@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { siDepositAppliedSen, siOutstandingSen } from "../vendor/scm/lib/si-outstanding";
 import { offersRecordPayment, piPaymentHint } from "./doc-payment";
-import { visibleFields, canOperateDeliveryOrders, canOperateSalesInvoices } from "../auth/salesAccess";
+import { visibleFields, canOperateDeliveryOrders, canOperateSalesInvoices, canPostGoodsReceipts } from "../auth/salesAccess";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { lineIdentity, orderLineIdentity } from "@2990s/shared";
 import { buildVariantSummary } from "../vendor/shared/variant-summary";
@@ -11,7 +11,7 @@ import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliv
 import { CommittedBatchRowMobile, PairedSoRowsMobile, SourcePosRowMobile, SubstitutedRowMobile } from "./source-chips"; import { MobileLinePoFacts, mobilePiPoPriceNotice } from "./MobileLinePoRef";
 import { MobileRelationshipMap } from "./MobileRelationshipMap";
 import { MobileLineRemark } from "./MobileLineRemark";
-import { useGrnZeroCostRemedy } from "./MobileGrnZeroCost";
+import { useGrnZeroCostRemedy } from "./MobileGrnZeroCost"; import { MobileGrnLineRack } from "./MobileGrnLineRack";
 import { flowAnchorForModule, type FlowNav } from "./relationship-map-model";
 import { idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import { api } from "../api/client";
@@ -22,6 +22,7 @@ import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { usePrompt } from "../vendor/scm/components/PromptDialog";
 import { askActionReason, DO_CANCEL_PROMPT, PO_CANCEL_PROMPT, type ActVariant, type DocAction } from "./doc-actions";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
+import { MemberAccountActions } from "./MemberAccountActions";
 import { MODULE_CONFIGS } from "./MobileModuleList";
 import { invalidateModuleShared } from "./sharedInvalidate";
 import { todayMyt } from "../vendor/scm/lib/dates";
@@ -373,7 +374,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Delivery", dmy(h.customer_delivery_date ?? h.expected_delivery_at)],
       ["Phone", formatPhone(firstOf(h.phone))],
       ["Ship-from", firstOf(h.sales_location)], // the BRANCH (owner 2026-09-07, header-level); the customer_state fallback was a different concept under one label
-      ["Reference", firstOf(h.ref, h.po_doc_no)],
+      ["Ref No.", firstOf(h.ref, h.po_doc_no)],
       ["Salesperson", firstOf(h.agent)],
     ],
     /* Owner 2026-07-17: Cost + Margin stat tiles removed from the mobile DO
@@ -407,7 +408,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Due Date", dmy(h.due_date)],
       ["Phone", formatPhone(firstOf(h.phone))],
       ["Location", firstOf(h.sales_location, h.customer_state, h.state)],
-      ["Reference", firstOf(h.ref, h.po_doc_no)],
+      ["Ref No.", firstOf(h.ref, h.po_doc_no)],
       ["Salesperson", firstOf(h.agent)],
     ],
     stats: (h) => {
@@ -457,6 +458,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     meta: (h) => [
       ["Received", dmy(h.received_at)],
       ["Delivery Note", firstOf(h.delivery_note_ref)],
+      ["Warehouse", firstOf(h.warehouse_code)],
       ["Supplier", firstOf(nested(h.supplier)?.code)],
       ["Currency", firstOf(h.currency)],
     ],
@@ -465,6 +467,9 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Tax", money(h.tax_sen), "#767b6e"],
       ["Total", money(h.total_sen), "var(--ink)"],
     ],
+    // A scanned draft's note says which PO it may be wrong about and which
+    // delivery-order lines were left off; the phone must see it before posting.
+    notice: (h) => (h.status === "DRAFT" && s(h.notes).trim() ? s(h.notes).trim() : null),
     line: (it) => ({
       name: firstOf(it.material_name, it.description, it.item_code),
       sub: join(it.item_code, s(it.qty_accepted).trim() ? `Accepted ${s(it.qty_accepted)}` : ""),
@@ -636,7 +641,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Received", dmy(h.received_at)],
       ["Inspected", dmy(h.inspected_at)],
       ["Refunded", dmy(h.refunded_at)],
-      ["Reference", firstOf(h.ref)],
+      ["Ref No.", firstOf(h.ref)],
     ],
     stats: (h) => [
       ["Total", money(h.local_total_sen), "var(--ink)"],
@@ -681,7 +686,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Delivery", dmy(h.customer_delivery_date ?? h.processing_date)],
       ["Phone", formatPhone(firstOf(h.phone))],
       ["Location", firstOf(h.sales_location, h.customer_state, h.customer_country)],
-      ["Reference", firstOf(h.ref, h.po_doc_no)],
+      ["Ref No.", firstOf(h.ref, h.po_doc_no)],
       ["Salesperson", firstOf(h.agent)],
     ],
     stats: (h) => {
@@ -725,7 +730,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Delivery", dmy(h.customer_delivery_date ?? h.expected_delivery_at)],
       ["Phone", formatPhone(firstOf(h.phone))],
       ["Location", firstOf(h.sales_location, h.customer_state, h.state)],
-      ["Reference", firstOf(h.ref, h.po_doc_no)],
+      ["Ref No.", firstOf(h.ref, h.po_doc_no)],
       ["Driver", firstOf(h.driver_name)],
     ],
     stats: (h) => [
@@ -971,7 +976,14 @@ function useMayOperateDoc(moduleKey: string): boolean {
 /** Build the valid status actions for a doc from its CURRENT status. Empty when
  *  the doc is terminal, the module has no status route, or the caller may only
  *  view it (`mayOperate` false → the footer renders nothing at all). */
-function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate: boolean): DocAction[] {
+/* Posting a GRN is its own permission (owner 2026-10-01): a storekeeper with
+   Goods Receipt edit drafts and sets racks, the purchaser posts. Same helper as
+   desktop; the server gate is scm/lib/grn-post-capability.ts. */
+function useMayPostGrn(): boolean {
+  return canPostGoodsReceipts(useAuth().user);
+}
+
+function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate: boolean, mayPostGrn: boolean): DocAction[] {
   if (!mayOperate) return [];
   const st = s(header?.status).toUpperCase();
   const enc = encodeURIComponent(id);
@@ -1054,7 +1066,7 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
     // GRN — /post (DRAFT→POSTED), /cancel. CANCELLED / CLOSED are terminal.
     case "grns": {
       if (st === "CANCELLED" || st === "CLOSED") return out;
-      if (st === "DRAFT") {
+      if (st === "DRAFT" && mayPostGrn) {
         out.push({ key: "post", label: "Post", variant: "solid", request: { path: `/grns/${enc}/post`, method: "PATCH" } });
       }
       out.push({ key: "cancel", label: "Cancel", variant: "danger", request: { path: `/grns/${enc}/cancel`, method: "PATCH" }, confirm: { title: "Cancel this goods receipt?", body: "This voids the GRN and reverses any posted stock.", confirmLabel: "Cancel GRN" } });
@@ -1242,13 +1254,14 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
   const [runningKey, setRunningKey] = useState<string | null>(null);
 
   const mayOperate = useMayOperateDoc(moduleKey);
+  const mayPostGrn = useMayPostGrn();
   /* POD confirms a delivery (stock + SO sync) → an operate action, gated on the
      SAME helper as the status actions (mirrors DeliveryOrderDetailV2's
      canWriteDo). MobileApp already withholds onPOD for a view-only user; this is
      defence-in-depth so the button, the early-return, the error offset and the
      scroll padding all agree. */
   const podEnabled = !!onPOD && mayOperate;
-  const statusActions = useMemo(() => statusActionsFor(moduleKey, id, header, mayOperate), [moduleKey, id, header, mayOperate]);
+  const statusActions = useMemo(() => statusActionsFor(moduleKey, id, header, mayOperate, mayPostGrn), [moduleKey, id, header, mayOperate, mayPostGrn]);
   const canPay = offersRecordPayment(moduleKey, header);
 
   const refresh = () => {
@@ -1483,10 +1496,11 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
   // Whether a sticky footer will render — used to reserve scroll padding so it
   // never covers the last line item. A POD button (delivery orders) also counts.
   const mayOperate = useMayOperateDoc(moduleKey);
+  const mayPostGrn = useMayPostGrn();
   // POD entry is gated on the operate helper (same as DocActionFooter) so a
   // view-only user gets no POD button — and the footer/scroll padding agree.
   const podEnabled = !!onPOD && mayOperate;
-  const hasStatusActions = !!id && (statusActionsFor(moduleKey, id, header, mayOperate).length > 0 || offersRecordPayment(moduleKey, header) || piPaymentHint(moduleKey, header) !== null);
+  const hasStatusActions = !!id && (statusActionsFor(moduleKey, id, header, mayOperate, mayPostGrn).length > 0 || offersRecordPayment(moduleKey, header) || piPaymentHint(moduleKey, header) !== null);
   const hasFooter = hasStatusActions || podEnabled;
   const invalidate = () => { void qc.invalidateQueries({ queryKey: ["mobile-module-detail", map.path, id] }); };
 
@@ -1593,7 +1607,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
                   : null;
                 const delivered = coverageType ? (deliveredMap.get(code) ?? []) : undefined;
                 const provenance = coverageType ? (provByCode.get(code) ?? []) : undefined;
-                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} remark={l.remark} qty={l.qty} unitSen={l.unitSen} amountSen={l.amountSen} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} provenance={provenance} allocations={allocations} poNumber={s(header?.po_number)} sourcePos={sourcePos} sourceAdj={sourceAdj} delivered={delivered} committedBatch={committedBatch} substituted={moduleKey === "delivery-orders-mfg" && Boolean(it?.ac_substituted)} poRef={<MobileLinePoFacts moduleKey={moduleKey} line={it ?? {}} nav={flowNav} />} />;
+                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} remark={l.remark} qty={l.qty} unitSen={l.unitSen} amountSen={l.amountSen} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} provenance={provenance} allocations={allocations} poNumber={s(header?.po_number)} sourcePos={sourcePos} sourceAdj={sourceAdj} delivered={delivered} committedBatch={committedBatch} substituted={moduleKey === "delivery-orders-mfg" && Boolean(it?.ac_substituted)} poRef={<><MobileLinePoFacts moduleKey={moduleKey} line={it ?? {}} nav={flowNav} />{id && <MobileGrnLineRack moduleKey={moduleKey} grnId={id} header={header} line={it ?? {}} onSaved={invalidate} />}</>} />;
               }) : <div style={{ fontSize: 11.5, color: "#9aa093", padding: "9px 0" }}>No line items.</div>)}
             </div>
             {!isLoading && !error && id && <MobileAddLine moduleKey={moduleKey} docId={id} header={header} onAdded={invalidate} />}
@@ -1711,99 +1725,9 @@ const SIMPLE_META: Record<string, { eyebrow: (r: any) => string; title: (r: any)
    reads it — but any doc worth its own header/stats belongs in DOC_MODULES. */
 const SIMPLE_DOC_PATHS: Record<string, { path: string; headerKey: string }> = {};
 
-// Member account actions (Team → Members). Desktop Team.tsx exposes Reset
-// password / Resend invitation in the member detail; this mirrors them 1:1 on
-// mobile (single-logic-layer rule) against the SAME endpoints — no new backend.
-// Gated on users.manage (the manage tier the desktop actions use); the endpoints
-// enforce it too, so a stray render still 403s. A pending (status "invited")
-// member gets Resend invitation (+ the returned invite link copied); an active
-// member gets Reset password (link emailed + copied).
-function MemberActions({ row, onDone }: { row: any; onDone: () => void }) {
-  const { can } = useAuth();
-  const notify = useNotify();
-  const confirm = useConfirm();
-  const [busy, setBusy] = useState<null | "reset" | "resend">(null);
-  const id = s(row?.id);
-  const email = s(row?.email);
-  const status = String(row?.status ?? "").toLowerCase();
-  if (!can("users.manage") || !id) return null;
-
-  const copyLink = async (link: string): Promise<boolean> => {
-    if (!link) return false;
-    try {
-      await navigator.clipboard.writeText(link);
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
-  const resendInvite = async () => {
-    setBusy("resend");
-    try {
-      const res = await api.post<{
-        ok: boolean;
-        invite_url?: string;
-        email_sent?: boolean;
-        email_status?: string;
-      }>(`/api/users/${id}/resend-invite`);
-      const copied = await copyLink(res.invite_url ?? "");
-      if (res.email_sent) {
-        await notify({ title: "Invitation sent", body: copied ? `Emailed to ${email} — the invite link is also copied.` : `Emailed to ${email}.` });
-      } else if (copied) {
-        await notify({ title: "Invite link copied", body: `Email not sent (${res.email_status || "check Settings, Email"}) — paste the copied link to the member.` });
-      } else {
-        await notify({ title: "Couldn't send", body: `Email not sent (${res.email_status || "check Settings, Email"}).` });
-      }
-      onDone();
-    } catch (e) {
-      await notify({ title: "Couldn't resend", body: e instanceof Error ? e.message : "Please try again." });
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  // Mirrors Team.tsx sendReset against the SAME endpoint — sending the link is
-  // a no-op on the account, and the link itself is never surfaced to the admin.
-  const resetPassword = async () => {
-    if (!(await confirm({ title: "Send reset link?", body: `Email a password reset link to ${email}? Nothing changes until they click it — their password and active sessions keep working. The link expires in 1 hour.`, confirmLabel: "Send link" }))) return;
-    setBusy("reset");
-    try {
-      const res = await api.post<{
-        ok: boolean;
-        email_sent?: boolean;
-        email_status?: string;
-      }>(`/api/users/${id}/reset-password`);
-      if (res.email_sent) {
-        await notify({ title: "Reset link sent", body: `Emailed to ${email} — expires in 1 hour.` });
-      } else {
-        await notify({ title: "Couldn't send", body: `Email not sent (${res.email_status || "check Settings, Email"}). Nothing was changed on the account.` });
-      }
-    } catch (e) {
-      await notify({ title: "Couldn't send", body: e instanceof Error ? e.message : "Please try again." });
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const isInvited = status === "invited";
-  return (
-    <>
-      <Eyebrow>Actions</Eyebrow>
-      <div style={{ display: "grid", gap: 8, marginBottom: 13 }}>
-        {isInvited ? (
-          <button className="btn" disabled={busy !== null} onClick={resendInvite} style={{ opacity: busy !== null ? 0.6 : 1 }}>
-            {busy === "resend" ? "Working…" : "Resend invitation"}
-          </button>
-        ) : (
-          <button className="btn" disabled={busy !== null} onClick={resetPassword} style={{ opacity: busy !== null ? 0.6 : 1 }}>
-            {busy === "reset" ? "Working…" : "Reset password"}
-          </button>
-        )}
-      </div>
-    </>
-  );
-}
+// Member account actions (Team -> Members: Set password / Send reset link /
+// Resend invitation) moved to ./MemberAccountActions so this file stays under its
+// size ceiling. The admin-reset invariant test scans that module by path.
 
 function SimpleDetail({ moduleKey, row, title, onBack, onEdit }: { moduleKey: string; row: any; title: string; onBack: () => void; onEdit?: () => void }) {
   /* Owner 2026-07-17 — cost is director-only. Its own useAuth: the costing gate
@@ -1884,7 +1808,8 @@ function SimpleDetail({ moduleKey, row, title, onBack, onEdit }: { moduleKey: st
   const actionRow = row ?? {};
   const actionId = s(row?.id);
   const mayOperate = useMayOperateDoc(moduleKey);
-  const hasFooter = !!actionId && (statusActionsFor(moduleKey, actionId, actionRow, mayOperate).length > 0 || offersRecordPayment(moduleKey, actionRow) || piPaymentHint(moduleKey, actionRow) !== null);
+  const mayPostGrn = useMayPostGrn();
+  const hasFooter = !!actionId && (statusActionsFor(moduleKey, actionId, actionRow, mayOperate, mayPostGrn).length > 0 || offersRecordPayment(moduleKey, actionRow) || piPaymentHint(moduleKey, actionRow) !== null);
   const invalidate = () => { void qc.invalidateQueries({ queryKey: ["mobile-module"] }); };
 
   return (
@@ -1927,7 +1852,7 @@ function SimpleDetail({ moduleKey, row, title, onBack, onEdit }: { moduleKey: st
         )}
 
         {moduleKey === "members" && (
-          <MemberActions row={effectiveRow} onDone={() => { void qc.invalidateQueries({ queryKey: ["mobile-module"] }); }} />
+          <MemberAccountActions row={effectiveRow} onDone={() => { void qc.invalidateQueries({ queryKey: ["mobile-module"] }); }} />
         )}
 
         </div>

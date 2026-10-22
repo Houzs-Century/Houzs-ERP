@@ -20,6 +20,8 @@
 // ----------------------------------------------------------------------------
 
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent } from 'react';
+import { ChevronDown, ChevronUp } from 'lucide-react';
+import styles from './NumberInput.module.css';
 
 export type NumberSign = 'signed' | 'unsigned';
 
@@ -67,14 +69,28 @@ export type NumberInputProps = {
   onBlur?: () => void;
   // For a cell/list editor that must not let a click bubble to the row.
   onClick?: (e: MouseEvent<HTMLInputElement>) => void;
+  /** Opt-in up/down stepper (buttons + ArrowUp/ArrowDown) for small counts like
+   *  a line qty, where clicking is quicker than typing (DEV-62). */
+  step?: number;
+  /** Lowest value the stepper goes down to. */
+  min?: number;
 };
 
 export const NumberInput = ({
   value, onValueChange, sign, decimal,
-  className, style, placeholder, disabled, title, 'aria-label': ariaLabel, onKeyDown, onBlur, onClick,
+  className, style, placeholder, disabled, title, 'aria-label': ariaLabel, onKeyDown, onBlur, onClick, step, min,
 }: NumberInputProps) => {
   const [draft, setDraft] = useState(() => fmt(value));
   const focused = useRef(false);
+
+  // Sets the draft too: while focused the value -> draft sync is paused.
+  const stepBy = (dir: 1 | -1) => {
+    if (!step) return;
+    let next = (value ?? 0) + dir * step;
+    if (min != null && next < min) next = min;
+    setDraft(fmt(next));
+    onValueChange(next);
+  };
 
   // Re-sync from the value ONLY when the box is not being edited — so a typed
   // leading zero survives while focused, and an external change (e.g. a lot pick
@@ -83,7 +99,7 @@ export const NumberInput = ({
     if (!focused.current) setDraft(fmt(value));
   }, [value]);
 
-  return (
+  const input = (
     <input
       type="text"
       inputMode={decimal ? 'decimal' : 'numeric'}
@@ -101,8 +117,32 @@ export const NumberInput = ({
         onValueChange(parseNumericText(text));
       }}
       onBlur={() => { focused.current = false; setDraft(fmt(value)); onBlur?.(); }}
-      onKeyDown={onKeyDown}
+      onKeyDown={(e) => {
+        if (step && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+          e.preventDefault();
+          stepBy(e.key === 'ArrowUp' ? 1 : -1);
+        }
+        onKeyDown?.(e);
+      }}
       onClick={onClick}
     />
+  );
+
+  if (!step) return input;
+  return (
+    <span className={styles.stepWrap}>
+      {input}
+      <span className={styles.stepBtns}>
+        <button type="button" tabIndex={-1} aria-label="Increase" disabled={disabled}
+          onMouseDown={(e) => e.preventDefault()} onClick={() => stepBy(1)}>
+          <ChevronUp size={10} />
+        </button>
+        <button type="button" tabIndex={-1} aria-label="Decrease"
+          disabled={disabled || (min != null && (value ?? 0) <= min)}
+          onMouseDown={(e) => e.preventDefault()} onClick={() => stepBy(-1)}>
+          <ChevronDown size={10} />
+        </button>
+      </span>
+    </span>
   );
 };

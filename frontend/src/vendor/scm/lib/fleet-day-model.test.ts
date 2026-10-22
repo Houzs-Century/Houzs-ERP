@@ -13,7 +13,7 @@ const stop = (over: Partial<FleetDayStop> & { id: string }): FleetDayStop => ({
 const trip = (over: Partial<FleetDayTrip> & { id: string }): FleetDayTrip => ({
   trip_no: over.id, trip_date: '2026-07-26', status: 'PLANNED', is_outsourced: false,
   total_distance_km: null, lorry: null, driver: null, helpers: [], warehouse: null,
-  depot: null, total_revenue_sen: 0, total_drops: 0, stops: [], ...over,
+  depot: null, total_revenue_sen: 0, total_drops: 0, total_delivered: 0, total_with_pod: 0, stops: [], ...over,
 });
 
 describe('buildMapRoutes', () => {

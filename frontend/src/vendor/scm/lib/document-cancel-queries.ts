@@ -43,6 +43,12 @@ export type CancelRequestRow = {
   doc_key: string;
   doc_number: string;
   doc_status_at_request: string | null;
+  /* The Sales Order's own customer reference, RAW — resolved for display by
+     customerRefOf, the rule the SO list and the amendment queue already use.
+     Sent for SO rows and for a DO's source order (a PO has no single order),
+     null when the order carries neither. */
+  doc_ref?: string | null;
+  doc_customer_so_no?: string | null;
   status: 'REQUESTED' | 'L1_APPROVED' | 'APPROVED' | 'EXECUTED' | 'REJECTED' | 'WITHDRAWN';
   reason: string;
   requested_by: number;
@@ -51,9 +57,12 @@ export type CancelRequestRow = {
   l1_by: number | null;
   l1_by_name: string | null;
   l1_at: string | null;
+  /** What each approver wrote when signing — optional, null when none (DEV-17). */
+  l1_remark: string | null;
   l2_by: number | null;
   l2_by_name: string | null;
   l2_at: string | null;
+  l2_remark: string | null;
   rejected_by: number | null;
   rejected_by_name: string | null;
   rejected_at: string | null;
@@ -128,6 +137,18 @@ export function cancelRequestLine(row: Pick<CancelRequestRow, 'status' | 'doc_ty
   }
 }
 
+/** The optional text box on every approve dialog (DEV-17). */
+export const APPROVE_REMARK_INPUT = { label: 'Remarks (optional)', placeholder: 'Anything the requester or the next approver should know' };
+
+/** The approvers' remarks in one line, each tagged with its level where there
+ *  are two; '' when nobody wrote one. */
+export function approvalRemarksOf(row: Pick<CancelRequestRow, 'doc_type' | 'l1_remark' | 'l2_remark'>): string {
+  const l1 = (row.l1_remark ?? '').trim();
+  const l2 = (row.l2_remark ?? '').trim();
+  if (levelsFor(docTypeOfRow(row)) <= 1) return l1;
+  return [l1 && `L1: ${l1}`, l2 && `L2: ${l2}`].filter(Boolean).join(' · ');
+}
+
 /** The approve button's words: names the level only where there are two. */
 export function approveLabel(docType: CancelRowDocType, level: ApprovalLevel): string {
   if (levelsFor(docType) <= 1) return 'Approve & cancel';
@@ -177,13 +198,14 @@ export function useRaiseCancelRequest(docType: CancelDocType) {
   });
 }
 
-/** Sign the level the request is waiting for. `execute` is true after the
- *  document's final signature: the caller must then run its own cancel. */
+/** Sign the level the request is waiting for, with the approver's optional
+ *  remark. `execute` is true after the document's final signature: the caller
+ *  must then run its own cancel. */
 export function useApproveCancelRequest(docType: CancelDocType) {
   const invalidate = useInvalidate(docType);
   return useMutation({
-    mutationFn: ({ key }: { key: string }) =>
-      authedFetch<{ request: CancelRequestRow; execute: boolean }>(path(docType, key, '/approve'), { method: 'POST' }),
+    mutationFn: ({ key, remark }: { key: string; remark: string | null }) =>
+      authedFetch<{ request: CancelRequestRow; execute: boolean }>(path(docType, key, '/approve'), { method: 'POST', body: JSON.stringify({ remark }) }),
     onSuccess: (_d, v) => invalidate(v.key),
   });
 }

@@ -22,7 +22,7 @@
 //      inputs he CAN change — so the client can say which boxes to move.
 // ----------------------------------------------------------------------------
 import { describe, expect, it } from 'vitest';
-import { checkAllowedOptions } from './allowed-options-check';
+import { checkAllowedOptions, variantNotAllowedSentence, variantsForEditCheck } from './allowed-options-check';
 
 /** The live prod pool, verbatim, including the mixed inch glyphs. */
 const PROD_TOTAL_HEIGHTS = [
@@ -315,5 +315,65 @@ describe('checkAllowedOptions — leg height: the zero-inch glyph is "No Leg"', 
   it('does NOT invent "No Leg" — a pool offering neither zero spelling still refuses 0"', () => {
     const m = model({ leg_heights: ['1"', '2"', '4"'] });
     expect(checkAllowedOptions(product(), m, { legHeight: '0"' })?.field).toBe('leg_height');
+  });
+});
+
+
+describe('variantsForEditCheck — a special the line already held is grandfathered (HC-SO-011014)', () => {
+  const product = { model_id: 'm1' } as Parameters<typeof checkAllowedOptions>[0];
+  const model = { allowed_options: { specials: ['Hydraulic', 'HB Fully Cover'] } } as Parameters<typeof checkAllowedOptions>[1];
+  const prev = { specials: ['hydraulic', 'HB Fully Cover'], fabricCode: null };
+
+  it('picking the fabric no longer trips on an old lowercase special', () => {
+    const next = { specials: ['hydraulic', 'HB Fully Cover'], fabricCode: 'PC151-01' };
+    expect(checkAllowedOptions(product, model, next)).not.toBeNull();
+    expect(checkAllowedOptions(product, model, variantsForEditCheck(next, prev))).toBeNull();
+  });
+
+  it('a special the edit ADDS is still judged', () => {
+    const next = { specials: ['hydraulic', 'Bogus'] };
+    expect(checkAllowedOptions(product, model, variantsForEditCheck(next, prev))).toMatchObject({ field: 'specials', value: 'Bogus' });
+  });
+
+  it('leaves variants alone when the line held no specials', () => {
+    const next = { specials: ['hydraulic'] };
+    expect(variantsForEditCheck(next, { specials: [] })).toBe(next);
+    expect(variantsForEditCheck(next, null)).toBe(next);
+  });
+});
+
+describe('checkAllowedOptions — compartment codes ignore case (ZNT 4821, 2026-09-30)', () => {
+  /* The pool is the live 8030 SOFFIO list; `8030-CONSOLE` is a real active SKU
+     beside `8030-Console`. The scan canonicalised to the upper-case one and the
+     draft was refused three times over. */
+  const soffio = model({ compartments: ['1S', '2A(LHF)', '2A(RHF)', 'Console', 'STOOL'] });
+  const sofaSku = (code: string) => product({ code, category: 'SOFA', size_code: null });
+
+  it('accepts an upper-case SKU suffix against a mixed-case pool entry', () => {
+    expect(checkAllowedOptions(sofaSku('8030-CONSOLE'), soffio, null)).toBeNull();
+  });
+
+  it('accepts an upper-case module id in cells', () => {
+    expect(checkAllowedOptions(sofaSku('8030-1S'), soffio, { cells: [{ moduleId: 'CONSOLE' }] } as never)).toBeNull();
+  });
+
+  it('still refuses a compartment the Model does not offer', () => {
+    expect(checkAllowedOptions(sofaSku('8030-CNR'), soffio, null)).toMatchObject({
+      error: 'variant_not_allowed', field: 'compartment', value: 'CNR',
+    });
+  });
+});
+
+describe('variantNotAllowedSentence — the scan job has no client to compose it', () => {
+  it('names the line, the field and the value in one short sentence', () => {
+    const s = variantNotAllowedSentence({
+      error: 'variant_not_allowed', field: 'compartment', value: 'CNR', itemCode: '8030-CNR', allowed: ['1S'],
+    });
+    expect(s).toBe('8030-CNR: the compartment "CNR" is not allowed for this model. Please enter this order manually.');
+    expect(s!.length).toBeLessThan(200);
+  });
+
+  it('returns null for any other refusal', () => {
+    expect(variantNotAllowedSentence({ error: 'phone_required' })).toBeNull();
   });
 });

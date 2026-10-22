@@ -24,6 +24,7 @@ const CARD_DESCRIPTIONS: Record<string, string> = {
   "/scm/consignment-notes":             "Delivery notes against consignment orders.",
   "/scm/consignment-returns":           "Consigned stock returned to base.",
   "/scm/purchase-consignment-orders":   "Stock received in on consignment terms.",
+  "/scm/product-requests":              "New product or repack requests, approved by the Purchaser.",
   "/scm/purchase-consignment-receives": "Consigned stock coming in from suppliers.",
   "/scm/purchase-consignment-returns":  "Consigned stock returned to supplier.",
 

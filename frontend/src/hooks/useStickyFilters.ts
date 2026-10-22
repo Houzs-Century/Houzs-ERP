@@ -27,13 +27,22 @@ import { identityStorageKey } from "../lib/storageIdentity";
  * @param keys   Optional allow-list of params to mirror. Anything else
  *               in the URL (e.g. `?focus=123` from a deep-link) won't
  *               be persisted. When omitted, every param is persisted.
+ * @param opts.idleTtlMs  When set, the stored filter is dropped once this many
+ *               ms have passed since the page was last used (owner 2026-09-30:
+ *               the calendar filter should "remain unless u log out or leave the
+ *               page without touching for 1 hour"). Opening the page restores the
+ *               filter AND re-stamps the clock, so the TTL measures time AWAY
+ *               from the page, not time since an edit. Logout clears it outright
+ *               (AuthContext sweeps `filters:*`).
  */
 export function useStickyFilters(
   scope: string,
-  keys?: readonly string[]
+  keys?: readonly string[],
+  opts?: { idleTtlMs?: number }
 ): ReturnType<typeof useSearchParams> {
   const [params, setParams] = useSearchParams();
   const storageKey = identityStorageKey(`filters:${scope}`);
+  const idleTtlMs = opts?.idleTtlMs;
   const restored = useRef(false);
 
   // Pick out only the allow-listed keys (or all if no list).
@@ -61,11 +70,25 @@ export function useStickyFilters(
       localStorage.removeItem(storageKey);
       const saved = sessionStorage.getItem(storageKey);
       if (!saved) return;
+      // With an idle TTL the value is stored as {v, t}. Drop it when the last
+      // CHANGE was more than idleTtlMs ago, or when it is not in that shape
+      // (a pre-TTL plain-string entry) — either way it is stale.
+      let snapStr = saved;
+      if (idleTtlMs != null) {
+        let parsed: unknown;
+        try { parsed = JSON.parse(saved); } catch { parsed = null; }
+        const rec = parsed as { v?: unknown; t?: unknown } | null;
+        if (!rec || typeof rec.v !== "string" || typeof rec.t !== "number" || Date.now() - rec.t > idleTtlMs) {
+          sessionStorage.removeItem(storageKey);
+          return;
+        }
+        snapStr = rec.v;
+      }
       // Pluck on restore too — legacy entries that contained keys
       // since renamed (e.g. an old `tab=` from before a sub-tab key
       // rename) must be dropped, not merged back into the URL where
       // they'd collide with an outer router that owns the same key.
-      const next = pluck(new URLSearchParams(saved));
+      const next = pluck(new URLSearchParams(snapStr));
       if (next.toString() === "") return;
       // Merge into existing params (preserve any unrelated keys
       // like `?focus=` set by a deep-link).
@@ -83,8 +106,16 @@ export function useStickyFilters(
     try {
       if (!storageKey) return;
       const snap = pluck(params).toString();
-      if (snap === "") sessionStorage.removeItem(storageKey);
-      else sessionStorage.setItem(storageKey, snap);
+      if (snap === "") { sessionStorage.removeItem(storageKey); return; }
+      if (idleTtlMs != null) {
+        // Stamp the time on every write — mounting/using the page (which restores
+        // the filter and re-mirrors it) counts as "touching" it, so the 1-hour
+        // idle clock measures time AWAY from the page. Owner 2026-09-30: "leave
+        // the page without touching for 1 hour".
+        sessionStorage.setItem(storageKey, JSON.stringify({ v: snap, t: Date.now() }));
+      } else {
+        sessionStorage.setItem(storageKey, snap);
+      }
     } catch {
       // ignore quota / privacy errors
     }

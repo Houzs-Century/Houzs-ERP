@@ -96,7 +96,7 @@
 }
 
 .opt {
-  padding: 6px 10px;
+  padding: var(--pick-opt-pad, 6px 10px);
   font-size: var(--fs-12, 12px);
   color: #11140f;
   cursor: pointer;

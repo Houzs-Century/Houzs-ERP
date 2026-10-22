@@ -18,6 +18,7 @@ import {
   type ScanJob,
   type ScanJobsResp,
 } from "../vendor/scm/lib/scan-jobs";
+import { ScanCodesPanel } from "../vendor/scm/components/ScanCodesPanel";
 import "./mobile.css";
 
 const ACCEPT = "image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf";
@@ -26,11 +27,12 @@ const isAcceptedFile = (f: File): boolean =>
 
 type EnqueueResp = { job_id: string; status: string };
 
-export function MobileGrnScan({ onBack }: { onBack: () => void }) {
+export function MobileGrnScan({ onBack, onOpenGrn }: { onBack: () => void; onOpenGrn: (grnId: string) => void }) {
   const [files, setFiles] = useState<File[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [enqueuedJobIds, setEnqueuedJobIds] = useState<string[]>([]);
+  const [codesOpen, setCodesOpen] = useState<string | null>(null);
   const camInputRef = useRef<HTMLInputElement>(null);
   const libInputRef = useRef<HTMLInputElement>(null);
 
@@ -160,11 +162,24 @@ export function MobileGrnScan({ onBack }: { onBack: () => void }) {
                   <div style={{ flex: 1, fontSize: 12.5, color: "#11140f", lineHeight: 1.45 }}>
                     {done
                       ? (j.linkedDocNo
-                          ? `Draft goods receipt ${j.linkedDocNo} — open it from Goods Receipts to review and post.`
+                          ? (j.linkedDocId
+                              ? <>Draft goods receipt{" "}
+                                  <button type="button" onClick={() => onOpenGrn(j.linkedDocId as string)} style={{ padding: 0, border: "none", background: "none", font: "inherit", fontWeight: 700, color: "#16695f", textDecoration: "underline" }}>{j.linkedDocNo}</button>
+                                  {" "}— tap to check the lines, set racks and post.</>
+                              : `Draft goods receipt ${j.linkedDocNo} — open it from Goods Receipts to review and post.`)
                           : (j.error || "Needs review — open the PO and receive by hand."))
                       : j.status === "error"
                         ? (j.error || "Couldn't read the delivery order.")
                         : "Reading the delivery order…"}
+                    {done && j.linkedDocNo && j.error && (
+                      <div style={{ marginTop: 4, color: "#a16a2e" }}>{j.error}</div>
+                    )}
+                    {done && (
+                      <button type="button" onClick={() => setCodesOpen(codesOpen === j.id ? null : j.id)} style={{ display: "block", marginTop: 6, padding: 0, border: "none", background: "none", font: "inherit", fontWeight: 700, color: "#16695f", textDecoration: "underline", minHeight: 32 }}>
+                        {codesOpen === j.id ? "Hide supplier codes" : "Match supplier codes"}
+                      </button>
+                    )}
+                    {done && codesOpen === j.id && <ScanCodesPanel jobId={j.id} jobsQueryKey={["mobile-grn-scan-jobs"]} />}
                   </div>
                   <span style={{ flex: "none", fontSize: 11, color: "#9aa093" }}>{jobTs(j.createdAt) ? hhmm(jobTs(j.createdAt)) : ""}</span>
                 </div>

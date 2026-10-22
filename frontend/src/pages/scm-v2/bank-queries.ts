@@ -233,14 +233,17 @@ export const useUploadBankStatement = () => {
 export const useBookBankReceipt = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ lineId, allocations }: {
+    mutationFn: ({ lineId, allocations, charge }: {
       lineId: number;
       /** One entry for the ordinary payout, several when one credit pays
           several statements. The shares must add up to the credit. */
       allocations: Array<{ batchId: number; amountSen: number }>;
+      /** What the acquirer KEPT off this credit, named against one of those
+          statements (owner 2026-09-30: GHL's RM 54, no advice to book it on). */
+      charge?: { batchId: number; amountSen: number; accountCode: string; note: string } | null;
     }) =>
-      authedFetch<{ ok: boolean; status: string; jeNo?: string; results: Array<{ batchId: number; jeNo: string | null; outstandingSen: number }> }>(
-        `/accounting/bank/lines/${lineId}/receipt`, { method: 'POST', body: JSON.stringify({ allocations }) },
+      authedFetch<{ ok: boolean; status: string; jeNo?: string; results: Array<{ batchId: number; jeNo: string | null; outstandingSen: number; chargeSen?: number }> }>(
+        `/accounting/bank/lines/${lineId}/receipt`, { method: 'POST', body: JSON.stringify(charge ? { allocations, charge } : { allocations }) },
       ),
     onSuccess: () => invalidateAfterBankPosting(qc),
   });
@@ -476,6 +479,10 @@ export const useBankMonth = (accountCode: string | null, month: string | null) =
     statements: Array<BankStatement & { spanning: boolean }>;
     lines: Array<BankLine & { file_name: string | null }>;
     unmatchedEntries: LedgerEntry[];
+    /** This month's movements still to decide that an earlier file of the
+        account already recorded, and the files carrying them (owner
+        2026-10-14). Optional only for the minute a newer screen reads an older server. */
+    repeats?: { count: number; statementIds: number[] };
   }>(`/accounting/bank/months/${encodeURIComponent(accountCode!)}/${encodeURIComponent(month!)}`),
   enabled: accountCode != null && month != null,
   retry: retryUnlessClientError,
@@ -508,6 +515,20 @@ export const useAutoMatchStatement = () => {
     mutationFn: (id: number) =>
       authedFetch<{ ok: boolean; matched: number; jeNos: string[]; contraPairs: number }>(
         `/accounting/bank/statements/${id}/auto-match`, { method: 'POST', body: '{}' },
+      ),
+    onSuccess: () => invalidateAfterBankPosting(qc),
+  });
+};
+
+/* What an earlier file of the account already recorded, left out of a statement
+   already in (owner 2026-10-14: a month-end file that printed the export's
+   movements with more words brought them back as still to decide). */
+export const useLeaveOutRepeats = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      authedFetch<{ ok: boolean; leftOut: number; lineIds: number[] }>(
+        `/accounting/bank/statements/${id}/repeats`, { method: 'POST', body: '{}' },
       ),
     onSuccess: () => invalidateAfterBankPosting(qc),
   });

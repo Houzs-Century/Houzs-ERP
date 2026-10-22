@@ -12,6 +12,7 @@ const r: RpReport = {
   receipts: [{ key: '300-0000', code: '300-0000', name: 'AR', cells: { '310-0010': 50000 }, totalSen: 50000 }],
   payments: [{ key: 'ADV', code: null, name: 'Supplier advances (预付)', cells: { '310-0010': 30000 }, totalSen: 30000 }],
   totals: { receipts: { '310-0010': 50000 }, payments: { '310-0010': 30000 }, closing: { '310-0010': 10000 }, openingTotalSen: -10000, receiptsTotalSen: 50000, paymentsTotalSen: 30000, closingTotalSen: 10000 },
+  card: { takingsSen: 0, transitSen: 0, codes: [] },
   entries: [],
   layout: {
     stored: false, inSen: 50000, outSen: 30000,
@@ -30,9 +31,9 @@ describe('cashFlowSheet', () => {
   it('names the report, its period and its rows; Total alone when nothing is ticked, the ticked column before Total otherwise', () => {
     const s = cashFlowSheet(r);
     expect(s.title).toBe('Cash Flow');
-    expect(s.subtitle).toBe("01/07/2026 – 31/07/2026 · every bank and cash account · by the owner's accounts · % of the side's total");
+    expect(s.subtitle).toBe("2026/07/01 – 2026/07/31 · every bank and cash account · by the owner's accounts · % of the side's total");
     expect(s.meta).toEqual([
-      { label: 'Period', value: '01/07/2026 – 31/07/2026' },
+      { label: 'Period', value: '2026/07/01 – 2026/07/31' },
       { label: 'Accounts', value: '310-0010' },
       { label: 'Rows', value: "By the owner's accounts" },
     ]);

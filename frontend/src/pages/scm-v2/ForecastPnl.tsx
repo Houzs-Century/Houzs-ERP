@@ -4,8 +4,11 @@
 // percentage 是吗 — 两个都可以，做). A planning grid: months across, the P&L's
 // own accounts down, laid on the P&L's layout tree the way the statement
 // prints. A sales line takes an amount (the month's forecast sales are their
-// sum); every other line a % of that sales figure OR an amount — key one and
-// the other box shows what it implies, in grey. Category subtotals, block
+// sum); every other line a % OR an amount — key one and the other box shows
+// what it implies, in grey. A % is of the month's sales, except on a purchase
+// line, whose % is of its OWN group's sales (owner 2026-09-29: purchase of
+// bedding 应该是根据回他的 sales 的 amount 算，而不是 total sales — the item-group
+// bindings say which; the box's tooltip names them). Category subtotals, block
 // totals, gross profit, profit before tax and net profit follow the
 // statement's own arithmetic (vendor/shared/forecast-pnl.ts — the server's
 // copy byte for byte, so the Dashboard reads what this page shows). A new
@@ -45,6 +48,9 @@ const monthLabel = (m: string): string => `${m.slice(5, 7)}/${m.slice(0, 4)}`;
 const fmtBp = (bp: number): string => (bp / 100).toFixed(2).replace(/\.?0+$/, '');
 /** % of sales for a total line, one decimal; nothing when there are no sales. */
 const pctOfSales = (sen: number, salesSen: number): string => (salesSen !== 0 ? `${((sen / salesSen) * 100).toFixed(1)}%` : '—');
+/** What a line's % box is a share of — the tooltip on the box. */
+const basisTitle = (a: ForecastAccount): string =>
+  (a.basis && a.basis.length > 0 ? `% of this line's own sales: ${a.basis.join(' + ')}` : "% of the month's sales");
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const mytMonth = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 7);
 
@@ -119,10 +125,11 @@ const AmountBox = ({ valueSen, impliedSen, onCommit, label, cellKey }: { valueSe
   );
 };
 
-/** A share of the month's forecast sales, typed as 15 or 15.4, stored in basis
-    points; Esc reverts; a blank clears the cell. Shows the implied share in
-    grey while an amount is keyed. */
-const PercentBox = ({ bp, impliedBp, onCommit, label, cellKey }: { bp: number | null; impliedBp: number | null; onCommit: (bp: number | null) => void; label: string; cellKey: string }) => {
+/** A share of the line's basis (the month's sales, or a purchase line's own
+    group's sales), typed as 15 or 15.4, stored in basis points; Esc reverts; a
+    blank clears the cell. Shows the implied share in grey while an amount is
+    keyed; the tooltip says what the share is of. */
+const PercentBox = ({ bp, impliedBp, onCommit, label, cellKey, title }: { bp: number | null; impliedBp: number | null; onCommit: (bp: number | null) => void; label: string; cellKey: string; title?: string }) => {
   const [draft, setDraft] = useState(bp == null ? '' : fmtBp(bp));
   const [focused, setFocused] = useState(false);
   useEffect(() => { if (!focused) setDraft(bp == null ? '' : fmtBp(bp)); }, [bp, focused]);
@@ -137,7 +144,7 @@ const PercentBox = ({ bp, impliedBp, onCommit, label, cellKey }: { bp: number | 
   };
   return (
     <input
-      type="text" inputMode="decimal" style={pctInput} value={draft} data-cell={cellKey} aria-label={label}
+      type="text" inputMode="decimal" style={pctInput} value={draft} data-cell={cellKey} aria-label={label} title={title}
       placeholder={impliedBp == null ? '' : fmtBp(impliedBp)}
       onFocus={() => setFocused(true)}
       onChange={(e) => setDraft(e.target.value)}
@@ -326,7 +333,7 @@ export const ForecastPnl = () => {
   return (
     <div className="space-y-4">
       <PageHeader eyebrow="Finance · Forecasting" title="Forecast P&L"
-        description="Targets on the P&L's own tree, a column per month. A sales line takes an amount — the month's forecast sales are their sum. Every other line takes a % of those sales or an amount; key one and the other shows what it implies. A new month inherits the percentages. Nothing here touches the books." />
+        description="Targets on the P&L's own tree, a column per month. A sales line takes an amount — the month's forecast sales are their sum. Every other line takes a % or an amount — of those sales, or, on a purchase line, of its own group's sales; key one and the other shows what it implies. A new month inherits the percentages. Nothing here touches the books." />
       <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
         <input type="month" value={addTarget} onChange={(e) => setAddMonth(e.target.value)} aria-label="Month to add" style={{ ...input, width: 150, textAlign: 'left', fontFamily: 'inherit' }} />
         <Button variant="secondary" size="sm" onClick={add}>Add month</Button>
@@ -402,6 +409,7 @@ export const ForecastPnl = () => {
                               {sales
                                 ? <span style={soft}>{cell ? pctOfSales(line?.amountSen ?? 0, figures[m]?.salesSen ?? 0) : ''}</span>
                                 : <PercentBox bp={bp} impliedBp={amount != null ? line?.bp ?? null : null} label={`${m} ${r.account.code} percent`} cellKey={`${m} ${r.account.code} percent`}
+                                    title={basisTitle(r.account)}
                                     onCommit={(next) => setCell(m, r.account.code, next == null ? null : { bp: next })} />}
                             </td>
                           </Fragment>

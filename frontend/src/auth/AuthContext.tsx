@@ -329,6 +329,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
        phone whose user believes they have signed out. No-op off the app. */
     forgetNativeSession();
     resetSessionCaches();
+    // Sticky list/calendar filters must not survive a sign-out (owner
+    // 2026-09-30: "remain filter unless u log out ..."). They live in
+    // sessionStorage under `filters:<page>:u<user>:c<company>`, which a reload
+    // does NOT clear, so sweep them here. Same-key re-login would otherwise
+    // resurrect the previous session's filters.
+    try {
+      for (const store of [sessionStorage, localStorage]) {
+        for (const k of Object.keys(store)) {
+          if (k.startsWith("filters:")) store.removeItem(k);
+        }
+      }
+    } catch {
+      // storage unavailable — nothing to clear
+    }
     // Signing out is an identity-context change, and identity scopes every read
     // (own-vs-downline SO rows, finance fields, page access). Nothing from the
     // outgoing user may survive into the next sign-in. A logout is an SPA state

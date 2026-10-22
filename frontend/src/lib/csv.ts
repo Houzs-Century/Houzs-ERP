@@ -46,6 +46,32 @@ export function downloadCSV(filename: string, content: string) {
   URL.revokeObjectURL(url);
 }
 
+/* Every page of a server-paged list for the current filter, so Export is the
+   whole filtered list, not the page on screen (HC-0003). Same loop as
+   Projects' export. 200 = the per_page cap on the list endpoints; each page is
+   its own Worker request, so the 1,000-subrequest limit is per page. */
+export async function fetchAllPages<T>(
+  fetchPage: (page: number, perPage: number) => Promise<{ data: T[]; total: number }>,
+): Promise<T[]> {
+  const all: T[] = [];
+  for (let page = 1; page <= 500; page++) {
+    const res = await fetchPage(page, 200);
+    const batch = res.data;
+    all.push(...batch);
+    if (batch.length === 0 || all.length >= res.total) break;
+  }
+  return all;
+}
+
+export async function downloadAllPagesCSV<T>(
+  name: string,
+  columns: CSVColumn<T>[],
+  fetchPage: (page: number, perPage: number) => Promise<{ data: T[]; total: number }>,
+) {
+  const rows = await fetchAllPages(fetchPage);
+  downloadCSV(`${name}-${new Date().toISOString().slice(0, 10)}.csv`, toCSV(rows, columns));
+}
+
 // Parses RFC4180-style CSV. Supports quoted fields, doubled quotes, CRLF/LF.
 export function parseCSV(text: string): string[][] {
   // Strip BOM
@@ -75,7 +101,8 @@ export function parseCSV(text: string): string[][] {
       continue;
     }
 
-    if (ch === '"') {
+    // A quote opens a quoted field only at its start; mid-field it is an inch mark.
+    if (ch === '"' && field === "") {
       inQuotes = true;
       i++;
       continue;
@@ -122,19 +149,4 @@ export function parseCSV(text: string): string[][] {
   }
 
   return rows;
-}
-
-// Convenience: parse a CSV File into an array of objects keyed by header row.
-export async function parseCSVFile(file: File): Promise<Array<Record<string, string>>> {
-  const text = await file.text();
-  const grid = parseCSV(text);
-  if (grid.length === 0) return [];
-  const headers = grid[0].map((h) => h.trim());
-  return grid.slice(1).map((cells) => {
-    const obj: Record<string, string> = {};
-    headers.forEach((h, i) => {
-      obj[h] = (cells[i] ?? "").trim();
-    });
-    return obj;
-  });
 }

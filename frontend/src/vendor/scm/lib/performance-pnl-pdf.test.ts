@@ -41,8 +41,8 @@ describe('performanceSheet', () => {
   it('names the report, its period and its orders; the groups table then the summary; the notes at the foot', () => {
     const s = performanceSheet(r);
     expect(s.title).toBe('Performance P&L');
-    expect(s.subtitle).toBe('Sales orders dated 01/07/2026 – 31/07/2026 · 4 orders, 3 not yet delivered · % of sales');
-    expect(s.meta).toEqual([{ label: 'Period', value: '01/07/2026 – 31/07/2026' }, { label: 'Orders', value: '4 (3 not yet delivered)' }]);
+    expect(s.subtitle).toBe('Sales orders dated 2026/07/01 – 2026/07/31 · 4 orders, 3 not yet delivered · % of sales');
+    expect(s.meta).toEqual([{ label: 'Period', value: '2026/07/01 – 2026/07/31' }, { label: 'Orders', value: '4 (3 not yet delivered)' }]);
     expect(s.tables).toHaveLength(2);
     expect(s.tables[0]!.rows.map((x) => x.label)).toEqual(['Bedframe', 'Sofa', 'Accessory', 'Service / transport income', 'Total']);
     expect(s.tables[0]!.rows[2]!.cells).toEqual([0, 12000, -12000, null]);
@@ -69,13 +69,18 @@ describe('performanceSheet', () => {
 
   it('the notes say where each side came from and what the rate replaced', () => {
     const notes = performanceNotes(r);
-    expect(notes[0]).toContain('sales orders dated 01/07/2026 to 31/07/2026');
+    expect(notes[0]).toContain('sales orders dated 2026/07/01 to 2026/07/31');
     expect(notes[0]).toContain('4 orders, 3 of them not yet delivered');
     expect(notes[1]).toContain('16.00% of sales excluding service / transport income (3,500.00), in place of account 900-O001 OPERATIING EXPENSE');
     expect(notes[1]).toContain('the 2,435.50 booked on that account in the period is left out. Other income and every other expense are as booked');
     expect(notes[2]).toContain('free gifts');
     const missing = performanceNotes({ ...r, operatingExpense: { ...r.operatingExpense, accountFound: false, accountName: null, bookedSen: 0 } });
     expect(missing[1]).toContain('Account 900-O001 is not in this company\'s chart, so nothing was replaced');
+    /* No covered account (Houzs): no sentence about them. */
+    expect(notes.some((n) => n.includes('also covers'))).toBe(false);
+    /* 2990's transport is inside the rate (owner 2026-10-06): one sentence names it and what was left out. */
+    const covered = performanceNotes({ ...r, operatingExpense: { ...r.operatingExpense, also: [{ code: '900-T004', name: 'TRANSPORTATION FEE' }], alsoBookedSen: 1260720 } });
+    expect(covered[2]).toBe('The rate also covers 900-T004 TRANSPORTATION FEE (with the accounts under them): the 12,607.20 booked on those in the period is left out of the expenses too — they print at nil.');
   });
 
   it('fmtPerf brackets a negative and keeps the thousands', () => {

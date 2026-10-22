@@ -222,7 +222,7 @@ export function MobileDoHeaderEdit({ id, onBack, onSaved }: {
             classes={{ list: "z-50 m-0 max-h-[260px] list-none overflow-auto rounded-lg border border-border bg-surface py-1 text-[13px] shadow-lg", item: "cursor-pointer px-3 py-2 text-ink hover:bg-canvas", code: "text-[11px] text-ink-muted" }} />
         </>
       ))}
-      {text("Customer SO ref", "customerSoRef", "customerSoNo", { placeholder: "Their PO / SO number" })}
+      {text("Ref No.", "customerSoRef", "customerSoNo", { placeholder: "Their PO / SO number" })}
       {field("Phone", <PhoneInput aria-label="Phone" value={form.phone} disabled={lockedKey("phone")} onChange={(v) => set({ phone: v })} />)}
       {text("Email", "email", "email", { inputMode: "email" })}
       {choice("Customer type", "customerType", "customerType", customerTypeOpts.map((o) => [o.value, o.label]))}
@@ -232,7 +232,7 @@ export function MobileDoHeaderEdit({ id, onBack, onSaved }: {
       {text("Address line 1", "address1", "address1", { placeholder: "Unit, street, area" })}
       {text("Address line 2", "address2", "address2", { placeholder: "Apt, floor, building (optional)" })}
       {field("State", (
-        <StatePicker compact value={form.state} disabled={addrLocked} placeholder="Pick state" selectClassName="cal-sel"
+        <StatePicker value={form.state} disabled={addrLocked} placeholder="Pick state" selectClassName="cal-sel"
           onChange={(next) => {
             const code = stateWarehousesQ.data?.mappings.find((m) => m.state === next)?.warehouse?.code;
             set({ ...pickState(next), ...(code ? { salesLocation: code } : {}) });

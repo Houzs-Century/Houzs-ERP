@@ -19,6 +19,8 @@
 import { hasHouzsPerm } from './houzs-perms';
 import { requireActiveCompanyId, scopeToCompany } from './companyScope';
 import type { PdfAttachment } from './pdf-attach';
+import { linkScanFiles, type ScanFileKind } from './scan-files';
+import { sha256Hex } from './scan-ocr';
 
 type Row = Record<string, any>;
 
@@ -43,11 +45,21 @@ export type DocFilesSpec = {
   keyPrefix: string;
   /** Upload and delete need one of these; reading rides the document. */
   writePerms: readonly string[];
+  /** Set when the writer is not a key holder — a product request's own
+      requester (a Sales caller holds no flat key). Replaces `writePerms`
+      entirely when present; `load` still narrows what the caller may reach. */
+  mayWrite?: (c: any) => boolean;
   /** The document under the active company — 404 when it is not there. */
   load: (c: any) => Promise<{ doc: DocForFiles } | { resp: Response }>;
   /** The refusals, worded for THIS document. */
   closedRefusal: { error: string; message: string };
   lockedRefusal: { error: string; message: string };
+  /** Set when the document must keep at least one file (a payment request's
+      bill, owner 2026-10-01: 申请一定要有) — removing the last one is refused. */
+  keepOne?: { error: string; message: string };
+  /** The scan kind whose kept original (scm.scan_files) an attached file links
+      to by its bytes (HC-0006 T7), or null when this document is never scanned. */
+  scanKind: ScanFileKind | null;
 };
 
 type Bucket = {
@@ -69,7 +81,7 @@ export const decodeBase64 = (b64: string): Uint8Array | null => {
 };
 
 export function makeDocFileHandlers(spec: DocFilesSpec) {
-  const canWrite = (c: any): boolean => spec.writePerms.some((k) => hasHouzsPerm(c, k));
+  const canWrite = (c: any): boolean => (spec.mayWrite ? spec.mayWrite(c) : spec.writePerms.some((k) => hasHouzsPerm(c, k)));
   const noPerm = (c: any): Response => c.json({ error: "You don't have permission to do that." }, 403);
 
   const upload = async (c: any): Promise<Response> => {
@@ -83,7 +95,8 @@ export function makeDocFileHandlers(spec: DocFilesSpec) {
     let body: any;
     try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
     const fileName = String(body.fileName ?? '').trim() || 'bill';
-    const mime = String(body.mime ?? '').trim().toLowerCase();
+    /* Two spellings some tools write (owner 2026-10-15: attach 不到 pdf) read as the real one. */
+    const mime = String(body.mime ?? '').trim().toLowerCase().replace(/^application\/x-pdf$/, 'application/pdf').replace(/^image\/jpg$/, 'image/jpeg');
     const b64 = String(body.dataBase64 ?? '');
     if (!DOC_FILE_MIMES.has(mime)) {
       return c.json({ error: 'bad_mime', message: `${mime || '(none)'} is not an image or a PDF.` }, 400);
@@ -118,6 +131,9 @@ export function makeDocFileHandlers(spec: DocFilesSpec) {
       created_by: String(c.get('user')?.id ?? ''),
     }).select('id, file_name, mime, size_bytes, sort_no').single();
     if (insErr || !row) return c.json({ error: 'save_failed', reason: insErr?.message ?? 'insert returned nothing' }, 500);
+    if (spec.scanKind) {
+      await linkScanFiles(sb, { companyId: co.companyId, kind: spec.scanKind, documentId: found.doc.id, keys: [], sha256: await sha256Hex(bytes.buffer as ArrayBuffer) });
+    }
     return c.json({ ok: true, file: row }, 201);
   };
 
@@ -126,7 +142,7 @@ export function makeDocFileHandlers(spec: DocFilesSpec) {
     if ('resp' in found) return found.resp;
     const sb = c.get('supabase');
     const { data, error } = await scopeToCompany(
-      sb.from(spec.table).select('id, file_name, mime, size_bytes, sort_no, created_at').eq(spec.fkColumn, found.doc.id), c,
+      sb.from(spec.table).select('id, file_name, mime, size_bytes, sort_no, created_at, kind').eq(spec.fkColumn, found.doc.id), c,
     ).order('sort_no');
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
     return c.json({ files: data ?? [] });
@@ -168,6 +184,11 @@ export function makeDocFileHandlers(spec: DocFilesSpec) {
     ).maybeSingle();
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
     if (!row) return c.json({ error: 'not_found' }, 404);
+    if (spec.keepOne) {
+      const { data: all, error: allErr } = await scopeToCompany(sb.from(spec.table).select('id').eq(spec.fkColumn, found.doc.id), c);
+      if (allErr) return c.json({ error: 'load_failed', reason: allErr.message }, 500);
+      if (((all ?? []) as Row[]).length <= 1) return c.json(spec.keepOne, 409);
+    }
     const { error: delErr } = await sb.from(spec.table)
       .delete().eq('company_id', (row as Row).company_id).eq('id', (row as Row).id);
     if (delErr) return c.json({ error: 'delete_failed', reason: delErr.message }, 500);

@@ -1,15 +1,18 @@
 // /mfg-sales-orders — B2B sales orders (HOUZS pattern).
 // Separate from retail `orders` (POS) — different lifecycle, different ID format.
 
+import { isSoLineOverDelivered } from '../lib/so-remaining-by-item';
 import { activeSoEditLease, soCallerUserId, soHeaderLeaseIntent, soLineWriteLeaseMatches, soEditLeaseExpiryIso, soEditLeaseRefusal, soEditLeaseTakeoverAllowed, type SoEditLeaseRow } from '../lib/so-edit-lease';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
 import { normalizePhone } from '../shared/phone';
+import { checkPaymentSlipDate } from '../shared/payment-slip-date';
+import { checkPaymentSlip } from '../shared/payment-slip-required';
 import {
   pickComboMatch, spreadComboTotal, splitSofaCode, sofaHeightKey,
-  buildVariantSummary, comboChargedPrices, matchComboSubset, type SofaComboRow, type SofaPriceTier,
+  buildVariantSummary, matchComboSubset, type SofaPriceTier,
   oneShotSofaCode, oneShotSimpleCode, remarkSlug,
   fabricTierAddon,
   validateFreeGiftClaims, buildFreeGiftTriggers,
@@ -19,7 +22,8 @@ import {
   resolveFabricTierOverride,
   type RuleLineInput,
   passesRefinementColumns,
-  LANE_LABEL, PRICE_LANE_COMPANY_CODE, type AmendmentLane,
+  LANE_LABEL, PRICE_LANE_COMPANY_CODES, type AmendmentLane,
+  laneSelfApproves, SELF_APPROVE_KEY,
 } from '../shared';
 import { computeSoDeliveryFee, type SoDeliveryFeeResult } from '../shared/pricing';
 /* Special delivery fee rules (migration 0024, #691 RuleTarget) — the model |
@@ -33,6 +37,10 @@ import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../li
 import { soHasDownstream } from '../lib/downstream-lock';
 import { dateOrNull, effectiveDateAfterPatch, isDateColumn } from '../lib/date-coerce';
 import { soStatusAfterProcessingDateChange } from '../lib/so-proceed-status-change';
+import { recordSoTotalChange, snapshotSoTotals } from '../lib/so-total-changes';
+import { liveStatusForProcessingDate, processingDateOnConfirm } from '../shared/so-proceeded-status';
+import { syncSoDeliveredFromDo } from '../lib/so-delivery-sync';
+import { exemptionExpirySeed } from '../lib/so-exemption-expiry';
 import { soIsMigrated, withSoMigratedReadonly } from '../lib/migrated-so-readonly';
 import { readSoLineFreeze, soLineWriteRefusal, soBuildLineIds, soLineFrozen, SO_FULLY_FROZEN_REFUSAL } from '../lib/downstream-lock'; // own line: autocountWritebackWiring asserts the import above verbatim
 /* Status-transition table + the discard guards — lifted out of this file, which
@@ -49,7 +57,10 @@ import { signalNullWarehouseRows } from '../lib/null-warehouse-signal';
    without importing a 12,000-line router. Re-exported below for the callers
    that still name this module. */
 import { deriveAccountSheet, PAYMENT_COLS, recordSoPaymentRow, afterSoPaymentRemoved, bookSoPaymentBestEffort, repostSoPaymentBestEffort, soPaymentFieldChanges, type SoPaymentRowInput } from '../lib/so-payment-row';
+import { linkPaymentScan } from '../lib/scan-files';
 import { enqueueSoPaymentEdit } from '../lib/ac-so-payment-edit';
+import { paymentMethodFieldRefusal } from '../lib/payment-method-fields';
+import { selfScopedSalesBlocked } from '../lib/so-self-scope';
 import { recomputeSiPaidForOrder } from '../lib/si-order-deposit';
 export { recordSoPaymentRow };
 export type { SoPaymentRowInput };
@@ -68,7 +79,7 @@ import {
   lockedColumnsChanged,
   PAYMENT_WINDOW_CLOSED_ERROR,
 } from '../shared/so-field-policy';
-import { paymentMayChange, SO_PAYMENT_AMEND } from '../../acc/payment-reconciled';
+import { paymentMayChange, SLIP_DATE_OVERRIDE_NOTE, SO_PAYMENT_AMEND, SO_PAYMENT_BACKDATE } from '../../acc/payment-reconciled';
 import { AMEND_SOURCE, ledgerFieldChange } from '../../acc/payment-corrections';
 import { paymentReasonRule } from '../lib/so-payment-reason';
 import { paymentVersionGuard, soCasGrace, soCasGraceOpen } from '../lib/so-cas';
@@ -112,7 +123,7 @@ import { loadSoWarehouseMasters, resolveSoWarehouseId } from '../lib/so-warehous
 import { resolveCreateWarehouseDefaults } from '../lib/so-create-warehouse-default';
 import { planStateRebindForDoc, stateChangeConflictBody } from '../lib/so-state-warehouse-rebind';
 import { canonicalizeMyState } from '../lib/canonical-state';
-import { deriveLineBrandingFromProduct, deriveHeaderBrandingFromLines } from '../lib/derive-line-branding';
+import { deriveLineBrandingFromProduct, deriveHeaderBrandingFromLines, clientHeaderBranding, loadHeaderBrandList } from '../lib/derive-line-branding';
 import { resolveBrandLetterheadKey } from '../lib/brand-letterhead';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { correctedSizeDescription, loadSizeSkuMap } from '../lib/size-variant-description';
@@ -122,6 +133,7 @@ import {
   MIRRORED_SO_READONLY, MIRRORED_SO_CREATE_BLOCKED,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
 } from '../lib/companyScope';
+import { loadComboModulesById, loadMasterSofaCombos, loadSellingSofaCombos } from '../lib/pos-sofa-combos';
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr } from '../lib/postgrest-search';
 import { effectiveStatusFilter, isRangeNotSatisfiable } from '../lib/so-list-filters';
@@ -133,7 +145,9 @@ import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { tallyStatusRows, type StatusTally } from '../lib/status-counts';
 /* "A PO is already out for this SO" — the second road to the same soft lock
    (owner 2026-08-12, 2990 only). See lib/so-po-lock.ts. */
-import { soPoLocked } from '../lib/so-po-lock';
+import { soHasLivePo, soHasUnreceivedPo, soPoLocked } from '../lib/so-po-lock';
+import { deliveryBroughtForward, deliveryNeedsPurchaserOk, processingDateFrozenByPo, PROCESSING_DATE_PO_LOCKED, PROCESSING_DATE_PO_OVERRIDE_KEY } from '../shared/so-po-date-rule';
+import { notifySoAmendmentPurchaserOkNeeded } from '../../services/amendmentNotify';
 import { monthBoundsMy, rangeBoundsMy, todayMyt, mytDateOf } from '../lib/my-time';
 // (canViewAllSales / isSelfScopedSales removed — replaced by flat permission
 // gates `scm.so.view_all` / `scm.so.attribute_other` against the REAL Houzs
@@ -144,7 +158,7 @@ import { hasHouzsPerm, canViewAllSales, isSalesCaller, canViewScmFinance } from 
    cannot drift apart — a typo on either side would silently disarm the pricing
    envelope, and no test would fail. */
 import { SESSION_ORIGIN_POS } from '../../services/auth';
-import { loadLeadBuffers } from '../../services/agents/procurement-learning';
+import { sharedLiveMrp } from '../lib/live-mrp-memo';
 import { SO_FINANCE_KEYS, SO_ITEM_FINANCE_KEYS, stripAuditFinance } from '../lib/finance-keys';
 import { resolveSalesScopeIds, applySoScope, soDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
 import { recordAmendmentRequested, notifyAmendmentsRaised } from '../lib/amendment-raised-effects';
@@ -153,9 +167,11 @@ import {
   type VenueSource,
   type VenueBindingSb,
 } from '../lib/venue-binding';
-import { bindVenueOnCreate, resolveFairForSave, type FairDb } from '../lib/fair-binding';
-import { fairPickedPeriod } from '../lib/fair-options';
+import { bindVenueOnCreate, fairConfirmProblems, fairLinkForEdit, fairLinkOnCreate, fairRequiredProblem, loadLinkedFair, resolveFairForSave, SCAN_STEP_NOTE, type FairDb } from '../lib/fair-binding';
+import { fairDayMissing, fairDayOnSave, fairWhyOf } from '../lib/fair-options';
+import { loadVpBrandAsk, type VpBrandDb } from '../lib/vp-brand-ask';
 import { recordSoAudit, diffFields, type FieldChange } from '../lib/so-audit';
+import { fairStateOf, recordFairChange } from '../lib/fair-audit';
 /* What changed on a LINE, for the audit trail — derived from the update about to
    be persisted rather than a hand-kept field list (owner 2026-08-12; see the
    module header for the 2990-SO-2608-017 edit this existed to catch and did not). */
@@ -184,6 +200,7 @@ import {
   loadSpecialAddons,
   recomputeFromSnapshot,
   erpLineTrust,
+  unitAfterLineEdit,
   loadProductByCode,
   loadProductsByCodes,
   loadFabricByCode,
@@ -207,6 +224,7 @@ import {
    restriction; null model_id = skip entirely. */
 import {
   checkAllowedOptions,
+  variantsForEditCheck,
   loadProductAndModel,
   loadProductsAndModels,
   variantCheckUnavailableResponse,
@@ -233,8 +251,14 @@ import {
   readSoProcessingDateFromBody,
   soDatePairCascadeColumns,
   soDatePairRefusal,
+  soDateYmd,
+  soLineDateRefusal,
+  withProcessingRemovalCascade,
+  isProcessingRemovalOnlyRequest,
 } from '../shared/so-processing-date';
 import { ATTRIBUTE_OTHER_REFUSAL, SO_IDENTITY_LOCK_COLS, changedIdentityLockCols, salespersonReattributed } from '../shared/so-identity-lock';
+import { SO_EDIT_AFTER_DO_PERMISSION, SO_EDIT_PRICE_AFTER_DO_PERMISSION, SO_AFTER_DO_CUSTOMER_COLS, AFTER_DO_INVOICED, AFTER_DO_PRICE_FORBIDDEN, AFTER_DO_PRICE_NOT_DELIVERED, afterDoPriceReturnedRefusal, AFTER_DO_SERVICE_ONLY, afterDoBlockedCols, afterDoFieldsRefusal, afterDoHeaderRefusal, afterDoTargetLockedRefusal, pickAfterDoTarget, type AfterDoTarget } from '../shared/so-after-do-edit';
+import { openAfterDo, readAfterDoTargets, catalogSaysService, copyCustomerDetailsToDos, addChargeLineToDo, readDoLinesOfSoLine, copyChargeLineToDo, copyLinePriceToDos, copyLinePriceToInvoices, type DoLineOfSoLine } from '../lib/so-after-do';
 /* Variants-vocabulary unification (port of 2990 73aeeb1e, 2026-06-26):
    POS-handover sofa lines speak `depth`/`sofaLegHeight`/`fabricColor`, Backend
    editors read `seatHeight`/`legHeight`/`fabricCode`. canonicalizeVariants
@@ -263,7 +287,7 @@ import {
   type SoCreatePayment,
 } from '../lib/so-create-payment-slips';
 import { pickCrossCategoryMatch, type AutoMatchCandidate } from '../lib/cross-category-match';
-import { convertGuard, type ConvertPlan } from '../lib/so-money';
+import { cancelledRemovalGuard, convertGuard, type ConvertPlan } from '../lib/so-money';
 import { cancelledWithMoneyHandler, ordersWithMoneyHandler, soConvertSourcesHandler, soMoneyHandler, soMoneyRefundHandler } from './so-money-routes';
 import { recomputeSoStockAllocation, isHardBoundLine } from '../lib/so-stock-allocation';
 import { snapshotSoLineLinks, planSoLineRelink, applySoLineRelink, soLineVariantSig } from '../lib/so-line-relink';
@@ -281,7 +305,7 @@ import { soLineBoundPoNumbers } from '../lib/so-converted-po';
 /* Shared 4-state delivery-planning derivation — the SO list emits planning_state
    (the mobile Orders-list card's status) from the SAME helper the Delivery
    Planning board uses, so the two can never drift. */
-import { computeMrp, mrpLineCoverage, type MrpResult } from './mrp';
+import { mrpLineCoverage, type MrpResult } from './mrp';
 import type { Env, Variables } from '../env';
 /* scan-bg-job — the headless createDraftSalesOrder below runs the create core
    without a request-scoped client; it uses the scm-scoped service client. */
@@ -403,11 +427,11 @@ type SoCoverage = { coverage: Map<string, { source: string; po: string | null; e
 /* Exported for the deferred `GET /:docNo/coverage` handler, which lives in
    mfg-sales-orders-list-enrichment.ts (this file is at its size ceiling). Same
    engine, same call — it must not re-implement the MRP logic. */
-export async function soCoverage(c: any, sb: unknown): Promise<SoCoverage> {
+export async function soCoverage(c: any, sb: unknown, savedAt: string | null = null): Promise<SoCoverage> {
   /* Best-effort, exactly as before: a failed allocation drops every line to
-     Pending and the page still loads. */
+     Pending and the page still loads. The run is shared with the list's Stock column (lib/live-mrp-memo.ts). */
   try {
-    const mrp = await computeMrp(sb, { catFilter: null, whFilter: null, includeUndated: true, companyId: activeCompanyId(c), leadBuffers: await loadLeadBuffers(c.env.DB) });
+    const mrp = await sharedLiveMrp(sb, c.env.DB, activeCompanyId(c), savedAt).result;
     return { coverage: mrpLineCoverage(mrp), mrp };
   } catch {
     return { coverage: new Map(), mrp: null };
@@ -665,8 +689,8 @@ async function isPosTabletCaller(c: PosCallerSource): Promise<boolean> {
    /override route). Houzs-flavoured: gate on the flat permission key
    `scm.so.price_override` against the REAL caller; the original
    scm.staff.role lookup is dead in Houzs (bridge pins to one super_admin
-   row). Owner + IT Admin pass via `*`; grant to other positions via the
-   Team > Positions matrix. Signature takes the Hono context so we can read
+   row). Owner + IT Admin pass via `*`; grant it to a ROLE under Team >
+   Roles & Permissions. Signature takes the Hono context so we can read
    the real user's permissions stash. */
 async function isPriceOverrideCaller(c: any): Promise<boolean> {
   return hasHouzsPerm(c, 'scm.so.price_override');
@@ -685,40 +709,6 @@ async function isPriceOverrideCaller(c: any): Promise<boolean> {
    NOT the pinned scm.staff uuid on user.id). Returns TRUE ⇒ block (the caller
    answers 404, indistinguishable from a nonexistent doc_no). A missing SO also
    returns TRUE (fail closed). */
-/* Row-scope guard for the 18 /:docNo handlers that hang off a sales order.
-
-   TWO dimensions. The salesperson one answers "is this MY order" and returns
-   false immediately for a view-all tier - correct for its own question, and
-   useless for tenancy, since a view-all caller holding the other company's
-   doc_no passed every caller of this guard, four money-writing payment verbs
-   included. So COMPANY is checked FIRST and for everyone. It belongs here
-   rather than in each handler: 18 callers share it, and the 19th gets it free. */
-async function selfScopedSalesBlocked(c: any, docNo: string): Promise<boolean> {
-  const sb = c.get('supabase');
-
-  /* 1. Tenancy - every tier, view-all included. scopeToCompany DEGRADES when the
-     company is UNRESOLVED and must NOT fail closed: unresolved means the
-     companies master could not be read (pre-migration, D1 test mirror,
-     Hyperdrive cold start), and refusing there locks every user out of all 18
-     handlers. See "THE ALLOW-LIST SENTINEL" in companyScope.ts. */
-  const { data: owned, error: ownedErr } = await scopeToCompany(
-    sb.from('mfg_sales_orders').select('doc_no').eq('doc_no', docNo),
-    c,
-  ).maybeSingle();
-  if (ownedErr || !owned) return true;
-
-  // 2. Salesperson - only for the self-scoped tier.
-  if (canViewAllSales(c)) return false; // view-all tier (director / office / *)
-  const { data, error } = await sb
-    .from('mfg_sales_orders')
-    .select('salesperson_id, access_staff_ids, open_to_all')
-    .eq('doc_no', docNo)
-    .maybeSingle();
-  if (error || !data) return true; // fail closed - unknown/unreadable doc is out of scope
-  const r = data as { salesperson_id?: number | string | null; access_staff_ids?: string[] | null; open_to_all?: boolean | null };
-  return soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, false, { salespersonId: r.salesperson_id, accessStaffIds: r.access_staff_ids, openToAll: r.open_to_all });
-}
-
 /* THE venue_id coercion — every writer of mfg_sales_orders.venue_id goes
    through this. The column is a UUID FK to the (empty/unused) scm.venues, but
    the Venue picker is fed from TWO other masters whose ids are not uuids:
@@ -814,47 +804,6 @@ function unexplainedExtraAddonResponse(
     itemCode: String(itemCode ?? ''),
     extraAddonAmountRM: amountRM,
   };
-}
-
-/* PR — Commander 2026-05-28 — Server-side combo recompute.
-   Fetches all active sofa_combo_pricing rows once (small table; ~64 rows
-   in steady state) and returns them as SofaComboRow[] for the pure
-   pickComboPrice() picker. Called by POST / and PATCH /:docNo/items/:itemId
-   before the line is persisted; if a sofa line's variants.cells match a
-   combo's modules at the line's seat-height tier, the combo price OVERRIDES
-   the client-submitted unit_price (anti-tamper). */
-async function loadActiveSofaCombos(sb: any, c: any): Promise<SofaComboRow[]> {
-  const { data } = await scopeToCompany(
-    sb
-      .from('sofa_combo_pricing')
-      .select('id, base_model, modules, tier, customer_id, prices_by_height, selling_prices_by_height, pwp_prices_by_height, label, effective_from, created_at, deleted_at, default_free_gifts'),
-    c,
-  )
-    .is('deleted_at', null)
-    .is('customer_id', null)   // 2990 B2C — default-scope rows only
-    .is('supplier_id', null);  // sales-side only — never auto-price a SO from a supplier's purchasing combos
-  return ((data ?? []) as Array<{
-    id: string; base_model: string; modules: string[][]; tier: SofaPriceTier | null;
-    customer_id: string | null; prices_by_height: Record<string, number | null>;
-    selling_prices_by_height: Record<string, number | null>;
-    pwp_prices_by_height: Record<string, number | null> | null;
-    label: string | null; effective_from: string; created_at: string; deleted_at: string | null;
-    default_free_gifts: unknown;
-  }>).map((r) => ({
-    id: r.id, baseModel: r.base_model, modules: r.modules ?? [],
-    tier: r.tier, customerId: r.customer_id,
-    // Combo cost/sell split — the engine charges SELLING merged over cost.
-    pricesByHeight: comboChargedPrices(r.selling_prices_by_height, r.prices_by_height),
-    // PWP (换购) selling price per height (Phase 2) — used INSTEAD of the above
-    // only when a sofa-reward line redeems a valid PWP code (see recompute).
-    pwpPricesByHeight: r.pwp_prices_by_height ?? {},
-    // created_at feeds the picker's duplicate tie-break (equal effective_from
-    // → newest row wins, matching the GET /sofa-combos admin list).
-    label: r.label, effectiveFrom: r.effective_from, createdAt: r.created_at, deletedAt: r.deleted_at,
-    // Default Free Gift (migration 0170, D9) — passthrough jsonb; the SO-create
-    // handler parses it to build the per-combo free-gift trigger.
-    defaultFreeGifts: r.default_free_gifts ?? [],
-  }));
 }
 
 /* Extract module ids + seat-height from a sofa line's `variants` blob.
@@ -1245,7 +1194,7 @@ mfgSalesOrders.get('/', async (c) => {
        2026-09-14), tab, search (approval codes and phone included) and date
        window — for the page, the money strip and the line export
        (lib/so-list-read.ts). The status counts take its `scoped` half. */
-    const read = await prepareSoListRead(sb, c, readSoListParams((k) => c.req.query(k), (k) => c.req.queries(k)), scopeIds, c.get('houzsUser')?.id ?? null, new Date());
+    const read = await prepareSoListRead(sb, c, readSoListParams((k) => c.req.query(k), (k) => c.req.queries(k), canViewScmFinance(c)), scopeIds, c.get('houzsUser')?.id ?? null, new Date());
     if (!read.ok) return c.json(read.body, read.status);
     let q = read.header(orderSoList(fromSoList(sb, LIST_COLS, { count: 'exact' }), c.req.query('sort') ?? null));
     q = q.range(page * pageSize, page * pageSize + pageSize - 1);
@@ -1327,8 +1276,12 @@ mfgSalesOrders.get('/', async (c) => {
        still carries the true total via PostgREST's `Content-Range` header. */
     if (error && isRangeNotSatisfiable(error)) {
       data = [];
-      total = res.count ?? 0;
       error = null;
+      /* supabase-js drops the count on a 416, so a page past a narrowed set (a
+         column funnel leaving 8 orders, read at page 2) reported total 0 — ask. */
+      const head = res.count == null ? await read.header(fromSoList(sb, 'doc_no', { count: 'exact', head: true })) : null;
+      if (head?.error) error = head.error;
+      total = res.count ?? head?.count ?? 0;
     }
     /* Every status in the vocabulary gets a bucket (lowercase keys, the wire
        shape the tabs read), plus `other` for anything OUTSIDE it (legacy
@@ -1640,7 +1593,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
        LIST route reads that view, so the base-table detail read is the only
        place they are valid. (`proceeded_at` was appended here until 2026-08-18,
        feeding a "Proceed Date" the desktop deleted on 2026-06-05.) */
-    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version, linked_ac_docno, collaborator_staff_ids, access_staff_ids, open_to_all`).eq('doc_no', docNo), c).maybeSingle(),
+    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version, linked_ac_docno, collaborator_staff_ids, access_staff_ids, open_to_all, project_id, fair_match, fair_date`).eq('doc_no', docNo), c).maybeSingle(),
     /* line_no = the persisted listing order (0165); NULLS LAST so pre-0165
        docs fall back to created_at + the rule re-derive below. */
     sb.from('mfg_sales_order_items').select(ITEM).eq('doc_no', docNo)
@@ -1766,10 +1719,19 @@ mfgSalesOrders.get('/:docNo', async (c) => {
       }));
   }
   const openAmendment = openAmendments[0] ?? null;
+  /* DEV-32 — the live DOs an after-DO edit would write to (shared/so-after-do-edit.ts). Null = unreadable. */
+  /* BUG-101 — the Processing Date is frozen once a live PO exists (any company);
+     the editors disable the field on this. Skipped when there is no date to freeze. */
+  const processingDatePoLocked = amendPoLocked
+    || (soDateYmd((h.data as { processing_date?: unknown }).processing_date) != null && await soHasLivePo(sb, docNo));
+  const afterDoCo = activeCompanyId(c);
+  const afterDoRead = (doCount ?? 0) > 0 && afterDoCo != null ? await readAfterDoTargets(sb, docNo, afterDoCo) : null;
   const salesOrder = {
     ...(h.data as unknown as Record<string, unknown>),
     has_children: (doCount ?? 0) > 0 || (siCount ?? 0) > 0,
     downstream_fully_frozen: fullyFrozen,
+    after_do_targets: afterDoRead ? (afterDoRead.ok ? afterDoRead.targets : null) : [],
+    after_do_invoiced: afterDoRead?.ok ? afterDoRead.invoicedWithoutDo : false,
     // Amendment flags (read-only; the FE routes on these).
     amendment_eligible: amendmentEligible,
     /* The PO half of the soft lock, as its own fact — so-detail-gates.procLockActive
@@ -1777,6 +1739,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
        amendment_eligible: that flag is already false for a hard-locked / terminal
        SO, and the editors must stay disabled in exactly those cases. */
     po_locked: amendPoLocked,
+    processing_date_po_locked: processingDatePoLocked,
     has_open_amendment: openAmendment != null,
     open_amendment: openAmendment,
     open_amendments: openAmendments,
@@ -1789,6 +1752,9 @@ mfgSalesOrders.get('/:docNo', async (c) => {
        CLAMPED `soOutstandingSen`: a screen can say "you hold RM 250 of his
        money", AutoCount's UDF_BALANCE cannot. Same inputs, two audiences. */
     balance_sen: soBalanceSen(paidInputs),
+    /* The event the order is linked to, so a recorded pick reads back as venue,
+       organizer and dates (owner 2026-09-24). Null = show the venue alone. */
+    fair: await loadLinkedFair(c.env.DB as unknown as FairDb, activeCompanySql(c, 'p.company_id'), (h.data as { project_id?: unknown }).project_id),
   };
   /* Owner batch 2026-07 — resolve the salesperson's display name + contact
      phone (scm.staff) so the SO PDF's ORDER DETAILS can print "Salesperson:
@@ -1960,7 +1926,8 @@ mfgSalesOrders.get('/:docNo', async (c) => {
       ready_source_pos: [],
       /* The line's OWN incoming PO (raised against this so_item). The SO
          "Incoming PO" chip prefers this over the shipped-batch trace. */
-      bound_source_pos: boundPoMap.get(it.id) ?? [],
+      bound_source_pos: boundPoMap.get(it.id)?.pos ?? [],
+      bound_source_po_etas: boundPoMap.get(it.id)?.etas ?? {},
     };
   });
   const totalDelivered = items.reduce((s, it) => s + Number(it.delivered_qty ?? 0), 0);
@@ -2106,7 +2073,8 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
       shipped_source_pos: shippedPos,
       shipped_source_adj: (shippedTrace?.adjQty ?? 0) > 0,
       ready_source_pos: readyPosMap.get(it.id) ?? [],
-      bound_source_pos: boundPoMap.get(it.id) ?? [],
+      bound_source_pos: boundPoMap.get(it.id)?.pos ?? [],
+      bound_source_po_etas: boundPoMap.get(it.id)?.etas ?? {},
     };
   });
   gateSoFinance(c, null, items);
@@ -2378,6 +2346,10 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       nextProc: procDate, nextDeliv: delivDate, origProc: null, origDeliv: null,
     });
     if (createPairRefusal) return c.json(createPairRefusal, 400);
+    const createLineDateRefusal = soLineDateRefusal({
+      processingDate: procDate, lineDeliveryDates: items.map((it) => it.lineDeliveryDate),
+    });
+    if (createLineDateRefusal) return c.json(createLineDateRefusal, 400);
     /* Aggregate the remaining Processing-Date gates into ONE response instead of
        returning on the first (owner 2026-07-18): the category-mandatory variants
        (Commander 2026-05-29 — a Processing Date means purchasing is released to
@@ -2461,8 +2433,8 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      hole). Houzs-flavoured: gate on the flat permission key
      `scm.so.attribute_other` against the REAL caller (the 2990 scm.staff.role
      lookup is dead in Houzs — the SCM bridge pins every caller to one
-     super_admin row). Owner + IT Admin pass via `*`; grant to other positions
-     via the Team > Positions matrix. */
+     super_admin row). Owner + IT Admin pass via `*`; grant it to a ROLE under
+     Team > Roles & Permissions. */
   /* An OMITTED salespersonId falls back to the caller's own staff row, for the
      same reason the self-scoped branch below already does: the creator IS the
      salesperson unless they name someone else. The frontend states this contract
@@ -2592,8 +2564,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      inserted. Carried down to the fair stamp after that. An explicit
      body.branding is the caller's decision and wins, exactly as it does for the
      header stamp itself. */
-  let effectiveBrand: string | null =
-    String((body.branding as string | null | undefined) ?? '').trim() || null;
+  let effectiveBrand: string | null = clientHeaderBranding(body.branding);
 
   /* Houzs venue_id guard — only a real uuid reaches the uuid column; a
      project_venues integer id or a `showroom:…` synthetic id becomes NULL and
@@ -2624,6 +2595,13 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         description: (it.description as string | null | undefined) ?? null,
       })),
     });
+    /* ...and a fair or No fair (owner 2026-10-19), worded by why the keyer got
+       none — the rule the form asks through /validate. Never the POS. */
+    const fairProblem = (await isPosTabletCaller(c)) ? null : await fairRequiredProblem({
+      companyCode: c.get('companyCode'), body, db: c.env.DB as unknown as FairDb,
+      companySql: activeCompanySql(c, 'p.company_id'), keyerId: Number(c.get('houzsUser')?.id ?? NaN), orderDate: soDateForVenue,
+    });
+    if (fairProblem) confirmProblems.push(fairProblem);
     if (confirmProblems.length > 0) return c.json(validationFailedBody(confirmProblems), 422);
   }
 
@@ -2644,17 +2622,39 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      unit price from (product, fabric, variants). Drift > 0.5% rejects
      the request with HTTP 400. Manual override path (mfgSoPriceOverrides)
      stays intact at PATCH /:docNo/items/:itemId/override. */
-  const cachedConfig = await loadMaintenanceConfig(sb);
-  // Special Add-ons (migration 0134) — fetched once; each line's specials pool is
-  // built from these so POS add-ons price from special_addons, not the legacy pool.
-  const cachedSpecialAddons = await loadSpecialAddons(sb);
+  /* HC-0006 speed: these eight reads don't depend on each other, so they run
+     together (one round trip instead of eight in a row). None of them throws —
+     each returns its failure as data — so every refusal below still comes out
+     exactly as before. loadSellingSofaCombos CAN throw, so it stays awaited in its
+     old place, after the allowed-options refusal. */
+  const itemCodes = items.map((it) => String(it?.itemCode ?? ''));
+  const [
+    cachedConfig,
+    // Special Add-ons (migration 0134) — fetched once; each line's specials pool is
+    // built from these so POS add-ons price from special_addons, not the legacy pool.
+    cachedSpecialAddons,
+    { byCode: pmByCode, lookupError: pmErr },
+    cachedFabricAddonConfig,  // migration 0124 — fabric-tier Δ (SoCreateContext → local companyId)
+    cachedModelOverrides,  // migration 0175 — per-Model Δ
+    cachedCompartmentOverrides,  // migration 0025 — per-compartment Δ
+    dropdownErr,
+    productRowByCode,
+  ] = await Promise.all([
+    loadMaintenanceConfig(sb, companyId),
+    loadSpecialAddons(sb, companyId),
+    loadProductsAndModels(sb, itemCodes, companyId),
+    loadFabricTierAddonConfig(sb, companyId),
+    loadModelFabricTierOverrides(sb),
+    loadCompartmentFabricTierOverrides(sb),
+    validateSoDropdownFields(sb, body, companyId),
+    loadProductsByCodes(sb, itemCodes, companyId),
+  ]);
   /* PR #216 — allowed_options pre-flight. Run BEFORE the pricing recompute
      so a disallowed variant returns the precise field/value/allowed
      payload instead of getting silently re-priced. Batched (Loo 2026-06-06):
      2 `in()` queries for the whole order instead of 2 × lines — per-line
      loads helped a 6-item order blow the CF Workers subrequest cap.
      First violation across all lines short-circuits the request. */
-  const { byCode: pmByCode, lookupError: pmErr } = await loadProductsAndModels(sb, items.map((it) => String(it?.itemCode ?? '')), companyId);
   /* A code missing from the map because the READ FAILED is not a code the
      catalog has nothing to say about — the loop below would read the resulting
      nulls as "allowed" and create the order. Refuse instead. */
@@ -2674,20 +2674,15 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       return c.json({ ...err, lineIdx: i, itemCode: code }, 400);
     }
   }
-  const cachedCombos = await loadActiveSofaCombos(sb, c);  // Phase 4b — sofa selling recompute
-  const cachedFabricAddonConfig = await loadFabricTierAddonConfig(sb, companyId);  // migration 0124 — fabric-tier Δ (SoCreateContext → local companyId)
-  const cachedModelOverrides = await loadModelFabricTierOverrides(sb);  // migration 0175 — per-Model Δ
-  const cachedCompartmentOverrides = await loadCompartmentFabricTierOverrides(sb);  // migration 0025 — per-compartment Δ
+  const cachedCombos = await loadSellingSofaCombos(sb, c);  // Phase 4b — sofa selling recompute
 
   /* Loo 2026-06-05 — maintained-dropdown 409 gate. Runs BEFORE any side
      effect (customer upsert, PWP claims) so a rejected request leaves
      nothing behind. */
-  const dropdownErr = await validateSoDropdownFields(sb, body, companyId);
   if (dropdownErr) return c.json(dropdownErr, 409);
 
   // Subrequest diet (Loo 2026-06-06) — one `in()` query for every line's
   // product row instead of one query per line.
-  const productRowByCode = await loadProductsByCodes(sb, items.map((it) => String(it.itemCode ?? '')), companyId);
   const lineProducts = items.map((it) => productRowByCode.get(String(it.itemCode ?? '').trim()) ?? null);
   /* PWP Code Voucher (migration 0130) — code-driven grant + atomic claim. A
      reward line earns its per-SKU pwp_price_sen ONLY if it carries a valid
@@ -3643,7 +3638,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         builtCompartments: built,
       });
     }
-    const specialModels = await specialDeliveryFeesForLines(sb, deliveryRuleLines, comboModulesById);
+    const specialModels = await specialDeliveryFeesForLines(sb, deliveryRuleLines, comboModulesById, companyId);
 
     /* Phase 2 — cross-order link. Sales typed the earlier SO's doc_no at
        handover. Validate it (exists, not cancelled, same customer by phone
@@ -3852,6 +3847,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       if (typeof body.postcode !== 'string' || !body.postcode.trim()) missing.push('postcode');
       if (typeof body.customerState !== 'string' || !body.customerState.trim()) missing.push('state');
       if (missing.length > 0) {
+        await rollbackPwpClaims();
         return c.json({
           error: 'delivery_date_needs_address',
           message: `A delivery date can't be set until the customer's address is filled — missing ${missing.join(', ')}. Either add the address or take off the delivery date.`,
@@ -3924,13 +3920,41 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     convertPlans.set(i, g.plan);
   }
 
-  /* Resolve each split payment's slip session → R2 key up front, for the rows
-     that CLAIM one. A slip-less row resolves to null and books slip-less — the
-     slip is optional (Owner 2026-08-13); a slip that is claimed and does not
-     resolve still refuses the create. The rule is
-     `planCreatePaymentSlips` (so-create-payment-slips.ts); this block is its
-     IO. All-or-nothing, BEFORE the header insert (and rolling back PWP
-     claims), so no SO is created with half its payment proofs missing. */
+  /* Slip-date window on CREATE (owner 2026-09-23) — the New-SO form carries ONE
+     payment date for every row it books, so it is judged once, here, before any
+     row is written. Rows that are money MOVED from another order take the source
+     order's date and are exempt, exactly as on the payments panel. The headless
+     scan job carries no permissions, so an OCR'd old receipt is refused and goes
+     to a human — the owner's call. */
+  const booksMoneyOnCreate = (posPayments ?? []).some((p) => p.method !== 'converted')
+    || (typeof body.depositSen === 'number' && body.depositSen > 0);
+  /* The proof on CREATE (owner 2026-10-13, shared/payment-slip-required). The
+     single-deposit body books its row from the header slip or the scanned
+     receipt (the legacy `depositSen` path below); with neither there is nothing
+     to verify, so the order is not created. The split `payments[]` rows are
+     judged per row by planCreatePaymentSlips further down. */
+  if (!posPayments && typeof body.depositSen === 'number' && body.depositSen > 0) {
+    const slipVerdict = checkPaymentSlip({ converted: false, hasSlip: Boolean(slipKey ?? receiptImageKey) });
+    if (!slipVerdict.ok) {
+      await rollbackPwpClaims();
+      return c.json({ error: slipVerdict.code, reason: slipVerdict.reason }, 400);
+    }
+  }
+  if (booksMoneyOnCreate) {
+    const verdict = checkPaymentSlipDate(dateOrNull(body.paymentDate) ?? todayMyt(), todayMyt());
+    if (!verdict.ok && !hasHouzsPerm(c, SO_PAYMENT_BACKDATE)) {
+      await rollbackPwpClaims();
+      return c.json({ error: 'slip_date_out_of_window', reason: verdict.reason }, 400);
+    }
+  }
+
+  /* Resolve each split payment's slip session → R2 key up front. A keyed row
+     without one refuses the create (owner 2026-10-13, slip required); only a
+     converted row books slip-less; a slip that is claimed and does not resolve
+     refuses too. The rule is `planCreatePaymentSlips`
+     (so-create-payment-slips.ts); this block is its IO. All-or-nothing, BEFORE
+     the header insert (and rolling back PWP claims), so no SO is created with
+     half its payment proofs missing. */
   let posPaymentSlipKeys: Array<string | null> | null = null;
   if (posPayments) {
     const sessionIds = claimedSlipSessionIds(posPayments);
@@ -4072,7 +4096,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     doc_no: dn,
     transfer_to: (body.transferTo as string) ?? null,
     so_date: dateOrNull(body.soDate) ?? todayMyt(),
-    branding: (body.branding as string) ?? null,
+    branding: clientHeaderBranding(body.branding),
     debtor_code: (body.debtorCode ?? body.customerCode as string) ?? null,
     debtor_name: customerName,
     agent: agentToStamp,
@@ -4097,6 +4121,9 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        to, resolved above via the active-fair resolver. NULL when the salesperson
        has no active fair; never blocks creation. */
     project_id: projectIdToStamp,
+    /* The DAY of the picked event the order was written on (owner 2026-09-24),
+       kept only as a day of that event, never after the order date. */
+    fair_date: dateOrNull(fairDayOnSave(body, soDateForVenue)),
     /* Fitted to the book's 40-char columns on save — scm/lib/so-address-on-save.ts, docs/bugs/0738. */
     ...fitSoAddress([(body.address1 as string) ?? null, (body.address2 as string) ?? null,
       (body.address3 as string) ?? null, (body.address4 as string) ?? null]),
@@ -4178,6 +4205,8 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     customer_birthday: dateOrNull(body.customerBirthday),
     customer_gender: (body.customerGender as string) ?? null,
     customer_delivery_date: dateOrNull(body.customerDeliveryDate),
+    /* BUG-51 — the original delivery date; see so-exemption-expiry.ts. */
+    sales_exemption_expiry: dateOrNull(body.customerDeliveryDate),
     /* PR #144 — Commander: "当我已经 create 好了这个 sales order 的时候，
        为什么我点进去 edit processing 的 delivery date 时，怎么没看到呢".
        processing_date was wired on PATCH (update header) but missed
@@ -4246,7 +4275,10 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        trading company; we don't need a DRAFT staging step. Every new SO is
        CONFIRMED on insert. The DRAFT enum value still exists for legacy
        row compatibility, but new rows skip it entirely. */
-    status: (body as { asDraft?: unknown }).asDraft === true ? 'DRAFT' : 'CONFIRMED',
+    /* A create that carries its Processing Date is already proceeded (owner
+       2026-09-01, shared/so-proceeded-status.ts), so it opens IN_PRODUCTION
+       rather than sitting in Submitted with a date nobody acts on. */
+    status: (body as { asDraft?: unknown }).asDraft === true ? 'DRAFT' : liveStatusForProcessingDate(dateOrNull(procDateOnCreate)),
     created_by: user.id,
     }),
     claimedPwpCodes.length === 0 ? 8 : 1,
@@ -4318,6 +4350,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         continue;
       }
       await bookSoPaymentBestEffort(sb, depRow, 'split payment at SO create'); // docs/bugs/0652: this row used to skip the gate
+      await linkPaymentScan(sb, { companyId: companyId ?? null, slipKey: posPaymentSlipKeys![i] ?? null, paymentId: String((depRow as { id?: unknown }).id ?? '') }); // HC-0006 T7
       /* Promote — 'promoted' rows are excluded from the slip reaper (same dance
          as the SO-create order slip). The UPDATE runs under the caller's RLS
          (pending_slip_uploads allows the UPLOADER to promote); in this flow the
@@ -4405,6 +4438,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         console.error('[so-create] deposit ledger insert failed:', depErr.message);
       } else {
         await bookSoPaymentBestEffort(sb, depRow, 'deposit at SO create'); // docs/bugs/0652: this row used to skip the gate
+        await linkPaymentScan(sb, { companyId: companyId ?? null, slipKey, paymentId: String((depRow as { id?: unknown }).id ?? '') }); // HC-0006 T7
         await recordSoAudit(sb, {
           docNo,
           action: 'ADD_PAYMENT',
@@ -4497,23 +4531,13 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        and no shipped client sends that field, so every ERP-created order landed
        with a blank header — which is exactly the hole the 2990 backfill had to
        fill for 100 orders, and would have re-opened on the next order created.
-       Only ever fills a BLANK header: an explicit body.branding is the caller's
-       decision and is not second-guessed. A null result leaves it blank rather
+       Fills the header unless the caller sent a real brand: a blank, placeholder
+       or category word ("BEDFRAME") is not one, so the lines decide. A null result leaves it blank rather
        than inventing one. */
-    if (String((body.branding as string | null | undefined) ?? '').trim() === '') {
+    if (clientHeaderBranding(body.branding) === null) {
       /* The company's maintained brands, so a sofa whose SKU carries no brand is
-         stamped with what the list shows (ZANOTTI) instead of NULL. An
-         unreadable pool is null and leaves the SKU-only answer. */
-      let listFallback: { companyCode: string | null; brands: string[] } | null = null;
-      try {
-        const brandRows = await c.env.DB.prepare(
-          `SELECT name FROM project_brands WHERE active = 1${activeCompanySql(c)}`
-        ).all<{ name: string }>();
-        listFallback = {
-          companyCode: c.get('companyCode') ?? null,
-          brands: (brandRows.results ?? []).map((b) => String(b.name ?? '').trim()).filter(Boolean),
-        };
-      } catch { listFallback = null; }
+         stamped with what the list shows (ZANOTTI) instead of NULL. */
+      const listFallback = await loadHeaderBrandList(c);
       const headerBrand = await deriveHeaderBrandingFromLines(
         sb,
         rowsWithDoc as unknown as Array<{ item_code?: string | null; item_group?: string | null; branding?: string | null; company_id?: number | null }>,
@@ -4546,36 +4570,26 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      venue and a date, and must still record WHY it has no fair link rather than
      leaving a blank that reads the same as "nobody has looked".
 
-     The automatic PMS binding above is a real link when it fired, so it stands
-     when the picker resolves nothing. Non-fatal throughout — no fair-link
-     problem may block a sale, and the nightly reconcile retries PENDING. */
+     Non-fatal throughout — no fair-link problem may block a sale, and the
+     nightly reconcile retries PENDING. The rule — No fair, a scan's slip place
+     and date then the KEYER's fair (owner 2026-10-19), a typed pick, the brand's
+     booth then the keyer's own — is fair-binding.ts::fairLinkOnCreate. */
   {
-    const fair = await resolveFairForSave({
-      db: c.env.DB as unknown as FairDb,
-      companySql: activeCompanySql(c, 'p.company_id'),
-      venue: resolvedVenueName,
-      organizer:
-        typeof body.fairOrganizer === 'string' && body.fairOrganizer.trim()
-          ? body.fairOrganizer.trim()
-          : null,
-      /* The PICKED row's period, straight off the dropdown the operator used.
-         Sent since 2026-09-19 because the server has no other way to know WHICH
-         occurrence they meant: the order date is the day it was keyed, which for
-         a fair written up afterwards is not a day that fair was on. With the
-         period the pick resolves exactly; without it the server falls back to
-         the venue window, which is a guess between the fairs that were there. */
-      picked: fairPickedPeriod(body),
-      soDate: soDateForVenue,
-      brand: effectiveBrand,
+    const fairLink = await fairLinkOnCreate({
+      db: c.env.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'),
+      companyCode: c.get('companyCode'), scanned: c.auditSource === 'scan',
+      keyerId: Number(c.get('houzsUser')?.id ?? NaN), body, venue: resolvedVenueName,
+      soDate: soDateForVenue, brand: effectiveBrand, bindingProjectId: projectIdToStamp,
     });
-    const linkedId = fair.projectId ?? projectIdToStamp;
-    await scopeToCompany(
-      sb
-        .from('mfg_sales_orders')
-        .update({ project_id: linkedId, fair_match: linkedId != null ? 'PICKED' : fair.match })
-        .eq('doc_no', docNo),
-      c,
-    );
+    await scopeToCompany(sb.from('mfg_sales_orders').update(fairLink.columns).eq('doc_no', docNo), c);
+    /* A scan's fair was the system's call: History says which rule made it (fair-audit.ts). */
+    if (fairLink.step) {
+      await recordFairChange({
+        sb, db: c.env.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), docNo,
+        before: { projectId: null, fairMatch: null }, after: fairStateOf(fairLink.columns), how: 'scan',
+        actorId: user.id, actorName: null, note: SCAN_STEP_NOTE[fairLink.step],
+      });
+    }
   }
 
   /* PWP Code Voucher (migration 0130) — carry forward the un-applied reserved
@@ -4689,7 +4703,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     /* Snapshot the REAL insert status — asDraft creates land as DRAFT (the
        background scan job path), everything else as CONFIRMED. Previously
        hardcoded 'CONFIRMED', which mislabelled scan drafts. */
-    statusSnapshot: (body as { asDraft?: unknown }).asDraft === true ? 'DRAFT' : 'CONFIRMED',
+    statusSnapshot: (body as { asDraft?: unknown }).asDraft === true ? 'DRAFT' : liveStatusForProcessingDate(dateOrNull(procDateOnCreate)),
     source: c.auditSource ?? 'web',
     note: c.auditNote,
   });
@@ -4698,9 +4712,15 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      to READY immediately and the header advances to READY_TO_SHIP. Runs a GLOBAL
      re-walk (not scoped to this doc) so that if this higher-priority order steals
      stock from a lower-priority one, the loser regresses from READY in the SAME
-     pass instead of lagging. Best-effort: a failure never sinks the SO create. */
-  try { await recomputeSoStockAllocation(sb); }
-  catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-create failed:', e); }
+     pass instead of lagging. Best-effort: a failure never sinks the SO create.
+     NOT for a DRAFT (HC-0006 speed): DRAFT is in SO_TERMINAL_STATES, so the walk
+     never loads the new order and the full re-walk only cost the scan job
+     seconds. DRAFT -> CONFIRMED re-walks on the status route, and the 5-minute
+     sweep repairs anything else. */
+  if ((body as { asDraft?: unknown }).asDraft !== true) {
+    try { await recomputeSoStockAllocation(sb); }
+    catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-create failed:', e); }
+  }
 
   /* ERP -> AutoCount write-back. Queued, never pushed inline: the AutoCount
      host must not be able to fail a salesperson's Save. No-op while the flag is
@@ -4730,6 +4750,19 @@ mfgSalesOrders.post('/', async (c) => {
     env: c.env,
     json: (b, status) => ({ status: status ?? 200, body: b as Record<string, unknown> }),
   });
+  /* WHICH BRAND IS THIS BILL FOR (owner 2026-09-27) -- asked by the form when
+     nothing on the bill names a brand (a bed frame or accessory bill written at
+     a brand's fair), for the Venture Portal only; branding is untouched. Added
+     here, after the core has answered, so the create itself is exactly as it
+     was. A draft is never asked (the loader says so): that is asked when it is
+     confirmed. lib/vp-brand-ask.ts. */
+  if (out.status === 201 && typeof out.body.docNo === 'string') {
+    const vpBrand = await loadVpBrandAsk({
+      sb: c.get('supabase'), db: c.env.DB as unknown as VpBrandDb, companyId: activeCompanyId(c) ?? null,
+      companySql: activeCompanySql(c), docNo: out.body.docNo,
+    });
+    if (vpBrand) return c.json({ ...out.body, vpBrand }, 201);
+  }
   return c.json(out.body, out.status as 201);
 });
 
@@ -4790,6 +4823,17 @@ mfgSalesOrders.post('/validate', async (c) => {
     asDraft,
     hasVenue: str(body.venueId).trim() !== '' || body.hasVenue === true,
     hasSalesperson: str(body.salespersonId).trim() !== '' || body.hasSalesperson === true,
+    // Fair compulsory on CREATE (owner 2026-09-26): a picked/auto-filled fair
+    // sets fairOrganizer; the operator can instead mark No-fair (showroom). Edits
+    // are exempt (isEdit) so the change never blocks editing a legacy order that
+    // pre-dates the rule.
+    fairChosen: str(body.fairOrganizer).trim() !== '' || isEdit,
+    noFair: body.noFair === true,
+    fairWhy: fairWhyOf(body.fairWhy), // why no fair was filled in (GET /fair-default)
+    /* The surfaces send the fair keys only when this draft picks or changes an
+       event (components/fairPick.ts), so an old order's untouched pick never
+       asks for a day it was saved without. */
+    fairDayMissing: fairDayMissing(body, str(body.soDate).slice(0, 10) || todayMY),
     gateLocation: !asDraft && !isEdit && companyRequiresStockLocation(companyCode),
     companyCode,
     salesLocation: str(body.salesLocation),
@@ -4928,7 +4972,7 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
      "confirmed"), which the old verbatim writer persisted as-is — a status no
      `=== 'CONFIRMED'` check would ever match. Normalising fixes that latent
      lowercase-persist bug and lets the transition table judge a canonical value. */
-  const toStatus = String(body.status).trim().toUpperCase();
+  let toStatus = String(body.status).trim().toUpperCase();
 
   /* Company scope made STRICT, 2026-08-18. selfScopedSalesBlocked below already
      refuses a doc outside the active company — that is its step 1, not the
@@ -5026,9 +5070,37 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
      of silently passing through. DRAFT→CONFIRMED only — a resume from
      ON_HOLD or a reopen re-enters CONFIRMED on an order that already passed
      (or predates) the gate, and re-gating those would strand legacy orders. */
-  if (fromNorm === 'DRAFT' && toStatus === 'CONFIRMED') {
+  const isConfirm = fromNorm === 'DRAFT' && toStatus === 'CONFIRMED';
+  if (isConfirm) {
     const confirmProblems = await soConfirmProblemsForDoc(sb, docNo);
+    /* ...and the fair (owner 2026-10-19): a fair or No fair — fair-binding.ts
+       (Sales Attending no longer stops it, owner 2026-10-22). */
+    confirmProblems.push(...await fairConfirmProblems({
+      sb, db: c.env.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), companyCode: c.get('companyCode'),
+      scope: (q) => scopeToCompanyId(q, co.companyId), docNo, confirmerId: Number(c.get('houzsUser')?.id ?? NaN), todayMyt: todayMyt(),
+    }));
     if (confirmProblems.length > 0) return c.json(validationFailedBody(confirmProblems), 422);
+  }
+  /* WHERE A CONFIRM LANDS. The scan review screen and the desktop draft fill
+     the Processing Date BEFORE Confirm, and this route only ever looked at the
+     requested target — so a draft confirmed with a date on it was filed under
+     Submitted, past the header-save rule that would have moved it (it fires on
+     null -> date, and the date was already there). 171 orders on 2026-10-13.
+     The confirm gate above still judges the CONFIRM; only the landing differs. */
+  let confirmProcRoll: { from: string | null; to: string } | null = null;
+  if (isConfirm) {
+    const { data: dated, error: datedErr } = await scopeToCompanyId(sb.from('mfg_sales_orders').select(`${SO_PROCESSING_DATE_COLUMN}, customer_delivery_date`), co.companyId)
+      .eq('doc_no', docNo).maybeSingle();
+    /* A failed read is not "no date": confirming into Submitted on a blip would
+       file a proceeded order under the wrong tab, which is the defect itself. */
+    if (datedErr) return c.json({ error: 'load_failed', reason: datedErr.message }, 500);
+    const datedRow = dated as Record<string, string | null> | null;
+    const storedProc = datedRow?.[SO_PROCESSING_DATE_COLUMN] ?? null;
+    /* HC-0113 — see processingDateOnConfirm. */
+    const roll = processingDateOnConfirm({ processingDate: storedProc, deliveryDate: datedRow?.customer_delivery_date, todayMY: todayMyt() });
+    if (!roll.ok) return c.json(validationFailedBody([roll.problem]), 422);
+    if (roll.write) confirmProcRoll = { from: storedProc, to: roll.write };
+    toStatus = liveStatusForProcessingDate(roll.write ?? storedProc);
   }
   /* ── Stock-location gate on the DRAFT -> live transition (owner 2026-08-13,
      company 1 only) — the SAME invariant the create path enforces. This is the
@@ -5042,6 +5114,7 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
     if (locationProblem) return c.json(validationFailedBody([locationProblem]), 422);
   }
   const patch: Record<string, unknown> = { status: toStatus, version: currentVersion + 1, updated_at: new Date().toISOString() };
+  if (confirmProcRoll) patch[SO_PROCESSING_DATE_COLUMN] = confirmProcRoll.to;
   if (toStatus === 'IN_PRODUCTION') {
     /* Column bound to the constant — see "WHY A CONSTANT" in
        shared/so-processing-date.ts. */
@@ -5152,6 +5225,25 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
 
     if (voucherPlan) await applySoCancelVouchers(sbx, docNo, voucherPlan);
 
+    /* The allocation recompute only walks live SOs, so a cancelled order's
+       lines kept READY + their claimed sofa batch forever. Release them here.
+       SERVICE lines are READY from birth (nothing to allocate) and stay so. */
+    if (isCancel) {
+      const { data: liveLines, error: lineErr } = await scopeToCompanyId(sbx.from('mfg_sales_order_items')
+        .select('id, item_code, item_group'), co.companyId)
+        .eq('doc_no', docNo).eq('cancelled', false);
+      if (lineErr) throw new Error(`so-cancel line read failed: ${lineErr.message}`);
+      const goodsIds = ((liveLines ?? []) as Array<{ id: string; item_code: string | null; item_group: string | null }>)
+        .filter((l) => !isServiceLine({ itemGroup: l.item_group, itemCode: l.item_code }))
+        .map((l) => l.id);
+      if (goodsIds.length > 0) {
+        const { error: relErr } = await scopeToCompanyId(sbx.from('mfg_sales_order_items')
+          .update({ stock_status: 'PENDING', stock_qty_ready: 0, allocated_batch_no: null }), co.companyId)
+          .eq('doc_no', docNo).in('id', goodsIds);
+        if (relErr) throw new Error(`so-cancel allocation release failed: ${relErr.message}`);
+      }
+    }
+
     // Audit row — best-effort on the ordinary path. Inside the cancel's atomic
     // command recordSoAudit throws instead, so a cancel can never commit the
     // voiding without the trail that explains it.
@@ -5170,15 +5262,26 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
       actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
       fieldChanges: [
         { field: 'status', from: fromStatus, to: toStatus },
+        ...(confirmProcRoll ? [{ field: 'processingDate', from: confirmProcRoll.from, to: confirmProcRoll.to }] : []),
         ...(voucherPlan ? soCancelVoucherAuditChanges(voucherPlan) : []),
       ],
       statusSnapshot: toStatus,
       note: body.notes ?? undefined,
     });
 
+    /* A draft that just became a live order is asked which brand it is for,
+       exactly as a create is (owner 2026-09-27; lib/vp-brand-ask.ts). */
+    const vpBrand = fromNorm === 'DRAFT' && toStatus !== 'CANCELLED'
+      ? await loadVpBrandAsk({
+          sb, db: c.env.DB as unknown as VpBrandDb, companyId: co.companyId,
+          companySql: activeCompanySql(c), docNo,
+        })
+      : null;
+
     return c.json({
       salesOrder: data,
       version: currentVersion + 1,
+      ...(vpBrand ? { vpBrand } : {}),
       ...(voucherPlan ? {
         pwpVouchers: {
           voided: voucherPlan.toVoid.map((r) => r.code),
@@ -5201,7 +5304,7 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
      one row per scan — see scan-sample-review on the missing so_doc_no index),
      and for a draft the operator edited (same header).
      Best-effort — never costs the operator their confirm. */
-  if (fromNorm === 'DRAFT' && toStatus === 'CONFIRMED') {
+  if (isConfirm) {
     const acceptNote = noteScanDraftAccepted(getSupabaseService(c.env), docNo);
     try { c.executionCtx.waitUntil(acceptNote); }
     catch { /* non-Workers runtime (tests) — let the floating promise run */ }
@@ -5628,15 +5731,8 @@ async function recomputeDeliveryFeeAttempt(
         };
       }),
     );
-    const { data: comboRows } = await scopeToCompany(
-      sb.from('sofa_combo_pricing').select('id, modules'),
-      c,
-    );
-    const comboModulesById = new Map<string, string[][]>(
-      ((comboRows ?? []) as Array<{ id: string; modules: string[][] | null }>)
-        .map((cb) => [cb.id, cb.modules ?? []]),
-    );
-    specialModels = await specialDeliveryFeesForLines(sb, deliveryRuleLines, comboModulesById);
+    const comboModulesById = await loadComboModulesById(sb, c);
+    specialModels = await specialDeliveryFeesForLines(sb, deliveryRuleLines, comboModulesById, activeCompanyId(c));
   }
 
   // Key by company_id (2990's row is id=100001); id=1 fallback when unresolved
@@ -5775,6 +5871,9 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
+  /* A category word or placeholder is not a brand (BUG-115): ignore it, the
+     lines keep deciding. An explicit null still clears. */
+  if (body.branding != null && clientHeaderBranding(body.branding) === null) delete body.branding;
 
   /* Audit 2026-06-20 — self-scoped sales may only edit their OWN SO. Without
      this a sales/sales_executive reaching the Backend SO detail could PATCH any
@@ -5786,6 +5885,8 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     ['debtorCode', 'debtor_code'], ['debtorName', 'debtor_name'], ['agent', 'agent'],
     ['salesLocation', 'sales_location'], ['ref', 'ref'],
     ['venue', 'venue'], ['venueId', 'venue_id'], ['branding', 'branding'], ['transferTo', 'transfer_to'],
+    /* The fair DAY — written only beside its event; see the fair block below. */
+    ['fairDate', 'fair_date'],
     ['address1', 'address1'], ['address2', 'address2'], ['address3', 'address3'],
     ['address4', 'address4'], ['phone', 'phone'], ['note', 'note'],
     ['remark2', 'remark2'], ['remark3', 'remark3'], ['remark4', 'remark4'],
@@ -5914,16 +6015,49 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      follower side effect. `reserveLineWrites` is the one explicit exception:
      the desktop composite-save uses it to acquire a CAS token before lines. */
   const beforeCols = map.map(([, snake]) => snake)
-    .concat(['status', 'version', 'edit_lease_token', 'edit_lease_expires_at', 'edit_lease_user_id'])
+    .concat(['status', 'version', 'edit_lease_token', 'edit_lease_expires_at', 'edit_lease_user_id', 'project_id', 'fair_match', 'sales_exemption_expiry'])
     .join(', ');
   const { data: before, error: beforeError } = await sb.from('mfg_sales_orders').select(beforeCols).eq('doc_no', docNo).maybeSingle();
   if (beforeError) return c.json({ error: 'load_failed', reason: beforeError.message }, 500);
   if (!before) return c.json({ error: 'not_found' }, 404);
   const beforeRecord = before as unknown as Record<string, unknown>;
+  /* A picked EVENT is recorded exactly (owner 2026-09-24). Resolved BEFORE the
+     unchanged fields drop out: another event at the same venue changes no mapped
+     column, and the save would otherwise answer "nothing to do". */
+  const fairLink = await fairLinkForEdit({ db: c.env?.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), body, stored: beforeRecord });
+  if (fairLink && (fairLink.project_id !== (beforeRecord.project_id == null ? null : Number(beforeRecord.project_id)) || fairLink.fair_match !== beforeRecord.fair_match)) {
+    updates['project_id'] = fairLink.project_id;
+    updates['fair_match'] = fairLink.fair_match;
+  }
+  /* The fair DAY is kept only as a day of the event in the same body
+     (fairDayOnSave). The screens send the event whole with its day
+     (so-header-diff TRAVEL_TOGETHER), so its start is there whenever the event
+     was picked or dropped (null for Others) — and then the day is re-derived,
+     cleared when none of it came. A bare fairDate names no event to check. */
+  if (body['fairStart'] !== undefined) {
+    const fairDay = fairDayOnSave(body, String(updates['so_date'] ?? beforeRecord.so_date ?? '').slice(0, 10) || null);
+    updates['fair_date'] = fairDay;
+    body['fairDate'] = fairDay;
+  } else {
+    delete updates['fair_date'];
+    delete body['fairDate'];
+  }
+  /* No fair, ticked on an edit (owner 2026-10-19: a scan draft cannot be confirmed
+     without a fair or this). A decided state, as on create; written only when it
+     changes. Unticking alone changes nothing — picking a fair does. */
+  if (body.noFair === true && !fairLink && (beforeRecord.fair_match !== 'NO_FAIR' || beforeRecord.project_id != null)) {
+    Object.assign(updates, { project_id: null, fair_match: 'NO_FAIR', fair_date: null }); body['fairDate'] = null;
+  }
   for (const [from, to] of map) {
     if (!(to in updates) || norm(updates[to]) !== norm(beforeRecord[to])) continue;
     delete updates[to];
     delete body[from];
+  }
+  if ('customer_delivery_date' in updates) {
+    /* A draft is not processed yet, so its date may still move. */
+    const stored = beforeRecord.status === 'DRAFT' ? null : beforeRecord.sales_exemption_expiry as string | null;
+    const seed = exemptionExpirySeed(stored, updates['customer_delivery_date'] as string | null);
+    if (seed) updates['sales_exemption_expiry'] = seed;
   }
 
   /* Token, flags, the end of a save and taking your own lock back: one rule in
@@ -6005,17 +6139,45 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
   const vFix = await venueNameForHalfWrittenPair(sb, body['venue'], body['venueId']);
   if (vFix.kind === 'resolved') { body['venue'] = vFix.name; updates['venue'] = vFix.name; }
   if (vFix.kind === 'unresolved') { delete body['venue']; delete updates['venue']; }
+  /* VENUE IS COMPULSORY ON A LIVE ORDER (owner 2026-10-05: "either sales from
+     showroom or sales from any project"). Confirm already demands one
+     (so-confirm-gate.ts rule 3); this stops an edit taking it away again. Only
+     when THIS patch touches the venue, so a legacy venue-less order stays
+     editable, and a DRAFT may still clear it. */
+  if (('venue' in updates || 'venue_id' in updates)
+    && beforeRecord.status !== 'DRAFT' && beforeRecord.status !== 'CANCELLED') {
+    const after = (k: string) => String((k in updates ? updates[k] : beforeRecord[k]) ?? '').trim();
+    if (!after('venue') && !after('venue_id')) {
+      return c.json(validationFailedBody([{
+        code: 'venue_required',
+        message: 'A venue is required: pick the showroom or the project this sale was made at.',
+        field: 'Venue',
+      }]), 422);
+    }
+  }
   if (body['venue'] !== undefined) {
     updates['venue_source'] = 'MANUAL' satisfies VenueSource;
     /* FAIR LINK (owner 2026-09-13) — the venue just moved, so whatever fair this
        order was linked to is now a claim about a place it was not written at.
-       Dropping the link and marking it PENDING hands it to the nightly reconcile
-       (and, failing that, to the pending screen) instead of leaving a stale
-       attribution in exhibition P&L. Re-resolving it here would need the order's
-       brand, which means reading its lines on the critical path of every header
-       save; PENDING is the honest, cheap answer and it self-heals. */
-    updates['project_id'] = null;
-    updates['fair_match'] = 'PENDING';
+       A picked EVENT was linked above; a place alone (Others) runs the same
+       venue + date + brand detection create does (HC-0094), and what it cannot
+       settle stays PENDING / AMBIGUOUS / UNMATCHED for the reconcile and the
+       pending screen. */
+    if (!fairLink && body.noFair !== true) {
+      const fair = await resolveFairForSave({
+        db: c.env?.DB as unknown as FairDb,
+        companySql: activeCompanySql(c, 'p.company_id'),
+        venue: typeof body['venue'] === 'string' ? body['venue'] : null,
+        organizer: null,
+        picked: null,
+        soDate: String(updates['so_date'] ?? beforeRecord.so_date ?? '').slice(0, 10),
+        brand: typeof (updates['branding'] ?? beforeRecord.branding) === 'string' ? String(updates['branding'] ?? beforeRecord.branding) : null,
+      });
+      updates['project_id'] = fair.projectId;
+      updates['fair_match'] = fair.projectId != null ? 'PICKED' : fair.match;
+      updates['fair_date'] = null;
+      body['fairDate'] = null;
+    }
   }
 
   /* Task #121 — when customerState changes, re-derive customer_country
@@ -6149,6 +6311,29 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
       }
       superAdminClearsProc = true;
     }
+    /* BUG-101 — a live PO freezes the Processing Date for every company, and the
+       admin clear above with it: removing the date does not un-raise the PO. */
+    if (proc !== undefined) {
+      const storedProc = soDateYmd(origProc) ?? '';
+      const nextProc = soDateYmd(norm(proc)) ?? '';
+      if (storedProc !== '' && nextProc !== storedProc && !hasHouzsPerm(c, PROCESSING_DATE_PO_OVERRIDE_KEY)
+        && processingDateFrozenByPo({ storedProc, nextProc, hasLivePo: await soHasLivePo(sb, docNo) })) {
+        return c.json(PROCESSING_DATE_PO_LOCKED, 409);
+      }
+    }
+  }
+
+  /* DEV-32 — after the DO, a permitted caller may still change the customer
+     details; they are copied onto every live DO (shared/so-after-do-edit.ts). */
+  let afterDo: { targets: AfterDoTarget[]; companyId: number } | null = null;
+  let afterDoCopyCols: string[] = [];
+  if (body['afterDo'] === true) {
+    const co = requireActiveCompanyId(c); if (!co.ok) return c.json(co.refusal, 409);
+    const open = await openAfterDo(sb, docNo, hasHouzsPerm(c, SO_EDIT_AFTER_DO_PERMISSION), co.companyId);
+    if (!open.ok) return c.json(open.body, open.status);
+    const refusal = afterDoHeaderRefusal(open.targets, open.invoicedWithoutDo);
+    if (refusal) return c.json(refusal, 409);
+    afterDo = { targets: open.targets, companyId: co.companyId };
   }
 
   /* Owner 2026-06-12 — processing-date lock: once the processing day has
@@ -6192,7 +6377,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
        bypass of the exact rule 2990-SO-2608-017 exists to justify. */
     const changedSchedule = lockedColumnsChanged(updates, beforeRowProc, {
       superAdminClearsProcessingDate: patchDateLocked ? superAdminClearsProc : false,
-    });
+    }).filter((col) => !afterDo || !(col in SO_AFTER_DO_CUSTOMER_COLS)); // DEV-32: after the DO, city/postcode follow the customer, not the PO
     if (changedSchedule.length > 0) {
       return c.json(patchDateLocked ? SO_PROCESSING_LOCKED_RESPONSE : SO_PO_LOCKED_RESPONSE, 409);
     }
@@ -6376,7 +6561,11 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     const changedLocked = changedIdentityLockCols(updates, beforeRow, { agentFollowedSalesperson });
     if (changedLocked.length > 0) {
       const lock = await soHasDownstream(sb, docNo);
-      if (lock) {
+      if (lock && afterDo && lock.error === 'so_has_downstream') {
+        const blocked = afterDoBlockedCols(changedLocked);
+        if (blocked.length > 0) return c.json(afterDoFieldsRefusal(blocked), 409);
+        afterDoCopyCols = changedLocked;
+      } else if (lock) {
         return c.json({
           error: 'so_identity_locked',
           message: 'SO has a Delivery Order / Sales Invoice — customer, branding, address, reference and value fields are locked. Payment and remarks can still be edited.',
@@ -6471,6 +6660,12 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
         statusSnapshot: (beforeRow as { status?: string }).status ?? null,
       });
     }
+    /* The fair, named, whenever this edit moved it (owner 2026-10-19) — fair-audit.ts. */
+    await recordFairChange({
+      sb, db: c.env?.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), docNo,
+      before: fairStateOf(beforeRow), after: fairStateOf({ ...beforeRow, ...updates }), how: 'edit',
+      actorId: user.id, actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
+    });
   }
 
   /* SO header edit may have changed customer_delivery_date or
@@ -6522,12 +6717,24 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      a key when the request body carried it. */
   await queueAcSoEdit(c, docNo, [], [], Object.keys(updates));
 
+  /* DEV-32 — the order is saved; now make its DOs say the same. A failed copy is
+     reported by DO number rather than rolled back: the SO save stands. */
+  let doCopyFailed: string[] = [];
+  if (afterDo && afterDoCopyCols.length > 0) {
+    const { data: soRow, error: soRowErr } = await sb.from('mfg_sales_orders')
+      .select(Object.keys(SO_AFTER_DO_CUSTOMER_COLS).join(', ')).eq('doc_no', docNo).maybeSingle();
+    doCopyFailed = soRow && !soRowErr
+      ? await copyCustomerDetailsToDos(sb, { companyId: afterDo.companyId, actor: c.get('houzsUser') ?? null, soDocNo: docNo }, soRow as Record<string, unknown>, afterDoCopyCols, afterDo.targets)
+      : afterDo.targets.map((t) => t.do_number ?? t.id);
+  }
+
   return c.json({
     ok: true,
     docNo,
     /* The bumped token, so a version-aware editor can advance its pinned value
        after a successful Save without waiting for the detail refetch. */
     version: savedVersion,
+    ...(afterDo && afterDoCopyCols.length > 0 ? { doCopied: afterDo.targets.map((t) => t.do_number), doCopyFailed } : {}),
     ...(crossCategoryRedetect ? {
       deliveryRedetected: true,
       crossCategory: crossCategoryRedetect.isFollowup,
@@ -6536,6 +6743,80 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     } : {}),
   });
 };
+
+/* DEV-70 — the unit price + discount of a line a live DO already carries, for a
+   caller holding `scm.so.edit_price_after_do` (rule: shared/so-after-do-edit.ts).
+   Live invoices billing those DO lines follow too (option B, Nico 2026-10-13).
+   Its own route rather than an `afterDo` flag on the line PATCH: that handler
+   re-prices, re-derives the delivery fee and reconciles free gifts, any of which
+   could move a delivered line. This one writes two columns and their totals. */
+mfgSalesOrders.post('/:docNo/items/:itemId/price-after-do', async (c) => {
+  const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const itemId = c.req.param('itemId');
+  const user = c.get('user');
+  if (!hasHouzsPerm(c, SO_EDIT_PRICE_AFTER_DO_PERMISSION)) return c.json(AFTER_DO_PRICE_FORBIDDEN, 403);
+  if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
+  const co = requireActiveCompanyId(c); if (!co.ok) return c.json(co.refusal, 409);
+  let body: { unitPriceSen?: unknown; discountSen?: unknown; reason?: unknown };
+  try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const unit = Number(body.unitPriceSen), discount = Number(body.discountSen ?? 0);
+  if (!Number.isInteger(unit) || unit < 0) return c.json({ error: 'invalid_price', message: 'Unit price must be zero or more.' }, 400);
+  if (!Number.isInteger(discount) || discount < 0) return c.json({ error: 'invalid_discount', message: 'Discount must be zero or more.' }, 400);
+  const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+
+  const open = await openAfterDo(sb, docNo, true, co.companyId);
+  if (!open.ok) return c.json(open.body, open.status);
+  if (open.invoicedWithoutDo) return c.json(AFTER_DO_INVOICED, 409);
+  const { data: line, error: lineErr } = await scopeSoItemToDocument(
+    sb.from('mfg_sales_order_items').select('item_code, qty, unit_price_sen, discount_sen, line_cost_sen'), docNo, itemId,
+  ).maybeSingle();
+  if (lineErr) return c.json({ error: 'downstream_check_failed', message: 'Could not read the line, so nothing was changed. Try again.' }, 409);
+  if (!line) return c.json({ error: 'not_found' }, 404);
+  const prev = line as { item_code: string | null; qty: number; unit_price_sen: number; discount_sen: number; line_cost_sen: number | null };
+  const doLines = await readDoLinesOfSoLine(sb, itemId, co.companyId, open.targets);
+  if (doLines === null) return c.json({ error: 'downstream_check_failed', message: 'Could not read the Delivery Order lines, so nothing was changed. Try again.' }, 409);
+  if (doLines.length === 0) return c.json(AFTER_DO_PRICE_NOT_DELIVERED, 409);
+  const returnedDos = open.targets.filter((t) => t.returned && doLines.some((d) => d.delivery_order_id === t.id));
+  if (returnedDos.length > 0) return c.json(afterDoPriceReturnedRefusal(returnedDos.map((t) => t.do_number ?? t.id)), 409);
+  const qty = Number(prev.qty);
+  if (discount > qty * unit) {
+    return c.json({ error: 'invalid_discount', message: 'Discount cannot be more than qty x unit price.', discount, max: qty * unit }, 422);
+  }
+  if (unit === Number(prev.unit_price_sen) && discount === Number(prev.discount_sen)) return c.json({ ok: true, unchanged: true });
+
+  const leaseBlocked = await requireSoLineWriteLease(sb, docNo, c);
+  if (leaseBlocked) return leaseBlocked;
+  const lineTotal = senOrZero(qty * unit - discount);
+  const { error } = await scopeSoItemToDocument(
+    sb.from('mfg_sales_order_items').update({
+      unit_price_sen: unit, discount_sen: discount,
+      total_sen: lineTotal, total_inc_sen: lineTotal, balance_sen: lineTotal,
+      line_margin_sen: lineTotal - senOrZero(prev.line_cost_sen),
+    }),
+    docNo,
+    itemId,
+  );
+  if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
+  await recomputeTotals(sb, docNo, c);
+  await recordSoAudit(sb, {
+    docNo,
+    action: 'UPDATE_LINE',
+    actorId: user.id,
+    actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
+    fieldChanges: [
+      { field: 'itemCode', to: prev.item_code },
+      ...(unit !== prev.unit_price_sen ? [{ field: 'unitPriceSen', from: prev.unit_price_sen, to: unit }] : []),
+      ...(discount !== prev.discount_sen ? [{ field: 'discountSen', from: prev.discount_sen, to: discount }] : []),
+    ],
+    note: `Price changed after DO${reason ? `: ${reason}` : ''}`,
+  });
+  await queueAcSoEdit(c, docNo);
+  const who = { companyId: co.companyId, actor: c.get('houzsUser') ?? null, soDocNo: docNo };
+  const priced = { item_code: prev.item_code, qty, unit_price_sen: unit, discount_sen: discount };
+  const failed = await copyLinePriceToDos(sb, who, priced, doLines, open.targets);
+  const siFailed = await copyLinePriceToInvoices(sb, who, priced, doLines.map((d) => d.id));
+  const doNumbers = [...new Set(doLines.map((d) => open.targets.find((t) => t.id === d.delivery_order_id)?.do_number ?? d.delivery_order_id))];
+  return c.json({ ok: true, doNumbers, ...(failed.length > 0 ? { doCopyFailed: failed } : {}), ...(siFailed.length > 0 ? { siCopyFailed: siFailed } : {}) });
+});
 
 mfgSalesOrders.patch('/:docNo', patchMfgSalesOrderHeaderHandler);
 
@@ -6595,7 +6876,7 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
      spreadComboTotal re-normalises an already-spread group to the same total. */
   const sofaRows = rows.filter((r) => (r.item_group ?? '').toLowerCase() === 'sofa');
   if (sofaRows.length > 0) {
-    const combos = await loadActiveSofaCombos(sb, c); // master scope only
+    const combos = await loadMasterSofaCombos(sb, c); // Houzs master rows: COST spread, every company
     if (combos.length > 0) {
       const fabricCodes = [...new Set(sofaRows.map((r) => String((r.variants ?? {} as Record<string, unknown>).fabricCode ?? '')).filter(Boolean))];
       const tierByFabric = new Map<string, SofaPriceTier>();
@@ -6762,6 +7043,8 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
   }
   const grandTotal  = total + deliverySen;
   const grandMargin = grandTotal - totalCost;
+  // Upsales / drop sales for Event Commission (owner 2026-10-20): the header before the write.
+  const totalsBefore = await snapshotSoTotals(sb, docNo);
   const { error: updErr } = await sb.from('mfg_sales_orders').update({
     mattress_sofa_sen: mattressSofa,
     bedframe_sen: bedframe,
@@ -6794,7 +7077,9 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
     }
     /* eslint-disable-next-line no-console */
     console.error('[so-recompute] header update failed — totals left STALE:', docNo, updErr.message);
+    return;
   }
+  await recordSoTotalChange(sb, c, docNo, totalsBefore, { goodsSen: mattressSofa + bedframe + accessories + others, totalSen: grandTotal });
 }
 
 mfgSalesOrders.post('/:docNo/items', async (c) => {
@@ -6814,8 +7099,26 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   }
 
   /* Line-add stays open while the order has something left to convert (owner 2026-09-15, shared/so-line-freeze.ts). */
+  /* DEV-32 — after the DO a permitted caller may add a CHARGE line; it goes onto
+     one live DO (shared/so-after-do-edit.ts), so the order-wide freeze and the
+     processing/PO locks below do not stand in its way. */
+  let afterDoTarget: AfterDoTarget | null = null;
+  let afterDoCompanyId = 0;
+  if (it.afterDo === true) {
+    const co = requireActiveCompanyId(c); if (!co.ok) return refuseWithoutWriting(c, co.refusal, 409);
+    const open = await openAfterDo(sb, docNo, hasHouzsPerm(c, SO_EDIT_AFTER_DO_PERMISSION), co.companyId);
+    if (!open.ok) return refuseWithoutWriting(c, open.body, open.status);
+    const service = await catalogSaysService(sb, String(it.itemCode).trim(), co.companyId);
+    if (service === null) return refuseWithoutWriting(c, { error: 'downstream_check_failed', message: 'Could not read the product, so nothing was added. Try again.' }, 409);
+    if (!service) return refuseWithoutWriting(c, AFTER_DO_SERVICE_ONLY, 409);
+    const pick = pickAfterDoTarget(open.targets, typeof it.targetDoId === 'string' ? it.targetDoId : null);
+    if (!pick.ok) return refuseWithoutWriting(c, pick.refusal, 409);
+    afterDoTarget = pick.target;
+    afterDoCompanyId = co.companyId;
+  }
+
   const freezeRead = await readSoLineFreeze(sb, docNo);
-  if (!freezeRead.ok || freezeRead.fullyFrozen) return refuseWithoutWriting(c, freezeRead.ok ? SO_FULLY_FROZEN_REFUSAL : freezeRead.refusal, 409);
+  if (!freezeRead.ok || (freezeRead.fullyFrozen && !afterDoTarget)) return refuseWithoutWriting(c, freezeRead.ok ? SO_FULLY_FROZEN_REFUSAL : freezeRead.refusal, 409);
 
   /* TBC fill-in (Loo 2026-06-11) — self-scoped selling roles only touch
      their own SO. */
@@ -6847,12 +7150,17 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
      SO's processing day has passed (already PO'd to the supplier). Owner
      2026-08-12 — nor once a live PO actually exists (2990), which is the case
      this rule was always describing and only sometimes catching. */
-  if (soProcessingLocked(header as { processing_date?: string | null; status: string | null })) {
+  if (!afterDoTarget && soProcessingLocked(header as { processing_date?: string | null; status: string | null })) {
     return refuseWithoutWriting(c, SO_PROCESSING_LOCKED_RESPONSE, 409);
   }
-  if (await soPoLocked(sb, docNo)) {
+  if (!afterDoTarget && await soPoLocked(sb, docNo)) {
     return refuseWithoutWriting(c, SO_PO_LOCKED_RESPONSE, 409);
   }
+  const addLineDateRefusal = soLineDateRefusal({
+    processingDate: (header as { processing_date?: string | null }).processing_date,
+    lineDeliveryDates: [it.lineDeliveryDate],
+  });
+  if (addLineDateRefusal) return refuseWithoutWriting(c, addLineDateRefusal, 400);
   /* Commander 2026-05-31 — a line added later inherits the SO state's warehouse
      by default (migration 0118). Explicit it.warehouseId override wins. */
   /* The line inherits the ORDER'S warehouse (resolveSoWarehouseId: recorded
@@ -6931,13 +7239,13 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     }
   }
   const [cachedConfig, productLite, fabricLite, sofaCombosLite, sellingTiersLite, fabricAddonConfigLite, specialAddonsLite, modelOverridesLite, compartmentOverridesLite] = await Promise.all([
-    loadMaintenanceConfig(sb),
+    loadMaintenanceConfig(sb, activeCompanyId(c)),
     loadProductByCode(sb, itemCodeStr, activeCompanyId(c)),
     loadFabricByCode(sb, variantsObj?.fabricCode ?? null),
-    loadActiveSofaCombos(sb, c),
+    loadSellingSofaCombos(sb, c),
     loadFabricSellingTiers(sb, (variantsObj as { fabricId?: string } | null)?.fabricId ?? null),
     loadFabricTierAddonConfig(sb, activeCompanyId(c)),
-    loadSpecialAddons(sb),
+    loadSpecialAddons(sb, activeCompanyId(c)),
     loadModelFabricTierOverrides(sb),
     loadCompartmentFabricTierOverrides(sb),
   ]);
@@ -7147,7 +7455,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   const hasExplicitLineDate = it.lineDeliveryDate !== undefined && it.lineDeliveryDate !== null;
   const lineDeliveryDate = hasExplicitLineDate
     ? (it.lineDeliveryDate as string | null)
-    : (header.customer_delivery_date as string | null) ?? null;
+    : (header.processing_date ? (header.customer_delivery_date as string | null) ?? null : null);
   const lineDeliveryDateOverridden = hasExplicitLineDate
     ? (it.lineDeliveryDateOverridden === undefined ? true : Boolean(it.lineDeliveryDateOverridden))
     : Boolean(it.lineDeliveryDateOverridden ?? false);
@@ -7348,6 +7656,11 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
          Deferred: the compartment rows are committed; the global sweep runs in
          the background (waitUntil) so the save returns without blocking ~8s. */
       deferAllocationRecompute(c, sb, 'post-line-add');
+      /* A line added to a DELIVERED order is goods that have NOT gone out: the
+         delivery reconciler re-opens the order (DELIVERED -> READY_TO_SHIP) on
+         the same evidence a cancelled DO would. It only ever ran from DO routes,
+         so HC-SO-012913 read "Delivered" with a sofa module still to ship. */
+      await syncSoDeliveredFromDo(sb, [docNo], user.id);
 
       /* The sofa branch RETURNED here and queued nothing, so adding a sofa to
          an order AutoCount already holds never reached the account book at all.
@@ -7405,8 +7718,17 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
      another SO out). Deferred: the INSERT is committed; the global sweep runs in
      the background (waitUntil) so the save returns without blocking ~8s on it. */
   deferAllocationRecompute(c, sb, 'post-line-add');
+  /* Same re-open as the sofa branch above: new demand on a delivered order. */
+  await syncSoDeliveredFromDo(sb, [docNo], user.id);
 
   await queueAcSoEdit(c, docNo, [], data?.id ? [String(data.id)] : []);
+
+  /* DEV-32 — the charge goes onto the picked DO. A failed copy is reported, not
+     rolled back: the SO line stands and can be added on the DO page by hand. */
+  if (afterDoTarget && data?.id) {
+    const put = await addChargeLineToDo(sb, { companyId: afterDoCompanyId, actor: c.get('houzsUser') ?? null, soDocNo: docNo }, String(data.id), afterDoTarget);
+    return c.json({ item: data, doNumber: afterDoTarget.do_number, ...(put.ok ? {} : { doCopyFailed: [afterDoTarget.do_number ?? afterDoTarget.id], doCopyError: put.reason }) }, 201);
+  }
 
   return c.json({ item: data }, 201);
 });
@@ -7430,9 +7752,32 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown, codeCheck.inactive), 409);
   }
 
+  /* DEV-32 — after the DO a permitted caller may edit a CHARGE line its one DO
+     line carries; the DO line follows (shared/so-after-do-edit.ts). */
+  let afterDoLine: { doLine: DoLineOfSoLine; target: AfterDoTarget; companyId: number } | null = null;
+  if (it.afterDo === true) {
+    const co = requireActiveCompanyId(c); if (!co.ok) return c.json(co.refusal, 409);
+    const open = await openAfterDo(sb, docNo, hasHouzsPerm(c, SO_EDIT_AFTER_DO_PERMISSION), co.companyId);
+    if (!open.ok) return c.json(open.body, open.status);
+    if (open.invoicedWithoutDo) return c.json(AFTER_DO_INVOICED, 409);
+    const { data: line, error: lineErr } = await scopeSoItemToDocument(sb.from('mfg_sales_order_items').select('item_code'), docNo, itemId).maybeSingle();
+    if (lineErr) return c.json({ error: 'downstream_check_failed', message: 'Could not read the line, so nothing was changed. Try again.' }, 409);
+    if (!line) return c.json({ error: 'not_found' }, 404);
+    const code = String((line as { item_code?: string | null }).item_code ?? '');
+    const service = await catalogSaysService(sb, code, co.companyId);
+    if (service === null) return c.json({ error: 'downstream_check_failed', message: 'Could not read the product, so nothing was changed. Try again.' }, 409);
+    if (!service || (it.itemCode !== undefined && String(it.itemCode).trim() !== code)) return c.json(AFTER_DO_SERVICE_ONLY, 409);
+    const doLines = await readDoLinesOfSoLine(sb, itemId, co.companyId, open.targets);
+    if (doLines === null) return c.json({ error: 'downstream_check_failed', message: 'Could not read the Delivery Order lines, so nothing was changed. Try again.' }, 409);
+    if (doLines.length > 1) return c.json({ error: 'after_do_split_line', message: 'This charge is split over more than one Delivery Order line. Change it on each Delivery Order instead.' }, 409);
+    const target = doLines.length === 1 ? open.targets.find((t) => t.id === doLines[0].delivery_order_id) : undefined;
+    if (target?.locked) return c.json(afterDoTargetLockedRefusal([target.do_number ?? target.id]), 409);
+    if (target) afterDoLine = { doLine: doLines[0], target, companyId: co.companyId };
+  }
+
   /* A line a live DO / SI carries is frozen; its siblings are not (owner 2026-09-15, shared/so-line-freeze.ts). */
   const lineLock = soLineWriteRefusal(await readSoLineFreeze(sb, docNo), [itemId]);
-  if (lineLock) return c.json(lineLock, 409);
+  if (lineLock && !(afterDoLine && lineLock.error === 'so_line_frozen')) return c.json(lineLock, 409);
 
   /* TBC fill-in (Loo 2026-06-11) — self-scoped selling roles only touch
      their own SO. */
@@ -7447,7 +7792,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
 
   /* Owner 2026-06-12 — processing-date lock: no line EDIT once the processing
      day has passed (the locked order is already PO'd to the supplier). */
-  {
+  if (!afterDoLine) {
     const procLock = await soProcessingLockBlocked(sb, docNo);
     if (procLock) return c.json(procLock, 409);
   }
@@ -7502,6 +7847,8 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     }, 422);
   }
   const clientUnit = it.unitPriceSen !== undefined ? Number(it.unitPriceSen) : prev.unit_price_sen;
+  // owner ruling — non-POS author prices freely; see erpLineTrust.
+  const patchTrust = erpLineTrust(posTablet, clientUnit, it.zeroPriceIntended, patchSoIsMigrated);
   const discount = it.discountSen !== undefined ? Number(it.discountSen) : prev.discount_sen;
 
   /* MFG-PRICING-ENGINE — Server-side recompute on PATCH. Triggered when
@@ -7556,7 +7903,8 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     const aoErr = checkAllowedOptions(
       product,
       model,
-      variantsAfter as Parameters<typeof checkAllowedOptions>[2],
+      // A special the line already held is grandfathered; only what the edit adds is judged.
+      variantsForEditCheck(variantsAfter as Parameters<typeof checkAllowedOptions>[2], (prev as { variants?: Parameters<typeof checkAllowedOptions>[2] }).variants ?? null),
     );
     if (aoErr) return c.json({ ...aoErr, itemCode: itemCodeAfter }, 400);
     /* Go-live review #6 — variant completeness on the LINE-EDIT route. When the
@@ -7600,13 +7948,13 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   }
   if (shouldRecompute && itemCodeAfter) {
     const [cfg, prodLite, fabLite, sofaCombosPatch, sellingTiersPatch, fabricAddonConfigPatch, specialAddonsPatch, modelOverridesPatch, compartmentOverridesPatch] = await Promise.all([
-      loadMaintenanceConfig(sb),
+      loadMaintenanceConfig(sb, activeCompanyId(c)),
       loadProductByCode(sb, itemCodeAfter, activeCompanyId(c)),
       loadFabricByCode(sb, variantsAfter?.fabricCode ?? null),
-      loadActiveSofaCombos(sb, c),
+      loadSellingSofaCombos(sb, c),
       loadFabricSellingTiers(sb, (variantsAfter as { fabricId?: string } | null)?.fabricId ?? null),
       loadFabricTierAddonConfig(sb, activeCompanyId(c)),
-      loadSpecialAddons(sb),
+      loadSpecialAddons(sb, activeCompanyId(c)),
       loadModelFabricTierOverrides(sb),
       loadCompartmentFabricTierOverrides(sb),
     ]);
@@ -7644,8 +7992,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
       sofaModuleCostRowsPatch,
       modelOverridesPatch, // migration 0175 — per-Model Δ
       compartmentOverridesPatch, // migration 0025 — per-compartment Δ
-      // owner ruling — non-POS author prices freely; see erpLineTrust.
-      erpLineTrust(posTablet, clientUnit, it.zeroPriceIntended, patchSoIsMigrated),
+      patchTrust,
     );
     /* Task 6 — grandfathering: a line already carrying variants.freeItem was
        made free at create time and must STAY at RM 0 on edit recompute, even
@@ -7680,7 +8027,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
        RM490 加购 into RM990 with no warning (Loo 2026-06-28). */
     : prevIsReward
     ? prev.unit_price_sen
-    : (recomputedPatch ? recomputedPatch.unit_price_sen : clientUnit);
+    : unitAfterLineEdit(recomputedPatch ? recomputedPatch.unit_price_sen : clientUnit, prev.unit_price_sen, patchTrust);
   /* Audit 2026-06-11 C-2 — same discount gate as POST /: the effective
      (patch-else-stored) discount must sit in [0, qty × unit] against the
      effective unit price (422, reject-don't-normalize). */
@@ -7789,6 +8136,24 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
      forget. A separate lineDeliveryDateOverridden=false reset path lets
      the UI deliberately rejoin the header cascade. */
   if (it.lineDeliveryDate !== undefined) {
+    /* Only a date that CHANGES is judged: the detail screen resends every
+       field of an edited line, so an untouched legacy date must not block a
+       qty edit. */
+    const { data: dateRow, error: dateErr } = dateOrNull(it.lineDeliveryDate)
+      ? await scopeSoItemToDocument(sb.from('mfg_sales_order_items').select('line_delivery_date'), docNo, itemId).maybeSingle()
+      : { data: null, error: null };
+    if (dateErr) return c.json({ error: 'so_read_failed', reason: dateErr.message }, 500);
+    if (dateOrNull(it.lineDeliveryDate)
+      && soDateYmd(it.lineDeliveryDate) !== soDateYmd((dateRow as { line_delivery_date?: string | null } | null)?.line_delivery_date)) {
+      const { data: procHdr, error: procErr } = await sb.from('mfg_sales_orders')
+        .select('processing_date').eq('doc_no', docNo).maybeSingle();
+      if (procErr) return c.json({ error: 'so_read_failed', reason: procErr.message }, 500);
+      const patchLineDateRefusal = soLineDateRefusal({
+        processingDate: (procHdr as { processing_date?: string | null } | null)?.processing_date,
+        lineDeliveryDates: [it.lineDeliveryDate],
+      });
+      if (patchLineDateRefusal) return c.json(patchLineDateRefusal, 400);
+    }
     updates['line_delivery_date'] = dateOrNull(it.lineDeliveryDate);
     updates['line_delivery_date_overridden'] = true;
   }
@@ -7807,6 +8172,8 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     docNo,
     itemId,
   );
+  // HC-0004: the DB floor (mig 20261014T1420) refused a cut below what a DO, created after the freeze read above, ships.
+  if (isSoLineOverDelivered(error)) return c.json({ error: 'qty_below_delivered', message: 'A Delivery Order has just shipped this Sales Order line. Its qty can no longer be cut below what was delivered. Refresh and check the order.', reason: error!.message }, 409);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   // Default Free Gift (0170) — editing a line (code/qty) may add or drop a
   // trigger; reconcile auto-syncs the gift lines, then recomputes totals.
@@ -7851,6 +8218,11 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   deferAllocationRecompute(c, sb, 'post-line-edit');
 
   await queueAcSoEdit(c, docNo);
+
+  if (afterDoLine) {
+    const put = await copyChargeLineToDo(sb, { companyId: afterDoLine.companyId, actor: c.get('houzsUser') ?? null, soDocNo: docNo }, itemId, afterDoLine.doLine, afterDoLine.target);
+    return c.json({ ok: true, doNumber: afterDoLine.target.do_number, ...(put.ok ? {} : { doCopyFailed: [afterDoLine.target.do_number ?? afterDoLine.target.id], doCopyError: put.reason }) });
+  }
 
   return c.json({ ok: true });
 });
@@ -8067,14 +8439,14 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
   }
 
   const [cfg, prodLite, fabPrev, fabNext, tiersPrev, tiersNext, addonCfg, specialDefs, modelOverrides, compartmentOverrides] = await Promise.all([
-    loadMaintenanceConfig(sb),
+    loadMaintenanceConfig(sb, activeCompanyId(c)),
     loadProductByCode(sb, prev.item_code, activeCompanyId(c)),
     loadFabricByCode(sb, (prevVariants.fabricCode as string | undefined) ?? null),
     loadFabricByCode(sb, (nextVariants.fabricCode as string | undefined) ?? null),
     loadFabricSellingTiers(sb, (prevVariants.fabricId as string | undefined) ?? null),
     loadFabricSellingTiers(sb, (nextVariants.fabricId as string | undefined) ?? null),
     loadFabricTierAddonConfig(sb, activeCompanyId(c)),
-    loadSpecialAddons(sb),
+    loadSpecialAddons(sb, activeCompanyId(c)),
     loadModelFabricTierOverrides(sb),
     loadCompartmentFabricTierOverrides(sb),
   ]);
@@ -8562,9 +8934,9 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
   if (rewardLinesToRevert.length > 0 || pwpDeleteCodes.length > 0 || pwpRevertCodes.length > 0 || pwpNewlyTriggered.length > 0) {
     // Loaders only when the re-evaluation actually has work to do.
     const [cfgX, addonCfgX, specialDefsX, modelOverridesX, compartmentOverridesX] = await Promise.all([
-      loadMaintenanceConfig(sb),
+      loadMaintenanceConfig(sb, activeCompanyId(c)),
       loadFabricTierAddonConfig(sb, activeCompanyId(c)),
-      loadSpecialAddons(sb),
+      loadSpecialAddons(sb, activeCompanyId(c)),
       loadModelFabricTierOverrides(sb),
       loadCompartmentFabricTierOverrides(sb),
     ]);
@@ -8779,13 +9151,13 @@ async function planSofaRewardRevert(
      stored `depth`. */
   const depth = String(leadV.depth ?? leadV.seatHeight ?? '24');
   const [cfg, prodLite, fabLite, combos, sellingTiers, addonCfg, specialDefs, modulePrices, modelOverridesLead, compartmentOverridesLead] = await Promise.all([
-    loadMaintenanceConfig(sb),
+    loadMaintenanceConfig(sb, activeCompanyId(c)),
     loadProductByCode(sb, lead.item_code, activeCompanyId(c)),
     loadFabricByCode(sb, (leadV.fabricCode as string | undefined) ?? null),
-    loadActiveSofaCombos(sb, c),
+    loadSellingSofaCombos(sb, c),
     loadFabricSellingTiers(sb, (leadV.fabricId as string | undefined) ?? null),
     loadFabricTierAddonConfig(sb, activeCompanyId(c)),
-    loadSpecialAddons(sb),
+    loadSpecialAddons(sb, activeCompanyId(c)),
     loadModelSofaModulePrices(sb, splitSofaCode(lead.item_code).baseModel, depth, activeCompanyId(c)),
     loadModelFabricTierOverrides(sb),
     loadCompartmentFabricTierOverrides(sb),
@@ -8964,12 +9336,12 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
      `depth`. recomputeFromSnapshot below also reads `depth ?? seatHeight`. */
   const depth = String((newVariants as { depth?: unknown; seatHeight?: unknown }).depth ?? (newVariants as { seatHeight?: unknown }).seatHeight ?? '24');
   const [cfg, fabLite, combos, sellingTiers, fabricAddonCfg, specialDefs, modulePrices, moduleCostRows, modelOverridesSwap, compartmentOverridesSwap] = await Promise.all([
-    loadMaintenanceConfig(sb),
+    loadMaintenanceConfig(sb, activeCompanyId(c)),
     loadFabricByCode(sb, (newVariants.fabricCode as string | undefined) ?? null),
-    loadActiveSofaCombos(sb, c),
+    loadSellingSofaCombos(sb, c),
     loadFabricSellingTiers(sb, (newVariants.fabricId as string | undefined) ?? null),
     loadFabricTierAddonConfig(sb, activeCompanyId(c)),
-    loadSpecialAddons(sb),
+    loadSpecialAddons(sb, activeCompanyId(c)),
     loadModelSofaModulePrices(sb, prodLite.base_model, depth, activeCompanyId(c)),
     loadModelSofaModuleCostRows(sb, prodLite.base_model, activeCompanyId(c)),
     loadModelFabricTierOverrides(sb),
@@ -9920,11 +10292,9 @@ const paymentCreateSchema = z.object({
   accountSheet:       z.string().optional().nullable(),
   collectedBy:        z.string().uuid().optional().nullable(),
   note:               z.string().optional().nullable(),
-  /* Owner 2026-07-13 — a payment slip is NOT always available (cash / walk-in
-     receipts), so the slip is OPTIONAL. When the client DID upload one it still
-     sends the session id and the row links it; when absent the payment records
-     slip-less (slip_key NULL, same as a scan-job first receipt). Previously
-     `.min(1)` (required). */
+  /* Nullable in the SCHEMA only so a converted row can send none (owner
+     2026-10-13, slip required): a keyed row without a session is refused below
+     with the shared sentence (shared/payment-slip-required), not a zod issue. */
   uploadSessionId:    z.string().min(1).optional().nullable(),
   /* Owed by a role holding the correction right (docs/bugs/0888). */
   reason:             z.string().trim().max(500).optional(),
@@ -9951,31 +10321,32 @@ export const postSoPaymentHandler = async (c: any) => {
   const owed = paymentReasonRule(c, { reason: p.reason });
   if (owed.refusal) return c.json(owed.refusal, 400);
 
-  /* FIX 3 (2026-07-16) — method ⇒ bank/account mapping, enforced server-side.
-     The desktop New-SO / Payments cascade blocks saving a Merchant payment with
-     no Bank or an Online (transfer) payment with no Sub-Type
-     (missingMethodSubField in PaymentsTable.tsx), but mobile / API POST straight
-     to this route and paymentCreateSchema left every sub-field optional. Mirror
-     the desktop rule for the SERVER-observable part: an amount-bearing Merchant
-     needs a Bank (merchantProvider); an Online/transfer needs a Sub-Type
-     (onlineType); Cash and legacy Installment need nothing. NOTE: the desktop also
-     makes a Merchant pick a Plan, but "One-off" serialises to installmentMonths
-     null — indistinguishable from unset — so requiring it here would reject a
-     legitimate one-shot card payment; the Plan is deliberately NOT gated. Slip
-     stays optional (owner 2026-07-13). Only amount > 0 rows are checked, matching
-     the desktop guard (a zeroed row carries no method commitment). */
-  if (p.amountSen > 0) {
-    let missing: string | null = null;
-    let methodName = '';
-    if (p.method === 'merchant' && !p.merchantProvider?.trim()) { missing = 'bank'; methodName = 'card / merchant'; }
-    else if (p.method === 'transfer' && !p.onlineType?.trim()) { missing = 'sub-type'; methodName = 'bank transfer / online'; }
-    if (missing) {
-      return c.json({
-        error: 'payment_method_field_required',
-        reason: `A ${methodName} payment needs a ${missing} before it can be recorded.`,
-      }, 400);
+  /* The proof (owner 2026-10-13, after Admin: "collect payment is attached with
+     slip"). A keyed payment carries its slip session or is refused; a converted
+     row is money receipted when it was first collected. The write core refuses
+     the same way underneath, so no caller can skip this by calling it directly. */
+  const slipVerdict = checkPaymentSlip({ converted: p.method === 'converted', hasSlip: Boolean(p.uploadSessionId) });
+  if (!slipVerdict.ok) return c.json({ error: slipVerdict.code, reason: slipVerdict.reason }, 400);
+
+  /* Slip-date window (owner 2026-09-23) — the rule is scm/shared/payment-slip-date;
+     `scm.payment.backdate` is the exception, and an exercised exception says so
+     in the audit note (unless a reason is already owed, which says more). A
+     CONVERTED row is money that moved, not a slip somebody keyed: its date comes
+     from the source order's first payment, so it is not window-checked here (the
+     write core skips it by method too). */
+  const mayBackdateSlip = hasHouzsPerm(c, SO_PAYMENT_BACKDATE);
+  let slipDateOverride = false;
+  if (p.method !== 'converted') {
+    const verdict = checkPaymentSlipDate(p.paidAt, todayMyt());
+    if (!verdict.ok) {
+      if (!mayBackdateSlip) return c.json({ error: 'slip_date_out_of_window', reason: verdict.reason }, 400);
+      slipDateOverride = true;
     }
   }
+
+  /* Method => bank/sub-type mapping (FIX 3) — lib/payment-method-fields. */
+  const methodRefusal = paymentMethodFieldRefusal(p);
+  if (methodRefusal) return c.json(methodRefusal, 400);
 
   /* OVER-COLLECTION IS ALLOWED (owner 2026-08-16). Spec D6's guard used to
      refuse Σ(ledger) + this payment > total_revenue_sen. It is deleted, not
@@ -9997,13 +10368,10 @@ export const postSoPaymentHandler = async (c: any) => {
      the screen: soBalanceSen). Nothing here touches lines, prices or the
      order total — a payment is a payment. */
 
-  /* Owner 2026-07-13 — the slip is OPTIONAL here, and since 2026-08-13 it is
-     optional on EVERY SO path, so this route is no longer the loose end of a
-     stricter create. Only when the client attached one (uploadSessionId
-     present) do we resolve the upload session → committed R2 key; an
-     unresolved / not-yet-uploaded session is still rejected so a dangling id
-     never books a payment whose proof points nowhere. Absent session →
-     paymentSlipKey stays null (records slip-less). */
+  /* Resolve the upload session → committed R2 key. An unresolved /
+     not-yet-uploaded session is rejected so a dangling id never books a
+     payment whose proof points nowhere. Absent only for a converted row (the
+     slip check above). */
   let paymentSlipKey: string | null = null;
   if (p.uploadSessionId) {
     const { data: slipRow, error: slipErr } = await sb
@@ -10014,11 +10382,9 @@ export const postSoPaymentHandler = async (c: any) => {
     if (slipErr) return c.json({ error: 'lookup_failed', reason: slipErr.message }, 500);
     const slipRowT = slipRow as { r2_key: string | null; status: string } | null;
     if (!slipRowT || slipRowT.status !== 'uploaded' || !slipRowT.r2_key) {
-      /* Names the CLAIM, not a requirement — the payment saves fine with no
-         slip; what it cannot do is carry one that never finished uploading. */
       return c.json({
         error: 'slip_required',
-        reason: "That payment slip hasn't finished uploading. Attach it again, or save the payment without one.",
+        reason: "That payment slip hasn't finished uploading. Attach it again.",
       }, 400);
     }
     paymentSlipKey = slipRowT.r2_key;
@@ -10051,6 +10417,7 @@ export const postSoPaymentHandler = async (c: any) => {
     createdBy:         user.id,
     actorName:         (user.user_metadata as { name?: string } | undefined)?.name ?? null,
     ...(owed.owed ? { auditSource: AMEND_SOURCE, auditNote: p.reason } : {}),
+    ...(slipDateOverride ? { allowOutOfWindowSlipDate: true, ...(owed.owed ? {} : { auditNote: SLIP_DATE_OVERRIDE_NOTE }) } : {}),
   });
   if (errorMessage) return c.json({ error: 'insert_failed', reason: errorMessage }, 500);
 
@@ -10184,6 +10551,17 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
   const nextOnline = nextMethod === 'transfer' ? (rawOnline ?? null) : null;
   const nextAmount = p.amountSen ?? before.amount_sen;
   const nextPaidAt = p.paidAt ?? before.paid_at;
+  /* Re-dating a payment goes through the same window as keying one (owner
+     2026-09-23) — otherwise "save it today, then change the date" is the way
+     around the rule. Only a CHANGE is judged: a row whose stored date is
+     already outside the window (legacy, or keyed on the backdate right) must
+     still be correctable for its amount or its bank. */
+  if (nextPaidAt !== before.paid_at) {
+    const verdict = checkPaymentSlipDate(nextPaidAt, todayMyt());
+    if (!verdict.ok && !hasHouzsPerm(c, SO_PAYMENT_BACKDATE)) {
+      return c.json({ error: 'slip_date_out_of_window', reason: verdict.reason }, 400);
+    }
+  }
   const nextApproval = p.approvalCode !== undefined ? (p.approvalCode ?? null) : before.approval_code;
   const nextCollectedBy = p.collectedBy !== undefined ? (p.collectedBy ?? null) : before.collected_by;
   /* Account Sheet on EDIT (owner 2026-07-16, "Acc sheet 亂填?") — the sheet is
@@ -10349,6 +10727,7 @@ export const deleteSoPaymentHandler = async (c: any) => {
     .eq('doc_no', docNo)
     .maybeSingle();
   const soIsDraft = (soStatusRow?.status as string | undefined) === 'DRAFT';
+  const soIsCancelled = (soStatusRow?.status as string | undefined) === 'CANCELLED';
   const createdAtRaw = (row as { created_at?: unknown }).created_at;
   if (typeof createdAtRaw !== 'string' || Number.isNaN(new Date(createdAtRaw).getTime())) {
     /* An unreadable created_at means we cannot tell whether the window is open.
@@ -10362,6 +10741,12 @@ export const deleteSoPaymentHandler = async (c: any) => {
   }
   // STRICT like the PATCH/POST either side: scopeToCompany degrades, and this DELETEs.
   const delCo = requireActiveCompanyId(c); if (!delCo.ok) return c.json(delCo.refusal, 409);
+  /* A CANCELLED order's payment comes off only at Finance's hand, and only while
+     its money is still on the order (owner 2026-09-29; lib/so-money.ts). */
+  if (soIsCancelled) {
+    const g = await cancelledRemovalGuard(sb, delCo.companyId, { docNo, paymentId: id, mayAmend: hasHouzsPerm(c, SO_PAYMENT_AMEND) });
+    if (!g.ok) return c.json({ error: g.error, message: g.message }, g.status);
+  }
   const windowCheck = await paymentMayChange(sb, {
     companyId: delCo.companyId, paymentId: id,
     createdDateMyt: mytDateOf(createdAtRaw), todayDateMyt: todayMyt(),
@@ -10375,7 +10760,7 @@ export const deleteSoPaymentHandler = async (c: any) => {
   }
   /* A DELETE carries no body here — version already rides the query, so the
      reason does too. Required on the amend right, same as the PATCH. */
-  const owed = paymentReasonRule(c, { reason: c.req.query('reason'), viaAmend: windowCheck.via === 'amend' });
+  const owed = paymentReasonRule(c, { reason: c.req.query('reason'), viaAmend: windowCheck.via === 'amend' || soIsCancelled });
   if (owed.refusal) return c.json(owed.refusal, 400);
 
   const { data: deleted, error } = await scopeToCompanyId(sb.from('mfg_sales_order_payments').delete()
@@ -10392,7 +10777,7 @@ export const deleteSoPaymentHandler = async (c: any) => {
 
   // Void the ledger entry AND re-roll the invoices this deposit was settling
   // (lib/so-payment-row afterSoPaymentRemoved). Best-effort, never blocks.
-  const delLedger = await afterSoPaymentRemoved(sb, { paymentId: id, docNo, companyId: delCo.companyId });
+  const delLedger = await afterSoPaymentRemoved(sb, { paymentId: id, docNo, companyId: delCo.companyId, neverHappened: soIsCancelled });
 
   /* Post-merge stitch — DELETE_PAYMENT audit row. Carries the typed reason as a
      field change so it renders in AuditHistoryPanel alongside the amount that
@@ -10409,6 +10794,7 @@ export const deleteSoPaymentHandler = async (c: any) => {
       { field: 'amountSen',  from: rowTyped.amount_sen,  to: null },
       ...(rowTyped.approval_code ? [{ field: 'approvalCode', from: rowTyped.approval_code, to: null } satisfies FieldChange] : []),
       ...ledgerFieldChange(delLedger),
+      ...(delLedger.draftReceipt ? [{ field: 'draftReceipt', from: delLedger.draftReceipt, to: null } satisfies FieldChange] : []),
     ],
     ...owed.audit,
   });
@@ -10815,7 +11201,9 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
      PO-locked SO would be refused BOTH roads (409 on the direct edit, 409 here
      for "not locked yet") and the operator would have no way to change anything
      at all. Keep the two definitions in lock-step. */
-  if (!await soEditLocked(sb, docNo, soRow as unknown as { processing_date?: string | null; status: string | null })) {
+  // A Processing Date removal is requestable before the lock too — the Purchaser signs it (owner 2026-09-30).
+  const removalOnly = isProcessingRemovalOnlyRequest({ headerChanges: body.headerChanges, lines: body.lines, storedProcessingDate: (soRow as { processing_date?: unknown }).processing_date });
+  if (!removalOnly && !await soEditLocked(sb, docNo, soRow as unknown as { processing_date?: string | null; status: string | null })) {
     return c.json({
       error: 'not_locked_no_amendment_needed',
       reason: 'This Sales Order is not processing-locked yet — edit it directly instead of raising an amendment.',
@@ -10893,6 +11281,9 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
       return c.json({ error: 'header_field_invalid', reason: 'Customer name cannot be blank — enter the corrected name instead.' }, 400);
     }
   }
+  // A Processing Date removal clears the Delivery Date with it — one request, Purchaser signs (owner 2026-09-30).
+  { const s = soRow as { processing_date?: unknown; customer_delivery_date?: unknown };
+    Object.assign(headerChanges, withProcessingRemovalCascade(headerChanges, { processingDate: s.processing_date, deliveryDate: s.customer_delivery_date })); }
   const hasHeaderChanges = Object.keys(headerChanges).length > 0;
   /* The header PATCH's identity lock, on this road too: once a live DO / SI exists the snapshotted fields stay put. */
   const lockedByAmendment = Object.keys(headerChanges).map((k) => AMENDABLE_HEADER_FIELDS[k]).filter((col) => SO_IDENTITY_LOCK_COLS.has(col));
@@ -10948,6 +11339,10 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
      values so changing ONE date is still checked against the other; an unchanged
      already-past date is NOT re-rejected (it is what the amendment exists to
      fix), but a NEWLY-requested past date is. */
+  /* BUG-101: once a live PO exists the Processing Date is frozen, and a Delivery
+     Date brought forward needs the Purchaser's OK on its Logistic half. */
+  let needsPurchaserOk = false;
+  let usesPoDateOverride = false;
   if (hasHeaderChanges) {
     const cur = soRow as { processing_date?: string | null; customer_delivery_date?: string | null };
     const ymd = (v: string | null | undefined): string => (v == null ? '' : String(v).slice(0, 10));
@@ -10955,6 +11350,18 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
     const curDeliv = ymd(cur.customer_delivery_date);
     const nextProc = 'processingDate' in headerChanges ? ymd(headerChanges['processingDate']) : curProc;
     const nextDeliv = 'customerDeliveryDate' in headerChanges ? ymd(headerChanges['customerDeliveryDate']) : curDeliv;
+    const procMoves = 'processingDate' in headerChanges && curProc !== '' && nextProc !== curProc;
+    const delivForward = 'customerDeliveryDate' in headerChanges && deliveryBroughtForward(curDeliv, nextDeliv);
+    const hasLivePo = procMoves && await soHasLivePo(sb, docNo);
+    if (processingDateFrozenByPo({ storedProc: curProc, nextProc, hasLivePo })) {
+      if (!hasHouzsPerm(c, PROCESSING_DATE_PO_OVERRIDE_KEY)) return c.json(PROCESSING_DATE_PO_LOCKED, 409);
+      usesPoDateOverride = true;
+    }
+    needsPurchaserOk = deliveryNeedsPurchaserOk({
+      storedDeliv: curDeliv,
+      nextDeliv: 'customerDeliveryDate' in headerChanges ? nextDeliv : null,
+      hasUnreceivedPo: delivForward && await soHasUnreceivedPo(sb, docNo),
+    });
     const todayMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
     /* Same predicate as every other write path (shared/so-processing-date), with
        this path's own error code kept: `amendment_dates_xor` is what the
@@ -11001,7 +11408,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
      requester was shown is the desk the row lands on. */
   // Price-lane carve-out is 2990's alone (owner 2026-09-21). Read the ACTIVE
   // company code, not the id — ids drift between environments.
-  const priceLaneEnabled = c.get('companyCode') === PRICE_LANE_COMPANY_CODE;
+  const priceLaneEnabled = PRICE_LANE_COMPANY_CODES.has(c.get('companyCode') ?? '');
   const split = await resolveAmendmentLaneSplit(sb, docNo, activeCompanyId(c), headerChanges, submittedLines, priceLaneEnabled);
   if (!split) return c.json(LINE_BUILD_ERRORS.unreadable, 500);
 
@@ -11040,6 +11447,17 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
     }
   };
 
+  /* Owner 2026-09-24: 「如果是 Logistic admin 修改客户信息, Delivery Date - 无需
+     approver」. A DELIVERY half raised by someone who can already SIGN that lane,
+     and that touches no service line, takes the shortcut: the row is still
+     written (the revision, the audit, the write-back all hang off it) and the
+     client applies it through the ordinary approve route, with every guard that
+     route carries. The rule itself is shared/amendment-self-approve.ts — this
+     file only asks it. Nothing here applies anything. */
+  const holdsDeliveryKey = hasHouzsPerm(c, SELF_APPROVE_KEY);
+  const selfApprovable: string[] = [];
+  const purchaserOkNeeded: string[] = [];
+
   for (const [i, laneKey] of split.lanes.entries()) {
     const half = split.perLane[laneKey];
     const laneHasHeader = half.headerKeys.length > 0;
@@ -11068,6 +11486,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
       company_id:   activeCompanyId(c),
       header_changes:      laneHasHeader ? half.headerChanges : null,
       old_header_snapshot: laneHasHeader ? oldHeaderSnapshot : null,
+      ...(usesPoDateOverride && 'processingDate' in half.headerChanges ? { po_date_override_by: requesterStaffId } : {}),
     }).select('id, so_doc_no, amendment_no, status, lane, reason, requested_by, created_at, header_changes, old_header_snapshot').single();
     if (insErr) {
       await rollbackCreated();
@@ -11102,6 +11521,12 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
       }
     }
 
+    const awaitsPurchaserOk = laneKey === 'DELIVERY' && needsPurchaserOk && 'customerDeliveryDate' in half.headerChanges;
+    if (awaitsPurchaserOk) purchaserOkNeeded.push(amendment.amendment_no);
+    else if (laneSelfApproves(laneKey, { holdsLaneKey: holdsDeliveryKey, hasLineChanges: half.lines.length > 0 })) {
+      selfApprovable.push(amendment.id);
+    }
+
     /* History row now, per lane; the notice after the loop, once every half has
        landed. Both live in lib/amendment-raised-effects. */
     await recordAmendmentRequested(sb, {
@@ -11112,10 +11537,21 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
     });
   }
 
+  /* A half that applies on submit needs no "waiting for your signature" notice —
+     the desk it would call is the desk that raised it. The approve route still
+     posts its own APPROVED notice when the apply lands. */
   await notifyAmendmentsRaised(c, sb, {
-    docNo, reason: body.reason, created: createdAmendments,
+    docNo, reason: body.reason,
+    created: createdAmendments.filter((a) => !selfApprovable.includes(a.id)),
     salespersonStaffId: (soRow as { salesperson_id?: string | null }).salesperson_id,
   });
+  for (const amendmentNo of purchaserOkNeeded) {
+    await notifySoAmendmentPurchaserOkNeeded(c.env, {
+      amendmentNo, soDocNo: docNo, companyId: activeCompanyId(c),
+      requesterName: c.get('houzsUser')?.name ?? null,
+      requesterUserId: c.get('houzsUser')?.id ?? null,
+    });
+  }
 
   /* `amendment` (singular) keeps the pre-split response contract for existing
      callers; `amendments` carries the full split so the UI can say "this was
@@ -11124,5 +11560,9 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
     amendment: createdAmendments[0],
     amendments: createdAmendments,
     lanes: split.lanes,
+    /* Ids the caller may apply straight away through PATCH /so-amendments/:id/
+       approve-so — the gate there re-checks the key, so this is an invitation,
+       never an authorisation. Empty for everyone else. */
+    selfApprovable,
   }, 201);
 });

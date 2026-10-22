@@ -205,6 +205,11 @@ export interface AssrCase {
   supplier_pickup_at?: string | null;
   // Mig 107 — date we collect the faulty item from the customer's house.
   customer_pickup_at?: string | null;
+  // HC-0129 — Pickup / Return tracking; allowed values in vendor/scm/lib/assr-pickup-tracking.ts.
+  pickup_status?: string | null;
+  actual_pickup_at?: string | null;
+  pickup_pic?: string | null;
+  item_location?: string | null;
   /* Mig 127 — on-site own-team inspection visit date, de-conflated from
      customer_pickup_at; drives a distinct INSPECTION leg on Delivery Planning. */
   inspection_visit_at?: string | null;
@@ -226,6 +231,10 @@ export interface AssrCase {
   // on customer.
   verification_outcome?: "accepted" | "rejected" | "needs_more_info" | null;
   verified_root_cause?: string | null;
+  // HC-0133 — Verification findings; pending_with values in vendor/scm/lib/assr-verification-fields.ts.
+  inspection_findings?: string | null;
+  next_action?: string | null;
+  pending_with?: string | null;
   verified_by?: number | null;
   verified_by_name?: string | null;
   verified_at?: string | null;

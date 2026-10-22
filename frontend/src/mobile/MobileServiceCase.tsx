@@ -1,3 +1,4 @@
+import { MobileCaseDocChips } from "./MobileCaseDocChips";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -27,8 +28,10 @@ import {
   assrSubStatus,
   ASSR_SUB_STATUSES,
 } from "../vendor/scm/lib/assr/stages";
-import type { SupplierReturn } from "../vendor/scm/lib/assr/returns";
+import { ANOTHER_RETURN_HINT, type SupplierReturn } from "../vendor/scm/lib/assr/returns";
 import { MobileFactoryTrips } from "./MobileFactoryTrips";
+import { ITEM_LOCATION_OPTIONS, PICKUP_STATUS_OPTIONS, pickupTrackingOptions, pickupPicSelectOptions, usePickupPicDrivers } from "../components/assr/PickupTrackingFields";
+import { pendingWithOptions } from "../vendor/scm/lib/assr-verification-fields";
 import { MobileReopenControl } from "./MobileReopenControl";
 import { splitCategories } from "../lib/assrProductCategories";
 import { MobileAssrCategoryChips } from "./MobileAssrCategoryChips";
@@ -253,7 +256,6 @@ function useAssignableUsers(): PicUser[] {
   });
   return Array.isArray(data) ? data : [];
 }
-
 
 
 /** Mobile Service Case (ASSR) — Status Cards list + tabbed detail
@@ -725,6 +727,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
      yet", never as a hardcoded taxonomy the admin cannot change. */
   const productCategoryOptions = useLookupNames("product-categories", []);
   const assignableUsers = useAssignableUsers();
+  const pickupPicDrivers = usePickupPicDrivers();
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["mobile-assr-detail", id],
@@ -1040,11 +1043,10 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                 );
               })}
             </div>
-            <RootCauseField
-              value={get(c, "verifiedRootCause", "verified_root_cause")}
-              busy={busy}
-              onSave={(v) => patchCase({ verified_root_cause: v || null }, "Couldn't save verification")}
-            />
+            <RootCauseField value={get(c, "verifiedRootCause", "verified_root_cause")} busy={busy} onSave={(v) => patchCase({ verified_root_cause: v || null }, "Couldn't save verification")} />
+            <EditRow label="Inspection findings / action taken" type="textarea" value={get(c, "inspectionFindings", "inspection_findings")} busy={busy} disabled={dis} onSave={(v) => patchCase({ inspection_findings: v }, "Couldn't save inspection findings")} />
+            <EditRow label="Next action" type="textarea" value={get(c, "nextAction", "next_action")} busy={busy} disabled={dis} onSave={(v) => patchCase({ next_action: v }, "Couldn't save next action")} />
+            <EditRow label="Pending with" type="select" options={pendingWithOptions()} value={get(c, "pendingWith", "pending_with")} busy={busy} disabled={dis} onSave={(v) => patchCase({ pending_with: v }, "Couldn't save pending with")} />
             {/* QC issue inspection — on receipt (mig 0105: folded in from
                 the retired Pending Inspection stage). The qc_issue_result
                 column exists but ships no UI — Nick 2026-07-14: date +
@@ -1099,8 +1101,11 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
             <LegOwnerToggle label="Pickup by" current={get(c, "pickupBy", "pickup_by")} disabled={dis}
               options={[{ v: "customer", label: "Own team pickup" }, { v: "supplier", label: "Supplier direct" }]}
               onPick={(v) => patchCase({ pickup_by: v }, "Couldn't save pickup-by")} />
-            {/* Folded in from the retired Item Pickup stage (mig 0110). */}
-            <EditRow label="Customer pickup date" type="date" value={get(c, "customerPickupAt", "customer_pickup_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ customer_pickup_at: v }, "Couldn't save pickup date")} />
+            <EditRow label="Pickup status" type="select" options={pickupTrackingOptions(PICKUP_STATUS_OPTIONS)} value={get(c, "pickupStatus", "pickup_status")} busy={busy} disabled={dis} onSave={(v) => patchCase({ pickup_status: v }, "Couldn't save pickup status")} />
+            <EditRow label="Scheduled pickup date (ETA)" type="date" value={get(c, "customerPickupAt", "customer_pickup_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ customer_pickup_at: v }, "Couldn't save pickup date")} />
+            <EditRow label="Actual pickup date" type="date" value={get(c, "actualPickupAt", "actual_pickup_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ actual_pickup_at: v }, "Couldn't save actual pickup date")} />
+            <EditRow label="Pickup PIC" type="select" options={pickupPicSelectOptions(pickupPicDrivers, get(c, "creditorName", "creditor_name") || get(c, "supplier", "supplier"), get(c, "pickupPic", "pickup_pic"))} value={get(c, "pickupPic", "pickup_pic")} busy={busy} disabled={dis} onSave={(v) => patchCase({ pickup_pic: v }, "Couldn't save pickup PIC")} />
+            <EditRow label="Current item location" type="select" options={pickupTrackingOptions(ITEM_LOCATION_OPTIONS)} value={get(c, "itemLocation", "item_location")} busy={busy} disabled={dis} onSave={(v) => patchCase({ item_location: v }, "Couldn't save item location")} />
             {/* 返厂 (owner 2026-09-21) — every factory trip is a row, add as many
                 as needed. The latest row is the current trip; its dates mirror to
                 supplier_pickup_at / items_ready_at for the board + sheet. */}
@@ -1160,7 +1165,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
               options={[{ v: "own", label: "Own team" }, { v: "supplier", label: "Supplier" }]}
               onPick={(v) => patchCase({ delivery_by: v }, "Couldn't save delivery-by")} />
             <EditRow label="DO date" type="date" value={get(c, "doDate", "do_date")} busy={busy} disabled={dis} onSave={(v) => patchCase({ do_date: v }, "Couldn't save DO date")} />
-            <EditRow label="Ref No" value={get(c, "refNo", "ref_no")} mono busy={busy} disabled={dis} onSave={(v) => patchCase({ ref_no: v }, "Couldn't save Ref No")} />
+            <EditRow label="Ref No." value={get(c, "refNo", "ref_no")} mono busy={busy} disabled={dis} onSave={(v) => patchCase({ ref_no: v }, "Couldn't save Ref No")} />
           </>
         );
       case "completed":
@@ -1350,10 +1355,15 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                         </span>
                       </div>
                       <MobileItemRemark c={c} it={it} busy={busy} onChanged={refetch} notify={notify} field="remark" placeholder="Customer remark — prints on customer copy" />
-                      <MobileItemRemark c={c} it={it} busy={busy} onChanged={refetch} notify={notify} field="supplier_remark" placeholder="Supplier remark — prints on supplier copy" />
+                      {(data?.supplier_returns ?? []).length === 0 && (
+                        <MobileItemRemark c={c} it={it} busy={busy} onChanged={refetch} notify={notify} field="supplier_remark" placeholder="Supplier remark — prints on supplier copy" />
+                      )}
                     </div>
                   )) : (
                     <div style={{ fontSize: 12, color: GREY, padding: "2px 0" }}>No items recorded.</div>
+                  )}
+                  {(data?.supplier_returns ?? []).length > 0 && items.length > 0 && !isArchived && (
+                    <div style={{ fontSize: 11, color: GREY, lineHeight: 1.4, margin: "6px 0 2px" }}>{ANOTHER_RETURN_HINT}</div>
                   )}
                   <KV label="Order PO" value={assrOrderPoText(c) || "—"} mono />
                   <KV label="PO No" value={(poNo ? [String(poNo)] : []).concat(relatedPOs.map((p) => String(get(p, "docNo", "doc_no") ?? "")).filter(Boolean)).join(", ") || "—"} mono />
@@ -1497,7 +1507,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                     // SO re-matches customer info from the SO mirror
                     // server-side.
                     { key: "doc_no", label: "SO No", value: get(c, "docNo", "doc_no"), type: "so" },
-                    { key: "ref_no", label: "Ref No", value: get(c, "refNo", "ref_no"), type: "text" },
+                    { key: "ref_no", label: "Ref No.", value: get(c, "refNo", "ref_no"), type: "text" },
                     { key: "customer_name", label: "Customer", value: customer(c) === "—" ? "" : customer(c), type: "text" },
                     { key: "phone", label: "Phone", value: get(c, "phone", "customerPhone", "customer_phone"), type: "text" },
                     { key: "customer_email", label: "Email", value: get(c, "customerEmail", "customer_email"), type: "text" },
@@ -1520,16 +1530,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                           </div>
                         </div>
                       </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 11 }}>
-                        <div style={{ background: FIELD_BG, border: `1px solid ${DIM}`, borderRadius: 9, padding: "7px 10px" }}>
-                          <div className="money" style={{ fontSize: 8.5, letterSpacing: ".1em", textTransform: "uppercase", color: GREY, fontWeight: 600 }}>SO No</div>
-                          <div className="money" style={{ fontSize: 12.5, fontWeight: 600, color: TEAL_DK, marginTop: 3, ...cellEllipsis }}>{String(get(c, "docNo", "doc_no") ?? "—")}</div>
-                        </div>
-                        <div style={{ background: FIELD_BG, border: `1px solid ${DIM}`, borderRadius: 9, padding: "7px 10px" }}>
-                          <div className="money" style={{ fontSize: 8.5, letterSpacing: ".1em", textTransform: "uppercase", color: GREY, fontWeight: 600 }}>Ref No</div>
-                          <div className="money" style={{ fontSize: 12.5, fontWeight: 600, color: INK, marginTop: 3, ...cellEllipsis }}>{String(get(c, "refNo", "ref_no") ?? "—")}</div>
-                        </div>
-                      </div>
+                      <MobileCaseDocChips c={c as Record<string, unknown>} />
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 0 9px", borderBottom: "1px solid #f1f0ea", marginTop: 4 }}>
                         <div style={{ minWidth: 0 }}>
                           <div className="money" style={{ fontSize: 8.5, letterSpacing: ".1em", textTransform: "uppercase", color: GREY, fontWeight: 600 }}>Phone</div>
@@ -3140,7 +3141,7 @@ function MobileItemRemark({ c, it, busy, onChanged, notify, field, placeholder }
 }
 
 // Supplier (creditor) picker — search the local creditors mirror and
-// hand-link a supplier when AutoCount has no MainSupplier, or register
+// hand-link a supplier when the PO / SO gives none, or register
 // a new one. Manual picks set creditor_source='manual' so the
 // auto-resolver won't overwrite them.
 function MobileSupplierPick({ c, onChanged, notify, disabled }: { c: Any; onChanged: () => void; notify: ReturnType<typeof useNotify>; disabled?: boolean }) {
@@ -3148,7 +3149,7 @@ function MobileSupplierPick({ c, onChanged, notify, disabled }: { c: Any; onChan
   const caseId = Number(get(c, "id"));
   const code = get(c, "creditorCode", "creditor_code");
   const name = get(c, "creditorName", "creditor_name");
-  const manual = String(get(c, "creditorSource", "creditor_source") ?? "") === "manual";
+  const source = String(get(c, "creditorSource", "creditor_source") ?? "");
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [results, setResults] = useState<Any[]>([]);
@@ -3226,7 +3227,7 @@ function MobileSupplierPick({ c, onChanged, notify, disabled }: { c: Any; onChan
         <div style={{ display: "flex", alignItems: "center", gap: 9, border: `1px solid ${DIM}`, borderRadius: 10, padding: "10px 11px", marginTop: 5 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12.5, fontWeight: 700, color: INK }}>{String(name ?? code)}</div>
-            <div className="money" style={{ fontSize: 10, color: GREY }}>{String(code)}{manual ? " · manual" : ""}</div>
+            <div className="money" style={{ fontSize: 10, color: GREY }}>{String(code)}{source === "manual" ? " · manual" : source === "po" ? " · from PO" : source === "so" ? " · from SO" : ""}</div>
           </div>
         </div>
       ) : (

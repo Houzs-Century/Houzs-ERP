@@ -13,7 +13,7 @@ import { lazy, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
-import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity, fmtQty } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import {
   ArrowLeft,
@@ -32,6 +32,7 @@ import {
   Share2,
   Split,
   Plus,
+  Undo2,
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -64,7 +65,6 @@ import {
 import { canOperatePurchaseOrders } from "../../auth/salesAccess";
 import { skuMapFromBindings, supplierCodeFor } from "../../vendor/scm/lib/supplier-doc-data";
 import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
-import { useMaintenanceConfig } from "../../vendor/scm/lib/mfg-products-queries";
 import { poDisplayNumber } from "../../vendor/scm/lib/po-status";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
@@ -487,10 +487,6 @@ function PurchaseOrderDetailV2ReadOnly() {
      hook every other PO screen uses. includeInactive so a warehouse
      that was toggled off after the PO was raised still resolves. */
   const warehousesQ = useWarehouses({ includeInactive: true });
-  // Sofa-compartment hero photos for the PO's sofa-layout schematic (drawn from
-  // real photos when uploaded, else the drawn fallback). Same master-scope config
-  // POS Custom Builder reads.
-  const maintenanceQ = useMaintenanceConfig();
   const warehouseNameById = useMemo(() => {
     const m = new Map<string, string>();
     for (const w of warehousesQ.data ?? []) {
@@ -587,11 +583,8 @@ function PurchaseOrderDetailV2ReadOnly() {
           .source_so_doc_no ?? null,
     };
     return import("../../vendor/scm/lib/purchase-order-pdf")
-      .then(async ({ generatePurchaseOrderPdf }) => {
-        const { loadSofaCompartmentPhotos } = await import("../../vendor/scm/lib/sales-order-queries");
-        const sofaPhotos = await loadSofaCompartmentPhotos(maintenanceQ.data?.data?.sofaCompartmentMeta);
-        return generatePurchaseOrderPdf(headerForPdf as never, items as never, { action, sofaPhotos });
-      })
+      .then(({ generatePurchaseOrderPdf }) =>
+        generatePurchaseOrderPdf(headerForPdf as never, items as never, { action }))
       .catch((e) =>
         notify({
           title: "PDF generation failed",
@@ -604,6 +597,14 @@ function PurchaseOrderDetailV2ReadOnly() {
   useOpenPrintPreviewFromUrl(print.openPreview, !!purchaseOrder);
   const goGrnFromPo = () =>
     id && navigate(convertToLink('poToGrn', id));
+
+  /* Raise Return — the PO-sourced purchase return. The button existed only on
+     the legacy detail page, which no route renders any more, so a received PO
+     had NO way into a return at all (owner 2026-09-28, HC-PO-010114). The link
+     goes through convertToLink so the scope params stay the ones
+     lib/convertScope owns. */
+  const goReturnFromPo = () =>
+    id && navigate(convertToLink('poToPr', id));
 
   /* Email this PO to its supplier — a HUMAN action (the agent only drafts). The
      PDF is rendered here in the browser (the backend has no PDF engine) and posted
@@ -873,7 +874,7 @@ function PurchaseOrderDetailV2ReadOnly() {
       getValue: (l) => l.qty,
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
-          {l.qty} <span className="text-[10.5px] text-ink-muted">{l.uom || ""}</span>
+          {fmtQty(l.qty)} <span className="text-[10.5px] text-ink-muted">{l.uom || ""}</span>
         </span>
       ),
     },
@@ -1254,6 +1255,15 @@ function PurchaseOrderDetailV2ReadOnly() {
                 Raise amendment
               </Button>
             )}
+            {/* Raise Return — once anything has been received against this PO.
+                Offered only to someone who can open the Purchase Returns area:
+                a button that lands on Forbidden is worse than no button. */}
+            {(purchaseOrder.status === 'PARTIALLY_RECEIVED' || purchaseOrder.status === 'RECEIVED')
+              && pageAccess('scm.procurement.pr') !== 'none' && (
+              <Button variant="secondary" icon={<Undo2 size={14} />} onClick={goReturnFromPo}>
+                Raise Return
+              </Button>
+            )}
             <Button variant="secondary" icon={<Plus size={14} />} onClick={goAddLine}>{ADD_LINE_LABEL}</Button>
             <Button variant="primary" icon={<Edit3 size={14} />} onClick={goEdit}>
               Edit
@@ -1606,15 +1616,12 @@ function PurchaseOrderDetailV2ReadOnly() {
         pairing={chainPairing}
       />
       {/* A chain slot standing for several documents opens this chooser instead
-          of a notice that only named them. Picking a row navigates, so the map
-          closes with it. */}
+          of a notice that only named them. The picked one opens in its own tab of the
+          in-app strip. */}
       <DocumentChoiceDialog
         prompt={chainChoice}
         onClose={closeChainChoice}
-        onPick={(d) => {
-          setRelMapOpen(false);
-          pickChainChoice(d);
-        }}
+        onPick={pickChainChoice}
       />
       {historyOpen && (
         <DocumentHistoryDrawer doc="PURCHASE_ORDER" id={String(purchaseOrder.id)}

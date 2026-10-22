@@ -103,6 +103,19 @@ vi.mock('./bank-queries', () => ({
   useUndoBankLine: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
+/* Where a kept charge may be booked (owner 2026-09-30) — read lazily, so the
+   list below is only reached once a test opens that form. */
+vi.mock('./settlement-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./settlement-queries')>()),
+  useChargeChoices: () => ({
+    data: {
+      chargeAccounts: [{ accountCode: '900-T003', accountName: 'TERMINAL RENTAL CHARGES' }, { accountCode: '900-T009', accountName: 'MERCHANT FEE' }],
+      feeAccountByAcquirer: { GHL: '900-T009' },
+    },
+    isError: false, error: null,
+  }),
+}));
+
 import { BankStatementTab } from './BankStatementTab';
 
 const openStatement = () => {
@@ -265,10 +278,10 @@ describe('amounts in two columns', () => {
     ];
     openStatement();
     const table = screen.getByText(/Outstanding items — in the books, not yet on the bank \(3\)/).closest('section') as HTMLElement;
-    expect(cellsOf(within(table).getByText('2990-JE-2608-0044').closest('tr') as HTMLElement).slice(1, 5)).toEqual(['2990-JE-2608-0044', '05/08/2026', '2990DraftOR-2608-001 · 2990-SO-2606-014', 'Ah Meng']);
-    expect(cellsOf(within(table).getByText('2990-JE-2608-0145').closest('tr') as HTMLElement).slice(2, 5)).toEqual(['12/08/2026', '2990-HPV-2608-017', 'LOO WEN WEI']);
+    expect(cellsOf(within(table).getByText('2990-JE-2608-0044').closest('tr') as HTMLElement).slice(1, 5)).toEqual(['2990-JE-2608-0044', '2026/08/05', '2990DraftOR-2608-001 · 2990-SO-2606-014', 'Ah Meng']);
+    expect(cellsOf(within(table).getByText('2990-JE-2608-0145').closest('tr') as HTMLElement).slice(2, 5)).toEqual(['2026/08/12', '2990-HPV-2608-017', 'LOO WEN WEI']);
     /* No reference from the server: the source, and the note for who. */
-    expect(cellsOf(within(table).getByText(/2990-JE-2607-0001/).closest('tr') as HTMLElement).slice(1, 5)).toEqual(['2990-JE-2607-0001 · earlier month', '01/07/2026', 'MANUAL', 'Opening']);
+    expect(cellsOf(within(table).getByText(/2990-JE-2607-0001/).closest('tr') as HTMLElement).slice(1, 5)).toEqual(['2990-JE-2607-0001 · earlier month', '2026/07/01', 'MANUAL', 'Opening']);
     expect(screen.queryByText('cacb0d35-8f9f-4a94-a156-d1b0f96b52d0')).toBeNull();
   });
 
@@ -299,7 +312,7 @@ describe('amounts in two columns', () => {
     expect(rows).toEqual(['Pick line 12', 'Pick line 15', 'Pick line 26', 'Pick line 46']);
     const cell = screen.getByText('JULY SALARY ENG SUI HOR 20260806HLBBMYKL010OCB64596966').closest('td') as HTMLElement;
     const linesOfCell = Array.from(cell.querySelectorAll(':scope > div')).map((d) => String(d.textContent).trim());
-    expect(linesOfCell).toEqual(['06/08/2026 · line 26', 'JULY SALARY ENG SUI HOR 20260806HLBBMYKL010OCB64596966', 'CIB Instant Transfer at DIO']);
+    expect(linesOfCell).toEqual(['2026/08/06 · line 26', 'JULY SALARY ENG SUI HOR 20260806HLBBMYKL010OCB64596966', 'CIB Instant Transfer at DIO']);
     expect(screen.queryByText('2026-08-06')).toBeNull();
   });
 });
@@ -532,6 +545,50 @@ describe('a movement still to decide', () => {
     expect(button.disabled).toBe(false);
     fireEvent.click(button);
     expect(ignoreMutate).toHaveBeenCalledWith({ lineId: 3, note: 'bank charge, posted from the GL side' });
+  });
+});
+
+/* Owner 2026-09-30 (这个RM54 是charges 来的，和之前的public bank一样): GHL paid
+   RM 3,128.40 against a report owed RM 3,182.40, and sends no advice to book the
+   RM 54.00 on — the credit books with the charge, or not at all. */
+describe('a credit short by a charge the acquirer kept', () => {
+  const KEPT: BankLine = {
+    ...LINE, id: 4, line_no: 11, acquirer_code: 'GHL', amount_sen: 312840, kind: 'PAYOUT_UNSURE', matched_batch_id: null,
+    candidates: [{ id: 9, acquirerCode: 'GHL', fileName: 'ghl-2908.csv', periodFrom: '2026-08-29', periodTo: '2026-08-29', payableSen: 318240, outstandingSen: 318240 }],
+  };
+
+  test('offers to book what the bank kept, and sends the credit and the charge together', () => {
+    lines = [KEPT];
+    openStatement();
+    fireEvent.click(screen.getByLabelText('Report ghl-2908.csv for line 11'));
+    expect(screen.getByText('RM 54.00 too much')).toBeTruthy();
+    const button = screen.getByText('Money received').closest('button') as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+
+    fireEvent.click(screen.getByLabelText('The bank kept RM 54.00 for line 11'));
+    /* The acquirer's fee account first; the one Finance picks wins. */
+    const account = screen.getByLabelText('Charge account for line 11') as HTMLSelectElement;
+    expect(account.value).toBe('900-T009');
+    fireEvent.change(account, { target: { value: '900-T003' } });
+    /* Not without saying what it was for. */
+    expect(button.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('What the bank kept it for, line 11'), { target: { value: 'GHL terminal rental' } });
+    expect(button.disabled).toBe(false);
+
+    fireEvent.click(button);
+    expect(bookMutate).toHaveBeenCalledWith({
+      lineId: 4,
+      allocations: [{ batchId: 9, amountSen: 312840 }],
+      charge: { batchId: 9, amountSen: 5400, accountCode: '900-T003', note: 'GHL terminal rental' },
+    });
+  });
+
+  test('offers nothing when the credit is MORE than the report — that is not a charge', () => {
+    lines = [{ ...KEPT, amount_sen: 318240 + 5400 }];
+    openStatement();
+    fireEvent.click(screen.getByLabelText('Report ghl-2908.csv for line 11'));
+    expect(screen.getByText('RM 54.00 short')).toBeTruthy();
+    expect(screen.queryByLabelText('The bank kept RM 54.00 for line 11')).toBeNull();
   });
 });
 

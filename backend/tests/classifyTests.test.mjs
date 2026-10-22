@@ -273,6 +273,24 @@ const MUST_GATE_MERGE = [
      absence assertion would pass over handlers moved out of mfg-sales-orders.ts
      and nothing would turn red. */
   "tests/soRouterFamily.test.ts",
+  /* The Delivery sheet feeds reach Postgres only after toPgPlaceholders. An
+     apostrophe in a SQL comment left ?1 / ?2 unconverted and the ASSR feeds 502d
+     (#4447); the pg suite that saw it is not a required check. */
+  "tests/deliverySheetFeedPlaceholders.test.ts",
+  /* The RBAC rebuild moved page access to the role_page_access table. This pins
+     that resolving from the seeded rows is byte-identical to the login-time
+     derivation it replaced, money/stock pages included — a regression would
+     silently narrow or widen who can see the GL, payment vouchers or stock on
+     the next login, with the deploy perfectly healthy. That has to stop a
+     MERGE. */
+  "tests/rolePageAccessCutover.test.ts",
+  /* PR2's page-access WRITE contract. The matrix stores role_page_access rows
+     that decide who sees the GL / payment vouchers / stock. A regression that
+     loosened the validation (a retired key the resolver treats inertly, the
+     looser 5-level `partial`, or dropping the system-role / `*` protection)
+     would let an admin's save silently fail to mean what it says, deploy still
+     green — the exact "设了没用" class the rebuild exists to end. */
+  "tests/rolesPageAccessWrite.test.ts",
 ];
 
 test("every merge-gating suite is classified LIGHT, so a required job runs it", async () => {

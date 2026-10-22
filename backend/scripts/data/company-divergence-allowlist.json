@@ -54,8 +54,20 @@
     },
     {
       "file": "backend/src/routes/assr_print.ts",
-      "text": "const csPhone = companyCode === HOUZS_COMPANY_CODE ? \"011-6155 6133\" : branding.phone;",
+      "text": "const csPhone = signCode === HOUZS_COMPANY_CODE ? \"011-6155 6133\" : signBranding.phone;",
       "why": "Print entity on a service-case document: which company's name, phone and logo head the paper, and which of the two profile blocks is the 'home' one. Presentation of a document, not what the document can do.",
+      "whoSetIt": "House branding — each company prints under its own name."
+    },
+    {
+      "file": "backend/src/routes/assr_print.ts",
+      "text": "const caseEntity = companyCode === HOUZS_COMPANY_CODE ? \"houzs\" : \"2990\";",
+      "why": "Print entity on a service-case document: the sign-off panels and footer contact name the same company as the letterhead. Presentation of a document, not what the document can do.",
+      "whoSetIt": "House branding — each company prints under its own name."
+    },
+    {
+      "file": "backend/src/routes/assr_print.ts",
+      "text": "return entity === \"2990\" ? \"2990\" : HOUZS_COMPANY_CODE;",
+      "why": "Print entity on a service-case document: the sign-off panels and footer contact name the same company as the letterhead. Presentation of a document, not what the document can do.",
       "whoSetIt": "House branding — each company prints under its own name."
     },
     {

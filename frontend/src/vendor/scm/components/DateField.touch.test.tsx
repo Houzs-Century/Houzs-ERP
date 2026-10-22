@@ -107,10 +107,10 @@ describe('reaching the picker by finger', () => {
 
     // And it accepts a date typed into it, on a phone, per keystroke.
     fireEvent.focus(box);
-    for (const chunk of ['7', '7/', '7/9', '7/9/', '7/9/2', '7/9/20', '7/9/202', '7/9/2026']) {
+    for (const chunk of ['2', '20', '202', '2026', '2026/', '2026/9', '2026/9/', '2026/9/7']) {
       fireEvent.change(box, { target: { value: chunk } });
     }
-    expect(box.value).toBe('7/9/2026');
+    expect(box.value).toBe('2026/9/7');
     expect(onChange).toHaveBeenLastCalledWith('2026-09-07');
   });
 
@@ -199,7 +199,7 @@ describe('an unparseable draft is visible', () => {
 
     expect(box.value).toBe('7/9');
     expect(box.getAttribute('aria-invalid')).toBe('true');
-    expect(screen.getByRole('alert').textContent).toContain('dd/mm/yyyy');
+    expect(screen.getByRole('alert').textContent).toContain('yyyy/mm/dd');
     expect(onChange).not.toHaveBeenCalled();
   });
 
@@ -209,7 +209,7 @@ describe('an unparseable draft is visible', () => {
     const box = screen.getByLabelText('Invoice date') as HTMLInputElement;
 
     fireEvent.focus(box);
-    fireEvent.change(box, { target: { value: '7/9/2026' } });
+    fireEvent.change(box, { target: { value: '2026/9/7' } });
     fireEvent.blur(box);
 
     expect(onChange).toHaveBeenLastCalledWith('2026-09-07');
@@ -235,12 +235,12 @@ describe('an unparseable draft is visible', () => {
     const box = screen.getByLabelText('Invoice date') as HTMLInputElement;
 
     fireEvent.focus(box);
-    fireEvent.change(box, { target: { value: '99/99/9999' } });
+    fireEvent.change(box, { target: { value: '9999/99/99' } });
     fireEvent.blur(box);
     expect(screen.getByRole('alert')).toBeTruthy();
 
     fireEvent.focus(box);
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(box.value).toBe('01/09/2026');
+    expect(box.value).toBe('2026/09/01');
   });
 });

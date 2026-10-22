@@ -21,6 +21,8 @@ const DATA: MaintenanceData = {
       code: 'PBB', display_name: 'PBB', statement_format: 'CSV', has_unique_ref: true,
       fee_method: 'gross-minus-net', date_tolerance_days: 3,
       column_map: { date: 'Date', gross: 'Amount', ref: 'Approval_code', net: 'Net' },
+      /* The till calls Public Bank "Public" (owner 2026-10-21: Public=PBB). */
+      so_names: ['Public'],
       ready: true, autoMatchable: true,
       /* His own case: the same merchant, two companies, two banks. */
       byCompany: {
@@ -81,6 +83,7 @@ const DATA: MaintenanceData = {
 const merchantMutate = vi.fn();
 const bankMutate = vi.fn();
 const saveLayout = vi.fn();
+const rematchMutateAsync = vi.fn();
 let bankError: unknown = null;
 
 /* The default-bank card's hooks (vendor accounting-queries) — stubbed so this
@@ -125,6 +128,7 @@ vi.mock('./settlement-queries', () => ({
   useSaveMaintenanceMerchant: () => ({ mutate: merchantMutate, isPending: false }),
   useSaveMaintenanceBank: () => ({ mutate: bankMutate, isPending: false, isError: bankError != null, error: bankError }),
   useSaveAcquirerSetup: () => ({ mutate: saveLayout, isPending: false }),
+  useRematch: () => ({ mutateAsync: rematchMutateAsync, isPending: false }),
 }));
 
 import { SettlementSetup } from './SettlementSetup';
@@ -225,6 +229,49 @@ describe('the report layout — the shared half', () => {
     fireEvent.click(screen.getByText('Save'));
     expect(screen.getByText(/Fill in the Date heading/)).toBeTruthy();
     expect(saveLayout).not.toHaveBeenCalled();
+  });
+});
+
+/* Owner 2026-10-21: 「Pinelabs=AEON，Public=PBB」, and 已经上传的报告也重新对一次. */
+describe("a merchant's other names on Sales Orders", () => {
+  test('the row says which other names the merchant answers to', () => {
+    draw();
+    expect(within(merchantRow('PBB')).getByText('also keyed as Public')).toBeTruthy();
+  });
+
+  test('saving a new name matches every company that uses the merchant again, and says what changed', async () => {
+    saveLayout.mockReset();
+    rematchMutateAsync.mockReset();
+    saveLayout.mockImplementation((_body: unknown, opts: { onSuccess: () => void }) => opts.onSuccess());
+    rematchMutateAsync
+      .mockResolvedValueOnce({ ok: true, acquirerCode: 'PBB', reports: 15, lines: 100, matched: 75, newlyMatched: 74, released: 0, failed: [] })
+      .mockResolvedValueOnce({ ok: true, acquirerCode: 'PBB', reports: 0, lines: 0, matched: 0, newlyMatched: 0, released: 0, failed: [] });
+    draw();
+    fireEvent.click(within(merchantRow('PBB')).getByText('Change'));
+    expect((screen.getByLabelText('PBB also keyed as') as HTMLInputElement).value).toBe('Public');
+    fireEvent.change(screen.getByLabelText('PBB also keyed as'), { target: { value: 'Public, Public Bank ,' } });
+    fireEvent.click(screen.getByText('Save'));
+
+    expect(saveLayout.mock.calls[0]![0]).toMatchObject({ code: 'PBB', soNames: ['Public', 'Public Bank'] });
+    expect(await screen.findByText(/PBB saved\. Reports matched again — Houzs Century: 75 lines matched by reference, ready to confirm \(74 new\); 2990's Home: no open lines\./)).toBeTruthy();
+    expect(rematchMutateAsync.mock.calls.map((c) => c[0])).toEqual([
+      { companyId: 1, acquirerCode: 'PBB' },
+      { companyId: 2, acquirerCode: 'PBB' },
+    ]);
+    saveLayout.mockReset();
+  });
+
+  test('a save that changes nothing a match depends on goes straight back, without matching again', () => {
+    saveLayout.mockReset();
+    rematchMutateAsync.mockReset();
+    saveLayout.mockImplementation((_body: unknown, opts: { onSuccess: () => void }) => opts.onSuccess());
+    draw();
+    fireEvent.click(within(merchantRow('PBB')).getByText('Change'));
+    fireEvent.change(screen.getByLabelText('PBB statement format'), { target: { value: 'XLSX' } });
+    fireEvent.click(screen.getByText('Save'));
+    expect(rematchMutateAsync).not.toHaveBeenCalled();
+    expect(screen.getByText('Merchants')).toBeTruthy();
+    saveLayout.mockReset();
   });
 });
 

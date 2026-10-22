@@ -48,6 +48,11 @@ export type DeliverableSoLine = {
   delivered: number;
   returned: number;
   remaining: number;
+  /** The order's raw reference pair (resolve with soRefOfCamelStamp). */
+  soRef?: string | null;
+  soCustomerSoNo?: string | null;
+  /** Null when the line's stock is READY (BUG-59). */
+  notReady: { status: 'PARTIAL' | 'PENDING'; reason: string } | null;
 };
 
 export const useDeliverableSoLines = () => useQuery({
@@ -226,12 +231,13 @@ export function doListSearchParams(f: { status?: string; q?: string; sort?: stri
   return usp;
 }
 
-export function useMfgDeliveryOrdersPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string; debtorNames?: string[]; currencies?: string[] }) {
-  const { page, pageSize, status, q, sort, debtorNames, currencies } = params;
+export function useMfgDeliveryOrdersPaged(params: { enabled: boolean; page: number; pageSize: number; status?: string; q?: string; sort?: string; debtorNames?: string[]; currencies?: string[] }) {
+  const { enabled, page, pageSize, status, q, sort, debtorNames, currencies } = params;
   const usp = doListSearchParams({ status, q, sort, debtorNames, currencies });
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
   return useQuery({
+    enabled,
     queryKey: ['mfg-delivery-orders-paged', page, pageSize, status ?? '', q ?? '', sort ?? '', JSON.stringify(debtorNames ?? []), JSON.stringify(currencies ?? [])],
     queryFn: ({ signal }) => authedFetch<{ deliveryOrders: any[]; total: number; page: number; pageSize: number; statusCounts: { all: number; open: number; in_transit: number; delivered: number; cancelled: number } }>(`/delivery-orders-mfg?${usp.toString()}`, { signal }),
     placeholderData: (prev: any) => prev,
@@ -302,6 +308,8 @@ export type DoDeliveryEvidence = {
   signatureData?: string;
   /** R2 key of the delivery photo → `delivery_orders.pod_r2_key`. */
   podKey?: string;
+  /** Every POD photo (the first is also podKey) → `delivery_orders.pod_photo_keys`. */
+  podKeys?: string[];
   /** Where it was signed (mig 0249). Written server-side as a PAIR or not at all. */
   podLat?: number;
   podLng?: number;

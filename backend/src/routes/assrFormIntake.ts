@@ -32,6 +32,7 @@ import { intakeCompany } from "../lib/intake-company";
 import { ASSR_SHEET_STATUS } from "../scm/shared/assr-stage-labels";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { summariseReadiness } from "../scm/lib/so-readiness";
+import { soTownLines } from "../services/autocount-address-fit";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -942,8 +943,8 @@ app.get("/so-export", async (c) => {
     address2: o.address2,
     /* 2990 keeps town/state in their own columns while the sheet expects the
        AutoCount shape: "<postcode> <town>" on line 3, state on line 4. */
-    address3: o.address3 ?? ([o.postcode, o.city].filter(Boolean).join(" ") || null),
-    address4: o.address4 ?? o.customer_state,
+    address3: soTownLines(o)[0],
+    address4: soTownLines(o)[1],
   }));
 
   return c.json({ count: rows.length, orders: rows });

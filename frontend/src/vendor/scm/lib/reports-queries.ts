@@ -87,6 +87,9 @@ export type SoDetailListingRow = Record<string, unknown> & {
   account_sheet: string | null;
   approval_code: string | null;
   collected_by: string | null;
+  /** The order's own reference pair (resolve with customerRefOf). */
+  ref?: string | null;
+  customer_so_no?: string | null;
 };
 
 export const useSalesOrderDetailListing = (filters: SoDetailListingFilters) => {
@@ -140,6 +143,12 @@ export type DetailListingRow = Record<string, unknown> & {
   total_sen?: number;
   balance_sen?: number;
   status?: string | null;
+  /** DO / SI rows: the order's raw reference pair (resolve with soRefOfStamp). */
+  so_ref?: string | null;
+  so_customer_so_no?: string | null;
+  /** DR rows: the return header's own reference pair (resolve with customerRefOf). */
+  ref?: string | null;
+  customer_so_no?: string | null;
 };
 
 const buildDetailListingQs = (filters: DetailListingFilters): string => {

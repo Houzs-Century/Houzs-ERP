@@ -1,6 +1,7 @@
 import { Check } from "lucide-react";
 import { Button } from "./Button";
 import { cn } from "../lib/utils";
+import { serializeLayout, type LayoutSeed, type NamedLayout, type StoredLayout } from "../lib/tableLayouts";
 
 /**
  * The "Layout" block at the top of a columns drawer — named layouts to pick
@@ -29,6 +30,17 @@ export interface LayoutPresetOption {
    *  Absent for a company default or a page seed, which they cannot rename or
    *  delete. */
   savedId?: number;
+  /** A code-shipped page seed with no admin override to edit: pickable only, so
+   *  the row shows no actions menu (a company default has no savedId either but
+   *  IS editable, so absence of savedId alone can't mean read-only). */
+  readOnly?: boolean;
+  /** A code-shipped page seed. A layout MANAGER may edit it team-wide ("Update
+   *  with current columns" writes a company-shared override), but it is never
+   *  renamed / duplicated / deleted like a personal layout. */
+  seed?: boolean;
+  /** This seed currently shows an admin's company-shared override, so the row
+   *  offers "Reset to default" back to the code seed. */
+  overridden?: boolean;
 }
 
 export interface LayoutDefaultManager {
@@ -177,4 +189,41 @@ export function withSingleActive(rows: LayoutPresetOption[]): LayoutPresetOption
   if (matches.length < 2) return rows;
   const winner = matches.find((r) => r.isDefault) ?? matches[0]!;
   return rows.map((r) => (r.active && r !== winner ? { ...r, active: false } : r));
+}
+
+/** The effective layout for a page SEED: a layout manager's company-shared
+ *  override (matched by name === seed id) if one exists, else the code seed.
+ *  One rule, so the picker row, apply and active-check never disagree. */
+export function resolveSeedLayout(
+  seed: LayoutSeed,
+  shared: NamedLayout[] | undefined,
+): StoredLayout {
+  return shared?.find((l) => l.name === seed.id)?.layout ?? seed.layout;
+}
+
+/** Build the picker rows for a page's code seeds, folding in any company-shared
+ *  overrides. `canManage` (Owner / Super Admin) makes each row editable; others
+ *  see a read-only, pickable row. Kept beside `LayoutPresetOption` so the seed's
+ *  id prefix and flags live in one place. */
+export function buildSeedPresetRows(
+  seeds: LayoutSeed[],
+  shared: NamedLayout[] | undefined,
+  columnsLength: number,
+  currentSignature: string,
+  canManage: boolean,
+): LayoutPresetOption[] {
+  return seeds.map((s) => {
+    const override = shared?.find((l) => l.name === s.id)?.layout;
+    const layout = override ?? s.layout;
+    return {
+      id: `seed:${s.id}`,
+      label: s.label,
+      seed: true,
+      overridden: override != null,
+      readOnly: !canManage,
+      isDefault: false,
+      count: Math.max(0, columnsLength - layout.hidden.length),
+      active: serializeLayout(layout) === currentSignature,
+    };
+  });
 }

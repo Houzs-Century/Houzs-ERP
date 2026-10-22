@@ -27,6 +27,7 @@ import { NotifyProvider, useNotify } from '../../vendor/scm/components/NotifyDia
 import { ConfirmProvider, useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { PromptProvider } from '../../vendor/scm/components/PromptDialog';
 import { ChoiceProvider } from '../../vendor/scm/components/ChoiceDialog';
+import { VpBrandPromptBridge } from '../../vendor/scm/components/VpBrandPromptBridge';
 import { PrintChainProvider } from '../../components/scm-v2/PrintChainProvider';
 import { registerDialogService } from '../../vendor/scm/lib/dialog-service';
 import { rememberScmListReturn } from '../../lib/scmListReturn';
@@ -71,6 +72,7 @@ export function Scm2990Shell({ children }: { children: ReactNode }) {
                 as Confirm / Choice / Notify and can use them. */}
             <PrintChainProvider>
             <DialogServiceBridge />
+            <VpBrandPromptBridge />
             <ScmListReturnTracker />
             {/* Nick 2026-07-09 — "local host 还没有上面 pin 起来". `overflow-x:
                 hidden` on this wrapper creates a scroll container that traps

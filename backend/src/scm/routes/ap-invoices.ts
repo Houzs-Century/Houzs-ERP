@@ -46,15 +46,20 @@ import {
 } from './ap-invoice-files';
 import { supabaseAuth } from '../middleware/auth';
 import { fmtSen } from '../shared/format';
+import { parseEventId, unknownEventRefusal } from '../lib/event-tags';
+import { linkPaymentRequest, paymentRequestLinkGuard } from '../lib/payment-request';
+import { officialActor, officialOwedFields, officialOwedUpdates } from '../lib/official-doc';
+import { eventAccountRefusal } from '../lib/event-accounts';
 
 type Row = Record<string, any>;
 
 const NO_PERM = (what: string) => ({ error: `You don't have permission to ${what}.` });
 
-const HEADER = 'id, company_id, invoice_number, supplier_id, supplier_invoice_ref, invoice_date, due_date, currency, exchange_rate, total_sen, paid_sen, status, notes, created_at, created_by, posted_at, posted_by, cancelled_at, cancelled_by';
-const LINE = 'id, line_no, description, debit_account_code, amount_sen';
+const HEADER = 'id, company_id, invoice_number, supplier_id, supplier_invoice_ref, invoice_date, due_date, currency, exchange_rate, total_sen, paid_sen, status, notes, created_at, created_by, posted_at, posted_by, cancelled_at, cancelled_by, official_doc, official_doc_note, official_doc_at, official_doc_by';
+const LINE = 'id, line_no, description, debit_account_code, amount_sen, project_id';
 
-type CleanLine = { description: string | null; code: string; amountSen: number };
+/** projectId: the event the line's money is for (owner 2026-09-30, 5a; lib/event-tags.ts). */
+type CleanLine = { description: string | null; code: string; amountSen: number; projectId: number | null };
 
 /** 1–50 lines, each with a leaf account and a positive integer sen. */
 function buildLines(raw: unknown): { lines: CleanLine[]; total: number } | { error: string; message: string } {
@@ -68,7 +73,9 @@ function buildLines(raw: unknown): { lines: CleanLine[]; total: number } | { err
     if (!Number.isInteger(amount) || amount <= 0) {
       return { error: 'bad_line', message: `Line ${i + 1}: amountSen must be a positive integer (got ${String(l?.amountSen)}).` };
     }
-    lines.push({ description: l?.description ? String(l.description).trim() : null, code, amountSen: amount });
+    const projectId = parseEventId(l?.projectId);
+    if (projectId === 'invalid') return { error: 'bad_line', message: `Line ${i + 1}: projectId must be an event id (got ${String(l?.projectId)}).` };
+    lines.push({ description: l?.description ? String(l.description).trim() : null, code, amountSen: amount, projectId });
   }
   return { lines, total: lines.reduce((s, l) => s + l.amountSen, 0) };
 }
@@ -190,6 +197,13 @@ export const createApInvoiceHandler = async (c: any): Promise<Response> => {
     const leafErr = await requireLeafAccount(c, co.companyId, code);
     if (leafErr) return leafErr;
   }
+  const eventErr = await unknownEventRefusal(c, built.lines.map((l) => l.projectId));
+  if (eventErr) return eventErr;
+  /* 申请付款 answered by a bill (owner 2026-09-30, 6.1): the request must still
+     be waiting — one with a live voucher or AP invoice is refused by name, and
+     a refund request takes a refund voucher, never a bill. */
+  const prq = await paymentRequestLinkGuard(c, body.paymentRequestId, { kind: 'API' });
+  if ('resp' in prq) return prq.resp;
 
   const sb = c.get('supabase');
   const invoiceNumber = await mintMonthlyDocNo(sb, 'ap_invoices', 'invoice_number', `${companyDocPrefix(c)}API-${docMonthTag(invoiceDate)}`);
@@ -198,6 +212,7 @@ export const createApInvoiceHandler = async (c: any): Promise<Response> => {
     invoice_number: invoiceNumber,
     supplier_id: sup.supplier.id,
     supplier_invoice_ref: body.supplierInvoiceRef ? String(body.supplierInvoiceRef).trim() : null,
+    ...officialOwedFields(body, officialActor(c)), // 欠正式单 — booked on a proforma (lib/official-doc.ts)
     invoice_date: invoiceDate,
     due_date: dueDate,
     currency: 'MYR',
@@ -217,10 +232,23 @@ export const createApInvoiceHandler = async (c: any): Promise<Response> => {
     description: l.description,
     debit_account_code: l.code,
     amount_sen: l.amountSen,
+    project_id: l.projectId,
   })));
   if (lineErr) {
     await sb.from('ap_invoices').delete().eq('company_id', co.companyId).eq('id', (inv as Row).id);
     return c.json({ error: 'save_failed', reason: lineErr.message }, 500);
+  }
+  /* The request is claimed only if still waiting — else this bill never
+     stood — and its files are copied onto the bill. */
+  let requestFilesCopied = 0;
+  if (prq.request) {
+    const linked = await linkPaymentRequest(c, prq.request, { kind: 'API', id: String((inv as Row).id), number: invoiceNumber });
+    if (!linked.ok) {
+      await sb.from('ap_invoice_lines').delete().eq('company_id', co.companyId).eq('invoice_id', (inv as Row).id);
+      await sb.from('ap_invoices').delete().eq('company_id', co.companyId).eq('id', (inv as Row).id);
+      return c.json(linked.body, linked.status);
+    }
+    requestFilesCopied = linked.filesCopied;
   }
   /* The habit this bill teaches: the supplier's name → the first line's
      account, so the OCR's next reading of the same vendor's bill pre-fills
@@ -231,7 +259,7 @@ export const createApInvoiceHandler = async (c: any): Promise<Response> => {
     payeeName: sup.supplier.name, purpose: 'SUPPLIER_PAYMENT', source: 'AP_INVOICE',
     lines: built.lines.map((l, i) => ({ line_no: i + 1, debit_account_code: l.code })),
   });
-  return c.json({ ok: true, invoice: inv }, 201);
+  return c.json({ ok: true, invoice: inv, ...(prq.request ? { requestFilesCopied } : {}) }, 201);
 };
 
 /* ── PATCH /:id — every field may change (owner 2026-09-06: edit 这个不能全部
@@ -273,6 +301,7 @@ export const updateApInvoiceHandler = async (c: any): Promise<Response> => {
     patch.supplier_id = sup.supplier.id;
   }
   if (body.supplierInvoiceRef !== undefined) patch.supplier_invoice_ref = body.supplierInvoiceRef ? String(body.supplierInvoiceRef).trim() : null;
+  Object.assign(patch, officialOwedUpdates(body, officialActor(c), inv));
   if (body.invoiceDate !== undefined) patch.invoice_date = dateOrNull(body.invoiceDate) ?? inv.invoice_date;
   if (body.dueDate !== undefined) patch.due_date = dateOrNull(body.dueDate);
   if (body.notes !== undefined) patch.notes = body.notes ? String(body.notes).trim() : null;
@@ -287,10 +316,12 @@ export const updateApInvoiceHandler = async (c: any): Promise<Response> => {
       const leafErr = await requireLeafAccount(c, co.companyId, code);
       if (leafErr) return leafErr;
     }
+    const eventErr = await unknownEventRefusal(c, built.lines.map((l) => l.projectId));
+    if (eventErr) return eventErr;
     await sb.from('ap_invoice_lines').delete().eq('company_id', co.companyId).eq('invoice_id', inv.id);
     const { error: lineErr } = await sb.from('ap_invoice_lines').insert(built.lines.map((l, i) => ({
       company_id: co.companyId, invoice_id: inv.id, line_no: i + 1,
-      description: l.description, debit_account_code: l.code, amount_sen: l.amountSen,
+      description: l.description, debit_account_code: l.code, amount_sen: l.amountSen, project_id: l.projectId,
     })));
     if (lineErr) return c.json({ error: 'save_failed', reason: lineErr.message }, 500);
     patch.total_sen = built.total;
@@ -320,7 +351,7 @@ export const updateApInvoiceHandler = async (c: any): Promise<Response> => {
   if ('resp' in sup) return sup.resp;
   const { data: lineRows, error: lErr } = await scopeToCompany(sb.from('ap_invoice_lines').select(LINE).eq('invoice_id', inv.id), c).order('line_no');
   if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
-  const lines = (lineRows ?? []) as Array<{ description: string | null; debit_account_code: string; amount_sen: number }>;
+  const lines = (lineRows ?? []) as Array<{ description: string | null; debit_account_code: string; amount_sen: number; project_id?: number | null }>;
   const roles = await resolveRoles(sb, co.companyId);
   const je = await postJournal(sb, {
     companyId: co.companyId,
@@ -329,7 +360,7 @@ export const updateApInvoiceHandler = async (c: any): Promise<Response> => {
     sourceDocNo: String(inv.invoice_number),
     narration: `AP invoice ${inv.invoice_number} — ${sup.supplier.name ?? sup.supplier.code ?? 'supplier'}${after.supplier_invoice_ref ? ` (${after.supplier_invoice_ref})` : ''} — edited`,
     lines: apInvoiceLines(roles, { invoice_number: String(inv.invoice_number) }, sup.supplier,
-      lines.map((l) => ({ accountCode: l.debit_account_code, myrSen: Number(l.amount_sen), description: l.description }))),
+      lines.map((l) => ({ accountCode: l.debit_account_code, myrSen: Number(l.amount_sen), description: l.description, projectId: l.project_id ?? null }))),
   });
   if (!je.ok) return c.json({ error: 'post_failed', status: je.status, reason: (je as { reason?: string }).reason ?? je.status }, 500);
   return c.json({ ok: true, invoice: after, reposted: true, jeNo: je.jeNo });
@@ -347,8 +378,11 @@ export const postApInvoiceHandler = async (c: any): Promise<Response> => {
   const sb = c.get('supabase');
   const { data: lineRows, error: lErr } = await scopeToCompany(sb.from('ap_invoice_lines').select(LINE).eq('invoice_id', inv.id), c).order('line_no');
   if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
-  const lines = (lineRows ?? []) as Array<{ description: string | null; debit_account_code: string; amount_sen: number }>;
+  const lines = (lineRows ?? []) as Array<{ description: string | null; debit_account_code: string; amount_sen: number; project_id?: number | null }>;
   if (lines.length === 0) return c.json({ error: 'lines_required', message: 'This bill has no lines to post.' }, 400);
+  /* 需要 Event (item 4): a line on an account Finance ticked needs its event to post. */
+  const evErr = await eventAccountRefusal(c, co.companyId, lines);
+  if (evErr) return evErr;
   const sup = await loadSupplier(c, String(inv.supplier_id));
   if ('resp' in sup) return sup.resp;
 
@@ -360,7 +394,7 @@ export const postApInvoiceHandler = async (c: any): Promise<Response> => {
     sourceDocNo: String(inv.invoice_number),
     narration: `AP invoice ${inv.invoice_number} — ${sup.supplier.name ?? sup.supplier.code ?? 'supplier'}${inv.supplier_invoice_ref ? ` (${inv.supplier_invoice_ref})` : ''}`,
     lines: apInvoiceLines(roles, { invoice_number: String(inv.invoice_number) }, sup.supplier,
-      lines.map((l) => ({ accountCode: l.debit_account_code, myrSen: Number(l.amount_sen), description: l.description }))),
+      lines.map((l) => ({ accountCode: l.debit_account_code, myrSen: Number(l.amount_sen), description: l.description, projectId: l.project_id ?? null }))),
   });
   if (!je.ok) return c.json({ error: 'post_failed', status: je.status, reason: (je as { reason?: string }).reason ?? je.status }, 500);
 

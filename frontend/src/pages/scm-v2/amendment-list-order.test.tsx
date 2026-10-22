@@ -41,6 +41,21 @@ vi.mock('../../vendor/scm/lib/so-amendment-queries', () => ({
 vi.mock('../../vendor/scm/lib/po-amendment-queries', () => ({
   usePoAmendments: () => ({ data: { amendments: poRows }, isLoading: false, error: null }),
 }));
+/* The queue also lists CANCELLATION requests since owner 2026-09-24. This file
+   is about the amendment rows, so the cancellation half is stubbed empty — and
+   its hooks are stubbed rather than provided, because they want a QueryClient,
+   an AuthProvider and a ConfirmProvider this render deliberately does without. */
+vi.mock('../../vendor/scm/lib/document-cancel-queries', async (orig) => ({
+  ...(await orig<typeof import('../../vendor/scm/lib/document-cancel-queries')>()),
+  useCancelRequests: () => ({ data: { requests: [] }, isLoading: false, error: null }),
+}));
+vi.mock('../../vendor/scm/lib/use-cancel-request-actions', async (orig) => ({
+  ...(await orig<typeof import('../../vendor/scm/lib/use-cancel-request-actions')>()),
+  useCancelRequestActions: () => ({ approve: async () => {}, reject: async () => {}, withdraw: async () => {}, executeNow: async () => {}, busy: false }),
+}));
+vi.mock('../../hooks/useAmendmentApprovals', () => ({ useRefreshApprovalBadges: () => () => {} }));
+vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: { id: 1 }, can: () => false }) }));
+
 vi.mock('../../hooks/useStaffLookup', () => ({
   useStaffLookup: () => ({ actorNameOf: () => '—' }),
 }));
@@ -85,7 +100,7 @@ describe('desktop SO amendment queue', () => {
 
   test('clicking Status sorts by the same order, not by the bucket names A-Z', () => {
     const { container } = render(<MemoryRouter><Amendments /></MemoryRouter>);
-    fireEvent.click(screen.getByRole('button', { name: 'Status' }));
+    fireEvent.click(screen.getByRole('columnheader', { name: /^Status/ }));
     const ids = gridIds(container, 'SO');
     const bucketOf = (id: string) => ({ a: 1, b: 2, c: 1, d: 0, e: 0, f: 2 } as Record<string, number>)[id];
     expect(ids.map(bucketOf)).toEqual([0, 0, 1, 1, 2, 2]);
@@ -97,7 +112,7 @@ describe('desktop SO amendment queue', () => {
   test('a Status sort left from an earlier visit does not decide the order the next time it opens', () => {
     const bucketOf = (id: string) => ({ a: 1, b: 2, c: 1, d: 0, e: 0, f: 2 } as Record<string, number>)[id];
     const first = render(<MemoryRouter><Amendments /></MemoryRouter>);
-    const status = screen.getByRole('button', { name: 'Status' });
+    const status = screen.getByRole('columnheader', { name: /^Status/ });
     fireEvent.click(status); // ascending
     fireEvent.click(status); // descending: Requested at the bottom for THIS visit
     expect(gridIds(first.container, 'SO').map(bucketOf)).toEqual([2, 2, 1, 1, 0, 0]);
@@ -129,7 +144,7 @@ describe('desktop PO amendment queue', () => {
       row('r', 'REJECTED', '2026-09-13T08:00:00Z'),
     ];
     const first = render(<MemoryRouter><PoAmendments /></MemoryRouter>);
-    const created = screen.getByRole('button', { name: 'Created' });
+    const created = screen.getByRole('columnheader', { name: /^Created/ });
     fireEvent.click(created); // oldest first
     fireEvent.click(created); // newest first: the Rejected row leads this visit
     expect(gridIds(first.container, 'PO')[0]).toBe('r');

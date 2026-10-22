@@ -100,7 +100,7 @@ import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { statusLabel } from "../../vendor/scm/lib/status-pill";
 import { cn } from "../../lib/utils";
-import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity, fmtQty } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { clearPaymentRetryHandoff, completePaymentRetryDraft, consumePaymentRetryNavigationState, planPaymentDraftFlush, readPaymentRetryHandoff, readPaymentRetryNavigationState } from "../../lib/paymentRetryHandoff";
 import { transferFromColumnLabel } from "../../lib/convertScope";
@@ -1054,7 +1054,7 @@ export function SalesInvoiceDetailV2() {
       getValue: (l) => l.qty,
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
-          {l.qty} <span className="text-[10.5px] text-ink-muted">{l.uom}</span>
+          {fmtQty(l.qty)} <span className="text-[10.5px] text-ink-muted">{l.uom}</span>
         </span>
       ),
     },
@@ -1479,7 +1479,7 @@ export function SalesInvoiceDetailV2() {
                   muted={soOf(salesInvoice) === "—"}
                 />
                 <Field
-                  label="Customer ref"
+                  label="Ref No."
                   value={refOf(salesInvoice)}
                   mono={refOf(salesInvoice) !== "—"}
                   muted={refOf(salesInvoice) === "—"}
@@ -1921,15 +1921,12 @@ export function SalesInvoiceDetailV2() {
         }}
       />
       {/* A chain slot standing for several documents opens this chooser instead
-          of a notice that only named them. Picking a row navigates, so the map
-          closes with it. */}
+          of a notice that only named them. The picked one opens in its own tab of the
+          in-app strip. */}
       <DocumentChoiceDialog
         prompt={chainChoice}
         onClose={closeChainChoice}
-        onPick={(d) => {
-          setRelMapOpen(false);
-          pickChainChoice(d);
-        }}
+        onPick={pickChainChoice}
       />
       {historyOpen && <DocumentHistoryDrawer doc="SALES_INVOICE" id={String(salesInvoice.id)}
         label={salesInvoice.invoice_number} onClose={() => setHistoryOpen(false)} />}

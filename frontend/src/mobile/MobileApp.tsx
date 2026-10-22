@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { canOperateDeliveryOrders, canDriverCompleteDelivery, canOperateSalesInvoices, canOperateGoodsReceipts, canOperatePurchaseOrders, canViewFairReport, isSalesDirectorUser } from "../auth/salesAccess";
 import { memberEditFormFor, memberInviteFormFor } from "./member-invite-form";
+import { supplierFormFor } from "./supplier-form";
 import { capability, type CapabilityKey } from "../auth/capabilities";
 import { NAV_TABS, type NavTab } from "../components/Sidebar";
 import { makeNavVisible } from "../components/navFilter";
@@ -11,6 +12,7 @@ import { NotifyProvider, useNotify } from "../vendor/scm/components/NotifyDialog
 import { ConfirmProvider, useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { PromptProvider } from "../vendor/scm/components/PromptDialog";
 import { ChoiceProvider } from "../vendor/scm/components/ChoiceDialog";
+import { VpBrandPromptBridge } from "../vendor/scm/components/VpBrandPromptBridge";
 import { registerDialogService } from "../vendor/scm/lib/dialog-service";
 import { invalidateSoShared } from "./sharedInvalidate";
 import { useApplyHtmlLang } from "./mobileI18n";
@@ -28,6 +30,8 @@ import { AndroidInstallGuide } from "../components/AndroidInstallGuide";
 import { MobileModuleList, MODULE_CONFIGS, FORM_MEMBERS_EDIT } from "./MobileModuleList";
 import { MobileInvitations } from "./MobileInvitations";
 import { mobileDestinationMatches, resolveMobileRoute, type MobileRoute } from "./mobileRoute";
+import { useItSupportConnected, withoutUnconnectedItSupport } from "../hooks/useItSupportConnected";
+import { useItSupportUnread } from "../hooks/useAmendmentApprovals";
 import type { FlowDocNav, FlowNav } from "./relationship-map-model";
 import type { SearchNav } from "./MobileSearch";
 import type { MobileScanPrefill } from "./MobileScan";
@@ -64,16 +68,20 @@ const MobileScanInvoice = lazy(() => import("./MobileScanInvoice").then((m) => (
 const MobileGrnScan = lazy(() => import("./MobileGrnScan").then((m) => ({ default: m.MobileGrnScan })));
 const MobileConvertWizard = lazy(() => import("./MobileConvertWizard").then((m) => ({ default: m.MobileConvertWizard })));
 const MobilePOD = lazy(() => import("./MobilePOD").then((m) => ({ default: m.MobilePOD })));
+const MobileOverview = lazy(() => import("./MobileOverview").then((m) => ({ default: m.MobileOverview })));
 const MobileMileageCapture = lazy(() => import("./MobileMileageCapture").then((m) => ({ default: m.MobileMileageCapture })));
 const MobileProfile = lazy(() => import("./MobileProfile").then((m) => ({ default: m.MobileProfile })));
 const MobileStockCard = lazy(() => import("./MobileStockCard").then((m) => ({ default: m.MobileStockCard })));
 const MobileStockTransferNew = lazy(() => import("./MobileStockTransferNew").then((m) => ({ default: m.MobileStockTransferNew })));
 const MobilePurchaseDocNew = lazy(() => import("./MobilePurchaseDocNew").then((m) => ({ default: m.MobilePurchaseDocNew })));
 const MobileRacks = lazy(() => import("./MobileRacks").then((m) => ({ default: m.MobileRacks })));
+const MobilePaymentRequests = lazy(() => import("./MobilePaymentRequests").then((m) => ({ default: m.MobilePaymentRequests })));
+const MobileProductRequests = lazy(() => import("./MobileProductRequests").then((m) => ({ default: m.MobileProductRequests })));
 const MobileFairReport = lazy(() => import("./MobileFairReport").then((m) => ({ default: m.MobileFairReport })));
 const MobileAutoCountSync = lazy(() => import("./MobileAutoCountSync").then((m) => ({ default: m.MobileAutoCountSync })));
 const MobileVenturePortalFeed = lazy(() => import("./MobileVenturePortalFeed").then((m) => ({ default: m.MobileVenturePortalFeed })));
 const MobileChangeLog = lazy(() => import("./MobileChangeLog").then((m) => ({ default: m.MobileChangeLog })));
+const MobileItSupport = lazy(() => import("./MobileItSupport").then((m) => ({ default: m.MobileItSupport })));
 // SO Maintenance is the SAME desktop page (/scm/sales-orders/maintenance) — the
 // director-only State→Warehouse / Localities / SO-dropdown CRUD surface. Mobile
 // has no route table, so the vendored desktop page is mounted directly inside
@@ -132,7 +140,7 @@ type Screen =
      tab, which is right when POD was opened from a document card — but the
      delivery-planning board sends the driver here MID-RUN, and dumping them on
      the home tab loses the run sheet they were working through. */
-  | { t: "pod"; docNo: string; from?: "delivery-planning" }
+  | { t: "pod"; docNo: string; from?: "delivery-planning" | "delivery-planning-driver" }
   /* Fleet Maintenance Phase 2 — the driver's day-complete odometer capture.
      Mobile mounts this for /fleet-health; desktop mounts the full Fleet Health
      admin dashboard at the same URL (one product, two presentations). */
@@ -141,14 +149,23 @@ type Screen =
      desktop Racks & Bins page at the same URL is the edit surface. Rack
      CREATE stays on MobileModuleList's FORM_RACK, unchanged. */
   | { t: "racks" }
+  /* 申请付款 (owner 2026-09-30) — a PIC asks Finance to pay a bill, photo and all. */
+  | { t: "payment-requests" }
+  | { t: "product-requests" }
   | { t: "service"; startNew?: boolean }
-  | { t: "delivery-planning" }
+  | { t: "delivery-planning"; completedDoNumber?: string | null }
+  /* Driver run-sheet — the same board component as `delivery-planning`, reached
+     from the "Last Mile Delivery (Driver)" menu row. Rows are the caller's own
+     jobs (server scope); a separate screen so its own menu entry resolves here. */
+  | { t: "delivery-planning-driver"; completedDoNumber: string | null }
+  | { t: "overview"; kind: "logistic" | "procurement" }
   | { t: "pms"; projectId?: number }
   | { t: "mail" }
   | { t: "roles" }
   | { t: "titles" }
   | { t: "announcements" }
   | { t: "inbox" }
+  | { t: "it-support" }
   /* A real mobile destination this user's position may not open. Reached only
      by URL — the menu never renders a row the user can't use. */
   | { t: "locked"; label: string }
@@ -179,11 +196,17 @@ export function destinationScreen(to: string, label: string): DestinationTarget 
   if (path === "/projects") return { t: "pms" };
   if (path === "/mail-center") return { t: "mail" };
   if (path === "/announcements") return { t: "announcements" };
+  if (path === "/it-support") return { t: "it-support" };
   if (path === "/activity-inbox") return { t: "inbox" };
   if (path === "/roles") return { t: "roles" };
   if (path === "/titles") return { t: "titles" };
   if (path === "/scm/delivery-planning") return { t: "delivery-planning" };
+  if (path === "/scm/delivery-planning-driver") return { t: "delivery-planning-driver", completedDoNumber: null };
+  if (path === "/scm/logistic-overview") return { t: "overview", kind: "logistic" };
+  if (path === "/scm/procurement-overview") return { t: "overview", kind: "procurement" };
   if (path === "/scm/warehouses/racks") return { t: "racks" };
+  if (path === "/scm/payment-requests") return { t: "payment-requests" };
+  if (path === "/scm/product-requests") return { t: "product-requests" };
   // Fleet Health on a phone IS the driver's mileage capture; the desktop Fleet
   // Health dashboard (plans admin + board) is the same URL's desktop surface.
   if (path === "/fleet-health") return { t: "mileage-capture" };
@@ -355,6 +378,14 @@ export const MOBILE_MENU_GROUPS: { group: string; items: MobileMenuItem[] }[] = 
        salesperson never gets this row. Routes to the MOBILE screen
        (MobileFairReport), NOT the desktop table. */
     { to: "/reports/fair-report", label: "Sales Report" },
+    /* 申请付款 (owner 2026-09-30): the PIC at a fair asks Finance to pay the
+       organiser, photo of the bill and all. Gated by its own NAV_TABS entries —
+       the requester's key (Workspace) or Finance's voucher key (Money out). */
+    { to: "/scm/payment-requests", label: "Payment Requests" },
+    /* Product request (owner 2026-10-06): a salesperson asks for a new product
+       or a repack; the Purchaser approves. Gated by its NAV_TABS entries — the
+       rep leaf, or the office leaf's keys (Consignment). */
+    { to: "/scm/product-requests", label: "Product Requests" },
   ]},
   { group: "Projects · PMS", items: [
     { to: "/projects", label: "Projects" },
@@ -363,6 +394,7 @@ export const MOBILE_MENU_GROUPS: { group: string; items: MobileMenuItem[] }[] = 
     { to: "/assr", label: "Service Case" },
   ]},
   { group: "Procurement & MRP", items: [
+    { to: "/scm/procurement-overview", label: "Procurement Overview" },
     { to: "/scm/mrp", label: "MRP · Stock Status" },
     { to: "/scm/purchase-orders", label: "Purchase Orders" },
     { to: "/scm/po-amendments", label: "PO Amendments" },
@@ -388,7 +420,9 @@ export const MOBILE_MENU_GROUPS: { group: string; items: MobileMenuItem[] }[] = 
     { to: "/scm/purchase-consignment-returns", label: "Purchase Consignment Returns" },
   ]},
   { group: "Logistics", items: [
-    { to: "/scm/delivery-planning", label: "Delivery Planning" },
+    { to: "/scm/logistic-overview", label: "Logistic Overview" },
+    { to: "/scm/delivery-planning", label: "Last Mile Delivery" },
+    { to: "/scm/delivery-planning-driver", label: "Last Mile Delivery (Driver)", gateVia: "/scm/delivery-planning" },
     { to: "/scm/fleet", label: "Fleet", gateVia: "/scm/delivery-maintenance" },
     /* KEPT, unlike the retired DESKTOP /scm/drivers page — mobile is NOT the
        same shape and the owner's "fleet 里面也是有 driver" is not true here.
@@ -489,6 +523,11 @@ export const PROFILE_ORG_ITEMS: MobileMenuItem[] = [
      to this user). So this row bypasses the desktop nav gate
      (announcements.read = the desktop ADMIN list/composer permission). */
   { to: "/announcements", label: "Announcements", alwaysShow: true },
+  /* Gated by its desktop NAV_TABS row (no permission: every signed-in user
+     reports problems and reads only their own requests). The Profile row is
+     also dropped where this environment is not connected to the IT Hub, as on
+     desktop; the screen stays reachable by its URL and says so itself. */
+  { to: "/it-support", label: "IT Support" },
   /* Team destinations follow the desktop redesign's NAV_TABS rows
      (?tab=directory / ?tab=departments2) so each mobile row keeps its exact
      query-bearing gate; the screens themselves stay the classic mobile
@@ -557,6 +596,7 @@ export function MobileApp() {
         <PromptProvider>
           <ChoiceProvider>
             <MobileDialogBridge />
+            <VpBrandPromptBridge />
             {/* Manual install coaches. Previously mounted only in the desktop
                 App shell, so phone users whose browser never fires
                 beforeinstallprompt (iOS Safari, Samsung Internet, in-app
@@ -583,6 +623,9 @@ function MobileAppInner() {
   // the Profile > Announcements row, so a phone user sees a new broadcast or
   // service case without opening the screen (B2).
   const annUnread = useAnnouncementUnread();
+  const itConnected = useItSupportConnected();
+  // The Profile tab pill also counts IT replies: IT Support lives under Profile.
+  const profileUnread = annUnread + useItSupportUnread();
 
   // Single-source the mobile gating on the SHARED per-node predicate the desktop
   // Sidebar + MobileTabBar filter with (components/navFilter.makeNavVisible), so
@@ -850,7 +893,7 @@ function MobileAppInner() {
   else if (screen.t === "new-so") overlay = <MobileNewSO mode={screen.mode} docNo={screen.docNo} scanPrefill={screen.scanPrefill} convertFrom={screen.convertFrom} openAddLine={screen.addLine === true} onBack={back} onSaved={(d) => setScreen({ t: "so-detail", docNo: d })} />;
   else if (screen.t === "scan") overlay = <MobileScan onBack={back} onDrafted={onScanDrafted} onOpenSo={(docNo) => setScreen({ t: "so-detail", docNo })} />;
   else if (screen.t === "scan-pi") overlay = <MobileScanInvoice onBack={back} onOpenPi={() => setScreen({ t: "module", key: "purchase-invoices", title: "Purchase Invoices" })} />;
-  else if (screen.t === "grn-scan") overlay = <MobileGrnScan onBack={() => setScreen({ t: "module", key: screen.key, title: screen.title })} />;
+  else if (screen.t === "grn-scan") overlay = <MobileGrnScan onBack={() => setScreen({ t: "module", key: screen.key, title: screen.title })} onOpenGrn={(id) => setScreen({ t: "module-detail", key: screen.key, row: { id }, title: screen.title })} />;
   else if (screen.t === "module") {
     const k = screen.key;
     const convertTarget = MODULE_TO_CONVERT[k];
@@ -924,7 +967,9 @@ function MobileAppInner() {
     overlay = <MobilePurchaseDocNew
       kind={screen.kind}
       onBack={backToList}
-      onCreated={backToList}
+      onCreated={(created) => (screen.kind === "grn" && created.id
+        ? setScreen({ t: "module-detail", key, row: { id: created.id }, title })
+        : backToList())}
       onConvertInstead={alt ? { label: alt.label, open: () => setScreen({ t: "convert", key, title, target: alt.target }) } : null} />;
   }
   else if (screen.t === "convert") {
@@ -935,7 +980,13 @@ function MobileAppInner() {
     const backToConvertHome = fromSo
       ? () => setScreen({ t: "so-detail", docNo: screen.initialSourceId! })
       : () => setScreen({ t: "module", key: screen.key, title: screen.title });
-    overlay = <MobileConvertWizard target={screen.target} initialSourceId={screen.initialSourceId} onBack={backToConvertHome} onCreated={backToConvertHome} />;
+    /* A new GRN opens on its card: receiving continues there (scan each line's
+       rack), so landing on the list would make the storekeeper find it again. */
+    const { key: convertKey, title: convertTitle } = screen;
+    const onConverted = (_docNo: string, docId?: string) => (screen.target === "grn" && docId
+      ? setScreen({ t: "module-detail", key: convertKey, row: { id: docId }, title: convertTitle })
+      : backToConvertHome());
+    overlay = <MobileConvertWizard target={screen.target} initialSourceId={screen.initialSourceId} onBack={backToConvertHome} onCreated={onConverted} />;
   }
   else if (screen.t === "module-detail" && screen.key === "inventory") {
     // Inventory row → the richer per-SKU stock card (replaces the generic detail).
@@ -947,6 +998,8 @@ function MobileAppInner() {
       onNewTransfer={() => setScreen({ t: "stock-transfer-new", key: screen.key, row: screen.row, title: screen.title })} />;
   }
   else if (screen.t === "racks") overlay = <MobileRacks onBack={back} />;
+  else if (screen.t === "payment-requests") overlay = <MobilePaymentRequests onBack={back} />;
+  else if (screen.t === "product-requests") overlay = <MobileProductRequests onBack={back} />;
   else if (screen.t === "stock-transfer-new") {
     const backToCard = () => setScreen({ t: "module-detail", key: screen.key, row: screen.row, title: screen.title });
     overlay = <MobileStockTransferNew onBack={backToCard} onCreated={backToCard} />;
@@ -985,7 +1038,10 @@ function MobileAppInner() {
       ? memberEditFormFor(FORM_MEMBERS_EDIT, scopedSalesDirector)
       : screen.key === "members" && baseForm
         ? memberInviteFormFor(baseForm, scopedSalesDirector)
-        : baseForm;
+        : screen.key === "suppliers" && baseForm
+          /* Owner 2026-09-30: the Finance part and (on edit) the code are Finance's. */
+          ? supplierFormFor(baseForm, capability(user, "scm.money.move"), screen.mode)
+          : baseForm;
     const title = cfg?.title ?? screen.key;
     overlay = !schema ? <Stub title={title} onBack={back} /> : (
       <MobileModuleForm schema={schema} mode={screen.mode} initial={screen.mode === "edit" ? screen.row : undefined}
@@ -998,19 +1054,28 @@ function MobileAppInner() {
     overlay = <MobileDoHeaderEdit id={String(screen.row.id)} onBack={backToDoc} onSaved={backToDoc} />;
   }
   else if (screen.t === "pod") {
-    const leavePod = screen.from === "delivery-planning"
-      ? () => setScreen({ t: "delivery-planning" })
-      : back;
-    overlay = <MobilePOD docNo={screen.docNo} onBack={leavePod} onDone={leavePod} />;
+    const fromDriver = screen.from === "delivery-planning-driver";
+    const fromSheet = fromDriver || screen.from === "delivery-planning";
+    const toSheet = (completedDoNumber: string | null) =>
+      setScreen(fromDriver
+        ? { t: "delivery-planning-driver", completedDoNumber }
+        : { t: "delivery-planning", completedDoNumber });
+    const leavePod = fromSheet ? () => toSheet(null) : back;
+    // Confirmed from the run-sheet: go back to it and on to the next stop.
+    const donePod = fromSheet ? () => toSheet(screen.docNo) : back;
+    overlay = <MobilePOD docNo={screen.docNo} onBack={leavePod} onDone={donePod} />;
   }
   else if (screen.t === "mileage-capture") overlay = <MobileMileageCapture onBack={back} />;
+  else if (screen.t === "overview") overlay = <MobileOverview kind={screen.kind} onBack={back} />;
   else if (screen.t === "service") overlay = <MobileServiceCase onBack={back} startNew={screen.startNew} />;
-  else if (screen.t === "delivery-planning") overlay = <MobileDeliveryPlanning onBack={back} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} onPod={(doNumber) => setScreen({ t: "pod", docNo: doNumber, from: "delivery-planning" })} />;
+  else if (screen.t === "delivery-planning") overlay = <MobileDeliveryPlanning onBack={back} completedDoNumber={screen.completedDoNumber ?? null} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} onPod={(doNumber) => setScreen({ t: "pod", docNo: doNumber, from: "delivery-planning" })} />;
+  else if (screen.t === "delivery-planning-driver") overlay = <MobileDeliveryPlanning onBack={back} completedDoNumber={screen.completedDoNumber} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} onPod={(doNumber) => setScreen({ t: "pod", docNo: doNumber, from: "delivery-planning-driver" })} />;
   else if (screen.t === "pms") overlay = <MobilePMS onBack={back} initialProjectId={screen.projectId} />;
   else if (screen.t === "mail") overlay = <MobileMailCenter onBack={back} />;
   else if (screen.t === "roles") overlay = can("roles.read") ? <MobileRoles onBack={back} /> : <TabLocked title="Roles" />;
   else if (screen.t === "titles") overlay = can("users.read") ? <MobileTitles onBack={back} /> : <TabLocked title="Titles" />;
   else if (screen.t === "announcements") overlay = <MobileAnnouncements onBack={back} />;
+  else if (screen.t === "it-support") overlay = <MobileItSupport onBack={back} />;
   else if (screen.t === "inbox") overlay = <MobileInbox onBack={back} onOpen={(n) => { const doc = (n as { doc_no?: string }).doc_no; if (doc) setScreen({ t: "so-detail", docNo: doc }); }} />;
   else if (screen.t === "locked") overlay = <UrlLocked label={screen.label} onHome={leaveUrlDeadEnd} />;
   else if (screen.t === "desktop-only") overlay = <DesktopOnly path={screen.path} onHome={leaveUrlDeadEnd} />;
@@ -1063,7 +1128,7 @@ function MobileAppInner() {
               focusProjectId={calJump?.projectId}
             />
           ) : <TabLocked title="Calendar" />)}
-          {tab === "profile" && <MobileProfile onLogout={logout} orgItems={profileOrgItems} onOpenOrg={openRoute} />}
+          {tab === "profile" && <MobileProfile onLogout={logout} orgItems={withoutUnconnectedItSupport(profileOrgItems, itConnected)} onOpenOrg={openRoute} />}
         </MobileCrashBoundary>
       </div>
 
@@ -1093,14 +1158,14 @@ function MobileAppInner() {
           <button
             className={`tab${tab === "profile" ? " on" : ""}`}
             onClick={() => setTab("profile")}
-            aria-label={annUnread > 0 ? `Profile, ${annUnread} unread notification${annUnread > 1 ? "s" : ""}` : "Profile"}
+            aria-label={profileUnread > 0 ? `Profile, ${profileUnread} unread` : "Profile"}
           >
             <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="3.7" /><path d="M4.8 20a7.2 7.2 0 0 1 14.4 0" /></svg>
             {/* App-wide unread badge — same red count pill as the Profile >
                 Announcements row (owner B2); the un-acked system-notice count. */}
-            {annUnread > 0 && (
+            {profileUnread > 0 && (
               <span aria-hidden style={{ position: "absolute", top: 4, left: "calc(50% + 5px)", minWidth: 16, height: 16, padding: "0 4px", borderRadius: 8, background: "#c0392b", color: "#fff", fontSize: 10, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, boxSizing: "border-box" }}>
-                {annUnread > 9 ? "9+" : annUnread}
+                {profileUnread > 9 ? "9+" : profileUnread}
               </span>
             )}
             <span className="tl">Profile</span>

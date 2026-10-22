@@ -7,10 +7,7 @@ import { MobileVirtualList } from "../src/mobile/MobileVirtualList";
 import { AutoCountSync } from "../src/pages/AutoCountSync";
 import { MobileAutoCountSync } from "../src/mobile/MobileAutoCountSync";
 import type { AcOutboxResponse, AcOutboxRow } from "../src/lib/autocountOutbox";
-import {
-  DataGrid,
-  type DataGridColumn,
-} from "../src/vendor/scm/components/DataGrid";
+import { DataGridCompat, type GridColumn } from "../src/components/DataGridCompat";
 import "../src/vendor/design-system/tokens.css";
 import "../src/index.css";
 import "./perf-lab.css";
@@ -30,7 +27,7 @@ const dataTableColumns: Column<Row>[] = [
   { key: "detail", label: "Detail", getValue: (row) => row.detail, render: (row) => row.detail },
 ];
 
-const dataGridColumns: DataGridColumn<Row>[] = [
+const dataGridColumns: GridColumn<Row>[] = [
   { key: "name", label: "Order", accessor: (row) => row.name, searchValue: (row) => row.name },
   { key: "detail", label: "Detail", accessor: (row) => row.detail, searchValue: (row) => row.detail },
 ];
@@ -52,7 +49,7 @@ function DataTableLab({ mobile = false }: { mobile?: boolean }) {
 function DataGridLab() {
   return (
     <main data-scenario="data-grid">
-      <DataGrid
+      <DataGridCompat
         rows={ROWS}
         columns={dataGridColumns}
         storageKey="perf-data-grid"

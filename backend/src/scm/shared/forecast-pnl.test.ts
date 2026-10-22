@@ -5,7 +5,7 @@
    percentages and not the amounts. */
 import { describe, expect, it } from 'vitest';
 import {
-  FORECAST_BLOCKS, blockOfSection, forecastSalesSen, inheritMonth, monthFigures, nextMonth, sortedMonths, validateGrid,
+  FORECAST_BLOCKS, basisSalesSen, blockOfSection, forecastSalesSen, inheritMonth, monthFigures, nextMonth, sortedMonths, validateGrid,
   type ForecastAccount,
 } from './forecast-pnl';
 
@@ -91,6 +91,44 @@ describe('monthFigures', () => {
     expect(f.salesSen).toBe(0);
     expect(f.lines.map((l) => [l.code, l.amountSen, l.bp])).toEqual([['601-0003', 0, 5500], ['900-T003', 120_000, null]]);
     expect(f.totals.netProfitSen).toBe(-120_000);
+  });
+});
+
+/* A purchase line's % is of its OWN group's sales (owner 2026-09-29: purchase of
+   bedding 应该是根据回他的 sales 的 amount 算，而不是 total sales, sofa 同理): the
+   account carries `basis`, the sales accounts its item groups are bound to. */
+describe("a line with a basis — a purchase account bound to its group's sales", () => {
+  const BOUND: ForecastAccount[] = ACCOUNTS.map((a) =>
+    (a.code === '601-0003' ? { ...a, basis: ['500-0003'] } : a.code === '601-0001' ? { ...a, basis: ['500-0001'] } : a));
+  const OCT = { '500-0003': { amtSen: 8_000_000 }, '500-0001': { amtSen: 2_000_000 }, '601-0003': { bp: 5500 }, '601-0001': { amtSen: 900_000 }, '900-T003': { bp: 1200 } };
+
+  it("a percent purchase line takes its own sales × bp; an amount purchase line's share is of its own sales; an expense line stays on the whole sales", () => {
+    const f = monthFigures(OCT, BOUND);
+    expect(f.salesSen).toBe(10_000_000);
+    const by = new Map(f.lines.map((l) => [l.code, l]));
+    /* 55% of the SOFA sales (80,000), not of the 100,000 whole. */
+    expect(by.get('601-0003')).toMatchObject({ amountSen: 4_400_000, bp: 5500, basisSen: 8_000_000, keyed: 'percent' });
+    /* 9,000 of the BEDDING sales (20,000) = 45%, not 9% of the whole. */
+    expect(by.get('601-0001')).toMatchObject({ amountSen: 900_000, bp: 4500, basisSen: 2_000_000, keyed: 'amount' });
+    /* Transport is a share of everything sold. */
+    expect(by.get('900-T003')).toMatchObject({ amountSen: 1_200_000, bp: 1200, basisSen: 10_000_000 });
+    expect(f.totals.costOfSalesSen).toBe(5_300_000);
+    expect(f.totals.grossProfitSen).toBe(4_700_000);
+    expect(basisSalesSen(OCT, BOUND[3]!, f.salesSen)).toBe(8_000_000);
+    expect(basisSalesSen(OCT, BOUND[7]!, f.salesSen)).toBe(10_000_000);
+  });
+
+  it('a group that sold nothing this month is a zero basis: its percent line is zero and its amount line has no share — the whole sales do not stand in', () => {
+    const f = monthFigures({ '500-0003': { amtSen: 8_000_000 }, '601-0001': { bp: 5500 }, '601-0003': { amtSen: 100_000 } }, BOUND);
+    const by = new Map(f.lines.map((l) => [l.code, l]));
+    expect(by.get('601-0001')).toMatchObject({ amountSen: 0, bp: 5500, basisSen: 0 });
+    expect(by.get('601-0003')).toMatchObject({ amountSen: 100_000, bp: 125, basisSen: 8_000_000 });
+    /* A basis of two sales lines adds them; an empty basis list is the whole sales. */
+    const two = monthFigures({ '500-0003': { amtSen: 8_000_000 }, '500-0001': { amtSen: 2_000_000 }, '601-0001': { bp: 1000 } },
+      ACCOUNTS.map((a) => (a.code === '601-0001' ? { ...a, basis: ['500-0001', '500-0003'] } : a)));
+    expect(two.lines.find((l) => l.code === '601-0001')).toMatchObject({ amountSen: 1_000_000, basisSen: 10_000_000 });
+    const none = monthFigures({ '500-0003': { amtSen: 8_000_000 }, '601-0001': { bp: 1000 } }, ACCOUNTS.map((a) => (a.code === '601-0001' ? { ...a, basis: [] } : a)));
+    expect(none.lines.find((l) => l.code === '601-0001')).toMatchObject({ amountSen: 800_000, basisSen: 8_000_000 });
   });
 });
 

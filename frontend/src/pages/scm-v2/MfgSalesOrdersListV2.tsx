@@ -24,6 +24,8 @@ import { shippedProgressColumn, ShippedProgressPill } from "./so-list-shipped-co
 import { SO_STATUS_TABS, statusFor, type StatusTab } from "./so-list-status";
 import { SoListStatusCell } from "./SoListStatusCell";
 import { SoListFilterBar } from "./SoListFilterBar";
+import { clampSoPage, soPageOnlyFunnelKeys, soServerFunnels, withSoFunnelSeeds, type SoServerFunnels } from "./so-list-server-funnels";
+import { useProjectBrands } from "../../vendor/scm/lib/product-models-queries";
 import { useSoListFilters } from "../../vendor/scm/lib/so-list-filter-state";
 import { salesOrderRowMenu } from "./row-menus";
 import { brandingToneForCategory, type BrandTone } from "../../lib/brandingTone";
@@ -43,7 +45,9 @@ import {
   CheckCircle2,
   Truck,
   RotateCcw,
+  Trash2,
 } from "lucide-react";
+import { DISCARD_DRAFT_LABEL, useDiscardDraftAction } from "./use-discard-draft-action";
 import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
 import { salesOrderPrintChain } from "../../lib/printChain";
@@ -80,7 +84,7 @@ import { shortCompanyName, getBrandingCompanyCode } from "../../lib/branding";
 import { brandingLabel, isPlaceholderBrandText } from "../../vendor/shared/so-branding-label";
 import { soCanRaiseDo } from "../../vendor/shared/so-deliverable-states";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
-import { useMfgSalesOrdersPaged, useMfgCustomers, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail, useEnrichedSoListRows, useSoLineCoverage } from "../../vendor/scm/lib/sales-order-queries";
+import { useMfgSalesOrdersPaged, useMfgCustomers, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail, useEnrichedSoListRows, useSoLineCoverage, useSoFunnelValues } from "../../vendor/scm/lib/sales-order-queries";
 import { useSetDocumentHold } from "../../vendor/scm/lib/document-hold-queries";
 import { holdPrompt } from "./use-hold-action";
 import { useCancelRequestAction } from "./use-cancel-request-action";
@@ -95,6 +99,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { convertToLink, transferToLabel } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
+import { OVERDUE_CLASS, OWING_CLASS, isDeliveredOwing, isPastDue } from "../../lib/tableHighlight";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { ItemGroupPill } from "../../vendor/scm/lib/category-badges";
 import { resolveSoLocation } from "../../lib/soLocation";
@@ -103,6 +108,7 @@ import { useAuth } from "../../auth/AuthContext";
 import { canViewScmCosting, canOperateDeliveryOrders } from "../../auth/salesAccess";
 import { capability } from "../../auth/capabilities";
 import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
+import { soExemptionExpiryOf } from "../../lib/so-exemption-expiry";
 import { formatPhone } from "@2990s/shared/phone";
 import { customerRefOf } from '../../lib/customer-ref';
 
@@ -187,6 +193,11 @@ type SoRow = HoldFields & {
   source_po_adj?: boolean;
   processing_date: string | null;
   customer_delivery_date: string | null;
+  /* The AutoCount book's sales-exemption expiry (public.sales_orders.expiry_date,
+     keyed by the order's linked book doc no), server-derived in so-list-rows.ts.
+     Null for orders not in AutoCount. The "Sales Exemption Expiry Date" column
+     falls back to it when the ERP's frozen sales_exemption_expiry is empty. */
+  ac_sales_exemption_expiry?: string | null;
   // ── Phase 2 FINANCE: cost / margin / per-category subtotals + deposit. The
   //    backend OMITS these keys entirely for non-finance callers
   //    (canViewScmFinance), so every one is optional. margin_pct_basis is
@@ -228,6 +239,12 @@ const SO_AUTOCOUNT_KEYS = [
 // Customer's PO / Ref number — spec: "Every list must show the customer SO
 // Ref number". Resolution order is the ONE rule in lib/customer-ref.ts.
 const refOf = (r: SoRow): string => customerRefOf(r) || "—";
+/** Still owes a delivery: not delivered in full, not closed or cancelled. */
+const soAwaitingDelivery = (r: SoRow): boolean =>
+  r.delivery_state !== "full" &&
+  !["delivered", "invoiced", "returned"].includes(r.lifecycle_state ?? "") &&
+  !isCancelledDocStatus(r.status) &&
+  r.status.toUpperCase() !== "CLOSED";
 
 // Branding badge tone. Spec: 2990 SOFA = success (green), AKEMI = neutral,
 // BEDFRAME = accent, other brands = warning (amber). brandOf's old `|| "—"`
@@ -252,15 +269,13 @@ const brandTone = (r: SoRow): BrandTone => brandingToneForCategory(r.first_item_
  *  redesign is showing off is the visual composition, not menu wizardry. */
 function SplitDropdown({
   onFromQuotation,
-  onImport,
   onDuplicate,
   canMaintain,
 }: {
   onFromQuotation: () => void;
-  onImport: () => void;
   onDuplicate: () => void;
-  /* SO Maintenance is director-only (owner 2026-07-15). Import-from-file and
-     Duplicate-last-SO both land on /scm/sales-orders/maintenance, so they are
+  /* SO Maintenance is director-only (owner 2026-07-15). Duplicate-last-SO
+     lands on /scm/sales-orders/maintenance, so it is
      hidden from a non-director (OFF, not hide — no menu entry, and the route
      itself Forbids). "New from quotation" stays for everyone. */
   canMaintain: boolean;
@@ -300,16 +315,6 @@ function SplitDropdown({
             </button>
             {canMaintain && (
               <>
-                <button
-                  type="button"
-                  className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft"
-                  onClick={() => {
-                    setOpen(false);
-                    onImport();
-                  }}
-                >
-                  Import from file
-                </button>
                 <button
                   type="button"
                   className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft"
@@ -435,6 +440,7 @@ function DetailDrawer({
   onEdit,
   onPrint,
   onConfirm,
+  onDiscard,
   onDeliver,
   onReopen,
   canDeliver,
@@ -446,6 +452,8 @@ function DetailDrawer({
   onEdit: () => void;
   onPrint: () => void;
   onConfirm: () => void;
+  /** DRAFT only: hard-delete it (use-discard-draft-action.ts). */
+  onDiscard: () => void;
   onDeliver: () => void;
   onReopen: () => void;
   /** Sales may raise the SO but not operate the DO (owner 2026-07-17). False
@@ -553,7 +561,7 @@ function DetailDrawer({
               <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
                 <MetaItem k="Salesperson" v={salespersonName} />
                 <MetaItem k="Location" v={<LocationText row={row} />} />
-                <MetaItem k="Reference" v={refOf(row)} mono />
+                <MetaItem k="Ref No." v={refOf(row)} mono />
                 <MetaItem k="Branding" v={brandOf(row)} />
                 <MetaItem k="Order date" v={fmtDate(row.so_date)} />
                 {/* Owner 2026-07-24 — the quick view showed only the order
@@ -695,14 +703,27 @@ function DetailDrawer({
                 // "DRAFT"); normalise once so the CTA switch works regardless.
                 const s = (row.status || "").toLowerCase();
                 if (s === "draft") {
+                  /* Discard beside Confirm (owner 2026-10-13: 「这个draft - discard
+                     不到」 — the drawer offered no way to delete a junk draft).
+                     Ghost + red so it never competes with Confirm. */
                   return (
-                    <Button
-                      variant="primary"
-                      icon={<CheckCircle2 size={14} />}
-                      onClick={onConfirm}
-                    >
-                      Confirm
-                    </Button>
+                    <>
+                      <Button
+                        variant="ghost"
+                        icon={<Trash2 size={14} />}
+                        onClick={onDiscard}
+                        style={{ color: "var(--c-festive-b, #B8331F)" }}
+                      >
+                        {DISCARD_DRAFT_LABEL}
+                      </Button>
+                      <Button
+                        variant="primary"
+                        icon={<CheckCircle2 size={14} />}
+                        onClick={onConfirm}
+                      >
+                        Confirm
+                      </Button>
+                    </>
                   );
                 }
                 if (soCanRaiseDo(row.status, row.on_hold ?? null)) {
@@ -1069,12 +1090,20 @@ export function MfgSalesOrdersListV2() {
   // Multi-select → batch "Print all". Keys are doc_no (the DataTable rowKey).
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [printingDocs, setPrintingDocs] = useState(false);
-  /* Server-filterable column funnels the grid pushes down (owner 2026-09-16) so
-     pagination runs over the filtered set: Customer (debtor) Name + Currency.
-     Debtor CODE and every line-level / MRP funnel stay client-side on the loaded
-     page (documented — debtor_code's grid value prefers ac_debtor_code, and the
-     line/MRP columns are not base columns on the list view). */
-  const [serverFunnels, setServerFunnels] = useState<{ debtorNames?: string[]; currencies?: string[] }>({});
+  /* Column funnels the grid pushes down so pagination and the total run over
+     the filtered set (owner 2026-09-16, every header column 2026-10-17); which
+     columns, and the few that stay page-local, in ./so-list-server-funnels. */
+  const [serverFunnels, setServerFunnels] = useState<SoServerFunnels>(() => soServerFunnels({}));
+  /* Each server column's funnel offers every value across the company's orders,
+     not only the loaded page's (backend lib/so-list-column-funnels.ts). */
+  const funnelValues = useSoFunnelValues().data?.values;
+  /* Seed the Branding funnel with every active brand, for the same reason as the
+     customer seed below: a brand absent from the loaded page must be pickable. */
+  const projectBrandsQ = useProjectBrands();
+  const brandNames = useMemo(
+    () => [...new Set((projectBrandsQ.data ?? []).filter((b) => b.active === 1 || b.active === true).map((b) => b.name.trim()).filter((n) => n.length > 0))],
+    [projectBrandsQ.data],
+  );
   /* Seed the Customer Name funnel with every customer (not only the loaded
      page's) so a customer whose orders are all on a later page is still
      pickable — the point of pushing the filter server-side. */
@@ -1111,6 +1140,7 @@ export function MfgSalesOrdersListV2() {
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const updateStatus = useUpdateMfgSalesOrderStatus();
   const requestCancel = useCancelRequestAction("so");
+  const { discard: discardDraft } = useDiscardDraftAction();
   const setHold = useSetDocumentHold("so");
 
   // The server already filtered (status + search) and sorted this page; the
@@ -1118,6 +1148,14 @@ export function MfgSalesOrdersListV2() {
   // wrong on a partial page).
   const rows = useEnrichedSoListRows((data?.salesOrders ?? []) as SoRow[], !listLoading); // SHIPPED chips + stored placeholders; deferred MRP heals 4 fields a beat later
   const total = data?.total ?? 0;
+  /* A deep-linked or stale ?page= past the filtered set's last page (page 70 of
+     a 3-page filter) falls back to the last page once the real total is in. */
+  useEffect(() => {
+    if (!data || isPlaceholderData) return;
+    const clamped = clampSoPage(page, total, pageSize);
+    if (clamped !== page) setPageParam(clamped);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setPageParam is recreated each render; the inputs are listed
+  }, [data, isPlaceholderData, page, total, pageSize]);
   // Status tab counts come from the server over the FULL scoped set (not the
   // page), so the pills stay correct while paging / searching.
   const counts: Record<string, number> = data?.statusCounts ?? { all: 0 };
@@ -1191,20 +1229,18 @@ export function MfgSalesOrdersListV2() {
     setPageParam(0); // sort change → back to page 0
   };
   /* DataTable reports its funnel state here; we lift the SERVER-FILTERABLE ones
-     (Customer Name, Currency) into the list query. Mirrors setSortAndReset: the
-     first (mount-restore) report adopts the funnel without clobbering a
-     deep-linked ?page=; later changes reset to page 1. */
+     (./so-list-server-funnels) into the list query. Mirrors
+     setSortAndReset: the first (mount-restore) report adopts the funnel without
+     clobbering a deep-linked ?page=; any later funnel change — server or
+     page-local — resets to page 1. */
   const funnelSyncedRef = useRef(false);
-  const serverFunnelSigRef = useRef("");
+  const funnelSigRef = useRef("");
   const onColFiltersChange = (colFilters: Record<string, string[] | undefined>) => {
-    const pick = (key: string): string[] | undefined => {
-      const v = colFilters[key];
-      return v && v.length > 0 ? v : undefined;
-    };
-    const next = { debtorNames: pick("debtor_name"), currencies: pick("currency") };
-    const sig = JSON.stringify(next);
-    if (sig === serverFunnelSigRef.current) return;
-    serverFunnelSigRef.current = sig;
+    const next = soServerFunnels(colFilters);
+    const pageOnly = soPageOnlyFunnelKeys(colFilters);
+    const sig = JSON.stringify([next, pageOnly.map((k) => [k, colFilters[k]])]);
+    if (sig === funnelSigRef.current) return;
+    funnelSigRef.current = sig;
     setServerFunnels(next);
     if (!funnelSyncedRef.current) { funnelSyncedRef.current = true; return; }
     setPageParam(0);
@@ -1221,7 +1257,6 @@ export function MfgSalesOrdersListV2() {
   const goScanOrder = () => setShowScan(true);
   const goSoMaintenance = () => navigate("/scm/sales-orders/maintenance");
   const goFromQuotation = () => navigate("/scm/sales-orders/new/guided");
-  const goImport = () => navigate("/scm/sales-orders/maintenance?tab=import");
   const goDuplicate = () => navigate("/scm/sales-orders/maintenance?tab=duplicate");
   const goEdit = (r: SoRow) => navigate(`/scm/sales-orders/${r.doc_no}?edit=1`);
   const printDocument = usePrintDocument();
@@ -1231,6 +1266,9 @@ export function MfgSalesOrdersListV2() {
       { docNo: r.doc_no, status: "confirmed", expectedStatus: r.status },
       { onSuccess: () => setSelected(null) }
     );
+  /* Discard a DRAFT (DELETE /:docNo) — confirm + words in ./use-discard-draft-action.
+     The row no longer exists on success, so the drawer closes. */
+  const doDiscard = async (r: SoRow) => { if (await discardDraft(r.doc_no)) setSelected(null); };
   const doDeliver = (r: SoRow) => navigate(convertToLink('soToDo', r.doc_no));
   // Reopen a cancelled SO → CONFIRMED so it can proceed again (2990
   // MfgSalesOrdersList "Reopen SO" parity; reuses the status PATCH endpoint).
@@ -1284,7 +1322,7 @@ export function MfgSalesOrdersListV2() {
   const soContextMenu = salesOrderRowMenu<SoRow>({
     open: goFullPage, edit: goEdit, print: printDocument,
     confirm: doConfirm, transferToDo: doDeliver, reopen: doReopen,
-    setStatus: setSoStatus, close: doCloseSo, setHold: setSoHold, cancel: doCancelSo, canDeliver,
+    setStatus: setSoStatus, close: doCloseSo, setHold: setSoHold, cancel: doCancelSo, discard: (r) => void doDiscard(r), canDeliver,
   });
 
   // ─── Multi-select → batch "Print all" ─────────────────────────────────────
@@ -1396,7 +1434,7 @@ export function MfgSalesOrdersListV2() {
      Branding are the book's spellings where the order is in AutoCount (the
      server stamps ac_*; 2990 prints its own). The ERP number stays on ERP Doc No. */
   const soLineColumnList = Object.values(soLineColumns<SoRow>());
-  const columns: Column<SoRow, SoListLine>[] = [
+  const columns: Column<SoRow, SoListLine>[] = withSoFunnelSeeds<Column<SoRow, SoListLine>>(funnelValues, [
     {
       key: "doc_no",
       group: "Basic",
@@ -1469,8 +1507,10 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "sales_exemption_expiry", group: "Basic", label: SO_LABELS.salesExemptionExpiryDate, width: "150px", defaultHidden: true, disableSort: true, exportFormat: "date",
-      getValue: (r) => r.sales_exemption_expiry ?? "",
-      render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.sales_exemption_expiry)}</span>,
+      /* HC-0122: the original delivery date (BUG-51), one rule with the detail
+         listing; see lib/so-exemption-expiry.ts. */
+      getValue: (r) => soExemptionExpiryOf(r) ?? "",
+      render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(soExemptionExpiryOf(r))}</span>,
     },
     {
       key: "sales_location",
@@ -1484,7 +1524,8 @@ export function MfgSalesOrdersListV2() {
     {
       key: "reference",
       group: "Basic",
-      label: SO_LABELS.ref,
+      label: "Ref No.",
+      exportLabel: SO_LABELS.ref,
       width: "132px",
       disableSort: true,
       getValue: (r) => refOf(r),
@@ -1499,6 +1540,8 @@ export function MfgSalesOrdersListV2() {
       width: "112px",
       disableSort: true,
       getValue: (r) => r.ac_branding ?? brandOf(r),
+      // Server-filterable (lib/so-list-branding-funnel.ts): seed every brand.
+      filterSeedValues: brandNames,
       render: (r) => {
         const b = r.ac_branding ?? brandOf(r);
         return (
@@ -1702,7 +1745,17 @@ export function MfgSalesOrdersListV2() {
       exportValue: (r) => senToRinggit(r.balance_sen_live ?? r.balance_sen, 2),
       exportFormat: "money",
       render: (r) => ( // negative = over-collected → text-err, the app's negative-money convention (owner 2026-08-16)
-        <span className={cn("font-money text-[13px]", (r.balance_sen_live ?? r.balance_sen) < 0 ? "text-err" : "text-ink")}>{fmtRm(r.balance_sen_live ?? r.balance_sen)}</span>
+        <span
+          className={cn(
+            "font-money text-[13px]",
+            (r.balance_sen_live ?? r.balance_sen) < 0
+              ? "text-err"
+              : isDeliveredOwing(r.balance_sen_live ?? r.balance_sen, r.delivery_state ?? null) ? OWING_CLASS : "text-ink",
+          )}
+          title={isDeliveredOwing(r.balance_sen_live ?? r.balance_sen, r.delivery_state ?? null) ? "Delivered, still owing" : undefined}
+        >
+          {fmtRm(r.balance_sen_live ?? r.balance_sen)}
+        </span>
       ),
     },
     // ── Re-added columns (Phase 2) — NON-finance fields that already travel on
@@ -1771,11 +1824,14 @@ export function MfgSalesOrdersListV2() {
       exportFormat: "date",
       getValue: (r) => r.customer_delivery_date ?? "",
       lineValue: (_r, l) => l.delivery_date, // the file: the line's own date, else the order's
-      render: (r) => (
-        <span className="text-[12.5px] text-ink-secondary">
-          {fmtDate(r.customer_delivery_date)}
-        </span>
-      ),
+      render: (r) => {
+        const late = isPastDue(r.customer_delivery_date, soAwaitingDelivery(r));
+        return (
+          <span className={cn("text-[12.5px]", late ? OVERDUE_CLASS : "text-ink-secondary")} title={late ? "Delivery date passed, not delivered yet" : undefined}>
+            {fmtDate(r.customer_delivery_date)}
+          </span>
+        );
+      },
     },
     {
       key: "note",
@@ -1836,7 +1892,7 @@ export function MfgSalesOrdersListV2() {
         ]
       : []),
     ...soLineColumnList,
-  ];
+  ]);
 
   /* ── Column layouts ──────────────────────────────────────────────────────
      Houzs and 2990 run their sales desks off the SAME list page but read it for
@@ -1964,7 +2020,6 @@ export function MfgSalesOrdersListV2() {
                 </Button>
                 <SplitDropdown
                   onFromQuotation={goFromQuotation}
-                  onImport={goImport}
                   onDuplicate={goDuplicate}
                   canMaintain={canMaintain}
                 />
@@ -2231,6 +2286,7 @@ export function MfgSalesOrdersListV2() {
         onEdit={() => selected && goEdit(selected)}
         onPrint={() => selected && printDocument(salesOrderPrintChain(selected).own)}
         onConfirm={() => selected && doConfirm(selected)}
+        onDiscard={() => selected && void doDiscard(selected)}
         onDeliver={() => selected && doDeliver(selected)}
         onReopen={() => selected && void doReopen(selected)}
         canDeliver={canDeliver}

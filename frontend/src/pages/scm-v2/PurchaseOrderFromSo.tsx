@@ -25,7 +25,7 @@ import { useMemo, useState, type CSSProperties } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Save, X, CheckSquare, Square, Filter } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { fmtDateOrDash, fmtMoneySen } from '@2990s/shared';
+import { fmtDateOrDash, fmtMoneySen, fmtQty } from '@2990s/shared';
 import { VariantDescription } from '../../vendor/scm/components/VariantDescription';
 import {
   useOutstandingSoItems,
@@ -33,13 +33,14 @@ import {
   usePurchaseOrderDetail,
   type OutstandingSoItem,
 } from '../../vendor/scm/lib/suppliers-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { readScmHandoff, writeScmHandoff } from '../../lib/scmHandoffStorage';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { soRefOfCamelStamp } from '../../lib/so-ref-search';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -283,7 +284,7 @@ export const PurchaseOrderFromSo = () => {
 
   // ── Columns — memoized on `picks` so the controlled checkbox + qty input
   //    re-render when pick state changes (DataGrid is React.memo'd). ───────
-  const columns = useMemo<DataGridColumn<OutstandingSoItem>[]>(() => [
+  const columns = useMemo<GridColumn<OutstandingSoItem>[]>(() => [
     {
       key: 'pick', label: '', width: 40, sortable: false, groupable: false,
       accessor: (r) => {
@@ -307,6 +308,12 @@ export const PurchaseOrderFromSo = () => {
       key: 'soDocNo', label: 'SO Doc No', width: 120, sortable: true, groupable: true,
       accessor: (r) => <span className={styles.codeCell}>{r.soDocNo}</span>,
       searchValue: (r) => r.soDocNo,
+    },
+    {
+      key: 'soRef', label: 'Ref No.', width: 150, sortable: true,
+      accessor: (r) => soRefOfCamelStamp(r) || '—',
+      searchValue: (r) => soRefOfCamelStamp(r),
+      sortFn: (a, b) => soRefOfCamelStamp(a).localeCompare(soRefOfCamelStamp(b)),
     },
     {
       key: 'debtorName', label: 'Customer', width: 180, sortable: true, groupable: true,
@@ -365,7 +372,7 @@ export const PurchaseOrderFromSo = () => {
     },
     {
       key: 'qty', label: 'SO Qty', width: 70, align: 'right', sortable: true,
-      accessor: (r) => String(r.qty),
+      accessor: (r) => fmtQty(r.qty),
       sortFn: (a, b) => a.qty - b.qty,
     },
     {
@@ -572,7 +579,7 @@ export const PurchaseOrderFromSo = () => {
         </p>
       )}
 
-      <DataGrid<OutstandingSoItem>
+      <DataGridCompat<OutstandingSoItem>
         rows={rows}
         columns={columns}
         storageKey={STORAGE_KEY}

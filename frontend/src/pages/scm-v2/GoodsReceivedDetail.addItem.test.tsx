@@ -35,6 +35,9 @@ vi.mock('../../vendor/scm/lib/grn-queries', () => ({
   }),
   useUpdateGrnHeader: () => ({ mutateAsync: vi.fn().mockResolvedValue({}) }),
   useUpdateGrnItem: () => ({ mutateAsync: vi.fn().mockResolvedValue({}) }),
+  useSetGrnLineRack: () => ({ mutateAsync: vi.fn().mockResolvedValue({}) }),
+  useGrnItemRacks: () => ({ data: [], isLoading: false }),
+  useSetGrnLineRacks: () => ({ mutate: vi.fn(), isPending: false }),
   useDeleteGrnItem: () => ({ mutate: vi.fn(), isPending: false }),
   useAddGrnItem: () => ({ mutateAsync: h.addMock, isPending: false }),
   useCancelGrn: () => ({ mutate: vi.fn(), isPending: false }),
@@ -52,6 +55,7 @@ vi.mock('../../vendor/scm/lib/inventory-queries', () => ({
 
 vi.mock('../../vendor/scm/lib/warehouse-queries', () => ({
   useRacks: () => ({ data: { racks: [] } }),
+  useCrossCompanyRacks: () => ({ data: undefined }),
 }));
 
 vi.mock('../../vendor/scm/lib/mfg-products-queries', () => ({

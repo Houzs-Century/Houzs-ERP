@@ -11,6 +11,7 @@
 // ---------------------------------------------------------------------------
 
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
+import { recordAi, type AiUsageTag } from '../../services/aiUsage';
 import {
   CLAUDE_MODEL,
   anthropicFetchWithRetry,
@@ -27,6 +28,13 @@ export type GrnExtractedLine = {
   barcode: string | null;
   description: string | null;
   qty: number;
+  // A purchase order number printed ON THIS ROW. A consolidated delivery order
+  // (Hookka's DO-2609-097) carries one of our POs per line and no header P.O.,
+  // so without this every line fell back to item matching.
+  poNo: string | null;
+  // The rack the receiving warehouse HANDWROTE beside this row ("R11-2"), as
+  // written, else null. Matched to a rack of the GRN's warehouse later.
+  rack: string | null;
 };
 
 export type GrnExtracted = {
@@ -39,6 +47,20 @@ export type GrnExtracted = {
   deliveryDate: string | null;
   lines: GrnExtractedLine[];
 };
+
+const NOTE_NO_LINES =
+  'We could not read any lines off this delivery order. Please open the PO and create the goods receipt from it.';
+const NOTE_UNREADABLE =
+  'This photo does not look like a delivery order, or the paper is cut off or blurry. Please retake it with the whole paper in view, or open the PO and create the goods receipt from it.';
+
+// Needs-review note for a scan that produced no lines. A read that came back
+// with no DO no, PO no, supplier or lines (the date alone is only today's default)
+// means the model saw no delivery order. A null read is a failed call, not a bad
+// photo, so it keeps the neutral note.
+export function emptyScanNote(parsed: GrnExtracted | null): string {
+  const blank = parsed && !parsed.doNo && !parsed.poNo && !parsed.supplierName && parsed.lines.length === 0;
+  return blank ? NOTE_UNREADABLE : NOTE_NO_LINES;
+}
 
 export type GrnExtractCall = {
   parsed: GrnExtracted | null;
@@ -53,6 +75,7 @@ const GR_SYSTEM_PROMPT = `You extract structured data from photos or PDFs of sup
 A delivery order has:
 - A header: the SUPPLIER's name, a "P.O. No" (the purchase order number this delivery fulfils, e.g. "PO-010070" or "HC-PO-2609-166"), a "D.O. No" (the delivery order's own number), and a delivery/document date.
 - A line-item table: each row has an item code / Article No / Barcode / product code, a description, and a quantity delivered. Some documents show BOTH an internal code column and a supplier Article No / Barcode column.
+- Some delivery orders combine several purchase orders: there is no single header P.O. No, and each row prints its own references under the order column (e.g. "PO: HC-PO-2609-148", "SO: HC-SO-2609-085", "REF: ...").
 
 OUTPUT: valid JSON only, this exact shape:
 {
@@ -65,7 +88,9 @@ OUTPUT: valid JSON only, this exact shape:
       "itemCode": string | null,   // the item/product/Article No code as printed; prefer a code that looks like a SKU (letters+digits) over a free-text name
       "barcode": string | null,    // a separate barcode/EAN number if the row shows one distinct from itemCode
       "description": string | null,
-      "qty": number                // the quantity delivered for this line; a positive number
+      "qty": number,               // the number of SETS / UNITS delivered for this line; a positive number
+      "poNo": string | null,       // the purchase order number printed on THIS row (e.g. "HC-PO-2609-148"), else null
+      "rack": string | null        // the rack HANDWRITTEN beside THIS row by our warehouse (e.g. "R11-2", "L5-1"), else null
     }
   ]
 }
@@ -74,6 +99,9 @@ RULES:
 - Transcribe codes EXACTLY as printed, including punctuation, spaces and letter case. Do NOT normalise, expand or "correct" a code.
 - If a row shows only a description and no code, set itemCode to null and put the text in description.
 - qty is the delivered quantity as a number (strip any unit like "PCS"/"UNIT"). If a row has no readable quantity, use 0.
+- qty counts SETS / UNITS, never component pieces or cartons. Furniture delivery orders often print a "Set" (or "Unit") column AND a piece breakdown such as "1 HB + 2 Divan" with a "Total Qty" of 3. That row delivered ONE set: use the Set column (1), never the piece total (3).
+- A row's poNo is ONLY a purchase order number printed on that row, labelled "PO" / "P.O.". Never put an SO / sales order / REF / Our SO number there, and never copy the header P.O. No into a row. Transcribe it exactly as printed. No PO on the row -> null.
+- A row's rack is ONLY a short location the receiving warehouse wrote BY HAND (pen) beside the row, usually in the left margin: a letter L or R followed by numbers, e.g. "R7-2", "L8-1", "R:11-2", "L-19-2". Transcribe it as written; after the L or R it is only digits and separators, so a mark that looks like a letter there is a digit (a handwritten 6 often looks like "b"). If a value is crossed out and another is written beside it, use the one NOT crossed out. If one rack is written with a bracket or line spanning several rows, give every row under that bracket the same rack. Never take a printed code, a SO / PO / REF number, a tick or a quantity mark as a rack. No handwritten rack beside the row -> null.
 - Ignore sub-total / total / remarks / signature rows — only real product lines go in "lines".
 - Never invent a P.O. No, D.O. No or code you cannot read; use null.`;
 
@@ -103,6 +131,8 @@ export function normalizeGrnExtract(raw: unknown): GrnExtracted {
       barcode: str(o.barcode),
       description: str(o.description),
       qty: Math.max(0, num(o.qty)),
+      poNo: str(o.poNo),
+      rack: str(o.rack),
     };
   });
   const isoDate = ((): string | null => {
@@ -126,6 +156,7 @@ export async function callClaudeGrExtract(
   apiKey: string,
   fileBlocks: ContentBlock[],
   fewShotText: string,
+  usage: AiUsageTag,
 ): Promise<GrnExtractCall> {
   let errorMsg: string | null = null;
   let timedOut = false;
@@ -134,7 +165,7 @@ export async function callClaudeGrExtract(
   let cacheHit = false;
 
   try {
-    const resp = await anthropicFetchWithRetry({
+    const resp = await recordAi(usage, anthropicFetchWithRetry({
       method: 'POST',
       signal: AbortSignal.timeout(110_000),
       headers: {
@@ -165,7 +196,7 @@ export async function callClaudeGrExtract(
           },
         ],
       }),
-    });
+    }));
 
     const bodyText = await resp.text();
     if (!resp.ok) {

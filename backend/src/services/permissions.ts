@@ -45,6 +45,10 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "service_cases.approve", resource: "Service Cases", verb: "manage", label: "Approve service cost", description: "Approve the quoted cost on an ASSR case (POST /api/assr/:id/approve)" },
   { key: "logs.read",     resource: "Activity Log", verb: "read", label: "View activity log", description: "See the system execution log" },
 
+  // IT pages (DEV-35): System Health, AI usage. While IT tests them the `*`
+  // wildcard does not confer this key; see services/itAccess.ts.
+  { key: "it.view", resource: "IT", verb: "read", label: "View IT pages", description: "See System Health and the other IT-only pages" },
+
   // Fleet Maintenance & Compliance (Phase 1) — the lorry master, compliance
   // vault and Fleet Health dashboard (/api/fleet-maintenance). Read is the
   // dashboard + reminders; write covers adding/editing vehicles and appending
@@ -65,6 +69,17 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "stock_in.approve", resource: "Projects", verb: "manage", label: "Approve stock IN transfers", description: "Approve the Stock In Transfer Record checklist step (owner rule 2026-07-21: HQ + Peter only)" },
   { key: "agreement.approve", resource: "Projects", verb: "manage", label: "Approve agreements", description: "Tick the Agreement / Quotation checklist step (director approval gate)" },
   { key: "projects.manage",  resource: "Projects", verb: "manage", label: "Manage projects",   description: "Archive, change stage, edit templates, backfill CSV" },
+  // Owner 2026-09-30 — the Projects › Reminder view. Compiles every INCOMPLETE
+  // checklist task across ALL events into per-organizer / per-owner / per-PIC
+  // groups the admin can copy as a ready-to-paste WhatsApp reminder, so nobody
+  // opens 20 projects and screenshots one by one to chase people. It exposes
+  // OTHER people's outstanding work, so it is admin-only by default: Owner +
+  // Super Admin hold it via "*", and every other role must be granted it
+  // explicitly under Team > Positions. This is deliberately NARROWER than
+  // projects.manage (which BD Exec / IT Admin also carry) — a manager can be
+  // handed the chase-list without full project admin. Regular users keep only
+  // their own row-scoped "My Pending" filter and can never trace others here.
+  { key: "projects.reminders", resource: "Projects", verb: "manage", label: "Compile task reminders", description: "See Projects › Reminder — filter every event's incomplete checklist tasks by task / month / organizer and copy a ready-made reminder to paste into a WhatsApp group (does not by itself grant editing projects)" },
   // Granular finance-view (owner 2026-07-23): grants a non-director role the
   // money figures (rental / sales / profit) + the Finances page, WITHOUT the
   // full DIRECTOR tier. Read by pmsAccess.isFinanceViewer. Given to the BD role.
@@ -75,6 +90,11 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "sales.write",  resource: "Sales Entries", verb: "write",  label: "Edit sales entries",   description: "Create and edit own draft sales entries, submit for review" },
   { key: "sales.manage", resource: "Sales Entries", verb: "manage", label: "Manage sales entries", description: "Edit any entry, configure fields, void entries, push to AutoCount" },
 
+  // Houzs POS (the cash & carry booth app) — the ERP's POS Admin menu: items,
+  // barcode labels, cashiers, events, settings, sync status, reports. Owner +
+  // IT Admin cover it via "*"; this key lets another role in.
+  { key: "pos.manage", resource: "POS Admin", verb: "manage", label: "Manage POS", description: "The POS Admin menu: POS items, barcode labels, cashiers, events, SST / receipt / printer / general settings, sync status and the POS sales report" },
+
   // Supply Chain — ported 2990's furniture SCM (/api/scm). Single coarse
   // gate: holding scm.access (or "*") unlocks every SCM module. Owner +
   // IT Admin already cover it via "*"; this lets non-admin roles in too.
@@ -82,18 +102,31 @@ export const PERMISSIONS: PermissionDef[] = [
   // Granular SCM write gates — replace the inherited 2990 staff_role checks
   // (which trivially pass in Houzs because the SCM bridge pins every caller
   // to one super_admin row). Owner + IT Admin already cover all four via "*";
-  // grant individual positions later via the Team > Positions matrix.
+  // grant it to a ROLE later under Team > Roles & Permissions.
   { key: "scm.config.write",        resource: "Supply Chain", verb: "write",  label: "Edit SCM master data",         description: "Edit SCM master data: products, sofa combos, delivery fees, fabric library + tier add-ons, PWP rules, sofa quick picks, special add-ons, Maintenance config, category hero images" },
   { key: "scm.so.price_override",   resource: "Supply Chain", verb: "manage", label: "Override SO line unit price",  description: "Hand-override the unit price on a SCM Sales Order line (audited, admin-level)" },
   { key: "scm.so.view_all",         resource: "Supply Chain", verb: "read",   label: "View all salespersons' SOs",   description: "View every salesperson's My-Orders board (bypass per-rep attribution scoping)" },
   { key: "scm.so.attribute_other",  resource: "Supply Chain", verb: "manage", label: "Attribute SO to another rep",  description: "Create or edit a SCM Sales Order on behalf of another salesperson (stamp a different salesperson_id)" },
+  // DEV-32 (Syu 2026-10-01) — for Logistics. Rule: scm/shared/so-after-do-edit.ts.
+  { key: "scm.so.edit_after_do",    resource: "Supply Chain", verb: "manage", label: "Edit SO after DO",             description: "After a Delivery Order is raised, change the SO customer details and add or edit charge lines (transport, storage, misc); the change is copied onto the DO. Not once the DO has an invoice or return." },
+  // DEV-70 (syasya 2026-10-12) — price of a line already on a DO. Rule: scm/shared/so-after-do-edit.ts.
+  { key: "scm.so.edit_price_after_do", resource: "Supply Chain", verb: "manage", label: "Edit SO line price after DO", description: "After a Delivery Order is raised, change the unit price and discount of any SO line it carries (qty, product and specification stay locked); the DO line follows. Not once the DO has an invoice or return." },
   // Port of 2990 gate #717 — clearing an already-set Processing Date pulls the
   // SO back out of the Proceed lane (and, once the day has elapsed, undoes the
   // lock that says "this is what we PO to the supplier"). 2990 restricts it to
   // super_admin; Houzs has no live staff_role (the SCM bridge pins every caller
   // to one super_admin row), so gate on this admin-level key instead. Owner + IT
-  // Admin cover it via "*"; grant other positions via the Team > Positions matrix.
+  // Admin cover it via "*"; grant the ROLE it belongs to under Team > Roles & Permissions.
+  { key: "scm.so.override_po_processing_date", resource: "Supply Chain", verb: "manage", label: "Change Processing Date under a PO", description: "Move or clear the Processing Date of a Sales Order that already has a Purchase Order (BUG-101: Purchaser only, never sales)" },
   { key: "scm.so.remove_processing_date", resource: "Supply Chain", verb: "manage", label: "Remove SO Processing Date", description: "Clear an already-set Processing Date on a SCM Sales Order (admin-level; pulls the order back out of the Proceed lane)" },
+  // Owner 2026-09-23 — a keyed-in payment's transaction-slip date must fall in
+  // the last 14 days (scm/shared/payment-slip-date.ts owns the window). This key
+  // is the exception: Finance / management keying a receipt that surfaced late.
+  // Owner + IT Admin cover it via "*"; grant the ROLE under Team > Roles & Permissions.
+  { key: "scm.payment.backdate", resource: "Supply Chain", verb: "manage", label: "Backdate a payment slip", description: "Record or re-date a Sales Order payment whose transaction-slip date is older than the 14-day window (or in the future); the entry is audited as an override" },
+  // Owner 2026-09-30: Logistic decides backdate REQUESTS without being able to
+  // key an old slip itself — their own late slips still go through a request.
+  { key: "scm.payment.backdate.approve", resource: "Supply Chain", verb: "approve", label: "Approve backdated payment requests", description: "See, approve or reject Sales Order payment requests whose slip date is older than the 14-day window; does not let the holder key such a payment directly, and never their own request" },
   // SO amendment / revision workflow — TWO-LANE model (owner rework 2026-07-27).
   // A processing-locked SO changes only through an amendment; at submit the
   // request is auto-classified (and, when mixed, SPLIT) into two independent
@@ -121,8 +154,8 @@ export const PERMISSIONS: PermissionDef[] = [
   // add or remove a line, or the header supplier / delivery / notes) through a
   // SIMPLIFIED single-approver gate: REQUESTED -> APPROVED (approve APPLIES the
   // change), or REQUESTED -> REJECTED (reject / withdraw). No supplier-confirm,
-  // no two-gate, no send. Owner + IT Admin cover all via "*"; grant purchasing
-  // positions via the Team > Positions matrix. po_amendment.approve also gates reject.
+  // no two-gate, no send. Owner + IT Admin cover all via "*"; grant the
+  // purchasing ROLE under Team > Roles & Permissions. po_amendment.approve also gates reject.
   { key: "scm.po_amendment.create",  resource: "Supply Chain", verb: "manage", label: "Raise PO amendment",   description: "Raise an amendment request against a Purchase Order (opens the single-approver PO revision flow)" },
   { key: "scm.po_amendment.approve", resource: "Supply Chain", verb: "manage", label: "Approve/reject PO amendment", description: "Approve a Purchase Order amendment — snapshots the prior version, applies the line + header diffs, bumps the PO revision (REQUESTED -> APPROVED) — or reject it (-> REJECTED)" },
   // Document cancellation approval (owner 2026-09-08, 「SO 和 PO 取消的话需要
@@ -150,8 +183,8 @@ export const PERMISSIONS: PermissionDef[] = [
   // value. Reading the list rides the coarse scm.access + the scm.finance area
   // guard; these flat keys gate the write transitions against the REAL caller
   // (2990's scm.staff.role gates are dead — the SCM bridge pins every caller to
-  // one super_admin row). Owner + IT Admin cover all via "*"; grant finance /
-  // purchasing positions via the Team > Positions matrix.
+  // one super_admin row). Owner + IT Admin cover all via "*"; grant the
+  // finance / purchasing ROLE under Team > Roles & Permissions.
   { key: "scm.payment_voucher.create", resource: "Supply Chain", verb: "write",  label: "Create payment voucher",  description: "Create a draft Payment Voucher (pay a non-goods vendor: freight forwarder, one-off service)" },
   { key: "scm.payment_voucher.write",  resource: "Supply Chain", verb: "write",  label: "Edit payment voucher",    description: "Edit a DRAFT Payment Voucher (payee, accounts, lines, PI settlement allocations)" },
   { key: "scm.payment_voucher.post",   resource: "Supply Chain", verb: "manage", label: "Post payment voucher",     description: "Post a Payment Voucher to the General Ledger (DRAFT -> POSTED; settles any linked PIs)" },
@@ -160,6 +193,23 @@ export const PERMISSIONS: PermissionDef[] = [
   // default except '*' — the owner grants it per position when he delegates.
   { key: "scm.payment_voucher.check", resource: "Supply Chain", verb: "manage", label: "Check payment voucher", description: "The first of the two yeses (owner 2026-09-02): check a prepared Payment Voucher — checking locks it and reserves it against Daily Bank's available money; a checker may also reject back to draft" },
   { key: "scm.payment_voucher.approve", resource: "Supply Chain", verb: "manage", label: "Approve payment voucher", description: "The second yes: approve a checked Payment Voucher — approval posts the GL entry in the same breath; an approver may also reject back to draft" },
+  // 申请付款 (owner 2026-09-30, 4a: Event 的 rental 要还的要相关负责人 upload，然后我
+  // finance 这里负责做 payment). The requester's half of a payment: who to pay, how
+  // much, for which event, and the bill itself. Finance answers with a voucher
+  // (scm.payment_voucher.create) through the untouched cycle; the requester sees
+  // their own requests only. Nobody holds it by default except '*' — grant it to
+  // a ROLE under Team > Roles & Permissions (Roles). It is also the one SCM door
+  // such a person has: requireScmAccess admits it for /payment-requests alone.
+  { key: "scm.payment_request.create", resource: "Supply Chain", verb: "create", label: "Request a payment (申请付款)", description: "Ask Finance to pay a bill — payee, amount, due date, the event it is for, the payee's bank details and the bill itself; see your own requests move from Submitted to Paid and Bank confirmed" },
+
+  // Product request (owner 2026-10-06: to request new product / repack product;
+  // Sales 都能提, Purchaser 批). Every Sales caller may raise one without this
+  // key (position / department, like the SO amendment); the create key is for a
+  // non-Sales person who should also raise them. The approve key is the
+  // Purchaser's: approve, reject, build the Model + SKU, raise the PC Order,
+  // close. Owner + IT Admin cover both via "*".
+  { key: "scm.product_request.create",  resource: "Supply Chain", verb: "create", label: "Raise a product request", description: "Ask the Purchaser for a new product or a repack — existing SKU or a new Model, fabric, seat and leg size, what it is for, where and when to deliver; see your own requests move from Requested to Approved and the Purchase Consignment Order raised from them" },
+  { key: "scm.product_request.approve", resource: "Supply Chain", verb: "manage", label: "Approve/reject product requests", description: "The Purchaser's decision on a product request: approve or reject it (with the why), build the new Model and SKU from it, raise the Purchase Consignment Order from it, close it" },
 
   // Correcting a customer payment after the day it was keyed (owner +
   // management, 2026-09-10: 让权限在finance 这里更改). Sales records the money
@@ -197,7 +247,7 @@ export const PERMISSIONS: PermissionDef[] = [
   // rate_to_myr (multi-currency FX, migration 0082). Reading the list is open to
   // any authed SCM caller (the GRN/PI/PV currency dropdowns need it); this flat
   // key gates create/edit of a currency + its rate. Owner + IT Admin cover it via
-  // "*"; grant finance / purchasing positions via the Team > Positions matrix.
+  // "*"; grant the finance / purchasing ROLE under Team > Roles & Permissions.
   { key: "scm.currency.manage",        resource: "Supply Chain", verb: "manage", label: "Manage currencies",        description: "Add or edit a currency in the master and set its exchange rate to MYR (used by GRN / PI / Payment Voucher foreign-currency posting)" },
 
   // HR / Commission (port of 2990 0171 + apps/api/src/routes/hr.ts). Computes

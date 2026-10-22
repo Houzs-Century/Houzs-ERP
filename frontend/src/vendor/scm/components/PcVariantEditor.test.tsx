@@ -27,6 +27,7 @@ vi.mock('../lib/mfg-products-queries', () => {
 });
 
 import { PcVariantEditor } from './PcVariantEditor';
+import { withMasterPickerPools } from '../lib/picker-maint';
 
 // Minimal maintenance config — the bedframe branch only reads the (empty) option
 // pools; the specials pool comes from the mocked useSpecialAddons.
@@ -86,5 +87,38 @@ describe('PcVariantEditor — unified Special Orders (consignment)', () => {
     expect((screen.getByRole('checkbox', { name: /HB Fully Cover/i }) as HTMLInputElement).disabled).toBe(true);
     await user.click(screen.getByRole('button', { name: /Override/i }));
     expect((screen.getByRole('checkbox', { name: /HB Fully Cover/i }) as HTMLInputElement).disabled).toBe(false);
+  });
+});
+
+describe('PcVariantEditor — sofa pickers follow master (BUG-60)', () => {
+  // 2990's Home: HOOKKA INDUSTRIES' 2026-05-29 overlay vs master after DEFAULT was added.
+  const HOOKKA = {
+    gaps: [], divanHeights: [], legHeights: [],
+    sofaSizes: ['24', '26', '28', '30', '32', '35'],
+    sofaLegHeights: [{ value: 'No Leg', priceSen: 0 }, { value: '4"', priceSen: 3000 }],
+  } as unknown as MaintenanceConfig;
+  const MASTER = {
+    gaps: [], divanHeights: [], legHeights: [],
+    sofaSizes: ['24', '26', '28', '30', '32', '35', '37', 'Flat', 'DEFAULT'],
+    sofaLegHeights: [{ value: 'No Leg', priceSen: 0 }, { value: '4"', priceSen: 5000 }, { value: 'DEFAULT', priceSen: 0 }],
+  } as unknown as MaintenanceConfig;
+  const optionValues = (label: string) =>
+    Array.from((screen.getByLabelText(label) as HTMLSelectElement).options).map((o) => o.value).filter(Boolean);
+
+  it('the supplier overlay alone hides DEFAULT (the reported screen)', () => {
+    render(<PcVariantEditor category="sofa" variants={{}} onChange={() => {}} fabrics={[]} maint={HOOKKA} />);
+    expect(optionValues('Seat Size')).not.toContain('DEFAULT');
+  });
+
+  it('offers and writes DEFAULT for Seat Size and Leg Heights', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<PcVariantEditor category="sofa" variants={{}} onChange={onChange} fabrics={[]} maint={withMasterPickerPools(HOOKKA, MASTER)!} />);
+    expect(optionValues('Seat Size')).toContain('DEFAULT');
+    expect(optionValues('Leg Heights')).toContain('DEFAULT');
+    await user.selectOptions(screen.getByLabelText('Seat Size'), 'DEFAULT');
+    await user.selectOptions(screen.getByLabelText('Leg Heights'), 'DEFAULT');
+    expect(onChange).toHaveBeenCalledWith('seatHeight', 'DEFAULT');
+    expect(onChange).toHaveBeenCalledWith('legHeight', 'DEFAULT');
   });
 });

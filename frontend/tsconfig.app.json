@@ -25,8 +25,7 @@
       "@2990s/shared/payment-methods": ["./src/vendor/scm/lib/payment-methods.ts"],
       "@2990s/shared/so-variant-rule": ["./src/vendor/shared/so-variant-rule.ts"],
       "@2990s/shared/so-line-display": ["./src/vendor/shared/so-line-display.ts"],
-      "@2990s/shared": ["./src/vendor/shared/index.ts"],
-      "@tanstack/react-virtual": ["./src/vendor/scm/lib/react-virtual-shim.ts"]
+      "@2990s/shared": ["./src/vendor/shared/index.ts"]
     }
   },
   "include": ["src", "functions"]

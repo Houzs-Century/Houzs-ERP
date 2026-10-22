@@ -45,7 +45,7 @@ type AppContext = Context<{ Bindings: Env; Variables: Variables }>;
 // gates on the flat permission key `scm.config.write` against the REAL caller
 // (the 2990 staff_role lookup is dead in Houzs — the SCM bridge pins every
 // caller to one super_admin row). Owner + IT Admin pass via `*`; grant
-// individual positions via the Team > Positions matrix. GET stays open (the
+// the key to a ROLE under Team > Roles & Permissions. GET stays open (the
 // POS salesperson must read combos to price builds); only writes are gated.
 
 async function requireWriteRole(c: AppContext): Promise<{ ok: true } | { ok: false; res: Response }> {
@@ -57,7 +57,7 @@ async function requireWriteRole(c: AppContext): Promise<{ ok: true } | { ok: fal
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const todayIso = () => todayMyt();
-const TIERS = new Set(['PRICE_1', 'PRICE_2', 'PRICE_3']);
+export const TIERS = new Set(['PRICE_1', 'PRICE_2', 'PRICE_3']);
 
 type Tier = 'PRICE_1' | 'PRICE_2' | 'PRICE_3' | null;
 
@@ -115,7 +115,7 @@ function rowToWire(r: Row) {
  * Returns null on a malformed payload (non-array, empty after trim, or a
  * slot with no codes).
  */
-function validateComboModules(v: unknown): ComboSlots | null {
+export function validateComboModules(v: unknown): ComboSlots | null {
   if (!Array.isArray(v) || v.length === 0) return null;
   // Reject mixed/garbage entries up front; the canonicalizer handles the
   // string vs string[] coercion + trimming + intra-slot/slot sort.
@@ -129,7 +129,7 @@ function validateComboModules(v: unknown): ComboSlots | null {
   return canonicalizeComboModulesForStorage(v);
 }
 
-function validatePricesByHeight(v: unknown): Record<string, number | null> | null {
+export function validatePricesByHeight(v: unknown): Record<string, number | null> | null {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
   const out: Record<string, number | null> = {};
   for (const [k, raw] of Object.entries(v as Record<string, unknown>)) {
@@ -137,7 +137,11 @@ function validatePricesByHeight(v: unknown): Record<string, number | null> | nul
     // ("24", "37") or named ones like "Flat". Accept alphanumeric labels (with
     // an optional space/dash); reject empty or symbol-only keys. The old
     // /^\d+$/ rejected the entire payload the moment "Flat" entered the pool.
-    if (!/^[A-Za-z0-9][A-Za-z0-9 _-]*$/.test(k)) return null;
+    // The inch mark is allowed too: the pool also holds `25"` / `27"` / `29"`,
+    // and since the composer sends every pool height, rejecting `"` refused
+    // EVERY combo save (BUG-46). Keys stay verbatim so they match the SO
+    // line's seatHeight, which is picked from the same pool.
+    if (!/^[A-Za-z0-9][A-Za-z0-9 _"'-]*$/.test(k)) return null;
     if (raw === null || raw === undefined || raw === '') {
       out[k] = null;
       continue;

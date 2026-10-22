@@ -134,7 +134,7 @@ export function MonthlyReport<T>({ report, title, withCumulative, fetchColumn, l
       : l.kind === 'net' ? { fontWeight: 700, borderTop: '2px solid var(--c-ink, #221f20)' }
         : l.kind === 'total' ? { fontWeight: 600, borderTop: '1px solid var(--border-weak, #e3e1da)' }
           : l.kind === 'category' ? { fontWeight: 600 }
-            : l.kind === 'unassigned' ? { fontStyle: 'italic', ...soft } : {};
+            : l.kind === 'unassigned' || l.kind === 'memo' ? { fontStyle: 'italic', ...soft } : {};
 
   return (
     <div className="space-y-3">

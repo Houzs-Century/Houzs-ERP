@@ -30,6 +30,13 @@
 //     not back on the closing account, so opening and closing read as two
 //     lines on the P&L the way AutoCount prints them.
 //
+// 2026-09-30 (owner: Inventory - Showroom, Inventory - Others; showroom 和
+// display 分开): FIVE buckets — showroom (-0004) and others (-0005) join, and
+// a warehouse typed showroom / others books there instead of on display /
+// customer. The sweep re-posts a month whose lines moved; a replacement that
+// cannot post (its accounts not on the chart yet) is refused BEFORE the old
+// pair is reversed, so a month is never left with no closing stock.
+//
 // The month's two entries are BOTH posted by the close, immediately:
 //   STOCKADJ-{co}-{YYYY-MM}      Dr STOCK-b V_b / Cr CLOSING-b V_b   (last day, per bucket)
 //   STOCKADJ-REV-{co}-{YYYY-MM}  Dr OPENING-b V_b / Cr STOCK-b V_b   (1st of next, per bucket)
@@ -44,7 +51,7 @@
 // and never deletes — a wrong value is reversed and re-posted, on the record.
 // ----------------------------------------------------------------------------
 
-import { postJournal, reverseJournal } from './engine';
+import { postJournal, reverseJournal, validateJournal } from './engine';
 import { resolveRoles, STOCK_BUCKET_ROLES, type RuleLine } from './rules';
 import { paginateAll } from '../scm/lib/paginate-all';
 import { fmtSen } from '../scm/shared/format';
@@ -383,6 +390,28 @@ export async function closeStockMonth(
   }
   if (cur.je && curRev.je && sameLines) {
     return record({ companyId, month, valueSen: totalSen, buckets, action: 'unchanged', jeNo: cur.je.je_no, revJeNo: curRev.je.je_no });
+  }
+
+  /* The replacement must be able to post BEFORE the old pair comes out. The
+     reversal below is followed by the fresh post; if that post then fails
+     (an account the chart does not carry yet — a new bucket's accounts not
+     opened), the month is left with its closing stock reversed and nothing in
+     its place until a later run succeeds. Checked with the engine's own gate,
+     both legs, and refused with the old pair untouched. */
+  if (totalSen > 0) {
+    const legs = [
+      { lines: closingLines, entryDate: edges.lastDay, sourceDocNo: adjDoc, narration: `Closing stock ${month}` },
+      { lines: openingLines, entryDate: edges.nextFirst, sourceDocNo: revDoc, narration: `Opening stock ${month}` },
+    ];
+    for (const leg of legs) {
+      const v = await validateJournal(sb, { companyId, sourceType: 'STOCKADJ', ...leg });
+      if (!v.ok) {
+        return record({
+          companyId, month, valueSen: totalSen, buckets, action: 'failed',
+          note: `the new entry cannot post (${v.status}${v.reason ? `: ${v.reason}` : ''}) — nothing was reversed; the month keeps its current entries`,
+        });
+      }
+    }
   }
 
   /* Value or shape moved (or a half-posted pair): take the old pair out FIRST

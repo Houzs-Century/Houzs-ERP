@@ -192,8 +192,8 @@ describe("ShareCalendar", () => {
     // Two image pages (the .pdf upload on event 7 is skipped), event 7 first.
     expect(pdf.pages.map((p) => p.images)).toEqual([["JPEG"], ["PNG"]]);
     expect(pdf.pages.map((p) => p.orientation)).toEqual(["portrait", "portrait"]);
-    expect(pdf.pages[0].texts).toEqual(["MID VALLEY", "11/09/2026 – 13/09/2026  ·  Booth 3053-3055"]);
-    expect(pdf.pages[1].texts).toEqual(["Spice Fair", "20/09/2026 – 21/09/2026  ·  SETIA SPICE"]);
+    expect(pdf.pages[0].texts).toEqual(["MID VALLEY", "2026/09/11 – 2026/09/13  ·  Booth 3053-3055"]);
+    expect(pdf.pages[1].texts).toEqual(["Spice Fair", "2026/09/20 – 2026/09/21  ·  SETIA SPICE"]);
     // Only image files were fetched, and the .pdf upload never was.
     const fetched = fetchMock.mock.calls.map((c) => String(c[0])).filter((u) => /\/floorplan\/t\d+$/.test(u));
     expect(fetched.map((u) => u.slice(u.lastIndexOf("/") + 1))).toEqual(["t702", "t901"]);

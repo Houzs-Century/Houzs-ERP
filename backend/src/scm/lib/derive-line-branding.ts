@@ -20,6 +20,11 @@ import { pgrestIn } from './pgrest-in-list';
 import { normCategory } from './so-readiness';
 import { brandForHeader, deriveListFirstItemBranding } from './so-list-first-item-branding';
 import { brandingLabel } from '../shared/so-branding-label';
+import { namesABrand } from './vp-brand';
+import { activeCompanyId, activeCompanySql, scopeToCompany, type CompanyScopeCtx } from './companyScope';
+import { soHasDownstream } from './downstream-lock';
+import { redetectFairAfterBrandChange, type FairDb } from './fair-binding';
+import { fairStateOf, recordFairChange } from './fair-audit';
 
 export type LineBrandingRow = {
   item_code?: string | null;
@@ -29,6 +34,114 @@ export type LineBrandingRow = {
 
 const isBlank = (v: string | null | undefined) =>
   v == null || String(v).trim() === '';
+
+/**
+ * The header branding a CLIENT sent, or null when it is not a brand. A client
+ * value that is blank, a placeholder or a category word ("BEDFRAME",
+ * "Accessories") is never stored: the lines decide instead.
+ */
+export function clientHeaderBranding(v: unknown): string | null {
+  return typeof v === 'string' && namesABrand(v) ? v.trim() : null;
+}
+
+type BrandListCtx = CompanyScopeCtx & { env: { DB: D1Database } };
+
+/** The active company's maintained brands (project_brands), or null when the
+ *  pool cannot be read — then the SKU-only answer stands. */
+export async function loadHeaderBrandList(
+  c: BrandListCtx,
+): Promise<{ companyCode: string | null; brands: string[] } | null> {
+  try {
+    const brandRows = await c.env.DB.prepare(
+      `SELECT name FROM project_brands WHERE active = 1${activeCompanySql(c)}`,
+    ).all<{ name: string }>();
+    return {
+      companyCode: (c.get('companyCode') as string | undefined) ?? null,
+      brands: brandRows.results.map((b) => String(b.name).trim()).filter(Boolean),
+    };
+  } catch { return null; }
+}
+
+/**
+ * Re-derive an ERP order's HEADER branding after its lines changed (BUG-115).
+ * Create stamps it once from the lines; without this a line added, swapped or
+ * removed later (the usual fix-up of a scanned draft) left the header naming a
+ * product the order no longer carries — HC-SO-2609-336, a Dunlopillo mattress
+ * order headed BEDFRAME. Best-effort and non-fatal like the roll-up it sits by.
+ *
+ * Left alone: a migrated order (its header is AutoCount's copy), an order a
+ * live DO / SI has snapshotted (the header identity lock), and any read that
+ * fails. A brand change re-runs fair detection with the new brand
+ * (`redetectFairAfterBrandChange`, HC-0094): an unlinked order is linked to an
+ * existing fair now, and a link to the old brand's booth moves to the new
+ * brand's booth at the same event.
+ */
+export async function restampHeaderBranding(
+  sb: SupabaseClient,
+  docNo: string,
+  c: BrandListCtx,
+): Promise<void> {
+  try {
+    const { data: head, error } = await scopeToCompany(
+      sb.from('mfg_sales_orders').select('branding, linked_ac_docno, project_id, fair_match, venue, so_date'),
+      c,
+    ).eq('doc_no', docNo).maybeSingle();
+    if (error || !head) return;
+    const h = head as { branding: string | null; linked_ac_docno: string | null; project_id: number | null; fair_match: string | null; venue: string | null; so_date: string | null };
+    if (h.linked_ac_docno) return;
+    if (await soHasDownstream(sb, docNo)) return;
+    const { data: lines, error: lErr } = await scopeToCompany(
+      sb.from('mfg_sales_order_items').select('item_code, item_group, branding, company_id'),
+      c,
+    ).eq('doc_no', docNo).eq('cancelled', false)
+      .order('line_no', { ascending: true, nullsFirst: false })
+      .order('created_at', { ascending: true });
+    if (lErr) return;
+    const brand = await deriveHeaderBrandingFromLines(
+      sb,
+      lines as Array<LineBrandingRow & { item_group?: string | null }>,
+      activeCompanyId(c) ?? null,
+      await loadHeaderBrandList(c),
+    );
+    if (!brand || brand === h.branding) return;
+    const companyId = activeCompanyId(c);
+    if (companyId == null) return;
+    const fair = await redetectFairAfterBrandChange({
+      db: c.env.DB as unknown as FairDb,
+      companySql: activeCompanySql(c, 'p.company_id'),
+      order: {
+        venue: h.venue,
+        soDate: String(h.so_date ?? '').slice(0, 10),
+        projectId: h.project_id == null ? null : Number(h.project_id),
+        fairMatch: h.fair_match,
+      },
+      oldBrand: h.branding,
+      newBrand: brand,
+    });
+    const { error: updErr } = await sb.from('mfg_sales_orders')
+      .update({ branding: brand, ...(fair ?? {}) })
+      .eq('doc_no', docNo).eq('company_id', companyId);
+    /* A fair the brand moved is in the order's History (fair-audit.ts). */
+    if (fair && !updErr) {
+      await recordFairChange({
+        sb, db: c.env.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), docNo,
+        before: fairStateOf(h), after: fairStateOf(fair), how: 'brand', actorId: null, actorName: 'System',
+        note: `The order's brand became ${brand}, so its fair link followed the brand.`,
+      });
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[restamp-header-branding] failed for', docNo, e);
+  }
+}
+
+/** The bulk repair script's half (repair-so-header-branding.mjs): a brand change
+ *  re-opens a fair verdict that found no booth under the old brand, so the
+ *  nightly reconcile retries it (PENDING). The app re-detects at once instead
+ *  (`redetectFairAfterBrandChange`). */
+export function fairRependsOnBrandChange(h: { project_id: number | null; fair_match: string | null }): boolean {
+  return h.project_id == null && (h.fair_match === 'AMBIGUOUS' || h.fair_match === 'UNMATCHED');
+}
 
 /**
  * Fill in `branding` in place from `scm.mfg_products.branding` for any row
@@ -129,8 +242,7 @@ export async function deriveHeaderBrandingFromLines(
   if (codes.length === 0) return null;
   const cid = rows.find((r) => r.company_id != null)?.company_id ?? fallbackCompanyId;
 
-  const brandByCode = new Map<string, string>();
-  const catByCode = new Map<string, string>();
+  const products: HeaderBrandingProduct[] = [];
   for (let i = 0; i < codes.length; i += 300) {
     let q = pgrestIn(sb.from('mfg_products').select('code, branding, category'), 'code', codes.slice(i, i + 300));
     if (cid != null) q = q.eq('company_id', cid);
@@ -141,16 +253,53 @@ export async function deriveHeaderBrandingFromLines(
        the caller leaves the header alone, and the SO list still derives a label
        from the lines. */
     if (error) return null;
-    for (const p of (data ?? []) as Array<{ code: string; branding: string | null; category: string | null }>) {
-      if (!isBlank(p.branding)) brandByCode.set(p.code, p.branding!.trim());
-      if (p.category) catByCode.set(p.code, p.category.trim().toUpperCase());
-    }
+    products.push(...((data ?? []) as HeaderBrandingProduct[]));
+  }
+  return pickHeaderBranding(rows, products, listFallback);
+}
+
+export type HeaderBrandingProduct = { code: string; branding: string | null; category: string | null };
+
+/**
+ * The pure half of deriveHeaderBrandingFromLines: the header brand for these
+ * live lines (in line order) given this company's catalogue rows for their
+ * codes. Exported so backend/scripts/check-so-header-branding.mjs judges old
+ * orders by this exact rule, not a copy of it.
+ */
+export function pickHeaderBranding(
+  rows: Array<LineBrandingRow & { item_group?: string | null }>,
+  products: readonly HeaderBrandingProduct[],
+  listFallback: { companyCode: string | null; brands: readonly string[] } | null,
+): string | null {
+  if (!rows.some((r) => !isBlank(r.item_code))) return null;
+  const brandByCode = new Map<string, string>();
+  const catByCode = new Map<string, string>();
+  for (const p of products) {
+    if (!isBlank(p.branding)) brandByCode.set(p.code, p.branding!.trim());
+    if (p.category) catByCode.set(p.code, p.category.trim().toUpperCase());
   }
 
   const isMain = (code: string | null | undefined): boolean => {
     const cat = code ? catByCode.get(code) : undefined;
     return !!cat && (cat.includes('SOFA') || cat.includes('BEDFRAME') || cat.includes('MATTRESS'));
   };
+  /* A BRAND beats a category word (BUG-115 / HC-0094, Chew 2026-10-13: "based
+     on our branding (Akemi, Dunlopillo, Zanotti, My Latex)"). The first main
+     line that names a real brand wins, so a bedframe keyed before a Dunlopillo
+     mattress no longer stamps BEDFRAME. A sofa with an unbranded SKU names its
+     house brand through the list rule (ZANOTTI). */
+  for (const r of rows) {
+    if (!r.item_code || !isMain(r.item_code)) continue;
+    let candidate = brandByCode.get(r.item_code) ?? null;
+    if (!candidate && listFallback && listFallback.brands.length > 0) {
+      const cat = normCategory(catByCode.get(r.item_code));
+      candidate = brandForHeader(brandingLabel(cat, null, listFallback.companyCode), listFallback.brands);
+    }
+    if (candidate && namesABrand(candidate)) return candidate;
+  }
+
+  /* No line names a brand: the order's category is all there is to say (a
+     bedframe-only Houzs order is BEDFRAME, which is in Houzs's own list). */
   const rep = rows.find((r) => isMain(r.item_code)) ?? rows[0];
   const brand = rep?.item_code ? brandByCode.get(rep.item_code) : undefined;
   if (brand) return brand;

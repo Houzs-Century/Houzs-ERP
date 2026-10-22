@@ -77,6 +77,7 @@ import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { salesInvoicePrintChain } from "../../lib/printChain";
 import { customerRefOf } from '../../lib/customer-ref';
+import { OVERDUE_CLASS, isPastDue } from '../../lib/tableHighlight';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Subset of the full SiRow (see SalesInvoicesList.tsx for the 40-field shape).
@@ -163,13 +164,6 @@ type SiRow = {
 type StatusTab = "all" | "sent" | "partial" | "paid" | "cancelled";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
-
-const fmtRm = (centi: number): string =>
-  `RM ${(centi / 100).toLocaleString("en-MY", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-
 // margin_pct_basis is basis points (margin/total x 10000) → percent string.
 const fmtPctBasis = (basis: number | null | undefined): string =>
   basis == null ? "—" : `${(basis / 100).toFixed(1)}%`;
@@ -246,10 +240,8 @@ const outstandingOf = (r: SiRow): number =>
    conversion this ERP has, in either direction. */
 function SplitDropdown({
   onFromDo,
-  onImport,
 }: {
   onFromDo: () => void;
-  onImport: () => void;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -283,16 +275,6 @@ function SplitDropdown({
               }}
             >
               New from Delivery Order
-            </button>
-            <button
-              type="button"
-              className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft"
-              onClick={() => {
-                setOpen(false);
-                onImport();
-              }}
-            >
-              Import from file
             </button>
           </div>
         </>
@@ -390,11 +372,11 @@ function CardsGrid({ rows, onOpen }: { rows: SiRow[]; onOpen: (r: SiRow) => void
                     outstanding > 0 ? "text-err" : "text-synced"
                   )}
                 >
-                  {outstanding > 0 ? fmtRm(outstanding) : "Cleared"}
+                  {outstanding > 0 ? fmtSen(outstanding) : "Cleared"}
                 </div>
               </div>
               <span className="font-money text-[15px] font-bold text-ink">
-                {fmtRm(r.total_sen || r.local_total_sen)}
+                {fmtSen(r.total_sen || r.local_total_sen)}
               </span>
             </div>
           </button>
@@ -512,7 +494,7 @@ function DetailDrawer({
               <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
                 <MetaItem k={transferFromColumnLabel('so')} v={soOf(row)} mono />
                 <MetaItem k={transferFromColumnLabel('do')} v={doOf(row)} mono />
-                <MetaItem k="Customer ref" v={refOf(row)} mono />
+                <MetaItem k="Ref No." v={refOf(row)} mono />
                 <MetaItem k="Due date" v={fmtDate(row.due_date)} />
                 {/* Owner 2026-07-24 — Processing (linked SO's
                     processing_date) + Delivery must be visible in every
@@ -608,10 +590,10 @@ function DetailDrawer({
                         {l.qty ?? 0}
                       </span>
                       <span className="text-right font-money text-[12.5px] text-ink-secondary">
-                        {fmtRm(l.unit_price_sen ?? 0)}
+                        {fmtSen(l.unit_price_sen ?? 0)}
                       </span>
                       <span className="text-right font-money text-[12.5px] font-semibold text-ink">
-                        {fmtRm(amt)}
+                        {fmtSen(amt)}
                       </span>
                     </div>
                   );
@@ -622,10 +604,10 @@ function DetailDrawer({
                   what the operator actually reads on this doc. Subtotal / SST
                   are 6%-inclusive in Malaysia so we don't split them out. */}
               <div className="mt-4 rounded-lg border border-border bg-surface px-5 py-4">
-                <TotalRow k="Invoice total" v={fmtRm(totalSen)} strong />
+                <TotalRow k="Invoice total" v={fmtSen(totalSen)} strong />
                 <TotalRow
                   k={depositSen > 0 ? "Paid on this invoice" : "Paid"}
-                  v={fmtRm(paidSen)}
+                  v={fmtSen(paidSen)}
                   tone="success"
                 />
                 {/* Named for the document that took it, exactly as the detail
@@ -634,13 +616,13 @@ function DetailDrawer({
                 {depositSen > 0 && (
                   <TotalRow
                     k={`Deposit on ${row.so_doc_no ?? "the order"}`}
-                    v={fmtRm(depositSen)}
+                    v={fmtSen(depositSen)}
                     tone="success"
                   />
                 )}
                 <TotalRow
                   k="Outstanding"
-                  v={outstanding > 0 ? fmtRm(outstanding) : "Cleared"}
+                  v={outstanding > 0 ? fmtSen(outstanding) : "Cleared"}
                   tone={outstanding > 0 ? "error" : "success"}
                 />
               </div>
@@ -1006,7 +988,6 @@ export function SalesInvoicesListV2() {
 
   const goNewSi = () => navigate("/scm/sales-invoices/new");
   const goFromDo = () => navigate("/scm/sales-invoices/from-do");
-  const goImport = () => navigate("/scm/sales-invoices?import=1");
   const goDoList = () => navigate("/scm/delivery-orders");
   const goOutstanding = () => navigate("/scm/outstanding");
   const goEdit = (r: SiRow) => navigate(`/scm/sales-invoices/${r.id}?edit=1`);
@@ -1174,9 +1155,15 @@ export function SalesInvoicesListV2() {
       width: "108px",
       disableSort: true,
       getValue: (r) => r.due_date ?? "",
-      render: (r) => (
-        <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.due_date)}</span>
-      ),
+      render: (r) => {
+        const bucket = (STATUS_TONE[r.status.toLowerCase()] as (typeof STATUS_TONE)[string] | undefined)?.bucket;
+        const late = isPastDue(r.due_date, bucket !== "paid" && bucket !== "cancelled");
+        return (
+          <span className={cn("text-[12.5px]", late ? OVERDUE_CLASS : "text-ink-secondary")} title={late ? "Past due and not paid" : undefined}>
+            {fmtDate(r.due_date)}
+          </span>
+        );
+      },
     },
     {
       key: "so_doc_no",
@@ -1249,7 +1236,7 @@ export function SalesInvoicesListV2() {
     },
     {
       key: "reference",
-      label: "Customer ref",
+      label: "Ref No.",
       width: "132px",
       disableSort: true,
       getValue: (r) => refOf(r),
@@ -1298,11 +1285,11 @@ export function SalesInvoicesListV2() {
             )}
             title={
               dep > 0
-                ? `${fmtRm(dep)} was collected on ${r.so_doc_no ?? "the sales order"} and settles this invoice.`
+                ? `${fmtSen(dep)} was collected on ${r.so_doc_no ?? "the sales order"} and settles this invoice.`
                 : undefined
             }
           >
-            {outstanding > 0 ? fmtRm(outstanding) : "Cleared"}
+            {outstanding > 0 ? fmtSen(outstanding) : "Cleared"}
             {dep > 0 && (
               <span className="rounded-sm bg-surface-2 px-1 font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">
                 dep
@@ -1320,7 +1307,7 @@ export function SalesInvoicesListV2() {
       getValue: (r) => r.total_sen ?? r.local_total_sen,
       render: (r) => (
         <span className="font-money text-[13px] font-semibold text-ink">
-          {fmtRm(r.total_sen || r.local_total_sen)}
+          {fmtSen(r.total_sen || r.local_total_sen)}
         </span>
       ),
     },
@@ -1384,7 +1371,7 @@ export function SalesInvoicesListV2() {
         const dep = siDepositAppliedSen(r);
         return dep > 0 ? (
           <span className="font-money text-[13px] text-synced" title={r.so_doc_no ?? undefined}>
-            {fmtRm(dep)}
+            {fmtSen(dep)}
           </span>
         ) : (
           <span className="text-[12.5px] text-ink-muted">—</span>
@@ -1400,7 +1387,7 @@ export function SalesInvoicesListV2() {
       disableSort: true,
       getValue: (r) => r.paid_sen ?? 0,
       render: (r) => (
-        <span className="font-money text-[13px] text-ink">{fmtRm(r.paid_sen ?? 0)}</span>
+        <span className="font-money text-[13px] text-ink">{fmtSen(r.paid_sen ?? 0)}</span>
       ),
     },
     {
@@ -1539,7 +1526,7 @@ export function SalesInvoicesListV2() {
             disableSort: true,
             getValue: (r) => r.mattress_sofa_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.mattress_sofa_sen ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtSen(r.mattress_sofa_sen ?? 0)}</span>
             ),
           },
           {
@@ -1551,7 +1538,7 @@ export function SalesInvoicesListV2() {
             disableSort: true,
             getValue: (r) => r.bedframe_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.bedframe_sen ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtSen(r.bedframe_sen ?? 0)}</span>
             ),
           },
           {
@@ -1563,7 +1550,7 @@ export function SalesInvoicesListV2() {
             disableSort: true,
             getValue: (r) => r.accessories_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.accessories_sen ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtSen(r.accessories_sen ?? 0)}</span>
             ),
           },
           {
@@ -1575,7 +1562,7 @@ export function SalesInvoicesListV2() {
             disableSort: true,
             getValue: (r) => r.others_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.others_sen ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtSen(r.others_sen ?? 0)}</span>
             ),
           },
           {
@@ -1587,7 +1574,7 @@ export function SalesInvoicesListV2() {
             disableSort: true,
             getValue: (r) => r.service_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.service_sen ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtSen(r.service_sen ?? 0)}</span>
             ),
           },
           {
@@ -1599,7 +1586,7 @@ export function SalesInvoicesListV2() {
             disableSort: true,
             getValue: (r) => r.mattress_sofa_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.mattress_sofa_cost_sen ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtSen(r.mattress_sofa_cost_sen ?? 0)}</span>
             ),
           },
           {
@@ -1611,7 +1598,7 @@ export function SalesInvoicesListV2() {
             disableSort: true,
             getValue: (r) => r.bedframe_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.bedframe_cost_sen ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtSen(r.bedframe_cost_sen ?? 0)}</span>
             ),
           },
           {
@@ -1623,7 +1610,7 @@ export function SalesInvoicesListV2() {
             disableSort: true,
             getValue: (r) => r.accessories_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.accessories_cost_sen ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtSen(r.accessories_cost_sen ?? 0)}</span>
             ),
           },
           {
@@ -1635,7 +1622,7 @@ export function SalesInvoicesListV2() {
             disableSort: true,
             getValue: (r) => r.others_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.others_cost_sen ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtSen(r.others_cost_sen ?? 0)}</span>
             ),
           },
           {
@@ -1647,7 +1634,7 @@ export function SalesInvoicesListV2() {
             disableSort: true,
             getValue: (r) => r.service_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.service_cost_sen ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtSen(r.service_cost_sen ?? 0)}</span>
             ),
           },
           {
@@ -1659,7 +1646,7 @@ export function SalesInvoicesListV2() {
             disableSort: true,
             getValue: (r) => r.total_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.total_cost_sen ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtSen(r.total_cost_sen ?? 0)}</span>
             ),
           },
           {
@@ -1671,7 +1658,7 @@ export function SalesInvoicesListV2() {
             disableSort: true,
             getValue: (r) => r.total_margin_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.total_margin_sen ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtSen(r.total_margin_sen ?? 0)}</span>
             ),
           },
           {
@@ -1719,7 +1706,7 @@ export function SalesInvoicesListV2() {
           </h1>
           <div className="mt-0.5 text-[12.5px] text-ink-muted">
             {total} invoice{total === 1 ? "" : "s"} ·{" "}
-            <span className="font-money">{fmtRm(money.revenueSen)}</span> billed
+            <span className="font-money">{fmtSen(money.revenueSen)}</span> billed
           </div>
         </div>
       </div>
@@ -1755,7 +1742,6 @@ export function SalesInvoicesListV2() {
                       </Button>
                       <SplitDropdown
                         onFromDo={goFromDo}
-                        onImport={goImport}
                       />
                     </div>
                   </>
@@ -1785,14 +1771,14 @@ export function SalesInvoicesListV2() {
             <StatCard
               pending={statsPending}
               label="Billed"
-              value={fmtRm(money.revenueSen)}
+              value={fmtSen(money.revenueSen)}
               subtitle={visible.filtered ? "Filtered · sum shown below" : "Sum on this page"}
               rail="bg-accent"
             />
             <StatCard
               pending={statsPending}
               label="Outstanding"
-              value={fmtRm(money.outstandingSen)}
+              value={fmtSen(money.outstandingSen)}
               subtitle={visible.filtered ? "Balance · filtered" : "Balance on this page"}
               tone="error"
               rail="bg-err"
@@ -1800,7 +1786,7 @@ export function SalesInvoicesListV2() {
             <StatCard
               pending={statsPending}
               label="Paid"
-              value={fmtRm(money.paidSen)}
+              value={fmtSen(money.paidSen)}
               subtitle={visible.filtered ? "Receipts · filtered" : "Receipts on this page"}
               tone="success"
               rail="bg-synced"

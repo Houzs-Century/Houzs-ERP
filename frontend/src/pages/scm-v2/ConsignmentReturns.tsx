@@ -13,15 +13,19 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { canViewScmCosting } from "../../auth/salesAccess";
-import type { JSX } from 'react';
+import type { JSX, ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Search } from 'lucide-react';
+import { Plus, Search, X, ExternalLink, Edit3, RotateCcw } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { Button as DrawerButton } from '../../components/Button';
+import { Badge } from '../../components/Badge';
+import { ResizableDetailDrawer } from '../../components/ResizableDetailDrawer';
+import { cn } from '../../lib/utils';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { formatPhone } from '@2990s/shared/phone';
-import { buildVariantSummary, fmtQty } from '@2990s/shared';
+import { buildVariantSummary, fmtDateOrDash, fmtQty, fmtSen } from '@2990s/shared';
 import {
   useConsignmentReturnsPaged, useUpdateConsignmentReturnStatus, useConsignmentReturnDetail,
 } from '../../vendor/scm/lib/consignment-return-queries';
@@ -37,11 +41,14 @@ import { PageHeader } from '../../components/Layout';
 import { StatCard } from '../../components/StatCard';
 import { FilterPills } from '../../components/FilterPills';
 import soDetailStyles from './SalesOrderDetail.module.css';
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 
 /* ── Row shape (CRN header — mirrors the DR header) ─────────────────────── */
 type CrnRow = {
   id: string;
   return_number: string;
+  /* Source Consignment Note number — on the list select (consignment-returns.ts). */
+  do_doc_no?: string | null;
   return_date: string;
   debtor_code: string | null;
   debtor_name: string;
@@ -73,16 +80,6 @@ type CrnRow = {
   currency: string;
   note: string | null;
   line_count?: number;
-};
-
-const fmtRm = (centi: number): string =>
-  (centi / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-const compactDate = (iso: string | null | undefined): string => {
-  if (!iso) return '';
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
-  if (!m) return iso;
-  return `${m[1]}/${m[2]}/${m[3]}`;
 };
 
 const STATUS_CLASS: Record<string, string> = {
@@ -159,7 +156,7 @@ const crnLineMarginOf = (it: CrnItem): number =>
    placeholder, no RM 0.00. The backend also omits the keys from the payload
    (canViewScmFinance), so rendering them for a non-finance user could only ever
    print zeros. */
-const buildCrnDrilldownColumns = (canFinance: boolean): DataGridColumn<CrnItem>[] => [
+const buildCrnDrilldownColumns = (canFinance: boolean): GridColumn<CrnItem>[] => [
   {
     key: 'group', label: 'Group', width: 90, groupable: true,
     accessor: (it) => <CategoryPill group={it.item_group} />,
@@ -200,13 +197,14 @@ const buildCrnDrilldownColumns = (canFinance: boolean): DataGridColumn<CrnItem>[
   },
   {
     key: 'qty', label: 'Qty', width: 60, align: 'right',
-    accessor: (it) => it.qty_returned ?? 0,
+    accessor: (it) => fmtQty(it.qty_returned ?? 0),
+    exportValue: (it) => Number(it.qty_returned ?? 0),
     searchValue: (it) => String(it.qty_returned ?? 0),
     sortFn: (a, b) => Number(a.qty_returned ?? 0) - Number(b.qty_returned ?? 0),
   },
   {
     key: 'unit_price', label: 'Unit Price', width: 100, align: 'right',
-    accessor: (it) => fmtRm(Number(it.unit_price_sen ?? 0)),
+    accessor: (it) => fmtSen(Number(it.unit_price_sen ?? 0)),
     exportValue: (it) => Number(it.unit_price_sen ?? 0) / 100,
     exportFormat: 'rate',
     searchValue: (it) => String(it.unit_price_sen ?? 0),
@@ -214,7 +212,7 @@ const buildCrnDrilldownColumns = (canFinance: boolean): DataGridColumn<CrnItem>[
   },
   {
     key: 'total', label: 'Total', width: 100, align: 'right',
-    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtRm(crnLineTotalOf(it))}</span>,
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtSen(crnLineTotalOf(it))}</span>,
     exportValue: (it) => crnLineTotalOf(it) / 100,
     exportFormat: 'money',
     searchValue: (it) => String(crnLineTotalOf(it)),
@@ -224,7 +222,7 @@ const buildCrnDrilldownColumns = (canFinance: boolean): DataGridColumn<CrnItem>[
     ? ([
         {
           key: 'unit_cost', label: 'Unit Cost', width: 100, align: 'right',
-          accessor: (it) => fmtRm(Number(it.unit_cost_sen ?? 0)),
+          accessor: (it) => fmtSen(Number(it.unit_cost_sen ?? 0)),
           exportValue: (it) => Number(it.unit_cost_sen ?? 0) / 100,
           exportFormat: 'rate',
           searchValue: (it) => String(it.unit_cost_sen ?? 0),
@@ -232,7 +230,7 @@ const buildCrnDrilldownColumns = (canFinance: boolean): DataGridColumn<CrnItem>[
         },
         {
           key: 'line_cost', label: 'Line Cost', width: 100, align: 'right',
-          accessor: (it) => fmtRm(crnLineCostOf(it)),
+          accessor: (it) => fmtSen(crnLineCostOf(it)),
           exportValue: (it) => crnLineCostOf(it) / 100,
           exportFormat: 'money',
           searchValue: (it) => String(crnLineCostOf(it)),
@@ -243,14 +241,14 @@ const buildCrnDrilldownColumns = (canFinance: boolean): DataGridColumn<CrnItem>[
           accessor: (it) => {
             const m = crnLineMarginOf(it);
             const c = m > 0 ? 'var(--c-secondary-a, #2F5D4F)' : m < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)';
-            return <span style={{ color: c, fontWeight: 600 }}>{fmtRm(m)}</span>;
+            return <span style={{ color: c, fontWeight: 600 }}>{fmtSen(m)}</span>;
           },
           exportValue: (it) => crnLineMarginOf(it) / 100,
           exportFormat: 'money',
           searchValue: (it) => String(crnLineMarginOf(it)),
           sortFn: (a, b) => crnLineMarginOf(a) - crnLineMarginOf(b),
         },
-      ] as DataGridColumn<CrnItem>[])
+      ] as GridColumn<CrnItem>[])
     : []),
 ];
 
@@ -283,7 +281,7 @@ const ExpandedCrnLines = ({ id, canFinance }: { id: string; canFinance: boolean 
 
   return (
     <div style={{ padding: 'var(--space-2) var(--space-3) var(--space-2) 40px', background: 'var(--c-cream)' }}>
-      <DataGrid<CrnItem>
+      <DataGridCompat<CrnItem>
         rows={items}
         columns={columns}
         storageKey="crn-drilldown-grid.v1"
@@ -300,13 +298,237 @@ const ExpandedCrnLines = ({ id, canFinance }: { id: string; canFinance: boolean 
           fontFamily: 'var(--font-button)', fontSize: 'var(--fs-10)',
           letterSpacing: '0.06em', textTransform: 'uppercase',
         }}>Subtotal</span>
-        <span>Total <strong style={{ color: '#16695f' }}>{fmtRm(totalSen)}</strong></span>
-        {canFinance && <span>Line Cost <strong style={{ color: 'var(--c-ink)' }}>{fmtRm(costSen)}</strong></span>}
-        {canFinance && <span>Margin <strong style={{ color: marginColor }}>{fmtRm(marginSen)}</strong></span>}
+        <span>Total <strong style={{ color: '#16695f' }}>{fmtSen(totalSen)}</strong></span>
+        {canFinance && <span>Line Cost <strong style={{ color: 'var(--c-ink)' }}>{fmtSen(costSen)}</strong></span>}
+        {canFinance && <span>Margin <strong style={{ color: marginColor }}>{fmtSen(marginSen)}</strong></span>}
       </div>
     </div>
   );
 };
+
+/* Status TONE for the drawer badge — the Delivery Return list's buckets
+   (same delivery_return_status enum): open loop = warning, closed happily =
+   success, closed unhappily = error. The LABEL is this page's STATUS_LABEL. */
+const STATUS_TONE: Record<string, 'success' | 'warning' | 'error' | 'neutral'> = {
+  PENDING: 'warning', RECEIVED: 'warning', INSPECTED: 'warning',
+  REFUNDED: 'success', CREDIT_NOTED: 'success',
+  REJECTED: 'error', CANCELLED: 'error',
+};
+
+/* ─── Quick-view drawer ────────────────────────────────────────────────────
+   Row click opens the same right slide-over the Sales Order / Delivery Order
+   lists have (ResizableDetailDrawer): header · meta · customer · returned
+   lines · value · actions, with "Open full page" for the editor. Lines come
+   from the SAME detail query the expand-chevron drill-down uses. */
+export function ConsignmentReturnDrawer({
+  row,
+  canFinance,
+  salespersonName,
+  onClose,
+  onOpenFull,
+  onEdit,
+  onCancel,
+  onReopen,
+}: {
+  row: CrnRow | null;
+  canFinance: boolean;
+  salespersonName: string;
+  onClose: () => void;
+  onOpenFull: () => void;
+  onEdit: () => void;
+  onCancel: () => void;
+  onReopen: () => void;
+}) {
+  const detailQ = useConsignmentReturnDetail(row?.id ?? null);
+  const items = (detailQ.data?.items as CrnItem[] | undefined) ?? [];
+  const open = Boolean(row);
+  const tone = row ? (STATUS_TONE[row.status] ?? 'neutral') : 'neutral';
+  const statusLabel = row ? (STATUS_LABEL[row.status] || row.status.replace(/_/g, ' ')) : '';
+  const status = row?.status ?? '';
+  const canCancel = !['CANCELLED', 'REFUNDED', 'CREDIT_NOTED'].includes(status);
+
+  const totalSen = items.length > 0
+    ? items.reduce((sum, l) => sum + crnLineTotalOf(l), 0)
+    : row?.local_total_sen ?? 0;
+  const brand = row ? deriveBranding(row) : '';
+
+  return (
+    <ResizableDetailDrawer
+      open={open}
+      onClose={onClose}
+      ariaLabel={row ? `Consignment return ${row.return_number}` : 'Consignment return details'}
+    >
+      {row && (
+        <>
+          <div className="flex h-[60px] shrink-0 items-center gap-3 bg-sidebar px-5 text-sidebar-ink">
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-sidebar-ink-muted hover:text-sidebar-ink"
+              aria-label="Close details"
+            >
+              <X size={18} />
+            </button>
+            <div className="min-w-0 flex-1">
+              <div className="font-mono text-[14px] font-bold tracking-wide">{row.return_number}</div>
+              <div className="mt-0.5 text-[11px] text-sidebar-ink-muted">Consignment Return</div>
+            </div>
+            <button
+              type="button"
+              onClick={onOpenFull}
+              className="inline-flex items-center gap-1.5 rounded-md border border-accent-bright/40 px-2.5 py-1.5 text-[11.5px] font-semibold text-accent-bright hover:bg-accent-bright/10"
+            >
+              Open full page <ExternalLink size={12} />
+            </button>
+            <Badge tone={tone} variant="solid" size="xs">{statusLabel}</Badge>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-5 py-5">
+            <div className="text-[19px] font-bold text-ink">{row.debtor_name || '—'}</div>
+            <div className="mt-1.5 flex items-center gap-2.5">
+              {brand ? <BrandingPill branding={brand} /> : null}
+              <span className="text-[12.5px] text-ink-muted">Returned {fmtDateOrDash(row.return_date)}</span>
+            </div>
+
+            <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
+              <DrawerMeta k="Consignment Note" v={row.do_doc_no || '—'} mono />
+              <DrawerMeta k="Ref No." v={row.customer_so_no ?? row.ref ?? '—'} mono />
+              <DrawerMeta k="Return date" v={fmtDateOrDash(row.return_date)} />
+              <DrawerMeta k="Location" v={row.sales_location || '—'} />
+              <DrawerMeta k="Salesperson" v={salespersonName} />
+              <DrawerMeta k="Venue" v={row.venue || '—'} />
+              <DrawerMeta k="Reason" v={row.reason || '—'} />
+            </dl>
+
+            <DrawerSection>Customer</DrawerSection>
+            <div className="overflow-hidden rounded-lg border border-border bg-surface">
+              <div className="flex items-center gap-3 border-b border-border-subtle px-4 py-3.5">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent-soft text-[13px] font-bold text-accent-ink">
+                  {(row.debtor_name || 'C').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w.charAt(0).toUpperCase()).join('') || 'C'}
+                </span>
+                <div className="min-w-0">
+                  <div className="text-[14px] font-bold text-ink">{row.debtor_name}</div>
+                  {row.debtor_code && (
+                    <div className="mt-0.5 font-mono text-[11.5px] text-ink-muted">{row.debtor_code}</div>
+                  )}
+                </div>
+              </div>
+              <DrawerKV k="Phone" v={formatPhone(row.phone) || '—'} />
+              <DrawerKV k="Email" v={row.email || '—'} />
+              <DrawerKV
+                k="Address"
+                v={[row.address1, row.address2, row.city, row.postcode, row.customer_state].filter(Boolean).join(', ') || '—'}
+              />
+              {row.note ? <DrawerKV k="Note" v={row.note} /> : null}
+            </div>
+
+            <DrawerSection>Returned lines</DrawerSection>
+            <div className="overflow-hidden rounded-lg border border-border">
+              <div className="grid grid-cols-[minmax(0,1fr)_40px_92px_80px] gap-2 border-b border-border-subtle bg-surface-2 px-4 py-2 font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
+                <span>Item</span>
+                <span className="text-right">Qty</span>
+                <span className="text-right">Amount</span>
+                <span>Condition</span>
+              </div>
+              {detailQ.isLoading && (
+                <div className="px-4 py-8 text-center text-[12px] text-ink-muted">Loading lines…</div>
+              )}
+              {detailQ.isError && (
+                <div className="px-4 py-8 text-center text-[12px] text-err">
+                  {detailQ.error instanceof Error ? detailQ.error.message : 'Failed to load lines'}
+                </div>
+              )}
+              {!detailQ.isLoading && !detailQ.isError && items.length === 0 && (
+                <div className="px-4 py-8 text-center text-[12px] text-ink-muted">No lines</div>
+              )}
+              {items.map((l) => {
+                const manual = (l.description ?? '').trim();
+                const summary = buildVariantSummary(l.item_group, l.variants);
+                return (
+                  <div
+                    key={l.id}
+                    className="grid grid-cols-[minmax(0,1fr)_40px_92px_80px] items-start gap-2 border-b border-border-subtle px-4 py-3 last:border-b-0"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <CategoryPill group={l.item_group} />
+                        <span className="text-[12.5px] font-medium leading-snug text-ink">{l.item_code || '—'}</span>
+                      </div>
+                      {(manual || summary) && (
+                        <div className="mt-0.5 text-[11.5px] leading-snug text-ink-secondary">{manual || summary}</div>
+                      )}
+                    </div>
+                    <span className="text-right font-money text-[12.5px] text-ink-secondary">{fmtQty(Number(l.qty_returned ?? 0))}</span>
+                    <span className="text-right font-money text-[12.5px] font-semibold text-ink">{fmtSen(crnLineTotalOf(l))}</span>
+                    <span className="text-[11px] font-semibold uppercase text-ink-secondary">{l.condition || '—'}</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-4 rounded-lg border border-border bg-surface px-5 py-4">
+              <DrawerTotal k="Return value" v={fmtSen(totalSen)} strong />
+              {canFinance && row.total_cost_sen != null ? (
+                <DrawerTotal k="Cost" v={fmtSen(row.total_cost_sen)} />
+              ) : null}
+              {canFinance && row.total_margin_sen != null ? (
+                <DrawerTotal k="Margin" v={fmtSen(row.total_margin_sen)} tone={row.total_margin_sen < 0 ? 'error' : 'success'} />
+              ) : null}
+            </div>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-2 border-t border-border bg-surface px-5 py-3">
+            <DrawerButton variant="ghost" icon={<Edit3 size={14} />} onClick={onEdit}>Edit</DrawerButton>
+            <div className="flex-1" />
+            {status === 'CANCELLED' ? (
+              <DrawerButton variant="primary" icon={<RotateCcw size={14} />} onClick={onReopen}>Reopen</DrawerButton>
+            ) : canCancel ? (
+              <DrawerButton variant="ghost" className="text-err" onClick={onCancel}>Cancel Return</DrawerButton>
+            ) : null}
+          </div>
+        </>
+      )}
+    </ResizableDetailDrawer>
+  );
+}
+
+function DrawerMeta({ k, v, mono }: { k: string; v: ReactNode; mono?: boolean }) {
+  return (
+    <div>
+      <dt className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">{k}</dt>
+      <dd className={cn('mt-0.5 text-[13px] font-semibold text-ink', mono && 'font-mono')}>{v}</dd>
+    </div>
+  );
+}
+
+function DrawerSection({ children }: { children: ReactNode }) {
+  return (
+    <div className="mb-2.5 mt-6 font-mono text-[10px] font-semibold uppercase tracking-brand text-ink-muted">{children}</div>
+  );
+}
+
+function DrawerKV({ k, v }: { k: string; v: ReactNode }) {
+  return (
+    <div className="flex items-start gap-3 border-b border-border-subtle px-4 py-2.5 last:border-b-0">
+      <span className="w-20 shrink-0 font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">{k}</span>
+      <span className="flex-1 text-[13px] font-semibold leading-relaxed text-ink">{v}</span>
+    </div>
+  );
+}
+
+function DrawerTotal({ k, v, strong, tone }: { k: string; v: string; strong?: boolean; tone?: 'success' | 'error' }) {
+  return (
+    <div className={cn('flex items-center justify-between py-1.5', strong && 'border-b border-border-subtle pb-2.5 mb-1')}>
+      <span className={cn('text-[12px] text-ink-muted', strong && 'text-[13px] font-semibold text-ink')}>{k}</span>
+      <span className={cn(
+        'font-money text-[13px] font-semibold',
+        strong && 'text-[15px] font-bold text-ink',
+        tone === 'success' && 'text-synced',
+        tone === 'error' && 'text-err',
+      )}>{v}</span>
+    </div>
+  );
+}
 
 const STORAGE_KEY = 'pr-g.crn-list.layout.v1';
 
@@ -364,6 +586,8 @@ export const ConsignmentReturns = () => {
   // Row-click multi-select (mirrors the DR / GRN lists) — ticks the row; the
   // ▸ chevron still drills down via its own stopPropagation handler.
   const [sel, setSel] = useState<Set<string>>(new Set());
+  /* Row click → quick-view drawer (same as the Sales Order / DO lists). */
+  const [selected, setSelected] = useState<CrnRow | null>(null);
   /* Clear the selection whenever the visible row set shifts (page / status /
      search) — a lingering selection would act on rows no longer on screen. */
   useEffect(() => { setSel(new Set()); }, [page, statusChip, debouncedSearch]);
@@ -408,7 +632,24 @@ export const ConsignmentReturns = () => {
       danger: true,
     }))) return;
     updateStatus.mutate({ id: row.id, status: 'CANCELLED' },
-      { onError: (e) => notify({ title: 'Failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }) });
+      {
+        onSuccess: () => setSelected(null),
+        onError: (e) => notify({ title: 'Failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }),
+      });
+  };
+
+  /* Reopen — bring a cancelled return back to RECEIVED. Shared by the context
+     menu and the drawer CTA. */
+  const doReopen = async (row: CrnRow) => {
+    if (!(await askConfirm({
+      title: `Reopen ${row.return_number} back to RECEIVED?`,
+      confirmLabel: 'Reopen',
+    }))) return;
+    updateStatus.mutate({ id: row.id, status: 'RECEIVED' },
+      {
+        onSuccess: () => setSelected(null),
+        onError: (e) => notify({ title: 'Failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }),
+      });
   };
 
   /* KPI tiles are the shared <StatCard/> now (owner 2026-07-26). */
@@ -440,15 +681,15 @@ export const ConsignmentReturns = () => {
           costSen / marginSen for such a caller. */}
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard pending={isLoading} label="Total Returns" value={fmtQty(total)} subtitle="All matching returns" rail="bg-primary" active />
-        <StatCard pending={isLoading} label="Returned Value" value={`RM ${fmtRm(kpis.revenue)}`} subtitle="All matching returns" rail="bg-accent" />
+        <StatCard pending={isLoading} label="Returned Value" value={fmtSen(kpis.revenue)} subtitle="All matching returns" rail="bg-accent" />
         {canFinance && (
-          <StatCard pending={isLoading} label="Cost" value={`RM ${fmtRm(kpis.cost)}`} subtitle="Cost of goods" rail="bg-accent-bright" />
+          <StatCard pending={isLoading} label="Cost" value={fmtSen(kpis.cost)} subtitle="Cost of goods" rail="bg-accent-bright" />
         )}
         {canFinance && (
           <StatCard
             pending={isLoading}
             label="Margin"
-            value={`RM ${fmtRm(kpis.margin)}`}
+            value={fmtSen(kpis.margin)}
             subtitle="Value − cost"
             tone={kpis.margin > 0 ? 'success' : kpis.margin < 0 ? 'error' : 'default'}
             rail={kpis.margin > 0 ? 'bg-synced' : kpis.margin < 0 ? 'bg-err' : 'bg-border-strong'}
@@ -485,13 +726,14 @@ export const ConsignmentReturns = () => {
         </div>
       </div>
 
-      <DataGrid<CrnRow>
+      <DataGridCompat<CrnRow>
         rows={searchTransition.resultsAreStale ? [] : rows}
         columns={COLUMNS}
         storageKey={STORAGE_KEY}
         exportName="Consignment Returns"
         searchPlaceholder="Search return no, customer, reference…"
         rowKey={(r) => r.id}
+        getRowClassName={(r) => cancelledRowClass(r.status)}
         selectable={{
           selectedKeys: sel,
           onToggle: (k) => setSel((p) => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; }),
@@ -503,6 +745,7 @@ export const ConsignmentReturns = () => {
         }}
         hideSearch
         groupBanner={false}
+        onRowClick={(r) => setSelected(r)}
         onRowDoubleClick={(r) => openDetail(r)}
         rowStyle={(r) => ['CANCELLED', 'REJECTED'].includes(r.status) ? { opacity: 0.55, filter: 'grayscale(0.6)' } : undefined}
         isLoading={listLoading}
@@ -522,16 +765,7 @@ export const ConsignmentReturns = () => {
             items.push({ label: 'Cancel Return', danger: true, onClick: () => doCancel(row) });
           }
           if (status === 'CANCELLED') {
-            items.push({
-              label: 'Reopen Return',
-              onClick: async () => {
-                if (!(await askConfirm({
-                  title: `Reopen ${row.return_number} back to RECEIVED?`,
-                  confirmLabel: 'Reopen',
-                }))) return;
-                updateStatus.mutate({ id: row.id, status: 'RECEIVED' });
-              },
-            });
+            items.push({ label: 'Reopen Return', onClick: () => void doReopen(row) });
           }
           return items;
         }}
@@ -545,16 +779,27 @@ export const ConsignmentReturns = () => {
         onPageChange={setPage}
         onPageSizeChange={(n) => { setPageSize(n); setPage(0); }}
       />}
+
+      <ConsignmentReturnDrawer
+        row={selected}
+        canFinance={canFinance}
+        salespersonName={selected?.salesperson_id ? staffById.get(selected.salesperson_id) ?? '—' : '—'}
+        onClose={() => setSelected(null)}
+        onOpenFull={() => selected && openDetail(selected)}
+        onEdit={() => selected && openDetail(selected, true)}
+        onCancel={() => selected && void doCancel(selected)}
+        onReopen={() => selected && void doReopen(selected)}
+      />
     </div>
   );
 };
 
 /* ── Columns — mirrors the DR list set, minus the DO transfer-from column. ── */
-const buildColumns = (staffById: Map<string, string>, canFinance: boolean): DataGridColumn<CrnRow>[] => [
+const buildColumns = (staffById: Map<string, string>, canFinance: boolean): GridColumn<CrnRow>[] => [
   {
     key: 'return_number', label: 'Return No.', width: 150, sortable: true,
     accessor: (r) => (
-      <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{r.return_number}</span>
+      <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }} className={cancelledDocNoClass(r.status)}>{r.return_number}</span>
     ),
     searchValue: (r) => `${r.return_number} ${r.status ?? ''}`,
     filterValue: (r) => r.return_number,
@@ -562,8 +807,8 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Data
   },
   {
     key: 'return_date', label: 'Date', width: 110, sortable: true,
-    accessor: (r) => compactDate(r.return_date),
-    searchValue: (r) => `${r.return_date ?? ''} ${compactDate(r.return_date)}`,
+    accessor: (r) => fmtDateOrDash(r.return_date),
+    searchValue: (r) => `${r.return_date ?? ''} ${fmtDateOrDash(r.return_date)}`,
     sortFn: (a, b) => (a.return_date ?? '').localeCompare(b.return_date ?? ''),
     filterType: 'date', dateValue: (r) => r.return_date,
   },
@@ -590,7 +835,7 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Data
     searchValue: (r) => r.reason ?? '',
   },
   {
-    key: 'customer_so_no', label: 'Reference', width: 130, sortable: true,
+    key: 'customer_so_no', label: 'Ref No.', width: 130, sortable: true,
     accessor: (r) => r.customer_so_no ?? r.ref ?? '—',
     searchValue: (r) => `${r.customer_so_no ?? ''} ${r.ref ?? ''}`,
     sortFn: (a, b) => (a.customer_so_no ?? a.ref ?? '').localeCompare(b.customer_so_no ?? b.ref ?? ''),
@@ -615,9 +860,9 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Data
   {
     key: 'local_total_sen', label: 'Returned Value', width: 130, sortable: true, align: 'right',
     accessor: (r) => (
-      <span style={{ fontWeight: 700, color: 'var(--c-ink)', fontVariantNumeric: 'tabular-nums' }}>{fmtRm(r.local_total_sen)}</span>
+      <span style={{ fontWeight: 700, color: 'var(--c-ink)', fontVariantNumeric: 'tabular-nums' }}>{fmtSen(r.local_total_sen)}</span>
     ),
-    searchValue: (r) => fmtRm(r.local_total_sen),
+    searchValue: (r) => fmtSen(r.local_total_sen),
     /* Export the NUMBER in ringgit so Excel can SUM the column. */
     exportValue: (r) => (r.local_total_sen ?? 0) / 100,
     exportFormat: 'money',
@@ -696,8 +941,8 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Data
     ? ([
   {
     key: 'total_cost_sen', label: 'Cost Total', width: 120, sortable: true, align: 'right', defaultHidden: true,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.total_cost_sen ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.total_cost_sen ?? 0),
+    accessor: (r) => <span className={styles.money}>{fmtSen(r.total_cost_sen ?? 0)}</span>,
+    searchValue: (r) => fmtSen(r.total_cost_sen ?? 0),
     exportValue: (r) => (r.total_cost_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.total_cost_sen ?? 0) - (b.total_cost_sen ?? 0),
@@ -708,13 +953,13 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Data
       const m = r.total_margin_sen ?? 0;
       if ((r.local_total_sen ?? 0) <= 0) return <span style={{ color: 'var(--fg-muted)' }}>—</span>;
       const color = m > 0 ? 'var(--c-secondary-a, #2F5D4F)' : m < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)';
-      return <span className={styles.money} style={{ color, fontWeight: 600 }}>{fmtRm(m)}</span>;
+      return <span className={styles.money} style={{ color, fontWeight: 600 }}>{fmtSen(m)}</span>;
     },
-    searchValue: (r) => fmtRm(r.total_margin_sen ?? 0),
+    searchValue: (r) => fmtSen(r.total_margin_sen ?? 0),
     exportValue: (r) => (r.total_margin_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.total_margin_sen ?? 0) - (b.total_margin_sen ?? 0),
   },
-      ] as DataGridColumn<CrnRow>[])
+      ] as GridColumn<CrnRow>[])
     : []),
 ];

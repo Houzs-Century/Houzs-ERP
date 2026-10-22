@@ -377,6 +377,32 @@ describe('PUT /chart/update — one definition, every company', () => {
     expect(tables.accounts.find((r) => r.account_code === '910-0000')!.account_name).toBe('Utilities');
   });
 
+  /* 需要 Event and the PMS row (owner 2026-10-01, payment-request item 4):
+     Finance's call per account, a definition field like the name. */
+  test('需要 Event and the PMS row ride the union and change on the code in every company', async () => {
+    const tables = { accounts: [
+      acct(1, '900-R032', { account_name: 'RENTAL - EXHIBITION', account_type: 'EXPENSE', needs_event: true, pms_row: 'rental' }),
+      acct(2, '900-R032', { account_name: 'RENTAL - EXHIBITION', account_type: 'EXPENSE', needs_event: true, pms_row: 'rental' }),
+      acct(1, '900-E001', { account_name: 'ENTERTAINMENT', account_type: 'EXPENSE' }),
+    ] };
+    const app = harness(tables);
+    const union = await (await app.request('/chart')).json() as { pmsRows: Array<{ row: string; label: string }>; accounts: Row[] };
+    expect(union.pmsRows.map((r) => r.row)).toEqual(['rental', 'setup', 'transport_setup_dismantle', 'transport_fee', 'commission', 'others']);
+    expect(union.pmsRows.find((r) => r.row === 'others')!.label).toBe('Others Costing');
+    expect(union.accounts.find((a) => a.code === '900-R032')).toMatchObject({ needsEvent: true, pmsRow: 'rental' });
+    expect(union.accounts.find((a) => a.code === '900-E001')).toMatchObject({ needsEvent: false, pmsRow: null });
+    const put = (body: Row) => app.request('/chart/update', { method: 'PUT', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } });
+    expect((await put({ code: '900-R032', needsEvent: false, pmsRow: 'others' })).status).toBe(200);
+    for (const co of [1, 2]) {
+      expect(tables.accounts.find((r) => r.company_id === co && r.account_code === '900-R032')).toMatchObject({ needs_event: false, pms_row: 'others' });
+    }
+    const bad = await put({ code: '900-R032', pmsRow: 'booth' });
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as Row).error).toBe('bad_pms_row');
+    expect((await put({ code: '900-R032', pmsRow: '' })).status).toBe(200);
+    expect(tables.accounts.find((r) => r.company_id === 1 && r.account_code === '900-R032')!.pms_row).toBeNull();
+  });
+
   test('an unknown code is a 404, an empty patch a 400', async () => {
     const app = harness({ accounts: [acct(1, '905-0000')] });
     const miss = await app.request('/chart/update', {

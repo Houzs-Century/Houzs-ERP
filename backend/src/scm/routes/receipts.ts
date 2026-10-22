@@ -26,6 +26,7 @@ import { todayMyt } from '../lib/my-time';
 import { postJournal, reverseJournal } from '../../acc/engine';
 import { type RuleLine } from '../../acc/rules';
 import { requireLeafAccount } from './accounting-chart';
+import { readSoRefs } from '../lib/so-ref-lookup';
 
 type Row = Record<string, any>;
 
@@ -69,6 +70,12 @@ export const listReceiptsHandler = async (c: any): Promise<Response> => {
   if (debtor.error) return c.json({ error: 'load_failed', reason: debtor.error.message }, 500);
   if (customer.error) return c.json({ error: 'load_failed', reason: customer.error.message }, 500);
 
+  /* A customer receipt's number is its order's; the order's customer reference
+     rides along so the page's search finds the payment by it. */
+  const customerRows = ((customer.data ?? []) as Row[]).filter((r) => Number(r.amount_sen ?? 0) >= 0);
+  const refs = await readSoRefs(sb, customerRows.map((r) => r.so_doc_no), (q) => scopeToCompany(q, c));
+  if (refs.error) console.error('[receipts] SO reference read failed; customer rows carry no SO reference:', refs.error);
+
   const rows = [
     ...((general.data ?? []) as Row[]).map((r) => ({
       kind: 'GENERAL' as const, id: r.id, number: r.receipt_number, date: r.receipt_date,
@@ -81,11 +88,13 @@ export const listReceiptsHandler = async (c: any): Promise<Response> => {
       totalSen: Number(r.total_sen ?? 0), status: r.status, debtorId: r.debtor_id,
     })),
     /* Money that LEFT an order (a mirror row, negative) is no receipt. */
-    ...((customer.data ?? []) as Row[]).filter((r) => Number(r.amount_sen ?? 0) >= 0).map((r) => ({
+    ...customerRows.map((r) => ({
       kind: 'CUSTOMER' as const, id: r.id, number: r.so_doc_no,
       date: String(r.paid_at ?? '').slice(0, 10),
       payer: r.is_deposit === true ? 'Customer deposit' : 'Customer payment',
       moneyAccount: r.method ?? '—', totalSen: Number(r.amount_sen ?? 0), status: 'RECEIVED',
+      soRef: refs.byDoc.get(String(r.so_doc_no ?? ''))?.ref ?? null,
+      soCustomerSoNo: refs.byDoc.get(String(r.so_doc_no ?? ''))?.customer_so_no ?? null,
     })),
   ].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.number < b.number ? 1 : -1));
 

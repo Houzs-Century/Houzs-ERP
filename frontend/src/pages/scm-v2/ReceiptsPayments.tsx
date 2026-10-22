@@ -25,7 +25,8 @@ import { Download, Printer } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { useAuth } from '../../auth/AuthContext';
 import { useAccounts } from '../../vendor/scm/lib/accounting-queries';
-import { rpReportPath, useRpReport, type RpReport } from '../../vendor/scm/lib/rp-report-queries';
+import { rpReportPath, useRpReport, type RpEntry, type RpReport } from '../../vendor/scm/lib/rp-report-queries';
+import { DataTable, type Column } from '../../components/DataTable';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { rpLines, type MonthColumn } from '../../vendor/scm/lib/report-monthly';
 import { ByMonthButton, MonthlyReport } from './MonthlyReport';
@@ -93,6 +94,7 @@ export const ReceiptsPaymentsTab = () => {
     if (!r || !drill) return [];
     return r.entries.filter((e) => drill.sides.includes(e.side) && drill.rowKeys.includes(e.rowKey) && (drill.column == null || e.column === drill.column));
   }, [r, drill]);
+  const drillRows = useMemo<DrillEntry[]>(() => entries.map((e, idx) => ({ ...e, idx })), [entries]);
   const pick = (node: LaidNode, column: string | null) =>
     setDrill({ sides: sidesOf(node), id: node.id, label: node.label, rowKeys: leafKeys(node), column });
   /* The levels count inside a side: L1 is the first layer under RECEIPTS / PAYMENTS. */
@@ -165,6 +167,11 @@ export const ReceiptsPaymentsTab = () => {
               <BalanceLine label="Cash Surplus / (Deficit)" columns={columns} per={surplusPer} total={r.totals.receiptsTotalSen - r.totals.paymentsTotalSen} strong />
               <BalanceLine label="Balance b/f" columns={columns} per={r.opening} total={r.totals.openingTotalSen} />
               <BalanceLine label="Balance c/f" columns={columns} per={r.totals.closing} total={r.totals.closingTotalSen} strong />
+              {/* The card money the bank has not received (owner 2026-09-28): the columns cannot carry it, the memo can. */}
+              <MemoLine label="Card takings this period (swiped, not yet in the bank)" columns={columns} total={r.card.takingsSen}
+                title={`Every movement on the card-machine clearing accounts (${r.card.codes.join(', ')}) in the period, the settlement module's own aside — counted in the columns only once the acquirer pays it out.`} />
+              <MemoLine label="Card money in transit at period end" columns={columns} total={r.card.transitSen}
+                title={`What the card-machine clearing accounts hold on ${to}: swiped, not yet received in the bank.`} />
             </tbody>
           </table>
         </div>
@@ -179,28 +186,35 @@ export const ReceiptsPaymentsTab = () => {
             </b>
             <Button variant="ghost" size="sm" onClick={() => setDrill(null)}>Close</Button>
           </div>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)', marginTop: 'var(--space-2)' }}>
-            <thead>
-              <tr><th style={{ ...th, textAlign: 'left' }}>Date</th><th style={{ ...th, textAlign: 'left' }}>Journal</th><th style={{ ...th, textAlign: 'left' }}>Document</th><th style={{ ...th, textAlign: 'left' }}>Party</th><th style={{ ...th, textAlign: 'left' }}>Account</th><th style={{ ...th, textAlign: 'right' }}>Amount</th></tr>
-            </thead>
-            <tbody>
-              {entries.map((e, i) => (
-                <tr key={`${e.jeNo}-${e.column}-${i}`} style={{ borderBottom: '1px solid var(--border-weak, #f0eee8)' }}>
-                  <td style={{ padding: '4px 10px', whiteSpace: 'nowrap' }}>{fmtDateOrDash(e.entryDate)}</td>
-                  <td style={{ padding: '4px 10px', fontFamily: 'var(--font-mono)' }}>{e.jeNo}</td>
-                  <td style={{ padding: '4px 10px' }}>{SOURCE_WORD[String(e.sourceType ?? '').replace(/_REVERSAL$/, '')] ?? e.sourceType ?? '—'}{e.sourceDocNo ? ` ${e.sourceDocNo}` : ''}</td>
-                  <td style={{ padding: '4px 10px' }}>{e.party ?? '—'}</td>
-                  <td style={{ padding: '4px 10px', fontFamily: 'var(--font-mono)' }}>{e.column}</td>
-                  <td style={{ padding: '4px 10px', ...num }}>{fmtRp(e.sen)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <DataTable<DrillEntry>
+            tableId="rp-drill-entries"
+            exportName="receipts-payments-entries"
+            exportXlsx
+            columns={DRILL_COLUMNS}
+            rows={drillRows}
+            emptyLabel="No entry behind this figure."
+            getRowKey={(e) => e.idx}
+          />
         </div>
       )}
     </div>
   );
 };
+
+type DrillEntry = RpEntry & { idx: number };
+const docText = (e: RpEntry): string =>
+  `${SOURCE_WORD[String(e.sourceType ?? '').replace(/_REVERSAL$/, '')] ?? e.sourceType ?? '—'}${e.sourceDocNo ? ` ${e.sourceDocNo}` : ''}`;
+const DRILL_COLUMNS: Column<DrillEntry>[] = [
+  { key: 'date', label: 'Date', render: (e) => fmtDateOrDash(e.entryDate), getValue: (e) => e.entryDate, exportFormat: 'date' },
+  { key: 'journal', label: 'Journal', render: (e) => <span style={{ fontFamily: 'var(--font-mono)' }}>{e.jeNo}</span>, getValue: (e) => e.jeNo },
+  { key: 'document', label: 'Document', render: docText, getValue: docText },
+  { key: 'party', label: 'Party', render: (e) => e.party ?? '—', getValue: (e) => e.party ?? '' },
+  { key: 'account', label: 'Account', render: (e) => <span style={{ fontFamily: 'var(--font-mono)' }}>{e.column}</span>, getValue: (e) => e.column },
+  {
+    key: 'amount', label: 'Amount', align: 'right', render: (e) => fmtRp(e.sen),
+    getValue: (e) => e.sen, exportValue: (e) => e.sen / 100, exportFormat: 'money',
+  },
+];
 
 const SectionLine = ({ label, span, muted }: { label: string; span: number; muted?: boolean }) => (
   <tr><td colSpan={span} style={{ padding: '10px 10px 4px', fontWeight: 700, ...(muted ? { fontStyle: 'italic', ...soft } : {}) }}>{label}</td></tr>
@@ -214,5 +228,16 @@ const BalanceLine = ({ label, columns, per, total, strong, pct }: { label: strin
     {columns.map((c) => <td key={c.code} style={{ padding: '6px 10px', fontWeight: 600, ...num }}>{fmtRp(per[c.code] ?? 0)}</td>)}
     <td style={{ padding: '6px 10px', fontWeight: 700, ...num }}>{fmtRp(total)}</td>
     <td style={{ padding: '6px 10px', ...num, ...soft }}>{pct ?? ''}</td>
+  </tr>
+);
+
+/* A memo under the foot: a figure the columns cannot carry — the card money still
+   on its way to the bank (owner 2026-09-28). Italic, soft, in the Total column only. */
+const MemoLine = ({ label, columns, total, title }: { label: string; columns: RpReport['columns']; total: number; title: string }) => (
+  <tr title={title} data-memo="card">
+    <td style={{ padding: '6px 10px', fontStyle: 'italic', ...soft }}>{label}</td>
+    {columns.map((c) => <td key={c.code} />)}
+    <td style={{ padding: '6px 10px', fontStyle: 'italic', ...num, ...soft }}>{fmtRp(total)}</td>
+    <td />
   </tr>
 );

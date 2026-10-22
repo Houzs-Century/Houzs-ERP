@@ -1,10 +1,18 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
 import { PERMISSIONS, isValidPermission, parsePermissions, droppedPermissions } from "../services/permissions";
+import {
+  PAGES,
+  isValidPageKey,
+  isRetiredPageKey,
+  isDormantPageKey,
+  isValidPositionLevel,
+} from "../services/pageAccess";
 import { requirePermission, requirePermissionOrSalesDirector } from "../middleware/auth";
 import { audit } from "../services/audit";
+import { bustUserSessions } from "../services/sessionCache";
 import { getDb } from "../db/client";
-import { roles, users } from "../db/schema";
+import { roles, users, role_page_access } from "../db/schema";
 import { eq, sql } from "drizzle-orm";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -222,6 +230,154 @@ app.delete("/:id", requirePermission("roles.manage"), async (c) => {
     summary: `Deleted role #${id}`,
   });
   return c.json({ ok: true });
+});
+
+/**
+ * GET /api/roles/page-access
+ * The page-visibility half of a role (RBAC rebuild, Option A — PR2). Returns the
+ * page catalogue (the backend is the source; the matrix UI must not keep a second
+ * copy of PAGES) and, per role, the RAW stored `role_page_access` levels. No
+ * cascade is applied here — the matrix resolves parent→child for display exactly
+ * as login does (resolvePositionAccessFromRows), so the two never drift.
+ *
+ * RETIRED keys are never returned (there is no cell to render for them); a stored
+ * row on a retired key stays inert and simply isn't listed. A role with no rows
+ * comes back with an empty `levels` map + `has_rows: false` — login still falls
+ * back to the legacy resolution for it (memberPageAccess), which the UI flags.
+ */
+app.get("/page-access", requirePermission("roles.read"), async (c) => {
+  const db = getDb(c.env);
+  const rows = await db
+    .select({
+      role_id: role_page_access.role_id,
+      page_key: role_page_access.page_key,
+      level: role_page_access.level,
+    })
+    .from(role_page_access);
+
+  const byRole = new Map<number, Record<string, string>>();
+  for (const r of rows) {
+    // Skip rows on keys that have left the catalogue — they grant nothing and
+    // have no cell. Keeps the matrix a faithful view of what is settable today.
+    if (!isValidPageKey(r.page_key) || isRetiredPageKey(r.page_key)) continue;
+    const m = byRole.get(r.role_id) ?? {};
+    m[r.page_key] = r.level;
+    byRole.set(r.role_id, m);
+  }
+
+  const roleRows = await db.select({ id: roles.id }).from(roles);
+
+  return c.json({
+    pages: PAGES.filter((p) => !isRetiredPageKey(p.key)).map((p) => ({
+      key: p.key,
+      label: p.label,
+      parent: p.parent ?? null,
+      // Dormant = settable but read by nothing (DORMANT_PAGE_KEYS). The matrix
+      // greys these and keeps the row, per the owner's standing ruling.
+      dormant: isDormantPageKey(p.key),
+    })),
+    roles: roleRows.map((r) => ({
+      role_id: r.id,
+      has_rows: byRole.has(r.id),
+      levels: byRole.get(r.id) ?? {},
+    })),
+  });
+});
+
+/**
+ * PATCH /api/roles/:id/page-access
+ * Body: { entries: { pageKey: string; level: string }[] }  — REPLACE-SET.
+ * Sets the role's entire page-access configuration at once: the given set BECOMES
+ * the role's rows (every other row for the role is removed). The matrix always
+ * sends the full configuration, so the role stays the single source of truth
+ * (memberPageAccess falls back to the legacy login resolution only for a role
+ * with ZERO rows — hence an empty body is refused rather than silently reverting
+ * the role to that fallback).
+ *
+ * Protection mirrors the permissions PATCH above: system roles (and the `*`
+ * wildcard they carry) are locked. Validation mirrors the old positions/roles
+ * page-access writes: every key through isValidPageKey (unknown / retired → 400),
+ * every level through isValidPositionLevel (none/view/edit/full — the 4-level
+ * matrix vocabulary; legacy `partial` is rejected on write, the UI having mapped
+ * it to `view` on load). Approval / money / fine-grained SCM keys are NOT touched
+ * here — those stay in the role's permission array (the Roles tab) with their
+ * explicit-grant semantics intact.
+ *
+ * On success every member of the role is session-busted so the change lands on
+ * their next request; the authz fingerprint's page arm covers the eventual case.
+ */
+app.patch("/:id/page-access", requirePermission("roles.manage"), async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  if (!id) return c.json({ error: "Invalid ID." }, 400);
+
+  const db = getDb(c.env);
+  const row = await db
+    .select({ id: roles.id, is_system: roles.is_system, permissions: roles.permissions })
+    .from(roles)
+    .where(eq(roles.id, id))
+    .limit(1);
+  if (row.length === 0) return c.json({ error: "Role not found" }, 404);
+  if (row[0].is_system || parsePermissions(row[0].permissions).includes("*")) {
+    return c.json(
+      { error: "System roles see every page and cannot have their page access changed" },
+      400,
+    );
+  }
+
+  const body = await c.req.json<{ entries?: Array<{ pageKey?: string; level?: string }> }>();
+  const entries = body.entries;
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return c.json(
+      { error: "entries is required (the role's full page-access set)" },
+      400,
+    );
+  }
+
+  // Validate + dedupe (last write wins on a repeated key, so the PK never clashes).
+  const wanted = new Map<string, string>();
+  for (const e of entries) {
+    const pageKey = e?.pageKey;
+    const level = e?.level;
+    if (typeof pageKey !== "string" || !isValidPageKey(pageKey) || isRetiredPageKey(pageKey)) {
+      return c.json({ error: `Unknown page: ${String(pageKey)}` }, 400);
+    }
+    if (typeof level !== "string" || !isValidPositionLevel(level)) {
+      return c.json({ error: `Invalid level for ${pageKey}: ${String(level)}` }, 400);
+    }
+    wanted.set(pageKey, level);
+  }
+
+  const now = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  await db.transaction(async (tx) => {
+    await tx.delete(role_page_access).where(eq(role_page_access.role_id, id));
+    await tx.insert(role_page_access).values(
+      [...wanted].map(([page_key, level]) => ({
+        role_id: id,
+        page_key,
+        level,
+        created_at: now,
+        updated_at: now,
+      })),
+    );
+  });
+
+  // Instant effect: bust every live session of every member of this role. The
+  // fingerprint's page arm already busts eventually; this removes the TTL wait.
+  const members = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.role_id, id));
+  for (const m of members) await bustUserSessions(c.env, m.id);
+
+  await audit(c, {
+    action: "role.page_access.update",
+    entityType: "role",
+    entityId: id,
+    summary: `Updated page access for role #${id} (${wanted.size} pages)`,
+    meta: { pages: wanted.size, members: members.length },
+  });
+
+  return c.json({ ok: true, pages: wanted.size, members: members.length });
 });
 
 export default app;

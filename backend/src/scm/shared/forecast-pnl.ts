@@ -4,10 +4,14 @@
 //
 // A planning grid, months × the P&L's own accounts. A SALES line takes an
 // AMOUNT — the month's forecast sales are the sum of the sales lines, and
-// they are what every percentage is of. Every other line takes EITHER a share
-// of that sales figure in basis points (15% = 1500) OR an amount in sen, never
-// both: a % line's amount is sales × bp / 10000, an amount line's share is
-// amount / sales. Totals follow the P&L's five blocks — trading income, cost
+// they are what a percentage is of. Every other line takes EITHER a share in
+// basis points (15% = 1500) OR an amount in sen, never both: a % line's amount
+// is basis × bp / 10000, an amount line's share is amount / basis. The BASIS is
+// the month's whole forecast sales — except for a line whose account is bound
+// to an item group's sales (a PURCHASE account, scm.acc_item_group_accounts):
+// its basis is those sales lines alone (owner 2026-09-29: purchase of bedding
+// 应该是根据回他的 sales 的 amount 算，而不是 total sales, sofa 同理), which the
+// route stamps on the account as `basis`. Totals follow the P&L's five blocks — trading income, cost
 // of sales, other income, expenses, taxation — to gross profit, profit before
 // tax and net profit, the statement's own arithmetic, so the forecast and the
 // actual read alike on the Dashboard. A new month inherits the previous
@@ -24,8 +28,11 @@ export type ForecastCell = { bp: number } | { amtSen: number };
 export type ForecastLines = Record<string, ForecastCell>;
 /** 'YYYY-MM' → the month's lines. A month exists once it was added, even empty. */
 export type ForecastGrid = Record<string, ForecastLines>;
-/** An account the grid may name: an active leaf of one of the P&L's sections, sectioned as the statement sections it. */
-export type ForecastAccount = { code: string; name: string; section: string; type: string };
+/** An account the grid may name: an active leaf of one of the P&L's sections,
+    sectioned as the statement sections it. `basis` — the sales accounts a
+    percentage on this line is OF (a purchase account's own group's sales, from
+    the item-group bindings); absent or empty = the month's whole sales. */
+export type ForecastAccount = { code: string; name: string; section: string; type: string; basis?: string[] };
 
 export const FORECAST_MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
@@ -105,10 +112,12 @@ const round = (v: number): number => Math.sign(v) * Math.round(Math.abs(v));
 
 export type ForecastLine = {
   code: string; name: string; section: string; block: ForecastBlockKey;
-  /** The line's forecast amount in sen — keyed, or sales × bp / 10000. */
+  /** The line's forecast amount in sen — keyed, or basis × bp / 10000. */
   amountSen: number;
-  /** The line's share of the month's forecast sales in basis points — keyed, or amount / sales; null when there are no sales to divide by. */
+  /** The line's share of its basis in basis points — keyed, or amount / basis; null when the basis is zero. */
   bp: number | null;
+  /** What the share is OF: the line's own group's sales when the account is bound to one, else the month's whole sales. */
+  basisSen: number;
   keyed: 'amount' | 'percent';
 };
 export type ForecastTotals = {
@@ -116,6 +125,20 @@ export type ForecastTotals = {
   expensesSen: number; profitBeforeTaxSen: number; taxationSen: number; netProfitSen: number;
 };
 export type ForecastFigures = { salesSen: number; lines: ForecastLine[]; totals: ForecastTotals };
+
+/** What a line's percentage is OF: the keyed amounts on the sales lines its
+    account is bound to (a purchase line's own group's sales — a line whose
+    group sold nothing this month has a zero basis, so its % is of nothing),
+    else the month's whole forecast sales. */
+export function basisSalesSen(lines: ForecastLines, account: ForecastAccount, salesSen: number): number {
+  if (!account.basis || account.basis.length === 0) return salesSen;
+  let sum = 0;
+  for (const code of account.basis) {
+    const c = cellOf(lines, code);
+    if (c && isAmountCell(c)) sum += c.amtSen;
+  }
+  return sum;
+}
 
 /** One month's figures: every keyed line's amount and share, and the P&L's totals over them. */
 export function monthFigures(lines: ForecastLines, accounts: ForecastAccount[]): ForecastFigures {
@@ -125,10 +148,11 @@ export function monthFigures(lines: ForecastLines, accounts: ForecastAccount[]):
     const block = blockOfSection(a.section);
     const c = cellOf(lines, a.code);
     if (!block || !c) continue;
+    const basisSen = basisSalesSen(lines, a, salesSen);
     if (isAmountCell(c)) {
-      out.push({ code: a.code, name: a.name, section: a.section, block, amountSen: c.amtSen, bp: salesSen !== 0 ? round((c.amtSen / salesSen) * 10000) : null, keyed: 'amount' });
+      out.push({ code: a.code, name: a.name, section: a.section, block, amountSen: c.amtSen, bp: basisSen !== 0 ? round((c.amtSen / basisSen) * 10000) : null, basisSen, keyed: 'amount' });
     } else {
-      out.push({ code: a.code, name: a.name, section: a.section, block, amountSen: round((salesSen * c.bp) / 10000), bp: c.bp, keyed: 'percent' });
+      out.push({ code: a.code, name: a.name, section: a.section, block, amountSen: round((basisSen * c.bp) / 10000), bp: c.bp, basisSen, keyed: 'percent' });
     }
   }
   const sum = (key: ForecastBlockKey): number => out.filter((l) => l.block === key).reduce((s, l) => s + l.amountSen, 0);

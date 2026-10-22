@@ -16,6 +16,7 @@ import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { fmtDate } from '../../vendor/shared/format';
 import { PageHeader } from '../../components/Layout';
+import { matchesSearch, soRefOfStamp, type SoRefStamp } from '../../lib/so-ref-search';
 
 type LoadingLine = {
   id: string;
@@ -40,7 +41,7 @@ type LoadingDo = {
   crew_driver_name: string | null;
   loading_lines: LoadingLine[];
   loading_qty_total: number;
-};
+} & SoRefStamp;
 
 type StatusFilter = 'to_load' | 'loaded' | 'all';
 const FILTERS: { key: StatusFilter; label: string }[] = [
@@ -63,12 +64,9 @@ export const LoadingList = () => {
 
   const rows = useMemo(() => {
     const all = listQ.data?.deliveryOrders ?? [];
-    const s = search.trim().toLowerCase();
-    if (!s) return all;
+    if (!search.trim()) return all;
     return all.filter((d) =>
-      [d.do_number, d.debtor_name, d.lorry_plate, d.crew_driver_name, d.city, d.state]
-        .filter(Boolean)
-        .some((v) => String(v).toLowerCase().includes(s)),
+      matchesSearch([d.do_number, d.debtor_name, d.lorry_plate, d.crew_driver_name, d.city, d.state, soRefOfStamp(d)], search),
     );
   }, [listQ.data, search]);
 

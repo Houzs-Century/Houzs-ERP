@@ -54,6 +54,17 @@ const comparable = (v: unknown): boolean =>
   typeof v === 'number' ||
   typeof v === 'boolean';
 
+/** Keys that are ONE answer spread over several fields: when any is dirty, all
+    are sent. A picked fair event (owner 2026-09-24, components/fairPick.ts) is
+    its venue, organizer and period together. Sent by halves, a new organizer
+    with an unchanged end date would reach the server without the end, which it
+    reads as a one-day fair — a different event, or none. The DAY of it rides
+    along too: the server keeps a day only as a day of the event in the same
+    body, so a day sent alone could not be checked. */
+const TRAVEL_TOGETHER: readonly (readonly string[])[] = [
+  ['fairVenue', 'fairOrganizer', 'fairStart', 'fairEnd', 'fairDate'],
+];
+
 /**
  * Return ONLY the entries of `next` that differ from `original`.
  *
@@ -95,6 +106,10 @@ export function diffHeaderPayload(
     const prev = original[key];
     if (comparable(prev) && comparable(value) && norm(prev) === norm(value)) continue;
     out[key] = value;
+  }
+  for (const group of TRAVEL_TOGETHER) {
+    if (!group.some((k) => k in out)) continue;
+    for (const k of group) if (next[k] !== undefined) out[k] = next[k];
   }
   return out;
 }

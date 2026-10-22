@@ -63,7 +63,7 @@ import { SearchScopeHint } from "../../components/SearchScopeHint";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
 import {
   usePurchaseOrdersPaged,
-  useSuppliers,
+  usePoListFacets,
   useEnrichedPoListRows,
   usePurchaseOrderDetail,
   fetchPurchaseOrderDetail,
@@ -77,6 +77,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { convertToLink, transferToLabel, transferFromLabel } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
+import { OVERDUE_CLASS, isPastDue } from "../../lib/tableHighlight";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useHoldAction } from "./use-hold-action";
 import { usePoCancelAction } from "./use-po-cancel-action";
@@ -801,24 +802,12 @@ export function PurchaseOrdersListV2() {
   /* The SERVER-FILTERABLE column funnels, reported by DataTable's
      onColFiltersChange and pushed into the list query so pagination runs over
      the filtered set (owner 2026-09-16): Creditor Name (the "supplier" column),
-     Creditor Code, Currency. Every other funnel (line-level: Item Code,
+     Creditor Code, Currency, Doc Date. Every other funnel (line-level: Item Code,
      Description, Location, Item Group, Delivery Date, Remaining/Qty/…, SO Doc No;
-     the Doc Date value-set; and the MRP-derived Assigned SO / Delivered) stays
+     and the MRP-derived Assigned SO / Delivered) stays
      client-side on the loaded page — those columns are line- or MRP-level and
      the list query cannot express them cheaply. */
-  const [serverFunnels, setServerFunnels] = useState<{ creditorNames?: string[]; creditorCodes?: string[]; currencies?: string[] }>({});
-  /* Seed the Creditor Name / Code funnel checklists with EVERY supplier (not
-     only those on the loaded page), so a creditor whose POs are all on a later
-     page is still pickable — the point of pushing the filter server-side. */
-  const suppliersQ = useSuppliers();
-  const supplierNames = useMemo(
-    () => [...new Set((suppliersQ.data ?? []).map((s) => s.name).filter((n): n is string => !!n))],
-    [suppliersQ.data],
-  );
-  const supplierCodes = useMemo(
-    () => [...new Set((suppliersQ.data ?? []).map((s) => s.code).filter((c): c is string => !!c))],
-    [suppliersQ.data],
-  );
+  const [serverFunnels, setServerFunnels] = useState<{ creditorNames?: string[]; creditorCodes?: string[]; currencies?: string[]; docDates?: string[] }>({});
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);
 
   // Send the active tab's BUCKET NAME as `status`; the backend resolves each
@@ -835,6 +824,9 @@ export function PurchaseOrdersListV2() {
     sort,
     ...serverFunnels,
   });
+  /* The server-filtered funnels list and count EVERY matching order, so an
+     option's count before the click equals the rows after it (DEV-13). */
+  const facets = usePoListFacets({ status: apiStatus, q: debouncedSearch, ...serverFunnels }).data?.facets;
   const searchTransition = useSearchResultTransition({
     inputTerm: search,
     requestTerm: debouncedSearch,
@@ -914,6 +906,7 @@ export function PurchaseOrdersListV2() {
       creditorNames: pick("supplier"),
       creditorCodes: pick("creditor_code"),
       currencies: pick("currency"),
+      docDates: pick("po_date"),
     };
     const sig = JSON.stringify(next);
     if (sig === serverFunnelSigRef.current) return;
@@ -1049,7 +1042,7 @@ export function PurchaseOrdersListV2() {
       : "";
     notify({
       title: n > 0
-        ? `Supplier Date ${res.slot} set on ${n} ${n === 1 ? "PO" : "POs"}`
+        ? `Supplier Date ${[...new Set(res.updated.map((u) => u.slot))].sort().join("/")} set on ${n} ${n === 1 ? "PO" : "POs"}`
         : "No purchase orders were updated",
       body: `${n > 0 ? `Header ${scope} now reads ${res.date}.` : ""}${skippedNote}`.trim()
         || "Nothing matched — check the picked purchase orders.",
@@ -1212,9 +1205,7 @@ export function PurchaseOrdersListV2() {
       width: "120px",
       disableSort: true,
       getValue: (r) => r.supplier?.code ?? "",
-      // Server-filterable: the funnel is pushed into the list query, so seed the
-      // checklist with every creditor code (not just the loaded page's).
-      filterSeedValues: supplierCodes,
+      filterCounts: facets?.creditor_code,
       render: (r) => <span className="font-mono text-[11.5px] text-ink-secondary">{r.supplier?.code || "—"}</span>,
     },
     {
@@ -1225,9 +1216,7 @@ export function PurchaseOrdersListV2() {
       label: PO_LINE_LABELS.creditorName,
       disableSort: true,
       getValue: (r) => supplierNameOf(r),
-      // Server-filterable: seed with every creditor name so one not on the
-      // loaded page is still pickable (the point of the server-side push).
-      filterSeedValues: supplierNames,
+      filterCounts: facets?.supplier,
       render: (r) => (
         <div className="min-w-0 truncate text-[13px] font-semibold text-ink">
           {supplierNameOf(r)}
@@ -1244,6 +1233,9 @@ export function PurchaseOrdersListV2() {
       label: PO_LINE_LABELS.docDate,
       width: "108px",
       getValue: (r) => r.po_date,
+      filterCounts: facets?.po_date,
+      filterLabel: (v) => (v === "—" ? v : fmtDate(v)),
+      newestFirst: true,
       exportFormat: "date",
       render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.po_date)}</span>,
     },
@@ -1277,9 +1269,16 @@ export function PurchaseOrdersListV2() {
       /* Owner 2026-09-15: in the file, each line's own delivery date. */
       lineValue: (_r, l) => l.delivery_date,
       exportFormat: "date",
-      render: (r) => (
-        <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.expected_at)}</span>
-      ),
+      render: (r) => {
+        // Sent to the supplier and not fully received: a draft or a held PO is not late.
+        const bucket = statusFor(r.status).bucket;
+        const late = isPastDue(r.expected_at, bucket === "open" || bucket === "partial");
+        return (
+          <span className={cn("text-[12.5px]", late ? OVERDUE_CLASS : "text-ink-secondary")} title={late ? "Expected date passed, goods not all received" : undefined}>
+            {fmtDate(r.expected_at)}
+          </span>
+        );
+      },
     },
     {
       /* Owner 2026-08-05 — ship-to warehouse (list embed purchase_location). */
@@ -1304,6 +1303,7 @@ export function PurchaseOrdersListV2() {
       defaultHidden: true,
       disableSort: true,
       getValue: (r) => r.currency ?? "MYR",
+      filterCounts: facets?.currency,
       render: (r) => (
         <span className="text-[12.5px] text-ink-secondary">{r.currency ?? "MYR"}</span>
       ),
@@ -1714,6 +1714,7 @@ export function PurchaseOrdersListV2() {
       <PoBulkSupplierDateModal
         open={bulkDateOpen}
         poIds={[...selectedIds]}
+        pos={rows.filter((r) => selectedIds.has(r.id))}
         onClose={() => setBulkDateOpen(false)}
         onDone={(res) => void onBulkDateDone(res)}
       />

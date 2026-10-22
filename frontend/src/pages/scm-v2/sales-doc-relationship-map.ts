@@ -28,7 +28,7 @@
 
 import { customerRefOf, type CustomerRefHeader } from '../../lib/customer-ref';
 import { useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useOpenDocInTab } from '../../lib/openDocInTab';
 import { useAuth } from '../../auth/AuthContext';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useDocumentFlow, type FlowNode } from '../../vendor/scm/lib/flow-queries';
@@ -189,11 +189,11 @@ export function useDoRelationshipMap(header: DoRelationshipHeader | null): {
      this map shows no floating hop (usePoSoCoverage is keyed by purchase doc). */
   pairing: { kind: PairingKind } | null;
 } & DocChoiceApi {
-  const navigate = useNavigate();
   const notify = useNotify();
   /* Several documents in one slot open a chooser whose every row clicks through
      (2026-08-03) — naming them and pointing at a list that cannot be searched by
      this doc no left the operator copying numbers by hand. */
+  const openDoc = useOpenDocInTab();
   const { choice, openChoice, closeChoice, pickChoice } = useDocChoice();
   const showCustomerPo = useCustomerPoNotice();
   const gates = useProcurementGates();
@@ -215,14 +215,14 @@ export function useDoRelationshipMap(header: DoRelationshipHeader | null): {
       if (n.type === 'Sales Order') {
         const soDoc = soNodes[0]?.id ?? header?.so_doc_no;
         if (soDoc) {
-          navigate(`/scm/sales-orders/${encodeURIComponent(soDoc)}`);
+          openDoc(`/scm/sales-orders/${encodeURIComponent(soDoc)}`);
           return true;
         }
         return false;
       }
       if (n.type === 'Sales Invoice' && siNodes.length > 0) {
         if (siNodes.length === 1) {
-          navigate(`/scm/sales-invoices/${siNodes[0]!.id}`);
+          openDoc(`/scm/sales-invoices/${siNodes[0]!.id}`);
           return true;
         }
         openChoice({
@@ -243,7 +243,7 @@ export function useDoRelationshipMap(header: DoRelationshipHeader | null): {
           return false;
         }
         if (grnNodes.length === 1) {
-          navigate(`/scm/grns/${grnNodes[0]!.id}`);
+          openDoc(`/scm/grns/${grnNodes[0]!.id}`);
           return true;
         }
         openChoice({
@@ -264,7 +264,7 @@ export function useDoRelationshipMap(header: DoRelationshipHeader | null): {
           return false;
         }
         if (poNodes.length === 1) {
-          navigate(`/scm/purchase-orders/${poNodes[0]!.id}`);
+          openDoc(`/scm/purchase-orders/${poNodes[0]!.id}`);
           return true;
         }
         openChoice({
@@ -285,7 +285,7 @@ export function useDoRelationshipMap(header: DoRelationshipHeader | null): {
           return false;
         }
         if (piNodes.length === 1) {
-          navigate(`/scm/purchase-invoices/${piNodes[0]!.id}`);
+          openDoc(`/scm/purchase-invoices/${piNodes[0]!.id}`);
           return true;
         }
         openChoice({
@@ -300,7 +300,7 @@ export function useDoRelationshipMap(header: DoRelationshipHeader | null): {
       }
       return false;
     },
-    [navigate, notify, openChoice, showCustomerPo, header?.so_doc_no, header?.do_number, soNodes, siNodes, poNodes, grnNodes, piNodes, gates],
+    [openDoc, notify, openChoice, showCustomerPo, header?.so_doc_no, header?.do_number, soNodes, siNodes, poNodes, grnNodes, piNodes, gates],
   );
 
   const pairing = useMemo<{ kind: PairingKind } | null>(
@@ -388,8 +388,8 @@ export function useSiRelationshipMap(header: SiRelationshipHeader | null): {
   nodes: ChainNode[];
   onNodeClick: (n: ChainNode) => boolean;
 } & DocChoiceApi {
-  const navigate = useNavigate();
   const notify = useNotify();
+  const openDoc = useOpenDocInTab();
   const { choice, openChoice, closeChoice, pickChoice } = useDocChoice();
   const showCustomerPo = useCustomerPoNotice();
 
@@ -408,14 +408,14 @@ export function useSiRelationshipMap(header: SiRelationshipHeader | null): {
       if (n.type === 'Sales Order') {
         const soDoc = soNodes[0]?.id ?? header?.so_doc_no;
         if (soDoc) {
-          navigate(`/scm/sales-orders/${encodeURIComponent(soDoc)}`);
+          openDoc(`/scm/sales-orders/${encodeURIComponent(soDoc)}`);
           return true;
         }
         return false;
       }
       if (n.type === 'Delivery Order' && doNodes.length > 0) {
         if (doNodes.length === 1) {
-          navigate(`/scm/delivery-orders/${doNodes[0]!.id}`);
+          openDoc(`/scm/delivery-orders/${doNodes[0]!.id}`);
           return true;
         }
         openChoice({
@@ -440,7 +440,7 @@ export function useSiRelationshipMap(header: SiRelationshipHeader | null): {
       }
       return false;
     },
-    [navigate, notify, openChoice, showCustomerPo, header?.so_doc_no, header?.invoice_number, soNodes, doNodes, paymentNodes],
+    [openDoc, notify, openChoice, showCustomerPo, header?.so_doc_no, header?.invoice_number, soNodes, doNodes, paymentNodes],
   );
 
   return { nodes, onNodeClick, choice, openChoice, closeChoice, pickChoice };
@@ -519,8 +519,8 @@ export function useDrRelationshipMap(header: DrRelationshipHeader | null): {
   nodes: ChainNode[];
   onNodeClick: (n: ChainNode) => boolean;
 } & DocChoiceApi {
-  const navigate = useNavigate();
   const notify = useNotify();
+  const openDoc = useOpenDocInTab();
   const { choice, openChoice, closeChoice, pickChoice } = useDocChoice();
   const showCustomerPo = useCustomerPoNotice();
 
@@ -538,7 +538,7 @@ export function useDrRelationshipMap(header: DrRelationshipHeader | null): {
     (n: ChainNode): boolean => {
       if (n.type === 'Sales Order' && soNodes.length > 0) {
         if (soNodes.length === 1) {
-          navigate(`/scm/sales-orders/${encodeURIComponent(soNodes[0]!.id)}`);
+          openDoc(`/scm/sales-orders/${encodeURIComponent(soNodes[0]!.id)}`);
           return true;
         }
         openChoice({
@@ -553,7 +553,7 @@ export function useDrRelationshipMap(header: DrRelationshipHeader | null): {
       }
       if (n.type === 'Delivery Order' && doNodes.length > 0) {
         if (doNodes.length === 1) {
-          navigate(`/scm/delivery-orders/${doNodes[0]!.id}`);
+          openDoc(`/scm/delivery-orders/${doNodes[0]!.id}`);
           return true;
         }
         openChoice({
@@ -565,7 +565,7 @@ export function useDrRelationshipMap(header: DrRelationshipHeader | null): {
       }
       if (n.type === 'Sales Invoice' && siNodes.length > 0) {
         if (siNodes.length === 1) {
-          navigate(`/scm/sales-invoices/${siNodes[0]!.id}`);
+          openDoc(`/scm/sales-invoices/${siNodes[0]!.id}`);
           return true;
         }
         openChoice({
@@ -580,7 +580,7 @@ export function useDrRelationshipMap(header: DrRelationshipHeader | null): {
       }
       return false;
     },
-    [navigate, notify, openChoice, showCustomerPo, header?.return_number, soNodes, doNodes, siNodes],
+    [openDoc, notify, openChoice, showCustomerPo, header?.return_number, soNodes, doNodes, siNodes],
   );
 
   return { nodes, onNodeClick, choice, openChoice, closeChoice, pickChoice };

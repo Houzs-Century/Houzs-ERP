@@ -19,7 +19,8 @@
 
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useProductRequest } from '../../vendor/scm/lib/product-request-queries';
 import { Save, Trash2, X } from 'lucide-react';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { Button } from '@2990s/design-system';
@@ -35,6 +36,7 @@ import {
   type MaterialKind,
 } from '../../vendor/scm/lib/suppliers-queries';
 import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
+import { withMasterPickerPools } from '../../vendor/scm/lib/picker-maint';
 import { useFabricTrackings } from '../../vendor/scm/lib/fabric-queries';
 import { PcVariantEditor } from '../../vendor/scm/components/PcVariantEditor';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
@@ -54,13 +56,12 @@ import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '..
 import { DateField } from "../../vendor/scm/components/DateField";
 import { showsVariantEditor } from '../../vendor/scm/lib/variant-editor-groups';
 
+import { fmtMoneySen } from '../../vendor/shared/format';
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
   const v = centi ?? 0;
-  return `${currency} ${(v / 100).toLocaleString('en-MY', {
-    minimumFractionDigits: 2, maximumFractionDigits: 2,
-  })}`;
+  return fmtMoneySen(v, currency);
 };
 
 type DraftLine = {
@@ -111,6 +112,51 @@ export const PurchaseConsignmentOrderNew = () => {
 
   const [dialog, setDialog] = useState<{ title: string; body: string } | null>(null);
 
+  /* Raised from a product request (owner 2026-10-06, ?fromProductRequest=; 方案 A
+     2026-10-15: one order line PER REQUEST LINE): the header's Purchase Location +
+     Expected Delivery, the supplier, and a line per request line — its SKU, qty,
+     fabric / seat / leg as the variant bag — are seeded once when the request
+     arrives; the line remarks ride the order notes (an order line has no remark). The Purchaser checks the prices; on save the order
+     claims the request (PCO_ISSUED). */
+  const [searchParams] = useSearchParams();
+  const fromProductRequest = searchParams.get('fromProductRequest');
+  const requestQ = useProductRequest(fromProductRequest);
+  const sourceRequest = requestQ.data?.request ?? null;
+  const [requestSeeded, setRequestSeeded] = useState(false);
+  useEffect(() => {
+    if (!fromProductRequest || requestSeeded || !sourceRequest) return;
+    if (sourceRequest.delivery_location_id) setPurchaseLocationId(sourceRequest.delivery_location_id);
+    if (sourceRequest.expected_delivery_date) setExpectedAt(sourceRequest.expected_delivery_date);
+    /* 方案 C (owner 2026-10-08): the supplier and the agreed prices the requester
+       named seed the Creditor and the line prices; the Purchaser may still change them. */
+    if (sourceRequest.supplier_id) setSupplierId(sourceRequest.supplier_id);
+    setNotes((prev) => prev || [
+      `From Product Request ${sourceRequest.request_no}`, sourceRequest.special_remarks,
+      ...sourceRequest.lines.filter((l) => l.remarks).map((l) => `L${l.line_no}: ${l.remarks}`),
+    ].filter(Boolean).join(' · '));
+    const seeded = sourceRequest.lines.filter((l) => !!l.item_code).map((l): DraftLine => {
+      const variants: Record<string, unknown> = {};
+      if (l.fabric_code) variants.fabricCode = l.fabric_code;
+      if (l.seat_size) variants.seatHeight = l.seat_size;
+      if (l.leg_size) variants.legHeight = l.leg_size;
+      return {
+        ...newLine(),
+        itemCode: l.item_code!,
+        materialName: l.model?.name ?? l.proposed_model_name ?? l.item_code!,
+        qty: l.qty,
+        category: l.category.toLowerCase() || undefined,
+        variants,
+        deliveryDate: sourceRequest.expected_delivery_date ?? undefined,
+        warehouseId: sourceRequest.delivery_location_id ?? undefined,
+        /* An agreed price is the requester's figure, kept over the binding's
+           default (priceTouched), exactly as a hand-typed price would be. */
+        ...(l.unit_price_sen != null && l.unit_price_sen > 0 ? { unitPriceSen: l.unit_price_sen, priceTouched: true } : {}),
+      };
+    });
+    if (seeded.length > 0) setLines(seeded);
+    setRequestSeeded(true);
+  }, [fromProductRequest, requestSeeded, sourceRequest]);
+
   // ── Data ────────────────────────────────────────────────────────────
   const suppliers       = useSuppliers({ status: 'ACTIVE' });
   const supplierDetail  = useSupplierDetail(supplierId || null);
@@ -126,11 +172,14 @@ export const PurchaseConsignmentOrderNew = () => {
     supplierId ? `supplier:${supplierId}` : '',
     { enabled: Boolean(supplierId) },
   );
-  const masterMaintQ = useMaintenanceConfig('master', {
-    enabled: !supplierId || !supplierMaintQ.data?.data,
-  });
+  const masterMaintQ = useMaintenanceConfig('master');
   const maint =
     supplierMaintQ.data?.data ?? masterMaintQ.data?.data ?? null;
+  /* Dropdown options follow master; the supplier overlay only prices them (BUG-60). */
+  const pickerMaint = useMemo(
+    () => withMasterPickerPools(maint, masterMaintQ.data?.data ?? null),
+    [maint, masterMaintQ.data?.data],
+  );
   const fabrics = useFabricTrackings().data ?? [];
 
   const categoryForCode = (code: string): string | undefined => {
@@ -329,9 +378,16 @@ export const PurchaseConsignmentOrderNew = () => {
         notes: notes || undefined,
         purchaseLocationId,
         items,
+        productRequestId: fromProductRequest ?? undefined,
       },
       {
-        onSuccess: (res) => navigate(`/scm/purchase-consignment-orders/${res.id}`),
+        onSuccess: (res) => {
+          if (fromProductRequest && res.requestClaimed === false) {
+            setDialog({ title: 'Order saved, request not linked', body: `${res.pcNumber} was created, but the product request was claimed by another order a moment ago — open the request to check.` });
+            return;
+          }
+          navigate(`/scm/purchase-consignment-orders/${res.id}`);
+        },
         onError:   (err) => setDialog({ title: 'Save failed', body: err instanceof Error ? err.message : 'Something went wrong.' }),
       },
     );
@@ -555,7 +611,7 @@ export const PurchaseConsignmentOrderNew = () => {
             const showVariants  = showsVariantEditor(l.category) && maint;
 
             return (
-              <div
+              <div data-grid-row
                 key={l.rid}
                 style={{
                   background: 'var(--c-paper)',
@@ -728,7 +784,7 @@ export const PurchaseConsignmentOrderNew = () => {
                       variants={l.variants as Record<string, unknown>}
                       onChange={(k, v) => setVariant(l.rid, k, v)}
                       fabrics={fabrics}
-                      maint={maint!}
+                      maint={pickerMaint!}
                     />
                   </div>
                 )}

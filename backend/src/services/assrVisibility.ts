@@ -53,29 +53,37 @@ export async function assrVisibleUserIds(c: {
  * and the printable — resolves visibility through this string, so there is
  * exactly one place the rule is written down.
  *
- * ── WHAT IT SAYS (owner decision 2026-08-20, docs/SERVICE-CASE-VISIBILITY-DECISION.md)
+ * ── WHAT IT SAYS (owner ruling 2026-09-28, superseding the 2026-08-20 rule)
  *
- * | source of the case's SO | who may see it |
+ * "sales person cannot see all service case, they can see their own case and
+ * cust only." A scoped caller sees a case ONLY when it is theirs:
+ *
+ * | linkage | arm |
  * |---|---|
- * | ERP-native (`scm."mfg_sales_orders"`) | self + DOWNLINE, resolved BY ID |
- * | AutoCount mirror, or no resolvable SO | anyone the COMPANY predicate admits |
+ * | they raised it (self + downline)      | `created_by` BY ID |
+ * | it is assigned to them                | `assigned_to` / `assigned_to_2` BY ID |
+ * | explicit access grant                 | `assr_case_access` BY ID |
+ * | ERP-native SO names them              | `scm.staff.user_id` BY ID |
+ * | legacy AutoCount `sales_agent` text   | substring vs THEIR OWN subtree names |
  *
- * The asymmetry is about DATA QUALITY, not trust. In the owner's words:
- * "AutoCount 那一边，它的 SysAgent 可能也不准吧，所以也麻烦，所以 AutoCount 就去
- * 开放给每一个人吧" — the agent data in AutoCount is itself unreliable, so an
- * agent filter on that side is not a weak control, it is a control driven by
- * wrong input. It silently removed access from a batch of Sales Agents and
- * nothing said why. ERP orders carry a real `salesperson_id`, so a per-person
- * scope is meaningful there and stays.
+ * The 2026-08-20 rule additionally opened every AutoCount-mirrored / no-SO case
+ * to anyone the company predicate admitted ("AutoCount 就去开放给每一个人吧").
+ * The owner reversed that for the scoped tier on 2026-09-28 after seeing a new
+ * Sales Executive's mobile Service tab list all 897 cases: the open arm is
+ * GONE, and the legacy reach is now the same self-scoped `sales_agent` match
+ * "My Cases" uses (`myCasesPredicateSql` below carries the census that shows
+ * why that arm must exist: 1,113 user→case pairs reachable only by name).
  *
- * ── WHAT THIS REPLACED, AND WHY IT MUST NOT COME BACK
+ * ── THE NAME ARM'S SHAPE, AND WHY IT IS NOT THE 2026-08 BREAKAGE
  *
- * The previous rule OR-ed in `LOWER(sales_agent) LIKE '%<subtree member name>%'`
- * — a SUBSTRING match over text mirrored from AutoCount. A rename, a stray
- * space or a different spelling silently dropped a rep out of their own cases.
- * That string comparison WAS the "binding", and it is what broke. ERP-sourced
- * rows now resolve the salesperson through `scm.staff.user_id` (mig 0066), which
- * is an id, so nothing depends on how a name is typed.
+ * The pre-2026-08-20 rule inlined the caller's display names as literals; a
+ * rename silently baked the OLD spelling into nothing — the rep dropped out of
+ * their own cases and no query would ever heal it. Here the names are resolved
+ * IN SQL from the users master (`users.name` for the same inlined subtree ids),
+ * so a rename is picked up on the very next query. It is also ADDITIVE to five
+ * id-keyed arms, never the only binding: every case raised in the ERP is
+ * reachable by `created_by` regardless of spelling. ERP-sourced rows still
+ * resolve the salesperson through `scm.staff.user_id` (mig 0066).
  *
  * ── THE THREE STATES, deliberately the same shape as `allowedCompaniesSql`
  *
@@ -84,8 +92,8 @@ export async function assrVisibleUserIds(c: {
  *   `[]`        -> `"1=0"`    a scoped caller with no resolvable identity. Fail
  *                             closed. `1=0` (not `false`) stays valid on the
  *                             D1/SQLite test mirror.
- *   non-empty   -> the rule   self + downline by id, plus every case whose SO is
- *                             not ERP-native.
+ *   non-empty   -> the rule   self + downline: by id everywhere an id exists,
+ *                             by own-subtree name over the legacy agent text.
  *
  * `prefix` is REQUIRED and is the outer table's alias with its dot — `"c."`,
  * `"ca."`, `"a."`, or `"assr_cases."` for an unaliased `FROM assr_cases`. It is
@@ -100,10 +108,8 @@ export async function assrVisibleUserIds(c: {
  * to `true` for every row. Postgres also evaluates an uncorrelated subquery once
  * and hashes it, rather than once per case row.
  *
- * `eo.doc_no IS NOT NULL` is load-bearing for the `NOT IN`: a single NULL in the
- * subquery makes `NOT IN` yield NULL — never true — which would hide every
- * AutoCount case from every scoped caller. `<> ''` keeps a case with no doc_no
- * (which COALESCEs to `''`) from matching a blank order number.
+ * `eo.doc_no IS NOT NULL AND eo.doc_no <> ''` keeps a case with no doc_no
+ * (which COALESCEs to `''`) from matching a blank or absent order number.
  *
  * Ids are INLINED, and there are no binds at all. Same justification
  * `allowedCompaniesSql` states: they come from OUR users master
@@ -122,11 +128,6 @@ export function assrVisibilityPredicateSql(
   // "the ERP order for this doc_no" that `fetchScmSoContext` (services/assr.ts)
   // uses when a case is created. Two different definitions of the ERP order
   // inside one module is the drift this repo keeps paying for, so they match.
-  const liveErpOrder =
-    `FROM scm."mfg_sales_orders" eo` +
-    ` WHERE eo.doc_no IS NOT NULL AND eo.doc_no <> ''` +
-    ` AND eo.status <> 'DRAFT' AND eo.status <> 'CANCELLED'`;
-  const erpDocs = `SELECT LOWER(eo.doc_no) ${liveErpOrder}`;
   const myErpDocs =
     `SELECT LOWER(eo.doc_no) FROM scm."mfg_sales_orders" eo` +
     ` JOIN scm.staff es ON es.id = eo.salesperson_id` +
@@ -144,12 +145,27 @@ export function assrVisibilityPredicateSql(
   // (assr_id, user_id). Empty table = no id matches = no behaviour change.
   const accessGrant =
     `${prefix}id IN (SELECT assr_id FROM assr_case_access WHERE user_id IN (${idList}))`;
+  // Legacy AutoCount reach, SELF-SCOPED (owner 2026-09-28): the case's
+  // free-text `sales_agent` contains a subtree member's display name. Names are
+  // resolved IN SQL from the users master for the SAME inlined ids — never
+  // baked in as literals — so a rename heals on the next query (the failure
+  // mode of the pre-2026-08 rule). UNCORRELATED like every other arm: the
+  // case's own column (`${prefix}id`) stays on the LEFT of the IN and the
+  // subquery names only its own aliases, so it never hits the outer-column
+  // trap the header warns about, and Postgres evaluates it once.
+  const myAgentNameCases =
+    `${prefix}id IN (` +
+    `SELECT ac.id FROM assr_cases ac, users nu` +
+    ` WHERE nu.id IN (${idList})` +
+    ` AND TRIM(COALESCE(nu.name, '')) <> ''` +
+    ` AND LOWER(COALESCE(ac.sales_agent, '')) LIKE '%' || LOWER(TRIM(nu.name)) || '%'` +
+    `)`;
   return (
     `${prefix}created_by IN (${idList})` +
     ` OR ${prefix}assigned_to IN (${idList})` +
     ` OR ${prefix}assigned_to_2 IN (${idList})` +
     ` OR ${accessGrant}` +
-    ` OR ${doc} NOT IN (${erpDocs})` +
+    ` OR ${myAgentNameCases}` +
     ` OR ${doc} IN (${myErpDocs})`
   );
 }

@@ -67,6 +67,8 @@ import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
    403, or a 504 - changed nothing and reported nothing. That is the owner's
    exact report on 2026-09-07: "我点了main 为什么没反应". */
 import { writeFailed } from '../../vendor/scm/lib/mutation-error';
+import { useCapability } from '../../auth/capabilities';
+import { supplierSaveBody } from '../../vendor/scm/lib/supplier-save-body';
 import { useProductModels, type ProductModelRow } from '../../vendor/scm/lib/product-models-queries';
 import {
   useLocalities,
@@ -79,9 +81,11 @@ import {
 import { SgPostcodeField } from '../../vendor/scm/components/SgPostcodeField';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import { composeSupplierSku, looksAmbiguous } from '../../vendor/scm/lib/supplier-sku-helpers';
+import { countModelessMatches, modelMatchesSearch } from '../../vendor/scm/lib/model-picker-search';
 import { parseSupplierCategories, displaySupplierCategories } from '../../vendor/scm/lib/supplier-categories';
 import { SupplyCategoryPicker, useSupplierCategoryPool } from '../../vendor/scm/components/SupplyCategoryPicker';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
+import { DataTable, type Column } from '../../components/DataTable';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
@@ -92,8 +96,10 @@ import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import styles from './SupplierDetail.module.css';
 import { exportBindingsCsv, ImportBindingsDialog } from './SupplierBindingsCsv';
+import { UnmappedModelSkus } from './UnmappedModelSkus';
 import { EffectiveDatedHistory } from '../../vendor/scm/components/EffectiveDatedHistory';
 import { todayMyt } from '../../vendor/scm/lib/dates';
+import { statusLabel } from '../../vendor/scm/lib/status-pill';
 import { DateField } from '../../vendor/scm/components/DateField';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -664,7 +670,8 @@ const SupplierSkuPricingPanel = ({
      Needs a new supplier_material_binding_prices child table (or JSONB
      price_tiers column on supplier_material_bindings) — out of scope for
      this PR per task brief. */
-  const products = useMfgProducts();
+  // fresh: a compartment SKU made a minute ago must show in the unmapped notice.
+  const products = useMfgProducts({ fresh: true });
 
   const CATEGORY_ORDER: readonly string[] = [
     'BEDFRAME_SIZES',
@@ -787,6 +794,9 @@ const SupplierSkuPricingPanel = ({
           sofaHeights={sofaHeights}
           onClose={() => setImporting(false)}
         />
+      )}
+      {open && (
+        <UnmappedModelSkus supplierId={id} bindings={bindings} products={products.data ?? []} />
       )}
       {open && (bindings.length === 0 ? (
         <div className={styles.cardBody}>
@@ -1021,7 +1031,7 @@ const bindingRowKey = (b: BindingRow) => b.id;
 function bindingHeadColumns(
   supplierId: string,
   update: ReturnType<typeof useUpdateBinding>,
-): DataGridColumn<BindingRow>[] {
+): GridColumn<BindingRow>[] {
   return [
     {
       key: 'code',
@@ -1062,7 +1072,7 @@ function bindingTailColumns(
   remove: ReturnType<typeof useDeleteBinding>,
   onEdit: (b: BindingRow) => void,
   setAnchor: ReturnType<typeof useSetCostAnchor>,
-): DataGridColumn<BindingRow>[] {
+): GridColumn<BindingRow>[] {
   return [
     {
       key: 'lead',
@@ -1152,7 +1162,7 @@ const DefaultSkuMappingsTable = ({
   const remove = useDeleteBinding();
   const setAnchor = useSetCostAnchor();
 
-  const columns = useMemo<DataGridColumn<BindingRow>[]>(() => [
+  const columns = useMemo<GridColumn<BindingRow>[]>(() => [
     ...bindingHeadColumns(supplierId, update),
     {
       key: 'price',
@@ -1172,7 +1182,7 @@ const DefaultSkuMappingsTable = ({
   ], [supplierId, update, remove, onEdit, setAnchor]);
 
   return (
-    <DataGrid
+    <DataGridCompat
       rows={bindings}
       columns={columns}
       storageKey={storageKey}
@@ -1207,6 +1217,11 @@ const SOFA_TIER_CHIPS: { value: 'P1' | 'P2' | 'P3'; label: string }[] = [
 
 const SOFA_HEIGHT_FALLBACK = ['24', '26', '28', '30', '32', '35'];
 
+/** Column header for a seat-height. Pool values are free text: a bare number
+ *  gains its inch mark, anything typed with one (`25"`) or a word (`DEFAULT`)
+ *  shows as typed, so the header never reads `25""`. */
+export const seatHeightLabel = (h: string): string => (/^\d+(\.\d+)?$/.test(h.trim()) ? `${h.trim()}"` : h);
+
 const SofaSkuMappingsTable = ({
   supplierId,
   bindings,
@@ -1234,12 +1249,12 @@ const SofaSkuMappingsTable = ({
     [config.data],
   );
 
-  const columns = useMemo<DataGridColumn<BindingRow>[]>(() => [
+  const columns = useMemo<GridColumn<BindingRow>[]>(() => [
     ...bindingHeadColumns(supplierId, update),
-    ...heights.map<DataGridColumn<BindingRow>>((h) => ({
+    ...heights.map<GridColumn<BindingRow>>((h) => ({
       key: `h-${h}`,
-      label: `${h}"`,
-      width: 110,
+      label: seatHeightLabel(h),
+      width: 130,
       align: 'right',
       accessor: (b) => (
         <CellStop>
@@ -1287,6 +1302,7 @@ const SofaSkuMappingsTable = ({
           <button
             key={c.value}
             type="button"
+            aria-pressed={selectedTier === c.value}
             onClick={() => setSelectedTier(c.value)}
             style={{
               fontFamily: 'var(--font-button)',
@@ -1303,12 +1319,12 @@ const SofaSkuMappingsTable = ({
             {c.label}
           </button>
         ))}
-        <span style={{ marginLeft: 'auto', fontSize: 'var(--fs-10)', color: 'var(--fg-soft)' }}>
+        <span style={{ marginInlineStart: 'var(--space-2)', fontSize: 'var(--fs-10)', color: 'var(--fg-soft)' }}>
           Cost per (seat-height × tier). Empty cell = "no price set".
         </span>
       </div>
 
-      <DataGrid
+      <DataGridCompat
         rows={bindings}
         columns={columns}
         storageKey={storageKey}
@@ -1345,12 +1361,12 @@ const BedframeSkuMappingsTable = ({
   const remove = useDeleteBinding();
   const setAnchor = useSetCostAnchor();
 
-  const columns = useMemo<DataGridColumn<BindingRow>[]>(() => [
+  const columns = useMemo<GridColumn<BindingRow>[]>(() => [
     ...bindingHeadColumns(supplierId, update),
-    ...(['P1', 'P2'] as const).map<DataGridColumn<BindingRow>>((tier) => ({
+    ...(['P1', 'P2'] as const).map<GridColumn<BindingRow>>((tier) => ({
       key: `price-${tier}`,
       label: tier === 'P1' ? 'Price 1' : 'Price 2',
-      width: 120,
+      width: 130,
       align: 'right',
       accessor: (b) => (
         <CellStop>
@@ -1375,7 +1391,7 @@ const BedframeSkuMappingsTable = ({
   ], [supplierId, update, remove, onEdit, setAnchor]);
 
   return (
-    <DataGrid
+    <DataGridCompat
       rows={bindings}
       columns={columns}
       storageKey={storageKey}
@@ -1859,65 +1875,33 @@ type LastPo = {
   receivedQty: number;
 };
 
-const LastTenPOsTable = ({ rows }: { rows: LastPo[] }) => {
-  if (rows.length === 0) {
-    return (
-      <div className={styles.cardBody}>
-        <p className={styles.emptyRow}>No purchase orders found for this supplier.</p>
-      </div>
-    );
-  }
+const deltaClass = (tone: string) => (tone === 'ok' ? styles.deltaOk : tone === 'late' ? styles.deltaLate : styles.deltaNeutral);
+const LAST_PO_COLUMNS: Column<LastPo>[] = [
+  { key: 'po', label: 'PO No.', render: (po) => <Link to={`/scm/purchase-orders?focus=${po.id}`} style={{ color: 'inherit' }}>{po.poNo}</Link>, getValue: (po) => po.poNo },
+  { key: 'status', label: 'Status', render: (po) => statusLabel('po', po.status), getValue: (po) => po.status },
+  { key: 'ordered', label: 'Ordered', align: 'right', render: (po) => fmtQty(po.orderedQty), getValue: (po) => po.orderedQty, exportFormat: 'number' },
+  { key: 'received', label: 'Received', align: 'right', render: (po) => fmtQty(po.receivedQty), getValue: (po) => po.receivedQty, exportFormat: 'number' },
+  { key: 'total', label: 'Total', align: 'right', render: (po) => fmtSen(po.totalSen), getValue: (po) => po.totalSen, exportValue: (po) => po.totalSen / 100, exportFormat: 'money' },
+  { key: 'expected', label: 'Expected', render: (po) => fmtDateOrDash(po.expectedDate), getValue: (po) => po.expectedDate, exportFormat: 'date' },
+  { key: 'actual', label: 'Actual', render: (po) => fmtDateOrDash(po.receivedDate), getValue: (po) => po.receivedDate, exportFormat: 'date' },
+  {
+    key: 'delta', label: 'Delta',
+    render: (po) => { const d = deliveryDelta(po.expectedDate, po.receivedDate); return <span className={deltaClass(d.tone)}>{d.label}</span>; },
+    getValue: (po) => deliveryDelta(po.expectedDate, po.receivedDate).label,
+  },
+];
 
-  return (
-    <table className={styles.table}>
-      <thead>
-        <tr>
-          <th>PO No.</th>
-          <th>Status</th>
-          <th className={styles.tableRight}>Ordered</th>
-          <th className={styles.tableRight}>Received</th>
-          <th className={styles.tableRight}>Total</th>
-          <th>Expected</th>
-          <th>Actual</th>
-          <th>Delta</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((po) => {
-          const delta = deliveryDelta(po.expectedDate, po.receivedDate);
-          return (
-            <tr key={po.id}>
-              <td className={styles.codeCell}>
-                <Link to={`/scm/purchase-orders?focus=${po.id}`} style={{ color: 'inherit' }}>
-                  {po.poNo}
-                </Link>
-              </td>
-              <td className={styles.muted}>{po.status}</td>
-              <td className={`${styles.tableRight} ${styles.muted}`}>{fmtQty(po.orderedQty)}</td>
-              <td className={`${styles.tableRight} ${styles.muted}`}>{fmtQty(po.receivedQty)}</td>
-              <td className={styles.priceCell}>{fmtSen(po.totalSen)}</td>
-              <td className={styles.muted}>{fmtDateOrDash(po.expectedDate)}</td>
-              <td className={styles.muted}>{fmtDateOrDash(po.receivedDate)}</td>
-              <td>
-                <span
-                  className={
-                    delta.tone === 'ok'
-                      ? styles.deltaOk
-                      : delta.tone === 'late'
-                        ? styles.deltaLate
-                        : styles.deltaNeutral
-                  }
-                >
-                  {delta.label}
-                </span>
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
-  );
-};
+const LastTenPOsTable = ({ rows }: { rows: LastPo[] }) => (
+  <DataTable<LastPo>
+    tableId="supplier-last-pos"
+    exportName="supplier-last-pos"
+    exportXlsx
+    columns={LAST_PO_COLUMNS}
+    rows={rows}
+    emptyLabel="No purchase orders found for this supplier."
+    getRowKey={(po) => po.id}
+  />
+);
 
 // SKU form modal — create or edit a supplier_material_binding.
 
@@ -2231,8 +2215,9 @@ const SkuFormDialog = ({
 // ── B1 — effective-dated supplier price timeline for a binding ───────────────
 // The binding's unit cost by date (via the reusable EffectiveDatedHistory) plus
 // a "schedule a future price" form. Append-only: scheduling never rewrites the
-// past. NOTE (owner): these rows are the same table auto-derive reads as-of, so
-// a scheduled price moves the derived product cost on its date.
+// past. A row becomes the binding's current cost on its date (the nightly apply
+// job, or at once when dated today or earlier), which then moves the derived
+// product cost.
 const BindingPriceTimeline = ({ supplierId, binding }: { supplierId: string; binding: BindingRow }) => {
   const history = useBindingPriceHistory(supplierId, binding.id);
   const schedule = useScheduleBindingPrice();
@@ -2250,7 +2235,13 @@ const BindingPriceTimeline = ({ supplierId, binding }: { supplierId: string; bin
     schedule.mutate(
       { supplierId, bindingId: binding.id, effectiveFrom, unitPriceSen: priceSen },
       {
-        onSuccess: (r) => notify({ title: r.baselined ? 'Price scheduled (current cost baselined at today).' : 'Price scheduled.' }),
+        onSuccess: (r) => notify({
+          title: r.applied
+            ? 'Price applied — it is the current cost from today.'
+            : r.baselined
+              ? `Price scheduled for ${effectiveFrom} (current cost baselined at today).`
+              : `Price scheduled for ${effectiveFrom}.`,
+        }),
         onError: (e) => notify({ title: 'Schedule failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }),
       },
     );
@@ -2260,7 +2251,7 @@ const BindingPriceTimeline = ({ supplierId, binding }: { supplierId: string; bin
     <div className={styles.formGridFull} style={{ marginTop: 'var(--space-4)', borderTop: '1px solid var(--line)', paddingTop: 'var(--space-3)' }}>
       <span className={styles.fieldLabel}>Supplier price timeline</span>
       <p style={{ fontSize: 'var(--fs-11)', color: '#767b6e', margin: '2px 0 10px' }}>
-        The unit cost this supplier charges, by date. Scheduling a future price never touches past orders — it applies from its own date.
+        The unit cost this supplier charges, by date. A scheduled price becomes the current cost on its date (POs and the Product Maintenance cost follow). Past orders are never touched.
       </p>
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 'var(--space-3)' }}>
         <label className={styles.field} style={{ margin: 0 }}>
@@ -2307,6 +2298,10 @@ const SupplierInfoCard = ({
 }) => {
   const update = useUpdateSupplier();
   const notify = useNotify();
+  /* Owner 2026-09-30 (采购只看采购的部分; 代码只有 finance 能改): the Finance part —
+     TIN, business reg, registration, exemption — shows to Finance only (the
+     server does not send it to anyone else), and only Finance edits the code. */
+  const isFinance = useCapability('scm.money.move');
   // Owner spec 2026-06-12 — maintained Supply Category pool, for rendering
   // the stored comma-joined list with canonical casing.
   const categoryPool = useSupplierCategoryPool();
@@ -2347,7 +2342,7 @@ const SupplierInfoCard = ({
   const setF = (k: keyof typeof form, v: string) => setForm((s) => ({ ...s, [k]: v }));
 
   const save = () => {
-    update.mutate({ id: supplier.id, ...form } as Partial<SupplierRow> & { id: string }, {
+    update.mutate({ id: supplier.id, ...supplierSaveBody(form, supplier.code, isFinance) } as Partial<SupplierRow> & { id: string }, {
       onSuccess: onClose,
       // Never fail silently (Commander 2026-06-16 — "Save 没有反应"): surface the
       // real error so a server reject (e.g. a stale DB constraint) is visible.
@@ -2406,11 +2401,15 @@ const SupplierInfoCard = ({
               label="Supply Category"
               value={displaySupplierCategories(supplier.category, categoryPool) || '—'}
             />
-            <InfoCell label="TIN Number" value={supplier.tin_number ?? '—'} />
-            <InfoCell label="Business Reg No" value={supplier.business_reg_no ?? '—'} />
-            {/* Mig 0028 — AutoCount creditor-export parity. */}
-            <InfoCell label="Registration No." value={supplier.registration_no ?? '—'} />
-            <InfoCell label="Exemption No." value={supplier.exemption_no ?? '—'} />
+            {isFinance && (
+              <>
+                <InfoCell label="TIN Number" value={supplier.tin_number ?? '—'} />
+                <InfoCell label="Business Reg No" value={supplier.business_reg_no ?? '—'} />
+                {/* Mig 0028 — AutoCount creditor-export parity. */}
+                <InfoCell label="Registration No." value={supplier.registration_no ?? '—'} />
+                <InfoCell label="Exemption No." value={supplier.exemption_no ?? '—'} />
+              </>
+            )}
             <InfoCell label="Nature of Business" value={supplier.nature_of_business ?? '—'} />
             <InfoCell label="Contact Person" value={supplier.contact_person ?? '—'} />
             <InfoCell label="Attention" value={supplier.attention ?? '—'} />
@@ -2448,7 +2447,7 @@ const SupplierInfoCard = ({
         ) : (
           <div className={styles.formGrid}>
             {/* Identity */}
-            <EditField label="Credit Account *" value={form.code} onChange={(v) => setF('code', v)} />
+            <EditField label={isFinance ? 'Credit Account *' : 'Credit Account (Finance changes it)'} value={form.code} onChange={(v) => setF('code', v)} disabled={!isFinance} />
             <EditField label="Company Name *" value={form.name} onChange={(v) => setF('name', v)} />
             <EditField label="Supplier Type" value={form.supplierType} onChange={(v) => setF('supplierType', v)} placeholder="Matrix / Distributor / Maker" />
             {/* Owner spec 2026-06-12 — Supply Category is a multi-select chip
@@ -2462,11 +2461,15 @@ const SupplierInfoCard = ({
               fieldClassName={styles.field}
               labelClassName={styles.fieldLabel}
             />
-            <EditField label="TIN Number" value={form.tinNumber} onChange={(v) => setF('tinNumber', v)} />
-            <EditField label="Business Reg No" value={form.businessRegNo} onChange={(v) => setF('businessRegNo', v)} />
-            {/* Mig 0028 — AutoCount creditor-export parity. */}
-            <EditField label="Registration No." value={form.registrationNo} onChange={(v) => setF('registrationNo', v)} />
-            <EditField label="Exemption No." value={form.exemptionNo} onChange={(v) => setF('exemptionNo', v)} />
+            {isFinance && (
+              <>
+                <EditField label="TIN Number" value={form.tinNumber} onChange={(v) => setF('tinNumber', v)} />
+                <EditField label="Business Reg No" value={form.businessRegNo} onChange={(v) => setF('businessRegNo', v)} />
+                {/* Mig 0028 — AutoCount creditor-export parity. */}
+                <EditField label="Registration No." value={form.registrationNo} onChange={(v) => setF('registrationNo', v)} />
+                <EditField label="Exemption No." value={form.exemptionNo} onChange={(v) => setF('exemptionNo', v)} />
+              </>
+            )}
             <EditField label="Nature of Business" value={form.natureOfBusiness} onChange={(v) => setF('natureOfBusiness', v)} />
             {/* Contact */}
             <EditField label="Contact Person" value={form.contactPerson} onChange={(v) => setF('contactPerson', v)} />
@@ -2527,10 +2530,10 @@ const SupplierInfoCard = ({
 };
 
 const EditField = ({
-  label, value, onChange, multiline, placeholder,
+  label, value, onChange, multiline, placeholder, disabled,
 }: {
   label: string; value: string; onChange: (v: string) => void;
-  multiline?: boolean; placeholder?: string;
+  multiline?: boolean; placeholder?: string; disabled?: boolean;
 }) => (
   <label className={`${styles.field} ${multiline ? styles.formGridFull : ''}`}>
     <span className={styles.fieldLabel}>{label}</span>
@@ -2548,6 +2551,7 @@ const EditField = ({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
+        disabled={disabled}
       />
     )}
   </label>
@@ -2631,7 +2635,7 @@ function bindingStatus(skuCount: number, boundCount: number): {
   label: string;
 } {
   if (boundCount === 0) return { tone: 'none', label: 'not mapped' };
-  if (boundCount >= skuCount) return { tone: 'all', label: `all ${skuCount} mapped` };
+  if (boundCount >= skuCount) return { tone: 'all', label: `all ${skuCount} mapped · edit price in the table below` };
   return { tone: 'mixed', label: `mixed ${boundCount}/${skuCount}` };
 }
 
@@ -2693,24 +2697,23 @@ const ModelSkuPickerDialog = ({
 
   /* Filtered Model rows with their pre-computed counts + binding status. */
   const modelRows = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const list = (modelsQ.data ?? []).filter((m) => {
-      // Show inactive Models too (purchaser 2026-06: "price info did not show
-      // item active or no"). They render dimmed + "Inactive" and are not
-      // pickable (you don't map prices on a deactivated item) — but visible.
-      if (!q) return true;
-      return (
-        m.model_code.toLowerCase().includes(q) ||
-        m.name.toLowerCase().includes(q) ||
-        (m.branding ?? '').toLowerCase().includes(q)
-      );
-    });
-    return list.map((m) => {
+    // Show inactive Models too (purchaser 2026-06: "price info did not show
+    // item active or no"). They render dimmed + "Inactive" and are not
+    // pickable (you don't map prices on a deactivated item) — but visible.
+    const out: { model: ProductModelRow; skus: MfgProductRow[]; boundCount: number }[] = [];
+    for (const m of modelsQ.data ?? []) {
       const skus = skusByModel.get(m.id) ?? [];
+      if (!modelMatchesSearch(m, skus, search)) continue;
       const bound = skus.filter((s) => boundCodes.has(`mfg_product|${s.code}`));
-      return { model: m, skus, boundCount: bound.length };
-    });
+      out.push({ model: m, skus, boundCount: bound.length });
+    }
+    return out;
   }, [modelsQ.data, skusByModel, search, boundCodes]);
+
+  const modelessMatches = useMemo(
+    () => countModelessMatches(productsQ.data ?? [], search),
+    [productsQ.data, search],
+  );
 
   const [pickedIds, setPickedIds] = useState<Set<string>>(new Set());
   const [drafts, setDrafts] = useState<Record<string, ModelDraft>>({});
@@ -2840,6 +2843,7 @@ const ModelSkuPickerDialog = ({
       <MultiSkuPickerDialog
         supplierId={supplierId}
         existingBindings={existingBindings}
+        initialSearch={search}
         onClose={onClose}
       />
     );
@@ -2907,7 +2911,7 @@ const ModelSkuPickerDialog = ({
                   <Search {...ICON} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#767b6e', pointerEvents: 'none' }} />
                   <input
                     type="search"
-                    placeholder="Search Model code / name / branding…"
+                    placeholder="Search Model or SKU code / name…"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     style={{
@@ -2961,7 +2965,7 @@ const ModelSkuPickerDialog = ({
                               : noSkus
                                 ? 'No active SKUs under this Model'
                                 : fullyBound
-                                  ? 'All SKUs under this Model already mapped'
+                                  ? 'Already mapped to this supplier. Close this and edit its price in the SKU Mappings table.'
                                   : ''
                           }
                         >
@@ -3007,6 +3011,18 @@ const ModelSkuPickerDialog = ({
                   </tbody>
                 </table>
               </div>
+              {!loading && modelessMatches > 0 && (
+                <p className={styles.infoLabel} style={{ marginTop: 'var(--space-2)' }}>
+                  {modelessMatches} matching SKU{modelessMatches === 1 ? ' has' : 's have'} no Model.{' '}
+                  <button
+                    type="button"
+                    onClick={() => setAdvanced(true)}
+                    style={{ background: 'none', border: 'none', padding: 0, color: 'inherit', textDecoration: 'underline', cursor: 'pointer', font: 'inherit' }}
+                  >
+                    Map with Advanced (per-SKU)
+                  </button>
+                </p>
+              )}
             </div>
             <footer className={styles.modalFooter}>
               <Button variant="ghost" onClick={onClose}>Cancel</Button>
@@ -3229,17 +3245,19 @@ const MULTI_PICKER_RENDER_CAP = 60;
 const MultiSkuPickerDialog = ({
   supplierId,
   existingBindings,
+  initialSearch,
   onClose,
 }: {
   supplierId: string;
   existingBindings: BindingRow[];
+  initialSearch: string;
   onClose: () => void;
 }) => {
   const batch = useCreateBindingsBatch();
   const notify = useNotify();
   const [step, setStep] = useState<1 | 2>(1);
   const [category, setCategory] = useState<'all' | MfgCategory>('all');
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(initialSearch);
   /* Perf (parity with MobileSkuPicker / #342) — DEBOUNCE the search before it
      drives the server query, so a fast typist doesn't fire one
      /mfg-products?search=… request + full re-render per keystroke. */

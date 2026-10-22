@@ -50,11 +50,14 @@ export type Env = {
    *  to deploy time + 30 minutes at cutover, then delete the variable.
    *  See docs/IDEMPOTENCY-PHASE2-RUNBOOK.md. */
   SO_CAS_GRACE_UNTIL?: string;
-  /** Seampify WhatsApp gateway (Delivery Planning "Send Message", owner
-   *  2026-07-22). BOTH are wrangler secrets; while either is unset the send
-   *  endpoint answers 503 not_configured — the UI ships before the creds. */
-  SEAMPIFY_SEND_URL?: string;
-  SEAMPIFY_API_KEY?: string;
+  /** Houzs Connect (chat.houzscentury.com) — the Delivery Planning "Send Now"
+   *  POSTs to CONNECT_WEBHOOK_URL/api/webhooks/erp with CONNECT_WEBHOOK_KEY in
+   *  the X-Connect-Key header (paired with Connect's own check). BOTH are
+   *  wrangler secrets; while either is unset the send endpoint answers 503
+   *  not_configured, so the send is OFF until it is deliberately configured.
+   *  (Replaced the retired Seampify gateway, owner 2026-09-28.) */
+  CONNECT_WEBHOOK_URL?: string;
+  CONNECT_WEBHOOK_KEY?: string;
   POD_BUCKET: R2Bucket;
   // R2 buckets used by the ported SCM routes (SO item photos, public assets).
   // Typed required so the ported code compiles; bind in wrangler.toml before the
@@ -115,6 +118,9 @@ export type Env = {
   // so Connect authenticates with its own credential.
   CONNECT_SERVICE_TOKEN: string;
   GOOGLE_MAPS_API_KEY?: string;
+  // DEV-42 lorry GPS (scm/lib/velocity-poll.ts). Either unset -> the poll is a no-op.
+  VELOCITY_REFRESH_TOKEN?: string;
+  VELOCITY_CUSTOMER_ID?: string;
   // Email (Resend). Leave RESEND_API_KEY unset to run in no-op mode —
   // send() will log + skip, never throw.
   RESEND_API_KEY?: string;
@@ -195,6 +201,12 @@ export type Env = {
   // receiver). The 2990 DB (pg_net) sends it as `x-sync-secret`. Set via
   // `wrangler secret put SYNC_SECRET`. Unset => the receiver 401s (fail-closed).
   SYNC_SECRET?: string;
+  // IT Support (routes/itSupport.ts). The requests live in the Houzs IT Hub;
+  // IT_HUB_URL is its origin. Each company has its own hub key, in the secret
+  // named IT_HUB_API_KEY_<company code> (read by name in the route, so they are
+  // not listed here), set with `wrangler secret put`. The address or the active
+  // company's key unset => the routes answer 501 and the menu row is hidden.
+  IT_HUB_URL?: string;
   // Houzs → 2990 Product Maintenance push (scm/routes/maintenance-push.ts).
   // The push writes 2990's public.maintenance_config_history DIRECTLY with
   // 2990's service-role key — an owner-granted, table-scoped exception to D2

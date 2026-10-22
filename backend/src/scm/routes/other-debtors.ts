@@ -22,6 +22,15 @@
 // create/write raise and prepare, scm.payment_voucher.check checks,
 // scm.payment_voucher.approve approves-and-posts, cancel cancels bills.
 //
+// 2026-09-29 (owner: 我希望 other debtor 那边只是 maintain other debtor 就好, 开
+// other debtor 的 bill 就直接在 ar invoice 页面): the Other Debtors page keeps
+// the REGISTRY alone; the bill is raised, edited and cancelled from the AR
+// Invoices page (routes/ar-invoices.ts lists both kinds; the writes stay HERE
+// — one write path); the money is received on the Receipts page's Other
+// Debtor door (postNow), and a POSTED receipt is VOIDED from there (the ODR
+// contra, the bills' money given back) — the four-layer doors below remain
+// for the API but no page walks them any more.
+//
 // Handlers exported bare for the vitest harness (accounting-chart precedent).
 // ----------------------------------------------------------------------------
 
@@ -36,6 +45,7 @@ import { dateOrNull } from '../lib/date-coerce';
 import { resolveRoles, type RuleLine } from '../../acc/rules';
 import { requireLeafAccount } from './accounting-chart';
 import { fmtSen } from '../shared/format';
+import { parseEventId, unknownEventRefusal } from '../lib/event-tags';
 
 type Row = Record<string, any>;
 
@@ -168,7 +178,7 @@ export const debtorDetailHandler = async (c: any): Promise<Response> => {
   const byBill = new Map<string, Row[]>();
   if (billRows.length > 0) {
     const { data: lineRows, error: lErr } = await scopeToCompany(
-      sb.from('acc_debtor_bill_lines').select('id, bill_id, line_no, description, credit_account_code, amount_sen').in('bill_id', billRows.map((b) => b.id)), c,
+      sb.from('acc_debtor_bill_lines').select('id, bill_id, line_no, description, credit_account_code, amount_sen, project_id').in('bill_id', billRows.map((b) => b.id)), c,
     ).order('line_no');
     if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
     for (const l of (lineRows ?? []) as Row[]) {
@@ -182,8 +192,12 @@ export const debtorDetailHandler = async (c: any): Promise<Response> => {
 /* ── Debtor Bill — posts directly (the owner: bill 直接过账) ───────────────── */
 
 /** A MONEY line names a credit account and a positive sen; a TEXT line (code
-    null, amount 0) carries a description alone — it prints, books nothing. */
-type BillLine = { description: string | null; code: string | null; amountSen: number };
+    null, amount 0) carries a description alone — it prints, books nothing.
+    projectId: the event a money line is for (owner 2026-10-01, payment-request
+    item 6: other debtor 单也要，但不是一定要选 — optional, never asked for); it
+    rides onto the line's credit leg, so a rental billed back to an organiser
+    lowers that event's Rental. A text line carries none. */
+type BillLine = { description: string | null; code: string | null; amountSen: number; projectId: number | null };
 const isMoneyLine = (l: BillLine): l is BillLine & { code: string } => l.code !== null;
 
 /** 1–50 lines: money lines (an account and a positive integer sen) and text
@@ -203,14 +217,16 @@ function buildBillLines(raw: unknown): { lines: BillLine[]; total: number } | { 
     const amount = blankAmount ? 0 : Number(l?.amountSen);
     if (!code && amount === 0) {
       if (!description) return { error: 'bad_line', message: `Line ${i + 1} is empty — a text line needs a description.` };
-      lines.push({ description, code: null, amountSen: 0 });
+      lines.push({ description, code: null, amountSen: 0, projectId: null });
       continue;
     }
     if (!code) return { error: 'bad_line', message: `Line ${i + 1} has no account.` };
     if (!Number.isInteger(amount) || amount <= 0) {
       return { error: 'bad_line', message: `Line ${i + 1}: amountSen must be a positive integer (got ${String(l?.amountSen)}).` };
     }
-    lines.push({ description: description || null, code, amountSen: amount });
+    const projectId = parseEventId(l?.projectId);
+    if (projectId === 'invalid') return { error: 'bad_line', message: `Line ${i + 1}: projectId must be an event id (got ${String(l?.projectId)}).` };
+    lines.push({ description: description || null, code, amountSen: amount, projectId });
   }
   if (!lines.some(isMoneyLine)) {
     return { error: 'lines_required', message: 'A bill needs at least one line with an account and an amount — text lines alone book nothing.' };
@@ -231,6 +247,7 @@ function debtorBillRuleLines(roles: { AR_OTHER: string }, debtorName: string, bi
       accountCode: l.code, debitSen: 0, creditSen: l.amountSen,
       partyType: null, partyCode: null, partyName: null,
       notes: l.description ?? billNumber,
+      projectId: l.projectId,
     })),
   ];
 }
@@ -257,6 +274,9 @@ export const createDebtorBillHandler = async (c: any): Promise<Response> => {
     const leafErr = await requireLeafAccount(c, coId, code);
     if (leafErr) return leafErr;
   }
+  /* A line's event must be the company's own (lib/event-tags.ts). */
+  const eventErr = await unknownEventRefusal(c, lines.map((l) => l.projectId));
+  if (eventErr) return eventErr;
   const billDate = dateOrNull(body.billDate) ?? todayMyt();
   const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
 
@@ -282,6 +302,7 @@ export const createDebtorBillHandler = async (c: any): Promise<Response> => {
     description: l.description,
     credit_account_code: l.code,
     amount_sen: l.amountSen,
+    project_id: l.projectId,
   })));
   if (lineErr) {
     await sb.from('acc_debtor_bills').delete().eq('company_id', coId).eq('id', bill.id);
@@ -347,6 +368,8 @@ export const updateDebtorBillHandler = async (c: any): Promise<Response> => {
       const leafErr = await requireLeafAccount(c, coId, code);
       if (leafErr) return leafErr;
     }
+    const eventErr = await unknownEventRefusal(c, built.lines.map((l) => l.projectId));
+    if (eventErr) return eventErr;
     rebuilt = built;
   }
   /* A blank or absent date keeps the old one — through the shared coercion, so
@@ -359,7 +382,7 @@ export const updateDebtorBillHandler = async (c: any): Promise<Response> => {
     if (delErr) return c.json({ error: 'save_failed', reason: delErr.message }, 500);
     const { error: lineErr } = await sb.from('acc_debtor_bill_lines').insert(rebuilt.lines.map((l, i) => ({
       company_id: coId, bill_id: bill.id, line_no: i + 1,
-      description: l.description, credit_account_code: l.code, amount_sen: l.amountSen,
+      description: l.description, credit_account_code: l.code, amount_sen: l.amountSen, project_id: l.projectId,
     })));
     if (lineErr) return c.json({ error: 'save_failed', reason: lineErr.message }, 500);
   }
@@ -383,10 +406,13 @@ export const updateDebtorBillHandler = async (c: any): Promise<Response> => {
   if (rebuilt) lines = rebuilt.lines;
   else {
     const { data: rows, error: lErr } = await scopeToCompany(
-      sb.from('acc_debtor_bill_lines').select('line_no, description, credit_account_code, amount_sen').eq('bill_id', bill.id), c,
+      sb.from('acc_debtor_bill_lines').select('line_no, description, credit_account_code, amount_sen, project_id').eq('bill_id', bill.id), c,
     ).order('line_no');
     if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
-    lines = ((rows ?? []) as Row[]).map((l) => ({ description: l.description ?? null, code: l.credit_account_code ? String(l.credit_account_code) : null, amountSen: Number(l.amount_sen) }));
+    lines = ((rows ?? []) as Row[]).map((l) => ({
+      description: l.description ?? null, code: l.credit_account_code ? String(l.credit_account_code) : null, amountSen: Number(l.amount_sen),
+      projectId: l.project_id == null ? null : Number(l.project_id),
+    }));
   }
   const roles = await resolveRoles(sb, coId);
   const r = await postJournal(sb, {
@@ -687,6 +713,59 @@ const postDebtorReceipt = async (c: any, sb: any, coId: number, r: Row): Promise
   return { jeNo: String((post as Row).jeNo ?? '') };
 };
 
+/* ── POST /receipts/:receiptId/void — the one undo of a POSTED receipt ─────
+   (owner 2026-09-29, the day the Other Debtors page became the registry alone
+   and the Receipts page the one door for the money): until then a posted
+   Other Debtor receipt could be voided nowhere — Void on the Receipts page was
+   the sundry receipt's alone. The ODR entry gets its contra, each ticked bill
+   takes its money back (received_sen down, PAID → POSTED), the receipt turns
+   CANCELLED — the ledger keeps both sides, as the RCT void does. A DRAFT is
+   not on the books and is rejected instead; a void one refuses twice.
+   The status is written LAST: a void that died after the contra resumes on
+   the next press (the engine answers already_reversed and the bills are
+   re-walked, floored at zero). */
+export const voidDebtorReceiptHandler = async (c: any): Promise<Response> => {
+  if (!hasHouzsPerm(c, 'scm.payment_voucher.cancel')) {
+    return c.json({ error: "You don't have permission to do that." }, 403);
+  }
+  const found = await loadReceipt(c);
+  if ('resp' in found) return found.resp;
+  const r = found.receipt;
+  if (r.status === 'CANCELLED') return c.json({ error: 'void_twice', message: `${r.receipt_number} is void.` }, 409);
+  if (r.status !== 'POSTED') return c.json({ error: 'not_posted', message: `${r.receipt_number} is not on the books — reject the draft instead of voiding it.` }, 409);
+  const sb = c.get('supabase');
+  const coId = Number(r.company_id);
+  const rev = await reverseJournal(sb, {
+    companyId: coId,
+    sourceType: 'ODR',
+    sourceDocNo: String(r.receipt_number),
+    narration: (orig) => `Void debtor receipt ${r.receipt_number} — voids ${orig.je_no}`,
+  });
+  if (!rev.ok) return c.json({ error: 'reverse_failed', reason: (rev as { reason?: string }).reason ?? rev.status }, 500);
+  /* The money goes back onto the bills it was taken off — the knock-off's own
+     clamp read backwards, floored at zero. Fail LOUD: the journal is already
+     reversed, and a bill we cannot read would keep money it no longer has. */
+  const { data: allocs, error: aErr } = await sb.from('acc_debtor_receipt_allocations')
+    .select('bill_id, amount_sen').eq('company_id', coId).eq('receipt_id', r.id);
+  if (aErr) return c.json({ error: 'load_failed', reason: aErr.message }, 500);
+  for (const a of (allocs ?? []) as Row[]) {
+    const { data: bill, error: bErr } = await sb.from('acc_debtor_bills')
+      .select('id, total_sen, received_sen, status').eq('company_id', coId).eq('id', a.bill_id).maybeSingle();
+    if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
+    if (!bill) continue;
+    const total = Number(bill.total_sen ?? 0);
+    const nextReceived = Math.max(0, Number(bill.received_sen ?? 0) - Number(a.amount_sen ?? 0));
+    const patch: Row = { received_sen: nextReceived };
+    if (bill.status !== 'CANCELLED') patch.status = total > 0 && nextReceived >= total ? 'PAID' : 'POSTED';
+    const { error: upErr } = await sb.from('acc_debtor_bills').update(patch).eq('company_id', coId).eq('id', bill.id);
+    if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
+  }
+  const { error: doneErr } = await sb.from('acc_debtor_receipts')
+    .update({ status: 'CANCELLED' }).eq('company_id', coId).eq('id', r.id);
+  if (doneErr) return c.json({ error: 'save_failed', reason: doneErr.message }, 500);
+  return c.json({ ok: true });
+};
+
 /* ── Router ───────────────────────────────────────────────────────────────── */
 
 export const otherDebtors = new Hono();
@@ -707,3 +786,4 @@ otherDebtors.post('/receipts/:receiptId/withdraw', withdrawDebtorReceiptHandler)
 otherDebtors.post('/receipts/:receiptId/check', checkDebtorReceiptHandler);
 otherDebtors.post('/receipts/:receiptId/reject', rejectDebtorReceiptHandler);
 otherDebtors.post('/receipts/:receiptId/approve', approveDebtorReceiptHandler);
+otherDebtors.post('/receipts/:receiptId/void', voidDebtorReceiptHandler);

@@ -31,6 +31,9 @@ import { assrCompanySql } from "../src/routes/assr";
    never granted that company, never from everyone. */
 
 const COMPANIES = [{ id: 1, code: "HOUZS" }, { id: 2, code: "2990" }];
+// A fixed recent-closed cutoff (owner 2026-10-21): the board passes `today - 90d`;
+// the exact value does not matter to the company-scope assertions below.
+const SINCE = "2026-07-01";
 
 /** Minimal context stand-in — the builders need only `.get`. */
 function ctx(allowed: number[] | undefined, active?: number) {
@@ -44,17 +47,17 @@ function ctx(allowed: number[] | undefined, active?: number) {
 
 describe("Delivery Planning board — Service Case rows follow the caller's companies", () => {
   test("a HOUZS-only caller's board union asks only for HOUZS cases", () => {
-    const sql = assrBoardUnionSql(ctx([1]));
+    const sql = assrBoardUnionSql(ctx([1]), SINCE);
     expect(sql).toContain("FROM assr_cases");
     expect(sql).toContain(assrCompanySql(ctx([1])));
   });
 
   test("a 2990-only caller's board union asks only for 2990 cases", () => {
-    expect(assrBoardUnionSql(ctx([2]))).toContain(assrCompanySql(ctx([2])));
+    expect(assrBoardUnionSql(ctx([2]), SINCE)).toContain(assrCompanySql(ctx([2])));
   });
 
   test("a both-company caller still gets the combined queue (widen, not isolate)", () => {
-    const sql = assrBoardUnionSql(ctx([1, 2]));
+    const sql = assrBoardUnionSql(ctx([1, 2]), SINCE);
     expect(sql).toContain(assrCompanySql(ctx([1, 2])));
     // The whole point of a cross-company view module: a dispatcher granted both
     // sees both. A predicate that pinned the SWITCHER's active company would
@@ -63,19 +66,26 @@ describe("Delivery Planning board — Service Case rows follow the caller's comp
   });
 
   test("granted no company matches nothing; unresolved degrades to no predicate", () => {
-    expect(assrBoardUnionSql(ctx([]))).toContain(" AND 1=0");
-    const unresolved = assrBoardUnionSql(ctx(undefined));
+    expect(assrBoardUnionSql(ctx([]), SINCE)).toContain(" AND 1=0");
+    const unresolved = assrBoardUnionSql(ctx(undefined), SINCE);
     expect(unresolved).not.toContain("company_id IN");
     expect(unresolved).not.toContain("1=0");
   });
 
-  test("the union still selects only OPEN cases carrying a driving date", () => {
-    // The company predicate must be ADDITIVE. A rewrite that scoped by company
-    // but dropped the open/dated filter would flood the board with closed work.
-    const sql = assrBoardUnionSql(ctx([1]));
+  test("the union keeps the OPEN-dated arm and ADDS a recent-closed arm", () => {
+    // The company predicate must be ADDITIVE — and so must the done-work widening
+    // (owner 2026-10-21: the Delivered tab shows every job type). Open dated cases
+    // still show; a closed case shows only when a leg is on/after the cutoff, so
+    // the whole closed history never floods the board.
+    const sql = assrBoardUnionSql(ctx([1]), SINCE);
     expect(sql).toContain("closed_at IS NULL");
     expect(sql).toContain("archived_at IS NULL");
     expect(sql).toContain("customer_pickup_at IS NOT NULL");
+    expect(sql).toContain(`>= '${SINCE}'`);
+    // closed_at / archived_at are now selected so the row builder can tell a done
+    // leg from a pending one.
+    expect(sql).toContain("AS closed_at");
+    expect(sql).toContain("AS archived_at");
   });
 });
 

@@ -388,12 +388,14 @@ describe("DataTable column width persistence", () => {
     // operator, not to a table, so it is a single global key. Anything else
     // appearing outside the family is a regression.
     const perTable = keys.filter((key) => key !== "dt:cols-drawer-az");
-    // hidden, shown, order, sort, mview, widths, pinned, pinnedr, groups.
+    // hidden, shown, order, sort, mview, widths, pinned, pinnedr, groups, groupby, wrap.
+    // `groupby` is the group-banner column list (DataGrid parity, 2026-09-25).
+    // `wrap` is the wrap-text switch (2026-09-26).
     // `pinnedr` is the right-freeze list (owner 2026-08-03) — a second flat list
     // rather than a reshaped `pinned`, so every layout already on disk keeps
     // reading. Funnel filters are NO LONGER here (owner 2026-09-16): they live in
     // in-visit memory (dataTableColFilterMemory), never localStorage.
-    expect(perTable).toHaveLength(9);
+    expect(perTable).toHaveLength(11);
     expect(perTable.every((key) => key.endsWith(":sales-order-lines"))).toBe(true);
   });
 
@@ -1302,6 +1304,24 @@ describe("DataTable header filter + sort menu", () => {
     expect(screen.queryByTitle("Clear all filters and search")).toBeNull();
   });
 
+  /* Delivery Planning (owner 2026-10-05): a name typed in the search box
+     offered no Reset, while Sales Orders (page-controlled search) did. The
+     grid-owned search box now counts, and the one click clears it. */
+  it("offers the toolbar Reset for client search text, and clears it", async () => {
+    setViewport(1280);
+    const { container } = render(
+      <DataTable tableId="search-reset" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} clientSearch={{ placeholder: "Find" }} />,
+    );
+    expect(screen.queryByTitle("Clear all filters and search")).toBeNull();
+    fireEvent.change(screen.getByPlaceholderText("Find"), { target: { value: "Order 2" } });
+    await waitFor(() => expect(rowCount(container)).toBe(1));
+
+    fireEvent.click(screen.getByTitle("Clear all filters and search"));
+    await waitFor(() => expect(rowCount(container)).toBe(6));
+    expect((screen.getByPlaceholderText("Find") as HTMLInputElement).value).toBe("");
+    expect(screen.queryByTitle("Clear all filters and search")).toBeNull();
+  });
+
   it("folds column filters into a page-owned Reset instead of shadowing it", () => {
     setViewport(1280);
     const onReset = vi.fn();
@@ -1338,6 +1358,76 @@ describe("DataTable header filter + sort menu", () => {
     );
     expect(rowCount(container)).toBe(6);
     expect(localStorage.getItem("dt:filters:filter-corrupt")).toBeNull();
+  });
+
+  /* The delivery planning boards (owner 2026-10-05): the queue a planner
+     narrowed yesterday is still narrowed today. persistFilters="always" keeps
+     the funnel in localStorage (dt:funnels:*), so a fresh bundle evaluation
+     reads it back; clearing the funnel removes the key. */
+  it('persistFilters="always" keeps a funnel across a fresh page load and drops the key on Clear', () => {
+    setViewport(1280);
+    const first = render(
+      <DataTable tableId="filter-kept" persistFilters="always" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
+    );
+    openFunnel("Status");
+    fireEvent.click(screen.getByRole("checkbox", { name: /Open/ }));
+    expect(rowCount(first.container)).toBe(3);
+    expect(JSON.parse(localStorage.getItem("dt:funnels:filter-kept") ?? "null")).toEqual({ status: ["Open"] });
+    first.unmount();
+
+    resetInVisitColFilters(); // simulate a fresh page load
+    const second = render(
+      <DataTable tableId="filter-kept" persistFilters="always" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
+    );
+    expect(rowCount(second.container)).toBe(3);
+    expect(screen.getByTitle("Filter & sort Status").className).toContain("text-accent");
+
+    openFunnel("Status");
+    fireEvent.click(screen.getByText("Clear"));
+    expect(rowCount(second.container)).toBe(6);
+    expect(localStorage.getItem("dt:funnels:filter-kept")).toBeNull();
+  });
+
+  /* A name typed in the search box above the delivery board was gone after
+     opening an order and coming back, while the funnel next to it stayed
+     (owner 2026-10-05). The text now rides the same in-visit memory. */
+  it("remembers the client search text across a remount this visit, and opens clean after a page load", async () => {
+    setViewport(1280);
+    const first = render(
+      <DataTable tableId="search-kept" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} clientSearch={{ placeholder: "Find" }} />,
+    );
+    fireEvent.change(screen.getByPlaceholderText("Find"), { target: { value: "Order 2" } });
+    await waitFor(() => expect(rowCount(first.container)).toBe(1));
+    first.unmount();
+
+    const second = render(
+      <DataTable tableId="search-kept" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} clientSearch={{ placeholder: "Find" }} />,
+    );
+    expect((screen.getByPlaceholderText("Find") as HTMLInputElement).value).toBe("Order 2");
+    await waitFor(() => expect(rowCount(second.container)).toBe(1));
+    second.unmount();
+
+    resetInVisitColFilters(); // simulate a fresh page load
+    const third = render(
+      <DataTable tableId="search-kept" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} clientSearch={{ placeholder: "Find" }} />,
+    );
+    expect((screen.getByPlaceholderText("Find") as HTMLInputElement).value).toBe("");
+    expect(rowCount(third.container)).toBe(6);
+  });
+
+  it("persistFilters={false} forgets the client search text on remount", async () => {
+    setViewport(1280);
+    const first = render(
+      <DataTable tableId="search-mount" persistFilters={false} rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} clientSearch={{ placeholder: "Find" }} />,
+    );
+    fireEvent.change(screen.getByPlaceholderText("Find"), { target: { value: "Order 2" } });
+    await waitFor(() => expect(rowCount(first.container)).toBe(1));
+    first.unmount();
+    const second = render(
+      <DataTable tableId="search-mount" persistFilters={false} rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} clientSearch={{ placeholder: "Find" }} />,
+    );
+    expect((screen.getByPlaceholderText("Find") as HTMLInputElement).value).toBe("");
+    expect(rowCount(second.container)).toBe(6);
   });
 });
 
@@ -1495,7 +1585,7 @@ describe("Sort is persisted, and Reset must clear it", () => {
     onSortChange.mockClear();
 
     fireEvent.click(screen.getByTitle(/^Columns —/));
-    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reset to default" }));
 
     // The parent must be told, or the next query keeps the old ORDER BY even
     // though the table no longer shows a sorted column.
@@ -1652,5 +1742,119 @@ describe("persistSort={false} sorts for this visit only", () => {
       <DataTable tableId="lines-session" persistSort={false} rows={three} columns={columns} getRowKey={(r) => r.id} />,
     );
     expect(names(second.container)).toEqual(["Order 1", "Order 2", "Order 3"]);
+  });
+});
+
+describe("DataTable initialRowLimit — first page + Load more (owner 2026-09-26)", () => {
+  const fewRows: Row[] = Array.from({ length: 10 }, (_, i) => ({
+    id: i + 1, name: `Order ${i + 1}`, status: "Open",
+  }));
+
+  it("renders the first N, reveals another N on Load more, and reports the FULL set", () => {
+    setViewport(1280);
+    const seen: Row[][] = [];
+    render(
+      <DataTable
+        tableId="orders-limit"
+        rows={fewRows}
+        columns={columns}
+        getRowKey={(row) => row.id}
+        initialRowLimit={3}
+        onFilteredRowsChange={(r) => seen.push(r)}
+      />,
+    );
+    // First page: 1-3 shown, 4 hidden behind the limit.
+    expect(screen.getByText("Order 1")).toBeTruthy();
+    expect(screen.queryByText("Order 4")).toBeNull();
+    // The button counts the rest of the whole set, and the parent still saw all 10.
+    expect(seen.at(-1)?.length).toBe(10);
+    const more = screen.getByRole("button", { name: /7 more rows/ });
+
+    fireEvent.click(more);
+    // Second page: up to 6 shown now, 7 still hidden.
+    expect(screen.getByText("Order 6")).toBeTruthy();
+    expect(screen.queryByText("Order 7")).toBeNull();
+    expect(screen.getByRole("button", { name: /4 more rows/ })).toBeTruthy();
+  });
+
+  it("shows no Load more when the prop is omitted — the whole set renders", () => {
+    setViewport(1280);
+    render(<DataTable tableId="orders-nolimit" rows={fewRows} columns={columns} getRowKey={(row) => row.id} />);
+    expect(screen.queryByRole("button", { name: /more rows/ })).toBeNull();
+    expect(screen.getByText("Order 10")).toBeTruthy();
+  });
+});
+
+describe("DataTable onRowReorder — drag to reorder (owner 2026-09-26)", () => {
+  const fewRows: Row[] = Array.from({ length: 3 }, (_, i) => ({ id: i + 1, name: `Order ${i + 1}`, status: "Open" }));
+
+  it("a drop reports the new order of the whole set, while no column sort is active", () => {
+    setViewport(1280);
+    const seen: string[][] = [];
+    const { container } = render(
+      <DataTable tableId="dt-reorder" rows={fewRows} columns={columns} getRowKey={(row) => row.id} onRowReorder={(keys) => seen.push(keys)} />,
+    );
+    const rows = container.querySelectorAll<HTMLElement>("tr[data-rowkey]");
+    const dataTransfer = { effectAllowed: "", setData: () => {}, getData: () => "" };
+    // Drag row 1 and drop it on row 3 → 1 moves to just before 3.
+    fireEvent.dragStart(rows[0], { dataTransfer });
+    fireEvent.dragOver(rows[2], { dataTransfer, clientY: 100 });
+    fireEvent.drop(rows[2], { dataTransfer });
+    expect(seen.at(-1)).toEqual(["2", "1", "3"]);
+  });
+
+  it("without onRowReorder the rows are not draggable", () => {
+    setViewport(1280);
+    const { container } = render(
+      <DataTable tableId="dt-noreorder" rows={fewRows} columns={columns} getRowKey={(row) => row.id} />,
+    );
+    const first = container.querySelector<HTMLElement>("tr[data-rowkey]");
+    expect(first?.getAttribute("draggable")).not.toBe("true");
+  });
+});
+
+describe("DataTable row-cell memoisation", () => {
+  // The scroll-smoothness win (owner 2026-10-21 step 2): a row's data cells are
+  // memoised on (row, columns, layout). When the table re-renders but none of
+  // those inputs changed — which is exactly what a scroll-window update is, a
+  // DataTable-internal state change that leaves rows / columns / layout alone —
+  // the cells must NOT re-run their render. This is the memory for that
+  // optimisation: if a future change hands the cells an unstable prop, the memo
+  // stops skipping and the scroll lag returns, and this test fails.
+  //
+  // (A parent-driven re-render such as a selection toggle is NOT skipped — the
+  // board re-creates its `selection` object, which ripples through DataTable's
+  // layout memos; that path is kept cheap by the per-cell memoisation in step 1.
+  // The scroll path, where the parent does not re-render, is the one this guards.)
+  it("skips re-rendering row cells when the table re-renders with unchanged inputs", () => {
+    setViewport(1280);
+    const renderSpy = vi.fn((row: Row) => row.name);
+    // Stable identities (defined once), like a real board's memoised columns and
+    // react-query rows — so a re-render hands the cells the very same props.
+    const memoCols: Column<Row>[] = [
+      { key: "name", label: "Order", render: renderSpy, getValue: (row) => row.name },
+      { key: "status", label: "Status", render: (row) => row.status, getValue: (row) => row.status },
+    ];
+    const smallRows = rows.slice(0, 5);
+    // Stable getRowKey: an inline one would change identity each wrapper render
+    // and ripple through DataTable's column memos (udfColumns depends on it), the
+    // way any unstable prop would. A scroll never re-renders the parent, so its
+    // props stay put; this stable key models that path.
+    const getRowKey = (row: Row) => row.id;
+    let bump: () => void = () => {};
+    function Wrapper() {
+      const [, setTick] = useState(0);
+      bump = () => setTick((t) => t + 1);
+      return (
+        <DataTable tableId="dt-cell-memo" rows={smallRows} columns={memoCols} getRowKey={getRowKey} />
+      );
+    }
+    render(<Wrapper />);
+    // Cells rendered on mount; start from a clean slate.
+    renderSpy.mockClear();
+    // Force a re-render whose DataTable props are all unchanged references — the
+    // memo must skip every row's cells.
+    act(() => { bump(); });
+    expect(renderSpy).not.toHaveBeenCalled();
   });
 });

@@ -51,7 +51,8 @@ import { docMonthTag, mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-
 import { isDocumentHeld } from '../lib/document-hold';
 import { dateOrNull } from '../lib/date-coerce';
 import { postJournal, reverseJournal } from '../../acc/engine';
-import { apControlRole, pvLines, customerRefundLines, resolveRoles } from '../../acc/rules';
+import { apControlRole, pvLines, pvBankChargeLines, customerRefundLines, resolveRoles, PV_BANK_CHARGE_ACCOUNT } from '../../acc/rules';
+import { checkExpenseLeaf } from '../../acc/charge-account';
 import { customerPartyCode } from '../../acc/payments';
 import { refundSourceHandler, refundCreateGuard, refundOwnControl, bookRefundCredit, refundHookInput } from '../lib/pv-refund';
 import { refundDepositInvoicesBestEffort, releaseRefundNotesBestEffort } from '../../acc/deposit-refunds';
@@ -68,7 +69,13 @@ import { todayMyt } from '../lib/my-time';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange, assertAuditWritable, auditUnavailableBody } from '../lib/entity-audit';
 import { pvCanEdit, pvCanPrepare, pvCanCheck, pvCanApprove, pvCanReject, pvCanWithdraw, pvCanPost, type PvApprovalShape } from '../lib/pv-approval';
 import { settlePiPaidSen } from '../lib/pi-settlement';
-import { extractOneBill, matchSupplier, normalizeVendor, BILL_IMAGE_MIMES, MAX_BILLS_PER_CALL, MAX_FILES_PER_BILL, MAX_BILL_FILE_BYTES } from '../../acc/bill-extract';
+import { normalizeVendor } from '../../acc/bill-extract';
+import { extractBillsHandler } from './pv-extract';
+import { parseEventId, pvLineEventRefusal } from '../lib/event-tags';
+import { paymentRequestLinkGuard, linkPaymentRequest } from '../lib/payment-request';
+import { pvBillFields, pvBillUpdates } from '../lib/bill-matches';
+import { officialActor, officialOwedFields, officialOwedUpdates } from '../lib/official-doc';
+import { pvEventAccountRefusal } from '../lib/event-accounts';
 import { requireLeafAccount } from './accounting-chart';
 import { planPvRateAdoption, isRateRetainedFromPv, roundRate6 } from '../lib/pv-rate-adoption';
 import { recostFromGrn } from '../lib/recost';
@@ -89,12 +96,15 @@ const PV_AUDIT_FIELDS: Array<[string, string]> = [
   ['currency', 'currency'],
   ['exchangeRate', 'exchange_rate'],
   ['totalSen', 'total_sen'],
+  ['billRef', 'bill_ref'],
+  ['billDate', 'bill_date'],
+  ['bankChargeSen', 'bank_charge_sen'],
 ];
 
 const HEADER =
-  'id, pv_number, voucher_date, payee_name, supplier_id, credit_account_code, currency, exchange_rate, purpose, notes, total_sen, status, posted_at, created_at, created_by, updated_at, company_id, submitted_at, submitted_by, checked_at, checked_by, approved_at, approved_by, refund_source_type, refund_source_doc_no, customer_id, debtor_code';
+  'id, pv_number, voucher_date, payee_name, supplier_id, credit_account_code, currency, exchange_rate, purpose, notes, total_sen, status, posted_at, created_at, created_by, updated_at, company_id, submitted_at, submitted_by, checked_at, checked_by, approved_at, approved_by, refund_source_type, refund_source_doc_no, customer_id, debtor_code, bill_ref, bill_date, official_doc, official_doc_note, official_doc_at, official_doc_by, bank_charge_sen';
 
-const LINE = 'id, pv_id, line_no, description, debit_account_code, amount_sen, created_at';
+const LINE = 'id, pv_id, line_no, description, debit_account_code, amount_sen, created_at, project_id';
 
 /* Migration 0202 — the PV purpose. Only SUPPLIER_PAYMENT settles AP (its
    allocations decrement the linked PIs' paid_sen); FREIGHT / OTHER post the GL
@@ -198,20 +208,23 @@ export function parseAmountSen(raw: unknown): number | null {
 /* ── Normalise + validate the incoming lines, recompute the header total ──── */
 export function buildLines(
   raw: unknown,
-): { rows: Array<{ line_no: number; description: string | null; debit_account_code: string; amount_sen: number }>; total: number } | { error: string } {
+): { rows: Array<{ line_no: number; description: string | null; debit_account_code: string; amount_sen: number; project_id: number | null }>; total: number } | { error: string } {
   if (!Array.isArray(raw) || raw.length === 0) return { error: 'lines_required' };
-  const rows: Array<{ line_no: number; description: string | null; debit_account_code: string; amount_sen: number }> = [];
+  const rows: Array<{ line_no: number; description: string | null; debit_account_code: string; amount_sen: number; project_id: number | null }> = [];
   let total = 0;
   for (let i = 0; i < raw.length; i += 1) {
     const line = raw[i] as Record<string, unknown>;
     const debit = (line.debitAccountCode as string | undefined)?.trim();
     const amount = parseAmountSen(line.amountSen);
     if (amount === null) return { error: 'line_amount_invalid' };
+    const event = parseEventId(line.projectId); // the event this line is for (owner 2026-09-30, 5a)
+    if (event === 'invalid') return { error: 'line_event_invalid' };
     rows.push({
       line_no: i + 1,
       description: (line.description as string | undefined)?.trim() || null,
       debit_account_code: debit ?? '',
       amount_sen: amount,
+      project_id: event,
     });
     total += amount;
   }
@@ -581,7 +594,7 @@ export const createPaymentVoucherHandler = async (c: any) => {
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   return createPaymentVoucherCore(c, body);
 };
-/** The voucher raised from a body already in hand — the door above, and lib/so-money's refund draft (docs/bugs/0927). */
+/** The voucher raised from a body already in hand — the door above (a refund from an order's money panel is a payment request since 2026-10-14). */
 export const createPaymentVoucherCore = async (c: any, body: Record<string, unknown>) => {
   const payeeName = (body.payeeName as string | undefined)?.trim();
   if (!payeeName) return c.json({ error: 'payee_required' }, 400);
@@ -606,6 +619,11 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
   if (built.rows.some((r) => r.debit_account_code === creditAccountCode)) {
     return c.json({ error: 'same_account', message: 'A line cannot debit the Paid From account itself — pick a different destination.' }, 400);
   }
+  const eventErr = await pvLineEventRefusal(c, body.purpose, built.rows); // lib/event-tags.ts
+  if (eventErr) return eventErr;
+  /* 申请付款: the request this voucher answers, still waiting (lib/payment-request.ts). */
+  const prq = await paymentRequestLinkGuard(c, body.paymentRequestId, { kind: 'PV', body });
+  if ('resp' in prq) return prq.resp;
 
   /* The AP split (owner 2026-09-03): a 405-x supplier's paper belongs to
      AP_OTHER (405-0000), everyone else's to AP (400-0000) — apControlRole in
@@ -647,6 +665,10 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
   if (allocBuilt.total > built.total) {
     return c.json({ error: 'allocations_exceed_total', allocated: allocBuilt.total, total: built.total }, 400);
   }
+
+  /* DEV-75: the bank's charge, recorded on the header only — not in total_sen, not on the GL. */
+  const bankChargeSen = parseAmountSen(body.bankChargeSen);
+  if (bankChargeSen === null) return c.json({ error: 'bank_charge_invalid' }, 400);
 
   const sb = c.get('supabase'); const user = c.get('user');
 
@@ -693,9 +715,12 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
       purpose,
       notes:               (body.notes as string | undefined) ?? null,
       total_sen:         built.total,
+      bank_charge_sen:     bankChargeSen,
       status:              'DRAFT',
       created_by:          user.id,
       ...(refund && refund.ok ? refund.fields : {}),
+      ...pvBillFields(body, prq.request), // the bill's own number and date (lib/bill-matches.ts)
+      ...officialOwedFields(body, officialActor(c)), // 欠正式单 — paid on a proforma (lib/official-doc.ts)
     }).select(HEADER).single(),
   );
   if (hErr) return c.json({ error: 'insert_failed', reason: hErr.message }, 500);
@@ -720,6 +745,10 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
     const allocRows = allocBuilt.rows.map((r) => ({ ...r, pv_id: h.id }));
     const { error: aErr } = await sb.from('pv_allocations').insert(stampCompany(allocRows, c));
     if (aErr) { await rollbackHeader(); return c.json({ error: 'allocations_insert_failed', reason: aErr.message }, 500); }
+  }
+  if (prq.request) { /* claimed only if still waiting; else this voucher never stood */
+    const linked = await linkPaymentRequest(c, prq.request, { kind: 'PV', id: h.id, number: h.pv_number });
+    if (!linked.ok) { await rollbackHeader(); return c.json(linked.body, linked.status); }
   }
 
   /* Recorded only after every compensating-delete path above is behind us, so
@@ -817,6 +846,12 @@ export const updatePaymentVoucherHandler = async (c: any) => {
   }
   if (body.supplierId !== undefined) updates.supplier_id = (body.supplierId as string | null) || null;
   if (body.notes !== undefined) updates.notes = (body.notes as string | null) ?? null;
+  if (body.bankChargeSen !== undefined) {
+    const v = parseAmountSen(body.bankChargeSen);
+    if (v === null) return c.json({ error: 'bank_charge_invalid' }, 400);
+    updates.bank_charge_sen = v;
+  }
+  Object.assign(updates, pvBillUpdates(body), officialOwedUpdates(body, officialActor(c), before));
   // PV→PI settlement (0202) — purpose is editable while DRAFT.
   if (body.purpose !== undefined) updates.purpose = normalizePurpose(body.purpose);
 
@@ -859,6 +894,8 @@ export const updatePaymentVoucherHandler = async (c: any) => {
     if (built.rows.some((r) => r.debit_account_code === effectiveCredit)) {
       return c.json({ error: 'same_account', message: 'A line cannot debit the Paid From account itself — pick a different destination.' }, 400);
     }
+    const eventErr = await pvLineEventRefusal(c, body.purpose !== undefined ? body.purpose : before.purpose, built.rows);
+    if (eventErr) return eventErr;
     /* 父户不记账 — the same typing-time door the create path holds, BEFORE the
        old lines are deleted, so a refused edit changes nothing — and the same
        exemption for a supplier payment's own AP-control line (docs/bugs/0649),
@@ -990,7 +1027,7 @@ export const postPaymentVoucherHandler = async (c: any) => {
     id: string; pv_number: string; voucher_date: string; payee_name: string;
     credit_account_code: string; total_sen: number; currency: string | null;
     exchange_rate: string | number | null; status: string; purpose: string | null;
-    company_id: number | null;
+    company_id: number | null; bank_charge_sen: number | null;
     supplier: { code: string | null; name: string | null } | null;
   };
   if (pv.status === 'CANCELLED') return c.json({ error: 'cannot_post', message: 'Voucher is cancelled' }, 409);
@@ -1030,8 +1067,8 @@ export const postPaymentVoucherHandler = async (c: any) => {
   if (!gate.ok) return c.json({ error: gate.error, message: gate.message }, 409);
 
   const { data: linesRaw } = await sb.from('payment_voucher_lines')
-    .select('line_no, description, debit_account_code, amount_sen').eq('pv_id', id).order('line_no');
-  const lines = (linesRaw ?? []) as Array<{ line_no: number; description: string | null; debit_account_code: string; amount_sen: number }>;
+    .select('line_no, description, debit_account_code, amount_sen, project_id').eq('pv_id', id).order('line_no');
+  const lines = (linesRaw ?? []) as Array<{ line_no: number; description: string | null; debit_account_code: string; amount_sen: number; project_id?: number | null }>;
   if (lines.length === 0) return c.json({ error: 'no_lines', message: 'Voucher has no lines to post' }, 400);
 
   /* FX conversion AT POST TIME (MYR-only today → rate 1). Each Dr leg =
@@ -1053,6 +1090,15 @@ export const postPaymentVoucherHandler = async (c: any) => {
     ? (await resolveRoles(sb, companyId))[apControlRole(supplier.code)]
     : null;
 
+  /* DEV-75: the header's Bank Charges ride the same journal (Finance, 2026-10-14:
+     900-B001). Refused rather than posted without the fee when the account is
+     not a usable expense leaf here. */
+  const feeSen = Number(pv.bank_charge_sen ?? 0);
+  if (feeSen > 0) {
+    const okFee = await checkExpenseLeaf(sb, co.companyId, PV_BANK_CHARGE_ACCOUNT, 'a bank charge');
+    if (!okFee.ok) return c.json({ error: 'bank_charge_account', message: `Bank charges cannot post: ${okFee.reason}` }, okFee.status === 'load_failed' ? 500 : 409);
+  }
+
   const pf = await assertAuditWritable(sb, { entityType: 'PAYMENT_VOUCHER', entityId: id, action: 'POST', companyId });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
@@ -1072,9 +1118,10 @@ export const postPaymentVoucherHandler = async (c: any) => {
     sourceType: 'PV',
     sourceDocNo: pv.pv_number,
     narration: isRefund(pv.purpose) ? `Customer refund ${pv.pv_number} — ${pv.payee_name} (${refundPv.refund_source_doc_no ?? '?'})` : `Payment voucher ${pv.pv_number} — ${pv.payee_name}`,
-    lines: isRefund(pv.purpose)
+    lines: (isRefund(pv.purpose)
       ? customerRefundLines({ ...pv, refund_source_doc_no: refundPv.refund_source_doc_no ?? null }, (await resolveRoles(sb, companyId)).AR, { code: customerPartyCode(refundPv.debtor_code, refundPv.customer_id), name: pv.payee_name }, totalSen)
-      : pvLines(pv, debitLegs, supplier, apControlCode),
+      : pvLines(pv, debitLegs, supplier, apControlCode)
+    ).concat(pvBankChargeLines(pv, feeSen)),
   });
   if (!r.ok) {
     if (r.status === 'je_insert_failed') return c.json({ error: 'je_insert_failed', reason: r.reason }, 500);
@@ -1497,6 +1544,8 @@ export const approvePaymentVoucherHandler = async (c: any) => {
   const loaded = await loadPvForApproval(c);
   if ('refusal' in loaded) return loaded.refusal;
   const { sb, id, pv, companyId } = loaded;
+  const evErr = await pvEventAccountRefusal(c, companyId, id); // 需要 Event — lib/event-accounts.ts (item 4)
+  if (evErr) return evErr;
   const resume = pv.status === 'DRAFT' && pv.approved_at != null;
   if (!resume) {
     const v = pvCanApprove(pv as PvApprovalShape);
@@ -1885,97 +1934,8 @@ export const applyAdvanceHandler = async (c: any) => {
 };
 paymentVouchers.post('/:id/apply-advance', applyAdvanceHandler);
 
-/* ── Bill OCR — read incoming bills into voucher pre-fills (2026-09-02) ──────
-   我想要把ocr 功能放去payment 那边. Each `bills` entry is ONE document (its
-   files are its pages — the human said so at upload; the server never guesses
-   whether two files are one bill). One vision call per bill, supplier matched
-   server-side, and NOTHING written: the answer pre-fills a form a person
-   still checks, saves, and sends through the untouched approval cycle. */
-export const extractBillsHandler = async (c: any) => {
-  if (!hasHouzsPerm(c, 'scm.payment_voucher.create')) {
-    return c.json({ error: "You don't have permission to do that." }, 403);
-  }
-  const co = requireActiveCompanyId(c);
-  if (!co.ok) return c.json(co.refusal, 409);
-  const apiKey = c.env?.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return c.json({ error: 'anthropic_key_missing', reason: 'Run: npx wrangler secret put ANTHROPIC_API_KEY' }, 503);
-  }
-
-  let body: any;
-  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
-  const bills = Array.isArray(body.bills) ? body.bills : [];
-  if (bills.length === 0) return c.json({ error: 'no_bills', message: 'Send at least one bill.' }, 400);
-  if (bills.length > MAX_BILLS_PER_CALL) {
-    return c.json({ error: 'too_many_bills', message: `At most ${MAX_BILLS_PER_CALL} bills per batch — split the pile.` }, 400);
-  }
-  for (const [i, b] of bills.entries()) {
-    const files = Array.isArray(b?.files) ? b.files : [];
-    if (files.length === 0) return c.json({ error: 'empty_bill', message: `Bill ${i + 1} has no files.` }, 400);
-    if (files.length > MAX_FILES_PER_BILL) {
-      return c.json({ error: 'too_many_pages', message: `Bill ${i + 1} has more than ${MAX_FILES_PER_BILL} pages.` }, 400);
-    }
-    for (const f of files) {
-      const mime = String(f?.mime ?? '');
-      if (!BILL_IMAGE_MIMES.has(mime) && mime !== 'application/pdf') {
-        return c.json({ error: 'bad_file_type', message: `Bill ${i + 1}: ${mime || 'unknown type'} — JPEG / PNG / WebP / PDF only.` }, 400);
-      }
-      const size = Math.floor(String(f?.dataBase64 ?? '').length * 0.75);
-      if (size > MAX_BILL_FILE_BYTES) {
-        return c.json({ error: 'file_too_big', message: `Bill ${i + 1}: a file is over ${Math.round(MAX_BILL_FILE_BYTES / 1024 / 1024)}MB.` }, 400);
-      }
-    }
-  }
-
-  /* Suppliers once for the whole batch — matching is per bill, in code. */
-  const sb = c.get('supabase');
-  const { data: supRaw, error: supErr } = await scopeToCompany(
-    sb.from('suppliers').select('id, code, name').eq('status', 'ACTIVE'), c,
-  );
-  if (supErr) return c.json({ error: 'load_failed', reason: supErr.message }, 500);
-  const suppliers = (supRaw ?? []) as Array<{ id: string; code: string | null; name: string }>;
-
-  /* Vendor memory (0341), once for the batch — what the operator saved the
-     last time each vendor was paid. Small by construction: one row per
-     distinct vendor per company. */
-  const { data: memRaw, error: memErr } = await scopeToCompany(
-    sb.from('acc_vendor_memory').select('vendor_key, payee_name, debit_account_code, purpose, times_seen'), c,
-  );
-  if (memErr) return c.json({ error: 'load_failed', reason: memErr.message }, 500);
-  type MemRow = { vendor_key: string; payee_name: string | null; debit_account_code: string | null; purpose: string | null; times_seen: number };
-  const memByKey = new Map(((memRaw ?? []) as MemRow[]).map((m) => [m.vendor_key, m]));
-  /* The printed name first; the MATCHED supplier's name second — a bill
-     reading "TENAGA NASIONAL" still finds the habit saved under "TNB" when
-     both normalize onto the supplier the matcher agreed on. */
-  const memoryFor = (vendorName: string | null, matchedName: string | null): MemRow | null => {
-    for (const raw of [vendorName, matchedName]) {
-      if (!raw) continue;
-      const hit = memByKey.get(normalizeVendor(raw));
-      if (hit) return hit;
-    }
-    return null;
-  };
-
-  const out = [] as Array<Record<string, unknown>>;
-  for (const [i, b] of bills.entries()) {
-    const files = (b.files as Array<{ name?: unknown; mime?: unknown; dataBase64?: unknown }>).map((f) => ({
-      name: String(f.name ?? `file-${i}`), mime: String(f.mime ?? ''), dataBase64: String(f.dataBase64 ?? ''),
-    }));
-    const r = await extractOneBill(apiKey, files);
-    if (!r.ok) {
-      out.push({ index: i, ok: false, reason: r.reason });
-      continue;
-    }
-    const match = matchSupplier(r.extraction.vendorName, suppliers);
-    const mem = memoryFor(r.extraction.vendorName, match?.supplier.name ?? null);
-    out.push({
-      index: i, ok: true, extraction: r.extraction,
-      supplierMatch: match ? { id: match.supplier.id, code: match.supplier.code, name: match.supplier.name, confidence: match.confidence } : null,
-      memory: mem ? { payeeName: mem.payee_name, debitAccountCode: mem.debit_account_code, purpose: mem.purpose, timesSeen: mem.times_seen } : null,
-    });
-  }
-  return c.json({ bills: out });
-};
+/* Bill OCR (2026-09-02) — the handler lives in pv-extract.ts; re-exported for its tests. */
+export { extractBillsHandler };
 paymentVouchers.post('/extract', extractBillsHandler);
 
 /* ── reversePvAccounting — contra the active PV JE (mirror reversePiAccounting).

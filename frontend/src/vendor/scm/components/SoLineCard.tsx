@@ -37,9 +37,10 @@ import { missingVariantAxes } from '@2990s/shared/so-variant-rule';
 import { computeTotalHeight, totalHeightPatch } from '../../shared/total-height';
 import { restrictPricedToPool, restrictStringsToPool } from '../../shared/maintenance-pools';
 import { fabricAllowedByPool } from '../../shared/fabric-pool';
-import { activeOptions, isColourKiv, isDeliveryFeeServiceCode, lineIdentity, maintPickerValues, fmtMoneySen } from '@2990s/shared';
+import { activeOptions, CONSOLE_ATTACH_KEY, isColourKiv, isDeliveryFeeServiceCode, isServiceCategory, lineIdentity, maintPickerValues, fmtMoneySen } from '@2990s/shared';
 import {
   useMfgProducts,
+  matchesProductQuery,
   useMaintenanceConfig,
   useSpecialAddons,
   useModelAllowedOptionsByCode,
@@ -62,13 +63,16 @@ import { CATEGORY_BADGE } from '../lib/category-badges';
 import { sortByNumeric } from '../lib/sort-options';
 import { posRemarkSpecialOf } from '../lib/pos-remark-special';
 import { seedFollowerVariants } from '../lib/so-variant-cascade';
+import { pickDefaultVariants } from '../../shared/model-default-variants';
+import { priceBoxAuthored } from '../lib/zeroPriceClaim';
 import { useAnchoredPanel, anchoredPanelStyle } from '../../../lib/anchoredPanel';
 import { useNotify } from './NotifyDialog';
 import { SpecialOrders } from './SpecialOrders';
 import styles from './SoLineCard.module.css';
 import { DateField } from "./DateField";
 import { DiscountInput } from './DiscountInput';
-import { NumberInput } from './NumberInput';
+import { NumberInput, cleanNumericText } from './NumberInput';
+import { dropOneMultiPick, isSofaGroup, multiPickCount, tapMultiPick } from '../lib/sofa-piece-lines';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
@@ -192,8 +196,11 @@ const SoLineCardInner = ({
   itemId,
   isEditing = true,
   variantsRequired,
+  lineDateLocked,
   seedSofaLegDefault,
   searchHint,
+  attachOptions,
+  chargeOnly = false,
 }: {
   index:     number;
   draft:     SoLineDraft;
@@ -234,6 +241,11 @@ const SoLineCardInner = ({
          (DO, consignment note/return, delivery return, sales invoice — the
           variants ride in with the items and are not re-specified here) */
   variantsRequired: boolean;
+  /* BUG-39 (Sim 2026-09-30): an SO with no Processing Date carries no delivery
+     date, on the lines either — the server refuses one (soLineDateRefusal).
+     SO New/Detail -> !processingDate; every other document -> false. Mandatory
+     for the same reason as variantsRequired. */
+  lineDateLocked: boolean;
   /* Whether this document may AUTO-FILL a blank sofa Leg Height with the
      maintenance "Default" option (owner 2026-07-13).
 
@@ -266,6 +278,14 @@ const SoLineCardInner = ({
      they pick a real SKU. It is a HINT ONLY — never committed as the product
      value (a no-match line must be filled from the dropdown, not free-typed). */
   searchHint?: string;
+  /* Console lines: the sofa modules on this order it can be joined to
+     (`consoleAttachOptions`); stored as variants.attachTo so the PO layout puts
+     the Console beside that module instead of guessing from line order. Null
+     on documents that do not feed a PO layout, and on non-Console lines. */
+  attachOptions: string[] | null;
+  /* DEV-32 — an SO line after its DO: the picker offers charge (SERVICE) SKUs
+     only, and the amount is typed: a transport or storage charge is priced per order. */
+  chargeOnly?: boolean;
 }) => {
   const notify = useNotify();
   const maintQ   = useMaintenanceConfig('master');
@@ -291,7 +311,7 @@ const SoLineCardInner = ({
      lines. The server still enforces the catalog price on lines it CAN price
      (isHatchSales in lib/auth.tsx — remove with the hatch). */
   const { staff } = useAuth();
-  const canEditPrice = isAdminLevel(staff?.role) || isHatchSales(staff?.role);
+  const canEditPrice = chargeOnly || isAdminLevel(staff?.role) || isHatchSales(staff?.role);
   /* DELIVERY FEE — the amount cell edits the LINE AMOUNT, not the unit price.
      The fee is derived (owner 2026-08-07, "every ringgit is a LINE"), so a
      typed unit price never survived: the next rebuild re-derived 250 over it
@@ -358,24 +378,31 @@ const SoLineCardInner = ({
      from the canonical centi only when it changes from outside, e.g. a
      product pick resets it to 0. */
   const [priceText, setPriceText] = useState((amountCellSen / 100).toFixed(2));
-  /* Task #102 — Same gate the debtor autocomplete got in PR #99. Without
-     this the product picker fired one /mfg-products?search=… request per
-     keystroke even when the picker wasn't open (every render of an
-     already-saved line re-issued the query for the description text). The
-     200 ms debounce smooths fast typists; the length>=2 + showPicker
-     enabled-flag guards the closed-picker + single-character cases. */
-  const debouncedSearch = useDebouncedValue(search, 200);
-  const trimmedSearch   = debouncedSearch.trim();
-  const productsQuery = useMfgProducts({
-    search:  trimmedSearch || undefined,
-    enabled: showPicker && trimmedSearch.length >= 2,
-  });
-  const candidates = productsQuery.data ?? [];
+  const [priceTyping, setPriceTyping] = useState(false);
+  /* The price the line had when this edit of the box began: an emptied box
+     requests no new price, so the line shows (and keeps) this one. */
+  const priceBeforeEdit = useRef<Pick<SoLineDraft, 'unitPriceSen' | 'priceAuthored'>>({ unitPriceSen: 0 });
+  /* Load the full catalog ONCE (cached 5 min) and filter it LOCALLY — the picker
+     no longer fires a `/mfg-products?search=` request per keystroke, so typing
+     stays instant even while the Worker is slow or dropping connections (owner
+     2026-09-23: "product code search slow"). The catalog is small (~2.7k rows)
+     and the single list load is retried on a transient 504 by authedFetch. The
+     >=2-char gate keeps the dropdown quiet until the query is real; enabled only
+     while the picker is open so a saved line's render never fetches. */
+  const trimmedSearch = search.trim();
+  const productsQuery = useMfgProducts({ enabled: showPicker });
+  const allProducts = productsQuery.data ?? [];
+  const candidates = useMemo(
+    () => (trimmedSearch.length >= 2
+      ? allProducts.filter((p) => matchesProductQuery(p, trimmedSearch) && (!chargeOnly || isServiceCategory(p.category)))
+      : []),
+    [allProducts, trimmedSearch, chargeOnly],
+  );
   /* Owner 2026-08-08 ("square pillow", HC-SO-2607-013) — typed text the
      catalog does not match must read as an ERROR, not sit quietly in the box:
      the operator once read the silence as "saved". True only when the line has
      no committed product, the search term is a real query (>=2 chars), and the
-     server answered it with zero candidates. */
+     loaded catalog produced zero matches. */
   const unmatchedFreeText =
     !draft.itemCode && trimmedSearch.length >= 2 &&
     productsQuery.isSuccess && !productsQuery.isFetching && candidates.length === 0;
@@ -455,6 +482,7 @@ const SoLineCardInner = ({
   // operator's in-progress typing untouched. On a fee line the canonical value
   // is the NET, so a rebuilt discount lands here too.
   useEffect(() => {
+    if (!priceBoxAuthored(priceText)) return; // a box emptied mid-edit stays empty
     const parsed = Math.round(Number(priceText) * 100) || 0;
     if (parsed !== amountCellSen) setPriceText((amountCellSen / 100).toFixed(2));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -471,6 +499,11 @@ const SoLineCardInner = ({
        lib/so-variant-cascade so the never-inherited keys are stripped in one
        place. PR #147 — reset overriddenKeys on a fresh pick. */
     const seedVariants = seedFollowerVariants(inheritVariantsByCategory?.[category]);
+    /* Model default variants pre-fill under the inherited ones, only where
+       this document specifies the build (same gate as the sofa Leg default). */
+    const defaults = seedSofaLegDefault
+      ? pickDefaultVariants(p.category, p.model_default_variants, p.allowed_options)
+      : {};
     onChange({
       itemCode:       p.code,
       itemGroup:      category,
@@ -482,19 +515,18 @@ const SoLineCardInner = ({
          never auto-populates). The server recompute stays authoritative at
          save; sofa module / seat-height pools land their exact figure there. */
       unitPriceSen: p.sell_price_sen ?? 0,
-      variants:       seedVariants,
+      // A seeded price is not a typed one: its 0 must not be claimed as free (BUG-63).
+      priceAuthored:  false,
+      variants:       { ...defaults, ...seedVariants },
       overriddenKeys: [],
     });
     setSearch(p.name);
   };
 
   /* Multi-add helpers (only meaningful when onAddProducts is wired). */
+  /* A sofa piece can be ticked again — two CNRs are two lines (sofa-piece-lines.ts). */
   const toggleMultiPick = (p: MfgProductRow) =>
-    setMultiPicked((prev) =>
-      prev.some((x) => x.id === p.id)
-        ? prev.filter((x) => x.id !== p.id)
-        : [...prev, p],
-    );
+    setMultiPicked((prev) => tapMultiPick(prev, p, (x) => x.id, isSofaGroup(p.category)));
   const commitMulti = () => {
     if (multiPicked.length === 0) return;
     const [first, ...rest] = multiPicked;
@@ -681,9 +713,13 @@ const SoLineCardInner = ({
      RM 0 on Backend-keyed lines. Now takes the full FabricColourRow straight
      from the combobox's selection (identical shape to the old library row), so
      the written variant payload is byte-for-byte what the <select> produced. */
+  const fabricSeries = useMemo(
+    () => new Map((fabricLibQ.data ?? []).map((f) => [f.id, f.label] as [string, string])),
+    [fabricLibQ.data],
+  );
   const pickFabricColour = (c: FabricColourRow) => {
     const colourId = c.colourId;
-    const seriesLabel = (fabricLibQ.data ?? []).find((f) => f.id === c.fabricId)?.label ?? null;
+    const seriesLabel = fabricSeries.get(c.fabricId) ?? null;
     setVariants({
       fabricCode: colourId,
       colourId,
@@ -779,7 +815,7 @@ const SoLineCardInner = ({
   const menuPos = useAnchoredPanel(pickerWrapRef, showPicker && isEditing, SUGGEST_LIST_MAX_H);
 
   return (
-    <div className={styles.card}>
+    <div data-grid-row className={styles.card}>
       {/* ── Main single row ────────────────────────────────────────── */}
       <div className={styles.row}>
         {/* 1. No # */}
@@ -875,7 +911,9 @@ const SoLineCardInner = ({
                 /* Commander 2026-05-27: picker rows show description only — one
                    scannable line per SKU. The code still binds on click. */
                 candidates.slice(0, 50).map((p) => {
-                  const ticked = multiMode && multiPicked.some((x) => x.id === p.id);
+                  const tickCount = multiMode ? multiPickCount(multiPicked, p.id, (x) => x.id) : 0;
+                  const ticked = tickCount > 0;
+                  const repeatable = isSofaGroup(p.category);
                   return (
                     <li
                       key={p.id}
@@ -892,6 +930,19 @@ const SoLineCardInner = ({
                       <div className={styles.suggestItemMeta}>
                         {p.name}
                       </div>
+                      {multiMode && repeatable && tickCount > 0 && (
+                        <>
+                          <span style={{ marginLeft: 'auto', fontWeight: 700 }}>{'×'}{tickCount}</span>
+                          <button
+                            type="button"
+                            aria-label={`Remove one ${p.name}`}
+                            onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setMultiPicked((prev) => dropOneMultiPick(prev, p.id, (x) => x.id)); }}
+                            style={{ padding: '0 8px', fontWeight: 700, cursor: 'pointer' }}
+                          >
+                            {'−'}
+                          </button>
+                        </>
+                      )}
                     </li>
                   );
                 })
@@ -929,10 +980,13 @@ const SoLineCardInner = ({
           onChange={(e) => onChange({ remark: e.target.value })}
         />
 
-        {/* 4. Qty */}
+        {/* 4. Qty — DEV-62 (Adrian): qty is a small count, so it gets the
+             up/down arrows; the Unit Price beside it is typed. */}
         <NumberInput
           sign="unsigned"
           decimal={false}
+          step={1}
+          min={1}
           className={styles.numericInput}
           value={draft.qty === 0 ? null : draft.qty}
           disabled={!isEditing}
@@ -945,10 +999,16 @@ const SoLineCardInner = ({
              amount cell is impossible to miss between the qty and date
              columns that sit either side of it. */}
         <input
-          type="number"
-          step="0.01"
+          type="text"
+          inputMode="decimal"
           className={styles.priceInput}
-          value={priceText}
+          /* DEV-62 (Adrian, PC + saved lines): any RM 0 shows as the
+             placeholder so typing a price does not start with deleting
+             "0.00". A 0 shows only while being typed, so "0" / "0.5" can
+             still be keyed in. A fee line keeps its 0.00: there it means
+             the fee is waived. */
+          value={!isFeeLine && amountCellSen === 0 && !priceTyping ? '' : priceText}
+          placeholder="0.00"
           disabled={!isEditing || !canEditPrice}
           title={
             !canEditPrice ? 'Price follows the SKU Master sell price — admin can override'
@@ -956,8 +1016,10 @@ const SoLineCardInner = ({
               : undefined
           }
           onChange={(e) => {
-            const t = e.target.value;
+            const t = cleanNumericText(e.target.value, 'signed', true);
+            if (!priceTyping) priceBeforeEdit.current = { unitPriceSen: draft.unitPriceSen, priceAuthored: draft.priceAuthored };
             setPriceText(t);
+            setPriceTyping(true);
             if (isFeeLine) {
               /* A BLANK box is mid-edit, not "waive the fee". `Number('')` is
                  0, which would read as charge-nothing and discount the whole
@@ -968,9 +1030,11 @@ const SoLineCardInner = ({
               onChange({ discountSen: feeDiscountForAmount(feeGrossSen, Math.round(n * 100)) });
               return;
             }
-            onChange({ unitPriceSen: Math.round(Number(t) * 100) || 0, priceAuthored: true });
+            onChange(priceBoxAuthored(t)
+              ? { unitPriceSen: Math.round(Number(t) * 100), priceAuthored: true }
+              : priceBeforeEdit.current);
           }}
-          onBlur={() => setPriceText((amountCellSen / 100).toFixed(2))}
+          onBlur={() => { setPriceTyping(false); setPriceText((amountCellSen / 100).toFixed(2)); }}
         />
 
         {/* 6. Discount — owner 2026-09-12: the sales side had no discount field
@@ -1008,8 +1072,10 @@ const SoLineCardInner = ({
           fullWidth
           className={styles.input}
           value={draft.lineDeliveryDate ?? ''}
-          disabled={!isEditing}
-          title={!draft.lineDeliveryDateOverridden && draft.lineDeliveryDate ? 'Auto-inherited from SO header' : undefined}
+          disabled={!isEditing || lineDateLocked}
+          title={lineDateLocked
+            ? 'Set the Processing Date first'
+            : !draft.lineDeliveryDateOverridden && draft.lineDeliveryDate ? 'Auto-inherited from SO header' : undefined}
           onChange={(iso) => onChange({
             lineDeliveryDate: iso || null,
             lineDeliveryDateOverridden: true,
@@ -1073,6 +1139,8 @@ const SoLineCardInner = ({
             <FabricColourCombobox
               label="Fabrics" required={variantsRequired}
               value={String(draft.variants.fabricCode ?? '')}
+              colourLabel={String(draft.variants.colourLabel ?? '')}
+              fabricSeries={fabricSeries}
               disabled={!isEditing}
               pool={allowOpts?.fabrics ?? null}
               inactiveCodes={inactiveFabricCodes}
@@ -1136,6 +1204,8 @@ const SoLineCardInner = ({
             <FabricColourCombobox
               label="Fabrics" required={variantsRequired}
               value={String(draft.variants.fabricCode ?? '')}
+              colourLabel={String(draft.variants.colourLabel ?? '')}
+              fabricSeries={fabricSeries}
               disabled={!isEditing}
               pool={allowOpts?.fabrics ?? null}
               inactiveCodes={inactiveFabricCodes}
@@ -1152,6 +1222,8 @@ const SoLineCardInner = ({
             <FabricColourCombobox
               label="Fabrics" required={variantsRequired}
               value={String(draft.variants.fabricCode ?? '')}
+              colourLabel={String(draft.variants.colourLabel ?? '')}
+              fabricSeries={fabricSeries}
               disabled={!isEditing}
               pool={allowOpts?.fabrics ?? null}
               inactiveCodes={inactiveFabricCodes}
@@ -1186,8 +1258,18 @@ const SoLineCardInner = ({
               options={sortByNumeric(restrictP(activeOptions(maint!.sofaLegHeights, String(draft.variants.legHeight ?? '')), allowOpts?.leg_heights))}
               onChange={(v) => setVariant('legHeight', v)}
             />
-            {/* Empty cell so the 4-col grid stays balanced */}
-            <span />
+            {attachOptions ? (
+              <VariantSelect
+                label="Attached to"
+                value={String(draft.variants[CONSOLE_ATTACH_KEY] ?? '')}
+                disabled={!isEditing}
+                options={attachOptions.map((id) => ({ value: id, priceSen: 0 }))}
+                onChange={(v) => setVariant(CONSOLE_ATTACH_KEY, v)}
+              />
+            ) : (
+              /* Empty cell so the 4-col grid stays balanced */
+              <span />
+            )}
           </div>
           {colourKiv && (
             <div style={{ fontSize: 'var(--fs-11)', fontWeight: 600, color: 'var(--c-festive-b, #B8331F)' }}>
@@ -1499,12 +1581,16 @@ const VariantSelect = ({
    ────────────────────────────────────────────────────────────────────── */
 
 const FabricColourCombobox = ({
-  label, value, onSelect, disabled = false, required = false, pool, inactiveCodes, itemCode,
+  label, value, colourLabel, fabricSeries, onSelect, disabled = false, required = false, pool, inactiveCodes, itemCode,
 }: {
   label:    string;
+  /** draft.variants.colourLabel — shown after the code when closed, as the phone's FabricField does. */
+  colourLabel: string;
+  /** fabric_library id → series label, for the dropdown's second line. */
+  fabricSeries: Map<string, string>;
   /** The line's SKU — the server applies its Model's pool before the 50 cap. */
   itemCode: string | null;
-  /** Selected colour code (draft.variants.fabricCode). Shown verbatim when closed. */
+  /** Selected colour code (draft.variants.fabricCode). Shown (plus colourLabel) when closed. */
   value:    string;
   /** Non-empty = restrict to these colour codes (Model allowed_options.fabrics). */
   pool?:    string[] | null;
@@ -1544,6 +1630,7 @@ const FabricColourCombobox = ({
   const menuPos = useAnchoredPanel(wrapRef, open && !disabled, SUGGEST_LIST_MAX_H);
 
   const invalid = required && !value;
+  const shown = value && colourLabel && colourLabel !== value ? `${value} — ${colourLabel}` : value;
 
   return (
     <label className={styles.variantField}>
@@ -1553,7 +1640,7 @@ const FabricColourCombobox = ({
           className={styles.select}
           /* Closed → show the selected code (NEVER blank a saved fabric).
              Open  → show the operator's live search term. */
-          value={open ? search : value}
+          value={open ? search : shown}
           placeholder={value ? undefined : 'Type 2+ chars to search…'}
           disabled={disabled}
           /* Owner 2026-08-09 — like the native Divan/Gap selects, opening must
@@ -1563,7 +1650,7 @@ const FabricColourCombobox = ({
           onBlur={() => setTimeout(() => setOpen(false), 150)}
           onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
           style={invalid && !disabled ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
-          title={value || undefined}
+          title={shown || undefined}
         />
         {menuPos && createPortal(
           <ul
@@ -1571,18 +1658,24 @@ const FabricColourCombobox = ({
             style={{ ...anchoredPanelStyle(menuPos), right: 'auto', marginTop: 0 }}
           >
             {results.length > 0 ? (
-              /* Owner 2026-06-23: show ONLY the fabric code — the code IS the
-                 fabric's identity. onMouseDown + preventDefault keeps the input
-                 focused so the portal doesn't blur-close before the pick lands. */
-              results.map((c) => (
-                <li
-                  key={c.colourId}
-                  className={styles.suggestItem}
-                  onMouseDown={(e) => { e.preventDefault(); onSelect(c); setSearch(''); setOpen(false); }}
-                >
-                  {c.colourId}
-                </li>
-              ))
+              /* The code leads (it IS the fabric's identity, owner 2026-06-23);
+                 series and colour name follow on a second line, as on the
+                 phone's fabric sheet (DEV-61). onMouseDown + preventDefault
+                 keeps the input focused so the portal doesn't blur-close before
+                 the pick lands. */
+              results.map((c) => {
+                const meta = [fabricSeries.get(c.fabricId) ?? '', c.label ?? ''].filter(Boolean).join(' · ');
+                return (
+                  <li
+                    key={c.colourId}
+                    className={styles.suggestItem}
+                    onMouseDown={(e) => { e.preventDefault(); onSelect(c); setSearch(''); setOpen(false); }}
+                  >
+                    <div className={styles.suggestItemCode}>{c.colourId}</div>
+                    {meta && <div className={styles.suggestItemMeta}>{meta}</div>}
+                  </li>
+                );
+              })
             ) : (
               <li className={styles.suggestItem} style={{ color: 'var(--fg-muted)', cursor: 'default' }}>
                 {trimmed.length < 2

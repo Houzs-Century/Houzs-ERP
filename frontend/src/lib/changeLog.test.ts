@@ -120,11 +120,11 @@ describe("times are Malaysia local, in the repo's ONE date format", () => {
      never introduce a second date format to avoid it — fmtDateTime already
      converts to MYT (vendor/shared/format.ts, mytParts). */
   it("renders 06:00 UTC as 14:00 on the same day, dd/mm/yyyy", () => {
-    expect(clWhen("2026-09-08T06:00:00.000Z")).toBe("08/09/2026 14:00");
+    expect(clWhen("2026-09-08T06:00:00.000Z")).toBe("2026/09/08 14:00");
   });
 
   it("crosses the day boundary the way MYT does, not the way UTC does", () => {
-    expect(clWhen("2026-09-07T17:00:00.000Z")).toBe("08/09/2026 01:00");
+    expect(clWhen("2026-09-07T17:00:00.000Z")).toBe("2026/09/08 01:00");
   });
 
   it("does not print Invalid Date for an unparseable stamp", () => {

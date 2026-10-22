@@ -84,6 +84,15 @@ describe('cancelRequestNotify', () => {
     expect(posted).toHaveBeenCalledTimes(2);
   });
 
+  it("carries the approver's remark when there is one, and nothing when there is not (DEV-17)", async () => {
+    await notifyCancelRequest(env, 'level1', { ...base, remark: 'Checked with the customer', actorUserId: 21 });
+    expect((posted.mock.calls[0]![1] as { body: string }).body).toContain('Remark: Checked with the customer');
+    await notifyCancelRequest(env, 'approved', { ...base, remark: 'Stock returned to shelf', actorUserId: 31 });
+    expect((posted.mock.calls[1]![1] as { body: string }).body).toContain('Remark: Stock returned to shelf');
+    await notifyCancelRequest(env, 'approved', { ...base, remark: null, actorUserId: 31 });
+    expect((posted.mock.calls[2]![1] as { body: string }).body).not.toContain('Remark:');
+  });
+
   it('never throws', async () => {
     holders.mockRejectedValueOnce(new Error('D1 down'));
     await expect(notifyCancelRequest(env, 'raised', base)).resolves.toBeUndefined();

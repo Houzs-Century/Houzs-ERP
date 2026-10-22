@@ -34,7 +34,10 @@ import {
   type LineWriteFailure,
 } from '../../vendor/scm/lib/line-write-failures';
 
+import { isSofaGroup, pieceShareSen, sofaPieceCount } from '../../vendor/scm/lib/sofa-piece-lines';
+
 export type { LineWriteFailure };
+export { SOFA_PIECES_SPLIT_DIALOG } from '../../vendor/scm/lib/sofa-piece-lines';
 
 /** One new line the operator has staged but not yet saved. */
 export type StagedAddLine = {
@@ -237,4 +240,44 @@ export function visibleLineCounts(args: {
   const kept = new Set(args.editingDraftIds);
   const persisted = args.itemIds.filter((id) => kept.has(id)).length;
   return { persisted, total: persisted + args.stagedAdds };
+}
+
+/** One sofa piece = one line (vendor/scm/lib/sofa-piece-lines.ts) on the edit
+ *  page. A staged add with qty N becomes N staged adds in place; an existing
+ *  line whose qty was CHANGED to N stays that line at qty 1 and stages the
+ *  other N-1 pieces as adds. An untouched line (an imported "x2") is never
+ *  rewritten. Null when nothing needed splitting. */
+export function splitSofaPiecesOnEdit(args: {
+  editing: Record<string, SoLineDraft>;
+  originals: Record<string, SoLineDraft>;
+  adding: StagedAddLine[];
+  mintKey: () => string;
+}): { editing: Record<string, SoLineDraft>; adding: StagedAddLine[] } | null {
+  const { originals, mintKey } = args;
+  let changed = false;
+  const editing: Record<string, SoLineDraft> = { ...args.editing };
+  const extra: StagedAddLine[] = [];
+  const piece = (d: SoLineDraft, i: number, n: number): SoLineDraft => ({
+    ...d,
+    qty: 1,
+    discountSen: pieceShareSen(d.discountSen, i, n),
+    ...(i === 0 ? {} : { photoUrls: [], pendingPhotoFiles: [] }),
+  });
+  for (const [id, d] of Object.entries(args.editing)) {
+    if (!isSofaGroup(d.itemGroup) || (id in originals && originals[id].qty === d.qty)) continue;
+    const n = sofaPieceCount(d.qty);
+    if (n === 1) continue;
+    changed = true;
+    editing[id] = piece(d, 0, n);
+    for (let i = 1; i < n; i++) extra.push({ key: mintKey(), idempotencyKey: mintKey(), draft: piece(d, i, n) });
+  }
+  const adding: StagedAddLine[] = [];
+  for (const row of args.adding) {
+    const n = isSofaGroup(row.draft.itemGroup) ? sofaPieceCount(row.draft.qty) : 1;
+    if (n === 1) { adding.push(row); continue; }
+    changed = true;
+    adding.push({ ...row, draft: piece(row.draft, 0, n) });
+    for (let i = 1; i < n; i++) adding.push({ key: mintKey(), idempotencyKey: mintKey(), draft: piece(row.draft, i, n) });
+  }
+  return changed ? { editing, adding: [...adding, ...extra] } : null;
 }

@@ -25,8 +25,9 @@
 
 import { customerRefOf } from '../../lib/customer-ref';
 import { useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useOpenDocInTab } from '../../lib/openDocInTab';
 import { useAuth } from '../../auth/AuthContext';
+import { isSalesStaff } from '../../auth/salesAccess';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useDocumentFlow, useCandidatePos, type FlowNode } from '../../vendor/scm/lib/flow-queries';
 import type { ChainNode, AmendmentChip, PairingKind } from '../../components/scm-v2/DocumentRelationshipMapModal';
@@ -74,14 +75,17 @@ const flowNodesOf = (data: { nodes: FlowNode[] } | undefined, type: FlowNode['ty
   (data?.nodes ?? []).filter((n) => n.type === type);
 
 /** Builds the SO chain and returns the click handler both SO detail pages pass
- *  straight to <DocumentRelationshipMapModal>. `onNodeClick` returns TRUE when the
- *  click navigated away, so the caller knows to close the map — an in-app notice
- *  must render OVER the map instead of dismissing it. */
+ *  straight to <DocumentRelationshipMapModal>. A linked document opens in its
+ *  own tab of the in-app tab strip (owner 2026-09-27); the SO keeps its tab.
+ *  `onNodeClick` returns TRUE when it opened something, so the caller closes
+ *  the map — an in-app notice must render OVER the map instead. */
 export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
   nodes: ChainNode[];
   onNodeClick: (n: ChainNode) => boolean;
   amendments: AmendmentChip[];
   onAmendmentClick: (a: AmendmentChip) => boolean;
+  returns: AmendmentChip[];
+  onReturnClick: (r: AmendmentChip) => boolean;
   /* The SO ↓ PO hop is PROVENANCE when the graph carries stored raise-links —
      muted, "bought for", never an execution binding ("soft until DO, hard
      from DO"). The SO map shows no FLOATING hop: usePoSoCoverage is keyed by
@@ -90,15 +94,15 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
      it here would need a new SO-keyed backend read (owner: zero new load). */
   pairing: { kind: PairingKind } | null;
 } & DocChoiceApi {
-  const navigate = useNavigate();
   const notify = useNotify();
   /* A slot standing for SEVERAL documents opens a chooser whose every row
      clicks through (2026-08-03). It used to raise a notice that only NAMED the
      doc numbers — and pointed at lists that cannot search by this SO's doc no,
      so the operator was copying numbers by hand. */
+  const openDoc = useOpenDocInTab();
   const { choice, openChoice, closeChoice, pickChoice } = useDocChoice();
   const showCustomerPo = useCustomerPoNotice();
-  const { can, pageAccess } = useAuth();
+  const { can, pageAccess, user } = useAuth();
 
   const docNo = salesOrder?.doc_no ?? null;
   // Downstream docs generated from this SO. Company-scoped server-side.
@@ -112,6 +116,13 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
   // purchase_invoices); the chain just never showed them.
   const poNodes = useMemo(() => flowNodesOf(flow.data, 'po'), [flow.data]);
   const piNodes = useMemo(() => flowNodesOf(flow.data, 'pi'), [flow.data]);
+  /* Delivery Returns off this SO's DOs (2990-0011). document-flow has always
+     returned them; the map dropped them, so a returned order looked like it
+     was still out with the customer. */
+  const returns: AmendmentChip[] = useMemo(
+    () => flowNodesOf(flow.data, 'dr').map((n) => ({ id: n.id, label: n.label, status: n.status })),
+    [flow.data],
+  );
 
   /* Amendments (SO revision requests) hang off this SO. document-flow returns
      them as a read-only side list; the map branches them off the Sales Order,
@@ -129,10 +140,10 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
   );
   const onAmendmentClick = useCallback(
     (a: AmendmentChip): boolean => {
-      navigate(`/scm/amendments/${a.id}`);
+      openDoc(`/scm/amendments/${a.id}`);
       return true;
     },
-    [navigate],
+    [openDoc],
   );
 
   /* Pre-MRP SOs (2026-07-09) have no linked PO leg. When the flow has loaded
@@ -154,6 +165,22 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
   // /scm/purchase-invoices/:id guard on their own areas, no allowSales).
   const canOpenPo = can('scm.access') || pageAccess('scm.procurement.po') !== 'none';
   const canOpenPi = can('scm.access') || pageAccess('scm.procurement.pi') !== 'none';
+  // Mirrors App.tsx DeliveryReturnsGuard: Sales staff are refused outright.
+  const canOpenDr = !isSalesStaff(user) && (can('scm.access') || pageAccess('scm.sales.returns') !== 'none');
+  const onReturnClick = useCallback(
+    (r: AmendmentChip): boolean => {
+      if (!canOpenDr) {
+        void notify({
+          title: 'Delivery Returns are not open to you',
+          body: `Goods on this order came back on ${r.label}. Opening a return needs Delivery Returns access — ask an admin if you need it.`,
+        });
+        return false;
+      }
+      openDoc(`/scm/delivery-returns/${r.id}`);
+      return true;
+    },
+    [canOpenDr, notify, openDoc],
+  );
 
   const poRef = customerRefOf(salesOrder);
 
@@ -285,7 +312,7 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
       // delivery/invoice lands on the filtered list).
       if (n.type === 'Delivery Order' && doNodes.length > 0) {
         if (doNodes.length === 1) {
-          navigate(`/scm/delivery-orders/${doNodes[0]!.id}`);
+          openDoc(`/scm/delivery-orders/${doNodes[0]!.id}`);
           return true;
         }
         openChoice({
@@ -297,7 +324,7 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
       }
       if (n.type === 'Sales Invoice' && siNodes.length > 0) {
         if (siNodes.length === 1) {
-          navigate(`/scm/sales-invoices/${siNodes[0]!.id}`);
+          openDoc(`/scm/sales-invoices/${siNodes[0]!.id}`);
           return true;
         }
         openChoice({
@@ -318,7 +345,7 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
           return false;
         }
         if (poNodes.length === 1) {
-          navigate(`/scm/purchase-orders/${poNodes[0]!.id}`);
+          openDoc(`/scm/purchase-orders/${poNodes[0]!.id}`);
           return true;
         }
         /* Several POs, one slot. Naming them was never enough — the PO list
@@ -360,7 +387,7 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
           return false;
         }
         if (piNodes.length === 1) {
-          navigate(`/scm/purchase-invoices/${piNodes[0]!.id}`);
+          openDoc(`/scm/purchase-invoices/${piNodes[0]!.id}`);
           return true;
         }
         openChoice({
@@ -381,7 +408,7 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
           return false;
         }
         if (grnNodes.length === 1) {
-          navigate(`/scm/grns/${grnNodes[0]!.id}`);
+          openDoc(`/scm/grns/${grnNodes[0]!.id}`);
           return true;
         }
         /* Several GRNs and one slot to show them in. The GRN list searches its
@@ -400,7 +427,7 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
       }
       return false;
     },
-    [navigate, notify, openChoice, showCustomerPo, salesOrder?.doc_no, doNodes, siNodes, grnNodes, poNodes, piNodes, candidatePos, canOpenGrn, canOpenPo, canOpenPi],
+    [openDoc, notify, openChoice, showCustomerPo, salesOrder?.doc_no, doNodes, siNodes, grnNodes, poNodes, piNodes, candidatePos, canOpenGrn, canOpenPo, canOpenPi],
   );
 
   const pairing = useMemo<{ kind: PairingKind } | null>(
@@ -408,5 +435,5 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
     [poNodes],
   );
 
-  return { nodes, onNodeClick, amendments, onAmendmentClick, pairing, choice, openChoice, closeChoice, pickChoice };
+  return { nodes, onNodeClick, amendments, onAmendmentClick, returns, onReturnClick, pairing, choice, openChoice, closeChoice, pickChoice };
 }

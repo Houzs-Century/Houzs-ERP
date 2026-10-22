@@ -37,12 +37,21 @@
 // never be handed this one.
 //
 // PAYLOAD (chat's `Call REST API` body):
+//   What it WRITES on the SO: only the request columns the board shows
+//   (amend_date_from_customer, amend_reason, delivery_message_status) via
+//   lib/chat-request-patch.ts — never the schedule. See that module.
+//
 //   { callback_id?: string,          // idempotency; chat's own step id
-//     event: "confirm" | "amend",
-//     ref: string,                   // the SO doc_no the message was about
+//     event: "confirm" | "amend" | "postage_confirm" | "postage_amend"
+//            | "property",             // the Property Details form answers
+//     ref: string,                   // the number the customer was shown: our
+//                                    // doc_no OR the AutoCount linked_ac_docno
+//     refs?: string,                 // the whole bundle, comma-joined (refs_all)
 //     phone?: string,
 //     delivery_date?: string,        // amend only — what the customer asked for
 //     reason?: string,               // amend only — Renovation Delay / Date Unavailable
+//     house_type?, delivery_purpose?, need_disposal?, disposal_item?: string,
+//                                    // property only — the form's four answers
 //     note?: string }                // free text, optional
 // ---------------------------------------------------------------------------
 
@@ -51,6 +60,9 @@ import type { Env } from "../types";
 import { timingSafeEqualStr } from "../services/auth";
 import { checkRateLimit, clientIp } from "../middleware/rateLimit";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
+import { CHAT_EVENTS, DOC_REF_RE, parseCallbackRefs, type ChatEvent } from "../lib/chat-request-patch";
+import { blastPhone } from "../scm/routes/delivery-messages";
+import { ChatTapLogFailed, recordChatTap, type ChatTapResult } from "../lib/chat-callback-record";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -97,13 +109,6 @@ async function chatCompany(
   }
 }
 
-/** Digits-only then '+'-prefixed, matching delivery-messages.normalizePhone so
- *  a callback's phone is comparable to the one the send logged. */
-function normalizePhone(raw: unknown): string | null {
-  const digits = String(raw ?? "").replace(/\D/g, "");
-  return digits.length >= 8 ? `+${digits}` : null;
-}
-
 /** Trim to a bounded, LIKE-safe token. The callback id is interpolated into an
  *  idempotency LIKE below, so anything that is not [A-Za-z0-9_-] is dropped
  *  rather than escaped — chat's own ids are already in that alphabet, and a
@@ -113,7 +118,7 @@ function safeId(raw: unknown): string | null {
   return s || null;
 }
 
-const EVENTS = new Set(["confirm", "amend"]);
+const EVENTS = new Set<string>(CHAT_EVENTS);
 
 app.post("/", async (c) => {
   // company-scope: every read below IS scoped — chatCompany() resolves HOUZS
@@ -141,10 +146,17 @@ app.post("/", async (c) => {
     callback_id?: string;
     event?: string;
     ref?: string;
+    refs?: unknown;
     phone?: string;
     delivery_date?: string;
     reason?: string;
+    address?: string;
     note?: string;
+    // event "property": the Property Details form answers.
+    house_type?: string;
+    delivery_purpose?: string;
+    need_disposal?: string;
+    disposal_item?: string;
   } | null = null;
   try {
     body = await c.req.json();
@@ -157,20 +169,39 @@ app.post("/", async (c) => {
 
   const event = String(body.event ?? "").trim().toLowerCase();
   if (!EVENTS.has(event)) {
-    return c.json({ error: "event must be 'confirm' or 'amend'" }, 400);
+    return c.json({ error: `event must be one of ${CHAT_EVENTS.join(", ")}` }, 400);
   }
-  const docNo = String(body.ref ?? "").trim().slice(0, 64);
-  if (!docNo) return c.json({ error: "ref (SO doc_no) is required" }, 400);
+  const ref = String(body.ref ?? "").trim().slice(0, 64);
+  if (!ref) return c.json({ error: "ref (SO doc_no) is required" }, 400);
 
   const callbackId = safeId(body.callback_id);
-  const phone = normalizePhone(body.phone);
+  const phone = blastPhone(body.phone);
   // Dates ride through as the customer's REQUEST, never as a schedule. Kept as
   // the raw string the flow sent: this row is evidence of what was asked for,
   // and reformatting it here would quietly lose "2026-09-30" vs "2026/09/30"
   // information that helps when a mismatch is being chased.
   const requestedDate = String(body.delivery_date ?? "").trim().slice(0, 32) || null;
+  // postage_amend: the address the customer typed, recorded verbatim on the
+  // log row (never written to the order — the Sales Order's address is the
+  // staff's to change).
+  const requestedAddress = String(body.address ?? "").trim().slice(0, 300) || null;
   const reason = String(body.reason ?? "").trim().slice(0, 200) || null;
   const note = String(body.note ?? "").trim().slice(0, 500) || null;
+  // event "property": the four Property Details answers, each bounded; null
+  // when this is not a property callback. Connect's interpolator leaves an
+  // UNSET attribute as its literal "{key}" (an answer the customer skipped, e.g.
+  // the disposal item when they said No) — treat that exact shape as blank so
+  // the placeholder never lands in a column.
+  const propField = (v: unknown, max: number): string | null => {
+    const t = String(v ?? "").trim().slice(0, max);
+    return !t || /^\{[a-z0-9_]+\}$/i.test(t) ? null : t;
+  };
+  const property = event === "property" ? {
+    houseType: propField(body.house_type, 60),
+    deliveryPurpose: propField(body.delivery_purpose, 60),
+    needDisposal: propField(body.need_disposal, 20),
+    disposalItem: propField(body.disposal_item, 200),
+  } : null;
 
   const sb = getSupabaseService(c.env);
 
@@ -187,94 +218,93 @@ app.post("/", async (c) => {
     );
   }
 
-  // ── Idempotency ─────────────────────────────────────────────────────────
-  // A webhook can fire twice for one tap. The id is matched against the exact
-  // JSON fragment it was written as, scoped to this company, and only among
-  // this route's own rows — so neither another tenant's row nor a
-  // delivery-planning send can be mistaken for a duplicate callback.
-  if (callbackId) {
-    let dupeQuery = sb
-      .from("wa_message_log")
-      .select("id")
-      .eq("source", "chat-callback")
-      .like("payload", `%"callback_id":"${callbackId}"%`);
-    if (company.id != null) dupeQuery = dupeQuery.eq("company_id", company.id);
-    const { data: dupe, error: dupeErr } = await dupeQuery.limit(1);
-    // NOT `data ?? []`. supabase-js does not throw: an unbound error here would
-    // read a five-second blip as "not a duplicate" and write the customer's
-    // answer twice — the exact class BUG-HISTORY 2026-07-17 records as money
-    // collected twice at the door. If we cannot tell, we refuse and let chat
-    // retry.
-    if (dupeErr) {
-      return c.json({ error: "load_failed", reason: dupeErr.message }, 500);
-    }
-    if (dupe && dupe.length > 0) {
-      return c.json({ ok: true, duplicate: true, id: (dupe[0] as { id: string }).id });
-    }
+  // `ref` is the number the CUSTOMER was shown — delivery-messages sends
+  // COALESCE(linked_ac_docno, doc_no), so for an AutoCount-linked order it is
+  // the AutoCount number, not ours — and `refs` is the whole bundle (the
+  // ERP's `refs_all`): a customer with 2–4 orders gets ONE message, and the
+  // tap answers for all of them. Match either column; each row is then keyed
+  // by OUR doc_no so the board finds it. Refs are interpolated into a
+  // PostgREST `or` filter, where `,` `(` `)` are syntax — anything outside the
+  // document-number alphabet is refused up front rather than escaped.
+  if (!DOC_REF_RE.test(ref)) {
+    return c.json({ error: "invalid_ref", reason: "ref has characters no document number carries" }, 400);
   }
-
-  let soQuery = sb.from("mfg_sales_orders").select("doc_no, company_id").eq("doc_no", docNo);
+  const refs = parseCallbackRefs(ref, body.refs);
+  const list = refs.join(",");
+  let soQuery = sb
+    .from("mfg_sales_orders")
+    .select("doc_no, company_id, linked_ac_docno")
+    .or(`doc_no.in.(${list}),linked_ac_docno.in.(${list})`);
   if (company.id != null) soQuery = soQuery.eq("company_id", company.id);
-  const { data: soRows, error: soErr } = await soQuery.limit(1);
+  const { data: soRows, error: soErr } = await soQuery.limit(refs.length * 2);
   if (soErr) {
     return c.json({ error: "load_failed", reason: soErr.message }, 500);
   }
-  if (!soRows || soRows.length === 0) {
+  const hits = (soRows ?? []) as Array<{ doc_no: string; linked_ac_docno: string | null }>;
+  // An exact doc_no hit wins over a linked_ac_docno hit, so a number that is
+  // somehow both is recorded against the order that literally carries it.
+  const resolve = (r: string): string | null =>
+    hits.find((h) => h.doc_no === r)?.doc_no ?? hits.find((h) => h.linked_ac_docno === r)?.doc_no ?? null;
+  const primaryDoc = resolve(ref);
+  if (!primaryDoc) {
     // Deliberately the same answer for "no such SO" and "not this company's
     // SO": the caller holds a Houzs credential and must not be able to probe
     // which doc numbers exist elsewhere.
-    return c.json({ error: "unknown_ref", reason: `no ${CHAT_KEY_COMPANY} order ${docNo}` }, 404);
+    return c.json({ error: "unknown_ref", reason: `no ${CHAT_KEY_COMPANY} order ${ref}` }, 404);
+  }
+  // The primary first, then the rest of the bundle; a sibling that does not
+  // resolve is reported, not fatal — the primary order's answer still lands.
+  const targets: Array<{ customerRef: string; docNo: string }> = [];
+  const unknown: string[] = [];
+  for (const r of refs) {
+    const d = resolve(r);
+    if (!d) { unknown.push(r); continue; }
+    if (!targets.some((t) => t.docNo === d)) targets.push({ customerRef: r, docNo: d });
   }
 
-  // ── Record ──────────────────────────────────────────────────────────────
-  // Reuses scm.wa_message_log rather than a new table: the board already reads
-  // it per doc, and one timeline of "what we sent / what they answered" beats
-  // two. `success` is TRUE here in the sense the row means — the callback was
-  // received and understood; `http_code` stays null because nothing was sent.
-  // delivery-messages./statuses filters to source='delivery-planning' so these
-  // rows cannot displace the board's send-status column.
-  const payload = JSON.stringify({
-    callback_id: callbackId,
-    event,
-    ref: docNo,
-    phone,
-    requested_delivery_date: requestedDate,
-    reason,
-    note,
-  });
-
-  const { data: inserted, error: insErr } = await sb
-    .from("wa_message_log")
-    .insert({
-      batch_id: crypto.randomUUID(),
-      company_id: company.id,
-      doc_no: docNo,
-      phone: phone ?? "",
-      payload,
-      http_code: null,
-      success: true,
-      error: null,
-      source: "chat-callback",
-      created_by: null,
-    })
-    .select("id")
-    .limit(1);
-
-  if (insErr) {
-    // NOT best-effort, unlike the send path's log. There the WhatsApp had
-    // already left and a log failure must not report a delivered message as an
-    // error; here the row IS the delivery. Swallowing it would answer 200 to
-    // chat, which would then never retry, and the customer's answer would be
-    // gone for good.
-    return c.json({ error: "log_failed", reason: insErr.message }, 500);
+  // ── Record, per order ───────────────────────────────────────────────────
+  // lib/chat-callback-record.ts: idempotency by (callback_id, doc), the
+  // wa_message_log row, then the board's request columns. A log failure is a
+  // 500 — the row IS the record, and a 200 would stop chat retrying.
+  const results: ChatTapResult[] = [];
+  for (const t of targets) {
+    try {
+      results.push(await recordChatTap(sb, {
+        companyId: company.id,
+        docNo: t.docNo,
+        customerRef: t.customerRef,
+        callbackId,
+        event: event as ChatEvent,
+        phone,
+        requestedDate,
+        reason,
+        property,
+        note: requestedAddress ? `${note ?? ""}${note ? " | " : ""}address: ${requestedAddress}` : note,
+      }));
+    } catch (e) {
+      if (e instanceof ChatTapLogFailed) {
+        return c.json({ error: "log_failed", reason: e.message, recorded: results.map((r) => r.docNo) }, 500);
+      }
+      throw e;
+    }
   }
 
+  const first = results[0];
+  if (results.every((r) => r.duplicate)) {
+    return c.json({ ok: true, duplicate: true, id: first?.id ?? null, refs: results.map((r) => r.docNo) });
+  }
   return c.json({
     ok: true,
-    id: (inserted?.[0] as { id: string } | undefined)?.id ?? null,
+    id: first?.id ?? null,
     event,
-    ref: docNo,
+    ref: primaryDoc,
+    refs: results.map((r) => r.docNo),
+    results,
+    ...(unknown.length ? { unknown } : {}),
     recorded: true,
+    // The schedule is untouched — `applied` keeps meaning "delivery date
+    // applied", which this endpoint never does. Each result's `so_request`
+    // says whether that order's request columns were filled.
     applied: false,
   });
 });

@@ -19,6 +19,7 @@ import { fmtDateTime } from "../../vendor/shared/format";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { AmendmentStatusPill } from "../../vendor/scm/components/StatusPill";
 import { AmendmentApproverBadge } from "../../vendor/scm/components/AmendmentApproverBadge";
+import { ChangeApproverButton } from "./ChangeApproverButton";
 import {
   PO_AMENDMENT_APPROVER,
   soAmendmentApprover,
@@ -98,6 +99,9 @@ function SoAmendmentBody({ target, onClose }: { target: AmendmentQuickViewTarget
               rejectionReason={a.rejection_reason ?? null}
               extra={boundPos ? { k: "Bound POs", v: boundPos } : null}
             />
+            <div className="mt-3">
+              <ChangeApproverButton amendment={{ id: String(a.id), amendment_no: a.amendment_no, status: a.status, lane: a.lane }} variant="desktop" />
+            </div>
             <Changes headerRows={headerRows} lineCount={lines.length}>
               {lines.map((l) => <SoAmendmentDiffCard key={l.id} line={l} />)}
             </Changes>

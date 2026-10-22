@@ -13,15 +13,20 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { canViewScmCosting } from "../../auth/salesAccess";
-import type { JSX } from 'react';
+import type { JSX, ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Search } from 'lucide-react';
+import { Plus, Search, X, ExternalLink, Edit3, Undo2, RotateCcw } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { Button as DrawerButton } from '../../components/Button';
+import { Badge } from '../../components/Badge';
+import { ResizableDetailDrawer } from '../../components/ResizableDetailDrawer';
+import { statusFor as doStatusFor } from './do-list-status';
+import { cn } from '../../lib/utils';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { formatPhone } from '@2990s/shared/phone';
-import { buildVariantSummary, fmtQty } from '@2990s/shared';
+import { buildVariantSummary, fmtDateOrDash, fmtQty, fmtSen } from '@2990s/shared';
 import {
   useConsignmentNotesPaged, useUpdateConsignmentNoteStatus, useConsignmentNoteDetail,
 } from '../../vendor/scm/lib/consignment-note-queries';
@@ -34,6 +39,7 @@ import { useAuth } from '../../auth/AuthContext';
 import { BrandingPill, badgeFor } from '../../vendor/scm/lib/category-badges';
 import styles from './MfgSalesOrdersList.module.css';
 import soDetailStyles from './SalesOrderDetail.module.css';
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import { PageHeader } from '../../components/Layout';
 import { StatCard } from '../../components/StatCard';
 import { FilterPills } from '../../components/FilterPills';
@@ -42,6 +48,8 @@ import { FilterPills } from '../../components/FilterPills';
 type CnRow = {
   id: string;
   do_number: string;
+  /* Source Consignment Order — on the list select (consignment-notes.ts). */
+  consignment_so_doc_no?: string | null;
   do_date: string;
   expected_delivery_at: string | null;
   customer_delivery_date: string | null;
@@ -76,16 +84,6 @@ type CnRow = {
   currency: string;
   note: string | null;
   line_count?: number;
-};
-
-const fmtRm = (centi: number): string =>
-  (centi / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-const compactDate = (iso: string | null | undefined): string => {
-  if (!iso) return '';
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
-  if (!m) return iso;
-  return `${m[1]}/${m[2]}/${m[3]}`;
 };
 
 const STATUS_CLASS: Record<string, string> = {
@@ -163,7 +161,7 @@ const cnLineMarginOf = (it: CnItem): number =>
    placeholder, no RM 0.00. The backend also omits the keys from the payload
    (canViewScmFinance), so rendering them for a non-finance user could only ever
    print zeros. */
-const buildCnDrilldownColumns = (canFinance: boolean): DataGridColumn<CnItem>[] => [
+const buildCnDrilldownColumns = (canFinance: boolean): GridColumn<CnItem>[] => [
   {
     key: 'group', label: 'Group', width: 90, groupable: true,
     accessor: (it) => <CategoryPill group={it.item_group} />,
@@ -202,13 +200,14 @@ const buildCnDrilldownColumns = (canFinance: boolean): DataGridColumn<CnItem>[] 
   },
   {
     key: 'qty', label: 'Qty', width: 60, align: 'right',
-    accessor: (it) => it.qty ?? 0,
+    accessor: (it) => fmtQty(it.qty ?? 0),
+    exportValue: (it) => Number(it.qty ?? 0),
     searchValue: (it) => String(it.qty ?? 0),
     sortFn: (a, b) => Number(a.qty ?? 0) - Number(b.qty ?? 0),
   },
   {
     key: 'unit_price', label: 'Unit Price', width: 100, align: 'right',
-    accessor: (it) => fmtRm(Number(it.unit_price_sen ?? 0)),
+    accessor: (it) => fmtSen(Number(it.unit_price_sen ?? 0)),
     exportValue: (it) => Number(it.unit_price_sen ?? 0) / 100,
     exportFormat: 'rate',
     searchValue: (it) => String(it.unit_price_sen ?? 0),
@@ -216,7 +215,7 @@ const buildCnDrilldownColumns = (canFinance: boolean): DataGridColumn<CnItem>[] 
   },
   {
     key: 'total', label: 'Total', width: 100, align: 'right',
-    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtRm(cnLineTotalOf(it))}</span>,
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtSen(cnLineTotalOf(it))}</span>,
     exportValue: (it) => cnLineTotalOf(it) / 100,
     exportFormat: 'money',
     searchValue: (it) => String(cnLineTotalOf(it)),
@@ -226,7 +225,7 @@ const buildCnDrilldownColumns = (canFinance: boolean): DataGridColumn<CnItem>[] 
     ? ([
         {
           key: 'unit_cost', label: 'Unit Cost', width: 100, align: 'right',
-          accessor: (it) => fmtRm(Number(it.unit_cost_sen ?? 0)),
+          accessor: (it) => fmtSen(Number(it.unit_cost_sen ?? 0)),
           exportValue: (it) => Number(it.unit_cost_sen ?? 0) / 100,
           exportFormat: 'rate',
           searchValue: (it) => String(it.unit_cost_sen ?? 0),
@@ -234,7 +233,7 @@ const buildCnDrilldownColumns = (canFinance: boolean): DataGridColumn<CnItem>[] 
         },
         {
           key: 'line_cost', label: 'Line Cost', width: 100, align: 'right',
-          accessor: (it) => fmtRm(cnLineCostOf(it)),
+          accessor: (it) => fmtSen(cnLineCostOf(it)),
           exportValue: (it) => cnLineCostOf(it) / 100,
           exportFormat: 'money',
           searchValue: (it) => String(cnLineCostOf(it)),
@@ -245,14 +244,14 @@ const buildCnDrilldownColumns = (canFinance: boolean): DataGridColumn<CnItem>[] 
           accessor: (it) => {
             const m = cnLineMarginOf(it);
             const c = m > 0 ? 'var(--c-secondary-a, #2F5D4F)' : m < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)';
-            return <span style={{ color: c, fontWeight: 600 }}>{fmtRm(m)}</span>;
+            return <span style={{ color: c, fontWeight: 600 }}>{fmtSen(m)}</span>;
           },
           exportValue: (it) => cnLineMarginOf(it) / 100,
           exportFormat: 'money',
           searchValue: (it) => String(cnLineMarginOf(it)),
           sortFn: (a, b) => cnLineMarginOf(a) - cnLineMarginOf(b),
         },
-      ] as DataGridColumn<CnItem>[])
+      ] as GridColumn<CnItem>[])
     : []),
 ];
 
@@ -285,7 +284,7 @@ const ExpandedCnLines = ({ id, canFinance }: { id: string; canFinance: boolean }
 
   return (
     <div style={{ padding: 'var(--space-2) var(--space-3) var(--space-2) 40px', background: 'var(--c-cream)' }}>
-      <DataGrid<CnItem>
+      <DataGridCompat<CnItem>
         rows={items}
         columns={columns}
         storageKey="cn-drilldown-grid.v1"
@@ -302,13 +301,235 @@ const ExpandedCnLines = ({ id, canFinance }: { id: string; canFinance: boolean }
           fontFamily: 'var(--font-button)', fontSize: 'var(--fs-10)',
           letterSpacing: '0.06em', textTransform: 'uppercase',
         }}>Subtotal</span>
-        <span>Total <strong style={{ color: '#16695f' }}>{fmtRm(totalSen)}</strong></span>
-        {canFinance && <span>Line Cost <strong style={{ color: 'var(--c-ink)' }}>{fmtRm(costSen)}</strong></span>}
-        {canFinance && <span>Margin <strong style={{ color: marginColor }}>{fmtRm(marginSen)}</strong></span>}
+        <span>Total <strong style={{ color: '#16695f' }}>{fmtSen(totalSen)}</strong></span>
+        {canFinance && <span>Line Cost <strong style={{ color: 'var(--c-ink)' }}>{fmtSen(costSen)}</strong></span>}
+        {canFinance && <span>Margin <strong style={{ color: marginColor }}>{fmtSen(marginSen)}</strong></span>}
       </div>
     </div>
   );
 };
+
+/* ─── Quick-view drawer ────────────────────────────────────────────────────
+   Row click opens the same right slide-over the Sales Order / Delivery Order
+   lists have (ResizableDetailDrawer): header · meta · consignee · lines ·
+   totals · actions, with "Open full page" for the editor. Lines come from
+   the SAME detail query the expand-chevron drill-down uses. Status TONE is
+   the DO list's (same do_status enum); the LABEL is this page's consignment
+   vocabulary (LOADED reads "Confirmed", DISPATCHED reads "Loaded"). */
+function ConsignmentNoteDrawer({
+  row,
+  canFinance,
+  salespersonName,
+  onClose,
+  onOpenFull,
+  onEdit,
+  onCreateReturn,
+  onCancel,
+  onReopen,
+}: {
+  row: CnRow | null;
+  canFinance: boolean;
+  salespersonName: string;
+  onClose: () => void;
+  onOpenFull: () => void;
+  onEdit: () => void;
+  onCreateReturn: () => void;
+  onCancel: () => void;
+  onReopen: () => void;
+}) {
+  const detailQ = useConsignmentNoteDetail(row?.id ?? null);
+  const items = (detailQ.data?.items as CnItem[] | undefined) ?? [];
+  const open = Boolean(row);
+  const tone = row ? doStatusFor(row.status).tone : 'neutral';
+  const statusLabel = row ? (STATUS_LABEL[row.status] || row.status.replace(/_/g, ' ')) : '';
+  const isCancelled = row?.status === 'CANCELLED';
+
+  const subtotalSen = items.length > 0
+    ? items.reduce((sum, l) => sum + cnLineTotalOf(l), 0)
+    : row?.local_total_sen ?? 0;
+  const brand = row ? deriveBranding(row) : '';
+
+  return (
+    <ResizableDetailDrawer
+      open={open}
+      onClose={onClose}
+      ariaLabel={row ? `Consignment note ${row.do_number}` : 'Consignment note details'}
+    >
+      {row && (
+        <>
+          <div className="flex h-[60px] shrink-0 items-center gap-3 bg-sidebar px-5 text-sidebar-ink">
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-sidebar-ink-muted hover:text-sidebar-ink"
+              aria-label="Close details"
+            >
+              <X size={18} />
+            </button>
+            <div className="min-w-0 flex-1">
+              <div className="font-mono text-[14px] font-bold tracking-wide">{row.do_number}</div>
+              <div className="mt-0.5 text-[11px] text-sidebar-ink-muted">Consignment Note</div>
+            </div>
+            <button
+              type="button"
+              onClick={onOpenFull}
+              className="inline-flex items-center gap-1.5 rounded-md border border-accent-bright/40 px-2.5 py-1.5 text-[11.5px] font-semibold text-accent-bright hover:bg-accent-bright/10"
+            >
+              Open full page <ExternalLink size={12} />
+            </button>
+            <Badge tone={tone} variant="solid" size="xs">{statusLabel}</Badge>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-5 py-5">
+            <div className="text-[19px] font-bold text-ink">{row.debtor_name || '—'}</div>
+            <div className="mt-1.5 flex items-center gap-2.5">
+              {brand ? <BrandingPill branding={brand} /> : null}
+              <span className="text-[12.5px] text-ink-muted">Issued {fmtDateOrDash(row.do_date)}</span>
+            </div>
+
+            <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
+              <DrawerMeta k="Consignment Order" v={row.consignment_so_doc_no || '—'} mono />
+              <DrawerMeta k="Ref No." v={row.customer_so_no ?? row.ref ?? '—'} mono />
+              <DrawerMeta k="Note date" v={fmtDateOrDash(row.do_date)} />
+              <DrawerMeta k="Expected at" v={fmtDateOrDash(row.expected_delivery_at)} />
+              <DrawerMeta k="Delivery date" v={fmtDateOrDash(row.customer_delivery_date)} />
+              <DrawerMeta k="Location" v={row.sales_location || '—'} />
+              <DrawerMeta k="Driver" v={row.driver_name || '—'} />
+              <DrawerMeta k="Vehicle" v={row.vehicle || '—'} />
+              <DrawerMeta k="Salesperson" v={salespersonName} />
+              <DrawerMeta k="Venue" v={row.venue || '—'} />
+            </dl>
+
+            <DrawerSection>Consignee &amp; delivery</DrawerSection>
+            <div className="overflow-hidden rounded-lg border border-border bg-surface">
+              <div className="flex items-center gap-3 border-b border-border-subtle px-4 py-3.5">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent-soft text-[13px] font-bold text-accent-ink">
+                  {(row.debtor_name || 'C').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w.charAt(0).toUpperCase()).join('') || 'C'}
+                </span>
+                <div className="min-w-0">
+                  <div className="text-[14px] font-bold text-ink">{row.debtor_name}</div>
+                  {row.debtor_code && (
+                    <div className="mt-0.5 font-mono text-[11.5px] text-ink-muted">{row.debtor_code}</div>
+                  )}
+                </div>
+              </div>
+              <DrawerKV k="Phone" v={formatPhone(row.phone) || '—'} />
+              <DrawerKV k="Email" v={row.email || '—'} />
+              <DrawerKV
+                k="Address"
+                v={[row.address1, row.address2, row.city, row.postcode, row.customer_state].filter(Boolean).join(', ') || '—'}
+              />
+              {row.note ? <DrawerKV k="Note" v={row.note} /> : null}
+            </div>
+
+            <DrawerSection>Line items</DrawerSection>
+            <div className="overflow-hidden rounded-lg border border-border">
+              <div className="grid grid-cols-[minmax(0,1fr)_40px_92px] gap-2 border-b border-border-subtle bg-surface-2 px-4 py-2 font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
+                <span>Item</span>
+                <span className="text-right">Qty</span>
+                <span className="text-right">Amount</span>
+              </div>
+              {detailQ.isLoading && (
+                <div className="px-4 py-8 text-center text-[12px] text-ink-muted">Loading lines…</div>
+              )}
+              {detailQ.isError && (
+                <div className="px-4 py-8 text-center text-[12px] text-err">
+                  {detailQ.error instanceof Error ? detailQ.error.message : 'Failed to load lines'}
+                </div>
+              )}
+              {!detailQ.isLoading && !detailQ.isError && items.length === 0 && (
+                <div className="px-4 py-8 text-center text-[12px] text-ink-muted">No lines</div>
+              )}
+              {items.map((l) => {
+                const manual = (l.description ?? '').trim();
+                const summary = buildVariantSummary(l.item_group, l.variants);
+                return (
+                  <div
+                    key={l.id}
+                    className="grid grid-cols-[minmax(0,1fr)_40px_92px] items-start gap-2 border-b border-border-subtle px-4 py-3 last:border-b-0"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <CategoryPill group={l.item_group} />
+                        <span className="text-[12.5px] font-medium leading-snug text-ink">{l.item_code || '—'}</span>
+                      </div>
+                      {(manual || summary) && (
+                        <div className="mt-0.5 text-[11.5px] leading-snug text-ink-secondary">{manual || summary}</div>
+                      )}
+                    </div>
+                    <span className="text-right font-money text-[12.5px] text-ink-secondary">{fmtQty(Number(l.qty ?? 0))}</span>
+                    <span className="text-right font-money text-[12.5px] font-semibold text-ink">{fmtSen(cnLineTotalOf(l))}</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-4 rounded-lg border border-border bg-surface px-5 py-4">
+              <DrawerTotal k="Goods value" v={fmtSen(subtotalSen)} strong />
+              {canFinance && row.total_cost_sen != null ? (
+                <DrawerTotal k="Cost" v={fmtSen(row.total_cost_sen)} />
+              ) : null}
+              {canFinance && row.total_margin_sen != null ? (
+                <DrawerTotal k="Margin" v={fmtSen(row.total_margin_sen)} tone={row.total_margin_sen < 0 ? 'error' : 'success'} />
+              ) : null}
+            </div>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-2 border-t border-border bg-surface px-5 py-3">
+            <DrawerButton variant="ghost" icon={<Edit3 size={14} />} onClick={onEdit}>Edit</DrawerButton>
+            {!isCancelled && (
+              <DrawerButton variant="ghost" className="text-err" onClick={onCancel}>Cancel Note</DrawerButton>
+            )}
+            <div className="flex-1" />
+            {isCancelled ? (
+              <DrawerButton variant="primary" icon={<RotateCcw size={14} />} onClick={onReopen}>Reopen</DrawerButton>
+            ) : (
+              <DrawerButton variant="primary" icon={<Undo2 size={14} />} onClick={onCreateReturn}>Create Consignment Return</DrawerButton>
+            )}
+          </div>
+        </>
+      )}
+    </ResizableDetailDrawer>
+  );
+}
+
+function DrawerMeta({ k, v, mono }: { k: string; v: ReactNode; mono?: boolean }) {
+  return (
+    <div>
+      <dt className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">{k}</dt>
+      <dd className={cn('mt-0.5 text-[13px] font-semibold text-ink', mono && 'font-mono')}>{v}</dd>
+    </div>
+  );
+}
+
+function DrawerSection({ children }: { children: ReactNode }) {
+  return (
+    <div className="mb-2.5 mt-6 font-mono text-[10px] font-semibold uppercase tracking-brand text-ink-muted">{children}</div>
+  );
+}
+
+function DrawerKV({ k, v }: { k: string; v: ReactNode }) {
+  return (
+    <div className="flex items-start gap-3 border-b border-border-subtle px-4 py-2.5 last:border-b-0">
+      <span className="w-20 shrink-0 font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">{k}</span>
+      <span className="flex-1 text-[13px] font-semibold leading-relaxed text-ink">{v}</span>
+    </div>
+  );
+}
+
+function DrawerTotal({ k, v, strong, tone }: { k: string; v: string; strong?: boolean; tone?: 'success' | 'error' }) {
+  return (
+    <div className={cn('flex items-center justify-between py-1.5', strong && 'border-b border-border-subtle pb-2.5 mb-1')}>
+      <span className={cn('text-[12px] text-ink-muted', strong && 'text-[13px] font-semibold text-ink')}>{k}</span>
+      <span className={cn(
+        'font-money text-[13px] font-semibold',
+        strong && 'text-[15px] font-bold text-ink',
+        tone === 'success' && 'text-synced',
+        tone === 'error' && 'text-err',
+      )}>{v}</span>
+    </div>
+  );
+}
 
 const STORAGE_KEY = 'pr-g.cn-list.layout.v1';
 
@@ -368,6 +589,8 @@ export const ConsignmentNotes = () => {
   // Row-click multi-select (mirrors the DO / GRN lists) — ticks the row; the
   // ▸ chevron still drills down via its own stopPropagation handler.
   const [sel, setSel] = useState<Set<string>>(new Set());
+  /* Row click → quick-view drawer (same as the Sales Order / DO lists). */
+  const [selected, setSelected] = useState<CnRow | null>(null);
   /* Clear the selection whenever the visible row set shifts (page / status /
      search) — a lingering selection would act on rows no longer on screen. */
   useEffect(() => { setSel(new Set()); }, [page, statusChip, debouncedSearch]);
@@ -412,8 +635,28 @@ export const ConsignmentNotes = () => {
       danger: true,
     }))) return;
     updateStatus.mutate({ id: row.id, status: 'CANCELLED' },
-      { onError: (e) => notify({ title: 'Failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }) });
+      {
+        onSuccess: () => setSelected(null),
+        onError: (e) => notify({ title: 'Failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }),
+      });
   };
+
+  /* Reopen — bring a cancelled note back to LOADED. Shared by the context
+     menu and the drawer CTA. */
+  const doReopen = async (row: CnRow) => {
+    if (!(await askConfirm({
+      title: `Reopen ${row.do_number} back to LOADED?`,
+      confirmLabel: 'Reopen',
+    }))) return;
+    updateStatus.mutate({ id: row.id, status: 'LOADED' },
+      {
+        onSuccess: () => setSelected(null),
+        onError: (e) => notify({ title: 'Failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }),
+      });
+  };
+
+  const createReturn = (row: CnRow) =>
+    navigate(`/scm/consignment-returns/new?fromConsignmentNote=${encodeURIComponent(row.id)}`);
 
   /* KPI tiles are the shared <StatCard/> now (owner 2026-07-26). */
 
@@ -444,15 +687,15 @@ export const ConsignmentNotes = () => {
           the server also omits costSen / marginSen for such a caller. */}
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard pending={isLoading} label="Total Notes" value={fmtQty(total)} subtitle="All matching notes" rail="bg-primary" active />
-        <StatCard pending={isLoading} label="Revenue" value={`RM ${fmtRm(kpis.revenue)}`} subtitle="All matching notes" rail="bg-accent" />
+        <StatCard pending={isLoading} label="Revenue" value={fmtSen(kpis.revenue)} subtitle="All matching notes" rail="bg-accent" />
         {canFinance && (
-          <StatCard pending={isLoading} label="Cost" value={`RM ${fmtRm(kpis.cost)}`} subtitle="Cost of goods" rail="bg-accent-bright" />
+          <StatCard pending={isLoading} label="Cost" value={fmtSen(kpis.cost)} subtitle="Cost of goods" rail="bg-accent-bright" />
         )}
         {canFinance && (
           <StatCard
             pending={isLoading}
             label="Margin"
-            value={`RM ${fmtRm(kpis.margin)}`}
+            value={fmtSen(kpis.margin)}
             subtitle="Revenue − cost"
             tone={kpis.margin > 0 ? 'success' : kpis.margin < 0 ? 'error' : 'default'}
             rail={kpis.margin > 0 ? 'bg-synced' : kpis.margin < 0 ? 'bg-err' : 'bg-border-strong'}
@@ -489,13 +732,14 @@ export const ConsignmentNotes = () => {
         </div>
       </div>
 
-      <DataGrid<CnRow>
+      <DataGridCompat<CnRow>
         rows={searchTransition.resultsAreStale ? [] : rows}
         columns={COLUMNS}
         storageKey={STORAGE_KEY}
         exportName="Consignment Notes"
         searchPlaceholder="Search note no, customer, reference…"
         rowKey={(r) => r.id}
+        getRowClassName={(r) => cancelledRowClass(r.status)}
         selectable={{
           selectedKeys: sel,
           onToggle: (k) => setSel((p) => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; }),
@@ -507,6 +751,7 @@ export const ConsignmentNotes = () => {
         }}
         hideSearch
         groupBanner={false}
+        onRowClick={(r) => setSelected(r)}
         onRowDoubleClick={(r) => openDetail(r)}
         rowStyle={(r) => r.status === 'CANCELLED' ? { opacity: 0.55, filter: 'grayscale(0.6)' } : undefined}
         isLoading={listLoading}
@@ -526,16 +771,7 @@ export const ConsignmentNotes = () => {
             items.push({ label: 'Cancel Note', danger: true, onClick: () => doCancel(row) });
           }
           if (status === 'CANCELLED') {
-            items.push({
-              label: 'Reopen Note',
-              onClick: async () => {
-                if (!(await askConfirm({
-                  title: `Reopen ${row.do_number} back to LOADED?`,
-                  confirmLabel: 'Reopen',
-                }))) return;
-                updateStatus.mutate({ id: row.id, status: 'LOADED' });
-              },
-            });
+            items.push({ label: 'Reopen Note', onClick: () => void doReopen(row) });
           }
           return items;
         }}
@@ -549,16 +785,28 @@ export const ConsignmentNotes = () => {
         onPageChange={setPage}
         onPageSizeChange={(n) => { setPageSize(n); setPage(0); }}
       />}
+
+      <ConsignmentNoteDrawer
+        row={selected}
+        canFinance={canFinance}
+        salespersonName={selected?.salesperson_id ? staffById.get(selected.salesperson_id) ?? '—' : '—'}
+        onClose={() => setSelected(null)}
+        onOpenFull={() => selected && openDetail(selected)}
+        onEdit={() => selected && openDetail(selected, true)}
+        onCreateReturn={() => selected && createReturn(selected)}
+        onCancel={() => selected && void doCancel(selected)}
+        onReopen={() => selected && void doReopen(selected)}
+      />
     </div>
   );
 };
 
 /* ── Columns — mirrors the DO list set, adapted to CN fields. ───────────── */
-const buildColumns = (staffById: Map<string, string>, canFinance: boolean): DataGridColumn<CnRow>[] => [
+const buildColumns = (staffById: Map<string, string>, canFinance: boolean): GridColumn<CnRow>[] => [
   {
     key: 'do_number', label: 'Note No.', width: 150, sortable: true,
     accessor: (r) => (
-      <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{r.do_number}</span>
+      <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }} className={cancelledDocNoClass(r.status)}>{r.do_number}</span>
     ),
     searchValue: (r) => `${r.do_number} ${r.status ?? ''}`,
     filterValue: (r) => r.do_number,
@@ -566,8 +814,8 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Data
   },
   {
     key: 'do_date', label: 'Date', width: 110, sortable: true,
-    accessor: (r) => compactDate(r.do_date),
-    searchValue: (r) => `${r.do_date ?? ''} ${compactDate(r.do_date)}`,
+    accessor: (r) => fmtDateOrDash(r.do_date),
+    searchValue: (r) => `${r.do_date ?? ''} ${fmtDateOrDash(r.do_date)}`,
     sortFn: (a, b) => (a.do_date ?? '').localeCompare(b.do_date ?? ''),
     filterType: 'date', dateValue: (r) => r.do_date,
   },
@@ -590,13 +838,13 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Data
   },
   {
     key: 'expected_delivery_at', label: 'Expected', width: 110, sortable: true,
-    accessor: (r) => compactDate(r.expected_delivery_at),
+    accessor: (r) => fmtDateOrDash(r.expected_delivery_at),
     searchValue: (r) => r.expected_delivery_at ?? '',
     sortFn: (a, b) => (a.expected_delivery_at ?? '').localeCompare(b.expected_delivery_at ?? ''),
     filterType: 'date', dateValue: (r) => r.expected_delivery_at,
   },
   {
-    key: 'customer_so_no', label: 'Reference', width: 130, sortable: true,
+    key: 'customer_so_no', label: 'Ref No.', width: 130, sortable: true,
     accessor: (r) => r.customer_so_no ?? r.ref ?? '—',
     searchValue: (r) => `${r.customer_so_no ?? ''} ${r.ref ?? ''}`,
     sortFn: (a, b) => (a.customer_so_no ?? a.ref ?? '').localeCompare(b.customer_so_no ?? b.ref ?? ''),
@@ -627,9 +875,9 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Data
   {
     key: 'local_total_sen', label: 'Local Total', width: 120, sortable: true, align: 'right',
     accessor: (r) => (
-      <span style={{ fontWeight: 700, color: 'var(--c-ink)', fontVariantNumeric: 'tabular-nums' }}>{fmtRm(r.local_total_sen)}</span>
+      <span style={{ fontWeight: 700, color: 'var(--c-ink)', fontVariantNumeric: 'tabular-nums' }}>{fmtSen(r.local_total_sen)}</span>
     ),
-    searchValue: (r) => fmtRm(r.local_total_sen),
+    searchValue: (r) => fmtSen(r.local_total_sen),
     /* Export the NUMBER in ringgit so Excel can SUM the column. */
     exportValue: (r) => (r.local_total_sen ?? 0) / 100,
     exportFormat: 'money',
@@ -696,8 +944,8 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Data
   },
   {
     key: 'customer_delivery_date', label: 'Delivery Date', width: 130, sortable: true, defaultHidden: true,
-    accessor: (r) => compactDate(r.customer_delivery_date),
-    searchValue: (r) => `${r.customer_delivery_date ?? ''} ${compactDate(r.customer_delivery_date)}`,
+    accessor: (r) => fmtDateOrDash(r.customer_delivery_date),
+    searchValue: (r) => `${r.customer_delivery_date ?? ''} ${fmtDateOrDash(r.customer_delivery_date)}`,
     filterType: 'date', dateValue: (r) => r.customer_delivery_date,
   },
   {
@@ -718,8 +966,8 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Data
     ? ([
         {
           key: 'total_cost_sen', label: 'Cost Total', width: 120, sortable: true, align: 'right', defaultHidden: true,
-          accessor: (r) => <span className={styles.money}>{fmtRm(r.total_cost_sen ?? 0)}</span>,
-          searchValue: (r) => fmtRm(r.total_cost_sen ?? 0),
+          accessor: (r) => <span className={styles.money}>{fmtSen(r.total_cost_sen ?? 0)}</span>,
+          searchValue: (r) => fmtSen(r.total_cost_sen ?? 0),
           exportValue: (r) => (r.total_cost_sen ?? 0) / 100,
           exportFormat: 'money',
           sortFn: (a, b) => (a.total_cost_sen ?? 0) - (b.total_cost_sen ?? 0),
@@ -730,13 +978,13 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Data
             const m = r.total_margin_sen ?? 0;
             if ((r.local_total_sen ?? 0) <= 0) return <span style={{ color: 'var(--fg-muted)' }}>—</span>;
             const color = m > 0 ? 'var(--c-secondary-a, #2F5D4F)' : m < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)';
-            return <span className={styles.money} style={{ color, fontWeight: 600 }}>{fmtRm(m)}</span>;
+            return <span className={styles.money} style={{ color, fontWeight: 600 }}>{fmtSen(m)}</span>;
           },
-          searchValue: (r) => fmtRm(r.total_margin_sen ?? 0),
+          searchValue: (r) => fmtSen(r.total_margin_sen ?? 0),
           exportValue: (r) => (r.total_margin_sen ?? 0) / 100,
           exportFormat: 'money',
           sortFn: (a, b) => (a.total_margin_sen ?? 0) - (b.total_margin_sen ?? 0),
         },
-      ] as DataGridColumn<CnRow>[])
+      ] as GridColumn<CnRow>[])
     : []),
 ];

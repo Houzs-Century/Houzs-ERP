@@ -3,9 +3,10 @@
 // BACK to the supplier and expects a credit (money-in framing). Aside hero =
 // Credit expected (synced/green because it's money coming back).
 
-import { useMemo, type ReactNode } from "react";
-import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { lazy, useMemo, type ReactNode } from "react";
+import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity, fmtQty } from "@2990s/shared";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import {
   ArrowLeft,
@@ -36,6 +37,7 @@ import {
   useCancelPurchaseReturn,
 } from "../../vendor/scm/lib/purchase-return-queries";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
+import { purchaseReturnReasonLabel } from "../../vendor/shared/purchase-return-reasons";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { usePrompt } from "../../vendor/scm/components/PromptDialog";
@@ -53,6 +55,10 @@ type PrHeader = {
   status: PrStatus;
   return_date: string | null;
   reason: string | null;
+  /* CREDIT (goods gone, credit note owed) or REPAIR (goods at the supplier,
+     coming back). Absent from a pre-2026-09-28 response, so read defensively. */
+  kind?: string | null;
+  repair_warehouse_id?: string | null;
   credit_note_ref?: string | null;
   refund_sen?: number;
   notes?: string | null;
@@ -234,7 +240,42 @@ function HeroLine({ k, v, strong }: { k: string; v: string; strong?: boolean }) 
   );
 }
 
+// ─── Legacy inline editor (lazy) ───────────────────────────────────────────
+// V2 is READ-ONLY by design. The draft editor (editable supplier / return date /
+// reason / credit-note ref / notes + inline Qty / Unit price per line, and the
+// T12 variant editor on non-GRN lines) lives in the legacy ./PurchaseReturnDetail
+// page — we forward to it whenever ?edit=1 lands on this route so the Edit
+// button actually opens editable fields. Mirrors how PurchaseInvoiceDetailV2 /
+// GoodsReceivedDetailV2 / PurchaseOrderDetailV2 forward ?edit=1 to their legacy
+// editor. Lazy-loaded so the editor bundle only ships when someone clicks Edit.
+const PurchaseReturnDetailInlineEditor = lazy(() =>
+  import("./PurchaseReturnDetail").then((m) => ({ default: m.PurchaseReturnDetail })),
+);
+
+/* Thin router — the only hooks it calls are useSearchParams and useLocation
+   (both unconditional, at the top), so Rules of Hooks are respected when the
+   ?edit=1 flip swaps between the read-only body and the lazy inline editor
+   (the two children have different hook counts). */
 export function PurchaseReturnDetailV2() {
+  const [params] = useSearchParams();
+  const location = useLocation();
+  if (params.get("edit") === "1") {
+    /* Scoped, not bare: a boundary keyed on the document this slot is editing,
+       so a failed editor chunk shows the panel in place of the editor and
+       clears when the operator moves to another document (lazySlotAudit). */
+    return (
+      <LazySlot
+        resetKey={`pr-editor:${location.pathname}`}
+        fallback={<div className="p-8 text-[13px] text-ink-muted">Loading editor…</div>}
+      >
+        <PurchaseReturnDetailInlineEditor />
+      </LazySlot>
+    );
+  }
+  return <PurchaseReturnDetailV2ReadOnly />;
+}
+
+function PurchaseReturnDetailV2ReadOnly() {
   const { id } = useParams<{ id: string }>();
   const [params] = useSearchParams();
   const navigate = useNavigate();
@@ -248,6 +289,9 @@ export function PurchaseReturnDetailV2() {
   const askPrompt = usePrompt();
 
   const purchaseReturn = (detail.data as { purchaseReturn?: PrHeader } | undefined)?.purchaseReturn ?? null;
+  /* A repair return waits for GOODS, not money: the credit-note chase would
+     send the operator looking for a document that is never coming. */
+  const isRepairReturn = (purchaseReturn?.kind ?? 'CREDIT') === 'REPAIR';
   const items: PrItem[] = useMemo(
     () => ((detail.data as { items?: PrItem[] } | undefined)?.items ?? []),
     [detail.data]
@@ -268,6 +312,9 @@ export function PurchaseReturnDetailV2() {
   // browser history happens to point). The list restores its own sticky
   // filters, so the prior filtered view comes back — no context lost.
   const goBack = () => navigate(scmListReturnTo("/scm/purchase-returns"));
+  // Only a POSTED ("Confirmed") return is editable — the legacy editor locks
+  // COMPLETED / CANCELLED, so don't offer a button that opens a locked page.
+  const canEdit = eff === "posted";
   const goEdit = () => id && navigate(`/scm/purchase-returns/${id}?edit=1`);
   const goHistory = () => id && navigate(`/scm/purchase-returns/${id}?tab=history`);
   // Render + download the PR PDF via the shared jspdf generator (client-side),
@@ -374,7 +421,7 @@ export function PurchaseReturnDetailV2() {
       getValue: (l) => l.qty_returned ?? l.qty ?? 0,
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
-          {l.qty_returned ?? l.qty ?? 0} <span className="text-[10.5px] text-ink-muted">{l.uom || ""}</span>
+          {fmtQty(l.qty_returned ?? l.qty ?? 0)} <span className="text-[10.5px] text-ink-muted">{l.uom || ""}</span>
         </span>
       ),
     },
@@ -490,7 +537,7 @@ export function PurchaseReturnDetailV2() {
             {canCancel && <Button variant="danger" icon={<XCircle size={14} />} onClick={doCancel}>Cancel return</Button>}
             {canPost && <Button variant="secondary" icon={<Send size={14} />} onClick={doPost}>Post</Button>}
             {canComplete && <Button variant="secondary" icon={<CheckCircle2 size={14} />} onClick={doComplete}>Complete</Button>}
-            <Button variant="primary" icon={<Edit3 size={14} />} onClick={goEdit}>Edit</Button>
+            {canEdit && <Button variant="primary" icon={<Edit3 size={14} />} onClick={goEdit}>Edit</Button>}
           </div>
         </div>
       </div>
@@ -504,7 +551,14 @@ export function PurchaseReturnDetailV2() {
             {fmtMoney(refund, purchaseReturn.currency)}
           </div>
           <div className="mt-1.5 text-[12px] text-ink-muted">
-            {items.length} line{items.length === 1 ? "" : "s"} · {EFFECTIVE_TONE[effectiveOf(purchaseReturn)].blurb}
+            {/* A repair return is waiting for the GOODS. Saying "awaiting credit
+                note" would send the operator hunting a document that is never
+                coming (owner 2026-09-28). */}
+            {items.length} line{items.length === 1 ? "" : "s"} · {
+              isRepairReturn && effectiveOf(purchaseReturn) === "posted"
+                ? "Confirmed · with the supplier, awaiting return"
+                : EFFECTIVE_TONE[effectiveOf(purchaseReturn)].blurb
+            }
           </div>
         </div>
 
@@ -513,7 +567,14 @@ export function PurchaseReturnDetailV2() {
             {purchaseReturn.reason && (
               <div className="mb-4 rounded-lg border-l-4 border-primary bg-primary-soft px-4 py-3">
                 <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">Return reason</div>
-                <div className="mt-1 text-[14px] font-semibold italic text-ink">“{purchaseReturn.reason}”</div>
+                {/* Stored as a CODE since 2026-09-28; the helper prints an older
+                    row’s free text verbatim rather than hiding it. */}
+                <div className="mt-1 text-[14px] font-semibold italic text-ink">“{purchaseReturnReasonLabel(purchaseReturn.reason)}”</div>
+                {isRepairReturn && (
+                  <div className="mt-1.5 text-[12px] text-ink-muted">
+                    With the supplier to be fixed and expected back — no credit note is owed.
+                  </div>
+                )}
               </div>
             )}
 
@@ -610,11 +671,11 @@ export function PurchaseReturnDetailV2() {
             <button type="button" onClick={doComplete} className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink">
               <CheckCircle2 size={16} /> Complete
             </button>
-          ) : (
+          ) : canEdit ? (
             <button type="button" onClick={goEdit} className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink">
               <Edit3 size={16} /> Edit
             </button>
-          )}
+          ) : null}
           <button type="button" onClick={print.openPreview} className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-surface-2 text-primary-ink hover:bg-primary-soft" aria-label="Print PDF">
             <Printer size={17} />
           </button>

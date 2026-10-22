@@ -240,16 +240,16 @@ export const ConsignmentOrderNew = () => {
   useAddLineHotkey(addLine);
   const dropLine = (rid: string) => setLines((prev) => prev.filter((l) => l.rid !== rid));
 
-  /* Client-side master-follower cascade for delivery date. */
+  /* Client-side master-follower cascade for delivery date. Last edit wins
+     (owner 2026-10-06): a hand-set line follows the header again. */
   useEffect(() => {
     setLines((prev) => {
       let didUpdate = false;
       const target = deliveryDate || null;
       const next = prev.map((l) => {
-        if (l.lineDeliveryDateOverridden) return l;
-        if ((l.lineDeliveryDate ?? null) === target) return l;
+        if (!l.lineDeliveryDateOverridden && (l.lineDeliveryDate ?? null) === target) return l;
         didUpdate = true;
-        return { ...l, lineDeliveryDate: target };
+        return { ...l, lineDeliveryDate: target, lineDeliveryDateOverridden: false };
       });
       return didUpdate ? next : prev;
     });
@@ -662,7 +662,7 @@ export const ConsignmentOrderNew = () => {
               />
             </label>
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Customer Ref</span>
+              <span className={styles.fieldLabel}>Ref No.</span>
               <input
                 className={styles.fieldInput}
                 value={customerSoNo}
@@ -1026,7 +1026,9 @@ export const ConsignmentOrderNew = () => {
                  server would have accepted. Same conditional rule as
                  SalesOrderNew; the CO is an ORDER, not a downstream document. */
               variantsRequired={!!processingDate}
+              lineDateLocked={false}
               seedSofaLegDefault={true}
+              attachOptions={null}
             />
           ))}
 

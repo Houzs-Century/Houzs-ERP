@@ -1,6 +1,9 @@
 # Combo Pricing
 
-Prices a whole COMBINATION of sofa modules instead of summing the modules individually, and overrides per-model compartment pricing when a line's module set matches. Everything goes through `/api/scm/sofa-combos`.
+Prices a whole COMBINATION of sofa modules instead of summing the modules individually, and overrides per-model compartment pricing when a line's module set matches. Two tables with two owners:
+
+- `scm.sofa_combo_pricing` via `/api/scm/sofa-combos` — Houzs's combos: supplier cost, the master cost anchor, and company 1's selling price.
+- `scm.pos_sofa_combos` via `/api/scm/pos-pools/sofa-combos` — the '2990' company's SELLING combos, authored on the 2990 POS. No cost column. Owner ruling: Houzs combos are Houzs's cost, 2990 combos are the POS's selling price, the two sets may differ, and Houzs may not change 2990's.
 
 ## Statuses and flow
 
@@ -10,9 +13,15 @@ Prices a whole COMBINATION of sofa modules instead of summing the modules indivi
 
 ## Permissions
 
+- `scm.pos_sofa_combos` is written ONLY by `scm.pos_sofa_combo_insert` / `scm.pos_sofa_combo_retire` (SECURITY DEFINER, EXECUTE for service_role only), which the `/pos-pools/sofa-combos` writes call with the real caller. service_role has SELECT only; a trigger refuses every other writer, every DELETE / TRUNCATE, and any change except retiring. Every create / retire is in `scm.pos_sofa_combo_audit`.
+
 - All writes gate on `requireWriteRole` (the `scm_config_write` permission). This checks permission ONLY, not tenancy — every by-id write (`PUT`/`DELETE /:id`) must separately company-scope its read of the target row, or an edit can clone another company's combo tuple into the active company.
 
 ## Rules that must not break
+
+- A SELLING reader gets combos from `loadSellingSofaCombos` (`lib/pos-sofa-combos.ts`): the '2990' company reads `pos_sofa_combos`, other companies the `sofa_combo_pricing` master rows. Never price a 2990 line from `sofa_combo_pricing` — its company-2 rows are Houzs cost work. A failed `pos_sofa_combos` read throws; it must not fall back to pricing a-la-carte.
+- Lookups by combo id (PWP rules, special-delivery targets) read BOTH tables (`loadLiveCombosByIds`, `loadComboModulesById`) — a POS combo created after the split exists only in `pos_sofa_combos`.
+- The SO cost spread keeps `loadMasterSofaCombos` (Houzs's table) for every company.
 
 - Combos must load and match at `PRICE_1` only (`computeSofaSellingSen` pins it) — module seat prices load at `PRICE_1` and every combo is authored at `PRICE_1`; matching against any other tier would make the server price a-la-carte while the POS applied the combo, and the drift gate would then reject a correct order.
 - `computeSofaSellingSen` is the one authoritative selling-total function, shared by the server's drift gate and the POS configurator — never fork a second pricing calculation for either surface.
@@ -27,6 +36,8 @@ Prices a whole COMBINATION of sofa modules instead of summing the modules indivi
 - The supplier-scoped half of `sofa_combo_pricing` is the majority of the table's rows in production — treat supplier-cost combos as the common case, not an edge case, when reasoning about this data.
 
 ## Where the code is
+
+- `backend/src/scm/lib/pos-sofa-combos.ts` — which table a reader uses; `backend/src/scm/routes/pos-sofa-combos.ts` — the POS's list / history / create / edit / retire.
 
 - `backend/src/scm/routes/sofa-combos.ts` — main API surface; combo cost auto-derives from the max supplier (flag-gated).
 - `backend/src/scm/shared/sofa-build.ts` — `computeSofaSellingSen`, the compartment-from-SKU derivation.

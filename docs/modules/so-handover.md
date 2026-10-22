@@ -34,10 +34,12 @@ Both answer per-order (`{moved, skipped}` / `{changed, skipped}`), never a bare 
 - There is no "replace" mode on `/share`, only `add` / `remove` — an unrecognised mode falls back to `add`. A replace was rejected on purpose: it would silently drop a grant someone else made.
 - A share that already exists reports as `skipped`, not `changed` — a second identical grant is a no-op and the response says so.
 - The "Shared with" field is absent (not blank) on an unshared order — most orders have no collaborators, and rendering blank rows everywhere would train people to stop reading the field.
+- **Per-order sharing on SO Detail** (2026-09-28): the "Shared with" field on desktop and mobile SO detail is ONE shared component, `vendor/scm/components/SoSharedWith.tsx`. For `scm.so.attribute_other` holders it is always shown (even when empty) as chips with a remove button plus an "Add a person" picker, and calls the same `POST /share` with a one-order `docNos`. A `skipped` answer for that order is surfaced as an error, not a success. Viewers without the permission still see the names only, and nothing when unshared. The Handover panel remains the tool for a salesperson's WHOLE book.
 
 ## Where the code is
 
 - `backend/src/scm/routes/so-handover.ts` — holders/preview/apply/share routes.
+- `frontend/src/vendor/scm/components/SoSharedWith.tsx` + `vendor/scm/lib/so-share-queries.ts` — per-order share editor on SO detail (desktop + mobile).
 - `backend/src/scm/shared/so-identity-lock.ts` — identity lock + the `agent` carve-out.
 - `backend/src/scm/lib/so-agent.ts` — `followSalespersonToAgent`.
 - `backend/src/db/migrations-pg/20260909T1000_scm_so_collaborator_staff_ids.sql`, `20260909T1001_scm_so_payment_totals_view_carries_collaborators.sql` — collaborator columns + trigger + view.

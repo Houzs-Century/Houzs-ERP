@@ -24,6 +24,7 @@
 
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useDocumentFlow } from "../../vendor/scm/lib/flow-queries";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import {
   ArrowLeft,
@@ -70,6 +71,7 @@ import { useRacks } from "../../vendor/scm/lib/warehouse-queries";
 import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
+import { DoProofOfDeliveryCard, doIsDelivered } from "./DoProofOfDeliveryCard";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { usePrompt } from "../../vendor/scm/components/PromptDialog";
@@ -88,7 +90,7 @@ import {
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
 import { convertToLink, transferToLabel } from "../../lib/convertScope";
-import { buildVariantSummary, fmtDate, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, orderLineIdentity, fmtQty } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useAuth } from "../../auth/AuthContext";
 import { canOperateDeliveryOrders, canRevertDelivery } from "../../auth/salesAccess";
@@ -151,6 +153,11 @@ type DoHeader = HoldFields & {
      delivery without noticing there was no evidence on the row. */
   signature_data?: string | null;
   pod_r2_key?: string | null;
+  departure_at?: string | null;
+  arrival_at?: string | null;
+  delivered_at?: string | null;
+  pod_lat?: number | null;
+  pod_lng?: number | null;
   lifecycle_state?: DoLifecycle;
   currency: string;
   created_at?: string;
@@ -945,7 +952,7 @@ export function DeliveryOrderDetailV2() {
       getValue: (l) => l.qty,
       render: (l) => (
         <span className="font-money text-[14px] font-semibold text-ink">
-          {l.qty}
+          {fmtQty(l.qty)}
           <span className="ml-1 text-[10.5px] font-normal text-ink-muted">
             {l.uom || ""}
           </span>
@@ -1017,6 +1024,7 @@ export function DeliveryOrderDetailV2() {
   if (detail.isPending) {
     return (
       <div className="animate-fade-in p-8 text-center text-ink-muted">
+        <DoDetailWarmup id={id} />
         Loading delivery order…
       </div>
     );
@@ -1306,7 +1314,7 @@ export function DeliveryOrderDetailV2() {
                   value={deliveryOrder.debtor_name || "—"}
                 />
                 <Field
-                  label="Customer SO ref"
+                  label="Ref No."
                   value={refOf(deliveryOrder)}
                   mono={refOf(deliveryOrder) !== "—"}
                   accent={refOf(deliveryOrder) !== "—"}
@@ -1517,10 +1525,14 @@ export function DeliveryOrderDetailV2() {
                 />
                 <KeyDateRow
                   k="Delivered"
-                  v={effectiveOf(deliveryOrder) === "shipped" ? "Pending" : EFFECTIVE_TONE[effectiveOf(deliveryOrder)].label}
-                  muted={effectiveOf(deliveryOrder) === "shipped" || effectiveOf(deliveryOrder) === "draft"}
+                  v={doIsDelivered(deliveryOrder)
+                    ? (deliveryOrder.delivered_at ? fmtDate(deliveryOrder.delivered_at) : "Delivered")
+                    : effectiveOf(deliveryOrder) === "shipped" ? "Pending" : EFFECTIVE_TONE[effectiveOf(deliveryOrder)].label}
+                  muted={!doIsDelivered(deliveryOrder) && (effectiveOf(deliveryOrder) === "shipped" || effectiveOf(deliveryOrder) === "draft")}
                 />
               </AsideCard>
+
+              <DoProofOfDeliveryCard h={deliveryOrder} />
 
               <AsideCard title="People">
                 <PersonRow
@@ -1722,15 +1734,12 @@ export function DeliveryOrderDetailV2() {
         pairing={chainPairing}
       />
       {/* A chain slot standing for several documents opens this chooser instead
-          of a notice that only named them. Picking a row navigates, so the map
-          closes with it. */}
+          of a notice that only named them. The picked one opens in its own tab of the
+          in-app strip. */}
       <DocumentChoiceDialog
         prompt={chainChoice}
         onClose={closeChainChoice}
-        onPick={(d) => {
-          closeModal();
-          pickChainChoice(d);
-        }}
+        onPick={pickChainChoice}
       />
       <PrintPreviewModal
         open={modal === "print"}
@@ -1755,3 +1764,12 @@ function Divider() {
 }
 
 export default DeliveryOrderDetailV2;
+
+/* HC-0002: the relationship map and the rack card start their reads with the
+   header rather than after it (document flow began at ~0.8s on prod). Same
+   hooks, same arguments as those panels; renders nothing. */
+function DoDetailWarmup({ id }: { id: string | undefined }) {
+  useDocumentFlow("do", id ?? null);
+  useRacks();
+  return null;
+}

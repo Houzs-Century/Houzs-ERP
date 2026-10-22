@@ -27,7 +27,7 @@ import { writeScmHandoff } from '../../lib/scmHandoffStorage';
 import { readConvertScope, UnrecognisedScopeNotice } from '../../lib/convertScope';
 import { ArrowRight, Search, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { fmtDateOrDash } from '../../vendor/shared/format';
+import { fmtDateOrDash, fmtQty } from '../../vendor/shared/format';
 import {
   useOutstandingGrnItems,
   type OutstandingGrnItem,
@@ -40,12 +40,11 @@ import { PageHeader } from '../../components/Layout';
 import { SearchInput } from '../../components/Button';
 import { SearchScopeHint } from '../../components/SearchScopeHint';
 
+import { fmtMoneySen } from '../../vendor/shared/format';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number, currency = 'MYR'): string =>
-  `${currency} ${(centi / 100).toLocaleString('en-MY', {
-    minimumFractionDigits: 2, maximumFractionDigits: 2,
-  })}`;
+  fmtMoneySen(centi, currency);
 
 export const PurchaseInvoiceFromGrn = () => {
   const navigate = useNavigate();
@@ -426,7 +425,7 @@ export const PurchaseInvoiceFromGrn = () => {
                           description={l.description}
                         />
                       </div>
-                      <span style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-13)' }}>{l.remaining}</span>
+                      <span style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-13)' }}>{fmtQty(l.remaining)}</span>
                       <input
                         type="number"
                         min={0}

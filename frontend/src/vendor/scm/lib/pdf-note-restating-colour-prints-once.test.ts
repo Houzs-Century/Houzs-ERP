@@ -6,7 +6,9 @@
  * "COVE-13 / SPECIAL: Col : cove 13"; HC-PO-2609-103 SB02 { COVE-08, "COVE-08" }
  * printed "Fabric: COVE-08 / SPECIAL: COVE-08". Asserted on what the real
  * generators PAINT into the PDF stream (docs/bugs/0934). */
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+// The letterhead is fetched for the tab's company before drawing (BUG-111).
+vi.mock('../../../hooks/useBranding', () => ({ ensureBrandingForActiveCompany: async () => {} }));
 
 import { DEFAULT_BRANDING, clearBrandingLogoCache, setBrandingCache } from '../../../lib/branding';
 import { purchaseOrderPdfBase64 } from './purchase-order-pdf';

@@ -14,7 +14,7 @@
 //     the headline numbers (matches the Houzs interactive feel)
 //   - Horizontal filter row (Filter icon · search · All Brands ▼ ·
 //     All Agents ▼ · All Venues ▼ · date from – to)
-//   - <DataGrid groupBanner={false}> hides the "drag column header here to
+//   - <DataGridCompat groupBanner={false}> hides the "drag column header here to
 //     group by that column" banner
 //
 // 2026-05-27 HOUZS port (so-list-houzs-port): re-ordered columns to match
@@ -29,17 +29,23 @@ import { useEffect, useMemo, useState } from 'react';
 import { canViewScmCosting } from "../../auth/salesAccess";
 import { brandingLabel } from '../../vendor/shared/so-branding-label';
 import { getBrandingCompanyCode } from '../../lib/branding';
-import type { JSX } from 'react';
+import type { JSX, ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, X, Search } from 'lucide-react';
+import { Plus, X, Search, ExternalLink, Edit3, Printer, Truck, RotateCcw } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { Button as DrawerButton } from '../../components/Button';
+import { Badge } from '../../components/Badge';
+import { ResizableDetailDrawer } from '../../components/ResizableDetailDrawer';
+import { statusFor } from './so-list-status';
+import { canCreateConsignmentNote } from './co-note-gate';
+import { cn } from '../../lib/utils';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { ListingPickerDialog, type ListingChoice } from '../../vendor/scm/components/ListingPickerDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { formatPhone } from '@2990s/shared/phone';
-import { buildVariantSummary, fmtDateOrDash, fmtQty } from '@2990s/shared';
+import { buildVariantSummary, fmtDateOrDash, fmtQty, fmtSen, orderLineIdentity } from '@2990s/shared';
 import {
   useConsignmentOrdersPaged, useUpdateConsignmentOrderStatus,
   useConsignmentOrderDetail,
@@ -52,7 +58,7 @@ import { ListPager } from '../../components/ListPager';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { useDebouncedSearchTerm, useSearchResultTransition } from '../../hooks/useServerSearch';
 import { useStaff } from '../../vendor/scm/lib/admin-queries';
-import { generateSalesOrderPdf } from '../../vendor/scm/lib/sales-order-pdf';
+import { CONSIGNMENT_ORDER_PDF_OPTS, generateSalesOrderPdf } from '../../vendor/scm/lib/sales-order-pdf';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { BrandingPill, badgeFor } from '../../vendor/scm/lib/category-badges';
 import { soStatusDisplay, type DeliveryState, type SoLifecycle } from '../../vendor/scm/lib/so-status';
@@ -63,6 +69,7 @@ import { StatCard } from '../../components/StatCard';
 import soDetailStyles from './SalesOrderDetail.module.css';
 import { retryUnlessClientError } from '../../lib/retryPolicy';
 import { transferToColumnLabel } from "../../lib/convertScope";
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import { customerRefOf } from '../../lib/customer-ref';
 
 /* Local payments hook — lazy-loaded per expanded SO row alongside the detail
@@ -236,19 +243,6 @@ type SoRow = {
      reached (DO / SI / DR), falling back to this SO's own number when nothing
      downstream exists yet. Same "latest event wins" order as the status badge. */
   current_doc_no?: string | null;
-};
-
-const fmtRm = (centi: number): string =>
-  (centi / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-/* Compact date — "2026/04/21". Falls back to the raw ISO string when the
-   source isn't a parseable date so legacy data still shows. */
-const compactDate = (iso: string | null | undefined): string => {
-  if (!iso) return '';
-  // Accept either YYYY-MM-DD or a full ISO timestamp.
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
-  if (!m) return iso;
-  return `${m[1]}/${m[2]}/${m[3]}`;
 };
 
 /* Follow-up #83 — Balance column source-of-truth chain:
@@ -445,7 +439,7 @@ const stockLabelOf = (it: SoItem): string => {
    RM 0.00. The backend also omits the keys from the payload
    (canViewScmFinance), so rendering them for a non-finance user could only ever
    print zeros. */
-const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): DataGridColumn<SoItem>[] => [
+const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): GridColumn<SoItem>[] => [
   {
     key: 'group', label: 'Group', width: 90, groupable: true,
     accessor: (it) => <CategoryPill group={it.item_group} />,
@@ -487,7 +481,8 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): DataGr
   },
   {
     key: 'qty', label: 'Qty', width: 60, align: 'right',
-    accessor: (it) => it.qty ?? 0,
+    accessor: (it) => fmtQty(it.qty ?? 0),
+    exportValue: (it) => Number(it.qty ?? 0),
     searchValue: (it) => String(it.qty ?? 0),
     sortFn: (a, b) => Number(a.qty ?? 0) - Number(b.qty ?? 0),
   },
@@ -500,7 +495,7 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): DataGr
         <div>
           {it.deliveries!.map((d, di) => (
             <div key={di} style={{ fontWeight: 600, color: '#16695f', whiteSpace: 'nowrap' }}>
-              {d.doNumber} <span style={{ color: 'var(--fg-muted)', fontWeight: 400 }}>×{d.qty}</span>
+              {d.doNumber} <span style={{ color: 'var(--fg-muted)', fontWeight: 400 }}>×{fmtQty(d.qty)}</span>
             </div>
           ))}
           {typeof it.remaining_qty === 'number' && (
@@ -508,7 +503,7 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): DataGr
               fontSize: 'var(--fs-10)', marginTop: 1,
               color: it.remaining_qty > 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--c-secondary-a, #2F5D4F)',
             }}>
-              {it.remaining_qty > 0 ? `Balance ${it.remaining_qty}` : 'Fully delivered'}
+              {it.remaining_qty > 0 ? `Balance ${fmtQty(it.remaining_qty)}` : 'Fully delivered'}
             </div>
           )}
         </div>
@@ -518,7 +513,7 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): DataGr
   },
   {
     key: 'unit_price', label: 'Unit Price', width: 100, align: 'right',
-    accessor: (it) => fmtRm(Number(it.unit_price_sen ?? 0)),
+    accessor: (it) => fmtSen(Number(it.unit_price_sen ?? 0)),
     exportValue: (it) => Number(it.unit_price_sen ?? 0) / 100,
     exportFormat: 'rate',
     searchValue: (it) => String(it.unit_price_sen ?? 0),
@@ -526,7 +521,7 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): DataGr
   },
   {
     key: 'total', label: 'Total', width: 100, align: 'right',
-    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtRm(Number(it.total_sen ?? 0))}</span>,
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtSen(Number(it.total_sen ?? 0))}</span>,
     exportValue: (it) => Number(it.total_sen ?? 0) / 100,
     exportFormat: 'money',
     searchValue: (it) => String(it.total_sen ?? 0),
@@ -536,7 +531,7 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): DataGr
     ? ([
         {
           key: 'unit_cost', label: 'Unit Cost', width: 100, align: 'right',
-          accessor: (it) => fmtRm(Number(it.unit_cost_sen ?? 0)),
+          accessor: (it) => fmtSen(Number(it.unit_cost_sen ?? 0)),
           exportValue: (it) => Number(it.unit_cost_sen ?? 0) / 100,
           exportFormat: 'rate',
           searchValue: (it) => String(it.unit_cost_sen ?? 0),
@@ -544,7 +539,7 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): DataGr
         },
         {
           key: 'line_cost', label: 'Line Cost', width: 100, align: 'right',
-          accessor: (it) => fmtRm(lineCostOf(it)),
+          accessor: (it) => fmtSen(lineCostOf(it)),
           exportValue: (it) => lineCostOf(it) / 100,
           exportFormat: 'money',
           searchValue: (it) => String(lineCostOf(it)),
@@ -555,14 +550,14 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): DataGr
           accessor: (it) => {
             const m = lineMarginOf(it);
             const c = m > 0 ? 'var(--c-secondary-a, #2F5D4F)' : m < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)';
-            return <span style={{ color: c, fontWeight: 600 }}>{fmtRm(m)}</span>;
+            return <span style={{ color: c, fontWeight: 600 }}>{fmtSen(m)}</span>;
           },
           exportValue: (it) => lineMarginOf(it) / 100,
           exportFormat: 'money',
           searchValue: (it) => String(lineMarginOf(it)),
           sortFn: (a, b) => lineMarginOf(a) - lineMarginOf(b),
         },
-      ] as DataGridColumn<SoItem>[])
+      ] as GridColumn<SoItem>[])
     : []),
   {
     key: 'stock', label: 'Stock', width: 100, groupable: true,
@@ -681,7 +676,7 @@ const ExpandedSoLines = ({ docNo, canFinance }: { docNo: string; canFinance: boo
           `embedded` mode (no search box / footer chrome). Layout persists under
           one shared key so the operator's column choices follow them into every
           SO they expand. */}
-      <DataGrid<SoItem>
+      <DataGridCompat<SoItem>
         rows={items}
         columns={columns}
         storageKey="so-drilldown-grid.v1"
@@ -702,13 +697,256 @@ const ExpandedSoLines = ({ docNo, canFinance }: { docNo: string; canFinance: boo
           fontFamily: 'var(--font-button)', fontSize: 'var(--fs-10)',
           letterSpacing: '0.06em', textTransform: 'uppercase',
         }}>Subtotal</span>
-        <span>Total <strong style={{ color: '#16695f' }}>{fmtRm(totalSen)}</strong></span>
-        {canFinance && <span>Line Cost <strong style={{ color: 'var(--c-ink)' }}>{fmtRm(costSen)}</strong></span>}
-        {canFinance && <span>Margin <strong style={{ color: marginColor }}>{fmtRm(marginSen)}</strong></span>}
+        <span>Total <strong style={{ color: '#16695f' }}>{fmtSen(totalSen)}</strong></span>
+        {canFinance && <span>Line Cost <strong style={{ color: 'var(--c-ink)' }}>{fmtSen(costSen)}</strong></span>}
+        {canFinance && <span>Margin <strong style={{ color: marginColor }}>{fmtSen(marginSen)}</strong></span>}
       </div>
     </div>
   );
 };
+
+/* ─── Quick-view drawer ────────────────────────────────────────────────────
+   Row click opens the same right slide-over the Sales Order list has
+   (MfgSalesOrdersListV2 DetailDrawer): header · meta · customer · lines ·
+   totals · actions, with "Open full page" for the editor. Lines come from
+   the SAME detail query the expand-chevron drill-down uses, so the two can
+   never disagree about an order. */
+function ConsignmentOrderDrawer({
+  row,
+  canFinance,
+  salespersonName,
+  onClose,
+  onOpenFull,
+  onEdit,
+  onPrint,
+  onCreateNote,
+  onReopen,
+}: {
+  row: SoRow | null;
+  canFinance: boolean;
+  salespersonName: string;
+  onClose: () => void;
+  onOpenFull: () => void;
+  onEdit: () => void;
+  onPrint: () => void;
+  onCreateNote: () => void;
+  onReopen: () => void;
+}) {
+  const detailQ = useConsignmentOrderDetail(row?.doc_no ?? null);
+  const items = ((detailQ.data?.items ?? []) as SoItem[]).filter((it) => !it.cancelled);
+  const open = Boolean(row);
+  const st = row ? statusFor(row.status) : null;
+  const eff = row ? soStatusDisplay(row.status, row.delivery_state, row.lifecycle_state) : null;
+  const statusLabel = row ? (eff?.label ?? (STATUS_LABEL[row.status] || row.status.replace(/_/g, ' '))) : '';
+
+  /* Totals from live lines once the detail has resolved; header totals until
+     then so the drawer reads immediately. Prices are SST-inclusive, so Total
+     is the subtotal (same rule as the SO drawer). */
+  const subtotalSen = items.length > 0
+    ? items.reduce((sum, l) => sum + Number(l.total_sen ?? Number(l.qty ?? 0) * Number(l.unit_price_sen ?? 0)), 0)
+    : row?.local_total_sen ?? 0;
+  const paidSen = row?.paid_total_sen ?? row?.paid_sen ?? 0;
+  const outstandingSen = subtotalSen - paidSen;
+
+  const status = row?.status ?? '';
+  const hasChildren = Boolean(row?.has_children);
+  const canCreateNote = row ? canCreateConsignmentNote(row) : false;
+  const brand = row ? deriveBranding(row) : '';
+
+  return (
+    <ResizableDetailDrawer
+      open={open}
+      onClose={onClose}
+      ariaLabel={row ? `Consignment order ${row.doc_no}` : 'Consignment order details'}
+    >
+      {row && st && (
+        <>
+          <div className="flex h-[60px] shrink-0 items-center gap-3 bg-sidebar px-5 text-sidebar-ink">
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-sidebar-ink-muted hover:text-sidebar-ink"
+              aria-label="Close details"
+            >
+              <X size={18} />
+            </button>
+            <div className="min-w-0 flex-1">
+              <div className="font-mono text-[14px] font-bold tracking-wide">{row.doc_no}</div>
+              <div className="mt-0.5 text-[11px] text-sidebar-ink-muted">Consignment Order</div>
+            </div>
+            <button
+              type="button"
+              onClick={onOpenFull}
+              className="inline-flex items-center gap-1.5 rounded-md border border-accent-bright/40 px-2.5 py-1.5 text-[11.5px] font-semibold text-accent-bright hover:bg-accent-bright/10"
+            >
+              Open full page <ExternalLink size={12} />
+            </button>
+            <Badge tone={st.tone} variant="solid" size="xs">{statusLabel}</Badge>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-5 py-5">
+            <div className="text-[19px] font-bold text-ink">{row.debtor_name || '—'}</div>
+            <div className="mt-1.5 flex items-center gap-2.5">
+              {brand ? <BrandingPill branding={brand} /> : null}
+              <span className="text-[12.5px] text-ink-muted">Ordered {fmtDateOrDash(row.so_date)}</span>
+            </div>
+
+            <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
+              <DrawerMeta k="Salesperson" v={salespersonName} />
+              <DrawerMeta k="Location" v={row.sales_location || '—'} />
+              <DrawerMeta k="Ref No." v={customerRefOf(row) || '—'} mono />
+              <DrawerMeta k="Branding" v={brand || '—'} />
+              <DrawerMeta k="Order date" v={fmtDateOrDash(row.so_date)} />
+              <DrawerMeta k="Processing" v={fmtDateOrDash(row.processing_date)} />
+              <DrawerMeta k="Delivery" v={fmtDateOrDash(row.customer_delivery_date)} />
+              <DrawerMeta k="Current doc" v={row.current_doc_no ?? row.doc_no} mono />
+              <DrawerMeta k="Venue" v={row.venue || '—'} />
+              <DrawerMeta k="Payment" v={row.payment_methods_summary || row.payment_method || '—'} />
+            </dl>
+
+            <DrawerSection>Customer &amp; delivery</DrawerSection>
+            <div className="overflow-hidden rounded-lg border border-border bg-surface">
+              <div className="flex items-center gap-3 border-b border-border-subtle px-4 py-3.5">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent-soft text-[13px] font-bold text-accent-ink">
+                  {(row.debtor_name || 'C').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w.charAt(0).toUpperCase()).join('') || 'C'}
+                </span>
+                <div className="min-w-0">
+                  <div className="text-[14px] font-bold text-ink">{row.debtor_name}</div>
+                  {row.debtor_code && (
+                    <div className="mt-0.5 font-mono text-[11.5px] text-ink-muted">{row.debtor_code}</div>
+                  )}
+                </div>
+              </div>
+              <DrawerKV k="Phone" v={formatPhone(row.phone) || '—'} />
+              <DrawerKV k="Email" v={row.email || '—'} />
+              <DrawerKV
+                k="Address"
+                v={[row.address1, row.address2, row.city, row.postcode, row.customer_state].filter(Boolean).join(', ') || '—'}
+              />
+            </div>
+
+            <DrawerSection>Order lines</DrawerSection>
+            <div className="overflow-hidden rounded-lg border border-border">
+              <div className="grid grid-cols-[minmax(0,1fr)_30px_92px_76px] gap-2 border-b border-border-subtle bg-surface-2 px-4 py-2 font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
+                <span>Item</span>
+                <span className="text-right">Qty</span>
+                <span className="text-right">Amount</span>
+                <span>Stock</span>
+              </div>
+              {detailQ.isLoading && (
+                <div className="px-4 py-8 text-center text-[12px] text-ink-muted">Loading lines…</div>
+              )}
+              {detailQ.isError && (
+                <div className="px-4 py-8 text-center text-[12px] text-err">
+                  {detailQ.error instanceof Error ? detailQ.error.message : 'Failed to load lines'}
+                </div>
+              )}
+              {!detailQ.isLoading && !detailQ.isError && items.length === 0 && (
+                <div className="px-4 py-8 text-center text-[12px] text-ink-muted">No lines</div>
+              )}
+              {items.map((l) => {
+                const amt = Number(l.total_sen ?? Number(l.qty ?? 0) * Number(l.unit_price_sen ?? 0));
+                const { primary, secondary } = orderLineIdentity({
+                  code: l.item_code,
+                  description: l.description,
+                  variant: buildVariantSummary(l.item_group ?? '', l.variants ?? null),
+                });
+                const stock = stockLabelOf(l);
+                return (
+                  <div
+                    key={l.id}
+                    className="grid grid-cols-[minmax(0,1fr)_30px_92px_76px] items-start gap-2 border-b border-border-subtle px-4 py-3 last:border-b-0"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <CategoryPill group={l.item_group} />
+                        <span className="text-[12.5px] font-medium leading-snug text-ink">{primary || '—'}</span>
+                      </div>
+                      {secondary && (
+                        <div className="mt-0.5 text-[11.5px] leading-snug text-ink-secondary">{secondary}</div>
+                      )}
+                    </div>
+                    <span className="text-right font-money text-[12.5px] text-ink-secondary">{fmtQty(Number(l.qty ?? 0))}</span>
+                    <span className="text-right font-money text-[12.5px] font-semibold text-ink">{fmtSen(amt)}</span>
+                    <span className={cn(
+                      'text-[11px] font-semibold',
+                      stock === 'STOCK' && 'text-synced',
+                      stock === 'DELIVERED' && 'text-ink-muted',
+                      stock === 'PENDING' && 'text-warning-text',
+                    )}>{stock}</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-4 rounded-lg border border-border bg-surface px-5 py-4">
+              <DrawerTotal k="Subtotal" v={fmtSen(subtotalSen)} />
+              <DrawerTotal k="Total" v={fmtSen(subtotalSen)} strong />
+              {paidSen > 0 ? <DrawerTotal k="Paid" v={fmtSen(paidSen)} tone="success" /> : null}
+              {outstandingSen !== 0 ? (
+                <DrawerTotal k={outstandingSen < 0 ? 'Over-collected' : 'Outstanding'} v={fmtSen(outstandingSen)} tone="error" />
+              ) : null}
+              {canFinance && row.total_margin_sen != null ? (
+                <DrawerTotal k="Margin" v={fmtSen(row.total_margin_sen)} />
+              ) : null}
+            </div>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-2 border-t border-border bg-surface px-5 py-3">
+            {!hasChildren && (
+              <DrawerButton variant="ghost" icon={<Edit3 size={14} />} onClick={onEdit}>Edit</DrawerButton>
+            )}
+            <DrawerButton variant="ghost" icon={<Printer size={14} />} onClick={onPrint}>Print</DrawerButton>
+            <div className="flex-1" />
+            {status === 'CANCELLED' ? (
+              <DrawerButton variant="primary" icon={<RotateCcw size={14} />} onClick={onReopen}>Reopen</DrawerButton>
+            ) : canCreateNote ? (
+              <DrawerButton variant="primary" icon={<Truck size={14} />} onClick={onCreateNote}>Create Consignment Note</DrawerButton>
+            ) : null}
+          </div>
+        </>
+      )}
+    </ResizableDetailDrawer>
+  );
+}
+
+function DrawerMeta({ k, v, mono }: { k: string; v: ReactNode; mono?: boolean }) {
+  return (
+    <div>
+      <dt className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">{k}</dt>
+      <dd className={cn('mt-0.5 text-[13px] font-semibold text-ink', mono && 'font-mono')}>{v}</dd>
+    </div>
+  );
+}
+
+function DrawerSection({ children }: { children: ReactNode }) {
+  return (
+    <div className="mb-2.5 mt-6 font-mono text-[10px] font-semibold uppercase tracking-brand text-ink-muted">{children}</div>
+  );
+}
+
+function DrawerKV({ k, v }: { k: string; v: ReactNode }) {
+  return (
+    <div className="flex items-start gap-3 border-b border-border-subtle px-4 py-2.5 last:border-b-0">
+      <span className="w-20 shrink-0 font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">{k}</span>
+      <span className="flex-1 text-[13px] font-semibold leading-relaxed text-ink">{v}</span>
+    </div>
+  );
+}
+
+function DrawerTotal({ k, v, strong, tone }: { k: string; v: string; strong?: boolean; tone?: 'success' | 'error' }) {
+  return (
+    <div className={cn('flex items-center justify-between py-1.5', strong && 'border-t border-border-subtle pt-2.5 mt-1')}>
+      <span className={cn('text-[12px] text-ink-muted', strong && 'text-[13px] font-semibold text-ink')}>{k}</span>
+      <span className={cn(
+        'font-money text-[13px] font-semibold',
+        strong && 'text-[15px] font-bold text-ink',
+        tone === 'success' && 'text-synced',
+        tone === 'error' && 'text-err',
+      )}>{v}</span>
+    </div>
+  );
+}
 
 export const ConsignmentOrders = () => {
   const navigate = useNavigate();
@@ -761,6 +999,8 @@ export const ConsignmentOrders = () => {
   // Row-click multi-select (mirrors the SO / DO / GRN lists) — ticks the row;
   // the ▸ chevron still drills down via its own stopPropagation handler.
   const [sel, setSel] = useState<Set<string>>(new Set());
+  /* Row click → quick-view drawer (same as the Sales Order list). */
+  const [selected, setSelected] = useState<SoRow | null>(null);
   /* Clear the selection whenever the visible row set shifts (page / overlay /
      search) — a lingering selection would act on rows no longer on screen. */
   useEffect(() => { setSel(new Set()); }, [page, outstandingOnly, debouncedSearch]);
@@ -871,7 +1111,7 @@ export const ConsignmentOrders = () => {
     await generateSalesOrderPdf(
       json.salesOrder as never, json.items as never, payments as never, action,
       (json.pwpCodes ?? []) as never,
-      { docTitle: 'CONSIGNMENT ORDER', docNoLabel: 'CO No', docNoun: 'consignment order' },
+      CONSIGNMENT_ORDER_PDF_OPTS,
     );
   };
 
@@ -901,7 +1141,7 @@ export const ConsignmentOrders = () => {
     // Commander 2026-05-30 — "Issue Delivery Order" is ALWAYS shown in the menu
     // (so the operator never thinks the feature vanished). When there's nothing
     // left to deliver, tell them plainly instead of silently doing nothing.
-    if (!row.has_undelivered || ['CANCELLED', 'CLOSED', 'ON_HOLD'].includes(row.status)) {
+    if (!canCreateConsignmentNote(row)) {
       notify({
         title: 'Nothing to be converted',
         body: 'Every line on this Consignment Order is already on a note (or the order is closed / cancelled / on hold).',
@@ -915,6 +1155,22 @@ export const ConsignmentOrders = () => {
      fetches it and pre-fills customer + line items (dates/payments excluded). */
   const copyToNewSo = (row: SoRow) => {
     navigate(`/scm/consignment-orders/new?copyFrom=${encodeURIComponent(row.doc_no)}`);
+  };
+
+  /* Reopen — bring a cancelled CO back to CONFIRMED so it proceeds again
+     (Commander 2026-05-29). Shared by the context menu and the drawer CTA. */
+  const doReopen = async (row: SoRow) => {
+    if (!(await askConfirm({
+      title: `Reopen ${row.doc_no} back to CONFIRMED so it can proceed again?`,
+      confirmLabel: 'Reopen',
+    }))) return;
+    updateStatus.mutate(
+      { docNo: row.doc_no, status: 'CONFIRMED' },
+      {
+        onSuccess: () => setSelected(null),
+        onError: (e) => notify({ title: 'Failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }),
+      },
+    );
   };
 
   // ── Columns (23 reference + 1 status pill) ──────────────────────
@@ -987,14 +1243,14 @@ export const ConsignmentOrders = () => {
         <StatCard
           pending={isLoading}
           label="Revenue"
-          value={`RM ${fmtRm(kpis.revenue)}`}
+          value={fmtSen(kpis.revenue)}
           subtitle="All matching orders"
           rail="bg-accent"
         />
         <StatCard
           pending={isLoading}
           label="Outstanding"
-          value={`RM ${fmtRm(kpis.outstanding)}`}
+          value={fmtSen(kpis.outstanding)}
           subtitle="Balance due"
           tone={kpis.outstanding > 0 ? 'error' : 'default'}
           rail={kpis.outstanding > 0 ? 'bg-err' : 'bg-border-strong'}
@@ -1002,7 +1258,7 @@ export const ConsignmentOrders = () => {
         <StatCard
           pending={isLoading}
           label="Paid"
-          value={`RM ${fmtRm(kpis.paid)}`}
+          value={fmtSen(kpis.paid)}
           subtitle="Receipts to date"
           tone={kpis.paid > 0 ? 'success' : 'default'}
           rail="bg-synced"
@@ -1036,13 +1292,14 @@ export const ConsignmentOrders = () => {
         initial={outstandingOnly ? 'outstanding-listing' : 'listing'}
       />
 
-      <DataGrid<SoRow>
+      <DataGridCompat<SoRow>
         rows={searchTransition.resultsAreStale ? [] : baseRows}
         columns={COLUMNS}
         storageKey={STORAGE_KEY}
         exportName="Consignment Orders"
         searchPlaceholder="Search doc no, customer, PO no, reference…"
         rowKey={(r) => r.doc_no}
+        getRowClassName={(r) => cancelledRowClass(r.status)}
         selectable={{
           selectedKeys: sel,
           onToggle: (k) => setSel((p) => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; }),
@@ -1058,6 +1315,7 @@ export const ConsignmentOrders = () => {
         /* Houzs chrome — kill the "drag column header here to group by
            that column" banner; the page-level filter row replaces it. */
         groupBanner={false}
+        onRowClick={(r) => setSelected(r)}
         onRowDoubleClick={(r) => openDetail(r)}
         /* Commander 2026-05-29 — cancelled SOs grey out in the list so they
            read as dead/inactive (they no longer proceed). */
@@ -1106,16 +1364,7 @@ export const ConsignmentOrders = () => {
           // Reopen — bring a cancelled SO back to CONFIRMED so it proceeds
           // again (Commander 2026-05-29).
           if (status === 'CANCELLED') {
-            items.push({
-              label: 'Reopen SO',
-              onClick: async () => {
-                if (!(await askConfirm({
-                  title: `Reopen ${row.doc_no} back to CONFIRMED so it can proceed again?`,
-                  confirmLabel: 'Reopen',
-                }))) return;
-                updateStatus.mutate({ docNo: row.doc_no, status: 'CONFIRMED' });
-              },
-            });
+            items.push({ label: 'Reopen SO', onClick: () => void doReopen(row) });
           }
           // Hard delete — only after a SO has been CANCELLED, matching the
           // PO Cancel/Delete pattern. Today the DELETE endpoint is gated
@@ -1147,6 +1396,18 @@ export const ConsignmentOrders = () => {
         onPageChange={setPage}
         onPageSizeChange={(n) => { setPageSize(n); setPage(0); }}
       />}
+
+      <ConsignmentOrderDrawer
+        row={selected}
+        canFinance={canFinance}
+        salespersonName={selected?.salesperson_id ? staffById.get(selected.salesperson_id) ?? '—' : '—'}
+        onClose={() => setSelected(null)}
+        onOpenFull={() => selected && openDetail(selected)}
+        onEdit={() => selected && openDetail(selected, true)}
+        onPrint={() => selected && void renderPdf(selected, 'print')}
+        onCreateNote={() => selected && convertToDo(selected)}
+        onReopen={() => selected && void doReopen(selected)}
+      />
     </div>
   );
 };
@@ -1187,7 +1448,7 @@ const CO_FINANCE_COL_KEYS = new Set<string>([
 
 const buildAllColumns = (
   staffById: Map<string, string>,
-): DataGridColumn<SoRow>[] => [
+): GridColumn<SoRow>[] => [
   /* ── HOUZS default-visible 18 ─────────────────────────────────────── */
   {
     key: 'doc_no', label: 'Doc. No.', width: 160, sortable: true, groupable: false,
@@ -1199,7 +1460,7 @@ const buildAllColumns = (
       <span style={{
         fontWeight: 700, color: '#16695f',
         fontVariantNumeric: 'tabular-nums',
-      }}>{r.doc_no}</span>
+      }} className={cancelledDocNoClass(r.status)}>{r.doc_no}</span>
     ),
     searchValue: (r) => `${r.doc_no} ${r.status ?? ''}`,
     filterValue: (r) => r.doc_no,
@@ -1219,9 +1480,9 @@ const buildAllColumns = (
   },
   {
     key: 'so_date', label: 'Date', width: 110, sortable: true,
-    accessor: (r) => compactDate(r.so_date),
-    searchValue: (r) => `${r.so_date ?? ''} ${compactDate(r.so_date)}`,
-    filterValue: (r) => compactDate(r.so_date),
+    accessor: (r) => fmtDateOrDash(r.so_date),
+    searchValue: (r) => `${r.so_date ?? ''} ${fmtDateOrDash(r.so_date)}`,
+    filterValue: (r) => fmtDateOrDash(r.so_date),
     sortFn: (a, b) => (a.so_date ?? '').localeCompare(b.so_date ?? ''),
     filterType: 'date', dateValue: (r) => r.so_date,
   },
@@ -1255,7 +1516,7 @@ const buildAllColumns = (
        `customer_so_ref` column in the 2990 schema, so customer_so_no IS that
        field. Falls back to the customer's PO doc number, then the legacy
        free-text ref, then "—" when all are empty. Sortable + searchable. */
-    key: 'customer_so_no', label: 'Reference', width: 130, sortable: true,
+    key: 'customer_so_no', label: 'Ref No.', width: 130, sortable: true,
     accessor: (r) => r.customer_so_no ?? r.po_doc_no ?? r.ref ?? '—',
     searchValue: (r) => `${r.customer_so_no ?? ''} ${r.po_doc_no ?? ''} ${r.ref ?? ''}`,
     filterValue: (r) => r.customer_so_no ?? r.po_doc_no ?? r.ref ?? '—',
@@ -1295,9 +1556,9 @@ const buildAllColumns = (
       <span style={{
         fontWeight: 700, color: 'var(--c-ink)',
         fontVariantNumeric: 'tabular-nums',
-      }}>{fmtRm(r.local_total_sen)}</span>
+      }}>{fmtSen(r.local_total_sen)}</span>
     ),
-    searchValue: (r) => fmtRm(r.local_total_sen),
+    searchValue: (r) => fmtSen(r.local_total_sen),
     /* Export the NUMBER in ringgit (not "1,234.00") so Excel can SUM it. */
     exportValue: (r) => (r.local_total_sen ?? 0) / 100,
     exportFormat: 'money',
@@ -1337,9 +1598,9 @@ const buildAllColumns = (
       return <span style={{
         fontWeight: 600, color: badgeFor('sofa').fg,
         fontVariantNumeric: 'tabular-nums',
-      }}>{fmtRm(v)}</span>;
+      }}>{fmtSen(v)}</span>;
     },
-    searchValue: (r) => fmtRm(r.mattress_sofa_sen ?? 0),
+    searchValue: (r) => fmtSen(r.mattress_sofa_sen ?? 0),
     exportValue: (r) => (r.mattress_sofa_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.mattress_sofa_sen ?? 0) - (b.mattress_sofa_sen ?? 0),
@@ -1352,9 +1613,9 @@ const buildAllColumns = (
       return <span style={{
         fontWeight: 600, color: badgeFor('bedframe').fg,
         fontVariantNumeric: 'tabular-nums',
-      }}>{fmtRm(v)}</span>;
+      }}>{fmtSen(v)}</span>;
     },
-    searchValue: (r) => fmtRm(r.bedframe_sen ?? 0),
+    searchValue: (r) => fmtSen(r.bedframe_sen ?? 0),
     exportValue: (r) => (r.bedframe_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.bedframe_sen ?? 0) - (b.bedframe_sen ?? 0),
@@ -1367,33 +1628,33 @@ const buildAllColumns = (
       return <span style={{
         fontWeight: 600, color: badgeFor('accessory').fg,
         fontVariantNumeric: 'tabular-nums',
-      }}>{fmtRm(v)}</span>;
+      }}>{fmtSen(v)}</span>;
     },
-    searchValue: (r) => fmtRm(r.accessories_sen ?? 0),
+    searchValue: (r) => fmtSen(r.accessories_sen ?? 0),
     exportValue: (r) => (r.accessories_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.accessories_sen ?? 0) - (b.accessories_sen ?? 0),
   },
   {
     key: 'mattress_sofa_cost_sen', label: 'Mattress/Sofa Cost', width: 140, sortable: true, align: 'right', groupable: false,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.mattress_sofa_cost_sen ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.mattress_sofa_cost_sen ?? 0),
+    accessor: (r) => <span className={styles.money}>{fmtSen(r.mattress_sofa_cost_sen ?? 0)}</span>,
+    searchValue: (r) => fmtSen(r.mattress_sofa_cost_sen ?? 0),
     exportValue: (r) => (r.mattress_sofa_cost_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.mattress_sofa_cost_sen ?? 0) - (b.mattress_sofa_cost_sen ?? 0),
   },
   {
     key: 'bedframe_cost_sen', label: 'Bedframe Cost', width: 130, sortable: true, align: 'right', groupable: false,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.bedframe_cost_sen ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.bedframe_cost_sen ?? 0),
+    accessor: (r) => <span className={styles.money}>{fmtSen(r.bedframe_cost_sen ?? 0)}</span>,
+    searchValue: (r) => fmtSen(r.bedframe_cost_sen ?? 0),
     exportValue: (r) => (r.bedframe_cost_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.bedframe_cost_sen ?? 0) - (b.bedframe_cost_sen ?? 0),
   },
   {
     key: 'accessories_cost_sen', label: 'Accessories Cost', width: 140, sortable: true, align: 'right', groupable: false,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.accessories_cost_sen ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.accessories_cost_sen ?? 0),
+    accessor: (r) => <span className={styles.money}>{fmtSen(r.accessories_cost_sen ?? 0)}</span>,
+    searchValue: (r) => fmtSen(r.accessories_cost_sen ?? 0),
     exportValue: (r) => (r.accessories_cost_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.accessories_cost_sen ?? 0) - (b.accessories_cost_sen ?? 0),
@@ -1488,15 +1749,15 @@ const buildAllColumns = (
        column removed, commander 2026-05-28. */
     key: 'processing_date', label: 'Processing Date', width: 130, sortable: true,
     defaultHidden: true,
-    accessor: (r) => compactDate(r.processing_date),
-    searchValue: (r) => `${r.processing_date ?? ''} ${compactDate(r.processing_date)}`,
+    accessor: (r) => fmtDateOrDash(r.processing_date),
+    searchValue: (r) => `${r.processing_date ?? ''} ${fmtDateOrDash(r.processing_date)}`,
     filterType: 'date', dateValue: (r) => r.processing_date,
   },
   {
     key: 'customer_delivery_date', label: 'Delivery Date', width: 130, sortable: true,
     defaultHidden: true,
-    accessor: (r) => compactDate(r.customer_delivery_date),
-    searchValue: (r) => `${r.customer_delivery_date ?? ''} ${compactDate(r.customer_delivery_date)}`,
+    accessor: (r) => fmtDateOrDash(r.customer_delivery_date),
+    searchValue: (r) => `${r.customer_delivery_date ?? ''} ${fmtDateOrDash(r.customer_delivery_date)}`,
     filterType: 'date', dateValue: (r) => r.customer_delivery_date,
   },
   {
@@ -1529,8 +1790,8 @@ const buildAllColumns = (
   {
     key: 'others_sen', label: 'Others', width: 110, sortable: true, align: 'right', groupable: false,
     defaultHidden: true,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.others_sen ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.others_sen ?? 0),
+    accessor: (r) => <span className={styles.money}>{fmtSen(r.others_sen ?? 0)}</span>,
+    searchValue: (r) => fmtSen(r.others_sen ?? 0),
     exportValue: (r) => (r.others_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.others_sen ?? 0) - (b.others_sen ?? 0),
@@ -1538,8 +1799,8 @@ const buildAllColumns = (
   {
     key: 'others_cost_sen', label: 'Others Cost', width: 120, sortable: true, align: 'right', groupable: false,
     defaultHidden: true,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.others_cost_sen ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.others_cost_sen ?? 0),
+    accessor: (r) => <span className={styles.money}>{fmtSen(r.others_cost_sen ?? 0)}</span>,
+    searchValue: (r) => fmtSen(r.others_cost_sen ?? 0),
     exportValue: (r) => (r.others_cost_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.others_cost_sen ?? 0) - (b.others_cost_sen ?? 0),
@@ -1548,8 +1809,8 @@ const buildAllColumns = (
   {
     key: 'total_cost_sen', label: 'Cost Total', width: 120, sortable: true, align: 'right', groupable: false,
     defaultHidden: true,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.total_cost_sen ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.total_cost_sen ?? 0),
+    accessor: (r) => <span className={styles.money}>{fmtSen(r.total_cost_sen ?? 0)}</span>,
+    searchValue: (r) => fmtSen(r.total_cost_sen ?? 0),
     exportValue: (r) => (r.total_cost_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.total_cost_sen ?? 0) - (b.total_cost_sen ?? 0),
@@ -1561,9 +1822,9 @@ const buildAllColumns = (
       const m = r.total_margin_sen ?? 0;
       if ((r.local_total_sen ?? 0) <= 0) return <span style={{ color: 'var(--fg-muted)' }}>—</span>;
       const color = m > 0 ? 'var(--c-secondary-a, #2F5D4F)' : m < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)';
-      return <span className={styles.money} style={{ color, fontWeight: 600 }}>{fmtRm(m)}</span>;
+      return <span className={styles.money} style={{ color, fontWeight: 600 }}>{fmtSen(m)}</span>;
     },
-    searchValue: (r) => fmtRm(r.total_margin_sen ?? 0),
+    searchValue: (r) => fmtSen(r.total_margin_sen ?? 0),
     exportValue: (r) => (r.total_margin_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.total_margin_sen ?? 0) - (b.total_margin_sen ?? 0),
@@ -1590,8 +1851,8 @@ const buildAllColumns = (
   {
     key: 'deposit_sen', label: 'Deposit', width: 110, sortable: true, align: 'right', groupable: false,
     defaultHidden: true,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.deposit_sen ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.deposit_sen ?? 0),
+    accessor: (r) => <span className={styles.money}>{fmtSen(r.deposit_sen ?? 0)}</span>,
+    searchValue: (r) => fmtSen(r.deposit_sen ?? 0),
     exportValue: (r) => (r.deposit_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.deposit_sen ?? 0) - (b.deposit_sen ?? 0),
@@ -1599,8 +1860,8 @@ const buildAllColumns = (
   {
     key: 'paid_total_sen', label: 'Paid', width: 110, sortable: true, align: 'right', groupable: false,
     defaultHidden: true,
-    accessor: (r) => <span className={styles.money}>{fmtRm(r.paid_total_sen ?? r.paid_sen ?? 0)}</span>,
-    searchValue: (r) => fmtRm(r.paid_total_sen ?? r.paid_sen ?? 0),
+    accessor: (r) => <span className={styles.money}>{fmtSen(r.paid_total_sen ?? r.paid_sen ?? 0)}</span>,
+    searchValue: (r) => fmtSen(r.paid_total_sen ?? r.paid_sen ?? 0),
     exportValue: (r) => (r.paid_total_sen ?? r.paid_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => (a.paid_total_sen ?? a.paid_sen ?? 0) - (b.paid_total_sen ?? b.paid_sen ?? 0),
@@ -1609,8 +1870,8 @@ const buildAllColumns = (
     /* Follow-up #83 — prefer the view's live balance. */
     key: 'balance_sen', label: 'Balance', width: 110, sortable: true, align: 'right', groupable: false,
     defaultHidden: true,
-    accessor: (r) => <span className={styles.money}>{fmtRm(liveBalance(r))}</span>,
-    searchValue: (r) => fmtRm(liveBalance(r)),
+    accessor: (r) => <span className={styles.money}>{fmtSen(liveBalance(r))}</span>,
+    searchValue: (r) => fmtSen(liveBalance(r)),
     exportValue: (r) => liveBalance(r) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => liveBalance(a) - liveBalance(b),
@@ -1636,5 +1897,5 @@ const buildAllColumns = (
 const buildColumns = (
   staffById: Map<string, string>,
   canFinance: boolean,
-): DataGridColumn<SoRow>[] =>
+): GridColumn<SoRow>[] =>
   buildAllColumns(staffById).filter((col) => canFinance || !CO_FINANCE_COL_KEYS.has(col.key));

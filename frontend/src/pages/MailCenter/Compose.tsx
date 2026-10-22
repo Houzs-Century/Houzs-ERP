@@ -19,6 +19,7 @@ import { useToast } from "../../hooks/useToast";
 import { useBranding } from "../../hooks/useBranding";
 import { saveDraft, deleteDraftBestEffort, type MailDraft } from "./mail-local";
 import { pickDefaultFromAddress } from "./mail-from-default";
+import { sentToast } from "./mail-delivery";
 // To / Cc / Bcc parsing + validation, shared with the phone's composer.
 import { parseRecipients, firstInvalid } from "./mail-recipients";
 import {
@@ -51,6 +52,7 @@ type ComposeResponse = {
   ok?: boolean;
   threadId?: string;
   messageId?: string;
+  queued?: boolean;
   error?: string;
 };
 
@@ -251,7 +253,7 @@ export function ComposeDialog({
         toast.error("Failed to send email. Please try again.");
         return;
       }
-      toast.success("Email sent.");
+      toast.success(sentToast(payload.queued, "Email sent."));
       if (draftId) deleteDraftBestEffort(draftId);
       onClose();
       if (payload.threadId) {

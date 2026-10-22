@@ -211,8 +211,9 @@ const MODULE_BY_ID = new Map<string, SofaModuleSpec>(SOFA_MODULES.map((m) => [m.
 
 /* ─── Structural fallback (Maintenance-is-master, Loo 2026-06-04) ───────
  *
- * A compartment code RENAMED on the Maintenance master pool cascades through
- * every stored copy (rename_sofa_compartment, migration 0149) — but the
+ * A compartment code RENAMED on the Maintenance master pool follows into the
+ * Model ticks, combos and quick picks (rename_sofa_compartment; only a code no
+ * SKU uses) — but the
  * canvas still needs to know the shape. As long as the rename keeps the
  * STRUCTURE tokens — base family (1A/1B/2A/2B/1NA/2NA/1S/2S/3S/CNR/L/
  * Console/STOOL), optional (LHF)/(RHF) orientation, optional (P)/(R)/(L)
@@ -981,54 +982,6 @@ export const centerCellsWithin = (cells: Cell[], depth: Depth, w: number, h: num
   const dx = w / 2 - bb.w / 2 - bb.x;
   const dy = h / 2 - bb.h / 2 - bb.y;
   return cells.map((c) => ({ ...c, x: c.x + dx, y: c.y + dy }));
-};
-
-/* ─── Default layout from a bare module list (PO PDF fallback, 2026-06-24) ───
- *
- * A sofa created in the BACKEND (SO New / Maintenance, NOT the POS
- * CustomBuilder) stores each module only as a per-line SKU — fabric/seat/leg
- * variants but NO x/y/rot geometry. There was never a real arrangement to
- * lose: the operator just picked modules as a LIST. This synthesizes a
- * sensible default plan-view from that list so the PO PDF's `drawSofaLayout`
- * has cells to render (geometry-less sofas previously drew nothing).
- *
- * Convention (matches apps/pos CustomBuilder / cellsFromComboModules EXACTLY):
- *   - x increases RIGHTWARD, y increases DOWNWARD, the FRONT faces +y (the TV).
- *   - modules tile LEFT→RIGHT in the GIVEN order, each at its `moduleFootprint`
- *     width, all rot=0, sharing the BACK edge (y=0 baseline). A taller chaise
- *     (L, d=165) therefore extends forward (+y) of the seating line — correct.
- *   - the L/chaise module's own LHF/RHF identity (and the order it appears in
- *     the list) carries handedness: a left-listed L(LHF) ends up the left
- *     chaise, a right-listed L(RHF) the right chaise — the configurator's
- *     decomposition convention (2+L → "2A(LHF) + L(RHF)", 3+L →
- *     "2A(LHF) + 1NA + L(RHF)"). `drawSofaLayout` then derives the arm sides
- *     from the laid-out positions, so LHF/RHF reads correctly with no extra
- *     rotation math.
- *
- * Fail-soft: an unknown / unmeasurable module is SKIPPED (never throws); an
- * empty or all-unknown list returns []. The result is exactly the `Cell[]`
- * shape `drawSofaLayout` consumes (it reads cell.x/y/rot + moduleFootprint),
- * with `cellIndex` set to the placement order. */
-export const buildDefaultSofaCells = (
-  modules: ReadonlyArray<{ moduleId: string }>,
-  depth: Depth,
-): Array<Cell & { cellIndex: number }> => {
-  if (!Array.isArray(modules) || modules.length === 0) return [];
-  const out: Array<Cell & { cellIndex: number }> = [];
-  let x = 0;
-  let idx = 0;
-  for (const mod of modules) {
-    const moduleId = (mod?.moduleId ?? '').trim();
-    if (!moduleId) continue;
-    const m = findModule(moduleId);
-    if (!m) continue; // unknown module → skip (fail-soft, never throws)
-    const fp = moduleFootprint(m, 0, depth);
-    if (!(fp.w > 0) || !(fp.h > 0)) continue;
-    out.push({ moduleId, x, y: 0, rot: 0, cellIndex: idx });
-    x += fp.w;
-    idx += 1;
-  }
-  return out;
 };
 
 /* ─── Adjacency + grouping ─────────────────────────────────────────── */

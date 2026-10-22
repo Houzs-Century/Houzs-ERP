@@ -49,9 +49,11 @@ import { canUseAssistant } from "./assistant-scope";
 import type { PositionPolicyRow } from "./positionPolicyRows";
 import type { AuthUser } from "./auth";
 import { hasPermission } from "./permissions";
+import { canViewItPages } from "./itAccess";
 import {
   isDirectorUser,
   isFinanceViewer,
+  isPosMarketingAccount,
   isProductCostViewer,
   isSalesDirectorUser,
   isSalesUser,
@@ -272,11 +274,23 @@ const PREDICATES = {
    *  projectGates.isCrewScopedUser — the Title's row, then its name. */
   "org.crew.scoped": (u: CapabilityCaller): boolean => isCrewScopedUser(asAuthUser(u)),
 
+  /** Is this caller the 2990 POS MARKETING account — the tablet shows it the
+   *  Marketing section and refuses it "Complete order". Read by that POS
+   *  (repo wenwei4046/2990s, @2990s/shared/marketing-access), not by this
+   *  frontend. GATE: pmsAccess.isPosMarketingAccount, the same function
+   *  scm/routes/sales-analysis.ts GET /lines admits through
+   *  (houzs-perms.isPosMarketingCaller). */
+  "pos.marketing": (u: CapabilityCaller): boolean => isPosMarketingAccount(asAuthUser(u)),
+
   /** May this caller open the Assistant at all. GATE: assistant-scope.canUseAssistant
    *  — wildcard yes, field crew + Sales denied, an unrecognised position fails
    *  CLOSED. The FE mirrored this deny list twice (auth/assistantAccess.ts route
    *  guard + Sidebar hideForPositions); both now read this answer instead. */
   "org.assistant.use": (u: CapabilityCaller): boolean => canUseAssistant(asAuthUser(u)),
+
+  /** May this caller open the IT pages (System Health, AI usage). GATE:
+   *  itAccess.canViewItPages, the same check middleware/auth.requireItPages runs. */
+  "it.pages.view": (u: CapabilityCaller): boolean => canViewItPages(granted(u)),
 } as const satisfies Record<string, (u: CapabilityCaller) => boolean>;
 
 /** Every capability key, frozen in declaration order. The frontend pins its own

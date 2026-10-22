@@ -20,12 +20,11 @@
 // as they are found. If you meet another, it is stale — fix it, do not copy it.
 //
 // NOTE WHAT IS *NOT* IMPLEMENTED: the ~1 day lag the owner describes exists in
-// the business, not in this code. Nothing here defers anything by a day, and
-// MRP does not read this date to decide when to order at all — it derives
-// `orderByDate = delivery date − category lead days` (routes/mrp.ts) and only
-// DISPLAYS the Processing Date. Do not write a comment claiming otherwise; the
-// comment at routes/mrp.ts:193 claimed exactly that for months while the code
-// ignored the field.
+// the business, not in this code. Nothing here defers anything by a day. MRP
+// reads this date for ONE thing: an order without one is not demand at all
+// (owner 2026-09-15, routes/mrp.ts isReleased). WHEN a released order is
+// ordered is still `orderByDate = delivery date − category lead days`, never
+// derived from the Processing Date.
 //
 // ─── WHY THIS FILE EXISTS ───────────────────────────────────────────────────
 //
@@ -488,6 +487,27 @@ export function soDatePairRefusal(
   return unchanged ? null : SO_DATE_PAIR_REFUSAL;
 }
 
+/* THE LINE HALF OF THE PAIR (BUG-39, Sim 2026-09-30: 「no proceed date will be
+   no any delivery date」). soDatePairRefusal guards the header; a line date was
+   free, so an order with no Processing Date could still carry a delivery date
+   on its lines and read as dated demand. Only a date being SET is refused —
+   clearing one is always allowed. */
+export const SO_LINE_DATE_NEEDS_PROCESSING_REFUSAL = {
+  error: 'line_delivery_needs_processing_date',
+  reason: 'Set the Processing Date first — a line cannot carry a Delivery Date while the order has none.',
+} as const;
+
+export function soLineDateRefusal(i: {
+  /** The order's Processing Date after this write. */
+  processingDate: unknown;
+  /** The line delivery dates this write sets. */
+  lineDeliveryDates: readonly unknown[];
+}): typeof SO_LINE_DATE_NEEDS_PROCESSING_REFUSAL | null {
+  const present = (v: unknown): boolean => String(v ?? '').trim() !== '';
+  if (present(i.processingDate)) return null;
+  return i.lineDeliveryDates.some(present) ? SO_LINE_DATE_NEEDS_PROCESSING_REFUSAL : null;
+}
+
 /**
  * CLEARING ONE CLEARS BOTH — the other half of the owner's rule, for the one
  * shape where refusing would be wrong.
@@ -520,6 +540,50 @@ export function soDatePairCascadeColumns(i: {
 }): readonly string[] {
   if (!i.procCleared || i.delivInPatch) return [];
   return soDateYmd(i.origDeliv) ? ['customer_delivery_date'] : [];
+}
+
+/**
+ * The amendment twin of soDatePairCascadeColumns (owner 2026-09-30: a Processing
+ * Date removal is requested by amendment and signed by the Purchaser). A request
+ * that clears a stored Processing Date also clears the Delivery Date, as the SAME
+ * change — so it is one document on one desk, and the approve-time pair re-check
+ * sees both dates go together instead of refusing each half forever.
+ *
+ * Returns the header changes to store/apply: unchanged unless the cascade fires.
+ */
+export function withProcessingRemovalCascade<T>(
+  headerChanges: Record<string, T | null>,
+  stored: { processingDate: unknown; deliveryDate: unknown },
+): Record<string, T | null> {
+  if (!Object.prototype.hasOwnProperty.call(headerChanges, 'processingDate')) return headerChanges;
+  const cols = soDatePairCascadeColumns({
+    procCleared: soDateDay(headerChanges['processingDate']) === '' && soDateDay(stored.processingDate) !== '',
+    delivInPatch: Object.prototype.hasOwnProperty.call(headerChanges, 'customerDeliveryDate'),
+    origDeliv: soDateDay(stored.deliveryDate) || null,
+  });
+  return cols.length > 0 ? { ...headerChanges, customerDeliveryDate: null } : headerChanges;
+}
+
+/**
+ * True when an amendment request is a Processing Date REMOVAL and nothing else:
+ * the stored date is set, the request clears it (and at most the Delivery Date
+ * with it), and carries no line. The one request an order that is NOT yet
+ * locked may still raise (owner 2026-09-30: 「还没锁定的也是 purchaser 可以审批」)
+ * — every other change on an unlocked order is a direct edit.
+ */
+export function isProcessingRemovalOnlyRequest(i: {
+  headerChanges: unknown;
+  lines: unknown;
+  storedProcessingDate: unknown;
+}): boolean {
+  if (Array.isArray(i.lines) && i.lines.length > 0) return false;
+  if (i.headerChanges == null || typeof i.headerChanges !== 'object' || Array.isArray(i.headerChanges)) return false;
+  const hc = i.headerChanges as Record<string, unknown>;
+  const keys = Object.keys(hc);
+  if (!keys.includes('processingDate')) return false;
+  if (!keys.every((k) => k === 'processingDate' || k === 'customerDeliveryDate')) return false;
+  if (!keys.every((k) => hc[k] == null || (typeof hc[k] === 'string' && soDateDay(hc[k]) === ''))) return false;
+  return soDateDay(i.storedProcessingDate) !== '';
 }
 
 /**

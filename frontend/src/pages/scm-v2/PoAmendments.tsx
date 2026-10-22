@@ -28,7 +28,7 @@ import {
   PO_AMENDMENT_INBOX_SOURCE_LABEL as SOURCE_LABEL,
   type PoAmendmentInboxRow as InboxRow,
 } from '../../vendor/scm/lib/po-amendment-inbox';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { AmendmentStatusPill } from '../../vendor/scm/components/StatusPill';
 import {
   simplifiedAmendmentPill,
@@ -62,7 +62,7 @@ const OPEN_ORDER = compareAmendmentsForList<InboxRow>((a) => a.status, (a) => a.
    people columns; search / group / sort all key off the RESOLVED name. */
 const buildColumns = (
   actorNameOf: (id: string | null | undefined, empty?: string) => string,
-): DataGridColumn<InboxRow>[] => [
+): GridColumn<InboxRow>[] => [
   {
     key: 'po_number', label: 'PO No.', width: 150, sortable: true, groupable: true,
     accessor: (a) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)', fontVariantNumeric: 'tabular-nums' }}>{a.poLabel || '—'}</span>,
@@ -211,7 +211,7 @@ export const PoAmendments = () => {
           onChange={(v) => setStatusChip(v)}
         />
 
-        <DataGrid<InboxRow>
+        <DataGridCompat<InboxRow>
           rows={rows}
           columns={columns}
           storageKey={PO_AMENDMENT_LIST_STORAGE_KEY}

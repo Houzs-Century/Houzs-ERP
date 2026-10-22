@@ -62,6 +62,12 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   { id: "chunk-print-resume", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "chunk-print-resume (the print to reopen after that reload)", matches: exact("chunk-print-resume") },
   { id: "workspace-tabs", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.workspaceTabs.v1 (per-window strip; blob records its {user,company} owner)", matches: exact("houzs.workspaceTabs.v1") },
   { id: "scm-list-return", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.scmListReturn.v1 (per-section last filtered list URL, for detail Back)", matches: exact("houzs.scmListReturn.v1") },
+  // Peter 2026-10-14: the desktop Projects list saves <main>'s scrollTop when a
+  // row opens and restores it on detail Back — same detail-Back shape as
+  // scm-list-return above. Written then consumed; no identity/company data.
+  { id: "projects-list-scroll", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "projects:listScroll (desktop list scroll position, for detail Back)", matches: exact("projects:listScroll") },
+  { id: "return-scroll", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.returnScroll.v1 (where a page was scrolled when a document was opened from it, per address, taken once on return; last 20, 30 minutes)", matches: exact("houzs.returnScroll.v1") },
+  { id: "project-overview-scroll", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.projectOverview.scroll (where a project's Back goes — the Projects address it was opened from — and the Project Overview page + table scroll per address, given back once; last 20 entries, 30 minutes)", matches: exact("houzs.projectOverview.scroll") },
   { id: "assr-list-filter", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.assrListFilter.v1 (per-tab Service Cases search + stage, for detail Back)", matches: exact("houzs.assrListFilter.v1") },
   // Owner 2026-08-24: "i want make it my filter didnt close until i manually
   // clear filter or close erp then filter will auto clear". Session-scoped for
@@ -70,7 +76,7 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   // above already use for their detail-Back. It was localStorage (an
   // IDENTITY_PREF), which kept last week's filters alive on the next login.
   // The legacy localStorage copies are cleaned up by useStickyFilters.
-  { id: "list-filters", classification: "TRANSIENT", storage: ["localStorage", "sessionStorage"], keyFamily: "filters:<page>:u<user>:c<company> (per-tab list filters; localStorage listed for cleanup of the pre-2026-08-24 copies only)", matches: (key) => /^filters:.+:u\d+:c\d+$/.test(key) },
+  { id: "list-filters", classification: "TRANSIENT", storage: ["localStorage", "sessionStorage"], keyFamily: "filters:<page>:u<user>:c<company> (per-tab list/calendar filters. Plain snapshot string; OR, for idle-TTL scopes like projects-calendar / mobile-calendar, a {v,t} blob dropped 1h after the last change — owner 2026-09-30. Cleared outright on logout. localStorage listed for cleanup of the pre-2026-08-24 copies only)", matches: (key) => /^filters:.+:u\d+:c\d+$/.test(key) },
   { id: "mobile-mode-override", classification: "TRANSIENT", storage: ["localStorage", "sessionStorage"], keyFamily: "hz_force_mobile (session + legacy local cleanup)", matches: exact("hz_force_mobile") },
   { id: "legacy-notification-preference", classification: "TRANSIENT", storage: ["localStorage"], keyFamily: "notifications:browserPush (ownerless cleanup only)", matches: exact("notifications:browserPush") },
   { id: "scan-toast-acks", classification: "TRANSIENT", storage: ["localStorage"], keyFamily: "houzs:scan-draft-acked:u<user>:c<company>", matches: prefix("houzs:scan-draft-acked:") },
@@ -130,6 +136,10 @@ export function classifyBrowserStorageKey(
 /** Files allowed to access browser storage directly. New callers require an
  * explicit ownership review; consumers should otherwise use existing helpers. */
 export const PRODUCTION_STORAGE_CALLERS = [
+  // Logout sweeps `filters:*` from session + localStorage (owner 2026-09-30) —
+  // a reload does not clear sessionStorage, so sign-out would otherwise keep the
+  // sticky list/calendar filters. Removes by key in a loop, never .clear().
+  "auth/AuthContext.tsx",
   "components/AndroidInstallGuide.tsx",
   "components/announcementLocalAcks.ts",
   "components/AssistantLauncher.tsx",
@@ -138,6 +148,9 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "components/AssistantPanel.tsx",
   "components/assistantLauncherPosition.ts",
   "components/DataTable.tsx",
+  // `dt:funnels:<idKey>` — funnels a persistFilters="always" table keeps (the
+  // delivery boards, owner 2026-10-05); the dt: device-pref family above.
+  "components/dataTableColFilterMemory.ts",
   "components/IosInstallGuide.tsx",
   "components/PwaBanners.tsx",
   "components/pwaDismissal.ts",
@@ -160,6 +173,9 @@ export const PRODUCTION_STORAGE_CALLERS = [
   // presentation only and no longer touches storage.
   "components/useAnnouncementBanner.ts",
   "hooks/useIdentityPreference.ts",
+  // Mobile calendar's non-URL filters (brand/section/organizer): sessionStorage
+  // under the shared filters: family, 1h idle TTL (list-filters rule).
+  "hooks/useIdleSessionFilter.ts",
   "hooks/useLocalStorage.ts",
   "hooks/usePendingReminder.ts",
   "hooks/useStickyFilters.ts",
@@ -198,6 +214,15 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "mobile/useIsMobile.ts",
   "pages/MailCenter/mail-local.ts",
   "pages/MailCenter/mail-prefs.ts",
+  // Projects list scroll memory for detail Back (projects-list-scroll family).
+  "pages/Projects.tsx",
+  // Project Overview: where the page and its project table were scrolled when a
+  // project was opened, given back on Back (project-overview-scroll, owner
+  // 2026-10-21). Scroll offsets only; the choices themselves live in the URL.
+  "pages/projects/projectOverviewView.ts",
+  // Return scroll (return-scroll, owner 2026-10-21): where a page was scrolled
+  // when an order was opened from it, so its Back lands on the same spot.
+  "lib/returnScroll.ts",
   // Composer draft autosave (2026-09-05): "announcements:draft:u<user>",
   // written debounced while a notice is being written, cleared on post. A
   // half-written notice surviving a closed modal / reload is the point; the
@@ -207,9 +232,5 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "pages/scm-v2/ProductModels.tsx",
   "pages/scm-v2/SoFromProducts.tsx",
   "pages/scm-v2/SupplierDetail.tsx",
-  // DataGrid funnel filters. Since 2026-09-16 they live in in-visit memory, not
-  // storage; this file only REMOVES the pre-2026-09-16 dg-filters:<idKey> keys
-  // (DEVICE_PREF via the dg- family) so a stale one cannot re-narrow a list.
-  "vendor/scm/components/dataGridFilterStorage.ts",
   "vendor/scm/components/dataGridLayoutStorage.ts",
 ] as const;

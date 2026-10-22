@@ -236,45 +236,8 @@ export const useAccountBalances = () => baseQuery<{ balances: AccountBalance[] }
   ['account-balances'], `/accounting/balances`,
 );
 
-export type ArAgingRow = {
-  invoice_id: string;
-  invoice_number: string;
-  debtor_code: string | null;
-  debtor_name: string;
-  invoice_date: string;
-  due_date: string | null;
-  total_sen: number;
-  paid_sen: number;
-  outstanding_sen: number;
-  days_overdue: number;
-  aging_bucket: 'CURRENT' | '1-30' | '31-60' | '61-90' | '90+';
-  status: string;
-};
-export const useArAging = () => baseQuery<{ arAging: ArAgingRow[] }>(
-  ['ar-aging'], `/accounting/ar-aging`,
-);
-
-export type ApAgingRow = {
-  invoice_id: string;
-  /** 'PI' (purchase invoice) or 'API' (AP invoice) — v_ap_aging lists both since 2026-09-06. */
-  kind?: 'PI' | 'API';
-  invoice_number: string;
-  supplier_invoice_ref: string | null;
-  supplier_id: string;
-  supplier_code: string | null;
-  supplier_name: string | null;
-  invoice_date: string;
-  due_date: string | null;
-  total_sen: number;
-  paid_sen: number;
-  outstanding_sen: number;
-  days_overdue: number;
-  aging_bucket: 'CURRENT' | '1-30' | '31-60' | '61-90' | '90+';
-  status: string;
-};
-export const useApAging = () => baseQuery<{ apAging: ApAgingRow[] }>(
-  ['ap-aging'], `/accounting/ap-aging`,
-);
+/* AR / AP Aging moved to aging-queries.ts (owner 2026-10-02: the formal debtor
+   and creditor aging replaced the per-invoice lists). */
 
 /* ── The Chart of Accounts maintenance surface (roadmap A, 2026-09-03) ──────
    The owner's selective sharing: one union across the granted companies, a
@@ -288,9 +251,13 @@ export type ChartRow = {
   accMoney: boolean;
   special: string | null;
   section: string | null;
+  /** 需要 Event and the PMS event page's row (owner 2026-10-01, payment-request item 4). */
+  needsEvent?: boolean;
+  pmsRow?: string | null;
   perCompany: Partial<Record<number, { active: boolean }>>;
 };
-export const useChartUnion = () => baseQuery<{ companies: ChartCompany[]; sections: AccountSection[]; accounts: ChartRow[] }>(
+/** pmsRows: the PMS event page's rows an account can fill — one list, from the server. */
+export const useChartUnion = () => baseQuery<{ companies: ChartCompany[]; sections: AccountSection[]; accounts: ChartRow[]; pmsRows?: Array<{ row: string; label: string }> }>(
   ['chart-union'], `/accounting/chart`,
 );
 
@@ -372,7 +339,7 @@ export const useChartRename = () => {
 export const useChartUpdate = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { code: string; name?: string; accountType?: string; accMoney?: boolean; parentCode?: string | null; section?: string }) =>
+    mutationFn: (body: { code: string; name?: string; accountType?: string; accMoney?: boolean; parentCode?: string | null; section?: string; needsEvent?: boolean; pmsRow?: string | null }) =>
       authedFetch<{ ok: boolean; companies: number }>(
         `/accounting/chart/update`, { method: 'PUT', body: JSON.stringify(body) },
       ),
@@ -403,14 +370,18 @@ export const useChartDelete = () => {
 /* ── Other Debtors (owner 2026-09-03) ───────────────────────────────────────
    Counterparty registry + Debtor Bills (post directly) + Receipts (the PV's
    four layers, AP-Payment-style knock-off, partial included). The GL keeps
-   one control (305-0000); per-party truth lives in these tables. */
+   one control (305-0000); per-party truth lives in these tables.
+   2026-09-29: the Other Debtors page is the registry alone; the bill is
+   raised on the AR Invoices page (ar-invoice-queries.ts lists it beside the
+   sales invoices), the money is received and voided on the Receipts page. */
 /** A debtor: the registry row, plus the party's data as the supplier master carries it (2026-09-21, `debtor-party.ts`). */
 export type OtherDebtor = {
   id: string; name: string; phone: string | null; notes: string | null;
   is_active: boolean; outstanding_sen: number;
 } & Partial<DebtorPartyColumns>;
-/** A bill line: a money line names its account; a TEXT line (2026-09-21) has no account and a zero amount — description only. */
-export type DebtorBillLine = { id: string; line_no: number; description: string | null; credit_account_code: string | null; amount_sen: number };
+/** A bill line: a money line names its account; a TEXT line (2026-09-21) has no account and a zero amount — description only.
+    project_id: the event a money line is for (2026-10-01, payment-request item 6 — optional). */
+export type DebtorBillLine = { id: string; line_no: number; description: string | null; credit_account_code: string | null; amount_sen: number; project_id?: number | null };
 export type DebtorBill = {
   id: string; bill_number: string; bill_date: string;
   total_sen: number; received_sen: number; status: string; notes: string | null;
@@ -435,9 +406,14 @@ export const useDebtorDetail = (id: string | null) => useQuery({
   enabled: !!id,
 });
 
+/* A bill or a receipt changes what the AR Invoices page shows (2026-09-29 —
+   the bill is raised there, the receipt on the Receipts page), so the debtor
+   side's mutations refresh that list and its bill pop-out too. */
 const invalidateDebtors = (qc: ReturnType<typeof useQueryClient>) => {
   void qc.invalidateQueries({ queryKey: ['other-debtors'] });
   void qc.invalidateQueries({ queryKey: ['other-debtor-detail'] });
+  void qc.invalidateQueries({ queryKey: ['ar-invoices'] });
+  void qc.invalidateQueries({ queryKey: ['ar-bill'] });
 };
 
 export const useCreateDebtor = () => {
@@ -516,6 +492,16 @@ export const useDebtorReceiptAction = () => {
     onSuccess: () => invalidateDebtors(qc),
   });
 };
+/** Void a POSTED debtor receipt from the Receipts page (owner 2026-09-29): the
+    ODR contra, the ticked bills take their money back, the receipt turns
+    CANCELLED. The receipts list and the debtor side both refresh. */
+export const useVoidDebtorReceipt = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (receiptId: string) => authedFetch<{ ok: boolean }>(`/other-debtors/receipts/${receiptId}/void`, { method: 'POST', body: '{}' }),
+    onSuccess: () => { invalidateDebtors(qc); void qc.invalidateQueries({ queryKey: ['receipts'] }); },
+  });
+};
 
 /* ── Receipts — every ringgit IN, one list (owner 2026-09-03) ───────────────
    GENERAL posts directly (不需要走四层) and voids by reversal; DEBTOR rows
@@ -525,6 +511,8 @@ export type ReceiptRow = {
   id: string; number: string; date: string; payer: string;
   moneyAccount: string; totalSen: number; status: string;
   debtorId?: string; notes?: string | null;
+  /** CUSTOMER rows: the order's raw reference pair (resolve with soRefOfCamelStamp). */
+  soRef?: string | null; soCustomerSoNo?: string | null;
 };
 /** No month = every month (owner 2026-09-08: 月份只是筛选); `month` echoes the
     filter, null when none. */

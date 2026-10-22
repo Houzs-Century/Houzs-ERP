@@ -37,6 +37,10 @@ export const PRODUCT_CODE_CASCADE: readonly CascadeColumn[] = [
      left on the old code would write a code that no longer exists. */
   { table: 'so_amendment_lines',         col: 'new_item_code' },
   { table: 'po_amendment_lines',         col: 'new_item_code' },
+  /* A product request LINE names the SKU its Purchase Consignment Order line
+     will be raised with; left on the old code, the order door would refuse a
+     request for a SKU that no longer exists. */
+  { table: 'product_request_lines',      col: 'item_code' },
   { table: 'pwp_codes',                  col: 'trigger_item_code' },
   { table: 'pwp_codes',                  col: 'redeemed_item_code' },
   /* A service add-on names the SVC-* SKU the order line is booked under. */
@@ -54,9 +58,13 @@ export const PRODUCT_CODE_CASCADE: readonly CascadeColumn[] = [
   { table: 'inventory_lots',             col: 'item_code' },
   { table: 'inventory_lot_consumptions', col: 'item_code' },
   { table: 'stock_transfer_lines',       col: 'item_code' },
+  { table: 'stock_adjustment_lines',     col: 'item_code' },
   { table: 'stock_take_lines',           col: 'item_code' },
   { table: 'warehouse_rack_items',       col: 'item_code' },
   { table: 'warehouse_rack_movements',   col: 'item_code' },
+  /* A supplier's printed code taught on the delivery-order scan card: left on the
+     old code, that supplier's next delivery order would match nothing. */
+  { table: 'supplier_scan_codes',        col: 'item_code' },
 ];
 
 export interface KeptColumn {
@@ -72,6 +80,8 @@ const AUTOCOUNT = 'names the item in AutoCount, which keeps its own code when th
 const SUPPLIER = "the supplier's own model code for our item, not ours";
 
 export const PRODUCT_CODE_KEEPS_VALUE: readonly KeptColumn[] = [
+  /* A record of which order a stock-PO receipt served, under the code it was received as (receipt-so-assignment.ts); history, not a live reference. */
+  { column: 'scm.po_receipt_so_assignments.item_code', why: 'a receipt-to-order assignment is history: it records the code the goods were received under' },
   { column: 'scm.mfg_so_item_deletions.item_code', why: 'forensic record of a deleted SO line as it was at the moment of deletion (0302)' },
   { column: 'scm.retail_price_guard_log.item_code', why: 'evidence of one intervention: the SKU as the offending writer named it, at that moment (20260920T1300)' },
   { column: 'scm.supplier_material_bindings.ac_item_code', why: AUTOCOUNT },
@@ -89,6 +99,8 @@ export const PRODUCT_CODE_KEEPS_VALUE: readonly KeptColumn[] = [
   { column: 'public.purchase_orders.item_code', why: `AutoCount outstanding-PO snapshot: ${AUTOCOUNT}` },
   { column: 'public.stock_items.item_code', why: `AutoCount StockItem cache (services/stockItems.ts): ${AUTOCOUNT}` },
   { column: 'public.sales_entry_items.item_code', why: 'legacy Sales Entry module: typed text, not a link to mfg_products' },
+  { column: 'public.pos_sale_lines.item_code', why: 'Houzs POS receipt line: the code as it was sold and printed; a bill reprints as issued, a later rename never rewrites it (20261014T1147)' },
+  { column: 'public.pos_items.item_code', why: 'Houzs POS item: a display snapshot beside the real link (product_id = scm.mfg_products.id); the device bundle re-reads the live code from the SKU at prepare time (20261014T1304)' },
   { column: 'public.project_defects.item_code', why: 'project defect report: typed text, not a link to mfg_products' },
   ...[
     'public.addons.service_sku',

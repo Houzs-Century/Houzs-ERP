@@ -15,6 +15,7 @@ import { DO_STATUS_BUCKETS } from './do-status-buckets';
 import { escapeForOr, phoneSearchOrParts } from './postgrest-search';
 import { normalizePhone } from '../shared/phone';
 import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
+import { inArm } from './so-ref-search';
 
 /* Indexed by a caller's string, so an unknown key is `undefined` — say so. */
 const BUCKETS: Readonly<Record<string, string[] | undefined>> = DO_STATUS_BUCKETS;
@@ -31,6 +32,9 @@ export type DoListParams = {
      MRP funnels stay client-side on the loaded page. */
   debtorNames: string[] | null;
   currencies: string[] | null;
+  /** SOs whose reference matches `q` (lib/so-ref-search.ts): the DO's own ref
+      copy is empty on many rows, so the SO link is matched instead. */
+  soRefDocNos: string[];
 };
 
 const param = (v: string | undefined): string | null => (v === undefined || v === '' ? null : v);
@@ -58,6 +62,7 @@ export function readDoListParams(query: (key: string) => string | undefined): Do
     to: param(query('to')),
     debtorNames: jsonArrayParam(query('debtorNames')),
     currencies: jsonArrayParam(query('currencies')),
+    soRefDocNos: [],
   };
 }
 
@@ -122,6 +127,7 @@ export function filterDoList<Q>(q: Q, p: DoListParams, c: CompanyScopeCtx, scope
       `debtor_code.ilike.%${s}%`, `ref.ilike.%${s}%`, `branding.ilike.%${s}%`,
       `sales_location.ilike.%${s}%`, `driver_name.ilike.%${s}%`,
       ...phoneSearchOrParts(s, p.q, normalizePhone),
+      ...inArm('so_doc_no', p.soRefDocNos),
     ].join(','));
   }
   if (p.from) out = out.gte('do_date', p.from);

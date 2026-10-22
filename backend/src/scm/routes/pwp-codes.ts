@@ -17,6 +17,7 @@ import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
 import { resolveCallerStaffId } from '../lib/salesScope';
 import type { Env, Variables } from '../env';
 import { pgrestIn } from '../lib/pgrest-in-list';
+import { loadLiveCombosByIds } from '../lib/pos-sofa-combos';
 
 type AppCtx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -251,16 +252,8 @@ pwpCodes.post('/reserve', async (c) => {
     if (sofaModules.length > 0) {
       const sofaRules = rules.filter((r) => r.trigger_category === 'SOFA' && (r.trigger_combo_ids ?? []).length > 0);
       const comboIds = [...new Set(sofaRules.flatMap((r) => r.trigger_combo_ids ?? []))];
-      const combosById = new Map<string, { base_model: string; modules: string[][] }>();
-      if (comboIds.length > 0) {
-        const { data: comboRows } = await supabase
-          .from('sofa_combo_pricing')
-          .select('id, base_model, modules, deleted_at')
-          .in('id', comboIds);
-        for (const cr of (comboRows ?? []) as Array<{ id: string; base_model: string; modules: string[][]; deleted_at: string | null }>) {
-          if (!cr.deleted_at) combosById.set(cr.id, { base_model: cr.base_model, modules: cr.modules ?? [] });
-        }
-      }
+      // Both tables: a POS combo created after the 2026-09-26 split lives only in scm.pos_sofa_combos.
+      const combosById = await loadLiveCombosByIds(supabase, comboIds);
       byComboRules = sofaRules.filter((r) => (r.trigger_combo_ids ?? []).some((cid) => {
         const combo = combosById.get(cid);
         return !!combo && (!prod.base_model || combo.base_model === prod.base_model) && matchComboSubset(sofaModules, combo.modules) != null;

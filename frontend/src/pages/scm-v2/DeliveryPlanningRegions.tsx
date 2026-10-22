@@ -29,7 +29,7 @@ import {
   sortOrderOf,
   type RegionMasterRow,
 } from '../../vendor/scm/lib/delivery-planning-regions-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import styles from './Suppliers.module.css';
@@ -110,7 +110,7 @@ export const DeliveryPlanningRegions = ({ embedded = false }: { embedded?: boole
     });
   };
 
-  const columns = useMemo<DataGridColumn<RegionMasterRow>[]>(() => [
+  const columns = useMemo<GridColumn<RegionMasterRow>[]>(() => [
     {
       key: 'code',
       label: 'Code',
@@ -263,7 +263,7 @@ export const DeliveryPlanningRegions = ({ embedded = false }: { embedded?: boole
         <p className={styles.eyebrow}>{regions.data?.length ?? 0} regions</p>
       </div>
 
-      <DataGrid
+      <DataGridCompat
         rows={regions.data ?? []}
         columns={columns}
         storageKey="dg-delivery-planning-regions"

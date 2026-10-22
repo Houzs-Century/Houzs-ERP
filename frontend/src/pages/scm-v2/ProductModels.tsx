@@ -11,7 +11,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ProductModelDetail } from './ProductModelDetail';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { Search, Plus, Trash2, Truck, X, ImageOff, Upload, Edit3 } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
@@ -23,6 +23,7 @@ import {
   type ProductModelRow, type AllowedOptions,
 } from '../../vendor/scm/lib/product-models-queries';
 import { useMaintenanceConfig, useMfgProducts, mfgCategoryLabel, MFG_PRODUCT_CATEGORIES, type MfgCategory, type MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
+import { isSingleSkuCategory } from '../../vendor/shared/product-categories';
 import { CategorySwapSelect } from '../../vendor/scm/components/CategorySwapSelect';
 import {
   useSuppliers, useCreateBindingsBatch,
@@ -133,7 +134,7 @@ export const ProductModels = () => {
     });
   };
 
-  const gridColumns = useMemo<DataGridColumn<ProductModelRow>[]>(() => {
+  const gridColumns = useMemo<GridColumn<ProductModelRow>[]>(() => {
     const stop = {
       onClick: (e: React.MouseEvent) => e.stopPropagation(),
       onDoubleClick: (e: React.MouseEvent) => e.stopPropagation(),
@@ -400,7 +401,7 @@ export const ProductModels = () => {
           chip — opens the detail drawer (PR #137 double-click semantics
           preserved). The photo cell keeps its click-to-upload /
           right-click-to-remove behaviour. */}
-      <DataGrid
+      <DataGridCompat
         rows={filtered}
         columns={gridColumns}
         storageKey={PM_GRID_KEY}
@@ -443,7 +444,8 @@ export const ProductModels = () => {
         />
       )}
 
-      {/* PR #119 — embedded Model detail drawer */}
+      {/* PR #119 — embedded Model detail drawer. Its px matches Layout's page
+          gutter, which PageHeader's -mx expects to cancel. */}
       {openModelId && (
         <div
           onClick={() => setOpenModelId(null)}
@@ -451,7 +453,7 @@ export const ProductModels = () => {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="h-full w-[min(1100px,92vw)] overflow-y-auto bg-surface shadow-slab"
+            className="h-full w-[min(1100px,92vw)] overflow-y-auto bg-surface px-3 shadow-slab sm:px-4"
           >
             <ProductModelDetail modelId={openModelId} onClose={() => setOpenModelId(null)} />
           </div>
@@ -788,10 +790,10 @@ export function NewModelDialog({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [category, _sizesPool.length, _compsPool.length]);
 
-  // ACCESSORY / SERVICE have no size/compartment axis — each Model is exactly one
-  // SKU (code = model code). They still auto-generate that single SKU so it lands
-  // in the SKU Master (Wei Siang 2026-06-09).
-  const isSingleSkuCat = category === 'ACCESSORY' || category === 'SERVICE';
+  // Every category but Sofa / Bedframe / Mattress has no size/compartment axis —
+  // each Model is exactly one SKU (code = model code). It still auto-generates
+  // that single SKU so it lands in the SKU Master (Wei Siang 2026-06-09).
+  const isSingleSkuCat = isSingleSkuCategory(category);
   const sharedCount = (category === 'SOFA') ? pickedComps.size : pickedSizes.size;
   const totalSkus   = isSingleSkuCat ? rows.length : rows.length * sharedCount;
 
@@ -823,7 +825,7 @@ export function NewModelDialog({
     // (B) Wei Siang 2026-06-08 — a Model must be born with at least one SKU.
     // For the sized/compartmented categories that auto-generate, block here if
     // nothing is picked, so we never create a 0-SKU phantom that then blocks
-    // re-tries with a duplicate-code error. (ACCESSORY/SERVICE don't auto-gen
+    // re-tries with a duplicate-code error. (Single-SKU categories need no pick
     // and are intentionally created without size variants — left untouched.)
     if (category === 'SOFA' && pickedComps.size === 0) {
       setBatchError('Pick at least one compartment — a model with no SKUs can’t be created.');
@@ -1803,7 +1805,7 @@ export function ModularAssignSupplierDialog({
   // PR — pull every active SKU once and group by model_id client-side; same
   // pattern as ModelSkuPickerDialog. 2990s' catalogue is small enough that
   // the alternative (one query per Model) is wasteful.
-  const productsQ  = useMfgProducts();
+  const productsQ  = useMfgProducts({ fresh: true });
   const batchMut   = useCreateBindingsBatch();
   const notify     = useNotify();
 

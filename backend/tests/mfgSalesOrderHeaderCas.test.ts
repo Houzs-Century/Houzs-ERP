@@ -50,8 +50,9 @@ class FakeQuery {
     return Promise.resolve({ data: rows[0] ?? null, error: null });
   }
 
-  then(resolve: (value: { data: Row[]; error: null }) => unknown, reject?: (reason: unknown) => unknown) {
-    return Promise.resolve({ data: this.run(), error: null }).then(resolve, reject);
+  then(resolve: (value: { data: Row[]; error: null; count: number }) => unknown, reject?: (reason: unknown) => unknown) {
+    const rows = this.run();
+    return Promise.resolve({ data: rows, error: null, count: rows.length }).then(resolve, reject);
   }
 }
 
@@ -355,6 +356,34 @@ describe('a venue id with no name is not a request to blank the venue', () => {
     expect(row.venue).toBe('');
     expect(row.venue_id).toBeNull();
   });
+
+  /* Owner 2026-10-05 (Weisiang): "venue is a compulsory, either sales from
+     showroom or sales from any project". Confirm already demands a venue; an
+     edit must not take it away again. Drafts above still may. */
+  test('a confirmed order cannot have its venue cleared', async () => {
+    const { app, row } = withVenue();
+    row.status = 'CONFIRMED';
+
+    const res = await patchHeader(app, { venue: '', venueId: '', version: 1 });
+
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({
+      error: 'validation_failed',
+      problems: [expect.objectContaining({ code: 'venue_required', field: 'Venue' })],
+    });
+    expect(row).toMatchObject({ venue: '2990s PJ', version: 1 });
+  });
+
+  test('a legacy confirmed order with no venue can still be edited elsewhere', async () => {
+    const { app, row } = withVenue();
+    row.status = 'CONFIRMED';
+    row.venue = null;
+
+    const res = await patchHeader(app, { note: 'still editable', version: 1 });
+
+    expect(res.status).toBe(200);
+    expect(row.note).toBe('still editable');
+  });
 });
 
 /* Owner 2026-08-31, HC-SO-013393: "我要 remove 掉我的 processing date 跟 delivery
@@ -506,5 +535,195 @@ describe('clearing the date pair from the edit page (null payload)', () => {
     expect(await response.json()).toMatchObject({ error: 'processing_delivery_must_pair' });
     expect(row).toMatchObject({ processing_date: '2026-12-01', version: 1 });
     expect(getCasArgs()).toBeNull();
+  });
+});
+
+/* Owner 2026-09-24: 「我选了那个场（Mid Valley，MLE，8 号到 9 号），选了过后，它就自动
+   记下是那个场地的…包括 venue, organiser 和那个日期」. An EDIT used to send the place
+   only and leave the link PENDING for the next morning's reconcile. */
+describe('an edit that picks a fair EVENT records that event', () => {
+  type Project = { id: number; company_id: number; venue: string; organizer: string; brand: string; start: string; end: string | null };
+  const PROJECTS: Project[] = [
+    { id: 340, company_id: 1, venue: 'MID VALLEY', organizer: 'REX', brand: 'AKEMI', start: '2026-07-24', end: '2026-07-26' },
+    { id: 500, company_id: 1, venue: 'MID VALLEY', organizer: 'MLE', brand: 'AKEMI', start: '2026-08-08', end: '2026-08-09' },
+    { id: 501, company_id: 1, venue: 'MID VALLEY', organizer: 'MLE', brand: 'ZANOTTI', start: '2026-08-08', end: '2026-08-09' },
+    /* The same event under the OTHER company: never reachable from company 1. */
+    { id: 900, company_id: 2, venue: 'MID VALLEY', organizer: 'MLE', brand: 'AKEMI', start: '2026-08-08', end: '2026-08-09' },
+  ];
+  /* The event lookup (`loadFairsForEvent`), answered from PROJECTS with the SQL's own
+     predicates, the company one included. Anything else reads empty. */
+  const fairDb = {
+    prepare: (sql: string) => ({
+      bind: (...vals: unknown[]) => ({
+        all: async () => {
+          if (!/p\.start_date = \?/.test(sql)) return { results: [] };
+          const company = Number(/p\.company_id = (\d+)/.exec(sql)?.[1]);
+          const [venue, organizer, start, end] = vals.map((v) => (v == null ? '' : String(v)));
+          const results = PROJECTS
+            .filter((p) => p.company_id === company && p.venue.toLowerCase() === venue!.trim().toLowerCase()
+              && p.organizer.toLowerCase() === organizer!.trim().toLowerCase() && p.start === start && (p.end ?? '') === end)
+            .map((p) => ({ id: p.id, venue: p.venue, organizer: p.organizer, brand: p.brand, startdate: p.start, enddate: p.end, status: 'confirmed' }));
+          return { results };
+        },
+      }),
+    }),
+  };
+  const MLE = { fairVenue: 'MID VALLEY', fairOrganizer: 'MLE', fairStart: '2026-08-08', fairEnd: '2026-08-09' };
+  const onFair = (row: Row, extra: Row) => Object.assign(row, {
+    venue: 'MID VALLEY', so_date: '2026-08-10', branding: 'AKEMI', project_id: 340, fair_match: 'PICKED', ...extra,
+  });
+  const patchWithFairs = (app: Hono, body: Row) => app.request('/mfg-sales-orders/SO-CAS-1', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  }, { DB: fairDb });
+
+  test('another event at the SAME venue is saved, not answered "nothing to do"', async () => {
+    const { app, row } = harness();
+    onFair(row, {});
+
+    const response = await patchWithFairs(app, { venue: 'MID VALLEY', ...MLE, version: 1 });
+
+    expect(response.status).toBe(200);
+    /* AKEMI's booth at MLE 08/08-09/08 — not ZANOTTI's, and never the other company's. */
+    expect(row).toMatchObject({ project_id: 500, fair_match: 'PICKED', venue: 'MID VALLEY', version: 2 });
+  });
+
+  test('a new venue with an event links that event instead of dropping to PENDING', async () => {
+    const { app, row } = harness();
+    onFair(row, { venue: 'SPICE ARENA', project_id: null, fair_match: 'PENDING' });
+
+    const response = await patchWithFairs(app, { venue: 'MID VALLEY', ...MLE, version: 1 });
+
+    expect(response.status).toBe(200);
+    expect(row).toMatchObject({ venue: 'MID VALLEY', venue_source: 'MANUAL', project_id: 500, fair_match: 'PICKED' });
+  });
+
+  test('a place alone (Others) still drops the link to PENDING for the reconcile', async () => {
+    const { app, row } = harness();
+    onFair(row, {});
+
+    const response = await patchWithFairs(app, { venue: 'IOI CITY MALL', fairVenue: null, fairOrganizer: null, fairStart: null, fairEnd: null, version: 1 });
+
+    expect(response.status).toBe(200);
+    expect(row).toMatchObject({ venue: 'IOI CITY MALL', project_id: null, fair_match: 'PENDING' });
+  });
+
+  test('the event already linked, picked again, is a no-op', async () => {
+    const { app, row, getRpcCalls } = harness();
+    onFair(row, { project_id: 500 });
+
+    const response = await patchWithFairs(app, { venue: 'MID VALLEY', ...MLE, version: 1 });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, changed: 0 });
+    expect(row).toMatchObject({ project_id: 500, version: 1 });
+    expect(getRpcCalls()).toBe(0);
+  });
+
+  test('an event the order\'s brand had no booth at is recorded UNMATCHED, not guessed', async () => {
+    const { app, row } = harness();
+    onFair(row, { branding: 'DUNLOPILLO' });
+
+    const response = await patchWithFairs(app, { venue: 'MID VALLEY', ...MLE, version: 1 });
+
+    expect(response.status).toBe(200);
+    expect(row).toMatchObject({ project_id: null, fair_match: 'UNMATCHED' });
+  });
+
+  /* Owner 2026-09-24: the event runs 7-9, 「他一选完那个 event，这边下拉菜单就要拉出来
+     7、8、9 三天给他选」 — the DAY of the event rides with it. */
+  test('the day picked with the event is recorded with it', async () => {
+    const { app, row } = harness();
+    onFair(row, { fair_date: null });
+
+    const response = await patchWithFairs(app, { venue: 'MID VALLEY', ...MLE, fairDate: '2026-08-09', version: 1 });
+
+    expect(response.status).toBe(200);
+    expect(row).toMatchObject({ project_id: 500, fair_date: '2026-08-09', version: 2 });
+  });
+
+  test('changing only the day saves the day and leaves the link alone', async () => {
+    const { app, row } = harness();
+    onFair(row, { project_id: 500, fair_date: '2026-08-08' });
+
+    const response = await patchWithFairs(app, { ...MLE, fairDate: '2026-08-09', version: 1 });
+
+    expect(response.status).toBe(200);
+    expect(row).toMatchObject({ project_id: 500, fair_match: 'PICKED', fair_date: '2026-08-09', version: 2 });
+  });
+
+  test('a day that is not a day of the picked event is not recorded', async () => {
+    const { app, row } = harness();
+    onFair(row, { project_id: 500, fair_date: '2026-08-08' });
+
+    const response = await patchWithFairs(app, { ...MLE, fairDate: '2026-08-10', version: 1 });
+
+    expect(response.status).toBe(200);
+    expect(row).toMatchObject({ project_id: 500, fair_date: null });
+  });
+
+  test('a day sent without its event names nothing to check it against, so it is ignored', async () => {
+    const { app, row } = harness();
+    onFair(row, { project_id: 500, fair_date: '2026-08-08' });
+
+    const response = await patchWithFairs(app, { fairDate: '2026-08-09', version: 1 });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, changed: 0 });
+    expect(row).toMatchObject({ fair_date: '2026-08-08', version: 1 });
+  });
+
+  test('a new place with no event clears the day, whether or not the fair keys came along', async () => {
+    const withKeys = harness();
+    onFair(withKeys.row, { project_id: 500, fair_date: '2026-08-08' });
+    await patchWithFairs(withKeys.app, { venue: 'IOI CITY MALL', fairVenue: null, fairOrganizer: null, fairStart: null, fairEnd: null, fairDate: null, version: 1 });
+    expect(withKeys.row).toMatchObject({ venue: 'IOI CITY MALL', project_id: null, fair_match: 'PENDING', fair_date: null });
+
+    const placeOnly = harness();
+    onFair(placeOnly.row, { project_id: 500, fair_date: '2026-08-08' });
+    await patchWithFairs(placeOnly.app, { venue: 'IOI CITY MALL', version: 1 });
+    expect(placeOnly.row).toMatchObject({ venue: 'IOI CITY MALL', project_id: null, fair_match: 'PENDING', fair_date: null });
+  });
+});
+
+/* HC-0094 (Chew, IT Hub, 2026-10-13): "Manual edit also will not recognized back
+   to project". Changing the venue to a place alone used to drop the link to
+   PENDING and wait for the nightly pass; it now runs the create-time detection
+   (venue + date + brand) against the fairs that already exist. */
+describe('a venue edit re-detects the fair at once', () => {
+  const fairDb = (fairs: Row[]) => ({
+    DB: {
+      prepare: () => ({
+        bind: (venue: unknown) => ({
+          all: async () => ({ results: fairs.filter((f) => f.venue === venue) }),
+        }),
+      }),
+    },
+  });
+  const MV = { venue: 'MID VALLEY', organizer: 'MLE', startdate: '2026-10-10', enddate: '2026-10-12', status: 'Confirmed' };
+
+  test('a place with one booth of the order brand links to that existing project', async () => {
+    const { app, row } = harness();
+    Object.assign(row, { venue: 'PJ SHOWROOM', so_date: '2026-10-12', branding: 'DUNLOPILLO', project_id: null, fair_match: 'NO_FAIR' });
+    const res = await app.request('/mfg-sales-orders/SO-CAS-1', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ venue: 'MID VALLEY', version: 1 }),
+    }, fairDb([{ id: 20, brand: 'AKEMI', ...MV }, { id: 21, brand: 'DUNLOPILLO', ...MV }]));
+    expect(res.status).toBe(200);
+    expect(row).toMatchObject({ venue: 'MID VALLEY', project_id: 21, fair_match: 'PICKED' });
+  });
+
+  test('a place with no fair yet stays PENDING for the reconcile', async () => {
+    const { app, row } = harness();
+    Object.assign(row, { venue: 'PJ SHOWROOM', so_date: '2026-10-12', branding: 'DUNLOPILLO', project_id: 9, fair_match: 'PICKED' });
+    const res = await app.request('/mfg-sales-orders/SO-CAS-1', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ venue: 'MID VALLEY', version: 1 }),
+    }, fairDb([]));
+    expect(res.status).toBe(200);
+    expect(row).toMatchObject({ venue: 'MID VALLEY', project_id: null, fair_match: 'PENDING' });
   });
 });

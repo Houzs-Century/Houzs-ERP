@@ -139,7 +139,7 @@ describe("Sales Invoices list: the one Export", () => {
     mount("/scm/sales-invoices?status=sent");
     await exportNow();
     expect(h.aoa[0]).toEqual([
-      "SI No.", "Date", "Due", "Transfer From (SO)", "Transfer From (DO)", "Source PO", "Customer", "Customer ref", "Status",
+      "SI No.", "Date", "Due", "Transfer From (SO)", "Transfer From (DO)", "Source PO", "Customer", "Ref No.", "Status",
       "Outstanding", "Total",
     ]);
     expect(h.aoa).toHaveLength(4);

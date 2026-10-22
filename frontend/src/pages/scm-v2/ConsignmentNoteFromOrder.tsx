@@ -22,7 +22,7 @@ import { ArrowRight, X, CheckSquare, Square } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { VariantDescription } from '../../vendor/scm/components/VariantDescription';
 import { useDeliverableOrderLines, type DeliverableOrderLine } from '../../vendor/scm/lib/consignment-note-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import styles from './SalesOrderDetail.module.css';
@@ -113,7 +113,7 @@ export const ConsignmentNoteFromOrder = () => {
   const picked = Object.entries(picks).filter(([, v]) => v.picked && v.qty > 0);
   const pickedCount = picked.length;
 
-  const columns = useMemo<DataGridColumn<DeliverableOrderLine>[]>(() => [
+  const columns = useMemo<GridColumn<DeliverableOrderLine>[]>(() => [
     {
       key: 'pick', label: '', width: 40, sortable: false, groupable: false,
       accessor: (r) => {
@@ -297,7 +297,7 @@ export const ConsignmentNoteFromOrder = () => {
         </p>
       )}
 
-      <DataGrid<DeliverableOrderLine>
+      <DataGridCompat<DeliverableOrderLine>
         rows={rows}
         columns={columns}
         storageKey="cn-g.cn-from-order-lines.layout.v1"

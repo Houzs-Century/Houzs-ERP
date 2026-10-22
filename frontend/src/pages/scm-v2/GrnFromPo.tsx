@@ -36,13 +36,13 @@ import {
   type OutstandingPoItem,
 } from '../../vendor/scm/lib/suppliers-queries';
 import { useGrnDetail, useAddGrnItem } from '../../vendor/scm/lib/grn-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
-import { fmtMoneySen } from '@2990s/shared';
+import { fmtDate, fmtMoneySen, fmtQty } from '@2990s/shared';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 
@@ -308,7 +308,7 @@ export const GrnFromPo = () => {
   //    Item Code / Description+variants / Ordered / Received / Pick Qty /
   //    Expected / Line Value). Memoized on `picks` so the controlled inputs
   //    re-render when pick state changes (DataGrid is React.memo'd). ────────
-  const columns = useMemo<DataGridColumn<OutstandingPoItem>[]>(() => [
+  const columns = useMemo<GridColumn<OutstandingPoItem>[]>(() => [
     {
       key: 'pick', label: '', width: 40, sortable: false, groupable: false,
       accessor: (r) => {
@@ -363,7 +363,7 @@ export const GrnFromPo = () => {
       /* PO Date — available in the Columns toggle; hidden by default to keep the
          picker dense. (Deliverable 4c.) */
       key: 'poDate', label: 'PO Date', width: 120, sortable: true, defaultHidden: true,
-      accessor: (r) => r.poDate ?? '',
+      accessor: (r) => fmtDate(r.poDate),
       searchValue: (r) => r.poDate ?? '',
       sortFn: (a, b) => String(a.poDate ?? '').localeCompare(String(b.poDate ?? '')),
     },
@@ -393,7 +393,7 @@ export const GrnFromPo = () => {
     },
     {
       key: 'qty', label: 'Ordered', width: 80, align: 'right', sortable: true,
-      accessor: (r) => String(r.qty),
+      accessor: (r) => fmtQty(r.qty),
       sortFn: (a, b) => a.qty - b.qty,
     },
     {
@@ -439,7 +439,7 @@ export const GrnFromPo = () => {
     },
     {
       key: 'expectedAt', label: 'Expected', width: 120, sortable: true,
-      accessor: (r) => r.expectedAt ?? '',
+      accessor: (r) => fmtDate(r.expectedAt),
       searchValue: (r) => r.expectedAt ?? '',
       sortFn: (a, b) => String(a.expectedAt ?? '').localeCompare(String(b.expectedAt ?? '')),
     },
@@ -644,7 +644,7 @@ export const GrnFromPo = () => {
         </p>
       )}
 
-      <DataGrid<OutstandingPoItem>
+      <DataGridCompat<OutstandingPoItem>
         rows={rows}
         columns={columns}
         storageKey={STORAGE_KEY}

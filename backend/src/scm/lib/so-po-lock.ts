@@ -56,6 +56,7 @@
 // ----------------------------------------------------------------------------
 
 import { isMirroredDocNo } from './companyScope';
+import { poAwaitingSupplier } from '../shared/so-po-date-rule';
 
 /** PostgREST `.in()` caps out on URL length. An SO's line count is small (the
  *  widest live order is a handful of rows), but chunk anyway so a pathological
@@ -81,6 +82,45 @@ export async function soPoLocked(
   docNo: string | null | undefined,
 ): Promise<boolean> {
   if (!docNo || !isMirroredDocNo(docNo)) return false;
+  return soHasLivePo(sb, docNo);
+}
+
+/**
+ * True when a live (non-CANCELLED) Purchase Order claims any line of this SO,
+ * for ANY company. The whole-SO lock above stays 2990's; this narrower question
+ * is what a Houzs order's Processing Date is frozen by (BUG-101, owner
+ * 2026-10-12): once the supplier has a PO, the Processing Date cannot move and
+ * only the Delivery Date may be amended. Fails closed like soPoLocked.
+ */
+export async function soHasLivePo(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  docNo: string | null | undefined,
+): Promise<boolean> {
+  return soHasPoInStatus(sb, docNo, (status) => status.toUpperCase() !== 'CANCELLED');
+}
+
+/**
+ * True when a PO on any line of this SO is still owed by the supplier — live
+ * and not yet RECEIVED. What a Delivery Date brought forward asks the Purchaser
+ * about (HC-0114): once every PO is RECEIVED the goods are in, and the date is
+ * Logistic's alone. Fails closed like soHasLivePo.
+ */
+export async function soHasUnreceivedPo(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  docNo: string | null | undefined,
+): Promise<boolean> {
+  return soHasPoInStatus(sb, docNo, poAwaitingSupplier);
+}
+
+async function soHasPoInStatus(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  docNo: string | null | undefined,
+  counts: (status: string) => boolean,
+): Promise<boolean> {
+  if (!docNo) return false;
 
   try {
     const { data: lineRows, error: lineErr } = await sb
@@ -118,7 +158,7 @@ export async function soPoLocked(
         .in('id', part);
       if (error) return true; // fail closed
       for (const p of (data ?? []) as Array<{ status: string | null }>) {
-        if ((p.status ?? '').toUpperCase() !== 'CANCELLED') return true;
+        if (counts(p.status ?? '')) return true;
       }
     }
     return false;

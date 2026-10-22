@@ -114,6 +114,14 @@ try {
      is a backlog only a windowed `?since=` backfill can collect. */
   console.log(`   doc_no range ${rate[0].oldest_doc ?? "-"} .. ${rate[0].newest_doc ?? "-"}`);
 
+  // 4. the last pull runs — a FAILED run names the rows that froze the checkpoint
+  const runs = await pg`
+    SELECT started_at, type, status, message FROM execution_logs
+     WHERE type LIKE 'PULL%' ORDER BY started_at DESC LIMIT 8`;
+  console.log("");
+  console.log("-- 4. last pull runs -------------------------------------------");
+  for (const r of runs) console.log(`   ${r.started_at}  ${r.type}  ${r.status}  ${r.message ?? ""}`);
+
   console.log("");
   console.log("-- VERDICT ------------------------------------------------------");
   const behind = at ? days(at) : null;

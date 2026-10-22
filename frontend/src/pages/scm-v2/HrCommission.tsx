@@ -18,8 +18,8 @@
 // card slab — owner 2026-07-18.
 // ----------------------------------------------------------------------------
 
-import { Fragment, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Download, Lock, LockOpen } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Download, Lock, LockOpen } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { Badge } from '../../components/Badge';
 import { PageHeader } from '../../components/Layout';
@@ -32,8 +32,9 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { usePrompt } from '../../vendor/scm/components/PromptDialog';
 import {
   useHrCommission, useHrPayoutPeriods, useCloseHrPayout, useReopenHrPayout,
-  type HrCommissionRow,
+  type HrCommissionRow, type HrPayoutPeriod,
 } from '../../vendor/scm/lib/hr-queries';
+import { DataTable, type Column } from '../../components/DataTable';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { writeLineExportXlsx } from "../../vendor/scm/lib/line-export-file";
 
@@ -144,14 +145,6 @@ export const HrCommission = () => {
       await notify({ title: 'Could not reopen the period', body: (e as Error)?.message, tone: 'error' });
     }
   };
-
-  const toggle = (staffId: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(staffId)) next.delete(staffId);
-      else next.add(staffId);
-      return next;
-    });
 
   const onExport = async () => {
     if (!data) return;
@@ -325,32 +318,21 @@ export const HrCommission = () => {
             </Badge>
           </header>
 
-          <div className="overflow-x-auto rounded-md border border-border bg-surface">
-            <table className="w-full text-[12px]">
-              <thead className="border-b-2 border-border bg-surface-dim text-[10px] font-bold uppercase tracking-brand text-ink">
-                <tr>
-                  <th className="px-3 py-2 text-left">Salesperson</th>
-                  <th className="px-2 py-2 text-left">Tier</th>
-                  <th className="px-2 py-2 text-right">Goods</th>
-                  <th className="px-2 py-2 text-right">Rate</th>
-                  <th className="px-2 py-2 text-right">Personal</th>
-                  <th className="px-2 py-2 text-right">Override</th>
-                  <th className="px-2 py-2 text-right">Item KPI</th>
-                  <th className="px-3 py-2 text-right">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {s.rows.map((r) => (
-                  <CommissionRow
-                    key={r.staffId}
-                    row={r}
-                    open={expanded.has(r.staffId)}
-                    onToggle={() => toggle(r.staffId)}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataTable<HrCommissionRow>
+            tableId="hr-commission"
+            exportName={`hr-commission-${s.showroomName}`}
+            exportXlsx
+            columns={COMMISSION_COLUMNS}
+            rows={s.rows}
+            getRowKey={(r) => r.staffId}
+            expandable={{
+              render: (r) => <CommissionBreakdown row={r} />,
+              // No breakdown to show: no chevron.
+              rowKey: (r) => (r.kpiDetail.length > 0 || (r.overrideDetail ?? []).length > 0 ? r.staffId : ''),
+              expandedIds: expanded,
+              onExpandedChange: setExpanded,
+            }}
+          />
         </section>
       ))}
 
@@ -366,141 +348,101 @@ export const HrCommission = () => {
           </div>
         )}
 
-        <div className="overflow-x-auto rounded-md border border-border bg-surface">
-          <table className="w-full text-[12px]">
-            <thead className="border-b-2 border-border bg-surface-dim text-[10px] font-bold uppercase tracking-brand text-ink">
-              <tr>
-                <th className="px-3 py-2 text-left">Period</th>
-                <th className="px-2 py-2 text-right">Rev</th>
-                <th className="px-2 py-2 text-left">Status</th>
-                <th className="px-2 py-2 text-right">People</th>
-                <th className="px-2 py-2 text-right">Total</th>
-                <th className="px-2 py-2 text-left">Closed by</th>
-                <th className="px-3 py-2 text-left">Reopened</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(periods.data ?? []).map((p) => (
-                <tr
-                  key={p.id}
-                  className="cursor-pointer border-t border-border-subtle hover:bg-primary-soft/40"
-                  onClick={() => {
-                    setFrom(p.from);
-                    setTo(p.to);
-                    setApplied({ from: p.from, to: p.to });
-                  }}
-                >
-                  <td className="px-3 py-2 text-ink">
-                    {formatDate(p.from)} – {formatDate(p.to)}
-                  </td>
-                  <td className="px-2 py-2 text-right font-mono text-ink-secondary">{p.revision}</td>
-                  <td className="px-2 py-2">
-                    <Badge tone={p.status === 'CLOSED' ? 'success' : 'warning'} variant="soft" caseless>
-                      {p.status === 'CLOSED' ? 'Closed' : 'Reopened'}
-                    </Badge>
-                  </td>
-                  <td className="px-2 py-2 text-right font-mono text-ink-secondary">{p.rowCount}</td>
-                  <td className="px-2 py-2 text-right font-mono">{fmtSen(p.totalSen)}</td>
-                  <td className="px-2 py-2 text-ink-secondary">
-                    {p.closedByName || '—'}
-                    {p.closedAt ? ` · ${formatDate(p.closedAt)}` : ''}
-                  </td>
-                  <td className="px-3 py-2 text-ink-secondary">
-                    {p.reopenedAt
-                      ? `${p.reopenedByName || 'unknown'} · ${formatDate(p.reopenedAt)}${p.reopenReason ? ` — ${p.reopenReason}` : ''}`
-                      : '—'}
-                  </td>
-                </tr>
-              ))}
-              {(periods.data ?? []).length === 0 && !periods.isLoading && !periods.isError && (
-                <tr className="border-t border-border-subtle">
-                  <td colSpan={7} className="px-3 py-4 text-center text-[12px] text-ink-secondary">
-                    No period has been closed yet. Every range still recalculates live.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        <DataTable<HrPayoutPeriod>
+          tableId="hr-payout-history"
+          exportName="hr-payout-history"
+          exportXlsx
+          columns={PERIOD_COLUMNS}
+          rows={periods.data ?? (periods.isError ? [] : null)}
+          loading={periods.isLoading}
+          emptyLabel="No period has been closed yet. Every range still recalculates live."
+          getRowKey={(p) => p.id}
+          onRowClick={(p) => {
+            setFrom(p.from);
+            setTo(p.to);
+            setApplied({ from: p.from, to: p.to });
+          }}
+        />
       </section>
     </div>
   );
 };
 
-const CommissionRow = ({
-  row,
-  open,
-  onToggle,
-}: {
-  row: HrCommissionRow;
-  open: boolean;
-  onToggle: () => void;
-}) => {
+const mono = 'font-mono';
+
+const overrideText = (row: HrCommissionRow): string => {
   const overrideLevels = row.overrideDetail ?? [];
-  const expandable = row.kpiDetail.length > 0 || overrideLevels.length > 0;
-
-  return (
-    <Fragment>
-      <tr className="border-t border-border-subtle">
-        <td className="px-3 py-2">
-          <span className="inline-flex items-center gap-1">
-            {expandable && (
-              <button
-                type="button"
-                onClick={onToggle}
-                aria-label={open ? 'Hide breakdown' : 'Show breakdown'}
-                className="rounded p-0.5 text-ink-muted hover:bg-primary-soft hover:text-primary"
-              >
-                {open ? <ChevronDown size={14} strokeWidth={2} /> : <ChevronRight size={14} strokeWidth={2} />}
-              </button>
-            )}
-            <span className="font-semibold text-ink">{row.staffName}</span>
-          </span>
-        </td>
-        <td className="px-2 py-2 text-ink-secondary">{row.tier}</td>
-        <td className="px-2 py-2 text-right font-mono">{fmtSen(row.personalGoodsSen)}</td>
-        <td className="px-2 py-2 text-right font-mono">{fmtPct(row.personalRateBps)}</td>
-        <td className="px-2 py-2 text-right font-mono">{fmtSen(row.personalCommissionSen)}</td>
-        <td className="px-2 py-2 text-right font-mono">
-          {/* null rate = chain mode, where the override is a sum over levels of
-              different rates on different bases. Printing a blended rate would
-              be a figure nobody can reconcile against a payslip, so the amount
-              stands alone and the per-level split lives in the expansion. */}
-          {row.overrideRateBps === null
-            ? overrideLevels.length === 0 && row.overrideCommissionSen === 0
-              ? '—'
-              : fmtSen(row.overrideCommissionSen)
-            : row.overrideRateBps === 0
-              ? '—'
-              : `${fmtPct(row.overrideRateBps)} · ${fmtSen(row.overrideCommissionSen)}`}
-        </td>
-        <td className="px-2 py-2 text-right font-mono">{fmtSen(row.itemKpiSen)}</td>
-        <td className="px-3 py-2 text-right font-mono font-semibold text-ink">{fmtSen(row.totalSen)}</td>
-      </tr>
-
-      {open &&
-        overrideLevels.map((d) => (
-          <tr key={`${row.staffId}-lvl${d.level}`} className="border-t border-border-subtle bg-bg/30 text-[11px]">
-            <td className="px-3 py-1.5 pl-9 text-ink-secondary" colSpan={5}>
-              Level {d.level} downline goods {fmtSen(d.goodsSen)} @ {fmtPct(d.rateBps)}
-            </td>
-            <td className="px-2 py-1.5 text-right font-mono text-ink-secondary" colSpan={3}>
-              {fmtSen(d.commissionSen)}
-            </td>
-          </tr>
-        ))}
-
-      {open &&
-        row.kpiDetail.map((d, i) => (
-          <tr key={`${row.staffId}-kpi${i}`} className="border-t border-border-subtle bg-bg/30 text-[11px]">
-            <td className="px-3 py-1.5 pl-9 text-ink-secondary" colSpan={5}>
-              {d.label} × {d.qty} @ {fmtSen(d.bonusSen)}
-            </td>
-            <td className="px-2 py-1.5 text-right font-mono text-ink-secondary" colSpan={3}>
-              {fmtSen(d.lineSen)}
-            </td>
-          </tr>
-        ))}
-    </Fragment>
-  );
+  /* null rate = chain mode, where the override is a sum over levels of
+     different rates on different bases. Printing a blended rate would be a
+     figure nobody can reconcile against a payslip, so the amount stands alone
+     and the per-level split lives in the expansion. */
+  if (row.overrideRateBps === null) {
+    return overrideLevels.length === 0 && row.overrideCommissionSen === 0 ? '—' : fmtSen(row.overrideCommissionSen);
+  }
+  return row.overrideRateBps === 0 ? '—' : `${fmtPct(row.overrideRateBps)} · ${fmtSen(row.overrideCommissionSen)}`;
 };
+
+const money = (key: string, label: string, sen: (r: HrCommissionRow) => number, bold = false): Column<HrCommissionRow> => ({
+  key, label, align: 'right',
+  render: (r) => <span className={bold ? `${mono} font-semibold text-ink` : mono}>{fmtSen(sen(r))}</span>,
+  getValue: sen, exportValue: (r) => sen(r) / 100, exportFormat: 'money',
+});
+
+const COMMISSION_COLUMNS: Column<HrCommissionRow>[] = [
+  { key: 'salesperson', label: 'Salesperson', render: (r) => <span className="font-semibold text-ink">{r.staffName}</span>, getValue: (r) => r.staffName },
+  { key: 'tier', label: 'Tier', render: (r) => r.tier, getValue: (r) => r.tier },
+  money('goods', 'Goods', (r) => r.personalGoodsSen),
+  { key: 'rate', label: 'Rate', align: 'right', render: (r) => <span className={mono}>{fmtPct(r.personalRateBps)}</span>, getValue: (r) => r.personalRateBps },
+  money('personal', 'Personal', (r) => r.personalCommissionSen),
+  { key: 'override', label: 'Override', align: 'right', render: (r) => <span className={mono}>{overrideText(r)}</span>, getValue: (r) => r.overrideCommissionSen },
+  money('itemKpi', 'Item KPI', (r) => r.itemKpiSen),
+  money('total', 'Total', (r) => r.totalSen, true),
+];
+
+const CommissionBreakdown = ({ row }: { row: HrCommissionRow }) => (
+  <div className="space-y-1 py-1 text-[11px] text-ink-secondary">
+    {(row.overrideDetail ?? []).map((d) => (
+      <div key={`lvl${d.level}`} className="flex justify-between gap-4">
+        <span>Level {d.level} downline goods {fmtSen(d.goodsSen)} @ {fmtPct(d.rateBps)}</span>
+        <span className={mono}>{fmtSen(d.commissionSen)}</span>
+      </div>
+    ))}
+    {row.kpiDetail.map((d, i) => (
+      <div key={`kpi${i}`} className="flex justify-between gap-4">
+        <span>{d.label} × {d.qty} @ {fmtSen(d.bonusSen)}</span>
+        <span className={mono}>{fmtSen(d.lineSen)}</span>
+      </div>
+    ))}
+  </div>
+);
+
+const PERIOD_COLUMNS: Column<HrPayoutPeriod>[] = [
+  { key: 'period', label: 'Period', render: (p) => `${formatDate(p.from)} – ${formatDate(p.to)}`, getValue: (p) => p.from, exportFormat: 'date' },
+  { key: 'rev', label: 'Rev', align: 'right', render: (p) => <span className={mono}>{p.revision}</span>, getValue: (p) => p.revision },
+  {
+    key: 'status', label: 'Status',
+    render: (p) => (
+      <Badge tone={p.status === 'CLOSED' ? 'success' : 'warning'} variant="soft" caseless>
+        {p.status === 'CLOSED' ? 'Closed' : 'Reopened'}
+      </Badge>
+    ),
+    getValue: (p) => (p.status === 'CLOSED' ? 'Closed' : 'Reopened'),
+  },
+  { key: 'people', label: 'People', align: 'right', render: (p) => <span className={mono}>{p.rowCount}</span>, getValue: (p) => p.rowCount },
+  {
+    key: 'total', label: 'Total', align: 'right', render: (p) => <span className={mono}>{fmtSen(p.totalSen)}</span>,
+    getValue: (p) => p.totalSen, exportValue: (p) => p.totalSen / 100, exportFormat: 'money',
+  },
+  {
+    key: 'closedBy', label: 'Closed By',
+    render: (p) => `${p.closedByName || '—'}${p.closedAt ? ` · ${formatDate(p.closedAt)}` : ''}`,
+    getValue: (p) => p.closedByName || '',
+  },
+  {
+    key: 'reopened', label: 'Reopened',
+    render: (p) => (p.reopenedAt
+      ? `${p.reopenedByName || 'unknown'} · ${formatDate(p.reopenedAt)}${p.reopenReason ? ` — ${p.reopenReason}` : ''}`
+      : '—'),
+    getValue: (p) => p.reopenedByName || '',
+  },
+];

@@ -20,10 +20,13 @@
 // revenue reversed) — a live invoice refunded would leave the customer owing
 // again, and the paper for THAT is the credit note, which is not built yet.
 //
-// THE HEADROOM IS WHAT THIS LEDGER BOOKED. Only payments that reached the
-// journal count (SOPAY / SIPAY, not reversed): an `imported` row or a
-// migrated invoice's payment lives in AutoCount's book, and refunding it here
-// would Dr an AR this ledger never credited. Every non-cancelled refund
+// THE HEADROOM IS WHAT THE DOCUMENT WAS PAID. Payments that reached the
+// journal count (SOPAY / SIPAY, not reversed) and, on a Sales Order, the
+// payments brought over from AutoCount (method `imported`) — the owner,
+// 2026-10-05: 「两个payment 我要看到也可以refund 和 convert … 那个在erp 开张前
+// 已记录，所以照理没欠了」. The refund books Dr AR as for any payment; the AR
+// Aging already footnotes the AutoCount deposits this ledger never booked. A
+// migrated INVOICE stays out: its money is AutoCount's invoice, not an order's. Every non-cancelled refund
 // voucher already on the document — draft or posted — is spoken for, the way
 // a draft AP Payment reserves its invoice (docs/bugs/0653).
 //
@@ -35,7 +38,8 @@ import { requireActiveCompanyId, scopeToCompanyId } from './companyScope';
 import { resolveRoles } from '../../acc/rules';
 import { addCustomerCredit } from './customer-credits';
 import { standingDeposits, type RefundInput } from '../../acc/deposit-refunds';
-import { conversionsFrom } from './so-money';
+import { IMPORTED_METHOD, conversionsFrom } from './so-money';
+import { heldSen, refundRequestsOn } from './refund-request';
 import { CONVERT_SOURCE } from '../../acc/payments';
 import { fmtSen } from '../shared/format';
 
@@ -47,8 +51,10 @@ export type RefundPayment = {
   method: string;
   provider: string | null;
   amountSen: number;
-  /** Reached this ledger (an active SOPAY / SIPAY journal) — only these count. */
+  /** Reached this ledger (an active SOPAY / SIPAY journal). */
   booked: boolean;
+  /** A Sales Order payment brought over from AutoCount — it counts too (owner 2026-10-05). */
+  imported: boolean;
 };
 
 export type RefundVoucherRow = { id: string; pvNumber: string; status: string; voucherDate: string; totalSen: number };
@@ -59,13 +65,19 @@ export type RefundSource = {
   status: string | null;
   customer: { name: string | null; phone: string | null; customerId: string | null; debtorCode: string | null };
   payments: RefundPayment[];
-  /** Money this ledger booked for the document (the refundable base). */
+  /** What the document was paid (the refundable base): booked here, plus — on a
+      Sales Order — brought over from AutoCount. The name is older than that half. */
   bookedSen: number;
+  /** The part of it brought over from AutoCount. */
+  importedSen: number;
   /** Every non-cancelled refund voucher on the document, draft or posted. */
   refunds: RefundVoucherRow[];
   refundedSen: number;
   /** Money already moved to other orders (docs/bugs/0927) — spoken for, like a voucher. */
   convertedSen: number;
+  /** Refund requests on the order still waiting for Finance (owner 2026-10-14;
+      lib/refund-request.ts) — spoken for too, all but the one being answered. */
+  requestedSen: number;
   refundableSen: number;
   /** Deposit invoices still standing on the order (none closed them), and
       what is left on them after earlier refunds — posting the refund raises
@@ -109,7 +121,8 @@ async function refundsOn(sb: any, companyId: number, docNo: string, excludePvId:
 /**
  * The document, its customer, what it collected and what may still be
  * refunded. `excludePvId` leaves one voucher out of the reserved sum — the
- * one being edited.
+ * one being edited; `excludeRequestId` one refund request — the one the
+ * voucher being raised answers.
  */
 export async function loadRefundSource(
   sb: any,
@@ -117,6 +130,7 @@ export async function loadRefundSource(
   typeRaw: unknown,
   docNoRaw: unknown,
   excludePvId: string | null = null,
+  excludeRequestId: string | null = null,
 ): Promise<{ ok: true; source: RefundSource } | { ok: false; status: number; error: string; message: string }> {
   const type = normType(typeRaw);
   const docNo = String(docNoRaw ?? '').trim();
@@ -147,6 +161,7 @@ export async function loadRefundSource(
     payments = rows.map((r) => ({
       id: String(r.id), paidOn: String(r.paid_at ?? '').slice(0, 10), method: String(r.method ?? ''),
       provider: r.merchant_provider ?? null, amountSen: Number(r.amount_sen ?? 0), booked: booked.ids.has(String(r.id)),
+      imported: String(r.method ?? '') === IMPORTED_METHOD,
     }));
   } else {
     const { data: si, error } = await sb.from('sales_invoices')
@@ -170,7 +185,7 @@ export async function loadRefundSource(
     if (!booked.ok) return { ok: false, status: 500, error: 'load_failed', message: booked.reason };
     payments = rows.map((r) => ({
       id: String(r.id), paidOn: String(r.paid_at ?? '').slice(0, 10), method: String(r.method ?? ''),
-      provider: r.merchant_provider ?? null, amountSen: Number(r.amount_sen ?? 0), booked: booked.ids.has(String(r.id)),
+      provider: r.merchant_provider ?? null, amountSen: Number(r.amount_sen ?? 0), booked: booked.ids.has(String(r.id)), imported: false,
     }));
   }
 
@@ -180,27 +195,33 @@ export async function loadRefundSource(
     if (!d.ok) return { ok: false, status: 500, error: 'load_failed', message: d.reason };
     deposits = d.deposits;
   }
-  const bookedSen = payments.filter((p) => p.booked && p.amountSen > 0).reduce((s, p) => s + p.amountSen, 0);
+  const counted = payments.filter((p) => (p.booked || p.imported) && p.amountSen > 0);
+  const bookedSen = counted.reduce((s, p) => s + p.amountSen, 0);
+  const importedSen = counted.filter((p) => p.imported && !p.booked).reduce((s, p) => s + p.amountSen, 0);
   const prior = await refundsOn(sb, companyId, docNo, excludePvId);
   if (!prior.ok) return { ok: false, status: 500, error: 'load_failed', message: prior.reason };
   const refundedSen = prior.rows.reduce((s, r) => s + r.totalSen, 0);
   let convertedSen = 0;
+  let requestedSen = 0;
   if (type === 'SO') {
     const moved = await conversionsFrom(sb, companyId, docNo);
     if (!moved.ok) return { ok: false, status: 500, error: 'load_failed', message: moved.reason };
     convertedSen = moved.rows.reduce((s, r) => s + r.amountSen, 0);
+    const asked = await refundRequestsOn(sb, companyId, [docNo], excludeRequestId);
+    if (!asked.ok) return { ok: false, status: 500, error: 'load_failed', message: asked.reason };
+    requestedSen = heldSen(asked.byDoc.get(docNo) ?? []);
   }
-  const refundableSen = Math.max(0, bookedSen - refundedSen - convertedSen);
+  const refundableSen = Math.max(0, bookedSen - refundedSen - requestedSen - convertedSen);
   if (!ineligible && bookedSen === 0) {
     ineligible = payments.length === 0
       ? `${docNo} collected nothing — there is no money to refund.`
-      : `${docNo}'s payments never reached this ledger (AutoCount-era or unbooked) — nothing here to refund against.`;
+      : `${docNo}'s payments never reached this ledger — nothing here to refund against.`;
   }
   return {
     ok: true,
     source: {
-      type, docNo, status, customer, payments, bookedSen,
-      refunds: prior.rows, refundedSen, convertedSen, refundableSen, deposits,
+      type, docNo, status, customer, payments, bookedSen, importedSen,
+      refunds: prior.rows, refundedSen, convertedSen, requestedSen, refundableSen, deposits,
       eligible: ineligible == null && refundableSen > 0,
       reason: ineligible ?? (refundableSen > 0 ? null : `${docNo} is refunded in full already.`),
     },
@@ -211,7 +232,12 @@ export async function loadRefundSource(
 export const refundSourceHandler = async (c: any): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  const r = await loadRefundSource(c.get('supabase'), co.companyId, c.req.query('type'), c.req.query('docNo'), String(c.req.query('excludePvId') ?? '').trim() || null);
+  const r = await loadRefundSource(
+    c.get('supabase'), co.companyId, c.req.query('type'), c.req.query('docNo'),
+    String(c.req.query('excludePvId') ?? '').trim() || null,
+    /* The refund request a voucher is being raised to answer (owner 2026-10-14). */
+    String(c.req.query('excludeRequestId') ?? '').trim() || null,
+  );
   if (!r.ok) return c.json({ error: r.error, message: r.message }, r.status);
   return c.json({ source: r.source });
 };
@@ -239,7 +265,10 @@ export async function refundCreateGuard(
   if (!Number.isInteger(amount) || amount <= 0) {
     return { ok: false, resp: c.json({ error: 'refund_amount_required', message: 'How much is refunded? An amount above zero, in sen.' }, 400) };
   }
-  const src = await loadRefundSource(sb, co.companyId, body.refundSourceType, body.refundSourceDocNo, excludePvId);
+  /* A voucher answering a refund request (owner 2026-10-14) is not held back by
+     that request's own amount — every other waiting request still is. */
+  const answering = typeof body.paymentRequestId === 'string' && body.paymentRequestId.trim() ? body.paymentRequestId.trim() : null;
+  const src = await loadRefundSource(sb, co.companyId, body.refundSourceType, body.refundSourceDocNo, excludePvId, answering);
   if (!src.ok) return { ok: false, resp: c.json({ error: src.error, message: src.message }, src.status) };
   const s = src.source;
   if (!s.eligible) return { ok: false, resp: c.json({ error: 'refund_not_allowed', message: s.reason ?? `${s.docNo} cannot be refunded.` }, 409) };
@@ -248,8 +277,8 @@ export async function refundCreateGuard(
       ok: false,
       resp: c.json({
         error: 'refund_exceeds_booked',
-        message: `${s.docNo} has ${fmtSen(s.refundableSen)} left to refund (${fmtSen(s.bookedSen)} booked, ${fmtSen(s.refundedSen)} already on refund vouchers${s.convertedSen > 0 ? `, ${fmtSen(s.convertedSen)} moved to other orders` : ''}) — not ${fmtSen(amount)}.`,
-        bookedSen: s.bookedSen, refundedSen: s.refundedSen, convertedSen: s.convertedSen, refundableSen: s.refundableSen,
+        message: `${s.docNo} has ${fmtSen(s.refundableSen)} left to refund (${fmtSen(s.bookedSen)} paid, ${fmtSen(s.refundedSen)} already on refund vouchers${s.requestedSen > 0 ? `, ${fmtSen(s.requestedSen)} on refund requests waiting for Finance` : ''}${s.convertedSen > 0 ? `, ${fmtSen(s.convertedSen)} moved to other orders` : ''}) — not ${fmtSen(amount)}.`,
+        bookedSen: s.bookedSen, refundedSen: s.refundedSen, requestedSen: s.requestedSen, convertedSen: s.convertedSen, refundableSen: s.refundableSen,
       }, 409),
     };
   }

@@ -33,6 +33,9 @@ export type AcquirerSetup = {
   bankReady?: boolean;
   /** Carries a unique reference — the only thing that may auto-match. */
   autoMatchable: boolean;
+  /** The other names the sales team keys this merchant as on a payment
+      (owner 2026-10-21: Pinelabs = AEON, Public = PBB). */
+  so_names?: string[];
 };
 
 /** A money account of the ACTIVE company — where a payout can land. */
@@ -167,6 +170,8 @@ export const useSaveAcquirerSetup = () => {
       feeMethod?: string | null;
       dateToleranceDays?: number;
       columnMap?: Record<string, string> | null;
+      /** The other names this merchant is keyed as on a payment. */
+      soNames?: string[];
       bankAccountCode?: string | null;
       transitAccountCode?: string;
       feeAccountCode?: string;
@@ -197,6 +202,9 @@ export type MaintenanceMerchant = {
   fee_method: string | null;
   date_tolerance_days: number;
   column_map: Record<string, string> | null;
+  /** The other names the sales team keys this merchant as on a payment —
+      shared by every company, like the report layout. */
+  so_names?: string[];
   ready: boolean;
   autoMatchable: boolean;
   /* Keyed by company id, and only for the companies the server answered for —
@@ -262,6 +270,35 @@ export const useSaveMaintenanceBank = () => {
     onSuccess: () => invalidateMaintenance(qc),
     /* No writeFailedAs: refusing to unhook a bank a merchant still uses is the
        MESSAGE, and the page shows the server's sentence verbatim. */
+  });
+};
+
+/** What matching a merchant's open lines again changed, for one company. */
+export type RematchResult = {
+  ok: true;
+  acquirerCode: string;
+  reports: number;
+  lines: number;
+  /** Open lines matched by reference now — what "Confirm all" posts. */
+  matched: number;
+  newlyMatched: number;
+  released: number;
+  failed: Array<{ rowId: number; reason: string }>;
+};
+
+/** Decide one merchant's OPEN report lines again for one company — run after
+    the merchant's matching rule changes (owner 2026-10-21: 已经上传的报告也
+    重新对一次). Nothing posts; the counts and the button move. */
+export const useRematch = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { companyId: number; acquirerCode: string }) =>
+      authedFetch<RematchResult>('/accounting/settlement/rematch', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['settlement-batches'] });
+      void qc.invalidateQueries({ queryKey: ['settlement-batch'] });
+      void qc.invalidateQueries({ queryKey: ['settlement-watchlist'] });
+    },
   });
 };
 
@@ -362,12 +399,30 @@ export const useUnconfirmSettlementRow = () => {
   });
 };
 
+export type ConfirmMatchedResult = {
+  attempted: number;
+  confirmed: number;
+  failed: Array<{ rowId: number; reason: string }>;
+  statementCharge: { status: string; jeNo?: string } | null;
+};
+
+/** One report's "post every line the reference matched" — the bare call, so a
+    pile of reports can be posted with ONE refresh at the end (see
+    useConfirmAcross in MerchantRecon). */
+export const confirmMatchedBatch = (batchId: number) => authedFetch<ConfirmMatchedResult>(
+  `/accounting/settlement/batches/${batchId}/confirm-matched`, { method: 'POST', body: '{}' },
+);
+
+/** Refresh everything a posting moves, once. */
+export const useInvalidateAfterPosting = () => {
+  const qc = useQueryClient();
+  return () => invalidateAfterPosting(qc);
+};
+
 export const useConfirmMatched = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (batchId: number) => authedFetch<{ attempted: number; confirmed: number; failed: Array<{ rowId: number; reason: string }>; statementCharge: { status: string; jeNo?: string } | null }>(
-      `/accounting/settlement/batches/${batchId}/confirm-matched`, { method: 'POST', body: '{}' },
-    ),
+    mutationFn: confirmMatchedBatch,
     onSuccess: () => invalidateAfterPosting(qc),
     onError: writeFailedAs('Settlements not confirmed'),
   });
@@ -468,6 +523,17 @@ export const usePayouts = () => useQuery({
     feeAccountByAcquirer: Record<string, string | null>;
   }>(`/accounting/settlement/payouts`),
   staleTime: 15_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
+/** Where a charge may be booked, alone — for a charge kept off a bank credit
+    (owner 2026-09-30); read only once somebody opens that form. */
+export const useChargeChoices = (enabled: boolean) => useQuery({
+  queryKey: ['settlement-charge-accounts'],
+  queryFn: () => authedFetch<{ chargeAccounts: ChargeAccount[]; feeAccountByAcquirer: Record<string, string | null> }>(`/accounting/settlement/charge-accounts`),
+  enabled,
+  staleTime: 60_000,
   retry: retryUnlessClientError,
   retryDelay: 800,
 });

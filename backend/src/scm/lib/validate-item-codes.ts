@@ -65,7 +65,7 @@ export async function validateItemCodes(
      item code, and which also broke the amendment-submit mix check
      (docs/bugs/0780). Escape via pgrestInList — byte-identical to `.in()` for a
      clean list — ONLY when a code actually carries one of those two characters. */
-  let q = sb.from('mfg_products').select('code, status');
+  let q = sb.from('mfg_products').select('code, status, model:product_models(active)');
   q = unique.some((code) => /["\\]/.test(code))
     ? q.filter('code', 'in', pgrestInList(unique))
     : q.in('code', unique);
@@ -77,14 +77,19 @@ export async function validateItemCodes(
   if (error) {
     console.error(`[validate-item-codes] mfg_products read failed (company=${companyId ?? 'unscoped'}):`, (error as { message?: unknown }).message ?? error);
   }
-  const rows = ((data ?? []) as Array<{ code: string; status?: string | null }>);
+  type ModelJoin = { active?: boolean | null };
+  const rows = ((data ?? []) as Array<{ code: string; status?: string | null; model?: ModelJoin | ModelJoin[] | null }>);
   const found = new Set(rows.map((r) => r.code));
   const unknown = unique.filter((c) => !found.has(c));
   /* A code counts ACTIVE if ANY of its rows is (code is only unique per
-     company; unscoped reads can see both companies' rows). */
+     company; unscoped reads can see both companies' rows). A SKU whose Model was
+     deactivated is inactive too — the picker hides it (BUG-50). */
+  const rowActive = (r: (typeof rows)[number]) => {
+    const m = Array.isArray(r.model) ? r.model[0] : r.model;
+    return (r.status ?? 'ACTIVE') === 'ACTIVE' && m?.active !== false;
+  };
   const inactive = opts?.requireActive
-    ? unique.filter((c) =>
-        found.has(c) && !rows.some((r) => r.code === c && (r.status ?? 'ACTIVE') === 'ACTIVE'))
+    ? unique.filter((c) => found.has(c) && !rows.some((r) => r.code === c && rowActive(r)))
     : [];
   return unknown.length === 0 && inactive.length === 0
     ? { ok: true }

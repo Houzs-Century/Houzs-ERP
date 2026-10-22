@@ -24,38 +24,12 @@
 import { postJournal, reverseJournal } from './engine';
 import { loadAcquirer } from './settlement';
 import { postSoPayment } from './payments';
+import { CHARGE_SOURCE, checkExpenseLeaf } from './charge-account';
 
 /* Borrowed from the poster rather than spelled out again — a new file's lint
    ceiling is zero, and a second name for the same client would be worse. */
 type Db = Parameters<typeof postSoPayment>[0];
 type Row = Record<string, unknown>;
-
-export const CHARGE_SOURCE = 'SETTLECHARGE';
-
-/** The reason the account was refused — one sentence, shown as it is. */
-export type BadAccount = { ok: false; status: 'bad_account'; reason: string };
-
-/**
- * May the gate post an expense here? The FOUR refusals the merchant fee account
- * already answers with, in the same words, because it is the same question:
- * in this company's chart, switched on, an expense, and a leaf.
- */
-export async function checkExpenseLeaf(
-  sb: Db, companyId: number, code: string, what: string,
-): Promise<{ ok: true } | BadAccount | { ok: false; status: 'load_failed'; reason: string }> {
-  const { data: acct, error: aErr } = await sb.from('accounts')
-    .select('account_code, account_type, is_active').eq('company_id', companyId).eq('account_code', code).maybeSingle();
-  if (aErr) return { ok: false, status: 'load_failed', reason: aErr.message };
-  const a = acct as { account_type?: string; is_active?: boolean } | null;
-  if (!a) return { ok: false, status: 'bad_account', reason: `${code} is not in this company's chart.` };
-  if (a.is_active === false) return { ok: false, status: 'bad_account', reason: `${code} is switched off in this company's chart, so nothing could be booked to it.` };
-  if (a.account_type !== 'EXPENSE') return { ok: false, status: 'bad_account', reason: `${code} is ${String(a.account_type ?? 'not an expense account')} — ${what} is an expense.` };
-  const { data: kids, error: kErr } = await sb.from('accounts')
-    .select('account_code').eq('company_id', companyId).eq('parent_code', code).limit(1);
-  if (kErr) return { ok: false, status: 'load_failed', reason: kErr.message };
-  if (((kids ?? []) as unknown[]).length > 0) return { ok: false, status: 'bad_account', reason: `${code} has sub-accounts, so nothing posts to it directly. Pick one of them.` };
-  return { ok: true };
-}
 
 export type ChargeInput = {
   payoutId: number;

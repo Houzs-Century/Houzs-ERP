@@ -8,6 +8,7 @@
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
+import { sha256Hex } from '../src/scm/lib/scan-ocr';
 import {
   uploadPvFileHandler, listPvFilesHandler, streamPvFileHandler, deletePvFileHandler, printPvBundleHandler,
 } from '../src/scm/routes/pv-files';
@@ -17,14 +18,17 @@ const CO = 1;
 
 class FakeQuery {
   private preds: Array<(r: Row) => boolean> = [];
-  private op: 'select' | 'insert' | 'delete' = 'select';
+  private op: 'select' | 'insert' | 'delete' | 'update' = 'select';
   private inserted: Row[] = [];
+  private patch: Row = {};
   constructor(private rows: Row[], private table: string) {}
   select() { return this; }
   order() { return this; }
   limit() { return this; }
   insert(p: Row | Row[]) { this.op = 'insert'; this.inserted = Array.isArray(p) ? p : [p]; return this; }
   delete() { this.op = 'delete'; return this; }
+  update(p: Row) { this.op = 'update'; this.patch = p; return this; }
+  is(col: string, val: null) { this.preds.push((r) => (r[col] ?? null) === val); return this; }
   eq(col: string, val: unknown) { this.preds.push((r) => String(r[col]) === String(val)); return this; }
   in(col: string, vals: unknown[]) {
     const s = new Set((vals ?? []).map(String));
@@ -39,6 +43,7 @@ class FakeQuery {
     }
     const hit = this.rows.filter((r) => this.preds.every((p) => p(r)));
     if (this.op === 'delete') for (const r of hit) this.rows.splice(this.rows.indexOf(r), 1);
+    if (this.op === 'update') for (const r of hit) Object.assign(r, this.patch);
     return hit;
   }
   maybeSingle() { const h = this.run(); return Promise.resolve({ data: h[0] ?? null, error: null }); }
@@ -119,6 +124,20 @@ describe('PV attachments — the bill lives with its voucher', () => {
     expect(streamed.status).toBe(200);
     expect(streamed.headers.get('content-type')).toBe('image/jpeg');
     expect(await streamed.text()).toBe('JPEGBYTES');
+  });
+
+  test('HC-0006 T7: attaching the scanned bill links its original scan to this voucher', async () => {
+    const sha = await sha256Hex(new TextEncoder().encode('JPEGBYTES').buffer as ArrayBuffer);
+    const tables: Record<string, Row[]> = {
+      payment_vouchers: [PV()], acc_pv_files: [],
+      scan_files: [
+        { id: 'S1', company_id: CO, kind: 'pv', sha256: sha, document_id: null },
+        { id: 'S2', company_id: 2, kind: 'pv', sha256: sha, document_id: null },
+      ],
+    };
+    const { app } = harness(tables);
+    expect((await upload(app)).status).toBe(201);
+    expect(tables.scan_files.map((f) => f.document_id)).toEqual(['pv-9', null]);
   });
 
   test('a mime outside image/pdf refuses; a cancelled voucher takes no more evidence', async () => {

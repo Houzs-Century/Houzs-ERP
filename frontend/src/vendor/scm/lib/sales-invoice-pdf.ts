@@ -14,6 +14,7 @@
 // ship_to/bill_to/install_to trio — see the SiHeader note.
 import { formatPhone } from '@2990s/shared/phone';
 import { siDepositAppliedSen } from './si-outstanding';
+import { PAYMENT_METHOD_DEFAULT_LABELS } from './payment-methods';
 import { DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawInfoColumns, drawPaymentDetails, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
 import { getBrandingCache } from '../../../lib/branding';
 import { billToBlock } from './pdf-party-blocks';
@@ -24,7 +25,7 @@ import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
    docs/modules/document-status-vocabulary.md §1. */
 import { statusLabel } from './status-pill';
 
-type SiHeader = {
+export type SiHeader = {
   invoice_number: string; status: string;
   so_doc_no: string | null; debtor_code: string | null; debtor_name: string;
   invoice_date: string; due_date: string | null; currency: string;
@@ -36,6 +37,10 @@ type SiHeader = {
      absent reads as 0, which prints the LARGER outstanding — the only
      direction a customer's copy may be wrong in. */
   so_deposit_applied_sen?: number | null;
+  /* Every sum received towards this invoice — the order's rows and its own —
+     stamped by GET /sales-invoices/:id (backend lib/si-receipts). Absent or
+     null prints one line per document instead of one per payment. */
+  receipts?: SiReceipts | null;
   /* The route has always CAPTURED these (sales-invoices.ts HEADER + the from-DO
      convert copies them off the DO header) — they were simply never printed, so
      the invoice went to the customer with no address on it. Optional because the
@@ -59,7 +64,48 @@ type SiHeader = {
      copy shows. Optional + drawInfoColumns skips it if null. */
   customer_delivery_date?: string | null;
 };
-type SiItem = {
+/** One sum received, as the printed "Payments received" list reads it. */
+export type SiReceipt = { paid_at: string | null; method: string | null; amount_sen: number };
+export type SiReceipts = { order: SiReceipt[]; invoice: SiReceipt[] };
+
+/* The method as the customer reads it: the system's own label; money brought
+   over from AutoCount carries none, so it is just a payment. */
+const receiptMethod = (m: string | null): string => {
+  if (!m || m === 'imported') return 'Payment';
+  if (m === 'converted') return 'Moved from another order';
+  return (PAYMENT_METHOD_DEFAULT_LABELS as Readonly<Record<string, string | undefined>>)[m] ?? m;
+};
+const sumOf = (rows: readonly SiReceipt[]): number => rows.reduce((s, r) => s + Number(r.amount_sen), 0);
+/* The rows, when they ARE the figure — every one money in, adding up to it. */
+const itemised = (rows: readonly SiReceipt[] | undefined, figure: number): readonly SiReceipt[] | null =>
+  rows && rows.length > 0 && rows.every((r) => Number(r.amount_sen) > 0) && sumOf(rows) === figure ? rows : null;
+
+/** "Payments received" (owner 2026-10-06: the print called all of it
+    "Deposit (<order>)", even money that paid the order in full): one line per
+    sum — day · method · on the order or on this invoice — when the rows add
+    up to what settles the invoice; otherwise one line per document (an order
+    split over several invoices). Nothing received, no lines. */
+export function paymentsReceivedLines(header: SiHeader): Array<{ label: string; amountSen: number }> {
+  const lines: Array<{ label: string; amountSen: number }> = [];
+  const fromOrder = siDepositAppliedSen(header);
+  const order = header.so_doc_no ?? 'the sales order';
+  const orderRows = itemised(header.receipts?.order, fromOrder);
+  if (orderRows) {
+    for (const r of orderRows) lines.push({ label: `${fmtDocDate(r.paid_at)} · ${receiptMethod(r.method)} · on order ${order}`, amountSen: Number(r.amount_sen) });
+  } else if (fromOrder > 0) {
+    lines.push({ label: `Paid on order ${order}`, amountSen: fromOrder });
+  }
+  const own = Number(header.paid_sen);
+  const ownRows = itemised(header.receipts?.invoice, own);
+  if (ownRows) {
+    for (const r of ownRows) lines.push({ label: `${fmtDocDate(r.paid_at)} · ${receiptMethod(r.method)} · on this invoice`, amountSen: Number(r.amount_sen) });
+  } else if (own > 0) {
+    lines.push({ label: 'Paid on this invoice', amountSen: own });
+  }
+  return lines;
+}
+
+export type SiItem = {
   item_code: string; description: string | null;
   qty: number; unit_price_sen: number;
   // Older items table rows in 2990s may omit these — keep optional so the
@@ -194,15 +240,26 @@ export async function renderSalesInvoiceInto(
   /* THIS IS THE CUSTOMER'S COPY, so it is the one place the old bug was worst:
      until 2026-08-23 it printed the full invoice total as Outstanding on an
      invoice whose order had already collected a deposit, and handed that to the
-     person who paid it (vendor/scm/lib/si-outstanding.ts). The deposit prints
-     as its OWN line naming the order — a customer reading a smaller number with
-     no explanation has the same question the office had. */
+     person who paid it (vendor/scm/lib/si-outstanding.ts). Money taken on the
+     order prints as its OWN lines naming the order — a customer reading a
+     smaller number with no explanation has the same question the office had.
+     Since 2026-10-06 every sum is listed by day and method under "Payments
+     received" (paymentsReceivedLines), never called "Deposit". */
   const siDeposit = siDepositAppliedSen(header);
-  drawRow(siDeposit > 0 ? 'Paid (this invoice)' : 'Paid',
-          fmtRm(header.paid_sen, header.currency), ty + 4); ty += 4;
-  if (siDeposit > 0) {
-    drawRow(`Deposit (${header.so_doc_no ?? 'sales order'})`,
-            fmtRm(siDeposit, header.currency), ty + 4); ty += 4;
+  const received = paymentsReceivedLines(header);
+  if (received.length > 0) {
+    const listX = pageW - margin - 130;
+    doc.setFont('helvetica', 'bold');
+    doc.text('Payments received', listX, ty + 4); ty += 4;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+    for (const r of received) {
+      const label = doc.splitTextToSize(r.label, 100) as string[];
+      doc.text(label, listX + 2, ty + 4.5);
+      doc.text(fmtRm(r.amountSen, header.currency), pageW - margin, ty + 4.5, { align: 'right' });
+      ty += 4.5 * Math.max(1, label.length);
+    }
+    doc.setFontSize(9);
+    ty += 1.5;   /* air between the list and the line it adds up to */
   }
   /* Unfloored, exactly as before: an over-payment must print negative so the
      customer sees the credit rather than a silent "0". The deposit cannot make
@@ -244,6 +301,16 @@ export async function generateSalesInvoicePdf(
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   await renderSalesInvoiceInto(doc, autoTable, header, items);
   deliverPdf(doc, `${header.invoice_number}-${safeName(header.debtor_name)}.pdf`, opts?.action);
+}
+
+/** The same pages as bytes — what a sales invoice opened from the AR Invoices
+    list shows before anyone prints (owner 2026-10-06: ar invoice 点不开). */
+export async function salesInvoicePdfBlob(header: SiHeader, items: SiItem[]): Promise<Blob> {
+  const { jsPDF } = await import('jspdf');
+  const autoTable = (await import('jspdf-autotable')).default;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  await renderSalesInvoiceInto(doc, autoTable, header, items);
+  return doc.output('blob');
 }
 
 /* Several SIs → ONE combined file, each invoice starting on a new page. For the

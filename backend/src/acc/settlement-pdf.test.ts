@@ -34,7 +34,7 @@ function tinyPdf(rows: Array<Array<{ x: number; text: string }>>): Uint8Array {
 
 describe('pdfToCsv — refusals', () => {
   it('a file that is not a PDF is named as such', async () => {
-    const r = await pdfToCsv(new TextEncoder().encode('Date,Amount\n01/08/2026,10.00'));
+    const r = await pdfToCsv(new TextEncoder().encode('Date,Amount\n2026/08/01,10.00'));
     expect(r).toMatchObject({ ok: false });
     expect((r as { reason: string }).reason).toMatch(/not a PDF/i);
   });

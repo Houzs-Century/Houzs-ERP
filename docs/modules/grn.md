@@ -17,9 +17,15 @@ go through `/api/scm/grns`.
   all funnel through the one chokepoint `postGrnAndRollup` (`grns.ts`), which flips
   status first (atomic CAS on the observed status) and only then recounts the PO's
   `received_qty`, so this GRN's own lines are included.
-- `CANCELLED`: `PATCH /:id/cancel`. A DRAFT short-circuits (flip only, nothing to
-  reverse). A POSTED GRN reverses the IN per line and is blocked if the stock was
-  already consumed downstream.
+- `CANCELLED`: `PATCH /:id/cancel`. A DRAFT writes no stock OUT. A POSTED GRN
+  reverses the IN per line and is blocked if the stock was already consumed
+  downstream. Both recount the PO's `received_qty` and queue the SO allocation
+  re-walk (a bound SO line is lit by its PO's `received_qty`).
+- The recount (`recomputePoReceived`) stops before writing when any of its reads
+  fails and returns `{ ok: false, reason }`; the stored `received_qty` and PO
+  status stay as they were. Post records it as `RECOUNT_FAILED` on the GRN's audit
+  trail, cancel returns it in `cancelErrors`. Before 2026-10-16 a failed read was
+  taken as "no receipts" and wrote 0 (READY audit F2).
 - `CLOSED`: nothing in the backend writes this anymore; it is a read-only legacy
   terminal that still blocks a re-post.
 - `ON_HOLD` is a marker beside the status, not a status overwrite (`PATCH /:id/hold`).
@@ -48,17 +54,42 @@ go through `/api/scm/grns`.
   user can no longer reach a create/convert flow that only 403s at the end.
 - Mobile add-line: `mayAddLine` (`frontend/src/mobile/mobile-add-line.ts`) — same
   `canOperateGoodsReceipts` check plus the shared line-lock state.
+- **Posting is its own permission** — position capability `scm.grn.post`
+  ("Post GRN", Roles & Permissions matrix; `*` positions pass). Without it, GRN
+  edit can only save DRAFTs, edit them and set racks. Enforced on every path that
+  posts — `POST /` without `asDraft`, `POST /from-pos`, `POST /from-po-items`,
+  `PATCH /:id/post` — by `grnPostRefusal` (`scm/lib/grn-post-capability.ts`),
+  before any write (`403 capability_required`). UI mirror:
+  `canPostGoodsReceipts` (`auth/salesAccess.ts`) hides Post / Create-and-post on
+  desktop (`GrnNew`, `GoodsReceivedDetailV2`) and phone (`MobileModuleDetail`,
+  `MobilePurchaseDocNew`). Owner 2026-10-01: the storekeeper receives (drafts +
+  scans racks), the purchaser posts. Seeded to Operation Executive, Operation
+  Manager, Procurement/Purchasing (`20261002T1200_grn_post_capability.sql`); the
+  `storekeeper` profile (Storekeeper, Warehouse Crew KL) has GRN edit for this.
 
 ## Rules that must not break
 
 - All stock/status mutation goes through `postGrnAndRollup`; the flip is a CAS on
   the *observed* status, never a blind `.neq('status', 'CLOSED')` update.
+- A from-PO convert makes one GRN per supplier AND PO ship-to warehouse: posting
+  books every line into the header warehouse, so two warehouses never share a GRN.
+- Delivery-order scan: a PO printed with its location in place of `HC-PO`
+  (`SRW-2610-021`) counts only when that PO ships to a warehouse whose code starts
+  with that location. With no item match it drafts everything the named POs still
+  owe; for 2+ POs only when the delivery order's qty per PO equals what each owes.
 - `PATCH /:id` (header) and all three create paths must scope by company on both
   the read and the write — the service-role client bypasses RLS, so the app-level
   predicate is the only isolation; use `maybeSingle()` on the scoped update, not
   `single()`, so a genuine zero-row (out-of-company) match reports 404, not 500.
 - Cross-company PO is refused at create (`firstCrossCompanyPo`) — receiving another
   company's PO would post its stock and cost into the active company's books.
+- A GRN may be created **without a parent PO** — a manual receipt (repair charge,
+  one-off fee, freight-only): `POST /` requires only a supplier, and the header's
+  `purchase_order_id` is **nullable** (each line still carries its own
+  `purchase_order_item_id`, or null). The DB column shipped NOT NULL while the
+  route already wrote `null`, so every manual receipt 500'd as the generic "system
+  hit a problem" — `20260922T0900_grns_purchase_order_id_nullable.sql` (#4222)
+  dropped it. Keep it nullable; do not re-add the constraint.
 - A non-MYR GRN must have a positive exchange rate (master or operator-entered)
   before it can post — `422 foreign_rate_unset`. Never default an unset rate to 1.
 - A line that would receive stock at zero cost, for a SKU previously received at a
@@ -109,6 +140,55 @@ go through `/api/scm/grns`.
   zero-cost remedy (`vendor/scm/lib/zero-cost-refusal.ts`), the add-line lock
   (`vendor/scm/lib/line-add-lock.ts`), and the per-line PO reference
   (`vendor/scm/lib/line-po-link.ts`).
+
+- Line rack: `PATCH /:id/items/:itemId/rack` (`lib/grn-line-rack.ts`) sets,
+  changes or clears one line's `rack_id` after the GRN exists — the New GRN form
+  is no longer the only place. Placement only (no stock, money or AutoCount), so
+  it is NOT behind the PI/PR child-lock; refused on CANCELLED/CLOSED. On a POSTED
+  GRN it mirrors the rack ledger: none->rack places (STOCK_IN), rack->rack moves
+  the placed row keeping `source_grn_id` (TRANSFER), rack->none pulls it
+  (STOCK_OUT). If the placed row was already moved on the rack board it refuses
+  (`rack_already_moved`) rather than placing the goods twice. Both surfaces:
+  desktop Edit mode (`GoodsReceivedDetail`) and the phone receipt detail
+  (`MobileGrnLineRack`, saves on pick), and the Goods Receipt list's side panel (`GrnDrawerRack`, saves on pick; a split line is shown only). On a DRAFT split editor the FIRST rack of an unplaced line takes the whole line on the pick (`placeWhole`); only a second rack asks for its qty + Add. Rack pickers commit on Enter when the typed term names one rack (`enterPick` in `SearchableSelect`); who may change it and the option list
+  live in the shared `vendor/scm/lib/grn-line-rack.ts` (`useGrnRackOptions`:
+  this company's racks of the receipt's warehouse, plain labels for reading a
+  saved pick back, and picker labels carrying the OTHER companies' stock on the
+  same shelf — "Rack L5.1 · HC 6 pcs" — from `GET /warehouse/cross-company`,
+  because a shelf that reads EMPTY on this company's board may be full of the
+  other company's goods; see warehouses.md on one building, one record per
+  company). The phone's create
+  forms still have no rack — set it on the detail after creating. Creating a GRN on
+  the phone — the PO convert wizard or the manual form, draft or not — opens the
+  new receipt's card (`MobileApp` on the GRN `id` the create returns), so the
+  racks are set next without finding it in the list (owner 2026-10-02). The phone
+  row also has **Scan**: it reads a shelf's rack sticker (`HZRACK:<label>`) and
+  resolves it among the racks of the GRN's own warehouse via
+  `vendor/scm/lib/rack-qr.ts`, then saves through the same PATCH. A sticker of
+  another warehouse or any other QR is explained, never saved. This is the
+  storekeeper's put-away step of the receiving flow the owner chose 2026-10-01:
+  storekeeper converts the PO to a DRAFT on the phone and scans each line's
+  shelf; the purchaser posts, and posting places the goods on those racks.
+- Line rack SPLIT (owner 2026-10-02): a DRAFT line can go on several racks, each
+  with a qty, in `scm.grn_item_racks` (`20261002T1400_grn_item_racks.sql`).
+  `GET /:id/racks` reads a GRN's split rows; `PUT /:id/items/:itemId/racks`
+  replaces one line's split (DRAFT only, `409 grn_not_draft` otherwise; racks
+  must be in the GRN's warehouse; total may be LESS than `qty_accepted` while
+  scanning, never more). `PATCH /:id/post` refuses `409 rack_split_incomplete`
+  until every split line's racks add up to `qty_accepted` (a line with no rack at
+  all is fine: racks are optional at Post, owner decision); posting then places
+  one rack row per share (`planGrnPlacements` in `lib/grn-line-racks.ts`, read
+  by `grn-rack-sync.ts`). `grn_items.rack_id` = the one rack when a split uses
+  one, NULL when several — a reader that only knows `rack_id` never names one
+  shelf for goods on three. The one-rack PATCH on a DRAFT replaces a split; on a
+  POSTED split line it refuses `409 rack_split_posted` (move on the rack board).
+  Rule: `scm/shared/rack-split.ts`, byte-mirrored in `vendor/shared/` (canonical
+  test). UI: `useGrnLineRackSplit` (`vendor/scm/lib/grn-line-rack.ts`) rendered by
+  `MobileGrnLineRack` (scan/pick + qty) and desktop `GrnRackSplitField` (edit
+  mode). Adding a shelf to a line that sits whole on one other rack takes the
+  qty off that rack (`addRackShare`). The desktop VIEW page (`GoodsReceivedDetailV2`) has a
+  Racks column (`L3.1 ×6, L3.2 ×4`, plus "N not on a rack" for a partly placed
+  line), formatted by the shared `lineRackSummary` (owner 2026-10-02).
 
 ## Gotchas
 
@@ -173,5 +253,5 @@ go through `/api/scm/grns`.
   `warehouse-label.ts`.
 - Mobile: `frontend/src/mobile/MobileModuleList.tsx`, `MobileModuleDetail.tsx`,
   `MobileConvertWizard.tsx`, `MobilePurchaseDocNew.tsx`, `MobileGrnZeroCost.tsx`,
-  `MobileLinePoRef.tsx`, `MobileAddLine.tsx`.
+  `MobileLinePoRef.tsx`, `MobileAddLine.tsx`, `MobileGrnLineRack.tsx`.
 - Auth: `frontend/src/auth/salesAccess.ts` (`canOperateGoodsReceipts`).

@@ -56,7 +56,7 @@ type LiveBody = {
 
 async function live(signingKey: string | undefined) {
   const app = new Hono<{ Variables: { user: { id: number; permissions: string[] } } }>();
-  app.use('*', async (c, next) => { c.set('user', { id: 1, permissions: ['*'] }); await next(); });
+  app.use('*', async (c, next) => { c.set('user', { id: 1, permissions: ['it.view'] }); await next(); });
   app.route('/', health);
   const res = await app.request('/live', {}, fakeEnv(signingKey));
   expect(res.status).toBe(200);

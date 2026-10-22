@@ -1,5 +1,6 @@
 import { formatPhone } from '@2990s/shared/phone';
 import { buildVariantSummary } from '@2990s/shared';
+import { customerRefOf } from '../../../lib/customer-ref';
 import type { RowInput } from 'jspdf-autotable';
 import {
   allocatePwpTriggerNotes,
@@ -23,6 +24,7 @@ import {
   type PdfAction,
 } from './pdf-common';
 import { billToBlock } from './pdf-party-blocks';
+import { orderAddressLines } from './order-address';
 import { mfgCategoryLabel } from '../../shared/product-categories';
 import { loadFabricDescriptionMap, loadFabricSupplierMap } from './supplier-doc-data';
 import { composeSoLineDescription } from './so-line-description';
@@ -93,6 +95,8 @@ type SoHeader = {
   branding: string | null;
   venue: string | null;
   ref: string | null;
+  /* The CO form writes the customer's reference here, not in `ref`. */
+  customer_so_no?: string | null;
   po_doc_no: string | null;
   phone: string | null;
   address1: string | null;
@@ -210,6 +214,51 @@ const receiptTerms = (noun: string): readonly string[] => [
   `Stair-carry surcharges (if any) are billed on this ${noun} and are not invoiced separately on the DO.`,
   'Once the delivery date has been confirmed, any subsequent request to change or extend the date will incur a rescheduling surcharge.',
 ];
+
+/* A Consignment Order is signed by the customer as the record of a TEMPORARY
+   PROVISION — goods lent while their own order is corrected or still in
+   production — and replaces the "Temporary provision" letter Operations used
+   to issue (HC-SL0047, owner 2026-10-05). The receipt terms above talk about
+   tax invoices, balances and surcharges; none of that applies to a loan, so the
+   CO prints these instead. The customer's signature box doubles as the
+   letter's "Client Acknowledgment". */
+export const CONSIGNMENT_LOAN_TERMS: readonly string[] = [
+  'This consignment order records a temporary provision: the items listed are lent to the customer as a courtesy until the order the customer placed is delivered. It is not a sale and no tax invoice is issued for it.',
+  'The items are provided in good condition. Please use them with normal, everyday care and return them in a similar condition.',
+  'Collection: once the order the customer placed has been delivered, our team will contact the customer to arrange a convenient time to collect the items. Please have them ready for pick-up.',
+  'Liability: normal wear and tear or minor stains during the loan period are not charged. The customer is responsible only for damage caused by misuse, negligence or intentional acts.',
+  'By signing below, the customer accepts this temporary provision and agrees to the terms above.',
+];
+
+/* The letter ended with "contact us at <phone> / <email>". Read live from the
+   company's customer-service desk (headline phone / email when no desk is
+   set, as the letterhead does), so the CO never carries another company's
+   number. Inserted before the signature line. */
+export function consignmentLoanTerms(): readonly string[] {
+  const phone = COMPANY.csPhone || COMPANY.phone;
+  const email = COMPANY.csEmail || COMPANY.email;
+  const reach = [phone, email].filter(Boolean).join(' or ');
+  const help = reach
+    ? `If anything comes up while the items are with you, contact us at ${reach} and we will be happy to help.`
+    : 'If anything comes up while the items are with you, let us know and we will be happy to help.';
+  return [...CONSIGNMENT_LOAN_TERMS.slice(0, -1), help, CONSIGNMENT_LOAN_TERMS[CONSIGNMENT_LOAN_TERMS.length - 1]!];
+}
+
+/* The one place the Consignment Order's PDF framing lives — the detail page
+   and the list both print through it, so the title, label and terms cannot
+   drift apart. */
+export const CONSIGNMENT_ORDER_PDF_OPTS = {
+  docTitle: 'CONSIGNMENT ORDER',
+  docNoLabel: 'CO No',
+  docNoun: 'consignment order',
+  /* The customer's own order (the one being corrected) — always printed, so a
+     CO raised without it shows a dash instead of silently omitting the row.
+     Captioned "Ref No." like every other screen (owner 2026-09-25, refNoLabel
+     gate). */
+  refLabel: 'Ref No.',
+  get terms(): readonly string[] { return consignmentLoanTerms(); },
+  money: false,
+} as const;
 
 /* The variant keys that can carry an internal fabric code, mirrored from
    supplier-doc-data's FABRIC_VARIANT_KEYS. The SO PDF maps each present code
@@ -334,7 +383,7 @@ export async function renderSalesOrderInto(
   /* PWP vouchers this SO's trigger items issued (GET /:docNo `pwpCodes`) —
      used to mark trigger lines. Optional so older callers stay valid. */
   pwpCodes: SoPwpCodeRow[] = [],
-  opts?: { docTitle?: string; docNoLabel?: string; docNoun?: string },
+  opts?: { docTitle?: string; docNoLabel?: string; docNoun?: string; refLabel?: string; terms?: readonly string[]; money?: boolean },
 ): Promise<void> {
   /* A cancelled line must never reach a CUSTOMER document — not as a printed
      row and not inside a total. The gate lives HERE, in the one function both
@@ -456,32 +505,10 @@ export async function renderSalesOrderInto(
      the postcode/city/state INSIDE the address lines, so the old code printed
      them twice (and city == state on KL doubled again). Each locality part is
      appended ONLY when it doesn't already appear in the lines above, locality
-     parts are deduped against each other, and exact-duplicate lines drop. */
-  const baseAddressLines = (header.ship_to_address ?? '').trim()
-    ? (header.ship_to_address as string).split('\n').map((s) => s.trim()).filter(Boolean)
-    : [header.address1, header.address2]
-        .map((s) => (typeof s === 'string' ? s.trim() : ''))
-        .filter(Boolean);
-  const addressHaystack = baseAddressLines.join(' ').toLowerCase();
-  const localityParts: string[] = [];
-  for (const part of [
-    (header.postcode ?? header.address4 ?? '').trim(),
-    (header.city ?? header.address3 ?? '').trim(),
-    (header.customer_state ?? '').trim(),
-  ]) {
-    if (!part) continue;
-    if (addressHaystack.includes(part.toLowerCase())) continue;   // already inside an address line
-    if (localityParts.some((p) => p.toLowerCase() === part.toLowerCase())) continue; // e.g. city == state (KL)
-    localityParts.push(part);
-  }
-  const seenAddressLines = new Set<string>();
-  const addressLines = [...baseAddressLines, localityParts.join(' ')].filter((l) => {
-    if (!l) return false;
-    const k = l.toLowerCase();
-    if (seenAddressLines.has(k)) return false;
-    seenAddressLines.add(k);
-    return true;
-  });
+     parts are deduped against each other, and exact-duplicate lines drop.
+     The rule lives in order-address.ts — the Deposit Invoice prints the same
+     lines off the same order. */
+  const addressLines = orderAddressLines(header);
   /* Family / second contact = the emergency_contact_* trio (POS handover
      "Emergency" phase). The SO schema has NO phone2/contact-person column —
      this is the only second-contact field family, so it prints here. */
@@ -529,7 +556,11 @@ export async function renderSalesOrderInto(
       rows: [
         [opts?.docNoLabel ?? 'Doc No', header.doc_no],
         ['Customer PO', header.customer_po ?? header.po_doc_no],
-        ['Reference', header.ref],
+        /* The customer's own reference, resolved by the ONE rule (lib/customer-ref):
+           `ref` leads, `customer_so_no` is the transitional fallback. The CO form
+           writes customer_so_no, so reading header.ref alone printed a dash under
+           "Ref No." while the screen showed HC12457 (owner, 2026-10-06). */
+        [opts?.refLabel ?? 'Reference', opts?.refLabel ? (customerRefOf(header) || '—') : (customerRefOf(header) || null)],
         ['Agent', header.agent],
         ['Sales Location', header.sales_location],
         ['Venue', header.venue],
@@ -675,113 +706,120 @@ export async function renderSalesOrderInto(
     if (photoRes.drew) ty = photoRes.endY + 6;
   }
 
-  // ── PAYMENTS RECEIVED ledger ──────────────────────────────────────
-  // Sources transactions from the payments ledger (mfg_sales_order_payments)
-  // instead of the legacy single-row header columns (deprecated PR-C).
-  if (ty > 250) { doc.addPage(); ty = margin; }
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'bold');
-  doc.text('PAYMENTS RECEIVED', margin, ty);
-  ty += 4;
+  /* A Consignment Order is a loan, not a sale: no payments are ever taken
+     against it, so the ledger, totals, deposit and amount-in-words block are
+     noise on a document the customer signs for goods they will give back
+     (owner 2026-10-05). `money: false` drops the whole block. */
+  if (opts?.money !== false) {
+    // ── PAYMENTS RECEIVED ledger ──────────────────────────────────────
+    // Sources transactions from the payments ledger (mfg_sales_order_payments)
+    // instead of the legacy single-row header columns (deprecated PR-C).
+    if (ty > 250) { doc.addPage(); ty = margin; }
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.text('PAYMENTS RECEIVED', margin, ty);
+    ty += 4;
 
-  if (payments.length === 0) {
-    doc.setFont('helvetica', 'normal');
+    if (payments.length === 0) {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.setTextColor(110);
+      doc.text('No payments recorded.', margin, ty);
+      doc.setTextColor(0);
+      ty += 6;
+    } else {
+      const payRows = payments.map((p) => [
+        fmtDocDate(p.paid_at),
+        methodLabel(p),
+        p.approval_code ?? '—',
+        p.collected_by_name ?? '—',
+        fmtRm(p.amount_sen, header.currency),
+      ]);
+      autoTable(doc, {
+        startY: ty,
+        head: [['Date', 'Method', 'Approval Code', 'Collected By', 'Amount']],
+        body: payRows,
+        theme: 'plain',
+        rowPageBreak: 'avoid',
+        styles: { ...DOC_TABLE_STYLES, fontSize: 8.5 },
+        headStyles: DOC_TABLE_HEAD_STYLES,
+        columnStyles: {
+          0: { cellWidth: 24 },
+          1: { cellWidth: 60 },
+          2: { cellWidth: 32 },
+          3: { cellWidth: 'auto' },
+          4: { cellWidth: 28, halign: 'right' },
+        },
+        margin: { left: margin, right: margin },
+      });
+      ty = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? ty) + 6;
+    }
+
+    // ── Totals: SUBTOTAL / PAID TO DATE / TOTAL / BALANCE DUE ─────────
+    /* POS-printout parity: the SO model has no separate subtotal — the grand
+       total stands in (add-ons ride inside the line totals). Paid-to-date
+       prefers the authoritative paid_sen_total stamped by GET /:docNo
+       (ledger + legacy header deposit), falling back to summing the rows. */
+    const subtotalSen = header.local_total_sen;
+    const paidSen = typeof header.paid_sen_total === 'number'
+      ? header.paid_sen_total
+      : payments.reduce((sum, p) => sum + (p.amount_sen || 0), 0);
+    /* SIGNED (owner 2026-08-16) — over-collection is allowed, so the print must
+       not floor the excess away and quietly tell the customer he is square when
+       the business is holding RM 250 of his money. Negative flips the LABEL
+       rather than printing "BALANCE DUE −250.00", which reads as a debt with a
+       typo; the figure itself is shown as the positive credit it is. */
+    const balanceSen = subtotalSen - paidSen;
+    const overpaidSen = balanceSen < 0 ? -balanceSen : 0;
+    if (ty > 240) { doc.addPage(); ty = margin; }
+    const awTopY = ty;
+    const totalsX = pageW - margin - 70;
     doc.setFontSize(9);
-    doc.setTextColor(110);
-    doc.text('No payments recorded.', margin, ty);
-    doc.setTextColor(0);
-    ty += 6;
-  } else {
-    const payRows = payments.map((p) => [
-      fmtDocDate(p.paid_at),
-      methodLabel(p),
-      p.approval_code ?? '—',
-      p.collected_by_name ?? '—',
-      fmtRm(p.amount_sen, header.currency),
-    ]);
-    autoTable(doc, {
-      startY: ty,
-      head: [['Date', 'Method', 'Approval Code', 'Collected By', 'Amount']],
-      body: payRows,
-      theme: 'plain',
-      rowPageBreak: 'avoid',
-      styles: { ...DOC_TABLE_STYLES, fontSize: 8.5 },
-      headStyles: DOC_TABLE_HEAD_STYLES,
-      columnStyles: {
-        0: { cellWidth: 24 },
-        1: { cellWidth: 60 },
-        2: { cellWidth: 32 },
-        3: { cellWidth: 'auto' },
-        4: { cellWidth: 28, halign: 'right' },
-      },
-      margin: { left: margin, right: margin },
-    });
-    ty = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? ty) + 6;
-  }
+    const drawRow = (label: string, val: string, ry: number, bold = false) => {
+      doc.setFont('helvetica', bold ? 'bold' : 'normal');
+      doc.text(label, totalsX, ry);
+      doc.text(val, pageW - margin, ry, { align: 'right' });
+    };
+    drawRow('Subtotal',     fmtRm(subtotalSen, header.currency), ty);     ty += 4;
+    /* Standard-checklist tax line — the SO model carries no header tax (prices
+       are tax-inclusive / exempt), so this prints as a dash, not a number. */
+    drawRow('Tax',          '—',                                   ty);     ty += 4;
+    drawRow('Total',        fmtRm(subtotalSen, header.currency), ty);     ty += 4;
+    drawRow('Paid to date', fmtRm(paidSen,     header.currency), ty);     ty += 2;
+    doc.setDrawColor(0);
+    doc.line(totalsX, ty, pageW - margin, ty);
+    doc.setFontSize(11);
+    drawRow(
+      overpaidSen > 0 ? 'CREDIT BALANCE' : 'BALANCE DUE',
+      fmtRm(overpaidSen > 0 ? overpaidSen : balanceSen, header.currency),
+      ty + 5,
+      true,
+    );
+    ty += 12;
 
-  // ── Totals: SUBTOTAL / PAID TO DATE / TOTAL / BALANCE DUE ─────────
-  /* POS-printout parity: the SO model has no separate subtotal — the grand
-     total stands in (add-ons ride inside the line totals). Paid-to-date
-     prefers the authoritative paid_sen_total stamped by GET /:docNo
-     (ledger + legacy header deposit), falling back to summing the rows. */
-  const subtotalSen = header.local_total_sen;
-  const paidSen = typeof header.paid_sen_total === 'number'
-    ? header.paid_sen_total
-    : payments.reduce((sum, p) => sum + (p.amount_sen || 0), 0);
-  /* SIGNED (owner 2026-08-16) — over-collection is allowed, so the print must
-     not floor the excess away and quietly tell the customer he is square when
-     the business is holding RM 250 of his money. Negative flips the LABEL
-     rather than printing "BALANCE DUE −250.00", which reads as a debt with a
-     typo; the figure itself is shown as the positive credit it is. */
-  const balanceSen = subtotalSen - paidSen;
-  const overpaidSen = balanceSen < 0 ? -balanceSen : 0;
-  if (ty > 240) { doc.addPage(); ty = margin; }
-  const awTopY = ty;
-  const totalsX = pageW - margin - 70;
-  doc.setFontSize(9);
-  const drawRow = (label: string, val: string, ry: number, bold = false) => {
-    doc.setFont('helvetica', bold ? 'bold' : 'normal');
-    doc.text(label, totalsX, ry);
-    doc.text(val, pageW - margin, ry, { align: 'right' });
-  };
-  drawRow('Subtotal',     fmtRm(subtotalSen, header.currency), ty);     ty += 4;
-  /* Standard-checklist tax line — the SO model carries no header tax (prices
-     are tax-inclusive / exempt), so this prints as a dash, not a number. */
-  drawRow('Tax',          '—',                                   ty);     ty += 4;
-  drawRow('Total',        fmtRm(subtotalSen, header.currency), ty);     ty += 4;
-  drawRow('Paid to date', fmtRm(paidSen,     header.currency), ty);     ty += 2;
-  doc.setDrawColor(0);
-  doc.line(totalsX, ty, pageW - margin, ty);
-  doc.setFontSize(11);
-  drawRow(
-    overpaidSen > 0 ? 'CREDIT BALANCE' : 'BALANCE DUE',
-    fmtRm(overpaidSen > 0 ? overpaidSen : balanceSen, header.currency),
-    ty + 5,
-    true,
-  );
-  ty += 12;
+    // Expected-deposit line — only shown when the commander has set one
+    // on the header. Keeps the "target vs. collected" distinction visible.
+    if ((header.deposit_sen ?? 0) > 0) {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.setTextColor(110);
+      doc.text(
+        `Expected deposit: ${fmtRm(header.deposit_sen ?? 0, header.currency)}`,
+        margin, ty,
+      );
+      doc.setTextColor(0);
+      ty += 5;
+    }
 
-  // Expected-deposit line — only shown when the commander has set one
-  // on the header. Keeps the "target vs. collected" distinction visible.
-  if ((header.deposit_sen ?? 0) > 0) {
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9);
-    doc.setTextColor(110);
+    // Amount in words (left, aligned with the totals block).
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(80);
     doc.text(
-      `Expected deposit: ${fmtRm(header.deposit_sen ?? 0, header.currency)}`,
-      margin, ty,
+      doc.splitTextToSize(`Amount in words: ${amountInWordsMyr(subtotalSen)}`, totalsX - margin - 8) as string[],
+      margin, awTopY + 1,
     );
     doc.setTextColor(0);
-    ty += 5;
-  }
 
-  // Amount in words (left, aligned with the totals block).
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(80);
-  doc.text(
-    doc.splitTextToSize(`Amount in words: ${amountInWordsMyr(subtotalSen)}`, totalsX - margin - 8) as string[],
-    margin, awTopY + 1,
-  );
-  doc.setTextColor(0);
+  }
 
   // ── Signature boxes — customer (with stored POS signature) + company ──
   if (ty > 225) { doc.addPage(); ty = margin; }
@@ -823,7 +861,7 @@ export async function renderSalesOrderInto(
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7.5);
   doc.setTextColor(110);
-  receiptTerms(opts?.docNoun ?? 'sales order').forEach((t, i) => {
+  (opts?.terms ?? receiptTerms(opts?.docNoun ?? 'sales order')).forEach((t, i) => {
     const wrapped = doc.splitTextToSize(`${i + 1}. ${t}`, pageW - margin * 2) as string[];
     doc.text(wrapped, margin, ty);
     ty += wrapped.length * 3.2 + 0.8;
@@ -856,7 +894,7 @@ export async function generateSalesOrderPdf(
   /* PWP vouchers this SO's trigger items issued (GET /:docNo `pwpCodes`) —
      used to mark trigger lines. Optional so older callers stay valid. */
   pwpCodes: SoPwpCodeRow[] = [],
-  opts?: { docTitle?: string; docNoLabel?: string; docNoun?: string },
+  opts?: { docTitle?: string; docNoLabel?: string; docNoun?: string; refLabel?: string; terms?: readonly string[]; money?: boolean },
 ): Promise<void> {
   // Dynamic import — code-split into a vendor chunk.
   const { jsPDF } = await import('jspdf');
@@ -874,7 +912,7 @@ export async function generateSalesOrderPdf(
    footer numbers its own pages; the whole file saves once. */
 export async function generateCombinedSalesOrderPdf(
   docs: Array<{ header: SoHeader; items: SoItem[]; payments?: SoPayment[]; pwpCodes?: SoPwpCodeRow[] }>,
-  opts?: { fileName?: string; docTitle?: string; docNoLabel?: string; docNoun?: string; action?: PdfAction },
+  opts?: { fileName?: string; docTitle?: string; docNoLabel?: string; docNoun?: string; refLabel?: string; terms?: readonly string[]; money?: boolean; action?: PdfAction },
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;

@@ -18,6 +18,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AsOfSection } from './InventoryAsOf';
+import { DemandSoPanel } from './InventoryDemandSoPanel';
 import {
   Search, ArrowUpRight, ArrowDownLeft, Star, X, Plus,
   Warehouse as WarehouseIcon, ChevronRight, ChevronDown,
@@ -46,6 +47,7 @@ import {
   buildStockBreakdown,
   lotAssignedQty,
   lotFreeQty,
+  lotIsDeadStock,
   isMakeToOrderCategory,
   type CogsEntry,
   type InventoryBatch,
@@ -58,8 +60,8 @@ import {
 
 /** Best-effort route for a movement's source doc. Mirrors StockCard's
  *  docHrefFor so every IN/OUT/ADJUSTMENT row on the Movements ledger can be
- *  clicked through to the document that drove it. ADJUSTMENT has no per-doc
- *  detail page — link to the list. */
+ *  clicked through to the document that drove it. ADJUSTMENT links to its document
+ *  when it has one, else to the list. */
 const docHrefFor = (m: InventoryMovement): string | null => {
   switch (m.source_doc_type) {
     case 'GRN':              return m.source_doc_id ? `/scm/grns/${m.source_doc_id}` : null;
@@ -68,11 +70,12 @@ const docHrefFor = (m: InventoryMovement): string | null => {
     case 'PURCHASE_RETURN':  return m.source_doc_id ? `/scm/purchase-returns/${m.source_doc_id}` : null;
     case 'STOCK_TRANSFER':   return m.source_doc_id ? `/scm/stock-transfers/${m.source_doc_id}` : null;
     case 'STOCK_TAKE':       return m.source_doc_id ? `/scm/stock-takes/${m.source_doc_id}` : null;
-    case 'ADJUSTMENT':       return '/scm/stock-adjustments';
+    case 'ADJUSTMENT':       return stockAdjustmentHref(m);
     default:                 return null;
   }
 };
 import styles from './Inventory.module.css';
+import { stockAdjustmentHref } from '../../vendor/scm/lib/stock-adjustment-link';
 
 const ICON = { size: 14, strokeWidth: 1.75 } as const;
 const ICON_MD = { size: 16, strokeWidth: 1.75 } as const;
@@ -505,7 +508,7 @@ const BalancesTab = ({
       </div>
 
       <p className={styles.eyebrow}>
-        {isLoading || searching ? 'Loading…' : `${visibleRows.length} SKU rows · click a row for the per-warehouse breakdown · chevron for variants`}
+        {isLoading || searching ? 'Loading…' : `${visibleRows.length} SKU rows · click a row for the per-warehouse breakdown · chevron for SOs, POs and variants`}
       </p>
       <SearchProgress active={searching} label={search.trim() ? searchTransition.statusText : 'Loading inventory…'} />
       <SearchScopeHint
@@ -545,6 +548,7 @@ const BalancesTab = ({
           render: (r) => (
             <>
               <IncomingPoPanel pos={r.incoming_pos} />
+              <DemandSoPanel sos={r.demand_sos} />
               <SkuVariantPanel code={r.item_code} />
             </>
           ),
@@ -580,13 +584,11 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
     key: 'desc',
     label: 'Description',
     width: '240px',
-    getValue: (r) => `${r.product_name} ${r.branding ?? ''}`,
-    render: (r) => (
-      <>
-        {r.product_name}
-        {r.branding && <span className={styles.numCellZero}> · {r.branding}</span>}
-      </>
-    ),
+    /* Name only (HC-0142, Sim): the export fed stock-check sheets as
+       "AKEMI ARISTOI MATTRESS (...) AKEMI" / "... BEDFRAME (6FT) BEDFRAME" —
+       the name already carries the brand, the suffix only polluted it. */
+    getValue: (r) => r.product_name,
+    render: (r) => r.product_name,
   },
   {
     key: 'category',
@@ -711,7 +713,7 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
     render: (r) => (
       <span
         className={`${styles.numCell} ${r.unscheduled_qty > 0 ? '' : styles.numCellZero}`}
-        title="Unscheduled = open Sales-Order demand with no delivery date yet (future / uncertain). Not subtracted from Available, but eats into Spare."
+        title="Unscheduled = open Sales-Order demand with no delivery date yet (future / uncertain). Not subtracted from Available, but eats into Spare. Open the row chevron for the SOs."
       >
         {r.unscheduled_qty > 0 ? fmtQty(r.unscheduled_qty) : '—'}
       </span>
@@ -1159,7 +1161,7 @@ const renderAssignedFreeStatus = (r: InventoryReservation) => {
   const assigned = lotAssignedQty(r);
   const free = lotFreeQty(r);
   const mto = r.make_to_order ?? isMakeToOrderCategory(r.category);
-  const deadStock = !r.is_consignment && free > 0;
+  const deadStock = lotIsDeadStock(r);
   return (
     <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4 }}>
       {assigned > 0 && (
@@ -1203,7 +1205,7 @@ const ReservationsTab = ({
   const rows = useMemo(() => all.filter((r) => {
     if (statusFilter === 'ASSIGNED' && lotAssignedQty(r) <= 0) return false;
     if (statusFilter === 'FREE' && lotFreeQty(r) <= 0) return false;
-    if (statusFilter === 'DEAD' && !(r.is_dead_stock ?? (!r.is_consignment && lotFreeQty(r) > 0))) return false;
+    if (statusFilter === 'DEAD' && !lotIsDeadStock(r)) return false;
     if (!q) return true;
     return r.item_code.toLowerCase().includes(q) ||
       (r.product_name ?? '').toLowerCase().includes(q) ||
@@ -1216,7 +1218,7 @@ const ReservationsTab = ({
     assignedQty: rows.reduce((s, r) => s + lotAssignedQty(r), 0),
     freeQty: rows.reduce((s, r) => s + lotFreeQty(r), 0),
     // Dead stock = free un-assigned units on OWNED lots (consignment excluded).
-    deadQty: rows.reduce((s, r) => s + ((r.is_dead_stock ?? (!r.is_consignment && lotFreeQty(r) > 0)) ? lotFreeQty(r) : 0), 0),
+    deadQty: rows.reduce((s, r) => s + (lotIsDeadStock(r) ? lotFreeQty(r) : 0), 0),
   }), [rows]);
 
   return (
@@ -1398,6 +1400,10 @@ const ProductBreakdownDrawer = ({
      mobile Stock Card uses — one logic layer, two presentations. */
   const lotRows = useMemo(() => reservations.data ?? [], [reservations.data]);
   const bd = useMemo(() => buildStockBreakdown(lotRows), [lotRows]);
+  // Free make-to-order units the server calls dead (service / showroom lots excluded).
+  const deadMtoQty = bd.ownedLots
+    .filter((l) => (l.make_to_order ?? isMakeToOrderCategory(l.category)) && lotIsDeadStock(l))
+    .reduce((s, l) => s + lotFreeQty(l), 0);
   /* Owned + consignment lots, one flat list tagged with which bucket each row
      came from — DataTable's groupBy needs one array, not two, to give this
      table the same column-filter/sort/freeze funnel every other DataTable in
@@ -1458,10 +1464,10 @@ const ProductBreakdownDrawer = ({
         {/* Dead-stock banner: free make-to-order (SOFA/BEDFRAME) on-hand stock is
             abnormal (built against an SO), so surface it prominently. Soft/absent
             for make-to-stock. */}
-        {!breakdownPending && bd.ownedFreeQty > 0 && bd.ownedLots.some((l) => (l.make_to_order ?? isMakeToOrderCategory(l.category)) && lotFreeQty(l) > 0) && (
+        {!breakdownPending && deadMtoQty > 0 && (
           <div className="mt-3 rounded-lg border border-err/40 bg-err/10 px-4 py-2.5 text-[13px] text-err">
             <strong className="font-semibold">Dead-stock candidate.</strong>{' '}
-            {fmtQty(bd.ownedFreeQty)} free (un-assigned) unit{bd.ownedFreeQty === 1 ? '' : 's'} on hand — this is a make-to-order SKU, so free stock has no Sales Order claiming it.
+            {fmtQty(deadMtoQty)} free (un-assigned) unit{deadMtoQty === 1 ? '' : 's'} on hand — this is a make-to-order SKU, so free stock has no Sales Order claiming it.
           </div>
         )}
 
@@ -1488,7 +1494,7 @@ const ProductBreakdownDrawer = ({
           getRowKey={(r) => r.id ?? `${r._source}|${r.warehouse_id}|${r.variant_key}|${r.batch_no ?? ''}`}
           groupBy={{ key: 'source', label: (v) => (v === 'owned' ? 'Owned' : 'Consignment — held, not owned (excluded from value)') }}
           columns={[
-            { key: 'source', label: 'Bucket', defaultHidden: true, getValue: (r) => r._source, render: (r) => r._source },
+            { key: 'source', label: 'Bucket', defaultHidden: true, getValue: (r) => r._source, render: (r) => (r._source === 'owned' ? 'Owned' : 'Consignment') },
             {
               key: 'warehouse', label: 'Warehouse', width: '140px',
               getValue: (r) => r.warehouse_code ?? r.warehouse_name ?? '',
@@ -1626,34 +1632,34 @@ const ProductBreakdownDrawer = ({
         </button>
         {cogsOpen && (
           <div className={`${styles.tableCard} ${styles.drawerScroll}`}>
-            <table className={`${styles.table} ${styles.compactTable}`}>
-              <thead>
-                <tr>
-                  <th>Consumed at</th>
-                  <th>Source Doc</th>
-                  <th style={{ textAlign: 'right' }}>Qty</th>
-                  <th style={{ textAlign: 'right' }}>Unit Cost</th>
-                  <th style={{ textAlign: 'right' }}>Total Cost</th>
-                  <th>From Lot</th>
-                </tr>
-              </thead>
-              <tbody>
-                {cogs.isLoading && <tr><td colSpan={6} className={styles.emptyRow}>Loading…</td></tr>}
-                {!cogs.isLoading && (cogs.data ?? []).length === 0 && (
-                  <tr><td colSpan={6} className={styles.emptyRow}>No COGS entries yet for this SKU.</td></tr>
-                )}
-                {(cogs.data ?? []).map((c) => (
-                  <tr key={c.id}>
-                    <td className={styles.numCellZero}>{fmtDateTime(c.consumed_at)}</td>
-                    <td><span className={styles.docLink}>{c.source_doc_no ?? '—'}</span></td>
-                    <td className={`${styles.numCell} ${styles.numCellNeg}`}>−{fmtQty(c.qty_consumed)}</td>
-                    <td className={`${styles.numCell} ${styles.numCellZero}`}>{fmtRm(c.unit_cost_sen)}</td>
-                    <td className={styles.numCell} style={{ fontWeight: 700 }}>{fmtRm(c.total_cost_sen)}</td>
-                    <td className={styles.numCellZero}>{c.lot_source_doc_no ?? '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <DataTable
+              tableId="inventory-sku-cogs"
+              exportName="sku-cogs"
+              exportXlsx
+              rows={cogs.data ?? (cogs.isError ? [] : null)}
+              loading={cogs.isLoading}
+              emptyLabel="No COGS entries yet for this SKU."
+              getRowKey={(c) => c.id}
+              columns={[
+                { key: 'consumed_at', label: 'Consumed at', getValue: (c) => c.consumed_at, render: (c) => <span className={styles.numCellZero}>{fmtDateTime(c.consumed_at)}</span> },
+                { key: 'source_doc', label: 'Source Doc', getValue: (c) => c.source_doc_no ?? '', render: (c) => <span className={styles.docLink}>{c.source_doc_no ?? '—'}</span> },
+                {
+                  key: 'qty', label: 'Qty', align: 'right', getValue: (c) => c.qty_consumed, exportFormat: 'number',
+                  render: (c) => <span className={`${styles.numCell} ${styles.numCellNeg}`}>−{fmtQty(c.qty_consumed)}</span>,
+                },
+                {
+                  key: 'unit_cost', label: 'Unit Cost', align: 'right', getValue: (c) => c.unit_cost_sen,
+                  exportValue: (c) => c.unit_cost_sen / 100, exportFormat: 'money',
+                  render: (c) => <span className={`${styles.numCell} ${styles.numCellZero}`}>{fmtRm(c.unit_cost_sen)}</span>,
+                },
+                {
+                  key: 'total_cost', label: 'Total Cost', align: 'right', getValue: (c) => c.total_cost_sen,
+                  exportValue: (c) => c.total_cost_sen / 100, exportFormat: 'money',
+                  render: (c) => <span className={styles.numCell} style={{ fontWeight: 700 }}>{fmtRm(c.total_cost_sen)}</span>,
+                },
+                { key: 'lot', label: 'From Lot', getValue: (c) => c.lot_source_doc_no ?? '', render: (c) => <span className={styles.numCellZero}>{c.lot_source_doc_no ?? '—'}</span> },
+              ] satisfies Column<NonNullable<typeof cogs.data>[number]>[]}
+            />
           </div>
         )}
       </div>

@@ -27,6 +27,16 @@ so this shipped in stages, each one independently reversible:
    change or a disable voids all of that person's passes. Instant.
 5. **Everything sends the pass** — desktop and the SCM screens (the slow ones).
 
+**What the pass carries, and its version.** The whole authorization envelope:
+permissions, page access, org fields, and — since 2026-09-28 — the Title's
+policy row and capability grants. Those two were missing at first, and the
+accounting write rule then judged a Finance Executive by job title alone and
+refused her every Confirm and Post while every read worked (the database path
+carried the row, so only a non-owner on the fast path could ever hit it). The
+pass is now versioned: one minted under an older shape is refused on the fast
+path and quietly re-issued by the next database check, so a fix of this kind
+reaches everyone at deploy with no re-login and no logout.
+
 All five are on `main` behind ONE switch, and **none of it does anything until
 the switch is turned on.** With the switch off, every request runs exactly as it
 did before — proven: the full backend test suite passes with the switch off.

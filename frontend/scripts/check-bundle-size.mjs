@@ -228,7 +228,33 @@ const CEILINGS = {
   // gained one name for the shared useServerColumnFunnels chunk the SCM list
   // pages import. Same shared-lazy-chunk mechanism as the note above; the bell
   // popover body is still the diet that buys real room.
-  INITIAL_JS_GZIP: 170 * KB,
+  // 2026-09-28: that diet is done — the bell popover body is its own lazy
+  // chunk (components/NotificationBellPopover.tsx), 170.0 -> 168.5 KB on the
+  // entry. The ceiling stays at 170: the room is for the next shell change.
+  // 170 -> 171 on 2026-10-08: main sat AT 170.0 and the PMS CONTRACT row's
+  // 「Request payment」 (PR #4529) added NO eager module — the entry's lazy-chunk
+  // map gained names for the shared PaymentRequestForm chunk (the Payment
+  // Requests page and the PMS dialogs import it) and the lazy PmsRequestModals
+  // chunk, and api/client.ts gained fetchBlob (fetchBlobUrl now reads through
+  // it). Same shared-lazy-chunk mechanism as the 09-14 / 09-16 notes.
+  // 171 -> 172 on 2026-10-14: main sat at 171.0 and the Houzs POS Admin page
+  // (PR #4635) added NO eager module: one lazy() route for /pos-admin in
+  // App.tsx and one Sidebar entry (System > POS Admin, the Store icon). The
+  // measured delta was +0.2 KB. Same shell-growth mechanism as the notes above.
+  // 171 -> 172 on 2026-10-15: main sat at 170,990 bytes, 10 under. PR #4646
+  // (supplier sofa pricing headers) added NO eager module; only the lazy
+  // SupplierDetail chunk's hashed name changed in the entry's lazy-chunk map,
+  // and gzip of the new hash cost a few bytes. Any lazy-page edit could trip it.
+  // 172 -> 173 on 2026-10-18: main sat AT 172.0 and the module dashboards
+  // (PR #4706) added NO eager module: two lazy() routes (Procurement /
+  // Logistic Overview), their manifest lines and four Sidebar entries renamed
+  // or added (each module opens with its overview; icons the shell already
+  // loads). Measured +0.2 KB on the entry. Same shell-growth mechanism.
+  // 173 -> 174 on 2026-10-22: main sat at 172.9 and HC-0002 (PR #4856) added
+  // NO eager module — its edits are in lazy chunks only (authed-fetch, the SO /
+  // DO detail pages, Service Cases), whose new hashed names in the entry's
+  // lazy-chunk map measured +0.1 KB. Same mechanism as 2026-10-15.
+  INITIAL_JS_GZIP: 174 * KB,
   // Everything the app can lazy-load (users only fetch the routes they visit).
   // A soft guard against unbounded total growth, not a first-paint cost. Left
   // at 1800 deliberately — main is at ~99% of it and RAISING IT AGAIN IS NOT

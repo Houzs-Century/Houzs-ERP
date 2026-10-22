@@ -27,15 +27,18 @@ import { useSearchParams } from 'react-router-dom';
 import { Download, Columns3, X, ChevronRight, LayoutList, Table2 } from 'lucide-react';
 import { PageHeader } from '../../components/Layout';
 import { StatCard } from '../../components/StatCard';
+import { DataTable, type Column } from '../../components/DataTable';
 import { formatDate } from '../../lib/utils';
-import { buildVariantSummary, orderLineIdentity } from '@2990s/shared';
+import { buildVariantSummary, fmtQty, fmtSen, orderLineIdentity } from '@2990s/shared';
 import { useAuth } from '../../auth/AuthContext';
-import { fairAllowedStages } from '../../auth/salesAccess';
+import { fairAllowedStages, isFairManagementUser } from '../../auth/salesAccess';
 import {
   useFairReport,
   useFairReportDetail,
+  useCostingGapListing,
   fairReportErrorInfo,
   type FairStage,
+  type FairCostingGapRow,
   type FairFilters,
   type FairDims,
   type FairSoRow,
@@ -51,16 +54,15 @@ import {
 import { DateField } from "../../vendor/scm/components/DateField";
 
 // ── money / number formatting ────────────────────────────────────────────────
-/** Table-cell money — no currency prefix, 2 decimals, zero/null → em dash so a
- *  wide grid reads cleanly (matches the approved mockup's "—" empties). */
+/** Table-cell money — zero/null → em dash so a wide grid reads cleanly
+ *  (matches the approved mockup's "—" empties). */
 const cell = (centi: number | null | undefined): string => {
   const v = Number(centi ?? 0);
   if (!v) return '—';
-  return (v / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return fmtSen(v);
 };
-/** KPI / drawer money — with the MYR prefix and always-shown 0.00. */
-const rm = (centi: number | null | undefined): string =>
-  `MYR ${(Number(centi ?? 0) / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+/** KPI / drawer money — always-shown 0.00. */
+const rm = (centi: number | null | undefined): string => fmtSen(centi ?? 0);
 const pct = (p: number | null | undefined): string => (p == null ? '—' : `${p.toFixed(1)}%`);
 /** Signed points for a margin drift (DO vs SO). */
 const pts = (a: number | null | undefined, b: number | null | undefined): string => {
@@ -86,10 +88,14 @@ const inputCls =
 const btnCls =
   'inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-[12.5px] font-medium text-ink-secondary transition-colors hover:border-primary/40';
 
-const STAGE_LABELS: Record<FairStage, string> = { so: 'Sales Orders', do: 'Delivery Orders', invoice: 'Invoices', pnl: 'P&L' };
+// 'gaps' is a FRONTEND-ONLY tab (its own /reports/costing-gap-listing endpoint),
+// NOT a fair-report stage — so it is kept out of FairStage (which mirrors the
+// backend FAIR_STAGES) and lives only as a tab key here.
+type TabKey = FairStage | 'gaps';
+const STAGE_LABELS: Record<TabKey, string> = { so: 'Sales Orders', do: 'Delivery Orders', invoice: 'Invoices', pnl: 'P&L', gaps: 'Costing Gaps' };
 
 // Optional column groups per stage — the "Columns" control toggles these off.
-const OPTIONAL_GROUPS: Record<FairStage, { key: string; label: string }[]> = {
+const OPTIONAL_GROUPS: Record<TabKey, { key: string; label: string }[]> = {
   so: [
     { key: 'catcost', label: 'Cost by category' },
     { key: 'tender', label: 'Deposit by tender' },
@@ -97,6 +103,7 @@ const OPTIONAL_GROUPS: Record<FairStage, { key: string; label: string }[]> = {
   do: [{ key: 'drift', label: 'Margin drift' }],
   invoice: [{ key: 'progression', label: 'Cost progression (SO / DO)' }],
   pnl: [{ key: 'threeway', label: 'Three-way cost (SO / DO / SI)' }],
+  gaps: [],
 };
 
 type OptionMaps = {
@@ -171,8 +178,14 @@ export const FairReport = () => {
   const [sp, setSp] = useSearchParams();
 
   // ── stage (clamped to what this user may see) ──────────────────────────────
-  const rawStage = (sp.get('stage') as FairStage) || 'so';
-  const stage: FairStage = allowed.includes(rawStage) ? rawStage : (allowed[0] ?? 'so');
+  // The backend fair-report stages, PLUS a frontend-only "Costing Gaps" tab
+  // (its own endpoint) for management.
+  const showGaps = isFairManagementUser(user);
+  const tabKeys: TabKey[] = showGaps ? [...allowed, 'gaps'] : allowed;
+  const rawStage = (sp.get('stage') as TabKey) || 'so';
+  const stage: TabKey = tabKeys.includes(rawStage) ? rawStage : (tabKeys[0] ?? 'so');
+  // The real fair-report stage to query (gaps has no fair-report stage).
+  const reportStage: FairStage = stage === 'gaps' ? 'so' : stage;
 
   // ── filters from the URL ───────────────────────────────────────────────────
   const filters: FairFilters = useMemo(() => {
@@ -203,11 +216,15 @@ export const FairReport = () => {
     setSp(next);
   };
 
-  const q = useFairReport(stage, filters, allowed.includes(stage));
+  const q = useFairReport(reportStage, filters, stage !== 'gaps' && allowed.includes(reportStage));
   const data = q.data;
+  // The costing-gap tab has its own endpoint (not the fair-report stage machinery).
+  const gapQ = useCostingGapListing(stage === 'gaps' && showGaps);
   // A 403 (not in the report's cohort) must not read as a transient "please
   // retry" — distinguish the permission denial from a load failure.
-  const errorInfo = q.isError ? fairReportErrorInfo(q.error) : null;
+  const errorInfo = (stage === 'gaps' ? gapQ.isError : q.isError)
+    ? fairReportErrorInfo(stage === 'gaps' ? gapQ.error : q.error)
+    : null;
 
   // ── accumulate filter options from whatever rows we've loaded ───────────────
   const [opts, setOpts] = useState<OptionMaps>(EMPTY_OPTS);
@@ -241,7 +258,8 @@ export const FairReport = () => {
     setSp(next);
   };
 
-  const activeCount = data?.rows?.length ?? 0;
+  const activeCount = stage === 'gaps' ? (gapQ.data?.rows.length ?? 0) : (data?.rows?.length ?? 0);
+  const panelLoading = stage === 'gaps' ? gapQ.isLoading : q.isLoading;
 
   const handleExport = () => {
     if (!data) return;
@@ -284,7 +302,7 @@ export const FairReport = () => {
 
       {/* ── Stage tabs ──────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap gap-1 rounded-lg border border-border bg-surface-2 p-1" role="tablist">
-        {allowed.map((s) => {
+        {tabKeys.map((s) => {
           const on = s === stage;
           return (
             <button
@@ -370,12 +388,14 @@ export const FairReport = () => {
       {/* ── The stage panel ─────────────────────────────────────────────────── */}
       <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
         <div className="flex items-center justify-between border-b border-border px-3 py-2 text-[13px] font-semibold text-ink">
-          <span>{STAGE_LABELS[stage]} — {q.isLoading ? 'loading…' : `${activeCount} row${activeCount === 1 ? '' : 's'}`}</span>
+          <span>{STAGE_LABELS[stage]} — {panelLoading ? 'loading…' : `${activeCount} row${activeCount === 1 ? '' : 's'}`}</span>
         </div>
-        {view === 'table' ? (
-          <StageTable data={data} stage={stage} hidden={hidden} loading={q.isLoading} onOpen={(so) => setParam('so', so)} />
+        {stage === 'gaps' ? (
+          <CostingGapTable rows={gapQ.data?.rows ?? []} loading={gapQ.isLoading} />
+        ) : view === 'table' ? (
+          <StageTable data={data} stage={reportStage} hidden={hidden} loading={q.isLoading} onOpen={(so) => setParam('so', so)} />
         ) : (
-          <StageCards data={data} stage={stage} loading={q.isLoading} onOpen={(so) => setParam('so', so)} />
+          <StageCards data={data} stage={reportStage} loading={q.isLoading} onOpen={(so) => setParam('so', so)} />
         )}
       </div>
 
@@ -395,6 +415,52 @@ export const FairReport = () => {
     </div>
   );
 };
+
+// ── costing-gap table ─────────────────────────────────────────────────────────
+// Owner 2026-09-26: which SO lines have no cost because the PRODUCT has no cost —
+// the actionable list of products to fill in Product Maintenance. Its own endpoint
+// (useCostingGapListing), so it renders standalone rather than through StageTable.
+function CostingGapTable({ rows, loading }: { rows: FairCostingGapRow[]; loading: boolean }) {
+  if (loading) return <div className="px-3 py-6 text-[13px] text-ink-muted">Loading…</div>;
+  if (rows.length === 0) {
+    return <div className="px-3 py-6 text-[13px] text-ink-muted">No costing gaps — every ordered product carries a cost.</div>;
+  }
+  const th = 'px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-brand text-ink-muted whitespace-nowrap';
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse">
+        <thead className="border-b border-border bg-surface-2">
+          <tr>
+            <th className={th}>SO No</th>
+            <th className={th}>Date</th>
+            <th className={th}>Item code</th>
+            <th className={th}>Description</th>
+            <th className={th}>Group</th>
+            <th className={`${th} text-right`}>Qty</th>
+            <th className={th}>Customer</th>
+            <th className={th}>Venue</th>
+            <th className={th}>Brand</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={`${r.doc_no}-${r.item_code}-${i}`} className="border-b border-border/60">
+              <td className={td}>{r.doc_no}</td>
+              <td className={td}>{formatDate(r.so_date)}</td>
+              <td className={`${td} font-medium`}>{r.item_code}</td>
+              <td className={td}>{r.description ?? '—'}</td>
+              <td className={td}>{r.item_group ?? '—'}</td>
+              <td className={tdR}>{r.qty ?? '—'}</td>
+              <td className={td}>{r.debtor_name ?? '—'}</td>
+              <td className={td}>{r.venue ?? '—'}</td>
+              <td className={td}>{r.branding ?? '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 // ── select filter ────────────────────────────────────────────────────────────
 function SelectFilter({ label, value, onChange, options, allLabel }: {
@@ -427,7 +493,7 @@ function KpiRow({ data, rows }: { data: FairReportData; rows: FairReportRows }) 
     return (
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard rail="bg-primary" label="Total Orders" value={s.orders.toLocaleString('en-MY')} subtitle="Confirmed, matching filter" />
-        <StatCard rail="bg-accent-bright" label="Revenue" value={rm(s.total_amount_sen)} subtitle={`${pct(s.margin_pct)} margin`} />
+        <StatCard rail="bg-accent-bright" label="Revenue" value={rm(s.total_amount_sen)} subtitle={`${pct(s.margin_pct)} margin · goods only`} />
         <StatCard rail="bg-err" label="Outstanding" value={rm(s.total_balance_sen)} tone="error" subtitle={`${s.below_deposit_count} below deposit`} />
         <StatCard rail="bg-synced" label="Paid" value={rm(paid)} tone="success" subtitle="Deposits collected" />
       </div>
@@ -463,159 +529,156 @@ function KpiRow({ data, rows }: { data: FairReportData; rows: FairReportRows }) 
       <StatCard rail="bg-primary" label="Invoices" value={s.invoices.toLocaleString('en-MY')} subtitle="SIs in this filter" />
       <StatCard rail="bg-accent-bright" label="Invoiced Amount" value={rm(s.total_invoiced_sen)} subtitle="Billed to date" />
       <StatCard rail="bg-err" label="Landed (SI) Cost" value={rm(s.total_si_cost_sen)} subtitle="Store-card after PI lands" />
-      <StatCard rail="bg-synced" label="Invoiced Margin" value={pct(s.margin_pct)} tone="success" subtitle="Invoiced − landed" />
+      <StatCard rail="bg-synced" label="Invoiced Margin" value={pct(s.margin_pct)} tone="success" subtitle="Goods only · invoiced − landed" />
     </div>
   );
 }
 
 // ── table ─────────────────────────────────────────────────────────────────────
+/* The footer sums what is on screen: the stage's rows after the table's own
+   search / filters, or only the ticked rows (owner 2026-09-25). The route pages
+   through every match, so with no table filter the footer equals the server
+   summary in the cards above. */
+const sumOf = <R,>(rows: R[], f: (r: R) => number | null | undefined): number =>
+  rows.reduce((acc, r) => acc + Number(f(r) ?? 0), 0);
+const marginOf = (revenue: number, cost: number): number | null =>
+  revenue === 0 ? null : ((revenue - cost) / revenue) * 100;
+const toneCls = (v: number | null | undefined) => ((v ?? 0) >= 0 ? 'text-synced' : 'text-err');
+const moneyCol = <R,>(key: string, label: string, f: (r: R) => number | null | undefined, extra?: Partial<Column<R>>): Column<R> => ({
+  key, label, align: 'right',
+  getValue: (r) => Number(f(r) ?? 0),
+  exportValue: (r) => Number(f(r) ?? 0) / 100, exportFormat: 'money',
+  render: (r) => cell(f(r)),
+  total: (rows) => cell(sumOf(rows, f)),
+  ...extra,
+});
+const textCol = <R,>(key: string, label: string, f: (r: R) => string | null | undefined): Column<R> => ({
+  key, label, getValue: (r) => f(r) ?? '', render: (r) => f(r) ?? '—',
+});
+const docCol = <R,>(key: string, label: string, f: (r: R) => string | null | undefined, cls: string): Column<R> => ({
+  key, label, getValue: (r) => f(r) ?? '', render: (r) => <span className={`${mono} ${cls}`}>{f(r) ?? '—'}</span>,
+});
+const dateCol = <R,>(key: string, label: string, f: (r: R) => string | null | undefined): Column<R> => ({
+  key, label, filterType: 'date', dateValue: f, getValue: (r) => f(r) ?? '',
+  render: (r) => <span className="tabular-nums">{formatDate(f(r))}</span>,
+});
+const marginCol = <R,>(f: (r: R) => number | null | undefined, revenue: (r: R) => number, cost: (r: R) => number): Column<R> => ({
+  key: 'margin', label: 'Margin %', align: 'right', getValue: (r) => f(r) ?? 0,
+  render: (r) => <span className={`${toneCls(f(r))} font-medium`}>{pct(f(r))}</span>,
+  total: (rs) => {
+    const m = marginOf(sumOf(rs, revenue), sumOf(rs, cost));
+    return <span className={toneCls(m)}>{pct(m)}</span>;
+  },
+});
+
 function StageTable({ data, stage, hidden, loading, onOpen }: {
   data: FairReportData; stage: FairStage; hidden: Set<string>; loading: boolean; onOpen: (so: string) => void;
 }) {
-  const empty = (cols: number) => (
-    <tr><td className={`${td} text-ink-muted`} colSpan={cols}>{loading ? 'Loading…' : 'No records match the current filters.'}</td></tr>
-  );
+  const [picked, setPicked] = useState<Set<string>>(() => new Set());
+  // Another stage or filter is another set of rows: the ticks do not carry.
+  useEffect(() => setPicked(new Set()), [data]);
+  const common = {
+    loading,
+    emptyLabel: 'No records match the current filters.',
+    selection: {
+      selectedIds: picked,
+      onToggle: (id: string) => setPicked((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        return next;
+      }),
+      onToggleAll: (keys: string[], all: boolean) => setPicked(all ? new Set() : new Set(keys)),
+    },
+  };
 
   if (stage === 'so') {
-    const rows = (data?.stage === 'so' ? data.rows : []) as FairSoRow[];
-    const showCat = !hidden.has('catcost');
-    const showTender = !hidden.has('tender');
-    const cols = 7 + 3 + (showCat ? 5 : 0) + 3 + (showTender ? 4 : 0) + 2;
-    const sum = data?.stage === 'so' ? data.summary : null;
+    const rows = data?.stage === 'so' ? (data.rows as FairSoRow[]) : null;
+    const columns: Column<FairSoRow>[] = [
+      dateCol('date', 'Date', (r) => r.so_date),
+      textCol('venue', 'Venue', (r) => r.venue),
+      textCol('project', 'Project / Fair', (r) => r.project),
+      docCol('so', 'SO No', (r) => r.so_no, 'text-primary-ink'),
+      docCol('form', 'Order Form', (r) => r.order_form, 'text-ink-secondary'),
+      textCol('salesperson', 'Salesperson', (r) => r.salesperson),
+      textCol('branding', 'Branding', (r) => r.branding),
+      moneyCol('amount', 'Amount', (r) => r.amount_sen),
+      moneyCol('selling', 'Selling', (r) => r.selling_sen),
+      moneyCol('serviceRev', 'Service Rev.', (r) => r.service_rev_sen),
+      ...(hidden.has('catcost') ? [] : [
+        moneyCol<FairSoRow>('catMattress', 'Mattress / Sofa', (r) => r.cost_by_category.mattress_sofa_cost_sen),
+        moneyCol<FairSoRow>('catBedframe', 'Bedframe', (r) => r.cost_by_category.bedframe_cost_sen),
+        moneyCol<FairSoRow>('catAccessories', 'Accessories', (r) => r.cost_by_category.accessories_cost_sen),
+        moneyCol<FairSoRow>('catOthers', 'Others', (r) => r.cost_by_category.others_cost_sen),
+        moneyCol<FairSoRow>('catService', 'Service', (r) => r.cost_by_category.service_cost_sen),
+      ]),
+      moneyCol('soCost', 'Total SO Cost', (r) => r.total_so_cost_sen, { className: 'font-semibold' }),
+      marginCol((r) => r.margin_pct, (r) => r.selling_sen, (r) => r.goods_cost_sen),
+      moneyCol('balance', 'Balance', (r) => r.balance_sen),
+      {
+        key: 'payment', label: 'Payment', getValue: (r) => r.payment_methods.join(' + '),
+        render: (r) => <span className="text-[11.5px] text-ink-secondary">{r.payment_methods.join(' + ') || '—'}</span>,
+      },
+      ...(hidden.has('tender') ? [] : [
+        moneyCol<FairSoRow>('cash', 'Cash', (r) => r.deposit_by_tender.Cash),
+        moneyCol<FairSoRow>('merchant', 'Merchant', (r) => r.deposit_by_tender.Merchant),
+        moneyCol<FairSoRow>('installment', 'Installment', (r) => r.deposit_by_tender.Installment),
+        moneyCol<FairSoRow>('online', 'Online', (r) => r.deposit_by_tender.Online),
+      ]),
+      {
+        key: 'pending', label: 'Pending', align: 'right', getValue: (r) => (r.below_deposit ? 'Yes' : ''),
+        render: (r) => (r.below_deposit
+          ? <span className="rounded bg-primary-soft px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-brand text-primary">Yes</span>
+          : '—'),
+        total: (rs) => rs.filter((r) => r.below_deposit).length || '—',
+      },
+    ];
     return (
-      <div className="overflow-x-auto">
-        <table className="w-full border-collapse">
-          <thead className="bg-primary-soft/30">
-            <tr>
-              <th className={th}>Date</th><th className={th}>Venue</th><th className={th}>Project / Fair</th>
-              <th className={th}>SO No</th><th className={th}>Order Form</th><th className={th}>Salesperson</th><th className={th}>Branding</th>
-              <th className={thR}>Amount</th><th className={thR}>Selling</th><th className={thR}>Service Rev.</th>
-              {showCat && <><th className={thR}>Mattress / Sofa</th><th className={thR}>Bedframe</th><th className={thR}>Accessories</th><th className={thR}>Others</th><th className={thR}>Service</th></>}
-              <th className={thR}>Total SO Cost</th><th className={thR}>Margin %</th><th className={thR}>Balance</th>
-              <th className={th}>Payment</th>
-              {showTender && <><th className={thR}>Cash</th><th className={thR}>Merchant</th><th className={thR}>Installment</th><th className={thR}>Online</th></>}
-              <th className={thR}>Pending</th><th className={thR} aria-label="open" />
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.so_no} className="cursor-pointer border-t border-border/60 even:bg-surface-2 hover:bg-primary-soft/20" onClick={() => onOpen(r.so_no)}>
-                <td className={`${td} tabular-nums`}>{formatDate(r.so_date)}</td>
-                <td className={td}>{r.venue ?? '—'}</td>
-                <td className={td}>{r.project ?? '—'}</td>
-                <td className={td}><span className={`${mono} text-primary-ink`}>{r.so_no}</span></td>
-                <td className={td}><span className={`${mono} text-ink-secondary`}>{r.order_form ?? '—'}</span></td>
-                <td className={td}>{r.salesperson ?? '—'}</td>
-                <td className={td}>{r.branding ?? '—'}</td>
-                <td className={tdR}>{cell(r.amount_sen)}</td>
-                <td className={tdR}>{cell(r.selling_sen)}</td>
-                <td className={tdR}>{cell(r.service_rev_sen)}</td>
-                {showCat && <>
-                  <td className={`${tdR} bg-surface-2`}>{cell(r.cost_by_category.mattress_sofa_cost_sen)}</td>
-                  <td className={`${tdR} bg-surface-2`}>{cell(r.cost_by_category.bedframe_cost_sen)}</td>
-                  <td className={`${tdR} bg-surface-2`}>{cell(r.cost_by_category.accessories_cost_sen)}</td>
-                  <td className={`${tdR} bg-surface-2`}>{cell(r.cost_by_category.others_cost_sen)}</td>
-                  <td className={`${tdR} bg-surface-2`}>{cell(r.cost_by_category.service_cost_sen)}</td>
-                </>}
-                <td className={`${tdR} font-semibold`}>{cell(r.total_so_cost_sen)}</td>
-                <td className={`${tdR} ${(r.margin_pct ?? 0) >= 0 ? 'text-synced' : 'text-err'} font-medium`}>{pct(r.margin_pct)}</td>
-                <td className={tdR}>{cell(r.balance_sen)}</td>
-                <td className={td}><span className="text-[11.5px] text-ink-secondary">{r.payment_methods.join(' + ') || '—'}</span></td>
-                {showTender && <>
-                  <td className={`${tdR} bg-primary-soft/15`}>{cell(r.deposit_by_tender.Cash)}</td>
-                  <td className={`${tdR} bg-primary-soft/15`}>{cell(r.deposit_by_tender.Merchant)}</td>
-                  <td className={`${tdR} bg-primary-soft/15`}>{cell(r.deposit_by_tender.Installment)}</td>
-                  <td className={`${tdR} bg-primary-soft/15`}>{cell(r.deposit_by_tender.Online)}</td>
-                </>}
-                <td className={tdR}>{r.below_deposit ? <span className="rounded bg-primary-soft px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-brand text-primary">Yes</span> : '—'}</td>
-                <td className={tdR}><ChevronRight size={15} className="text-ink-muted" /></td>
-              </tr>
-            ))}
-            {rows.length === 0 && empty(cols)}
-          </tbody>
-          {sum && rows.length > 0 && (
-            <tfoot>
-              <tr className="border-t-2 border-border bg-surface-2 font-semibold">
-                <td className={`${td} uppercase text-[10px] tracking-brand text-ink-muted`} colSpan={7}>Filtered totals · {sum.orders} orders</td>
-                <td className={tdR}>{cell(sum.total_amount_sen)}</td>
-                <td className={tdR}>{cell(sum.total_selling_sen)}</td>
-                <td className={tdR}>{cell(sum.total_service_rev_sen)}</td>
-                {showCat && <><td className={tdR} colSpan={5} /></>}
-                <td className={tdR}>{cell(sum.total_so_cost_sen)}</td>
-                <td className={`${tdR} ${(sum.margin_pct ?? 0) >= 0 ? 'text-synced' : 'text-err'}`}>{pct(sum.margin_pct)}</td>
-                <td className={tdR}>{cell(sum.total_balance_sen)}</td>
-                <td className={td} />
-                {showTender && <>
-                  <td className={tdR}>{cell(sum.tender_totals.Cash)}</td>
-                  <td className={tdR}>{cell(sum.tender_totals.Merchant)}</td>
-                  <td className={tdR}>{cell(sum.tender_totals.Installment)}</td>
-                  <td className={tdR}>{cell(sum.tender_totals.Online)}</td>
-                </>}
-                <td className={tdR}>{sum.below_deposit_count || '—'}</td>
-                <td className={tdR} />
-              </tr>
-            </tfoot>
-          )}
-        </table>
-      </div>
+      <DataTable<FairSoRow> tableId="fair-report-so" columns={columns} rows={rows} getRowKey={(r) => r.so_no}
+        onRowClick={(r) => onOpen(r.so_no)} {...common} />
     );
   }
 
   if (stage === 'do') {
-    const rows = (data?.stage === 'do' ? data.rows : []) as FairDoRow[];
-    const showDrift = !hidden.has('drift');
-    const sum = data?.stage === 'do' ? data.summary : null;
-    const cols = 7 + 5 + (showDrift ? 1 : 0) + 1;
+    const rows = data?.stage === 'do' ? (data.rows as FairDoRow[]) : null;
+    const columns: Column<FairDoRow>[] = [
+      dateCol('date', 'Delivery Date', (r) => r.delivery_date),
+      textCol('venue', 'Venue', (r) => r.venue),
+      textCol('project', 'Project / Fair', (r) => r.project),
+      textCol('branding', 'Branding', (r) => r.branding),
+      {
+        key: 'do', label: 'DO No', getValue: (r) => r.do_no,
+        render: (r) => (
+          <>
+            <span className={`${mono} text-primary-ink`}>{r.do_no}</span>
+            {r.do_cost_is_legacy && <span className="ml-1 rounded bg-ink-muted/15 px-1 py-0.5 text-[9px] font-semibold uppercase text-ink-muted">Legacy</span>}
+          </>
+        ),
+      },
+      docCol('so', 'Linked SO', (r) => r.so_no, 'text-ink-secondary'),
+      { key: 'qty', label: 'Qty', align: 'right', getValue: (r) => r.qty, render: (r) => fmtQty(r.qty), total: (rs) => fmtQty(sumOf(rs, (r) => r.qty)) },
+      moneyCol('soAmount', 'SO Amount', (r) => r.so_amount_sen),
+      moneyCol('soCost', 'Total SO Cost', (r) => r.total_so_cost_sen),
+      moneyCol('doCost', 'Total DO Cost', (r) => r.total_do_cost_sen, { className: 'font-semibold' }),
+      {
+        key: 'delta', label: 'Cost Δ', align: 'right', getValue: (r) => r.cost_delta_sen,
+        render: (r) => <span className={`${r.cost_delta_sen > 0 ? 'text-err' : r.cost_delta_sen < 0 ? 'text-synced' : ''} font-medium`}>{signedMoney(r.cost_delta_sen)}</span>,
+        total: (rs) => {
+          const d = sumOf(rs, (r) => r.total_do_cost_sen) - sumOf(rs, (r) => r.total_so_cost_sen);
+          return <span className={d > 0 ? 'text-err' : d < 0 ? 'text-synced' : ''}>{signedMoney(d)}</span>;
+        },
+      },
+      { key: 'doMargin', label: 'DO Margin %', align: 'right', getValue: (r) => r.do_margin_pct ?? 0, render: (r) => pct(r.do_margin_pct) },
+      ...(hidden.has('drift') ? [] : [{
+        key: 'drift', label: 'Margin drift', align: 'right' as const,
+        getValue: (r: FairDoRow) => (r.do_margin_pct ?? 0) - (r.so_margin_pct ?? 0),
+        render: (r: FairDoRow) => (
+          <span className={`${(r.do_margin_pct ?? 0) < (r.so_margin_pct ?? 0) ? 'text-err' : 'text-synced'} font-medium`}>{pts(r.do_margin_pct, r.so_margin_pct)}</span>
+        ),
+      }]),
+    ];
     return (
-      <div className="overflow-x-auto">
-        <table className="w-full border-collapse">
-          <thead className="bg-primary-soft/30">
-            <tr>
-              <th className={th}>Delivery Date</th><th className={th}>Venue</th><th className={th}>Project / Fair</th><th className={th}>Branding</th>
-              <th className={th}>DO No</th><th className={th}>Linked SO</th><th className={thR}>Qty</th><th className={thR}>SO Amount</th>
-              <th className={thR}>Total SO Cost</th><th className={thR}>Total DO Cost</th><th className={thR}>Cost Δ</th><th className={thR}>DO Margin %</th>
-              {showDrift && <th className={thR}>Margin drift</th>}
-              <th className={thR} aria-label="open" />
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.do_no} className="cursor-pointer border-t border-border/60 even:bg-surface-2 hover:bg-primary-soft/20" onClick={() => r.so_no && onOpen(r.so_no)}>
-                <td className={`${td} tabular-nums`}>{formatDate(r.delivery_date)}</td>
-                <td className={td}>{r.venue ?? '—'}</td>
-                <td className={td}>{r.project ?? '—'}</td>
-                <td className={td}>{r.branding ?? '—'}</td>
-                <td className={td}><span className={`${mono} text-primary-ink`}>{r.do_no}</span>{r.do_cost_is_legacy && <span className="ml-1 rounded bg-ink-muted/15 px-1 py-0.5 text-[9px] font-semibold uppercase text-ink-muted">Legacy</span>}</td>
-                <td className={td}><span className={`${mono} text-ink-secondary`}>{r.so_no ?? '—'}</span></td>
-                <td className={tdR}>{r.qty}</td>
-                <td className={tdR}>{cell(r.so_amount_sen)}</td>
-                <td className={tdR}>{cell(r.total_so_cost_sen)}</td>
-                <td className={`${tdR} font-semibold`}>{cell(r.total_do_cost_sen)}</td>
-                <td className={`${tdR} ${r.cost_delta_sen > 0 ? 'text-err' : r.cost_delta_sen < 0 ? 'text-synced' : ''} font-medium`}>{signedMoney(r.cost_delta_sen)}</td>
-                <td className={tdR}>{pct(r.do_margin_pct)}</td>
-                {showDrift && <td className={`${tdR} ${(r.do_margin_pct ?? 0) < (r.so_margin_pct ?? 0) ? 'text-err' : 'text-synced'} font-medium`}>{pts(r.do_margin_pct, r.so_margin_pct)}</td>}
-                <td className={tdR}><ChevronRight size={15} className="text-ink-muted" /></td>
-              </tr>
-            ))}
-            {rows.length === 0 && empty(cols)}
-          </tbody>
-          {sum && rows.length > 0 && (
-            <tfoot>
-              <tr className="border-t-2 border-border bg-surface-2 font-semibold">
-                <td className={`${td} uppercase text-[10px] tracking-brand text-ink-muted`} colSpan={6}>Delivered · {sum.deliveries} orders</td>
-                <td className={tdR} />
-                <td className={tdR} />
-                <td className={tdR}>{cell(sum.total_so_cost_sen)}</td>
-                <td className={tdR}>{cell(sum.total_do_cost_sen)}</td>
-                <td className={`${tdR} ${sum.cost_delta_sen > 0 ? 'text-err' : sum.cost_delta_sen < 0 ? 'text-synced' : ''}`}>{signedMoney(sum.cost_delta_sen)}</td>
-                <td className={tdR} />
-                {showDrift && <td className={tdR} />}
-                <td className={tdR} />
-              </tr>
-            </tfoot>
-          )}
-        </table>
-      </div>
+      <DataTable<FairDoRow> tableId="fair-report-do" columns={columns} rows={rows} getRowKey={(r) => r.do_no}
+        onRowClick={(r) => { if (r.so_no) onOpen(r.so_no); }} {...common} />
     );
   }
 
@@ -628,113 +691,69 @@ function StageTable({ data, stage, hidden, loading, onOpen }: {
         </div>
       );
     }
-    const rows = (pnl?.rows ?? []) as FairPnlRow[];
-    const sum = pnl?.summary ?? null;
-    const showThree = !hidden.has('threeway');
-    const cols = 5 + 1 + (showThree ? 3 : 0) + 3;
+    const rows = pnl ? (pnl.rows as FairPnlRow[]) : null;
+    const columns: Column<FairPnlRow>[] = [
+      dateCol('date', 'Date', (r) => r.so_date),
+      textCol('venue', 'Venue', (r) => r.venue),
+      docCol('so', 'SO No', (r) => r.so_no, 'text-primary-ink'),
+      textCol('salesperson', 'Salesperson', (r) => r.salesperson),
+      textCol('branding', 'Branding', (r) => r.branding),
+      moneyCol('revenue', 'Revenue', (r) => r.revenue_sen),
+      ...(hidden.has('threeway') ? [] : [
+        moneyCol<FairPnlRow>('soCost', 'SO Cost', (r) => r.so_cost_sen),
+        moneyCol<FairPnlRow>('doCost', 'DO Cost', (r) => r.do_cost_sen, { render: (r) => (r.do_cost_sen == null ? '—' : cell(r.do_cost_sen)) }),
+        moneyCol<FairPnlRow>('siCost', 'SI Cost', (r) => r.si_cost_sen, { render: (r) => (r.si_cost_sen == null ? '—' : cell(r.si_cost_sen)) }),
+      ]),
+      moneyCol('cogs', 'COGS', (r) => r.effective_cost_sen, {
+        className: 'font-semibold',
+        render: (r) => (
+          <>
+            {cell(r.effective_cost_sen)}
+            <span className="ml-1 rounded bg-ink-muted/15 px-1 py-0.5 text-[9px] font-semibold uppercase text-ink-muted">{r.effective_cost_stage}</span>
+          </>
+        ),
+      }),
+      moneyCol('gross', 'Gross Profit', (r) => r.gross_profit_sen, {
+        render: (r) => <span className={`${toneCls(r.gross_profit_sen)} font-medium`}>{cell(r.gross_profit_sen)}</span>,
+        total: (rs) => {
+          const g = sumOf(rs, (r) => r.gross_profit_sen);
+          return <span className={toneCls(g)}>{cell(g)}</span>;
+        },
+      }),
+      marginCol((r) => r.margin_pct, (r) => r.revenue_sen, (r) => r.effective_cost_sen),
+    ];
     return (
-      <div className="overflow-x-auto">
+      <div>
         {pnl && !pnl.meta.rate_present && (
           <div className="border-b border-border bg-surface-2 px-3 py-2 text-[11.5px] text-ink-muted">
             No cost-rate card for this fair's brand{pnl.meta.brand ? ` (${pnl.meta.brand})` : ''} — overhead shows as zero, so net profit equals gross profit until a rate card is set.
           </div>
         )}
-        <table className="w-full border-collapse">
-          <thead className="bg-primary-soft/30">
-            <tr>
-              <th className={th}>Date</th><th className={th}>Venue</th><th className={th}>SO No</th><th className={th}>Salesperson</th><th className={th}>Branding</th>
-              <th className={thR}>Revenue</th>
-              {showThree && <><th className={thR}>SO Cost</th><th className={thR}>DO Cost</th><th className={thR}>SI Cost</th></>}
-              <th className={thR}>COGS</th><th className={thR}>Gross Profit</th><th className={thR}>Margin %</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.so_no} className="cursor-pointer border-t border-border/60 even:bg-surface-2 hover:bg-primary-soft/20" onClick={() => onOpen(r.so_no)}>
-                <td className={`${td} tabular-nums`}>{formatDate(r.so_date)}</td>
-                <td className={td}>{r.venue ?? '—'}</td>
-                <td className={td}><span className={`${mono} text-primary-ink`}>{r.so_no}</span></td>
-                <td className={td}>{r.salesperson ?? '—'}</td>
-                <td className={td}>{r.branding ?? '—'}</td>
-                <td className={tdR}>{cell(r.revenue_sen)}</td>
-                {showThree && <>
-                  <td className={`${tdR} bg-surface-2`}>{cell(r.so_cost_sen)}</td>
-                  <td className={`${tdR} bg-surface-2`}>{r.do_cost_sen == null ? '—' : cell(r.do_cost_sen)}</td>
-                  <td className={`${tdR} bg-surface-2`}>{r.si_cost_sen == null ? '—' : cell(r.si_cost_sen)}</td>
-                </>}
-                <td className={`${tdR} font-semibold`}>{cell(r.effective_cost_sen)}<span className="ml-1 rounded bg-ink-muted/15 px-1 py-0.5 text-[9px] font-semibold uppercase text-ink-muted">{r.effective_cost_stage}</span></td>
-                <td className={`${tdR} ${r.gross_profit_sen >= 0 ? 'text-synced' : 'text-err'} font-medium`}>{cell(r.gross_profit_sen)}</td>
-                <td className={`${tdR} ${(r.margin_pct ?? 0) >= 0 ? 'text-synced' : 'text-err'} font-medium`}>{pct(r.margin_pct)}</td>
-              </tr>
-            ))}
-            {rows.length === 0 && empty(cols)}
-          </tbody>
-          {sum && rows.length > 0 && (
-            <tfoot>
-              <tr className="border-t-2 border-border bg-surface-2 font-semibold">
-                <td className={`${td} uppercase text-[10px] tracking-brand text-ink-muted`} colSpan={5}>Fair totals · {sum.orders} orders</td>
-                <td className={tdR}>{cell(sum.total_revenue_sen)}</td>
-                {showThree && <><td className={tdR}>{cell(sum.total_so_cost_sen)}</td><td className={tdR}>{cell(sum.total_do_cost_sen)}</td><td className={tdR}>{cell(sum.total_si_cost_sen)}</td></>}
-                <td className={tdR}>{cell(sum.total_cogs_sen)}</td>
-                <td className={`${tdR} ${sum.gross_profit_sen >= 0 ? 'text-synced' : 'text-err'}`}>{cell(sum.gross_profit_sen)}</td>
-                <td className={`${tdR} ${(sum.gross_margin_pct ?? 0) >= 0 ? 'text-synced' : 'text-err'}`}>{pct(sum.gross_margin_pct)}</td>
-              </tr>
-            </tfoot>
-          )}
-        </table>
+        <DataTable<FairPnlRow> tableId="fair-report-pnl" columns={columns} rows={rows} getRowKey={(r) => r.so_no}
+          onRowClick={(r) => onOpen(r.so_no)} {...common} />
       </div>
     );
   }
 
-  // invoice
-  const rows = (data?.stage === 'invoice' ? data.rows : []) as FairInvoiceRow[];
-  const showProg = !hidden.has('progression');
-  const sum = data?.stage === 'invoice' ? data.summary : null;
-  const cols = 6 + 1 + (showProg ? 2 : 0) + 1 + 1 + 1;
+  const rows = data?.stage === 'invoice' ? (data.rows as FairInvoiceRow[]) : null;
+  const columns: Column<FairInvoiceRow>[] = [
+    dateCol('date', 'Invoice Date', (r) => r.invoice_date),
+    textCol('venue', 'Venue', (r) => r.venue),
+    textCol('project', 'Project / Fair', (r) => r.project),
+    textCol('branding', 'Branding', (r) => r.branding),
+    docCol('inv', 'Invoice No', (r) => r.inv_no, 'text-primary-ink'),
+    docCol('so', 'Linked SO', (r) => r.so_no, 'text-ink-secondary'),
+    moneyCol('invoiced', 'Invoiced', (r) => r.invoiced_sen),
+    ...(hidden.has('progression') ? [] : [
+      moneyCol<FairInvoiceRow>('soCost', 'SO Cost', (r) => r.so_cost_sen),
+      moneyCol<FairInvoiceRow>('doCost', 'DO Cost', (r) => r.do_cost_sen),
+    ]),
+    moneyCol('siCost', 'Landed (SI) Cost', (r) => r.si_cost_sen, { className: 'font-semibold' }),
+    marginCol((r) => r.margin_pct, (r) => r.goods_invoiced_sen, (r) => r.goods_si_cost_sen),
+  ];
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full border-collapse">
-        <thead className="bg-primary-soft/30">
-          <tr>
-            <th className={th}>Invoice Date</th><th className={th}>Venue</th><th className={th}>Project / Fair</th><th className={th}>Branding</th>
-            <th className={th}>Invoice No</th><th className={th}>Linked SO</th><th className={thR}>Invoiced</th>
-            {showProg && <><th className={thR}>SO Cost</th><th className={thR}>DO Cost</th></>}
-            <th className={thR}>Landed (SI) Cost</th><th className={thR}>Margin %</th>
-            <th className={thR} aria-label="open" />
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.inv_no} className="cursor-pointer border-t border-border/60 even:bg-surface-2 hover:bg-primary-soft/20" onClick={() => r.so_no && onOpen(r.so_no)}>
-              <td className={`${td} tabular-nums`}>{formatDate(r.invoice_date)}</td>
-              <td className={td}>{r.venue ?? '—'}</td>
-              <td className={td}>{r.project ?? '—'}</td>
-              <td className={td}>{r.branding ?? '—'}</td>
-              <td className={td}><span className={`${mono} text-primary-ink`}>{r.inv_no}</span></td>
-              <td className={td}><span className={`${mono} text-ink-secondary`}>{r.so_no ?? '—'}</span></td>
-              <td className={tdR}>{cell(r.invoiced_sen)}</td>
-              {showProg && <><td className={tdR}>{cell(r.so_cost_sen)}</td><td className={tdR}>{cell(r.do_cost_sen)}</td></>}
-              <td className={`${tdR} font-semibold`}>{cell(r.si_cost_sen)}</td>
-              <td className={`${tdR} ${(r.margin_pct ?? 0) >= 0 ? 'text-synced' : 'text-err'} font-medium`}>{pct(r.margin_pct)}</td>
-              <td className={tdR}><ChevronRight size={15} className="text-ink-muted" /></td>
-            </tr>
-          ))}
-          {rows.length === 0 && empty(cols)}
-        </tbody>
-        {sum && rows.length > 0 && (
-          <tfoot>
-            <tr className="border-t-2 border-border bg-surface-2 font-semibold">
-              <td className={`${td} uppercase text-[10px] tracking-brand text-ink-muted`} colSpan={6}>Invoiced · {sum.invoices} orders</td>
-              <td className={tdR}>{cell(sum.total_invoiced_sen)}</td>
-              {showProg && <><td className={tdR}>{cell(sum.total_so_cost_sen)}</td><td className={tdR}>{cell(sum.total_do_cost_sen)}</td></>}
-              <td className={tdR}>{cell(sum.total_si_cost_sen)}</td>
-              <td className={`${tdR} ${(sum.margin_pct ?? 0) >= 0 ? 'text-synced' : 'text-err'}`}>{pct(sum.margin_pct)}</td>
-              <td className={tdR} />
-            </tr>
-          </tfoot>
-        )}
-      </table>
-    </div>
+    <DataTable<FairInvoiceRow> tableId="fair-report-invoice" columns={columns} rows={rows} getRowKey={(r) => r.inv_no}
+      onRowClick={(r) => { if (r.so_no) onOpen(r.so_no); }} {...common} />
   );
 }
 

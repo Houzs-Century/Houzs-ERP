@@ -32,12 +32,14 @@ import { ArrowRight, X, CheckSquare, Square } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { VariantDescription } from '../../vendor/scm/components/VariantDescription';
 import { useDeliverableSoLines, type DeliverableSoLine } from '../../vendor/scm/lib/delivery-order-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
+import { SoStockPill } from '../../components/SoSourceChips';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
-import { fmtMoneySen } from '@2990s/shared';
+import { soRefOfCamelStamp } from '../../lib/so-ref-search';
+import { fmtMoneySen, fmtQty } from '@2990s/shared';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -160,14 +162,15 @@ export const DeliveryOrderFromSo = () => {
      screen is a ready-to-review draft rather than a filtered list to re-tick by
      hand. Copies GrnFromPo, the one convert that already worked. Nothing ships
      and no stock moves here — Continue only carries the picks to the New DO
-     form. */
+     form. Lines whose stock is not READY stay unticked (BUG-59, Azza: deliver
+     the ready lines now, the rest on a later DO). */
   const prefilled = useRef(false);
   useEffect(() => {
     if (prefilled.current) return;
     if (scope.keys.size === 0) return;
     if (linesQ.isLoading) return;
     prefilled.current = true;
-    const mine = rows.filter((r) => r.remaining > 0);
+    const mine = rows.filter((r) => r.remaining > 0 && !r.notReady);
     const first = mine[0];
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- mine[0] is typed non-optional without noUncheckedIndexedAccess; an empty scope match is real
     if (!first) return;
@@ -251,7 +254,7 @@ export const DeliveryOrderFromSo = () => {
     [picks],
   );
 
-  const columns = useMemo<DataGridColumn<DeliverableSoLine>[]>(() => [
+  const columns = useMemo<GridColumn<DeliverableSoLine>[]>(() => [
     /* The per-row tick lives in the grid's first-class `selectable` column, so
        the header carries a real select-all checkbox scoped to the filtered
        rows. Don't re-add a hand-rolled `pick` column here — that header can
@@ -261,6 +264,12 @@ export const DeliveryOrderFromSo = () => {
       accessor: (r) => <span className={styles.codeCell}>{r.docNo}</span>,
       searchValue: (r) => r.docNo,
       groupValue: (r) => r.docNo,
+    },
+    {
+      key: 'soRef', label: 'Ref No.', width: 150, sortable: true,
+      accessor: (r) => soRefOfCamelStamp(r) || '—',
+      searchValue: (r) => soRefOfCamelStamp(r),
+      sortFn: (a, b) => soRefOfCamelStamp(a).localeCompare(soRefOfCamelStamp(b)),
     },
     {
       key: 'debtorName', label: 'Customer', width: 200, sortable: true, groupable: true,
@@ -293,8 +302,18 @@ export const DeliveryOrderFromSo = () => {
       searchValue: (r) => `${r.description ?? ''} ${r.description2 ?? ''}`.trim(),
     },
     {
+      key: 'stock', label: 'Stock', width: 90, sortable: true, groupable: true,
+      accessor: (r) => (
+        <span title={r.notReady?.reason}>
+          <SoStockPill line={{ item_group: r.itemGroup, stock_status_effective: r.notReady?.status ?? 'READY' }} />
+        </span>
+      ),
+      searchValue: (r) => r.notReady?.status ?? 'READY',
+      groupValue: (r) => r.notReady?.status ?? 'READY',
+    },
+    {
       key: 'qty', label: 'SO Qty', width: 70, align: 'right', sortable: true,
-      accessor: (r) => String(r.qty),
+      accessor: (r) => fmtQty(r.qty),
       sortFn: (a, b) => a.qty - b.qty,
     },
     {
@@ -304,7 +323,7 @@ export const DeliveryOrderFromSo = () => {
     },
     {
       key: 'remaining', label: 'Remaining', width: 80, align: 'right', sortable: true,
-      accessor: (r) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)' }}>{r.remaining}</span>,
+      accessor: (r) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)' }}>{fmtQty(r.remaining)}</span>,
       sortFn: (a, b) => a.remaining - b.remaining,
     },
     {
@@ -448,6 +467,14 @@ export const DeliveryOrderFromSo = () => {
           </Link>
         </p>
       )}
+      {/* HC-0102 (Azza, 2026-10-14): a not-READY line starts unticked (BUG-59)
+          but is NOT locked — say so, or it reads as "can't be delivered". */}
+      {scope.keys.size > 0 && rows.some((r) => r.notReady) && (
+        <p style={{ margin: '0 0 var(--space-2)', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+          Lines whose Stock is not READY start unticked. Tick any of them to include it in this
+          Delivery Order — you will be asked to confirm before it is created.
+        </p>
+      )}
       {lockedCustomerName && (
         <p style={{ margin: '0 0 var(--space-2)', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
           One customer per Delivery Order — locked to <strong>{lockedCustomerName}</strong>. Other
@@ -455,7 +482,7 @@ export const DeliveryOrderFromSo = () => {
         </p>
       )}
 
-      <DataGrid<DeliverableSoLine>
+      <DataGridCompat<DeliverableSoLine>
         rows={rows}
         columns={columns}
         storageKey={STORAGE_KEY}

@@ -29,7 +29,7 @@ const world = (over: Record<string, Row[]> = {}) => fakeSb({
     { company_id: CO, payment_source: 'SOPAY', payment_id: 'pay-2', or_number: '2990DraftOR-2608-003', status: 'DRAFT' },
   ],
   acc_settlement_batches: [{ id: 60, company_id: CO, acquirer_code: 'HLB' }, { id: 61, company_id: CO, acquirer_code: 'GHL' }],
-  acc_settlement_receipts: [{ id: 54, company_id: CO, batch_id: 60, received_on: '2026-08-26', bank_ref: 'HLB-77123' }],
+  acc_settlement_receipts: [{ id: 54, company_id: CO, batch_id: 60, received_on: '2026-08-26', bank_ref: 'HLB-77123' }, { id: 55, company_id: CO, batch_id: 61, received_on: '2026-09-02', bank_ref: 'GHL-3128' }],
   acc_settlement_rows: [{ id: 103, company_id: CO, batch_id: 61, acquirer_code: 'GHL', txn_date: '2026-06-02', ref: '615318040666' }],
   acc_settlement_payout_batches: [{ id: 4, company_id: CO, batch_id: 61, settled_on: '2026-06-06' }],
   purchase_invoices: [{ company_id: CO, invoice_number: '2990-PI-2607-001', supplier_invoice_ref: 'INV-8891' }],
@@ -63,6 +63,8 @@ const DOCS = [
   { jeNo: 'D-SET', sourceType: 'SETTLE', sourceDocNo: 'SETTLE-103', partyName: null, notes: 'GHL settlement 2026-06-02 ref 615318040666' },
   { jeNo: 'D-MOVE', sourceType: 'SETTLEMOVE', sourceDocNo: 'SETTLEMOVE-103', partyName: null, notes: null },
   { jeNo: 'D-CHG', sourceType: 'SETTLECHARGE', sourceDocNo: 'SETTLECHARGE-4', partyName: null, notes: 'PBB bank charge' },
+  /* Kept off a credit, no advice (owner 2026-09-30): named by the credit it came off. */
+  { jeNo: 'D-KEPT', sourceType: 'SETTLECHARGE_REVERSAL', sourceDocNo: 'SETTLECHARGE-R55', partyName: null, notes: null },
   { jeNo: 'D-STK', sourceType: 'STOCKADJ', sourceDocNo: 'STOCKADJ-2-2026-07', partyName: null, notes: 'Closing stock 2026-07' },
   { jeNo: 'D-STKR', sourceType: 'STOCKADJ', sourceDocNo: 'STOCKADJ-REV-2-2026-08', partyName: null, notes: null },
   /* Money moved from a cancelled order (docs/bugs/0927): the new order and the one it came from. */
@@ -79,7 +81,7 @@ describe('resolveJournalRefs', () => {
     expect(at('JE-1')).toEqual({ reference: '2990-SO-2606-014', who: 'Ah Meng', doc: '2990-SO-2606-014', doc2: null });
     expect(at('JE-2')).toEqual({ reference: '2990DraftOR-2608-003 · 2990-SO-2608-067', who: 'NG KAH YEE', doc: '2990DraftOR-2608-003', doc2: '2990-SO-2608-067' });
     expect(at('JE-3')).toEqual({ reference: '2990-HPV-2608-017', who: 'LOO WEN WEI', doc: '2990-HPV-2608-017', doc2: null });
-    expect(at('JE-4')).toEqual({ reference: 'HLB payout 26/08/2026', who: 'HLB', doc: 'HLB payout 26/08/2026', doc2: 'HLB-77123' });
+    expect(at('JE-4')).toEqual({ reference: 'HLB payout 2026/08/26', who: 'HLB', doc: 'HLB payout 2026/08/26', doc2: 'HLB-77123' });
     /* A reversal reads as its original. */
     expect(at('JE-5')).toEqual({ reference: '2990-SO-2606-014', who: 'Ah Meng', doc: '2990-SO-2606-014', doc2: null });
     /* A payment the tables no longer hold keeps its key, and the note stands in for the who. */
@@ -101,9 +103,10 @@ describe('resolveJournalRefs', () => {
     expect(at('D-CN')).toEqual(['2990-CN-2609-001', '2990-SO-2608-067', 'NG KAH YEE']);
     /* A refund voucher: what it refunds is the second handle; the payee is the who. */
     expect(at('D-PVR')).toEqual(['2990-HPV-2606-025', '2990-HRF-2606-001', 'THE CONTS']);
-    expect(at('D-SET')).toEqual(['GHL settlement 02/06/2026', '615318040666', 'GHL']);
-    expect(at('D-MOVE')).toEqual(['GHL settlement 02/06/2026', '615318040666', 'GHL']);
-    expect(at('D-CHG')).toEqual(['GHL charge 06/06/2026', null, 'GHL']);
+    expect(at('D-SET')).toEqual(['GHL settlement 2026/06/02', '615318040666', 'GHL']);
+    expect(at('D-MOVE')).toEqual(['GHL settlement 2026/06/02', '615318040666', 'GHL']);
+    expect(at('D-CHG')).toEqual(['GHL charge 2026/06/06', null, 'GHL']);
+    expect(at('D-KEPT')).toEqual(['GHL charge 2026/09/02', 'GHL-3128', 'GHL']);
     expect(at('D-STK')).toEqual(['Stock 07/2026', null, 'Closing stock 2026-07']);
     expect(at('D-STKR')).toEqual(['Stock 08/2026', null, null]);
     expect(at('D-CONV')).toEqual(['2990-SO-2608-067', '2990-SO-2607-010', 'NG KAH YEE']);

@@ -15,23 +15,30 @@
 // (GRN) column is relabelled to the source Purchase Consignment Receive.
 // ----------------------------------------------------------------------------
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus } from 'lucide-react';
+import { Plus, Edit3 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
+import { Button as DrawerButton } from '../../components/Button';
+import {
+  QuickViewShell, DrawerMetaGrid, DrawerMeta, DrawerSection, DrawerKV, DrawerPartyCard,
+  DrawerLines, DrawerLineRow, DrawerLineItem, DrawerTotals, DrawerTotal, drawerErrorText, type DrawerTone,
+} from './QuickViewDrawerParts';
 import {
   usePurchaseConsignmentReturns,
   useCancelPurchaseConsignmentReturn,
   usePurchaseConsignmentReturnDetail,
 } from '../../vendor/scm/lib/purchase-consignment-return-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
-import { fmtDateOrDash, buildVariantSummary } from '@2990s/shared';
+import { fmtDateOrDash, buildVariantSummary, fmtQty, fmtSen } from '@2990s/shared';
+import { statusLabel } from '../../vendor/scm/lib/status-pill';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 import { FilterPills } from '../../components/FilterPills';
 import { transferFromColumnLabel } from "../../lib/convertScope";
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -47,9 +54,6 @@ const STATUS_LABEL: Record<string, string> = {
 };
 const STATUS_CHIPS = ['all', 'POSTED', 'COMPLETED', 'CANCELLED'] as const;
 
-const fmtMoney = (centi: number, currency = 'MYR'): string =>
-  `${currency} ${(centi / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
 const PCT_LIST_STORAGE_KEY = 'pc-return-list.layout.v1';
 
 type PrRow = Record<string, unknown> & {
@@ -63,10 +67,10 @@ type PrRow = Record<string, unknown> & {
   pc_receive?: { id: string; receive_number: string } | null;
 };
 
-const buildColumns = (): DataGridColumn<PrRow>[] => [
+const buildColumns = (): GridColumn<PrRow>[] => [
   {
     key: 'return_number', label: 'Return No.', width: 150, sortable: true,
-    accessor: (r) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{r.return_number}</span>,
+    accessor: (r) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }} className={cancelledDocNoClass(r.status)}>{r.return_number}</span>,
     searchValue: (r) => r.return_number,
     /* Accessor is JSX → export the raw doc-no string or the cell exports blank. */
     exportValue: (r) => r.return_number,
@@ -110,10 +114,10 @@ const buildColumns = (): DataGridColumn<PrRow>[] => [
     key: 'refund_sen', label: 'Refund', width: 130, sortable: true, align: 'right', groupable: false,
     accessor: (r) => (
       <span style={{ fontFamily: 'var(--font-mark)', color: '#16695f', fontWeight: 800 }}>
-        {fmtMoney(Number(r.refund_sen ?? 0))}
+        {fmtSen(Number(r.refund_sen ?? 0))}
       </span>
     ),
-    searchValue: (r) => fmtMoney(Number(r.refund_sen ?? 0)),
+    searchValue: (r) => fmtSen(Number(r.refund_sen ?? 0)),
     /* Accessor is JSX → export the NUMBER in ringgit so Excel can SUM it. */
     exportValue: (r) => Number(r.refund_sen ?? 0) / 100,
     exportFormat: 'money',
@@ -123,10 +127,10 @@ const buildColumns = (): DataGridColumn<PrRow>[] => [
     key: 'status', label: 'Status', width: 130, sortable: true, groupable: true,
     accessor: (r) => (
       <span className={styles.statusPill} style={{ background: STATUS_COLOR[r.status] }}>
-        {STATUS_LABEL[r.status] ?? r.status.replace('_', ' ')}
+        {statusLabel('pr', r.status)}
       </span>
     ),
-    searchValue: (r) => STATUS_LABEL[r.status] ?? r.status.replace('_', ' '),
+    searchValue: (r) => statusLabel('pr', r.status),
     /* Accessor is JSX → export the human status label, not blank. */
     exportValue: (r) => STATUS_LABEL[r.status] ?? r.status.replace(/_/g, ' '),
     groupValue: (r) => STATUS_LABEL[r.status] ?? r.status,
@@ -147,7 +151,7 @@ type PrItem = Record<string, unknown> & {
   line_refund_sen?: number | null;
 };
 
-const buildDrilldownColumns = (): DataGridColumn<PrItem>[] => [
+const buildDrilldownColumns = (): GridColumn<PrItem>[] => [
   {
     key: 'item_code', label: 'Item Code', width: 130,
     accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{it.item_code ?? '—'}</span>,
@@ -169,13 +173,14 @@ const buildDrilldownColumns = (): DataGridColumn<PrItem>[] => [
   },
   {
     key: 'qty_returned', label: 'Qty Returned', width: 100, align: 'right',
-    accessor: (it) => it.qty_returned ?? 0,
+    accessor: (it) => fmtQty(it.qty_returned ?? 0),
+    exportValue: (it) => Number(it.qty_returned ?? 0),
     searchValue: (it) => String(it.qty_returned ?? 0),
     sortFn: (a, b) => Number(a.qty_returned ?? 0) - Number(b.qty_returned ?? 0),
   },
   {
     key: 'unit_price', label: 'Unit Price', width: 110, align: 'right',
-    accessor: (it) => fmtMoney(Number(it.unit_price_sen ?? 0)),
+    accessor: (it) => fmtSen(Number(it.unit_price_sen ?? 0)),
     exportValue: (it) => Number(it.unit_price_sen ?? 0) / 100,
     exportFormat: 'rate',
     searchValue: (it) => String(it.unit_price_sen ?? 0),
@@ -183,7 +188,7 @@ const buildDrilldownColumns = (): DataGridColumn<PrItem>[] => [
   },
   {
     key: 'line_total', label: 'Line Total', width: 120, align: 'right',
-    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtMoney(Number(it.line_refund_sen ?? 0))}</span>,
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtSen(Number(it.line_refund_sen ?? 0))}</span>,
     exportValue: (it) => Number(it.line_refund_sen ?? 0) / 100,
     exportFormat: 'money',
     searchValue: (it) => String(it.line_refund_sen ?? 0),
@@ -215,7 +220,7 @@ const ExpandedLines = ({ pr }: { pr: PrRow }) => {
 
   return (
     <div style={{ padding: 'var(--space-2) var(--space-3) var(--space-3) 40px', background: 'var(--c-cream)' }}>
-      <DataGrid<PrItem>
+      <DataGridCompat<PrItem>
         rows={items}
         columns={columns}
         storageKey="pc-return-drilldown-grid.v1"
@@ -232,14 +237,105 @@ const ExpandedLines = ({ pr }: { pr: PrRow }) => {
           fontFamily: 'var(--font-button)', fontSize: 'var(--fs-10)',
           letterSpacing: '0.06em', textTransform: 'uppercase',
         }}>Subtotal</span>
-        <span>Total <strong style={{ color: '#16695f' }}>{fmtMoney(subtotal)}</strong></span>
+        <span>Total <strong style={{ color: '#16695f' }}>{fmtSen(subtotal)}</strong></span>
       </div>
     </div>
   );
 };
 
+/* Status TONE for the drawer badge (purchase_return_status enum): POSTED is
+   the live return = warning, COMPLETED = success, CANCELLED = error. */
+const PCT_TONE: Record<string, DrawerTone> = { POSTED: 'warning', COMPLETED: 'success', CANCELLED: 'error' };
+const PCT_LINE_COLS = 'grid-cols-[minmax(0,1fr)_44px_96px]';
+
+/* Quick-view drawer — row click opens the same right slide-over the Sales
+   Order / Purchase Return lists have. Lines ride the SAME detail query the
+   expand chevron uses. */
+export function PurchaseConsignmentReturnDrawer({
+  row, onClose, onOpenFull, onEdit, onCancel,
+}: {
+  row: PrRow | null;
+  onClose: () => void;
+  onOpenFull: () => void;
+  onEdit: () => void;
+  onCancel: () => void;
+}) {
+  const detailQ = usePurchaseConsignmentReturnDetail(row?.id ?? null);
+  const items = (detailQ.data?.items ?? []) as PrItem[];
+  const status = row?.status ?? '';
+  const canCancel = status !== 'CANCELLED' && status !== 'COMPLETED';
+  const lineSum = items.reduce((sum, it) => sum + Number(it.line_refund_sen ?? 0), 0);
+  const refundSen = items.length > 0 ? lineSum : Number(row?.refund_sen ?? 0);
+
+  return (
+    <QuickViewShell
+      open={Boolean(row)}
+      onClose={onClose}
+      ariaLabel={row ? `Purchase consignment return ${row.return_number}` : 'Purchase consignment return details'}
+      docNo={row?.return_number ?? ''}
+      docLabel="Purchase Consignment Return"
+      statusLabel={statusLabel('pr', status)}
+      statusTone={PCT_TONE[status] ?? 'neutral'}
+      onOpenFull={onOpenFull}
+      footer={row && (
+        <>
+          <DrawerButton variant="ghost" icon={<Edit3 size={14} />} onClick={onEdit}>Edit</DrawerButton>
+          <div className="flex-1" />
+          {canCancel && <DrawerButton variant="ghost" className="text-err" onClick={onCancel}>Cancel Return</DrawerButton>}
+        </>
+      )}
+    >
+      {row && (
+        <>
+          <div className="text-[19px] font-bold text-ink">{row.supplier?.name ?? '—'}</div>
+          <div className="mt-1.5 text-[12.5px] text-ink-muted">Returned {fmtDateOrDash(row.return_date)}</div>
+
+          <DrawerMetaGrid>
+            <DrawerMeta k={transferFromColumnLabel('pcr')} v={row.pc_receive?.receive_number ?? '—'} mono />
+            <DrawerMeta k="Return date" v={fmtDateOrDash(row.return_date)} />
+            <DrawerMeta k="Supplier code" v={row.supplier?.code ?? '—'} mono />
+            <DrawerMeta k="Lines" v={String(items.length)} />
+          </DrawerMetaGrid>
+
+          <DrawerSection>Supplier</DrawerSection>
+          <DrawerPartyCard name={row.supplier?.name ?? '—'} code={row.supplier?.code}>
+            <DrawerKV k="Code" v={row.supplier?.code ?? '—'} />
+          </DrawerPartyCard>
+
+          <DrawerSection>Returned lines</DrawerSection>
+          <DrawerLines
+            cols={PCT_LINE_COLS}
+            headings={[{ label: 'Item' }, { label: 'Qty', right: true }, { label: 'Refund', right: true }]}
+            loading={detailQ.isLoading}
+            error={drawerErrorText(detailQ)}
+            empty={items.length === 0}
+          >
+            {items.map((it) => {
+              const manual = (it.description ?? '').trim();
+              const summary = buildVariantSummary(it.item_group, it.variants);
+              return (
+                <DrawerLineRow key={it.id} cols={PCT_LINE_COLS}>
+                  <DrawerLineItem primary={it.item_code ?? '—'} secondary={manual || summary || it.material_name} />
+                  <span className="text-right font-money text-[12.5px] text-ink-secondary">{fmtQty(it.qty_returned ?? 0)}</span>
+                  <span className="text-right font-money text-[12.5px] font-semibold text-ink">{fmtSen(Number(it.line_refund_sen ?? 0))}</span>
+                </DrawerLineRow>
+              );
+            })}
+          </DrawerLines>
+
+          <DrawerTotals>
+            <DrawerTotal k="Refund" v={fmtSen(refundSen)} strong />
+          </DrawerTotals>
+        </>
+      )}
+    </QuickViewShell>
+  );
+}
+
 export const PurchaseConsignmentReturns = () => {
   const navigate = useNavigate();
+  /* Row click → quick-view drawer. */
+  const [selected, setSelected] = useState<PrRow | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const statusChip = searchParams.get('status') ?? 'all';
   const setStatusChip = (s: string) => {
@@ -268,6 +364,7 @@ export const PurchaseConsignmentReturns = () => {
       danger: true,
     }))) return;
     cancelPr.mutate(r.id, {
+      onSuccess: () => setSelected(null),
       onError: (e) => notify({ title: 'Cancel failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }),
     });
   };
@@ -305,15 +402,17 @@ export const PurchaseConsignmentReturns = () => {
         onChange={(v) => setStatusChip(v)}
       />
 
-      <DataGrid<PrRow>
+      <DataGridCompat<PrRow>
         rows={rows}
         columns={columns}
         storageKey={PCT_LIST_STORAGE_KEY}
         exportName="Purchase Consignment Returns"
         rowKey={(r) => r.id}
+        getRowClassName={(r) => cancelledRowClass(r.status)}
         searchPlaceholder="Search return no, supplier…"
         loadedSearchLimit={300}
         groupBanner={false}
+        onRowClick={(r) => setSelected(r)}
         onRowDoubleClick={(r) => navigate(`/scm/purchase-consignment-returns/${r.id}`)}
         rowStyle={(r) => r.status === 'COMPLETED' || r.status === 'CANCELLED'
           ? { opacity: 0.6, filter: 'grayscale(0.4)' }
@@ -335,6 +434,14 @@ export const PurchaseConsignmentReturns = () => {
         }}
         isLoading={isLoading}
         emptyMessage='No returns yet — click "New Purchase Consignment Return" to raise one.'
+      />
+
+      <PurchaseConsignmentReturnDrawer
+        row={selected}
+        onClose={() => setSelected(null)}
+        onOpenFull={() => selected && navigate(`/scm/purchase-consignment-returns/${selected.id}`)}
+        onEdit={() => selected && navigate(`/scm/purchase-consignment-returns/${selected.id}?edit=1`)}
+        onCancel={() => selected && void doCancelPr(selected)}
       />
     </div>
   );

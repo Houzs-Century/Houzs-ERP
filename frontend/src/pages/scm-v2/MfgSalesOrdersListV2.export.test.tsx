@@ -146,6 +146,25 @@ describe("Sales Orders list: the ONE Export", () => {
     expect(h.written[0]).toMatch(/\.xlsx$/);
   });
 
+  /* HC-0122 / 2990-0010 (Syu 2026-10-19): the column is the ORIGINAL delivery
+     date (BUG-51): the ERP's frozen sales_exemption_expiry, else the AutoCount
+     book's value, else the delivery date. Never blank just because the order is
+     not in AutoCount (every 2990 order, most HC ones). */
+  it("Sales Exemption Expiry Date shows the original delivery date, AutoCount or not", async () => {
+    h.authed.mockImplementation(async () => ({
+      salesOrders: [
+        so("HC-SO-013001", { ac_sales_exemption_expiry: "2026-12-31", customer_delivery_date: "2026-09-30", sales_exemption_expiry: "2026-08-20" }),
+        so("HC-SO-013002", { ac_sales_exemption_expiry: "2026-12-31", customer_delivery_date: "2026-09-30", sales_exemption_expiry: null }),
+        so("HC-SO-008230", { ac_sales_exemption_expiry: null, customer_delivery_date: "2026-10-23", sales_exemption_expiry: null }),
+      ],
+      total: 3, lineCount: 6, next: null,
+    }));
+    const { body, cell } = await exportNow("/scm/sales-orders");
+    expect(cell(body[0]!, "Sales Exemption Expiry Date")).toBe("2026-08-20");
+    expect(cell(body[2]!, "Sales Exemption Expiry Date")).toBe("2026-12-31");
+    expect(cell(body[4]!, "Sales Exemption Expiry Date")).toBe("2026-10-23");
+  });
+
   it("asks the server with the list's tab, search and sort, and no page", async () => {
     await exportNow("/scm/sales-orders?status=confirmed&q=TAN&page=3");
     const path = h.authed.mock.calls.map((c) => String(c[0])).find((p) => p.startsWith("/mfg-sales-orders/export/rows"));

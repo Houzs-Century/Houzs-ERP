@@ -30,8 +30,8 @@
 // read 1,800.00).
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Camera, Plus, Printer } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { useAccounts, postableAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
@@ -41,11 +41,14 @@ import {
   useApInvoiceFiles, useUploadApInvoiceFile, useDeleteApInvoiceFile, fetchApInvoiceFileBlobUrl,
   type ApListKind, type ApListRow, type ApInvoiceHeader, type ApInvoiceLine,
 } from '../../vendor/scm/lib/ap-invoice-queries';
-import type { PvFilePayload, BillExtraction, VendorMemory } from '../../vendor/scm/lib/payment-voucher-queries';
+import { useExtractRequestBill, type PvFilePayload, type BillExtraction, type ExtractedBill, type VendorMemory } from '../../vendor/scm/lib/payment-voucher-queries';
+import { usePaymentRequest } from '../../vendor/scm/lib/payment-request-queries';
+import { OfficialDocActions } from '../../vendor/scm/components/OfficialDoc';
 import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { generateApListingPdf } from '../../vendor/scm/lib/ap-invoice-listing-pdf';
 import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
 import { Modal } from '../../vendor/scm/components/Modal';
+import { BackToPile } from '../../vendor/scm/components/BackToPile';
 import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -53,7 +56,12 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { fmtSen, fmtDateOrDash } from '../../vendor/shared/format';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
-import { ApInvoiceForm, emptyApForm, formFromExtraction, scanNoteFor, type ApFormMode, type ApFormSubmit, type ApFormValues } from './ApInvoiceForm';
+import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
+import { DataTable, type Column } from '../../components/DataTable';
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
+import { ApInvoiceForm, emptyApForm, formFromExtraction, formFromRequest, scanNoteFor, type ApFormMode, type ApFormSubmit, type ApFormValues } from './ApInvoiceForm';
+import { eventCellText } from '../../vendor/scm/components/EventSelect';
+import { useEventLabels, type EventSuggestion } from '../../vendor/scm/lib/event-queries';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
@@ -92,13 +100,15 @@ const fromDetail = (d: Detail, copy: boolean): ApFormValues => ({
   invoiceDate: copy ? myt() : d.invoice.invoice_date,
   dueDate: copy ? '' : (d.invoice.due_date ?? ''),
   description: d.invoice.notes ?? '',
-  lines: d.lines.map((l, i) => ({ rid: i + 1, description: l.description ?? '', debitAccountCode: l.debit_account_code, amountSen: l.amount_sen })),
+  lines: d.lines.map((l, i) => ({ rid: i + 1, description: l.description ?? '', debitAccountCode: l.debit_account_code, amountSen: l.amount_sen, projectId: l.project_id ?? null })),
 });
 
 type FormState = {
   mode: ApFormMode; initial: ApFormValues; invoiceId?: string; invoiceNumber?: string; posted?: boolean; paidSen?: number;
   /** A bill handed over from the pile page: its read pages and the reader's sentence. */
-  scan?: { files: PvFilePayload[]; note: string };
+  scan?: { files: PvFilePayload[]; note: string; eventSuggestions?: EventSuggestion[] };
+  /** The 申请付款 this new bill answers (owner 2026-09-30, 6.1). */
+  request?: { id: string; no: string };
 };
 
 export const ApInvoices = () => {
@@ -115,6 +125,7 @@ export const ApInvoices = () => {
   const [detailId, setDetailId] = useState<string | null>(null);
   const detailQ = useApInvoiceDetail(detailId);
   const detail = detailQ.data;
+  const eventLabelsQ = useEventLabels((detail?.lines ?? []).map((l) => l.project_id ?? null));
 
   /* The supplier filter (owner: supplier 筛选) — the suppliers ON the list,
      never the whole registry, so every choice shows something. */
@@ -126,6 +137,8 @@ export const ApInvoices = () => {
     return [{ value: '', label: 'All suppliers' }, ...named];
   }, [rows]);
   const visibleRows = useMemo(() => (supplierFilter ? rows.filter((r) => r.supplierId === supplierFilter) : rows), [rows, supplierFilter]);
+  /* What the table shows after its own funnels: the listing prints exactly that. */
+  const [shownRows, setShownRows] = useState<ApListRow[] | null>(null);
   const filteredSupplierName = supplierFilter ? (rows.find((r) => r.supplierId === supplierFilter)?.supplierName ?? null) : null;
 
   const suppliersQ = useSuppliers({ status: 'ACTIVE' });
@@ -155,17 +168,49 @@ export const ApInvoices = () => {
   const location = useLocation();
   const navigate = useNavigate();
   useEffect(() => {
-    const st = location.state as { apPrefill?: { extraction: BillExtraction; supplierMatch: { id: string; name: string } | null; memory: VendorMemory | null } } | null;
+    const st = location.state as { apPrefill?: { extraction: BillExtraction; supplierMatch: { id: string; name: string } | null; memory: VendorMemory | null; eventSuggestions?: EventSuggestion[] } } | null;
     if (!st?.apPrefill) return;
-    const { extraction, supplierMatch, memory } = st.apPrefill;
+    const { extraction, supplierMatch, memory, eventSuggestions } = st.apPrefill;
     setForm({
       mode: 'new',
       initial: { ...emptyApForm(), ...formFromExtraction(extraction, supplierMatch, memory) },
-      scan: { files: takePvFiles(), note: scanNoteFor({ extraction, supplierMatch, memory }) },
+      scan: { files: takePvFiles(), note: scanNoteFor({ extraction, supplierMatch, memory }), eventSuggestions: eventSuggestions ?? [] },
     });
     navigate(location.pathname, { replace: true, state: null });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
+  /* 申请付款 answered by a bill (owner 2026-09-30, 6.1–6.2): ?fromRequest=<id>
+     reads the request's own bill first, then opens the New form with what was
+     asked overlaid by what the bill reads (formFromRequest). The server claims
+     the request and copies its files onto the invoice on save. ?open=<id>
+     opens a bill's detail — the request's link to its invoice. */
+  const [searchParams, setSearchParams] = useSearchParams();
+  const fromRequest = searchParams.get('fromRequest');
+  const requestQ = usePaymentRequest(fromRequest);
+  const extractRequest = useExtractRequestBill();
+  const requestTaken = useRef<string | null>(null);
+  const [readingRequest, setReadingRequest] = useState<string | null>(null);
+  useEffect(() => {
+    const r = requestQ.data?.request;
+    if (!fromRequest || !r || requestTaken.current === fromRequest) return;
+    requestTaken.current = fromRequest;
+    setReadingRequest(r.request_no);
+    void (async () => {
+      let bill: ExtractedBill | undefined;
+      let readError: string | null = null;
+      try {
+        bill = (await extractRequest.mutateAsync(fromRequest)).bills.at(0);
+      } catch (e) {
+        readError = e instanceof Error ? e.message : 'the reader failed';
+      }
+      const built = formFromRequest(r, bill, readError);
+      setReadingRequest(null);
+      setForm({ mode: 'new', initial: built.initial, request: { id: r.id, no: r.request_no }, scan: { files: [], note: built.note, eventSuggestions: built.eventSuggestions } });
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fromRequest, requestQ.data]);
+  const openParam = searchParams.get('open');
+  useEffect(() => { if (openParam) setDetailId(openParam); }, [openParam]);
   const openEdit = (d: Detail) => setForm({
     mode: 'edit', initial: fromDetail(d, false), invoiceId: d.invoice.id, invoiceNumber: d.invoice.invoice_number,
     posted: d.invoice.status !== 'DRAFT', paidSen: Number(d.invoice.paid_sen),
@@ -185,7 +230,10 @@ export const ApInvoices = () => {
         });
         return;
       }
-      const res = await create.mutateAsync(values);
+      const res = await create.mutateAsync(form.request ? { ...values, paymentRequestId: form.request.id } : values);
+      if (form.request) {
+        setSearchParams((prev) => { const next = new URLSearchParams(prev); next.delete('fromRequest'); return next; }, { replace: true });
+      }
       /* Attach the scanned bill AFTER the invoice exists — sequentially, so
          sort_no (= print order) is the scan order. A failed upload never
          un-saves the bill: the notice says what still needs adding, and the
@@ -209,6 +257,7 @@ export const ApInvoices = () => {
         body: [
           `${fmtSen(res.invoice.total_sen)} as a draft — post it to put it on the books.`,
           form.mode === 'copy' && form.invoiceNumber ? `Copied from ${form.invoiceNumber}.` : null,
+          form.request ? `It answers ${form.request.no}${res.requestFilesCopied ? ` — ${res.requestFilesCopied} file(s) from the request attached` : ''}.` : null,
           attached > 0 ? `${attached} scanned file(s) attached.` : null,
           attachErr ? `${pendingFiles.length - attached} file(s) did not attach (${attachErr}) — add them from the bill's Files card.` : null,
         ].filter(Boolean).join(' '),
@@ -249,10 +298,40 @@ export const ApInvoices = () => {
   /* Print listing (owner: print listing 功能我也想要) — exactly the rows on
      screen, kind and supplier filters applied, totalled. */
   const printListing = () => {
-    void generateApListingPdf(visibleRows, { kind, supplierName: filteredSupplierName }).catch((e: unknown) => {
+    void generateApListingPdf(shownRows ?? visibleRows, { kind, supplierName: filteredSupplierName }).catch((e: unknown) => {
       void notify({ title: 'Listing not printed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
     });
   };
+
+  const apColumns = useMemo<Column<ApListRow>[]>(() => [
+    { key: 'kind', label: 'Kind', render: (r) => <span style={{ fontSize: 'var(--fs-11)', fontWeight: 600 }}>{KIND_LABEL[r.kind]}</span>, getValue: (r) => KIND_LABEL[r.kind] },
+    {
+      key: 'number', label: 'No.',
+      render: (r) => r.kind === 'PI'
+        ? <Link to={`/scm/purchase-invoices/${r.id}`} className={cancelledDocNoClass(r.status)} style={{ color: 'inherit', ...mono }}>{r.invoiceNumber}</Link>
+        : <button type="button" onClick={() => setDetailId(r.id)} className={cancelledDocNoClass(r.status)} style={{ ...linkBtn, ...mono }}>{r.invoiceNumber}</button>,
+      getValue: (r) => r.invoiceNumber,
+    },
+    {
+      key: 'supplier', label: 'Supplier',
+      render: (r) => <>{r.supplierName ?? '—'}{r.supplierCode ? <span style={soft}> · {r.supplierCode}</span> : null}</>,
+      getValue: (r) => r.supplierName ?? '',
+    },
+    { key: 'ref', label: 'Ref', render: (r) => r.supplierInvoiceRef ?? '—', getValue: (r) => r.supplierInvoiceRef ?? '' },
+    { key: 'description', label: 'Description', width: '260px', render: (r) => r.description ?? '—', getValue: (r) => r.description ?? '' },
+    { key: 'date', label: 'Date', render: (r) => fmtDateOrDash(r.invoiceDate), getValue: (r) => r.invoiceDate, exportFormat: 'date' },
+    { key: 'due', label: 'Due', render: (r) => fmtDateOrDash(r.dueDate), getValue: (r) => r.dueDate, exportFormat: 'date' },
+    {
+      key: 'total', label: 'Total', align: 'right', render: (r) => fmtSen(r.totalSen),
+      getValue: (r) => r.totalSen, exportValue: (r) => r.totalSen / 100, exportFormat: 'money',
+    },
+    {
+      key: 'outstanding', label: 'Outstanding', align: 'right',
+      render: (r) => <span style={{ fontWeight: r.outstandingSen > 0 ? 700 : 400 }}>{fmtSen(r.outstandingSen)}</span>,
+      getValue: (r) => r.outstandingSen, exportValue: (r) => r.outstandingSen / 100, exportFormat: 'money',
+    },
+    { key: 'status', label: 'Status', render: (r) => <span style={{ fontSize: 'var(--fs-11)' }}>{humaniseStatusKey(r.status)}</span>, getValue: (r) => r.status },
+  ], []);
 
   const formTitle = form?.mode === 'edit'
     ? `Edit ${form.invoiceNumber ?? 'AP invoice'}`
@@ -268,6 +347,8 @@ export const ApInvoices = () => {
             {/* The pile: many supplier bills at once, read and split one AP
                 invoice each (owner 2026-09-08: scan bill 的按钮可以直接做在
                 + new ap invoice 附近吗). */}
+            {/* The pile kept while this tab lives (owner 2026-10-06): the bills not yet opened. */}
+            <BackToPile target="ap" />
             <button type="button" onClick={() => navigate('/scm/ap-invoices/scan')} style={linkBtn}>
               <Camera {...ICON} /> Scan bills
             </button>
@@ -278,6 +359,7 @@ export const ApInvoices = () => {
         ) : undefined}
       />
 
+      {readingRequest && <div style={soft} role="status">Reading the bill on {readingRequest}…</div>}
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Supplier invoices — both kinds</h2>
@@ -289,63 +371,30 @@ export const ApInvoices = () => {
               <SearchCombo options={supplierOptions} value={supplierFilter} onChange={setSupplierFilter}
                 className={styles.fieldInput} aria-label="Filter by supplier" placeholder="All suppliers" />
             </div>
-            <Button variant="secondary" size="sm" onClick={printListing} disabled={visibleRows.length === 0}>
+            <Button variant="secondary" size="sm" onClick={printListing} disabled={(shownRows ?? visibleRows).length === 0}>
               <Printer {...ICON} /> Print listing
             </Button>
           </div>
         </div>
         <div className={styles.cardBody} style={{ overflowX: 'auto' }}>
-          {listQ.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading…</div>}
           {/* A refused or failed read says so — an empty sentence over a 403 hid
              docs/bugs/0648 for an afternoon. */}
-          {listQ.isError && (
-            <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-red, #b3261e)' }}>The list could not be loaded — {listQ.error instanceof Error ? listQ.error.message : 'something went wrong.'}</div>
-          )}
-          {!listQ.isLoading && !listQ.isError && visibleRows.length === 0 && (
-            <div style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)' }}>
-              {rows.length > 0
-                ? 'No supplier invoices match this filter — pick another supplier or kind.'
-                : 'No supplier invoices here yet — purchase invoices show once posted on the Procurement side; raise an AP invoice for a non-stock bill.'}
-            </div>
-          )}
-          {visibleRows.length > 0 && (
-            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 'var(--fs-13)' }}>
-              <thead>
-                <tr>
-                  <th style={th}>Kind</th>
-                  <th style={th}>No.</th>
-                  <th style={th}>Supplier</th>
-                  <th style={th}>Ref</th>
-                  <th style={th}>Description</th>
-                  <th style={th}>Date</th>
-                  <th style={th}>Due</th>
-                  <th style={{ ...th, textAlign: 'right' }}>Total</th>
-                  <th style={{ ...th, textAlign: 'right' }}>Outstanding</th>
-                  <th style={th}>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleRows.map((r) => (
-                  <tr key={`${r.kind}-${r.id}`} style={{ borderBottom: '1px solid var(--border-weak, #f0eee8)', opacity: r.status === 'CANCELLED' ? 0.55 : 1 }}>
-                    <td style={{ ...td, fontSize: 'var(--fs-11)', fontWeight: 600, whiteSpace: 'nowrap' }}>{KIND_LABEL[r.kind]}</td>
-                    <td style={{ ...td, ...mono, whiteSpace: 'nowrap' }}>
-                      {r.kind === 'PI'
-                        ? <Link to={`/scm/purchase-invoices/${r.id}`} style={{ color: 'inherit' }}>{r.invoiceNumber}</Link>
-                        : <button type="button" onClick={() => setDetailId(r.id)} style={{ ...linkBtn, ...mono }}>{r.invoiceNumber}</button>}
-                    </td>
-                    <td style={td}>{r.supplierName ?? '—'}{r.supplierCode ? <span style={soft}> · {r.supplierCode}</span> : null}</td>
-                    <td style={td}>{r.supplierInvoiceRef ?? '—'}</td>
-                    <td style={{ ...td, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.description ?? undefined}>{r.description ?? '—'}</td>
-                    <td style={{ ...td, whiteSpace: 'nowrap' }}>{fmtDateOrDash(r.invoiceDate)}</td>
-                    <td style={{ ...td, whiteSpace: 'nowrap' }}>{fmtDateOrDash(r.dueDate)}</td>
-                    <td style={{ ...td, ...right }}>{fmtSen(r.totalSen)}</td>
-                    <td style={{ ...td, ...right, fontWeight: r.outstandingSen > 0 ? 700 : 400 }}>{fmtSen(r.outstandingSen)}</td>
-                    <td style={{ ...td, fontSize: 'var(--fs-11)' }}>{r.status}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+          <DataTable<ApListRow>
+            tableId="ap-invoices"
+            exportName="ap-invoices"
+            exportXlsx
+            columns={apColumns}
+            rows={listQ.data ? visibleRows : null}
+            loading={listQ.isLoading}
+            error={listQ.isError ? `The list could not be loaded — ${listQ.error instanceof Error ? listQ.error.message : 'something went wrong.'}` : null}
+            emptyLabel={rows.length > 0
+              ? 'No supplier invoices match this filter — pick another supplier or kind.'
+              : 'No supplier invoices here yet — purchase invoices show once posted on the Procurement side; raise an AP invoice for a non-stock bill.'}
+            getRowKey={(r) => `${r.kind}-${r.id}`}
+            getRowClassName={(r) => cancelledRowClass(r.status)}
+            getRowStyle={(r) => (r.status === 'CANCELLED' ? { opacity: 0.55 } : undefined)}
+            onFilteredRowsChange={setShownRows}
+          />
         </div>
       </section>
 
@@ -383,6 +432,9 @@ export const ApInvoices = () => {
             <Meta label="Invoice date" value={fmtDateOrDash(detail.invoice.invoice_date)} />
             <Meta label="Due date" value={fmtDateOrDash(detail.invoice.due_date)} />
             <Meta label="Description" value={detail.invoice.notes ?? '—'} />
+            {detail.invoice.status !== 'CANCELLED' && (
+              <Meta label="Official invoice" value={<OfficialDocActions kind="API" id={detail.invoice.id} state={detail.invoice.official_doc ?? null} note={detail.invoice.official_doc_note ?? null} />} />
+            )}
           </div>
           <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 'var(--fs-13)' }}>
             <thead>
@@ -390,6 +442,7 @@ export const ApInvoices = () => {
                 <th style={{ ...th, width: 36 }}>#</th>
                 <th style={th}>Account</th>
                 <th style={th}>Description</th>
+                <th style={th}>Event</th>
                 <th style={{ ...th, textAlign: 'right' }}>Amount</th>
               </tr>
             </thead>
@@ -399,11 +452,12 @@ export const ApInvoices = () => {
                   <td style={{ ...td, ...mono, color: 'var(--fg-muted)' }}>{l.line_no}</td>
                   <td style={td}><span style={mono}>{l.debit_account_code}</span>{accountName(l.debit_account_code) ? <span style={soft}> · {accountName(l.debit_account_code)}</span> : null}</td>
                   <td style={td}>{l.description ?? '—'}</td>
+                  <td style={{ ...td, ...(l.project_id == null ? soft : {}) }}>{eventCellText(eventLabelsQ.data, l.project_id)}</td>
                   <td style={{ ...td, ...right }}>{fmtSen(l.amount_sen)}</td>
                 </tr>
               ))}
               <tr style={{ borderTop: '1px solid var(--border-weak, #e3e1da)' }}>
-                <td colSpan={3} style={{ ...td, fontWeight: 600 }}>Total · paid {fmtSen(detail.invoice.paid_sen)}</td>
+                <td colSpan={4} style={{ ...td, fontWeight: 600 }}>Total · paid {fmtSen(detail.invoice.paid_sen)}</td>
                 <td style={{ ...td, ...right, fontWeight: 700 }}>{fmtSen(detail.invoice.total_sen)}</td>
               </tr>
             </tbody>
@@ -422,11 +476,14 @@ export const ApInvoices = () => {
             initial={form.initial}
             initialFiles={form.scan?.files}
             initialNote={form.scan?.note}
+            initialEventSuggestions={form.scan?.eventSuggestions}
             suppliers={suppliersQ.data ?? []}
             suppliersLoading={suppliersQ.isLoading}
             lineAccounts={lineAccounts}
             posted={form.posted}
             paidSen={form.paidSen}
+            selfId={form.mode === 'edit' ? (form.invoiceId ?? null) : null}
+            requestId={form.request?.id ?? null}
             saving={create.isPending || update.isPending || uploadFile.isPending}
             onSubmit={submitForm}
             onCancel={() => setForm(null)}

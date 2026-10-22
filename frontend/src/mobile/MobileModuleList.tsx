@@ -5,6 +5,7 @@ import { formatPhone } from "@2990s/shared/phone";
 import { useAuth } from "../auth/AuthContext";
 import { visibleFields } from "../auth/salesAccess";
 import { formatDate } from "../lib/utils";
+import { deliveryReturnSearchText } from "../lib/so-ref-search";
 import { fmtAmt } from "../lib/scm";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
@@ -797,7 +798,7 @@ function ListCard({ config, row, onOpen }: { config: ModuleConfig; row: any; onO
       <div className="card" onClick={open} style={{ ...cardStyle, ...(cancelled ? { opacity: 0.6 } : null) }}>
         <div className="card-b" style={{ padding: "12px 13px" }}>
           <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
-            <span style={{ fontSize: 14, fontWeight: 800, color: "var(--ink)", flex: 1, minWidth: 0, whiteSpace: "normal" }}>{name}</span>
+            <span style={{ fontSize: 14, fontWeight: 800, color: "var(--ink)", flex: 1, minWidth: 0, whiteSpace: "normal", ...(cancelled ? { textDecoration: "line-through", textDecorationThickness: 1 } : null) }}>{name}</span>
             {status ? <span style={{ flex: "none" }}><Badge label={status} tone={statusTone} /></span> : null}
           </div>
           {(sub || brandText) && (
@@ -828,7 +829,7 @@ function ListCard({ config, row, onOpen }: { config: ModuleConfig; row: any; onO
   return (
     <div className="card" onClick={open} style={{ ...cardStyle, padding: "12px 13px", ...(cancelled ? { opacity: 0.6 } : null) }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" }}>
-        <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 800, color: "#11140f" }}>{name}</span>
+        <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 800, color: "#11140f", ...(cancelled ? { textDecoration: "line-through", textDecorationThickness: 1 } : null) }}>{name}</span>
         {status ? <span style={{ flex: "none" }}><Badge label={status} tone={statusTone} /></span> : (() => {
           const rightRaw = config.right ? config.right(row) : "";
           const rightText = config.rightMoney ? `RM ${rm(rightRaw as unknown as number)}` : rightRaw;
@@ -1572,8 +1573,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     form: FORM_DEPARTMENTS,
   },
 
-  // delivery-returns.get('/') → { deliveryReturns: [...] }; cols return_number,
-  // do_doc_no, debtor_name, return_date, status, refund_sen.
+  // delivery-returns.get('/') → { deliveryReturns: [...] }; search = the desktop's (so-ref-search).
   // Design m-pr (Sales Returns): Return No/Date/Reason/Value + status pill. Real
   // cols: return_number, return_date, reason, refund_sen, status. All present.
   "delivery-returns": {
@@ -1586,7 +1586,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     secondary: (r) => join(r.return_number, r.status, dm(r.return_date)),
     right: (r) => r.refund_sen,
     rightMoney: true,
-    search: (r) => join(r.debtor_name, r.return_number, r.do_doc_no),
+    search: (r) => deliveryReturnSearchText(r),
     statusDocType: "dr",
     pill: (r) => scmStatusLabel("dr", pick(r, "status")),
     // Spec #sr-list: name + status, "{{doc_no}} · {{return_date}} · ref

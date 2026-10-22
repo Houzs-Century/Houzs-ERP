@@ -99,7 +99,7 @@ describe('the money matcher these tests depend on', () => {
   });
 
   test('it does not match what a stock document legitimately draws', () => {
-    for (const v of ['20/08/2026', 'TOTAL QTY', '10', '-1', '+2', '2 of 3',
+    for (const v of ['2026/08/20', 'TOTAL QTY', '10', '-1', '+2', '2 of 3',
       'HC-ST-2608-001', 'WH-BLK', 'Page 1 of 1', 'fabriccode bf-16 · gap 16']) {
       expect(MONEY.test(v), v).toBe(false);
     }
@@ -188,7 +188,7 @@ describe('Stock Transfer PDF', () => {
     const { draws } = await renderTransfer(TRANSFER_HEADER, TRANSFER_LINES);
     const text = draws.map((d) => d.text);
     expect(text).toContain('ST No: HC-ST-2608-001');
-    expect(text).toContain('Date: 20/08/2026');
+    expect(text).toContain('Date: 2026/08/20');
     /* Right-hand detail rail: drawInfoColumns paints the value as ": <value>".
        The word is CONFIRMED, not the stored `POSTED`: since 2026-08-26 the
        status comes from statusLabel('stockTransfer', …), the same map the
@@ -396,7 +396,7 @@ describe('Stock Take PDF', () => {
     const { draws } = await renderTake(TAKE_HEADER, TAKE_LINES);
     const text = draws.map((d) => d.text);
     expect(text).toContain('STK No: HC-STK-2608-004');
-    expect(text).toContain('Date: 21/08/2026');
+    expect(text).toContain('Date: 2026/08/21');
     expect(text).toContain('WH-BLK · Balakong Warehouse');
     expect(text).toContain('All SKUs');
     // Resolved by the page, never a uuid.
@@ -480,6 +480,36 @@ describe('Stock Take PDF', () => {
     // Every page of this take's span still gets its footer.
     const footers = draws.filter((d) => d.text === 'HC-STK-2608-004' && d.y === 290);
     expect(footers.length).toBe(doc.getNumberOfPages());
+  });
+
+  /* Owner 2026-10-06: a 704-line Category take printed to 40+ pages. The sheet
+     is one line per row now, and an OPEN sheet carries a blank RACK column to
+     write where the goods actually sit. */
+  test('an OPEN 704-line count sheet is compact and has a Rack column', async () => {
+    const many = Array.from({ length: 704 }, (_, i) => ({
+      item_code: `AKEMI APEX MATT (${i})`,
+      product_name: `AKEMI APEX MATTRESS (183X190X30CM) WITH A LONG NAME ${i}`,
+      variant_key: '', variant_label: null,
+      system_qty: 0, counted_qty: null, variance: null, notes: null,
+    }));
+    const { doc, draws } = await renderTake({ ...TAKE_HEADER, status: 'OPEN', posted_at: null }, many);
+    expect(doc.getNumberOfPages()).toBeLessThanOrEqual(18);
+    const text = draws.map((d) => d.text);
+    expect(text).toContain('Rack');
+    expect(text).not.toContain('Variance');
+  });
+
+  test('the printed variant is the short form', async () => {
+    const { printVariant } = await import('./stock-take-pdf');
+    expect(printVariant('fabriccode pc151-01 · gap 12" · divanheight 10" · legheight 1" · special hb fully covered'))
+      .toBe('pc151-01 · gap 12" · divan 10" · leg 1" · hb fully covered');
+  });
+
+  test('a POSTED sheet shows Variance in place of Rack', async () => {
+    const { draws } = await renderTake(TAKE_HEADER, TAKE_LINES);
+    const text = draws.map((d) => d.text);
+    expect(text).toContain('Variance');
+    expect(text).not.toContain('Rack');
   });
 
   test('a scope with a value spells the value out', async () => {

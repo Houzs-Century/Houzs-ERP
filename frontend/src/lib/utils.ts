@@ -75,9 +75,9 @@ export function parseDate(d: string | null | undefined): Date | null {
 
 /* THE DATE RULE LIVES IN ONE PLACE — `@2990s/shared`'s `fmtDate`.
    These three names stay because 154 call sites use them, but they no longer
-   carry a copy of the rule: they forward to it. The rule they used to hold
-   (numeric DD/MM/YYYY, no month names, date-only shown verbatim, instants
-   converted once into GMT+8) is now the shared module's, comment and all, and
+   carry a copy of the rule: they forward to it. The rule (numeric yyyy/mm/dd
+   since 2026-09-25, no month names, date-only shown verbatim, instants
+   converted once into GMT+8) is the shared module's, comment and all, and
    it is the same rule the SPA lists, the detail pages and the PDFs use.
 
    The old bodies here were the BEST of the five spellings in the tree — they
@@ -88,13 +88,13 @@ export function formatDate(d: string | null | undefined): string {
   return fmtDate(d);
 }
 
-/** DD/MM/YYYY HH:mm (24h, GMT+8). See {@link formatDate}. */
+/** yyyy/mm/dd HH:mm (24h, GMT+8). See {@link formatDate}. */
 export function formatDateTime(d: string | null | undefined): string {
   return fmtDateTime(d);
 }
 
 /**
- * DD/MM/YYYY HH:mm:ss in GMT+8. Use this for audit timestamps where
+ * yyyy/mm/dd HH:mm:ss in GMT+8. Use this for audit timestamps where
  * the full second is meaningful (activity log, attachment uploaded_at,
  * etc.). For scheduling fields prefer formatDateTime.
  */
@@ -118,7 +118,7 @@ export function relativeTime(d: string | null | undefined): string {
   if (hr < 24) return `${hr}h ago`;
   const day = Math.floor(hr / 24);
   if (day < 7) return `${day}d ago`;
-  // Past one week — fall back to the absolute date in DD/MM/YYYY (GMT+8),
+  // Past one week — fall back to the absolute date in yyyy/mm/dd (GMT+8),
   // matching the rest of the SPA's date format.
   return fmtDate(date);
 }
@@ -149,11 +149,10 @@ export function isExpired(d: string | null | undefined): boolean {
   // Audit timestamp — compare its GMT+8 calendar date.
   const date = parseDate(d);
   if (!date) return false;
-  const inTz = fmtDate(d); // DD/MM/YYYY
+  const inTz = fmtDate(d); // YYYY/MM/DD
   if (inTz === "—") return false;
-  // Convert DD/MM/YYYY → YYYY-MM-DD for lexicographic compare.
-  const [dd, mm, yyyy] = inTz.split("/");
-  return `${yyyy}-${mm}-${dd}` < today;
+  // Convert YYYY/MM/DD → YYYY-MM-DD for lexicographic compare.
+  return inTz.replace(/\//g, "-") < today;
 }
 
 export function isExpiringSoon(d: string | null | undefined, days = 3): boolean {
@@ -162,9 +161,8 @@ export function isExpiringSoon(d: string | null | undefined, days = 3): boolean 
   // Compute cutoff in GMT+8 by anchoring midnight at this calendar date.
   const cutoff = new Date(`${today}T00:00:00+08:00`);
   cutoff.setDate(cutoff.getDate() + days);
-  const cutoffStr = fmtDate(cutoff);
-  const [cd, cm, cy] = cutoffStr.split("/");
-  const cutoffIso = `${cy}-${cm}-${cd}`;
+  // fmtDate is year-first (YYYY/MM/DD), so YYYY-MM-DD is just a separator swap.
+  const cutoffIso = fmtDate(cutoff).replace(/\//g, "-");
 
   const datePart =
     isDateOnly(d) || isWallClockDateTime(d) ? d.slice(0, 10) : null;
@@ -172,8 +170,7 @@ export function isExpiringSoon(d: string | null | undefined, days = 3): boolean 
 
   const inTz = fmtDate(d);
   if (inTz === "—") return false;
-  const [dd, mm, yyyy] = inTz.split("/");
-  const iso = `${yyyy}-${mm}-${dd}`;
+  const iso = inTz.replace(/\//g, "-");
   return iso >= today && iso <= cutoffIso;
 }
 

@@ -317,6 +317,7 @@ table against the mounts in `scm/index.ts`:
 | `/mfg-sales-orders/*` | Sales Orders — create, edit, confirm, hold, cancel, payments |
 | `/so-amendments/*` | the amendment gates — supplier-confirm, approve-so, approve-po, send, reject, withdraw |
 | `/so-handover/*` | reassigning a Sales Order's salesperson |
+| `/payment-backdate-requests/*` | an admin approving or rejecting a payment whose slip is older than 14 days |
 | `/quotes/*` | quotations |
 | `/pwp-codes/*` | purchase-with-purchase codes |
 | `/scan-so/*`, `/scan-payment/*`, `/slips/*` | the scan / slip intake that creates orders and books their receipts |

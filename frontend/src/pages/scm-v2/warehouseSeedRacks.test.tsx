@@ -46,6 +46,10 @@ vi.mock('../../vendor/scm/lib/inventory-queries', async (importOriginal) => ({
   }),
 }));
 
+vi.mock('../../components/scm-v2/PrintPreviewModal', () => ({
+  PrintPreviewModal: () => null,
+  usePrintPreview: () => ({ open: false, openPreview: vi.fn(), close: vi.fn(), handlers: {} }),
+}));
 vi.mock('../../vendor/scm/components/NotifyDialog', () => ({
   useNotify: () => () => {},
   NotifyProvider: ({ children }: { children: React.ReactNode }) => children,
@@ -107,5 +111,17 @@ describe('Seed Racks — the body the page posts', () => {
     fireEvent.click(screen.getByRole('button', { name: /create racks/i }));
 
     expect(lastBody).toMatchObject({ prefix: 'Rack', count: 10, levels: 1, series: '' });
+    expect(lastBody).not.toHaveProperty('alsoSiblingCompanies');
+  });
+
+  test("ticking the other-companies box posts the flag, so the label lands under 2990's and HOUZS's KL WAREHOUSE alike", () => {
+    openSeedModal();
+    setField(/^Series/, 'L');
+    setField(/^How many/, '21');
+    setField(/^Levels per aisle$/, '2');
+    fireEvent.click(screen.getByRole('checkbox', { name: /other companies' warehouses with the same code/i }));
+    fireEvent.click(screen.getByRole('button', { name: /create racks/i }));
+
+    expect(lastBody).toMatchObject({ warehouseId: WAREHOUSE_ID, series: 'L', count: 21, levels: 2, alsoSiblingCompanies: true });
   });
 });

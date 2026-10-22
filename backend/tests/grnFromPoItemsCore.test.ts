@@ -30,8 +30,10 @@ type Row = Record<string, any>;
    statement being asserted (doc-no mint, fx, audit probe, over-receipt re-sum,
    header-total recompute), so every builder method chains and an unknown table
    reads as empty. Two things beyond the companyScope harness: grns inserts get a
-   generated id (the real column is DB-default) and default status DRAFT (the
-   core never sets status — it relies on that default). */
+   generated id (the real column is DB-default) and the status default the LIVE
+   column has, which is 'POSTED' (verified against production 2026-10-01). This
+   fake used to default to DRAFT, which is why it passed while every scanned GRN
+   landed POSTED with no stock behind it: the core must set DRAFT itself. */
 let grnSeq = 0;
 class FakeQuery {
   private preds: Array<(r: Row) => boolean> = [];
@@ -52,7 +54,7 @@ class FakeQuery {
     this.inserted = rows.map((r) => {
       if (this.table === 'grns') {
         grnSeq += 1;
-        return { id: r.id ?? `grn_${grnSeq}`, status: r.status ?? 'DRAFT', ...r };
+        return { id: r.id ?? `grn_${grnSeq}`, status: r.status ?? 'POSTED', ...r };
       }
       return { ...r };
     });
@@ -182,6 +184,19 @@ describe('createDraftGrnsFromPoItemsCore — creates a DRAFT, never posts stock'
     expect(res.created[0]!.lineCount).toBe(1);
   });
 
+  test("the supplier's delivery order number lands in the Delivery Note field (HC-0119)", async () => {
+    const t = tables();
+    const res = await runCore(t, CO_A, { picks: [{ poItemId: 'poi-a', qty: 1 }], deliveryNoteRef: ' DGSN26002269 ' });
+    expect(res.ok).toBe(true);
+    expect(t.grns[0]!.delivery_note_ref).toBe('DGSN26002269');
+  });
+
+  test('no delivery order number leaves the Delivery Note empty', async () => {
+    const t = tables();
+    await runCore(t, CO_A, { picks: [{ poItemId: 'poi-a', qty: 1 }] });
+    expect(t.grns[0]!.delivery_note_ref).toBeNull();
+  });
+
   test('two POs from ONE supplier fold into ONE GRN (multi-PO capability intact)', async () => {
     const t = tables();
     const res = await runCore(t, CO_A, {
@@ -205,6 +220,20 @@ describe('createDraftGrnsFromPoItemsCore — creates a DRAFT, never posts stock'
     expect(res.created[0]!.lineCount).toBe(2);
 
     // Still no stock movement — draft only.
+    expect(t.inventory_movements).toHaveLength(0);
+  });
+
+  test('two POs of one supplier at different warehouses become one GRN per warehouse', async () => {
+    const t = tables();
+    t.purchase_order_items[1]!.po = { ...(t.purchase_order_items[1]!.po as Row), purchase_location_id: 'wh2' };
+    const res = await runCore(t, CO_A, {
+      picks: [{ poItemId: 'poi-a', qty: 2 }, { poItemId: 'poi-c', qty: 1 }],
+    });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.created).toHaveLength(2);
+    expect(new Set(t.grns.map((g) => g.warehouse_id))).toEqual(new Set(['wh1', 'wh2']));
     expect(t.inventory_movements).toHaveLength(0);
   });
 

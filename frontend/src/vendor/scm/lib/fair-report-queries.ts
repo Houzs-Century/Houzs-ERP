@@ -69,7 +69,8 @@ export type FairSoRow = FairDims & {
   service_rev_sen: number;
   cost_by_category: FairCostByCategory;
   total_so_cost_sen: number;
-  margin_pct: number | null;
+  goods_cost_sen: number;       // total cost less the service lines' cost
+  margin_pct: number | null;    // goods only: (selling − goods cost) / selling
   balance_sen: number;
   paid_total_sen: number;
   deposit_sen: number;
@@ -84,8 +85,9 @@ export type FairSoSummary = {
   total_selling_sen: number;
   total_service_rev_sen: number;
   total_so_cost_sen: number;
-  total_margin_sen: number;
-  margin_pct: number | null;
+  total_goods_cost_sen: number;
+  total_margin_sen: number;     // goods: selling − goods cost
+  margin_pct: number | null;    // goods only
   total_balance_sen: number;
   below_deposit_count: number;
   tender_totals: FairTenderSplit;
@@ -103,8 +105,8 @@ export type FairDoRow = FairDims & {
   total_do_cost_sen: number;
   do_cost_is_legacy: boolean;
   cost_delta_sen: number;       // do − so (positive = cost grew at delivery)
-  so_margin_pct: number | null;
-  do_margin_pct: number | null;
+  so_margin_pct: number | null; // goods only, over the SO's goods sales
+  do_margin_pct: number | null; // goods only
 };
 
 export type FairDoSummary = {
@@ -126,7 +128,9 @@ export type FairInvoiceRow = FairDims & {
   so_cost_sen: number;
   do_cost_sen: number;
   si_cost_sen: number;          // landed
-  margin_pct: number | null;      // invoiced vs landed
+  goods_invoiced_sen: number;   // the invoice less its service lines
+  goods_si_cost_sen: number;    // their landed cost
+  margin_pct: number | null;      // goods only: goods invoiced vs their landed cost
 };
 
 export type FairInvoiceSummary = {
@@ -135,7 +139,9 @@ export type FairInvoiceSummary = {
   total_so_cost_sen: number;
   total_do_cost_sen: number;
   total_si_cost_sen: number;
-  margin_pct: number | null;
+  total_goods_invoiced_sen: number;
+  total_goods_si_cost_sen: number;
+  margin_pct: number | null;    // goods only
 };
 
 // ── stage=pnl (exhibition P&L) ───────────────────────────────────────────────
@@ -260,6 +266,34 @@ export const useFairReport = (stage: FairStage, filters: FairFilters, enabled = 
     staleTime: 30_000,
   });
 };
+
+// ── stage=gaps ───────────────────────────────────────────────────────────────
+// The costing-gap listing (owner 2026-09-26): SO lines with NO cost whose PRODUCT
+// also has no cost — the products to fill in Product Maintenance. Its own endpoint
+// (/reports/costing-gap-listing), not the fair-report stage machinery, so it has a
+// dedicated hook and is not filtered by the fair filter bar (it is a global "what
+// is incomplete" list). Finance-gated on the server.
+export type FairCostingGapRow = {
+  doc_no: string;
+  so_date: string | null;
+  item_code: string;
+  description: string | null;
+  item_group: string | null;
+  qty: number | null;
+  debtor_name: string | null;
+  venue: string | null;
+  branding: string | null;
+  status: string | null;
+};
+
+export const useCostingGapListing = (enabled = true) =>
+  useQuery({
+    queryKey: ['reports', 'costing-gap-listing'],
+    queryFn: () => authedFetch<{ rows: FairCostingGapRow[] }>('/reports/costing-gap-listing'),
+    enabled,
+    placeholderData: (prev) => prev,
+    staleTime: 30_000,
+  });
 
 /**
  * Interpret a useFairReport / useFairReportDetail failure for display. A 403 is a

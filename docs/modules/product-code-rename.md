@@ -55,8 +55,9 @@ All in schema `scm`, all carrying `company_id`.
 | Purchase documents (`material_kind` scoped) | `purchase_order_items`, `grn_items`, `purchase_invoice_items`, `purchase_return_items` (`item_code`) |
 | Consignment | `consignment_sales_order_items`, `consignment_delivery_order_items`, `consignment_delivery_return_items`; `purchase_consignment_order_items`, `purchase_consignment_receive_items`, `purchase_consignment_return_items` (these three `material_kind` scoped) |
 | Amendments | `so_amendment_lines.new_item_code`, `po_amendment_lines.new_item_code` — a pending amendment applies this code onto the line later |
+| Product requests | `product_request_lines.item_code` — the SKU each Purchase Consignment Order line is raised with; the order door refuses a code the catalogue no longer has. Snapshot line added by hand from the migration; the first re-probe after deploy confirms it |
 | Stock | `inventory_movements`, `inventory_lots`, `inventory_lot_consumptions`, `stock_transfer_lines`, `stock_take_lines`, `warehouse_rack_items`, `warehouse_rack_movements` (`item_code`) |
-| Masters and prices | `supplier_material_bindings.item_code` (`material_kind` scoped), `master_price_history.item_code`, `mfg_product_price_history.item_code` (dated selling price), `product_dept_configs.item_code`, `hr_item_kpi.ref`, `pwp_codes.trigger_item_code`, `pwp_codes.redeemed_item_code`, `addons.service_sku` (a service add-on's SVC-* SKU) |
+| Masters and prices | `supplier_material_bindings.item_code` (`material_kind` scoped), `master_price_history.item_code`, `mfg_product_price_history.item_code` (dated selling price), `product_dept_configs.item_code`, `hr_item_kpi.ref`, `pwp_codes.trigger_item_code`, `pwp_codes.redeemed_item_code`, `addons.service_sku` (a service add-on's SVC-* SKU), `supplier_scan_codes.item_code` (a supplier's printed code taught on the delivery-order scan card; snapshot line added by hand from the migration) |
 
 Ten of these were added 2026-09-15 — the two amendment columns, the six
 consignment tables, `mfg_product_price_history` and `addons.service_sku`:
@@ -112,6 +113,26 @@ rows hold a live SKU code, which is the evidence for deciding a new column.
 handler: the duplicate probe refusals, and a rename that flips the added columns
 while `supplier_sku`, `ac_item_code`, the delete audit, a fabric row and another
 company's line stay.
+
+## 5a. Sofa compartment code rename (Maintenance)
+
+Editing a code in place in Maintenance -> Sofa Compartments (master scope) calls
+`POST /api/scm/maintenance-config/sofa-compartments/rename` `{ from, to, apply }`
+(gate: `canWriteScmConfig` + resolved active company), backed by
+`scm.rename_sofa_compartment(company_id, from, to, apply)`.
+
+- Active company only. `apply` must be `true` to write; anything else is a preview.
+  The screen always previews, shows the counts, then confirms.
+- Refused (409 `in_use`, with counts) while ANY SKU, doc line, stock row, price
+  override, binding, PWP code, legacy per-model compartment, POS combo or personal
+  quick pick of the company uses the code: it is the suffix of every SKU code
+  (`<MODEL>-<code>`). Owner 2026-10-02: only an unused code (a typo) is renamed; the
+  wording staff see changes through the SKU name or the compartment description.
+- Rewrites only exact JSON values: the company's compartment pools (every scope)
+  and its meta entry, Model `allowed_options.compartments`, combos, quick picks. An
+  uploaded photo is filed under the old code and is dropped (re-upload).
+- The new code has no spaces (the sofa canvas cannot parse one) and keeps
+  `<longest SOFA model code>-<code>` within 30 characters.
 
 ## 6. Open
 

@@ -7,6 +7,16 @@ import {
   periodContains,
   lookbackWindow,
   fairPickedPeriod,
+  editFairPick,
+  fairDayOnSave,
+  fairDayMissing,
+  linkedFairOf,
+  keyerFairDefault,
+  fairWhyOf,
+  fairMissingMessage,
+  companyUsesKeyerFair,
+  resolveFairWithKeyer,
+  allFairOptions,
   type FairProjectRow,
 } from './fair-options';
 
@@ -49,18 +59,32 @@ describe('buildFairOptions — one row is a place plus an organizer', () => {
     expect(running[0].projectIds).toEqual([340, 341, 342, 2250]);
   });
 
+  it('names each booth’s brand, so a person linking an order can tell them apart (owner 2026-10-20)', () => {
+    /* Fair Links offered three identical "MID VALLEY — BIGHOME (10/02 - 10/04)"
+       rows: 「我要 link fair 时无法知道 brand」. */
+    const rows = [...MID_VALLEY_REX, fair({ projectId: 343, brand: null })];
+    const { running } = buildFairOptions(rows, '2026-09-13');
+    expect(running[0].booths).toEqual([
+      { projectId: 340, brand: 'AKEMI' },
+      { projectId: 342, brand: 'ERGOTEX' },
+      { projectId: 2250, brand: 'ERGOTEX' },
+      { projectId: 341, brand: 'ZANOTTI' },
+      { projectId: 343, brand: null },
+    ]);
+  });
+
   it('labels EVERY row with its dates (owner 2026-09-19, reversing 2026-09-13)', () => {
     /* The list is now four weeks of mostly-CLOSED fairs, so picking a row means
        saying WHICH occurrence — the label has to show it or the operator is
        guessing. The old `showDates` exception is gone, not widened. */
     const { running } = buildFairOptions(MID_VALLEY_REX, '2026-09-13');
-    expect(fairOptionLabel(running[0])).toBe('MID VALLEY — REX (11/09 - 13/09)');
+    expect(fairOptionLabel(running[0])).toBe('MID VALLEY — REX (09/11 - 09/13)');
   });
 
   it('renders a one-day fair as a single date, not a range', () => {
     const rows = [fair({ projectId: 1, startDate: '2026-09-13', endDate: '2026-09-13' })];
     const { running } = buildFairOptions(rows, '2026-09-13');
-    expect(fairOptionLabel(running[0])).toBe('MID VALLEY — REX (13/09)');
+    expect(fairOptionLabel(running[0])).toBe('MID VALLEY — REX (09/13)');
   });
 
   it('splits running-today from the fairs that have already closed', () => {
@@ -105,6 +129,29 @@ describe('buildFairOptions — one row is a place plus an organizer', () => {
     expect(earlier.map((o) => o.venue)).toEqual(['SEPTEMBER HALL', 'EDGE OF WINDOW']);
   });
 
+  it('Fair Links offers EVERY fair — any place, any date, newest first, booths kept (owner 2026-10-21)', () => {
+    /* 「我这里link fair 要可以选完全部fair」: HC-SO-2610-002's slip says PISA SPICE ARENA,
+       PMS says SETIA SPICE CONVENTION CENTRE, so the order's own place never reached it. */
+    const rows = [
+      fair({ projectId: 2235, venue: 'SETIA SPICE CONVENTION CENTRE', organizer: 'HOMEDEC', startDate: '2026-10-02', endDate: '2026-10-04' }),
+      fair({ projectId: 2246, venue: 'SETIA SPICE CONVENTION CENTRE', organizer: 'HOMEDEC', brand: 'ZANOTTI', startDate: '2026-10-02', endDate: '2026-10-04' }),
+      fair({ projectId: 68, venue: 'PISA SPICE ARENA CONVENTION CENTRE', organizer: 'MLE', startDate: '2026-07-03', endDate: '2026-07-05' }),
+      fair({ projectId: 61, venue: 'PISA SPICE ARENA CONVENTION CENTRE', organizer: 'MEGAHOME', startDate: '2026-11-06', endDate: '2026-11-08' }),
+      fair({ projectId: 9, venue: 'OLD HALL', startDate: '2024-03-01', endDate: '2024-03-03' }),
+      fair({ projectId: 10, venue: 'GONE HALL', status: 'cancelled' }),
+    ];
+    const all = allFairOptions(rows);
+    expect(all.map((o) => [o.venue, o.startDate])).toEqual([
+      ['PISA SPICE ARENA CONVENTION CENTRE', '2026-11-06'],
+      ['SETIA SPICE CONVENTION CENTRE', '2026-10-02'],
+      ['PISA SPICE ARENA CONVENTION CENTRE', '2026-07-03'],
+      ['OLD HALL', '2024-03-01'],
+    ]);
+    expect(all[1]!.booths).toEqual([{ projectId: 2235, brand: 'AKEMI' }, { projectId: 2246, brand: 'ZANOTTI' }]);
+    /* The order form's four weeks are untouched. */
+    expect(buildFairOptions(rows, '2026-10-02').running.map((o) => o.venue)).toEqual(['SETIA SPICE CONVENTION CENTRE']);
+  });
+
   it('keeps two occurrences of ONE venue+organizer apart by their dates', () => {
     /* MVEC SOUTHKEY / REX, August 2026: 8-10 and 14-16. Both sit inside the
        window on the 20th, and with only venue+organizer on screen they would be
@@ -116,8 +163,8 @@ describe('buildFairOptions — one row is a place plus an organizer', () => {
     ];
     const { earlier } = buildFairOptions(rows, '2026-08-20');
     expect(earlier.map(fairOptionLabel)).toEqual([
-      'MVEC SOUTHKEY — REX (14/08 - 16/08)',
-      'MVEC SOUTHKEY — REX (08/08 - 10/08)',
+      'MVEC SOUTHKEY — REX (08/14 - 08/16)',
+      'MVEC SOUTHKEY — REX (08/08 - 08/10)',
     ]);
     expect(new Set(earlier.map((o) => o.key)).size).toBe(2);
   });
@@ -132,9 +179,9 @@ describe('buildFairOptions — one row is a place plus an organizer', () => {
     ];
     const { running } = buildFairOptions(rows, '2026-09-12');
     expect(running.map(fairOptionLabel)).toEqual([
-      'IOI MALL PUTRAJAYA — SOLO (11/09 - 13/09)',
-      'PAVILION BUKIT JALIL — MEGAHOME (11/09 - 13/09)',
-      'SETIA SPICE CONVENTION CENTRE — HOMELOVE (11/09 - 13/09)',
+      'IOI MALL PUTRAJAYA — SOLO (09/11 - 09/13)',
+      'PAVILION BUKIT JALIL — MEGAHOME (09/11 - 09/13)',
+      'SETIA SPICE CONVENTION CENTRE — HOMELOVE (09/11 - 09/13)',
     ]);
     /* The label changed, the identity did not: the save path still resolves the
        project from the real organizer. */
@@ -149,8 +196,8 @@ describe('buildFairOptions — one row is a place plus an organizer', () => {
     ];
     const { earlier } = buildFairOptions(rows, '2026-09-12');
     expect(earlier.map(fairOptionLabel)).toEqual([
-      'SUNWAY CARNIVAL — SOLO (09/09 - 10/09)',
-      'SUNWAY CARNIVAL — SOLO (04/09 - 06/09)',
+      'SUNWAY CARNIVAL — SOLO (09/09 - 09/10)',
+      'SUNWAY CARNIVAL — SOLO (09/04 - 09/06)',
     ]);
   });
 
@@ -345,5 +392,235 @@ describe('resolveFair — the brand decides which booth, and it is never guessed
       brand: 'AKEMI', organizer: 'REX',
     });
     expect(r.match).toBe('PENDING');
+  });
+});
+
+/* Owner 2026-09-24, backfilling an old order: 「我选了那个场（Mid Valley，MLE，8 号到
+   9 号），选了过后，它就自动记下是那个场地的…包括 venue, organiser 和那个日期」. */
+describe('editFairPick — what an edit save picked', () => {
+  it('an event: the picked row\'s venue, organizer and period', () => {
+    expect(editFairPick({
+      fairVenue: 'MID VALLEY', venue: 'Mid Valley Exhibition Centre',
+      fairOrganizer: ' MLE ', fairStart: '2026-08-08', fairEnd: '2026-08-09',
+    }, 'MID VALLEY')).toEqual({ venue: 'MID VALLEY', organizer: 'MLE', picked: { startDate: '2026-08-08', endDate: '2026-08-09' } });
+  });
+
+  it('without the row venue, the sent venue and then the stored one name the place', () => {
+    const event = { fairOrganizer: 'MLE', fairStart: '2026-08-08', fairEnd: null };
+    expect(editFairPick({ ...event, venue: 'IOI CITY MALL' }, 'MID VALLEY')?.venue).toBe('IOI CITY MALL');
+    expect(editFairPick(event, 'MID VALLEY')?.venue).toBe('MID VALLEY');
+    expect(editFairPick(event, 'MID VALLEY')?.picked).toEqual({ startDate: '2026-08-08', endDate: null });
+  });
+
+  it('a place alone, a clear, or an incomplete event picks nothing', () => {
+    expect(editFairPick({ venue: 'MID VALLEY' }, 'MID VALLEY')).toBeNull();
+    expect(editFairPick({ fairVenue: null, fairOrganizer: null, fairStart: null, fairEnd: null }, 'MID VALLEY')).toBeNull();
+    expect(editFairPick({ fairOrganizer: 'MLE', fairStart: '08/08/2026' }, 'MID VALLEY')).toBeNull();
+    expect(editFairPick({ fairOrganizer: '  ', fairStart: '2026-08-08' }, 'MID VALLEY')).toBeNull();
+    expect(editFairPick({ fairOrganizer: 'MLE', fairStart: '2026-08-08' }, null)).toBeNull();
+  });
+});
+
+/* Owner 2026-09-24: the event runs 7-9, 「他一选完那个 event，这边下拉菜单就要拉出来 7、8、9
+   三天给他选。这样我就可以确切知道他这张单是在哪一天开的」. */
+describe('fairDayOnSave — the day kept is a day of the picked event', () => {
+  const EVENT = { fairOrganizer: 'MLE', fairStart: '2026-09-07', fairEnd: '2026-09-09' };
+
+  it('keeps any day of the event, first and last included', () => {
+    expect(fairDayOnSave({ ...EVENT, fairDate: '2026-09-07' }, '2026-09-20')).toBe('2026-09-07');
+    expect(fairDayOnSave({ ...EVENT, fairDate: '2026-09-08' }, '2026-09-20')).toBe('2026-09-08');
+    expect(fairDayOnSave({ ...EVENT, fairDate: '2026-09-09' }, '2026-09-20')).toBe('2026-09-09');
+  });
+
+  it('drops a day outside the event, or after the order date', () => {
+    expect(fairDayOnSave({ ...EVENT, fairDate: '2026-09-06' }, '2026-09-20')).toBeNull();
+    expect(fairDayOnSave({ ...EVENT, fairDate: '2026-09-10' }, '2026-09-20')).toBeNull();
+    /* Keyed on the 8th: the 9th had not happened yet. */
+    expect(fairDayOnSave({ ...EVENT, fairDate: '2026-09-09' }, '2026-09-08')).toBeNull();
+    expect(fairDayOnSave({ ...EVENT, fairDate: '2026-09-08' }, '2026-09-08')).toBe('2026-09-08');
+  });
+
+  it('a one-day fair (no end) has exactly one day', () => {
+    const oneDay = { fairOrganizer: 'MLE', fairStart: '2026-09-07', fairEnd: null };
+    expect(fairDayOnSave({ ...oneDay, fairDate: '2026-09-07' }, '2026-09-20')).toBe('2026-09-07');
+    expect(fairDayOnSave({ ...oneDay, fairDate: '2026-09-08' }, '2026-09-20')).toBeNull();
+  });
+
+  it('keeps no day without an event beside it, and none that is not a date', () => {
+    expect(fairDayOnSave({ fairDate: '2026-09-08' }, '2026-09-20')).toBeNull();
+    expect(fairDayOnSave({ fairStart: '2026-09-07', fairEnd: '2026-09-09', fairDate: '2026-09-08' }, '2026-09-20')).toBeNull();
+    expect(fairDayOnSave({ ...EVENT, fairDate: '08/09/2026' }, '2026-09-20')).toBeNull();
+    expect(fairDayOnSave({ ...EVENT, fairDate: null }, '2026-09-20')).toBeNull();
+    expect(fairDayOnSave({ ...EVENT }, '2026-09-20')).toBeNull();
+  });
+
+  it('with no order date to cap by, the event alone bounds the day', () => {
+    expect(fairDayOnSave({ ...EVENT, fairDate: '2026-09-09' }, null)).toBe('2026-09-09');
+  });
+});
+
+describe('fairDayMissing — an event picked without a day of it', () => {
+  const EVENT = { fairOrganizer: 'MLE', fairStart: '2026-09-07', fairEnd: '2026-09-09' };
+
+  it('asks for the day when an event is picked without one, or with a stray one', () => {
+    expect(fairDayMissing({ ...EVENT }, '2026-09-20')).toBe(true);
+    expect(fairDayMissing({ ...EVENT, fairDate: null }, '2026-09-20')).toBe(true);
+    expect(fairDayMissing({ ...EVENT, fairDate: '2026-09-12' }, '2026-09-20')).toBe(true);
+    expect(fairDayMissing({ ...EVENT, fairDate: '2026-09-08' }, '2026-09-20')).toBe(false);
+  });
+
+  it('a place alone, or no pick at all, needs no day', () => {
+    expect(fairDayMissing({}, '2026-09-20')).toBe(false);
+    expect(fairDayMissing({ fairOrganizer: null, fairStart: null, fairEnd: null, fairDate: null }, '2026-09-20')).toBe(false);
+    expect(fairDayMissing({ fairOrganizer: 'MLE' }, '2026-09-20')).toBe(false);
+  });
+});
+
+describe('linkedFairOf — a recorded pick reads back as the row that was picked', () => {
+  it('carries the venue, organizer, SOLO flag and period', () => {
+    expect(linkedFairOf(fair({ projectId: 500, organizer: 'MLE', startDate: '2026-08-08', endDate: '2026-08-09' })))
+      .toEqual({ venue: 'MID VALLEY', organizer: 'MLE', solo: false, startDate: '2026-08-08', endDate: '2026-08-09' });
+    expect(linkedFairOf(fair({ projectId: 501, organizer: 'MALL MGT', eventType: 'solo', endDate: null })))
+      .toEqual({ venue: 'MID VALLEY', organizer: 'MALL MGT', solo: true, startDate: '2026-09-11', endDate: null });
+  });
+
+  it('a project that could never have been a row reads back as nothing', () => {
+    expect(linkedFairOf(fair({ projectId: 502, venue: null }))).toBeNull();
+    expect(linkedFairOf(fair({ projectId: 503, organizer: '' }))).toBeNull();
+    expect(linkedFairOf(fair({ projectId: 504, startDate: null }))).toBeNull();
+  });
+
+  it('a fair cancelled after the link still reads back — it is what the order is attributed to', () => {
+    expect(linkedFairOf(fair({ projectId: 505, status: 'cancelled' }))?.organizer).toBe('REX');
+  });
+});
+
+describe("keyerFairDefault — a new order starts with the KEYER's fair (owner 2026-10-19)", () => {
+  /* The keyer's own fairs, as loadKeyerFairs reads them (PIC or Sales Attending). */
+  const SUNWAY = fair({ projectId: 2228, venue: 'SUNWAY CARNIVAL MALL', organizer: 'MALL MGT', brand: 'DUNLOPILLO', startDate: '2026-09-25', endDate: '2026-09-29' });
+  const MV_BIGHOME = fair({ projectId: 2301, organizer: 'BIGHOME', brand: 'AKEMI', startDate: '2026-10-02', endDate: '2026-10-04' });
+  const IOI = fair({ projectId: 2320, venue: 'IOIGECC', organizer: 'MLE', brand: 'AKEMI', startDate: '2026-10-17', endDate: '2026-10-20' });
+
+  it('a fair running on the order date wins', () => {
+    const d = keyerFairDefault([SUNWAY, MV_BIGHOME, IOI], '2026-10-19');
+    expect(d.how).toBe('ongoing');
+    expect(d.event).toMatchObject({ venue: 'IOIGECC', organizer: 'MLE', startDate: '2026-10-17', endDate: '2026-10-20', projectIds: [2320] });
+    expect(d.why).toBeNull();
+  });
+
+  it('none running: the latest one they stood at, inside the dropdown window', () => {
+    const d = keyerFairDefault([SUNWAY, MV_BIGHOME], '2026-10-19');
+    expect(d.how).toBe('latest');
+    expect(d.event?.key).toBe(buildFairOptions([MV_BIGHOME], '2026-10-19').earlier[0]?.key);
+  });
+
+  it('the event it fills in is the dropdown row for the same event, so the picker lights it up', () => {
+    const d = keyerFairDefault([IOI], '2026-10-19');
+    const ergotex = fair({ projectId: 2321, venue: 'IOIGECC', organizer: 'MLE', brand: 'ERGOTEX', startDate: '2026-10-17', endDate: '2026-10-20' });
+    expect(buildFairOptions([IOI, ergotex], '2026-10-19').running.map((o) => o.key)).toContain(d.event?.key);
+    /* Only the KEYER's booths ride on the default; the dropdown row lists the event's. */
+    expect(d.event?.projectIds).toEqual([2320]);
+    expect(d.event?.booths).toEqual([{ projectId: 2320, brand: 'AKEMI' }]);
+  });
+
+  it('the last fair ended before the window: no event, and says which fair', () => {
+    const d = keyerFairDefault([SUNWAY], '2026-10-30');
+    expect(d.event).toBeNull();
+    expect(d.why).toEqual({ code: 'too_old', venue: 'SUNWAY CARNIVAL MALL', startDate: '2026-09-25', endDate: '2026-09-29' });
+  });
+
+  it('the window is the dropdown window: a fair that ended 28 days back still counts', () => {
+    expect(keyerFairDefault([SUNWAY], '2026-10-27').how).toBe('latest');
+    expect(keyerFairDefault([SUNWAY], '2026-10-28').why?.code).toBe('too_old');
+  });
+
+  it('on no fair at all: no_fair', () => {
+    expect(keyerFairDefault([], '2026-10-19')).toEqual({ event: null, how: null, why: { code: 'no_fair' } });
+  });
+
+  it('never a fair that has not started, a cancelled one, or one with no organizer', () => {
+    const later = fair({ projectId: 2400, startDate: '2026-10-25', endDate: '2026-10-27' });
+    const cancelled = fair({ projectId: 2401, startDate: '2026-10-18', endDate: '2026-10-20', status: 'cancelled' });
+    const noOrganizer = fair({ projectId: 2402, organizer: null, startDate: '2026-10-18', endDate: '2026-10-20' });
+    expect(keyerFairDefault([later, cancelled, noOrganizer], '2026-10-19').why).toEqual({ code: 'no_fair' });
+  });
+
+  it('two running at once: the one that started last, then the shorter, then the lower id', () => {
+    const long = fair({ projectId: 10, venue: 'A', startDate: '2026-10-15', endDate: '2026-10-30' });
+    const short = fair({ projectId: 11, venue: 'B', startDate: '2026-10-15', endDate: '2026-10-20' });
+    const older = fair({ projectId: 9, venue: 'C', startDate: '2026-10-10', endDate: '2026-10-20' });
+    expect(keyerFairDefault([long, short, older], '2026-10-19').event?.venue).toBe('B');
+    expect(keyerFairDefault([long, older], '2026-10-19').event?.venue).toBe('A');
+  });
+
+  it('an unreadable date answers nothing rather than a guess', () => {
+    expect(keyerFairDefault([SUNWAY], 'not a date')).toEqual({ event: null, how: null, why: null });
+  });
+});
+
+describe('fairWhyOf / fairMissingMessage — the reason travels back checked', () => {
+  it('keeps only the two codes, with real dates', () => {
+    expect(fairWhyOf({ code: 'no_fair' })).toEqual({ code: 'no_fair' });
+    expect(fairWhyOf({ code: 'too_old', venue: ' X ', startDate: '2026-09-25', endDate: 'junk' }))
+      .toEqual({ code: 'too_old', venue: 'X', startDate: '2026-09-25', endDate: null });
+    expect(fairWhyOf({ code: 'too_old', venue: 'X', startDate: 'junk' })).toBeNull();
+    expect(fairWhyOf({ code: 'not_in_team' })).toBeNull();
+    expect(fairWhyOf('no_fair')).toBeNull();
+    expect(fairWhyOf(null)).toBeNull();
+  });
+
+  it('a one-day last fair names one day', () => {
+    expect(fairMissingMessage({ code: 'too_old', venue: 'KLCC', startDate: '2026-07-04', endDate: null }))
+      .toBe('No fair found for you: your last fair (KLCC, 07/04) ended over a month ago. Pick a fair yourself, or ask the person in charge to add you.');
+  });
+
+  it('only Houzs is on the keyer rule; 2990 is unchanged', () => {
+    expect(companyUsesKeyerFair('HOUZS')).toBe(true);
+    expect(companyUsesKeyerFair(' houzs ')).toBe(true);
+    expect(companyUsesKeyerFair('2990')).toBe(false);
+    expect(companyUsesKeyerFair(undefined)).toBe(false);
+  });
+});
+
+describe("resolveFairWithKeyer — the brand's booth first, then the keyer's own (owner 2026-10-19)", () => {
+  const MV = (projectId: number, brand: string, organizer = 'REX', startDate = '2026-09-11', endDate = '2026-09-13') =>
+    fair({ projectId, brand, organizer, startDate, endDate });
+
+  it("the brand's booth stands even when the keyer stood at another booth", () => {
+    const r = resolveFairWithKeyer({ candidates: [MV(340, 'AKEMI'), MV(341, 'ZANOTTI')], brand: 'AKEMI', organizer: 'REX', keyerProjectIds: new Set([341]) });
+    expect(r).toMatchObject({ projectId: 340, match: 'PICKED' });
+  });
+
+  it("the brand has no booth there: the keyer's own booth", () => {
+    const r = resolveFairWithKeyer({ candidates: [MV(340, 'AKEMI'), MV(341, 'ZANOTTI')], brand: 'BEDFRAME', organizer: 'REX', keyerProjectIds: new Set([341]) });
+    expect(r).toEqual({ projectId: 341, match: 'PICKED', candidateIds: [340, 341] });
+  });
+
+  it("no brand and several booths: the keyer's own booth", () => {
+    const r = resolveFairWithKeyer({ candidates: [MV(340, 'AKEMI'), MV(341, 'ZANOTTI')], brand: null, organizer: 'REX', keyerProjectIds: new Set([340]) });
+    expect(r.projectId).toBe(340);
+  });
+
+  it('a place with two events: the one the keyer stood at, and the brand decides inside it', () => {
+    const r = resolveFairWithKeyer({
+      candidates: [MV(340, 'AKEMI'), MV(2301, 'AKEMI', 'BIGHOME', '2026-10-02', '2026-10-04'), MV(2302, 'DUNLOPILLO', 'BIGHOME', '2026-10-02', '2026-10-04')],
+      brand: 'AKEMI', organizer: null, keyerProjectIds: new Set([2302]),
+    });
+    expect(r.projectId).toBe(2301);
+  });
+
+  it('the keyer on no booth there, or on two: the plain answer stays for a person', () => {
+    const candidates = [MV(340, 'AKEMI'), MV(341, 'ZANOTTI'), MV(342, 'ERGOTEX')];
+    expect(resolveFairWithKeyer({ candidates, brand: 'BEDFRAME', organizer: 'REX', keyerProjectIds: new Set() }).match).toBe('UNMATCHED');
+    expect(resolveFairWithKeyer({ candidates, brand: 'BEDFRAME', organizer: 'REX', keyerProjectIds: new Set([341, 342]) }).match).toBe('UNMATCHED');
+  });
+
+  it('two records of one booth are still one booth', () => {
+    const r = resolveFairWithKeyer({ candidates: [MV(340, 'AKEMI'), MV(342, 'ERGOTEX'), MV(2250, 'ERGOTEX')], brand: 'BEDFRAME', organizer: 'REX', keyerProjectIds: new Set([342, 2250]) });
+    expect(r.projectId).toBe(342);
+  });
+
+  it('nothing there at all stays PENDING', () => {
+    expect(resolveFairWithKeyer({ candidates: [], brand: 'AKEMI', organizer: 'REX', keyerProjectIds: new Set([1]) }).match).toBe('PENDING');
   });
 });

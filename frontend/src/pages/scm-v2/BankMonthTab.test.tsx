@@ -76,8 +76,10 @@ const state = vi.hoisted(() => ({
   statements: [] as unknown[],
   lock: null as unknown,
   balances: null as unknown,
+  repeats: undefined as unknown,
   autoMatch: vi.fn(),
   typeClosing: vi.fn(),
+  leaveOut: vi.fn(),
 }));
 
 /* The failed-print notice needs the app's notify; the tab is mounted without
@@ -92,6 +94,7 @@ vi.mock('./bank-queries', () => ({
       assembly: state.assembly, reconciliation: state.recon, lock: state.lock,
       balances: state.balances,
       statements: state.statements, lines: state.lines, unmatchedEntries: [],
+      repeats: state.repeats,
     },
     isLoading: false,
   }),
@@ -110,6 +113,7 @@ vi.mock('./bank-queries', () => ({
   useUnlockBankMonth: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
   useAutoMatchStatement: () => ({ mutate: vi.fn(), mutateAsync: state.autoMatch, isPending: false, isError: false, error: null }),
   useTypeMonthClosing: () => ({ mutate: state.typeClosing, isPending: false, isError: false, error: null }),
+  useLeaveOutRepeats: () => ({ mutateAsync: state.leaveOut, isPending: false }),
 }));
 
 import { BankMonthTab, monthLabel, parseRm, previousMonthOf } from './BankMonthTab';
@@ -117,6 +121,7 @@ import { BankMonthTab, monthLabel, parseRm, previousMonthOf } from './BankMonthT
 const setUp = (over: {
   months?: unknown[]; assembly?: BankMonthAssembly; recon?: Reconciliation;
   lines?: unknown[]; statements?: unknown[]; lock?: unknown; balances?: BankMonthBalances;
+  repeats?: { count: number; statementIds: number[] };
 } = {}) => {
   state.months = over.months ?? [MONTH];
   state.assembly = over.assembly ?? ASSEMBLY;
@@ -125,8 +130,10 @@ const setUp = (over: {
   state.statements = over.statements ?? STATEMENTS;
   state.lock = over.lock ?? null;
   state.balances = over.balances ?? { closing: null, previousClosing: null };
+  state.repeats = over.repeats;
   state.autoMatch.mockReset();
   state.typeClosing.mockReset();
+  state.leaveOut.mockReset();
 };
 
 /* The print dialog this screen mounts reads the company branding through
@@ -236,6 +243,33 @@ describe('what is still to decide, on the month', () => {
     openMonth();
     expect(screen.getByText('1 still to decide')).toBeTruthy();
     expect(screen.queryByText('Match the obvious ones now')).toBeNull();
+  });
+});
+
+/* Owner 2026-10-14 (这个我重新上传会需要重新match 过？ → B，做): the month-end file
+   repeated the any-day export's movements printed with more words; one press
+   files them as already recorded, the files carrying them in turn. */
+describe('movements an earlier file already recorded', () => {
+  test('one press leaves them out, asking each file that carries them; none waiting, no button', async () => {
+    setUp({ repeats: { count: 42, statementIds: [3] } });
+    state.leaveOut.mockResolvedValueOnce({ ok: true, leftOut: 42, lineIds: [] });
+    openMonth();
+    expect(screen.getByText(/d03\.csv repeats them, printed a little differently/)).toBeTruthy();
+    fireEvent.click(screen.getByText('Leave out 42 already recorded'));
+    await waitFor(() => expect(state.leaveOut).toHaveBeenCalledTimes(1));
+    expect(state.leaveOut.mock.calls[0]![0]).toBe(3);
+    expect(await screen.findByText('42 left out.')).toBeTruthy();
+  });
+
+  test('no button when nothing repeats, or on a closed month', () => {
+    setUp({ repeats: { count: 0, statementIds: [] } });
+    const first = show();
+    fireEvent.click(screen.getByText('Reconcile'));
+    expect(screen.queryByText(/already recorded$/)).toBeNull();
+    first.unmount();
+    setUp({ repeats: { count: 2, statementIds: [3] }, lock: { accountCode: '310-0020', month: '2026-09', lockedBy: 'Chew', lockedAt: '2026-10-02T03:14:00Z', lockNote: null, closingStatementSen: 1090000, closingLedgerSen: 1090000, differenceSen: 0, statementCount: 3, wasComplete: true } });
+    openMonth();
+    expect(screen.queryByText('Leave out 2 already recorded')).toBeNull();
   });
 });
 
@@ -474,7 +508,7 @@ describe('closing a month', () => {
   test('the list says a month is closed instead of how clean it looks', () => {
     setUp({ months: [{ ...MONTH, locked: { lockedBy: 'Chew', lockedAt: '2026-10-02T03:14:00Z' } }] });
     show();
-    expect(screen.getByText(/closed by Chew on 2026-10-02/)).toBeTruthy();
+    expect(screen.getByText(/closed by Chew on 2026\/10\/02/)).toBeTruthy();
     expect(screen.queryByText('covered end to end')).toBeNull();
   });
 });

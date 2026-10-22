@@ -28,19 +28,32 @@ import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr } from '../lib/postgrest-search';
 import { bindingToProductPatch } from '../lib/cost-anchor-sync';
 import { autoDeriveEnabled, recomputeDerivedProductCostSafe, recordSupplierPriceHistorySafe } from '../lib/auto-derive-cost';
+import { applyDueSupplierPrices } from '../lib/supplier-price-apply';
 import { todayMyt } from '../lib/my-time';
 import { paginateAll } from '../lib/paginate-all';
 import { scopeToCompany, activeCompanyId, stampCompany,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
   detailMissResponse } from '../lib/companyScope';
 import type { Env, Variables } from '../env';
-import { pgrestIn } from '../lib/pgrest-in-list';
+import type { Context } from 'hono';
+import { pgrestIn, pgrestInList } from '../lib/pgrest-in-list';
+import { isSupplierFinanceCaller, supplierCodeChangeRefusal } from '../lib/supplier-finance';
+import { withoutSupplierFinance, withoutSupplierFinanceKeys } from '../shared/supplier-finance-fields';
+
+type SupplierCtx = Context<{ Bindings: Env; Variables: Variables }>;
 
 /* Task #91 — small helper: normalize a body field to E.164 phone storage,
    passing through nullish + non-string values untouched. */
 const normPhone = (v: unknown): string | null => {
   if (typeof v !== 'string') return null;
   return normalizePhone(v) ?? v;
+};
+
+/* A free-text field as stored: trimmed, and blank is NULL (the bank details). */
+const textOrNull = (v: unknown): string | null => {
+  if (typeof v !== 'string') return null;
+  const t = v.trim();
+  return t ? t : null;
 };
 
 export const suppliers = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -74,10 +87,29 @@ const SUPPLIER_BASE_COLS =
    table but NOT on the view — see SUPPLIER_LIST_COLS. */
 const SUPPLIER_STRUCTURED_ADDRESS_COLS = 'address1, address2, address3, address4, city';
 
+/* Supplier Maintenance (owner 2026-10-02, mig 20261002T2000) — the supplier's
+   bank and the purchasing tick, both in the Finance part. Base table only: the
+   list view froze its columns before them, like the structured address. */
+const SUPPLIER_MAINTENANCE_COLS = 'for_purchasing, bank_name, bank_account_no, bank_account_name';
+
 /* Base-table column set — used by the DETAIL / create / patch reads, which hit
    `scm.suppliers` directly (not the view) and so can see the structured address. */
-const SUPPLIER_COLS =
-  `${SUPPLIER_BASE_COLS}, ${SUPPLIER_STRUCTURED_ADDRESS_COLS}, created_at, updated_at`;
+export const SUPPLIER_COLS =
+  `${SUPPLIER_BASE_COLS}, ${SUPPLIER_STRUCTURED_ADDRESS_COLS}, ${SUPPLIER_MAINTENANCE_COLS}, created_at, updated_at`;
+
+/* A supplier Finance keeps to itself (for_purchasing false — owner 2026-10-02,
+   A2a: 「Finance 开的 supplier 只有 Finance 看得到，采购看不到」) is not shown to a
+   caller who is not Finance: not in the list, not on its page, not editable. */
+const NOT_FOR_PURCHASING = { error: 'not_found', message: 'That supplier is not one you can open.' };
+
+/** The ids of this company's Finance-only suppliers — what the list leaves out
+    for a caller who is not Finance. Read from the base table: the list view has
+    no for_purchasing column. */
+async function financeOnlySupplierIds(supabase: SupabaseClient, c: SupplierCtx): Promise<{ ok: true; ids: string[] } | { ok: false; reason: string }> {
+  const { data, error } = await scopeToCompany(supabase.from('suppliers').select('id').eq('for_purchasing', false), c);
+  if (error) return { ok: false, reason: error.message };
+  return { ok: true, ids: ((data ?? []) as Array<{ id: string }>).map((r) => String(r.id)) };
+}
 
 /* PR — Commander 2026-05-27 ("当 Assign SKU 之后，你就会知道它是什么 Category 了呀"):
    List endpoint queries the `suppliers_with_derived_category` view (migration
@@ -127,7 +159,7 @@ const BINDING_COLS =
                                        flows via unit_price_sen).
    Unknown / null / empty → undefined (caller should write NULL). */
 const TIER_KEYS = new Set(['P1', 'P2', 'P3']);
-function validatePriceMatrix(
+export function validatePriceMatrix(
   raw: unknown,
   category: string | null,
 ): Record<string, unknown> | null | undefined {
@@ -163,10 +195,11 @@ function validatePriceMatrix(
   if (cat === 'SOFA') {
     const out: Record<string, Record<string, number>> = {};
     for (const [height, inner] of Object.entries(raw as Record<string, unknown>)) {
-      // Heights are free-form numeric strings (24/26/28/30/32/35 by default
-      // but commander can edit the maintenance config). Allow anything that
-      // parses to a number.
-      if (!Number.isFinite(Number(height))) {
+      // Height keys come from the Maintenance Sizes pool: numeric ("24"),
+      // inch-marked (`25"`) or named ("Flat", "DEFAULT"). Same rule as
+      // validatePricesByHeight in sofa-combos.ts; the old numeric-only check
+      // refused the whole row once a "Flat" cell was priced (BUG-109).
+      if (!/^[A-Za-z0-9][A-Za-z0-9 _"'-]*$/.test(height)) {
         throw new Error(`invalid_price_matrix:sofa_height:${height}`);
       }
       if (inner === null || inner === undefined) continue;
@@ -310,10 +343,22 @@ async function afterBindingWrite(
 }
 
 // ── List suppliers ────────────────────────────────────────────────────
-suppliers.get('/', async (c) => {
+/* Owner 2026-09-30 (采购只看采购的部分): a caller who is not Finance reads
+   every supplier without its Finance part (shared/supplier-finance-fields). */
+export const listSuppliersHandler = async (c: SupplierCtx) => {
   const status = c.req.query('status');
   const search = c.req.query('search');
   const supabase = c.get('supabase');
+  const finance = isSupplierFinanceCaller(c);
+  const readable = <T extends object>(rows: T[]): T[] => (finance ? rows : rows.map((r) => withoutSupplierFinance(r)));
+  /* Finance's own suppliers stay out of a purchaser's list — pickers included
+     (owner 2026-10-02, A2a). Finance sees every supplier. */
+  let hidden: string[] = [];
+  if (!finance) {
+    const r = await financeOnlySupplierIds(supabase, c);
+    if (!r.ok) return c.json({ error: 'load_failed', reason: r.reason }, 500);
+    hidden = r.ids;
+  }
 
   /* Opt-in server-side pagination + search + sort + Supply-Category filter
      (mirrors usePurchaseOrdersPaged in mfg-purchase-orders.ts). The PRESENCE
@@ -338,11 +383,12 @@ suppliers.get('/', async (c) => {
       .limit(2000);
     if (status && SUPPLIER_STATUSES.has(status)) q = q.eq('status', status);
     if (search) { const s = escapeForOr(search); if (s) q = q.or(`code.ilike.%${s}%,name.ilike.%${s}%,contact_person.ilike.%${s}%`); }
+    if (hidden.length > 0) q = q.not('id', 'in', pgrestInList(hidden));
     q = scopeToCompany(q, c); // multi-company: suppliers are per-company (view exposes company_id via mig 0062)
 
     const { data, error } = await q;
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-    return c.json({ suppliers: data ?? [] });
+    return c.json({ suppliers: readable(data ?? []) });
   }
 
   /* --- PAGINATED PATH (opt-in via `page`) --- */
@@ -395,17 +441,19 @@ suppliers.get('/', async (c) => {
     const s = escapeForOr(category);
     if (s) q = q.ilike('category', `%${s}%`);
   }
+  if (hidden.length > 0) q = q.not('id', 'in', pgrestInList(hidden));
 
   q = scopeToCompany(q, c); // multi-company: suppliers are per-company (view exposes company_id via mig 0062)
   q = q.range(page * pageSize, page * pageSize + pageSize - 1);
 
   const { data, error, count } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ suppliers: data ?? [], total: count ?? (data?.length ?? 0), page, pageSize });
-});
+  return c.json({ suppliers: readable(data ?? []), total: count ?? (data?.length ?? 0), page, pageSize });
+};
+suppliers.get('/', listSuppliersHandler);
 
 // ── Supplier detail (+ bindings) ──────────────────────────────────────
-suppliers.get('/:id', async (c) => {
+export const getSupplierHandler = async (c: SupplierCtx) => {
   const id = c.req.param('id');
   const supabase = c.get('supabase');
 
@@ -432,15 +480,24 @@ suppliers.get('/:id', async (c) => {
   }
   if (bindingsRes.error) return c.json({ error: 'load_failed', reason: bindingsRes.error.message }, 500);
 
-  return c.json({ supplier: supplierRes.data, bindings: bindingsRes.data ?? [] });
-});
+  const finance = isSupplierFinanceCaller(c);
+  if (!finance && (supplierRes.data as { for_purchasing?: boolean }).for_purchasing === false) return c.json(NOT_FOR_PURCHASING, 404);
+  const supplier = finance ? supplierRes.data : withoutSupplierFinance(supplierRes.data);
+  return c.json({ supplier, bindings: bindingsRes.data ?? [] });
+};
+suppliers.get('/:id', getSupplierHandler);
 
 // ── Create supplier ──────────────────────────────────────────────────
-suppliers.post('/', async (c) => {
+/* A purchaser opens a supplier with its code (it must match the AutoCount
+   creditor) and the purchasing part; the Finance part is Finance's to fill,
+   so it is not taken from a purchaser's body (owner 2026-09-30). */
+export const createSupplierHandler = async (c: SupplierCtx) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch {
     return c.json({ error: 'invalid_json' }, 400);
   }
+  const finance = isSupplierFinanceCaller(c);
+  if (!finance) body = withoutSupplierFinanceKeys(body);
 
   const code = (body.code as string | undefined)?.trim();
   const name = (body.name as string | undefined)?.trim();
@@ -485,6 +542,13 @@ suppliers.post('/', async (c) => {
     statement_type: STATEMENT_TYPES.has(body.statementType as string) ? body.statementType : 'OPEN_ITEM',
     aging_basis: AGING_BASES.has(body.agingBasis as string) ? body.agingBasis : 'INVOICE_DATE',
     credit_limit_sen: typeof body.creditLimitSen === 'number' ? body.creditLimitSen : 0,
+    /* Supplier Maintenance (owner 2026-10-02) — the bank a payment carries, and
+       whether purchasing shares the supplier. Finance's alone: a purchaser's body
+       has neither (stripped above), so a supplier purchasing opens is shared. */
+    bank_name: textOrNull(body.bankName),
+    bank_account_no: textOrNull(body.bankAccountNo),
+    bank_account_name: textOrNull(body.bankAccountName),
+    for_purchasing: body.forPurchasing !== false,
     /* Mig 0028 — AutoCount creditor-export parity. phone2 normalizes to E.164
        like the other phone fields. */
     registration_no: (body.registrationNo as string) ?? null,
@@ -508,8 +572,9 @@ suppliers.post('/', async (c) => {
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
-  return c.json({ supplier: data }, 201);
-});
+  return c.json({ supplier: finance ? data : withoutSupplierFinance(data) }, 201);
+};
+suppliers.post('/', createSupplierHandler);
 
 // ── Update supplier ─────────────────────────────────────────────────
 export const patchSupplierHandler = async (c: any) => {
@@ -517,6 +582,44 @@ export const patchSupplierHandler = async (c: any) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch {
     return c.json({ error: 'invalid_json' }, 400);
+  }
+  const finance = isSupplierFinanceCaller(c);
+  /* A purchaser's save carries no Finance part: whatever the body says there is
+     not theirs to write (owner 2026-09-30, shared/supplier-finance-fields). */
+  if (!finance) body = withoutSupplierFinanceKeys(body);
+
+  const supabase = c.get('supabase');
+  /* Multi-company: an edit must act only on THIS company's supplier. Scope the
+     UPDATE predicate on company_id (not just id) so a blind id from another
+     company matches nothing — maybeSingle then reports it as not-found rather
+     than mutating a supplier the caller can't even see in its own list. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+
+  /* A supplier Finance keeps to itself is not a purchaser's to edit (owner
+     2026-10-02, A2a) — answered exactly as a supplier that is not there. */
+  if (!finance) {
+    const { data: own, error: ownErr } = await scopeToCompanyId(supabase.from('suppliers').select('id, for_purchasing').eq('id', id), co.companyId).maybeSingle();
+    if (ownErr) return c.json({ error: 'load_failed', reason: ownErr.message }, 500);
+    if (own && (own as { for_purchasing?: boolean }).for_purchasing === false) return c.json(NOT_FOR_PURCHASING, 404);
+  }
+
+  /* The code: the same code is no change; a new one is Finance's, and only while
+     nothing carries the old one yet (lib/supplier-finance.ts). */
+  if (body.code !== undefined) {
+    const next = String(body.code ?? '').trim();
+    if (!next) return c.json({ error: 'code_required', message: 'A supplier needs a code.' }, 400);
+    const { data: cur, error: curErr } = await scopeToCompanyId(supabase.from('suppliers').select('id, code').eq('id', id), co.companyId).maybeSingle();
+    if (curErr) return c.json({ error: 'load_failed', reason: curErr.message }, 500);
+    if (!cur) return c.json(NOT_THIS_COMPANY, 404);
+    const onFile = cur as { id: string; code: string };
+    if (next === String(onFile.code)) {
+      delete body.code;
+    } else {
+      const refusal = await supplierCodeChangeRefusal(supabase, co.companyId, { id: String(onFile.id), code: String(onFile.code) }, finance);
+      if (refusal) return c.json(refusal.body, refusal.status);
+      body.code = next;
+    }
   }
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -562,21 +665,22 @@ export const patchSupplierHandler = async (c: any) => {
   if (body.agingBasis !== undefined && AGING_BASES.has(body.agingBasis as string)) {
     updates.aging_basis = body.agingBasis;
   }
+  /* Supplier Maintenance (owner 2026-10-02): the bank, trimmed, blank clears it;
+     the purchasing tick only as a true boolean. A purchaser's body carries
+     neither — both are the Finance part, stripped above. */
+  for (const [from, to] of [['bankName', 'bank_name'], ['bankAccountNo', 'bank_account_no'], ['bankAccountName', 'bank_account_name']] as const) {
+    if (body[from] !== undefined) updates[to] = textOrNull(body[from]);
+  }
+  if (typeof body.forPurchasing === 'boolean') updates.for_purchasing = body.forPurchasing;
 
-  const supabase = c.get('supabase');
-  /* Multi-company: an edit must act only on THIS company's supplier. Scope the
-     UPDATE predicate on company_id (not just id) so a blind id from another
-     company matches nothing — maybeSingle then reports it as not-found rather
-     than mutating a supplier the caller can't even see in its own list. */
-  const co = requireActiveCompanyId(c);
-  if (!co.ok) return c.json(co.refusal, 409);
   const { data, error } = await scopeToCompanyId(supabase.from('suppliers').update(updates).eq('id', id), co.companyId).select(SUPPLIER_COLS).maybeSingle();
   if (error) {
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
+    if (error.code === '23505') return c.json({ error: 'duplicate_code', message: 'Another supplier already has this code.' }, 409);
     return c.json({ error: 'update_failed', reason: error.message }, 500);
   }
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
-  return c.json({ supplier: data });
+  return c.json({ supplier: finance ? data : withoutSupplierFinance(data) });
 };
 suppliers.patch('/:id', patchSupplierHandler);
 
@@ -1129,7 +1233,7 @@ export const createBindingPriceChangeHandler = async (c: any) => {
       toInsert.push({
         company_id: co.companyId, supplier_id: b.supplier_id, material_kind: b.material_kind,
         item_code: b.item_code, unit_price_sen: b.unit_price_sen ?? null, price_matrix: b.price_matrix ?? null,
-        is_main_supplier: Boolean(b.is_main_supplier), effective_from: today,
+        is_main_supplier: Boolean(b.is_main_supplier), effective_from: today, applied_at: new Date().toISOString(),
         notes: 'Auto-baseline: current cost before the first scheduled change.', created_by: createdBy,
       });
     }
@@ -1152,7 +1256,20 @@ export const createBindingPriceChangeHandler = async (c: any) => {
   }
   const inserted = (data ?? []) as Array<{ effective_from: string }>;
   const row = inserted.find((r) => r.effective_from === effectiveFrom) ?? inserted.at(-1) ?? null;
-  return c.json({ ok: true, baselined, row }, 201);
+  // Today or back-dated: live now, so POs and the product cost pick it up now
+  // rather than at the nightly run. A future date waits for that run.
+  let applied = false;
+  if (effectiveFrom <= today) {
+    try {
+      const r = await applyDueSupplierPrices(supabase, {
+        today, companyId: co.companyId, supplierId: b.supplier_id, itemCode: b.item_code,
+      });
+      applied = r.applied > 0;
+    } catch (e) {
+      console.error('[supplier-price-apply] immediate apply failed:', e instanceof Error ? e.message : e);
+    }
+  }
+  return c.json({ ok: true, baselined, applied, row }, 201);
 };
 suppliers.post('/:id/bindings/:bindingId/price-changes', createBindingPriceChangeHandler);
 

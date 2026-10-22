@@ -24,15 +24,48 @@
 // ----------------------------------------------------------------------------
 
 import {
+  cellEdges,
   findModule,
   moduleFootprint,
   cellsBbox,
+  groupSofas,
   type Cell,
   type Depth,
 } from '@2990s/shared';
 import { cornerCompositeFromCells, drawCornerSofa } from './sofa-corner-pdf';
 
 type JsPdf = import('jspdf').jsPDF;
+
+/** The motion variant a module code carries: "1A(P)(LHF)" → "P", "1NA(R)" →
+ *  "R", "1S(L)" → "L" (Power / Recliner / Power leg). Only the FIRST paren
+ *  group counts, so the chaise "L(LHF)" and a plain "1A(LHF)" return null. */
+export function motionMark(moduleId: string): 'P' | 'R' | 'L' | null {
+  const m = /^[^(]+\(([PRL])\)/.exec(moduleId);
+  return m ? (m[1] as 'P' | 'R' | 'L') : null;
+}
+
+/** The seat depth a POS build's stored x/y were laid out at. Module widths grow
+ *  with depth, so drawing the cells at another depth opens gaps (or overlaps)
+ *  between pieces that touched on the canvas. The SO split drops the line's
+ *  `depth` key in favour of `seatHeight`, and the two can disagree with the x/y
+ *  (BUG-110, Sim 2026-10-13: 2990-SO-2610-037, laid out at 28", drew at the 24"
+ *  default with a 20cm gap; -022 stores seatHeight 28 but its x/y and summary
+ *  are 24"). Of the candidates,
+ *  the one under which the cells join into the fewest sofas wins; ties keep
+ *  candidate order. */
+export function layoutDepth(cells: Cell[], candidates: ReadonlyArray<unknown>): Depth {
+  const depths = [...new Set(
+    candidates.map((d) => String(d ?? '').trim()).filter((d) => /^\d+$/.test(d)),
+  )];
+  if (depths.length === 0) return '24';
+  let best = depths[0]!;
+  let bestGroups = Infinity;
+  for (const d of depths) {
+    const n = groupSofas(cells, d).length;
+    if (n < bestGroups) { best = d; bestGroups = n; }
+  }
+  return best;
+}
 
 /**
  * Draw a small top-down sofa schematic at (x, y) within (maxW × maxH) mm.
@@ -99,7 +132,22 @@ export function drawSofaLayout(
     const quarter = ((Math.round(corner.rot / 90) % 4) + 4) % 4;
     const swap = quarter === 1 || quarter === 3;
     drawCornerSofa(doc, corner.geo, ox, oy, swap ? sofaH : sofaW, swap ? sofaW : sofaH);
-  } else
+  } else {
+  /* The artwork is drawn unrotated, so a sofa with any turned piece (an L or U
+     leg, a right-hand corner) is drawn as the schematic throughout rather than
+     as sideways art or a mix of the two. */
+  const artOk = cells.every((c) => ((Number(c.rot) || 0) % 360) === 0);
+  // Arms go on each SEPARATE sofa's outer ends, not just the whole drawing's:
+  // a 2S in front of a wider 1A + Console + 1A is flush with neither edge.
+  const sofaBbox = new Map<Cell, { x: number; w: number }>();
+  try {
+    for (const g of groupSofas(cells, depth)) {
+      const gb = cellsBbox(g, depth);
+      if (gb) for (const c of g) sofaBbox.set(c, gb);
+    }
+  } catch {
+    /* malformed cells: arms fall back to the whole drawing's ends */
+  }
   // ── Cells: each module = a cream SEAT with a tan BACKREST strip on its back
   //    edge (the side away from the TV — the whole sofa faces the TV at the
   //    bottom/+y). Faithful positions → the L-shape notch + LHF/RHF come out
@@ -138,7 +186,7 @@ export function drawSofaLayout(
        not tile those either; it draws them through renderSeamlessSofa, which is
        not ported yet. A drawn cell is visibly a drawing; a blank one would look
        like a missing module. */
-    const art = photos?.[c.moduleId];
+    const art = artOk ? photos?.[c.moduleId] : undefined;
     if (art) {
       try {
         doc.addImage(art, px, py, w, h);
@@ -159,9 +207,34 @@ export function drawSofaLayout(
     const t = Math.max(0.8, Math.min(h * 0.26, 2.4)); // strip thickness (mm)
     const eps = 0.5; // cm tolerance
     doc.setFillColor(196, 162, 110); // tan
-    doc.rect(px, py, w, t, 'F'); // backrest (top / back)
-    if (Math.abs(c.x - bbox.x) < eps) doc.rect(px, py, t, h, 'F'); // left arm
-    if (Math.abs((c.x + fp.w) - (bbox.x + bbox.w)) < eps) doc.rect(px + w - t, py, t, h, 'F'); // right arm
+    if ((Number(c.rot) || 0) % 360 !== 0) {
+      /* A turned piece (L / U leg, right-hand corner): strip every edge the
+         module's own edge map calls back or arm, rotated with it. */
+      const [ew, en, ee, es] = cellEdges(c);
+      const solid = (e: string | undefined) => e === 'back' || e === 'arm';
+      if (solid(ew)) doc.rect(px, py, t, h, 'F');
+      if (solid(en)) doc.rect(px, py, w, t, 'F');
+      if (solid(ee)) doc.rect(px + w - t, py, t, h, 'F');
+      if (solid(es)) doc.rect(px, py + h - t, w, t, 'F');
+    } else {
+      doc.rect(px, py, w, t, 'F'); // backrest (top / back)
+      const sb = sofaBbox.get(c) ?? bbox;
+      if (Math.abs(c.x - sb.x) < eps) doc.rect(px, py, t, h, 'F'); // left arm
+      if (Math.abs((c.x + fp.w) - (sb.x + sb.w)) < eps) doc.rect(px + w - t, py, t, h, 'F'); // right arm
+    }
+    /* BUG-42 (Sim 2026-09-30, HC-PO-2609-318): a power seat drew as a plain
+       seat, so the supplier could not tell 1A(P) from 1A on the plan while the
+       item photos beside it showed the "P". Stamp the letter the POS art
+       carries — these codes have no PNG, so they always land here. */
+    const mark = motionMark(c.moduleId);
+    if (mark) {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(Math.max(4, Math.min(14, (Math.min(w, h) - t) * 0.55 * 2.835)));
+      doc.setTextColor(44, 44, 42);
+      doc.text(mark, px + w / 2, py + h / 2, { align: 'center', baseline: 'middle' });
+      doc.setTextColor(0);
+    }
+  }
   }
 
   // ── TV marker BELOW the sofa (greater y = front / viewing direction) ─

@@ -205,3 +205,219 @@ describe('GET /delivery-planning — cross-company means GRANTED companies', () 
     expect((body.orders ?? []).length).toBe(2);
   });
 });
+
+/* BUG-51 repoint (owner 2026-10-15): the board's "Sales Exemption Expiry Date"
+   column shows the REAL AutoCount exemption expiry (public.sales_orders.expiry_date,
+   via linked_ac_docno), not the customer delivery date. Self-contained harness (its
+   own fake DB with the AutoCount mirror) so the shared harness above — whose SOs
+   carry no linked_ac_docno and so never hit the mirror read — stays untouched. */
+describe('GET /delivery-planning — Sales Exemption Expiry Date column', () => {
+  const soLinked = (docNo: string, linkedAc: string | null, frozen: string | null = null): Row => ({
+    doc_no: docNo, company_id: 1, debtor_code: 'C1', debtor_name: 'A Customer',
+    status: 'CONFIRMED', delivery_state: null, customer_state: 'Selangor', customer_country: 'Malaysia',
+    customer_delivery_date: '2026-09-01', sales_exemption_expiry: frozen, processing_date: '2026-08-20',
+    local_total_sen: 100_000, balance_sen: 0, linked_ac_docno: linkedAc,
+  });
+  const line = (docNo: string, id: string): Row => ({
+    id, doc_no: docNo, item_code: 'SOFA-1', item_group: 'SOFA', qty: 1, cancelled: false,
+    stock_status: 'READY', line_no: 1, created_at: '2026-08-01T00:00:00.000Z',
+  });
+  const build = () => {
+    const sb = fakeSb({
+      warehouses: [],
+      mfg_sales_orders: [
+        soLinked('HC-SO-2608-001', 'SO-000111', '2026-06-30'), // linked; book expiry + a frozen original date
+        soLinked('HC-SO-2608-002', 'SO-000222'), // linked, book has NO expiry
+        soLinked('HC-SO-2608-003', null),        // not in AutoCount at all
+      ],
+      mfg_sales_order_items: [line('HC-SO-2608-001', 'li-1'), line('HC-SO-2608-002', 'li-2'), line('HC-SO-2608-003', 'li-3')],
+      delivery_order_items: [],
+      delivery_orders: [],
+      /* The AutoCount mirror (public schema). SO-000111 carries the exemption
+         expiry; SO-000222 is in the book but carries none. */
+      sales_orders: [
+        { doc_no: 'SO-000111', company_id: 1, expiry_date: '2026-12-31' },
+        { doc_no: 'SO-000222', company_id: 1, expiry_date: null },
+      ],
+    });
+    const app = new Hono<{ Bindings: Env; Variables: Variables }>();
+    app.use('*', async (c, next) => {
+      c.set('supabase', sb as unknown as Variables['supabase']);
+      c.set('companyId', 1 as Variables['companyId']);
+      c.set('allowedCompanyIds', [1] as Variables['allowedCompanyIds']);
+      c.set('user', { id: 'u1' } as unknown as Variables['user']);
+      c.set('houzsUser', { id: 9, name: 'Tester', permissions_set: new Set(['*']) } as unknown as Variables['houzsUser']);
+      await next();
+    });
+    app.get('/delivery-planning', deliveryPlanningBoardHandler);
+    return app;
+  };
+
+  it('shows the real AutoCount exemption expiry, blank off-book or when the book has none', async () => {
+    const res = await build().request('/delivery-planning');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { orders?: Array<{ so_doc_no: string; ac_sales_exemption_expiry?: string | null }> };
+    const byDoc = Object.fromEntries((body.orders ?? []).map((o) => [o.so_doc_no, o.ac_sales_exemption_expiry ?? null]));
+    expect(byDoc['HC-SO-2608-001']).toBe('2026-12-31'); // the real exemption date, NOT the delivery date 2026-09-01
+    expect(byDoc['HC-SO-2608-002']).toBeNull();          // linked but the book carries no expiry
+    expect(byDoc['HC-SO-2608-003']).toBeNull();          // not in AutoCount
+  });
+
+  /* Owner 2026-10-22: the board also carries the FROZEN original delivery date
+     (sales_exemption_expiry) so the frontend's "Sales Exemption Expiry Date"
+     column can show it via soExemptionExpiryOf — the SAME value the SO list shows. */
+  it('carries the frozen original delivery date (sales_exemption_expiry) on the SO row', async () => {
+    const res = await build().request('/delivery-planning');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { orders?: Array<{ so_doc_no: string; sales_exemption_expiry?: string | null }> };
+    const byDoc = Object.fromEntries((body.orders ?? []).map((o) => [o.so_doc_no, o.sales_exemption_expiry ?? null]));
+    expect(byDoc['HC-SO-2608-001']).toBe('2026-06-30'); // the frozen original, independent of the book expiry 2026-12-31
+    expect(byDoc['HC-SO-2608-002']).toBeNull();
+    expect(byDoc['HC-SO-2608-003']).toBeNull();
+  });
+});
+
+/* OPEN-TIME parallel reads (owner 2026-10-20): the live-balance, line, deliverable
+   and DO reads were made concurrent (each kicked off together, awaited at its
+   original site) to cut the board's open latency. The one risk that refactor adds
+   is a read's result being wired to the wrong field. This pins that a distinctive
+   balance value and a distinctive DO number each still land on their OWN row
+   field — i.e. the balance read feeds balance_sen_live and the DO read feeds
+   delivery_orders, not swapped. Self-contained harness (seeds the payment-totals
+   view + a DO the shared harness above omits). */
+describe('GET /delivery-planning — concurrent per-SO reads wire to the right fields', () => {
+  const build = () => {
+    const sb = fakeSb({
+      warehouses: [],
+      mfg_sales_orders: [so('HC-SO-2608-001', 1)],
+      mfg_sales_order_items: [soLine('HC-SO-2608-001', 'li-1')],
+      // The live-balance read (a VIEW keyed by doc_no); 4242 is a value nothing
+      // else in the fixture could produce, so reading it back proves the wiring.
+      mfg_sales_orders_with_payment_totals: [{ doc_no: 'HC-SO-2608-001', balance_sen_live: 4242 }],
+      delivery_order_items: [],
+      // A committed DO with a distinctive number; status is non-DRAFT/CANCELLED so
+      // it is kept and surfaces on the row.
+      delivery_orders: [{ id: 'do-1', do_number: 'HC-DO-9999', so_doc_no: 'HC-SO-2608-001', status: 'ISSUED' }],
+      delivery_order_crew: [],
+    });
+    const app = new Hono<{ Bindings: Env; Variables: Variables }>();
+    app.use('*', async (c, next) => {
+      c.set('supabase', sb as unknown as Variables['supabase']);
+      c.set('companyId', 1 as Variables['companyId']);
+      c.set('allowedCompanyIds', [1] as Variables['allowedCompanyIds']);
+      c.set('user', { id: 'u1' } as unknown as Variables['user']);
+      c.set('houzsUser', { id: 9, name: 'Tester', permissions_set: new Set(['*']) } as unknown as Variables['houzsUser']);
+      await next();
+    });
+    app.get('/delivery-planning', deliveryPlanningBoardHandler);
+    return app;
+  };
+
+  it('keeps the live balance and the DO on their own fields', async () => {
+    const res = await build().request('/delivery-planning');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      orders?: Array<{ so_doc_no: string; balance_sen_live: number | null; delivery_orders: Array<{ do_number: string }> }>;
+    };
+    const row = (body.orders ?? []).find((o) => o.so_doc_no === 'HC-SO-2608-001');
+    expect(row).toBeDefined();
+    expect(row?.balance_sen_live).toBe(4242);
+    expect((row?.delivery_orders ?? []).map((d) => d.do_number)).toEqual(['HC-DO-9999']);
+  });
+});
+
+/* The THREE non-SO sub-boards — ASSR legs, manual DP jobs, PMS project windows —
+   are unioned onto the board after the SO rows. The shared harness above seeds no
+   ASSR/DP/project data and gives no c.env.DB, so those reads fail-silent and the
+   paths went UNTESTED. This fixture exercises all three so the board's open-time
+   read parallelisation (kickOffSubBoardReads) can be proven output-preserving: a
+   fake D1 feeds the ASSR union + project reads (branched by SQL), and dp_orders is
+   seeded on the scm client. Each row kind must surface with its key fields. */
+describe('GET /delivery-planning — the ASSR / DP / project sub-boards union onto the board', () => {
+  // A minimal D1-shim: the handler calls c.env.DB.prepare(sql).all<T>() for the
+  // ASSR union and the project union. Branch on the SQL so each read gets its own
+  // rows; everything the processing reads is present, the rest is null.
+  const fakeD1 = {
+    prepare: (sql: string) => ({
+      all: async () => ({
+        results: /\bprojects\b/i.test(sql)
+          ? [{
+              id: 10, code: 'PRJ-1', name: 'Expo Build', brand: 'AKEMI', venue: 'Hall 3', venue_address: 'Hall 3, KLCC',
+              state: 'Selangor', setup_start_at: '2026-09-10', dismantle_start_at: null,
+              // Crew lives in the per-phase JSON (the editor path); the scalar
+              // driver/lorry are stale fallbacks that the JSON must override.
+              setup_crew: JSON.stringify({
+                lorry_crew: [{ plate: 'VRH1', drivers: [{ name: 'JSON Driver', phone: '+60111' }], helpers: [{ name: 'Helper One', phone: '+60122' }, { name: 'Helper Two', phone: '+60133' }] }],
+              }),
+              dismantle_crew: null,
+              setup_driver_name: 'Driver A', setup_lorry_plate: 'WXX1', dismantle_driver_name: null, dismantle_lorry_plate: null,
+            }]
+          : [{
+              id: 1, assr_no: 'ASSR-001', company_id: 1, status: 'OPEN', customer_name: 'A Customer',
+              phone: '011', location: 'KL', customer_pickup_at: null, inspection_visit_at: null,
+              inspection_by: null, do_date: '2026-09-05', addr1: '1 Jln', addr2: null, addr3: null, addr4: null,
+              so_state: 'Selangor', so_postcode: '40000', so_country: 'Malaysia',
+            }],
+      }),
+    }),
+  };
+  const build = () => {
+    const sb = fakeSb({
+      warehouses: [],
+      mfg_sales_orders: [so('HC-SO-2608-001', 1)],
+      mfg_sales_order_items: [soLine('HC-SO-2608-001', 'li-1')],
+      delivery_order_items: [],
+      delivery_orders: [],
+      // A manual DP job (no source doc) — the only sub-board read on the scm client.
+      dp_orders: [{
+        id: 5, company_id: 1, dp_no: 'DP-1', job_type: 'SETUP', party_name: 'Setup Co', contact_phone: '012',
+        address1: 'Jln Setup', address2: null, address3: null, address4: null, city: 'KL', postcode: '50000',
+        state: 'Selangor', requested_date: '2026-09-08', status: 'PENDING', trip_id: null,
+        so_doc_no: null, assr_case_id: null, do_id: null,
+      }],
+    });
+    const app = new Hono<{ Bindings: Env; Variables: Variables }>();
+    app.use('*', async (c, next) => {
+      c.set('supabase', sb as unknown as Variables['supabase']);
+      c.set('companyId', 1 as Variables['companyId']);
+      c.set('allowedCompanyIds', [1] as Variables['allowedCompanyIds']);
+      c.set('user', { id: 'u1' } as unknown as Variables['user']);
+      c.set('houzsUser', { id: 9, name: 'Tester', permissions_set: new Set(['*']) } as unknown as Variables['houzsUser']);
+      await next();
+    });
+    app.get('/delivery-planning', deliveryPlanningBoardHandler);
+    return app;
+  };
+
+  it('shows one SO row plus an ASSR, a DP and a project row', async () => {
+    const res = await build().request('/delivery-planning', undefined, { DB: fakeD1 } as never);
+    expect(res.status).toBe(200);
+    type Crew = { driver_1_name: string | null; driver_1_contact: string | null; helper_1_name: string | null; helper_2_name: string | null; lorry_plate: string | null } | null;
+    const body = (await res.json()) as { orders?: Array<{ row_type: string; so_doc_no: string; ref: string | null; dp_no: string | null; branding: string | null; delivery_state: string | null; customer_delivery_date: string | null; amended_delivery_date: string | null; crew: Crew }> };
+    const byType = (t: string) => (body.orders ?? []).filter((o) => o.row_type === t);
+    expect(byType('so').map((o) => o.so_doc_no)).toEqual(['HC-SO-2608-001']);
+    expect(byType('assr')).toHaveLength(1);       // the fake ASSR union row, delivery leg
+    expect(byType('dp').map((o) => o.dp_no)).toEqual(['DP-1']);
+    expect(byType('project').map((o) => o.so_doc_no)).toEqual(['PRJ:10#SETUP']);
+    // Branding column fills for a project leg from the PMS project's brand (read-only).
+    expect(byType('project').map((o) => o.branding)).toEqual(['AKEMI']);
+    // Owner 2026-10-21 — the Delivered tab shows every job type: a project window
+    // whose date has already passed is done, while an OPEN service case is still
+    // pending (and a dated DP job that is not yet delivered is pending too).
+    expect(byType('project')[0]?.delivery_state).toBe('DELIVERED'); // setup 2026-09-10 is in the past
+    expect(byType('assr')[0]?.delivery_state).toBe('PENDING_DELIVERY'); // OPEN case, no closed_at
+    // Owner 2026-10-22: an ASSR row carries its SERVICE date in customer_delivery_date
+    // (shown in the "Sales Exemption Expiry Date" column) and leaves "Delivery Date"
+    // (amended_delivery_date) blank for admin to propose.
+    expect(byType('assr')[0]?.customer_delivery_date).toBe('2026-09-05'); // the seeded do_date leg
+    expect(byType('assr')[0]?.amended_delivery_date).toBeNull();
+    // Crew (driver + phone, both helpers, lorry) is pulled from the per-phase crew
+    // JSON and OVERRIDES the stale scalar driver/lorry fallback (Driver A / WXX1).
+    const projCrew = byType('project')[0]?.crew;
+    expect(projCrew?.driver_1_name).toBe('JSON Driver');
+    expect(projCrew?.driver_1_contact).toBe('+60111');
+    expect(projCrew?.helper_1_name).toBe('Helper One');
+    expect(projCrew?.helper_2_name).toBe('Helper Two');
+    expect(projCrew?.lorry_plate).toBe('VRH1');
+  });
+});

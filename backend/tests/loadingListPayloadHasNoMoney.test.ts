@@ -27,6 +27,7 @@ class FakeQuery {
   lte(col: string, val: unknown) { this.preds.push((r) => r[col] != null && r[col] <= (val as any)); return this; }
   order() { return this; }
   limit() { return this; }
+  range() { return this; }
   private project(r: Row): Row {
     if (!this.cols) return r;
     const out: Row = {};
@@ -58,7 +59,7 @@ function app(tables: Record<string, Row[]>) {
 function seed() {
   return {
     delivery_orders: [
-      { id: 'do-1', do_number: 'DO-1', status: 'DRAFT', company_id: 1, debtor_name: 'Acme', city: 'KL', state: 'Selangor', customer_delivery_date: '2026-08-27', vehicle: 'WXY-1', driver_name: 'Ali', ...MONEY },
+      { id: 'do-1', do_number: 'DO-1', status: 'DRAFT', company_id: 1, so_doc_no: 'SO-1', debtor_name: 'Acme', city: 'KL', state: 'Selangor', customer_delivery_date: '2026-08-27', vehicle: 'WXY-1', driver_name: 'Ali', ...MONEY },
       { id: 'do-2', do_number: 'DO-2', status: 'LOADED', company_id: 1, debtor_name: 'Beta', city: 'JB', state: 'Johor', customer_delivery_date: '2026-08-28', vehicle: null, driver_name: null, ...MONEY },
       // Other company — must never appear (company scope).
       { id: 'do-9', do_number: 'DO-9', status: 'DRAFT', company_id: 2, debtor_name: 'Other Co', ...MONEY },
@@ -70,6 +71,11 @@ function seed() {
     ],
     delivery_order_crew: [
       { do_id: 'do-1', lorry_plate: 'ABC-1234', driver_1_name: 'Ali Bin' },
+    ],
+    mfg_sales_orders: [
+      { doc_no: 'SO-1', company_id: 1, ref: 'CUST-REF-77', customer_so_no: null, ...MONEY },
+      // Same number in the other company — its reference must not be borrowed.
+      { doc_no: 'SO-1', company_id: 2, ref: 'OTHER-CO-REF', customer_so_no: null },
     ],
   };
 }
@@ -116,6 +122,15 @@ describe('loading list — no money in the payload, ever', () => {
   test('company scope — the other company’s DO never appears', async () => {
     const body = await get(app(seed()), '?status=all');
     expect(body.deliveryOrders.map((d: any) => d.do_number)).not.toContain('DO-9');
+  });
+
+  test('carries the Sales Order reference so the search can find a DO by it', async () => {
+    const body = await get(app(seed()), '?status=all');
+    const do1 = body.deliveryOrders.find((d: any) => d.do_number === 'DO-1');
+    expect(do1.so_ref).toBe('CUST-REF-77');
+    expect(do1.so_customer_so_no).toBeNull();
+    const do2 = body.deliveryOrders.find((d: any) => d.do_number === 'DO-2');
+    expect(do2.so_ref).toBeNull();
   });
 
   test('lorry falls back to the header vehicle when no crew row exists', async () => {

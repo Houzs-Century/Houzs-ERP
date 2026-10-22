@@ -3,6 +3,7 @@ import type { Env } from "../types";
 import { getUserBySession, timingSafeEqualStr, type AuthUser, mintSessionPass } from "../services/auth";
 import { tryPassAuth } from "../services/session-pass";
 import { hasPermission } from "../services/permissions";
+import { canViewItPages } from "../services/itAccess";
 import { isSalesDirectorUser, isSalesUser, isDirectorUser } from "../services/pmsAccess";
 import {
   fullAccessMap,
@@ -230,6 +231,20 @@ export function requirePermission(perm: string): MiddlewareHandler<{ Bindings: E
   };
 }
 
+/** Gate for the IT pages (System Health, AI usage). See services/itAccess.ts. */
+export function requireItPages(): MiddlewareHandler<{ Bindings: Env }> {
+  return async (c, next) => {
+    const user = c.get("user");
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- typed as set, but unset if a route forgets authMiddleware
+    if (!user) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- tests and scripts build AuthUser without permissions_set
+    if (!canViewItPages(user.permissions_set ?? user.permissions)) {
+      return c.json({ error: "You don't have permission to do that." }, 403);
+    }
+    await next();
+  };
+}
+
 /**
  * ADDITIVE gate: admit the caller if they hold `perm` OR they are a
  * "Sales Director" (STABLE ORG FIELD position_name, see
@@ -404,6 +419,28 @@ export const requireScmAccess: MiddlewareHandler<{ Bindings: Env }> = async (c, 
   // path gate keeps procurement / warehouse / finance SCM areas closed to a
   // Sales rep with no explicit grant.
   if (c.req.path.includes("/mfg-sales-orders") && isSalesUser(user)) {
+    await next();
+    return;
+  }
+  // Additive (owner 2026-09-30, 申请付款): a holder of the flat key
+  // scm.payment_request.create — a sales PIC asking Finance to pay an event's
+  // rental — reaches the payment-request router and nothing else. TIGHT: that one
+  // prefix; the router answers such a caller with their OWN requests only and
+  // keeps every voucher, account and supplier behind Finance's own doors. A
+  // Sales caller by stable org field reaches it too (owner 2026-10-14, option
+  // A): the refund they asked for from an order is a request of their own, read
+  // there — raising any other request still takes the key.
+  if (/\/scm\/payment-requests(\/|$)/.test(c.req.path)
+    && (hasPermission(granted, "scm.payment_request.create") || isSalesUser(user))) {
+    await next();
+    return;
+  }
+  // Additive (owner 2026-10-06, product request: Sales 都能提, Purchaser 批): a
+  // Sales caller by stable org field, or a holder of either flat product-request
+  // key, reaches the product-request router and nothing else. The router shows
+  // a requester their own requests only; the Purchaser's key sees all.
+  if (/\/scm\/product-requests(\/|$)/.test(c.req.path)
+    && (isSalesUser(user) || hasPermission(granted, "scm.product_request.create") || hasPermission(granted, "scm.product_request.approve"))) {
     await next();
     return;
   }

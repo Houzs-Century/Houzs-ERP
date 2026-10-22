@@ -81,7 +81,7 @@ describe('DiscountInput — one field, no mode to pick', () => {
     render(<DiscountInput bare valueSen={25_000} baseSen={BASE} onCommit={vi.fn()} />);
     const box = screen.getByLabelText('Discount — type an amount or a percentage') as HTMLInputElement;
     expect(box.value).toBe('250.00');
-    expect(screen.getByText('= 25% of RM 1000.00')).toBeTruthy();
+    expect(screen.getByText('= 25% of RM 1,000.00')).toBeTruthy();
   });
 
   test('clearing the field commits 0', () => {

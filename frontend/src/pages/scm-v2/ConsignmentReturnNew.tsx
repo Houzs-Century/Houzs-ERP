@@ -347,7 +347,7 @@ export const ConsignmentReturnNew = () => {
                 onChange={(e) => setDebtorName(e.target.value)} placeholder="e.g. Lim Mei Hua" required />
             </label>
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Customer Ref</span>
+              <span className={styles.fieldLabel}>Ref No.</span>
               <input className={styles.fieldInput} value={customerSoNo}
                 placeholder="Their PO / order number" onChange={(e) => setCustomerSoNo(e.target.value)} />
             </label>
@@ -537,7 +537,9 @@ export const ConsignmentReturnNew = () => {
               client-side invention - a red ring and a ` *` for a field the
               backend never asked for. */
               variantsRequired={false}
+              lineDateLocked={false}
               seedSofaLegDefault={false}
+              attachOptions={null}
             />
           ))}
           <AddLineButton variant="block" onClick={addLine} />

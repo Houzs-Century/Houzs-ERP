@@ -35,8 +35,8 @@ import { fmtDate, fmtTime } from "../vendor/shared/format";
 
 import type { AcDocGroup, AcOutboxRow } from "./autocountOutbox";
 
-/** `dd/mm/yyyy`, which is what `fmtDate` produces for anything it can read. */
-const AC_DMY = /^(\d{2})\/(\d{2})\/(\d{4})$/;
+/** `yyyy/mm/dd`, which is what `fmtDate` produces for anything it can read. */
+const AC_DMY = /^(\d{4})\/(\d{2})\/(\d{2})$/;
 
 /** The mark for a cell with no value. One constant so no column picks its own,
  *  and so a test can ask for it by name rather than by glyph. */
@@ -205,7 +205,9 @@ export const acDayKey = (row: AcOutboxRow): string => fmtDate(acWhenIso(row));
  */
 export function acWhenText(row: AcOutboxRow): string {
   const key = acDayKey(row);
-  return AC_DMY.test(key) ? `${key.slice(0, 5)} ${fmtTime(acWhenIso(row))}` : AC_NO_VALUE;
+  // The separator above the row carries the full date; the cell shows month/day
+  // (the year-first key with its leading "yyyy/" trimmed) + the time.
+  return AC_DMY.test(key) ? `${key.slice(5)} ${fmtTime(acWhenIso(row))}` : AC_NO_VALUE;
 }
 
 /** A row whose timestamp cannot be read still belongs somewhere, and it says so
@@ -339,8 +341,9 @@ export function acGroupsInRange(
      disagree at a day boundary. A row whose timestamp cannot be read matches no
      window and is honestly dropped from every range except All time. */
   if (range === "month") {
-    const mm = today.slice(3);
-    return groups.filter((g) => acDayKey(g.current).slice(3) === mm);
+    // The year-first key's "yyyy/mm" prefix is the calendar month.
+    const mm = today.slice(0, 7);
+    return groups.filter((g) => acDayKey(g.current).slice(0, 7) === mm);
   }
   const days = range === "today" ? 1 : 7;
   const keys = new Set(

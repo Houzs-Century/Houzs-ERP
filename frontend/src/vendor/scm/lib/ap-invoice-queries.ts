@@ -37,8 +37,11 @@ export type ApInvoiceHeader = {
   id: string; invoice_number: string; supplier_id: string; supplier_invoice_ref: string | null;
   invoice_date: string; due_date: string | null; currency: string; total_sen: number; paid_sen: number;
   status: string; notes: string | null; posted_at: string | null; posted_by: string | null;
+  /** 欠正式单 (item 3): booked on a proforma — OWED, RECEIVED (to check), CHECKED. */
+  official_doc?: string | null; official_doc_note?: string | null;
 };
-export type ApInvoiceLine = { id: string; line_no: number; description: string | null; debit_account_code: string; amount_sen: number };
+/** project_id: the event the line's money is for (owner 2026-09-30, 5a). */
+export type ApInvoiceLine = { id: string; line_no: number; description: string | null; debit_account_code: string; amount_sen: number; project_id?: number | null };
 
 export const useApInvoices = (kind: ApListKind = 'ALL') => useQuery({
   queryKey: ['ap-invoices', kind],
@@ -56,15 +59,21 @@ const invalidate = (qc: ReturnType<typeof useQueryClient>) => {
   void qc.invalidateQueries({ queryKey: ['ap-invoices'] });
   void qc.invalidateQueries({ queryKey: ['ap-invoice'] });
   void qc.invalidateQueries({ queryKey: ['ap-aging'] });
+  /* A bill entered, changed or cancelled is (or stops being) another's same bill. */
+  void qc.invalidateQueries({ queryKey: ['payment-request-bill-matches'] });
+  /* …and answers (or, cancelled, re-opens) a request on Finance's waiting count. */
+  void qc.invalidateQueries({ queryKey: ['payment-requests'] });
 };
 
-export type ApInvoiceLineInput = { description?: string; debitAccountCode: string; amountSen: number };
+export type ApInvoiceLineInput = { description?: string; debitAccountCode: string; amountSen: number; projectId?: number };
 
 export const useCreateApInvoice = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { supplierId: string; supplierInvoiceRef?: string; invoiceDate: string; dueDate?: string | null; notes?: string; lines: ApInvoiceLineInput[] }) =>
-      authedFetch<{ ok: boolean; invoice: ApInvoiceHeader }>(`/ap-invoices`, { method: 'POST', body: JSON.stringify(body) }),
+    /* paymentRequestId: the 申请付款 this bill answers (owner 2026-09-30, 6.1) —
+       the server claims it and copies its files on (requestFilesCopied). */
+    mutationFn: (body: { supplierId: string; supplierInvoiceRef?: string; invoiceDate: string; dueDate?: string | null; notes?: string; lines: ApInvoiceLineInput[]; paymentRequestId?: string }) =>
+      authedFetch<{ ok: boolean; invoice: ApInvoiceHeader; requestFilesCopied?: number }>(`/ap-invoices`, { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => invalidate(qc),
   });
 };

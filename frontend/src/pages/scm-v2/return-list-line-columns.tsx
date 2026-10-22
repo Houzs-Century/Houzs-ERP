@@ -18,7 +18,8 @@
 
 import type { ReactNode } from "react";
 import { lineSumColumn, lineTextColumn } from "../../components/dataTableLineCells";
-import { fmtDate } from "@2990s/shared";
+import { fmtDate, fmtQty } from "@2990s/shared";
+import { formatCurrency } from "../../lib/utils";
 import type { Column } from "../../components/DataTable";
 import type { ExportCell } from "../../components/dataTableLineExport";
 import type { ReturnLineColumn } from "../../vendor/scm/lib/return-line-export-columns";
@@ -38,14 +39,12 @@ export type ReturnColumnValues<R, L> = {
 
 const DASH = "—";
 
-const money = (n: number): string =>
-  n.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const rate = (n: number): string =>
   n.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
 
 const shown = (v: ExportCell, format: ReturnLineColumn["format"]): string => {
   if (v === null || v === "") return DASH;
-  if (typeof v === "number") return format === "money" ? money(v) : format === "rate" ? rate(v) : String(v);
+  if (typeof v === "number") return format === "money" ? formatCurrency(v) : format === "rate" ? rate(v) : format === "number" ? fmtQty(v) : String(v);
   return format === "date" ? fmtDate(v) : v;
 };
 

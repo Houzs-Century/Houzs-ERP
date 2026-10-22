@@ -27,10 +27,23 @@ import { PROJECT_STATUS_OPTIONS, paymentPillOptions } from "../vendor/scm/lib/pm
 import "./mobile.css";
 import { fmtTime } from "../vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
+import { EditProjectSheet } from "./MobileEditProjectSheet";
 import { DefectActionsCtx, DefectFileActions, type AttachmentAction } from "./MobilePmsDefectActions";
-import { PlanFileChips } from "./MobilePmsPlanFileChips";
+import {
+  SalesDocsCard, BigFilePreview, ReviewBadge, ReviewButtons, R2Thumb, UploadGlyph,
+  CREW_DOC_TILES, DEFECT_REVIEW_TILES,
+  autoSubmitReviewable, checklistReviewVisible, removeChecklistAttachment,
+  mimeFromKey, humanize, roleColor, roleLabelParts, formatRoleLabel,
+  type ChecklistItem, type TaskAttachment, type DocTile,
+  type NotifyFn, type ConfirmFn, type PromptFn, type SetBusy,
+} from "./MobilePmsDocCard";
 import { floorPlanTileVisible } from "./MobilePmsFloorPlanTiles";
+import { MobilePmsSalesOrders } from "./MobilePmsSalesOrders";
+import { MobilePmsPosSales, useMobileProjectPosSales } from "./MobilePmsPosSales";
+import { MobilePmsSalesBills, useMobileProjectSalesBills, type MobileProjectSalesBillsQuery } from "./MobilePmsSalesBills";
+import { fmtRmSen, notOpenedByRepId } from "../lib/projectSalesBills";
 import { SoloSafeName, useCanSeeSoloOrganizer, isSoloMasked, shownProjectName } from "../pages/projects/SoloSafeName";
+import type { EventPnl } from "../pages/projects/types";
 
 /* ------------------------------------------------------------------ *
  * Mobile Project (PMS) — list + detail.
@@ -94,36 +107,7 @@ type ListResponse = {
 };
 
 // ── Detail (subset — never crash on missing fields) ──
-type ChecklistItem = {
-  id: number;
-  seq: number;
-  title: string;
-  role_label: string | null;
-  due_date: string | null;
-  status: string | null; // pending | done | na | blocked | review | rejected | amended
-  section_id: number | null;
-  owner_name?: string | null;
-  required_perm?: string | null;
-  // mig 090 — payment / deposit rows render as multi-state pills instead of a
-  // done/pending tick. pill_value stored via the standard checklist PATCH.
-  pill_kind?: string | null; // "rental_payment" | "security_deposit" | null
-  pill_value?: string | null; // none | unpaid | fully_paid | refunded
-  review_status?: string | null; // drives the approve/reject gate
-  notes?: string | null; // item-level remark (Deco/Coffee Table, Weekend Activity)
-};
-
-// Per-task attachment (mig 050). Grouped by item_id.
-type TaskAttachment = {
-  id: number;
-  item_id: number;
-  r2_key: string;
-  file_name: string | null;
-  mime_type: string | null;
-  uploader_name?: string | null;
-  uploaded_at?: string | null;
-  archived_at?: string | null;
-  caption?: string | null;
-};
+// ChecklistItem + TaskAttachment moved to MobilePmsDocCard.tsx (imported above).
 
 type TasklistSection = {
   id: number;
@@ -208,6 +192,9 @@ type ProjectDetail = {
     total_sales: number | null;
   } | null;
   finance_lines?: FinanceLine[];
+  /** The two P&Ls (owner 2026-10-16; backend services/eventPnl.ts) — the same
+   *  figures the desktop event page shows. Null on an older server. */
+  finance_pnl?: EventPnl | null;
   checklist?: ChecklistItem[];
   checklist_attachments?: TaskAttachment[];
   sections?: TasklistSection[];
@@ -239,7 +226,9 @@ type StockTransfer = {
   fileName?: string | null;
 };
 
-// Finance ledger line (income/cost). Synthetic sales rows carry source='sales_entry'.
+// Finance ledger line (income/cost). Synthetic sales rows carry source='sales_entry';
+// money Finance posted to the event carries source='books' and its document
+// number (payment-request item 5 — the server already set aside what it replaced).
 type FinanceLine = {
   id: number;
   kind: string;
@@ -258,6 +247,7 @@ type FinanceLine = {
   autoSource?: string | null;
   source?: string | null;
   source_id?: number | null;
+  doc_no?: string | null;
 };
 
 type ProjectAttachment = {
@@ -280,13 +270,11 @@ type Lorry = { id: number; plate: string | null; type?: string | null; is_intern
 // ── Reference-data list rows (populate the write-form selects) ──
 type PicUser = { id: number; name: string | null; email: string };
 type SalesRepOption = { id: number; code: string | null; name: string | null };
+/** Active staff not on the Sales Team roster yet — adding one puts them on it. */
+type StaffOption = { user_id: number; name: string | null; email: string };
 type FleetStaff = { id: number; name: string | null; role_name: string | null; phone?: string | null; company_phone?: string | null; companyPhone?: string | null };
 
-// ── Shared dialog-hook / setter fn types (props into the write blocks) ──
-type NotifyFn = (o: { title: string; body?: ReactNode; tone?: "info" | "error" }) => Promise<void>;
-type ConfirmFn = (o: { title: string; body?: ReactNode; confirmLabel?: string; cancelLabel?: string; danger?: boolean }) => Promise<boolean>;
-type PromptFn = (o: { title: string; body?: ReactNode; defaultValue?: string; placeholder?: string; confirmLabel?: string; validate?: (v: string) => string | null }) => Promise<string | null>;
-type SetBusy = Dispatch<SetStateAction<boolean>>;
+// Shared dialog-hook / setter fn types moved to MobilePmsDocCard.tsx (imported above).
 
 // Dual-read helper — the PG driver camelCases result columns, so a row may
 // carry either snake_case (D1 fallback / raw SQL) or camelCase. Always read
@@ -352,10 +340,14 @@ export function MobilePMS({ onBack, initialProjectId }: { onBack?: () => void; i
   // leaves PMS entirely; once the user visits the list, Back returns to it.
   const [direct, setDirect] = useState<boolean>(initialProjectId != null);
 
+  // Peter 2026-10-14: the list screen unmounts while a detail is open, so its
+  // scroll position died with it — remember it here and restore on return.
+  const listScroll = useRef(0);
+
   if (openId != null) {
     return <ProjectDetailView id={openId} onBack={() => (direct ? onBack?.() : setOpenId(null))} />;
   }
-  return <ProjectListView onOpen={(id) => { setDirect(false); setOpenId(id); }} onBack={onBack} />;
+  return <ProjectListView onOpen={(id) => { setDirect(false); setOpenId(id); }} onBack={onBack} scrollMemory={listScroll} />;
 }
 
 // ── List ──
@@ -395,7 +387,7 @@ const STAGE_FILTERS: [string, string][] = [
 
 const PMS_PAGE_SIZE = 30;
 
-function ProjectListView({ onOpen, onBack }: { onOpen: (id: number) => void; onBack?: () => void }) {
+function ProjectListView({ onOpen, onBack, scrollMemory }: { onOpen: (id: number) => void; onBack?: () => void; scrollMemory?: { current: number } }) {
   const { can, user } = useAuth();
   // Owner 2026-07-21: the sales cohort's list rows show progress over THEIR
   // OWN deliverables (SALES PIC tasks) — the admin section chip ("CONTRACT
@@ -498,6 +490,15 @@ function ProjectListView({ onOpen, onBack }: { onOpen: (id: number) => void; onB
     [data],
   );
   const totalCount = data?.pages[0]?.total ?? 0;
+  // Restore the remembered scroll ONCE rows have height again (they come from
+  // the query cache on return, so this fires on the first paint back).
+  const restoredScroll = useRef(false);
+  useEffect(() => {
+    if (restoredScroll.current || !scrollMemory?.current || rows.length === 0) return;
+    restoredScroll.current = true;
+    scrollRef.current?.scrollTo(0, scrollMemory.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows.length]);
   const searchTransition = useSearchResultTransition({
     inputTerm: q,
     requestTerm: debouncedQ,
@@ -584,7 +585,7 @@ function ProjectListView({ onOpen, onBack }: { onOpen: (id: number) => void; onB
         </div>
       </header>
 
-      <div ref={scrollRef} className="scroll" style={{ padding: 14, paddingBottom: 120 }}>
+      <div ref={scrollRef} className="scroll" style={{ padding: 14, paddingBottom: 120 }} onScroll={(e) => { if (scrollMemory) scrollMemory.current = e.currentTarget.scrollTop; }}>
 
         {isLoading && <div style={{ textAlign: "center", color: "#9aa093", fontSize: 12, padding: "26px 0" }}>Loading…</div>}
         {error && <div style={{ textAlign: "center", color: "#b23a3a", fontSize: 12, padding: "26px 0" }}>Couldn't load projects. Pull to retry.</div>}
@@ -725,6 +726,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   // Owner 2026-07-21: the system project code is unreadable at full length —
   // the header meta collapses to one ellipsised line, tap toggles the full string.
   const [metaExpanded, setMetaExpanded] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["mobile-pms-detail", id],
@@ -782,12 +784,15 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
 
   const salesRepsQ = useQuery({
     queryKey: ["mobile-pms-sales-reps"],
-    queryFn: () => api.get<{ data: SalesRepOption[] }>(`/api/projects/sales-rep-options`),
+    queryFn: () => api.get<{ data: SalesRepOption[]; others?: StaffOption[] }>(`/api/projects/sales-rep-options`),
     staleTime: 5 * 60_000,
     enabled: canWrite,
     retry: false,
   });
   const salesReps = salesRepsQ.data?.data ?? [];
+  /* Owner 2026-10-19: staff in other departments who stand at fairs (Lim,
+     Nancy, Syasya) — picked here, they join the Sales Team roster. */
+  const salesStaff = salesRepsQ.data?.others ?? [];
 
   const fleetQ = useQuery({
     queryKey: ["mobile-pms-fleet"],
@@ -946,6 +951,10 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   // (isSalesExecMgr) HOLDS the log-sale action but has canFinancial=false, so
   // nesting it under the finance gate lost the action for the person who owns it.
   const canViewSales = salesAccess !== "none" || isSalesStaff || isDirectorPos;
+  // The pasted sales report — the Sales panel's block and the red number
+  // beside each name under Sales Attending read the same query.
+  const billsQ = useMobileProjectSalesBills(id, canViewSales);
+  const notOpenedByRep = notOpenedByRepId(billsQ.data?.persons ?? []);
   // ── Owner 2026-07-23 card respec — the remaining two cohorts go card-based ──
   // cohortMgmt = management dept / directors / owner / BD; cohortOps = the
   // office/ops staff left over (Nancy, Farra, Sim, Syu, Syasya, logistic
@@ -963,12 +972,16 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   // kingsley = id 44 "Kingsley"/Sales Director, the Agreement Approver).
   const isWeisiangDev = user?.id === 4;
   const isKingsley = user?.id === 44;
+  // Ummu (id 7) — owner 2026-09-30: upload + edit on the mobile doc cards.
+  // Her BD Exec role already lands her in isBD, but the grant is pinned to the
+  // stable id so a role rename can't silently drop it.
+  const isUmmu = user?.id === 7;
   const isFinanceRole = /finance/i.test(_roleName) || /^finance manager$/i.test(_pos);
   const isSalesDirectorPos = /^sales\s*director$/i.test(_pos);
   // Doc-edit tiers: BD-domain documents (license, weekend, stamp duty, permit,
   // decoration, payment, S&D docs) are editable by owner/BD/weisiang; the
   // Agreement/Quotation contract additionally by Kingsley.
-  const canBdEdit = isOwnerAdmin || isBD || isWeisiangDev;
+  const canBdEdit = isOwnerAdmin || isBD || isWeisiangDev || isUmmu;
   const canContractEdit = canBdEdit || isKingsley;
   // P&L: edit for owner/BD/weisiang/finance; VIEW-ONLY for sales directors;
   // hidden from everyone else (server already strips finance data for
@@ -1035,8 +1048,13 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
   const opsSdTiles: DocTile[] = [
     { label: "Setup Image (Driver)", match: /^setup image/i, driverOnly: true, readOnly: true },
     { label: "Setup Image (Sales PIC)", match: /^setup image/i, salesPicOnly: true, readOnly: true },
-    { label: "Defect Item Setup", match: /^defect (list|item) setup/i, readOnly: true },
-    { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, readOnly: true },
+    // A reviewer (Nancy, Ops Exec) has the dedicated Defect list card — drop
+    // the view-only defect pair here so it doesn't render twice (same rule as
+    // the crew card).
+    ...(defectActionsValue.canReview ? [] : [
+      { label: "Defect Item Setup", match: /^defect (list|item) setup/i, readOnly: true },
+      { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, readOnly: true },
+    ]),
     { label: "Event Complete Image", match: /^event complete image/i, readOnly: true },
     { label: "Dismantle Image", match: /^dismantle image/i, readOnly: true },
   ];
@@ -1151,35 +1169,20 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
             )}
             {/* Edit lived on the (removed) Project card's summary — the card
                 is gone (owner 2026-07-22: header carries all its info), so the
-                sequential-prompt editor moved up here. Same flow, same gate. */}
+                editor moved up here. Owner 2026-09-21: it opens a single sheet
+                with every field on screen (name, booth, venue, organizer, both
+                dates) — the old back-to-back prompts ended the moment any one was
+                dismissed, so the operator never reached the date fields. Same
+                gate, same fields, same PATCH. `soloMasked` still drops name +
+                organizer for a user who may not see a solo event's organizer
+                (owner 2026-09-18), exactly as the old prompt flow did. */}
             {p && canWrite && access.canEdit && (
               <button
                 className="tinybtn"
                 disabled={busy}
                 aria-label="Edit project"
                 style={{ background: "rgba(255,255,255,.08)", borderColor: "rgba(231,234,228,.18)", color: "#e7eae4" }}
-                onClick={async () => {
-                  if (busy) return;
-                  // Sequential single-field prompts (usePrompt returns one
-                  // value); each null/cancel ends the flow, blanks are skipped.
-                  const fields = ([
-                    ["name", "Project name", p.name],
-                    ["booth_no", "Booth number", p.booth_no],
-                    ["venue", "Venue", p.venue],
-                    ["organizer", "Organizer", p.organizer],
-                    ["start_date", "Start date (YYYY-MM-DD)", p.start_date],
-                    ["end_date", "End date (YYYY-MM-DD)", p.end_date],
-                  ] as Array<[string, string, string | null | undefined]>).filter((fld) => !(soloMasked && (fld[0] === "name" || fld[0] === "organizer")));
-                  const patch: Record<string, unknown> = {};
-                  for (const [key, label, cur] of fields) {
-                    const val = await prompt({ title: `Edit ${label}`, placeholder: label, defaultValue: (cur ?? "") as string });
-                    if (val == null) break; // cancelled — stop the flow
-                    const t = val.trim();
-                    if (key === "name" && !t) continue; // name can't be blanked
-                    if (t !== (cur ?? "")) patch[key] = t || null;
-                  }
-                  if (Object.keys(patch).length > 0) await patchProject(patch);
-                }}
+                onClick={() => { if (!busy) setEditOpen(true); }}
               >
                 Edit
               </button>
@@ -1225,6 +1228,16 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
           {p?.code || "—"}
         </div>
       </header>
+
+      {p && canWrite && access.canEdit && editOpen && (
+        <EditProjectSheet
+          project={p}
+          busy={busy}
+          hideNameOrganizer={soloMasked}
+          onClose={() => setEditOpen(false)}
+          onSave={patchProject}
+        />
+      )}
 
       <div className="scroll" style={{ padding: 14, paddingBottom: 120 }}>
         {isLoading && <div style={{ textAlign: "center", color: "#9aa093", fontSize: 12, padding: "26px 0" }}>Loading…</div>}
@@ -1312,6 +1325,8 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                   projectId={id}
                   attendees={data.sales_attendees ?? []}
                   options={salesReps}
+                  others={salesStaff}
+                  notOpenedByRep={notOpenedByRep}
                   canWrite={canEditAttending}
                   busy={busy}
                   setBusy={setBusy}
@@ -1319,6 +1334,24 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                   confirm={confirm}
                   reload={reload}
                 />
+                {/* Agreement / Quotation — owner 2026-09-30: inside the Team
+                    card, AFTER Sales Attending ("sales attending supposed
+                    below PIC"), so the card reads PIC → Sales attending →
+                    Quotation. Same visibility tier as the old Contract card
+                    (owner / BD / weisiang / Ummu / Kingsley). */}
+                {cohortMgmt && canContractEdit && (
+                  <div style={{ marginTop: 10 }}>
+                    <SalesDocsCard
+                      bare
+                      tiles={mgmtContractTiles}
+                      showRoleTags
+                      checklist={data.checklist}
+                      attachments={data.checklist_attachments}
+                      canTick={canTick}
+                      busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
+                    />
+                  </div>
+                )}
               </div>
             </details>
 
@@ -1419,8 +1452,13 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
             )}
 
             {/* Defect list — the state reviewer's own card (owner 2026-09-15):
-                per-photo Done/Replace for Shukor / Nancy / admin. See the guide. */}
-            {defectActionsValue.canReview && (
+                per-photo Done/Replace for Shukor / Nancy. See the guide.
+                NOT for the mgmt cohort (owner 2026-09-30 "no upload button"):
+                admin matches canReview too, and this read-only card rendered
+                BESIDE their editable defect tiles in the S&D documents card —
+                the duplicate without an upload path read as a missing button.
+                Their own tiles carry Done/Replace as well, so nothing is lost. */}
+            {defectActionsValue.canReview && !cohortMgmt && (
               <SalesDocsCard
                 tiles={DEFECT_REVIEW_TILES}
                 title="Defect list"
@@ -1449,17 +1487,8 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                 S&D DOCUMENTS → FLOORPLANS → SALES → P&L. */}
             {cohortMgmt && (
               <>
-                {canContractEdit && (
-                  <SalesDocsCard
-                    tiles={mgmtContractTiles}
-                    showRoleTags
-                    title="Contract"
-                    checklist={data.checklist}
-                    attachments={data.checklist_attachments}
-                    canTick={canTick}
-                    busy={busy} setBusy={setBusy} notify={notify} prompt={prompt} confirm={confirm} reload={reload}
-                  />
-                )}
+                {/* Contract card moved INTO the Team card, under the PIC name
+                    (owner 2026-09-30). */}
                 {/* Owner 2026-07-28: the PAYMENT card is hidden from the Sales
                     Director view (sales staff never see it either). */}
                 {!isSalesDirectorPos && (
@@ -1581,6 +1610,8 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
               <SalesPanel
                 projectId={id}
                 incomeLines={data.finance_lines}
+                finalTotalRm={data.finance?.total_sales ?? null}
+                bills={billsQ}
                 canLogSale={canLogSale}
                 busy={busy}
                 setBusy={setBusy}
@@ -1598,6 +1629,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
               <FinancialSnapshot
                 finance={data.finance!}
                 lines={data.finance_lines}
+                pnl={data.finance_pnl ?? null}
                 canWrite={canWrite && financeCanEdit}
                 busy={busy}
                 setBusy={setBusy}
@@ -1616,11 +1648,15 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
 
 // ── Sales attending (add via picker + remove) ──
 function SalesAttending({
-  projectId, attendees, options, canWrite, busy, setBusy, notify, confirm, reload,
+  projectId, attendees, options, others, notOpenedByRep, canWrite, busy, setBusy, notify, confirm, reload,
 }: {
   projectId: number;
   attendees: SalesAttendee[];
   options: SalesRepOption[];
+  /** Staff not on the Sales Team roster; adding one puts them on it. */
+  others: StaffOption[];
+  /** sen still not opened per rep, from the pasted sales report — red beside the name. */
+  notOpenedByRep: Map<number, number>;
   canWrite: boolean;
   busy: boolean;
   setBusy: SetBusy;
@@ -1632,8 +1668,21 @@ function SalesAttending({
   // Multi-select (owner 2026-07-23): tick several reps, add them in one go —
   // mirrors the desktop checkbox list instead of the old one-at-a-time picker.
   const [picks, setPicks] = useState<Set<number>>(new Set());
+  const [staffPicks, setStaffPicks] = useState<Set<number>>(new Set());
   const present = new Set(attendees.map((a) => a.sales_rep_id));
   const available = options.filter((o) => !present.has(o.id));
+  const pickedCount = picks.size + staffPicks.size;
+  // Peter 2026-10-21: merge reps + the 2026-10-19 "not in Sales Team" staff into
+  // ONE continuous A→Z list (they were two separate A→Z sections, so the picker
+  // restarted the alphabet at the divider and read as un-sorted). Non-roster
+  // staff keep a small inline tag.
+  type PickItem =
+    | { kind: "rep"; id: number; name: string; code: string | null }
+    | { kind: "staff"; id: number; name: string };
+  const pickItems: PickItem[] = [
+    ...available.map((o): PickItem => ({ kind: "rep", id: o.id, name: o.name ?? `#${o.id}`, code: o.code })),
+    ...others.map((s): PickItem => ({ kind: "staff", id: s.user_id, name: s.name || s.email })),
+  ].sort((a, b) => a.name.localeCompare(b.name));
 
   const toggle = (id: number) =>
     setPicks((prev) => {
@@ -1642,15 +1691,26 @@ function SalesAttending({
       else n.add(id);
       return n;
     });
+  const toggleStaff = (userId: number) =>
+    setStaffPicks((prev) => {
+      const n = new Set(prev);
+      if (n.has(userId)) n.delete(userId);
+      else n.add(userId);
+      return n;
+    });
 
   const addSelected = async () => {
-    if (!picks.size) return;
+    if (!pickedCount) return;
     setBusy(true);
     try {
       for (const repId of picks) {
         await api.post(`/api/projects/${projectId}/sales-attendees`, { sales_rep_id: repId });
       }
+      for (const userId of staffPicks) {
+        await api.post(`/api/projects/${projectId}/sales-attendees`, { user_id: userId });
+      }
       setPicks(new Set());
+      setStaffPicks(new Set());
       setAdding(false);
       reload();
     } catch (e) {
@@ -1678,24 +1738,32 @@ function SalesAttending({
     <>
       <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "10px 0 6px" }}>
         <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093" }}>Sales attending</span>
-        {canWrite && !adding && available.length > 0 && (
+        {canWrite && !adding && (available.length > 0 || others.length > 0) && (
           <button className="tinybtn" style={{ marginLeft: "auto" }} disabled={busy} onClick={() => setAdding(true)}>+ Add</button>
         )}
       </div>
       {adding && (
         <div style={{ marginBottom: 8 }}>
           <div style={{ maxHeight: 240, overflowY: "auto", border: "1px solid #e3e6e0", borderRadius: 10 }}>
-            {available.length === 0 && (
+            {pickItems.length === 0 && (
               <div style={{ fontSize: 12, color: "#9aa093", padding: "9px 11px" }}>Everyone is already attending.</div>
             )}
-            {available.map((o, i) => (
+            {pickItems.map((it, i) => (
               <label
-                key={o.id}
+                key={it.kind === "rep" ? `rep-${it.id}` : `staff-${it.id}`}
                 style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 11px", borderTop: i === 0 ? "none" : "1px solid #eceee9", cursor: busy ? "default" : "pointer" }}
               >
-                <input type="checkbox" checked={picks.has(o.id)} disabled={busy} onChange={() => toggle(o.id)} />
-                <span className="money" style={{ fontSize: 10, color: "#9aa093" }}>{o.code || "—"}</span>
-                <span style={{ fontSize: 13 }}>{o.name || `#${o.id}`}</span>
+                <input
+                  type="checkbox"
+                  checked={it.kind === "rep" ? picks.has(it.id) : staffPicks.has(it.id)}
+                  disabled={busy}
+                  onChange={() => (it.kind === "rep" ? toggle(it.id) : toggleStaff(it.id))}
+                />
+                {it.kind === "rep" && <span className="money" style={{ fontSize: 10, color: "#9aa093" }}>{it.code || "—"}</span>}
+                <span style={{ fontSize: 13, flex: 1, minWidth: 0 }}>{it.name}</span>
+                {it.kind === "staff" && (
+                  <span style={{ fontSize: 8.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em", color: "#b4791a", background: "#fdf1dc", borderRadius: 10, padding: "1px 6px" }} title="Not in the Sales Team yet — adding puts them in it">+ team</span>
+                )}
               </label>
             ))}
           </div>
@@ -1703,12 +1771,12 @@ function SalesAttending({
             <button
               className="tinybtn"
               style={{ background: "#16695f", borderColor: "#16695f", color: "#fff" }}
-              disabled={busy || picks.size === 0}
+              disabled={busy || pickedCount === 0}
               onClick={addSelected}
             >
-              Add selected{picks.size ? ` (${picks.size})` : ""}
+              Add selected{pickedCount ? ` (${pickedCount})` : ""}
             </button>
-            <button className="tinybtn" disabled={busy} onClick={() => { setAdding(false); setPicks(new Set()); }}>Cancel</button>
+            <button className="tinybtn" disabled={busy} onClick={() => { setAdding(false); setPicks(new Set()); setStaffPicks(new Set()); }}>Cancel</button>
           </div>
         </div>
       )}
@@ -1719,6 +1787,9 @@ function SalesAttending({
             <div key={s.sales_rep_id} style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 11px", borderTop: i === 0 ? "none" : "1px solid #eceee9" }}>
               <span className="money" style={{ fontSize: 10, color: "#9aa093" }}>{s.rep_code || "—"}</span>
               <span style={{ fontSize: 12.5, fontWeight: 600, color: "#11140f", flex: 1, minWidth: 0 }}>{s.rep_name || s.user_name || "—"}</span>
+              {(notOpenedByRep.get(s.sales_rep_id) ?? 0) > 0 && (
+                <span className="money" style={{ fontSize: 11, fontWeight: 700, color: "#b42318" }}>{fmtRmSen(notOpenedByRep.get(s.sales_rep_id))}</span>
+              )}
               {canWrite && (
                 <button aria-label="Remove" className="tinybtn" disabled={busy} style={{ padding: "3px 7px", color: "#a13a34", fontWeight: 700 }} onClick={() => remove(s)}>×</button>
               )}
@@ -1740,10 +1811,14 @@ function SalesAttending({
 // a sales-only user therefore sees the log action with an empty list and still
 // no P&L.
 function SalesPanel({
-  projectId, incomeLines, canLogSale, busy, setBusy, prompt, notify, reload,
+  projectId, incomeLines, finalTotalRm, bills, canLogSale, busy, setBusy, prompt, notify, reload,
 }: {
   projectId: number;
   incomeLines?: FinanceLine[];
+  /** project_finance.total_sales (RM) — null when finance is stripped or unset. */
+  finalTotalRm: number | null;
+  /** The pasted sales report, read by the detail view and shared with Sales Attending. */
+  bills: MobileProjectSalesBillsQuery;
   canLogSale: boolean;
   busy: boolean;
   setBusy: SetBusy;
@@ -1751,6 +1826,9 @@ function SalesPanel({
   notify: NotifyFn;
   reload: () => void;
 }) {
+  // The POS bills of a Cash & Carry fair; also tells the panel to drop the
+  // SO / sales-report blocks that project type has none of.
+  const posQ = useMobileProjectPosSales(projectId, true);
   // Quick-log a sale at the project (POST /api/sales/entries { quick_log }).
   // Lands as a draft sales entry; surfaces as a synthetic income line.
   const logSale = async () => {
@@ -1789,6 +1867,13 @@ function SalesPanel({
         <svg className="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 6 6 6-6 6" /></svg>
       </summary>
       <div className="pbody">
+        {/* The Houzs POS bills of a Cash & Carry fair (layout E9) stand in for
+            the sales report and the SO block, which that project type has none of. */}
+        <MobilePmsPosSales query={posQ} />
+        {/* The orders opened in the SO module for this fair — the desktop
+            block's phone half, same read and arithmetic. */}
+        {!posQ.data?.pos_enabled && <MobilePmsSalesBills query={bills} />}
+        {!posQ.data?.pos_enabled && <MobilePmsSalesOrders projectId={projectId} finalTotalRm={finalTotalRm} />}
         <div style={{ display: "flex", alignItems: "center", margin: "0 0 6px" }}>
           <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093" }}>Sales entries</span>
           {canLogSale && <button className="tinybtn" style={{ marginLeft: "auto", color: "#16695f", borderColor: "#bcdcd7" }} disabled={busy} onClick={logSale}>+ Log sale</button>}
@@ -1872,33 +1957,7 @@ function StagePipeline({ stage, sections }: { stage: string | null; sections?: S
 }
 
 // ── Tasklist ──
-// Role-badge colours mirror the design's PROJ_TASKS palette, keyed by the
-// checklist item's `role_label` (BD / PURCHASER / DRIVER / SALES PIC …).
-const ROLE_COLOR: Record<string, string> = {
-  BD: "#7a5c86",
-  PURCHASER: "#a16a2e",
-  DRIVER: "#2a6f9e",
-  "SALES PIC": "#16695f",
-  SALES: "#16695f",
-  LOGISTIC: "#2f8a5b",
-  // Shared sales+driver deliverables (the Defect List pair, owner 2026-07-29).
-  "SALES PIC & DRIVER": "#16695f",
-};
-const roleColor = (label: string) => ROLE_COLOR[label.toUpperCase()] ?? "#767b6e";
-// Owner 2026-07-15: badges should read sentence-case ("Purchaser", "Driver",
-// "Sales PIC") instead of shouting all-caps — but keep genuine acronyms
-// (BD, PIC) uppercase, matching how the app writes them elsewhere.
-const ROLE_ACRONYMS = new Set(["BD", "PIC", "PO", "DO", "PPE", "3D", "2D"]);
-const formatRoleLabel = (label: string): string =>
-  label
-    .trim()
-    .split(/\s+/)
-    .map((w) => (ROLE_ACRONYMS.has(w.toUpperCase()) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()))
-    .join(" ");
-// Owner 2026-07-29: a combined role_label ("SALES PIC & DRIVER") renders as
-// SEPARATE badges — one per role, each in its own colour — never one merged tag.
-const roleLabelParts = (label: string): string[] =>
-  label.split("&").map((s) => s.trim()).filter(Boolean);
+// Role-badge colours + label helpers moved to MobilePmsDocCard.tsx (imported above).
 
 // Checklist status cycle for the tick control: pending → done → na → pending.
 const NEXT_STATUS: Record<string, "pending" | "done" | "na"> = {
@@ -2558,20 +2617,7 @@ function CrewLine({ role, person }: { role: string; person: CrewPerson }) {
   );
 }
 
-// Best-effort content type from an R2 key's extension — some payloads
-// (finance lines, phase photos) don't carry a stored mime type, and the
-// lightbox needs one to decide between inline <img>/<video> and a
-// download tile.
-const mimeFromKey = (key: string): string | null => {
-  const m = /\.([a-z0-9]+)$/i.exec(key);
-  if (!m) return null;
-  const ext = m[1].toLowerCase();
-  if (["png", "jpg", "jpeg", "webp", "gif", "heic"].includes(ext)) return `image/${ext === "jpg" ? "jpeg" : ext}`;
-  if (["mp4", "webm"].includes(ext)) return `video/${ext}`;
-  if (ext === "mov") return "video/quicktime";
-  if (ext === "pdf") return "application/pdf";
-  return null;
-};
+// mimeFromKey moved to MobilePmsDocCard.tsx (imported above).
 
 // Split an ISO "date T time" into the parts an <input type=date/time> wants.
 const isoDatePart = (iso: string | null | undefined): string => {
@@ -2773,8 +2819,9 @@ function SetupDismantle({
           )}
           {canScheduleEdit && (
             <>
-              <button className="tinybtn" style={{ width: "100%" }} disabled={busy} onClick={() => void startScheduleUpload()}>
-                {scheduleShots.length ? "+ Add / replace screenshot" : "Upload handbook schedule screenshot"}
+              <button className="tinybtn" style={{ width: "100%", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }} disabled={busy} onClick={() => void startScheduleUpload()}>
+                <UploadGlyph />
+                {scheduleShots.length ? "+ Add / replace screenshot" : "Upload handbook schedule (image or PDF)"}
               </button>
               <input ref={schedRef} type="file" accept="image/*,application/pdf,.heic" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadSchedule(f); }} />
             </>
@@ -3143,553 +3190,7 @@ function PhaseBlock({
   );
 }
 
-// ── Setup & Dismantle documents — sales tile card (owner 2026-07-17) ──
-// The sales cohort's six deliverables rendered as Floor-Plans-style tiles:
-// Weekend Activity is a REMARK tile (tap to edit the item's `notes`); the
-// other five are FILE tiles (thumbnail of the latest upload, tap to view,
-// "+ Add" to upload — Defect List keeps its compulsory per-photo remark).
-// Tiles map to checklist items by title prefix; "Setup Image" exists twice,
-// so that tile pins to the SALES PIC-badged variant.
-// Arrangement per the owner's Card-Editor screenshot (2026-07-17): Weekend
-// full-width on top, Permit+Deco side by side, Setup Image+Defect List side
-// by side, Event Complete Image full-width at the bottom.
-type DocTile = {
-  label: string;
-  match: RegExp;
-  salesPicOnly?: boolean;
-  /** Pin to the DRIVER-badged variant when a title exists in two roles. */
-  driverOnly?: boolean;
-  remarkTile?: boolean;
-  /** Owner 2026-07-21 (crew Decoration): media area shows the item's remark
-   *  AND the files are listed below, view/download-only. */
-  remarkWithFiles?: boolean;
-  requirePhotoRemark?: boolean;
-  /** Full-width tile (spans both grid columns). */
-  fullWidth?: boolean;
-  /** Media area height in px (default 80). */
-  mediaH?: number;
-  /** Owner 2026-07-17: BD-owned items — sales VIEW + DOWNLOAD only, no
-   *  edit/upload/remove from this card. */
-  readOnly?: boolean;
-};
-
-const SALES_DOC_TILES: ReadonlyArray<DocTile> = [
-  { label: "Weekend Activity", match: /^weekend/i, remarkTile: true, fullWidth: true, readOnly: true },
-  { label: "Permit", match: /permit/i, readOnly: true },
-  { label: "Decoration", match: /^deco/i, readOnly: true },
-  { label: "Setup Image", match: /^setup image/i, salesPicOnly: true },
-  // Defect List split (owner 2026-07-29): Setup + Dismantle variants, both
-  // shared with the driver crew ("SALES PIC & DRIVER") and both keeping the
-  // compulsory per-photo remark.
-  { label: "Defect Item Setup", match: /^defect (list|item) setup/i, requirePhotoRemark: true },
-  { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, requirePhotoRemark: true },
-  { label: "Event Complete Image", match: /^event complete image/i, fullWidth: true, mediaH: 108 },
-];
-
-// ── Crew (driver/helper/storekeeper) tile set (owner 2026-07-21 v2) ──
-// Same card style as sales; crew's own photo work lives in Setup & Dismantle's
-// phase photos. Defect tiles carry the per-file action timeline (owner
-// 2026-07-29). Match BOTH title families — live rows are "Defect Item …", not
-// "Defect List …" (BUG-HISTORY 2026-08-07: the narrow match hid the buttons).
-const isDefectTile = (t: { item?: ChecklistItem | null }): boolean =>
-  /^defect (list|item)/i.test((t.item?.title ?? "").trim());
-
-// Reviewer's Defect-list card (owner 2026-09-15). readOnly — reviewers stamp,
-// never upload; isDefectTile still renders the file list + actions.
-const DEFECT_REVIEW_TILES: ReadonlyArray<DocTile> = [
-  { label: "Defect Item Setup", match: /^defect (list|item) setup/i, readOnly: true },
-  { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, readOnly: true },
-];
-
-const CREW_DOC_TILES: ReadonlyArray<DocTile> = [
-  // Owner 2026-07-22: Stock Out + Blank Floorplan tiles removed (floorplan
-  // lives in the Floor plans & layout card below).
-  { label: "Permit", match: /permit/i, readOnly: true },
-  { label: "Decoration", match: /^deco/i, readOnly: true, remarkWithFiles: true },
-  // Defect pair (owner 2026-07-29): crew EDIT, compulsory remark per photo.
-  { label: "Defect Item Setup", match: /^defect (list|item) setup/i, requirePhotoRemark: true },
-  { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, requirePhotoRemark: true },
-];
-
-// ── Document review (Approve / Reject) — shared by the doc cards ──
-// The rule now lives in pms-reviewable-titles.ts, shared with desktop, which
-// used to test a Set of EXACT titles — so a suffixed row got this workflow here
-// and no review controls at all on the PC.
-
-// After uploading to a reviewable doc, auto-submit it so the approver's
-// Approve/Reject (re)appear — desktop does exactly this (Projects.tsx upload →
-// onReview("submit")). Non-perm reviewables (3D/2D/Display/Exchange) depend on
-// this: their gate needs review_status=pending_review, which nothing else sets.
-// Non-fatal: a failed submit only delays the amber PENDING badge.
-async function autoSubmitReviewable(itemId: number, title: string | null | undefined): Promise<void> {
-  if (!isReviewableTitle(title)) return;
-  try {
-    await api.post(`/api/projects/checklist/${itemId}/review`, { action: "submit" });
-  } catch {
-    /* silent-write-ok: the UPLOAD already succeeded and is on screen. This
-       only delays the amber PENDING badge, and the approver can still submit
-       via re-upload, so there is nothing for the uploader to act on. */
-  }
-}
-
-// Whether to show Approve/Reject on a document tile — desktop-parity gate
-// (pages/Projects.tsx DocRow): once a file exists, a holder of the item's
-// approval permission decides a still-open gated doc; an un-permed reviewable
-// keeps the submit-then-review flow (any viewer, while a review is pending).
-// canApprove = wildcard-free: an explicit approval key is required for the four
-// EXPLICIT_APPROVAL_KEYS, but a non-perm reviewable is open to any viewer.
-function checklistReviewVisible(
-  permissions: readonly string[] | null | undefined,
-  item: ChecklistItem | undefined,
-  hasFiles: boolean,
-): boolean {
-  if (!item || !hasFiles) return false;
-  const reviewStatus = (item.review_status ?? "").toLowerCase();
-  const canApprove = !item.required_perm || holdsChecklistApproval(permissions, item.required_perm);
-  const awaitingReview = reviewStatus === "pending_review" || reviewStatus === "amended";
-  // Owner 2026-07-31 (final): on a gated document the approver ALWAYS keeps
-  // Approve / Reject once a file exists — including one already approved — so a
-  // decision can be reviewed or reversed at any time. (Previously the buttons
-  // vanished the moment it was approved, which read as "the feature is
-  // missing": on prod all 248 3D Designs were approved, so no event showed
-  // them.) The current decision still rides the tile as its APPROVED /
-  // REJECTED / PENDING badge, and every click is logged to the comment
-  // history, so reversals stay auditable. `status`/`awaitingReview` are no
-  // longer part of this arm — the permission alone decides.
-  if (item.required_perm) return canApprove;
-  const reviewable = isReviewableTitle(item.title);
-  return reviewable && awaitingReview && canApprove;
-}
-
-// The Approve / Reject button pair + review handler, shared by the doc cards.
-// Reject requires a reason (prompt); both POST /checklist/:id/review (the
-// endpoint re-checks the approval permission server-side → 403s a non-holder).
-function ReviewButtons({
-  item, busy, setBusy, prompt, notify, reload,
-}: {
-  item: ChecklistItem;
-  busy: boolean;
-  setBusy: SetBusy;
-  prompt: PromptFn;
-  notify: NotifyFn;
-  reload: () => void;
-}) {
-  const review = async (action: "approve" | "reject") => {
-    const body: Record<string, unknown> = { action };
-    if (action === "reject") {
-      const reason = await prompt({ title: `Reject "${item.title}"?`, placeholder: "Reason (required)", validate: (v) => (v.trim() ? null : "A reason is required.") });
-      if (reason == null || !reason.trim()) return;
-      body.reason = reason.trim();
-    }
-    setBusy(true);
-    try {
-      await api.post(`/api/projects/checklist/${item.id}/review`, body);
-      reload();
-    } catch (e) {
-      await notify({ title: "Failed", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
-    } finally {
-      setBusy(false);
-    }
-  };
-  // Toggle (owner 2026-08-10): show only the button that REVERSES the current
-  // decision. Approve hidden once approved (Reject stays, to re-open); Reject
-  // hidden once rejected (Approve stays, to approve the fix). The status itself
-  // stays visible via the ReviewBadge next to these buttons.
-  const rs = (item.review_status ?? "").toLowerCase();
-  return (
-    <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-      {rs !== "approved" && (
-        <button className="tinybtn" style={{ flex: 1, background: "#e2f0e9", borderColor: "#bcdcd7", color: "#2f8a5b" }} disabled={busy} onClick={(e) => { e.stopPropagation(); void review("approve"); }}>Approve</button>
-      )}
-      {rs !== "rejected" && (
-        <button className="tinybtn" style={{ flex: 1, background: "#f7e7e5", borderColor: "#e6c9c6", color: "#a13a34" }} disabled={busy} onClick={(e) => { e.stopPropagation(); void review("reject"); }}>Reject</button>
-      )}
-    </div>
-  );
-}
-
-// Small review-decision badge (green approved / red rejected / amber pending),
-// shared by the doc cards. Renders nothing when there's no decision yet.
-// Owner 2026-07-31: "cant see which one not approve yet". A reviewable doc that
-// carries a file but has NO decision yet (review_status NULL — uploaded before
-// auto-submit existed, or never submitted) used to render NO badge at all, so
-// approved and un-approved documents looked identical on the tile. Pass
-// `item`+`hasFiles` and it now says NOT APPROVED instead of staying blank.
-// Nothing shows on an empty document — there is nothing to approve yet.
-function ReviewBadge({
-  reviewStatus, item, hasFiles,
-}: {
-  reviewStatus: string | null | undefined;
-  item?: ChecklistItem;
-  hasFiles?: boolean;
-}) {
-  const rs = (reviewStatus ?? "").toLowerCase();
-  if (!rs) {
-    const reviewable = !!item && (!!item.required_perm || isReviewableTitle(item.title));
-    const approvedByStatus = (item?.status ?? "").toLowerCase() === "done";
-    if (!reviewable || !hasFiles || approvedByStatus) return null;
-    return <span className="rbadge" style={{ background: "#f6efd9", color: "#6e4d12" }}>NOT APPROVED</span>;
-  }
-  return (
-    <span className="rbadge" style={{
-      background: rs === "approved" ? "#e2f0e9" : rs === "rejected" ? "#f7e7e5" : "#f6efd9",
-      color: rs === "approved" ? "#2f8a5b" : rs === "rejected" ? "#a13a34" : "#6e4d12",
-    }}>{humanize(rs).toUpperCase()}</span>
-  );
-}
-
-function SalesDocsCard({
-  checklist, attachments, canTick, busy, setBusy, notify, prompt, confirm, reload,
-  tiles: tileDefs = SALES_DOC_TILES,
-  title = "Setup & Dismantle documents",
-  showRoleTags = false,
-}: {
-  checklist?: ChecklistItem[];
-  attachments?: TaskAttachment[];
-  canTick: boolean;
-  busy: boolean;
-  setBusy: SetBusy;
-  notify: NotifyFn;
-  prompt: PromptFn;
-  confirm: ConfirmFn;
-  reload: () => void;
-  /** Tile set — defaults to the sales six; crew pass CREW_DOC_TILES. */
-  tiles?: ReadonlyArray<DocTile>;
-  title?: string;
-  /** Owner 2026-07-23: show each task's role chip (DRIVER / SALES PIC / …) on
-   *  the tile — for oversight viewers (mgt, BD, owner, SD, logistic). */
-  showRoleTags?: boolean;
-}) {
-  const fileRef = useRef<HTMLInputElement | null>(null);
-  const pendingRef = useRef<{ itemId: number; title: string | null; caption?: string } | null>(null);
-  const [view, setView] = useState<{ items: MediaItem[]; idx: number } | null>(null);
-  // Approve/Reject on the doc tiles (owner 2026-07-29). The tasklist that used
-  // to carry these is gone on mobile, so a reviewable doc (Agreement/Quotation,
-  // Stock Out/In, 3D/2D Design, Display Floorplan, Exchange List) had no way to
-  // be approved on a phone. Gate + endpoint match the desktop DocRow exactly
-  // (shared checklistReviewVisible / ReviewButtons); user drives the perm check.
-  const { user, can } = useAuth();
-  // Owner 2026-09-03: every user may remove a file from THEIR OWN task, so this
-  // follows the tile's own edit right instead of projects.manage. Each use site
-  // already ANDs `!t.readOnly`, which is what marks a tile as not this cohort's
-  // to work on.
-  const canDeleteFiles = canTick;
-
-  const tiles = tileDefs.map((t) => {
-    const item = (checklist ?? []).find(
-      (it) =>
-        t.match.test((it.title || "").trim()) &&
-        (!t.salesPicOnly || (it.role_label ?? "").trim().toUpperCase() === "SALES PIC") &&
-        (!t.driverOnly || (it.role_label ?? "").trim().toUpperCase() === "DRIVER")
-    );
-    const atts = item
-      ? (attachments ?? []).filter((a) => !a.archived_at && a.item_id === item.id)
-      : [];
-    const files = atts.map((a): MediaItem => ({
-      r2_key: a.r2_key,
-      content_type: a.mime_type ?? mimeFromKey(a.r2_key),
-      caption: a.file_name,
-    }));
-    return { ...t, item, atts, files };
-  }).filter((t) => t.item);
-
-  if (tiles.length === 0) return null;
-
-  const doneCount = tiles.filter((t) =>
-    t.remarkTile ? !!(t.item?.notes ?? "").trim()
-    : t.remarkWithFiles ? (t.files.length > 0 || !!(t.item?.notes ?? "").trim())
-    : t.files.length > 0
-  ).length;
-
-  const startUpload = async (t: (typeof tiles)[number]) => {
-    if (!t.item || t.readOnly) return;
-    let caption: string | undefined;
-    if (t.requirePhotoRemark) {
-      const remark = await prompt({
-        title: "Remark for this photo",
-        placeholder: "e.g. scratch on left armrest",
-        validate: (v) => (v.trim() ? null : "Please write a remark before uploading."),
-      });
-      if (remark == null || !remark.trim()) return;
-      caption = remark.trim();
-    }
-    pendingRef.current = { itemId: t.item.id, title: t.item.title, caption };
-    fileRef.current?.click();
-  };
-
-  const upload = async (file: File) => {
-    const pending = pendingRef.current;
-    pendingRef.current = null;
-    if (!pending) return;
-    if (file.size > 10 * 1024 * 1024) {
-      await notify({ title: "File too large", body: "Max 10MB.", tone: "error" });
-      return;
-    }
-    const ext = (file.name.split(".").pop() || "").toLowerCase();
-    if (!ext) {
-      await notify({ title: "Missing extension", body: "The file needs an extension.", tone: "error" });
-      return;
-    }
-    setBusy(true);
-    try {
-      const buf = await file.arrayBuffer();
-      const capParam = pending.caption ? `&caption=${encodeURIComponent(pending.caption)}` : "";
-      await api.putBinary(
-        `/api/projects/checklist/${pending.itemId}/attachments?ext=${encodeURIComponent(ext)}&name=${encodeURIComponent(file.name)}${capParam}`,
-        buf,
-        file.type || "application/octet-stream",
-      );
-      // Reviewable docs auto-submit so the approver's Approve/Reject appear (desktop parity).
-      await autoSubmitReviewable(pending.itemId, pending.title);
-      reload();
-    } catch (e) {
-      await notify({ title: "Upload failed", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
-    } finally {
-      setBusy(false);
-      if (fileRef.current) fileRef.current.value = "";
-    }
-  };
-
-  const removeFile = async (t: (typeof tiles)[number], att: TaskAttachment) => {
-    if (t.readOnly || !canDeleteFiles) return;
-    if (!(await confirm({ title: `Remove ${att.file_name || "this file"}?`, confirmLabel: "Remove", danger: true }))) return;
-    setBusy(true);
-    try {
-      await api.del(`/api/projects/checklist/attachments/${att.id}`);
-      reload();
-    } catch (e) {
-      await notify({ title: "Remove failed", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const editRemark = async (t: (typeof tiles)[number]) => {
-    if (!t.item || !canTick) return;
-    const val = await prompt({
-      title: `Remark — ${t.label}`,
-      placeholder: "Write the remark…",
-      defaultValue: t.item.notes ?? "",
-    });
-    if (val == null) return;
-    setBusy(true);
-    try {
-      await api.patch(`/api/projects/checklist/${t.item.id}`, { notes: val.trim() });
-      reload();
-    } catch (e) {
-      await notify({ title: "Save failed", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const openTile = async (t: (typeof tiles)[number]) => {
-    if (t.remarkWithFiles) {
-      // Files win the tap (they carry the download); the remark is already
-      // visible on the tile face, and surfaces in full when there's no file.
-      if (t.files.length > 0) { setView({ items: t.files, idx: t.files.length - 1 }); return; }
-      const txt = (t.item?.notes ?? "").trim();
-      await notify(txt
-        ? { title: t.label, body: txt }
-        : { title: t.label, body: "No remark or file here yet.", tone: "info" });
-      return;
-    }
-    if (t.remarkTile) {
-      if (t.readOnly) {
-        // View-only: surface the full remark (the tile truncates long text).
-        const txt = (t.item?.notes ?? "").trim();
-        await notify(txt
-          ? { title: t.label, body: txt }
-          : { title: t.label, body: "No remark has been written yet.", tone: "info" });
-        return;
-      }
-      await editRemark(t);
-      return;
-    }
-    if (t.files.length > 0) { setView({ items: t.files, idx: t.files.length - 1 }); return; }
-    if (canTick && !t.readOnly) { await startUpload(t); return; }
-    await notify({ title: `${t.label} not uploaded`, body: "Nothing has been uploaded here yet.", tone: "info" });
-  };
-
-  return (
-    <details className="pacc" open>
-      <summary>
-        <span className="psec-t">{title}</span>
-        <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 700, color: "#9aa093" }}>{doneCount}/{tiles.length}</span>
-        <svg className="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 6 6 6-6 6" /></svg>
-      </summary>
-      <div className="pbody">
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
-          {tiles.map((t) => {
-            // Tile cover (owner 2026-08-28): prefer the newest IMAGE so a PDF
-            // uploaded after the photos doesn't blank the thumbnail — users
-            // read the hatched placeholder as "nothing here".
-            const latest =
-              [...t.files].reverse().find((f) => /^image\//.test(f.content_type ?? "")) ??
-              t.files[t.files.length - 1];
-            const hasContent = t.remarkTile ? !!(t.item?.notes ?? "").trim()
-              : t.remarkWithFiles ? (t.files.length > 0 || !!(t.item?.notes ?? "").trim())
-              : t.files.length > 0;
-            const mediaH = t.mediaH ?? 80;
-            // Review state (desktop parity) — shared gate + badge + buttons.
-            const rItem = t.item!;
-            const canReview = checklistReviewVisible(user?.permissions, rItem, t.files.length > 0);
-            return (
-              <div key={t.label} style={{ border: "1px solid #d6d9d2", borderRadius: 11, overflow: "hidden", background: "#fff", ...(t.fullWidth ? { gridColumn: "1 / -1" } : {}) }}>
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => { if (!busy) void openTile(t); }}
-                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (!busy) void openTile(t); } }}
-                  style={{ cursor: "pointer" }}
-                >
-                  {t.remarkTile || t.remarkWithFiles ? (
-                    <div style={{ height: mediaH, padding: "8px 10px", fontSize: 11, lineHeight: 1.45, color: (t.item?.notes ?? "").trim() ? "#414539" : "#9aa093", overflow: "hidden", background: "#faf9f5" }}>
-                      {(t.item?.notes ?? "").trim() || (canTick && !t.readOnly && !t.remarkWithFiles ? "Tap to write the remark…" : "No remark yet.")}
-                    </div>
-                  ) : latest && /^image\//.test(latest.content_type ?? "") ? (
-                    <R2Thumb r2Key={latest.r2_key} style={{ width: "100%", height: mediaH }} />
-                  ) : (
-                    <div className="ph" style={{ height: mediaH }} />
-                  )}
-                  <div style={{ padding: "7px 9px 4px" }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: "#11140f" }}>{t.label}</div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
-                      <span className="rbadge" style={{ background: hasContent ? "#e2f0e9" : "#f0f1ed", color: hasContent ? "#2f8a5b" : "#9aa093" }}>
-                        {t.remarkTile || (t.remarkWithFiles && t.files.length === 0)
-                          ? (hasContent ? "DONE" : "NONE")
-                          : (hasContent ? `${t.files.length} FILE${t.files.length === 1 ? "" : "S"}` : "NONE")}
-                      </span>
-                      {/* Owner 2026-07-23: oversight viewers (mgt/BD/owner/SD/
-                          logistic) see WHO owns each deliverable — the task's
-                          role chip, same colours as the old tasklist rows. */}
-                      {showRoleTags && (t.item?.role_label ?? "").trim() && roleLabelParts(t.item!.role_label!).map((part) => (
-                        <span key={part} className="rbadge" style={{ background: `${roleColor(part)}1f`, color: roleColor(part), marginRight: 4 }}>
-                          {formatRoleLabel(part)}
-                        </span>
-                      ))}
-                      {/* Review decision (owner 2026-07-29): green approved ·
-                          red rejected · amber pending — travels with the tile. */}
-                      <ReviewBadge reviewStatus={rItem.review_status} item={rItem} hasFiles={t.files.length > 0} />
-                    </div>
-                  </div>
-                </div>
-                {/* Owner 2026-07-17: the editable photo tiles list every uploaded
-                    file by name — tap the name to VIEW it first; × removes it
-                    (confirm-guarded). Upload stays its own button below. */}
-                {/* remarkWithFiles (crew Decoration): the files listed by name,
-                    view/download-only — tap opens the lightbox. */}
-                {t.remarkWithFiles && t.atts.length > 0 && (
-                  <div style={{ padding: "0 9px 8px", display: "flex", flexDirection: "column", gap: 5 }}>
-                    {t.atts.map((a, i) => (
-                      <button
-                        key={a.id}
-                        type="button"
-                        className="tinybtn"
-                        style={{ minWidth: 0, display: "inline-flex", alignItems: "center", gap: 5 }}
-                        onClick={() => setView({ items: t.files, idx: i })}
-                        title={a.file_name ?? undefined}
-                      >
-                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.file_name || "File"}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {/* Defect tiles ALSO list files when read-only (owner 2026-07-29):
-                    the purchaser's view tile carries the per-file Ongoing/Done
-                    timeline, so Sim can action defects from her card. */}
-                {!t.remarkTile && !t.remarkWithFiles && (!t.readOnly || isDefectTile(t)) && t.atts.length > 0 && (
-                  <div style={{ padding: "0 9px 6px", display: "flex", flexDirection: "column", gap: 5 }}>
-                    {t.atts.map((a, i) => (
-                      <div key={a.id}>
-                        <span style={{ display: "inline-flex", alignItems: "stretch", width: "100%" }}>
-                          <button
-                            type="button"
-                            className="tinybtn"
-                            style={{ flex: 1, minWidth: 0, display: "inline-flex", alignItems: "center", gap: 5, ...(canDeleteFiles && !t.readOnly ? { borderTopRightRadius: 0, borderBottomRightRadius: 0, borderRight: "none" } : {}) }}
-                            onClick={() => setView({ items: t.files, idx: i })}
-                            title={a.file_name ?? undefined}
-                          >
-                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.file_name || "File"}</span>
-                          </button>
-                          {canDeleteFiles && !t.readOnly && (
-                            <button
-                              type="button"
-                              className="tinybtn"
-                              disabled={busy}
-                              style={{ flex: "none", padding: "0 8px", borderTopLeftRadius: 0, borderBottomLeftRadius: 0, color: "#a13a34", display: "inline-flex", alignItems: "center" }}
-                              onClick={() => void removeFile(t, a)}
-                              title="Remove file"
-                              aria-label="Remove file"
-                            >
-                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-                            </button>
-                          )}
-                        </span>
-                        {isDefectTile(t) && <DefectFileActions att={a} />}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {!t.remarkTile && canTick && !t.readOnly && (
-                  <div style={{ padding: "0 9px 8px" }}>
-                    <button className="tinybtn" style={{ width: "100%" }} disabled={busy} onClick={() => void startUpload(t)}>
-                      {t.files.length ? "+ Add more" : "Upload"}
-                    </button>
-                  </div>
-                )}
-                {/* N/A — no defect (owner 2026-07-29): sales PIC + driver mark a
-                    defect list N/A when nothing is defective. Tap again undoes. */}
-                {isDefectTile(t) && t.item && canTick && !t.readOnly && (
-                  <div style={{ padding: "0 9px 8px" }}>
-                    <button
-                      className="tinybtn"
-                      style={{ width: "100%", background: t.item.status === "na" ? "#f4f6f3" : "#fff", color: "#767b6e" }}
-                      disabled={busy}
-                      onClick={async () => {
-                        const next = t.item!.status === "na" ? "pending" : "na";
-                        setBusy(true);
-                        try {
-                          await api.post(`/api/projects/checklist/${t.item!.id}/status`, { status: next });
-                          reload();
-                        } catch (e) {
-                          await notify({ title: "Failed to update", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
-                        } finally {
-                          setBusy(false);
-                        }
-                      }}
-                    >
-                      {t.item.status === "na" ? "Marked N/A — tap to undo" : "N/A — no defect"}
-                    </button>
-                  </div>
-                )}
-                {/* Approve / Reject — shown to a holder of this doc's approval
-                    permission (server re-checks). Renders even on a read-only
-                    tile: the approver often isn't the uploader. */}
-                {canReview && (
-                  <div style={{ padding: "0 9px 8px" }}>
-                    <ReviewButtons item={rItem} busy={busy} setBusy={setBusy} prompt={prompt} notify={notify} reload={reload} />
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-        <input ref={fileRef} type="file" accept="image/*,.pdf,.mp4,.mov,.webm" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void upload(f); }} />
-        {view && (
-          <MediaLightbox
-            items={view.items}
-            index={view.idx}
-            onChange={(i) => setView((v) => (v ? { ...v, idx: i } : v))}
-            onClose={() => setView(null)}
-            baseUrl="/api/projects/attachments"
-            badge="Document"
-          />
-        )}
-      </div>
-    </details>
-  );
-}
+// SalesDocsCard + doc tiles + review helpers moved to MobilePmsDocCard.tsx
 
 // ── Floor plans & layout + stock transfers ──
 // The 3D viewer stays a design placeholder (no plan-image payload). The
@@ -3741,6 +3242,8 @@ function FloorPlans({
   const threeDItem = itemByPrefix(/^3d\s*(design|render)/i);
   const twoDItem = itemByPrefix(/^2d\s*design/i);
   const displayItem = itemByPrefix(/^display\s*floor\s*plan/i);
+  const blankItem = itemByPrefix(/^blank\s*floor\s*plan/i);
+  const filledItem = itemByPrefix(/^filled\s*floor\s*plan/i);
   const stockOutItem = itemByPrefix(/^stock\s*out\s*transfer/i);
 
   // The tiles mirror the "Blank Floorplan" / "Filled Floorplan" CHECKLIST
@@ -3790,7 +3293,6 @@ function FloorPlans({
   // Checklist task ids by title prefix — used to attach uploads to the right task.
   const taskIdByPrefix = (prefix: RegExp): number | null =>
     (checklist ?? []).find((it) => prefix.test((it.title || "").trim()))?.id ?? null;
-  const filledPlanTaskId = taskIdByPrefix(/^filled\s*floor\s*plan/i);
   // Purchaser stock-out edit (owner 2026-07-23) — uploads land on the Stock
   // Out Transfer Record task.
   const stockOutUploadTaskId = taskIdByPrefix(/^stock\s*out\s*transfer/i);
@@ -3824,59 +3326,39 @@ function FloorPlans({
       if (stockRef.current) stockRef.current.value = "";
     }
   };
-  // Stock out transfer — mirrors the "Stock Out Transfer Record" CHECKLIST task
-  // attachments. (The legacy project-level stock_transfers store is unused: every
-  // stock-out record is attached to the task, which is why this read empty.)
+  // Stock transfer records — the "Stock Out" AND "Stock In" CHECKLIST tasks'
+  // attachments, pooled into one list. (The legacy project-level
+  // stock_transfers store is unused: every record is attached to its task,
+  // which is why this read empty.) Each row carries WHICH task it came from —
+  // the badge used to hardcode OUT, so a Stock In record wore an OUT badge and
+  // the owner read one event's out+in pair as "two stock outs" (2026-09-30).
   const stockOutAtts = (() => {
-    const ids = new Set(
-      (checklist ?? []).filter((it) => /^stock\s*(out|in)\s*transfer/i.test((it.title || "").trim())).map((it) => it.id)
+    const dirById = new Map(
+      (checklist ?? [])
+        .filter((it) => /^stock\s*(out|in)\s*transfer/i.test((it.title || "").trim()))
+        .map((it) => [it.id, /^stock\s*in/i.test((it.title || "").trim()) ? "IN" : "OUT"] as const)
     );
-    return (checklistAttachments ?? []).filter((a) => !a.archived_at && ids.has(a.item_id));
+    return (checklistAttachments ?? [])
+      .filter((a) => !a.archived_at && dirById.has(a.item_id))
+      .map((a) => ({ ...a, dir: dirById.get(a.item_id) ?? "OUT" }));
   })();
-  // Sales upload the Filled Floorplan straight from this card (owner 2026-07-17)
-  // — it attaches to the "Filled Floorplan" checklist task, so the tasklist row
-  // and this card stay one and the same file.
-  const filledRef = useRef<HTMLInputElement | null>(null);
-  const uploadFilledPlan = async (file: File) => {
-    if (!filledPlanTaskId) {
-      await notify({ title: "No Filled Floorplan task", body: "This event has no Filled Floorplan task to attach to.", tone: "error" });
-      return;
-    }
-    if (file.size > 10 * 1024 * 1024) {
-      await notify({ title: "File too large", body: "Max 10MB.", tone: "error" });
-      return;
-    }
-    const ext = (file.name.split(".").pop() || "").toLowerCase();
-    if (!ext) {
-      await notify({ title: "Missing extension", body: "The file needs an extension.", tone: "error" });
-      return;
-    }
-    setBusy(true);
-    try {
-      const buf = await file.arrayBuffer();
-      await api.putBinary(
-        `/api/projects/checklist/${filledPlanTaskId}/attachments?ext=${encodeURIComponent(ext)}&name=${encodeURIComponent(file.name)}`,
-        buf,
-        file.type || "application/octet-stream",
-      );
-      reload();
-    } catch (e) {
-      await notify({ title: "Upload failed", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
-    } finally {
-      setBusy(false);
-      if (filledRef.current) filledRef.current.value = "";
-    }
+  // Plan uploads — ONE path for every tile (owner 2026-09-30: "task mana yang
+  // user boleh edit ... sini tak ada icon upload utk owner" — only Filled and
+  // Display had upload wired; 3D / 2D / Unfilled gave an editor no way to put
+  // a file on the task from the phone). Each tile carries its checklist task;
+  // the button attaches there, exactly like the doc cards, and reviewable
+  // titles auto-submit so the approver's Approve/Reject reappear.
+  const planUpRef = useRef<HTMLInputElement | null>(null);
+  const pendingPlanRef = useRef<{ taskId: number; title: string | null } | null>(null);
+  const startPlanUpload = (task: ChecklistItem | undefined) => {
+    if (!task) return;
+    pendingPlanRef.current = { taskId: task.id, title: task.title };
+    planUpRef.current?.click();
   };
-  // Upload straight onto the Display floor plan task — the replace half of the
-  // same complaint: with no upload here, removing a wrong plan left the tile
-  // empty and the phone with no way to put the right one back.
-  const displayRef = useRef<HTMLInputElement | null>(null);
-  const displayPlanTaskId = displayItem?.id ?? null;
-  const uploadDisplayPlan = async (file: File) => {
-    if (displayPlanTaskId == null) {
-      await notify({ title: "No Display Floor Plan task", body: "This event has no Display Floor Plan task to attach to.", tone: "error" });
-      return;
-    }
+  const uploadPlanFile = async (file: File) => {
+    const pending = pendingPlanRef.current;
+    pendingPlanRef.current = null;
+    if (!pending) return;
     if (file.size > 10 * 1024 * 1024) {
       await notify({ title: "File too large", body: "Max 10MB.", tone: "error" });
       return;
@@ -3890,30 +3372,24 @@ function FloorPlans({
     try {
       const buf = await file.arrayBuffer();
       await api.putBinary(
-        `/api/projects/checklist/${displayPlanTaskId}/attachments?ext=${encodeURIComponent(ext)}&name=${encodeURIComponent(file.name)}`,
+        `/api/projects/checklist/${pending.taskId}/attachments?ext=${encodeURIComponent(ext)}&name=${encodeURIComponent(file.name)}`,
         buf,
         file.type || "application/octet-stream",
       );
-      // Display Floor Plan is reviewable — mirror the doc tiles so the
-      // approver's Approve/Reject reappear after a re-upload.
-      await autoSubmitReviewable(displayPlanTaskId, displayItem?.title ?? "Display Floor Plan");
+      // Display / 3D / 2D are reviewable — mirror the doc cards so the
+      // approver's Approve/Reject reappear after a re-upload (no-op for the
+      // non-reviewable plan tasks).
+      await autoSubmitReviewable(pending.taskId, pending.title);
       reload();
     } catch (e) {
       await notify({ title: "Upload failed", body: e instanceof Error ? e.message : "Please try again.", tone: "error" });
     } finally {
       setBusy(false);
-      if (displayRef.current) displayRef.current.value = "";
+      if (planUpRef.current) planUpRef.current.value = "";
     }
   };
   const [planView, setPlanView] = useState<{ items: MediaItem[]; idx: number } | null>(null);
   const [docView, setDocView] = useState<MediaItem | null>(null);
-  const openPlan = async (files: MediaItem[], which: string) => {
-    if (files.length === 0) {
-      await notify({ title: `${which} plan not uploaded`, body: "No floor plan has been uploaded for this project yet.", tone: "info" });
-      return;
-    }
-    setPlanView({ items: files, idx: files.length - 1 });
-  };
 
   return (
     <details className="pacc">
@@ -3923,91 +3399,83 @@ function FloorPlans({
         <svg className="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 6 6 6-6 6" /></svg>
       </summary>
       <div className="pbody">
-        {/* Owner 2026-07-31: the Display floor plan is a NORMAL tile now — the
-            black banner is gone and it shows its own preview like every other
-            tile. Order is Display → 3D + 2D → Unfilled + Filled; Display spans
-            the full width so the two design tiles stay paired on their own row.
-            Which tiles a cohort sees is ONE rule in MobilePmsFloorPlanTiles.ts:
-            crew = Display only (owner 2026-09-15); ops/office lose the two
-            plan tiles (owner 2026-07-23: sales/SD/mgt/BD only). */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
+        {/* Owner 2026-09-30 (B2 layout): the plan docs render like every other
+            document — stacked full-width blocks, each file a large preview
+            (file name chipped on, tap → lightbox, × for editors). Order is
+            Display → 3D → 2D → Unfilled → Filled. Which blocks a cohort sees
+            is ONE rule in MobilePmsFloorPlanTiles.ts: crew = Display only
+            (owner 2026-09-15); ops/office lose the two plan tiles (owner
+            2026-07-23: sales/SD/mgt/BD only). */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
           {([
-            { key: "Display", label: "Display floor plan", files: displayPlanFiles, atts: displayPlanAtts, badge: "PLAN", bg: "#f3ece0", col: "#a16a2e", item: displayItem, full: true, mediaH: 140 },
-            { key: "3D Design", label: "3D Design", files: threeDFiles, atts: threeDAtts, badge: "3D", bg: "#e9e6f4", col: "#5b4b8a", item: threeDItem, full: false, mediaH: 80 },
-            { key: "2D Design", label: "2D Design", files: twoDFiles, atts: twoDAtts, badge: "2D", bg: "#e2ecf5", col: "#2f5c8a", item: twoDItem, full: false, mediaH: 80 },
-            { key: "Unfilled", label: "Unfilled plan", files: unfilledFiles, atts: unfilledAtts, badge: "DRAFT", bg: "#f6efd9", col: "#6e4d12", item: undefined, full: false, mediaH: 80 },
-            { key: "Filled", label: "Filled plan", files: filledFiles, atts: filledAtts, badge: "PLACED", bg: "#e2f0e9", col: "#2f8a5b", item: undefined, full: false, mediaH: 80 },
+            { key: "Display", label: "Display floor plan", files: displayPlanFiles, atts: displayPlanAtts, badge: "PLAN", bg: "#f3ece0", col: "#a16a2e", item: displayItem, task: displayItem },
+            { key: "3D Design", label: "3D Design", files: threeDFiles, atts: threeDAtts, badge: "3D", bg: "#e9e6f4", col: "#5b4b8a", item: threeDItem, task: threeDItem },
+            { key: "2D Design", label: "2D Design", files: twoDFiles, atts: twoDAtts, badge: "2D", bg: "#e2ecf5", col: "#2f5c8a", item: twoDItem, task: twoDItem },
+            { key: "Unfilled", label: "Unfilled plan", files: unfilledFiles, atts: unfilledAtts, badge: "DRAFT", bg: "#f6efd9", col: "#6e4d12", item: undefined, task: blankItem },
+            { key: "Filled", label: "Filled plan", files: filledFiles, atts: filledAtts, badge: "PLACED", bg: "#e2f0e9", col: "#2f8a5b", item: undefined, task: filledItem },
           ] as const).filter((t) => floorPlanTileVisible(t.key, { crewPlanView, hidePlanTiles })).map((t) => {
             const files = t.files;
-            // Cover = newest IMAGE (owner 2026-08-28): a PDF uploaded after the
-            // photos must not blank the thumbnail into the hatched placeholder.
-            const latest =
-              [...files].reverse().find((f) => /^image\//.test(f.content_type ?? "")) ??
-              files[files.length - 1];
             // Display / 3D / 2D are reviewable (owner 2026-07-29); the
             // Unfilled / Filled plan tiles are not.
             const tileItem = t.item;
             const tileCanReview = checklistReviewVisible(user?.permissions, tileItem, files.length > 0);
+            // Per-file remove needs the checklist attachment row for its id —
+            // the legacy project-level fallback files (pre-mig-050 events)
+            // have none, so they stay view-only, exactly as before.
+            const removable = canDeleteFiles && t.atts.length === files.length;
             return (
-              <div
-                key={t.key}
-                role="button"
-                tabIndex={0}
-                onClick={() => void openPlan(files, t.label)}
-                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void openPlan(files, t.label); } }}
-                style={{ border: "1px solid #d6d9d2", borderRadius: 11, overflow: "hidden", cursor: "pointer", background: "#fff", ...(t.full ? { gridColumn: "1 / -1" } : {}) }}
-              >
-                {latest && /^image\//.test(latest.content_type ?? "")
-                  ? <R2Thumb r2Key={latest.r2_key} style={{ width: "100%", height: t.mediaH }} />
-                  : <div className="ph" style={{ height: t.mediaH }} />}
-                <div style={{ padding: "7px 9px" }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: "#11140f" }}>{t.label}</div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
-                    <span className="rbadge" style={{ background: latest ? t.bg : "#f0f1ed", color: latest ? t.col : "#9aa093" }}>
-                      {latest ? `${t.badge}${files.length > 1 ? ` · ${files.length}` : ""}` : "NONE"}
-                    </span>
-                    {tileItem && <ReviewBadge reviewStatus={tileItem.review_status} item={tileItem} hasFiles={files.length > 0} />}
-                  </div>
-                  {t.key === "Filled" && canWrite && filledPlanTaskId != null && (
-                    <button
-                      className="tinybtn"
-                      style={{ marginTop: 6, width: "100%" }}
-                      disabled={busy}
-                      onClick={(e) => { e.stopPropagation(); filledRef.current?.click(); }}
-                    >
-                      {files.length ? "+ Add / replace" : "Upload"}
-                    </button>
-                  )}
-                  {t.key === "Display" && canWrite && displayPlanTaskId != null && (
-                    <button
-                      className="tinybtn"
-                      style={{ marginTop: 6, width: "100%" }}
-                      disabled={busy}
-                      onClick={(e) => { e.stopPropagation(); displayRef.current?.click(); }}
-                    >
-                      {files.length ? "+ Add / replace" : "Upload"}
-                    </button>
-                  )}
-                  {canDeleteFiles && (
-                    <PlanFileChips
-                      files={t.atts}
-                      busy={busy}
-                      setBusy={setBusy}
-                      confirm={confirm}
-                      notify={notify}
-                      reload={reload}
-                    />
-                  )}
-                  {tileCanReview && tileItem && (
-                    <ReviewButtons item={tileItem} busy={busy} setBusy={setBusy} prompt={prompt} notify={notify} reload={reload} />
-                  )}
+              <div key={t.key} style={{ border: "1px solid #d6d9d2", borderRadius: 12, background: "#fff", padding: "10px 11px", display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: "#11140f", marginRight: "auto" }}>{t.label}</span>
+                  {tileItem && <ReviewBadge reviewStatus={tileItem.review_status} item={tileItem} hasFiles={files.length > 0} />}
+                  <span className="rbadge" style={{ background: files.length ? t.bg : "#f0f1ed", color: files.length ? t.col : "#9aa093" }}>
+                    {files.length ? `${t.badge}${files.length > 1 ? ` · ${files.length}` : ""}` : "NONE"}
+                  </span>
                 </div>
+                {files.map((f, i) => (
+                  <BigFilePreview
+                    key={t.atts[i]?.id ?? `${t.key}-${i}`}
+                    media={f}
+                    busy={busy}
+                    onOpen={() => setPlanView({ items: files, idx: i })}
+                    onRemove={removable
+                      ? () => void removeChecklistAttachment(t.atts[i], { confirm, notify, setBusy, reload })
+                      : undefined}
+                  />
+                ))}
+                {files.length === 0 && (
+                  <div
+                    role={canWrite && t.task ? "button" : undefined}
+                    tabIndex={canWrite && t.task ? 0 : undefined}
+                    onClick={() => { if (canWrite && t.task && !busy) startPlanUpload(t.task); }}
+                    onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && canWrite && t.task && !busy) { e.preventDefault(); startPlanUpload(t.task); } }}
+                    style={{ border: "1px dashed #d6d9d2", borderRadius: 9, padding: "13px 10px", textAlign: "center", fontSize: 11, color: "#9aa093", ...(canWrite && t.task ? { cursor: "pointer" } : {}) }}
+                  >
+                    {canWrite && t.task ? "No file yet — tap to upload" : "No file yet"}
+                  </div>
+                )}
+                {/* Owner 2026-09-30: EVERY plan task an editor may write shows
+                    its upload button (icon included) — 3D / 2D / Unfilled had
+                    none, so the owner had no way to put a file on them here. */}
+                {canWrite && t.task && (
+                  <button
+                    className="tinybtn"
+                    style={{ width: "100%", padding: "8px 9px", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+                    disabled={busy}
+                    onClick={() => startPlanUpload(t.task)}
+                  >
+                    <UploadGlyph />
+                    {files.length ? "+ Add / replace" : "Upload"}
+                  </button>
+                )}
+                {tileCanReview && tileItem && (
+                  <ReviewButtons item={tileItem} busy={busy} setBusy={setBusy} prompt={prompt} notify={notify} reload={reload} />
+                )}
               </div>
             );
           })}
         </div>
-        <input ref={filledRef} type="file" accept="image/*,.pdf" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadFilledPlan(f); }} />
-        <input ref={displayRef} type="file" accept="image/*,.pdf" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadDisplayPlan(f); }} />
+        <input ref={planUpRef} type="file" accept="image/*,.pdf" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadPlanFile(f); }} />
 
         <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093", margin: "10px 0 6px" }}>Stock transfer record</div>
         {stockOutAtts.length === 0 && <div style={{ fontSize: 12, color: "#9aa093", marginBottom: 8 }}>No stock transfer recorded yet.</div>}
@@ -4027,7 +3495,9 @@ function FloorPlans({
                     ? <R2Thumb r2Key={a.r2_key} style={{ width: 54, height: 44 }} />
                     : <span className="ph" style={{ display: "block", width: 54, height: 44 }} />}
                 </span>
-                <span className="rbadge" style={{ background: "#e2f0e9", color: "#2f8a5b" }}>OUT</span>
+                <span className="rbadge" style={a.dir === "IN"
+                  ? { background: "#e2ecf5", color: "#2f5c8a" }
+                  : { background: "#e2f0e9", color: "#2f8a5b" }}>{a.dir}</span>
                 <span style={{ flex: 1, minWidth: 80, fontSize: 11, color: "#414539" }}>
                   {[a.file_name || "Record", a.uploader_name || null, a.uploaded_at ? dm(a.uploaded_at) : null].filter(Boolean).join(" · ")}
                 </span>
@@ -4083,7 +3553,8 @@ function FloorPlans({
             row used, so desktop and mobile stay one file set. */}
         {canStockEdit && stockOutUploadTaskId != null && (
           <>
-            <button className="tinybtn" style={{ width: "100%", marginBottom: 8 }} disabled={busy} onClick={() => stockRef.current?.click()}>
+            <button className="tinybtn" style={{ width: "100%", marginBottom: 8, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }} disabled={busy} onClick={() => stockRef.current?.click()}>
+              <UploadGlyph />
               + Upload stock out transfer record
             </button>
             <input
@@ -4199,8 +3670,11 @@ function QuickRentalField({
   const existing = lines.filter(
     (l) => (l.kind ?? "").toLowerCase() === "cost"
       && (l.category ?? "").trim() === "rental"
-      && !pick(l.auto_source, l.autoSource),
+      && !pick(l.auto_source, l.autoSource)
+      && !l.source,
   );
+  // Rental from the books: Finance's figure, shown, never typed over.
+  const fromBooks = lines.filter((l) => (l.kind ?? "").toLowerCase() === "cost" && l.source === "books" && l.category === "rental");
   const current = existing.reduce((s, l) => s + (l.amount || 0), 0);
   const [val, setVal] = useState(current ? String(current) : "");
   useEffect(() => {
@@ -4237,6 +3711,18 @@ function QuickRentalField({
     }
   };
 
+  if (fromBooks.length > 0) {
+    return (
+      <div style={{ background: "#f4f6f3", borderRadius: 10, padding: 11 }}>
+        <span className="pkv-l">Rental (RM) · 入账</span>
+        <div className="money" style={{ fontSize: 15, fontWeight: 700, color: "#11140f", marginTop: 4 }}>
+          {formatCurrency(fromBooks.reduce((s, l) => s + (l.amount || 0), 0))}
+        </div>
+        <div style={{ fontSize: 10, color: "#9aa093", marginTop: 2 }}>{[...new Set(fromBooks.map((l) => l.doc_no).filter(Boolean))].join(", ")}</div>
+      </div>
+    );
+  }
+
   return (
     <label style={{ background: "#f4f6f3", borderRadius: 10, padding: 11, display: "block" }}>
       <span className="pkv-l">Rental (RM)</span>
@@ -4257,11 +3743,12 @@ function QuickRentalField({
 }
 
 function FinancialSnapshot({
-  projectId, finance, lines, canWrite, busy, setBusy, notify, reload,
+  projectId, finance, lines, pnl, canWrite, busy, setBusy, notify, reload,
 }: {
   projectId: number;
   finance: NonNullable<ProjectDetail["finance"]>;
   lines?: FinanceLine[];
+  pnl: EventPnl | null;
   canWrite: boolean;
   busy: boolean;
   setBusy: SetBusy;
@@ -4279,8 +3766,11 @@ function FinancialSnapshot({
 
   const allLines = lines ?? [];
   const costLines = allLines.filter((l) => (l.kind ?? "").toLowerCase() === "cost");
-  const sales = finance.total_sales ?? 0;
-  const cost =
+  /* The server's P&L by Total Sales when it sent one — the desktop page's own
+     figures, Finance's books and the orders' cost included; else the old
+     cached rollup. */
+  const sales = pnl ? pnl.by_sales.sales : finance.total_sales ?? 0;
+  const cost = pnl ? pnl.by_sales.totalCost :
     (finance.rental ?? 0) +
     (finance.contractor_cost ?? 0) +
     (finance.license_fee ?? 0) +
@@ -4321,6 +3811,13 @@ function FinancialSnapshot({
             <div className="money" style={{ fontSize: 16, fontWeight: 800, color: netColor, marginTop: 3 }}>{marginPct == null ? "—" : `${marginPct.toFixed(1)}%`}</div>
           </div>
         </div>
+        {/* The second P&L (owner 2026-10-16): the Sales Orders opened at the fair. */}
+        {pnl?.by_so && (
+          <div style={{ fontSize: 11, color: "#6b7064", marginTop: 8 }}>
+            By Sales Orders ({pnl.so_count}): sales {formatCurrency(pnl.by_so.sales)} · cost {formatCurrency(pnl.by_so.totalCost)} · net{" "}
+            <span style={{ fontWeight: 700, color: pnl.by_so.netProfit >= 0 ? "#2f8a5b" : "#b23a3a" }}>{formatCurrency(pnl.by_so.netProfit)}</span>
+          </div>
+        )}
         {/* Quick edit (finance write) — Total Sales PATCHes
             project_finance.total_sales (mirror desktop saveQuickTotal:9937-9954);
             Rental writes a `rental` cost line (mirror desktop
@@ -4345,12 +3842,14 @@ function FinancialSnapshot({
           <div style={{ border: "1px solid #eceee9", borderRadius: 10, overflow: "hidden" }}>
             {costLines.map((line, i) => {
               const auto = !!pick(line.auto_source, line.autoSource);
+              const fromBooks = line.source === "books";
               const receiptKey = pick(line.r2_key, line.r2Key);
               return (
                 <div key={line.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderTop: i === 0 ? "none" : "1px solid #eceee9", flexWrap: "wrap" }}>
                   <span style={{ flex: 1, minWidth: 90, fontSize: 12, color: "#414539" }}>
                     {line.description || ledgerCategoryLabel(line.category)}
                     {auto && <span style={{ marginLeft: 5, fontSize: 9, color: "#9aa093" }}>auto</span>}
+                    {fromBooks && <span style={{ marginLeft: 5, fontSize: 9, color: "#8a4b12" }}>入账 {line.doc_no}</span>}
                   </span>
                   <span className="money" style={{ fontSize: 12, fontWeight: 700 }}>{formatCurrency(line.amount)}</span>
                   {receiptKey && <button className="tinybtn" disabled={busy} onClick={() => openReceipt(line)}>Receipt</button>}
@@ -4381,19 +3880,7 @@ function FinancialSnapshot({
 // R2-backed thumbnail. <img src> can't carry the bearer, so fetch as a blob
 // URL (api.fetchBlobUrl) and revoke on unmount. r2Key is streamed from the
 // project attachments endpoint (/api/projects/attachments/:key).
-function R2Thumb({ r2Key, style }: { r2Key: string; style?: React.CSSProperties }) {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    let live = true;
-    let made: string | null = null;
-    api.fetchBlobUrl(`/api/projects/attachments/${r2Key}`)
-      .then((u) => { if (live) { made = u; setUrl(u); } else URL.revokeObjectURL(u); })
-      .catch(() => {});
-    return () => { live = false; if (made) URL.revokeObjectURL(made); };
-  }, [r2Key]);
-  if (!url) return <div className="ph" style={style} />;
-  return <img src={url} alt="" style={{ ...style, objectFit: "cover", display: "block" }} />;
-}
+// R2Thumb moved to MobilePmsDocCard.tsx (imported above).
 
 // ── Small building blocks ──
 // List meta pill (spec project-list: branding / venue chips under the title).
@@ -4486,6 +3973,4 @@ function MiniProgress({ pct }: { pct: number }) {
   );
 }
 
-function humanize(s: string): string {
-  return s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
+// humanize moved to MobilePmsDocCard.tsx (imported above).

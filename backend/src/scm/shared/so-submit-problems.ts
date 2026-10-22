@@ -22,6 +22,7 @@
 // exactly as collectProcessingGateProblems already takes its facts, so this stays
 // pure and the IO lives in the route / validate endpoint.
 // ----------------------------------------------------------------------------
+import { fairMissingMessage, type FairWhy } from '../lib/fair-options';
 import { SOFA_MIX_REASON } from '../lib/main-mix';
 import { soLocationProblem } from '../lib/so-location-gate';
 import {
@@ -73,6 +74,19 @@ export interface SoSubmitFacts {
   hasVenue: boolean;
   /** Resolved salesperson — false when none. Confirm-only. */
   hasSalesperson: boolean;
+  /** A fair EVENT was picked/auto-filled (its organizer is set). Confirm-only.
+   *  Owner 2026-09-26: fair is compulsory so the Sales Report can attribute every
+   *  order — a submit must EITHER pick a fair OR mark `noFair`. */
+  fairChosen: boolean;
+  /** The operator explicitly marked this a No-fair / showroom sale (the escape
+   *  hatch that keeps the compulsory rule from blocking a genuine non-fair sale). */
+  noFair: boolean;
+  /** Why no fair was filled in for the keyer (GET /fair-default), which words
+   *  the fair refusal (`fairMissingMessage`). Null keeps the standing sentence. */
+  fairWhy: FairWhy | null;
+  /** An EVENT was picked with no day of it (owner 2026-09-24,
+   *  `fair-options.ts::fairDayMissing`). Confirm-only, like the venue. */
+  fairDayMissing: boolean;
   /** Whether to run the stock-location gate at all. False for a draft, an edit,
    *  or while the mappings are still loading (an in-flight mapping table makes
    *  every State look unmapped, and refusing an order because a read is in flight
@@ -128,6 +142,12 @@ export function collectSoSubmitProblems(facts: SoSubmitFacts): SaveProblem[] {
   if (!facts.hasNamedLine) out.push(requiredFieldProblem('At least one line item with a product'));
   if (!facts.asDraft) {
     if (!facts.hasVenue) out.push(requiredFieldProblem('Venue'));
+    // Fair is compulsory (owner 2026-09-26): a fair must be picked, or the sale
+    // explicitly marked No-fair / showroom. Blocks the ambiguous "left blank".
+    if (!facts.fairChosen && !facts.noFair) {
+      out.push({ code: 'fair_required', message: fairMissingMessage(facts.fairWhy), field: 'Fair' });
+    }
+    if (facts.fairDayMissing) out.push(requiredFieldProblem('Fair day'));
     if (!facts.hasSalesperson) out.push(requiredFieldProblem('Salesperson'));
   }
 

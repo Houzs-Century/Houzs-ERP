@@ -12,6 +12,8 @@ const approveAsync = vi.fn(async (_v: unknown) => ({ request: {}, execute: false
 const rejectAsync = vi.fn(async (_v: unknown) => ({ request: {} }));
 const withdrawAsync = vi.fn(async (_v: unknown) => ({ request: {} }));
 const confirm = vi.fn(async (_o: unknown) => true);
+/* The approve dialog: the approver's optional remark, '' when left blank. */
+const approveDialog = vi.fn(async (_o: unknown): Promise<string | null> => '');
 const prompt = vi.fn(async (_o: unknown): Promise<string | null> => 'Production has already started');
 const notify = vi.fn(async (_o: unknown) => undefined);
 
@@ -25,7 +27,7 @@ vi.mock('../lib/document-cancel-queries', async (orig) => ({
 vi.mock('../../../auth/AuthContext', () => ({
   useAuth: () => ({ user: { id: viewer.id }, can: (p: string) => viewer.perms.includes('*') || viewer.perms.includes(p) }),
 }));
-vi.mock('./ConfirmDialog', () => ({ useConfirm: () => confirm }));
+vi.mock('./ConfirmDialog', () => ({ useConfirm: () => confirm, usePrompt: () => approveDialog }));
 vi.mock('./PromptDialog', () => ({ usePrompt: () => prompt }));
 vi.mock('../lib/dialog-service', () => ({ serviceNotify: (o: unknown) => notify(o) }));
 
@@ -34,7 +36,7 @@ const { CancelRequestPanel } = await import('./CancelRequestPanel');
 const row = (over: Partial<Row> = {}): Row => ({
   id: 'r1', company_id: 1, doc_type: 'SO', doc_key: 'SO-1', doc_number: 'SO-1', doc_status_at_request: 'CONFIRMED',
   status: 'REQUESTED', reason: 'Customer cancelled the order', requested_by: 11, requested_by_name: 'Amy', requested_at: '2026-09-08T01:00:00Z',
-  l1_by: null, l1_by_name: null, l1_at: null, l2_by: null, l2_by_name: null, l2_at: null,
+  l1_by: null, l1_by_name: null, l1_at: null, l1_remark: null, l2_by: null, l2_by_name: null, l2_at: null, l2_remark: null,
   rejected_by: null, rejected_by_name: null, rejected_at: null, reject_reason: null, executed_by: null, executed_at: null,
   ...over,
 });
@@ -47,7 +49,7 @@ const mount = (onExecute = vi.fn()) => {
 beforeEach(() => {
   open = row();
   viewer = { id: 51, perms: [] };
-  approveAsync.mockClear(); rejectAsync.mockClear(); withdrawAsync.mockClear(); confirm.mockClear(); prompt.mockClear(); notify.mockClear();
+  approveAsync.mockClear(); rejectAsync.mockClear(); withdrawAsync.mockClear(); confirm.mockClear(); approveDialog.mockClear(); prompt.mockClear(); notify.mockClear();
 });
 
 describe('CancelRequestPanel', () => {
@@ -74,8 +76,8 @@ describe('CancelRequestPanel', () => {
     viewer = { id: 21, perms: ['scm.so_cancel.approve_l1'] };
     const onExecute = mount();
     fireEvent.click(screen.getByText('Approve (level 1)'));
-    await waitFor(() => expect(approveAsync).toHaveBeenCalledWith({ key: 'SO-1' }));
-    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ confirmLabel: 'Approve (level 1)', danger: false }));
+    await waitFor(() => expect(approveAsync).toHaveBeenCalledWith({ key: 'SO-1', remark: null }));
+    expect(approveDialog).toHaveBeenCalledWith(expect.objectContaining({ confirmLabel: 'Approve (level 1)', danger: false }));
     expect(onExecute).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({ title: 'Level-1 approval recorded' }));
   });
@@ -87,7 +89,26 @@ describe('CancelRequestPanel', () => {
     const onExecute = mount();
     fireEvent.click(screen.getByText('Approve & cancel (level 2)'));
     await waitFor(() => expect(onExecute).toHaveBeenCalledTimes(1));
-    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ danger: true }));
+    expect(approveDialog).toHaveBeenCalledWith(expect.objectContaining({ danger: true }));
+  });
+
+  it("sends the approver's remark, and a closed dialog signs nothing (DEV-17)", async () => {
+    viewer = { id: 21, perms: ['scm.so_cancel.approve_l1'] };
+    mount();
+    approveDialog.mockResolvedValueOnce(null);
+    fireEvent.click(screen.getByText('Approve (level 1)'));
+    await waitFor(() => expect(approveDialog).toHaveBeenCalledTimes(1));
+    expect(approveAsync).not.toHaveBeenCalled();
+
+    approveDialog.mockResolvedValueOnce('Checked with the customer');
+    fireEvent.click(screen.getByText('Approve (level 1)'));
+    await waitFor(() => expect(approveAsync).toHaveBeenCalledWith({ key: 'SO-1', remark: 'Checked with the customer' }));
+  });
+
+  it("shows the level-1 remark to the level-2 approver", () => {
+    open = row({ status: 'L1_APPROVED', l1_by: 21, l1_by_name: 'Ben', l1_at: '2026-09-08T02:00:00Z', l1_remark: 'Customer confirmed by phone' });
+    mount();
+    expect(screen.getByTestId('cancel-approval-remarks').textContent).toContain('L1: Customer confirmed by phone');
   });
 
   it('the level-1 signer does not get the level-2 button, and the requester gets neither', () => {

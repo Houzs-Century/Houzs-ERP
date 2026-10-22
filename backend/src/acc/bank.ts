@@ -19,6 +19,8 @@ import type { BankRecognitionRule, PayableBatch, PayoutAdviceForMatch } from './
 import type { LedgerMovement } from './bank-reconcile';
 import { lockMonthOf, monthAsDate, monthFromDate, type MonthLock } from './bank-lock';
 import { isReversalPair } from './reversal-pairs';
+import { lineForRepeats, type LineForRepeats } from './bank-repeats';
+import { chunkIn, paginateAll } from '../scm/lib/paginate-all';
 
 export type BankStatementConfig = {
   id: number;
@@ -119,7 +121,7 @@ export async function loadPayableBatches(
     sb.from('acc_settlement_rows')
       .select('batch_id, confirmed_at, bucket').eq('company_id', companyId),
     sb.from('acc_settlement_receipts')
-      .select('batch_id, amount_sen').eq('company_id', companyId),
+      .select('batch_id, amount_sen, charge_sen').eq('company_id', companyId),
     /* What the bank KEPT off a payout and Finance booked as a charge
        (docs/bugs/0787) is settled the same way a credit is — the report is
        owed its net less it. Read here too (docs/bugs/0812): the bank side was
@@ -140,11 +142,13 @@ export async function loadPayableBatches(
     openByBatch.set(id, (openByBatch.get(id) ?? 0) + open);
   }
   const receivedByBatch = new Map<number, number>();
+  const chargedByBatch = new Map<number, number>();
   for (const r of (recRes.data ?? []) as Array<Record<string, any>>) {
     const id = Number(r.batch_id);
     receivedByBatch.set(id, (receivedByBatch.get(id) ?? 0) + Number(r.amount_sen ?? 0));
+    /* A charge kept off a credit (owner 2026-09-30, GHL) settles like one booked on an advice day. */
+    chargedByBatch.set(id, (chargedByBatch.get(id) ?? 0) + Number(r.charge_sen ?? 0));
   }
-  const chargedByBatch = new Map<number, number>();
   for (const r of (chargeRes.data ?? []) as Array<{ batch_id: number | null; charge_sen: number | null }>) {
     if (r.batch_id == null) continue;
     const id = Number(r.batch_id);
@@ -407,4 +411,34 @@ export async function loadLineMonth(
     return { ok: false, reason: `bank line ${lineId} has no statement to check a lock against` };
   }
   return { ok: true, found: true, accountCode, month: lockMonthOf(String(line.booked_on).slice(0, 10)) };
+}
+
+/**
+ * Every movement this account's statements carry, as acc/bank-repeats reads
+ * them (owner 2026-10-14) — each with the words that say where it is recorded:
+ * its entry when it has one, else its file and whether it waits or was left out
+ * there. Paged: an account's lines outgrow PostgREST's 1,000-row reply within a
+ * year.
+ */
+export async function loadLinesForRepeats(
+  sb: any, companyId: number, accountCode: string,
+): Promise<{ ok: true; lines: LineForRepeats[] } | Fail> {
+  const stmts = await paginateAll<{ id: number; file_name: string | null }>((lo, hi) => sb.from('acc_bank_statements')
+    .select('id, file_name').eq('company_id', companyId).eq('account_code', accountCode).order('id').range(lo, hi));
+  if (stmts.error) return { ok: false, reason: stmts.error.message };
+  const fileOf = new Map((stmts.data ?? []).map((s) => [Number(s.id), String(s.file_name ?? `statement ${s.id}`)]));
+  const rows = await chunkIn<Record<string, any>, number>([...fileOf.keys()], (batch, lo, hi) => sb.from('acc_bank_statement_lines')
+    .select('id, statement_id, line_no, booked_on, description, reference, amount_sen, state, kind, posted_je_no')
+    .eq('company_id', companyId).in('statement_id', batch).order('id').range(lo, hi));
+  if (rows.error) return { ok: false, reason: rows.error.message };
+  return {
+    ok: true,
+    lines: rows.data.map((r) => {
+      const state = String(r.state ?? '');
+      const file = fileOf.get(Number(r.statement_id)) ?? `statement ${r.statement_id}`;
+      return lineForRepeats(r, r.posted_je_no
+        ? String(r.posted_je_no)
+        : `${file}${state === 'OPEN' ? ' (still open there)' : state === 'IGNORED' ? ' (left out there)' : ''}`);
+    }),
+  };
 }

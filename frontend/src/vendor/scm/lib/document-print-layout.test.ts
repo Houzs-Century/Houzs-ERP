@@ -4,7 +4,7 @@
 //
 // 1. The letterhead's left block was drawn with NO width limit, so a long
 //    company address simply ran under the right-hand meta column: on 2990's DO
-//    "…Wilayah Persekutuan KL" ended up touching "Date: 06/08/2026". Nothing
+//    "…Wilayah Persekutuan KL" ended up touching "Date: 2026/08/06". Nothing
 //    threw — the two blocks are drawn by separate calls that never consult each
 //    other.
 // 2. The item table printed a near-black header band and striped rows. The
@@ -142,7 +142,7 @@ describe('letterhead: the company block never runs into the meta column', () => 
       logo: FAKE_LOGO,
       rightMeta: [
         { label: 'DO No', value: '2990-DO-2608-006' },
-        { label: 'Date', value: '06/08/2026' },
+        { label: 'Date', value: '2026/08/06' },
       ],
     });
 

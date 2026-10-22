@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { LogIn } from "lucide-react";
+import { LogIn, KeyRound, Mail, Eye, EyeOff } from "lucide-react";
 import { api } from "../../api/client";
 import { useQuery } from "../../hooks/useQuery";
 import { useToast } from "../../hooks/useToast";
@@ -75,6 +75,17 @@ export function TeamMemberProfile({
   const dialog = useDialog();
   const [tab, setTab] = useState<ProfileTab>("details");
   const [saving, setSaving] = useState(false);
+
+  /* Account access. Restored after the profile redesign dropped the old edit
+     panel's "Set password" field and reset-link button. A driver who forgets
+     their password has no office email they reliably check, so an admin needs to
+     hand them a new one directly. Gated on `canManage`, which the Directory sets
+     to full-admin only (`canManage && !salesDirScoped`) — exactly the users.manage
+     tier the backend PATCH password gate enforces, so a Sales Director never sees
+     this and could not use it if they did. */
+  const [newPw, setNewPw] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [pwBusy, setPwBusy] = useState<null | "set" | "link">(null);
 
   // Assignment draft — starts from the live row, saved as one PATCH diff.
   const [draft, setDraft] = useState(() => ({
@@ -176,6 +187,64 @@ export function TeamMemberProfile({
       toast.error(e instanceof Error ? e.message : "Could not save changes");
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Set a new password directly (PATCH {password}) — the member signs in with it
+  // at once. Separate from the Assignment Save because it is a sensitive, one-off
+  // action, not part of a role/department edit. Min 12 mirrors the backend
+  // strength check; the final word is the server's.
+  async function setNewPassword() {
+    const pw = newPw.trim();
+    if (pw.length < 12) {
+      toast.error("Password must be at least 12 characters");
+      return;
+    }
+    if (
+      !(await dialog.confirm(
+        `Set a new password for ${member.name || member.email}?\n\nThey sign in with their email and this password. It is NOT emailed — tell it to them directly.`,
+      ))
+    )
+      return;
+    setPwBusy("set");
+    try {
+      await api.patch(`/api/users/${member.id}`, { password: pw });
+      toast.success("New password set");
+      setNewPw("");
+      setShowPw(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not set the password");
+    } finally {
+      setPwBusy(null);
+    }
+  }
+
+  // The gentler alternative — email a one-time link and let them choose their own
+  // password. Same endpoint the old panel used; the link is never surfaced to the
+  // admin, and nothing on the account changes until the member clicks it.
+  async function sendResetLink() {
+    if (
+      !(await dialog.confirm(
+        `Email a password reset link to ${member.email}?\n\nNothing changes until they click it — their current password and sessions keep working. The link expires in 1 hour.`,
+      ))
+    )
+      return;
+    setPwBusy("link");
+    try {
+      const res = await api.post<{ email_sent?: boolean; email_status?: string }>(
+        `/api/users/${member.id}/reset-password`,
+      );
+      if (res.email_sent) {
+        toast.success(`Reset link emailed to ${member.email} — expires in 1 hour`);
+      } else {
+        toast.error(
+          `Email not sent (${res.email_status || "check Settings, Email"}). Nothing was changed.`,
+        );
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not send the reset link");
+    } finally {
+      setPwBusy(null);
     }
   }
 
@@ -487,6 +556,66 @@ export function TeamMemberProfile({
               pendingSave={!posPinSaved}
               autoOpen={pinPrompt}
             />
+          )}
+
+          {tab === "details" && canManage && member.status !== "invited" && (
+            <div className="rounded-lg border border-border bg-surface shadow-stone">
+              <div className="border-b border-border-subtle px-5 py-3">
+                <Eyebrow>Account access</Eyebrow>
+              </div>
+              <div className="flex flex-col gap-3 p-5">
+                <div>
+                  <div className="text-[11.5px] text-ink-muted">Set a new password</div>
+                  <div className="mt-1 flex items-start gap-2">
+                    <div className="relative flex-1">
+                      <input
+                        type={showPw ? "text" : "password"}
+                        value={newPw}
+                        onChange={(e) => setNewPw(e.target.value)}
+                        placeholder="New password (min 12 characters)"
+                        autoComplete="new-password"
+                        className="w-full rounded-md border border-border bg-surface px-3 py-2 pr-10 text-[13px] text-ink outline-none focus:border-primary"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPw((s) => !s)}
+                        className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-ink-muted transition-colors hover:text-primary"
+                        aria-label={showPw ? "Hide password" : "Show password"}
+                        title={showPw ? "Hide password" : "Show password"}
+                      >
+                        {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
+                      </button>
+                    </div>
+                    <Button
+                      variant="primary"
+                      icon={<KeyRound size={14} />}
+                      disabled={pwBusy !== null || newPw.trim().length < 12}
+                      onClick={setNewPassword}
+                    >
+                      {pwBusy === "set" ? "Setting…" : "Set password"}
+                    </Button>
+                  </div>
+                  <p className="mb-0 mt-1.5 text-[11.5px] leading-relaxed text-ink-muted">
+                    They sign in with their email and this password — it is not emailed, so
+                    tell it to them directly. Use this when a member is locked out and cannot
+                    receive a reset link.
+                  </p>
+                </div>
+                <div className="flex items-center justify-between gap-3 border-t border-border-subtle pt-3">
+                  <span className="text-[11.5px] text-ink-muted">
+                    Rather they set their own? Email a one-time link instead.
+                  </span>
+                  <Button
+                    variant="secondary"
+                    icon={<Mail size={14} />}
+                    disabled={pwBusy !== null}
+                    onClick={sendResetLink}
+                  >
+                    {pwBusy === "link" ? "Sending…" : "Send reset link"}
+                  </Button>
+                </div>
+              </div>
+            </div>
           )}
 
           {tab === "permissions" && (

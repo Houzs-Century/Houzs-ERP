@@ -20,10 +20,13 @@ import type { Env, Variables } from '../env';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   crossCompanySourceRefusal,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
+import { stampDoLineSoRefs } from '../lib/so-ref-lookup';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
 import { assertLinkedLineItemsMatch } from '../lib/line-link-item-identity';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
+import { traceDoShipmentSources } from '../lib/source-po-trace';
+import { shippedBatchOf } from '../lib/return-line-batch';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { computeVariantKey, type VariantAttrs } from '../shared';
 import { doLineRemaining, returnableRemainingFrom, resolveCandidateDoIds, custKeyOf, remainingUnavailableResponse, type DoRemainingLine, type DoRemainingResult } from '../lib/do-line-remaining';
@@ -255,32 +258,47 @@ async function warehouseCodeMap(
    so the batch view + batch-scoped consume stay consistent. Trace
    do_item_id → delivery_order_items.so_item_id → mfg_sales_order_items.
    allocated_batch_no. Best-effort: absent column (pre-0121) / non-sofa → no
-   entry → plain non-batched IN, identical to the old behaviour. */
+   entry → plain non-batched IN, identical to the old behaviour.
+   A sofa line takes the batch its DO actually shipped from first (2990-0011):
+   allocated_batch_no is cleared once the SO is delivered, so a return booked
+   after that came back un-batched and MRP could not see it. */
 async function resolveDrLineBatches(
   sb: any,
-  items: Array<{ id: string; do_item_id?: string | null }>,
+  items: Array<{ id: string; do_item_id?: string | null; item_code?: string | null; item_group?: string | null; variants?: VariantAttrs | null }>,
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   const doItemIds = [...new Set(items.map((it) => it.do_item_id ?? null).filter((x): x is string => !!x))];
   if (doItemIds.length === 0) return out;
   const { data: doLines } = await sb.from('delivery_order_items')
-    .select('id, so_item_id').in('id', doItemIds);
-  const doRows = (doLines ?? []) as Array<{ id: string; so_item_id: string | null }>;
+    .select('id, so_item_id, delivery_order_id').in('id', doItemIds);
+  const doRows = (doLines ?? []) as Array<{ id: string; so_item_id: string | null; delivery_order_id: string | null }>;
   const soByDoLine = new Map<string, string>();
+  const doByDoLine = new Map<string, string>();
   const soItemIds = new Set<string>();
-  for (const r of doRows) { if (r.so_item_id) { soByDoLine.set(r.id, r.so_item_id); soItemIds.add(r.so_item_id); } }
-  if (soItemIds.size === 0) return out;
+  for (const r of doRows) {
+    if (r.so_item_id) { soByDoLine.set(r.id, r.so_item_id); soItemIds.add(r.so_item_id); }
+    if (r.delivery_order_id) doByDoLine.set(r.id, r.delivery_order_id);
+  }
+  const isSofa = (it: { item_group?: string | null }) => String(it.item_group ?? '').toUpperCase().includes('SOFA');
+  const sofaDoIds = [...new Set(items.filter(isSofa).map((it) => (it.do_item_id ? doByDoLine.get(it.do_item_id) : undefined)).filter((x): x is string => !!x))];
+  const shipped = sofaDoIds.length > 0 ? (await traceDoShipmentSources(sb, sofaDoIds)).byBucket : new Map();
   const batchBySo = new Map<string, string>();
-  try {
-    const { data: soRows, error } = await sb.from('mfg_sales_order_items')
-      .select('id, allocated_batch_no').in('id', [...soItemIds]);
-    if (!error) for (const r of (soRows ?? []) as Array<{ id: string; allocated_batch_no: string | null }>) {
-      if (r.allocated_batch_no) batchBySo.set(r.id, r.allocated_batch_no);
-    }
-  } catch { /* column absent pre-0121 — no batches */ }
+  if (soItemIds.size > 0) {
+    try {
+      const { data: soRows, error } = await sb.from('mfg_sales_order_items')
+        .select('id, allocated_batch_no').in('id', [...soItemIds]);
+      if (!error) for (const r of (soRows ?? []) as Array<{ id: string; allocated_batch_no: string | null }>) {
+        if (r.allocated_batch_no) batchBySo.set(r.id, r.allocated_batch_no);
+      }
+    } catch { /* column absent pre-0121 — no batches */ }
+  }
   for (const it of items) {
+    const doId = it.do_item_id ? doByDoLine.get(it.do_item_id) : undefined;
+    const fromShip = doId && it.item_code && isSofa(it)
+      ? shippedBatchOf(shipped, doId, it.item_code, computeVariantKey(it.item_group ?? null, it.variants ?? null))
+      : null;
     const so = it.do_item_id ? soByDoLine.get(it.do_item_id) : undefined;
-    const batch = so ? batchBySo.get(so) : undefined;
+    const batch = fromShip ?? (so ? batchBySo.get(so) : undefined);
     if (batch) out.set(it.id, batch);
   }
   return out;
@@ -315,7 +333,7 @@ async function increaseInventoryForReturn(sb: any, deliveryReturnId: string, per
     (drHeader as { company_id?: number | null } | null)?.company_id ?? undefined,
   );
   // Sofa batch per DR line — returned modules re-enter the batch they shipped from.
-  const lineBatch = await resolveDrLineBatches(sb, items as Array<{ id: string; do_item_id?: string | null }>);
+  const lineBatch = await resolveDrLineBatches(sb, items as Array<{ id: string; do_item_id?: string | null; item_code?: string | null; item_group?: string | null; variants?: VariantAttrs | null }>);
 
   /* Collapse identical (warehouse_id, item_code, variant_key, batch_no) lines
      into one IN row. A DR can list the same product across two lines AND across
@@ -444,7 +462,7 @@ async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, perfo
       drHeaderWarehouseId,
       (drHeader as { company_id?: number | null }).company_id ?? undefined,
     );
-    const lineBatch = await resolveDrLineBatches(sb, lineRows as Array<{ id: string; do_item_id?: string | null }>);
+    const lineBatch = await resolveDrLineBatches(sb, lineRows);
     for (const it of lineRows) {
       /* P1 SO-SKU spec §4.6 — SERVICE lines never wrote IN on create, so they
          stay out of the resync TARGET too (else the delta walk would write a
@@ -819,6 +837,8 @@ deliveryReturns.get('/returnable-do-lines', async (c) => {
   if (!canViewScmFinance(c)) {
     for (const l of lines) delete (l as unknown as Record<string, unknown>).unitCostSen;
   }
+  // The DO's order reference, for the picker's search (owner 2026-09-25).
+  await stampDoLineSoRefs(sb, lines, (q) => scopeToCompany(q, c), 'returnable-do-lines');
   return c.json({ lines });
 });
 

@@ -71,9 +71,9 @@ describe('splitDateTimeLocal / joinDateTimeLocal', () => {
 describe('DateTimeField rendering', () => {
   test('shows the date half day-first, never in the OS locale', () => {
     render(<Harness initial="2026-05-31T14:30" />);
-    // 31/05/2026 — not 05/31/2026, which is what a native datetime-local
+    // 2026/05/31 — not 2026/31/05, which is what a native datetime-local
     // renders on a US-locale machine and is the bug this component exists for.
-    expect(dateBox().value).toBe('31/05/2026');
+    expect(dateBox().value).toBe('2026/05/31');
     expect(timeBox().value).toBe('14:30');
   });
 
@@ -85,7 +85,7 @@ describe('DateTimeField rendering', () => {
 
   test('a stored date-only value shows the date with an empty time', () => {
     render(<Harness initial="2026-05-31" />);
-    expect(dateBox().value).toBe('31/05/2026');
+    expect(dateBox().value).toBe('2026/05/31');
     expect(timeBox().value).toBe('');
   });
 });
@@ -97,7 +97,7 @@ describe('DateTimeField value contract', () => {
     // lose or gain a day west of Greenwich, so assert exactly that one.
     const onChange = vi.fn();
     render(<Harness initial="2026-05-31T00:00" onChange={onChange} />);
-    expect(dateBox().value).toBe('31/05/2026');
+    expect(dateBox().value).toBe('2026/05/31');
 
     fireEvent.change(timeBox(), { target: { value: '23:59' } });
     expect(onChange).toHaveBeenLastCalledWith('2026-05-31T23:59');
@@ -113,7 +113,7 @@ describe('DateTimeField value contract', () => {
     const onChange = vi.fn();
     render(<Harness initial="" onChange={onChange} />);
     fireEvent.change(timeBox(), { target: { value: '09:15' } });
-    fireEvent.change(dateBox(), { target: { value: '01/02/2026' } });
+    fireEvent.change(dateBox(), { target: { value: '2026/02/01' } });
     // 1 February, not 2 January.
     expect(onChange).toHaveBeenLastCalledWith('2026-02-01T09:15');
   });
@@ -140,7 +140,7 @@ describe('DateTimeField clearing', () => {
     render(<Harness initial="2026-05-31T14:30" />);
     fireEvent.change(dateBox(), { target: { value: '' } });
     expect(emitted()).toBe('');
-    fireEvent.change(dateBox(), { target: { value: '01/06/2026' } });
+    fireEvent.change(dateBox(), { target: { value: '2026/06/01' } });
     expect(emitted()).toBe('2026-06-01T14:30');
   });
 });
@@ -151,9 +151,9 @@ describe('DateTimeField half-filled state', () => {
      derive-from-props would wipe the half the operator just entered. */
   test('a date entered before a time STAYS on screen while the value is empty', () => {
     render(<Harness initial="" />);
-    fireEvent.change(dateBox(), { target: { value: '31/05/2026' } });
+    fireEvent.change(dateBox(), { target: { value: '2026/05/31' } });
     expect(emitted()).toBe('');            // incomplete — nothing saved yet
-    expect(dateBox().value).toBe('31/05/2026'); // but still visible
+    expect(dateBox().value).toBe('2026/05/31'); // but still visible
     fireEvent.change(timeBox(), { target: { value: '08:00' } });
     expect(emitted()).toBe('2026-05-31T08:00');
   });
@@ -163,7 +163,7 @@ describe('DateTimeField half-filled state', () => {
     fireEvent.change(timeBox(), { target: { value: '08:00' } });
     expect(emitted()).toBe('');
     expect(timeBox().value).toBe('08:00');
-    fireEvent.change(dateBox(), { target: { value: '31/05/2026' } });
+    fireEvent.change(dateBox(), { target: { value: '2026/05/31' } });
     expect(emitted()).toBe('2026-05-31T08:00');
   });
 
@@ -186,9 +186,9 @@ describe('DateTimeField external updates', () => {
       );
     }
     render(<Outer />);
-    expect(dateBox().value).toBe('31/05/2026');
+    expect(dateBox().value).toBe('2026/05/31');
     fireEvent.click(screen.getByText('load other row'));
-    expect(dateBox().value).toBe('25/12/2027');
+    expect(dateBox().value).toBe('2027/12/25');
     expect(timeBox().value).toBe('06:45');
   });
 
@@ -231,7 +231,7 @@ describe('DateTimeField disabled', () => {
 describe('DateTimeField half-filled disclosure', () => {
   test('a date with no time flags the TIME half, because nothing is being saved', () => {
     render(<Harness initial="" />);
-    fireEvent.change(dateBox(), { target: { value: '31/05/2026' } });
+    fireEvent.change(dateBox(), { target: { value: '2026/05/31' } });
     // The contract is unchanged: still nothing emitted.
     expect(emitted()).toBe('');
     // ...but the field no longer stays silent about it.
@@ -253,7 +253,7 @@ describe('DateTimeField half-filled disclosure', () => {
     expect(emitted()).toBe('');
     // The date is still on screen, so the flag is the only thing telling the
     // operator that what they can see is not what will be saved.
-    expect(dateBox().value).toBe('31/05/2026');
+    expect(dateBox().value).toBe('2026/05/31');
     expect(timeBox().getAttribute('aria-invalid')).toBe('true');
   });
 

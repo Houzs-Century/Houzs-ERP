@@ -16,9 +16,20 @@ import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
 export type MoneyPayment = {
   id: string; paidOn: string; method: string; provider: string | null; amountSen: number;
-  booked: boolean; collectedBy: string | null; convertedFrom: string | null;
+  booked: boolean;
+  /** Brought over from AutoCount — the order's money all the same (owner 2026-10-05). Optional for the minute a newer screen reads an older server. */
+  imported?: boolean;
+  collectedBy: string | null; convertedFrom: string | null;
 };
 export type MoneyRefund = { id: string; pvNumber: string; status: string; voucherDate: string; totalSen: number };
+/** A refund asked of Finance as a payment request (owner 2026-10-14; server:
+    lib/refund-request.ts). WAITING holds its money; ANSWERED — a refund voucher
+    answers it (pvNumber); RETURNED — Finance said no, with why (financeNote). */
+export type MoneyRefundRequest = {
+  id: string; requestNo: string; amountSen: number;
+  state: 'WAITING' | 'ANSWERED' | 'RETURNED' | 'WITHDRAWN';
+  reason: string; financeNote: string | null; requestedBy: string | null; requestedOn: string; pvNumber: string | null;
+};
 export type MoneyConversion = { paymentId: string; toDocNo: string; amountSen: number; paidOn: string; convertedOn: string };
 export type OrderMoney = {
   docNo: string;
@@ -26,9 +37,15 @@ export type OrderMoney = {
   cancelled: boolean;
   customer: { name: string | null; phone: string | null; customerId: string | null; debtorCode: string | null };
   payments: MoneyPayment[];
+  /** The money in the pool: booked here plus brought over from AutoCount. */
   bookedSen: number;
+  /** The part of it brought over from AutoCount (optional against an older server). */
+  importedSen?: number;
   refunds: MoneyRefund[];
   refundedSen: number;
+  /** The refund requests on the order, and what the waiting ones hold (optional against an older server). */
+  refundRequests?: MoneyRefundRequest[];
+  requestedSen?: number;
   conversions: MoneyConversion[];
   convertedSen: number;
   remainingSen: number;
@@ -89,31 +106,52 @@ export const useCancelledWithMoney = (phone?: string | null, enabled = true) => 
   retry: retryUnlessClientError,
 });
 
-/** The Refund button: a Customer Refund voucher DRAFT for Finance. */
-/** One refund draft for each of several cancelled orders (the SO list's bar). */
+/** What the Refund button sends (owner 2026-10-14): the amount, the reason and
+    the customer's bank — all required; the server raises a payment request. */
+export type RefundAsk = { amountSen: number; reason: string; bankName: string; bankAccountNo: string; bankAccountName: string };
+export type RefundAskBank = Omit<RefundAsk, 'amountSen' | 'reason'>;
+export const EMPTY_BANK: RefundAskBank = { bankName: '', bankAccountNo: '', bankAccountName: '' };
+/** The fields still empty — none means the ask may go. */
+export const refundAskGaps = (a: Pick<RefundAsk, 'reason'> & RefundAskBank): string[] => [
+  !a.reason.trim() ? 'the reason' : null,
+  !a.bankName.trim() ? "the customer's bank" : null,
+  !a.bankAccountNo.trim() ? 'the account number' : null,
+  !a.bankAccountName.trim() ? 'the name on the account' : null,
+].filter((x): x is string => x != null);
+const trimAsk = (a: RefundAsk): RefundAsk => ({
+  amountSen: a.amountSen, reason: a.reason.trim(), bankName: a.bankName.trim(), bankAccountNo: a.bankAccountNo.trim(), bankAccountName: a.bankAccountName.trim(),
+});
+type Raised = { id: string; requestNo: string };
+
+/** What a raised refund request makes stale: the order's money, the lists of
+    orders with money, the refund source PV New reads, and the requests. */
+const afterRefundAsked = (qc: ReturnType<typeof useQueryClient>, docNos: string[]) => {
+  for (const d of docNos) void qc.invalidateQueries({ queryKey: ORDER_MONEY_KEY(d) });
+  void qc.invalidateQueries({ queryKey: ['pv-refund-source'] });
+  void qc.invalidateQueries({ queryKey: ['so-cancelled-with-money'] });
+  void qc.invalidateQueries({ queryKey: ['so-with-money'] });
+  void qc.invalidateQueries({ queryKey: ['payment-requests'] });
+};
+
+/** One refund request for each of several orders (the SO list's bar). */
 export const useRequestRefunds = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (asks: Array<{ docNo: string; amountSen: number; note?: string | null }>) => {
-      const out: Array<{ docNo: string; pvNumber?: string; error?: string }> = [];
-      for (const a of asks) {
+    mutationFn: async (asks: Array<RefundAsk & { docNo: string }>) => {
+      const out: Array<{ docNo: string; requestNo?: string; error?: string }> = [];
+      for (const { docNo, ...a } of asks) {
         try {
-          const r = await authedFetch<{ id: string; pvNumber: string }>(`/mfg-sales-orders/${encodeURIComponent(a.docNo)}/money/refund`, {
-            method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ amountSen: a.amountSen, note: a.note ?? null }),
+          const r = await authedFetch<Raised>(`/mfg-sales-orders/${encodeURIComponent(docNo)}/money/refund`, {
+            method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(trimAsk(a)),
           });
-          out.push({ docNo: a.docNo, pvNumber: r.pvNumber });
+          out.push({ docNo, requestNo: r.requestNo });
         } catch (e) {
-          out.push({ docNo: a.docNo, error: e instanceof Error ? e.message : String(e) });
+          out.push({ docNo, error: e instanceof Error ? e.message : String(e) });
         }
       }
       return out;
     },
-    onSuccess: (out) => {
-      for (const o of out) void qc.invalidateQueries({ queryKey: ORDER_MONEY_KEY(o.docNo) });
-      void qc.invalidateQueries({ queryKey: ['refund-source'] });
-      void qc.invalidateQueries({ queryKey: ['so-cancelled-with-money'] });
-      void qc.invalidateQueries({ queryKey: ['so-with-money'] });
-    },
+    onSuccess: (out) => afterRefundAsked(qc, out.map((o) => o.docNo)),
   });
 };
 
@@ -133,19 +171,16 @@ export const readConvertSource = async (docNo: string): Promise<{ ok: true; sour
   }
 };
 
+/** The Refund button: a payment request for Finance (owner 2026-10-14) — the
+    caller's own; Finance answers it with the refund voucher or returns it. */
 export const useRequestRefund = (docNo: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (p: { amountSen: number; note?: string | null }) =>
-      authedFetch<{ id: string; pvNumber: string }>(`/mfg-sales-orders/${encodeURIComponent(docNo)}/money/refund`, {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(p),
+    mutationFn: (p: RefundAsk) =>
+      authedFetch<Raised>(`/mfg-sales-orders/${encodeURIComponent(docNo)}/money/refund`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(trimAsk(p)),
       }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ORDER_MONEY_KEY(docNo) });
-      void qc.invalidateQueries({ queryKey: ['refund-source'] });
-      void qc.invalidateQueries({ queryKey: ['so-cancelled-with-money'] });
-      void qc.invalidateQueries({ queryKey: ['so-with-money'] });
-    },
+    onSuccess: () => afterRefundAsked(qc, [docNo]),
   });
 };
 

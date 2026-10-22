@@ -282,6 +282,7 @@ export async function postJournal(sb: any, input: PostJournalInput): Promise<Pos
     party_code: l.partyCode ?? null,
     party_name: l.partyName ?? null,
     notes: l.notes ?? null,
+    project_id: l.projectId ?? null,
   }));
   const { error: linesErr } = await sb.from('journal_entry_lines').insert(lineRows);
   if (linesErr) {
@@ -315,6 +316,11 @@ export type ReverseJournalInput = {
   narration: (orig: { je_no: string }) => string;
   /** entry_date for the contra. Defaults to today (MYT) — a void happens when it happens. */
   entryDate?: string;
+  /** Date the contra on the ORIGINAL entry's own day instead: the entry records
+      something that never happened (a payment Finance removes from a cancelled
+      order, owner 2026-09-29), so the pair must net to zero in the month it sits
+      in rather than leave that month overstated. `entryDate`, when given, wins. */
+  onOriginalDate?: boolean;
   /** canonical 2-line fallback if the original somehow has no lines. */
   fallbackLines?: (totalSen: number) => EngineLine[];
 };
@@ -325,7 +331,7 @@ export type ReverseJournalResult =
       was voided — the number a reader recognises, which the contra's is not. */
   | { ok: true; status: 'reversed'; jeNo: string; jeId: string; originalJeNo: string }
   | { ok: true; status: 'already_reversed' | 'nothing_to_reverse' }
-  | { ok: false; status: 'reversal_read_failed' | 'reversal_insert_failed' | 'reversal_lines_failed'; reason?: string };
+  | { ok: false; status: 'reversal_read_failed' | 'reversal_insert_failed' | 'reversal_lines_failed' | 'reversal_post_failed' | 'reversal_flag_failed'; reason?: string };
 
 export async function reverseJournal(sb: any, input: ReverseJournalInput): Promise<ReverseJournalResult> {
   const revType = REVERSAL_SOURCE[input.sourceType] ?? `${input.sourceType}_REVERSAL`;
@@ -380,13 +386,14 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
     return { ok: true, status: 'reversed', jeNo: orig.je_no, jeId: orig.id, originalJeNo: orig.je_no };
   }
 
-  // Mirror the SAME accounts + parties with debit/credit swapped — a faithful
-  // contra. The read is caught before the `?? []` fold: a failed read is not
-  // "the original had no lines", and falling through would contra assumed
+  // Mirror the SAME accounts + parties + events with debit/credit swapped — a
+  // faithful contra, so an event's cost nets to zero with its voided entry.
+  // The read is caught before the `?? []` fold: a failed read is not "the
+  // original had no lines", and falling through would contra assumed
   // accounts instead of the real ones.
   const { data: origLines, error: origLinesErr } = await sb
     .from('journal_entry_lines')
-    .select('account_code, debit_sen, credit_sen, party_type, party_code, party_name, notes')
+    .select('account_code, debit_sen, credit_sen, party_type, party_code, party_name, notes, project_id')
     .eq('journal_entry_id', orig.id)
     .order('line_no');
   if (origLinesErr) return { ok: false, status: 'reversal_read_failed', reason: `origLines: ${origLinesErr.message}` };
@@ -398,6 +405,7 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
     party_code: string | null;
     party_name: string | null;
     notes: string | null;
+    project_id?: number | null;
   }>;
 
   const companyId = orig.company_id ?? null;
@@ -408,7 +416,9 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
   // NUMBERED in that same month's series — mirror postJournal, which mints from
   // the entry's OWN date. Minting from orig.entry_date put an Aug void into the
   // original's (e.g. Jan) JE-YYMM series while the row itself was dated Aug.
-  const contraEntryDate = dateOrNull(input.entryDate) ?? todayMyt();
+  const contraEntryDate = dateOrNull(input.entryDate)
+    ?? (input.onOriginalDate ? dateOrNull(String(orig.entry_date ?? '').slice(0, 10)) : null)
+    ?? todayMyt();
 
   let revJe: { id: string; je_no: string } | null = null;
   let lastErr: { code?: string; message?: string } | null = null;
@@ -451,6 +461,7 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
           party_code: l.party_code ?? null,
           party_name: l.party_name ?? null,
           notes: `Reversal — ${l.notes ?? ''}`.trim(),
+          project_id: l.project_id ?? null,
         }))
       : (input.fallbackLines ? input.fallbackLines(totalSen) : []).map((l, i) => ({
           ...companyCol,
@@ -463,6 +474,7 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
           party_code: l.partyCode ?? null,
           party_name: l.partyName ?? null,
           notes: l.notes ?? null,
+          project_id: l.projectId ?? null,
         }));
   if (swapped.length === 0) {
     await sb.from('journal_entries').delete().eq('id', revJe.id);
@@ -477,8 +489,25 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
   // Post the contra + flag the original. Order matters: if the flag update
   // fails the contra still exists, so the reversed_by_je guard makes a retry
   // idempotent instead of double-voiding.
-  await sb.from('journal_entries').update({ posted: true }).eq('id', revJe.id);
-  await sb.from('journal_entries').update({ reversed: true, reversed_by_je: revJe.id }).eq('id', orig.id);
+  //
+  // BOTH answers are read (owner 2026-10-20, 「这样要修」). Unread, a contra the
+  // database refused to post — the one-active index refused every SECOND void
+  // of a document until 20261020T1100 — still flagged the original reversed
+  // and answered ok, so the caller booked afresh over a void that never posted:
+  // 35 such contras in production by 2026-10-20. A refused post now takes the
+  // unposted contra back out and leaves the original live, so the caller stops
+  // with nothing half-done.
+  const { error: postErr } = await sb.from('journal_entries').update({ posted: true }).eq('id', revJe.id);
+  if (postErr) {
+    await sb.from('journal_entry_lines').delete().eq('journal_entry_id', revJe.id);
+    await sb.from('journal_entries').delete().eq('id', revJe.id);
+    return { ok: false, status: 'reversal_post_failed', reason: postErr.message };
+  }
+  // The contra is posted. If the flag does not stick, the caller must not book
+  // afresh over an original the books still count; its retry lands on the
+  // reversed_by_je guard above, which makes the flag stick and answers ok.
+  const { error: flagErr } = await sb.from('journal_entries').update({ reversed: true, reversed_by_je: revJe.id }).eq('id', orig.id);
+  if (flagErr) return { ok: false, status: 'reversal_flag_failed', reason: flagErr.message };
 
   return { ok: true, status: 'reversed', jeNo: revJe.je_no, jeId: revJe.id, originalJeNo: orig.je_no };
 }

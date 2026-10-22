@@ -114,7 +114,7 @@ describe("MobileDoHeaderEdit — an open delivery order", () => {
     const { onSaved } = mount();
     await waitFor(() => expect(input("Customer delivery date").value).not.toBe(""));
     await userEvent.clear(input("Customer delivery date"));
-    await userEvent.type(input("Customer delivery date"), "20/09/2026");
+    await userEvent.type(input("Customer delivery date"), "2026/09/20");
     await userEvent.tab();
     await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(onSaved).toHaveBeenCalled());

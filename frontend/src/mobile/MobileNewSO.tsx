@@ -11,7 +11,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { authedFetch, type SaveProblem } from "../vendor/scm/lib/authed-fetch";
 import { lineWriteFailure, lineWriteSaveMessage, type LineWriteFailure } from "../vendor/scm/lib/line-write-failures";
-import { amendmentVariants } from "../vendor/scm/lib/so-amendment-line-diff";
+import { amendmentVariants, amendmentVariantsKey, amendmentRequestedUnitPriceSen, amendmentPriceFields, storedLineRemark } from "../vendor/scm/lib/so-amendment-line-diff";
 import { photoLabel, photoUploadFailure, photoUploadFailureMessage, unmatchedLinePhotos, type PhotoUploadFailure } from "../vendor/scm/lib/photo-upload-failures";
 import { runSoVersionedMutation } from "../vendor/scm/lib/so-versioned-mutation";
 import { notifySaveProblems, SaveProblemsList, saveProblemsTitle } from "../vendor/scm/components/SaveProblemsList";
@@ -20,10 +20,13 @@ import { useSoValidate } from "../vendor/scm/lib/use-so-validate";
 import { uploadSlipFull } from "../vendor/scm/lib/slip";
 import { usePickableStaff } from "../vendor/scm/lib/admin-queries";
 import { resolveSelfStaff } from "../vendor/scm/lib/self-staff";
+import { fillCollectedBy } from "../vendor/scm/lib/default-collected-by";
 import { useAuth, isAdminLevel, isHatchSales } from "../vendor/scm/lib/auth";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { useVenues, type AutoVenue } from "../vendor/scm/lib/venues-queries";
-import { FairPicker, type FairPickValue } from "../components/FairPicker";
+import { FairDayPicker, FairPicker, useAutoFair, type FairPickValue } from "../components/FairPicker";
+import { FairFallback } from "../components/FairFallback";
+import { fairDayCheck, fairEditPatch, fairEventOf, fairPickValue, linkedEvent, type LinkedFair } from "../components/fairPick";
 import { useStateWarehouseMappings } from "../vendor/scm/lib/state-warehouse-queries";
 import { todayMyt } from "../vendor/scm/lib/dates";
 import { addressLineProps } from "../lib/acColumnWidths";
@@ -42,7 +45,7 @@ import { SgPostcodeField } from "../vendor/scm/components/SgPostcodeField";
 import { diffHeaderPayload, hasHeaderChanges } from "../vendor/scm/lib/so-header-diff";
 import { soSaveEndFields, soVersionAfter } from "../vendor/scm/lib/so-save-lease";
 import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER, AMENDMENT_NOTHING_TO_SUBMIT, AMENDMENT_REASON_REQUIRED } from "../vendor/scm/lib/so-amendment-submit";
-import { useAmendmentSubmitDialog } from "../vendor/scm/components/AmendmentSubmitDialog";
+import { useAmendmentSubmitDialog, RequestProcessingDateRemoval } from "../vendor/scm/components/AmendmentSubmitDialog";
 import { LOCKED_STATUSES, procLockActive, migratedReadonly as soMigratedReadonly, soDownstreamHardLocked, soItemFrozen, type SoDetailGateHeader } from "../vendor/scm/lib/so-detail-gates";
 import { FROZEN_LINE_LABEL, FROZEN_LINE_LABEL_STYLE, FROZEN_LINE_STYLE } from "../vendor/scm/lib/so-frozen-line-style";
 import { MigratedReadonlyBanner } from "../vendor/scm/components/MigratedReadonlyBanner";
@@ -65,11 +68,12 @@ import {
 } from "../vendor/scm/lib/address-cascade";
 import { StatePicker } from "../vendor/scm/components/StatePicker";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
-import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
+import { deferLineDateToHeader, lineDatePinned, withoutLineDate } from "../vendor/scm/lib/so-line-date-defer";
+import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
 import { useCreateAmendment, type CreateAmendmentLine } from "../vendor/scm/lib/so-amendment-queries";
 import { useCreateMfgSalesOrder } from "../vendor/scm/lib/sales-order-queries";
 import { MobileSavedPhotoThumb, StagedPhotoThumb } from "./MobileSavedPhotoThumb";
-import { zeroPriceClaim } from "../vendor/scm/lib/zeroPriceClaim";
+import { priceBoxAuthored, zeroPriceClaim } from "../vendor/scm/lib/zeroPriceClaim";
 import { invalidateSoShared } from "./sharedInvalidate";
 import { mobileLineAddHeaders } from "./mobile-so-line-save";
 import { uploadSoItemPhotoWithLease } from "./mobile-so-concurrency";
@@ -77,6 +81,7 @@ import type { ExtractedSlip } from "../vendor/scm/components/ScanOrderModal";
 import type { MobileScanPrefill } from "./MobileScan";
 import { ADD_LINE_LABEL } from "../vendor/scm/lib/add-line-handoff";
 import { MobileSkuPicker, type PickedSku } from "./MobileSkuPicker";
+import { SOFA_PIECES_SPLIT_DIALOG } from "../vendor/scm/lib/sofa-piece-lines"; import { splitMobileSofaPieces } from "./mobile-sofa-pieces";
 import {
   useMaintenanceConfig,
   useSpecialAddons,
@@ -98,7 +103,10 @@ import { RecordedPaymentsList, type RecordedPayment } from "./RecordedPayments";
    makes. This screen owns the only OTHER payment editor (the pre-create PayCard
    below), so it is the one surface a rule landing on the shared/detail ledger
    keeps missing (#583, then again in fix/b3-pay). */
-import { missingMethodSubField } from "../vendor/scm/components/PaymentsTable";
+import { missingMethodSubField, slipDateProblem } from "../vendor/scm/components/PaymentsTable";
+import { SLIP_REQUIRED_REASON, slipMissingProblem } from "../vendor/scm/lib/payment-slip-gate";
+import { paymentSlipDateWindow } from "../vendor/scm/lib/payment-slip-date";
+import { REQUEST_HINT, askNewSoBackdateReason, isBackdateRequestRow, sendNewSoBackdateRequests } from "../vendor/scm/lib/new-so-backdate";
 /* Money moved from a cancelled order (docs/bugs/0933): the method option, its pick, the body, the seed. */
 import { ConvertSourceField, convertedBody, rmInput, useMobileConvertSources, withConvertOption, type MobileConvertPrefill } from "./MobileOrderMoney";
 import { CONVERT_LABEL, type ConvertSource } from "../vendor/scm/lib/so-money-queries";
@@ -110,7 +118,8 @@ import { isColourKiv } from "../vendor/shared/variant-summary";
 /* parseInches is imported, not redeclared: this file's private copy also served
    sortNumeric below, and a shared parser serves both readers. */
 import { computeTotalHeight, isTotalHeightCategory, parseInches } from "../vendor/shared/total-height";
-import { lineIdentity } from "@2990s/shared";
+import { CONSOLE_ATTACH_KEY, consoleAttachOptions, lineIdentity } from "@2990s/shared";
+import { Field, SpecSel } from "./mobile-fields";
 import { normalizePhone } from "../vendor/shared/phone";
 import { PhoneInput } from "../vendor/scm/components/PhoneInput";
 import { fmtSen as fmtSharedSen } from "../vendor/shared/format";
@@ -206,6 +215,7 @@ type SoHeader = {
   version: number;
   debtor_name: string | null;
   status: string | null;
+  so_date: string | null;
   /* The staff row this order is credited to. Served by the detail route and read
      by MobileSODetail already; this form was typed without it, which is part of
      why it never seeded the picker. */
@@ -219,6 +229,8 @@ type SoHeader = {
   venue: string | null;
   venue_id?: string | null;
   venueId?: string | null;
+  fair?: LinkedFair | null; // the linked event (owner 2026-09-24); absent on an older server
+  fair_date?: string | null; fair_match?: string | null; // the day of that event; how it was linked
   sales_location?: string | null;
   note: string | null;
   address1: string | null;
@@ -264,6 +276,8 @@ type DetailResp = {
     amendment_eligible?: boolean | null;
     has_open_amendment?: boolean | null;
     open_amendment?: { id: string; status: string; amendment_no: string } | null;
+    /* BUG-101 — a live PO freezes the Processing Date (any company). */
+    processing_date_po_locked?: boolean | null;
   };
   items: SoItem[];
 };
@@ -346,7 +360,6 @@ const fmt = (n: number) => n.toLocaleString("en-MY", { minimumFractionDigits: 2,
    the compartments of one sofa. */
 const FABRIC_SYNC_KEYS: readonly string[] = FABRIC_IDENTITY_KEYS;
 
-
 function newLine(): LineItem {
   return {
     key: uid(), addIdempotencyKey: newIdempotencyKey(), itemCode: "", itemGroup: "", itemId: "",
@@ -402,7 +415,7 @@ function buildVariants(l: LineItem): Record<string, unknown> {
 /* Line-item body for POST /:docNo/items and the create body's items[]. Pure +
    module-level so BOTH the interactive save() and the headless
    createDraftFromPrefill() below shape a line identically (no copy-paste). */
-function buildItemBody(l: LineItem): Record<string, unknown> {
+function buildItemBody(l: LineItem, datePinned = false): Record<string, unknown> {
   const variants = buildVariants(l);
   return {
     itemCode: l.itemCode,
@@ -420,7 +433,7 @@ function buildItemBody(l: LineItem): Record<string, unknown> {
     unitPriceSen: toSen(l.price),
     /* Create items[] AND POST /:docNo/items: a TYPED 0 is free, an untouched 0 is unpriced. */
     ...zeroPriceClaim(toSen(l.price), l.priceAuthored === true),
-    lineDeliveryDate: l.ddate || null,
+    lineDeliveryDate: l.ddate || null, lineDeliveryDateOverridden: datePinned,
     ...(Object.keys(variants).length ? { variants } : {}),
   };
 }
@@ -544,18 +557,18 @@ function lineFromItem(it: SoItem): LineItem {
     price: fromSen(it.unit_price_sen),
     priceAuthored: true, // off the persisted row: a 0 IS its price (edit-DRAFT re-creates)
     ddate: (it.line_delivery_date ?? "").slice(0, 10),
-    remark: it.remark ?? (typeof v.remark === "string" ? v.remark : ""),
+    remark: storedLineRemark(it.remark, it.variants),
     cat,
     variants: v,
     photoKeys: Array.isArray(it.photoUrls) ? it.photoUrls : Array.isArray(it.photo_urls) ? it.photo_urls : [],
     photoFiles: [],
   };
 }
-function newPayment(): Payment {
+function newPayment(collectedBy = ""): Payment {
   const today = todayMyt();
   return {
     key: uid(), idempotencyKey: newIdempotencyKey(),
-    method: "Cash", date: today, amount: "0.00", account: "", approval: "", collectedBy: "",
+    method: "Cash", date: today, amount: "0.00", account: "", approval: "", collectedBy,
     /* The method's L2 picks seed BLANK — desktop parity (newPaymentDraft seeds
        merchantProvider / installmentMonthsLabel / onlineType as ''). Seeding
        BANK_OPTS[0] here INVENTED a bank: a Merchant payment the operator never
@@ -577,7 +590,6 @@ const planToMonths = (label: string): number | null => {
   return m ? Number(m[1]) : null;
 };
 
-type Opt = { value: string; label: string };
 type VariantPools = {
   ready: boolean; // maintenance config loaded (pools meaningful)
   /* Owner #1 scaling pain (2026-07-14): the fabric-colour library is NO LONGER
@@ -611,7 +623,7 @@ export function MobileNewSO({
 }) {
   const qc = useQueryClient();
   const notify = useNotify();
-  const confirm = useConfirm();
+  const confirm = useConfirm(); const prompt = usePrompt(); const backdateReasonRef = useRef("");
   const submitDialog = useAmendmentSubmitDialog();
   /* SO-amendment CREATE (Phase 1-C) — the SAME vendored mutation the desktop
      SalesOrderDetail.submitAmendment uses (POST /:docNo/amendments). Reused
@@ -655,6 +667,8 @@ export function MobileNewSO({
      Salesperson default + the scm.so.attribute_other gate, mirroring desktop
      SalesOrderNew (which reads `can` + `user` from the same context). */
   const { user: currentUser, can } = useHouzsAuth();
+  /* Too old for the window: posted as an admin request, not booked (owner 2026-10-01, lib/new-so-backdate). */
+  const isBackdateRow = (p: Payment) => isBackdateRequestRow({ paidAt: p.date, methodLabel: p.method, receiptBacked: false }, can("scm.payment.backdate"));
   const canChangeSalesperson = can("scm.so.attribute_other");
   /* Remove-Processing-Date gate (Owner 2026-07-09, port of 2990 #717) — clearing
      a SET Processing Date pulls the SO back out of Proceed, so it is admin-level
@@ -662,6 +676,7 @@ export function MobileNewSO({
      Owner + IT Admin pass via `*`. Desktop SalesOrderDetail reads the identical
      key — one rule, both surfaces. */
   const canRemoveProcessingDate = can("scm.so.remove_processing_date");
+  const canOverridePoProcessingDate = can("scm.so.override_po_processing_date");
   /* Unit Price is LOCKED to the SKU Master sell price for everyone below admin
      (SO-SKU spec D4, Loo 2026-06-05) — the SAME gate the desktop SoLineCard uses
      (lib/auth): admin-level roles (or the temporary POS "hatch" role) may hand-
@@ -830,6 +845,7 @@ export function MobileNewSO({
      instead of writing the lines directly (desktop SalesOrderDetail parity).
      `hasOpenAmend` blocks raising a SECOND amendment while one is in flight. */
   const [amendEligible, setAmendEligible] = useState(false);
+  const [procPoLocked, setProcPoLocked] = useState(false);
   const [hasOpenAmend, setHasOpenAmend] = useState(false);
   /* FIX D2/D3 — the PERSISTED processing date (processing_date) drives the
      processing-date lock. Kept separate from the editable procDate form value so
@@ -890,6 +906,13 @@ export function MobileNewSO({
   const activeLineLeaseRef = useRef<string | null>(null);
   const [prefillVenueId, setPrefillVenueId] = useState<string | null>(null);
   const [prefillVenueName, setPrefillVenueName] = useState<string>("");
+  /* The loaded order's own date; null on a new order, which the server dates
+     today. The fair list is the four weeks behind THIS date: a venue backfilled
+     a month later must offer the fairs that were on when the order was written,
+     not the ones on today (owner 2026-09-23). Desktop passes header.so_date. */
+  const [orderDate, setOrderDate] = useState<string | null>(null);
+  const [linkedFair, setLinkedFair] = useState<LinkedFair | null>(null); // seeds the picker's event
+  const [linkedDay, setLinkedDay] = useState<string | null>(null); // ...and the day of it
   // SKU picker sheet — the line key it was opened for, or null when closed.
   const [pickerFor, setPickerFor] = useState<string | null>(null);
   // Fabric picker sheet — the line key it was opened for, or null when closed.
@@ -966,6 +989,8 @@ export function MobileNewSO({
         setBuildingType(h.building_type ?? "");
         setPrefillVenueId(h.venueId ?? h.venue_id ?? null);
         setPrefillVenueName(h.venue ?? "");
+        setOrderDate(h.so_date ? h.so_date.slice(0, 10) : null);
+        setLinkedFair(h.fair ?? null); setLinkedDay(h.fair_date ?? null); setNoFair(h.fair_match === "NO_FAIR");
         setProcDate((h.processing_date ?? "").slice(0, 10));
         setOrigProcDate((h.processing_date ?? "").slice(0, 10));
         setDelivDate((h.customer_delivery_date ?? "").slice(0, 10));
@@ -1000,7 +1025,8 @@ export function MobileNewSO({
            to {} and still sends nothing. */
         setSalespersonId(h.salesperson_id != null ? String(h.salesperson_id) : "");
         setOrigSalespersonId(h.salesperson_id != null ? String(h.salesperson_id) : "");
-        originalHeaderPatchRef.current = soHeaderPatchFrom({
+        // The fair keys are seeded like every field, so an untouched picker sends nothing.
+        originalHeaderPatchRef.current = { ...fairEditPatch(linkedEvent(h.venue ?? null, h.fair, h.fair_date ?? null)), ...soHeaderPatchFrom({
           name: h.debtor_name ?? "",
           custRef: h.customer_so_no ?? h.ref ?? "",
           phone: toE164(h.phone),
@@ -1024,7 +1050,7 @@ export function MobileNewSO({
           /* Matches the seed above, not a hard null: the baseline has to describe
              the form as it now stands, or a form nobody touched reads as dirty. */
           salespersonId: h.salesperson_id != null ? String(h.salesperson_id) : null,
-        });
+        }) };
         const liveItems = (detail.items ?? []).filter((it) => !it.cancelled);
         setOrigItems(liveItems);
         const editable = liveItems.map(lineFromItem);
@@ -1047,6 +1073,7 @@ export function MobileNewSO({
            edit view stays usable; Save then submits an amendment (see save()). */
         setAmendEligible(Boolean(detail.salesOrder.amendment_eligible));
         setHasOpenAmend(Boolean(detail.salesOrder.has_open_amendment));
+        setProcPoLocked(detail.salesOrder.processing_date_po_locked === true);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Couldn't load this order.");
       } finally {
@@ -1130,10 +1157,15 @@ export function MobileNewSO({
   }, [isEdit]);
 
   /* Venue derives from the picked salesperson's staff.venue_id (falls back to
-     the auth user's own venue, the persisted venue on edit, or the active
-     project's venue). Mirrors SalesOrderNew resolvedVenue*. */
+     the auth user's own venue, or the active project's venue). Mirrors
+     SalesOrderNew resolvedVenue*. On EDIT a venue already saved on the order
+     wins: a default fills only an order with none (owner 2026-06-23, "never
+     override a manual or loaded pick"). A saved venue with no venue_id used to
+     rank below the salesperson's default — dormant only while those default ids
+     match nothing in useVenues(). */
+  const savedVenue = isEdit && (prefillVenueId != null || prefillVenueName.trim() !== "");
   const resolvedVenueId: string | null =
-    prefillVenueId ?? selectedStaff?.venueId ?? authStaff?.venueId ?? autoVenue?.venueId ?? null;
+    prefillVenueId ?? (savedVenue ? null : selectedStaff?.venueId ?? authStaff?.venueId ?? autoVenue?.venueId) ?? null;
   const resolvedVenueName: string = useMemo(() => {
     if (resolvedVenueId) {
       const v = (venuesQ.data ?? []).find((r) => r.id === resolvedVenueId);
@@ -1149,21 +1181,25 @@ export function MobileNewSO({
      value keeps flowing (including a later salesperson change re-deriving it);
      picking "—" reverts to the derived default (desktop-verbatim behaviour). */
   const [pickedVenueId, setPickedVenueId] = useState<string | null>(null);
-  /* FAIR PICKER (owner 2026-09-13) — desktop parity, same component, same rules:
-     a row is a place plus an organizer, nothing is typed, and the brand is
-     derived from the SKUs server-side. The venue NAME leads and the master id
-     follows it by name, because a fair can name a venue the master lacks. */
+  /* FAIR PICKER (owner 2026-09-13) — desktop parity, same component, same rules. The venue NAME
+     leads and the master id follows it by name, because a fair can name a venue the master lacks. */
   const [fairPick, setFairPick] = useState<FairPickValue>({
-    venue: null, organizer: null, startDate: null, endDate: null,
+    venue: null, organizer: null, startDate: null, endDate: null, day: null,
   });
+  const [noFair, setNoFair] = useState(false); // fair compulsory on create (owner 2026-09-26)
+  const onFairChange = useCallback((n: FairPickValue) => { setFairPick(n); if (n.organizer) setNoFair(false); }, []);
+  const autoFair = useAutoFair(!isEdit && !noFair, fairPick, onFairChange); // the keyer's fair (owner 2026-10-19)
   useEffect(() => {
-    /* Seeds a BLANK only — a human pick is a decision and is never overwritten. */
-    /* A PLACE, not an event — see the desktop twin. */
+    /* Seeds a BLANK only — a human pick is a decision and is never overwritten.
+       A place, plus the order's linked event when it has one (fairPick.ts).
+       On edit, not until the order has loaded: a default seeded first would
+       block the saved venue for good. */
+    if (isEdit && loading) return;
     if (fairPick.venue == null && resolvedVenueName) {
-      setFairPick({ venue: resolvedVenueName, organizer: null, startDate: null, endDate: null });
+      setFairPick(fairPickValue(resolvedVenueName, linkedEvent(resolvedVenueName, linkedFair, linkedDay)));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolvedVenueName]);
+  }, [resolvedVenueName, loading]);
   const effectiveVenueId = fairPick.venue
     ? ((venuesQ.data ?? []).find((r) => r.name.trim().toLowerCase() === fairPick.venue!.trim().toLowerCase())?.id ?? null)
     : (pickedVenueId ?? resolvedVenueId);
@@ -1262,6 +1298,7 @@ export function MobileNewSO({
      would deny the very action the permission grants. Moving (rather than
      clearing) a locked date still 409s server-side — same as desktop. */
   const scheduleDatesLocked = migratedLocked || (procLocked && !amendmentMode && !canRemoveProcessingDate);
+  const procDateFrozen = isEdit && procPoLocked && origProcDate !== "" && !canOverridePoProcessingDate;
   /* Schedule-date floor (desktop parity) — the backend rejects a past
      Processing / Delivery Date (todayMY, UTC+8), so grey out earlier days in
      the picker exactly as SalesOrderNew / SalesOrderDetail do, instead of
@@ -1296,6 +1333,15 @@ export function MobileNewSO({
     if (isEdit) return; // edit keeps the persisted salesperson
     if (selfStaffMatch) setSalespersonId((prev) => prev || selfStaffMatch.id);
   }, [isEdit, selfStaffMatch]);
+  /* DEV-44: Collected By defaults to the signed-in salesperson, as on desktop.
+     Only when they are in the pickable list, or the select would show "—"
+     while posting their id. */
+  const selfCollectorId =
+    selfStaffMatch && (pickableStaffQ.data ?? []).some((s) => s.id === selfStaffMatch.id) ? selfStaffMatch.id : "";
+  useEffect(() => {
+    if (isEdit || !selfCollectorId) return; // edit keeps persisted collectors
+    setPays((prev) => fillCollectedBy(prev, selfCollectorId));
+  }, [isEdit, selfCollectorId]);
 
   /* Customer Type default (owner 2026-07-03, re-stated 2026-07-16) — a NEW SO
      defaults to the real DB option whose label reads "New Customer". The pick
@@ -1371,6 +1417,8 @@ export function MobileNewSO({
     asDraft: asDraftFlag,
     isEdit,
     hasVenue: isEdit || !!outgoingVenueName || !!outgoingVenueId,
+    ...fairDayCheck(fairEditPatch(fairEventOf(fairPick)), fairEditPatch(linkedEvent(resolvedVenueName, linkedFair, linkedDay))),
+    noFair, fairWhy: autoFair.why,
     hasSalesperson: isEdit || !canChangeSalesperson || !!outgoingSalespersonId || !!selfStaffMatch,
     companyCode: branding.companyCode,
     salesLocation,
@@ -1391,12 +1439,39 @@ export function MobileNewSO({
       convertedFromDocNo: p.convertedFromDocNo ?? "",
       amountSen: toSen(p.amount),
     })),
-  }), [name, phone, namedLines, isEdit, outgoingVenueName, outgoingVenueId, canChangeSalesperson, outgoingSalespersonId, selfStaffMatch, branding.companyCode, salesLocation, state, procDate, delivDate, addr1, postcode, origProcDate, origDelivDate, origItems, pays]);
+  }), [name, phone, namedLines, isEdit, outgoingVenueName, outgoingVenueId, fairPick, noFair, autoFair.why, resolvedVenueName, linkedFair, linkedDay, canChangeSalesperson, outgoingSalespersonId, selfStaffMatch, branding.companyCode, salesLocation, state, procDate, delivDate, addr1, postcode, origProcDate, origDelivDate, origItems, pays]);
 
-  /* Two genuinely client-only blockers the backend cannot see: an invalid email
-     format, and a line with no product picked. Merged into the same list. */
+  /* A slip date outside the window blocks the save (the payments post AFTER the
+     create) — except a too-old row, which becomes an admin request (isBackdateRow). */
+  const outOfWindowPayments = useMemo(
+    () => pays
+      .filter((p) => toSen(p.amount) > 0 && !isBackdateRow(p))
+      .map((p) => slipDateProblem({ paidAt: p.date, methodLabel: p.method }, todayMyt(), can("scm.payment.backdate")))
+      .filter((m): m is string => m !== null),
+    [pays, can],
+  );
+
+  /* The proof (owner 2026-10-13, lib/payment-slip-required): every keyed row carries its slip before the save, as on desktop. A converted row needs none. */
+  const slipMissingPayments = useMemo(
+    () => pays.filter((p) => toSen(p.amount) > 0 && slipMissingProblem({ methodLabel: p.method, slipUploadSessionId: p.slipSession || null }) !== null),
+    [pays],
+  );
+
+  /* Client-only blockers the backend cannot see: an invalid email format, a
+     payment date or slip the validate body does not carry, and a line with no
+     product picked. Merged into the same list. */
   const soClientExtras = useMemo<SaveProblem[]>(() => [
     ...(emailErr ? [{ code: "email_invalid", message: "Enter a valid email, or leave it blank.", field: "Email" }] : []),
+    ...(outOfWindowPayments.length > 0
+      ? [{ code: "slip_date_out_of_window", message: outOfWindowPayments[0]!, field: "Payment date" }]
+      : []),
+    ...(slipMissingPayments.length > 0
+      ? [{
+          code: "slip_required",
+          message: `${slipMissingPayments.length} payment${slipMissingPayments.length === 1 ? " has" : "s have"} no slip attached. ${SLIP_REQUIRED_REASON}`,
+          field: "Payment slip",
+        }]
+      : []),
     ...(unpickedLines.length > 0
       ? [{
           code: "line_unpicked",
@@ -1404,7 +1479,7 @@ export function MobileNewSO({
           field: "Line items",
         }]
       : []),
-  ], [emailErr, unpickedLines]);
+  ], [emailErr, unpickedLines, outOfWindowPayments, slipMissingPayments]);
 
   const liveSoValidateDraft = useMemo(() => buildSoValidateDraft(false), [buildSoValidateDraft]);
   const { problems: soBackendProblems } = useSoValidate(liveSoValidateDraft, true);
@@ -1416,7 +1491,11 @@ export function MobileNewSO({
   /* The lines as the shared cascade layer sees them. A line with no SKU picked
      has no category, so it neither drives nor follows. */
   const cascadeLines = useMemo(
-    () => lines.map((l) => ({ category: l.itemCode.trim() && l.itemGroup ? l.itemGroup : '', variants: l.variants })),
+    () => lines.map((l) => ({
+      category: l.itemCode.trim() && l.itemGroup ? l.itemGroup : '',
+      variants: l.variants,
+      persisted: Boolean(l.itemId),
+    })),
     [lines],
   );
 
@@ -1569,20 +1648,16 @@ export function MobileNewSO({
 
   /* Post-create payment recording — records each amount-bearing row AFTER the
      SO exists, through the same POST /:docNo/payments the SO-detail screen uses.
-
-     THE FILTER IS THE AMOUNT, AND ONLY THE AMOUNT. It used to also demand a
-     slipSession, which silently dropped a slip-less row: the cashier's payment
-     never posted and the SO read unpaid (BUG-HISTORY, the money bug that
-     produced the shared slipless guard). With the slip now OPTIONAL everywhere
-     (Owner 2026-08-13) that guard is gone, so this filter is the only thing
-     deciding whether the money is recorded — it must never look at the slip
-     again. The route accepts a null uploadSessionId and records the row
-     slip-less. */
+     THE FILTER IS THE AMOUNT, AND ONLY THE AMOUNT: a slip filter here once
+     silently dropped a row and the SO read unpaid (BUG-HISTORY). The slip is
+     REQUIRED (owner 2026-10-13) but that gate is BEFORE the save
+     (slipMissingPayments); this writer stays blind to it. */
   async function recordNewPayments(createdDocNo: string) {
     const rows = pays.filter((p) => toSen(p.amount) > 0);
     if (rows.length === 0) return;
     let failed = 0;
     let firstError = "";
+    const requests: Array<Record<string, unknown>> = [];
     for (const p of rows) {
       const code = paymentMethodCodeForValue(p.method) ?? "cash";
       const body: Record<string, unknown> = {
@@ -1600,6 +1675,7 @@ export function MobileNewSO({
       else if (code === "transfer") { body.onlineType = p.online || null; }
       /* A converted row posts only its source and amount — the server fixes the day and the collector. */
       const posted = p.method === CONVERT_LABEL ? convertedBody(p.convertedFromDocNo ?? "", toSen(p.amount)) : body;
+      if (isBackdateRow(p)) { requests.push(body); continue; }
       try {
         await authedFetch(`/mfg-sales-orders/${encodeURIComponent(createdDocNo)}/payments`,
           idempotentInit(p.idempotencyKey, { method: "POST", body: JSON.stringify(posted) }));
@@ -1612,6 +1688,7 @@ export function MobileNewSO({
       const detail = firstError ? ` ${firstError}` : "";
       void notify({ title: "Some payments weren't recorded", body: `${failed} of ${rows.length} payment(s) failed to post.${detail} Record them again from the SO detail screen.`, tone: "error" });
     }
+    await sendNewSoBackdateRequests(createdDocNo, requests, backdateReasonRef.current, notify);
   }
 
   /* Post-save per-line photo upload. Uploads each staged File against the saved
@@ -1667,7 +1744,8 @@ export function MobileNewSO({
   /* Line-item body for POST /:docNo/items and the create body's items[].
      Delegates to the module-level buildItemBody (shared with the headless
      createDraftFromPrefill). */
-  const itemBody = buildItemBody;
+  const datePinned = (l: LineItem) => lineDatePinned({ lineDate: l.ddate, headerDate: delivDate, handEdited: ddateOverrides.has(l.key) });
+  const itemBody = (l: LineItem) => buildItemBody(l, datePinned(l));
 
   const itemPatchBody = (l: LineItem): Record<string, unknown> => ({
     itemCode: l.itemCode,
@@ -1675,9 +1753,9 @@ export function MobileNewSO({
     description: l.name.trim(),
     qty: num(l.qty) || 1,
     unitPriceSen: toSen(l.price),
-    /* An EXISTING line: its 0 IS its persisted price (desktop's PATCH said so since #2425). */
-    ...zeroPriceClaim(toSen(l.price), true),
-    lineDeliveryDate: l.ddate || null,
+    /* A persisted or typed 0 is claimed; a re-pick's seeded 0 is not, so the server keeps the stored price (BUG-63). */
+    ...zeroPriceClaim(toSen(l.price), l.priceAuthored === true),
+    ...(deferLineDateToHeader({ storedProcessingDate: origProcDate, overridden: ddateOverrides.has(l.key) }) ? {} : { lineDeliveryDate: l.ddate || null, lineDeliveryDateOverridden: datePinned(l) }),
     variants: buildVariants(l),
   });
 
@@ -1695,7 +1773,7 @@ export function MobileNewSO({
     if ((num(l.qty) || 1) !== (snap.qty ?? 1)) return true;
     if (toSen(l.price) !== (snap.unit_price_sen ?? 0)) return true;
     if (l.name.trim() !== (snap.description ?? "").trim()) return true;
-    if ((l.ddate || "") !== ((snap.line_delivery_date ?? "").slice(0, 10))) return true;
+    if (!deferLineDateToHeader({ storedProcessingDate: origProcDate, overridden: ddateOverrides.has(l.key) }) && (l.ddate || "") !== ((snap.line_delivery_date ?? "").slice(0, 10))) return true; // a cascaded date is the header save's (so-line-date-defer)
     if (canonJson(buildVariants(l)) !== canonJson(snap.variants ?? {})) return true;
     return false;
   };
@@ -1709,19 +1787,20 @@ export function MobileNewSO({
      its own old_snapshot and rendered as an identical Was/Requesting pair
      (Owner 2026-07-16: "完全看不出有什麼變動申請？"). Desktop had the same defect via
      lineCommitSig; both now test only what the payload carries. */
+  const requestedPriceSen = (l: LineItem): number | null => amendmentRequestedUnitPriceSen({ unitPriceSen: toSen(l.price), priceAuthored: l.priceAuthored }); // a seeded 0 requests NO price (HC-SO-013490)
   const amendmentLineChanged = (l: LineItem, snap: SoItem): boolean => {
     if (l.itemCode !== (snap.item_code ?? "")) return true;
     if ((num(l.qty) || 1) !== (snap.qty ?? 1)) return true;
-    if (toSen(l.price) !== (snap.unit_price_sen ?? 0)) return true;
+    if ((requestedPriceSen(l) ?? (snap.unit_price_sen ?? 0)) !== (snap.unit_price_sen ?? 0)) return true;
     /* Variants WITHOUT the remark side channel on BOTH sides (amendmentVariants):
        buildVariants copies the remark into variants.remark, the stored blob of an
        imported line carries none, so the raw compare read every remarked line as
        a spec change — a Delivery Date change on HC-SO-011410 opened a second,
        Purchaser approval over nothing (owner 2026-09-15). */
-    if (canonJson(amendmentVariants(buildVariants(l))) !== canonJson(amendmentVariants(snap.variants))) return true;
+    if (amendmentVariantsKey(buildVariants(l)) !== amendmentVariantsKey(snap.variants)) return true;
     /* mig 0280 — the remark is a carryable field, so a remark-only edit IS a
        request; it is tested HERE, as its own field, on both platforms. */
-    if (l.remark.trim() !== (snap.remark ?? "").trim()) return true;
+    if (l.remark.trim() !== storedLineRemark(snap.remark, snap.variants).trim()) return true;
     return false;
   };
 
@@ -1746,7 +1825,7 @@ export function MobileNewSO({
           await authedFetch(base, {
             method: "POST",
             headers: mobileLineAddHeaders(l, leaseToken),
-            body: JSON.stringify(itemBody(l)),
+            body: JSON.stringify(deferLineDateToHeader({ storedProcessingDate: origProcDate, overridden: ddateOverrides.has(l.key) }) ? withoutLineDate(itemBody(l)) : itemBody(l)),
           });
         }
         catch (e) { failures.push(lineWriteFailure(l.itemCode.trim(), e)); }
@@ -1783,8 +1862,8 @@ export function MobileNewSO({
       if (!snap) continue;
       if (!amendmentLineChanged(l, snap)) continue; // nothing amendable moved
       const codeSame = l.itemCode === (snap.item_code ?? "");
-      const variantsSame = canonJson(amendmentVariants(buildVariants(l))) === canonJson(amendmentVariants(snap.variants));
-      const priceSame = toSen(l.price) === (snap.unit_price_sen ?? 0);
+      const variantsSame = amendmentVariantsKey(buildVariants(l)) === amendmentVariantsKey(snap.variants);
+      const priceSame = (requestedPriceSen(l) ?? (snap.unit_price_sen ?? 0)) === (snap.unit_price_sen ?? 0);
       const qtyMoved = (num(l.qty) || 1) !== (snap.qty ?? 1);
       const qtyOnly = codeSame && variantsSame && priceSame && qtyMoved;
       out.push({
@@ -1794,11 +1873,11 @@ export function MobileNewSO({
         // The remark rides newRemark below, never inside the variants an approval writes back.
         newVariants: amendmentVariants(buildVariants(l)) ?? undefined,
         newQty: num(l.qty) || 1,
-        newUnitPriceSen: toSen(l.price),
+        ...amendmentPriceFields({ unitPriceSen: toSen(l.price), priceAuthored: l.priceAuthored }), // omitted = null on the row = keep the stored price
         /* mig 0280 — send the remark only when it MOVED (desktop parity): a null
            new_remark is "not requested", which is what keeps the apply from
            rewriting a remark this session never touched. */
-        ...(l.remark.trim() !== (snap.remark ?? "").trim()
+        ...(l.remark.trim() !== storedLineRemark(snap.remark, snap.variants).trim()
           ? { newRemark: l.remark.trim() }
           : {}),
         oldSnapshot: {
@@ -1848,6 +1927,8 @@ export function MobileNewSO({
   // ---- Mutations ------------------------------------------------------------
   async function save(asDraft = false) {
     setTouched(true);
+    const pieces = splitMobileSofaPieces(lines, origItems); // one sofa piece = one line
+    if (pieces) { setLines(pieces); await notify(SOFA_PIECES_SPLIT_DIALOG); return; }
     const procOut = asDraft ? "" : procDate;
     const delivOut = asDraft ? "" : delivDate;
     /* The one value bag the EDIT patch and the CREATE body are both built from
@@ -1882,11 +1963,15 @@ export function MobileNewSO({
       await notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: "error" });
       return;
     }
+    const backdateReason = await askNewSoBackdateReason(prompt, pays.filter((p) => toSen(p.amount) > 0 && isBackdateRow(p)).length);
+    if (backdateReason === null) return;
+    backdateReasonRef.current = backdateReason;
     setError(null);
     setSubmitting(true);
     try {
       if (isEdit && docNo) {
-        const patch: Record<string, unknown> = soHeaderPatchFrom(headerPatchInput);
+        // The picked fair EVENT rides the edit too (owner 2026-09-24) — fairPick.ts.
+        const patch: Record<string, unknown> = { ...fairEditPatch(fairEventOf(fairPick)), ...soHeaderPatchFrom(headerPatchInput), ...(isDraftSo && noFair ? { noFair: true } : {}) };
         /* AMENDMENT MODE (Phase 1-C, desktop SalesOrderDetail.submitAmendment
            parity) — the SO is processing-locked but amendment_eligible. The edit
            splits in two:
@@ -2074,27 +2159,23 @@ export function MobileNewSO({
         /* The picked event's ORGANIZER — CREATE only. On an EDIT the server
            re-derives the fair whenever the venue changes, so the patch must not
            carry it (soHeaderPatchFrom feeds the edit diff as well). */
+        noFair: noFair || undefined,
         fairOrganizer: fairPick.organizer ?? undefined,
         /* The picked event's PERIOD — same contract as the desktop form. */
         fairStart: fairPick.startDate ?? undefined,
         fairEnd: fairPick.endDate ?? undefined,
+        fairDate: fairPick.day ?? undefined, // which day of it (owner 2026-09-24)
         /* EXPLICIT draft flag — the backend statuses DRAFT only on
            body.asDraft === true; nulling the dates alone saves CONFIRMED. */
         asDraft: asDraft === true,
-        /* GATE-ONLY, never booked. recordNewPayments runs AFTER this
-           create, so at CREATE time the backend saw RM0 and the Processing-Date
-           deposit gate refused the save with the money plainly on screen — and
-           the create had to succeed before the payments could ever be posted.
-           Deadlock, identical to the desktop screen (same fix, same PR: the two
-           surfaces share this rule and only one of them being fixed is the
-           recurring bug class in CLAUDE.md). Same filter recordNewPayments
-           uses — the AMOUNT, and only the amount — so this can never claim
-           money it is not about to record. It used to also demand a
-           slipSession; once the slip became optional (Owner 2026-08-13) that
-           would have re-opened this very deadlock for a slip-less deposit. */
+        /* GATE-ONLY, never booked: recordNewPayments posts AFTER the create, so
+           without this the Processing-Date deposit gate saw RM0 (deadlock; same
+           fix as desktop). The AMOUNT only — never the slip — and never a
+           backdate-request row, which is not money the order holds until an
+           admin approves it. */
         pendingDepositSen: (() => {
           const c = pays
-            .filter((p) => toSen(p.amount) > 0)
+            .filter((p) => toSen(p.amount) > 0 && !isBackdateRow(p))
             .reduce((sum, p) => sum + toSen(p.amount), 0);
           return c > 0 ? c : undefined;
         })(),
@@ -2273,7 +2354,7 @@ export function MobileNewSO({
                     />
                   </Field>
                 </div>
-                <Field label="Customer SO Ref" scanned={scanned("custRef", custRef)}>
+                <Field label="Ref No." scanned={scanned("custRef", custRef)}>
                   <input className="fld-i" value={custRef} disabled={identityLocked} onChange={(e) => setCustRef(e.target.value)} placeholder="Their PO / SO number" />
                 </Field>
               </div>
@@ -2318,19 +2399,27 @@ export function MobileNewSO({
                     </select>
                   </Field>
                   {/* Owner 2026-09-13 — the venue select became the FAIR picker:
-                      place + organizer, no dates, nothing typed. Same component
-                      as desktop SalesOrderNew, which is the point. */}
+                      place + organizer + dates, nothing typed. Same component
+                      as the desktop forms, which is the point. */}
                   <Field label="Fair" style={{ flex: 1 }}>
                     <FairPicker
                       id="mob-so-fair"
                       value={fairPick}
-                      soDate={null}
-                      onChange={setFairPick} disabled={identityLocked}
+                      soDate={orderDate}
+                      onChange={onFairChange} disabled={identityLocked}
                       selectClassName="fld-i"
                     />
                   </Field>
                 </div>
-                {!isEdit && autoVenue?.venueId &&
+                {autoFair.hint}
+                {/* Back-keying date + the No-fair escape (owner 2026-09-26 / 10-19),
+                    shared with the desktop form; FairFallback.tsx has the rules. */}
+                <FairFallback enabled={!isEdit || isDraftSo} value={fairPick} orderDate={orderDate}
+                  onOrderDate={setOrderDate} maxDate={today} noFair={noFair} onNoFair={setNoFair} disabled={identityLocked} />
+                {fairEventOf(fairPick) && ( // which DAY of the picked event (owner 2026-09-24)
+                  <Field label="Fair Day"><FairDayPicker id="mob-so-fair-day" value={fairPick} soDate={orderDate} onChange={setFairPick} disabled={identityLocked} selectClassName="fld-i" /></Field>
+                )}
+                {!isEdit && !autoFair.hint && autoVenue?.venueId &&
                   (pickedVenueId == null || pickedVenueId === autoVenue.venueId) && (
                   <div style={{ fontSize: 10, color: "#16695f", marginTop: -4 }}>
                     {autoVenue.source === "SHOWROOM"
@@ -2345,16 +2434,21 @@ export function MobileNewSO({
                     Owner 2026-07-16 — UNLESS the order is amendment-eligible:
                     then both dates are editable and go out as an amendment
                     request for approval instead of saving directly. */}
-                <Field label="Processing Date" error={touched && dateXorErr} scanned={scanned("procDate", procDate)} onClear={procDate && !scheduleDatesLocked ? () => setProcDate("") : undefined}>
+                <Field label="Processing Date" error={touched && dateXorErr} scanned={scanned("procDate", procDate)} onClear={procDate && !scheduleDatesLocked && !procDateFrozen ? () => setProcDate("") : undefined}>
                   <DateField
                     fullWidth
                     className="fld-i"
                     value={procDate}
-                    disabled={scheduleDatesLocked}
-                    min={procLocked ? undefined : today}
+                    disabled={scheduleDatesLocked || procDateFrozen}
+                    min={procLocked || procDateFrozen ? undefined : today}
                     onChange={(iso) => setProcDate(iso)}
                   />
                 </Field>
+                {procDateFrozen && !scheduleDatesLocked && (
+                  <div style={{ fontSize: 10, color: "#9aa093", marginTop: -3 }}>
+                    Has a Purchase Order — only a Purchaser can change this date.
+                  </div>
+                )}
                 <Field label="Delivery Date" error={touched && dateXorErr} scanned={scanned("delivDate", delivDate)} onClear={delivDate && !scheduleDatesLocked ? () => setDelivDate("") : undefined}>
                   <DateField
                     fullWidth
@@ -2367,10 +2461,9 @@ export function MobileNewSO({
                   />
                 </Field>
                 <div style={{ fontSize: 10, color: "#9aa093", marginTop: -3 }}>
-                  {amendmentMode
-                    ? "Changing a date here submits an amendment request — it applies once approved."
-                    : "Set both dates together, or leave both empty to keep this a draft."}
+                  {amendmentMode ? "Changing a date here submits an amendment request — it applies once approved." : "Set both dates together, or leave both empty to keep this a draft."}
                 </div>
+                <RequestProcessingDateRemoval docNo={docNo ?? ""} surface="mobile" show={!!(isEdit && docNo && origProcDate) && !procLocked && !procDateFrozen && !amendmentMode && !migratedLocked && !lineLocked && !canRemoveProcessingDate} />
                 <Field label="Note" scanned={scanned("note", note)}>
                   <input className="fld-i" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Internal notes — SO detail only" />
                 </Field>
@@ -2408,20 +2501,17 @@ export function MobileNewSO({
                         free-text inputs (the vendor no-data behaviour).
                         FIX D2 — State/City/Postcode freeze once the processing
                         date has passed (identity columns feed the supplier PO). */}
-                    {/* Address MVP2 (2026-07-23) — the shared StatePicker in
-                        compact mode. MY states listed first, then CN + SG
-                        grouped under their country in native <optgroup>s the
-                        OS picker respects (iOS wheel picker, Android list).
+                    {/* The shared StatePicker combobox: type to filter, MY
+                        states first, then CN + SG grouped under their country.
                         No `(legacy)` fallback option, no `<select> → <input>`
                         free-text branch — a state not in scm.my_localities
                         must be added via the Localities Maintenance UI first. */}
                     <Field label={addressRequired && stateRequiredForCompany ? "State *" : "State"} error={touched && addressRequired && stateRequiredForCompany && !state.trim()} scanned={scanned("state", state)}>
                       <StatePicker
-                        compact
                         value={state}
                         disabled={addressIdentityLocked}
                         placeholder="Pick state"
-                        selectClassName="fld-i"
+                        selectClassName="fld-i fld-pick"
                         onChange={(next) => onStateChange(next)}
                       />
                     </Field>
@@ -2438,25 +2528,28 @@ export function MobileNewSO({
                           state resolve back via resolvePostcode /
                           resolveCityState. */}
                       <Field label="City" style={{ flex: 1 }} error={false} scanned={scanned("city", city)}>
-                        <select
-                          className="fld-i"
+                        <SearchableSelect
+                          className="fld-i fld-pick"
+                          ariaLabel="City"
                           value={city}
                           disabled={addressIdentityLocked || cityChoices.length === 0}
-                          onChange={(e) => onCityChange(e.target.value)}
-                        >
-                          <option value="">
-                            {cityChoices.length === 0 ? "No cities seeded" : cityPlaceholder(state)}
-                          </option>
-                          {cityChoices.map((c) => <option key={c} value={c}>{c}</option>)}
-                        </select>
+                          placeholder={cityChoices.length === 0 ? "No cities seeded" : cityPlaceholder(state)}
+                          onChange={onCityChange}
+                          options={cityChoices.map((c) => ({ value: c, label: c }))}
+                        />
                       </Field>
                       <Field label={addressRequired ? "Postcode *" : "Postcode"} style={{ flex: 1 }} error={touched && addressRequired && !postcode.trim()} scanned={scanned("postcode", postcode)}>
                         {country === 'Singapore'
                           ? <SgPostcodeField bare inputClassName="fld-i" value={postcode} onChange={setPostcode} onResolve={(r) => { setAddr1(r.address); if (r.state && r.city) { setState(r.state); setCity(r.city); } }} disabled={addressIdentityLocked} />
-                          : (<select className="fld-i" value={postcode} disabled={addressIdentityLocked || postcodeChoices.length === 0} onChange={(e) => onPostcodeChange(e.target.value)}>
-                              <option value="">{postcodeChoices.length === 0 ? "No postcodes seeded" : postcodePlaceholder(state, city)}</option>
-                              {postcodeChoices.map((p) => <option key={p} value={p}>{p}</option>)}
-                            </select>)}
+                          : (<SearchableSelect
+                              className="fld-i fld-pick"
+                              ariaLabel="Postcode"
+                              value={postcode}
+                              disabled={addressIdentityLocked || postcodeChoices.length === 0}
+                              placeholder={postcodeChoices.length === 0 ? "No postcodes seeded" : postcodePlaceholder(state, city)}
+                              onChange={onPostcodeChange}
+                              options={postcodeChoices.map((p) => ({ value: p, label: p }))}
+                            />)}
                       </Field>
                     </div>
                     {addressIdentityLocked ? (
@@ -2538,7 +2631,8 @@ export function MobileNewSO({
                           canEditPrice={canEditPrice}
                           soDocNo={docNo}
                           onChange={(patch) => patchLine(l.key, patch)}
-                          onDdateChange={(v) => setLineDdateManual(l.key, v)}
+                          onDdateChange={procDate ? (v) => setLineDdateManual(l.key, v) : null}
+                          attachOptions={consoleAttachOptions(lines, i)}
                           onRemove={async () => {
                             if (!(await confirm({ title: "Remove this line?", body: l.name ? `"${l.name}" will be removed from the order.` : undefined, confirmLabel: "Remove", danger: true }))) return;
                             setDdateOverrides((prev) => {
@@ -2605,14 +2699,10 @@ export function MobileNewSO({
                     />
                   ))}
                 </div>
-                <button className="addline" onClick={() => setPays((p) => [...p, newPayment()])}>+ Add Payment</button>
-                {/* Owner 2026-08-13 — the slip is optional, so this line no
-                    longer claims a row without one is only "planned". Every
-                    amount-bearing row is recorded; the slip can follow later
-                    from the SO detail screen. */}
+                <button className="addline" onClick={() => setPays((p) => [...p, newPayment(selfCollectorId)])}>+ Add Payment</button>
                 {!!pays.length && (
                   <div style={{ fontSize: 10, color: "#767b6e", marginTop: 6 }}>
-                    Payments are recorded on the order when you {isEdit ? "Save" : "Create"}. A slip is optional — attach one here, or add it later from the SO detail screen.
+                    Payments are recorded on the order when you {isEdit ? "Save" : "Create"}. Every payment needs its slip or receipt photo attached first.
                   </div>
                 )}
               </div>
@@ -2693,7 +2783,8 @@ export function MobileNewSO({
             name: (sku.name ?? "").trim() || code,
             cat: nextCat,
             price: fromSen(sku.unitPriceSen),
-            variants: seededVariants,
+            priceAuthored: false, // seeded, not typed (BUG-63)
+            variants: { ...sku.defaultVariants, ...seededVariants },
             overriddenKeys: [],
           };
         };
@@ -2859,40 +2950,6 @@ function soHeaderPatchFrom(v: SoHeaderPatchInput): Record<string, unknown> {
 
 // ---- Sub-components ---------------------------------------------------------
 
-function Field({ label, error, scanned, onClear, style, children }: { label: string; error?: boolean; scanned?: boolean; onClear?: () => void; style?: React.CSSProperties; children: React.ReactNode }) {
-  return (
-    <label className="fld" style={style}>
-      <span className="fld-l" style={{ display: "flex", alignItems: "center", gap: 6, ...(error ? { color: "#b23a3a" } : null) }}>
-        {label}
-        {scanned && <ScannedTag />}
-        {/* A native date input has no way back once a value is set — the iOS
-            wheel cannot land on "nothing". Owner, 2026-08-03: "当他不小心选了一个
-            日期，它不能 reset 的吗?". A label-level Clear costs no row width, which
-            the three-across line row has none of. */}
-        {onClear && (
-          <span
-            role="button"
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClear(); }}
-            style={{ marginLeft: "auto", color: "#9aa093", fontSize: 9, fontWeight: 700, letterSpacing: ".04em", cursor: "pointer", padding: "0 2px" }}
-          >
-            CLEAR
-          </span>
-        )}
-      </span>
-      {children}
-    </label>
-  );
-}
-
-function ScannedTag() {
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "1px 6px", borderRadius: 999, background: "#eaf2f0", color: "#16695f", fontSize: 8, fontWeight: 700, letterSpacing: ".04em" }}>
-      <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#16695f" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z" /><circle cx="12" cy="13" r="3" /></svg>
-      SCANNED
-    </span>
-  );
-}
-
 /* ── Variant pool → option list builders (REAL sources) ─────────────────── */
 /* The restrict step is the SHARED restrictStringsToPool / restrictPricedToPool
    (the same helpers PoLineCard and PcVariantEditor call), not a private copy —
@@ -2925,6 +2982,7 @@ function LineCard({
   onChange,
   onDdateChange,
   onRemove,
+  attachOptions,
 }: {
   line: LineItem;
   index: number;
@@ -2946,15 +3004,17 @@ function LineCard({
      a signed URL and to route photo delete to the right document. */
   soDocNo?: string;
   onChange: (patch: Partial<LineItem>) => void;
-  /* FIX D1(b) — a manual Item Delivery Date edit routes through here so the
-     parent can flag the line as an override the header cascade won't touch. */
-  onDdateChange: (value: string) => void;
+  /* FIX D1(b) — a manual Item Delivery Date edit routes through here so the header
+     cascade won't touch it. null = no Processing Date, date locked (BUG-39). */
+  onDdateChange: ((value: string) => void) | null;
   onRemove: () => void;
+  attachOptions: string[] | null; // Console lines: modules it can join (variants.attachTo)
 }) {
   const amt = fmt(num(line.qty) * num(line.price));
   const picked = Boolean(line.itemCode.trim());
   const v = line.variants;
   const photoInputRef = useRef<HTMLInputElement | null>(null);
+  const [priceTyping, setPriceTyping] = useState(false); const priceBeforeEdit = useRef<Pick<LineItem, "price" | "priceAuthored">>({ price: "0.00", priceAuthored: false }); const [blankText, setBlankText] = useState<string | null>(null); // HC-0095: an emptied box requests no new price, so the line keeps (and shows) its pre-edit price
 
   /* Per-SKU allowed_options (Modular ON/OFF), resolved by code. */
   const allowQ = useModelAllowedOptionsByCode(line.itemCode || undefined);
@@ -3087,22 +3147,36 @@ function LineCard({
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 7, padding: 10 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-          <Field label="Qty" style={{ flex: 0.5 }}>
-            <input className="fld-i" inputMode="numeric" value={line.qty} onChange={(e) => onChange({ qty: e.target.value })} />
+          {/* DEV-62 (Adrian): qty is a small count, so it steps with − / +;
+              the price is a big number, so it gets the decimal keypad. */}
+          <Field label="Qty" style={{ flex: 0.7 }}>
+            <div className="qty-step">
+              <button type="button" aria-label="Decrease qty" disabled={(num(line.qty) || 1) <= 1}
+                onClick={() => onChange({ qty: String(Math.max(1, (num(line.qty) || 1) - 1)) })}>{"−"}</button>
+              <input className="fld-i" inputMode="numeric" aria-label="Qty" value={line.qty} onChange={(e) => onChange({ qty: e.target.value })} />
+              <button type="button" aria-label="Increase qty"
+                onClick={() => onChange({ qty: String((num(line.qty) || 1) + 1) })}>{"+"}</button>
+            </div>
           </Field>
           <Field label="Unit Price" style={{ flex: 1 }}>
             <input
               className="fld-i money"
-              value={line.price}
+              inputMode="decimal"
+              /* DEV-62 (Adrian): any RM 0, new or saved, shows as the placeholder
+                 so typing a price does not start with deleting "0.00". A 0 shows
+                 only while being typed, so "0" / "0.5" can still be keyed in. */
+              value={blankText ?? (toSen(line.price) === 0 && !priceTyping ? "" : line.price)}
+              placeholder="0.00"
               disabled={!canEditPrice}
               title={!canEditPrice ? "Price follows the SKU Master sell price — admin can override" : undefined}
-              onChange={(e) => onChange({ price: e.target.value, priceAuthored: true })}
+              onChange={(e) => { const t = e.target.value; if (!priceTyping) priceBeforeEdit.current = { price: line.price, priceAuthored: line.priceAuthored }; setPriceTyping(true); if (priceBoxAuthored(t)) { setBlankText(null); onChange({ price: t, priceAuthored: true }); } else { setBlankText(t); onChange(priceBeforeEdit.current); } }}
+              onBlur={() => { setPriceTyping(false); setBlankText(null); }}
             />
           </Field>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-          <Field label="Line Delivery Date" style={{ flex: 1 }} onClear={line.ddate ? () => onDdateChange("") : undefined}>
-            <DateField fullWidth className="fld-i" value={line.ddate} onChange={(iso) => onDdateChange(iso)}/>
+          <Field label="Line Delivery Date" style={{ flex: 1 }} onClear={line.ddate && onDdateChange ? () => onDdateChange("") : undefined}>
+            <DateField fullWidth className="fld-i" value={line.ddate} disabled={!onDdateChange} title={onDdateChange ? undefined : "Set the Processing Date first"} onChange={(iso) => onDdateChange?.(iso)}/>
           </Field>
         </div>
         <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
@@ -3149,6 +3223,10 @@ function LineCard({
               <SpecSel label="Leg height" invalid={showErrors && missing.has("legHeight")}
                 value={String(v.legHeight ?? "")} opts={sofaLegOpts} onChange={(x) => setVar({ legHeight: x })} />
             </div>
+            {attachOptions && (
+              <SpecSel label="Attached to" value={String(v[CONSOLE_ATTACH_KEY] ?? "")}
+                opts={attachOptions.map((id) => ({ value: id, label: id }))} onChange={(x) => setVar({ [CONSOLE_ATTACH_KEY]: x })} />
+            )}
           </>
         )}
 
@@ -3528,28 +3606,6 @@ function SpecialOrderSheet({ line, pools, showPrices, onChange, onClose }: {
   );
 }
 
-/* SpecSel — a labelled <select> bound to a real option list. */
-function SpecSel({ label, value, opts, onChange, required = false, invalid = false, emptyHint }: {
-  label: string; value: string; opts: Opt[]; onChange: (v: string) => void;
-  required?: boolean; invalid?: boolean; emptyHint?: string;
-}) {
-  const hasCurrent = Boolean(value) && opts.some((o) => o.value === value);
-  return (
-    <Field label={label + (required ? " *" : "")} style={{ flex: 1, minWidth: 0 }}>
-      <select
-        className="fld-i"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        style={invalid ? { borderColor: "#b23a3a", boxShadow: "0 0 0 2px rgba(178,58,58,.12)" } : undefined}
-      >
-        <option value="" disabled>{opts.length === 0 && emptyHint ? emptyHint : "Select…"}</option>
-        {value && !hasCurrent && <option value={value}>{value} (current)</option>}
-        {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
-    </Field>
-  );
-}
-
 function PayCard({ pay, staff, convertSources, onChange, onRemove }: { pay: Payment; staff: Array<{ id: string; name: string }>; convertSources: ConvertSource[]; onChange: (patch: Partial<Payment>) => void; onRemove: () => void }) {
   const fileRef = useRef<HTMLInputElement | null>(null);
   /* Live payment dropdowns from the maintenance catalog (same API the desktop
@@ -3560,6 +3616,13 @@ function PayCard({ pay, staff, convertSources, onChange, onRemove }: { pay: Paym
   const bankOpts = optionsOrFallback("payment_merchant", useSoDropdownOptions("payment_merchant").data);
   const planOpts = optionsOrFallback("installment_plan", useSoDropdownOptions("installment_plan").data);
   const onlineOpts = optionsOrFallback("online_type", useSoDropdownOptions("online_type").data);
+  /* Slip-date window (owner 2026-09-23) — the same rule, sentence and exception
+     as the desktop panel and the payments sheet. The row is bounded here so the
+     order is not created before the money's date is refused. */
+  const { can: canPay } = useHouzsAuth();
+  const mayBackdateSlip = canPay("scm.payment.backdate");
+  const slipWindow = paymentSlipDateWindow(todayMyt());
+  const slipProblem = slipDateProblem({ paidAt: pay.date, methodLabel: pay.method }, todayMyt(), mayBackdateSlip);
   const onPickSlip = async (f: File | null) => {
     if (!f) return;
     onChange({ slipName: f.name, slipSession: "", slipPhase: "uploading" });
@@ -3583,10 +3646,20 @@ function PayCard({ pay, staff, convertSources, onChange, onRemove }: { pay: Paym
       <div style={{ display: "flex", flexDirection: "column", gap: 7, padding: 10 }}>
         <div style={{ display: "flex", gap: 9, alignItems: "flex-end" }}>
           <Field label="Date" style={{ flex: 1.1 }} onClear={pay.date ? () => onChange({ date: "" }) : undefined}>
-            <DateField fullWidth className="fld-i" value={pay.date} onChange={(iso) => onChange({ date: iso })}/>
+            <DateField
+              fullWidth
+              className="fld-i"
+              value={pay.date}
+              max={mayBackdateSlip ? undefined : slipWindow.max}
+              invalid={slipProblem !== null}
+              onChange={(iso) => onChange({ date: iso })}
+            />
+            {slipProblem && (
+              <span style={{ fontSize: 11, lineHeight: 1.3, color: "var(--red)" }}>{isBackdateRequestRow({ paidAt: pay.date, methodLabel: pay.method, receiptBacked: false }, mayBackdateSlip) ? REQUEST_HINT : slipProblem}</span>
+            )}
           </Field>
           <Field label="Amount" style={{ flex: 1.1 }}>
-            <input className="fld-i money" value={pay.amount} onChange={(e) => onChange({ amount: e.target.value })} />
+            <input className="fld-i money" inputMode="decimal" value={pay.amount} onChange={(e) => onChange({ amount: e.target.value })} />
           </Field>
         </div>
         {/* Merchant needs BOTH (missingMethodSubField); marked required now that
@@ -3630,7 +3703,7 @@ function PayCard({ pay, staff, convertSources, onChange, onRemove }: { pay: Paym
             </select>
           </Field>
           <div style={{ flex: 1 }}>
-            <div className="fld-l" style={{ color: "#9aa093" }}>Slip</div>
+            <div className="fld-l" style={{ color: "#9aa093" }}>{pay.method === CONVERT_LABEL ? "Slip" : "Slip (required)"}</div>
             <input ref={fileRef} type="file" accept="image/*,application/pdf" style={{ display: "none" }} onChange={(e) => { void onPickSlip(e.target.files?.[0] ?? null); e.target.value = ""; }} />
             <button
               type="button"
@@ -3652,11 +3725,13 @@ function PayCard({ pay, staff, convertSources, onChange, onRemove }: { pay: Paym
             </button>
           </div>
         </div>
-        {/* The per-row amber warning is gone (Owner 2026-08-13): it called a
-            slip-less row a mere plan, which was true only while the writer
-            filtered on the slip. The slip is optional and the row is recorded
-            on its amount, so that line asked for something not required and
-            implied the money would not book without it. */}
+        {/* The proof is required (owner 2026-10-13, lib/payment-slip-required):
+            the save is blocked until this row carries its slip, and the line
+            says so in the shared sentence. The row is still RECORDED on its
+            amount alone once saved — the writer never filters on the slip. */}
+        {pay.slipPhase !== "uploading" && toSen(pay.amount) > 0 && slipMissingProblem({ methodLabel: pay.method, slipUploadSessionId: pay.slipSession || null }) && (
+          <div style={{ fontSize: 11, lineHeight: 1.3, color: "var(--red)" }}>{SLIP_REQUIRED_REASON}</div>
+        )}
       </div>
     </div>
   );

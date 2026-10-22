@@ -102,6 +102,28 @@ export function redactText(input: string): string {
 }
 
 /**
+ * The cause of a failure, as one Worker-log string. `console.error(err)` logs
+ * the stack alone, and a postgres.js error's stack has no message line, so
+ * every database error reached the log as bare frames ("at ErrorResponse ...")
+ * naming neither the constraint nor the table. Redacted like the reported
+ * message: a Postgres message can quote a value.
+ */
+export function describeErrorForLog(err: unknown): string {
+  if (!(err instanceof Error)) return redactText(String(err)).slice(0, MAX_MESSAGE);
+  const pg = err as Error & Record<string, unknown>;
+  const where = [
+    ["code", pg.code],
+    ["table", pg.table_name],
+    ["column", pg.column_name],
+    ["constraint", pg.constraint_name],
+  ]
+    .filter(([, v]) => typeof v === "string" && v !== "")
+    .map(([k, v]) => `${k}=${v}`)
+    .join(" ");
+  return redactText(`${err.name}${where ? ` (${where})` : ""}: ${err.message}`).slice(0, MAX_MESSAGE);
+}
+
+/**
  * Parse SENTRY_DSN. Returns null for absent, blank, or malformed input —
  * malformed is treated exactly like absent (stay inert) rather than throwing,
  * because a typo in a secret must never take production down.

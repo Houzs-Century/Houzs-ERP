@@ -31,6 +31,18 @@ const extractAsync = vi.fn(async (_bills: unknown) => ({ bills: [{
   supplierMatch: { id: 'sup-h', code: '405-H001', name: 'HOUZS VENTURE HOLDING SDN BHD', confidence: 'contains' },
   memory: { payeeName: 'HOUZS VENTURE HOLDING SDN BHD', debitAccountCode: '900-A001', purpose: 'SUPPLIER_PAYMENT', timesSeen: 1 },
 }] }));
+/* 申请付款 answered by a bill (owner 2026-09-30, 6.1–6.2) — set by that test only. */
+let requestDetail: Record<string, unknown> | undefined;
+const extractRequestAsync = vi.fn(async (_id: unknown) => ({ bills: [{
+  index: 0, ok: true,
+  extraction: {
+    vendorName: 'HOUZS VENTURE HOLDING SDN. BHD.', vendorRegNo: null, documentKind: 'invoice', invoiceNumber: 'HVH-0930',
+    invoiceDate: '2026-09-10', dueDate: null, currency: 'MYR', totalSen: 800_000, sstSen: null,
+    lines: [{ description: 'Booth F1 rental 50%', amountSen: 800_000 }],
+  },
+  supplierMatch: { id: 'sup-h', code: '405-H001', name: 'HOUZS VENTURE HOLDING SDN BHD', confidence: 'contains' },
+  memory: { payeeName: 'HOUZS VENTURE HOLDING SDN BHD', debitAccountCode: '900-A001', purpose: 'SUPPLIER_PAYMENT', timesSeen: 1 },
+}] }));
 /* The detail's status — flipped by tests: a DRAFT may lose a file and edits plainly, a POSTED bill keeps files and re-posts on edit. */
 let detailStatus = 'DRAFT';
 
@@ -39,6 +51,14 @@ const ROWS = [
   { kind: 'PI', id: 'pi-1', invoiceNumber: '2990-PI-2607-005', supplierId: 'sup-t', supplierCode: '400-H004', supplierName: 'HOOKKA INDUSTRIES SDN. BHD.', supplierInvoiceRef: null, description: null, invoiceDate: '2026-06-27', dueDate: '2026-07-27', currency: 'MYR', totalSen: 300_000, paidSen: 100_000, outstandingSen: 200_000, status: 'PARTIALLY_PAID' },
 ];
 
+/* 欠正式单 (item 3): Finance's marks and the requester's upload — stubbed. */
+const markOfficial = vi.fn();
+const uploadOfficialAsync = vi.fn(async (_b: unknown) => ({ ok: true, received: [{ kind: 'PV', number: 'HC-PV-2610-001' }], note: null as string | null }));
+vi.mock('../../vendor/scm/lib/official-doc-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/official-doc-queries')>()),
+  useMarkOfficialDoc: () => ({ mutate: markOfficial, isPending: false }),
+  useUploadOfficialDoc: () => ({ mutateAsync: uploadOfficialAsync, isPending: false }),
+}));
 vi.mock('../../vendor/scm/lib/ap-invoice-queries', () => ({
   useApInvoices: () => ({ data: { rows: ROWS }, isLoading: false, isError: false, error: null }),
   useApInvoiceDetail: (id: string | null) => ({ data: id ? {
@@ -55,8 +75,21 @@ vi.mock('../../vendor/scm/lib/ap-invoice-queries', () => ({
   useDeleteApInvoiceFile: () => ({ mutateAsync: deleteAsync, isPending: false }),
   fetchApInvoiceFileBlobUrl: vi.fn(),
 }));
+/* The same bill elsewhere (owner 2026-10-05: 提醒也加) — answered by number|date;
+   every ask is kept with what it excluded. */
+let sameBill: Record<string, unknown[]> = {};
+const billMatchAsks: Array<[string, string, string | null, string | null]> = [];
+vi.mock('../../vendor/scm/lib/payment-request-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/payment-request-queries')>()),
+  usePaymentRequest: (id: string | null) => ({ data: id && requestDetail ? { request: requestDetail, finance: true } : undefined, isLoading: false }),
+  useBillMatches: (no: string, date: string, excludeRequest: string | null = null, excludeApInvoice: string | null = null) => {
+    billMatchAsks.push([no, date, excludeRequest, excludeApInvoice]);
+    return { data: { matches: sameBill[`${no.trim()}|${date}`] ?? [] } };
+  },
+}));
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   useExtractBills: () => ({ mutateAsync: extractAsync, isPending: false }),
+  useExtractRequestBill: () => ({ mutateAsync: extractRequestAsync, isPending: false }),
   fileToBase64: async (f: File) => `b64:${f.name}`,
   PV_FILE_ACCEPT: 'image/jpeg,image/png,image/webp,application/pdf',
 }));
@@ -76,11 +109,26 @@ vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
 }));
 vi.mock('../../vendor/scm/lib/suppliers-queries', () => ({
   useSuppliers: () => ({ data: [{ id: 'sup-h', code: '405-H001', name: 'HOUZS VENTURE HOLDING SDN BHD' }], isLoading: false }),
+  /* The finance-details reminder reads the detail; this supplier has its TIN, so it stays quiet. */
+  useSupplierDetail: (id: string | null) => ({ data: id ? { supplier: { id, name: 'HOUZS VENTURE HOLDING SDN BHD', tin_number: 'C123', business_reg_no: '201901', registration_no: null }, bindings: [] } : undefined }),
 }));
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
 const confirmFn = vi.fn(async (_a: unknown) => true);
-vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => confirmFn }));
+vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => confirmFn, usePrompt: () => async () => null }));
 vi.mock('../../vendor/scm/components/NotifyDialog', () => ({ useNotify: () => vi.fn() }));
+
+/* Events (owner 2026-09-30, 5a) — the picker's list and the labels, stubbed; the real eventLabel stays. */
+const EVENT_OPTIONS = [
+  { id: 336, code: 'E-336', name: 'Pulau Pinang [AKEMI] HOMELOVE @ SETIA SPICE', startDate: '2026-09-04', endDate: '2026-09-06', status: 'confirmed', archived: false, venue: null, brand: 'AKEMI', organizer: 'HOMELOVE', boothNo: null },
+  { id: 348, code: 'E-348', name: 'Pulau Pinang [AKEMI] MLE @ PWCC', startDate: '2026-09-25', endDate: '2026-09-27', status: 'confirmed', archived: false, venue: null, brand: 'AKEMI', organizer: 'MLE', boothNo: 'F1' },
+];
+const retagMutate = vi.fn();
+vi.mock('../../vendor/scm/lib/event-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/event-queries')>()),
+  useEventOptions: () => ({ data: EVENT_OPTIONS, isLoading: false }),
+  useEventLabels: () => ({ data: new Map(EVENT_OPTIONS.map((e) => [e.id, e])) }),
+  useRetagPvLine: () => ({ mutate: retagMutate, isPending: false }),
+}));
 
 import { ApInvoices } from './ApInvoices';
 
@@ -165,7 +213,7 @@ describe('raising an AP invoice', () => {
     fireEvent.click(screen.getByText('New AP invoice'));
     const d = dialog();
     const amountHead = within(d).getByText('Amount (RM)');
-    expect([...amountHead.parentElement!.children].map((c) => c.textContent)).toEqual(['Account', 'Description', 'Amount (RM)', '']);
+    expect([...amountHead.parentElement!.children].map((c) => c.textContent)).toEqual(['Account', 'Description', 'Amount (RM)', 'Event', '']);
 
     fireEvent.keyDown(within(d).getByLabelText('line 1 amount'), { key: 'Insert' });
     expect(within(d).getByLabelText('line 2 amount')).toBeTruthy();
@@ -333,5 +381,133 @@ describe('editing and copying a bill (round 3)', () => {
     expect(body.supplierInvoiceRef).toBeUndefined();
     expect(body.notes).toBe('Rent September');
     expect(body.lines).toHaveLength(2);
+  });
+});
+
+describe('the event each line is for (owner 2026-09-30, 5a — the header a default)', () => {
+  test('the header event sets every line and rides the create payload; the event column sits after the amount', async () => {
+    createAsync.mockClear();
+    draw();
+    fireEvent.click(screen.getByText('New AP invoice'));
+    const d = dialog();
+    fireEvent.focus(within(d).getByLabelText('AP invoice supplier'));
+    fireEvent.mouseDown(screen.getByText('405-H001 · HOUZS VENTURE HOLDING SDN BHD'));
+    const accountBox = within(d).getAllByRole('combobox').find((el) => (el as HTMLInputElement).placeholder.includes('account this line'))!;
+    fireEvent.focus(accountBox);
+    fireEvent.mouseDown(screen.getByText('900-A001 · RENTAL'));
+    setAmount('line 1 amount', '800');
+    fireEvent.focus(within(d).getByLabelText('Event for all lines'));
+    fireEvent.mouseDown(screen.getByText(/MLE @ PWCC/));
+    expect((within(d).getByLabelText('line 1 event') as HTMLInputElement).value).toBe('Pulau Pinang [AKEMI] MLE @ PWCC · 09/25 - 09/27 · booth F1');
+    fireEvent.click(within(d).getByText('Save as draft'));
+    await waitFor(() => expect(createAsync).toHaveBeenCalled());
+    expect((createAsync.mock.calls[0]![0] as { lines: unknown }).lines).toEqual([{ debitAccountCode: '900-A001', amountSen: 80_000, projectId: 348 }]);
+  });
+});
+
+describe('the event a scanned bill names (owner 2026-09-30, 6a — suggest, never bind)', () => {
+  test('the pile hands over the suggestions; nothing is set until Use, which puts the event on every line', async () => {
+    createAsync.mockClear();
+    stashPvFiles([]);
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/scm/ap-invoices', state: { apPrefill: {
+        extraction: {
+          vendorName: 'MLE EVENTS SDN BHD', vendorRegNo: null, documentKind: 'invoice', invoiceNumber: 'MLE-0925',
+          invoiceDate: '2026-09-02', dueDate: null, currency: 'MYR', totalSen: 850_000, sstSen: null,
+          lines: [{ description: 'Booth F1 rental', amountSen: 850_000 }],
+          event: { name: 'MLE Home Expo', venue: 'PWCC', booth: 'F1', dateFrom: '2026-09-25', dateTo: '2026-09-27' },
+        },
+        supplierMatch: { id: 'sup-h', code: '405-H001', name: 'HOUZS VENTURE HOLDING SDN BHD', confidence: 'contains' },
+        memory: { payeeName: null, debitAccountCode: '900-A001', purpose: 'SUPPLIER_PAYMENT', timesSeen: 1 },
+        eventSuggestions: [{ id: 348, score: 120, reasons: ['booth F1', 'same days', 'organiser MLE'], event: EVENT_OPTIONS[1] }],
+      } } }]}><ApInvoices /></MemoryRouter>,
+    );
+    const d = dialog();
+    const note = within(d).getByRole('note', { name: 'Events the bill names' });
+    expect(note.textContent).toContain('booth F1 · same days · organiser MLE');
+    expect((within(d).getByLabelText('line 1 event') as HTMLInputElement).value).toBe('— No event —');
+    fireEvent.click(within(note).getByLabelText('Use Pulau Pinang [AKEMI] MLE @ PWCC'));
+    expect((within(d).getByLabelText('line 1 event') as HTMLInputElement).value).toMatch(/MLE @ PWCC/);
+    expect(within(note).getByText('✓ in use')).toBeTruthy();
+    fireEvent.click(within(d).getByText('Save as draft'));
+    await waitFor(() => expect(createAsync).toHaveBeenCalled());
+    expect((createAsync.mock.calls[0]![0] as { lines: unknown }).lines).toEqual([expect.objectContaining({ amountSen: 850_000, projectId: 348 })]);
+  });
+});
+
+describe('a payment request answered by a bill (?fromRequest=, owner 2026-09-30 6.1–6.2)', () => {
+  test('its bill is read first; what was asked is overlaid, every line on its event; a total that differs is said; the save names the request', async () => {
+    createAsync.mockClear(); extractRequestAsync.mockClear();
+    requestDetail = {
+      id: 'prq-1', request_no: 'HC-PRQ-2609-001', requested_by_name: 'James Seow', payee_name: 'MLE EVENTS SDN BHD',
+      amount_sen: 850_000, purpose: 'Booth F1 rental', due_date: '2026-09-15', project_id: 348, status: 'SUBMITTED', stage: 'SUBMITTED', voucher: null,
+    };
+    try {
+      render(<MemoryRouter initialEntries={['/scm/ap-invoices?fromRequest=prq-1']}><ApInvoices /></MemoryRouter>);
+      const d = await screen.findByRole('dialog');
+      expect(extractRequestAsync).toHaveBeenCalledWith('prq-1');
+      expect(d.textContent).toContain('Answering HC-PRQ-2609-001 from James Seow — its bill is copied onto this invoice when you save.');
+      expect(d.textContent).toContain('The bill reads RM 8,000.00 but James Seow asked for RM 8,500.00 — check which is right.');
+      expect((within(d).getByLabelText('AP invoice description') as HTMLInputElement).value).toBe('Payment request HC-PRQ-2609-001 — Booth F1 rental');
+      expect((within(d).getByLabelText('line 1 event') as HTMLInputElement).value).toMatch(/MLE @ PWCC/);
+      fireEvent.click(within(d).getByText('Save as draft'));
+      await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
+      expect(createAsync.mock.calls[0]![0]).toEqual({
+        supplierId: 'sup-h', supplierInvoiceRef: 'HVH-0930', invoiceDate: '2026-09-10', dueDate: '2026-09-15',
+        notes: 'Payment request HC-PRQ-2609-001 — Booth F1 rental',
+        lines: [{ description: 'BOOTH F1 RENTAL 50%', debitAccountCode: '900-A001', amountSen: 800_000, projectId: 348 }],
+        paymentRequestId: 'prq-1',
+      });
+    } finally {
+      requestDetail = undefined;
+    }
+  });
+
+  test('?open= opens a bill\'s detail — the request\'s link to its invoice', () => {
+    render(<MemoryRouter initialEntries={['/scm/ap-invoices?open=api-1']}><ApInvoices /></MemoryRouter>);
+    expect(within(dialog()).getByText('Rent Sept')).toBeTruthy();
+  });
+});
+
+/* 提醒也加 (owner 2026-10-05): a bill whose printed number and date already sit
+   on another request, voucher or AP invoice is said under the bill's own
+   fields — a warning, never a block; an edited bill never finds itself. */
+describe('the same bill already entered', () => {
+  test('a pile bill already on the books is said under its number and date, and the save still goes', async () => {
+    createAsync.mockClear();
+    sameBill = { 'HVH-0913|2026-09-02': [{ kind: 'API', id: 'api-9', number: '2990-API-2609-009', amountSen: 150_000, status: 'POSTED', answeredBy: null }] };
+    try {
+      render(
+        <MemoryRouter initialEntries={[{ pathname: '/scm/ap-invoices', state: { apPrefill: {
+          extraction: {
+            vendorName: 'HOUZS VENTURE HOLDING SDN. BHD.', vendorRegNo: null, documentKind: 'invoice', invoiceNumber: 'hvh-0913',
+            invoiceDate: '2026-09-02', dueDate: null, currency: 'MYR', totalSen: 150_000, sstSen: null,
+            lines: [{ description: 'Rent Oct', amountSen: 150_000 }],
+          },
+          supplierMatch: { id: 'sup-h', code: '405-H001', name: 'HOUZS VENTURE HOLDING SDN BHD', confidence: 'contains' },
+          memory: { payeeName: 'HOUZS VENTURE HOLDING SDN BHD', debitAccountCode: '900-A001', purpose: 'SUPPLIER_PAYMENT', timesSeen: 2 },
+        } } }]}><ApInvoices /></MemoryRouter>,
+      );
+      const d = dialog();
+      const note = within(d).getByRole('alert', { name: 'Same bill elsewhere' });
+      expect(note.textContent).toContain('这张单已经有了');
+      expect(note.textContent).toContain('AP invoice 2990-API-2609-009 · RM 1,500.00 · posted');
+      /* Only a warning: the bill still saves. */
+      fireEvent.click(within(d).getByText('Save as draft'));
+      await waitFor(() => expect(createAsync).toHaveBeenCalled());
+    } finally {
+      sameBill = {};
+    }
+  });
+
+  test('a bill with nothing else under its number shows no warning; an edited bill asks without itself', () => {
+    detailStatus = 'DRAFT';
+    billMatchAsks.length = 0;
+    draw();
+    fireEvent.click(screen.getByText('2990-API-2609-001'));
+    fireEvent.click(screen.getByText('Edit'));
+    const form = screen.getAllByRole('dialog')[1]!;
+    expect(within(form).queryByRole('alert', { name: 'Same bill elsewhere' })).toBeNull();
+    expect(billMatchAsks.at(-1)).toEqual(['HVH-0912', '2026-09-01', null, 'api-1']);
   });
 });

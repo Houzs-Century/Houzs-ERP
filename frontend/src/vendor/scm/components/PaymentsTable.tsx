@@ -21,6 +21,7 @@
 // across both modes.
 // ----------------------------------------------------------------------------
 
+import { ViewOriginalScan } from './ViewOriginalScan';
 import { memo, useEffect, useRef, useState, type CSSProperties, type ReactNode, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -36,6 +37,8 @@ import { MoneyInput } from './MoneyInput';
 import { DateField } from './DateField';
 import { RefundsLine } from './RefundsLine';
 import { OrderMoneyPanel } from './OrderMoneyPanel';
+import { BackdateRequestsPanel } from './BackdateRequestsPanel';
+import { BACKDATE_REASON_ASK, REQUEST_HINT, slipDateNeedsRequest, useRaiseBackdateRequest } from '../lib/payment-backdate-queries';
 import { CONVERT_LABEL, CONVERTED_METHOD, convertPicksFrom, useAddedConvertSources, useConvertSources, type ConvertSource } from '../lib/so-money-queries';
 import { useNotify } from './NotifyDialog';
 import { useConfirm } from './ConfirmDialog';
@@ -44,6 +47,10 @@ import { todayMyt, mytDayOf } from '../lib/dates';
    the button and the endpoint cannot disagree about whether the window is open
    (Owner 2026-07-19). */
 import { paymentRowMutable, type PaymentChangeVia } from '../lib/so-field-policy';
+/* The slip-date window, byte-identical to the backend's copy — the picker's
+   bounds, the inline refusal and the server's 400 are one rule. */
+import { checkPaymentSlipDate, paymentSlipDateWindow } from '../lib/payment-slip-date';
+import { slipMissingProblem } from '../lib/payment-slip-gate';
 import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
 import { owesPaymentReason, paymentReasonAsk, reasonWhyFor } from '../lib/payment-reason';
 import { usePrompt } from './ConfirmDialog';
@@ -72,6 +79,7 @@ import detailStyles from '../../../pages/scm-v2/SalesOrderDetail.module.css';
 import paymentsStyles from '../../../pages/scm-v2/Payments.module.css';
 import { useUnsavedWork } from '../../../lib/unsavedWork';
 
+import { fmtMoneySen } from '../../../vendor/shared/format';
 /* Bare amount, no currency. The Amount COLUMN carries the currency once in its
    header: `currency` is a single per-document prop (callers pass
    `header.currency`) and SoPayment has no currency field of its own, so every
@@ -83,8 +91,7 @@ const fmtAmt = (centi: number): string =>
 
 /* Currency-prefixed — for the summary totals and the delete confirm, which read
    outside the Amount column and so cannot lean on its header. */
-const fmtRm = (centi: number, currency = 'MYR'): string =>
-  `${currency} ${fmtAmt(centi)}`;
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 /* installment_plan "One Shot" option VALUE (spec 1 + 6) — the default plan for
    a Merchant card with no written tenure. Parsed to null months on persist. */
@@ -338,6 +345,22 @@ export const missingMethodSubField = (
   return null;
 };
 
+/* WHY THIS ROW'S DATE CANNOT BE SAVED, or null. The window lives in
+   lib/payment-slip-date (the backend reads the same file); this adds the two
+   things the rule itself must not know — who may go outside it, and that money
+   MOVED from another order carries the source order's date, never a keyed slip.
+   Exported so the New SO / DO / SI batch-save guard asks the same question the
+   panel's own Save button does. */
+export const slipDateProblem = (
+  d: Pick<PaymentDraft, 'paidAt' | 'methodLabel'>,
+  today: string,
+  mayBackdate: boolean,
+): string | null => {
+  if (mayBackdate || d.methodLabel === CONVERT_LABEL) return null;
+  const verdict = checkPaymentSlipDate(d.paidAt, today);
+  return verdict.ok ? null : verdict.reason;
+};
+
 /* Method-scoped L2 fields for a draft row — shared by commitDraft below and
    every page that batches PaymentDraft[] to a payments endpoint (New SO /
    DO / SI / consignment flows), so the installment branch lives in exactly
@@ -382,6 +405,12 @@ type SavedModeProps = {
   currency?: string;
   /** When true, hides Add Payment + per-row trash/save controls. */
   locked?: boolean;
+  /** A CANCELLED order (owner 2026-09-29). The card stays shut — no Add, no
+   *  Edit, no proof — but Finance (the correction right) gets a trash on each
+   *  row, to remove money that never came in here (one swipe keyed on two
+   *  orders). The reason is always asked; the server holds the same rule and
+   *  reverses the entry on its own day, not today. */
+  cancelledRemoval?: boolean;
   /** Owner 2026-07-13 (no-naked-payment-edits) — set when the parent SO is a
    *  DRAFT. A draft's payments are never locked by the same-day rule, so the
    *  per-row Edit (pencil) shows on EVERY persisted row (not just today's).
@@ -540,6 +569,11 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
      fact only the server can read, so this side never claims to know it. */
   const { can, user: houzsUser } = useHouzsAuth();
   const mayAmend = can('scm.so_payment.amend');
+  /* Owner 2026-09-23 — a slip may not be dated more than 14 days back. The
+     exception is a permission, read here the same way the server reads it
+     (flat key or the wildcard), so the field and the endpoint agree. */
+  const mayBackdateSlip = can('scm.payment.backdate');
+  const slipWindow = paymentSlipDateWindow(todayMyt());
   /* A correction on the amend right owes a reason, asked BEFORE the write and
      required (owner 2026-09-10: 靠权限改的来决定). A same-day fix asks nothing —
      unless the caller's ROLE holds the right LITERALLY (owner 2026-09-14,
@@ -549,6 +583,12 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
      The wording of every ask lives in lib/payment-reason, shared with mobile. */
   const reasonOnEvery = owesPaymentReason(houzsUser);
   const askReason = usePrompt();
+  /* Too old for the window, and not a backdater: the row can still go to an
+     admin as a request (owner 2026-09-30). Only a NEW row — an edit of a booked
+     payment keeps its refusal. */
+  const raiseBackdate = useRaiseBackdateRequest();
+  const needsRequest = (d: PaymentDraft): boolean =>
+    !d.editingPersistedId && d.methodLabel !== CONVERT_LABEL && slipDateNeedsRequest(d.paidAt, todayMyt(), mayBackdateSlip);
 
   /* ── Official Receipt print (GL redesign 9b) ──────────────────────────
      ensure-then-print: the endpoint fetches the payment's OR (creating one
@@ -611,6 +651,8 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
   /* ── SAVED MODE hooks (always called — TanStack Query lazily skips
         when enabled=false). docNo is non-null in SAVED mode. ──────────── */
   const isSaved = props.docNo !== null;
+  /* Finance's remove door on a cancelled order — see SavedModeProps.cancelledRemoval. */
+  const removalOnly = isSaved && ((props as SavedModeProps).cancelledRemoval ?? false) && mayAmend;
   const paymentsQ     = useSalesOrderPayments(isSaved ? props.docNo : null);
   const addPayment    = useAddSalesOrderPayment();
   const editPayment   = useEditSalesOrderPayment();
@@ -906,9 +948,6 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
      commit affordance; the parent batches them at SO-create time. */
   const commitDraft = async (d: PaymentDraft) => {
     if (!isSaved) return;
-    /* Owner 2026-07-13 — the slip is OPTIONAL now (a receipt isn't always on
-       hand). Gate only on an amount > 0; the SO route accepts a slip-less
-       payment. The slip uploader stays available for when one IS attached. */
     if (d.amountSen <= 0) return;
     /* Same-day EDIT (owner 2026-07-13) — an edit draft carries the id of the
        persisted row it amends. Route it through PATCH instead of POST. */
@@ -924,6 +963,18 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
         title: `Pick the ${missing} for this ${d.methodLabel} payment.`,
         tone: 'error',
       });
+      return;
+    }
+    /* The proof (owner 2026-10-13), before the window: a late slip needs its photo before it goes to an admin. */
+    const noSlip = slipMissingProblem(d);
+    if (noSlip) { void notify({ title: 'Attach the slip first', body: noSlip, tone: 'error' }); return; }
+    /* Slip-date window (owner 2026-09-23). The field is already bounded, but a
+       row seeded from a scanned receipt carries the receipt's own date and a
+       stale draft can outlive the window while the page sits open. */
+    if (needsRequest(d)) { void requestDraft(d); return; }
+    const outOfWindow = slipDateProblem(d, todayMyt(), mayBackdateSlip);
+    if (outOfWindow) {
+      void notify({ title: 'Check the slip date', body: outOfWindow, tone: 'error' });
       return;
     }
     let method: PaymentMethod;
@@ -967,6 +1018,37 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
     });
   };
 
+  /* Send a too-old row to an admin instead of booking it (owner 2026-09-30).
+     Same body the payments route takes, plus the reason; the row leaves the
+     table and reappears under the requests card until an admin decides. */
+  const requestDraft = async (d: PaymentDraft) => {
+    if (!isSaved || d.amountSen <= 0) return;
+    const missing = missingMethodSubField(d);
+    if (missing) { void notify({ title: `Pick the ${missing} for this ${d.methodLabel} payment.`, tone: 'error' }); return; }
+    let method: PaymentMethod;
+    try { ({ method } = labelToApi(d.methodLabel)); }
+    catch (e) { void notify({ title: 'Payment method not recognised', body: e instanceof Error ? e.message : String(e), tone: 'error' }); return; }
+    const reason = await askReason(BACKDATE_REASON_ASK);
+    if (!reason) return;
+    try {
+      await raiseBackdate.mutateAsync({
+        docNo:           (props as SavedModeProps).docNo,
+        reason,
+        paidAt:          d.paidAt,
+        method,
+        amountSen:       d.amountSen,
+        accountSheet:    d.accountSheet || null,
+        approvalCode:    d.approvalCode || null,
+        collectedBy:     d.collectedBy || null,
+        uploadSessionId: d.slipUploadSessionId,
+        ...draftMethodFields(method, d),
+      });
+      removeDraft(d.uid);
+    } catch (e) {
+      void notify({ title: 'Request not sent', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
+
   /* THE PAGE'S SAVE COMMITS THESE ROWS TOO (owner 2026-08-31).
    *
    * A typed payment row used to be booked ONLY by its own Save button. The page
@@ -992,6 +1074,10 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
       if (d.amountSen <= 0) { blocked.push(`${d.methodLabel}: no amount`); continue; }
       const missing = missingMethodSubField(d);
       if (missing) { blocked.push(`${d.methodLabel}: pick the ${missing}`); continue; }
+      const noSlip = slipMissingProblem(d);
+      if (noSlip) { blocked.push(`${d.methodLabel}: ${noSlip}`); continue; }
+      const outOfWindow = slipDateProblem(d, todayMyt(), mayBackdateSlip);
+      if (outOfWindow) { blocked.push(`${d.methodLabel}: ${needsRequest(d) ? REQUEST_HINT : outOfWindow}`); continue; }
       let method: PaymentMethod;
       try { ({ method } = labelToApi(d.methodLabel)); }
       catch (e) { blocked.push(`${d.methodLabel}: ${e instanceof Error ? e.message : 'payment method not recognised'}`); continue; }
@@ -1373,6 +1459,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                         it — a slip that turns up on a later day is exactly the
                         case this exists for. `locked` still applies, so it only
                         shows once the operator has opted into payment edits. */}
+                    {isSaved && <ViewOriginalScan kind="payment" documentId={String(p.id)} />}
                     {isSaved && !locked && (
                       <SlipUploadField
                         key={p.slip_key ?? 'none'}
@@ -1402,7 +1489,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                       <Printer size={14} strokeWidth={1.75} />
                     </button>
                   )}
-                  {!locked && (
+                  {(!locked || removalOnly) && (
                     <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end', alignItems: 'center' }}>
                       {/* Same-day EDIT (owner 2026-07-13) — only for a payment
                           recorded today; after MYT midnight it locks (no pencil).
@@ -1410,7 +1497,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                           every persisted row keeps its pencil while unconfirmed. */}
                       {/* Money moved from a cancelled order is moved back by
                           deleting the row, never edited in place (docs/bugs/0931). */}
-                      {rowMutable(p.created_at) && p.method !== CONVERTED_METHOD && (
+                      {!locked && rowMutable(p.created_at) && p.method !== CONVERTED_METHOD && (
                         <button
                           type="button"
                           disabled={editPayment.isPending}
@@ -1440,19 +1527,31 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                           className={paymentsStyles.trashBtn}
                           disabled={deletePayment.isPending}
                           onClick={async () => {
-                            const why = reasonWhyFor(rowVia(p.created_at), reasonOnEvery);
+                            /* Off a cancelled order a reason is always owed — the server refuses without one. */
+                            const why = reasonWhyFor(rowVia(p.created_at), reasonOnEvery) ?? (removalOnly ? 'amend' : null);
                             const reason = why ? await askReason(paymentReasonAsk('delete', why)) : '';
                             if (reason === null) return;
-                            if (await askConfirm({
+                            if (await askConfirm(removalOnly ? {
+                              title: `Remove this ${methodDisplay(p)} payment of ${fmtRm(p.amount_sen, currency)} from the cancelled order?`,
+                              body: 'Only for money that never came in on this order, such as one swipe keyed on two orders. '
+                                + `Its journal entry is reversed on ${p.method === CONVERTED_METHOD ? 'the day the money was moved' : formatDate(p.paid_at)}, not today, `
+                                + 'and its draft receipt is removed. It cannot be undone.',
+                              confirmLabel: 'Remove',
+                              danger: true,
+                            } : {
                               title: `Delete this ${methodDisplay(p)} payment of ${fmtRm(p.amount_sen, currency)}?`,
                               body: 'This removes the payment from the order, so the balance owing goes back up. It cannot be undone.',
                               confirmLabel: 'Delete',
                               danger: true,
                             })) {
-                              deletePayment.mutate({ docNo: (props as SavedModeProps).docNo, id: p.id, version: p.version, ...(reason ? { reason } : {}) });
+                              deletePayment.mutate(
+                                { docNo: (props as SavedModeProps).docNo, id: p.id, version: p.version, ...(reason ? { reason } : {}) },
+                                /* A refusal is said, never swallowed: reconciled, a locked month, money already refunded or moved. */
+                                { onError: (e) => { void notify({ title: 'Payment not removed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }); } },
+                              );
                             }
                           }}
-                          title="Remove payment (same-day only)"
+                          title={removalOnly ? 'Remove payment (Finance — cancelled order)' : 'Remove payment (same-day only)'}
                         >
                           <Trash2 size={14} strokeWidth={1.75} />
                         </button>
@@ -1473,7 +1572,11 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                 (owner 2026-08-07, live on prod). The row now says what it is,
                 in words, in the reading position, and carries a Save button
                 with a label. */}
-            {drafts.map((d) => (
+            {drafts.map((d) => {
+              /* The window refusal for THIS row — shown under the field and, in
+                 the same words, by every Save path that would refuse it. */
+              const slipProblem = slipDateProblem(d, todayMyt(), mayBackdateSlip);
+              return (
               <div className={paymentsStyles.row} key={d.uid}>
                 <span className={`${paymentsStyles.cell} ${unsavedCls}`} data-label="Date"
                       style={{ flexDirection: 'column', alignItems: 'stretch', gap: 2 }}>
@@ -1489,8 +1592,15 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                     className={paymentsStyles.inlineInput}
                     value={d.paidAt ?? ''}
                     disabled={locked}
+                    /* No future day for a non-backdater. No lower bound: an older
+                       slip goes to an admin as a request (owner 2026-09-30). */
+                    max={mayBackdateSlip ? undefined : slipWindow.max}
+                    invalid={slipProblem !== null}
                     onChange={(iso) => patchDraft(d.uid, { paidAt: iso })}
                   />
+                  {slipProblem && (
+                    <span className={paymentsStyles.fieldProblem}>{needsRequest(d) ? REQUEST_HINT : slipProblem}</span>
+                  )}
                 </span>
                 <span className={`${paymentsStyles.cell} ${unsavedCls}`} data-label="Method" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
                   {/* L1 — Method (always visible) */}
@@ -1720,11 +1830,10 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                         </div>
                       ) : null;
                     })()}
-                    {/* Owner 2026-07-13 — per-payment slip uploader is OPTIONAL
-                        now (a receipt isn't always available); commit no longer
-                        waits on it. Still offered for when one IS on hand. */}
+                    {/* The proof is REQUIRED on a new row (owner 2026-10-13, lib/payment-slip-gate);
+                        Save waits on it. An edit of a booked row keeps the slip it has. */}
                     <SlipUploadField
-                      required={false}
+                      required={!d.editingPersistedId}
                       disabled={locked}
                       onConfirmed={(sid) => patchDraft(d.uid, { slipUploadSessionId: sid })}
                       onCleared={() => patchDraft(d.uid, { slipUploadSessionId: null })}
@@ -1762,13 +1871,12 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                         Only the SO-route batching page (SalesOrderNew) sets
                         slipUpload; DO / SI / consignment pages do NOT, so their
                         tables render no uploader (the endpoint doesn't accept
-                        one). NOT required-marked: the slip is optional on the
-                        new-SO path too (Owner 2026-08-13), so the asterisk went
-                        with the rule — the SAVED-mode uploader above has never
-                        carried one since 2026-07-13. */}
+                        one). Required-marked (owner 2026-10-13): the New-SO
+                        save is blocked by slipMissingProblem until every keyed
+                        row carries its slip. A converted row needs none. */}
                     {!isSaved && (props as DraftModeProps).slipUpload && (
                       <SlipUploadField
-                        required={false}
+                        required={d.methodLabel !== CONVERT_LABEL}
                         disabled={locked}
                         onConfirmed={(sid) => patchDraft(d.uid, { slipUploadSessionId: sid })}
                         onCleared={() => patchDraft(d.uid, { slipUploadSessionId: null })}
@@ -1785,12 +1893,14 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                          required sub-field(s). */
                       const noAmount = d.amountSen <= 0;
                       const missing  = missingMethodSubField(d);
-                      const blocked  = noAmount || missing !== null;
-                      const title = noAmount
-                        ? 'Enter an amount > 0 first'
-                        : missing
-                          ? `Pick the ${missing} for this ${d.methodLabel} payment first`
-                          : d.editingPersistedId ? 'Save changes' : 'Save payment';
+                      /* No slip (owner 2026-10-13): no Save, and no request either. */
+                      const noSlip   = slipMissingProblem(d);
+                      /* Too old for the window: commitDraft sends it as a request instead. */
+                      const asRequest = !noAmount && !missing && !noSlip && needsRequest(d);
+                      const blocked  = noAmount || missing !== null || noSlip !== null || (slipProblem !== null && !asRequest);
+                      const title = noAmount ? 'Enter an amount > 0 first'
+                        : missing ? `Pick the ${missing} for this ${d.methodLabel} payment first`
+                        : noSlip ?? (asRequest ? REQUEST_HINT : slipProblem ?? (d.editingPersistedId ? 'Save changes' : 'Save payment'));
                       /* A LABELLED button, not a bare glyph — see the note on
                          the drafts block. `title` still carries the reason the
                          button is unavailable, which a label cannot. */
@@ -1799,11 +1909,11 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                           type="button"
                           className={paymentsStyles.saveBtn}
                           onClick={() => commitDraft(d)}
-                          disabled={locked || addPayment.isPending || blocked}
+                          disabled={locked || addPayment.isPending || raiseBackdate.isPending || blocked}
                           title={title}
                         >
                           <Save size={13} strokeWidth={1.75} />
-                          {addPayment.isPending ? 'Saving…' : 'Save'}
+                          {addPayment.isPending || raiseBackdate.isPending ? 'Saving…' : asRequest ? 'Request approval' : 'Save'}
                         </button>
                       );
                     })()}
@@ -1836,7 +1946,8 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                   </div>
                 </span>
               </div>
-            ))}
+              );
+            })}
           </div>
           </div>
 
@@ -1874,6 +1985,8 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
           {/* Money that went BACK (§14) — every refund voucher on a saved
               order, linked by number; nothing when there is none. */}
           {isSaved && <RefundsLine docNo={(props as SavedModeProps).docNo} />}
+          {/* Payments sent to an admin because the slip is older than 14 days. */}
+          {isSaved && <BackdateRequestsPanel docNo={(props as SavedModeProps).docNo} />}
           {/* A CANCELLED order's money and its two exits — refund or convert
               (docs/bugs/0931); the panel decides for itself whether to show. */}
           {isSaved && <OrderMoneyPanel docNo={(props as SavedModeProps).docNo} />}

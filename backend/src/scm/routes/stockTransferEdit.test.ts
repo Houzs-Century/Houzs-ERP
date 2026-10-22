@@ -209,3 +209,51 @@ describe('PATCH stock-transfers/:id — item/qty/SKU replace', () => {
     expect(lines('st-1')[0]!.id).toBe('li-1');
   });
 });
+
+// DEV-15: the detail page's Edit can now add and remove lines, so the replace
+// must accept a line list whose length differs from what was saved.
+describe('PATCH stock-transfers/:id — adding / removing lines', () => {
+  it('adds a line to a saved transfer', async () => {
+    sb = makeSb();
+    sb.tables.v_inventory_lots_open.push({ warehouse_id: 'wh-1', item_code: 'SKU-2', variant_key: '', qty_remaining: 10, company_id: 1 });
+    const res = await patch('st-1', {
+      items: [
+        { itemCode: 'SKU-1', productName: 'Sofa', variantKey: '', qty: 2, notes: 'old line note' },
+        { itemCode: 'SKU-2', productName: 'Armchair', variantKey: '', qty: 3 },
+      ],
+    });
+    expect(res.status).toBe(200);
+    const ls = lines('st-1');
+    expect(ls).toHaveLength(2);
+    expect(ls.map((l) => [l.item_code, l.qty])).toEqual([['SKU-1', 2], ['SKU-2', 3]]);
+  });
+
+  it('removes a line from a saved transfer', async () => {
+    sb = makeSb();
+    sb.tables.stock_transfer_lines.push({ id: 'li-2', stock_transfer_id: 'st-1', item_code: 'SKU-2', product_name: 'Armchair', variant_key: '', qty: 1, notes: null, created_at: '2026-09-01T00:00:01Z' });
+    const res = await patch('st-1', {
+      items: [{ itemCode: 'SKU-1', productName: 'Sofa', variantKey: '', qty: 2 }],
+    });
+    expect(res.status).toBe(200);
+    const ls = lines('st-1');
+    expect(ls).toHaveLength(1);
+    expect(ls[0]!.item_code).toBe('SKU-1');
+  });
+
+  it('409s an added line on the same bucket when the combined qty exceeds what is available', async () => {
+    sb = makeSb();
+    // Existing SKU-1 line keeps 2; a second SKU-1 line of 7 makes 9 > 8 available.
+    const res = await patch('st-1', {
+      items: [
+        { itemCode: 'SKU-1', variantKey: '', qty: 2 },
+        { itemCode: 'SKU-1', variantKey: '', qty: 7 },
+      ],
+    });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      error: 'insufficient_stock',
+      shortages: [{ itemCode: 'SKU-1', requested: 9, available: 8 }],
+    });
+    expect(lines('st-1')).toHaveLength(1);
+  });
+});

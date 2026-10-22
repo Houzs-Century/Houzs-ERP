@@ -41,7 +41,10 @@ export const ALARM = 1;
 export const CANNOT_ANSWER = 2;
 
 /**
- * @param {{checkpoint: string|null, behind: number|null, d7: number, d30: number, total: number}} state
+ * @param {{checkpoint: string|null, behind: number|null, d7: number, d30: number, total: number,
+ *          runs: {total: number, failed: number, quiet: number}}} state
+ *   `runs` = incremental pull runs logged in the last STALE_CHECKPOINT_DAYS days;
+ *   `quiet` = runs that ended SKIPPED ("No modifications since checkpoint").
  * @returns {{code: 0|1|2, alarms: string[], reason?: string}}
  */
 /**
@@ -59,7 +62,7 @@ export function normaliseBehind(behind) {
 }
 
 export function decide(state) {
-  const { checkpoint, behind, d7, d30, total } = state;
+  const { checkpoint, behind, d7, d30, total, runs } = state;
   const alarms = [];
 
   /* REFUSE before judging. An empty mirror makes "0 arrivals" trivially true,
@@ -97,6 +100,15 @@ export function decide(state) {
         `explains (the column is naive, so up to ${TZ_SLOP_HOURS}h is tolerated). The next ` +
         "getSince() would ask for a window starting in the future and skip everything before it.",
     );
+  } else if (staleness > STALE_CHECKPOINT_DAYS && runs.total === 0) {
+    alarms.push(
+      `pull_checkpoint is ${staleness} days behind and NO pull run was logged in the last ` +
+        `${STALE_CHECKPOINT_DAYS} days. The cron is not running the pull.`,
+    );
+  } else if (staleness > STALE_CHECKPOINT_DAYS && runs.failed === 0 && runs.quiet === runs.total) {
+    /* Every run asked AutoCount and got "nothing new". The checkpoint only moves
+       when a row arrives, so a quiet AutoCount leaves it behind with no fault.
+       A frozen pull fails rows; it does not report clean empty runs. */
   } else if (staleness > STALE_CHECKPOINT_DAYS) {
     alarms.push(
       `pull_checkpoint is ${staleness} days behind (limit ${STALE_CHECKPOINT_DAYS}). It only advances ` +

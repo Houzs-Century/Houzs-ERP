@@ -25,6 +25,7 @@ import type { Context } from 'hono';
 import type { Env, Variables } from '../env';
 import { supabaseAuth } from '../middleware/auth';
 import { scopeToCompany } from '../lib/companyScope';
+import { stampSoRefs } from '../lib/so-ref-lookup';
 import { buildVariantSummary } from '../shared';
 import { soLineGroupRank } from '../shared/so-line-display';
 
@@ -114,6 +115,9 @@ export const loadingListHandler = async (c: Context<{ Bindings: Env; Variables: 
   // array, never null), so no `?? []` guard here.
   const headers = data as unknown as HeaderRow[];
   if (headers.length === 0) return c.json({ deliveryOrders: [] });
+
+  // The order's customer reference, so the queue's search finds a DO by it.
+  await stampSoRefs(sb, headers, 'so_doc_no', (sq) => scopeToCompany(sq, c), 'loading-list');
 
   const ids = headers.map((h) => h.id);
   // Lines (no money) + the crew's assigned lorry, in parallel. The crew table

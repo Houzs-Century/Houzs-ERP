@@ -6,18 +6,20 @@
 // incident: a Houzs (company 1) GO wrote the single row, and the reader had no
 // company predicate, so the switch reached company 2's catalogue too.
 //
-// The reader is fixed (autoDeriveEnabled takes a required companyId), but the
-// WRITE side still has to refuse two things no flag value can express:
-//   1. re-pointing the existing row at a different company, which would move
-//      the switch out from under its current owner without saying so;
-//   2. arming the mechanism over company 2, whose retail prices are authored
-//      only by 2990's POS SKU Master and must never be derived from our
-//      supplier prices.
+// The flag is now a SINGLE GLOBAL SWITCH (owner 2026-09-25: both companies must
+// behave the same; autoDeriveEnabled reads the one (key) row regardless of
+// company). Retail is defended where it is WRITTEN — every derive path merges
+// through mergeRetailOntoDerivedSeatGrid, and company 2 carries the DB trigger
+// trg_mfg_products_retail_price_lock — so arming company 2 can no longer blank a
+// retail price, and it is no longer forbidden. The WRITE side still refuses to
+// re-point the existing row at a different company, which would move the switch
+// out from under its current owner without saying so.
 //
-// Pure so both refusals are provable without a database.
+// Pure so the refusal is provable without a database.
 
-/** Companies whose catalogue this mechanism may never be armed over. */
-export const DERIVE_FORBIDDEN_COMPANY_IDS = [2];
+/** Companies whose catalogue this mechanism may never be armed over. Empty since
+ *  2026-09-25: the switch is global and retail is protected at write time. */
+export const DERIVE_FORBIDDEN_COMPANY_IDS = [];
 
 /**
  * @param {{ key: string, companyId: number, desired: string,

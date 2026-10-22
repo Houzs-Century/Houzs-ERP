@@ -53,6 +53,7 @@ type VpDrainSummaryShape = {
   failed: number;
   retried: number;
   outOfScope: number;
+  changed: number;
 };
 
 const URL_ROW = { k: 'vp.url', v: 'https://venture-portal-chi.vercel.app/api/erp/v1/sales-orders' };
@@ -81,7 +82,7 @@ function db(opts: {
       app_config: opts.flag == null ? [] : [{ key: 'scm.venture_portal_feed', value: opts.flag }],
       sync_config: opts.config ?? [URL_ROW, SECRET_ROW],
       venture_portal_outbox: opts.outbox ?? [
-        { id: 'vp-1', doc_no: 'HC-SO-013403', op: 'UPDATE', status: 'pending', attempts: 0, created_at: '2026-09-12T01:00:00Z' },
+        { id: 'vp-1', doc_no: 'HC-SO-013403', op: 'UPDATE', status: 'pending', attempts: 0, revision: 0, created_at: '2026-09-12T01:00:00Z' },
       ],
       mfg_sales_orders: opts.orders ?? [{ doc_no: 'HC-SO-013403', company_id: 1, so_date: '2026-09-01' }],
     },
@@ -287,6 +288,66 @@ describe('delivering', () => {
     expect(r.sent).toBe(1);
     expect(r.outOfScope).toBe(0);
     expect(JSON.parse(bodies[0]).deleted).toBe(true);
+    expect(outbox(sb)[0].status).toBe('sent');
+  });
+
+  /* THE LOST SAVE (HC-SO-2609-271, 2026-09-30). One Save press is several
+     requests: the header save queued the order and its kick built the payload,
+     and the line request's recomputed header total landed 1.6 s later — after
+     the build, before the row was marked. ON CONFLICT DO NOTHING folded it into
+     a delivery that never carried it, the row went `sent`, and the portal kept
+     RM 1,750 for a RM 3,500 bill with nothing left in the queue. */
+  test('a save that lands while its order is in flight goes again, never folded into the delivery that missed it', async () => {
+    const sb = db({ flag: '1' });
+    let builds = 0;
+    sb.rpcHandlers.vp_build_payloads = () => {
+      builds += 1;
+      if (builds === 1) {
+        /* The save, between the build and the mark: what the enqueue triggers'
+           ON CONFLICT DO UPDATE does to the pending row. A new object, as the
+           database's row is not the drain's copy of it. */
+        const rows = outbox(sb);
+        rows[0] = { ...rows[0], revision: Number(rows[0].revision) + 1 };
+      }
+      return [{ ...payloadFor('HC-SO-013403'), snapshotAt: `2026-09-12T02:00:0${builds}.000Z` }];
+    };
+    currentSb = sb;
+    const bodies: string[] = [];
+    const fetchImpl = vi.fn(async (_u: string, init: RequestInit) => {
+      bodies.push(String(init.body));
+      return res(200, { outcome: 'applied' });
+    }) as never;
+
+    const first = await drainVenturePortalOutbox(env, 25, fetchImpl);
+    expect(first.sent).toBe(0);
+    expect(first.changed).toBe(1);
+    expect(outbox(sb)[0].status).toBe('pending');
+
+    const second = await drainVenturePortalOutbox(env, 25, fetchImpl);
+    expect(second.sent).toBe(1);
+    expect(second.changed).toBe(0);
+    expect(outbox(sb)[0].status).toBe('sent');
+    /* Built again at send time: the second delivery is the newer state. */
+    expect(bodies.map((b) => JSON.parse(b).snapshotAt)).toEqual([
+      '2026-09-12T02:00:01.000Z',
+      '2026-09-12T02:00:02.000Z',
+    ]);
+  });
+
+  test('a save made before the row was read is in the payload already, so the row is sent', async () => {
+    const sb = withBuilder(
+      db({
+        flag: '1',
+        outbox: [{ id: 'vp-1', doc_no: 'HC-SO-013403', op: 'UPDATE', status: 'pending', attempts: 0, revision: 3, created_at: '2026-09-12T01:00:00Z' }],
+      }),
+      [payloadFor('HC-SO-013403')],
+    );
+    currentSb = sb;
+
+    const r = await drainVenturePortalOutbox(env, 25, vi.fn(async () => res(200)) as never);
+
+    expect(r.sent).toBe(1);
+    expect(r.changed).toBe(0);
     expect(outbox(sb)[0].status).toBe('sent');
   });
 });
@@ -740,7 +801,15 @@ function outOfScopeQueue(n: number) {
 
 describe('deciding whether to sweep again', () => {
   const summary = (over: Partial<VpDrainSummaryShape>): VpDrainSummaryShape => ({
-    processed: 0, sent: 0, failed: 0, retried: 0, outOfScope: 0, ...over,
+    processed: 0, sent: 0, failed: 0, retried: 0, outOfScope: 0, changed: 0, ...over,
+  });
+
+  /* An order saved again while its delivery was in flight. The save that did
+     it is usually the rest of the same Save press, whose own kick was debounced
+     into this one, so without another sweep it would wait for the cron. */
+  test('an order that changed in flight earns another sweep, however small the batch', () => {
+    expect(vpKickSweepAgain(summary({ processed: 1, changed: 1 }))).toBe(true);
+    expect(vpKickSweepAgain(summary({ skipped: 'feed_off', changed: 1 }))).toBe(false);
   });
 
   test('a full batch that LEFT the queue means there is probably more', () => {
@@ -780,7 +849,7 @@ describe('kicking the drain', () => {
     resetVpKick({ sleep: async (ms) => { waited = ms; } });
     const { ctx, settle, count } = fakeCtx();
 
-    expect(kickVenturePortalDrain(env, ctx)).toBe('scheduled');
+    expect(kickVenturePortalDrain(env, ctx, null)).toBe('scheduled');
     expect(count()).toBe(1);
     /* Nothing has happened YET — the work is queued, not run, which is the
        property that keeps it off the request's critical path. */
@@ -801,17 +870,17 @@ describe('kicking the drain', () => {
     resetVpKick({ now: () => clock, sleep: async () => {} });
     const { ctx, settle, count } = fakeCtx();
 
-    expect(kickVenturePortalDrain(env, ctx)).toBe('scheduled');
+    expect(kickVenturePortalDrain(env, ctx, null)).toBe('scheduled');
     clock += 200;
-    expect(kickVenturePortalDrain(env, ctx)).toBe('debounced');
+    expect(kickVenturePortalDrain(env, ctx, null)).toBe('debounced');
     clock += 200;
-    expect(kickVenturePortalDrain(env, ctx)).toBe('debounced');
+    expect(kickVenturePortalDrain(env, ctx, null)).toBe('debounced');
     expect(count()).toBe(1);
 
     /* And a write AFTER the window gets its own drain — the debounce is a
        collapse, not a rate limit that drops work. */
     clock += VP_KICK_DELAY_MS;
-    expect(kickVenturePortalDrain(env, ctx)).toBe('scheduled');
+    expect(kickVenturePortalDrain(env, ctx, null)).toBe('scheduled');
     expect(count()).toBe(2);
     await settle();
   });
@@ -819,7 +888,7 @@ describe('kicking the drain', () => {
   test('a context with no waitUntil is reported, not silently ignored', () => {
     currentSb = outOfScopeQueue(1);
     resetVpKick({ sleep: async () => {} });
-    expect(kickVenturePortalDrain(env, null)).toBe('no_execution_context');
+    expect(kickVenturePortalDrain(env, null, null)).toBe('no_execution_context');
     expect(outbox(currentSb)[0].status).toBe('pending');
   });
 
@@ -832,10 +901,10 @@ describe('kicking the drain', () => {
     resetVpKick({ sleep: async () => {} });
     const angry = { waitUntil: () => { throw new Error('this context is dead'); } };
 
-    expect(kickVenturePortalDrain(env, angry)).toBe('no_execution_context');
+    expect(kickVenturePortalDrain(env, angry, null)).toBe('no_execution_context');
 
     const { ctx } = fakeCtx();
-    expect(kickVenturePortalDrain(env, ctx)).toBe('scheduled');
+    expect(kickVenturePortalDrain(env, ctx, null)).toBe('scheduled');
   });
 
   /* NEVER INTO THE REQUEST. The person who pressed Save already has their 200;
@@ -846,9 +915,64 @@ describe('kicking the drain', () => {
     resetVpKick({ sleep: async () => { throw new Error('boom'); } });
     const { ctx, settle } = fakeCtx();
 
-    expect(kickVenturePortalDrain(env, ctx)).toBe('scheduled');
+    expect(kickVenturePortalDrain(env, ctx, null)).toBe('scheduled');
     await expect(settle()).resolves.toBeDefined();
     expect(outbox(currentSb)[0].status).toBe('pending');
+  });
+
+  /* THE CATALOGUE RIDES THE SAME TASK (owner 2026-09-24: live, not five
+     minutes). One task per window, the orders first, and neither half can stop
+     the other. */
+  test('the step after the drain runs once the sweeps are done, in the same task', async () => {
+    currentSb = outOfScopeQueue(1);
+    resetVpKick({ sleep: async () => {} });
+    const { ctx, settle, count } = fakeCtx();
+    const seen: string[] = [];
+    const after = vi.fn(async () => { seen.push(String(outbox(currentSb)[0].status)); });
+
+    expect(kickVenturePortalDrain(env, ctx, after)).toBe('scheduled');
+    expect(count()).toBe(1);
+    expect(after).not.toHaveBeenCalled();
+
+    await settle();
+    expect(after).toHaveBeenCalledTimes(1);
+    /* The drain had already cleared the row when the step ran. */
+    expect(seen).toEqual(['skipped']);
+  });
+
+  test('writes inside the window run the step ONCE, with the one drain', async () => {
+    currentSb = outOfScopeQueue(1);
+    let clock = 1_000_000;
+    resetVpKick({ now: () => clock, sleep: async () => {} });
+    const { ctx, settle } = fakeCtx();
+    const after = vi.fn(async () => {});
+
+    expect(kickVenturePortalDrain(env, ctx, after)).toBe('scheduled');
+    clock += 200;
+    expect(kickVenturePortalDrain(env, ctx, after)).toBe('debounced');
+    await settle();
+    expect(after).toHaveBeenCalledTimes(1);
+  });
+
+  test('a drain that fails still runs the step after it', async () => {
+    currentSb = outOfScopeQueue(1);
+    resetVpKick({ sleep: async () => { throw new Error('boom'); } });
+    const { ctx, settle } = fakeCtx();
+    const after = vi.fn(async () => {});
+
+    expect(kickVenturePortalDrain(env, ctx, after)).toBe('scheduled');
+    await expect(settle()).resolves.toBeDefined();
+    expect(after).toHaveBeenCalledTimes(1);
+  });
+
+  test('a step that throws never rejects either', async () => {
+    currentSb = outOfScopeQueue(1);
+    resetVpKick({ sleep: async () => {} });
+    const { ctx, settle } = fakeCtx();
+
+    expect(kickVenturePortalDrain(env, ctx, async () => { throw new Error('catalogue down'); })).toBe('scheduled');
+    await expect(settle()).resolves.toBeDefined();
+    expect(outbox(currentSb)[0].status).toBe('skipped');
   });
 
   /* THE BACKFILL, which is why one kick sweeps more than once: 30 waiting
@@ -858,13 +982,44 @@ describe('kicking the drain', () => {
     resetVpKick({ sleep: async () => {} });
     const { ctx, settle } = fakeCtx();
 
-    expect(kickVenturePortalDrain(env, ctx)).toBe('scheduled');
+    expect(kickVenturePortalDrain(env, ctx, null)).toBe('scheduled');
     await settle();
 
     /* A single sweep is capped at VP_DRAIN_BATCH, so all 30 being cleared is the
        proof that the loop ran twice. */
     expect(outbox(currentSb).filter((r) => r.status === 'skipped')).toHaveLength(30);
     expect(outbox(currentSb).filter((r) => r.status === 'pending')).toHaveLength(0);
+  });
+
+  /* The rest of the Save press lands after the first build; the kick waits the
+     same 1.5 s again and sends the order as it ended up, instead of leaving it
+     to the five-minute cron. */
+  test('an order saved again while its delivery was in flight is swept again after the same wait', async () => {
+    const sb = db({ flag: '1' });
+    let builds = 0;
+    sb.rpcHandlers.vp_build_payloads = () => {
+      builds += 1;
+      if (builds === 1) {
+        const rows = outbox(sb);
+        rows[0] = { ...rows[0], revision: Number(rows[0].revision) + 1 };
+      }
+      return [payloadFor('HC-SO-013403')];
+    };
+    currentSb = sb;
+    const waits: number[] = [];
+    resetVpKick({ sleep: async (ms) => { waits.push(ms); } });
+    vi.stubGlobal('fetch', vi.fn(async () => res(200, { outcome: 'applied' })));
+    try {
+      const { ctx, settle } = fakeCtx();
+      expect(kickVenturePortalDrain(env, ctx, null)).toBe('scheduled');
+      await settle();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(builds).toBe(2);
+    expect(waits).toEqual([VP_KICK_DELAY_MS, VP_KICK_DELAY_MS]);
+    expect(outbox(sb)[0].status).toBe('sent');
   });
 
   /* AND IT IS BOUNDED. A kick is not a backfill tool — 4 sweeps, then it hands
@@ -876,7 +1031,7 @@ describe('kicking the drain', () => {
     resetVpKick({ sleep: async () => {} });
     const { ctx, settle } = fakeCtx();
 
-    expect(kickVenturePortalDrain(env, ctx)).toBe('scheduled');
+    expect(kickVenturePortalDrain(env, ctx, null)).toBe('scheduled');
     await settle();
 
     expect(outbox(currentSb).filter((r) => r.status === 'skipped'))

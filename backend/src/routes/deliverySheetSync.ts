@@ -26,7 +26,7 @@
  *   · Remark 4 (col P) = `remark4`, written back from col A — col A itself is
  *     never written by the ERP (the writer starts at col B, as it always did).
  */
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import type { Env } from "../types";
 import { timingSafeEqualStr } from "../services/auth";
 import { checkRateLimit, clientIp } from "../middleware/rateLimit";
@@ -64,7 +64,9 @@ import {
   type PoHeadForSheet,
 } from "../lib/delivery-sheet-po-feed";
 import {
+  FEED_ASSR_CONTACTS_SQL,
   FEED_ASSR_LEGS_SQL,
+  toAssrContactRecord,
   toAssrLegRecords,
   type AssrFeedRow,
 } from "../lib/delivery-sheet-assr-feed";
@@ -72,8 +74,22 @@ import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { SUPPLIER_DATE_SLOT_COL, cascadePoSupplierDate } from "../scm/lib/po-supplier-date-cascade";
 import { poHasDownstream } from "../scm/lib/downstream-lock";
 import { enqueueEdit } from "../scm/lib/autocount-outbox";
+import { sheetUsageCounter, type SheetUsageVars } from "../lib/sheet-sync-usage";
 
-const app = new Hono<{ Bindings: Env }>();
+/** `sheetAuthed` is set once the shared secret matched; `usageRows` is how
+ *  many records the handler is about to answer with. Both feed the usage
+ *  counter and nothing else. */
+const app = new Hono<{ Bindings: Env; Variables: SheetUsageVars }>();
+
+/**
+ * Per-endpoint usage counters (scm.sheet_sync_usage). The owner's audit of the
+ * sheet's scripts (2026-09-24) needs "how often, and how much" to survive
+ * longer than three months, which is the one question nothing here could
+ * answer — see the migration's header for why neither the sheet's own log nor
+ * Analytics Engine can stand in. Counted only once the shared secret matched,
+ * so a wrong key still touches no database at all.
+ */
+app.use("*", sheetUsageCounter);
 
 /** The company the sheet's secret speaks for. */
 const SHEET_KEY_COMPANY = "HOUZS";
@@ -81,23 +97,40 @@ const SHEET_KEY_COMPANY = "HOUZS";
 async function badSheetKey(c: any): Promise<Response | null> {
   const provided = c.req.header("X-Intake-Key") || "";
   const expected = c.env.SHEET_SYNC_KEY || "";
-  if (expected && timingSafeEqualStr(provided, expected)) return null;
+  if (expected && timingSafeEqualStr(provided, expected)) {
+    c.set("sheetAuthed", true);
+    return null;
+  }
   const limited = await checkRateLimit(c, "intake_badkey", clientIp(c), 10, 900);
   await new Promise((r) => setTimeout(r, 250));
   if (limited) return limited;
   return c.json({ error: "unauthorized" }, 401);
 }
 
+/** BUG-49: the sheet's 2990 pull appends 2990 orders onto the same tabs, and a
+ *  date edited on those rows has to reach the ERP too. SHEET_SYNC_KEY speaks for
+ *  HOUZS only, so those rows write back with the 2990 pull's own key, which
+ *  opens 2990's orders and nothing else. Only POST /updates accepts it. */
+async function updatesKeyCompany(c: any): Promise<string | Response> {
+  const provided = c.req.header("X-Intake-Key") || "";
+  const key2990 = c.env.SHEET_SYNC_KEY_2990 || "";
+  if (key2990 && timingSafeEqualStr(provided, key2990)) {
+    c.set("sheetAuthed", true);
+    return "2990";
+  }
+  return (await badSheetKey(c)) ?? SHEET_KEY_COMPANY;
+}
+
 /** The secret's company id, or the refusal to send. Never degrades to "no
  *  predicate": on a master-less install there is nothing this feed may serve. */
-async function sheetCompanyId(c: any): Promise<{ id: number } | { refusal: Response }> {
-  const keyCo = await intakeCompany(c.env.DB, SHEET_KEY_COMPANY);
+async function sheetCompanyId(c: any, code = SHEET_KEY_COMPANY): Promise<{ id: number } | { refusal: Response }> {
+  const keyCo = await intakeCompany(c.env.DB, code);
   if (keyCo.id == null) {
     return {
       refusal: c.json(
         {
           error: "company_unresolved",
-          message: `No company is configured for code ${SHEET_KEY_COMPANY}, so this sync cannot be scoped and is refused.`,
+          message: `No company is configured for code ${code}, so this sync cannot be scoped and is refused.`,
         },
         503,
       ),
@@ -154,6 +187,7 @@ app.get("/so-since", async (c) => {
   const loaded = await loadRecords(c, FEED_SINCE_SQL, [co.id, since, limit]);
   if ("refusal" in loaded) return loaded.refusal;
   const { records } = loaded;
+  c.set("usageRows", records.length);
   return c.json({
     count: records.length,
     limit,
@@ -179,6 +213,7 @@ app.get("/overdue", async (c) => {
   // company-scope: ?1 is the secret's company id.
   const loaded = await loadRecords(c, FEED_OVERDUE_SQL, [co.id]);
   if ("refusal" in loaded) return loaded.refusal;
+  c.set("usageRows", loaded.records.length);
   return c.json({ count: loaded.records.length, records: loaded.records });
 });
 
@@ -190,6 +225,7 @@ app.get("/balance-collection", async (c) => {
   // company-scope: ?1 is the secret's company id.
   const loaded = await loadRecords(c, FEED_BALANCE_COLLECTION_SQL, [co.id]);
   if ("refusal" in loaded) return loaded.refusal;
+  c.set("usageRows", loaded.records.length);
   return c.json({ count: loaded.records.length, records: loaded.records });
 });
 
@@ -209,6 +245,7 @@ app.get("/ready-open", async (c) => {
   const loaded = await loadRecords(c, FEED_READY_OPEN_SQL, [co.id, from, from]);
   if ("refusal" in loaded) return loaded.refusal;
   const records = loaded.records.filter((r) => r.Ready);
+  c.set("usageRows", records.length);
   return c.json({ count: records.length, scanned: loaded.records.length, from, records });
 });
 
@@ -289,6 +326,7 @@ app.post("/prune-check", async (c) => {
       ? { DocNo: d, found: true, ErpDocNo: st.ErpDocNo, Ready: st.Ready, Remark2: st.Remark2, Status: st.Status, Deletable: st.Deletable }
       : { DocNo: d, found: false, ErpDocNo: null as string | null, Ready: false, Remark2: null as string | null, Status: null as string | null, Deletable: false };
   });
+  c.set("usageRows", results.length);
   return c.json({
     count: results.length,
     found: results.filter((r) => r.found).length,
@@ -327,6 +365,7 @@ app.post("/feed-by-docnos", async (c) => {
   // OR linked_ac_docno (the sheet key is linked_ac_docno), bound once at ?2..
   const loaded = await loadRecords(c, feedFullByDocNosSql(docNos.length), [co.id, ...docNos]);
   if ("refusal" in loaded) return loaded.refusal;
+  c.set("usageRows", loaded.records.length);
   return c.json({ count: loaded.records.length, requested: docNos.length, records: loaded.records });
 });
 
@@ -337,24 +376,23 @@ app.post("/feed-by-docnos", async (c) => {
    board stays un-gated, so board and sheet intentionally differ. Incremental,
    same `since`/`limit` cursor as /so-since — but the LIMIT counts CASES, each
    expanding to up to three leg rows. */
-app.get("/assr-legs", async (c) => {
+async function assrCasePage<R>(c: Context<{ Bindings: Env; Variables: SheetUsageVars }>, sql: string, toRecords: (row: AssrFeedRow) => R[]) {
   const denied = await badSheetKey(c);
   if (denied) return denied;
   const since = parseSince(c.req.query("since"));
   if (!since) return c.json({ error: "bad_since", message: "since must be a timestamp (yyyy-mm-dd hh:mm:ss[.ffffff][+hh])" }, 400);
   const limit = parseLimit(c.req.query("limit"));
-  const co = await sheetCompanyId(c);
-  if ("refusal" in co) return co.refusal;
 
   let cases: AssrFeedRow[];
   try {
-    // company-scope: ?1 is the secret's company id, resolved from the master.
-    const res = (await c.env.DB.prepare(FEED_ASSR_LEGS_SQL).bind(co.id, since, limit).all()) as { results?: AssrFeedRow[] };
+    // company-scope: none by owner ruling — Service Cases are not split by company (see FEED_ASSR_LEGS_SQL).
+    const res = (await c.env.DB.prepare(sql).bind(since, limit).all()) as { results?: AssrFeedRow[] };
     cases = res.results ?? [];
   } catch (e) {
     return c.json({ error: "feed_read_failed", message: e instanceof Error ? e.message : String(e) }, 502);
   }
-  const records = cases.flatMap(toAssrLegRecords);
+  const records = cases.flatMap(toRecords);
+  c.set("usageRows", records.length);
   return c.json({
     count: records.length,
     // The page is a CASE page; the checkpoint and has_more are measured in
@@ -366,13 +404,20 @@ app.get("/assr-legs", async (c) => {
     has_more: cases.length >= limit,
     records,
   });
-});
+}
+
+app.get("/assr-legs", (c) => assrCasePage(c, FEED_ASSR_LEGS_SQL, toAssrLegRecords));
+
+/* BUG-54: every open case's name / phone / address, own-team gate or not, so a
+   contact corrected in the ERP reaches the leg rows the sheet already carries.
+   The Apps Script writes these onto existing rows only and never appends. */
+app.get("/assr-contacts", (c) => assrCasePage(c, FEED_ASSR_CONTACTS_SQL, (row) => [toAssrContactRecord(row)]));
 
 type SheetUpdate = { DocNo?: unknown; Remark4?: unknown; ExpiryDate?: unknown };
 
 app.post("/updates", async (c) => {
-  const denied = await badSheetKey(c);
-  if (denied) return denied;
+  const keyCode = await updatesKeyCompany(c);
+  if (typeof keyCode !== "string") return keyCode;
   let body: { updates?: unknown };
   try {
     body = (await c.req.json()) as { updates?: unknown };
@@ -382,7 +427,7 @@ app.post("/updates", async (c) => {
   const updates = Array.isArray(body.updates) ? (body.updates as SheetUpdate[]) : null;
   if (!updates) return c.json({ error: "bad_request", message: "updates[] required" }, 400);
   if (updates.length > UPDATES_MAX) return c.json({ error: "too_many", max: UPDATES_MAX }, 413);
-  const co = await sheetCompanyId(c);
+  const co = await sheetCompanyId(c, keyCode);
   if ("refusal" in co) return co.refusal;
 
   // Validate every row first; the writable ones go to the database as ONE
@@ -439,6 +484,7 @@ app.post("/updates", async (c) => {
     }
   }
   const written = results.filter((r) => r.ok === true).length;
+  c.set("usageRows", results.length);
   return c.json({ count: results.length, written, results });
 });
 
@@ -463,6 +509,7 @@ app.get("/outstanding-po", async (c) => {
     return c.json({ error: "feed_read_failed", message: e instanceof Error ? e.message : String(e) }, 502);
   }
   const records = rows.map(toOutstandingPoRecord);
+  c.set("usageRows", records.length);
   return c.json({ count: records.length, records });
 });
 
@@ -615,6 +662,7 @@ app.post("/po-dates", async (c) => {
   }
 
   const count = results.filter((r) => r.ok === true && r.unchanged !== true && r.dry_run !== true).length;
+  c.set("usageRows", results.length);
   return c.json({ count: results.length, written: count, dry_run: dryRun, results });
 });
 

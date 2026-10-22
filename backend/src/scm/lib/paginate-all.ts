@@ -48,7 +48,7 @@ export const PAGE = 1000;
 // Absolute ceiling so a runaway view can't loop forever (50 pages = 50k rows).
 const MAX_PAGES = 50;
 
-type PageResult<T> = { data: T[] | null; error: { message: string; code?: string } | null };
+export type PageResult<T> = { data: T[] | null; error: { message: string; code?: string } | null };
 
 export async function paginateAll<T = Record<string, unknown>>(
   makeQuery: (from: number, to: number) => PromiseLike<PageResult<T>>,
@@ -179,6 +179,20 @@ export const UUID_CHUNK = chunkSizeForUrl(['00000000-0000-4000-8000-000000000000
  * engine already settled on in mrp.ts for the same reason.
  */
 const CHUNK_CONCURRENCY = 6;
+
+/**
+ * A PostgREST `in.(...)` list with every value quoted and escaped, for
+ * `.filter(col, 'in', inList(values))`.
+ *
+ * postgrest-js `.in()` wraps a value holding `,()` in double quotes but does not
+ * escape a double quote inside it, so a product code like `GENERASI 5" MATT (S)`
+ * ends the quoted value early and the rest of that batch matches nothing, with
+ * no error (2026-10-19: 233 open order lines silently missing from the
+ * Procurement dead-stock demand).
+ */
+export function inList(values: readonly InValue[]): string {
+  return `(${values.map((v) => `"${String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`).join(',')})`;
+}
 
 export async function chunkIn<T = Record<string, unknown>, V extends InValue = string>(
   codes: readonly V[],

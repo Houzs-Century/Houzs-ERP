@@ -13,7 +13,11 @@
 //   • 2026-09-21: the value splits into three closing stocks by the warehouse's
 //     bucket (its override, else its type), each pair on the bucket's own
 //     child accounts, the opening on 600-000x; consignment goods never count;
-//     a month on the old one-account shape re-posts the first time it is seen.
+//     a month on the old one-account shape re-posts the first time it is seen;
+//   • 2026-09-30: FIVE — showroom (-0004) and others (-0005) join; a month
+//     booked with its showroom goods on display re-posts on showroom; a
+//     replacement whose accounts are not on the chart is refused BEFORE the
+//     old pair is reversed.
 
 import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../scm/lib/fake-postgrest';
@@ -26,14 +30,16 @@ const acct = (code: string, parent: string | null): Row => ({
   account_code: code, account_name: code, account_type: code.startsWith('330') ? 'ASSET' : 'EXPENSE',
   parent_code: parent, is_active: true, company_id: CO,
 });
-/* The three parents and their bucket children (owner 2026-09-21): the close posts to the children only. */
-const CHART: Row[] = ['330-0000', '600-0000', '620-0000'].flatMap((p) => [acct(p, null), ...['0001', '0002', '0003'].map((s) => acct(`${p.slice(0, 4)}${s}`, p))]);
+/* The three parents and their bucket children (owner 2026-09-21, 2026-09-30): the close posts to the children only. */
+const CHART: Row[] = ['330-0000', '600-0000', '620-0000'].flatMap((p) => [acct(p, null), ...['0001', '0002', '0003', '0004', '0005'].map((s) => acct(`${p.slice(0, 4)}${s}`, p))]);
 
 /* The warehouses a movement stands in: the bucket is the type's default, or the row's override. */
 const WAREHOUSES: Row[] = [
   { id: 'wh-main', company_id: CO, type: 'warehouse', stock_bucket: null },
+  { id: 'wh-disp', company_id: CO, type: 'display', stock_bucket: null },
   { id: 'wh-show', company_id: CO, type: 'showroom', stock_bucket: null },
   { id: 'wh-svc', company_id: CO, type: 'service', stock_bucket: null },
+  { id: 'wh-hq', company_id: CO, type: 'others', stock_bucket: null },
   { id: 'wh-cc', company_id: CO, type: 'display', stock_bucket: 'customer' },
 ];
 
@@ -137,7 +143,7 @@ describe('closeStockMonth — the pair, the heal, the log', () => {
     expect(lineOf(adj.id, '620-0001')).toMatchObject({ credit_sen: 100_000 });
     expect(lineOf(rev.id, '600-0001')).toMatchObject({ debit_sen: 100_000 });
     expect(lineOf(rev.id, '330-0001')).toMatchObject({ credit_sen: 100_000 });
-    expect(o.buckets).toEqual({ customer: 100_000, display: 0, service: 0 });
+    expect(o.buckets).toEqual({ customer: 100_000, display: 0, service: 0, showroom: 0, others: 0 });
 
     expect(sb.tables.acc_stock_close_runs).toHaveLength(1);
     expect(sb.tables.acc_stock_close_runs[0]).toMatchObject({ month: '2026-08', action: 'posted', trigger: 'manual' });
@@ -186,7 +192,7 @@ describe('closeStockMonth — the pair, the heal, the log', () => {
   });
 });
 
-describe('three closing stocks (owner 2026-09-21: closing stock - customer / display / service)', () => {
+describe('the closing stocks by bucket (owner 2026-09-21: customer / display / service; 2026-09-30: + showroom, + others)', () => {
   const lineOf = (sb: ReturnType<typeof world>, jeId: unknown, code: string) =>
     sb.tables.journal_entry_lines.find((l) => l.journal_entry_id === jeId && l.account_code === code);
   const activeAdj = (sb: ReturnType<typeof world>) =>
@@ -198,51 +204,95 @@ describe('three closing stocks (owner 2026-09-21: closing stock - customer / dis
     const sb = world({
       inventory_movements: [
         mv({ item_code: 'SOFA-1', warehouse_id: 'wh-main' }),                                                  // customer 1,000.00
-        mv({ item_code: 'SOFA-1', warehouse_id: 'wh-show', total_cost_sen: 30_000 }),                         // display   300.00
+        mv({ item_code: 'SOFA-1', warehouse_id: 'wh-disp', total_cost_sen: 30_000 }),                         // display   300.00
         mv({ item_code: 'SOFA-1', warehouse_id: 'wh-svc', total_cost_sen: 5_000 }),                           // service    50.00
+        mv({ item_code: 'SOFA-1', warehouse_id: 'wh-show', total_cost_sen: 40_000 }),                         // showroom  400.00
+        mv({ item_code: 'SOFA-1', warehouse_id: 'wh-hq', total_cost_sen: 7_000 }),                            // others     70.00
         mv({ item_code: 'SOFA-1', warehouse_id: 'wh-cc', total_cost_sen: 20_000 }),                           // typed display, bucket customer → customer 200.00
         mv({ item_code: 'SOFA-1', warehouse_id: 'wh-show', total_cost_sen: 99_900, source_doc_type: 'PC_RECEIVE', source_doc_no: '2990-PCR-2608-001' }), // the supplier's
       ],
     });
+    const want = { customer: 120_000, display: 30_000, service: 5_000, showroom: 40_000, others: 7_000 };
     const split = await stockValueByBucketAsOf(sb, CO, '2026-08-31');
-    expect(split).toEqual({ ok: true, buckets: { customer: 120_000, display: 30_000, service: 5_000 }, totalSen: 155_000 });
-    expect(await stockValueAsOf(sb, CO, '2026-08-31')).toEqual({ ok: true, valueSen: 155_000 });
+    expect(split).toEqual({ ok: true, buckets: want, totalSen: 202_000 });
+    expect(await stockValueAsOf(sb, CO, '2026-08-31')).toEqual({ ok: true, valueSen: 202_000 });
 
     const o = await closeStockMonth(sb, CO, '2026-08', 'manual');
-    expect(o).toMatchObject({ action: 'posted', valueSen: 155_000, buckets: { customer: 120_000, display: 30_000, service: 5_000 } });
+    expect(o).toMatchObject({ action: 'posted', valueSen: 202_000, buckets: want });
     const adj = activeAdj(sb);
     const rev = activeRev(sb);
-    expect(lineOf(sb, adj.id, '330-0001')).toMatchObject({ debit_sen: 120_000 });
-    expect(lineOf(sb, adj.id, '620-0001')).toMatchObject({ credit_sen: 120_000 });
-    expect(lineOf(sb, adj.id, '330-0002')).toMatchObject({ debit_sen: 30_000 });
-    expect(lineOf(sb, adj.id, '620-0002')).toMatchObject({ credit_sen: 30_000 });
-    expect(lineOf(sb, adj.id, '330-0003')).toMatchObject({ debit_sen: 5_000 });
-    expect(lineOf(sb, adj.id, '620-0003')).toMatchObject({ credit_sen: 5_000 });
-    expect(lineOf(sb, rev.id, '600-0001')).toMatchObject({ debit_sen: 120_000 });
-    expect(lineOf(sb, rev.id, '600-0002')).toMatchObject({ debit_sen: 30_000 });
-    expect(lineOf(sb, rev.id, '600-0003')).toMatchObject({ debit_sen: 5_000 });
-    expect(lineOf(sb, rev.id, '330-0002')).toMatchObject({ credit_sen: 30_000 });
+    /* Each bucket on its own three accounts: -0001 customer … -0005 others. */
+    for (const [suffix, sen] of [['0001', 120_000], ['0002', 30_000], ['0003', 5_000], ['0004', 40_000], ['0005', 7_000]] as const) {
+      expect(lineOf(sb, adj.id, `330-${suffix}`)).toMatchObject({ debit_sen: sen });
+      expect(lineOf(sb, adj.id, `620-${suffix}`)).toMatchObject({ credit_sen: sen });
+      expect(lineOf(sb, rev.id, `600-${suffix}`)).toMatchObject({ debit_sen: sen });
+      expect(lineOf(sb, rev.id, `330-${suffix}`)).toMatchObject({ credit_sen: sen });
+    }
     /* The parents take no money. */
     expect(sb.tables.journal_entry_lines.some((l) => ['330-0000', '600-0000', '620-0000'].includes(String(l.account_code)))).toBe(false);
     /* The run log names the split. */
     const run = sb.tables.acc_stock_close_runs[0]!;
-    expect(String(run.note)).toContain('customer');
-    expect(String(run.note)).toContain('display');
-    expect(String(run.note)).toContain('service');
+    for (const b of Object.keys(want)) expect(String(run.note)).toContain(b);
     /* And the per-item photograph leaves the supplier's goods out too. */
     const { stockBreakdownAsOf } = await import('./stock-close');
     const br = await stockBreakdownAsOf(sb, CO, '2026-08-31');
-    expect(br.ok && [...br.items.values()].reduce((s, v) => s + v.valueSen, 0)).toBe(155_000);
+    expect(br.ok && [...br.items.values()].reduce((s, v) => s + v.valueSen, 0)).toBe(202_000);
+  });
+
+  /* The month-end pair as the close wrote it for a showroom's goods BEFORE 2026-09-30: on display. */
+  const postedOnDisplay = async (sb: ReturnType<typeof world>, sen: number) => {
+    const pair = (docNo: string, entryDate: string, dr: string, cr: string) => postJournal(sb, {
+      companyId: CO, entryDate, sourceType: 'STOCKADJ', sourceDocNo: docNo, narration: 'booked before showroom had its own',
+      lines: [
+        { accountCode: dr, debitSen: sen, creditSen: 0, notes: 'display' },
+        { accountCode: cr, debitSen: 0, creditSen: sen, notes: 'display' },
+      ],
+    });
+    expect((await pair(`STOCKADJ-${CO}-2026-08`, '2026-08-31', '330-0002', '620-0002')).ok).toBe(true);
+    expect((await pair(`STOCKADJ-REV-${CO}-2026-08`, '2026-09-01', '600-0002', '330-0002')).ok).toBe(true);
+  };
+
+  test('a showroom\'s goods booked on display re-post on showroom: the old pair reversed, the new one on 330-0004 / 620-0004 / 600-0004', async () => {
+    const sb = world({ inventory_movements: [mv({ item_code: 'SOFA-1', warehouse_id: 'wh-show', total_cost_sen: 40_000 })] });
+    await postedOnDisplay(sb, 40_000);
+    const o = await closeStockMonth(sb, CO, '2026-08', 'cron');
+    expect(o).toMatchObject({ action: 'reposted', valueSen: 40_000, buckets: { showroom: 40_000, display: 0 } });
+    expect(lineOf(sb, activeAdj(sb).id, '330-0004')).toMatchObject({ debit_sen: 40_000 });
+    expect(lineOf(sb, activeAdj(sb).id, '620-0004')).toMatchObject({ credit_sen: 40_000 });
+    expect(lineOf(sb, activeRev(sb).id, '600-0004')).toMatchObject({ debit_sen: 40_000 });
+    expect(lineOf(sb, activeAdj(sb).id, '330-0002')).toBeUndefined();
+    expect(sb.tables.journal_entries.filter((j) => j.reversed)).toHaveLength(2);
+  });
+
+  test('a replacement whose accounts are not on the chart is refused BEFORE the old pair comes out — the month keeps its entries', async () => {
+    const sb = world({ inventory_movements: [mv({ item_code: 'SOFA-1', warehouse_id: 'wh-show', total_cost_sen: 40_000 })] });
+    await postedOnDisplay(sb, 40_000);
+    /* The showroom accounts not opened yet (the migration not run). */
+    sb.tables.accounts = sb.tables.accounts.filter((a) => !String(a.account_code).endsWith('-0004'));
+    const entriesBefore = sb.tables.journal_entries.length;
+
+    const o = await closeStockMonth(sb, CO, '2026-08', 'cron');
+    expect(o.action).toBe('failed');
+    expect(String(o.note)).toContain('nothing was reversed');
+    expect(sb.tables.journal_entries).toHaveLength(entriesBefore);
+    expect(sb.tables.journal_entries.filter((j) => j.reversed)).toHaveLength(0);
+    expect(lineOf(sb, activeAdj(sb).id, '330-0002')).toMatchObject({ debit_sen: 40_000 });
+    expect(sb.tables.acc_stock_close_runs.at(-1)).toMatchObject({ action: 'failed', month: '2026-08' });
+
+    /* The accounts open: the next run completes the move. */
+    sb.tables.accounts.push(...['330-0000', '600-0000', '620-0000'].map((p) => acct(`${p.slice(0, 4)}0004`, p)));
+    expect((await closeStockMonth(sb, CO, '2026-08', 'cron')).action).toBe('reposted');
+    expect(lineOf(sb, activeAdj(sb).id, '330-0004')).toMatchObject({ debit_sen: 40_000 });
   });
 
   test('a warehouse re-bucketed re-posts the month: the same money on other accounts is a changed entry', async () => {
     const sb = world({ inventory_movements: [mv({ item_code: 'SOFA-1', warehouse_id: 'wh-cc' })] });
     const first = await closeStockMonth(sb, CO, '2026-08', 'manual');
-    expect(first).toMatchObject({ action: 'posted', buckets: { customer: 100_000, display: 0, service: 0 } });
+    expect(first).toMatchObject({ action: 'posted', buckets: { customer: 100_000, display: 0, service: 0, showroom: 0, others: 0 } });
     /* Finance clears the override: the display-typed location reads display again. */
     sb.tables.warehouses.find((w) => w.id === 'wh-cc')!.stock_bucket = null;
     const second = await closeStockMonth(sb, CO, '2026-08', 'cron');
-    expect(second).toMatchObject({ action: 'reposted', valueSen: 100_000, buckets: { customer: 0, display: 100_000, service: 0 } });
+    expect(second).toMatchObject({ action: 'reposted', valueSen: 100_000, buckets: { customer: 0, display: 100_000, service: 0, showroom: 0, others: 0 } });
     expect(lineOf(sb, activeAdj(sb).id, '330-0002')).toMatchObject({ debit_sen: 100_000 });
     expect(lineOf(sb, activeAdj(sb).id, '330-0001')).toBeUndefined();
     expect(sb.tables.journal_entries.filter((j) => j.reversed)).toHaveLength(2);

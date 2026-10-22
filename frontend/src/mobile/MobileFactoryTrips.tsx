@@ -13,6 +13,7 @@ import {
   roundCount,
   currentRound,
   QC_RESULTS,
+  returnNotePath,
 } from "../vendor/scm/lib/assr/returns";
 
 const INK = "#11140f";
@@ -61,8 +62,12 @@ export function MobileFactoryTrips({
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <span style={{ fontSize: 12.5, fontWeight: 700, color: INK }}>
               {roundLabel(r.round_no)}{cur && cur.id === r.id ? " · Current" : ""}
+              {r.ref_no ? <span style={{ display: "block", fontSize: 11, fontWeight: 400, color: MUTED, fontFamily: "monospace" }}>{r.ref_no}</span> : null}
             </span>
-            {!disabled ? <button className="tinybtn" disabled={busy} onClick={() => archive(r.id)}>Remove</button> : null}
+            <span style={{ display: "flex", gap: 6 }}>
+              <button className="tinybtn" onClick={() => void runWrite(async () => { await api.openHtml(returnNotePath(caseId, r.id)); }, "Couldn't open the return note")}>Print</button>
+              {!disabled ? <button className="tinybtn" disabled={busy} onClick={() => archive(r.id)}>Remove</button> : null}
+            </span>
           </div>
           <label style={lbl}>Sent to Supplier</label>
           <DateField value={r.pickup_at ?? ""} onChange={(iso) => patch(r.id, { pickup_at: iso || null })} disabled={disabled || busy} fullWidth />

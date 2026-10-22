@@ -27,6 +27,7 @@
 // ----------------------------------------------------------------------------
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { expandSofaPieceItems } from "../../vendor/scm/lib/sofa-piece-lines";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { lineIdentity } from "@2990s/shared";
 import {
@@ -278,7 +279,8 @@ export function SalesOrderNewFromProducts() {
     }
     setShowValidation(false);
     setPostError(null);
-    const items = cartLines.map((l) => ({
+    // One sofa piece = one line: a sofa module in the cart x2 goes out as two lines.
+    const items = expandSofaPieceItems(cartLines.map((l) => ({
       itemCode: l.code,
       itemGroup: itemGroupFor(l.sku?.category ?? "OTHERS"),
       description: l.sku?.name ?? "",
@@ -288,7 +290,7 @@ export function SalesOrderNewFromProducts() {
       unitCostSen: 0,
       variants: { addedVia: "from-products" },
       remark: "",
-    }));
+    })));
     /* Backend authors the blocker list (owner 2026-09-16); validate returns the
        reasons a cart can trip (identity, sofa-mix) — this just displays them in
        the same SaveProblemsList popup + live indicator. A failed validate never

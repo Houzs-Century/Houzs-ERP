@@ -175,6 +175,8 @@ export type MfgProductRow = {
   sell_price_sen?: number | null;
   seat_height_prices?: SeatHeightPrice[] | null;
   allowed_options?: ModelAllowedOptions | null;
+  /** The Model's default_variants, flattened like allowed_options. */
+  model_default_variants?: Record<string, string> | null;
   // HOUZS VENDOR — Products wave (SkuMasterTab). The SKU Master grid + New SKU
   // drawer + CSV round-trip read the rest of the source row. unit_m3_milli is
   // required in the source (the grid sorts on it); the rest are optional.
@@ -232,21 +234,32 @@ export function useMfgProducts(opts?: {
      marker). Opt-in and separately cache-keyed so the SO/PO pickers keep their
      lean, un-annotated list. */
   anchorState?: boolean;
+  /* Read the catalogue from the server on every mount, past both caches — for a
+     screen that acts on SKUs another person may have just created (BUG-85: the
+     Assign-to-suppliers dialog showed "0 SKUs" for a model whose SKU existed). */
+  fresh?: boolean;
 }) {
+  const qc = useQueryClient();
   return useQuery({
     queryKey: ['mfg-products', activeCompanyKey(), opts?.category ?? 'all', opts?.search ?? '', opts?.anchorState ? 'anchor' : ''],
-    queryFn: async ({ signal }) => {
+    queryFn: async ({ signal, queryKey }) => {
       const params = new URLSearchParams();
       if (opts?.category) params.set('category', opts.category);
       if (opts?.search) params.set('search', opts.search);
       if (opts?.anchorState) params.set('anchorState', '1');
+      /* The server sends this list with a 60s private max-age. A refetch that
+         follows a write (the query was invalidated) must not be answered from
+         that browser cache, or the list comes back without the SKU just made
+         and is then held as fresh for staleTime (BUG-85). */
+      const pastBrowserCache = opts?.fresh || qc.getQueryState(queryKey)?.isInvalidated;
       const res = await authedFetch<{ products: MfgProductRow[] }>(
         `/mfg-products${params.toString() ? `?${params.toString()}` : ''}`,
-        { signal },
+        { signal, ...(pastBrowserCache ? { cache: 'no-cache' as const } : {}) },
       );
       return res.products;
     },
     enabled: opts?.enabled ?? true,
+    refetchOnMount: opts?.fresh ? 'always' : true,
     /* HOUZS VENDOR perf deviation (owner 2026-07-03, "Loading Catalog is
        slow"): the catalog is stable reference data, so cache it 5 min and
        keep the previous page's rows on screen while a new (category, search)
@@ -257,6 +270,26 @@ export function useMfgProducts(opts?: {
     retry: retryUnlessClientError,
     retryDelay: 800,
   });
+}
+
+/** Client-side product search — matches the SAME fields the `/mfg-products?search`
+ *  server filter does: code / name / description / barcode, case-insensitive
+ *  substring (backend routes/mfg-products.ts:204). The SKU pickers filter the
+ *  cached list with THIS instead of firing a per-keystroke `?search=` request,
+ *  which stalled or dropped the connection while the Worker was slow (owner
+ *  2026-09-23: "product code search slow"). Pure, so it is unit-tested. */
+export function matchesProductQuery(
+  p: Pick<MfgProductRow, 'code' | 'name' | 'description' | 'barcode'>,
+  query: string,
+): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return false;
+  return (
+    p.code.toLowerCase().includes(q)
+    || p.name.toLowerCase().includes(q)
+    || (p.description ?? '').toLowerCase().includes(q)
+    || (p.barcode ?? '').toLowerCase().includes(q)
+  );
 }
 
 /* SKU codes (this company) that already carry at least one supplier binding.
@@ -870,23 +903,38 @@ export const useSaveSpecialAddons = () => {
   });
 };
 
+/** What scm.rename_sofa_compartment reports, for a preview or a run. */
+export type SofaCompartmentRenameResult = {
+  from: string;
+  to: string;
+  applied: boolean;
+  refused: 'in_use' | null;
+  /** `<table>.<column>` -> rows of THIS company still using the code. */
+  inUse: Record<string, number>;
+  inUseTotal: number;
+  /** table -> rows the rename rewrites (pool, Model ticks, combos, quick picks). */
+  changes: Record<string, number>;
+  /** An uploaded photo is filed under the old code and is dropped. */
+  photoCleared: boolean;
+};
+
 /**
- * Maintenance-is-master cascade rename — renames a sofa compartment code text
- * ATOMICALLY across the whole stack. Backed by the rename_sofa_compartment()
- * SECURITY DEFINER function; admin only.
+ * Renames a sofa compartment code in the ACTIVE company only. `apply: false`
+ * is a preview (no write). A code still used by any SKU, document or stock row
+ * of the company is refused (409 in_use).
  */
 export function useRenameSofaCompartment() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (args: { from: string; to: string }) => {
-      return authedFetch<{ ok: boolean; result: unknown }>(
+    mutationFn: async (args: { from: string; to: string; apply: boolean }) => {
+      return authedFetch<{ ok: boolean; applied: boolean; result: SofaCompartmentRenameResult }>(
         `/maintenance-config/sofa-compartments/rename`,
         { method: 'POST', body: JSON.stringify(args) },
       );
     },
-    onSuccess: () => {
+    onSuccess: (_data, args) => {
+      if (!args.apply) return;
       qc.invalidateQueries({ queryKey: ['maintenance-config'] });
-      qc.invalidateQueries({ queryKey: ['mfg-products'] });
       qc.invalidateQueries({ queryKey: ['product-models'] });
       qc.invalidateQueries({ queryKey: ['sofa-combos'] });
     },

@@ -32,6 +32,14 @@ const { updateAsync, idle, DETAIL } = vi.hoisted(() => {
   };
   return { updateAsync, idle, DETAIL };
 });
+/* 欠正式单 (item 3): Finance's marks and the requester's upload — stubbed. */
+const markOfficial = vi.fn();
+const uploadOfficialAsync = vi.fn(async (_b: unknown) => ({ ok: true, received: [{ kind: 'PV', number: 'HC-PV-2610-001' }], note: null as string | null }));
+vi.mock('../../vendor/scm/lib/official-doc-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/official-doc-queries')>()),
+  useMarkOfficialDoc: () => ({ mutate: markOfficial, isPending: false }),
+  useUploadOfficialDoc: () => ({ mutateAsync: uploadOfficialAsync, isPending: false }),
+}));
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', async (importOriginal) => ({
   /* The real constants stay (PV_FILE_ACCEPT for the files card); only the hooks are stubbed. */
   ...(await importOriginal<typeof import('../../vendor/scm/lib/payment-voucher-queries')>()),
@@ -72,13 +80,27 @@ vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
   useAccountRoles: () => ({ data: { roles: { AP: '400-0000', AP_OTHER: '405-0000', AR: '300-0000', BANK_DEFAULT: '310-0020' }, overridden: {} }, isLoading: false }),
 }));
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
-vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => vi.fn(async () => true) }));
+/* usePrompt: the 欠正式单 remark is asked in the in-app prompt (OfficialDocActions, 2026-10-08). */
+vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => vi.fn(async () => true), usePrompt: () => vi.fn(async () => null) }));
 vi.mock('../../vendor/scm/components/NotifyDialog', () => ({ useNotify: () => vi.fn() }));
 vi.mock('./EntityHistoryPanel', () => ({ EntityHistoryPanel: () => null }));
 vi.mock('../../components/scm-v2/PrintPreviewModal', () => ({
   PrintPreviewModal: () => null,
   usePrintPreview: () => ({ open: false, close: () => {}, openPreview: () => {} }),
   useOpenPrintPreviewFromUrl: () => {},
+}));
+
+/* Events (owner 2026-09-30, 5a) — the picker's list and the labels, stubbed; the real eventLabel stays. */
+const EVENT_OPTIONS = [
+  { id: 336, code: 'E-336', name: 'Pulau Pinang [AKEMI] HOMELOVE @ SETIA SPICE', startDate: '2026-09-04', endDate: '2026-09-06', status: 'confirmed', archived: false, venue: null, brand: 'AKEMI', organizer: 'HOMELOVE', boothNo: null },
+  { id: 348, code: 'E-348', name: 'Pulau Pinang [AKEMI] MLE @ PWCC', startDate: '2026-09-25', endDate: '2026-09-27', status: 'confirmed', archived: false, venue: null, brand: 'AKEMI', organizer: 'MLE', boothNo: 'F1' },
+];
+const retagMutate = vi.fn();
+vi.mock('../../vendor/scm/lib/event-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/event-queries')>()),
+  useEventOptions: () => ({ data: EVENT_OPTIONS, isLoading: false }),
+  useEventLabels: () => ({ data: new Map(EVENT_OPTIONS.map((e) => [e.id, e])) }),
+  useRetagPvLine: () => ({ mutate: retagMutate, isPending: false }),
 }));
 
 import { PaymentVoucherDetail } from './PaymentVoucherDetail';
@@ -106,15 +128,15 @@ describe('Edit on a DRAFT AP Payment is the AP form, not the plain voucher\'s', 
     expect(screen.queryByText(/no outstanding purchase invoices/)).toBeNull();
     expect((screen.getByLabelText('Pay 2990-API-2609-004 in full') as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText('Apply to 2990-API-2609-004') as HTMLInputElement).value).toBe('10,077.42');
-    expect(screen.getByText('Applying MYR 10,077.42 = MYR 10,077.42')).toBeTruthy();
+    expect(screen.getByText('Applying RM 10,077.42 = RM 10,077.42')).toBeTruthy();
 
     /* A prepay rides the same voucher; the total follows ticks + prepay. */
     const prepay = screen.getByLabelText('Prepay amount') as HTMLInputElement;
     fireEvent.focus(prepay);
     fireEvent.change(prepay, { target: { value: '100' } });
     fireEvent.blur(prepay);
-    expect(screen.getByText('Applying MYR 10,077.42 + prepay MYR 100.00 = MYR 10,177.42')).toBeTruthy();
-    expect(screen.getByText(/Books: Dr 405-0000 Account Payable MYR 10,177\.42 \(incl\. prepay MYR 100\.00\)/)).toBeTruthy();
+    expect(screen.getByText('Applying RM 10,077.42 + prepay RM 100.00 = RM 10,177.42')).toBeTruthy();
+    expect(screen.getByText(/Books: Dr 405-0000 Account Payable RM 10,177\.42 \(incl\. prepay RM 100\.00\)/)).toBeTruthy();
 
     fireEvent.click(screen.getByText('Save'));
     await waitFor(() => expect(updateAsync).toHaveBeenCalledTimes(1));
@@ -130,7 +152,7 @@ describe('Edit on a DRAFT AP Payment is the AP form, not the plain voucher\'s', 
     draw();
     await waitFor(() => expect(screen.getByLabelText('Pay 2990-API-2609-004 in full')).toBeTruthy());
     fireEvent.click(screen.getByLabelText('Pay 2990-API-2609-004 in full'));
-    expect(screen.getByText('Applying MYR 0.00 = MYR 0.00')).toBeTruthy();
+    expect(screen.getByText('Applying RM 0.00 = RM 0.00')).toBeTruthy();
     const prepay = screen.getByLabelText('Prepay amount') as HTMLInputElement;
     fireEvent.focus(prepay);
     fireEvent.change(prepay, { target: { value: '2500' } });

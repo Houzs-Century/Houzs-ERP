@@ -34,6 +34,8 @@ const ROUTE_LABELS: Array<[RegExp, string]> = [
   [/^\/mail-center$/, "Mail Center"],
   [/^\/agents$/, "Agent Console"],
   [/^\/system-health$/, "System Health"],
+  [/^\/ai-usage$/, "AI Usage"],
+  [/^\/ocr$/, "OCR"],
   [/^\/reports\/fair-report$/, "Sales Report"],
   // The Supply Chain hub is a single-segment route, so it never reaches the
   // /scm/* segment table below (which needs a 2nd segment). Curate it here —
@@ -62,6 +64,7 @@ const SCM_SEGMENT_LABELS: Record<string, [string, string]> = {
   "purchase-orders": ["Purchase Orders", "Purchase Order"],
   "po-amendments": ["PO Amdt.", "PO Amdt."],
   "cancel-requests": ["Cancel Requests", "Cancel Request"],
+  "payment-backdate-requests": ["Payment Backdate Requests", "Payment Backdate Request"],
   "purchase-invoices": ["Purchase Invoices", "Purchase Invoice"],
   "purchase-returns": ["Purchase Returns", "Purchase Return"],
   "grns": ["Goods Received Notes", "Goods Received Note"],
@@ -87,6 +90,7 @@ const SCM_SEGMENT_LABELS: Record<string, [string, string]> = {
   // Transportation
   "drivers": ["Drivers", "Driver"],
   "delivery-planning": ["Delivery Planning", "Delivery Planning"],
+  "delivery-planning-driver": ["Last Mile Delivery (Driver)", "Last Mile Delivery (Driver)"],
   "dp-orders": ["DP Orders", "DP Order"],
   "delivery-planning-regions": ["Delivery Planning Regions", "Delivery Planning Regions"],
   "fleet": ["Fleet", "Fleet"],
@@ -97,6 +101,7 @@ const SCM_SEGMENT_LABELS: Record<string, [string, string]> = {
   "consignment-returns": ["Consignment Returns", "Consignment Return"],
   // Consignment (purchase side)
   "purchase-consignment-orders": ["Purchase Consignment Orders", "Purchase Consignment Order"],
+  "product-requests": ["Product Requests", "Product Request"],
   "purchase-consignment-receives": ["Purchase Consignment Receives", "Purchase Consignment Receive"],
   "purchase-consignment-returns": ["Purchase Consignment Returns", "Purchase Consignment Return"],
   // Section hubs — the Level-2 sub-group landing pages (ScmSubgroupHub). Their

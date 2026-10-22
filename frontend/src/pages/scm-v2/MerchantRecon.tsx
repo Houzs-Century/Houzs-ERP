@@ -26,14 +26,17 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, ArrowLeft, ArrowRight, CheckCheck, Download, Undo2, Upload } from 'lucide-react';
 import {
   useAcquirerSetup, useSaveAcquirerSetup, useSettlementBatches, useSettlementBatch,
   useUploadStatement, useConfirmSettlementRow, useConfirmMatched, useIgnoreSettlementRow,
   useSettlementWatchlist, useUnconfirmSettlementRow, useFindPayments,
+  confirmMatchedBatch, useInvalidateAfterPosting,
   type AcquirerSetup, type SettlementRow, type SettlementBucket, type SettlementBatch, type BankAccount, type SettlementCandidate,
+  type Watchlist,
 } from './settlement-queries';
+import { DataTable, type Column } from '../../components/DataTable';
 import {
   ICON, fmt, btn, cell, num, table, headRow, rowLine, softText, danger, good, panel,
   BUCKET_LABEL, refusalText, payableOf,
@@ -43,6 +46,44 @@ import { downloadCSV, toCSV } from '../../lib/csv';
 import styles from './Suppliers.module.css';
 import grid from './MerchantRecon.module.css';
 import { PageHeader } from '../../components/Layout';
+import { fmtDate } from '../../vendor/shared/format';
+import { markWorkspaceOpenIntent } from '../../lib/workspaceTabs';
+import { rememberReturnScroll, useReturnScroll } from '../../lib/returnScroll';
+
+/* ── The order behind a line, one click away ──────────────────────────────────
+   Owner 2026-10-21: 点开那个 HC-SO-013512 这些 sales order 直接打开整张 sales
+   order. An order number opens the whole order in its OWN tab of the in-app
+   strip — the convention of Fair Links and the project page's order list
+   (lib/openDocInTab) — so the report stays one click away; Ctrl/Cmd-click opens
+   a browser window. The order's Back closes that tab and returns here, to the
+   same report at the same spot (owner 2026-10-21: 返回也要返回 merchant recon)
+   — so the spot is noted as the link is clicked. An invoice payment's number
+   stays text: the invoice page is reached by an id this screen does not
+   carry. */
+const DocLink = ({ source, docNo, bold }: { source: string | null | undefined; docNo: string; bold?: boolean }) => {
+  if (source !== 'SOPAY' || !docNo) return bold ? <b>{docNo}</b> : <>{docNo}</>;
+  return (
+    <Link
+      to={`/scm/sales-orders/${encodeURIComponent(docNo)}`}
+      onClick={(e) => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey) { rememberReturnScroll(); markWorkspaceOpenIntent(true); } }}
+      style={{ fontWeight: bold ? 700 : undefined, whiteSpace: 'nowrap' }}
+    >
+      {docNo}
+    </Link>
+  );
+};
+
+/** The orders a matched line claimed, each one a door to its order. */
+const LinkedDocs = ({ links }: { links: SettlementRow['linked'] }) => (
+  <>
+    {links.map((l, i) => (
+      <span key={l.payment_id}>
+        {i > 0 && ', '}
+        {l.doc_no ? <DocLink source={l.payment_source} docNo={l.doc_no} bold /> : <b>{l.payment_id}</b>}
+      </span>
+    ))}
+  </>
+);
 
 /* The server sends the four piles as a plain tally; a bucket with nothing in it
    is simply absent, so read it as a lookup rather than a guaranteed key. */
@@ -97,7 +138,20 @@ const ReconcileTab = () => {
   const watchlist = useSettlementWatchlist();
   const upload = useUploadStatement();
   const bulk = useConfirmAcross();
-  const [batchId, setBatchId] = useState<number | null>(null);
+  /* The open report lives in the ADDRESS (?batch=), not in memory: a Sales
+     Order opened from a report and closed again comes back to the same report
+     (owner 2026-10-21: 我从 merchant recon 点开 SO，返回也要返回 merchant
+     recon), and so does a reload. */
+  const [params, setParams] = useSearchParams();
+  const batchParam = Number(params.get('batch'));
+  const batchId = Number.isInteger(batchParam) && batchParam > 0 ? batchParam : null;
+  const setBatchId = (id: number | null) => setParams((prev) => {
+    const next = new URLSearchParams(prev);
+    if (id == null) next.delete('batch'); else next.set('batch', String(id));
+    return next;
+  });
+  /* Back from an order lands where the list was scrolled. */
+  useReturnScroll(batchId == null && batches.data != null);
   /* The batches the last upload created — the summary screen it lands on. */
   const [justUploaded, setJustUploaded] = useState<number[] | null>(null);
   const [showDone, setShowDone] = useState(false);
@@ -212,6 +266,7 @@ const ReconcileTab = () => {
   /* Two different jobs, and the button may only claim the first: a line that
      matched by reference is a press, a line without one is a decision. */
   const readyToConfirm = open.reduce((s, b) => s + (b.to_confirm_count ?? 0), 0);
+  const toPost = open.filter(worthConfirming).length;
   const stillToDecide = open.reduce((s, b) => s + (b.to_choose_count ?? 0) + (b.no_record_count ?? 0), 0);
   /* Card money the sales team recorded that no statement has reported. Held
      back until the watchlist has answered, so an empty list never reads as
@@ -303,11 +358,12 @@ const ReconcileTab = () => {
         {readyToConfirm > 0 && (
           <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
             <button type="button" style={btn(true, bulk.busy)} disabled={bulk.busy}
-              onClick={() => bulk.run(open)}>
-              {/* Says its scope too: one press here covers every open report,
-                  and the button inside a report covers only that one. */}
+              onClick={() => { void bulk.run(open); }}>
+              {/* Says its scope too: one press here covers every report with
+                  something to post, and the button inside a report covers only
+                  that one. */}
               <CheckCheck {...ICON} /> {bulk.busy ? 'Posting…'
-                : `Confirm all ${readyToConfirm} matched, across ${open.length} report${open.length === 1 ? '' : 's'}`}
+                : `Confirm all ${readyToConfirm} matched, across ${toPost} report${toPost === 1 ? '' : 's'}`}
             </button>
             <span style={softText}>
               Books each line&rsquo;s fee;
@@ -360,41 +416,39 @@ const ReconcileTab = () => {
           Keyed in by the sales team; the merchant has not put them on a report. {fmt(waitingSen)} in total.
           {untagged > 0 && ` ${untagged} keyed in without a bank (未标): shown once here, offered to each merchant's report, and named by the one that confirms it.`}
         </div>
-        {watchlist.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading…</div>}
-        {!watchlist.isLoading && waiting.length === 0 && (
-          <div style={{ fontSize: 'var(--fs-13)', color: good }}>
-            Every card payment recorded is on a merchant report.
-          </div>
-        )}
-        {waiting.length > 0 && (
-          <table className={grid.grid}>
-            <thead>
-              <tr>
-                <th>Merchant</th><th>Document</th><th>Salesperson</th><th>Customer paid on</th>
-                <th className={grid.num}>Days</th><th className={grid.num}>Amount</th><th>Approval</th>
-              </tr>
-            </thead>
-            <tbody>
-              {waiting.map((p) => (
-                <tr key={`${p.source}:${p.id}`}>
-                  <td><span className={styles.codeChip}>{p.acquirerCode ?? '未标'}</span></td>
-                  <td>{p.docNo}</td>
-                  <td>{p.salespersonName ?? '—'}</td>
-                  <td>{p.paidOn}</td>
-                  <td className={grid.num} style={{ color: p.ageDays > 14 ? danger : undefined, fontWeight: p.ageDays > 14 ? 700 : undefined }}>
-                    {p.ageDays}
-                  </td>
-                  <td className={grid.num}>{fmt(p.amountSen)}</td>
-                  <td>{p.approvalCode ?? '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        <DataTable<WaitingCard>
+          tableId="merchant-recon-waiting"
+          exportName="card-payments-not-reported"
+          exportXlsx
+          columns={WAITING_COLUMNS}
+          rows={watchlist.data ? waiting : null}
+          loading={watchlist.isLoading}
+          error={watchlist.isError ? 'The watch list did not load.' : null}
+          emptyLabel="Every card payment recorded is on a merchant report."
+          getRowKey={(p) => `${p.source}:${p.id}`}
+        />
       </section>
     </div>
   );
 };
+
+type WaitingCard = Watchlist['recordedNotArrived'][number];
+const WAITING_COLUMNS: Column<WaitingCard>[] = [
+  { key: 'merchant', label: 'Merchant', render: (p) => <span className={styles.codeChip}>{p.acquirerCode ?? '未标'}</span>, getValue: (p) => p.acquirerCode ?? '未标' },
+  { key: 'document', label: 'Document', render: (p) => <DocLink source={p.source} docNo={p.docNo} />, getValue: (p) => p.docNo },
+  { key: 'salesperson', label: 'Salesperson', render: (p) => p.salespersonName ?? '—', getValue: (p) => p.salespersonName ?? '' },
+  { key: 'paidOn', label: 'Customer paid on', render: (p) => fmtDate(p.paidOn), getValue: (p) => p.paidOn, exportFormat: 'date' },
+  {
+    key: 'days', label: 'Days', align: 'right',
+    render: (p) => <span style={{ color: p.ageDays > 14 ? danger : undefined, fontWeight: p.ageDays > 14 ? 700 : undefined }}>{p.ageDays}</span>,
+    getValue: (p) => p.ageDays, exportFormat: 'number',
+  },
+  {
+    key: 'amount', label: 'Amount', align: 'right', render: (p) => fmt(p.amountSen),
+    getValue: (p) => p.amountSen, exportValue: (p) => p.amountSen / 100, exportFormat: 'money',
+  },
+  { key: 'approval', label: 'Approval', render: (p) => p.approvalCode ?? '—', getValue: (p) => p.approvalCode ?? '' },
+];
 
 /* ── What the upload found ────────────────────────────────────────────────────
    The owner uploads a month of reports in one go, and asked for one answer for
@@ -417,26 +471,45 @@ const ReconcileTab = () => {
    time, so a refusal names ITS OWN file instead of failing the pile, and what
    went through stays through. Sequential, not parallel, for the same reason
    the upload is — each confirmation must see the payments the previous one
-   already claimed. */
+   already claimed.
+
+   ONLY the reports with something to post, and ONE refresh at the end (owner
+   2026-10-21, on "Posted 0. 52 could not be — Network error"). Every open
+   report used to get a request — 79 of them for one matched line — and after
+   EACH one the whole screen was read again, every open report's lines with it,
+   so one press sent thousands of requests that the next refresh cut off. The
+   connection choked and the screen called "failed" what the server had done. */
+
+/** A report the press has work in: a line matched by reference, or a
+    statement charge not yet booked — which the press books too. */
+export const worthConfirming = (b: SettlementBatch): boolean =>
+  (b.to_confirm_count ?? 0) > 0 || (Number(b.adjustment_sen) !== 0 && !b.adjustment_je_no);
+
+type Posted = { lines: number; charges: number; failures: Array<{ file: string; reason: string }> };
 
 const useConfirmAcross = () => {
-  const confirmAll = useConfirmMatched();
+  const refresh = useInvalidateAfterPosting();
   const [busy, setBusy] = useState(false);
-  const [posted, setPosted] = useState<{ confirmed: number; failed: number } | null>(null);
+  const [posted, setPosted] = useState<Posted | null>(null);
 
-  const run = (batches: SettlementBatch[]) => {
+  const run = async (batches: SettlementBatch[]) => {
     setBusy(true);
     setPosted(null);
-    let confirmed = 0;
-    let failed = 0;
-    const next = (i: number) => {
-      if (i >= batches.length) { setBusy(false); setPosted({ confirmed, failed }); return; }
-      confirmAll.mutate(batches[i].id, {
-        onSuccess: (r) => { confirmed += r.confirmed; failed += r.failed.length; next(i + 1); },
-        onError: () => { failed += 1; next(i + 1); },
-      });
-    };
-    next(0);
+    const out: Posted = { lines: 0, charges: 0, failures: [] };
+    for (const b of batches.filter(worthConfirming)) {
+      try {
+        const r = await confirmMatchedBatch(b.id);
+        out.lines += r.confirmed;
+        if (r.statementCharge?.status === 'posted') out.charges += 1;
+        for (const f of r.failed) out.failures.push({ file: b.file_name, reason: f.reason });
+      } catch (e) {
+        /* One report's failure is that report's line on the note; the rest go on. */
+        out.failures.push({ file: b.file_name, reason: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    refresh();
+    setBusy(false);
+    setPosted(out);
   };
 
   return { run, busy, posted };
@@ -481,12 +554,22 @@ const UploadDone = ({ batches }: { batches: SettlementBatch[] }) => {
   );
 };
 
-const PostedNote = ({ posted }: { posted: { confirmed: number; failed: number } }) => (
-  <div style={{ fontSize: 'var(--fs-13)', color: posted.failed ? danger : good }}>
-    Posted {posted.confirmed}.
-    {posted.failed > 0 ? ` ${posted.failed} could not be — open the report to see why.` : ''}
-  </div>
-);
+/* Says what posted — lines AND the statement charges the press books with them
+   — and, for what did not, which report and why, in the server's own words. */
+const PostedNote = ({ posted }: { posted: Posted }) => {
+  const what = [
+    `${posted.lines} line${posted.lines === 1 ? '' : 's'}`,
+    ...(posted.charges > 0 ? [`${posted.charges} statement charge${posted.charges === 1 ? '' : 's'}`] : []),
+  ].join(' and ');
+  const n = posted.failures.length;
+  return (
+    <div style={{ fontSize: 'var(--fs-13)', color: n ? danger : good, display: 'grid', gap: 2 }}>
+      <span>Posted {what}.{n > 0 ? ` ${n} could not be:` : ''}</span>
+      {posted.failures.slice(0, 5).map((f, i) => <span key={i}><b>{f.file}</b> — {f.reason}</span>)}
+      {n > 5 && <span>…and {n - 5} more — open the report to see why.</span>}
+    </div>
+  );
+};
 
 const UploadSummary = ({ batchIds, refusals, leftOut, onOpen, onDone }: {
   batchIds: number[];
@@ -537,7 +620,7 @@ const UploadSummary = ({ batchIds, refusals, leftOut, onOpen, onDone }: {
 
           {toConfirm > 0 && (
             <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-              <button type="button" style={btn(true, busy)} disabled={busy} onClick={() => bulk.run(mine)}>
+              <button type="button" style={btn(true, busy)} disabled={busy} onClick={() => { void bulk.run(mine); }}>
                 <CheckCheck {...ICON} /> {busy ? 'Posting…' : `Confirm all ${toConfirm} matched`}
               </button>
               <span style={softText}>Books each line&rsquo;s fee. The money itself is the next screen.</span>
@@ -692,13 +775,15 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
           ? sale.map((l) => ({
             key: l.payment_id,
             docNo: l.doc_no ?? l.payment_id,
+            /* No document number: the payment id is shown, and it opens nothing. */
+            source: l.doc_no ? l.payment_source : null,
             customer: l.customer_name ?? null,
             paidOn: l.paid_on ?? null,
             code: l.approval_code ?? null,
             amountSen: l.amount_sen,
           }))
           : guess.map((p) => ({
-            key: p.id, docNo: p.docNo, customer: p.customerName ?? null,
+            key: p.id, docNo: p.docNo, source: p.source, customer: p.customerName ?? null,
             paidOn: p.paidOn, code: p.approvalCode ?? null, amountSen: p.amountSen,
           }));
         /* One line settling several orders stacks INSIDE its cell — the rare
@@ -724,7 +809,7 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
             <td className={grid.seam}>
               {orders.length === 0
                 ? <span className={grid.sub}>{r.candidates.length > 0 ? `${r.candidates.length} possible` : '—'}</span>
-                : stack((o) => <b>{o.docNo}</b>)}
+                : stack((o) => <DocLink source={o.source} docNo={o.docNo} bold />)}
             </td>
             <td>{stack((o) => o.customer)}</td>
             <td>{stack((o) => o.paidOn)}</td>
@@ -795,6 +880,8 @@ const Tally = ({ n, label, note, tone }: {
 
 const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void }) => {
   const q = useSettlementBatch(batchId);
+  /* Back from an order opened on one of these lines lands on that line. */
+  useReturnScroll(q.data != null);
   const confirmAll = useConfirmMatched();
   const [showDone, setShowDone] = useState(false);
 
@@ -938,7 +1025,7 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
                 <td className={grid.seam}>
                   {r.linked.map((l) => (
                     <div key={l.payment_id}>
-                      <b>{l.doc_no ?? l.payment_id}</b>
+                      {l.doc_no ? <DocLink source={l.payment_source} docNo={l.doc_no} bold /> : <b>{l.payment_id}</b>}
                       {l.customer_name ? <span className={grid.sub}> · {l.customer_name}</span> : null}
                     </div>
                   ))}
@@ -1062,7 +1149,7 @@ const FindTheSale = ({ rowId, grossSen, picked, shown, onToggle }: {
                   <input type="checkbox" checked={picked.has(key(p))} onChange={() => onToggle(p)} aria-label={`Select ${p.docNo}`} />
                 </td>
                 <td style={cell}>
-                  {p.docNo}
+                  <DocLink source={p.source} docNo={p.docNo} />
                   {p.possible && <span className={styles.codeChip} style={{ marginLeft: 6 }}>possible</span>}
                   {p.merchantProvider === null && (
                     <span style={{ marginLeft: 6, fontSize: 'var(--fs-12)', color: 'var(--text-soft, #8a8578)' }}>未标 merchant</span>
@@ -1147,13 +1234,13 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
       {row.posted_je_no && (
         <div style={{ fontSize: 'var(--fs-13)', color: good }}>
           Posted as <span className={styles.codeChip}>{row.posted_je_no}</span>
-          {row.linked.length > 0 && ` — ${row.linked.map((l) => l.doc_no ?? l.payment_id).join(', ')}`}
+          {row.linked.length > 0 && <> — <LinkedDocs links={row.linked} /></>}
         </div>
       )}
 
       {!row.confirmed_at && row.linked.length > 0 && (
         <div style={{ fontSize: 'var(--fs-13)' }}>
-          Matched to <b>{row.linked.map((l) => l.doc_no ?? l.payment_id).join(', ')}</b>
+          Matched to <LinkedDocs links={row.linked} />
           {row.ref ? ' by its reference' : ''} — press <b>Confirm</b> to book its fee.
         </div>
       )}
@@ -1176,7 +1263,7 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
                       aria-label={`Select ${p.docNo}`} />
                   </td>
                   <td style={cell}>
-                    {p.docNo}
+                    <DocLink source={p.source} docNo={p.docNo} />
                     {/* A migration-era payment carries no merchant tag; say so
                         where it is being claimed. Confirming writes the tag.
                         Strictly null: a candidate WITHOUT the field (an older

@@ -50,7 +50,7 @@ describe('CollectedOnOrderCard', () => {
       ],
     });
     expect(screen.getByText(/Taken on HC-SO-013497, not on this document/i)).toBeTruthy();
-    expect(screen.getByText('MYR 400.00')).toBeTruthy();
+    expect(screen.getByText('RM 400.00')).toBeTruthy();
     expect(screen.getByText(/across 2 receipts/i)).toBeTruthy();
     expect(screen.getByText('CIMB-9')).toBeTruthy();
   });

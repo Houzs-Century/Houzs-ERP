@@ -244,7 +244,7 @@ export const NO_ITEMS_LABEL = 'No Items';
 
    Deliberately a SMALL closed list of spellings, not a heuristic: a brand this
    business actually uses must never be swallowed ("Nonesuch" is a brand). */
-const PLACEHOLDER_BRAND_TEXTS = new Set(['NONE', 'N/A', 'NA', 'N.A.', 'NIL', 'TBC', 'KIV', '-', '--', '—']);
+export const PLACEHOLDER_BRAND_TEXTS: ReadonlySet<string> = new Set(['NONE', 'N/A', 'NA', 'N.A.', 'NIL', 'TBC', 'KIV', '-', '--', '—']);
 
 export function isPlaceholderBrandText(text: string | null | undefined): boolean {
   const t = (text ?? '').trim();

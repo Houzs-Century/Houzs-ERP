@@ -30,9 +30,11 @@ import { maintActiveValues, fmtSen } from '@2990s/shared';
 import {
   useProductModel, useUpdateProductModel, useDeleteProductModel, useGenerateModelSkus,
   useActivateOneShot, useBrandingPool, useUploadProductModelPhoto,
-  type AllowedOptions, type AllowedOptions as AOpts,
+  type AllowedOptions, type AllowedOptions as AOpts, type ModelSkuRow,
 } from '../../vendor/scm/lib/product-models-queries';
+import { DataTable } from '../../components/DataTable';
 import { useMaintenanceConfig, useUpdateMfgProductStatus, useSpecialAddons, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
+import { isSingleSkuCategory } from '../../vendor/shared/product-categories';
 import { useFabricLibrary } from '../../vendor/scm/lib/queries';
 import { CategorySwapSelect } from '../../vendor/scm/components/CategorySwapSelect';
 import { useAuth } from '../../auth/AuthContext';
@@ -44,6 +46,7 @@ import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
+import { MODEL_DEFAULT_AXES, pickDefaultVariants } from '../../vendor/shared/model-default-variants';
 import { PhotoGallery as ProductModelPhotoGallery } from '../../components/scm-v2/PhotoGallery';
 
 // Staff #5 — reuse the proven multi-supplier assign dialog from the Models list,
@@ -174,6 +177,7 @@ export const ProductModelDetail = ({
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [allowed, setAllowed] = useState<AllowedOptions>({});
+  const [defaults, setDefaults] = useState<Record<string, string>>({});
   const [addCodesOpen, setAddCodesOpen] = useState(false);
 
   // PR #97 — Commander 2026-05-26: "可以放照片的啊，为什么不能放呢". Photo
@@ -198,6 +202,7 @@ export const ProductModelDetail = ({
     setModelCode(data.model.model_code);
     setName(data.model.name);
     setDescription(data.model.description ?? '');
+    setDefaults(data.model.default_variants ?? {});
 
     const saved = data.model.allowed_options ?? {};
     const next: AllowedOptions = { ...saved };
@@ -276,6 +281,25 @@ export const ProductModelDetail = ({
       name,
       description: description.trim() || null,
       allowedOptions: allowed,
+      // Drops a default whose option was just unticked, so the save is not refused.
+      defaultVariants: pickDefaultVariants(model.category, defaults, allowed),
+    }, {
+      onSuccess: (res) => {
+        const made = res.autoCreatedSkus ?? [];
+        const failed = res.autoCreateFailed ?? [];
+        if (failed.length > 0) {
+          void notify({
+            title: 'Saved, but some item codes were not created.',
+            body: `${failed.join(', ')}. Use "Add codes" to create them.`,
+            tone: 'error',
+          });
+        } else {
+          void notify({
+            title: 'Saved.',
+            body: made.length > 0 ? `New item codes: ${made.join(', ')}.` : undefined,
+          });
+        }
+      },
     });
   };
 
@@ -351,7 +375,11 @@ export const ProductModelDetail = ({
   return (
     <div className="space-y-4">
       {/* Header --------------------------------------------------------- */}
-      <PageHeader back
+      {/* Bare `back` is history-back, which from the list's drawer (no URL
+          change on open) left Product Models entirely. */}
+      <PageHeader
+        back="/scm/product-models"
+        beforeBack={onClose ? () => { onClose(); return false; } : undefined}
         eyebrow="Product Model"
         title={model.model_code}
         description={model.name}
@@ -653,6 +681,8 @@ export const ProductModelDetail = ({
           </div>
         )}
 
+        <ModelDefaultVariants category={model.category} allowed={allowed} value={defaults} onChange={setDefaults} />
+
         {(model.category === 'ACCESSORY' || model.category === 'SERVICE') && (
           <p className={styles.cardSub}>
             No configurable options for {mfgCategoryLabel(model.category).toLowerCase()} models —
@@ -729,82 +759,71 @@ export const ProductModelDetail = ({
             then click "Add codes…" to materialise the variants you want.
           </p>
         ) : (
-          <table className={styles.skuTable}>
-            <thead>
-              <tr>
-                <th>Code</th>
-                <th>Name</th>
-                <th>Size</th>
-                <th>Status</th>
-                <th>POS</th>
-                {showCost && <th style={{ textAlign: 'right' }}>Cost</th>}
-                <th style={{ textAlign: 'right' }}>Price 2</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.skus.map((sku) => (
-                <tr key={sku.id}>
-                  <td>
-                    <code>{sku.code}</code>
-                  </td>
-                  <td>{sku.name}</td>
-                  <td>{sku.size_label ?? sku.size_code ?? '—'}</td>
-                  <td>
-                    {/* PR #87 — Status pill is now a button. One click flips
-                        ACTIVE↔INACTIVE via PATCH /mfg-products/:id. Disabled
-                        while a bulk toggle is in flight to avoid racing the
-                        per-row mutation against bulk fan-out. */}
+          <DataTable<ModelSkuRow>
+            tableId="product-model-skus"
+            exportName={`${model.model_code}-skus`}
+            exportXlsx
+            columns={[
+              { key: 'code', label: 'Code', render: (sku) => <code>{sku.code}</code>, getValue: (sku) => sku.code },
+              { key: 'name', label: 'Name', render: (sku) => sku.name, getValue: (sku) => sku.name },
+              { key: 'size', label: 'Size', render: (sku) => sku.size_label ?? sku.size_code ?? '—', getValue: (sku) => sku.size_label ?? sku.size_code ?? '' },
+              {
+                key: 'status', label: 'Status', getValue: (sku) => sku.status,
+                /* PR #87 — the pill is a button: one click flips ACTIVE<->INACTIVE
+                   via PATCH /mfg-products/:id, disabled while a bulk toggle runs so
+                   the per-row mutation never races the fan-out. */
+                render: (sku) => (
+                  <button
+                    type="button"
+                    className={`${styles.statusPill} ${sku.status === 'ACTIVE' ? styles.active : styles.inactive}`}
+                    style={{ cursor: 'pointer', border: '1px solid #d6d9d2' }}
+                    disabled={statusMut.isPending}
+                    onClick={() => statusMut.mutate({ id: sku.id, status: sku.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE' })}
+                    title={sku.status === 'ACTIVE'
+                      ? 'Click to deactivate · removes from SO/PO picker'
+                      : 'Click to activate · returns to SO/PO picker'}
+                  >
+                    {sku.status}
+                  </button>
+                ),
+              },
+              {
+                key: 'pos', label: 'POS',
+                getValue: (sku) => (sku.one_shot ? (sku.pos_active === false ? 'Not in POS' : 'Active in POS') : ''),
+                /* One-shot SKUs start with pos_active=false and need an explicit
+                   Activate to surface in the POS catalog. */
+                render: (sku) => (sku.one_shot ? (
+                  sku.pos_active === false ? (
                     <button
                       type="button"
-                      className={`${styles.statusPill} ${sku.status === 'ACTIVE' ? styles.active : styles.inactive}`}
-                      /* border hex-pinned — var(--line) resolved to #d6d9d2
-                         only via the removed .page cascade (:root has it as
-                         rgba(34,31,32,.12)). */
+                      className={`${styles.statusPill} ${styles.inactive}`}
                       style={{ cursor: 'pointer', border: '1px solid #d6d9d2' }}
-                      disabled={statusMut.isPending}
-                      onClick={() => statusMut.mutate({
-                        id: sku.id,
-                        status: sku.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE',
-                      })}
-                      title={sku.status === 'ACTIVE'
-                        ? 'Click to deactivate · removes from SO/PO picker'
-                        : 'Click to activate · returns to SO/PO picker'}
+                      disabled={activateOneShotMut.isPending}
+                      onClick={() => activateOneShotMut.mutate({ id: sku.id })}
+                      title="Activate this one-shot SKU in POS"
                     >
-                      {sku.status}
+                      Activate
                     </button>
-                  </td>
-                  <td>
-                    {/* One-shot SKUs start with pos_active=false and need an
-                        explicit Activate to surface in the POS catalog. */}
-                    {sku.one_shot ? (
-                      sku.pos_active === false ? (
-                        <button
-                          type="button"
-                          className={`${styles.statusPill} ${styles.inactive}`}
-                          style={{ cursor: 'pointer', border: '1px solid #d6d9d2' }}
-                          disabled={activateOneShotMut.isPending}
-                          onClick={() => activateOneShotMut.mutate({ id: sku.id })}
-                          title="Activate this one-shot SKU in POS"
-                        >
-                          Activate
-                        </button>
-                      ) : (
-                        <span className={`${styles.statusPill} ${styles.active}`}>
-                          Active in POS
-                        </span>
-                      )
-                    ) : (
-                      <span className={styles.statusPill}>—</span>
-                    )}
-                  </td>
-                  {showCost && (
-                    <td style={{ textAlign: 'right' }}>{formatRM(sku.cost_price_sen)}</td>
-                  )}
-                  <td style={{ textAlign: 'right' }}>{formatRM(sku.base_price_sen ?? 0)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  ) : (
+                    <span className={`${styles.statusPill} ${styles.active}`}>Active in POS</span>
+                  )
+                ) : (
+                  <span className={styles.statusPill}>—</span>
+                )),
+              },
+              ...(showCost ? [{
+                key: 'cost', label: 'Cost', align: 'right' as const, render: (sku: ModelSkuRow) => formatRM(sku.cost_price_sen),
+                getValue: (sku: ModelSkuRow) => sku.cost_price_sen, exportValue: (sku: ModelSkuRow) => sku.cost_price_sen / 100,
+                exportFormat: 'money' as const,
+              }] : []),
+              {
+                key: 'price2', label: 'Price 2', align: 'right', render: (sku) => formatRM(sku.base_price_sen ?? 0),
+                getValue: (sku) => sku.base_price_sen ?? 0, exportValue: (sku) => (sku.base_price_sen ?? 0) / 100, exportFormat: 'money',
+              },
+            ]}
+            rows={data.skus}
+            getRowKey={(sku) => sku.id}
+          />
         )}
       </section>
       {/* + Add codes picker modal ------------------------------------- */}
@@ -875,8 +894,8 @@ const DEFAULT_FORMATS = {
   // template ('{model_name} {compartment}') worked only when commander
   // typed "SOFA 5530" into model.name; for new Models like "ADDA" it
   // produced "ADDA 1A(LHF)" (no "SOFA" word). Now inserts "SOFA" literal
-  // + optional branding prefix. Mirrors API §SOFA branch.
-  sofaName:     '{branding} SOFA {model_name} {compartment}',
+  // (no branding: it lives in its own column). Mirrors API §SOFA branch.
+  sofaName:     'SOFA {model_name} {compartment}',
   // PR #88 — Drop the "-NF" suffix per Commander ("NF 不需要"). Was
   // '{branding_nf}{model_code} MATT ({size})' producing "HAPPI.S-NF
   // PUREZONE MATT (K)"; now just prepends "{branding} " for a plain
@@ -971,6 +990,17 @@ function computeCandidates(
         size_label: label,
       };
     });
+  }
+  /* The one SKU a single-SKU Model carries, exactly as the server's own branch
+     writes it — so a Model left with none (BUG-85) can be given its SKU here. */
+  if (isSingleSkuCategory(category)) {
+    const prefix = branding.trim() ? `${branding.trim()} ` : '';
+    return [{
+      code:       modelCode.trim().toUpperCase(),
+      name:       `${prefix}${modelName.trim() || modelCode.trim()}`.trim().toUpperCase(),
+      size_code:  null,
+      size_label: null,
+    }];
   }
   return [];
 }
@@ -1133,6 +1163,51 @@ function AddCodesModal({
 }
 
 /* ────────────────────────── Per-category allowed-option panels ────── */
+
+const DEFAULT_LABELS: Record<string, string> = {
+  seatHeight: 'Seat size', legHeight: 'Leg height', divanHeight: 'Divan height', gap: 'Gap',
+};
+
+/** Default variant per option: what a new SO line starts with when this
+    Model's SKU is picked. Choices are the ticked allowed options only. */
+function ModelDefaultVariants({
+  category, allowed, value, onChange,
+}: {
+  category: string; allowed: AllowedOptions;
+  value: Record<string, string>; onChange: (next: Record<string, string>) => void;
+}) {
+  const axes = Object.entries(MODEL_DEFAULT_AXES[category] ?? {})
+    .map(([key, poolKey]) => ({ key, options: ((allowed as Record<string, unknown>)[poolKey] as string[] | undefined) ?? [] }))
+    .filter((a) => a.options.length > 0);
+  if (axes.length === 0) return null;
+  return (
+    <div className={styles.optGroup}>
+      <div className={styles.optHead}>
+        <span className="t-eyebrow">Default variants (pre-filled on a new SO line)</span>
+      </div>
+      <div className="flex flex-wrap gap-3">
+        {axes.map(({ key, options }) => (
+          <label key={key} className="flex flex-col gap-1 text-[12px] text-ink-secondary">
+            {DEFAULT_LABELS[key] ?? key}
+            <select
+              className="rounded border border-border-subtle bg-surface px-2 py-1 text-[13px] text-ink"
+              value={value[key] ?? ''}
+              onChange={(e) => {
+                const next = { ...value };
+                if (e.target.value) next[key] = e.target.value;
+                else delete next[key];
+                onChange(next);
+              }}
+            >
+              <option value="">No default</option>
+              {options.map((o) => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function ChipToggle({
   options, selected, onChange,

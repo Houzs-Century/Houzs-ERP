@@ -5,7 +5,7 @@
 // the phone sheet has. Presentation only: the rows, URL state, count preview and
 // server predicates are the shared layer (vendor/scm/lib/so-list-filter-state.ts
 // + vendor/shared/so-list-filter-model.ts), identical to mobile's.
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   soFilterField,
   soFilterIsComplete,
@@ -25,7 +25,44 @@ export function SoListFilterBar({ q }: { q: string }) {
   const lookups = useSoFilterLookups(open ? draft : filters);
   const preview = useSoListCountPreview({ status, q, filters: draft, enabled: open });
   const boxRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null);
   const k = SO_FILTER_SKINS.desktop;
+
+  // Adaptive placement. The panel is position:fixed so it escapes the two
+  // horizontal-overflow clips it lives inside (<main> overflow-x-hidden +
+  // Scm2990Shell overflow-x:clip) — the earlier left-0/right-0 anchors were
+  // clipped there whenever the button sat mid-row. No ancestor sets
+  // transform/filter/contain, so fixed resolves against the viewport and the
+  // getBoundingClientRect coords line up. We anchor under the button and clamp
+  // to the viewport on every axis, so it can't be cut off at any button
+  // position or window width (owner: 换成自适应).
+  const place = useCallback(() => {
+    const btn = triggerRef.current;
+    if (!btn) return;
+    const r = btn.getBoundingClientRect();
+    const margin = 8;
+    const vw = document.documentElement.clientWidth;
+    const vh = document.documentElement.clientHeight;
+    const width = Math.min(560, vw - margin * 2);
+    const left = Math.max(margin, Math.min(r.left, vw - width - margin));
+    const top = r.bottom + 6;
+    const maxHeight = Math.max(200, vh - top - margin);
+    setPos({ top, left, width, maxHeight });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) { setPos(null); return; }
+    place();
+    const onScroll = () => place();
+    window.addEventListener("resize", place);
+    // capture: <main> is the scroll container, and scroll doesn't bubble.
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", onScroll, true);
+    };
+  }, [open, place]);
 
   useEffect(() => {
     if (!open) return;
@@ -55,22 +92,25 @@ export function SoListFilterBar({ q }: { q: string }) {
           </button>
         </span>
       ))}
-      <button type="button" onClick={() => (open ? setOpen(false) : openPanel())} aria-expanded={open}
+      <button ref={triggerRef} type="button" onClick={() => (open ? setOpen(false) : openPanel())} aria-expanded={open}
         className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-[12px] font-semibold uppercase tracking-wider text-ink-secondary hover:border-primary/60 hover:text-primary">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M3 5h18M6 12h12M10 19h4" /></svg>
         {filters.length > 0 ? `Filters · ${filters.length}` : "More filters"}
       </button>
       {open && (
-        // Anchor right on desktop so the 560px panel opens LEFTWARD into view: the
-        // button sits mid-row (after the status pills), so left-0 pushed the panel
-        // past the right edge, where <main>'s overflow-x-hidden clipped it (looked
-        // narrow + cut off). The narrow md:hidden bar keeps left-0 (button near left).
         <div role="dialog" aria-label="More filters"
-          className="absolute left-0 top-full z-30 mt-2 flex max-h-[70vh] w-[560px] max-w-[calc(100vw-2rem)] flex-col rounded-lg border border-border bg-surface shadow-lg md:left-auto md:right-0">
+          style={{
+            position: "fixed",
+            top: pos?.top ?? -9999,
+            left: pos?.left ?? -9999,
+            width: pos?.width,
+            maxHeight: pos?.maxHeight,
+          }}
+          className="z-40 flex flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-lg">
           <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
             <span className={k.label}>More filters · {complete.length}</span>
           </div>
-          <div className="overflow-y-auto px-4 py-3">
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
             <SoFilterRowsEditor skin="desktop" draft={draft} onDraftChange={setDraft} lookups={lookups} today={soTodayYmd(new Date())} />
           </div>
           <div className="flex items-center justify-end gap-2 border-t border-border px-4 py-2.5">

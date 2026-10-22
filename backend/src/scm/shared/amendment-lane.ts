@@ -10,12 +10,12 @@
 //              charges). Approved by Logistics
 //              (scm.amendment.approve_delivery); applying never touches a PO.
 //   PRICE    — a PRICE-ONLY product-line change (only unit price and/or discount
-//              moved; SKU/colour/qty/remark unchanged) on the 2990 company only.
-//              Owner 2026-09-21: the sell price is Finance's (Kris), not the
-//              Purchaser's — it changes what the CUSTOMER pays and carries
-//              nothing for the PO to follow. Approved by
-//              scm.amendment.approve_price; applying never touches a PO. HOUZS
-//              keeps a price change on LINES. See PRICE_LANE_COMPANY_CODE.
+//              moved; SKU/colour/qty/remark unchanged). Owner 2026-09-21 (2990)
+//              and 2026-09-25 (HOUZS): the sell price is the Sales Director's,
+//              not the Purchaser's — it changes what the CUSTOMER pays and
+//              carries nothing for the PO to follow. Approved by
+//              scm.amendment.approve_price; applying never touches a PO. See
+//              PRICE_LANE_COMPANY_CODES.
 //
 // A submission that mixes lanes is SPLIT at create time into one amendment
 // document per lane, each with its own approver and lifecycle
@@ -51,11 +51,11 @@ import { isServiceLine } from './service-sku';
 
 export type AmendmentLane = 'LINES' | 'DELIVERY' | 'PRICE';
 
-/** The ONE company whose SO amendments carve a price-only line into the PRICE
- *  lane (owner 2026-09-21). Keyed on companies.code, never the numeric id — ids
- *  drift between prod / staging / test, the code does not (mig 0216 grants target
- *  roles by name for the same reason). HOUZS keeps a price change on LINES. */
-export const PRICE_LANE_COMPANY_CODE = '2990';
+/** Companies whose SO amendments carve a price-only line into the PRICE lane.
+ *  Keyed on companies.code, never the numeric id — ids drift between prod /
+ *  staging / test, the code does not (mig 0216 grants target roles by name for
+ *  the same reason). */
+export const PRICE_LANE_COMPANY_CODES: ReadonlySet<string> = new Set(['2990', 'HOUZS']);
 
 /** Flat permission key that approves a given lane (services/permissions.ts). */
 export const LANE_APPROVE_KEY: Record<AmendmentLane, string> = {
@@ -162,8 +162,8 @@ export type LaneSplit<L> = {
  *
  * `linePriceOnly` answers, for a line the caller resolved as a product line,
  * whether the ONLY thing it moves is the sell price / discount (SKU / colour /
- * qty / remark unchanged); `priceLaneEnabled` is true only on
- * PRICE_LANE_COMPANY_CODE. When both hold, that product line carves off into
+ * qty / remark unchanged); `priceLaneEnabled` is true only on a
+ * PRICE_LANE_COMPANY_CODES company. When both hold, that product line carves off into
  * the PRICE lane instead of LINES. Both are REQUIRED so the price carve-out is
  * never a silent default — a caller with no price lane passes `() => false` and
  * `false`, and the split is exactly the two-lane behaviour it always had.
@@ -174,14 +174,27 @@ export function splitAmendmentByLane<L>(
   lineIdentity: (line: L) => LineLaneIdentity,
   linePriceOnly: (line: L) => boolean,
   priceLaneEnabled: boolean,
+  /** DEV-70 — a product line moving its price AND its spec, as two halves: the
+   *  spec half (no price) to LINES, the price half to PRICE. `null` = not such
+   *  a line. Only asked on a price-lane company. */
+  splitPrice: (line: L) => { spec: L; price: L } | null,
 ): LaneSplit<L> {
   const mk = () => ({ headerChanges: {} as Record<string, string | null>, headerKeys: [] as string[], lines: [] as L[] });
   const perLane: LaneSplit<L>['perLane'] = { LINES: mk(), DELIVERY: mk(), PRICE: mk() };
 
+  /* A Processing Date REMOVAL takes the Delivery Date clear with it onto LINES
+     (owner 2026-09-30: the Purchaser signs it). Split across two desks, each half
+     alone would leave the order holding one date and the approve-time pair
+     re-check refuses both — neither could ever be approved. */
+  const blank = (v: unknown): boolean => String(v ?? '').trim() === '';
+  const removesProc = Object.prototype.hasOwnProperty.call(headerChanges, 'processingDate')
+    && blank(headerChanges['processingDate']);
   for (const [k, v] of Object.entries(headerChanges)) {
     // Header keys only ever answer LINES or DELIVERY — a price is a line-level
     // value, so classifyHeaderKey never routes to PRICE.
-    const lane = classifyHeaderKey(k);
+    const lane = removesProc && k === 'customerDeliveryDate' && blank(v)
+      ? 'LINES'
+      : classifyHeaderKey(k);
     perLane[lane].headerChanges[k] = v;
     perLane[lane].headerKeys.push(k);
   }
@@ -191,6 +204,12 @@ export function splitAmendmentByLane<L>(
     // price-lane company: the sell price carries nothing for the PO to follow.
     // Service lines are already DELIVERY and never reach this branch.
     if (lane === 'LINES' && priceLaneEnabled && linePriceOnly(line)) lane = 'PRICE';
+    const halves = lane === 'LINES' && priceLaneEnabled ? splitPrice(line) : null;
+    if (halves) {
+      perLane.LINES.lines.push(halves.spec);
+      perLane.PRICE.lines.push(halves.price);
+      continue;
+    }
     perLane[lane].lines.push(line);
   }
 

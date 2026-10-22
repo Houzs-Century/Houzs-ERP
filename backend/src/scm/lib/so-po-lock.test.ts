@@ -4,7 +4,7 @@
 // through a minimal fake PostgREST client — same shape as
 // so-converted-po.test.ts, which walks the same SO→PO chain.
 import { describe, expect, test } from 'vitest';
-import { soPoLocked } from './so-po-lock';
+import { soHasLivePo, soHasUnreceivedPo, soPoLocked } from './so-po-lock';
 
 type Row = Record<string, unknown>;
 
@@ -149,5 +149,62 @@ describe('soPoLocked', () => {
       const sb = { from: () => { throw new Error('connection reset'); } };
       expect(await soPoLocked(sb, MIRRORED)).toBe(true);
     });
+  });
+});
+
+describe('soHasLivePo (BUG-101: any company)', () => {
+  test('a Houzs SO with a live PO answers true, though soPoLocked stays false', async () => {
+    // HC-SO-2609-395 / PO-2610-025: the Processing Date moved after the PO.
+    const sb = fakeSb({
+      mfg_sales_order_items: [soItem('si-1', HOUZS)],
+      purchase_order_items: [poItem('si-1', 'po-1')],
+      purchase_orders: [po('po-1', 'SUBMITTED')],
+    });
+    expect(await soHasLivePo(sb, HOUZS)).toBe(true);
+    expect(await soPoLocked(sb, HOUZS)).toBe(false);
+  });
+
+  test('a cancelled PO does not count', async () => {
+    const sb = fakeSb({
+      mfg_sales_order_items: [soItem('si-1', HOUZS)],
+      purchase_order_items: [poItem('si-1', 'po-1')],
+      purchase_orders: [po('po-1', 'CANCELLED')],
+    });
+    expect(await soHasLivePo(sb, HOUZS)).toBe(false);
+  });
+
+  test('fails closed on a read error', async () => {
+    const sb = fakeSb({ mfg_sales_order_items: [soItem('si-1', HOUZS)] }, 'purchase_order_items');
+    expect(await soHasLivePo(sb, HOUZS)).toBe(true);
+  });
+});
+
+describe('soHasUnreceivedPo (HC-0114: Delivery Date brought forward)', () => {
+  const sbWith = (...statuses: string[]) => fakeSb({
+    mfg_sales_order_items: statuses.map((_, i) => soItem(`si-${i}`, HOUZS)),
+    purchase_order_items: statuses.map((_, i) => poItem(`si-${i}`, `po-${i}`)),
+    purchase_orders: statuses.map((st, i) => po(`po-${i}`, st)),
+  });
+
+  test('HC-SO-012039: every PO received answers false, though the PO is still live', async () => {
+    const sb = sbWith('RECEIVED');
+    expect(await soHasUnreceivedPo(sb, HOUZS)).toBe(false);
+    expect(await soHasLivePo(sb, HOUZS)).toBe(true);
+  });
+
+  test('one PO still partly received answers true', async () => {
+    expect(await soHasUnreceivedPo(sbWith('RECEIVED', 'PARTIALLY_RECEIVED'), HOUZS)).toBe(true);
+  });
+
+  test('received + cancelled answers false', async () => {
+    expect(await soHasUnreceivedPo(sbWith('RECEIVED', 'CANCELLED'), HOUZS)).toBe(false);
+  });
+
+  test('fails closed on a read error', async () => {
+    const sb = fakeSb({
+      mfg_sales_order_items: [soItem('si-1', HOUZS)],
+      purchase_order_items: [poItem('si-1', 'po-1')],
+    }, 'purchase_orders');
+    expect(await soHasUnreceivedPo(sb, HOUZS)).toBe(true);
   });
 });

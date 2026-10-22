@@ -85,6 +85,41 @@ describe('the unique reference is the only automatic path', () => {
   });
 });
 
+/* Owner 2026-10-21: 同一个 approval code 但金额不一样时，不自动配，改成让你自己
+   选. PBB's 16/09 RM 4,000 line was auto-matched to the RM 3,500 payment that
+   carried its code — the only one the screen could see — and the confirm,
+   which needs the line made to the sen, refused it at every "Confirm all". */
+describe('one payment carrying the reference, but for a different amount', () => {
+  it('is never taken by itself: offered first, with the payments that could make the line, nothing ticked', () => {
+    const [d] = matchStatement(cfg(), [row({ ref: '213017', grossSen: 400000 })], [
+      pay({ id: 'p97', docNo: 'HC-SO-2609-097', approvalCode: '213017', amountSen: 350000 }),
+      pay({ id: 'x1', docNo: 'SO-X1', approvalCode: null, amountSen: 50000 }),
+      pay({ id: 'x2', docNo: 'SO-X2', approvalCode: null, amountSen: 400000 }),
+      pay({ id: 'far', docNo: 'SO-FAR', approvalCode: null, amountSen: 400000, paidOn: '2026-07-01' }),
+    ]);
+    expect(d.bucket).toBe('NEEDS_CONFIRM');
+    expect(d.matchReason).toBe('ref');
+    expect(d.matched).toEqual([]);
+    expect(d.suggested).toEqual([]);
+    /* The code's own payment first, then the exact amount, then the rest; the
+       one outside the window is not offered. */
+    expect(d.candidates.map((p) => p.id)).toEqual(['p97', 'x2', 'x1']);
+    expect(d.comboHints).toEqual([['p97', 'x1']]);
+    expect(d.clue).toBe('Reference 213017 is on HC-SO-2609-097, but for RM 3,500.00 — this line is RM 4,000.00. Pick the payment(s) that make it.');
+  });
+
+  it('claims nothing, so the same payment is still there for the line it does belong to', () => {
+    const ds = matchStatement(cfg(), [
+      row({ lineNo: 1, ref: '213017', grossSen: 400000 }),
+      row({ lineNo: 2, ref: '555', grossSen: 350000 }),
+    ], [pay({ id: 'p97', approvalCode: '213017', amountSen: 350000 })]);
+    expect(ds[0]!.bucket).toBe('NEEDS_CONFIRM');
+    /* The second line has no code match; the payment is still unclaimed, so the
+       amount+date path can still offer it. */
+    expect(ds[1]!.candidates.map((p) => p.id)).toEqual(['p97']);
+  });
+});
+
 describe('the date tolerance is the configured number', () => {
   it('3 days accepts day 3 and refuses day 4', () => {
     const inside = matchStatement(cfg({ has_unique_ref: false }), [row({ txnDate: '2026-08-04' })], [pay({ paidOn: '2026-08-01' })]);

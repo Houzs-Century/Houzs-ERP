@@ -92,6 +92,26 @@ const read = async (app: Hono, qs: string) => {
 };
 
 describe('the Merchant charges report', () => {
+  /* Kept off a credit when the acquirer sends no advice (owner 2026-09-30, GHL's
+     RM 54): the bank charge of that report, in the month of its settlement day. */
+  test('a charge kept off a credit is the bank charge of its report, by its settlement day', async () => {
+    const { app } = harness([GL_PERM], () => fakeSb({
+      ...MERCHANT_TABLES(),
+      acc_settlement_receipts: [
+        { id: 1, company_id: CO, batch_id: 11, received_on: '2026-07-02', amount_sen: 42600, charge_sen: 5400 },
+        { id: 2, company_id: CO, batch_id: 12, received_on: '2026-07-14', amount_sen: 98210, charge_sen: 0 },
+      ],
+    }));
+    const { body } = await read(app, 'from=2026-06&to=2026-07');
+    const ghl = body.months[0].acquirers.find((a: any) => a.acquirer === 'GHL');
+    expect(ghl).toMatchObject({ grossSen: 50000, feeSen: 2000, bankChargeSen: 5400, chargeSen: 7400, chargePct: 14.8 });
+    expect(ghl.reports[0]).toMatchObject({ batchId: 11, bankChargeSen: 5400 });
+    expect(body.totals).toMatchObject({ bankChargeSen: 32400 + 5400 });
+    /* Outside the range, it is not this report's. */
+    const july = await read(app, 'from=2026-07&to=2026-07');
+    expect(july.body.totals.bankChargeSen).toBe(0);
+  });
+
   test('per month and per acquirer: gross, fee, net, fee %, with the bank charge beside it', async () => {
     const { app } = harness();
     const { status, body } = await read(app, 'from=2026-06&to=2026-07');

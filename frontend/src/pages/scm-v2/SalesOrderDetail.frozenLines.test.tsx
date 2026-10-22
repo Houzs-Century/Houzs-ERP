@@ -119,9 +119,9 @@ describe("desktop SO editor — a partly delivered order", () => {
 
   it("moving the header Delivery Date moves the open line and leaves the delivered line on its date", () => {
     mount(header, [line("line-delivered", "BF-QUEEN", true), line("line-open", "MT-QUEEN", false)]);
-    const dateBox = screen.getByDisplayValue("20/09/2026") as HTMLInputElement;
+    const dateBox = screen.getByDisplayValue("2026/09/20") as HTMLInputElement;
     expect(dateBox.disabled).toBe(false);
-    fireEvent.change(dateBox, { target: { value: "01/10/2026" } });
+    fireEvent.change(dateBox, { target: { value: "2026/10/01" } });
     expect(screen.getByTestId("card-line-open").dataset.ddate).toBe("2026-10-01");
     expect(screen.getByTestId("card-line-delivered").dataset.ddate).toBe("2026-09-20");
   });

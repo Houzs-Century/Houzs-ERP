@@ -9,6 +9,7 @@ import { describe, expect, test, vi } from 'vitest';
 
 const createAsync = vi.fn(async (_b: unknown) => ({ ok: true, receipt: { receiptNumber: 'HC-OR-2609-001', totalSen: 88800 } }));
 const voidAsync = vi.fn(async (_id: unknown) => ({ ok: true }));
+const voidDebtorAsync = vi.fn(async (_id: unknown) => ({ ok: true }));
 const updateAsync = vi.fn(async (_b: unknown) => ({ ok: true, reposted: true, jeNo: 'JE-2608-009', receipt: { receiptNumber: 'HC-OR-2609-001', totalSen: 88800, receiptDate: '2026-08-28' } }));
 
 /* ONE stable object, as react-query would hand back — a fresh literal per
@@ -37,6 +38,7 @@ vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
   useReceipts: (month?: string) => { receiptsAsked.push(month); return { data: LIST, isLoading: false }; },
   useCreateReceipt: () => ({ mutateAsync: createAsync, isPending: false }),
   useVoidReceipt: () => ({ mutateAsync: voidAsync, isPending: false }),
+  useVoidDebtorReceipt: () => ({ mutateAsync: voidDebtorAsync, isPending: false }),
   /* The Other Debtor door (owner 2026-09-08): the registry, one debtor's open
      bills, and the raise-and-post mutation. */
   useOtherDebtors: () => ({ data: { debtors: [
@@ -71,9 +73,10 @@ describe('the unified money-in list', () => {
     expect(screen.getByText('Other Debtor')).toBeTruthy();
     expect(screen.getByText('Customer')).toBeTruthy();
     /* 888.00 + 200.00 + 3,500.00 */
-    expect(screen.getByText('MYR 4,588.00')).toBeTruthy();
+    expect(screen.getByText('RM 4,588.00')).toBeTruthy();
     expect(screen.getByText('HC-SO-2609-004').closest('a')!.getAttribute('href')).toBe('/scm/sales-orders/HC-SO-2609-004');
-    expect(screen.getByText('HC-ODR-2609-001').closest('a')!.getAttribute('href')).toBe('/scm/other-debtors');
+    /* A debtor receipt's number leads to that debtor's bills on AR Invoices (2026-09-29). */
+    expect(screen.getByText('HC-ODR-2609-001').closest('a')!.getAttribute('href')).toBe('/scm/ar-invoices?debtor=d1');
   });
 
   /* 月份只是筛选 (owner 2026-09-08): the page opens on every month; picking one
@@ -104,13 +107,13 @@ describe('the unified money-in list', () => {
     expect(screen.getByText('Pick the debtor to list what they still owe.')).toBeTruthy();
     /* The registry: active debtors only, what each still owes beside the name. */
     const debtor = screen.getByLabelText('Debtor') as HTMLSelectElement;
-    expect([...debtor.options].map((o) => o.textContent)).toEqual(['— pick the debtor —', 'AHMAD BIN ALI — owes MYR 300.00']);
+    expect([...debtor.options].map((o) => o.textContent)).toEqual(['— pick the debtor —', 'AHMAD BIN ALI — owes RM 300.00']);
     fireEvent.change(debtor, { target: { value: 'd1' } });
     /* Only the bill with money outstanding is offered; the paid one is not. */
     expect(screen.getByText('HC-ODB-2609-001')).toBeTruthy();
     expect(screen.queryByText('HC-ODB-2608-009')).toBeNull();
     fireEvent.click(screen.getByLabelText('Collect HC-ODB-2609-001 in full'));
-    expect(screen.getByText('Total MYR 300.00')).toBeTruthy();
+    expect(screen.getByText('Total RM 300.00')).toBeTruthy();
     fireEvent.focus(screen.getByLabelText(/Received into/));
     fireEvent.mouseDown(screen.getByText('310-0010 · MAYBANK'));
     fireEvent.click(screen.getByText('Post receipt'));
@@ -129,12 +132,12 @@ describe('the unified money-in list', () => {
     draw();
     fireEvent.click(screen.getByText('New receipt'));
     /* The date is the receipt's own (owner 2026-09-07: 没办法输入日期) —
-       typed day-first, sent ISO; the number's month follows it server-side. */
+       typed year-first, sent ISO; the number's month follows it server-side. */
     const date = screen.getByLabelText('Receipt date') as HTMLInputElement;
     fireEvent.focus(date);
-    fireEvent.change(date, { target: { value: '02092026' } });
+    fireEvent.change(date, { target: { value: '20260902' } });
     fireEvent.blur(date);
-    expect(date.value).toBe('02/09/2026');
+    expect(date.value).toBe('2026/09/02');
     fireEvent.change(screen.getByLabelText(/Received from/), { target: { value: 'ALLIANZ INSURANCE' } });
     const combos = screen.getAllByRole('combobox');
     fireEvent.focus(combos[0]!); // Received into — money only
@@ -161,7 +164,7 @@ describe('the unified money-in list', () => {
     draw();
     fireEvent.click(screen.getByText('New receipt'));
     const date = screen.getByLabelText('Receipt date') as HTMLInputElement;
-    expect(date.value).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
+    expect(date.value).toMatch(/^\d{4}\/\d{2}\/\d{2}$/);
     /* Payer, both account pickers, the description and the amount all carry
        the PV form's fieldInput class — no more bordered boxes beside bare
        selects (owner 2026-09-07: 有些有格子有些没有). */
@@ -176,13 +179,21 @@ describe('the unified money-in list', () => {
     expect(date.closest('span')!.className).toMatch(/fieldInput/);
   });
 
-  test('void confirms with the reversal sentence, then sends the id — offered on GENERAL rows only', async () => {
-    voidAsync.mockClear(); confirmFn.mockClear();
+  /* Void reaches the posted Other Debtor receipt too (owner 2026-09-29: this
+     page is the one door for that money) — through the debtor module's own
+     route, with its own sentence; a customer payment is never voided here. */
+  test('void confirms with the reversal sentence, then sends the id — the sundry receipt and the posted Other Debtor receipt alike, never a customer payment', async () => {
+    voidAsync.mockClear(); voidDebtorAsync.mockClear(); confirmFn.mockClear();
     draw();
-    expect(screen.getAllByLabelText(/^Void /)).toHaveLength(1); // only the GENERAL row
+    expect(screen.getAllByLabelText(/^Void /)).toHaveLength(2);
+    expect(screen.queryByLabelText('Void HC-SO-2609-004')).toBeNull();
     fireEvent.click(screen.getByLabelText('Void HC-OR-2609-001'));
     await waitFor(() => expect(voidAsync).toHaveBeenCalledWith('g1'));
-    expect(JSON.stringify(confirmFn.mock.calls[0]![0])).toMatch(/reversed/);
+    expect(JSON.stringify(confirmFn.mock.calls[0]![0])).toMatch(/RCT journal is reversed/);
+    fireEvent.click(screen.getByLabelText('Void HC-ODR-2609-001'));
+    await waitFor(() => expect(voidDebtorAsync).toHaveBeenCalledWith('dr1'));
+    expect(JSON.stringify(confirmFn.mock.calls[1]![0])).toMatch(/ticked bills take their money back/);
+    expect(voidAsync).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -195,10 +206,10 @@ describe('edit a posted receipt and re-post (owner 2026-09-07: 收钱的日期�
     await waitFor(() => expect(screen.getByText('Edit HC-OR-2609-001 — 改了会重新过账')).toBeTruthy());
     expect((screen.getByLabelText(/Received from/) as HTMLInputElement).value).toBe('ALLIANZ INSURANCE');
     const date = screen.getByLabelText('Receipt date') as HTMLInputElement;
-    expect(date.value).toBe('03/09/2026');
+    expect(date.value).toBe('2026/09/03');
     expect((screen.getByLabelText('line 1 amount') as HTMLInputElement).value).toBe('888.00');
     fireEvent.focus(date);
-    fireEvent.change(date, { target: { value: '28082026' } });
+    fireEvent.change(date, { target: { value: '20260828' } });
     fireEvent.blur(date);
     fireEvent.click(screen.getByText('Save & re-post'));
     await waitFor(() => expect(updateAsync).toHaveBeenCalledWith({

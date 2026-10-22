@@ -18,6 +18,7 @@
 // the scm.payment_voucher.* flat permissions.
 // ----------------------------------------------------------------------------
 
+import { ViewOriginalScan } from '../../vendor/scm/components/ViewOriginalScan';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, ChevronDown, Copy, History, Pencil, Plus, Printer, RotateCcw, Save, Send, Ban, Trash2, X, XCircle } from 'lucide-react';
@@ -50,23 +51,29 @@ import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
+import { SupplierFinanceReminder, SupplierPayTo } from '../../vendor/scm/components/SupplierFinanceReminder';
+import { EventSelect } from '../../vendor/scm/components/EventSelect';
+import { useEventLabels } from '../../vendor/scm/lib/event-queries';
+import { PvLineEventCell } from './PvLineEventCell';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { OfficialDocActions } from '../../vendor/scm/components/OfficialDoc';
 import { EntityHistoryPanel } from './EntityHistoryPanel';
 import { PAYMENT_VOUCHER_AUDIT_LABELS } from './entity-audit-labels';
 import { resolveFxRate, deriveRateFromMyrPaid } from './fx-rate';
 import { useUnsavedWork } from '../../lib/unsavedWork';
 
+import { fmtMoneySen } from '../../vendor/shared/format';
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
   const v = centi ?? 0;
-  return `${currency} ${(v / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return fmtMoneySen(v, currency);
 };
 
 /* The stored `purpose` is the document kind — shown as "Type: AP Payment /
@@ -89,6 +96,8 @@ type EditLine = {
   description:      string;
   debitAccountCode: string;
   amountSen:      number;
+  /** The event this line's money is for (owner 2026-09-30, 5a) — null = none. */
+  projectId:        number | null;
 };
 
 const newLine = (): EditLine => ({
@@ -96,6 +105,7 @@ const newLine = (): EditLine => ({
   description:      '',
   debitAccountCode: '',
   amountSen:      0,
+  projectId:        null,
 });
 
 function InfoCell({ label, value }: { label: string; value: string | null | undefined }) {
@@ -217,6 +227,7 @@ export const PaymentVoucherDetail = () => {
   const [creditAccountCode, setCreditAccountCode] = useState('');
   const [voucherDate, setVoucherDate]             = useState('');
   const [notes, setNotes]                         = useState('');
+  const [bankChargeSen, setBankChargeSen]         = useState(0);
   /* Multi-currency (Phase 1-A) — MYR per 1 unit of the PV currency, string-typed.
      Seeded from the voucher on enter-edit; shown only for a foreign currency. */
   const [exchangeRate, setExchangeRate]           = useState('1');
@@ -228,6 +239,10 @@ export const PaymentVoucherDetail = () => {
   /* A Customer Refund (§14) has ONE line the system writes; an edit moves the
      amount and the server re-composes it (refundAmountSen), never the lines. */
   const isRefundPv = isRefundPurpose(pv?.purpose);
+  /* 5a: an event rides a line that IS the money spent — not a supplier
+     payment's AP line (its event is on the AP invoice it pays) nor a refund's. */
+  const eventsAllowed = !!pv && !isRefundPv && pvTypeOf(pv.purpose) !== 'SUPPLIER_PAYMENT';
+  const eventLabelsQ = useEventLabels(lines.map((l) => (l.project_id == null ? null : Number(l.project_id))));
   const [editRefundAmountSen, setEditRefundAmountSen] = useState<number>(0);
   // Migration 0202 — edit allocations: applied amount per invoice id (PI or AP invoice), in sen.
   const [allocAmounts, setAllocAmounts]           = useState<Record<string, number>>({});
@@ -253,6 +268,7 @@ export const PaymentVoucherDetail = () => {
     setCreditAccountCode(pv.credit_account_code ?? '');
     setVoucherDate(pv.voucher_date ?? '');
     setNotes(pv.notes ?? '');
+    setBankChargeSen(Number(pv.bank_charge_sen ?? 0));
     setExchangeRate(String(pv.exchange_rate ?? '1'));
     /* Cleared on entering edit, never back-derived from the stored rate: the MYR
        field means "this is what I actually paid", and inventing it from a rate would
@@ -273,6 +289,7 @@ export const PaymentVoucherDetail = () => {
             description:      l.description ?? '',
             debitAccountCode: l.debit_account_code ?? '',
             amountSen:      Number(l.amount_sen ?? 0),
+            projectId:        l.project_id == null ? null : Number(l.project_id),
           }))
         : [newLine()],
     );
@@ -282,7 +299,10 @@ export const PaymentVoucherDetail = () => {
   const setLine  = (rid: string, patch: Partial<EditLine>) =>
     setEditLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
   const dropLine = (rid: string) => setEditLines((prev) => (prev.length <= 1 ? prev : prev.filter((l) => l.rid !== rid)));
-  const addLine  = () => setEditLines((prev) => [...prev, newLine()]);
+  /* The lines' shared event, when they all name one (5a's header default on
+     this page): the "all lines" picker shows it, and a line added takes it. */
+  const commonEditEvent = editLines.length > 0 && editLines.every((l) => l.projectId === editLines[0]!.projectId) ? editLines[0]!.projectId : null;
+  const addLine  = () => setEditLines((prev) => [...prev, { ...newLine(), projectId: commonEditEvent }]);
 
   const editLinesTotalSen = useMemo(() => editLines.reduce((s, l) => s + l.amountSen, 0), [editLines]);
   const viewTotalSen = Number(pv?.total_sen ?? 0);
@@ -442,6 +462,7 @@ export const PaymentVoucherDetail = () => {
         creditAccountCode,
         voucherDate,
         notes:             notes || null,
+        bankChargeSen,
         // Multi-currency (Phase 1-A) — resolved currency + rate. MYR forces 1
         // (server enforces too); a blank/invalid foreign rate → 1.
         currency:          editCurrency,
@@ -456,6 +477,7 @@ export const PaymentVoucherDetail = () => {
               description:      l.description || undefined,
               debitAccountCode: l.debitAccountCode,
               amountSen:      l.amountSen,
+              ...(l.projectId != null ? { projectId: l.projectId } : {}),
             })) }),
         // Always send allocations for a SUPPLIER_PAYMENT edit (empty clears
         // them); FREIGHT/OTHER omit the key so the server leaves them untouched.
@@ -523,6 +545,7 @@ export const PaymentVoucherDetail = () => {
         actions={
           <div className={styles.actions} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
             <StatusPill docType="pv" status={pv.status} />
+            <ViewOriginalScan kind="pv" documentId={String(pv.id)} />
             {/* History drawer toggle. Same header seat on every detail page, and
                 ungated: whoever may open the voucher may see who changed it. */}
             <Button variant="ghost" size="md" onClick={() => setHistoryOpen(true)}>
@@ -629,6 +652,8 @@ export const PaymentVoucherDetail = () => {
             <div className={styles.formGrid2}>
               <InfoCell label={isRefundPv ? 'Customer' : 'Payee'} value={pv.payee_name} />
               {!isRefundPv && <InfoCell label="Supplier" value={pv.supplier?.name ?? null} />}
+              {!isRefundPv && pv.supplier_id && <SupplierFinanceReminder supplierId={String(pv.supplier_id)} />}
+              {!isRefundPv && pv.supplier_id && <SupplierPayTo supplierId={String(pv.supplier_id)} />}
               <InfoCell label="Type" value={pvTypeLabel(pv.purpose)} />
               {isRefundPv && (
                 <div className={styles.field}>
@@ -642,7 +667,16 @@ export const PaymentVoucherDetail = () => {
               <InfoCell label="Voucher Date" value={pv.voucher_date ? fmtDateOrDash(pv.voucher_date) : null} />
               <InfoCell label="Currency" value={viewCurrency} />
               {viewCurrency !== 'MYR' && <InfoCell label="Exchange Rate" value={`${pv.exchange_rate} (MYR per 1 ${viewCurrency})`} />}
+              <InfoCell label="Bank Charges" value={Number(pv.bank_charge_sen ?? 0) > 0 ? `${fmtRm(Number(pv.bank_charge_sen), 'MYR')} (not in total)` : null} />
               <InfoCell label="Notes" value={pv.notes ?? null} />
+              {/* The bill's own number and date (item 1) and its official invoice (欠正式单, item 3). */}
+              {(pv.bill_ref || pv.bill_date) && <InfoCell label="Bill" value={`${pv.bill_ref ?? '—'}${pv.bill_date ? ` · ${fmtDateOrDash(pv.bill_date)}` : ''}`} />}
+              {!isRefundPv && pv.status !== 'CANCELLED' && (
+                <div className={styles.field}>
+                  <span className={styles.fieldLabel}>Official invoice</span>
+                  <OfficialDocActions kind="PV" id={String(pv.id)} state={pv.official_doc ?? null} note={pv.official_doc_note ?? null} />
+                </div>
+              )}
             </div>
           ) : (
             <div className={styles.formGrid2}>
@@ -667,6 +701,8 @@ export const PaymentVoucherDetail = () => {
                     <option key={s.id} value={s.id}>{s.code} · {s.name}</option>
                   ))}
                 </select>
+                <SupplierFinanceReminder supplierId={supplierId} />
+                <SupplierPayTo supplierId={supplierId} />
               </label>
               <label className={styles.field}>
                 <span className={styles.fieldLabel}>Type</span>
@@ -715,6 +751,12 @@ export const PaymentVoucherDetail = () => {
                 </label>
               )}
               <label className={styles.field}>
+                <span className={styles.fieldLabel}>Bank Charges (MYR, not in total)</span>
+                <MoneyInput bare valueSen={bankChargeSen} aria-label="Bank charges"
+                  onCommit={(sen) => setBankChargeSen(Math.max(0, sen ?? 0))}
+                  inputClassName={styles.fieldInput} selectOnFocus />
+              </label>
+              <label className={styles.field}>
                 <span className={styles.fieldLabel}>Notes</span>
                 <textarea value={notes} onChange={(e) => setNotes(e.target.value)} className={styles.fieldInput} rows={2} style={{ resize: 'vertical', minHeight: 60 }} />
               </label>
@@ -747,6 +789,7 @@ export const PaymentVoucherDetail = () => {
                     <th style={{ padding: '6px 8px' }}>#</th>
                     <th style={{ padding: '6px 8px' }}>Account (Debit)</th>
                     <th style={{ padding: '6px 8px' }}>Description</th>
+                    {eventsAllowed && <th style={{ padding: '6px 8px' }}>Event</th>}
                     <th style={{ padding: '6px 8px', textAlign: 'right' }}>Amount</th>
                   </tr>
                 </thead>
@@ -759,6 +802,12 @@ export const PaymentVoucherDetail = () => {
                           journal (owner 2026-09-08: 看不到是谁 → 可以). */}
                       <td style={{ padding: '6px 8px' }}>{accountLabel(l.debit_account_code)}{isRefundPv && pv.payee_name ? ` · ${pv.payee_name}` : ''}</td>
                       <td style={{ padding: '6px 8px' }}>{l.description || '—'}</td>
+                      {eventsAllowed && (
+                        <td style={{ padding: '6px 8px' }}>
+                          <PvLineEventCell lineId={String(l.id)} projectId={l.project_id == null ? null : Number(l.project_id)}
+                            labels={eventLabelsQ.data} around={pv.voucher_date ?? null} canChange={canWrite && pv.status !== 'CANCELLED'} />
+                        </td>
+                      )}
                       <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(Number(l.amount_sen ?? 0), currency)}</td>
                     </tr>
                   ))}
@@ -767,8 +816,14 @@ export const PaymentVoucherDetail = () => {
             )
           ) : (
             <>
+              {/* 5a's header default: one event for every line; a line can still name its own. */}
+              <label className={styles.field} style={{ maxWidth: 640 }}>
+                <span className={styles.fieldLabel}>Event (all lines)</span>
+                <EventSelect value={commonEditEvent} around={voucherDate || null} className={styles.fieldInput} aria-label="Event for all lines"
+                  onChange={(v) => setEditLines((prev) => prev.map((x) => ({ ...x, projectId: v })))} />
+              </label>
               {editLines.map((l, idx) => (
-                <div key={l.rid} style={{
+                <div data-grid-row key={l.rid} style={{
                   background: 'var(--c-paper)', border: '1px solid var(--line)',
                   borderRadius: 'var(--radius-lg)', padding: 'var(--space-4)',
                   display: 'flex', flexDirection: 'column', gap: 'var(--space-3)',
@@ -803,6 +858,11 @@ export const PaymentVoucherDetail = () => {
                       <MoneyInput bare valueSen={l.amountSen}
                         onCommit={(sen) => setLine(l.rid, { amountSen: sen ?? 0 })}
                         inputClassName={styles.fieldInput} selectOnFocus />
+                    </label>
+                    <label className={styles.field}>
+                      <span className={styles.fieldLabel}>Event</span>
+                      <EventSelect value={l.projectId} around={voucherDate || null} className={styles.fieldInput} aria-label={`line ${idx + 1} event`}
+                        onChange={(v) => setLine(l.rid, { projectId: v })} />
                     </label>
                   </div>
                 </div>

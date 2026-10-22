@@ -5,6 +5,10 @@ import { todayMyt } from "../scm/lib/my-time";
 import { canonicalizeMyState } from "../scm/lib/canonical-state";
 import { canonicalizeVenue } from "../scm/lib/canonical-venue";
 import { deriveProjectCode, deriveProjectName, syncedNameForOrganizerChange } from "./project-naming";
+import { checklistRowDone } from "./checklistProgress";
+import { eventFinanceLines } from "./projectFinanceLines";
+import { loadEventPnl } from "./eventPnlInputs";
+import { pnlForProjects, withPnlColumns } from "./eventPnlBatch";
 export { deriveProjectCode, deriveProjectName };
 
 /** Disambiguate against existing codes by appending -2, -3, … */
@@ -762,11 +766,10 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
   )
     .bind(id)
     .all();
-
-  // Progress: % of non-NA items marked done. Trip & finance excluded.
+  // Progress: % of non-NA items done or approved. Trip & finance excluded.
   const counts = {
     total: (checklist.results ?? []).length,
-    done: (checklist.results ?? []).filter((r: any) => r.status === "done").length,
+    done: (checklist.results ?? []).filter((r: any) => checklistRowDone(r)).length,
     na: (checklist.results ?? []).filter((r: any) => r.status === "na").length,
   };
   const denom = counts.total - counts.na;
@@ -822,71 +825,14 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
   }
 
   // Finance ledger lines — the new canonical source. Frontend shows
-  // these directly; project_finance is only the cached rollup.
-  const ledger = await listLedgerLines(env, id);
-
-  // Sales entries surface as virtual income rows in the ledger so the
-  // Finance section reflects rep-entered sales without double-bookkeeping.
-  // sales_entries is the source of truth (managed via the Sales section);
-  // these synthetic rows carry source='sales_entry' so the UI suppresses
-  // edit/delete controls.
-  const salesEntryLines = await env.DB.prepare(
-    `SELECT s.id, s.amount, s.occurred_at, s.created_at,
-            s.customer_name, s.ref_no, s.notes,
-            COALESCE(sp.name, u.name) as created_by_name
-       FROM sales_entries s
-       LEFT JOIN users u  ON u.id  = s.created_by
-       LEFT JOIN users sp ON sp.id = s.sales_person_id
-      WHERE s.project_id = ?
-        AND s.archived_at IS NULL
-        AND s.status != 'void'
-      ORDER BY s.occurred_at DESC, s.id DESC`
-  )
-    .bind(id)
-    .all<{
-      id: number;
-      amount: number;
-      occurred_at: string;
-      created_at: string;
-      customer_name: string;
-      ref_no: string | null;
-      notes: string | null;
-      created_by_name: string | null;
-    }>();
-  // Quick-log rows (rep entered amount + ref_no only at the project)
-  // carry the sentinel "(quick log)" in customer_name. Render them
-  // with a friendlier "Quick log · {ref}" label in the project finance
-  // ledger so the boss isn't squinting at a parenthesised placeholder.
-  const QUICK_LOG_SENTINEL = "(quick log)";
-  const synthIncome = (salesEntryLines.results ?? []).map((s) => ({
-    id: -s.id,
-    project_id: id,
-    kind: "income" as const,
-    category: "sales",
-    description:
-      s.customer_name === QUICK_LOG_SENTINEL
-        ? `Quick log · ${s.ref_no ?? "no ref"}`
-        : (s.ref_no ? `${s.ref_no} · ` : "") + s.customer_name,
-    amount: s.amount,
-    occurred_at: s.occurred_at,
-    r2_key: null,
-    file_name: null,
-    mime_type: null,
-    notes: s.notes,
-    created_by_name: s.created_by_name,
-    created_at: s.created_at,
-    archived_at: null,
-    source: "sales_entry" as const,
-    source_id: s.id,
-  }));
-  const ledgerWithSales = [...ledger, ...synthIncome].sort((a: any, b: any) => {
-    const ao = a.occurred_at ?? "";
-    const bo = b.occurred_at ?? "";
-    if (ao && bo) return bo.localeCompare(ao);
-    if (!ao && bo) return 1;
-    if (ao && !bo) return -1;
-    return (b.id ?? 0) - (a.id ?? 0);
-  });
+  // these directly; project_finance is only the cached rollup. With the books
+  // and the sales entries in: services/projectFinanceLines.ts.
+  const { financeLines, books } = await eventFinanceLines(
+    env, id, project.company_id ?? companyId ?? null, await listLedgerLines(env, id), LEDGER_COST_CATEGORIES,
+  );
+  /* The two P&Ls — by Total Sales and by the Sales Orders (owner 2026-10-16). */
+  const pnl = await loadEventPnl(env, { id, brand: project.brand, companyId: project.company_id ?? companyId ?? null },
+    financeLines, books.rows, (finance as { total_sales?: number | null } | null)?.total_sales ?? null);
 
   // Stock transfers — OUT + RETURN records, confirmation-tracked.
   const stockTransfers = await env.DB.prepare(
@@ -914,7 +860,7 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
       (r: any) => r.section_id === s.id
     );
     const total = items.length;
-    const done = items.filter((r: any) => r.status === "done").length;
+    const done = items.filter((r: any) => checklistRowDone(r)).length;
     const na = items.filter((r: any) => r.status === "na").length;
     const denom = total - na;
     const complete = denom > 0 && done === denom;
@@ -932,7 +878,7 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
   );
   if (uncatItems.length > 0) {
     const total = uncatItems.length;
-    const done = uncatItems.filter((r: any) => r.status === "done").length;
+    const done = uncatItems.filter((r: any) => checklistRowDone(r)).length;
     const na = uncatItems.filter((r: any) => r.status === "na").length;
     const denom = total - na;
     sectionProgress.push({
@@ -960,7 +906,7 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
        LEFT JOIN sales_reps r ON r.id = a.sales_rep_id
        LEFT JOIN users u      ON u.id = r.user_id
       WHERE a.project_id = ?
-      ORDER BY r.code, r.name`
+      ORDER BY LOWER(r.name), r.code`
   )
     .bind(id)
     .all();
@@ -968,7 +914,9 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
   return {
     project: { ...project, progress_pct, duration_days },
     finance: finance ?? null,
-    finance_lines: ledgerWithSales,
+    finance_lines: financeLines,
+    finance_books: books,
+    finance_pnl: pnl,
     stock_transfers: stockTransfers.results ?? [],
     checklist: checklist.results ?? [],
     checklist_comments: comments,
@@ -1188,6 +1136,9 @@ export function stripSetupDismantle<
 // ── List ──────────────────────────────────────────────────────
 
 export interface ListProjectsFilters {
+  /** Fill the finance columns from the event page's P&L (services/eventPnlBatch.ts) —
+   *  set by the route for a caller who may see finance (owner 2026-10-19, ledger item 5). */
+  with_pnl?: boolean;
   stage?: string;
   /** Date-derived event phase for the field/sales slim filter bar (owner
    *  2026-07-21). The `stage` enum is unmaintained (never reaches
@@ -1571,7 +1522,11 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     // clean-able ones himself with 'done' (they never reach here); the purchaser
     // then closes a replace with 'done'. Timeline-gated to events that ended
     // within the last 30 days so the historical backlog does not flood the lane.
-    // One bind (defectSince).
+    // The defect ITEM must still be open: once it is ticked done/na the
+    // purchaser is finished, so the project leaves this lane even though the
+    // attachment's last action stays 'replace' on record (owner 2026-10-21 —
+    // Sim saw two done HOMEDEC events linger here, chip falling back to a
+    // BD/owner section). One bind (defectSince).
     const defectSince = (() => {
       const d = new Date(`${dueToday}T00:00:00Z`);
       d.setUTCDate(d.getUTCDate() - 30);
@@ -1583,6 +1538,7 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                 JOIN project_checklist_attachments da
                   ON da.item_id = dl.id AND da.archived_at IS NULL
                 WHERE dl.project_id = p.id
+                  AND dl.status NOT IN ('done', 'na')
                   AND (dl.title LIKE 'Defect List%' OR dl.title LIKE 'Defect Item%')
                   AND COALESCE((SELECT act.status
                                   FROM project_checklist_attachment_actions act
@@ -2068,7 +2024,9 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     .all();
 
   return {
-    data: rows.results ?? [],
+    data: f.with_pnl
+      ? withPnlColumns((rows.results ?? []) as any[], await pnlForProjects(env, (rows.results ?? []) as any[], f.company_id ?? null, LEDGER_COST_CATEGORIES))
+      : rows.results ?? [],
     page,
     per_page: perPage,
     total: total?.count ?? 0,
@@ -2834,11 +2792,27 @@ export async function syncFinanceRollup(env: Env, projectId: number) {
   // record sets — a project can have both during the migration window.
   out.total_sales += entriesTotal;
 
+  // A project whose sales were only ever keyed as the quick lump-sum Total
+  // Sales has no sales source to roll up, so the sum above is 0 and adding a
+  // rental line wiped the typed figure (owner 2026-10-05, projects 2246/2257).
+  // Keep the lump sum unless some sales source has EVER existed — archived
+  // rows count, so removing the last real sales line still resets to 0.
+  const src = await env.DB.prepare(
+    `SELECT
+       (SELECT COUNT(*) FROM project_finance_lines
+         WHERE project_id = ? AND kind = 'income' AND category <> 'deposit_refund') AS lines,
+       (SELECT COUNT(*) FROM project_sales_reports WHERE project_id = ?) AS reports,
+       (SELECT COUNT(*) FROM sales_entries WHERE project_id = ?) AS entries`
+  )
+    .bind(projectId, projectId, projectId)
+    .first<{ lines: number; reports: number; entries: number }>();
+  const keepLumpSales = !Number(src?.lines) && !Number(src?.reports) && !Number(src?.entries);
+
   await env.DB.prepare(
     `UPDATE project_finance
         SET rental = ?, contractor_cost = ?, license_fee = ?,
             deposit_paid = ?, deposit_refund = ?, misc_cost = ?,
-            total_sales = ?, updated_at = datetime('now')
+            total_sales = ${keepLumpSales ? "total_sales" : "?"}, updated_at = datetime('now')
       WHERE project_id = ?`
   )
     .bind(
@@ -2848,7 +2822,7 @@ export async function syncFinanceRollup(env: Env, projectId: number) {
       out.deposit_paid,
       out.deposit_refund,
       out.misc_cost,
-      out.total_sales,
+      ...(keepLumpSales ? [] : [out.total_sales]),
       projectId
     )
     .run();

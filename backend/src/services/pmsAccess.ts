@@ -177,6 +177,30 @@ export function isSalesUser(user: AuthUser | null | undefined): boolean {
   return dept.includes("sales");
 }
 
+// The 2990 POS MARKETING account (owner 2026-10-08). EXACT normalised Title name,
+// like the director list above and for the same reason: this admits a company's
+// whole sales history, so a Title that merely contains the word must not inherit it.
+const POS_MARKETING_POSITION_NAMES: ReadonlySet<string> = new Set(
+  ["Sales Marketing"].map(normalisePosition),
+);
+
+/**
+ * True for the 2990 POS MARKETING account: a salesperson's permissions plus the
+ * POS Marketing section, and the POS refuses it "Complete order". Here it is
+ * admitted to the sales lines that section draws (scm/routes/sales-analysis.ts
+ * GET /lines) and answers the `pos.marketing` capability the POS reads.
+ *
+ * Sales cohort (the Title's row first, else its name) and not the director tier:
+ * a `*` holder is a director by isDirectorUser, so an Owner's tablet orders are
+ * never blocked by a Title rename.
+ */
+export function isPosMarketingAccount(user: AuthUser | null | undefined): boolean {
+  if (!user) return false;
+  return isSalesUser(user)
+    && !isDirectorUser(user)
+    && POS_MARKETING_POSITION_NAMES.has(normalisePosition(user.position_name));
+}
+
 /**
  * True for the DIRECTOR tier that sees ALL data — Owner / IT Admin (`*`
  * wildcard) or a director/finance position (Super Admin, Sales Director,
@@ -415,4 +439,22 @@ export function isFinanceViewer(user: AuthUser | null | undefined): boolean {
 export function financeHiddenForUser(user: AuthUser | null | undefined): boolean {
   if (!user || user.position_id == null) return false;
   return !isFinanceViewer(user);
+}
+
+/**
+ * May this user CREATE an event (a PMS project)? Owner 2026-07-24: BD staff,
+ * the Owner account, and Lim (weisiang329@gmail.com) — NOT other Super Admins
+ * nor anyone else. The ONE backend copy: the New Project POST
+ * (routes/projects.ts) and the fair re-assign (scm/lib/fair-reassign.ts — owner
+ * 2026-10-16: "PMS" may re-assign an order's fair) both read it. Mirrored for
+ * the buttons in frontend auth/salesAccess.canCreateEvent; this is the authority.
+ */
+export function canCreateEvent(
+  user: { role_name?: string | null; position_name?: string | null; email?: string | null } | null | undefined,
+): boolean {
+  if (!user) return false;
+  const role = (user.role_name ?? "").toLowerCase();
+  const position = (user.position_name ?? "").toLowerCase();
+  const email = (user.email ?? "").toLowerCase();
+  return /\bbd\b/.test(role) || position === "owner" || email === "weisiang329@gmail.com";
 }

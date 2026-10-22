@@ -16,7 +16,7 @@ type Row = import('../../vendor/scm/lib/document-cancel-queries').CancelRequestR
 const base = (over: Partial<Row>): Row => ({
   id: 'r', company_id: 1, doc_type: 'SO', doc_key: 'SO-1', doc_number: 'SO-1', doc_status_at_request: 'CONFIRMED',
   status: 'REQUESTED', reason: 'Customer cancelled', requested_by: 11, requested_by_name: 'Amy', requested_at: '2026-09-08T01:00:00Z',
-  l1_by: null, l1_by_name: null, l1_at: null, l2_by: null, l2_by_name: null, l2_at: null,
+  l1_by: null, l1_by_name: null, l1_at: null, l1_remark: null, l2_by: null, l2_by_name: null, l2_at: null, l2_remark: null,
   rejected_by: null, rejected_by_name: null, rejected_at: null, reject_reason: null, executed_by: null, executed_at: null,
   ...over,
 });
@@ -47,7 +47,7 @@ vi.mock('../../vendor/scm/lib/suppliers-queries', () => ({ useCancelPurchaseOrde
 vi.mock('../../auth/AuthContext', () => ({
   useAuth: () => ({ user: { id: viewer.id }, can: (p: string) => viewer.perms.includes('*') || viewer.perms.includes(p) }),
 }));
-vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => confirm }));
+vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => confirm, usePrompt: () => async () => '' }));
 vi.mock('../../vendor/scm/components/PromptDialog', () => ({ usePrompt: () => vi.fn(async () => null) }));
 vi.mock('../../vendor/scm/lib/dialog-service', () => ({ serviceNotify: (o: unknown) => notify(o) }));
 
@@ -72,6 +72,16 @@ describe('CancelRequests', () => {
     expect(screen.getByText('Amy')).toBeTruthy();
   });
 
+  /* Owner 2026-09-25: every search box finds a record by its SO's reference. */
+  it("shows the order's reference and the search finds a request by it", async () => {
+    ROWS = [base({ id: 'r1', doc_ref: null, doc_customer_so_no: 'CUST-PO-7' }), freshRows()[1]];
+    mount();
+    expect(await screen.findByText('CUST-PO-7')).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText(/Search document no, ref no./), { target: { value: 'cust-po' } });
+    await waitFor(() => expect(screen.queryByText('PO-7')).toBeNull());
+    expect(screen.getByText('SO-1')).toBeTruthy();
+  });
+
   it('offers no signature on a purchase order, wildcard or not', async () => {
     mount();
     expect(await screen.findByText('Approve (level 1)')).toBeTruthy();
@@ -87,7 +97,10 @@ describe('CancelRequests', () => {
     fireEvent.click(await screen.findByText('Cancel now'));
     await waitFor(() => expect(cancelPo).toHaveBeenCalledWith({ id: 'po-7', reason: 'Supplier cannot deliver' }));
     expect(cancelSo).not.toHaveBeenCalled();
-    expect(notify).toHaveBeenCalledWith(expect.objectContaining({ title: 'Purchase Order PO-7 cancelled' }));
+    /* The toast names the DOCUMENT, not its type: the number already carries it,
+       and a table of type nouns in the shared action flow would be one more home
+       for the {SO, PO, DO} set (owner-facing copy unchanged otherwise). */
+    expect(notify).toHaveBeenCalledWith(expect.objectContaining({ title: 'PO-7 cancelled' }));
   });
 
   /* Owner 2026-09-14 — a delivery order is cancelled on its reason alone, and

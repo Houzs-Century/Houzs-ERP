@@ -223,7 +223,7 @@ describe('Delivery Order — Theme C template', () => {
     // The right column: the two title words, the doc number and the issued
     // date — everything drawn above the header rule at the right edge.
     const meta = spans.filter(
-      (s) => ['DELIVERY', 'ORDER', `No. : ${HEADER.do_number}`, 'Issued 06/08/2026'].includes(s.text) && s.y < 50,
+      (s) => ['DELIVERY', 'ORDER', `No. : ${HEADER.do_number}`, 'Issued 2026/08/06'].includes(s.text) && s.y < 50,
     );
     expect(meta.length).toBeGreaterThanOrEqual(4);
     const metaLeft = Math.min(...meta.map((s) => s.left));

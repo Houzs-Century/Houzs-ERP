@@ -62,6 +62,8 @@ function fakeSb(tables: Record<string, Row[]>) {
     // optimisation; the JS-side SO_DONE / PO_DEAD filters stay authoritative and
     // are what these tests exercise.
     not() { return this; }
+    // sofa-set-coverage reads open lots with .gt('qty_remaining', 0).
+    gt(col: string, val: number) { this.rows = this.rows.filter((r) => Number(r[col] ?? 0) > val); return this; }
     // An UPPER bound only, exactly like the real one — it can lower the ceiling,
     // never raise it past PGRST_MAX_ROWS. Nothing in mrp.ts chains it any more.
     limit(n: number) { this.rows = this.rows.slice(0, n); return this; }
@@ -93,6 +95,7 @@ const BASE_TABLES: Record<string, Row[]> = {
   fabric_trackings: [],
   delivery_order_items: [],
   delivery_return_items: [],
+  v_inventory_lots_open: [],
 };
 
 const opts = { catFilter: null, whFilter: null, includeUndated: true, companyId: null, leadBuffers: NO_BUFFERS };
@@ -103,7 +106,7 @@ const demandRed = (qty: number): Row => ({
   item_group: 'bedframe', variants: { fabricCode: 'RED' }, qty,
   warehouse_id: 'W1', line_delivery_date: '2026-12-01', line_no: 1, created_at: '2026-07-01T00:00:00Z',
   cancelled: false,
-  so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: '2026-12-01', processing_date: null, customer_state: null },
+  so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: '2026-12-01', processing_date: '2026-07-02', customer_state: null },
 });
 
 // A PO supply line for BF-100 → W1. `variant` null builds the legacy '' key.
@@ -399,7 +402,7 @@ const sofaDemand = (id: string, docNo: string, qty: number, delivery: string | n
   item_group: 'sofa', variants: { fabricCode: 'RED' }, qty,
   warehouse_id: 'W1', line_delivery_date: delivery, line_no: 1, created_at: '2026-07-01T00:00:00Z',
   cancelled: false,
-  so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: delivery, processing_date: null, customer_state: null },
+  so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: delivery, processing_date: '2026-07-02', customer_state: null },
 });
 
 // A sofa PO supply line for SF-100 → W1. `variant` null builds the legacy '' key.
@@ -450,8 +453,8 @@ describe('computeMrp — sofa supply matches on the full variant key too', () =>
       ...BASE_TABLES,
       mfg_sales_order_items: [sofaDemand('si-sofa', 'SO-9', 8, '2026-12-01')],
       purchase_order_items: [
-        sofaPoLine('PO-RED-SOFA', 5, { fabricCode: 'RED' }, '2026-11-01'),
-        sofaPoLine('PO-LEGACY-SOFA', 5, null, '2026-10-01'),
+        { ...sofaPoLine('PO-RED-SOFA', 5, { fabricCode: 'RED' }, '2026-11-01'), so_item_id: 'si-sofa' },
+        { ...sofaPoLine('PO-LEGACY-SOFA', 5, null, '2026-10-01'), so_item_id: 'si-sofa' },
       ],
     });
 
@@ -470,7 +473,7 @@ describe('computeMrp — sofa supply matches on the full variant key too', () =>
     const sb = fakeSb({
       ...BASE_TABLES,
       mfg_sales_order_items: [{ ...sofaDemand('si-sofa', 'SO-9', 8, '2026-12-01'), variants: {} }],
-      purchase_order_items: [sofaPoLine('PO-LEGACY-SOFA', 5, null, '2026-10-01')],
+      purchase_order_items: [{ ...sofaPoLine('PO-LEGACY-SOFA', 5, null, '2026-10-01'), so_item_id: 'si-sofa' }],
     });
 
     const res = await computeMrp(asSb(sb), opts);
@@ -486,7 +489,7 @@ describe('computeMrp — includeUndated is visibility, not a demand filter (audi
   const undated: Row = {
     ...demandRed(5), id: 'si-undated', doc_no: 'SO-2',
     line_delivery_date: null,
-    so: { debtor_name: 'Beta', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: null, processing_date: null, customer_state: null },
+    so: { debtor_name: 'Beta', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: null, processing_date: '2026-07-02', customer_state: null },
   };
   const tables = () => ({
     ...BASE_TABLES,
@@ -610,11 +613,11 @@ describe('computeMrp — undated demand is COUNTED even when it is hidden', () =
   const d2 = {
     ...demandRed(1), id: 'si-d2', doc_no: 'SO-D2',
     line_delivery_date: '2026-12-02',
-    so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: '2026-12-02', processing_date: null, customer_state: null },
+    so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: '2026-12-02', processing_date: '2026-07-02', customer_state: null },
   };
   const undatedSo = (id: string, docNo: string, qty: number): Row => ({
     ...demandRed(qty), id, doc_no: docNo, line_delivery_date: null,
-    so: { debtor_name: 'Beta', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: null, processing_date: null, customer_state: null },
+    so: { debtor_name: 'Beta', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: null, processing_date: '2026-07-02', customer_state: null },
   });
   const tables = () => ({
     ...BASE_TABLES,
@@ -753,7 +756,7 @@ describe('computeMrp — SHIPPED no longer creates demand (audit D4)', () => {
   test('a SHIPPED-status SO line is done, matching so-stock-allocation / reservations', async () => {
     const shipped: Row = {
       ...demandRed(5),
-      so: { debtor_name: 'Acme', status: 'SHIPPED', so_date: '2026-07-01', customer_delivery_date: '2026-12-01', processing_date: null, customer_state: null },
+      so: { debtor_name: 'Acme', status: 'SHIPPED', so_date: '2026-07-01', customer_delivery_date: '2026-12-01', processing_date: '2026-07-02', customer_state: null },
     };
     const sb = fakeSb({ ...BASE_TABLES, mfg_sales_order_items: [shipped] });
     const res = await computeMrp(asSb(sb), opts);
@@ -1057,7 +1060,7 @@ const demandFor = (docNo: string, dates: Row): Row => ({
   line_delivery_date_overridden: false,
   so: {
     debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01',
-    amended_delivery_date: null, processing_date: null, customer_state: null,
+    amended_delivery_date: null, processing_date: '2026-07-02', customer_state: null,
     ...dates,
   },
 });
@@ -1136,6 +1139,37 @@ describe('computeMrp — allocation ranks on the EFFECTIVE delivery date', () =>
     const l1 = res.skus[0]!.lines.find((l) => l.soDocNo === 'SO-1')!;
     expect(l1.deliveryDate).toBe('2026-10-01');
     expect(l1.orderByDate).toBe('2026-10-01');
+  });
+});
+
+/* Owner 2026-09-15: 「没有 Processing date 的单子就不进来」. BUG-39 (2026-09-29):
+   HC-SO-013393 had a delivery date and no Processing Date and still showed on
+   MRP as SHORT with a supplier picked. */
+describe('computeMrp — an order with no Processing Date is not demand', () => {
+  test('an unreleased order with the EARLIER delivery date takes nothing; the released one gets the unit', async () => {
+    const sb = oneUnitWorld(
+      demandFor('SO-1', { customer_delivery_date: '2026-10-01', processing_date: null }),
+      demandFor('SO-2', { customer_delivery_date: '2026-12-01' }),
+    );
+
+    const res = await computeMrp(asSb(sb), opts);
+
+    expect(sourceByDoc(res)).toEqual({ 'SO-2': 'stock' });
+    expect(res.totals.shortageUnits).toBe(0);
+    const bucket = mrpStockAssignment(res).get(stockAssignmentKey('W1', 'BF-100', 'fabriccode=red'))!;
+    expect(bucket.claims.map((c) => c.soDocNo)).toEqual(['SO-2']);
+  });
+
+  test('a bucket whose only demand is unreleased has no row, even with undated shown', async () => {
+    const sb = oneUnitWorld(
+      demandFor('SO-1', { customer_delivery_date: '2026-10-01', processing_date: null }),
+      demandFor('SO-2', { customer_delivery_date: '2026-11-01', processing_date: null }),
+    );
+
+    const res = await computeMrp(asSb(sb), { ...opts, includeUndated: true });
+
+    expect(res.skus).toHaveLength(0);
+    expect(res.totals.shortageSkuCount).toBe(0);
   });
 });
 
@@ -1429,9 +1463,12 @@ describe('company 1: a sofa set is planned from its own purchase order only', ()
   });
 
   test('company 2 keeps the pooled sofa model — the rule is company-1 only', async () => {
+    /* Pooled, but per BATCH: a received dye lot that holds the whole set covers
+       it, whoever ordered it (see the set-walk suite below). */
     const sb = world({
       mfg_sales_order_items: [sofaDemand('si-sofa', 'SO-9', 5, '2026-12-01')],
       inventory_balances: [{ item_code: 'SF-100', warehouse_id: 'W1', variant_key: 'fabriccode=red', qty: 5 }],
+      v_inventory_lots_open: [{ warehouse_id: 'W1', item_code: 'SF-100', variant_key: 'fabriccode=red', batch_no: 'PO-OLD', qty_remaining: 5, received_at: '2026-08-01T00:00:00Z' }],
     }, 2);
 
     const res = await computeMrp(asSb(sb), { ...opts, companyId: 2 });
@@ -1472,7 +1509,7 @@ describe('an uncatalogued line keeps its category on the row, not just in the fi
     item_group: 'accessory', variants: {}, qty,
     warehouse_id: 'W1', line_delivery_date: '2026-12-01', line_no: 1, created_at: '2026-07-01T00:00:00Z',
     cancelled: false,
-    so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: '2026-12-01', processing_date: null, customer_state: null },
+    so: { debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01', customer_delivery_date: '2026-12-01', processing_date: '2026-07-02', customer_state: null },
   });
 
   test('mfg_products has no row for it: the SKU still says ACCESSORY', async () => {
@@ -1631,5 +1668,250 @@ describe('company 1: a custom pillow is planned from its own purchase order only
   test('company 2 keeps the pooled model for pillows too', async () => {
     const res = await computeMrp(asSb(world({ mfg_sales_order_items: demand, purchase_order_items: supply }, 2)), { ...opts, companyId: 2 });
     expect(lineOf(res, 'l-013496').poNumber).not.toBeNull();
+  });
+});
+
+/* 1 PO = 1 BATCH, AND A SOFA SET IS ONE BATCH OR NOTHING.
+ *
+ * Owner, 2026-10-05, on 2990-SO-2610-005 (XAMMAR 1A(LHF) + 2A(RHF), EZ-001):
+ * 「不能跨批次 1PO = 1batch 不能分开」. The stored allocator already plans the
+ * set that way (so-stock-allocation.ts 7b: one received batch covers EVERY
+ * module or the set stays PENDING) and the DO gate refuses a two-batch set.
+ * This engine planned each MODULE from its own pool: it handed the set the
+ * 2A(RHF) unit of batch 2990-PO-2607-018 (a cancelled order's half-set) and
+ * asked purchasing for the 1A(LHF) alone — a PO that could never complete
+ * the set, because the new lot and the old one are two batches. The page said
+ * "stock" where the SO said PENDING, and the suggested order was a half-set
+ * nobody could ship.
+ */
+describe('company 2: a sofa set is planned whole — one batch (= one PO) or nothing', () => {
+  const EZ = { fabricCode: 'EZ-001' };
+  const VKEY = 'fabriccode=ez-001';
+  const line = (id: string, docNo: string, code: string, delivery = '2026-12-01', extra: Row = {}): Row => ({
+    ...sofaDemand(id, docNo, 1, delivery), item_code: code, variants: EZ, ...extra,
+  });
+  const lot = (code: string, batch: string, qty = 1, receivedAt = '2026-08-12T00:00:00Z'): Row => ({
+    warehouse_id: 'W1', item_code: code, variant_key: VKEY, batch_no: batch, qty_remaining: qty, received_at: receivedAt,
+  });
+  const po = (poNumber: string, code: string, qty: number, eta: string, soItemId: string | null = null): Row => ({
+    ...sofaPoLine(poNumber, qty, EZ, eta), item_code: code, so_item_id: soItemId,
+  });
+  const run = async (tables: Record<string, Row[]>) => {
+    const res = await computeMrp(asSb(fakeSb({ ...BASE_TABLES, ...tables })), opts);
+    return new Map(res.sofaSets.map((s) => [s.soItemId, s]));
+  };
+  const LHF = 'XAMMAR-1A(LHF)';
+  const RHF = 'XAMMAR-2A(RHF)';
+  const SET = (docNo = 'SO-005', delivery = '2026-12-01') => [
+    line(`${docNo}-lhf`, docNo, LHF, delivery),
+    line(`${docNo}-rhf`, docNo, RHF, delivery),
+  ];
+
+  test('the production case: one module in a received batch, the other nowhere — the WHOLE set is short', async () => {
+    const sets = await run({
+      mfg_sales_order_items: SET(),
+      inventory_balances: [{ item_code: RHF, warehouse_id: 'W1', variant_key: VKEY, qty: 1 }],
+      v_inventory_lots_open: [lot(RHF, '2990-PO-2607-018')],
+    });
+    for (const id of ['SO-005-lhf', 'SO-005-rhf']) {
+      const s = sets.get(id)!;
+      expect(s.shortageQty).toBe(1);   // was: RHF "stock", LHF short — a half-set order
+      expect(s.stockQty).toBe(0);
+      expect(s.poNumber).toBeNull();
+      expect(s.batchNo).toBeNull();
+    }
+  });
+
+  test('a received batch holding EVERY module covers the set from stock, and names the dye lot', async () => {
+    const sets = await run({
+      mfg_sales_order_items: SET(),
+      v_inventory_lots_open: [lot(LHF, 'PO-X'), lot(RHF, 'PO-X')],
+    });
+    for (const id of ['SO-005-lhf', 'SO-005-rhf']) {
+      const s = sets.get(id)!;
+      expect(s.shortageQty).toBe(0);
+      expect(s.stockQty).toBe(1);
+      expect(s.poNumber).toBeNull();
+      expect(s.batchNo).toBe('PO-X');
+    }
+  });
+
+  test('both modules in stock but in two different batches is NOT coverage — never mix dye lots', async () => {
+    const sets = await run({
+      mfg_sales_order_items: SET(),
+      v_inventory_lots_open: [lot(LHF, 'PO-X'), lot(RHF, 'PO-Y')],
+    });
+    expect(sets.get('SO-005-lhf')!.shortageQty).toBe(1);
+    expect(sets.get('SO-005-rhf')!.shortageQty).toBe(1);
+    expect(sets.get('SO-005-lhf')!.batchNo).toBeNull();
+  });
+
+  test('one open PO carrying every module covers the set; the set lands when its LAST module does', async () => {
+    const sets = await run({
+      mfg_sales_order_items: SET(),
+      purchase_order_items: [po('PO-Y', LHF, 1, '2026-10-20'), po('PO-Y', RHF, 1, '2026-10-25')],
+    });
+    for (const id of ['SO-005-lhf', 'SO-005-rhf']) {
+      const s = sets.get(id)!;
+      expect(s.shortageQty).toBe(0);
+      expect(s.poNumber).toBe('PO-Y');
+      expect(s.poEta).toBe('2026-10-25');
+      expect(s.batchNo).toBe('PO-Y');
+    }
+  });
+
+  test('a partly received PO is still ONE batch: the landed module reads as that PO too, with its stock slice', async () => {
+    const sets = await run({
+      mfg_sales_order_items: SET(),
+      v_inventory_lots_open: [lot(LHF, 'PO-Y')],
+      purchase_order_items: [po('PO-Y', RHF, 1, '2026-10-25')],
+    });
+    const lhf = sets.get('SO-005-lhf')!;
+    const rhf = sets.get('SO-005-rhf')!;
+    expect(lhf.shortageQty).toBe(0);
+    expect(lhf.stockQty).toBe(1);
+    expect(lhf.poNumber).toBe('PO-Y');   // the SET is on PO-Y until the RHF lands
+    expect(rhf.shortageQty).toBe(0);
+    expect(rhf.stockQty).toBe(0);
+    expect(rhf.poNumber).toBe('PO-Y');
+  });
+
+  test('modules on two different open POs: the set names ONE of them and the other module is short — complete that PO, do not raise a third', async () => {
+    const sets = await run({
+      mfg_sales_order_items: SET(),
+      purchase_order_items: [po('PO-A', LHF, 1, '2026-10-20', 'SO-005-lhf'), po('PO-B', RHF, 1, '2026-10-22', 'SO-005-rhf')],
+    });
+    const lhf = sets.get('SO-005-lhf')!;
+    const rhf = sets.get('SO-005-rhf')!;
+    expect(lhf.poNumber).toBe('PO-A');
+    expect(lhf.shortageQty).toBe(0);
+    expect(rhf.poNumber).toBe('PO-A');   // the covering PO is named on the short line too
+    expect(rhf.shortageQty).toBe(1);
+    expect(rhf.batchNo).toBe('PO-A');
+  });
+
+  test("BUG-65: another order's open PO covering only part of the set is not named — the whole set is short, ready for one new PO", async () => {
+    const sets = await run({
+      mfg_sales_order_items: SET('2990-SO-2610-005'),
+      purchase_order_items: [
+        po('2990-PO-2607-018', 'XAMMAR-L(LHF)', 1, '2026-08-19', 'so-2607-024-l'),
+        po('2990-PO-2607-018', RHF, 1, '2026-08-19', 'so-2607-024-rhf'),
+      ],
+    });
+    for (const id of ['2990-SO-2610-005-lhf', '2990-SO-2610-005-rhf']) {
+      const s = sets.get(id)!;
+      expect(s.shortageQty).toBe(1);
+      expect(s.poNumber).toBeNull();   // was: 2990-PO-2607-018, and Proceed PO refused the set
+      expect(s.batchNo).toBeNull();
+    }
+  });
+
+  test('BUG-65: a partial PO with no SO provenance (hand-raised) is not named either', async () => {
+    const sets = await run({
+      mfg_sales_order_items: SET(),
+      purchase_order_items: [po('PO-M', RHF, 1, '2026-10-20')],
+    });
+    expect(sets.get('SO-005-lhf')!.poNumber).toBeNull();
+    expect(sets.get('SO-005-rhf')!.shortageQty).toBe(1);
+  });
+
+  test("BUG-65: another order's open PO still covers a set it holds WHOLE", async () => {
+    const sets = await run({
+      mfg_sales_order_items: SET(),
+      purchase_order_items: [po('PO-Z', LHF, 1, '2026-10-20', 'other-lhf'), po('PO-Z', RHF, 1, '2026-10-20', 'other-rhf')],
+    });
+    expect(sets.get('SO-005-lhf')!.poNumber).toBe('PO-Z');
+    expect(sets.get('SO-005-rhf')!.shortageQty).toBe(0);
+  });
+
+  test('two sets, one received batch: the earlier delivery takes it whole, the later one is wholly short', async () => {
+    const sets = await run({
+      mfg_sales_order_items: [...SET('SO-A', '2026-11-01'), ...SET('SO-B', '2026-12-01')],
+      v_inventory_lots_open: [lot(LHF, 'PO-X'), lot(RHF, 'PO-X')],
+    });
+    expect(sets.get('SO-A-lhf')!.batchNo).toBe('PO-X');
+    expect(sets.get('SO-A-rhf')!.shortageQty).toBe(0);
+    expect(sets.get('SO-B-lhf')!.shortageQty).toBe(1);
+    expect(sets.get('SO-B-rhf')!.shortageQty).toBe(1);
+  });
+
+  test('a set the allocator already LOCKED keeps its batch, even against an earlier delivery', async () => {
+    const sets = await run({
+      mfg_sales_order_items: [
+        ...SET('SO-A', '2026-11-01'),
+        ...SET('SO-B', '2026-12-01').map((r) => ({ ...r, allocated_batch_no: 'PO-X' })),
+      ],
+      v_inventory_lots_open: [lot(LHF, 'PO-X'), lot(RHF, 'PO-X')],
+    });
+    expect(sets.get('SO-B-lhf')!.batchNo).toBe('PO-X');
+    expect(sets.get('SO-B-rhf')!.stockQty).toBe(1);
+    expect(sets.get('SO-A-lhf')!.shortageQty).toBe(1);
+    expect(sets.get('SO-A-rhf')!.shortageQty).toBe(1);
+  });
+
+  test('a received batch cannot be topped up: a 2-of-one-module set with 1 in the batch is short by the whole set', async () => {
+    const sets = await run({
+      mfg_sales_order_items: [{ ...line('SO-005-lhf', 'SO-005', LHF), qty: 2 }],
+      v_inventory_lots_open: [lot(LHF, 'PO-X', 1)],
+    });
+    const s = sets.get('SO-005-lhf')!;
+    expect(s.shortageQty).toBe(2);
+    expect(s.stockQty).toBe(0);
+    expect(s.batchNo).toBeNull();
+  });
+
+  test('the stock side agrees: a batch that covers no whole set is assigned to nobody (free stock)', async () => {
+    const res = await computeMrp(asSb(fakeSb({
+      ...BASE_TABLES,
+      mfg_sales_order_items: SET(),
+      inventory_balances: [{ item_code: RHF, warehouse_id: 'W1', variant_key: VKEY, qty: 1 }],
+      v_inventory_lots_open: [lot(RHF, '2990-PO-2607-018')],
+    })), opts);
+    expect(mrpStockAssignment(res).get(stockAssignmentKey('W1', RHF, VKEY))).toBeUndefined();
+  });
+});
+
+describe('computeMrp — HC-0128 Hydraulic / NB fabric lines pre-select NB FURNITURE', () => {
+  const bind = (supplierId: string, code: string, isMain: boolean): Row => ({
+    item_code: 'BF-100', material_kind: 'mfg_product', is_main_supplier: isMain,
+    supplier_id: supplierId, supplier: { code, name: code },
+  });
+  const line = (id: string, variants: Row): Row => ({ ...demandRed(1), id, doc_no: `SO-${id}`, variants });
+  const tables = (bindings: Row[]): Record<string, Row[]> => ({
+    ...BASE_TABLES,
+    mfg_sales_order_items: [
+      line('si-hyd', { fabricCode: 'RED', specials: ['Hydraulic'] }),
+      line('si-note', { fabricCode: 'RED', extraAddonNote: '12”divan no leg with hydraulic.' }),
+      line('si-nb', { fabricCode: 'NB-04' }),
+      line('si-plain', { fabricCode: 'RED' }),
+    ],
+    supplier_material_bindings: bindings,
+    fabric_trackings: [{ fabric_code: 'NB-04', series: 'NB' }, { fabric_code: 'RED', series: 'R' }],
+  });
+  const ruleOf = (res: Awaited<ReturnType<typeof computeMrp>>): Record<string, string | null> =>
+    Object.fromEntries(res.skus.flatMap((s) => s.lines).map((l) => [l.soItemId, l.ruleSupplierId]));
+
+  test('routes hydraulic (special or note) and NB-series fabric to the bound NB supplier', async () => {
+    const res = await computeMrp(asSb(fakeSb(tables([bind('hk', '400-H004', true), bind('nb', '400-N002', false)]))), opts);
+    expect(ruleOf(res)).toEqual({ 'si-hyd': 'nb', 'si-note': 'nb', 'si-nb': 'nb', 'si-plain': null });
+  });
+
+  test('one NB bedframe pulls the other bedframes of the SAME SO to NB, nothing else', async () => {
+    const sb = fakeSb({
+      ...tables([bind('hk', '400-H004', true), bind('nb', '400-N002', false)]),
+      mfg_sales_order_items: [
+        { ...line('si-hyd', { fabricCode: 'RED', specials: ['Hydraulic'] }), doc_no: 'SO-A' },
+        { ...line('si-sib', { fabricCode: 'RED' }), doc_no: 'SO-A' },
+        { ...line('si-matt', {}), doc_no: 'SO-A', item_group: 'mattress' },
+        { ...line('si-other', { fabricCode: 'RED' }), doc_no: 'SO-B' },
+      ],
+    });
+    const res = await computeMrp(asSb(sb), opts);
+    expect(ruleOf(res)).toEqual({ 'si-hyd': 'nb', 'si-sib': 'nb', 'si-matt': null, 'si-other': null });
+  });
+
+  test('no rule when NB FURNITURE is not bound to the SKU (the PO would fall back to main)', async () => {
+    const res = await computeMrp(asSb(fakeSb(tables([bind('hk', '400-H004', true)]))), opts);
+    expect(Object.values(ruleOf(res)).every((v) => v === null)).toBe(true);
   });
 });

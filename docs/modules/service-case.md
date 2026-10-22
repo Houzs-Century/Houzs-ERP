@@ -26,6 +26,8 @@ in the ordered stage table but is a legal value everywhere else. Both
 `completed` and `voided` stamp `closed_at`; only `completed` stamps
 `completion_date` and feeds the CSAT survey.
 
+A crew POD on the delivery run (scm/routes/delivery-job-progress.ts) attaches its photos as `completion` and makes one move, only from the leg's own step: pickup -> Pending Supplier Pickup, inspection -> QC Issue Result, delivery (Delivery stage) -> completed with the survey (`services/assrCompletionSurvey.ts`, shared with the manual transition).
+
 Sub-statuses exist inside two stages only: Under Verification
 (`pending_inspection` / `qc_issue_result`); Pickup/Return has **three** legs —
 enters on `pending_customer_pickup` (collect from customer), then
@@ -35,6 +37,12 @@ enters on `pending_customer_pickup` (collect from customer), then
 (no-op otherwise). **"Open"** (backlog/aging/SLA/escalation) means neither
 terminal stage AND not archived — both terminal stages must be excluded, not
 just `completed`.
+
+Stage target days are snapshotted on the case (`stage_target_days`) and its open
+`assr_stage_history` row when it enters a stage. Saving a target in Service
+Maintenance (priority cell, or the active Lead Time profile) re-reads it for
+the open cases already in that stage (`reapplyStageTargets`), so "overdue"
+follows the new SLA at once.
 
 ## Permissions
 
@@ -63,6 +71,12 @@ just `completed`.
   AND visibility scope explicitly — an **unresolved** scope (`undefined`,
   pre-migration/cold start) skips the check; an **empty** scope (`[]`, no
   grants) must 404. Never collapse the two.
+- A case's `company_id` is stamped at CREATE from its order, not the creator's
+  switcher (owner 2026-10-05): `scmSoCompanyId` matches `doc_no` OR
+  `linked_ac_docno`, else reads the number (`HC-SO-`/`SO-<digits>` = HOUZS,
+  `2990-SO-` = 2990, via `docPrefixForCode`). Only a non-order doc (display
+  stock, free text) falls back to the switcher. Editing `doc_no` re-stamps it
+  the same way (`patchAssrCase`); a non-order doc keeps the company.
 - `complained_date` is server-stamped at create and immutable after —
   deliberately absent from `PATCH_FIELDS`.
 - `items[]` is NOT required at create — a case need not be about a defective
@@ -79,16 +93,28 @@ just `completed`.
 - `order_pos` (read-only, merged: the SO's raised purchase orders) must never
   be confused with `po_no` (the case's own service PO — hand-edited or
   `generate-po`, refuses once set).
+- `order_dos` (read-only, detail route only, `services/assrOrderDos.ts`) =
+  the SALES ORDER's delivery orders with each one's delivery date
+  (SCM `delivered_at` → `do_date`, else AutoCount mirror `doc_date`), shown
+  as "DO No" / "Delivery Date" on the Customer card (desktop
+  `components/assr/CaseDocChips.tsx`, mobile `MobileCaseDocChips.tsx` +
+  `MobileMyCaseDetail.tsx`, one reader `assr/order-delivery.ts`). It is NOT
+  the case's `do_date`, which is the SERVICE delivery leg's date.
 - The pre-auth form-intake endpoints scope strictly by the caller's **secret**
   → company mapping; an unmapped secret 503s, it must never fall back to "no
   predicate" (that would leak both companies' PII).
 - A logistics leg reaches the HC Delivery sheet ONLY when its own-team marker
   AND its date are both set: inspection (`inspection_by='own'` +
   `inspection_visit_at`), pickup (`pickup_by='customer'` + `customer_pickup_at`),
-  delivery (`delivery_by='own'` + `do_date`). Supplier / 3PL / unset legs never
+  delivery (`delivery_by='own'` + `do_date`), from EVERY company: the sheet
+  feed is the one deliberate exception to `assrCompanySql` (owner 2026-10-01,
+  Service Cases are not split by company). Supplier / 3PL / unset legs never
   sync. `GET /api/delivery-sheet/assr-legs` is the own-team-gated feed
   (`delivery-sheet-assr-feed.ts`); the Delivery Planning board is deliberately
   NOT gated (it shows every dated leg), so board and sheet differ on purpose.
+- **Pickup tracking** on Pickup / Return (HC-0129): `pickup_status` (pending / scheduled / completed), `actual_pickup_at`, `pickup_pic` (free text), `item_location` (customer / warehouse / supplier). The Scheduled Pickup Date (ETA) is `customer_pickup_at`, not a new column. Allowed values live in `scm/shared/assr-pickup-tracking.ts` (frontend copy byte-identical); the PATCH refuses anything else. Desktop `components/assr/PickupTrackingFields.tsx`, mobile rows in `MobileServiceCase.tsx`.
+- **Supplier (creditor) auto-fill** (HC-0130): resolved when the case is created (awaited, so it is set at Review) and when `item_code` changes: the PO raised from the case item's SO line (`creditor_source='po'`), else the SO item's main bound supplier in `supplier_material_bindings` (`'so'`; several suppliers and no main = left blank), else blank for a manual pick (Farra's rule; AutoCount MainSupplier is not used). A manual pick (`'manual'`) is never overwritten; "Resolve now" forces a re-resolve. A case whose SO line is not in the ERP (old AutoCount-only orders) keeps its current supplier and source ("SO not in the ERP; supplier kept"). `services/assrOrderPos.ts`, `services/stockItems.ts`.
+- **Verification findings** (HC-0133): `inspection_findings` and `next_action` (free text, logged on the timeline like other notes) and `pending_with` (supplier / production / logistics / customer / management) sit under the root cause, which now shows before an Outcome is picked. Stored 1:1 in `assr_case_verification_notes`, NOT on `assr_cases`: the list / detail read `c.*` plus joined columns and the D1 test mirror caps a result set at 100 columns, which those reads had reached. `services/assrVerificationNotes.ts` splits the keys off the PATCH and the detail route merges them onto `case`. Allowed values live in `scm/shared/assr-verification-fields.ts` (frontend copy byte-identical). Desktop `components/assr/VerificationFindingsFields.tsx`, mobile rows in `MobileServiceCase.tsx`.
 - **Supplier returns (返厂)** are rows in `assr_supplier_returns` (`round_no`
   1..N, added freely; an archived trip keeps its number, never reused). The list
   is the source of truth for each trip's out/back dates; the case's
@@ -101,6 +127,17 @@ just `completed`.
   `POST`/`PATCH`/`DELETE /api/assr/:id/supplier-returns` (`service_cases.write`,
   under the `enforceCaseScope` `/:id` guard). `qc_receipt_date` stays a
   Verification-stage field, NOT a supplier-return date.
+- **Each supplier return has its own document number** `ref_no` =
+  `SVC-RTN-YYMM-NNNN` (MYT month), minted through `services/documentRefs.ts`
+  (registry `document_refs`, `entity_type='assr_supplier_return'`) on the
+  shared `scm.next_doc_no_n` counter. Numbering never blocks saving a trip:
+  a trip left unnumbered is numbered on the next `listSupplierReturns` read.
+  Removing a trip VOIDs its number in the registry; it is never re-issued.
+  Its paper is the Supplier Return Note: `GET /api/assr-print/:id?variant=supplier&round=<trip id>`
+  (Print on each trip, desktop + mobile, path from `returnNotePath`).
+- **Case number** `ASSR/YYMM-NNN`: month in MYT, number from
+  `scm.next_doc_no_n` floored at the month's live max (`nextAssrNumber`); the
+  unique index on `assr_no` + the create retry stay as the backstop.
 - **Reopen for a DIFFERENT complaint** (`POST /api/assr/:id/reopen`,
   `service_cases.write`): a completed/voided case that comes back with a new
   problem keeps its number. The OLD `complaint_issue` is logged to the timeline

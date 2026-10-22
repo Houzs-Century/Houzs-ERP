@@ -33,7 +33,7 @@ import { Save, Trash2, X, ArrowRightLeft, ChevronDown } from 'lucide-react';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { Button } from '@2990s/design-system';
 import { formatPhone } from '@2990s/shared/phone';
-import { activeOptions, buildVariantSummary, fmtDateOrDash, isServiceLine, maintPickerValues } from '@2990s/shared';
+import { activeOptions, buildVariantSummary, fmtDateOrDash, isServiceLine, maintPickerValues, fmtMoneySen } from '@2990s/shared';
 import { useCreateGrn, usePostGrn } from '../../vendor/scm/lib/grn-queries';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { readScmHandoff, removeScmHandoff, writeScmHandoff } from '../../lib/scmHandoffStorage';
@@ -43,10 +43,12 @@ import { usePurchaseOrderDetail, usePurchaseOrders, useSuppliers, useSupplierDet
 import { useMfgProducts, useMaintenanceConfig, useSpecialAddons, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
-import { useRacks } from '../../vendor/scm/lib/warehouse-queries';
+import { useGrnRackOptions } from '../../vendor/scm/lib/grn-line-rack';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { skuMapFromBindings, supplierCodeFor } from '../../vendor/scm/lib/supplier-doc-data';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
+import { LinePoRefLink } from '../../vendor/scm/components/LinePoRefLink';
+import { linePoLink, type LinePoFields } from '../../vendor/scm/lib/line-po-link';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
@@ -60,12 +62,14 @@ import { PageHeader } from '../../components/Layout';
 import { resolveFxRate } from './fx-rate';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
+import { useAuth } from '../../auth/AuthContext';
+import { canPostGoodsReceipts } from '../../auth/salesAccess';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtAmt = (centi: number | null | undefined): string =>
   ((centi ?? 0) / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => `${currency} ${fmtAmt(centi)}`;
+const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => fmtMoneySen(centi ?? 0, currency);
 
 /* Commander 2026-05-29 — "PO 那边根据 Category 会叫我填写我的 Variant，这个
    (GRN) 怎么没有？" Manual GRN lines whose product is a bedframe/sofa now get
@@ -122,6 +126,10 @@ type DraftLine = {
   /* Commander 2026-06-04 — optional per-line destination Rack (warehouse-scoped).
      Persists to grn_items.rack_id when the create payload forwards rackId. */
   rackId:            string;
+  /* DEV-28 (Sim 2026-10-01): the PO each line came from, shown on the line like
+     the purchase invoice does. A from-PO receipt can span several orders, so it
+     is per line, never the header's PO. Absent on drafts stashed before this. */
+  sourcePo?:         LinePoFields | null;
 };
 
 /* Stashed to sessionStorage before leaving for the From-PO-multi picker, so the
@@ -145,6 +153,8 @@ type GrnNewDraft = {
 };
 
 export const GrnNew = () => {
+  const { user } = useAuth();
+  const mayPost = canPostGoodsReceipts(user);
   const navigate = useNavigate();
   const notify = useNotify();
   const [params] = useSearchParams();
@@ -270,8 +280,8 @@ export const GrnNew = () => {
   /* Commander 2026-06-04 — racks of the chosen "Receive into" warehouse, for the
      optional per-line Rack picker. Racks are warehouse-scoped, so this re-queries
      whenever the header warehouse changes; gated until a warehouse is chosen. */
-  const racksQ = useRacks({ warehouseId: warehouseId || undefined });
-  const racks = useMemo(() => racksQ.data?.racks ?? [], [racksQ.data?.racks]);
+  const racksQ = useGrnRackOptions(warehouseId || undefined);
+  const racks = racksQ.racks;
   /* True once the on-mount From-PO picks restore has run (whether or not picks
      were found). The warehouse-default effect MUST wait for this — otherwise it
      races the async restore: on first render hasPicks is false simply because
@@ -340,6 +350,7 @@ export const GrnNew = () => {
         unitPriceSen:      p.unitPriceSen ?? 0,
         notes:               '',
         rackId:              '',
+        sourcePo:            { source_po_id: p.poId, source_po_number: p.poDocNo },
       }));
     setLines([...baseLines, ...pickLines]);
 
@@ -384,6 +395,7 @@ export const GrnNew = () => {
       return;
     }
     if (!poQ.data) return;
+    const header = poQ.data.purchaseOrder;
     const next: DraftLine[] = poQ.data.items
       .map((it: any) => {
         const outstanding = (it.qty ?? 0) - (it.received_qty ?? 0);
@@ -403,6 +415,7 @@ export const GrnNew = () => {
           unitPriceSen:    it.unit_price_sen ?? 0,
           notes:             '',
           rackId:            '',
+          sourcePo:          { source_po_id: header.id, source_po_number: header.po_number },
         };
       })
       .filter((l) => (l.outstanding ?? 0) > 0);
@@ -782,10 +795,12 @@ export const GrnNew = () => {
               <Save {...ICON} />
               {saving ? 'Saving…' : 'Save as Draft'}
             </Button>
-            <Button variant="primary" size="md" onClick={() => onSave(false)} disabled={saving}>
-              <Save {...ICON} />
-              {saving ? 'Saving…' : 'Create Goods Receipt'}
-            </Button>
+            {mayPost && (
+              <Button variant="primary" size="md" onClick={() => onSave(false)} disabled={saving}>
+                <Save {...ICON} />
+                {saving ? 'Saving…' : 'Create Goods Receipt'}
+              </Button>
+            )}
           </div>
         }
       />
@@ -1068,7 +1083,7 @@ export const GrnNew = () => {
                 })() });
 
               return (
-                <div
+                <div data-grid-row
                   key={l.rid}
                   style={{
                     background: 'var(--c-paper)',
@@ -1093,6 +1108,11 @@ export const GrnNew = () => {
                         LINE {idx + 1}
                       </span>
                       {l.itemGroup && <ItemGroupPill group={l.itemGroup} />}
+                      {l.sourcePo && linePoLink(l.sourcePo) && (
+                        <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+                          From PO <LinePoRefLink line={l.sourcePo} />
+                        </span>
+                      )}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
                       <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
@@ -1351,30 +1371,25 @@ export const GrnNew = () => {
                         has none. Empty value = "— No rack —". */}
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Rack</span>
-                      <span className={styles.selectWrap}>
-                        <select
-                          className={styles.fieldSelect}
-                          value={l.rackId}
-                          onChange={(e) => setLine(l.rid, { rackId: e.target.value })}
-                          disabled={!warehouseId || racksQ.isLoading}
-                        >
-                          {!warehouseId ? (
-                            <option value="">— Pick a warehouse first —</option>
-                          ) : racksQ.isLoading ? (
-                            <option value="">Loading racks…</option>
-                          ) : racks.length === 0 ? (
-                            <option value="">No racks in this warehouse</option>
-                          ) : (
-                            <>
-                              <option value="">— No rack —</option>
-                              {sortByText(racks).map((r) => (
-                                <option key={r.id} value={r.id}>{r.rack}</option>
-                              ))}
-                            </>
-                          )}
-                        </select>
-                        <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
-                      </span>
+                      <SearchableSelect
+                        className={styles.fieldInput}
+                        value={l.rackId}
+                        onChange={(v) => setLine(l.rid, { rackId: v })}
+                        disabled={!warehouseId || racksQ.isLoading || racks.length === 0}
+                        ariaLabel={`Rack for line ${idx + 1}`}
+                        placeholder={!warehouseId ? '— Pick a warehouse first —'
+                          : racksQ.isLoading ? 'Loading racks…'
+                          : racks.length === 0 ? 'No racks in this warehouse'
+                          : '— No rack — (type to search)'}
+                        /* The picker seeds its search with the selected label, so
+                           an empty rack must have no option of its own or opening
+                           it would filter the list down to "— No rack —". The
+                           clear option appears once a rack is picked. */
+                        options={[
+                          ...(l.rackId ? [{ value: '', label: '— No rack —' }] : []),
+                          ...racksQ.options,
+                        ]}
+                      />
                     </label>
                   </div>
                 </div>

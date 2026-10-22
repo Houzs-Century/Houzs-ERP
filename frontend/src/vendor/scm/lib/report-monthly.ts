@@ -22,7 +22,7 @@ import { flattenLaid } from './report-layout';
 export type FlatLine = {
   id: string;
   label: string;
-  kind: 'block' | 'category' | 'row' | 'unassigned' | 'total' | 'net';
+  kind: 'block' | 'category' | 'row' | 'unassigned' | 'total' | 'net' | 'memo';
   depth: number;
   amountSen: number;
   pct: number | null;
@@ -206,6 +206,7 @@ export const performanceLines = (r: PerfLike, summary: PerfSummaryLike[]): FlatL
 type RpLike = {
   layout: { tree: LaidNode[]; inSen: number; outSen: number };
   totals: { openingTotalSen: number; receiptsTotalSen: number; paymentsTotalSen: number; closingTotalSen: number };
+  card: { takingsSen: number; transitSen: number };
 };
 
 /** The Cash Flow as lines, the Total column only: each top category as a
@@ -224,6 +225,10 @@ export const rpLines = (r: RpLike): FlatLine[] => {
   out.push(fixedLine('net:surplus', 'Cash Surplus / (Deficit)', 'net', t.receiptsTotalSen - t.paymentsTotalSen, null));
   out.push(fixedLine('bal:opening', 'Balance b/f', 'total', t.openingTotalSen, null));
   out.push(fixedLine('bal:closing', 'Balance c/f', 'net', t.closingTotalSen, null));
+  /* The card money the bank has not received (owner 2026-09-28): memo lines, so a
+     month whose bank statement is not in yet is never blank. */
+  out.push(fixedLine('memo:card-takings', 'Card takings this period (swiped, not yet in the bank)', 'memo', r.card.takingsSen, null));
+  out.push(fixedLine('memo:card-transit', 'Card money in transit at period end', 'memo', r.card.transitSen, null));
   return out;
 };
 

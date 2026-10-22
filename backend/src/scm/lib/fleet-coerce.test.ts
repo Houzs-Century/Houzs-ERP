@@ -6,6 +6,8 @@ import { describe, expect, test } from 'vitest';
 
 import {
   dateOrNull, floatOrNull, intOrNull, iso, normPlate, numOrNull, refsOrNull, tsOrNull,
+  WORK_ORDER_FILE_KINDS, isWorkOrderFileKind, isWorkOrderFileKeyOf, workOrderFileKey,
+  breakdownFileKey, isBreakdownFileKeyOf,
 } from './fleet-coerce';
 
 /** Every `*OrNull` coercer shares the not-supplied rule. Asserted for all of
@@ -114,5 +116,38 @@ describe('normPlate', () => {
   test('null and undefined normalise to empty, not to "NULL"', () => {
     expect(normPlate(null)).toBe('');
     expect(normPlate(undefined)).toBe('');
+  });
+});
+
+describe('work-order file keys (HC-0031)', () => {
+  test('the key sits under the work order, by kind, with a cleaned file name', () => {
+    expect(workOrderFileKey('wo1', 'invoice', 'pdf', 'Inv #77 (T Force).PDF', 1700))
+      .toBe('fleet/work-orders/wo1/invoice/1700-Inv_77_T_Force.pdf');
+    expect(workOrderFileKey('wo1', 'photo', 'jpg', null, 5)).toBe('fleet/work-orders/wo1/photo/5.jpg');
+  });
+  test('only the three kinds map to a refs column', () => {
+    expect(isWorkOrderFileKind('quote')).toBe(true);
+    expect(isWorkOrderFileKind('toString')).toBe(false);
+    expect(WORK_ORDER_FILE_KINDS.photo).toBe('photo_refs');
+  });
+  test('a key is accepted only for its own work order', () => {
+    const k = workOrderFileKey('wo1', 'quote', 'png', 'q', 1);
+    expect(isWorkOrderFileKeyOf(k, 'wo1')).toBe(true);
+    expect(isWorkOrderFileKeyOf(k, 'wo2')).toBe(false);
+    expect(isWorkOrderFileKeyOf('fleet/work-orders/wo1/../wo2/x.pdf', 'wo1')).toBe(false);
+    expect(isWorkOrderFileKeyOf('fleet/compliance/l/d/1.pdf', 'wo1')).toBe(false);
+  });
+});
+
+describe('breakdown media keys', () => {
+  test('the key sits under the case, with a cleaned file name', () => {
+    expect(breakdownFileKey('bd1', 'mp4', 'Scene 1 (KL).MP4', 1700)).toBe('fleet/breakdowns/bd1/1700-Scene_1_KL.mp4');
+    expect(breakdownFileKey('bd1', 'jpg', null, 5)).toBe('fleet/breakdowns/bd1/5.jpg');
+  });
+  test('a key is ours only under its own case; a legacy slips/ key is not', () => {
+    expect(isBreakdownFileKeyOf(breakdownFileKey('bd1', 'jpg', 'x', 1), 'bd1')).toBe(true);
+    expect(isBreakdownFileKeyOf(breakdownFileKey('bd1', 'jpg', 'x', 1), 'bd2')).toBe(false);
+    expect(isBreakdownFileKeyOf('fleet/breakdowns/bd1/../bd2/x.jpg', 'bd1')).toBe(false);
+    expect(isBreakdownFileKeyOf('slips/2026/10/abc.jpg', 'bd1')).toBe(false);
   });
 });

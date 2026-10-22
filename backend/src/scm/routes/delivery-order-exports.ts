@@ -32,6 +32,7 @@ import { readExportWindow } from '../lib/document-line-export';
 import { resolveSalesScopeIds } from '../lib/salesScope';
 import { canViewAllSales } from '../lib/houzs-perms';
 import { DO_LIST_HEADER, DO_LIST_ROW_DEPS } from './delivery-orders-mfg';
+import { withSoRefDocNos } from '../lib/so-ref-search';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -45,7 +46,7 @@ export async function doExportRowsHandler(c: Ctx) {
     return c.json({ error: 'Your account is not linked to a Houzs user, so delivery orders cannot be shown — please contact IT.' }, 403);
   }
   const scopeIds = await resolveSalesScopeIds(sb, c.env, houzsUserId, canViewAll);
-  const out = await buildDoExportRows(sb, c, readDoListParams((k) => c.req.query(k)), scopeIds, DO_LIST_HEADER, DO_LIST_ROW_DEPS, readExportWindow((k) => c.req.query(k)));
+  const out = await buildDoExportRows(sb, c, await withSoRefDocNos(sb, c, readDoListParams((k) => c.req.query(k))), scopeIds, DO_LIST_HEADER, DO_LIST_ROW_DEPS, readExportWindow((k) => c.req.query(k)));
   if (out.error !== null) return c.json({ error: 'export_failed', reason: out.error }, 500);
   return c.json(out);
 }

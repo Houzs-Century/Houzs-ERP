@@ -44,9 +44,13 @@ describe('the Finance sidebar', () => {
       '/scm/currencies', '/reports/fair-report',
       /* And the ones added since (docs/bugs/0827, 0828; the Forecast P&L 2026-09-21). */
       '/scm/credit-notes', '/scm/deposit-invoices', '/scm/forecast', '/scm/finance-dashboard',
+      /* AR Invoices (2026-09-29) — the AP list's twin. */
+      '/scm/ar-invoices',
+      /* Card and transfer payments not matched yet, one list (2026-09-30). */
+      '/scm/unmatched-payments',
     ]) expect(tos, `${to} is still reachable`).toContain(to);
     /* The Accounting page's tabs, now reachable by name. */
-    for (const tab of ['je', 'gl', 'tb', 'close', 'check', 'pnl', 'bs', 'rp', 'ar', 'ap', 'corrections', 'collection', 'charges', 'groups', 'performance']) {
+    for (const tab of ['je', 'gl', 'tb', 'close', 'check', 'pnl', 'bs', 'rp', 'ar', 'ap', 'corrections', 'collection', 'charges', 'groups', 'performance', 'products']) {
       expect(tos, `tab ${tab} is deep-linked`).toContain(`/scm/accounting?tab=${tab}`);
     }
     expect(new Set(tos).size, 'no destination twice').toBe(tos.length);
@@ -66,6 +70,6 @@ describe('the Finance sidebar', () => {
   it('puts the reports together, the Corrections report among them', () => {
     const reports = finance?.children?.find((g) => g.label === 'Reports');
     const labels = (reports?.children ?? []).map((t) => t.label);
-    expect(labels).toEqual(expect.arrayContaining(['P&L', 'Balance Sheet', 'Cash Flow', 'AR Aging', 'AP Aging', 'Corrections', 'Sales Report']));
+    expect(labels).toEqual(expect.arrayContaining(['P&L', 'Balance Sheet', 'Cash Flow', 'AR Aging', 'AP Aging', 'Corrections', 'Sales Report', 'Product Profit']));
   });
 });

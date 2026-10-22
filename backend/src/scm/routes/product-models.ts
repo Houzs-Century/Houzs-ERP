@@ -35,8 +35,10 @@ import { baseKeyOf, deleteThumbFor, putOptionalThumb } from '../../services/phot
 import type { Env, Variables } from '../env';
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { categorySwapAllowed } from '../shared/category-swap';
+import { invalidModelDefault } from '../shared/model-default-variants';
 import { moveModelCategory } from '../lib/model-category-move';
 import { MFG_PRODUCT_CATEGORIES } from './mfg-products';
+import { isSingleSkuCategory } from '../shared/product-categories';
 
 export const productModels = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -166,9 +168,14 @@ const CreateBody = z.object({
   active:         z.boolean().optional(),
 });
 
+const MODEL_CODE_MAX = 32;
+
 const PatchBody = z.object({
   branding:       z.string().trim().max(80).nullable().optional(),
-  modelCode:      z.string().trim().min(1).max(32).optional(),
+  // The 32-character limit is checked in the handler, and only for a CHANGED
+  // code: imported models carry longer codes, and the edit screen sends the
+  // code back on every save, so a schema limit made those models uneditable.
+  modelCode:      z.string().trim().min(1).max(200).optional(),
   name:           z.string().trim().min(1).max(200).optional(),
   // category: any other category (shared/category-swap.ts), and it moves the
   // model's SKUs with it so none is orphaned in the other category.
@@ -176,10 +183,12 @@ const PatchBody = z.object({
   description:    z.string().trim().max(500).nullable().optional(),
   photoUrl:       z.string().trim().url().nullable().optional(),
   allowedOptions: z.record(z.unknown()).optional(),
+  // Keyed like a line's variants; checked against allowed_options below.
+  defaultVariants: z.record(z.string().trim().min(1)).optional(),
   active:         z.boolean().optional(),
 });
 
-const COLS = 'id, branding, model_code, name, category, description, photo_url, allowed_options, active, created_at, updated_at';
+const COLS = 'id, branding, model_code, name, category, description, photo_url, allowed_options, default_variants, active, created_at, updated_at';
 
 // ── GET / ──────────────────────────────────────────────────────────────────
 export const listProductModelsHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
@@ -490,6 +499,7 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
   if (parsed.data.description !== undefined)    u.description     = parsed.data.description;
   if (parsed.data.photoUrl !== undefined)       u.photo_url       = parsed.data.photoUrl;
   if (parsed.data.allowedOptions !== undefined) u.allowed_options = parsed.data.allowedOptions;
+  if (parsed.data.defaultVariants !== undefined) u.default_variants = parsed.data.defaultVariants;
   if (parsed.data.active !== undefined)         u.active          = parsed.data.active;
   if (parsed.data.category !== undefined)       u.category        = parsed.data.category;
 
@@ -506,9 +516,16 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
   // just ACTIVATED (sofa auto-SKU rule below — Chairman 2026-06-02).
   const { data: before } = await scopeToCompanyId(supabase
     .from('product_models')
-    .select('allowed_options, category')
+    .select('allowed_options, category, model_code')
     .eq('id', id), co.companyId)
     .maybeSingle();
+  const beforeCode = (before as { model_code?: string } | null)?.model_code ?? null;
+  if (u.model_code !== undefined && u.model_code !== beforeCode && String(u.model_code).length > MODEL_CODE_MAX) {
+    return c.json({
+      error: 'model_code_too_long',
+      reason: `Model code can be at most ${MODEL_CODE_MAX} characters.`,
+    }, 400);
+  }
   const beforeCategory = (before as { category?: string } | null)?.category ?? null;
   if (u.category !== undefined && u.category === beforeCategory) delete u.category;
   if (u.category !== undefined && !categorySwapAllowed(beforeCategory, String(u.category))) {
@@ -518,6 +535,16 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
     }, 409);
   }
   if (Object.keys(u).length === 0) return c.json({ error: 'empty_patch' }, 400);
+  if (parsed.data.defaultVariants !== undefined) {
+    const bad = invalidModelDefault(
+      String(u.category ?? beforeCategory ?? ''),
+      parsed.data.defaultVariants,
+      parsed.data.allowedOptions ?? (before as { allowed_options?: unknown } | null)?.allowed_options ?? null,
+    );
+    if (bad) {
+      return c.json({ error: 'default_not_allowed', message: `The default for ${bad} is not one of this Model's allowed options.` }, 400);
+    }
+  }
   // The category moves through the helper Import SKUs also uses, so the model's SKUs always follow it.
   const newCategory = u.category === undefined ? undefined : String(u.category);
   delete u.category;
@@ -603,6 +630,9 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
   // "Console") — the engine matches case-sensitively, so the code suffix must
   // equal the laid-out cell code.
   const autoCreatedSkus: string[] = [];
+  // Codes the insert refused: the options are saved, so the PATCH still
+  // succeeds, but the screen must say these codes do not exist yet.
+  const autoCreateFailed: string[] = [];
   if (cat === 'SOFA' && parsed.data.allowedOptions !== undefined) {
     const oldComps = new Set(
       Array.isArray((before?.allowed_options as { compartments?: unknown } | null)?.compartments)
@@ -618,14 +648,12 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
       const codePrefix = modelCode.toUpperCase();
       const modelName  = String((data as { name?: string }).name ?? '').trim();
       const branding   = String((data as { branding?: string | null }).branding ?? '').trim();
-      const namePrefix = (branding ? `${branding} ` : '').toUpperCase();
       const upperName  = (modelName || modelCode).toUpperCase();
-      // Backend-authority client (bypasses POS-role RLS for the system insert).
-      const admin = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY, {
-        auth: { persistSession: false, autoRefreshToken: false },
-      });
+      // The request's own client: it is already service-role AND pointed at the
+      // `scm` schema. A raw createClient() here defaulted to `public`, where
+      // this table is not, so every auto-create failed and was swallowed.
       const wantCodes = added.map((comp) => `${codePrefix}-${comp}`);
-      const { data: existing, error: existingErr } = await pgrestIn(admin
+      const { data: existing, error: existingErr } = await pgrestIn(supabase
         .from('mfg_products')
         .select('code'), 'code', wantCodes)
         .eq('company_id', activeCompanyId(c));
@@ -644,7 +672,7 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
           return {
             id:         `mfg-${rand.replace(/-/g, '').slice(0, 12)}`,
             code:       `${codePrefix}-${comp}`,
-            name:       `${namePrefix}SOFA ${upperName} ${comp}`.trim(),
+            name:       `SOFA ${upperName} ${comp}`,
             category:   'SOFA',
             base_model: modelCode,
             model_id:   id,
@@ -658,13 +686,14 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
         // Best-effort: allowed_options already saved; don't fail the PATCH if the
         // auto-create hiccups (Master Admin can still add via SKU Master). 23505
         // = a concurrent create already made it — treat as success (idempotent).
-        const { error: insErr } = await admin.from('mfg_products').insert(stampCompany(rows, c));
+        const { error: insErr } = await supabase.from('mfg_products').insert(stampCompany(rows, c));
         if (!insErr || insErr.code === '23505') autoCreatedSkus.push(...rows.map((r) => r.code));
+        else autoCreateFailed.push(...rows.map((r) => r.code));
       }
     }
   }
 
-  return c.json({ model: data, autoCreatedSkus });
+  return c.json({ model: data, autoCreatedSkus, autoCreateFailed });
 };
 productModels.patch('/:id', patchProductModelHandler);
 
@@ -818,11 +847,9 @@ productModels.post('/:id/generate-skus', async (c) => {
   //               data sample. Empty branding → prefix + space dropped.
   //
   //   SOFA      code:  {model_code}-{compartment}                  5530-1A(LHF)
-  //             name:  {branding?} SOFA {model.name} {compartment} SOFA 5530 1A(LHF)
-  //                                                                SOFA ADDA 1A(LHF)
-  //                                                                Houzs SOFA ADDA 1A(LHF)
-  //             — "SOFA" literal added in PR #81 to match commander's
-  //               legacy data sample. Empty branding → prefix dropped.
+  //             name:  SOFA {model.name} {compartment}   SOFA 5530 1A(LHF)
+  //                                                       SOFA ADDA 1A(LHF)
+  //             — no branding in the name; it lives in the branding column.
   //
   const modelName = (model.name ?? '').trim();
   const sizesArr  = Array.isArray(opts.sizes)        ? (opts.sizes as string[])        : [];
@@ -859,13 +886,11 @@ productModels.post('/:id/generate-skus', async (c) => {
     // (commander typed "SOFA 5530" as the name). Now the template adds
     // them so commander can keep `model.name` short ("ADDA" → "SOFA ADDA
     // 1A(LHF)"). Mattress branch below got the same treatment.
-    const branding = (model.branding ?? '').trim();
-    const prefix   = branding ? `${branding} ` : '';
     for (const comp of compsArr) {
       wanted.push({
         code:       `${model.model_code}-${comp}`,
-        // "SOFA 5530 1A(LHF)" or "Houzs SOFA ADDA 1A(RHF)"
-        name:       `${prefix}SOFA ${modelName} ${comp}`.trim(),
+        // Brand stays in the branding column, not the name: "SOFA ADDA 1A(RHF)"
+        name:       `SOFA ${modelName} ${comp}`,
         size_code:  null,
         size_label: null,
       });
@@ -945,7 +970,7 @@ productModels.post('/:id/generate-skus', async (c) => {
         size_label: label,
       });
     }
-  } else if (model.category === 'ACCESSORY' || model.category === 'SERVICE') {
+  } else if (isSingleSkuCategory(model.category)) {
     // No variant axis — the Model itself IS the single SKU. Generate exactly one
     // row whose code is the model code (Wei Siang 2026-06-09: accessories /
     // services have no sizes, but must still produce one sellable SKU so they

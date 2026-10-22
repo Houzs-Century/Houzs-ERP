@@ -22,18 +22,21 @@ import { Button } from '@2990s/design-system';
 import {
   useRateCards, useRateCard, useRateCardMeta,
   useCreateRateCard, useUpdateRateCard, useDeleteRateCard,
-  useCreateRateRule, useDeleteRateRule, useComputeCost, useReconcile,
+  useCreateRateRule, useDeleteRateRule, useComputeCost, useReconcile, type ReconcileRow,
   type RateCard, type RateRule, type RateRuleType, type DeliveryFacts, type RateAggregation,
 } from '../../vendor/scm/lib/delivery-rate-card-queries';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
+import { DataTable, type Column } from '../../components/DataTable';
+import { fmtDate, fmtSen } from '@2990s/shared';
 import {
   RULE_LABEL, RULE_CATEGORY, CATEGORY_LABEL, CATEGORY_HINT,
   RATE_RULE_CATEGORIES, rulesByCategory, type RateRuleCategory, type RateRuleTypeT,
 } from '../../vendor/scm/lib/rate-rule-taxonomy';
 import { ThreePLCompanies } from './ThreePLCompanies';
+import { ThreePLInvoices } from './ThreePLInvoices';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -77,7 +80,7 @@ const COMPANY_LIST_KEY = ['delivery-rate-card-meta'];
 export const DeliveryRateCards = ({ embedded = false }: {
   embedded?: boolean;
 } = {}) => {
-  const [tab, setTab] = useState<'cards' | 'reconcile'>('cards');
+  const [tab, setTab] = useState<'cards' | 'reconcile' | 'invoices'>('cards');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState<{ carrierCompanyId: string | null } | null>(null);
   const [companiesOpen, setCompaniesOpen] = useState(false);
@@ -112,7 +115,7 @@ export const DeliveryRateCards = ({ embedded = false }: {
       )}
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, borderBottom: '1px solid var(--border, rgba(0,0,0,0.1))' }}>
-        {(['cards', 'reconcile'] as const).map((t) => (
+        {(['cards', 'invoices', 'reconcile'] as const).map((t) => (
           <button key={t} type="button" onClick={() => setTab(t)}
             style={{
               background: 'none', border: 'none', padding: '8px 14px', cursor: 'pointer',
@@ -120,7 +123,7 @@ export const DeliveryRateCards = ({ embedded = false }: {
               color: tab === t ? 'var(--fg, #111)' : 'var(--fg-muted)',
               borderBottom: tab === t ? '2px solid var(--c-primary-a, #2563eb)' : '2px solid transparent',
             }}>
-            {t === 'cards' ? 'Rate Cards' : 'Reconciliation'}
+            {t === 'cards' ? 'Rate Cards' : t === 'invoices' ? '3PL invoices' : 'Reconciliation'}
           </button>
         ))}
         {/* Embedded there is no PageHeader, so the tab strip carries the actions
@@ -152,7 +155,7 @@ export const DeliveryRateCards = ({ embedded = false }: {
             ? <CardEditor key={selectedId} cardId={selectedId} onDeleted={() => setSelectedId(null)} />
             : <div style={{ padding: 24, color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>Select a card to edit its rules, or create one.</div>}
         </div>
-      ) : (
+      ) : tab === 'invoices' ? <ThreePLInvoices /> : (
         <ReconcileView />
       )}
 
@@ -484,7 +487,13 @@ const RulesEditor = ({ cardId, rules, zones }: { cardId: string; rules: RateRule
         {needsPosition && <RMLikeInput label={form.ruleType === 'OVERAGE' ? 'Cap N' : 'Position (3=3rd+)'} value={form.tierPosition} onChange={(v) => set('tierPosition', v)} width={110} />}
         {needsBracket && <RMLikeInput label="Comp min" value={form.bracketMin} onChange={(v) => set('bracketMin', v)} width={90} />}
         {needsBracket && <RMLikeInput label="Comp max (blank=+)" value={form.bracketMax} onChange={(v) => set('bracketMax', v)} width={130} />}
-        {needsZone && <SelectField label="Zone" value={form.zone} onChange={(v) => set('zone', v)} options={zones.map((z) => [z, z])} />}
+        {needsZone && (
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Zone or town</span>
+            <input className={styles.fieldInput} list="rate-zone-list" value={form.zone} onChange={(e) => set('zone', e.target.value)} placeholder="KL, JOHOR, or a town e.g. RAWANG" />
+            <datalist id="rate-zone-list">{zones.map((z) => <option key={z} value={z} />)}</datalist>
+          </label>
+        )}
         <RMLikeInput label="Amount (RM)" value={form.amountRM} onChange={(v) => set('amountRM', v)} width={110} />
         <Button variant="secondary" size="md" onClick={addRule} disabled={create.isPending}><Plus {...ICON} /><span>Add rule</span></Button>
       </div>
@@ -569,7 +578,7 @@ const CalculatorPanel = ({ cardId, basis, zones, rules }: { cardId: string; basi
                 return (
                   <div key={f.key} style={{ opacity: priced ? 1 : 0.45 }} title={priced ? undefined : `This card has no ${RULE_LABEL[f.rule!]} rule, so this input cannot change the total.`}>
                     {f.key === 'zone'
-                      ? <SelectField label="Destination zone" value={facts.zone} onChange={(v) => set('zone', v)} options={[['', 'In-town'], ...zones.map((z) => [z, z] as [string, string])]} />
+                      ? <SelectField label="Destination zone" value={facts.zone} onChange={(v) => set('zone', v)} options={[['', 'In-town'], ...[...new Set([...zones, ...rules.filter((r) => r.ruleType === 'OUTSTATION' && r.zone).map((r) => r.zone as string)])].map((z) => [z, z] as [string, string])]} />
                       : <RMLikeInput label={f.key === 'count' ? (basis === 'ITEM' ? 'Items' : 'Sets') : f.label} value={facts[f.key]} onChange={(v) => set(f.key, v)} />}
                   </div>
                 );
@@ -604,6 +613,44 @@ const CalculatorPanel = ({ cardId, basis, zones, rules }: { cardId: string; basi
 };
 
 // ── Reconciliation view ────────────────────────────────────────────────────────
+const muted = { color: 'var(--fg-muted)' };
+const reconStatus = (r: ReconcileRow): string => (!r.matched ? 'unmatched' : r.flagged ? 'mismatch' : 'match');
+const RECON_COLUMNS: Column<ReconcileRow>[] = [
+  { key: 'trip', label: 'Trip', render: (r) => r.tripNo ?? r.tripId.slice(0, 8), getValue: (r) => r.tripNo ?? r.tripId },
+  { key: 'date', label: 'Date', render: (r) => (r.tripDate ? fmtDate(r.tripDate) : '—'), getValue: (r) => r.tripDate, exportFormat: 'date' },
+  { key: 'card', label: 'Card', render: (r) => (r.matched ? r.cardName : <span style={muted}>no card</span>), getValue: (r) => (r.matched ? r.cardName ?? '' : '') },
+  { key: 'drops', label: 'Drops', align: 'right', render: (r) => r.dropCount, getValue: (r) => r.dropCount },
+  { key: 'zone', label: 'Zone', render: (r) => r.derivedZone ?? '—', getValue: (r) => r.derivedZone ?? '' },
+  {
+    key: 'expected', label: 'Expected', align: 'right', render: (r) => fmtSen(r.expectedSen),
+    getValue: (r) => r.expectedSen, exportValue: (r) => (r.expectedSen == null ? null : r.expectedSen / 100), exportFormat: 'money',
+  },
+  {
+    key: 'billed', label: 'Billed', align: 'right', render: (r) => fmtSen(r.billedSen),
+    getValue: (r) => r.billedSen, exportValue: (r) => r.billedSen / 100, exportFormat: 'money',
+  },
+  {
+    key: 'delta', label: 'Delta', align: 'right',
+    render: (r) => (
+      <span style={{ color: r.flagged ? 'var(--c-danger, #dc2626)' : 'var(--fg-muted)' }}>
+        {r.deltaSen == null ? '—' : `${r.deltaSen > 0 ? '+' : r.deltaSen < 0 ? '−' : ''}${fmtSen(Math.abs(r.deltaSen))}`}
+      </span>
+    ),
+    getValue: (r) => r.deltaSen, exportValue: (r) => (r.deltaSen == null ? null : r.deltaSen / 100), exportFormat: 'money',
+  },
+  {
+    key: 'status', label: 'Status',
+    render: (r) => (
+      <>
+        {!r.matched ? <span style={muted}>unmatched</span>
+          : r.flagged ? <span style={{ color: 'var(--c-danger, #dc2626)', fontWeight: 600 }}>mismatch</span>
+          : <span style={{ color: 'var(--c-secondary-a, #16a34a)' }}>match</span>}
+        {r.matched && !r.factsComplete && <span style={{ ...muted, fontSize: 'var(--fs-11)' }}> · facts partial</span>}
+      </>
+    ),
+    getValue: reconStatus,
+  },
+];
 const ReconcileView = () => {
   const [range, setRange] = useState<{ from: string; to: string }>({ from: '', to: '' });
   const recon = useReconcile(range);
@@ -618,43 +665,18 @@ const ReconcileView = () => {
         <RMLikeInput label="From" value={range.from} onChange={(v) => setRange((s) => ({ ...s, from: v }))} type="date" width={150} />
         <RMLikeInput label="To" value={range.to} onChange={(v) => setRange((s) => ({ ...s, to: v }))} type="date" width={150} />
       </div>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
-        <thead>
-          <tr style={{ textAlign: 'left', color: 'var(--fg-muted)', fontSize: 'var(--fs-11)' }}>
-            <th style={{ padding: '4px 8px' }}>Trip</th><th style={{ padding: '4px 8px' }}>Date</th>
-            <th style={{ padding: '4px 8px' }}>Card</th><th style={{ padding: '4px 8px' }}>Drops</th>
-            <th style={{ padding: '4px 8px' }}>Zone</th>
-            <th style={{ padding: '4px 8px', textAlign: 'right' }}>Expected</th>
-            <th style={{ padding: '4px 8px', textAlign: 'right' }}>Billed</th>
-            <th style={{ padding: '4px 8px', textAlign: 'right' }}>Delta</th>
-            <th style={{ padding: '4px 8px' }}>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {recon.isLoading && <tr><td colSpan={9} style={{ padding: 12, color: 'var(--fg-muted)' }}>Loading…</td></tr>}
-          {!recon.isLoading && rows.length === 0 && <tr><td colSpan={9} style={{ padding: 12, color: 'var(--fg-muted)' }}>No 3PL trips with a captured billed cost in range.</td></tr>}
-          {rows.map((r) => (
-            <tr key={r.tripId} style={{ borderTop: '1px solid var(--border, rgba(0,0,0,0.06))', background: r.flagged ? 'rgba(220,38,38,0.06)' : undefined }}>
-              <td style={{ padding: '6px 8px' }}>{r.tripNo ?? r.tripId.slice(0, 8)}</td>
-              <td style={{ padding: '6px 8px' }}>{r.tripDate ?? '—'}</td>
-              <td style={{ padding: '6px 8px' }}>{r.matched ? r.cardName : <span style={{ color: 'var(--fg-muted)' }}>no card</span>}</td>
-              <td style={{ padding: '6px 8px' }}>{r.dropCount}</td>
-              <td style={{ padding: '6px 8px' }}>{r.derivedZone ?? '—'}</td>
-              <td style={{ padding: '6px 8px', textAlign: 'right' }}>{r.expectedSen == null ? '—' : `RM ${centiToRM(r.expectedSen)}`}</td>
-              <td style={{ padding: '6px 8px', textAlign: 'right' }}>RM {centiToRM(r.billedSen)}</td>
-              <td style={{ padding: '6px 8px', textAlign: 'right', color: r.flagged ? 'var(--c-danger, #dc2626)' : 'var(--fg-muted)' }}>
-                {r.deltaSen == null ? '—' : `${r.deltaSen > 0 ? '+' : r.deltaSen < 0 ? '−' : ''}RM ${centiToRM(Math.abs(r.deltaSen))}`}
-              </td>
-              <td style={{ padding: '6px 8px' }}>
-                {!r.matched ? <span style={{ color: 'var(--fg-muted)' }}>unmatched</span>
-                  : r.flagged ? <span style={{ color: 'var(--c-danger, #dc2626)', fontWeight: 600 }}>mismatch</span>
-                  : <span style={{ color: 'var(--c-secondary-a, #16a34a)' }}>match</span>}
-                {r.matched && !r.factsComplete && <span style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-11)' }}> · facts partial</span>}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <DataTable<ReconcileRow>
+        tableId="rate-card-reconcile"
+        exportName="rate-card-reconcile"
+        exportXlsx
+        columns={RECON_COLUMNS}
+        rows={recon.data ? rows : null}
+        loading={recon.isLoading}
+        error={recon.isError ? 'The reconciliation did not load.' : null}
+        emptyLabel="No 3PL trips with a captured billed cost in range."
+        getRowKey={(r) => r.tripId}
+        getRowStyle={(r) => (r.flagged ? { background: 'rgba(220,38,38,0.06)' } : undefined)}
+      />
     </div>
   );
 };

@@ -125,14 +125,17 @@ function fixture(): DataSet {
       { id: 'do-2', do_number: 'DO-2', so_doc_no: 'SO-2', do_date: '2026-07-09', delivered_at: null, status: 'LOADED' },
     ],
     delivery_order_items: [
-      { delivery_order_id: 'do-1', qty: 2, unit_cost_sen: 30000, ship_cost_sen: 26000 }, // 52000
+      { delivery_order_id: 'do-1', qty: 2, unit_cost_sen: 30000, ship_cost_sen: 26000, item_group: 'mattress', item_code: 'M1' }, // 52000
+      /* The delivery fee rides the DO with no frozen cost: not stock, so neither LEGACY nor goods. */
+      { delivery_order_id: 'do-1', qty: 1, unit_cost_sen: 0, ship_cost_sen: null, item_group: 'service', item_code: 'SVC-DELIVERY' },
       { delivery_order_id: 'do-2', qty: 1, unit_cost_sen: 21000, ship_cost_sen: null },  // 21000, legacy
     ],
     sales_invoices: [
       { id: 'si-1', invoice_number: 'INV-1', so_doc_no: 'SO-1', delivery_order_id: 'do-1', invoice_date: '2026-07-10', total_sen: 100000, status: 'SENT' },
     ],
     sales_invoice_items: [
-      { sales_invoice_id: 'si-1', qty: 2, unit_cost_sen: 27000, line_cost_sen: 54000 },
+      { sales_invoice_id: 'si-1', qty: 2, unit_cost_sen: 27000, line_cost_sen: 54000, line_total_sen: 70000, item_group: 'mattress', item_code: 'M1' },
+      { sales_invoice_id: 'si-1', qty: 1, unit_cost_sen: 0, line_cost_sen: 0, line_total_sen: 30000, item_group: 'service', item_code: 'SVC-DELIVERY' },
     ],
     mfg_sales_order_items: [
       { doc_no: 'SO-1', item_code: 'M1', description: 'Mattress', qty: 2, unit_price_sen: 35000, total_sen: 70000, unit_cost_sen: 25000, line_cost_sen: 50000, cancelled: false },
@@ -179,7 +182,10 @@ describe('stage=so', () => {
     expect(so1.service_rev_sen).toBe(30000);
     expect(so1.cost_by_category.service_cost_sen).toBe(15000);
     expect(so1.total_so_cost_sen).toBe(50000);
-    expect(so1.margin_pct).toBeCloseTo(50);
+    expect(so1.goods_cost_sen).toBe(35000);      // 50000 less the 15000 service cost
+    expect(so1.margin_pct).toBeCloseTo(50);      // goods: (70000-35000)/70000
+    // Summary margin on goods too: selling 70000+50000+20000+12345, goods cost 35000+20000+8000+5000.
+    expect(body.summary.margin_pct).toBeCloseTo(((152345 - 68000) / 152345) * 100);
     expect(so1.order_form).toBe('OF-1');
     expect(so1.salesperson).toBe('Alice');
     expect(so1.project).toBe('KL Fair');
@@ -205,7 +211,9 @@ describe('stage=do', () => {
     expect(do1.total_so_cost_sen).toBe(50000);
     expect(do1.total_do_cost_sen).toBe(52000);   // 26000 ship × 2
     expect(do1.cost_delta_sen).toBe(2000);
-    expect(do1.do_cost_is_legacy).toBe(false);
+    expect(do1.do_cost_is_legacy).toBe(false);   // the fee line has no frozen cost and must not flag it
+    expect(do1.so_margin_pct).toBeCloseTo(50);   // goods: (70000-35000)/70000
+    expect(do1.do_margin_pct).toBeCloseTo(((70000 - 52000) / 70000) * 100);
     const do2 = body.rows.find((r: any) => r.do_no === 'DO-2');
     expect(do2.total_do_cost_sen).toBe(21000);   // fell back to unit cost
     expect(do2.do_cost_is_legacy).toBe(true);
@@ -227,8 +235,11 @@ describe('stage=invoice', () => {
     expect(si.so_cost_sen).toBe(50000);
     expect(si.do_cost_sen).toBe(52000);          // from linked do-1
     expect(si.si_cost_sen).toBe(54000);          // landed
-    expect(si.invoiced_sen).toBe(100000);
-    expect(si.margin_pct).toBeCloseTo(46);         // (100000-54000)/100000
+    expect(si.invoiced_sen).toBe(100000);          // the whole invoice, fee included
+    expect(si.goods_invoiced_sen).toBe(70000);     // the RM 300 delivery line is out
+    expect(si.goods_si_cost_sen).toBe(54000);
+    expect(si.margin_pct).toBeCloseTo(((70000 - 54000) / 70000) * 100);
+    expect(body.summary.margin_pct).toBeCloseTo(((70000 - 54000) / 70000) * 100);
   });
 });
 

@@ -11,8 +11,8 @@
 //   POST   /post/pi/:invoiceNumber    — auto-post a PI: Dr Inventory, Cr AP
 //   GET    /gl                        — flat GL stream (v_gl_entries)
 //   GET    /balances                  — running account balances (v_account_balances)
-//   GET    /ar-aging                  — v_ar_aging
-//   GET    /ap-aging                  — v_ap_aging
+//   GET    /ar-aging                  — the formal debtor aging (accounting-aging.ts)
+//   GET    /ap-aging                  — the formal creditor aging (accounting-aging.ts)
 //
 // Note: this is intentionally minimal — single legal entity, single currency.
 // ERPNext-style chart hierarchy + cost centres are deferred.
@@ -28,8 +28,8 @@ import { safeRate, toMyrSen } from '../lib/fx';
 import { todayMyt } from '../lib/my-time';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { postJournal, reverseJournal } from '../../acc/engine';
-import { backfillSoPayments, paymentEntryDisagreements, unbookedPayments } from '../../acc/payments';
-import { computeDailyBank } from '../../acc/daily-bank';
+import { CONVERT_SOURCE, backfillSoPayments, paymentEntryDisagreements, unbookedPayments } from '../../acc/payments';
+import { computeDailyBank, type PendingVoucherRow } from '../../acc/daily-bank';
 import { systemTakings, postCashOverShort } from '../../acc/daily-close';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
 import { splitByItemGroup } from '../../acc/item-group-split';
@@ -42,18 +42,22 @@ import {
   settlementBatchDetail, settlementConfirmRow, settlementConfirmMatched, settlementRowUnconfirm,
   settlementIgnoreRow, settlementWatchlist, settlementExport, settlementInTransit, settlementFindPayments,
   settlementBatchReceived, settlementReceiptUndo,
-  settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank,
+  settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank, settlementRematch,
 } from './accounting-settlement';
 import {
   bankSetup, bankUpload, bankStatements, bankStatementDetail,
   bankRulesList, bankRuleCreate, bankRuleUpdate,
   bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo, bankLinesMatchGroup, bankStatementPeriod, bankStatementAutoMatch,
+  bankStatementRepeats,
 } from './accounting-bank';
 import { bankMonths, bankMonthDetail, bankMonthClosing } from './accounting-bank-months';
 import { bankLocks, bankMonthLock, bankMonthUnlock } from './accounting-bank-locks';
 import { paymentCorrections } from './accounting-payment-corrections';
+import { unmatchedPaymentsHandler } from './accounting-unmatched-payments';
+import { arAgingHandler, apAgingHandler } from './accounting-aging';
+import { productProfitHandler } from './accounting-product-profit';
 import { bankConfigList, bankConfigSave } from './accounting-bank-config';
-import { payoutUpload, payoutList, payoutCharge, payoutChargeUndo } from './accounting-payouts';
+import { payoutUpload, payoutList, payoutCharge, payoutChargeUndo, chargeAccountsHandler } from './accounting-payouts';
 import {
   chartUnionHandler, chartTickHandler, chartImportHandler,
   chartRenameHandler, chartUpdateHandler, chartDeleteHandler, chartCreateHandler,
@@ -118,6 +122,7 @@ accounting.patch('/settlement/setup/:code', settlementSetupSave);
 accounting.get('/settlement/maintenance', settlementMaintenance);
 accounting.patch('/settlement/maintenance/merchant', settlementMaintenanceMerchant);
 accounting.patch('/settlement/maintenance/bank', settlementMaintenanceBank);
+accounting.post('/settlement/rematch', settlementRematch);
 accounting.post('/settlement/batches', settlementUpload);
 accounting.get('/settlement/batches', settlementBatches);
 accounting.get('/settlement/batches/:id', settlementBatchDetail);
@@ -132,6 +137,9 @@ accounting.post('/settlement/rows/:id/ignore', settlementIgnoreRow);
 accounting.get('/settlement/rows/:id/find', settlementFindPayments);
 accounting.get('/settlement/watchlist', settlementWatchlist);
 accounting.get('/settlement/in-transit', settlementInTransit);
+/* Card AND transfer payments not matched yet, on one list (owner 2026-09-30:
+   我有没有一个表是显示全部还没 match 的). Rules in acc/unmatched-payments. */
+accounting.get('/unmatched-payments', unmatchedPaymentsHandler);
 /* The acquirer's own payment advice — Public Bank's IBG, which says which
    reports one bank credit pays (owner: 几份 excel 对一份 pdf). */
 accounting.post('/settlement/payouts', payoutUpload);
@@ -140,6 +148,8 @@ accounting.get('/settlement/payouts', payoutList);
    Finance picks (docs/bugs/0787); and its undo. */
 accounting.post('/settlement/payouts/:id/days/:settledOn/charge', payoutCharge);
 accounting.delete('/settlement/payouts/:id/days/:settledOn/charge', payoutChargeUndo);
+/* Where a charge may go, alone — for one kept off a bank credit (owner 2026-09-30). */
+accounting.get('/settlement/charge-accounts', chargeAccountsHandler);
 
 /* Layer 4 — reconciling the BANK's own statement (brief §3.5). Registered the
    same way and for the same reason: one path each, every one in the matrix.
@@ -179,6 +189,10 @@ accounting.delete('/reports/layout', reportLayoutReset);
    expense in place of one ledger account, the rest as booked (owner
    2026-09-12; docs/bugs/0835). Handlers in accounting-performance.ts. */
 accounting.get('/reports/performance', performanceReport);
+/* The monthly product profit ranking (owner 2026-10-05): every product the
+   month sold, by model, with its own cost and its share of the gifts.
+   accounting-product-profit.ts; acc/product-profit.ts. */
+accounting.get('/product-profit', productProfitHandler);
 /* The Forecast P&L (owner 2026-09-21): a planning grid beside the statements; nothing posts. */
 accounting.get('/forecast', forecastGetHandler);
 accounting.put('/forecast', forecastPutHandler);
@@ -220,6 +234,8 @@ accounting.get('/bank/statements/:id', bankStatementDetail);
 accounting.post('/bank/statements/:id/period', bankStatementPeriod);
 /* The obvious matches, run over a statement uploaded before the rule (docs/bugs/0814). */
 accounting.post('/bank/statements/:id/auto-match', bankStatementAutoMatch);
+/* What an earlier file of the account already recorded, left out (owner 2026-10-14). */
+accounting.post('/bank/statements/:id/repeats', bankStatementRepeats);
 /* The same reconciliation asked of a MONTH rather than a file — registered
    BEFORE nothing and after the file doors deliberately: `/bank/months` cannot
    collide with `/bank/statements/:id`, and keeping the two families apart is
@@ -929,45 +945,12 @@ accounting.get('/balances', async (c) => {
   return c.json({ balances: data ?? [] });
 });
 
-accounting.get('/ar-aging', async (c) => {
-  const sb = c.get('supabase');
-  /* LEAK GUARD (DRAFT, two-state — 2026-06-25 anchoring diff vs 2990) — v_ar_aging
-     filters CANCELLED/VOID but NOT DRAFT (the view predates the SI two-state). A
-     DRAFT SI has posted no AR yet, so it must never appear in the aging buckets; the
-     view exposes s.status, so filter DRAFT out here at the route (migrations are
-     frozen). */
-  // PostgREST's 1000-row cap silently truncated the aging buckets — page through
-  // so the full AR ledger is bucketed, not just the first 1000 rows. Ordering
-  // stays inside the page factory so every page is consistent.
-  const { data, error } = await paginateAll((from, to) => scopeToCompany(sb
-    .from('v_ar_aging')
-    .select('*')
-    .neq('status', 'DRAFT'), c) // multi-company: isolate AR aging to the active company (view exposes company_id, mig 0106)
-    .order('days_overdue', { ascending: false })
-    .range(from, to));
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ arAging: data ?? [] });
-});
-
-accounting.get('/ap-aging', async (c) => {
-  const sb = c.get('supabase');
-  /* LEAK GUARD (DRAFT, PI two-state — 2026-06-25 anchoring diff vs 2990) — v_ap_aging
-     filters CANCELLED/VOID but NOT DRAFT (the view predates the PI two-state). A
-     DRAFT PI has posted no AP yet, so it must never appear in the aging buckets; the
-     view exposes p.status, so filter DRAFT out here at the route (migrations are
-     frozen). Mirrors the /ar-aging DRAFT fix. */
-  // PostgREST's 1000-row cap silently truncated the aging buckets — page through
-  // so the full AP ledger is bucketed, not just the first 1000 rows. Ordering
-  // stays inside the page factory so every page is consistent.
-  const { data, error } = await paginateAll((from, to) => scopeToCompany(sb
-    .from('v_ap_aging')
-    .select('*')
-    .neq('status', 'DRAFT'), c) // multi-company: isolate AP aging to the active company (view exposes company_id, mig 0106)
-    .order('days_overdue', { ascending: false })
-    .range(from, to));
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ apAging: data ?? [] });
-});
+/* AR Aging / AP Aging — the formal debtor and creditor aging (owner 2026-10-02,
+   B4: replace the old ones, keep the names): as at a date, one row per debtor
+   or creditor, by the invoice's month, money not tied to a bill in 未冲, the
+   rows adding up to the control accounts. accounting-aging.ts; acc/aging.ts. */
+accounting.get('/ar-aging', arAgingHandler);
+accounting.get('/ap-aging', apAgingHandler);
 
 /* ════════════════════════════════════════════════════════════════════════
    Phase 1 — chart management, manual-JV reversal, control-account self-check
@@ -1273,19 +1256,25 @@ export const controlCheckHandler = async (c: any) => {
     /* What LEGITIMATELY moves each control account: the document that books it
        plus everything that settles it. AR moves on invoices AND on customer
        payments (SOPAY/SIPAY, phase 2A), on the deposit invoice a payment
-       raises (DI, Dr AR), on the credit note a refund raises against it (CN)
-       and on the Customer Refund voucher itself (PV, Dr AR); AP moves on
-       purchase invoices AND on the payment vouchers that settle them.
-       Anything else on the account is the finding. */
+       raises (DI, Dr AR), on the credit note a refund raises against it (CN),
+       on the Customer Refund voucher itself (PV, Dr AR) and on a CONVERSION
+       (SOCONV — acc/payments.ts CONVERT_SOURCE: a customer's money moved from
+       one order to another, Dr and Cr AR for the same party, netting to nil;
+       owner 2026-10-06 saw its two lines as findings); AP moves on purchase
+       invoices AND on the payment vouchers that settle them. Anything else on
+       the account is the finding. */
     const family = role === 'AR'
       ? new Set(['SI', 'SI_REVERSAL', 'SOPAY', 'SOPAY_REVERSAL', 'SIPAY', 'SIPAY_REVERSAL',
-        'DI', 'DI_REVERSAL', 'CN', 'CN_REVERSAL', 'PV', 'PV_REVERSAL'])
+        'DI', 'DI_REVERSAL', 'CN', 'CN_REVERSAL', 'PV', 'PV_REVERSAL', CONVERT_SOURCE, `${CONVERT_SOURCE}_REVERSAL`])
       : role === 'AR_OTHER'
         ? new Set(['ODB', 'ODB_REVERSAL', 'ODR', 'ODR_REVERSAL'])
         /* API = the AP invoice (docs/bugs/0654): it credits 400 or 405 by the
            supplier's code, exactly as a PI does, and its edit re-post writes
            the reversal. Both were read as foreign until this line. */
-        : new Set(['PI', 'PI_REVERSAL', 'PV', 'PV_REVERSAL', 'API', 'API_REVERSAL']);
+        /* SCN = a supplier's credit note (Dr the supplier's AP control), which
+           since 2026-10-01 also comes off the invoices it credits — part of
+           the family, not a finding. */
+        : new Set(['PI', 'PI_REVERSAL', 'PV', 'PV_REVERSAL', 'API', 'API_REVERSAL', 'SCN', 'SCN_REVERSAL']);
     for (const l of (lines ?? []) as Array<{ je_no: string; source_type: string; debit_sen: number; credit_sen: number }>) {
       bal += Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0);
       if (!family.has(l.source_type)) {
@@ -1393,15 +1382,23 @@ export const dailyBankHandler = async (c: any) => {
   const money = (moneyRaw ?? []) as Array<{ account_code: string; account_name: string }>;
 
   const { data: acqRaw, error: aErr } = await sb.from('acc_acquirers')
-    .select('code, transit_account_code')
+    .select('code, transit_account_code, bank_account_code')
     .eq('company_id', co.companyId).eq('is_active', true).order('code');
   if (aErr) return c.json({ error: 'load_failed', reason: aErr.message }, 500);
   /* One transit account may serve several acquirers until 决定4 assigns each
      its own - collapse duplicates so the board does not count a balance twice. */
   const transitByAccount = new Map<string, string>();
-  for (const a of (acqRaw ?? []) as Array<{ code: string; transit_account_code: string }>) {
+  /* The bank each transit account's money lands in — Settlement Setup's, per
+     acquirer (owner 2026-09-29: settlement in transit 放在相对应的银行). Two
+     acquirers sharing one transit account but naming different banks leave it
+     unassigned rather than guess. */
+  const bankByTransit = new Map<string, string | null>();
+  for (const a of (acqRaw ?? []) as Array<{ code: string; transit_account_code: string; bank_account_code: string | null }>) {
     const existing = transitByAccount.get(a.transit_account_code);
     transitByAccount.set(a.transit_account_code, existing ? `${existing}/${a.code}` : a.code);
+    const bank = a.bank_account_code ? String(a.bank_account_code) : null;
+    const seen = bankByTransit.has(a.transit_account_code);
+    bankByTransit.set(a.transit_account_code, seen && bankByTransit.get(a.transit_account_code) !== bank ? null : bank);
   }
   /* The GENERIC clearing account (role TRANSIT_EDC, 326-0000) stays on the
      board once the acquirers have their own accounts (owner 2026-09-07: 我想要
@@ -1421,6 +1418,7 @@ export const dailyBankHandler = async (c: any) => {
     acquirerCode: transitByAccount.get(code) ?? code,
     account_code: code,
     account_name: nameOf.get(code) ?? code,
+    bankAccountCode: bankByTransit.get(code) ?? null,
   }));
 
   /* Phase 3: DRAFT vouchers sitting in the approval cycle — money already
@@ -1429,7 +1427,9 @@ export const dailyBankHandler = async (c: any) => {
      clear the marks). The error is bound: a failed read must not dress up as
      "nothing pending" on the one board that answers how much can move. */
   const { data: pendingRaw, error: pErr } = await sb.from('payment_vouchers')
-    .select('total_sen, exchange_rate')
+    /* Each voucher's payee, number, note and Paid From ride along: the board
+       lists them under the bank they will pay out of (owner 2026-09-29). */
+    .select('id, pv_number, payee_name, notes, purpose, credit_account_code, voucher_date, total_sen, exchange_rate')
     /* daily bank 的pending 就是第一层的checked (the owner, 2026-09-02): a
        voucher reserves the board's money once the FIRST yes is on it — a
        merely prepared one is still the preparer's business. */
@@ -1437,7 +1437,7 @@ export const dailyBankHandler = async (c: any) => {
     .not('checked_at', 'is', null)
     .lte('checked_at', `${date}T23:59:59.999`);
   if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
-  const pending = (pendingRaw ?? []) as Array<{ total_sen: number; exchange_rate: string | number | null }>;
+  const pending = (pendingRaw ?? []) as PendingVoucherRow[];
 
   const allCodes = [...money.map((m) => m.account_code), ...transitCodes];
   if (allCodes.length === 0) {
@@ -1455,7 +1455,58 @@ export const dailyBankHandler = async (c: any) => {
   /* The board reads the ledger the reconciliation reads: neither side of a
      reversal pair is money that moved (docs/bugs/0923). */
   const counted = (lines ?? []).filter((l) => !isReversalPair(l as { reversed?: boolean | null; reversed_by_je?: string | null }));
-  return c.json(computeDailyBank(date, money, transitAccounts, counted as never, pending));
+
+  /* Who paid or was paid, and the number the board prints, for the day's
+     money lines (owner 2026-09-29 — the sample's PAY TO and number columns):
+     the entry's party off its own lines, and for a customer payment its
+     official receipt (the order when none was issued) in place of the
+     payment's internal id. Both reads are bound: a failed one answers 500,
+     never a board of nameless lines. */
+  const moneyCodes = new Set(money.map((m) => m.account_code));
+  type BoardLine = { entry_date: string; je_no: string; source_type: string; source_doc_no: string | null; account_code: string };
+  const isTodayMoney = (l: BoardLine): boolean => l.entry_date === date && moneyCodes.has(String(l.account_code));
+  const todays = (counted as unknown as BoardLine[]).filter(isTodayMoney);
+  const partyOf = new Map<string, string>();
+  const receiptOf = new Map<string, string>();
+  const jeNos = [...new Set(todays.map((l) => String(l.je_no)))];
+  if (jeNos.length > 0) {
+    const { data: partyRows, error: prErr } = await sb.from('v_gl_entries').select('je_no, party_name')
+      .eq('company_id', co.companyId).in('je_no', jeNos).not('party_name', 'is', null);
+    if (prErr) return c.json({ error: 'load_failed', reason: prErr.message }, 500);
+    for (const r of (partyRows ?? []) as Array<{ je_no: string; party_name: string | null }>) {
+      if (r.party_name && !partyOf.has(r.je_no)) partyOf.set(r.je_no, r.party_name);
+    }
+    const payIds = [...new Set(todays.filter((l) => (l.source_type === 'SOPAY' || l.source_type === 'SIPAY') && l.source_doc_no).map((l) => String(l.source_doc_no)))];
+    if (payIds.length > 0) {
+      const { data: orRows, error: orErr } = await sb.from('acc_official_receipts').select('payment_id, or_number, doc_no')
+        .eq('company_id', co.companyId).in('payment_id', payIds);
+      if (orErr) return c.json({ error: 'load_failed', reason: orErr.message }, 500);
+      for (const r of (orRows ?? []) as Array<{ payment_id: string; or_number: string | null; doc_no: string | null }>) {
+        const shown = r.or_number ?? r.doc_no;
+        if (shown) receiptOf.set(String(r.payment_id), shown);
+      }
+      /* A payment with no receipt row yet prints its order's number. */
+      const orderless = payIds.filter((id) => !receiptOf.has(id));
+      if (orderless.length > 0) {
+        const { data: payRows, error: payErr } = await sb.from('mfg_sales_order_payments').select('id, so_doc_no')
+          .eq('company_id', co.companyId).in('id', orderless);
+        if (payErr) return c.json({ error: 'load_failed', reason: payErr.message }, 500);
+        for (const r of (payRows ?? []) as Array<{ id: string; so_doc_no: string | null }>) {
+          if (r.so_doc_no) receiptOf.set(String(r.id), r.so_doc_no);
+        }
+      }
+    }
+  }
+  /* A customer payment's id is internal — never printed: its receipt, its
+     order, else the journal's own number. */
+  const docOf = (l: BoardLine): string | null => {
+    if (l.source_type === 'SOPAY' || l.source_type === 'SIPAY') return receiptOf.get(String(l.source_doc_no ?? '')) ?? l.je_no;
+    return null;
+  };
+  const stamped = (counted as unknown as BoardLine[]).map((l) => (isTodayMoney(l)
+    ? { ...l, party: partyOf.get(String(l.je_no)) ?? null, doc_no: docOf(l) }
+    : l));
+  return c.json(computeDailyBank(date, money, transitAccounts, stamped as never, pending));
 };
 accounting.get('/daily-bank', dailyBankHandler);
 

@@ -28,11 +28,13 @@ import {
   useBankSetup, useBankStatements, useBankStatement, useUploadBankStatement,
   useBookBankReceipt, useMatchBankLine, useMatchBankGroup, useIgnoreBankLine, useUndoBankLine, useSetStatementPeriod, useAutoMatchStatement,
   type BankLine, type BankStatement, type Reconciliation, type LedgerEntry } from './bank-queries';
+import { useChargeChoices } from './settlement-queries';
 import { ICON, fmt, btn, softText, danger, good, panel, refusalText } from './settlement-ui';
 import styles from './Suppliers.module.css';
 import grid from './MerchantRecon.module.css';
 import { BankAccountTabs, currentAccount } from './BankAccountTabs';
 import { fmtDateOrDash } from '../../vendor/shared/format';
+import { DataTable } from '../../components/DataTable';
 import { ReconcilePickProvider, byDateThenLine, useReconcilePick } from './bank-reconcile-pick';
 
 export const BankStatementTab = () => {
@@ -209,36 +211,38 @@ const UploadAndList = ({ onOpen }: { onOpen: (id: number) => void }) => {
         )}
         <BankAccountTabs codes={codes} value={current} onChange={setAccount} ariaLabel="Bank account of the files listed" />
         {shown.length > 0 && (
-          <table className={grid.grid}>
-            <thead>
-              <tr>
-                <th>File</th><th>Period</th>
-                <th className={grid.num}>In</th><th className={grid.num}>Out</th>
-                <th>Still to decide</th><th />
-              </tr>
-            </thead>
-            <tbody>
-              {shown.map((s) => (
-                <tr key={s.id}>
-                  <td style={{ wordBreak: 'break-all' }}>{s.file_name}</td>
-                  <td>{s.period_from} → {s.period_to}</td>
-                  <td className={grid.num}>{fmt(s.in_sen)}</td>
-                  <td className={grid.num}>{fmt(s.out_sen)}</td>
-                  <td className={(s.open_count ?? 0) === 0 ? grid.good : undefined}>
+          <DataTable<BankStatement>
+            tableId="bank-statements-read"
+            exportName="bank-statements"
+            exportXlsx
+            columns={[
+              { key: 'file', label: 'File', getValue: (s) => s.file_name, render: (s) => <span style={{ wordBreak: 'break-all' }}>{s.file_name}</span> },
+              { key: 'period', label: 'Period', getValue: (s) => s.period_from, render: (s) => `${fmtDateOrDash(s.period_from)} → ${fmtDateOrDash(s.period_to)}` },
+              { key: 'in', label: 'In', align: 'right', getValue: (s) => s.in_sen, exportValue: (s) => s.in_sen / 100, exportFormat: 'money', render: (s) => fmt(s.in_sen) },
+              { key: 'out', label: 'Out', align: 'right', getValue: (s) => s.out_sen, exportValue: (s) => s.out_sen / 100, exportFormat: 'money', render: (s) => fmt(s.out_sen) },
+              {
+                key: 'open', label: 'Still to decide', getValue: (s) => s.open_count ?? 0,
+                render: (s) => (
+                  <span className={(s.open_count ?? 0) === 0 ? grid.good : undefined}>
                     {(s.open_count ?? 0) === 0
                       ? 'nothing'
                       : `${s.open_count} of ${s.line_count}`
                         + ((s.open_payout_count ?? 0) > 0 ? ` · ${s.open_payout_count} card payout(s)` : '')}
-                  </td>
-                  <td>
-                    <button type="button" style={btn((s.open_count ?? 0) > 0)} onClick={() => onOpen(s.id)}>
-                      {(s.open_count ?? 0) > 0 ? 'Reconcile' : 'Open'}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </span>
+                ),
+              },
+              {
+                key: 'action', label: '', exportLabel: 'Action',
+                render: (s) => (
+                  <button type="button" style={btn((s.open_count ?? 0) > 0)} onClick={() => onOpen(s.id)}>
+                    {(s.open_count ?? 0) > 0 ? 'Reconcile' : 'Open'}
+                  </button>
+                ),
+              },
+            ]}
+            rows={shown}
+            getRowKey={(s) => s.id}
+          />
         )}
       </section>
     </div>
@@ -733,6 +737,23 @@ export const OpenLine = ({ line, isPicked = false, onPick }: { line: BankLine; i
   const chosen = line.candidates.filter((b) => picked.includes(b.id));
   const allocatedSen = chosen.reduce((s, b) => s + b.outstandingSen, 0);
   const shortSen = line.amount_sen - allocatedSen;
+  /* WHAT THE ACQUIRER KEPT (owner 2026-09-30: 这个RM54 是charges 来的，和之前的
+     public bank一样 → 做). The reports ticked are owed MORE than the bank
+     credited — GHL paid RM 3,128.40 for RM 3,182.40 and sends no advice to book
+     the RM 54.00 on. Offered only when asked for: the difference is booked as a
+     charge on the LAST report ticked, whose share is its outstanding less it,
+     to the account Finance picks (starting on the acquirer's fee account). */
+  const keptSen = shortSen < 0 ? -shortSen : 0;
+  const [keeping, setKeeping] = useState(false);
+  const charging = keeping && keptSen > 0;
+  const choicesQ = useChargeChoices(charging);
+  const [chargeAccount, setChargeAccount] = useState('');
+  const [chargeNote, setChargeNote] = useState('');
+  const feeAccount = line.acquirer_code ? (choicesQ.data?.feeAccountByAcquirer[line.acquirer_code] ?? null) : null;
+  const account = chargeAccount || feeAccount || choicesQ.data?.chargeAccounts.at(0)?.accountCode || '';
+  const chargedReport = chosen.at(-1) ?? null;
+  const chargedShareSen = chargedReport ? chargedReport.outstandingSen - keptSen : 0;
+  const chargeReady = charging && account !== '' && chargeNote.trim() !== '' && chargedShareSen > 0;
   const [note, setNote] = useState('');
   const [asking, setAsking] = useState(false);
   /* Which ledger entry the operator says this movement is. Nothing is
@@ -808,18 +829,48 @@ export const OpenLine = ({ line, isPicked = false, onPick }: { line: BankLine; i
             )}
             {/* Only when it does NOT add up — a running total nobody needs is
                 one more number in the way. */}
-            {picked.length > 0 && shortSen !== 0 && (
+            {picked.length > 0 && shortSen !== 0 && !charging && (
               <span className={grid.sub}>
                 Selected {fmt(allocatedSen)} of {fmt(line.amount_sen)} —{' '}
                 <b className={grid.bad}>{fmt(Math.abs(shortSen))} {shortSen > 0 ? 'short' : 'too much'}</b>
               </span>
             )}
-            <button type="button" style={btn(true, picked.length === 0 || shortSen !== 0 || book.isPending)}
-              disabled={picked.length === 0 || shortSen !== 0 || book.isPending}
-              onClick={() => book.mutate({
-                lineId: line.id,
-                allocations: chosen.map((b) => ({ batchId: b.id, amountSen: b.outstandingSen })),
-              })}>
+            {picked.length > 0 && keptSen > 0 && (
+              <label style={{ display: 'flex', gap: 6, alignItems: 'baseline', fontSize: 'var(--fs-12)' }}>
+                <input type="checkbox" checked={keeping} onChange={(e) => setKeeping(e.target.checked)}
+                  aria-label={`The bank kept ${fmt(keptSen)} for line ${line.line_no}`} />
+                <span>The bank kept <b>{fmt(keptSen)}</b> — book it as a charge</span>
+              </label>
+            )}
+            {charging && (
+              <div style={{ display: 'grid', gap: 4, paddingLeft: 20 }}>
+                <select aria-label={`Charge account for line ${line.line_no}`} value={account} onChange={(e) => setChargeAccount(e.target.value)}
+                  style={{ fontSize: 'var(--fs-12)', padding: '2px 6px', maxWidth: 260 }}>
+                  {(choicesQ.data?.chargeAccounts ?? []).map((a) => <option key={a.accountCode} value={a.accountCode}>{a.accountCode} · {a.accountName}</option>)}
+                </select>
+                <input aria-label={`What the bank kept it for, line ${line.line_no}`} value={chargeNote} onChange={(e) => setChargeNote(e.target.value)}
+                  placeholder={`e.g. ${line.acquirer_code ?? 'Terminal'} rental`} style={{ fontSize: 'var(--fs-12)', padding: '2px 6px', maxWidth: 260 }} />
+                {chargedReport && (
+                  <span className={grid.sub}>
+                    {fmt(line.amount_sen)} into the bank and {fmt(keptSen)} to {account || 'the account'}, against {chargedReport.fileName ?? `report ${chargedReport.id}`}.
+                    {chargedShareSen <= 0 ? ' That report is owed less than the charge — untick a report.' : ''}
+                  </span>
+                )}
+                {choicesQ.isError && <span style={{ color: danger, fontSize: 'var(--fs-12)' }}>{refusalText(choicesQ.error, 'The accounts could not be loaded.')}</span>}
+              </div>
+            )}
+            <button type="button" style={btn(true, picked.length === 0 || (shortSen !== 0 && !chargeReady) || book.isPending)}
+              disabled={picked.length === 0 || (shortSen !== 0 && !chargeReady) || book.isPending}
+              onClick={() => book.mutate(charging && chargedReport
+                ? {
+                  lineId: line.id,
+                  allocations: chosen.map((b) => ({ batchId: b.id, amountSen: b.id === chargedReport.id ? chargedShareSen : b.outstandingSen })),
+                  charge: { batchId: chargedReport.id, amountSen: keptSen, accountCode: account, note: chargeNote.trim() },
+                }
+                : {
+                  lineId: line.id,
+                  allocations: chosen.map((b) => ({ batchId: b.id, amountSen: b.outstandingSen })),
+                })}>
               <Landmark {...ICON} />{' '}
               {book.isPending ? 'Posting…' : picked.length > 1 ? `Money received — ${picked.length} reports` : 'Money received'}
             </button>

@@ -53,21 +53,33 @@
 //     already started. Those orders go through Others and the nightly reconcile
 //     links them once the fair exists.
 //  6. A PLACE ALREADY ON THE ORDER IS THE VALUE (owner, 2026-09-15, looking at
-//     HC-SO-2609-071 in edit mode: 「应该是venue的」). No order stores an
-//     organizer, so the edit form, mobile edit and every auto-filled default all
-//     arrive here as a place with no organizer — which this control used to
-//     render as the "Others" sentinel with the place pushed into a second box,
-//     on every order that has a venue. "Others" is an ACTION the operator takes
-//     to open the venue master, never the resting state of a saved answer.
+//     HC-SO-2609-071 in edit mode: 「应该是venue的」). An order with no fair link,
+//     and every auto-filled default, arrives here as a place with no organizer —
+//     which this control used to render as the "Others" sentinel with the place
+//     pushed into a second box. "Others" is an ACTION the operator takes to open
+//     the venue master, never the resting state of a saved answer.
+//  7. A RECORDED PICK READS BACK AS ITS EVENT (owner 2026-09-24). The edit forms
+//     seed the organizer and dates from the order's fair link (`fairPick.ts`), so
+//     the row that was picked is the row shown; the edit save sends the picked
+//     event and the server links exactly that one.
+//  8. THE DAY IS PART OF THE PICK (owner 2026-09-24): the event runs 7-9, and
+//     「他一选完那个 event，这边下拉菜单就要拉出来 7、8、9 三天给他选」, so the order
+//     records which day it was written on, not just which event. `FairDayPicker`
+//     below is that second column. Picking another event, Others or a clear
+//     empties the day; nothing guesses it from today's date.
 // ----------------------------------------------------------------------------
 
-import { useState, type ReactNode } from 'react';
-import { useFairOptions, fairLabel, type FairOption } from '../vendor/scm/lib/fair-options-queries';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  useFairDefault, useFairOptions, fairLabel, type FairOption, type FairWhy,
+} from '../vendor/scm/lib/fair-options-queries';
+import { fmtDayMonth } from '../vendor/shared/format';
+import { fairDaysOf, soleFairDay } from './fairPick';
 
 /** What the SO form stores. `organizer` is null whenever the form holds a place
- *  but no fair row: a pick through Others, an order opened for edit (no order
- *  stores an organizer), or an auto-filled default. The server resolves a null
- *  organizer from venue + date + brand; the picker shows that place as itself. */
+ *  but no fair row: a pick through Others, an order with no fair link, or an
+ *  auto-filled default. The server resolves a null organizer from venue + date +
+ *  brand; the picker shows that place as itself. */
 export type FairPickValue = {
   venue: string | null;
   organizer: string | null;
@@ -82,6 +94,9 @@ export type FairPickValue = {
    *  reads as a decision rather than an omission. */
   startDate: string | null;
   endDate: string | null;
+  /** The DAY of the picked event the order was written on (rule 8), `YYYY-MM-DD`.
+   *  Null until one is picked, and for any value that is not an event. */
+  day: string | null;
 };
 
 export type FairPickerProps = {
@@ -143,7 +158,11 @@ export function FairPicker(props: FairPickerProps) {
      AS the value. It is never re-read as a fair: picking the row from the venue
      alone could name a fair that was not running on the order's date. */
   const selected = picked ? optionValue(picked) : place ? PLACE : choosingPlace ? OTHERS : '';
-  const placeLabel = value.organizer ? `${place} — ${value.organizer}` : place;
+  /* A linked event outside this order's list (e.g. archived since) still reads
+     back whole — venue, organizer and dates — never as a bare venue. */
+  const placeLabel = value.organizer && value.startDate
+    ? fairLabel({ venue: place, organizer: value.organizer, startDate: value.startDate, endDate: value.endDate })
+    : value.organizer ? `${place} — ${value.organizer}` : place;
   const showPlaceList = !picked && choosingPlace;
 
   /* An order can carry a venue the master no longer lists (renamed, deactivated,
@@ -156,7 +175,7 @@ export function FairPicker(props: FairPickerProps) {
     if (next === PLACE) return setChoosingPlace(false);
     if (next === '') {
       setChoosingPlace(false);
-      return onChange({ venue: null, organizer: null, startDate: null, endDate: null });
+      return onChange({ venue: null, organizer: null, startDate: null, endDate: null, day: null });
     }
     if (next === OTHERS) {
       setChoosingPlace(true);
@@ -164,7 +183,7 @@ export function FairPicker(props: FairPickerProps) {
          "the list did not have my fair", not "clear the venue". The PERIOD goes,
          because Others means no event was chosen and a stale period would tell
          the server to match an occurrence the operator just rejected. */
-      return onChange({ venue: value.venue ?? null, organizer: null, startDate: null, endDate: null });
+      return onChange({ venue: value.venue ?? null, organizer: null, startDate: null, endDate: null, day: null });
     }
     const key = next.slice('fair:'.length);
     const hit = all.find((o) => o.key === key);
@@ -178,6 +197,8 @@ export function FairPicker(props: FairPickerProps) {
         organizer: hit.organizer,
         startDate: hit.startDate,
         endDate: hit.endDate,
+        /* A new event starts with no day unless it has only one to give. */
+        day: soleFairDay(hit, q.data?.date ?? null),
       });
     }
   }
@@ -228,7 +249,7 @@ export function FairPicker(props: FairPickerProps) {
           value={place}
           disabled={disabled}
           onChange={(e) =>
-            onChange({ venue: e.target.value || null, organizer: null, startDate: null, endDate: null })
+            onChange({ venue: e.target.value || null, organizer: null, startDate: null, endDate: null, day: null })
           }
           aria-label="Place"
           style={{ marginTop: '6px' }}
@@ -244,6 +265,102 @@ export function FairPicker(props: FairPickerProps) {
       {hint}
     </span>
   );
+}
+
+export type FairDayPickerProps = {
+  value: FairPickValue;
+  /** The ORDER's date, exactly as `FairPicker` takes it: the days stop at the
+   *  date the fair list was built for, never later. */
+  soDate: string | null;
+  onChange: (next: FairPickValue) => void;
+  disabled?: boolean;
+  selectClassName?: string;
+  wrapClassName?: string;
+  id?: string;
+};
+
+/** The second column (rule 8): which DAY of the picked event. Renders nothing
+ *  until an event is picked — a place alone has no days — so a caller shows its
+ *  labelled field only while `fairEventOf(value)` is set. */
+export function FairDayPicker(props: FairDayPickerProps) {
+  const { value, soDate, onChange, disabled, selectClassName, wrapClassName, id } = props;
+  const q = useFairOptions(soDate);
+  if (!value.organizer || !value.startDate) return null;
+  const days = fairDaysOf(value, q.data?.date ?? null);
+  /* A saved day the list no longer offers (the order re-dated, the fair
+     re-planned) is still the order's answer, so it is shown as itself. */
+  const options = value.day && !days.includes(value.day) ? [value.day, ...days] : days;
+  return (
+    <span className={wrapClassName}>
+      <select
+        id={id}
+        className={selectClassName}
+        value={value.day ?? ''}
+        disabled={disabled}
+        onChange={(e) => onChange({ ...value, day: e.target.value || null })}
+        aria-label="Fair day"
+      >
+        <option value="">—</option>
+        {options.map((d) => (
+          <option key={d} value={d}>{fmtDayMonth(d)}</option>
+        ))}
+      </select>
+    </span>
+  );
+}
+
+export type AutoFair = {
+  /** Why no fair was filled in — the form sends it to POST /validate as
+   *  `fairWhy`, which words the refusal. Null when there is nothing to say. */
+  why: FairWhy | null;
+  /** The line under the picker: what was filled in, or why nothing was. */
+  hint: ReactNode;
+};
+
+const sameText = (a: string | null | undefined, b: string | null | undefined) =>
+  (a ?? '').trim().toLowerCase() === (b ?? '').trim().toLowerCase();
+
+/**
+ * A NEW order starts with the KEYER's fair (owner 2026-10-19, the boss's rule):
+ * the fair they stand at today, else the latest one within a month. The rule is
+ * the server's (GET /fair-default); this fills the picker ONCE, through the
+ * form's own pick handler — so a filled-in fair clears No fair exactly as a
+ * picked one does — and words the line under it. Nothing is forced: the
+ * operator changes it like any pick, and it never fills in again.
+ *
+ * Only a form with no EVENT yet is filled: a place the form defaulted to
+ * (/active-venue) gives way, a fair someone already picked does not.
+ *
+ * @param enabled A new order whose operator has not ticked No fair. An edit keeps
+ *   its own fair, and a No fair tick is a decision this never undoes.
+ */
+export function useAutoFair(
+  enabled: boolean,
+  value: FairPickValue,
+  onChange: (next: FairPickValue) => void,
+): AutoFair {
+  const d = useFairDefault(enabled).data ?? null;
+  const filled = useRef(false);
+  useEffect(() => {
+    if (filled.current || !enabled || !d) return;
+    filled.current = true;
+    const e = d.event;
+    if (!e || value.organizer) return;
+    onChange({ venue: e.venue, organizer: e.organizer, startDate: e.startDate, endDate: e.endDate, day: soleFairDay(e, d.date) });
+  }, [d, enabled]); // fills ONCE, when the default arrives — not on every pick
+
+  if (!enabled || !d) return { why: null, hint: null };
+  const e = d.event;
+  const showing = e && sameText(e.venue, value.venue) && sameText(e.organizer, value.organizer) && e.startDate === value.startDate;
+  const line = { display: 'block', fontSize: '11px', marginTop: '4px' } as const;
+  const hint = showing
+    ? <span style={{ ...line, opacity: 0.75 }}>
+        {d.how === 'ongoing' ? 'Filled in: your fair today.' : 'Filled in: your latest fair.'} Change it if this order is for another fair.
+      </span>
+    : !e && d.whyMessage && !value.organizer
+      ? <span role="note" style={{ ...line, color: 'var(--c-festive-b, #B8331F)' }}>{d.whyMessage}</span>
+      : null;
+  return { why: d.why, hint };
 }
 
 export default FairPicker;

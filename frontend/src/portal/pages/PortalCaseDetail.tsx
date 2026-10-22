@@ -299,7 +299,7 @@ export function PortalCaseDetailPage() {
                   { label: "ASSR No", value: cs.assr_no },
                   { label: "Customer", value: cs.customer_name, plain: true },
                   { label: "SO No", value: cs.doc_no },
-                  { label: "Ref No", value: cs.ref_no },
+                  { label: "Ref No.", value: cs.ref_no },
                 ] as Array<{ label: string; value?: string | null; plain?: boolean }>
               ).map((f) => (
                 <div key={f.label} className="min-w-0">

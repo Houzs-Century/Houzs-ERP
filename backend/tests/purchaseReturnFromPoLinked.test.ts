@@ -28,15 +28,38 @@ describe('GET /purchase-returns/returnable-grn-lines', () => {
     expect(literal, 'literal path must precede /:id').toBeLessThan(param);
   });
 
-  it('draws from POSTED receipts only, company-scoped, with a positive remaining', () => {
+  it('draws from POSTED receipts only, company-scoped, through the shared pool', () => {
     const start = BE.indexOf("purchaseReturns.get('/returnable-grn-lines'");
     const seg = BE.slice(start, BE.indexOf("purchaseReturns.get('/:id'", start));
     expect(seg).toContain(".eq('status', 'POSTED')");
     expect(seg).toContain('scopeToCompany(');
-    expect(seg).toContain('.filter((l) => l.remaining > 0)');
-    // Both reads bind their errors — no fail-open on this pool.
-    expect(seg).toContain('error: gErr');
-    expect(seg).toContain('error: iErr');
+    /* The remaining > 0 rule moved into lib/returnable-grn-lines.ts on
+       2026-09-28, where returnable-grn-lines.test.ts asserts it against real
+       rows rather than against this file's characters. What is pinned HERE is
+       that the route still asks that one pool instead of growing a second. */
+    expect(seg).toContain('buildReturnablePool(');
+    expect(seg).not.toMatch(/\.filter\(\(l\) => l\.remaining/);
+    // Every read binds its error — no fail-open on this pool.
+    for (const bound of ['error: poErr', 'error: piErr', 'error: hgErr', 'error: gErr']) {
+      expect(seg, `unbound read: ${bound}`).toContain(bound);
+    }
+  });
+
+  /* THE DEFECT, 2026-09-28 (owner, HC-PO-010114: 「系统找不到 GRN - 但是现实已经
+     received stock」). The pool matched `grns.purchase_order_id` only, so every
+     unit received on a receipt HEADED at another purchase order was invisible
+     and a fully received PO offered nothing to return. One receipt carrying
+     several suppliers' orders is deliberate here, so the LINE link is the truth. */
+  it("finds receipts by the LINE link, and answers the PO's own supplier", () => {
+    const start = BE.indexOf("purchaseReturns.get('/returnable-grn-lines'");
+    const seg = BE.slice(start, BE.indexOf("purchaseReturns.get('/:id'", start));
+    expect(seg).toContain(".in('purchase_order_item_id', batch)");
+    // The legacy carve-out: an UNLINKED line on this PO's own receipt.
+    expect(seg).toContain(".is('purchase_order_item_id', null)");
+    // The supplier is the ORDER's, never the receipt's — a shared receipt
+    // belongs to a different counterparty.
+    expect(seg).toContain("const supplierId = (poRow as { supplier_id: string | null }).supplier_id ?? null;");
+    expect(seg).not.toContain('grnList[0]?.supplier_id');
   });
 });
 

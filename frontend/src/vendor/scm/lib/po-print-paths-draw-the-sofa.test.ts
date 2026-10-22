@@ -35,10 +35,13 @@ const CALLERS = [
 describe('one sheet, whichever button raised it', () => {
   test('the GENERATOR loads the artwork itself', () => {
     expect(GEN).toContain('loadSofaCompartmentArtForPrint');
-    /* Supplied wins, so the caller that already holds the map spends no second
-       request — but absence is a fetch, never a blank. */
-    expect(GEN).toContain('opts?.sofaPhotos');
-    expect(GEN).toContain('?? await loadSofaCompartmentArtForPrint(');
+    /* The lookup ALWAYS runs; a supplied map only overrides per code. "Supplied
+       wins outright" let a partial map (the V2 detail page passed only codes
+       with a stored imageKey) blank every other piece: HC-PO-2610-007 printed
+       1A / Console / 2S as bare boxes (owner 2026-10-03). */
+    expect(GEN).toContain('...await loadSofaCompartmentArtForPrint(');
+    expect(GEN).toContain('...opts?.sofaPhotos,');
+    expect(GEN).not.toContain('?? await loadSofaCompartmentArtForPrint(');
     /* KEYED BY THE CODES THIS SHEET NEEDS, not by walking the stored config.
        The config carries no imageKey for the defaults — Products.tsx seeds
        those client-side — so a config-only lookup found nothing and drew
@@ -74,11 +77,11 @@ describe('one sheet, whichever button raised it', () => {
     }
   });
 
-  test('the four that pass nothing are not silently a different document', () => {
+  test('no caller passes its own artwork map', () => {
     /* Asserted as a COUNT so the test fails when a fifth caller appears, which
        is the moment somebody should think about this again rather than the
        moment a supplier gets a different-looking sheet. */
     const passing = CALLERS.filter(([, p]) => read(p).includes('sofaPhotos'));
-    expect(passing.map(([n]) => n)).toEqual(['V2 detail']);
+    expect(passing.map(([n]) => n)).toEqual([]);
   });
 });

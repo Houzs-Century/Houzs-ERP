@@ -21,7 +21,7 @@ import { writeScmHandoff } from '../../lib/scmHandoffStorage';
 import { ArrowRight, X, CheckSquare, Square } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { useOutstandingPcOrderLines, type OutstandingPcOrderLine } from '../../vendor/scm/lib/purchase-consignment-receive-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { VariantDescription } from '../../vendor/scm/components/VariantDescription';
@@ -114,7 +114,7 @@ export const PurchaseConsignmentReceiveFromOrder = () => {
   const picked = Object.entries(picks).filter(([, v]) => v.picked && v.qty > 0);
   const pickedCount = picked.length;
 
-  const columns = useMemo<DataGridColumn<OutstandingPcOrderLine>[]>(() => [
+  const columns = useMemo<GridColumn<OutstandingPcOrderLine>[]>(() => [
     {
       key: 'pick', label: '', width: 40, sortable: false, groupable: false,
       accessor: (r) => {
@@ -309,7 +309,7 @@ export const PurchaseConsignmentReceiveFromOrder = () => {
         </p>
       )}
 
-      <DataGrid<OutstandingPcOrderLine>
+      <DataGridCompat<OutstandingPcOrderLine>
         rows={rows}
         columns={columns}
         storageKey="pcr-g.pcr-from-order-lines.layout.v1"

@@ -5,12 +5,14 @@
 // ----------------------------------------------------------------------------
 
 import { useCallback } from 'react';
-import { fmtDateOrDash } from '../../vendor/shared/format';
+import { fmtDateOrDash, fmtQty, fmtSen } from '../../vendor/shared/format';
+import { statusLabel } from '../../vendor/scm/lib/status-pill';
 import { DetailListingShell } from '../../components/scm-v2/DetailListingShell';
 import { useDeliveryOrderDetailListing, type DetailListingRow } from '../../vendor/scm/lib/reports-queries';
-import type { DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import type { GridColumn } from '../../components/DataGridCompat';
 import styles from './SalesOrderDetailListing.module.css';
 import { transferFromColumnLabel } from "../../lib/convertScope";
+import { soRefOfStamp } from "../../lib/so-ref-search";
 
 type DoRow = DetailListingRow & {
   do_number?: string;
@@ -28,16 +30,11 @@ type DoRow = DetailListingRow & {
   item_group?: string | null;
 };
 
-const fmtRm = (centi: number | null | undefined): string => {
-  const c = Number(centi ?? 0);
-  return `MYR ${(c / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-};
-
 const fmtM3 = (milli: number | null | undefined): string =>
   ((Number(milli ?? 0)) / 1000).toFixed(3);
 
 export const DeliveryOrderDetailListing = () => {
-  const buildColumns = useCallback((opts: { checked: Record<string, boolean>; onToggle: (id: string) => void }): DataGridColumn<DoRow>[] => [
+  const buildColumns = useCallback((opts: { checked: Record<string, boolean>; onToggle: (id: string) => void }): GridColumn<DoRow>[] => [
     {
       key: 'check', label: 'Check', width: 50, align: 'left', sortable: false, groupable: false,
       accessor: (r) => (
@@ -66,6 +63,11 @@ export const DeliveryOrderDetailListing = () => {
       key: 'so_doc_no', label: transferFromColumnLabel('so'), width: 110, sortable: true, groupable: true,
       accessor: (r) => r.so_doc_no ?? '—',
       searchValue: (r) => r.so_doc_no ?? '',
+    },
+    {
+      key: 'so_ref', label: 'Ref No.', width: 150, sortable: true,
+      accessor: (r) => soRefOfStamp(r) || '—',
+      searchValue: (r) => soRefOfStamp(r),
     },
     {
       key: 'debtor_code', label: 'Customer', width: 110, sortable: true, groupable: true,
@@ -125,7 +127,8 @@ export const DeliveryOrderDetailListing = () => {
     },
     {
       key: 'qty', label: 'Qty', width: 70, align: 'right', sortable: true,
-      accessor: (r) => String(r.qty ?? 0),
+      accessor: (r) => fmtQty(r.qty ?? 0),
+      exportValue: (r) => Number(r.qty ?? 0),
       searchValue: (r) => String(r.qty ?? 0),
       sortFn: (a, b) => Number(a.qty ?? 0) - Number(b.qty ?? 0),
     },
@@ -137,31 +140,31 @@ export const DeliveryOrderDetailListing = () => {
     },
     {
       key: 'unit_price', label: 'Unit Price', width: 110, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.unit_price_sen),
+      accessor: (r) => fmtSen(r.unit_price_sen),
       exportValue: (r) => Number(r.unit_price_sen ?? 0) / 100,
       exportFormat: 'rate',
-      searchValue: (r) => fmtRm(r.unit_price_sen),
+      searchValue: (r) => fmtSen(r.unit_price_sen),
       sortFn: (a, b) => Number(a.unit_price_sen ?? 0) - Number(b.unit_price_sen ?? 0),
     },
     {
       key: 'discount', label: 'Discount', width: 100, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.discount_sen),
+      accessor: (r) => fmtSen(r.discount_sen),
       exportValue: (r) => Number(r.discount_sen ?? 0) / 100,
       exportFormat: 'money',
-      searchValue: (r) => fmtRm(r.discount_sen),
+      searchValue: (r) => fmtSen(r.discount_sen),
       sortFn: (a, b) => Number(a.discount_sen ?? 0) - Number(b.discount_sen ?? 0),
     },
     {
       key: 'line_total', label: 'Line Total', width: 110, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.total_sen),
+      accessor: (r) => fmtSen(r.total_sen),
       exportValue: (r) => Number(r.total_sen ?? 0) / 100,
       exportFormat: 'money',
-      searchValue: (r) => fmtRm(r.total_sen),
+      searchValue: (r) => fmtSen(r.total_sen),
       sortFn: (a, b) => Number(a.total_sen ?? 0) - Number(b.total_sen ?? 0),
     },
     {
       key: 'status', label: 'Status', width: 120, sortable: true, groupable: true,
-      accessor: (r) => (r.status ? String(r.status).replace(/_/g, ' ') : '—'),
+      accessor: (r) => (r.status ? statusLabel('do', String(r.status)) : '—'),
       searchValue: (r) => r.status ?? '',
     },
   ], []);

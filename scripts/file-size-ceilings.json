@@ -44,7 +44,6 @@
     "frontend/src/pages/scm-v2/Products.tsx": 5014,
     "frontend/src/pages/scm-v2/SalesOrderDetail.tsx": 4206,
     "frontend/src/pages/scm-v2/SalesOrderNew.tsx": 2317,
-    "frontend/src/pages/scm-v2/SupplierDetail.tsx": 4328,
-    "frontend/src/vendor/scm/components/DataGrid.tsx": 2161
+    "frontend/src/pages/scm-v2/SupplierDetail.tsx": 4328
   }
 }

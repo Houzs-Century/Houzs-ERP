@@ -5,7 +5,7 @@
  * an archived (mistaken) trip must not be current, must not be counted, yet must
  * still consume its number so a re-add never collides. */
 import { describe, expect, test } from "vitest";
-import { roundCount, currentRound, nextRoundNo, roundLabel, qcResultLabel, type SupplierReturn } from "./returns";
+import { roundCount, currentRound, nextRoundNo, roundLabel, qcResultLabel, returnNotePath, type SupplierReturn } from "./returns";
 
 const r = (round_no: number, extra: Partial<SupplierReturn> = {}): SupplierReturn => ({
   id: round_no * 10,
@@ -56,5 +56,11 @@ describe("labels", () => {
     expect(qcResultLabel("pass")).toBe("Pass");
     expect(qcResultLabel("na")).toBe("N/A");
     expect(qcResultLabel(null)).toBe("—");
+  });
+});
+
+describe("returnNotePath", () => {
+  test("prints ONE trip on the supplier copy (both surfaces open this)", () => {
+    expect(returnNotePath(42, 7)).toBe("/api/assr-print/42?variant=supplier&round=7");
   });
 });

@@ -98,6 +98,13 @@ export const soHeaderFieldKind = (
 /** Only the CHANGED keys are present; a value of null clears the column. */
 export type SoAmendmentHeaderChanges = Partial<Record<AmendableHeaderKey, string | null>>;
 
+/** A Processing Date removal request: both dates go together (the server
+    cascades the Delivery Date anyway) and the Purchaser signs it (owner 2026-09-30). */
+export const PROCESSING_DATE_REMOVAL_CHANGES: SoAmendmentHeaderChanges = Object.freeze({
+  processingDate: null,
+  customerDeliveryDate: null,
+});
+
 /** Human labels for the before/after diff (desktop AmendmentDetailV2 + the
     mobile "View changes" sheet render these, so the wording lives once). */
 export const AMENDABLE_HEADER_LABELS: Record<AmendableHeaderKey, string> = {

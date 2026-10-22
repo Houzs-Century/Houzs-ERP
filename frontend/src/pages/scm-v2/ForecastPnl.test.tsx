@@ -126,4 +126,36 @@ describe('the Forecast P&L page', () => {
     fireEvent.click(screen.getByText('Save'));
     expect(mutate.mock.calls[1]![0]).toEqual({});
   });
+
+  /* A purchase line's % is of its OWN group's sales (owner 2026-09-29: purchase
+     of bedding 应该是根据回他的 sales 的 amount 算，而不是 total sales, sofa 同理):
+     the account comes with `basis`, the box says so, and the implied figures
+     move with that group's sales alone. */
+  test("a purchase line's % is of its own group's sales, the box says which, and only that group's sales move it", () => {
+    state.data = {
+      ...DATA,
+      months: { '2026-09': { '500-0003': { amtSen: 10_000_000 }, '500-0001': { amtSen: 4_000_000 }, '601-0003': { bp: 6000 }, '601-0001': { amtSen: 1_000_000 }, '900-S001': { bp: 1000 } } },
+      accounts: [
+        { code: '500-0003', name: 'SALES OF SOFA', section: 'SALES', type: 'INCOME' },
+        { code: '500-0001', name: 'SALES OF BEDDING', section: 'SALES', type: 'INCOME' },
+        { code: '601-0003', name: 'PURCHASE OF SOFA', section: 'COST OF GOODS SOLD', type: 'EXPENSE', basis: ['500-0003'] },
+        { code: '601-0001', name: 'PURCHASES OF BEDDING', section: 'COST OF GOODS SOLD', type: 'EXPENSE', basis: ['500-0001'] },
+        { code: '900-S001', name: 'SALARY', section: 'EXPENSES', type: 'EXPENSE' },
+      ],
+    };
+    render(<MemoryRouter><ForecastPnl /></MemoryRouter>);
+    /* Sofa 60% of the 100,000 sofa sales = 60,000 (not of the 140,000 whole); bedding 10,000 of 40,000 = 25%; salary 10% of everything = 14,000. */
+    expect(amount('2026-09', '601-0003').placeholder).toBe('60,000.00');
+    expect(percent('2026-09', '601-0001').placeholder).toBe('25');
+    expect(amount('2026-09', '900-S001').placeholder).toBe('14,000.00');
+    expect(percent('2026-09', '601-0003').title).toBe("% of this line's own sales: 500-0003");
+    expect(percent('2026-09', '900-S001').title).toBe("% of the month's sales");
+    expect(rowText('gross-profit')).toContain('70,000.00');
+    /* More bedding sales: the bedding share falls, the sofa figure stands, salary follows the whole. */
+    key(amount('2026-09', '500-0001'), '100000');
+    expect(percent('2026-09', '601-0001').placeholder).toBe('10');
+    expect(amount('2026-09', '601-0003').placeholder).toBe('60,000.00');
+    expect(amount('2026-09', '900-S001').placeholder).toBe('20,000.00');
+    expect(rowText('gross-profit')).toContain('130,000.00');
+  });
 });

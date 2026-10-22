@@ -18,8 +18,12 @@ import {
   SO_DATE_PAIR_REFUSAL,
   soDatePairCascadeColumns,
   soDatePairRefusal,
+  soLineDateRefusal,
+  SO_LINE_DATE_NEEDS_PROCESSING_REFUSAL,
   soDateDay,
   soDateYmd,
+  withProcessingRemovalCascade,
+  isProcessingRemovalOnlyRequest,
 } from './so-processing-date';
 
 describe('soDatePairRefusal — the predicate', () => {
@@ -132,6 +136,67 @@ describe('soDatePairCascadeColumns — clearing one clears both', () => {
   });
 });
 
+describe('withProcessingRemovalCascade — the amendment twin', () => {
+  const stored = { processingDate: '2026-09-01', deliveryDate: '2026-09-20' };
+
+  it('a removal also clears the stored Delivery Date', () => {
+    expect(withProcessingRemovalCascade({ processingDate: null }, stored))
+      .toEqual({ processingDate: null, customerDeliveryDate: null });
+  });
+
+  it('an empty string counts as a removal', () => {
+    expect(withProcessingRemovalCascade({ processingDate: '' }, stored))
+      .toEqual({ processingDate: '', customerDeliveryDate: null });
+  });
+
+  it('a Date object on the stored row is still a stored date', () => {
+    expect(withProcessingRemovalCascade({ processingDate: null }, { processingDate: new Date('2026-09-01T00:00:00Z'), deliveryDate: new Date('2026-09-20T00:00:00Z') }))
+      .toEqual({ processingDate: null, customerDeliveryDate: null });
+  });
+
+  it('leaves a request that already names the Delivery Date alone', () => {
+    const hc = { processingDate: null, customerDeliveryDate: '2026-10-01' };
+    expect(withProcessingRemovalCascade(hc, stored)).toBe(hc);
+  });
+
+  it('moving the Processing Date is not a removal', () => {
+    const hc = { processingDate: '2026-09-05' };
+    expect(withProcessingRemovalCascade(hc, stored)).toBe(hc);
+  });
+
+  it('nothing to cascade when the order had no Processing Date', () => {
+    const hc = { processingDate: null };
+    expect(withProcessingRemovalCascade(hc, { processingDate: null, deliveryDate: '2026-09-20' })).toBe(hc);
+  });
+});
+
+describe('isProcessingRemovalOnlyRequest — the one request an unlocked order may raise', () => {
+  const stored = '2026-10-05';
+  it('a removal of both dates, no lines', () => {
+    expect(isProcessingRemovalOnlyRequest({ headerChanges: { processingDate: null, customerDeliveryDate: null }, lines: [], storedProcessingDate: stored })).toBe(true);
+  });
+  it('a removal of the Processing Date alone (the server cascades the other)', () => {
+    expect(isProcessingRemovalOnlyRequest({ headerChanges: { processingDate: '' }, lines: undefined, storedProcessingDate: stored })).toBe(true);
+  });
+  it('not when a line rides along', () => {
+    expect(isProcessingRemovalOnlyRequest({ headerChanges: { processingDate: null }, lines: [{ changeType: 'QTY' }], storedProcessingDate: stored })).toBe(false);
+  });
+  it('not when another header field rides along', () => {
+    expect(isProcessingRemovalOnlyRequest({ headerChanges: { processingDate: null, address1: 'x' }, lines: [], storedProcessingDate: stored })).toBe(false);
+  });
+  it('not when a date is moved rather than cleared', () => {
+    expect(isProcessingRemovalOnlyRequest({ headerChanges: { processingDate: '2026-10-09' }, lines: [], storedProcessingDate: stored })).toBe(false);
+    expect(isProcessingRemovalOnlyRequest({ headerChanges: { processingDate: null, customerDeliveryDate: '2026-10-20' }, lines: [], storedProcessingDate: stored })).toBe(false);
+  });
+  it('not when the order has no Processing Date to remove', () => {
+    expect(isProcessingRemovalOnlyRequest({ headerChanges: { processingDate: null }, lines: [], storedProcessingDate: null })).toBe(false);
+  });
+  it('not on a malformed body', () => {
+    expect(isProcessingRemovalOnlyRequest({ headerChanges: null, lines: [], storedProcessingDate: stored })).toBe(false);
+    expect(isProcessingRemovalOnlyRequest({ headerChanges: { processingDate: 5 }, lines: [], storedProcessingDate: stored })).toBe(false);
+  });
+});
+
 /* The approve-so gate reads the SO's stored dates through the PostgreSQL
    command transaction, whose postgres.js shim returns a DATE column as a JS
    Date. `String(date).slice(0, 10)` is 'Fri Aug 28' — it sorts after every
@@ -167,5 +232,23 @@ describe('soDateDay / soDateYmd — a Date object is a day, not "Fri Aug 28"', (
   it('treats an invalid Date as absent', () => {
     expect(soDateDay(new Date('garbage'))).toBe('');
     expect(soDateYmd(new Date('garbage'))).toBeNull();
+  });
+});
+
+describe('soLineDateRefusal — no Processing Date, no line delivery date (BUG-39)', () => {
+  it('refuses a line date on an order with no Processing Date', () => {
+    expect(soLineDateRefusal({ processingDate: null, lineDeliveryDates: [null, '2026-09-30'] }))
+      .toBe(SO_LINE_DATE_NEEDS_PROCESSING_REFUSAL);
+    expect(soLineDateRefusal({ processingDate: '', lineDeliveryDates: ['2026-09-30'] }))
+      .toBe(SO_LINE_DATE_NEEDS_PROCESSING_REFUSAL);
+  });
+
+  it('accepts a line date once the order has a Processing Date', () => {
+    expect(soLineDateRefusal({ processingDate: '2026-09-01', lineDeliveryDates: ['2026-09-30'] })).toBeNull();
+  });
+
+  it('never refuses clearing or leaving the line date empty', () => {
+    expect(soLineDateRefusal({ processingDate: null, lineDeliveryDates: [null, undefined, ''] })).toBeNull();
+    expect(soLineDateRefusal({ processingDate: null, lineDeliveryDates: [] })).toBeNull();
   });
 });

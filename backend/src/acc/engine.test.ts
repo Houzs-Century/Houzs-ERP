@@ -294,6 +294,42 @@ describe('reverseJournal — voiding through the same gate', () => {
     const out = await reverseJournal(sb, { sourceType: 'MANUAL', narration: (o) => o.je_no });
     expect(out).toMatchObject({ ok: false, status: 'reversal_read_failed' });
   });
+
+  /* The database refusing an UPDATE on journal_entries — the fake checks unique
+     indexes on INSERT only, and the refusal that mattered (2026-10-20) was the
+     one-active index answering the contra's `posted = true` with 23505. */
+  const refusingUpdate = (sb: ReturnType<typeof world>, refuses: (patch: Row) => boolean) => ({
+    ...sb,
+    from: (t: string) => {
+      const b = sb.from(t);
+      if (t !== 'journal_entries') return b;
+      const update = b.update.bind(b);
+      b.update = (patch: Row) => (refuses(patch)
+        ? { eq: async () => ({ data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint "acc_je_one_active_source"' } }) }
+        : update(patch));
+      return b;
+    },
+  });
+
+  it('a contra the database refuses to POST is taken back out and the original stays live — never "ok" over a void that did not happen', async () => {
+    const sb = world({ jes: [{ ...LIVE }], jeLines: [...LIVE_LINES] });
+    const out = await reverseJournal(refusingUpdate(sb, (p) => p.posted === true), revInput);
+    expect(out).toMatchObject({ ok: false, status: 'reversal_post_failed' });
+    expect(sb.tables.journal_entries).toHaveLength(1);
+    expect(sb.tables.journal_entries[0]).toMatchObject({ id: 'je-1', reversed: false });
+    expect(sb.tables.journal_entry_lines.filter((l) => l.journal_entry_id !== 'je-1')).toHaveLength(0);
+  });
+
+  it('a flag that does not stick answers not-ok, and the retry makes it stick through the existing contra', async () => {
+    const sb = world({ jes: [{ ...LIVE }], jeLines: [...LIVE_LINES] });
+    const out = await reverseJournal(refusingUpdate(sb, (p) => p.reversed === true), revInput);
+    expect(out).toMatchObject({ ok: false, status: 'reversal_flag_failed' });
+    expect(sb.tables.journal_entries.find((j) => j.source_type === 'SI_REVERSAL')!.posted).toBe(true);
+    const retry = await reverseJournal(sb, revInput);
+    expect(retry).toMatchObject({ ok: true, status: 'already_reversed' });
+    expect(sb.tables.journal_entries.find((j) => j.id === 'je-1')!.reversed).toBe(true);
+    expect(sb.tables.journal_entries.filter((j) => j.source_type === 'SI_REVERSAL')).toHaveLength(1);
+  });
 });
 
 describe('rules — role resolution', () => {

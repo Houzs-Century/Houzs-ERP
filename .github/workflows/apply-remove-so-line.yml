@@ -1,0 +1,108 @@
+name: Apply — remove a Sales Order service line (gated)
+
+# The APPLY half for remove-so-storage-line.mts: delete ONE service/charge line
+# from a processing-locked / delivered SO and sync the removal to AutoCount, when
+# the desk cannot raise/approve an amendment. It holds ONE credential — the
+# database — and the script reuses the app's own retiredLineOf + enqueueEdit so no
+# accounting payload is hand-crafted. See the script header for the full contract.
+#
+# Run DRY-RUN first (reads + previews, writes nothing); read the preview in the run
+# log; then re-run with mode=apply. The script refuses unless the line matches
+# doc + line_id + item_code, is a SERVICE line, and carries no live DO / SI.
+#
+# Inputs reach the script ONLY through the ENVIRONMENT, never `${{ }}` interpolated
+# into a run body — a dispatch input is attacker-shaped text.
+on:
+  workflow_dispatch:
+    inputs:
+      doc:
+        description: "SO doc_no, e.g. HC-SO-011427"
+        required: true
+        type: string
+      line_id:
+        description: "The mfg_sales_order_items.id (uuid) to remove"
+        required: true
+        type: string
+      item_code:
+        description: "Expected item_code of that line (wrong-line guard), e.g. STORAGE"
+        required: true
+        type: string
+      reason:
+        description: "Audit reason (recorded on the DELETE_LINE row)"
+        required: true
+        type: string
+      mode:
+        description: "dry-run previews and writes nothing; apply performs it"
+        required: true
+        default: "dry-run"
+        type: choice
+        options: [dry-run, apply]
+      confirm:
+        description: 'CONFIRM phrase to apply — must be exactly: REMOVE SO LINE'
+        required: false
+        default: ""
+        type: string
+      target:
+        description: "Which DB"
+        required: true
+        default: "staging"
+        type: choice
+        options: [staging, prod]
+
+# One repair at a time per database, and never cancelled mid-write. Deliberately
+# NOT the deploy's group.
+concurrency:
+  group: apply-remove-so-line-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  apply-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+        working-directory: backend
+      - name: Remove line
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          DOC: ${{ inputs.doc }}
+          LINE_ID: ${{ inputs.line_id }}
+          ITEM_CODE: ${{ inputs.item_code }}
+          REASON: ${{ inputs.reason }}
+          CONFIRM: ${{ inputs.confirm }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: npx tsx scripts/remove-so-storage-line.mts
+
+  apply-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+        working-directory: backend
+      - name: Remove line
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          DOC: ${{ inputs.doc }}
+          LINE_ID: ${{ inputs.line_id }}
+          ITEM_CODE: ${{ inputs.item_code }}
+          REASON: ${{ inputs.reason }}
+          CONFIRM: ${{ inputs.confirm }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: npx tsx scripts/remove-so-storage-line.mts

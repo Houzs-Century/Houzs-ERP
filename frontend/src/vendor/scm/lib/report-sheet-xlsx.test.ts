@@ -13,8 +13,8 @@ import { AMOUNT_FORMAT, PCT_FORMAT, columnWidths, rowCells, sheetMatrix, sheetNa
 
 const sheet: ReportSheet = {
   title: 'P&L',
-  subtitle: '01/09/2026 – 19/09/2026 · % of sales · on the saved layout',
-  meta: [{ label: 'Period', value: '01/09/2026 – 19/09/2026' }],
+  subtitle: '2026/09/01 – 2026/09/19 · % of sales · on the saved layout',
+  meta: [{ label: 'Period', value: '2026/09/01 – 2026/09/19' }],
   tables: [{
     columns: [{ label: 'Amount', kind: 'amount' }, { label: '% of sales', kind: 'pct' }],
     rows: [

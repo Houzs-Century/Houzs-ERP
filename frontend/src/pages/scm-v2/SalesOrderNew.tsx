@@ -52,6 +52,8 @@ import { api } from '../../api/client';
 import type { Department, TeamMember } from '../../types';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import { usePrompt } from '../../vendor/scm/components/ConfirmDialog';
+import { askNewSoBackdateReason, draftRequestBody, isBackdateRequestRow, sendNewSoBackdateRequests } from '../../vendor/scm/lib/new-so-backdate';
 import {
   useCreateMfgSalesOrder, useDebtorSearch, useAddSalesOrderPayment,
   useUploadSoItemPhoto, useMfgSalesOrderDetail,
@@ -90,7 +92,9 @@ import { useAuth } from '../../vendor/scm/lib/auth';
    AuthUser to default + name the creator so the field is never blank. */
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useVenues, type AutoVenue } from '../../vendor/scm/lib/venues-queries';
-import { FairPicker, type FairPickValue } from '../../components/FairPicker';
+import { FairDayPicker, FairPicker, useAutoFair, type FairPickValue } from '../../components/FairPicker';
+import { FairFallback } from '../../components/FairFallback';
+import { fairDayCheck, fairEditPatch, fairEventOf } from '../../components/fairPick';
 import {
   useLocalities, countryForState,
 } from '../../vendor/scm/lib/localities-queries';
@@ -105,6 +109,7 @@ import {
 import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-queries';
 import { SoLineCard, emptySoLine, missingRequiredVariants, type SoLineDraft } from '../../vendor/scm/components/SoLineCard';
 import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from '@2990s/shared/so-variant-rule';
+import { pickDefaultVariants } from '../../vendor/shared/model-default-variants';
 /* FIX (d) scan fabric seed — resolve a scanned fabric code (e.g. "BO315-22")
    to the SAME fabric_colours / fabric_library rows SoLineCard's pickFabricColour
    uses, so the matched colour rides onto the seeded line's variants instead of
@@ -119,13 +124,15 @@ import { useSpecialAddons, type MfgProductRow } from '../../vendor/scm/lib/mfg-p
 import { type ScanPrefill, type ExtractedSlip } from '../../vendor/scm/components/ScanOrderModal';
 import {
   PaymentsTable, labelToApi, draftMethodFields, newPaymentDraft, convertDraftsFrom,
-  missingMethodSubField, parseInstallmentMonths, type PaymentDraft,
+  missingMethodSubField, parseInstallmentMonths, slipDateProblem, type PaymentDraft,
 } from '../../vendor/scm/components/PaymentsTable';
 import { useOrdersWithMoney } from '../../vendor/scm/lib/so-money-queries';
+import { SLIP_REQUIRED_REASON, slipMissingProblem } from '../../vendor/scm/lib/payment-slip-gate';
 import { useBranding } from '../../hooks/useBranding';
 import styles from './SalesOrderNew.module.css';
-import { fmtMoneySen } from '@2990s/shared';
+import { consoleAttachOptions, fmtMoneySen } from '@2990s/shared';
 import { DateField } from "../../vendor/scm/components/DateField";
+import { isSofaGroup, pieceShareSen, SOFA_PIECES_SPLIT_NOTICE, splitSofaPieceLines } from '../../vendor/scm/lib/sofa-piece-lines';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -148,7 +155,7 @@ const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, cu
 
 export const SalesOrderNew = () => {
   const navigate = useNavigate();
-  const notify = useNotify();
+  const notify = useNotify(); const prompt = usePrompt();
   /* Copy-to-new-SO: ?copyFrom=<docNo> seeds this form from an existing SO
      (customer + line items only — dates, payments, customer SO ref, doc no
      and status are intentionally left blank so the operator starts fresh). */
@@ -473,14 +480,9 @@ export const SalesOrderNew = () => {
         onlineType:             p.onlineTypeValue || '',
         approvalCode:           p.approvalCode || '',
         amountSen:            p.depositSen > 0 ? p.depositSen : 0,
-        /* Bug #3 (2026-06-24) — the card receipt scanned in the modal IS this
-           deposit's slip. Tag the draft with the receipt's R2 key so the save
-           records the deposit through the SO-create proof (receiptImageKey on
-           the header) rather than the per-payment slip route. This used to be
-           what satisfied the slip-required guard; that guard is gone (Owner
-           2026-08-13) but the ROUTING still matters — without the tag the row
-           would post as an ordinary payment and the receipt would never land
-           on it. */
+        /* Bug #3 (2026-06-24) — the scanned card receipt IS this deposit's slip (it satisfies
+           slipMissingProblem). The tag routes the row through the SO-create proof (receiptImageKey
+           on the header) rather than the per-payment slip route; untagged, the receipt lands on nothing. */
         receiptImageKey:        payload.receiptImageKey || '',
       }]);
     }
@@ -713,11 +715,10 @@ export const SalesOrderNew = () => {
 
   /* Desktop sofa multi-add (MobileSkuPicker.onPickMany parity). SoLineCard's
      multi-select commits the FIRST tick to the current line and hands the REST
-     here — each becomes a fresh line seeded exactly like a single pick: real
-     itemGroup, SKU sell price, and the same category variant inherit (so a
-     second, third… sofa in the same shot follows LINE 1's seat/leg the way a
-     manually-added follower line would; the per-sofa colour sync stays scoped
-     to real split builds). */
+     here — each seeded exactly like a single pick: real itemGroup, SKU sell
+     price, Model default variants under the same category inherit (a second
+     sofa in the same shot follows LINE 1's seat/leg like a manually-added
+     follower; the per-sofa colour sync stays scoped to real split builds). */
   const addProducts = (rows: MfgProductRow[]) => {
     if (rows.length === 0) return;
     setLines((prev) => {
@@ -730,7 +731,7 @@ export const SalesOrderNew = () => {
           itemGroup:      category,
           description:    p.name,
           unitPriceSen: p.sell_price_sen ?? 0,
-          variants:       seedFollowerVariants(inheritVariantsByCategory[category]),
+          variants: { ...pickDefaultVariants(p.category, p.model_default_variants, p.allowed_options), ...seedFollowerVariants(inheritVariantsByCategory[category]) },
           overriddenKeys: [],
         };
       });
@@ -1043,8 +1044,19 @@ export const SalesOrderNew = () => {
      it leads here and the master id follows it by name for back-compat with the
      `venue_id` column and the reports that read it. */
   const [fairPick, setFairPick] = useState<FairPickValue>({
-    venue: null, organizer: null, startDate: null, endDate: null,
+    venue: null, organizer: null, startDate: null, endDate: null, day: null,
   });
+  /* Fair is compulsory on submit (owner 2026-09-26): the operator must pick a
+     fair OR tick No-fair (showroom). Picking a fair clears the No-fair mark. */
+  const [noFair, setNoFair] = useState(false);
+  /* Back-keying: the date that anchors the fair list (FairFallback.tsx has the
+     why). null = today's window — the unchanged live default. */
+  const [fairDate, setFairDate] = useState<string | null>(null);
+  const onFairChange = useCallback((next: FairPickValue) => {
+    setFairPick(next);
+    if (next.organizer) setNoFair(false);
+  }, []);
+  const autoFair = useAutoFair(!noFair, fairPick, onFairChange); // the keyer's fair (owner 2026-10-19)
   const effectiveVenueName: string = useMemo(() => {
     if (fairPick.venue) return fairPick.venue;
     const id = pickedVenueId ?? resolvedVenueId;
@@ -1091,7 +1103,7 @@ export const SalesOrderNew = () => {
       /* An auto-filled venue is a PLACE, never an event — no organizer and no
          period. Seeding a period here would tell the server the operator chose
          an occurrence they never saw. */
-      setFairPick({ venue: autoVenue.venueName, organizer: null, startDate: null, endDate: null });
+      setFairPick({ venue: autoVenue.venueName, organizer: null, startDate: null, endDate: null, day: null });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoVenue]);
@@ -1196,7 +1208,8 @@ export const SalesOrderNew = () => {
     return failures;
   };
 
-  const paymentIntents = () => paymentDrafts.filter((d) => d.amountSen > 0 && !d.receiptImageKey);
+  const backdateRows = () => paymentDrafts.filter((d) => d.amountSen > 0 && isBackdateRequestRow({ ...d, receiptBacked: Boolean(d.receiptImageKey) }, can('scm.payment.backdate')));
+  const paymentIntents = () => paymentDrafts.filter((d) => d.amountSen > 0 && !d.receiptImageKey && !backdateRows().includes(d));
 
   const flushPaymentDrafts = async (docNo: string, drafts: PaymentDraft[]): Promise<{ failedDrafts: PaymentDraft[] }> => {
     const tasks = drafts
@@ -1219,10 +1232,8 @@ export const SalesOrderNew = () => {
           accountSheet:    d.accountSheet || null,
           approvalCode:    d.approvalCode || null,
           collectedBy:     d.collectedBy  || null,
-          /* Null when the operator attached none — the slip is OPTIONAL
-             (Owner 2026-08-13) and the route records a slip-less payment.
-             A row is posted on its AMOUNT alone; never filter this list on the
-             slip, or the payment silently never books. */
+          /* The slip is required (owner 2026-10-13) but gated BEFORE the save (slipMissingExtras);
+             a row is posted on its AMOUNT alone — never filter on the slip, or the payment silently never books. */
           uploadSessionId: d.slipUploadSessionId,
         };
         /* Task #122 (cascade) — replay the L2 picks per method so the
@@ -1394,6 +1405,8 @@ export const SalesOrderNew = () => {
     items: lines.map((l) => ({ itemCode: l.itemCode, itemGroup: l.itemGroup, variants: l.variants, qty: l.qty })),
     asDraft: asDraftFlag,
     hasVenue: !!effectiveVenueId,
+    ...fairDayCheck(fairEditPatch(fairEventOf(fairPick)), {}),
+    noFair, fairWhy: autoFair.why,
     hasSalesperson: !!salespersonId,
     companyCode: branding.companyCode,
     salesLocation,
@@ -1411,7 +1424,7 @@ export const SalesOrderNew = () => {
       convertedFromDocNo: d.convertedFromDocNo,
       amountSen: d.amountSen,
     })),
-  }), [debtorName, phone, lines, effectiveVenueId, salespersonId, branding.companyCode, salesLocation, state, processingDate, deliveryDate, fillAddressLater, address1, postcode, paymentDrafts]);
+  }), [debtorName, phone, lines, effectiveVenueId, fairPick, noFair, autoFair.why, salespersonId, branding.companyCode, salesLocation, state, processingDate, deliveryDate, fillAddressLater, address1, postcode, paymentDrafts]);
 
   /* Live "Can't save — N to fix" list, asked of the backend as the operator
      types (debounced). Based on the CONFIRMED create (asDraft:false), which is
@@ -1434,7 +1447,29 @@ export const SalesOrderNew = () => {
         }]
       : [];
   }, [lines, scanLineMeta]);
-  const blockingProblems = useMemo(() => [...backendLiveProblems, ...scannedExtras], [backendLiveProblems, scannedExtras]);
+  /* A slip date the backend cannot see (validate carries no dates) blocks the SAVE,
+     as mobile's does — except a too-old row, which goes to an admin as a request
+     after the order is created (owner 2026-10-01, lib/new-so-backdate). */
+  const slipDateExtras = useMemo<SaveProblem[]>(() => {
+    const mayBackdate = can('scm.payment.backdate');
+    const problems = paymentDrafts
+      .filter((d) => d.amountSen > 0 && !isBackdateRequestRow({ ...d, receiptBacked: Boolean(d.receiptImageKey) }, mayBackdate))
+      .map((d) => slipDateProblem(d, todayMyt(), mayBackdate))
+      .filter((m): m is string => m !== null);
+    return problems.length > 0
+      ? [{ code: 'slip_date_out_of_window', message: problems[0]!, field: 'Payment date' }]
+      : [];
+  }, [paymentDrafts, can]);
+  /* The proof (owner 2026-10-13, lib/payment-slip-required): every keyed row carries its slip
+     before the order is saved (the rows post AFTER the create). A scanned receipt or a converted row needs none. */
+  const slipMissingExtras = useMemo<SaveProblem[]>(() => {
+    const missing = paymentDrafts.filter((d) => d.amountSen > 0 && slipMissingProblem(d) !== null).length;
+    return missing > 0 ? [{ code: 'slip_required', message: `${missing} payment${missing === 1 ? ' has' : 's have'} no slip attached. ${SLIP_REQUIRED_REASON}`, field: 'Payment slip' }] : [];
+  }, [paymentDrafts]);
+  const blockingProblems = useMemo(
+    () => [...backendLiveProblems, ...scannedExtras, ...slipMissingExtras, ...slipDateExtras],
+    [backendLiveProblems, scannedExtras, slipDateExtras, slipMissingExtras],
+  );
   const openBlockingList = () => {
     void notify({ title: saveProblemsTitle(blockingProblems.length), body: <SaveProblemsList problems={blockingProblems} />, tone: 'error' });
   };
@@ -1464,6 +1499,23 @@ export const SalesOrderNew = () => {
       });
       return;
     }
+    /* One sofa piece = one line (sofa-piece-lines.ts): the operator sees the
+       split lines before anything is sent. */
+    const pieces = splitSofaPieceLines(lines, {
+      shouldSplit: (l) => isSofaGroup(l.itemGroup),
+      qtyOf: (l) => l.qty,
+      asPiece: (l, i, n) => ({
+        ...l,
+        qty: 1,
+        discountSen: pieceShareSen(l.discountSen, i, n),
+        ...(i === 0 ? {} : { rid: newLine().rid, photoUrls: [], pendingPhotoFiles: [] }),
+      }),
+    });
+    if (pieces) {
+      setLines(pieces);
+      await notify({ title: 'Sofa pieces split', body: SOFA_PIECES_SPLIT_NOTICE });
+      return;
+    }
     const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0);
     /* Backend is the authority for what blocks this submit (owner 2026-09-16).
        Ask the validate dry-run for the definitive list for THIS press (draft vs
@@ -1484,11 +1536,13 @@ export const SalesOrderNew = () => {
       // failure must not block the operator, and the create call below is the
       // authoritative gate that surfaces any real refusal.
     }
-    const problems = [...serverProblems, ...scannedExtras];
+    const problems = [...serverProblems, ...scannedExtras, ...slipMissingExtras, ...slipDateExtras];
     if (problems.length > 0) {
       void notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: 'error' });
       return;
     }
+    const backdateReason = await askNewSoBackdateReason(prompt, backdateRows().length);
+    if (backdateReason === null) return;
 
     /* Edit-gate — operator committed to saving, so fold their corrections back
        into the few-shot pool (fire-and-forget, fromScan only). */
@@ -1526,11 +1580,9 @@ export const SalesOrderNew = () => {
        exactly `paymentIntents()` — what flushPaymentDrafts is about to post,
        which by its own filter excludes the receipt-backed deposit the create
        body already carries — so this can neither claim money the client is not
-       about to record nor count the same ringgit twice. It used to ALSO demand
-       a slip session; once the slip became optional (Owner 2026-08-13) that
-       would have re-opened the very deadlock this field exists to close, a
-       slip-less deposit counting as RM0 against a Processing Date the operator
-       can see is paid for. */
+       about to record nor count the same ringgit twice. Never the slip: a
+       slip filter here once counted a deposit as RM0 against a Processing Date
+       the operator could see was paid for. */
     const pendingDepositSen = paymentIntents()
       .reduce((sum, d) => sum + d.amountSen, 0);
 
@@ -1567,6 +1619,7 @@ export const SalesOrderNew = () => {
         /* The picked event's ORGANIZER. Together with the venue, the order date
            and the brand derived from the lines, this is what identifies one
            fair; the server never trusts a project id from here. */
+        noFair: noFair || undefined,
         fairOrganizer: fairPick.organizer ?? undefined,
         /* The picked event's PERIOD. Venue + organizer + period is what names
            ONE occurrence; the order date cannot stand in for it, because this
@@ -1574,6 +1627,8 @@ export const SalesOrderNew = () => {
            was keyed — not a day the fair was necessarily on. */
         fairStart: fairPick.startDate ?? undefined,
         fairEnd: fairPick.endDate ?? undefined,
+        /* Which DAY of that event (owner 2026-09-24) — kept only as one of its days. */
+        fairDate: fairPick.day ?? undefined,
         /* Address handling: address1/2 skipped when fill-later is on, but
            State/City/Postcode/BuildingType always submit. */
         address1: fillAddressLater ? undefined : (address1 || undefined),
@@ -1625,16 +1680,15 @@ export const SalesOrderNew = () => {
           /* THE ACCOUNTS MAY HAVE REFUSED IT, and until 2026-08-19 only a queue
              behind a permission key knew. Never blocks — the order is saved. */
           await notifyAcNotSent(notify, res, 'Sales order');
-          /* Task #105 — Fire the queued payment drafts as follow-up POSTs.
-             We don't gate navigation on success — if a payment fails the
-             SO still exists, so we navigate to the Detail page where
-             commander can re-enter the affected row. */
+          /* Task #105 — the queued drafts post after the create; a failure never
+             blocks navigation (the SO exists), the Detail page retries it. */
           const intents = paymentIntents();
           const staged = intents.length === 0 || writePaymentRetryHandoff('so', res.docNo, intents);
           const { failedDrafts } = staged
             ? await flushPaymentDrafts(res.docNo, intents)
             : { failedDrafts: intents };
           const failed = failedDrafts.length;
+          await sendNewSoBackdateRequests(res.docNo, backdateRows().map(draftRequestBody), backdateReason, notify);
           /* Line-card-redesign — Drain pendingPhotoFiles for every line
              after the SO + items exist. Same non-blocking pattern as
              payments: a photo failure leaves the SO intact and we
@@ -1794,7 +1848,7 @@ export const SalesOrderNew = () => {
               />
             </label>
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Customer SO Ref</span>
+              <span className={styles.fieldLabel}>Ref No.</span>
               <input
                 className={`${styles.fieldInput} ${editedClass('customerSoNo', customerSoNo)}`}
                 value={customerSoNo}
@@ -1900,7 +1954,7 @@ export const SalesOrderNew = () => {
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>
-            <label className={styles.field}>
+            <label className={styles.field} style={{ gridColumn: 'span 2' }}>
               <span className={styles.fieldLabel}>Fair</span>
               {/* Owner 2026-09-13: a row is a PLACE plus an ORGANIZER, no dates,
                   and nothing here is typed — "Others" is a second PICK over the
@@ -1911,26 +1965,38 @@ export const SalesOrderNew = () => {
               <FairPicker
                 id="so-fair"
                 value={fairPick}
-                /* The create form has no SO-date field — the server stamps today in
-                   MYT — so null is the honest value here, not a browser date. */
-                soDate={null}
-                onChange={setFairPick}
+                /* Anchored to `fairDate` (null = today) so back-keying can offer
+                   the fair that was running on the order's real date. */
+                soDate={fairDate}
+                onChange={onFairChange}
                 wrapClassName={styles.selectWrap}
                 selectClassName={`${styles.fieldSelect} ${editedClass('venueId', effectiveVenueId ?? '')}`}
               />
+              {autoFair.hint}
               {/* Name the SOURCE of the default, not just that there was one:
                   "from Ipoh Fair" and "from your showroom" mean different things
-                  and the operator overrides on that. (The "master holds ~38" note
-                  that stood here was stale — measured 2026-09-13 it holds 92 and
-                  covers every venue any 2026 fair uses.) */}
-              {autoVenue?.venueName && (
+                  and the operator overrides on that. Not beside the keyer's fair line. */}
+              {autoVenue?.venueName && !autoFair.hint && (
                 <span style={{ fontSize: '11px', marginTop: '4px', opacity: 0.7 }}>
                   {autoVenue.venueId
                     ? `Auto-filled from ${autoVenue.source === 'PMS' ? (autoVenue.projectName ?? 'your fair') : `your showroom${autoVenue.showroomName ? ` (${autoVenue.showroomName})` : ''}`} — change it if you are somewhere else today`
                     : `${autoVenue.venueName} is not in the venue list yet — it still saves on the order; add it in Project Maintenance to show it here.`}
                 </span>
               )}
+              {/* When no fair is picked: the back-keying date + the No-fair escape
+                  (owner 2026-09-26). Shared with the mobile form. */}
+              <FairFallback enabled value={fairPick} orderDate={fairDate} onOrderDate={setFairDate}
+                maxDate={today} noFair={noFair} onNoFair={setNoFair} />
             </label>
+            {/* Which DAY of the picked event (owner 2026-09-24) — shown once an
+                event is picked, in the slot the row keeps free for it. */}
+            {fairEventOf(fairPick) && (
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Fair Day</span>
+                <FairDayPicker id="so-fair-day" value={fairPick} soDate={fairDate} onChange={setFairPick}
+                  wrapClassName={styles.selectWrap} selectClassName={styles.fieldSelect} />
+              </label>
+            )}
             <label className={styles.field} style={{ gridColumn: 'span 2' }}>
               <span className={styles.fieldLabel}>Processing Date</span>
               <DateField
@@ -2193,7 +2259,8 @@ export const SalesOrderNew = () => {
                      ` *` marker + red ring stay off while the order is still a
                      no-date draft (owner 2026-07-14). */
                   variantsRequired={!!processingDate}
-                  seedSofaLegDefault={true}
+                  lineDateLocked={!processingDate}
+                  seedSofaLegDefault={true} attachOptions={consoleAttachOptions(lines, idx)}
                   /* Scan-Order (Task #73) — a NO-MATCH scanned line seeds an
                      empty SKU picker; pass the slip rawText as the picker's
                      placeholder hint so the operator can pick a real SKU

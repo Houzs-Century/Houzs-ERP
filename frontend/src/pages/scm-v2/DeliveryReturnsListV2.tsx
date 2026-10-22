@@ -65,6 +65,7 @@ import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
+import { cancelledDocNoClass, cancelledRowClass } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useAuth } from "../../auth/AuthContext";
 import { deliveryReturnRowMenu } from "./row-menus";
@@ -72,6 +73,7 @@ import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
 import { deliveryReturnPrintChain } from "../../lib/printChain";
 import { deliveryReturnPdfBundle } from "../../lib/printDocumentPdf";
 import { customerRefOf } from '../../lib/customer-ref';
+import { deliveryReturnMatchesSearch } from '../../lib/so-ref-search';
 import {
   DR_LINE_COLUMNS,
   returnCancelledWord,
@@ -211,11 +213,9 @@ const statusFor = (
 
 function SplitDropdown({
   onFromDo,
-  onImport,
   onDuplicate,
 }: {
   onFromDo: () => void;
-  onImport: () => void;
   onDuplicate: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -250,16 +250,6 @@ function SplitDropdown({
               }}
             >
               New from Delivery Order
-            </button>
-            <button
-              type="button"
-              className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft"
-              onClick={() => {
-                setOpen(false);
-                onImport();
-              }}
-            >
-              Import from file
             </button>
             <button
               type="button"
@@ -339,7 +329,7 @@ function CardsGrid({ rows, onOpen }: { rows: DrRow[]; onOpen: (r: DrRow) => void
             className="group relative overflow-hidden rounded-lg border border-border bg-surface px-4 py-4 text-left shadow-stone transition-all duration-200 hover:-translate-y-px hover:border-primary/40 hover:shadow-slab focus:outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="font-docno text-[12.5px] font-semibold text-ink">
+              <span className={cn("font-docno text-[12.5px] font-semibold text-ink", cancelledDocNoClass(r.status))}>
                 {r.return_number}
               </span>
               <Badge tone={st.tone} size="xs">{st.label}</Badge>
@@ -496,7 +486,7 @@ function DetailDrawer({
 
               <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
                 <MetaItem k={transferFromColumnLabel('do')} v={doOf(row)} mono />
-                <MetaItem k="Customer ref" v={refOf(row)} mono />
+                <MetaItem k="Ref No." v={refOf(row)} mono />
                 <MetaItem k="Location" v={row.sales_location || "—"} />
                 <MetaItem k="Salesperson" v={salespersonName} />
                 <MetaItem k="Venue" v={row.venue || "—"} />
@@ -814,25 +804,7 @@ export function DeliveryReturnsListV2() {
   function deliveryReturnsInView(rows: DrRow[], tab: StatusTab, term: string): DrRow[] {
     const inTab = tab === "all" ? rows : rows.filter((r) => statusFor(r.status).bucket === tab);
     if (!term.trim()) return inTab;
-    const q = term.toLowerCase();
-    return inTab.filter((r) => {
-      const hay = [
-        r.return_number,
-        r.do_doc_no,
-        r.debtor_name,
-        r.debtor_code,
-        r.salesperson_id,
-        refOf(r),
-        r.branding,
-        r.sales_location,
-        r.reason,
-        r.venue,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      return hay.includes(q);
-    });
+    return inTab.filter((r) => deliveryReturnMatchesSearch(r, term));
   }
 
   const counts = useMemo(() => {
@@ -899,7 +871,6 @@ export function DeliveryReturnsListV2() {
   // Wired actions
   const goNewDr = () => navigate("/scm/delivery-returns/new");
   const goFromDo = () => navigate("/scm/delivery-returns/from-do");
-  const goImport = () => navigate("/scm/delivery-returns?import=1");
   const goDuplicate = () => navigate("/scm/delivery-returns?duplicate=1");
   const goDoList = () => navigate("/scm/delivery-orders");
   const goInvoiceList = () => navigate("/scm/sales-invoices");
@@ -1095,7 +1066,7 @@ export function DeliveryReturnsListV2() {
     doc_no: {
       doc: (r) => r.return_number,
       width: "156px",
-      render: (r) => <span className="font-docno text-[12.5px] font-semibold text-ink">{r.return_number}</span>,
+      render: (r) => <span className={cn("font-docno text-[12.5px] font-semibold text-ink", cancelledDocNoClass(r.status))}>{r.return_number}</span>,
     },
     doc_date: { doc: (r) => r.return_date || null, width: "108px" },
     debtor_code: { doc: (r) => r.debtor_code || null, width: "120px", mono: true },
@@ -1534,7 +1505,6 @@ export function DeliveryReturnsListV2() {
                   </Button>
                   <SplitDropdown
                     onFromDo={goFromDo}
-                    onImport={goImport}
                     onDuplicate={goDuplicate}
                   />
                 </div>
@@ -1665,6 +1635,7 @@ export function DeliveryReturnsListV2() {
               error={error ? (error as Error).message ?? "Failed to load" : null}
               columns={columns}
               getRowKey={(r) => r.id}
+              getRowClassName={(r) => cancelledRowClass(r.status)}
               onRowClick={(r) => setSelected(r)}
               contextMenu={drContextMenu}
               expandable={{

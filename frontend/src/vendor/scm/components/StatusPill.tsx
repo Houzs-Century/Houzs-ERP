@@ -37,3 +37,16 @@ export function AmendmentStatusPill({ status, className }: { status: string | nu
     </span>
   );
 }
+
+/** The same badge with the words chosen by the caller — for a row whose state
+ *  is a SENTENCE rather than an enum (a cancellation request says which
+ *  signature it is waiting for), while its TONE still comes from the three
+ *  amendment buckets so the queue reads as one list. */
+export function TonedPill({ label, tone, className }: { label: string; tone: keyof typeof STATUS_TONES; className?: string }) {
+  const { bg, fg } = STATUS_TONES[tone];
+  return (
+    <span className={`${styles.pill} ${className ?? ''}`} style={{ background: bg, color: fg }}>
+      {label}
+    </span>
+  );
+}

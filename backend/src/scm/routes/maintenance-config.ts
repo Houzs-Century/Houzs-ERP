@@ -384,63 +384,64 @@ export const createChangeHandler = async (c: McCtx) => {
 maintenanceConfig.post('/changes', createChangeHandler);
 
 // ── POST /sofa-compartments/rename ─────────────────────────────────────
-// Maintenance-is-master cascade rename (Loo 2026-06-04: "what maintenance
-// change all will follow"). body: { from, to }. Delegates to the
-// rename_sofa_compartment() SECURITY DEFINER function (migration 0149),
-// which atomically renames the compartment code text across the SKU
-// master, every doc-line snapshot, Modular allowed-options, combos, quick
-// picks, in-flight carts and the maintenance config blobs themselves.
-/* GATED HERE, and it was not.
-   This comment used to read "Admin-gated inside the function (is_admin()); 403
-   surfaces here." It is not, and the migration that ported the function says so
-   in the opposite direction — scripts/scm-schema/port-missing-functions-triggers.sql:165:
-
-     "The 2990 body opens with `IF NOT is_admin() THEN RAISE forbidden`. scm has
-      no is_admin()/auth machinery ... The admin gate now lives in the
-      route/RBAC layer - the DB-level gate is dropped here ... (Behaviour
-      change - flagged.)"
-
-   The DB handed the gate to the route; the route believed the DB still had it;
-   nobody wrote one. So this handler - which renames a compartment code across
-   the SKU master, EVERY historical doc-line snapshot, Modular allowed-options,
-   combos, quick picks and in-flight carts, irreversibly - opened straight at
-   c.req.json() while its two siblings in this same file (POST /changes:237,
-   DELETE /changes/:id:347) both check canWriteScmConfig.
-
-   The `42501 -> 403` branch below is dead for the same reason: service-role
-   client, RLS bypassed, and the RAISE was removed with the gate. */
-maintenanceConfig.post('/sofa-compartments/rename', async (c) => {
+// body: { from, to, apply }. Renames a compartment code in the ACTIVE company
+// only, via scm.rename_sofa_compartment (migration *_scm_rename_sofa_compartment_scoped).
+// `apply` must be literally true to write; anything else is a preview that
+// returns what would change. A code still used by any SKU, doc line, stock row
+// or POS combo of this company is refused (409 in_use, with counts): the code is
+// part of every SKU code (`<MODEL>-<code>`), so renaming it would orphan them.
+// Owner 2026-10-02: only an unused code (a typo) may be renamed; wording staff
+// see changes through the SKU name or the compartment description.
+// The function is SECURITY DEFINER with no gate of its own: the gate is here.
+export const renameSofaCompartmentHandler = async (c: McCtx) => {
   if (!canWriteScmConfig(c)) {
     return c.json({ error: "You don't have permission to rename a compartment code." }, 403);
   }
-  let body: { from?: string; to?: string };
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  let body: { from?: unknown; to?: unknown; apply?: unknown };
   try {
     body = (await c.req.json()) as typeof body;
   } catch {
     return c.json({ error: 'invalid_json' }, 400);
   }
-  const from = (body.from ?? '').trim();
-  const to = (body.to ?? '').trim();
+  const from = typeof body.from === 'string' ? body.from.trim() : '';
+  const to = typeof body.to === 'string' ? body.to.trim() : '';
   if (!from || !to) return c.json({ error: 'from_and_to_required' }, 400);
   if (from === to) return c.json({ error: 'same_code' }, 400);
+  const apply = body.apply === true;
 
   const supabase = c.get('supabase');
   const { data, error } = await supabase.rpc('rename_sofa_compartment', {
+    p_company_id: co.companyId,
     p_from: from,
     p_to: to,
+    p_apply: apply,
   });
   if (error) {
-    if (error.code === '42501' || /forbidden|permission denied/i.test(error.message)) {
-      return c.json({ error: 'forbidden' }, 403);
+    const msg = String(error.message ?? '');
+    if (/code_exists/.test(msg)) {
+      return c.json({ error: 'code_exists', reason: `"${to}" is already a compartment code.` }, 400);
     }
-    if (/code_exists/.test(error.message)) return c.json({ error: 'code_exists' }, 400);
-    if (/same_code|empty_code/.test(error.message)) return c.json({ error: 'invalid_code' }, 400);
-    return c.json({ error: 'rename_failed', reason: error.message }, 500);
+    if (/invalid_code|empty_code|same_code/.test(msg)) {
+      return c.json({ error: 'invalid_code', reason: 'A compartment code cannot contain spaces, e.g. 1A(LHF) or Console.' }, 400);
+    }
+    if (/code_too_long/.test(msg)) {
+      return c.json({ error: 'code_too_long', reason: 'Model code + "-" + this code would pass the 30-character item code limit.' }, 400);
+    }
+    return c.json({ error: 'rename_failed', reason: msg }, 500);
   }
-  // The cascade rename rewrites the maintenance config blobs themselves.
-  await bumpConfigVersion(c.env, 'maintcfg');
-  return c.json({ ok: true, result: data });
-});
+  const result = data as { applied?: boolean; refused?: string | null } | null;
+  if (apply && result?.refused === 'in_use') {
+    return c.json({ error: 'in_use', reason: `"${from}" is still used by this company's SKUs, documents or stock.`, result }, 409);
+  }
+  if (apply && result?.applied !== true) {
+    return c.json({ error: 'rename_failed', reason: 'The rename did not apply.', result }, 500);
+  }
+  if (apply) await bumpConfigVersion(c.env, 'maintcfg');
+  return c.json({ ok: true, applied: apply, result });
+};
+maintenanceConfig.post('/sofa-compartments/rename', renameSofaCompartmentHandler);
 
 // ── DELETE /changes/:id ────────────────────────────────────────────────
 // Remove a row (typically cancelling a pending future change). Note that

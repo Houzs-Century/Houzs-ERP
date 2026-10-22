@@ -113,6 +113,15 @@ describe('the door into the payments ledger', () => {
     expect(readViewSource).not.toContain('{hardLocked && salesOrder.status');
   });
 
+  /* A CANCELLED order takes no money, but Finance may take off money that never
+     came in on it (owner 2026-09-29: one swipe keyed on two orders). The card
+     stays shut and hands the table its remove door — never on a migrated
+     order, whose payment writes the server refuses. */
+  test('a cancelled order hands Finance the remove door and nothing else', () => {
+    expect(readViewSource).toContain('cancelledRemoval={soStatus === "cancelled" && !migratedLocked}');
+    expect(readViewSource).toContain('locked={!canEditPayments}');
+  });
+
   test('collecting stays on the read page; only edit=1 swaps to the editor', () => {
     /* 2026-08-09 (owner: "点选 collect payment … 全部 UI 都不一样") — the read
        page now hosts the shared PaymentsTable itself; `?payments=1` merely
@@ -140,7 +149,8 @@ describe('unsaved payment rows are legible as unsaved', () => {
 
   test('the commit control carries a word, not just a glyph', () => {
     expect(tableSource).toContain('className={paymentsStyles.saveBtn}');
-    expect(tableSource).toContain("{addPayment.isPending ? 'Saving…' : 'Save'}");
+    /* A too-old slip turns the same button into "Request approval" (2026-09-30). */
+    expect(tableSource).toContain("{addPayment.isPending || raiseBackdate.isPending ? 'Saving…' : asRequest ? 'Request approval' : 'Save'}");
   });
 
   test('the row is marked, and the mark reaches the summary line too', () => {

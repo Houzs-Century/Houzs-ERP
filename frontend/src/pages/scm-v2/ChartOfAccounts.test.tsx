@@ -42,7 +42,8 @@ vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
     { code: '500-0000', name: 'SALES', type: 'INCOME', parentCode: null, accMoney: false, special: null, section: 'SALES', perCompany: { 1: { active: true } } },
     { code: '700-0000', name: 'Other Income', type: 'INCOME', parentCode: null, accMoney: false, special: null, section: 'OTHER INCOMES', perCompany: { 1: { active: true } } },
     { code: '590-0000', name: 'TRANSPORT INCOME', type: 'INCOME', parentCode: '700-0000', accMoney: false, special: null, section: 'OTHER INCOMES', perCompany: { 1: { active: true } } },
-  ] }, isLoading: false, error: null }),
+    { code: '900-R032', name: 'RENTAL - EXHIBITION', type: 'EXPENSE', parentCode: null, accMoney: false, special: null, section: 'EXPENSES', needsEvent: true, pmsRow: 'rental', perCompany: { 1: { active: true } } },
+  ], pmsRows: [{ row: 'rental', label: 'Rental' }, { row: 'setup', label: 'Setup' }, { row: 'others', label: 'Others Costing' }] }, isLoading: false, error: null }),
   useChartTick: () => ({ mutateAsync: tickAsync, isPending: false }),
   useChartImport: () => ({ mutateAsync: importAsync, isPending: false }),
   useChartRename: () => ({ mutateAsync: renameAsync, isPending: false }),
@@ -379,5 +380,24 @@ describe('the upload preview', () => {
     expect(sent.rows.map((r) => [r.code, r.shared])).toEqual([
       ['310-0000', true], ['310-0010', false], ['900-A002', true],
     ]);
+  });
+});
+
+/* 需要 Event and the PMS row (owner 2026-10-01, payment-request item 4): Finance's
+   call per account, on the chart — a money account, never a header. */
+describe('需要 Event and the PMS row', () => {
+  test('a money account carries both; a tick and a pick save on the code; a header carries neither', async () => {
+    updateAsync.mockClear();
+    draw();
+    expect((screen.getByLabelText('900-R032 needs its Event') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText('900-R032 PMS row') as HTMLSelectElement).value).toBe('rental');
+    expect(screen.queryByLabelText('310-0000 needs its Event')).toBeNull();
+    expect(screen.queryByLabelText('500-0000 PMS row')).toBeNull();
+    fireEvent.click(screen.getByLabelText('900-A002 needs its Event'));
+    await waitFor(() => expect(updateAsync).toHaveBeenCalledWith({ code: '900-A002', needsEvent: true }));
+    fireEvent.change(screen.getByLabelText('900-R032 PMS row'), { target: { value: 'others' } });
+    await waitFor(() => expect(updateAsync).toHaveBeenCalledWith({ code: '900-R032', pmsRow: 'others' }));
+    fireEvent.change(screen.getByLabelText('900-R032 PMS row'), { target: { value: '' } });
+    await waitFor(() => expect(updateAsync).toHaveBeenCalledWith({ code: '900-R032', pmsRow: null }));
   });
 });

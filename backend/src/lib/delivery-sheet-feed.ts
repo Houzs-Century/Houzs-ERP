@@ -14,8 +14,10 @@
  */
 import { LOCATION_MAP } from "../services/autocount-master-maps";
 import { bookSpellingOrOwn, resolveAcAgent } from "../services/autocount-writeback";
+import { soTownLines } from "../services/autocount-address-fit";
 import { summariseReadiness } from "../scm/lib/so-readiness";
 import { SO_DELIVERED_OR_BEYOND } from "../scm/shared/so-deliverable-states";
+import { canonicalizeMyState, isCanonicalMyState } from "../scm/lib/canonical-state";
 
 /** One head row, as the feed SQL below returns it. Every date is `::text`
  *  because postgres.js leaves `date` columns as strings but turns
@@ -47,6 +49,7 @@ export type FeedHeadRow = {
   postcode: string | null;
   city: string | null;
   customer_state: string | null;
+  customer_country: string | null;
   venue: string | null;
   status: string;
   do_numbers: string | null;
@@ -148,7 +151,7 @@ const FEED_BASE_SQL = `
          so.processing_date::text AS processing_date,
          so.customer_delivery_date::text AS customer_delivery_date,
          so.address1, so.address2, so.address3, so.address4,
-         so.postcode, so.city, so.customer_state, so.venue,
+         so.postcode, so.city, so.customer_state, so.customer_country, so.venue,
          so.status::text AS status,
          dos.do_numbers, pos.po_numbers,
          GREATEST(so.updated_at, pay.last_paid_at, dos.last_do_at) AS last_modified
@@ -315,19 +318,73 @@ ORDER BY t.so_date, t.doc_no`;
  * sheet's key; a native order carries the same number on both. So the row is
  * found by EITHER column, within the secret's company. RETURNING carries the
  * sheet's key back so the caller can answer per row.
+ *
+ * HC-0118: a date that MOVES the header moves the lines too, by the rule the
+ * SO editor's header save follows (scm.apply_so_header_cas, migration
+ * 20260915T1200): every line, a hand-set one included (its flag resets), except
+ * a line a live delivery order or invoice names, and no line at all while a
+ * live delivery order or invoice carries a line naming none. Before this the
+ * header moved alone and the SO screen, and every DO cut from it, kept the old
+ * line date (HC-SO-012526: header 30/10, lines 15/09). A re-sent unchanged
+ * date leaves the lines alone, as an unchanged header save does.
  */
 export function updateFromSheetSql(rowCount: number): string {
   const values = Array.from({ length: rowCount }, () => "(?::text, ?::text, ?::date)").join(", ");
   return `
-UPDATE scm.mfg_sales_orders so
-   SET remark4 = COALESCE(v.remark4, so.remark4),
-       customer_delivery_date = COALESCE(v.delivery_date, so.customer_delivery_date),
-       updated_at = now()
-  FROM (VALUES ${values}) AS v(sheet_doc_no, remark4, delivery_date)
- WHERE so.company_id = ?
-   AND (so.linked_ac_docno = v.sheet_doc_no OR so.doc_no = v.sheet_doc_no)
-   AND so.status::text NOT IN ('DRAFT', 'CANCELLED')
- RETURNING so.doc_no, v.sheet_doc_no`;
+WITH v(sheet_doc_no, remark4, delivery_date) AS (VALUES ${values}),
+hit AS (
+  SELECT so.doc_no, v.sheet_doc_no, v.remark4, v.delivery_date, so.customer_delivery_date AS prev_date
+    FROM scm.mfg_sales_orders so
+    JOIN v ON so.linked_ac_docno = v.sheet_doc_no OR so.doc_no = v.sheet_doc_no
+   WHERE so.company_id = ?
+     AND so.status::text NOT IN ('DRAFT', 'CANCELLED')
+),
+upd AS (
+  UPDATE scm.mfg_sales_orders so
+     SET remark4 = COALESCE(h.remark4, so.remark4),
+         customer_delivery_date = COALESCE(h.delivery_date, so.customer_delivery_date),
+         updated_at = now()
+    FROM hit h
+   WHERE so.doc_no = h.doc_no
+  RETURNING so.doc_no, h.sheet_doc_no, h.delivery_date, h.prev_date
+),
+moved AS (
+  SELECT u.doc_no, u.delivery_date
+    FROM upd u
+   WHERE u.delivery_date IS NOT NULL
+     AND u.delivery_date IS DISTINCT FROM u.prev_date
+     AND NOT EXISTS (
+       SELECT 1 FROM scm.delivery_order_items doi
+         JOIN scm.delivery_orders d ON d.id = doi.delivery_order_id
+        WHERE d.so_doc_no = u.doc_no
+          AND upper(btrim(COALESCE(d.status::text, ''))) <> 'CANCELLED'
+          AND doi.so_item_id IS NULL)
+     AND NOT EXISTS (
+       SELECT 1 FROM scm.sales_invoice_items sii
+         JOIN scm.sales_invoices s ON s.id = sii.sales_invoice_id
+        WHERE s.so_doc_no = u.doc_no
+          AND upper(btrim(COALESCE(s.status::text, ''))) <> 'CANCELLED'
+          AND sii.so_item_id IS NULL AND sii.do_item_id IS NULL)
+),
+lines AS (
+  UPDATE scm.mfg_sales_order_items i
+     SET line_delivery_date = m.delivery_date,
+         line_delivery_date_overridden = false
+    FROM moved m
+   WHERE i.doc_no = m.doc_no
+     AND NOT EXISTS (
+       SELECT 1 FROM scm.delivery_order_items doi
+         JOIN scm.delivery_orders d ON d.id = doi.delivery_order_id
+        WHERE doi.so_item_id = i.id
+          AND upper(btrim(COALESCE(d.status::text, ''))) <> 'CANCELLED')
+     AND NOT EXISTS (
+       SELECT 1 FROM scm.sales_invoice_items sii
+         JOIN scm.sales_invoices s ON s.id = sii.sales_invoice_id
+        WHERE sii.so_item_id = i.id
+          AND upper(btrim(COALESCE(s.status::text, ''))) <> 'CANCELLED')
+  RETURNING i.id
+)
+SELECT doc_no, sheet_doc_no FROM upd`;
 }
 
 const senToAmount = (sen: number | null | undefined): number =>
@@ -339,13 +396,33 @@ const blankToNull = (v: string | null | undefined): string | null => {
 };
 
 /** Same rule as the Apps Script and services/autocount.ts routeRegion, plus
- *  HQ (the 2023-era Balakong code) on the West side. */
-export function sheetRegion(salesLocation: string | null, addr3: string | null): DeliverySheetRecord["Region"] {
+ *  HQ (the 2023-era Balakong code) on the West side. A native ERP order picks
+ *  Singapore from the locality master (state "West", city "Jurong East",
+ *  customer_country "Singapore") and is sold from KL, so the word never reaches
+ *  addr3 and the country decides (BUG-52, HC12842). */
+export function sheetRegion(
+  salesLocation: string | null,
+  addr3: string | null,
+  country: string | null = null,
+): DeliverySheetRecord["Region"] {
+  if ((country ?? "").trim().toUpperCase() === "SINGAPORE") return "SG";
   if ((addr3 ?? "").toUpperCase().includes("SINGAPORE")) return "SG";
   const loc = (salesLocation ?? "").toUpperCase();
   if (loc === "KL" || loc === "PG" || loc === "HQ") return "WEST";
   if (loc === "SBH" || loc === "SRW") return "EAST";
   return null;
+}
+
+/** The state column (InvAddr4) in the SHEET's vocabulary. AutoCount-era rows
+ *  carry the typed "Penang" while the ERP stores "Pulau Pinang" (mig 0175), and
+ *  the dispatch team filters on "Penang" — so a native order dropped out of
+ *  their Penang filter (DEV-25). Every spelling of a state lands on one word;
+ *  an unrecognised value (a street line in address4) passes through. */
+export function sheetStateSpelling(raw: string | null): string | null {
+  const s = blankToNull(raw);
+  if (!s) return null;
+  const canonical = canonicalizeMyState(s);
+  return canonical === "Pulau Pinang" ? "Penang" : canonical;
 }
 
 /** The derived readiness label in the SHEET's vocabulary. The SO list says
@@ -377,10 +454,27 @@ export function resolveSheetRemark2(remark2Header: string | null, lines: Readonl
   return header && !isSheetReady(header) && derived && isSheetReady(derived) ? derived : (header ?? derived);
 }
 
+/** Address lines 3 / 4 for the SHEET, whose Address 4 is the STATE column the
+ *  dispatch team filters on. An imported order's four lines are the account
+ *  book's 40-character wrap of one address, so line 4 can be a leftover
+ *  ("Jaya Selangor" on SO-010791, the tail of "47820 Petaling Jaya Selangor")
+ *  while the order's own state field is right. When line 4 is not a state and
+ *  the state field is, the leftover rejoins line 3 and the state takes line 4.
+ *  A line 4 that IS a state is left alone even where it differs from the field. */
+export function sheetTownLines(addr3: string | null, rawAddr4: string | null, customerState: string | null): [string | null, string | null] {
+  const line4 = blankToNull(rawAddr4);
+  const state = blankToNull(customerState);
+  const isState = (v: string) => isCanonicalMyState(canonicalizeMyState(v));
+  if (line4 && state && !isState(line4) && isState(state)) {
+    return [[blankToNull(addr3), line4].filter(Boolean).join(" "), sheetStateSpelling(state)];
+  }
+  return [addr3, sheetStateSpelling(rawAddr4)];
+}
+
 export function toSheetRecord(row: FeedHeadRow, lines: ReadonlyArray<FeedLineRow>): DeliverySheetRecord {
   const salesLocation = bookSpellingOrOwn(row.sales_location, LOCATION_MAP);
-  const addr3 = blankToNull(row.address3) ?? blankToNull([row.postcode, row.city].filter(Boolean).join(" "));
-  const addr4 = blankToNull(row.address4) ?? blankToNull(row.customer_state);
+  const [townLine, rawAddr4] = soTownLines(row);
+  const [addr3, addr4] = sheetTownLines(townLine, rawAddr4, row.customer_state);
   const remark2 = resolveSheetRemark2(row.remark2, lines);
   return {
     DocNo: row.linked_ac_docno ?? row.doc_no,
@@ -413,7 +507,7 @@ export function toSheetRecord(row: FeedHeadRow, lines: ReadonlyArray<FeedLineRow
     SOUDF_VENUE: blankToNull(row.venue),
     Status: row.status,
     Ready: isSheetReady(remark2),
-    Region: sheetRegion(salesLocation, addr3),
+    Region: sheetRegion(salesLocation, addr3, row.customer_country),
     LastModified: row.last_modified_text,
   };
 }

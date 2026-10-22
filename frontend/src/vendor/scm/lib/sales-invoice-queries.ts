@@ -158,6 +158,9 @@ export type DoRemainingLine = {
   unitCostSen: number;
   discountSen: number;
   variants: unknown;
+  /** The DO's order's raw reference pair (resolve with soRefOfCamelStamp). */
+  soRef?: string | null;
+  soCustomerSoNo?: string | null;
 };
 
 /* Invoiceable DO LINES for the line-level DO→Sales Invoice picker. Each row is a

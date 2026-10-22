@@ -23,6 +23,7 @@
 // ----------------------------------------------------------------------------
 
 import type { MfgProductRow } from './mfg-products-queries';
+import { isSingleSkuCategory } from '../../shared/product-categories';
 
 /**
  * Derive the per-SKU suffix appended after the Model-level supplier code.
@@ -43,8 +44,10 @@ import type { MfgProductRow } from './mfg-products-queries';
  * a dangling "-".
  */
 export function suffixForSku(p: Pick<MfgProductRow, 'code' | 'category' | 'size_code'>): string {
-  // ACCESSORY / SERVICE — no per-SKU suffix, the supplier code IS the SKU.
-  if (p.category === 'ACCESSORY' || p.category === 'SERVICE') return '';
+  // Single-SKU categories (Accessory, Sofa Accessory, Service, ...) — no per-SKU
+  // suffix, the supplier code IS the SKU. "BC06-MF" is a whole model code, not
+  // a sofa compartment.
+  if (isSingleSkuCategory(p.category)) return '';
 
   // BEDFRAME / MATTRESS — prefer the canonical size_code if the API row
   // surfaces it. Falls through to code parsing for legacy rows where

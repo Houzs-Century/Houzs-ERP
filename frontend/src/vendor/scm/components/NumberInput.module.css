@@ -1,0 +1,43 @@
+/* Stepper variant (DEV-62): two stacked arrows inside the right edge of the
+   host input, like a native number spinner but always visible. */
+
+.stepWrap {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+.stepWrap > input {
+  padding-right: 20px;
+}
+.stepBtns {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  display: flex;
+  flex-direction: column;
+  width: 16px;
+  border-left: 1px solid var(--line);
+}
+.stepBtns button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+.stepBtns button + button {
+  border-top: 1px solid var(--line);
+}
+.stepBtns button:hover:not(:disabled) {
+  background: var(--c-cream);
+  color: var(--c-ink);
+}
+.stepBtns button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}

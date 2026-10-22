@@ -159,7 +159,20 @@ export function readReason(v: unknown): { ok: true; reason: string } | { ok: fal
   return { ok: true, reason: text };
 }
 
-/* ── Can this document be asked about at all? ────────────────────────────── */
+/** An approver's remark on their signature (DEV-17). Optional, unlike the
+ *  reason: blank or absent is null, not a refusal. Same flattening and cap. */
+export function readRemark(v: unknown): { ok: true; remark: string | null } | { ok: false; refusal: Refusal } {
+  if (v != null && typeof v !== 'string') {
+    return { ok: false, refusal: { error: 'remark_invalid', message: 'Remark must be text.' } };
+  }
+  const text = (v ?? '').replace(/\s+/g, ' ').trim();
+  if (text.length > MAX_REASON_CHARS) {
+    return { ok: false, refusal: { error: 'remark_too_long', message: `Remark too long (${MAX_REASON_CHARS} characters max).` } };
+  }
+  return { ok: true, remark: text || null };
+}
+
+/* ── Can this document be asked about at all?────────────────────────────── */
 
 /** A DRAFT is discarded, not cancelled (the SO deletes it; the PO's draft cancel
  *  commits nothing to anyone) — so a draft needs no approval and no request. A

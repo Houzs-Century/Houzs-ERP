@@ -20,8 +20,14 @@
 import { lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { coverageStateOf } from "../../components/coverage-state";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useOrderMoney, useConvertSources } from "../../vendor/scm/lib/so-money-queries";
+import { useCancelRequest } from "../../vendor/scm/lib/document-cancel-queries";
+import { useSoBackdateRequests } from "../../vendor/scm/lib/payment-backdate-queries";
+import { useDocumentFlow } from "../../vendor/scm/lib/flow-queries";
+import { useSoDropdownOptions } from "../../vendor/scm/lib/so-dropdown-options-queries";
 import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
+import { returnToWorkspaceOpener, useWorkspaceOpener } from "../../lib/useWorkspaceOpener";
 import {
   ArrowLeft,
   History,
@@ -35,7 +41,10 @@ import {
   MoreHorizontal,
   Wallet,
   Plus,
+  Trash2,
+  FileText,
 } from "lucide-react";
+import { DISCARD_DRAFT_LABEL, useDiscardDraftAction } from "./use-discard-draft-action";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { SoSourceChips, SoStockPill } from "../../components/SoSourceChips";
@@ -60,6 +69,7 @@ import {
    page uses, so History means one thing across both (owner 2026-08-13). */
 import { AuditHistoryPanel } from "../../components/audit/AuditHistoryPanel";
 import { SO_AUDIT_LABELS } from "./so-audit-labels";
+import { useSoHistoryWithRelated } from "./so-history-related";
 import { fmtDateTime } from "../../vendor/shared/format";
 import { brandingLabel } from "../../vendor/shared/so-branding-label";
 import { getBrandingCompanyCode } from "../../lib/branding";
@@ -67,7 +77,7 @@ import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useStaff } from "../../vendor/scm/lib/admin-queries";
-import { collaboratorLabel } from "../../vendor/scm/lib/so-collaborators";
+import { SoSharedWith } from "../../vendor/scm/components/SoSharedWith";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { CancelRequestPanel } from "../../vendor/scm/components/CancelRequestPanel";
@@ -77,6 +87,7 @@ import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { useSoRelationshipMap } from "./so-relationship-map";
 import { PaymentsTable, type PaymentDraft } from "../../vendor/scm/components/PaymentsTable";
+import { ViewOriginalScan } from "../../vendor/scm/components/ViewOriginalScan";
 import { fetchSoSlipUrl } from "../../vendor/scm/lib/slip";
 import {
   completePaymentRetryDraft, consumePaymentRetryNavigationState,
@@ -84,7 +95,7 @@ import {
 } from "../../lib/paymentRetryHandoff";
 import { cn, formatDate } from "../../lib/utils";
 import { SoLinePhotoStrip } from "../../components/scm-v2/SoLinePhotoStrip";
-import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity, fmtQty } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import {
   isLocked as isSoLocked,
@@ -95,11 +106,15 @@ import {
   soDownstreamHardLocked,
 } from "../../vendor/scm/lib/so-detail-gates";
 import { MigratedReadonlyBanner } from "../../vendor/scm/components/MigratedReadonlyBanner";
+import { soAfterDoMode, soPriceAfterDoOn } from "../../vendor/scm/lib/so-after-do-client";
+import type { AfterDoTarget } from "../../vendor/shared/so-after-do-edit";
 import { customerRefOf } from '../../lib/customer-ref';
 
 import { isFocLine } from '../../vendor/scm/lib/foc-line';
 import { OrderSlipPhoto } from "../../vendor/scm/components/OrderSlipPhoto";
 import { ADD_LINE_LABEL, addLineHref } from "../../vendor/scm/lib/add-line-handoff";
+import { fairLabel } from "../../vendor/scm/lib/fair-options-queries";
+import { linkedEvent, type LinkedFair } from "../../components/fairPick";
 // ─── Row types (subset — see MfgSalesOrdersList.tsx for the full SoRow) ────
 
 type SoHeader = {
@@ -143,6 +158,10 @@ type SoHeader = {
   customer_type: string | null;
   building_type: string | null;
   venue: string | null;
+  // The linked fair event (owner 2026-09-24); absent on an older server.
+  fair?: LinkedFair | null;
+  // The day of that fair the order was written on; null = not recorded.
+  fair_date?: string | null;
   // The processing-date column the lock reads. Label, API field and column are
   // finally the same word (mig 0284 renamed it from internal_expected_dd).
   processing_date?: string | null;
@@ -155,6 +174,8 @@ type SoHeader = {
   downstream_fully_frozen?: boolean | null;
   amendment_eligible?: boolean | null;
   has_open_amendment?: boolean | null;
+  after_do_targets?: AfterDoTarget[] | null;
+  after_do_invoiced?: boolean | null;
   customer_delivery_date: string | null;
   note: string | null;
   currency: string;
@@ -585,6 +606,7 @@ function SalesOrderDetailV2ReadOnly() {
   const coverage = useSoLineCoverage(docNo ?? null);
   const updateStatus = useUpdateMfgSalesOrderStatus();
   const requestCancel = useCancelRequestAction("so");
+  const discardDraft = useDiscardDraftAction();
   const { nameOf: salespersonNameOf } = useStaffLookup();
   const staffRoster = useStaff();
   const notify = useNotify();
@@ -602,10 +624,6 @@ function SalesOrderDetailV2ReadOnly() {
   ]);
 
   const salesOrder = (detail.data as { salesOrder?: SoHeader } | undefined)?.salesOrder ?? null;
-  /* Who else may see and edit this order. Null when it is shared with nobody,
-     which is most orders — the field is then not rendered at all. Granting and
-     withdrawing live on SO Maintenance (docs/modules/so-handover.md §8). */
-  const sharedWith = collaboratorLabel(salesOrder, staffRoster.data);
   // Coverage keyed by line id; empty until the async coverage query returns (or
   // when the endpoint 404s on an older backend). Overlaid onto the lines below.
   /* The overlay is SHARED with the list drill-down (vendor/scm/lib/
@@ -658,7 +676,14 @@ function SalesOrderDetailV2ReadOnly() {
      this door leads to exactly one dropdown. Without it, handing a delivered
      order to a resigning rep's replacement meant Override — which unlocks the
      whole order, addresses and lines included. */
-  const canAttributeOther = useHouzsAuth().can("scm.so.attribute_other");
+  const { can } = useHouzsAuth();
+  const canAttributeOther = can("scm.so.attribute_other");
+  /* DEV-56 — `scm.so.edit_after_do` (DEV-32) is spent behind Override, and
+     Override lives in the ?edit=1 editor. Asked as if Override were already on:
+     the question here is only whether the editor has anything to offer. */
+  const canEditAfterDo = salesOrder
+    ? soAfterDoMode(salesOrder, { can, override: true, migrated: false }).on
+    : false;
   /* CUTOVER: an order carried across from AutoCount is view-only (owner
      2026-09-08). It out-ranks the salesperson door above — `canAttributeOther`
      exists so a hard-locked order can still change hands, and re-attributing a
@@ -667,10 +692,16 @@ function SalesOrderDetailV2ReadOnly() {
      the operator is looking at; two locks with one sentence is how a refusal
      stops being actionable. */
   const migratedLocked = soMigratedReadonly(salesOrder);
-  const editDisabled = migratedLocked || (hardLocked && !canAttributeOther);
+  /* DEV-70 — a delivered line's price is changed from the editor's $ button. */
+  const canPriceAfterDo = salesOrder ? soPriceAfterDoOn(salesOrder, { can, migrated: migratedLocked }) : false;
+  const editDisabled = migratedLocked || (hardLocked && !canAttributeOther && !canEditAfterDo && !canPriceAfterDo);
   const lockedEditHint = migratedLocked
     ? soMigratedReadonlyReason(salesOrder)
-    : hardLocked && canAttributeOther
+    : hardLocked && canPriceAfterDo && !canEditAfterDo
+      ? "This order is locked by its Delivery Order — press Edit, then the $ button on a line, to change its unit price or discount."
+    : hardLocked && canEditAfterDo
+      ? "This order is locked by its Delivery Order — press Edit, then Override, to change the customer details or charge lines."
+      : hardLocked && canAttributeOther
       ? "This order is locked by a downstream Delivery Order / Sales Invoice — only the Salesperson can still be changed."
       : "This order is locked — it already has a downstream Delivery Order / Sales Invoice.";
   const editLabel = canAmend
@@ -679,10 +710,16 @@ function SalesOrderDetailV2ReadOnly() {
       : "Submit SO Amendment"
     : "Edit";
 
-  // Back always returns to the Sales Orders list (owner 2026-07-24: every
-  // details page's back button goes to its relevant list, not wherever
-  // browser history happens to point). The list restores its own sticky
-  // filters, so the prior filtered view comes back — no context lost.
+  // Back returns to the Sales Orders list (owner 2026-07-24: every details
+  // page's back button goes to its relevant list, not wherever browser history
+  // happens to point). The list restores its own sticky filters, so the prior
+  // filtered view comes back — no context lost.
+  // EXCEPT an order opened as a document from another page — Merchant Recon,
+  // Fair Links, a project, a relationship map: Back returns to THAT page, and
+  // its tab, the way it was left (owner 2026-10-21: 我从 merchant recon 点开
+  // SO，返回也要返回 merchant recon).
+  const cameFrom = useWorkspaceOpener();
+  const backLabel = cameFrom ? cameFrom.label : "Sales Orders";
   const goBack = async () => {
     if (unsavedPayments > 0 && !(await askConfirm({
       title: "Leave without saving payments?",
@@ -690,7 +727,7 @@ function SalesOrderDetailV2ReadOnly() {
       confirmLabel: "Leave anyway",
       danger: true,
     }))) return;
-    navigate(scmListReturnTo("/scm/sales-orders"));
+    navigate(returnToWorkspaceOpener() ?? scmListReturnTo("/scm/sales-orders"));
   };
   // Edit always forwards to the full editor (?edit=1). When the SO is
   // amendment-eligible the editor opens in amendment mode (Save submits an
@@ -739,6 +776,12 @@ function SalesOrderDetailV2ReadOnly() {
      the cancel itself (executeCancel) is run by CancelRequestPanel on the
      second signature, with every guard the status route always had. */
   const doCancel = () => { if (salesOrder) void requestCancel(salesOrder.doc_no, salesOrder.doc_no); };
+  /* Discard a DRAFT (owner 2026-10-13: 「这个draft - discard不到」 — this read-only
+     page offered Request cancellation and nothing else on a draft). The order
+     ceases to exist on success, so we leave for the list. */
+  const doDiscard = async () => {
+    if (salesOrder && (await discardDraft.discard(salesOrder.doc_no))) navigate("/scm/sales-orders");
+  };
   const executeCancel = () => {
     if (!salesOrder) return;
     updateStatus.mutate({ docNo: salesOrder.doc_no, status: "CANCELLED", expectedStatus: salesOrder.status });
@@ -758,6 +801,7 @@ function SalesOrderDetailV2ReadOnly() {
   const closeHistory = useCallback(() => setHistoryOpen(false), []);
   const auditQ = useSalesOrderAuditLog(docNo ?? null);
   const auditEntries = auditQ.data ?? [];
+  const history = useSoHistoryWithRelated(historyOpen ? docNo ?? null : null, auditQ);
   const slipImageKey =
     (salesOrder as unknown as { slipImageKey?: string | null; slip_image_key?: string | null } | null)?.slipImageKey
     ?? (salesOrder as unknown as { slip_image_key?: string | null } | null)?.slip_image_key
@@ -828,6 +872,8 @@ function SalesOrderDetailV2ReadOnly() {
     onNodeClick: onChainNodeClick,
     amendments: chainAmendments,
     onAmendmentClick: onChainAmendmentClick,
+    returns: chainReturns,
+    onReturnClick: onChainReturnClick,
     pairing: chainPairing,
     choice: chainChoice,
     closeChoice: closeChainChoice,
@@ -892,7 +938,7 @@ function SalesOrderDetailV2ReadOnly() {
       getValue: (l) => l.qty,
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
-          {l.qty} <span className="text-[10.5px] text-ink-muted">{l.uom}</span>
+          {fmtQty(l.qty)} <span className="text-[10.5px] text-ink-muted">{l.uom}</span>
         </span>
       ),
     },
@@ -1030,6 +1076,7 @@ function SalesOrderDetailV2ReadOnly() {
   if (detail.isPending) {
     return (
       <div className="animate-fade-in p-8 text-center text-ink-muted">
+        <SoDetailWarmup docNo={docNo} />
         Loading {docNo}…
       </div>
     );
@@ -1046,7 +1093,7 @@ function SalesOrderDetailV2ReadOnly() {
         </p>
         <div className="mt-4">
           <Button variant="secondary" onClick={goBack} icon={<ArrowLeft size={14} />}>
-            Back to Sales Orders
+            Back to {backLabel}
           </Button>
         </div>
       </div>
@@ -1068,9 +1115,9 @@ function SalesOrderDetailV2ReadOnly() {
             type="button"
             onClick={goBack}
             className="inline-flex items-center gap-1 text-[14px] font-semibold text-accent-bright"
-            aria-label="Back to Sales Orders"
+            aria-label={`Back to ${backLabel}`}
           >
-            <ArrowLeft size={16} /> Orders
+            <ArrowLeft size={16} /> {cameFrom ? cameFrom.label : "Orders"}
           </button>
           <span className="font-mono text-[12.5px] font-semibold text-sidebar-ink">
             {salesOrder.doc_no}
@@ -1113,7 +1160,8 @@ function SalesOrderDetailV2ReadOnly() {
             <button
               type="button"
               onClick={goBack}
-              aria-label="Back to Sales Orders"
+              aria-label={`Back to ${backLabel}`}
+              title={`Back to ${backLabel}`}
               className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-surface text-ink-secondary hover:border-primary/50 hover:text-primary"
             >
               <ArrowLeft size={16} />
@@ -1137,6 +1185,7 @@ function SalesOrderDetailV2ReadOnly() {
                 <span>SO date {fmtDate(salesOrder.so_date)}</span>
                 <Divider />
                 <span>{items.length} line{items.length === 1 ? "" : "s"}</span>
+                <ViewOriginalScan kind="so" documentId={salesOrder.doc_no} />
                 {refOf(salesOrder) !== "—" && (
                   <>
                     <Divider />
@@ -1215,12 +1264,34 @@ function SalesOrderDetailV2ReadOnly() {
                 Collect payment
               </Button>
             )}
+            {/* DEV-76: a charge-only order (no DO) is invoiced straight off the SO. */}
+            {!migratedLocked && salesOrder.status.toLowerCase() === "confirmed" && salesOrder.has_children === false && (
+              <Button
+                variant="secondary"
+                icon={<FileText size={14} />}
+                onClick={() => navigate(`/scm/sales-invoices/new?fromSo=${encodeURIComponent(salesOrder.doc_no)}`)}
+              >
+                Create Invoice
+              </Button>
+            )}
             {/* Cancel is a WRITE (PATCH /:docNo/status), and on a migrated order
                 it is refused. It is also the most destructive thing on this bar,
                 so it is disabled-with-a-reason rather than hidden: a salesperson
                 looking for it must find out WHY it cannot be used, not wonder
                 where it went. */}
-            {salesOrder.status?.toLowerCase() !== "cancelled" && (
+            {/* A DRAFT is discarded, not cancelled (owner 2026-07-20): DELETE,
+                no document number burnt, no dead CANCELLED row. The right-click
+                menu on the list still offers Request cancellation on a draft. */}
+            {salesOrder.status.toLowerCase() === "draft" ? (
+              <Button
+                variant="danger"
+                icon={<Trash2 size={14} />}
+                onClick={() => void doDiscard()}
+                disabled={discardDraft.isPending}
+              >
+                {discardDraft.isPending ? "Discarding…" : DISCARD_DRAFT_LABEL}
+              </Button>
+            ) : salesOrder.status?.toLowerCase() !== "cancelled" && (
               <Button
                 variant="danger"
                 icon={<XCircle size={14} />}
@@ -1237,7 +1308,7 @@ function SalesOrderDetailV2ReadOnly() {
               variant="secondary"
               icon={<Plus size={14} />}
               onClick={goAddLine}
-              disabled={editDisabled}
+              disabled={editDisabled || (hardLocked && !canEditAfterDo && !canAttributeOther)}
             >
               {ADD_LINE_LABEL}
             </Button>
@@ -1303,7 +1374,7 @@ function SalesOrderDetailV2ReadOnly() {
                   muted={!salesOrder.customer_type}
                 />
                 <Field
-                  label="Customer SO ref"
+                  label="Ref No."
                   value={refOf(salesOrder)}
                   mono={refOf(salesOrder) !== "—"}
                   muted={refOf(salesOrder) === "—"}
@@ -1319,12 +1390,15 @@ function SalesOrderDetailV2ReadOnly() {
                     !salesOrder.agent && !salesOrder.salesperson_id
                   }
                 />
-                {/* Rendered ONLY when the order is actually shared. A field
-                    that is blank on almost every order teaches people to stop
-                    reading it, and this one has to be read. */}
-                {sharedWith && (
-                  <Field label="Shared with" value={sharedWith} />
-                )}
+                {/* Who else may see and edit this order. Hidden from viewers
+                    when it is shared with nobody; editable in place for
+                    scm.so.attribute_other. */}
+                <SoSharedWith
+                  docNo={salesOrder.doc_no}
+                  header={salesOrder}
+                  staff={staffRoster.data}
+                  frame={(v) => <Field label="Shared with" span={2} value={v} />}
+                />
               </div>
             </Section>
 
@@ -1336,11 +1410,17 @@ function SalesOrderDetailV2ReadOnly() {
                   value={salesOrder.building_type || "—"}
                   muted={!salesOrder.building_type}
                 />
+                {/* A recorded pick reads back as its event — venue, organizer and
+                    dates (owner 2026-09-24); shown only under the order's own venue. */}
                 <Field
-                  label="Venue"
-                  value={salesOrder.venue || "—"}
+                  label="Fair"
+                  value={salesOrder.fair && linkedEvent(salesOrder.venue, salesOrder.fair, null) ? fairLabel(salesOrder.fair) : salesOrder.venue || "—"}
                   muted={!salesOrder.venue}
                 />
+                {/* Which day of the fair (owner 2026-09-24) — only once one is recorded. */}
+                {salesOrder.fair_date && (
+                  <Field label="Fair day" value={fmtDate(salesOrder.fair_date)} />
+                )}
                 <Field
                   label="Processing Date"
                   value={fmtDate(salesOrder.processing_date)}
@@ -1482,6 +1562,7 @@ function SalesOrderDetailV2ReadOnly() {
                     grandTotalSen={salesOrder.local_total_sen ?? 0}
                     currency={salesOrder.currency}
                     locked={!canEditPayments}
+                    cancelledRemoval={soStatus === "cancelled" && !migratedLocked}
                     draftUnlocked={soStatus === "draft"}
                     slip={{ slipKey: salesOrder.slip_key ?? null, fetcher: fetchSoSlipUrl }}
                     initialDrafts={paymentRetryDrafts}
@@ -1678,16 +1759,17 @@ function SalesOrderDetailV2ReadOnly() {
         </div>
       </div>
 
-      {/* History drawer — the shared audit panel, same entries the Recent
-          activity card summarises above. */}
+      {/* History drawer — the shared audit panel over the SO's own entries
+          (the Recent activity card summarises those) plus the rows of the
+          POs / DOs / invoices raised from it. */}
       {historyOpen && (
         <AuditHistoryPanel
           recordLabel={salesOrder.doc_no}
           entityName="Sales order"
-          entries={auditEntries}
-          isLoading={auditQ.isLoading}
-          error={auditQ.error}
+          {...history.panel}
+          error={history.error}
           labels={SO_AUDIT_LABELS}
+          renderBadge={history.renderDocTag}
           onClose={closeHistory}
         />
       )}
@@ -1707,18 +1789,19 @@ function SalesOrderDetailV2ReadOnly() {
         onAmendmentClick={(a) => {
           if (onChainAmendmentClick(a)) setRelMapOpen(false);
         }}
+        returns={chainReturns}
+        onReturnClick={(r) => {
+          if (onChainReturnClick(r)) setRelMapOpen(false);
+        }}
         pairing={chainPairing}
       />
       {/* A chain slot standing for several documents opens this chooser instead
-          of a notice that only named them. Picking a row navigates, so the map
-          closes with it. */}
+          of a notice that only named them. The picked one opens in its own tab of the
+          in-app strip. */}
       <DocumentChoiceDialog
         prompt={chainChoice}
         onClose={closeChainChoice}
-        onPick={(d) => {
-          setRelMapOpen(false);
-          pickChainChoice(d);
-        }}
+        onPick={pickChainChoice}
       />
       <PrintPreviewModal
         open={print.open}
@@ -1767,3 +1850,21 @@ function Divider() {
 }
 
 export default SalesOrderDetailV2;
+
+/* HC-0002. The panels below mount only once the header lands, so each one's
+   read started a wave later (prod 2026-10-22: money / convert-sources /
+   document-flow at ~1.2s). This calls the SAME hooks with the same arguments
+   from the URL while the header loads, so each panel finds its read already in
+   flight. Every one of them mounts for any saved order, so nothing extra is
+   asked for; it renders nothing, so nothing above it re-renders. Not the
+   refund source: its hook has no staleTime, so the panel would read it twice. */
+function SoDetailWarmup({ docNo }: { docNo: string | undefined }) {
+  const key = docNo ?? null;
+  useOrderMoney(key);
+  useConvertSources(key);
+  useCancelRequest("so", key);
+  useSoBackdateRequests(key);
+  useDocumentFlow("so", key);
+  useSoDropdownOptions("payment_method");
+  return null;
+}

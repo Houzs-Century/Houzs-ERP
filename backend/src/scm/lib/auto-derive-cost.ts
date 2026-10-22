@@ -44,18 +44,20 @@ type Sb = { from: (t: string) => any }; // eslint-disable-line @typescript-eslin
  * existing (is_cost_anchor) path rather than silently switching mechanism
  * mid-outage.
  *
- * ⚠️ `companyId` is NOT optional, and the reason is an incident. scm.app_config
- * is per-company (company_id is NOT NULL), but this read used to carry no
- * company predicate. The stage-4 GO wrote ONE row, under company 1 — and it
- * switched the mechanism on over company 2 (2990) as well, whose catalogue is
- * maintained in a different system by a different team that never opted in.
- * The derive then erased 193 of 2990's RETAIL prices (see
- * writeProductCost below and BUG-HISTORY 2026-09-20). A company that has not
- * set its own row is OFF, which is what "off by default" was always supposed
- * to mean.
+ * ⚠️ SINGLE GLOBAL SWITCH (owner 2026-09-25: both companies must behave the
+ * same). scm.app_config's primary key is (key) ALONE, so this flag is one row
+ * for the whole database — one switch, both companies. It read PER-COMPANY
+ * between 2026-09-20 and 2026-09-25, after a stage-4 GO wrote one row (company
+ * 1) with no company predicate on the read and the derive erased 193 of company
+ * 2's RETAIL prices. Retail is now defended where it is WRITTEN, not by hiding
+ * the switch from company 2: every write path merges through
+ * mergeRetailOntoDerivedSeatGrid, and company 2 carries a BEFORE-UPDATE DB
+ * trigger (trg_mfg_products_retail_price_lock) that keeps its selling prices no
+ * matter what a writer sends. So arming both companies can no longer blank a
+ * retail price.
  *
- * A null/undefined companyId also reads OFF: without a company there is no row
- * to consult, and guessing is how this went wrong the first time.
+ * companyId stays required and a null/undefined one reads OFF: no company
+ * context, no derive.
  */
 export async function autoDeriveEnabled(sb: Sb, companyId: number | null | undefined): Promise<boolean> {
   if (companyId == null) return false;
@@ -64,7 +66,6 @@ export async function autoDeriveEnabled(sb: Sb, companyId: number | null | undef
       .from('app_config')
       .select('value')
       .eq('key', AUTO_DERIVE_FLAG_KEY)
-      .eq('company_id', companyId)
       .maybeSingle();
     if (error) return false;
     const v = String((data as { value?: unknown } | null)?.value ?? '')
@@ -366,13 +367,17 @@ export async function recordSupplierPriceHistorySafe(
 ): Promise<void> {
   const code = args.itemCode.trim();
   if (!code || !args.supplierId) return;
+  const effectiveFrom = (args.effectiveFrom ?? '').trim() || todayMyt();
   try {
+    // Compared against the row live on effectiveFrom, not the newest-dated one:
+    // a price scheduled for a later date is not what the binding holds now.
     let q = sb
       .from('supplier_binding_price_history')
       .select('unit_price_sen, price_matrix')
       .eq('material_kind', 'mfg_product')
       .eq('item_code', code)
-      .eq('supplier_id', args.supplierId);
+      .eq('supplier_id', args.supplierId)
+      .lte('effective_from', effectiveFrom);
     if (args.companyId != null) q = q.eq('company_id', args.companyId);
     const { data: latest, error: readErr } = await q
       .order('effective_from', { ascending: false })
@@ -396,7 +401,9 @@ export async function recordSupplierPriceHistorySafe(
       unit_price_sen: args.unitPriceSen ?? null,
       price_matrix: args.priceMatrix ?? null,
       is_main_supplier: Boolean(args.isMainSupplier),
-      effective_from: (args.effectiveFrom ?? '').trim() || todayMyt(),
+      effective_from: effectiveFrom,
+      // A snapshot of what the flat binding already holds — nothing to apply.
+      applied_at: new Date().toISOString(),
       notes: 'supplier price snapshot',
     });
     if (insErr) throw new Error(insErr.message);

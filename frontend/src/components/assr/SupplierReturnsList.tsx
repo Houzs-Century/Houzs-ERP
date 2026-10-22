@@ -15,6 +15,7 @@ import {
   roundLabel,
   QC_RESULTS,
   qcResultLabel,
+  returnNotePath,
 } from "../../vendor/scm/lib/assr/returns";
 import { DateField } from "../../vendor/scm/components/DateField";
 import { api } from "../../api/client";
@@ -49,20 +50,24 @@ function Labeled({ label, children }: { label: string; children: React.ReactNode
 
 function TripCard({
   r,
+  caseId,
   isCurrent,
   canWrite,
   busy,
   onPatch,
   onArchive,
+  onError,
   formatDate,
   confirm,
 }: {
   r: SupplierReturn;
+  caseId: number;
   isCurrent: boolean;
   canWrite: boolean;
   busy: boolean;
   onPatch: (roundId: number, patch: Record<string, string | null>) => void;
   onArchive: (roundId: number) => void;
+  onError: (msg: string) => void;
   formatDate?: (s: string | null | undefined) => string;
   confirm?: (msg: string) => boolean | Promise<boolean>;
 }) {
@@ -97,10 +102,23 @@ function TripCard({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="text-[12px] font-semibold text-ink">{roundLabel(r.round_no)}</span>
+          {r.ref_no && <span className="font-mono text-[11px] text-ink-muted">{r.ref_no}</span>}
           {isCurrent && (
             <span className="rounded bg-primary-soft px-1.5 py-0.5 text-[10px] font-semibold text-primary">Current</span>
           )}
         </div>
+        <div className="flex items-center gap-3">
+        <button
+          type="button"
+          className="text-[11px] font-semibold text-primary hover:opacity-80"
+          onClick={() => {
+            void api.openHtml(returnNotePath(caseId, r.id)).catch((e: unknown) =>
+              onError(e instanceof Error ? e.message : "Couldn't open the return note"),
+            );
+          }}
+        >
+          Print
+        </button>
         {canWrite && (
           <button
             type="button"
@@ -114,6 +132,7 @@ function TripCard({
             Remove
           </button>
         )}
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-2">
@@ -245,11 +264,13 @@ export function SupplierReturnsList({
         <TripCard
           key={r.id}
           r={r}
+          caseId={caseId}
           isCurrent={cur?.id === r.id}
           canWrite={canWrite}
           busy={busy}
           onPatch={onPatch}
           onArchive={onArchive}
+          onError={onError}
           formatDate={formatDate}
           confirm={confirm}
         />

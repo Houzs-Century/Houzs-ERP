@@ -7,7 +7,7 @@
 // shared at the left. Connector lines are coloured by transfer kind. Clicking
 // any node jumps to that document's detail page.
 
-import { useNavigate } from 'react-router';
+import { useOpenDocInTab } from '../../../lib/openDocInTab';
 import {
   useDocumentFlow,
   usePoSoCoverage,
@@ -99,7 +99,7 @@ const LEGEND: Array<{ key: string; color: string; label: string; dashed?: boolea
 const colX = (col: number) => PAD + col * (NODE_W + COL_GAP);
 
 export function DocumentFlowModal({ type, id, open, onClose }: Props) {
-  const navigate = useNavigate();
+  const openDoc = useOpenDocInTab();
   const { data, isLoading, isError } = useDocumentFlow(open ? type : null, open ? id : null);
   /* Floating pre-DO pairing for a PURCHASE anchor — read from the SAME
      usePoSoCoverage query key the detail pages / list drill-downs use, so the
@@ -124,7 +124,7 @@ export function DocumentFlowModal({ type, id, open, onClose }: Props) {
 
   const goPoAmendment = (amendmentId: string) => {
     onClose();
-    navigate(`/scm/po-amendments/${amendmentId}`);
+    openDoc(`/scm/po-amendments/${amendmentId}`);
   };
 
   // ── Layout: assign every node an (x, y) ─────────────────────────────────
@@ -172,7 +172,8 @@ export function DocumentFlowModal({ type, id, open, onClose }: Props) {
     const route = TYPE_META[n.type].route;
     if (!route) return;
     onClose();
-    navigate(route(n.id));
+    // Its own tab in the in-app strip (owner 2026-09-27).
+    openDoc(route(n.id));
   };
 
   return (

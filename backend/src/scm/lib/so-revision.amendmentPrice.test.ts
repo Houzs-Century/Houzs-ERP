@@ -324,7 +324,7 @@ describe('applySoAmendment — an APPROVED amendment carries the approved unit p
 describe('applySoAmendment — an approved RM 0 is a price, not a missing price', () => {
   it('a line an approver signed down to RM 0 stays at 0', async () => {
     const store = baseStore();
-    store.so_amendment_lines = [specLine({ new_unit_price_sen: 0 })];
+    store.so_amendment_lines = [specLine({ new_unit_price_sen: 0, zero_price_intended: true })];
 
     await apply(store);
 
@@ -390,7 +390,7 @@ describe('applySoAmendment — an approved RM 0 is a price, not a missing price'
        approve-so gate constructs — so an unapproved apply cannot author a 0
        any more than it could author RM 50. */
     const store = baseStore();
-    store.so_amendment_lines = [specLine({ new_unit_price_sen: 0 })];
+    store.so_amendment_lines = [specLine({ new_unit_price_sen: 0, zero_price_intended: true })];
 
     await apply(store, null);
 
@@ -468,6 +468,122 @@ describe('applySoAmendment — the MIGRATED-order protections still hold', () =>
 
     const added = store.mfg_sales_order_items.find((r) => r.id !== 'L1')!;
     expect(added.unit_price_sen).toBe(CATALOGUE_SEN);
+  });
+});
+
+/* ── A SEEDED 0 is not a requested price (HC-SO-013490) ─────────────────────
+   The amend editor fills a re-picked line's price from the catalogue, and a SKU
+   with no sell price seeds 0 with `priceAuthored: false`. Both builders used to
+   send that 0 as `newUnitPriceSen` on every changed line, so a SPEC swap to an
+   unpriced SKU reached here as an approved RM 0: on a migrated order
+   'including-zero' kept it, on a native one 'operator-zero' did. 11 lines on
+   10 orders were billed RM 0 that way (HC-SO-013490: 8,500 -> 0). The builders
+   now send NO price for an unauthored 0 (amendmentRequestedUnitPriceSen), and
+   these pin what the engine does with that: the line keeps its stored price, on
+   both order shapes, while a typed 0 an approver signed still lands as 0. */
+describe('applySoAmendment — a SPEC swap to an UNPRICED SKU keeps the stored price when no price is requested', () => {
+  /* The swap target: a catalogue row with NO sell price, the shape that seeds 0. */
+  const unpriced = () => product({ code: 'MAT-2', name: 'Mattress (unpriced)', sell_price_sen: null, base_price_sen: null });
+  const swapLine = (over: Partial<Row> = {}) => specLine({
+    new_item_code: 'MAT-2',
+    old_snapshot: { item_code: 'ACC-1', itemGroup: 'accessory', qty: 1, unitPriceSen: 850000 },
+    ...over,
+  });
+
+  it('MIGRATED: stored 850000, new_unit_price_sen null -> 850000 survives the swap', async () => {
+    const store = baseStore({ linkedAcDocNo: 'AC-SO-0001' });
+    store.mfg_products.push(unpriced());
+    store.mfg_sales_order_items = [soLine({ unit_price_sen: 850000, total_sen: 850000, balance_sen: 850000 })];
+    store.so_amendment_lines = [swapLine({ new_unit_price_sen: null })];
+
+    await apply(store);
+
+    const line = lineOf(store);
+    expect(line.item_code).toBe('MAT-2');
+    expect(line.unit_price_sen).toBe(850000);
+    expect(line.total_sen).toBe(850000);
+  });
+
+  it('NATIVE: stored 850000, new_unit_price_sen null -> 850000 survives the swap too', async () => {
+    const store = baseStore();
+    store.mfg_products.push(unpriced());
+    store.mfg_sales_order_items = [soLine({ unit_price_sen: 850000, total_sen: 850000, balance_sen: 850000 })];
+    store.so_amendment_lines = [swapLine({ new_unit_price_sen: null })];
+
+    await apply(store);
+
+    const line = lineOf(store);
+    expect(line.item_code).toBe('MAT-2');
+    expect(line.unit_price_sen).toBe(850000);
+  });
+
+  it('MIGRATED: an EXPLICIT 0 an approver signed still lands as 0 (unchanged behaviour)', async () => {
+    const store = baseStore({ linkedAcDocNo: 'AC-SO-0001' });
+    store.mfg_products.push(unpriced());
+    store.mfg_sales_order_items = [soLine({ unit_price_sen: 850000, total_sen: 850000, balance_sen: 850000 })];
+    store.so_amendment_lines = [swapLine({ new_unit_price_sen: 0, zero_price_intended: true })];
+
+    await apply(store);
+
+    expect(lineOf(store).unit_price_sen).toBe(0);
+    expect(lineOf(store).total_sen).toBe(0);
+  });
+
+  it('NATIVE: an EXPLICIT 0 an approver signed still lands as 0 (unchanged behaviour)', async () => {
+    const store = baseStore();
+    store.mfg_products.push(unpriced());
+    store.mfg_sales_order_items = [soLine({ unit_price_sen: 850000, total_sen: 850000, balance_sen: 850000 })];
+    store.so_amendment_lines = [swapLine({ new_unit_price_sen: 0, zero_price_intended: true })];
+
+    await apply(store);
+
+    expect(lineOf(store).unit_price_sen).toBe(0);
+  });
+});
+
+/* HC-0095 (15 Oct 2026): a 0 the operator did not type (an unpriced SKU's seed,
+   sent by a pre-#4591 bundle or queued before it) zeroed priced lines on
+   approval. Only a claimed 0 may land; an unclaimed one keeps the stored price. */
+describe('applySoAmendment — an UNCLAIMED requested 0 keeps the stored price', () => {
+  const unpriced = () => product({ code: 'MAT-2', name: 'Mattress (unpriced)', sell_price_sen: null, base_price_sen: null });
+  const zeroSwap = (over: Partial<Row> = {}) => specLine({
+    new_item_code: 'MAT-2', new_unit_price_sen: 0,
+    old_snapshot: { item_code: 'ACC-1', itemGroup: 'accessory', qty: 1, unitPriceSen: 850000 },
+    ...over,
+  });
+  const priced = () => [soLine({ unit_price_sen: 850000, total_sen: 850000, balance_sen: 850000 })];
+
+  it('MIGRATED: stored 850000, unclaimed 0 -> 850000', async () => {
+    const store = baseStore({ linkedAcDocNo: 'AC-SO-0001' });
+    store.mfg_products.push(unpriced());
+    store.mfg_sales_order_items = priced();
+    store.so_amendment_lines = [zeroSwap({ zero_price_intended: false })];
+
+    await apply(store);
+
+    expect(lineOf(store)).toMatchObject({ item_code: 'MAT-2', unit_price_sen: 850000, total_sen: 850000 });
+  });
+
+  it('NATIVE: stored 850000, unclaimed 0 -> 850000', async () => {
+    const store = baseStore();
+    store.mfg_products.push(unpriced());
+    store.mfg_sales_order_items = priced();
+    store.so_amendment_lines = [zeroSwap({ zero_price_intended: false })];
+
+    await apply(store);
+
+    expect(lineOf(store).unit_price_sen).toBe(850000);
+  });
+
+  it('a row with no flag at all (queued before the column) is unclaimed too', async () => {
+    const store = baseStore();
+    store.mfg_products.push(unpriced());
+    store.mfg_sales_order_items = priced();
+    store.so_amendment_lines = [zeroSwap()];
+
+    await apply(store);
+
+    expect(lineOf(store).unit_price_sen).toBe(850000);
   });
 });
 
@@ -621,5 +737,91 @@ describe('applySoAmendment — an approved delivery-date amendment is both SEEN 
     const line = lineOf(store);
     expect(line.line_delivery_date).toBe('2026-10-19');
     expect(line.line_delivery_date_overridden).toBe(true);
+  });
+});
+
+/* DEV-70 — the submit route now splits a SKU swap that also moves the price
+   (lib/amendment-noop-lines splitPriceFromSpec): the LINES half arrives with
+   no price, the PRICE half with nothing but the price. HC-SO-013490/A1: the
+   King mattress line held the RM 8,500 set price and the swapped-to SKU sells
+   at 0 in the catalogue. */
+describe('applySoAmendment — the two halves of a split SKU-swap-with-price (DEV-70)', () => {
+  const PRICE_APPROVED: SoAmendmentApproval = { approvedByUserId: 'user-finance', approvalPermission: 'scm.amendment.approve_price' };
+  const swapStore = (linkedAcDocNo: string | null) => {
+    const store = baseStore({ linkedAcDocNo });
+    store.mfg_sales_order_items = [soLine({ unit_price_sen: 850000, total_sen: 850000, balance_sen: 850000 })];
+    store.mfg_products.push(product({ code: 'ACC-2', name: 'Swapped Table', sell_price_sen: 0, base_price_sen: 0 }));
+    return store;
+  };
+
+  it('migrated order: the spec half swaps the SKU and keeps the stored set price', async () => {
+    const store = swapStore('SO-013490');
+    store.so_amendment_lines = [specLine({ new_item_code: 'ACC-2', new_unit_price_sen: null })];
+
+    await apply(store);
+
+    expect(lineOf(store)).toMatchObject({ item_code: 'ACC-2', unit_price_sen: 850000, total_sen: 850000 });
+  });
+
+  it('native order: the spec half keeps the stored price too, not the new SKU\'s catalogue 0', async () => {
+    const store = swapStore(null);
+    store.so_amendment_lines = [specLine({ new_item_code: 'ACC-2', new_unit_price_sen: null })];
+
+    await apply(store);
+
+    expect(lineOf(store)).toMatchObject({ item_code: 'ACC-2', unit_price_sen: 850000 });
+  });
+
+  it('the price half moves only the price: code, qty and spec stay as they are', async () => {
+    const store = swapStore('SO-013490');
+    store.so_amendment_lines = [specLine({ new_item_code: null, new_qty: null, new_variants: null, new_unit_price_sen: 0, zero_price_intended: true })];
+
+    await apply(store, PRICE_APPROVED);
+
+    expect(lineOf(store)).toMatchObject({ item_code: 'ACC-1', qty: 1, unit_price_sen: 0, total_sen: 0 });
+  });
+});
+
+/* ── The SKU decides the group (docs/bugs/0514) ─────────────────────────────
+   HC-SO-012243: a SPEC swapped SQUARE PILLOW (Sofa Accessory) for the free-gift
+   AMN-SOFA PILLOW (Accessory) and kept fabric_accessory. That group is
+   hard-bound for company 1, so MRP read the line SHORT beside 78 in stock. */
+describe('applySoAmendment — a changed code takes the new SKU\'s group', () => {
+  const pillowStore = () => {
+    const store = baseStore();
+    store.mfg_products.push(product({ code: 'PILLOW-SQ', category: 'FABRIC_ACCESSORY', name: 'Square Pillow' }));
+    store.mfg_sales_order_items = [soLine({ item_code: 'PILLOW-SQ', item_group: 'fabric_accessory', description: 'Square Pillow' })];
+    return store;
+  };
+
+  it('a SPEC code swap restamps item_group from the new SKU', async () => {
+    const store = pillowStore();
+    store.so_amendment_lines = [specLine({ new_item_code: 'ACC-1' })];
+
+    await apply(store);
+
+    expect(lineOf(store).item_code).toBe('ACC-1');
+    expect(lineOf(store).item_group).toBe('accessory');
+  });
+
+  it('a SPEC that keeps the code leaves the stored group alone', async () => {
+    const store = pillowStore();
+    store.so_amendment_lines = [specLine({ new_item_code: 'PILLOW-SQ', new_qty: 2 })];
+
+    await apply(store);
+
+    expect(lineOf(store).item_group).toBe('fabric_accessory');
+  });
+
+  it('an ADDED line takes the catalogue group over the requested one', async () => {
+    const store = baseStore();
+    store.so_amendment_lines = [specLine({
+      id: 'al-add', sales_order_item_id: null, change_type: 'ADD',
+      new_item_code: 'ACC-1', new_variants: { itemGroup: 'others' }, old_snapshot: null,
+    })];
+
+    await apply(store);
+
+    expect(store.mfg_sales_order_items.find((r) => r.id !== 'L1')!.item_group).toBe('accessory');
   });
 });

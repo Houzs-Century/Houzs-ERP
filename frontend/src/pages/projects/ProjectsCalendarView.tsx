@@ -26,8 +26,15 @@ import {
 } from "./calendarModel";
 import { CalendarTaskChip, DayCountBadge, CalendarBarPopover, CalendarTaskPopover, CalendarDayModal } from "./calendarParts";
 
+// Owner 2026-09-30: the calendar filter must survive going into a project and
+// back, and only clear on logout or after an hour of not being touched.
+const CALENDAR_FILTER_IDLE_MS = 60 * 60 * 1000;
+
 const PROJECTS_CALENDAR_FILTER_KEYS = [
   "brand",
+  // `status` was READ and SET here but never listed, so it alone was dropped on
+  // every navigation while brand/organizer/search survived (owner 2026-09-30).
+  "status",
   "stage",
   "organizer",
   "month",
@@ -48,7 +55,8 @@ export function ProjectsCalendarView() {
   const navigate = useNavigate();
   const [params, setParams] = useStickyFilters(
     "projects-calendar",
-    PROJECTS_CALENDAR_FILTER_KEYS
+    PROJECTS_CALENDAR_FILTER_KEYS,
+    { idleTtlMs: CALENDAR_FILTER_IDLE_MS }
   );
   const brand = params.get("brand") || "";
   const status = params.get("status") || "";

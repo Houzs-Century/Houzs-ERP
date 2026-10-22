@@ -31,6 +31,8 @@ const world = () => fakeSb({
     { company_id: CO, account_code: '310-0010', account_name: 'CASH AT BANK - MAYBANK', acc_money: true, is_active: true, account_type: 'ASSET', section: 'CURRENT ASSETS' },
     { company_id: CO, account_code: '320-0000', account_name: 'CASH IN HAND', acc_money: true, is_active: true, account_type: 'ASSET', section: 'CURRENT ASSETS' },
     { company_id: CO, account_code: '300-0000', account_name: 'ACCOUNT RECEIVEABLE', acc_money: false, is_active: true, account_type: 'ASSET', section: 'CURRENT ASSETS' },
+    { company_id: CO, account_code: '326-0000', account_name: 'CARD MACHINE CLEARING (EDC)', acc_money: false, is_active: true, account_type: 'ASSET', section: 'CURRENT ASSETS' },
+    { company_id: CO, account_code: '326-0010', account_name: 'CARD MACHINE CLEARING — PBB', acc_money: false, is_active: true, account_type: 'ASSET', section: 'CURRENT ASSETS' },
     { company_id: CO, account_code: '400-0000', account_name: 'ACCOUNT PAYABLE', acc_money: false, is_active: true, account_type: 'LIABILITY', section: 'CURRENT LIABILITIES' },
     { company_id: CO, account_code: '405-0000', account_name: 'OTHER CREDITORS', acc_money: false, is_active: true, account_type: 'LIABILITY', section: 'CURRENT LIABILITIES' },
     { company_id: CO, account_code: '900-A001', account_name: 'RENTAL', acc_money: false, is_active: true, account_type: 'EXPENSE', section: 'EXPENSES' },
@@ -68,6 +70,15 @@ const world = () => fakeSb({
     gl('JE-9', '2026-07-26', 'PV', 'PV-9', '310-0010', 'CASH AT BANK - MAYBANK', 0, 99900, { reversed: true, reversed_by_je: 'je-9r' }),
     gl('JE-9R', '2026-07-28', 'PV_REVERSAL', 'PV-9', '310-0010', 'CASH AT BANK - MAYBANK', 99900, 0, { reversed_by_je: 'je-9' }),
     gl('JE-9R', '2026-07-28', 'PV_REVERSAL', 'PV-9', '910-0000', 'UTILITIES', 0, 99900, { reversed_by_je: 'je-9' }),
+    /* Card money (owner 2026-09-28): a June swipe on the generic EDC clearing, a July
+       swipe on the PBB clearing, the acquirer's fee — none of it touches a money
+       account, so the report's columns cannot see it; the memo lines can. */
+    gl('JE-C0', '2026-06-25', 'SOPAY', 'pay-c0', '326-0000', 'CARD MACHINE CLEARING (EDC)', 5000, 0),
+    gl('JE-C0', '2026-06-25', 'SOPAY', 'pay-c0', '300-0000', 'ACCOUNT RECEIVEABLE', 0, 5000, { party_type: 'CUSTOMER', party_name: 'Ah Meng' }),
+    gl('JE-C1', '2026-07-15', 'SOPAY', 'pay-c1', '326-0010', 'CARD MACHINE CLEARING — PBB', 30000, 0),
+    gl('JE-C1', '2026-07-15', 'SOPAY', 'pay-c1', '300-0000', 'ACCOUNT RECEIVEABLE', 0, 30000, { party_type: 'CUSTOMER', party_name: 'Ah Meng' }),
+    gl('JE-C2', '2026-07-16', 'SETTLE', 'SETTLE-1', '900-T009', 'MERCHANT CHARGES', 300, 0),
+    gl('JE-C2', '2026-07-16', 'SETTLE', 'SETTLE-1', '326-0010', 'CARD MACHINE CLEARING — PBB', 0, 300),
   ],
   payment_vouchers: [
     { id: 'pv-3', company_id: CO, pv_number: 'PV-3', status: 'POSTED' },
@@ -81,6 +92,7 @@ const world = () => fakeSb({
   ap_invoices: [{ id: 'api-1', company_id: CO, invoice_number: 'API-1' }],
   ap_invoice_lines: [{ id: 'l1', company_id: CO, invoice_id: 'api-1', debit_account_code: '900-A001', amount_sen: 5000 }],
   acc_report_layouts: [],
+  acc_acquirers: [{ company_id: CO, code: 'PBB', display_name: 'PBB', transit_account_code: '326-0010', is_active: true }],
 });
 
 function harness(sb: ReturnType<typeof fakeSb>) {
@@ -101,6 +113,7 @@ type Report = {
   payments: Array<{ key: string; code: string | null; name: string; cells: Record<string, number>; totalSen: number }>;
   totals: { receipts: Record<string, number>; payments: Record<string, number>; closing: Record<string, number>; openingTotalSen: number; receiptsTotalSen: number; paymentsTotalSen: number; closingTotalSen: number };
   entries: Array<{ jeNo: string; side: 'R' | 'P'; rowKey: string; column: string; sen: number }>;
+  card: { takingsSen: number; transitSen: number; codes: string[] };
 };
 const fetchReport = async (app: Hono, qs: string): Promise<Report> => {
   const res = await app.request(`/accounting/reports/receipts-payments?${qs}`);
@@ -141,6 +154,18 @@ describe('Receipts & Payments — columns per money account, rows in the owner\'
     /* Rows carry their Total; entries carry the drill-down. */
     expect(r.payments.find((x) => x.key === '601-0003')?.totalSen).toBe(40000);
     expect(r.entries.filter((e) => e.jeNo === 'JE-3').map((e) => [e.rowKey, e.sen]).sort()).toEqual([['601-0001', 30000], ['601-0003', 40000], ['ADV', 30000]]);
+  });
+
+  test('the card money the bank has not received: what was swiped in the period, what the clearing accounts hold at its end (owner 2026-09-28: 9 月刷卡的钱要看得到)', async () => {
+    const july = await fetchReport(harness(world()), 'from=2026-07-01&to=2026-07-31');
+    /* The swipes never reach a money column… */
+    expect(july.receipts.find((x) => x.key === '326-0010')).toBeUndefined();
+    expect(july.totals.receipts).toEqual({ '310-0010': 50000, '320-0000': 20000 });
+    /* …but the memo carries July's swipe (the acquirer's fee is the settlement module's own, not a taking)
+       and the balance at month end: June's 50.00 + July's 300.00 − the 3.00 fee. */
+    expect(july.card).toEqual({ takingsSen: 30000, transitSen: 34700, codes: ['326-0000', '326-0010'] });
+    const june = await fetchReport(harness(world()), 'from=2026-06-01&to=2026-06-30');
+    expect(june.card).toEqual({ takingsSen: 5000, transitSen: 5000, codes: ['326-0000', '326-0010'] });
   });
 
   test('party=1 names the control rows by debtor/creditor and does not split the supplier payment', async () => {

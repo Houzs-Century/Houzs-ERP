@@ -30,7 +30,7 @@ describe('whatChanged', () => {
       { field: 'method', from: 'cash', to: 'transfer' },
       { field: 'merchantProvider', from: null, to: 'MBB' },
       { field: 'paidAt', from: '2026-09-01', to: '2026-09-04' },
-    ] }))).toBe('Method cash → transfer; Bank — → MBB; Date 01/09/2026 → 04/09/2026');
+    ] }))).toBe('Method cash → transfer; Bank — → MBB; Date 2026/09/01 → 2026/09/04');
   });
 
   it('a field it does not know still prints, by its raw name', () => {
@@ -48,7 +48,7 @@ describe('whatChanged', () => {
     expect(whatChanged(row({
       kind: 'added', amountFromSen: null, amountToSen: 150_000,
       changes: [{ field: 'paidAt', from: null, to: '2026-09-12' }, { field: 'method', from: null, to: 'cash' }, { field: 'amountSen', from: null, to: 150_000 }],
-    }))).toBe('Added — RM 1,500.00 (cash on 12/09/2026)');
+    }))).toBe('Added — RM 1,500.00 (cash on 2026/09/12)');
     expect(whatChanged(row({ kind: 'added', amountFromSen: null, amountToSen: 20_000, changes: [{ field: 'amountSen', from: null, to: 20_000 }] }))).toBe('Added — RM 200.00');
     expect(whatChanged(row({ kind: 'added', amountFromSen: null, amountToSen: null, changes: [] }))).toBe('Added');
   });
@@ -63,12 +63,12 @@ describe('whatChanged', () => {
    是谁记录这一笔的) — and a dash, never a guess, when nothing could be read. */
 describe('recordedText', () => {
   it('names the recorder and the day', () => {
-    expect(recordedText(row())).toBe('Rachael\n29/08/2026');
+    expect(recordedText(row())).toBe('Rachael\n2026/08/29');
   });
 
   it('a recorder with no day, or a day with no name, prints what it has', () => {
     expect(recordedText(row({ recordedOn: null }))).toBe('Rachael');
-    expect(recordedText(row({ recordedBy: null }))).toBe('—\n29/08/2026');
+    expect(recordedText(row({ recordedBy: null }))).toBe('—\n2026/08/29');
   });
 
   it('nothing read prints a dash', () => {
@@ -113,10 +113,10 @@ describe('correctionsDocument', () => {
     expect(doc.title).toBe('PAYMENT CORRECTIONS');
     expect(doc.monthText).toBe('09/2026');
     expect(doc.lines).toEqual([[
-      '10/09/2026\nChew',
+      '2026/09/10\nChew',
       '2990-SO-2606-043\nWong li way',
       'Amount RM 1,990.00 -> RM 1,991.00',
-      'Rachael\n29/08/2026',
+      'Rachael\n2026/08/29',
       'Sales keyed RM 1,990 — receipt shows RM 1,991',
       'JE-2609-0031 -> reversed by JE-2609-0057 -> JE-2609-0058',
     ]]);

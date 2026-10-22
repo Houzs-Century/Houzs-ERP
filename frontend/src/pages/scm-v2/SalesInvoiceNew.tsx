@@ -12,6 +12,9 @@
 // place money is taken, and its ledger is shown read-only below. Without
 // ?fromDo it is a blank Create-Invoice form.
 //
+// ?fromSo=<SO doc no> (DEV-76) seeds the same fields from a Sales Order that has
+// no DO — a charge-only order (extra logistics / storage) invoiced on its own.
+//
 // On Save: POST /sales-invoices (header + items) — the server records revenue
 // (Dr Accounts Receivable / Cr Sales Revenue) on create — then replay the
 // payment drafts through POST /:id/payments before navigating to the new
@@ -32,6 +35,8 @@ import { Button } from '@2990s/design-system';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import { useToast } from '../../vendor/scm/components/Toast';
+import { siAfterSavePath } from '../../lib/siAfterSave';
 import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import {
   useCreateSalesInvoice, useAddSalesInvoicePayment,
@@ -52,14 +57,15 @@ import { SoLineCard, emptySoLine, type SoLineDraft } from '../../vendor/scm/comp
 import {
   PaymentsTable, labelToApi, draftMethodFields, type PaymentDraft,
 } from '../../vendor/scm/components/PaymentsTable';
-import { useSalesOrderPayments } from '../../vendor/scm/lib/sales-order-queries';
+import { useSalesOrderPayments, useMfgSalesOrderDetail } from '../../vendor/scm/lib/sales-order-queries';
+import { useSoConversionSource } from '../../vendor/scm/lib/delivery-order-queries';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { fmtMoneySen } from '@2990s/shared';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-type DraftLine = SoLineDraft & { rid: string; doItemId?: string };
+type DraftLine = SoLineDraft & { rid: string; doItemId?: string; soItemId?: string };
 
 const newLine = (): DraftLine => ({
   ...emptySoLine(),
@@ -71,9 +77,12 @@ const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, cu
 export const SalesInvoiceNew = () => {
   const navigate = useNavigate();
   const notify = useNotify();
+  const toast = useToast();
   const [searchParams] = useSearchParams();
   const fromDo = searchParams.get('fromDo');
   const fromPicks = searchParams.get('fromPicks') === '1';
+  // ?fromDo wins when both are present: the DO already carries its SO.
+  const fromSo = fromDo ? null : searchParams.get('fromSo');
 
   const create = useCreateSalesInvoice();
   /* One key for the one invoice this page is open to raise (lib/idempotency.ts).
@@ -93,13 +102,19 @@ export const SalesInvoiceNew = () => {
 
   // Prefill source — the DO this invoice is being raised from (if any).
   const doDetail = useMfgDeliveryOrderDetail(fromDo);
+  // Same header read the Create-DO page uses for ?fromSo; lines from the SO detail.
+  const soSource = useSoConversionSource(fromSo);
+  const soDetail = useMfgSalesOrderDetail(fromSo);
   /* `include` carries the salesperson already on the SOURCE document this one is
      being raised from, so someone the onlySales narrowing hides is still named.
      "(former staff)" below is then only reachable for a row that genuinely is
      gone. Declared after the source query so the id is in scope. */
   const staffQ = usePickableStaff({
     onlySales: true,
-    include: [(doDetail.data?.deliveryOrder as Record<string, unknown> | undefined)?.salesperson_id as string | undefined],
+    include: [
+      (doDetail.data?.deliveryOrder as Record<string, unknown> | undefined)?.salesperson_id as string | undefined,
+      soSource.data?.source.salespersonId ?? undefined,
+    ],
   });
 
   const customerTypeOptsQ = useSoDropdownOptions('customer_type');
@@ -247,6 +262,57 @@ export const SalesInvoiceNew = () => {
     setPrefilled(true);
   }, [fromDo, fromPicks, prefilled, doDetail.data]);
 
+  /* ?fromSo prefill — header mapping mirrors DeliveryOrderNewV2's; every live
+     SO line is invoiced at its full qty and price. Seeds once, like ?fromDo. */
+  useEffect(() => {
+    if (!fromSo || prefilled) return;
+    const so = soSource.data?.source;
+    const items = soDetail.data?.items as Array<Record<string, unknown>> | undefined;
+    if (!so || !items) return;
+    setDebtorCode(so.debtorCode ?? '');
+    setDebtorName(so.customerName ?? '');
+    setPhone(so.phone ?? '');
+    setEmail(so.email ?? '');
+    setSalespersonId(so.salespersonId ?? '');
+    setCustomerType(so.customerType ?? '');
+    setCustomerSoNo(so.customerSoRef ?? '');
+    setBuildingType(so.buildingType ?? '');
+    setVenue(so.venue ?? '');
+    setVenueId(so.venueId ?? '');
+    setCustomerDeliveryDate((so.customerDeliveryDate ?? '').slice(0, 10));
+    setAddress1(so.address1 ?? '');
+    setAddress2(so.address2 ?? '');
+    setState(so.customerState ?? '');
+    setCity(so.city ?? '');
+    setPostcode(so.postcode ?? '');
+    setSalesLocation(so.salesLocation ?? '');
+    setBranding(so.branding ?? '');
+    setSoDocNo(fromSo);
+    setEmergencyName(so.emergencyContactName ?? '');
+    setEmergencyRel(so.emergencyContactRelationship ?? '');
+    setEmergencyPhone(so.emergencyContactPhone ?? '');
+    const live = items.filter((it) => !it.cancelled);
+    if (live.length > 0) {
+      setLines(live.map((it) => ({
+        ...emptySoLine(),
+        rid: `l${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${String(it.id)}`,
+        soItemId: String(it.id),
+        itemCode: String(it.item_code ?? ''),
+        itemGroup: String(it.item_group ?? 'others'),
+        description: String(it.description ?? ''),
+        uom: String(it.uom ?? 'UNIT'),
+        qty: Number(it.qty ?? 1),
+        unitPriceSen: Number(it.unit_price_sen ?? 0),
+        discountSen: Number(it.discount_sen ?? 0),
+        unitCostSen: Number(it.unit_cost_sen ?? 0),
+        variants: it.variants && typeof it.variants === 'object' ? (it.variants as Record<string, unknown>) : {},
+        remark: String(it.remark ?? ''),
+        lineDeliveryDate: (so.customerDeliveryDate ?? '').slice(0, 10) || null,
+      })));
+    }
+    setPrefilled(true);
+  }, [fromSo, prefilled, soSource.data, soDetail.data]);
+
   const staffList = useMemo(() => (staffQ.data ?? []).filter((s) => s.active), [staffQ.data]);
 
   const locRows = useMemo(() => loc.data ?? [], [loc.data]);
@@ -381,6 +447,7 @@ export const SalesInvoiceNew = () => {
         note: note || undefined,
         items: validLines.map((l) => ({
           doItemId: l.doItemId,
+          soItemId: l.soItemId,
           itemGroup: l.itemGroup,
           itemCode: l.itemCode,
           description: l.description,
@@ -436,8 +503,9 @@ export const SalesInvoiceNew = () => {
             setCreatedInvoice({ id: res.id, number: res.invoiceNumber });
             return;
           }
+          if (fromDo && failed === 0) toast.success(`Invoice ${res.invoiceNumber} created.`);
           navigate(
-            `/scm/sales-invoices/${res.id}${failed > 0 ? '?retryPayments=1' : ''}`,
+            siAfterSavePath(res.id, fromDo, failed),
             { state: failed > 0 ? paymentRetryNavigationState('si', res.id, failedDrafts) : undefined },
           );
         },
@@ -446,7 +514,8 @@ export const SalesInvoiceNew = () => {
     );
   };
 
-  const loadingPrefill = Boolean(fromDo) && !prefilled && doDetail.isLoading;
+  const loadingPrefill = !prefilled && ((Boolean(fromDo) && doDetail.isLoading)
+    || (Boolean(fromSo) && (soSource.isLoading || soDetail.isLoading)));
 
   return (
     <div className="space-y-4">
@@ -454,7 +523,7 @@ export const SalesInvoiceNew = () => {
         eyebrow="Supply Chain"
         title={createdInvoice
           ? `Complete Sales Invoice ${createdInvoice.number}`
-          : `New Sales Invoice${fromDo ? ' — from Delivery Order' : ''}`}
+          : `New Sales Invoice${fromDo ? ' — from Delivery Order' : fromSo ? ` — from ${fromSo}` : ''}`}
         description={createdInvoice
           ? 'The invoice already exists. Finish or remove the retained payment rows, then continue to its Detail page.'
           : undefined}
@@ -495,7 +564,12 @@ export const SalesInvoiceNew = () => {
 
       {loadingPrefill && (
         <div className={styles.bannerWarn} style={{ background: 'var(--c-cream)', border: '1px solid var(--line)', color: 'var(--fg-muted)' }}>
-          Loading Delivery Order…
+          {fromSo ? 'Loading Sales Order…' : 'Loading Delivery Order…'}
+        </div>
+      )}
+      {fromSo && !prefilled && (soSource.isError || soDetail.isError) && (
+        <div className={styles.bannerWarn}>
+          Could not read {fromSo}. Nothing has been copied across.
         </div>
       )}
 
@@ -510,7 +584,7 @@ export const SalesInvoiceNew = () => {
                 onChange={(e) => setDebtorName(e.target.value)} placeholder="e.g. Lim Mei Hua" required />
             </label>
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Customer SO Ref</span>
+              <span className={styles.fieldLabel}>Ref No.</span>
               <input className={styles.fieldInput} value={customerSoNo}
                 placeholder="Their PO / SO number" onChange={(e) => setCustomerSoNo(e.target.value)} />
             </label>
@@ -691,7 +765,9 @@ export const SalesInvoiceNew = () => {
               client-side invention - a red ring and a ` *` for a field the
               backend never asked for. */
               variantsRequired={false}
+              lineDateLocked={false}
               seedSofaLegDefault={false}
+              attachOptions={null}
             />
           ))}
           <AddLineButton variant="block" onClick={addLine} />

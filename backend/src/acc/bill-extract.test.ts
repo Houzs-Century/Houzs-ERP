@@ -42,6 +42,29 @@ describe('coerceBillJson', () => {
     expect(out.lines).toEqual([]);
   });
 
+  /* Owner 2026-10-02 (upload 后很多资料都没有填): a payment request fills its
+     "What is it for" and the payee's bank from the paper — read as printed. */
+  it('reads the one-line summary and the printed bank account; nothing printed is null', () => {
+    const out = coerceBillJson({
+      vendorName: 'HOUZS VENTURE HOLDINGS SDN BHD', totalRm: 8082.33,
+      summary: "  Payroll cost share — Aug'26 · adjustment  ",
+      payTo: { bankName: 'Hong Leong Bank Berhad', accountNo: '123-4567-8901', accountName: 'Houzs Venture Holding Sdn Bhd' },
+    });
+    expect(out.summary).toBe("Payroll cost share — Aug'26 · adjustment");
+    expect(out.payTo).toEqual({ bankName: 'Hong Leong Bank Berhad', accountNo: '123-4567-8901', accountName: 'Houzs Venture Holding Sdn Bhd' });
+
+    const none = coerceBillJson({ vendorName: 'TNB', summary: '', payTo: { bankName: null, accountNo: '', accountName: null } });
+    expect(none.summary).toBeNull();
+    expect(none.payTo).toBeNull();
+    expect(coerceBillJson({ vendorName: 'TNB' }).payTo).toBeNull();
+  });
+
+  it('an account number the model sent as a JSON number is kept only while it is exact', () => {
+    expect(coerceBillJson({ payTo: { accountNo: 12345678901 } }).payTo).toEqual({ bankName: null, accountNo: '12345678901', accountName: null });
+    /* 17 digits cannot survive a JSON number — no account beats a wrong one. */
+    expect(coerceBillJson({ payTo: { bankName: 'Maybank', accountNo: 51234567890123456 } }).payTo).toEqual({ bankName: 'Maybank', accountNo: null, accountName: null });
+  });
+
   it('parseModelJson takes the outermost object out of prose and fences', () => {
     expect(parseModelJson('Here is the bill:\n```json\n{"totalRm": 5}\n```')).toEqual({ totalRm: 5 });
     expect(parseModelJson('no json at all')).toBeNull();
@@ -143,20 +166,20 @@ describe('extractOneBill', () => {
   }), { status: 200 })) as unknown as typeof fetch;
 
   it('a clean answer comes back coerced', async () => {
-    const r = await extractOneBill('key', FILES, modelSays('{"vendorName":"TNB","totalRm":10}'));
+    const r = await extractOneBill('key', FILES, null, modelSays('{"vendorName":"TNB","totalRm":10}'));
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.extraction.totalSen).toBe(1000);
   });
 
   it('API refusal is a sentence, not a throw', async () => {
     const failing: typeof fetch = (async () => new Response('overloaded', { status: 529 })) as unknown as typeof fetch;
-    const r = await extractOneBill('key', FILES, failing);
+    const r = await extractOneBill('key', FILES, null, failing);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/refused \(529\)/);
   });
 
   it('an answer with no JSON is refused with advice, not crashed on', async () => {
-    const r = await extractOneBill('key', FILES, modelSays('I see a cat.'));
+    const r = await extractOneBill('key', FILES, null, modelSays('I see a cat.'));
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/clearer photo/);
   });

@@ -70,7 +70,7 @@ describe("CalendarBarPopover", () => {
     render(<CalendarBarPopover info={{ project: PROJECT, x: 10, y: 10 }} />);
     expect(screen.getByText("HZ-007")).toBeTruthy();
     expect(screen.getByText("SELANGOR [HOUZS] SOLO @ MITEC")).toBeTruthy();
-    expect(screen.getByText("01/08/2026 – 03/08/2026")).toBeTruthy();
+    expect(screen.getByText("2026/08/01 – 2026/08/03")).toBeTruthy();
     expect(screen.getByText("Confirmed")).toBeTruthy();
   });
 });
@@ -89,7 +89,7 @@ describe("CalendarDayModal", () => {
         onOpenProject={onOpenProject}
       />,
     );
-    expect(screen.getByRole("heading", { name: "Saturday 01/08/2026" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Saturday 2026/08/01" })).toBeTruthy();
     expect(screen.getByText("Hari Kebangsaan")).toBeTruthy();
     expect(screen.getByText("Projects · 1")).toBeTruthy();
     expect(screen.getByText("Tasks due · 2")).toBeTruthy();

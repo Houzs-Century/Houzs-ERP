@@ -24,7 +24,7 @@ import {
   useDeleteZoneRule,
   type ZoneRuleRow,
 } from '../../vendor/scm/lib/delivery-zones-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import styles from './Suppliers.module.css';
@@ -117,7 +117,7 @@ export const DeliveryZones = ({ embedded = false }: { embedded?: boolean } = {})
     }
   };
 
-  const columns = useMemo<DataGridColumn<ZoneRuleRow>[]>(() => [
+  const columns = useMemo<GridColumn<ZoneRuleRow>[]>(() => [
     {
       key: 'zone', label: 'Zone', width: 150,
       accessor: (r) => {
@@ -257,7 +257,7 @@ export const DeliveryZones = ({ embedded = false }: { embedded?: boolean } = {})
         <p className={styles.eyebrow}>{rows.length} zone rules</p>
       </div>
 
-      <DataGrid
+      <DataGridCompat
         rows={rows}
         columns={columns}
         storageKey="dg-delivery-zones"

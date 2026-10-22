@@ -79,7 +79,8 @@ import type { Context, MiddlewareHandler, Next } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { hasHouzsPerm, canViewAllSales } from '../lib/houzs-perms';
-import { salesDocOutOfScope } from '../lib/salesScope';
+import { salesDocOutOfScope, resolveSalesScopeIds, readSoOwnership, soOwnedInScope } from '../lib/salesScope';
+import { subtreeUserIds } from '../../services/orgScope';
 import {
   NOT_THIS_COMPANY,
   activeCompanyId,
@@ -88,6 +89,7 @@ import {
   scopeToCompanyId,
 } from '../lib/companyScope';
 import { doHasDownstream, poHasDownstream, soHasDownstream } from '../lib/downstream-lock';
+import { readSoRefs, readSoRefsByDoId } from '../lib/so-ref-lookup';
 import { recordSoAudit } from '../lib/so-audit';
 import { recordEntityAudit } from '../lib/entity-audit';
 import { notifyCancelRequest } from '../../services/cancelRequestNotify';
@@ -106,6 +108,7 @@ import {
   isReasonOnly,
   levelsFor,
   readReason,
+  readRemark,
   rejectRefusal,
   statusAfterApproval,
   withdrawRefusal,
@@ -360,6 +363,15 @@ export function requestCancelHandler(docType: CancelDocType) {
 
 export function approveCancelHandler(docType: CancelDocType) {
   return async (c: AnyCtx) => {
+    /* The body is optional: a tab loaded before DEV-17 still posts none. */
+    let body: { remark?: unknown } = {};
+    const raw = await c.req.text();
+    if (raw.trim()) {
+      try { body = JSON.parse(raw) ?? {}; } catch { return c.json({ error: 'invalid_json' }, 400); }
+    }
+    const remark = readRemark(body.remark);
+    if (!remark.ok) return c.json(remark.refusal, 400);
+
     const loaded = await loadDoc(c, docType, c.req.param(DOCS[docType].param));
     if (!loaded.ok) return loaded.res;
     const { doc, companyId } = loaded;
@@ -381,6 +393,7 @@ export function approveCancelHandler(docType: CancelDocType) {
     patch[`l${level}_by`] = actor.id;
     patch[`l${level}_by_name`] = actor.name;
     patch[`l${level}_at`] = at;
+    patch[`l${level}_remark`] = remark.remark;
 
     /* CAS on the status the decision was made against — two approvers pressing
        the same button land one signature, not two on one level. */
@@ -394,9 +407,10 @@ export function approveCancelHandler(docType: CancelDocType) {
     if (error) return c.json({ error: 'approve_failed', reason: error.message }, 500);
     if (!updated) return c.json({ error: 'stale', message: 'This request changed while you were looking at it — reload and try again.' }, 409);
 
-    await audit(c, docType, doc, 'APPROVE', `level ${level} of ${levelsFor(docType)} approved`, null);
+    const signed = `level ${level} of ${levelsFor(docType)} approved`;
+    await audit(c, docType, doc, 'APPROVE', remark.remark ? `${signed} — ${remark.remark}` : signed, null);
     await notifyCancelRequest(c.env, final ? 'approved' : 'level1', {
-      docType, docNumber: doc.number, reason: String(open.reason ?? ''), companyId,
+      docType, docNumber: doc.number, reason: String(open.reason ?? ''), remark: remark.remark, companyId,
       requesterUserId: Number(open.requested_by) || null, requesterName: (open.requested_by_name as string | null) ?? null,
       actorUserId: actor.id, actorName: actor.name,
     });
@@ -481,7 +495,46 @@ export const listCancelRequestsHandler = async (c: AnyCtx) => {
   if (scope !== 'all') q = q.in('status', [...OPEN_CANCEL_STATUSES]);
   const { data, error } = await scopeToCompany(q, c).order('requested_at', { ascending: false }).limit(500);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ requests: data ?? [] });
+  let rows = (data ?? []) as Array<{ doc_type: string; doc_key: string; requested_by?: number | null }>;
+  /* An SO cancellation follows the SO amendment queue's rule (DEV-40,
+     salesScope.soOwnedInScope): a scoped caller sees what they or their downline
+     raised, or what sits on an order they or their downline own or were shared.
+     These rows list beside the amendments on that queue, so a looser rule here
+     would show a rep every other rep's cancellations. DO / PO rows are not on
+     that queue and keep their reach. */
+  const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
+  if (scopeIds && rows.some((r) => r.doc_type === 'SO')) {
+    const hu = c.get('houzsUser')?.id;
+    const userIds = new Set(hu == null ? [] : await subtreeUserIds(c.env, Number(hu)));
+    const owned = await readSoOwnership(sb, [...new Set(rows.filter((r) => r.doc_type === 'SO').map((r) => r.doc_key))], (sq) => scopeToCompany(sq, c));
+    if (owned.error) return c.json({ error: 'load_failed', reason: owned.error }, 500);
+    rows = rows.filter((r) => r.doc_type !== 'SO'
+      || (r.requested_by != null && userIds.has(Number(r.requested_by)))
+      || soOwnedInScope(scopeIds, owned.byDoc.get(r.doc_key)));
+  }
+  /* The Sales Order's own customer reference (owner 2026-09-24: 「为什么 ref 不会
+     出现?每个 SO 都会有的」). A cancellation request shows in the SO Amendment
+     queue beside the amendments, and that queue's Reference column was blank on
+     every cancellation row because this endpoint sent the document NUMBER and
+     nothing else about the order.
+
+     Sent RAW (`ref`, `customer_so_no`) exactly as GET /so-amendments sends it,
+     so the frontend resolves both kinds of row through the one display rule
+     (customerRefOf) and two rows for the same order can never disagree. SO rows,
+     and a DO's source order below; a PO has no single order. A failed read FAILS the
+     list, like the main read: a blank column would claim the order has no
+     reference, which a failed read does not know. */
+  const inCompany = (sq: Parameters<typeof scopeToCompany>[0]) => scopeToCompany(sq, c);
+  const soRefs = await readSoRefs(sb, rows.filter((r) => r.doc_type === 'SO').map((r) => r.doc_key), inCompany);
+  if (soRefs.error) return c.json({ error: 'load_failed', reason: soRefs.error }, 500);
+  /* Owner 2026-09-25: every search finds a record by its SO's reference. */
+  const doRefs = await readSoRefsByDoId(sb, rows.filter((r) => r.doc_type === 'DO').map((r) => r.doc_key), inCompany);
+  if (doRefs.error) return c.json({ error: 'load_failed', reason: doRefs.error }, 500);
+  const requests = rows.map((r) => {
+    const so = r.doc_type === 'SO' ? soRefs.byDoc.get(r.doc_key) : r.doc_type === 'DO' ? doRefs.byDoId.get(r.doc_key) : undefined;
+    return { ...r, doc_ref: so?.ref ?? null, doc_customer_so_no: so?.customer_so_no ?? null };
+  });
+  return c.json({ requests });
 };
 
 /* ── Routers ─────────────────────────────────────────────────────────────── */

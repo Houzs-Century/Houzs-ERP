@@ -14,6 +14,10 @@ const OK: SoSubmitFacts = {
   asDraft: false,
   hasVenue: true,
   hasSalesperson: true,
+  fairChosen: true,
+  noFair: false,
+  fairWhy: null,
+  fairDayMissing: false,
   gateLocation: true,
   companyCode: 'HOUZS',
   salesLocation: 'HQ-WH',
@@ -50,11 +54,42 @@ describe('collectSoSubmitProblems', () => {
     expect(ps.every((p) => p.code === 'required_field')).toBe(true);
   });
 
-  it('a draft does not need the confirm-only fields (venue, salesperson, location)', () => {
+  it('an event picked without its day asks for the day, after the venue (owner 2026-09-24)', () => {
+    expect(messages({ ...OK, fairDayMissing: true })).toEqual(['Fair day is required.']);
+    expect(messages({ ...OK, hasVenue: false, fairDayMissing: true, hasSalesperson: false }))
+      .toEqual(['Venue is required.', 'Fair day is required.', 'Salesperson is required.']);
+  });
+
+  it('fair is compulsory on submit — blocked when neither a fair is chosen nor No-fair marked (owner 2026-09-26)', () => {
+    const ps = collectSoSubmitProblems({ ...OK, fairChosen: false, noFair: false });
+    expect(ps.map((p) => p.code)).toContain('fair_required');
+    expect(ps.find((p) => p.code === 'fair_required')?.message).toMatch(/No fair/);
+  });
+  it('says WHY no fair was filled in, in the owner\'s English (2026-10-19)', () => {
+    const msg = (fairWhy: SoSubmitFacts['fairWhy']) =>
+      collectSoSubmitProblems({ ...OK, fairChosen: false, fairWhy }).find((p) => p.code === 'fair_required')?.message;
+    expect(msg({ code: 'no_fair' })).toBe(
+      'No fair found for you: you are not on Sales Attending for any fair in PMS. Pick a fair yourself, or ask the person in charge to add you.',
+    );
+    expect(msg({ code: 'too_old', venue: 'SUNWAY CARNIVAL MALL', startDate: '2026-09-25', endDate: '2026-09-29' })).toBe(
+      'No fair found for you: your last fair (SUNWAY CARNIVAL MALL, 09/25 - 09/29) ended over a month ago. Pick a fair yourself, or ask the person in charge to add you.',
+    );
+    expect(msg(null)).toBe('Pick the Fair, or mark it No fair (showroom).');
+  });
+  it('fair rule satisfied by a picked fair OR by the No-fair mark', () => {
+    expect(codes({ ...OK, fairChosen: true, noFair: false })).not.toContain('fair_required');
+    expect(codes({ ...OK, fairChosen: false, noFair: true })).not.toContain('fair_required');
+  });
+  it('a draft does not need fair (or the other confirm-only fields)', () => {
+    expect(codes({ ...OK, asDraft: true, fairChosen: false, noFair: false })).not.toContain('fair_required');
+  });
+
+  it('a draft does not need the confirm-only fields (venue, fair day, salesperson, location)', () => {
     const ps = collectSoSubmitProblems({
       ...OK,
       asDraft: true,
       hasVenue: false,
+      fairDayMissing: true,
       hasSalesperson: false,
       gateLocation: false,
       salesLocation: '',

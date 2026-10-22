@@ -222,8 +222,9 @@ describe("Projects.tsx — Attach is offered to every role the server admits (05
     expect(text).toContain("attachment.id > 0 &&");
 
     // Mobile has THREE delete gates, not one — the file chip, the document
-    // tiles and the floor-plan card. All follow the caller's edit right now.
-    const mobile = src("mobile/MobilePMS.tsx");
+    // blocks (SalesDocsCard, extracted to MobilePmsDocCard.tsx 2026-09-30)
+    // and the floor-plan card. All follow the caller's edit right now.
+    const mobile = src("mobile/MobilePMS.tsx") + src("mobile/MobilePmsDocCard.tsx");
     const mobileCode = mobile
       .split(/\r?\n/)
       .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))

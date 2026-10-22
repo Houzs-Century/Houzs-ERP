@@ -9,7 +9,7 @@
 import { useMemo } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
-import { poListParams } from './po-list-export';
+import { poListParams, type PoListFilterParams } from './po-list-export';
 import type { PoListLine } from './po-line-export-columns';
 import { applyListMrpEnrichment, type EnrichableMrpRow, type ListMrpEnrichment } from '../../../lib/listMrpEnrichment';
 import { writeFailed, writeFailedAs } from './mutation-error';
@@ -37,6 +37,10 @@ export type StatementType = 'OPEN_ITEM' | 'BALANCE_FORWARD' | 'NO_STATEMENT';
 export type AgingBasis    = 'INVOICE_DATE' | 'DUE_DATE';
 
 export type SupplierRow = {
+  /* The Finance part (vendor/shared/supplier-finance-fields: TIN, business reg,
+     registration, exemption, credit limit, statement type, aging basis) is
+     OPTIONAL: the server leaves it out for a caller who is not Finance
+     (owner 2026-09-30, 采购只看采购的部分). */
   id: string;
   code: string;
   name: string;
@@ -53,8 +57,8 @@ export type SupplierRow = {
   /* PR #40 — full master record (Commander 2026-05-26 AutoCount parity) */
   supplier_type: string | null;
   category: string | null;
-  tin_number: string | null;
-  business_reg_no: string | null;
+  tin_number?: string | null;
+  business_reg_no?: string | null;
   postcode: string | null;
   area: string | null;
   /* Mig 0131 — structured city (dropdown from scm.my_localities). Null on
@@ -68,15 +72,23 @@ export type SupplierRow = {
   business_nature: string | null;
   country: string;                          // PR #47 — default 'Malaysia'
   currency: Currency;
-  statement_type: StatementType;
-  aging_basis: AgingBasis;
-  credit_limit_sen: number;
+  statement_type?: StatementType;
+  aging_basis?: AgingBasis;
+  credit_limit_sen?: number;
   /* Mig 0028 — AutoCount creditor-export parity (registration_no /
      nature_of_business / exemption_no / phone2). */
-  registration_no: string | null;
+  registration_no?: string | null;
   nature_of_business: string | null;
-  exemption_no: string | null;
+  exemption_no?: string | null;
   phone2: string | null;
+  /* Supplier Maintenance (owner 2026-10-02) — also the Finance part, so also
+     optional: the bank a payment carries, and whether purchasing shares the
+     supplier (false = Finance's alone). Base-table reads only (detail / create /
+     patch); the list view predates them. */
+  bank_name?: string | null;
+  bank_account_no?: string | null;
+  bank_account_name?: string | null;
+  for_purchasing?: boolean;
   created_at: string;
   updated_at: string;
   /* PR — Commander 2026-05-27: auto-derived from the supplier's assigned
@@ -170,6 +182,7 @@ export type PoHeaderRow = PoHoldFields & {
   submitted_at: string | null;
   received_at: string | null;
   cancelled_at: string | null;
+  cancel_reason?: string | null;
   /** Mig 0080 — bumped on every approved revision (SO-amendment follow-up or
    *  standalone PO amendment). Display shows `_R{revision-1}` when > 1. */
   revision?: number | null;
@@ -271,6 +284,7 @@ export type PoItemRow = {
   /** PR #77 — per-line delivery date + ship-to warehouse (both inherit from
       PO header when null). */
   delivery_date?: string | null;
+  line_delivery_date_overridden?: boolean | null;
   warehouse_id?: string | null;
   /** Mig 0026 — supplier-revised per-line delivery dates. All optional; the
       supplier pushes the date back. Effective line date = MAX over non-null of
@@ -578,13 +592,18 @@ export function useScheduleBindingPrice() {
   return useMutation({
     mutationFn: ({ supplierId, bindingId, ...body }:
       { supplierId: string; bindingId: string; effectiveFrom: string; unitPriceSen: number; notes?: string }) =>
-      authedFetch<{ ok: boolean; baselined: boolean }>(
+      authedFetch<{ ok: boolean; baselined: boolean; applied: boolean }>(
         `/suppliers/${supplierId}/bindings/${bindingId}/price-changes`,
         { method: 'POST', body: JSON.stringify(body) },
       ),
-    onSuccess: (_, vars) => {
+    onSuccess: (r, vars) => {
       void qc.invalidateQueries({ queryKey: ['binding-price-history', vars.supplierId, vars.bindingId] });
       void qc.invalidateQueries({ queryKey: ['supplier-detail', vars.supplierId] });
+      if (r.applied) {
+        // Applied now: the flat cost and the derived product cost both moved.
+        void qc.invalidateQueries({ queryKey: ['suppliers-for-material'] });
+        void qc.invalidateQueries({ queryKey: ['mfg-products'] });
+      }
     },
     onError: writeFailed,
   });
@@ -678,20 +697,34 @@ export type PoStatusCounts = {
      `outstanding` is: an older deployment answers without it. */
   on_hold?: number;
 };
-export function usePurchaseOrdersPaged(params: { page: number; pageSize: number; status?: string; supplierId?: string; q?: string; sort?: string; creditorNames?: string[]; creditorCodes?: string[]; currencies?: string[] }) {
-  const { page, pageSize, status, supplierId, q, sort, creditorNames, creditorCodes, currencies } = params;
+export function usePurchaseOrdersPaged(params: { page: number; pageSize: number; status?: string; supplierId?: string; q?: string; sort?: string; creditorNames?: string[]; creditorCodes?: string[]; currencies?: string[]; docDates?: string[] }) {
+  const { page, pageSize, status, supplierId, q, sort, creditorNames, creditorCodes, currencies, docDates } = params;
   // The filter half is shared with the two exports (po-list-export.ts), so an
   // export can never be sent a different filter than the list it was pressed on.
-  const usp = poListParams({ status, supplierId, q, sort, creditorNames, creditorCodes, currencies });
+  const usp = poListParams({ status, supplierId, q, sort, creditorNames, creditorCodes, currencies, docDates });
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
   return useQuery({
-    queryKey: ['mfg-purchase-orders-paged', page, pageSize, status ?? '', supplierId ?? '', q ?? '', sort ?? '', JSON.stringify(creditorNames ?? []), JSON.stringify(creditorCodes ?? []), JSON.stringify(currencies ?? [])],
+    queryKey: ['mfg-purchase-orders-paged', page, pageSize, status ?? '', supplierId ?? '', q ?? '', sort ?? '', JSON.stringify(creditorNames ?? []), JSON.stringify(creditorCodes ?? []), JSON.stringify(currencies ?? []), JSON.stringify(docDates ?? [])],
     queryFn: ({ signal }) => authedFetch<{ purchaseOrders: PoHeaderRow[]; total: number; page: number; pageSize: number; statusCounts: PoStatusCounts }>(`/mfg-purchase-orders?${usp.toString()}`, { signal }),
     placeholderData: (prev: any) => prev,
     staleTime: 30_000,
     retry: retryUnlessClientError,
     retryDelay: 800,
+  });
+}
+
+/* The PO list's funnel option counts over EVERY matching order, not just the
+   loaded page (GET /mfg-purchase-orders/facets). Same filter params as the list. */
+export type PoListFacets = Record<'supplier' | 'creditor_code' | 'currency' | 'po_date', Array<[string, number]>>;
+export function usePoListFacets(f: PoListFilterParams) {
+  const usp = poListParams({ ...f, sort: undefined });
+  return useQuery({
+    queryKey: ['mfg-purchase-orders-facets', usp.toString()],
+    queryFn: ({ signal }) => authedFetch<{ facets: PoListFacets }>(`/mfg-purchase-orders/facets?${usp.toString()}`, { signal }),
+    placeholderData: (prev) => prev,
+    staleTime: 30_000,
+    retry: retryUnlessClientError,
   });
 }
 
@@ -805,6 +838,8 @@ export type NewPoItem = {
   variants?: Record<string, unknown>;
   /* PR #77 — per-line ship-to overrides; both null = inherit from PO header */
   deliveryDate?: string | null;
+  /** true = the user set this line's date by hand; the header date cascade leaves it alone. */
+  lineDeliveryDateOverridden?: boolean;
   warehouseId?: string | null;
   /* Mig 0026 — supplier-revised per-line delivery dates (optional). */
   supplierDeliveryDate2?: string | null;
@@ -845,6 +880,9 @@ export type OutstandingSoItem = {
      the line can't be converted to a PO until it's assigned a supplier). */
   mainSupplierCode: string | null;
   mainSupplierName: string | null;
+  /** The order's raw reference pair (resolve with soRefOfCamelStamp). */
+  soRef?: string | null;
+  soCustomerSoNo?: string | null;
 };
 
 export function useOutstandingSoItems() {

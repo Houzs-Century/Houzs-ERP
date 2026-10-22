@@ -252,14 +252,18 @@ describePg('the 2990 retail-price sentinel, against real Postgres', () => {
     expect(r.notes.join(' ')).toMatch(/was not checked/);
   });
 
-  test('auto-derive switched on for company 2 is an alarm — their catalogue is not ours to derive', async () => {
+  // Owner 2026-09-25: the switch is global (both companies derive cost) and
+  // retail is protected by the write-path merge and the DB trigger, so the flag
+  // being on is NOT an alarm — only actual retail loss (seat/flat/guard) is.
+  test('auto-derive on for company 2 is NOT an alarm — it is a reported note', async () => {
     await sql`INSERT INTO scm.app_config (company_id, key, value) VALUES (${CO}, 'scm.auto_derive_product_cost', 'on')`;
     const r = await run();
-    expect(r.alarms.join(' ')).toMatch(/must never be derived/);
-    expect(r.ok).toBe(false);
+    expect(r.alarms).toEqual([]);
+    expect(r.ok).toBe(true);
+    expect(r.notes.join(' ')).toMatch(/auto_derive_product_cost is 'on'/);
   });
 
-  test('company 1 having it on is NOT an alarm for company 2', async () => {
+  test('the flag on is still not an alarm, whichever company owns the row', async () => {
     await sql`UPDATE scm.app_config SET value = 'on' WHERE company_id = ${OTHER}`;
     const r = await run();
     expect(r.alarms).toEqual([]);

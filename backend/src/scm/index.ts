@@ -40,6 +40,7 @@ import {
   poCancelRequests,
   soCancelRequests,
 } from "./routes/document-cancel-routes";
+import { soPaymentBackdateRequests, paymentBackdateInbox } from "./routes/so-payment-backdate-requests";
 import { grns } from "./routes/grns";
 import { grnsListEnrichment } from "./routes/grns-list-enrichment";
 import { grnExports } from "./routes/grn-exports";
@@ -49,8 +50,14 @@ import { purchaseInvoiceExports } from "./routes/purchase-invoice-exports";
 import { paymentVouchers } from "./routes/payment-vouchers";
 import { otherDebtors } from "./routes/other-debtors";
 import { apInvoices } from "./routes/ap-invoices";
+import { arInvoices } from "./routes/ar-invoices";
 import { creditNotes } from "./routes/credit-notes";
 import { depositInvoices } from "./routes/deposit-invoices";
+import { accEvents } from "./routes/acc-events";
+import { officialDocs } from "./routes/official-docs";
+import { supplierMaintenance } from "./routes/supplier-maintenance";
+import { paymentRequests } from "./routes/payment-requests";
+import { productRequests } from "./routes/product-requests";
 import { receipts } from "./routes/receipts";
 import { entityAuditLog } from "./routes/entity-audit-log";
 import { changeLog } from "./routes/change-log";
@@ -61,6 +68,7 @@ import { mfgSalesOrders } from "./routes/mfg-sales-orders";
 import { mfgSalesOrdersListEnrichment } from "./routes/mfg-sales-orders-list-enrichment";
 import { salesOrderExports } from "./routes/sales-order-exports";
 import { mfgSoFairs } from "./routes/mfg-so-fairs";
+import { mfgSoVpBrand } from "./routes/mfg-so-vp-brand";
 import { soAmendmentLanePreview } from "./routes/so-amendment-lane-preview";
 import { soAmendments } from "./routes/so-amendments";
 import { soHandover } from "./routes/so-handover";
@@ -93,6 +101,8 @@ import { mrp } from "./routes/mrp";
 import { mrpLeadTimes } from "./routes/mrp-lead-times";
 import { mrpSupplierLeadTimes } from "./routes/mrp-supplier-lead-times";
 import { outstanding } from "./routes/outstanding";
+import { procurementOverview } from "./routes/procurement-overview";
+import { logisticOverview } from "./routes/logistic-overview";
 import { unbilledDeliveries } from "./routes/unbilled-deliveries";
 import { localities } from "./routes/localities";
 import { sgPostcode } from "./routes/sg-postcode";
@@ -110,13 +120,18 @@ import { scanGr } from "./routes/scan-gr";
 import { scanPi } from "./routes/scan-pi";
 import { scanPayment } from "./routes/scan-payment";
 import { scanLorryInvoice } from "./routes/scan-lorry-invoice";
+import { scanFilesSo, scanFilesPayment, scanFilesPv, scanFilesWorkshop } from "./routes/scan-files";
 import { slips } from "./routes/slips";
 import { deliveryPlanning } from "./routes/delivery-planning";
+import { deliveryJobProgress } from "./routes/delivery-job-progress";
 import { deliveryPlanningRegions } from "./routes/delivery-planning-regions";
+import { deliveryPlanningRowMarks } from "./routes/delivery-planning-row-marks";
+import { deliveryPlanningRowOrder } from "./routes/delivery-planning-row-order";
 import { deliveryResidenceRules } from "./routes/delivery-residence-rules";
 import { threeplCompanies } from "./routes/threepl-companies";
 import { deliveryZones } from "./routes/delivery-zones";
 import { deliveryRateCards } from "./routes/delivery-rate-cards";
+import { threeplDoCharges } from "./routes/threepl-do-charges";
 import { driverLeave } from "./routes/driver-leave";
 import { trips } from "./routes/trips";
 import { tripScanToken } from "./routes/trip-scan-token";
@@ -137,6 +152,7 @@ import { scmAreaGuard } from "./middleware/area-guard";
 import { hasPositionCapability } from "../services/positionCapabilities";
 import { scmWriteFreeze } from "./lib/write-freeze";
 import { venturePortalKick } from "./lib/venture-portal-kick";
+import { forgetLiveMrpOnWrite } from "./lib/live-mrp-memo";
 import { migratedSoReadonly, migratedSoAmendmentReadonly } from "./lib/migrated-so-readonly";
 import { writeFreezeStatus } from "./routes/write-freeze-status";
 
@@ -166,6 +182,10 @@ scm.use('/*', scmWriteFreeze());
    are the zero-loss guarantee and this is only the accelerator. Cost of an idle
    kick, and what it cannot see: lib/venture-portal-kick.ts. */
 scm.use('/*', venturePortalKick());
+
+/* HC-0002: the SO list and detail share one live MRP run for 30s per isolate;
+   a successful write here drops it so the next read is fresh. lib/live-mrp-memo.ts. */
+scm.use('/*', forgetLiveMrpOnWrite());
 
 /* Read-only view of that value for the operator making the go/no-go call —
    GET, so the freeze never blocks it, and no area guard because it is not an
@@ -415,11 +435,18 @@ scm.route("/mfg-sales-orders", salesOrderExports);
 // the status route — which only wakes when the body says CANCELLED — is mounted
 // above, ahead of the area guard. routes/document-cancel-routes.ts.
 scm.route("/mfg-sales-orders", soCancelRequests);
+// A payment whose slip is older than the 14-day window, as a request an admin
+// approves (owner 2026-09-30). routes/so-payment-backdate-requests.ts.
+scm.route("/mfg-sales-orders", soPaymentBackdateRequests);
 // The fair picker (owner 2026-09-13). Mounted BEFORE the main router for the same
 // reason as the enrichment above: its static `/fair-options` and `/fair-pending`
 // paths must resolve ahead of `/:docNo`. In its own file because
 // mfg-sales-orders.ts is already over its file-size ceiling.
 scm.route("/mfg-sales-orders", mfgSoFairs);
+// Which brand a bill is for, for the Venture Portal (owner 2026-09-27): the
+// answer to the question the form asks after a save whose products name no
+// brand. Own file for the same ceiling reason. routes/mfg-so-vp-brand.ts.
+scm.route("/mfg-sales-orders", mfgSoVpBrand);
 // Lane preview (owner 2026-09-15, option B): which desk an amendment WILL go to,
 // read from the same resolver the submit route stores from. Own file for the
 // same ceiling reason; ahead of the main router so `/:docNo/amendments/lane-preview`
@@ -449,6 +476,11 @@ scm.route("/so-handover", soHandover);
 // scm.access only: an inbox spanning the sales and procurement areas cannot
 // pick one of them; each row's actions still hit the per-document routes above.
 scm.route("/cancel-requests", cancelRequestsInbox);
+// The backdate-request inbox — admin only (scm.payment.backdate), checked in
+// every handler; approving books a Sales Order payment, so it rides the same
+// area guard (and write freeze) as the order itself.
+scm.use("/payment-backdate-requests/*", scmAreaGuard("scm.sales.orders"));
+scm.route("/payment-backdate-requests", paymentBackdateInbox);
 // state-warehouse-mappings: cross-area lookup (SO/DO warehouse routing) — left
 // on the coarse gate, see SHARED READ HELPERS note above.
 scm.route("/state-warehouse-mappings", stateWarehouseMappings);
@@ -474,6 +506,11 @@ scm.use(
           hasPositionCapability(u, "scm.do.load") ||
           hasPositionCapability(u, "scm.do.dispatch")
         );
+      }
+      // Driver "Arrived" — PATCH .../arrival only; the handler re-checks the
+      // verb, the caller's own job and that the DO is on the road.
+      if (c.req.method === "PATCH" && c.req.path.endsWith("/arrival")) {
+        return hasPositionCapability(u, "scm.do.dispatch");
       }
       // Ops-lead revert — POST .../revert only, on the editable scm.do.revert
       // capability. The handler re-checks the verb and reverses stock itself.
@@ -550,7 +587,10 @@ scm.route("/purchase-consignment-returns", purchaseConsignmentReturns);
 // fire BOTH and re-couple the two, defeating the split.) The reads the
 // adjustment form needs (warehouses, buckets, movements) stay under /inventory
 // on `scm.warehouse.inventory`.
-scm.use("/inventory/adjustments", scmAreaGuard("scm.warehouse.adjustments"));
+// Wildcard since BUG-66 (2026-10-07): the router now serves /:id too, and an
+// exact-path guard would leave those paths behind supabaseAuth alone, because
+// this router answers before the broad /inventory/* guard is reached.
+scm.use("/inventory/adjustments/*", scmAreaGuard("scm.warehouse.adjustments"));
 scm.route("/inventory/adjustments", inventoryAdjustments);
 // openReadPaths /inventory/warehouses (2026-07-19, fix/so-maintenance-403) —
 // GET /inventory/warehouses is the warehouse PICKLIST (id / code / name /
@@ -603,6 +643,11 @@ scm.route("/receipts", receipts);
 // purchase invoices it is paid alongside; same area, same PV key family.
 scm.use("/ap-invoices/*", scmAreaGuard("scm.finance.accounting"));
 scm.route("/ap-invoices", apInvoices);
+// AR Invoices (owner 2026-09-29) — the AP list's twin for the money owed TO
+// the company: sales invoices mirrored beside the other-debtor bills. Reads
+// only; the bill's writes stay on /other-debtors. Same area guard.
+scm.use("/ar-invoices/*", scmAreaGuard("scm.finance.accounting"));
+scm.route("/ar-invoices", arInvoices);
 // Credit and debit notes (owner 2026-09-12; docs/bugs/0827) — the customer's
 // CN / DN and the supplier's SCN, raised by Finance; same area, same PV key
 // family as the AP invoice beside it.
@@ -613,6 +658,21 @@ scm.route("/credit-notes", creditNotes);
 // and holds the switch. Same area as the notes and receipts beside it.
 scm.use("/deposit-invoices/*", scmAreaGuard("scm.finance.accounting"));
 scm.route("/deposit-invoices", depositInvoices);
+// Events on the money side (owner 2026-09-30, 5a) — the event picker for voucher
+// and AP invoice lines, the event cost report, and changing a paid voucher
+// line's event. Same area as the vouchers it serves.
+scm.use("/acc-events/*", scmAreaGuard("scm.finance.accounting"));
+scm.route("/acc-events", accEvents);
+// Official invoices owed (owner 2026-10-01, payment-request item 3) — the
+// payments made on a proforma or quotation, still owing the real invoice:
+// Finance's list and its owed / checked marks. Same area as the vouchers.
+scm.use("/official-docs/*", scmAreaGuard("scm.finance.accounting"));
+scm.route("/official-docs", officialDocs);
+// Supplier Maintenance (owner 2026-10-02) — Finance's own supplier list in
+// Money out: what the books say each supplier is owed, its advances, credit
+// left and open invoices. Reads only; the record is edited through /suppliers.
+scm.use("/supplier-maintenance/*", scmAreaGuard("scm.finance.accounting"));
+scm.route("/supplier-maintenance", supplierMaintenance);
 // Payment Audit Log — Finance's payment TRAIL (port of 2990's /admin/audit-log):
 // one row per mfg_sales_order_payments entry + its SO header context. Read-only.
 // Same L2 area as Accounting: it is the money ledger's read side, not a new
@@ -687,6 +747,17 @@ scm.route("/venture-portal-feed", venturePortalFeed);
 // lookup left on the coarse scm gate (reads open); writes are gated inside the
 // route by scm.currency.manage.
 scm.route("/currencies", currencies);
+// 申请付款 (owner 2026-09-30) — NO area guard: a sales PIC asking Finance to pay
+// an event's rental holds no SCM area, only the flat scm.payment_request.create,
+// which requireScmAccess admits for this prefix alone. Each handler checks that
+// key or Finance's scm.payment_voucher.create, and a requester sees their own.
+scm.route("/payment-requests", paymentRequests);
+// Product request (owner 2026-10-06) — NO area guard, for the same reason: a
+// salesperson (Sales 都能提) holds no consignment or procurement area and the
+// Purchaser holds no sales area. requireScmAccess admits a Sales caller and the
+// two flat scm.product_request.* keys for this prefix alone; each handler checks
+// the caller, and a requester sees their own requests only.
+scm.route("/product-requests", productRequests);
 // HR / Commission (port of 2990 apps/api routes/hr.ts + migration 0123). The
 // only place commission is calculated — the last thing keeping 2990's apps/api
 // alive. NO scmAreaGuard: an L2 area key is a PAGE key, and there is no HR page
@@ -707,6 +778,12 @@ scm.route("/mrp-supplier-lead-times", mrpSupplierLeadTimes);
 // Ported 2026-06-20 — Outstanding dashboard (v_*_outstanding views), MY
 // State/City/Postcode reference (my_localities). /fabric-library already
 // mounted above — its GET list was added to the existing route, not remounted.
+// Procurement Overview (owner 2026-10-16): the PO side of procurement.
+scm.use("/procurement-overview/*", scmAreaGuard("scm.procurement.po"));
+scm.route("/procurement-overview", procurementOverview);
+// Logistic Overview (owner 2026-10-16): weekly DO / delivered / runs history.
+scm.use("/logistic-overview/*", scmAreaGuard("scm.transportation.drivers"));
+scm.route("/logistic-overview", logisticOverview);
 scm.use("/outstanding/*", scmAreaGuard("scm.finance.outstanding"));
 scm.route("/outstanding", outstanding);
 // Delivered-but-not-invoiced, aged (read-only). The money answer to the same
@@ -761,7 +838,33 @@ scm.route("/drivers", drivers);
 // ── Delivery Planning + TMS (scm.transportation.*) — stage 2, ported 2026-06-28 ─
 // Mounted under the existing transportation area key; owner/* bypasses, no lockout.
 // Finer per-route L2 keys (planning / fleet / trips) can be added later.
-scm.use("/delivery-planning/*", scmAreaGuard("scm.transportation.drivers"));
+// readInheritsFrom (2026-10-22) — the driver run-sheet ("Last Mile Delivery
+// (Driver)") READS the board here, but the Driver role carries
+// scm.transportation.last_mile=view and scm.transportation.drivers=none, so an
+// L2-configured driver 403'd on GET / and the page showed "Couldn't load".
+// A Last Mile page viewer may READ its own board (every row is still delivery-
+// scoped to the caller); every WRITE (scheduling / crew assignment) still needs
+// `edit` on scm.transportation.drivers, so dispatch stays dispatcher-only.
+scm.use("/delivery-planning/*", scmAreaGuard("scm.transportation.drivers", { readInheritsFrom: "scm.transportation.last_mile" }));
+// The crew's On the way / Arrived / POD on a non-DO job. readInheritsFrom — the
+// SAME run-sheet READS this job-progress feed (On the way / Arrived state), so a
+// Last Mile viewer must read it too, or the driver's stop pills stay blank.
+// writeBypass — a driver or helper holds view on transportation plus
+// scm.do.dispatch, not edit; the handlers admit only the caller's OWN job
+// (delivery scope) unless scope is 'all'.
+scm.use(
+  "/delivery-jobs/*",
+  scmAreaGuard("scm.transportation.drivers", {
+    readInheritsFrom: "scm.transportation.last_mile",
+    writeBypass: (c) =>
+      c.req.method === "POST" &&
+      hasPositionCapability(
+        c.get("user") as unknown as Parameters<typeof hasPositionCapability>[0],
+        "scm.do.dispatch",
+      ),
+  }),
+);
+scm.route("/delivery-jobs", deliveryJobProgress);
 scm.route("/delivery-planning", deliveryPlanning);
 // openRead (2026-07-19, fix/so-maintenance-403) — this router is pure REFERENCE
 // data: the region master (code / name / sortOrder / active) and the per-state →
@@ -776,6 +879,10 @@ scm.route("/delivery-planning", deliveryPlanning);
 // own, they are just not secret.
 scm.use("/delivery-planning-regions/*", scmAreaGuard("scm.transportation.drivers", { openRead: true }));
 scm.route("/delivery-planning-regions", deliveryPlanningRegions);
+scm.use("/delivery-planning-row-marks/*", scmAreaGuard("scm.transportation.drivers", { openRead: true }));
+scm.route("/delivery-planning-row-marks", deliveryPlanningRowMarks);
+scm.use("/delivery-planning-row-order/*", scmAreaGuard("scm.transportation.drivers", { openRead: true }));
+scm.route("/delivery-planning-row-order", deliveryPlanningRowOrder);
 // Residence delivery rules (mig 0195) — per-building-type service duration +
 // access windows the Phase 3 scheduler will read. Same Transportation area gate
 // as the rest of TMS: read the rules = view, edit them = edit. Not openRead —
@@ -800,6 +907,10 @@ scm.route("/delivery-zones", deliveryZones);
 // and it does NOT touch the FIFO money-path.
 scm.use("/delivery-rate-cards/*", scmAreaGuard("scm.transportation.drivers"));
 scm.route("/delivery-rate-cards", deliveryRateCards);
+// HC-0031 - the 3PL invoice keyed in after delivery, tallied per DO against the
+// rate cards above. Same Transportation area gate.
+scm.use("/threepl-do-charges/*", scmAreaGuard("scm.transportation.drivers"));
+scm.route("/threepl-do-charges", threeplDoCharges);
 // Fleet A3 (mig 0206) — driver-leave admin. The date-ranged absences the A2
 // auto-assigner reads to skip on-leave drivers. Same Transportation area gate as
 // the rest of the TMS fleet masters: read = view, record/delete = edit.
@@ -919,6 +1030,16 @@ scm.route("/scan-pi", scanPi);
 // /scan-payment/extract returns 503 anthropic_key_missing when absent.
 scm.use("/scan-payment/*", scmAreaGuard("scm.sales.orders", { writeLevel: "view" }));
 scm.route("/scan-payment", scanPayment);
+/* Original scans (HC-0006 T7) — one router per kind, each behind the area
+   guard of the document it belongs to. */
+scm.use("/scan-files/so/*", scmAreaGuard("scm.sales.orders", { writeLevel: "view" }));
+scm.route("/scan-files/so", scanFilesSo);
+scm.use("/scan-files/payment/*", scmAreaGuard("scm.sales.orders", { writeLevel: "view" }));
+scm.route("/scan-files/payment", scanFilesPayment);
+scm.use("/scan-files/pv/*", scmAreaGuard("scm.finance.accounting"));
+scm.route("/scan-files/pv", scanFilesPv);
+scm.use("/scan-files/workshop/*", scmAreaGuard("scm.transportation.drivers"));
+scm.route("/scan-files/workshop", scanFilesWorkshop);
 // Ported 2026-06-24 — payment-slip upload session (init → upload → confirm).
 // PRODUCES the pending_slip_uploads row that the SO-create + add-payment
 // handlers (mfg-sales-orders.ts) CONSUME by upload_session_id; without it the
@@ -929,7 +1050,22 @@ scm.route("/scan-payment", scanPayment);
 // the SLIPS R2 binding, now bound in wrangler.toml (prod + staging).
 // writeLevel view: staging an upload only produces the caller's own pending
 // slip row — a view-level sales rep can attach slips to their own draft.
-scm.use("/slips/*", scmAreaGuard("scm.sales.orders", { writeLevel: "view" }));
+// writeBypass — the driver's POD photo rides this same upload pipeline (MobilePOD
+// → uploadSlipFull), and a driver holds scm.do.dispatch, not scm.sales.orders.
+// An upload session only stores an image under the caller's own staff id; it
+// attaches to nothing until a route that checks its own access consumes the key.
+scm.use(
+  "/slips/*",
+  scmAreaGuard("scm.sales.orders", {
+    writeLevel: "view",
+    writeBypass: (c) =>
+      c.req.method === "POST" &&
+      hasPositionCapability(
+        c.get("user") as unknown as Parameters<typeof hasPositionCapability>[0],
+        "scm.do.dispatch",
+      ),
+  }),
+);
 scm.route("/slips", slips);
 
 export default scm;

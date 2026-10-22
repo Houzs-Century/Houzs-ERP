@@ -2,6 +2,26 @@
   "reviewed": [
     {
       "check": "D1",
+      "key": "EDIT,FULL,NONE,VIEW|backend/src/services/pageAccess.ts frontend/src/lib/roleMatrixModel.ts",
+      "why": "THE 4-LEVEL PAGE-ACCESS VOCABULARY (none/view/edit/full). Two homes by necessity: POSITION_ACCESS_LEVELS (pageAccess.ts) is the server's writable set that isValidPositionLevel validates every role_page_access write against (PATCH /api/roles/:id/page-access); MATRIX_LEVELS (roleMatrixModel.ts) is the RBAC-matrix UI's dropdown order + 无/看/改/批 labels in the browser. The two packages share no build graph, the set is closed to the code, and a divergence costs a dropdown option, never a wrong grant — the server is the referee. Recorded rather than collapsed because the frontend cannot import backend/src and the matrix needs the ordered list for its control."
+    },
+    {
+      "check": "D2",
+      "key": "APPROVED,REJECTED,REQUESTED ~ APPROVED,REJECTED,REQUESTED,WITHDRAWN",
+      "why": "TWO DIFFERENT ENUMS that share three words: scm.so_payment_backdate_requests.status (mig 20260930T1500) has WITHDRAWN as its own fourth terminal state, and BackdateRequestQuickView STATUS_TONE draws each of the four in its own tone; the amendment bucket (status-pill.ts BUCKET_ENTRY / PO_AMENDMENT / AMENDMENT_BUCKET_ORDER) folds a withdrawal INTO Rejected on purpose, so it has three. Not one rule with two homes. Divergence costs a pill colour, never money or stock."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CREDIT_NOTED,REFUNDED ~ CANCELLED,CREDIT_NOTED,REFUNDED,REJECTED",
+      "why": "TWO DIFFERENT DOCUMENTS, each deciding when ITS OWN return is closed to editing: ConsignmentReturnDetail / ConsignmentReturns lock a consignment return at CANCELLED / CREDIT_NOTED / REFUNDED; DeliveryReturnDetail (the Delivery Return editor, BUG-62) also treats REJECTED as closed, matching DeliveryReturnDetailV2's isTerminal, which hides the Edit button for the same four. Different enums that share words, not one rule with two homes. Divergence costs an editor that opens or refuses, never money or stock."
+    },
+    {
+      "check": "D1",
+      "key": "BEDFRAME,MATTRESS,OTHER,SOFA|backend/src/acc/product-profit.ts frontend/src/lib/brandingTone.ts frontend/src/pages/scm-v2/product-profit-view.ts",
+      "why": "THE PRODUCT PROFIT REPORT'S FOUR CATEGORIES (owner 2026-10-05), one decision with one home: acc/product-profit.ts PRODUCT_CATEGORIES decides which category a product lands in (mattress / sofa / bedframe from the line's group, everything else other, service left out) and writes it on each row; product-profit-view.ts CATEGORY_ORDER is only the order the screen draws the chips and the donut in, over the category the server already wrote, so it cannot move a product. brandingTone.ts TONE_BY_BUCKET answers a different question (the tint a brand bucket is drawn in) with the same four words. Divergence costs a chip in another place, never a figure."
+    },
+    {
+      "check": "D1",
       "key": "ACCESSORY,BEDFRAME,MATTRESS,SERVICE,SOFA|backend/src/scm/lib/lead-time.ts backend/src/scm/routes/mrp-lead-times.ts backend/src/scm/routes/product-models.ts backend/src/scm/routes/pwp-rules.ts backend/src/scm/routes/scan-so.ts backend/src/scm/routes/special-addons.ts backend/src/services/assistant-tools.ts frontend/src/pages/scm-v2/products/VariantsTab.tsx frontend/src/vendor/scm/lib/mrp-queries.ts frontend/src/vendor/scm/lib/scan-prefill.ts frontend/src/vendor/scm/lib/supplier-categories.ts",
       "why": "THE PRODUCT-CATEGORY VOCABULARY, written out at 11 homes (LEAD_CATEGORIES, CATEGORIES, VARIANT_CATEGORIES, CATEGORY_TO_GROUP, DEFAULT_SUPPLIER_CATEGORIES) as zod enums, MRP lead-time buckets, supplier defaults and pickers. One question — what categories does this business sell — with 11 answers, and D2 already reports three of them disagreeing (MIXED, OTHERS, a missing SERVICE). Recorded and NOT collapsed here: it touches eleven modules and belongs in its own PR."
     },
@@ -122,13 +142,18 @@
     },
     {
       "check": "D1",
-      "key": "APAD,CROSS_BORDER,INSURANCE,PUSPAKOM,ROAD_TAX|backend/src/scm/lib/fleet-availability.ts backend/src/services/fleet-status.ts frontend/src/pages/FleetHealth.tsx",
+      "key": "GERAN,INSURANCE,PUSPAKOM,ROAD_TAX|backend/src/services/fleet-status.ts frontend/src/pages/FleetHealth.tsx",
       "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 3 homes: COMPLIANCE_DOC_TYPES, COMPLIANCE_DOC_LABELS, DOC_TYPES, DOC_LABEL. Cost of divergence is a blank chip, not a wrong number."
     },
     {
       "check": "D1",
-      "key": "ARRIVES EM WAREHOUSE,CONFIRM,DONE DELIVERED,DONE SHIPOUT,HOUSE NOT READY,PENDING PICKUP,REQUEST HOLD|backend/src/scm/routes/delivery-orders-mfg.ts backend/src/scm/routes/delivery-planning.ts frontend/src/vendor/scm/lib/delivery-planning-queries.ts",
-      "why": "THE HC DELIVERY SUB-STATUS VALUES — the owner's own words, carried on the DO, the planning board and the frontend query layer (HC_SUBSTATUS_VALUES). Free text to the business, a closed set to the code; three homes and no referee."
+      "key": "ARRIVES EM WAREHOUSE,CONFIRM,DONE DELIVERED,DONE SHIPOUT,HOUSE NOT READY,PENDING PICKUP,REQUEST HOLD|backend/src/scm/routes/delivery-orders-mfg.ts backend/src/scm/routes/delivery-planning-fields.ts frontend/src/vendor/scm/lib/delivery-planning-queries.ts",
+      "why": "THE HC DELIVERY SUB-STATUS VALUES — the owner's own words, carried on the DO, the planning board and the frontend query layer (HC_SUBSTATUS_VALUES). Free text to the business, a closed set to the code; three homes and no referee. The planning-board home MOVED from delivery-planning.ts into delivery-planning-fields.ts when that router hit its file-size ceiling (2026-09-22); the /fields whitelists live there now."
+    },
+    {
+      "check": "D1",
+      "key": "DONE AMEND,DONE BALANCE COLLECTION,DONE DELIVERED,DONE DRIVER INFORMATION,DONE POSTAGE,DONE POSTPONE REASON,DONE REMIND (1),DONE REMIND (2),DONE REMIND (3),DONE SCHEDULING,DONE SEND,INVALID DATA,NOT SENT (A),NOT SENT (D),PENDING RESCHEDULE (D),TO REMIND CUSTOMER REPLY (1),TO REMIND CUSTOMER REPLY (2),TO REMIND CUSTOMER REPLY (3),TO SEND COLLECT BALANCE,TO SEND DELIVERY DATE,TO SEND DRIVER INFO,TO SEND POSTAGE,TO SEND POSTPONE REASON|backend/src/scm/routes/delivery-planning-fields.ts frontend/src/vendor/scm/lib/delivery-planning-queries.ts",
+      "why": "THE DELIVERY MESSAGE-STATUS VALUES (owner 2026-10-21) — the customer-communication workflow shown and edited in the 'Delivery Message Status' column. HC_MESSAGE_STATUS_VALUES (delivery-planning-fields.ts) is the server whitelist the /fields route validates against; MESSAGE_STATUSES (delivery-planning-queries.ts) is the frontend dropdown's option list. Front and back share no build graph, the set is closed to the code, and a drift costs a refused edit (400 invalid_message_status), never a wrong number; the backend list is pinned by delivery-planning.fields.test.ts. Every outbound send lands on a Done X; the inbound chat tap (chat-request-patch.ts) sets Done Scheduling / Pending Reschedule (D), so those inbound values stay in the set."
     },
     {
       "check": "D1",
@@ -182,8 +207,8 @@
     },
     {
       "check": "D1",
-      "key": "GIF,HEIC,JPEG,JPG,PNG,WEBP|frontend/src/mobile/MobilePMS.tsx frontend/src/mobile/MobileServiceCase.tsx frontend/src/pages/ServiceCases.tsx",
-      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR). 3 homes: unnamed inline literal(s). Divergence costs a refused upload, never money or stock."
+      "key": "GIF,HEIC,JPEG,JPG,PNG,WEBP|frontend/src/mobile/MobilePmsDocCard.tsx frontend/src/mobile/MobileServiceCase.tsx frontend/src/pages/ServiceCases.tsx",
+      "why": "AN UPLOAD WHITELIST, per endpoint, and deliberately not one list: each surface decides what IT accepts (portal vs staff vs mail vs OCR). 3 homes: unnamed inline literal(s). Divergence costs a refused upload, never money or stock. The mobile home MOVED from MobilePMS.tsx into MobilePmsDocCard.tsx (2026-09-30 SalesDocsCard extraction at the size ceiling) — same literal, same surface, not a new decision."
     },
     {
       "check": "D1",
@@ -282,8 +307,8 @@
     },
     {
       "check": "D1",
-      "key": "2D,3D,BD,DO,PIC,PO,PPE|frontend/src/mobile/MobilePMS.tsx frontend/src/pages/Projects.tsx",
-      "why": "A DESKTOP/MOBILE TWIN of the same list — the two surfaces render the same thing and neither can import the other. 2 homes: ROLE_ACRONYMS. Divergence shows as one surface missing an option."
+      "key": "2D,3D,BD,DO,PIC,PO,PPE|frontend/src/mobile/MobilePmsDocCard.tsx frontend/src/pages/Projects.tsx",
+      "why": "A DESKTOP/MOBILE TWIN of the same list — the two surfaces render the same thing and neither can import the other. 2 homes: ROLE_ACRONYMS. Divergence shows as one surface missing an option. The mobile home MOVED from MobilePMS.tsx into MobilePmsDocCard.tsx (2026-09-30 SalesDocsCard extraction at the size ceiling)."
     },
     {
       "check": "D1",
@@ -452,7 +477,7 @@
     },
     {
       "check": "D1",
-      "key": "DELIVERY,LINE,PRICE,QTY,SPEC,SUPPLIER,VARIANT|backend/src/scm/shared/amendment-routing.ts frontend/src/vendor/scm/lib/amendment-routing.ts",
+      "key": "COST,DELIVERY,LINE,PRICE,QTY,SPEC,SUPPLIER,VARIANT|backend/src/scm/shared/amendment-routing.ts frontend/src/vendor/scm/lib/amendment-routing.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: FIELD_KIND_LABEL."
     },
     {
@@ -612,7 +637,7 @@
     },
     {
       "check": "D2",
-      "key": "ACTION_REMARK,ADDR1,ADDR2,ADDR3,ADDR4,ASSIGNED_TO,ASSIGNED_TO_2,COMPLAINT_ISSUE,COMPLETION_DATE,COST_NOTES,CUSTOMER_AMOUNT,CUSTOMER_EMAIL,CUSTOMER_NAME,CUSTOMER_PICKUP_AT,DEADLINE_AT,DELIVERY_BY,DELIVERY_ORDER,DOC_NO,DO_DATE,EMAIL_FOR_SURVEY,GOODS_RETURNED_NOTE,INSPECTION_BY,INSPECTION_RESULT,INSPECTION_VISIT_AT,ISSUE_CATEGORY,ITEMS_READY_AT,ITEM_CODE,LOCATION,NCR_CATEGORY,PHONE,PICKUP_BY,PO_AMOUNT,PO_NO,PRIORITY,QC_ISSUE_RESULT,QC_RECEIPT_DATE,QUALITY_REVIEW_PASSED,REF_NO,RESOLUTION_METHOD,SALES_AGENT,SATISFACTION_NOTES,SATISFACTION_RATING,SERVICE_CATEGORY,SLA_HOURS,SUB_STATUS,SUPPLIER_INVOICE_REF,SUPPLIER_PICKUP_AT,SUPPLIER_SERVICE_NOTE,VERIFICATION_OUTCOME,VERIFIED_ROOT_CAUSE,VOID_REASON ~ ACTION_REMARK,ADDR1,ADDR2,ADDR3,ADDR4,COMPLAINT_ISSUE,COMPLETION_DATE,COST_NOTES,CUSTOMER_AMOUNT,CUSTOMER_EMAIL,CUSTOMER_NAME,CUSTOMER_PICKUP_AT,DEADLINE_AT,DELIVERY_BY,DELIVERY_ORDER,DOC_NO,DO_DATE,EMAIL_FOR_SURVEY,GOODS_RETURNED_NOTE,INSPECTION_BY,INSPECTION_RESULT,INSPECTION_VISIT_AT,ISSUE_CATEGORY,ITEMS_READY_AT,ITEM_CODE,LOCATION,NCR_CATEGORY,PHONE,PICKUP_BY,PO_AMOUNT,PO_NO,PRIORITY,QC_ISSUE_RESULT,QC_RECEIPT_DATE,QUALITY_REVIEW_PASSED,REF_NO,RESOLUTION_METHOD,SALES_AGENT,SATISFACTION_NOTES,SATISFACTION_RATING,SERVICE_CATEGORY,SLA_HOURS,SUPPLIER_INVOICE_REF,SUPPLIER_PICKUP_AT,SUPPLIER_SERVICE_NOTE,VERIFICATION_OUTCOME,VERIFIED_ROOT_CAUSE",
+      "key": "ACTION_REMARK,ACTUAL_PICKUP_AT,ADDR1,ADDR2,ADDR3,ADDR4,ASSIGNED_TO,ASSIGNED_TO_2,COMPLAINT_ISSUE,COMPLETION_DATE,COST_NOTES,CUSTOMER_AMOUNT,CUSTOMER_EMAIL,CUSTOMER_NAME,CUSTOMER_PICKUP_AT,DEADLINE_AT,DELIVERY_BY,DELIVERY_ORDER,DOC_NO,DO_DATE,EMAIL_FOR_SURVEY,GOODS_RETURNED_NOTE,INSPECTION_BY,INSPECTION_RESULT,INSPECTION_VISIT_AT,ISSUE_CATEGORY,ITEMS_READY_AT,ITEM_CODE,ITEM_LOCATION,LOCATION,NCR_CATEGORY,PHONE,PICKUP_BY,PICKUP_PIC,PICKUP_STATUS,PO_AMOUNT,PO_NO,PRIORITY,QC_ISSUE_RESULT,QC_RECEIPT_DATE,QUALITY_REVIEW_PASSED,REF_NO,RESOLUTION_METHOD,SALES_AGENT,SATISFACTION_NOTES,SATISFACTION_RATING,SERVICE_CATEGORY,SLA_HOURS,SUB_STATUS,SUPPLIER_INVOICE_REF,SUPPLIER_PICKUP_AT,SUPPLIER_SERVICE_NOTE,VERIFICATION_OUTCOME,VERIFIED_ROOT_CAUSE,VOID_REASON ~ ACTION_REMARK,ACTUAL_PICKUP_AT,ADDR1,ADDR2,ADDR3,ADDR4,COMPLAINT_ISSUE,COMPLETION_DATE,COST_NOTES,CUSTOMER_AMOUNT,CUSTOMER_EMAIL,CUSTOMER_NAME,CUSTOMER_PICKUP_AT,DEADLINE_AT,DELIVERY_BY,DELIVERY_ORDER,DOC_NO,DO_DATE,EMAIL_FOR_SURVEY,GOODS_RETURNED_NOTE,INSPECTION_BY,INSPECTION_RESULT,INSPECTION_VISIT_AT,ISSUE_CATEGORY,ITEMS_READY_AT,ITEM_CODE,ITEM_LOCATION,LOCATION,NCR_CATEGORY,PHONE,PICKUP_BY,PICKUP_PIC,PICKUP_STATUS,PO_AMOUNT,PO_NO,PRIORITY,QC_ISSUE_RESULT,QC_RECEIPT_DATE,QUALITY_REVIEW_PASSED,REF_NO,RESOLUTION_METHOD,SALES_AGENT,SATISFACTION_NOTES,SATISFACTION_RATING,SERVICE_CATEGORY,SLA_HOURS,SUPPLIER_INVOICE_REF,SUPPLIER_PICKUP_AT,SUPPLIER_SERVICE_NOTE,VERIFICATION_OUTCOME,VERIFIED_ROOT_CAUSE",
       "why": "THE ASSR PATCHABLE FIELDS VERSUS THE ASSR FIELD LABELS, in one file. Four fields are patchable without ever being shown as a labelled diff (assignments, sub-status, void reason). Same file, two lists, deliberate."
     },
     {
@@ -697,8 +722,8 @@
     },
     {
       "check": "D2",
-      "key": "AGING,BREACH_NOW,BREACH_PERIOD,CLOSED_PERIOD,CUSTOMER_CASES,ITEM_CASES,OPENING_COUNT,OPEN_NOW,OVER_1_MONTH,OVER_2_WEEKS,OVER_3_WEEKS,PENDING_REVIEW,QA_PASSED,TOTAL_PERIOD ~ AGING,BREACH_NOW,BREACH_PERIOD,CLOSED_PERIOD,OPENING_COUNT,OPEN_NOW,OVER_1_MONTH,OVER_2_WEEKS,OVER_3_WEEKS,PENDING_REVIEW,QA_PASSED,TOTAL_PERIOD",
-      "why": "THE SERVICE DRILL METRICS VERSUS THEIR LABELS, differing by two metrics the UI does not offer as a drill-down. Deliberate."
+      "key": "AGING,BREACH_NOW,BREACH_PERIOD,CATEGORY_CASES,CLOSED_PERIOD,CUSTOMER_CASES,ITEM_CASES,OPENING_COUNT,OPEN_NOW,OVER_1_MONTH,OVER_2_WEEKS,OVER_3_WEEKS,PENDING_REVIEW,QA_PASSED,RESOLUTION_CASES,TOTAL_PERIOD ~ AGING,BREACH_NOW,BREACH_PERIOD,CLOSED_PERIOD,OPENING_COUNT,OPEN_NOW,OVER_1_MONTH,OVER_2_WEEKS,OVER_3_WEEKS,PENDING_REVIEW,QA_PASSED,TOTAL_PERIOD",
+      "why": "THE SERVICE DRILL METRICS VERSUS THEIR LABELS, differing by the metrics whose panel titles itself (customer, item, and since 2026-10-20 the category / resolution slice of the Quality donuts) rather than take a fixed label. Deliberate."
     },
     {
       "check": "D2",
@@ -1277,7 +1302,7 @@
     },
     {
       "check": "D1",
-      "key": "DELIVERY_ORDER,GRN,INVENTORY_ADJUSTMENT,PAYMENT_VOUCHER,PURCHASE_INVOICE,PURCHASE_ORDER,PURCHASE_RETURN,SALES_INVOICE,STOCK_TAKE,STOCK_TRANSFER|backend/src/scm/lib/entity-audit.ts frontend/src/vendor/scm/lib/entity-audit-queries.ts",
+      "key": "DELIVERY_ORDER,GRN,INVENTORY_ADJUSTMENT,PAYMENT_REQUEST,PAYMENT_VOUCHER,PRODUCT_REQUEST,PURCHASE_INVOICE,PURCHASE_ORDER,PURCHASE_RETURN,SALES_INVOICE,STOCK_TAKE,STOCK_TRANSFER|backend/src/scm/lib/entity-audit.ts frontend/src/vendor/scm/lib/entity-audit-queries.ts",
       "why": "PINNED BY A TEST, which is this checker's own prescribed remedy for a pair that must stay two. The list cannot be imported across the app boundary (the frontend does not build backend sources), so frontend/src/vendor/scm/lib/entity-audit-queries.test.ts READS backend/src/scm/lib/entity-audit.ts and asserts the two are equal, with a second assertion that the read found more than five names so a dead matcher cannot report a pass. Recorded rather than collapsed because this pair already cost four documents their change log while the comment said 'must stay in step' and nothing made it - docs/bugs/0847-four-documents-kept-a-change-log-nobody-could-read.md."
     },
     {
@@ -1409,6 +1434,211 @@
       "check": "D1",
       "key": "CALENDAR_VIEWER,DRIVER_HELPER,STOREKEEPER,STOREKEEPER_SUPERVISOR|backend/src/services/positionPolicy.ts backend/src/services/positionPolicyRows.ts",
       "why": "ONE vocabulary with a TYPE-CHECKED second home, not a second decision: RESTRICTED_PROFILES (positionPolicyRows.ts) is the list a position_policy row may name, and PROFILE_ROWS (positionPolicy.ts) maps each name to its page whitelist as Record<RestrictedProfile, ...> — a profile added to one and not the other is a compile error (tsc), never a runtime drift. positionPolicyRows.ts cannot import positionPolicy.ts (cycle), which is why the map lives beside the whitelists it names."
+    },
+    {
+      "check": "D1",
+      "key": "ADDRESS,AMENDED_DELIVERY_DATE,AMEND_DATE_FROM_CUSTOMER,AMEND_REASON,AMEND_REASON_FROM_CUSTOMER,ARRIVAL_AT,ARRIVES_EM_WAREHOUSE_DATE,BALANCE_SEN,BRANDING,BS_DELIVERY_DATE,BS_REMARKS,COMPANY_CODE,CONSIGNMENT_NO,CTN,CUSTOMER_DELIVERY_DATE,DEBTOR_NAME,DELIVERED_AT,DELIVERY_MESSAGE_STATUS,DELIVERY_SUBSTATUS,DEPARTURE_AT,DISPOSAL_REQUEST,DO,DO_DATE,DP_REMARK,DRIVER,DRIVER_2,DRIVER_CONTACT,DRIVER_IC,EM_DELIVERY_STATUS,ESB_REMARKS,ETA_ARRIVING_PORT,ETD_PORT_KLANG,HELPER_1,HELPER_2,HOUSE_TYPE,LORRY,PHONE,POD,POSTCODE,PO_NOS,PROCESSING_DATE,REGION,REPLACEMENT_DISPOSAL,ROW_TYPE,SALESPERSON,SHIPOUT_DATE,SO_DATE,SO_DOC_NO,SO_REF,STOCK_REMARK,TIME_CONFIRMED,TIME_RANGE,TOTAL_AMOUNT,TRIP_NO,VENUE,VESSEL_VOYAGE,WAREHOUSE,WA_MESSAGE|frontend/src/vendor/scm/components/DeliveryPlanningBoard.tsx frontend/src/vendor/scm/lib/deliveryPlanningLayouts.ts",
+      "why": "DP_DEFAULT_ORDER (the board's pristine column order) and the layout presets (BASE_ORDER + EM_ORDER in deliveryPlanningLayouts.ts) list the SAME Delivery Planning column set in different orders on purpose; deliveryPlanningLayouts.test.ts asserts the presets cover exactly the board's columns, so the two cannot drift."
+    },
+    {
+      "check": "D2",
+      "key": "ARRIVAL_AT,ARRIVES_EM_WAREHOUSE_DATE,BS_DELIVERY_DATE,BS_REMARKS,COMPANY_CODE,CONSIGNMENT_NO,CTN,DELIVERED_AT,DEPARTURE_AT,DO_DATE,DRIVER,DRIVER_2,DRIVER_CONTACT,DRIVER_IC,EM_DELIVERY_STATUS,ESB_REMARKS,ETA_ARRIVING_PORT,ETD_PORT_KLANG,HELPER_1,HELPER_2,LORRY,SHIPOUT_DATE,TIME_CONFIRMED,TIME_RANGE,TRIP_NO,VENUE,VESSEL_VOYAGE,WAREHOUSE ~ ARRIVAL_AT,ARRIVES_EM_WAREHOUSE_DATE,BS_DELIVERY_DATE,BS_REMARKS,COMPANY_CODE,CONSIGNMENT_NO,CTN,DELIVERED_AT,DEPARTURE_AT,DO_DATE,DRIVER,DRIVER_2,DRIVER_CONTACT,DRIVER_IC,EM_DELIVERY_STATUS,ESB_REMARKS,ETA_ARRIVING_PORT,ETD_PORT_KLANG,HELPER_1,HELPER_2,LORRY,TIME_CONFIRMED,TIME_RANGE,TRIP_NO,VENUE,VESSEL_VOYAGE,WAREHOUSE",
+      "why": "The Delivery Date and SG Order presets hide almost the same columns, differing only by SHIPOUT_DATE (SG shows the cross-border ship-out date) — both are the owner's 2026-09-24 per-layout choices in deliveryPlanningLayouts.ts, not one rule enforced at N-1 of N places."
+    },
+    {
+      "check": "D2",
+      "key": "AMENDMENT_PO_APPROVED,CANCEL,CREATE,DELETE,POST,REVERSE,SEND ~ CANCEL,CREATE,DELETE,POST,REVERSE,SEND,UPDATE",
+      "why": "TWO DIFFERENT QUESTIONS over the PO audit verbs. RELATED_AUDIT_ACTIONS (mfg-sales-orders/history.ts) picks which of a child PO / DO / SI trail surfaces on the SO History drawer: lifecycle moves only, so it drops UPDATE (line and date edits stay on the PO drawer) and keeps AMENDMENT_PO_APPROVED (the PO re-derived from this SO amendment, DEV-16). PO_ACTIONS is the PO drawer label map, which must name every verb it may render. They are not required to agree; a verb missing from the labels still renders through the lower-case fallback."
+    },
+    {
+      "check": "D1",
+      "key": "ALL,ODB,SI|backend/src/scm/routes/ar-invoices.ts frontend/src/vendor/scm/lib/ar-invoice-listing-pdf.ts",
+      "why": "THE AR LIST'S THREE KIND WORDS at two homes: the route REFUSES any other kind (ar-invoices.ts KINDS, pinned by arInvoices.test.ts kind=PI → bad_kind) and the listing PRINTS the word for the kind chosen (ar-invoice-listing-pdf.ts SHOWING, pinned by ar-invoice-listing-pdf.test.ts) — the same pair the AP list carries in ap-invoices.ts and ap-invoice-listing-pdf.ts. A backend/frontend shared mirror for three words would cost more than it guards; a fourth kind arrives through the route first and the two tests name it."
+    },
+    {
+      "check": "D2",
+      "key": "CUSTOMER / DEBTOR,DATE,DESCRIPTION,DUE,KIND,NO.,OUTSTANDING,PAID,REF,STATUS,TOTAL ~ DATE,DESCRIPTION,DUE,KIND,NO.,OUTSTANDING,PAID,REF,STATUS,SUPPLIER,TOTAL",
+      "why": "TWO LISTINGS' COLUMN HEADS differing by one word: the supplier-invoice listing names the SUPPLIER, the customer-invoice listing the CUSTOMER / DEBTOR — each paper's own party column on the same table dress, not one rule with two homes."
+    },
+    {
+      "check": "D1",
+      "key": "AGING_BASIS,BANK_ACCOUNT_NAME,BANK_ACCOUNT_NO,BANK_NAME,BUSINESS_REG_NO,CREDIT_LIMIT_SEN,EXEMPTION_NO,FOR_PURCHASING,REGISTRATION_NO,STATEMENT_TYPE,TIN_NUMBER|backend/src/scm/shared/supplier-finance-fields.ts frontend/src/vendor/shared/supplier-finance-fields.ts",
+      "why": "THE SUPPLIER FINANCE PART (owner 2026-09-30: 采购只看采购的部分; finance 这里的权限最大 — and 2026-10-02 Supplier Maintenance added the supplier's bank and the purchasing tick), a VENDORED TWIN, not a second decision. backend/src/scm/shared/supplier-finance-fields.ts is the home — the supplier routes strip these fields from what a caller who is not Finance reads and ignore them in what that caller writes; frontend/src/vendor/shared/supplier-finance-fields.ts is a byte-identical copy because the browser cannot import from backend/src, and the screens hide exactly what it names. Refereed by frontend/src/vendor/shared/supplier-finance-fields.canonical.test.ts, which byte-compares the two files and pins that the column list and the body-key list name the same eleven fields. This entry: the COLUMN spelling (scm.suppliers)."
+    },
+    {
+      "check": "D1",
+      "key": "AGINGBASIS,BANKACCOUNTNAME,BANKACCOUNTNO,BANKNAME,BUSINESSREGNO,CREDITLIMITSEN,EXEMPTIONNO,FORPURCHASING,REGISTRATIONNO,STATEMENTTYPE,TINNUMBER|backend/src/scm/shared/supplier-finance-fields.ts frontend/src/vendor/shared/supplier-finance-fields.ts",
+      "why": "THE SUPPLIER FINANCE PART (owner 2026-09-30: 采购只看采购的部分; finance 这里的权限最大 — and 2026-10-02 Supplier Maintenance added the supplier's bank and the purchasing tick), a VENDORED TWIN, not a second decision. backend/src/scm/shared/supplier-finance-fields.ts is the home — the supplier routes strip these fields from what a caller who is not Finance reads and ignore them in what that caller writes; frontend/src/vendor/shared/supplier-finance-fields.ts is a byte-identical copy because the browser cannot import from backend/src, and the screens hide exactly what it names. Refereed by frontend/src/vendor/shared/supplier-finance-fields.canonical.test.ts, which byte-compares the two files and pins that the column list and the body-key list name the same eleven fields. This entry: the BODY-KEY spelling (create / update bodies)."
+    },
+    {
+      "check": "D1",
+      "key": "ADDRESS1,ADDRESS2,ADDRESS3,ADDRESS4,BILL_TO_ADDRESS,BUILDING_TYPE,CITY,CUSTOMER_ID,CUSTOMER_TYPE,DEBTOR_NAME,EMAIL,EMERGENCY_CONTACT_NAME,EMERGENCY_CONTACT_PHONE,EMERGENCY_CONTACT_RELATIONSHIP,INSTALL_TO_ADDRESS,PHONE,POSTCODE,SHIP_TO_ADDRESS|backend/src/scm/shared/so-after-do-edit.ts frontend/src/vendor/shared/so-after-do-edit.ts",
+      "why": "THE CUSTOMER DETAILS LOGISTICS MAY CHANGE ON A SALES ORDER AFTER ITS DELIVERY ORDER (DEV-32, Syu 2026-10-01), a VENDORED TWIN, not a second decision. backend/src/scm/shared/so-after-do-edit.ts is the home - the SO header PATCH lets a scm.so.edit_after_do caller past the identity lock for exactly these columns and copies them onto the live DOs; frontend/src/vendor/shared/so-after-do-edit.ts is its byte-identical copy so the SO editor reopens the same fields. Refereed by frontend/src/vendor/shared/so-line-freeze.canonical.test.ts, which byte-compares the two files."
+    },
+    {
+      "check": "D2",
+      "key": "ON_HOLD,PAID,PARTIALLY_PAID,POSTED ~ ON_HOLD,PARTIALLY_PAID,POSTED",
+      "why": "TWO DIFFERENT QUESTIONS about purchase invoices, differing by PAID on purpose: routes/ap-invoices.ts mirrors EVERY posted purchase invoice into the AP Invoices list, a paid one included (it shows Paid); routes/supplier-maintenance.ts OPEN_PI counts only the ones still OWING a supplier (owner 2026-10-02, Supplier Maintenance's open bills) — a paid invoice owes nothing. Not one rule with two homes."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,OVERDUE,PARTIALLY_PAID,SENT ~ OVERDUE,PARTIALLY_PAID,SENT",
+      "why": "TWO DIFFERENT QUESTIONS about a sales invoice, differing by CANCELLED on purpose: routes/sales-invoices.ts names the statuses an invoice may MOVE to from one state (cancelling included); scm/lib/open-invoice-states.ts OPEN_SI_STATUSES names the ones that still OWE (owner 2026-10-02, the formal AR Aging's count of AutoCount invoices outside the books) — a cancelled invoice owes nothing. Not one rule with two homes."
+    },
+    {
+      "check": "D2",
+      "key": "OVERDUE,PAID,PARTIALLY_PAID,SENT ~ OVERDUE,PARTIALLY_PAID,SENT",
+      "why": "TWO DIFFERENT QUESTIONS about a sales invoice, differing by PAID on purpose: routes/ar-invoices.ts SI_MIRROR_STATUSES mirrors every issued invoice into the AR Invoices list, a paid one included (it shows Paid); scm/lib/open-invoice-states.ts OPEN_SI_STATUSES names only the ones still OWED (owner 2026-10-02, the formal AR Aging) — a paid invoice owes nothing. Not one rule with two homes."
+    },
+    {
+      "check": "D1",
+      "key": "AMEND,BALANCE_REMINDER,DELIVERY,DELIVERY_COMPLETED,DRIVER_INFO,POSTAGE,POSTPONE,REMINDER_1,REMINDER_2,REMINDER_3|backend/src/scm/lib/delivery-message-kinds.ts frontend/src/vendor/scm/components/SendDeliveryMessageModal.tsx",
+      "why": "THE BOARD'S WHATSAPP MESSAGE KINDS (2026-10-05), one decision with one home: scm/lib/delivery-message-kinds.ts MESSAGE_KINDS decides which kinds exist and KIND_AUTOMATION which Connect automation each fires (the zod enum on /delivery-messages/send is built from that array). SendDeliveryMessageModal's KIND_TITLE and KIND_AFTER_STATUS are PRESENTATION of the same vocabulary — the drawer heading and the workflow status the board shows after a successful send — keyed by the frontend SendMessageKind type that mirrors the backend list; a kind added on one side without the other is a compile error on the frontend (Record<SendMessageKind, ...>) and a 400 invalid_body from the server, never a wrong message. Cost of divergence is a missing menu entry, not a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "#,AMOUNT,DESCRIPTION|frontend/src/vendor/scm/lib/debtor-bill-pdf.ts frontend/src/vendor/scm/lib/deposit-invoice-pdf.ts",
+      "why": "TWO PRINTED TABLES' COLUMN HEADINGS that happen to match (owner 2026-10-06, the Deposit Invoice reprinted in the Sales Invoice layout): a debtor bill's lines and a deposit invoice's one deposit line each print # / Description / Amount. A heading row is how one document lays out its own table, not a business rule with two homes; divergence costs a differently titled column, never a figure."
+    },
+    {
+      "check": "D1",
+      "key": "CUSTOMER_ORDER,FAIR_EXHIBITION,SAMPLE,SHOWROOM|backend/src/scm/shared/product-request.ts frontend/src/vendor/scm/lib/product-request-queries.ts",
+      "why": "A PRODUCT REQUEST'S APPLICATION (owner 2026-10-06: 用途 — 展厅 / 客户订单 / 样品; Fair Exhibition added 2026-10-07), one decision with one home: scm/shared/product-request.ts PRODUCT_REQUEST_APPLICATIONS is what POST /product-requests accepts (400 application_invalid otherwise). product-request-queries.ts APPLICATION_LABEL is PRESENTATION of the same vocabulary — the words the picker and the list show — keyed by the frontend ProductRequestApplication type that mirrors the backend list; a value added on one side without the other is a compile error on the frontend (Record<ProductRequestApplication, string>) and a 400 from the server, never a wrong request. Cost of divergence is a missing picker entry, not money or stock."
+    },
+    {
+      "check": "D2",
+      "key": "DIVANHEIGHTS,GAPS,LEGHEIGHTS,SOFALEGHEIGHTS,SOFASIZES ~ DIVANHEIGHTS,GAPS,LEGHEIGHTS,SOFALEGHEIGHTS,SOFASIZES,TOTALHEIGHTS",
+      "why": "TWO QUESTIONS ABOUT THE MAINTENANCE POOLS, not one rule at N-1 places (BUG-60, 2026-10-06). INCH_POOLS (scm/shared/maintenance-pools.ts) is which pools hold inch-bearing values whose quotes are normalised on SAVE, and Total Height is one of them. PICKER_POOLS (vendor/scm/lib/picker-maint.ts) is which pools a purchasing document's variant DROPDOWNS read, so master's options can replace a supplier cost overlay's stale list. No PO / PI / Purchase Consignment editor has a Total Height dropdown: it is derived from divan + leg + gap and only priced, so adding it to the picker list would change nothing on screen and removing it from INCH_POOLS would stop normalising stored heights."
+    },
+    {
+      "check": "D2",
+      "key": "DELIVERY,INSPECTION,PICKUP,SERVICE ~ INSPECTION,PICKUP,SERVICE",
+      "why": "TWO DIFFERENT QUESTIONS keyed on trip-stop words: assrFormIntake SCHED_COL picks which assr_cases date column an intake form writes (no delivery leg on a form); delivery-pod-context ASSR_LEG_BY_STOP maps a lorry stop to the board leg it runs, where a DELIVERY stop is the delivery-back leg. Divergence costs a missing row on a driver run-sheet, never money or stock."
+    },
+    {
+      "check": "D1",
+      "key": "AMOUNT_SEN,BALANCE_SEN,COUNT,DRAFT_COUNT,PAID_SEN,SERVICE_SEN|backend/src/routes/project-sales-orders.ts frontend/src/pages/projects/projectSalesOrders.ts",
+      "why": "ONE WIRE SHAPE seen from its two ends, not two answers to one question: routes/project-sales-orders.ts builds the totals object GET /api/project-sales-orders/:projectId sends, and the page-side ZERO_TOTALS in projectSalesOrders.ts is the empty value of that same object, used only when the read came back in another shape (normalizeProjectSalesOrders). The keys are the response contract; nothing is decided twice. Cost of divergence is a 0 in the Sales header, caught by the route test on one side and the normalize test on the other."
+    },
+    {
+      "check": "D1",
+      "key": "AMOUNT_SEN,COUNT,NOT_OPENED_COUNT,NOT_OPENED_SEN,OPENED_COUNT,OPENED_SEN,OTHER_EVENT_COUNT|backend/src/routes/lib/sales-report-bills.ts frontend/src/lib/projectSalesBills.ts",
+      "why": "ONE WIRE SHAPE seen from its two ends, not two answers to one question: routes/lib/sales-report-bills.ts summarizeBills builds the totals object GET /api/project-sales-bills/:projectId sends, and the page-side ZERO in lib/projectSalesBills.ts is the empty value of that same object, used only when the read came back in another shape (normalizeProjectSalesBills). The keys are the response contract; nothing is decided twice. Cost of divergence is a 0 in the Sales header, caught by sales-report-bills.test.ts on one side and projectSalesBills.test.ts on the other."
+    },
+    {
+      "check": "D1",
+      "key": "CASH,CREDIT,DEBIT,EWALLET,QR|backend/src/scm/shared/pos-vocabulary.ts frontend/src/vendor/shared/pos-vocabulary.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. POS_METHOD_LABEL (the Houzs POS payment methods and their words) is declared ONCE in scm/shared/pos-vocabulary.ts and frontend/src/vendor/shared/pos-vocabulary.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. The method array is derived from the label keys, so even inside the file the list is stated once. Cost of divergence is a build failure, not a wrong payment line."
+    },
+    {
+      "check": "D1",
+      "key": "GENERAL,PRINTER_SCANNER,SST_RECEIPT|backend/src/scm/shared/pos-settings.ts frontend/src/vendor/shared/pos-settings.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. POS_SETTINGS_GROUPS (the three Houzs POS settings documents: SST & receipt, printer & scanner, general) is declared ONCE in scm/shared/pos-settings.ts and frontend/src/vendor/shared/pos-settings.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. The server validates a PUT group against this list and the settings page iterates it; a group added to one side without the other is a build failure, never a lost setting."
+    },
+    {
+      "check": "D1",
+      "key": "0000101,0001001,0010001,0010111,0011011,0011101,0100001,0100111,0110011,0111001|backend/src/scm/shared/ean13.ts frontend/src/vendor/shared/ean13.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the G digit-pattern table is the EAN-13 standard's fixed encoding table (GS1 General Specifications, not a business rule) declared ONCE in scm/shared/ean13.ts and frontend/src/vendor/shared/ean13.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. A wrong digit here prints an unscannable label, and ean13.test.ts pins the bar pattern against GS1 worked examples."
+    },
+    {
+      "check": "D1",
+      "key": "0001011,0001101,0010011,0011001,0100011,0101111,0110001,0110111,0111011,0111101|backend/src/scm/shared/ean13.ts frontend/src/vendor/shared/ean13.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the L digit-pattern table is the EAN-13 standard's fixed encoding table (GS1 General Specifications, not a business rule) declared ONCE in scm/shared/ean13.ts and frontend/src/vendor/shared/ean13.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. A wrong digit here prints an unscannable label, and ean13.test.ts pins the bar pattern against GS1 worked examples."
+    },
+    {
+      "check": "D1",
+      "key": "1000010,1000100,1001000,1001110,1010000,1011100,1100110,1101100,1110010,1110100|backend/src/scm/shared/ean13.ts frontend/src/vendor/shared/ean13.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the R digit-pattern table is the EAN-13 standard's fixed encoding table (GS1 General Specifications, not a business rule) declared ONCE in scm/shared/ean13.ts and frontend/src/vendor/shared/ean13.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. A wrong digit here prints an unscannable label, and ean13.test.ts pins the bar pattern against GS1 worked examples."
+    },
+    {
+      "check": "D1",
+      "key": "LGGGLL,LGGLGL,LGGLLG,LGLGGL,LGLGLG,LGLLGG,LLGGGL,LLGGLG,LLGLGG,LLLLLL|backend/src/scm/shared/ean13.ts frontend/src/vendor/shared/ean13.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the PARITY digit-pattern table is the EAN-13 standard's fixed encoding table (GS1 General Specifications, not a business rule) declared ONCE in scm/shared/ean13.ts and frontend/src/vendor/shared/ean13.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. A wrong digit here prints an unscannable label, and ean13.test.ts pins the bar pattern against GS1 worked examples."
+    },
+    {
+      "check": "D1",
+      "key": "AMOUNT (RM),BY,REASON,VOID|backend/src/scm/shared/pos-report.ts frontend/src/vendor/shared/pos-report.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the Void block header of reportRows is declared ONCE in scm/shared/pos-report.ts (the one Houzs POS report aggregation behind the device report, the ERP Sales Report, the summary email, the CSV and the Excel sheets) and frontend/src/vendor/shared/pos-report.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. Every table on every POS report is built from these rows, so a column renamed on one side without the other is a build failure, never two reports that disagree."
+    },
+    {
+      "check": "D1",
+      "key": "AMOUNT (RM),ORIGINAL,RETURN|backend/src/scm/shared/pos-report.ts frontend/src/vendor/shared/pos-report.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the Return block header of reportRows is declared ONCE in scm/shared/pos-report.ts (the one Houzs POS report aggregation behind the device report, the ERP Sales Report, the summary email, the CSV and the Excel sheets) and frontend/src/vendor/shared/pos-report.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. Every table on every POS report is built from these rows, so a column renamed on one side without the other is a build failure, never two reports that disagree."
+    },
+    {
+      "check": "D1",
+      "key": "BILLS,BY SALESMAN,NET (RM)|backend/src/scm/shared/pos-report.ts frontend/src/vendor/shared/pos-report.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the By salesman block header of reportRows is declared ONCE in scm/shared/pos-report.ts (the one Houzs POS report aggregation behind the device report, the ERP Sales Report, the summary email, the CSV and the Excel sheets) and frontend/src/vendor/shared/pos-report.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. Every table on every POS report is built from these rows, so a column renamed on one side without the other is a build failure, never two reports that disagree."
+    },
+    {
+      "check": "D1",
+      "key": "BILLS,BY TERMINAL,NET (RM)|backend/src/scm/shared/pos-report.ts frontend/src/vendor/shared/pos-report.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the By terminal block header of reportRows is declared ONCE in scm/shared/pos-report.ts (the one Houzs POS report aggregation behind the device report, the ERP Sales Report, the summary email, the CSV and the Excel sheets) and frontend/src/vendor/shared/pos-report.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. Every table on every POS report is built from these rows, so a column renamed on one side without the other is a build failure, never two reports that disagree."
+    },
+    {
+      "check": "D1",
+      "key": "BILLS,BY_DAY,BY_ITEM,BY_METHOD,BY_SALESMAN,BY_TERMINAL,DISCOUNT_SEN,FOC_UNITS,GROSS_SEN,NET_SEN,RETURNS,RETURN_COUNT,RETURN_SEN,SST_SEN,TOP_ITEMS,UNITS,VOIDS,VOID_COUNT,VOID_SEN|backend/src/scm/shared/pos-report.ts frontend/src/vendor/shared/pos-report.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the ReportTotals shape (the empty totals object aggregateSales fills) is declared ONCE in scm/shared/pos-report.ts (the one Houzs POS report aggregation behind the device report, the ERP Sales Report, the summary email, the CSV and the Excel sheets) and frontend/src/vendor/shared/pos-report.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. Every table on every POS report is built from these rows, so a column renamed on one side without the other is a build failure, never two reports that disagree."
+    },
+    {
+      "check": "D1",
+      "key": "BY ITEM,DESCRIPTION,DISCOUNT (RM),FOC,GROSS (RM),NET (RM),QTY|backend/src/scm/shared/pos-report.ts frontend/src/vendor/shared/pos-report.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the By item block header of reportRows is declared ONCE in scm/shared/pos-report.ts (the one Houzs POS report aggregation behind the device report, the ERP Sales Report, the summary email, the CSV and the Excel sheets) and frontend/src/vendor/shared/pos-report.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. Every table on every POS report is built from these rows, so a column renamed on one side without the other is a build failure, never two reports that disagree."
+    },
+    {
+      "check": "D1",
+      "key": "BY PAYMENT METHOD,NET RECEIVED (RM),REFUNDS (RM),SALES (RM)|backend/src/scm/shared/pos-report.ts frontend/src/vendor/shared/pos-report.ts",
+      "why": "THE MIRROR ITSELF, not a second decision. the By payment method block header of reportRows is declared ONCE in scm/shared/pos-report.ts (the one Houzs POS report aggregation behind the device report, the ERP Sales Report, the summary email, the CSV and the Excel sheets) and frontend/src/vendor/shared/pos-report.ts is its byte-identical copy, which check-shared-mirrors.mjs --strict fails the build over if the two ever differ. Every table on every POS report is built from these rows, so a column renamed on one side without the other is a build failure, never two reports that disagree."
+    },
+    {
+      "check": "D1",
+      "key": "HIGH,LOW,MEDIUM,URGENT|backend/src/routes/itSupport.ts frontend/src/lib/itSupport.ts",
+      "why": "The four urgency levels are the Houzs IT Hub's own vocabulary, not a Century rule: the relay (routes/itSupport.ts PRIORITIES) refuses any other value before the hub does, and the list (lib/itSupport.ts URGENCY_ORDER) only sorts and labels what the hub sends back, an unknown level sorting last. The hub owns the set; divergence costs a sort position, never a lost request."
+    },
+    {
+      "check": "D2",
+      "key": "GERAN,INSURANCE,PUSPAKOM,ROAD_TAX ~ INSURANCE,PUSPAKOM,ROAD_TAX",
+      "why": "Not the same question. The four are the kinds an in-house lorry keeps on file; the three are the kinds that EXPIRE (a flat expiry column each, and required for an in-house lorry). Geran has no expiry, so it is deliberately in the first and not the second."
+    },
+    {
+      "check": "D1",
+      "key": "AVAILABLE,BREAKDOWN,COMPLIANCE_BLOCKED,OUT_OF_SERVICE,PLANNED_MAINTENANCE,SERVICE_DUE,WAITING_PARTS|backend/src/services/fleet-status.ts frontend/src/pages/FleetHealth.tsx frontend/src/pages/FleetHealthCharts.tsx",
+      "why": "ONE DECISION, ONE HOME: services/fleet-status.ts derives the vehicle status; FleetHealth.tsx and FleetHealthCharts.tsx only colour and label the value the API returns (a display map keyed by the enum). The browser cannot import the Worker module. A status the map lacks renders unlabelled, never decides dispatch."
+    },
+    {
+      "check": "D1",
+      "key": "ACCESSORIES_COST_SEN,ACCESSORIES_SEN,BEDFRAME_COST_SEN,BEDFRAME_SEN,DEPOSIT_SEN,MARGIN_PCT_BASIS,MATTRESS_SOFA_COST_SEN,MATTRESS_SOFA_SEN,OTHERS_COST_SEN,OTHERS_SEN,SERVICE_COST_SEN,SERVICE_SEN,TOTAL_COST_SEN,TOTAL_MARGIN_SEN|backend/src/scm/lib/finance-keys.ts frontend/src/pages/scm-v2/so-list-server-funnels.ts",
+      "why": "THE SERVER DECIDES: scm/lib/finance-keys.ts is the one list of finance columns the server hides from non-finance users and ignores in their filters; so-list-server-funnels.ts only names which grid columns to SEND as server filters. A key missing on the client means that column filters the page only; it can never expose a finance figure, because the server strips it regardless."
+    },
+    {
+      "check": "D1",
+      "key": "ACCESSORY,BEDFRAME,DINING,MATTRESS,OTHERS,SOFA|backend/src/scm/lib/procurement-overview.ts frontend/src/pages/scm-v2/ProcurementOverview.tsx",
+      "why": "ONE DECISION, ONE HOME: scm/lib/procurement-overview.ts procurementCategory() decides each line's category and PROCUREMENT_CATEGORIES its order; ProcurementOverview.tsx CAT_LABEL only prints the category code the API returns (display labels; the browser cannot import the Worker lib). An unknown code prints as itself."
+    },
+    {
+      "check": "D1",
+      "key": "ACCESSORY,BEDFRAME,MATTRESS,SOFA|frontend/src/pages/scm-v2/Mrp.tsx frontend/src/pages/scm-v2/ProcurementOverview.tsx",
+      "why": "TWO DIFFERENT QUESTIONS: Mrp.tsx lists the categories an MRP lead time can be SET for; ProcurementOverview.tsx MRP_CATEGORY maps the overview's upper-case category code to that setting's lower-case key so Apply writes the right row. DINING and OTHERS have no MRP setting, so the overview map stops at four on purpose."
+    },
+    {
+      "check": "D1",
+      "key": "AMBIGUOUS,NO_FAIR,PENDING,UNMATCHED|backend/src/scm/lib/fair-audit.ts backend/src/scm/lib/fair-pending.ts",
+      "why": "ONE vocabulary (scm.mfg_sales_orders.fair_match), two different jobs: fair-pending.ts LISTED_VERDICTS is WHICH unlinked verdicts the Fair Links to Settle page lists; fair-audit.ts UNLINKED is how an order's History NAMES an unlinked state (owner 2026-10-19, every fair move named). Presentation of the same vocabulary, not a second answer to what the verdicts are. A verdict added to one and not the other costs a History row reading \"Not linked\", never a wrong list."
+    },
+    {
+      "check": "D1",
+      "key": "COMPLETED,PENDING,SCHEDULED|backend/src/scm/shared/assr-pickup-tracking.ts frontend/src/vendor/scm/lib/assr-pickup-tracking.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: PICKUP_STATUS_OPTIONS."
+    },
+    {
+      "check": "D1",
+      "key": "CUSTOMER,SUPPLIER,WAREHOUSE|backend/src/scm/shared/assr-pickup-tracking.ts frontend/src/vendor/scm/lib/assr-pickup-tracking.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: ITEM_LOCATION_OPTIONS."
+    },
+    {
+      "check": "D1",
+      "key": "CUSTOMER,LOGISTICS,MANAGEMENT,PRODUCTION,SUPPLIER|backend/src/scm/shared/assr-verification-fields.ts frontend/src/vendor/scm/lib/assr-verification-fields.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: PENDING_WITH_OPTIONS."
     }
   ]
 }

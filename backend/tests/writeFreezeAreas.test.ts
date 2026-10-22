@@ -95,15 +95,19 @@ describe('the areas the owner named resolve to the routers he means', () => {
     });
   }
 
-  it('sales orders is EIGHT routers, not just the SO API', () => {
+  it('sales orders is ELEVEN routers, not just the SO API', () => {
     /* The owner asks for "sales orders"; the key he must type also carries
-       amendments, the salesperson handover, quotes, the PWP codes and the three
-       scan/slip intake routes. That is what the lift will actually open, and the
-       runbook says so. */
+       amendments, the salesperson handover, quotes, the PWP codes, the three
+       scan/slip intake routes, the SO and payment original scans and the
+       payment backdate-request inbox. That is
+       what the lift will actually open, and the runbook says so. */
     expect(prefixesForArea('scm.sales.orders').sort()).toEqual([
       '/mfg-sales-orders/*',
+      '/payment-backdate-requests/*',
       '/pwp-codes/*',
       '/quotes/*',
+      '/scan-files/payment/*',
+      '/scan-files/so/*',
       '/scan-payment/*',
       '/scan-so/*',
       '/slips/*',
@@ -116,6 +120,7 @@ describe('the areas the owner named resolve to the routers he means', () => {
     expect(prefixesForArea('scm.procurement.po').sort()).toEqual([
       '/mfg-purchase-orders/*',
       '/po-amendments/*',
+      '/procurement-overview/*', // read-only overview (2026-10-16); freezing writes leaves it untouched
     ]);
   });
 });
@@ -129,9 +134,11 @@ describe('areaForPath', () => {
   });
 
   it('picks the MOST SPECIFIC mount, mirroring Hono', () => {
-    // scm/index.ts registers the exact /inventory/adjustments guard before the
-    // broad /inventory/* one precisely so adjustments is its own permission.
+    // scm/index.ts registers the /inventory/adjustments/* guard before the
+    // broad /inventory/* one precisely so adjustments is its own permission —
+    // the document's own /:id paths included (BUG-66).
     expect(areaForPath('/api/scm/inventory/adjustments')).toBe('scm.warehouse.adjustments');
+    expect(areaForPath('/api/scm/inventory/adjustments/9')).toBe('scm.warehouse.adjustments');
     expect(areaForPath('/api/scm/inventory/buckets')).toBe('scm.warehouse.inventory');
     expect(areaForPath('/api/scm/maintenance-config/sofa-compartments/4'))
       .toBe('scm.procurement.products');

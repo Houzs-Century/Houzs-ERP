@@ -25,12 +25,14 @@
 import { useState } from 'react';
 import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
 import { fmtDateTime } from '../../shared/format';
-import { useConfirm } from './ConfirmDialog';
+import { useConfirm, usePrompt as useConfirmWithText } from './ConfirmDialog';
 import { usePrompt } from './PromptDialog';
 import { serviceNotify } from '../lib/dialog-service';
 import { STATUS_TONES } from '../lib/status-pill';
 import {
+  APPROVE_REMARK_INPUT,
   approveLabel,
+  approvalRemarksOf,
   cancelRequestLine,
   isFinalLevel,
   pendingLevel,
@@ -79,6 +81,7 @@ export function CancelRequestPanel({ docType, docKey, docNumber, onExecute, exec
   const withdraw = useWithdrawCancelRequest(docType);
   const askPrompt = usePrompt();
   const askConfirm = useConfirm();
+  const askApprove = useConfirmWithText();
   const [busy, setBusy] = useState(false);
 
   const open = q.data?.open ?? null;
@@ -96,17 +99,19 @@ export function CancelRequestPanel({ docType, docKey, docNumber, onExecute, exec
     serviceNotify({ title, body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
 
   const doApprove = async () => {
-    if (!(await askConfirm({
+    const remark = await askApprove({
       title: final ? `Approve and cancel ${docNumber}?` : `Give level-1 approval to cancel ${docNumber}?`,
       body: final
         ? `This is the final approval. The document is cancelled on your signature${docType === 'so' ? ' — a cancelled sales order cannot be reactivated' : ''}.`
         : 'Level 2 still has to approve after you. Nothing is cancelled yet.',
       confirmLabel: final ? 'Approve & cancel' : 'Approve (level 1)',
       danger: final,
-    }))) return;
+      input: APPROVE_REMARK_INPUT,
+    });
+    if (remark == null) return;
     setBusy(true);
     try {
-      const res = await approve.mutateAsync({ key: docKey });
+      const res = await approve.mutateAsync({ key: docKey, remark: remark || null });
       if (res.execute && onExecute) await onExecute();
       else if (!res.execute) void serviceNotify({ title: 'Level-1 approval recorded', body: `${docNumber} now waits for the level-2 approver.` });
     } catch (err) {
@@ -178,11 +183,19 @@ export function CancelRequestPanel({ docType, docKey, docNumber, onExecute, exec
 }
 
 function Signatures({ row }: { row: CancelRequestRow }) {
+  const remarks = approvalRemarksOf(row);
   return (
-    <div style={{ fontSize: 'var(--fs-11, 11px)', color: 'var(--fg-muted)', display: 'flex', flexWrap: 'wrap', gap: '4px 14px' }}>
-      <span>Raised by {who(row.requested_by_name, row.requested_at)}</span>
-      <span>{levelsFor(docTypeOfRow(row)) > 1 ? 'Level 1' : 'Approval'}: {row.l1_at ? who(row.l1_by_name, row.l1_at) : 'pending'}</span>
-      {levelsFor(docTypeOfRow(row)) > 1 && <span>Level 2: {row.l2_at ? who(row.l2_by_name, row.l2_at) : 'pending'}</span>}
-    </div>
+    <>
+      <div style={{ fontSize: 'var(--fs-11, 11px)', color: 'var(--fg-muted)', display: 'flex', flexWrap: 'wrap', gap: '4px 14px' }}>
+        <span>Raised by {who(row.requested_by_name, row.requested_at)}</span>
+        <span>{levelsFor(docTypeOfRow(row)) > 1 ? 'Level 1' : 'Approval'}: {row.l1_at ? who(row.l1_by_name, row.l1_at) : 'pending'}</span>
+        {levelsFor(docTypeOfRow(row)) > 1 && <span>Level 2: {row.l2_at ? who(row.l2_by_name, row.l2_at) : 'pending'}</span>}
+      </div>
+      {remarks && (
+        <div data-testid="cancel-approval-remarks" style={{ fontSize: 'var(--fs-12, 12px)', color: 'var(--c-ink)', whiteSpace: 'pre-wrap' }}>
+          <span style={{ color: 'var(--fg-muted)' }}>Approval remarks: </span>{remarks}
+        </div>
+      )}
+    </>
   );
 }

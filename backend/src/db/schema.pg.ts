@@ -42,6 +42,7 @@ import {
   index,
   uniqueIndex,
   check,
+  numeric,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -94,6 +95,25 @@ export const roles = pgTable("roles", {
   scope_to_pic: integer("scope_to_pic").notNull().default(0),
   created_at: text("created_at").default(nowText),
 });
+
+// ── role_page_access (mig-pg 20261019T1300) ────────────────
+// Persistent per-role page visibility — one level per (role, page_key). Recreates
+// the old 073 table dropped on 2026-09-17; the RBAC rebuild (Option A) makes the
+// role the single source of page access, edited through PR2's matrix down to
+// sub-page granularity. `level` is free text (none/partial/view/edit/full) so the
+// resolver's whole vocabulary round-trips; the cascade/filter lives in
+// pageAccess.resolvePositionAccessFromRows, consumed by memberPageAccess.ts.
+export const role_page_access = pgTable(
+  "role_page_access",
+  {
+    role_id: integer("role_id").notNull(),
+    page_key: text("page_key").notNull(),
+    level: text("level").notNull(),
+    created_at: text("created_at").default(nowText),
+    updated_at: text("updated_at").default(nowText),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.role_id, t.page_key] }) }),
+);
 
 // ── push_devices (mig-pg 0266) — iOS push token registry ───
 export const push_devices = pgTable("push_devices", {
@@ -608,6 +628,328 @@ export const project_checklist_template_items = pgTable(
   },
 );
 
+// ── project_sales_bills (mig 20261014T1600) ────────────────
+// The evening sales report pasted into a project's chat, one row per booklet
+// number: what the slip said and who sold it, so the project can say which
+// bills are still not opened as Sales Orders. Matching is done at read time
+// (routes/lib/sales-report-bills.ts); nothing about the match is stored.
+export const project_sales_bills = pgTable(
+  "project_sales_bills",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    project_id: bigint("project_id", { mode: "number" }).notNull(),
+    ref_token: text("ref_token").notNull(),
+    ref_raw: text("ref_raw").notNull(),
+    amount_sen: bigint("amount_sen", { mode: "number" }).notNull(),
+    salesperson_name: text("salesperson_name"),
+    report_date: text("report_date"),
+    source_activity_id: bigint("source_activity_id", { mode: "number" }),
+    created_by: bigint("created_by", { mode: "number" }),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("uq_project_sales_bills_token").on(t.company_id, t.project_id, t.ref_token)],
+);
+
+// ── Houzs POS (mig 20261014T1147) ──────────────────────────
+// The cash & carry booth app's bills, synced from the device into the ERP's
+// own database. Money is integer sen. A bill is VOIDed, never deleted; its
+// lines and payments hang under it (ON DELETE CASCADE in the DDL).
+export const pos_sales = pgTable(
+  "pos_sales",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    uuid: uuid("uuid").notNull(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    project_id: bigint("project_id", { mode: "number" }).notNull(),
+    terminal_code: text("terminal_code").notNull(),
+    receipt_no: text("receipt_no").notNull(),
+    type: text("type").notNull().default("SALE"),
+    ref_sale_uuid: uuid("ref_sale_uuid"),
+    cashier_id: bigint("cashier_id", { mode: "number" }),
+    cashier_name: text("cashier_name"),
+    salesman_id: bigint("salesman_id", { mode: "number" }),
+    salesman_name: text("salesman_name"),
+    customer_name: text("customer_name"),
+    customer_phone: text("customer_phone"),
+    sold_at: timestamp("sold_at", { withTimezone: true, mode: "string" }).notNull(),
+    subtotal_sen: bigint("subtotal_sen", { mode: "number" }).notNull().default(0),
+    item_discount_sen: bigint("item_discount_sen", { mode: "number" }).notNull().default(0),
+    bill_discount_sen: bigint("bill_discount_sen", { mode: "number" }).notNull().default(0),
+    // Mig 20261014T1711: the supervisor who passed a bill discount above the cap.
+    bill_discount_by: text("bill_discount_by"),
+    sst_applied: boolean("sst_applied").notNull().default(false),
+    sst_rate: numeric("sst_rate", { precision: 5, scale: 2 }).notNull().default("0"),
+    sst_amount_sen: bigint("sst_amount_sen", { mode: "number" }).notNull().default(0),
+    rounding_sen: bigint("rounding_sen", { mode: "number" }).notNull().default(0),
+    total_sen: bigint("total_sen", { mode: "number" }).notNull().default(0),
+    status: text("status").notNull().default("PAID"),
+    void_reason: text("void_reason"),
+    void_by: text("void_by"),
+    voided_at: timestamp("voided_at", { withTimezone: true, mode: "string" }),
+    is_test: boolean("is_test").notNull().default(false),
+    source: text("source").notNull().default("NORMAL"),
+    local_seq: integer("local_seq"),
+    // Mig 20261014T1445: why the stock deduction was not clean (no location,
+    // location went negative); NULL = deducted without a remark.
+    stock_warning: text("stock_warning"),
+    synced_at: timestamp("synced_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("uq_pos_sales_uuid").on(t.uuid),
+    uniqueIndex("uq_pos_sales_receipt").on(t.company_id, t.terminal_code, t.receipt_no),
+    index("idx_pos_sales_project_sold").on(t.project_id, t.sold_at),
+  ],
+);
+
+export const pos_sale_lines = pgTable(
+  "pos_sale_lines",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    sale_id: bigint("sale_id", { mode: "number" }).notNull(),
+    line_no: integer("line_no").notNull(),
+    item_id: bigint("item_id", { mode: "number" }),
+    item_code: text("item_code").notNull(),
+    description: text("description").notNull(),
+    uom: text("uom").notNull().default("UNIT"),
+    qty: numeric("qty", { precision: 12, scale: 3 }).notNull(),
+    unit_price_sen: bigint("unit_price_sen", { mode: "number" }).notNull(),
+    original_price_sen: bigint("original_price_sen", { mode: "number" }),
+    override_by: text("override_by"),
+    override_reason: text("override_reason"),
+    discount_source: text("discount_source"),
+    discount_type: text("discount_type"),
+    discount_value: numeric("discount_value", { precision: 12, scale: 2 }),
+    // Mig 20261014T1711: the supervisor who passed a manual discount above the cap.
+    discount_by: text("discount_by"),
+    discount_amount_sen: bigint("discount_amount_sen", { mode: "number" }).notNull().default(0),
+    is_foc: boolean("is_foc").notNull().default(false),
+    amount_sen: bigint("amount_sen", { mode: "number" }).notNull(),
+  },
+  (t) => [uniqueIndex("uq_pos_sale_lines_no").on(t.sale_id, t.line_no)],
+);
+
+export const pos_payments = pgTable(
+  "pos_payments",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    sale_id: bigint("sale_id", { mode: "number" }).notNull(),
+    method: text("method").notNull(),
+    amount_sen: bigint("amount_sen", { mode: "number" }).notNull(),
+    reference: text("reference"),
+    last4: text("last4"),
+    tendered_sen: bigint("tendered_sen", { mode: "number" }),
+    change_sen: bigint("change_sen", { mode: "number" }),
+  },
+  (t) => [index("idx_pos_payments_sale").on(t.sale_id)],
+);
+
+// ── Houzs POS Admin masters (mig 20261014T1304) ────────────
+export const pos_settings = pgTable(
+  "pos_settings",
+  {
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    group: text("group").notNull(),
+    value: jsonb("value").notNull().default({}),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    updated_by: bigint("updated_by", { mode: "number" }),
+  },
+  (t) => [primaryKey({ columns: [t.company_id, t.group] })],
+);
+
+export const pos_items = pgTable(
+  "pos_items",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    product_id: text("product_id").notNull(),
+    item_code: text("item_code").notNull(),
+    name: text("name").notNull(),
+    uom: text("uom").notNull().default("UNIT"),
+    price_sen: bigint("price_sen", { mode: "number" }).notNull().default(0),
+    cost_sen: bigint("cost_sen", { mode: "number" }),
+    preset_discount_type: text("preset_discount_type"),
+    preset_discount_value: numeric("preset_discount_value", { precision: 12, scale: 2 }),
+    foc_allowed: boolean("foc_allowed").notNull().default(false),
+    max_manual_disc_pct: numeric("max_manual_disc_pct", { precision: 5, scale: 2 }),
+    stock_source_warehouse_id: text("stock_source_warehouse_id"),
+    receipt_name: text("receipt_name"),
+    active: boolean("active").notNull().default(true),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("uq_pos_items_product").on(t.company_id, t.product_id), index("idx_pos_items_company_code").on(t.company_id, t.item_code)],
+);
+
+export const pos_item_barcodes = pgTable(
+  "pos_item_barcodes",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    pos_item_id: bigint("pos_item_id", { mode: "number" }).notNull(),
+    barcode: text("barcode").notNull(),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("uq_pos_item_barcodes").on(t.company_id, t.barcode)],
+);
+
+export const pos_generated_barcodes = pgTable(
+  "pos_generated_barcodes",
+  {
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    product_id: text("product_id").notNull(),
+    barcode: text("barcode").notNull(),
+    generated_at: timestamp("generated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    generated_by: bigint("generated_by", { mode: "number" }),
+  },
+  (t) => [primaryKey({ columns: [t.company_id, t.product_id] }), uniqueIndex("uq_pos_generated_barcode").on(t.barcode)],
+);
+
+export const pos_cashiers = pgTable(
+  "pos_cashiers",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    phone: text("phone"),
+    pin_hash: text("pin_hash").notNull(),
+    role: text("role").notNull().default("PARTTIME"),
+    max_discount_pct: numeric("max_discount_pct", { precision: 5, scale: 2 }).notNull().default("0"),
+    working_hours_note: text("working_hours_note"),
+    bank_note: text("bank_note"),
+    active: boolean("active").notNull().default(true),
+    last_login_at: timestamp("last_login_at", { withTimezone: true, mode: "string" }),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("uq_pos_cashiers_code").on(t.company_id, t.code)],
+);
+
+export const pos_terminals = pgTable(
+  "pos_terminals",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    code: text("code").notNull(),
+    device_name: text("device_name"),
+    platform: text("platform"),
+    project_id: bigint("project_id", { mode: "number" }),
+    printer: text("printer"),
+    prepared_at: timestamp("prepared_at", { withTimezone: true, mode: "string" }),
+    last_seen_at: timestamp("last_seen_at", { withTimezone: true, mode: "string" }),
+    last_sync_at: timestamp("last_sync_at", { withTimezone: true, mode: "string" }),
+    pending_count: integer("pending_count").notNull().default(0),
+    pending_amount_sen: bigint("pending_amount_sen", { mode: "number" }).notNull().default(0),
+    receipt_counter: integer("receipt_counter").notNull().default(0),
+    app_version: text("app_version"),
+    status: text("status").notNull().default("NEW"),
+    active: boolean("active").notNull().default(true),
+    token_hash: text("token_hash"),
+    // Mig 20261014T1445: the last heartbeat that still reported pending bills,
+    // so an empty device reconnecting is recognised as DATA LOST.
+    last_known_pending_count: integer("last_known_pending_count").notNull().default(0),
+    last_known_pending_sen: bigint("last_known_pending_sen", { mode: "number" }).notNull().default(0),
+    db_empty_at: timestamp("db_empty_at", { withTimezone: true, mode: "string" }),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("uq_pos_terminals_code").on(t.company_id, t.code)],
+);
+
+export const pos_event_links = pgTable(
+  "pos_event_links",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    project_id: bigint("project_id", { mode: "number" }).notNull(),
+    catalog_scope: text("catalog_scope").notNull().default("ALL"),
+    stock_source_warehouse_id: text("stock_source_warehouse_id"),
+    sst_default: boolean("sst_default").notNull().default(false),
+    receipt_header: text("receipt_header"),
+    catalog_version: integer("catalog_version").notNull().default(1),
+    pushed_at: timestamp("pushed_at", { withTimezone: true, mode: "string" }),
+    // Mig 20261014T1530: the end-of-event summary email went out (once).
+    summary_sent_at: timestamp("summary_sent_at", { withTimezone: true, mode: "string" }),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("uq_pos_event_links_project").on(t.company_id, t.project_id)],
+);
+
+export const pos_event_cashiers = pgTable(
+  "pos_event_cashiers",
+  {
+    link_id: bigint("link_id", { mode: "number" }).notNull(),
+    cashier_id: bigint("cashier_id", { mode: "number" }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.link_id, t.cashier_id] })],
+);
+
+export const pos_event_items = pgTable(
+  "pos_event_items",
+  {
+    link_id: bigint("link_id", { mode: "number" }).notNull(),
+    pos_item_id: bigint("pos_item_id", { mode: "number" }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.link_id, t.pos_item_id] })],
+);
+
+export const pos_event_prices = pgTable(
+  "pos_event_prices",
+  {
+    link_id: bigint("link_id", { mode: "number" }).notNull(),
+    pos_item_id: bigint("pos_item_id", { mode: "number" }).notNull(),
+    price_sen: bigint("price_sen", { mode: "number" }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.link_id, t.pos_item_id] })],
+);
+
+export const pos_heartbeats = pgTable(
+  "pos_heartbeats",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    terminal_id: bigint("terminal_id", { mode: "number" }).notNull(),
+    at: timestamp("at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    payload: jsonb("payload").notNull().default({}),
+  },
+  (t) => [index("idx_pos_heartbeats_terminal_at").on(t.terminal_id, t.at)],
+);
+
+export const pos_alerts = pgTable("pos_alerts", {
+  id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+  company_id: bigint("company_id", { mode: "number" }).notNull(),
+  type: text("type").notNull(),
+  terminal_id: bigint("terminal_id", { mode: "number" }),
+  project_id: bigint("project_id", { mode: "number" }),
+  detail: jsonb("detail").notNull().default({}),
+  email_sent_at: timestamp("email_sent_at", { withTimezone: true, mode: "string" }),
+  last_resent_at: timestamp("last_resent_at", { withTimezone: true, mode: "string" }),
+  resolved_at: timestamp("resolved_at", { withTimezone: true, mode: "string" }),
+  created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+});
+
+export const pos_audit = pgTable(
+  "pos_audit",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    entity: text("entity").notNull(),
+    entity_id: text("entity_id").notNull(),
+    field: text("field").notNull(),
+    from_value: text("from_value"),
+    to_value: text("to_value"),
+    by_user_id: bigint("by_user_id", { mode: "number" }),
+    by_name: text("by_name"),
+    at: timestamp("at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  },
+  (t) => [index("idx_pos_audit_entity").on(t.entity, t.entity_id)],
+);
+
 // ── sales_entries (mig 041 / 051) ──────────────────────────
 export const sales_entries = pgTable("sales_entries", {
   company_id: bigint("company_id", { mode: "number" }),
@@ -815,4 +1157,26 @@ export const companies = pgTable("companies", {
   name: text("name").notNull(),
   is_active: integer("is_active").notNull().default(1),
   created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ── auth_failed_logins (mig 20261016T0910; DEV-35) ─────────
+// One row per failed sign-in. Never holds the attempted password or code.
+export const auth_failed_logins = pgTable("auth_failed_logins", {
+  id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+  created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  email: text("email"),
+  user_id: bigint("user_id", { mode: "number" }),
+  ip: text("ip"),
+  reason: text("reason").notNull(),
+});
+
+// ── job_runs (mig 20261016T0900): one row per scheduled job run ──
+export const job_runs = pgTable("job_runs", {
+  id: uuid("id").primaryKey(),
+  job: text("job").notNull(),
+  started_at: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  finished_at: timestamp("finished_at", { withTimezone: true }),
+  status: text("status").notNull().default("running"),
+  error: text("error"),
+  duration_ms: integer("duration_ms"),
 });

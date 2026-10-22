@@ -7,6 +7,7 @@
 // settlement).
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { DOC_FILE_ACCEPT } from './doc-file-mime';
 import { API_URL, authedFetch, humanApiError } from './authed-fetch';
 import { readAuthToken } from '../../../lib/authToken';
 import { companyHeader } from '../../../lib/activeCompany';
@@ -17,6 +18,7 @@ import {
   requestIdFromResponse,
 } from '../../../lib/requestCorrelation';
 import { idempotentInit } from '../../../lib/idempotency';
+import type { EventSuggestion } from './event-queries';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
 // baseQuery is a custom-hook factory — only ever called from use* hooks below.
@@ -38,9 +40,13 @@ export type PaymentVoucherRow = Record<string, unknown> & {
   voucher_date: string | null;
   payee_name: string;
   total_sen?: number;
+  /** DEV-75: recorded only — not in total_sen, posts nothing. */
+  bank_charge_sen?: number | null;
   currency?: string;
   exchange_rate?: string | number | null;
   credit_account_code?: string;
+  /** The header's Notes, as Finance typed them — the list shows them (owner 2026-10-14). */
+  notes?: string | null;
   supplier?: { id: string; code: string; name: string } | null;
   /* The owner's four layers (2026-09-02). No marks: raw Draft. submitted:
      Prepared (still editable). checked: locked, on Daily Bank's pending.
@@ -100,7 +106,13 @@ export const useCreatePaymentVoucher = () => {
     mutationFn: ({ idempotencyKey, ...body }: { idempotencyKey?: string } & Record<string, unknown>) =>
       authedFetch<{ id: string; pvNumber: string }>(`/payment-vouchers`,
         idempotentInit(idempotencyKey, { method: 'POST', body: JSON.stringify(body) })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['payment-vouchers'] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      /* A bill now vouchered is another's same bill (the pile says so on return). */
+      void qc.invalidateQueries({ queryKey: ['payment-request-bill-matches'] });
+      /* A voucher answering a request takes it off Finance's waiting count. */
+      void qc.invalidateQueries({ queryKey: ['payment-requests'] });
+    },
   });
 };
 
@@ -173,6 +185,8 @@ export const useCancelPaymentVoucher = () => {
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
       void qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
+      /* A cancelled voucher puts its request back on Finance's waiting count. */
+      void qc.invalidateQueries({ queryKey: ['payment-requests'] });
     },
   });
 };
@@ -216,10 +230,13 @@ export const useRejectPaymentVoucher = () => {
    this call. */
 export type BillExtraction = {
   vendorName: string | null; vendorRegNo: string | null;
-  documentKind: 'invoice' | 'bill' | 'receipt' | 'statement' | 'unknown';
+  /** proforma / quotation: not yet the real invoice — a payment on it owes the official one (item 3). */
+  documentKind: 'invoice' | 'bill' | 'receipt' | 'statement' | 'proforma' | 'quotation' | 'unknown';
   invoiceNumber: string | null; invoiceDate: string | null; dueDate: string | null;
   currency: string; totalSen: number | null; sstSen: number | null;
   lines: Array<{ description: string | null; amountSen: number | null }>;
+  /** The event the bill prints (owner 2026-09-30) — read, never matched here. */
+  event?: { name: string | null; venue: string | null; booth: string | null; dateFrom: string | null; dateTo: string | null } | null;
 };
 /* Vendor memory (mig 0341) — what the operator saved the LAST time this
    vendor was paid; the reader hands it back so the form can pre-fill the
@@ -227,7 +244,11 @@ export type BillExtraction = {
 export type VendorMemory = { payeeName: string | null; debitAccountCode: string | null; purpose: string | null; timesSeen: number };
 
 export type ExtractedBill =
-  | { index: number; ok: true; extraction: BillExtraction; supplierMatch: { id: string; code: string | null; name: string; confidence: 'exact' | 'contains' } | null; memory: VendorMemory | null }
+  | {
+    index: number; ok: true; extraction: BillExtraction; supplierMatch: { id: string; code: string | null; name: string; confidence: 'exact' | 'contains' } | null; memory: VendorMemory | null;
+    /** The events the server matched to what the bill printed — suggestions only (6a). */
+    eventSuggestions?: EventSuggestion[];
+  }
   | { index: number; ok: false; reason: string };
 
 /* FileReader, not buf→btoa: a chunked fromCharCode spread stack-overflows on a
@@ -246,6 +267,16 @@ export const useExtractBills = () => useMutation({
     }),
 });
 
+/* The bill a payment request carries, read when Finance opens the voucher or
+   AP invoice that answers it (owner 2026-09-30, 6.2): the server reads the
+   request's own files, so nothing is uploaded twice. No bill → `bills: []`. */
+export const useExtractRequestBill = () => useMutation({
+  mutationFn: (requestId: string) =>
+    authedFetch<{ bills: ExtractedBill[] }>(`/payment-vouchers/extract`, {
+      method: 'POST', body: JSON.stringify({ fromRequest: requestId }),
+    }),
+});
+
 /* ── PV attachments (2026-09-03) — the bill LIVES with its voucher. Before
    this the scan flow read the bill and kept nothing, so there was no evidence
    to show or to print (owner: 我希望可以 print pv include ocr 的文件一起).
@@ -260,7 +291,7 @@ export type PvFile = {
 export type PvFilePayload = { name: string; mime: string; dataBase64: string };
 /* What a voucher file may be — the server's PV_FILE_MIMES (pv-files.ts),
    as an <input accept>. */
-export const PV_FILE_ACCEPT = 'image/jpeg,image/png,image/webp,application/pdf';
+export const PV_FILE_ACCEPT = DOC_FILE_ACCEPT;
 
 export const usePvFiles = (pvId: string | null) => useQuery({
   queryKey: ['pv-files', pvId],
@@ -383,8 +414,9 @@ export const usePvReservations = (supplierId: string | null, excludePvId: string
    The document a refund refunds — 认单为主: the operator names the Sales
    Order (any status) or the Sales Invoice (CANCELLED only), and the server
    answers with the customer, every payment it collected (booked = reached
-   this ledger), the refunds already on it and the headroom. */
-export type RefundPayment = { id: string; paidOn: string; method: string; provider: string | null; amountSen: number; booked: boolean };
+   this ledger; imported = brought over from AutoCount, which counts on an
+   order too — owner 2026-10-05), the refunds already on it and the headroom. */
+export type RefundPayment = { id: string; paidOn: string; method: string; provider: string | null; amountSen: number; booked: boolean; imported?: boolean };
 export type RefundVoucherRow = { id: string; pvNumber: string; status: string; voucherDate: string; totalSen: number };
 export type RefundSource = {
   type: 'SO' | 'SI';
@@ -392,9 +424,15 @@ export type RefundSource = {
   status: string | null;
   customer: { name: string | null; phone: string | null; customerId: string | null; debtorCode: string | null };
   payments: RefundPayment[];
+  /** What the document was paid: booked here plus, on an order, brought over from AutoCount. */
   bookedSen: number;
+  /** The part of it brought over from AutoCount (optional against an older server). */
+  importedSen?: number;
   refunds: RefundVoucherRow[];
   refundedSen: number;
+  /** Refund requests on the order still waiting for Finance (owner 2026-10-14)
+      — spoken for, all but the one being answered. Optional against an older server. */
+  requestedSen?: number;
   refundableSen: number;
   /** Deposit invoices still standing on the order, and what is left on them
       (docs/bugs/0860). Optional only for the minute a newer screen reads an
@@ -404,11 +442,13 @@ export type RefundSource = {
   reason: string | null;
 };
 
-export const useRefundSource = (type: 'SO' | 'SI', docNo: string, excludePvId: string | null = null) => useQuery({
-  queryKey: ['pv-refund-source', type, docNo.trim(), excludePvId],
+/** `excludeRequestId` — the refund request this voucher answers: its own amount
+    is not held against it (owner 2026-10-14). */
+export const useRefundSource = (type: 'SO' | 'SI', docNo: string, excludePvId: string | null = null, excludeRequestId: string | null = null) => useQuery({
+  queryKey: ['pv-refund-source', type, docNo.trim(), excludePvId, excludeRequestId],
   enabled: docNo.trim().length > 0,
   retry: false,
   queryFn: () => authedFetch<{ source: RefundSource }>(
-    `/payment-vouchers/refund-source?type=${type}&docNo=${encodeURIComponent(docNo.trim())}${excludePvId ? `&excludePvId=${encodeURIComponent(excludePvId)}` : ''}`,
+    `/payment-vouchers/refund-source?type=${type}&docNo=${encodeURIComponent(docNo.trim())}${excludePvId ? `&excludePvId=${encodeURIComponent(excludePvId)}` : ''}${excludeRequestId ? `&excludeRequestId=${encodeURIComponent(excludeRequestId)}` : ''}`,
   ),
 });

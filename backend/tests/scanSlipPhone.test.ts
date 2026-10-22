@@ -59,6 +59,27 @@ describe('the Malaysian forms a slip is actually written in still work', () => {
   });
 });
 
+// The draft-body builder used to prepend "+60" to phones[0] even though
+// postProcessSlip already returns E.164 — so a slip phone was stored as
+// "+6060142703095" (double country code). The builder now routes the value
+// through normalizePhone once more, which must be IDEMPOTENT for an already-+60
+// number, whatever writing style the slip carried.
+describe('re-normalising never doubles the country code (the +6060... bug)', () => {
+  test('an already-E.164 number stays single +60', () => {
+    const once = slipPhone('0142703095');
+    expect(once).toBe('+60142703095');
+    expect(slipPhone(once)).toBe('+60142703095');
+    expect(slipPhone(once)).not.toBe('+6060142703095');
+  });
+  test('every writing style lands on the same single-+60 number', () => {
+    for (const raw of ['0142703095', '142703095', '60142703095', '+60142703095', '+6014 2703095', '014-270 3095']) {
+      const first = slipPhone(raw);
+      expect(first).toBe('+60142703095');
+      expect(slipPhone(first)).toBe('+60142703095'); // idempotent
+    }
+  });
+});
+
 describe('unusable input yields null rather than a guess', () => {
   test('empty and non-string', () => {
     expect(slipPhone('')).toBe(null);

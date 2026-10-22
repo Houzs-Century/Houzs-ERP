@@ -43,6 +43,7 @@ import type { Env, Variables } from '../env';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { scopeToCompany, activeCompanyId } from '../lib/companyScope';
 import { stampOrderDeposit } from '../lib/si-list-stamps';
+import { stampSoRefs } from '../lib/so-ref-lookup';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { deriveDisplayBrandingByDoc } from '../lib/so-display-branding';
 import { isPlaceholderBrandText } from '../shared/so-branding-label';
@@ -53,10 +54,11 @@ import { SO_FINANCE_KEYS, SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { soPaidSen, soPaidInputsOf } from '../shared/so-outstanding';
 import {
   parseStage, fairReportAccess, fairSoMoney, depositByTender, paymentMethodsUsed,
-  belowDeposit, fairBalanceSen, doCostTotal, siCostTotal, marginPct, resolveDateWindow,
+  belowDeposit, fairBalanceSen, doCostTotal, siCostTotal, siGoodsTotals, marginPct, resolveDateWindow,
   summarizeSo, summarizeDo, summarizeInvoice,
   fairPnlLineCost, summarizeFairPnl,
   type FairStage, type FairFilters, type PaymentRow, type FairCostRate, type FairPnlSummaryRow,
+  type DoCostLine, type SiGoodsLine,
 } from '../lib/fair-report';
 import type { AuthUser } from '../../services/auth';
 
@@ -329,6 +331,64 @@ reports.get('/sales-order-detail-listing', async (c) => {
 });
 
 // ----------------------------------------------------------------------------
+// Costing-gap listing (owner 2026-09-26). Which SO lines carry NO cost because
+// the PRODUCT itself has no cost — the actionable list of products to fill in
+// Product Maintenance (a line whose product HAS a cost is filled by the nightly
+// restamp, so it is NOT a real gap and is excluded). Sits beside P&L in the
+// Sales Report so the owner sees exactly what is incomplete. Read-only;
+// finance-gated (it exposes the cost dimension).
+// ----------------------------------------------------------------------------
+/** A product's cost is present when the flat cost lane is set, or (SOFA) the seat
+ *  grid carries a PRICE_2 cost row. Mirrors the restamp's unitCostSen fallbacks. */
+function productHasCost(p: { category?: unknown; base_price_sen?: unknown; cost_price_sen?: unknown; seat_height_prices?: unknown }): boolean {
+  if (Number(p.base_price_sen) > 0 || Number(p.cost_price_sen) > 0) return true;
+  const grid = Array.isArray(p.seat_height_prices) ? p.seat_height_prices : [];
+  return grid.some((r) => (r?.tier ?? 'PRICE_2') === 'PRICE_2' && Number(r?.priceSen) > 0);
+}
+
+reports.get('/costing-gap-listing', async (c) => {
+  const sb = c.get('supabase');
+  const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
+
+  // Products with NO cost, by code — the set a zero-cost line must belong to to
+  // count as a real (owner-fixable) gap.
+  const { data: prodData, error: prodErr } = await paginateAll((pFrom, pTo) => {
+    let q = sb.from('mfg_products').select('code, category, base_price_sen, cost_price_sen, seat_height_prices');
+    q = scopeToCompany(q, c);
+    return q.range(pFrom, pTo);
+  });
+  if (prodErr) return c.json({ error: 'load_failed', reason: prodErr.message }, 500);
+  const noCostCodes = new Set<string>();
+  for (const p of (prodData ?? []) as AnyRow[]) if (!productHasCost(p)) noCostCodes.add(String(p.code));
+
+  const { data, error } = await paginateAll((pFrom, pTo) => {
+    let q = sb
+      .from('mfg_sales_order_items')
+      .select(`
+        id, doc_no, line_date, item_code, description, item_group, qty, unit_cost_sen, cancelled, variants,
+        mfg_sales_orders!inner ( doc_no, so_date, debtor_name, branding, venue, status )
+      `)
+      .or('unit_cost_sen.is.null,unit_cost_sen.eq.0');
+    if (scopeIds) q = q.in('mfg_sales_orders.salesperson_id', scopeIds);
+    q = scopeToCompany(q, c);
+    return q.range(pFrom, pTo);
+  });
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+
+  const rows = ((data ?? []) as unknown as AnyRow[])
+    .map((r) => flattenJoin(r, 'mfg_sales_orders'))
+    .filter((r) => !r.cancelled && noCostCodes.has(String(r.item_code)))
+    .map((r) => ({
+      doc_no: r.doc_no, so_date: r.so_date ?? r.line_date, item_code: r.item_code,
+      description: r.description, item_group: r.item_group, qty: r.qty,
+      debtor_name: r.debtor_name, venue: r.venue, branding: r.branding, status: r.status,
+    }));
+
+  gateReportFinance(c, rows);
+  return c.json({ rows });
+});
+
+// ----------------------------------------------------------------------------
 // L2 line-level Detail Listings for Delivery Order / Sales Invoice / Delivery
 // Return. Same shape as /sales-order-detail-listing: flatten the header onto
 // every line, apply filter params, return { rows: [...] }.
@@ -433,6 +493,8 @@ reports.get('/delivery-order-detail-listing', async (c) => {
       if (dateTo   && (!d || d > dateTo))   return false;
       return true;
     });
+  // The order's customer reference, for the listing's row search.
+  await stampSoRefs(sb, rows, 'so_doc_no', (q) => scopeToCompany(q, c), 'do-detail-listing');
 
   return c.json({ rows });
 });
@@ -532,6 +594,8 @@ reports.get('/sales-invoice-detail-listing', async (c) => {
       if (dateTo   && (!d || d > dateTo))   return false;
       return true;
     });
+  // The order's customer reference, for the listing's row search.
+  await stampSoRefs(sb, rows, 'so_doc_no', (q) => scopeToCompany(q, c), 'si-detail-listing');
 
   return c.json({ rows });
 });
@@ -568,7 +632,7 @@ reports.get('/delivery-return-detail-listing', async (c) => {
         qty_returned, condition, unit_price_sen, refund_sen, notes, created_at,
         delivery_returns!inner (
           id, return_number, delivery_order_id, sales_invoice_id, debtor_code,
-          debtor_name, return_date, reason, status, refund_sen,
+          debtor_name, return_date, reason, status, refund_sen, ref, customer_so_no,
           received_at, inspected_at, refunded_at, inspection_notes, notes
         )
       `);
@@ -918,6 +982,7 @@ export const fairReportHandler = async (c: FairCtx) => {
         service_rev_sen: money.service_rev_sen,
         cost_by_category: money.cost_by_category,
         total_so_cost_sen: money.total_so_cost_sen,
+        goods_cost_sen: money.goods_cost_sen,
         margin_pct: money.margin_pct,
         balance_sen: balanceSen,
         paid_total_sen: paidTotal,
@@ -1082,25 +1147,27 @@ export const fairReportHandler = async (c: FairCtx) => {
     if (doErr) return c.json({ error: 'load_failed', reason: doErr.message }, 500);
     const dos = (doData ?? []) as Array<{ id: string; do_number: string; so_doc_no: string | null; do_date: string | null; delivered_at: string | null; status: string | null }>;
 
-    // Their lines (cost), grouped per DO id.
-    const linesByDo = new Map<string, Array<{ qty: number | null; unit_cost_sen: number | null; ship_cost_sen: number | null }>>();
+    // Their lines (cost), grouped per DO id. item_group / item_code tell the
+    // service lines apart: they are left out of the goods-only margin.
+    const linesByDo = new Map<string, DoCostLine[]>();
     const doIds = dos.map((d) => d.id);
     if (doIds.length > 0) {
       const { data: liData, error: liErr } = await chunkIn(doIds, (batch: string[], pFrom: number, pTo: number) => scopeToCompany(sb
         .from('delivery_order_items')
-        .select('delivery_order_id, qty, unit_cost_sen, ship_cost_sen')
+        .select('delivery_order_id, qty, unit_cost_sen, ship_cost_sen, item_group, item_code')
         .in('delivery_order_id', batch), c)
         .range(pFrom, pTo));
       if (liErr) return c.json({ error: 'load_failed', reason: liErr.message }, 500);
-      for (const l of (liData ?? []) as Array<{ delivery_order_id: string; qty: number | null; unit_cost_sen: number | null; ship_cost_sen: number | null }>) {
+      for (const l of (liData ?? []) as Array<DoCostLine & { delivery_order_id: string }>) {
         const arr = linesByDo.get(l.delivery_order_id) ?? [];
-        arr.push({ qty: l.qty, unit_cost_sen: l.unit_cost_sen, ship_cost_sen: l.ship_cost_sen });
+        arr.push({ qty: l.qty, unit_cost_sen: l.unit_cost_sen, ship_cost_sen: l.ship_cost_sen, item_group: l.item_group, item_code: l.item_code });
         linesByDo.set(l.delivery_order_id, arr);
       }
     }
 
     const rows = dos.map((d) => {
       const h = d.so_doc_no ? soByDoc.get(d.so_doc_no) : undefined;
+      const money = h ? fairSoMoney(h) : null;
       const doCost = doCostTotal(linesByDo.get(d.id) ?? []);
       const totalSoCost = Number(h?.total_cost_sen ?? 0);
       const costDelta = doCost.total_do_cost_sen - totalSoCost;
@@ -1113,7 +1180,7 @@ export const fairReportHandler = async (c: FairCtx) => {
         qty: doCost.qty,
         // The linked SO's amount (product + service) — same value the SO tab
         // shows in its Amount column, so the two stages reconcile per SO.
-        so_amount_sen: h ? fairSoMoney(h).amount_sen : null,
+        so_amount_sen: money ? money.amount_sen : null,
         total_so_cost_sen: totalSoCost,
         total_do_cost_sen: doCost.total_do_cost_sen,
         do_cost_is_legacy: doCost.is_legacy,
@@ -1121,8 +1188,9 @@ export const fairReportHandler = async (c: FairCtx) => {
            would otherwise read as a naked 100% margin (2990-DO-2607-021). */
         do_cost_ship_anyway: doCost.has_zero_frozen,
         cost_delta_sen: costDelta,
-        so_margin_pct: marginPct(Number(h?.local_total_sen ?? 0), totalSoCost),
-        do_margin_pct: marginPct(Number(h?.local_total_sen ?? 0), doCost.total_do_cost_sen),
+        // Goods only, both sides over the SO's goods sales (see marginPct).
+        so_margin_pct: money ? money.margin_pct : null,
+        do_margin_pct: money ? marginPct(money.selling_sen, doCost.goods_do_cost_sen) : null,
       };
     });
     const summary = summarizeDo(rows);
@@ -1140,19 +1208,23 @@ export const fairReportHandler = async (c: FairCtx) => {
   if (siErr) return c.json({ error: 'load_failed', reason: siErr.message }, 500);
   const sis = (siData ?? []) as Array<{ id: string; invoice_number: string; so_doc_no: string | null; delivery_order_id: string | null; invoice_date: string | null; total_sen: number | null; status: string | null }>;
 
-  // SI line costs grouped per SI id.
-  const siLinesById = new Map<string, Array<{ qty: number | null; unit_cost_sen: number | null; line_cost_sen: number | null }>>();
+  // SI line costs grouped per SI id. line_total / item_group / item_code give
+  // the goods side the margin is worked on.
+  const siLinesById = new Map<string, SiGoodsLine[]>();
   const siIds = sis.map((s) => s.id);
   if (siIds.length > 0) {
     const { data: liData, error: liErr } = await chunkIn(siIds, (batch: string[], pFrom: number, pTo: number) => scopeToCompany(sb
       .from('sales_invoice_items')
-      .select('sales_invoice_id, qty, unit_cost_sen, line_cost_sen')
+      .select('sales_invoice_id, qty, unit_cost_sen, line_cost_sen, line_total_sen, item_group, item_code')
       .in('sales_invoice_id', batch), c)
       .range(pFrom, pTo));
     if (liErr) return c.json({ error: 'load_failed', reason: liErr.message }, 500);
-    for (const l of (liData ?? []) as Array<{ sales_invoice_id: string; qty: number | null; unit_cost_sen: number | null; line_cost_sen: number | null }>) {
+    for (const l of (liData ?? []) as Array<SiGoodsLine & { sales_invoice_id: string }>) {
       const arr = siLinesById.get(l.sales_invoice_id) ?? [];
-      arr.push({ qty: l.qty, unit_cost_sen: l.unit_cost_sen, line_cost_sen: l.line_cost_sen });
+      arr.push({
+        qty: l.qty, unit_cost_sen: l.unit_cost_sen, line_cost_sen: l.line_cost_sen,
+        line_total_sen: l.line_total_sen, item_group: l.item_group, item_code: l.item_code,
+      });
       siLinesById.set(l.sales_invoice_id, arr);
     }
   }
@@ -1180,7 +1252,9 @@ export const fairReportHandler = async (c: FairCtx) => {
     const invoiced = Number(s.total_sen ?? 0);
     const soCost = Number(h?.total_cost_sen ?? 0);
     const doCost = s.delivery_order_id ? doCostById.get(s.delivery_order_id) ?? 0 : 0;
-    const siCost = siCostTotal(siLinesById.get(s.id) ?? []);
+    const siLines = siLinesById.get(s.id) ?? [];
+    const siCost = siCostTotal(siLines);
+    const goods = siGoodsTotals(siLines);
     return {
       ...(h ? fairDims(h, staffNames, projects) : {}),
       invoice_date: s.invoice_date,
@@ -1192,7 +1266,9 @@ export const fairReportHandler = async (c: FairCtx) => {
       so_cost_sen: soCost,
       do_cost_sen: doCost,
       si_cost_sen: siCost,
-      margin_pct: marginPct(invoiced, siCost),
+      goods_invoiced_sen: goods.goods_invoiced_sen,
+      goods_si_cost_sen: goods.goods_cost_sen,
+      margin_pct: marginPct(goods.goods_invoiced_sen, goods.goods_cost_sen),
     };
   });
   const summary = summarizeInvoice(rows);

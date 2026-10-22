@@ -33,8 +33,9 @@
 // ScmDeliveryReturnDetailV2 is the whole switch. Data + mutations use
 // the vendored delivery-return-queries slice.
 
-import { useMemo, useState, type ReactNode } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { lazy, useMemo, useState, type ReactNode } from "react";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import {
   ArrowLeft,
@@ -76,7 +77,7 @@ import {
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
-import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity, fmtQty } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { transferFromColumnLabel } from "../../lib/convertScope";
 import { customerRefOf } from '../../lib/customer-ref';
@@ -472,9 +473,35 @@ function HeroLine({
   );
 }
 
+// ─── Editor (lazy) ─────────────────────────────────────────────────────────
+// This page is read-only. The Edit button (and the list's right-click Edit)
+// lands on ?edit=1, which is handed to ./DeliveryReturnDetail, the editor with
+// no route of its own. Same forward as PurchaseReturnDetailV2.
+const DeliveryReturnDetailInlineEditor = lazy(() =>
+  import("./DeliveryReturnDetail").then((m) => ({ default: m.DeliveryReturnDetail })),
+);
+
+/* Thin router: its only hooks run unconditionally at the top, so the ?edit=1
+   flip between two children with different hook counts is safe. */
+export function DeliveryReturnDetailV2() {
+  const [params] = useSearchParams();
+  const location = useLocation();
+  if (params.get("edit") === "1") {
+    return (
+      <LazySlot
+        resetKey={`dr-editor:${location.pathname}`}
+        fallback={<div className="p-8 text-[13px] text-ink-muted">Loading editor…</div>}
+      >
+        <DeliveryReturnDetailInlineEditor />
+      </LazySlot>
+    );
+  }
+  return <DeliveryReturnDetailV2ReadOnly />;
+}
+
 // ─── Main page ─────────────────────────────────────────────────────────────
 
-export function DeliveryReturnDetailV2() {
+function DeliveryReturnDetailV2ReadOnly() {
   const { id } = useParams<{ id: string }>();
   const [params] = useSearchParams();
   const navigate = useNavigate();
@@ -689,7 +716,7 @@ export function DeliveryReturnDetailV2() {
       getValue: (l) => l.qty_returned,
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
-          {l.qty_returned}{" "}
+          {fmtQty(l.qty_returned)}{" "}
           <span className="text-[10.5px] text-ink-muted">{l.uom}</span>
         </span>
       ),
@@ -906,13 +933,15 @@ export function DeliveryReturnDetailV2() {
                 Mark refunded
               </Button>
             )}
-            <Button
-              variant="primary"
-              icon={<Edit3 size={14} />}
-              onClick={goEdit}
-            >
-              Edit
-            </Button>
+            {!isTerminal && (
+              <Button
+                variant="primary"
+                icon={<Edit3 size={14} />}
+                onClick={goEdit}
+              >
+                Edit
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -978,7 +1007,7 @@ export function DeliveryReturnDetailV2() {
                   muted={doOf(deliveryReturn) === "—"}
                 />
                 <Field
-                  label="Customer ref"
+                  label="Ref No."
                   value={refOf(deliveryReturn)}
                   mono={refOf(deliveryReturn) !== "—"}
                   muted={refOf(deliveryReturn) === "—"}
@@ -1223,7 +1252,7 @@ export function DeliveryReturnDetailV2() {
             >
               <CheckCircle2 size={16} /> Mark refunded
             </button>
-          ) : (
+          ) : !isTerminal ? (
             <button
               type="button"
               onClick={goEdit}
@@ -1231,7 +1260,7 @@ export function DeliveryReturnDetailV2() {
             >
               <Edit3 size={16} /> Edit
             </button>
-          )}
+          ) : null}
           <button
             type="button"
             onClick={print.openPreview}
@@ -1268,15 +1297,12 @@ export function DeliveryReturnDetailV2() {
         }}
       />
       {/* A chain slot standing for several documents opens this chooser instead
-          of a notice that only named them. Picking a row navigates, so the map
-          closes with it. */}
+          of a notice that only named them. The picked one opens in its own tab of the
+          in-app strip. */}
       <DocumentChoiceDialog
         prompt={chainChoice}
         onClose={closeChainChoice}
-        onPick={(d) => {
-          setRelMapOpen(false);
-          pickChainChoice(d);
-        }}
+        onPick={pickChainChoice}
       />
       <PrintPreviewModal
         open={print.open}

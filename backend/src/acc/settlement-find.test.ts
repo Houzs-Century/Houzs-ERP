@@ -30,7 +30,7 @@ const pay = (id: string, so_doc_no: string, over: Partial<Row> = {}): Row => ({
   amount_sen: 286_500, approval_code: '005751', collected_by: null, created_by: 'u1', ...over,
 });
 
-const world = (over: { matches?: Row[]; pays?: Row[] } = {}) => fakeSb({
+const world = (over: { matches?: Row[]; pays?: Row[]; sos?: Row[]; siPays?: Row[]; sis?: Row[] } = {}) => fakeSb({
   accounts: CHART,
   acc_account_roles: [],
   acc_acquirers: [{ company_id: 2, code: 'GHL', display_name: 'GHL', transit_account_code: '326-0020', fee_account_code: '900-T009', bank_account_code: null, date_tolerance_days: 3, has_unique_ref: false, fee_method: 'stated', is_active: true }],
@@ -41,7 +41,7 @@ const world = (over: { matches?: Row[]; pays?: Row[] } = {}) => fakeSb({
     { id: 3, batch_id: 6, company_id: 1, acquirer_code: 'GHL', line_no: 1, txn_date: '2026-06-02', ref: null, gross_sen: 100, fee_sen: 0, net_sen: 100, bucket: 'UNMATCHED', confirmed_at: null, posted_je_no: null },
   ],
   acc_settlement_matches: over.matches ?? [],
-  mfg_sales_orders: [
+  mfg_sales_orders: over.sos ?? [
     so('2990-SO-2606-011', 'Chou Mun Yee', 's-kw'),
     so('2990-SO-2606-013', 'Tan Ah Kow'),
     so('2990-SO-2606-002', 'Wong li way'),
@@ -55,8 +55,8 @@ const world = (over: { matches?: Row[]; pays?: Row[] } = {}) => fakeSb({
     pay('p-old', '2990-SO-2605-090', { amount_sen: 286_500, method: 'merchant', merchant_provider: 'GHL', paid_at: '2026-05-01' }), // same amount, months earlier
     pay('p-theirs', 'HC-SO-1', { company_id: 1, amount_sen: 286_500 }),                     // other company
   ],
-  sales_invoice_payments: [],
-  sales_invoices: [],
+  sales_invoice_payments: over.siPays ?? [],
+  sales_invoices: over.sis ?? [],
   journal_entries: [],
   journal_entry_lines: [],
   staff: [{ id: 's-kw', name: 'Kah Wai' }],
@@ -106,6 +106,26 @@ describe('findPaymentsForRow', () => {
     const out = await findPaymentsForRow(world(), 2, 3, '');
     expect(out.ok).toBe(false);
     expect(!out.ok && out.status).toBe('not_found');
+  });
+
+  /* Owner 2026-09-25: every search finds a record by its SO's reference — a
+     sales-order payment through its order, an invoice payment through the
+     invoice's so_doc_no. */
+  it("finds by the order's reference, for an SO payment and for an invoice payment", async () => {
+    const sb = world({
+      sos: [
+        { ...so('2990-SO-2606-011', 'Chou Mun Yee'), ref: 'MR CHOU / IOI', customer_so_no: null },
+        { ...so('2990-SO-2606-013', 'Tan Ah Kow'), ref: null, customer_so_no: 'CUST-PO-88' },
+        so('2990-SO-2606-002', 'Wong li way'),
+        so('2990-SO-2605-090', 'Lim Siew Mei'),
+      ],
+      sis: [{ id: 'si-1', company_id: 2, invoice_number: '2990-SI-2606-001', debtor_name: 'Tan Ah Kow', so_doc_no: '2990-SO-2606-013' }],
+      siPays: [pay('sp-1', '', { sales_invoice_id: 'si-1', so_doc_no: undefined, amount_sen: 50_000 })],
+    });
+    const byRef = await findPaymentsForRow(sb, 2, 2, 'chou / ioi');
+    expect(byRef.ok && byRef.payments.map((p) => p.id)).toEqual(['p-011']);
+    const bySiOrder = await findPaymentsForRow(sb, 2, 2, 'cust-po-88');
+    expect(bySiOrder.ok && bySiOrder.payments.map((p) => p.id).sort()).toEqual(['p-013', 'sp-1']);
   });
 
   it('a read that fails is a refusal, not an empty list', async () => {

@@ -42,7 +42,14 @@ import {
 } from '../../../lib/requestCorrelation';
 import { companyHeader } from '../../../lib/activeCompany';
 import { abortableDelay, combineAbortSignals } from '../../../lib/abort';
-import { reportServerFailure, reportAccessDenied } from '../../../lib/errorReporter';
+import { reportServerFailure, reportAccessDenied, reportSlowRequest } from '../../../lib/errorReporter';
+
+// Same threshold as api/client.ts, so both halves of the app report alike.
+const SLOW_FETCH_MS = 800;
+
+/** Doc numbers (HC-SO-2609-004, PO-2607-001) are ids, so one endpoint stays one telemetry signature. */
+export const scmTelemetryPath = (path: string): string =>
+  path.replace(/\/[A-Z]+(?:-[A-Z]+)*-\d{4}-\d+(?:-[A-Z0-9]+)*(?=[/?#]|$)/gi, '/:id');
 
 // `||` not `??`: the CI build inlines VITE_API_URL as an EMPTY STRING when the
 // repo var is unset, and `'' ?? default` keeps `''`. PROD fallback is now
@@ -71,8 +78,18 @@ export const API_URL =
    error; a caller-initiated abort is never rewritten.
    NB: `path` here is the segment AFTER the /api/scm mount, so the /scan- test
    still matches the vendored scan endpoints. */
+/* The bill readers — a supplier bill, a supplier credit note, a payment
+   request's bill — each hand ONE paper to the AI reader, which can take past
+   30 s on a long bill (owner 2026-10-05: the pile's "That took too long").
+   They get the scan wait, and since they WRITE NOTHING a timeout says so
+   instead of warning of a duplicate save. */
+export const BILL_READER_PATH = /\/payment-vouchers\/extract$|\/credit-notes\/scan$|\/payment-requests\/read-bill$|\/stock-takes\/[^/]+\/read-sheet$/;
+/* A document's file upload (POST …/files, …/official-doc) carries the whole
+   file as base64 in one body — up to 27 MB for the 20 MB cap — which a slow
+   office uplink does not finish in 30 s (owner 2026-10-15: attach 不到 pdf). */
+export const FILE_UPLOAD_PATH = /\/files$|\/official-doc$/;
 function timeoutSignal(path: string): AbortSignal | undefined {
-  const ms = /\/scan-/.test(path) ? 120_000 : 30_000;
+  const ms = /\/scan-/.test(path) || BILL_READER_PATH.test(path) || FILE_UPLOAD_PATH.test(path) ? 120_000 : 30_000;
   try { return AbortSignal.timeout(ms); } catch { return undefined; } // pre-2022 browsers
 }
 
@@ -109,6 +126,11 @@ async function fetchWithTimeout(url: string, init: RequestInit, path: string): P
          Either way it fails LOUDLY — never a spinner the operator walks away
          from believing it saved (owner ruling 2026-07-19). */
       const method = String(init.method ?? 'GET').toUpperCase();
+      if (method !== 'GET' && BILL_READER_PATH.test(path)) {
+        /* A reader writes nothing — reading again is always safe; it is not
+           replayed by itself, since one try already waited two minutes. */
+        throw correlateError(new Error('Reading took too long — nothing was saved. Please read it again.'), requestId);
+      }
       if (method !== 'GET') {
         const hasIdemKey = Boolean(
           (init.headers as Record<string, string> | undefined)?.['Idempotency-Key'],
@@ -172,6 +194,28 @@ async function confirmDropship(raw: string): Promise<boolean> {
         `It nets out and the batch number stamps onto this Delivery Order when ` +
         `the Goods Received Note arrives.\n\nAffected: ${codes}`,
       confirmLabel: 'Confirm drop-ship',
+      danger: true,
+    });
+  } catch {
+    return false;
+  }
+}
+
+/* BUG-59 — some picked Sales Order lines have no stock set aside for them.
+   A warning, not a block (Azza 2026-10-06): the operator may go back or
+   deliver anyway. Returns true on confirm; replays with confirmNotReady:true. */
+async function confirmNotReady(raw: string): Promise<boolean> {
+  try {
+    const body = JSON.parse(raw.slice(raw.indexOf('{'))) as {
+      lines?: Array<{ docNo: string; itemCode: string; reason: string }>;
+    };
+    const lines = (body.lines ?? [])
+      .map((l) => `• ${l.itemCode} (${l.docNo})\n   ${l.reason}`)
+      .join('\n\n');
+    return await serviceConfirm({
+      title: 'Item Not Ready',
+      body: `${lines}\n\nGo back and untick these lines to deliver them on a later Delivery Order, or deliver them now anyway.`,
+      confirmLabel: 'Deliver anyway',
       danger: true,
     });
   } catch {
@@ -280,7 +324,16 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
   let res: Response;
   for (let attempt = 0; ; attempt++) {
     try {
+      const startedAt = performance.now();
       res = await fetchWithTimeout(`${API_URL}${path}`, { ...init, headers }, path);
+      /* HC-0002: the SO / DO screens all read through here, not api/client.ts,
+         so without this the slow-request baseline never saw the slowest pages. */
+      const ms = Math.round(performance.now() - startedAt);
+      if (ms >= SLOW_FETCH_MS) {
+        const m = String(init?.method ?? 'GET').toUpperCase();
+        console.warn(`[perf] slow ${m} /api/scm${path} - ${ms}ms id=${requestIdFromResponse(res)}`);
+        try { reportSlowRequest(m, scmTelemetryPath(path), ms); } catch { /* never let telemetry break the request path */ }
+      }
     } catch (e) {
       if (init?.signal?.aborted) throw e;
       if (isGet && attempt < 4) { await abortableDelay(600 + attempt * 1200, init?.signal); continue; }
@@ -329,7 +382,15 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
     try { mergedBody = JSON.parse(init.body) as Record<string, unknown>; } catch { mergedBody = null; }
     for (let guard = 0; mergedBody && guard < 4 && res.status === 409; guard++) {
       const text = await consumeCorrelated(res, () => res.clone().text());
-      if (text.includes('"short_stock"') && mergedBody.confirmShortStock !== true) {
+      if (text.includes('"items_not_ready"') && mergedBody.confirmNotReady !== true) {
+        if (!(await confirmNotReady(text))) {
+          throw correlateError(
+            new Error('Some lines are not ready, so the delivery order was not created. Untick them and deliver them on a later Delivery Order.'),
+            requestIdFromResponse(res),
+          );
+        }
+        mergedBody = { ...mergedBody, confirmNotReady: true };
+      } else if (text.includes('"short_stock"') && mergedBody.confirmShortStock !== true) {
         /* ASK ONCE (2026-07-31). "Ship as drop-ship?" and "Ship anyway?" are the
            same question — the goods are not here — and the operator has already
            answered it in the affirmative on this very request. Re-asking it in
@@ -439,8 +500,8 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
        500 into two failures. */
     try {
       const m = String(init?.method ?? 'GET').toUpperCase();
-      if (res.status >= 500) reportServerFailure(m, path, res.status);
-      else if (res.status === 403) reportAccessDenied(m, path);
+      if (res.status >= 500) reportServerFailure(m, scmTelemetryPath(path), res.status);
+      else if (res.status === 403) reportAccessDenied(m, scmTelemetryPath(path));
     } catch { /* never let telemetry break the request path */ }
     // Plain-language message for the operator (Wei Siang 2026-06-08: every error
     // shown must be 白话文 — no HTTP codes, no raw JSON, no DB internals). The
@@ -561,6 +622,14 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
      there would surface to the operator raw". */
   migrated_source_document:
     'This delivery or receipt was carried over from AutoCount, so its invoice has to mirror the AutoCount one exactly — run the migrated-invoice converter instead of building it by hand.',
+  /* GOODS RECEIPT over-receipt (backend grns.ts qty_exceeds_remaining). The line
+     is already fully received on its purchase order, so the receive is refused —
+     and the body carries no `message`, so until now it fell to the status-409
+     catch-all "That clashes... please refresh." Refreshing never helps: the PO
+     line's received quantity does not change, so the operator retried and got the
+     same wall (office, 2026-09-23). Name the real reason instead. */
+  qty_exceeds_remaining:
+    'This line is already fully received on its purchase order, so no more can be received against it — refreshing will not change that. Receive the purchase-order line that still has an outstanding balance instead.',
   duplicate_code:   'That code is already in use. Please choose a different one.',
   phone_required:   'A phone number is required.',
   not_found:        'That item could no longer be found. Please refresh.',

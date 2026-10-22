@@ -35,6 +35,7 @@
 // ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
+import { syncTripCrewToDos } from '../lib/trip-crew-sync';
 import { z } from 'zod';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
@@ -285,6 +286,7 @@ trips.get('/day', async (c) => {
   // no trip_stops.so_id for an SO — it has no uuid). do_id -> so_doc_no -> SO.
   const doIds = [...new Set(rawStops.map((s) => s.do_id).filter((v): v is string => !!v))];
   const soDocByDoId = new Map<string, string>();
+  const podByDoId = new Map<string, { delivered: boolean; hasPod: boolean }>();
   if (doIds.length > 0) {
     /* COMPANY PREDICATE. The trips above are scoped and the stops hang off
        them, but rule (b) of the company-scope note in scm/lib/companyScope.ts
@@ -292,12 +294,21 @@ trips.get('/day', async (c) => {
        trip, never that the DO is in your books. Same shape as docs/bugs/0496.
        Widened, not isolated — TMS is one shared queue. */
     const { data: doRows } = await scopeToAllowedCompanies(
-      sb.from('delivery_orders').select('id, so_doc_no').in('id', doIds), c,
+      sb.from('delivery_orders').select('id, so_doc_no, status, delivered_at, pod_r2_key, pod_lat').in('id', doIds), c,
     );
     for (const d of (doRows ?? []) as Array<Record<string, unknown>>) {
       const id = dual<string | null>(d, 'id');
       const soDoc = dual<string | null>(d, 'so_doc_no');
       if (id && soDoc) soDocByDoId.set(String(id), String(soDoc));
+      if (id) {
+        const status = String(dual<string | null>(d, 'status') ?? '').toUpperCase();
+        const podKey = dual<string | null>(d, 'pod_r2_key');
+        const podLat = dual<number | null>(d, 'pod_lat');
+        podByDoId.set(String(id), {
+          delivered: status === 'DELIVERED',
+          hasPod: podKey != null || podLat != null,
+        });
+      }
     }
   }
   const soDocNos = [...new Set([...soDocByDoId.values()])];
@@ -351,8 +362,10 @@ trips.get('/day', async (c) => {
   // matching what propose-schedule cached, for cache-key parity; else the snapshot).
   const enrichByStopId = new Map<string, StopEnrichment>();
   const geoAddrByStopId = new Map<string, string>();
+  const podByStopId = new Map<string, { delivered: boolean; hasPod: boolean }>();
   for (const s of rawStops) {
     const soDoc = s.do_id ? soDocByDoId.get(s.do_id) ?? null : null;
+    if (s.do_id) { const m = podByDoId.get(s.do_id); if (m) podByStopId.set(s.id, m); }
     const so = soDoc ? soByDoc.get(soDoc) ?? null : null;
     const houseType = so?.buildingType ?? null;
     const win = houseType ? windowByType.get(houseType.trim().toLowerCase()) ?? null : null;
@@ -412,7 +425,7 @@ trips.get('/day', async (c) => {
   const { trips: dayTrips } = assembleDayView({
     trips: rawTrips, stops: rawStops,
     driversById, helpersById, lorriesById, warehousesById,
-    enrichByStopId, geoByStopId, depotByWarehouseId,
+    enrichByStopId, geoByStopId, depotByWarehouseId, podByStopId,
   });
 
   return c.json({ date, configured, warehouses, trips: dayTrips });
@@ -754,6 +767,11 @@ export const patchTripHandler = async (c: any) => {
     return c.json({ error: 'update_failed', reason: error.message }, 500);
   }
   if (!data) return c.json({ error: 'not_found' }, 404);
+  // The run's crew lands on every DO it carries (Delivery Planning and the phones read the DO crew).
+  if (p.driverId !== undefined || p.helper1Id !== undefined || p.helper2Id !== undefined || p.lorryId !== undefined) {
+    const syncErr = await syncTripCrewToDos(sb, id, null, c.get('user')?.id ?? null).then(() => null, (e: Error) => String(e.message).slice(0, 160));
+    if (syncErr) return c.json({ trip: data, crewSyncError: syncErr });
+  }
   return c.json({ trip: data });
 };
 trips.patch('/:id', patchTripHandler);

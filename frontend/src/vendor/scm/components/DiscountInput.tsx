@@ -34,6 +34,7 @@
 // ----------------------------------------------------------------------------
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 
+import { fmtMoneySen } from '../../../vendor/shared/format';
 /** At-rest display for the amount half: "1000.00", "" when there is none. */
 const amountAtRest = (sen: number | null | undefined): string =>
   sen == null || sen === 0 ? '' : (sen / 100).toFixed(2);
@@ -132,13 +133,13 @@ export const DiscountInput = ({
   const live = readDiscountEntry(draft, baseSen);
   const hint = (() => {
     if (baseSen <= 0) return 'Set a unit price first';
-    if (live.kind === 'percent') return `= ${currency} ${(live.sen / 100).toFixed(2)}`;
+    if (live.kind === 'percent') return `= ${fmtMoneySen(live.sen, currency)}`;
     if (live.kind === 'amount' && live.sen > 0) {
       const pct = Math.round((live.sen / baseSen) * 10000) / 100;
-      return `= ${pctAtRest(Math.min(100, pct)) || '0'}% of ${currency} ${(baseSen / 100).toFixed(2)}`;
+      return `= ${pctAtRest(Math.min(100, pct)) || '0'}% of ${fmtMoneySen(baseSen, currency)}`;
     }
     if (live.kind === 'invalid') return 'Type an amount (1000) or a percentage (25%)';
-    return `${currency} ${(baseSen / 100).toFixed(2)} before discount`;
+    return `${fmtMoneySen(baseSen, currency)} before discount`;
   })();
 
   const commit = () => {

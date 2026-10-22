@@ -6,14 +6,6 @@ export default defineConfig({
   root: fileURLToPath(new URL(".", import.meta.url)),
   plugins: [react()],
   resolve: {
-    alias: [
-      {
-        find: /^@tanstack\/react-virtual$/,
-        replacement: fileURLToPath(
-          new URL("../src/vendor/scm/lib/react-virtual-shim.ts", import.meta.url),
-        ),
-      },
-    ],
     dedupe: ["react", "react-dom"],
   },
   server: {

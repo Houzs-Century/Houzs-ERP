@@ -54,8 +54,8 @@ import { ArrowLeft, Printer, Plus } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
 import { StatCard } from '../../components/StatCard';
-import { buildVariantSummary } from '@2990s/shared'; // Commander 2026-05-28
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { buildVariantSummary, fmtDateOrDash, fmtMoneySen, fmtQty, fmtSen } from '@2990s/shared'; // Commander 2026-05-28
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { ItemGroupPill, BrandingPill, badgeFor } from '../../vendor/scm/lib/category-badges';
 import {
   useSalesOrderDetailListing,
@@ -64,27 +64,17 @@ import {
 } from '../../vendor/scm/lib/reports-queries';
 import { useAuth } from '../../auth/AuthContext';
 import styles from './SalesOrderDetailListing.module.css';
+import { customerRefOf } from '../../lib/customer-ref';
+import { soExemptionExpiryOf } from '../../lib/so-exemption-expiry';
+import { soListStatusWord } from '../../vendor/scm/lib/so-line-export-columns';
 
 /* Bump the storage key when migrating to the Houzs layout — the previous
    key (`so-detail-listing-grid`) held the AutoCount column order, which
    doesn't match the new Houzs columns. v2 starts fresh. */
 const STORAGE_KEY = 'so-detail-listing-grid.v2.houzs';
 
-const fmtRm = (centi: number | null | undefined, currency = ''): string => {
-  const c = Number(centi ?? 0);
-  const prefix = currency ? `${currency} ` : '';
-  return `${prefix}${(c / 100).toLocaleString('en-MY', {
-    minimumFractionDigits: 2, maximumFractionDigits: 2,
-  })}`;
-};
-
-/* Compact date — "2026/05/04". */
-const compactDate = (iso: string | null | undefined): string => {
-  if (!iso) return '—';
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
-  if (!m) return iso;
-  return `${m[1]}/${m[2]}/${m[3]}`;
-};
+const rowMoney = (centi: number | null | undefined, currency: string | null | undefined): string =>
+  !currency || currency === 'MYR' ? fmtSen(centi) : fmtMoneySen(centi, currency);
 
 /* Payment status pill — same warm/green/grey palette as item-group pill,
    tied to a coarse three-state derived from `payment_status` enum. */
@@ -175,7 +165,7 @@ const heightSortValue = (v: number | string | null): number =>
    total ex · plus 2990-extras (customer_delivery_date · processing_date ·
    customer_state · payment_method).
    ───────────────────────────────────────────────────────────────────────── */
-const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[] => {
+const buildColumns = (canFinance: boolean): GridColumn<SoDetailListingRow>[] => {
   /* Read-out helper for the "may exist on the row but not on the type"
      fields — the API flattens the SO header onto every line, so anything
      in mfg_sales_orders is reachable via (r as Record<string, unknown>)[k]. */
@@ -192,9 +182,14 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
       searchValue: (r) => r.doc_no,
       filterType: 'numbering', filterValue: (r) => r.doc_no,
     },
+    /* 1b */ {
+      key: 'reference', label: 'Ref No.', width: 150, sortable: true,
+      accessor: (r) => customerRefOf(r) || '—',
+      searchValue: (r) => customerRefOf(r),
+    },
     /* 2 */ {
       key: 'so_date', label: 'Date', width: 110, sortable: true,
-      accessor: (r) => compactDate((r.so_date ?? r.line_date) as string | null),
+      accessor: (r) => fmtDateOrDash((r.so_date ?? r.line_date) as string | null),
       searchValue: (r) => String(r.so_date ?? r.line_date ?? ''),
       sortFn: (a, b) => String(a.so_date ?? a.line_date ?? '').localeCompare(String(b.so_date ?? b.line_date ?? '')),
       filterType: 'date', dateValue: (r) => (r.so_date ?? r.line_date) as string | null,
@@ -261,24 +256,25 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
     },
     /* 9 */ {
       key: 'qty', label: 'Qty', width: 60, align: 'right', sortable: true,
-      accessor: (r) => String(r.qty ?? 0),
+      accessor: (r) => fmtQty(r.qty ?? 0),
+      exportValue: (r) => r.qty,
       searchValue: (r) => String(r.qty ?? 0),
       sortFn: (a, b) => Number(a.qty ?? 0) - Number(b.qty ?? 0),
     },
     /* 10 */ {
       key: 'unit_price', label: 'Unit Price', width: 110, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.unit_price_sen),
+      accessor: (r) => rowMoney(r.unit_price_sen, r.currency),
       exportValue: (r) => r.unit_price_sen / 100,
       exportFormat: 'rate',
-      searchValue: (r) => fmtRm(r.unit_price_sen),
+      searchValue: (r) => rowMoney(r.unit_price_sen, r.currency),
       sortFn: (a, b) => (a.unit_price_sen ?? 0) - (b.unit_price_sen ?? 0),
     },
     /* 11 */ {
       key: 'total', label: 'Total', width: 120, align: 'right', sortable: true,
-      accessor: (r) => <span style={{ fontWeight: 600 }}>{fmtRm(r.total_sen)}</span>,
+      accessor: (r) => <span style={{ fontWeight: 600 }}>{rowMoney(r.total_sen, r.currency)}</span>,
       exportValue: (r) => r.total_sen / 100,
       exportFormat: 'money',
-      searchValue: (r) => fmtRm(r.total_sen),
+      searchValue: (r) => rowMoney(r.total_sen, r.currency),
       sortFn: (a, b) => (a.total_sen ?? 0) - (b.total_sen ?? 0),
       filterType: 'number', numberValue: (r) => r.total_sen ?? 0,
     },
@@ -290,10 +286,10 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
     ...(canFinance ? ([
       /* 12 */ {
         key: 'line_cost', label: 'Line Cost', width: 110, align: 'right', sortable: true,
-        accessor: (r) => (r.line_cost_sen ?? 0) > 0 ? fmtRm(r.line_cost_sen) : <span style={{ color: 'var(--fg-muted)' }}>—</span>,
+        accessor: (r) => (r.line_cost_sen ?? 0) > 0 ? rowMoney(r.line_cost_sen, r.currency) : <span style={{ color: 'var(--fg-muted)' }}>—</span>,
         exportValue: (r) => r.line_cost_sen / 100,
         exportFormat: 'money',
-        searchValue: (r) => fmtRm(r.line_cost_sen ?? 0),
+        searchValue: (r) => rowMoney(r.line_cost_sen ?? 0, r.currency),
         sortFn: (a, b) => (a.line_cost_sen ?? 0) - (b.line_cost_sen ?? 0),
       },
       /* 13 */ {
@@ -302,11 +298,11 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
           const m = r.line_margin_sen ?? 0;
           if ((r.total_sen ?? 0) <= 0) return <span style={{ color: 'var(--fg-muted)' }}>—</span>;
           const color = m > 0 ? 'var(--c-secondary-a, #2F5D4F)' : m < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)';
-          return <span style={{ color, fontWeight: 600 }}>{fmtRm(m)}</span>;
+          return <span style={{ color, fontWeight: 600 }}>{rowMoney(m, r.currency)}</span>;
         },
         exportValue: (r) => r.line_margin_sen / 100,
         exportFormat: 'money',
-        searchValue: (r) => fmtRm(r.line_margin_sen ?? 0),
+        searchValue: (r) => rowMoney(r.line_margin_sen ?? 0, r.currency),
         sortFn: (a, b) => (a.line_margin_sen ?? 0) - (b.line_margin_sen ?? 0),
       },
       /* 14 */ {
@@ -332,13 +328,13 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
           return aPct - bPct;
         },
       },
-    ] as DataGridColumn<SoDetailListingRow>[]) : []),
+    ] as GridColumn<SoDetailListingRow>[]) : []),
     /* 15 */ {
       key: 'balance', label: 'Balance', width: 110, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.balance_sen ?? 0),
+      accessor: (r) => rowMoney(r.balance_sen ?? 0, r.currency),
       exportValue: (r) => r.balance_sen / 100,
       exportFormat: 'money',
-      searchValue: (r) => fmtRm(r.balance_sen ?? 0),
+      searchValue: (r) => rowMoney(r.balance_sen ?? 0, r.currency),
       sortFn: (a, b) => (a.balance_sen ?? 0) - (b.balance_sen ?? 0),
     },
     /* 16 */ {
@@ -419,7 +415,7 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
           background: 'rgba(232, 107, 58, 0.10)', color,
           fontFamily: 'var(--font-button)', fontSize: 'var(--fs-10)',
           fontWeight: 700, letterSpacing: '0.06em',
-        }}>{s.replace(/_/g, ' ')}</span>;
+        }}>{soListStatusWord(s, null, null, null)}</span>;
       },
       searchValue: (r) => r.status ?? '',
       groupValue: (r) => r.status ?? '(none)',
@@ -440,15 +436,15 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
          saved column layouts still match. Duplicate "Internal DD" column
          removed, commander 2026-05-28. */
       key: 'processing_date', label: 'Processing Date', width: 130, sortable: true,
-      accessor: (r) => { const v = opt(r, 'processing_date'); return v ? compactDate(v) : '—'; },
+      accessor: (r) => fmtDateOrDash(opt(r, 'processing_date') || null),
       searchValue: (r) => opt(r, 'processing_date'),
       filterType: 'date', dateValue: (r) => opt(r, 'processing_date'),
     },
     /* 28 */ {
       key: 'tax_expiry', label: 'Tax Exemption Expiry', width: 150, sortable: true,
-      accessor: (r) => r.sales_exemption_expiry ? compactDate(r.sales_exemption_expiry) : '—',
-      searchValue: (r) => r.sales_exemption_expiry ?? '',
-      filterType: 'date', dateValue: (r) => r.sales_exemption_expiry,
+      accessor: (r) => fmtDateOrDash(soExemptionExpiryOf(r)),
+      searchValue: (r) => soExemptionExpiryOf(r) ?? '',
+      filterType: 'date', dateValue: (r) => soExemptionExpiryOf(r),
     },
     /* 29 */ {
       key: 'note', label: 'Note', width: 160, sortable: true,
@@ -457,17 +453,17 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
     },
     /* 30 */ {
       key: 'paid', label: 'Paid', width: 110, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.paid_total_sen ?? 0),
+      accessor: (r) => rowMoney(r.paid_total_sen ?? 0, r.currency),
       exportValue: (r) => r.paid_total_sen / 100,
       exportFormat: 'money',
-      searchValue: (r) => fmtRm(r.paid_total_sen ?? 0),
+      searchValue: (r) => rowMoney(r.paid_total_sen ?? 0, r.currency),
       sortFn: (a, b) => (a.paid_total_sen ?? 0) - (b.paid_total_sen ?? 0),
     },
     /* 31 — Task #63: last payment date sourced server-side as MAX(paid_at)
        from mfg_sales_order_payments per SO. */
     {
       key: 'last_payment', label: 'Last Payment', width: 120, sortable: true,
-      accessor: (r) => r.last_payment_at ? compactDate(r.last_payment_at) : '—',
+      accessor: (r) => fmtDateOrDash(r.last_payment_at),
       searchValue: (r) => r.last_payment_at ?? '',
       sortFn: (a, b) => String(a.last_payment_at ?? '').localeCompare(String(b.last_payment_at ?? '')),
       filterType: 'date', dateValue: (r) => r.last_payment_at,
@@ -525,18 +521,18 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
     {
       key: 'tax_header', label: 'Tax (Header)', width: 100, align: 'right', sortable: false,
       defaultHidden: true,
-      accessor: () => fmtRm(0),
+      accessor: () => fmtSen(0),
       exportValue: () => 0,
       exportFormat: 'money',
-      searchValue: () => fmtRm(0),
+      searchValue: () => fmtSen(0),
     },
     {
       key: 'tax_line', label: 'Tax (Line)', width: 100, align: 'right', sortable: false,
       defaultHidden: true,
-      accessor: () => fmtRm(0),
+      accessor: () => fmtSen(0),
       exportValue: () => 0,
       exportFormat: 'money',
-      searchValue: () => fmtRm(0),
+      searchValue: () => fmtSen(0),
     },
     {
       /* No-SST regime — constant "SR" (Standard Rated 0%). */
@@ -561,10 +557,10 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
     {
       key: 'total_ex', label: 'Total (Ex)', width: 110, align: 'right', sortable: true,
       defaultHidden: true,
-      accessor: (r) => fmtRm((r.total_sen ?? 0) - (r.tax_sen ?? 0)),
+      accessor: (r) => rowMoney((r.total_sen ?? 0) - (r.tax_sen ?? 0), r.currency),
       exportValue: (r) => (r.total_sen - r.tax_sen) / 100,
       exportFormat: 'money',
-      searchValue: (r) => fmtRm((r.total_sen ?? 0) - (r.tax_sen ?? 0)),
+      searchValue: (r) => rowMoney((r.total_sen ?? 0) - (r.tax_sen ?? 0), r.currency),
       sortFn: (a, b) =>
         ((a.total_sen ?? 0) - (a.tax_sen ?? 0)) -
         ((b.total_sen ?? 0) - (b.tax_sen ?? 0)),
@@ -576,7 +572,7 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
          API (apps/api/src/routes/reports.ts L73). */
       key: 'customer_delivery_date_extra', label: 'Delivery Date', width: 130, sortable: true,
       defaultHidden: true,
-      accessor: (r) => r.customer_delivery_date ? compactDate(r.customer_delivery_date) : '—',
+      accessor: (r) => fmtDateOrDash(r.customer_delivery_date),
       searchValue: (r) => r.customer_delivery_date ?? '',
       filterType: 'date', dateValue: (r) => r.customer_delivery_date,
     },
@@ -604,8 +600,8 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
    intact (a useMemo(buildColumns) would have been rebuilt on every mount). A
    layout saved while the finance columns were visible is safe — DataGrid drops
    saved order/hidden keys it can't resolve against the current column set. */
-const COLUMNS_FINANCE: DataGridColumn<SoDetailListingRow>[] = buildColumns(true);
-const COLUMNS_NO_FINANCE: DataGridColumn<SoDetailListingRow>[] = buildColumns(false);
+const COLUMNS_FINANCE: GridColumn<SoDetailListingRow>[] = buildColumns(true);
+const COLUMNS_NO_FINANCE: GridColumn<SoDetailListingRow>[] = buildColumns(false);
 
 export const SalesOrderDetailListing = () => {
   const navigate = useNavigate();
@@ -752,26 +748,26 @@ export const SalesOrderDetailListing = () => {
           [
             { label: 'Total Lines',    value: kpis.totalLines.toString() },
             { label: 'Unique Orders',  value: kpis.uniqueOrders.toString() },
-            { label: 'Revenue (RM)',   value: fmtRm(kpis.revenue) },
+            { label: 'Revenue',   value: fmtSen(kpis.revenue) },
             ...(kpis.cost !== null
-              ? [{ label: 'Cost (RM)', value: fmtRm(kpis.cost) }]
+              ? [{ label: 'Cost', value: fmtSen(kpis.cost) }]
               : []),
             ...(kpis.margin !== null
               ? [{
-                  label: 'Margin (RM + %)',
-                  value: `${fmtRm(kpis.margin)}${kpis.revenue > 0 ? ` (${(kpis.marginPct ?? 0).toFixed(1)}%)` : ''}`,
+                  label: 'Margin',
+                  value: `${fmtSen(kpis.margin)}${kpis.revenue > 0 ? ` (${(kpis.marginPct ?? 0).toFixed(1)}%)` : ''}`,
                   tone: kpis.margin > 0 ? ('success' as const) : kpis.margin < 0 ? ('error' as const) : undefined,
                 }]
               : []),
             {
-              label: 'Outstanding (RM)',
-              value: fmtRm(kpis.outstanding),
+              label: 'Outstanding',
+              value: fmtSen(kpis.outstanding),
               tone: kpis.outstanding > 0 ? ('error' as const) : undefined,
             },
           ] as Array<{ label: string; value: string; tone?: 'success' | 'error' }>
         ).map(({ label, value, tone }) => (
           /* Every tile is a reduce over `visibleRows`, which is EMPTY until the
-             listing resolves — so "Revenue (RM) RM 0.00" would be a confident
+             listing resolves — so "Revenue RM 0.00" would be a confident
              statement about a report that has not loaded. Mark them unknown
              until there are rows behind them. */
           <StatCard
@@ -786,7 +782,7 @@ export const SalesOrderDetailListing = () => {
 
       {/* ── DataGrid — 33 visible columns + 14 hidden by default ───── */}
       <section className="overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
-        <DataGrid<SoDetailListingRow>
+        <DataGridCompat<SoDetailListingRow>
           rows={baseRows}
           onFilteredRowsChange={setVisibleRows}
           columns={columns}

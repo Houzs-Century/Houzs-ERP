@@ -25,7 +25,7 @@ import {
   ArrowLeft, Pencil, Printer, Trash2, Save, Ban, ChevronDown,
 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { buildVariantSummary, fmtDateOrDash } from '@2990s/shared';
+import { buildVariantSummary, fmtDateOrDash, fmtSen } from '@2990s/shared';
 import { formatPhone } from '@2990s/shared/phone';
 import {
   usePurchaseConsignmentReturnDetail,
@@ -55,12 +55,7 @@ import { DateField } from "../../vendor/scm/components/DateField";
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
-const fmtRm = (centi: number | null | undefined): string => {
-  const v = centi ?? 0;
-  return `MYR ${(v / 100).toLocaleString('en-MY', {
-    minimumFractionDigits: 2, maximumFractionDigits: 2,
-  })}`;
-};
+const fmtRm = (centi: number | null | undefined): string => fmtSen(centi ?? 0);
 
 type HeaderDraft = {
   supplierId: string;
@@ -181,6 +176,7 @@ export const PurchaseConsignmentReturnDetail = () => {
       refund_sen: refundTotal,
       credit_note_ref: pr.credit_note_ref ?? null,
       notes: pr.notes ?? null,
+      supplier_id: pr.supplier_id ?? null,
       supplier: pr.supplier ?? undefined,
     };
     const pdfItems = items.map((it) => ({
@@ -190,6 +186,9 @@ export const PurchaseConsignmentReturnDetail = () => {
       unit_price_sen: it.unit_price_sen,
       line_refund_sen: it.line_refund_sen ?? (it.qty_returned * it.unit_price_sen),
       reason: null,
+      item_group: it.item_group ?? null,
+      description: it.description ?? null,
+      variants: it.variants ?? null,
     }));
     return import('../../vendor/scm/lib/purchase-return-pdf')
       .then(({ generatePurchaseReturnPdf }) =>

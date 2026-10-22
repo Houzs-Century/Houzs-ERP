@@ -138,3 +138,33 @@ describe('fitSoAddress locks a stored address to the column', () => {
     expect(out.address4).toBeNull();
   });
 });
+
+/* BUG-40, HC8962: the form corrects postcode / city / state and has no input for
+   address3 / address4, so the cutover's old town line must not outvote it. */
+describe('a corrected postcode replaces the cutover town line', () => {
+  const MIGRATED = {
+    address1: '312, Jalan Banjaran Utama,', address2: 'Kawasan Kempas Banjaran,',
+    address3: '51200 Kuala Lumpur', address4: 'Kuala Lumpur',
+  };
+
+  test('the stored lines no longer carry the postcode: the structured fields win', () => {
+    const inv = soInvoiceAddress({ ...MIGRATED, postcode: '81200', city: 'Johor Bahru', customer_state: 'Johor' });
+    expect(inv.InvAddr3).toBe('81200 Johor Bahru');
+    expect(inv.InvAddr4).toBe('Johor');
+  });
+
+  test('an untouched migrated order keeps its own AutoCount text', () => {
+    const inv = soInvoiceAddress({ ...MIGRATED, postcode: '51200', city: 'Kuala Lumpur', customer_state: 'Kuala Lumpur' });
+    expect(inv.InvAddr3).toBe('51200 Kuala Lumpur');
+    expect(inv.InvAddr4).toBe('Kuala Lumpur');
+  });
+
+  test('a postcode the import found on line 2 still counts as agreeing', () => {
+    const inv = soInvoiceAddress({
+      address1: 'No 1, Jalan Besar', address2: '43300 Seri Kembangan', address3: 'Selangor', address4: null,
+      postcode: '43300', city: 'Seri Kembangan', customer_state: 'Selangor',
+    });
+    expect(inv.InvAddr3).toBe('Selangor');
+    expect(inv.InvAddr4).toBe('Selangor');
+  });
+});

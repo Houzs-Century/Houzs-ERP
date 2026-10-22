@@ -20,9 +20,13 @@ import {
   amendmentLineFieldKinds,
   amendmentLineIsChange,
   amendmentLineSig,
+  amendmentRequestedUnitPriceSen,
+  amendmentPriceFields,
   amendmentUnrenderedAxes,
   amendmentVariantSummaries,
   amendmentVariants,
+  amendmentVariantsKey,
+  storedLineRemark,
   resolveVariantGroup,
   unrenderedVariantAxes,
   visibleAmendmentLines,
@@ -388,6 +392,39 @@ describe('amendmentLineSig', () => {
   });
 });
 
+/* HC-SO-013490 (2026-10-13): a SPEC swap to a SKU with no sell price seeded 0
+   into the editor (priceAuthored false), both builders sent it as
+   newUnitPriceSen, and an approval made it the billed price. The amendment road
+   now reads an UNAUTHORED 0 the way zeroPriceClaim does on the direct road: no
+   price requested, the stored price stays. */
+describe('amendmentRequestedUnitPriceSen', () => {
+  it('a seeded 0 (not authored) requests NO price', () => {
+    expect(amendmentRequestedUnitPriceSen({ unitPriceSen: 0, priceAuthored: false })).toBeNull();
+  });
+
+  it('an absent priceAuthored flag is not an authored price either', () => {
+    expect(amendmentRequestedUnitPriceSen({ unitPriceSen: 0 })).toBeNull();
+  });
+
+  it('a typed 0 is a real request for RM 0', () => {
+    expect(amendmentRequestedUnitPriceSen({ unitPriceSen: 0, priceAuthored: true })).toBe(0);
+  });
+
+  it('a non-zero price is requested whether or not it was typed (a catalogue fill is a price)', () => {
+    expect(amendmentRequestedUnitPriceSen({ unitPriceSen: 850000, priceAuthored: false })).toBe(850000);
+    expect(amendmentRequestedUnitPriceSen({ unitPriceSen: 850000, priceAuthored: true })).toBe(850000);
+  });
+
+  it('a line whose request carries no price is NOT a price change, and routes without a PRICE atom', () => {
+    const swap: DiffableAmendmentLine = {
+      change_type: 'SPEC', new_item_code: 'MAT-2', new_qty: 1, new_unit_price_sen: null,
+      old_snapshot: { itemCode: 'MAT-1', qty: 1, unitPriceSen: 850000, itemGroup: 'mattress' },
+    };
+    expect(amendmentLineChangedFields(swap).unitPrice).toBe(false);
+    expect(amendmentLineFieldKinds(swap)).toEqual(['SPEC']);
+  });
+});
+
 /* HC-SO-011410 (owner 2026-09-15): the phone copies the line remark into
    variants.remark, the stored blob of an imported line carries none, so the raw
    compare read every remarked line as a spec change and a Delivery Date change
@@ -410,5 +447,45 @@ describe('amendmentVariants', () => {
     const v = { gap: '14"', remark: 'x' };
     amendmentVariants(v);
     expect(v).toEqual({ gap: '14"', remark: 'x' });
+  });
+});
+
+describe('edit-view fills are not changes (HC-0103)', () => {
+  const sig = (variants: unknown, remark = '') => amendmentLineSig({ itemCode: 'X', qty: 1, unitPriceSen: 0, variants, remark, discountSen: 0 });
+
+  it('a blank sofa leg filled with "Default" does not move the signature; a real leg does', () => {
+    const stored = { colourId: 'NICCA-02', specials: ['Nylon Fabric'], seatHeight: '24' };
+    expect(sig({ ...stored, legHeight: 'Default' })).toBe(sig(stored));
+    expect(sig({ ...stored, legHeight: '6"' })).not.toBe(sig(stored));
+  });
+
+  it('a recomputed bedframe totalHeight does not move it; a moved divan does', () => {
+    const stored = { divanHeight: '8"', legHeight: '1"', gap: '10"', totalHeight: '9"' };
+    expect(amendmentVariantsKey({ ...stored, totalHeight: '19"' })).toBe(amendmentVariantsKey(stored));
+    expect(amendmentVariantsKey({ ...stored, divanHeight: '10"', totalHeight: '21"' })).not.toBe(amendmentVariantsKey(stored));
+  });
+
+  it('key order and the remark side channel never count', () => {
+    expect(amendmentVariantsKey({ b: 1, a: 2, remark: 'x' })).toBe(amendmentVariantsKey({ a: 2, b: 1 }));
+    expect(amendmentVariantsKey({ remark: 'x', totalHeight: '' })).toBe('null');
+  });
+
+  it('the stored remark falls back to the copy in variants.remark (HC-SO-2609-321/A2)', () => {
+    expect(storedLineRemark(null, { remark: 'Backrest change to 8069' })).toBe('Backrest change to 8069');
+    expect(storedLineRemark('column wins', { remark: 'blob' })).toBe('column wins');
+    expect(storedLineRemark(undefined, null)).toBe('');
+  });
+});
+
+/* HC-0095 — the apply honours a requested 0 only with zeroPriceIntended. */
+describe('amendmentPriceFields', () => {
+  it('a typed 0 carries the claim', () => {
+    expect(amendmentPriceFields({ unitPriceSen: 0, priceAuthored: true })).toEqual({ newUnitPriceSen: 0, zeroPriceIntended: true });
+  });
+  it('a seeded 0 sends nothing', () => {
+    expect(amendmentPriceFields({ unitPriceSen: 0, priceAuthored: false })).toEqual({});
+  });
+  it('a real price is sent without the claim', () => {
+    expect(amendmentPriceFields({ unitPriceSen: 850000 })).toEqual({ newUnitPriceSen: 850000 });
   });
 });

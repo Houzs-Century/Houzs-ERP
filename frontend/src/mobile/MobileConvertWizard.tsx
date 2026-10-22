@@ -13,6 +13,8 @@ import { outstandingEmptyReason, type OutstandingScope } from "../lib/outstandin
 import "./mobile.css";
 import { SI_TRANSFERABLE_DO_STATES } from '../vendor/shared/do-shipped-states';
 import { soCanRaiseDo } from '../vendor/shared/so-deliverable-states';
+import { customerRefOf } from '../lib/customer-ref';
+import { matchesSearch } from '../lib/so-ref-search';
 /* The word, from the desktop picker's own component, so the phone and the desk
    cannot drift into two names for one field. Mobile spells its field labels
    "Label: value" (see "Supplier SKU:" below), not uppercase — the WORD is
@@ -130,10 +132,13 @@ const clampQty = (raw: string, max: number): number => {
 type SoListRow = {
   doc_no: string; debtor_name: string | null; status: string | null; on_hold?: boolean | null;
   so_date: string | null; local_total_sen: number | null; total_revenue_sen: number | null;
+  ref?: string | null; customer_so_no?: string | null;
 };
 type DoListRow = {
   id: string; do_number: string; debtor_name: string | null; status: string | null;
   do_date: string | null; local_total_sen: number | null;
+  /** The DO's copy of its order's reference, as the DO list shows it. */
+  ref?: string | null; customer_so_no?: string | null;
 };
 type PoListRow = {
   id: string; po_number: string; status: string | null; po_date: string | null;
@@ -152,6 +157,7 @@ type SoDeliverableLine = {
   soItemId: string; docNo: string; itemCode: string; description: string | null;
   itemGroup: string | null; variants: unknown;
   qty: number; remaining: number; unitPriceSen: number; debtorName: string | null;
+  notReady: { reason: string } | null;
 };
 type DoInvoiceableLine = {
   doItemId: string; doNumber: string; itemCode: string; description: string | null;
@@ -209,6 +215,8 @@ type PickLine = {
      row then omits the line entirely (mobile convention, see
      MobileModuleDetail.tsx:491 — no "Standard" filler on a phone). */
   variantLine: string;
+  /** SO→DO only: why this line's stock is not READY; it starts unticked (BUG-59). */
+  notReadyReason: string | null;
   origQty: number;       // the source line's ordered qty (0 when the GET omits it)
   remaining: number;     // outstanding qty still convertible
   unitPriceSen: number;
@@ -224,7 +232,9 @@ export function MobileConvertWizard({
 }: {
   target: ConvertTarget;
   onBack: () => void;
-  onCreated: (docNo: string) => void;
+  /* docId is set only where the next step happens ON the new document — a GRN
+     draft, whose racks the storekeeper scans next (owner 2026-10-02). */
+  onCreated: (docNo: string, docId?: string) => void;
   /* Pre-seed the source document (single-source targets only: SO→DO / SO→PO /
      DO→SI). When set, the wizard opens straight on the line/qty step for that
      document — mirrors the desktop's per-row "Issue Delivery Order" action,
@@ -321,12 +331,12 @@ export function MobileConvertWizard({
     if (meta.source === "so") {
       return ((data?.salesOrders ?? []) as SoListRow[])
         .filter((r) => soCanRaiseDo(r.status, r.on_hold ?? null))
-        .filter((r) => !needle || `${str(r.debtor_name)} ${r.doc_no}`.toLowerCase().includes(needle));
+        .filter((r) => matchesSearch([r.debtor_name, r.doc_no, customerRefOf(r)], needle));
     }
     if (meta.source === "do") {
       return ((data?.deliveryOrders ?? []) as DoListRow[])
         .filter((r) => isTransferableDo(r.status))
-        .filter((r) => !needle || `${str(r.debtor_name)} ${r.do_number}`.toLowerCase().includes(needle));
+        .filter((r) => matchesSearch([r.debtor_name, r.do_number, customerRefOf(r)], needle));
     }
     // PO (GRN): filter to one supplier at a time so /grns/from-pos never 400s
     // on mixed_suppliers. Once a supplier is chosen, show only that supplier.
@@ -373,6 +383,7 @@ export function MobileConvertWizard({
             lineId: l.soItemId,
             label: str(pick(l, "description")) || str(pick(l, "itemCode")) || "—",
             variantLine: variantLineOf(l),
+            notReadyReason: null,
             origQty: Number(l.qty) || 0,
             remaining: Number(l.remainingQty) || 0,
             unitPriceSen: Number(l.unitPriceSen) || 0,
@@ -388,10 +399,11 @@ export function MobileConvertWizard({
           lineId: l.soItemId,
           label: str(pick(l, "description")) || str(pick(l, "itemCode")) || "—",
           variantLine: variantLineOf(l),
+          notReadyReason: l.notReady?.reason ?? null,
           origQty: Number(l.qty) || 0,
           remaining: Number(l.remaining) || 0,
           unitPriceSen: Number(l.unitPriceSen) || 0,
-          checked: true,
+          checked: !l.notReady,
           qty: String(Number(l.remaining) || 0),
         }));
       }
@@ -405,6 +417,7 @@ export function MobileConvertWizard({
         lineId: l.doItemId,
         label: str(pick(l, "description")) || str(pick(l, "itemCode")) || "—",
         variantLine: variantLineOf(l),
+        notReadyReason: null,
         origQty: Number(l.remaining) || 0,
         remaining: Number(l.remaining) || 0,
         unitPriceSen: Number(l.unitPriceSen) || 0,
@@ -516,6 +529,7 @@ export function MobileConvertWizard({
     setSubmitting(true);
     try {
       let newDocNo = "";
+      let newDocId = "";
 
       if (target === "do") {
         /* asDraft:true — the DO is PARKED, not shipped. `from-sos` reads
@@ -621,19 +635,20 @@ export function MobileConvertWizard({
         };
         if (deliveryNoteRef.trim()) body.deliveryNoteRef = deliveryNoteRef.trim();
         if (notes.trim()) body.notes = notes.trim();
-        const res = await authedFetch<{ grnNumber?: string }>("/grns",
+        const res = await authedFetch<{ id?: string; grnNumber?: string }>("/grns",
           idempotentInit(idemKey, {
             method: "POST",
             body: JSON.stringify(body),
           }));
         newDocNo = str(res?.grnNumber);
+        newDocId = str(res.id);
         await qc.invalidateQueries({ queryKey: ["mobile-module"] });
       }
 
       // Also refresh the shared/desktop doc lists (source + target) so a desktop
       // tab doesn't read a stale picker/list after a mobile convert.
       invalidateConvertShared(qc);
-      onCreated(newDocNo);
+      onCreated(newDocNo, newDocId || undefined);
     } catch (e) {
       // A declined short-stock / drop-ship confirm surfaces as a thrown marker;
       // treat any non-success as a plain in-app error (never a naked alert).
@@ -960,6 +975,9 @@ function LinesStep({
                       "BF-01 / SEAT 24 / LEG …" is the same ambiguity again. */}
                   {l.variantLine && (
                     <span style={{ display: "block", marginTop: 2, fontSize: 11, color: "#767b6e" }}><span>{DESCRIPTION_2_LABEL}: </span><span>{l.variantLine}</span></span>
+                  )}
+                  {l.notReadyReason && (
+                    <span style={{ display: "block", marginTop: 3, fontSize: 11, fontWeight: 600, color: "#a16a2e" }}>Not ready: {l.notReadyReason}</span>
                   )}
                   {/* Spec #convert meta: "Outstanding ×{outstanding} of {qty}". */}
                   <span className="tnum" style={{ display: "block", marginTop: 3, fontSize: 11, color: "#767b6e" }}>

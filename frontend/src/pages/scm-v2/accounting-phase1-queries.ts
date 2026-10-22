@@ -210,17 +210,36 @@ export const useControlCheck = () => useQuery({
   retryDelay: 800,
 });
 
-export type DailyBankMovement = { jeNo: string; sourceType: string; sourceDocNo: string | null; note: string; amountSen: number };
+/* The Daily Bank board (backend/src/acc/daily-bank.ts), by bank since
+   2026-09-29: each money account carries its day's lines with who and which
+   document, its checked vouchers awaiting approval, its available, and the
+   card money swiped for the acquirers that pay into it. */
+export type DailyBankMovement = {
+  jeNo: string; sourceType: string; sourceDocNo: string | null;
+  /** The number the board prints — a receipt, voucher, order or journal number, never an internal id. */
+  docNo: string;
+  /** Who paid or was paid; null when the entry names nobody. */
+  party: string | null;
+  note: string; amountSen: number;
+};
+export type DailyBankPending = { id: string | null; pvNumber: string | null; payee: string | null; description: string; voucherDate: string | null; accountCode: string | null; amountSen: number };
+export type DailyBankTransit = { acquirerCode: string; accountCode: string; accountName: string; balanceSen: number; bankAccountCode: string | null };
 export type DailyBankBlock = {
   accountCode: string; accountName: string;
   openingSen: number; inSen: number; outSen: number; closingSen: number;
   receipts: DailyBankMovement[]; payouts: DailyBankMovement[];
+  pending: DailyBankPending[]; pendingSen: number; availableSen: number;
+  transit: DailyBankTransit[]; transitSen: number; availableWithTransitSen: number;
 };
 export type DailyBankBoard = {
   date: string;
   blocks: DailyBankBlock[];
-  transit: Array<{ acquirerCode: string; accountCode: string; accountName: string; balanceSen: number }>;
+  transit: DailyBankTransit[];
   totalClosingSen: number; totalTransitSen: number; pendingApprovalSen: number; availableSen: number;
+  /** Card money whose acquirer names no bank on the board (未标银行). */
+  unassignedTransit: DailyBankTransit[];
+  /** Pending vouchers paying from an account the board does not carry. */
+  unassignedPending: DailyBankPending[];
   note: string;
 };
 

@@ -101,6 +101,23 @@ describe('every SO / CO write path that touches a date calls the shared predicat
   });
 });
 
+describe('every SO line write path calls the line-date predicate (BUG-39)', () => {
+  test('SO create', () => {
+    expect(between(SO, 'const procDate  = (body.processingDate', 'const todayMY'))
+      .toContain('soLineDateRefusal');
+  });
+
+  test('SO add line — and a line added to an order with no Processing Date does not inherit the header date', () => {
+    expect(SO).toContain('const addLineDateRefusal = soLineDateRefusal(');
+    expect(SO).toContain("(header.processing_date ? (header.customer_delivery_date as string | null) ?? null : null)");
+  });
+
+  test('SO line PATCH', () => {
+    expect(between(SO, 'if (it.lineDeliveryDate !== undefined) {', "updates['line_delivery_date'] = dateOrNull(it.lineDeliveryDate);"))
+      .toContain('soLineDateRefusal');
+  });
+});
+
 describe('the deliberate exclusions say why they are excluded', () => {
   /* CLAUDE.md: a route that is deliberately outside a sweep says so in a
      comment naming why, so the next sweep does not "fix" it — and so removing

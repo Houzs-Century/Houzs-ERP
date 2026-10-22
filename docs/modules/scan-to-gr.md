@@ -9,13 +9,30 @@ lists only what differs for GR.
 
 - A scan **only ever lands a DRAFT / unposted GRN.** Stock posts later, on the
   operator's DRAFT→POSTED (`PATCH /grns/:id/post`). No OCR read moves stock.
+  The core sets `status: 'DRAFT'` **explicitly**: the live `scm.grns.status`
+  default is `'POSTED'`. Until 2026-10-01 it relied on that default, so every
+  scanned GRN read "Submitted · inventory received" with no IN written and no PO
+  rollup, and Cancel was refused as `grn_consumed_downstream` (nothing on hand to
+  reverse). `tests/grnFromPoItemsCore.test.ts` fakes the live default to keep it so.
 - **Convert, never standalone.** The GRN is created from PO line(s) via
   `createDraftGrnFromPoItems` (`lib/grn-from-po-core.ts`), so PO outstanding
   clears. A standalone GRN is never fabricated.
 - **Never a wrong link.** If the matcher cannot confidently resolve the PO
   line(s), **nothing is created** — the job lands *needs-review* (status `done`,
   `linked_doc_no` null, slip retained, a plain note) and the operator receives
-  from the PO by hand.
+  from the PO by hand. The note lists each scanned line and why, including a
+  refused PO's live status ("HC-PO-2609-223 is marked Received"), on hold, another
+  supplier's PO ("HC-PO-010086 is OHANA STUDIO's PO"), or no open line found (`printedPoWhy`),
+  for a row's PO and the header's alike. Our number with the location inside
+  ("HC-SRW-PO-2610-091") resolves when that PO ships to that warehouse.
+- **Known PO, unknown codes.** A row whose PO is known but whose code matches
+  nothing (DIGLANT prints its own `T1MAMWA0MK`) is matched by product name
+  (`nameMatchItem`: every word only that item has on the PO must be printed; item-group words such as MATT / MATTRESS are not needed, and a hyphen suffix counts, so FLEXICARE-C is not FLEXICARE-S);
+  the note says how many rows matched by name. Before the name, a row printing one of our SO numbers is a SET (Dorsettloft: "DSL8030 - 2 + L" x1 = two PO pieces): it takes every piece on its PO raised for that SO (`setLinesBySo`, narrowed by a printed model number), at the remaining qty. A row no name matches is
+  "not on the PO" (free gifts). When no row lines up at all, the draft carries
+  every line still owed on the named PO(s) (`poFallback`) only when the
+  delivery order's qty equals what each owes; otherwise needs-review with the
+  counts (`qtyMismatch`). Never with an unresolved supplier.
 
 ## Endpoints (`/scan-gr/*`, gated `scm.procurement.grn`, writeLevel `view`)
 
@@ -24,6 +41,8 @@ lists only what differs for GR.
 | `POST /scan-gr/enqueue` | multipart, repeated `file` (delivery-order pages). Stores photos to R2, inserts a `scan_jobs` row `document_type='GR'`, queues it, returns `202 {job_id}`. |
 | `GET /scan-gr/jobs` | latest 20 GR jobs for the active company. |
 | `GET /scan-gr/jobs/:id` | poll one job. |
+| `GET /scan-gr/jobs/:id/codes` | printed codes on a finished scan that did not match by code (name-matched or not matched), one row per code, with the PO lines they could be (the named POs, else the supplier's open lines). |
+| `POST /scan-gr/jobs/:id/codes` | `{pairs:[{printedCode, poItemId}]}`: only codes and lines that GET offered. Upserts `scm.supplier_scan_codes`; a job with no draft yet is matched again from its stored read (no OCR) and drafted. |
 | `POST /scan-gr/jobs/clear-failed` | delete this company's terminal `error` GR rows. |
 | `GET /scan-gr/slip-image?key=scan-slips/<id>` | serve the stored delivery-order photo (R2 proxy, `scan-slips/` prefix guard). |
 
@@ -32,12 +51,23 @@ lists only what differs for GR.
 `runGrnScanJob`: OCR → sample → match → convert.
 1. `callClaudeGrExtract` (`lib/grn-scan-extract.ts`) — delivery-order prompt;
    extracts supplier, `poNo`, `doNo`, `deliveryDate`, and lines (item code /
-   Article No / barcode, description, qty). Few-shot from prior GR samples.
+   Article No / barcode, description, qty, and the row's own `poNo`). `qty` is
+   SETS, never the piece total (Hookka prints `1 HB + 2 Divan` / Total Qty 3 for
+   one set). Few-shot from prior GR samples.
 2. `insertGrnScanSample` writes `so_scan_samples` `document_type='GR'`.
 3. `matchGrnScanToPoLines` (`lib/grn-scan-match.ts`, **pure**) over open PO lines
-   + supplier bindings (`lib/grn-scan-load.ts`).
-4. Confident picks → `createDraftGrnFromPoItems` → stamp `scan_jobs.linked_doc_no`
-   with the GRN number. No picks → needs-review (no doc).
+   + supplier bindings (`lib/grn-scan-load.ts`) + codes taught for the resolved
+   supplier (`scm.supplier_scan_codes`, `lib/grn-scan-codes.ts`). Steps 3-4 live
+   in `lib/grn-scan-draft.ts`, shared with the codes re-run. Identical lines of
+   one item on one PO take a row's qty in PO line order.
+4. Confident picks → `createDraftGrnFromPoItems` (one draft per ship-to warehouse) →
+   stamp `scan_jobs.linked_doc_no` with the first GRN number; the job note names every draft. No picks → needs-review (no doc).
+5. A rack the warehouse HANDWROTE beside a row ("R11-2", read as
+   `lines[].rack`) is put on that row's draft line when it names exactly one rack
+   of the GRN's warehouse ("Rack R11.2", `lib/grn-scan-racks.ts`). Placement
+   only on a DRAFT; an unknown rack is left blank and listed in the note.
+   After the L/R only digits follow, so look-alike letters read as digits
+   ("L1b-2" -> L16.2).
 
 **Queue routing:** the SO consumer (`processScanQueueMessage`) reads
 `document_type` and delegates `'GR'` to `processGrnScanQueueMessage` (one-way
@@ -47,11 +77,21 @@ other's rows.
 
 ## Matcher (`lib/grn-scan-match.ts`) — how confidence is decided
 
-Match order: **PO number first, then item code / barcode.**
-- The scanned `poNo` (e.g. `PO-010070`) is normalised (uppercase, strip non-alnum)
-  and compared to our `po_number` (`HC-PO-…` / `2990-PO-…`). A hit **scopes**
-  matching to that PO. Supplier-printed PO numbers usually differ from ours, so
-  this often misses and matching falls to item code.
+Match order: **supplier, then PO number, then item code / barcode.**
+- The printed supplier name resolves to ONE of our suppliers
+  (`resolveScannedSupplier`: normalised name / code, else a unique containment
+  match). When resolved, only that supplier's PO lines are candidates.
+- The scanned `poNo` is normalised (uppercase, strip non-alnum) and resolved to
+  our `po_number` (`HC-PO-…` / `2990-PO-…`) by `resolvePrintedPo`: exact, else a
+  unique tail of 6+ digits, because suppliers print ours without the prefix
+  (`PO-010080`, `PO: 2609-251`). A hit **scopes** matching to that PO. Their
+  own refs (`S/O1791`) resolve to nothing and matching falls to item code.
+- **A PO printed on the row** (a consolidated DO such as Hookka's, one of our
+  POs per line, no header P.O.) anchors that row to that PO only. A printed row
+  PO that is not one of our open POs (a fair/service ref like `ART-HOK-002`, a PO
+  already received) leaves the row unmatched `po_not_open` — never item-matched
+  onto another PO. When any row is anchored, a row that printed no PO is left
+  `no_po_number` instead of item-matched.
 - A scanned line resolves to our item code via: its own printed code (direct),
   or `supplier_material_bindings.supplier_sku` / `ac_item_code` → `item_code`, or
   a PO line's own `supplier_sku`. (Suppliers print `AMN-SF9050 SOFA 2B(RHF)`; we
@@ -60,8 +100,15 @@ Match order: **PO number first, then item code / barcode.**
   line.** Zero → `no_open_po_line`; many → `ambiguous`; both leave it unmatched
   (never guessed). Qty is clamped to the PO line's remaining.
 
-**Outcomes:** ≥1 pick → DRAFT GRN(s) linked to the source PO(s), any unmatched
-lines noted for the operator to add. 0 picks (or convert refused, e.g. an
+**Confidence gate (no PO-number hit on the header or any row):** the scan is refused (needs-review, no
+document) when the supplier is unresolved or when the picks span more than one PO.
+When half or fewer of the scanned lines matched the one PO, the draft is still
+created but flagged `weakMatch`: "Check the PO" goes on the GRN note, the scan
+card and the notice. The draft never moves stock until someone posts it.
+
+**Outcomes:** ≥1 pick → DRAFT GRN(s) linked to the source PO(s). Each unmatched
+line is written by name, qty and reason (`describeUnmatchedScanLines`) onto the
+GRN note and the scan card, so the operator knows what to add. 0 picks (or convert refused, e.g. an
 over-receipt race) → needs-review, no document.
 
 ## Learning (`lib/grn-scan-review.ts`)
@@ -87,4 +134,12 @@ jobs write `linked_doc_no` only (never `so_doc_no`).
   `ScanGrnModal` (`vendor/scm/components/ScanGrnModal.tsx`).
 - Mobile: `MobileModuleList` scan icon (wired for `grns` in `MobileApp.tsx`) →
   `MobileGrnScan` (`mobile/MobileGrnScan.tsx`).
-- Both reuse `vendor/scm/lib/scan-jobs.ts` (+ `linkedDocNo`) and `authedFetch`.
+- Both: a finished card has "Match supplier codes" → `ScanCodesPanel`
+  (`vendor/scm/components/ScanCodesPanel.tsx`), shared.
+- Both reuse `vendor/scm/lib/scan-jobs.ts` (+ `linkedDocNo`, `linkedDocId`) and `authedFetch`.
+  The job endpoints resolve `linkedDocId` (company-scoped), so the scan card's
+  GRN number opens the draft directly.
+- Correcting a scanned draft happens on the DRAFT, not on a pre-save review
+  screen (it moves no stock): add from PO / add manual / delete / qty / racks on
+  desktop; racks and add-manual on the phone. The phone shows a DRAFT's note as
+  the amber notice.

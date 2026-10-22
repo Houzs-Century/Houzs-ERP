@@ -33,10 +33,6 @@
       "reads": 0,
       "catches": 3
     },
-    "backend/src/routes/mail-inbound.ts": {
-      "reads": 0,
-      "catches": 1
-    },
     "backend/src/routes/projects.ts": {
       "reads": 0,
       "catches": 2
@@ -133,12 +129,16 @@
       "reads": 3,
       "catches": 0
     },
+    "backend/src/scm/lib/pos-sofa-combos.ts": {
+      "reads": 1,
+      "catches": 0
+    },
     "backend/src/scm/lib/product-pricing-history.ts": {
       "reads": 2,
       "catches": 0
     },
     "backend/src/scm/lib/pwp-claim-single.ts": {
-      "reads": 3,
+      "reads": 2,
       "catches": 0
     },
     "backend/src/scm/lib/reaper.ts": {
@@ -194,7 +194,7 @@
       "catches": 0
     },
     "backend/src/scm/lib/so-stock-allocation.ts": {
-      "reads": 2,
+      "reads": 1,
       "catches": 0
     },
     "backend/src/scm/lib/so-warehouse.ts": {
@@ -258,7 +258,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/document-flow.ts": {
-      "reads": 56,
+      "reads": 47,
       "catches": 0
     },
     "backend/src/scm/routes/dp-orders.ts": {
@@ -278,7 +278,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/grns.ts": {
-      "reads": 49,
+      "reads": 44,
       "catches": 0
     },
     "backend/src/scm/routes/helpers.ts": {
@@ -314,7 +314,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/mfg-sales-orders.ts": {
-      "reads": 75,
+      "reads": 73,
       "catches": 2
     },
     "backend/src/scm/routes/mfg-sales-orders/cross-category.ts": {
@@ -370,7 +370,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/pwp-codes.ts": {
-      "reads": 6,
+      "reads": 5,
       "catches": 0
     },
     "backend/src/scm/routes/reports.ts": {
@@ -394,7 +394,7 @@
       "catches": 1
     },
     "backend/src/scm/routes/so-amendments.ts": {
-      "reads": 9,
+      "reads": 8,
       "catches": 0
     },
     "backend/src/scm/routes/so-dropdown-options.ts": {
@@ -406,7 +406,7 @@
       "catches": 3
     },
     "backend/src/scm/routes/stock-takes.ts": {
-      "reads": 8,
+      "reads": 6,
       "catches": 0
     },
     "backend/src/scm/routes/stock-transfers.ts": {
@@ -450,10 +450,6 @@
       "catches": 1
     },
     "backend/src/services/photoThumbs.ts": {
-      "reads": 0,
-      "catches": 1
-    },
-    "backend/src/services/stockItems.ts": {
       "reads": 0,
       "catches": 1
     },
@@ -511,7 +507,7 @@
     },
     "frontend/src/mobile/MobilePMS.tsx": {
       "reads": 0,
-      "catches": 2
+      "catches": 1
     },
     "frontend/src/mobile/MobileScan.tsx": {
       "reads": 0,

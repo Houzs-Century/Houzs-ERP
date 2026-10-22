@@ -49,6 +49,11 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
   every failure is logged and stepped over.
 - A negative or fractional amount is refused (400), never silently clamped to
   0.
+- **Bank Charges** (`bank_charge_sen`, header, MYR sen) is not in `total_sen`.
+  On post it adds Dr `900-B001` / Cr the PV's bank to the same journal, in MYR
+  as keyed (never through the exchange rate); a cancel's contra reverses it.
+  900-B001 not an active expense leaf of the company = post refused 409
+  `bank_charge_account`. Negative/fractional refused 400 `bank_charge_invalid`.
 - An allocation names a PI **or** an AP invoice, never both or neither
   (`allocation_two_targets` / `allocation_pi_required`).
 - An invoice a saved unposted (Draft/Prepared/Checked) voucher already applies
@@ -97,6 +102,58 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
 - The OCR bill reader (`/payment-vouchers/extract`) **writes nothing** — every
   scan lands on the New page for a human to confirm before save; supplier
   matching falls back to NO match rather than guess wrong.
+- The bill pile (`PaymentVoucherScan.tsx`, PV and AP alike) sends **one bill
+  per request, three at a time** (`READ_AT_ONCE`), at most 50 files a pile
+  (`MAX_PILE_FILES`): one request for the whole pile read the bills one after
+  another and outran the browser's wait (owner 2026-10-05). A bill that fails
+  is read again alone. The bill readers (`/payment-vouchers/extract`,
+  `/credit-notes/scan`, `/payment-requests/read-bill` — `BILL_READER_PATH` in
+  `authed-fetch.ts`) get the 120 s scan wait, and their timeout says nothing
+  was saved instead of the duplicate-save warning.
+- The pile lives in `bill-pile-store.ts` (one per company and per kind) while
+  the tab lives (owner 2026-10-06): opening a bill and coming back finds the
+  rest as read, each opened bill says so, and `BackToPile` on the AP Invoices,
+  Payment Vouchers and New voucher pages offers "Back to Scan bills (N left)".
+  A read stamped with an ended run (Clear the pile, a re-read) is dropped.
+- A bill whose printed number **and** date sit on another live request,
+  voucher or AP invoice (`lib/bill-matches.ts`, `GET
+  /payment-requests/bill-matches`) is said on the voucher form, beside each
+  read bill in the pile, and on the AP invoice form — a warning, never a block;
+  an AP invoice being edited is never its own match (`excludeApInvoice`).
+- A payment request raised from a PMS row (owner 2026-10-08) keeps the row
+  (`acc_payment_requests.checklist_item_id`,
+  `backend/src/scm/lib/pms-checklist-source.ts`): only an event's CONTRACT row,
+  not N/A, of the request's own event (none named = the row's); the event
+  stays when the request is edited (`checklist_event_locked`), and 申请付余额
+  keeps the row. The row reads its requests back through
+  `GET /payment-requests/from-checklist?items=` — a requester's own, Finance's all.
+- Requests waiting for Finance (owner 2026-10-08) are counted, never listed, by
+  `GET /payment-requests/waiting-count` — the page's 「Waiting for Finance」: SUBMITTED,
+  plus an answered one whose AP invoice (or, without one, voucher) is cancelled
+  or gone; 0 for anyone but Finance. It feeds the Payment Vouchers page's reminder
+  (`PaymentRequestsWaiting.tsx` → `/scm/payment-requests?filter=waiting`) and the
+  red count on Money out › Payment Requests; Finance sees that entry only — the
+  Workspace one is the requester's (`hidePerm`).
+- A Sales Order's Refund button raises a payment request, not a voucher (owner
+  2026-10-14; `backend/src/scm/lib/refund-request.ts`): the customer as payee,
+  the reason and the customer's bank required, a file not;
+  `refund_source_type`/`refund_source_doc_no` name the order. While it waits
+  (submitted, or its voucher cancelled) it holds that much of the order's money
+  — in `ordersMoney` and in the refund headroom (`loadRefundSource`) alike.
+  Only a Customer Refund voucher on that order answers it
+  (`refundAnswerRefusal`: `refund_request_needs_refund`, and
+  `request_not_a_refund` the other way round), and its own amount is left out
+  of the headroom (`excludeRequestId`; PV New `?type=refund&fromRequest=`);
+  Finance's Return is the rejection. It is never edited
+  (`refund_request_fixed`) and takes no balance (`refund_no_balance`). Its
+  requester reads it on Payment Requests without the key — every caller reads
+  their own requests there, a Sales caller reaches the router
+  (`requireScmAccess`), and the list says `mayRaise` so the page offers New
+  request only to the key and Finance.
+- Finance's 欠正式单 remark (what to follow up) rides the mark: written with the
+  tick on PV New / the AP invoice form (`officialDocNote`) or on the detail
+  (`POST /official-docs/:kind/:id` with `note`), at most 500 characters; a
+  blank re-mark keeps the remark that is there.
 - Vendor memory (`scm.acc_vendor_memory`) only learns from what the operator
   actually **saved**, never from a model guess; AP payments teach nothing
   (their one line is fixed by role).
@@ -126,6 +183,9 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
   `backend/src/scm/lib/doc-no.ts`, `backend/src/scm/lib/pv-refund.ts` —
   settlement, costing cascade, FX helpers, numbering, refund rules.
 - `backend/src/acc/bill-extract.ts` — OCR extraction.
+- `frontend/src/pages/scm-v2/PaymentRequests.tsx` (申请付款; `?open=<id>` opens
+  one) over `PaymentRequestForm.tsx` (the request form — also opened from a
+  PMS CONTRACT row with the row's files as the bill).
 - `frontend/src/pages/scm-v2/PaymentVouchers.tsx` (list),
   `PaymentVoucherNew.tsx` (create/AP Payment/refund/transfer),
   `PaymentVoucherScan.tsx` (bill pile), `PaymentVoucherDetail.tsx`

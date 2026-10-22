@@ -24,6 +24,8 @@ export type ExportFormat = "text" | "number" | "money" | "rate" | "date";
 export type LineExportColumn<T, L> = {
   key: string;
   label: string;
+  /** The exported header when it must differ from the on-screen label. */
+  exportLabel?: string;
   getValue?: (row: T) => string | number | boolean | null | undefined;
   exportValue?: (row: T) => ExportCell;
   lineValue?(row: T, line: L): ExportCell;
@@ -82,7 +84,7 @@ export function buildLineExportMatrix<T, L>(
     }
   }
   return {
-    header: cols.map((c) => c.label || c.key),
+    header: cols.map((c) => c.exportLabel || c.label || c.key),
     formats: cols.map((c) => c.exportFormat ?? "text"),
     body,
   };

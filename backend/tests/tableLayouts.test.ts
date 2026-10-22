@@ -203,29 +203,35 @@ describe("table layouts", () => {
      save collapses the rows the old scoping left behind. */
   const SHARED = "dg:dg-delivery-planning";
 
-  test("a shared board's layout follows the user across company windows, pinned to one row", async () => {
-    const user = await seedActor(["sales_orders.read"]);
+  /* The boards moved onto DataTable (2026-09-26), which keeps the old storageKey
+     as its table id WITHOUT the "dg:" prefix: that key must stay shared too, or
+     the board forks per company the day it moves. */
+  test.each([SHARED, "dg-delivery-planning-v2"])(
+    "a shared board's layout follows the user across company windows, pinned to one row (%s)",
+    async (key) => {
+      const user = await seedActor(["sales_orders.read"]);
 
-    // Saved from a 2990 window …
-    expect(
-      (await req(user, `/${SHARED}`, { method: "PUT", companyId: 2, body: { layout: layout({ order: ["board"] }) } }))
-        .status,
-    ).toBe(200);
+      // Saved from a 2990 window …
+      expect(
+        (await req(user, `/${key}`, { method: "PUT", companyId: 2, body: { layout: layout({ order: ["board"] }) } }))
+          .status,
+      ).toBe(200);
 
-    // … and read back identically from a HOUZS window.
-    const inHouzs = await (await req(user, "", { companyId: 1 })).json<{
-      mine: Record<string, { layout: { order: string[] } }>;
-    }>();
-    expect(inHouzs.mine[SHARED]?.layout.order).toEqual(["board"]);
+      // … and read back identically from a HOUZS window.
+      const inHouzs = await (await req(user, "", { companyId: 1 })).json<{
+        mine: Record<string, { layout: { order: string[] } }>;
+      }>();
+      expect(inHouzs.mine[key]?.layout.order).toEqual(["board"]);
 
-    // The row is pinned to the lowest visible company, not the window's.
-    const row = await env.DB.prepare(
-      `SELECT company_id FROM table_layouts WHERE table_key = ? AND user_id = ?`,
-    )
-      .bind(SHARED, user.id)
-      .first<{ company_id: number }>();
-    expect(Number(row?.company_id)).toBe(1);
-  });
+      // The row is pinned to the lowest visible company, not the window's.
+      const row = await env.DB.prepare(
+        `SELECT company_id FROM table_layouts WHERE table_key = ? AND user_id = ?`,
+      )
+        .bind(key, user.id)
+        .first<{ company_id: number }>();
+      expect(Number(row?.company_id)).toBe(1);
+    },
+  );
 
   test("a shared board serves the NEWEST forked row, and the next save collapses the fork", async () => {
     const user = await seedActor(["sales_orders.read"]);
@@ -529,5 +535,110 @@ describe("named layouts", () => {
     expect((await req(user, `/${TABLE}/layouts/${Number(live?.id)}`, { method: "DELETE" })).status).toBe(404);
     const body = await (await req(user, "")).json<{ mine: Record<string, unknown> }>();
     expect(body.mine[TABLE]).toBeTruthy();
+  });
+});
+
+/* ── Company-SHARED layouts (mig 20260925) ────────────────────────────────────
+   A team-wide named view (user_id NULL, is_shared 1): a layout MANAGER edits it,
+   everyone in the company reads it. Distinct from the single company default —
+   the two must not clobber each other. */
+describe("company-shared layouts", () => {
+  const seedManager = () => seedActor(["*"]);
+  const SEED = "dg:dg-delivery-planning-v2";
+
+  test("a manager's shared layout is seen by everyone; a non-manager cannot write one", async () => {
+    const manager = await seedManager();
+    const plain = await seedActor(["sales_orders.read"]);
+
+    expect(
+      (await req(plain, `/${SEED}/shared`, {
+        method: "PUT",
+        body: { name: "delivery-date", layout: layout({ order: ["p"] }) },
+      })).status,
+    ).toBe(403);
+    expect(
+      (await req(manager, `/${SEED}/shared`, {
+        method: "PUT",
+        body: { name: "delivery-date", layout: layout({ order: ["team"] }) },
+      })).status,
+    ).toBe(200);
+
+    // Everyone in the company reads it, not just the manager who wrote it.
+    const body = await (await req(plain, "")).json<{
+      sharedLayouts: Record<string, Array<{ name: string; layout: { order: string[] } }>>;
+    }>();
+    expect((body.sharedLayouts[SEED] ?? []).find((l) => l.name === "delivery-date")?.layout.order).toEqual(["team"]);
+  });
+
+  test("a shared layout and the company default are different rows — neither clobbers the other", async () => {
+    const manager = await seedManager();
+    await req(manager, `/${SEED}/default`, { method: "PUT", body: { layout: layout({ order: ["default"] }) } });
+    await req(manager, `/${SEED}/shared`, { method: "PUT", body: { name: "em-order", layout: layout({ order: ["shared"] }) } });
+
+    let body = await (await req(manager, "")).json<{
+      defaults: Record<string, Record<string, { order: string[] }>>;
+      sharedLayouts: Record<string, Array<{ name: string; layout: { order: string[] } }>>;
+    }>();
+    expect(body.defaults["2"]?.[SEED]?.order).toEqual(["default"]);
+    expect((body.sharedLayouts[SEED] ?? []).find((l) => l.name === "em-order")?.layout.order).toEqual(["shared"]);
+
+    // Resetting the shared one leaves the default standing.
+    expect((await req(manager, `/${SEED}/shared/em-order`, { method: "DELETE" })).status).toBe(200);
+    body = await (await req(manager, "")).json<{
+      defaults: Record<string, Record<string, { order: string[] }>>;
+      sharedLayouts: Record<string, Array<{ name: string }>>;
+    }>();
+    expect(body.defaults["2"]?.[SEED]?.order).toEqual(["default"]);
+    expect(body.sharedLayouts[SEED] ?? []).toHaveLength(0);
+  });
+
+  test("editing a shared layout updates the one row, never a second", async () => {
+    const manager = await seedManager();
+    await req(manager, `/${SEED}/shared`, { method: "PUT", body: { name: "sg-order", layout: layout({ order: ["v1"] }) } });
+    await req(manager, `/${SEED}/shared`, { method: "PUT", body: { name: "sg-order", layout: layout({ order: ["v2"] }) } });
+
+    const rows = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM table_layouts WHERE table_key = ? AND user_id IS NULL AND is_shared = 1`,
+    )
+      .bind(SEED)
+      .first<{ n: number }>();
+    expect(Number(rows?.n)).toBe(1);
+    const body = await (await req(manager, "")).json<{
+      sharedLayouts: Record<string, Array<{ name: string; layout: { order: string[] } }>>;
+    }>();
+    expect((body.sharedLayouts[SEED] ?? []).find((l) => l.name === "sg-order")?.layout.order).toEqual(["v2"]);
+  });
+
+  test("a cross-company board's shared layout is ONE copy for both companies", async () => {
+    const manager = await seedManager();
+    const viewer = await seedActor(["sales_orders.read"]);
+
+    // Written with a 2990 window active …
+    expect(
+      (await req(manager, `/${SEED}/shared`, {
+        method: "PUT",
+        companyId: 2,
+        body: { name: "delivery-date", layout: layout({ order: ["one_for_all"] }) },
+      })).status,
+    ).toBe(200);
+
+    // … and seen, identically, by a viewer on the HOUZS window.
+    const inHouzs = await (await req(viewer, "", { companyId: 1 })).json<{
+      sharedLayouts: Record<string, Array<{ name: string; layout: { order: string[] } }>>;
+    }>();
+    expect((inHouzs.sharedLayouts[SEED] ?? []).find((l) => l.name === "delivery-date")?.layout.order).toEqual(["one_for_all"]);
+
+    // Stored as a single row across the group, not one per company.
+    const rows = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM table_layouts WHERE table_key = ? AND user_id IS NULL AND is_shared = 1`,
+    )
+      .bind(SEED)
+      .first<{ n: number }>();
+    expect(Number(rows?.n)).toBe(1);
+
+    // A reset clears it for both.
+    expect((await req(manager, `/${SEED}/shared/delivery-date`, { method: "DELETE", companyId: 1 })).status).toBe(200);
+    const after = await (await req(viewer, "", { companyId: 2 })).json<{ sharedLayouts: Record<string, unknown[]> }>();
+    expect(after.sharedLayouts[SEED] ?? []).toHaveLength(0);
   });
 });

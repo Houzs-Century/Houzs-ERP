@@ -19,13 +19,10 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { ACCOUNTING_TAB_TITLES, accountingTabFromSearch, type AccountingTab } from './accounting-tabs';
 import {
   useAccountBalances,
-  useArAging,
-  useApAging,
   useAccounts,
   type Account,
-  type ArAgingRow,
-  type ApAgingRow,
 } from '../../vendor/scm/lib/accounting-queries';
+import { AgingReport } from './AgingReport';
 import {
   useControlCheck,
   usePaymentBookingDryRun,
@@ -33,6 +30,7 @@ import {
   type ControlCheckRow,
   type UnbookedPayments,
   type PaymentDryRun,
+  type PaymentDryRunRow,
   type PaymentDrift,
   type PaymentDriftRow,
 } from './accounting-phase1-queries';
@@ -45,9 +43,12 @@ import { PaymentCorrectionsTab } from './PaymentCorrectionsTab';
 import { CollectionTab } from './CollectionReport';
 import { MerchantChargesTab } from './MerchantChargesReport';
 import { PerformanceTab } from './PerformancePnl';
+import { EventCostsTab } from './EventCosts';
+import { EventCommissionTab } from './EventCommission';
+import { ProductProfitTab } from './ProductProfit';
 import { cardStyle, fieldStyle, btnStyle } from './JournalEntryCards';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
-import { fmtSen } from '../../vendor/shared/format';
+import { fmtDateOrDash, fmtSen } from '../../vendor/shared/format';
 import { byText } from '../../vendor/scm/lib/sort-options';
 import styles from './Suppliers.module.css';
 import { GeneralLedger } from './GeneralLedger';
@@ -55,7 +56,7 @@ import { JournalTab } from './JournalEntries';
 import { CancelledWithMoneyCard } from './CancelledWithMoneyCard';
 import { ReceiptBackfillCard } from './ReceiptBackfillCard';
 import { PageHeader } from '../../components/Layout';
-import { fmtDateOrDash } from '../../vendor/shared/format';
+import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 
@@ -93,13 +94,18 @@ export const Accounting = () => {
       {tab === 'pnl'   && <PnLTab />}
       {tab === 'bs'    && <BalanceSheetTab />}
       {tab === 'rp'    && <ReceiptsPaymentsTab />}
-      {tab === 'ar'    && <ArAgingTab />}
-      {tab === 'ap'    && <ApAgingTab />}
+      {/* The formal debtor and creditor aging (owner 2026-10-02, B4: it replaces
+          the old lists under the same names). */}
+      {tab === 'ar'    && <AgingReport side="ar" />}
+      {tab === 'ap'    && <AgingReport side="ap" />}
       {tab === 'check' && <SelfCheckTab />}
       {tab === 'corrections' && <PaymentCorrectionsTab />}
       {tab === 'collection' && <CollectionTab />}
       {tab === 'charges' && <MerchantChargesTab />}
       {tab === 'performance' && <PerformanceTab />}
+      {tab === 'events' && <EventCostsTab />}
+      {tab === 'commission' && <EventCommissionTab />}
+      {tab === 'products' && <ProductProfitTab />}
     </div>
   );
 };
@@ -150,7 +156,7 @@ const CoaTab = () => {
         getRowKey={(r) => r.account_code}
         groupBy={{ key: 'type' }}
         columns={[
-          { key: 'type', label: 'Type', width: '110px', defaultHidden: true, getValue: (r) => r.account_type, render: (r) => r.account_type },
+          { key: 'type', label: 'Type', width: '110px', defaultHidden: true, getValue: (r) => r.account_type, render: (r) => humaniseStatusKey(r.account_type) },
           {
             key: 'code', label: 'Code', width: '130px', getValue: (r) => r.account_code,
             render: (r) => (
@@ -202,7 +208,7 @@ const CoaTab = () => {
             getValue: (r) => (r.is_active ? 'ACTIVE' : 'INACTIVE'),
             render: (r) => (
               <span className={`${styles.statusPill} ${r.is_active ? styles.statusActive : styles.statusInactive}`}>
-                {r.is_active ? 'ACTIVE' : 'INACTIVE'}
+                {r.is_active ? 'Active' : 'Inactive'}
               </span>
             ),
           },
@@ -302,7 +308,7 @@ export const TrialBalanceTab = () => {
         getRowKey={(r) => r.account_code}
         groupBy={{ key: 'type' }}
         columns={[
-          { key: 'type', label: 'Type', width: '110px', defaultHidden: true, getValue: (r) => r.account_type, render: (r) => r.account_type },
+          { key: 'type', label: 'Type', width: '110px', defaultHidden: true, getValue: (r) => r.account_type, render: (r) => humaniseStatusKey(r.account_type) },
           { key: 'account', label: 'Account', getValue: (r) => `${r.account_code} — ${r.account_name}`, render: (r) => `${r.account_code} — ${r.account_name}` },
           { key: 'debit', label: 'Σ Debit', align: 'right', width: '140px', getValue: (r) => r.total_debit_sen / 100, render: (r) => fmt(r.total_debit_sen) },
           { key: 'credit', label: 'Σ Credit', align: 'right', width: '140px', getValue: (r) => r.total_credit_sen / 100, render: (r) => fmt(r.total_credit_sen) },
@@ -430,23 +436,18 @@ export const UnbookedPaymentsCard = ({ p }: { p: UnbookedPayments }) => {
       )}
 
       {p.rows.length > 0 && (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
-          <thead>
-            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.18))' }}>
-              <th>Document</th><th>Paid on</th><th>How</th><th style={{ textAlign: 'right' }}>Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            {p.rows.map((r) => (
-              <tr key={`${r.source}:${r.id}`} style={{ borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.10))' }}>
-                <td>{r.docNo}</td>
-                <td>{r.paidOn}</td>
-                <td>{r.method}</td>
-                <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmt(r.amountSen)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <DataTable<UnbookedPayments['rows'][number]>
+          tableId="acc-unbooked-payments"
+          embedded
+          columns={[
+            { key: 'document', label: 'Document', getValue: (r) => r.docNo, render: (r) => r.docNo },
+            { key: 'paidOn', label: 'Paid on', getValue: (r) => r.paidOn, render: (r) => fmtDateOrDash(r.paidOn) },
+            { key: 'how', label: 'How', getValue: (r) => r.method, render: (r) => r.method },
+            { key: 'amount', label: 'Amount', align: 'right', getValue: (r) => r.amountSen, exportValue: (r) => r.amountSen / 100, exportFormat: 'money', render: (r) => fmt(r.amountSen) },
+          ]}
+          rows={p.rows}
+          getRowKey={(r) => `${r.source}:${r.id}`}
+        />
       )}
     </div>
   );
@@ -498,6 +499,8 @@ export const PaymentDriftCard = ({ d }: { d: PaymentDrift }) => {
             + 'Editing a payment does not re-post its entry, so a change made after the day it was keyed leaves the books behind.'}
       </div>
 
+      {/* Stays a plain table on purpose: this card reads and offers no button
+          at all (PaymentDriftCard.test), and a list grid brings its own. */}
       {d.rows.length > 0 && (
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
           <thead>
@@ -553,25 +556,23 @@ const DryRunResult = ({ r }: { r: PaymentDryRun }) => {
         {r.remaining > r.rows.length ? ` Showing the first ${r.rows.length}.` : ''}
       </div>
       {r.rows.length > 0 && (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
-          <thead>
-            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.18))' }}>
-              <th>Document</th><th>Paid on</th><th>How</th><th style={{ textAlign: 'right' }}>Amount</th><th>Verdict</th><th>Reason</th>
-            </tr>
-          </thead>
-          <tbody>
-            {r.rows.map((row) => (
-              <tr key={row.id} style={{ borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.10))' }}>
-                <td>{row.docNo}</td>
-                <td>{row.paidOn}</td>
-                <td>{row.method}</td>
-                <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmt(row.amountSen)}</td>
-                <td style={{ fontWeight: 600, color: row.status === 'would_post' ? good : bad }}>{row.status === 'would_post' ? 'would post' : row.status}</td>
-                <td>{row.reason ?? '—'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <DataTable<PaymentDryRunRow>
+          tableId="acc-payment-dry-run"
+          embedded
+          columns={[
+            { key: 'document', label: 'Document', getValue: (row) => row.docNo, render: (row) => row.docNo },
+            { key: 'paidOn', label: 'Paid on', getValue: (row) => row.paidOn, render: (row) => fmtDateOrDash(row.paidOn) },
+            { key: 'how', label: 'How', getValue: (row) => row.method, render: (row) => row.method },
+            { key: 'amount', label: 'Amount', align: 'right', getValue: (row) => row.amountSen, render: (row) => fmt(row.amountSen) },
+            {
+              key: 'verdict', label: 'Verdict', getValue: (row) => (row.status === 'would_post' ? 'would post' : row.status),
+              render: (row) => <span style={{ fontWeight: 600, color: row.status === 'would_post' ? good : bad }}>{row.status === 'would_post' ? 'would post' : row.status}</span>,
+            },
+            { key: 'reason', label: 'Reason', getValue: (row) => row.reason ?? '', render: (row) => row.reason ?? '—' },
+          ]}
+          rows={r.rows}
+          getRowKey={(row) => row.id}
+        />
       )}
     </div>
   );
@@ -605,28 +606,19 @@ const ControlCheckCard = ({ check }: { check: ControlCheckRow }) => {
       </div>
 
       {check.driftDocs.length > 0 && (
-        <table style={{ width: '100%', fontSize: 'var(--fs-13)', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.12))' }}>
-              <th style={{ padding: '4px 8px' }}>Document</th>
-              <th style={{ padding: '4px 8px', textAlign: 'right' }}>Document total</th>
-              <th style={{ padding: '4px 8px', textAlign: 'right' }}>Journal total</th>
-              <th style={{ padding: '4px 8px', textAlign: 'right' }}>Difference</th>
-              <th style={{ padding: '4px 8px' }}>What is wrong</th>
-            </tr>
-          </thead>
-          <tbody>
-            {check.driftDocs.map((d) => (
-              <tr key={d.docNo} style={{ borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.06))' }}>
-                <td style={{ padding: '4px 8px' }}><span className={styles.codeChip}>{d.docNo}</span></td>
-                <td style={{ padding: '4px 8px', textAlign: 'right' }}>{fmt(d.docTotalSen)}</td>
-                <td style={{ padding: '4px 8px', textAlign: 'right' }}>{fmt(d.jeTotalSen)}</td>
-                <td style={{ padding: '4px 8px', textAlign: 'right', fontWeight: 700 }}>{fmt(d.diffSen)}</td>
-                <td style={{ padding: '4px 8px' }}>{d.note}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <DataTable<(typeof check.driftDocs)[number]>
+          tableId="acc-control-drift"
+          embedded
+          columns={[
+            { key: 'document', label: 'Document', getValue: (d) => d.docNo, render: (d) => <span className={styles.codeChip}>{d.docNo}</span> },
+            { key: 'docTotal', label: 'Document total', align: 'right', getValue: (d) => d.docTotalSen, render: (d) => fmt(d.docTotalSen) },
+            { key: 'jeTotal', label: 'Journal total', align: 'right', getValue: (d) => d.jeTotalSen, render: (d) => fmt(d.jeTotalSen) },
+            { key: 'diff', label: 'Difference', align: 'right', getValue: (d) => d.diffSen, render: (d) => <span style={{ fontWeight: 700 }}>{fmt(d.diffSen)}</span> },
+            { key: 'wrong', label: 'What is wrong', getValue: (d) => d.note, render: (d) => d.note },
+          ]}
+          rows={check.driftDocs}
+          getRowKey={(d) => d.docNo}
+        />
       )}
 
       {check.foreignLines.length > 0 && (
@@ -639,106 +631,7 @@ const ControlCheckCard = ({ check }: { check: ControlCheckRow }) => {
   );
 };
 
-/* ── AR Aging ────────────────────────────────────────────────────────── */
-const ArAgingTab = () => {
-  const q = useArAging();
-  const rows = useMemo(() => q.data?.arAging ?? [], [q.data]);
-  const totals = useMemo(() => bucketTotals<ArAgingRow>(rows), [rows]);
-
-  return (
-    <>
-      <BucketSummary totals={totals} grandTotal={rows.reduce((s, r) => s + r.outstanding_sen, 0)} />
-      <DataTable<ArAgingRow>
-        tableId="accounting-ar-aging"
-        layoutFamily="accounting-ar-aging"
-        exportName="ar-aging"
-        rows={q.isLoading ? null : rows}
-        loading={q.isLoading}
-        emptyLabel="No outstanding AR."
-        getRowKey={(r) => r.invoice_id}
-        columns={[
-          { key: 'invoice', label: 'Invoice', width: '140px', getValue: (r) => r.invoice_number, render: (r) => <span className={styles.codeChip}>{r.invoice_number}</span> },
-          { key: 'customer', label: 'Customer', getValue: (r) => `${r.debtor_name}${r.debtor_code ? ` (${r.debtor_code})` : ''}`, render: (r) => `${r.debtor_name}${r.debtor_code ? ` (${r.debtor_code})` : ''}` },
-          { key: 'invoice_date', label: 'Date', width: '110px', getValue: (r) => r.invoice_date, render: (r) => fmtDateOrDash(r.invoice_date) },
-          { key: 'due', label: 'Due', width: '110px', getValue: (r) => r.due_date ?? '', render: (r) => r.due_date ?? '—' },
-          {
-            key: 'outstanding', label: 'Outstanding', align: 'right', width: '140px',
-            getValue: (r) => r.outstanding_sen / 100,
-            render: (r) => <span style={{ fontWeight: 700 }}>{fmt(r.outstanding_sen)}</span>,
-          },
-          { key: 'days_overdue', label: 'Days Overdue', align: 'right', width: '120px', getValue: (r) => r.days_overdue, render: (r) => (r.days_overdue > 0 ? r.days_overdue : '—') },
-          { key: 'bucket', label: 'Bucket', width: '110px', getValue: (r) => r.aging_bucket, render: (r) => <BucketPill bucket={r.aging_bucket} /> },
-        ] satisfies Column<ArAgingRow>[]}
-      />
-    </>
-  );
-};
-
-/* ── AP Aging ────────────────────────────────────────────────────────── */
-const ApAgingTab = () => {
-  const q = useApAging();
-  const rows = useMemo(() => q.data?.apAging ?? [], [q.data]);
-  const totals = useMemo(() => bucketTotals<ApAgingRow>(rows), [rows]);
-
-  return (
-    <>
-      <BucketSummary totals={totals} grandTotal={rows.reduce((s, r) => s + r.outstanding_sen, 0)} />
-      <DataTable<ApAgingRow>
-        tableId="accounting-ap-aging"
-        layoutFamily="accounting-ap-aging"
-        exportName="ap-aging"
-        rows={q.isLoading ? null : rows}
-        loading={q.isLoading}
-        emptyLabel="No outstanding AP."
-        getRowKey={(r) => r.invoice_id}
-        columns={[
-          { key: 'invoice', label: 'Invoice', width: '140px', getValue: (r) => r.invoice_number, render: (r) => <span className={styles.codeChip}>{r.invoice_number}</span> },
-          /* Both kinds age here since 2026-09-06 — the AP invoice (non-stock
-             bill) beside the purchase invoice; the column says which. */
-          { key: 'kind', label: 'Kind', width: '90px', getValue: (r) => r.kind ?? 'PI', render: (r) => (r.kind === 'API' ? 'AP inv' : 'PI') },
-          // Owner 2026-07-24: supplier NAME and CODE are separate columns on
-          // every procurement table, not one combined cell.
-          { key: 'supplier', label: 'Supplier', getValue: (r) => r.supplier_name ?? '', render: (r) => r.supplier_name ?? '—' },
-          {
-            key: 'supplier_code', label: 'Supplier Code', width: '130px',
-            getValue: (r) => r.supplier_code ?? '',
-            render: (r) => (r.supplier_code ? <span className={styles.codeChip}>{r.supplier_code}</span> : '—'),
-          },
-          { key: 'invoice_date', label: 'Date', width: '110px', getValue: (r) => r.invoice_date, render: (r) => fmtDateOrDash(r.invoice_date) },
-          { key: 'due', label: 'Due', width: '110px', getValue: (r) => r.due_date ?? '', render: (r) => r.due_date ?? '—' },
-          {
-            key: 'outstanding', label: 'Outstanding', align: 'right', width: '140px',
-            getValue: (r) => r.outstanding_sen / 100,
-            render: (r) => <span style={{ fontWeight: 700 }}>{fmt(r.outstanding_sen)}</span>,
-          },
-          { key: 'days_overdue', label: 'Days Overdue', align: 'right', width: '120px', getValue: (r) => r.days_overdue, render: (r) => (r.days_overdue > 0 ? r.days_overdue : '—') },
-          { key: 'bucket', label: 'Bucket', width: '110px', getValue: (r) => r.aging_bucket, render: (r) => <BucketPill bucket={r.aging_bucket} /> },
-        ] satisfies Column<ApAgingRow>[]}
-      />
-    </>
-  );
-};
-
 /* ── Helpers ─────────────────────────────────────────────────────────── */
-type Bucket = 'CURRENT' | '1-30' | '31-60' | '61-90' | '90+';
-
-const bucketTotals = <T extends { aging_bucket: Bucket; outstanding_sen: number }>(rows: T[]) => {
-  const out: Record<Bucket, number> = { 'CURRENT': 0, '1-30': 0, '31-60': 0, '61-90': 0, '90+': 0 };
-  for (const r of rows) out[r.aging_bucket] += r.outstanding_sen;
-  return out;
-};
-
-const BucketSummary = ({
-  totals, grandTotal,
-}: { totals: Record<Bucket, number>; grandTotal: number }) => (
-  <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 'var(--space-3)' }}>
-    {(['CURRENT', '1-30', '31-60', '61-90', '90+'] as const).map((b) => (
-      <SummaryTile key={b} label={b} value={fmt(totals[b])} muted={b === 'CURRENT'} />
-    ))}
-    <SummaryTile label="Total" value={fmt(grandTotal)} bold />
-  </section>
-);
-
 const SummaryTile = ({
   label, value, muted, bold,
 }: { label: string; value: string; muted?: boolean; bold?: boolean }) => (
@@ -755,22 +648,3 @@ const SummaryTile = ({
   </div>
 );
 
-const BucketPill = ({ bucket }: { bucket: Bucket }) => {
-  const colorMap: Record<Bucket, { bg: string; fg: string }> = {
-    'CURRENT': { bg: 'rgba(47, 93, 79, 0.12)', fg: 'var(--c-secondary-a, #2F5D4F)' },
-    '1-30':    { bg: 'rgba(232, 107, 58, 0.10)', fg: 'var(--c-orange)' },
-    '31-60':   { bg: 'rgba(232, 107, 58, 0.18)', fg: 'var(--c-orange)' },
-    '61-90':   { bg: 'rgba(184, 51, 31, 0.10)', fg: 'var(--c-festive-b, #B8331F)' },
-    '90+':     { bg: 'rgba(184, 51, 31, 0.18)', fg: 'var(--c-festive-b, #B8331F)' },
-  };
-  const c = colorMap[bucket];
-  return (
-    <span style={{
-      display: 'inline-block', padding: '2px 8px',
-      borderRadius: 999, background: c.bg, color: c.fg,
-      fontSize: 'var(--fs-12)', fontWeight: 700,
-    }}>
-      {bucket}
-    </span>
-  );
-};

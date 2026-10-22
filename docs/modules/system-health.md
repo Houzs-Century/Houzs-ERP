@@ -4,7 +4,10 @@ Admin-only diagnostic and manual-refresh surface for integrations that normally 
 
 ## Permissions
 
-- Every route under `/api/admin/health` requires the `*` permission (owner / IT Admin only) — including the read-only diagnostics, since several issue multi-thousand-row reads or reveal internal build/host details.
+- Every route under `/api/admin/health`, and the page and its menu row, require `it.view` (the IT pages gate, `services/itAccess.ts`, exposed to the client as the `it.pages.view` capability). `IT_PAGES_WILDCARD_PASSES` is true, so the `*` wildcard passes and Owner and Super Admin see it; set it false to hide the IT pages from them again.
+- The ledger, AutoCount reconcile/pull/snapshot, host-build and page-ceiling routes additionally require `*`, so while the switch is off nobody can call them.
+- The `system_health` page-access key no longer gates anything.
+- `GET /jobs` (last run and verdict per cron job, from `public.job_runs`) and `GET /queues` (waiting / failed / oldest age per queue, plus failed slip scans in 7 days) need only `it.view`.
 
 ## Rules that must not break
 
@@ -24,10 +27,17 @@ Admin-only diagnostic and manual-refresh surface for integrations that normally 
 - `/rest-page-ceiling` and `/autocount/host-build` both need Worker-only secrets (`SUPABASE_SERVICE_ROLE_KEY`, `AC_SYNC_URL`/`AC_SYNC_KEY`) — they cannot be probed from a GitHub Actions workflow, only by calling the deployed route as a signed-in owner.
 - The month-end stock-close sweep and the inventory valuation page (`GET /inventory/valuation`) share one replay engine (`stock-close.ts`) — don't add a second valuation calculation.
 - `/api/announcements` is served by three routers mounted on the same prefix in order (module, receipts, approval) — a route added to the wrong one can silently shadow or be shadowed.
+- Failed logins (`public.auth_failed_logins`, `GET /logins`): every failed branch of `/auth/login` and `/auth/totp/login` saves a row via `recordFailedLogin` AFTER the response (waitUntil, errors only logged); it must never change the login's status, body or timing, and never store the password or code. Kept 90 days (`pruneFailedLogins`, daily cron).
+- `/logins` verdict: one email >= 10 failures in 24 h or > 100 total = warning; one email >= 30 = critical. Rate-limited attempts count as failures.
+- `GET /database`: one catalog statement per metric, each in its own transaction with `SET LOCAL statement_timeout = '5s'`. Never plain `SET`: the Hyperdrive pooler is session mode, so it would leak.
+- Without `pg_read_all_stats`, other roles' sessions are hidden: long-transaction counts become a lower bound and `limitedVisibility` is set. Lock waits read `pg_locks` (any role can read it, and it has `waitstart`).
+- Connections are judged against the smaller of `max_connections` and the 60-connection cap noted in `wrangler.toml`.
 
 ## Where the code is
 
-- `backend/src/routes/systemHealth.ts` — all diagnostic/refresh routes.
+- `backend/src/routes/systemHealth.ts` — all diagnostic/refresh routes; database load (`systemHealthDatabase.ts`), `/jobs` and `/queues` (`systemHealthJobs.ts`), `/services` and `/logins` live in their own files mounted inside it.
+- `backend/src/routes/systemHealthServices.ts` — `GET /services`, one row per outside service, read only from what is already recorded (`execution_logs`, `scm.autocount_outbox`, `email_log`, `scm.wa_message_log`, `push_devices`, `scm.venture_portal_outbox`, `ai_usage_events`); verdict rules in `services/serviceHealth.ts`. Mail-inbox sync and untimed APNs errors are not recorded, so they cannot be judged.
+- `backend/src/services/jobRuns.ts` (`track()` wraps every job in `scheduled()`, 14-day retention) and `jobHealth.ts` (job catalogue and verdict rules). A new cron job needs a `track("name", ...)` and a catalogue entry, or its test fails.
 - `backend/src/scm/lib/paginate-all.ts` — the `paginateAll` pagination helper `/rest-page-ceiling` measures.
 - `backend/src/db/supabase.ts` — PostgREST client used by the ceiling probe.
 - `backend/src/acc/stock-close.ts` — month-end stock close sweep + valuation replay.

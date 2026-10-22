@@ -17,6 +17,7 @@ import { PO_STATUS_BUCKETS } from './po-status-buckets';
 import { HELD_OR_TERM, HOLD_COLUMNS } from './document-hold';
 import { escapeForOr } from './postgrest-search';
 import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
+import { inArm } from './so-ref-search';
 import { chunkIn } from './paginate-all';
 
 export const PO_HEADER_COLS =
@@ -59,6 +60,11 @@ export type PoListFilters = {
   creditorNames: string[] | null;
   creditorCodes: string[] | null;
   currencies: string[] | null;
+  /** Doc Date funnel: exact `po_date` values (YYYY-MM-DD). */
+  docDates: string[] | null;
+  /** POs with a line bought for an SO whose reference matches `q`
+      (lib/so-ref-search.ts); a PO carries no ref of its own. */
+  soRefPoIds: string[];
 };
 
 const param = (v: string | undefined): string | null => (v === undefined || v === '' ? null : v);
@@ -78,6 +84,13 @@ function jsonArrayParam(v: string | undefined): string[] | null {
   }
 }
 
+/* A non-date value would make Postgres reject the whole list read (400), so it
+   is dropped; nothing left reads as no filter. */
+function isoDates(v: string[] | null): string[] | null {
+  const out = (v ?? []).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+  return out.length ? out : null;
+}
+
 export function readPoListFilters(query: (key: string) => string | undefined): PoListFilters {
   return {
     status: param(query('status')),
@@ -89,6 +102,8 @@ export function readPoListFilters(query: (key: string) => string | undefined): P
     creditorNames: jsonArrayParam(query('creditorNames')),
     creditorCodes: jsonArrayParam(query('creditorCodes')),
     currencies: jsonArrayParam(query('currencies')),
+    docDates: isoDates(jsonArrayParam(query('docDates'))),
+    soRefPoIds: [],
   };
 }
 
@@ -163,13 +178,14 @@ export function filterPoList<Q>(q: Q, f: PoListFilters, c: CompanyScopeCtx, vali
   if (f.creditorNames && f.creditorNames.length > 0) out = out.in('supplier.name', f.creditorNames);
   if (f.creditorCodes && f.creditorCodes.length > 0) out = out.in('supplier.code', f.creditorCodes);
   if (f.currencies && f.currencies.length > 0) out = out.in('currency', f.currencies);
+  if (f.docDates && f.docDates.length > 0) out = out.in('po_date', f.docDates);
   out = scopeToCompany(out, c); // multi-company: isolate to the active company
   /* free-text search over the base-table text columns. Supplier name / code are
      embedded resources, not base purchase_orders columns, so they can't be
      ilike'd here. */
   if (f.q) {
     const s = escapeForOr(f.q);
-    if (s) out = out.or(`po_number.ilike.%${s}%,notes.ilike.%${s}%`);
+    if (s) out = out.or([`po_number.ilike.%${s}%`, `notes.ilike.%${s}%`, ...inArm('id', f.soRefPoIds)].join(','));
   }
   if (f.from) out = out.gte('po_date', f.from);
   if (f.to) out = out.lte('po_date', f.to);

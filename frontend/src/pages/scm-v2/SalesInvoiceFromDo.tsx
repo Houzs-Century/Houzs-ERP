@@ -37,12 +37,13 @@ import { ArrowRight, X, CheckSquare, Square } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { VariantDescription } from '../../vendor/scm/components/VariantDescription';
 import { useInvoiceableDoLines, type DoRemainingLine } from '../../vendor/scm/lib/sales-invoice-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
-import { fmtMoneySen } from '@2990s/shared';
+import { soRefOfCamelStamp } from '../../lib/so-ref-search';
+import { fmtMoneySen, fmtQty } from '@2990s/shared';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -222,7 +223,7 @@ export const SalesInvoiceFromDo = () => {
     [picks],
   );
 
-  const columns = useMemo<DataGridColumn<DoRemainingLine>[]>(() => [
+  const columns = useMemo<GridColumn<DoRemainingLine>[]>(() => [
     /* The per-row tick lives in the grid's first-class `selectable` column, so the
        header carries a real select-all checkbox scoped to the filtered rows. Don't
        re-add a hand-rolled `pick` column — that header can only hold a string. */
@@ -231,6 +232,12 @@ export const SalesInvoiceFromDo = () => {
       accessor: (r) => <span className={styles.codeCell}>{r.doNumber}</span>,
       searchValue: (r) => r.doNumber,
       groupValue: (r) => r.doNumber,
+    },
+    {
+      key: 'soRef', label: 'Ref No.', width: 150, sortable: true,
+      accessor: (r) => soRefOfCamelStamp(r) || '—',
+      searchValue: (r) => soRefOfCamelStamp(r),
+      sortFn: (a, b) => soRefOfCamelStamp(a).localeCompare(soRefOfCamelStamp(b)),
     },
     {
       key: 'debtorName', label: 'Customer', width: 200, sortable: true, groupable: true,
@@ -274,7 +281,7 @@ export const SalesInvoiceFromDo = () => {
     },
     {
       key: 'remaining', label: 'Remaining', width: 80, align: 'right', sortable: true,
-      accessor: (r) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)' }}>{r.remaining}</span>,
+      accessor: (r) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)' }}>{fmtQty(r.remaining)}</span>,
       sortFn: (a, b) => a.remaining - b.remaining,
     },
     {
@@ -425,7 +432,7 @@ export const SalesInvoiceFromDo = () => {
         </p>
       )}
 
-      <DataGrid<DoRemainingLine>
+      <DataGridCompat<DoRemainingLine>
         rows={rows}
         columns={columns}
         storageKey={STORAGE_KEY}

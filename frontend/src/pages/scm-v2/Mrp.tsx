@@ -38,7 +38,7 @@ import {
   type ModelGroup, type MrpFilters, rowKey, computeTabModels, lineInWindow, groupEarliestDate,
 } from './mrp-model-pipeline';
 import { exportMrpWorkbook } from './mrp-export-workbook';
-import { fmtDate, fmtDateTime } from '../../vendor/shared/format';
+import { fmtDate, fmtDateTime, fmtQty } from '../../vendor/shared/format';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { Button } from '../../components/Button';
@@ -254,7 +254,7 @@ export const Mrp = () => {
      lines of the same SKU may pick different suppliers). { soItemId: supplierId };
      defaults to the SKU's main supplier when no entry. Covered / already-PO'd
      lines never appear here — they show the PO's supplier read-only. */
-  const [lineSupplier, setLineSupplier] = useState<Record<string, string>>({});
+  const [lineSupplier, setLineSupplier] = useState<Partial<Record<string, string>>>({});
   const setLineSupplierId = (soItemId: string, supplierId: string) =>
     setLineSupplier((prev) => ({ ...prev, [soItemId]: supplierId }));
   /* In-app result dialog (Commander 2026-05-29: confirm INSIDE the page, not a
@@ -506,7 +506,8 @@ export const Mrp = () => {
   /* General — picks (+ codes + unit count) from SHORTAGE order-lines. When a
      line-level selection exists, only the selected soItemIds are gathered;
      otherwise every visible shortage line. Each pick carries its per-line
-     chosen supplier (defaulting to the SKU's main supplier). */
+     chosen supplier (defaulting to the line's rule supplier, else the SKU's
+   main supplier). */
   const gatherShortages = (skus: MrpResponse['skus'], onlySelected: boolean) => {
     const picks: Array<{ soItemId: string; qty: number; supplierId: string | null }> = [];
     const orderedCodes = new Set<string>();
@@ -515,7 +516,7 @@ export const Mrp = () => {
       const def = skuDefaultSupplierId(s);
       for (const l of shortageLinesOf(s)) {
         if (onlySelected && !selected.has(l.soItemId)) continue;
-        picks.push({ soItemId: l.soItemId, qty: l.shortageQty, supplierId: lineSupplier[l.soItemId] ?? def });
+        picks.push({ soItemId: l.soItemId, qty: l.shortageQty, supplierId: lineSupplier[l.soItemId] ?? l.ruleSupplierId ?? def });
         orderedCodes.add(s.itemCode);
         units += l.shortageQty;
       }
@@ -530,6 +531,47 @@ export const Mrp = () => {
     const picks = [...base.picks];
     const orderedCodes = new Set(base.orderedCodes);
     let units = base.units;
+
+    /* 1 PO = 1 batch (owner 2026-10-05): a sofa set ships from ONE dye lot, so
+       every module of one SO must leave in ONE purchase order. Two refusals
+       before anything is sent:
+         · the set's modules were given different suppliers — the server would
+           split them into two POs (po-grouping keys on supplier), i.e. two
+           batches that can never ship together;
+         · the set already has units ON ORDER (the plan names its PO) — a
+           second PO for the missing module is a second batch. Complete THAT PO
+           instead (PO amendment), which is what the chip is pointing at. */
+    const lineByItem = new Map<string, { line: MrpLine; suppliers: MrpSku['suppliers'] }>();
+    for (const s of skus) for (const l of s.lines) lineByItem.set(l.soItemId, { line: l, suppliers: s.suppliers });
+    const supplierBySo = new Map<string, Set<string>>();
+    const onOrderBySo = new Map<string, string>();
+    for (const p of picks) {
+      const hit = lineByItem.get(p.soItemId);
+      if (!hit) continue;
+      const sup = supplierBySo.get(hit.line.soDocNo) ?? new Set<string>();
+      sup.add(p.supplierId ?? '');
+      supplierBySo.set(hit.line.soDocNo, sup);
+      if (hit.line.poNumber) onOrderBySo.set(hit.line.soDocNo, hit.line.poNumber);
+    }
+    const splitDocs = [...supplierBySo.entries()].filter(([, s]) => s.size > 1).map(([d]) => d);
+    if (splitDocs.length > 0) {
+      return {
+        picks: [], orderedCodes, units: 0,
+        blocked: {
+          title: 'One supplier per sofa set',
+          body: `A sofa set is one dye lot, so every module of an order goes on ONE purchase order. Pick the same supplier for all modules of:\n${splitDocs.map((d) => `• ${d}`).join('\n')}`,
+        },
+      };
+    }
+    if (onOrderBySo.size > 0) {
+      return {
+        picks: [], orderedCodes, units: 0,
+        blocked: {
+          title: 'Set already on a purchase order',
+          body: `These orders already have part of their sofa set on order. A second PO would be a second batch, and the set must ship from one. Amend the named PO to add the missing module instead:\n${[...onOrderBySo.entries()].map(([d, po]) => `• ${d} → ${po}`).join('\n')}`,
+        },
+      };
+    }
 
     /* Commander 2026-05-29 — "pillow 开在 sofa 里面就要跟 sofa 的 PO 一起". For
        every SO we're proceeding a sofa set on, ALSO pull that SO's accessory
@@ -553,7 +595,7 @@ export const Mrp = () => {
     const already = new Set(picks.map((p) => p.soItemId));
     const accessoryLines = (data?.skus ?? [])
       .filter((s) => (s.category ?? '').toUpperCase() === 'ACCESSORY')
-      .flatMap((s) => s.lines.map((l) => ({ line: l, itemCode: s.itemCode, supplierId: lineSupplier[l.soItemId] ?? skuDefaultSupplierId(s) })))
+      .flatMap((s) => s.lines.map((l) => ({ line: l, itemCode: s.itemCode, supplierId: lineSupplier[l.soItemId] ?? l.ruleSupplierId ?? skuDefaultSupplierId(s) })))
       .filter(({ line }) =>
         line.source === 'shortage' && line.shortageQty > 0 && line.soItemId
         && setDocs.has(line.soDocNo) && (!hasWindow || lineInWindow(line, filters)));
@@ -564,7 +606,7 @@ export const Mrp = () => {
       orderedCodes.add(itemCode);
       units += line.shortageQty;
     }
-    return { picks, orderedCodes, units };
+    return { picks, orderedCodes, units, blocked: undefined };
   };
 
   /* Commander 2026-05-31 — selection is now per SO ORDER-LINE (soItemId). Every
@@ -666,9 +708,13 @@ export const Mrp = () => {
      OPTIONALLY pick one Expected Delivery date for the whole batch. */
   const onProceed = () => {
     const onlySelected = selectedShortCount > 0;
-    const { picks, orderedCodes, units } = view === 'sofa'
+    const { picks, orderedCodes, units, blocked } = view === 'sofa'
       ? gatherSofa(shortageSkus, onlySelected)
-      : gatherShortages(shortageSkus, onlySelected);
+      : { ...gatherShortages(shortageSkus, onlySelected), blocked: undefined };
+    if (blocked) {
+      setDialog({ kind: 'info', title: blocked.title, body: blocked.body });
+      return;
+    }
     if (picks.length === 0) {
       setDialog({ kind: 'info', title: 'Nothing to order', body: 'No uncovered (shortage) lines in the current selection / window.' });
       return;
@@ -784,8 +830,8 @@ export const Mrp = () => {
         );
       },
     },
-    { key: 'qtyNeeded', label: 'Qty Needed', width: '120px', align: 'right', className: styles.num, getValue: (g) => g.qtyNeeded, render: (g) => g.qtyNeeded },
-    { key: 'stock', label: 'Stock', width: '110px', align: 'right', className: styles.num, getValue: (g) => g.stock, render: (g) => g.stock },
+    { key: 'qtyNeeded', label: 'Qty Needed', width: '120px', align: 'right', className: styles.num, getValue: (g) => g.qtyNeeded, render: (g) => fmtQty(g.qtyNeeded) },
+    { key: 'stock', label: 'Stock', width: '110px', align: 'right', className: styles.num, getValue: (g) => g.stock, render: (g) => fmtQty(g.stock) },
     { key: 'poOutstanding', label: 'PO Outstanding', width: '150px', align: 'right', className: styles.num, getValue: (g) => g.poOutstanding, render: (g) => g.poOutstanding || '—' },
     {
       key: 'shortage', label: 'Shortage', width: '120px', align: 'right', className: styles.num,
@@ -1170,7 +1216,7 @@ const LineSupplierCell = ({ suppliers, chosenSupplierId, onSupplierChange }: {
       value={chosenSupplierId ?? defaultSupplierId}
       onChange={(e) => onSupplierChange(e.target.value)}
       onClick={(e) => e.stopPropagation()}
-      title="Supplier for this SO line — defaults to the SKU's main supplier"
+      title="Supplier for this SO line — defaults to the SKU's main supplier (NB FURNITURE for Hydraulic / NB fabric, and for the other bedframes of that SO)"
     >
       {sortByText(suppliers).map((s) => (
         <option key={s.supplierId} value={s.supplierId}>
@@ -1209,7 +1255,7 @@ const ModelDrilldown = ({
   selected: Set<string>;
   onToggleLine: (soItemId: string) => void;
   onSetLinesSelected: (ids: string[], on: boolean) => void;
-  lineSupplier: Record<string, string>;
+  lineSupplier: Partial<Record<string, string>>;
   onLineSupplierChange: (soItemId: string, supplierId: string) => void;
   flatModules?: boolean;
   /* BF-FLAT — bedframe groups are single-variant (one colour each); its colour
@@ -1321,6 +1367,24 @@ const ModelDrilldown = ({
 /* Tiny helper so multi-element returns inside .map keep a single key. */
 const FragmentRow = ({ children }: { children: ReactNode }) => <>{children}</>;
 
+/* Column widths for the SO-line child tables (see .childTableFixed). The
+   unclassed <col> is Customer, the elastic one. */
+const SoLineCols = ({ module }: { module?: boolean }) => (
+  <colgroup>
+    <col className={styles.colSelect} />
+    <col className={styles.cSoNo} />
+    <col className={styles.cWh} />
+    {module && <col className={styles.cModule} />}
+    <col />
+    <col className={styles.cState} />
+    <col className={styles.cDate} />
+    <col className={styles.cDate} />
+    <col className={styles.cQty} />
+    <col className={styles.cCoverage} />
+    <col className={styles.cSupplier} />
+  </colgroup>
+);
+
 /* The SO-order child table — shared by every leaf level. Each shortage line has
    its own select checkbox + supplier dropdown; covered lines show the covering
    PO's supplier read-only (Commander 2026-05-31). */
@@ -1328,10 +1392,11 @@ const OrderLines = ({ sku, selected, onToggleLine, lineSupplier, onLineSupplierC
   sku: MrpSku;
   selected: Set<string>;
   onToggleLine: (soItemId: string) => void;
-  lineSupplier: Record<string, string>;
+  lineSupplier: Partial<Record<string, string>>;
   onLineSupplierChange: (soItemId: string, supplierId: string) => void;
 }) => (
-  <table className={styles.childTable}>
+  <table className={`${styles.childTable} ${styles.childTableFixed}`}>
+    <SoLineCols />
     <thead>
       <tr>
         <th className={styles.colSelect} />
@@ -1356,7 +1421,7 @@ const OrderLines = ({ sku, selected, onToggleLine, lineSupplier, onLineSupplierC
           whName={sku.warehouseName}
           selected={selected.has(ln.soItemId)}
           onToggleLine={() => onToggleLine(ln.soItemId)}
-          chosenSupplierId={lineSupplier[ln.soItemId] ?? null}
+          chosenSupplierId={lineSupplier[ln.soItemId] ?? ln.ruleSupplierId ?? null}
           onSupplierChange={(sid) => onLineSupplierChange(ln.soItemId, sid)}
         />
       ))}
@@ -1441,7 +1506,7 @@ const SofaSoTable = ({ group, selected, onToggleLine, lineSupplier, onLineSuppli
   group: ModelGroup;
   selected: Set<string>;
   onToggleLine: (soItemId: string) => void;
-  lineSupplier: Record<string, string>;
+  lineSupplier: Partial<Record<string, string>>;
   onLineSupplierChange: (soItemId: string, supplierId: string) => void;
   /* The cover / pillow shortage lines on THIS SO (owner 2026-09-11). Shown as
      read-along rows under the sofa modules: they ride onto the order whenever
@@ -1450,7 +1515,8 @@ const SofaSoTable = ({ group, selected, onToggleLine, lineSupplier, onLineSuppli
   accessoryRiders: AccessoryRider[];
   poMode: 'combined' | 'per-so';
 }) => (
-  <table className={styles.childTable}>
+  <table className={`${styles.childTable} ${styles.childTableFixed}`}>
+    <SoLineCols module />
     <thead>
       <tr>
         <th className={styles.colSelect} />
@@ -1494,7 +1560,9 @@ const SofaSoTable = ({ group, selected, onToggleLine, lineSupplier, onLineSuppli
             <DeliveryCell iso={ln.deliveryDate} />
             <td className={styles.num}>{ln.qty}</td>
             <td>
-              {ln.source === 'stock' && <span className={`${styles.tag} ${styles.tagStock}`}>stock</span>}
+              {ln.source === 'stock' && (
+                <span className={`${styles.tag} ${styles.tagStock}`} title={ln.batchNo ? `Whole set from batch ${ln.batchNo}` : undefined}>stock</span>
+              )}
               {/* Same rule as the desktop table above: no number, no chip. */}
               {ln.source === 'po' && ln.poNumber && (
                 <span className={`${styles.tag} ${styles.tagPo}`}>
@@ -1509,7 +1577,7 @@ const SofaSoTable = ({ group, selected, onToggleLine, lineSupplier, onLineSuppli
             </td>
             <td className={styles.supplierCell}>
               {short
-                ? <LineSupplierCell suppliers={v.suppliers} chosenSupplierId={lineSupplier[ln.soItemId] ?? null} onSupplierChange={(sid) => onLineSupplierChange(ln.soItemId, sid)} />
+                ? <LineSupplierCell suppliers={v.suppliers} chosenSupplierId={lineSupplier[ln.soItemId] ?? ln.ruleSupplierId ?? null} onSupplierChange={(sid) => onLineSupplierChange(ln.soItemId, sid)} />
                 : ln.source === 'po'
                   ? <span className={styles.poSupplierRO} title="This PO covers the line in the current allocation. Supplier is read-only because the PO is already raised."><Truck {...ICON} /> {ln.poSupplierName ?? '—'}</span>
                   : <span className={styles.whNone}>—</span>}

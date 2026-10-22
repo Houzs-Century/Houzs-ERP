@@ -14,6 +14,7 @@ import { Button } from '@2990s/design-system';
 import {
   useCreateWarehouse,
   useUpdateWarehouse,
+  type StockBucket,
   type Warehouse,
   type WarehouseType,
 } from '../lib/inventory-queries';
@@ -124,7 +125,7 @@ export const WarehouseFormDrawer = ({
         isDefault: form.isDefault,
         type: form.type,
         venueName: isShowroom ? form.venueName.trim() : null,
-        stockBucket: (form.stockBucket || null) as 'customer' | 'display' | 'service' | null,
+        stockBucket: (form.stockBucket || null) as StockBucket | null,
       }, { onSuccess: done });
     } else {
       create.mutate({
@@ -138,7 +139,7 @@ export const WarehouseFormDrawer = ({
         isDefault: form.isDefault,
         type: form.type,
         venueName: isShowroom ? form.venueName.trim() : null,
-        stockBucket: (form.stockBucket || null) as 'customer' | 'display' | 'service' | null,
+        stockBucket: (form.stockBucket || null) as StockBucket | null,
       }, { onSuccess: done });
     }
   };
@@ -251,10 +252,11 @@ export const WarehouseFormDrawer = ({
               ))}
             </select>
           </label>
-          {/* The closing-stock bucket (owner 2026-09-21): which of the three
-              closing stocks this warehouse's goods book on at month end. Blank
-              follows the type — warehouse / others → customer, showroom /
-              display → display, service → service. */}
+          {/* The closing-stock bucket (owner 2026-09-21; showroom and others
+              their own since 2026-09-30): which closing stock this warehouse's
+              goods book on at month end. Blank follows the type — warehouse →
+              customer, display → display, showroom → showroom, service →
+              service, others → others. */}
           <label style={{ display: 'block', marginBottom: 'var(--space-3)' }}>
             <div className={styles.eyebrow}>Closing stock bucket</div>
             <select className={styles.searchInput} style={{ width: '100%' }} aria-label="Closing stock bucket"
@@ -265,6 +267,8 @@ export const WarehouseFormDrawer = ({
               <option value="customer">Customer stock</option>
               <option value="display">Display stock</option>
               <option value="service">Service stock</option>
+              <option value="showroom">Showroom stock</option>
+              <option value="others">Others stock</option>
             </select>
           </label>
           {form.type === 'showroom' && (

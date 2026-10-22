@@ -31,14 +31,13 @@ import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/Prin
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { SoSourceChips } from '../../components/SoSourceChips';
 import { useSetBreadcrumbs } from '../../hooks/useBreadcrumbs';
-import { buildVariantSummary, canonicalizeVariants, fmtSen, fmtDateOrDash, fmtMoneySen, lineIdentity, missingVariantAxes } from '@2990s/shared'; // Commander 2026-05-28
+import { buildVariantSummary, canonicalizeVariants, consoleAttachOptions, fmtSen, fmtDateOrDash, fmtMoneySen, lineIdentity, missingVariantAxes } from '@2990s/shared'; // Commander 2026-05-28
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import {
   useMfgSalesOrderDetail,
   useUpdateMfgSalesOrderHeader,
   useUpdateMfgSalesOrderStatus,
-  useDeleteMfgSalesOrder,
   useAddMfgSalesOrderItem,
   useUpdateMfgSalesOrderItem,
   useDeleteMfgSalesOrderItem,
@@ -53,6 +52,7 @@ import { resolveSelfStaff } from '../../vendor/scm/lib/self-staff';
 import { AuditHistoryPanel } from '../../components/audit/AuditHistoryPanel';
 import type { AuditFieldChange, AuditLogEntry } from '../../components/audit/audit-labels';
 import { SO_AUDIT_LABELS } from './so-audit-labels';
+import { useSoHistoryWithRelated } from './so-history-related';
 import {
   LOCKED_STATUSES,
   CANCELLABLE_STATUSES,
@@ -79,8 +79,9 @@ import { diffHeaderPayload, hasHeaderChanges } from '../../vendor/scm/lib/so-hea
 import { soSaveEndFields, soVersionAfter } from '../../vendor/scm/lib/so-save-lease';
 import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER,
   AMENDMENT_NOTHING_TO_SUBMIT } from '../../vendor/scm/lib/so-amendment-submit';
-import { useAmendmentSubmitDialog } from '../../vendor/scm/components/AmendmentSubmitDialog';
+import { useAmendmentSubmitDialog, RequestProcessingDateRemoval } from '../../vendor/scm/components/AmendmentSubmitDialog';
 import { todayMyt } from '../../vendor/scm/lib/dates';
+import { soConfirmDateNote } from '../../lib/soConfirmDateNote';
 import { addressLineProps } from '../../lib/acColumnWidths';
 /* lib/utils formatDate (NOT the vendored fmtDate) for the amendment's header
    dates: these are bare YYYY-MM-DD strings, and fmtDate's `new Date(d)` parses
@@ -95,7 +96,8 @@ import { completePaymentRetryDraft, consumePaymentRetryNavigationState, readPaym
 import { DocumentRelationshipMapModal, DocumentChoiceDialog } from '../../components/scm-v2/DocumentRelationshipMapModal';
 import { useSoRelationshipMap } from './so-relationship-map';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
-import { usePrompt } from '../../vendor/scm/components/PromptDialog';
+import { SoLockBanner } from './SoLockBanner';
+import { soAfterDoMode, soPriceAfterDoOn, afterDoEditableLine, afterDoHeaderFields, afterDoEditFields, afterDoAddFields, afterDoCopyProblem, type AfterDoSave } from '../../vendor/scm/lib/so-after-do-client';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover } from '../../vendor/scm/lib/amendment-approver';
@@ -112,7 +114,7 @@ import {
   amendmentLineFieldKinds,
   amendmentOldSnapshot,
   amendmentVariantSummaries,
-  visibleAmendmentLines, amendmentLineSig} from '../../vendor/scm/lib/so-amendment-line-diff';
+  visibleAmendmentLines, amendmentLineSig, amendmentVariantsKey, amendmentRequestedUnitPriceSen, amendmentPriceFields} from '../../vendor/scm/lib/so-amendment-line-diff';
 import { routeField, type AmendmentFieldKind } from '../../vendor/scm/lib/amendment-routing';
 import { fetchSoSlipUrl, fetchScanSlipImageBlobUrl } from '../../vendor/scm/lib/slip';
 import {
@@ -140,25 +142,29 @@ import { soStatusDisplay, type DeliveryState, type SoLifecycle } from '../../ven
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useAuth } from '../../vendor/scm/lib/auth';
 import { useVenues } from '../../vendor/scm/lib/venues-queries';
-import { FairPicker } from '../../components/FairPicker';
+import { FairDayPicker, FairPicker } from '../../components/FairPicker';
+import { fairDayCheck, fairEditPatch, fairElsewhereLine, fairEventOf, fairPickValue, linkedEvent, type LinkedFair } from '../../components/fairPick';
 import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-queries';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { generateSalesOrderPdf } from '../../vendor/scm/lib/sales-order-pdf';
 import { newIdempotencyKey } from '../../lib/idempotency';
+import { deferLineDateToHeader } from '../../vendor/scm/lib/so-line-date-defer';
 import { useSoVariantCascade, useSoLineDeliveryDateCascade } from './use-so-variant-cascade';
 import {
   dropStagedAdd, firstBlankStagedAdd, namedStagedAdds,
   patchStagedAdd, runSoLineWrites, stagedAddDrafts, stagedAddLabel, visibleLineCounts,
-  type StagedAddLine,
+  type StagedAddLine, splitSofaPiecesOnEdit, SOFA_PIECES_SPLIT_DIALOG,
 } from './so-add-lines';
 import {
   readVersionConflict, SoVersionConflictBanner, type SoVersionConflict,
 } from './so-version-conflict';
 import { RevisionsTab } from './so-revisions-tab';
 import styles from './SalesOrderDetail.module.css';
+import { PriceAfterDoModal } from './PriceAfterDoModal';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { HoldChip } from "../../vendor/scm/components/HoldChip";
 import { CancelRequestPanel } from "../../vendor/scm/components/CancelRequestPanel"; import { useCancelRequestAction } from "./use-cancel-request-action";
+import { useDiscardDraftAction } from "./use-discard-draft-action";
 
 import { ADD_LINE_LABEL } from '../../vendor/scm/lib/add-line-handoff';
 import { useAddLineHandoff } from '../../vendor/scm/lib/useAddLineHandoff';
@@ -282,6 +288,8 @@ type SoHeader = {
   /* Migration 0086 — venue master FK. Auto-stamped from staff.venue_id on
      POST/PATCH when the row's salesperson belongs to a venue. */
   venue_id: string | null;
+  fair?: LinkedFair | null; // the linked event (owner 2026-09-24); absent on an older server
+  fair_date?: string | null; fair_match?: string | null; // the day of that event; how it was linked
   branding: string | null;
   transfer_to: string | null;
   address1: string | null;
@@ -318,6 +326,9 @@ type SoHeader = {
      only). Feeds soProcLockActive, which is why the line/State/Postcode freeze
      below fires with no processing date involved. */
   po_locked?: boolean;
+  /* BUG-101 — a live PO (any company) freezes the Processing Date: no move, no
+     clear, by amendment or directly. Only the Delivery Date can be requested. */
+  processing_date_po_locked?: boolean;
   has_children?: boolean; downstream_fully_frozen?: boolean; // a live DO/SI exists / every line is on one (shared/so-line-freeze.ts)
   has_open_amendment?: boolean;
   open_amendment?: { id: string; status: string; amendment_no: string; lane?: string | null } | null;
@@ -450,6 +461,8 @@ const draftFromItem = (it: SoItem): SoLineDraft => ({
   uom:            it.uom ?? 'UNIT',
   qty:            it.qty ?? 1,
   unitPriceSen: it.unit_price_sen ?? 0,
+  // The persisted price IS this line's price, 0 included; a product re-pick clears it.
+  priceAuthored: true,
   discountSen:  it.discount_sen ?? 0,
   unitCostSen:  it.unit_cost_sen ?? 0,
   // 2026-06-08 (Loo) — canonicalise POS-vocabulary sofa keys (depth →
@@ -502,9 +515,8 @@ export const SalesOrderDetail = () => {
   const updateHeader = useUpdateMfgSalesOrderHeader();
   const updateStatus = useUpdateMfgSalesOrderStatus();
   const requestCancel = useCancelRequestAction('so');
-  const deleteDraft = useDeleteMfgSalesOrder();
+  const deleteDraft = useDiscardDraftAction();
   const askConfirm = useConfirm();
-  const askPrompt = usePrompt();
   const submitDialog = useAmendmentSubmitDialog();
   const notify = useNotify();
   const addItem = useAddMfgSalesOrderItem();
@@ -626,8 +638,21 @@ export const SalesOrderDetail = () => {
   /* Owner 2026-08-16: "it should be able to keep adding lines." A single
      nullable draft + a self-hiding button capped an edit session at ONE. */
   const [addingDrafts, setAddingDrafts] = useState<StagedAddLine[]>([]);
+  /* Console lines only: the modules each can be joined to, over the order's
+     lines as currently edited (saved lines, their open drafts, staged adds). */
+  const attachOptionsById = useMemo(() => {
+    const rows = items.map((it) => {
+      const d = it.id in editingDrafts ? editingDrafts[it.id] : null;
+      return { id: it.id, itemCode: d ? d.itemCode : it.item_code, itemGroup: d ? d.itemGroup : it.item_group };
+    });
+    for (const a of addingDrafts) rows.push({ id: a.key, itemCode: a.draft.itemCode, itemGroup: a.draft.itemGroup });
+    const out: Record<string, string[] | null> = {};
+    rows.forEach((r, i) => { out[r.id] = consoleAttachOptions(rows, i); });
+    return out;
+  }, [items, editingDrafts, addingDrafts]);
   const [overriding, setOverriding] = useState<SoItem | null>(null);
-  const [unlockOverride, setUnlockOverride] = useState(false);
+  const [repricing, setRepricing] = useState<SoItem | null>(null);
+  const [unlockOverride, setUnlockOverride] = useState(false), [afterDoTargetId, setAfterDoTargetId] = useState<string | null>(null), afterDoRef = useRef<AfterDoSave | null>(null); // DEV-32
   // PR-D — History panel toggle. Commander asked for the HOOKKA-style
   // floating right-side history drawer.
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -740,6 +765,7 @@ export const SalesOrderDetail = () => {
     onNodeClick: onChainNodeClick,
     amendments: chainAmendments,
     onAmendmentClick: onChainAmendmentClick,
+    returns: chainReturns, onReturnClick: onChainReturnClick,
     pairing: chainPairing,
     choice: chainChoice,
     closeChoice: closeChainChoice,
@@ -808,7 +834,7 @@ export const SalesOrderDetail = () => {
     const proc = header?.processing_date ? String(header.processing_date).slice(0, 10) : '';
     const deliv = header?.customer_delivery_date ? String(header.customer_delivery_date).slice(0, 10) : '';
     return {
-      isEdit: true, hasVenue: true, hasSalesperson: true, fillAddressLater: false, companyCode: null, salesLocation: '', payments: [],
+      isEdit: true, hasVenue: true, hasSalesperson: true, fillAddressLater: false, companyCode: null, salesLocation: '', payments: [], ...customerCardRef.current?.fairDayKeys(),
       phone: customerCardRef.current?.getPhone() ?? header?.phone, debtorName: header?.debtor_name,
       address1: header?.address1, postcode: header?.postcode, customerState: header?.customer_state,
       items: editedDraftGroups.map((d) => ({ itemCode: d.itemCode, itemGroup: d.itemGroup, variants: d.variants, qty: d.qty })),
@@ -855,6 +881,8 @@ export const SalesOrderDetail = () => {
     if (savingOrder) return;
     clearSaveFeedback();
 
+    const pieces = splitSofaPiecesOnEdit({ editing: editingDrafts, originals: originalDraftsRef.current, adding: addingDrafts, mintKey: newIdempotencyKey });
+    if (pieces) { setEditingDrafts(pieces.editing); setAddingDrafts(pieces.adding); await notify(SOFA_PIECES_SPLIT_DIALOG); return; }
     /* Backend authors the business-rule blockers; merge the client-only extras
        (blank line, blank staged add, CustomerCard date fault). PATCH below gates. */
     const blankAddPos = firstBlankStagedAdd(addingDrafts);
@@ -1035,15 +1063,20 @@ export const SalesOrderDetail = () => {
       /* Fall back to the item's own pristine draft when the seed is missing, so a
          line can never be recorded just because its snapshot went absent. */
       const orig = originalDraftsRef.current[it.id] ?? draftFromItem(it);
-      if (amendmentLineSig(draft) === amendmentLineSig(orig)) continue; // nothing amendable moved
+      /* A SEEDED 0 (an unpriced SKU re-pick, priceAuthored false) requests no
+         price: the line keeps its stored one, so the signature and the QTY/SPEC
+         test both read it as the stored price (HC-SO-013490, billed RM 0). */
+      const requestedUnitSen = amendmentRequestedUnitPriceSen(draft);
+      const effective = { ...draft, unitPriceSen: requestedUnitSen ?? orig.unitPriceSen };
+      if (amendmentLineSig(effective) === amendmentLineSig(orig)) continue; // nothing amendable moved
       /* QTY vs SPEC — compared against the same pristine draft the signature
          used, so both sides are canonicalised alike (an `it`-derived fallback
          would compare canonicalised drafts to a raw blob and mis-classify a
          POS-created sofa line as SPEC). */
       const qtyOnly =
         draft.itemCode === orig.itemCode
-        && JSON.stringify(draft.variants ?? null) === JSON.stringify(orig.variants ?? null)
-        && draft.unitPriceSen === orig.unitPriceSen
+        && amendmentVariantsKey(draft.variants) === amendmentVariantsKey(orig.variants)
+        && effective.unitPriceSen === orig.unitPriceSen
         && draft.qty !== orig.qty;
       out.push({
         salesOrderItemId: it.id,
@@ -1051,7 +1084,8 @@ export const SalesOrderDetail = () => {
         newItemCode: draft.itemCode || undefined,
         newVariants: draft.variants ?? undefined,
         newQty: draft.qty,
-        newUnitPriceSen: draft.unitPriceSen,
+        // Omitted (null on the row) when no price is requested: the apply keeps the stored price.
+        ...amendmentPriceFields(draft),
         /* mig 0280 — the line's remark rides the amendment. Sent ONLY when it
            actually moved: null/absent means "not requested", which is what stops
            the apply from rewriting a remark this session never touched. */
@@ -1147,7 +1181,7 @@ export const SalesOrderDetail = () => {
       const r = await authedFetch<{ problems: SaveProblem[] }>('/mfg-sales-orders/validate', {
         method: 'POST',
         body: JSON.stringify({
-          isEdit: true, hasVenue: true, hasSalesperson: true, fillAddressLater: false, companyCode: null, salesLocation: '', payments: [],
+          isEdit: true, hasVenue: true, hasSalesperson: true, fillAddressLater: false, companyCode: null, salesLocation: '', payments: [], ...handle.fairDayKeys(),
           processingDate: '', customerDeliveryDate: '', phone: handle.getPhone(), debtorName: header?.debtor_name,
           items: items.map((it) => ({ itemCode: it.item_code, itemGroup: it.item_group, variants: {}, qty: it.qty })),
           origItemGroups: items.map((it) => it.item_group),
@@ -1271,6 +1305,7 @@ export const SalesOrderDetail = () => {
           docNo: stableDocNo,
           ...patch,
           ...soSaveEndFields(lineLease), // ends the save even when the patch is not empty - so-save-lease.ts
+          ...afterDoHeaderFields(afterDoRef.current, patch),
           // The route rejects a real header mutation without this loaded token.
           // The detail response is migration-backed, so absence is a load defect,
           // not permission to fall back to last-writer-wins.
@@ -1281,6 +1316,7 @@ export const SalesOrderDetail = () => {
           onSuccess: (result) => {
             loadedVersionRef.current = soVersionAfter(result, loadedVersionRef.current);
             if (lineLease) activeLineLeaseRef.current = null;
+            const copyMsg = afterDoCopyProblem(result); if (copyMsg) void notify({ title: 'Delivery Order not updated', body: copyMsg, tone: 'error' });
             cb?.onSuccess?.();
           },
           // Pass the raw Error too — its `.body` carries the aggregated problems.
@@ -1288,7 +1324,7 @@ export const SalesOrderDetail = () => {
         },
       );
     },
-    [stableDocNo, updateHeader],
+    [stableDocNo, updateHeader, notify],
   );
   const closeHistory = useCallback(() => setHistoryOpen(false), []);
 
@@ -1463,7 +1499,7 @@ export const SalesOrderDetail = () => {
   const commitEditingDraft = (id: string, d: SoLineDraft) =>
     updateItem.mutateAsync({
       docNo: header!.doc_no,
-      itemId: id,
+      itemId: id, ...afterDoEditFields(afterDoRef.current, id),
       leaseToken: activeLineLeaseRef.current!,
       itemCode:       d.itemCode,
       itemGroup:      d.itemGroup,
@@ -1471,16 +1507,17 @@ export const SalesOrderDetail = () => {
       uom:            d.uom,
       qty:            d.qty,
       unitPriceSen: d.unitPriceSen,
-      /* This line ALREADY EXISTS: its 0 is the price it carries, so re-sending
-         it must not silently re-price it (a qty-only edit sends the price too). */
-      ...zeroPriceClaim(d.unitPriceSen, true),
+      /* A persisted 0 or a typed 0 is claimed; the 0 a product re-pick seeds
+         (no sell price) is not, so the server keeps the stored price (BUG-63). */
+      ...zeroPriceClaim(d.unitPriceSen, d.priceAuthored === true),
       discountSen:  d.discountSen,
       unitCostSen:  d.unitCostSen,
       variants:       d.variants,
       remark:         d.remark,
-      lineDeliveryDate:           d.lineDeliveryDate ?? null,
+      // A cascaded date while the order has no Processing Date is the header save's to stamp (so-line-date-defer).
+      lineDeliveryDate: deferLineDateToHeader({ storedProcessingDate: header!.processing_date, overridden: !!d.lineDeliveryDateOverridden }) ? undefined : (d.lineDeliveryDate ?? null),
       lineDeliveryDateOverridden: d.lineDeliveryDateOverridden ?? false,
-    });
+    }).then((r) => { const msg = afterDoCopyProblem(r); if (msg) void notify({ title: 'Delivery Order not updated', body: msg, tone: 'error' }); return r; });
 
   /* Commit ONE staged add via addItem, then drain its staged photo Files
      against the freshly-minted itemId. The key comes off the ROW, so a retry
@@ -1490,7 +1527,7 @@ export const SalesOrderDetail = () => {
     const pendingFiles = d.pendingPhotoFiles ?? [];
     const res = await addItem.mutateAsync({
       docNo: header!.doc_no,
-      idempotencyKey: staged.idempotencyKey,
+      idempotencyKey: staged.idempotencyKey, ...afterDoAddFields(afterDoRef.current),
       leaseToken: activeLineLeaseRef.current!,
       itemCode:       d.itemCode,
       itemGroup:      d.itemGroup,
@@ -1506,13 +1543,14 @@ export const SalesOrderDetail = () => {
       unitCostSen:  d.unitCostSen,
       variants:       d.variants,
       remark:         d.remark,
-      lineDeliveryDate:           d.lineDeliveryDate ?? null,
+      // A cascaded date while the order has no Processing Date is the header save's to stamp (so-line-date-defer).
+      lineDeliveryDate: deferLineDateToHeader({ storedProcessingDate: header!.processing_date, overridden: !!d.lineDeliveryDateOverridden }) ? undefined : (d.lineDeliveryDate ?? null),
       lineDeliveryDateOverridden: d.lineDeliveryDateOverridden ?? false,
     });
     /* POST /:docNo/items returns the inserted row; pull its id and upload
        each staged File. Upload failures don't undo the line — surface a
        soft warning so the line can be re-attached. */
-    const newItemId = (res.item as { id?: string } | null)?.id;
+    const newItemId = (res.item as { id?: string } | null)?.id, copyMsg = afterDoCopyProblem(res); if (copyMsg) void notify({ title: 'Delivery Order not updated', body: copyMsg, tone: 'error' });
     if (newItemId && pendingFiles.length > 0) {
       let failed = 0;
       for (const f of pendingFiles) {
@@ -1569,9 +1607,11 @@ export const SalesOrderDetail = () => {
     );
   }
 
-  /* Downstream lock, per line (owner 2026-09-15, shared/so-line-freeze.ts): the page locks only when EVERY line is on a live DO/SI; otherwise those lines grey out below. Not overridable. */
+  /* Downstream lock, per line (owner 2026-09-15, shared/so-line-freeze.ts): the page locks only when EVERY line is on a live DO/SI; otherwise those lines grey out below. Not overridable, except by soAfterDoMode below. */
   const downstreamLocked = soDownstreamHardLocked(header), migratedLocked = soMigratedReadonly(header);
   const isLocked = migratedLocked || isSoLocked(header.status, downstreamLocked, unlockOverride); // migrated is OUTSIDE isSoLocked: Override must not reach it
+  const afterDo = soAfterDoMode(header, { can, override: unlockOverride, migrated: migratedLocked }); // DEV-32: Logistics edits charges + customer details after the DO
+  const priceAfterDo = soPriceAfterDoOn(header, { can, migrated: migratedLocked }); // DEV-70: a delivered line's price, through its $ dialog
   /* The one thing a hard-locked SO still accepts: a new salesperson. Same
      permission the API enforces (mfg-sales-orders.ts PATCH), so the Edit button
      it re-enables can never open an order the server would refuse to save. */
@@ -1621,8 +1661,9 @@ export const SalesOrderDetail = () => {
      (procLocked && !amendmentMode)`); this brings desktop onto the same rule.
      Nothing is written directly — submitAmendment routes the diff through the
      approval flow, and the server's line routes still 409 a direct write. */
-  const linesLocked = isLocked || (procLockActive && !amendmentMode);
-  addLineHandoff.current = { enabled: isEditing && !linesLocked, onTrigger: startAddLine };
+  const linesLocked = isLocked || (procLockActive && !amendmentMode), chargeAdds = linesLocked && afterDo.on, addLocked = linesLocked && !chargeAdds;
+  afterDoRef.current = { mode: afterDo, lineIds: new Set(items.filter((it) => afterDoEditableLine(afterDo, it)).map((it) => it.id)), chargeAdds, targetId: afterDoTargetId };
+  addLineHandoff.current = { enabled: isEditing && !addLocked, onTrigger: startAddLine };
   /* The raw lock, for the few per-line actions that still write DIRECTLY to the
      server (price override) rather than through the amendment diff — those must
      stay disabled on a locked SO or they render-then-409. */
@@ -1719,22 +1760,9 @@ export const SalesOrderDetail = () => {
      anything but a DRAFT. On success the SO is gone, so we leave the page for the
      SO list rather than render a detail for a deleted order. */
   const handleDiscardDraft = async () => {
-    if (!(await askConfirm({
-      title: `Discard draft ${header.doc_no}?`,
-      body: 'This permanently deletes this draft order and everything on it. It cannot be undone. (Confirmed orders are cancelled, not discarded.)',
-      confirmLabel: 'Discard draft', danger: true,
-    }))) return;
-    try {
-      await deleteDraft.mutateAsync({ docNo: header.doc_no });
-      notify({ title: 'Draft discarded' });
-      navigate('/scm/sales-orders');
-    } catch (e) {
-      notify({
-        title: 'Could not discard this draft',
-        body: `${e instanceof Error ? e.message : String(e)} Nothing was changed — please try again.`,
-        tone: 'error',
-      });
-    }
+    /* Confirm + words + refusal handling live in ./use-discard-draft-action,
+       shared with the read-only page, the list menu and the quick view. */
+    if (await deleteDraft.discard(header.doc_no)) navigate('/scm/sales-orders');
   };
   const deliverPrintPdf = (action: PdfAction) => {
     /* Followup #81 — Wait for the payments query before generating; legacy
@@ -1930,7 +1958,7 @@ export const SalesOrderDetail = () => {
                 dropdown. The heavy door stays for everything else. */}
             {!isEditing ? (
               <Button variant="primary"
-                onClick={enterEdit} disabled={migratedLocked || (isLocked && !canAttributeOther)}>
+                onClick={enterEdit} disabled={migratedLocked || (isLocked && !canAttributeOther && !afterDo.on && !priceAfterDo)}>
                 <Pencil {...ICON} />
                 <span>Edit</span>
               </Button>
@@ -2037,9 +2065,10 @@ export const SalesOrderDetail = () => {
             </Button>
             <Button variant="primary"
               onClick={async () => {
+                const dateNote = soConfirmDateNote(header.processing_date, header.customer_delivery_date);
                 if (!(await askConfirm({
                   title: `Confirm ${header.doc_no}?`,
-                  body: 'This turns the draft into a live, confirmed sales order — it will appear in MRP / PO / DO flows and KPIs.',
+                  body: <>This turns the draft into a live, confirmed sales order — it will appear in MRP / PO / DO flows and KPIs.{dateNote && <><br /><br /><strong>{dateNote}</strong></>}</>,
                   confirmLabel: 'Confirm Order',
                 }))) return;
                 updateStatus.mutate({ docNo: header.doc_no, status: 'CONFIRMED', expectedStatus: header.status });
@@ -2051,46 +2080,10 @@ export const SalesOrderDetail = () => {
         </div>
       )}
 
-      {/* ── Lock banner ─────────────────────────────────────────── */}
-      {!isCancelled && (migratedLocked || LOCKED_STATUSES.includes(header.status)) && (
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: 'var(--space-3) var(--space-4)',
-          background: unlockOverride ? 'rgba(184, 51, 31, 0.06)' : 'rgba(232, 107, 58, 0.08)',
-          border: `1px solid ${unlockOverride ? 'var(--c-festive-b, #B8331F)' : 'var(--c-orange)'}`,
-          borderRadius: 'var(--radius-md)',
-          fontSize: 'var(--fs-13)',
-        }}>
-          <span style={LOCK_BANNER_INNER_STYLE}>
-            <Lock {...ICON} />
-            {migratedLocked ? <><strong>View only — carried over from AutoCount.</strong> {soMigratedReason(header)}</>
-              : unlockOverride ? <strong>Edit-lock overridden — changes are tracked in the status timeline below.</strong>
-              : <>This SO is <strong>{header.status.replace(/_/g, ' ')}</strong>. Line item edits + addresses are locked. Click <em>Override</em> if you must change something.</>}
-          </span>
-          <Button variant={unlockOverride ? 'ghost' : 'primary'} disabled={migratedLocked}
-            onClick={async () => {
-              if (!unlockOverride) {
-                const reason = await askPrompt({
-                  title: 'Reason for override?',
-                  body: 'This unlocks editing on a locked SO. The override is tracked in the status timeline.',
-                  placeholder: 'At least 10 characters',
-                  multiline: true,
-                  confirmLabel: 'Override',
-                  validate: (v) => (v.trim().length < 10 ? 'Override needs a reason ≥ 10 chars.' : null),
-                });
-                if (reason == null) return;
-                // Audit the override via a status change row (we re-affirm the
-                // current status with an OVERRIDE notes prefix).
-                updateStatus.mutate({ docNo: header.doc_no, status: header.status, expectedStatus: header.status });
-                setUnlockOverride(true);
-              } else {
-                setUnlockOverride(false);
-              }
-            }}>
-            {unlockOverride ? 'Re-lock' : 'Override'}
-          </Button>
-        </div>
-      )}
+      {/* ── Lock banner + the DEV-32 after-DO notice ───────────── */}
+      <SoLockBanner status={header.status} cancelled={isCancelled} migratedReason={migratedLocked ? soMigratedReason(header) : null} overridden={unlockOverride}
+        onOverride={() => { updateStatus.mutate({ docNo: header.doc_no, status: header.status, expectedStatus: header.status }); setUnlockOverride(true); }}
+        onRelock={() => setUnlockOverride(false)} afterDo={afterDo} afterDoTargetId={afterDoTargetId} onPickTarget={setAfterDoTargetId} />
 
       {/* ── Amendment-mode banner (Phase 1-C) ─────────────────────────
           The SO is processing-locked (already PO'd) but still editable via the
@@ -2207,7 +2200,7 @@ export const SalesOrderDetail = () => {
         header={header}
         onSave={handleHeaderSave}
         saving={updateHeader.isPending}
-        locked={isLocked} identityLocked={header.has_children === true}
+        locked={isLocked} identityLocked={header.has_children === true} afterDoFields={afterDo.headerOpen}
         isEditing={isEditing}
         amendmentMode={amendmentMode}
         onDeliveryDateChange={cascadeDeliveryDateToLines}
@@ -2240,7 +2233,7 @@ export const SalesOrderDetail = () => {
               open, capping an edit session at ONE new line (owner 2026-08-16: "it
               should be able to keep adding lines"). `linesLocked` still refuses. */}
           {isEditing && (
-            <Button variant="primary" onClick={startAddLine} disabled={linesLocked}>
+            <Button variant="primary" onClick={startAddLine} disabled={addLocked}>
               <Plus {...ICON} />
               <span>{ADD_LINE_LABEL}</span>
             </Button>
@@ -2263,9 +2256,9 @@ export const SalesOrderDetail = () => {
               // A freshly-deleted row drops its draft (removeEditingLine) but
               // lingers in `items` until the re-fetch — skip rendering it.
               if (!editDraft) return null;
-              const cb = rowCallbacks.get(it.id), frozen = soItemFrozen(it);
+              const cb = rowCallbacks.get(it.id), frozen = soItemFrozen(it), afterDoLine = afterDoEditableLine(afterDo, it);
               return (
-                <div key={it.id} style={frozen ? FROZEN_LINE_STYLE : undefined} data-frozen={frozen || undefined}>
+                <div key={it.id} style={frozen && !afterDoLine ? FROZEN_LINE_STYLE : undefined} data-frozen={frozen || undefined}>
                   {/* Per-line action — Override price ($). Removal is handled
                       by the SoLineCard's own trash button (onRemove → delete
                       mutation), so it isn't duplicated here. Override is a
@@ -2279,11 +2272,15 @@ export const SalesOrderDetail = () => {
                         locked SO goes through the amendment's line diff instead,
                         which carries newUnitPriceSen. Off, not render-then-deny. */}
                     {frozen && <span style={FROZEN_LINE_LABEL_STYLE}>{FROZEN_LINE_LABEL}</span>}
-                    <button type="button" className={styles.iconBtn} title="Override price"
-                      disabled={overrideLocked || frozen}
-                      onClick={() => !overrideLocked && !frozen && setOverriding(it)}>
-                      <DollarSign {...SM_ICON} />
-                    </button>
+                    {frozen && priceAfterDo
+                      ? <button type="button" className={styles.iconBtn} title="Change price after DO" onClick={() => setRepricing(it)}><DollarSign {...SM_ICON} /></button>
+                      : (
+                      <button type="button" className={styles.iconBtn} title="Override price"
+                        disabled={overrideLocked || frozen}
+                        onClick={() => !overrideLocked && !frozen && setOverriding(it)}>
+                        <DollarSign {...SM_ICON} />
+                      </button>
+                    )}
                   </div>
                   <SoLineCard
                     index={idx}
@@ -2296,12 +2293,13 @@ export const SalesOrderDetail = () => {
                        their photos defer to after the first save. */
                     docNo={header.doc_no}
                     itemId={it.id}
-                    isEditing={!linesLocked && !frozen}
+                    isEditing={(!linesLocked && !frozen) || afterDoLine} chargeOnly={afterDoLine}
                     /* Variants are mandatory only once a Processing Date is set
                        (matches this page's Save gate + the backend), so the ` *`
                        marker + red ring stay off on a no-date draft (owner
                        2026-07-14). */
-                    variantsRequired={requireVariants} seedSofaLegDefault={true}
+                    variantsRequired={requireVariants} lineDateLocked={!requireVariants} seedSofaLegDefault={true}
+                    attachOptions={attachOptionsById[it.id] ?? null}
                   />
                 </div>
               );
@@ -2325,8 +2323,9 @@ export const SalesOrderDetail = () => {
                     draft={staged.draft}
                     onChange={cb?.onChange ?? ((patch) => patchAddingDraft(staged.key, patch))}
                     onRemove={cb?.onRemove ?? (() => cancelAddLine(staged.key))}
-                    canRemove={true}
-                    variantsRequired={requireVariants} seedSofaLegDefault={true}
+                    canRemove={true} chargeOnly={chargeAdds}
+                    variantsRequired={requireVariants} lineDateLocked={!requireVariants} seedSofaLegDefault={true}
+                    attachOptions={attachOptionsById[staged.key] ?? null}
                   />
                 </div>
               );
@@ -2646,6 +2645,7 @@ export const SalesOrderDetail = () => {
           onClose={() => setOverriding(null)}
         />
       )}
+      {repricing && <PriceAfterDoModal item={repricing} docNo={header.doc_no} currency={header.currency} onClose={() => setRepricing(null)} />}
 
       {/* Phase 1-C — Amendment before/after diff modal ("view changes"). */}
       {viewingAmendmentId && (
@@ -2679,18 +2679,16 @@ export const SalesOrderDetail = () => {
         onAmendmentClick={(a) => {
           if (onChainAmendmentClick(a)) setRelMapOpen(false);
         }}
+        returns={chainReturns} onReturnClick={(r) => { if (onChainReturnClick(r)) setRelMapOpen(false); }}
         pairing={chainPairing}
       />
       {/* A chain slot standing for several documents opens this chooser instead
-          of a notice that only named them. Picking a row navigates, so the map
-          closes with it. */}
+          of a notice that only named them. The picked one opens in its own tab of the
+          in-app strip. */}
       <DocumentChoiceDialog
         prompt={chainChoice}
         onClose={closeChainChoice}
-        onPick={(d) => {
-          setRelMapOpen(false);
-          pickChainChoice(d);
-        }}
+        onPick={pickChainChoice}
       />
       {submitDialog.element}
     </div>
@@ -2737,6 +2735,8 @@ type CustomerCardHandle = {
   /** Is the DIRECT half dirty? Tells "nothing to submit" apart from "nothing
       needs APPROVAL" — the two the old single return could not. */
   hasDirectHeaderChanges: () => boolean;
+  /** The fair keys the submit check needs when this edit picked or changed the event or its day (fairPick.ts). */
+  fairDayKeys: () => Record<string, string | null>;
 };
 
 type CustomerCardProps = {
@@ -2754,7 +2754,7 @@ type CustomerCardProps = {
       the visual lock. We keep the prop optional so existing call sites
       compile. */
   locked?: boolean;
-  /** A live DO / SI exists: the fields it snapshots (shared/so-identity-lock.ts) freeze; dates + note stay open. */ identityLocked: boolean;
+  /** A live DO / SI exists: the fields it snapshots (shared/so-identity-lock.ts) freeze; dates + note stay open. */ identityLocked: boolean; /** DEV-32 — the customer details reopen after the DO (so-after-do-client.ts). */ afterDoFields?: boolean;
   /** PR-A — Page-level edit mode. When false (default), every input in this
       card is disabled and the per-card Save button is hidden — the parent
       page renders Edit/Save/Cancel in its own header. */
@@ -2785,7 +2785,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
      per-card Save button it drove was removed. The page-level Save in
      SalesOrderDetail's header now surfaces the in-flight spinner. */
   saving: _saving,
-  locked = false, identityLocked,
+  locked = false, identityLocked, afterDoFields = false,
   isEditing = false,
   amendmentMode = false,
   onDeliveryDateChange,
@@ -2832,6 +2832,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
      super_admin row), so mirror the API and gate on the flat permission key
      the PATCH enforces (mfg-sales-orders.ts). Owner + IT Admin pass via `*`. */
   const canRemoveProcessingDate = can('scm.so.remove_processing_date');
+  const canOverridePoProcessingDate = can('scm.so.override_po_processing_date');
 
   /* Task #118 — DB-backed dropdowns (was hardcoded). Falls back to the
      migration 0081 seed list when loading or when the DB has zero rows
@@ -2884,6 +2885,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
        master link is durable. */
     venue: h.venue ?? '',
     venueId: h.venue_id ?? '',
+    fair: linkedEvent(h.venue, h.fair, h.fair_date ?? null), noFair: h.fair_match === 'NO_FAIR',
     phone: h.phone ?? '',
     address1: h.address1 ?? '',
     address2: h.address2 ?? '',
@@ -2927,6 +2929,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
        staff.venue_id. We persist both the FK + the resolved name. */
     venue: f.venue,
     venueId: f.venueId || null,
+    ...fairEditPatch(f.fair), ...(f.noFair ? { noFair: true } : {}),
     phone: f.phone,
     address1: f.address1,
     address2: f.address2,
@@ -3026,14 +3029,14 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     if (!form.salespersonId) return;
     /* Houzs 2026-06-23 (owner): Venue is manually pickable — only auto-fill the
        DEFAULT when it is still empty; never override a manual or loaded pick. */
-    if (form.venueId) return;
+    if (form.venueId || form.venue.trim()) return; // a saved venue often has no venue_id: its TEXT is the loaded pick
     const picked = staffList.find((s) => s.id === form.salespersonId);
     const resolvedId = picked?.venueId ?? '';
     if (!resolvedId) return;
     const resolvedName = (venuesQ.data ?? []).find((v) => v.id === resolvedId)?.name;
     if (!resolvedName) return; // 0591: `?? ''` blanked a loaded venue, permanently
-    setForm((s) => ({ ...s, venueId: resolvedId, venue: resolvedName }));
-  }, [form.salespersonId, staffList, venuesQ.data, form.venueId]);
+    setForm((s) => (s.venueId || s.venue.trim() ? s : { ...s, venueId: resolvedId, venue: resolvedName, fair: null }));
+  }, [form.salespersonId, staffList, venuesQ.data, form.venueId, form.venue]);
 
   /* Commander 2026-05-27 (Fix 5) — State → Sales Location cascade. When the
      user picks a delivery state, look up state_warehouse_mappings and set
@@ -3130,6 +3133,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
   const processingLocked =
     originalProcessing !== '' && originalProcessing < today && !amendmentMode &&
     !canRemoveProcessingDate;
+  const processingPoLocked = originalProcessing !== '' && header.processing_date_po_locked === true && !canOverridePoProcessingDate;
 
   /* Owner 2026-07-05 — the SO PROCESS lock fires only once the SO has a
      Processing Date (which IS what being proceeded means) AND that day has
@@ -3174,7 +3178,8 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
       today,
       originalProcessingDate: originalProcessing,
       originalDeliveryDate: originalDelivery,
-      canRemoveProcessingDate,
+      // In amendment mode the removal is a REQUEST the Purchaser signs (owner 2026-09-30), not a direct write.
+      canRemoveProcessingDate: canRemoveProcessingDate || amendmentMode,
     });
     return err ? soErrorText(err) : null;
   };
@@ -3261,10 +3266,11 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     getLockedHeaderChanges: () =>
       buildAmendmentHeaderChanges(lockedHeaderNow, lockedHeaderOriginal),
     hasDirectHeaderChanges: () => hasHeaderChanges(directHeaderPatch()),
+    fairDayKeys: () => fairDayCheck(buildPayload(), originalPayloadRef.current),
   }));
 
   /* Read-only outside edit mode or on a locked SO; the identity fields also freeze once a live DO / SI exists (the date pair + note do not). */
-  const scheduleDisabled = !isEditing || locked, inputsDisabled = scheduleDisabled || identityLocked;
+  const scheduleDisabled = !isEditing || locked, inputsDisabled = scheduleDisabled || identityLocked, customerDisabled = afterDoFields ? !isEditing : inputsDisabled;
 
   /* PR #168 — Commander 2026-05-27 screenshot diff vs. Create SO: Detail
      was using one big "Customer · Addresses" card with 4 hairline-divided
@@ -3293,7 +3299,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 ref={custInputRef}
                 className={styles.fieldInput}
                 value={form.customerName}
-                disabled={inputsDisabled}
+                disabled={customerDisabled}
                 onChange={(e) => { set('customerName', e.target.value); setShowSuggest(true); }}
                 onFocus={() => setShowSuggest(true)}
                 onBlur={() => setTimeout(() => setShowSuggest(false), 150)}
@@ -3311,7 +3317,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               />
             </label>
             <label className={styles.field}>
-              <span className={styles.fieldLabel}>Customer SO Ref</span>
+              <span className={styles.fieldLabel}>Ref No.</span>
               <input className={styles.fieldInput} value={form.customerSoNo}
                 placeholder="Their PO / SO number"
                 disabled={inputsDisabled}
@@ -3324,21 +3330,21 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               <PhoneInput
                 className={styles.fieldInput}
                 value={form.phone}
-                disabled={inputsDisabled}
+                disabled={customerDisabled}
                 onChange={(v) => set('phone', v)}
               />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Email *</span>
               <input type="email" className={styles.fieldInput} value={form.email}
-                disabled={inputsDisabled}
+                disabled={customerDisabled}
                 onChange={(e) => set('email', e.target.value)} />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Customer Type</span>
               <span className={styles.selectWrap}>
                 <select className={styles.fieldSelect} value={form.customerType}
-                  disabled={inputsDisabled}
+                  disabled={customerDisabled}
                   onChange={(e) => set('customerType', e.target.value)}>
                   <option value="">—</option>
                   {customerTypeOpts.map((t) => (
@@ -3406,7 +3412,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               <span className={styles.fieldLabel}>Building Type</span>
               <span className={styles.selectWrap}>
                 <select className={styles.fieldSelect} value={form.buildingType}
-                  disabled={inputsDisabled}
+                  disabled={customerDisabled}
                   onChange={(e) => set('buildingType', e.target.value)}>
                   <option value="">—</option>
                   {buildingTypeOpts.map((b) => (
@@ -3419,25 +3425,19 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>
-            <label className={styles.field}>
+            <label className={styles.field} style={{ gridColumn: 'span 2' }}>
               <span className={styles.fieldLabel}>Fair</span>
-              {/* Owner 2026-09-13 — same picker as the create forms. The ORGANIZER
-                  is deliberately not sent on a header PATCH: a venue change drops
-                  the fair link to PENDING and the nightly reconcile re-derives it
-                  from venue + date + brand, which is unique except where two
-                  organizers share a venue on one day (3 days in all of 2026).
-                  Those land on the pending screen for a person, not on a guess. */}
+              {/* Same picker as the create forms. A picked EVENT is saved and linked
+                  exactly (owner 2026-09-24); the order's link reads back as its row.
+                  Both halves live in components/fairPick.ts, shared with the phone. */}
               <FairPicker
                 id="so-detail-fair"
-                /* A saved order stores a PLACE, never an occurrence, so this
-                   screen has no period to offer — explicit nulls. Editing the
-                   fair here still drops the link to PENDING for the nightly
-                   reconcile; only the CREATE forms send a picked event today. */
-                value={{ venue: form.venue || null, organizer: null, startDate: null, endDate: null }}
+                value={fairPickValue(form.venue || null, form.fair)}
                 soDate={header.so_date}
                 disabled={inputsDisabled}
                 onChange={(next) => setForm((s) => ({
                   ...s,
+                  fair: fairEventOf(next), noFair: fairEventOf(next) ? false : s.noFair,
                   venue: next.venue ?? '',
                   venueId: (venuesQ.data ?? []).find(
                     (v) => v.name.trim().toLowerCase() === (next.venue ?? '').trim().toLowerCase(),
@@ -3446,29 +3446,35 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 wrapClassName={styles.selectWrap}
                 selectClassName={styles.fieldSelect}
               />
+              {!form.fair && fairElsewhereLine(header.venue, header.fair) && <span style={{ fontSize: '11px', marginTop: '4px' }}>{fairElsewhereLine(header.venue, header.fair)}</span>}
+              {(header.status as string) === 'DRAFT' && !form.fair && (/* a draft says No fair here too (owner 2026-10-19) */
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', marginTop: '6px', cursor: 'pointer' }}><input type="checkbox" checked={form.noFair} disabled={inputsDisabled} onChange={(e) => setForm((s) => ({ ...s, noFair: e.target.checked }))} />
+                  <span>No fair (showroom / direct sale)</span></label>)}
             </label>
-            <label className={styles.field}>
+            {form.fair && (/* which DAY of the picked event (owner 2026-09-24) */
+              <label className={styles.field}><span className={styles.fieldLabel}>Fair Day</span><FairDayPicker id="so-detail-fair-day" value={fairPickValue(form.venue || null, form.fair)} soDate={header.so_date} disabled={inputsDisabled}
+                onChange={(next) => setForm((s) => ({ ...s, fair: fairEventOf(next) }))} wrapClassName={styles.selectWrap} selectClassName={styles.fieldSelect} /></label>)}
+            <label className={styles.field} style={{ gridColumn: 'span 2' }}>
               <span className={styles.fieldLabel}>Processing Date</span>
               <DateField
                 fullWidth
                 className={styles.fieldInput}
                 value={form.processingDate}
-                disabled={scheduleDisabled || processingLocked}
-                title={processingLocked ? 'Processing date has passed — locked.' : undefined}
-                min={processingLocked ? undefined : today}
+                disabled={scheduleDisabled || processingLocked || processingPoLocked}
+                title={processingPoLocked
+                  ? 'This order already has a Purchase Order — only a Purchaser can change the Processing Date.'
+                  : processingLocked ? 'Processing date has passed — locked.' : undefined}
+                min={processingLocked || processingPoLocked ? undefined : today}
                 onChange={(iso) => set('processingDate', iso)}
                 style={datesXor && !form.processingDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
               />
-              {/* Remove-Processing-Date gate (Owner 2026-07-09) — the server 403s
-                  a non-holder's clear; surface the rule up front instead of
-                  letting them find out on Save. */}
-              {originalProcessing !== '' && !inputsDisabled && !processingLocked && !canRemoveProcessingDate && (
-                <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', marginTop: 2 }}>
-                  Only a Super Admin can remove this date.
-                </span>
+              {/* Remove-Processing-Date gate: the direct clear is Super-Admin-only (2026-07-09); anyone else REQUESTS it for the Purchaser (2026-09-30). */}
+              <RequestProcessingDateRemoval docNo={header.doc_no} surface="desktop" hint={originalProcessing !== '' && !inputsDisabled && !processingLocked && !canRemoveProcessingDate && !amendmentMode} show={originalProcessing !== '' && !locked && !processingLocked && !processingPoLocked && !canRemoveProcessingDate && !amendmentMode} />
+              {processingPoLocked && !scheduleDisabled && (
+                <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', marginTop: 2 }}>Has a Purchase Order — only a Purchaser can change this date.</span>
               )}
             </label>
-            <label className={styles.field}>
+            <label className={styles.field} style={{ gridColumn: 'span 2' }}>
               <span className={styles.fieldLabel}>Delivery Date</span>
               <DateField
                 fullWidth
@@ -3513,7 +3519,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               <span className={styles.fieldLabel}>Contact Name</span>
               <input className={styles.fieldInput} value={form.emergencyContactName}
                 placeholder="e.g. Lim Mei Hua"
-                disabled={inputsDisabled}
+                disabled={customerDisabled}
                 onChange={(e) => set('emergencyContactName', e.target.value)} />
             </label>
             <label className={styles.field}>
@@ -3526,7 +3532,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                   them on first paint. */}
               <span className={styles.selectWrap}>
                 <select className={styles.fieldSelect} value={form.emergencyContactRelationship}
-                  disabled={inputsDisabled}
+                  disabled={customerDisabled}
                   onChange={(e) => set('emergencyContactRelationship', e.target.value)}>
                   <option value="">—</option>
                   {relationshipOpts.map((r) => (
@@ -3547,7 +3553,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               <PhoneInput
                 className={styles.fieldInput}
                 value={form.emergencyContactPhone}
-                disabled={inputsDisabled}
+                disabled={customerDisabled}
                 onChange={(v) => set('emergencyContactPhone', v)}
               />
             </label>
@@ -3581,7 +3587,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               <input className={styles.fieldInput} value={form.address1}
                 placeholder="Unit, street, area"
                 autoComplete="houzs-no-autofill"
-                disabled={inputsDisabled} {...addressLineProps((v) => set('address1', v), { value: form.address2, set: (v) => set('address2', v) })}
+                disabled={customerDisabled} {...addressLineProps((v) => set('address1', v), { value: form.address2, set: (v) => set('address2', v) })}
                 onChange={(e) => set('address1', e.target.value)} />
             </label>
             <label className={`${styles.field}`} style={{ gridColumn: 'span 4' }}>
@@ -3589,7 +3595,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               <input className={styles.fieldInput} value={form.address2}
                 placeholder="Apt, floor, building (optional)"
                 autoComplete="houzs-no-autofill"
-                disabled={inputsDisabled} {...addressLineProps((v) => set('address2', v), null)}
+                disabled={customerDisabled} {...addressLineProps((v) => set('address2', v), null)}
                 onChange={(e) => set('address2', e.target.value)} />
             </label>
             {/* Owner spec 2026-07-23 — StatePicker (MY-default, click Others for CN/SG, Search). Same shared component as Warehouse / Supplier / Venue / MobileNewSO / SalesOrderNew. No `(legacy)` sneak-through, no free-text fallback. */}
@@ -3618,7 +3624,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                   className={styles.fieldSelect}
                   value={form.city}
                   onChange={applyCityReverse}
-                  disabled={inputsDisabled || stateLocked}
+                  disabled={afterDoFields ? !isEditing : (inputsDisabled || stateLocked)}
                   title={stateLocked ? 'Processing has passed — City is locked (it is part of the PO delivery location).' : undefined}
                   placeholder={cityPlaceholder(form.state)}
                   options={sortByText(cityChoices).map((c) => ({ value: c, label: c }))}
@@ -3634,7 +3640,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               onResolve={(r) => setForm((s) => ({ ...s, address1: r.address, ...(r.state && r.city ? { state: r.state, city: r.city } : {}) }))}
               postcodeChoices={postcodeChoices}
               placeholder={postcodePlaceholder(form.state, form.city)}
-              disabled={inputsDisabled || stateLocked}
+              disabled={afterDoFields ? !isEditing : (inputsDisabled || stateLocked)}
               title={stateLocked ? 'Processing has passed — Postcode is locked (it drives the PO delivery location).' : undefined}
               classes={{ field: styles.field, label: styles.fieldLabel, select: styles.fieldSelect, selectWrap: styles.selectWrap, chevron: styles.selectChevron, input: styles.fieldInput }}
             />
@@ -3890,10 +3896,10 @@ const HistoryPanel = memo(({
   onClose: () => void;
 }) => {
   const q = useSalesOrderAuditLog(docNo);
-  const entries = q.data ?? [];
+  const { panel, error, renderDocTag } = useSoHistoryWithRelated(docNo, q);
 
   const renderBadge = useCallback((entry: AuditLogEntry, changes: AuditFieldChange[]) => {
-    if (entry.action !== 'UPDATE_STATUS') return null;
+    if (entry.action !== 'UPDATE_STATUS') return renderDocTag(entry);
     const status = changes.find((f) => f.field === 'status')?.to as string | undefined;
     if (!status) return null;
     return (
@@ -3904,15 +3910,14 @@ const HistoryPanel = memo(({
         {SO_STATUS_LABEL[status] ?? status.replace(/_/g, ' ')}
       </span>
     );
-  }, []);
+  }, [renderDocTag]);
 
   return (
     <AuditHistoryPanel
       recordLabel={docNo}
       entityName="Sales order"
-      entries={entries}
-      isLoading={q.isLoading}
-      error={q.error}
+      {...panel}
+      error={error}
       labels={SO_AUDIT_LABELS}
       onClose={onClose}
       renderBadge={renderBadge}

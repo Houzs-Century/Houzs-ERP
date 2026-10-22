@@ -29,15 +29,18 @@
 //   {submitDialog.element}
 // ----------------------------------------------------------------------------
 
-import { useCallback, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
   useAmendmentLanePreview,
+  useCreateAmendment,
   type AmendmentLane,
   type AmendmentLanePreview,
   type AmendmentLanePreviewArgs,
 } from '../lib/so-amendment-queries';
-import { AMENDMENT_REASON_REQUIRED } from '../lib/so-amendment-submit';
-import { AMENDABLE_HEADER_LABELS } from '../lib/so-amendment-header';
+import { AMENDMENT_REASON_REQUIRED, amendmentSubmittedNotice } from '../lib/so-amendment-submit';
+import { AMENDABLE_HEADER_LABELS, PROCESSING_DATE_REMOVAL_CHANGES } from '../lib/so-amendment-header';
+import { useNotify } from './NotifyDialog';
+import { newIdempotencyKey } from '../../../lib/idempotency';
 import {
   soAmendmentApprover, AMENDMENT_APPROVER_LABEL, AMENDMENT_APPROVER_TONE,
 } from '../lib/amendment-approver';
@@ -199,4 +202,56 @@ export function useAmendmentSubmitDialog(): {
     />
   ) : null;
   return { ask, element };
+}
+
+/* Remove-Processing-Date for a NON-holder of `scm.so.remove_processing_date`, on
+   an order not in amendment mode. `hint` says the direct clear is Super-Admin-only
+   (Owner 2026-07-09); `show` offers to REQUEST the removal instead, which the
+   Purchaser approves (owner 2026-09-30: 「还没锁定的也是 purchaser 可以审批」) —
+   both dates cleared, LINES lane. One component for desktop and phone. */
+export function RequestProcessingDateRemoval({ docNo, show, hint = false, surface }: {
+  docNo: string;
+  show: boolean;
+  hint?: boolean;
+  surface: 'desktop' | 'mobile';
+}) {
+  const dialog = useAmendmentSubmitDialog();
+  const notify = useNotify();
+  const create = useCreateAmendment();
+  const keyRef = useRef<string | null>(null);
+  if (!show && !hint) return null;
+
+  const run = async () => {
+    const headerChanges = PROCESSING_DATE_REMOVAL_CHANGES;
+    const answer = await dialog.ask({ docNo, lines: [], headerChanges });
+    if (answer == null) return;
+    keyRef.current ??= newIdempotencyKey();
+    try {
+      const res = await create.mutateAsync({ docNo, reason: answer.reason, lines: [], headerChanges, idempotencyKey: keyRef.current });
+      keyRef.current = null;
+      void notify(amendmentSubmittedNotice('AMENDMENT', res));
+    } catch (e) {
+      void notify({ title: 'Removal request not sent', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
+  const small = surface === 'desktop' ? 'var(--fs-11)' : 11;
+  const link: CSSProperties = {
+    alignSelf: 'flex-start', background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+    color: surface === 'desktop' ? 'var(--c-burnt)' : '#B8331F', fontWeight: 600, fontSize: small, textDecoration: 'underline',
+  };
+  return (
+    <>
+      {hint && (
+        <span style={{ fontSize: small, color: surface === 'desktop' ? 'var(--fg-muted)' : '#9aa093', marginTop: 2 }}>
+          Only a Super Admin can remove this date directly.
+        </span>
+      )}
+      {show && (
+        <button type="button" style={link} disabled={create.isPending} onClick={() => { void run(); }}>
+          Request removal (Purchaser approves)
+        </button>
+      )}
+      {dialog.element}
+    </>
+  );
 }

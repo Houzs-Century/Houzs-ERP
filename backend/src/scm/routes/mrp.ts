@@ -84,13 +84,17 @@ import {
   type PoSupplyEntry,
 } from '../lib/ship-commitment';
 import { collectBatchClaims, openBucketStock, drawBucketStock } from '../lib/batch-claimed-stock';
+import { loadSofaBatchStock } from '../lib/sofa-set-coverage';
+import { planSofaSets, type SofaPlan, type SofaSetLine, type SofaSetPoSupply } from '../lib/sofa-set-plan';
 import { WH_NONE, composite, loadCommittedShipments } from '../lib/committed-shipments';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { pgrestInList } from '../lib/pgrest-in-list';
 import { readMfgProductBindings } from '../lib/supplier-bindings';
+import { NB_FABRIC_SERIES, NB_SUPPLIER_CODE, needsNbSupplier } from '../lib/mrp-rule-supplier';
 import { mapBounded, eager } from '../lib/concurrency';
 import type { Env, Variables } from '../env';
 import { SO_TERMINAL_STATES } from '../shared/so-terminal-states';
+import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
 import { isDefaultMrpView, readMrpSnapshot, refreshMrpSnapshot } from '../lib/mrp-snapshot';
 import { allocSourceOf, allocSourceCoveringPo, type AllocSource } from '../shared/mrp-alloc-source';
 import { isHardBoundLine, HARD_BOUND_COMPANY_ID } from '../lib/so-stock-allocation';
@@ -211,9 +215,10 @@ type DemandRow = {
     customer_delivery_date: string | null;   // the customer's ORIGINAL promise — never overwritten
     amended_delivery_date: string | null;    // the reschedule Logistics confirmed; wins over the original
     processing_date: string | null; /* Release-for-purchasing signal (owner 2026-08-18: "Processing Date
-       就代表这张单可以安排订货了"). Carried for DISPLAY only — this page's
-       "when to order" is orderByDate below, derived from the delivery date and
-       the category lead time. NOT a production date: there is no production. */
+       就代表这张单可以安排订货了"). GATES entry: a line whose order has none is
+       not demand (see isReleased). Once in, "when to order" is orderByDate below,
+       derived from the delivery date and the category lead time. NOT a
+       production date: there is no production. */
     customer_state: string | null;       // staff #8 — show the customer's state (info-only)
     sales_location: string | null;       // the SO's OWN warehouse of record (lib/so-warehouse.ts)
   } | null;
@@ -292,6 +297,10 @@ export type MrpLine = {
      supplier can't change). NULL for stock / shortage lines. */
   poSupplierId: string | null;
   poSupplierName: string | null;
+  /* HC-0128 — the supplier this line's content routes to (Hydraulic / NB
+     fabric -> NB FURNITURE), when that supplier is bound to the SKU; the UI
+     pre-selects it instead of the SKU's main supplier. NULL = no rule fired. */
+  ruleSupplierId: string | null;
 };
 
 export type MrpSku = {
@@ -359,6 +368,12 @@ type SofaSet = {
      for stock / shortage sets. */
   poSupplierId: string | null;
   poSupplierName: string | null;
+  /* The batch (= purchase order number) the WHOLE set is planned from — the
+     received dye lot for a `stock` set, the covering PO for a `po` set, the
+     partly-covering PO for a short set that already has units on order. NULL
+     when nothing covers it (order the whole set, on one PO). Company-1 bound
+     lines carry their own PO here. */
+  batchNo: string | null;
   suppliers: Array<{ supplierId: string; code: string; name: string; isMain: boolean }>;
 };
 
@@ -564,6 +579,13 @@ export async function computeMrp(
   /* The category walk (section 2), the two warehouse masters (section 2) and the
      stock + PO-supply reads (sections 3 and 4). Each is byte-identical to the
      query that stood at its own site; only the moment it is ISSUED moved. */
+  /* HC-0128 — the NB-series fabric codes (NB FURNITURE routing). Keyed off
+     nothing but the company, so it rides this wave instead of adding a round
+     trip after the bindings. */
+  const nbFabricsProm = eager(Promise.resolve(scoped(sb
+    .from('fabric_trackings')
+    .select('fabric_code')
+    .eq('series', NB_FABRIC_SERIES))));
   const catRowsProm = eager(paginateAll<{ category: string | null }>((from, to) =>
     scoped(sb.from('mfg_products').select('category')).order('id').range(from, to)));
   const balancesProm = eager(paginateAll<BalanceRow>((from, to) => {
@@ -638,10 +660,20 @@ export async function computeMrp(
       so:mfg_sales_orders!inner ( debtor_name, status, so_date, customer_delivery_date, amended_delivery_date, processing_date, customer_state, sales_location )
     `)
     .eq('cancelled', false)
-    .not('so.status', 'in', SO_DONE_SQL))
+    .not('so.status', 'in', SO_DONE_SQL)
+    .not(`so.${SO_PROCESSING_DATE_COLUMN}`, 'is', null))
     .order('id')
     .range(from, to));
   if (demandErr) throw new Error(`mrp_load_failed: ${demandErr.message}`);
+
+  /* NO PROCESSING DATE, NO DEMAND (owner 2026-09-15, BUG-39 2026-09-29).
+     「没有 Processing date 的单子就不进来」 — the Processing Date is the release
+     for purchasing, so an order without one takes no stock, claims no PO and
+     shows no shortage, on every consumer of this engine. Priority among the
+     released orders is still the delivery date. The stock allocator applies the
+     same gate (so-stock-allocation.ts); the SQL filter above only saves read
+     budget, this one is authoritative. */
+  const isReleased = (r: DemandRow): boolean => !!r.so?.processing_date;
 
   /* Undated lines (no line delivery date AND no SO delivery date) are not ready
      to order — the MRP page HIDES them by default (owner 2026-08-18;
@@ -658,16 +690,16 @@ export async function computeMrp(
      under both flag values. `includeUndated` only controls whether undated
      rows appear in the RESULT (visibility, not math). */
   const demandActive = ((demandRaw ?? []) as unknown as DemandRow[]).filter(
-    (r) => r.item_code && r.so && !SO_DONE.has(r.so.status) && r.qty > 0,
+    (r) => r.item_code && r.so && !SO_DONE.has(r.so.status) && isReleased(r) && r.qty > 0,
   );
   const isDatedLine = (r: DemandRow): boolean => deliveryOf(r) !== null;
 
   // A partially-delivered SO keeps its header status active (the header only
   // flips to DELIVERED once EVERY line is fully covered), so already-delivered
   // lines would otherwise phantom back in as demand and over-order. Subtract
-  // delivered-net-of-returns per line and drop any line with nothing left to
-  // fulfil. Single source of truth: soDeliverableRemaining (same query the DO
-  // convert flow uses), so MRP can never disagree with the SO's remaining.
+  // delivered per line and drop any line with nothing left to fulfil. The
+  // delivered count comes from soDeliverableRemaining (same query the DO
+  // convert flow uses); its returned count is deliberately not added back.
   //
   /* BATCHED BY THE CALLER, and the caller is the reason. Paging the demand read
      above changed this call's scale by more than an order of magnitude: MRP used
@@ -713,12 +745,13 @@ export async function computeMrp(
   for (const part of parts) {
     for (const [soItemId, d] of part) deliverable.set(soItemId, d);
   }
-  const deliveredNetOf = (soItemId: string): number => {
-    const d = deliverable.get(soItemId);
-    if (!d) return 0;
-    return Math.max(0, (d.delivered ?? 0) - (d.returned ?? 0));
-  };
-  const effQtyOf = (r: DemandRow): number => Math.max(0, r.qty - deliveredNetOf(r.id));
+  /* Delivered GROSS of returns (Sim, 2026-10-20, 2990-0011): a returned unit
+     is not demand again. The rejected goods go back to stock for the next
+     matching order; a customer who still wants the item gets a new SO, and
+     that SO is what purchasing orders against. The stock allocator applies
+     the same rule. */
+  const deliveredOf = (soItemId: string): number => Math.max(0, deliverable.get(soItemId)?.delivered ?? 0);
+  const effQtyOf = (r: DemandRow): number => Math.max(0, r.qty - deliveredOf(r.id));
   const demand = demandActive.filter((r) => effQtyOf(r) > 0);
 
   // Stamp variants.fabricSupplierCode on the demand lines (ONE batched read,
@@ -941,8 +974,14 @@ export async function computeMrp(
     boundCompany
     && !!r.so_item_id
     && (isHardBoundLine(r.item_group, r.item_code) || demandBoundById.has(String(r.so_item_id)));
+  const poRaisedFor = new Map<string, Set<string>>();
   for (const r of (poRaw ?? []) as unknown as PoLineRow[]) {
     if (!r.po || PO_DEAD.has(r.po.status)) continue;
+    if (r.so_item_id) {
+      const ids = poRaisedFor.get(r.po.po_number) ?? new Set<string>();
+      ids.add(String(r.so_item_id));
+      poRaisedFor.set(r.po.po_number, ids);
+    }
     /* Migration 0180 — ETA is the EFFECTIVE (latest revised) delivery date: the
        line's own effective date (MAX over its delivery_date + revisions), else
        the header's effective date (MAX over expected_at + revisions). camelCase
@@ -1105,6 +1144,20 @@ export async function computeMrp(
     }
   }
 
+  /* HC-0128 — NB-series fabrics (Fabric Converter) route to NB FURNITURE. A
+     failed read fails the plan like every other read here: an empty set would
+     silently send NB lines to the main supplier. */
+  const nbFabricCodes = new Set<string>();
+  {
+    const { data: nbFabrics, error: nbErr } = (await nbFabricsProm)();
+    if (nbErr) throw new Error(`mrp_load_failed: ${nbErr.message}`);
+    for (const f of (nbFabrics ?? []) as Array<{ fabric_code: string | null }>) {
+      if (f.fabric_code) nbFabricCodes.add(f.fabric_code.trim().toUpperCase());
+    }
+  }
+  const nbSupplierIdOf = (code: string): string | null =>
+    suppliersByCode.get(code)?.find((s) => s.code === NB_SUPPLIER_CODE)?.supplierId ?? null;
+
   // ── 6. Group demand by (warehouse + SKU + variant), apply category filter ─
   // Commander 2026-05-31 — warehouse is part of the bucket: the same SKU+variant
   // in two warehouses is two rows (no cross-WH pooling). When whFilter is set,
@@ -1125,6 +1178,24 @@ export async function computeMrp(
     if (s.includes('ACCESSOR')) return 'ACCESSORY';
     if (s.includes('SERVICE')) return 'SERVICE';
     return null;
+  };
+
+  /* HC-0128 — once one bedframe of an SO goes to NB, every bedframe of that SO
+     does too: two makers' bedframes side by side get compared by the customer
+     (Sim 2026-10-20). Decided over ALL of the SO's open lines, so a line already
+     on an NB PO still pulls its shortage siblings along. */
+  const isBedframeLine = (r: DemandRow): boolean =>
+    (prodByCode.get(r.item_code)?.category ?? catFromGroup(r.item_group)) === 'BEDFRAME';
+  const nbBedframeDocs = new Set(
+    demand
+      .filter((r) => isBedframeLine(r) && nbSupplierIdOf(r.item_code) && needsNbSupplier(r.variants, nbFabricCodes))
+      .map((r) => r.doc_no),
+  );
+  const ruleSupplierIdOf = (r: DemandRow): string | null => {
+    const nb = nbSupplierIdOf(r.item_code);
+    if (!nb) return null;
+    if (needsNbSupplier(r.variants, nbFabricCodes)) return nb;
+    return isBedframeLine(r) && nbBedframeDocs.has(r.doc_no) ? nb : null;
   };
   const demandByKey = new Map<string, Bucket>();
   for (const d of demand) {
@@ -1225,7 +1296,7 @@ export async function computeMrp(
     const lines: MrpLine[] = [];
     let qtyNeeded = 0;
     for (const r of rows) {
-      const eff = effQtyOf(r);                              // qty still to fulfil (ordered − delivered + returned)
+      const eff = effQtyOf(r);                              // qty still to fulfil (ordered − delivered)
       let need = eff;
       /* BOUND LINE (company 1, bedframe / `(SP)` mattress / custom pillow). Drawn at
          STOCK, and only at stock, and the distinction is the whole design:
@@ -1338,6 +1409,7 @@ export async function computeMrp(
         // Only covered-by-PO lines carry a read-only supplier; stock/shortage = null.
         poSupplierId: source === 'po' ? poSupplierId : null,
         poSupplierName: source === 'po' && poSupplierId ? (supplierNameById.get(poSupplierId) ?? null) : null,
+        ruleSupplierId: ruleSupplierIdOf(r),
       });
     }
 
@@ -1432,44 +1504,72 @@ export async function computeMrp(
   }
 
   const sofaSets: SofaSet[] = [];
-  for (const [k, bucket] of sofaByKey.entries()) {
-    // `code` and `vkey` were only ever read to build the '' legacy key; the
-    // bucket still carries them, this loop no longer needs them.
-    const { whId, rows } = bucket;
-    const wh = whId ? whById.get(whId) : null;
-    // Same deterministic tie-break as section 7: equal delivery date → SO doc
-    // number ascending, so same-day sofa allocation is stable.
-    rows.sort((a, b) => {
-      const byDate = byDateAsc(deliveryOf(a), deliveryOf(b));
-      if (byDate !== 0) return byDate;
-      return (a.doc_no ?? '').localeCompare(b.doc_no ?? '');
-    });
-    /* On-hand split into (claim reserve, free pool) — section 4c's carve, the
-       twin of section 7's. THIS is the walk where the prod contradiction lived:
-       the sofa allocator's whole-set lock is exactly an allocated_batch_no on
-       each module line, and this walk used to hand those units to whichever SO
-       delivered earlier. */
-    const bucketStock = openBucketStock(stockByKey.get(k) ?? 0, batchClaims.qtyByBucket.get(k) ?? 0);
-    /* Sofa draws its OWN bucket's PO supply only — the twin of section 7, and
-       removed for the same reason on the same ruling (owner 2026-08-16). The
-       fallback that stood here was added by audit D2 (2026-08-01) specifically
-       to mirror section 7's; mirroring it in the other direction is what keeps
-       the two paths from drifting. Sofa's key is fabricCode + seatHeight +
-       legHeight (ATTRS_BY_GROUP), so a '' sofa PO is one with no fabric, no
-       seat and no leg recorded — precisely the thing the owner says cannot
-       stand in for a colour-matched set. See section 7 for the full reasoning,
-       including why item_group is NOT re-derived from the product master. */
-    const ownPo = poByKey.get(k) ?? [];
-    const poQueue: PoSupply[] = ownPo.map((p) => ({ ...p })).sort((a, b) => byDateAsc(a.eta, b.eta));
+  /* What one module line is planned from (lib/sofa-set-plan.ts). Each walk
+     below writes one per demand line; the emit loop turns it into the row. */
+  const sofaPlanByLine = new Map<string, SofaPlan>();
+  /* camelCase trap, same as section 4c: a repair script driving this through
+     the postgres shim gets allocatedBatchNo — dual-read so the lock is seen. */
+  const lockOf = (d: DemandRow): string | null =>
+    d.allocated_batch_no ?? (d as unknown as Record<string, string | null>).allocatedBatchNo ?? null;
+
+  if (boundCompany) {
     /* COMPANY 1 SOFA IS HARD-BOUND — the twin of section 7's branch, added
-       2026-09-09 for the reason section 4a now records at length. A bound set
+       2026-09-09 for the reason section 4a records at length. A bound line
        draws its OWN purchase order and nothing else: its receipt first
        (`dedicatedReceivedByLine`, which is why a fully received PO still covers
-       even though it left `poQueue` empty), then its own outstanding quantity.
-       The pooled `bucketStock` / `poQueue` above stay exactly as they are for
-       company 2, which keeps the pooled model. */
-    const boundSofa = boundCompany;
+       even though it left the open queue empty), then its own outstanding
+       quantity. Planned per LINE, as the stored allocator's hard-binding arm
+       does; the pooled set walk below is company 2's model. */
+    for (const bucket of sofaByKey.values()) {
+      for (const d of bucket.rows) {
+        let need = effQtyOf(d);
+        const fromStock = Math.min(need, dedicatedReceivedByLine.get(d.id) ?? 0);
+        need -= fromStock;
+        let poNumber: string | null = null;
+        let poEta: string | null = null;
+        let poSupplierId: string | null = null;
+        const queue = dedicatedOpenByLine.get(d.id) ?? [];
+        while (need > 0 && queue.length > 0) {
+          const front = queue[0];
+          if (!front) break;
+          const take = Math.min(front.qtyLeft, need);
+          if (poNumber == null) { poNumber = front.poNumber; poEta = front.eta; poSupplierId = front.supplierId; }
+          front.qtyLeft -= take;
+          need -= take;
+          if (front.qtyLeft <= 0) queue.shift();
+        }
+        sofaPlanByLine.set(d.id, { fromStock, need, poNumber, poEta, poSupplierId, batchNo: poNumber });
+      }
+    }
+  } else if (sofaByKey.size > 0) {
+    /* THE SET WALK — company 2's pooled sofa model, planned the way it SHIPS:
+       one batch (= one PO) covers the whole set or nothing does. Owner
+       2026-10-05 on 2990-SO-2610-005: 「不能跨批次 1PO = 1batch 不能分开」. The
+       rule, its four arms and the lock carve live in lib/sofa-set-plan.ts;
+       this block only hands it the engine's lines, lots and PO supply. */
+    const setLines: SofaSetLine[] = [];
+    for (const [k, bucket] of sofaByKey) {
+      for (const d of bucket.rows) {
+        setLines.push({
+          soItemId: d.id, docNo: d.doc_no, bucketKey: k, whId: bucket.whId, code: bucket.code, vkey: bucket.vkey,
+          need: effQtyOf(d), lockedBatchNo: lockOf(d), delivery: deliveryOf(d),
+        });
+      }
+    }
+    const lots = await loadSofaBatchStock(sb, [...new Set(setLines.map((l) => l.code))]);
+    /* A bucket's OWN PO lines only (no '' fallback — owner 2026-08-16), cloned
+       so the walk's decrements never touch the shared map. */
+    const poByBucket = new Map<string, SofaSetPoSupply[]>();
+    for (const k of sofaByKey.keys()) {
+      const own = poByKey.get(k);
+      if (own && own.length > 0) poByBucket.set(k, own.map((p) => ({ ...p })));
+    }
+    for (const [id, plan] of planSofaSets(setLines, lots, poByBucket, poRaisedFor)) sofaPlanByLine.set(id, plan);
+  }
 
+  for (const [, bucket] of sofaByKey.entries()) {
+    const { whId, rows } = bucket;
+    const wh = whId ? whById.get(whId) : null;
     for (const d of rows) {
       const v = (d.variants ?? {}) as Record<string, unknown>;
       const cells = Array.isArray(v.cells) ? (v.cells as Array<{ moduleId?: string }>) : [];
@@ -1481,31 +1581,13 @@ export async function computeMrp(
         ? cells.map((c) => sstr(c.moduleId)).filter(Boolean)
         : [sstr(splitSofaCode(d.item_code).sizeCode)].filter(Boolean);
       const colour = [sstr(v.fabricCode), sstr(v.colorCode) || sstr(v.colourCode)].filter(Boolean).join(' ');
-      const eff = effQtyOf(d);                        // set qty still to fulfil (ordered − delivered + returned)
+      const eff = effQtyOf(d);                        // set qty still to fulfil (ordered − delivered)
       const prod = prodByCode.get(d.item_code);
       const setDelivery = deliveryOf(d);
-
-      let need = eff;
-      /* Bound: the units RECEIVED on this set's own purchase order. Unbound
-         (company 2): the pooled on-hand carve, batch claims honoured. */
-      const fromStock = boundSofa
-        ? Math.min(need, dedicatedReceivedByLine.get(d.id) ?? 0)
-        : drawBucketStock(bucketStock, batchClaims.qtyByLine.get(d.id) ?? 0, need);
-      need -= fromStock;
-      let poNumber: string | null = null;
-      let poEta: string | null = null;
-      let poSupplierId: string | null = null;
-      const queue = boundSofa ? (dedicatedOpenByLine.get(d.id) ?? []) : poQueue;
-      while (need > 0 && queue.length > 0) {
-        const front = queue[0];
-        if (!front) break;
-        const take = Math.min(front.qtyLeft, need);
-        if (poNumber == null) { poNumber = front.poNumber; poEta = front.eta; poSupplierId = front.supplierId; }
-        front.qtyLeft -= take;
-        need -= take;
-        if (front.qtyLeft <= 0) queue.shift();
-      }
-      const ordered = eff - need;                     // covered by pooled stock+PO
+      const plan = sofaPlanByLine.get(d.id)
+        ?? { fromStock: 0, need: eff, poNumber: null, poEta: null, poSupplierId: null, batchNo: null };
+      const need = plan.need;
+      const ordered = eff - need;                     // covered by one batch's stock + PO
 
       /* Audit D6 — same rule as section 7: the allocation above always runs;
          the flag only controls whether the (undated) set is rendered. Counted
@@ -1538,16 +1620,17 @@ export async function computeMrp(
         colour: colour || null,
         qty: eff,
         orderedQty: ordered,
-        stockQty: fromStock, // on-hand units this set consumed (assigned-stock signal)
+        stockQty: plan.fromStock, // on-hand units this set consumed (assigned-stock signal)
         shortageQty: need,
-        poNumber,
-        poEta,
+        poNumber: plan.poNumber,
+        poEta: plan.poEta,
         // PO-covered sets carry the covering PO's supplier (read-only); it's
         // only non-null when a PO was actually consumed above. Name resolved
         // from the same map the general path uses, so sofa + general display
         // identically (fixes the sofa "—" supplier).
-        poSupplierId,
-        poSupplierName: poSupplierId ? (supplierNameById.get(poSupplierId) ?? null) : null,
+        poSupplierId: plan.poSupplierId,
+        poSupplierName: plan.poSupplierId ? (supplierNameById.get(plan.poSupplierId) ?? null) : null,
+        batchNo: plan.batchNo,
         suppliers: suppliersByCode.get(d.item_code) ?? [],
       });
     }

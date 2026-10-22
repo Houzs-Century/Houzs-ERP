@@ -25,7 +25,24 @@
 
 import { afterEach } from "vitest";
 import { cleanup } from "@testing-library/react";
+import { resetInVisitColFilters } from "./components/dataTableColFilterMemory";
 
 afterEach(() => {
   cleanup();
+  /* The in-visit funnel + search memory is module-scoped, so a search one test
+     typed would narrow the next test's table in the same file. In the app that
+     memory is the point; here each test starts as a fresh page load. */
+  resetInVisitColFilters();
+  /* A DataTable writes its column filters into the address (`cf.<tableId>`).
+     jsdom keeps one address for a whole file, so a funnel one test sets would
+     open the next test's table already filtered. In the app every page has
+     its own address; here each test gets a clean one. (Node-environment
+     files have no window at all.) */
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  const stale = [...url.searchParams.keys()].filter((k) => k.startsWith("cf."));
+  if (stale.length > 0) {
+    for (const k of stale) url.searchParams.delete(k);
+    window.history.replaceState(window.history.state, "", url);
+  }
 });

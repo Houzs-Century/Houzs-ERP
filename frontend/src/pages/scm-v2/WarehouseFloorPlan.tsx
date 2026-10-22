@@ -16,7 +16,7 @@
 import { useMemo, useState, type CSSProperties } from 'react';
 import {
   Search, X, Truck, ArrowLeftRight,
-  ArrowDownToLine, Pencil, Trash2, Download,
+  ArrowDownToLine, Pencil, Trash2, Download, Printer,
 } from 'lucide-react';
 import { Button, SearchInput } from '../../components/Button';
 import { ResizableDetailDrawer } from '../../components/ResizableDetailDrawer';
@@ -57,7 +57,7 @@ const detailLine = (s: Slot): string => {
 };
 
 export function WarehouseFloorPlan({
-  racks, warehouseId, isLoading, wide, view, onEditRack, onStockInHere,
+  racks, warehouseId, isLoading, wide, view, onEditRack, onStockInHere, onPrintLabels,
 }: {
   racks: Rack[];
   warehouseId: string;
@@ -66,6 +66,8 @@ export function WarehouseFloorPlan({
   view: 'plan' | 'list';
   onEditRack: (r: Rack) => void;
   onStockInHere: (rackId: string) => void;
+  /** Reprint the stickers of these rack labels (one damaged sticker, or a few). */
+  onPrintLabels: (labels: string[]) => void;
 }) {
   const [filters, setFilters] = useState<FloorFilters>({ q: '', product: '', customer: '', from: '', to: '', status: '' });
   const [picked, setPicked] = useState<string[]>([]);
@@ -172,6 +174,7 @@ export function WarehouseFloorPlan({
           onRelease={() => setReserved(false)}
           onSetZone={(zone) => void batchSetZone(zone)}
           onExport={exportSelection}
+          onPrintLabels={() => onPrintLabels(pickedSlots.map((s) => s.rack.rack))}
           busy={updateRack.isPending}
           onClear={() => setPicked([])}
         />
@@ -204,6 +207,7 @@ export function WarehouseFloorPlan({
             zoneBusy={updateRack.isPending}
             onEdit={() => { onEditRack(sel.rack); setSelId(null); }}
             onStockInHere={() => { onStockInHere(sel.rack.id); setSelId(null); }}
+            onPrintLabel={() => { onPrintLabels([sel.rack.rack]); setSelId(null); }}
             onDelete={async () => {
               if (sel.itemCount > 0) {
                 void notify({ title: 'This slot still has stock on it.', body: 'Stock out its items before deleting.', tone: 'error' });
@@ -296,13 +300,14 @@ function Toolbar({
 
 /* ── Batch bar (≥1 selected) ────────────────────────────────────────────── */
 function BatchBar({
-  count, onReserve, onRelease, onSetZone, onExport, busy, onClear,
+  count, onReserve, onRelease, onSetZone, onExport, onPrintLabels, busy, onClear,
 }: {
   count: number;
   onReserve: () => void;
   onRelease: () => void;
   onSetZone: (zone: string | null) => void;
   onExport: () => void;
+  onPrintLabels: () => void;
   busy: boolean;
   onClear: () => void;
 }) {
@@ -326,6 +331,7 @@ function BatchBar({
       <button type="button" className={ghost} onClick={onRelease} disabled={busy}>Release reserve</button>
       <button type="button" className={ghost} disabled title="Not available yet — bulk stock-out is coming in a later phase">Empty slots</button>
       <button type="button" className={ghost} onClick={onExport}><Download size={13} className="mr-1 inline" strokeWidth={2} />Export</button>
+      <button type="button" className={ghost} onClick={onPrintLabels}><Printer size={13} className="mr-1 inline" strokeWidth={2} />Print labels</button>
       <div className="flex-1" />
       <button type="button" onClick={onClear} className="h-8 rounded-md px-3 text-[12.5px] font-semibold text-[#cfe0dc] hover:text-white">Clear</button>
     </div>
@@ -563,7 +569,7 @@ const MOVE_TAG: Record<RackMovementType, { label: string; bg: string; fg: string
 };
 
 function SlotDrawerBody({
-  slot, warehouseId, onClose, onSetZone, zoneBusy, onEdit, onStockInHere, onDelete, deleting,
+  slot, warehouseId, onClose, onSetZone, zoneBusy, onEdit, onStockInHere, onPrintLabel, onDelete, deleting,
 }: {
   slot: Slot;
   warehouseId: string;
@@ -572,6 +578,7 @@ function SlotDrawerBody({
   zoneBusy: boolean;
   onEdit: () => void;
   onStockInHere: () => void;
+  onPrintLabel: () => void;
   onDelete: () => void;
   deleting: boolean;
 }) {
@@ -668,6 +675,7 @@ function SlotDrawerBody({
           <span>{slot.status === 'empty' ? 'Put away here' : 'Pick from slot'}</span>
         </Button>
         <Button variant="secondary" icon={<Pencil size={14} />} onClick={onEdit}>Edit</Button>
+        <Button variant="secondary" icon={<Printer size={14} />} onClick={onPrintLabel}>Print label</Button>
         {slot.itemCount === 0 && (
           <Button variant="ghost" icon={<Trash2 size={14} />} onClick={onDelete} disabled={deleting}>Delete</Button>
         )}

@@ -184,6 +184,34 @@ describe('applyPoAmendment — snapshot + revision + audit', () => {
     expect(res.linesRemoved).toBe(1);
   });
 
+  it('HC-0121: REMOVE of the unreceived line on a partly received PO names it for AutoCount and releases its SO line', async () => {
+    const store = baseStore();
+    const lines = store.purchase_order_items;
+    lines.find((i) => i.id === 'POI-1')!.received_qty = 1;
+    Object.assign(lines.find((i) => i.id === 'POI-2')!, { linked_ac_dtlkey: 4412, description2: 'KING', so_item_id: 'SOI-9' });
+    store.purchase_orders[0].status = 'PARTIALLY_RECEIVED';
+    store.po_amendment_lines = [
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-2', change_type: 'REMOVE', new_qty: null, new_unit_price_sen: null, new_item_code: null, new_material_name: null, new_variants: null, new_delivery_date: null, old_snapshot: { qty: 1 } },
+    ];
+    const res = await applyPoAmendment(fakeSb(store), AMD, 'user-1');
+    expect(store.purchase_order_items.find((i) => i.id === 'POI-2')).toBeUndefined();
+    expect(res.retired).toEqual([{ DtlKey: 4412, ItemCode: 'BF-2', Desc2: 'KING', Gone: 'deleted' }]);
+    expect(res.releasedSoItemIds).toEqual(['SOI-9']);
+  });
+
+  it('a REMOVE AutoCount never knew (no DtlKey) and a preserved received line retire nothing', async () => {
+    const store = baseStore();
+    Object.assign(store.purchase_order_items.find((i) => i.id === 'POI-1')!, { received_qty: 1, linked_ac_dtlkey: 4411, so_item_id: 'SOI-8' });
+    store.po_amendment_lines = [
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-1', change_type: 'REMOVE', new_qty: null, new_unit_price_sen: null, new_item_code: null, new_material_name: null, new_variants: null, new_delivery_date: null, old_snapshot: { qty: 1 } },
+      { id: 'AL-2', amendment_id: AMD, purchase_order_item_id: 'POI-2', change_type: 'REMOVE', new_qty: null, new_unit_price_sen: null, new_item_code: null, new_material_name: null, new_variants: null, new_delivery_date: null, old_snapshot: { qty: 1 } },
+    ];
+    const res = await applyPoAmendment(fakeSb(store), AMD, 'user-1');
+    expect(res.linesRemoved).toBe(1);
+    expect(res.retired).toEqual([]);
+    expect(res.releasedSoItemIds).toEqual([]);
+  });
+
   it('PRESERVES an already-received REMOVE line and warns instead of deleting', async () => {
     const store = baseStore();
     store.purchase_order_items.find((i) => i.id === 'POI-2')!.received_qty = 1;
@@ -211,6 +239,46 @@ describe('applyPoAmendment — snapshot + revision + audit', () => {
     expect(store.po_revisions).toHaveLength(0);
     expect(store.purchase_orders[0].revision).toBe(1);
     expect(store.purchase_order_items.find((i) => i.id === 'POI-1')!.qty).toBe(1);  // unchanged fixture qty
+  });
+
+  it('answers the DB floor (P0411, a GRN posted after the floor read) with ReceivedFloorError, not a 500', async () => {
+    const store = baseStore();
+    store.purchase_order_items.find((i) => i.id === 'POI-1')!.qty = 3;
+    store.po_amendment_lines = [
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-1', change_type: 'QTY', new_qty: 1, new_unit_price_sen: null, new_item_code: null, new_material_name: null, new_variants: null, new_delivery_date: null, old_snapshot: { qty: 3 } },
+    ];
+    const sb = fakeSb(store);
+    const from = sb.from;
+    // received_qty still reads 0, so the app floor passes; the trigger refuses the write.
+    sb.from = (table: string) => {
+      const q = from(table);
+      if (table === 'purchase_order_items') {
+        q.update = (() => ({ eq: async () => ({ data: null, error: { code: 'P0411', message: 'po_line_over_received: PO line POI-1 would have 2 received against qty 1' } }) })) as unknown as Query['update'];
+      }
+      return q;
+    };
+    const err = await applyPoAmendment(sb, AMD, 'user-1').catch((e) => e);
+    expect(err).toBeInstanceOf(ReceivedFloorError);
+    expect(err).toMatchObject({ poItemId: 'POI-1', revisedQty: 1, receivedQty: 2 });
+  });
+
+  it('leaves any other line-update error a plain Error', async () => {
+    const store = baseStore();
+    store.po_amendment_lines = [
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-1', change_type: 'QTY', new_qty: 2, new_unit_price_sen: null, new_item_code: null, new_material_name: null, new_variants: null, new_delivery_date: null, old_snapshot: { qty: 1 } },
+    ];
+    const sb = fakeSb(store);
+    const from = sb.from;
+    sb.from = (table: string) => {
+      const q = from(table);
+      if (table === 'purchase_order_items') {
+        q.update = (() => ({ eq: async () => ({ data: null, error: { code: '23505', message: 'duplicate key' } }) })) as unknown as Query['update'];
+      }
+      return q;
+    };
+    const err = await applyPoAmendment(sb, AMD, 'user-1').catch((e) => e);
+    expect(err).not.toBeInstanceOf(ReceivedFloorError);
+    expect(String(err.message)).toContain('line update failed');
   });
 
   it('applies a header supplier change and records it', async () => {

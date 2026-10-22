@@ -36,7 +36,7 @@ import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { Button } from '@2990s/design-system';
 import { formatPhone } from '@2990s/shared/phone';
-import { activeOptions, buildVariantSummary, isServiceLine, maintPickerValues } from '@2990s/shared';
+import { activeOptions, buildVariantSummary, isServiceLine, maintPickerValues, fmtMoneySen } from '@2990s/shared';
 import {
   useCreatePurchaseInvoice,
   usePostPurchaseInvoice,
@@ -73,7 +73,7 @@ const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
   const v = centi ?? 0;
-  return `${currency} ${(v / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return fmtMoneySen(v, currency);
 };
 
 /* Commander 2026-05-29 — manual PI lines whose product is a bedframe/sofa get
@@ -872,7 +872,7 @@ export const PurchaseInvoiceNew = () => {
               })() });
             const isManualLine = l.grnItemId === null;
             return (
-              <div key={l.rid} style={{
+              <div data-grid-row key={l.rid} style={{
                 background: 'var(--c-paper)', border: '1px solid var(--line)',
                 borderRadius: 'var(--radius-lg)', padding: 'var(--space-4)',
                 display: 'flex', flexDirection: 'column', gap: 'var(--space-3)',

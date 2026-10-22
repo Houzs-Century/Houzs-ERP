@@ -77,6 +77,7 @@ import { SO_ITEM_FINANCE_KEYS, stripAuditFinance } from '../lib/finance-keys';
 import type { Env, Variables } from '../env';
 import { skuCategoryResolver } from '../lib/sku-category';
 import { pgrestIn } from '../lib/pgrest-in-list';
+import { cascadeCoHeaderDelivery } from '../lib/co-header-date-cascade';
 
 export const consignmentOrders = new Hono<{ Bindings: Env; Variables: Variables }>();
 consignmentOrders.use('*', supabaseAuth);
@@ -668,8 +669,8 @@ consignmentOrders.post('/', async (c) => {
   let mattressSofaCost = 0, bedframeCost = 0, accessoriesCost = 0, othersCost = 0;
   const headerDeliveryDate = dateOrNull(body.customerDeliveryDate);
 
-  const cachedConfig = await loadMaintenanceConfig(sb);
-  const cachedSpecialAddons = await loadSpecialAddons(sb);
+  const cachedConfig = await loadMaintenanceConfig(sb, activeCompanyId(c));
+  const cachedSpecialAddons = await loadSpecialAddons(sb, activeCompanyId(c));
   /* allowed_options pre-flight — run BEFORE the pricing recompute so a
      disallowed variant returns the precise field/value/allowed payload. */
   for (let i = 0; i < items.length; i++) {
@@ -1210,6 +1211,7 @@ consignmentOrders.patch('/:docNo', async (c) => {
   /* Set when clearing the Processing Date also clears a Delivery Date the
      request never named — read by the line-level cascade after the write. */
   let coCascadedDeliveryClear = false;
+  let coDeliveryChanged = false;
   {
     const beforeRow = (before as unknown as Record<string, unknown> | null);
     const todayMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
@@ -1229,6 +1231,7 @@ consignmentOrders.patch('/:docNo', async (c) => {
     for (const col of coCascadeCols) updates[col] = null;
     coCascadedDeliveryClear = coCascadeCols.length > 0;
     const effDelivAfterCascade = coCascadedDeliveryClear ? null : effDeliv;
+    coDeliveryChanged = effDelivAfterCascade !== origDeliv;
     const coPairRefusal = soDatePairRefusal({
       nextProc: effProc, nextDeliv: effDelivAfterCascade, origProc, origDeliv,
     });
@@ -1268,17 +1271,12 @@ consignmentOrders.patch('/:docNo', async (c) => {
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
 
-  /* Master-follower cascade. When the header's customer_delivery_date changes,
-     every non-overridden line picks up the new date. Best-effort. */
-  if (body['customerDeliveryDate'] !== undefined || coCascadedDeliveryClear) {
-    /* A cascaded clear has no body value to read — the header column was set to
-       null above, so the lines must follow it, or MRP keeps ordering by a line
-       date the header no longer holds. */
-    const newDate = coCascadedDeliveryClear ? null : dateOrNull(body['customerDeliveryDate']); // header coerced, lines did not: the cascade 500'd after the header committed
-    await scopeToCompanyId(sb.from('consignment_sales_order_items')
-      .update({ line_delivery_date: newDate })
-      .eq('doc_no', docNo), co.companyId)
-      .eq('line_delivery_date_overridden', false);
+  /* Keyed on change, not presence: this page sends every header field on every
+     save, so a remark-only edit must move nothing. A cascaded clear has no body
+     value: the header was nulled above, so the lines follow it to null. */
+  if (coDeliveryChanged) {
+    await cascadeCoHeaderDelivery(sb, docNo, co.companyId,
+      coCascadedDeliveryClear ? null : dateOrNull(body['customerDeliveryDate']));
   }
 
   /* Audit log row capturing field-level from→to diff. */
@@ -1528,13 +1526,13 @@ consignmentOrders.post('/:docNo/items', async (c) => {
     if (aoErr) return c.json({ ...aoErr, itemCode: itemCodeStr }, 400);
   }
   const [cachedConfig, productLite, fabricLite, sofaCombosLite, sellingTiersLite, fabricAddonConfigLite, specialAddonsLite, modelOverridesLite, compartmentOverridesLite] = await Promise.all([
-    loadMaintenanceConfig(sb),
+    loadMaintenanceConfig(sb, activeCompanyId(c)),
     loadProductByCode(sb, itemCodeStr, activeCompanyId(c)),
     loadFabricByCode(sb, variantsObj?.fabricCode ?? null),
     loadActiveSofaCombos(sb),
     loadFabricSellingTiers(sb, (variantsObj as { fabricId?: string } | null)?.fabricId ?? null),
     loadFabricTierAddonConfig(sb, activeCompanyId(c)),
-    loadSpecialAddons(sb),
+    loadSpecialAddons(sb, activeCompanyId(c)),
     loadModelFabricTierOverrides(sb),
     loadCompartmentFabricTierOverrides(sb),
   ]);
@@ -1700,13 +1698,13 @@ consignmentOrders.patch('/:docNo/items/:itemId', async (c) => {
   }
   if (shouldRecompute && itemCodeAfter) {
     const [cfg, prodLite, fabLite, sofaCombosPatch, sellingTiersPatch, fabricAddonConfigPatch, specialAddonsPatch, modelOverridesPatch, compartmentOverridesPatch] = await Promise.all([
-      loadMaintenanceConfig(sb),
+      loadMaintenanceConfig(sb, activeCompanyId(c)),
       loadProductByCode(sb, itemCodeAfter, activeCompanyId(c)),
       loadFabricByCode(sb, variantsAfter?.fabricCode ?? null),
       loadActiveSofaCombos(sb),
       loadFabricSellingTiers(sb, (variantsAfter as { fabricId?: string } | null)?.fabricId ?? null),
       loadFabricTierAddonConfig(sb, activeCompanyId(c)),
-      loadSpecialAddons(sb),
+      loadSpecialAddons(sb, activeCompanyId(c)),
       loadModelFabricTierOverrides(sb),
       loadCompartmentFabricTierOverrides(sb),
     ]);

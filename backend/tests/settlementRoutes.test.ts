@@ -21,6 +21,7 @@ import {
   settlementBatchReceived, settlementInTransit, settlementRowUnconfirm,
   settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank,
 } from '../src/scm/routes/accounting-settlement';
+import { postBatchReceipt } from '../src/acc/settlement';
 
 const CO = 1;
 const GL_PERM = 'scm.payment_voucher.post';
@@ -656,6 +657,28 @@ describe('GET /settlement/in-transit — whose money is still out there', () => 
       .filter((l) => l.account_code === '326-0000')
       .reduce((s, l) => s + Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0), 0);
     expect(body.totalSen).toBe(100000 + transit);
+  });
+
+  /* A charge the acquirer kept off a credit (owner 2026-09-30, GHL's RM 54)
+     leaves in-transit with the credit — so it comes off the list with it. */
+  test('a charge kept off a credit comes off the money still owed, with the credit', async () => {
+    const rental: Row = { account_code: '930-0001', account_name: 'TERMINAL RENTAL', account_type: 'EXPENSE', parent_code: null, is_active: true, company_id: CO };
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()], accounts: [...CHART, rental] });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+    await post(app, `/settlement/batches/${up.batchId}/confirm-matched`);
+    const booked = await postBatchReceipt(sb, CO, up.batchId, { receivedOn: '2026-08-05', amountSen: 50000, charge: { amountSen: 5400, accountCode: '930-0001', note: 'Terminal rental' } });
+    expect(booked).toMatchObject({ ok: true, chargeSen: 5400 });
+
+    const body = await (await app.request('/settlement/in-transit')).json() as { totalSen: number; lines: Array<{ amountSen: number }> };
+    expect(body.lines[0].amountSen).toBe(100000 - 1500 - 50000 - 5400);
+    const transit = sb.tables.journal_entry_lines
+      .filter((l) => l.account_code === '326-0000')
+      .reduce((s, l) => s + Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0), 0);
+    expect(body.totalSen).toBe(100000 + transit);
+
+    /* The statements list reads it as settled by that much too. */
+    const list = await (await app.request('/settlement/batches')).json() as { batches: Array<Record<string, unknown>> };
+    expect(list.batches[0]).toMatchObject({ charged_sen: 5400 });
   });
 });
 

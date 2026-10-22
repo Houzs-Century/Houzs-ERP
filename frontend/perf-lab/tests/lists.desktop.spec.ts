@@ -7,7 +7,7 @@ test("DataTable keeps 10k desktop rows windowed at its real internal scroll limi
   // the window's scroll range ends at the frozen composition, so the old
   // "scroll the WINDOW to its clamped end" contract no longer reaches row
   // 10000 by design. The windowing guarantee under a real scroll limit is now
-  // the same one the DataGrid test below exercises: drive the INNER scroller
+  // the same one the DataGridCompat test below exercises: drive the INNER scroller
   // to its true end and the tail must be live while the DOM stays bounded.
   await page.goto("/?scenario=data-table-desktop");
   const rows = page.locator("tr[data-vrow]");
@@ -27,7 +27,8 @@ test("DataTable keeps 10k desktop rows windowed at its real internal scroll limi
   await expectBounded(rows, 60);
 });
 
-test("DataGrid keeps 10k rows windowed at its real internal scroll limit", async ({ page }) => {
+// The SCM DataGrid's props, now rendered by DataTable (one-table plan, 2026-09-26).
+test("DataGridCompat keeps 10k rows windowed at its real internal scroll limit", async ({ page }) => {
   await page.goto("/?scenario=data-grid");
   const rows = page.locator("tr[data-vrow]");
   const scroller = page.locator('[data-scenario="data-grid"] table').locator("..");

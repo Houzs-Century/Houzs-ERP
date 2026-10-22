@@ -17,6 +17,16 @@
 import type { Context } from "hono";
 import type { Env } from "../types";
 import { transitionStage, logActivity, type Stage } from "./assr";
+import { mintDocumentRef, voidDocumentRef } from "./documentRefs";
+
+// Each trip's own document number, SVC-RTN-YYMM-NNNN (owner 2026-09-24): the
+// company-wide registry, so it is unique, restarts monthly (MYT) and is voided,
+// never re-issued, when the trip is removed.
+export const SUPPLIER_RETURN_REF = {
+  deptCode: "SVC",
+  typeCode: "RTN",
+  entityType: "assr_supplier_return",
+} as const;
 
 export interface SupplierReturnInput {
   pickup_at?: string | null;
@@ -37,12 +47,44 @@ export function currentSupplierReturn<
   return live.reduce((a, b) => (b.round_no > a.round_no ? b : a));
 }
 
+/** The live trips BEFORE `current`, oldest first, that carry a number — so the
+ *  supplier's paper for trip N also lists trips 1..N-1 (owner 2026-09-29).
+ *  Pure, so it is unit-tested directly. */
+export function earlierSupplierReturns<
+  T extends { round_no: number; ref_no?: string | null; archived_at?: string | null },
+>(rows: readonly T[], current: T | null): T[] {
+  if (!current) return [];
+  return rows
+    .filter((r) => !r.archived_at && r.ref_no && Number(r.round_no) < Number(current.round_no))
+    .sort((a, b) => Number(a.round_no) - Number(b.round_no));
+}
+
 /** Next round number to mint = highest EXISTING number (archived included, so a
  *  number is never reused) + 1. Pure, so it is unit-tested directly. */
 export function nextSupplierReturnRoundNo(
   rows: readonly { round_no: number }[],
 ): number {
   return rows.reduce((m, r) => Math.max(m, r.round_no), 0) + 1;
+}
+
+/** Mint (or re-read — the registry is keyed by the trip) the trip's number and
+ *  store it. Never throws: a trip must not fail to save because numbering did;
+ *  listSupplierReturns retries any live trip still without one. */
+async function assignSupplierReturnRef(env: Env, roundId: number, createdBy: number | null): Promise<string | null> {
+  try {
+    const ref = await mintDocumentRef(env, {
+      ...SUPPLIER_RETURN_REF,
+      entityId: String(roundId),
+      createdBy,
+    });
+    await env.DB.prepare(`UPDATE assr_supplier_returns SET ref_no = ? WHERE id = ? AND ref_no IS NULL`)
+      .bind(ref.refNo, roundId)
+      .run();
+    return ref.refNo;
+  } catch (e) {
+    console.warn(`[assr.supplier-return] could not number trip ${roundId}:`, e instanceof Error ? e.message : e);
+    return null;
+  }
 }
 
 export async function listSupplierReturns(env: Env, assrId: number) {
@@ -56,7 +98,12 @@ export async function listSupplierReturns(env: Env, assrId: number) {
   )
     .bind(assrId)
     .all();
-  return r.results ?? [];
+  const rows = (r.results ?? []) as Array<Record<string, unknown>>;
+  for (const row of rows) {
+    if (row.ref_no) continue;
+    row.ref_no = await assignSupplierReturnRef(env, Number(row.id), (row.created_by as number | null) ?? null);
+  }
+  return rows;
 }
 
 // Re-point the case's summary columns at the current (latest) round so the
@@ -141,11 +188,13 @@ export async function openSupplierReturn(
     input.reason ? `第 ${roundNo} 次返厂 — ${input.reason}` : `第 ${roundNo} 次返厂`,
     userId, { category: "supplier" },
   );
-  return (await env.DB.prepare(
+  const round = await env.DB.prepare(
     `SELECT * FROM assr_supplier_returns WHERE assr_id = ? AND round_no = ? AND archived_at IS NULL`
   )
     .bind(assrId, roundNo)
-    .first<Record<string, unknown>>()) ?? null;
+    .first<Record<string, unknown>>();
+  if (round && !round.ref_no) round.ref_no = await assignSupplierReturnRef(env, Number(round.id), userId);
+  return round ?? null;
 }
 
 // Edit one trip's recorded fields. Re-mirrors so the case columns follow the
@@ -177,6 +226,37 @@ export async function patchSupplierReturn(
   return r.meta.changes > 0;
 }
 
+// A case that reached the supplier leg through the stage dropdown (or was
+// printed for the supplier) before anyone pressed "Add supplier return" had NO
+// trip, so no SVC-RTN number, and the Supplier Service Order printed without a
+// Return No. Seed trip #1 from the case's own supplier columns — only when the
+// case has never had a trip (a removed trip means ops meant it; don't revive).
+// Single guarded INSERT, so two concurrent prints can't both seed round 1. No
+// stage move and no activity row: this records the trip the case is already on.
+// Never throws — a print or stage change must not fail because of it.
+export async function ensureFirstSupplierReturn(env: Env, assrId: number, userId: number | null): Promise<void> {
+  try {
+    const r = await env.DB.prepare(
+      `INSERT INTO assr_supplier_returns (assr_id, round_no, pickup_at, returned_at, creditor_code, created_by)
+       SELECT c.id, 1, c.supplier_pickup_at, c.items_ready_at, c.creditor_code, ?
+         FROM assr_cases c
+        WHERE c.id = ?
+          AND NOT EXISTS (SELECT 1 FROM assr_supplier_returns sr WHERE sr.assr_id = c.id)`
+    )
+      .bind(userId || null, assrId)
+      .run();
+    if (!r.meta.changes) return;
+    const round = await env.DB.prepare(
+      `SELECT id FROM assr_supplier_returns WHERE assr_id = ? AND round_no = 1 AND archived_at IS NULL`
+    )
+      .bind(assrId)
+      .first<{ id: number }>();
+    if (round) await assignSupplierReturnRef(env, Number(round.id), userId || null);
+  } catch (e) {
+    console.warn(`[assr.supplier-return] could not seed trip 1 for case ${assrId}:`, e instanceof Error ? e.message : e);
+  }
+}
+
 // Remove a mistakenly-recorded trip, then re-mirror onto the new current trip.
 export async function archiveSupplierReturn(
   env: Env,
@@ -184,6 +264,11 @@ export async function archiveSupplierReturn(
   roundId: number,
   userId: number,
 ): Promise<boolean> {
+  const trip = await env.DB.prepare(
+    `SELECT ref_no FROM assr_supplier_returns WHERE id = ? AND assr_id = ? AND archived_at IS NULL`
+  )
+    .bind(roundId, assrId)
+    .first<{ ref_no: string | null }>();
   const r = await env.DB.prepare(
     `UPDATE assr_supplier_returns SET archived_at = datetime('now'), updated_at = datetime('now')
       WHERE id = ? AND assr_id = ? AND archived_at IS NULL`
@@ -191,6 +276,11 @@ export async function archiveSupplierReturn(
     .bind(roundId, assrId)
     .run();
   if (r.meta.changes > 0) {
+    if (trip?.ref_no) {
+      await voidDocumentRef(env, trip.ref_no, userId, "Supplier return removed").catch((e) =>
+        console.warn(`[assr.supplier-return] could not void ${trip.ref_no}:`, e instanceof Error ? e.message : e),
+      );
+    }
     await reprojectLatestSupplierReturn(env, assrId);
     await logActivity(env, assrId, "supplier_return_archived", `round ${roundId}`, null, null, userId, { category: "supplier" });
   }

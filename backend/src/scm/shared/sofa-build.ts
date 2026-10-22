@@ -211,8 +211,9 @@ const MODULE_BY_ID = new Map<string, SofaModuleSpec>(SOFA_MODULES.map((m) => [m.
 
 /* ─── Structural fallback (Maintenance-is-master, Loo 2026-06-04) ───────
  *
- * A compartment code RENAMED on the Maintenance master pool cascades through
- * every stored copy (rename_sofa_compartment, migration 0149) — but the
+ * A compartment code RENAMED on the Maintenance master pool follows into the
+ * Model ticks, combos and quick picks (rename_sofa_compartment; only a code no
+ * SKU uses) — but the
  * canvas still needs to know the shape. As long as the rename keeps the
  * STRUCTURE tokens — base family (1A/1B/2A/2B/1NA/2NA/1S/2S/3S/CNR/L/
  * Console/STOOL), optional (LHF)/(RHF) orientation, optional (P)/(R)/(L)

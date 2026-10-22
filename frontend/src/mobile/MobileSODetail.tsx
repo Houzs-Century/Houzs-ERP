@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { ViewOriginalScan } from "../vendor/scm/components/ViewOriginalScan";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { formatDate } from "../lib/utils";
 import { NonSellingWarehouseNoteMobile, SourcePosRowMobile, soStockPillMobile } from "./source-chips";
 import { MobileRelationshipMap } from "./MobileRelationshipMap";
@@ -9,10 +10,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog"; import { notifySaveProblems } from "../vendor/scm/components/SaveProblemsList";
 import { usePrompt } from "../vendor/scm/components/PromptDialog"; import { CancelRequestPanel } from "../vendor/scm/components/CancelRequestPanel"; import { useCancelRequestAction } from "../pages/scm-v2/use-cancel-request-action"; import { WrongApproverFlagButton } from "../pages/scm-v2/WrongApproverFlagButton";
-import { fetchScanSlipImageBlobUrl } from "../vendor/scm/lib/slip";
+import { fetchScanSlipImageBlobUrl } from "../vendor/scm/lib/slip"; import { fairLabel } from "../vendor/scm/lib/fair-options-queries"; import { fairElsewhereLine, type LinkedFair } from "../components/fairPick";
 import { MobileLinePhotos } from "./MobileLinePhotos";
 import { useStaff, usePickableStaff } from "../vendor/scm/lib/admin-queries";
-import { collaboratorLabel } from "../vendor/scm/lib/so-collaborators";
+import { SoSharedWith } from "../vendor/scm/components/SoSharedWith";
 import { HIST_FIELD_LABEL, HIST_MONEY_FIELDS } from "./so-history-labels";
 import { statusLabel } from "../vendor/scm/lib/status-pill";
 import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover, SO_AMENDMENT_LANE_APPROVE_PERM } from "../vendor/scm/lib/amendment-approver";
@@ -78,13 +79,6 @@ import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPr
 import type { PdfAction } from "../vendor/scm/lib/pdf-common";
 import { amendmentPrintedStatus, soAmendmentToPdfInput } from "../vendor/scm/lib/amendment-pdf-map";
 import { useStaffLookup } from "../hooks/useStaffLookup";
-/* The 2990 bridge's staff row — the vocabulary so_amendments.requested_by is
-   written in (a scm.staff uuid). Desktop AmendmentDetailV2 compares it to decide
-   "did I raise this?"; mirrored here so the mobile withdraw gate matches exactly
-   (the Houzs bridge has no staff id, so isRequester is inert on BOTH surfaces —
-   the effective gate is canReject — but the logic is kept identical so a future
-   bridge fix lands on both at once). */
-import { useAuth as useScmAuth } from "../vendor/scm/lib/auth";
 import {
   buildAmendmentDecisionHistory,
   isRejectDecision,
@@ -101,6 +95,7 @@ import { MobileLineRemark } from "./MobileLineRemark";
 import "./mobile.css";
 
 import { isFocLine } from '../vendor/scm/lib/foc-line';
+import { soConfirmDateNote } from '../lib/soConfirmDateNote';
 /* Shapes are the subset of the /mfg-sales-orders/:docNo + /:docNo/payments
    responses the mobile detail screen reads. The backend camelCases nothing —
    these are the raw snake_case columns. */
@@ -131,10 +126,10 @@ type SoHeader = {
   emergency_contact_phone: string | null;
   emergency_contact_relationship: string | null;
   building_type: string | null;
-  /* venue = free-text venue name (customer-facing, on PDFs); venue_id = the
-     master FK (mig 0086). Desktop reads the name for display, id as fallback. */
+  /* venue = the free-text name (on PDFs); venue_id = the master FK (mig 0086); fair = the linked event. */
   venue: string | null;
   venue_id: string | null;
+  fair?: LinkedFair | null; fair_date?: string | null; // + the day of it the order was written on
   note: string | null;
   /* Delivery address columns — the desktop SO form maps these to labelled
      lines (address1/2 = free-text; address3 = city fallback; address4 =
@@ -211,6 +206,7 @@ type SoItem = {
   stock_state?: "stock" | "po" | "shortage" | null;
   coverage_po?: string | null; coverage_eta?: string | null;
   bound_source_pos?: string[];
+  bound_source_po_etas?: Record<string, string>;
   shipped_source_pos?: string[];
   shipped_source_adj?: boolean;
   ready_source_pos?: Array<{ po: string | null; qty: number; kind: "po" | "adjustment" }>;
@@ -387,7 +383,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
   /* Who else may see and edit it. Null on an unshared order, which is most of
      them; granting and withdrawing live on SO Maintenance, desktop-only
      (docs/modules/so-handover.md §8). */
-  const sharedWith = collaboratorLabel(h, staffQ.data);
 
   /* Status change routes through the SHARED useUpdateMfgSalesOrderStatus so
      mobile gets the same optimistic update + audit-log / status-changes
@@ -510,18 +505,13 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
          requester OR anyone who could reject — desktop `status === "REQUESTED"
          && (isRequester || canReject)`.
      The server re-checks both; these gates only decide whether to show the
-     control. `requested_by` (a scm.staff uuid) comes off the shared amendment
-     detail (useAmendmentDetail — same query key the diff sheet warms). The
-     scm-auth bridge has no staff id on Houzs, so isRequester is inert here
-     exactly as on desktop (the effective gate is canReject), but the shape is
-     kept identical so a future bridge fix lands on both surfaces at once. */
-  const { staff: scmStaff } = useScmAuth();
+     control. Whether the caller raised it comes from the SERVER
+     (viewerIsRequester on the shared amendment detail — useAmendmentDetail,
+     same query key the diff sheet warms): the browser has no scm.staff id to
+     compare requested_by against, so a local compare was always false. */
   const openAmendmentDetail = useAmendmentDetail(hasOpenAmendment && openAmendment ? openAmendment.id : null);
   const amendmentStatus = (openAmendment?.status ?? "").toUpperCase();
-  const amendmentRequestedBy =
-    (openAmendmentDetail.data?.amendment as { requested_by?: string | null } | undefined)?.requested_by ?? null;
-  const isAmendmentRequester =
-    amendmentRequestedBy != null && scmStaff?.id != null && String(amendmentRequestedBy) === String(scmStaff.id);
+  const isAmendmentRequester = openAmendmentDetail.data?.viewerIsRequester === true;
   /* Two-lane rework (2026-07-27): a lane row (open_amendment.lane set) has ONE
      approver key — LINES → purchasing, DELIVERY → logistics — and its whole
      life is REQUESTED → applied. The legacy chain keys below stay for
@@ -795,6 +785,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
         </div>
         <div className="eyebrow" style={{ marginTop: 7, display: "flex", alignItems: "center", gap: 6, minWidth: 0, flexWrap: "wrap" }}>
           <span className="money" style={{ flex: "none" }}>{h?.doc_no ?? docNo}</span>
+          {h?.doc_no && <ViewOriginalScan kind="so" documentId={h.doc_no} />}
           {(h?.customer_so_no || h?.ref || h?.po_doc_no) && (<><span style={{ opacity: .5, flex: "none" }}>·</span><span className="money" style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{h?.customer_so_no || h?.ref || h?.po_doc_no}</span></>)}
         </div>
         <div className="scr-title">{h?.debtor_name || "—"}</div>
@@ -1021,8 +1012,8 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
               <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Customer type" value={val(h.customer_type)} /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Salesperson" value={val(salespersonName)} /></div></div>
               {/* Only when actually shared — a field blank on almost every
                   order teaches people to stop reading it. */}
-              {sharedWith && <RoField label="Shared with" value={sharedWith} />}
-              <RoField label="Customer SO ref" value={val(h.customer_so_no ?? h.ref)} mono />
+              <SoSharedWith docNo={h.doc_no} header={h} staff={staffQ.data} frame={(v) => <RoField label="Shared with" value={v} />} />
+              <RoField label="Ref No." value={val(h.customer_so_no ?? h.ref)} mono />
               {/* Emergency contact — whole row HIDDEN when no phone on file
                   (Build Spec §6 + null-field rule: "hide the row"). Value =
                   "name · phone (relationship)" from the header's emergency_* cols. */}
@@ -1033,7 +1024,8 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
 
             {/* Order info */}
             <div className="card"><div className="card-h"><span className="card-t">Order info</span></div><div className="card-b">
-              <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Building type" value={val(h.building_type)} /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Venue" value={val(h.venue ?? h.venue_id)} /></div></div>
+              <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Building type" value={val(h.building_type)} /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Fair" value={h.fair ? fairLabel(h.fair) : val(h.venue ?? h.venue_id)} /></div></div>{h.fair_date ? <RoField label="Fair day" value={dl(h.fair_date)} mono /> : null}
+              {h.fair && h.venue && fairElsewhereLine(h.venue, h.fair) ? <RoField label="Venue" value={`${h.venue} · Venue differs`} /> : null}{/* the fair is named above; its place is not the order's (owner 2026-10-19) */}
               <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Processing Date" value={dl(h.processing_date)} mono /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Delivery Date" value={dl(h.customer_delivery_date)} mono /></div></div>
               <RoField label="Sales location" value={val(h.sales_location ?? h.customer_state)} />
               {/* Note — a non-empty note is emphasised as an amber callout (desktop
@@ -1137,6 +1129,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                     <SourcePosRowMobile
                       pos={(it.bound_source_pos && it.bound_source_pos.length > 0) ? it.bound_source_pos : (it.shipped_source_pos ?? [])}
                       adj={it.shipped_source_adj}
+                      etas={it.bound_source_pos && it.bound_source_pos.length > 0 ? Object.fromEntries(Object.entries(it.bound_source_po_etas ?? {}).map(([po, d]) => [po, dl(d)])) : undefined}
                       ready={(it.bound_source_pos && it.bound_source_pos.length > 0) ? [] : ((it.delivered_qty ?? 0) > 0 && (it.remaining_qty ?? null) === 0 ? [] : (it.ready_source_pos ?? []))}
                       incoming={(it.bound_source_pos && it.bound_source_pos.length > 0) ? null : (it.stock_state === "po" && it.coverage_po ? { po: it.coverage_po, eta: it.coverage_eta ? dl(it.coverage_eta) : null } : null)}
                     />
@@ -1303,7 +1296,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
             <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
               <div style={{ display: "flex", gap: 9 }}>
                 <button className="btn-ghost" style={{ flex: 1, opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={() => onEdit?.(docNo)}>Edit Draft</button>
-                <button className="btn" style={{ flex: 1.3, opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={() => setStatus("CONFIRMED")}>{busy ? "Working…" : "Create Sales Order"}</button>
+                <button className="btn" style={{ flex: 1.3, opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={async () => { const note = soConfirmDateNote(h.processing_date, h.customer_delivery_date); if (note && !(await confirm({ title: `Confirm ${docNo}?`, body: note, confirmLabel: "Create Sales Order" }))) return; void setStatus("CONFIRMED"); }}>{busy ? "Working…" : "Create Sales Order"}</button>
               </div>
               {onAddLine && <button className="btn-ghost" style={{ opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={() => onAddLine(docNo)}>+ {ADD_LINE_LABEL}</button>}
               {/* Discard draft — the escape hatch for a junk draft (esp. a bad
@@ -1393,7 +1386,7 @@ function Kpi({ label, centi, color, unknown }: { label: string; centi: number | 
 /* Locked read-only field — the design's `.fld` + `.fld-l` + `.fld-ro` trio, the
    detail screen's whole "form rendered locked" idiom. `mono` opts the value into
    tabular-nums (phone / doc refs / dates) via the shared `.money` class. */
-function RoField({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function RoField({ label, value, mono }: { label: string; value: ReactNode; mono?: boolean }) {
   return (
     <div className="fld">
       <span className="fld-l">{label}</span>
@@ -1548,6 +1541,10 @@ const histSentence = (e: SoAuditEntry): string => {
       return e.status_snapshot === "DRAFT" ? "created this order (draft)" : "created this order";
     case "UPDATE_DETAILS":
       return "updated details";
+    case "UPDATE_FAIR": { // owner 2026-10-19: every fair move, named
+      const f = find("fair");
+      return f ? `changed the fair: ${String(f.from ?? "—")} → ${String(f.to ?? "—")}` : "changed the fair";
+    }
     case "UPDATE_STATUS": {
       const s = find("status");
       const to = statusLabel("so", (s?.to ?? e.status_snapshot ?? "?") as string);
@@ -2021,8 +2018,9 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
                             <div className="money" style={{ fontSize: 12.5, fontWeight: 700, color: "#0c3f39", ...mEmphIf(chg.itemCode) }}>{l.new_item_code ?? old.itemCode ?? "—"}</div>
                             <div className="money" style={{ fontSize: 11, color: "var(--mut)", marginTop: 2 }}>
                               <span style={mEmphIf(chg.qty)}>Qty {l.new_qty ?? old.qty ?? "—"}</span>
-                              {typeof l.new_unit_price_sen === "number" ? (
-                                <>{" · "}<span style={mEmphIf(chg.unitPrice)}>RM {rm(l.new_unit_price_sen)}</span></>
+                              {/* A null requested price keeps the stored one (desktop parity): show it unchanged. */}
+                              {typeof (l.new_unit_price_sen ?? old.unitPriceSen) === "number" ? (
+                                <>{" · "}<span style={mEmphIf(chg.unitPrice)}>RM {rm((l.new_unit_price_sen ?? old.unitPriceSen) as number)}</span></>
                               ) : ""}
                             </div>
                             {newSummary ? <div style={{ fontSize: 10.5, color: "var(--mut2)", marginTop: 2, ...mEmphIf(chg.variants) }}>{newSummary}</div> : null}

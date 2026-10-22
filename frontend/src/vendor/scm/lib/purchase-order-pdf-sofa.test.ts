@@ -9,9 +9,12 @@
 //
 // Set SOFA_PDF_OUT=<path> to also write the rendered PDF for eyeballing.
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+// The letterhead is fetched for the tab's company before drawing (BUG-111).
+vi.mock('../../../hooks/useBranding', () => ({ ensureBrandingForActiveCompany: async () => {} }));
 import { writeFileSync } from 'node:fs';
 import { purchaseOrderPdfBase64 } from './purchase-order-pdf';
+import { layoutDepth, motionMark } from './sofa-layout-pdf';
 
 /* One cast for every test's line array, instead of one per call site: the
    generator takes the rich PoItem[]; these fixtures carry only the fields each
@@ -109,6 +112,63 @@ describe('purchase-order-pdf sofa layout (reinstated 2026-07-27)', () => {
     expect(raw).toContain('1NA');
     expect(raw).toContain('1A\\(P\\)\\(RHF\\)');
     expect(raw).not.toContain('2A\\(RHF\\)');
+  });
+
+  /* HC-SO-2609-221 (owner 2026-09-28): a U booked as five lines with the two
+     corners on ONE "CNR x2" line. The diagram must count the line's qty as
+     pieces (it drew one corner) and turn the run at the corners (it drew a
+     straight row). */
+  it('draws both corners of a "CNR x2" line', async () => {
+    const line = (moduleId: string, qty = 1) => ({ ...sofaLine(moduleId), item_code: `8030-${moduleId}`, qty });
+    const b64 = await purchaseOrderPdfBase64(
+      header,
+      asItems([line('1A(LHF)'), line('2NA'), line('1NA'), line('CNR', 2), line('1A(RHF)')]),
+    );
+    const pdf = Buffer.from(b64, 'base64');
+    const raw = pdf.toString('latin1');
+    expect(raw).toContain('Sofa layout');
+    expect(raw.match(/CNR/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+    if (process.env.SOFA_PDF_OUT) writeFileSync(process.env.SOFA_PDF_OUT.replace(/\.pdf$/, '-u.pdf'), pdf);
+  });
+
+  /* BUG-42, HC-PO-2609-318 (Sim 2026-09-30): power seats drew as plain seats.
+     The plan must stamp "P" on each one — a bare "(P) Tj" text op, distinct
+     from the escaped "1A\(P\)..." caption. */
+  it('marks power seats with P on the plan', async () => {
+    const line = (moduleId: string) => ({ ...sofaLine(moduleId), item_code: `DSL-8038-${moduleId}` });
+    const b64 = await purchaseOrderPdfBase64(
+      header,
+      asItems([line('1A(P)(LHF)'), line('1A(P)(RHF)'), line('Console')]),
+    );
+    const pdf = Buffer.from(b64, 'base64');
+    const raw = pdf.toString('latin1');
+    expect(raw).toContain('Sofa layout');
+    expect(raw.match(/\(P\) Tj/g)?.length ?? 0).toBe(2);
+    if (process.env.SOFA_PDF_OUT) writeFileSync(process.env.SOFA_PDF_OUT.replace(/\.pdf$/, '-p.pdf'), pdf);
+  });
+
+  /* BUG-110 (Sim 2026-10-13): 2990-SO-2610-037 was laid out at 28" (L(RHF) at
+     x=178, the 28" width of a 2A) but its lines carry no `depth`, so the PO
+     drew at 24" with a 20cm gap. -022 stores seatHeight 28 while its x/y are
+     24" (L at x=158) and must stay joined. Real variants from both SOs. */
+  it('draws a POS sofa at the depth its positions were laid out at', () => {
+    const cells = (lx: number) => [
+      { moduleId: '2A(LHF)', x: 0, y: 0, rot: 0 as const },
+      { moduleId: 'L(RHF)', x: lx, y: 0, rot: 0 as const },
+    ];
+    expect(layoutDepth(cells(178), [undefined, '28', '28', '24'])).toBe('28');
+    expect(layoutDepth(cells(158), [undefined, '28', '24', '24'])).toBe('24');
+    expect(layoutDepth(cells(158), [undefined, undefined, undefined, '24'])).toBe('24');
+    expect(layoutDepth(cells(178), [])).toBe('24');
+  });
+
+  it('reads the motion letter from the first paren group only', () => {
+    expect(motionMark('1A(P)(LHF)')).toBe('P');
+    expect(motionMark('1NA(R)')).toBe('R');
+    expect(motionMark('1S(L)')).toBe('L');
+    expect(motionMark('L(LHF)')).toBeNull();
+    expect(motionMark('1A(LHF)')).toBeNull();
+    expect(motionMark('Console')).toBeNull();
   });
 
   it('draws nothing sofa-shaped for a non-sofa PO', async () => {

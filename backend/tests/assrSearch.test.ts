@@ -62,4 +62,13 @@ describe('listAssrCases — search matches name / phone / reference', () => {
   test('a term matching nothing returns no rows', async () => {
     expect(await ids('nomatch-xyz')).toEqual([]);
   });
+
+  test('a supplier-return number (SVC-RTN) finds the case it belongs to', async () => {
+    await env.DB.exec(`DELETE FROM assr_supplier_returns`);
+    await env.DB.prepare(
+      `INSERT INTO assr_supplier_returns (assr_id, round_no, ref_no) VALUES (2, 1, 'SVC-RTN-2609-0007')`,
+    ).run();
+    expect(await ids('SVC-RTN-2609-0007')).toEqual([2]);
+    expect(await ids('svc-rtn-2609-0007')).toEqual([2]);
+  });
 });

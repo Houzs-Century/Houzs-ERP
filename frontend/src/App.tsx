@@ -1,4 +1,5 @@
 import { lazy, Suspense } from "react";
+import { BACKDATE_DECIDER_PERMS } from "./vendor/scm/lib/payment-backdate-perms";
 import { Routes, Route, Navigate, useParams } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { useAuth } from "./auth/AuthContext";
@@ -26,6 +27,7 @@ import { PageSkeleton, RouteCrashBoundary } from "./components/RouteFallback";
 import { IosInstallGuide } from "./components/IosInstallGuide";
 import { AndroidInstallGuide } from "./components/AndroidInstallGuide";
 import { LazySlot } from "./components/LazySlot";
+import { LineGridNav } from "./components/LineGridNav";
 
 /* LAZY, and it costs nothing: this is a modal nobody sees until after the
    digest request answers, so it has no business in the chunk that has to arrive
@@ -62,9 +64,13 @@ const Sales = lazy(() => import("./pages/Sales").then((m) => ({ default: m.Sales
 const Profile = lazy(() => import("./pages/Profile").then((m) => ({ default: m.Profile })));
 const Notifications = lazy(() => import("./pages/Notifications").then((m) => ({ default: m.Notifications })));
 const Announcements = lazy(() => import("./pages/Announcements").then((m) => ({ default: m.Announcements })));
+const ItSupport = lazy(() => import("./pages/ItSupport").then((m) => ({ default: m.ItSupport })));
 const Settings = lazy(() => import("./pages/Settings").then((m) => ({ default: m.Settings })));
+const PosAdmin = lazy(() => import("./pages/PosAdmin").then((m) => ({ default: m.PosAdmin })));
 const Team = lazy(() => import("./pages/Team").then((m) => ({ default: m.Team })));
 const SystemHealth = lazy(() => import("./pages/SystemHealth").then((m) => ({ default: m.SystemHealth })));
+const AiUsage = lazy(() => import("./pages/AiUsage").then((m) => ({ default: m.AiUsage })));
+const OcrDashboard = lazy(() => import("./pages/OcrDashboard").then((m) => ({ default: m.OcrDashboard })));
 const AutoCountSync = lazy(() => import("./pages/AutoCountSync").then((m) => ({ default: m.AutoCountSync })));
 const VenturePortalFeed = lazy(() => import("./pages/VenturePortalFeed").then((m) => ({ default: m.VenturePortalFeed })));
 const ChangeLog = lazy(() => import("./pages/ChangeLog").then((m) => ({ default: m.ChangeLog })));
@@ -83,6 +89,8 @@ const ScmSuppliersV2 = lazy(() => import("./pages/scm-v2/SuppliersV2Route"));
 // Each list/detail page is a NAMED export wrapped at the route in <Scm2990Shell>
 // (the Notify/Confirm/dialog-service providers).
 const Scm2990Shell = lazy(() => import("./pages/scm-v2/Scm2990Shell"));
+const ScmLogisticOverview = lazy(() => import("./pages/scm-v2/LogisticOverview").then((m) => ({ default: m.LogisticOverview })));
+const ScmProcurementOverview = lazy(() => import("./pages/scm-v2/ProcurementOverview").then((m) => ({ default: m.ProcurementOverview })));
 const ScmPurchaseOrdersV2 = lazy(() => import("./pages/scm-v2/PurchaseOrdersListV2").then((m) => ({ default: m.PurchaseOrdersListV2 })));
 const ScmPurchaseOrderNewV2 = lazy(() => import("./pages/scm-v2/PurchaseOrderNew").then((m) => ({ default: m.PurchaseOrderNew })));
 const ScmPurchaseOrderFromSoV2 = lazy(() => import("./pages/scm-v2/PurchaseOrderFromSo").then((m) => ({ default: m.PurchaseOrderFromSo })));
@@ -93,6 +101,7 @@ const ScmAccountingV2 = lazy(() => import("./pages/scm-v2/Accounting").then((m) 
 const ScmDailyBank = lazy(() => import("./pages/scm-v2/DailyBank").then((m) => ({ default: m.DailyBank })));
 const ScmMerchantRecon = lazy(() => import("./pages/scm-v2/MerchantRecon").then((m) => ({ default: m.MerchantRecon })));
 const ScmBankRecon = lazy(() => import("./pages/scm-v2/BankRecon").then((m) => ({ default: m.BankRecon })));
+const ScmUnmatchedPayments = lazy(() => import("./pages/scm-v2/UnmatchedPayments").then((m) => ({ default: m.UnmatchedPayments })));
 const ScmSettlementSetup = lazy(() => import("./pages/scm-v2/SettlementSetup").then((m) => ({ default: m.SettlementSetup })));
 const ScmOutstandingV2 = lazy(() => import("./pages/scm-v2/Outstanding").then((m) => ({ default: m.Outstanding })));
 const ScmUnbilledDeliveriesV2 = lazy(() => import("./pages/scm-v2/UnbilledDeliveriesV2").then((m) => ({ default: m.UnbilledDeliveriesV2 })));
@@ -119,6 +128,11 @@ const ScmOtherDebtorsV2 = lazy(() => import("./pages/scm-v2/OtherDebtors").then(
 const ScmReceiptsV2 = lazy(() => import("./pages/scm-v2/Receipts").then((m) => ({ default: m.Receipts })));
 const ScmOfficialReceiptsV2 = lazy(() => import("./pages/scm-v2/OfficialReceipts").then((m) => ({ default: m.OfficialReceipts })));
 const ScmApInvoicesV2 = lazy(() => import("./pages/scm-v2/ApInvoices").then((m) => ({ default: m.ApInvoices })));
+const ScmArInvoicesV2 = lazy(() => import("./pages/scm-v2/ArInvoices").then((m) => ({ default: m.ArInvoices })));
+const ScmPaymentRequestsV2 = lazy(() => import("./pages/scm-v2/PaymentRequests").then((m) => ({ default: m.PaymentRequests })));
+const ScmProductRequestsV2 = lazy(() => import("./pages/scm-v2/ProductRequests").then((m) => ({ default: m.ProductRequests })));
+const ScmOfficialDocsV2 = lazy(() => import("./pages/scm-v2/OfficialDocs").then((m) => ({ default: m.OfficialDocs })));
+const ScmSupplierMaintenanceV2 = lazy(() => import("./pages/scm-v2/SupplierMaintenance").then((m) => ({ default: m.SupplierMaintenance })));
 const ScmCreditNotesV2 = lazy(() => import("./pages/scm-v2/CreditNotes").then((m) => ({ default: m.CreditNotes })));
 const ScmDepositInvoicesV2 = lazy(() => import("./pages/scm-v2/DepositInvoices").then((m) => ({ default: m.DepositInvoices })));
 const ScmForecastPnlV2 = lazy(() => import("./pages/scm-v2/ForecastPnl").then((m) => ({ default: m.ForecastPnl })));
@@ -126,6 +140,8 @@ const ScmFinanceDashboardV2 = lazy(() => import("./pages/scm-v2/FinanceDashboard
 const ScmPaymentVoucherDetailV2 = lazy(() => import("./pages/scm-v2/PaymentVoucherDetail").then((m) => ({ default: m.PaymentVoucherDetail })));
 const ScmStockAdjustmentsV2 = lazy(() => import("./pages/scm-v2/StockAdjustments").then((m) => ({ default: m.StockAdjustments })));
 const ScmStockAdjustmentNewV2 = lazy(() => import("./pages/scm-v2/StockAdjustmentNew").then((m) => ({ default: m.StockAdjustmentNew })));
+const ScmStockAdjustmentEditV2 = lazy(() => import("./pages/scm-v2/StockAdjustmentNew").then((m) => ({ default: m.StockAdjustmentEdit })));
+const ScmStockAdjustmentDetailV2 = lazy(() => import("./pages/scm-v2/StockAdjustmentDetail").then((m) => ({ default: m.StockAdjustmentDetail })));
 const ScmStockTransfersV2 = lazy(() => import("./pages/scm-v2/StockTransfersListV2").then((m) => ({ default: m.StockTransfersListV2 })));
 const ScmStockTransferNewV2 = lazy(() => import("./pages/scm-v2/StockTransferNew").then((m) => ({ default: m.StockTransferNew })));
 const ScmStockTransferDetailV2 = lazy(() => import("./pages/scm-v2/StockTransferDetail").then((m) => ({ default: m.StockTransferDetail })));
@@ -145,6 +161,7 @@ const ScmStockCardV2 = lazy(() => import("./pages/scm-v2/StockCard").then((m) =>
 const ScmSupplierDetailV2 = lazy(() => import("./pages/scm-v2/SupplierDetail").then((m) => ({ default: m.SupplierDetail })));
 // Delivery Planning + TMS (Stage 3 — ported 2026-06-28 from 2990).
 const ScmDeliveryPlanningV2 = lazy(() => import("./pages/scm-v2/DeliveryPlanning").then((m) => ({ default: m.DeliveryPlanning })));
+const ScmDeliveryPlanningDriverV2 = lazy(() => import("./pages/scm-v2/DeliveryPlanningDriver").then((m) => ({ default: m.DeliveryPlanningDriver })));
 const ScmDpOrdersV2 = lazy(() => import("./pages/scm-v2/DpOrders").then((m) => ({ default: m.DpOrders })));
 const ScmTrips = lazy(() => import("./pages/scm-v2/Trips").then((m) => ({ default: m.Trips })));
 const ScmDeliveryPlanningRegionsV2 = lazy(() => import("./pages/scm-v2/DeliveryPlanningRegions").then((m) => ({ default: m.DeliveryPlanningRegions })));
@@ -159,6 +176,7 @@ const ScmThreePLCompaniesV2 = lazy(() => import("./pages/scm-v2/ThreePLCompanies
 const ScmFleetV2 = lazy(() => import("./pages/scm-v2/Fleet").then((m) => ({ default: m.Fleet })));
 const ScmDeliveryMaintenanceV2 = lazy(() => import("./pages/scm-v2/DeliveryMaintenance").then((m) => ({ default: m.DeliveryMaintenance })));
 const ScmLorryCapacityV2 = lazy(() => import("./pages/scm-v2/LorryCapacity").then((m) => ({ default: m.LorryCapacity })));
+const ScmLorryLiveMap = lazy(() => import("./pages/scm-v2/LorryLiveMap").then((m) => ({ default: m.LorryLiveMap })));
 // Fleet Module A4 — day-view map + printable driver run-sheet (read/render over trips).
 const ScmFleetDayV2 = lazy(() => import("./pages/scm-v2/FleetDay").then((m) => ({ default: m.FleetDay })));
 const ScmFleetRunSheetV2 = lazy(() => import("./pages/scm-v2/FleetRunSheet").then((m) => ({ default: m.FleetRunSheet })));
@@ -183,6 +201,7 @@ const ScmAmendmentsV2 = lazy(() => import("./pages/scm-v2/Amendments").then((m) 
 const ScmAmendmentDetailV2 = lazy(() => import("./pages/scm-v2/AmendmentDetailV2").then((m) => ({ default: m.AmendmentDetailV2 })));
 const ScmPoAmendmentsV2 = lazy(() => import("./pages/scm-v2/PoAmendments").then((m) => ({ default: m.PoAmendments })));
 const ScmCancelRequestsV2 = lazy(() => import("./pages/scm-v2/CancelRequests").then((m) => ({ default: m.CancelRequests })));
+const ScmPaymentBackdateRequestsV2 = lazy(() => import("./pages/scm-v2/PaymentBackdateRequests").then((m) => ({ default: m.PaymentBackdateRequests })));
 const ScmFairPending = lazy(() => import("./pages/scm-v2/FairPending").then((m) => ({ default: m.FairPending })));
 const ScmPoAmendmentDetailV2 = lazy(() => import("./pages/scm-v2/PoAmendmentDetailV2").then((m) => ({ default: m.PoAmendmentDetailV2 })));
 const ScmSoDetailListingV2 = lazy(() => import("./pages/scm-v2/SalesOrderDetailListing").then((m) => ({ default: m.SalesOrderDetailListing })));
@@ -267,6 +286,7 @@ function Guard({
   anyPerm,
   anyAccess,
   allowSalesDirector = false,
+  allowSales = false,
   children,
 }: {
   perm?: string;
@@ -286,9 +306,15 @@ function Guard({
    *  spelling of "admit the Sales Director too" and the next route that needs it
    *  must not invent a second one. */
   allowSalesDirector?: boolean;
+  /** ADDITIVE: a Sales-department user (auth/salesAccess.isSalesStaff) passes —
+   *  the same spelling as ScmGuard's and PageGuard's allowSales. Set on
+   *  /scm/payment-requests (owner 2026-10-14): a salesperson reads the refund
+   *  they asked for there; the server shows them their own requests only. */
+  allowSales?: boolean;
   children: React.ReactNode;
 }) {
   const { can, pageAccess, user } = useAuth();
+  if (allowSales && isSalesStaff(user)) return <>{children}</>;
   // OR across all provided gates — pass if ANY is satisfied. (Previously each
   // gate could only DENY; with anyAccess the gates are alternatives, so a
   // grant on any one is sufficient.)
@@ -421,6 +447,21 @@ function SoMaintenanceGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/** IT pages (System Health, AI usage): the server's `it.pages.view` answer. */
+function ItPagesGuard({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  if (capabilitiesUnresolved(user)) {
+    return (
+      <Forbidden
+        page="it.view"
+        reason="We couldn't load your permissions, so this page stayed shut. This is a system problem, not a change to your access — reload the page, and tell IT if it keeps happening."
+      />
+    );
+  }
+  if (!capability(user, "it.pages.view")) return <Forbidden page="it.view" />;
+  return <>{children}</>;
+}
+
 /**
  * Fair Report route guard — management + the Sales Director only, mirroring the
  * backend fairReportAccess cohort (auth/salesAccess.canViewFairReport =
@@ -445,6 +486,7 @@ export default function App() {
       <LazySlot resetKey="pending-reminder" fallback={null}><PendingTasksReminder /></LazySlot>
       <QuickActionsFAB />
       <BackToTopFAB />
+      <LineGridNav />
       <AssistantPanelProvider>
         <AssistantLauncher />
         <AssistantPanel />
@@ -565,6 +607,9 @@ export default function App() {
         {/* Agent console — owner/IT only (wildcard). Runtime governance for the
             agent fleet: pause/kill, autonomy gates, proposals + findings, the
             learned-tuning approvals, and the per-agent teaching notebook. */}
+        {/* Houzs POS Admin (layouts E1-E9): owner / admin, the same key the
+            /api/pos-admin routes read. */}
+        <Route path="/pos-admin" element={<Guard anyPerm={["*", "pos.manage"]}><PosAdmin /></Guard>} />
         <Route path="/agents" element={<Guard anyPerm={["*"]}><Agents /></Guard>} />
         {/* No permission gate: the Assistant is open to every authenticated staff
             member, and what each may SEE is scoped server-side per position
@@ -574,9 +619,25 @@ export default function App() {
         <Route
           path="/system-health"
           element={
-            <PageGuard page="system_health">
+            <ItPagesGuard>
               <SystemHealth />
-            </PageGuard>
+            </ItPagesGuard>
+          }
+        />
+        <Route
+          path="/ai-usage"
+          element={
+            <ItPagesGuard>
+              <AiUsage />
+            </ItPagesGuard>
+          }
+        />
+        <Route
+          path="/ocr"
+          element={
+            <ItPagesGuard>
+              <OcrDashboard />
+            </ItPagesGuard>
           }
         />
         {/* AutoCount Sync — the read of scm.autocount_outbox. Gated on the same
@@ -639,6 +700,10 @@ export default function App() {
             keys off `canWrite` = announcements.write / Sales Director, which the
             backend re-checks. ── */}
         <Route path="/announcements" element={<Announcements />} />
+        {/* IT Support — report a problem to IT and follow it. Not guarded, like
+            Announcements: every signed-in user has it, and /api/it-support
+            answers each caller with their OWN requests only. */}
+        <Route path="/it-support" element={<ItSupport />} />
         {/* Fleet Health — Fleet Maintenance & Compliance Phase 1 dashboard.
             Gated on the flat fleet.read permission; fleet.write covers the
             mutations (backend re-checks). Desktop ops screen. */}
@@ -681,6 +746,8 @@ export default function App() {
         {/* Vendored 2990's Purchase Order pages. /new + /from-so precede /:id so
             the literal segments match before the param route. Each page is wrapped
             in <Scm2990Shell> for the Notify/Confirm/dialog-service providers. */}
+        <Route path="/scm/logistic-overview" element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmLogisticOverview embedded={false} /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/procurement-overview" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmProcurementOverview embedded={false} /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-orders" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPurchaseOrdersV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-orders/new" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPurchaseOrderNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-orders/from-so" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPurchaseOrderFromSoV2 /></Scm2990Shell></ScmGuard>} />
@@ -695,6 +762,9 @@ export default function App() {
         {/* Cancellation requests (owner 2026-09-08) — one inbox for both documents; a
             row's actions still hit the per-document routes behind their own area guards. */}
         <Route path="/scm/cancel-requests" element={<ScmGuard area="scm" allowDirector><Scm2990Shell><ScmCancelRequestsV2 /></Scm2990Shell></ScmGuard>} />
+        {/* Admin only (owner 2026-09-30: 「只有 admin 可以看到 request」) — the key the
+            endpoint asks; `*` covers Owner / IT Admin. */}
+        <Route path="/scm/payment-backdate-requests" element={<Guard anyPerm={BACKDATE_DECIDER_PERMS}><Scm2990Shell><ScmPaymentBackdateRequestsV2 /></Scm2990Shell></Guard>} />
         {/* Fair links still to settle (owner 2026-09-13). Same guard as the SO
             list — deciding which exhibition a sale belongs to is a sales-order
             decision, and the row's own write goes through the SO routes. */}
@@ -706,6 +776,7 @@ export default function App() {
         <Route path="/scm/daily-bank" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmDailyBank /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/merchant-recon" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmMerchantRecon /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/bank-recon" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmBankRecon /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/unmatched-payments" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmUnmatchedPayments /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/settlement-setup" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmSettlementSetup /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/outstanding" element={<ScmGuard area="scm.finance.outstanding"><Scm2990Shell><ScmOutstandingV2 /></Scm2990Shell></ScmGuard>} />
         {/* Delivered-but-not-billed, aged. Same area key as Outstanding — it is the
@@ -744,6 +815,21 @@ export default function App() {
         <Route path="/scm/receipts" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmReceiptsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/official-receipts" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOfficialReceiptsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/ap-invoices" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmApInvoicesV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/ar-invoices" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmArInvoicesV2 /></Scm2990Shell></ScmGuard>} />
+        {/* 申请付款 (owner 2026-09-30): a flat-key door, not an SCM area — a sales PIC
+            asking Finance to pay a bill holds no Finance area; Finance comes in on
+            the voucher key. The server shows a requester their own requests only.
+            Since 2026-10-14 (option A) Sales staff and anyone working Sales Orders
+            come in too: the refund they ask for from an order is their request. */}
+        <Route path="/scm/payment-requests" element={<Guard anyPerm={["*", "scm.payment_request.create", "scm.payment_voucher.create"]} anyAccess={["scm.sales.orders"]} allowSales><Scm2990Shell><ScmPaymentRequestsV2 /></Scm2990Shell></Guard>} />
+        {/* Product request (owner 2026-10-06): Sales 都能提 (allowSales), the Purchaser
+            批 (any scm.* grant, like the cancel-requests inbox) — the router shows a
+            requester their own requests only. */}
+        <Route path="/scm/product-requests" element={<ScmGuard area="scm" allowSales><Scm2990Shell><ScmProductRequestsV2 /></Scm2990Shell></ScmGuard>} />
+        {/* 欠正式单 (owner 2026-10-01, item 3) — Finance's list of payments still owing the official invoice. */}
+        <Route path="/scm/official-docs" element={<Guard anyPerm={["*", "scm.payment_voucher.create"]}><Scm2990Shell><ScmOfficialDocsV2 /></Scm2990Shell></Guard>} />
+        {/* Supplier Maintenance (owner 2026-10-02) — Finance's own supplier list; same area as the AP Invoices it sits beside. */}
+        <Route path="/scm/supplier-maintenance" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmSupplierMaintenanceV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/ap-invoices/scan" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherScanV2 target="ap" /></Scm2990Shell></ScmGuard>} />
         {/* Credit and debit notes (owner 2026-09-12; docs/bugs/0827). */}
         <Route path="/scm/credit-notes" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmCreditNotesV2 /></Scm2990Shell></ScmGuard>} />
@@ -762,6 +848,8 @@ export default function App() {
             inventory-view but no adjustments grant reaches Inventory, not this. */}
         <Route path="/scm/stock-adjustments" element={<ScmGuard area="scm.warehouse.adjustments"><Scm2990Shell><ScmStockAdjustmentsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/stock-adjustments/new" element={<ScmGuard area="scm.warehouse.adjustments"><Scm2990Shell><ScmStockAdjustmentNewV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/stock-adjustments/:id" element={<ScmGuard area="scm.warehouse.adjustments"><Scm2990Shell><ScmStockAdjustmentDetailV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/stock-adjustments/:id/edit" element={<ScmGuard area="scm.warehouse.adjustments"><Scm2990Shell><ScmStockAdjustmentEditV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/stock-transfers" element={<ScmGuard area="scm.warehouse.transfers"><Scm2990Shell><ScmStockTransfersV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/stock-transfers/new" element={<ScmGuard area="scm.warehouse.transfers"><Scm2990Shell><ScmStockTransferNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/stock-transfers/:id" element={<ScmGuard area="scm.warehouse.transfers"><Scm2990Shell><ScmStockTransferDetailV2 /></Scm2990Shell></ScmGuard>} />
@@ -798,6 +886,7 @@ export default function App() {
             re-add this route. */}
         {/* Delivery Planning + TMS Stage 3 — all under the existing scm.transportation.drivers area. */}
         <Route path="/scm/delivery-planning"         element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryPlanningV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/delivery-planning-driver"  element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryPlanningDriverV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/dp-orders"                 element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDpOrdersV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/trips"                     element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmTrips /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/delivery-planning-regions" element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryPlanningRegionsV2 /></Scm2990Shell></ScmGuard>} />
@@ -810,6 +899,7 @@ export default function App() {
         <Route path="/scm/fleet"                     element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmFleetV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/delivery-maintenance"      element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryMaintenanceV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/lorry-capacity"            element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmLorryCapacityV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/lorry-live-map"            element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmLorryLiveMap /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/fleet-day"                 element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmFleetDayV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/fleet-run-sheet"           element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmFleetRunSheetV2 /></Scm2990Shell></ScmGuard>} />
         {/* Supply Chain Hub — section landing page (main app layout, NOT the 2990 shell). */}

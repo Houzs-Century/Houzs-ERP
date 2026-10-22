@@ -31,6 +31,7 @@ import {
 import { lockedRefusal, monthAsDate, monthFromDate } from '../../acc/bank-lock';
 import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-reconcile';
 import { entryCandidatesFor } from '../../acc/bank-match';
+import { lineForRepeats, repeatsAmong } from '../../acc/bank-repeats';
 import { withJournalRefs } from '../../acc/journal-refs';
 import {
   loadPayableBatches, loadAccountLedger, loadLiveMonthLock, loadBankConfig, claimedSetFor, jeNosOf,
@@ -512,6 +513,13 @@ export const bankMonthDetail = bankGuard(async (c) => {
     loadLiveMonthLock(sb, co.companyId, accountCode, month),
   ]);
   if (!ledger.ok) return c.json({ error: 'load_failed', reason: ledger.reason }, 500);
+  /* Named the way a person knows them (docs/bugs/0918), as the statement
+     detail and the lock already name them: the month's outstanding list showed
+     a customer's transfer as "SOPAY · <payment uuid>" with no customer (owner
+     2026-09-30) because only this door skipped the naming. */
+  const named = await withJournalRefs(sb, co.companyId, ledger.movements);
+  if (!named.ok) return c.json({ error: 'load_failed', reason: named.reason }, 500);
+  ledger.movements = named.entries;
   /* A LOCK THE SCREEN CANNOT READ IS A REFUSAL, not an omission. A month that
      draws its buttons as though it were open, because the lock read quietly
      failed, is the one way this can mislead somebody into attempting a write
@@ -547,6 +555,13 @@ export const bankMonthDetail = bankGuard(async (c) => {
     return s === undefined ? null : textOf(s.file_name);
   };
 
+  /* This month's movements still to decide that an earlier file of the account
+     already recorded (owner 2026-10-14; acc/bank-repeats.ts) — what the screen's
+     "leave out" button offers, and the files to ask it of. */
+  const repeated = repeatsAmong(everyLine.map((l) => lineForRepeats(l, '')));
+  const repeatLines = lines.filter((l) => repeated.has(Number(l.id)));
+  const repeats = { count: repeatLines.length, statementIds: [...new Set(repeatLines.map((l) => Number(l.statement_id)))] };
+
   return c.json({
     accountCode,
     month,
@@ -555,6 +570,7 @@ export const bankMonthDetail = bankGuard(async (c) => {
     /* Null means open. The screen renders the LOCK rather than inferring one
        from a disabled button, so a closed month says who closed it and why. */
     lock: held.lock,
+    repeats,
     /* The typed month-end figures as stored — this month's and the previous
        month's — so the screen can show what was typed even where a file
        printed the balance and the typed one was not used (docs/bugs/0858). */

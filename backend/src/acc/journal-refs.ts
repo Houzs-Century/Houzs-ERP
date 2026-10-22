@@ -34,7 +34,9 @@
 //   SETTLE(MOVE)    doc = "<acquirer> settlement dd/mm/yyyy"; doc2 = the
 //                   merchant's transaction ref
 //   SETTLEBANK      doc = "<acquirer> payout dd/mm/yyyy"; doc2 = the bank ref
-//   SETTLECHARGE    doc = "<acquirer> charge dd/mm/yyyy"
+//   SETTLECHARGE    doc = "<acquirer> charge dd/mm/yyyy" — the advice day's; a
+//                   charge kept off a credit (SETTLECHARGE-R<receipt>) reads the
+//                   credit's day, doc2 = its bank ref
 //   STOCKADJ        doc = "Stock mm/yyyy"
 //   MANUAL          nothing — the narration says what it is
 // ----------------------------------------------------------------------------
@@ -68,6 +70,8 @@ const chunks = <T>(xs: T[]): T[][] => {
 };
 
 const baseTypeOf = (t: string | null): string => String(t ?? '').replace(/_REVERSAL$/, '');
+/** The key of a charge kept off a credit (acc/charge-account receiptChargeKey). */
+const KEPT_CHARGE = /^SETTLECHARGE-R(\d+)$/;
 
 /** "Stock 07/2026" off a STOCKADJ key (STOCKADJ-<company>-<yyyy>-<mm>, or STOCKADJ-REV-…). */
 export const stockMonthLabel = (doc: string): string => {
@@ -148,15 +152,21 @@ export async function resolveJournalRefs(sb: Db, companyId: number, entries: Jou
     for (const r of (Array.isArray(data) ? data : []) as Array<{ id: number; txn_date: string | null; ref: string | null; acquirer_code: string | null }>) settleRows.set(Number(r.id), r);
   }
   const payoutKeys = docsOf(['SETTLEBANK']);
-  const receiptIds = [...new Set(payoutKeys.map((k) => Number(k.split('-')[2])).filter((n) => Number.isInteger(n)))];
-  const batchIds = new Set(payoutKeys.map((k) => Number(k.split('-')[1])).filter((n) => Number.isInteger(n)));
-  const receipts = new Map<number, { received_on: string; bank_ref: string | null }>();
-  if (receiptIds.length > 0) {
-    const { data, error } = await sb.from('acc_settlement_receipts').select('id, received_on, bank_ref').eq('company_id', companyId).in('id', receiptIds);
-    if (error) return { ok: false, reason: `settlement receipts: ${String(error.message ?? error)}` };
-    for (const r of (Array.isArray(data) ? data : []) as Array<{ id: number; received_on: string | null; bank_ref: string | null }>) receipts.set(Number(r.id), { received_on: String(r.received_on ?? '').slice(0, 10), bank_ref: r.bank_ref ?? null });
-  }
   const chargeKeys = docsOf(['SETTLECHARGE']);
+  /* A charge kept off a credit is keyed on the credit (SETTLECHARGE-R<id>, owner
+     2026-09-30) — it reads its day and bank ref off the same receipt rows. */
+  const keptReceiptIds = chargeKeys.map((k) => KEPT_CHARGE.exec(k)?.[1]).filter((x): x is string => x != null).map(Number);
+  const receiptIds = [...new Set([...payoutKeys.map((k) => Number(k.split('-')[2])), ...keptReceiptIds].filter((n) => Number.isInteger(n)))];
+  const batchIds = new Set(payoutKeys.map((k) => Number(k.split('-')[1])).filter((n) => Number.isInteger(n)));
+  const receipts = new Map<number, { received_on: string; bank_ref: string | null; batch_id: number | null }>();
+  if (receiptIds.length > 0) {
+    const { data, error } = await sb.from('acc_settlement_receipts').select('id, received_on, bank_ref, batch_id').eq('company_id', companyId).in('id', receiptIds);
+    if (error) return { ok: false, reason: `settlement receipts: ${String(error.message ?? error)}` };
+    for (const r of (Array.isArray(data) ? data : []) as Array<{ id: number; received_on: string | null; bank_ref: string | null; batch_id?: number | null }>) {
+      receipts.set(Number(r.id), { received_on: String(r.received_on ?? '').slice(0, 10), bank_ref: r.bank_ref ?? null, batch_id: r.batch_id == null ? null : Number(r.batch_id) });
+      if (r.batch_id != null && keptReceiptIds.includes(Number(r.id))) batchIds.add(Number(r.batch_id));
+    }
+  }
   const payoutBatchIds = [...new Set(chargeKeys.map((k) => Number(k.split('-')[1])).filter((n) => Number.isInteger(n)))];
   const charges = new Map<number, { settled_on: string; batch_id: number | null }>();
   if (payoutBatchIds.length > 0) {
@@ -208,6 +218,10 @@ export async function resolveJournalRefs(sb: Db, companyId: number, entries: Jou
       const row = settleRows.get(Number(doc.split('-')[1]));
       const acquirer = row?.acquirer_code ?? 'Card';
       ref = { reference: doc, who: party ?? acquirer, doc: row ? `${acquirer} settlement${row.txn_date ? ` ${fmtDate(String(row.txn_date).slice(0, 10))}` : ''}` : doc, doc2: row?.ref ?? null };
+    } else if (base === 'SETTLECHARGE' && doc && KEPT_CHARGE.test(doc)) {
+      const r = receipts.get(Number(KEPT_CHARGE.exec(doc)?.[1]));
+      const acquirer = r?.batch_id != null ? (acquirerOfBatch.get(r.batch_id) ?? 'Card') : 'Card';
+      ref = { reference: doc, who: party ?? acquirer, doc: r ? `${acquirer} charge${r.received_on ? ` ${fmtDate(r.received_on)}` : ''}` : doc, doc2: r?.bank_ref ?? null };
     } else if (base === 'SETTLECHARGE' && doc) {
       const ch = charges.get(Number(doc.split('-')[1]));
       const acquirer = ch?.batch_id != null ? (acquirerOfBatch.get(ch.batch_id) ?? 'Card') : 'Card';

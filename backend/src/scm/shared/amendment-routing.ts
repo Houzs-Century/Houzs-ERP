@@ -19,6 +19,7 @@ export type AmendmentType = 'PROCESSING' | 'DELIVERY_COMMERCIAL';
 export type ResponsibleDept =
   | 'Production / Design'
   | 'Finance'
+  | 'Sales Director'
   | 'Logistics'
   | 'Purchasing';
 
@@ -28,6 +29,7 @@ export type AmendmentFieldKind =
   | 'QTY'
   | 'LINE'
   | 'PRICE'
+  | 'COST'
   | 'DELIVERY'
   | 'SUPPLIER';
 
@@ -42,7 +44,8 @@ const FIELD_ROUTING: Record<AmendmentFieldKind, { type: AmendmentType; departmen
   VARIANT:  { type: 'PROCESSING',          department: 'Production / Design' },
   QTY:      { type: 'PROCESSING',          department: 'Production / Design' },
   LINE:     { type: 'PROCESSING',          department: 'Production / Design' },
-  PRICE:    { type: 'DELIVERY_COMMERCIAL', department: 'Finance' },
+  PRICE:    { type: 'DELIVERY_COMMERCIAL', department: 'Sales Director' },
+  COST:     { type: 'DELIVERY_COMMERCIAL', department: 'Finance' },
   DELIVERY: { type: 'DELIVERY_COMMERCIAL', department: 'Logistics' },
   SUPPLIER: { type: 'DELIVERY_COMMERCIAL', department: 'Purchasing' },
 };
@@ -53,6 +56,7 @@ export const FIELD_KIND_LABEL: Record<AmendmentFieldKind, string> = {
   QTY: 'Quantity',
   LINE: 'Line',
   PRICE: 'Price',
+  COST: 'Unit cost',
   DELIVERY: 'Delivery date',
   SUPPLIER: 'Supplier',
 };

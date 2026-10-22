@@ -188,7 +188,7 @@ describe("the key line", () => {
   it("recognises the key without being able to reveal it", () => {
     const line = vpKeyLine(status());
     expect(line).toMatch(/····9f2a/);
-    expect(line).toMatch(/generated 13\/09\/2026 /);
+    expect(line).toMatch(/generated 2026\/09\/13 /);
     /* Nothing that could be a key: no run of key-shaped characters. The status
        payload cannot carry one, and this pins that the sentence would not print
        it if a future endpoint change ever did. */

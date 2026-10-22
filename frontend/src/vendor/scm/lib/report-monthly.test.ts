@@ -157,12 +157,17 @@ describe('each report as lines', () => {
         ],
       },
       totals: { openingTotalSen: -10_000, receiptsTotalSen: 50_000, paymentsTotalSen: 70_000, closingTotalSen: -30_000 },
+      card: { takingsSen: 12_300, transitSen: 45_600 },
     };
     const lines = rpLines(r);
     expect(lines.map((l) => l.id)).toEqual([
       'blk:side:in', 'in:acc:300-0000', 'tot:side:in', 'blk:side:out', 'out:cat:p', 'out:acc:601-0003', 'tot:side:out', 'sub:ops',
       'blk:unassigned:out', 'out:acc:ADV', 'tot:unassigned:out', 'net:surplus', 'bal:opening', 'bal:closing',
+      'memo:card-takings', 'memo:card-transit',
     ]);
+    /* The card money the bank has not received (owner 2026-09-28): two memo lines after the foot. */
+    expect(lines.find((l) => l.id === 'memo:card-takings')).toMatchObject({ label: 'Card takings this period (swiped, not yet in the bank)', kind: 'memo', amountSen: 12_300, pct: null });
+    expect(lines.find((l) => l.id === 'memo:card-transit')).toMatchObject({ label: 'Card money in transit at period end', kind: 'memo', amountSen: 45_600, pct: null });
     expect(lines.find((l) => l.id === 'tot:side:in')).toMatchObject({ label: 'Total receipts', kind: 'total', amountSen: 50_000, pct: 100 });
     expect(lines.find((l) => l.id === 'sub:ops')).toMatchObject({ label: 'Net operation surplus / (deficit)', kind: 'net', amountSen: 10_000, pct: null });
     expect(lines.find((l) => l.id === 'tot:unassigned:out')).toMatchObject({ label: 'Total unassigned payments', kind: 'total', amountSen: 30_000, pct: 42.9 });

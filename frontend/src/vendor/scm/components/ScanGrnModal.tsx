@@ -33,6 +33,7 @@ import {
   type ScanJob,
   type ScanJobsResp,
 } from '../lib/scan-jobs';
+import { ScanCodesPanel } from './ScanCodesPanel';
 import styles from './ScanOrderModal.module.css';
 
 const ACCEPT = 'image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf';
@@ -48,6 +49,7 @@ export function ScanGrnModal({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [enqueuedJobIds, setEnqueuedJobIds] = useState<string[]>([]);
   const [dragOver, setDragOver] = useState(false);
+  const [codesOpen, setCodesOpen] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const busy = submitting;
@@ -209,7 +211,11 @@ export function ScanGrnModal({ onClose }: { onClose: () => void }) {
                       <div className={styles.resultMain}>
                         {done
                           ? (j.linkedDocNo
-                              ? `Draft goods receipt ${j.linkedDocNo} — open it to review and post.`
+                              ? (j.linkedDocId
+                                  ? <>Draft goods receipt{' '}
+                                      <button type="button" className={styles.docLink} onClick={() => { onClose(); navigate(`/scm/grns/${j.linkedDocId}`); }}>{j.linkedDocNo}</button>
+                                      {' '}— open it to check the lines, add what is missing, set racks and post.</>
+                                  : `Draft goods receipt ${j.linkedDocNo} — open it to review and post.`)
                               : (j.error || 'Needs review — open the PO and receive by hand.'))
                           : failed
                             ? (j.error || "Couldn't read the delivery order.")
@@ -217,6 +223,12 @@ export function ScanGrnModal({ onClose }: { onClose: () => void }) {
                         {done && j.linkedDocNo && j.error && (
                           <div className={styles.resultSub}>{j.error}</div>
                         )}
+                        {done && (
+                          <button type="button" className={styles.docLink} style={{ display: 'block', marginTop: 4 }} onClick={() => setCodesOpen(codesOpen === j.id ? null : j.id)}>
+                            {codesOpen === j.id ? 'Hide supplier codes' : 'Match supplier codes'}
+                          </button>
+                        )}
+                        {done && codesOpen === j.id && <ScanCodesPanel jobId={j.id} jobsQueryKey={['scan-grn-modal-jobs']} />}
                       </div>
                       <span style={{ flex: 'none', fontSize: 11, color: 'var(--fg-muted)' }}>
                         {jobTs(j.createdAt) ? hhmm(jobTs(j.createdAt)) : ''}

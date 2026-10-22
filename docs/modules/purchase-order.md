@@ -16,7 +16,7 @@ A PO moves NO inventory at any status; stock IN happens at GRN post. What it mov
 - Hold `PATCH /:id/hold` (shared `document-hold-routes.ts`): sets the marker `on_hold / hold_reason / held_at / held_by`; status is unchanged. List shows real pill + Hold chip; On Hold tab reads the flag.
 - No document-level delete. CANCELLED is terminal (reopen aside). Line delete and allocation delete still exist.
 - List tabs (`lib/po-status-buckets.ts`): draft, open (SUBMITTED), partial, received, cancelled, on_hold, and `outstanding` = SUBMITTED + PARTIALLY_RECEIVED — a roll-up that overlaps open + partial, so tab counts do not sum to all.
-- Revisions: a PO is revised IN PLACE — `revision` bumps, prior version snapshotted to `scm.po_revisions`; number shows as `<po_number>_R<revision-1>` (`poDisplayNumber`) on screen and print. Two engines: `reviseBoundPo` (SO-amendment follow-up, lines re-derived by `rederivePoLineFromSoLine`) and `applyPoAmendment` (`/po-amendments` router).
+- Revisions: a PO is revised IN PLACE — `revision` bumps, prior version snapshotted to `scm.po_revisions`; number shows as `<po_number>_R<revision-1>` (`poDisplayNumber`) on screen and print. Two engines: `reviseBoundPo` (SO-amendment follow-up, lines re-derived by `rederivePoLineFromSoLine`; the unit cost re-derives only when the line's code or variants move, otherwise the PO's own price is kept) and `applyPoAmendment` (`/po-amendments` router).
 - Pre-DO, every PO <-> SO pairing is floating (MRP pooled allocator); `so_item_id` and allocation slices are procurement PROVENANCE. At DO creation the live allocator (`do-live-allocator.ts`) binds `committed_po_batch_no`; post-DO records are anchored history.
 
 ## Permissions
@@ -34,6 +34,7 @@ A PO moves NO inventory at any status; stock IN happens at GRN post. What it mov
 Locks and required fields
 - Any non-cancelled GRN on the PO -> header PATCH, line add/edit/delete and cancel all 409 (`poHasDownstream`, `lib/downstream-lock.ts`); convert-to-GRN stays allowed. Same rule AutoCount applies to transferred documents.
 - UI lock `purchaseOrderLinesLocked` (`vendor/scm/lib/line-add-lock.ts`): editable only in DRAFT / SUBMITTED / PARTIALLY_RECEIVED with no children; used by desktop editor and phone — never inline a copy.
+- `POST /bulk-supplier-date` never overwrites a filled Supplier Date 2-4 (`pickSupplierDateSlot`); `slot: 'next'` takes each PO's first empty slot. The header PATCH is the correction path; line import and delivery-sheet sync are not gated.
 - Create requires `supplierId` and `purchaseLocationId` (400); `expectedAt` blank defaults to today (MYT).
 - No PO may reach SUBMITTED (confirm, reopen) while header `purchase_location_id` is blank and any line lacks `warehouse_id`.
 - Send-to-supplier refused for DRAFT and CANCELLED (`poSendRefusalForStatus`); re-send is allowed, with a 60 s double-click window.
@@ -64,6 +65,7 @@ Money
 - `line_total_sen = max(0, qty * unit_price_sen - discount_sen)`; header `subtotal_sen = total_sen = SUM(line_total_sen)`. Any repair writes discount, line total and header together.
 - Currency `MYR | RMB | CNY | USD | SGD`; the PO has no exchange rate — FX to MYR happens at the GRN.
 - Line PATCH stores prices as sent; spec-edit re-pricing (`computeMfgPoUnitCost`) runs in the browser (`PurchaseOrderDetail.tsx`).
+- A PO prices from the flat `supplier_material_bindings` cost. A scheduled supplier price (`supplier_binding_price_history`, `applied_at IS NULL`) is copied onto it on its date by `applyDueSupplierPrices` (00:05 MYT cron, or at once when dated today or earlier), which then re-derives the product cost when auto-derive is on.
 - Supplier cost never leaks to sales: `loadSupplierSofaCombos` excludes `supplier_id IS NULL` rows; `/sofa-combos` is not openRead.
 
 Company scope
@@ -102,6 +104,7 @@ Line import (`/line-import/preview`, `/line-import/apply`)
 Export and print
 - One toolbar Export via `GET /export/rows`: every PO the list filters match, one row per line, visible columns only, money in ringgit (never sen); stops at 20,000 orders with `truncated: true`, which the page refuses to write.
 - `purchase-order-pdf.ts` is the only PO print generator; it fetches sofa compartment art itself. Print all goes through `PrintPreviewBatchModal`.
+- Sofa layout for a geometry-less (backend / mobile) sofa: `buildDefaultSofaCells` (`vendor/shared/sofa-build.ts`) counts each line's qty as pieces and TURNS the run at a CNR (2026-09-28): one CNR = an L (longer run along the back), two = a U with side legs coming forward toward the TV. Line order is the walking order, left leg front → back row → right leg front; two adjacent CNRs (an old "CNR x2") fall back to end piece = leg. Before that, `splitBackendSofa` (`vendor/scm/lib/sofa-walk-order.ts`, owner 2026-10-03) makes each both-arms piece (1S/2S/3S) a sofa of its own and walks the one LHF piece first and the one RHF piece last; the PO table rows follow the same order. With two or more LHF or RHF pieces the stored order is kept. A sofa with any turned piece draws the schematic throughout (`sofa-layout-pdf.ts`), because the compartment art is unrotated.
 - Right-click Print chain: no entry for an `assigned_sos` item with `source: 'mrp'` or a bare-string GRN chip.
 
 ## Gotchas

@@ -27,6 +27,12 @@ import { ListSkeleton } from "../components/Skeleton";
 import { useQuery } from "../hooks/useQuery";
 import { api } from "../api/client";
 import { cn } from "../lib/utils";
+import { useLorries } from "../vendor/scm/lib/lorries-queries";
+import { todayMY } from "../vendor/shared/format";
+import { PurchaseSection, CapacitySection } from "./scm-v2/LorryDetail";
+import { NotifyProvider } from "../vendor/scm/components/NotifyDialog";
+import { LorryTodayRoute } from "./fleet/LorryTodayRoute";
+import { RepairSpend } from "./fleet/RepairSpend";
 import {
   PlansSection, MileageSection, BreakdownSection, WorkOrdersSection,
   ComponentsSection, AttachmentStrip, AddRenewalForm,
@@ -65,6 +71,9 @@ export function LorryRecord() {
 
   const v = detail.data?.vehicle;
   const compliance = detail.data?.compliance;
+  // The lorry master row: the vehicle-details editor writes it (PATCH /lorries/:id).
+  const lorries = useLorries({ includeInactive: true, fleet: "all" });
+  const lorryRow = (lorries.data ?? []).find((l) => l.id === lorryId) ?? null;
 
   if (detail.loading && !v) return <div className="space-y-4"><ListSkeleton /></div>;
   if (!v) {
@@ -78,13 +87,29 @@ export function LorryRecord() {
 
   const box = boxLabel(v);
 
+  /* Owner, 2026-10-15: Fleet Health is the in-house fleet's record. An outsourced
+     lorry is the 3PL's to maintain — it needs only its delivery capacity, which
+     is set on Coverage & Fleet. */
+  if (v.isInternal === false) {
+    return (
+      <div className="space-y-4">
+        <PageHeader eyebrow="Operations · Fleet" title={v.plate} description="Outsourced lorry" />
+        <p className="rounded-md border border-border bg-surface px-4 py-3 text-[12.5px] text-ink-secondary">
+          Fleet Health keeps in-house lorries only. An outsourced lorry needs no compliance, vehicle,
+          repair or service record here; its delivery capacity is set on{" "}
+          <Link to="/scm/fleet" className="text-primary hover:underline">Coverage &amp; Fleet</Link>.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <PageHeader
         eyebrow="Operations · Fleet"
         title={v.plate}
         description={[
-          v.isInternal === false ? "Outsourced" : "In-house",
+          "In-house",
           v.model, box, v.driverName, v.region,
         ].filter(Boolean).join(" · ") || "No particulars on file"}
         actions={
@@ -115,25 +140,24 @@ export function LorryRecord() {
           explanation under every value plus a paragraph under the row. The
           reasoning lives in mig 0245 and the module guide, which is where
           reasoning belongs; the screen shows the dates. */}
-      <Section title="Vehicle" hint="the dates a lorry's life is measured from">
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <DateFact label="Manufactured" value={v.manufactureDate ?? null} />
-          <DateFact label="Registered" value={v.registrationDate ?? null} />
-          <DateFact label="In service" value={v.inServiceDate ?? null} />
-          <DateFact
-            label="Purchased"
-            value={v.purchaseDate ?? null}
-            hint={v.purchasePriceSen != null ? money(v.purchasePriceSen) : undefined}
-          />
-        </div>
-        {/* The lorry master stays the SINGLE writer for lorry columns — a second
-            editor over the same fields is how two screens start disagreeing, and
-            it sits behind a different permission (scm.transportation.drivers,
-            not fleet.write). So this is a link, not a duplicate form. */}
-        <p className="mt-3 text-[10.5px] text-ink-muted">
-          Edit these on the lorry master:{" "}
-          <Link to="/scm/fleet" className="text-primary hover:underline">Coverage &amp; Fleet</Link>.
-        </p>
+      <Section title="Where it is & today's route" hint="GPS position · route driven today · planned stops">
+        <LorryTodayRoute lorryId={v.id} />
+      </Section>
+
+      {/* Vehicle details and purchase are kept HERE now (owner, 2026-10-15), not on
+          Coverage & Fleet. Same editor and same writer (PATCH /lorries/:id), moved. */}
+      {/* The scm editor reports through the scm dialog, so it carries its provider here. */}
+      {/* Length / width / height and the trip ceilings of an in-house lorry are set here
+          (owner, 2026-10-16); Coverage & Fleet shows the same row. */}
+      {lorryRow && <NotifyProvider><CapacitySection lorry={lorryRow} ownFleet /></NotifyProvider>}
+      {lorryRow ? <NotifyProvider><PurchaseSection lorry={lorryRow} /></NotifyProvider> : (
+        <Section title="Vehicle details & purchase">
+          <p className="text-[12px] text-ink-muted">{lorries.isLoading ? "Loading…" : "The lorry master row could not be read."}</p>
+        </Section>
+      )}
+
+      <Section title="Repair spend" hint="every repair and recorded service, from its work orders">
+        <RepairSpend workOrders={detail.data?.workOrders ?? []} today={todayMY()} />
       </Section>
 
       <Section title="Breakdown & incidents" hint="a critical, unresolved case grounds the lorry">
@@ -162,7 +186,7 @@ export function LorryRecord() {
         <MileageSection readings={detail.data?.mileage ?? []} vehicleId={v.id} onChanged={refresh} />
       </Section>
 
-      <Section title="Compliance vault" hint="current document + renewal history (append-only)">
+      <Section title="Compliance" hint="road tax, insurance, PUSPAKOM, Geran · each renewal is added, never overwritten">
         <div className="space-y-4">
           {DOC_TYPES.map((t) => {
             const group = compliance?.[t];
@@ -172,8 +196,16 @@ export function LorryRecord() {
               <div key={t} className="rounded-lg border border-border bg-surface-2/40 p-3">
                 <div className="mb-2 flex items-center justify-between">
                   <span className="text-[12.5px] font-semibold text-ink">{DOC_LABEL[t]}</span>
-                  {history.length === 0 && <span className="text-[11px] text-ink-muted">No document on file</span>}
+                  {history.length === 0 && !group?.flatExpiry && <span className="text-[11px] text-ink-muted">No document on file</span>}
                 </div>
+                {/* An expiry typed on the lorry master before the vault existed still counts
+                    (it grounds the lorry when past), so it is shown, not hidden behind "none". */}
+                {history.length === 0 && group?.flatExpiry && (
+                  <div className="mb-1 flex items-center justify-between rounded-md border border-border bg-surface px-2.5 py-1.5 text-[12px]">
+                    <span className="text-ink">Expiry on file <span className="text-[10.5px] text-ink-muted">(no document yet: add the renewal to keep its history)</span></span>
+                    <span className="tabular-nums text-ink">{group.flatExpiry}</span>
+                  </div>
+                )}
                 {history.length > 0 && (
                   <div className="space-y-1.5">
                     {history.map((doc: DocView) => (

@@ -3,7 +3,7 @@
 // Received value + qty landed, tinted green once posted.
 
 import { lazy, useCallback, useMemo, useState, type ReactNode } from "react";
-import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity, fmtQty } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { LazySlot } from "../../components/LazySlot";
@@ -30,9 +30,13 @@ import { DATA_TABLE_LAYOUT_FAMILIES } from "../../components/dataTableLayoutFami
 import { DetailGrid, DetailMain, DetailAside, Section } from "../../components/DetailLayout";
 import {
   useGrnDetail,
+  useGrnItemRacks,
   usePostGrn,
   useCancelGrn,
 } from "../../vendor/scm/lib/grn-queries";
+import { useRacks } from "../../vendor/scm/lib/warehouse-queries";
+import { lineRackSummary } from "../../vendor/scm/lib/grn-line-rack";
+import { effectiveRackSplit } from "../../vendor/shared/rack-split";
 import { useSupplierDetail } from "../../vendor/scm/lib/suppliers-queries";
 import { skuMapFromBindings, supplierCodeFor } from "../../vendor/scm/lib/supplier-doc-data";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
@@ -52,6 +56,8 @@ import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip"
 import { FocAmount } from "../../vendor/scm/components/FocAmount";
 import { LinePoRefLink } from "../../vendor/scm/components/LinePoRefLink";
 import { ADD_LINE_LABEL, addLineHref } from "../../vendor/scm/lib/add-line-handoff";
+import { useAuth } from "../../auth/AuthContext";
+import { canPostGoodsReceipts } from "../../auth/salesAccess";
 type GrnStatus = "DRAFT" | "POSTED" | "CANCELLED" | string;
 
 type GrnHeader = HoldFields & {
@@ -107,6 +113,9 @@ type GrnItem = {
      PO line's qty, stamped by the detail GET (null on manual lines). */
   qty_received?: number | null;
   qty_accepted?: number | null;
+  /* The one rack the line is on (NULL when split over several — those are in
+     scm.grn_item_racks, read by useGrnItemRacks). */
+  rack_id?: string | null;
   ordered_qty?: number | null;
   source_po_id?: string | null;
   source_po_number?: string | null;
@@ -307,6 +316,7 @@ export function GoodsReceivedDetailV2() {
 }
 
 function GoodsReceivedDetailV2ReadOnly() {
+  const { user } = useAuth();
   const { id } = useParams<{ id: string }>();
   const [params] = useSearchParams();
   const navigate = useNavigate();
@@ -333,6 +343,20 @@ function GoodsReceivedDetailV2ReadOnly() {
     () => ((detail.data as { items?: GrnItem[] } | undefined)?.items ?? []),
     [detail.data]
   );
+
+  /* Owner 2026-10-02: the view page shows each line's racks, as the phone's
+     line card does, instead of only the Edit page. */
+  const racksQ = useRacks({ warehouseId: grn?.warehouse_id ?? undefined });
+  const splitQ = useGrnItemRacks(grn?.id);
+  const rackSummaryOf = useMemo(() => {
+    const labels = new Map((racksQ.data?.racks ?? []).map((r) => [r.id, r.rack] as const));
+    const rows = new Map<string, { rackId: string; qty: number }[]>();
+    for (const r of splitQ.data ?? []) rows.set(r.grnItemId, [...(rows.get(r.grnItemId) ?? []), { rackId: r.rackId, qty: r.qty }]);
+    return (l: GrnItem) => {
+      const accepted = Number(l.qty_accepted ?? 0);
+      return lineRackSummary(effectiveRackSplit(l.rack_id ?? null, accepted, rows.get(l.id) ?? []), accepted, (rid) => labels.get(rid));
+    };
+  }, [racksQ.data?.racks, splitQ.data]);
 
   // The 5-node receipt chain + what each node does when clicked (shared hook,
   // one logic layer — mirrors how the PO / DO detail pages consume their map).
@@ -500,7 +524,7 @@ function GoodsReceivedDetailV2ReadOnly() {
       getValue: (l) => l.ordered_qty ?? "",
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
-          {l.ordered_qty ?? "—"} <span className="text-[10.5px] text-ink-muted">{l.uom || ""}</span>
+          {fmtQty(l.ordered_qty)} <span className="text-[10.5px] text-ink-muted">{l.uom || ""}</span>
         </span>
       ),
     },
@@ -517,6 +541,22 @@ function GoodsReceivedDetailV2ReadOnly() {
         const ordered = Number(l.ordered_qty ?? 0);
         const full = ordered > 0 && rec >= ordered;
         return <span className={cn("font-money text-[13px] font-semibold", full ? "text-synced" : "text-ink")}>{rec}</span>;
+      },
+    },
+    {
+      key: "racks",
+      label: "Racks",
+      width: "150px",
+      getValue: (l) => rackSummaryOf(l).text,
+      render: (l) => {
+        const { text, unplaced } = rackSummaryOf(l);
+        if (!text) return <span className="text-ink-muted">—</span>;
+        return (
+          <div className="min-w-0">
+            <div className="font-mono text-[12px] text-ink">{text}</div>
+            {unplaced > 0 && <div className="text-[11px] text-amber-700">{unplaced} not on a rack</div>}
+          </div>
+        );
       },
     },
     {
@@ -613,7 +653,7 @@ function GoodsReceivedDetailV2ReadOnly() {
   };
 
   const rawStatus = (grn.status || "").toUpperCase();
-  const canPost = rawStatus === "DRAFT";
+  const canPost = rawStatus === "DRAFT" && canPostGoodsReceipts(user);
   const canConvertToPi = rawStatus === "POSTED" && !grn.fully_invoiced;
   const canConvertToPr = rawStatus === "POSTED" && !grn.fully_returned;
   const canCancel = rawStatus !== "CANCELLED";
@@ -795,15 +835,12 @@ function GoodsReceivedDetailV2ReadOnly() {
         pairing={chainPairing}
       />
       {/* A chain slot standing for several documents opens this chooser instead
-          of a notice that only named them. Picking a row navigates, so the map
-          closes with it. */}
+          of a notice that only named them. The picked one opens in its own tab of the
+          in-app strip. */}
       <DocumentChoiceDialog
         prompt={chainChoice}
         onClose={closeChainChoice}
-        onPick={(d) => {
-          setRelMapOpen(false);
-          pickChainChoice(d);
-        }}
+        onPick={pickChainChoice}
       />
 
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-surface/95 px-3 pb-6 pt-2.5 shadow-slab backdrop-blur-sm md:hidden">

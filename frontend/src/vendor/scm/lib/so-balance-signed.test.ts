@@ -196,11 +196,11 @@ describe('the SO print does not hide an over-collection', () => {
     const texts = draws.map((d) => d.text);
     expect(texts, drawn(draws)).toContain('CREDIT BALANCE');
     expect(texts).not.toContain('BALANCE DUE');
-    /* The figure is the excess as a positive credit — never "MYR -250.00",
-       and never the "MYR 0.00" the floor used to print. fmtRm prefixes the
+    /* The figure is the excess as a positive credit — never "RM -250.00",
+       and never the "RM 0.00" the floor used to print. fmtRm prefixes the
        currency, so the drawn cell is the whole string. */
-    expect(texts, drawn(draws)).toContain('MYR 250.00');
-    expect(texts).not.toContain('MYR -250.00');
-    expect(texts).not.toContain('MYR 0.00');
+    expect(texts, drawn(draws)).toContain('RM 250.00');
+    expect(texts).not.toContain('RM -250.00');
+    expect(texts).not.toContain('RM 0.00');
   }, 20_000);
 });

@@ -191,8 +191,9 @@ describe('GET /pos-pools/sofa-combos — cost-stripped POS combo pricing (#13)',
   const comboData: DataSet = {
     sofa_combo_pricing: [
       // company 1 — must never leak into a company-2 read
+      // S has selling; M has ONLY cost (the fallback path)
       { id: 'c-h', company_id: 1, base_model: 'HB', modules: [['A']], tier: 'PRICE_1', customer_id: null, supplier_id: null,
-        selling_prices_by_height: { S: 900 }, prices_by_height: { S: 500 }, pwp_prices_by_height: null,
+        selling_prices_by_height: { S: 900, M: null }, prices_by_height: { S: 500, M: 1500 }, pwp_prices_by_height: { S: 800 },
         default_free_gifts: null, label: 'H', effective_from: '2020-01-01', created_at: '2020-01-01', updated_at: '2020-01-01', created_by: null, deleted_at: null },
       // company 2 — active master combo. S has selling; M has ONLY cost (fallback path)
       { id: 'c1', company_id: 2, base_model: 'XB', modules: [['A'], ['B']], tier: 'PRICE_1', customer_id: null, supplier_id: null,
@@ -208,6 +209,13 @@ describe('GET /pos-pools/sofa-combos — cost-stripped POS combo pricing (#13)',
         selling_prices_by_height: { S: 3000 }, prices_by_height: { S: 2000 }, pwp_prices_by_height: null,
         default_free_gifts: [], label: 'sup', effective_from: '2020-01-01', created_at: '2020-01-01', updated_at: '2020-01-01', created_by: null, deleted_at: null },
     ],
+    // 2990's selling combos live in their own POS-owned table since the
+    // 2026-09-26 split; company 2's sofa_combo_pricing rows above are Houzs's.
+    pos_sofa_combos: [
+      { id: 'p1', company_id: 2, base_model: 'XB', modules: [['A'], ['B']], tier: 'PRICE_1',
+        selling_prices_by_height: { S: 2100 }, pwp_prices_by_height: {}, default_free_gifts: [], label: 'P1', notes: null,
+        effective_from: '2020-01-01', created_at: '2020-06-01', updated_at: '2020-06-01', created_by: null, created_by_name: null, deleted_at: null },
+    ],
   };
   function comboApp(companyId: number) {
     const supabase = fakeSupabase(comboData);
@@ -215,6 +223,7 @@ describe('GET /pos-pools/sofa-combos — cost-stripped POS combo pricing (#13)',
     app.use('*', async (c, next) => {
       c.set('supabase' as never, supabase as never);
       c.set('companyId' as never, companyId as never);
+      c.set('companyCode' as never, (companyId === 2 ? '2990' : 'HOUZS') as never);
       c.set('allowedCompanyIds' as never, [1, 2] as never);
       await next();
     });
@@ -227,10 +236,9 @@ describe('GET /pos-pools/sofa-combos — cost-stripped POS combo pricing (#13)',
     return body.rules;
   }
 
-  test('company 2 gets only its own master combos — no company 1, no supplier rows, latest-effective per tuple', async () => {
+  test('company 2 (2990) reads its POS-owned table — none of the sofa_combo_pricing rows', async () => {
     const rules = await combos(2);
-    // c-h (co1) + c-sup (supplier) + c1-old (superseded) all excluded
-    expect(rules.map((r) => r.id)).toEqual(['c1']);
+    expect(rules.map((r) => r.id)).toEqual(['p1']);
   });
 
   test('company 1 isolation — the other direction', async () => {
@@ -239,13 +247,13 @@ describe('GET /pos-pools/sofa-combos — cost-stripped POS combo pricing (#13)',
   });
 
   test('cost is stripped and the charged price rides sellingPricesByHeight (selling ?? cost)', async () => {
-    const [r] = await combos(2);
+    const [r] = await combos(1);
     expect(r.pricesByHeight).toEqual({});   // raw cost never ships
     expect(r.supplierId).toBeNull();        // which supplier never ships
     expect(r.notes).toBe('');               // internal notes withheld
-    // S: selling 2000 wins; M: selling null → falls back to cost 1500 — the exact
+    // S: selling 900 wins; M: selling null → falls back to cost 1500 — the exact
     // merge the POS comboChargedPrices + the server recompute both apply.
-    expect(r.sellingPricesByHeight).toEqual({ S: 2000, M: 1500 });
-    expect(r.pwpPricesByHeight).toEqual({ S: 1800 });
+    expect(r.sellingPricesByHeight).toEqual({ S: 900, M: 1500 });
+    expect(r.pwpPricesByHeight).toEqual({ S: 800 });
   });
 });

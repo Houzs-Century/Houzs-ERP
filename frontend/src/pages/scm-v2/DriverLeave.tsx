@@ -20,7 +20,10 @@ import {
   useDriverLeave,
   useCreateDriverLeave,
   useDeleteDriverLeave,
+  type DriverLeaveRow,
 } from '../../vendor/scm/lib/delivery-zones-queries';
+import { DataTable, type Column } from '../../components/DataTable';
+import { fmtDate } from '@2990s/shared';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { DateField } from "../../vendor/scm/components/DateField";
@@ -99,6 +102,26 @@ export const DriverLeave = () => {
   };
 
   const rows = leave.data ?? [];
+  const columns: Column<DriverLeaveRow>[] = [
+    {
+      key: 'type', label: 'Type',
+      render: (r) => <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>{crewOf(r).kind}</span>,
+      getValue: (r) => crewOf(r).kind,
+    },
+    { key: 'name', label: 'Name', render: (r) => <strong>{crewOf(r).name}</strong>, getValue: (r) => crewOf(r).name },
+    { key: 'from', label: 'From', render: (r) => fmtDate(r.startDate), getValue: (r) => r.startDate, exportFormat: 'date' },
+    { key: 'to', label: 'To', render: (r) => fmtDate(r.endDate), getValue: (r) => r.endDate, exportFormat: 'date' },
+    { key: 'reason', label: 'Reason', render: (r) => r.reason ?? '—', getValue: (r) => r.reason ?? '' },
+    {
+      key: 'actions', label: '', exportLabel: 'Actions',
+      render: (r) => (
+        <Button variant="ghost" size="sm" onClick={() => remove(r.id, `${crewOf(r).name} (${r.startDate}–${r.endDate})`)} disabled={deleteLeave.isPending}>
+          <Trash2 {...ICON} />
+          <span>Remove</span>
+        </Button>
+      ),
+    },
+  ];
 
   return (
     <div className="space-y-4">
@@ -147,45 +170,17 @@ export const DriverLeave = () => {
       </div>
 
       {/* List */}
-      <div style={{ borderRadius: 10, border: '1px solid var(--border, rgba(0,0,0,0.12))', overflow: 'hidden' }}>
-        {leave.isLoading ? (
-          <p style={{ padding: '12px 16px', fontSize: 'var(--fs-13)', color: 'var(--fg-muted)' }}>Loading…</p>
-        ) : rows.length === 0 ? (
-          <p style={{ padding: '12px 16px', fontSize: 'var(--fs-13)', color: 'var(--fg-muted)' }}>
-            No leave recorded. Add a row above when a driver or helper is off.
-          </p>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
-              <thead>
-                <tr style={{ textAlign: 'left', color: 'var(--fg-muted)' }}>
-                  <Th>Type</Th><Th>Name</Th><Th>From</Th><Th>To</Th><Th>Reason</Th><Th></Th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => {
-                  const who = crewOf(r);
-                  return (
-                    <tr key={r.id} style={{ borderTop: '1px solid var(--border, rgba(0,0,0,0.06))' }}>
-                      <Td><span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>{who.kind}</span></Td>
-                      <Td><strong>{who.name}</strong></Td>
-                      <Td>{r.startDate}</Td>
-                      <Td>{r.endDate}</Td>
-                      <Td>{r.reason ?? '—'}</Td>
-                      <Td>
-                        <Button variant="ghost" size="sm" onClick={() => remove(r.id, `${who.name} (${r.startDate}–${r.endDate})`)} disabled={deleteLeave.isPending}>
-                          <Trash2 {...ICON} />
-                          <span>Remove</span>
-                        </Button>
-                      </Td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <DataTable<DriverLeaveRow>
+        tableId="driver-leave"
+        exportName="driver-leave"
+        exportXlsx
+        columns={columns}
+        rows={leave.data ? rows : null}
+        loading={leave.isLoading}
+        error={leave.isError ? 'The leave list did not load.' : null}
+        emptyLabel="No leave recorded. Add a row above when a driver or helper is off."
+        getRowKey={(r) => r.id}
+      />
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
         <CalendarOff {...ICON} />
@@ -195,12 +190,6 @@ export const DriverLeave = () => {
   );
 };
 
-const Th = ({ children }: { children?: ReactNode }) => (
-  <th style={{ padding: '8px 12px', fontWeight: 500 }}>{children}</th>
-);
-const Td = ({ children }: { children: ReactNode }) => (
-  <td style={{ padding: '8px 12px' }}>{children}</td>
-);
 const Ctl = ({ label, children }: { label: string; children: ReactNode }) => (
   <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
     <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>{label}</span>

@@ -24,6 +24,7 @@ import { resolveSalesScopeIds } from '../lib/salesScope';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { activeCompanyId } from '../lib/companyScope';
 import { gateSiFinance, stampSourcePos } from './sales-invoices';
+import { withSoRefDocNos } from '../lib/so-ref-search';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -54,7 +55,7 @@ async function stampSiHeaders(sb: unknown, rows: Array<Record<string, unknown>>,
 export async function siExportRowsHandler(c: Ctx) {
   const sb = c.get('supabase');
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
-  const filters = readSiListFilters((k) => c.req.query(k));
+  const filters = await withSoRefDocNos(sb, c, readSiListFilters((k) => c.req.query(k)));
   const out = await readSiExportRows(sb, c, filters, scopeIds);
   if (out.error !== null) return c.json({ error: 'export_failed', reason: out.error }, 500);
   const stamped = await stampSiHeaders(sb, out.rows, activeCompanyId(c) ?? null);

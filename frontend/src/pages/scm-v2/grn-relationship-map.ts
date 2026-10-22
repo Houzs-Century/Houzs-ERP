@@ -20,7 +20,7 @@
 // amendments, so this hook carries no amendments row (unlike the PO map).
 
 import { useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useOpenDocInTab } from '../../lib/openDocInTab';
 import { useAuth } from '../../auth/AuthContext';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useDocumentFlow, type FlowNode, type FlowEdge } from '../../vendor/scm/lib/flow-queries';
@@ -115,11 +115,11 @@ export function useGrnRelationshipMap(header: GrnRelationshipHeader | null): {
      by a receipt, not a purchase doc, so there is no live MRP pairing to show. */
   pairing: { kind: PairingKind } | null;
 } & DocChoiceApi {
-  const navigate = useNavigate();
   const notify = useNotify();
   /* Several documents in one slot open a chooser whose every row clicks through
      (2026-08-03) — naming them and pointing at a list the doc no cannot be
      searched in left the operator copying numbers by hand. */
+  const openDoc = useOpenDocInTab();
   const { choice, openChoice, closeChoice, pickChoice } = useDocChoice();
   const { can, pageAccess } = useAuth();
 
@@ -183,7 +183,7 @@ export function useGrnRelationshipMap(header: GrnRelationshipHeader | null): {
           return false;
         }
         if (soNodes.length === 1) {
-          navigate(`/scm/sales-orders/${encodeURIComponent(soNodes[0]!.id)}`);
+          openDoc(`/scm/sales-orders/${encodeURIComponent(soNodes[0]!.id)}`);
           return true;
         }
         openChoice({
@@ -207,7 +207,7 @@ export function useGrnRelationshipMap(header: GrnRelationshipHeader | null): {
           return false;
         }
         if (poNodes.length === 1) {
-          navigate(`/scm/purchase-orders/${poNodes[0]!.id}`);
+          openDoc(`/scm/purchase-orders/${poNodes[0]!.id}`);
           return true;
         }
         openChoice({
@@ -228,7 +228,7 @@ export function useGrnRelationshipMap(header: GrnRelationshipHeader | null): {
           return false;
         }
         if (piNodes.length === 1) {
-          navigate(`/scm/purchase-invoices/${piNodes[0]!.id}`);
+          openDoc(`/scm/purchase-invoices/${piNodes[0]!.id}`);
           return true;
         }
         openChoice({
@@ -249,7 +249,7 @@ export function useGrnRelationshipMap(header: GrnRelationshipHeader | null): {
           return false;
         }
         if (prNodes.length === 1) {
-          navigate(`/scm/purchase-returns/${prNodes[0]!.id}`);
+          openDoc(`/scm/purchase-returns/${prNodes[0]!.id}`);
           return true;
         }
         openChoice({
@@ -261,7 +261,7 @@ export function useGrnRelationshipMap(header: GrnRelationshipHeader | null): {
       }
       return false;
     },
-    [navigate, notify, openChoice, soNodes, poNodes, piNodes, prNodes, canOpenSo, canOpenPo, canOpenPi, canOpenPr],
+    [openDoc, notify, openChoice, soNodes, poNodes, piNodes, prNodes, canOpenSo, canOpenPo, canOpenPi, canOpenPr],
   );
 
   const pairing = useMemo<{ kind: PairingKind } | null>(

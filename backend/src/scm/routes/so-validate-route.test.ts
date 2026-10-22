@@ -40,6 +40,16 @@ describe('the validate route is wired to the shared collector', () => {
     expect(handler).toContain('!mixesSofaWithOtherMain(((body.origItemGroups');
   });
 
+  it('asks for the fair DAY through the shared rule (owner 2026-09-24)', () => {
+    /* An event picked without a day of it blocks a confirmed save; the rule is
+       fair-options.ts::fairDayMissing, the same bounds the save keeps a day by. */
+    expect(handler).toContain('fairDayMissing: fairDayMissing(body,');
+  });
+
+  it('words the fair refusal by why the keyer got none, checked (owner 2026-10-19)', () => {
+    expect(handler).toContain('fairWhy: fairWhyOf(body.fairWhy)');
+  });
+
   it('writes NOTHING — it is a dry run', () => {
     expect(handler).not.toMatch(/\.insert\(|\.update\(|\.delete\(/);
     expect(handler).not.toContain('nextDocNo(');

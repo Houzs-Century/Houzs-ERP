@@ -5,6 +5,8 @@ import { slaHoursFor, slaHoursForPriority } from "./assrSla";
 import { listSupplierReturns } from "./assrSupplierReturns";
 export { slaHoursFor, slaHoursForPriority };
 import { todayMyt } from "../scm/lib/my-time";
+import { BASE_COMPANY_CODE, MIRRORED_COMPANY_CODE, docPrefixForCode } from "../scm/lib/companyScope";
+import { claimFromCounter, yymmFor } from "./documentRefs";
 import { assrOpenStageSql } from "./assrStages";
 import { isServiceLine } from "../scm/shared/service-sku";
 import { AutoCountClient, cleanPhone } from "./autocount";
@@ -15,6 +17,7 @@ import { getActiveStaffToken } from "./caseTracking";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { assrVisibilityPredicateSql } from "./assrVisibility";
 import { attachOrderPurchaseOrders } from "./assrOrderPos";
+import { attachOrderDeliveryDates } from "./assrOrderDos";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -132,6 +135,33 @@ const DEFAULT_STAGE_TARGET_DAYS: Record<Stage, number> = {
  *   3. The hardcoded Normal defaults — last-resort safety net so a
  *      stage transition can never crash on missing config.
  */
+/** After a stage target is changed in Service Maintenance, re-read it for every
+ *  open case sitting in that stage, on the case and on its open stage-history
+ *  row (owner 2026-10-20: "当修改了，我的 dashboard 就不会看到那么多 breached").
+ *  The target is otherwise a snapshot taken when the case entered the stage, so
+ *  a new value would only reach cases that move later. Returns how many changed.
+ *  Service Cases are a cross-company queue, as the list is. */
+export async function reapplyStageTargets(env: Env, stage: Stage): Promise<number> {
+  const open = await env.DB.prepare(
+    `SELECT c.id, c.priority, c.stage_target_days FROM assr_cases c
+      WHERE c.stage = ? AND c.archived_at IS NULL AND ${assrOpenStageSql("c")}`
+  ).bind(stage).all<{ id: number; priority: string | null; stage_target_days: number | null }>();
+  const byPriority = new Map<string, number>();
+  let changed = 0;
+  for (const r of open.results ?? []) {
+    const key = r.priority ?? "";
+    if (!byPriority.has(key)) byPriority.set(key, await lookupStageTargetDays(env, stage, r.priority));
+    const days = byPriority.get(key)!;
+    if (r.stage_target_days === days) continue;
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE assr_cases SET stage_target_days = ? WHERE id = ?`).bind(days, r.id),
+      env.DB.prepare(`UPDATE assr_stage_history SET target_days = ? WHERE assr_id = ? AND stage = ? AND exited_at IS NULL`).bind(days, r.id, stage),
+    ]);
+    changed += 1;
+  }
+  return changed;
+}
+
 async function lookupStageTargetDays(
   env: Env,
   stage: Stage,
@@ -219,11 +249,12 @@ export async function nextServicePONumber(env: Env): Promise<string> {
 
 // ── ASSR number generator ─────────────────────────────────────
 
-export async function nextAssrNumber(env: Env): Promise<string> {
-  const now = new Date();
-  const yy = String(now.getUTCFullYear()).slice(-2);
-  const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
-  const prefix = `ASSR/${yy}${mm}`;
+// ASSR/YYMM-NNN, month in MYT (07:00 on the 1st is the new month). The number
+// comes from the atomic counter (scm.next_doc_no_n) floored at the live max, so
+// simultaneous creates cannot read the same max; without it (D1 mirror) max + 1,
+// still guarded by the unique index + retry in createAssrCase.
+export async function nextAssrNumber(env: Env, nowMs = Date.now()): Promise<string> {
+  const prefix = `ASSR/${yymmFor(nowMs)}`;
 
   const row = await env.DB.prepare(
     `SELECT assr_no FROM assr_cases WHERE assr_no LIKE ? ORDER BY assr_no DESC LIMIT 1`
@@ -231,12 +262,13 @@ export async function nextAssrNumber(env: Env): Promise<string> {
     .bind(`${prefix}-%`)
     .first<{ assr_no: string }>();
 
-  let next = 1;
+  let floor = 0;
   if (row?.assr_no) {
     const parts = row.assr_no.split("-");
     const seq = parseInt(parts[1] || "", 10);
-    if (!isNaN(seq)) next = seq + 1;
+    if (!isNaN(seq)) floor = seq;
   }
+  const next = (await claimFromCounter(env, prefix, floor)) ?? floor + 1;
   return `${prefix}-${String(next).padStart(3, "0")}`;
 }
 
@@ -249,8 +281,9 @@ export async function nextAssrNumber(env: Env): Promise<string> {
 // row (a case belongs to its order's company, whatever the creator's switcher
 // says) → the request's company (passed from the route via
 // assrCreateCompanyId(c): the caller's active switcher company) → the Houzs
-// default. AutoCount-keyed Houzs docs carry no local company_id, so for them
-// the route's value stays authoritative.
+// default. An AutoCount-keyed doc resolves through linked_ac_docno or, for an
+// order never imported, its number (scmSoCompanyId); only a doc that is not an
+// order number at all leaves the route's value authoritative.
 //
 // Returns null when nothing is resolvable (companies master absent
 // pre-migration, or a DB cold-start). The INSERT then omits the column,
@@ -336,6 +369,59 @@ async function fetchScmSoContext(
   }
 }
 
+// The owning company of the order a doc number names — by the ERP number OR
+// the AutoCount number. Go-live imported every Houzs order as HC-SO-xxxxxx with
+// its book number (SO-xxxxxx) in linked_ac_docno, and a case raised against the
+// book number missed fetchScmSoContext's doc_no match, so the creator's
+// switcher company won: ASSR/2608-016 (SO-012823) was stamped 2990 (owner
+// 2026-10-05: the case follows its SO's company). Company only — the context
+// path is unchanged.
+//
+// An order that never reached the ERP (delivered before go-live — SO-012823
+// itself) is identified by its NUMBER instead: every HOUZS order is HC-SO-… or
+// the book's SO-<digits>, every 2990 order 2990-SO-… (prod 2026-10-05: 3,293
+// HOUZS / 209 2990 orders, no exception either way). Anything else (display
+// stock, free text) is null and the switcher company still decides.
+function companyCodeFromSoNumber(docNo: string): string | null {
+  const d = docNo.trim().toUpperCase();
+  if (d.startsWith(`${docPrefixForCode(MIRRORED_COMPANY_CODE)}SO-`)) return MIRRORED_COMPANY_CODE;
+  if (d.startsWith(`${docPrefixForCode(BASE_COMPANY_CODE)}SO-`) || /^SO-\d/.test(d)) return BASE_COMPANY_CODE;
+  return null;
+}
+
+export async function scmSoCompanyId(env: Env, docNo: string): Promise<number | null> {
+  const fromOrder = await orderCompanyId(env, docNo);
+  if (fromOrder != null) return fromOrder;
+  const code = companyCodeFromSoNumber(docNo);
+  if (!code) return null;
+  try {
+    const row = await env.DB.prepare(`SELECT id FROM companies WHERE code = ? LIMIT 1`)
+      .bind(code)
+      .first<{ id: number | string }>();
+    return row?.id != null ? Number(row.id) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function orderCompanyId(env: Env, docNo: string): Promise<number | null> {
+  try {
+    const row = await env.DB.prepare(
+      `SELECT o.company_id
+         FROM scm."mfg_sales_orders" o
+        WHERE (LOWER(o.doc_no) = LOWER(?) OR LOWER(o.linked_ac_docno) = LOWER(?))
+          AND o.status <> 'DRAFT' AND o.status <> 'CANCELLED'
+        ORDER BY CASE WHEN LOWER(o.doc_no) = LOWER(?) THEN 0 ELSE 1 END
+        LIMIT 1`
+    )
+      .bind(docNo, docNo, docNo)
+      .first<{ company_id: number | string | null }>();
+    return row?.company_id != null ? Number(row.company_id) : null;
+  } catch {
+    return null;
+  }
+}
+
 // ── Create case ───────────────────────────────────────────────
 
 export async function createAssrCase(
@@ -353,6 +439,7 @@ export async function createAssrCase(
     context = scmSo.context;
     soCompanyId = scmSo.company_id;
   } else {
+    soCompanyId = await scmSoCompanyId(env, input.doc_no);
     const client = new AutoCountClient(env);
     try {
       context = await client.getSingle(input.doc_no);
@@ -573,11 +660,11 @@ export async function createAssrCase(
     );
   }
 
-  // Fire-and-forget creditor resolution from the primary item. A
-  // failed lookup (item unknown upstream, network, etc.) must not
-  // block case creation — the case is already committed above.
+  // Creditor resolution from the primary item. Awaited (HC-0130): the Worker may
+  // cancel a floating promise, and the Supplier must be there at Review. A failed
+  // lookup must still not fail the create — the case is already committed above.
   if (firstItem) {
-    resolveCreditorForCase(env, assrId, firstItem).catch((e) =>
+    await resolveCreditorForCase(env, assrId, firstItem).catch((e) =>
       console.warn(`[assr.create] creditor resolve failed for ${assrNo}:`, e?.message || e)
     );
   }
@@ -716,7 +803,7 @@ export async function getAssrDetail(env: Env, id: number) {
   // SCM fallback) so the detail page's DO field also fills for cases
   // whose hand-entered delivery_order was never set — which is nearly
   // all of them.
-  await Promise.all([attachDeliveryOrders(env, [caseRow]), attachOrderPos(env, [caseRow])]);
+  await Promise.all([attachDeliveryOrders(env, [caseRow]).then(() => attachOrderDeliveryDates(env, [caseRow])), attachOrderPos(env, [caseRow])]);
 
   const items = await env.DB.prepare(
     `SELECT * FROM assr_items WHERE assr_id = ? ORDER BY id`
@@ -980,10 +1067,9 @@ const PATCH_FIELDS = [
   "sla_hours", "deadline_at",
   // Mig 064 — supplier handover + ready dates
   "supplier_pickup_at", "items_ready_at",
-  // Mig 107 — date we collect the faulty item from the customer's house
-  "customer_pickup_at",
-  // Mig 127 — on-site OWN-TEAM inspection visit date, de-conflated from
-  // customer_pickup_at; drives a distinct INSPECTION leg on Delivery Planning.
+  // Mig 107 — date we collect the faulty item from the customer's house (shown as the Scheduled Pickup Date / ETA)
+  "customer_pickup_at", "pickup_status", "actual_pickup_at", "pickup_pic", "item_location", // HC-0129, values checked in the route
+  // Mig 127 — own-team inspection visit date (not customer_pickup_at); drives the INSPECTION leg on Delivery Planning.
   "inspection_visit_at",
   // Mig 074 — v3.1 fields
   "inspection_result", "email_for_survey",
@@ -1034,7 +1120,8 @@ const FIELD_LABELS: Record<string, string> = {
   supplier_invoice_ref: "Supplier Invoice Ref", cost_notes: "Cost Notes",
   sla_hours: "SLA Hours", deadline_at: "Deadline",
   supplier_pickup_at: "Supplier Pickup Date", items_ready_at: "Supplier Return / Item Ready Date",
-  customer_pickup_at: "Customer Pickup Date", inspection_visit_at: "Inspection Visit Date",
+  customer_pickup_at: "Scheduled Pickup Date", inspection_visit_at: "Inspection Visit Date", actual_pickup_at: "Actual Pickup Date",
+  pickup_status: "Pickup Status", pickup_pic: "Pickup PIC", item_location: "Item Location",
   inspection_result: "Inspection Result", email_for_survey: "Survey Email",
   verification_outcome: "Verification Outcome", verified_root_cause: "Verified Root Cause",
   qc_receipt_date: "QC Receipt Date", goods_returned_note: "Goods Returned Note",
@@ -1049,7 +1136,7 @@ const FIELD_LABELS: Record<string, string> = {
 // separately as attachment events, and item remarks via item_remark.
 const FIELD_LOG_ALLOW = new Set<string>([
   // dates
-  "customer_pickup_at", "supplier_pickup_at", "items_ready_at",
+  "customer_pickup_at", "actual_pickup_at", "supplier_pickup_at", "items_ready_at",
   "completion_date", "do_date", "qc_receipt_date",
   // remarks / free-text notes
   "goods_returned_note", "supplier_service_note", "action_remark", "satisfaction_notes",
@@ -1078,6 +1165,10 @@ export async function patchAssrCase(
   // refreshed, so a combined manual edit still wins. No mirror hit →
   // just the doc_no changes (mirror is frozen; new SOs may be absent).
   let prevDocNo: string | null = null;
+  // A corrected SO number also re-stamps the case's company from that order
+  // (owner 2026-10-05: the case follows its SO's company, at create AND when
+  // the SO no. is edited). null = not an order number → the company stays.
+  let docCompanyId: number | null = null;
   if ("doc_no" in body && typeof body.doc_no === "string" && body.doc_no.trim()) {
     body.doc_no = body.doc_no.trim();
     const prev = await env.DB.prepare(
@@ -1087,6 +1178,7 @@ export async function patchAssrCase(
       .first<{ doc_no: string | null }>();
     prevDocNo = prev?.doc_no ?? null;
     if (prevDocNo !== body.doc_no) {
+      docCompanyId = await scmSoCompanyId(env, body.doc_no);
       let so = await env.DB.prepare(
         `SELECT ref, debtor_name, phone, sales_agent
            FROM sales_orders WHERE LOWER(doc_no) = LOWER(?)`
@@ -1150,6 +1242,10 @@ export async function patchAssrCase(
     }
   }
   if (!sets.length) return false;
+  if (docCompanyId != null) {
+    sets.push("company_id = ?");
+    binds.push(docCompanyId);
+  }
 
   // Mig 081 — when QA sets the verification outcome, server-stamp
   // verified_at + verified_by so the actor can't be spoofed from the
@@ -1289,10 +1385,10 @@ export async function patchAssrCase(
   }
 
   // When the case's item_code changes, re-resolve the creditor so the
-  // link to the procurement supplier stays accurate. Fire-and-forget —
-  // a failed lookup shouldn't fail the PATCH.
+  // link to the procurement supplier stays accurate. Awaited (a floating
+  // promise dies with the response); a failed lookup shouldn't fail the PATCH.
   if ("item_code" in body) {
-    resolveCreditorForCase(env, id, body.item_code ?? null).catch((e) =>
+    await resolveCreditorForCase(env, id, body.item_code ?? null).catch((e) =>
       console.warn(`[assr.patch] creditor resolve failed for case=${id}:`, e?.message || e)
     );
   }
@@ -1835,12 +1931,12 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
     // user types with dashes/spaces is cleanPhone'd the SAME way before the
     // LIKE; the raw predicate still catches an exact-format substring.
     where.push(
-      "(LOWER(c.assr_no) LIKE ? OR LOWER(c.doc_no) LIKE ? OR LOWER(c.ref_no) LIKE ? OR LOWER(c.customer_name) LIKE ? OR LOWER(c.sales_agent) LIKE ? OR LOWER(c.complaint_issue) LIKE ? OR LOWER(c.item_code) LIKE ? OR LOWER(c.phone) LIKE ? OR LOWER(c.phone) LIKE ? OR EXISTS (SELECT 1 FROM assr_items i WHERE i.assr_id = c.id AND (LOWER(i.item_code) LIKE ? OR LOWER(i.item_description) LIKE ?)))"
+      "(LOWER(c.assr_no) LIKE ? OR LOWER(c.doc_no) LIKE ? OR LOWER(c.ref_no) LIKE ? OR LOWER(c.customer_name) LIKE ? OR LOWER(c.sales_agent) LIKE ? OR LOWER(c.complaint_issue) LIKE ? OR LOWER(c.item_code) LIKE ? OR LOWER(c.phone) LIKE ? OR LOWER(c.phone) LIKE ? OR EXISTS (SELECT 1 FROM assr_items i WHERE i.assr_id = c.id AND (LOWER(i.item_code) LIKE ? OR LOWER(i.item_description) LIKE ?)) OR EXISTS (SELECT 1 FROM assr_supplier_returns sr WHERE sr.assr_id = c.id AND LOWER(sr.ref_no) LIKE ?))"
     );
     const like = `%${f.search.toLowerCase()}%`;
     const digits = cleanPhone(f.search);
     const phoneLike = digits ? `%${digits.toLowerCase()}%` : like;
-    binds.push(like, like, like, like, like, like, like, like, phoneLike, like, like);
+    binds.push(like, like, like, like, like, like, like, like, phoneLike, like, like, like);
   }
   // Calendar date-window bound (perf/servicecase-board-calendar-bound):
   // the Cases Calendar passes the viewed month grid as from/to so it pulls
@@ -2145,12 +2241,12 @@ export async function exportAssrCases(
     // user types with dashes/spaces is cleanPhone'd the SAME way before the
     // LIKE; the raw predicate still catches an exact-format substring.
     where.push(
-      "(LOWER(c.assr_no) LIKE ? OR LOWER(c.doc_no) LIKE ? OR LOWER(c.ref_no) LIKE ? OR LOWER(c.customer_name) LIKE ? OR LOWER(c.sales_agent) LIKE ? OR LOWER(c.complaint_issue) LIKE ? OR LOWER(c.item_code) LIKE ? OR LOWER(c.phone) LIKE ? OR LOWER(c.phone) LIKE ? OR EXISTS (SELECT 1 FROM assr_items i WHERE i.assr_id = c.id AND (LOWER(i.item_code) LIKE ? OR LOWER(i.item_description) LIKE ?)))"
+      "(LOWER(c.assr_no) LIKE ? OR LOWER(c.doc_no) LIKE ? OR LOWER(c.ref_no) LIKE ? OR LOWER(c.customer_name) LIKE ? OR LOWER(c.sales_agent) LIKE ? OR LOWER(c.complaint_issue) LIKE ? OR LOWER(c.item_code) LIKE ? OR LOWER(c.phone) LIKE ? OR LOWER(c.phone) LIKE ? OR EXISTS (SELECT 1 FROM assr_items i WHERE i.assr_id = c.id AND (LOWER(i.item_code) LIKE ? OR LOWER(i.item_description) LIKE ?)) OR EXISTS (SELECT 1 FROM assr_supplier_returns sr WHERE sr.assr_id = c.id AND LOWER(sr.ref_no) LIKE ?))"
     );
     const like = `%${f.search.toLowerCase()}%`;
     const digits = cleanPhone(f.search);
     const phoneLike = digits ? `%${digits.toLowerCase()}%` : like;
-    binds.push(like, like, like, like, like, like, like, like, phoneLike, like, like);
+    binds.push(like, like, like, like, like, like, like, like, phoneLike, like, like, like);
   }
   pushVisibilityScope(where, f.visible_to_user_ids);
   pushAllowedCompanies(where, f.allowed_company_ids);

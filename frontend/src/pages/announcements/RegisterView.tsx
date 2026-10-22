@@ -16,6 +16,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Download, Plus } from "lucide-react";
 import { Button } from "../../components/Button";
+import { DataTable } from "../../components/DataTable";
 import { useQuery } from "../../hooks/useQuery";
 import { useToast } from "../../hooks/useToast";
 import { useDialog } from "../../hooks/useDialog";
@@ -326,87 +327,86 @@ export function RegisterView({ docTypes, className }: { docTypes: DocumentTypeOp
         </label>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-border bg-surface shadow-stone">
-        <table className="w-full text-[12.5px]">
-          <thead>
-            <tr className="border-b border-border bg-surface-2 text-left font-mono text-[10px] uppercase tracking-wider text-ink-muted">
-              <th className="px-4 py-2">Ref no</th>
-              <th className="px-4 py-2">Type</th>
-              <th className="px-4 py-2">Title</th>
-              <th className="px-4 py-2">Department</th>
-              <th className="px-4 py-2">Date</th>
-              <th className="px-4 py-2">File</th>
-              <th className="px-4 py-2">Registered</th>
-              <th className="px-4 py-2"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {listQ.loading && rows.length === 0 && (
-              <tr>
-                <td colSpan={8} className="px-4 py-6 text-center text-ink-muted">Loading…</td>
-              </tr>
-            )}
-            {!listQ.loading && rows.length === 0 && (
-              <tr>
-                <td colSpan={8} className="px-4 py-6 text-center text-ink-muted">Nothing registered yet.</td>
-              </tr>
-            )}
-            {rows.map((m) => {
+      <DataTable<RegisteredDocument>
+        tableId="document-register"
+        exportName="document-register"
+        exportXlsx
+        columns={[
+          {
+            key: "ref", label: "Ref no", getValue: (m) => m.refNo ?? "",
+            render: (m) => <span className={cn("font-mono font-semibold", m.voidedAt != null ? "line-through" : "text-ink")}>{m.refNo ?? "—"}</span>,
+          },
+          {
+            key: "type", label: "Type", getValue: (m) => m.docType,
+            render: (m) => (
+              <span className="rounded border border-border bg-surface-2 px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-ink-secondary" title={typeLabel.get(m.docType) ?? m.docType}>
+                {m.docType}
+              </span>
+            ),
+          },
+          {
+            key: "title", label: "Title", getValue: (m) => m.title,
+            render: (m) => {
               const voided = m.voidedAt != null;
-              const mayVoid = !voided && (canManage || (user?.id != null && m.createdBy === user.id));
               return (
-                <tr key={m.id} className={cn("border-b border-border-subtle last:border-b-0", voided && "text-ink-muted")} data-testid={`register-row-${m.id}`}>
-                  <td className={cn("px-4 py-2 font-mono font-semibold", voided ? "line-through" : "text-ink")}>{m.refNo ?? "—"}</td>
-                  <td className="px-4 py-2">
-                    <span className="rounded border border-border bg-surface-2 px-1.5 py-0.5 font-mono text-[10.5px] font-semibold text-ink-secondary" title={typeLabel.get(m.docType) ?? m.docType}>
-                      {m.docType}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2">
-                    <div className={cn(voided && "line-through")}>{m.title}</div>
-                    {voided && (
-                      <div className="text-[11px] text-ink-muted">
-                        Voided by {m.voidedByName ?? "?"}{m.voidedAt ? ` · ${fmtDateTime(m.voidedAt)}` : ""}: {m.voidReason ?? "no reason recorded"}
-                      </div>
-                    )}
-                    {!voided && m.notes && <div className="text-[11px] text-ink-secondary">{m.notes}</div>}
-                  </td>
-                  <td className="px-4 py-2">{m.departmentName ?? m.deptCode}</td>
-                  <td className="px-4 py-2 font-mono text-[12px]">{m.memoDate ? fmtDate(m.memoDate) : "—"}</td>
-                  <td className="px-4 py-2">
-                    {m.file ? (
-                      <button
-                        type="button"
-                        onClick={() => void api.downloadFile(`/api/memos/${m.id}/file`, m.file?.name ?? "document")}
-                        className="inline-flex items-center gap-1 text-[12px] font-semibold text-primary hover:underline"
-                      >
-                        <Download size={12} />
-                        {m.file.name ?? "Download"}
-                      </button>
-                    ) : (
-                      <span className="text-ink-muted">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2 text-[11.5px] text-ink-secondary">
-                    {m.createdByName ?? "?"}{m.createdAt ? ` · ${fmtDateTime(m.createdAt)}` : ""}
-                  </td>
-                  <td className="px-4 py-2 text-right">
-                    {mayVoid && (
-                      <button
-                        type="button"
-                        onClick={() => void voidDocument(m)}
-                        className="rounded-md border border-err/40 bg-surface px-2.5 py-1 text-[11px] font-[650] text-err hover:bg-err/5"
-                      >
-                        Void…
-                      </button>
-                    )}
-                  </td>
-                </tr>
+                <>
+                  <div className={cn(voided && "line-through")}>{m.title}</div>
+                  {voided && (
+                    <div className="text-[11px] text-ink-muted">
+                      Voided by {m.voidedByName ?? "?"}{m.voidedAt ? ` · ${fmtDateTime(m.voidedAt)}` : ""}: {m.voidReason ?? "no reason recorded"}
+                    </div>
+                  )}
+                  {!voided && m.notes && <div className="text-[11px] text-ink-secondary">{m.notes}</div>}
+                </>
               );
-            })}
-          </tbody>
-        </table>
-      </div>
+            },
+          },
+          { key: "department", label: "Department", getValue: (m) => m.departmentName ?? m.deptCode, render: (m) => m.departmentName ?? m.deptCode },
+          {
+            key: "date", label: "Date", getValue: (m) => m.memoDate, exportFormat: "date",
+            render: (m) => <span className="font-mono text-[12px]">{m.memoDate ? fmtDate(m.memoDate) : "—"}</span>,
+          },
+          {
+            key: "file", label: "File", getValue: (m) => m.file?.name ?? "",
+            render: (m) => (m.file ? (
+              <button
+                type="button"
+                onClick={() => void api.downloadFile(`/api/memos/${m.id}/file`, m.file?.name ?? "document")}
+                className="inline-flex items-center gap-1 text-[12px] font-semibold text-primary hover:underline"
+              >
+                <Download size={12} />
+                {m.file.name ?? "Download"}
+              </button>
+            ) : (
+              <span className="text-ink-muted">—</span>
+            )),
+          },
+          {
+            key: "registered", label: "Registered", getValue: (m) => m.createdAt,
+            render: (m) => <span className="text-[11.5px] text-ink-secondary">{m.createdByName ?? "?"}{m.createdAt ? ` · ${fmtDateTime(m.createdAt)}` : ""}</span>,
+          },
+          {
+            key: "actions", label: "", exportLabel: "Actions", align: "right",
+            render: (m) => {
+              const mayVoid = m.voidedAt == null && (canManage || (user?.id != null && m.createdBy === user.id));
+              return mayVoid ? (
+                <button
+                  type="button"
+                  onClick={() => void voidDocument(m)}
+                  className="rounded-md border border-err/40 bg-surface px-2.5 py-1 text-[11px] font-[650] text-err hover:bg-err/5"
+                >
+                  Void…
+                </button>
+              ) : null;
+            },
+          },
+        ]}
+        rows={listQ.loading && rows.length === 0 ? null : rows}
+        loading={listQ.loading && rows.length === 0}
+        emptyLabel="Nothing registered yet."
+        getRowKey={(m) => m.id}
+        getRowClassName={(m) => (m.voidedAt != null ? "text-ink-muted" : undefined)}
+      />
     </div>
   );
 }

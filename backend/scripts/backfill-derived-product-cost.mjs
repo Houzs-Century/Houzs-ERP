@@ -33,9 +33,18 @@
    Env: DATABASE_URL (required); COMPANY (optional, default = every company with
    active products); LIST_LIMIT (biggest movers to print, default 40).
 
-   RE-RUN: idempotent — once applied, a re-run plans 0 changes (stored == derived). */
+   RETAIL IS PRESERVED. The seat grid is MERGED, not overwritten: derived COST
+   rows are laid over the stored grid while every stored RETAIL (sellingPriceSen)
+   row is carried forward (mergeRetailOntoDerivedSeatGrid — the same function the
+   live route uses, and the same rule company 2's DB trigger
+   trg_mfg_products_retail_price_lock enforces). So a 2990 SKU that stores its
+   selling price in the seat grid keeps it; only the cost dimension moves.
+
+   RE-RUN: idempotent — once applied, a re-run plans 0 changes (stored == merged
+   derived, retail rows included). */
 import postgres from 'postgres';
 import { deriveProductCostFromSuppliers } from '../src/scm/lib/derive-product-cost-from-suppliers.ts';
+import { mergeRetailOntoDerivedSeatGrid } from '../src/scm/lib/auto-derive-cost.ts';
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
@@ -115,7 +124,15 @@ async function planCompany(client, companyId) {
     const pt = derived.patch;
     const newBase = 'base_price_sen' in pt ? (pt.base_price_sen ?? null) : p.base_price_sen;
     const newP1 = 'price1_sen' in pt ? (pt.price1_sen ?? null) : p.price1_sen;
-    const newSeat = pt.seat_height_prices !== undefined ? pt.seat_height_prices : p.seat_height_prices;
+    // Lay the derived COST grid over the stored one WITHOUT dropping the RETAIL
+    // (sellingPriceSen) rows — the same merge the live route uses, and the same
+    // rule company 2's DB trigger (trg_mfg_products_retail_price_lock) enforces.
+    // A plain overwrite would blank 2990's retail prices; merging also makes the
+    // apply idempotent (a re-run compares against the merged grid, not a
+    // cost-only one, so it settles to 0 changes).
+    const newSeat = pt.seat_height_prices !== undefined
+      ? mergeRetailOntoDerivedSeatGrid(p.seat_height_prices, pt.seat_height_prices)
+      : p.seat_height_prices;
     const baseChanged = Number(newBase ?? -1) !== Number(p.base_price_sen ?? -1);
     const p1Changed = 'price1_sen' in pt && Number(newP1 ?? -1) !== Number(p.price1_sen ?? -1);
     const seatChanged = pt.seat_height_prices !== undefined && seatKey(newSeat) !== seatKey(p.seat_height_prices);

@@ -10,15 +10,16 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { Role, TeamMember } from "../../types";
 
-const { get, patch, success, error, confirm } = vi.hoisted(() => ({
+const { get, patch, post, success, error, confirm } = vi.hoisted(() => ({
   get: vi.fn(),
   patch: vi.fn(),
+  post: vi.fn(),
   success: vi.fn(),
   error: vi.fn(),
   confirm: vi.fn(),
 }));
 
-vi.mock("../../api/client", () => ({ api: { get, patch, post: vi.fn() } }));
+vi.mock("../../api/client", () => ({ api: { get, patch, post } }));
 vi.mock("../../hooks/useToast", () => ({ useToast: () => ({ success, error }) }));
 vi.mock("../../hooks/useDialog", () => ({ useDialog: () => ({ confirm, prompt: vi.fn() }) }));
 
@@ -99,8 +100,10 @@ function pickRole(label: string) {
 beforeEach(() => {
   get.mockReset();
   patch.mockReset().mockResolvedValue({ ok: true });
+  post.mockReset().mockResolvedValue({ email_sent: true });
   success.mockReset();
   error.mockReset();
+  confirm.mockReset().mockResolvedValue(true);
 });
 
 describe("TeamMemberProfile — Role", () => {
@@ -138,6 +141,45 @@ describe("TeamMemberProfile — Role", () => {
     mount({ roles: [] });
     expect(roleField().value).toBe("Position Preview");
     expect(roleField().disabled).toBe(true);
+  });
+});
+
+describe("TeamMemberProfile — Account access", () => {
+  const pwField = () =>
+    screen.getByPlaceholderText("New password (min 12 characters)") as HTMLInputElement;
+
+  test("an admin sets a new password, which PATCHes the password alone", async () => {
+    mount();
+    fireEvent.change(pwField(), { target: { value: "brand-new-pass-123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Set password" }));
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch).toHaveBeenCalledWith("/api/users/151", { password: "brand-new-pass-123" });
+    expect(success).toHaveBeenCalledWith("New password set");
+  });
+
+  test("the Set password button stays disabled until the password is long enough", () => {
+    mount();
+    const btn = screen.getByRole("button", { name: "Set password" }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    fireEvent.change(pwField(), { target: { value: "short" } });
+    expect(btn.disabled).toBe(true);
+    fireEvent.change(pwField(), { target: { value: "twelve-chars-long" } });
+    expect(btn.disabled).toBe(false);
+  });
+
+  test("Send reset link posts to the reset endpoint and never surfaces the link", async () => {
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: "Send reset link" }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(post).toHaveBeenCalledWith("/api/users/151/reset-password");
+    // The admin screens must never put a reset link in the admin's hands.
+    expect(success).toHaveBeenCalledWith(expect.stringContaining("Reset link emailed"));
+  });
+
+  test("a viewer who cannot manage members has no account-access controls", () => {
+    mount({ canManage: false });
+    expect(screen.queryByRole("button", { name: "Set password" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Send reset link" })).toBeNull();
   });
 });
 

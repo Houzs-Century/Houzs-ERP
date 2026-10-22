@@ -302,6 +302,16 @@ for (const file of pending) {
   const stmts = splitSqlStatements(file.sql);
   try {
     await pg.begin(async (tx) => {
+      // Every file starts from the role's own search_path. A plain
+      // `SET search_path = scm, public` inside a migration is SESSION-level on
+      // this single connection, so without this it outlived its file and
+      // silently steered the next file's unqualified CREATE TABLE into scm.
+      // Staging built table_layouts, assr_case_categories and the three
+      // ac_snapshot_* tables in scm that way during bulk catch-up runs
+      // (2026-08-12, 2026-08-22), and 20260925T0900 then failed there for ten
+      // days. Production was spared only because those files deployed one per
+      // run. See 20260925T0859_relocate_tables_built_under_a_leaked_search_path.sql.
+      await tx.unsafe("RESET search_path");
       for (const s of stmts) await tx.unsafe(s);
       await tx`
         INSERT INTO _pg_migrations (filename, checksum)

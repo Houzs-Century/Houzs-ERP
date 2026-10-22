@@ -24,6 +24,7 @@
 /* The image allowlist lives in vision-blocks.ts — ONE home for "what images
    can Claude read here", shared with the assistant and the scan routes. */
 import { ASSISTANT_IMAGE_MIMES as BILL_IMAGE_MIMES } from '../services/vision-blocks';
+import { recordAiError, recordAiResponse, type AiUsageTag } from '../services/aiUsage';
 
 export { BILL_IMAGE_MIMES };
 
@@ -42,7 +43,9 @@ export type BillLine = { description: string | null; amountSen: number | null };
 export type BillExtraction = {
   vendorName: string | null;
   vendorRegNo: string | null;
-  documentKind: 'invoice' | 'bill' | 'receipt' | 'statement' | 'unknown';
+  /** proforma / quotation: not yet the real invoice — a payment on it owes the
+      official one (owner 2026-10-01, payment-request item 3). */
+  documentKind: 'invoice' | 'bill' | 'receipt' | 'statement' | 'proforma' | 'quotation' | 'unknown';
   invoiceNumber: string | null;
   invoiceDate: string | null;   // ISO yyyy-mm-dd, null when unreadable
   dueDate: string | null;
@@ -50,6 +53,32 @@ export type BillExtraction = {
   totalSen: number | null;
   sstSen: number | null;
   lines: BillLine[];
+  /** The event (fair / exhibition / roadshow) the bill is FOR, as printed —
+      owner 2026-09-30: ocr 要有办法 detect 相关的 event. Read, never matched:
+      server code turns it into suggestions (scm/lib/event-match.ts), and a
+      person picks (6a, suggest only). null when the bill names no event. */
+  event: BillEventHint | null;
+  /** What the bill is FOR, one line in its own words — a payment request's
+      "What is it for" (owner 2026-10-02: upload 后很多资料都没有填). */
+  summary: string | null;
+  /** The bank account PRINTED for paying this bill (a Payment / Bank details
+      block) — a payment request's payee bank. Read as printed, never looked
+      up; null when the paper prints none. */
+  payTo: BillPayTo | null;
+};
+
+export type BillPayTo = {
+  bankName: string | null;
+  accountNo: string | null;
+  accountName: string | null;
+};
+
+export type BillEventHint = {
+  name: string | null;
+  venue: string | null;
+  booth: string | null;
+  dateFrom: string | null;
+  dateTo: string | null;
 };
 
 const PROMPT = `You are reading ONE incoming bill/invoice for a Malaysian furniture company's finance clerk. The input images/PDF pages all belong to THIS ONE document.
@@ -58,14 +87,17 @@ Return ONLY a JSON object, no prose, with exactly these keys:
 {
   "vendorName": the issuing company's name as PRINTED (the party asking to be paid) or null,
   "vendorRegNo": the issuer's registration number (e.g. 202301027399, 1234567-X) or null,
-  "documentKind": one of "invoice" | "bill" | "receipt" | "statement" | "unknown",
+  "documentKind": one of "invoice" | "bill" | "receipt" | "statement" | "proforma" | "quotation" | "unknown" — "proforma" when the paper is titled PROFORMA / PRO FORMA INVOICE, "quotation" when titled QUOTATION / QUOTE,
   "invoiceNumber": the document's own number or null,
   "invoiceDate": the document date as YYYY-MM-DD or null,
   "dueDate": the payment due date as YYYY-MM-DD or null,
   "currency": the 3-letter currency printed (default "MYR"),
   "totalRm": the GRAND TOTAL payable as a plain number (e.g. 1234.56) or null,
   "sstRm": the SST/tax amount as a plain number, or null when not itemised,
-  "lines": the rows that ADD UP to the amount paid — EVERY goods/service line printed, in order, plus any discount, tax or rounding row [{ "description": string, "amountRm": number|null }] — one entry per printed line however many there are, or ONE entry summarising the charge when the bill has no itemisation
+  "lines": the rows that ADD UP to the amount paid — EVERY goods/service line printed, in order, plus any discount, tax or rounding row [{ "description": string, "amountRm": number|null }] — one entry per printed line however many there are, or ONE entry summarising the charge when the bill has no itemisation,
+  "event": ONLY when the bill is for an exhibition / fair / expo / roadshow / event space (booth rental, setup, electricity at a venue, and the like): { "name": the event's name as printed or null, "venue": the venue / hall / mall as printed or null, "booth": the booth / lot / stand number(s) as printed or null, "dateFrom": the event's first day as YYYY-MM-DD or null, "dateTo": its last day as YYYY-MM-DD or null } — otherwise null,
+  "summary": what the bill is FOR in one short line (under 100 chars), in the bill's own words — its printed subject / summary / description line, or its main charge when it prints none — or null,
+  "payTo": ONLY when the paper prints the bank account to pay into (a "Payment details" / "Bank details" / remittance block): { "bankName": the bank as printed or null, "accountNo": the account number as a STRING, exactly as printed, or null, "accountName": the account holder's name as printed or null } — otherwise null
 }
 
 Rules:
@@ -74,9 +106,10 @@ Rules:
 - totalRm is the amount the vendor asks to be PAID (after tax/rounding), not a subtotal.
 - A receipt's FOOTER is not line items: never list a Sub Total / Total / Net Total / Amount Due row, a payment or tender row (Cash, Card, DuitNow, QR, e-wallet, Tendered, Paid), the Change, or a Total Items count — those restate the total, they are not charges.
 - vendorName is the ISSUER, never the addressee (the addressee is our own company).
-- Line descriptions stay short (under 80 chars), in the bill's own words.`;
+- Line descriptions stay short (under 80 chars), in the bill's own words.
+- payTo.accountNo is copied character for character — never completed, re-grouped or guessed; an account you cannot read in full is null.`;
 
-const rmToSen = (v: unknown): number | null => {
+export const rmToSen = (v: unknown): number | null => {
   /* null / undefined / '' are ABSENT, not zero — Number(null) is 0, and a
      bill whose total the model could not read must never arrive as RM 0.00. */
   if (v == null || v === '') return null;
@@ -84,7 +117,7 @@ const rmToSen = (v: unknown): number | null => {
   return Number.isFinite(n) ? Math.round(n * 100) : null;
 };
 
-const isoOrNull = (v: unknown): string | null => {
+export const isoOrNull = (v: unknown): string | null => {
   const s = String(v ?? '').trim();
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
 };
@@ -131,13 +164,19 @@ export function isFooterLine(description: string | null, amountSen: number | nul
 export const stripFooterLines = (lines: BillLine[]): BillLine[] =>
   lines.filter((l) => !isFooterLine(l.description, l.amountSen));
 
+/** A printed word or number as trimmed text, or null. */
+const printedText = (v: unknown, max: number): string | null => {
+  const s = typeof v === 'string' || typeof v === 'number' ? String(v).trim() : '';
+  return s ? s.slice(0, max) : null;
+};
+
 /** Coerce whatever the model said into the strict shape — every field
     defensively, because a vision model under a bad photo says strange things
     and NONE of them may crash a finance screen. */
 export function coerceBillJson(raw: unknown): BillExtraction {
   const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const kindRaw = String(o.documentKind ?? '').toLowerCase();
-  const kind = (['invoice', 'bill', 'receipt', 'statement'] as const).find((k) => k === kindRaw) ?? 'unknown';
+  const kind = (['invoice', 'bill', 'receipt', 'statement', 'proforma', 'quotation'] as const).find((k) => k === kindRaw) ?? 'unknown';
   const linesRaw = Array.isArray(o.lines) ? o.lines : [];
   return {
     vendorName: o.vendorName ? String(o.vendorName).slice(0, 200) : null,
@@ -159,7 +198,36 @@ export function coerceBillJson(raw: unknown): BillExtraction {
         amountSen: rmToSen(li.amountRm),
       };
     })),
+    event: coerceEventHint(o.event),
+    summary: printedText(o.summary, 160),
+    payTo: coercePayTo(o.payTo),
   };
+}
+
+/** The printed bank account, or null when nothing of it was read. An account
+    number that came back as a JSON number is taken only while it is exact — a
+    long one has already lost digits, and a wrong account is worse than none. */
+export function coercePayTo(raw: unknown): BillPayTo | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const p = raw as Record<string, unknown>;
+  const accountNo = typeof p.accountNo === 'number' && !Number.isSafeInteger(p.accountNo) ? null : printedText(p.accountNo, 40);
+  const payTo: BillPayTo = { bankName: printedText(p.bankName, 120), accountNo, accountName: printedText(p.accountName, 160) };
+  return Object.values(payTo).some((v) => v != null) ? payTo : null;
+}
+
+/** The printed event, or null when nothing of it was read — an object of five
+    nulls is no event, and saying so keeps the suggestions from running on air. */
+export function coerceEventHint(raw: unknown): BillEventHint | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const e = raw as Record<string, unknown>;
+  const hint: BillEventHint = {
+    name: printedText(e.name, 160),
+    venue: printedText(e.venue, 160),
+    booth: printedText(e.booth, 80),
+    dateFrom: isoOrNull(e.dateFrom),
+    dateTo: isoOrNull(e.dateTo),
+  };
+  return Object.values(hint).some((v) => v != null) ? hint : null;
 }
 
 /* The model sometimes wraps JSON in prose or a fence — take the outermost
@@ -171,14 +239,18 @@ export function parseModelJson(text: string): unknown {
   try { return JSON.parse(text.slice(start, end + 1)); } catch { return null; }
 }
 
-/** ONE bill → one vision call. fetchImpl is injectable so tests never touch
-    the network. Throws only on programmer error; API trouble comes back as
-    { ok: false, reason } for the route to say out loud. */
-export async function extractOneBill(
+/** ONE paper → one vision call, its answer as parsed JSON (null when the
+    model answered with something else). Shared by the bill reader below and
+    the credit-note reader (acc/cn-extract.ts). fetchImpl is injectable so
+    tests never touch the network; API trouble comes back as { ok: false,
+    reason } for the route to say out loud. */
+export async function readPaperJson(
   apiKey: string,
   files: BillFile[],
+  prompt: string,
+  usage: AiUsageTag | null,
   fetchImpl: typeof fetch = fetch,
-): Promise<{ ok: true; extraction: BillExtraction } | { ok: false; reason: string }> {
+): Promise<{ ok: true; json: unknown } | { ok: false; reason: string }> {
   const blocks = files.map((f) => (
     BILL_IMAGE_MIMES.has(f.mime)
       ? { type: 'image', source: { type: 'base64', media_type: f.mime, data: f.dataBase64 } }
@@ -199,12 +271,14 @@ export async function extractOneBill(
            choked past ~50 lines and the cut JSON failed the parse, reading the
            WHOLE bill as a failure. 8000 carries ~300 lines. */
         max_tokens: 8000,
-        messages: [{ role: 'user', content: [...blocks, { type: 'text', text: PROMPT }] }],
+        messages: [{ role: 'user', content: [...blocks, { type: 'text', text: prompt }] }],
       }),
     });
   } catch (e) {
+    await recordAiError(usage, e);
     return { ok: false, reason: `The reader could not be reached: ${e instanceof Error ? e.message : String(e)}` };
   }
+  await recordAiResponse(usage, res);
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     return { ok: false, reason: `The reader refused (${res.status}): ${body.slice(0, 200)}` };
@@ -218,9 +292,20 @@ export async function extractOneBill(
     return { ok: false, reason: `The reader's answer was unreadable: ${e instanceof Error ? e.message : String(e)}` };
   }
   const text = (data.content ?? []).filter((b) => b.type === 'text').map((b) => b.text ?? '').join('');
-  const parsed = parseModelJson(text);
-  if (!parsed) return { ok: false, reason: 'The reader answered, but not with a bill — try a clearer photo.' };
-  return { ok: true, extraction: coerceBillJson(parsed) };
+  return { ok: true, json: parseModelJson(text) };
+}
+
+/** ONE bill → one vision call. Throws only on programmer error. */
+export async function extractOneBill(
+  apiKey: string,
+  files: BillFile[],
+  usage: AiUsageTag | null,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ ok: true; extraction: BillExtraction } | { ok: false; reason: string }> {
+  const read = await readPaperJson(apiKey, files, PROMPT, usage, fetchImpl);
+  if (!read.ok) return read;
+  if (!read.json) return { ok: false, reason: 'The reader answered, but not with a bill — try a clearer photo.' };
+  return { ok: true, extraction: coerceBillJson(read.json) };
 }
 
 /* ── Supplier fuzzy match — server-side, plain code ─────────────────────────

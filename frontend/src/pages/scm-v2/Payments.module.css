@@ -442,3 +442,13 @@
     grid-template-columns: 1fr auto;
   }
 }
+
+/* A field's own refusal, under the field it belongs to — the slip-date window
+   (scm/shared/payment-slip-date). Red like the invalid border, small enough to
+   sit inside a table row without pushing the grid around. */
+.fieldProblem {
+  font-family: var(--font-sans);
+  font-size: var(--fs-11);
+  line-height: 1.3;
+  color: var(--c-festive-b, #B8331F);
+}

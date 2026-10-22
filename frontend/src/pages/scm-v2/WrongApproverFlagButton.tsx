@@ -21,6 +21,7 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { humanApiError } from "../../vendor/scm/lib/authed-fetch";
 import { useFlagAmendmentLane } from "../../vendor/scm/lib/so-amendment-queries";
 import { soAmendmentApprover, AMENDMENT_APPROVER_LABEL } from "../../vendor/scm/lib/amendment-approver";
+import { ChangeApproverButton } from "./ChangeApproverButton";
 
 export type FlaggableAmendment = {
   id: string;
@@ -48,12 +49,25 @@ const plainError = (e: unknown): string => {
   return err.message ?? "Something went wrong. Please try again.";
 };
 
-export function WrongApproverFlagButton({ amendment, canSign, variant }: {
+type FlagProps = {
   amendment: FlaggableAmendment | null | undefined;
   /** The caller holds this row's own lane approval key. */
   canSign: boolean;
   variant: "desktop" | "mobile";
-}) {
+};
+
+/* The super admin's "change approver" rides along here so every surface that
+   offers the approver's handover also offers the admin's, from one mount. */
+export function WrongApproverFlagButton(props: FlagProps) {
+  return (
+    <>
+      <FlagButton {...props} />
+      <ChangeApproverButton amendment={props.amendment} variant={props.variant} />
+    </>
+  );
+}
+
+function FlagButton({ amendment, canSign, variant }: FlagProps) {
   const askPrompt = usePrompt();
   const notify = useNotify();
   const flagLane = useFlagAmendmentLane();

@@ -11,11 +11,14 @@
 // shows when closed (a saved value never blanks); an empty search shows every
 // option, so a short list still just opens-and-picks.
 
-import { useMemo, useRef, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useAnchoredPanel, anchoredPanelStyle } from "../../../lib/anchoredPanel";
 
-export type SearchableSelectOption = { value: string; label: string };
+/** `group` (optional) heads a run of options with a small title — the list is
+ *  shown in the order given, so options of one group must sit together. A
+ *  search keeps the headings of the groups that still have a match. */
+export type SearchableSelectOption = { value: string; label: string; group?: string };
 
 /**
  * How many options reach the DOM at once. The menu is 280px tall — about ten
@@ -38,6 +41,24 @@ export function nextOptionWindow(current: number, total: number, step = OPTION_P
   const safeCurrent = Math.max(0, Math.floor(current));
   const safeStep = Math.max(1, Math.floor(step));
   return Math.min(total, safeCurrent + safeStep);
+}
+
+/**
+ * The option Enter commits for a typed term: the one whose label or value IS the
+ * term (or ends with it as a word, "L19.2" -> "Rack L19.2"), else the only
+ * match. Several matches and none exact -> null, the list stays open to click.
+ * Sim, 2026-10-20: a rack typed and Enter'd looked filled but was never picked,
+ * so the GRN saved one line's rack out of eleven.
+ */
+export function enterPick(term: string, filtered: ReadonlyArray<SearchableSelectOption>): SearchableSelectOption | null {
+  const q = term.trim().toLowerCase();
+  if (!q) return null;
+  const exact = filtered.filter((o) => {
+    const l = o.label.toLowerCase();
+    return l === q || o.value.toLowerCase() === q || l.endsWith(` ${q}`);
+  });
+  if (exact.length === 1) return exact[0];
+  return filtered.length === 1 ? filtered[0] : null;
 }
 
 export function SearchableSelect({
@@ -120,7 +141,21 @@ export function SearchableSelect({
           setSearch(selectedLabel ?? "");
           e.currentTarget.select();
         }}
-        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onBlur={() => {
+          // Text deleted, then the operator moved on: that is a clear, not a
+          // cancel. (A pick closes the menu first, so it never lands here.)
+          if (open && !search.trim() && selectedLabel) onChange("");
+          setTimeout(() => setOpen(false), 150);
+        }}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter") return;
+          const pick = enterPick(search, filtered);
+          if (!pick) return;
+          e.preventDefault();
+          onChange(pick.value);
+          setSearch("");
+          setOpen(false);
+        }}
         onChange={(e) => {
           setSearch(e.target.value);
           setOpen(true);
@@ -131,6 +166,7 @@ export function SearchableSelect({
       {open && !disabled && menuPos &&
         createPortal(
           <ul
+            role="listbox"
             style={{
               ...anchoredPanelStyle(menuPos),
               overflowY: "auto",
@@ -153,11 +189,30 @@ export function SearchableSelect({
             }}
           >
             {filtered.length > 0 ? (
-              visible.map((o) => {
+              visible.map((o, i) => {
                 const isSel = o.value === value;
+                const heading = o.group && o.group !== visible[i - 1]?.group ? o.group : null;
                 return (
+                  <Fragment key={o.value}>
+                  {heading && (
+                    <li
+                      role="presentation"
+                      // Not a pick: keep the input focused.
+                      onMouseDown={(e) => e.preventDefault()}
+                      style={{
+                        padding: "8px 10px 2px",
+                        fontSize: "var(--fs-11, 11px)",
+                        fontWeight: 600,
+                        color: "var(--fg-muted, #888)",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {heading}
+                    </li>
+                  )}
                   <li
-                    key={o.value}
+                    role="option"
+                    aria-selected={isSel}
                     // onMouseDown + preventDefault so the input doesn't blur-close
                     // before the pick lands.
                     onMouseDown={(e) => {
@@ -167,7 +222,7 @@ export function SearchableSelect({
                       setOpen(false);
                     }}
                     style={{
-                      padding: "6px 10px",
+                      padding: "var(--pick-opt-pad, 6px 10px)",
                       borderRadius: 6,
                       cursor: "pointer",
                       fontSize: "var(--fs-13, 13px)",
@@ -188,6 +243,7 @@ export function SearchableSelect({
                   >
                     {o.label}
                   </li>
+                  </Fragment>
                 );
               })
             ) : (

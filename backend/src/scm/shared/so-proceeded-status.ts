@@ -42,6 +42,25 @@
 export const PROCEED_FROM_STATUS = 'CONFIRMED';
 export const PROCEED_TO_STATUS = 'IN_PRODUCTION';
 
+/* THE DATE DECIDES WHERE A LIVE ORDER LANDS, not only where it MOVES.
+
+   The two transition rules above fire on a header SAVE that adds or clears the
+   date. Three other writers put an order into CONFIRMED and none of them asked
+   about the date: the create (a New Sales Order filled in with its Processing
+   Date), the confirm of a DRAFT (the scan review screen fills the date BEFORE
+   Confirm), and the stock sweep's regress out of READY_TO_SHIP. Measured on
+   production 2026-10-13: 171 of 2,569 Submitted orders carried a Processing
+   Date — proceeded by the owner's rule, filed under Submitted by the route.
+
+   This is the landing rule those writers share: a date means IN_PRODUCTION,
+   no date means CONFIRMED. It answers for a status that is being written
+   anyway; it never decides WHETHER to write one. */
+export function liveStatusForProcessingDate(
+  processingDate: string | null | undefined,
+): typeof PROCEED_FROM_STATUS | typeof PROCEED_TO_STATUS {
+  return (processingDate ?? '').trim() ? PROCEED_TO_STATUS : PROCEED_FROM_STATUS;
+}
+
 export function statusAfterProcessingDateSet(input: {
   /** The order's status BEFORE this save. */
   currentStatus: string | null | undefined;
@@ -100,4 +119,34 @@ export function statusAfterProcessingDateCleared(input: {
      READY_TO_SHIP and everything past it are left exactly alone. */
   if (cur !== PROCEED_TO_STATUS) return null;
   return PROCEED_FROM_STATUS;
+}
+
+/* A DRAFT CONFIRMED LATE PROCEEDS ON THE DAY IT IS CONFIRMED (HC-0113, Sim
+   2026-10-16). HC-SO-2609-077 was saved as a draft with Processing Date 18/9
+   and confirmed on 13/10; the order reached purchasing carrying 18/9, so it
+   read as an order purchasing had sat on for four weeks. A draft is out of MRP
+   and PO until confirmed, so nothing proceeded before the confirm.
+
+   Only a PAST date moves: a draft dated for a later proceed keeps it (Samuel
+   2026-10-16). Moving the date to today past a Delivery Date that has also gone
+   by would leave Processing after Delivery, which every other writer refuses,
+   so the confirm is refused instead and the salesperson re-dates the delivery
+   first. */
+export const CONFIRM_DELIVERY_PAST_PROBLEM = {
+  code: 'confirm_delivery_date_past',
+  message: 'The Delivery Date has already passed. Move it to today or later, then confirm — the Processing Date becomes the confirm date.',
+  field: 'Delivery Date',
+} as const;
+
+export function processingDateOnConfirm(i: {
+  processingDate: string | null | undefined;
+  deliveryDate: string | null | undefined;
+  /** 'YYYY-MM-DD', Malaysia. */
+  todayMY: string;
+}): { ok: true; write: string | null } | { ok: false; problem: typeof CONFIRM_DELIVERY_PAST_PROBLEM } {
+  const proc = String(i.processingDate ?? '').trim().slice(0, 10);
+  if (!proc || proc >= i.todayMY) return { ok: true, write: null };
+  const deliv = String(i.deliveryDate ?? '').trim().slice(0, 10);
+  if (deliv && deliv < i.todayMY) return { ok: false, problem: CONFIRM_DELIVERY_PAST_PROBLEM };
+  return { ok: true, write: i.todayMY };
 }

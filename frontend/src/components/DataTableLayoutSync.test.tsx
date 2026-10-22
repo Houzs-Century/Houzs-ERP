@@ -185,7 +185,7 @@ describe("DataTable with server layouts", () => {
     );
 
     mockApi.put.mockClear();
-    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reset to default" }));
     await vi.runAllTimersAsync();
     expect(mockApi.del).toHaveBeenCalledWith("/api/table-layouts/push");
     vi.useRealTimers();

@@ -18,8 +18,21 @@
 //
 // WHAT IS AND IS NOT IN THE PASS. Everything that decides AUTHORIZATION is in:
 // role, permissions, page_access, brand_scope, scope_to_pic, scm_l2_configured,
-// org fields, status, session origin, and the authz fingerprint (stage 4
-// revocation compares against it). Profile counters (points, streak, profile
+// org fields, status, session origin, the Title's policy row and capability
+// grants (claims v2), and the authz fingerprint (stage 4 revocation compares
+// against it).
+//
+// THE PASS IS VERSIONED (SESSION_PASS_CLAIMS_VERSION). v1 carried permissions
+// and page_access but NOT position_policy / position_capabilities. Every rule
+// that reads those off the AuthUser therefore saw "no policy row" on the fast
+// path and fell back to its name-keyed default: moneyWriteDenial judged a
+// Finance Executive by job title alone (only "Finance Manager" / "Super Admin"
+// may move money by name) and refused every accounting WRITE of a full+money
+// Title while every read worked — 2026-09-28, the first non-wildcard user to
+// confirm a settlement row. The DB path carried the row and let the same
+// person through, which is why no fixture ever saw it. A pass whose version is
+// not the current one is refused by tryPassAuth, so the DB path re-mints it —
+// one authoritative read per session at deploy, no re-login. Profile counters (points, streak, profile
 // pic) are deliberately OUT — they are not authorization, they change often,
 // and the handful of routes that read them can query them; baking them into a
 // signed pass would only make the pass go stale for no security gain.
@@ -28,6 +41,12 @@ import type { AuthUser } from './auth';
 import type { Env } from '../types';
 import { signSessionToken, verifySessionToken, type SessionClaims } from './session-token';
 import { passIsRevoked, sidFor } from './session-revocation';
+import type { PositionPolicyRow } from './positionPolicyRows';
+
+/** The claims shape this build mints and honours. Bump it whenever a field that
+ *  decides authorization joins the pass: an older pass is then refused on the
+ *  fast path and re-issued by the DB path, instead of authorizing with a hole. */
+export const SESSION_PASS_CLAIMS_VERSION = 2;
 
 /** 8 hours — one working day. A pass self-expires at the end of the day; the
  *  revocation list (stage 4) handles anything faster than that. Long enough
@@ -52,6 +71,8 @@ export function sessionSigningSecret(env: unknown): string | null {
 /** The authorization snapshot a pass carries. Extends the primitive's claims
  *  (which mandate `exp` and stamp `iat`). */
 export interface SessionPassClaims extends SessionClaims {
+  /** SESSION_PASS_CLAIMS_VERSION at issue time — see the file header. */
+  v: number;
   uid: number;
   email: string;
   name: string | null;
@@ -69,6 +90,14 @@ export interface SessionPassClaims extends SessionClaims {
   brand_scope: string[] | null;
   scope_to_pic: boolean;
   scm_l2_configured: boolean;
+  /** The Title's policy row (cohort / money / config / fleet / duty), null when
+   *  the Title has none — exactly what hydrateAuthUser puts on the DB-path
+   *  AuthUser, so moneyWriteDenial and friends decide the same way on both
+   *  paths. Absent from v1 (see the header). */
+  position_policy: PositionPolicyRow | null;
+  /** The Title's operational capability grants (position_capabilities). Absent
+   *  from v1, where hasPositionCapability failed closed on the fast path. */
+  position_capabilities: string[];
   /** Session origin ('pos' | null). Republished by middleware exactly as the
    *  DB path does. */
   origin: string | null;
@@ -96,6 +125,7 @@ export async function issueSessionPass(
 ): Promise<string> {
   const claims: SessionPassClaims = {
     exp: nowMs + SESSION_PASS_TTL_MS,
+    v: SESSION_PASS_CLAIMS_VERSION,
     sid,
     uid: user.id,
     email: user.email,
@@ -114,6 +144,8 @@ export async function issueSessionPass(
     brand_scope: user.brand_scope,
     scope_to_pic: user.scope_to_pic,
     scm_l2_configured: user.scm_l2_configured,
+    position_policy: user.position_policy ?? null,
+    position_capabilities: user.position_capabilities ?? [],
     origin: user.session_origin ?? null,
     fp: user.authz_fingerprint ?? null,
   };
@@ -147,6 +179,8 @@ export function authUserFromPass(claims: SessionPassClaims): AuthUser {
     brand_scope: claims.brand_scope,
     page_access: claims.page_access as AuthUser['page_access'],
     scm_l2_configured: claims.scm_l2_configured,
+    position_policy: claims.position_policy ?? null,
+    position_capabilities: claims.position_capabilities,
     authz_fingerprint: claims.fp ?? undefined,
     session_origin: claims.origin,
   };
@@ -163,6 +197,8 @@ export function authUserFromPass(claims: SessionPassClaims): AuthUser {
  *   • no secret set  → the feature is off;
  *   • no pass sent   → a legacy client, or a request before stage-3 rollout;
  *   • bad / expired signature;
+ *   • an older claims shape (SESSION_PASS_CLAIMS_VERSION) — re-minted by the
+ *     DB path with the fields the old shape lacked;
  *   • the pass is on the revocation board (logged out, or the user's authz
  *     changed after it was issued).
  * The caller (middleware/auth.ts) then runs the existing getUserBySession path,
@@ -184,6 +220,11 @@ export async function tryPassAuth(
   const r = await verifySessionToken(pass, secret, nowMs);
   if (!r.ok) return null;
   const claims = r.claims as SessionPassClaims;
+  // VERSION: a pass minted under an older claims shape is not honoured — it
+  // authorized with fields missing (v1: no Title policy, no capabilities). The
+  // DB path re-reads the envelope and mints a current pass, so the caller pays
+  // one authoritative read and nothing else changes for them.
+  if (claims.v !== SESSION_PASS_CLAIMS_VERSION) return null;
   // BINDING: sid is the hash of the token the pass was minted for. A pass whose
   // sid does not match this request's token — a stolen or mismatched pass — is
   // refused and falls back to the DB path, where the token itself is validated.

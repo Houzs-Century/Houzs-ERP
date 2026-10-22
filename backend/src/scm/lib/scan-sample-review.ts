@@ -43,6 +43,7 @@
 // ---------------------------------------------------------------------------
 
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
+import { recordSlipAliases, slipAliasPairs } from './scan-field-aliases';
 
 // getSupabaseService is schema-parameterised (db:{schema:'scm'}), so the bare
 // SupabaseClient type does not accept it. Same loosened alias scan-so.ts uses.
@@ -131,7 +132,7 @@ export type SoItemSnapshot = Record<string, unknown>;
 const SO_HEADER_COLS =
   'debtor_name, phone, emergency_contact_phone, address1, city, postcode, customer_state, ' +
   'customer_so_no, customer_type, building_type, payment_method, merchant_provider, ' +
-  'approval_code, deposit_sen, customer_delivery_date';
+  'approval_code, deposit_sen, customer_delivery_date, company_id';
 const SO_ITEM_COLS = 'item_group, item_code, qty, unit_price_sen, variants, cancelled, line_no, created_at';
 
 /* postgres.js camelCases columns; PostgREST does not. Dual-read is the house
@@ -561,6 +562,13 @@ export async function noteScanDraftAccepted(
       .update({ corrected, status: SAMPLE_CORRECTED })
       .eq('id', sampleId)
       .eq('status', SAMPLE_EXTRACTED);
+
+    /* HC-0006 T8: the same corrections, as exact aliases the next scan of this
+       company applies (scan-field-aliases.ts). */
+    const companyId = Number(col(headerRow as SoHeaderSnapshot | null, 'company_id'));
+    if (Number.isInteger(companyId) && companyId > 0) {
+      await recordSlipAliases(svc, companyId, slipAliasPairs(s.extracted as Record<string, unknown>, corrected));
+    }
   } catch (e) {
     // eslint-disable-next-line no-console
     console.warn('[scan-sample-review] review note failed (non-fatal):', docNo, (e as Error).message);

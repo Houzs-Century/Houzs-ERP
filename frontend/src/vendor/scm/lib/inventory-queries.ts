@@ -30,6 +30,9 @@ import { retryUnlessClientError } from '../../../lib/queryClient';
    not fit. `is_showroom` (mig 0148) is now derived: `is_showroom = (type =
    'showroom')`. The old boolean stays in reads so the venue resolver and the
    Members page keep working without a rewrite. */
+/** The closing stock a warehouse's goods book on at month end (backend scm/lib/stock-bucket.ts). */
+export type StockBucket = 'customer' | 'display' | 'service' | 'showroom' | 'others';
+
 export type WarehouseType =
   | 'warehouse'
   | 'showroom'
@@ -62,8 +65,8 @@ export type Warehouse = {
   /* Optional on the type so a pre-mig-0171 response still parses (backend
      defaults to 'warehouse' on POST when unspecified). */
   type?: WarehouseType;
-  /** The closing-stock bucket override (mig 20260921T2000): customer / display / service; null = by type. */
-  stock_bucket?: 'customer' | 'display' | 'service' | null;
+  /** The closing-stock bucket override (mig 20260921T2000; showroom / others since 2026-09-30); null = by type. */
+  stock_bucket?: StockBucket | null;
 };
 
 export type InventoryBalance = {
@@ -127,12 +130,14 @@ export type InventoryProductTotal = {
        surplus_qty         = available_qty − unscheduled_qty
        non_selling_qty     = on-hand standing in a showroom / display / service
                              warehouse — doing its job, not idle
-       sellable_surplus_qty= surplus_qty − non_selling_qty, floored at 0; the
+       sellable_surplus_qty= ON-HAND owned − all open demand − owned non_selling,
+                             floored at 0 (incoming never counts); the
                              dead-stock signal, and the ONLY one the Dead/Spare
                              badge may read
        oldest_lot_at       = oldest open FIFO lot → age of the stock */
   incoming_qty: number;
   incoming_pos: InventoryIncomingPo[];
+  demand_sos: InventoryDemandSo[];
   committed_scheduled: number;
   unscheduled_qty: number;
   reserved_total: number;
@@ -157,6 +162,16 @@ export type InventoryProductTotal = {
 export type InventoryIncomingPo = {
   po_number: string;
   eta: string | null;
+  qty: number;
+};
+
+/* One open Sales Order claiming a SKU — the SO(s) behind Scheduled (delivery_date
+   set) and Unscheduled (delivery_date null), net of delivered (HC-0115). */
+export type InventoryDemandSo = {
+  doc_no: string;
+  debtor_name: string | null;
+  so_date: string | null;
+  delivery_date: string | null;
   qty: number;
 };
 
@@ -237,7 +252,7 @@ export function useWarehouses(opts?: { includeInactive?: boolean }) {
 export function useCreateWarehouse() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { code: string; name: string; location?: string; country?: string | null; state?: string | null; postcode?: string | null; city?: string | null; isDefault?: boolean; isShowroom?: boolean; venueName?: string | null; type?: WarehouseType; stockBucket?: 'customer' | 'display' | 'service' | null }) =>
+    mutationFn: (body: { code: string; name: string; location?: string; country?: string | null; state?: string | null; postcode?: string | null; city?: string | null; isDefault?: boolean; isShowroom?: boolean; venueName?: string | null; type?: WarehouseType; stockBucket?: StockBucket | null }) =>
       authedFetch<{ warehouse: Warehouse }>(`/inventory/warehouses`, { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
     onError: writeFailed,
@@ -247,7 +262,7 @@ export function useCreateWarehouse() {
 export function useUpdateWarehouse() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; code?: string; name?: string; location?: string; country?: string | null; state?: string | null; postcode?: string | null; city?: string | null; isActive?: boolean; isDefault?: boolean; isShowroom?: boolean; venueName?: string | null; type?: WarehouseType; stockBucket?: 'customer' | 'display' | 'service' | null }) =>
+    mutationFn: ({ id, ...body }: { id: string; code?: string; name?: string; location?: string; country?: string | null; state?: string | null; postcode?: string | null; city?: string | null; isActive?: boolean; isDefault?: boolean; isShowroom?: boolean; venueName?: string | null; type?: WarehouseType; stockBucket?: StockBucket | null }) =>
       authedFetch<{ warehouse: Warehouse }>(`/inventory/warehouses/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouses'] }),
     onError: writeFailed,
@@ -501,6 +516,13 @@ export function lotAssignedQty(l: StockLotLike): number {
 export function lotFreeQty(l: StockLotLike): number {
   const qty = l.qty_remaining ?? 0;
   return l.free_qty != null ? Math.max(0, Math.round(l.free_qty)) : qty;
+}
+
+/* Is this lot a dead-stock candidate? The server's verdict (is_dead_stock also
+   excludes showroom / display / service warehouses); an older payload without it
+   falls back to free owned units. */
+export function lotIsDeadStock(l: StockLotLike & { is_dead_stock?: boolean }): boolean {
+  return l.is_dead_stock ?? (!l.is_consignment && lotFreeQty(l) > 0);
 }
 
 export function buildStockBreakdown<T extends StockLotLike>(

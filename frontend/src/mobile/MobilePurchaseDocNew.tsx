@@ -46,6 +46,8 @@ import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { MoneyInput } from "../vendor/scm/components/MoneyInput";
 import { DateField } from "../vendor/scm/components/DateField";
 import { useIdempotencyKey } from "../lib/idempotency";
+import { useAuth } from "../auth/AuthContext";
+import { canPostGoodsReceipts } from "../auth/salesAccess";
 import { MobileSkuPicker, type PickedSku } from "./MobileSkuPicker";
 import {
   PURCHASE_DOC_CONFIG,
@@ -131,13 +133,16 @@ export function MobilePurchaseDocNew({
 }: {
   kind: PurchaseDocKind;
   onBack: () => void;
-  onCreated: () => void;
+  onCreated: (created: Created) => void;
   /** The existing convert wizard for this document, or null where the phone has
    *  none (a PI from a GRN is desktop-only today). Required, not optional: a
    *  caller that forgets it would silently hide a flow the desktop offers. */
   onConvertInstead: { label: string; open: () => void } | null;
 }) {
   const cfg = PURCHASE_DOC_CONFIG[kind];
+  const { user } = useAuth();
+  // A GRN confirm posts stock — the purchaser's, not every Goods Receipt editor's.
+  const mayConfirm = kind !== "grn" || canPostGoodsReceipts(user);
   const notify = useNotify();
   const qc = useQueryClient();
   /* One key per mount = one document. MobileApp leaves this screen on success
@@ -203,7 +208,7 @@ export function MobilePurchaseDocNew({
     await notify({
       title: `${cfg.label} ${created.number} ${asDraft ? "saved as draft" : "created"}`,
     });
-    onCreated();
+    onCreated(created);
   };
 
   const submit = async (asDraft: boolean) => {
@@ -369,14 +374,16 @@ export function MobilePurchaseDocNew({
         >
           Save draft
         </button>
-        <button
-          className="btn"
-          disabled={!canSubmit}
-          style={{ opacity: canSubmit ? 1 : 0.5 }}
-          onClick={() => void submit(false)}
-        >
-          {busy ? "Saving…" : cfg.confirmLabel}
-        </button>
+        {mayConfirm && (
+          <button
+            className="btn"
+            disabled={!canSubmit}
+            style={{ opacity: canSubmit ? 1 : 0.5 }}
+            onClick={() => void submit(false)}
+          >
+            {busy ? "Saving…" : cfg.confirmLabel}
+          </button>
+        )}
       </div>
 
       {pickerOpen && <MobileSkuPicker onPick={addSku} onClose={() => setPickerOpen(false)} />}

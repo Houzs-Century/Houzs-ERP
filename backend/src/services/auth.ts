@@ -1,11 +1,7 @@
 import type { Env } from "../types";
 import { parsePermissions } from "./permissions";
-import {
-  pageAccessFromPermissions,
-  fullAccessMap,
-  type AccessLevel,
-  type PageAccessMeta,
-} from "./pageAccess";
+import { type AccessLevel } from "./pageAccess";
+import { resolveMemberPageAccess } from "./memberPageAccess";
 import {
   getCachedUser,
   setCachedUser,
@@ -19,7 +15,7 @@ import {
 import { applySalesJdOverride } from "./salesJdAccess";
 import { issueSessionPass, sessionSigningSecret } from "./session-pass";
 import { sidFor, revokeSession } from "./session-revocation";
-import { resolvePositionPolicy, positionGrantsWildcard } from "./positionPolicy";
+import { positionGrantsWildcard } from "./positionPolicy";
 import { policyRowFromDb, type PositionPolicyRow } from "./positionPolicyRows";
 
 // ── Crypto helpers ────────────────────────────────────────
@@ -145,7 +141,37 @@ export const REMEMBER_TTL_SECONDS = 60 * 60 * 24 * 365; // 1 year, rolling
 /* v5 (2026-09-17): role_page_access is gone; the fingerprint lost its `page`
  * arm and a member with no Title resolves pages from the role's permission keys
  * alone, so every cached v4 session rebuilds once. */
-export const AUTHZ_ENVELOPE_VERSION = 5;
+/* v6 (2026-10-19): role_page_access is back as the single source of page access
+ * (RBAC rebuild, Option A). The fingerprint regains a `page` arm — the role's
+ * role_page_access rows join the per-request component read — so a matrix edit
+ * (PR2) busts every member of that role on their next request. The bump rebuilds
+ * each cached v5 session once, which is also what re-reads the new resolution for
+ * every member on deploy; a role with no rows still resolves to its previous
+ * page access (memberPageAccess.ts fallback), so the rebuild changes nothing
+ * until the seed runs. */
+/* v7 (2026-10-20): the Finance area splits into per-group page keys
+ * (scm.finance.money_in / .money_out / .bank / .books / .reports / .forecast /
+ * .setup — children of scm.finance.accounting). Each hydrated session's
+ * page_access map gains those keys, so the bump rebuilds each cached v6 session
+ * once to pick them up. The keys inherit their parent's resolved level, so the
+ * rebuild changes no one's access (financeSubpageSplit.test.ts). */
+/* v8 (2026-10-21): the Transportation area splits into per-page page keys
+ * (scm.transportation.overview / .planning / .dp_orders / .last_mile /
+ * .lorry_map / .lorry_capacity / .crew_leave / .coverage — children of
+ * scm.transportation.drivers). Each hydrated session's page_access map gains
+ * those keys, so the bump rebuilds each cached v7 session once to pick them up.
+ * The keys inherit their parent's resolved level, so the rebuild changes no
+ * one's access (transportSubpageSplit.test.ts). */
+/* v9 (2026-10-21): the Team and Service areas split into per-page page keys. The
+ * four Team children (team.members / .roles / .org_chart / .departments) leave
+ * DORMANT and gain a new sibling team.mailboxes; service_cases.settings leaves
+ * DORMANT onto the Service Maintenance tab. Each hydrated session's page_access
+ * map gains team.mailboxes (the rest already hydrated), so the bump rebuilds each
+ * cached v8 session once to pick it up. The wired keys resolve to exactly what
+ * gated the same pages on v8 — team.* children equal their `team` parent and
+ * every service_cases.manage holder keeps service_cases.settings — so the rebuild
+ * changes no one's access (teamServiceSubpageSplit.test.ts). */
+export const AUTHZ_ENVELOPE_VERSION = 9;
 
 /* Session ORIGIN (mig 0120) — the DOOR a session was minted at. It is NOT a
    property of the person: the same salesperson simultaneously holds a 'pos'
@@ -417,7 +443,7 @@ interface SessionAuthority {
 }
 
 interface AuthzComponent {
-  kind: "brand" | "cap";
+  kind: "brand" | "cap" | "page";
   owner_key: "role" | "self" | "manager" | "position";
   item_key: string;
   item_value: string;
@@ -534,52 +560,43 @@ async function hydrateAuthUser(env: Env, row: any): Promise<AuthUser> {
   // more; it is left on the envelope as a vestigial null rather than reshaping
   // the signed-session claims contract in the same change.
   const brandScope: string[] | null = null;
-  // Page-access SOURCE (owner-directed 2026-07-18, services/positionPolicy.ts):
-  // ONE authoritative policy for ALL 17 positions — the old matrix + a separate
-  // sales rule are BOTH gone for a positioned user.
-  //   - `*` wildcard              → fullAccessMap() (UNCHANGED — never narrowed).
-  //   - positioned, non-`*` user  → resolvePositionPolicy(), not position_page_access:
-  //       · cohort "restricted" → the owner's explicit whitelist. Its explicit
-  //         scm* rows set `explicitScm` through the SAME resolver the table used,
-  //         so the area-guard enforces the whitelist's `none` denials (a
-  //         Storekeeper can VIEW inventory but every stock write 403s).
-  //       · cohort "sales" → the sales whitelist (prod rows + SALES_JD leaves),
-  //         resolved in-policy — FOLDED IN, no longer deferred to the matrix. The
-  //         scm.sales row sets `explicitScm` TRUE, so the delivery/invoices `view`
-  //         caps stay enforced at the area-guard exactly as before. Proven
-  //         byte-identical to the old matrix + applySalesJdOverride resolution
-  //         (positionPolicy.test.ts). applySalesJdOverride still composes below,
-  //         now IDEMPOTENT for positioned sales — load-bearing only for the
-  //         positionless Sales-department fallback the policy cannot reach.
-  //       · cohort "full" (everyone else / unclassified) → fullAccessMap()
-  //         (owner's interim "暂时都可以看到系统里的所有内容"; fail-OPEN — an
-  //         unclassified position lands here, never on a lockout).
-  //   - positionless non-`*` user → the legacy role matrix (transition fallback,
-  //     unchanged — a positionless user never reaches the position policy).
+  // Page-access SOURCE (RBAC rebuild, Option A): the role is the single source of
+  // page access. role_page_access holds one level per (role, page_key), resolved
+  // here for EVERY member through the ONE resolver in memberPageAccess.ts:
+  //   - `*` wildcard            → fullAccessMap() (UNCHANGED — never narrowed), and
+  //                               the rows are not even read.
+  //   - any non-`*` member      → the role's rows when the role HAS them; when it
+  //                               has NONE, fall back to exactly the previous
+  //                               resolution (the position policy for a titled
+  //                               member, the permission backfill for a title-less
+  //                               one). An UNSEEDED table is therefore a no-op, so
+  //                               the cutover does not depend on the seed running
+  //                               before this code deploys.
+  // scm_l2_configured stays a NON-page output of the position policy for a titled
+  // member (NOT re-derived from the seeded rows — see memberPageAccess.ts on why
+  // re-deriving it would flip the full cohort and trip the area-guard).
   //
-  // `scmMeta.explicitScm` drives AuthUser.scm_l2_configured. It is FALSE on the
-  // full + `*` branches (a full map needs no per-area enforcement — same as `*`),
-  // TRUE for a restricted whitelist that configured scm* areas, and TRUE for sales
-  // (the scm.sales row) — the same signal a Sales position carries today.
-  const scmMeta: PageAccessMeta = { explicitScm: false };
-  let pageAccess: Record<string, AccessLevel>;
-  if (permissionsSet.has("*")) {
-    pageAccess = fullAccessMap();
-  } else if (row.position_id != null) {
-    // ALL 17 positioned cohorts resolve HERE now — full, restricted, AND sales.
-    // The policy is the single page-access source; the legacy position matrix is
-    // no longer read for a positioned user. (A member with no Title resolves from the
-    // role's permission keys below.)
-    const policy = resolvePositionPolicy({
-      position_name: row.position_name ?? null,
-      department_name: row.department_name ?? null,
-    }, policyRow);
-    pageAccess = policy.pageAccess;
-    scmMeta.explicitScm = policy.scmConfigured;
-  } else {
-    // No Title: pages come from the role's permission keys alone.
-    pageAccess = pageAccessFromPermissions(permissionsSet);
+  // The rows load only for a non-`*` caller — `*` short-circuits to fullAccessMap
+  // and the position-capability load below skips the same way.
+  let roleRows: Array<{ page_key: string; level: string }> = [];
+  if (!permissionsSet.has("*")) {
+    const pageRows = await env.DB.prepare(
+      `SELECT page_key, level FROM role_page_access WHERE role_id = ? ORDER BY page_key`,
+    )
+      .bind(row.role_id)
+      .all<{ page_key: string; level: string }>();
+    roleRows = pageRows.results ?? [];
   }
+  const memberAccess = resolveMemberPageAccess({
+    permissionsSet,
+    positionId: row.position_id ?? null,
+    positionName: row.position_name ?? null,
+    departmentName: row.department_name ?? null,
+    positionPolicy: policyRow,
+    roleRows,
+  });
+  const pageAccess: Record<string, AccessLevel> = memberAccess.pageAccess;
+  const scmL2Configured = memberAccess.scmL2Configured;
 
   // Actions matrix (owner 2026-08-22): the position's operational capability
   // rows ride the session envelope. A `*` caller skips the load — the guard
@@ -631,7 +648,7 @@ async function hydrateAuthUser(env: Env, row: any): Promise<AuthUser> {
     }),
     position_capabilities: positionCapabilities,
     position_policy: policyRow,
-    scm_l2_configured: scmMeta.explicitScm,
+    scm_l2_configured: scmL2Configured,
     // sessions.origin — present only on the getUserBySession row (that SELECT
     // already joins `sessions`, so this costs no extra round-trip). getUserById
     // has no session, so `row.origin` is absent there and this lands null =
@@ -725,6 +742,11 @@ export async function getUserBySession(env: Env, token: string): Promise<AuthUse
               pc.capability AS item_key, '' AS item_value
        FROM principal pr
        JOIN position_capabilities pc ON pc.position_id = pr.position_id
+       UNION ALL
+       SELECT 'page' AS kind, 'role' AS owner_key,
+              rpa.page_key AS item_key, rpa.level AS item_value
+       FROM principal pr
+       JOIN role_page_access rpa ON rpa.role_id = pr.role_id
        ORDER BY kind, owner_key, item_key, item_value`
     )
       .bind(token)

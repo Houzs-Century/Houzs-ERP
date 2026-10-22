@@ -20,7 +20,8 @@ import { Button } from '@2990s/design-system';
 import { usePaymentVouchers, useCancelPaymentVoucher, useSubmitPaymentVoucher, useCheckPaymentVoucher, useApprovePaymentVoucher, fetchPvPrintDetail, fetchPvPrintBundle, type PaymentVoucherRow } from '../../vendor/scm/lib/payment-voucher-queries';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { deliverPdfBlob, type PdfAction } from '../../vendor/scm/lib/pdf-common';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { statusLabel } from '../../vendor/scm/lib/status-pill';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -29,7 +30,9 @@ import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { fmtDateOrDash, fmtMoneySen } from '@2990s/shared';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
+import { BackToPile } from '../../vendor/scm/components/BackToPile';
 import { FilterPills } from '../../components/FilterPills';
+import { PaymentRequestsWaiting } from './PaymentRequestsWaiting';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -64,10 +67,12 @@ const fmtMoney = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi,
 
 const PV_LIST_STORAGE_KEY = 'pv-list.layout.v1';
 
-const buildPvColumns = (): DataGridColumn<PaymentVoucherRow>[] => [
+const notesOf = (r: PaymentVoucherRow): string => (r.notes ?? '').trim();
+
+const buildPvColumns = (): GridColumn<PaymentVoucherRow>[] => [
   {
     key: 'pv_number', label: 'Voucher No.', width: 150, sortable: true,
-    accessor: (r) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{r.pv_number}</span>,
+    accessor: (r) => <span className={cancelledDocNoClass(r.status)} style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{r.pv_number}</span>,
     searchValue: (r) => r.pv_number,
     exportValue: (r) => r.pv_number,
     sortFn: (a, b) => a.pv_number.localeCompare(b.pv_number),
@@ -78,6 +83,18 @@ const buildPvColumns = (): DataGridColumn<PaymentVoucherRow>[] => [
     searchValue: (r) => `${r.payee_name ?? ''} ${r.supplier?.name ?? ''}`.trim(),
     groupValue: (r) => r.payee_name || r.supplier?.name || '(none)',
     sortFn: (a, b) => (a.payee_name ?? '').localeCompare(b.payee_name ?? ''),
+  },
+  {
+    /* The header's Notes (owner 2026-10-14: pv 那边的 list，可以让他把 notes
+       显示出来吗？) — what the voucher is for, in Finance's own words. A long
+       note is cut with … and reads whole on hover (the cell's title comes
+       from filterValue) or with WRAP on; the search box and Export carry it. */
+    key: 'notes', label: 'Notes', width: 260, sortable: true, groupable: false,
+    accessor: (r) => notesOf(r) || '—',
+    filterValue: (r) => notesOf(r),
+    searchValue: (r) => notesOf(r),
+    exportValue: (r) => notesOf(r),
+    sortFn: (a, b) => notesOf(a).localeCompare(notesOf(b)),
   },
   {
     key: 'credit_account_code', label: 'Paid From', width: 120, sortable: true, groupable: true,
@@ -103,6 +120,14 @@ const buildPvColumns = (): DataGridColumn<PaymentVoucherRow>[] => [
     exportValue: (r) => Number(r.total_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => Number(a.total_sen ?? 0) - Number(b.total_sen ?? 0),
+  },
+  {
+    /* DEV-75: not in Total; posts Dr 900-B001 / Cr the bank with the voucher. */
+    key: 'bank_charge_sen', label: 'Bank Charges', width: 120, sortable: true, align: 'right', groupable: false,
+    accessor: (r) => fmtMoney(Number(r.bank_charge_sen ?? 0), 'MYR'),
+    exportValue: (r) => Number(r.bank_charge_sen ?? 0) / 100,
+    exportFormat: 'money',
+    sortFn: (a, b) => Number(a.bank_charge_sen ?? 0) - Number(b.bank_charge_sen ?? 0),
   },
   {
     key: 'status', label: 'Status', width: 160, sortable: true, groupable: true,
@@ -334,7 +359,9 @@ export const PaymentVouchers = () => {
         eyebrow="Finance"
         title="Payment Vouchers"
         actions={
-          <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+          <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
+            {/* The pile kept while this tab lives (owner 2026-10-06): the bills not yet opened. */}
+            {canCreate && <BackToPile target="pv" />}
             {canCreate && (
               <>
                 {/* Two documents, AutoCount-style (owner 2026-08-30): the AP
@@ -364,6 +391,9 @@ export const PaymentVouchers = () => {
           </div>
         }
       />
+
+      {/* Requests waiting for Finance (owner 2026-10-08: 提醒我有几个payment request 还没proceed). */}
+      <PaymentRequestsWaiting />
 
       <p className={styles.eyebrow}>
         {isLoading ? 'Loading vouchers…' : `${rows.length} payment vouchers`}
@@ -428,7 +458,7 @@ export const PaymentVouchers = () => {
         </div>
       )}
 
-      <DataGrid<PaymentVoucherRow>
+      <DataGridCompat<PaymentVoucherRow>
         rows={rows}
         columns={columns}
         storageKey={PV_LIST_STORAGE_KEY}
@@ -452,10 +482,11 @@ export const PaymentVouchers = () => {
              a double-click opens, right-click menus; nothing else ticks. */
           checkboxOnly: true,
         }}
-        searchPlaceholder="Search voucher no, payee…"
+        searchPlaceholder="Search voucher no, payee, notes…"
         loadedSearchLimit={500}
         groupBanner={false}
         onRowDoubleClick={(r) => navigate(`/scm/payment-vouchers/${r.id}`)}
+        getRowClassName={(r) => cancelledRowClass(r.status)}
         rowStyle={(r) => r.status === 'CANCELLED'
           ? { opacity: 0.6, filter: 'grayscale(0.4)' }
           : advanceOpenSen(r) > 0 ? { color: ADVANCE_BLUE } : undefined}

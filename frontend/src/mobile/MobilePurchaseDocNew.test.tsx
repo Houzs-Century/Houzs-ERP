@@ -15,6 +15,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { authedFetch } = vi.hoisted(() => ({ authedFetch: vi.fn() }));
 vi.mock("../vendor/scm/lib/authed-fetch", () => ({ authedFetch }));
+const auth = vi.hoisted(() => ({ user: { permissions: ["*"], position_capabilities: [] as string[] } }));
+vi.mock("../auth/AuthContext", () => ({ useAuth: () => ({ user: auth.user }) }));
 
 /* The picker hands back the catalog row it would have: note the SELLING price
    (99,900 sen) — the screen must NOT carry it onto a purchase line. */
@@ -133,6 +135,8 @@ describe("MobilePurchaseDocNew — what it sends", () => {
     expect(await screen.findByText("Goods receipt GRN-2609-100 created")).toBeTruthy();
     await okDialog();
     await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+    // The app opens the new receipt from this: its racks are set on the card.
+    expect(onCreated).toHaveBeenCalledWith({ id: "grn-1", number: "GRN-2609-100" });
 
     const [create, post] = writes();
     expect(create.url).toBe("/grns");
@@ -145,6 +149,17 @@ describe("MobilePurchaseDocNew — what it sends", () => {
     const keys = invalidate.mock.calls.map(([f]) => JSON.stringify((f as { queryKey: unknown }).queryKey));
     expect(keys).toContain(JSON.stringify(["mobile-module"]));
     expect(keys).toContain(JSON.stringify(["mobile-module-paged"]));
+  });
+
+  it("GRN: a storekeeper without Post GRN can only save a draft", async () => {
+    auth.user = { permissions: [], position_capabilities: ["scm.do.load"] };
+    try {
+      mount("grn");
+      expect(screen.queryByRole("button", { name: "Receive & post" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Save draft" })).toBeTruthy();
+    } finally {
+      auth.user = { permissions: ["*"], position_capabilities: [] };
+    }
   });
 
   it("PI: creates the manual invoice then POSTS it — without the post no liability is booked", async () => {

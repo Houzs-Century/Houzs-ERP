@@ -20,7 +20,7 @@
 
 import { splitAmendmentByLane, type LaneSplit, type AmendmentLane } from '../shared/amendment-lane';
 import { catalogCategoriesByCode } from './validate-item-codes';
-import { amendmentLinePriceOnly, type NoopCheckLine, type StoredLine } from './amendment-noop-lines';
+import { amendmentLinePriceOnly, splitPriceFromSpec, type NoopCheckLine, type StoredLine } from './amendment-noop-lines';
 
 /** A submitted line, from the caller's payload — the same shape the no-op drop
  *  reads, because the price-lane carve-out compares the SAME requested fields
@@ -39,7 +39,7 @@ export async function resolveAmendmentLaneSplit<L extends LaneResolvableLine>(
   companyId: number | null | undefined,
   headerChanges: Record<string, string | null>,
   lines: L[],
-  /** True only on PRICE_LANE_COMPANY_CODE (owner 2026-09-21). Required so the
+  /** True only on a PRICE_LANE_COMPANY_CODES company. Required so the
    *  price carve-out is never a silent default — the caller reads the ACTIVE
    *  company code and decides. */
   priceLaneEnabled: boolean,
@@ -77,6 +77,10 @@ export async function resolveAmendmentLaneSplit<L extends LaneResolvableLine>(
       return stored ? amendmentLinePriceOnly(l, stored) : false;
     },
     priceLaneEnabled,
+    (l) => {
+      const stored = l.salesOrderItemId ? storedById.get(l.salesOrderItemId) : undefined;
+      return stored ? splitPriceFromSpec(l, stored) : null;
+    },
   );
 }
 

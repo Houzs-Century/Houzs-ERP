@@ -231,13 +231,16 @@ describe("the population this ruling turns off", () => {
   });
 
   /* The five money floors were REMOVED on 2026-08-18 (owner ruling: a POS
-     caller may lower or cancel a line). What this gate turns off is now the
-     four drift 400s alone — see tests/soTotalFloorRemoved.test.ts, which pins
-     that the floors are gone AND that the drift rejects survived them. */
-  test("the refusals it gates are the four drift 400s", () => {
+     caller may lower or cancel a line). What this gate turns off is the four
+     drift 400s — see tests/soTotalFloorRemoved.test.ts, which pins that the
+     floors are gone AND that the drift rejects survived them — and, since
+     2026-10-19 (#4731), the "pick a fair or No fair" 422 on create: the POS
+     tablet sells at its own counter and never names a fair. */
+  test("the refusals it gates are the four drift 400s and the fair-required 422", () => {
     const count = (rx: RegExp) => (soRouteSource.match(rx) ?? []).length;
     expect(count(/error:\s*'so_total_below_original'/g)).toBe(0);
     expect(count(/error:\s*'pricing_drift'/g)).toBe(4);
-    expect(count(/await isPosTabletCaller\(c\)/g)).toBe(6);
+    expect(count(/\(await isPosTabletCaller\(c\)\) \? null : await fairRequiredProblem\(/g)).toBe(1);
+    expect(count(/await isPosTabletCaller\(c\)/g)).toBe(7);
   });
 });

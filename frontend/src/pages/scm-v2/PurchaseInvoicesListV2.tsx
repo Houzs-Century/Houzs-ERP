@@ -74,6 +74,7 @@ import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { StatusWithHold, rowIsHeld, type HoldFields } from "../../vendor/scm/components/HoldChip";
 import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
 import { purchaseInvoicePrintChain } from "../../lib/printChain";
+import { OVERDUE_CLASS, isPastDue } from "../../lib/tableHighlight";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -179,12 +180,10 @@ const statusFor = (
 
 function SplitDropdown({
   onFromGrn,
-  onImport,
   onDuplicate,
   onScan,
 }: {
   onFromGrn: () => void;
-  onImport: () => void;
   onDuplicate: () => void;
   onScan: () => void;
 }) {
@@ -209,9 +208,6 @@ function SplitDropdown({
             </button>
             <button type="button" className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft" onClick={() => { setOpen(false); onScan(); }}>
               Scan invoice
-            </button>
-            <button type="button" className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft" onClick={() => { setOpen(false); onImport(); }}>
-              Import from file
             </button>
             <button type="button" className="block w-full px-3.5 py-2 text-left text-[12.5px] text-ink hover:bg-primary-soft" onClick={() => { setOpen(false); onDuplicate(); }}>
               Duplicate last invoice
@@ -769,7 +765,6 @@ export function PurchaseInvoicesListV2() {
 
   const goNewPi = () => navigate("/scm/purchase-invoices/new");
   const goFromGrn = () => navigate("/scm/purchase-invoices/from-grn");
-  const goImport = () => navigate("/scm/purchase-invoices?import=1");
   const goDuplicate = () => navigate("/scm/purchase-invoices?duplicate=1");
   const goGrns = () => navigate("/scm/grns");
   const goSuppliers = () => navigate("/scm/suppliers");
@@ -1023,7 +1018,14 @@ export function PurchaseInvoicesListV2() {
       width: "108px",
       disableSort: true,
       getValue: (r) => r.due_date ?? "",
-      render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.due_date)}</span>,
+      render: (r) => {
+        const late = isPastDue(r.due_date, !isCancelledDocStatus(r.status) && outstandingOf(r) > 0);
+        return (
+          <span className={cn("text-[12.5px]", late ? OVERDUE_CLASS : "text-ink-secondary")} title={late ? "Past due and not paid" : undefined}>
+            {fmtDate(r.due_date)}
+          </span>
+        );
+      },
     },
     source: {
       key: "source",
@@ -1176,7 +1178,7 @@ export function PurchaseInvoicesListV2() {
                   <Button variant="primary" icon={<Plus size={14} />} onClick={goNewPi} className="rounded-r-none">
                     New Purchase Invoice
                   </Button>
-                  <SplitDropdown onFromGrn={goFromGrn} onImport={goImport} onDuplicate={goDuplicate} onScan={() => setShowScan(true)} />
+                  <SplitDropdown onFromGrn={goFromGrn} onDuplicate={goDuplicate} onScan={() => setShowScan(true)} />
                 </div>
               </div>
             }

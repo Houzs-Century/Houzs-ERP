@@ -20,6 +20,8 @@
 //     (send the numbers that matter, not whole tables).
 // ---------------------------------------------------------------------------
 
+import { recordAi, type AiUsageTag } from "./aiUsage";
+
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
 /** Same model as the scan-so OCR pipeline — one model, one bill, one behaviour. */
@@ -39,6 +41,8 @@ export interface AskAgentBrainOptions {
   maxTokens?: number;
   /** Accumulates Anthropic token usage for the Agent Console run log. */
   usageSink?: AgentBrainUsageSink;
+  /** Records each call into ai_usage_events (services/aiUsage.ts); null records nothing. */
+  aiUsage: AiUsageTag | null;
   /** Optional non-text content blocks (image / document) appended AFTER the text
    *  payload in the user turn — the assistant uses this to let the model READ an
    *  uploaded image or PDF. Every existing caller omits it and is unchanged. */
@@ -51,7 +55,7 @@ export async function askAgentBrain(
 ): Promise<string | null> {
   if (!apiKey) return null;
   try {
-    const res = await fetch(ANTHROPIC_URL, {
+    const res = await recordAi(opts.aiUsage, fetch(ANTHROPIC_URL, {
       method: "POST",
       headers: {
         "x-api-key": apiKey,
@@ -72,7 +76,7 @@ export async function askAgentBrain(
           },
         ],
       }),
-    });
+    }));
     if (!res.ok) {
       console.warn(`[agent-brain] Anthropic ${res.status}`);
       return null;
@@ -133,6 +137,7 @@ export interface AskAgentBrainWithToolsOptions {
    *  a model that keeps asking for tools is forced to answer instead of hanging. */
   maxTurns?: number;
   usageSink?: AgentBrainUsageSink;
+  aiUsage: AiUsageTag | null;
 }
 
 type AnthropicContentBlock =
@@ -153,7 +158,7 @@ export async function askAgentBrainWithTools(
     for (let turn = 0; turn < maxTurns; turn++) {
       // The LAST allowed turn drops `tools`, so the model must answer in prose.
       const offerTools = turn < maxTurns - 1 && opts.tools.length > 0;
-      const res = await fetch(ANTHROPIC_URL, {
+      const res = await recordAi(opts.aiUsage, fetch(ANTHROPIC_URL, {
         method: "POST",
         headers: {
           "x-api-key": apiKey,
@@ -167,7 +172,7 @@ export async function askAgentBrainWithTools(
           messages,
           ...(offerTools ? { tools: opts.tools } : {}),
         }),
-      });
+      }));
       if (!res.ok) {
         console.warn(`[agent-brain] tools Anthropic ${res.status}`);
         return null; // best-effort: caller falls back to the single-shot path

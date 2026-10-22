@@ -25,10 +25,20 @@ import {
   Pin,
   PinOff,
   EyeOff,
+  Eye,
   MoveHorizontal,
   Filter,
+  Rows3,
+  WrapText,
 } from "lucide-react";
 import { cn } from "../lib/utils";
+import { headerLabel } from "../lib/columnHeaderLabel";
+import { columnDescription } from "../lib/columnDescriptions";
+import { rowsToTsv } from "./dataTableClipboard";
+import { tickedOrAll } from "./dataTableTicked";
+import { DataTableFreezeItems, keysThrough } from "./DataTableFreezeItems";
+import { parseUrlColFilters, serializeUrlColFilters, UrlFilterResync } from "./dataTableUrlFilters";
+import { useInRouterContext } from "react-router-dom";
 import { ResetFiltersButton } from "./ResetFiltersButton";
 import { TableSkeleton } from "./Skeleton";
 import {
@@ -41,7 +51,7 @@ import { withSingleActive } from "./LayoutSection";
 import { showAllColumnPrefs, toggleColumnPrefs, type ColumnPrefs } from "./dataTableColumnPrefs";
 import { UdfCell } from "./UdfCell";
 import { useLocalStorage } from "../hooks/useLocalStorage";
-import { useInVisitColFilters } from "./dataTableColFilterMemory";
+import { useInVisitClientSearch, useInVisitColFilters, useKeptColFilters } from "./dataTableColFilterMemory";
 import { useFrozenTableHeader } from "./useFrozenTableHeader";
 import { useSmallViewport } from "../hooks/useSmallViewport";
 import { inferColumnGroup } from "../lib/columnGroups";
@@ -58,13 +68,19 @@ import {
   updateNamedLayout,
   saveCompanyDefault,
   saveMyLayout,
+  saveSharedLayout,
+  deleteSharedLayout,
   serializeLayout,
+  dataGridIdKey,
+  dataGridTableKey,
   subscribeTableLayouts,
+  type NamedLayout,
   type StoredLayout,
 } from "../lib/tableLayouts";
+import { isSharedDataGridStorageKey } from "../vendor/scm/components/dataGridLayoutStorage";
 import { useUdf, type UseUdfResult } from "../hooks/useUdf";
 import { downloadCSV, isoForExport, toCSV, type CSVColumn } from "../lib/csv";
-import { applyColumnFilters, filterKeyOf, filterKeysOf, sortTableRows } from "./dataTableRows";
+import { applyColumnFilters, facetedFilterValues, sortTableRows } from "./dataTableRows";
 import {
   buildLineExportMatrix,
   exportableColumns,
@@ -74,571 +90,34 @@ import {
   type ExportFormat,
 } from "./dataTableLineExport";
 import { SearchScopeHint } from "./SearchScopeHint";
+import { DataTableConditionSection } from "./DataTableConditionSection";
+import { DataTableGroupBanner } from "./DataTableGroupBanner";
+import { gridLayoutToTableLayout, readLegacyGridLayout } from "./dataTableLegacyGridLayout";
+import { buildSearchBlob, conditionToken, isConditionToken, parseCondition } from "./dataTableConditionFilters";
 import { MobileVirtualList } from "../mobile/MobileVirtualList";
+import { reorderKeys } from "../lib/reorder";
+import { useDragAutoScroll } from "./useDragAutoScroll";
 
-export interface Column<T, L = never> {
-  key: string;
-  label: string;
-  width?: string;
-  align?: "left" | "right" | "center";
-  className?: string;
-  /** Render the cell. */
-  render: (row: T) => ReactNode;
-  /** Optional custom header content (e.g. a select-all checkbox). When set,
-   *  it replaces the label + sort affordance for this column. */
-  renderHeader?: () => ReactNode;
-  /** Raw value for CSV export, the funnel and sorting; without it a column is skipped by export and cannot be sorted. `sortValue` overrides the ORDER only, where alphabetical is the wrong priority (Stock Status) — CSV and the funnel stay on `getValue`, so omitting it sorts exactly as it did before `sortValue` existed. */
-  getValue?: (row: T) => string | number | boolean | null | undefined;
-  sortValue?: (row: T) => string | number | boolean | null | undefined;
-  /** The value this column EXPORTS, when it differs from `getValue` (money in
-   *  ringgit where getValue holds sen for sorting). Repeats on every line of a
-   *  line export. See dataTableLineExport.ts. */
-  exportValue?: (row: T) => ExportCell;
-  /** Line export only: this column's cell for ONE line of the row. Method
-   *  syntax on purpose — it keeps a Column<T, L> assignable where Column<T> is
-   *  expected. */
-  lineValue?(row: T, line: L): ExportCell;
-  /** Line export only: the Excel cell type (date / money / rate / number). */
-  exportFormat?: ExportFormat;
-  /** For cells holding SEVERAL values (Bedframe AND Mattress): the menu lists
-   *  each value separately, counts it per carrying row, and a row matches when
-   *  ANY ticked value hits. `getValue` still required (sort + CSV). */
-  getFilterValues?: (row: T) => (string | number | null | undefined)[];
-  /** Values the filter menu ALWAYS lists, 0-count included — for enum-shaped
-   *  columns whose full vocabulary must stay pickable (Nico 2026-09-04). */
-  filterSeedValues?: readonly string[];
-  /** Excluded from the column chooser AND pinned to the front (unreorderable). */
-  alwaysVisible?: boolean;
-  /** Opt-out of sort for columns that have getValue but aren't meaningfully
-   *  sortable (e.g. a selection checkbox column).
-   *
-   *  On a `serverSort` table this means "not in the backend sort whitelist",
-   *  NOT "never sortable": the column still sorts, but CLIENT-side over the
-   *  loaded page only (owner 2026-07-24: every column must sort). The sort is
-   *  never reported to the parent, so the backend query is untouched. To make
-   *  a server-sorted column truly unsortable, drop its `getValue`. */
-  disableSort?: boolean;
-  /**
-   * Hide on first load even though the column exists. The user can still
-   * reveal it from the Columns panel (and that override is persisted).
-   * Useful for "extended" columns that come from a wide upstream payload
-   * — show a sane default subset, let power users opt-in to the rest.
-   */
-  defaultHidden?: boolean;
-  /**
-   * @deprecated The funnel now shows on EVERY column that has `getValue`
-   * (owner 2026-07-24: "所有list的headers都需要有filter功能"). This flag is
-   * no longer the gate and is kept only so existing `filterable` call sites
-   * keep compiling. To turn the funnel OFF for one column, use `disableFilter`.
-   */
-  filterable?: boolean;
-  /**
-   * Opt a `getValue` column OUT of the header filter/sort menu. For columns
-   * whose values are unique per row (a running total, a timestamp) where a
-   * distinct-value checklist is just noise. The column can still be sorted by
-   * clicking its header; only the funnel menu is suppressed.
-   */
-  disableFilter?: boolean;
-  /**
-   * Category this column belongs to in the Columns drawer — "Basic",
-   * "Amounts", "Logistics", … A table that annotates NOTHING renders one flat
-   * list, exactly as before, which is what let the grouped drawer ship to every
-   * list page at once. UDF columns are grouped as "Custom fields" for free.
-   */
-  group?: string;
-}
+import type { Column, DataTableProps, SortDir, SortState } from "./dataTableTypes";
+import { DataRowCells } from "./DataTableRowCells";
+import {
+  DEFAULT_COL_WIDTH,
+  DebouncedSearchInput,
+  MIN_COL_WIDTH,
+  ROW_HEIGHT_ESTIMATE,
+  VIRTUAL_OVERSCAN,
+  VIRTUAL_ROW_THRESHOLD,
+  parsePxWidth,
+  sanitizeColumnWidths,
+  sanitizeMobileView,
+  sanitizeSortState,
+  sanitizeStringList,
+  useViewportClampedPos,
+} from "./dataTableHelpers";
 
-/**
- * A named column layout — "which columns, in what order" — offered in the
- * Columns panel (owner 2026-08-01: the 2990 Sales Order list and the Houzs one
- * are the same table wanting two different working views, and each tenant's
- * users should be able to pick either).
- *
- * A preset is a BASELINE, never a lock: applying one writes the same per-user
- * `dt:*` prefs a hand-arranged layout writes, so the very next column toggle or
- * header drag edits it exactly as before. The one marked `isDefault` is what a
- * user who has never touched this table sees — that is how a company gets its
- * own default view without a stored pref per person.
- */
-export interface ColumnLayoutPreset {
-  /** Stable id. Only ever compared, never shown. */
-  id: string;
-  label: string;
-  /** Optional one-liner under the label. */
-  hint?: string;
-  /**
-   * Movable column keys, in display order. `alwaysVisible` columns are implicit
-   * (they are pinned to the front by contract) and must NOT be listed. Keys that
-   * don't exist for this user — a finance-only column for a non-finance viewer —
-   * are dropped, so one preset can be shared across permission levels.
-   */
-  columns: string[];
-  /**
-   * The company this layout belongs to ('HOUZS' | '2990'). Naming one makes
-   * this preset that company's SEED default — used until an admin saves a real
-   * one from the Columns panel, at which point the saved layout takes this
-   * row's place (lib/tableLayouts.ts). Leave unset for a layout that isn't
-   * about a company.
-   */
-  companyCode?: string;
-  /** The layout used when this user has no stored prefs for this table. Only
-   *  consulted where the companies master isn't resolvable (tests,
-   *  single-company installs); otherwise the ACTIVE company decides. */
-  isDefault?: boolean;
-}
+export type { Column, ColumnLayoutPreset, DataTableProps } from "./dataTableTypes";
 
-interface Props<T, L = never> {
-  /** Stable identifier used for persisting column visibility, order, sort,
-   *  and density per page (localStorage). */
-  tableId?: string;
-  /**
-   * Optional stable layout family shared by many instances of the same table
-   * schema. Detail pages must use this instead of embedding a document id in
-   * every persisted key, otherwise browsing documents grows localStorage
-   * forever. This affects layout preferences only; row identity still comes
-   * from `getRowKey` and `tableId` remains available to the caller.
-   */
-  layoutFamily?: string;
-  /**
-   * `false` keeps the column funnels for this visit only: the table opens with
-   * no filter every time, and any funnel an earlier version saved for it is
-   * erased. Absent = the saved-view behaviour every other table has had since
-   * 2026-07-29, so no existing table changes (SKU Master, owner 2026-09-15:
-   * "每一次打开应该默认都是全部展开的").
-   */
-  persistFilters?: boolean;
-  /**
-   * `false` keeps a header sort for this visit only and erases one an earlier
-   * version saved. For document LINE tables: their layout is shared by every
-   * document of the kind, so a saved sort re-ordered the lines of every order
-   * opened after it — away from the document order its editor shows (owner
-   * 2026-09-15). Absent = the saved sort every other table keeps.
-   */
-  persistSort?: boolean;
-  /**
-   * Named column layouts offered at the top of the Columns panel. The preset
-   * flagged `isDefault` is also the BASELINE this table renders with until the
-   * user stores prefs of their own — so a page can hand each company its own
-   * default view (see ColumnLayoutPreset). Omit for the historical behaviour:
-   * the baseline is then the columns' own `defaultHidden` flags and no preset
-   * section is shown.
-   */
-  layoutPresets?: ColumnLayoutPreset[];
-  /** Document name for the Columns drawer eyebrow, e.g. "Sales Orders". */
-  documentLabel?: string;
-  columns: Column<T, L>[];
-  rows: T[] | null;
-  loading?: boolean;
-  error?: string | null;
-  emptyLabel?: string;
-  onRowClick?: (row: T) => void;
-  getRowKey: (row: T) => string | number;
-  getRowClassName?: (row: T) => string | undefined;
-  /** Filename stem for CSV export, e.g. "orders". A date suffix is appended automatically. */
-  exportName?: string;
-  /** Toolbar button text, default "Export" — override when a second export
-   *  button sits beside it (via `toolbarExtra`) and the two need distinct
-   *  labels, e.g. MRP's "Export all" beside "Export current tab". */
-  exportLabel?: string;
-  /** If provided, the Export button calls this with the visible export columns instead of
-   *  exporting the on-screen rows — so a server-paged list can export ALL pages with them. */
-  onExport?: (columns: CSVColumn<T>[]) => void;
-  /** One row per LINE over every row the server filter matches, with the grid's
-   *  visible columns, funnels and sort (dataTableLineExport.ts). When set, the
-   *  toolbar Export writes an .xlsx this way and `onExport` is not called. */
-  exportLines?: DataTableLineExport<T, L>;
-  /** Extra toolbar button(s) rendered beside Export/Columns, for a caller that
-   *  needs a second export variant (e.g. MRP's per-tab export) without a whole
-   *  second toolbar. */
-  toolbarExtra?: React.ReactNode;
-  /** Reports the per-column funnel state (the same `{ colKey: [values] }` the
-   *  grid persists and applies) whenever it changes, so a server-paged list can
-   *  push the SERVER-FILTERABLE columns into its list query and paginate over the
-   *  filtered set — while the grid still owns and persists the funnels and
-   *  applies them client-side on the loaded page. Mirrors `onSortChange` +
-   *  `serverSort`: the grid stays the source of truth, the page drives the
-   *  server. Columns the server cannot filter (line-level, MRP-derived) simply
-   *  keep working client-side on the page. */
-  onColFiltersChange?: (colFilters: Record<string, string[]>) => void;
-  /** If provided, an Import button is shown that calls this with the parsed File. */
-  onImport?: (file: File) => void;
-  /** Optional eyebrow rendered next to the row count. */
-  caption?: string;
-  /**
-   * Backend table identifier for user-defined fields. When set, the
-   * Columns panel grows a "Custom Fields" section (add/delete), UDF
-   * columns render alongside the static ones, and cells are editable
-   * inline. UDFs are stored in worker D1 and never synced to AutoCount.
-   */
-  udfTable?: string;
-  /** Friendly label used in the Custom Fields section heading. */
-  udfTableLabel?: string;
-  /**
-   * When provided, renders a search input on the left side of the table
-   * toolbar. The page is responsible for resetting pagination on change.
-   */
-  search?: {
-    value: string;
-    onChange: (next: string) => void;
-    placeholder?: string;
-    /**
-     * True while the visible term has not yet produced the rows below. This
-     * keeps A results from being presented as if they belonged to A1.
-     */
-    searching?: boolean;
-    searchingLabel?: string;
-    /** True while totalRecords belongs to a placeholder/failed filter key. */
-    countPending?: boolean;
-    /**
-     * Declares the data boundary of this search box. Defaults to `loaded`, so
-     * a partial-page filter can never silently present itself as global.
-     */
-    scope?: "server" | "loaded";
-    /** Settled result count. Hidden while a replacement search is pending. */
-    totalRecords?: number;
-    /** Known backend cap when scope is loaded rather than server-wide. */
-    loadedLimit?: number;
-    /**
-     * Milliseconds to wait after the last keystroke before calling `onChange`.
-     * Default 250. Pass 0 to propagate on every keystroke (only correct when
-     * `onChange` does nothing but set local state).
-     *
-     * WHY THIS DEFAULTS TO ON: this input is fully controlled and used to call
-     * `onChange` on EVERY keystroke. Several consumers map that value straight
-     * into a server query key — `pages/ServiceCases.tsx` (`/api/assr?search=`)
-     * and both `pages/Projects.tsx` lists — so typing an 8-character customer
-     * name fired eight requests, of which seven were already stale on arrival.
-     * Projects also writes the value into the URL, so each keystroke was a
-     * `history.replaceState` too. Debouncing here fixes every DataTable
-     * consumer at once rather than one page at a time.
-     */
-    debounceMs?: number;
-  };
-  /**
-   * When provided, renders a "Reset" button next to the search input
-   * that is visible only while `filtersActive` is true. The page owns
-   * the meaning of "active" and the actual clear logic (URL params,
-   * sticky storage, pagination).
-   */
-  resetFilters?: {
-    active: boolean;
-    onReset: () => void;
-    label?: string;
-  };
-  /**
-   * Server-side sort. When true, clicking a header doesn't sort the
-   * visible rows in-memory — instead the parent gets the new sort via
-   * `onSortChange` and is expected to re-query with `sort_by` /
-   * `sort_dir` so the ordering applies across the entire dataset
-   * (not just the current page).
-   */
-  serverSort?: boolean;
-  onSortChange?: (sort: { key: string; dir: "asc" | "desc" } | null) => void;
-  /**
-   * Customise the mobile (<sm) card layout. When omitted, the mobile
-   * branch falls back to "first visible column = title; rest as label /
-   * value rows", which is right for most heterogeneous tables. Some
-   * dense list views (e.g. Trips Queue) want fewer cells laid out as a
-   * value-only grid — that's what this opts into.
-   */
-  mobileCard?: {
-    /** Column key used as the card title. Defaults to first visible column. */
-    primary?: string;
-    /** Ordered keys to show below the title. Defaults to remaining visible columns. */
-    cells?: string[];
-    /** "stack" (today) or "grid-2" — two equal columns, value-only. */
-    layout?: "stack" | "grid-2";
-    /** Hide the `<dt>` labels even in "stack" layout. Default false. */
-    hideLabels?: boolean;
-  };
-  /**
-   * Opt-in drill-down (2990 DataGrid parity). When set, a 32px chevron
-   * column is prepended; clicking the chevron (or the chevron cell)
-   * toggles an inline expanded sub-`<tr>` below the row that spans the
-   * full width and renders `expandable.render(row)`. Expanded ids live in
-   * a transient Set (not persisted — drill-downs reset on reload). Absent
-   * (default) = no chevron column, layout byte-identical to before.
-   */
-  expandable?: {
-    /** Render the expanded sub-row body. */
-    render: (row: T) => ReactNode;
-    /** Stable id for expansion state. Defaults to `getRowKey`. */
-    rowKey?: (row: T) => string;
-    /** Controlled expansion (opt-in). When BOTH are provided, DataTable renders
-     *  exactly `expandedIds` instead of its own transient state and reports every
-     *  chevron toggle through `onExpandedChange` — so a page can drive
-     *  Expand/Collapse-all or auto-open its search hits (MRP). Omit both for the
-     *  default transient behaviour (drill-downs reset on reload), byte-identical
-     *  to before this option existed. */
-    expandedIds?: Set<string>;
-    onExpandedChange?: (next: Set<string>) => void;
-  };
-  /**
-   * Opt-in row selection (2990 DataGrid `selectable` parity). When set, a
-   * leading checkbox column is prepended (before any `expandable` chevron):
-   * a header select-all with an indeterminate state, plus a per-row tick. Row
-   * ids are `String(getRowKey(row))`. Selection state is owned by the parent
-   * (so it survives re-render and drives a bulk-action bar) — the table only
-   * renders the checkboxes and reports toggles. Ticking a box stops
-   * propagation, so it never also fires `onRowClick`. Absent (default) = no
-   * checkbox column, render path byte-identical to before. Desktop table only
-   * — the mobile card branch is untouched.
-   */
-  /**
-   * The rows that survived the per-column funnels, post-sort (owner 2026-08-12).
-   * Mirrors the DataGrid prop of the same name, deliberately down to the name,
-   * so a page that swaps components does not have to relearn the contract.
-   *
-   * Exists because the column filters are CLIENT-side and were invisible above
-   * this component: a Purchase Orders list with a stuck DATE funnel showed five
-   * rows worth RM 9,112.50 under a "Sum on this page" card reading RM 164,349.70
-   * — two contradictory numbers on one screen, which reads as a broken system
-   * rather than an active filter. A page that summarises its rows needs to know
-   * which rows the operator can actually see.
-   *
-   * Pass a STABLE setter (e.g. a useState dispatch); it fires in an effect.
-   */
-  onFilteredRowsChange?: (rows: T[]) => void;
-  selection?: {
-    /** Currently-selected row ids (stringified `getRowKey`). */
-    selectedIds: Set<string>;
-    /** Toggle one row's selection. */
-    onToggle: (id: string) => void;
-    /** Toggle all currently-rendered rows. `keys` = the row ids shown now;
-     *  `allSelected` = whether they are all already selected (so the parent
-     *  clears vs selects the batch). */
-    onToggleAll: (keys: string[], allSelected: boolean) => void;
-  };
-  /**
-   * Opt-in row right-click menu (2990 DataGrid parity). Receives the row
-   * and returns the items to show. Returning an empty array suppresses
-   * the menu for that row (the native menu is still suppressed once the
-   * prop is present). A `divider: true` item renders a rule; `danger`
-   * tints the item with the error token. Absent (default) = the browser's
-   * native context menu, unchanged.
-   */
-  contextMenu?: (
-    row: T
-  ) => Array<{
-    label: string;
-    onClick: () => void;
-    danger?: boolean;
-    divider?: boolean;
-  }>;
-  /**
-   * Opt-in single-level group-by (2990 DataGrid parity). Rows are bucketed
-   * by `groupBy.key` (a column key; the column must expose `getValue` so we
-   * have a stable group value). Each bucket gets a collapsible header row
-   * with a count; collapse state is persisted per table. Grouping applies
-   * to the desktop table only — the mobile card branch is untouched.
-   * Absent (default) = flat rows, render path byte-identical to before.
-   */
-  groupBy?: {
-    /** Column key to group on. Must match a column with `getValue`. */
-    key: string;
-    /** Pretty-print a raw group value for the header. */
-    label?: (val: string) => string;
-  };
-  /**
-   * Fixed-width column layout (opt-in, default off = byte-identical to before).
-   * OFF: the table is `w-full` and column widths are suggestions the auto layout
-   * redistributes to fill 100%, so resizing one column re-flows its neighbours.
-   * ON: the table is `table-layout: fixed`, exactly as wide as the sum of the
-   * column widths — each column holds its size, resizing one changes ONLY that
-   * column (the table grows and the scroll container scrolls horizontally) and
-   * nothing squeezes its neighbours (owner 2026-09-11, MRP). Every column
-   * resolves to a px width (its own `width`, a user drag, else the 160 default),
-   * so a caller turning this on should give its wide columns an explicit `width`.
-   */
-  fixedColumnWidths?: boolean;
-}
-
-type SortDir = "asc" | "desc";
-interface SortState {
-  key: string;
-  dir: SortDir;
-}
-
-// Resize / pin tuning. MIN_COL_WIDTH is the floor a drag can shrink a
-// column to. DEFAULT_COL_WIDTH is the assumed width when computing a
-// pinned column's sticky-left offset and the column has no user width and
-// no px-parseable `width` default (e.g. a "%" width or none at all).
-const MIN_COL_WIDTH = 64;
-const DEFAULT_COL_WIDTH = 160;
-
-// Row windowing: past this many FLAT rows, render only the slice scrolled into
-// view (see the effect in the component). Kept a no-op for grouped/expandable
-// tables and short lists, so existing pages render byte-identically. Threshold
-// mirrors the SCM DataGrid's (25) with a little headroom.
-const VIRTUAL_ROW_THRESHOLD = 30;
-const VIRTUAL_OVERSCAN = 12;
-const ROW_HEIGHT_ESTIMATE = 33; // px; corrected at runtime by measuring a real row
-function sanitizeStringList(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return [...new Set(value.filter((item): item is string => typeof item === "string" && item.length > 0))]
-    .slice(0, 500);
-}
-
-function sanitizeSortState(value: unknown): SortState | null {
-  if (!value || typeof value !== "object") return null;
-  const record = value as Record<string, unknown>;
-  if (typeof record.key !== "string" || !record.key) return null;
-  if (record.dir !== "asc" && record.dir !== "desc") return null;
-  return { key: record.key, dir: record.dir };
-}
-
-function sanitizeMobileView(value: unknown): "cards" | "table" {
-  return value === "table" ? "table" : "cards";
-}
-
-function sanitizeColumnWidths(value: unknown): Record<string, number> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const widths: Record<string, number> = {};
-  for (const [key, width] of Object.entries(value as Record<string, unknown>)) {
-    if (!key || typeof width !== "number" || !Number.isFinite(width)) continue;
-    widths[key] = Math.min(10_000, Math.max(40, width));
-    if (Object.keys(widths).length >= 500) break;
-  }
-  return widths;
-}
-
-// Keep a pointer-anchored context menu inside the viewport: one opened near the
-// bottom or right edge hung off-screen, and any page scroll dismisses these
-// menus, so the clipped tail was unreachable. Measured after render, re-clamped
-// on resize; the raw anchor shows for the frame before that, so nothing jumps.
-// NOT the funnel popover — that goes through lib/anchoredPanel, which also
-// decides which SIDE to open on.
-function useViewportClampedPos(
-  anchor: { x: number; y: number } | null,
-  ref: React.RefObject<HTMLDivElement | null>,
-): { top: number; left: number } | null {
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
-  useLayoutEffect(() => {
-    if (!anchor) {
-      setPos(null);
-      return;
-    }
-    const el = ref.current;
-    if (!el) return;
-    const clamp = () => {
-      setPos({
-        top: Math.max(8, Math.min(anchor.y, window.innerHeight - el.offsetHeight - 8)),
-        left: Math.max(8, Math.min(anchor.x, window.innerWidth - el.offsetWidth - 8)),
-      });
-    };
-    clamp();
-    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(clamp) : null;
-    ro?.observe(el);
-    return () => ro?.disconnect();
-  }, [anchor, ref]);
-  if (!anchor) return null;
-  return pos ?? { top: anchor.y, left: anchor.x };
-}
-
-/**
- * The toolbar search box. Types instantly, tells the page 250ms later.
- *
- * The keystroke has to stay local or the caret stutters and a fast typist loses
- * characters — so the field is driven by `draft`, and `onChange` is what gets
- * debounced. The two-way sync is the fiddly half:
- *
- *  - DOWN: the page can change the value itself (a Reset Filters click, a URL
- *    with `?search=`, a restored sticky filter). We must accept that and
- *    overwrite the draft. But we must NOT overwrite it with the page's echo of
- *    what we just sent up, or a slow re-render would snap the caret back to a
- *    stale value mid-word. `lastSentRef` distinguishes the two: a `value` equal
- *    to what we last propagated is our own echo and is ignored.
- *  - UP: debounced, and skipped entirely when the draft already equals `value`,
- *    so mounting or an echo never fires a redundant onChange.
- *
- * Flushed on Enter and on blur, because a user who types and immediately hits
- * Enter or clicks away expects to have searched, not to wait out a timer.
- */
-function DebouncedSearchInput({
-  value,
-  onChange,
-  placeholder,
-  delayMs,
-  className,
-  onPendingChange,
-}: {
-  value: string;
-  onChange: (next: string) => void;
-  placeholder: string;
-  delayMs: number;
-  className: string;
-  onPendingChange?: (pending: boolean) => void;
-}) {
-  const [draft, setDraft] = useState(value);
-  const lastSentRef = useRef(value);
-  const timerRef = useRef<number | null>(null);
-  const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
-
-  useEffect(() => {
-    onPendingChange?.(draft !== value);
-  }, [draft, value, onPendingChange]);
-
-  // DOWN-sync: adopt an externally-driven change, ignore our own echo.
-  useEffect(() => {
-    if (value !== lastSentRef.current) {
-      lastSentRef.current = value;
-      setDraft(value);
-    }
-  }, [value]);
-
-  // UP-sync: debounced.
-  useEffect(() => {
-    if (draft === lastSentRef.current) return;
-    if (delayMs <= 0) {
-      lastSentRef.current = draft;
-      onChangeRef.current(draft);
-      return;
-    }
-    const t = window.setTimeout(() => {
-      timerRef.current = null;
-      lastSentRef.current = draft;
-      onChangeRef.current(draft);
-    }, delayMs);
-    timerRef.current = t;
-    return () => {
-      window.clearTimeout(t);
-      if (timerRef.current === t) timerRef.current = null;
-    };
-  }, [draft, delayMs]);
-
-  /* Cancels the pending timer as well as sending. Without the cancel, blurring
-     100ms into a 250ms window fired onChange twice with the same value — the
-     flush, then the timer that was still armed. Harmless for a search box, but
-     it is a duplicate request per blur, which is the exact thing this component
-     exists to stop. */
-  const flush = () => {
-    if (timerRef.current !== null) {
-      window.clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-    if (draft === lastSentRef.current) return;
-    lastSentRef.current = draft;
-    onChangeRef.current(draft);
-  };
-
-  return (
-    <input
-      value={draft}
-      onChange={(e) => {
-        const next = e.target.value;
-        setDraft(next);
-        onPendingChange?.(next !== value);
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") flush();
-      }}
-      onBlur={flush}
-      placeholder={placeholder}
-      className={className}
-    />
-  );
-}
+type Props<T, L = never> = DataTableProps<T, L>;
 
 /**
  * Hydration writes the account's saved layout into the same localStorage keys
@@ -672,17 +151,32 @@ function DataTableInner<T, L>({
   onRowClick,
   getRowKey,
   getRowClassName,
+  onRowDoubleClick,
+  getRowStyle,
+  initialRowLimit,
+  onRowReorder,
+  defaultSort,
+  embedded = false,
+  groupBanner = false,
+  legacyGridKey,
+  layoutSeeds,
+  overlayHidden,
+  onUserAdjustColumns,
+  scrollToRow,
   exportName,
   exportLabel = "Export",
   onExport,
   exportLines,
+  exportXlsx,
   toolbarExtra,
   onColFiltersChange,
   onImport,
   caption,
   udfTable,
   udfTableLabel,
-  search,
+  search: searchProp,
+  clientSearch,
+  focusSearchNonce,
   resetFilters,
   serverSort,
   onSortChange,
@@ -695,12 +189,11 @@ function DataTableInner<T, L>({
   onFilteredRowsChange,
 }: Props<T, L>) {
   const isSmallViewport = useSmallViewport();
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (focusSearchNonce != null) searchInputRef.current?.focus();
+  }, [focusSearchNonce]);
   const [searchDraftPending, setSearchDraftPending] = useState(false);
-  const searchBusy = Boolean(
-    search?.searching || (search?.searching !== undefined && searchDraftPending),
-  );
-  const effectiveLoading = Boolean(loading || searchBusy);
-  const rowActionsDisabled = effectiveLoading || Boolean(error);
   /* Per-company column prefs (owner 2026-07-24 bug: "在 2990 sales order list
      点选 column 会影响我在 Houzs 的 column"). The table id alone keyed every
      company's columns to the SAME localStorage entry, so the 2990 window and the
@@ -724,7 +217,11 @@ function DataTableInner<T, L>({
   /* When a company is resolved, prefix it. When NONE is (single-company Houzs,
      the historical default) the key is byte-identical to before — those installs
      are unchanged, and the layoutFamily/tableId migration below still applies. */
-  const idKey = activeCompany != null ? `c${activeCompany}:${baseIdKey}` : baseIdKey;
+  /* A cross-company queue board keeps ONE layout whatever company the window is
+     on (the server keeps these rows unscoped too: SHARED_TABLE_KEYS). */
+  const sharedAcrossCompanies = isSharedDataGridStorageKey(baseIdKey);
+  const idKey =
+    activeCompany != null && !sharedAcrossCompanies ? `c${activeCompany}:${baseIdKey}` : baseIdKey;
   /* Company-scoped keys fall back to the pre-scoping UNSCOPED key, so a user's
      existing columns carry over on first load instead of resetting to defaults
      (both tenants start from the shared value, then diverge as each writes its
@@ -733,6 +230,28 @@ function DataTableInner<T, L>({
     ? baseIdKey
     : (layoutFamily && tableId && layoutFamily !== tableId ? tableId : undefined);
   const legacyStorageKey = (part: string) => legacyIdKey ? `dt:${part}:${legacyIdKey}` : undefined;
+  /* `clientSearch`: the grid owns the box and filters the loaded rows itself; a
+     page-controlled `search` wins. Remembered for the visit like the funnels
+     (owner 2026-10-05), except on per-mount tables. */
+  const [clientQuery, setClientQuery] = useInVisitClientSearch(idKey, persistFilters !== false);
+  const clientSearching = !!clientSearch && !searchProp;
+  const search: Props<T, L>["search"] =
+    searchProp ??
+    (clientSearch
+      ? {
+          value: clientQuery,
+          onChange: setClientQuery,
+          placeholder: clientSearch.placeholder,
+          debounceMs: 150,
+          scope: "loaded",
+          loadedLimit: clientSearch.loadedLimit,
+        }
+      : undefined);
+  const searchBusy = Boolean(
+    search?.searching || (search?.searching !== undefined && searchDraftPending),
+  );
+  const effectiveLoading = Boolean(loading || searchBusy);
+  const rowActionsDisabled = effectiveLoading || Boolean(error);
   const [hiddenList, setHiddenList] = useLocalStorage<string[]>(
     `dt:hidden:${idKey}`,
     [],
@@ -784,8 +303,8 @@ function DataTableInner<T, L>({
     legacyStorageKey("mview"),
     sanitizeMobileView,
   );
-  const showTable = !isSmallViewport || mobileView === "table";
-  const showMobileCards = isSmallViewport && mobileView === "cards";
+  const showTable = embedded || !isSmallViewport || mobileView === "table";
+  const showMobileCards = !embedded && isSmallViewport && mobileView === "cards";
   // Per-column user widths (px). Overrides the column's `width` default.
   // Keyed by column key; absent = use the column default. Desktop-only —
   // the mobile card branch ignores widths entirely.
@@ -822,6 +341,18 @@ function DataTableInner<T, L>({
     },
     [setStoredWidths],
   );
+  /* Every table is fixed-layout once it has rows (owner 2026-09-25: resizing
+     one column must never move the others). The first paint uses the auto
+     layout so columns open at their natural size; the header widths read off
+     that paint become the fixed baseline. Not persisted (a user drag is), and
+     keyed by idKey so a company switch measures again. */
+  const [measured, setMeasured] = useState<{ idKey: string; widths: Record<string, number> } | null>(null);
+  const measuredWidths = measured?.idKey === idKey ? measured.widths : null;
+  const layoutFixed = !!fixedColumnWidths || measuredWidths !== null;
+  /* Wrap long text onto more lines instead of clipping it (owner 2026-09-25).
+     A personal preference per table, like the other dt:* keys. */
+  const [wrapText, setWrapText] = useLocalStorage<boolean>(`dt:wrap:${idKey}`, false, undefined, (v) => v === true);
+  const wrapOn = wrapText && layoutFixed;
   // Pinned (frozen-left) column keys. Pinned columns render at the front
   // (after any alwaysVisible columns) and stick during horizontal scroll.
   const [pinned, setPinned] = useLocalStorage<string[]>(
@@ -866,19 +397,43 @@ function DataTableInner<T, L>({
      stays highlighted while a filter is set, and each column's popover Clear
      (or the page's reset control) drops its entry.
 
-     Three sources, by design (owner 2026-09-16, reconciling 2026-07-29 /
-     2026-08-19):
-     - default (`persistFilters` true): IN-VISIT memory (dataTableColFilterMemory).
-       A funnel survives drilling into a record and back, but a fresh page load /
-       new tab / F5 opens clean — it never reaches localStorage.
-     - `persistFilters={false}` (SKU Master, document line tables): per-mount
-       useState, clean on EVERY mount — a remembered funnel there hid a
-       just-renamed row.
-     There is no longer a localStorage-backed funnel path; the old dt:filters:*
-     keys are erased on mount below so a stale one cannot re-narrow a list. */
+     Three sources (dataTableColFilterMemory): default = IN-VISIT memory, a
+     funnel survives drilling into a record and back but a page load opens clean
+     (owner 2026-09-16); `false` = per mount, clean on EVERY mount (SKU Master, a
+     remembered funnel hid a just-renamed row); `"always"` = localStorage
+     `dt:funnels:`, the delivery boards reopen as narrowed as they were left
+     (owner 2026-10-05). The old dt:filters:* keys are erased on mount below. */
   const visitColFilters = useInVisitColFilters(idKey);
   const sessionColFilters = useState<Record<string, string[]>>({});
-  const [colFilters, setColFilters] = persistFilters ? visitColFilters : sessionColFilters;
+  const keptColFilters = useKeptColFilters(idKey, persistFilters === "always");
+  const [colFilters, setColFilters] =
+    persistFilters === "always" ? keptColFilters : persistFilters ? visitColFilters : sessionColFilters;
+  /* Column filters ride in the address (owner 2026-09-25), so a filtered list
+     can be sent as a link: one `cf.<tableId>` parameter holding the funnels.
+     Read once on mount, where a link beats the in-visit memory; rewritten with
+     replaceState on every change so Back is not filled with filter steps. Not
+     for per-mount tables (persistFilters false), whose funnels never persist. */
+  const urlFilterParam = tableId && persistFilters ? `cf.${tableId}` : null, inRouter = useInRouterContext();
+  const urlSeedRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!urlFilterParam || urlSeedRef.current !== undefined) return;
+    const seeded = parseUrlColFilters(new URLSearchParams(window.location.search).get(urlFilterParam));
+    urlSeedRef.current = seeded ? JSON.stringify(seeded) : null;
+    if (seeded) setColFilters(seeded);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per table; setColFilters is stable per mode
+  }, [urlFilterParam]);
+  useEffect(() => {
+    if (!urlFilterParam || urlSeedRef.current === undefined) return;
+    const next = serializeUrlColFilters(colFilters);
+    // The seed has not landed yet: writing now would drop the link's filters.
+    if (urlSeedRef.current !== null && next !== urlSeedRef.current) return;
+    urlSeedRef.current = null;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get(urlFilterParam) === next) return;
+    if (next) url.searchParams.set(urlFilterParam, next);
+    else url.searchParams.delete(urlFilterParam);
+    window.history.replaceState(window.history.state, "", url);
+  }, [colFilters, urlFilterParam]);
   /* Erase the pre-2026-09-16 localStorage funnel key (both modes now — funnels
      no longer persist to disk at all). Re-runs when idKey gains its `c<company>:`
      prefix after the company resolves, so both the scoped and legacy keys go. */
@@ -934,8 +489,10 @@ function DataTableInner<T, L>({
 
   // Sticky funnels count for the toolbar Reset — see ResetFiltersButton for why.
   const colFiltersActive = Object.values(colFilters).some((values) => values.length > 0);
+  const clientQueryActive = clientSearching && clientQuery.trim() !== "";
   function handleResetFilters() {
     if (colFiltersActive) setColFilters({});
+    if (clientQueryActive) setClientQuery("");
     resetFilters?.onReset();
   }
 
@@ -1005,6 +562,14 @@ function DataTableInner<T, L>({
     legacyStorageKey("groups"),
     sanitizeStringList,
   );
+  /* Columns the user dragged onto the group banner, outermost first. Part of
+     the saved layout (`groupBy`), unlike the code-set `groupBy` prop. */
+  const [userGroups, setUserGroups] = useLocalStorage<string[]>(
+    `dt:groupby:${idKey}`,
+    [],
+    legacyStorageKey("groupby"),
+    sanitizeStringList,
+  );
   const collapsedGroupSet = useMemo(
     () => new Set(collapsedGroups),
     [collapsedGroups]
@@ -1065,7 +630,7 @@ function DataTableInner<T, L>({
      page-declared list, `isDefault` and all. */
   const resolvedPresets = useMemo(() => {
     const declared = layoutPresets ?? [];
-    if (declared.length === 0 && layoutStore.companies.length === 0) return [];
+    if (declared.length === 0 && layoutStore.companies.length === 0 && !layoutSeeds?.length) return [];
     const seedByCode = new Map(
       declared
         .filter((p) => p.companyCode)
@@ -1085,12 +650,47 @@ function DataTableInner<T, L>({
       savedId?: number;
       /** Set only for a company-default row — renaming it goes to /default. */
       companyId?: number;
+      /** The server table a saved row lives under, when not this table's own
+       *  (a named layout saved while the page was still a DataGrid). */
+      tableKey?: string;
+      /** A code-shipped page seed; `overridden` = a manager's team-wide copy. */
+      seed?: boolean;
+      overridden?: boolean;
     }> = [];
+    const legacyTableKey = legacyGridKey ? dataGridTableKey(legacyGridKey) : null;
+    const sharedLayouts = layoutStore.sharedLayouts as Record<string, NamedLayout[] | undefined>;
+    /* Page seeds lead the picker (curated team-wide views). A layout manager's
+       company-shared override wins; one written while the page was a DataGrid is
+       read through the DataGrid rules until someone saves over it. */
+    for (const seed of layoutSeeds ?? []) {
+      const own = sharedLayouts[baseIdKey]?.find((l) => l.name === seed.id)?.layout;
+      const legacy = legacyTableKey
+        ? sharedLayouts[legacyTableKey]?.find((l) => l.name === seed.id)?.layout
+        : undefined;
+      const override = own ?? (legacy ? gridLayoutToTableLayout(legacy, rawColumns) : undefined);
+      out.push({
+        id: `seed:${seed.id}`,
+        label: seed.label,
+        layout: override ?? seed.layout,
+        isDefault: false,
+        fromServer: override != null,
+        seed: true,
+        overridden: override != null,
+      });
+    }
+    // Typed as possibly-missing: a company with no saved default has no entry.
+    type ByKey<V> = Record<string, Record<string, V | undefined> | undefined>;
+    const defaults = layoutStore.defaults as ByKey<StoredLayout>;
+    const names = layoutStore.defaultNames as ByKey<string>;
     for (const co of layoutStore.companies) {
-      const saved = layoutStore.defaults[String(co.id)]?.[baseIdKey];
+      const own = defaults[String(co.id)]?.[baseIdKey];
+      const legacy = legacyTableKey ? defaults[String(co.id)]?.[legacyTableKey] : undefined;
+      const saved = own ?? (legacy ? gridLayoutToTableLayout(legacy, rawColumns) : undefined);
       const seed = seedByCode.get(co.code.toUpperCase());
       if (!saved && !seed) continue;
-      const savedName = layoutStore.defaultNames[String(co.id)]?.[baseIdKey];
+      const savedName =
+        names[String(co.id)]?.[baseIdKey] ??
+        (legacyTableKey ? names[String(co.id)]?.[legacyTableKey] : undefined);
       out.push({
         id: `company:${co.id}`,
         // Named by an admin, or called after the company until one does.
@@ -1108,7 +708,8 @@ function DataTableInner<T, L>({
     }
     /* The user's OWN saved layouts (mig 0239) — offered after the company
        rows, and the only ones that can be renamed or deleted. */
-    for (const saved of layoutStore.myLayouts[baseIdKey] ?? []) {
+    const myLayouts = layoutStore.myLayouts as Record<string, NamedLayout[] | undefined>;
+    for (const saved of myLayouts[baseIdKey] ?? []) {
       out.push({
         id: `saved:${saved.id}`,
         label: saved.name,
@@ -1117,6 +718,18 @@ function DataTableInner<T, L>({
         isDefault: false,
         fromServer: true,
         savedId: saved.id,
+      });
+    }
+    for (const saved of legacyTableKey ? myLayouts[legacyTableKey] ?? [] : []) {
+      out.push({
+        id: `saved:${saved.id}`,
+        label: saved.name,
+        hint: "Saved by you",
+        layout: gridLayoutToTableLayout(saved.layout, rawColumns),
+        isDefault: false,
+        fromServer: true,
+        savedId: saved.id,
+        tableKey: legacyTableKey!,
       });
     }
     // Page presets that aren't about a company (and, when there is no company
@@ -1133,7 +746,7 @@ function DataTableInner<T, L>({
       });
     }
     return out;
-  }, [layoutPresets, layoutStore, baseIdKey]);
+  }, [layoutPresets, layoutSeeds, layoutStore, baseIdKey, legacyGridKey, rawColumns]);
 
   /* Turn a preset into the same shape a saved layout has, so ONE rule renders
      both: a column list means "show exactly these, in this order" — which for
@@ -1261,23 +874,31 @@ function DataTableInner<T, L>({
   // columns slot in directly after them (preserving each group's relative
   // order). Everything else follows. When nothing is pinned this is
   // identical to `visibleColumns`, so the default render is unchanged.
+  /* `overlayHidden` narrows what is DRAWN (the delivery boards while their map
+     is open) without touching the user's saved choice; the Columns drawer keeps
+     showing their real prefs. */
+  const onScreenColumns = useMemo(() => {
+    if (!overlayHidden?.length) return visibleColumns;
+    const off = new Set(overlayHidden);
+    return visibleColumns.filter((c) => c.alwaysVisible || !off.has(c.key));
+  }, [visibleColumns, overlayHidden]);
   const displayColumns = useMemo(() => {
-    if (pinnedSet.size === 0 && pinnedRightSet.size === 0) return visibleColumns;
-    const always = visibleColumns.filter((c) => c.alwaysVisible);
-    const pinnedCols = visibleColumns.filter(
+    if (pinnedSet.size === 0 && pinnedRightSet.size === 0) return onScreenColumns;
+    const always = onScreenColumns.filter((c) => c.alwaysVisible);
+    const pinnedCols = onScreenColumns.filter(
       (c) => !c.alwaysVisible && pinnedSet.has(c.key)
     );
-    const rightCols = visibleColumns.filter(
+    const rightCols = onScreenColumns.filter(
       (c) => !c.alwaysVisible && !pinnedSet.has(c.key) && pinnedRightSet.has(c.key)
     );
-    const rest = visibleColumns.filter(
+    const rest = onScreenColumns.filter(
       (c) =>
         !c.alwaysVisible && !pinnedSet.has(c.key) && !pinnedRightSet.has(c.key)
     );
     // Left run · the scrolling middle · right run. A column pinned to both
     // sides cannot exist — the cycle moves it, it never adds.
     return [...always, ...pinnedCols, ...rest, ...rightCols];
-  }, [visibleColumns, pinnedSet, pinnedRightSet]);
+  }, [onScreenColumns, pinnedSet, pinnedRightSet]);
 
   // Display index of the header being dragged — decides which side of the drop
   // target the insertion bar is drawn on. -1 when no drag is in flight.
@@ -1312,10 +933,12 @@ function DataTableInner<T, L>({
     (col: Column<T>): number => {
       const user = widths[col.key];
       if (typeof user === "number" && user > 0) return user;
+      const seen = measuredWidths?.[col.key];
+      if (typeof seen === "number" && seen > 0) return seen;
       const parsed = parsePxWidth(col.width);
       return parsed ?? DEFAULT_COL_WIDTH;
     },
-    [widths]
+    [widths, measuredWidths]
   );
 
   /* Total table width for the fixed-width layout (opt-in `fixedColumnWidths`):
@@ -1323,10 +946,10 @@ function DataTableInner<T, L>({
      width. Recomputes as a drag mutates `widths` (via resolveWidth), so the
      table grows live while a column is resized. undefined when the flag is off. */
   const fixedTableWidth = useMemo(() => {
-    if (!fixedColumnWidths) return undefined;
+    if (!layoutFixed) return undefined;
     const lead = (selection ? 36 : 0) + (expandable ? 32 : 0);
     return lead + displayColumns.reduce((acc, c) => acc + resolveWidth(c), 0);
-  }, [fixedColumnWidths, selection, expandable, displayColumns, resolveWidth]);
+  }, [layoutFixed, selection, expandable, displayColumns, resolveWidth]);
 
   /* How many TRAILING display columns are frozen to the right. Mirror image
      of stickyCount: a contiguous run, because a gap in it would let an
@@ -1409,13 +1032,16 @@ function DataTableInner<T, L>({
         isDefault: p.isDefault,
         savedId: p.savedId,
         companyId: p.companyId,
+        seed: p.seed,
+        overridden: p.overridden,
+        readOnly: p.seed ? !layoutStore.canManageLayouts : undefined,
         active:
           wouldShow.length === current.length &&
           wouldShow.every((k, i) => current[i] === k),
       };
     });
     return withSingleActive(rows);
-  }, [resolvedPresets, presetLayout, allColumns, visibleColumns]);
+  }, [resolvedPresets, presetLayout, allColumns, visibleColumns, layoutStore.canManageLayouts]);
 
   /* Visibility gestures live in dataTableColumnPrefs: under a default layout the
      two lists below are read PAST, so a gesture that edits only them can write
@@ -1427,6 +1053,7 @@ function DataTableInner<T, L>({
   }
 
   function toggleColumn(key: string) {
+    onUserAdjustColumns?.();
     const seen = { hidden: hiddenList, shown: shownList };
     writeColumnPrefs(toggleColumnPrefs(allColumns, effectiveHidden, key, seen, !!baselineLayout));
   }
@@ -1445,6 +1072,7 @@ function DataTableInner<T, L>({
      snap the table to the OTHER company's default — precisely the cross-company
      pick this feature exists to allow. */
   function applyPreset(id: string) {
+    onUserAdjustColumns?.();
     const preset = resolvedPresets.find((p) => p.id === id);
     if (!preset) return;
     const layout = presetLayout(preset);
@@ -1466,6 +1094,7 @@ function DataTableInner<T, L>({
     setPinned(keep(layout.pinned).filter((k) => !hiddenSet.has(k)));
     setPinnedRight(keep(layout.pinnedRight).filter((k) => !hiddenSet.has(k)));
     if (Object.keys(layout.widths).length > 0) updateWidths(layout.widths, true);
+    if (groupBanner) setUserGroups(keep(layout.groupBy));
   }
 
   /* ── Sync this table's layout to the account ──────────────────────────────
@@ -1482,11 +1111,9 @@ function DataTableInner<T, L>({
       widths: storedWidths,
       pinned,
       pinnedRight,
-      // DataTable has no grouping of its own; the field exists for the
-      // vendored DataGrid, which shares this store.
-      groupBy: [],
+      groupBy: userGroups,
     }),
-    [order, hiddenList, shownList, storedWidths, pinned, pinnedRight],
+    [order, hiddenList, shownList, storedWidths, pinned, pinnedRight, userGroups],
   );
   const myLayoutSignature = serializeLayout(myLayout);
   const syncedRef = useRef<{ key: string; signature: string } | null>(null);
@@ -1498,6 +1125,43 @@ function DataTableInner<T, L>({
     if (previous.signature === myLayoutSignature) return;
     saveMyLayout(baseIdKey, myLayout);
   }, [baseIdKey, myLayoutSignature, myLayout]);
+
+  /* A page that moved off the SCM DataGrid opens with the layout its user left
+     there, once per table key. Boot hydration writes the account's DataGrid
+     layout into the grid's own local blob, so reading that blob covers both
+     browsers and accounts; the state change then syncs it under THIS key. */
+  useEffect(() => {
+    if (!legacyGridKey) return;
+    const marker = `dt:legacy:${idKey}`;
+    try {
+      if (localStorage.getItem(marker)) return;
+    } catch {
+      return;
+    }
+    const mark = () => {
+      try {
+        localStorage.setItem(marker, "1");
+      } catch {
+        // storage unavailable: the import simply re-checks next mount
+      }
+    };
+    const own =
+      order.length + hiddenList.length + shownList.length + pinned.length + pinnedRight.length +
+      userGroups.length + Object.keys(storedWidths).length;
+    if (own > 0) return mark();
+    const grid = readLegacyGridLayout(dataGridIdKey(legacyGridKey, activeCompany));
+    if (!grid) return;
+    const layout = gridLayoutToTableLayout(grid, rawColumns);
+    setOrder(layout.order);
+    setHiddenList(layout.hidden);
+    setShownList(layout.shown);
+    setPinned(layout.pinned);
+    if (Object.keys(layout.widths).length > 0) updateWidths(layout.widths, true);
+    if (groupBanner) setUserGroups(layout.groupBy);
+    if (grid.sort && persistSort && rawColumns.some((c) => c.key === grid.sort!.key)) setSort(grid.sort);
+    mark();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per table key; state read is the mount snapshot
+  }, [idKey, legacyGridKey]);
 
   /* Admin-only: publish the arrangement on screen as this company's default
      view — the thing that used to be a code constant and a deploy. Reaches
@@ -1536,9 +1200,9 @@ function DataTableInner<T, L>({
       widths: storedWidths,
       pinned,
       pinnedRight,
-      groupBy: [],
+      groupBy: userGroups,
     };
-  }, [allColumns, effectiveHidden, storedWidths, pinned, pinnedRight]);
+  }, [allColumns, effectiveHidden, storedWidths, pinned, pinnedRight, userGroups]);
 
   const defaultManager = useMemo(() => {
     if (!layoutStore.ready || !layoutStore.canManageDefaults) return undefined;
@@ -1583,7 +1247,7 @@ function DataTableInner<T, L>({
         .filter((c) => !c.alwaysVisible)
         .map((c) => ({
           key: c.key,
-          label: c.label || c.key,
+          label: headerLabel(c.label || c.key),
           /* Explicit beats inferred: a page that sorted its columns by hand
              (Sales Orders) keeps that sort; every other list gets the shared
              classifier rather than one flat scroll. */
@@ -1600,11 +1264,13 @@ function DataTableInner<T, L>({
   );
 
   function showAllColumns() {
+    onUserAdjustColumns?.();
     writeColumnPrefs(showAllColumnPrefs(allColumns, effectiveHidden, Boolean(baselineLayout)));
   }
 
   /** Back to the active layout: its columns, its order, its widths. */
   function resetLayout() {
+    onUserAdjustColumns?.();
     resetVisibility();
     resetOrder();
     /* Sort is persisted per table in `dt:sort:<id>` and replayed on every mount,
@@ -1619,6 +1285,7 @@ function DataTableInner<T, L>({
        with [] deps. */
     setSort(null);
     reportServerSort(null);
+    setWrapText(false);
   }
 
   /** True when the columns on screen match no offered layout — the "· edited"
@@ -1653,7 +1320,7 @@ function DataTableInner<T, L>({
   const renameLayout = useCallback(
     (id: string, name: string) => {
       const target = resolvedPresets.find((p) => p.id === id);
-      if (target?.savedId != null) return renameNamedLayout(baseIdKey, target.savedId, name);
+      if (target?.savedId != null) return renameNamedLayout(target.tableKey ?? baseIdKey, target.savedId, name);
       if (target?.companyId != null) return renameCompanyDefault(baseIdKey, name);
       return Promise.resolve();
     },
@@ -1663,8 +1330,14 @@ function DataTableInner<T, L>({
      handler, two destinations again: a saved layout is replaced by id, the
      COMPANY row goes through the same publish path the footer button uses. */
   const updateLayout = useCallback(
-    (id: string) => {
+    async (id: string) => {
+      if (id.startsWith("seed:")) return saveSharedLayout(baseIdKey, id.slice("seed:".length), renderedLayout);
       const target = resolvedPresets.find((p) => p.id === id);
+      if (target?.savedId != null && target.tableKey) {
+        // A DataGrid-era layout moves to this table on its first edit.
+        await createNamedLayout(baseIdKey, target.label, renderedLayout);
+        return deleteNamedLayout(target.tableKey, target.savedId);
+      }
       if (target?.savedId != null) {
         return updateNamedLayout(baseIdKey, target.savedId, renderedLayout);
       }
@@ -1675,8 +1348,21 @@ function DataTableInner<T, L>({
   );
 
   const deleteSavedLayout = useCallback(
-    (savedId: number) => deleteNamedLayout(baseIdKey, savedId),
-    [baseIdKey]
+    (savedId: number) =>
+      deleteNamedLayout(resolvedPresets.find((p) => p.savedId === savedId)?.tableKey ?? baseIdKey, savedId),
+    [baseIdKey, resolvedPresets]
+  );
+  /** Drop a seed's team-wide override (and a DataGrid-era one), back to the code seed. */
+  const resetSeedLayout = useCallback(
+    async (id: string) => {
+      if (!id.startsWith("seed:")) return;
+      const name = id.slice("seed:".length);
+      const shared = layoutStore.sharedLayouts as Record<string, NamedLayout[] | undefined>;
+      if (shared[baseIdKey]?.some((l) => l.name === name)) await deleteSharedLayout(baseIdKey, name);
+      const legacyKey = legacyGridKey ? dataGridTableKey(legacyGridKey) : null;
+      if (legacyKey && shared[legacyKey]?.some((l) => l.name === name)) await deleteSharedLayout(legacyKey, name);
+    },
+    [baseIdKey, legacyGridKey, layoutStore.sharedLayouts]
   );
 
   /** Download the arrangement as JSON — the drawer's "Export column config".
@@ -1773,10 +1459,23 @@ function DataTableInner<T, L>({
     window.addEventListener("blur", onBlur);
   }
 
-  // Auto-fit = clear the stored width so the column falls back to its
-  // natural / default size. (We don't measure the DOM; clearing is the
-  // predictable, persistence-friendly behaviour.)
+  /* Auto-fit (double-click the edge, or the header menu): the widest of the
+     header and the cells drawn now, measured on one line. With nothing drawn
+     to measure, fall back to the column's natural size. */
   function autoFitColumn(key: string) {
+    const cells = scrollWrapRef.current?.querySelectorAll<HTMLElement>(`[data-col-key="${CSS.escape(key)}"]`);
+    let widest = 0;
+    cells?.forEach((cell) => {
+      const was = cell.style.whiteSpace;
+      cell.style.whiteSpace = "nowrap";
+      widest = Math.max(widest, cell.scrollWidth);
+      cell.style.whiteSpace = was;
+    });
+    if (widest > 0) {
+      const fit = Math.min(800, Math.max(MIN_COL_WIDTH, Math.ceil(widest) + 8));
+      updateWidths((prev) => ({ ...prev, [key]: fit }), true);
+      return;
+    }
     updateWidths((prev) => {
       if (!(key in prev)) return prev;
       const next = { ...prev };
@@ -1804,6 +1503,9 @@ function DataTableInner<T, L>({
       setPinnedRight((prev) => prev.filter((k) => k !== key));
     }
   }
+
+  // Owner 2026-09-27: freeze the first N columns in one step (see DataTableFreezeItems).
+  const freezeUpTo = (key: string) => { const keys = keysThrough(displayColumns, key); setPinned(keys); setPinnedRight((p) => p.filter((k) => !keys.includes(k))); };
 
   // ── Column reorder ─────────────────────────────────────────
   // Shared by the Columns drawer and by dragging a header directly. Moves
@@ -1858,6 +1560,37 @@ function DataTableInner<T, L>({
     setDropCol(null);
   }
 
+  /* Ctrl+C (owner 2026-09-25): the ticked rows, or the row in focus, as cells
+     Excel pastes. A text selection is the browser's own copy and is left alone,
+     as is any key pressed inside a field. */
+  const [copiedNote, setCopiedNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (!copiedNote) return;
+    const t = setTimeout(() => setCopiedNote(null), 2500);
+    return () => clearTimeout(t);
+  }, [copiedNote]);
+  function handleCopyKey(e: React.KeyboardEvent) {
+    if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "c") return;
+    const target = e.target as HTMLElement;
+    if (target.closest("textarea, select, [contenteditable='true']")) return;
+    if (target instanceof HTMLInputElement && target.type !== "checkbox") return;
+    if ((window.getSelection()?.toString() ?? "") !== "") return;
+    if (!sortedRows?.length) return;
+    let picked: T[] = actionRows?.picked ? actionRows.rows : [];
+    if (picked.length === 0) {
+      const key = target.closest<HTMLElement>("tr[data-rowkey]")?.dataset.rowkey;
+      const row = key == null ? undefined : sortedRows.find((r) => String(getRowKey(r)) === key);
+      if (row) picked = [row];
+    }
+    if (picked.length === 0 || !navigator.clipboard) return;
+    e.preventDefault();
+    const n = picked.length;
+    navigator.clipboard.writeText(rowsToTsv(picked, visibleColumns)).then(
+      () => setCopiedNote(`Copied ${n} row${n === 1 ? "" : "s"}`),
+      () => setCopiedNote("The browser blocked the copy"),
+    );
+  }
+
   const [exporting, setExporting] = useState(false);
   async function handleLineExport(spec: DataTableLineExport<T, L>) {
     if (exporting) return;
@@ -1866,7 +1599,7 @@ function DataTableInner<T, L>({
       const cols = exportableColumns(visibleColumns as Column<T, L>[]);
       const filterKeys = Object.entries(colFilters).filter(([, v]) => v.length > 0).map(([k]) => k);
       const fetched = await spec.fetchRows({ exportKeys: cols.map((c) => c.key), filterKeys });
-      const kept = sortTableRows(applyColumnFilters(fetched, colFilters, allColumns), sort, allColumns, Boolean(serverSort));
+      const kept = tickedOrAll(sortTableRows(applyColumnFilters(fetched, colFilters, allColumns), sort, allColumns, Boolean(serverSort), defaultSort ?? null), selection?.selectedIds, getRowKey).rows;
       const matrix = buildLineExportMatrix(kept, spec.linesOf, cols);
       const date = new Date().toISOString().slice(0, 10);
       await writeLineExportFile(matrix, spec.sheetName, `${exportName || tableId || "export"}-${date}.xlsx`);
@@ -1886,13 +1619,19 @@ function DataTableInner<T, L>({
       .filter((c) => typeof c.getValue === "function" || typeof c.exportValue === "function")
       .map((c) => ({
         key: c.key,
-        label: c.label || c.key,
+        label: c.exportLabel || c.label || c.key,
         getValue: (r: T) => (c.exportValue ? c.exportValue(r) : isoForExport(c.getValue!(r) as string | number | null)),
       }));
     if (onExport) { onExport(csvCols); return; }
-    if (!sortedRows || sortedRows.length === 0 || csvCols.length === 0) return;
-    const date = new Date().toISOString().slice(0, 10);
-    downloadCSV(`${exportName || tableId || "export"}-${date}.csv`, toCSV(sortedRows, csvCols));
+    if (!actionRows || actionRows.rows.length === 0 || csvCols.length === 0) return;
+    const date = new Date().toISOString().slice(0, 10), outRows = actionRows.rows;
+    if (exportXlsx) {
+      // No lines: one sheet row per list row, keeping each column's exportFormat.
+      const matrix = buildLineExportMatrix(outRows, () => [], exportableColumns(visibleColumns as Column<T, L>[]));
+      void writeLineExportFile(matrix, "Sheet1", `${exportName || tableId || "export"}-${date}.xlsx`);
+      return;
+    }
+    downloadCSV(`${exportName || tableId || "export"}-${date}.csv`, toCSV(outRows, csvCols));
   }
 
   function handleImportClick() {
@@ -1920,7 +1659,7 @@ function DataTableInner<T, L>({
   // out entirely; on server tables it only demotes the column to the
   // client-side fallback (see above).
   const canSortColumn = useCallback(
-    (col: Column<T>) => !!col.getValue && (!col.disableSort || !!serverSort),
+    (col: Column<T>) => !!col.sortCompare || (!!col.getValue && (!col.disableSort || !!serverSort)),
     [serverSort]
   );
 
@@ -1930,7 +1669,7 @@ function DataTableInner<T, L>({
     (s: SortState | null): SortState | null => {
       if (!s) return null;
       const col = allColumns.find((c) => c.key === s.key);
-      return col?.getValue && !col.disableSort ? s : null;
+      return col?.getValue && !col.disableSort && !col.sortCompare ? s : null;
     },
     [allColumns]
   );
@@ -2051,15 +1790,53 @@ function DataTableInner<T, L>({
   // Per-column filters apply first (client-side, loaded rows only), then
   // sort — the SAME functions the line export runs over every fetched row
   // (dataTableRows.ts).
-  const filteredRows = useMemo(
-    () => (rows ? applyColumnFilters(rows, colFilters, allColumns) : rows),
-    [rows, colFilters, allColumns],
+  const searchBlobs = useMemo(
+    () => (clientSearching && rows ? new Map(rows.map((r) => [r, buildSearchBlob(r, allColumns)])) : null),
+    [clientSearching, rows, allColumns],
   );
+  const filteredRows = useMemo(() => {
+    if (!rows) return rows;
+    const q = clientQuery.trim().toLowerCase();
+    const searched = searchBlobs && q ? rows.filter((r) => (searchBlobs.get(r) ?? "").includes(q)) : rows;
+    return applyColumnFilters(searched, colFilters, allColumns);
+  }, [rows, colFilters, allColumns, searchBlobs, clientQuery]);
 
   const sortedRows = useMemo(
-    () => (filteredRows ? sortTableRows(filteredRows, sort, allColumns, Boolean(serverSort)) : filteredRows),
-    [filteredRows, sort, allColumns, serverSort],
+    () => (filteredRows ? sortTableRows(filteredRows, sort, allColumns, Boolean(serverSort), defaultSort ?? null) : filteredRows),
+    [filteredRows, sort, allColumns, serverSort, defaultSort],
   );
+
+  /* "Load more" (owner 2026-09-26): render only the first `rowLimit` of the
+     sorted set, revealing another `initialRowLimit` per click. `null` = show all
+     (the default and what "Load more" builds up to). Search / filters / sort and
+     the reported count below still run over the WHOLE set — only the render is
+     capped. State, so it resets to the first page each time the table remounts. */
+  const [rowLimit, setRowLimit] = useState<number | null>(initialRowLimit ?? null);
+  const limitedRows = useMemo(
+    () => (sortedRows && rowLimit != null && sortedRows.length > rowLimit ? sortedRows.slice(0, rowLimit) : sortedRows),
+    [sortedRows, rowLimit],
+  );
+  const hiddenByLimit = (sortedRows?.length ?? 0) - (limitedRows?.length ?? 0);
+  // Ticked rows while any are, else all shown: the footer, Export and Ctrl+C share it.
+  const actionRows = useMemo(() => (sortedRows ? tickedOrAll(sortedRows, selection?.selectedIds, getRowKey) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- getRowKey is an inline prop; keys are stable per row
+    [sortedRows, selection?.selectedIds]);
+  const footerTotals = actionRows?.rows.length && displayColumns.some((c) => c.total) ? actionRows : null;
+  const loadMore = () => setRowLimit((n) => (n ?? 0) + (initialRowLimit ?? 200));
+
+  /* Drag-to-reorder + edge auto-scroll (owner 2026-09): rows drag only while no column sort; a drop reports the whole new order, persisted by the caller via `defaultSort`. */
+  const rowReorderable = !!onRowReorder && sort == null;
+  const [dragKey, setDragKey] = useState<string | null>(null);
+  const [dropKey, setDropKey] = useState<string | null>(null);
+  const dragScroll = useDragAutoScroll(() => scrollWrapRef.current);
+  const onRowDrop = (toKey: string) => {
+    dragScroll.stop();
+    if (dragKey && dragKey !== toKey && sortedRows) {
+      onRowReorder?.(reorderKeys(sortedRows.map((r) => String(getRowKey(r))), dragKey, toKey));
+    }
+    setDragKey(null);
+    setDropKey(null);
+  };
 
   /* Report what the operator can actually see (owner 2026-08-12) — see the
      onFilteredRowsChange prop doc. In an effect, not during render, so a parent
@@ -2087,7 +1864,26 @@ function DataTableInner<T, L>({
   // `displayColumns.length`, so non-expandable callers are unchanged.
   const expandColCount = expandable ? 1 : 0;
   const selectColCount = selection ? 1 : 0;
-  const totalColSpan = displayColumns.length + expandColCount + selectColCount;
+  /* In the fixed layout a blank last column takes the slack, so a column made
+     narrower gives its space to the blank instead of to its neighbours. It
+     sits before any right-frozen run, which stays at the right edge. */
+  const fillerCount = layoutFixed ? 1 : 0;
+  const fillerAt = displayColumns.length - stickyRightCount;
+  const totalColSpan = displayColumns.length + expandColCount + selectColCount + fillerCount;
+  useLayoutEffect(() => {
+    if (layoutFixed || !showTable || effectiveLoading || !sortedRows?.length) return;
+    const heads = scrollWrapRef.current?.querySelectorAll<HTMLElement>("thead th[data-col-key]");
+    if (!heads?.length) return;
+    const next: Record<string, number> = {};
+    for (const th of heads) {
+      const w = th.getBoundingClientRect().width;
+      // Not laid out (a hidden tab): measure on a later paint instead.
+      if (w <= 0) return;
+      next[th.dataset.colKey!] = Math.max(MIN_COL_WIDTH, Math.round(w));
+    }
+    setMeasured({ idKey, widths: next });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- scrollWrapRef is a ref
+  }, [layoutFixed, showTable, effectiveLoading, sortedRows, idKey]);
 
   // ── Group-by (opt-in) ──────────────────────────────────────
   // Flatten the sorted rows into a list of render instructions — a group
@@ -2096,58 +1892,67 @@ function DataTableInner<T, L>({
   // `{ kind: "row" }` stream so the tbody map below is identical to the old
   // flat render. Grouping needs a `getValue` on the target column for a
   // stable bucket key; if that's missing we silently fall back to flat.
+  const headerText = (c: Column<T>) => c.label || c.key;
   type RenderItem =
-    | { kind: "group"; value: string; label: string; count: number; collapsed: boolean }
+    | { kind: "group"; path: string; level: number; label: string; count: number; collapsed: boolean }
     | { kind: "row"; row: T; rowIdx: number };
-  const groupCol = useMemo(
-    () =>
-      groupBy ? allColumns.find((c) => c.key === groupBy.key) ?? null : null,
-    [groupBy, allColumns]
-  );
-  const renderList = useMemo<RenderItem[]>(() => {
-    if (!sortedRows) return [];
-    if (!groupBy || !groupCol || !groupCol.getValue) {
-      return sortedRows.map((row, rowIdx) => ({ kind: "row", row, rowIdx }));
+  /* Banner groups (user-dragged, any depth) win over the code-set single
+     `groupBy`. A column without `getValue` has no stable bucket and is skipped. */
+  const groupLevels = useMemo(() => {
+    const byKey = new Map(allColumns.map((c) => [c.key, c]));
+    if (groupBanner && userGroups.length > 0) {
+      return userGroups
+        .map((k) => byKey.get(k))
+        .filter((c): c is Column<T> => !!c?.getValue)
+        .map((c) => ({ col: c, label: (v: string) => `${headerText(c)}: ${v || "(blank)"}` }));
     }
-    const getter = groupCol.getValue;
-    // Preserve first-seen group order (sortedRows already reflects any active
-    // sort), bucketing rows by their stringified group value.
-    const order: string[] = [];
-    const buckets = new Map<string, T[]>();
-    for (const row of sortedRows) {
-      const raw = getter(row);
-      const val = raw == null || raw === "" ? "" : String(raw);
-      if (!buckets.has(val)) {
-        buckets.set(val, []);
-        order.push(val);
-      }
-      buckets.get(val)!.push(row);
+    const code = groupBy ? byKey.get(groupBy.key) : undefined;
+    if (!groupBy || !code?.getValue) return [];
+    const fmt = groupBy.label;
+    return [{ col: code, label: (v: string) => (fmt ? fmt(v) : v || "(blank)") }];
+  }, [allColumns, groupBanner, userGroups, groupBy]);
+  const renderList = useMemo<RenderItem[]>(() => {
+    if (!limitedRows) return [];
+    if (groupLevels.length === 0) {
+      return limitedRows.map((row, rowIdx) => ({ kind: "row", row, rowIdx }));
     }
     const out: RenderItem[] = [];
     let rowIdx = 0;
-    for (const val of order) {
-      const bucket = buckets.get(val)!;
-      const collapsed = collapsedGroupSet.has(val);
-      out.push({
-        kind: "group",
-        value: val,
-        label: groupBy.label ? groupBy.label(val) : val || "(blank)",
-        count: bucket.length,
-        collapsed,
-      });
-      if (!collapsed) {
-        for (const row of bucket) {
-          out.push({ kind: "row", row, rowIdx });
-          rowIdx++;
+    // First-seen bucket order at every level, so an active sort still reads
+    // top to bottom. The level-0 path is the bare value: collapse state saved
+    // before nesting existed keeps working.
+    const walk = (rowsIn: T[], level: number, parentPath: string) => {
+      const { col, label } = groupLevels[level];
+      const order: string[] = [];
+      const buckets = new Map<string, T[]>();
+      for (const row of rowsIn) {
+        const raw = col.getValue!(row);
+        const val = raw == null || raw === "" ? "" : String(raw);
+        if (!buckets.has(val)) {
+          buckets.set(val, []);
+          order.push(val);
         }
-      } else {
-        // Keep the zebra index advancing past collapsed rows so re-expanding
-        // doesn't shift the stripe pattern of later rows.
-        rowIdx += bucket.length;
+        buckets.get(val)!.push(row);
       }
-    }
+      for (const val of order) {
+        const bucket = buckets.get(val)!;
+        const path = level === 0 ? val : `${parentPath}${val}`;
+        const collapsed = collapsedGroupSet.has(path);
+        out.push({ kind: "group", path, level, label: label(val), count: bucket.length, collapsed });
+        if (collapsed) {
+          // Keep the zebra index advancing past collapsed rows so re-expanding
+          // doesn't shift the stripe pattern of later rows.
+          rowIdx += bucket.length;
+        } else if (level + 1 < groupLevels.length) {
+          walk(bucket, level + 1, path);
+        } else {
+          for (const row of bucket) out.push({ kind: "row", row, rowIdx: rowIdx++ });
+        }
+      }
+    };
+    walk(limitedRows, 0, "");
     return out;
-  }, [sortedRows, groupBy, groupCol, collapsedGroupSet]);
+  }, [limitedRows, groupLevels, collapsedGroupSet]);
 
   // Density-aware cell padding. Tightened on 2026-05-08 — every row
   // is one line of data, full stop. Old comfy (py-3.5) and old
@@ -2155,8 +1960,8 @@ function DataTableInner<T, L>({
   // collapse to a single 13px line + minimal cushion on each side.
   // Headers stay one notch taller so the column boundary still reads.
   // Permanently comfy (density toggle removed 2026-06).
-  const cellPad = "px-3 py-1.5 leading-tight";
-  const headPad = "px-3 py-2 leading-tight";
+  const cellPad = embedded ? "px-2 py-1 leading-tight" : "px-3 py-1.5 leading-tight";
+  const headPad = embedded ? "px-2 py-1.5 leading-tight" : "px-3 py-2 leading-tight";
 
   // Common toolbar button class — used by Import / Export / Density / Columns.
   // 44 px on mobile (touch-target floor), compresses to 32 px on sm+ where
@@ -2170,9 +1975,15 @@ function DataTableInner<T, L>({
   // ── Row selection (opt-in `selection`) ─────────────────────────────────────
   // Select-all operates over the currently-rendered rows (post filter + sort).
   const selectableKeys = useMemo(
-    () => (selection && sortedRows ? sortedRows.map((r) => String(getRowKey(r))) : []),
+    () =>
+      selection && sortedRows
+        ? sortedRows
+            .map((r) => String(getRowKey(r)))
+            .filter((k) => !selection.isDisabled?.(k))
+        : [],
     [selection, sortedRows, getRowKey]
   );
+  const rowClickTicks = !!selection?.toggleOnRowClick;
   const allRowsSelected =
     !!selection &&
     selectableKeys.length > 0 &&
@@ -2206,7 +2017,7 @@ function DataTableInner<T, L>({
   // risky state is simply never the windowed one. Collapsing the last row
   // returns it to the windowed path.
   const canVirtualize =
-    showTable && !effectiveLoading && !error && !groupBy &&
+    showTable && !effectiveLoading && !error && groupLevels.length === 0 &&
     (!expandable || expandedRowsEffective.size === 0) &&
     renderList.length > VIRTUAL_ROW_THRESHOLD;
   const tbodyRef = useRef<HTMLTableSectionElement>(null);
@@ -2215,6 +2026,35 @@ function DataTableInner<T, L>({
     start: 0,
     end: VIRTUAL_ROW_THRESHOLD * 2,
   });
+
+  /* Scroll-to-row (map pin -> board row, DataGrid parity). The nonce is the
+     trigger, so the same pin clicked twice scrolls again. A windowed row may not
+     be in the DOM yet: jump to its estimated offset first, then settle on it. */
+  const [highlightKey, setHighlightKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (!scrollToRow) return;
+    const key = scrollToRow.key;
+    setHighlightKey(key);
+    const idx = renderList.findIndex((it) => it.kind === "row" && String(getRowKey(it.row)) === key);
+    if (idx < 0) return;
+    const find = () => tbodyRef.current?.querySelector<HTMLElement>(`tr[data-rowkey="${CSS.escape(key)}"]`);
+    const settle = () => find()?.scrollIntoView({ block: "center" });
+    if (find()) return settle();
+    const offset = idx * (rowHeightRef.current || ROW_HEIGHT_ESTIMATE);
+    const wrap = scrollWrapRef.current;
+    // A programmatic scroll does not always emit `scroll` (a background tab never
+    // does), and the row window only moves on that event: send it ourselves.
+    if (wrap && wrap.scrollHeight > wrap.clientHeight) {
+      wrap.scrollTop = offset;
+      wrap.dispatchEvent(new Event("scroll"));
+    } else if (tbodyRef.current) {
+      window.scrollTo({ top: window.scrollY + tbodyRef.current.getBoundingClientRect().top + offset - window.innerHeight / 2 });
+      window.dispatchEvent(new Event("scroll"));
+    }
+    const raf = requestAnimationFrame(() => requestAnimationFrame(settle));
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires per nonce, not per render
+  }, [scrollToRow?.nonce]);
   useEffect(() => {
     if (!canVirtualize) return;
     let raf = 0;
@@ -2222,8 +2062,12 @@ function DataTableInner<T, L>({
       raf = 0;
       const el = tbodyRef.current;
       if (!el) return;
-      const firstRow = el.querySelector<HTMLElement>("tr[data-vrow]");
-      if (firstRow && firstRow.offsetHeight > 0) rowHeightRef.current = firstRow.offsetHeight;
+      /* The average of the rows drawn, not the first one: with text wrapped the
+         rows are no longer one height. */
+      const drawn = el.querySelectorAll<HTMLElement>("tr[data-vrow]");
+      let sum = 0;
+      drawn.forEach((tr) => { sum += tr.offsetHeight; });
+      if (drawn.length > 0 && sum > 0) rowHeightRef.current = sum / drawn.length;
       const rh = rowHeightRef.current || ROW_HEIGHT_ESTIMATE;
       const top = el.getBoundingClientRect().top; // tbody top relative to viewport
       const vh = window.innerHeight;
@@ -2260,8 +2104,9 @@ function DataTableInner<T, L>({
 
   return (
     <div ref={freezeRootRef}>
-      {/* ── Toolbar (always rendered) ──────────────────────── */}
-      <div className="mb-2.5 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+      {urlFilterParam && inRouter && <UrlFilterResync param={urlFilterParam} value={serializeUrlColFilters(colFilters)} />}
+      {/* ── Toolbar (always rendered; an embedded grid has none) ── */}
+      <div className={cn("mb-2.5 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between", embedded && "hidden")}>
         <div className="flex flex-1 flex-wrap items-center gap-2 sm:gap-3">
           {search && (
             <div className="w-full sm:w-72 sm:max-w-full">
@@ -2271,6 +2116,7 @@ function DataTableInner<T, L>({
                   className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted"
                 />
                 <DebouncedSearchInput
+                  inputRef={searchInputRef}
                   value={search.value}
                   onChange={search.onChange}
                   placeholder={search.placeholder || "Search…"}
@@ -2303,7 +2149,7 @@ function DataTableInner<T, L>({
             </div>
           )}
           <ResetFiltersButton
-            active={colFiltersActive || (resetFilters?.active ?? false)}
+            active={colFiltersActive || clientQueryActive || (resetFilters?.active ?? false)}
             onReset={handleResetFilters}
             label={resetFilters?.label}
           />
@@ -2325,6 +2171,7 @@ function DataTableInner<T, L>({
                 <span className="mx-2 text-ink-muted">·</span>
                 <span className="font-mono text-ink">{visibleColumns.length}</span>
                 <span className="ml-1 text-ink-muted">of {allColumns.length} cols</span>
+                {copiedNote && <span role="status" className="ml-2 text-primary">{copiedNote}</span>}
               </span>
             ) : (
               <span className="text-ink-muted">Loading…</span>
@@ -2353,7 +2200,7 @@ function DataTableInner<T, L>({
             className={toolbarBtn}
           >
             <Download size={13} />
-            {exporting ? "Exporting…" : exportLabel}
+            {exporting ? "Exporting…" : actionRows?.picked && !onExport ? `${exportLabel} (${actionRows.rows.length})` : exportLabel}
           </button>
           {toolbarExtra}
           {/* Density toggle removed 2026-06 — layout is permanently comfy. */}
@@ -2382,6 +2229,16 @@ function DataTableInner<T, L>({
               <LayoutList size={13} />
             )}
             {mobileView === "cards" ? "Table" : "Cards"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setWrapText(!wrapText)}
+            aria-pressed={wrapText}
+            title={wrapText ? "Show each row on one line" : "Wrap long text onto more lines"}
+            className={cn(toolbarBtn, "hidden sm:inline-flex", wrapText && "border-primary/40 bg-primary-soft text-primary")}
+          >
+            <WrapText size={13} />
+            Wrap
           </button>
           <ColumnsButton
             visibleCount={visibleCount}
@@ -2414,6 +2271,7 @@ function DataTableInner<T, L>({
         onRenameLayout={layoutStore.canManageLayouts ? renameLayout : undefined}
         onDeleteLayout={layoutStore.canManageLayouts ? deleteSavedLayout : undefined}
         onUpdateLayout={layoutStore.canManageLayouts ? updateLayout : undefined}
+        onResetLayout={layoutStore.canManageLayouts ? resetSeedLayout : undefined}
         defaultManager={defaultManager}
         dirty={layoutDirty}
         onExport={exportColumnConfig}
@@ -2426,6 +2284,22 @@ function DataTableInner<T, L>({
             outer wrapper drops `overflow-hidden` when forced on mobile
             so the rounded corners don't clip the horizontal scroll
             shadow at the right edge. */}
+      {showTable && groupBanner && !embedded && (
+        <DataTableGroupBanner
+          groups={userGroups}
+          labelOf={(k) => {
+            const c = allColumns.find((x) => x.key === k);
+            return c ? headerLabel(headerText(c)) : k;
+          }}
+          dragKey={dragCol}
+          canGroup={(k) => !!allColumns.find((x) => x.key === k)?.getValue}
+          onAdd={(k) => {
+            setUserGroups((prev) => (prev.includes(k) ? prev : [...prev, k]));
+            endHeaderDrag();
+          }}
+          onRemove={(k) => setUserGroups((prev) => prev.filter((x) => x !== k))}
+        />
+      )}
       {showTable && (
         <div
           className="rounded-lg border border-border bg-surface shadow-stone sm:block sm:overflow-hidden"
@@ -2433,19 +2307,24 @@ function DataTableInner<T, L>({
         >
           <div
             ref={scrollWrapRef}
+            onKeyDown={handleCopyKey}
             className="thin-scroll overflow-x-auto overflow-y-auto"
             style={freezeScrollStyle}
           >
           <table
-            className={cn(
-              "border-separate border-spacing-0 text-sm",
-              // Fixed layout sizes the table to the sum of its columns (below);
-              // otherwise fill the container and let the auto layout distribute.
-              !fixedColumnWidths && "w-full",
-            )}
-            style={fixedColumnWidths ? { tableLayout: "fixed", width: fixedTableWidth } : undefined}
+            className="w-full border-separate border-spacing-0 text-sm"
+            // Fixed: every column holds its width; the table is at least their
+            // sum (it scrolls) and at least the container (the filler takes it).
+            style={layoutFixed ? { tableLayout: "fixed", minWidth: fixedTableWidth } : undefined}
           >
-            <thead className="sticky top-0 z-10">
+            {/* z-30, ABOVE the body sticky cells (z-20): the thead's own z-index
+                opens a stacking context, so a frozen header <th>'s inline z-30 is
+                scoped to it and cannot out-stack a body sticky cell at the ROOT
+                level. At z-10 the frozen-left/right BODY cells (z-20) painted OVER
+                the frozen header on scroll-down — the header's own corner showed
+                a data row where its heading should be. Lifting the whole thead
+                above z-20 keeps the frozen header on top on both axes. */}
+            <thead className="sticky top-0 z-30">
               <tr>
                 {selection && (
                   <th
@@ -2499,7 +2378,7 @@ function DataTableInner<T, L>({
                   // actually holds the size instead of the browser
                   // redistributing free space.
                   const cellStyle: React.CSSProperties = {};
-                  if (fixedColumnWidths) {
+                  if (layoutFixed) {
                     // Fixed layout: pin every column to its resolved width so the
                     // table-layout:fixed grid honours it exactly (widths come from
                     // this header row) and a resize grows ONLY this column, never
@@ -2525,9 +2404,11 @@ function DataTableInner<T, L>({
                   if (isSticky) {
                     cellStyle.position = "sticky";
                     cellStyle.left = stickyLeft[i];
-                    // Above body sticky cells (z-20) and the sticky header
-                    // baseline (the thead is z-10); 30 keeps frozen headers
-                    // on top of everything during a two-axis scroll.
+                    // Above the scrollable header cells WITHIN the thead's own
+                    // stacking context (thead is z-30), so a frozen corner header
+                    // stays on top of the scrolling header during a two-axis
+                    // scroll. The thead being z-30 (> body sticky z-20) is what
+                    // keeps the whole header above the body — see the thead above.
                     cellStyle.zIndex = 30;
                   } else if (isStickyRight) {
                     cellStyle.position = "sticky";
@@ -2535,8 +2416,10 @@ function DataTableInner<T, L>({
                     cellStyle.zIndex = 30;
                   }
                   return (
+                    <Fragment key={c.key}>
+                    {i === fillerAt && fillerCount > 0 && <th aria-hidden className="border-b-2 border-border bg-surface-dim p-0" />}
                     <th
-                      key={c.key}
+                      data-col-key={c.key}
                       style={cellStyle}
                       /* Drag the header itself to reorder. HTML5 DnD, same as
                          the Columns drawer. The resize strip preventDefaults
@@ -2591,7 +2474,9 @@ function DataTableInner<T, L>({
                         // overflow-hidden: a header must never paint over its
                         // neighbour either — crop the label when the column is
                         // narrower than it (same clip rule as body cells).
-                        "group/th relative overflow-hidden border-b-2 border-border bg-surface-dim text-[10px] font-bold uppercase tracking-brand text-ink",
+                        // English Title Case, not CSS capitals (owner 2026-09-25).
+                        "group/th relative overflow-hidden border-b-2 border-border bg-surface-dim text-[11.5px] font-semibold text-ink",
+                        wrapOn ? "whitespace-normal align-bottom" : "whitespace-nowrap",
                         headPad,
                         c.align === "right" && "text-right",
                         c.align === "center" && "text-center",
@@ -2612,7 +2497,7 @@ function DataTableInner<T, L>({
                         isFirstStickyRight && "border-l border-border"
                       )}
                     >
-                      <span className="inline-flex items-center gap-1">
+                      <span className="inline-flex items-center gap-1" title={c.description ?? columnDescription(tableId, c.key)}>
                         {c.renderHeader ? (
                           c.renderHeader()
                         ) : (
@@ -2624,7 +2509,11 @@ function DataTableInner<T, L>({
                                 aria-label="Pinned"
                               />
                             )}
-                            {c.label}
+                            {c.description ?? columnDescription(tableId, c.key) ? (
+                              <span className="underline decoration-ink-muted decoration-dotted underline-offset-2">{headerLabel(c.label)}</span>
+                            ) : (
+                              headerLabel(c.label)
+                            )}
                             {sortable && (
                               <span
                                 className={cn(
@@ -2708,8 +2597,12 @@ function DataTableInner<T, L>({
                         />
                       )}
                     </th>
+                    </Fragment>
                   );
                 })}
+                {fillerAt === displayColumns.length && fillerCount > 0 && (
+                  <th aria-hidden className="border-b-2 border-border bg-surface-dim p-0" />
+                )}
               </tr>
             </thead>
             <tbody ref={tbodyRef}>
@@ -2748,8 +2641,8 @@ function DataTableInner<T, L>({
                   if (item.kind === "group") {
                     return (
                       <tr
-                        key={`grp:${item.value}`}
-                        onClick={() => toggleGroup(item.value)}
+                        key={`grp:${item.path}`}
+                        onClick={() => toggleGroup(item.path)}
                         className="cursor-pointer select-none bg-surface-dim/70 transition-colors hover:bg-surface-dim"
                       >
                         <td
@@ -2759,7 +2652,7 @@ function DataTableInner<T, L>({
                             cellPad
                           )}
                         >
-                          <span className="inline-flex items-center gap-1.5 pl-5">
+                          <span className="inline-flex items-center gap-1.5" style={{ paddingLeft: 20 + item.level * 16 }}>
                             <ChevronRight
                               size={12}
                               className={cn(
@@ -2789,7 +2682,8 @@ function DataTableInner<T, L>({
                   // white surface, pre-blended so there's no visible seam.
                   const stickyBg =
                     rowIdx % 2 === 0 ? "#ffffff" : "#f8f8f5";
-                  const expId = expandable ? expansionId(row) : null;
+                  // A falsy key means this row has nothing to drill into: no chevron.
+                  const expId = expandable ? expansionId(row) || null : null;
                   const isExpanded = expId != null && expandedRowsEffective.has(expId);
                   const selKey = selection ? String(getRowKey(row)) : null;
                   const isRowSelected =
@@ -2798,7 +2692,44 @@ function DataTableInner<T, L>({
                     <Fragment key={getRowKey(row)}>
                       <tr
                         data-vrow=""
-                        onClick={onRowClick ? () => onRowClick(row) : undefined}
+                        data-rowkey={String(getRowKey(row))}
+                        draggable={rowReorderable}
+                        onDragStart={rowReorderable ? (e) => { setDragKey(String(getRowKey(row))); e.dataTransfer.effectAllowed = "move"; } : undefined}
+                        onDragOver={rowReorderable && dragKey ? (e) => { e.preventDefault(); dragScroll.at(e.clientY); const k = String(getRowKey(row)); if (k !== dragKey) setDropKey(k); } : undefined}
+                        onDrop={rowReorderable && dragKey ? (e) => { e.preventDefault(); onRowDrop(String(getRowKey(row))); } : undefined}
+                        onDragEnd={rowReorderable ? () => { dragScroll.stop(); setDragKey(null); setDropKey(null); } : undefined}
+                        style={{
+                          ...getRowStyle?.(row),
+                          ...(rowReorderable ? { cursor: "grab" } : {}),
+                          ...(dropKey === String(getRowKey(row)) ? { boxShadow: "inset 0 2px 0 0 var(--primary, #2f5d4f)" } : {}),
+                        }}
+                        onClick={
+                          onRowClick || rowClickTicks
+                            ? () => {
+                                if (rowClickTicks && selKey != null && !selection.isDisabled?.(selKey)) {
+                                  selection.onToggle(selKey);
+                                }
+                                onRowClick?.(row);
+                              }
+                            : undefined
+                        }
+                        onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(row) : undefined}
+                        /* A clickable row is reachable from the keyboard: Enter is the
+                           click, Shift+Enter the double-click (a keyboard has no
+                           second click). Only on the row itself, never on a control
+                           inside it. */
+                        tabIndex={onRowClick || onRowDoubleClick ? 0 : -1}
+                        onKeyDown={
+                          onRowClick || onRowDoubleClick
+                            ? (e) => {
+                                if (e.key !== "Enter" || e.target !== e.currentTarget) return;
+                                e.preventDefault();
+                                if (e.shiftKey && onRowDoubleClick) onRowDoubleClick(row);
+                                else if (onRowClick) onRowClick(row);
+                                else onRowDoubleClick?.(row);
+                              }
+                            : undefined
+                        }
                         onContextMenu={
                           contextMenu
                             ? (e) => {
@@ -2815,10 +2746,11 @@ function DataTableInner<T, L>({
                           /* The zebra only where the row has no colour of its own: the built
                              CSS emits .bg-surface AFTER .bg-primary/10 / .bg-err-bg, so on one
                              <tr> the zebra won and a ticked or toned row never painted. */
-                          isRowSelected ? "bg-primary/10"
+                          isRowSelected || highlightKey === String(getRowKey(row)) ? "bg-primary/10"
                             : customClass && /(^|\s)!?bg-/.test(customClass) ? null
                             : rowIdx % 2 === 0 ? "bg-surface" : "bg-surface-dim/35",
-                          onRowClick && "cursor-pointer",
+                          (onRowClick || onRowDoubleClick || rowClickTicks) && "cursor-pointer",
+                          (onRowClick || onRowDoubleClick) && "focus:outline-none focus-visible:bg-primary/10",
                           customClass
                         )}
                       >
@@ -2836,12 +2768,13 @@ function DataTableInner<T, L>({
                           >
                             <input
                               type="checkbox"
-                              aria-label="Select row"
+                              aria-label={selection.rowLabel?.(row) ?? "Select row"}
                               checked={isRowSelected}
+                              disabled={selKey != null && !!selection.isDisabled?.(selKey)}
                               onChange={() => {
                                 if (selKey != null) selection.onToggle(selKey);
                               }}
-                              className="cursor-pointer accent-primary"
+                              className="cursor-pointer accent-primary disabled:cursor-not-allowed disabled:opacity-40"
                             />
                           </td>
                         )}
@@ -2857,13 +2790,14 @@ function DataTableInner<T, L>({
                               cellPad
                             )}
                           >
+                            {expId != null && (
                             <button
                               type="button"
                               aria-label={isExpanded ? "Collapse row" : "Expand row"}
                               aria-expanded={isExpanded}
                               onClick={(e) => {
                                 e.stopPropagation();
-                                if (expId != null) toggleExpand(expId);
+                                toggleExpand(expId);
                               }}
                               className="inline-flex items-center justify-center rounded text-ink-muted transition-colors hover:text-primary"
                             >
@@ -2876,90 +2810,27 @@ function DataTableInner<T, L>({
                                 aria-hidden
                               />
                             </button>
+                            )}
                           </td>
                         )}
-                        {displayColumns.map((c, i) => {
-                          const isSticky = i < stickyCount;
-                          const isLastSticky = isSticky && i === stickyCount - 1;
-                          const isStickyRight = stickyRight[i] !== undefined;
-                          const isFirstStickyRight =
-                            isStickyRight && i === displayColumns.length - stickyRightCount;
-                          const userW = widths[c.key];
-                          const cellStyle: React.CSSProperties = {};
-                          if (typeof userW === "number") {
-                            cellStyle.width = userW;
-                            cellStyle.minWidth = userW;
-                            cellStyle.maxWidth = userW;
-                          } else if (c.width) {
-                            cellStyle.width = c.width;
-                            // Same cap as the header cell: a px width means
-                            // "clip here", never "stretch to the longest value".
-                            const px = parsePxWidth(c.width);
-                            if (px != null) cellStyle.maxWidth = px;
-                          }
-                          if (isSticky) {
-                            cellStyle.position = "sticky";
-                            cellStyle.left = stickyLeft[i];
-                            cellStyle.zIndex = 20;
-                            cellStyle.background = stickyBg;
-                          } else if (isStickyRight) {
-                            cellStyle.position = "sticky";
-                            cellStyle.right = stickyRight[i];
-                            cellStyle.zIndex = 20;
-                            // Opaque for the same reason the left run is: the
-                            // scrolling middle passes UNDER these cells.
-                            cellStyle.background = stickyBg;
-                          }
-                          // Full raw value as a native tooltip so a clipped
-                          // cell is still readable on hover. Strings only:
-                          // numeric getValues are raw centi/ISO shapes that
-                          // would contradict the formatted cell text.
-                          const rawVal = c.getValue?.(row);
-                          const cellTitle =
-                            typeof rawVal === "string" && rawVal !== ""
-                              ? rawVal
-                              : undefined;
-                          return (
-                            <td
-                              key={c.key}
-                              style={cellStyle}
-                              title={cellTitle}
-                              className={cn(
-                                "border-b border-border-subtle text-[13px] text-ink transition-colors",
-                                cellPad,
-                                // Single-line rule (2026-05-08) + clip rule
-                                // (owner 2026-07-24). Cells stop wrapping AND
-                                // stop painting past their own column: a value
-                                // longer than the column is cropped with an
-                                // ellipsis (full text in the title tooltip)
-                                // instead of overlapping the neighbour cell.
-                                // Render functions that genuinely need
-                                // multi-line wrap via an inner block element
-                                // or `c.className` ("whitespace-normal") —
-                                // still overflow-hidden within the column.
-                                "overflow-hidden text-ellipsis whitespace-nowrap",
-                                // Pine-green tint on hover (matches the
-                                // calendar's "on track" green). Reads clearly
-                                // on both zebra shades. (Was a pale brass
-                                // `accent-soft` wash that looked yellow.)
-                                "group-hover:bg-[#3f6b53]/25",
-                                c.align === "right" && "text-right",
-                                c.align === "center" && "text-center",
-                                // Leading gutter belongs to the select /
-                                // chevron cell when present; otherwise the
-                                // first column.
-                                i === 0 && !expandable && !selection && "pl-5",
-                                i === displayColumns.length - 1 && "pr-5",
-                                // Freeze line on the last sticky column.
-                                isLastSticky && "border-r border-border",
-                                isFirstStickyRight && "border-l border-border",
-                                c.className
-                              )}
-                            >
-                              {c.render(row)}
-                            </td>
-                          );
-                        })}
+                        {/* The data cells are memoised (see DataRowCells): a
+                            scroll / selection / search re-render skips every row
+                            whose data + columns + layout are unchanged. */}
+                        <DataRowCells
+                          row={row}
+                          columns={displayColumns}
+                          widths={widths}
+                          stickyLeft={stickyLeft}
+                          stickyRight={stickyRight}
+                          stickyCount={stickyCount}
+                          stickyRightCount={stickyRightCount}
+                          cellPad={cellPad}
+                          wrapOn={wrapOn}
+                          fillerAt={fillerAt}
+                          fillerCount={fillerCount}
+                          stickyBg={stickyBg}
+                          firstColGutter={!expandable && !selection}
+                        />
                       </tr>
                       {/* Inline expanded sub-row (opt-in `expandable`). Spans
                           the full width; renders the caller's drill-down.
@@ -2986,7 +2857,67 @@ function DataTableInner<T, L>({
                   <td colSpan={totalColSpan} style={{ height: (renderList.length - vEnd) * rowHeightRef.current, padding: 0, border: 0 }} />
                 </tr>
               )}
+              {hiddenByLimit > 0 && (
+                <tr>
+                  <td colSpan={totalColSpan} className="p-0">
+                    <button
+                      type="button"
+                      onClick={loadMore}
+                      className="w-full border-t border-border py-2.5 text-[12px] font-semibold uppercase tracking-wider text-primary transition-colors hover:bg-primary-soft"
+                    >
+                      Load more — {hiddenByLimit} more row{hiddenByLimit === 1 ? "" : "s"}
+                    </button>
+                  </td>
+                </tr>
+              )}
             </tbody>
+            {footerTotals && (
+              <tfoot className="sticky bottom-0 z-30">
+                <tr title={footerTotals.picked ? "Total of the ticked rows" : "Total of the rows shown"}>
+                  {selectColCount + expandColCount > 0 && (
+                    <td colSpan={selectColCount + expandColCount} className="border-t-2 border-border bg-surface-dim" />
+                  )}
+                  {displayColumns.map((c, i) => {
+                    const cellStyle: React.CSSProperties = { width: resolveWidth(c) };
+                    if (i < stickyCount) {
+                      cellStyle.position = "sticky";
+                      cellStyle.left = stickyLeft[i];
+                      cellStyle.zIndex = 20;
+                    } else if (stickyRight[i] !== undefined) {
+                      cellStyle.position = "sticky";
+                      cellStyle.right = stickyRight[i];
+                      cellStyle.zIndex = 20;
+                    }
+                    const label =
+                      i === 0 && !c.total
+                        ? `${footerTotals.picked ? "Selected" : "Total"} · ${footerTotals.rows.length} row${footerTotals.rows.length === 1 ? "" : "s"}`
+                        : null;
+                    return (
+                      <Fragment key={c.key}>
+                        {i === fillerAt && fillerCount > 0 && <td aria-hidden className="border-t-2 border-border bg-surface-dim p-0" />}
+                        <td
+                          data-total-key={c.key}
+                          style={cellStyle}
+                          className={cn(
+                            "overflow-hidden text-ellipsis whitespace-nowrap border-t-2 border-border bg-surface-dim text-[13px] font-semibold tabular-nums text-ink",
+                            cellPad,
+                            c.align === "right" && "text-right",
+                            c.align === "center" && "text-center",
+                            i === 0 && !expandable && !selection && "pl-5",
+                            i === displayColumns.length - 1 && "pr-5",
+                          )}
+                        >
+                          {c.total ? c.total(footerTotals.rows) : label}
+                        </td>
+                      </Fragment>
+                    );
+                  })}
+                  {fillerAt === displayColumns.length && fillerCount > 0 && (
+                    <td aria-hidden className="border-t-2 border-border bg-surface-dim p-0" />
+                  )}
+                </tr>
+              </tfoot>
+            )}
           </table>
           </div>
         </div>
@@ -3163,31 +3094,22 @@ function DataTableInner<T, L>({
         (() => {
           const col = allColumns.find((c) => c.key === filterMenu.colKey);
           if (!col?.getValue) return null;
-          const getter = col.getValue;
-          const multi = col.getFilterValues;
-          const counts = new Map<string, number>();
-          for (const r of rows ?? []) {
-            // A multi-value row counts once against EACH of its values, so
-            // the funnel lists "Bedframe" and "Mattress" separately rather
-            // than a composite "Bedframe, Mattress" entry.
-            for (const k of multi ? filterKeysOf(multi(r)) : [filterKeyOf(getter(r))]) {
-              counts.set(k, (counts.get(k) ?? 0) + 1);
-            }
-          }
-          // Seed the always-listed vocabulary (0-count entries stay pickable).
-          for (const seed of col.filterSeedValues ?? []) {
-            const k = filterKeyOf(seed);
-            if (!counts.has(k)) counts.set(k, 0);
-          }
-          const values = [...counts.entries()].sort((a, b) =>
-            a[0].localeCompare(b[0], undefined, { numeric: true })
-          );
+          /* FACETED value list (owner 2026-09-23, "越筛越少") — the options are
+             counted over the rows that survive every OTHER active column filter,
+             so once Date = 23/9 is picked the Creditor funnel lists only
+             creditors present that day, and each further filter narrows the rest.
+             See facetedFilterValues for the exact rule (0-count options drop
+             unless they are fixed vocabulary or currently ticked). */
+          const values = facetedFilterValues(rows ?? [], colFilters, col, allColumns);
+          const allTokens = colFilters[col.key] ?? [];
+          const conditionTokens = allTokens.filter(isConditionToken);
+          const selected = new Set(allTokens.filter((v) => !isConditionToken(v)));
+          const currentCondition = conditionTokens.length > 0 ? parseCondition(conditionTokens[0]) : null;
           const q = filterQuery.trim().toLowerCase();
           const shown = q
-            ? values.filter(([v]) => v.toLowerCase().includes(q))
+            ? values.filter(([v]) => (col.filterLabel?.(v) ?? v).toLowerCase().includes(q))
             : values;
           const shownValues = shown.map(([v]) => v);
-          const selected = new Set(colFilters[col.key] ?? []);
           const canSort = canSortColumn(col);
           const sortActive = sort?.key === col.key ? sort.dir : null;
 
@@ -3196,12 +3118,12 @@ function DataTableInner<T, L>({
           // search untouched — so you can search "KL", tick those, clear the
           // search, search "Selangor", tick those, and keep both.
           const selectAll = () =>
-            setColumnFilter(col.key, [...selected, ...shownValues]);
+            setColumnFilter(col.key, [...conditionTokens, ...selected, ...shownValues]);
           const invert = () => {
             const shownSet = new Set(shownValues);
             const keptOutsideSearch = [...selected].filter((v) => !shownSet.has(v));
             const flippedWithinSearch = shownValues.filter((v) => !selected.has(v));
-            setColumnFilter(col.key, [...keptOutsideSearch, ...flippedWithinSearch]);
+            setColumnFilter(col.key, [...conditionTokens, ...keptOutsideSearch, ...flippedWithinSearch]);
           };
 
           const sortBtn =
@@ -3217,7 +3139,7 @@ function DataTableInner<T, L>({
             >
               <div className="shrink-0 border-b border-border-subtle px-3 py-2">
                 <span className="text-[10px] font-bold uppercase tracking-brand text-ink-secondary">
-                  {col.label || col.key}
+                  {headerLabel(col.label || col.key)}
                 </span>
               </div>
 
@@ -3233,7 +3155,7 @@ function DataTableInner<T, L>({
                   }}
                 >
                   <ArrowDownAZ size={13} className="shrink-0 text-ink-muted" />
-                  Sort A → Z
+                  {col.newestFirst ? "Sort Oldest → Newest" : "Sort A → Z"}
                 </button>
                 <button
                   type="button"
@@ -3245,7 +3167,7 @@ function DataTableInner<T, L>({
                   }}
                 >
                   <ArrowUpAZ size={13} className="shrink-0 text-ink-muted" />
-                  Sort Z → A
+                  {col.newestFirst ? "Sort Newest → Oldest" : "Sort Z → A"}
                 </button>
                 {/* Pin — owner 2026-07-24 "需要pin到headers". Freezes the
                     column to the left so it stays put while the rest scrolls
@@ -3272,7 +3194,19 @@ function DataTableInner<T, L>({
                         : "Freeze to the left"}
                   </button>
                 )}
+                <DataTableFreezeItems className={sortBtn} anyFrozen={pinnedSet.size > 0} onFreezeUpTo={() => { freezeUpTo(col.key); setFilterMenu(null); }} onUnfreezeAll={() => { setPinned([]); setFilterMenu(null); }} />
               </div>
+
+              {col.filterType && (
+                <DataTableConditionSection
+                  key={col.key}
+                  filterType={col.filterType}
+                  current={currentCondition}
+                  onChange={(next) =>
+                    setColumnFilter(col.key, [...(next ? [conditionToken(next)] : []), ...selected])
+                  }
+                />
+              )}
 
               {/* Search */}
               <div className="shrink-0 border-b border-border-subtle px-3 py-1.5">
@@ -3308,7 +3242,7 @@ function DataTableInner<T, L>({
                 <button
                   type="button"
                   onClick={() => setColumnFilter(col.key, [])}
-                  disabled={selected.size === 0}
+                  disabled={allTokens.length === 0}
                   className="rounded px-1.5 py-0.5 text-accent hover:bg-surface-dim disabled:text-ink-muted/50 disabled:hover:bg-transparent"
                 >
                   Clear
@@ -3334,7 +3268,7 @@ function DataTableInner<T, L>({
                       onChange={() => toggleFilterValue(col.key, v)}
                       className="accent-accent"
                     />
-                    <span className="min-w-0 flex-1 truncate" title={v}>{v}</span>
+                    <span className="min-w-0 flex-1 truncate" title={v}>{col.filterLabel?.(v) ?? v}</span>
                     <span className="shrink-0 font-mono text-[10px] text-ink-muted">{n}</span>
                   </label>
                 ))}
@@ -3357,8 +3291,10 @@ function DataTableInner<T, L>({
           return createPortal(
             <div
               ref={headerMenuRef}
-              className="fixed z-[120] min-w-[176px] overflow-hidden rounded-md border border-border bg-surface py-1 shadow-slab"
-              style={{ top: pos.top, left: pos.left }}
+              className="fixed z-[120] min-w-[176px] overflow-y-auto overscroll-contain rounded-md border border-border bg-surface py-1 shadow-slab"
+              // A board with ~20 hidden columns lists them all below: cap to the
+              // viewport and scroll (#4290, the same bug on the old grid).
+              style={{ top: pos.top, left: pos.left, maxHeight: "calc(100vh - 16px)" }}
               onClick={(e) => e.stopPropagation()}
               onContextMenu={(e) => e.preventDefault()}
             >
@@ -3402,6 +3338,7 @@ function DataTableInner<T, L>({
                 )}
                 {isPinned ? "Unpin left" : "Pin left"}
               </button>
+                <DataTableFreezeItems className={itemCls} anyFrozen={pinnedSet.size > 0} onFreezeUpTo={() => { freezeUpTo(col.key); setHeaderMenu(null); }} onUnfreezeAll={() => { setPinned([]); setHeaderMenu(null); }} />
               <button
                 type="button"
                 className={itemCls}
@@ -3413,6 +3350,21 @@ function DataTableInner<T, L>({
                 <MoveHorizontal size={13} className="shrink-0 text-ink-muted" />
                 Auto-fit width
               </button>
+              {groupBanner && col.getValue && (
+                <button
+                  type="button"
+                  className={itemCls}
+                  onClick={() => {
+                    setUserGroups((prev) =>
+                      prev.includes(col.key) ? prev.filter((k) => k !== col.key) : [...prev, col.key],
+                    );
+                    setHeaderMenu(null);
+                  }}
+                >
+                  <Rows3 size={13} className="shrink-0 text-ink-muted" />
+                  {userGroups.includes(col.key) ? "Stop grouping by this column" : "Group by this column"}
+                </button>
+              )}
               <div className="my-1 border-t border-border-subtle" />
               <button
                 type="button"
@@ -3426,6 +3378,30 @@ function DataTableInner<T, L>({
                 <EyeOff size={13} className="shrink-0 text-ink-muted" />
                 Hide column
               </button>
+              {/* Bring a hidden column back from the header (SCM DataGrid parity:
+                  staff use this on the Delivery Planning board). */}
+              {chooserOptions.some((o) => effectiveHidden.has(o.key)) && (
+                <>
+                  <div className="my-1 border-t border-border-subtle" />
+                  <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-brand text-ink-muted">Hidden</div>
+                  {chooserOptions
+                    .filter((o) => effectiveHidden.has(o.key))
+                    .map((o) => (
+                      <button
+                        key={o.key}
+                        type="button"
+                        className={itemCls}
+                        onClick={() => {
+                          toggleColumn(o.key);
+                          setHeaderMenu(null);
+                        }}
+                      >
+                        <Eye size={13} className="shrink-0 text-ink-muted" />
+                        Show {o.label}
+                      </button>
+                    ))}
+                </>
+              )}
             </div>,
             document.body
           );
@@ -3497,16 +3473,3 @@ function DataTableInner<T, L>({
 // Handles the common shapes getValue returns: null/undefined last,
 // then numbers numerically, then strings case-insensitively, then
 // booleans (false < true).
-
-// Parse a column's `width` CSS string into a pixel number when possible.
-// "120px" → 120, "120" → 120. Non-px units ("20%", "8rem") and undefined
-// return null so the caller falls back to DEFAULT_COL_WIDTH for offset math
-// (the inline width style still passes the original string through for those).
-function parsePxWidth(width: string | undefined): number | null {
-  if (!width) return null;
-  const m = /^(\d+(?:\.\d+)?)(px)?$/.exec(width.trim());
-  if (!m) return null;
-  const n = Number(m[1]);
-  return Number.isFinite(n) ? n : null;
-}
-

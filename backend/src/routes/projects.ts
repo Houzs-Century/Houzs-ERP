@@ -1,9 +1,9 @@
-import { Hono } from "hono";
-import type { Context } from "hono";
+import { Hono, type Context } from "hono";
 import type { Env } from "../types";
 import { requirePermission, requireAnyPermission, requirePageAccess } from "../middleware/auth";
 import { parseFairSheet, eventToFinanceLines } from "../services/agents/fair-report-parse";
 import { buildFileBlocks } from "../services/vision-blocks";
+import { recordAi, requestAiTag } from "../services/aiUsage";
 import { reconcileSchedule, type ProjRow } from "../services/agents/schedule-reconcile";
 import {
   DEFECT_REVIEW_REGION_STATES,
@@ -54,17 +54,19 @@ import {
   stripSensitiveChecklist,
   stripSetupDismantle,
 } from "../services/projects";
-import { getPmsAccess, financeHiddenForUser, isFinanceViewer, isSalesUser } from "../services/pmsAccess";
+import { canCreateEvent, getPmsAccess, financeHiddenForUser, isFinanceViewer, isSalesUser } from "../services/pmsAccess";
 import { scopeSalesReportsForUser } from "../services/orgScope";
 import { audit } from "../services/audit";
 import { hasPermission, holdsChecklistApproval, EXPLICIT_APPROVAL_KEYS } from "../services/permissions";
 import { recomputeAutoCostLines } from "../services/projectCostRates";
+import { attendeeRepId, staffNotOnRoster } from "../services/salesAttending";
 import { issueShareToken, revokeShareTokens } from "../services/contractorShare";
 import { todayMyt } from "../scm/lib/my-time";
 import { canonicalizeVenue } from "../scm/lib/canonical-venue";
 import { getDb } from "../db/client";
 import {
   project_brands,
+  project_finance,
   project_finance_lines,
   projects as projectsTable,
 } from "../db/schema";
@@ -849,14 +851,14 @@ app.post("/schedule-reconcile/scan", requirePermission("projects.write"), async 
 
   let extract: { organizer: string; events: { venue: string; startDate: string | null; endDate: string | null; status?: string | null }[] };
   try {
-    const resp = await fetch(RECONCILE_URL, {
+    const resp = await recordAi(requestAiTag(c, "schedule_reconcile", RECONCILE_MODEL), fetch(RECONCILE_URL, {
       method: "POST",
       headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
       body: JSON.stringify({
         model: RECONCILE_MODEL, max_tokens: 2000, system: sys,
         messages: [{ role: "user", content: [...blocks, { type: "text", text: "Extract the schedule as JSON." }] }],
       }),
-    });
+    }));
     if (!resp.ok) return c.json({ error: "extract_failed", reason: `vision ${resp.status}` }, 502);
     const data = (await resp.json()) as { content?: { type: string; text?: string }[] };
     const text = (data.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
@@ -905,14 +907,14 @@ app.post("/setup-invoice/scan", requirePermission("projects.write"), async (c) =
 
   let parsed: { vendor?: string | null; currency?: string; totalRM?: number; items?: { description?: string; amountRM?: number }[] };
   try {
-    const resp = await fetch(RECONCILE_URL, {
+    const resp = await recordAi(requestAiTag(c, "setup_invoice_extract", RECONCILE_MODEL), fetch(RECONCILE_URL, {
       method: "POST",
       headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
       body: JSON.stringify({
         model: RECONCILE_MODEL, max_tokens: 2000, system: sys,
         messages: [{ role: "user", content: [...blocks, { type: "text", text: "Extract the invoice as JSON." }] }],
       }),
-    });
+    }));
     if (!resp.ok) return c.json({ error: "extract_failed", reason: `vision ${resp.status}` }, 502);
     const data = (await resp.json()) as { content?: { type: string; text?: string }[] };
     const text = (data.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
@@ -1170,6 +1172,7 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
   }
   const result = await listProjects(c.env, {
     company_id: activeCompanyId(c),
+    with_pnl: !financeHiddenForUser(user), // finance columns from the event P&L (ledger item 5)
     pending_label: pendingLabel,
     pending_title: pendingTitle,
     pending_logistic: pendingLogistic,
@@ -2393,9 +2396,9 @@ app.get("/sales-rep-options", requirePermission("projects.write"), async (c) => 
        FROM sales_reps r
       WHERE r.archived_at IS NULL
         AND r.status = 'active'
-      ORDER BY r.name, r.code`
+      ORDER BY LOWER(r.name), r.code`
   ).all<{ id: number; code: string; name: string; phone: string | null }>();
-  return c.json({ data: rows.results ?? [] });
+  return c.json({ data: rows.results ?? [], others: await staffNotOnRoster(c.env, activeCompanyId(c)) });
 });
 
 // ── Detail ────────────────────────────────────────────────────
@@ -2451,6 +2454,7 @@ app.get("/:id", requirePageAccess("projects.list"), async (c) => {
       ...payload,
       finance: null,
       finance_lines: [],
+      finance_books: null,
     };
   }
   if (stripPayment) {
@@ -2513,20 +2517,8 @@ app.get("/:id", requirePageAccess("projects.list"), async (c) => {
 
 // ── Create ────────────────────────────────────────────────────
 
-// Event (project) creation is restricted to BD staff, the Owner account, and
-// Lim (weisiang329@gmail.com) — NOT other Super Admins nor anyone else (owner
-// 2026-07-24). This is the authority; the FE hides the New Project button for
-// everyone else. Mirrors frontend auth/salesAccess.canCreateEvent.
-function canCreateEvent(
-  user: { role_name?: string | null; position_name?: string | null; email?: string | null } | null | undefined,
-): boolean {
-  if (!user) return false;
-  const role = (user.role_name ?? "").toLowerCase();
-  const position = (user.position_name ?? "").toLowerCase();
-  const email = (user.email ?? "").toLowerCase();
-  return /\bbd\b/.test(role) || position === "owner" || email === "weisiang329@gmail.com";
-}
-
+// Event (project) creation: BD staff, the Owner account and Lim only (owner
+// 2026-07-24) — services/pmsAccess.canCreateEvent is the one rule.
 app.post("/", requirePermission("projects.write"), async (c) => {
   const user = c.get("user");
   if (!canCreateEvent(user)) {
@@ -2799,9 +2791,9 @@ app.get("/finance/categories", (c) => {
 // Per-project finance summary — feeds the Finances → List tab. One row
 // per project; SUMs income / cost / net out of project_finance_lines
 // and joins back to projects for display fields (code, name, brand,
-// stage, dates). Filters: date range constrains which lines are summed
-// (a project shows up as long as it has any matching activity within
-// the range, OR has its start/end inside the range); brand + search
+// stage, dates). Filters: the date range selects PROJECTS whose event
+// dates (start_date..end_date — the "Dates" column) overlap the window;
+// every line of a matching project is summed. Brand + stage + search
 // filter the project itself.
 app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c) => {
   const denied = denyFinance(c); if (denied) return denied;
@@ -2823,25 +2815,24 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
 
   const db = getDb(c.env);
 
-  // Date filter applies INSIDE the SUM aggregations (each SUM only counts
-  // lines in the window) AND as a row filter: when a range is set, projects
-  // with no lines in it are dropped entirely (owner decision 2026-08-13 —
-  // a date filter should mean "don't show me anything outside it", not
-  // rows of zeros). With no range set, every project still surfaces, so
-  // upcoming events with no lines yet remain visible in the default view.
-  const dateConds: any[] = [];
+  // The From/To window is a PROJECT predicate on the event dates (the "Dates"
+  // column), not a per-line occurred_at filter: filtering lines surfaced a
+  // July 2027 event under September because its rent line was keyed then.
+  // Overlap: ends on/after From, starts on/before To; end_date falls back to
+  // start_date. substr() keeps it text-vs-text (see /analytics/profitability).
+  const projConds: any[] = [];
   if (dateFrom) {
-    dateConds.push(sql`COALESCE(l.occurred_at, l.created_at) >= ${dateFrom}`);
+    projConds.push(
+      sql`substr(COALESCE(p.end_date, p.start_date), 1, 10) >= ${dateFrom.slice(0, 10)}`
+    );
   }
   if (dateTo) {
-    dateConds.push(sql`COALESCE(l.occurred_at, l.created_at) <= ${`${dateTo}T23:59:59`}`);
+    projConds.push(sql`substr(p.start_date, 1, 10) <= ${dateTo.slice(0, 10)}`);
   }
-  const dateClause = dateConds.length
-    ? sql`AND ${sql.join(dateConds, sql` AND `)}`
-    : sql``;
+  // Every non-archived line of a matching project is summed: no line clause.
+  const dateClause = sql``;
 
-  // Project-level WHERE.
-  const projConds: any[] = [];
+  // Project-level WHERE (continued).
   // Multi-company: rollups follow the active company (no predicate when the
   // context is unresolved).
   const rollupCompanyId = activeCompanyId(c);
@@ -2890,10 +2881,8 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
   };
   const orderByClause = sql`ORDER BY ${sql.raw(`${sortMap[sortBy] ?? sortMap.net} ${sortDir}`)}, id DESC`;
 
-  // The aggregate row per project; row visibility under a date range is
-  // enforced by the `visible` wrapper below (line_count > 0).
-  // Per-category breakdown built with one CASE-SUM per dedicated column;
-  // the residue lands in `others_cost`.
+  // The aggregate row per project. Per-category breakdown built with one
+  // CASE-SUM per dedicated column; the residue lands in `others_cost`.
   const baseSelect = sql`
     SELECT p.id,
            p.code,
@@ -2906,7 +2895,14 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
            p.venue,
            p.organizer,
            COALESCE(SUM(CASE WHEN l.kind = 'income' AND l.archived_at IS NULL ${dateClause} THEN l.amount ELSE 0 END), 0) AS income,
-           COALESCE(SUM(CASE WHEN l.kind = 'income' AND l.category = 'sales' AND l.archived_at IS NULL ${dateClause} THEN l.amount ELSE 0 END), 0) AS sales,
+           -- Same rule as the project page's P&L snapshot: individual sales
+           -- lines when any exist, else the lump "Total Sales" box
+           -- (project_finance.total_sales), which is where most events keep
+           -- their sales. MAX(): pf is 1:1 with p but not in the GROUP BY.
+           CASE WHEN COALESCE(SUM(CASE WHEN l.kind = 'income' AND l.category = 'sales' AND l.archived_at IS NULL ${dateClause} THEN l.amount ELSE 0 END), 0) > 0
+                THEN COALESCE(SUM(CASE WHEN l.kind = 'income' AND l.category = 'sales' AND l.archived_at IS NULL ${dateClause} THEN l.amount ELSE 0 END), 0)
+                ELSE COALESCE(MAX(pf.total_sales), 0)
+           END AS sales,
            COALESCE(SUM(CASE WHEN l.kind = 'cost'   AND l.archived_at IS NULL ${dateClause} THEN l.amount ELSE 0 END), 0) AS cost,
            -- COGS family (2026-05-08): legacy cogs slug + the three product
            -- sub-categories the boss requested. Sums into one column for the
@@ -2926,6 +2922,7 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
            COUNT(CASE WHEN l.archived_at IS NULL ${dateClause} THEN l.id END) AS line_count
       FROM ${projectsTable} p
       LEFT JOIN ${project_finance_lines} l ON l.project_id = p.id
+      LEFT JOIN ${project_finance} pf ON pf.project_id = p.id
       ${whereClause}
       GROUP BY p.id
   `;
@@ -2959,14 +2956,10 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
       FROM (${baseSelect}) sub
   `;
 
-  // Row filter for date ranges: a project only appears when it has at least
-  // one non-archived line inside the window. line_count (not the amounts)
-  // is the predicate, so a window containing only zero-amount lines still
-  // shows — there IS data in range, it just nets to zero.
-  const visible =
-    dateFrom || dateTo
-      ? sql`SELECT * FROM (${wrapped}) vis WHERE line_count > 0`
-      : wrapped;
+  // Row visibility is decided by the project-date predicate in whereClause
+  // (an event in the window shows even before any line is keyed, matching
+  // the Projects list), so no line_count gate here.
+  const visible = wrapped;
 
   const totalRow = await db.get<{ count: number }>(
     sql`SELECT COUNT(*) AS count FROM (${visible}) outerSub`
@@ -4641,8 +4634,7 @@ app.delete("/team/:teamId", requirePermission("projects.write"), async (c) => {
 // project (booth duty etc). Separate from pic_id (a User) and the
 // generic project_team (also Users).
 
-// (sales-rep-options GET route MOVED above the "/:id" detail route — it's a
-// single-segment static path that "/:id" would otherwise shadow with a 400.)
+// (GET /sales-rep-options sits above "/:id", which would otherwise shadow it with a 400.)
 
 app.post("/:id/sales-attendees", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -4651,26 +4643,26 @@ app.post("/:id/sales-attendees", requirePermission("projects.write"), async (c) 
   const user = c.get("user");
   // Owner 2026-07-20: reversed the 2026-07-18 block — a Sales Director may now
   // change Sales Attending, like everyone else holding projects.write.
-  const body = await c.req.json<{ sales_rep_id?: number }>();
-  if (!body.sales_rep_id) return c.json({ error: "Please choose a sales attendee." }, 400);
+  const picked = await attendeeRepId(c.env, activeCompanyId(c), await c.req.json(), user?.id ?? null, id);
+  if (!picked.ok) return c.json({ error: picked.error }, 400);
   try {
     await c.env.DB.prepare(
       `INSERT INTO project_sales_attendees (project_id, sales_rep_id, created_by)
        VALUES (?, ?, ?)`
     )
-      .bind(id, body.sales_rep_id, user?.id ?? null)
+      .bind(id, picked.repId, user?.id ?? null)
       .run();
     const rep = await c.env.DB.prepare(
       `SELECT code, name FROM sales_reps WHERE id = ?`
     )
-      .bind(body.sales_rep_id)
+      .bind(picked.repId)
       .first<{ code: string; name: string }>();
     await logProjectActivity(
       c.env,
       id,
       "sales_attendee_add",
       null,
-      rep ? `${rep.code} ${rep.name}` : String(body.sales_rep_id),
+      rep ? `${rep.code} ${rep.name}` : String(picked.repId),
       null,
       user?.id
     );

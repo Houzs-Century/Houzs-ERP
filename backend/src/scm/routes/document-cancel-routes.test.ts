@@ -90,9 +90,9 @@ const get = (who: Who, path: string) => app(who).request(path, undefined, ENV);
 beforeEach(() => {
   tables = {
     mfg_sales_orders: [
-      { doc_no: 'SO-1', status: 'CONFIRMED', company_id: CO, salesperson_id: 11 },
+      { doc_no: 'SO-1', status: 'CONFIRMED', company_id: CO, salesperson_id: 11, ref: 'MR TAN / SUNWAY', customer_so_no: null },
       { doc_no: 'SO-DRAFT', status: 'DRAFT', company_id: CO, salesperson_id: 11 },
-      { doc_no: 'SO-DONE', status: 'CANCELLED', company_id: CO, salesperson_id: 11 },
+      { doc_no: 'SO-DONE', status: 'CANCELLED', company_id: CO, salesperson_id: 11, ref: null, customer_so_no: 'CUST-PO-7' },
       { doc_no: 'SO-OTHER', status: 'CONFIRMED', company_id: 2, salesperson_id: 11 },
     ],
     purchase_orders: [
@@ -184,6 +184,24 @@ describe('the two signatures', () => {
     expect(await l2.json()).toMatchObject({ execute: true, request: { status: 'APPROVED', l2_by: 31, l2_by_name: 'MD Cara' } });
     expect(notify).toHaveBeenLastCalledWith(expect.anything(), 'approved', expect.objectContaining({ requesterUserId: 11, actorUserId: 31 }));
     expect(soAudit).toHaveBeenCalledTimes(3);
+    /* No body at all — a tab loaded before DEV-17 — still signs, with no remark. */
+    expect(rows()[0]).toMatchObject({ l1_remark: null, l2_remark: null });
+  });
+
+  it('each signature may carry an optional remark (DEV-17)', async () => {
+    const l1 = await post(L1, '/mfg-sales-orders/SO-1/cancel-request/approve', { remark: '  Checked with\n the customer ' });
+    expect(await body(l1)).toMatchObject({ request: { status: 'L1_APPROVED', l1_remark: 'Checked with the customer' } });
+    expect(notify).toHaveBeenLastCalledWith(expect.anything(), 'level1', expect.objectContaining({ remark: 'Checked with the customer' }));
+
+    const l2 = await post(L2, '/mfg-sales-orders/SO-1/cancel-request/approve', { remark: '   ' });
+    expect(await body(l2)).toMatchObject({ execute: true, request: { status: 'APPROVED', l1_remark: 'Checked with the customer', l2_remark: null } });
+  });
+
+  it('refuses a remark that is not text or is too long, and signs nothing', async () => {
+    expect(await body(await post(L1, '/mfg-sales-orders/SO-1/cancel-request/approve', { remark: 42 }))).toMatchObject({ error: 'remark_invalid' });
+    expect(await body(await post(L1, '/mfg-sales-orders/SO-1/cancel-request/approve', { remark: 'x'.repeat(1001) }))).toMatchObject({ error: 'remark_too_long' });
+    expect(rows()[0]!.status).toBe('REQUESTED');
+    expect(rows()[0]!.l1_by ?? null).toBeNull();
   });
 
   it('the requester cannot sign, and a wildcard holder cannot sign twice', async () => {
@@ -238,6 +256,30 @@ describe('the two signatures', () => {
     await post(REQUESTER, '/mfg-sales-orders/SO-1/cancel-request/withdraw');
     expect((await body(await get(NOBODY, '/cancel-requests'))).requests).toHaveLength(0);
     expect((await body(await get(NOBODY, '/cancel-requests?scope=all'))).requests).toHaveLength(2);
+  });
+
+  /* Owner 2026-09-24, on the SO Amendment queue: 「为什么 ref 不会出现?每个 SO 都
+     会有的」 — the queue lists cancellation requests beside the amendments, so the
+     inbox has to send the Sales Order's reference the way GET /so-amendments
+     does. RAW, both columns: the frontend picks between them with one rule. */
+  it('carries the Sales Order reference — raw, and only for SO rows', async () => {
+    await post(REQUESTER, '/mfg-sales-orders/SO-1/cancel-request', { reason: 'Customer cancelled the order' });
+    await patch(NOBODY, '/mfg-purchase-orders/po-1/cancel', { reason: 'Supplier cannot deliver' });
+    const { requests } = await body(await get(NOBODY, '/cancel-requests?scope=all'));
+    const byDoc = Object.fromEntries(requests.map((r: { doc_number: string }) => [r.doc_number, r]));
+    expect(byDoc['SO-1']).toMatchObject({ doc_ref: 'MR TAN / SUNWAY', doc_customer_so_no: null });
+    // A purchase order has no such field — null, never another document's ref.
+    expect(byDoc['PO-1']).toMatchObject({ doc_ref: null, doc_customer_so_no: null });
+  });
+
+  /* Owner 2026-09-25: every search finds a record by its SO's reference — a
+     Delivery Order's cancellation carries its ORDER's pair, via so_doc_no. */
+  it("carries a Delivery Order's Sales Order reference", async () => {
+    tables.delivery_orders[0].so_doc_no = 'SO-DONE';
+    await patch(NOBODY, '/delivery-orders-mfg/do-1/status', { status: 'CANCELLED', reason: 'Customer postponed the delivery' });
+    const { requests } = await body(await get(NOBODY, '/cancel-requests?scope=all'));
+    const doRow = requests.find((r: { doc_type: string }) => r.doc_type === 'DO');
+    expect(doRow).toMatchObject({ doc_ref: null, doc_customer_so_no: 'CUST-PO-7' });
   });
 });
 
@@ -612,5 +654,76 @@ describe('the guard runs before supabaseAuth: identify the caller from `user` to
       { method: 'PATCH', ...json({ reason: 'customer cancelled the order' }) }, ENV);
     expect(res.status).toBe(403);
     expect((await body(res)).error).toBe('caller_unknown');
+  });
+});
+
+/* DEV-40 (owner 2026-10-06): the SO Amendment queue lists SO cancellations
+ * beside the amendments, so a scoped salesperson sees only the ones they or
+ * their downline raised, or that sit on an order they or their downline own.
+ * Approvers hold scm.so.view_all and keep the whole inbox; DO / PO rows are not
+ * on that queue and are untouched. */
+describe('the inbox, for a scoped salesperson', () => {
+  const MANAGER: Who = { id: 60, name: 'Stanley', perms: ['scm.access'] };
+  const REP_A: Who = { id: 61, name: 'Adrian', perms: ['scm.access'] };
+  const REP_B: Who = { id: 62, name: 'Ben', perms: ['scm.access'] };
+  const ORG = [
+    { id: MANAGER.id, manager_id: null },
+    { id: REP_A.id, manager_id: MANAGER.id },
+    { id: REP_B.id, manager_id: null },
+  ];
+  const SCOPED_ENV = {
+    DB: {
+      prepare: () => ({
+        bind: (...ids: unknown[]) => ({
+          all: async () => ({
+            results: ORG.filter((u) => u.manager_id != null && ids.map(Number).includes(u.manager_id)).map((u) => ({ id: u.id })),
+          }),
+        }),
+      }),
+    },
+  } as unknown as Env;
+  const inbox = async (who: Who) =>
+    ((await body(await app(who).request('/cancel-requests?scope=all', undefined, SCOPED_ENV))).requests as Array<{ doc_number: string }>)
+      .map((r) => r.doc_number).sort();
+  const request = (docType: string, key: string, by: number) => ({
+    company_id: CO, doc_type: docType, doc_key: key, doc_number: key, status: 'REQUESTED',
+    reason: 'x', requested_by: by, requested_by_name: 'x', requested_at: '2026-10-06T00:00:00Z',
+  });
+
+  beforeEach(() => {
+    tables.staff = [
+      { id: 'staff-a', user_id: REP_A.id },
+      { id: 'staff-b', user_id: REP_B.id },
+      { id: 'staff-mgr', user_id: MANAGER.id },
+    ];
+    tables.mfg_sales_orders.push(
+      // Rep A's own order, an imported OPEN order sold by rep B, and one shared with rep A.
+      { doc_no: 'SO-A', status: 'CONFIRMED', company_id: CO, salesperson_id: 'staff-a', access_staff_ids: ['staff-a'] },
+      { doc_no: 'SO-OPEN', status: 'CONFIRMED', company_id: CO, salesperson_id: 'staff-b', access_staff_ids: ['staff-b'], open_to_all: true },
+      { doc_no: 'SO-SHARED', status: 'CONFIRMED', company_id: CO, salesperson_id: 'staff-b', access_staff_ids: ['staff-b', 'staff-a'] },
+    );
+    tables.document_cancel_requests.push(
+      request('SO', 'SO-A', REQUESTER.id),
+      request('SO', 'SO-OPEN', REP_B.id),
+      request('SO', 'SO-SHARED', REQUESTER.id),
+      request('SO', 'SO-1', REP_A.id),
+      request('PO', 'PO-1', NOBODY.id),
+    );
+  });
+
+  it('sees requests on own and shared orders and the ones they raised, never an open order they have no part in', async () => {
+    expect(await inbox(REP_A)).toEqual(['PO-1', 'SO-1', 'SO-A', 'SO-SHARED']);
+  });
+
+  it('the order\'s own salesperson sees a request someone else raised on it', async () => {
+    expect(await inbox(REP_B)).toEqual(['PO-1', 'SO-OPEN', 'SO-SHARED']);
+  });
+
+  it('a manager sees their downline\'s', async () => {
+    expect(await inbox(MANAGER)).toEqual(['PO-1', 'SO-1', 'SO-A', 'SO-SHARED']);
+  });
+
+  it('a view-all caller still sees every request', async () => {
+    expect(await inbox(NOBODY)).toEqual(['PO-1', 'SO-1', 'SO-A', 'SO-OPEN', 'SO-SHARED']);
   });
 });

@@ -24,7 +24,8 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Save, Trash2, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
-import { useCreatePaymentVoucher, usePaymentVoucherDetail, useSupplierAdvances, usePvReservations, NO_RESERVATIONS, useExtractBills, useUploadPvFile, useRefundSource, fileToBase64, type BillExtraction, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { useCreatePaymentVoucher, usePaymentVoucherDetail, useSupplierAdvances, usePvReservations, NO_RESERVATIONS, useExtractBills, useUploadPvFile, useRefundSource, useExtractRequestBill, fileToBase64, type BillExtraction, type ExtractedBill, type VendorMemory, type PvFilePayload } from '../../vendor/scm/lib/payment-voucher-queries';
+import { docFileMime } from '../../vendor/scm/lib/doc-file-mime';
 import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { useAccounts, useAccountRoles, postableAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
@@ -41,18 +42,27 @@ import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
+import { SupplierFinanceReminder, SupplierPayTo } from '../../vendor/scm/components/SupplierFinanceReminder';
+import { supplierBankLine } from '../../vendor/scm/lib/supplier-maintenance-queries';
+import { EventSelect } from '../../vendor/scm/components/EventSelect';
+import { EventSuggestions } from '../../vendor/scm/components/EventSuggestions';
+import type { EventSuggestion } from '../../vendor/scm/lib/event-queries';
+import { useBillMatches, usePaymentRequest } from '../../vendor/scm/lib/payment-request-queries';
+import { BillMatchesNote } from '../../vendor/scm/components/RequestBill';
 import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
 import { fmtDate } from '../../vendor/shared/format';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { BackToPile } from '../../vendor/scm/components/BackToPile';
 import { resolveFxRate, deriveRateFromMyrPaid } from './fx-rate';
 
+import { fmtMoneySen, fmtSen } from '../../vendor/shared/format';
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
   const v = centi ?? 0;
-  return `${currency} ${(v / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return fmtMoneySen(v, currency);
 };
 
 /* Migration 0202 — what this voucher is FOR. SUPPLIER_PAYMENT settles a
@@ -65,6 +75,8 @@ type DraftLine = {
   description:      string;
   debitAccountCode: string;
   amountSen:      number;
+  /** The event this line's money is for (owner 2026-09-30, 5a) — null = none. */
+  projectId:        number | null;
 };
 
 const newLine = (): DraftLine => ({
@@ -72,6 +84,7 @@ const newLine = (): DraftLine => ({
   description:      '',
   debitAccountCode: '',
   amountSen:      0,
+  projectId:        null,
 });
 
 /* One outstanding-PI row in the "Apply to PI" picker, with the amount the
@@ -146,6 +159,22 @@ export const PaymentVoucherNew = () => {
   }, [rolesQ.data, moneyAccounts]);
   const [voucherDate, setVoucherDate]             = useState<string>(() => todayMyt());
   const [notes, setNotes]                         = useState<string>('');
+  const [bankChargeSen, setBankChargeSen]         = useState<number>(0);
+  /* The bill's own number and date (owner 2026-10-01: 同一张单 — the same pair on
+     another request, voucher or AP invoice is said out loud, never refused). */
+  const [billRef, setBillRef]                     = useState<string>('');
+  const [billDate, setBillDate]                   = useState<string>('');
+  /* 欠正式单 (item 3): paid on a proforma or quotation — the official invoice is
+     still owed. Finance's tick, pre-ticked when the reader read either word. */
+  const [officialOwed, setOfficialOwed]           = useState<boolean>(false);
+  /* Finance's remark on what to follow up (owner 2026-10-08) — sent with the tick. */
+  const [officialNote, setOfficialNote]           = useState<string>('');
+  const takeProvisional = (kind: BillExtraction['documentKind']) => { if (kind === 'proforma' || kind === 'quotation') setOfficialOwed(true); };
+  /* One bill's pair: a voucher paying several bills ("A, B") keeps none. */
+  const takeBillPair = (no: string | null | undefined, date: string | null | undefined) => {
+    if (no && !no.includes(',')) setBillRef((prev) => prev.trim() ? prev : (upperFill(no) ?? no));
+    if (date) setBillDate((prev) => prev || date);
+  };
 
   /* Internal transfer INSIDE the PV (GL redesign item 10, owner: 不能直接在
      pv 那边开转账就好吗) — same document, same Draft→Checked→Approved chain,
@@ -168,6 +197,9 @@ export const PaymentVoucherNew = () => {
   const location = useLocation();
   const extract = useExtractBills();
   const [scanNote, setScanNote] = useState<string | null>(null);
+  /* The events the scanned bill points at (owner 2026-09-30, 6a) — offered
+     beside the header's event, set only when a person presses Use. */
+  const [eventSuggestions, setEventSuggestions] = useState<EventSuggestion[]>([]);
   /* The scanned bill's own bytes, waiting to ATTACH once the voucher exists
      (owner 2026-09-03: print pv include ocr 的文件一起 — so the file must
      live with the voucher, not die with this tab). Filled by the batch
@@ -193,6 +225,8 @@ export const PaymentVoucherNew = () => {
       ex.dueDate ? `due ${ex.dueDate}` : null,
     ].filter(Boolean).join(' · '));
     if (noteBits) setNotes((prev) => prev.trim() ? prev : noteBits);
+    takeBillPair(ex.invoiceNumber, ex.invoiceDate);
+    takeProvisional(ex.documentKind);
     /* The account: ONLY what this operator saved for this vendor before
        (mig 0341) — never a model guess. Absent a memory it stays empty and a
        person picks it. */
@@ -212,9 +246,10 @@ export const PaymentVoucherNew = () => {
      pv-file-handoff.ts); take() clears, so only set when something was
      actually taken (a double-run effect must not wipe the first take). */
   useEffect(() => {
-    const st = location.state as { billPrefill?: { extraction: BillExtraction; lines?: Array<{ description: string | null; amountSen: number | null }>; memory?: VendorMemory | null } } | null;
+    const st = location.state as { billPrefill?: { extraction: BillExtraction; lines?: Array<{ description: string | null; amountSen: number | null }>; memory?: VendorMemory | null; eventSuggestions?: EventSuggestion[] } } | null;
     if (st?.billPrefill) {
       applyExtraction(st.billPrefill.extraction, { lines: st.billPrefill.lines, memory: st.billPrefill.memory });
+      setEventSuggestions(st.billPrefill.eventSuggestions ?? []);
       const carried = takePvFiles();
       if (carried.length > 0) setPendingFiles(carried);
     }
@@ -225,7 +260,7 @@ export const PaymentVoucherNew = () => {
     setScanNote('Reading the bill…');
     try {
       const files = await Promise.all([...list].map(async (f) => ({
-        name: f.name, mime: f.type || 'application/pdf',
+        name: f.name, mime: docFileMime(f),
         dataBase64: await fileToBase64(f),
       })));
       const res = await extract.mutateAsync([{ files }]);
@@ -233,6 +268,7 @@ export const PaymentVoucherNew = () => {
       if (!bill) { setScanNote('The bill could not be read.'); return; }
       if (!bill.ok) { setScanNote(bill.reason); return; }
       applyExtraction(bill.extraction, { memory: bill.memory });
+      setEventSuggestions(bill.eventSuggestions ?? []);
       /* The read pages become the voucher's attachments on save. The LAST
          successful read wins, matching applyExtraction overwriting the lines
          — this page reads ONE bill at a time. */
@@ -267,6 +303,9 @@ export const PaymentVoucherNew = () => {
      supplier's currency (below). */
   const [currencyOverride, setCurrencyOverride]   = useState<string | null>(null);
   const [lines, setLines]                         = useState<DraftLine[]>([newLine()]);
+  /* The header's event (5a): picking one sets every line, and each line added
+     after takes it; a line can still name its own. */
+  const [defaultEvent, setDefaultEvent]           = useState<number | null>(null);
   const [dialog, setDialog] = useState<{ title: string; body: string; goTo?: string } | null>(null);
   /* ── Customer Refund state (§14). refundDocNo is the COMMITTED number (blur /
      Enter on the input); the source is read from the server by that number. */
@@ -274,7 +313,9 @@ export const PaymentVoucherNew = () => {
   const [refundDocInput, setRefundDocInput] = useState<string>('');
   const [refundDocNo, setRefundDocNo]       = useState<string>('');
   const [refundAmountSen, setRefundAmountSen] = useState<number | null>(null);
-  const refundQ = useRefundSource(refundType, isRefund ? refundDocNo : '');
+  /* Answering a refund request (owner 2026-10-14): its own amount is not held against it. */
+  const refundForRequest = isRefund ? searchParams.get('fromRequest') : null;
+  const refundQ = useRefundSource(refundType, isRefund ? refundDocNo : '', null, refundForRequest);
   const refundSrc = isRefund && refundQ.data ? refundQ.data.source : null;
   /* The amount opens at the headroom (a full refund is the common case) and
      follows a re-load; a typed figure stays until the document changes. */
@@ -321,11 +362,99 @@ export const PaymentVoucherNew = () => {
         description: String((l as Record<string, unknown>).description ?? ''),
         amountSen: Number((l as Record<string, unknown>).amount_sen ?? 0),
         debitAccountCode: String((l as Record<string, unknown>).debit_account_code ?? ''),
+        projectId: ((l as Record<string, unknown>).project_id as number | null | undefined) ?? null,
       }));
     if (copied.length > 0) setLines(copied);
     setScanNote(`Copied from ${String(v.pv_number ?? 'voucher')} — new number, today's date, approvals restart; nothing is applied to bills yet.`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [copyFrom, copyQ.data]);
+
+  /* ── Answering a payment request (申请付款, owner 2026-09-30) ─────────────
+     ?fromRequest=<id> fills the payee, one line for what was asked — the
+     purpose as its description, the event on it and on the header — and names
+     the request (and the payee's bank) in the notes. Saving sends
+     paymentRequestId: the server claims the request for this voucher and
+     copies its bill across (backend lib/payment-request.ts). */
+  const fromRequest = searchParams.get('fromRequest');
+  const requestQ = usePaymentRequest(fromRequest);
+  const requestApplied = useRef(false);
+  useEffect(() => {
+    const r = requestQ.data?.request;
+    if (!fromRequest || requestApplied.current || !r) return;
+    requestApplied.current = true;
+    setPayeeName(r.payee_name);
+    const bank = [r.bank_name, r.bank_account_no, r.bank_account_name].filter(Boolean).join(' ');
+    /* The requester's note comes along (owner 2026-10-02: 多一个第五给他们写note). */
+    setNotes(`Payment request ${r.request_no} — ${r.purpose}${bank ? ` · pay to ${bank}` : ''}${r.note ? ` · Note: ${r.note}` : ''}`);
+    /* A refund request (owner 2026-10-14): the Customer Refund on its own order —
+       the order named and fixed, the amount asked, the customer's bank in the
+       notes above; there is no bill to read. */
+    if (isRefund) {
+      const doc = r.refund_source_doc_no ?? '';
+      setRefundType('SO');
+      setRefundDocInput(doc);
+      setRefundDocNo(doc);
+      setRefundAmountSen(r.amount_sen);
+      setScanNote(`Answering ${r.request_no} from ${r.requested_by_name ?? 'the requester'} — a refund of ${fmtRm(r.amount_sen)} on ${doc}. Pay it to the customer's bank in the notes.`);
+      return;
+    }
+    /* An AP Payment answering a balance (item 2) pays the bill's AP invoice:
+       its lines come from the tick below, not from the request. */
+    if (isAp) {
+      setScanNote(`Answering ${r.request_no} from ${r.requested_by_name ?? 'the requester'} — paid on the bill's AP invoice; the bill stays with the invoice.`);
+      return;
+    }
+    setDefaultEvent(r.project_id);
+    takeBillPair(r.bill_no, r.bill_date);
+    setLines([{ ...newLine(), description: r.purpose.slice(0, 200), amountSen: r.amount_sen, projectId: r.project_id }]);
+    setScanNote(`Answering ${r.request_no} from ${r.requested_by_name ?? 'the requester'} — its bill is attached to this voucher when you save. Reading its bill…`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fromRequest, requestQ.data]);
+  /* …and its bill is READ on opening (owner 2026-09-30, 6.2 — the server reads
+     the request's own files): the bill's lines replace the one asked for, each
+     on the request's event, under the account this vendor was last paid from;
+     the bill's number and date join the notes; a total that differs from the
+     amount asked is said out loud. The payee stays the one the requester named. */
+  const extractRequest = useExtractRequestBill();
+  const requestRead = useRef(false);
+  useEffect(() => {
+    const r = requestQ.data?.request;
+    if (!fromRequest || isAp || isRefund || requestRead.current || !r) return;
+    requestRead.current = true;
+    const who = r.requested_by_name ?? 'the requester';
+    const asked = `Answering ${r.request_no} from ${who} — its bill is attached to this voucher when you save.`;
+    void (async () => {
+      let bill: ExtractedBill | undefined;
+      try {
+        bill = (await extractRequest.mutateAsync(fromRequest)).bills.at(0);
+      } catch (e) {
+        setScanNote(`${asked} Its bill could not be read (${e instanceof Error ? e.message : 'the reader failed'}).`);
+        return;
+      }
+      if (!bill) { setScanNote(`${asked} It carries no bill to read.`); return; }
+      if (!bill.ok) { setScanNote(`${asked} Its bill could not be read (${bill.reason}).`); return; }
+      const ex = bill.extraction;
+      const account = bill.memory?.debitAccountCode ?? '';
+      const read = ex.lines
+        .filter((l) => l.amountSen != null && l.amountSen > 0)
+        .map((l) => ({ ...newLine(), description: upperFill(l.description) ?? '', amountSen: l.amountSen!, debitAccountCode: account, projectId: r.project_id }));
+      if (read.length > 0) setLines(read);
+      else if (account) setLines((prev) => prev.map((l) => ({ ...l, debitAccountCode: l.debitAccountCode || account })));
+      const billBits = upperFill([ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : null, ex.invoiceDate ? `dated ${ex.invoiceDate}` : null].filter(Boolean).join(' · '));
+      if (billBits) setNotes((prev) => (prev.includes(billBits) ? prev : `${prev} · ${billBits}`));
+      takeBillPair(ex.invoiceNumber, ex.invoiceDate);
+      takeProvisional(ex.documentKind);
+      if (r.project_id == null) setEventSuggestions(bill.eventSuggestions ?? []);
+      setScanNote([
+        asked,
+        'Its bill was read — check every figure before saving.',
+        ex.totalSen != null && ex.totalSen !== r.amount_sen ? `The bill reads ${fmtSen(ex.totalSen)} but ${who} asked for ${fmtSen(r.amount_sen)} — check which is right.` : null,
+        account ? `Account ${account} filled from your last ${bill.memory?.payeeName ?? 'same-vendor'} voucher — check it.` : null,
+        ex.totalSen == null ? 'The TOTAL was not readable — check the amount yourself.' : null,
+      ].filter(Boolean).join(' '));
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fromRequest, requestQ.data]);
 
   // Supplier link is optional. When set, auto-fill the payee (if blank) + adopt
   // the supplier's default currency (e.g. a China vendor billing RMB).
@@ -336,6 +465,17 @@ export const PaymentVoucherNew = () => {
     if (!supplierRow) return;
     setPayeeName((prev) => prev.trim() ? prev : supplierRow.name);
   }, [supplierRow]);
+  /* The supplier's bank rides into the Notes, which the voucher prints under PAY
+     TO (owner 2026-10-02, A3a: 付款时自动带出来). Only into empty Notes, or Notes
+     still holding the last supplier's bank line — what Finance typed stays. */
+  const lastBankNote = useRef('');
+  useEffect(() => {
+    if (!isAp) return;
+    const line = supplierBankLine(supplierDetail);
+    const next = line ? `Pay to ${line}` : '';
+    setNotes((prev) => (!prev.trim() || prev === lastBankNote.current ? next : prev));
+    lastBankNote.current = next;
+  }, [isAp, supplierDetail]);
 
   /* Multi-currency (Phase 1-A) — the PV's currency defaults to the linked
      supplier's currency; MYR when unset (strict no-op, no rate field). The
@@ -355,7 +495,7 @@ export const PaymentVoucherNew = () => {
   const setLine  = (rid: string, patch: Partial<DraftLine>) =>
     setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
   const dropLine = (rid: string) => setLines((prev) => (prev.length <= 1 ? prev : prev.filter((l) => l.rid !== rid)));
-  const addLine  = () => setLines((prev) => [...prev, newLine()]);
+  const addLine  = () => setLines((prev) => [...prev, { ...newLine(), projectId: defaultEvent }]);
   /* Insert adds a line and LANDS on its account (owner 2026-09-06: 按 Ins 直接
      加然后直接跳到那一行去输入资料 — the AP invoice's manners, here too);
      Enter on an amount hops to the next line's account, adding one when
@@ -367,7 +507,7 @@ export const PaymentVoucherNew = () => {
     setLandOn(null);
   }, [landOn, lines]);
   const addLineAndLand = () => {
-    const l = newLine();
+    const l = { ...newLine(), projectId: defaultEvent };
     setLines((prev) => [...prev, l]);
     setLandOn(l.rid);
   };
@@ -422,6 +562,9 @@ export const PaymentVoucherNew = () => {
      so an operator who unticks it is not overruled; an invoice the list does
      not offer (paid since, reserved by another voucher) is simply not ticked. */
   const piParam = isAp ? searchParams.get('pi') : null;
+  /* ?amount= (sen) ticks only that much — a balance request (item 2) pays its
+     own instalment on the bill's AP invoice, not the whole of what is owed. */
+  const amountParam = (() => { const n = Number(searchParams.get('amount')); return Number.isInteger(n) && n > 0 ? n : null; })();
   const piTicked = useRef(false);
   useEffect(() => {
     if (!piParam || piTicked.current) return;
@@ -429,7 +572,8 @@ export const PaymentVoucherNew = () => {
     if (!row) return;
     piTicked.current = true;
     const owed = Number(row.total_sen ?? 0) - Number(row.paid_sen ?? 0) - (reserved.byPi[piParam] ?? 0);
-    setAllocAmounts((prev) => ({ ...prev, [piParam]: owed }));
+    setAllocAmounts((prev) => ({ ...prev, [piParam]: amountParam != null ? Math.min(amountParam, owed) : owed }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [piParam, outstandingPiRows, reserved]);
 
   /* AP Payment: every row starts at 0 — TICK pays an invoice in full, typing
@@ -445,6 +589,17 @@ export const PaymentVoucherNew = () => {
       && (r.status === 'POSTED' || r.status === 'PARTIALLY_PAID')
       && r.outstandingSen - (reserved.byApInvoice[r.id] ?? 0) > 0);
   }, [applyToPi, apListQ.data, supplierId, reserved]);
+  /* ?pi= may name an AP INVOICE as well — the bill a balance request is paid on
+     (item 2) — ticked the same way, for ?amount= when given. */
+  useEffect(() => {
+    if (!piParam || piTicked.current) return;
+    const row = outstandingApiRows.find((r) => r.id === piParam);
+    if (!row) return;
+    piTicked.current = true;
+    const owed = row.outstandingSen - (reserved.byApInvoice[piParam] ?? 0);
+    setAllocAmounts((prev) => ({ ...prev, [piParam]: amountParam != null ? Math.min(amountParam, owed) : owed }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [piParam, outstandingApiRows, reserved]);
 
   const allocations: PiAlloc[] = useMemo(() => {
     const fromPis: PiAlloc[] = outstandingPiRows.map((r) => {
@@ -523,6 +678,10 @@ export const PaymentVoucherNew = () => {
       : !!payeeName.trim() && !!creditAccountCode && realLines.length > 0;
 
   const transferMode = !isAp && isTransfer;
+  /* A plain payment of a bill keeps the bill's number and date — not a transfer,
+     a refund or an AP Payment (the AP invoice it pays carries its own). */
+  const showBill = !isAp && !isRefund && !transferMode;
+  const billMatchesQ = useBillMatches(showBill ? billRef : '', billDate, fromRequest);
   const transferPayee = toAccount ? `Internal transfer to ${toAccount.account_code} ${toAccount.account_name}` : '';
   const onSave = async () => {
     if (isRefund) {
@@ -563,6 +722,7 @@ export const PaymentVoucherNew = () => {
         description:      l.description || undefined,
         debitAccountCode: l.debitAccountCode,
         amountSen:      l.amountSen,
+        ...(l.projectId != null ? { projectId: l.projectId } : {}),
       }));
     const sendAllocations = applyToPi
       ? allocations.filter((a) => a.amountSen > 0).map((a) => (
@@ -580,6 +740,7 @@ export const PaymentVoucherNew = () => {
         creditAccountCode,
         voucherDate,
         notes:             notes || undefined,
+        bankChargeSen,
         // Multi-currency (Phase 1-A) — resolved currency + rate. MYR forces 1
         // (server enforces too); a blank/invalid foreign rate → 1.
         currency,
@@ -588,6 +749,9 @@ export const PaymentVoucherNew = () => {
           : 1,
         lines: sendLines,
         ...(sendAllocations.length > 0 ? { allocations: sendAllocations } : {}),
+        ...(fromRequest ? { paymentRequestId: fromRequest } : {}),
+        ...(showBill ? { billRef: billRef.trim() || null, billDate: billDate || null } : {}),
+        ...(showBill && officialOwed ? { officialDocOwed: true, ...(officialNote.trim() ? { officialDocNote: officialNote.trim() } : {}) } : {}),
       });
       /* Attach the scanned bill AFTER the voucher exists — sequentially, so
          sort_no (= print order) is the scan order. A failed upload never
@@ -632,6 +796,8 @@ export const PaymentVoucherNew = () => {
         title={isRefund ? 'New Customer Refund' : isAp ? 'New AP Payment' : 'New Payment Voucher'}
         actions={
           <div className={styles.actions}>
+            {/* The pile kept while this tab lives (owner 2026-10-06): the bills not yet opened. */}
+            <BackToPile target="pv" />
             <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{SAVE_HOTKEY_HINT}</span>
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/payment-vouchers')}>
               <X {...ICON} /> Cancel
@@ -698,6 +864,8 @@ export const PaymentVoucherNew = () => {
                   className={styles.fieldInput}
                   placeholder={suppliersQ.isLoading ? 'Loading suppliers…' : 'Type to find the supplier this pays'}
                 />
+                <SupplierFinanceReminder supplierId={supplierId} />
+                <SupplierPayTo supplierId={supplierId} />
               </label>
             )}
             <label className={styles.field}>
@@ -716,9 +884,44 @@ export const PaymentVoucherNew = () => {
               />
             </label>
             <label className={styles.field}>
+              <span className={styles.fieldLabel}>Bank Charges (MYR, not in total)</span>
+              <MoneyInput bare valueSen={bankChargeSen} aria-label="Bank charges"
+                onCommit={(sen) => setBankChargeSen(Math.max(0, sen ?? 0))}
+                inputClassName={styles.fieldInput} selectOnFocus />
+            </label>
+            <label className={styles.field}>
               <span className={styles.fieldLabel}>Notes</span>
               <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Internal notes" className={styles.fieldInput} rows={2} style={{ resize: 'vertical', minHeight: 60 }} />
             </label>
+            {showBill && (
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Bill no. (the supplier's own)</span>
+                <input type="text" value={billRef} onChange={(e) => setBillRef(e.target.value)} aria-label="Bill no."
+                  placeholder="Filled when the bill is read" className={styles.fieldInput} />
+              </label>
+            )}
+            {showBill && (
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Bill date</span>
+                <DateField fullWidth value={billDate} onChange={(iso) => setBillDate(iso)} className={styles.fieldInput} aria-label="Bill date" />
+              </label>
+            )}
+            {showBill && (
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-12)', color: 'var(--fg-muted)', alignSelf: 'end' }}>
+                <input type="checkbox" checked={officialOwed} onChange={(e) => setOfficialOwed(e.target.checked)} aria-label="Official invoice owed" />
+                Proforma / quotation — official invoice owed · 欠正式单
+              </label>
+            )}
+            {showBill && officialOwed && (
+              <label className={styles.field} style={{ gridColumn: '1 / -1' }}>
+                <span className={styles.fieldLabel}>Remark — what to follow up (optional)</span>
+                <input className={styles.fieldInput} value={officialNote} onChange={(e) => setOfficialNote(e.target.value)} maxLength={500}
+                  aria-label="Official invoice remark" placeholder="e.g. Proforma only — ask MITEC for the tax invoice" />
+              </label>
+            )}
+            {showBill && (billMatchesQ.data?.matches.length ?? 0) > 0 && (
+              <div style={{ gridColumn: '1 / -1' }}><BillMatchesNote matches={billMatchesQ.data?.matches} /></div>
+            )}
 
             {/* Multi-currency (Phase 1-A). Currency defaults to the linked
                 supplier's currency (MYR = strict no-op, rate field hidden); a
@@ -789,14 +992,19 @@ export const PaymentVoucherNew = () => {
             </span>
           </div>
           <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+            {/* Answering a refund request (owner 2026-10-14): which, and for whom. */}
+            {refundForRequest && scanNote && (
+              <p style={{ color: 'var(--c-orange)', fontSize: 'var(--fs-13)' }}>{scanNote}</p>
+            )}
             <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'flex-end', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', gap: 8 }}>
-                <Button variant={refundType === 'SO' ? 'primary' : 'secondary'} onClick={() => { setRefundType('SO'); setRefundDocNo(''); }}>Sales Order</Button>
-                <Button variant={refundType === 'SI' ? 'primary' : 'secondary'} onClick={() => { setRefundType('SI'); setRefundDocNo(''); }}>Sales Invoice</Button>
+                <Button variant={refundType === 'SO' ? 'primary' : 'secondary'} disabled={!!refundForRequest} onClick={() => { setRefundType('SO'); setRefundDocNo(''); }}>Sales Order</Button>
+                <Button variant={refundType === 'SI' ? 'primary' : 'secondary'} disabled={!!refundForRequest} onClick={() => { setRefundType('SI'); setRefundDocNo(''); }}>Sales Invoice</Button>
               </div>
               <label className={styles.field} style={{ flex: '1 1 260px' }}>
                 <span className={styles.fieldLabel}>{refundType === 'SO' ? 'Sales Order no. *' : 'Sales Invoice no. *'}</span>
-                <input type="text" value={refundDocInput} aria-label="Refunded document"
+                {/* A request's refund stays on its own order — the server refuses another. */}
+                <input type="text" value={refundDocInput} aria-label="Refunded document" readOnly={!!refundForRequest}
                   onChange={(e) => setRefundDocInput(e.target.value)}
                   onBlur={() => setRefundDocNo(refundDocInput.trim())}
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); setRefundDocNo(refundDocInput.trim()); } }}
@@ -830,16 +1038,20 @@ export const PaymentVoucherNew = () => {
                         <td style={{ padding: '6px 8px' }}>{p.method}</td>
                         <td style={{ padding: '6px 8px' }}>{p.provider ?? '—'}</td>
                         <td style={{ padding: '6px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmtRm(p.amountSen)}</td>
-                        <td style={{ padding: '6px 8px' }}>{p.booked ? '✓ booked' : p.method === 'imported' ? 'AutoCount era' : 'not booked'}</td>
+                        <td style={{ padding: '6px 8px' }}>{p.booked ? '✓ booked' : p.method === 'imported' ? (refundSrc.type === 'SO' ? 'from AutoCount — counts' : 'AutoCount era') : 'not booked'}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
                 <div style={{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap', fontSize: 'var(--fs-13)', borderTop: '1px solid var(--line)', paddingTop: 'var(--space-3)' }}>
-                  <span>Booked here <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.bookedSen)}</b></span>
+                  <span>Paid <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.bookedSen)}</b>{(refundSrc.importedSen ?? 0) > 0 ? <span style={{ color: 'var(--fg-muted)' }}> (incl. {fmtRm(refundSrc.importedSen ?? 0)} from AutoCount)</span> : null}</span>
                   <span>Already on refund vouchers <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.refundedSen)}</b>
                     {refundSrc.refunds.map((r) => <span key={r.id}> · <a href={`/scm/payment-vouchers/${r.id}`} style={{ color: 'var(--c-orange)' }}>{r.pvNumber}</a></span>)}
                   </span>
+                  {/* Other refund requests still waiting hold their money (owner 2026-10-14). */}
+                  {(refundSrc.requestedSen ?? 0) > 0 && (
+                    <span>Waiting on {refundForRequest ? 'other ' : ''}refund requests <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.requestedSen ?? 0)}</b></span>
+                  )}
                   <span>Refundable <b style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(refundSrc.refundableSen)}</b></span>
                 </div>
                 {/* The deposit-invoice half (docs/bugs/0860): said before the
@@ -896,8 +1108,18 @@ export const PaymentVoucherNew = () => {
               {pendingFiles.map((f) => f.name).join(', ')}
             </div>
           )}
+          {/* The event these lines are for (owner 2026-09-30, 5a) — the header
+              default: picking one here sets every line and each new line; a
+              line can still name its own below. */}
+          <label className={styles.field} style={{ maxWidth: 640 }}>
+            <span className={styles.fieldLabel}>Event (all lines)</span>
+            <EventSelect value={defaultEvent} around={voucherDate} className={styles.fieldInput} aria-label="Event for all lines"
+              onChange={(v) => { setDefaultEvent(v); setLines((prev) => prev.map((x) => ({ ...x, projectId: v }))); }} />
+          </label>
+          <EventSuggestions suggestions={eventSuggestions} current={defaultEvent}
+            onUse={(id) => { setDefaultEvent(id); setLines((prev) => prev.map((x) => ({ ...x, projectId: id }))); }} />
           {lines.map((l, idx) => (
-            <div key={l.rid} data-line={l.rid}
+            <div data-grid-row key={l.rid} data-line={l.rid}
               onKeyDown={(e) => { if (e.key === 'Insert') { e.preventDefault(); addLineAndLand(); } }}
               style={{
                 background: 'var(--c-paper)', border: '1px solid var(--line)',
@@ -945,6 +1167,11 @@ export const PaymentVoucherNew = () => {
                     onCommit={(sen) => setLine(l.rid, { amountSen: sen ?? 0 })}
                     onKeyDown={(e) => { if (e.key === 'Enter') hopFrom(l.rid); }}
                     inputClassName={styles.fieldInput} selectOnFocus />
+                </label>
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>Event</span>
+                  <EventSelect value={l.projectId} around={voucherDate} className={styles.fieldInput} aria-label={`line ${idx + 1} event`}
+                    onChange={(v) => setLine(l.rid, { projectId: v })} />
                 </label>
               </div>
             </div>

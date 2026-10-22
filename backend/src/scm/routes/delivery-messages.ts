@@ -1,30 +1,49 @@
 // ---------------------------------------------------------------------------
-// delivery-messages.ts — WhatsApp (Seampify) sends from the Delivery Planning
-// board.
+// delivery-messages.ts — WhatsApp sends from the Delivery Planning board, via
+// Houzs Connect (chat.houzscentury.com).
 //
-// Owner 2026-07-22: the board takes over the sheet-era "BulkSend" Apps Script.
-// One WhatsApp per CUSTOMER PHONE bundling all their selected orders — the
-// exact payload shape the sheet's "Delivery Logs" tab recorded:
-//   { phone: '+60...', total_item: N,
-//     ref_1, branding_1, debtor_name_1, delivery_date_1, address4_1,
-//     ref_2, ... }
-// The Seampify endpoint + key come from env (SEAMPIFY_SEND_URL /
-// SEAMPIFY_API_KEY, wrangler secrets). Until BOTH are set, /send answers 503
-// not_configured and writes nothing — the UI ships before the credentials.
+// "Send Now" bundles a customer's selected orders into ONE message per CUSTOMER
+// PHONE and POSTs to Connect's /api/webhooks/erp (see services/connect.ts),
+// which fires the automation the message KIND names (default "New Delivery
+// Follow-up"; the full list and what each needs is scm/lib/delivery-message-
+// kinds.ts) — Connect sends the Meta-approved template, and for the openers the
+// customer's Confirm / Amend tap comes back to /api/chat-callback. Gated on CONNECT_WEBHOOK_URL +
+// CONNECT_WEBHOOK_KEY; until both are set /send answers 503 not_configured and
+// writes nothing — the UI ships before the credentials.
+//
 // Every real attempt (success or fail) is logged to scm.wa_message_log
 // (mig 0185), one row per doc with a shared batch_id per phone, so the board
-// shows a per-row "Message" status.
+// shows a per-row "Message" status. (Replaced the retired Seampify gateway,
+// owner 2026-09-28.)
 //
 // Mounted at /api/scm/delivery-messages under scm.transportation.drivers —
 // the same area as the board itself.
 // ---------------------------------------------------------------------------
 
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import type { Env, Variables } from '../env';
 import { activeCompanyId, scopeToAllowedCompanies } from '../lib/companyScope';
 import { supabaseAuth } from '../middleware/auth';
 import { effectiveSoDelivery, type SoDeliveryDateRow } from '../shared';
+import { normalizePhone } from '../shared/phone';
+import {
+  KIND_AUTOMATION,
+  MESSAGE_KINDS,
+  OPENER_KINDS,
+  kindAttributes,
+  type SendExtras,
+} from '../lib/delivery-message-kinds';
+import {
+  isConnectConfigured,
+  buildDeliveryFollowUp,
+  postConnectContact,
+  parseConnectCompanyProfiles,
+  chatCallbackUrl,
+  CONNECT_COMPANY_PROFILE_KEY,
+  type ConnectOrder,
+  type ConnectCompanyProfile,
+} from '../../services/connect';
 
 export const deliveryMessages = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -32,52 +51,67 @@ export const deliveryMessages = new Hono<{ Bindings: Env; Variables: Variables }
 // without it has no c.get('supabase') and 500s on the first query).
 deliveryMessages.use('*', supabaseAuth);
 
-/** Digits-only, then '+'-prefixed — the sheet-era fix: the first BulkSend
- *  failed until the phone carried the '+'. Returns null for an empty/blank
- *  phone so the caller can skip (and report) the row instead of sending into
- *  the void. */
-function normalizePhone(raw: unknown): string | null {
-  const digits = String(raw ?? '').replace(/\D/g, '');
-  return digits.length >= 8 ? `+${digits}` : null;
+/** The shared E.164 normaliser, so a stored "+6060..." (pre-#4582 header) or
+ *  "0176..." is sent as "+60176...", not to a number that does not exist
+ *  (HC-0096). Null for a blank phone so the caller can skip (and report) it. */
+export function blastPhone(raw: unknown): string | null {
+  return normalizePhone(raw == null ? null : String(raw));
 }
 
-/** ISO YYYY-MM-DD → the sheet payload's YYYY/MM/DD. */
+/** ISO YYYY-MM-DD → the template payload's YYYY/MM/DD. */
 function payloadDate(iso: string | null | undefined): string {
   return String(iso ?? '').slice(0, 10).replace(/-/g, '/');
 }
 
 const sendSchema = z.object({
   docNos: z.array(z.string().min(1)).min(1).max(200),
+  kind: z.enum(MESSAGE_KINDS).default('delivery'),
+  // Operator-supplied variables for the kinds whose data the ERP does not hold
+  // (see delivery-message-kinds.ts). Validated per kind below, not here, so a
+  // delivery send never has to carry empty driver fields.
+  driverInfo: z.object({
+    driverName: z.string().trim().min(1).max(80),
+    driverContact: z.string().trim().min(1).max(40),
+    driverIc: z.string().trim().max(40).default(''),
+    carPlate: z.string().trim().max(20).default(''),
+    deliveryTime: z.string().trim().min(1).max(60),
+  }).optional(),
 });
 
-/* ── POST /send — one Seampify call per customer phone ─────────────────────── */
-deliveryMessages.post('/send', async (c) => {
-  const url = c.env.SEAMPIFY_SEND_URL;
-  const key = c.env.SEAMPIFY_API_KEY;
-  if (!url || !key) {
-    return c.json({
-      error: 'not_configured',
-      reason: 'Seampify is not configured yet — set the SEAMPIFY_SEND_URL and SEAMPIFY_API_KEY secrets to enable sending.',
-    }, 503);
-  }
+/* The result of a delivery-message send. POST /send maps readError to a 500; a
+   best-effort caller (the DELIVERED → "Delivery Completed" hook) treats it as
+   "nothing sent" and does not claim its once-guard. */
+export interface SendDeliveryMessagesResult {
+  sent: Array<{ phone: string; docNos: string[]; httpCode: number }>;
+  failed: Array<{ phone: string; docNos: string[]; error: string }>;
+  skipped: Array<{ docNo: string; reason: string }>;
+  readError?: { code: string; reason: string };
+}
 
-  let body: unknown;
-  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
-  const parsed = sendSchema.safeParse(body);
-  if (!parsed.success) return c.json({ error: 'invalid_body', reason: parsed.error.message }, 400);
-  const docNos = [...new Set(parsed.data.docNos)];
-
+/* The shared sender — group the docs by customer phone, load the per-company
+   profile + live balances, POST one Connect event per phone and log each. POST
+   /send and the DELIVERED hook both call this, so the auto "Delivery Completed"
+   message goes through the SAME path (one message per customer, same
+   wa_message_log shape) instead of a second copy of the sender. The caller MUST
+   have checked isConnectConfigured first (postConnectContact's contract). */
+export async function sendDeliveryMessageForDocs(
+  c: Context<{ Bindings: Env; Variables: Variables }>,
+  docNos: string[],
+  kind: (typeof MESSAGE_KINDS)[number],
+  extras: SendExtras,
+): Promise<SendDeliveryMessagesResult> {
   const sb = c.get('supabase');
   const user = c.get('user') as { id?: string } | null;
 
   // The message fields, straight off the SO header (the board's own source).
+  // Address columns feed the Postage kind only; the rest read nothing extra.
   const { data: rowsRaw, error: readErr } = await scopeToAllowedCompanies(
     sb.from('mfg_sales_orders')
-      .select('doc_no, debtor_name, phone, branding, address4, customer_delivery_date, amended_delivery_date')
+      .select('doc_no, debtor_name, phone, branding, customer_delivery_date, amended_delivery_date, amend_reason, delivery_address1, delivery_address2, delivery_address3, delivery_address4, address1, address2, address3, address4, postcode, city, customer_state')
       .in('doc_no', docNos),
     c,
   );
-  if (readErr) return c.json({ error: 'load_failed', reason: readErr.message }, 500);
+  if (readErr) return { sent: [], failed: [], skipped: [], readError: { code: 'load_failed', reason: readErr.message } };
   const rows = (rowsRaw ?? []) as Array<Record<string, unknown>>;
 
   const byDoc = new Map(rows.map((r) => [String(r.doc_no), r]));
@@ -87,7 +121,7 @@ deliveryMessages.post('/send', async (c) => {
   for (const docNo of docNos) {
     const r = byDoc.get(docNo);
     if (!r) { skipped.push({ docNo, reason: 'not_found' }); continue; }
-    const phone = normalizePhone(r.phone);
+    const phone = blastPhone(r.phone);
     if (!phone) { skipped.push({ docNo, reason: 'no_phone' }); continue; }
     const arr = byPhone.get(phone) ?? [];
     arr.push(r);
@@ -97,39 +131,83 @@ deliveryMessages.post('/send', async (c) => {
   const sent: Array<{ phone: string; docNos: string[]; httpCode: number }> = [];
   const failed: Array<{ phone: string; docNos: string[]; error: string }> = [];
 
+  // Per-company message values (signature / bank / disposal) the rebuilt flows
+  // reference; read once. A profile keyed by company is config, not business
+  // data, so it is read by key and not company-scoped. Unset / malformed
+  // app_config => null => no per-company attributes (the message still goes).
+  // company-scope: app_config is a global key/value config table, not per-company data.
+  const { data: profileRow, error: profileErr } = await sb.from('app_config')
+    .select('value').eq('key', CONNECT_COMPANY_PROFILE_KEY).maybeSingle();
+  // A FAILED read is not "no profile": sending without it would hand the
+  // customer a balance paragraph with no bank details and no signature, and
+  // the staff would never know. Refuse; nothing has been sent yet.
+  if (profileErr) return { sent, failed, skipped, readError: { code: 'profile_load_failed', reason: profileErr.message } };
+  const companyProfile: ConnectCompanyProfile | null =
+    parseConnectCompanyProfiles((profileRow as { value?: string | null } | null)?.value ?? null)[
+      String(activeCompanyId(c) ?? '')
+    ] ?? null;
+
+  // LIVE balance per SO — the SO list's own source of truth
+  // (mfg_sales_orders_with_payment_totals.balance_sen_live = local_total −
+  // Σpayments), NOT the base table's balance_sen, which nothing maintains.
+  // VIEW-TRAP (backend/docs/scm-view-trap-coe.md): only view-native columns
+  // here, never a base-table header column added after the view was recreated.
+  // Same fail-closed rule as the profile: a balance we could not read must not
+  // go out as "nothing owed".
+  const { data: balRaw, error: balErr } = await scopeToAllowedCompanies(
+    sb.from('mfg_sales_orders_with_payment_totals')
+      .select('doc_no, balance_sen_live')
+      .in('doc_no', docNos),
+    c,
+  );
+  if (balErr) return { sent, failed, skipped, readError: { code: 'balance_load_failed', reason: balErr.message } };
+  const balanceByDoc = new Map<string, number>();
+  for (const b of (balRaw ?? []) as Array<{ doc_no: string | null; balance_sen_live: number | null }>) {
+    if (b.doc_no != null && b.balance_sen_live != null) balanceByDoc.set(String(b.doc_no), Number(b.balance_sen_live));
+  }
+  const callbackUrl = chatCallbackUrl(c.env);
+
   for (const [phone, group] of byPhone) {
-    // The sheet-era BulkSend payload, byte-compatible: numbered per-item vars.
-    const payload: Record<string, unknown> = { phone, total_item: group.length };
-    group.forEach((r, i) => {
-      const n = i + 1;
-      payload[`ref_${n}`] = String(r.doc_no ?? '');
-      payload[`branding_${n}`] = String(r.branding ?? '');
-      payload[`debtor_name_${n}`] = String(r.debtor_name ?? '');
-      // Effective date rule (amended ?? original), same as the board.
-      payload[`delivery_date_${n}`] = payloadDate(
-        effectiveSoDelivery(r as SoDeliveryDateRow),
-      );
-      payload[`address4_${n}`] = String(r.address4 ?? '');
-    });
     const groupDocs = group.map((r) => String(r.doc_no));
-
-    let httpCode: number | null = null;
-    let ok = false;
-    let errText: string | null = null;
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
-        body: JSON.stringify(payload),
-      });
-      httpCode = res.status;
-      ok = res.ok;
-      if (!res.ok) errText = (await res.text().catch(() => '')).slice(0, 300) || `HTTP ${res.status}`;
-    } catch (e) {
-      errText = String((e as Error)?.message ?? e).slice(0, 300);
+    // What this KIND adds (or why this customer is skipped): the group's first
+    // order is the one the single-order templates print; the owed total is the
+    // same figure `amount` carries.
+    const first = group[0] as Record<string, unknown>;
+    const owedSen = group.reduce((sum, r) => sum + Math.max(0, balanceByDoc.get(String(r.doc_no)) ?? 0), 0);
+    const perKind = kindAttributes(kind, first, effectiveSoDelivery(first as SoDeliveryDateRow), owedSen, extras);
+    if (perKind.skip) {
+      for (const docNo of groupDocs) skipped.push({ docNo, reason: perKind.skip });
+      continue;
     }
+    const sendCtx = {
+      callbackUrl,
+      automation: KIND_AUTOMATION[kind],
+      extra: perKind.attributes,
+      resetConversation: OPENER_KINDS.has(kind),
+    };
+    // ONE message per customer phone. buildDeliveryFollowUp shows the first 3
+    // orders and carries the TRUE count in order_total, so a customer with 4+
+    // orders gets a single "first 3 of N" message, not several sends. ref = our
+    // Sales Order number; effective (amended ?? original) date as yyyy/mm/dd,
+    // same as the board.
+    const orders: ConnectOrder[] = group.map((r) => ({
+      // The ERP Sales Order number, always (owner 2026-10-06) — not the AutoCount
+      // number an older / imported order may also carry; the chat-callback still
+      // resolves either, so an in-flight conversation opened under the old rule
+      // is unaffected.
+      ref: String(r.doc_no ?? ''),
+      branding: String(r.branding ?? ''),
+      deliveryDate: payloadDate(effectiveSoDelivery(r as SoDeliveryDateRow)),
+      balanceSen: balanceByDoc.get(String(r.doc_no)) ?? null,
+    }));
+    const contact = buildDeliveryFollowUp(
+      phone, String(group[0]?.debtor_name ?? ''), orders, companyProfile, sendCtx,
+    );
 
-    // Log one row per doc, tied by batch_id. Best-effort: a log failure must
+    const result = await postConnectContact(c.env, contact);
+
+    // Log one row per doc (all of the phone's docs, not only the 3 shown — the
+    // send covers them all), tied by batch_id. Best-effort: a log failure must
     // not turn a delivered WhatsApp into a reported error — but it is COUNTED
     // (console.warn), never silently dropped.
     const batchId = crypto.randomUUID();
@@ -139,10 +217,10 @@ deliveryMessages.post('/send', async (c) => {
         company_id: activeCompanyId(c) ?? null,
         doc_no: docNo,
         phone,
-        payload: JSON.stringify(payload),
-        http_code: httpCode,
-        success: ok,
-        error: errText,
+        payload: JSON.stringify(contact),
+        http_code: result.httpCode,
+        success: result.ok,
+        error: result.error,
         source: 'delivery-planning',
         created_by: user?.id ?? null,
       })));
@@ -150,11 +228,36 @@ deliveryMessages.post('/send', async (c) => {
       console.warn(`[delivery-messages] log insert failed: ${String((e as Error).message).slice(0, 120)}`);
     }
 
-    if (ok) sent.push({ phone, docNos: groupDocs, httpCode: httpCode ?? 0 });
-    else failed.push({ phone, docNos: groupDocs, error: errText ?? 'send failed' });
+    if (result.ok) sent.push({ phone, docNos: groupDocs, httpCode: result.httpCode ?? 0 });
+    else failed.push({ phone, docNos: groupDocs, error: result.error ?? 'send failed' });
   }
 
-  return c.json({ sent, failed, skipped });
+  return { sent, failed, skipped };
+}
+
+/* ── POST /send — one Houzs Connect call per customer phone ────────────────── */
+deliveryMessages.post('/send', async (c) => {
+  if (!isConnectConfigured(c.env)) {
+    return c.json({
+      error: 'not_configured',
+      reason: 'Houzs Connect is not configured yet — set the CONNECT_WEBHOOK_URL and CONNECT_WEBHOOK_KEY secrets to enable sending.',
+    }, 503);
+  }
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const parsed = sendSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: 'invalid_body', reason: parsed.error.message }, 400);
+  const docNos = [...new Set(parsed.data.docNos)];
+  const kind = parsed.data.kind;
+  const extras: SendExtras = { driverInfo: parsed.data.driverInfo };
+  if (kind === 'driver_info' && !extras.driverInfo) {
+    return c.json({ error: 'invalid_body', reason: 'Driver Info needs the driver, contact, plate and time.' }, 400);
+  }
+  // Postpone needs no request field: it reads the row's Amend Reason + Delivery
+  // Date (kindAttributes), and skips any order missing either.
+  const result = await sendDeliveryMessageForDocs(c, docNos, kind, extras);
+  if (result.readError) return c.json({ error: result.readError.code, reason: result.readError.reason }, 500);
+  return c.json({ sent: result.sent, failed: result.failed, skipped: result.skipped });
 });
 
 /* ── POST /statuses — latest send status per doc (board "Message" column) ──── */

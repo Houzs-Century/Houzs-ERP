@@ -20,6 +20,10 @@ via public no-login share links — outside contractors and brand partners.
   reviewer (region-split: Ops Exec for Pulau Pinang/Kelantan/Terengganu/Perak,
   else the Storekeeper Supervisor by position name) sets `replace` to
   escalate; Stage 2 (Purchaser) closes with `done`.
+- A defect photo's remark is packed as `Model:` + `Reason:` in its attachment
+  `caption` (`pages/projects/defectRemark.ts`); it renders under the photo for
+  EVERY mobile viewer (`MobilePmsDefectActions.tsx`, not the hidden tasklist),
+  with an inline thumbnail. A legacy free-text caption reads out as the reason.
 - Stock transfers (`project_stock_transfers`) mirror into one checklist row
   per transfer (`notes = auto:stock_transfer=<id>`); confirm/unconfirm/delete
   re-sync or drop that row. A missing `transferred_at` defaults to today
@@ -53,9 +57,13 @@ Access is layered on **four independent axes** — do not conflate them:
    every project, regardless of PIC or brand.
 3. **Write authority** is the flat role permission matrix
    (`backend/src/services/permissions.ts`): `projects.read`, `.chat`,
-   `.checklist.tick`, `.write`, `.approve`, `.manage`, plus
+   `.checklist.tick`, `.write`, `.approve`, `.manage`, `.reminders`, plus
    `stock_transfer.approve`, `agreement.approve`, `projects.finance.view`,
-   `stock_in.approve`. A bare `*` does **not** confer the four
+   `stock_in.approve`. `projects.reminders` gates only the **Reminder view**
+   (see below) — it is deliberately narrower than `.manage` (which BD Exec /
+   IT Admin also carry) so a manager can be handed the cross-event chase-list
+   without full project admin; Owner + Super Admin cover it via `*`. A bare
+   `*` does **not** confer the four
    `EXPLICIT_APPROVAL_KEYS` (`projects.approve`, `stock_transfer.approve`,
    `agreement.approve`, and the stock-in equivalent) — those gate checklist
    tick/status/review explicitly.
@@ -73,6 +81,14 @@ the project list; Driver is crew-scoped on the **calendar only**, not the
 list. Holding `projects.write` escapes crew scoping entirely on both.
 
 ## Rules that must not break
+
+- The CONTRACT row's 「Request payment」 (owner 2026-10-08) sends the row's own
+  files as the payment request's bill — a PDF or an image only — with the
+  event fixed; the row then lists its requests and their 欠正式单 state, and
+  「补正式单」 sends a row file as the official invoice. The payable sections are
+  one list on each side (`PAYABLE_SECTIONS` in
+  `backend/src/scm/lib/pms-checklist-source.ts`, `PAYABLE_SECTION_NAMES` in
+  `frontend/src/pages/projects/PmsRequestPayment.tsx`) — keep them equal.
 
 - Venue resolution (`backend/src/scm/lib/venue-binding.ts`) has exactly
   three outcomes in order — PIC/attending PMS project whose period contains
@@ -106,6 +122,16 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   canonical-venue TS module, its PG migration function, the D1 parity file,
   and the backfill script — a DB trigger also re-applies it on any direct
   write, so a route bypass cannot reintroduce the alias.
+- A crew POD for a Setup/Dismantle leg on the delivery run files its photos as phase photos and ticks the open "Setup Image" / "Dismantle Image" row; it never changes `stage` (scm/routes/delivery-job-progress.ts).
+- A checklist item counts as **complete** for progress and the stage tracker
+  when `status` is `done`/`na` **OR** `review_status = approved` — a gated
+  document (3D Design, Display Floor Plan, Stock In/Out) is finished by approval
+  and keeps `status = pending`, so reading status alone leaves an approved task
+  stuck red. One rule, two homes that must agree:
+  `backend/src/services/checklistProgress.ts` (`checklistRowDone`, feeds the
+  progress % / section bars / mobile pipeline) and
+  `frontend/src/pages/projects/checklistDone.ts` (`itemComplete`, the desktop
+  stage stepper). Mirrors the My-Pending SQL `status='done' OR review_status='approved'`.
 - Checklist-tick UI controls must gate on the **role-label badge**
   (`roleLabelAdmits`, shared by desktop and mobile), not on `projects.write`
   alone — a `projects.checklist.tick`-only holder (e.g. Purchaser) is
@@ -134,9 +160,70 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   `salesAccess.canSeeSoloOrganizer` (BD role, Owner position, weisiang). An
   exhibition's organizer shows to everybody. Display-only — the stored name,
   the list, the calendar and the API still carry the organizer.
+- The same Sales section also lists the Sales Orders hard-linked to the event
+  (`scm.mfg_sales_orders.project_id`) via `GET /api/project-sales-orders/:id`
+  (`routes/project-sales-orders.ts`; desktop `pages/projects/
+  ProjectSalesOrdersBlock.tsx`, mobile `MobilePmsSalesOrders.tsx`): same read
+  gate as the entries list, the SO module's own own/downline row scope
+  (`scoped: true` marks partial totals), CANCELLED excluded, DRAFT counted,
+  paid from the payment ledger via `so-outstanding.ts`. "Not yet opened" is
+  the lump-sum `total_sales` minus the SO total — a comparison, not a count
+  of slips.
+- The event page's finance lines take Finance's money from the books
+  (`scm/lib/event-books.ts`, read in `services/projectFinanceLines.ts`): posted
+  GL legs tagged to the event, plus payment-voucher lines that are CHECKED but
+  not yet approved (`readCheckedVoucherLegs`, owner 2026-10-19 「改成 pv
+  checked」; shown as "PV-… (checked)"). A row the books fill replaces its typed
+  and auto lines; a rejected voucher drops out and the typed figure returns; AP
+  invoices still count from Post.
+- The event P&L is TWO P&Ls (owner 2026-10-16; `services/eventPnl.ts`, inputs
+  `services/eventPnlInputs.ts`, detail field `finance_pnl`): BY TOTAL SALES (sales
+  lines, else the Total Sales box, else the orders' total) and BY SALES ORDERS
+  (the opened, uncancelled orders — drafts included, as the SO block counts —
+  at their own cost buckets). COGS by Total Sales = a typed COGS, else the
+  orders' cost ratio × Total Sales. Rental / Setup / Transport S&D / Others are
+  shared. Transport Fee / Commission / Merchandise = Finance's books, else a
+  typed line, else the brand rate card % of THAT column's sales (boost on that
+  column's GP%); the stored `auto_source` lines are not counted. Desktop
+  `EventPnlTable` shows both; the phone P&L tiles read `by_sales` and a By Sales
+  Orders line. The Projects list fills its finance columns (Rental, Revenue,
+  COGS, GP, NP — `fin_*`) from the same Total Sales P&L for a caller who may see
+  finance (`services/eventPnlBatch.ts`, one read per input for the page;
+  `readEventBooksMany` = posted legs + checked vouchers, the event page's two
+  reads); a failed read leaves the list's own SQL figures.
+- The evening sales report (one bill per line: booklet no, amount, salesperson;
+  a "+ N(T)" transport or "(D)" disposal tail is kept apart) is DERIVED from the
+  project chat on every read — notes by the Owner position, Ummu or weisiang
+  (`canSaveSalesReport`, both sides), newest message winning per booklet number
+  (`GET /api/project-sales-bills/:id`, `routes/project-sales-bills.ts`; parser
+  `scm/shared/sales-report-parse.ts` mirrored to the frontend; rules in
+  `routes/lib/sales-report-bills.ts`). Void = archive the note (`POST
+  …/void/:activityId`, trail row `sales_report_voided`). A summary's Total line
+  IS Total Sales: set on post, and an empty Total Sales (null or 0) is filled from
+  the latest summary when a finance writer opens the event; a set figure is never
+  overwritten on view; voiding the summary it came from puts back the latest one
+  left (or empties it). Day lines that differ are shown, never used. Bills match orders
+  by booklet number (SO `customer_so_no` / `ref` tokens); one under another event
+  counts as opened, is listed with that event, and its rep is noticed on post
+  (`…/notify`, `source=sales_report_fair_mismatch`). The red amount beside a
+  name under Sales Attending is that rep's bills not yet opened.
+  `public.project_sales_bills` is unused (see tasks/TODO.md).
+- Sales Attending picks from the Sales Team roster (`sales_reps`, auto-made for
+  Sales-department logins). `GET /projects/sales-rep-options` also returns
+  `others`: active staff of the company not on it; adding one (`POST
+  /:id/sales-attendees { user_id }`) puts them on the roster without changing their
+  department (`ensureSalesRepForUser`, owner 2026-10-19).
 
 ## Gotchas
 
+- Calendar/list filters persist so a project round-trip does not lose them.
+  Desktop calendar + list use `useStickyFilters` (URL ↔ sessionStorage, keyed
+  `filters:<page>:u<user>:c<company>`); the **key allow-list must include every
+  filter param** (a param that is read/set but not listed is silently dropped —
+  that was the `status` bug). The projects-calendar scope and the mobile
+  calendar (`useIdleSessionFilter`, non-URL state) carry a **1-hour idle TTL**:
+  the filter clears an hour after the last change, not on mere navigation, and
+  logout sweeps `filters:*` (AuthContext) — owner 2026-09-30.
 - Do not reintroduce PIC- or brand-based row filtering — that ACL
   (`projectAcl.ts`) was deliberately deleted 2026-08-19; row visibility is
   company scope plus crew scoping only.
@@ -174,19 +261,37 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   `frontend/src/components/ProjectChat.tsx`, `ProjectGantt.tsx`,
   `PnlCalendar.tsx`. Public share pages: `frontend/src/pages/
   ContractorCalendar.tsx`, `ShareCalendar.tsx`.
+- **Reminder view** (owner/admin chase-list, owner 2026-09-30):
+  `frontend/src/pages/projects/OutstandingReminders.tsx` — the third mode of
+  the Project List `Cards | Table | Reminder` toggle, shown only to
+  `projects.reminders` holders. Pulls every incomplete checklist task from
+  `GET /api/projects/outstanding-tasks` (one payload) and slices it
+  client-side by task / status / month / group-by (Organizer · Owner · Sales
+  PIC), then copies a paste-ready WhatsApp reminder per group or for all
+  groups — clipboard only, no `wa.me` / personal numbers. Grouping + message
+  formatting are pure functions unit-tested in `OutstandingReminders.test.ts`.
+- CONTRACT row 「Request payment」: `frontend/src/pages/projects/PmsRequestPayment.tsx`
+  (button, the row's requests) and `PmsRequestModals.tsx` (the pick-the-bill
+  and 补正式单 dialogs, loaded on first use, in the SCM shell's providers).
 - PMS agent pages: `frontend/src/pages/SetupInvoiceFill.tsx`,
   `ScheduleReconcile.tsx`, `FairReportFill.tsx`,
   `frontend/src/pages/scm-v2/FairReport.tsx`.
 - Mobile: `frontend/src/mobile/MobilePMS.tsx` (list, detail, checklist, crew,
   photos, defects — single file, no separate detail file), `MobileCalendar.tsx`,
   `MobileFairReport.tsx`, `MobilePmsDefectActions.tsx`,
-  `MobilePmsFloorPlanTiles.ts`.
+  `MobilePmsFloorPlanTiles.ts`, `MobileEditProjectSheet.tsx` (the detail-header
+  Edit control — name/booth/venue/organizer/start/end on one sheet, gated by
+  `canWrite && access.canEdit`, saved through the same project PATCH).
 - Backend routes: `backend/src/routes/projects.ts` (~90 routes — see
   `docs/generated/route-capability-matrix.csv` for the full inventory),
+  `projectsOutstanding.ts` (the Reminder view feed
+  `GET /api/projects/outstanding-tasks`, gated `projects.reminders`; its own
+  file, mounted before the projects router so `/:id` cannot swallow it),
   `projects_print.ts`, `finance.ts`, `notifications.ts`,
   `publicContractorCalendar.ts`, `publicBrandCalendar.ts`, `brandShare.ts`,
   `backend/src/scm/routes/reports.ts` (Fair/Sales Report).
-- Backend services: `backend/src/services/projects.ts`, `auth.ts`,
+- Backend services: `backend/src/services/projects.ts`, `outstandingTasks.ts`
+  (Reminder view query), `auth.ts`,
   `positionPolicy.ts`, `pmsAccess.ts`, `projectGates.ts`, `contractorShare.ts`,
   `brandShare.ts`, `shareCalendar.ts`, `permissions.ts`,
   `agents/fair-report-parse.ts`, `agents/schedule-reconcile.ts`.

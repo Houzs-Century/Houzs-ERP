@@ -99,10 +99,21 @@ export type AmendmentDetail = {
        they replace. NULL/absent on a line-only amendment. */
     header_changes?: SoAmendmentHeaderChanges | null;
     old_header_snapshot?: SoAmendmentHeaderChanges | null;
+    /* BUG-101 — the Purchaser's OK on a Delivery Date brought forward. */
+    purchaser_ok_by?: string | null;
+    purchaser_ok_at?: string | null;
+    /* BUG-101 — the requester changed a PO-frozen Processing Date under
+       scm.so.override_po_processing_date. */
+    po_date_override_by?: string | null;
   };
   lines: AmendmentLine[];
   salesOrder: { doc_no: string; status: string; revision: number } | null;
   purchaseOrders: Array<{ id: string; po_number: string; status: string }>;
+  /** The caller raised this amendment (server-resolved staff identity). */
+  viewerIsRequester?: boolean;
+  /** BUG-101 — an open Logistic request that brings the Delivery Date forward on
+   *  an order with a live PO: a Purchaser must OK it before Logistic approves. */
+  purchaserOkRequired?: boolean;
 };
 
 /* SO revision snapshot row — one per approved SO revision (so_revisions).
@@ -124,6 +135,8 @@ export type CreateAmendmentLine = {
   newVariants?: unknown;
   newQty?: number;
   newUnitPriceSen?: number;
+  /* HC-0095 — sent with a TYPED 0 only; the apply ignores a 0 without it. */
+  zeroPriceIntended?: true;
   /* mig 0280 — the line's REMARK. Omit when the request does not touch it; ''
      is a real request to clear it. Before 0280 this had no column and the
      submit dropped it in silence (owner 2026-08-11, 2990-SO-2608-016). */
@@ -261,6 +274,69 @@ export const useAmendmentLanePreview = (args: AmendmentLanePreviewArgs | null) =
 /* ── Create (nested under the SO mount) ────────────────────────────────────
    POST /mfg-sales-orders/:docNo/amendments — the CREATE lives on the SO router
    so it can reuse the SO processing-lock / downstream guards. */
+/** What POST /mfg-sales-orders/:docNo/amendments answers, plus what the hook
+ *  then did with it. `autoApplied` counts the halves that applied on the spot. */
+export type CreateAmendmentResult = {
+  amendment: AmendmentRow;
+  amendments?: AmendmentRow[];
+  lanes?: string[];
+  selfApprovable?: string[];
+  autoApplied?: number;
+  /** Ids whose apply was REFUSED — still raised, still in the queue. */
+  notApplied?: string[];
+};
+
+/* THE SHORTCUT THE SERVER OFFERS (owner 2026-09-24: 「如果是 Logistic admin 修改
+   客户信息, Delivery Date - 无需 approver」). The create response lists the ids the
+   RAISER may apply themselves — a DELIVERY half, header-only, raised by someone
+   who holds that lane's approve key (backend shared/amendment-self-approve.ts
+   decides; the approve route re-checks, so this list is an invitation and never
+   an authorisation).
+
+   The apply runs through the ORDINARY approve route, exactly as the approver's
+   own click does, so every guard it carries stays where it is — the same reason
+   a cancellation's final approval runs the document's own cancel rather than
+   re-implementing it (vendor/scm/lib/use-cancel-request-actions.ts).
+
+   A refused apply is NOT an error for the submit: the amendment exists and sits
+   in the queue as REQUESTED, which is exactly where it sat before this existed,
+   and the desk that raised it can still sign it. So the failure is swallowed
+   here and reported as `autoApplied: 0` — the notice then says 'waiting for
+   Logistic' instead of 'applied', which is the truth in that case.
+
+   It lives in this ONE hook because all four surfaces that raise an amendment
+   (SO detail, MobileNewSO, MobileDeliveryPlanning, DeliveryFieldsDrawer) call
+   it — a chain written at the call sites would be four chains, and the one that
+   drifted would be the one that left the row pending. */
+async function createAmendmentThenApplyOwn(
+  docNo: string,
+  idempotencyKey: string | undefined,
+  body: unknown,
+): Promise<CreateAmendmentResult> {
+  const created = await authedFetch<CreateAmendmentResult>(
+    `/mfg-sales-orders/${docNo}/amendments`,
+    idempotentInit(idempotencyKey, { method: 'POST', body: JSON.stringify(body) }),
+  );
+  const ids = created.selfApprovable ?? [];
+  if (ids.length === 0) return { ...created, autoApplied: 0, notApplied: [] };
+  let autoApplied = 0;
+  const notApplied: string[] = [];
+  for (const id of ids) {
+    try {
+      await authedFetch(`/so-amendments/${id}/approve-so`, { method: 'PATCH' });
+      autoApplied += 1;
+    } catch {
+      /* RECORDED, not swallowed: the id rides back on the result, `autoApplied`
+         stays short of the halves raised, and the submit notice then says the
+         desk is waiting — which is true, because the row is sitting in the
+         queue as REQUESTED for that desk to sign. Nothing is lost and nobody is
+         told a change applied when it did not. */
+      notApplied.push(id);
+    }
+  }
+  return { ...created, autoApplied, notApplied };
+}
+
 export const useCreateAmendment = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -284,10 +360,7 @@ export const useCreateAmendment = () => {
       lines: CreateAmendmentLine[];
       headerChanges?: SoAmendmentHeaderChanges;
     }) =>
-      authedFetch<{ amendment: AmendmentRow }>(
-        `/mfg-sales-orders/${docNo}/amendments`,
-        idempotentInit(idempotencyKey, { method: 'POST', body: JSON.stringify(body) }),
-      ),
+      createAmendmentThenApplyOwn(docNo, idempotencyKey, body),
     onSuccess: (_, vars) => {
       invalidateAmendmentSideEffects(qc);
       // The SO gains an open amendment → its detail flags (has_open_amendment,
@@ -375,6 +448,17 @@ export const useRejectAmendment = () => {
   });
 };
 
+/* BUG-101 — the Purchaser's OK on a Delivery Date brought forward. Applies
+   nothing; Logistic's approve can run once it is recorded. */
+export const usePurchaserOk = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id }: { id: string }) =>
+      authedFetch<{ amendment: AmendmentRow }>(`/so-amendments/${id}/purchaser-ok`, { method: 'PATCH' }),
+    onSuccess: (_, vars) => invalidateAmendmentSideEffects(qc, vars.id),
+  });
+};
+
 /* Flag — the APPROVER saying this request is not theirs to sign. The server
    passes it to the other desk (still REQUESTED), or refuses and says why. */
 export const useFlagAmendmentLane = () => {
@@ -383,6 +467,20 @@ export const useFlagAmendmentLane = () => {
     mutationFn: ({ id, note }: { id: string; note: string }) =>
       authedFetch<{ amendment: AmendmentRow }>(`/so-amendments/${id}/flag-lane`, {
         method: 'PATCH', body: JSON.stringify({ note }),
+      }),
+    onSuccess: (_, vars) => invalidateAmendmentSideEffects(qc, vars.id),
+  });
+};
+
+/* Change approver — a SUPER ADMIN (the * wildcard) choosing which desk signs an
+   open request. The server applies the same safety as the flag above and says
+   why when it refuses. */
+export const useChangeAmendmentLane = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, lane, note }: { id: string; lane: 'LINES' | 'DELIVERY' | 'PRICE'; note: string }) =>
+      authedFetch<{ amendment: AmendmentRow }>(`/so-amendments/${id}/lane`, {
+        method: 'PATCH', body: JSON.stringify({ lane, note }),
       }),
     onSuccess: (_, vars) => invalidateAmendmentSideEffects(qc, vars.id),
   });

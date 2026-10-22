@@ -20,10 +20,12 @@
 // it reuses useScheduleDelivery / useDeliveryPlanningLines exactly as before.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useMemo, useState, useEffect, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
+import { useUpdateTrip } from '../lib/trips-queries';
 import { buildVariantSummary, fmtSen, fmtDate, fmtDateOrDash, fmtDateTime } from '@2990s/shared';
 import { formatPhone } from '@2990s/shared/phone';
-import { DataGrid, type DataGridColumn } from './DataGrid';
+import { DataGridCompat, type GridColumn, type GridContextMenuItem } from '../../../components/DataGridCompat';
 import { useConfirm } from './ConfirmDialog';
 import { useNotify } from './NotifyDialog';
 import { Button } from '../../../components/Button';
@@ -32,22 +34,32 @@ import { badgeFor } from '../lib/category-badges';
 import {
   useDeliveryPlanningLines,
   useScheduleDelivery,
+  useUpdateDeliveryFields,
+  useAssignDoCrew,
   DELIVERY_STATES,
   DELIVERY_STATE_LABEL,
+  sxeDateOf,
+  MESSAGE_STATUSES,
+  AMEND_REASONS,
   dpJobTypeLabel,
   assrJobKindLabel,
-  arrangementStageLabel,
   dateArrangementOf,
   DATE_ARRANGEMENT_LABEL,
   ARRANGEMENT_STAGE_LABEL,
   type DeliveryState,
   type PlanningOrder,
 } from '../lib/delivery-planning-queries';
+import type { LayoutSeed } from '../../../lib/tableLayouts';
 import { type DriverRow } from '../lib/drivers-queries';
 import { type LorryRow } from '../lib/lorries-queries';
+import { useHelpers, type HelperRow } from '../lib/helpers-queries';
 import { useStaffLookup } from '../../../hooks/useStaffLookup';
 import styles from './DeliveryPlanningBoard.module.css';
 import { DateField } from "./DateField";
+import { deliveryDateChange } from "../lib/delivery-date-edit";
+import { SearchCombo } from "./SearchCombo";
+import { crewComboOptions, crewComboValue, latestDoId, KEEP_CURRENT } from "../lib/dispatch-cell";
+import { useDeliveryRowMarks, rowMarkTint, useBulkSetRowMark, useBulkClearRowMark, ROW_MARK_PALETTE } from "../lib/delivery-row-mark";
 
 /* HC "Remark 4" delivery sub-status → a small pill class (reuse the cream
    palette; unknown/blank → muted). Default-shown column. */
@@ -73,6 +85,36 @@ function SubstatusPill({ value }: { value: string | null }) {
 }
 /* A datetime-or-dash cell (TIMESTAMPTZ columns). */
 const dtOrDash = (iso: string | null): string => (iso ? fmtDateTime(iso) : '—');
+
+/* POD (proof of delivery) cell. SO rows only. A real driver POD left a photo or
+   a GPS fix (has_pod) → a green "POD" chip linking to the DO detail where the
+   signature/photo/GPS are shown. A DELIVERED order with no evidence (office
+   advance / QR scan) → an amber "No POD" chip (the thing dispatchers chase).
+   Not-yet-delivered rows render a muted dash. */
+function PodCell({ o }: { o: PlanningOrder }) {
+  if (o.row_type !== 'so') return <NotApplicable />;
+  if (o.has_pod) {
+    const doId = o.delivery_orders[o.delivery_orders.length - 1]?.id;
+    const chip = (
+      <span style={{
+        display: 'inline-block', padding: '1px 8px', borderRadius: 999,
+        border: '1px solid #2e7d32', color: '#2e7d32', fontSize: 'var(--fs-10)',
+        fontWeight: 600, whiteSpace: 'nowrap',
+      }}>✓ POD</span>
+    );
+    return doId ? <Link to={`/scm/delivery-orders/${doId}`} title="View proof of delivery">{chip}</Link> : chip;
+  }
+  if (o.delivery_state === 'DELIVERED') {
+    return (
+      <span style={{
+        display: 'inline-block', padding: '1px 8px', borderRadius: 999,
+        border: '1px solid #b26a00', color: '#b26a00', fontSize: 'var(--fs-10)',
+        fontWeight: 600, whiteSpace: 'nowrap',
+      }}>No POD</span>
+    );
+  }
+  return <NotApplicable />;
+}
 
 /* Company badge for the SHARED cross-company queue — a small code chip
    (HOUZS / 2990). null (e.g. ASSR rows / unresolved) renders a muted dash. */
@@ -206,16 +248,6 @@ export function regionTabsFrom(
 /* The 4 state tabs (the top row). */
 const STATE_TABS = DELIVERY_STATES;
 
-/* Per-state tint for the Status cell's editable select — the same cream palette
-   the old inline pill used, applied as the select's text/background so an
-   overridden state still reads at a glance. */
-const DSTATE_TONE: Record<DeliveryState, { bg: string; fg: string }> = {
-  PENDING_DELIVERY: { bg: 'rgba(34, 31, 32, 0.06)', fg: '#767b6e' },
-  PENDING_SCHEDULE: { bg: 'rgba(232, 107, 58, 0.12)', fg: '#0c3f39' },
-  OVERDUE:          { bg: 'rgba(184, 51, 31, 0.12)', fg: '#b8331f' },
-  DELIVERED:        { bg: 'rgba(47, 93, 79, 0.12)', fg: '#2f5d4f' },
-};
-
 /* ── Inline (Excel-style) cell editors ────────────────────────────────────────
    Each cell IS the control (no drill-in). All of them stopPropagation on click /
    double-click so editing a cell never selects the row or triggers the row's
@@ -239,39 +271,118 @@ const stopRow = {
   onDoubleClick: (e: ReactMouseEvent) => e.stopPropagation(),
 };
 
-function StatusEditCell({ order, sched }: { order: PlanningOrder; sched: SchedMutation }) {
-  const tone = DSTATE_TONE[order.delivery_state];
-  /* ASSR + DP rows: the delivery-state override is not wired for these yet, so
-     show the state read-only (as a tinted pill) instead of an editable select. */
+type UpdateFieldsMutation = ReturnType<typeof useUpdateDeliveryFields>;
+
+/* The "Delivery Status" column's inline editor — the customer-message follow-up
+   workflow status (owner 2026-09-22), one of the 23 MESSAGE_STATUSES or blank.
+   SO rows only; ASSR / DP / project rows show a dash (this is a customer-
+   conversation field, not a fleet-job one). Writes delivery_message_status
+   through useUpdateDeliveryFields; the blank option clears it. */
+function MessageStatusEditCell({ order, updateFields }: { order: PlanningOrder; updateFields: UpdateFieldsMutation }) {
   if (isAssr(order) || isDp(order) || isProject(order)) {
-    return (
-      <span
-        className={styles.dstatePill}
-        style={{ background: tone.bg, color: tone.fg }}
-        title={isProject(order) ? 'PMS project window — scheduled in Projects' : isDp(order) ? 'DP-job state (schedule it from the DP Order)' : 'Service-case state (override not wired for ASSR)'}
-      >
-        {DELIVERY_STATE_LABEL[order.delivery_state]}
-      </span>
-    );
+    return <NotApplicable />;
   }
   return (
     <select
       className={styles.inlineEdit}
-      style={{ background: tone.bg, color: tone.fg, fontWeight: 600 }}
-      value={order.delivery_state}
-      disabled={sched.isPending}
-      title="Manual delivery-state override (wins over the derived state)"
+      value={order.delivery_message_status ?? ''}
+      disabled={updateFields.isPending}
+      title="Customer-message workflow status"
       {...stopRow}
       onChange={(e) => {
-        const deliveryState = e.target.value as DeliveryState;
-        if (deliveryState === order.delivery_state) return;
-        sched.mutate({ type: 'so', id: order.so_doc_no, deliveryState });
+        const next = e.target.value;
+        if ((next || null) === (order.delivery_message_status ?? null)) return;
+        updateFields.mutate({ type: 'so', id: order.so_doc_no, deliveryMessageStatus: next || null });
       }}
     >
-      {DELIVERY_STATES.map((s) => (
-        <option key={s} value={s}>{DELIVERY_STATE_LABEL[s]}</option>
+      <option value="">—</option>
+      {/* Keep an off-list current value selectable (robustness). */}
+      {order.delivery_message_status
+        && !(MESSAGE_STATUSES as readonly string[]).includes(order.delivery_message_status)
+        ? <option value={order.delivery_message_status}>{order.delivery_message_status}</option>
+        : null}
+      {MESSAGE_STATUSES.map((s) => (
+        <option key={s} value={s}>{s}</option>
       ))}
     </select>
+  );
+}
+
+/* Delivery Date inline editor (owner 2026-09-25: 填写日期也能选日期) — the board's
+   "Delivery Date" column is editable in place again, both by typing dd/mm/yyyy and
+   by the calendar picker (the shared DateField does both). SO rows write
+   amended_delivery_date via useScheduleDelivery, committing on BLUR so a half-typed
+   year (31/03/20 → 31/03/2026) is never saved on the way. ASSR / DP / project rows
+   keep their own scheduling entry (drawer / DP Order / read-only mirror). */
+function DeliveryDateEditCell({ order, sched }: { order: PlanningOrder; sched: SchedMutation }) {
+  const current = (order.amended_delivery_date ?? '').slice(0, 10);
+  const [val, setVal] = useState(current);
+  // Follow the row when its date changes underneath (optimistic save, poll).
+  useEffect(() => { setVal(current); }, [current]);
+  if (isAssr(order) || isDp(order) || isProject(order)) {
+    return detail(fmtDateOrDash(order.amended_delivery_date));
+  }
+  return (
+    <span {...stopRow} style={{ display: 'flex', width: '100%', minWidth: 0 }}>
+      <DateField
+        fullWidth
+        value={val}
+        disabled={sched.isPending}
+        aria-label="Delivery date"
+        onChange={setVal}
+        onBlur={() => {
+          const next = deliveryDateChange(current, val);
+          if (next.changed) sched.mutate({ type: 'so', id: order.so_doc_no, scheduleDate: next.value });
+        }}
+      />
+    </span>
+  );
+}
+
+/* Amend Reason inline editor (owner 2026-09-22) — pick a preset reason or keep a
+   free-text one. SO rows only; writes amend_reason via useUpdateDeliveryFields. */
+function AmendReasonEditCell({ order, updateFields }: { order: PlanningOrder; updateFields: UpdateFieldsMutation }) {
+  if (isAssr(order) || (isDp(order) && !order.trip_id) || isProject(order)) return <NotApplicable />;
+  const current = order.amend_reason ?? '';
+  return (
+    <select
+      className={styles.inlineEdit}
+      value={current}
+      disabled={updateFields.isPending}
+      title="Amend / reschedule reason"
+      {...stopRow}
+      onChange={(e) => {
+        const next = e.target.value;
+        if ((next || null) === (order.amend_reason ?? null)) return;
+        updateFields.mutate({ type: 'so', id: order.so_doc_no, amendReason: next || null });
+      }}
+    >
+      <option value="">—</option>
+      {current && !(AMEND_REASONS as readonly string[]).includes(current)
+        ? <option value={current}>{current}</option>
+        : null}
+      {AMEND_REASONS.map((r) => (
+        <option key={r} value={r}>{r}</option>
+      ))}
+    </select>
+  );
+}
+
+/* A plain inline text editor for a free-text SO field (owner 2026-09-22:
+   Disposal Request, Remarks). SO rows only; commits on blur / Enter. */
+function TextEditCell({ order, value, onCommit, placeholder }: {
+  order: PlanningOrder; value: string | null; onCommit: (next: string | null) => void; placeholder?: string;
+}) {
+  if (isAssr(order) || isDp(order) || isProject(order)) return <NotApplicable />;
+  return (
+    <input
+      className={styles.inlineEdit}
+      defaultValue={value ?? ''}
+      placeholder={placeholder}
+      {...stopRow}
+      onBlur={(e) => { const v = e.target.value.trim() || null; if (v !== (value ?? null)) onCommit(v); }}
+      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+    />
   );
 }
 
@@ -283,83 +394,130 @@ function StatusEditCell({ order, sched }: { order: PlanningOrder; sched: SchedMu
    lands on the SO's amended_delivery_date — the customer's ORIGINAL
    customer_delivery_date is never overwritten. */
 
-/* Sentinel for an existing crew assignment whose name/plate is NOT in the active
-   master list — shown as a selected option so the cell never blanks an existing
-   assignment; picking it is a no-op (guarded in onChange). */
-const KEEP_CURRENT = '__current__';
+/* Write ONE crew seat on the row's latest DO (owner 2026-09-26). Returns false
+   when the order has no DO yet — crew lives on delivery_order_crew, so there is
+   nothing to write and the caller reverts its picker and prompts to open a DO. */
+type CrewSeatWrite = (order: PlanningOrder, seat: {
+  driver1Id?: string | null; driver2Id?: string | null;
+  helper1Id?: string | null; helper2Id?: string | null; lorryId?: string | null;
+}) => boolean;
 
-function DriverEditCell({ order, sched, drivers }: { order: PlanningOrder; sched: SchedMutation; drivers: DriverRow[] }) {
-  /* DP rows carry no crew until scheduled from the DP Order → non-applicable. */
-  if (isDp(order)) return <NotApplicable />;
-  /* PMS project rows are a read-only mirror — show the crew PMS assigned (edit in Projects). */
+/* Driver — a type-to-search picker (owner 2026-09-26: 可以输入搜索). SO rows write
+   the DO crew (delivery_order_crew) via useAssignDoCrew, which snapshots the
+   driver's IC + contact from the master so the neighbouring Driver IC / Driver
+   Contact columns fill in on the refetch. ASSR legs keep the trip-crew write
+   (type:'assr') so the leg still consumes fleet capacity. DP → n/a; project →
+   read-only mirror (edit in Projects). */
+function DriverPickCell({ order, drivers, sched, writeSeat, pending }: {
+  order: PlanningOrder; drivers: DriverRow[]; sched: SchedMutation; writeSeat: CrewSeatWrite; pending: boolean;
+}) {
+  // SCROLL PERF (owner 2026-10-21 "滚动变顺"): the board re-renders every visible
+  // cell on each scroll frame / tick / keystroke. These option lists must be
+  // MEMOISED — rebuilt per render they handed SearchCombo a new array identity
+  // every time, forcing its own chosen/hits/rows useMemos to recompute on all
+  // ~200 crew pickers on screen. drivers is react-query-stable, so this is free.
+  const items = useMemo(() => drivers.map((d) => ({ id: d.id, label: d.name })), [drivers]);
+  const currentName = order.crew?.driver_1_name ?? null;
+  const options = useMemo(() => crewComboOptions(items, currentName), [items, currentName]);
+  const chosen = useMemo(() => crewComboValue(items, currentName), [items, currentName]);
+  const [val, setVal] = useState(chosen);
+  useEffect(() => { setVal(chosen); }, [chosen]);
+  if (isDp(order) && !order.trip_id) return <NotApplicable />;
   if (isProject(order)) return <span style={{ color: '#767b6e' }}>{order.crew?.driver_1_name || '—'}</span>;
-  /* SO rows write type:'so'; ASSR legs write type:'assr' (+ jobKind) — the backend
-     wires the leg onto a trip so it consumes fleet capacity (P3). No driver_id on
-     the row (crew carries names only) → preselect by matching driver_1_name. */
   const assrLeg = isAssr(order);
-  const currentName = order.crew?.driver_1_name ?? '';
-  const matchedId = drivers.find((d) => d.name === currentName)?.id ?? '';
-  const offList = currentName !== '' && matchedId === '';
   return (
-    <select
-      className={styles.inlineEdit}
-      value={offList ? KEEP_CURRENT : matchedId}
-      disabled={sched.isPending}
-      {...stopRow}
-      onChange={(e) => {
-        const picked = e.target.value;
-        if (picked === KEEP_CURRENT) return;   // re-picking the off-list current = no-op
-        const driverId = picked || null;
-        const driverNameOptimistic = driverId ? (drivers.find((d) => d.id === driverId)?.name ?? null) : null;
-        sched.mutate(assrLeg
-          ? { type: 'assr', id: String(order.assr_id ?? ''), jobKind: order.job_kind, driverId, driverNameOptimistic }
-          : { type: 'so', id: order.so_doc_no, driverId, driverNameOptimistic });
-      }}
-    >
-      <option value="">—</option>
-      {/* Keep the current name selectable even if it's not (or no longer) in the
-          active driver master, so an existing assignment never silently blanks. */}
-      {offList && <option value={KEEP_CURRENT}>{currentName}</option>}
-      {drivers.map((d) => (
-        <option key={d.id} value={d.id}>{d.name}</option>
-      ))}
-    </select>
+    <span {...stopRow} style={{ display: 'flex', width: '100%', minWidth: 0 }}>
+      <SearchCombo
+        fill aria-label="Driver" placeholder="— pick a driver —"
+        options={options}
+        value={val}
+        disabled={pending}
+        onChange={(picked) => {
+          if (picked === KEEP_CURRENT) return;   // re-picking the off-list current = no-op
+          const driverId = picked || null;
+          if (assrLeg) {
+            setVal(picked);
+            const driverNameOptimistic = driverId ? (drivers.find((d) => d.id === driverId)?.name ?? null) : null;
+            sched.mutate({ type: 'assr', id: String(order.assr_id ?? ''), jobKind: order.job_kind, driverId, driverNameOptimistic });
+            return;
+          }
+          setVal(writeSeat(order, { driver1Id: driverId }) ? picked : chosen);
+        }}
+      />
+    </span>
   );
 }
 
-function LorryEditCell({ order, sched, lorries }: { order: PlanningOrder; sched: SchedMutation; lorries: LorryRow[] }) {
-  /* DP rows carry no crew until scheduled from the DP Order → non-applicable. */
-  if (isDp(order)) return <NotApplicable />;
-  /* PMS project rows are a read-only mirror — show the assigned lorry (edit in Projects). */
-  if (isProject(order)) return <span style={{ color: '#767b6e' }}>{order.crew?.lorry_plate || '—'}</span>;
-  /* SO rows write type:'so'; ASSR legs write type:'assr' (+ jobKind) — wires the
-     leg onto a trip (P3) so a lorry is a real fleet commitment. */
+/* Lorry Plate — same picker; SO writes the DO crew lorry, ASSR the trip lorry. */
+function LorryPickCell({ order, lorries, sched, writeSeat, pending }: {
+  order: PlanningOrder; lorries: LorryRow[]; sched: SchedMutation; writeSeat: CrewSeatWrite; pending: boolean;
+}) {
+  // SCROLL PERF: memoise the option list (see DriverPickCell) — stable identity
+  // keeps SearchCombo's internal memos from recomputing on every board re-render.
+  const items = useMemo(() => lorries.map((l) => ({ id: l.id, label: l.plate })), [lorries]);
+  const currentPlate = order.crew?.lorry_plate ?? null;
+  const options = useMemo(() => crewComboOptions(items, currentPlate), [items, currentPlate]);
+  const chosen = useMemo(() => crewComboValue(items, currentPlate), [items, currentPlate]);
+  const [val, setVal] = useState(chosen);
+  useEffect(() => { setVal(chosen); }, [chosen]);
+  if (isDp(order) && !order.trip_id) return <NotApplicable />;
+  if (isProject(order) || isDp(order)) return <span style={{ color: '#767b6e' }}>{order.crew?.lorry_plate || '—'}</span>;
   const assrLeg = isAssr(order);
-  const currentPlate = order.crew?.lorry_plate ?? '';
-  const matchedId = lorries.find((l) => l.plate === currentPlate)?.id ?? '';
-  const offList = currentPlate !== '' && matchedId === '';
   return (
-    <select
-      className={styles.inlineEdit}
-      value={offList ? KEEP_CURRENT : matchedId}
-      disabled={sched.isPending}
-      {...stopRow}
-      onChange={(e) => {
-        const picked = e.target.value;
-        if (picked === KEEP_CURRENT) return;
-        const lorryId = picked || null;
-        const lorryPlateOptimistic = lorryId ? (lorries.find((l) => l.id === lorryId)?.plate ?? null) : null;
-        sched.mutate(assrLeg
-          ? { type: 'assr', id: String(order.assr_id ?? ''), jobKind: order.job_kind, lorryId, lorryPlateOptimistic }
-          : { type: 'so', id: order.so_doc_no, lorryId, lorryPlateOptimistic });
-      }}
-    >
-      <option value="">—</option>
-      {offList && <option value={KEEP_CURRENT}>{currentPlate}</option>}
-      {lorries.map((l) => (
-        <option key={l.id} value={l.id}>{l.plate}</option>
-      ))}
-    </select>
+    <span {...stopRow} style={{ display: 'flex', width: '100%', minWidth: 0 }}>
+      <SearchCombo
+        fill aria-label="Lorry plate" placeholder="— pick a lorry —"
+        options={options}
+        value={val}
+        disabled={pending}
+        onChange={(picked) => {
+          if (picked === KEEP_CURRENT) return;
+          const lorryId = picked || null;
+          if (assrLeg) {
+            setVal(picked);
+            const lorryPlateOptimistic = lorryId ? (lorries.find((l) => l.id === lorryId)?.plate ?? null) : null;
+            sched.mutate({ type: 'assr', id: String(order.assr_id ?? ''), jobKind: order.job_kind, lorryId, lorryPlateOptimistic });
+            return;
+          }
+          setVal(writeSeat(order, { lorryId }) ? picked : chosen);
+        }}
+      />
+    </span>
+  );
+}
+
+/* Helper 1 / Helper 2 — a type-to-search picker that writes the DO crew helper
+   seat (owner 2026-09-26). SO rows only: helpers live on delivery_order_crew, so
+   ASSR / DP / project rows have no seat to write. */
+function HelperPickCell({ order, helpers, writeSeat, pending, slot }: {
+  order: PlanningOrder; helpers: HelperRow[]; writeSeat: CrewSeatWrite; pending: boolean; slot: 1 | 2;
+}) {
+  // SCROLL PERF: memoise the option list (see DriverPickCell).
+  const items = useMemo(() => helpers.map((h) => ({ id: h.id, label: h.name })), [helpers]);
+  const currentName = (slot === 1 ? order.crew?.helper_1_name : order.crew?.helper_2_name) ?? null;
+  const options = useMemo(() => crewComboOptions(items, currentName), [items, currentName]);
+  const chosen = useMemo(() => crewComboValue(items, currentName), [items, currentName]);
+  const [val, setVal] = useState(chosen);
+  useEffect(() => { setVal(chosen); }, [chosen]);
+  // Project rows are a read-only PMS mirror — show the helper the project crewed
+  // (owner 2026-10-21), like the Driver / Lorry cells. ASSR / DP have no seat.
+  if (isProject(order)) return <span style={{ color: '#767b6e' }}>{currentName || '—'}</span>;
+  if (isAssr(order) || isDp(order)) return <NotApplicable />;
+  return (
+    <span {...stopRow} style={{ display: 'flex', width: '100%', minWidth: 0 }}>
+      <SearchCombo
+        fill aria-label={`Helper ${slot}`} placeholder="— pick a helper —"
+        options={options}
+        value={val}
+        disabled={pending}
+        onChange={(picked) => {
+          if (picked === KEEP_CURRENT) return;
+          const helperId = picked || null;
+          const seat = slot === 1 ? { helper1Id: helperId } : { helper2Id: helperId };
+          setVal(writeSeat(order, seat) ? picked : chosen);
+        }}
+      />
+    </span>
   );
 }
 
@@ -418,7 +576,7 @@ const CategoryPill = ({ group }: { group: string | null | undefined }) => {
 /* Four drill-down columns — Group · Item Code · Description · Description 2.
    Matches the SO list's accessors/markup verbatim. Shared layout key so the
    operator's column prefs persist across every SO they expand. */
-const DRILLDOWN_COLUMNS: DataGridColumn<DrillItem>[] = [
+const DRILLDOWN_COLUMNS: GridColumn<DrillItem>[] = [
   {
     key: 'group', label: 'Group', width: 90, groupable: true,
     accessor: (it) => <CategoryPill group={it.item_group} />,
@@ -490,7 +648,7 @@ const PlanningExpandedLines = ({ docNo }: { docNo: string }) => {
       padding: 'var(--space-2) var(--space-3) var(--space-2) 40px',
       background: '#fff',
     }}>
-      <DataGrid<DrillItem>
+      <DataGridCompat<DrillItem>
         rows={items}
         columns={DRILLDOWN_COLUMNS}
         storageKey="delivery-planning-drilldown-grid.v1"
@@ -503,7 +661,7 @@ const PlanningExpandedLines = ({ docNo }: { docNo: string }) => {
 };
 
 /* Row-context-menu item shape (mirrors DataGrid's contextMenu return). */
-type ContextMenuItems = ReturnType<NonNullable<Parameters<typeof DataGrid<PlanningOrder>>[0]['contextMenu']>>;
+type ContextMenuItems = GridContextMenuItem[];
 
 export type DeliveryBoardStateTabs = {
   activeState: string;               // 'ALL' | DeliveryState
@@ -569,6 +727,18 @@ export type DeliveryPlanningBoardProps = {
   exportName?: string;
   searchPlaceholder?: string;
   emptyMessage?: string;
+  /* Code-shipped, read-only layout presets for the Columns picker — passed only
+     by the full Delivery Planning board (the date/time/crew sub-pages have their
+     own storage keys and narrower views). */
+  layoutPresets?: LayoutSeed[];
+  /* First-page row cap (owner 2026-09-26): the full board renders this many rows
+     with a "Load more" for the rest; passed only by the main Delivery Planning
+     page. Omitted on the sub-pages (they render their whole, narrower queue). */
+  initialRowLimit?: number;
+  /* Drag-to-reorder the board rows (owner 2026-09-26): called with the new order
+     of the displayed rows. Passed only by the main Delivery Planning page, whose
+     `defaultSort` reads the same persisted order back. */
+  onRowReorder?: (orderedKeys: string[]) => void;
 
   /* Default ordering while NO column sort is active — forwarded to the
      DataGrid. The two arrangement queues pass arrangementQueueCompare
@@ -577,6 +747,10 @@ export type DeliveryPlanningBoardProps = {
      A clicked header still overrides as always. Omitted (the main Delivery
      Planning board), the rows render in the server's order exactly as before. */
   defaultSort?: (a: PlanningOrder, b: PlanningOrder) => number;
+  /* The host page's own view state (state tab, region chip) behind the toolbar
+     "Reset layout" button, which the grid shows whenever a funnel, the search
+     box or this is active (owner 2026-10-05: same button as Sales Orders). */
+  resetFilters?: { active: boolean; onReset: () => void };
 };
 
 /* Selection keys are prefixed (`so:<docNo>` / `assr:<id>` / `dp:<id>`). The bulk
@@ -609,17 +783,55 @@ export function DeliveryPlanningBoard({
   scrollToRow,
   visibleColumnsOverride,
   onUserAdjustColumns,
-  storageKey = 'dg-delivery-planning',
+  storageKey = 'dg-delivery-planning-v2',
   exportName = 'DeliveryPlanning',
   searchPlaceholder = 'Search SO / ref / customer / phone…',
   emptyMessage = 'No orders need delivering in this view.',
   defaultSort,
+  layoutPresets,
+  initialRowLimit,
+  onRowReorder,
+  resetFilters,
 }: DeliveryPlanningBoardProps) {
   const askConfirm = useConfirm();
   const notify = useNotify();
   /* Salesperson column — agent text / salesperson_id resolved against the staff
      roster, same helper as the SO list (never renders a raw UUID). */
   const { nameOf: salespersonNameOf } = useStaffLookup();
+  /* Writes the customer-message workflow status (delivery_message_status) from
+     the "Delivery Status" column's inline select (owner 2026-09-22). */
+  const updateFields = useUpdateDeliveryFields();
+  /* Crew (driver / lorry / helper) inline pickers write the DO crew snapshot —
+     the store the board reads and the one that captures the driver's IC/contact.
+     Helpers are fetched here (like updateFields) rather than threaded as a prop. */
+  const assignCrew = useAssignDoCrew();
+  const updateTrip = useUpdateTrip();
+  const helpers = useHelpers().data ?? [];
+  /* One inline pick → one seat on the row's latest DO; the backend keeps the
+     other seats. No DO yet → nothing to write, so say so and leave the picker. */
+  const writeCrewSeat: CrewSeatWrite = (order, seat) => {
+    /* A DP job has no DO: its crew IS its run's crew (the server copies it to
+       the run's DOs, and the driver's phone follows the run). */
+    if (isDp(order) && order.trip_id) {
+      updateTrip.mutate({ id: order.trip_id, ...(seat.driver1Id !== undefined ? { driverId: seat.driver1Id } : {}),
+        ...(seat.helper1Id !== undefined ? { helper1Id: seat.helper1Id } : {}), ...(seat.helper2Id !== undefined ? { helper2Id: seat.helper2Id } : {}) });
+      return true;
+    }
+    const doId = latestDoId(order.delivery_orders);
+    if (!doId) {
+      void notify({ title: 'Create a delivery order first', body: 'This order has no delivery order yet, so crew cannot be saved. Create a DO first.' });
+      return false;
+    }
+    assignCrew.mutate({ doId, ...seat });
+    return true;
+  };
+  const crewPending = assignCrew.isPending || sched.isPending || updateTrip.isPending;
+  /* Manual colour marks (owner 2026-09-26): a Map<rowKey, colour token>, painted
+     from the row context menu on the main page and tinted onto the row below. */
+  const rowMarks = useDeliveryRowMarks().data;
+  const bulkSetMark = useBulkSetRowMark();
+  const bulkClearMark = useBulkClearRowMark();
+  const markBusy = bulkSetMark.isPending || bulkClearMark.isPending;
 
   /* EM/SG nicety: when the active region is EM or SG, the cross-border columns
      (shipout date, port ref, customer-delivered date) default-SHOW; elsewhere
@@ -655,83 +867,7 @@ export function DeliveryPlanningBoard({
     return split;
   }, [orders]);
 
-  /* ── Bulk-edit bar state ────────────────────────────────────────────────────
-     One field at a time: Status | Delivery date | Driver | Lorry. The second
-     control's TYPE depends on the chosen field; `bulkValue` holds its raw value
-     (state code / YYYY-MM-DD / driver id / lorry id). Apply fans out one
-     useScheduleDelivery call per selected SO (capped concurrency), then clears
-     the selection and reports a summary via the in-app NotifyDialog. */
-  type BulkField = 'STATUS' | 'DATE' | 'DRIVER' | 'LORRY';
-  const [bulkField, setBulkField] = useState<BulkField>('STATUS');
-  const [bulkValue, setBulkValue] = useState<string>('');
-  const [bulkBusy, setBulkBusy] = useState(false);
-
-  /* Reset the value control whenever the field type changes (a date value makes
-     no sense once the field is Driver, etc.). */
-  const changeBulkField = (f: BulkField) => { setBulkField(f); setBulkValue(''); };
-
-  const applyBulk = async () => {
-    const docNos = selectedSoDocNos();
-    if (docNos.length === 0 || bulkBusy) return;
-
-    /* Build the single-field patch + a human label for the confirm/summary. */
-    const patch: Partial<Parameters<typeof sched.mutateAsync>[0]> = {};
-    let valueLabel = '';
-    if (bulkField === 'STATUS') {
-      if (!bulkValue) return;
-      patch.deliveryState = bulkValue as DeliveryState;
-      valueLabel = DELIVERY_STATE_LABEL[bulkValue as DeliveryState];
-    } else if (bulkField === 'DATE') {
-      patch.scheduleDate = bulkValue || null;   // empty → clear the amended date
-      valueLabel = bulkValue || '(cleared)';
-    } else if (bulkField === 'DRIVER') {
-      patch.driverId = bulkValue || null;
-      patch.driverNameOptimistic = bulkValue ? (drivers.find((d) => d.id === bulkValue)?.name ?? null) : null;
-      valueLabel = bulkValue ? (drivers.find((d) => d.id === bulkValue)?.name ?? bulkValue) : '(none)';
-    } else {
-      patch.lorryId = bulkValue || null;
-      patch.lorryPlateOptimistic = bulkValue ? (lorries.find((l) => l.id === bulkValue)?.plate ?? null) : null;
-      valueLabel = bulkValue ? (lorries.find((l) => l.id === bulkValue)?.plate ?? bulkValue) : '(none)';
-    }
-
-    const fieldLabel = bulkField === 'STATUS' ? 'Status' : bulkField === 'DATE' ? 'Delivery date' : bulkField === 'DRIVER' ? 'Driver' : 'Lorry';
-    if (!(await askConfirm({
-      title: `Set ${fieldLabel} on ${docNos.length} order${docNos.length === 1 ? '' : 's'}?`,
-      body: `${fieldLabel} → ${valueLabel} will be applied to every selected order.`,
-      confirmLabel: `Apply to ${docNos.length}`,
-    }))) return;
-
-    setBulkBusy(true);
-    let ok = 0;
-    const failed: string[] = [];
-    const LIMIT = 4;
-    try {
-      for (let i = 0; i < docNos.length; i += LIMIT) {
-        const batch = docNos.slice(i, i + LIMIT);
-        await Promise.all(batch.map(async (docNo) => {
-          try {
-            await sched.mutateAsync({ type: 'so', id: docNo, ...patch });
-            ok += 1;
-          } catch (e) {
-            failed.push(`${docNo} (${e instanceof Error ? e.message : 'Something went wrong.'})`);
-          }
-        }));
-      }
-    } finally {
-      setBulkBusy(false);
-    }
-    onClearSelection();
-    setBulkValue('');
-    const parts = [`${fieldLabel} set to ${valueLabel} on ${ok} order${ok === 1 ? '' : 's'}.`];
-    if (failed.length > 0) parts.push(`Failed ${failed.length}: ${failed.join('; ')}.`);
-    notify({
-      title: failed.length > 0 ? 'Bulk update finished with errors' : 'Bulk update complete',
-      body: parts.join(' '),
-      tone: failed.length > 0 ? 'error' : 'info',
-    });
-  };
-
-  const columns = useMemo<DataGridColumn<PlanningOrder>[]>(() => {
+  const columns = useMemo<GridColumn<PlanningOrder>[]>(() => {
     /* The DEFAULT header order (owner 2026-07-22 header tidy): identity →
        status → dates → fleet → documents → money, with every default-hidden
        HC / crew-detail column grouped after, so the Columns drawer reads in
@@ -740,54 +876,40 @@ export function DeliveryPlanningBoard({
        layouts actually show. A user's saved layout.order still wins. A key
        missing here falls to the end in definition order. */
     const DP_DEFAULT_ORDER = [
-      /* ── SHOWN BY DEFAULT — the question each block answers ──────────────
-         Owner's column pass, 2026-08-04 (he went through all 45 by hand). These
-         columns were written for a board that carried SO deliveries only; it now
-         also carries ASSR legs, DP orders and PMS project rows, on which most SO
-         columns are structurally empty. Five columns were removed outright in
-         that pass — Days Left, Delivered Date, Property, Possession, Referral,
-         Internal Est. — and the address moved INTO the default view, because
-         where the lorry is going is a planning question. Referral came BACK
-         on 2026-09-15 as "Reference" (default-hidden, see below). */
-      // What is this row, and who is it for (owner 2026-08-19: + who sold it
-      // and at which venue — Salesperson / Venue joined the default view)
-      'row_type', 'so_doc_no', 'company_code', 'debtor_name', 'salesperson', 'venue', 'phone', 'wa_message',
-      // Where it is going
-      'region', 'address', 'postcode',
-      // Where it stands
-      'delivery_state', 'stock_remark',
-      // When (owner 2026-08-19: + Processing Date, the internal expected
-      // delivery date — same field the SO list shows under that name)
+      /* Owner's column pass, 2026-09-22 — he reordered the columns by hand in an
+         Excel and set each Show Y/N. This array is the pristine ORDER; a column's
+         own defaultHidden is what hides it, and a user's saved layout.order still
+         wins. A key missing here falls to the end in definition order. */
+      // The customer-message workflow status leads (the visible "status")
+      'delivery_message_status',
+      // What the row is, who it is for, and what it is worth
+      'row_type', 'company_code', 'so_doc_no', 'do', 'so_date', 'so_ref', 'branding',
+      'debtor_name', 'phone', 'venue', 'salesperson',
+      'total_amount', 'balance_sen', 'stock_remark',
+      // The delivery dates and the amend conversation
       'processing_date', 'customer_delivery_date', 'amended_delivery_date',
-      // Who takes it
-      'driver', 'lorry',
-      // What proves it, and what it's worth (owner 2026-08-19: + Total Amount)
-      'do', 'total_amount',
-      // Cross-border, shown ONLY on the EM / SG region tabs (defaultHidden:
-      // !isEmSg) — noise on the other four, essential on those two.
+      'amend_date_from_customer', 'amend_reason_from_customer', 'amend_reason', 'time_confirmed',
+      // Customer / house detail, then the address block
+      'house_type', 'replacement_disposal', 'disposal_request',
+      'po_nos', 'address', 'postcode', 'region',
+      // Logistics — warehouse, execution times, and the EM cross-border legs
+      'warehouse', 'time_range', 'departure_at', 'arrival_at',
       'shipout_date', 'eta_arriving_port', 'arrives_em_warehouse_date',
-
-      /* ── DEFAULT-HIDDEN from here down, grouped by theme so the Columns
-            drawer reads as blocks rather than one long alphabet. ──────────── */
-      // Delivery detail
-      'delivery_substatus',
-      // Arrangement pipeline (derived) — the sub-state within Pending Schedule
-      // and the live trip the order sits on. Default-hidden: the split already
-      // reads off the sub-count row / the Date & Time Arrangement pages.
-      'arrangement_stage', 'trip_no',
-      // Amendment trail
-      'amend_date_from_customer', 'amend_reason',
-      // Execution times — filled in as the day happens, not while planning it
-      'time_range', 'time_confirmed', 'arrival_at', 'departure_at',
-      // Customer detail
-      'house_type', 'replacement_disposal', 'so_ref', 'branding',
-      // Crew detail — the Driver / Lorry columns above carry the summary
-      'driver_ic', 'driver_contact', 'driver_2', 'helper_1', 'helper_2',
-      // Document + money
-      'so_date', 'warehouse', 'do_date', 'po_nos', 'balance_sen',
+      // EM transport status (owner 2026-09-23) — the two 3PL legs, same
+      // cross-border block (default-show only on the EM / SG tabs).
+      'em_delivery_status', 'consignment_no', 'vessel_voyage', 'etd_port_klang',
+      'bs_delivery_date', 'esb_remarks', 'bs_remarks', 'ctn',
+      // Crew — assigned later, default-hidden
+      'trip_no', 'lorry', 'driver', 'driver_ic', 'driver_contact', 'driver_2', 'helper_1', 'helper_2',
+      // Admin remark, document date, real delivered time (default-hidden)
+      'dp_remark', 'do_date', 'delivered_at',
+      // Send status, POD evidence, then the message sub-status (delivery_state /
+      // arrangement_stage are no longer board columns — still derived server-side
+      // for the top tabs).
+      'wa_message', 'pod', 'delivery_substatus',
     ];
     const pos = new Map(DP_DEFAULT_ORDER.map((k, i) => [k, i] as const));
-    const cols: DataGridColumn<PlanningOrder>[] = [
+    const cols: GridColumn<PlanningOrder>[] = [
     {
       /* Row type — SO delivery vs ASSR (service-case) job. A chip per row so the
          two kinds read apart at a glance. */
@@ -816,16 +938,17 @@ export function DeliveryPlanningBoard({
     },
     {
       /* Company — the SHARED cross-company queue serves both HOUZS + 2990, so
-         each row is tagged with its owning company. Default-VISIBLE so the two
-         companies read apart at a glance. ASSR rows have no company (dash). */
-      key: 'company_code', label: 'Company', width: 90, groupable: true,
+         each row is tagged with its owning company. Default-HIDDEN (owner
+         2026-09-22 column pass); re-show from the Columns drawer. ASSR rows have
+         no company (dash). */
+      key: 'company_code', label: 'Company', width: 90, groupable: true, defaultHidden: true,
       accessor: (o) => <CompanyBadge code={o.company_code ?? null} />,
       searchValue: (o) => o.company_code ?? '',
       groupValue: (o) => o.company_code ?? '(none)',
       exportValue: (o) => o.company_code ?? '',
     },
     {
-      key: 'debtor_name', label: 'Customer', width: 200, sortable: true, groupable: true,
+      key: 'debtor_name', label: 'Customer Name', width: 200, sortable: true, groupable: true,
       accessor: (o) => strong(o.debtor_name ?? o.debtor_code ?? '—'),
       searchValue: (o) => `${o.debtor_name ?? ''} ${o.debtor_code ?? ''}`.trim(),
       groupValue: (o) => o.debtor_name ?? o.debtor_code ?? '(none)',
@@ -844,7 +967,7 @@ export function DeliveryPlanningBoard({
     {
       /* Where it was SOLD (owner 2026-08-19) — the SO's sales venue; PMS
          project rows carry their event venue. */
-      key: 'venue', label: 'Venue', width: 160, groupable: true,
+      key: 'venue', label: 'Venue', width: 160, groupable: true, defaultHidden: true,
       accessor: (o) => detail(o.venue?.trim() || '—'),
       searchValue: (o) => o.venue ?? '',
       groupValue: (o) => o.venue?.trim() || '(none)',
@@ -858,27 +981,53 @@ export function DeliveryPlanningBoard({
     {
       /* Latest WhatsApp (Seampify) send for this SO, from scm.wa_message_log —
          '—' until a send exists. SO-only (the send action is SO-only too). */
-      key: 'wa_message', label: 'Message', width: 110,
+      key: 'wa_message', label: 'Send Status', width: 130,
       accessor: (o) => {
         if (o.row_type !== 'so') return '—';
         const s = msgStatuses?.[o.so_doc_no];
-        if (!s) return '—';
+        // Default "Done All" (owner 2026-09-22): no send needed, or the last send
+        // was OK. Only a FAILED latest send shows a problem.
+        const failed = s ? !s.success : false;
         return (
-          <span style={{ fontWeight: 600, color: s.success ? '#2e7d32' : '#b3261e' }}>
-            {s.success ? `Sent ${fmtDate(s.created_at)}` : 'Failed'}
+          <span style={{ fontWeight: 600, color: failed ? '#b3261e' : '#2e7d32' }}>
+            {failed ? 'Failed' : 'Done All'}
           </span>
         );
       },
-      searchValue: () => '',
+      searchValue: (o) => {
+        if (o.row_type !== 'so') return '';
+        const s = msgStatuses?.[o.so_doc_no];
+        return s && !s.success ? 'Failed' : 'Done All';
+      },
       exportValue: (o) => {
-        const s = o.row_type === 'so' ? msgStatuses?.[o.so_doc_no] : undefined;
-        return s ? (s.success ? `Sent ${String(s.created_at).slice(0, 10)}` : 'Failed') : '';
+        if (o.row_type !== 'so') return '';
+        const s = msgStatuses?.[o.so_doc_no];
+        return s && !s.success ? 'Failed' : 'Done All';
       },
     },
     {
-      /* Default-hidden since the 2026-07-22 header tidy — product brand rarely
-         drives scheduling; re-show it from the Columns drawer when needed. */
-      key: 'branding', label: 'Branding', width: 130, groupable: true, defaultHidden: true,
+      /* POD — did the driver leave proof (photo/GPS)? A DELIVERED order with no
+         evidence shows "No POD" so dispatch can chase it. Links to the DO. */
+      key: 'pod', label: 'POD', width: 110, groupable: true,
+      accessor: (o) => <PodCell o={o} />,
+      groupValue: (o) => (o.row_type !== 'so' ? '(n/a)' : o.has_pod ? 'POD' : o.delivery_state === 'DELIVERED' ? 'No POD' : '—'),
+      searchValue: (o) => (o.has_pod ? 'POD proof of delivery' : o.delivery_state === 'DELIVERED' ? 'No POD' : ''),
+      exportValue: (o) => (o.has_pod ? 'POD' : o.delivery_state === 'DELIVERED' ? 'No POD' : ''),
+    },
+    {
+      /* The real delivered instant (delivery_orders.delivered_at), stamped when
+         POD completes — distinct from the manually-typed customer delivered
+         date. Default-hidden; add via the Columns panel. */
+      key: 'delivered_at', label: 'Delivered At', width: 150, sortable: true, defaultHidden: true,
+      accessor: (o) => (o.row_type !== 'so' ? <NotApplicable /> : detail(dtOrDash(o.delivered_at ?? null))),
+      searchValue: (o) => o.delivered_at ?? '',
+      exportValue: (o) => (o.delivered_at ? fmtDateTime(o.delivered_at) : ''),
+      sortFn: (a, b) => String(a.delivered_at ?? '').localeCompare(String(b.delivered_at ?? '')),
+    },
+    {
+      /* Default-SHOWN again per the owner's 2026-09-22 column pass (it had been
+         hidden since the 2026-07-22 header tidy). */
+      key: 'branding', label: 'Branding', width: 130, groupable: true,
       accessor: (o) => detail(o.branding ?? '—'),
       searchValue: (o) => o.branding ?? '',
       groupValue: (o) => o.branding ?? '(none)',
@@ -903,13 +1052,13 @@ export function DeliveryPlanningBoard({
        question, not a dispatch one. `referral` went too, and came back on
        2026-09-15 as "Reference" — below. */
     {
-      key: 'house_type', label: 'Building Type', width: 130, groupable: true, defaultHidden: true,
+      key: 'house_type', label: 'Building Type', width: 130, groupable: true,
       accessor: (o) => o.house_type ?? '—',
       searchValue: (o) => o.house_type ?? '',
       groupValue: (o) => o.house_type ?? '(none)',
     },
     {
-      key: 'replacement_disposal', label: 'Replacement / Disposal', width: 180, defaultHidden: true,
+      key: 'replacement_disposal', label: 'New House / Replacement', width: 180,
       accessor: (o) => o.replacement_disposal ?? '—',
       searchValue: (o) => o.replacement_disposal ?? '',
     },
@@ -920,7 +1069,7 @@ export function DeliveryPlanningBoard({
          shipped reading `referral` (#3961) — the HC referral CHANNEL, empty on
          every order — so the column was blank; docs/bugs/0934. Default-HIDDEN:
          it lives in the Columns panel, not the default view. SO rows only. */
-      key: 'so_ref', label: 'Reference', width: 140, groupable: true, defaultHidden: true,
+      key: 'so_ref', label: 'Ref No.', width: 140, groupable: true,
       accessor: (o) => o.so_ref ?? '—',
       searchValue: (o) => o.so_ref ?? '',
       groupValue: (o) => o.so_ref ?? '(none)',
@@ -945,7 +1094,7 @@ export function DeliveryPlanningBoard({
       groupValue: (o) => o.warehouse_code ?? '(none)',
     },
     {
-      key: 'so_date', label: 'SO Date', width: 120, sortable: true, defaultHidden: true,
+      key: 'so_date', label: 'SO Date', width: 120, sortable: true,
       accessor: (o) => detail(fmtDateOrDash(o.so_date)),
       searchValue: (o) => o.so_date ?? '',
       sortFn: (a, b) => String(a.so_date ?? '').localeCompare(String(b.so_date ?? '')),
@@ -969,36 +1118,65 @@ export function DeliveryPlanningBoard({
       filterType: 'date', dateValue: (o) => (o.row_type !== 'so' ? null : o.processing_date),
     },
     {
-      key: 'customer_delivery_date', label: 'Delivery Date', width: 130, sortable: true,
-      accessor: (o) => detail(fmtDateOrDash(o.customer_delivery_date)),
-      searchValue: (o) => o.customer_delivery_date ?? '',
-      sortFn: (a, b) => String(a.customer_delivery_date ?? '').localeCompare(String(b.customer_delivery_date ?? '')),
-      filterType: 'date', dateValue: (o) => o.customer_delivery_date,
+      /* BUG-51 repoint (owner 2026-10-15): the REAL AutoCount sales-exemption
+         expiry, not the customer delivery date. SO rows only; blank off-book.
+         EXCEPT ASSR rows (owner 2026-10-22): a service case has no AutoCount book,
+         so its own SERVICE date shows here (sxeDateOf), and its "Delivery Date"
+         column is left blank for admin to propose. DP / project rows stay blank.
+         Grid key kept as customer_delivery_date so saved layouts keep the column. */
+      key: 'customer_delivery_date', label: 'Sales Exemption Expiry Date', width: 170, sortable: true,
+      accessor: (o) => detail(fmtDateOrDash(sxeDateOf(o))),
+      searchValue: (o) => sxeDateOf(o) ?? '',
+      sortFn: (a, b) => String(sxeDateOf(a) ?? '').localeCompare(String(sxeDateOf(b) ?? '')),
+      filterType: 'date', dateValue: (o) => sxeDateOf(o),
     },
     /* Amendment dates (migration 0199). "Amended" (the date WE confirmed / the
        proposed delivery date) default-SHOWS — it's the firm date the board commits
        to. "Amend (Cust)" (the customer's requested new date) default-HIDES. The
        ORIGINAL "Delivery Date" column above is unchanged. */
     {
-      key: 'amended_delivery_date', label: 'Est. New Delivery Date', width: 130, sortable: true,
-      accessor: (o) => detail(fmtDateOrDash(o.amended_delivery_date)),
+      key: 'amended_delivery_date', label: 'Delivery Date', width: 170, sortable: true,
+      accessor: (o) => <DeliveryDateEditCell order={o} sched={sched} />,
       searchValue: (o) => o.amended_delivery_date ?? '',
       sortFn: (a, b) => String(a.amended_delivery_date ?? '').localeCompare(String(b.amended_delivery_date ?? '')),
       filterType: 'date', dateValue: (o) => o.amended_delivery_date,
     },
     {
-      key: 'amend_date_from_customer', label: 'Customer Request Date', width: 140, sortable: true, defaultHidden: true,
+      key: 'amend_date_from_customer', label: 'Customer Request Date', width: 140, sortable: true,
       accessor: (o) => detail(fmtDateOrDash(o.amend_date_from_customer)),
       searchValue: (o) => o.amend_date_from_customer ?? '',
       sortFn: (a, b) => String(a.amend_date_from_customer ?? '').localeCompare(String(b.amend_date_from_customer ?? '')),
       filterType: 'date', dateValue: (o) => o.amend_date_from_customer,
     },
-    /* HC "Amend Client Date Reason" (migration 0201) — free-text reason paired
-       with the amend dates above. default-HIDES (off in the Columns menu). */
+    /* The customer's own reason for asking to move the date — what they tapped
+       in the WhatsApp amend flow. Read-only: /api/chat-callback writes it. */
     {
-      key: 'amend_reason', label: 'Amend Reason', width: 200, defaultHidden: true,
-      accessor: (o) => o.amend_reason ?? '—',
+      key: 'amend_reason_from_customer', label: 'Customer Amend Reason', width: 170,
+      accessor: (o) => detail(o.amend_reason_from_customer || '—'),
+      searchValue: (o) => o.amend_reason_from_customer ?? '',
+      exportValue: (o) => o.amend_reason_from_customer ?? '',
+    },
+    /* HC "Amend Client Date Reason" (migration 0201) — OUR reason for moving
+       the date: a preset from AMEND_REASONS (or free text), chosen by staff
+       and printed by the Postpone notice after "due to". A customer's tap
+       never writes here (it has its own column above). */
+    {
+      key: 'amend_reason', label: 'Amend Reason', width: 220,
+      accessor: (o) => <AmendReasonEditCell order={o} updateFields={updateFields} />,
       searchValue: (o) => o.amend_reason ?? '',
+      exportValue: (o) => o.amend_reason ?? '',
+    },
+    {
+      key: 'disposal_request', label: 'Disposal Request', width: 180,
+      accessor: (o) => <TextEditCell order={o} value={o.disposal_request} onCommit={(v) => updateFields.mutate({ type: 'so', id: o.so_doc_no, disposalRequest: v })} placeholder="Disposal…" />,
+      searchValue: (o) => o.disposal_request ?? '',
+      exportValue: (o) => o.disposal_request ?? '',
+    },
+    {
+      key: 'dp_remark', label: 'Remarks', width: 200, defaultHidden: true,
+      accessor: (o) => <TextEditCell order={o} value={o.dp_remark} onCommit={(v) => updateFields.mutate({ type: 'so', id: o.so_doc_no, dpRemark: v })} placeholder="Remarks…" />,
+      searchValue: (o) => o.dp_remark ?? '',
+      exportValue: (o) => o.dp_remark ?? '',
     },
     {
       key: 'stock_remark', label: 'Stock', width: 170, groupable: true,
@@ -1017,35 +1195,22 @@ export function DeliveryPlanningBoard({
       groupValue: (o) => (isAssr(o) || isDp(o) ? '(n/a)' : o.stock_status),
     },
     {
-      /* "Delivery Status" on screen, `delivery_state` in the data (owner,
-         2026-08-04). The column key, the stored column and DELIVERY_STATE_LABEL
-         keep the old word — renaming those would touch the API contract and the
-         override write path for a heading. */
-      key: 'delivery_state', label: 'Delivery Status', width: 160, sortable: true, groupable: true,
-      /* Inline-editable: writes a manual delivery_state override (wins over the
-         derived state). Real stock readiness stays visible in the Stock column. */
-      accessor: (o) => <StatusEditCell order={o} sched={sched} />,
-      searchValue: (o) => DELIVERY_STATE_LABEL[o.delivery_state],
-      groupValue: (o) => DELIVERY_STATE_LABEL[o.delivery_state],
-      exportValue: (o) => DELIVERY_STATE_LABEL[o.delivery_state],
-      sortFn: (a, b) => a.delivery_state.localeCompare(b.delivery_state),
+      /* "Delivery Status" (owner 2026-09-22) = the customer-message follow-up
+         workflow status (delivery_message_status): one of the 23 values or blank,
+         inline-editable. The coarse scm.delivery_state that drives the top state
+         tabs is the separate, default-hidden column below. */
+      key: 'delivery_message_status', label: 'Delivery Message Status', width: 220, sortable: true, groupable: true,
+      accessor: (o) => <MessageStatusEditCell order={o} updateFields={updateFields} />,
+      searchValue: (o) => o.delivery_message_status ?? '',
+      groupValue: (o) => o.delivery_message_status ?? '(none)',
+      exportValue: (o) => o.delivery_message_status ?? '',
+      sortFn: (a, b) => (a.delivery_message_status ?? '').localeCompare(b.delivery_message_status ?? ''),
     },
-    /* ── Arrangement pipeline (derived server-side, lib/arrangement-stage.ts) —
-       the sub-state WITHIN Pending Schedule (Pending Date Arrangement /
-       Pending Time Arrangement / Time arranged) and the live trip the order
-       sits on. Default-hidden (the Pending Schedule sub-count row and the Date /
-       Time Arrangement pages carry the split); groupable so the board can be
-       grouped by stage from the Columns menu. */
-    {
-      key: 'arrangement_stage', label: 'Arrangement', width: 180, groupable: true, defaultHidden: true,
-      accessor: (o) => {
-        const label = arrangementStageLabel(o);
-        return label ? label : <NotApplicable />;
-      },
-      searchValue: (o) => arrangementStageLabel(o),
-      groupValue: (o) => arrangementStageLabel(o) || '(not in pipeline)',
-      exportValue: (o) => arrangementStageLabel(o),
-    },
+    /* delivery_state (coarse Pending/Schedule/Overdue/Delivered) and
+       arrangement_stage (its Pending-Schedule sub-state) are no longer board
+       columns (owner 2026-09-24) — both are still derived server-side and drive
+       the top state tabs; the manual state override lives on the bulk "Status"
+       action. */
     {
       /* The live (non-CANCELLED) trip carrying this order's DELIVERY stop —
          "Time arranged" made concrete. '—' until the order is on a trip. */
@@ -1063,15 +1228,24 @@ export function DeliveryPlanningBoard({
        eta_arriving_port, arrives_em_warehouse_date) still default-SHOW when the
        active region is EM/SG. */
     {
-      key: 'delivery_substatus', label: 'Sub-status', width: 150, groupable: true, defaultHidden: true,
+      key: 'delivery_substatus', label: 'Remark 4', width: 150, groupable: true, defaultHidden: true,
       accessor: (o) => <SubstatusPill value={o.delivery_substatus} />,
       searchValue: (o) => o.delivery_substatus ?? '',
       groupValue: (o) => o.delivery_substatus ?? '(none)',
       exportValue: (o) => o.delivery_substatus ?? '',
     },
     {
-      key: 'time_range', label: 'Time Slot', width: 120, defaultHidden: true,
-      accessor: (o) => o.time_range ?? '—',
+      key: 'time_range', label: 'Time Slot', width: 130, defaultHidden: true,
+      /* Inline free-text (owner 2026-09-26: 可以输入文本) → the DO's time_range via
+         useUpdateDeliveryFields. SO rows only; no DO yet → the server saves nothing
+         and returns no_do_hint, which we surface. */
+      accessor: (o) => (
+        <TextEditCell order={o} value={o.time_range} placeholder="e.g. 2-4pm"
+          onCommit={(v) => updateFields.mutate(
+            { type: 'so', id: o.so_doc_no, timeRange: v },
+            { onSuccess: (res) => { if (res.no_do_hint) void notify({ title: 'Saved (partly)', body: res.no_do_hint }); } },
+          )} />
+      ),
       searchValue: (o) => o.time_range ?? '',
     },
     {
@@ -1113,13 +1287,66 @@ export function DeliveryPlanningBoard({
       sortFn: (a, b) => String(a.arrives_em_warehouse_date ?? '').localeCompare(String(b.arrives_em_warehouse_date ?? '')),
       filterType: 'date', dateValue: (o) => o.arrives_em_warehouse_date,
     },
-    /* Crew — split into the HC delivery-sheet columns. Driver + Lorry show by
-       default; IC / contact / driver 2 / helpers are in the show/hide menu. */
+    /* EM cross-border transport (owner 2026-09-23) — the two 3PL legs (ESB
+       sea-freight + BS last-mile), edited in the "Edit HC fields" drawer and
+       read-only here. Auto-SHOW on the EM / SG region tabs (defaultHidden:
+       !isEmSg), like shipout / ETA / arrives-warehouse. Costs are phase 2. */
     {
-      /* Inline-editable: assigns the trip driver (writes driverId; the backend
-         find-or-creates the trip + appends the stop). */
-      key: 'driver', label: 'Driver', width: 160,
-      accessor: (o) => <DriverEditCell order={o} sched={sched} drivers={drivers} />,
+      key: 'em_delivery_status', label: 'EM Delivery Status', width: 170, groupable: true, defaultHidden: !isEmSg,
+      accessor: (o) => o.em_delivery_status ?? '—',
+      searchValue: (o) => o.em_delivery_status ?? '',
+    },
+    {
+      key: 'consignment_no', label: 'Consignment No', width: 150, defaultHidden: !isEmSg,
+      accessor: (o) => o.consignment_no ?? '—',
+      searchValue: (o) => o.consignment_no ?? '',
+    },
+    {
+      key: 'vessel_voyage', label: 'Vessel & Voyage', width: 170, defaultHidden: !isEmSg,
+      accessor: (o) => o.vessel_voyage ?? '—',
+      searchValue: (o) => o.vessel_voyage ?? '',
+    },
+    {
+      key: 'etd_port_klang', label: 'ETD Port Klang', width: 130, sortable: true, defaultHidden: !isEmSg,
+      accessor: (o) => detail(fmtDateOrDash(o.etd_port_klang)),
+      searchValue: (o) => o.etd_port_klang ?? '',
+      sortFn: (a, b) => String(a.etd_port_klang ?? '').localeCompare(String(b.etd_port_klang ?? '')),
+      filterType: 'date', dateValue: (o) => o.etd_port_klang,
+    },
+    {
+      key: 'bs_delivery_date', label: 'BS Delivery Date', width: 140, sortable: true, defaultHidden: !isEmSg,
+      accessor: (o) => detail(fmtDateOrDash(o.bs_delivery_date)),
+      searchValue: (o) => o.bs_delivery_date ?? '',
+      sortFn: (a, b) => String(a.bs_delivery_date ?? '').localeCompare(String(b.bs_delivery_date ?? '')),
+      filterType: 'date', dateValue: (o) => o.bs_delivery_date,
+    },
+    {
+      key: 'esb_remarks', label: 'ESB Remarks', width: 180, defaultHidden: !isEmSg,
+      accessor: (o) => o.esb_remarks ?? '—',
+      searchValue: (o) => o.esb_remarks ?? '',
+    },
+    {
+      key: 'bs_remarks', label: 'BS Remarks', width: 180, defaultHidden: !isEmSg,
+      accessor: (o) => o.bs_remarks ?? '—',
+      searchValue: (o) => o.bs_remarks ?? '',
+    },
+    {
+      key: 'ctn', label: 'CTN', width: 90, defaultHidden: !isEmSg,
+      accessor: (o) => o.ctn ?? '—',
+      searchValue: (o) => o.ctn ?? '',
+    },
+    /* em_delivered_date ("Done Delivery") dropped as a board column (owner
+       2026-09-24 — BS Delivery Date is the EM last-mile date); the field stays
+       editable in the fields drawer. */
+    /* Crew — split into the HC delivery-sheet columns. Default-HIDDEN per the
+       owner's 2026-09-22 column pass (crew is assigned later, not at planning);
+       re-show Driver / Lorry / helpers from the Columns drawer. */
+    {
+      /* Inline type-to-search (owner 2026-09-26). SO writes the DO crew (which
+         snapshots the driver's IC + contact into the next two columns); an ASSR
+         leg writes the trip crew so it still consumes fleet capacity. */
+      key: 'driver', label: 'Driver', width: 170, defaultHidden: true,
+      accessor: (o) => <DriverPickCell order={o} drivers={drivers} sched={sched} writeSeat={writeCrewSeat} pending={crewPending} />,
       searchValue: (o) => o.crew?.driver_1_name ?? '',
       exportValue: (o) => o.crew?.driver_1_name ?? '',
     },
@@ -1139,19 +1366,22 @@ export function DeliveryPlanningBoard({
       searchValue: (o) => o.crew?.driver_2_name ?? '',
     },
     {
-      key: 'helper_1', label: 'Helper 1', width: 150, defaultHidden: true,
-      accessor: (o) => o.crew?.helper_1_name || <span style={{ color: '#767b6e' }}>—</span>,
+      key: 'helper_1', label: 'Helper 1', width: 160, defaultHidden: true,
+      accessor: (o) => <HelperPickCell order={o} helpers={helpers} writeSeat={writeCrewSeat} pending={crewPending} slot={1} />,
       searchValue: (o) => o.crew?.helper_1_name ?? '',
+      exportValue: (o) => o.crew?.helper_1_name ?? '',
     },
     {
-      key: 'helper_2', label: 'Helper 2', width: 150, defaultHidden: true,
-      accessor: (o) => o.crew?.helper_2_name || <span style={{ color: '#767b6e' }}>—</span>,
+      key: 'helper_2', label: 'Helper 2', width: 160, defaultHidden: true,
+      accessor: (o) => <HelperPickCell order={o} helpers={helpers} writeSeat={writeCrewSeat} pending={crewPending} slot={2} />,
       searchValue: (o) => o.crew?.helper_2_name ?? '',
+      exportValue: (o) => o.crew?.helper_2_name ?? '',
     },
     {
-      /* Inline-editable: assigns the trip lorry (writes lorryId). */
-      key: 'lorry', label: 'Lorry', width: 150,
-      accessor: (o) => <LorryEditCell order={o} sched={sched} lorries={lorries} />,
+      /* Inline type-to-search (owner 2026-09-26). SO writes the DO crew lorry; an
+         ASSR leg writes the trip lorry. */
+      key: 'lorry', label: 'Lorry Plate', width: 160, defaultHidden: true,
+      accessor: (o) => <LorryPickCell order={o} lorries={lorries} sched={sched} writeSeat={writeCrewSeat} pending={crewPending} />,
       searchValue: (o) => o.crew?.lorry_plate ?? '',
       exportValue: (o) => o.crew?.lorry_plate ?? '',
     },
@@ -1176,7 +1406,7 @@ export function DeliveryPlanningBoard({
          what a dispatcher actually needs from the money side — already rides on
          the row; the raw balance is a finance figure, and it is 0 on every ASSR /
          DP / project row by construction. */
-      key: 'balance_sen', label: 'Balance', width: 130, align: 'right', sortable: true, defaultHidden: true,
+      key: 'balance_sen', label: 'Balance', width: 130, align: 'right', sortable: true,
       /* Below zero is an OVER-COLLECTION, not a settled row — it must not share
          the muted grey that means "nothing owed" (owner 2026-08-16); a live
          balance reads in the SO list's ink since the 2026-08-19 restyle. */
@@ -1206,7 +1436,7 @@ export function DeliveryPlanningBoard({
          raised-PO chips (same walk: backend lib/so-converted-po.ts, adapted per
          company by lib/planning-po-nos.ts). Owner 2026-09-15, asked for beside
          Reference. Default-hidden; SO rows only, a dash on the synthetic kinds. */
-      key: 'po_nos', label: 'PO No.', width: 150, groupable: true, defaultHidden: true,
+      key: 'po_nos', label: 'PO No.', width: 150, groupable: true,
       accessor: (o) => (o.po_nos?.length ? <span style={DOCNO_STYLE}>{o.po_nos.join(', ')}</span> : '—'),
       searchValue: (o) => (o.po_nos ?? []).join(' '),
       groupValue: (o) => (o.po_nos?.length ? o.po_nos.join(', ') : '(none)'),
@@ -1232,7 +1462,7 @@ export function DeliveryPlanningBoard({
   // accessors close over `sched` + the driver/lorry option lists, so they join the
   // deps (a new driver/lorry list must re-render the pickers); ditto the
   // Salesperson cells over the staff-roster lookup.
-  }, [isEmSg, sched, drivers, lorries, msgStatuses, salespersonNameOf]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isEmSg, sched, updateFields, drivers, lorries, msgStatuses, salespersonNameOf]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Map-open column narrowing: everything NOT in the override hides at render
      time (DataGrid overlayHidden). The user's persisted layout is untouched —
@@ -1343,82 +1573,31 @@ export function DeliveryPlanningBoard({
       {selectedKeys.size > 0 && (
         <div className={styles.bulkBar}>
           <span className={styles.bulkCount}>{selectedKeys.size} selected</span>
+          {/* Colour marks (owner 2026-09-26): paint every selected row a palette
+              colour, or clear it. Shared with the per-row right-click palette. */}
           <span className={styles.bulkSep}>·</span>
-          <span className={styles.bulkLabel}>Set</span>
-          <select
-            className={styles.bulkControl}
-            style={{ minWidth: 130 }}
-            value={bulkField}
-            disabled={bulkBusy}
-            onChange={(e) => changeBulkField(e.target.value as typeof bulkField)}
-            aria-label="Bulk-edit field"
-          >
-            <option value="STATUS">Status</option>
-            <option value="DATE">Delivery date</option>
-            <option value="DRIVER">Driver</option>
-            <option value="LORRY">Lorry</option>
-          </select>
-          <span className={styles.bulkLabel}>&rarr;</span>
-          {/* Value control — type depends on the field. */}
-          {bulkField === 'STATUS' && (
-            <select
-              className={styles.bulkControl}
-              value={bulkValue}
-              disabled={bulkBusy}
-              onChange={(e) => setBulkValue(e.target.value)}
-              aria-label="New status"
-            >
-              <option value="">Choose status…</option>
-              {DELIVERY_STATES.map((s) => (
-                <option key={s} value={s}>{DELIVERY_STATE_LABEL[s]}</option>
-              ))}
-            </select>
-          )}
-          {bulkField === 'DATE' && (
-            <DateField
-              fullWidth
-              className={styles.bulkControl}
-              value={bulkValue}
-              disabled={bulkBusy}
-              onChange={(iso) => setBulkValue(iso)}
-              aria-label="New delivery date"
+          <span className={styles.bulkLabel}>Colour</span>
+          {ROW_MARK_PALETTE.map((p) => (
+            <button
+              key={p.token}
+              type="button"
+              title={`Mark ${p.label}`}
+              aria-label={`Mark ${p.label}`}
+              disabled={markBusy}
+              onClick={() => bulkSetMark.mutate({ rowKeys: [...selectedKeys], colour: p.token })}
+              style={{ width: 22, height: 22, borderRadius: '50%', background: p.swatch, border: '2px solid rgba(0,0,0,0.15)', cursor: 'pointer', padding: 0 }}
             />
-          )}
-          {bulkField === 'DRIVER' && (
-            <select
-              className={styles.bulkControl}
-              value={bulkValue}
-              disabled={bulkBusy}
-              onChange={(e) => setBulkValue(e.target.value)}
-              aria-label="New driver"
-            >
-              <option value="">Unassign / choose driver…</option>
-              {drivers.map((d) => (
-                <option key={d.id} value={d.id}>{d.name}</option>
-              ))}
-            </select>
-          )}
-          {bulkField === 'LORRY' && (
-            <select
-              className={styles.bulkControl}
-              value={bulkValue}
-              disabled={bulkBusy}
-              onChange={(e) => setBulkValue(e.target.value)}
-              aria-label="New lorry"
-            >
-              <option value="">Unassign / choose lorry…</option>
-              {lorries.map((l) => (
-                <option key={l.id} value={l.id}>{l.plate}</option>
-              ))}
-            </select>
-          )}
-          <Button
-            variant="primary"
-            disabled={bulkBusy || (bulkField === 'STATUS' && !bulkValue)}
-            onClick={() => void applyBulk()}
+          ))}
+          <button
+            type="button"
+            title="Clear colour from the selected rows"
+            aria-label="Clear colour"
+            disabled={markBusy}
+            onClick={() => bulkClearMark.mutate([...selectedKeys])}
+            style={{ background: 'transparent', border: 'none', color: 'var(--fg-soft, #9a9a9a)', cursor: 'pointer', fontSize: 'var(--fs-12)', textDecoration: 'underline' }}
           >
-            {bulkBusy ? 'Applying…' : 'Apply'}
-          </Button>
+            Clear
+          </button>
 
           <span className={styles.bulkSpacer} />
 
@@ -1428,10 +1607,22 @@ export function DeliveryPlanningBoard({
         </div>
       )}
 
-      <DataGrid
+      <DataGridCompat
         rows={rows}
         columns={columns}
         storageKey={storageKey}
+        /* The queue a planner narrows is the queue they come back to: funnels on
+           the four delivery boards survive a page load (owner 2026-10-05), unlike
+           every other list, which opens clean. */
+        persistFilters="always"
+        resetFilters={{
+          active: resetFilters?.active ?? false,
+          onReset: resetFilters?.onReset ?? (() => undefined),
+          label: 'Reset layout',
+        }}
+        layoutPresets={layoutPresets}
+        initialRowLimit={initialRowLimit}
+        onRowReorder={onRowReorder}
         exportName={exportName}
         rowKey={rowIdOf}
         searchPlaceholder={searchPlaceholder}
@@ -1452,7 +1643,11 @@ export function DeliveryPlanningBoard({
           /* Falsy key suppresses the expand chevron for non-SO rows. */
           rowExpansionKey: (row) => (isAssr(row) || isDp(row) || isProject(row) ? '' : row.so_doc_no),
         }}
-        rowStyle={(o) => (o.region === 'SG' ? { boxShadow: 'inset 3px 0 0 #2f5d4f' } : undefined)}
+        rowStyle={(o) => {
+          const base = o.region === 'SG' ? { boxShadow: 'inset 3px 0 0 #2f5d4f' } : undefined;
+          const tint = rowMarkTint(rowMarks?.get(rowIdOf(o)));
+          return tint ? { ...(base ?? {}), background: tint } : base;
+        }}
         contextMenu={contextMenu}
         defaultSort={defaultSort}
         onRowClick={onRowClick}

@@ -21,19 +21,22 @@ import { describe, expect, test } from "vitest";
  */
 
 const sources = import.meta.glob(
-  ["./Team.tsx", "../mobile/MobileModuleDetail.tsx"],
+  // The three admin surfaces that can send a reset link: the classic Team page,
+  // the member-profile drawer, and the mobile member actions (extracted from
+  // MobileModuleDetail to keep that file under its size ceiling).
+  ["./Team.tsx", "./team/TeamMemberProfile.tsx", "../mobile/MemberAccountActions.tsx"],
   { query: "?raw", import: "default", eager: true },
 ) as Record<string, string>;
 
 const screens = Object.entries(sources);
 
 describe("the admin reset screens were actually loaded", () => {
-  test("both files resolved and are non-trivial", () => {
-    expect(screens.length).toBe(2);
+  test("all files resolved and are non-trivial", () => {
+    expect(screens.length).toBe(3);
     for (const [, src] of screens) expect(src.length).toBeGreaterThan(1000);
   });
 
-  test("both call the reset endpoint", () => {
+  test("all call the reset endpoint", () => {
     for (const [, src] of screens) expect(src).toContain("reset-password");
   });
 });

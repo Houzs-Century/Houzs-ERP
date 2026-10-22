@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMfgProducts, type MfgCategory, type MfgProductRow } from "../vendor/scm/lib/mfg-products-queries";
+import { useMfgProducts, matchesProductQuery, type MfgCategory, type MfgProductRow } from "../vendor/scm/lib/mfg-products-queries";
+import { dropOneMultiPick, isSofaGroup, multiPickCount, tapMultiPick } from "../vendor/scm/lib/sofa-piece-lines";
+import { pickDefaultVariants } from "../vendor/shared/model-default-variants";
 import "./mobile.css";
 
 /* Perf cap (parity with SalesOrderNewFromProducts, PR #342) — never render more
@@ -47,6 +49,9 @@ export type PickedSku = {
   name: string;
   unitPriceSen: number;
   category: MfgCategory;
+  /** Model default variants (vendor/shared/model-default-variants); only a
+   *  document that specifies the build applies them. */
+  defaultVariants: Record<string, string>;
 };
 
 export function MobileSkuPicker({
@@ -86,26 +91,27 @@ export function MobileSkuPicker({
      SKU) so "Add N products" hands back selections in the order tapped. */
   const [picked, setPicked] = useState<Array<{ id: string; sku: PickedSku }>>([]);
 
-  // The catalog read. Category "" omits the filter; search is a server-side
-  // code/name match (GET /mfg-products?category=&search=).
-  //
-  // Server-typeahead gate (owner #1 scaling pain, 2026-07-14) — the "All / no
-  // search" read used to pull the WHOLE ~1141-SKU catalog on every open. It is
-  // now bounded: the query only fires once the operator has typed >= 2 chars OR
-  // narrowed to a category chip (a category-scoped read is bounded to that
-  // category). Below the gate we show a prompt instead of fetching everything.
+  // Load the full catalog ONCE and filter it LOCALLY. This uses the SAME cache
+  // key as the desktop picker (['mfg-products', company, 'all', '', '']), so the
+  // list is fetched at most once per company and the sheet no longer fires a
+  // `/mfg-products?search=` request per keystroke — typing stays responsive even
+  // while the Worker is slow or dropping connections (owner 2026-09-23: "product
+  // code search slow"). The gate still governs what we SHOW: below >=2 chars and
+  // no category chip we prompt instead of listing arbitrary rows, and RENDER_CAP
+  // still bounds the DOM so a wide match can't freeze the sheet.
   const trimmedSearch = search.trim();
   const gateOpen = trimmedSearch.length >= 2 || cat !== "";
-  const productsQ = useMfgProducts({
-    category: cat || undefined,
-    search: trimmedSearch || undefined,
-    enabled: gateOpen,
-  });
+  const productsQ = useMfgProducts({ enabled: true });
 
-  const rows = useMemo<MfgProductRow[]>(
-    () => (productsQ.data ?? []).filter((p) => p.status !== "INACTIVE"),
-    [productsQ.data],
-  );
+  const rows = useMemo<MfgProductRow[]>(() => {
+    if (!gateOpen) return [];
+    return (productsQ.data ?? []).filter(
+      (p) =>
+        p.status !== "INACTIVE" &&
+        (!cat || p.category === cat) &&
+        (trimmedSearch.length < 2 || matchesProductQuery(p, trimmedSearch)),
+    );
+  }, [productsQ.data, gateOpen, cat, trimmedSearch]);
   // Cap the DOM to RENDER_CAP rows so an "All / no search" set can't freeze the
   // sheet; the hint below tells the operator to narrow when rows are hidden.
   const shown = useMemo(() => rows.slice(0, RENDER_CAP), [rows]);
@@ -166,20 +172,21 @@ export function MobileSkuPicker({
                 name: p.name,
                 unitPriceSen: p.sell_price_sen ?? 0,
                 category: p.category,
+                defaultVariants: pickDefaultVariants(p.category, p.model_default_variants, p.allowed_options),
               });
-              const isOn = multi && picked.some((x) => x.id === p.id);
+              /* A sofa piece can be tapped again (two CNRs of a U are two
+                 lines, never one line x2) — sofa-piece-lines.ts. */
+              const repeatable = isSofaGroup(p.category);
+              const count = multi ? multiPickCount(picked, p.id, (x) => x.id) : 0;
+              const isOn = count > 0;
               return (
                 <button
                   key={p.id}
                   type="button"
                   onClick={() => {
                     if (multi) {
-                      // Toggle this row in/out of the running selection.
-                      setPicked((prev) =>
-                        prev.some((x) => x.id === p.id)
-                          ? prev.filter((x) => x.id !== p.id)
-                          : [...prev, { id: p.id, sku: skuOf() }],
-                      );
+                      // Toggle this row in/out of the running selection; a sofa piece adds another copy.
+                      setPicked((prev) => tapMultiPick(prev, { id: p.id, sku: skuOf() }, (x) => x.id, repeatable));
                       return;
                     }
                     onPick(skuOf());
@@ -218,6 +225,23 @@ export function MobileSkuPicker({
                       stays available as the chip filter above. skuOf() still
                       binds p.code / p.category on tap — display-only change. */}
                   <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: "#11140f", overflowWrap: "anywhere" }}>{p.name}</span>
+                  {repeatable && count > 0 && (
+                    <>
+                      <span style={{ flex: "none", fontSize: 12, fontWeight: 800, color: "#0c3f39" }}>{"×"}{count}</span>
+                      <span
+                        role="button"
+                        aria-label={`Remove one ${p.name}`}
+                        onClick={(e) => { e.stopPropagation(); setPicked((prev) => dropOneMultiPick(prev, p.id, (x) => x.id)); }}
+                        style={{
+                          flex: "none", width: 26, height: 26, borderRadius: 7, border: "1px solid rgba(34,31,32,.2)",
+                          background: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
+                          fontSize: 16, fontWeight: 800, color: "#11140f",
+                        }}
+                      >
+                        {"−"}
+                      </span>
+                    </>
+                  )}
                 </button>
               );
             })}

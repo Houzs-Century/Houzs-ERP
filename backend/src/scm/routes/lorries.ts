@@ -15,6 +15,8 @@ import type { Env, Variables } from '../env';
 import { activeCompanyId } from '../lib/companyScope';
 import { normalizePlate } from '../lib/plate-normalize';
 import { carrierLinkForInsert, resolveCarrierLink } from '../lib/threepl-link';
+import { costSen, kmFromFixes, myDayWindow, type Fix } from '../lib/lorry-km';
+import { paginateAll } from '../lib/paginate-all';
 
 export const lorries = new Hono<{ Bindings: Env; Variables: Variables }>();
 lorries.use('*', supabaseAuth);
@@ -31,7 +33,7 @@ lorries.use('*', supabaseAuth);
 // that same audience. Fleet money is visible to the fleet audience. If that
 // ruling ever changes it changes for both routes together, not just this one.
 const COLS = [
-  'id', 'plate', 'type', 'is_internal', 'warehouse_id', 'capacity_m3', 'capacity_kg',
+  'id', 'plate', 'type', 'is_internal', 'warehouse_id', 'warehouse_ids', 'capacity_m3', 'capacity_kg',
   'active', 'notes', 'created_at', 'updated_at',
   'model', 'purchase_date', 'purchase_price_sen',
   'purchase_invoice_key', 'purchase_invoice_name', 'purchase_invoice_mime', 'purchase_invoice_size',
@@ -50,6 +52,8 @@ const COLS = [
      the road-tax / insurance / PUSPAKOM cycles anchor to), and the first day it
      worked FOR US (the denominator for cost-per-day). */
   'manufacture_date', 'registration_date', 'in_service_date',
+  // Own-lorry running cost (km x this); NULL = not set.
+  'cost_per_km_sen',
 ].join(', ');
 
 const CAPACITY_LAYERS = new Set(['SETS', 'REVENUE', 'BOTH']);
@@ -89,6 +93,14 @@ function toNumericOrNull(v: unknown): number | null {
    not that exact shape is REJECTED rather than coerced: these are compliance
    dates, and a silently-mangled road-tax expiry is worse than a 400. Postgres
    would 22007 on garbage anyway; this turns that 500 into an honest 400. */
+/* A lorry serves one or more warehouses (owner, 2026-10-16). warehouse_ids is
+   the set; warehouse_id stays as its first entry for readers that know one. */
+function warehouseColumns(body: Record<string, unknown>): { warehouse_id: string | null; warehouse_ids: string[] } {
+  const raw = Array.isArray(body.warehouseIds) ? body.warehouseIds : body.warehouseId ? [body.warehouseId] : [];
+  const ids = [...new Set(raw.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim()))];
+  return { warehouse_id: ids[0] ?? null, warehouse_ids: ids };
+}
+
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 function toDateOrNull(v: unknown): { ok: true; value: string | null } | { ok: false } {
   if (v === null || v === undefined || v === '') return { ok: true, value: null };
@@ -156,6 +168,8 @@ lorries.post('/', async (c) => {
   }
   const price = toIntOrNull(body.purchasePriceSen);
   if (!price.ok) return c.json({ error: 'invalid_amount', reason: 'purchasePriceSen must be a non-negative integer (cents)' }, 400);
+  const perKm = toIntOrNull(body.costPerKmSen);
+  if (!perKm.ok) return c.json({ error: 'invalid_amount', reason: 'costPerKmSen must be a non-negative integer (cents) or blank' }, 400);
 
   const maxSets = toCapacityOrNull(body.maxSets);
   if (!maxSets.ok) return c.json({ error: 'invalid_capacity', reason: 'maxSets must be a non-negative integer or blank' }, 400);
@@ -183,7 +197,7 @@ lorries.post('/', async (c) => {
     plate,
     type,
     is_internal: link.ownFlag,
-    warehouse_id: (body.warehouseId as string) || null,
+    ...warehouseColumns(body),
     threepl_company_id: link.carrierId,
     length_ft: lengthFt,
     width_ft: widthFt,
@@ -194,6 +208,7 @@ lorries.post('/', async (c) => {
     active: body.active === false ? false : true,
     model: (body.model as string) || null,
     purchase_price_sen: price.value,
+    cost_per_km_sen: perKm.value,
     max_sets: maxSets.value,
     max_revenue_sen: maxRevenue.value,
     capacity_layer: layerRaw,
@@ -243,7 +258,7 @@ lorries.patch('/:id', async (c) => {
     if (!LORRY_TYPES.has(type)) return c.json({ error: 'invalid_type' }, 400);
     updates.type = type;
   }
-  if (body.warehouseId !== undefined) updates.warehouse_id = (body.warehouseId as string) || null;
+  if (body.warehouseIds !== undefined || body.warehouseId !== undefined) Object.assign(updates, warehouseColumns(body));
   if (body.capacityM3 !== undefined) updates.capacity_m3 = toNumericOrNull(body.capacityM3);
   if (body.capacityKg !== undefined) updates.capacity_kg = toNumericOrNull(body.capacityKg);
   // WS3: box dimensions (ft). When the edit carries all three, capacity_m3 is
@@ -294,6 +309,11 @@ lorries.patch('/:id', async (c) => {
     if (!price.ok) return c.json({ error: 'invalid_amount', reason: 'purchasePriceSen must be a non-negative integer (cents)' }, 400);
     updates.purchase_price_sen = price.value;
   }
+  if (body.costPerKmSen !== undefined) {
+    const perKm = toIntOrNull(body.costPerKmSen);
+    if (!perKm.ok) return c.json({ error: 'invalid_amount', reason: 'costPerKmSen must be a non-negative integer (cents) or blank' }, 400);
+    updates.cost_per_km_sen = perKm.value;
+  }
   if (body.maxSets !== undefined) {
     const m = toCapacityOrNull(body.maxSets);
     if (!m.ok) return c.json({ error: 'invalid_capacity', reason: 'maxSets must be a non-negative integer or blank' }, 400);
@@ -324,6 +344,82 @@ lorries.patch('/:id', async (c) => {
     return c.json({ error: 'update_failed', reason: error.message }, 500);
   }
   return c.json({ lorry: data });
+});
+
+// DEV-42: each lorry's latest Velocity fix in the last 24 h (scm/lib/velocity-poll.ts
+// writes them every 5 min). Unified fleet like GET / — not scoped by company.
+lorries.get('/positions/latest', async (c) => {
+  const sb = c.get('supabase');
+  const since = new Date(Date.now() - 24 * 3600_000).toISOString();
+  // ponytail: scans 24 h of rows (288 per tracked lorry); a DISTINCT ON view if the fleet grows large.
+  const { data, error } = await sb.from('lorry_positions')
+    .select('lorry_id, lat, lng, speed_kmh, heading, ignition, street, recorded_at, received_at')
+    .gte('recorded_at', since)
+    .order('recorded_at', { ascending: false });
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  const latest = new Map<string, NonNullable<typeof data>[number]>();
+  for (const r of data) if (!latest.has(r.lorry_id)) latest.set(r.lorry_id, r);
+  if (!latest.size) return c.json({ positions: [] });
+  const { data: plates, error: pErr } = await sb.from('lorries').select('id, plate').in('id', [...latest.keys()]);
+  if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
+  const plateById = new Map(plates.map((l) => [l.id as string, l.plate as string]));
+  const positions = [...latest.values()]
+    .map((r) => ({ ...r, plate: plateById.get(r.lorry_id) ?? '' }))
+    .sort((a, b) => a.plate.localeCompare(b.plate));
+  return c.json({ positions });
+});
+
+// Own-lorry running cost for one Malaysia day: km from the Velocity fixes x
+// cost_per_km_sen. Unified fleet like /positions/latest. Fixes exist from
+// 15 Oct 2026 only (the poller's start), so earlier days return no rows.
+lorries.get('/km-cost', async (c) => {
+  const date = c.req.query('date') ?? new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+  const day = ISO_DATE.test(date) ? myDayWindow(date) : null;
+  if (!day) return c.json({ error: 'invalid_date', reason: 'date must be YYYY-MM-DD' }, 400);
+  const { from, to } = day;
+  const sb = c.get('supabase');
+  // ~288 fixes per lorry per day, so this is several pages past the 1000-row cap.
+  const { data, error } = await paginateAll<Fix & { lorry_id: string }>((f, t) => sb.from('lorry_positions')
+    .select('lorry_id, lat, lng, recorded_at')
+    .gte('recorded_at', from).lt('recorded_at', to)
+    .order('recorded_at').order('id')
+    .range(f, t));
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  const byLorry = new Map<string, Fix[]>();
+  for (const r of data ?? []) {
+    const list = byLorry.get(r.lorry_id) ?? [];
+    list.push(r);
+    byLorry.set(r.lorry_id, list);
+  }
+  if (!byLorry.size) return c.json({ date, lorries: [] });
+  const { data: rows, error: lErr } = await sb.from('lorries')
+    .select('id, plate, cost_per_km_sen').in('id', [...byLorry.keys()]);
+  if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
+  const out = rows.map((l) => {
+    const km = kmFromFixes(byLorry.get(l.id as string) ?? []);
+    const rate = (l.cost_per_km_sen ?? null) as number | null;
+    return { lorry_id: l.id as string, plate: l.plate as string, km, cost_per_km_sen: rate, cost_sen: costSen(km, rate) };
+  }).sort((a, b) => a.plate.localeCompare(b.plate));
+  return c.json({ date, lorries: out });
+});
+
+// One lorry's driven track for a Malaysia day — its Velocity fixes in time order
+// (Fleet Health's lorry page draws them as the route it actually drove), plus the
+// km they add up to. Unified fleet like /positions/latest.
+lorries.get('/:id/track', async (c) => {
+  // company-scope: UNIFIED FLEET — one shared fleet across all companies (lorries.ts:132), same as /positions/latest and /km-cost.
+  const date = c.req.query('date') ?? new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+  const day = ISO_DATE.test(date) ? myDayWindow(date) : null;
+  if (!day) return c.json({ error: 'invalid_date', reason: 'date must be YYYY-MM-DD' }, 400);
+  const { data, error } = await paginateAll<Fix & { speed_kmh: number | null; street: string | null }>((f, t) => c.get('supabase').from('lorry_positions')
+    .select('lat, lng, recorded_at, speed_kmh, street')
+    .eq('lorry_id', c.req.param('id'))
+    .gte('recorded_at', day.from).lt('recorded_at', day.to)
+    .order('recorded_at').order('id')
+    .range(f, t));
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  const fixes = data ?? [];
+  return c.json({ date, km: kmFromFixes(fixes), fixes });
 });
 
 export default lorries;

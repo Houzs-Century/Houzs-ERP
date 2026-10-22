@@ -22,6 +22,11 @@ vi.mock('../vendor/scm/lib/so-dropdown-options-queries', async (orig) => ({
 }));
 vi.mock('./MobileOrderMoney', async (orig) => ({ ...(await orig<Record<string, unknown>>()), useMobileConvertSources }));
 vi.mock('../vendor/scm/components/NotifyDialog', () => ({ useNotify: () => vi.fn() }));
+vi.mock('../vendor/scm/lib/payment-backdate-queries', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  useRaiseBackdateRequest: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+vi.mock('../vendor/scm/components/BackdateRequestsPanel', () => ({ BackdateRequestsPanel: () => null }));
 vi.mock('../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => vi.fn(), usePrompt: () => vi.fn() }));
 vi.mock('../auth/AuthContext', () => ({ useAuth: () => ({ can: () => false, user: null }) }));
 

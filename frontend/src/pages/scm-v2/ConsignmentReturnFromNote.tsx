@@ -23,13 +23,14 @@ import { ArrowRight, X, CheckSquare, Square } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { VariantDescription } from '../../vendor/scm/components/VariantDescription';
 import { useReturnableNoteLines, type ReturnableNoteLine } from '../../vendor/scm/lib/consignment-return-queries';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 
+import { fmtQty } from '../../vendor/shared/format';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const CONDITIONS = ['NEW', 'OPENED', 'DAMAGED', 'DEFECTIVE'] as const;
@@ -125,7 +126,7 @@ export const ConsignmentReturnFromNote = () => {
   const picked = Object.entries(picks).filter(([, v]) => v.picked && v.qty > 0);
   const pickedCount = picked.length;
 
-  const columns = useMemo<DataGridColumn<ReturnableNoteLine>[]>(() => [
+  const columns = useMemo<GridColumn<ReturnableNoteLine>[]>(() => [
     {
       key: 'pick', label: '', width: 40, sortable: false, groupable: false,
       accessor: (r) => {
@@ -192,7 +193,7 @@ export const ConsignmentReturnFromNote = () => {
     },
     {
       key: 'remaining', label: 'Remaining', width: 80, align: 'right', sortable: true,
-      accessor: (r) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)' }}>{r.remaining}</span>,
+      accessor: (r) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)' }}>{fmtQty(r.remaining)}</span>,
       sortFn: (a, b) => a.remaining - b.remaining,
     },
     {
@@ -228,7 +229,7 @@ export const ConsignmentReturnFromNote = () => {
             disabled={locked}
             onClick={(e) => e.stopPropagation()}
             onChange={(e) => setCondition(r, e.target.value)}
-            style={{ ...QTY_INPUT, width: 118, ...(locked ? { cursor: 'not-allowed', background: 'var(--c-cream)' } : null) }}
+            style={{ ...QTY_INPUT, width: '100%', ...(locked ? { cursor: 'not-allowed', background: 'var(--c-cream)' } : null) }}
           >
             {sortByText(CONDITIONS).map((cond) => <option key={cond} value={cond}>{cond}</option>)}
           </select>
@@ -328,7 +329,7 @@ export const ConsignmentReturnFromNote = () => {
         </p>
       )}
 
-      <DataGrid<ReturnableNoteLine>
+      <DataGridCompat<ReturnableNoteLine>
         rows={rows}
         columns={columns}
         storageKey="cr-g.cr-from-note-lines.layout.v1"

@@ -20,10 +20,16 @@ import { PageHeader } from "../components/Layout";
 import { Button } from "../components/Button";
 import { DashboardBreakdown } from "../components/Dashboard";
 import { ListSkeleton } from "../components/Skeleton";
+import { DataTable, type Column } from "../components/DataTable";
 import { useQuery, type QueryState } from "../hooks/useQuery";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../api/client";
 import { cn, relativeTime } from "../lib/utils";
+import { JobsPanel } from "./systemHealth/JobsPanel";
+import { QueuesPanel } from "./systemHealth/QueuesPanel";
+import { ServicesPanel } from "./systemHealth/ServicesPanel";
+import { DatabasePanel } from "./systemHealth/DatabasePanel";
+import { LoginsPanel } from "./systemHealth/LoginsPanel";
 
 // ---------------------------------------------------------------------------
 // System Health — owner-only ("*"). "Real data" phase 1, ported from Hookka's
@@ -223,8 +229,7 @@ export function SystemHealth() {
   const [showSetup, setShowSetup] = useState(false);
   const { can } = useAuth();
   // Client errors panel is super-admin only (the backend gates /summary on "*"
-  // too). Hard-gate the query so a non-owner with system_health page access
-  // never fires a 403 fetch.
+  // too). Hard-gate the query so a caller without "*" never fires a 403 fetch.
   const isOwner = can("*");
 
   const live = useQuery<LivePayload>("/api/admin/health/live", () => api.get("/api/admin/health/live"));
@@ -288,7 +293,7 @@ export function SystemHealth() {
       <PageHeader
         eyebrow="System · Health"
         title="System Health"
-        description="Live database and connection health, plus the audit trail of who changed what. Restricted to positions granted System Health access."
+        description="Live database and connection health, plus the audit trail of who changed what. Restricted to roles granted View IT pages."
         actions={
           <div className="flex items-center gap-3">
             <button
@@ -514,6 +519,12 @@ export function SystemHealth() {
               </p>
             </div>
 
+            <JobsPanel />
+            <QueuesPanel />
+            <ServicesPanel />
+            <DatabasePanel />
+            <LoginsPanel />
+
             {/* Audit feed — who changed what, from audit_events. */}
             <div className="rounded-lg border border-border bg-surface px-5 py-5 shadow-stone">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -580,39 +591,14 @@ export function SystemHealth() {
                   No {sensitiveOnly ? "sensitive " : ""}events in the last {range}.
                 </div>
               ) : (
-                <div className="thin-scroll max-h-[28rem] overflow-auto">
-                  <table className="w-full text-[12px]">
-                    <thead className="sticky top-0">
-                      <tr className="border-b-2 border-border bg-surface-dim text-left text-[10px] font-semibold uppercase tracking-brand text-ink-secondary">
-                        <th className="py-1.5 pr-3">When</th>
-                        <th className="py-1.5 pr-3">Who</th>
-                        <th className="py-1.5 pr-3">Action</th>
-                        <th className="py-1.5">What</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rows.map((r) => (
-                        <tr key={r.id} className="border-b border-border/60 align-top">
-                          <td
-                            className="whitespace-nowrap py-1.5 pr-3 font-mono text-[10.5px] text-ink-muted"
-                            title={r.created_at}
-                          >
-                            {relativeTime(r.created_at)}
-                          </td>
-                          <td className="py-1.5 pr-3 text-ink-secondary">
-                            {r.actor_email || (r.actor_id ? `#${r.actor_id}` : "system")}
-                          </td>
-                          <td className="py-1.5 pr-3 font-mono text-[10.5px] text-ink">{r.action}</td>
-                          <td className="py-1.5 text-ink-secondary">
-                            {r.summary ||
-                              [r.entity_type, r.entity_id].filter(Boolean).join(" ") ||
-                              "—"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <DataTable<AuditRow>
+                  tableId="system-health-audit"
+                  exportName="audit-log"
+                  exportXlsx
+                  columns={AUDIT_COLUMNS}
+                  rows={rows}
+                  getRowKey={(r) => r.id}
+                />
               )}
             </div>
 
@@ -632,6 +618,39 @@ export function SystemHealth() {
 // renders it behind can("*") and the query is hard-gated to match the
 // backend's requirePermission("*") on /api/client-errors/summary.
 // ---------------------------------------------------------------------------
+
+type ClientErrorRow = ClientErrorsSummary["data"][number];
+
+const AUDIT_COLUMNS: Column<AuditRow>[] = [
+  {
+    key: "when", label: "When", getValue: (r) => r.created_at,
+    render: (r) => <span className="font-mono text-[10.5px] text-ink-muted" title={r.created_at}>{relativeTime(r.created_at)}</span>,
+  },
+  {
+    key: "who", label: "Who", getValue: (r) => r.actor_email || (r.actor_id ? `#${r.actor_id}` : "system"),
+    render: (r) => r.actor_email || (r.actor_id ? `#${r.actor_id}` : "system"),
+  },
+  { key: "action", label: "Action", getValue: (r) => r.action, render: (r) => <span className="font-mono text-[10.5px] text-ink">{r.action}</span> },
+  {
+    key: "what", label: "What",
+    getValue: (r) => r.summary || [r.entity_type, r.entity_id].filter(Boolean).join(" "),
+    render: (r) => r.summary || [r.entity_type, r.entity_id].filter(Boolean).join(" ") || "—",
+  },
+];
+
+const CLIENT_ERROR_COLUMNS: Column<ClientErrorRow>[] = [
+  { key: "route", label: "Route", getValue: (r) => r.route, render: (r) => <span className="font-mono text-[10.5px] text-ink">{r.route || "—"}</span> },
+  {
+    key: "message", label: "Message", width: "448px", getValue: (r) => r.message,
+    render: (r) => <span title={r.build_id ? `build ${r.build_id}` : undefined}>{r.message}</span>,
+  },
+  { key: "count", label: "Count", align: "right", getValue: (r) => r.count, render: (r) => <span className="font-semibold text-ink">{r.count.toLocaleString()}</span> },
+  { key: "users", label: "Users", align: "right", getValue: (r) => r.affected_users, render: (r) => r.affected_users },
+  {
+    key: "lastSeen", label: "Last seen", getValue: (r) => r.last_seen_at,
+    render: (r) => <span className="font-mono text-[10.5px] text-ink-muted" title={r.last_seen_at}>{relativeTime(r.last_seen_at)}</span>,
+  },
+];
 
 function ClientErrorsPanel({ q }: { q: QueryState<ClientErrorsSummary> }) {
   const rows = q.data?.data ?? [];
@@ -661,38 +680,14 @@ function ClientErrorsPanel({ q }: { q: QueryState<ClientErrorsSummary> }) {
           No client errors reported in the last 7 days.
         </div>
       ) : (
-        <div className="thin-scroll max-h-[22rem] overflow-auto">
-          <table className="w-full text-[12px]">
-            <thead className="sticky top-0">
-              <tr className="border-b-2 border-border bg-surface-dim text-left text-[10px] font-semibold uppercase tracking-brand text-ink-secondary">
-                <th className="py-1.5 pr-3">Route</th>
-                <th className="py-1.5 pr-3">Message</th>
-                <th className="py-1.5 pr-3 text-right">Count</th>
-                <th className="py-1.5 pr-3 text-right">Users</th>
-                <th className="py-1.5">Last seen</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.dedup_hash} className="border-b border-border/60 align-top">
-                  <td className="whitespace-nowrap py-1.5 pr-3 font-mono text-[10.5px] text-ink">
-                    {r.route || "—"}
-                  </td>
-                  <td className="max-w-[28rem] break-words py-1.5 pr-3 text-ink-secondary" title={r.build_id ? `build ${r.build_id}` : undefined}>
-                    {r.message}
-                  </td>
-                  <td className="py-1.5 pr-3 text-right font-semibold text-ink">
-                    {r.count.toLocaleString()}
-                  </td>
-                  <td className="py-1.5 pr-3 text-right text-ink-secondary">{r.affected_users}</td>
-                  <td className="whitespace-nowrap py-1.5 font-mono text-[10.5px] text-ink-muted" title={r.last_seen_at}>
-                    {relativeTime(r.last_seen_at)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable<ClientErrorRow>
+          tableId="system-health-client-errors"
+          exportName="client-errors"
+          exportXlsx
+          columns={CLIENT_ERROR_COLUMNS}
+          rows={rows}
+          getRowKey={(r) => r.dedup_hash}
+        />
       )}
     </div>
   );

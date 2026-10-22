@@ -127,8 +127,9 @@ export const tidy = (s: unknown): string | null => {
  * | `InvAddr3` | `address3`, else `postcode` + `city` |
  * | `InvAddr4` | `address4`, else `customer_state` |
  *
- * `address3` / `address4` WIN when they are populated: only the cutover import
- * ever wrote them, and that text is AutoCount's own. An ERP-created order has
+ * `address3` / `address4` WIN when they are populated AND still name the stored
+ * postcode (see soTownLines): only the cutover import ever wrote them, and that
+ * text is AutoCount's own. An ERP-created order has
  * both blank and keeps the same facts in `city` / `postcode` / `customer_state`
  * — measured 2026-08-14 on production, 94 of 115 unpushed sales orders are in
  * exactly that shape, so AutoCount's document carried the street lines and no
@@ -137,17 +138,41 @@ export const tidy = (s: unknown): string | null => {
  * Postcode before town, state on its own line, is the Malaysian postal order
  * ("43300 SERI KEMBANGAN" / "SELANGOR"). Free text, no master, no foreign key.
  */
-export function soInvoiceAddress(h: {
+type SoAddressHead = {
   /* `unknown` and optional for the same reason as soCustomerRef above. */
   address1?: unknown; address2?: unknown; address3?: unknown; address4?: unknown;
   city?: unknown; postcode?: unknown; customer_state?: unknown;
-}): {
+};
+
+/**
+ * Lines 3 and 4 of a sales order's address, before fitting.
+ *
+ * The SO form edits postcode / city / state and has no input for address3 /
+ * address4, so on a migrated order a corrected postcode left the cutover's old
+ * town line in place and it kept winning (BUG-40, HC8962: the sheet still said
+ * "51200 Kuala Lumpur" after the order was changed to 81200 Johor Bahru). The
+ * import derived the postcode FROM those lines, so the lines are stale only when
+ * they name a postcode and it is not the stored one. Lines naming no postcode
+ * at all are left to win, as before.
+ */
+export function soTownLines(h: SoAddressHead): [string | null, string | null] {
+  const postcode = tidy(h.postcode);
+  const town = [postcode, tidy(h.city)].filter(Boolean).join(' ') || null;
+  const state = tidy(h.customer_state);
+  const named = [h.address1, h.address2, h.address3, h.address4]
+    .flatMap((v) => (tidy(v) ?? '').match(/\b\d{5}\b/g) ?? []);
+  const stale = postcode != null && named.length > 0 && !named.includes(postcode);
+  if (stale) return [town, state];
+  return [tidy(h.address3) ?? town, tidy(h.address4) ?? state];
+}
+
+export function soInvoiceAddress(h: SoAddressHead): {
     InvAddr1: string | null;
     InvAddr2: string | null;
     InvAddr3: string | null;
     InvAddr4: string | null;
   } {
-  const town = [tidy(h.postcode), tidy(h.city)].filter(Boolean).join(' ');
+  const [line3, line4] = soTownLines(h);
   /* FITTED TO THE BOOK'S OWN WIDTH before it leaves. AutoCount's four address
      columns are 40 characters and it refuses the WHOLE document when one is
      over — see fitAddressLines, which returns an address that already fits
@@ -155,8 +180,8 @@ export function soInvoiceAddress(h: {
   const { lines } = fitAddressLines([
     tidy(h.address1),
     tidy(h.address2),
-    tidy(h.address3) ?? (town || null),
-    tidy(h.address4) ?? tidy(h.customer_state),
+    line3,
+    line4,
   ]);
   return {
     InvAddr1: lines[0] ?? null,

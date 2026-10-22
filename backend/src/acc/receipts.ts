@@ -244,6 +244,28 @@ export async function ensureReceiptForPayment(
 }
 
 /**
+ * Remove the DRAFT receipt of a payment that is going because it should never
+ * have been recorded — Finance removing a payment from a cancelled order (owner
+ * 2026-09-29: the same swipe keyed on two orders; its draft goes with it). Only
+ * a DRAFT: a FORMAL receipt was issued to the customer and stays on file
+ * whatever becomes of the payment. `orNumber` is the draft removed, or null
+ * when the payment had none.
+ */
+export async function removeDraftReceiptForPayment(
+  sb: any,
+  p: { source: 'SOPAY' | 'SIPAY'; paymentId: string; companyId: number | null },
+): Promise<{ ok: true; orNumber: string | null } | { ok: false; reason: string }> {
+  let q = sb.from('acc_official_receipts').delete()
+    .eq('payment_source', p.source).eq('payment_id', p.paymentId).eq('status', 'DRAFT');
+  if (p.companyId !== null) q = q.eq('company_id', p.companyId);
+  /* One receipt per payment (UNIQUE payment_source, payment_id), so the
+     RETURNING is zero rows or one. */
+  const { data, error } = await q.select('or_number').maybeSingle();
+  if (error) return { ok: false, reason: error.message };
+  return { ok: true, orNumber: (data as { or_number?: string | null } | null)?.or_number ?? null };
+}
+
+/**
  * Card money confirmed by merchant reconciliation → the payments' receipts
  * turn FORMAL on the acquirer's payout bank. BEST-EFFORT by design: the
  * settlement confirm must never fail over a receipt (the fee entry is the

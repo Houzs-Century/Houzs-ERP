@@ -20,6 +20,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 export type ColFilters = Record<string, string[]>;
 
 const store = new Map<string, ColFilters>();
+// The search box text, same visit scope: a name typed above the board came back
+// empty after opening a record (owner 2026-10-05), while the funnels beside it
+// were remembered.
+const searchStore = new Map<string, string>();
 
 // Test seam: seed the store to simulate "a funnel set earlier this visit", and
 // reset it to simulate a fresh page load. Not called by production code.
@@ -28,6 +32,7 @@ export function primeInVisitColFilters(idKey: string, filters: ColFilters): void
 }
 export function resetInVisitColFilters(): void {
   store.clear();
+  searchStore.clear();
 }
 
 /** Funnel state backed by the in-visit Map, with the same `[value, setValue]`
@@ -53,6 +58,83 @@ export function useInVisitColFilters(
     if (Object.keys(value).length === 0) store.delete(idKey);
     else store.set(idKey, value);
   }, [idKey, value]);
+
+  const update = useCallback(
+    (v: ColFilters | ((prev: ColFilters) => ColFilters)) =>
+      setValue((prev) => (typeof v === "function" ? (v as (p: ColFilters) => ColFilters)(prev) : v)),
+    [],
+  );
+
+  return [value, update];
+}
+
+/** The client search text, in-visit like the funnels. `enabled` false (per-mount
+ *  tables) keeps it in plain component state and never touches the store. */
+export function useInVisitClientSearch(
+  idKey: string,
+  enabled: boolean,
+): [string, (v: string) => void] {
+  const [value, setValue] = useState<string>(() => (enabled ? searchStore.get(idKey) ?? "" : ""));
+  const keyRef = useRef(idKey);
+  useEffect(() => {
+    if (!enabled) return;
+    if (keyRef.current !== idKey) {
+      keyRef.current = idKey;
+      setValue(searchStore.get(idKey) ?? "");
+      return;
+    }
+    if (value === "") searchStore.delete(idKey);
+    else searchStore.set(idKey, value);
+  }, [idKey, value, enabled]);
+  return [value, setValue];
+}
+
+/* Funnels a table KEEPS across page loads (`persistFilters="always"`): the
+   delivery planning boards, where the owner wants the queue he narrowed
+   yesterday to still be narrowed today (2026-10-05). A device pref in the same
+   `dt:` family as the column layout, read on mount, removed when cleared. The
+   key is deliberately not `dt:filters:` — DataTable erases that pre-2026-09-16
+   family on every mount. */
+const KEPT_PREFIX = "dt:funnels:";
+
+function sanitizeColFilters(raw: unknown): ColFilters {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: ColFilters = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === "string")) out[k] = v as string[];
+  }
+  return out;
+}
+
+function readKeptColFilters(idKey: string): ColFilters {
+  try {
+    const raw = localStorage.getItem(KEPT_PREFIX + idKey);
+    return raw ? sanitizeColFilters(JSON.parse(raw)) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function useKeptColFilters(
+  idKey: string,
+  enabled: boolean,
+): [ColFilters, (v: ColFilters | ((prev: ColFilters) => ColFilters)) => void] {
+  const [value, setValue] = useState<ColFilters>(() => (enabled ? readKeptColFilters(idKey) : {}));
+  const keyRef = useRef(idKey);
+  useEffect(() => {
+    if (!enabled) return;
+    if (keyRef.current !== idKey) {
+      keyRef.current = idKey;
+      setValue(readKeptColFilters(idKey));
+      return;
+    }
+    try {
+      if (Object.keys(value).length === 0) localStorage.removeItem(KEPT_PREFIX + idKey);
+      else localStorage.setItem(KEPT_PREFIX + idKey, JSON.stringify(value));
+    } catch {
+      // quota / privacy mode: the funnel still applies for this visit
+    }
+  }, [idKey, value, enabled]);
 
   const update = useCallback(
     (v: ColFilters | ((prev: ColFilters) => ColFilters)) =>

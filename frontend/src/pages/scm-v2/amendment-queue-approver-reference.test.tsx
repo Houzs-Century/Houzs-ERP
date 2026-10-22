@@ -32,6 +32,21 @@ vi.mock('../../vendor/scm/lib/so-amendment-queries', () => ({
 vi.mock('../../vendor/scm/lib/po-amendment-queries', () => ({
   usePoAmendments: () => ({ data: { amendments: poRows }, isLoading: false, error: null }),
 }));
+/* The queue also lists CANCELLATION requests since owner 2026-09-24. This file
+   is about the amendment rows, so the cancellation half is stubbed empty — and
+   its hooks are stubbed rather than provided, because they want a QueryClient,
+   an AuthProvider and a ConfirmProvider this render deliberately does without. */
+vi.mock('../../vendor/scm/lib/document-cancel-queries', async (orig) => ({
+  ...(await orig<typeof import('../../vendor/scm/lib/document-cancel-queries')>()),
+  useCancelRequests: () => ({ data: { requests: [] }, isLoading: false, error: null }),
+}));
+vi.mock('../../vendor/scm/lib/use-cancel-request-actions', async (orig) => ({
+  ...(await orig<typeof import('../../vendor/scm/lib/use-cancel-request-actions')>()),
+  useCancelRequestActions: () => ({ approve: async () => {}, reject: async () => {}, withdraw: async () => {}, executeNow: async () => {}, busy: false }),
+}));
+vi.mock('../../hooks/useAmendmentApprovals', () => ({ useRefreshApprovalBadges: () => () => {} }));
+vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: { id: 1 }, can: () => false }) }));
+
 vi.mock('../../hooks/useStaffLookup', () => ({
   useStaffLookup: () => ({ actorNameOf: () => '—' }),
 }));
@@ -64,14 +79,14 @@ describe('desktop Sales Order Amendment queue', () => {
     expect(gridBadges(container)).toEqual(['PURCHASER:Purchaser', 'LOGISTIC:Logistic', 'LEGACY:Legacy']);
   });
 
-  test('a Reference column shows the Sales Order reference, by the Sales Order list rule', () => {
+  test('a Ref No. column shows the Sales Order reference, by the Sales Order list rule', () => {
     soRows = [
       row('a', 14, { so_ref: 'MR TAN / SUNWAY', so_customer_so_no: 'IGNORED WHEN REF IS SET' }),
       row('b', 13, { so_ref: null, so_customer_so_no: 'CUST-PO-7' }),
       row('c', 12, { so_ref: null, so_customer_so_no: null }),
     ];
     const { container } = render(<MemoryRouter><Amendments /></MemoryRouter>);
-    expect(screen.getByRole('button', { name: 'Reference' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: /^Ref No./ })).toBeTruthy();
     const rows = [...container.querySelectorAll('tr[data-vrow]')].map((tr) => tr.textContent);
     expect(rows[0]).toContain('MR TAN / SUNWAY');
     expect(rows[0]).not.toContain('IGNORED WHEN REF IS SET');

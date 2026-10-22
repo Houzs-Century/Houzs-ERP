@@ -1264,7 +1264,7 @@ export function DeliveryOrderNewV2() {
               />
             </div>
             <div>
-              <Label text="Customer SO ref" />
+              <Label text="Ref No." />
               <TextInput
                 value={customerSoRef}
                 onChange={setCustomerSoRef}
@@ -1524,7 +1524,9 @@ export function DeliveryOrderNewV2() {
                    category-mandatory variants are NOT re-required here (they
                    ride in from the SO stash / DO detail). */
                 variantsRequired={false}
+                lineDateLocked={false}
                 seedSofaLegDefault={false}
+                attachOptions={null}
               />
             ))}
           </div>

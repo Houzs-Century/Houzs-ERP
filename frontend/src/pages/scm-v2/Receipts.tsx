@@ -22,7 +22,10 @@
 // Other Debtors page's picker; Post raises the ODR through that module's own
 // route with postNow, which books Dr bank / Cr 305 and knocks the bills off in
 // the same call — no four layers on this door. The bill itself (记它欠多少) is
-// still raised on the Other Debtors page.
+// raised on the AR Invoices page (owner 2026-09-29: the Other Debtors page is
+// the registry alone), and a POSTED Other Debtor receipt is VOIDED from here
+// — the ODR contra, the ticked bills take their money back — so this page is
+// the one door for that money in and out again.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -31,29 +34,30 @@ import { Ban, Pencil, Plus } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
   useAccounts, useReceipts, useCreateReceipt, useVoidReceipt, useReceiptDetail, useUpdateReceipt,
-  useOtherDebtors, useDebtorDetail, useCreateDebtorReceipt,
+  useOtherDebtors, useDebtorDetail, useCreateDebtorReceipt, useVoidDebtorReceipt,
   postableAccounts,
   type Account, type ReceiptRow, type DebtorBill,
 } from '../../vendor/scm/lib/accounting-queries';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
-import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
+import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
+import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import { Modal } from '../../vendor/scm/components/Modal';
 import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../vendor/scm/lib/use-save-hotkey';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { todayMyt } from '../../vendor/scm/lib/dates';
+import { soRefOfCamelStamp } from '../../lib/so-ref-search';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { fmtDate, fmtSen } from '../../vendor/shared/format';
+import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-const fmtRm = (sen: number | null | undefined): string => {
-  const v = Number(sen ?? 0);
-  return `MYR ${(v / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-};
+const fmtRm = (sen: number | null | undefined): string => fmtSen(sen ?? 0);
 
 const KIND_LABEL: Record<ReceiptRow['kind'], string> = {
   GENERAL: 'Receipt', DEBTOR: 'Other Debtor', CUSTOMER: 'Customer',
@@ -74,7 +78,7 @@ const iconButton = { background: 'none', border: 'none', cursor: 'pointer', colo
 const buildReceiptColumns = (h: {
   canEdit: boolean; canCancel: boolean;
   onEdit: (r: ReceiptRow) => void; onVoid: (r: ReceiptRow) => void;
-}): DataGridColumn<ReceiptRow>[] => [
+}): GridColumn<ReceiptRow>[] => [
   {
     key: 'kind', label: 'Kind', width: 110, sortable: true, groupable: true,
     accessor: (r) => <span style={{ fontSize: 'var(--fs-11)', fontWeight: 600 }}>{KIND_LABEL[r.kind]}</span>,
@@ -86,22 +90,24 @@ const buildReceiptColumns = (h: {
   {
     key: 'number', label: 'No.', width: 180, sortable: true,
     accessor: (r) => (
-      <span style={{ fontFamily: 'var(--font-mono)' }}>
+      <span className={cancelledDocNoClass(r.status)} style={{ fontFamily: 'var(--font-mono)' }}>
         {r.kind === 'DEBTOR'
-          ? <Link to="/scm/other-debtors" style={{ color: 'inherit' }}>{r.number}</Link>
+          ? <Link to={`/scm/ar-invoices?debtor=${r.debtorId ?? ''}`} style={{ color: 'inherit' }}>{r.number}</Link>
           : r.kind === 'CUSTOMER'
             ? <Link to={`/scm/sales-orders/${r.number}`} style={{ color: 'inherit' }}>{r.number}</Link>
             : r.number}
       </span>
     ),
-    searchValue: (r) => r.number,
+    /* A customer receipt is also found by its order's reference. */
+    searchValue: (r) => `${r.number} ${soRefOfCamelStamp(r)}`,
     filterValue: (r) => r.number,
+    exportValue: (r) => r.number,
     filterType: 'numbering',
     sortFn: (a, b) => a.number.localeCompare(b.number),
   },
   {
     key: 'date', label: 'Date', width: 120, sortable: true,
-    accessor: (r) => r.date,
+    accessor: (r) => fmtDate(r.date),
     searchValue: (r) => r.date,
     filterType: 'date', dateValue: (r) => r.date,
     sortFn: (a, b) => a.date.localeCompare(b.date),
@@ -131,7 +137,7 @@ const buildReceiptColumns = (h: {
   },
   {
     key: 'status', label: 'Status', width: 120, sortable: true, groupable: true,
-    accessor: (r) => <span style={{ fontSize: 'var(--fs-11)' }}>{r.status}</span>,
+    accessor: (r) => <span style={{ fontSize: 'var(--fs-11)' }}>{humaniseStatusKey(r.status)}</span>,
     searchValue: (r) => r.status,
     filterValue: (r) => r.status,
     groupValue: (r) => r.status,
@@ -147,7 +153,7 @@ const buildReceiptColumns = (h: {
             <Pencil size={14} strokeWidth={1.75} />
           </button>
         )}
-        {r.kind === 'GENERAL' && r.status === 'POSTED' && h.canCancel && (
+        {(r.kind === 'GENERAL' || r.kind === 'DEBTOR') && r.status === 'POSTED' && h.canCancel && (
           <button type="button" aria-label={`Void ${r.number}`} style={iconButton}
             onClick={(e) => { e.stopPropagation(); h.onVoid(r); }}>
             <Ban size={14} strokeWidth={1.75} />
@@ -182,6 +188,7 @@ export const Receipts = () => {
 
   const createReceipt = useCreateReceipt();
   const voidReceipt = useVoidReceipt();
+  const voidDebtorReceipt = useVoidDebtorReceipt();
   const updateReceipt = useUpdateReceipt();
 
   const [adding, setAdding] = useState(false);
@@ -273,12 +280,15 @@ export const Receipts = () => {
   const onVoid = async (r: ReceiptRow) => {
     const ok = await askConfirm({
       title: `Void ${r.number}?`,
-      body: 'The RCT journal is reversed and the receipt turns CANCELLED — the ledger keeps both sides.',
+      body: r.kind === 'DEBTOR'
+        ? 'The ODR journal is reversed, the ticked bills take their money back and the receipt turns CANCELLED — the ledger keeps both sides.'
+        : 'The RCT journal is reversed and the receipt turns CANCELLED — the ledger keeps both sides.',
       confirmLabel: 'Void', danger: true,
     });
     if (!ok) return;
     try {
-      await voidReceipt.mutateAsync(r.id);
+      if (r.kind === 'DEBTOR') await voidDebtorReceipt.mutateAsync(r.id);
+      else await voidReceipt.mutateAsync(r.id);
     } catch (e) {
       void notify({ title: 'Void failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
     }
@@ -453,7 +463,7 @@ export const Receipts = () => {
         </Modal>
       )}
 
-      <DataGrid<ReceiptRow>
+      <DataGridCompat<ReceiptRow>
         rows={rows}
         columns={columns}
         storageKey={RECEIPTS_STORAGE_KEY}
@@ -464,6 +474,7 @@ export const Receipts = () => {
         emptyMessage={`Nothing came in ${month ? 'this month' : 'yet'} (searched general + other-debtor + customer receipts).`}
         onFilteredRowsChange={setVisible}
         defaultSort={NEWEST_FIRST}
+        getRowClassName={(r) => cancelledRowClass(r.status)}
         rowStyle={(r) => (r.status === 'CANCELLED' ? { opacity: 0.55 } : undefined)}
         groupBanner={false}
         toolbar={(

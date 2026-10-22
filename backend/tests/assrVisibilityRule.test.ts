@@ -15,14 +15,21 @@ import { assrCompanySql, canAccessServiceCases, holdsAnyCompanyGrant, holdsHouzs
  *
  *   1. ADMITTANCE — the HOUZS company grant admits; a `/^sales/i` position name
  *      does not admit on its own any more.
- *   2. ROW VISIBILITY — an ERP-native SO stays scoped to self + downline BY ID;
- *      an AutoCount-mirrored SO is open to whoever the company predicate admits.
+ *   2. ROW VISIBILITY — a scoped caller sees ONLY their own cases (owner ruling
+ *      2026-09-28: "sales person cannot see all service case, they can see
+ *      their own case and cust only"). Self + downline, keyed BY ID wherever an
+ *      id exists; the legacy AutoCount `sales_agent` text is reached by a
+ *      SELF-SCOPED substring match whose names are resolved in-SQL from the
+ *      users master — never inlined as literals. This supersedes the
+ *      2026-08-20 arm that opened every AutoCount-mirrored SO to whoever the
+ *      company predicate admitted.
  *
- * The live symptom this closes: a batch of Sales Agents lost every Service Case
- * at once, because the old rule matched `assr_cases.sales_agent` — free text
- * mirrored out of AutoCount — as a SUBSTRING against a subtree member's display
- * name. A rename, a stray space or a different spelling silently revoked access
- * and nothing said why.
+ * The 2026-08 symptom stays closed: back then a batch of Sales Agents lost
+ * every Service Case at once because the rule matched `sales_agent` against
+ * name LITERALS baked into the query — a rename silently revoked access and
+ * nothing said why. The name arm that exists now heals on the next query
+ * (names come from the users master at execution time) and is ADDITIVE to five
+ * id-keyed arms, never the only binding.
  */
 
 const COMPANIES = [
@@ -155,12 +162,29 @@ describe("the row-visibility rule: ERP orders by id, AutoCount orders by company
     expect(sql).toContain("c.assigned_to_2 IN (5)");
   });
 
-  test("a case whose SO is NOT an ERP order is admitted with no agent test", () => {
+  test("the open-to-company AutoCount arm is GONE — owner ruling 2026-09-28", () => {
+    // 2026-08-20 admitted every non-ERP case to any company grantee; the owner
+    // reversed that after a new Sales Executive's phone listed all 897 cases.
+    // A scoped caller must never receive an arm that matches rows with no
+    // linkage to them, which is what `doc_no NOT IN (all ERP docs)` was.
     const sql = assrVisibilityPredicateSql([5], "c.") ?? "";
-    // The AutoCount arm: doc_no is not among the ERP order numbers.
+    expect(sql).not.toContain("NOT IN");
+  });
+
+  test("the legacy AutoCount reach is SELF-scoped: own subtree names, resolved in-SQL", () => {
+    // The arm that replaces it: the case's free-text sales_agent contains a
+    // subtree member's display name — the SAME rule My Cases runs on
+    // (myCasesPredicateSql), so the mobile board and the PC My Cases list can
+    // never disagree about whose case it is. Names come from the users master
+    // AT EXECUTION TIME (a rename heals on the next query), never as literals.
+    const sql = assrVisibilityPredicateSql([5, 6], "c.") ?? "";
+    expect(sql).toContain("SELECT ac.id FROM assr_cases ac, users nu");
+    expect(sql).toContain("nu.id IN (5,6)");
     expect(sql).toContain(
-      `LOWER(COALESCE(c.doc_no, '')) NOT IN (SELECT LOWER(eo.doc_no) FROM scm."mfg_sales_orders" eo`,
+      "LOWER(COALESCE(ac.sales_agent, '')) LIKE '%' || LOWER(TRIM(nu.name)) || '%'",
     );
+    // An empty display name must not become LIKE '%%' (matches everything).
+    expect(sql).toContain("TRIM(COALESCE(nu.name, '')) <> ''");
   });
 
   test("an ERP-native SO resolves the salesperson BY ID through scm.staff", () => {
@@ -169,16 +193,15 @@ describe("the row-visibility rule: ERP orders by id, AutoCount orders by company
     expect(sql).toContain(`es.user_id IN (5)`);
   });
 
-  test("the free-text sales_agent SUBSTRING match is GONE — it is what broke", () => {
+  test("name LITERALS are never inlined into the query — that is what broke in 2026-08", () => {
+    // The names participate only through the users-master subquery; nothing a
+    // caller's display name contains can appear in (or break) the SQL string.
     const sql = assrVisibilityPredicateSql([5, 6], "c.") ?? "";
-    expect(sql).not.toContain("sales_agent");
-    expect(sql).not.toContain("LIKE");
+    expect(sql).not.toMatch(/LIKE '%[^']/); // only the '%' || … || '%' shape
   });
 
-  test("NULL doc_no cannot poison the NOT IN, and blank cannot match a blank order", () => {
+  test("blank doc_no cannot match a blank order number", () => {
     const sql = assrVisibilityPredicateSql([5], "c.") ?? "";
-    // A single NULL in a NOT IN subquery makes the whole test NULL — never true —
-    // which would hide every AutoCount case from every scoped caller.
     expect(sql).toContain("eo.doc_no IS NOT NULL");
     expect(sql).toContain("eo.doc_no <> ''");
   });
@@ -186,10 +209,10 @@ describe("the row-visibility rule: ERP orders by id, AutoCount orders by company
   test("'the ERP order' means the same thing here as it does on the CREATE path", () => {
     // fetchScmSoContext (services/assr.ts) resolves a doc_no to its ERP order
     // with exactly this status filter. Two definitions of the same object inside
-    // one module is the drift this repo keeps paying for — both arms carry it.
+    // one module is the drift this repo keeps paying for.
     const sql = assrVisibilityPredicateSql([5], "c.") ?? "";
     const armed = sql.match(/eo\.status <> 'DRAFT' AND eo\.status <> 'CANCELLED'/g) ?? [];
-    expect(armed.length).toBe(2);
+    expect(armed.length).toBe(1);
   });
 
   test("the case's doc_no is never referenced INSIDE a subquery", () => {

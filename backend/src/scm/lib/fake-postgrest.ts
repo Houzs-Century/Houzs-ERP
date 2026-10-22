@@ -259,14 +259,31 @@ export function fakeSb(
         filters.push((r) => (val === null ? r[col] === null || r[col] === undefined : r[col] === val));
         return builder;
       },
-      /* THE NEGATION OF `is`, and only of `is`. PostgREST's `.not(col, op,
-         val)` takes any operator, but the only shape this repo asks for is
-         `.not(col, 'is', null)` — "has a value" — so an unknown operator
+      /* THE NEGATION OF `is` and of `in`, and only of those. PostgREST's
+         `.not(col, op, val)` takes any operator, but the shapes this repo asks
+         for are `.not(col, 'is', null)` — "has a value" — and `.not(col, 'in',
+         list)` — "none of these" — so an unknown operator
          THROWS rather than quietly matching everything. A fake that answered a
          filter it does not implement by returning every row would make a scope
          test pass for the wrong reason, which is the exact failure mode this
          file exists to avoid. */
       not(col: string, op: string, val: unknown) {
+        /* `.not(col, 'in', '(a,b)')` — "none of these", the escaped in-list the
+           app builds with pgrestInList (the supplier list leaves out Finance's
+           own suppliers). Parsed by the same function, like filter() below. */
+        if (op === 'in') {
+          const vals = parsePgrestInList(String(val));
+          filters.push((r) => !vals.includes(String(r[col])));
+          return builder;
+        }
+        /* `.not(col, 'like', 'SVC-%')` — the SO line readers leaving the service
+           lines out. A NULL column passes neither `like` nor its negation, as in
+           SQL (`NOT (NULL LIKE …)` is NULL). */
+        if (op === 'like') {
+          const rx = new RegExp(`^${String(val).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*')}$`);
+          filters.push((r) => r[col] != null && !rx.test(String(r[col])));
+          return builder;
+        }
         if (op !== 'is') throw new Error(`fake-postgrest: not(${op}) is not implemented`);
         filters.push((r) => !(val === null ? r[col] === null || r[col] === undefined : r[col] === val));
         return builder;
@@ -291,6 +308,10 @@ export function fakeSb(
          written as gte(first) + lt(next-first) — the only correct shape for a
          timestamptz — returned an empty report against this fake while the
          real database returned the rows (docs/bugs/0785). */
+      gt(col: string, val: unknown) {
+        filters.push((r) => r[col] != null && (typeof r[col] === 'number' ? Number(r[col]) > Number(val) : String(r[col]) > String(val)));
+        return builder;
+      },
       lt(col: string, val: unknown) {
         filters.push((r) => r[col] != null && (typeof r[col] === 'number' ? Number(r[col]) < Number(val) : String(r[col]) < String(val)));
         return builder;
@@ -330,17 +351,43 @@ export function fakeSb(
       },
       /* PostgREST `or=(a.op.v,b.op.v)`: the row passes when ANY term does. Only
          the term shapes the list readers send are understood — `ilike` (the
-         search box), `eq` and `is.true|false|null` (the hold marker); anything
-         else THROWS, for the reason `not()` above gives. */
+         search box), `eq` and `is.true|false|null` (the hold marker), `neq`
+         (the sales lines' item group), `in.(…)` (the SO Branding funnel),
+         `ov.{…}` (the sales scope, the SO Sales Location funnel); anything else
+         THROWS, for the reason `not()` above gives. Terms split on the commas
+         OUTSIDE a quoted value, an `in.(…)` list or an `ov.{…}` array, as
+         PostgREST does. */
       or(expr: string) {
-        const terms = String(expr).split(',').map((t) => {
+        const parts: string[] = [];
+        let cur = '', depth = 0, quoted = false;
+        for (let i = 0; i < String(expr).length; i += 1) {
+          const ch = String(expr)[i]!;
+          if (quoted && ch === '\\') { cur += ch + (String(expr)[i + 1] ?? ''); i += 1; continue; }
+          if (ch === '"') quoted = !quoted;
+          else if (!quoted && (ch === '(' || ch === '{')) depth += 1;
+          else if (!quoted && (ch === ')' || ch === '}')) depth -= 1;
+          else if (!quoted && depth === 0 && ch === ',') { parts.push(cur); cur = ''; continue; }
+          cur += ch;
+        }
+        parts.push(cur);
+        const terms = parts.map((t) => {
           const [col, op, ...rest] = t.split('.');
           const val = rest.join('.');
+          if (op === 'in') {
+            const vals = parsePgrestInList(val);
+            return (r: Row) => r[col!] != null && vals.includes(String(r[col!]));
+          }
+          if (op === 'ov') {
+            const vals = val.replace(/^\{|\}$/g, '').split(',');
+            return (r: Row) => Array.isArray(r[col!]) && (r[col!] as unknown[]).some((x) => vals.includes(String(x)));
+          }
           if (op === 'ilike') {
             const rx = new RegExp(`^${val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*')}$`, 'i');
             return (r: Row) => rx.test(String(r[col!] ?? ''));
           }
           if (op === 'eq') return (r: Row) => String(r[col!]) === val;
+          // NULL is unequal to nothing in SQL; a reader asks for it with `is.null`.
+          if (op === 'neq') return (r: Row) => r[col!] != null && String(r[col!]) !== val;
           if (op === 'is' && (val === 'true' || val === 'false')) return (r: Row) => r[col!] === (val === 'true');
           if (op === 'is' && val === 'null') return (r: Row) => r[col!] === null || r[col!] === undefined;
           throw new Error(`fake-postgrest: or(${t}) is not implemented`);
