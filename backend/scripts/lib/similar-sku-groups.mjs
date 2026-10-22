@@ -6,9 +6,9 @@
 //   - same AutoCount item: two ACTIVE codes whose supplier bindings send the same
 //     AutoCount ItemCode (BUG-38, HC-0141 and HC-0147 all had this);
 //   - same code once spaces and punctuation are ignored ("LUXE2.0" / "LUXE 2.0");
-//   - near-identical code: same category and size suffix, at most 3 letters apart.
-//     Codes that differ only in digits are different models (9058-1 / 9058-2) and
-//     are not reported.
+//   - near-identical code: same category and size suffix, and one code is the other
+//     with 1 to 3 letters added (ROY / ROYAL). A changed letter is a different
+//     product (4KFIT / 4QFIT, BLU / PNK), so substitutions never count.
 // A group is a suggestion for a person to rule on, never a merge.
 //
 // NO SHEBANG: tests/similarSkuGroups.test.mjs imports this module.
@@ -18,20 +18,16 @@ import { normCode } from "./ac-mapping-csv.mjs";
 const compact = (code) => normCode(code).replace(/[^A-Z0-9]/g, "");
 const sizeSuffix = (code) => normCode(code).match(/\(([^()]*)\)\s*$/)?.[1].replace(/\s+/g, "") ?? "";
 
-function distanceAtMost(a, b, max) {
-  if (Math.abs(a.length - b.length) > max) return false;
-  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
-  for (let i = 1; i <= a.length; i++) {
-    const cur = [i];
-    let rowMin = i;
-    for (let j = 1; j <= b.length; j++) {
-      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
-      rowMin = Math.min(rowMin, cur[j]);
-    }
-    if (rowMin > max) return false;
-    prev = cur;
+function lettersAdded(short, long, max) {
+  const extra = long.length - short.length;
+  if (extra < 1 || extra > max) return false;
+  let i = 0;
+  let added = "";
+  for (const ch of long) {
+    if (i < short.length && ch === short[i]) i++;
+    else added += ch;
   }
-  return prev[b.length] <= max;
+  return i === short.length && /^[A-Z]+$/.test(added);
 }
 
 export const REASONS = {
@@ -91,11 +87,9 @@ export function groupSimilarSkus(w) {
   for (const members of nearBuckets) {
     for (let i = 0; i < members.length; i++) {
       for (let j = i + 1; j < members.length; j++) {
-        const a = compact(members[i]);
-        const b = compact(members[j]);
-        if (a === b || Math.min(a.length, b.length) < 12) continue;
-        if (a.replace(/[0-9]/g, "") === b.replace(/[0-9]/g, "")) continue;
-        if (distanceAtMost(a, b, 3)) link(members[i], members[j], REASONS.near);
+        const [a, b] = [compact(members[i]), compact(members[j])].sort((x, y) => x.length - y.length);
+        if (a.length < 12) continue;
+        if (lettersAdded(a, b, 3)) link(members[i], members[j], REASONS.near);
       }
     }
   }

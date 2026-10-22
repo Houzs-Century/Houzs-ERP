@@ -40,13 +40,16 @@ describe('groupSimilarSkus', () => {
     expect(g.reasons).toContain(REASONS.spacing);
   });
 
-  it('leaves alone different sizes, digit-only model differences, other categories and inactive rows', () => {
+  it('leaves alone different sizes, changed letters, added digits, other categories and inactive rows', () => {
     expect(groupSimilarSkus({
       products: [
         sku('DUNLOPILLO ROYAL EXECUTIVE MATT (K)'),
         sku('DUNLOPILLO ROYAL EXECUTIVE MATT (Q)'),
         sku('SOFA MAYBATCH 9058-1 SEATER', 'SOFA'),
-        sku('SOFA MAYBATCH 9058-2 SEATER', 'SOFA'),
+        sku('SOFA MAYBATCH 9058-12 SEATER', 'SOFA'),
+        sku('AF RM PE PNK 4KFIT', 'ACCESSORY'),
+        sku('AF RM PE PNK 4QFIT', 'ACCESSORY'),
+        sku('AF RM PE BLU 4QFIT', 'ACCESSORY'),
         sku('HAPPI SLEEP SOLITUDE MATT (S)'),
         sku('HAPPI SLEEP SOLITUDE BEDF (S)', 'BEDFRAME'),
         sku('HAPPI SLEEP SOLITUDES MATT (S)', 'MATTRESS', 'INACTIVE'),

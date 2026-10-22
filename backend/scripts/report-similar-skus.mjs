@@ -13,8 +13,14 @@
 //   DATABASE_URL  required
 //   COMPANY_ID    default 1
 
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { groupSimilarSkus } from "./lib/similar-sku-groups.mjs";
+
+const BOOK = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "data", "duplicate-sku-merges.json"), "utf8"));
+const RULED = new Map(Object.entries(BOOK).flatMap(([ticket, e]) => e.pairs.map((p) => [p.drop, `${ticket}: merges into "${p.keep}"`])));
 
 const DSN = process.env.DATABASE_URL;
 const CO = Number(process.env.COMPANY_ID || 1);
@@ -56,12 +62,14 @@ async function main() {
      WHERE company_id = ${CO} AND material_kind::text = 'mfg_product'
        AND is_main_supplier = true AND item_code = ANY(${codes})`).map((r) => r.item_code));
 
-  log(`company ${CO}: ${products.filter((p) => p.status === "ACTIVE").length} active SKU(s), ${groups.length} group(s) that look alike`);
-  for (const g of groups) {
+  const ruled = (g) => g.codes.some((c) => RULED.has(c));
+  log(`company ${CO}: ${products.filter((p) => p.status === "ACTIVE").length} active SKU(s), ${groups.length} group(s) that look alike, ${groups.filter(ruled).length} of them already ruled in data/duplicate-sku-merges.json`);
+  for (const g of [...groups.filter((x) => !ruled(x)), ...groups.filter(ruled)]) {
     log("");
     log(`GROUP  ${g.reasons.join("; ")}${g.acCodes.length ? `  [AutoCount ${g.acCodes.join(" / ")}]` : ""}`);
     for (const c of g.codes) {
-      log(`   "${c}"  SO lines ${soLines.get(c) ?? 0}, PO lines ${poLines.get(c) ?? 0}, stock ${stock.get(c) ?? 0}, main supplier ${main.has(c) ? "yes" : "no"}`);
+      const note = RULED.has(c) ? `  (${RULED.get(c)})` : "";
+      log(`   "${c}"  SO lines ${soLines.get(c) ?? 0}, PO lines ${poLines.get(c) ?? 0}, stock ${stock.get(c) ?? 0}, main supplier ${main.has(c) ? "yes" : "no"}${note}`);
     }
   }
   log("");
