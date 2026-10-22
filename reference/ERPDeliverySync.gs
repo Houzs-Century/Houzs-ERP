@@ -205,6 +205,63 @@ function erpRowOfDoc_(sheet, startRow, docNo, hint, state) {
   return state.index[docNo] || 0;
 }
 
+function erpNormHeader_(s) { return String(s == null ? "" : s).replace(/\s+/g, " ").trim().toLowerCase(); }
+
+/** header name (normalised) -> 1-based column, read from the tab's header row. */
+function erpHeaderColumns_(sheet, headerRow) {
+  const map = {};
+  const lc = sheet.getLastColumn();
+  if (lc < 1 || headerRow < 1) return map;
+  sheet.getRange(headerRow, 1, 1, lc).getValues()[0].forEach(function (h, i) {
+    const k = erpNormHeader_(h);
+    if (k && !map[k]) map[k] = i + 1;
+  });
+  return map;
+}
+
+/** EM Order's ERP-owned columns by header name (= live Helper.gs writeEastByHeader_). */
+function erpEastFieldMap_(o, doc) {
+  const d = function (x) { return x ? String(x).split("T")[0] : ""; };
+  return {
+    "doc. no.": doc,
+    "transfer to": o.TransferTo || "",
+    "so date": d(o.DocDate),
+    "ref.": o.Ref || "",
+    "branding": o.SOUDF_BRANDING || "",
+    "debtor name": o.DebtorName || "",
+    "phone": (o.Phone1 || "").toString().replace(/[+\s&\-]/g, ""),
+    "sales location": o.SalesLocation || "",
+    "agent": o.SalesAgent || "",
+    "local total": o.Total || 0,
+    "balance": o.SOUDF_BALANCE || 0,
+    "remarks 2": o.Remark2 || "",
+    "processing date": d(o.SOUDF_PDate),
+    "sales exemption expiry date": d(o.SalesExemptionExpiryDate),
+    "remark 4": o.Remark4 || "",
+    "remark 3 (internal use)": o.Remark3 || "",
+    "note": o.SOUDF_Note || "",
+    "po doc no.": o.SOUDF_ToPONo || "",
+    "address 1": o.InvAddr1 || "",
+    "address 2": o.InvAddr2 || "",
+    "address 3": o.InvAddr3 || "",
+    "address 4": o.InvAddr4 || "",
+    "attention": o.Attention || "",
+    "sync status": "SYNCED"
+  };
+}
+
+/** An APPENDED row gets col A back from the ERP (remark4 = the last col A the sheet pushed). */
+function erpRestoreStatusIfNew_(sheet, rowIndex, isNew, o, counts, sheetName, rid) {
+  if (!isNew) return;
+  counts.appended++;
+  const status = String(o.Remark4 || "").trim();
+  if (!status) return;
+  try {
+    const a = sheet.getRange(rowIndex, 1);
+    if (String(a.getValue() || "").trim() === "") { a.setValue(status); counts.restoredStatus++; }
+  } catch (e) { Log.warn(rid, "[" + sheetName + "] Could not restore col A for " + o.DocNo + ": " + e.message); }
+}
+
 function erpWriteRecords_(ss, sheetName, dataArray, rid) {
   const sheet = ss.getSheetByName(sheetName);
   if (!sheet) {
@@ -214,6 +271,7 @@ function erpWriteRecords_(ss, sheetName, dataArray, rid) {
   const cfg = getSheetConfig(sheetName);
   const state = { index: erpDocNoIndex_(sheet, cfg.startRow), moved: 0 };
   const counts = { success: 0, fail: 0, appended: 0, restoredStatus: 0 };
+  const eastHeaders = sheetName === CONFIG.EAST_SHEET ? erpHeaderColumns_(sheet, cfg.startRow - 1) : null;
 
   dataArray.forEach(function (o) {
     const doc = String(o.DocNo || "").trim();
@@ -230,6 +288,26 @@ function erpWriteRecords_(ss, sheetName, dataArray, rid) {
         counts.fail++;
         return;
       }
+    }
+
+    if (eastHeaders) {
+      // EM Order was rearranged (ESB / BS / Admin columns between and after
+      // the ERP's), so its fields are written by row-3 header NAME, exactly as
+      // the live Helper.gs writeEastByHeader_ did before this writer replaced it
+      // (2026-10-22: the fixed-position write put Attention / Sync Status into
+      // the unlabeled AQ / AR). A column the tab has no header for is skipped.
+      const fm = erpEastFieldMap_(o, doc);
+      Object.keys(fm).forEach(function (h) {
+        if (!(h in eastHeaders)) return;
+        try {
+          const cell = sheet.getRange(rowIndex, eastHeaders[h]);
+          cell.setValue(fm[h]);
+          if (h === "sync status") cell.setBackground("#d9ead3");
+        } catch (e) { Log.warn(rid, "[" + sheetName + "] " + h + " for " + doc + " hit protection."); }
+      });
+      erpRestoreStatusIfNew_(sheet, rowIndex, isNew, o, counts, sheetName, rid);
+      counts.success++;
+      return;
     }
 
     const b1Data = [
@@ -260,16 +338,7 @@ function erpWriteRecords_(ss, sheetName, dataArray, rid) {
       sheet.getRange(rowIndex, cfg.statusCol).setValue("SYNCED").setBackground("#d9ead3");
     } catch (e) { Log.warn(rid, "[" + sheetName + "] Block 3 (Status) for " + doc + " hit protection."); }
 
-    if (isNew) {
-      counts.appended++;
-      const status = String(o.Remark4 || "").trim();
-      if (status) {
-        try {
-          const a = sheet.getRange(rowIndex, 1);
-          if (String(a.getValue() || "").trim() === "") { a.setValue(status); counts.restoredStatus++; }
-        } catch (e) { Log.warn(rid, "[" + sheetName + "] Could not restore col A for " + doc + ": " + e.message); }
-      }
-    }
+    erpRestoreStatusIfNew_(sheet, rowIndex, isNew, o, counts, sheetName, rid);
     counts.success++;
   });
 
