@@ -18,6 +18,7 @@ import {
   type ScanJob,
   type ScanJobsResp,
 } from "../vendor/scm/lib/scan-jobs";
+import { ScanCodesPanel } from "../vendor/scm/components/ScanCodesPanel";
 import "./mobile.css";
 
 const ACCEPT = "image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf";
@@ -31,6 +32,7 @@ export function MobileGrnScan({ onBack, onOpenGrn }: { onBack: () => void; onOpe
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [enqueuedJobIds, setEnqueuedJobIds] = useState<string[]>([]);
+  const [codesOpen, setCodesOpen] = useState<string | null>(null);
   const camInputRef = useRef<HTMLInputElement>(null);
   const libInputRef = useRef<HTMLInputElement>(null);
 
@@ -172,6 +174,12 @@ export function MobileGrnScan({ onBack, onOpenGrn }: { onBack: () => void; onOpe
                     {done && j.linkedDocNo && j.error && (
                       <div style={{ marginTop: 4, color: "#a16a2e" }}>{j.error}</div>
                     )}
+                    {done && (
+                      <button type="button" onClick={() => setCodesOpen(codesOpen === j.id ? null : j.id)} style={{ display: "block", marginTop: 6, padding: 0, border: "none", background: "none", font: "inherit", fontWeight: 700, color: "#16695f", textDecoration: "underline", minHeight: 32 }}>
+                        {codesOpen === j.id ? "Hide supplier codes" : "Match supplier codes"}
+                      </button>
+                    )}
+                    {done && codesOpen === j.id && <ScanCodesPanel jobId={j.id} jobsQueryKey={["mobile-grn-scan-jobs"]} />}
                   </div>
                   <span style={{ flex: "none", fontSize: 11, color: "#9aa093" }}>{jobTs(j.createdAt) ? hhmm(jobTs(j.createdAt)) : ""}</span>
                 </div>

@@ -8,6 +8,7 @@ import { cn } from "../../lib/utils";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { RolesTab } from "../Roles";
+import { RoleMatrixTab } from "./RoleMatrixTab";
 import { EmptyState } from "../../components/EmptyState";
 import { ListSkeleton } from "../../components/Skeleton";
 import type { Position } from "../../types";
@@ -94,10 +95,11 @@ export function TeamRolesV2() {
   // Permissions 里加个 Roles 分区"): the strip lost its Roles tab in the
   // redesign and the only way to a role's permission checkboxes was the
   // URL ?tab=roles, which nobody finds.
-  type Tab = "roles" | "titles" | "actions";
+  type Tab = "roles" | "matrix" | "titles" | "actions";
   const [tab, setTab] = useState<Tab>("roles");
   const [creatingRole, setCreatingRole] = useState(false);
   const isRoles = tab === "roles";
+  const isMatrix = tab === "matrix";
   const isTitles = tab === "titles";
 
   // Drafts — seeded from the server, edited optimistically; a failed PUT
@@ -134,9 +136,10 @@ export function TeamRolesV2() {
     }
   }
 
-  // The Roles section has its own loading state (RolesTab); only the matrix
-  // sections wait for the position + capability queries.
-  if (!isRoles && (positionsQ.loading || matrixQ.loading || policyQ.loading)) return <ListSkeleton rows={5} />;
+  // The Roles and Matrix sections have their own loading states (RolesTab /
+  // RoleMatrixTab); only the Titles + Actions sections wait for the position +
+  // capability queries.
+  if (!isRoles && !isMatrix && (positionsQ.loading || matrixQ.loading || policyQ.loading)) return <ListSkeleton rows={5} />;
   if (isTitles && policyQ.error)
     return (
       <EmptyState
@@ -144,14 +147,14 @@ export function TeamRolesV2() {
         description="This tab needs the position-policy API from the same release — it appears once this branch's backend is deployed."
       />
     );
-  if (matrixQ.error)
+  if (!isRoles && !isMatrix && matrixQ.error)
     return (
       <EmptyState
         message="The capability matrix isn't served by this backend yet"
         description="This screen needs the position-capabilities API from the same release — it appears once this branch's backend is deployed."
       />
     );
-  if (positionsQ.error)
+  if (!isRoles && !isMatrix && positionsQ.error)
     return <div className="text-[12px] text-err">Couldn't load the permission matrix.</div>;
 
   const mostPopulous = positions.reduce(
@@ -171,6 +174,7 @@ export function TeamRolesV2() {
           onChange={setTab}
           options={[
             { value: "roles", label: "Roles" },
+            { value: "matrix", label: "Matrix" },
             { value: "titles", label: "Titles" },
             { value: "actions", label: "Actions" },
           ]}
@@ -188,6 +192,8 @@ export function TeamRolesV2() {
 
       {isRoles ? (
         <RolesTab creating={creatingRole} onCloseCreate={() => setCreatingRole(false)} />
+      ) : isMatrix ? (
+        <RoleMatrixTab />
       ) : isTitles && policyQ.data ? (
         <TeamTitlesPolicy payload={policyQ.data} canEdit={canEdit} onSaved={() => policyQ.reload()} />
       ) : (

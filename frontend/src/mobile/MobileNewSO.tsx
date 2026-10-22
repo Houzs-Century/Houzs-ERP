@@ -24,7 +24,8 @@ import { fillCollectedBy } from "../vendor/scm/lib/default-collected-by";
 import { useAuth, isAdminLevel, isHatchSales } from "../vendor/scm/lib/auth";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { useVenues, type AutoVenue } from "../vendor/scm/lib/venues-queries";
-import { FairDayPicker, FairPicker, type FairPickValue } from "../components/FairPicker";
+import { FairDayPicker, FairPicker, useAutoFair, type FairPickValue } from "../components/FairPicker";
+import { FairFallback } from "../components/FairFallback";
 import { fairDayCheck, fairEditPatch, fairEventOf, fairPickValue, linkedEvent, type LinkedFair } from "../components/fairPick";
 import { useStateWarehouseMappings } from "../vendor/scm/lib/state-warehouse-queries";
 import { todayMyt } from "../vendor/scm/lib/dates";
@@ -67,7 +68,7 @@ import {
 } from "../vendor/scm/lib/address-cascade";
 import { StatePicker } from "../vendor/scm/components/StatePicker";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
-import { deferLineDateToHeader, withoutLineDate } from "../vendor/scm/lib/so-line-date-defer";
+import { deferLineDateToHeader, lineDatePinned, withoutLineDate } from "../vendor/scm/lib/so-line-date-defer";
 import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
 import { useCreateAmendment, type CreateAmendmentLine } from "../vendor/scm/lib/so-amendment-queries";
 import { useCreateMfgSalesOrder } from "../vendor/scm/lib/sales-order-queries";
@@ -229,7 +230,7 @@ type SoHeader = {
   venue_id?: string | null;
   venueId?: string | null;
   fair?: LinkedFair | null; // the linked event (owner 2026-09-24); absent on an older server
-  fair_date?: string | null; // the day of that event the order was written on
+  fair_date?: string | null; fair_match?: string | null; // the day of that event; how it was linked
   sales_location?: string | null;
   note: string | null;
   address1: string | null;
@@ -414,7 +415,7 @@ function buildVariants(l: LineItem): Record<string, unknown> {
 /* Line-item body for POST /:docNo/items and the create body's items[]. Pure +
    module-level so BOTH the interactive save() and the headless
    createDraftFromPrefill() below shape a line identically (no copy-paste). */
-function buildItemBody(l: LineItem): Record<string, unknown> {
+function buildItemBody(l: LineItem, datePinned = false): Record<string, unknown> {
   const variants = buildVariants(l);
   return {
     itemCode: l.itemCode,
@@ -432,7 +433,7 @@ function buildItemBody(l: LineItem): Record<string, unknown> {
     unitPriceSen: toSen(l.price),
     /* Create items[] AND POST /:docNo/items: a TYPED 0 is free, an untouched 0 is unpriced. */
     ...zeroPriceClaim(toSen(l.price), l.priceAuthored === true),
-    lineDeliveryDate: l.ddate || null,
+    lineDeliveryDate: l.ddate || null, lineDeliveryDateOverridden: datePinned,
     ...(Object.keys(variants).length ? { variants } : {}),
   };
 }
@@ -989,7 +990,7 @@ export function MobileNewSO({
         setPrefillVenueId(h.venueId ?? h.venue_id ?? null);
         setPrefillVenueName(h.venue ?? "");
         setOrderDate(h.so_date ? h.so_date.slice(0, 10) : null);
-        setLinkedFair(h.fair ?? null); setLinkedDay(h.fair_date ?? null);
+        setLinkedFair(h.fair ?? null); setLinkedDay(h.fair_date ?? null); setNoFair(h.fair_match === "NO_FAIR");
         setProcDate((h.processing_date ?? "").slice(0, 10));
         setOrigProcDate((h.processing_date ?? "").slice(0, 10));
         setDelivDate((h.customer_delivery_date ?? "").slice(0, 10));
@@ -1180,15 +1181,14 @@ export function MobileNewSO({
      value keeps flowing (including a later salesperson change re-deriving it);
      picking "—" reverts to the derived default (desktop-verbatim behaviour). */
   const [pickedVenueId, setPickedVenueId] = useState<string | null>(null);
-  /* FAIR PICKER (owner 2026-09-13) — desktop parity, same component, same rules:
-     a row is a place plus an organizer, nothing is typed, and the brand is
-     derived from the SKUs server-side. The venue NAME leads and the master id
-     follows it by name, because a fair can name a venue the master lacks. */
+  /* FAIR PICKER (owner 2026-09-13) — desktop parity, same component, same rules. The venue NAME
+     leads and the master id follows it by name, because a fair can name a venue the master lacks. */
   const [fairPick, setFairPick] = useState<FairPickValue>({
     venue: null, organizer: null, startDate: null, endDate: null, day: null,
   });
   const [noFair, setNoFair] = useState(false); // fair compulsory on create (owner 2026-09-26)
   const onFairChange = useCallback((n: FairPickValue) => { setFairPick(n); if (n.organizer) setNoFair(false); }, []);
+  const autoFair = useAutoFair(!isEdit && !noFair, fairPick, onFairChange); // the keyer's fair (owner 2026-10-19)
   useEffect(() => {
     /* Seeds a BLANK only — a human pick is a decision and is never overwritten.
        A place, plus the order's linked event when it has one (fairPick.ts).
@@ -1418,7 +1418,7 @@ export function MobileNewSO({
     isEdit,
     hasVenue: isEdit || !!outgoingVenueName || !!outgoingVenueId,
     ...fairDayCheck(fairEditPatch(fairEventOf(fairPick)), fairEditPatch(linkedEvent(resolvedVenueName, linkedFair, linkedDay))),
-    noFair,
+    noFair, fairWhy: autoFair.why,
     hasSalesperson: isEdit || !canChangeSalesperson || !!outgoingSalespersonId || !!selfStaffMatch,
     companyCode: branding.companyCode,
     salesLocation,
@@ -1439,7 +1439,7 @@ export function MobileNewSO({
       convertedFromDocNo: p.convertedFromDocNo ?? "",
       amountSen: toSen(p.amount),
     })),
-  }), [name, phone, namedLines, isEdit, outgoingVenueName, outgoingVenueId, fairPick, noFair, resolvedVenueName, linkedFair, linkedDay, canChangeSalesperson, outgoingSalespersonId, selfStaffMatch, branding.companyCode, salesLocation, state, procDate, delivDate, addr1, postcode, origProcDate, origDelivDate, origItems, pays]);
+  }), [name, phone, namedLines, isEdit, outgoingVenueName, outgoingVenueId, fairPick, noFair, autoFair.why, resolvedVenueName, linkedFair, linkedDay, canChangeSalesperson, outgoingSalespersonId, selfStaffMatch, branding.companyCode, salesLocation, state, procDate, delivDate, addr1, postcode, origProcDate, origDelivDate, origItems, pays]);
 
   /* A slip date outside the window blocks the save (the payments post AFTER the
      create) — except a too-old row, which becomes an admin request (isBackdateRow). */
@@ -1744,7 +1744,8 @@ export function MobileNewSO({
   /* Line-item body for POST /:docNo/items and the create body's items[].
      Delegates to the module-level buildItemBody (shared with the headless
      createDraftFromPrefill). */
-  const itemBody = buildItemBody;
+  const datePinned = (l: LineItem) => lineDatePinned({ lineDate: l.ddate, headerDate: delivDate, handEdited: ddateOverrides.has(l.key) });
+  const itemBody = (l: LineItem) => buildItemBody(l, datePinned(l));
 
   const itemPatchBody = (l: LineItem): Record<string, unknown> => ({
     itemCode: l.itemCode,
@@ -1754,7 +1755,7 @@ export function MobileNewSO({
     unitPriceSen: toSen(l.price),
     /* A persisted or typed 0 is claimed; a re-pick's seeded 0 is not, so the server keeps the stored price (BUG-63). */
     ...zeroPriceClaim(toSen(l.price), l.priceAuthored === true),
-    ...(deferLineDateToHeader({ storedProcessingDate: origProcDate, overridden: ddateOverrides.has(l.key) }) ? {} : { lineDeliveryDate: l.ddate || null }),
+    ...(deferLineDateToHeader({ storedProcessingDate: origProcDate, overridden: ddateOverrides.has(l.key) }) ? {} : { lineDeliveryDate: l.ddate || null, lineDeliveryDateOverridden: datePinned(l) }),
     variants: buildVariants(l),
   });
 
@@ -1970,7 +1971,7 @@ export function MobileNewSO({
     try {
       if (isEdit && docNo) {
         // The picked fair EVENT rides the edit too (owner 2026-09-24) — fairPick.ts.
-        const patch: Record<string, unknown> = { ...fairEditPatch(fairEventOf(fairPick)), ...soHeaderPatchFrom(headerPatchInput) };
+        const patch: Record<string, unknown> = { ...fairEditPatch(fairEventOf(fairPick)), ...soHeaderPatchFrom(headerPatchInput), ...(isDraftSo && noFair ? { noFair: true } : {}) };
         /* AMENDMENT MODE (Phase 1-C, desktop SalesOrderDetail.submitAmendment
            parity) — the SO is processing-locked but amendment_eligible. The edit
            splits in two:
@@ -2410,16 +2411,15 @@ export function MobileNewSO({
                     />
                   </Field>
                 </div>
-                {!isEdit && !fairEventOf(fairPick) && (
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, marginTop: 6 }}>
-                    <input type="checkbox" checked={noFair} disabled={identityLocked} onChange={(e) => setNoFair(e.target.checked)} />
-                    <span>No fair (showroom / direct sale)</span>
-                  </label>
-                )}
+                {autoFair.hint}
+                {/* Back-keying date + the No-fair escape (owner 2026-09-26 / 10-19),
+                    shared with the desktop form; FairFallback.tsx has the rules. */}
+                <FairFallback enabled={!isEdit || isDraftSo} value={fairPick} orderDate={orderDate}
+                  onOrderDate={setOrderDate} maxDate={today} noFair={noFair} onNoFair={setNoFair} disabled={identityLocked} />
                 {fairEventOf(fairPick) && ( // which DAY of the picked event (owner 2026-09-24)
                   <Field label="Fair Day"><FairDayPicker id="mob-so-fair-day" value={fairPick} soDate={orderDate} onChange={setFairPick} disabled={identityLocked} selectClassName="fld-i" /></Field>
                 )}
-                {!isEdit && autoVenue?.venueId &&
+                {!isEdit && !autoFair.hint && autoVenue?.venueId &&
                   (pickedVenueId == null || pickedVenueId === autoVenue.venueId) && (
                   <div style={{ fontSize: 10, color: "#16695f", marginTop: -4 }}>
                     {autoVenue.source === "SHOWROOM"
@@ -2501,20 +2501,17 @@ export function MobileNewSO({
                         free-text inputs (the vendor no-data behaviour).
                         FIX D2 — State/City/Postcode freeze once the processing
                         date has passed (identity columns feed the supplier PO). */}
-                    {/* Address MVP2 (2026-07-23) — the shared StatePicker in
-                        compact mode. MY states listed first, then CN + SG
-                        grouped under their country in native <optgroup>s the
-                        OS picker respects (iOS wheel picker, Android list).
+                    {/* The shared StatePicker combobox: type to filter, MY
+                        states first, then CN + SG grouped under their country.
                         No `(legacy)` fallback option, no `<select> → <input>`
                         free-text branch — a state not in scm.my_localities
                         must be added via the Localities Maintenance UI first. */}
                     <Field label={addressRequired && stateRequiredForCompany ? "State *" : "State"} error={touched && addressRequired && stateRequiredForCompany && !state.trim()} scanned={scanned("state", state)}>
                       <StatePicker
-                        compact
                         value={state}
                         disabled={addressIdentityLocked}
                         placeholder="Pick state"
-                        selectClassName="fld-i"
+                        selectClassName="fld-i fld-pick"
                         onChange={(next) => onStateChange(next)}
                       />
                     </Field>
@@ -2531,25 +2528,28 @@ export function MobileNewSO({
                           state resolve back via resolvePostcode /
                           resolveCityState. */}
                       <Field label="City" style={{ flex: 1 }} error={false} scanned={scanned("city", city)}>
-                        <select
-                          className="fld-i"
+                        <SearchableSelect
+                          className="fld-i fld-pick"
+                          ariaLabel="City"
                           value={city}
                           disabled={addressIdentityLocked || cityChoices.length === 0}
-                          onChange={(e) => onCityChange(e.target.value)}
-                        >
-                          <option value="">
-                            {cityChoices.length === 0 ? "No cities seeded" : cityPlaceholder(state)}
-                          </option>
-                          {cityChoices.map((c) => <option key={c} value={c}>{c}</option>)}
-                        </select>
+                          placeholder={cityChoices.length === 0 ? "No cities seeded" : cityPlaceholder(state)}
+                          onChange={onCityChange}
+                          options={cityChoices.map((c) => ({ value: c, label: c }))}
+                        />
                       </Field>
                       <Field label={addressRequired ? "Postcode *" : "Postcode"} style={{ flex: 1 }} error={touched && addressRequired && !postcode.trim()} scanned={scanned("postcode", postcode)}>
                         {country === 'Singapore'
                           ? <SgPostcodeField bare inputClassName="fld-i" value={postcode} onChange={setPostcode} onResolve={(r) => { setAddr1(r.address); if (r.state && r.city) { setState(r.state); setCity(r.city); } }} disabled={addressIdentityLocked} />
-                          : (<select className="fld-i" value={postcode} disabled={addressIdentityLocked || postcodeChoices.length === 0} onChange={(e) => onPostcodeChange(e.target.value)}>
-                              <option value="">{postcodeChoices.length === 0 ? "No postcodes seeded" : postcodePlaceholder(state, city)}</option>
-                              {postcodeChoices.map((p) => <option key={p} value={p}>{p}</option>)}
-                            </select>)}
+                          : (<SearchableSelect
+                              className="fld-i fld-pick"
+                              ariaLabel="Postcode"
+                              value={postcode}
+                              disabled={addressIdentityLocked || postcodeChoices.length === 0}
+                              placeholder={postcodeChoices.length === 0 ? "No postcodes seeded" : postcodePlaceholder(state, city)}
+                              onChange={onPostcodeChange}
+                              options={postcodeChoices.map((p) => ({ value: p, label: p }))}
+                            />)}
                       </Field>
                     </div>
                     {addressIdentityLocked ? (

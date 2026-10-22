@@ -48,4 +48,13 @@ describe('po-amendment approve — received status re-derived after the apply', 
   it('imports the recount from its one home in grns.ts', () => {
     expect(SRC).toContain("import { recomputePoReceived } from './grns';");
   });
+
+  it('HC-0121: names the removed lines to AutoCount and recounts their SO lines', () => {
+    const seg = betweenApplyAndFlip();
+    expect(seg).toContain('recomputeSoPicked(sb, releasedSoItemIds)');
+    expect(SRC).toContain('releasedSoItemIds = applied.releasedSoItemIds;');
+    expect(SRC).toContain('appliedRetire = applied.retired;');
+    const edit = SRC.slice(SRC.indexOf('await enqueueEdit(sb, {'));
+    expect(edit.slice(0, edit.indexOf('});'))).toContain('retire: appliedRetire');
+  });
 });

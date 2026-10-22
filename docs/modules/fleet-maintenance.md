@@ -121,6 +121,9 @@ appended) → `BREAKDOWN` (a CRITICAL, non-RESOLVED breakdown case) →
   vehicle master and service-record sibling routes.
 - `backend/src/scm/routes/scan-lorry-invoice.ts` — repair-document OCR
   (writes nothing).
+- `fleet-work-order-files.ts` / `fleet-breakdown-files.ts` — files on a work
+  order (quote, invoice, photo; 15 MB) and on a breakdown case (photo 15 MB,
+  MP4/MOV video 50 MB). Old mobile breakdown photos are `slips/` keys in SLIPS.
 - `frontend/src/pages/FleetHealth.tsx` — desktop board + drawer (section
   components exported for reuse).
 - `frontend/src/pages/LorryRecord.tsx` — the full per-lorry record page.

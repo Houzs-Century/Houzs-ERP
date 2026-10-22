@@ -70,6 +70,7 @@ import { findUnlinkedSoLines, unlinkedSoLinesResponse, itemCodeKey } from '../li
 import { findNotReadySoLines, itemsNotReadyResponse } from '../lib/do-not-ready-lines';
 import { unlinkedScanRefusal } from '../lib/unlinked-line-edit-guard';
 import { maybeSendDeliveryOrderEmail } from '../lib/do-email';
+import { maybeSendPodDeliveredWhatsApp } from '../lib/pod-delivered-message';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { todayMyt } from '../lib/my-time';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
@@ -5214,6 +5215,10 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   if (toStatus === 'DELIVERED') {
     const { data: doRow } = await sb.from('delivery_orders').select('so_doc_no').eq('id', id).maybeSingle();
     await syncSoDeliveredFromDo(sb, [(doRow as { so_doc_no?: string } | null)?.so_doc_no], user.id);
+    /* #5 — auto "Delivery Completed" WhatsApp when a REAL POD completes the SO.
+       AFTER the sync so the SO's DELIVERED status is visible to the gate.
+       Best-effort, inert without Connect, once-guarded, only on real POD. */
+    await maybeSendPodDeliveredWhatsApp(c, id);
   }
 
   /* Bug #1 — cancelling a DO AUTO-REVERSES the stock OUT via reverseInventoryForDo,

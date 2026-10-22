@@ -10,6 +10,7 @@ const totals = (over: Partial<Parameters<typeof summarizeProjectSalesOrders>[0]>
   count: 3,
   draft_count: 1,
   amount_sen: 8_000_000,
+  service_sen: 0,
   paid_sen: 3_000_050,
   balance_sen: 4_999_950,
   ...over,
@@ -69,7 +70,7 @@ describe("normalizeProjectSalesOrders", () => {
     for (const raw of [{ data: [] }, null, undefined, "nope", 42, { totals: { count: "3" } }]) {
       const r = normalizeProjectSalesOrders(raw);
       expect(r.data).toEqual([]);
-      expect(r.totals).toEqual({ count: 0, draft_count: 0, amount_sen: 0, paid_sen: 0, balance_sen: 0 });
+      expect(r.totals).toEqual({ count: 0, draft_count: 0, amount_sen: 0, paid_sen: 0, balance_sen: 0, service_sen: 0 });
       expect(r.scoped).toBe(false);
     }
   });
@@ -87,3 +88,11 @@ describe("soStatusLabel", () => {
     expect(soStatusLabel("  ")).toBe("—");
   });
 });
+
+describe("the header splits Sales from Service revenue (owner 2026-10-20)", () => {
+  test("opened = sales + service, as the Financial Snapshot's By Sales Orders column", () => {
+    const s = summarizeProjectSalesOrders(totals({ amount_sen: 14_642_100, service_sen: 1_522_800 }), null);
+    expect(s).toMatchObject({ openedRm: 146_421, salesRm: 131_193, serviceRm: 15_228 });
+  });
+});
+

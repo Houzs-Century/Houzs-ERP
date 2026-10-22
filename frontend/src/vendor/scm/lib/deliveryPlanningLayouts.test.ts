@@ -13,7 +13,7 @@ const BOARD_COLUMNS = [
   "processing_date", "customer_delivery_date", "delivery_substatus",
   "amended_delivery_date", "amend_date_from_customer", "amend_reason_from_customer", "amend_reason",
   "house_type", "replacement_disposal", "disposal_request", "po_nos",
-  "address", "postcode", "dp_remark", "do_date", "wa_message", "venue",
+  "address", "postcode", "dp_remark", "do_date", "delivered_at", "wa_message", "pod", "venue",
   "warehouse", "time_range", "time_confirmed", "departure_at", "arrival_at",
   "trip_no", "lorry", "driver", "driver_ic", "driver_contact", "driver_2",
   "helper_1", "helper_2", "shipout_date", "eta_arriving_port",
@@ -27,12 +27,13 @@ const DROPPED = ["delivery_state", "arrangement_stage", "em_delivered_date", "da
 
 /** Owner's four tabs, in order, with the visible-column count he arranged
  *  (+1 on the three BASE_ORDER tabs since 2026-10-14: "Customer Amend Reason"
- *  sits beside Customer Request Date; EM Order hides both). */
+ *  sits beside Customer Request Date; EM Order hides both. +1 on every tab
+ *  since 2026-10-19: the "POD" column shows; "Delivered At" is added hidden). */
 const EXPECTED = [
-  { id: "delivery-date", label: "Delivery Date", visible: 29 },
-  { id: "delivery-details", label: "Delivery Details", visible: 42 },
-  { id: "sg-order", label: "SG Order", visible: 30 },
-  { id: "em-order", label: "EM Order", visible: 34 },
+  { id: "delivery-date", label: "Delivery Date", visible: 30 },
+  { id: "delivery-details", label: "Delivery Details", visible: 43 },
+  { id: "sg-order", label: "SG Order", visible: 31 },
+  { id: "em-order", label: "EM Order", visible: 35 },
 ];
 
 describe("Delivery Planning layout presets", () => {

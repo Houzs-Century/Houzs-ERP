@@ -24,6 +24,7 @@ import { defaultCompanyCodeForHost } from "../middleware/companyContext";
 import { validatePasswordStrength } from "../services/passwordStrength";
 import { verifyTotp, consumeBackupCode } from "../services/totp";
 import { checkRateLimit, clearRateLimit, clientIp } from "../middleware/rateLimit";
+import { recordFailedLogin, recordRateLimitedOnce } from "../services/failedLogins";
 
 /**
  * Auth routes — UNAUTHENTICATED entry points.
@@ -117,7 +118,10 @@ app.post("/login", async (c) => {
   // Brute-force speed bump: 10 attempts / 15 min per email+IP. Fail-open.
   const rlKey = `${email}:${clientIp(c)}`;
   const limited = await checkRateLimit(c, "login", rlKey);
-  if (limited) return limited;
+  if (limited) {
+    recordRateLimitedOnce(c, email, "rate_limited", rlKey, 900);
+    return limited;
+  }
 
   const user = await c.env.DB.prepare(
     `SELECT id, password_hash, status, totp_enabled FROM users WHERE email = ?`
@@ -156,9 +160,16 @@ app.post("/login", async (c) => {
        stops the frontend telling a user who mistyped their EMAIL that their
        password was wrong, which sent people off resetting a password that was
        never the problem. */
+    recordFailedLogin(
+      c,
+      email,
+      user?.id ?? null,
+      !user ? "unknown_email" : !user.password_hash ? "no_password" : "wrong_password",
+    );
     return c.json({ error: "Email or password is incorrect." }, 401);
   }
   if (user.status !== "active") {
+    recordFailedLogin(c, email, user.id, "disabled");
     return c.json({ error: "Account is disabled" }, 403);
   }
 
@@ -242,10 +253,14 @@ app.post("/totp/login", async (c) => {
 
   // 5 guesses / 5 min per challenge.
   const limited = await checkRateLimit(c, "totp", challenge, 5, 300);
-  if (limited) return limited;
+  if (limited) {
+    recordRateLimitedOnce(c, null, "totp_rate_limited", challenge, 300);
+    return limited;
+  }
 
   const userIdRaw = await kv.get(`2fa:${challenge}`).catch(() => null);
   if (!userIdRaw) {
+    recordFailedLogin(c, null, null, "totp_expired");
     return c.json({ error: "This sign-in attempt expired — start again." }, 401);
   }
   const [userIdPart, rememberPart] = String(userIdRaw).split(":");
@@ -263,6 +278,7 @@ app.post("/totp/login", async (c) => {
       status: string;
     }>();
   if (!row || !row.totp_enabled || !row.totp_secret || row.status !== "active") {
+    recordFailedLogin(c, null, Number.isFinite(userId) ? userId : null, "totp_unavailable");
     return c.json({ error: "Two-factor is not available for this account." }, 401);
   }
 
@@ -285,6 +301,7 @@ app.post("/totp/login", async (c) => {
      and the remedy is identical: read the current code again. Backup codes are
      accepted on this endpoint, so the message names them. */
   if (!ok) {
+    recordFailedLogin(c, null, userId, "totp_failed");
     return c.json(
       { error: "That code didn't match — try the current code from your authenticator app, or a backup code." },
       401,

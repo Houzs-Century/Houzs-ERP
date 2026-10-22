@@ -5,13 +5,14 @@
 // 什么罗里、什么 Driver、什么 Helper". The Time page sequences (排单); Last
 // Mile labels the crew onto the SAME numbered trips.
 //
-// Time-arranged orders flow in automatically: the board rows are simply the SO
-// rows whose live trip sits on the picked date (the server stamps trip_id /
-// trip_no / trip_date on every row; lib/last-mile.ts folds the split — see its
-// header). Same page skeleton as the rest of the family: PageHeader -> split
-// chips (All / Time arranged / Delivered, counts for the day) -> region chips
-// -> the shared DeliveryPlanningBoard (inline Driver / Lorry cells stay as the
-// manual path).
+// The board rows are the day's SO rows: those whose live trip sits on the picked
+// date (the server stamps trip_id / trip_no / trip_date on every row) PLUS those
+// DUE that day but not on a lorry run yet — the TO_ARRANGE side, so the dispatcher
+// can pick tomorrow and see tomorrow's orders before any trip exists (owner
+// 2026-10-21). lib/last-mile.ts folds the split (lastMileListSideOf). Same page
+// skeleton as the rest of the family: PageHeader -> split chips (All / To arrange
+// / Time arranged / Delivered, counts for the day) -> region chips -> the shared
+// DeliveryPlanningBoard (inline Driver / Lorry cells stay as the manual path).
 //
 // "Propose crew" — the day's crew intelligence, on the day's EXISTING trips:
 // ONE sequence-assign call over the day's time-arranged orders (leave-aware
@@ -70,10 +71,12 @@ import {
 } from '../../vendor/scm/lib/delivery-planning-queries';
 import {
   lastMileSideOf,
+  lastMileListSideOf,
   proposeCrewDocNos,
   matchCrewSuggestions,
-  LAST_MILE_SIDE_LABEL,
-  type LastMileSide,
+  LAST_MILE_LIST_SIDES,
+  LAST_MILE_LIST_SIDE_LABEL,
+  type LastMileListSide,
   type CrewSuggestion,
 } from '../../vendor/scm/lib/last-mile';
 import {
@@ -153,17 +156,20 @@ export function FleetDay() {
   const boardOrders = useMemo<PlanningOrder[]>(() => board.data?.orders ?? [], [board.data]);
   const boardRegionTabs = useMemo(() => regionTabsFrom(board.data?.regions), [board.data?.regions]);
 
-  const [side, setSide] = useState<'ALL' | LastMileSide>('ALL');
+  const [side, setSide] = useState<'ALL' | LastMileListSide>('ALL');
   const sideCounts = useMemo(() => {
-    const c: Record<LastMileSide, number> = { TIME_ARRANGED: 0, DELIVERED: 0 };
+    const c = Object.fromEntries(LAST_MILE_LIST_SIDES.map((s) => [s.side, 0])) as Record<LastMileListSide, number>;
     for (const o of boardOrders) {
-      const s = lastMileSideOf(o, date);
+      const s = lastMileListSideOf(o, date);
       if (s) c[s] += 1;
     }
     return c;
   }, [boardOrders, date]);
   const dayRows = useMemo(
-    () => boardOrders.filter((o) => (side === 'ALL' ? lastMileSideOf(o, date) != null : lastMileSideOf(o, date) === side)),
+    () => boardOrders.filter((o) => {
+      const s = lastMileListSideOf(o, date);
+      return side === 'ALL' ? s != null : s === side;
+    }),
     [boardOrders, date, side],
   );
 
@@ -503,6 +509,21 @@ export function FleetDay() {
                 <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
                   {t.warehouse?.name ? `${t.warehouse.name} · ` : ''}{t.total_drops} drops · {fmtSen(t.total_revenue_sen)}
                 </span>
+                {t.total_drops > 0 && (
+                  <span
+                    title={`${t.total_delivered} of ${t.total_drops} drops delivered; ${t.total_with_pod} with real POD evidence`}
+                    style={{
+                      fontSize: 'var(--fs-11)', fontWeight: 600,
+                      color: t.total_with_pod === t.total_drops
+                        ? 'var(--c-success, #16a34a)'
+                        : t.total_delivered > t.total_with_pod
+                          ? 'var(--c-warning, #b45309)'
+                          : 'var(--fg-muted)',
+                    }}
+                  >
+                    {t.total_delivered}/{t.total_drops} delivered · {t.total_with_pod} POD
+                  </span>
+                )}
                 {suggestions && !suggestions.has(t.id) && crewAssign && (
                   <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>no engine suggestion — assign by hand</span>
                 )}
@@ -551,7 +572,7 @@ export function FleetDay() {
       <PageHeader
         eyebrow="Delivery"
         title="Last Mile Delivery"
-        description="The day's time-arranged orders and their trips — manage crew on the trip cards, watch every lorry's route on the side map, and print the driver run-sheet."
+        description="The day's delivery orders — on a lorry run or still to be arranged — with crew on the trip cards, every lorry's route on the side map, and the driver run-sheet."
         primaryAction={
           <Button variant="secondary" icon={<Printer size={14} />} onClick={() => goPrint()} disabled={trips.length === 0}>
             Print run-sheet
@@ -585,7 +606,7 @@ export function FleetDay() {
 
       {/* Split chips — the execution split for the picked day. */}
       <div className="flex flex-wrap gap-1.5">
-        {(['ALL', 'TIME_ARRANGED', 'DELIVERED'] as const).map((s) => (
+        {(['ALL', ...LAST_MILE_LIST_SIDES.map((s) => s.side)] as Array<'ALL' | LastMileListSide>).map((s) => (
           <button
             key={s}
             type="button"
@@ -596,12 +617,12 @@ export function FleetDay() {
             )}
           >
             {s === 'ALL'
-              ? `All (${sideCounts.TIME_ARRANGED + sideCounts.DELIVERED})`
-              : `${LAST_MILE_SIDE_LABEL[s]} (${sideCounts[s]})`}
+              ? `All (${LAST_MILE_LIST_SIDES.reduce((n, k) => n + sideCounts[k.side], 0)})`
+              : `${LAST_MILE_LIST_SIDE_LABEL[s]} (${sideCounts[s]})`}
           </button>
         ))}
         <span className="ml-2 self-center text-[11.5px] text-ink-muted">
-          Time-arranged orders flow in from Delivery Time Arrangement automatically
+          Orders due this day show here even before they're on a lorry; arranged trips flow in automatically
         </span>
         <span className="flex-1" />
         {mapOpen && mapFocus && (
@@ -656,7 +677,7 @@ export function FleetDay() {
         onRowClick={(o) => { if (mapOpen && o.row_type === 'so') setSelectedPin(o.so_doc_no); setJobPanel(panelTargetOf(o)); }}
         scrollToRow={scrollTo}
         defaultSort={arrangementQueueCompare}
-        emptyMessage="No time-arranged orders for this day — arrange times in Delivery Time Arrangement."
+        emptyMessage="No orders due for delivery on this day."
         onRowDoubleClick={(o) => { const to = rowDocumentPath(o); if (to) navigate(to); else setJobPanel(panelTargetOf(o)); }}
         contextMenu={(row) => (row.row_type === 'so'
           ? [{ label: 'Open Sales Order', onClick: () => navigate('/scm/sales-orders/' + row.so_doc_no) }]
@@ -674,9 +695,9 @@ export function FleetDay() {
         </p>
       )}
 
-      {!query.isLoading && !query.error && trips.length === 0 && (
-        <p className="rounded-md border border-border bg-surface p-6 text-center text-[13px] text-ink-muted">
-          No trips scheduled for this day. Arrange times in Delivery Time Arrangement to create them.
+      {!query.isLoading && !query.error && trips.length === 0 && sideCounts.TO_ARRANGE > 0 && (
+        <p className="rounded-md border border-border bg-surface p-4 text-center text-[12.5px] text-ink-muted">
+          No trips scheduled for this day yet — the orders above still need times arranged in Delivery Time Arrangement to go on a lorry.
         </p>
       )}
 

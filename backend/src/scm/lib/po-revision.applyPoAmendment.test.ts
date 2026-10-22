@@ -184,6 +184,34 @@ describe('applyPoAmendment — snapshot + revision + audit', () => {
     expect(res.linesRemoved).toBe(1);
   });
 
+  it('HC-0121: REMOVE of the unreceived line on a partly received PO names it for AutoCount and releases its SO line', async () => {
+    const store = baseStore();
+    const lines = store.purchase_order_items;
+    lines.find((i) => i.id === 'POI-1')!.received_qty = 1;
+    Object.assign(lines.find((i) => i.id === 'POI-2')!, { linked_ac_dtlkey: 4412, description2: 'KING', so_item_id: 'SOI-9' });
+    store.purchase_orders[0].status = 'PARTIALLY_RECEIVED';
+    store.po_amendment_lines = [
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-2', change_type: 'REMOVE', new_qty: null, new_unit_price_sen: null, new_item_code: null, new_material_name: null, new_variants: null, new_delivery_date: null, old_snapshot: { qty: 1 } },
+    ];
+    const res = await applyPoAmendment(fakeSb(store), AMD, 'user-1');
+    expect(store.purchase_order_items.find((i) => i.id === 'POI-2')).toBeUndefined();
+    expect(res.retired).toEqual([{ DtlKey: 4412, ItemCode: 'BF-2', Desc2: 'KING', Gone: 'deleted' }]);
+    expect(res.releasedSoItemIds).toEqual(['SOI-9']);
+  });
+
+  it('a REMOVE AutoCount never knew (no DtlKey) and a preserved received line retire nothing', async () => {
+    const store = baseStore();
+    Object.assign(store.purchase_order_items.find((i) => i.id === 'POI-1')!, { received_qty: 1, linked_ac_dtlkey: 4411, so_item_id: 'SOI-8' });
+    store.po_amendment_lines = [
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-1', change_type: 'REMOVE', new_qty: null, new_unit_price_sen: null, new_item_code: null, new_material_name: null, new_variants: null, new_delivery_date: null, old_snapshot: { qty: 1 } },
+      { id: 'AL-2', amendment_id: AMD, purchase_order_item_id: 'POI-2', change_type: 'REMOVE', new_qty: null, new_unit_price_sen: null, new_item_code: null, new_material_name: null, new_variants: null, new_delivery_date: null, old_snapshot: { qty: 1 } },
+    ];
+    const res = await applyPoAmendment(fakeSb(store), AMD, 'user-1');
+    expect(res.linesRemoved).toBe(1);
+    expect(res.retired).toEqual([]);
+    expect(res.releasedSoItemIds).toEqual([]);
+  });
+
   it('PRESERVES an already-received REMOVE line and warns instead of deleting', async () => {
     const store = baseStore();
     store.purchase_order_items.find((i) => i.id === 'POI-2')!.received_qty = 1;

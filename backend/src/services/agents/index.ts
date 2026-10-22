@@ -17,7 +17,8 @@ import {
   effectiveStage,
 } from "../agent-console";
 import { autoApproveReorderProposals } from "./procurement-execute";
-import { askAgentBrain, type AgentBrainUsageSink } from "../agent-brain";
+import { AGENT_BRAIN_MODEL, askAgentBrain, type AgentBrainUsageSink } from "../agent-brain";
+import { agentFeature } from "../aiUsage";
 import { DELIVERY_TRANSIT_RULE, runDeliveryAgent } from "./delivery-agent";
 import type { DeliveryBriefData } from "./delivery-agent";
 import { runCollectionAgent } from "./collection-agent";
@@ -137,6 +138,7 @@ registerAgent({
         payload: { brief: compactDeliveryBrief(r.brief), ownerInstructions },
         maxTokens: 400,
         usageSink: sink,
+        aiUsage: { env, feature: agentFeature("DELIVERY"), model: AGENT_BRAIN_MODEL, companyId: null, userId: null, waitUntil: null },
       });
       ctx.addTokens(sink.tokensIn, sink.tokensOut);
       if (focus) {
@@ -187,6 +189,7 @@ async function maybeAiFocus(
     payload: { brief, ownerInstructions },
     maxTokens: 400,
     usageSink: sink,
+    aiUsage: { env, feature: agentFeature(family), model: AGENT_BRAIN_MODEL, companyId: null, userId: null, waitUntil: null },
   });
   ctx.addTokens(sink.tokensIn, sink.tokensOut);
   if (focus) {

@@ -9,6 +9,7 @@ A salesperson's request for new products or repacks: a HEADER (new product or re
 | Method | Path | Who | Effect |
 |---|---|---|---|
 | GET | `/product-requests`, `/:id` | requester (own only), Purchaser (all; `?mine=1` for own) | list / detail, each with its `lines` (and each line's Model), the linked PC Order, delivery location and supplier |
+| GET | `/product-requests/pending-count` | anyone | `{count}` of `REQUESTED` requests in the company for a LITERAL holder of `scm.product_request.approve` (`*` gets 0), else 0; fails soft to 0 — the red count on the Consignment > Product Request entry |
 | GET | `/product-requests/supplier-options` | anyone who may open requests | ACTIVE suppliers of the company as id / code / name only — the requester's picker (a salesperson holds no `scm.procurement.suppliers`) |
 | POST | `/product-requests` | any Sales caller, or `scm.product_request.create` | raise, header + `lines[]` (1 to 200), lands `REQUESTED` |
 | PATCH | `/:id` | the requester | change while `REQUESTED` or `REJECTED`; header fields absent from the body keep their value; `lines`, when sent, REPLACES the set; a `REJECTED` one goes back to `REQUESTED`, decision cleared |
@@ -39,6 +40,7 @@ The PC Order is raised on PC Order New (`?fromProductRequest=<id>`), which seeds
 - Every status move is guarded on the status the row was read in (`request_moved` 409 on a race); the PC Order link claims the request only while `APPROVED`, so two orders raised at once cannot both claim it — the loser's order stays, unlinked, and the create answer says `requestClaimed: false`.
 - A PATCH that replaces lines deletes and re-inserts them after the header update; a refused body (bad line, unknown SKU) leaves the stored lines untouched because validation runs first.
 - Files (owner 2026-10-15): the requester attaches to their own request and removes while it is `REQUESTED` / `REJECTED`; once decided their files stay (`request_decided`) though they may still add one; the Purchaser attaches and removes on any; `WITHDRAWN` / `CLOSED` take no more (`request_closed`). The file factory's `mayWrite` (not a flat key) admits a Sales caller; `load` narrows a requester to their own request. The form uploads files picked before sending one by one after the request exists — a failed upload leaves the request standing.
+- Raising a request, and resending a rejected one, posts a bell notice (`services/productRequestNotify.ts`, source `product_request`) to every active LITERAL holder of `scm.product_request.approve` in the company, never the requester — the SO amendment rule, so a Purchaser whose role holds only `*` gets neither the notice nor the count. A notify failure never fails the write.
 - Every write pre-flights the audit sink (`assertAuditWritable`) and records `PRODUCT_REQUEST` in `scm.entity_audit_log` (`lineCount` and a `products` summary on create / edit; `lineNo` + `itemCode` on a build).
 - The service-role client bypasses RLS: the `company_id` predicate is the only boundary, on every read and write — lines carry their own `company_id`.
 

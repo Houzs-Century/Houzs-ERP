@@ -99,8 +99,9 @@ function PriorityTargetsSection({
         <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
           Per-priority stage targets in days. The priority a case is created with
           drives its per-stage SLA snapshot. Edit a cell to flex how aggressive
-          that priority is — changes affect new cases and future stages of
-          in-flight cases. Leave a cell blank to fall back to the system default.
+          that priority is — a change applies at once to the open cases in that
+          stage as well as to new ones. Leave a cell blank to fall back to the
+          system default.
         </p>
       </header>
       <div className="overflow-x-auto">

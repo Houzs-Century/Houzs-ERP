@@ -71,6 +71,7 @@ import { cn } from "../../lib/utils";
 import { convertToLink, transferToLabel, transferFromLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
+import { GrnDrawerRack } from "./GrnDrawerRack";
 import { useHoldAction } from "./use-hold-action";
 import { StatusWithHold, rowIsHeld, type HoldFields } from "../../vendor/scm/components/HoldChip";
 import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
@@ -124,6 +125,8 @@ type GrnItem = {
   unit_price_sen?: number;
   line_total_sen?: number;
   warehouse_code?: string | null;
+  // The PO the line was received from; one GRN can draw on several POs.
+  source_po_number?: string | null;
 };
 
 type StatusTab = "all" | "draft" | "posted" | "cancelled" | "on_hold";
@@ -287,6 +290,7 @@ function DetailDrawer({
 }) {
   const detailQ = useGrnDetail(row?.id ?? null);
   const items: GrnItem[] = ((detailQ.data as { items?: GrnItem[] } | undefined)?.items ?? []);
+  const detailGrn = (detailQ.data as { grn?: { status?: string; warehouse_id?: string | null } } | undefined)?.grn;
   const open = !!row;
   const st = row ? statusFor(row.status) : null;
   const total = row ? totalOf(row) : 0;
@@ -375,6 +379,12 @@ function DetailDrawer({
                           {secondary}
                         </div>
                       )}
+                      {l.source_po_number && (
+                        <div className="mt-1 font-mono text-[11px] text-ink-muted">PO {l.source_po_number}</div>
+                      )}
+                      {!isServiceLine({ itemGroup: l.item_group ?? null, itemCode: l.item_code ?? "" }) && (
+                        <GrnDrawerRack grnId={row.id} status={detailGrn?.status ?? row.status} warehouseId={detailGrn?.warehouse_id ?? null} line={l} />
+                      )}
                     </div>
                     <span className="text-right font-money text-[12.5px] text-ink-secondary">{l.qty_accepted ?? l.qty_received ?? 0}</span>
                     <span className="text-right font-money text-[12.5px] text-ink-secondary">{fmtRm(l.unit_price_sen ?? 0)}</span>
@@ -395,7 +405,7 @@ function DetailDrawer({
               </div>
             </div>
 
-            <div className="flex shrink-0 items-center gap-2 border-t border-border bg-surface px-5 py-3">
+            <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-border bg-surface px-5 py-3">
               <Button variant="ghost" icon={<Edit3 size={14} />} onClick={onEdit}>Edit</Button>
               <Button variant="ghost" icon={<Printer size={14} />} onClick={onPrint}>Print</Button>
               <div className="flex-1" />
@@ -408,21 +418,24 @@ function DetailDrawer({
                     </Button>
                   );
                 }
-                if (s === "POSTED") {
-                  if (!row.fully_invoiced) {
-                    return (
-                      <Button variant="primary" icon={<Receipt size={14} />} onClick={onConvertToPi}>
-                        {transferToLabel('pi')}
-                      </Button>
-                    );
-                  }
-                  if (!row.fully_returned) {
-                    return (
-                      <Button variant="secondary" icon={<RotateCcw size={14} />} onClick={onConvertToPr}>
-                        {transferToLabel('pr')}
-                      </Button>
-                    );
-                  }
+                /* HC-0135: an unbilled GRN used to show only the Invoice button, so
+                   "From Goods Receipt" on a new Purchase Return led to a drawer with
+                   no way back to the return. Both, like the full page. */
+                if (s === "POSTED" && (!row.fully_invoiced || !row.fully_returned)) {
+                  return (
+                    <div className="order-first flex w-full gap-2">
+                      {!row.fully_returned && (
+                        <Button variant="secondary" icon={<RotateCcw size={14} />} onClick={onConvertToPr} className="flex-1 justify-center whitespace-nowrap">
+                          {transferToLabel('pr')}
+                        </Button>
+                      )}
+                      {!row.fully_invoiced && (
+                        <Button variant="primary" icon={<Receipt size={14} />} onClick={onConvertToPi} className="flex-1 justify-center whitespace-nowrap">
+                          {transferToLabel('pi')}
+                        </Button>
+                      )}
+                    </div>
+                  );
                 }
                 if (s !== "CANCELLED") {
                   return (

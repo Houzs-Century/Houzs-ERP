@@ -1,5 +1,5 @@
 // ----------------------------------------------------------------------------
-// mfg-so-fairs — the SO fair picker's three endpoints.
+// mfg-so-fairs — the SO fair picker's endpoints.
 //
 // Mounted at /mfg-sales-orders BEFORE the main router so `/fair-options` is not
 // swallowed by its `/:docNo`. It lives in its own file rather than in
@@ -16,7 +16,12 @@
 // pick others"*, and Others is a second PICK from the company's venue master.
 //
 //   GET  /fair-options          the dropdown, for one order date
-//   GET  /fair-pending          orders whose fair link still needs a person
+//   GET  /fair-default          the keyer's fair a new order starts with
+//   GET  /fair-pending          orders with no fair link a person should see
+//   GET  /fair-pending/count    how many — the sidebar badge
+//   GET  /fair-checks           linked orders to check: venue differs / Sales Attending
+//                               / an evening report puts them at another fair
+//   POST /fair-transfer         a person moves orders to their fair, one or many
 //   POST /:docNo/fair           a person settles one of them
 //   GET  /active-venue          the rep's bound venue (moved here, unchanged)
 //
@@ -26,15 +31,23 @@
 
 import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
-import { activeCompanySql, scopeToCompany, activeCompanyId } from '../lib/companyScope';
+import { activeCompanySql, scopeToCompany, activeCompanyId, requireActiveCompanyId } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import {
+  keyerFairDefaultFor,
+  loadAllFairs,
   loadFairsInWindow,
   loadFairsAtVenue,
   loadVenueMaster,
   type FairDb,
 } from '../lib/fair-binding';
-import { buildFairOptions, isPickableFair } from '../lib/fair-options';
+import { allFairOptions, buildFairOptions, companyUsesKeyerFair, fairMissingMessage, isPickableFair } from '../lib/fair-options';
+import { countFairPending, loadFairPending } from '../lib/fair-pending';
+import { loadFairPutAside, NOT_PUT_ASIDE, setFairPutAside } from '../lib/fair-put-aside';
+import { loadFairChecks } from '../lib/fair-checks';
+import { fairStateOf, recordFairChange } from '../lib/fair-audit';
+import { canReassignFair, FAIR_REASSIGN_REFUSAL } from '../lib/fair-reassign';
+import { FAIR_TRANSFER_MAX, fairTransferItemsOf, transferFairDay, transferOrdersToFairs } from '../lib/fair-transfer';
 /* GET /active-venue moved here from mfg-sales-orders.ts on 2026-09-13. It is the
    same concern as the picker — which exhibition is this rep at — and that file
    is over its size ceiling, so the endpoint could not stay beside its new
@@ -89,48 +102,201 @@ mfgSoFairs.get('/fair-options', async (c) => {
   }
 });
 
-/* What the pending screen shows. Every value here is already on the order — this
-   endpoint joins nothing and computes nothing, so it cannot disagree with the
-   list view about an order's state. */
-const PENDING_COLUMNS =
-  'doc_no, so_date, venue, branding, project_id, fair_match, status, local_total_sen, salesperson_id';
+/**
+ * GET /mfg-sales-orders/fair-options/all
+ *
+ * Every pickable fair of the company, at any place and on any date, newest
+ * first — for the people who settle links on Fair Links (owner 2026-10-21: 「我
+ * 这里link fair 要可以选完全部fair」). Finance or PMS only, as linking; the
+ * order form never asks. One read for the whole page, not one per order date.
+ * A failed read is an error: the page then offers the order's own place only.
+ */
+mfgSoFairs.get('/fair-options/all', async (c) => {
+  if (!canReassignFair(c)) return c.json({ error: 'forbidden', reason: FAIR_REASSIGN_REFUSAL }, 403);
+  try {
+    const rows = await loadAllFairs(c.env.DB as unknown as FairDb, activeCompanySql(c, 'p.company_id'));
+    return c.json({ fairs: allFairOptions(rows) });
+  } catch {
+    return c.json({ error: 'fair_options_read_failed', fairs: [] }, 500);
+  }
+});
 
-const NEEDS_A_PERSON = ['PENDING', 'AMBIGUOUS', 'UNMATCHED'];
+/**
+ * GET /mfg-sales-orders/fair-default?date=YYYY-MM-DD
+ *
+ * The fair a NEW typed order starts with: the fair of the person KEYING it —
+ * running today, else the latest one they stood at within the dropdown's window
+ * (owner 2026-10-19, the boss's rule; the rule is fair-options.ts::
+ * keyerFairDefault). `event` is a row of GET /fair-options, so the picker lights
+ * it up and the operator can change it like any pick.
+ *
+ * With no event, `why` says why and `whyMessage` is the sentence the save is
+ * refused with — the same `fairMissingMessage` /validate and the create use, so
+ * the hint and the refusal cannot word it differently.
+ *
+ * Only for companies on the keyer rule (Houzs); the others answer nothing and
+ * their forms keep the place default from /active-venue. Never an error status:
+ * a broken default is "nothing to fill in", and the operator still picks.
+ */
+mfgSoFairs.get('/fair-default', async (c) => {
+  const soDate = orderDate(c.req.query('date'));
+  const none = { date: soDate, event: null, how: null, why: null, whyMessage: null };
+  if (!companyUsesKeyerFair(c.get('companyCode'))) return c.json(none);
+  const hu = c.get('houzsUser');
+  const found = await keyerFairDefaultFor({
+    db: c.env.DB as unknown as FairDb,
+    companySql: activeCompanySql(c, 'p.company_id'),
+    userId: hu?.id != null ? Number(hu.id) : NaN,
+    orderDate: soDate,
+  });
+  return c.json({ date: soDate, ...found, whyMessage: found.why ? fairMissingMessage(found.why) : null });
+});
 
 /**
  * GET /mfg-sales-orders/fair-pending?limit=200
  *
- * The orders the reconcile job could not settle on its own. Three different
- * reasons live here and the screen must keep them apart — see the `fair_match`
+ * Every order with no fair link that a person should look at — the "Fair Links
+ * to Settle" page. The reasons stay apart on the screen — see the `fair_match`
  * column comment (mig 20260913T1900):
  *
  *   PENDING    the fair is not in PMS yet. Usually resolves itself when it is.
  *   AMBIGUOUS  two booths fit. Only a person knows which.
  *   UNMATCHED  the order's brand has no booth at that event. Usually a missing
  *              brand on the SKU rather than a wrong venue.
+ *   NO_FAIR    the salesperson ticked "No fair" (owner 2026-10-19: listed too).
+ *   NULL       no verdict — listed only from 1 September 2026, when Houzs
+ *              opened its books in the ERP; the AutoCount years stay out.
  *
- * NULL `fair_match` is deliberately NOT in this list: those are the 2,946 orders
- * that predate the picker, and dumping them here would bury the handful that
- * actually need attention under three years of history.
+ * Which orders, exactly, is scm/lib/fair-pending.ts — shared with the count the
+ * sidebar badge shows, so the two cannot disagree.
  */
 mfgSoFairs.get('/fair-pending', async (c) => {
   const sb = c.get('supabase');
   const limitRaw = Number(c.req.query('limit'));
   const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 500) : 200;
   try {
-    const { data, error } = await scopeToCompany(
-      sb
-        .from('mfg_sales_orders')
-        .select(PENDING_COLUMNS)
-        .in('fair_match', NEEDS_A_PERSON)
-        .order('so_date', { ascending: false })
-        .limit(limit),
-      c,
-    );
-    if (error) return c.json({ error: 'fair_pending_read_failed', rows: [] }, 500);
-    return c.json({ rows: data });
+    const scope = <Q>(q: Q): Q => scopeToCompany(q, c);
+    /* With the orders a person PUT ASIDE (owner 2026-10-21), for the page's
+       folded group at the bottom. */
+    const [res, aside] = await Promise.all([loadFairPending(sb, scope, limit), loadFairPutAside(sb, scope, limit)]);
+    if (!res.ok || !aside.ok) return c.json({ error: 'fair_pending_read_failed', rows: [] }, 500);
+    return c.json({ rows: res.rows, putAside: aside.rows });
   } catch {
     return c.json({ error: 'fair_pending_read_failed', rows: [] }, 500);
+  }
+});
+
+/**
+ * POST /mfg-sales-orders/:docNo/fair-put-aside   { aside: boolean }
+ *
+ * Put an order aside on Fair Links, or bring it back (owner 2026-10-21: 「还有
+ * 一些我看了是 service 要 put aside 的」). Put aside, it leaves every group and
+ * the menu's count; the order's History records who and when. Finance or PMS
+ * only, as linking (scm/lib/fair-put-aside.ts).
+ */
+mfgSoFairs.post('/:docNo/fair-put-aside', async (c) => {
+  if (!canReassignFair(c)) return c.json({ error: 'forbidden', reason: FAIR_REASSIGN_REFUSAL }, 403);
+  let body: { aside?: unknown };
+  try {
+    body = (await c.req.json()) as { aside?: unknown };
+  } catch {
+    return c.json({ error: 'bad_json' }, 400);
+  }
+  if (typeof body.aside !== 'boolean') return c.json({ error: 'bad_aside', reason: 'Send aside: true to put the order aside, false to bring it back.' }, 400);
+  const company = requireActiveCompanyId(c);
+  if (!company.ok) return c.json(company.refusal, 409);
+  const user = c.get('user');
+  try {
+    const res = await setFairPutAside({
+      sb: c.get('supabase'),
+      companyId: company.companyId,
+      docNo: c.req.param('docNo'),
+      aside: body.aside,
+      actorId: user.id,
+      actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? c.get('houzsUser')?.name ?? null,
+    });
+    if (!res.ok) return c.json({ error: res.reason }, res.reason === 'not_found' ? 404 : 500);
+    return c.json({ ok: true, changed: res.changed });
+  } catch {
+    return c.json({ error: 'fair_put_aside_failed' }, 500);
+  }
+});
+
+/**
+ * GET /mfg-sales-orders/fair-pending/count
+ *
+ * How many orders the page above lists — the red number on its sidebar entry
+ * (owner 2026-10-19: 「先做 Fair links to settle 菜单」). A failed read answers
+ * an error, never 0: the badge then shows nothing rather than "all settled".
+ */
+mfgSoFairs.get('/fair-pending/count', async (c) => {
+  try {
+    const res = await countFairPending(c.get('supabase'), (q) => scopeToCompany(q, c));
+    if (!res.ok) return c.json({ error: 'fair_pending_count_failed' }, 500);
+    return c.json({ count: res.count });
+  } catch {
+    return c.json({ error: 'fair_pending_count_failed' }, 500);
+  }
+});
+
+/**
+ * GET /mfg-sales-orders/fair-checks
+ *
+ * The LINKED orders the same page lists in two groups of their own (owner
+ * 2026-10-19): 要查 — the venue on the order is not where it was placed — and
+ * 等加人 — a scan whose scanner is not on its booth's Sales Attending. Read as
+ * the order and PMS stand now; scm/lib/fair-checks.ts has the rules. A failed
+ * read is an error, never "nothing to check".
+ */
+mfgSoFairs.get('/fair-checks', async (c) => {
+  const res = await loadFairChecks({
+    sb: c.get('supabase'),
+    db: c.env.DB as unknown as FairDb,
+    companySql: activeCompanySql(c, 'p.company_id'),
+    scope: (q) => scopeToCompany(q, c),
+  });
+  if (!res.ok) return c.json({ error: 'fair_checks_read_failed', rows: [] }, 500);
+  return c.json({ rows: res.rows });
+});
+
+/**
+ * POST /mfg-sales-orders/fair-transfer   { items: [{ docNo, projectId }] }
+ *
+ * Move orders to the project they belong to — one, a ticked few, or all of a
+ * list at one click (owner 2026-10-20: 「做成 manual bulk transfer」, 「也要支持一
+ * 键按钮转」). The Fair, the Venue and the Fair Day move together, with a
+ * History row each (scm/lib/fair-transfer.ts). Finance or PMS only, as the
+ * settle route below. Answers per order: one that cannot move says why and the
+ * rest still move.
+ */
+mfgSoFairs.post('/fair-transfer', async (c) => {
+  if (!canReassignFair(c)) return c.json({ error: 'forbidden', reason: FAIR_REASSIGN_REFUSAL }, 403);
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'bad_json' }, 400);
+  }
+  const items = fairTransferItemsOf(body);
+  if (!items) {
+    return c.json({ error: 'bad_items', reason: `Send 1 to ${FAIR_TRANSFER_MAX} orders, each with its docNo and the projectId to move it to.` }, 400);
+  }
+  const company = requireActiveCompanyId(c);
+  if (!company.ok) return c.json(company.refusal, 409);
+  const user = c.get('user');
+  try {
+    const results = await transferOrdersToFairs({
+      sb: c.get('supabase'),
+      db: c.env.DB as unknown as FairDb,
+      companySql: activeCompanySql(c, 'p.company_id'),
+      companyId: company.companyId,
+      items,
+      actorId: user?.id ?? null,
+      actorName: (user?.user_metadata as { name?: string } | undefined)?.name ?? c.get('houzsUser')?.name ?? null,
+    });
+    return c.json({ results, moved: results.filter((r) => r.ok).length });
+  } catch {
+    return c.json({ error: 'fair_transfer_failed' }, 500);
   }
 });
 
@@ -147,6 +313,8 @@ mfgSoFairs.get('/fair-pending', async (c) => {
  * a stale screen and a sale attributed to the other company's exhibition.
  */
 mfgSoFairs.post('/:docNo/fair', async (c) => {
+  /* Finance or PMS only (owner 2026-10-16) — scm/lib/fair-reassign.ts. */
+  if (!canReassignFair(c)) return c.json({ error: 'forbidden', reason: FAIR_REASSIGN_REFUSAL }, 403);
   const sb = c.get('supabase');
   const docNo = c.req.param('docNo');
   let body: { projectId?: unknown };
@@ -166,13 +334,20 @@ mfgSoFairs.post('/:docNo/fair', async (c) => {
      against, and reading it under the company predicate also answers "is this
      order mine" before anything is written. */
   const { data: so, error: soErr } = await scopeToCompany(
-    sb.from('mfg_sales_orders').select('doc_no, so_date, venue').eq('doc_no', docNo),
+    sb.from('mfg_sales_orders').select('doc_no, so_date, venue, fair_date, project_id, fair_match').eq('doc_no', docNo),
     c,
   ).maybeSingle();
   if (soErr) return c.json({ error: 'so_read_failed' }, 500);
   if (!so) return c.json({ error: 'not_found' }, 404);
 
   const soDate = String((so as Record<string, unknown>).so_date ?? '').slice(0, 10) || todayMyt();
+  const venueBefore = ((so as Record<string, unknown>).venue as string | null) ?? null;
+  const fairDayBefore = String((so as Record<string, unknown>).fair_date ?? '').slice(0, 10) || null;
+  /* LINKING MOVES THE VENUE AND THE FAIR DAY WITH THE FAIR, as a transfer does
+     (owner 2026-10-22: 「我link 不到」 — HC-SO-2609-388 was linked to the MLE fair
+     at PENANG WATERFRONT but kept AEON BUKIT MERTAJAM, so "venue differs" listed
+     it again and the link looked lost). The old place stays in History. */
+  let moved: { venue: string; fairDate: string | null } | null = null;
 
   if (projectId != null) {
     const rows = await c.env.DB.prepare(
@@ -210,6 +385,8 @@ mfgSoFairs.post('/:docNo/fair', async (c) => {
        recorded against it. Such an order stays visible — `so_date` against the
        project's own start/end says so at any time, with no flag to keep in
        step — so a report can find them without this route having to guess. */
+    const period = { startDate: String(fair.startDate ?? '').slice(0, 10), endDate: fair.endDate ? String(fair.endDate).slice(0, 10) : null };
+    moved = { venue: (fair.venue ?? '').trim(), fairDate: transferFairDay(period, null, fairDayBefore) };
   }
 
   const { error: updErr } = await scopeToCompany(
@@ -218,11 +395,30 @@ mfgSoFairs.post('/:docNo/fair', async (c) => {
       .update({
         project_id: projectId,
         fair_match: projectId == null ? 'AMBIGUOUS' : 'PICKED',
+        /* A link made by hand brings a put-aside order back (fair-put-aside.ts),
+           and takes the fair's place and a day of it (above). */
+        ...(moved ? { venue: moved.venue, venue_source: 'PMS', fair_date: moved.fairDate, ...NOT_PUT_ASIDE } : {}),
       })
       .eq('doc_no', docNo),
     c,
   );
   if (updErr) return c.json({ error: 'fair_update_failed' }, 500);
+
+  /* Who moved it, from what to what — in the order's History (fair-audit.ts). */
+  const user = c.get('user');
+  await recordFairChange({
+    sb, db: c.env.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), docNo,
+    before: fairStateOf(so as Record<string, unknown>),
+    after: { projectId, fairMatch: projectId == null ? 'AMBIGUOUS' : 'PICKED' },
+    how: 'settle', actorId: user?.id ?? null,
+    actorName: (user?.user_metadata as { name?: string } | undefined)?.name ?? c.get('houzsUser')?.name ?? null,
+    ...(moved ? {
+      also: [
+        { field: 'venue', from: venueBefore, to: moved.venue },
+        { field: 'fairDate', from: fairDayBefore, to: moved.fairDate },
+      ],
+    } : {}),
+  });
 
   return c.json({ ok: true, docNo, projectId, companyId: activeCompanyId(c) ?? null });
 });

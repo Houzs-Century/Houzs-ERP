@@ -29,6 +29,7 @@ import { canOperateDeliveryOrders, canDriverCompleteDelivery } from "../auth/sal
 import { MobileTrackingBanner } from "./MobileTrackingBanner";
 import "./mobile.css";
 import { MobileJobStop, jobRefOf, jobKey, jobLabelOf, useJobProgressMap } from "./MobileJobStop";
+import { LEG_LABEL } from "../vendor/scm/lib/delivery-job";
 
 /* ------------------------------------------------------------------ *
  * Mobile Delivery Planning — driver run-sheet screen (v2 job card).
@@ -181,9 +182,8 @@ const effDateOf = (o: BoardRow): string | null =>
    order date alone put a stop under the wrong day whenever the run was moved. */
 const runDateOf = (o: BoardRow): string | null => o.trip_date || effDateOf(o);
 
-/* How far back History reaches. It used to hold every delivered order ever
-   (one driver's read 603 / 1303), which is a ledger, not a run-sheet. */
-const HISTORY_DAYS = 30;
+/* History reaches back only to the 1st of the CURRENT month (owner 2026-10-21):
+   a run-sheet, not a ledger. The month floor is computed in `buckets`. */
 
 // House type — HC raw-data field, falling back to the SO building_type.
 const houseTypeOf = (o: BoardRow): string | null =>
@@ -337,13 +337,13 @@ export function MobileDeliveryPlanning({
     const today: BoardRow[] = [];
     const tomorrow: BoardRow[] = [];
     const history: BoardRow[] = [];
-    const historyFloor = (() => {
+    // History = the CURRENT month only (owner 2026-10-21): floor at the 1st.
+    const monthFloor = (() => {
       const d = new Date(todayKey + "T00:00:00");
-      d.setDate(d.getDate() - HISTORY_DAYS);
+      d.setDate(1);
       return dayKey(d.toISOString());
     })();
     for (const o of allOrders) {
-      const { done } = stopFlags(o);
       const k = dayKey(runDateOf(o));
       /* A finished stop STAYS on its day, so Today reads "3 / 8 delivered"
          instead of always 0 / n — it used to be moved to History on completion. */
@@ -351,8 +351,8 @@ export function MobileDeliveryPlanning({
         today.push(o);
       } else if (k && k === tomorrowKey) {
         tomorrow.push(o);
-      } else if (k && k < todayKey && (!done || k >= historyFloor)) {
-        // past-due and still open (always), or delivered within HISTORY_DAYS.
+      } else if (k && k < todayKey && k >= monthFloor) {
+        // delivered or still-open earlier THIS month (history = current month).
         history.push(o);
       }
       // else: further-out / undated → left off the run-sheet (desktop owns it).
@@ -515,7 +515,7 @@ export function MobileDeliveryPlanning({
           </button>
           <span className="eyebrow">Transportation</span>
         </div>
-        <div className="scr-title">Delivery Planning</div>
+        <div className="scr-title">Last Mile Delivery</div>
         <div
           className="tnum"
           style={{ fontSize: 11.5, color: "var(--mut)", marginTop: 2 }}
@@ -760,6 +760,31 @@ function MetaChip({ children }: { children: ReactNode }) {
   );
 }
 
+/* The job type (owner 2026-10-21) — brand-tinted so a Setup / Dismantle /
+   Supplier / Transfer / Lorry service / Service job is told apart from a plain
+   delivery at a glance. Reuses the board's own leg -> label map (LEG_LABEL). */
+function JobTypeChip({ o }: { o: BoardRow }) {
+  const ref = jobRefOf(o);
+  const label = ref ? (LEG_LABEL[ref.leg] ?? ref.leg) : "Delivery";
+  return (
+    <span
+      style={{
+        fontSize: 10,
+        fontWeight: 800,
+        letterSpacing: ".02em",
+        color: "var(--brand-d)",
+        background: "var(--brand-bg)",
+        border: "1px solid var(--line)",
+        padding: "3px 8px",
+        borderRadius: 7,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
 /* HC "Remark 4" delivery sub-status → pill tone. Mirrors the desktop board's
    SUBSTATUS_TONE (pages/scm-v2/DeliveryPlanning.tsx) verbatim. The VALUES are
    already shared via HC_SUBSTATUS_VALUES, but the display tone is desktop-local,
@@ -929,6 +954,7 @@ function StopCard({
           marginTop: 9,
         }}
       >
+        <JobTypeChip o={o} />
         <StopPill o={o} isToday={isToday} />
         <DaysLeftChip days={o.days_left} done={st === "done"} />
         {o.delivery_substatus && o.delivery_substatus.trim() ? (
@@ -1526,7 +1552,7 @@ function StopDetail({
       <header className="hdr">
         <div className="hdr-row">
           <button className="back" onClick={onBack}>
-            <span className="chev">‹</span> Delivery Planning
+            <span className="chev">‹</span> Last Mile Delivery
           </button>
           <StopPill o={order} isToday={isToday} />
         </div>

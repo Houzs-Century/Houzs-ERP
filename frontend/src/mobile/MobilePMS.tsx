@@ -43,6 +43,7 @@ import { MobilePmsPosSales, useMobileProjectPosSales } from "./MobilePmsPosSales
 import { MobilePmsSalesBills, useMobileProjectSalesBills, type MobileProjectSalesBillsQuery } from "./MobilePmsSalesBills";
 import { fmtRmSen, notOpenedByRepId } from "../lib/projectSalesBills";
 import { SoloSafeName, useCanSeeSoloOrganizer, isSoloMasked, shownProjectName } from "../pages/projects/SoloSafeName";
+import type { EventPnl } from "../pages/projects/types";
 
 /* ------------------------------------------------------------------ *
  * Mobile Project (PMS) — list + detail.
@@ -191,6 +192,9 @@ type ProjectDetail = {
     total_sales: number | null;
   } | null;
   finance_lines?: FinanceLine[];
+  /** The two P&Ls (owner 2026-10-16; backend services/eventPnl.ts) — the same
+   *  figures the desktop event page shows. Null on an older server. */
+  finance_pnl?: EventPnl | null;
   checklist?: ChecklistItem[];
   checklist_attachments?: TaskAttachment[];
   sections?: TasklistSection[];
@@ -266,6 +270,8 @@ type Lorry = { id: number; plate: string | null; type?: string | null; is_intern
 // ── Reference-data list rows (populate the write-form selects) ──
 type PicUser = { id: number; name: string | null; email: string };
 type SalesRepOption = { id: number; code: string | null; name: string | null };
+/** Active staff not on the Sales Team roster yet — adding one puts them on it. */
+type StaffOption = { user_id: number; name: string | null; email: string };
 type FleetStaff = { id: number; name: string | null; role_name: string | null; phone?: string | null; company_phone?: string | null; companyPhone?: string | null };
 
 // Shared dialog-hook / setter fn types moved to MobilePmsDocCard.tsx (imported above).
@@ -778,12 +784,15 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
 
   const salesRepsQ = useQuery({
     queryKey: ["mobile-pms-sales-reps"],
-    queryFn: () => api.get<{ data: SalesRepOption[] }>(`/api/projects/sales-rep-options`),
+    queryFn: () => api.get<{ data: SalesRepOption[]; others?: StaffOption[] }>(`/api/projects/sales-rep-options`),
     staleTime: 5 * 60_000,
     enabled: canWrite,
     retry: false,
   });
   const salesReps = salesRepsQ.data?.data ?? [];
+  /* Owner 2026-10-19: staff in other departments who stand at fairs (Lim,
+     Nancy, Syasya) — picked here, they join the Sales Team roster. */
+  const salesStaff = salesRepsQ.data?.others ?? [];
 
   const fleetQ = useQuery({
     queryKey: ["mobile-pms-fleet"],
@@ -1316,6 +1325,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                   projectId={id}
                   attendees={data.sales_attendees ?? []}
                   options={salesReps}
+                  others={salesStaff}
                   notOpenedByRep={notOpenedByRep}
                   canWrite={canEditAttending}
                   busy={busy}
@@ -1619,6 +1629,7 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
               <FinancialSnapshot
                 finance={data.finance!}
                 lines={data.finance_lines}
+                pnl={data.finance_pnl ?? null}
                 canWrite={canWrite && financeCanEdit}
                 busy={busy}
                 setBusy={setBusy}
@@ -1637,11 +1648,13 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
 
 // ── Sales attending (add via picker + remove) ──
 function SalesAttending({
-  projectId, attendees, options, notOpenedByRep, canWrite, busy, setBusy, notify, confirm, reload,
+  projectId, attendees, options, others, notOpenedByRep, canWrite, busy, setBusy, notify, confirm, reload,
 }: {
   projectId: number;
   attendees: SalesAttendee[];
   options: SalesRepOption[];
+  /** Staff not on the Sales Team roster; adding one puts them on it. */
+  others: StaffOption[];
   /** sen still not opened per rep, from the pasted sales report — red beside the name. */
   notOpenedByRep: Map<number, number>;
   canWrite: boolean;
@@ -1655,8 +1668,10 @@ function SalesAttending({
   // Multi-select (owner 2026-07-23): tick several reps, add them in one go —
   // mirrors the desktop checkbox list instead of the old one-at-a-time picker.
   const [picks, setPicks] = useState<Set<number>>(new Set());
+  const [staffPicks, setStaffPicks] = useState<Set<number>>(new Set());
   const present = new Set(attendees.map((a) => a.sales_rep_id));
   const available = options.filter((o) => !present.has(o.id));
+  const pickedCount = picks.size + staffPicks.size;
 
   const toggle = (id: number) =>
     setPicks((prev) => {
@@ -1665,15 +1680,26 @@ function SalesAttending({
       else n.add(id);
       return n;
     });
+  const toggleStaff = (userId: number) =>
+    setStaffPicks((prev) => {
+      const n = new Set(prev);
+      if (n.has(userId)) n.delete(userId);
+      else n.add(userId);
+      return n;
+    });
 
   const addSelected = async () => {
-    if (!picks.size) return;
+    if (!pickedCount) return;
     setBusy(true);
     try {
       for (const repId of picks) {
         await api.post(`/api/projects/${projectId}/sales-attendees`, { sales_rep_id: repId });
       }
+      for (const userId of staffPicks) {
+        await api.post(`/api/projects/${projectId}/sales-attendees`, { user_id: userId });
+      }
       setPicks(new Set());
+      setStaffPicks(new Set());
       setAdding(false);
       reload();
     } catch (e) {
@@ -1701,14 +1727,14 @@ function SalesAttending({
     <>
       <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "10px 0 6px" }}>
         <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093" }}>Sales attending</span>
-        {canWrite && !adding && available.length > 0 && (
+        {canWrite && !adding && (available.length > 0 || others.length > 0) && (
           <button className="tinybtn" style={{ marginLeft: "auto" }} disabled={busy} onClick={() => setAdding(true)}>+ Add</button>
         )}
       </div>
       {adding && (
         <div style={{ marginBottom: 8 }}>
           <div style={{ maxHeight: 240, overflowY: "auto", border: "1px solid #e3e6e0", borderRadius: 10 }}>
-            {available.length === 0 && (
+            {available.length === 0 && others.length === 0 && (
               <div style={{ fontSize: 12, color: "#9aa093", padding: "9px 11px" }}>Everyone is already attending.</div>
             )}
             {available.map((o, i) => (
@@ -1721,17 +1747,31 @@ function SalesAttending({
                 <span style={{ fontSize: 13 }}>{o.name || `#${o.id}`}</span>
               </label>
             ))}
+            {others.length > 0 && (
+              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "#9aa093", padding: "8px 11px 4px", borderTop: available.length ? "1px solid #eceee9" : "none", background: "#f6f7f4" }}>
+                Not in the Sales Team yet — adding puts them in it
+              </div>
+            )}
+            {others.map((s) => (
+              <label
+                key={`staff-${s.user_id}`}
+                style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 11px", borderTop: "1px solid #eceee9", cursor: busy ? "default" : "pointer" }}
+              >
+                <input type="checkbox" checked={staffPicks.has(s.user_id)} disabled={busy} onChange={() => toggleStaff(s.user_id)} />
+                <span style={{ fontSize: 13 }}>{s.name || s.email}</span>
+              </label>
+            ))}
           </div>
           <div style={{ display: "flex", gap: 7, marginTop: 7 }}>
             <button
               className="tinybtn"
               style={{ background: "#16695f", borderColor: "#16695f", color: "#fff" }}
-              disabled={busy || picks.size === 0}
+              disabled={busy || pickedCount === 0}
               onClick={addSelected}
             >
-              Add selected{picks.size ? ` (${picks.size})` : ""}
+              Add selected{pickedCount ? ` (${pickedCount})` : ""}
             </button>
-            <button className="tinybtn" disabled={busy} onClick={() => { setAdding(false); setPicks(new Set()); }}>Cancel</button>
+            <button className="tinybtn" disabled={busy} onClick={() => { setAdding(false); setPicks(new Set()); setStaffPicks(new Set()); }}>Cancel</button>
           </div>
         </div>
       )}
@@ -3698,11 +3738,12 @@ function QuickRentalField({
 }
 
 function FinancialSnapshot({
-  projectId, finance, lines, canWrite, busy, setBusy, notify, reload,
+  projectId, finance, lines, pnl, canWrite, busy, setBusy, notify, reload,
 }: {
   projectId: number;
   finance: NonNullable<ProjectDetail["finance"]>;
   lines?: FinanceLine[];
+  pnl: EventPnl | null;
   canWrite: boolean;
   busy: boolean;
   setBusy: SetBusy;
@@ -3720,8 +3761,11 @@ function FinancialSnapshot({
 
   const allLines = lines ?? [];
   const costLines = allLines.filter((l) => (l.kind ?? "").toLowerCase() === "cost");
-  const sales = finance.total_sales ?? 0;
-  const cost =
+  /* The server's P&L by Total Sales when it sent one — the desktop page's own
+     figures, Finance's books and the orders' cost included; else the old
+     cached rollup. */
+  const sales = pnl ? pnl.by_sales.sales : finance.total_sales ?? 0;
+  const cost = pnl ? pnl.by_sales.totalCost :
     (finance.rental ?? 0) +
     (finance.contractor_cost ?? 0) +
     (finance.license_fee ?? 0) +
@@ -3762,6 +3806,13 @@ function FinancialSnapshot({
             <div className="money" style={{ fontSize: 16, fontWeight: 800, color: netColor, marginTop: 3 }}>{marginPct == null ? "—" : `${marginPct.toFixed(1)}%`}</div>
           </div>
         </div>
+        {/* The second P&L (owner 2026-10-16): the Sales Orders opened at the fair. */}
+        {pnl?.by_so && (
+          <div style={{ fontSize: 11, color: "#6b7064", marginTop: 8 }}>
+            By Sales Orders ({pnl.so_count}): sales {formatCurrency(pnl.by_so.sales)} · cost {formatCurrency(pnl.by_so.totalCost)} · net{" "}
+            <span style={{ fontWeight: 700, color: pnl.by_so.netProfit >= 0 ? "#2f8a5b" : "#b23a3a" }}>{formatCurrency(pnl.by_so.netProfit)}</span>
+          </div>
+        )}
         {/* Quick edit (finance write) — Total Sales PATCHes
             project_finance.total_sales (mirror desktop saveQuickTotal:9937-9954);
             Rental writes a `rental` cost line (mirror desktop

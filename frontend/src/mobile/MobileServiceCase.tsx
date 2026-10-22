@@ -30,6 +30,8 @@ import {
 } from "../vendor/scm/lib/assr/stages";
 import { ANOTHER_RETURN_HINT, type SupplierReturn } from "../vendor/scm/lib/assr/returns";
 import { MobileFactoryTrips } from "./MobileFactoryTrips";
+import { ITEM_LOCATION_OPTIONS, PICKUP_STATUS_OPTIONS, pickupTrackingOptions, pickupPicSelectOptions, usePickupPicDrivers } from "../components/assr/PickupTrackingFields";
+import { pendingWithOptions } from "../vendor/scm/lib/assr-verification-fields";
 import { MobileReopenControl } from "./MobileReopenControl";
 import { splitCategories } from "../lib/assrProductCategories";
 import { MobileAssrCategoryChips } from "./MobileAssrCategoryChips";
@@ -254,7 +256,6 @@ function useAssignableUsers(): PicUser[] {
   });
   return Array.isArray(data) ? data : [];
 }
-
 
 
 /** Mobile Service Case (ASSR) — Status Cards list + tabbed detail
@@ -726,6 +727,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
      yet", never as a hardcoded taxonomy the admin cannot change. */
   const productCategoryOptions = useLookupNames("product-categories", []);
   const assignableUsers = useAssignableUsers();
+  const pickupPicDrivers = usePickupPicDrivers();
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["mobile-assr-detail", id],
@@ -1041,11 +1043,10 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
                 );
               })}
             </div>
-            <RootCauseField
-              value={get(c, "verifiedRootCause", "verified_root_cause")}
-              busy={busy}
-              onSave={(v) => patchCase({ verified_root_cause: v || null }, "Couldn't save verification")}
-            />
+            <RootCauseField value={get(c, "verifiedRootCause", "verified_root_cause")} busy={busy} onSave={(v) => patchCase({ verified_root_cause: v || null }, "Couldn't save verification")} />
+            <EditRow label="Inspection findings / action taken" type="textarea" value={get(c, "inspectionFindings", "inspection_findings")} busy={busy} disabled={dis} onSave={(v) => patchCase({ inspection_findings: v }, "Couldn't save inspection findings")} />
+            <EditRow label="Next action" type="textarea" value={get(c, "nextAction", "next_action")} busy={busy} disabled={dis} onSave={(v) => patchCase({ next_action: v }, "Couldn't save next action")} />
+            <EditRow label="Pending with" type="select" options={pendingWithOptions()} value={get(c, "pendingWith", "pending_with")} busy={busy} disabled={dis} onSave={(v) => patchCase({ pending_with: v }, "Couldn't save pending with")} />
             {/* QC issue inspection — on receipt (mig 0105: folded in from
                 the retired Pending Inspection stage). The qc_issue_result
                 column exists but ships no UI — Nick 2026-07-14: date +
@@ -1100,8 +1101,11 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
             <LegOwnerToggle label="Pickup by" current={get(c, "pickupBy", "pickup_by")} disabled={dis}
               options={[{ v: "customer", label: "Own team pickup" }, { v: "supplier", label: "Supplier direct" }]}
               onPick={(v) => patchCase({ pickup_by: v }, "Couldn't save pickup-by")} />
-            {/* Folded in from the retired Item Pickup stage (mig 0110). */}
-            <EditRow label="Customer pickup date" type="date" value={get(c, "customerPickupAt", "customer_pickup_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ customer_pickup_at: v }, "Couldn't save pickup date")} />
+            <EditRow label="Pickup status" type="select" options={pickupTrackingOptions(PICKUP_STATUS_OPTIONS)} value={get(c, "pickupStatus", "pickup_status")} busy={busy} disabled={dis} onSave={(v) => patchCase({ pickup_status: v }, "Couldn't save pickup status")} />
+            <EditRow label="Scheduled pickup date (ETA)" type="date" value={get(c, "customerPickupAt", "customer_pickup_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ customer_pickup_at: v }, "Couldn't save pickup date")} />
+            <EditRow label="Actual pickup date" type="date" value={get(c, "actualPickupAt", "actual_pickup_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ actual_pickup_at: v }, "Couldn't save actual pickup date")} />
+            <EditRow label="Pickup PIC" type="select" options={pickupPicSelectOptions(pickupPicDrivers, get(c, "creditorName", "creditor_name") || get(c, "supplier", "supplier"), get(c, "pickupPic", "pickup_pic"))} value={get(c, "pickupPic", "pickup_pic")} busy={busy} disabled={dis} onSave={(v) => patchCase({ pickup_pic: v }, "Couldn't save pickup PIC")} />
+            <EditRow label="Current item location" type="select" options={pickupTrackingOptions(ITEM_LOCATION_OPTIONS)} value={get(c, "itemLocation", "item_location")} busy={busy} disabled={dis} onSave={(v) => patchCase({ item_location: v }, "Couldn't save item location")} />
             {/* 返厂 (owner 2026-09-21) — every factory trip is a row, add as many
                 as needed. The latest row is the current trip; its dates mirror to
                 supplier_pickup_at / items_ready_at for the board + sheet. */}
@@ -3137,7 +3141,7 @@ function MobileItemRemark({ c, it, busy, onChanged, notify, field, placeholder }
 }
 
 // Supplier (creditor) picker — search the local creditors mirror and
-// hand-link a supplier when AutoCount has no MainSupplier, or register
+// hand-link a supplier when the PO / SO gives none, or register
 // a new one. Manual picks set creditor_source='manual' so the
 // auto-resolver won't overwrite them.
 function MobileSupplierPick({ c, onChanged, notify, disabled }: { c: Any; onChanged: () => void; notify: ReturnType<typeof useNotify>; disabled?: boolean }) {
@@ -3145,7 +3149,7 @@ function MobileSupplierPick({ c, onChanged, notify, disabled }: { c: Any; onChan
   const caseId = Number(get(c, "id"));
   const code = get(c, "creditorCode", "creditor_code");
   const name = get(c, "creditorName", "creditor_name");
-  const manual = String(get(c, "creditorSource", "creditor_source") ?? "") === "manual";
+  const source = String(get(c, "creditorSource", "creditor_source") ?? "");
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [results, setResults] = useState<Any[]>([]);
@@ -3223,7 +3227,7 @@ function MobileSupplierPick({ c, onChanged, notify, disabled }: { c: Any; onChan
         <div style={{ display: "flex", alignItems: "center", gap: 9, border: `1px solid ${DIM}`, borderRadius: 10, padding: "10px 11px", marginTop: 5 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12.5, fontWeight: 700, color: INK }}>{String(name ?? code)}</div>
-            <div className="money" style={{ fontSize: 10, color: GREY }}>{String(code)}{manual ? " · manual" : ""}</div>
+            <div className="money" style={{ fontSize: 10, color: GREY }}>{String(code)}{source === "manual" ? " · manual" : source === "po" ? " · from PO" : source === "so" ? " · from SO" : ""}</div>
           </div>
         </div>
       ) : (

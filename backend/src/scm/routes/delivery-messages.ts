@@ -20,7 +20,7 @@
 // the same area as the board itself.
 // ---------------------------------------------------------------------------
 
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import type { Env, Variables } from '../env';
 import { activeCompanyId, scopeToAllowedCompanies } from '../lib/companyScope';
@@ -78,28 +78,28 @@ const sendSchema = z.object({
   }).optional(),
 });
 
-/* ── POST /send — one Houzs Connect call per customer phone ────────────────── */
-deliveryMessages.post('/send', async (c) => {
-  if (!isConnectConfigured(c.env)) {
-    return c.json({
-      error: 'not_configured',
-      reason: 'Houzs Connect is not configured yet — set the CONNECT_WEBHOOK_URL and CONNECT_WEBHOOK_KEY secrets to enable sending.',
-    }, 503);
-  }
+/* The result of a delivery-message send. POST /send maps readError to a 500; a
+   best-effort caller (the DELIVERED → "Delivery Completed" hook) treats it as
+   "nothing sent" and does not claim its once-guard. */
+export interface SendDeliveryMessagesResult {
+  sent: Array<{ phone: string; docNos: string[]; httpCode: number }>;
+  failed: Array<{ phone: string; docNos: string[]; error: string }>;
+  skipped: Array<{ docNo: string; reason: string }>;
+  readError?: { code: string; reason: string };
+}
 
-  let body: unknown;
-  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
-  const parsed = sendSchema.safeParse(body);
-  if (!parsed.success) return c.json({ error: 'invalid_body', reason: parsed.error.message }, 400);
-  const docNos = [...new Set(parsed.data.docNos)];
-  const kind = parsed.data.kind;
-  const extras: SendExtras = { driverInfo: parsed.data.driverInfo };
-  if (kind === 'driver_info' && !extras.driverInfo) {
-    return c.json({ error: 'invalid_body', reason: 'Driver Info needs the driver, contact, plate and time.' }, 400);
-  }
-  // Postpone needs no request field: it reads the row's Amend Reason + Delivery
-  // Date (kindAttributes), and skips any order missing either.
-
+/* The shared sender — group the docs by customer phone, load the per-company
+   profile + live balances, POST one Connect event per phone and log each. POST
+   /send and the DELIVERED hook both call this, so the auto "Delivery Completed"
+   message goes through the SAME path (one message per customer, same
+   wa_message_log shape) instead of a second copy of the sender. The caller MUST
+   have checked isConnectConfigured first (postConnectContact's contract). */
+export async function sendDeliveryMessageForDocs(
+  c: Context<{ Bindings: Env; Variables: Variables }>,
+  docNos: string[],
+  kind: (typeof MESSAGE_KINDS)[number],
+  extras: SendExtras,
+): Promise<SendDeliveryMessagesResult> {
   const sb = c.get('supabase');
   const user = c.get('user') as { id?: string } | null;
 
@@ -111,7 +111,7 @@ deliveryMessages.post('/send', async (c) => {
       .in('doc_no', docNos),
     c,
   );
-  if (readErr) return c.json({ error: 'load_failed', reason: readErr.message }, 500);
+  if (readErr) return { sent: [], failed: [], skipped: [], readError: { code: 'load_failed', reason: readErr.message } };
   const rows = (rowsRaw ?? []) as Array<Record<string, unknown>>;
 
   const byDoc = new Map(rows.map((r) => [String(r.doc_no), r]));
@@ -141,7 +141,7 @@ deliveryMessages.post('/send', async (c) => {
   // A FAILED read is not "no profile": sending without it would hand the
   // customer a balance paragraph with no bank details and no signature, and
   // the staff would never know. Refuse; nothing has been sent yet.
-  if (profileErr) return c.json({ error: 'profile_load_failed', reason: profileErr.message }, 500);
+  if (profileErr) return { sent, failed, skipped, readError: { code: 'profile_load_failed', reason: profileErr.message } };
   const companyProfile: ConnectCompanyProfile | null =
     parseConnectCompanyProfiles((profileRow as { value?: string | null } | null)?.value ?? null)[
       String(activeCompanyId(c) ?? '')
@@ -160,7 +160,7 @@ deliveryMessages.post('/send', async (c) => {
       .in('doc_no', docNos),
     c,
   );
-  if (balErr) return c.json({ error: 'balance_load_failed', reason: balErr.message }, 500);
+  if (balErr) return { sent, failed, skipped, readError: { code: 'balance_load_failed', reason: balErr.message } };
   const balanceByDoc = new Map<string, number>();
   for (const b of (balRaw ?? []) as Array<{ doc_no: string | null; balance_sen_live: number | null }>) {
     if (b.doc_no != null && b.balance_sen_live != null) balanceByDoc.set(String(b.doc_no), Number(b.balance_sen_live));
@@ -232,7 +232,32 @@ deliveryMessages.post('/send', async (c) => {
     else failed.push({ phone, docNos: groupDocs, error: result.error ?? 'send failed' });
   }
 
-  return c.json({ sent, failed, skipped });
+  return { sent, failed, skipped };
+}
+
+/* ── POST /send — one Houzs Connect call per customer phone ────────────────── */
+deliveryMessages.post('/send', async (c) => {
+  if (!isConnectConfigured(c.env)) {
+    return c.json({
+      error: 'not_configured',
+      reason: 'Houzs Connect is not configured yet — set the CONNECT_WEBHOOK_URL and CONNECT_WEBHOOK_KEY secrets to enable sending.',
+    }, 503);
+  }
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const parsed = sendSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: 'invalid_body', reason: parsed.error.message }, 400);
+  const docNos = [...new Set(parsed.data.docNos)];
+  const kind = parsed.data.kind;
+  const extras: SendExtras = { driverInfo: parsed.data.driverInfo };
+  if (kind === 'driver_info' && !extras.driverInfo) {
+    return c.json({ error: 'invalid_body', reason: 'Driver Info needs the driver, contact, plate and time.' }, 400);
+  }
+  // Postpone needs no request field: it reads the row's Amend Reason + Delivery
+  // Date (kindAttributes), and skips any order missing either.
+  const result = await sendDeliveryMessageForDocs(c, docNos, kind, extras);
+  if (result.readError) return c.json({ error: result.readError.code, reason: result.readError.reason }, 500);
+  return c.json({ sent: result.sent, failed: result.failed, skipped: result.skipped });
 });
 
 /* ── POST /statuses — latest send status per doc (board "Message" column) ──── */

@@ -453,10 +453,6 @@
       "reads": 0,
       "catches": 1
     },
-    "backend/src/services/stockItems.ts": {
-      "reads": 0,
-      "catches": 1
-    },
     "backend/src/services/supplierPortal.ts": {
       "reads": 0,
       "catches": 1

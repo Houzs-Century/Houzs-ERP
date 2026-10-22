@@ -5,15 +5,20 @@
  * under Sales Attending comes from the same read (lib/projectSalesBills.ts).
  * The report is the chat: a message counts when posted and stops counting when
  * voided (components/projectChatSalesReport.tsx), so there is nothing to edit
- * here.
+ * here — except where an order sits (owner 2026-10-20): a bill whose order is
+ * under another event, or none, can be transferred HERE — ticked, or all at
+ * one click — moving its Fair, Venue and Fair Day (Finance or PMS).
  *
  * Own module: Projects.tsx is at its file-size ceiling.
  */
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { markWorkspaceOpenIntent } from "../../lib/workspaceTabs";
 import type { QueryState } from "../../hooks/useQuery";
 import { cn, formatDate } from "../../lib/utils";
-import { billStatusLabel, billsNeedingAction, fmtRmSen, type ProjectSalesBillsResponse } from "../../lib/projectSalesBills";
+import { billStatusLabel, billsNeedingAction, billsToTransfer, fmtRmSen, type ProjectSalesBillsResponse } from "../../lib/projectSalesBills";
+import { transferSummary, useFairTransfer } from "../../vendor/scm/lib/fair-options-queries";
+import { announceProjectSalesChanged, useOnProjectSalesChanged } from "./projectSalesEvents";
 
 const TONE: Record<"red" | "green" | "amber" | "grey", string> = {
   red: "bg-err/10 text-err",
@@ -53,6 +58,31 @@ export function ProjectSalesBillsBlock({
   const bills = billsNeedingAction(data?.bills ?? []);
   const totals = data?.totals;
   const summary = data?.summary ?? null;
+  /* Orders the report puts here but that sit under another event or none. */
+  const here = data?.project_id ?? null;
+  const movable = data?.can_transfer && here != null ? billsToTransfer(bills) : [];
+  const transfer = useFairTransfer();
+  const [ticked, setTicked] = useState<ReadonlySet<string>>(new Set());
+  const [moved, setMoved] = useState<string | null>(null);
+  const tickedDocs = movable.map((b) => b.match.so_doc_no as string).filter((d) => ticked.has(d));
+  const allTicked = movable.length > 0 && tickedDocs.length === movable.length;
+  useOnProjectSalesChanged(query.reload);
+  function moveHere(docs: readonly string[]) {
+    if (here == null || docs.length === 0) return;
+    setMoved(null);
+    transfer.mutate(docs.map((docNo) => ({ docNo, projectId: here })), {
+      onSuccess: (res) => {
+        setMoved(transferSummary(res.results));
+        setTicked(new Set());
+        announceProjectSalesChanged();
+      },
+    });
+  }
+  const toggle = (doc: string) => setTicked((s) => {
+    const next = new Set(s);
+    if (next.has(doc)) next.delete(doc); else next.add(doc);
+    return next;
+  });
   /* The summary's Total line is the event's Total Sales (owner 2026-10-14:
      "this format mention total sales so fill up by this total"). An EMPTY
      Total Sales (none, or 0) is filled from the latest summary in the chat the
@@ -136,6 +166,31 @@ export function ProjectSalesBillsBlock({
         </div>
       )}
 
+      {movable.length > 0 && (
+        <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[10.5px]">
+          <span className="text-ink-muted">
+            {movable.length} order{movable.length === 1 ? "" : "s"} in this report sit{movable.length === 1 ? "s" : ""} under another event or none.
+          </span>
+          <button
+            onClick={() => moveHere(tickedDocs)}
+            disabled={transfer.isPending || tickedDocs.length === 0}
+            className="rounded-md border border-amber-500/50 bg-amber-50 px-2 py-0.5 font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+            title="Move the ticked orders to this event: their Fair, Venue and Fair Day change, and History records it"
+          >
+            Transfer ticked here ({tickedDocs.length})
+          </button>
+          <button
+            onClick={() => moveHere(movable.map((b) => b.match.so_doc_no as string))}
+            disabled={transfer.isPending}
+            className="rounded-md border border-amber-600/60 bg-amber-100 px-2 py-0.5 font-semibold text-amber-900 hover:bg-amber-200 disabled:opacity-50"
+            title="Move every order below that sits under another event or none to this event"
+          >
+            {transfer.isPending ? "Transferring…" : `Transfer all here (${movable.length})`}
+          </button>
+          {moved && <span role="status" className="font-semibold text-ink">{moved}</span>}
+        </div>
+      )}
+
       {bills.length > 0 && (
         <div className="overflow-x-auto rounded-md border border-border bg-surface">
           <table className="w-full min-w-[640px]">
@@ -146,11 +201,23 @@ export function ProjectSalesBillsBlock({
                 <th className="px-2 py-1.5 text-right">Amount</th>
                 <th className="px-2 py-1.5">Sales Person</th>
                 <th className="px-2 py-1.5">Status</th>
+                {movable.length > 0 && (
+                  <th className="px-2 py-1.5 text-center">
+                    <input
+                      type="checkbox"
+                      aria-label="Tick every order to transfer here"
+                      checked={allTicked}
+                      disabled={transfer.isPending}
+                      onChange={() => setTicked(allTicked ? new Set() : new Set(movable.map((b) => b.match.so_doc_no as string)))}
+                    />
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
               {bills.map((b) => {
                 const st = billStatusLabel(b.match);
+                const canMove = movable.includes(b);
                 return (
                   <tr key={b.key} className="border-t border-border-subtle text-[11.5px] hover:bg-bg/40">
                     <td className="px-2 py-1.5 font-mono text-ink-secondary">{b.report_date ? formatDate(b.report_date) : "—"}</td>
@@ -171,6 +238,11 @@ export function ProjectSalesBillsBlock({
                       {b.match.so_doc_no && (
                         <Link
                           to={`/scm/sales-orders/${encodeURIComponent(b.match.so_doc_no)}`}
+                          // Peter 2026-10-15: open the SO in its OWN workspace tab
+                          // so the project it was clicked from stays open (owner's
+                          // openDocInTab convention). Plain left-click only —
+                          // ctrl/cmd/shift/middle still open a real browser tab.
+                          onClick={(e) => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey) markWorkspaceOpenIntent(true); }}
                           className="ml-1.5 font-mono text-[10.5px] font-semibold text-accent underline underline-offset-2 hover:text-accent/80"
                           title="Open this sales order"
                         >
@@ -181,6 +253,19 @@ export function ProjectSalesBillsBlock({
                         <span className="ml-1.5 text-[10px] text-amber-800">under {b.other_event_name}</span>
                       )}
                     </td>
+                    {movable.length > 0 && (
+                      <td className="px-2 py-1.5 text-center">
+                        {canMove && (
+                          <input
+                            type="checkbox"
+                            aria-label={`Tick ${b.match.so_doc_no ?? ""} to transfer here`}
+                            checked={ticked.has(b.match.so_doc_no as string)}
+                            disabled={transfer.isPending}
+                            onChange={() => toggle(b.match.so_doc_no as string)}
+                          />
+                        )}
+                      </td>
+                    )}
                   </tr>
                 );
               })}

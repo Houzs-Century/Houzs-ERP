@@ -42,7 +42,6 @@ import { FilterPills } from "../components/FilterPills";
 import { ProjectMaintenanceView } from "./ProjectMaintenance";
 import { TabStrip } from "../components/TabStrip";
 import { toCSV, downloadCSV } from "../lib/csv";
-import { PnlCalendar } from "../components/PnlCalendar";
 import { DataTable, type Column } from "../components/DataTable";
 import { ListErrorPanel, SearchPendingPanel } from "../components/SearchProgress";
 import { StatusDot } from "../components/StatusDot";
@@ -114,6 +113,7 @@ import type {
   StockTransfer,
   FinanceLine,
   FinanceBooks,
+  EventPnl,
   ProjectAttachment,
   ProjectDefect,
   ProjectTrip,
@@ -124,6 +124,8 @@ import type {
 } from "./projects/types";
 import { composeDefaultProjectName, viewableMime, googleCalendarUrl } from "./projects/projectHelpers";
 import { itemComplete } from "./projects/checklistDone";
+import { PROJECT_STAGES, projectStage, setupArrangedOf } from "./projects/projectStage";
+import { todayMY } from "../vendor/shared/format";
 import { salesOrderProjectLabel, shownProjectName, shownOrganizer, isSoloMasked, maskSoloOrganizer, SOLO_ORGANIZER_MASK, type SoloMaskProject } from "./projects/soloOrganizerMask";
 import { SoloSafeName, useCanSeeSoloOrganizer } from "./projects/SoloSafeName";
 import { STATUS_OPTIONS, ProjectStatusSelect } from "./projects/projectStatus";
@@ -141,22 +143,9 @@ import { SPEC_INPUT_CLASS, QuickRentalField, SpecTextField, SpecCell, SpecValue 
 import { LogisticsDateTimeField, GrabHelperBox, type CrewMember } from "./projects/logisticsParts";
 import { type PhasePhoto, PhasePhotosSection, PhotoGroup } from "./projects/phasePhotos";
 import { FinanceAttachmentsSection, SnapshotKpi, SnapshotRow } from "./projects/financeLedgerParts";
-import {
-  type ProfitabilityBreakdown,
-  type ProfitabilityGroupBy,
-  type ProfitabilityFilters,
-  type ProfitabilityDrillState,
-  type ProfitabilityMonthsResponse,
-  type ProfitabilityProjectsResponse,
-  type ProfitabilityResponse,
-  type FinanceTab,
-  FINANCE_TABS,
-  FINANCE_TAB_HEADER,
-  PROJECTS_FINANCES_TAB_KEYS,
-  type FinanceProjectRow,
-  type FinanceByProjectResponse,
-  FINANCE_STAGE_OPTIONS,
-} from "./projects/financeViewModel";
+import { EventPnlTable } from "./projects/EventPnlTable";
+import { ProjectOverviewPage } from "./projects/ProjectOverviewPage";
+import { projectBackTo, rememberBackTo } from "./projects/projectOverviewView";
 
 interface ProjectDetail {
   project: ProjectRow & {
@@ -263,6 +252,8 @@ interface ProjectDetail {
   finance_lines: FinanceLine[];
   /** The books on the event (payment-request item 5); null when finance is hidden. */
   finance_books?: FinanceBooks | null;
+  /** The two P&Ls (owner 2026-10-16) — services/eventPnl.ts; null on an older server. */
+  finance_pnl?: EventPnl | null;
   stock_transfers: StockTransfer[];
   checklist: ChecklistItem[];
   checklist_comments: ChecklistComment[];
@@ -436,8 +427,10 @@ export function Projects() {
   const canProjectMaintenance = access.maintenance === "full";
   const allowed: ProjectsView[] = PROJECTS_VIEWS.filter(
     (v) =>
-      access[v as keyof typeof access] !== "none" &&
-      (v !== "finances" || canProjectFinance) &&
+      /* Project Overview: every finance viewer (directors, and the
+         projects.finance.view grant), with or without the page-access row
+         (owner 2026-10-20: open it to the directors). */
+      (v === "finances" ? canProjectFinance : access[v as keyof typeof access] !== "none") &&
       (v !== "maintenance" || canProjectMaintenance)
   );
   const firstAllowed: ProjectsView | null = allowed[0] ?? null;
@@ -485,7 +478,7 @@ export function Projects() {
       [
         { key: "list", label: "Project List", description: "All projects — status, brand, dates, PIC, budget.", icon: ClipboardList, v: "list" },
         { key: "calendar", label: "Calendar", description: "Projects & tasks on a month timeline.", icon: Calendar, v: "calendar" },
-        { key: "finances", label: "Finances", description: "Revenue, spend and margin across projects.", icon: DollarSign, v: "finances" },
+        { key: "finances", label: "Project Overview", description: "Sales, COGS, GP and NP across projects.", icon: DollarSign, v: "finances" },
         { key: "maintenance", label: "Project Maintenance", description: "Templates, checklists and defaults.", icon: Wrench, v: "maintenance" },
       ] as const
     ).filter(
@@ -741,6 +734,8 @@ function ProjectsListView() {
     try {
       sessionStorage.setItem("projects:listScroll", String(document.querySelector("main")?.scrollTop ?? 0));
     } catch {}
+    /* And where this project's Back goes: this list, its filters and page with it. */
+    rememberBackTo(id, `${window.location.pathname}${window.location.search}`);
     navigate(`/projects/${id}`);
   };
   const hasRows = !!list.data;
@@ -1743,49 +1738,13 @@ function ProjectsListView() {
 }
 
 function ProjectsFinancesView() {
-  const [params, setParams] = useStickyFilters(
-    "projects-finances-tab",
-    PROJECTS_FINANCES_TAB_KEYS
-  );
-  const rawTab = params.get("tab") as FinanceTab | null;
-  const tab: FinanceTab =
-    rawTab && FINANCE_TABS.includes(rawTab) ? rawTab : "list";
-  function setTab(next: FinanceTab) {
-    const p = new URLSearchParams(params);
-    if (next === "list") p.delete("tab");
-    else p.set("tab", next);
-    setParams(p, { replace: true });
-  }
-
+  // One page (owner 2026-10-17): the Finance lines live on each project and the
+  // P&L by month / quarter / year is the trend on Project Overview.
   return (
     <div>
-      {/* TabStrip above PageHeader — matches Orders / PurchaseOrders /
-          Settings (the tabbed-module convention: tab bar is the top
-          chrome, per-tab title sits beneath the active tab). */}
-      <TabStrip<FinanceTab>
-        value={tab}
-        onChange={setTab}
-        options={[
-          { value: "list", label: "List" },
-          { value: "analytics", label: "Analytics" },
-          { value: "pnl", label: "P&L" },
-        ]}
-      />
-      <PageHeader
-        eyebrow="Operations · Projects · Finances"
-        title={FINANCE_TAB_HEADER[tab].title}
-        description={FINANCE_TAB_HEADER[tab].description}
-      />
-
-      {tab === "list" && <FinanceListView />}
-      {tab === "analytics" && <ProjectsAnalyticsView />}
-      {tab === "pnl" && (
-        <PnlCalendar
-          scope="projects"
-          title="Project Cost — Monthly"
-          subtitle="Total project cost (COGS + other cost lines) across all projects, grouped by month."
-        />
-      )}
+      <PageHeader eyebrow="Operations · Projects · Project Overview" title="Project Overview"
+        description="Sales, costs and profit of every event in the period — from the keyed books, or from the Sales Orders until an event is settled." />
+      <ProjectOverviewPage />
     </div>
   );
 }
@@ -1802,557 +1761,6 @@ const FINANCE_LIST_FILTER_KEYS = [
   "page",
 ] as const;
 
-function FinanceListView() {
-  const navigate = useNavigate();
-  const { user } = useAuth();
-  // The parent (ProjectsFinancesView) only mounts this view when the viewer
-  // has the DIRECTOR-level finance flag, but guard the denyFinance-protected
-  // fetch with `enabled` too so a future refactor can never let it fire (and
-  // 403) for a non-viewer. Fail-open when the flag is absent — backend enforces.
-  const canProjectFinance = !!user?.project_finance_viewer;
-  const thisYear = new Date().getFullYear();
-  const defaultFrom = `${thisYear}-01-01`;
-  const defaultTo = `${thisYear}-12-31`;
-  const [params, setParams] = useStickyFilters(
-    "projects-finance",
-    FINANCE_LIST_FILTER_KEYS
-  );
-  const dateFrom = params.get("date_from") || defaultFrom;
-  const dateTo = params.get("date_to") || defaultTo;
-  const brand = params.get("brand") || "";
-  const stage = params.get("stage") || "";
-  const search = params.get("search") || "";
-  const includeArchived = params.get("include_archived") === "1";
-  const page = Math.max(1, parseInt(params.get("page") || "1", 10) || 1);
-  function patchParams(patch: Record<string, string>) {
-    const next = new URLSearchParams(params);
-    for (const [k, v] of Object.entries(patch)) {
-      if (
-        v === "" ||
-        (k === "page" && v === "1") ||
-        (k === "include_archived" && v === "0") ||
-        (k === "date_from" && v === defaultFrom) ||
-        (k === "date_to" && v === defaultTo)
-      ) {
-        next.delete(k);
-      } else next.set(k, v);
-    }
-    setParams(next, { replace: true });
-  }
-  const setDateFrom = (v: string) => patchParams({ date_from: v, page: "1" });
-  const setDateTo = (v: string) => patchParams({ date_to: v, page: "1" });
-  const setBrand = (v: string) => patchParams({ brand: v, page: "1" });
-  const setStage = (v: string) => patchParams({ stage: v, page: "1" });
-  const setSearch = (v: string) => patchParams({ search: v, page: "1" });
-  const setIncludeArchived = (v: boolean) =>
-    patchParams({ include_archived: v ? "1" : "0", page: "1" });
-  const setPage = (n: number) => patchParams({ page: String(n) });
-
-  const [perPage, setPerPage] = useIdentityPreference(
-    "pp:project-finance-by-project",
-    50,
-    pageSizePreference([10, 25, 50, 100, 200]),
-  );
-  const { sort, sortParams, handleSortChange } = useServerSort(() =>
-    setPage(1)
-  );
-
-  const brandsQ = useQuery<{ data: string[] }>("/api/projects/brands", () =>
-    api.get("/api/projects/brands")
-  );
-
-  const list = useQuery<FinanceByProjectResponse>("/api/projects/finance/by-project",
-    (signal) =>
-      api.get(
-        `/api/projects/finance/by-project${buildQuery({
-          date_from: dateFrom || undefined,
-          date_to: dateTo || undefined,
-          brand: brand || undefined,
-          stage: stage || undefined,
-          search: search || undefined,
-          include_archived: includeArchived ? "1" : undefined,
-          page,
-          per_page: perPage,
-          ...sortParams,
-        })}`,
-        { signal },
-      ),
-    [dateFrom, dateTo, brand, stage, search, includeArchived, page, perPage, sort?.key, sort?.dir],
-    // Paginated + filter-switched list: keep the current rows on screen while
-    // the next page/filter loads instead of flashing an empty table.
-    { keepPreviousData: true, enabled: canProjectFinance }
-  );
-  const searchTransition = useSearchResultTransition({
-    inputTerm: search,
-    requestTerm: search,
-    isFetching: list.fetching,
-    isPlaceholderData: list.placeholder,
-    hasData: list.data !== null,
-    hasError: Boolean(list.error),
-  });
-
-  const columns: Column<FinanceProjectRow>[] = [
-    {
-      key: "project",
-      label: "Project",
-      alwaysVisible: true,
-      render: (r) => (
-        <div>
-          <div className="truncate text-[12px] font-semibold text-ink">
-            <SoloSafeName p={r} />
-          </div>
-          {r.venue && (
-            <div className="truncate text-[10.5px] text-ink-muted">
-              {r.venue}
-              {shownOrganizer(r, canSeeSoloOrganizer(user)) ? ` · ${shownOrganizer(r, canSeeSoloOrganizer(user))}` : ""}
-            </div>
-          )}
-        </div>
-      ),
-      getValue: (r) => r.code,
-    },
-    {
-      key: "brand",
-      label: "Brand",
-      render: (r) =>
-        r.brand ? (
-          <span className="rounded-full bg-accent/10 px-2 py-0.5 font-mono text-[9.5px] font-bold uppercase tracking-wider text-accent">
-            {r.brand}
-          </span>
-        ) : (
-          <span className="text-ink-muted">—</span>
-        ),
-      getValue: (r) => r.brand ?? "",
-    },
-    {
-      key: "stage",
-      label: "Stage",
-      render: (r) => (
-        <span className="font-mono text-[10.5px] uppercase tracking-wider text-ink-secondary">
-          {r.stage}
-        </span>
-      ),
-      getValue: (r) => r.stage,
-    },
-    {
-      key: "start",
-      label: "Dates",
-      render: (r) => (
-        <div className="text-[11px] text-ink-secondary">
-          <div>{formatDate(r.start_date)}</div>
-          {r.end_date && (
-            <div className="text-ink-muted">to {formatDate(r.end_date)}</div>
-          )}
-        </div>
-      ),
-      getValue: (r) => r.start_date,
-    },
-    {
-      key: "sales",
-      label: "Sales",
-      align: "right",
-      alwaysVisible: true,
-      render: (r) => (
-        <span className="font-mono text-[12px] font-semibold text-synced">
-          {formatCurrency(r.sales)}
-        </span>
-      ),
-      getValue: (r) => r.sales,
-    },
-    {
-      key: "sales_per_day",
-      label: "Revenue / day",
-      align: "right",
-      defaultHidden: true,
-      render: (r) =>
-        r.sales_per_day == null ? (
-          <span className="text-ink-muted">—</span>
-        ) : (
-          <span className="font-mono text-[12px] text-ink-secondary">
-            {formatCurrency(r.sales_per_day)}
-          </span>
-        ),
-      getValue: (r) => r.sales_per_day ?? -1,
-    },
-    {
-      key: "cogs",
-      label: "COGS",
-      align: "right",
-      alwaysVisible: true,
-      render: (r) => (
-        <span className="font-mono text-[12px] text-ink-secondary">
-          {formatCurrency(r.cogs)}
-        </span>
-      ),
-      getValue: (r) => r.cogs,
-    },
-    {
-      key: "gp_pct",
-      label: "GP %",
-      align: "right",
-      alwaysVisible: true,
-      render: (r) =>
-        r.gp_pct == null ? (
-          <span className="text-ink-muted">—</span>
-        ) : (
-          <span
-            className={cn(
-              "font-mono text-[12px] font-semibold",
-              r.gp_pct >= 0 ? "text-synced" : "text-err"
-            )}
-          >
-            {r.gp_pct.toFixed(1)}%
-          </span>
-        ),
-      getValue: (r) => r.gp_pct ?? -9999,
-    },
-    {
-      key: "rental",
-      label: "Rental",
-      align: "right",
-      alwaysVisible: true,
-      render: (r) => (
-        <span className="font-mono text-[12px] text-ink-secondary">
-          {formatCurrency(r.rental)}
-        </span>
-      ),
-      getValue: (r) => r.rental,
-    },
-    {
-      key: "rent_per_sqm",
-      label: "Rent / sqm",
-      align: "right",
-      defaultHidden: true,
-      render: (r) =>
-        r.rent_per_sqm == null ? (
-          <span className="text-ink-muted">—</span>
-        ) : (
-          <span className="font-mono text-[12px] text-ink-secondary">
-            {formatCurrency(r.rent_per_sqm)}
-          </span>
-        ),
-      getValue: (r) => r.rent_per_sqm ?? -1,
-    },
-    {
-      key: "setup",
-      label: "Setup",
-      align: "right",
-      defaultHidden: true,
-      render: (r) => (
-        <span className="font-mono text-[12px] text-ink-secondary">
-          {formatCurrency(r.setup_cost)}
-        </span>
-      ),
-      getValue: (r) => r.setup_cost,
-    },
-    {
-      key: "transport",
-      label: "Transport",
-      align: "right",
-      defaultHidden: true,
-      render: (r) => (
-        <span className="font-mono text-[12px] text-ink-secondary">
-          {formatCurrency(r.transport_cost)}
-        </span>
-      ),
-      getValue: (r) => r.transport_cost,
-    },
-    {
-      key: "commission",
-      label: "Commission",
-      align: "right",
-      defaultHidden: true,
-      render: (r) => (
-        <span className="font-mono text-[12px] text-ink-secondary">
-          {formatCurrency(r.commission_cost)}
-        </span>
-      ),
-      getValue: (r) => r.commission_cost,
-    },
-    {
-      key: "merchandise",
-      label: "Merchandise",
-      align: "right",
-      defaultHidden: true,
-      render: (r) => (
-        <span className="font-mono text-[12px] text-ink-secondary">
-          {formatCurrency(r.merchandise_cost)}
-        </span>
-      ),
-      getValue: (r) => r.merchandise_cost,
-    },
-    {
-      key: "others",
-      label: "Others",
-      align: "right",
-      defaultHidden: true,
-      render: (r) => (
-        <span className="font-mono text-[12px] text-ink-secondary">
-          {formatCurrency(r.others_cost)}
-        </span>
-      ),
-      getValue: (r) => r.others_cost,
-    },
-    {
-      key: "total_cost",
-      label: "Total cost",
-      align: "right",
-      alwaysVisible: true,
-      render: (r) => (
-        <span className="font-mono text-[12px] font-semibold text-err">
-          {formatCurrency(r.cost)}
-        </span>
-      ),
-      getValue: (r) => r.cost,
-    },
-    {
-      key: "net_profit",
-      label: "Net profit",
-      align: "right",
-      alwaysVisible: true,
-      render: (r) => (
-        <span
-          className={cn(
-            "font-mono text-[12.5px] font-bold",
-            r.net_profit >= 0 ? "text-synced" : "text-err"
-          )}
-        >
-          {formatCurrency(r.net_profit)}
-        </span>
-      ),
-      getValue: (r) => r.net_profit,
-    },
-    {
-      key: "income",
-      label: "Revenue (all)",
-      align: "right",
-      defaultHidden: true,
-      render: (r) => (
-        <span className="font-mono text-[12px] text-ink-secondary">
-          {formatCurrency(r.income)}
-        </span>
-      ),
-      getValue: (r) => r.income,
-    },
-    {
-      key: "net",
-      label: "Net (income−cost)",
-      align: "right",
-      defaultHidden: true,
-      render: (r) => (
-        <span
-          className={cn(
-            "font-mono text-[12px]",
-            r.net >= 0 ? "text-synced" : "text-err",
-          )}
-        >
-          {formatCurrency(r.net)}
-        </span>
-      ),
-      getValue: (r) => r.net,
-    },
-    {
-      key: "margin_pct",
-      label: "Margin %",
-      align: "right",
-      defaultHidden: true,
-      render: (r) =>
-        r.margin_pct == null ? (
-          <span className="text-ink-muted">—</span>
-        ) : (
-          <span
-            className={cn(
-              "font-mono text-[12px]",
-              r.margin_pct >= 0 ? "text-synced" : "text-err"
-            )}
-          >
-            {r.margin_pct.toFixed(1)}%
-          </span>
-        ),
-      getValue: (r) => r.margin_pct ?? -9999,
-    },
-    {
-      key: "lines",
-      label: "Lines",
-      align: "right",
-      render: (r) => (
-        <span className="font-mono text-[11px] text-ink-muted">
-          {r.line_count.toLocaleString()}
-        </span>
-      ),
-      getValue: (r) => r.line_count,
-    },
-  ];
-
-  const totals = list.data?.totals;
-
-  return (
-    <div>
-      {totals && (
-        <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-5">
-          <StatCard
-            label="Sales"
-            value={formatCurrency(totals.sales)}
-            subtitle="Filtered total"
-            tone="success"
-          />
-          <StatCard
-            label="COGS"
-            value={formatCurrency(totals.cogs)}
-            subtitle="Cost of goods sold"
-          />
-          <StatCard
-            label="Rental"
-            value={formatCurrency(totals.rental)}
-            subtitle="Total rent paid"
-          />
-          <StatCard
-            label="Total cost"
-            value={formatCurrency(totals.cost)}
-            subtitle="All cost categories"
-            tone="error"
-          />
-          <StatCard
-            label="Net profit"
-            value={formatCurrency(totals.net_profit)}
-            subtitle={totals.net_profit >= 0 ? "Surplus" : "Deficit"}
-            tone={totals.net_profit >= 0 ? "success" : "error"}
-          />
-        </div>
-      )}
-
-      {/* Filters */}
-      <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-6">
-        <FilterField label="From">
-          <DateField
-            fullWidth
-            value={dateFrom}
-            onChange={(iso) => setDateFrom(iso)}
-            className="h-8 w-full rounded-md border border-border bg-surface px-2 text-[11px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
-          />
-        </FilterField>
-        <FilterField label="To">
-          <DateField
-            fullWidth
-            value={dateTo}
-            onChange={(iso) => setDateTo(iso)}
-            className="h-8 w-full rounded-md border border-border bg-surface px-2 text-[11px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
-          />
-        </FilterField>
-        <FilterField label="Brand">
-          <span className="relative inline-flex">
-          <select
-              value={brand}
-              onChange={(e) => setBrand(e.target.value)}
-              className="h-8 w-full rounded-md border border-border bg-surface px-2 text-[11px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
-            >
-              <option value="">All</option>
-              {(brandsQ.data?.data ?? []).map((b) => (
-                <option key={b} value={b}>
-                  {b}
-                </option>
-              ))}
-            </select>
-            <ChevronDown size={12} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-ink-muted" />
-          </span>
-        </FilterField>
-        <FilterField label="Stage">
-          <select
-            value={stage}
-            onChange={(e) => setStage(e.target.value)}
-            className="h-8 w-full rounded-md border border-border bg-surface px-2 text-[11px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
-          >
-            <option value="">All</option>
-            {FINANCE_STAGE_OPTIONS.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-        </FilterField>
-        <FilterField label="Per page">
-          <select
-            value={perPage}
-            onChange={(e) => {
-              setPerPage(parseInt(e.target.value, 10));
-              setPage(1);
-            }}
-            className="h-8 w-full rounded-md border border-border bg-surface px-2 text-[11px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
-          >
-            <option value={25}>25</option>
-            <option value={50}>50</option>
-            <option value={100}>100</option>
-            <option value={200}>200</option>
-          </select>
-        </FilterField>
-        <FilterField label="Archived">
-          <label className="flex h-8 items-center gap-2 rounded-md border border-border bg-surface px-2 text-[11px]">
-            <input
-              type="checkbox"
-              checked={includeArchived}
-              onChange={(e) => setIncludeArchived(e.target.checked)}
-              className="accent-accent"
-            />
-            Include archived
-          </label>
-        </FilterField>
-      </div>
-
-      <DataTable
-        tableId="project-finance-by-project"
-        exportName="project-finance-by-project"
-        search={{
-          value: search,
-          onChange: (v) => setSearch(v),
-          placeholder: "Search project code, name, venue, organizer…",
-          searching: searchTransition.isSearching,
-          countPending: list.loading || list.placeholder || Boolean(list.error) || searchTransition.resultsAreStale,
-          scope: "server",
-          totalRecords: list.data?.total,
-        }}
-        resetFilters={{
-          active: !!(
-            search ||
-            brand ||
-            stage ||
-            includeArchived ||
-            dateFrom !== defaultFrom ||
-            dateTo !== defaultTo
-          ),
-          onReset: () => {
-            const next = new URLSearchParams(params);
-            ["search", "brand", "stage", "date_from", "date_to", "include_archived", "page"].forEach(
-              (k) => next.delete(k)
-            );
-            setParams(next, { replace: true });
-          },
-        }}
-        columns={columns}
-        rows={list.data?.data ?? null}
-        loading={list.loading || searchTransition.isSearching}
-        error={list.error}
-        emptyLabel="No projects match these filters"
-        getRowKey={(r) => r.id}
-        onRowClick={(r) => navigate(`/projects/${r.id}`)}
-        serverSort
-        onSortChange={handleSortChange}
-      />
-
-      {list.data && !searchTransition.resultsAreStale && (
-        <Pagination
-          page={page}
-          perPage={perPage}
-          total={list.data.total}
-          onPageChange={setPage}
-          onPerPageChange={(n) => {
-            setPerPage(n);
-            setPage(1);
-          }}
-        />
-      )}
-    </div>
-  );
-}
 
 function FilterField({
   label,
@@ -2371,904 +1779,21 @@ function FilterField({
   );
 }
 
-function ProjectsAnalyticsView() {
-  // Date range default: current year. User can clear or change.
-  const thisYear = new Date().getFullYear();
-  const navigate = useNavigate();
-  const { user } = useAuth();
-  // Belt-and-suspenders finance gate (see FinanceListView): the profitability
-  // fetch is denyFinance-guarded server-side; never fire it for a non-viewer.
-  const canProjectFinance = !!user?.project_finance_viewer;
-  const toast = useToast();
 
-  // URL is state (repo rule): the analytics filters AND the open drill path
-  // both live in the query string, so a drilled view is shareable and the
-  // browser Back button unwinds the drill one level at a time. A filter
-  // defaults to the current year when its param is ABSENT; an explicit empty
-  // param (e.g. ?af_from=) means the user cleared that bound.
-  const [params, setParams] = useSearchParams();
-  const dateFrom = params.get("af_from") ?? `${thisYear}-01-01`;
-  const dateTo = params.get("af_to") ?? `${thisYear}-12-31`;
-  const brand = params.get("af_brand") ?? "";
-  const organizer = params.get("af_org") ?? "";
-  const eventTypeId = params.get("af_type") ?? "";
-  // Owner decision 2026-08-11: default to the full picture. "completed" was
-  // the original default (an unstarted event carries only booked rental, which
-  // reads as a loss that has not happened), but half the year's sales sat on
-  // events staff never marked completed, so the completed-only view kept
-  // understating revenue by ~50% and reading as "the numbers are wrong".
-  const scope = params.get("af_scope") ?? "all";
-
-  // Writing a filter clears the open drill: its value may not exist under the
-  // new scope, so an orphaned drill path would just render "no data".
-  const setFilterParam = (key: string, val: string) => {
-    setParams((prev) => {
-      const next = new URLSearchParams(prev);
-      next.set(key, val);
-      next.delete("dim");
-      next.delete("dv");
-      next.delete("dm");
-      return next;
-    });
-  };
-  const setDateFrom = (v: string) => setFilterParam("af_from", v);
-  const setDateTo = (v: string) => setFilterParam("af_to", v);
-  const setBrand = (v: string) => setFilterParam("af_brand", v);
-  const setOrganizer = (v: string) => setFilterParam("af_org", v);
-  const setEventTypeId = (v: string) => setFilterParam("af_type", v);
-  const setScope = (v: string) => setFilterParam("af_scope", v);
-  const clearFilters = () => {
-    setParams((prev) => {
-      const next = new URLSearchParams(prev);
-      // Explicit empty bounds = "all time"; the rest default to "" when absent.
-      next.set("af_from", "");
-      next.set("af_to", "");
-      for (const k of ["af_brand", "af_org", "af_type", "af_scope", "dim", "dv", "dm"]) next.delete(k);
-      return next;
-    });
-  };
-
-  // The open drill path — only one at a time keeps the URL a single shareable
-  // path. Clicking a value in another card replaces the path; changing the
-  // month within a card just swaps `dm`.
-  const drillDim = (params.get("dim") as ProfitabilityGroupBy | null) ?? null;
-  const drillState: ProfitabilityDrillState = {
-    dim: drillDim,
-    value: params.get("dv"),
-    month: params.get("dm"),
-    toggleValue: (dim, key) =>
-      setParams((prev) => {
-        const next = new URLSearchParams(prev);
-        if (next.get("dim") === dim && next.get("dv") === key) {
-          next.delete("dim");
-          next.delete("dv");
-          next.delete("dm");
-        } else {
-          next.set("dim", dim);
-          next.set("dv", key);
-          next.delete("dm");
-        }
-        return next;
-      }),
-    toggleMonth: (key) =>
-      setParams((prev) => {
-        const next = new URLSearchParams(prev);
-        if (next.get("dm") === key) next.delete("dm");
-        else next.set("dm", key);
-        return next;
-      }),
-  };
-
-  const brands = useQuery<{ data: string[] }>("/api/projects/brands", () => api.get("/api/projects/brands"));
-  const eventTypes = useQuery<{ data: EventType[] }>("/api/projects/event-types", () =>
-    api.get("/api/projects/event-types")
-  );
-  const organizers = useQuery<{ data: { id: number; name: string }[] }>("/api/projects/organizers", () =>
-    api.get("/api/projects/organizers")
-  );
-
-  const q = useQuery<ProfitabilityResponse>("/api/projects/analytics/profitability",
-    () =>
-      api.get(
-        `/api/projects/analytics/profitability${buildQuery({
-          date_from: dateFrom || undefined,
-          date_to: dateTo || undefined,
-          brand: brand || undefined,
-          organizer: organizer || undefined,
-          event_type_id: eventTypeId || undefined,
-          scope,
-        })}`
-      ),
-    [dateFrom, dateTo, brand, organizer, eventTypeId, scope],
-    { enabled: canProjectFinance }
-  );
-
-  const d = q.data;
-  // Owner P&L model shares: COGS runs ~48-50% of revenue for this business,
-  // gross margin = GP / Revenue, net margin = NP / Revenue (from the server).
-  const totals = d?.totals;
-  const cogsPctOfRevenue =
-    totals && totals.income > 0 ? (totals.cogs / totals.income) * 100 : null;
-  const grossMarginPct =
-    totals && totals.income > 0 ? (totals.gp / totals.income) * 100 : null;
-
-  // Active filters forwarded to every drill-down query, so a group's project
-  // list stays inside the same scope the group table was computed under.
-  const drillFilters: ProfitabilityFilters = {
-    date_from: dateFrom || undefined,
-    date_to: dateTo || undefined,
-    brand: brand || undefined,
-    organizer: organizer || undefined,
-    event_type_id: eventTypeId || undefined,
-    scope,
-  };
-
-  return (
-    <div>
-      <div className="mb-3 flex items-center gap-2">
-        <span className="h-px w-6 bg-accent" />
-        <span className="font-mono text-[10px] font-semibold uppercase tracking-brand text-accent">
-          Profitability breakdown
-        </span>
-        {d && (
-          <span className="ml-auto text-[10px] font-medium text-ink-muted">
-            {d.totals.projects.toLocaleString()} projects in scope
-          </span>
-        )}
-      </div>
-
-      <div className="mb-4 flex flex-wrap items-end gap-3">
-        <div>
-          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-            From
-          </div>
-          <DateField
-            fullWidth
-            value={dateFrom}
-            onChange={(iso) => setDateFrom(iso)}
-            className="h-8 rounded-md border border-border bg-surface px-2 text-[12px]"
-          />
-        </div>
-        <div>
-          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
-            To
-          </div>
-          <DateField
-            fullWidth
-            value={dateTo}
-            onChange={(iso) => setDateTo(iso)}
-            className="h-8 rounded-md border border-border bg-surface px-2 text-[12px]"
-          />
-        </div>
-        <select
-          value={brand}
-          onChange={(e) => setBrand(e.target.value)}
-          className="h-8 appearance-none rounded-md border border-border bg-surface px-2 text-[12px]"
-        >
-          <option value="">All brands</option>
-          {(brands.data?.data ?? []).map((b) => (
-            <option key={b} value={b}>
-              {b}
-            </option>
-          ))}
-        </select>
-        <select
-          value={eventTypeId}
-          onChange={(e) => setEventTypeId(e.target.value)}
-          className="h-8 appearance-none rounded-md border border-border bg-surface px-2 text-[12px]"
-        >
-          <option value="">All types</option>
-          {(eventTypes.data?.data ?? []).map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </select>
-        <select
-          value={scope}
-          onChange={(e) => setScope(e.target.value)}
-          title="Unsettled events have their rental and setup booked while sales are still being keyed, so including them understates profit. Settled-only is the true P&L."
-          className="h-8 appearance-none rounded-md border border-border bg-surface px-2 text-[12px]"
-        >
-          <option value="completed">Completed only</option>
-          <option value="started">Started events</option>
-          <option value="all">All incl. upcoming</option>
-        </select>
-        <select
-          value={organizer}
-          onChange={(e) => setOrganizer(e.target.value)}
-          className="h-8 appearance-none rounded-md border border-border bg-surface px-2 text-[12px]"
-        >
-          <option value="">All organizers</option>
-          {(organizers.data?.data ?? []).map((o) => (
-            <option key={o.id} value={o.name}>
-              {o.name}
-            </option>
-          ))}
-        </select>
-        <button
-          onClick={clearFilters}
-          className="h-8 rounded-md border border-border bg-surface px-2.5 text-[11px] text-ink-secondary hover:border-accent/40 hover:text-accent"
-        >
-          Clear
-        </button>
-        {q.loading && <span className="text-[11px] text-ink-muted">Loading…</span>}
-      </div>
-
-      {q.error && (
-        <div className="mb-4 rounded-md border border-err/40 bg-err/5 px-4 py-2 text-[12px] text-err">
-          {q.error}
-        </div>
-      )}
-
-      {d && (
-        <>
-          {/* Headline — the owner's P&L waterfall:
-              Revenue − COGS = GP;  GP − Cost = NP. */}
-          <DashboardGrid cols={5}>
-            <StatCard
-              label="Revenue"
-              value={formatCurrency(d.totals.income)}
-              subtitle="Total sales + other income"
-            />
-            <StatCard
-              label="COGS"
-              value={formatCurrency(d.totals.cogs)}
-              subtitle={
-                cogsPctOfRevenue != null
-                  ? `${cogsPctOfRevenue.toFixed(0)}% of revenue`
-                  : "Cost of goods sold"
-              }
-              tone="error"
-            />
-            <StatCard
-              label="Gross profit"
-              value={formatCurrency(d.totals.gp)}
-              subtitle={
-                grossMarginPct != null
-                  ? `${grossMarginPct.toFixed(1)}% gross margin`
-                  : "Revenue − COGS"
-              }
-              tone={d.totals.gp >= 0 ? "success" : "error"}
-            />
-            <StatCard
-              label="Cost"
-              value={formatCurrency(d.totals.cost)}
-              subtitle="Rental, setup, transport, commission…"
-              tone="error"
-            />
-            <StatCard
-              label="Net profit"
-              value={formatCurrency(d.totals.profit)}
-              subtitle={
-                d.totals.margin_pct != null
-                  ? `${d.totals.margin_pct.toFixed(1)}% net margin`
-                  : "GP − Cost"
-              }
-              tone={d.totals.profit >= 0 ? "success" : "error"}
-            />
-          </DashboardGrid>
-
-          {/* Breakdowns — two columns. Each row expands in place (Layer 2) to
-              the projects behind it, and each project navigates to its page
-              (Layer 3). */}
-          <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <BreakdownCard
-              title="By Brand"
-              rows={d.by_brand}
-              groupBy="brand"
-              filters={drillFilters}
-              drill={drillState}
-              onOpenProject={(id) => navigate(`/projects/${id}`)}
-            />
-            <BreakdownCard
-              title="By Event Type"
-              rows={d.by_event_type}
-              groupBy="event_type"
-              filters={drillFilters}
-              drill={drillState}
-              onOpenProject={(id) => navigate(`/projects/${id}`)}
-            />
-            <BreakdownCard
-              title="By Organizer"
-              rows={d.by_organizer}
-              groupBy="organizer"
-              filters={drillFilters}
-              drill={drillState}
-              onOpenProject={(id) => navigate(`/projects/${id}`)}
-            />
-            <BreakdownCard
-              title="By Venue"
-              rows={d.by_venue}
-              groupBy="venue"
-              filters={drillFilters}
-              drill={drillState}
-              onOpenProject={(id) => navigate(`/projects/${id}`)}
-            />
-            <BreakdownCard
-              title="By Month"
-              rows={d.by_month}
-              groupBy="month"
-              filters={drillFilters}
-              drill={drillState}
-              onOpenProject={(id) => navigate(`/projects/${id}`)}
-              monthMode
-            />
-          </div>
-
-          {/* Ranked events */}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <RankedCard
-              title="Top 5 by profit"
-              tone="synced"
-              rows={d.top}
-              onOpen={(id) => navigate(`/projects/${id}`)}
-            />
-            <RankedCard
-              title="Bottom 5 by profit"
-              tone="err"
-              rows={d.bottom}
-              onOpen={(id) => navigate(`/projects/${id}`)}
-            />
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function BreakdownCard({
-  title,
-  rows,
-  groupBy,
-  filters,
-  drill,
-  onOpenProject,
-  monthMode,
-}: {
-  title: string;
-  rows: ProfitabilityBreakdown[] | undefined;
-  groupBy: ProfitabilityGroupBy;
-  filters: ProfitabilityFilters;
-  drill: ProfitabilityDrillState;
-  onOpenProject: (id: number) => void;
-  monthMode?: boolean;
-}) {
-  // Defensive: a stale API response (or a cache miss against an older
-  // worker version) can leave a breakdown field undefined. Don't crash.
-  const safeRows = rows ?? [];
-  const maxAbsProfit = Math.max(1, ...safeRows.map((r) => Math.abs(r.profit)));
-
-  // This card owns the drill only while the URL's `dim` points at it; the open
-  // value / month come straight from the URL so the drill is shareable and the
-  // Back button unwinds it. One value (and, for a dimension card, one month)
-  // is open at a time.
-  const isCardActive = drill.dim === groupBy;
-  const expandedValue = isCardActive ? drill.value : null;
-  const expandedMonth = isCardActive ? drill.month : null;
-
-  // Layer 2 — the value's performance BY MONTH. Only the four real dimensions
-  // have a month level; the By-Month card drills straight to projects. Keyed by
-  // the value AND the active filters so it re-fetches when either changes.
-  const monthsQuery = useQuery<ProfitabilityMonthsResponse>(
-    [
-      "profitability-drill-months",
-      groupBy,
-      expandedValue ?? "",
-      filters.date_from ?? "",
-      filters.date_to ?? "",
-      filters.brand ?? "",
-      filters.organizer ?? "",
-      filters.event_type_id ?? "",
-    ],
-    () =>
-      api.get(
-        `/api/projects/analytics/profitability/drill${buildQuery({
-          dimension: groupBy,
-          value: expandedValue ?? undefined,
-          date_from: filters.date_from,
-          date_to: filters.date_to,
-          brand: filters.brand,
-          organizer: filters.organizer,
-          event_type_id: filters.event_type_id,
-          scope: filters.scope,
-        })}`
-      ),
-    [
-      groupBy,
-      expandedValue,
-      filters.date_from,
-      filters.date_to,
-      filters.brand,
-      filters.organizer,
-      filters.event_type_id,
-      filters.scope,
-    ],
-    { enabled: !monthMode && isCardActive && expandedValue != null }
-  );
-
-  // Layer 3 — the projects inside the open month (dimension cards) or inside
-  // the open month value itself (By-Month card). One projects query per card;
-  // the open-at-a-time rule means only the current month renders it.
-  const projectsQuery = useQuery<ProfitabilityProjectsResponse>(
-    [
-      "profitability-drill-projects",
-      groupBy,
-      expandedValue ?? "",
-      monthMode ? "" : expandedMonth ?? "",
-      filters.date_from ?? "",
-      filters.date_to ?? "",
-      filters.brand ?? "",
-      filters.organizer ?? "",
-      filters.event_type_id ?? "",
-    ],
-    () =>
-      api.get(
-        `/api/projects/analytics/profitability/drill${buildQuery({
-          dimension: groupBy,
-          value: expandedValue ?? undefined,
-          month: monthMode ? undefined : expandedMonth ?? undefined,
-          date_from: filters.date_from,
-          date_to: filters.date_to,
-          brand: filters.brand,
-          organizer: filters.organizer,
-          event_type_id: filters.event_type_id,
-          scope: filters.scope,
-        })}`
-      ),
-    [
-      groupBy,
-      expandedValue,
-      monthMode,
-      expandedMonth,
-      filters.date_from,
-      filters.date_to,
-      filters.brand,
-      filters.organizer,
-      filters.event_type_id,
-      filters.scope,
-    ],
-    { enabled: isCardActive && expandedValue != null && (monthMode ? true : expandedMonth != null) }
-  );
-
-  // 8 columns: Name/Month, #, Revenue, COGS, GP, Rental, NP, Margin.
-  const COLSPAN = 8;
-
-  return (
-    <section className="overflow-hidden rounded-xl border border-border bg-surface shadow-stone">
-      <header className="flex items-center justify-between border-b border-border-subtle px-4 py-2.5">
-        <h3 className="inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-brand text-ink">
-          <BarChart3 size={12} className="text-accent" />
-          {title}
-        </h3>
-        <span className="text-[10px] text-ink-muted">{safeRows.length} groups</span>
-      </header>
-      {safeRows.length === 0 ? (
-        <div className="px-4 py-6 text-center text-[11px] text-ink-muted">No data.</div>
-      ) : (
-        <div className="max-h-[320px] overflow-auto">
-          {/* Full P&L model per group: Revenue − COGS = GP; GP − Cost = NP,
-              with Rental (a slice of Cost) pulled out as its own column. Click
-              a row to drill: a dimension value opens its months (Layer 2), a
-              month opens its projects (Layer 3), a project opens its page
-              (Layer 4). min-width keeps the eight columns legible; the wrapper
-              scrolls horizontally on a narrow (mobile / half-width) card. */}
-          <table className="w-full min-w-[600px] text-[11px]">
-            <thead className="bg-bg/40 text-[9px] font-semibold uppercase tracking-wider text-ink-muted">
-              <tr>
-                <th className="px-2 py-1.5 text-left">{monthMode ? "Month" : "Name"}</th>
-                <th className="whitespace-nowrap px-1.5 py-1.5 text-right">#</th>
-                <th className="whitespace-nowrap px-1.5 py-1.5 text-right">Revenue</th>
-                <th className="whitespace-nowrap px-1.5 py-1.5 text-right">COGS</th>
-                <th className="whitespace-nowrap px-1.5 py-1.5 text-right">GP</th>
-                <th className="whitespace-nowrap px-1.5 py-1.5 text-right">Rental</th>
-                <th className="whitespace-nowrap px-1.5 py-1.5 text-right">NP</th>
-                <th className="whitespace-nowrap px-1.5 py-1.5 text-right">Margin</th>
-              </tr>
-            </thead>
-            <tbody>
-              {safeRows.map((r) => {
-                const barPct = Math.round((Math.abs(r.profit) / maxAbsProfit) * 100);
-                const isExpanded = expandedValue === r.key;
-                return (
-                  <Fragment key={r.key}>
-                    <tr
-                      onClick={() => drill.toggleValue(groupBy, r.key)}
-                      aria-expanded={isExpanded}
-                      className={cn(
-                        "cursor-pointer border-t border-border-subtle hover:bg-accent-soft/30",
-                        isExpanded && "bg-accent-soft/20"
-                      )}
-                    >
-                      <td className="px-2 py-1.5">
-                        <div className="flex items-center gap-1">
-                          {isExpanded ? (
-                            <ChevronDown size={11} className="shrink-0 text-ink-muted" />
-                          ) : (
-                            <ChevronRight size={11} className="shrink-0 text-ink-muted" />
-                          )}
-                          <span className="font-semibold text-ink">
-                            {monthMode ? formatMonth(r.key) : r.key}
-                          </span>
-                        </div>
-                        <div className="mt-0.5 h-[3px] w-full min-w-[64px] rounded-full bg-bg">
-                          <div
-                            className={cn(
-                              "h-full rounded-full",
-                              r.profit >= 0 ? "bg-synced" : "bg-err"
-                            )}
-                            style={{ width: `${barPct}%` }}
-                          />
-                        </div>
-                      </td>
-                      <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono">{r.count}</td>
-                      <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono">
-                        {formatCurrency(r.income)}
-                      </td>
-                      <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
-                        {formatCurrency(r.cogs)}
-                      </td>
-                      <td
-                        className={cn(
-                          "whitespace-nowrap px-1.5 py-1.5 text-right font-mono",
-                          r.gp >= 0 ? "text-ink" : "text-err"
-                        )}
-                      >
-                        {formatCurrency(r.gp)}
-                      </td>
-                      <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
-                        {formatCurrency(r.rental)}
-                      </td>
-                      <td
-                        className={cn(
-                          "whitespace-nowrap px-1.5 py-1.5 text-right font-mono font-bold",
-                          r.profit >= 0 ? "text-synced" : "text-err"
-                        )}
-                      >
-                        {formatCurrency(r.profit)}
-                      </td>
-                      <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
-                        {r.margin != null ? `${r.margin.toFixed(1)}%` : "—"}
-                      </td>
-                    </tr>
-                    {isExpanded && !monthMode && (
-                      <BreakdownMonthRows
-                        monthsQuery={monthsQuery}
-                        projectsQuery={projectsQuery}
-                        parentValue={r.key}
-                        expandedMonth={expandedMonth}
-                        onToggleMonth={drill.toggleMonth}
-                        colSpan={COLSPAN}
-                        onOpenProject={onOpenProject}
-                      />
-                    )}
-                    {isExpanded && monthMode && (
-                      <BreakdownProjectRows
-                        projectsQuery={projectsQuery}
-                        expectValue={r.key}
-                        expectMonth={null}
-                        colSpan={COLSPAN}
-                        onOpenProject={onOpenProject}
-                      />
-                    )}
-                  </Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </section>
-  );
-}
 
 // A single full-width message row (loading / error / empty) spanning the drill
 // table, so nested states never break the column grid.
-function DrillMessageRow({
-  colSpan,
-  tone,
-  children,
-}: {
-  colSpan: number;
-  tone?: "muted" | "err";
-  children: React.ReactNode;
-}) {
-  return (
-    <tr className="border-t border-border-subtle bg-bg/30">
-      <td
-        colSpan={colSpan}
-        className={cn(
-          "px-2 py-3 text-center text-[10px]",
-          tone === "err" ? "text-err" : "text-ink-muted"
-        )}
-      >
-        {children}
-      </td>
-    </tr>
-  );
-}
 
 // Layer-2 body: the months behind one expanded dimension value, rendered as
 // sibling <tr>s so their P&L columns line up under the group's. Each month
 // expands in turn to its projects (Layer 3).
-function BreakdownMonthRows({
-  monthsQuery,
-  projectsQuery,
-  parentValue,
-  expandedMonth,
-  onToggleMonth,
-  colSpan,
-  onOpenProject,
-}: {
-  monthsQuery: QueryState<ProfitabilityMonthsResponse>;
-  projectsQuery: QueryState<ProfitabilityProjectsResponse>;
-  parentValue: string;
-  expandedMonth: string | null;
-  onToggleMonth: (key: string) => void;
-  colSpan: number;
-  onOpenProject: (id: number) => void;
-}) {
-  if (monthsQuery.loading) {
-    return <DrillMessageRow colSpan={colSpan}>Loading months…</DrillMessageRow>;
-  }
-  if (monthsQuery.error) {
-    return (
-      <DrillMessageRow colSpan={colSpan} tone="err">
-        {monthsQuery.error}
-      </DrillMessageRow>
-    );
-  }
-  // Guard on value match so a resolving query never flashes another value's
-  // months under this one.
-  const months =
-    monthsQuery.data && monthsQuery.data.value === parentValue
-      ? monthsQuery.data.months
-      : [];
-  if (months.length === 0) {
-    return <DrillMessageRow colSpan={colSpan}>No monthly activity.</DrillMessageRow>;
-  }
-  return (
-    <>
-      {months.map((m) => {
-        const isMonthExpanded = expandedMonth === m.key;
-        return (
-          <Fragment key={m.key}>
-            <tr
-              onClick={() => onToggleMonth(m.key)}
-              aria-expanded={isMonthExpanded}
-              className={cn(
-                "cursor-pointer border-t border-border-subtle bg-bg/20 hover:bg-accent-soft/30",
-                isMonthExpanded && "bg-accent-soft/20"
-              )}
-            >
-              <td className="px-2 py-1.5 pl-6">
-                <div className="flex items-center gap-1">
-                  {isMonthExpanded ? (
-                    <ChevronDown size={11} className="shrink-0 text-ink-muted" />
-                  ) : (
-                    <ChevronRight size={11} className="shrink-0 text-ink-muted" />
-                  )}
-                  <span className="font-medium text-ink">{formatMonth(m.key)}</span>
-                </div>
-              </td>
-              <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono">{m.count}</td>
-              <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono">
-                {formatCurrency(m.income)}
-              </td>
-              <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
-                {formatCurrency(m.cogs)}
-              </td>
-              <td
-                className={cn(
-                  "whitespace-nowrap px-1.5 py-1.5 text-right font-mono",
-                  m.gp >= 0 ? "text-ink" : "text-err"
-                )}
-              >
-                {formatCurrency(m.gp)}
-              </td>
-              <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
-                {formatCurrency(m.rental)}
-              </td>
-              <td
-                className={cn(
-                  "whitespace-nowrap px-1.5 py-1.5 text-right font-mono font-bold",
-                  m.profit >= 0 ? "text-synced" : "text-err"
-                )}
-              >
-                {formatCurrency(m.profit)}
-              </td>
-              <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
-                {m.margin != null ? `${m.margin.toFixed(1)}%` : "—"}
-              </td>
-            </tr>
-            {isMonthExpanded && (
-              <BreakdownProjectRows
-                projectsQuery={projectsQuery}
-                expectValue={parentValue}
-                expectMonth={m.key}
-                colSpan={colSpan}
-                onOpenProject={onOpenProject}
-              />
-            )}
-          </Fragment>
-        );
-      })}
-    </>
-  );
-}
 
 // Layer-3 body: the projects behind one expanded month (or, for the By-Month
 // card, one expanded month value). Each project row navigates to its detail
 // page (Layer 4). Guarded on value+month so a resolving query never flashes
 // the wrong slice under this row.
-function BreakdownProjectRows({
-  projectsQuery,
-  expectValue,
-  expectMonth,
-  colSpan,
-  onOpenProject,
-}: {
-  projectsQuery: QueryState<ProfitabilityProjectsResponse>;
-  expectValue: string;
-  expectMonth: string | null;
-  colSpan: number;
-  onOpenProject: (id: number) => void;
-}) {
-  const d = projectsQuery.data;
-  const matches =
-    !!d && d.value === expectValue && (d.month ?? null) === (expectMonth ?? null);
-  if (projectsQuery.loading || !matches) {
-    if (projectsQuery.error) {
-      return (
-        <DrillMessageRow colSpan={colSpan} tone="err">
-          {projectsQuery.error}
-        </DrillMessageRow>
-      );
-    }
-    return <DrillMessageRow colSpan={colSpan}>Loading projects…</DrillMessageRow>;
-  }
-  const projects = d!.projects;
-  if (projects.length === 0) {
-    return <DrillMessageRow colSpan={colSpan}>No projects.</DrillMessageRow>;
-  }
-  return (
-    <>
-      {projects.map((p) => (
-        <tr
-          key={p.id}
-          onClick={() => onOpenProject(p.id)}
-          className="cursor-pointer border-t border-border-subtle bg-bg/30 hover:bg-accent-soft/40"
-        >
-          <td className="px-2 py-1.5 pl-10">
-            <div className="flex items-center gap-1">
-              <span className="truncate font-medium text-ink">{p.name}</span>
-              <ExternalLink size={9} className="shrink-0 text-ink-muted" />
-            </div>
-            <div className="text-[9.5px] text-ink-muted">
-              {p.code}
-              {p.start_date ? ` · ${formatDate(p.start_date)}` : ""}
-            </div>
-          </td>
-          <td className="px-1.5 py-1.5" />
-          <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono">
-            {formatCurrency(p.income)}
-          </td>
-          <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
-            {formatCurrency(p.cogs)}
-          </td>
-          <td
-            className={cn(
-              "whitespace-nowrap px-1.5 py-1.5 text-right font-mono",
-              p.gp >= 0 ? "text-ink" : "text-err"
-            )}
-          >
-            {formatCurrency(p.gp)}
-          </td>
-          <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
-            {formatCurrency(p.rental)}
-          </td>
-          <td
-            className={cn(
-              "whitespace-nowrap px-1.5 py-1.5 text-right font-mono font-bold",
-              p.profit >= 0 ? "text-synced" : "text-err"
-            )}
-          >
-            {formatCurrency(p.profit)}
-          </td>
-          <td className="whitespace-nowrap px-1.5 py-1.5 text-right font-mono text-ink-secondary">
-            {p.margin != null ? `${p.margin.toFixed(1)}%` : "—"}
-          </td>
-        </tr>
-      ))}
-    </>
-  );
-}
 
-function RankedCard({
-  title,
-  tone,
-  rows,
-  onOpen,
-}: {
-  title: string;
-  tone: "synced" | "err";
-  rows: ProfitabilityResponse["top"] | undefined;
-  onOpen: (id: number) => void;
-}) {
-  const safeRows = rows ?? [];
-  return (
-    <section className="overflow-hidden rounded-xl border border-border bg-surface shadow-stone">
-      <header className="flex items-center justify-between border-b border-border-subtle px-4 py-2.5">
-        <h3
-          className={cn(
-            "text-[11px] font-bold uppercase tracking-brand",
-            tone === "synced" ? "text-synced" : "text-err"
-          )}
-        >
-          {title}
-        </h3>
-        <span className="text-[10px] text-ink-muted">{safeRows.length}</span>
-      </header>
-      {safeRows.length === 0 ? (
-        <div className="px-4 py-6 text-center text-[11px] text-ink-muted">No data.</div>
-      ) : (
-        <ul>
-          {safeRows.map((r) => (
-            <li key={r.id}>
-              <button
-                onClick={() => onOpen(r.id)}
-                className="flex w-full items-start gap-3 border-t border-border-subtle px-4 py-2 text-left hover:bg-accent-soft/30"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-baseline gap-2">
-                    {r.brand && (
-                      <span className="rounded bg-accent/10 px-1 text-[9px] font-bold text-accent">
-                        {r.brand}
-                      </span>
-                    )}
-                    <span className="truncate text-[12px] font-semibold text-ink">
-                      {r.name}
-                    </span>
-                  </div>
-                  <div className="text-[10px] text-ink-muted">
-                    {r.venue || "—"}
-                    {r.start_date && ` · ${formatDate(r.start_date)}`}
-                  </div>
-                  {/* Model context: Revenue and GP (COGS = Revenue − GP). */}
-                  <div className="mt-0.5 font-mono text-[10px] text-ink-muted">
-                    Rev {formatCurrency(r.income)}
-                    {" · "}
-                    GP {formatCurrency(r.gp)}
-                  </div>
-                </div>
-                <div className="shrink-0 text-right">
-                  <div
-                    className={cn(
-                      "font-mono text-[12px] font-bold",
-                      tone === "synced" ? "text-synced" : "text-err"
-                    )}
-                  >
-                    {formatCurrency(r.profit)}
-                  </div>
-                  <div className="text-[10px] text-ink-muted">
-                    {r.margin != null ? `${r.margin.toFixed(1)}% NP` : "—"}
-                  </div>
-                </div>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}
 
-function formatMonth(yyyy_mm: string): string {
-  const [y, m] = yyyy_mm.split("-");
-  if (!y || !m) return yyyy_mm;
-  // Numeric MM/YYYY month-group label (no "Jun"/"Jul" month names).
-  return `${m}/${y}`;
-}
 
 // ── Progress bar ─────────────────────────────────────────────
 
@@ -3477,7 +2002,7 @@ function ProjectDetailContent({
   return (
     <DetailLayout
       breadcrumbs={[
-        { label: "Projects", to: "/projects" },
+        { label: "Projects", to: projectBackTo(id) },
         { label: detailName || "Loading…" },
       ]}
       eyebrow="Project"
@@ -3486,7 +2011,10 @@ function ProjectDetailContent({
       // Owner 2026-07-29: keep the event title (+ actions) pinned while
       // scrolling the project detail — same sticky chrome ASSR detail uses.
       stickyTitle
-      backTo="/projects"
+      /* Back to the Projects page this project was opened from — its period,
+         sort and filters (owner 2026-10-21: 我点9月的project，按 back 后又跳回
+         10月，然后会跑回最上面); the bare list when it was opened some other way. */
+      backTo={projectBackTo(id)}
       loading={detail.loading && !p}
       error={detail.error}
       actions={
@@ -3719,6 +2247,7 @@ function ProjectDetailContent({
                   durationDays={p.duration_days ?? null}
                   lines={detail.data?.finance_lines ?? []}
                   books={detail.data?.finance_books ?? null}
+                  pnl={detail.data?.finance_pnl ?? null}
                   lumpSales={detail.data?.finance?.total_sales ?? null}
                   onChange={() => detail.reload()}
                   toast={toast}
@@ -3775,6 +2304,13 @@ interface SalesRepBrief {
   brands_csv?: string | null;
 }
 
+/** An active staff member who is not on the Sales Team roster yet. */
+interface StaffBrief {
+  user_id: number;
+  name: string | null;
+  email: string;
+}
+
 function ProjectTeamSection({
   projectId,
   project: p,
@@ -3809,7 +2345,7 @@ function ProjectTeamSection({
   // Sales-attending picker — gated on projects.write, role-filtered to
   // sales_person. Brand-relaxed (owner: Option A): lists ALL active
   // Sales Persons regardless of brand. See GET /api/projects/sales-rep-options.
-  const repsQ = useQuery<{ data: SalesRepBrief[] }>("/api/projects/sales-rep-options",
+  const repsQ = useQuery<{ data: SalesRepBrief[]; others?: StaffBrief[] }>("/api/projects/sales-rep-options",
     () => api.get(`/api/projects/sales-rep-options`),
     []
   );
@@ -3818,19 +2354,22 @@ function ProjectTeamSection({
   const reps = [...(repsQ.data?.data ?? [])].sort((a, b) =>
     (a.name ?? "").localeCompare(b.name ?? ""),
   );
+  /* Staff NOT on the Sales Team roster (owner 2026-10-19: 「不需要改部门啊，就让
+     他们可以去 sales attending 不就好了？」). Adding one puts them on the roster;
+     their department stays as it is. */
+  const others = repsQ.data?.others ?? [];
   const takenRepIds = new Set(attendees.map((a) => a.sales_rep_id));
   const availableReps = reps.filter((r) => !takenRepIds.has(r.id));
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const filteredAvailable = availableReps.filter((r) => {
+  const [selectedStaff, setSelectedStaff] = useState<Set<number>>(new Set());
+  const matches = (...texts: Array<string | null | undefined>) => {
     const q = search.trim().toLowerCase();
-    if (!q) return true;
-    return (
-      (r.code ?? "").toLowerCase().includes(q) ||
-      (r.name ?? "").toLowerCase().includes(q)
-    );
-  });
+    return !q || texts.some((t) => (t ?? "").toLowerCase().includes(q));
+  };
+  const filteredAvailable = availableReps.filter((r) => matches(r.code, r.name));
+  const filteredOthers = others.filter((s) => matches(s.name, s.email));
 
   function toggleSelected(id: number) {
     setSelected((prev) => {
@@ -3840,12 +2379,22 @@ function ProjectTeamSection({
       return next;
     });
   }
+  function toggleStaff(userId: number) {
+    setSelectedStaff((prev) => {
+      const next = new Set(prev);
+      if (next.has(userId)) next.delete(userId);
+      else next.add(userId);
+      return next;
+    });
+  }
+  const pickedCount = selected.size + selectedStaff.size;
 
   // Owner 2026-06-25: multi-select — tick several reps + add them in one go
   // (was one-at-a-time). POSTs each selected id sequentially, then reloads once.
   async function addSelected() {
     const ids = [...selected].filter((id) => availableReps.some((r) => r.id === id));
-    if (ids.length === 0) return;
+    const staffIds = [...selectedStaff].filter((id) => others.some((s) => s.user_id === id));
+    if (ids.length === 0 && staffIds.length === 0) return;
     setBusy(true);
     try {
       for (const repId of ids) {
@@ -3853,7 +2402,11 @@ function ProjectTeamSection({
           sales_rep_id: repId,
         });
       }
+      for (const userId of staffIds) {
+        await api.post(`/api/projects/${projectId}/sales-attendees`, { user_id: userId });
+      }
       setSelected(new Set());
+      setSelectedStaff(new Set());
       setSearch("");
       onChanged();
     } catch (e: any) {
@@ -3988,7 +2541,7 @@ function ProjectTeamSection({
           <div className="mt-2">
             {/* Multi-select (owner 2026-06-25: "直接可以 multiselect 多选,不用
                 一个一个按") — filter + tick several + "Add N" in one go. */}
-            {reps.length === 0 ? (
+            {reps.length === 0 && others.length === 0 ? (
               !repsQ.loading && (
                 <div className="text-[9.5px] leading-snug text-warning-text">
                   No Sales Persons found. This picker reads the active Sales Reps
@@ -3997,7 +2550,7 @@ function ProjectTeamSection({
                   make sure that rep exists and is active (not archived).
                 </div>
               )
-            ) : availableReps.length === 0 ? (
+            ) : availableReps.length === 0 && others.length === 0 ? (
               <div className="text-[11px] italic text-ink-muted">
                 All sales reps added.
               </div>
@@ -4011,7 +2564,7 @@ function ProjectTeamSection({
                   className={SPEC_INPUT_CLASS}
                 />
                 <div className="mt-1 max-h-44 overflow-auto rounded-md border border-border">
-                  {filteredAvailable.length === 0 ? (
+                  {filteredAvailable.length === 0 && filteredOthers.length === 0 ? (
                     <div className="px-2 py-2 text-[10.5px] text-ink-muted">
                       No matches.
                     </div>
@@ -4038,13 +2591,36 @@ function ProjectTeamSection({
                       </label>
                     ))
                   )}
+                  {filteredOthers.length > 0 && (
+                    <>
+                      <div className="border-t border-border bg-bg/60 px-2 py-1 text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
+                        Not in the Sales Team yet — adding puts them in it
+                      </div>
+                      {filteredOthers.map((s) => (
+                        <label
+                          key={`staff-${s.user_id}`}
+                          className="flex cursor-pointer items-center gap-2 border-t border-border px-2 py-1.5 text-[11px] hover:bg-bg/60"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedStaff.has(s.user_id)}
+                            onChange={() => toggleStaff(s.user_id)}
+                          />
+                          <span className="truncate text-ink">{s.name || s.email}</span>
+                          {s.name && (
+                            <span className="ml-auto shrink-0 truncate font-mono text-[9.5px] text-ink-muted">{s.email}</span>
+                          )}
+                        </label>
+                      ))}
+                    </>
+                  )}
                 </div>
                 <button
                   onClick={addSelected}
-                  disabled={busy || selected.size === 0}
+                  disabled={busy || pickedCount === 0}
                   className="mt-2 inline-flex w-full items-center justify-center gap-1 rounded-md border border-accent/40 bg-surface px-2 py-1.5 text-[11px] font-semibold text-accent hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <Plus size={11} /> Add{selected.size > 0 ? ` ${selected.size} selected` : ""}
+                  <Plus size={11} /> Add{pickedCount > 0 ? ` ${pickedCount} selected` : ""}
                 </button>
               </>
             )}
@@ -4871,28 +3447,8 @@ function TaskAttachmentRow({
 }
 
 // ── Project Stage stepper ─────────────────────────────────────
-// Auto-detected 9-step timeline (Floorplan → Done) with T-offset
-// deadlines from the project's start date. A step is "done" when its
-// mapped checklist item(s) are done; steps whose items don't exist
-// (e.g. removed from the template) are treated as pass-through so they
-// never block. The current step is the first not-done one — shown red
-// when today is past its deadline.
-const PROJECT_STAGES: { label: string; offset: number; titles: string[]; kind?: "crew" }[] = [
-  { label: "Floorplan", offset: -21, titles: ["Blank Floorplan"] },
-  { label: "3D", offset: -14, titles: ["3D Design"] },
-  // "Stocks Request" retired — the "Stocks Request Listing" item was
-  // removed, so the step is dropped from the tracker.
-  { label: "Stocks Transfer", offset: -7, titles: ["Stock Out Transfer Record"] },
-  { label: "Driver Info", offset: -3, titles: ["Stock In Transfer Record"] },
-  // Setup/Dismantle crew arrangement — not a checklist item; goes green
-  // when the Setup & Dismantle section is filled (kind: "crew").
-  { label: "Setup/Dismantle", offset: -2, titles: [], kind: "crew" },
-  { label: "Setup Image", offset: 0, titles: ["Setup Image"] },
-  { label: "Filled Floorplan", offset: 3, titles: ["Filled Floorplan"] },
-  { label: "Event Complete", offset: 7, titles: ["Event Complete Image"] },
-  { label: "Done", offset: 7, titles: [] },
-];
-
+// The 9-step tracker; its rule lives in projects/projectStage.ts, shared with
+// Project Overview's event list.
 function ProjectStageStepper({
   checklist,
   startDate,
@@ -4905,26 +3461,7 @@ function ProjectStageStepper({
   setupCrew?: string | null;
   setupStartAt?: string | null;
 }) {
-  const items = checklist ?? [];
-  // Setup is considered "arranged" when a setup time is set OR the setup
-  // crew JSON holds anything (dismantle may be left empty = same as setup).
-  const setupArranged =
-    !!setupStartAt ||
-    (!!setupCrew && !["", "{}"].includes(setupCrew.trim()));
-  const stepDone = (idx: number): boolean => {
-    const st = PROJECT_STAGES[idx];
-    if (st.kind === "crew") return setupArranged;
-    if (st.titles.length === 0) return false; // final "Done" handled below
-    const present = items.filter((i) => st.titles.includes(i.title));
-    if (present.length === 0) return true; // no signal → pass-through
-    // Every mapped item done / N/A / approved (see itemComplete): status alone
-    // kept an approved 3D bullet red for months (owner 2026-09-23, KL ZANOTTI REX).
-    return present.every(itemComplete);
-  };
-  const lastIdx = PROJECT_STAGES.length - 1;
-  let currentIdx = PROJECT_STAGES.findIndex((_, i) => i < lastIdx && !stepDone(i));
-  const allDone = currentIdx === -1;
-  if (allDone) currentIdx = lastIdx;
+  const { currentIdx, allDone, lastIdx } = projectStage(checklist ?? [], setupArrangedOf(setupCrew, setupStartAt), startDate, todayMY());
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -7435,11 +5972,11 @@ function PhaseCrewEditor({
     save({ ...pc, lorryCrew: lorries.map((l, i) => (i === li ? { ...l, ...p } : l)) });
   const addLorry = () => save({ ...pc, lorryCrew: [...lorries, { plate: "", drivers: [], helpers: [] }] });
   const removeLorry = (li: number) => save({ ...pc, lorryCrew: lorries.filter((_, i) => i !== li) });
-  // Owner 2026-07-22: the Driver 2 / Helper 2 rows stay HIDDEN until needed —
-  // most lorries run one driver + one helper, so the empty second slots were
-  // noise. A filled slot always shows; an empty one shows only after its
-  // "+ Add …" button (styled like "+ Add lorry") is clicked. UI-only state:
-  // collapsing back happens by clearing the name (row hides on next open).
+  // Owner 2026-07-22 / 2026-10-21: the Driver 2 row stays HIDDEN until needed
+  // (most lorries run one driver), revealed by its "+ Add driver" button. BOTH
+  // helper slots always show — setup/dismantle lorries usually ride two helpers,
+  // so Helper 1 and Helper 2 are directly fillable (leave blank if unused).
+  // UI-only state; a hidden Driver 2 re-collapses by clearing its name.
   const [openSlot2, setOpenSlot2] = useState<Set<string>>(new Set());
   const showSlot2 = (li: number, kind: "d" | "h") => setOpenSlot2((s) => new Set(s).add(`${li}${kind}`));
   return (
@@ -7478,27 +6015,18 @@ function PhaseCrewEditor({
               <CrewSlotRow label="Driver 2" color="text-synced" options={drivers} slot={lorry.drivers[1]} onChange={(s) => setLorrySlot(li, "drivers", 1, s)} readOnly={readOnly} />
             )}
             <CrewSlotRow label="Helper 1" color="text-warning-text" options={helpers} slot={lorry.helpers[0]} onChange={(s) => setLorrySlot(li, "helpers", 0, s)} readOnly={readOnly} />
-            {(!!lorry.helpers[1]?.name || openSlot2.has(`${li}h`)) && (
-              <CrewSlotRow label="Helper 2" color="text-warning-text" options={helpers} slot={lorry.helpers[1]} onChange={(s) => setLorrySlot(li, "helpers", 1, s)} readOnly={readOnly} />
-            )}
-            {!readOnly && (!(lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) || !(lorry.helpers[1]?.name || openSlot2.has(`${li}h`))) && (
+            {/* Owner 2026-10-21: both helper slots show directly — setup/dismantle
+                lorries usually ride two helpers, so Helper 2 is always fillable
+                (leave blank if unused), no "+ Add" step. */}
+            <CrewSlotRow label="Helper 2" color="text-warning-text" options={helpers} slot={lorry.helpers[1]} onChange={(s) => setLorrySlot(li, "helpers", 1, s)} readOnly={readOnly} />
+            {!readOnly && !(lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) && (
               <div className="flex gap-1.5 pt-0.5">
-                {!(lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) && (
-                  <button
-                    onClick={() => showSlot2(li, "d")}
-                    className="rounded-md border border-dashed border-border bg-surface px-2.5 py-1 text-[10.5px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent"
-                  >
-                    + Add driver
-                  </button>
-                )}
-                {!(lorry.helpers[1]?.name || openSlot2.has(`${li}h`)) && (
-                  <button
-                    onClick={() => showSlot2(li, "h")}
-                    className="rounded-md border border-dashed border-border bg-surface px-2.5 py-1 text-[10.5px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent"
-                  >
-                    + Add helper
-                  </button>
-                )}
+                <button
+                  onClick={() => showSlot2(li, "d")}
+                  className="rounded-md border border-dashed border-border bg-surface px-2.5 py-1 text-[10.5px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent"
+                >
+                  + Add driver
+                </button>
               </div>
             )}
           </div>
@@ -8555,6 +7083,7 @@ function FinanceLedgerSection({
   durationDays,
   lines,
   books,
+  pnl,
   lumpSales,
   onChange,
   toast,
@@ -8566,6 +7095,10 @@ function FinanceLedgerSection({
   /** The books on this event (payment-request item 5): the rows they fill are
    *  Finance's figures — read-only here. `lines` already carries them. */
   books: FinanceBooks | null;
+  /** The two P&Ls — by Total Sales and by the Sales Orders (owner 2026-10-16).
+   *  Null on an older server or when the orders could not be read: the single
+   *  snapshot below is then computed from the lines, as before. */
+  pnl: EventPnl | null;
   /** project_finance.total_sales — the quick lump-sum "Total Sales" box.
    *  Used as the snapshot's sales figure when no individual sales-entry
    *  lines exist, so the green box and the snapshot agree. */
@@ -8701,9 +7234,6 @@ function FinanceLedgerSection({
     .filter((l) => !NAMED_COSTS.has((l.category ?? "").trim()))
     .reduce((s, l) => s + (l.amount || 0), 0);
   const netProfit = sales - totalCost;
-  const gpPct = sales > 0 ? ((sales - cogs) / sales) * 100 : null;
-  const salesPerDay =
-    durationDays && durationDays > 0 ? sales / durationDays : null;
   const rentPerSqm = sizeSqm && sizeSqm > 0 ? rentalTotal / sizeSqm : null;
   const rentPerDay =
     durationDays && durationDays > 0 ? rentalTotal / durationDays : null;
@@ -8714,6 +7244,14 @@ function FinanceLedgerSection({
     rentalTotal > 0 && sizeSqm && sizeSqm > 0 && durationDays && durationDays > 0
       ? rentalTotal / sizeSqm / durationDays
       : 0;
+  /* The tiles read the Total Sales P&L when the server sent it (eventPnl.ts),
+     so tiles and table never disagree; else the lines, as before. */
+  const kpi = pnl
+    ? { sales: pnl.by_sales.sales, gp: pnl.by_sales.grossProfit, cost: pnl.by_sales.totalCost, net: pnl.by_sales.netProfit }
+    : { sales, gp: grossProfit, cost: totalCost, net: netProfit };
+  const kpiGpPct = kpi.sales > 0 ? (kpi.gp / kpi.sales) * 100 : null;
+  const kpiNetPct = kpi.sales > 0 ? (kpi.net / kpi.sales) * 100 : 0;
+  const kpiPerDay = durationDays && durationDays > 0 ? kpi.sales / durationDays : null;
 
   return (
     <PanelSection title={`Finance Ledger (${lines.length})`} muted>
@@ -8738,40 +7276,55 @@ function FinanceLedgerSection({
         <div className="grid grid-cols-2 divide-x divide-y divide-border-subtle border-b border-border sm:grid-cols-4 sm:divide-y-0">
           <SnapshotKpi
             label="Total Sales"
-            value={formatCurrency(sales)}
+            value={formatCurrency(kpi.sales)}
             subtitle={
-              salesPerDay != null
-                ? `${formatCurrency(salesPerDay)} / day`
+              kpiPerDay != null
+                ? `${formatCurrency(kpiPerDay)} / day`
                 : "—"
             }
           />
           <SnapshotKpi
             label="Gross Profit"
-            value={formatCurrency(grossProfit)}
-            tone={grossProfit >= 0 ? "synced" : "err"}
+            value={formatCurrency(kpi.gp)}
+            tone={kpi.gp >= 0 ? "synced" : "err"}
             subtitle={
-              gpPct != null ? `${gpPct.toFixed(1)}% after COGS` : "0.0% after COGS"
+              kpiGpPct != null ? `${kpiGpPct.toFixed(1)}% after COGS` : "0.0% after COGS"
             }
           />
           <SnapshotKpi
             label="Total Cost"
-            value={formatCurrency(totalCost)}
-            subtitle="All cost lines"
+            value={formatCurrency(kpi.cost)}
+            subtitle={pnl ? "By Total Sales" : "All cost lines"}
           />
           <SnapshotKpi
             label="Net Profit"
-            value={formatCurrency(netProfit)}
-            tone={netProfit >= 0 ? "synced" : "err"}
-            subtitle={`${netMarginPct.toFixed(1)}% bottom line`}
+            value={formatCurrency(kpi.net)}
+            tone={kpi.net >= 0 ? "synced" : "err"}
+            subtitle={`${kpiNetPct.toFixed(1)}% bottom line`}
           />
         </div>
+
+        {/* THE TWO P&Ls (owner 2026-10-16): by Total Sales and by the Sales
+            Orders, side by side — EventPnlTable. The single snapshot below is
+            the fallback when the server sent none. */}
+        {pnl && (
+          <div className="overflow-x-auto">
+            <EventPnlTable
+              pnl={pnl}
+              editable={(category, row) => typedRow(row, category)}
+              busyCategory={savingCat}
+              books={filled}
+              rentalNote={`${formatCurrency(rentPerSqmPerDay)}/sqm/day`}
+            />
+          </div>
+        )}
 
         {/* Itemized cost table — single editor surface (2026-05-08).
             Click any non-auto row to inline-edit the amount; saving
             consolidates that category's lines into one. Per-row
             expanders are gone (boss feedback) — receipts live in the
             single Attachments section below. */}
-        <div className="text-[12px]">
+        {!pnl && <div className="text-[12px]">
           <SnapshotRow
             label="COGS — Matt/Sofa"
             value={cogsMattSofa}
@@ -8849,7 +7402,7 @@ function FinanceLedgerSection({
             tone={netProfit >= 0 ? "synced" : "err"}
             annotation={`(${netMarginPct.toFixed(1)}%)`}
           />
-        </div>
+        </div>}
 
         {/* Cost lines — single section at the bottom of the snapshot
             card. Lists every non-auto cost line (with or without a
@@ -8869,7 +7422,8 @@ function FinanceLedgerSection({
       </div>
       <p className="mt-1 text-[10.5px] text-ink-muted">
         Tap a row to set its amount. Individual cost lines and their receipts live in the Cost lines section above. Sales live in the Sales section above; auto rows are computed from the rate card.
-        {filled.size > 0 && " Rows marked 入账 are Finance's figures — approved payment vouchers and posted AP invoices on this event — and replace the typed or auto amount."}
+        {pnl && " By Sales Orders is the orders opened at this fair at their own cost; By Total Sales prices COGS at the same cost ratio until a COGS is typed, and works its % rows from its own sales."}
+        {filled.size > 0 && " Rows marked 入账 are Finance's figures — payment vouchers once checked, and posted AP invoices, on this event — and replace the typed or auto amount."}
       </p>
       {books && !books.ok && (
         <p className="mt-1 text-[10.5px] text-warning-text" role="status">

@@ -21,6 +21,7 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState, useEffect, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { useUpdateTrip } from '../lib/trips-queries';
 import { buildVariantSummary, fmtSen, fmtDate, fmtDateOrDash, fmtDateTime } from '@2990s/shared';
 import { formatPhone } from '@2990s/shared/phone';
@@ -83,6 +84,36 @@ function SubstatusPill({ value }: { value: string | null }) {
 }
 /* A datetime-or-dash cell (TIMESTAMPTZ columns). */
 const dtOrDash = (iso: string | null): string => (iso ? fmtDateTime(iso) : '—');
+
+/* POD (proof of delivery) cell. SO rows only. A real driver POD left a photo or
+   a GPS fix (has_pod) → a green "POD" chip linking to the DO detail where the
+   signature/photo/GPS are shown. A DELIVERED order with no evidence (office
+   advance / QR scan) → an amber "No POD" chip (the thing dispatchers chase).
+   Not-yet-delivered rows render a muted dash. */
+function PodCell({ o }: { o: PlanningOrder }) {
+  if (o.row_type !== 'so') return <NotApplicable />;
+  if (o.has_pod) {
+    const doId = o.delivery_orders[o.delivery_orders.length - 1]?.id;
+    const chip = (
+      <span style={{
+        display: 'inline-block', padding: '1px 8px', borderRadius: 999,
+        border: '1px solid #2e7d32', color: '#2e7d32', fontSize: 'var(--fs-10)',
+        fontWeight: 600, whiteSpace: 'nowrap',
+      }}>✓ POD</span>
+    );
+    return doId ? <Link to={`/scm/delivery-orders/${doId}`} title="View proof of delivery">{chip}</Link> : chip;
+  }
+  if (o.delivery_state === 'DELIVERED') {
+    return (
+      <span style={{
+        display: 'inline-block', padding: '1px 8px', borderRadius: 999,
+        border: '1px solid #b26a00', color: '#b26a00', fontSize: 'var(--fs-10)',
+        fontWeight: 600, whiteSpace: 'nowrap',
+      }}>No POD</span>
+    );
+  }
+  return <NotApplicable />;
+}
 
 /* Company badge for the SHARED cross-company queue — a small code chip
    (HOUZS / 2990). null (e.g. ASSR rows / unresolved) renders a muted dash. */
@@ -291,7 +322,7 @@ function DeliveryDateEditCell({ order, sched }: { order: PlanningOrder; sched: S
     return detail(fmtDateOrDash(order.amended_delivery_date));
   }
   return (
-    <span {...stopRow} style={{ display: 'inline-flex', minWidth: 128 }}>
+    <span {...stopRow} style={{ display: 'flex', width: '100%', minWidth: 0 }}>
       <DateField
         fullWidth
         value={val}
@@ -379,19 +410,25 @@ type CrewSeatWrite = (order: PlanningOrder, seat: {
 function DriverPickCell({ order, drivers, sched, writeSeat, pending }: {
   order: PlanningOrder; drivers: DriverRow[]; sched: SchedMutation; writeSeat: CrewSeatWrite; pending: boolean;
 }) {
-  const items = drivers.map((d) => ({ id: d.id, label: d.name }));
+  // SCROLL PERF (owner 2026-10-21 "滚动变顺"): the board re-renders every visible
+  // cell on each scroll frame / tick / keystroke. These option lists must be
+  // MEMOISED — rebuilt per render they handed SearchCombo a new array identity
+  // every time, forcing its own chosen/hits/rows useMemos to recompute on all
+  // ~200 crew pickers on screen. drivers is react-query-stable, so this is free.
+  const items = useMemo(() => drivers.map((d) => ({ id: d.id, label: d.name })), [drivers]);
   const currentName = order.crew?.driver_1_name ?? null;
-  const chosen = crewComboValue(items, currentName);
+  const options = useMemo(() => crewComboOptions(items, currentName), [items, currentName]);
+  const chosen = useMemo(() => crewComboValue(items, currentName), [items, currentName]);
   const [val, setVal] = useState(chosen);
   useEffect(() => { setVal(chosen); }, [chosen]);
   if (isDp(order) && !order.trip_id) return <NotApplicable />;
   if (isProject(order)) return <span style={{ color: '#767b6e' }}>{order.crew?.driver_1_name || '—'}</span>;
   const assrLeg = isAssr(order);
   return (
-    <span {...stopRow} style={{ display: 'inline-flex', minWidth: 150 }}>
+    <span {...stopRow} style={{ display: 'flex', width: '100%', minWidth: 0 }}>
       <SearchCombo
         fill aria-label="Driver" placeholder="— pick a driver —"
-        options={crewComboOptions(items, currentName)}
+        options={options}
         value={val}
         disabled={pending}
         onChange={(picked) => {
@@ -414,19 +451,22 @@ function DriverPickCell({ order, drivers, sched, writeSeat, pending }: {
 function LorryPickCell({ order, lorries, sched, writeSeat, pending }: {
   order: PlanningOrder; lorries: LorryRow[]; sched: SchedMutation; writeSeat: CrewSeatWrite; pending: boolean;
 }) {
-  const items = lorries.map((l) => ({ id: l.id, label: l.plate }));
+  // SCROLL PERF: memoise the option list (see DriverPickCell) — stable identity
+  // keeps SearchCombo's internal memos from recomputing on every board re-render.
+  const items = useMemo(() => lorries.map((l) => ({ id: l.id, label: l.plate })), [lorries]);
   const currentPlate = order.crew?.lorry_plate ?? null;
-  const chosen = crewComboValue(items, currentPlate);
+  const options = useMemo(() => crewComboOptions(items, currentPlate), [items, currentPlate]);
+  const chosen = useMemo(() => crewComboValue(items, currentPlate), [items, currentPlate]);
   const [val, setVal] = useState(chosen);
   useEffect(() => { setVal(chosen); }, [chosen]);
   if (isDp(order) && !order.trip_id) return <NotApplicable />;
   if (isProject(order) || isDp(order)) return <span style={{ color: '#767b6e' }}>{order.crew?.lorry_plate || '—'}</span>;
   const assrLeg = isAssr(order);
   return (
-    <span {...stopRow} style={{ display: 'inline-flex', minWidth: 150 }}>
+    <span {...stopRow} style={{ display: 'flex', width: '100%', minWidth: 0 }}>
       <SearchCombo
         fill aria-label="Lorry plate" placeholder="— pick a lorry —"
-        options={crewComboOptions(items, currentPlate)}
+        options={options}
         value={val}
         disabled={pending}
         onChange={(picked) => {
@@ -451,17 +491,22 @@ function LorryPickCell({ order, lorries, sched, writeSeat, pending }: {
 function HelperPickCell({ order, helpers, writeSeat, pending, slot }: {
   order: PlanningOrder; helpers: HelperRow[]; writeSeat: CrewSeatWrite; pending: boolean; slot: 1 | 2;
 }) {
-  const items = helpers.map((h) => ({ id: h.id, label: h.name }));
+  // SCROLL PERF: memoise the option list (see DriverPickCell).
+  const items = useMemo(() => helpers.map((h) => ({ id: h.id, label: h.name })), [helpers]);
   const currentName = (slot === 1 ? order.crew?.helper_1_name : order.crew?.helper_2_name) ?? null;
-  const chosen = crewComboValue(items, currentName);
+  const options = useMemo(() => crewComboOptions(items, currentName), [items, currentName]);
+  const chosen = useMemo(() => crewComboValue(items, currentName), [items, currentName]);
   const [val, setVal] = useState(chosen);
   useEffect(() => { setVal(chosen); }, [chosen]);
-  if (isAssr(order) || isDp(order) || isProject(order)) return <NotApplicable />;
+  // Project rows are a read-only PMS mirror — show the helper the project crewed
+  // (owner 2026-10-21), like the Driver / Lorry cells. ASSR / DP have no seat.
+  if (isProject(order)) return <span style={{ color: '#767b6e' }}>{currentName || '—'}</span>;
+  if (isAssr(order) || isDp(order)) return <NotApplicable />;
   return (
-    <span {...stopRow} style={{ display: 'inline-flex', minWidth: 150 }}>
+    <span {...stopRow} style={{ display: 'flex', width: '100%', minWidth: 0 }}>
       <SearchCombo
         fill aria-label={`Helper ${slot}`} placeholder="— pick a helper —"
-        options={crewComboOptions(items, currentName)}
+        options={options}
         value={val}
         disabled={pending}
         onChange={(picked) => {
@@ -855,11 +900,12 @@ export function DeliveryPlanningBoard({
       'bs_delivery_date', 'esb_remarks', 'bs_remarks', 'ctn',
       // Crew — assigned later, default-hidden
       'trip_no', 'lorry', 'driver', 'driver_ic', 'driver_contact', 'driver_2', 'helper_1', 'helper_2',
-      // Admin remark, document date
-      'dp_remark', 'do_date',
-      // Send status, then the message sub-status (delivery_state / arrangement_stage
-      // are no longer board columns — still derived server-side for the top tabs).
-      'wa_message', 'delivery_substatus',
+      // Admin remark, document date, real delivered time (default-hidden)
+      'dp_remark', 'do_date', 'delivered_at',
+      // Send status, POD evidence, then the message sub-status (delivery_state /
+      // arrangement_stage are no longer board columns — still derived server-side
+      // for the top tabs).
+      'wa_message', 'pod', 'delivery_substatus',
     ];
     const pos = new Map(DP_DEFAULT_ORDER.map((k, i) => [k, i] as const));
     const cols: GridColumn<PlanningOrder>[] = [
@@ -957,6 +1003,25 @@ export function DeliveryPlanningBoard({
         const s = msgStatuses?.[o.so_doc_no];
         return s && !s.success ? 'Failed' : 'Done All';
       },
+    },
+    {
+      /* POD — did the driver leave proof (photo/GPS)? A DELIVERED order with no
+         evidence shows "No POD" so dispatch can chase it. Links to the DO. */
+      key: 'pod', label: 'POD', width: 110, groupable: true,
+      accessor: (o) => <PodCell o={o} />,
+      groupValue: (o) => (o.row_type !== 'so' ? '(n/a)' : o.has_pod ? 'POD' : o.delivery_state === 'DELIVERED' ? 'No POD' : '—'),
+      searchValue: (o) => (o.has_pod ? 'POD proof of delivery' : o.delivery_state === 'DELIVERED' ? 'No POD' : ''),
+      exportValue: (o) => (o.has_pod ? 'POD' : o.delivery_state === 'DELIVERED' ? 'No POD' : ''),
+    },
+    {
+      /* The real delivered instant (delivery_orders.delivered_at), stamped when
+         POD completes — distinct from the manually-typed customer delivered
+         date. Default-hidden; add via the Columns panel. */
+      key: 'delivered_at', label: 'Delivered At', width: 150, sortable: true, defaultHidden: true,
+      accessor: (o) => (o.row_type !== 'so' ? <NotApplicable /> : detail(dtOrDash(o.delivered_at ?? null))),
+      searchValue: (o) => o.delivered_at ?? '',
+      exportValue: (o) => (o.delivered_at ? fmtDateTime(o.delivered_at) : ''),
+      sortFn: (a, b) => String(a.delivered_at ?? '').localeCompare(String(b.delivered_at ?? '')),
     },
     {
       /* Default-SHOWN again per the owner's 2026-09-22 column pass (it had been
@@ -1067,7 +1132,7 @@ export function DeliveryPlanningBoard({
        to. "Amend (Cust)" (the customer's requested new date) default-HIDES. The
        ORIGINAL "Delivery Date" column above is unchanged. */
     {
-      key: 'amended_delivery_date', label: 'Delivery Date', width: 150, sortable: true,
+      key: 'amended_delivery_date', label: 'Delivery Date', width: 170, sortable: true,
       accessor: (o) => <DeliveryDateEditCell order={o} sched={sched} />,
       searchValue: (o) => o.amended_delivery_date ?? '',
       sortFn: (a, b) => String(a.amended_delivery_date ?? '').localeCompare(String(b.amended_delivery_date ?? '')),

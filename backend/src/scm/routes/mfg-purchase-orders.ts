@@ -2753,7 +2753,7 @@ export async function recomputePoExpectedAt(sb: any, poId: string) {
    MRP keeps reading po_qty_picked, now always accurate. Two plain queries (no
    PostgREST embedding) so behaviour is predictable in production. Best-effort:
    callers wrap in try/catch and never fail the PO mutation on a recount error. */
-async function recomputeSoPicked(sb: any, soItemIds: Array<string | null | undefined>) {
+export async function recomputeSoPicked(sb: any, soItemIds: Array<string | null | undefined>) {
   const ids = [...new Set(soItemIds.filter((x): x is string => Boolean(x)))];
   if (ids.length === 0) return;
   // Best-effort, never throws (Commander 2026-05-30): the primary write already

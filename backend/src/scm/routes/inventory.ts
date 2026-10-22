@@ -511,8 +511,11 @@ async function deliveredReturnedBySoItem(
 /* ── Product totals (AutoCount-style list view) — PR #38 ─────────────────
    One row per item_code with summed qty across all warehouses + main
    supplier. Double-click a row in the UI to drill into per-warehouse
-   breakdown via GET /inventory?showAll=true&search=... */
-inventory.get('/products', async (c) => {
+   breakdown via GET /inventory?showAll=true&search=...
+   Exported for the route test, same reason as listInventoryHandler above. */
+export const productTotalsHandler = async (
+  c: Context<{ Bindings: Env; Variables: Variables }>,
+) => {
   const sb = c.get('supabase');
   const search = c.req.query('search');
   const category = c.req.query('category');
@@ -581,6 +584,10 @@ inventory.get('/products', async (c) => {
 
   const committedScheduled = new Map<string, number>(); // demand WITH a delivery date
   const unscheduled = new Map<string, number>();         // demand with NO delivery date
+  /* The SO(s) behind Scheduled / Unscheduled, so a planner can see WHICH orders
+     make up the figure without re-running AutoCount's SO detail listing (HC-0115). */
+  type DemandSo = { doc_no: string; debtor_name: string | null; so_date: string | null; delivery_date: string | null; qty: number };
+  const demandSos = new Map<string, DemandSo[]>();
   const incoming = new Map<string, number>();            // PO qty arriving within 30d
   type IncPo = { po_number: string; eta: string | null; qty: number };
   const incomingPos = new Map<string, IncPo[]>();
@@ -659,7 +666,7 @@ inventory.get('/products', async (c) => {
     const { data: demand, error: demandErr } = await chunkIn(codes, (batch, from, to) => {
       let dq = pgrestIn(scopeToCompany(sb
         .from('mfg_sales_order_items')
-        .select('id, item_code, qty, warehouse_id, line_delivery_date, cancelled, so:mfg_sales_orders!inner(status, customer_delivery_date)'), c), 'item_code', batch)
+        .select('id, doc_no, item_code, qty, warehouse_id, line_delivery_date, cancelled, so:mfg_sales_orders!inner(status, customer_delivery_date, debtor_name, so_date)'), c), 'item_code', batch)
         .eq('cancelled', false);
       if (warehouseId) dq = dq.eq('warehouse_id', warehouseId); // ask A — scope demand to this warehouse (mig 0118)
       return dq.range(from, to);
@@ -668,8 +675,9 @@ inventory.get('/products', async (c) => {
       // eslint-disable-next-line no-console
       console.error('[inventory] SO demand read failed:', (demandErr as { message?: unknown }).message ?? demandErr);
     }
-    const demandRows = ((demand ?? []) as Array<{ id: string; item_code: string; qty: number; line_delivery_date: string | null; so: { status: string; customer_delivery_date: string | null } | Array<{ status: string; customer_delivery_date: string | null }> | null }>)
-      .map((r) => ({ id: r.id, item_code: r.item_code, qty: Number(r.qty ?? 0), line_delivery_date: r.line_delivery_date, so: Array.isArray(r.so) ? r.so[0] : r.so }))
+    type DemandSoHead = { status: string; customer_delivery_date: string | null; debtor_name: string | null; so_date: string | null };
+    const demandRows = ((demand ?? []) as Array<{ id: string; doc_no: string; item_code: string; qty: number; line_delivery_date: string | null; so: DemandSoHead | DemandSoHead[] | null }>)
+      .map((r) => ({ id: r.id, doc_no: r.doc_no, item_code: r.item_code, qty: Number(r.qty ?? 0), line_delivery_date: r.line_delivery_date, so: Array.isArray(r.so) ? r.so[0] : r.so }))
       .filter((r) => r.so != null && !SO_DONE.has(r.so.status) && r.qty > 0);
 
     // Net-of-delivered per line — mirror so-stock-allocation: an open SO line's
@@ -689,6 +697,11 @@ inventory.get('/products', async (c) => {
       const dd = (r.line_delivery_date ?? so.customer_delivery_date)?.slice(0, 10);
       if (dd) committedScheduled.set(code, (committedScheduled.get(code) ?? 0) + net);
       else    unscheduled.set(code, (unscheduled.get(code) ?? 0) + net);
+      const sos = demandSos.get(code) ?? [];
+      const same = sos.find((x) => x.doc_no === r.doc_no && x.delivery_date === (dd ?? null));
+      if (same) same.qty += net;
+      else sos.push({ doc_no: r.doc_no, debtor_name: so.debtor_name, so_date: so.so_date?.slice(0, 10) ?? null, delivery_date: dd ?? null, qty: net });
+      demandSos.set(code, sos);
     }
 
     // Incoming — open PO lines whose EFFECTIVE ETA (line revised date, else PO
@@ -793,7 +806,7 @@ inventory.get('/products', async (c) => {
         committed_scheduled: 0, unscheduled_qty: 0, reserved_total: 0,
         available_qty: 0, surplus_qty: 0,
         sellable_surplus_qty: 0, non_selling_qty: 0,
-        incoming_qty: 0, incoming_pos: [],
+        incoming_qty: 0, incoming_pos: [], demand_sos: [],
         oldest_lot_at: null,
       };
     }
@@ -900,6 +913,8 @@ inventory.get('/products', async (c) => {
       non_selling_qty:     nonSellingQty.get(code) ?? 0,
       incoming_qty:        inc,
       incoming_pos:        pos,
+      demand_sos:          (demandSos.get(code) ?? []).slice().sort((a, b) =>
+        byDateAsc(a.delivery_date, b.delivery_date) || byDateAsc(a.so_date, b.so_date) || a.doc_no.localeCompare(b.doc_no)),
       oldest_lot_at:       oldestLot.get(code) ?? null,
     };
   });
@@ -910,7 +925,8 @@ inventory.get('/products', async (c) => {
     ? enriched.filter((r) => (r.total_qty as number) !== 0 || r.incoming_qty > 0 || r.reserved_total > 0)
     : enriched;
   return c.json({ products: out });
-});
+};
+inventory.get('/products', productTotalsHandler);
 
 /* Earliest-first date comparator (NULLs last) — used to order a SKU's incoming
    PO list by ETA in the balances enrichment above. */

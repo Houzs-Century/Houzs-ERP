@@ -22,6 +22,7 @@ import { coverageStateOf } from "../../components/coverage-state";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
+import { returnToWorkspaceOpener, useWorkspaceOpener } from "../../lib/useWorkspaceOpener";
 import {
   ArrowLeft,
   History,
@@ -704,10 +705,16 @@ function SalesOrderDetailV2ReadOnly() {
       : "Submit SO Amendment"
     : "Edit";
 
-  // Back always returns to the Sales Orders list (owner 2026-07-24: every
-  // details page's back button goes to its relevant list, not wherever
-  // browser history happens to point). The list restores its own sticky
-  // filters, so the prior filtered view comes back — no context lost.
+  // Back returns to the Sales Orders list (owner 2026-07-24: every details
+  // page's back button goes to its relevant list, not wherever browser history
+  // happens to point). The list restores its own sticky filters, so the prior
+  // filtered view comes back — no context lost.
+  // EXCEPT an order opened as a document from another page — Merchant Recon,
+  // Fair Links, a project, a relationship map: Back returns to THAT page, and
+  // its tab, the way it was left (owner 2026-10-21: 我从 merchant recon 点开
+  // SO，返回也要返回 merchant recon).
+  const cameFrom = useWorkspaceOpener();
+  const backLabel = cameFrom ? cameFrom.label : "Sales Orders";
   const goBack = async () => {
     if (unsavedPayments > 0 && !(await askConfirm({
       title: "Leave without saving payments?",
@@ -715,7 +722,7 @@ function SalesOrderDetailV2ReadOnly() {
       confirmLabel: "Leave anyway",
       danger: true,
     }))) return;
-    navigate(scmListReturnTo("/scm/sales-orders"));
+    navigate(returnToWorkspaceOpener() ?? scmListReturnTo("/scm/sales-orders"));
   };
   // Edit always forwards to the full editor (?edit=1). When the SO is
   // amendment-eligible the editor opens in amendment mode (Save submits an
@@ -860,6 +867,8 @@ function SalesOrderDetailV2ReadOnly() {
     onNodeClick: onChainNodeClick,
     amendments: chainAmendments,
     onAmendmentClick: onChainAmendmentClick,
+    returns: chainReturns,
+    onReturnClick: onChainReturnClick,
     pairing: chainPairing,
     choice: chainChoice,
     closeChoice: closeChainChoice,
@@ -1078,7 +1087,7 @@ function SalesOrderDetailV2ReadOnly() {
         </p>
         <div className="mt-4">
           <Button variant="secondary" onClick={goBack} icon={<ArrowLeft size={14} />}>
-            Back to Sales Orders
+            Back to {backLabel}
           </Button>
         </div>
       </div>
@@ -1100,9 +1109,9 @@ function SalesOrderDetailV2ReadOnly() {
             type="button"
             onClick={goBack}
             className="inline-flex items-center gap-1 text-[14px] font-semibold text-accent-bright"
-            aria-label="Back to Sales Orders"
+            aria-label={`Back to ${backLabel}`}
           >
-            <ArrowLeft size={16} /> Orders
+            <ArrowLeft size={16} /> {cameFrom ? cameFrom.label : "Orders"}
           </button>
           <span className="font-mono text-[12.5px] font-semibold text-sidebar-ink">
             {salesOrder.doc_no}
@@ -1145,7 +1154,8 @@ function SalesOrderDetailV2ReadOnly() {
             <button
               type="button"
               onClick={goBack}
-              aria-label="Back to Sales Orders"
+              aria-label={`Back to ${backLabel}`}
+              title={`Back to ${backLabel}`}
               className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-surface text-ink-secondary hover:border-primary/50 hover:text-primary"
             >
               <ArrowLeft size={16} />
@@ -1772,6 +1782,10 @@ function SalesOrderDetailV2ReadOnly() {
         amendments={chainAmendments}
         onAmendmentClick={(a) => {
           if (onChainAmendmentClick(a)) setRelMapOpen(false);
+        }}
+        returns={chainReturns}
+        onReturnClick={(r) => {
+          if (onChainReturnClick(r)) setRelMapOpen(false);
         }}
         pairing={chainPairing}
       />

@@ -573,15 +573,15 @@ export async function drainEmailOutbox(
 // Used by callers to build survey / portal / invite / reset URLs.
 // Falls back to the canonical user-facing domain if PUBLIC_APP_URL is unset.
 //
-// Per-company: links in a 2990-identity email should land on 2990's hostname
-// (companyContext's hostname default then resolves 2990 as the login default).
-// Callers pass the company code where they know it; omitted → the historical
-// PUBLIC_APP_URL / houzscentury.com behaviour, so untouched callers (cron
-// reminders, escalations) are unchanged.
-
-const COMPANY_PUBLIC_URLS: Record<string, string> = {
-  "2990": "https://erp.2990shome.com",
-};
+// Per-company: a company's links may land on its own hostname once that
+// hostname serves THIS app. Callers pass the company code where they know it;
+// omitted -> the PUBLIC_APP_URL / houzscentury.com behaviour.
+//
+// 2990 is deliberately absent: erp.2990shome.com is still the old 2990 system's
+// own backend site (Pages project 2990s-backend), which has no /invite or
+// /reset page, so a 2990 invitee landed on a sign-in form with no password to
+// type. Add it back only after that hostname is moved onto this app's Pages.
+const COMPANY_PUBLIC_URLS: Record<string, string> = {};
 
 export function publicUrl(env: Env, path: string, companyCode?: string | null): string {
   const code = (companyCode ?? "").trim().toUpperCase();

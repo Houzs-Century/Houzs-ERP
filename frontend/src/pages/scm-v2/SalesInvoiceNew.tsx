@@ -35,6 +35,8 @@ import { Button } from '@2990s/design-system';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import { useToast } from '../../vendor/scm/components/Toast';
+import { siAfterSavePath } from '../../lib/siAfterSave';
 import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import {
   useCreateSalesInvoice, useAddSalesInvoicePayment,
@@ -75,6 +77,7 @@ const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, cu
 export const SalesInvoiceNew = () => {
   const navigate = useNavigate();
   const notify = useNotify();
+  const toast = useToast();
   const [searchParams] = useSearchParams();
   const fromDo = searchParams.get('fromDo');
   const fromPicks = searchParams.get('fromPicks') === '1';
@@ -500,8 +503,9 @@ export const SalesInvoiceNew = () => {
             setCreatedInvoice({ id: res.id, number: res.invoiceNumber });
             return;
           }
+          if (fromDo && failed === 0) toast.success(`Invoice ${res.invoiceNumber} created.`);
           navigate(
-            `/scm/sales-invoices/${res.id}${failed > 0 ? '?retryPayments=1' : ''}`,
+            siAfterSavePath(res.id, fromDo, failed),
             { state: failed > 0 ? paymentRetryNavigationState('si', res.id, failedDrafts) : undefined },
           );
         },

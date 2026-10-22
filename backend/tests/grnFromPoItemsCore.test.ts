@@ -184,6 +184,19 @@ describe('createDraftGrnsFromPoItemsCore — creates a DRAFT, never posts stock'
     expect(res.created[0]!.lineCount).toBe(1);
   });
 
+  test("the supplier's delivery order number lands in the Delivery Note field (HC-0119)", async () => {
+    const t = tables();
+    const res = await runCore(t, CO_A, { picks: [{ poItemId: 'poi-a', qty: 1 }], deliveryNoteRef: ' DGSN26002269 ' });
+    expect(res.ok).toBe(true);
+    expect(t.grns[0]!.delivery_note_ref).toBe('DGSN26002269');
+  });
+
+  test('no delivery order number leaves the Delivery Note empty', async () => {
+    const t = tables();
+    await runCore(t, CO_A, { picks: [{ poItemId: 'poi-a', qty: 1 }] });
+    expect(t.grns[0]!.delivery_note_ref).toBeNull();
+  });
+
   test('two POs from ONE supplier fold into ONE GRN (multi-PO capability intact)', async () => {
     const t = tables();
     const res = await runCore(t, CO_A, {

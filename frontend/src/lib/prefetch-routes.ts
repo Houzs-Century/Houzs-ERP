@@ -41,6 +41,8 @@ const ROUTE_CHUNKS: Record<string, () => Promise<unknown>> = {
   "/announcements": () => import("../pages/Announcements"),
   "/team": () => import("../pages/Team"),
   "/system-health": () => import("../pages/SystemHealth"),
+  "/ai-usage": () => import("../pages/AiUsage"),
+  "/ocr": () => import("../pages/OcrDashboard"),
   "/agents": () => import("../pages/Agents"),
   "/settings": () => import("../pages/Settings"),
   // Supply Chain hubs — the /scm landing grid and the six Level-2 sub-group
@@ -76,6 +78,7 @@ const ROUTE_CHUNKS: Record<string, () => Promise<unknown>> = {
   "/scm/purchase-returns": () => import("../pages/scm-v2/PurchaseReturnsListV2"),
   // Transportation.
   "/scm/delivery-planning": () => import("../pages/scm-v2/DeliveryPlanning"),
+  "/scm/delivery-planning-driver": () => import("../pages/scm-v2/DeliveryPlanningDriver"),
   "/scm/dp-orders": () => import("../pages/scm-v2/DpOrders"),
   "/scm/fleet": () => import("../pages/scm-v2/Fleet"),
   "/scm/lorry-capacity": () => import("../pages/scm-v2/LorryCapacity"),

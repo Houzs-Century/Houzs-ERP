@@ -41,8 +41,8 @@ import {
 import { collectProcessingGateProblems } from '../shared/so-save-problems';
 import { canonicaliseSoHeaderChanges, soDateDay, soDatePairRefusal, withProcessingRemovalCascade } from '../shared/so-processing-date';
 import { recordSoAudit } from '../lib/so-audit';
-import { soHasLivePo } from '../lib/so-po-lock';
-import { deliveryBroughtForward, deliveryNeedsPurchaserOk, processingDateFrozenByPo, PROCESSING_DATE_PO_LOCKED, PROCESSING_DATE_PO_OVERRIDE_KEY, PURCHASER_OK_REQUIRED } from '../shared/so-po-date-rule';
+import { soHasLivePo, soHasUnreceivedPo } from '../lib/so-po-lock';
+import { deliveryBroughtForward, deliveryNeedsPurchaserOk, poAwaitingSupplier, processingDateFrozenByPo, PROCESSING_DATE_PO_LOCKED, PROCESSING_DATE_PO_OVERRIDE_KEY, PURCHASER_OK_REQUIRED } from '../shared/so-po-date-rule';
 import { scopeToCompany, isMirroredDocNo, houzsOwns2990, MIRRORED_SO_READONLY, activeCompanyId, requireActiveCompanyId } from '../lib/companyScope';
 import {
   enqueueAmendmentCommand,
@@ -644,7 +644,7 @@ soAmendments.get('/:id', async (c) => {
     && deliveryNeedsPurchaserOk({
       storedDeliv: soDateDay(salesOrder?.customer_delivery_date),
       nextDeliv: requestedDeliv === undefined ? null : soDateDay(requestedDeliv as string | null),
-      hasLivePo: purchaseOrders.some((p) => String(p.status).toUpperCase() !== 'CANCELLED'),
+      hasUnreceivedPo: purchaseOrders.some((p) => poAwaitingSupplier(p.status)),
     });
 
   return c.json({ amendment, lines, salesOrder, purchaseOrders, poFollowUps, viewerIsRequester, purchaserOkRequired });
@@ -873,11 +873,11 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
     const procMoves = 'processingDate' in headerChanges && origProc !== '' && nextProc !== origProc && !poDateOverridden;
     const delivForward = lane === 'DELIVERY' && 'customerDeliveryDate' in headerChanges
       && deliveryBroughtForward(ymd(cur.customer_delivery_date), nextDeliv);
-    const hasLivePo = (procMoves || (delivForward && !amendment.purchaser_ok_at)) && await soHasLivePo(sb, amendment.so_doc_no);
+    const hasLivePo = procMoves && await soHasLivePo(sb, amendment.so_doc_no);
     if (!poDateOverridden && processingDateFrozenByPo({ storedProc: origProc, nextProc, hasLivePo })) {
       return c.json(PROCESSING_DATE_PO_LOCKED, 409);
     }
-    if (delivForward && hasLivePo && !amendment.purchaser_ok_at) {
+    if (delivForward && !amendment.purchaser_ok_at && await soHasUnreceivedPo(sb, amendment.so_doc_no)) {
       return c.json(PURCHASER_OK_REQUIRED, 409);
     }
 
@@ -1505,12 +1505,12 @@ soAmendments.patch('/:id/purchaser-ok', async (c) => {
   const needed = 'customerDeliveryDate' in headerChanges && deliveryNeedsPurchaserOk({
     storedDeliv: soDateDay((soRow as { customer_delivery_date?: unknown } | null)?.customer_delivery_date),
     nextDeliv: soDateDay(headerChanges['customerDeliveryDate']),
-    hasLivePo: await soHasLivePo(sb, amendment.so_doc_no),
+    hasUnreceivedPo: await soHasUnreceivedPo(sb, amendment.so_doc_no),
   });
   if (!needed) {
     return c.json({
       error: 'purchaser_ok_not_needed',
-      message: 'This amendment does not bring the Delivery Date forward on an order with a Purchase Order, so Logistic approves it alone.',
+      message: 'This amendment does not bring the Delivery Date forward on an order with a Purchase Order still to be received, so Logistic approves it alone.',
     }, 409);
   }
 

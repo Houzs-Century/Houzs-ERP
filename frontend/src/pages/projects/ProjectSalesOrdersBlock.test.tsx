@@ -3,10 +3,20 @@
    gap between them in words a salesperson reads ("Not yet opened"); each order
    links to its SO; a scoped rep is told the totals are theirs only; nothing is
    claimed about the business when the read came back empty. */
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import type { QueryState } from "../../hooks/useQuery";
+const transferMutate = vi.hoisted(() => vi.fn());
+vi.mock("../../vendor/scm/lib/fair-options-queries", async (orig) => ({
+  ...(await orig<typeof import("../../vendor/scm/lib/fair-options-queries")>()),
+  useFairTransfer: () => ({ mutate: transferMutate, isPending: false }),
+  useFairOptions: () => ({ data: { date: "2026-10-12", running: [], venues: [], earlier: [
+    { key: "ioigecc|homelove|2026-10-09|2026-10-11", venue: "IOIGECC", organizer: "HOMELOVE", startDate: "2026-10-09", endDate: "2026-10-11", projectIds: [307, 2267],
+      booths: [{ projectId: 307, brand: "AKEMI" }, { projectId: 2267, brand: "ZANOTTI" }] },
+  ] }, isLoading: false, isError: false }),
+}));
+
 import { ProjectSalesOrdersBlock } from "./ProjectSalesOrdersBlock";
 import type { ProjectSalesOrderRow, ProjectSalesOrdersResponse } from "./projectSalesOrders";
 
@@ -27,6 +37,7 @@ const response = (rows: ProjectSalesOrderRow[], scoped = false): ProjectSalesOrd
     { count: 0, draft_count: 0, amount_sen: 0, paid_sen: 0, balance_sen: 0 },
   ),
   scoped,
+  can_transfer: false,
 });
 
 const query = (over: Partial<QueryState<ProjectSalesOrdersResponse>>): QueryState<ProjectSalesOrdersResponse> => ({
@@ -104,5 +115,50 @@ describe("ProjectSalesOrdersBlock", () => {
     mount(query({ error: "403: You don't have permission to view this page." }), 113_990);
     expect(screen.getByText("403: You don't have permission to view this page.")).toBeTruthy();
     expect(screen.queryByText(/were found/)).toBeNull();
+  });
+
+  test('marks an order placed here from another place — "Venue differs" (owner 2026-10-19)', () => {
+    mount(query({ data: response([row({}), row({ doc_no: "HC-SO-2610-167", venue_differs: "IOIGECC" })]) }), null);
+    const pills = screen.getAllByText("Venue differs");
+    expect(pills).toHaveLength(1);
+    expect(pills[0]!.getAttribute("title")).toBe("Venue on the order: IOIGECC");
+    expect(pills[0]!.closest("tr")?.textContent).toContain("HC-SO-2610-167");
+  });
+});
+
+describe("ProjectSalesOrdersBlock — moving an order out (owner 2026-10-20)", () => {
+  const reported = row({ doc_no: "HC-SO-2610-167", venue: "IOI MALL PUTRAJAYA", branding: "AKEMI",
+    report_elsewhere: { project_id: 307, label: "AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11)", report_date: "2026-10-10" } });
+  const differs = row({ doc_no: "HC-SO-2610-166", so_date: "2026-10-12", venue: "IOIGECC", branding: "AKEMI", venue_differs: "IOIGECC" });
+  const plain = row({ doc_no: "HC-SO-2610-100" });
+
+  test("another event's report names where it belongs: moved ticked, or all at one click", () => {
+    transferMutate.mockReset();
+    mount(query({ data: { ...response([reported, plain]), can_transfer: true } }), null);
+    expect(screen.getByText("AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11)")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Transfer all to their reported event (1)" }));
+    expect(transferMutate.mock.calls[0]![0]).toEqual([{ docNo: "HC-SO-2610-167", projectId: 307 }]);
+    fireEvent.click(screen.getByLabelText("Tick HC-SO-2610-167 to transfer"));
+    fireEvent.click(screen.getByRole("button", { name: "Transfer ticked (1)" }));
+    expect(transferMutate.mock.calls[1]![0]).toEqual([{ docNo: "HC-SO-2610-167", projectId: 307 }]);
+  });
+
+  test("a Venue differs order no report places: pick a booth at its own venue, one at a time", () => {
+    transferMutate.mockReset();
+    mount(query({ data: { ...response([differs, plain]), can_transfer: true } }), null);
+    const pick = screen.getByLabelText("Fair to move HC-SO-2610-166 to") as HTMLSelectElement;
+    /* Its own brand's booth, filled in; the person still presses Transfer. */
+    expect(pick.value).toBe("307");
+    expect([...pick.options].map((o) => o.text)).toEqual(["— pick a fair —", "AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11)", "ZANOTTI — IOIGECC — HOMELOVE (10/09 - 10/11)"]);
+    expect(transferMutate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Transfer" }));
+    expect(transferMutate.mock.calls[0]![0]).toEqual([{ docNo: "HC-SO-2610-166", projectId: 307 }]);
+    expect(screen.queryByRole("button", { name: /Transfer all/ })).toBeNull();
+  });
+
+  test("without the right, no Move column", () => {
+    mount(query({ data: response([reported, differs]) }), null);
+    expect(screen.queryByText("Move to")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Transfer/ })).toBeNull();
   });
 });

@@ -666,6 +666,12 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
     const { placeGrnLinesOnRacks } = await import('../lib/grn-rack-sync');
     await placeGrnLinesOnRacks(sb, grnId, grnNo, userId);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[grn-rack] place failed:', e); }
+  /* Which open orders the stock-PO lines of this receipt serve, earliest
+     delivery first, kept for the lead-time figures (owner 2026-10-19). Best-effort. */
+  try {
+    const { recordReceiptAssignments } = await import('../lib/receipt-so-assignment');
+    await recordReceiptAssignments(sb, grnId, companyId);
+  } catch (e) { /* eslint-disable-next-line no-console */ console.error('[receipt-so] post-grn failed:', e); }
   /* B2C SO auto-allocation — stock just came in, re-walk every PENDING SO line
      and flip to READY where the new inventory covers it. Best-effort. */
   try {
@@ -1251,7 +1257,7 @@ grns.get('/:id', async (c) => {
   const [h, i] = await Promise.all([
     // Company-scoped (owner 2026-08-10 audit): a bare uuid must not read
     // another company's GRN. Siblings (delivery-returns, suppliers) do this.
-    scopeToCompany(sb.from('grns').select(`${HEADER}, supplier:suppliers(id, code, name, contact_person, phone, email, address), purchase_order:purchase_orders(id, po_number)`), c).eq('id', id).maybeSingle(),
+    scopeToCompany(sb.from('grns').select(`${HEADER}, supplier:suppliers(id, code, name, contact_person, phone, email, address), purchase_order:purchase_orders(id, po_number), warehouse:warehouses!warehouse_id(id, code, name)`), c).eq('id', id).maybeSingle(),
     sb.from('grn_items').select(ITEM).eq('grn_id', id).order('created_at'),
   ]);
   if (h.error) return c.json({ error: 'load_failed', reason: h.error.message }, 500);
@@ -1259,7 +1265,10 @@ grns.get('/:id', async (c) => {
   // Migration 0106 — surface the convert-eligibility / lock flags on the grn
   // object so the detail page can lock once a PI/PR draws from it.
   const itemRows = (i.data ?? []) as Array<{ qty_accepted?: number | null; invoiced_qty?: number | null; returned_qty?: number | null }>;
-  const grn = { ...(h.data as Record<string, unknown>), ...computeGrnFlags(itemRows) };
+  // The detail page and phone show warehouse_code; only warehouse_id is a column
+  // (Sim, 2026-10-19: "the GRN also did not capture the warehouse").
+  const header = h.data as Record<string, unknown> & { warehouse?: { code?: string | null } | null };
+  const grn = { ...header, warehouse_code: header.warehouse?.code ?? null, ...computeGrnFlags(itemRows) };
 
   /* Bug #2 (Agent C 2026-05-31) — surface "received from which PO" + "receive
      date" per GRN line. The header carries received_at; each line links to a PO

@@ -84,6 +84,76 @@ export function useEventCosts(from: string, to: string) {
   });
 }
 
+/* Event Commission (owner 2026-10-20) — server: routes/acc-event-commission.ts,
+   rules: backend/src/scm/lib/event-commission.ts. Money in sen except the event
+   page's own Total Sales and Commission row, which are RM. */
+export type CommissionChange = {
+  date: string;
+  deltaGoodsSen: number;
+  kind: 'upsale' | 'drop';
+  notCounted: 'opening_day' | 'first_price' | null;
+  source: string;
+  changedBy: string | null;
+};
+export type CommissionSoRow = {
+  docNo: string;
+  soDate: string | null;
+  salesperson: string | null;
+  customer: string | null;
+  goodsSen: number;
+  totalSen: number;
+  paidSen: number;
+  paidPct: number;
+  reachedOn: string | null;
+  commissionSen: number;
+  changes: CommissionChange[];
+};
+export type CommissionFairRow = {
+  id: number;
+  name: string;
+  brand: string | null;
+  startDate: string;
+  endDate: string | null;
+  ratePct: number | null;
+  totalSalesRm: number | null;
+  estimateRm: number | null;
+  payableSen: number;
+  sos: CommissionSoRow[];
+};
+export type CommissionAdjustment = {
+  date: string;
+  kind: 'reached' | 'upsale' | 'drop' | 'cancelled';
+  docNo: string;
+  fairId: number;
+  fairName: string;
+  salesperson: string | null;
+  goodsSen: number;
+  commissionSen: number;
+  beforeReach: boolean;
+};
+/** Which date puts an order in the range: its fair's start, or its own SO date. */
+export type CommissionBasis = 'fair' | 'so_date';
+export type EventCommission = {
+  /** Absent from a server older than the toggle — read it through basisOf. */
+  basis?: CommissionBasis;
+  from: string;
+  to: string;
+  fairs: CommissionFairRow[];
+  adjustments: CommissionAdjustment[];
+  totals: { payableSen: number; adjustmentsSen: number; totalSen: number };
+};
+
+/** Event Commission for [from, to]: by fair, the fairs starting in it (as at
+ *  `to`) and what happened in it to the orders of earlier fairs; by SO date,
+ *  the orders opened in it and what happened to orders opened earlier. */
+export function useEventCommission(from: string, to: string, basis: CommissionBasis = 'fair') {
+  return useQuery({
+    queryKey: ['acc-events', 'commission', from, to, basis],
+    queryFn: () => authedFetch<EventCommission>(`/acc-events/commission?from=${from}&to=${to}${basis === 'so_date' ? '&basis=so_date' : ''}`),
+    staleTime: 30_000,
+  });
+}
+
 /** Change the event on one voucher line — posted or not; the server moves the
  *  line and, once posted, its journal leg together. */
 export function useRetagPvLine() {

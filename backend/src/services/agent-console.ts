@@ -428,7 +428,8 @@ export async function setAgentControl(
 /** Claude Sonnet list prices — for the console's ESTIMATE only. */
 const USD_PER_MTOK_IN = 3;
 const USD_PER_MTOK_OUT = 15;
-const USD_TO_MYR_EST = 4.7;
+/** Also the IT AI Usage page's rate (services/aiUsage.ts), so both agree. */
+export const USD_TO_MYR_EST = 4.7;
 
 const DEFAULT_LLM_MONTHLY_BUDGET_MYR = 150; // per agent family, per month
 const MIN_LLM_BUDGET_MYR = 10;

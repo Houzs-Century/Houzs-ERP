@@ -30,7 +30,7 @@ export async function loadOpenPoLines(
       .from('purchase_order_items')
       .select(`
         id, purchase_order_id, item_code, material_name, supplier_sku, qty, received_qty, warehouse_id,
-        item_group, variants, description2,
+        item_group, variants, description2, so_item_id,
         po:purchase_orders!inner ( id, po_number, supplier_id, status, on_hold, company_id, purchase_location_id )
       `)
       .in('purchase_orders.status', RECEIVABLE_PO_STATUSES as unknown as string[]);
@@ -43,7 +43,7 @@ export async function loadOpenPoLines(
     id: string; purchase_order_id: string; item_code: string | null;
     material_name: string | null; supplier_sku: string | null;
     qty: number | null; received_qty: number | null; warehouse_id: string | null;
-    item_group: string | null; variants: unknown; description2: string | null;
+    item_group: string | null; variants: unknown; description2: string | null; so_item_id: string | null;
     po: { id: string; po_number: string; supplier_id: string | null; status: string | null; on_hold: boolean | null; purchase_location_id: string | null } | null;
   };
   const rows = (data ?? []) as unknown as Row[];
@@ -55,6 +55,15 @@ export async function loadOpenPoLines(
     const { data: whs, error: whErr } = await svc.from('warehouses').select('id, code').in('id', whIds);
     if (whErr) throw new Error(`load PO warehouses failed: ${whErr.message}`);
     for (const w of whs as Array<{ id: string; code: string | null }>) if (w.code) codeById.set(w.id, w.code);
+  }
+  // The SO each line was raised for, so a delivery-order row printing our SO
+  // number (Dorsettloft "*HC-SO-013339") can be received as that set.
+  const soItemIds = [...new Set(rows.map((r) => r.so_item_id).filter((x): x is string => Boolean(x)))];
+  const soDocByItem = new Map<string, string>();
+  for (let i = 0; i < soItemIds.length; i += 200) {
+    const { data: soRows, error: soErr } = await svc.from('mfg_sales_order_items').select('id, doc_no').in('id', soItemIds.slice(i, i + 200));
+    if (soErr) throw new Error(`load PO line SOs failed: ${soErr.message}`);
+    for (const so of soRows as Array<{ id: string; doc_no: string | null }>) if (so.doc_no) soDocByItem.set(so.id, so.doc_no);
   }
   const out: OpenPoLine[] = [];
   for (const r of rows) {
@@ -72,6 +81,8 @@ export async function loadOpenPoLines(
       remaining,
       locationCode: codeById.get(whOf(r) ?? '') ?? null,
       description2: lineExportDescription2(r.item_group, r.variants, r.description2),
+      soDocNo: r.so_item_id ? soDocByItem.get(r.so_item_id) ?? null : null,
+      itemGroup: r.item_group ?? null,
     });
   }
   return out;
@@ -124,13 +135,16 @@ export async function loadPoStatuses(
   companyId: number | null,
 ): Promise<PoStatusRef[]> {
   const { data, error } = await paginateAll((from, to) => {
-    let q = svc.from('purchase_orders').select('po_number, status');
+    let q = svc.from('purchase_orders').select('po_number, status, on_hold, supplier_id, supplier:suppliers(name)');
     if (companyId != null) q = q.eq('company_id', companyId);
     return q.order('id').range(from, to);
   });
   if (error) throw new Error(`load PO statuses failed: ${error.message}`);
-  type Row = { po_number: string | null; status: string | null };
+  type Row = { po_number: string | null; status: string | null; on_hold: boolean | null; supplier_id: string | null; supplier: { name: string | null } | null };
   return ((data ?? []) as unknown as Row[])
     .filter((r) => r.po_number)
-    .map((r) => ({ poNumber: r.po_number as string, status: r.status ?? '' }));
+    .map((r) => ({
+      poNumber: r.po_number as string, status: r.status ?? '',
+      supplierId: r.supplier_id, supplierName: r.supplier?.name ?? null, onHold: r.on_hold === true,
+    }));
 }

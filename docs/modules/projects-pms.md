@@ -169,6 +169,28 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   paid from the payment ledger via `so-outstanding.ts`. "Not yet opened" is
   the lump-sum `total_sales` minus the SO total — a comparison, not a count
   of slips.
+- The event page's finance lines take Finance's money from the books
+  (`scm/lib/event-books.ts`, read in `services/projectFinanceLines.ts`): posted
+  GL legs tagged to the event, plus payment-voucher lines that are CHECKED but
+  not yet approved (`readCheckedVoucherLegs`, owner 2026-10-19 「改成 pv
+  checked」; shown as "PV-… (checked)"). A row the books fill replaces its typed
+  and auto lines; a rejected voucher drops out and the typed figure returns; AP
+  invoices still count from Post.
+- The event P&L is TWO P&Ls (owner 2026-10-16; `services/eventPnl.ts`, inputs
+  `services/eventPnlInputs.ts`, detail field `finance_pnl`): BY TOTAL SALES (sales
+  lines, else the Total Sales box, else the orders' total) and BY SALES ORDERS
+  (the opened, uncancelled orders — drafts included, as the SO block counts —
+  at their own cost buckets). COGS by Total Sales = a typed COGS, else the
+  orders' cost ratio × Total Sales. Rental / Setup / Transport S&D / Others are
+  shared. Transport Fee / Commission / Merchandise = Finance's books, else a
+  typed line, else the brand rate card % of THAT column's sales (boost on that
+  column's GP%); the stored `auto_source` lines are not counted. Desktop
+  `EventPnlTable` shows both; the phone P&L tiles read `by_sales` and a By Sales
+  Orders line. The Projects list fills its finance columns (Rental, Revenue,
+  COGS, GP, NP — `fin_*`) from the same Total Sales P&L for a caller who may see
+  finance (`services/eventPnlBatch.ts`, one read per input for the page;
+  `readEventBooksMany` = posted legs + checked vouchers, the event page's two
+  reads); a failed read leaves the list's own SQL figures.
 - The evening sales report (one bill per line: booklet no, amount, salesperson;
   a "+ N(T)" transport or "(D)" disposal tail is kept apart) is DERIVED from the
   project chat on every read — notes by the Owner position, Ummu or weisiang
@@ -186,6 +208,11 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   (`…/notify`, `source=sales_report_fair_mismatch`). The red amount beside a
   name under Sales Attending is that rep's bills not yet opened.
   `public.project_sales_bills` is unused (see tasks/TODO.md).
+- Sales Attending picks from the Sales Team roster (`sales_reps`, auto-made for
+  Sales-department logins). `GET /projects/sales-rep-options` also returns
+  `others`: active staff of the company not on it; adding one (`POST
+  /:id/sales-attendees { user_id }`) puts them on the roster without changing their
+  department (`ensureSalesRepForUser`, owner 2026-10-19).
 
 ## Gotchas
 

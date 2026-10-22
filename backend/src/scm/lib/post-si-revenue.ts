@@ -142,7 +142,7 @@ export async function postSiRevenue(sb: any, invoiceNumber: string): Promise<Pos
 export type ReverseSiResult =
   | { ok: true; status: 'reversed'; jeNo: string; jeId: string }
   | { ok: true; status: 'already_reversed' | 'nothing_to_reverse' }
-  | { ok: false; status: 'reversal_insert_failed' | 'reversal_lines_failed' | 'reversal_read_failed'; reason?: string };
+  | { ok: false; status: 'reversal_insert_failed' | 'reversal_lines_failed' | 'reversal_read_failed' | 'reversal_post_failed' | 'reversal_flag_failed'; reason?: string };
 
 /**
  * Reverse (void) the revenue JE for a Sales Invoice when it is CANCELLED.

@@ -8,6 +8,8 @@ import type { AuditLabelDictionary } from '../../components/audit/audit-labels';
 const ACTIONS: Record<string, string> = {
   CREATE:         'Created order',
   UPDATE_DETAILS: 'Updated details',
+  /* Every fair move, named (owner 2026-10-19; backend scm/lib/fair-audit.ts). */
+  UPDATE_FAIR:    'Fair changed',
   UPDATE_STATUS:  'Status changed',
   ADD_LINE:       'Added line',
   UPDATE_LINE:    'Updated line',
@@ -39,6 +41,9 @@ const FIELDS: Record<string, string> = {
   emergencyContactName: 'Emergency name', emergencyContactPhone: 'Emergency phone',
   emergencyContactRelationship: 'Emergency relationship',
   targetDate: 'Target date', branding: 'Branding', venue: 'Venue', venueId: 'Venue (master)',
+  fair: 'Fair',
+  /* A transfer moves the Fair Day with the fair (owner 2026-10-20). */
+  fairDate: 'Fair Day',
   salesLocation: 'Sales location', ref: 'Ref No.', poDocNo: 'PO doc no',
   /* Coverage-audit additions (2026-07) — keys emitted by the DO amend mirror,
      Delivery Planning /fields + /schedule and payment/automation entries. */

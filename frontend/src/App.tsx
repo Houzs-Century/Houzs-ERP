@@ -69,6 +69,8 @@ const Settings = lazy(() => import("./pages/Settings").then((m) => ({ default: m
 const PosAdmin = lazy(() => import("./pages/PosAdmin").then((m) => ({ default: m.PosAdmin })));
 const Team = lazy(() => import("./pages/Team").then((m) => ({ default: m.Team })));
 const SystemHealth = lazy(() => import("./pages/SystemHealth").then((m) => ({ default: m.SystemHealth })));
+const AiUsage = lazy(() => import("./pages/AiUsage").then((m) => ({ default: m.AiUsage })));
+const OcrDashboard = lazy(() => import("./pages/OcrDashboard").then((m) => ({ default: m.OcrDashboard })));
 const AutoCountSync = lazy(() => import("./pages/AutoCountSync").then((m) => ({ default: m.AutoCountSync })));
 const VenturePortalFeed = lazy(() => import("./pages/VenturePortalFeed").then((m) => ({ default: m.VenturePortalFeed })));
 const ChangeLog = lazy(() => import("./pages/ChangeLog").then((m) => ({ default: m.ChangeLog })));
@@ -87,6 +89,8 @@ const ScmSuppliersV2 = lazy(() => import("./pages/scm-v2/SuppliersV2Route"));
 // Each list/detail page is a NAMED export wrapped at the route in <Scm2990Shell>
 // (the Notify/Confirm/dialog-service providers).
 const Scm2990Shell = lazy(() => import("./pages/scm-v2/Scm2990Shell"));
+const ScmLogisticOverview = lazy(() => import("./pages/scm-v2/LogisticOverview").then((m) => ({ default: m.LogisticOverview })));
+const ScmProcurementOverview = lazy(() => import("./pages/scm-v2/ProcurementOverview").then((m) => ({ default: m.ProcurementOverview })));
 const ScmPurchaseOrdersV2 = lazy(() => import("./pages/scm-v2/PurchaseOrdersListV2").then((m) => ({ default: m.PurchaseOrdersListV2 })));
 const ScmPurchaseOrderNewV2 = lazy(() => import("./pages/scm-v2/PurchaseOrderNew").then((m) => ({ default: m.PurchaseOrderNew })));
 const ScmPurchaseOrderFromSoV2 = lazy(() => import("./pages/scm-v2/PurchaseOrderFromSo").then((m) => ({ default: m.PurchaseOrderFromSo })));
@@ -157,6 +161,7 @@ const ScmStockCardV2 = lazy(() => import("./pages/scm-v2/StockCard").then((m) =>
 const ScmSupplierDetailV2 = lazy(() => import("./pages/scm-v2/SupplierDetail").then((m) => ({ default: m.SupplierDetail })));
 // Delivery Planning + TMS (Stage 3 — ported 2026-06-28 from 2990).
 const ScmDeliveryPlanningV2 = lazy(() => import("./pages/scm-v2/DeliveryPlanning").then((m) => ({ default: m.DeliveryPlanning })));
+const ScmDeliveryPlanningDriverV2 = lazy(() => import("./pages/scm-v2/DeliveryPlanningDriver").then((m) => ({ default: m.DeliveryPlanningDriver })));
 const ScmDpOrdersV2 = lazy(() => import("./pages/scm-v2/DpOrders").then((m) => ({ default: m.DpOrders })));
 const ScmTrips = lazy(() => import("./pages/scm-v2/Trips").then((m) => ({ default: m.Trips })));
 const ScmDeliveryPlanningRegionsV2 = lazy(() => import("./pages/scm-v2/DeliveryPlanningRegions").then((m) => ({ default: m.DeliveryPlanningRegions })));
@@ -442,6 +447,21 @@ function SoMaintenanceGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/** IT pages (System Health, AI usage): the server's `it.pages.view` answer. */
+function ItPagesGuard({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  if (capabilitiesUnresolved(user)) {
+    return (
+      <Forbidden
+        page="it.view"
+        reason="We couldn't load your permissions, so this page stayed shut. This is a system problem, not a change to your access — reload the page, and tell IT if it keeps happening."
+      />
+    );
+  }
+  if (!capability(user, "it.pages.view")) return <Forbidden page="it.view" />;
+  return <>{children}</>;
+}
+
 /**
  * Fair Report route guard — management + the Sales Director only, mirroring the
  * backend fairReportAccess cohort (auth/salesAccess.canViewFairReport =
@@ -599,9 +619,25 @@ export default function App() {
         <Route
           path="/system-health"
           element={
-            <PageGuard page="system_health">
+            <ItPagesGuard>
               <SystemHealth />
-            </PageGuard>
+            </ItPagesGuard>
+          }
+        />
+        <Route
+          path="/ai-usage"
+          element={
+            <ItPagesGuard>
+              <AiUsage />
+            </ItPagesGuard>
+          }
+        />
+        <Route
+          path="/ocr"
+          element={
+            <ItPagesGuard>
+              <OcrDashboard />
+            </ItPagesGuard>
           }
         />
         {/* AutoCount Sync — the read of scm.autocount_outbox. Gated on the same
@@ -710,6 +746,8 @@ export default function App() {
         {/* Vendored 2990's Purchase Order pages. /new + /from-so precede /:id so
             the literal segments match before the param route. Each page is wrapped
             in <Scm2990Shell> for the Notify/Confirm/dialog-service providers. */}
+        <Route path="/scm/logistic-overview" element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmLogisticOverview embedded={false} /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/procurement-overview" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmProcurementOverview embedded={false} /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-orders" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPurchaseOrdersV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-orders/new" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPurchaseOrderNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-orders/from-so" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPurchaseOrderFromSoV2 /></Scm2990Shell></ScmGuard>} />
@@ -848,6 +886,7 @@ export default function App() {
             re-add this route. */}
         {/* Delivery Planning + TMS Stage 3 — all under the existing scm.transportation.drivers area. */}
         <Route path="/scm/delivery-planning"         element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryPlanningV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/delivery-planning-driver"  element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryPlanningDriverV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/dp-orders"                 element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDpOrdersV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/trips"                     element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmTrips /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/delivery-planning-regions" element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryPlanningRegionsV2 /></Scm2990Shell></ScmGuard>} />

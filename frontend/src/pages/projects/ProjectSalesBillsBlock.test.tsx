@@ -10,6 +10,12 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, test, vi } from "vitest";
 import type { QueryState } from "../../hooks/useQuery";
 import type { ProjectSalesBill, ProjectSalesBillsResponse } from "../../lib/projectSalesBills";
+const transferMutate = vi.hoisted(() => vi.fn());
+vi.mock("../../vendor/scm/lib/fair-options-queries", async (orig) => ({
+  ...(await orig<typeof import("../../vendor/scm/lib/fair-options-queries")>()),
+  useFairTransfer: () => ({ mutate: transferMutate, isPending: false }),
+}));
+
 import { ProjectSalesBillsBlock } from "./ProjectSalesBillsBlock";
 
 const bill = (over: Partial<ProjectSalesBill> & { key: string }): ProjectSalesBill => ({
@@ -36,6 +42,8 @@ const RESPONSE: ProjectSalesBillsResponse = {
   summary: { activity_id: 7, total_sen: 4818500, days_sen: 4836500, created_at: "2026-10-14 11:27:25" },
   total_sales_rm: null,
   can_save: true,
+  project_id: 344,
+  can_transfer: false,
 };
 
 const query = (over: Partial<QueryState<ProjectSalesBillsResponse>>): QueryState<ProjectSalesBillsResponse> => ({
@@ -131,7 +139,7 @@ describe("ProjectSalesBillsBlock", () => {
 
   test("nothing counted says how a report counts; loading and errors show as such", () => {
     const empty: ProjectSalesBillsResponse = {
-      bills: [], persons: [], report_activity_ids: [], summary: null, total_sales_rm: null, can_save: true,
+      bills: [], persons: [], report_activity_ids: [], summary: null, total_sales_rm: null, can_save: true, project_id: 344, can_transfer: false,
       totals: { count: 0, amount_sen: 0, opened_count: 0, opened_sen: 0, not_opened_count: 0, not_opened_sen: 0, other_event_count: 0 },
     };
     const { unmount } = mount(query({ data: empty }), 113_990);
@@ -142,5 +150,39 @@ describe("ProjectSalesBillsBlock", () => {
     u2();
     mount(query({ error: "403: You don't have permission to view this page." }), null);
     expect(screen.getByText("403: You don't have permission to view this page.")).toBeTruthy();
+  });
+});
+
+describe("ProjectSalesBillsBlock — transfer here (owner 2026-10-20)", () => {
+  const FINANCE: ProjectSalesBillsResponse = { ...RESPONSE, can_transfer: true };
+
+  test("an order the report puts here but sits under another event moves here — ticked, or all at one click", () => {
+    transferMutate.mockReset();
+    mount(query({ data: FINANCE }), 48_185);
+    fireEvent.click(screen.getByRole("button", { name: "Transfer all here (1)" }));
+    expect(transferMutate.mock.calls[0]![0]).toEqual([{ docNo: "HC-SO-2609-324", projectId: 344 }]);
+
+    const ticked = screen.getByRole("button", { name: "Transfer ticked here (0)" }) as HTMLButtonElement;
+    expect(ticked.disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText("Tick HC-SO-2609-324 to transfer here"));
+    fireEvent.click(screen.getByRole("button", { name: "Transfer ticked here (1)" }));
+    expect(transferMutate.mock.calls[1]![0]).toEqual([{ docNo: "HC-SO-2609-324", projectId: 344 }]);
+    /* A bill not opened yet has nothing to move. */
+    expect(screen.getAllByRole("checkbox")).toHaveLength(2); // tick-all + the one order
+  });
+
+  test("says what moved and what did not", () => {
+    transferMutate.mockReset();
+    transferMutate.mockImplementation((_items: unknown, opts: { onSuccess: (r: unknown) => void }) =>
+      opts.onSuccess({ results: [{ docNo: "HC-SO-2609-324", ok: false, reason: "already_there" }], moved: 0 }));
+    mount(query({ data: FINANCE }), 48_185);
+    fireEvent.click(screen.getByRole("button", { name: "Transfer all here (1)" }));
+    expect(screen.getByRole("status").textContent).toBe("0 moved. Not moved: HC-SO-2609-324 (already there).");
+  });
+
+  test("without the right (only Finance or PMS), nothing to transfer", () => {
+    mount(query({ data: RESPONSE }), 48_185);
+    expect(screen.queryByRole("button", { name: /Transfer/ })).toBeNull();
+    expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
   });
 });
