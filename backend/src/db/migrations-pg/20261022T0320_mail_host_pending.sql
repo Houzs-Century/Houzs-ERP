@@ -1,4 +1,4 @@
--- 20261016T1800_mail_host_pending.sql
+-- 20261022T0320_mail_host_pending.sql
 -- REVERSAL: ALTER TABLE email_addresses DROP COLUMN IF EXISTS mail_host_status,
 --             DROP COLUMN IF EXISTS mail_host_confirmed_at,
 --             DROP COLUMN IF EXISTS mail_host_confirmed_by;
