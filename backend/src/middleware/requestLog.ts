@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import type { Env } from "../types";
+import { stepTimingEntries, withStepTiming, type StepMark } from "../lib/step-timing";
 
 // One structured access-log line per request + a request id echoed back in the
 // `X-Request-Id` header. Turns `wrangler tail` into a greppable log and lets a
@@ -34,8 +35,15 @@ export const requestLog: MiddlewareHandler<{ Bindings: Env }> = async (c, next) 
   c.header("X-Request-Id", id);
   c.set("requestId", id);
   const t0 = Date.now();
-  await next();
+  const marks: StepMark[] = [];
+  await withStepTiming(marks, () => next());
   const ms = Date.now() - t0;
+  // Worker time vs. the browser's wait, plus each timed() step (lib/step-timing.ts).
+  try {
+    c.res.headers.set("Server-Timing", [`app;dur=${ms}`, ...stepTimingEntries(marks)].join(", "));
+  } catch {
+    /* an immutable passthrough response keeps its own headers */
+  }
   const path = new URL(c.req.url).pathname;
   if (path === "/health") return; // skip keep-alive noise
   const uid = c.get("user")?.id ?? "-";

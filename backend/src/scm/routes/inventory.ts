@@ -32,6 +32,7 @@ import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr } from '../lib/postgrest-search';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { eager } from '../lib/concurrency';
+import { timed } from '../../lib/step-timing';
 import { reconcileLedger } from '../lib/reconcile-ledger';
 import { inventoryValuationHandler } from './inventory-valuation';
 import {
@@ -530,13 +531,13 @@ export const productTotalsHandler = async (
   // through with .range() so the full catalogue comes back. Any ?search/?category
   // filter only narrows the set, so filtered views stay correct.
   const s = search ? escapeForOr(search) : '';
-  const { data, error } = await paginateAll((from, to) => {
+  const { data, error } = await timed('inv-totals', () => paginateAll((from, to) => {
     let q = sb.from('v_inventory_product_totals').select('*');
     q = scopeToCompany(q, c); // multi-company: isolate product totals to the active company (view exposes company_id, mig 0106)
     if (s) q = q.or(`item_code.ilike.%${s}%,product_name.ilike.%${s}%`);
     if (category && category !== 'all') q = q.eq('category', category);
     return q.order('item_code').range(from, to);
-  });
+  }));
   if (error) {
     if (/relation .* does not exist/i.test(error.message)) {
       return c.json({ error: 'migration_pending', reason: 'Run migrations 0050/0053/0054.' }, 500);
@@ -640,7 +641,7 @@ export const productTotalsHandler = async (
          !inner embed removes the line with its header, and both sides compare
          case-sensitively. It only stops every finished order in history coming
          back; the JS filter stays the gate. */
-      const demand = await eager(chunkIn(codes, (batch, from, to) => {
+      const demand = await eager(timed('inv-demand', () => chunkIn(codes, (batch, from, to) => {
         let dq = pgrestIn(scopeToCompany(sb
           .from('mfg_sales_order_items')
           .select('id, doc_no, item_code, qty, warehouse_id, line_delivery_date, cancelled, so:mfg_sales_orders!inner(status, customer_delivery_date, debtor_name, so_date)'), c), 'item_code', batch)
@@ -653,9 +654,9 @@ export const productTotalsHandler = async (
         rows: ((data ?? []) as Array<{ id: string; doc_no: string; item_code: string; qty: number; line_delivery_date: string | null; so: DemandSoHead | DemandSoHead[] | null }>)
           .map((r) => ({ id: r.id, doc_no: r.doc_no, item_code: r.item_code, qty: Number(r.qty ?? 0), line_delivery_date: r.line_delivery_date, so: Array.isArray(r.so) ? r.so[0] : r.so }))
           .filter((r) => r.so != null && !SO_DONE.has(r.so.status) && r.qty > 0),
-      })));
-      const netting = await eager((async () => deliveredReturnedBySoItem(sb, demand().rows.map((r) => r.id)))());
-      const lots = await eager(chunkIn(codes, (batch, from, to) => {
+      }))));
+      const netting = await eager(timed('inv-netting', () => deliveredReturnedBySoItem(sb, demand().rows.map((r) => r.id))));
+      const lots = await eager(timed('inv-lots', () => chunkIn(codes, (batch, from, to) => {
         let lq = pgrestIn(scopeToCompany(sb
           .from('v_inventory_lots_open')
           // source_doc_type/no classify each lot OWNED vs CONSIGNMENT; remaining_value_sen
@@ -664,16 +665,16 @@ export const productTotalsHandler = async (
           .select('item_code, received_at, qty_remaining, remaining_value_sen, source_doc_type, source_doc_no'), c), 'item_code', batch); // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
         if (warehouseId) lq = lq.eq('warehouse_id', warehouseId); // ask A — oldest lot within this warehouse
         return lq.range(from, to);
-      }));
+      })));
       return { demand, netting, lots };
     })();
     const laneB = (async () => {
       const whBal = warehouseId
-        ? await eager(chunkIn(codes, (batch, from, to) => pgrestIn(scopeToCompany(sb
+        ? await eager(timed('inv-wh-balances', () => chunkIn(codes, (batch, from, to) => pgrestIn(scopeToCompany(sb
           .from('inventory_balances').select('item_code, qty'), c)
-          .eq('warehouse_id', warehouseId), 'item_code', batch).range(from, to)))
+          .eq('warehouse_id', warehouseId), 'item_code', batch).range(from, to))))
         : null;
-      const nsBal = await eager((async () => {
+      const nsBal = await eager(timed('inv-nonselling', async () => {
         const nonSellingIds = await loadNonSellingWarehouseIds(sb, c);
         const scopedNonSelling = warehouseId
           ? (nonSellingIds.has(warehouseId) ? [warehouseId] : [])
@@ -682,13 +683,13 @@ export const productTotalsHandler = async (
         return chunkIn(codes, (batch, from, to) => pgrestIn(scopeToCompany(sb
           .from('inventory_balances').select('item_code, qty'), c)
           .in('warehouse_id', scopedNonSelling), 'item_code', batch).range(from, to));
-      })());
+      }));
       /* No po.status pre-filter here: incoming_pos sorts by eta alone, so POs with
          the same eta keep DB row order, and a new predicate on the embed can
          change the plan and with it that order. */
-      const po = await eager(chunkIn(codes, (batch, from, to) => pgrestIn(scopeToCompany(sb
+      const po = await eager(timed('inv-po', () => chunkIn(codes, (batch, from, to) => pgrestIn(scopeToCompany(sb
         .from('purchase_order_items')
-        .select('item_code, qty, received_qty, delivery_date, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, warehouse_id, po:purchase_orders!inner(po_number, status, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, purchase_location_id)'), c), 'item_code', batch).range(from, to)));
+        .select('item_code, qty, received_qty, delivery_date, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, warehouse_id, po:purchase_orders!inner(po_number, status, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, purchase_location_id)'), c), 'item_code', batch).range(from, to))));
       return { whBal, nsBal, po };
     })();
     const [readsA, readsB] = await Promise.all([laneA, laneB]);
