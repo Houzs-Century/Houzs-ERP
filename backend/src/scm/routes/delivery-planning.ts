@@ -420,11 +420,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     phone: string | null; branding: string | null; status: string | null; delivery_state: string | null;
     agent: string | null; salesperson_id: string | null; salespersonId?: string | null; venue: string | null;
     customer_state: string | null; customer_country: string | null;
-    customer_delivery_date: string | null; processing_date: string | null;
-    // The FROZEN original delivery date (BUG-51 / migration seed). Feeds the
-    // board's "Sales Exemption Expiry Date" column via soExemptionExpiryOf, the
-    // SAME rule the SO list uses, so the two surfaces agree (owner 2026-10-22).
-    sales_exemption_expiry: string | null; salesExemptionExpiry?: string | null;
+    customer_delivery_date: string | null; sales_exemption_expiry: string | null; salesExemptionExpiry?: string | null; processing_date: string | null;
     so_date: string | null; address1: string | null; address2: string | null;
     postcode: string | null; building_type: string | null;
     local_total_sen: number | null; balance_sen: number | null;
@@ -834,7 +830,6 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     const remaining = remainingByDoc.get(docNo) ?? 0;
     const status = String(r.status ?? '').toUpperCase();
     const customerDD = r.customer_delivery_date ?? null;
-    const salesExemptionExpiry = r.salesExemptionExpiry ?? r.sales_exemption_expiry ?? null;
     const procDate = r.processing_date ?? null;
     /* Amendment dates. The ORIGINAL is never overwritten; the amended date (when
        set) is what we now commit to. effectiveSoDelivery is the ONE reader of that
@@ -924,11 +919,8 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       })(),
       // dates
       so_date: r.so_date ?? null,
-      // ORIGINAL date (the customer's pick — never overwritten) stays here.
-      customer_delivery_date: customerDD,
-      // Frozen original delivery date — what the "Sales Exemption Expiry Date"
-      // column shows (soExemptionExpiryOf), matching the SO list (owner 2026-10-22).
-      sales_exemption_expiry: salesExemptionExpiry,
+      // ORIGINAL date (never overwritten); sales_exemption_expiry = frozen original, shown in the SXE column via soExemptionExpiryOf (owner 2026-10-22).
+      customer_delivery_date: customerDD, sales_exemption_expiry: r.salesExemptionExpiry ?? r.sales_exemption_expiry ?? null,
       // Amendment dates: the customer's requested new date and the date WE
       // confirmed. The Original column above is unchanged.
       amend_date_from_customer: amendDateFromCustomer,
@@ -1127,8 +1119,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           // frontend's ASSR arm). "Delivery Date" (amended_delivery_date) is LEFT
           // BLANK — it is the date admin proposes to the customer when scheduling
           // (owner 2026-10-22: ASSR follows the SO-sync date convention).
-          customer_delivery_date: leg.date,
-          sales_exemption_expiry: null, // synthetic row — no frozen SO date
+          customer_delivery_date: leg.date, sales_exemption_expiry: null,
           amend_date_from_customer: null,
           amended_delivery_date: null,
           amend_reason: null, amend_reason_from_customer: null,
@@ -1297,8 +1288,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           return { decision: g.decision, remaining_sen: g.remainingSen, collect_on_delivery_sen: g.collectOnDeliverySen, reason: 'DP job — no order balance' };
         })(),
         so_date: null,
-        customer_delivery_date: date,
-        sales_exemption_expiry: null, // synthetic row — no frozen SO date
+        customer_delivery_date: date, sales_exemption_expiry: null,
         amend_date_from_customer: null,
         amended_delivery_date: date,
         amend_reason: null, amend_reason_from_customer: null,
@@ -1438,8 +1428,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
             return { decision: g.decision, remaining_sen: g.remainingSen, collect_on_delivery_sen: g.collectOnDeliverySen, reason: 'PMS project — no order balance' };
           })(),
           so_date: null,
-          customer_delivery_date: leg.date,
-          sales_exemption_expiry: null, // synthetic row — no frozen SO date
+          customer_delivery_date: leg.date, sales_exemption_expiry: null,
           amend_date_from_customer: null,
           amended_delivery_date: leg.date,
           amend_reason: null, amend_reason_from_customer: null,
