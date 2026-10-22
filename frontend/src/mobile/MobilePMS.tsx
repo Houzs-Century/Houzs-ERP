@@ -270,8 +270,6 @@ type Lorry = { id: number; plate: string | null; type?: string | null; is_intern
 // ── Reference-data list rows (populate the write-form selects) ──
 type PicUser = { id: number; name: string | null; email: string };
 type SalesRepOption = { id: number; code: string | null; name: string | null };
-/** Active staff not on the Sales Team roster yet — adding one puts them on it. */
-type StaffOption = { user_id: number; name: string | null; email: string };
 type FleetStaff = { id: number; name: string | null; role_name: string | null; phone?: string | null; company_phone?: string | null; companyPhone?: string | null };
 
 // Shared dialog-hook / setter fn types moved to MobilePmsDocCard.tsx (imported above).
@@ -784,15 +782,12 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
 
   const salesRepsQ = useQuery({
     queryKey: ["mobile-pms-sales-reps"],
-    queryFn: () => api.get<{ data: SalesRepOption[]; others?: StaffOption[] }>(`/api/projects/sales-rep-options`),
+    queryFn: () => api.get<{ data: SalesRepOption[] }>(`/api/projects/sales-rep-options`),
     staleTime: 5 * 60_000,
     enabled: canWrite,
     retry: false,
   });
   const salesReps = salesRepsQ.data?.data ?? [];
-  /* Owner 2026-10-19: staff in other departments who stand at fairs (Lim,
-     Nancy, Syasya) — picked here, they join the Sales Team roster. */
-  const salesStaff = salesRepsQ.data?.others ?? [];
 
   const fleetQ = useQuery({
     queryKey: ["mobile-pms-fleet"],
@@ -1325,7 +1320,6 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
                   projectId={id}
                   attendees={data.sales_attendees ?? []}
                   options={salesReps}
-                  others={salesStaff}
                   notOpenedByRep={notOpenedByRep}
                   canWrite={canEditAttending}
                   busy={busy}
@@ -1648,13 +1642,11 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
 
 // ── Sales attending (add via picker + remove) ──
 function SalesAttending({
-  projectId, attendees, options, others, notOpenedByRep, canWrite, busy, setBusy, notify, confirm, reload,
+  projectId, attendees, options, notOpenedByRep, canWrite, busy, setBusy, notify, confirm, reload,
 }: {
   projectId: number;
   attendees: SalesAttendee[];
   options: SalesRepOption[];
-  /** Staff not on the Sales Team roster; adding one puts them on it. */
-  others: StaffOption[];
   /** sen still not opened per rep, from the pasted sales report — red beside the name. */
   notOpenedByRep: Map<number, number>;
   canWrite: boolean;
@@ -1668,34 +1660,20 @@ function SalesAttending({
   // Multi-select (owner 2026-07-23): tick several reps, add them in one go —
   // mirrors the desktop checkbox list instead of the old one-at-a-time picker.
   const [picks, setPicks] = useState<Set<number>>(new Set());
-  const [staffPicks, setStaffPicks] = useState<Set<number>>(new Set());
   const present = new Set(attendees.map((a) => a.sales_rep_id));
   const available = options.filter((o) => !present.has(o.id));
-  const pickedCount = picks.size + staffPicks.size;
-  // Peter 2026-10-21: merge reps + the 2026-10-19 "not in Sales Team" staff into
-  // ONE continuous A→Z list (they were two separate A→Z sections, so the picker
-  // restarted the alphabet at the divider and read as un-sorted). Non-roster
-  // staff keep a small inline tag.
-  type PickItem =
-    | { kind: "rep"; id: number; name: string; code: string | null }
-    | { kind: "staff"; id: number; name: string };
-  const pickItems: PickItem[] = [
-    ...available.map((o): PickItem => ({ kind: "rep", id: o.id, name: o.name ?? `#${o.id}`, code: o.code })),
-    ...others.map((s): PickItem => ({ kind: "staff", id: s.user_id, name: s.name || s.email })),
-  ].sort((a, b) => a.name.localeCompare(b.name));
+  const pickedCount = picks.size;
+  // A→Z by the shown name (owner 2026-07-28).
+  type PickItem = { id: number; name: string; code: string | null };
+  const pickItems: PickItem[] = available
+    .map((o): PickItem => ({ id: o.id, name: o.name ?? `#${o.id}`, code: o.code }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   const toggle = (id: number) =>
     setPicks((prev) => {
       const n = new Set(prev);
       if (n.has(id)) n.delete(id);
       else n.add(id);
-      return n;
-    });
-  const toggleStaff = (userId: number) =>
-    setStaffPicks((prev) => {
-      const n = new Set(prev);
-      if (n.has(userId)) n.delete(userId);
-      else n.add(userId);
       return n;
     });
 
@@ -1706,11 +1684,7 @@ function SalesAttending({
       for (const repId of picks) {
         await api.post(`/api/projects/${projectId}/sales-attendees`, { sales_rep_id: repId });
       }
-      for (const userId of staffPicks) {
-        await api.post(`/api/projects/${projectId}/sales-attendees`, { user_id: userId });
-      }
       setPicks(new Set());
-      setStaffPicks(new Set());
       setAdding(false);
       reload();
     } catch (e) {
@@ -1738,7 +1712,7 @@ function SalesAttending({
     <>
       <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "10px 0 6px" }}>
         <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#9aa093" }}>Sales attending</span>
-        {canWrite && !adding && (available.length > 0 || others.length > 0) && (
+        {canWrite && !adding && available.length > 0 && (
           <button className="tinybtn" style={{ marginLeft: "auto" }} disabled={busy} onClick={() => setAdding(true)}>+ Add</button>
         )}
       </div>
@@ -1750,20 +1724,17 @@ function SalesAttending({
             )}
             {pickItems.map((it, i) => (
               <label
-                key={it.kind === "rep" ? `rep-${it.id}` : `staff-${it.id}`}
+                key={`rep-${it.id}`}
                 style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 11px", borderTop: i === 0 ? "none" : "1px solid #eceee9", cursor: busy ? "default" : "pointer" }}
               >
                 <input
                   type="checkbox"
-                  checked={it.kind === "rep" ? picks.has(it.id) : staffPicks.has(it.id)}
+                  checked={picks.has(it.id)}
                   disabled={busy}
-                  onChange={() => (it.kind === "rep" ? toggle(it.id) : toggleStaff(it.id))}
+                  onChange={() => toggle(it.id)}
                 />
-                {it.kind === "rep" && <span className="money" style={{ fontSize: 10, color: "#9aa093" }}>{it.code || "—"}</span>}
+                <span className="money" style={{ fontSize: 10, color: "#9aa093" }}>{it.code || "—"}</span>
                 <span style={{ fontSize: 13, flex: 1, minWidth: 0 }}>{it.name}</span>
-                {it.kind === "staff" && (
-                  <span style={{ fontSize: 8.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em", color: "#b4791a", background: "#fdf1dc", borderRadius: 10, padding: "1px 6px" }} title="Not in the Sales Team yet — adding puts them in it">+ team</span>
-                )}
               </label>
             ))}
           </div>
@@ -1776,7 +1747,7 @@ function SalesAttending({
             >
               Add selected{pickedCount ? ` (${pickedCount})` : ""}
             </button>
-            <button className="tinybtn" disabled={busy} onClick={() => { setAdding(false); setPicks(new Set()); setStaffPicks(new Set()); }}>Cancel</button>
+            <button className="tinybtn" disabled={busy} onClick={() => { setAdding(false); setPicks(new Set()); }}>Cancel</button>
           </div>
         </div>
       )}
