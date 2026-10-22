@@ -324,6 +324,21 @@
   color: #11140f;
 }
 .childShort { background: rgba(22, 105, 95, 0.09); }
+/* SO-line child tables (HC-0143, Sim 2026-10-22): each expanded row draws its
+   own table, and auto layout sized every one from its own content, so the
+   Processing Date column landed at a different x per group and the eye could
+   not run down it to pick the orders past their cooling-off. Fixed layout with
+   set widths puts every column at the same place in every group; Customer is
+   the one elastic column (it wraps). */
+.childTableFixed { table-layout: fixed; }
+.cSoNo { width: 140px; }
+.cWh { width: 130px; }
+.cModule { width: 220px; }
+.cState { width: 130px; }
+.cDate { width: 150px; }
+.cQty { width: 60px; }
+.cCoverage { width: 230px; }
+.cSupplier { width: 230px; }
 
 /* ── Coverage pills ────────────────────────────────────────────────── */
 .tag {
