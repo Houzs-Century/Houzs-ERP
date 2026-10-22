@@ -2135,9 +2135,6 @@ function ProjectDetailContent({
                   setTransitioning(true);
                   try {
                     await patch({ status: next });
-                    if (next === "confirmed" && !(p.contractor ?? "").trim()) {
-                      toast.warning("Confirmed, but no contractor is set, so it won't show on any contractor's calendar link.");
-                    }
                   } catch (e: any) {
                     toast.error(e?.message || "Failed to update status");
                   } finally {
@@ -2803,20 +2800,6 @@ function ProjectSpecStrip({
           </button>
         )}
       </header>
-      {/* The contractor share links list confirmed events by THIS field, and
-          Contractor sits behind Edit — so an event confirmed without one went
-          missing from the contractor's calendar with nothing on screen to say
-          so (2026-09-24: AKEMI FRAGRANCE @ Mid Valley). */}
-      {p.status === "confirmed" && !p.archived_at && !(p.contractor ?? "").trim() && (
-        <div className="mb-2 rounded-md border border-[#c2740f]/40 bg-[#f7e8d2] px-3 py-2 text-[12px] text-[#8a4e0e]">
-          No contractor set. This confirmed event will not appear on any contractor's calendar link.
-          {fullAccess && !editing && (
-            <button type="button" onClick={() => setEditing(true)} className="ml-1.5 font-semibold underline">
-              Set contractor
-            </button>
-          )}
-        </div>
-      )}
       <div
         className={cn(
           "grid grid-cols-1 divide-x divide-y divide-border-subtle border-y border-border-subtle md:grid-cols-2",
