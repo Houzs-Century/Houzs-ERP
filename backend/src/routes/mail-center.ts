@@ -41,8 +41,11 @@ import {
   threadingHeaders,
   threadMessageIds,
 } from "../lib/mail-threading";
+import { MY_READ_JOIN, MY_UNREAD_SQL, isThreadUnreadFor, setThreadRead, threadReaders } from "../lib/mail-reads";
+import { acksForMessages, myOwedOnThread, requestAcks, staffRecipients } from "../lib/mail-acks";
 
 const app = new Hono<{ Bindings: Env }>();
+const NO_STAFF_TO_ACK = "None of the To / Cc recipients is a staff member, so nobody can acknowledge it.";
 
 // ---------------------------------------------------------------------------
 // Multi-company scoping (merge: HOUZS=1, 2990=2). Every PER-COMPANY mail table
@@ -352,33 +355,24 @@ export async function ingestInboundEmail(
         `INSERT INTO email_threads
            (id, mailbox_address, subject, counterparty_email,
             counterparty_name, status, last_message_at, last_direction,
-            last_snippet, message_count, unread, created_at${stampCo ? ", company_id" : ""})
-         VALUES (?, ?, ?, ?, ?, 'open', ?, 'inbound', ?, 1, 1, ?${stampCo ? ", ?" : ""})`,
+            last_snippet, message_count, unread, last_inbound_at, created_at${stampCo ? ", company_id" : ""})
+         VALUES (?, ?, ?, ?, ?, 'open', ?, 'inbound', ?, 1, 1, ?, ?${stampCo ? ", ?" : ""})`,
       )
-      .bind(
-        threadId,
-        mailbox,
-        subject,
-        from,
-        payload.fromName ?? null,
-        sentAt,
-        snippet,
-        now,
-        ...(stampCo ? [companyId] : []),
-      )
+      .bind(threadId, mailbox, subject, from, payload.fromName ?? null, sentAt, snippet, now, now, ...(stampCo ? [companyId] : []))
       .run();
   } else {
-    // Re-open a closed thread when a new inbound message lands.
+    // Re-open a closed thread when a new inbound message lands. last_inbound_at
+    // is the ERP's receipt time, which each person's read_at is compared with.
     await db
       .prepare(
         `UPDATE email_threads
             SET last_message_at = ?, last_direction = 'inbound',
                 last_snippet = ?, message_count = message_count + 1,
-                unread = 1,
+                unread = 1, last_inbound_at = ?,
                 status = CASE WHEN status = 'closed' THEN 'open' ELSE status END
           WHERE id = ?`,
       )
-      .bind(sentAt, snippet, threadId)
+      .bind(sentAt, snippet, now, threadId)
       .run();
   }
 
@@ -442,6 +436,8 @@ type ThreadRow = {
   // Computed (not a column): EXISTS roll-up of any outbound message, so the
   // frontend's Sent folder is accurate instead of relying on last_direction.
   has_outbound?: number | boolean | null;
+  my_unread?: number | string | null;
+  last_inbound_at?: string | null;
 };
 
 function rowToThread(r: ThreadRow) {
@@ -458,7 +454,8 @@ function rowToThread(r: ThreadRow) {
     lastDirection: r.last_direction ?? "inbound",
     lastSnippet: r.last_snippet ?? "",
     messageCount: Number(r.message_count ?? 0),
-    unread: Number(r.unread ?? 0) === 1,
+    // The caller's own read state (lib/mail-reads.ts) when the query joined it.
+    unread: Number(r.my_unread ?? r.unread ?? 0) === 1,
     starred: Number(r.starred ?? 0) === 1,
     labels: parseJsonArray(r.labels),
     trashedAt: r.trashed_at ?? null,
@@ -918,8 +915,9 @@ app.get("/threads", async (c) => {
        EXISTS (
          SELECT 1 FROM email_messages m
           WHERE m.thread_id = t.id AND m.direction = 'outbound'
-       ) AS has_outbound
-       FROM email_threads t ${whereSql}`;
+       ) AS has_outbound, ${MY_UNREAD_SQL} AS my_unread
+       FROM email_threads t ${MY_READ_JOIN} ${whereSql}`;
+  const selectBinds = [scope.userId ?? 0, ...binds];
   const orderSql = " ORDER BY t.last_message_at DESC NULLS LAST";
 
   if (paginated) {
@@ -940,7 +938,7 @@ app.get("/threads", async (c) => {
     const res = await c.env.DB.prepare(
       selectSql + orderSql + " LIMIT ? OFFSET ?",
     )
-      .bind(...binds, pageSize, offset)
+      .bind(...selectBinds, pageSize, offset)
       .all<ThreadRow>();
     const threadsPage = (res.results ?? []).map(rowToThread);
     return c.json({
@@ -953,7 +951,7 @@ app.get("/threads", async (c) => {
   }
 
   const res = await c.env.DB.prepare(selectSql + orderSql + " LIMIT 300")
-    .bind(...binds)
+    .bind(...selectBinds)
     .all<ThreadRow>();
   return c.json((res.results ?? []).map(rowToThread));
 });
@@ -1012,20 +1010,20 @@ app.get("/threads/:id", async (c) => {
     console.error("[mail-center] loading attachments failed:", e);
   }
 
-  // Clear the unread flag on open.
-  try {
-    await c.env.DB.prepare(`UPDATE email_threads SET unread = 0 WHERE id = ?`)
-      .bind(id)
-      .run();
-  } catch {
-    /* read view must not fail if the mark-read write blips */
-  }
+  // Read for the opener only; colleagues keep their own state (A4).
+  const me = scope.userId;
+  if (me != null) await setThreadRead(c.env.DB, id, me, true).catch((e) => console.error("[mail-center] mark read:", e));
+  const acks = await acksForMessages(c.env.DB, mappedMsgs.map((m) => m.id));
+  const owed = me != null ? await myOwedOnThread(c.env.DB, me, mappedMsgs) : new Map<string, string>();
 
   return c.json({
-    thread: rowToThread(thread),
+    thread: { ...rowToThread(thread), unread: false },
+    readers: await threadReaders(c.env.DB, thread, activeCompanyId(c) ?? null),
     messages: mappedMsgs.map((m) => ({
       ...m,
       attachments: attByMsg.get(m.id) ?? [],
+      acks: acks.get(m.id) ?? [],
+      ackRequestId: owed.get(m.id) ?? null,
     })),
   });
 });
@@ -1852,6 +1850,7 @@ app.post("/threads/:id/reply", async (c) => {
     cc?: string | string[];
     bcc?: string | string[];
     attachments?: Array<{ filename: string; contentBase64: string }>;
+    needsAck?: boolean;
   };
   const body: ReplyBody = await c.req
     .json<ReplyBody>()
@@ -1942,6 +1941,8 @@ app.post("/threads/:id/reply", async (c) => {
   // Resolve the From: an explicit fromAddress is honoured only when the caller
   // may send from it (admin = any; non-admin = a mailbox in scope OR their own
   // alias). Otherwise fall back to the thread's mailbox (ownership-checked above).
+  const ackPeople = body.needsAck ? await staffRecipients(c.env.DB, [...toList, ...ccList], scope.userId) : [];
+  if (body.needsAck && ackPeople.length === 0) return c.json({ error: NO_STAFF_TO_ACK }, 400);
   const requestedFrom = (body.fromAddress ?? "").trim();
   let fromAddress = mailbox;
   if (requestedFrom && (await canSendFrom(c, scope, requestedFrom))) {
@@ -2014,12 +2015,14 @@ app.post("/threads/:id/reply", async (c) => {
   await c.env.DB.prepare(
     `UPDATE email_threads
         SET last_message_at = ?, last_direction = 'outbound',
-            last_snippet = ?, message_count = message_count + 1, unread = 0
+            last_snippet = ?, message_count = message_count + 1
       WHERE id = ?`,
   )
     .bind(now, snippet, id)
     .run();
 
+  if (scope.userId != null) await setThreadRead(c.env.DB, id, scope.userId, true);
+  if (ackPeople.length) await requestAcks(c.env, messageId, ackPeople, { subject, senderName: fromName });
   return c.json({ ok: true, messageId, queued: result.status !== "sent" });
 });
 
@@ -2041,6 +2044,7 @@ app.post("/compose", async (c) => {
     subject?: string;
     text?: string;
     attachments?: Array<{ filename: string; contentBase64: string }>;
+    needsAck?: boolean;
   };
   const body: ComposeBody = await c.req
     .json<ComposeBody>()
@@ -2083,6 +2087,8 @@ app.post("/compose", async (c) => {
   // Authorize the From: non-admins may only send from a mailbox they own or have
   // been granted, OR their own outward alias (users.email_alias). addresses are
   // already lowercased in getMailScope.
+  const ackPeople = body.needsAck ? await staffRecipients(c.env.DB, [...toList, ...ccList], scope.userId) : [];
+  if (body.needsAck && ackPeople.length === 0) return c.json({ error: NO_STAFF_TO_ACK }, 400);
   if (!(await canSendFrom(c, scope, fromAddress))) {
     return c.json({ error: "not allowed to send from " + fromAddress }, 403);
   }
@@ -2167,6 +2173,7 @@ app.post("/compose", async (c) => {
     companyId: companyId ?? null,
   });
 
+  if (ackPeople.length) await requestAcks(c.env, messageId, ackPeople, { subject, senderName: fromName });
   return c.json({ ok: true, threadId, messageId, queued: result.status !== "sent" }, 201);
 });
 
@@ -2232,30 +2239,24 @@ app.patch("/threads/:id", async (c) => {
     sets.push("labels = ?");
     binds.push(JSON.stringify(clean));
   }
-  if (body.unread !== undefined) {
-    sets.push("unread = ?");
-    binds.push(body.unread ? 1 : 0);
-  }
+  // Per person (A4): only the caller's own read row changes.
+  if (body.unread !== undefined && scope.userId != null) await setThreadRead(c.env.DB, id, scope.userId, !body.unread);
   if (body.trashed !== undefined) {
     sets.push("trashed_at = ?");
     binds.push(body.trashed ? new Date().toISOString() : null);
   }
-  if (sets.length === 0) {
+  if (sets.length === 0 && body.unread === undefined) {
     return c.json({ error: "no fields to update" }, 400);
   }
-
-  await c.env.DB.prepare(
-    `UPDATE email_threads SET ${sets.join(", ")} WHERE id = ?`,
-  )
-    .bind(...binds, id)
-    .run();
+  if (sets.length) await c.env.DB.prepare(`UPDATE email_threads SET ${sets.join(", ")} WHERE id = ?`).bind(...binds, id).run();
 
   const row = await c.env.DB.prepare(
     `SELECT * FROM email_threads WHERE id = ? LIMIT 1`,
   )
     .bind(id)
     .first<ThreadRow>();
-  return c.json(row ? rowToThread(row) : { id });
+  const unread = scope.userId != null ? await isThreadUnreadFor(c.env.DB, id, scope.userId) : false;
+  return c.json(row ? { ...rowToThread(row), unread } : { id });
 });
 
 export default app;
