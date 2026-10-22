@@ -70,6 +70,8 @@ describe("column grouping", () => {
       ["paid", "Paid", COLUMN_GROUPS.amounts],
       ["deposit_sen", "Deposit", COLUMN_GROUPS.amounts],
       ["payment_method", "Payment Method", COLUMN_GROUPS.amounts],
+      ["epf", "EPF EE", COLUMN_GROUPS.amounts],
+      ["ot", "OT Pay", COLUMN_GROUPS.amounts],
 
       ["customer_delivery_date", "Delivery Date", COLUMN_GROUPS.logistics],
       ["warehouse", "Warehouse", COLUMN_GROUPS.logistics],
@@ -92,6 +94,8 @@ describe("column grouping", () => {
       ["salesperson", "Salesperson", COLUMN_GROUPS.people],
       ["role", "Role", COLUMN_GROUPS.people],
       ["reports_to", "Reports to", COLUMN_GROUPS.people],
+      ["in", "Clock In", COLUMN_GROUPS.people],
+      ["ot", "OT Hours", COLUMN_GROUPS.people],
 
       ["doc_no", "Doc No.", COLUMN_GROUPS.basic],
       ["so_date", "Date", COLUMN_GROUPS.basic],
