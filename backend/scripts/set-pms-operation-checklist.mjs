@@ -18,9 +18,12 @@
         exhibition's Decoration item (handled by B).
      B. ZANOTTI exhibitions: the pending Decoration item -> 'done'.
      C. SOLO fairs: the pending Decoration item -> 'done'. Solo fairs' other
-        OPERATION items are left untouched (the N/A sweep is exhibitions only).
+        OPERATION items are left untouched UNLESS SOLO_NA_SWEEP=1 (see D).
+     D. (SOLO_NA_SWEEP=1 only) SOLO fairs: every OTHER pending OPERATION item
+        -> 'na' -- the same sweep A does for exhibitions, so a solo fair's flow
+        reaches DONE too. The owner's 2026-10-22 follow-up.
 
-   The three sets are disjoint and each requires status = 'pending', so order does
+   The sets are disjoint and each requires status = 'pending', so order does
    not matter and nothing is touched twice.
 
    DATE SCOPE. Default: PAST fairs only (end_date before today, Asia/Kuala_Lumpur)
@@ -47,6 +50,7 @@ if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
 const CO = Number(process.env.COMPANY || 1);
 const ACTOR = Number(process.env.ACTOR || 1); // HOUZS CENTURY — the acting user stamped on done/activity
 const ALL_DATES = process.env.ALL_DATES === '1' || process.env.INCLUDE_FUTURE === '1';
+const SOLO_NA_SWEEP = process.env.SOLO_NA_SWEEP === '1';
 const APPLY = (process.env.MODE || 'plan').toLowerCase() === 'apply';
 const CONFIRM_PHRASE = 'I HAVE REVIEWED THE PLAN';
 
@@ -97,6 +101,21 @@ const CHANGES = [
   },
 ];
 
+/* D is opt-in (SOLO_NA_SWEEP=1): the owner's 2026-10-22 follow-up to finish the
+   solo fairs' flow by sweeping their remaining OPERATION items the way A does for
+   exhibitions. Disjoint from C (Decoration, handled there); kept behind a flag so
+   a default run still leaves solo non-Decoration items untouched. */
+if (SOLO_NA_SWEEP) {
+  CHANGES.push({
+    name: 'D. Solo fairs: pending OPERATION (non-Decoration) -> N/A',
+    target: 'na',
+    done: false,
+    scope: (ref) => `et.slug = 'solo'
+            AND ${DATE_PRED}
+            AND ${ref}.title <> 'Decoration'`,
+  });
+}
+
 /* Conditions common to every change, minus the project_id = p.id join (added per
    query) and minus the spec scope. */
 const common = (ref, ch) => `${ref}.company_id = $1
@@ -123,7 +142,7 @@ function listTargets(client, ch) {
 }
 
 async function main() {
-  note(`mode=${APPLY ? 'APPLY' : 'PLAN (writes nothing)'} company=${CO} actor=${ACTOR} dates=${ALL_DATES ? 'ALL (incl. upcoming)' : 'past only'}`);
+  note(`mode=${APPLY ? 'APPLY' : 'PLAN (writes nothing)'} company=${CO} actor=${ACTOR} dates=${ALL_DATES ? 'ALL (incl. upcoming)' : 'past only'} solo_na=${SOLO_NA_SWEEP ? 'on' : 'off'}`);
 
   const planned = [];
   for (const ch of CHANGES) {
