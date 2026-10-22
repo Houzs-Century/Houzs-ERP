@@ -838,13 +838,24 @@ scm.route("/drivers", drivers);
 // ── Delivery Planning + TMS (scm.transportation.*) — stage 2, ported 2026-06-28 ─
 // Mounted under the existing transportation area key; owner/* bypasses, no lockout.
 // Finer per-route L2 keys (planning / fleet / trips) can be added later.
-scm.use("/delivery-planning/*", scmAreaGuard("scm.transportation.drivers"));
-// The crew's On the way / Arrived / POD on a non-DO job. writeBypass — a driver
-// or helper holds view on transportation plus scm.do.dispatch, not edit; the
-// handlers admit only the caller's OWN job (delivery scope) unless scope is 'all'.
+// readInheritsFrom (2026-10-22) — the driver run-sheet ("Last Mile Delivery
+// (Driver)") READS the board here, but the Driver role carries
+// scm.transportation.last_mile=view and scm.transportation.drivers=none, so an
+// L2-configured driver 403'd on GET / and the page showed "Couldn't load".
+// A Last Mile page viewer may READ its own board (every row is still delivery-
+// scoped to the caller); every WRITE (scheduling / crew assignment) still needs
+// `edit` on scm.transportation.drivers, so dispatch stays dispatcher-only.
+scm.use("/delivery-planning/*", scmAreaGuard("scm.transportation.drivers", { readInheritsFrom: "scm.transportation.last_mile" }));
+// The crew's On the way / Arrived / POD on a non-DO job. readInheritsFrom — the
+// SAME run-sheet READS this job-progress feed (On the way / Arrived state), so a
+// Last Mile viewer must read it too, or the driver's stop pills stay blank.
+// writeBypass — a driver or helper holds view on transportation plus
+// scm.do.dispatch, not edit; the handlers admit only the caller's OWN job
+// (delivery scope) unless scope is 'all'.
 scm.use(
   "/delivery-jobs/*",
   scmAreaGuard("scm.transportation.drivers", {
+    readInheritsFrom: "scm.transportation.last_mile",
     writeBypass: (c) =>
       c.req.method === "POST" &&
       hasPositionCapability(
