@@ -23,7 +23,6 @@ import { useLocation, useNavigate, useParams, useSearchParams } from "react-rout
 import { useOrderMoney, useConvertSources } from "../../vendor/scm/lib/so-money-queries";
 import { useCancelRequest } from "../../vendor/scm/lib/document-cancel-queries";
 import { useSoBackdateRequests } from "../../vendor/scm/lib/payment-backdate-queries";
-import { useRefundSource } from "../../vendor/scm/lib/payment-voucher-queries";
 import { useDocumentFlow } from "../../vendor/scm/lib/flow-queries";
 import { useSoDropdownOptions } from "../../vendor/scm/lib/so-dropdown-options-queries";
 import { LazySlot } from "../../components/LazySlot";
@@ -1857,14 +1856,14 @@ export default SalesOrderDetailV2;
    document-flow at ~1.2s). This calls the SAME hooks with the same arguments
    from the URL while the header loads, so each panel finds its read already in
    flight. Every one of them mounts for any saved order, so nothing extra is
-   asked for; it renders nothing, so nothing above it re-renders. */
+   asked for; it renders nothing, so nothing above it re-renders. Not the
+   refund source: its hook has no staleTime, so the panel would read it twice. */
 function SoDetailWarmup({ docNo }: { docNo: string | undefined }) {
   const key = docNo ?? null;
   useOrderMoney(key);
   useConvertSources(key);
   useCancelRequest("so", key);
   useSoBackdateRequests(key);
-  useRefundSource("SO", docNo ?? "");
   useDocumentFlow("so", key);
   useSoDropdownOptions("payment_method");
   return null;
