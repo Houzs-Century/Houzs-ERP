@@ -18,16 +18,6 @@ class FakeQuery {
   filter() { return this; }
   eq(col: string, val: unknown) { this.preds.push((r) => String(r[col]) === String(val)); return this; }
   in(col: string, vals: unknown[]) { const s = new Set(vals.map(String)); this.preds.push((r) => s.has(String(r[col]))); return this; }
-  /* The demand read pre-filters finished orders on the !inner `so` embed
-     (`so.status` not in SO_DONE); modelled so line 'e' is dropped by the read
-     as in PostgREST, with the handler's own SO_DONE filter still behind it. */
-  not(col: string, op: string, list: string) {
-    if (op !== 'in') return this;
-    const s = new Set([...list.matchAll(/"([^"]*)"/g)].map((m) => m[1]));
-    const [head, field] = col.split('.');
-    this.preds.push((r) => !s.has(String(field ? (r[head] as Record<string, unknown> | null)?.[field] : r[col])));
-    return this;
-  }
   range(from: number, to: number) { this._range = [from, to]; return this; }
   then(res: (v: { data: unknown[]; error: null }) => unknown, rej?: (e: unknown) => unknown) {
     let out = this.rows.filter((r) => this.preds.every((p) => p(r)));

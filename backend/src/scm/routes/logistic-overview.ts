@@ -16,7 +16,6 @@ import { scopeToCompany } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import { logisticPeriod, regionOf, type PeriodDo, type DoCatLine } from '../lib/logistic-period';
 import { DO_NOT_DELIVERED_IN_LIST, DO_STOCK_OUT_STATES } from '../shared/do-shipped-states';
-import { eager } from '../lib/concurrency';
 
 /* A sales order that is a draft or cancelled has no balance to chase. */
 const SO_NOT_LIVE = `(${['DRAFT', 'CANCELLED'].join(',')})`;
@@ -51,34 +50,10 @@ logisticOverview.get('/', async (c) => {
   const firstWeek = iso(Date.parse(`${thisMonday}T00:00:00Z`) - 8 * 7 * DAY);
   const yearAgo = `${iso(Date.parse(`${today.slice(0, 7)}-01T00:00:00Z`) - 330 * DAY).slice(0, 7)}-01`;
   const fail = (what: string, e: { message: string }) => c.json({ error: 'load_failed', reason: `${what}: ${e.message}` }, 500);
-  const weekAgo = iso(Date.parse(`${today}T00:00:00Z`) - 7 * DAY);
-  const monthAgo = iso(Date.parse(`${today}T00:00:00Z`) - 30 * DAY);
-  const ISO = /^\d{4}-\d{2}-\d{2}$/;
-  const qFrom = c.req.query('from'); const qTo = c.req.query('to');
-  const pFrom = qFrom && ISO.test(qFrom) ? qFrom : `${today.slice(0, 7)}-01`;
-  const pTo = qTo && ISO.test(qTo) ? qTo : today;
 
-  /* The six reads keyed on nothing but the query go out together (prod 1.2 s,
-     12 stages in series), each awaited at its own site so the first failure
-     reported is the serial one. The batched reads keyed on their rows stay in
-     order below, so at most one chunkIn wave (<= 6) runs beside them. */
-  const dosProm = eager(paginateAll<Row>((f, t) => scopeToCompany(byWh(sb.from('delivery_orders')
+  const dos = await paginateAll<Row>((f, t) => scopeToCompany(byWh(sb.from('delivery_orders')
     .select('id, do_date, delivered_at, status, local_total_sen').gte('do_date', yearAgo)
-    .not('status', 'in', DO_NOT_DELIVERED_IN_LIST)), c).order('id').range(f, t)));
-  const owingProm = eager(paginateAll<Row>((f, t) => scopeToCompany(sb.from('mfg_sales_orders')
-    .select('doc_no, balance_sen').gt('balance_sen', 0).not('status', 'in', SO_NOT_LIVE), c).order('doc_no').range(f, t)));
-  const notClosedProm = eager(paginateAll<Row>((f, t) => scopeToCompany(byWh(sb.from('delivery_orders')
-    .select('do_date, local_total_sen').eq('status', 'LOADED').lt('do_date', weekAgo)), c).order('id').range(f, t)));
-  const noCostProm = eager(paginateAll<Row>((f, t) => scopeToCompany(byWh(sb.from('delivery_orders')
-    .select('local_total_sen').gte('do_date', iso(Date.parse(`${today}T00:00:00Z`) - 90 * DAY))
-    .neq('status', 'CANCELLED').gt('local_total_sen', 0).or('total_cost_sen.is.null,total_cost_sen.eq.0')), c).order('id').range(f, t)));
-  const periodDosProm = eager(paginateAll<Row>((f, t) => scopeToCompany(byWh(sb.from('delivery_orders')
-    .select('id, do_number, so_doc_no, debtor_name, status, do_date, local_total_sen, state, customer_state, vehicle')
-    .gte('do_date', pFrom).lte('do_date', pTo)
-    .in('status', [...DO_STOCK_OUT_STATES])), c).order('id').range(f, t)));
-  const fleetProm = eager(Promise.resolve(scopeToCompany(sb.from('lorries').select('id, plate, is_internal, active'), c)));
-
-  const dos = (await dosProm)();
+    .not('status', 'in', DO_NOT_DELIVERED_IN_LIST)), c).order('id').range(f, t));
   if (dos.error) return fail('delivery orders', dos.error);
 
   // Weeks: 8 back, this week, next week.
@@ -101,7 +76,8 @@ logisticOverview.get('/', async (c) => {
 
   /* Delivered but still owing: an order whose delivery is done and whose
      balance is above zero, aged from its last delivery. */
-  const owing = (await owingProm)();
+  const owing = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('mfg_sales_orders')
+    .select('doc_no, balance_sen').gt('balance_sen', 0).not('status', 'in', SO_NOT_LIVE), c).order('doc_no').range(f, t));
   if (owing.error) return fail('order balances', owing.error);
   const owingDocs = (owing.data ?? []).map((r) => String(r.doc_no));
   const delivered = await chunkIn<Row>(owingDocs, (b, f, t) => scopeToCompany(sb.from('delivery_orders')
@@ -126,9 +102,14 @@ logisticOverview.get('/', async (c) => {
   /* Two process gaps management should see: DOs loaded more than a week ago
      and never closed as delivered (the POD step skipped, so "delivered" and
      "owing" read low), and DOs carrying no cost (their margin reads 100%). */
-  const notClosed = (await notClosedProm)();
+  const weekAgo = iso(Date.parse(`${today}T00:00:00Z`) - 7 * DAY);
+  const monthAgo = iso(Date.parse(`${today}T00:00:00Z`) - 30 * DAY);
+  const notClosed = await paginateAll<Row>((f, t) => scopeToCompany(byWh(sb.from('delivery_orders')
+    .select('do_date, local_total_sen').eq('status', 'LOADED').lt('do_date', weekAgo)), c).order('id').range(f, t));
   if (notClosed.error) return fail('unclosed delivery orders', notClosed.error);
-  const noCost = (await noCostProm)();
+  const noCost = await paginateAll<Row>((f, t) => scopeToCompany(byWh(sb.from('delivery_orders')
+    .select('local_total_sen').gte('do_date', iso(Date.parse(`${today}T00:00:00Z`) - 90 * DAY))
+    .neq('status', 'CANCELLED').gt('local_total_sen', 0).or('total_cost_sen.is.null,total_cost_sen.eq.0')), c).order('id').range(f, t));
   if (noCost.error) return fail('delivery orders without cost', noCost.error);
   const doNotClosed = { count: 0, amountSen: 0, over30: 0, over30Sen: 0 };
   for (const d of notClosed.data ?? []) {
@@ -139,7 +120,14 @@ logisticOverview.get('/', async (c) => {
 
   /* The selected period (?from=&to=, default this month to today): the DOs
      issued in it, the lorry each went on, and their lines by category. */
-  const periodDos = (await periodDosProm)();
+  const ISO = /^\d{4}-\d{2}-\d{2}$/;
+  const qFrom = c.req.query('from'); const qTo = c.req.query('to');
+  const pFrom = qFrom && ISO.test(qFrom) ? qFrom : `${today.slice(0, 7)}-01`;
+  const pTo = qTo && ISO.test(qTo) ? qTo : today;
+  const periodDos = await paginateAll<Row>((f, t) => scopeToCompany(byWh(sb.from('delivery_orders')
+    .select('id, do_number, so_doc_no, debtor_name, status, do_date, local_total_sen, state, customer_state, vehicle')
+    .gte('do_date', pFrom).lte('do_date', pTo)
+    .in('status', [...DO_STOCK_OUT_STATES])), c).order('id').range(f, t));
   if (periodDos.error) return fail('delivery orders in the period', periodDos.error);
   const doIds = (periodDos.data ?? []).map((d) => String(d.id));
   /* The lorry: the DO's crew record first, else the lorry run it was put on,
@@ -159,7 +147,7 @@ logisticOverview.get('/', async (c) => {
   for (const s of stops.data) { const l = lorryOfTrip.get(String(s.trip_id)); if (l) lorryOfDo.set(String(s.do_id), l); }
   for (const r of crew.data) { const l = str(r.lorry_id) || str(r.lorry_plate); if (l) lorryOfDo.set(String(r.do_id), l); }
   /* The fleet, to name each lorry by its plate and list our own even on no day out. */
-  const fleet = (await fleetProm)();
+  const fleet = await scopeToCompany(sb.from('lorries').select('id, plate, is_internal, active'), c);
   if (fleet.error) return fail('lorries', fleet.error);
   const plateOf = new Map((fleet.data as Row[]).map((l) => [String(l.id), String(l.plate ?? '—')]));
   const fleetByNorm = new Map((fleet.data as Row[]).map((l) => [String(l.plate ?? '').replace(/\s+/g, '').toUpperCase(), String(l.plate ?? '—')]));
