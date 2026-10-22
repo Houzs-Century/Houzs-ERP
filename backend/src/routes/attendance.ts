@@ -103,8 +103,12 @@ attendance.post("/punch", async (c) => {
   if (!emp) return c.json(NOT_LINKED, 403);
   if (emp.status !== "ACTIVE") return c.json({ error: "not_active", message: "Your employee record is not active. Ask HR." }, 403);
 
-  const form = await c.req.parseBody().catch(() => null);
-  if (!form) return c.json({ error: "bad_body", message: "The punch did not arrive. Please tap again." }, 400);
+  let form: Awaited<ReturnType<typeof c.req.parseBody>>;
+  try {
+    form = await c.req.parseBody();
+  } catch {
+    return c.json({ error: "bad_body", message: "The punch did not arrive. Please tap again." }, 400);
+  }
   const action = form.action === "CLOCK_IN" || form.action === "CLOCK_OUT" ? form.action : null;
   if (!action) return c.json({ error: "bad_action", message: "Clock in or clock out?" }, 400);
   const lat = num(form.lat);
