@@ -21,6 +21,7 @@ export const JOB_CADENCE_MIN: Record<string, number> = {
   "ac-delivery-dates": 5,
   "so-allocation": 5,
   "mrp-snapshot": 15,
+  "procurement-overview": 15,
   "vp-reconcile": 30,
   "assr-alerts": 30,
   "ann-escalation": 30,

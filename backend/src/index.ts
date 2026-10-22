@@ -119,6 +119,7 @@ import { reconcilePendingFairs } from "./scm/lib/fair-reconcile";
 import { relinkHeldBackSweep } from "./scm/lib/autocount-relink-sweep";
 import { deliveryDateSweep } from "./scm/lib/autocount-delivery-date-sweep";
 import { refreshAllMrpSnapshots } from "./scm/lib/mrp-snapshot";
+import { refreshProcurementOverviewSnapshots } from "./scm/routes/procurement-overview";
 import { amendmentMirror } from "./scm/routes/amendment-mirror";
 import { customerMirror } from "./scm/routes/customer-mirror";
 import { staffMirror } from "./scm/routes/staff-mirror";
@@ -877,6 +878,11 @@ export default {
       ctx.waitUntil(
         track("mrp-snapshot", () => refreshAllMrpSnapshots(env, new Date().toISOString()))
           .catch((e) => console.error("[cron mrp-snapshot]", e))
+      );
+      // HC-0145: the Procurement Overview's default views, served from KV between runs.
+      ctx.waitUntil(
+        track("procurement-overview", () => refreshProcurementOverviewSnapshots(env, todayMyt()))
+          .catch((e) => console.error("[cron procurement-overview]", e))
       );
     } else if (event.cron === "*/30 * * * *") {
       /* Venture Portal feed BACKSTOP — the half of "not one order missed" that
