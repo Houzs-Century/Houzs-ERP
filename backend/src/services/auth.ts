@@ -149,7 +149,29 @@ export const REMEMBER_TTL_SECONDS = 60 * 60 * 24 * 365; // 1 year, rolling
  * every member on deploy; a role with no rows still resolves to its previous
  * page access (memberPageAccess.ts fallback), so the rebuild changes nothing
  * until the seed runs. */
-export const AUTHZ_ENVELOPE_VERSION = 6;
+/* v7 (2026-10-20): the Finance area splits into per-group page keys
+ * (scm.finance.money_in / .money_out / .bank / .books / .reports / .forecast /
+ * .setup — children of scm.finance.accounting). Each hydrated session's
+ * page_access map gains those keys, so the bump rebuilds each cached v6 session
+ * once to pick them up. The keys inherit their parent's resolved level, so the
+ * rebuild changes no one's access (financeSubpageSplit.test.ts). */
+/* v8 (2026-10-21): the Transportation area splits into per-page page keys
+ * (scm.transportation.overview / .planning / .dp_orders / .last_mile /
+ * .lorry_map / .lorry_capacity / .crew_leave / .coverage — children of
+ * scm.transportation.drivers). Each hydrated session's page_access map gains
+ * those keys, so the bump rebuilds each cached v7 session once to pick them up.
+ * The keys inherit their parent's resolved level, so the rebuild changes no
+ * one's access (transportSubpageSplit.test.ts). */
+/* v9 (2026-10-21): the Team and Service areas split into per-page page keys. The
+ * four Team children (team.members / .roles / .org_chart / .departments) leave
+ * DORMANT and gain a new sibling team.mailboxes; service_cases.settings leaves
+ * DORMANT onto the Service Maintenance tab. Each hydrated session's page_access
+ * map gains team.mailboxes (the rest already hydrated), so the bump rebuilds each
+ * cached v8 session once to pick it up. The wired keys resolve to exactly what
+ * gated the same pages on v8 — team.* children equal their `team` parent and
+ * every service_cases.manage holder keeps service_cases.settings — so the rebuild
+ * changes no one's access (teamServiceSubpageSplit.test.ts). */
+export const AUTHZ_ENVELOPE_VERSION = 9;
 
 /* Session ORIGIN (mig 0120) — the DOOR a session was minted at. It is NOT a
    property of the person: the same salesperson simultaneously holds a 'pos'

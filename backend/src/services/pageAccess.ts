@@ -259,6 +259,21 @@ export const PAGES: PageDef[] = [
     backfill: (p) =>
       isOwner(p) || has(p, "users.manage") ? "full" : "none",
   },
+  {
+    // RBAC rebuild batch 3 (owner 2026-10-20 "全部拆开"): the Team Mailboxes tab
+    // (/team?tab=mail2) gets its own switch so a role can be given Directory but
+    // not the shared-mailbox admin. It is the ONE genuinely new Team key — the
+    // other four (members / roles / org_chart / departments) already existed as
+    // dormant catalogue rows; this batch only wires them. Parented on `team`, so
+    // it inherits the role's Team level at login (zero-change). The nav row still
+    // carries its own `mail_center.manage` perm gate, ANDed with this page key.
+    key: "team.mailboxes",
+    parent: "team",
+    label: "Mailboxes",
+    partialMeaning: "View shared mailboxes; cannot manage.",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) || has(p, "mail_center.manage") ? "full" : "none"),
+  },
 
   // ── Supply Chain (parent + area children) ───────────────────
   // ADDITIVE per-position gating for the ported 2990 SCM. These page
@@ -461,6 +476,101 @@ export const PAGES: PageDef[] = [
     supportsPartial: true,
     backfill: (p) => (isOwner(p) ? "full" : "none"),
   },
+  // ── Transportation sub-pages (owner 2026-10-20: "全部拆开" — one switch per
+  //    sidebar page, so a role can be given Delivery Planning but not the Lorry
+  //    Map). Batch 2. The eight keys map 1:1 to the Transportation nav pages that
+  //    today all gate on scm.transportation.drivers (overview / planning /
+  //    dp_orders / last_mile / lorry_map / lorry_capacity / crew_leave, plus one
+  //    `coverage` key for the Maintenance sub-group — Coverage & Fleet + Delivery
+  //    Zones + Carriers & Rates). The retired Drivers nav row is gone, so
+  //    scm.transportation.drivers now serves as the parent "master" switch for the
+  //    whole area; it is kept in the catalogue.
+  //
+  //    PARENT IS scm.transportation.drivers, NOT scm.transportation — mirroring the
+  //    Finance batch-1 safety rule (parent on the leaf the pages used to gate on,
+  //    not the area parent). Prod (anogrigyjbduyzclzjgn, 2026-10-21) holds only
+  //    three transportation shapes across 24 roles: full/full/full (11),
+  //    none/none/none (9), and scm=none / transportation=view / drivers=view (4 —
+  //    they may SEE the pages, scm umbrella off). In every shape drivers resolves
+  //    EQUAL to its parent scm.transportation, so no role is upgraded either way;
+  //    parenting on the drivers leaf still follows the money/stock-safety analogue
+  //    (never inherit above the key the pages carry) and keeps the mapping faithful
+  //    ("these pages were gated by drivers"). Each new key therefore inherits the
+  //    role's EXACT drivers level, so the split is byte-identical on day one. A
+  //    one-shot backfill migration writes the same value as an explicit row per
+  //    role (so the role matrix / Excel replace-set does not re-persist a new key
+  //    as none on the owner's next save). backfill stays owner-only, matching the
+  //    other scm.* keys (the role matrix drives these, never the permission
+  //    backfill). transportSubpageSplit.test.ts pins the zero-change: every new key
+  //    resolves == scm.transportation.drivers for every prod cohort.
+  {
+    key: "scm.transportation.overview",
+    parent: "scm.transportation.drivers",
+    label: "Logistic Overview",
+    partialMeaning: "View only; write gating is per-route (later).",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    key: "scm.transportation.planning",
+    parent: "scm.transportation.drivers",
+    label: "Delivery Planning",
+    partialMeaning: "View only; write gating is per-route (later).",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    key: "scm.transportation.dp_orders",
+    parent: "scm.transportation.drivers",
+    label: "DP Orders",
+    partialMeaning: "View only; write gating is per-route (later).",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    key: "scm.transportation.last_mile",
+    parent: "scm.transportation.drivers",
+    label: "Last Mile Delivery",
+    partialMeaning: "View only; write gating is per-route (later).",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    key: "scm.transportation.lorry_map",
+    parent: "scm.transportation.drivers",
+    label: "Lorry Live Map",
+    partialMeaning: "View only; write gating is per-route (later).",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    key: "scm.transportation.lorry_capacity",
+    parent: "scm.transportation.drivers",
+    label: "Lorry Capacity",
+    partialMeaning: "View only; write gating is per-route (later).",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    key: "scm.transportation.crew_leave",
+    parent: "scm.transportation.drivers",
+    label: "Crew Leave",
+    partialMeaning: "View only; write gating is per-route (later).",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    // One key for the Maintenance sub-group: Coverage & Fleet
+    // (/scm/delivery-maintenance) + Delivery Zones + Carriers & Rates. Fleet
+    // Health sits in the same sub-group but keeps its OWN gate (fleet.read) —
+    // repointing it would NOT be zero-change, so it is left untouched.
+    key: "scm.transportation.coverage",
+    parent: "scm.transportation.drivers",
+    label: "Coverage, Zones & Carriers",
+    partialMeaning: "View only; write gating is per-route (later).",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
   {
     key: "scm.warehouse",
     parent: "scm",
@@ -527,6 +637,83 @@ export const PAGES: PageDef[] = [
     parent: "scm.finance",
     label: "Outstanding",
     partialMeaning: "View only; write gating is per-route (later).",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  // ── Finance sub-pages (owner 2026-10-20: "全部拆开" — one switch per finance
+  //    group, so a role can be given 收款 but not 付款). The owner's seven groups
+  //    map to the Finance nav groups: Money in / Money out / Bank & cards / Books /
+  //    Reports / Forecasting / Setup.
+  //
+  //    PARENT IS scm.finance.accounting, NOT scm.finance — ON PURPOSE. Prod
+  //    (anogrigyjbduyzclzjgn, 2026-10-20) holds only three finance shapes across
+  //    24 roles: finance=full/accounting=full (4 roles), finance=full/accounting=
+  //    VIEW (7 roles: Logistic/BD/Ops/Purchaser/IT Admin/HR/Logistic Admin — they
+  //    may SEE the books but not post), and all-none (13). Parenting these on
+  //    scm.finance would make the 7 view-roles inherit full and silently gain
+  //    money-write — the exact over-grant the money-safety rule forbids. Parenting
+  //    on scm.finance.accounting makes each new key inherit the role's EXACT
+  //    accounting level (view stays view), so the split is byte-identical on day
+  //    one. A one-shot backfill migration writes the same value as an explicit row
+  //    per role (so the role matrix, which replace-sets every row, does not
+  //    re-persist a new key as none on the owner's next save). backfill stays
+  //    owner-only, matching the other scm.* keys (the role matrix drives these,
+  //    never the permission backfill). financeSubpageSplit.test.ts pins the
+  //    zero-change: every new key resolves == scm.finance.accounting for every
+  //    prod cohort, view-roles included.
+  {
+    key: "scm.finance.money_in",
+    parent: "scm.finance.accounting",
+    label: "Money in (receipts, debtors, CN/DN)",
+    partialMeaning: "View money-in documents; edit to post them.",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    key: "scm.finance.money_out",
+    parent: "scm.finance.accounting",
+    label: "Money out (vouchers, AP, suppliers)",
+    partialMeaning: "View money-out documents; edit to post them.",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    key: "scm.finance.bank",
+    parent: "scm.finance.accounting",
+    label: "Bank & cards",
+    partialMeaning: "View daily bank + reconciliations; edit to reconcile.",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    key: "scm.finance.books",
+    parent: "scm.finance.accounting",
+    label: "Books (JE / GL / trial balance / month-end)",
+    partialMeaning: "View the ledger; edit to post entries.",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    key: "scm.finance.reports",
+    parent: "scm.finance.accounting",
+    label: "Reports (P&L / aging / collection / …)",
+    partialMeaning: "(not used; full or none)",
+    supportsPartial: false,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    key: "scm.finance.forecast",
+    parent: "scm.finance.accounting",
+    label: "Forecasting (Forecast P&L + Dashboard)",
+    partialMeaning: "View the forecast; edit to set targets.",
+    supportsPartial: true,
+    backfill: (p) => (isOwner(p) ? "full" : "none"),
+  },
+  {
+    key: "scm.finance.setup",
+    parent: "scm.finance.accounting",
+    label: "Setup (chart of accounts / item groups / recon)",
+    partialMeaning: "View the finance setup; edit to change it.",
     supportsPartial: true,
     backfill: (p) => (isOwner(p) ? "full" : "none"),
   },
@@ -658,14 +845,22 @@ export function isRetiredPageKey(key: string): boolean {
 // snapshot row's stored `view` now means "may open the adjustment page, but the
 // write still needs edit" — identical to the fused inventory-era behaviour (view
 // could not POST).
+//
+// RBAC rebuild batch 3 (owner 2026-10-20 "全部拆开"): five more keys left this
+// list because the Team / Service nav now READS them. `team.members` /
+// `team.roles` / `team.org_chart` / `team.departments` each back a Team sub-page
+// (Directory / Roles & Permissions / Org Chart / Departments) whose nav row was
+// repointed off the parent `team` onto the per-item key; `service_cases.settings`
+// now gates the Service Maintenance tab. Proven zero-change on day one: prod
+// (anogrigyjbduyzclzjgn, 2026-10-21) stores every team.* child EQUAL to its
+// `team` parent for all 24 roles, and every role holding `service_cases.manage`
+// (the Service Maintenance perm gate, still ANDed) stores `service_cases.settings`
+// = full, so no login gains or loses a page (teamServiceSubpageSplit.test.ts).
+// Only the two below stay dormant — no sidebar entry reads them: `by_creditor`
+// has no nav row, and `pnl` is an in-page figure, not a tab.
 export const DORMANT_PAGE_KEYS: ReadonlySet<string> = new Set([
   "service_cases.by_creditor",
   "service_cases.pnl",
-  "service_cases.settings",
-  "team.members",
-  "team.roles",
-  "team.org_chart",
-  "team.departments",
 ]);
 
 export function isDormantPageKey(key: string): boolean {

@@ -15,7 +15,7 @@ import { idempotency } from "./middleware/idempotency";
 import { requestLog } from "./middleware/requestLog";
 // Error tracking (Sentry-protocol, no SDK). Completely inert until the owner
 // sets the SENTRY_DSN Worker secret — see services/errorTracking.ts.
-import { captureError } from "./services/errorTracking";
+import { captureError, describeErrorForLog } from "./services/errorTracking";
 import assr from "./routes/assr";
 import logs from "./routes/logs";
 import auditRoutes from "./routes/audit";
@@ -596,7 +596,7 @@ function humanizeError(err: Error): { status: 500 | 503; message: string } {
 }
 
 app.onError((err, c) => {
-  console.error("[onError]", err);
+  console.error("[onError]", describeErrorForLog(err), err);
   // Preserve Hono HTTPException status/body (intentional 4xx from handlers).
   const anyErr = err as Error & { getResponse?: () => Response; status?: number };
   const base =

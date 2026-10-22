@@ -660,11 +660,11 @@ export async function createAssrCase(
     );
   }
 
-  // Fire-and-forget creditor resolution from the primary item. A
-  // failed lookup (item unknown upstream, network, etc.) must not
-  // block case creation — the case is already committed above.
+  // Creditor resolution from the primary item. Awaited (HC-0130): the Worker may
+  // cancel a floating promise, and the Supplier must be there at Review. A failed
+  // lookup must still not fail the create — the case is already committed above.
   if (firstItem) {
-    resolveCreditorForCase(env, assrId, firstItem).catch((e) =>
+    await resolveCreditorForCase(env, assrId, firstItem).catch((e) =>
       console.warn(`[assr.create] creditor resolve failed for ${assrNo}:`, e?.message || e)
     );
   }
@@ -1385,10 +1385,10 @@ export async function patchAssrCase(
   }
 
   // When the case's item_code changes, re-resolve the creditor so the
-  // link to the procurement supplier stays accurate. Fire-and-forget —
-  // a failed lookup shouldn't fail the PATCH.
+  // link to the procurement supplier stays accurate. Awaited (a floating
+  // promise dies with the response); a failed lookup shouldn't fail the PATCH.
   if ("item_code" in body) {
-    resolveCreditorForCase(env, id, body.item_code ?? null).catch((e) =>
+    await resolveCreditorForCase(env, id, body.item_code ?? null).catch((e) =>
       console.warn(`[assr.patch] creditor resolve failed for case=${id}:`, e?.message || e)
     );
   }

@@ -276,9 +276,24 @@ describe("nav — Finance / HR are top-level, not under Supply Chain", () => {
   });
 
   it("a Finance-only grant shows Finance and still no other SCM area", () => {
+    // The hydrated map carries the per-group finance keys resolved from
+    // accounting (the split's cascade / backfill) — the Books/Reports/Setup nav
+    // now gates on scm.finance.books/.reports/.setup, Money in/out/bank on their
+    // own keys. Mirror that so Finance is reachable.
     const ctx = ctxFor(
       rep({ position_name: "Account Executive", department_name: "Management" }),
-      { scm: "view", "scm.finance": "view", "scm.finance.accounting": "view" },
+      {
+        scm: "view",
+        "scm.finance": "view",
+        "scm.finance.accounting": "view",
+        "scm.finance.money_in": "view",
+        "scm.finance.money_out": "view",
+        "scm.finance.bank": "view",
+        "scm.finance.books": "view",
+        "scm.finance.reports": "view",
+        "scm.finance.forecast": "view",
+        "scm.finance.setup": "view",
+      },
     );
     const paths = desktopPaths(ctx);
     expect(paths).toContain("/scm/accounting");

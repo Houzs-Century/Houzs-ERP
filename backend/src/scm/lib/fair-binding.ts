@@ -153,6 +153,22 @@ export async function loadFairsInWindow(
 }
 
 /**
+ * EVERY live fair of the company, whatever its place or dates — what Fair
+ * Links offers the people who settle links there (owner 2026-10-21, see
+ * fair-options.ts::allFairOptions). Archived and cancelled projects are out,
+ * as everywhere a fair is offered. Houzs: about 750 booths (2024-03 → 2027-07).
+ */
+export async function loadAllFairs(db: FairDb, companySql: string): Promise<FairProjectRow[]> {
+  const rows = await db
+    .prepare(`SELECT ${FAIR_COLUMNS} FROM projects p WHERE ${LIVE_FAIR}${companySql}`)
+    .bind()
+    .all<Record<string, unknown>>();
+  return ((rows.results ?? []) as Array<Record<string, unknown>>)
+    .map(toFairRow)
+    .filter((r) => Number.isFinite(r.projectId));
+}
+
+/**
  * Every fair at ONE venue inside the lookback window. The venue match is
  * case/space-insensitive because the picker writes the master's spelling but
  * historical rows and PMS rows were typed by hand.

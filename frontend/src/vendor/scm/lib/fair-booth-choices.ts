@@ -44,11 +44,33 @@ export function boothChoices(
   options: readonly FairOption[],
   order: Pick<FairPendingRow, 'venue' | 'branding' | 'so_date'>,
 ): { choices: BoothChoice[]; suggested: number | null } {
+  const choices = boothsOf(options, order, (o) => norm(o.venue) === norm(order.venue))
+    .sort((a, b) =>
+      Number(b.choice.sameBrand) - Number(a.choice.sameBrand) ||
+      a.days - b.days ||
+      b.start.localeCompare(a.start) ||
+      (a.brand === '' ? 1 : 0) - (b.brand === '' ? 1 : 0) ||
+      a.brand.localeCompare(b.brand) ||
+      a.choice.projectId - b.choice.projectId)
+    .map((x) => x.choice);
+  return { choices, suggested: choices[0]?.sameBrand ? choices[0].projectId : null };
+}
+
+type RankedBooth = { choice: BoothChoice; days: number; start: string; brand: string; samePlace: boolean };
+
+/** The booths of the events `keep` accepts, one per brand per event (the lowest
+ *  id), with what they are ranked by. */
+function boothsOf(
+  options: readonly FairOption[],
+  order: Pick<FairPendingRow, 'venue' | 'branding' | 'so_date'>,
+  keep: (o: FairOption) => boolean,
+): RankedBooth[] {
   const brand = norm(order.branding);
+  const place = norm(order.venue);
   const soDate = order.so_date ? order.so_date.slice(0, 10) : null;
-  const byBooth = new Map<string, { choice: BoothChoice; days: number; start: string; brand: string }>();
+  const byBooth = new Map<string, RankedBooth>();
   for (const o of options) {
-    if (norm(o.venue) !== norm(order.venue)) continue;
+    if (!keep(o)) continue;
     const booths = o.booths ?? o.projectIds.map((projectId) => ({ projectId, brand: null }));
     for (const b of booths) {
       const key = b.brand ? `${o.key}|${norm(b.brand)}` : `${o.key}|#${b.projectId}`;
@@ -59,17 +81,36 @@ export function boothChoices(
         days: daysFrom(o, soDate),
         start: o.startDate,
         brand: norm(b.brand),
+        samePlace: place !== '' && norm(o.venue) === place,
       });
     }
   }
-  const choices = [...byBooth.values()]
+  return [...byBooth.values()];
+}
+
+/** One booth of EVERY fair, and whether it is at the order's own place. */
+export type AnyBoothChoice = BoothChoice & { samePlace: boolean };
+
+/**
+ * Every booth of every fair, for a person settling a link on Fair Links (owner
+ * 2026-10-21: 「我这里link fair 要可以选完全部fair」 — a slip naming the place
+ * differently from PMS, PISA SPICE ARENA vs SETIA SPICE CONVENTION CENTRE,
+ * could not reach its fair). The order's own place first, then everywhere
+ * else; in each, the fair nearest the order's date first, the order's brand
+ * first among equals. Nothing here is filled in — a person picks.
+ */
+export function allBoothChoices(
+  options: readonly FairOption[],
+  order: Pick<FairPendingRow, 'venue' | 'branding' | 'so_date'>,
+): AnyBoothChoice[] {
+  return boothsOf(options, order, () => true)
     .sort((a, b) =>
-      Number(b.choice.sameBrand) - Number(a.choice.sameBrand) ||
+      Number(b.samePlace) - Number(a.samePlace) ||
       a.days - b.days ||
+      Number(b.choice.sameBrand) - Number(a.choice.sameBrand) ||
       b.start.localeCompare(a.start) ||
       (a.brand === '' ? 1 : 0) - (b.brand === '' ? 1 : 0) ||
       a.brand.localeCompare(b.brand) ||
       a.choice.projectId - b.choice.projectId)
-    .map((x) => x.choice);
-  return { choices, suggested: choices[0]?.sameBrand ? choices[0].projectId : null };
+    .map((x) => ({ ...x.choice, samePlace: x.samePlace }));
 }

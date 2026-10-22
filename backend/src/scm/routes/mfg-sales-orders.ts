@@ -158,7 +158,7 @@ import { hasHouzsPerm, canViewAllSales, isSalesCaller, canViewScmFinance } from 
    cannot drift apart — a typo on either side would silently disarm the pricing
    envelope, and no test would fail. */
 import { SESSION_ORIGIN_POS } from '../../services/auth';
-import { loadLeadBuffers } from '../../services/agents/procurement-learning';
+import { sharedLiveMrp } from '../lib/live-mrp-memo';
 import { SO_FINANCE_KEYS, SO_ITEM_FINANCE_KEYS, stripAuditFinance } from '../lib/finance-keys';
 import { resolveSalesScopeIds, applySoScope, soDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
 import { recordAmendmentRequested, notifyAmendmentsRaised } from '../lib/amendment-raised-effects';
@@ -305,7 +305,7 @@ import { soLineBoundPoNumbers } from '../lib/so-converted-po';
 /* Shared 4-state delivery-planning derivation — the SO list emits planning_state
    (the mobile Orders-list card's status) from the SAME helper the Delivery
    Planning board uses, so the two can never drift. */
-import { computeMrp, mrpLineCoverage, type MrpResult } from './mrp';
+import { mrpLineCoverage, type MrpResult } from './mrp';
 import type { Env, Variables } from '../env';
 /* scan-bg-job — the headless createDraftSalesOrder below runs the create core
    without a request-scoped client; it uses the scm-scoped service client. */
@@ -427,11 +427,11 @@ type SoCoverage = { coverage: Map<string, { source: string; po: string | null; e
 /* Exported for the deferred `GET /:docNo/coverage` handler, which lives in
    mfg-sales-orders-list-enrichment.ts (this file is at its size ceiling). Same
    engine, same call — it must not re-implement the MRP logic. */
-export async function soCoverage(c: any, sb: unknown): Promise<SoCoverage> {
+export async function soCoverage(c: any, sb: unknown, savedAt: string | null = null): Promise<SoCoverage> {
   /* Best-effort, exactly as before: a failed allocation drops every line to
-     Pending and the page still loads. */
+     Pending and the page still loads. The run is shared with the list's Stock column (lib/live-mrp-memo.ts). */
   try {
-    const mrp = await computeMrp(sb, { catFilter: null, whFilter: null, includeUndated: true, companyId: activeCompanyId(c), leadBuffers: await loadLeadBuffers(c.env.DB) });
+    const mrp = await sharedLiveMrp(sb, c.env.DB, activeCompanyId(c), savedAt).result;
     return { coverage: mrpLineCoverage(mrp), mrp };
   } catch {
     return { coverage: new Map(), mrp: null };
@@ -3638,7 +3638,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         builtCompartments: built,
       });
     }
-    const specialModels = await specialDeliveryFeesForLines(sb, deliveryRuleLines, comboModulesById);
+    const specialModels = await specialDeliveryFeesForLines(sb, deliveryRuleLines, comboModulesById, companyId);
 
     /* Phase 2 — cross-order link. Sales typed the earlier SO's doc_no at
        handover. Validate it (exists, not cancelled, same customer by phone
@@ -5732,7 +5732,7 @@ async function recomputeDeliveryFeeAttempt(
       }),
     );
     const comboModulesById = await loadComboModulesById(sb, c);
-    specialModels = await specialDeliveryFeesForLines(sb, deliveryRuleLines, comboModulesById);
+    specialModels = await specialDeliveryFeesForLines(sb, deliveryRuleLines, comboModulesById, activeCompanyId(c));
   }
 
   // Key by company_id (2990's row is id=100001); id=1 fallback when unresolved

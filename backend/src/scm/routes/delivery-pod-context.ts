@@ -7,6 +7,7 @@ import type { Env, Variables } from '../env';
 import { scopeToAllowedCompanies } from '../lib/companyScope';
 import { resolveDeliveryScope, scopeMatchesAssignment, type CrewAssignment } from '../lib/deliveryScope';
 import { ASSR_LEG_BY_STOP } from '../lib/assr-board-scope';
+import { getUserPhasesOnProject } from '../../services/projects';
 
 const NOT_YOUR_JOB = "You can only update a delivery job assigned to you.";
 
@@ -92,6 +93,9 @@ export async function ownServiceAndProjectRowKeys(
   env: Env,
   scope: { driverIds: ReadonlySet<string>; helperIds: ReadonlySet<string> },
   userId: number,
+  // The caller's display name — project crew matching needs it (the per-lorry
+  // crew editor stores people as {name,phone} JSON with NO user ids).
+  userName: string | null,
   rows: Array<{ row_type: string; so_doc_no: string; assr_id?: number | null; job_kind?: string | null; dp_job_type?: string | null }>,
 ): Promise<Set<string>> {
   const own = new Set<string>();
@@ -117,21 +121,20 @@ export async function ownServiceAndProjectRowKeys(
   const projectRows = rows.filter((r) => r.row_type === 'project' && r.so_doc_no.startsWith('PRJ:'));
   if (projectRows.length && Number.isFinite(userId)) {
     const ids = [...new Set(projectRows.map((r) => Number(r.so_doc_no.slice(4).split('#')[0])))].filter(Number.isFinite);
-    // company-scope: crew lookup for project ids already on the caller's board, which reads projects across companies on purpose (delivery-planning.ts project rows)
-    const res = await env.DB.prepare(
-      `SELECT id, setup_driver_user_id, setup_helper_1_id, setup_helper_2_id,
-              dismantle_driver_user_id, dismantle_helper_1_id, dismantle_helper_2_id
-         FROM projects WHERE id IN (${ids.map(() => '?').join(',')})`,
-    ).bind(...ids).all<Record<string, number | null>>();
-    const byId = new Map((res.results ?? []).map((p) => [Number(p.id), p]));
+    /* Crew membership = the project module's canonical rule (scalar user id OR a
+       name in the setup/dismantle crew JSON the per-lorry editor writes). The old
+       id-only match here dropped every driver crewed by name — they never saw
+       their own Setup/Dismantle on the run-sheet. company-scope: project ids are
+       already on the caller's board, read across companies on purpose (fleet is
+       shared). */
+    const phasesById = new Map<number, ReadonlyArray<'setup' | 'dismantle'>>();
+    for (const id of ids) {
+      phasesById.set(id, await getUserPhasesOnProject(env, id, userId, userName));
+    }
     for (const r of projectRows) {
       const [id, leg] = r.so_doc_no.slice(4).split('#');
-      const p = byId.get(Number(id));
-      if (!p) continue;
-      const crew = leg === 'SETUP'
-        ? [p.setup_driver_user_id, p.setup_helper_1_id, p.setup_helper_2_id]
-        : [p.dismantle_driver_user_id, p.dismantle_helper_1_id, p.dismantle_helper_2_id];
-      if (crew.some((v) => v != null && Number(v) === userId)) own.add(r.so_doc_no);
+      const phase = leg === 'SETUP' ? 'setup' : 'dismantle';
+      if (phasesById.get(Number(id))?.includes(phase)) own.add(r.so_doc_no);
     }
   }
   return own;
