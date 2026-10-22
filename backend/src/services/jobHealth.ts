@@ -22,6 +22,7 @@ export const JOB_CADENCE_MIN: Record<string, number> = {
   "so-allocation": 5,
   "mrp-snapshot": 15,
   "vp-reconcile": 30,
+  "hr-auto-clockout": 30,
   "assr-alerts": 30,
   "ann-escalation": 30,
   "lead-time-schedule": 30,
