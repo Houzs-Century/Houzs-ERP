@@ -493,7 +493,7 @@ function KpiRow({ data, rows }: { data: FairReportData; rows: FairReportRows }) 
     return (
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard rail="bg-primary" label="Total Orders" value={s.orders.toLocaleString('en-MY')} subtitle="Confirmed, matching filter" />
-        <StatCard rail="bg-accent-bright" label="Revenue" value={rm(s.total_amount_sen)} subtitle={`${pct(s.margin_pct)} margin`} />
+        <StatCard rail="bg-accent-bright" label="Revenue" value={rm(s.total_amount_sen)} subtitle={`${pct(s.margin_pct)} margin · goods only`} />
         <StatCard rail="bg-err" label="Outstanding" value={rm(s.total_balance_sen)} tone="error" subtitle={`${s.below_deposit_count} below deposit`} />
         <StatCard rail="bg-synced" label="Paid" value={rm(paid)} tone="success" subtitle="Deposits collected" />
       </div>
@@ -529,7 +529,7 @@ function KpiRow({ data, rows }: { data: FairReportData; rows: FairReportRows }) 
       <StatCard rail="bg-primary" label="Invoices" value={s.invoices.toLocaleString('en-MY')} subtitle="SIs in this filter" />
       <StatCard rail="bg-accent-bright" label="Invoiced Amount" value={rm(s.total_invoiced_sen)} subtitle="Billed to date" />
       <StatCard rail="bg-err" label="Landed (SI) Cost" value={rm(s.total_si_cost_sen)} subtitle="Store-card after PI lands" />
-      <StatCard rail="bg-synced" label="Invoiced Margin" value={pct(s.margin_pct)} tone="success" subtitle="Invoiced − landed" />
+      <StatCard rail="bg-synced" label="Invoiced Margin" value={pct(s.margin_pct)} tone="success" subtitle="Goods only · invoiced − landed" />
     </div>
   );
 }
@@ -612,7 +612,7 @@ function StageTable({ data, stage, hidden, loading, onOpen }: {
         moneyCol<FairSoRow>('catService', 'Service', (r) => r.cost_by_category.service_cost_sen),
       ]),
       moneyCol('soCost', 'Total SO Cost', (r) => r.total_so_cost_sen, { className: 'font-semibold' }),
-      marginCol((r) => r.margin_pct, (r) => r.amount_sen, (r) => r.total_so_cost_sen),
+      marginCol((r) => r.margin_pct, (r) => r.selling_sen, (r) => r.goods_cost_sen),
       moneyCol('balance', 'Balance', (r) => r.balance_sen),
       {
         key: 'payment', label: 'Payment', getValue: (r) => r.payment_methods.join(' + '),
@@ -749,7 +749,7 @@ function StageTable({ data, stage, hidden, loading, onOpen }: {
       moneyCol<FairInvoiceRow>('doCost', 'DO Cost', (r) => r.do_cost_sen),
     ]),
     moneyCol('siCost', 'Landed (SI) Cost', (r) => r.si_cost_sen, { className: 'font-semibold' }),
-    marginCol((r) => r.margin_pct, (r) => r.invoiced_sen, (r) => r.si_cost_sen),
+    marginCol((r) => r.margin_pct, (r) => r.goods_invoiced_sen, (r) => r.goods_si_cost_sen),
   ];
   return (
     <DataTable<FairInvoiceRow> tableId="fair-report-invoice" columns={columns} rows={rows} getRowKey={(r) => r.inv_no}
