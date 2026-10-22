@@ -3,6 +3,7 @@ import { ChevronRight, FileDown, FileUp, Search } from "lucide-react";
 import { api } from "../../api/client";
 import { useQuery } from "../../hooks/useQuery";
 import { useToast } from "../../hooks/useToast";
+import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useAuth } from "../../auth/AuthContext";
 import { cn } from "../../lib/utils";
 import { Button } from "../../components/Button";
@@ -58,31 +59,19 @@ function seedPageLevels(pages: PageLite[], stored: Record<string, string> | unde
   return out;
 }
 
-// Module-column width (px): personal preference, read/written straight to
-// localStorage and clamped so a drag can never collapse the column or push the
-// level picker off-screen. Persisted on drag-release, not on every mousemove.
+// Module-column width (px): a device-local UI preference kept in localStorage
+// through the shared useLocalStorage hook (the app's one storage surface, so no
+// new direct storage caller). Clamped so a drag can never collapse the column
+// or push the level picker off-screen.
 const COL_KEY = "roleMatrix:moduleColPx";
 const MIN_COL = 200;
 const MAX_COL = 640;
 const DEFAULT_COL = 360;
 const clampCol = (n: number) => Math.max(MIN_COL, Math.min(MAX_COL, Math.round(n)));
-function readStoredCol(): number {
-  try {
-    const raw = localStorage.getItem(COL_KEY);
-    if (raw == null) return DEFAULT_COL;
-    const n = Number(raw);
-    return Number.isFinite(n) ? clampCol(n) : DEFAULT_COL;
-  } catch {
-    return DEFAULT_COL;
-  }
-}
-function writeStoredCol(n: number) {
-  try {
-    localStorage.setItem(COL_KEY, String(n));
-  } catch {
-    // quota / privacy mode — the width just resets next visit
-  }
-}
+const sanitizeCol = (v: unknown): number => {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? clampCol(n) : DEFAULT_COL;
+};
 
 export function RoleMatrixTab() {
   const { can } = useAuth();
@@ -118,7 +107,7 @@ export function RoleMatrixTab() {
   const [saving, setSaving] = useState(false);
   const [importing, setImporting] = useState(false);
   const [query, setQuery] = useState("");
-  const [moduleCol, setModuleCol] = useState<number>(readStoredCol);
+  const [moduleCol, setModuleCol] = useLocalStorage<number>(COL_KEY, DEFAULT_COL, undefined, sanitizeCol);
   const resizeFrom = useRef<{ x: number; w: number } | null>(null);
 
   // The whole-matrix snapshot for Excel export/import (all roles, current state).
@@ -202,8 +191,8 @@ export function RoleMatrixTab() {
 
   // Drag to resize the Module column. Listeners live on window so the pointer
   // can leave the handle mid-drag; the start width is captured in a ref so the
-  // move handler never reads a stale `moduleCol`. The width is persisted once,
-  // on release.
+  // move handler never reads a stale `moduleCol`. useLocalStorage persists each
+  // width change, so the last position is remembered with no explicit save.
   function onResizeMove(e: MouseEvent) {
     const from = resizeFrom.current;
     if (!from) return;
@@ -215,10 +204,6 @@ export function RoleMatrixTab() {
     window.removeEventListener("mouseup", endResize);
     document.body.style.cursor = "";
     document.body.style.userSelect = "";
-    setModuleCol((w) => {
-      writeStoredCol(w);
-      return w;
-    });
   }
   function startResize(e: React.MouseEvent) {
     e.preventDefault();
