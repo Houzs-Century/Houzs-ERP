@@ -2640,7 +2640,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     dropdownErr,
     productRowByCode,
   ] = await Promise.all([
-    loadMaintenanceConfig(sb),
+    loadMaintenanceConfig(sb, companyId),
     loadSpecialAddons(sb),
     loadProductsAndModels(sb, itemCodes, companyId),
     loadFabricTierAddonConfig(sb, companyId),
@@ -7239,7 +7239,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     }
   }
   const [cachedConfig, productLite, fabricLite, sofaCombosLite, sellingTiersLite, fabricAddonConfigLite, specialAddonsLite, modelOverridesLite, compartmentOverridesLite] = await Promise.all([
-    loadMaintenanceConfig(sb),
+    loadMaintenanceConfig(sb, activeCompanyId(c)),
     loadProductByCode(sb, itemCodeStr, activeCompanyId(c)),
     loadFabricByCode(sb, variantsObj?.fabricCode ?? null),
     loadSellingSofaCombos(sb, c),
@@ -7948,7 +7948,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   }
   if (shouldRecompute && itemCodeAfter) {
     const [cfg, prodLite, fabLite, sofaCombosPatch, sellingTiersPatch, fabricAddonConfigPatch, specialAddonsPatch, modelOverridesPatch, compartmentOverridesPatch] = await Promise.all([
-      loadMaintenanceConfig(sb),
+      loadMaintenanceConfig(sb, activeCompanyId(c)),
       loadProductByCode(sb, itemCodeAfter, activeCompanyId(c)),
       loadFabricByCode(sb, variantsAfter?.fabricCode ?? null),
       loadSellingSofaCombos(sb, c),
@@ -8439,7 +8439,7 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
   }
 
   const [cfg, prodLite, fabPrev, fabNext, tiersPrev, tiersNext, addonCfg, specialDefs, modelOverrides, compartmentOverrides] = await Promise.all([
-    loadMaintenanceConfig(sb),
+    loadMaintenanceConfig(sb, activeCompanyId(c)),
     loadProductByCode(sb, prev.item_code, activeCompanyId(c)),
     loadFabricByCode(sb, (prevVariants.fabricCode as string | undefined) ?? null),
     loadFabricByCode(sb, (nextVariants.fabricCode as string | undefined) ?? null),
@@ -8934,7 +8934,7 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
   if (rewardLinesToRevert.length > 0 || pwpDeleteCodes.length > 0 || pwpRevertCodes.length > 0 || pwpNewlyTriggered.length > 0) {
     // Loaders only when the re-evaluation actually has work to do.
     const [cfgX, addonCfgX, specialDefsX, modelOverridesX, compartmentOverridesX] = await Promise.all([
-      loadMaintenanceConfig(sb),
+      loadMaintenanceConfig(sb, activeCompanyId(c)),
       loadFabricTierAddonConfig(sb, activeCompanyId(c)),
       loadSpecialAddons(sb),
       loadModelFabricTierOverrides(sb),
@@ -9151,7 +9151,7 @@ async function planSofaRewardRevert(
      stored `depth`. */
   const depth = String(leadV.depth ?? leadV.seatHeight ?? '24');
   const [cfg, prodLite, fabLite, combos, sellingTiers, addonCfg, specialDefs, modulePrices, modelOverridesLead, compartmentOverridesLead] = await Promise.all([
-    loadMaintenanceConfig(sb),
+    loadMaintenanceConfig(sb, activeCompanyId(c)),
     loadProductByCode(sb, lead.item_code, activeCompanyId(c)),
     loadFabricByCode(sb, (leadV.fabricCode as string | undefined) ?? null),
     loadSellingSofaCombos(sb, c),
@@ -9336,7 +9336,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
      `depth`. recomputeFromSnapshot below also reads `depth ?? seatHeight`. */
   const depth = String((newVariants as { depth?: unknown; seatHeight?: unknown }).depth ?? (newVariants as { seatHeight?: unknown }).seatHeight ?? '24');
   const [cfg, fabLite, combos, sellingTiers, fabricAddonCfg, specialDefs, modulePrices, moduleCostRows, modelOverridesSwap, compartmentOverridesSwap] = await Promise.all([
-    loadMaintenanceConfig(sb),
+    loadMaintenanceConfig(sb, activeCompanyId(c)),
     loadFabricByCode(sb, (newVariants.fabricCode as string | undefined) ?? null),
     loadSellingSofaCombos(sb, c),
     loadFabricSellingTiers(sb, (newVariants.fabricId as string | undefined) ?? null),
