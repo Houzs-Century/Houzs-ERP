@@ -144,6 +144,7 @@ import { publicContractorCalendar } from "./routes/publicContractorCalendar";
 import { publicBrandCalendar } from "./routes/publicBrandCalendar";
 import { brandShare } from "./routes/brandShare";
 import { drainEmailOutbox } from "./services/email";
+import { backfillOutboundMessageIds } from "./lib/mail-threading";
 import { pollVelocity } from "./scm/lib/velocity-poll";
 import { runClientErrorDigest } from "./services/clientErrors";
 import { runSlaEscalation } from "./services/assrEscalation";
@@ -676,12 +677,16 @@ export default {
       // Durable email: retry outbox rows whose immediate send failed. No-op
       // without RESEND_API_KEY; bounded to 25 rows / 3 attempts so a bad batch
       // can't stall the slot.
+      // Then give Mail Center sends Resend's Message-ID, which a customer's
+      // reply quotes to land back on its thread.
       ctx.waitUntil(
         track("email-outbox", () => drainEmailOutbox(env))
           .then((r) => {
             if (r.processed) console.log(`[cron email-outbox] processed=${r.processed} sent=${r.sent} failed=${r.failed}`);
           })
           .catch((e) => console.error("[cron email-outbox]", e))
+          .then(() => backfillOutboundMessageIds(env.DB, env, null, 10))
+          .catch((e) => console.error("[cron mail-message-ids]", e))
       );
       // DEV-42: store live lorry positions from Velocity (no-op until the secret is set).
       ctx.waitUntil(

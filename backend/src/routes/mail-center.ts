@@ -33,6 +33,14 @@ import { validateMailAttachments } from "../lib/mail-attachments";
 import { isSalesDirectorUser } from "../services/pmsAccess";
 import { activeCompanyCodePred, activeCompanyId, activeCompanySql } from "../scm/lib/companyScope";
 import { toArray, stripHtml, safeIso, base64ToBytes, safeFilename } from "../services/mail-parse";
+import {
+  backfillOutboundMessageIds,
+  deliveryStatus,
+  recordOutboundMessage,
+  threadForReferences,
+  threadingHeaders,
+  threadMessageIds,
+} from "../lib/mail-threading";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -292,14 +300,15 @@ export async function ingestInboundEmail(
     .slice(0, 240);
 
   // Idempotency — the inbound worker may retry. Skip if we already stored this
-  // Message-ID. BUT: if the existing message has NO attachments yet and this
+  // Message-ID in THIS company (one mail copied to both companies is stored in
+  // each). BUT: if the existing message has NO attachments yet and this
   // (re)delivery carries some, backfill them onto the already-ingested message.
   if (payload.messageId) {
     const dup = await db
       .prepare(
-        `SELECT id, thread_id FROM email_messages WHERE message_id = ? LIMIT 1`,
+        `SELECT id, thread_id FROM email_messages WHERE message_id = ?${stampCo ? " AND company_id = ?" : ""} LIMIT 1`,
       )
-      .bind(payload.messageId)
+      .bind(payload.messageId, ...(stampCo ? [companyId] : []))
       .first<{ id: string; thread_id?: string }>();
     if (dup?.id) {
       if (payload.attachments && payload.attachments.length > 0) {
@@ -324,20 +333,16 @@ export async function ingestInboundEmail(
   }
 
   // Thread resolution: follow In-Reply-To / References back to an existing
-  // message's thread. Otherwise start a new thread.
-  let threadId = "";
+  // message's thread IN THIS COMPANY (a forged header must not reach the other
+  // company's thread). Our own sends learn their Message-ID from Resend after
+  // the fact, so on a miss fill those in once and look again.
   const refs = [payload.inReplyTo, ...toArray(payload.references)].filter(
     Boolean,
   ) as string[];
-  if (refs.length) {
-    const placeholders = refs.map(() => "?").join(", ");
-    const ref = await db
-      .prepare(
-        `SELECT thread_id FROM email_messages WHERE message_id IN (${placeholders}) LIMIT 1`,
-      )
-      .bind(...refs)
-      .first<{ thread_id?: string }>();
-    if (ref?.thread_id) threadId = ref.thread_id;
+  const co = stampCo ? companyId : null;
+  let threadId = (await threadForReferences(db, refs, co)) ?? "";
+  if (!threadId && refs.length && env && (await backfillOutboundMessageIds(db, env, co, 10)) > 0) {
+    threadId = (await threadForReferences(db, refs, co)) ?? "";
   }
 
   if (!threadId) {
@@ -480,6 +485,7 @@ type MessageRow = {
   sent_by_user_id: number | null;
   sent_by_name: string | null;
   created_at: string | null;
+  outbox_status?: string | null;
 };
 
 function parseJsonArray(s: string | null): string[] {
@@ -511,6 +517,7 @@ function rowToMessage(r: MessageRow) {
     sentByUserId: r.sent_by_user_id ?? undefined,
     sentByName: r.sent_by_name ?? undefined,
     createdAt: r.created_at ?? "",
+    deliveryStatus: deliveryStatus(r.outbox_status),
   };
 }
 
@@ -970,7 +977,9 @@ app.get("/threads/:id", async (c) => {
   }
 
   const msgs = await c.env.DB.prepare(
-    `SELECT * FROM email_messages WHERE thread_id = ? ORDER BY created_at ASC`,
+    `SELECT m.*, o.status AS outbox_status FROM email_messages m
+       LEFT JOIN email_outbox o ON o.id = m.outbox_id
+      WHERE m.thread_id = ? ORDER BY m.created_at ASC`,
   )
     .bind(id)
     .all<MessageRow>();
@@ -1826,13 +1835,8 @@ function escapeHtml(s: string): string {
 // POST /api/mail-center/threads/:id/reply — send an outbound reply via Houzs
 // sendEmail (Resend), then record it. The From identity (domain/company) tracks
 // Branding inside deliverViaResend; the operator's chosen mailbox is honoured
-// only when it's in their scope.
-//
-// NOTE: sendEmail has no custom In-Reply-To / References header support, so this
-// reply is NOT RFC-threaded on the recipient's side for v1 — local threading is
-// still correct. Attachments ARE now forwarded to Resend on the immediate send
-// (contentBase64 -> base64 content); they are not persisted to the outbox row,
-// so a drained retry would send body-only.
+// only when it's in their scope. The reply carries In-Reply-To / References
+// built from the thread's Message-IDs, so the customer's client threads it.
 app.post("/threads/:id/reply", async (c) => {
   const id = c.req.param("id");
   const scope = await getMailScope(c);
@@ -1948,6 +1952,7 @@ app.post("/threads/:id/reply", async (c) => {
   const subject = /^re:/i.test(baseSubject) ? baseSubject : `Re: ${baseSubject}`;
 
   const htmlBody = html || `<p>${escapeHtml(text).replace(/\n/g, "<br/>")}</p>`;
+  const headers = threadingHeaders(await threadMessageIds(c.env.DB, id));
 
   // Send via Houzs sendEmail. purpose:"generic" (caller opted in). The From is
   // the operator's chosen mailbox (owner ask: replies come FROM the mailbox, not
@@ -1967,12 +1972,15 @@ app.post("/threads/:id/reply", async (c) => {
     from: fromAddress || undefined,
     replyTo: fromAddress || undefined,
     companyCode: companyCodeForRecipient([fromAddress]),
+    headers,
     attachments: attachments.map((a) => ({
       filename: a.filename,
       content: a.contentBase64.replace(/^data:[^;]+;base64,/, ""),
     })),
   });
-  if (result.status !== "sent") {
+  // A failed send the outbox will retry is recorded as queued: answering 502
+  // would make the operator send it again on top of the retry.
+  if (result.status !== "sent" && !result.retrying) {
     return c.json(
       { error: result.reason || "failed to send reply" },
       result.status === "skipped" ? 400 : 502,
@@ -1984,40 +1992,24 @@ app.post("/threads/:id/reply", async (c) => {
 
   const now = new Date().toISOString();
   const snippet = (text || stripHtml(htmlBody)).slice(0, 240);
-  const messageId = crypto.randomUUID();
-  // Stamp the active company (the thread was verified in it above). Guarded —
-  // omitted when unresolved, so the column DEFAULT (HOUZS) applies.
-  const companyId = activeCompanyId(c);
-  const stampCo = companyId != null;
-  await c.env.DB.prepare(
-    `INSERT INTO email_messages
-       (id, thread_id, direction, from_address, from_name,
-        to_addresses, cc_addresses, subject, text_body, html_body, sent_at, received_at,
-        sent_by_user_id, sent_by_name, provider_message_id, created_at${stampCo ? ", company_id" : ""})
-     VALUES (?, ?, 'outbound', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${stampCo ? ", ?" : ""})`,
-  )
-    .bind(
-      messageId,
-      id,
-      fromAddress || null,
-      fromName || null,
-      /* The full lists, so the thread shows who actually received this and the
-         NEXT reply-all reads them back. Bcc is not stored: it was blind, and a
-         thread anyone on the mailbox can open is the wrong place to record it. */
-      JSON.stringify(toList),
-      JSON.stringify(ccList),
-      subject,
-      text || null,
-      htmlBody,
-      now,
-      now,
-      userId,
-      fromName || null,
-      result.providerId ?? null,
-      now,
-      ...(stampCo ? [companyId] : []),
-    )
-    .run();
+  // The active company (the thread was verified in it above); unresolved =
+  // the column DEFAULT (HOUZS).
+  const messageId = await recordOutboundMessage(c.env.DB, {
+    threadId: id,
+    fromAddress,
+    fromName,
+    to: toList,
+    cc: ccList,
+    subject,
+    text: text || null,
+    html: htmlBody,
+    userId,
+    providerId: result.providerId ?? null,
+    outboxId: result.outboxId ?? null,
+    inReplyTo: headers?.["In-Reply-To"] ?? null,
+    references: headers?.References ?? null,
+    companyId: activeCompanyId(c) ?? null,
+  });
 
   await c.env.DB.prepare(
     `UPDATE email_threads
@@ -2028,7 +2020,7 @@ app.post("/threads/:id/reply", async (c) => {
     .bind(now, snippet, id)
     .run();
 
-  return c.json({ ok: true, messageId });
+  return c.json({ ok: true, messageId, queued: result.status !== "sent" });
 });
 
 // POST /api/mail-center/compose — start a NEW outbound conversation. Sends via
@@ -2120,7 +2112,8 @@ app.post("/compose", async (c) => {
       content: a.contentBase64.replace(/^data:[^;]+;base64,/, ""),
     })),
   });
-  if (result.status !== "sent") {
+  // Queued for the outbox retry = recorded, not an error (see the reply route).
+  if (result.status !== "sent" && !result.retrying) {
     return c.json(
       { error: result.reason || "send failed" },
       result.status === "skipped" ? 400 : 502,
@@ -2133,7 +2126,6 @@ app.post("/compose", async (c) => {
   const now = new Date().toISOString();
   const snippet = text.slice(0, 200);
   const threadId = crypto.randomUUID();
-  const messageId = crypto.randomUUID();
   // Stamp the active company on the new thread + message. Guarded — omitted when
   // unresolved, so the column DEFAULT (HOUZS) applies.
   const companyId = activeCompanyId(c);
@@ -2158,39 +2150,24 @@ app.post("/compose", async (c) => {
     )
     .run();
 
-  await c.env.DB.prepare(
-    `INSERT INTO email_messages
-       (id, thread_id, direction, from_address, from_name,
-        to_addresses, cc_addresses, subject, text_body, html_body, sent_at,
-        sent_by_user_id, sent_by_name, provider_message_id, created_at${stampCo ? ", company_id" : ""})
-     VALUES (?, ?, 'outbound', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${stampCo ? ", ?" : ""})`,
-  )
-    .bind(
-      messageId,
-      threadId,
-      fromAddress,
-      fromName || null,
-      /* The FULL recipient lists, not just the first address. This row is what
-         the thread view renders and what a reply-all reads back — a message
-         stored as one recipient makes everyone else invisible in the history
-         and drops them from every later reply. Bcc is deliberately NOT stored:
-         it is blind, and a thread anyone on the mailbox can open is the wrong
-         place to record who was quietly copied. */
-      JSON.stringify(toList),
-      JSON.stringify(ccList),
-      subject,
-      text,
-      htmlBody,
-      now,
-      userId,
-      fromName || null,
-      result.providerId ?? null,
-      now,
-      ...(stampCo ? [companyId] : []),
-    )
-    .run();
+  const messageId = await recordOutboundMessage(c.env.DB, {
+    threadId,
+    fromAddress,
+    fromName,
+    to: toList,
+    cc: ccList,
+    subject,
+    text,
+    html: htmlBody,
+    userId,
+    providerId: result.providerId ?? null,
+    outboxId: result.outboxId ?? null,
+    inReplyTo: null,
+    references: null,
+    companyId: companyId ?? null,
+  });
 
-  return c.json({ ok: true, threadId, messageId }, 201);
+  return c.json({ ok: true, threadId, messageId, queued: result.status !== "sent" }, 201);
 });
 
 // PATCH /api/mail-center/threads/:id — mutate a thread: assign / resolve /

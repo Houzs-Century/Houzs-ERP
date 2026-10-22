@@ -693,3 +693,34 @@ describe("MobileMailCenter label filter", () => {
     expect((call![1] as Record<string, unknown>).color).toBe(LABEL_PALETTE[0].value);
   });
 });
+
+describe("MobileMailCenter queued send", () => {
+  beforeEach(() => {
+    queryData.clear();
+    authUser.current = { id: 7, email: "zoe@houzs.test" };
+    queryData.set("/api/mail-center/addresses", ALPHABETICAL_ADDRESSES);
+    const detail = threadDetail();
+    detail.messages.push({
+      ...detail.messages[0],
+      id: "m2",
+      direction: "outbound",
+      fromAddress: "sales@example.com",
+      fromName: "Zoe",
+      textBody: "Quote attached.",
+      deliveryStatus: "queued",
+    } as (typeof detail.messages)[number]);
+    queryData.set(THREAD_DETAIL_KEY, detail);
+    apiGet.mockReset();
+    apiGet.mockImplementation(async () => threadsPage());
+  });
+
+  afterEach(cleanup);
+
+  it("marks an outbound message the outbox is still retrying", async () => {
+    render(<MobileMailCenter />);
+    await flush();
+    fireEvent.click(screen.getByText("Quotation for 3 sofas"));
+    await flush();
+    expect(screen.getByText("Queued, retrying")).toBeTruthy();
+  });
+});
