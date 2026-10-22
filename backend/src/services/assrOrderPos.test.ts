@@ -190,10 +190,14 @@ describe('orderSupplierCode', () => {
     expect(seen).toContain('supplier_material_bindings.company_id=1');
   });
 
-  test('several suppliers and no main, no binding, or item not on the SO -> null', async () => {
+  test('SO line in the ERP but several suppliers and no main, or no binding -> null (blank)', async () => {
     expect(await orderSupplierCode(fakeSb(t), 'HC-SO-2', 'MAT-2', HOUZS)).toBeNull();
     expect(await orderSupplierCode(fakeSb(t), 'HC-SO-2', 'MAT-3', HOUZS)).toBeNull();
-    expect(await orderSupplierCode(fakeSb(t), 'HC-SO-2', 'MAT-9', HOUZS)).toBeNull();
-    expect(await orderSupplierCode(fakeSb(t), 'HC-SO-2', 'MAT-1', null)).toBeNull();
+  });
+
+  test('SO or SO line not in the ERP -> so-missing (the caller keeps the supplier)', async () => {
+    expect(await orderSupplierCode(fakeSb(t), 'HC-SO-2', 'MAT-9', HOUZS)).toBe('so-missing');
+    expect(await orderSupplierCode(fakeSb(t), 'SO-001911', 'MAT-1', HOUZS)).toBe('so-missing');
+    expect(await orderSupplierCode(fakeSb(t), 'HC-SO-2', 'MAT-1', null)).toBe('so-missing');
   });
 });
