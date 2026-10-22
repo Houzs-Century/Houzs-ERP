@@ -55,6 +55,13 @@ const who = vi.hoisted(() => ({ perms: new Set<string>(['scm.finance.accounting'
 vi.mock('../../auth/AuthContext', () => ({
   useAuth: () => ({ user: { id: 1, role_name: who.role, position_name: null, email: 'x@houzs.test' }, can: (p: string) => who.perms.has('*') || who.perms.has(p) }),
 }));
+/* The staff roster the SO list names salespeople from; s5 is on no roster. */
+const STAFF = vi.hoisted((): Record<string, string> => ({ s1: 'Alice', s2: 'Bob', s3: 'Chong', s4: 'Devi' }));
+vi.mock('../../hooks/useStaffLookup', () => ({
+  useStaffLookup: () => ({
+    nameOf: (_agent: string | null, id: string | null | undefined, fallback = '—') => (id && STAFF[id]) || fallback,
+  }),
+}));
 
 vi.mock('../../vendor/scm/lib/fair-options-queries', async (orig) => ({
   ...(await orig<typeof import('../../vendor/scm/lib/fair-options-queries')>()),
@@ -131,8 +138,17 @@ describe('FairPending', () => {
     for (const title of ['Pick one (1)', 'Waiting for the fair (1)', 'Marked No fair (1)']) {
       const group = screen.getByText(title).closest('section') as HTMLElement;
       expect(within(group).getAllByRole('columnheader').map((h) => h.textContent))
-        .toEqual(['SO No.', 'Ref No.', 'SO date', 'Venue', 'Brand', 'Amount', 'Fair', '']);
+        .toEqual(['SO No.', 'Ref No.', 'SO date', 'Salesperson', 'Venue', 'Brand', 'Amount', 'Fair', '']);
     }
+  });
+
+  it('every group shows who sold the order after its date, a dash when the roster has nobody', () => {
+    /* Owner 2026-10-22: 「这里也帮我显示sales person」. */
+    show();
+    const pick = screen.getByText('HC-SO-2609-064').closest('tr') as HTMLTableRowElement;
+    expect([...pick.cells].map((c) => c.textContent).slice(2, 5)).toEqual(['2026/09/13', 'Alice', 'MID VALLEY']);
+    const keyedBefore = screen.getByText('HC-SO-2609-009').closest('tr') as HTMLTableRowElement;
+    expect(keyedBefore.cells[3]!.textContent).toBe('—');
   });
 
   /* Owner 2026-10-21: 「做成好看的table 有线条的那种」, 「header 颜色…可以refer
@@ -285,6 +301,7 @@ describe('FairPending — linked orders to check (owner 2026-10-19)', () => {
     show();
     const group = screen.getByText('Waiting for Sales Attending (1)').closest('section') as HTMLElement;
     expect(group.textContent).toContain(NEEDS_ATTENDING.note);
+    expect((screen.getByText('HC-SO-2610-300').closest('tr') as HTMLTableRowElement).cells[3]!.textContent).toBe('Bob');
     expect(within(group).queryByRole('button')).toBeNull();
     expect(within(group).getByRole('link', { name: 'HC-SO-2610-300' }).getAttribute('href')).toBe('/scm/sales-orders/HC-SO-2610-300');
   });
@@ -315,6 +332,7 @@ describe('FairPending — put aside', () => {
     expect(screen.queryByText('HC-SO-2610-066')).toBeNull();
     fireEvent.click(toggle);
     const row = screen.getByText('HC-SO-2610-066').closest('tr') as HTMLTableRowElement;
+    expect(row.cells[3]!.textContent).toBe('Chong');
     expect(row.textContent).toContain('Chew · 2026/10/21');
     fireEvent.click(within(row).getByRole('button', { name: 'Bring back' }));
     expect(aside.mutate).toHaveBeenCalledWith({ docNo: 'HC-SO-2610-066', aside: false });
@@ -448,7 +466,7 @@ describe('FairPending — report says another fair (owner 2026-10-20)', () => {
     show();
     const group = screen.getByText('Report says another fair (2)').closest('section') as HTMLElement;
     const heads = within(group).getAllByRole('columnheader');
-    expect(heads.map((h) => h.textContent)).toEqual(['SO No.', 'Ref No.', 'SO date', 'Now under', 'Brand', 'Amount', 'Report says']);
+    expect(heads.map((h) => h.textContent)).toEqual(['SO No.', 'Ref No.', 'SO date', 'Salesperson', 'Now under', 'Brand', 'Amount', 'Report says']);
     /* The tick sits first in the SO No. cell, ahead of the number. */
     expect(heads[0]!.querySelector('input[type="checkbox"]')).toBeTruthy();
     const body = group.querySelector('tbody') as HTMLTableSectionElement;
@@ -457,10 +475,10 @@ describe('FairPending — report says another fair (owner 2026-10-20)', () => {
     const linked = body.rows[0]!;
     expect(linked.cells[0]!.querySelector('input[aria-label="Tick HC-SO-2610-167"]')).toBeTruthy();
     expect([...linked.cells].map((c) => c.textContent)).toEqual([
-      'HC-SO-2610-167', 'HC13316', '2026/10/12', '[AKEMI] MALL MGTIOI MALL PUTRAJAYA · 09/16 - 09/20', 'AKEMI', 'RM 3,388.00',
+      'HC-SO-2610-167', 'HC13316', '2026/10/12', 'Alice', '[AKEMI] MALL MGTIOI MALL PUTRAJAYA · 09/16 - 09/20', 'AKEMI', 'RM 3,388.00',
       '[AKEMI] HOMELOVEIOIGECC · 10/09 - 10/11 · reported 10/10',
     ]);
-    expect(body.rows[1]!.cells[3]!.textContent).toBe('Not linkedSUNWAY PYRAMID CONVENTION CENTRE');
+    expect(body.rows[1]!.cells[4]!.textContent).toBe('Not linkedSUNWAY PYRAMID CONVENTION CENTRE');
   });
 
   it('a server from before the two lines still names the fair on one line', () => {

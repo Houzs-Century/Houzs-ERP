@@ -67,6 +67,10 @@
  * order's date first, in one list that typing narrows. A slip saying PISA SPICE
  * ARENA could not otherwise reach the fair PMS calls SETIA SPICE CONVENTION
  * CENTRE. The order form keeps its four weeks at the order's place.
+ *
+ * SALESPERSON (owner 2026-10-22: 「这里也帮我显示sales person」). Every group
+ * shows who sold the order, after its date — the name the SO list shows, from
+ * the same roster (hooks/useStaffLookup), a dash when the order names nobody.
  */
 import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
@@ -74,6 +78,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { useAuth } from '../../auth/AuthContext';
 import { canCreateEvent } from '../../auth/salesAccess';
+import { useStaffLookup } from '../../hooks/useStaffLookup';
 import { customerRefOf } from '../../lib/customer-ref';
 import { cn } from '../../lib/utils';
 import { markWorkspaceOpenIntent } from '../../lib/workspaceTabs';
@@ -131,9 +136,9 @@ const TD_AMOUNT = cn(TD, 'whitespace-nowrap text-right tabular-nums');
 const NOTE = 'bg-surface-2 px-3 pb-2 pt-1.5 text-[12px] text-ink-muted';
 
 /* The same column widths in every group, so the tables line up: SO No. (with
-   the report group's tick), Ref No., SO date, Venue (Now under), Brand, Amount,
-   Fair, Link. */
-const COLUMNS: Array<number | string | undefined> = [172, 104, 100, '18%', 110, 124, undefined, 184];
+   the report group's tick), Ref No., SO date, Salesperson, Venue (Now under),
+   Brand, Amount, Fair, Link. */
+const COLUMNS: Array<number | string | undefined> = [172, 104, 100, 128, '18%', 110, 124, undefined, 184];
 const COLS = COLUMNS.length;
 
 function money(sen: number | null): string {
@@ -397,7 +402,7 @@ function Group({ title, hint, place = 'Venue', last, lead, actions, children }: 
       <p style={{ margin: '0 0 8px', opacity: 0.7, fontSize: 12 }}>{hint}</p>
       {actions}
       <div className={TABLE_BOX}>
-        <table style={{ width: '100%', minWidth: 1040, tableLayout: 'fixed', borderCollapse: 'collapse' }}>
+        <table style={{ width: '100%', minWidth: 1168, tableLayout: 'fixed', borderCollapse: 'collapse' }}>
           <colgroup>
             {COLUMNS.map((w, i) => <col key={i} style={w == null ? undefined : { width: w }} />)}
           </colgroup>
@@ -406,6 +411,7 @@ function Group({ title, hint, place = 'Venue', last, lead, actions, children }: 
               <th className={TH}>{lead ? <span className="inline-flex items-center gap-2">{lead}SO No.</span> : 'SO No.'}</th>
               <th className={TH}>Ref No.</th>
               <th className={TH}>SO date</th>
+              <th className={TH}>Salesperson</th>
               <th className={TH}>{place}</th>
               <th className={TH}>Brand</th>
               <th className={cn(TH, 'text-right')}>Amount</th>
@@ -436,13 +442,14 @@ function SoLink({ docNo }: { docNo: string }) {
   );
 }
 
-type OrderRow = Pick<FairPendingRow, 'doc_no' | 'so_date' | 'venue' | 'branding' | 'local_total_sen' | 'ref' | 'customer_so_no'>;
+type OrderRow = Pick<FairPendingRow, 'doc_no' | 'so_date' | 'venue' | 'branding' | 'local_total_sen' | 'ref' | 'customer_so_no' | 'salesperson_id'>;
 
 /** The cells every group shares: number (the report group's tick ahead of it),
- *  Ref No., date, venue, brand, amount. The report group puts where the order
- *  is now in the venue's place. */
+ *  Ref No., date, salesperson, venue, brand, amount. The report group puts
+ *  where the order is now in the venue's place. */
 function OrderCells({ row, lead, place }: { row: OrderRow; lead?: ReactNode; place?: ReactNode }) {
   const ref = customerRefOf(row);
+  const seller = useStaffLookup().nameOf(null, row.salesperson_id, '');
   return (
     <>
       <td className={TD_NOWRAP}>
@@ -450,6 +457,7 @@ function OrderCells({ row, lead, place }: { row: OrderRow; lead?: ReactNode; pla
       </td>
       <td className={TD_NOWRAP} style={mono}>{ref || <span style={soft}>—</span>}</td>
       <td className={TD_NOWRAP}>{fmtDateOrDash(row.so_date)}</td>
+      <td className={TD}>{seller || <span style={soft}>—</span>}</td>
       <td className={TD}>{place ?? (row.venue || <span style={soft}>(no place)</span>)}</td>
       <td className={TD}>{row.branding || <span style={soft}>no brand</span>}</td>
       <td className={TD_AMOUNT} style={mono}>{money(row.local_total_sen)}</td>
