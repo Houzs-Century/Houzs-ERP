@@ -290,6 +290,7 @@ export const createCreditNoteHandler = async (c: any): Promise<Response> => {
     reason: String(body.reason ?? '').trim() || null,
     notes: String(body.notes ?? '').trim() || null,
     lines: lines.map((l) => ({ description: l.description, code: l.code, amountSen: l.amountSen, projectId: l.projectId })),
+    knockOffApInvoiceIds: plan.filter((t) => t.kind === 'API').map((t) => t.id),
     createdBy: who(c),
   });
   if (!raised.ok) return c.json({ error: 'save_failed', reason: raised.reason }, 500);
@@ -358,10 +359,19 @@ export const updateCreditNoteHandler = async (c: any): Promise<Response> => {
     }
     const eventErr = await unknownEventRefusal(c, typed.map((l) => l.projectId));
     if (eventErr) return eventErr;
-    /* A supplier note against an AP invoice takes its events (acc/credit-notes.ts). */
-    const lines = note.kind === 'SCN' && note.ap_invoice_id
-      ? eventsFromApInvoice(typed, await apInvoiceEventLines(sb, co.companyId, String(note.ap_invoice_id)))
-      : typed;
+    /* A supplier note takes the events of the AP invoices it names or knocks
+       off (acc/credit-notes.ts) — the ticks in this body, else the ones it has. */
+    let sources: string[] = [];
+    if (note.kind === 'SCN') {
+      const ticked = plan ? plan.filter((t) => t.kind === 'API').map((t) => t.id) : null;
+      if (ticked) sources = ticked;
+      else {
+        const al = await noteAllocations(sb, co.companyId, note);
+        sources = al.ok ? al.allocations.filter((a) => a.kind === 'API').map((a) => a.docId) : [];
+      }
+      if (note.ap_invoice_id) sources.push(String(note.ap_invoice_id));
+    }
+    const lines = sources.length > 0 ? eventsFromApInvoice(typed, await apInvoiceEventLines(sb, co.companyId, sources)) : typed;
     const { error: delErr } = await sb.from('acc_credit_note_lines').delete().eq('company_id', co.companyId).eq('note_id', note.id);
     if (delErr) return c.json({ error: 'save_failed', reason: delErr.message }, 500);
     const { error: insErr } = await sb.from('acc_credit_note_lines').insert(lines.map((l, i) => ({
