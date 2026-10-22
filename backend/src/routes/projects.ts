@@ -1189,6 +1189,9 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
         ? (c.req.query("phase") as "setup" | "dismantle")
         : undefined,
     brand: c.req.query("brand"),
+    // Organizer multi-select (owner 2026-10-22). Single value or comma-separated
+    // list; listProjects binds each entry (p.organizer IN (...)), like brand.
+    organizer: c.req.query("organizer") || undefined,
     state: c.req.query("state") || undefined,
     event_type_id: eventTypeParam ? parseInt(eventTypeParam, 10) : undefined,
     section: c.req.query("section") || undefined,

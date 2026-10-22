@@ -579,6 +579,9 @@ function ProjectsListView() {
   const csvParam = (v: string) => v.split(",").map((s) => s.trim()).filter(Boolean);
   const taskPendingList = useMemo(() => csvParam(taskPending), [taskPending]);
   const status = params.get("status") || "";
+  // Organizer filter (owner 2026-10-22, "add on organizer") — comma-separated
+  // multi-select of organizer names, matched server-side against projects.organizer.
+  const organizer = params.get("organizer") || "";
   // Date-range filter (owner 2026-08-11) — replaces the year/month dropdowns.
   // from/to are ISO YYYY-MM-DD; the list scopes to events overlapping the window.
   const from = params.get("from") || "";
@@ -590,6 +593,7 @@ function ProjectsListView() {
   const yearList = useMemo(() => csvParam(year), [year]);
   const monthList = useMemo(() => csvParam(month), [month]);
   const statusList = useMemo(() => csvParam(status), [status]);
+  const organizerList = useMemo(() => csvParam(organizer), [organizer]);
   // Cohort "Setup"/"Dismantle" pick a date-derived event PHASE (not the stale
   // `stage` enum) — see the field/sales slim bar below + backend f.phase.
   const phase = params.get("phase") || "";
@@ -604,6 +608,7 @@ function ProjectsListView() {
   }
   const setSearch = (v: string) => patchParams({ search: v, page: "1" });
   const setBrand = (v: string) => patchParams({ brand: v, page: "1" });
+  const setOrganizer = (v: string) => patchParams({ organizer: v, page: "1" });
   const setYear = (v: string) => patchParams({ year: v, page: "1" });
   const setMonth = (v: string) => patchParams({ month: v, page: "1" });
   const setSection = (v: string) => patchParams({ section: v, page: "1" });
@@ -691,6 +696,7 @@ function ProjectsListView() {
           // brand / year / month / status / my_pending filters are hidden from
           // them, so force those undefined to keep their list unfiltered.
           brand: restrictedCohort ? undefined : brand || undefined,
+          organizer: restrictedCohort ? undefined : organizer || undefined,
           year: restrictedCohort ? undefined : year || undefined,
           month: restrictedCohort ? undefined : month || undefined,
           from: restrictedCohort ? undefined : from || undefined,
@@ -713,7 +719,7 @@ function ProjectsListView() {
         })}`,
         { signal },
       ),
-    [brand, year, month, from, to, section, taskPending, status, phase, restrictedCohort, sendAssignedToMe, excludeDoneParam, myPending, search, page, perPage, showArchived, sort?.key, sort?.dir],
+    [brand, organizer, year, month, from, to, section, taskPending, status, phase, restrictedCohort, sendAssignedToMe, excludeDoneParam, myPending, search, page, perPage, showArchived, sort?.key, sort?.dir],
     // Paginated + filter-switched list: keep the current rows on screen while
     // the next page/filter loads instead of flashing an empty table.
     { keepPreviousData: true }
@@ -752,6 +758,7 @@ function ProjectsListView() {
             // Mirror the on-screen filter set, incl. the cohort's slim bar
             // (stage + assigned_to_me), so the export matches what they see.
             brand: restrictedCohort ? undefined : brand || undefined,
+            organizer: restrictedCohort ? undefined : organizer || undefined,
             year: restrictedCohort ? undefined : year || undefined,
             month: restrictedCohort ? undefined : month || undefined,
             from: restrictedCohort ? undefined : from || undefined,
@@ -858,6 +865,11 @@ function ProjectsListView() {
   const summaryUnknown = !!summary.error || !summary.data;
 
   const brands = useQuery<{ data: string[] }>("/api/projects/brands", () => api.get("/api/projects/brands"));
+  // Organizer pool (picker-backed, same source as the New Project organizer
+  // picker + the Analytics filter) — drives the toolbar's Organizer dropdown.
+  const organizers = useQuery<{ data: { id: number; name: string }[] }>("/api/projects/organizers", () =>
+    api.get("/api/projects/organizers")
+  );
   const eventTypes = useQuery<{ data: EventType[] }>("/api/projects/event-types", () =>
     api.get("/api/projects/event-types")
   );
@@ -1343,6 +1355,26 @@ function ProjectsListView() {
             { name: null, options: (brands.data?.data ?? []).map((b) => ({ value: b, label: b })) },
           ]}
         />
+        {/* Organizer filter (owner 2026-10-22, "add on organizer"). Multi-select
+            like brand/status. Gated on seeOrg (canSeeSoloOrganizer: BD/Owner/
+            weisiang) because the dropdown enumerates organizer names, and a
+            solo roadshow's organizer (mall mgmt) is masked to "SOLO" everywhere
+            else for users without that permission — listing the raw names here
+            would leak them. Exhibition organizers aren't secret, but the pool
+            mixes both and can't tell them apart, so the whole control is gated. */}
+        {seeOrg && (
+          <MultiSelectFilter
+            placeholder="All organizers"
+            title="Filter by organizer"
+            summary={(n) => `${n} organizers`}
+            panelWidth="w-[240px]"
+            selected={organizerList}
+            onChange={(next) => setOrganizer(next.join(","))}
+            groups={[
+              { name: null, options: (organizers.data?.data ?? []).map((o) => ({ value: o.name, label: o.name })) },
+            ]}
+          />
+        )}
         <DateRangeFilter from={from} to={to} onChange={setDateRange} />
         <MultiSelectFilter
           placeholder="All statuses"
@@ -1360,7 +1392,7 @@ function ProjectsListView() {
             dropdown keeps its own in-panel "Clear (n)"; this resets them all
             together so the owner doesn't have to open each one. Shown only when
             at least one dropdown is active. Search + My-pending are left alone. */}
-        {(section || taskPending || brand || from || to || status) && (
+        {(section || taskPending || brand || organizer || from || to || status) && (
           <button
             type="button"
             onClick={() =>
@@ -1368,6 +1400,7 @@ function ProjectsListView() {
                 section: "",
                 task: "",
                 brand: "",
+                organizer: "",
                 year: "",
                 month: "",
                 from: "",
@@ -1569,10 +1602,10 @@ function ProjectsListView() {
             totalRecords: list.data?.total,
           }}
           resetFilters={{
-            active: !!(search || brand || year || month || section || taskPending || status),
+            active: !!(search || brand || organizer || year || month || section || taskPending || status),
             onReset: () => {
               const next = new URLSearchParams(params);
-              ["search", "brand", "year", "month", "section", "task", "status", "page"].forEach((k) =>
+              ["search", "brand", "organizer", "year", "month", "section", "task", "status", "page"].forEach((k) =>
                 next.delete(k)
               );
               setParams(next, { replace: true });
@@ -3514,6 +3547,9 @@ function ProjectDetailContent({
                   setTransitioning(true);
                   try {
                     await patch({ status: next });
+                    if (next === "confirmed" && !(p.contractor ?? "").trim()) {
+                      toast.warning("Confirmed, but no contractor is set, so it won't show on any contractor's calendar link.");
+                    }
                   } catch (e: any) {
                     toast.error(e?.message || "Failed to update status");
                   } finally {
@@ -4123,6 +4159,20 @@ function ProjectSpecStrip({
           </button>
         )}
       </header>
+      {/* The contractor share links list confirmed events by THIS field, and
+          Contractor sits behind Edit — so an event confirmed without one went
+          missing from the contractor's calendar with nothing on screen to say
+          so (2026-09-24: AKEMI FRAGRANCE @ Mid Valley). */}
+      {p.status === "confirmed" && !p.archived_at && !(p.contractor ?? "").trim() && (
+        <div className="mb-2 rounded-md border border-[#c2740f]/40 bg-[#f7e8d2] px-3 py-2 text-[12px] text-[#8a4e0e]">
+          No contractor set. This confirmed event will not appear on any contractor's calendar link.
+          {fullAccess && !editing && (
+            <button type="button" onClick={() => setEditing(true)} className="ml-1.5 font-semibold underline">
+              Set contractor
+            </button>
+          )}
+        </div>
+      )}
       <div
         className={cn(
           "grid grid-cols-1 divide-x divide-y divide-border-subtle border-y border-border-subtle md:grid-cols-2",
