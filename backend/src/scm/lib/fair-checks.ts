@@ -8,10 +8,9 @@
 //                           an older link the old cross-venue fallback made.
 //                           Re-link it to the fair at its venue, or leave it.
 //   等加人 NEEDS_ATTENDING  a SCANNED order whose scanner is not on its booth's
-//                           Sales Attending (or PIC). A draft cannot be confirmed
-//                           until PMS adds them (fair-binding.ts::
-//                           fairConfirmProblems); a confirmed order that moved to
-//                           another brand's booth is listed so PMS can add them.
+//                           Sales Attending (or PIC), listed so PMS can add them.
+//                           It no longer stops Confirm (owner 2026-10-22: 「…不能
+//                           开单的帮我remove 掉这个rule先。但扫描单还是能认」).
 //
 // The EVENING SALES REPORT (project chat) outranks the slip's place (owner
 // 2026-10-20, routes/lib/sales-report-evidence.ts):
@@ -61,7 +60,7 @@ export const FAIR_CHECKS_FROM = NO_VERDICT_LISTED_FROM;
 
 /** A CONFIRMED scan is checked for Sales Attending only from the day the scan
  *  rule went live (#4736); before it nobody had to be on the booth. A DRAFT is
- *  checked whatever its date — it cannot be confirmed without it. */
+ *  checked whatever its date. */
 export const SCAN_RULE_FROM = '2026-10-19';
 
 /** Reports are read from fairs that started a month before the first checked
@@ -235,7 +234,7 @@ export async function loadFairChecks(args: {
         if (standing.has(Number(o.project_id))) continue;
         rows.push({
           ...o, check: 'NEEDS_ATTENDING',
-          note: attendingNote(boothOf(o)!, names.get(scanner) ?? 'The person who scanned it', o.status === 'DRAFT'),
+          note: attendingNote(boothOf(o)!, names.get(scanner) ?? 'The person who scanned it'),
         });
       }
     }

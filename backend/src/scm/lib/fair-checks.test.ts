@@ -87,7 +87,7 @@ describe('等加人 — a scan whose scanner is not on the booth', () => {
     );
     expect(res.ok && res.rows).toEqual([expect.objectContaining({
       check: 'NEEDS_ATTENDING',
-      note: 'Jason is not on Sales Attending for AKEMI @ MID VALLEY (10/15 - 10/18). The draft cannot be confirmed until PMS adds them.',
+      note: 'Jason is not on Sales Attending for AKEMI @ MID VALLEY (10/15 - 10/18). PMS adds them in the project.',
     })]);
   });
 
@@ -99,7 +99,7 @@ describe('等加人 — a scan whose scanner is not on the booth', () => {
       fakeDb([[KEYER, []], [BY_IDS, BOOTHS], [USERS, [{ id: 92, name: 'Jason' }]]]),
     );
     expect(res.ok && res.rows.map((r) => [r.doc_no, r.note])).toEqual([
-      ['HC-SO-2610-003', 'Jason is not on Sales Attending for AKEMI @ MID VALLEY (10/15 - 10/18).'],
+      ['HC-SO-2610-003', 'Jason is not on Sales Attending for AKEMI @ MID VALLEY (10/15 - 10/18). PMS adds them in the project.'],
     ]);
   });
 
