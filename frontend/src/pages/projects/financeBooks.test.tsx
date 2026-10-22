@@ -132,4 +132,18 @@ describe("the quick Rental box", () => {
     render(<QuickRentalField projectId={7} financeLines={[line({ id: 3, amount: 7500 }), booksTransport]} onSaved={vi.fn()} toast={toast} />);
     expect((screen.getByRole("spinbutton") as HTMLInputElement).value).toBe("7500");
   });
+
+  it("books holding only money back: the typed rental stays, the credit comes off it — the P&L's figure (owner 2026-10-22)", () => {
+    /* #343: typed 45,900; HC-ODB-2609-004 billed the partner's half back. */
+    const back = line({
+      id: -1_000_000_002, category: "rental", amount: -22950, source: "books", doc_no: "HC-ODB-2609-004",
+      account_code: "900-R032", account_name: "RENTAL - EXHIBITION",
+    });
+    render(<QuickRentalField projectId={7} financeLines={[line({ id: 4, amount: 45900 }), back]} onSaved={vi.fn()} toast={toast} />);
+    expect((screen.getByRole("spinbutton") as HTMLInputElement).value).toBe("45900");
+    const taken = screen.getByTitle("Taken off — from the books: HC-ODB-2609-004");
+    expect(taken.textContent).toContain("22,950.00");
+    expect(taken.textContent).toContain("= 22,950.00");
+    expect(taken.textContent).not.toContain("-22,950.00");
+  });
 });

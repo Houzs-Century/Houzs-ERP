@@ -241,7 +241,9 @@ export function siLines(
    Three documents, one shape: the party's control on one side, the note's
    own lines on the other. Amounts arrive in MYR sen and already sum to the
    header total — the caller owns that. */
-export type NoteLine = { accountCode: string; amountSen: number; description: string | null };
+/** projectId: the event the line's money is for (owner 2026-10-22) — carried
+    onto the line's own leg, never the party's control leg, as a voucher's. */
+export type NoteLine = { accountCode: string; amountSen: number; description: string | null; projectId?: number | null };
 export type NoteParty = { code: string | null; name: string | null };
 
 /** Customer credit note posted: Dr each line's account (RETURN INWARDS by
@@ -253,6 +255,7 @@ export function creditNoteLines(roles: RoleCodes, note: { note_number: string },
       accountCode: l.accountCode, debitSen: l.amountSen, creditSen: 0,
       partyType: null, partyCode: null, partyName: null,
       notes: l.description ?? `Credit note ${note.note_number}`,
+      projectId: l.projectId ?? null,
     })),
     {
       accountCode: roles.AR, debitSen: 0, creditSen: totalSen,
@@ -276,6 +279,7 @@ export function debitNoteLines(roles: RoleCodes, note: { note_number: string }, 
       accountCode: l.accountCode, debitSen: 0, creditSen: l.amountSen,
       partyType: null, partyCode: null, partyName: null,
       notes: l.description ?? `Debit note ${note.note_number}`,
+      projectId: l.projectId ?? null,
     })),
   ];
 }
@@ -295,6 +299,7 @@ export function supplierCreditNoteLines(roles: RoleCodes, note: { note_number: s
       accountCode: l.accountCode, debitSen: 0, creditSen: l.amountSen,
       partyType: null, partyCode: null, partyName: null,
       notes: l.description ?? `Supplier credit note ${note.note_number}`,
+      projectId: l.projectId ?? null,
     })),
   ];
 }
