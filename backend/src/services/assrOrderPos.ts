@@ -116,14 +116,24 @@ export async function soItemSupplierCode(
   }
 }
 
-/** PO first, then the SO item's bound supplier. */
+/** PO first, then the SO item's bound supplier. "so-missing" when the case's
+    SO line is not in the ERP (old AutoCount-only orders, or the read failed):
+    the caller then keeps the case's current supplier (HC-0130, YH 21 Oct). */
 export async function orderSupplierCode(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   docNo: string | null,
   itemCode: string | null,
   companyId: number | null,
-): Promise<{ code: string; source: "po" | "so" } | null> {
+): Promise<{ code: string; source: "po" | "so" } | "so-missing" | null> {
+  if (!docNo || !itemCode || !Number.isInteger(companyId) || (companyId as number) <= 0) return "so-missing";
+  try {
+    const lines = await sb.from("mfg_sales_order_items").select("id")
+      .eq("company_id", companyId).eq("doc_no", docNo).eq("item_code", itemCode);
+    if (lines.error || (lines.data ?? []).length === 0) return "so-missing";
+  } catch {
+    return "so-missing";
+  }
   const po = await orderPoSupplierCode(sb, docNo, itemCode, companyId);
   if (po) return { code: po, source: "po" };
   const so = await soItemSupplierCode(sb, docNo, itemCode, companyId);

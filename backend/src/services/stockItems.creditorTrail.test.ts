@@ -6,7 +6,7 @@
 // never used, even when the stock_items cache has one.
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-const order = vi.hoisted(() => ({ result: null as { code: string; source: 'po' | 'so' } | null }));
+const order = vi.hoisted(() => ({ result: null as { code: string; source: 'po' | 'so' } | 'so-missing' | null }));
 vi.mock('../db/supabase', () => ({ isSupabaseConfigured: () => true, getSupabaseService: () => ({}) }));
 vi.mock('./assrOrderPos', () => ({ orderSupplierCode: async () => order.result }));
 vi.mock('./logger', () => ({ writeLog: async () => undefined }));
@@ -22,7 +22,8 @@ const ACTIVITY_COLS = new Set([
   'stage_elapsed_days', 'stage_target_days', 'source_channel', 'references_entry_id', 'is_correction',
 ]);
 
-function fakeEnv(inserted: Array<unknown[]>, sqls: string[]) {
+const BLANK = { creditor_code: null, creditor_source: null };
+function fakeEnv(inserted: Array<unknown[]>, sqls: string[], current: { creditor_code: string | null; creditor_source: string | null } = BLANK) {
   const DB = {
     prepare(sql: string) {
       sqls.push(sql);
@@ -30,7 +31,7 @@ function fakeEnv(inserted: Array<unknown[]>, sqls: string[]) {
       const stmt = {
         bind(...a: unknown[]) { args = a; return stmt; },
         async first() {
-          if (sql.includes('FROM assr_cases')) return { creditor_code: null, creditor_source: null, doc_no: 'HC-SO-1', company_id: 1 };
+          if (sql.includes('FROM assr_cases')) return { ...current, doc_no: 'HC-SO-1', company_id: 1 };
           if (sql.includes('FROM stock_items')) return { item_code: 'MAT-1', main_supplier: '400-D002' };
           return null;
         },
@@ -56,16 +57,33 @@ describe('resolveCreditorForCase', () => {
   test('writes a creditor_resolved row the real assr_activity table accepts', async () => {
     order.result = { code: '400-H003', source: 'so' };
     const inserted: Array<unknown[]> = [];
-    expect(await resolveCreditorForCase(fakeEnv(inserted, []), 5, 'MAT-1')).toBe('400-H003');
+    expect(await resolveCreditorForCase(fakeEnv(inserted, []), 5, 'MAT-1')).toEqual({ code: '400-H003', soMissing: false });
     expect(inserted).toEqual([[5, null, '400-H003', 'Auto-resolved from the SO supplier of item MAT-1']]);
   });
 
   test('no PO or SO supplier leaves it blank and never reads AutoCount', async () => {
     const inserted: Array<unknown[]> = [];
     const sqls: string[] = [];
-    expect(await resolveCreditorForCase(fakeEnv(inserted, sqls), 5, 'MAT-1')).toBeNull();
+    expect(await resolveCreditorForCase(fakeEnv(inserted, sqls), 5, 'MAT-1')).toEqual({ code: null, soMissing: false });
     expect(sqls.some((s) => s.includes('stock_items'))).toBe(false);
     expect(inserted).toEqual([]);
+  });
+
+  test('SO not in the ERP: Resolve now keeps the current supplier and source (YH, 21 Oct)', async () => {
+    order.result = 'so-missing';
+    const inserted: Array<unknown[]> = [];
+    const sqls: string[] = [];
+    const env = fakeEnv(inserted, sqls, { creditor_code: '400-D002', creditor_source: 'auto' });
+    expect(await resolveCreditorForCase(env, 5, 'MAT-1', { force: true })).toEqual({ code: '400-D002', soMissing: true });
+    expect(sqls.filter((s) => /UPDATE\s+assr_cases/.test(s))).toEqual([]);
+    expect(inserted).toEqual([]);
+  });
+
+  test('SO in the ERP with no PO and no SO supplier: an old supplier is cleared to blank', async () => {
+    const inserted: Array<unknown[]> = [];
+    const env = fakeEnv(inserted, [], { creditor_code: '400-D002', creditor_source: 'auto' });
+    expect(await resolveCreditorForCase(env, 5, 'MAT-1', { force: true })).toEqual({ code: null, soMissing: false });
+    expect(inserted).toEqual([[5, '400-D002', null, 'No PO or SO supplier found for item MAT-1']]);
   });
 });
 

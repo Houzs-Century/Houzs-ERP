@@ -60,6 +60,27 @@ describe('recordFairChange — one History row per move', () => {
     });
     expect(tables.mfg_so_audit_log).toEqual([]);
   });
+
+  it('a re-link to the same fair that moves the place still gets its row — the place only (owner 2026-10-22)', async () => {
+    /* HC-SO-2609-388: linked to the MLE fair, still saying AEON BUKIT MERTAJAM. */
+    const tables: Record<string, Array<Record<string, unknown>>> = {
+      mfg_sales_orders: [{ doc_no: 'HC-SO-2609-388', company_id: 1 }],
+      mfg_so_audit_log: [],
+    };
+    await recordFairChange({
+      sb: fakeSb(tables, {}) as unknown as SupabaseClient, db, companySql: ' AND p.company_id = 1', docNo: 'HC-SO-2609-388',
+      before: { projectId: 348, fairMatch: 'PICKED' }, after: { projectId: 348, fairMatch: 'PICKED' },
+      how: 'settle', actorId: 'staff-1', actorName: 'Chew',
+      also: [
+        { field: 'venue', from: 'AEON BUKIT MERTAJAM', to: 'PENANG WATERFRONT CONVENTION CENTRE' },
+        { field: 'fairDate', from: null, to: null },
+      ],
+    });
+    expect(tables.mfg_so_audit_log).toEqual([expect.objectContaining({
+      so_doc_no: 'HC-SO-2609-388', action: 'UPDATE_FAIR', source: 'settle',
+      field_changes: [{ field: 'venue', from: 'AEON BUKIT MERTAJAM', to: 'PENANG WATERFRONT CONVENTION CENTRE' }],
+    })]);
+  });
 });
 
 describe('canReassignFair — Finance or PMS (owner 2026-10-16: 「就开放 finance 和 pms 啊」)', () => {
