@@ -6,10 +6,13 @@
 // Two Hookka faults fixed on the way: the penalty deduction is printed, so
 // net reconciles on the paper; the rule text comes from the slip's own
 // figures, not a hard-coded "10-minute grace". A draft prints a diagonal
-// ESTIMATE so it can never pass for a final slip.
+// ESTIMATE so it can never pass for a final slip. Phase 5 prints the trip
+// month's commission (base x rate) and each trip allowance with its count,
+// the monthly allowances, and backpay as a deduction.
 // ----------------------------------------------------------------------------
 import { DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawInfoColumns, ensurePdfCjkFont, fmtDocDate, fmtRm, safeName, type PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { pcbHasFigure } from "../../vendor/shared/hr-pcb";
+import { tripMonthBounds } from "../../vendor/shared/hr-trip-pay";
 import type { Payslip } from "./hrApi";
 
 type JsPdf = import("jspdf").jsPDF;
@@ -64,7 +67,18 @@ export async function renderPayslipInto(doc: JsPdf, autoTable: AutoTable, s: Pay
   if (s.otWeekdayPaySen > 0) earnings.push([`Overtime, weekday: ${hrs(s.otWeekdayHours)}`, fmtRm(s.otWeekdayPaySen)]);
   if (s.otSundayPaySen > 0) earnings.push([`Overtime, Sunday: ${hrs(s.otSundayHours)}`, fmtRm(s.otSundayPaySen)]);
   if (s.otHolidayPaySen > 0) earnings.push([`Overtime, public holiday: ${hrs(s.otHolidayHours)}`, fmtRm(s.otHolidayPaySen)]);
-  if (s.allowancesSen > 0) earnings.push(["Allowance", fmtRm(s.allowancesSen)]);
+  const trip = s.detail.trip;
+  const pct = (bps: number) => `${(bps / 100).toFixed(2)}%`;
+  if (trip) {
+    for (const l of trip.commission.lines) earnings.push([`Commission: ${fmtRm(l.baseSen)} x ${pct(l.rateBps)}`, fmtRm(l.amountSen)]);
+    for (const l of trip.lines) earnings.push([`${l.label} x ${l.count}`, fmtRm(l.amountSen)]);
+  } else {
+    if (s.commissionSen > 0) earnings.push(["Commission", fmtRm(s.commissionSen)]);
+    if (s.tripAllowanceSen > 0) earnings.push(["Trip allowance", fmtRm(s.tripAllowanceSen)]);
+  }
+  const monthly = (s.detail.allowances ?? []).filter((a) => a.kind !== "BACKPAY");
+  if (monthly.length) for (const a of monthly) earnings.push([a.note ? `${a.label} (${a.note})` : a.label, fmtRm(a.amountSen)]);
+  else if (s.allowancesSen > 0) earnings.push(["Allowance", fmtRm(s.allowancesSen)]);
 
   const pcbFigure = pcbHasFigure(s.pcbStatus);
   const deductions: string[][] = [
@@ -74,8 +88,9 @@ export async function renderPayslipInto(doc: JsPdf, autoTable: AutoTable, s: Pay
     ["PCB (income tax)", s.pcbStatus === "DISABLED" ? "Not registered" : pcbFigure ? fmtRm(s.pcbSen) : "--"],
   ];
   if (s.advanceSen > 0) deductions.push([`Salary advance${s.detail.advanceDates.length ? ` (${s.detail.advanceDates.map(fmtDocDate).join(", ")})` : ""}`, fmtRm(s.advanceSen)]);
+  if (s.backpaySen > 0) deductions.push(["Backpay (company advance)", fmtRm(s.backpaySen)]);
   if (s.penaltySen > 0) deductions.push(["Penalty", fmtRm(s.penaltySen)]);
-  const totalDeductions = s.statutoryEmployeeSen + s.advanceSen + s.penaltySen;
+  const totalDeductions = s.statutoryEmployeeSen + s.advanceSen + s.backpaySen + s.penaltySen;
 
   const half = (pageW - margin * 2 - 6) / 2;
   const table = (startX: number, title: string, body: string[][], total: [string, string]) => {
@@ -116,6 +131,12 @@ export async function renderPayslipInto(doc: JsPdf, autoTable: AutoTable, s: Pay
   const notes: string[] = [];
   if (s.payMode === "MONTHLY") notes.push(`Day rate ${fmtRm(s.dayRateSen)} (salary / working days); hour rate ${fmtRm(s.hourRateSen)} (day rate / the working day including lunch).`);
   if (s.detail.absentDates.length) notes.push(`Absent: ${s.detail.absentDates.map(fmtDocDate).join(", ")}.`);
+  if (s.detail.paidLeaveDates?.length) notes.push(`Paid leave: ${s.detail.paidLeaveDates.map(fmtDocDate).join(", ")}.`);
+  if (trip) {
+    const { first, last } = tripMonthBounds(s.period);
+    const cut = trip.commission.cutBps > 0 ? ` Commission rate cut ${pct(trip.commission.cutBps)} for ${trip.commission.missedDays} day(s) with no punch and no leave.` : "";
+    notes.push(`Trip pay counts the jobs from ${fmtDocDate(first)} to ${fmtDocDate(last)}.${cut}`);
+  }
   if (s.detail.otDays.length) notes.push(`Overtime days: ${s.detail.otDays.map((d) => `${fmtDocDate(d.date)} ${d.hours} h${d.kind === "WEEKDAY" ? "" : d.kind === "SUNDAY" ? " (Sun)" : " (PH)"}`).join(", ")}.`);
   if (!pcbFigure && s.pcbStatus !== "DISABLED") notes.push(s.detail.pcbNote || "PCB not computed: net pay does not include any tax withholding.");
   if (notes.length) {

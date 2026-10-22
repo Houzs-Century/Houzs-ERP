@@ -983,6 +983,7 @@ export const hr_employees = pgTable("hr_employees", {
   tax_residency: text("tax_residency"),
   tax_category: text("tax_category"),
   tax_child_relief_sen: bigint("tax_child_relief_sen", { mode: "number" }),
+  trip_names: text("trip_names"),
   created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
   created_by: integer("created_by"),
   updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
@@ -1144,6 +1145,9 @@ export const hr_payslips = pgTable(
     ot_holiday_pay_sen: sen("ot_holiday_pay_sen"),
     ot_pay_sen: sen("ot_pay_sen"),
     allowances_sen: sen("allowances_sen"),
+    commission_sen: sen("commission_sen"),
+    trip_allowance_sen: sen("trip_allowance_sen"),
+    backpay_sen: sen("backpay_sen"),
     gross_sen: sen("gross_sen"),
     epf_employee_sen: sen("epf_employee_sen"),
     epf_employer_sen: sen("epf_employer_sen"),
@@ -1220,6 +1224,85 @@ export const hr_penalty_lines = pgTable("hr_penalty_lines", {
   payslip_id: bigint("payslip_id", { mode: "number" }),
   posted_at: timestamp("posted_at", { withTimezone: true, mode: "string" }),
 });
+
+// ── HR: trip pay, allowances, phase 5 (mig-pg 20261022T1500, HC-0125) ──
+export const hr_trip_rows = pgTable(
+  "hr_trip_rows",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    trip_month: text("trip_month").notNull(),
+    source: text("source").notNull(),
+    source_ref: text("source_ref"),
+    trip_date: date("trip_date", { mode: "string" }).notNull(),
+    doc_no: text("doc_no").notNull().default(""),
+    transfer_to: text("transfer_to").notNull().default(""),
+    ref_no: text("ref_no").notNull().default(""),
+    kind: text("kind").notNull(),
+    local_total_sen: bigint("local_total_sen", { mode: "number" }).notNull().default(0),
+    state: text("state").notNull().default(""),
+    lorry_plate: text("lorry_plate").notNull().default(""),
+    driver_1_name: text("driver_1_name").notNull().default(""),
+    driver_2_name: text("driver_2_name").notNull().default(""),
+    helper_1_name: text("helper_1_name").notNull().default(""),
+    helper_2_name: text("helper_2_name").notNull().default(""),
+    driver_1_employee_id: bigint("driver_1_employee_id", { mode: "number" }),
+    driver_2_employee_id: bigint("driver_2_employee_id", { mode: "number" }),
+    helper_1_employee_id: bigint("helper_1_employee_id", { mode: "number" }),
+    helper_2_employee_id: bigint("helper_2_employee_id", { mode: "number" }),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    created_by: integer("created_by"),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  },
+  (t) => [index("idx_hr_trip_rows_month").on(t.company_id, t.trip_month, t.trip_date)],
+);
+
+export const hr_trip_rate_versions = pgTable(
+  "hr_trip_rate_versions",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    effective_from: date("effective_from", { mode: "string" }).notNull(),
+    rates: jsonb("rates").notNull(),
+    note: text("note"),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    created_by: integer("created_by"),
+  },
+  (t) => [uniqueIndex("uq_hr_trip_rate_versions_date").on(t.company_id, t.effective_from)],
+);
+
+export const hr_trip_missed_days = pgTable(
+  "hr_trip_missed_days",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    employee_id: bigint("employee_id", { mode: "number" }).notNull(),
+    trip_month: text("trip_month").notNull(),
+    missed_days: integer("missed_days").notNull(),
+    note: text("note"),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    updated_by: integer("updated_by"),
+  },
+  (t) => [uniqueIndex("uq_hr_trip_missed_days").on(t.employee_id, t.trip_month)],
+);
+
+export const hr_allowances = pgTable(
+  "hr_allowances",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    company_id: bigint("company_id", { mode: "number" }).notNull(),
+    employee_id: bigint("employee_id", { mode: "number" }).notNull(),
+    kind: text("kind").notNull(),
+    amount_sen: bigint("amount_sen", { mode: "number" }).notNull(),
+    from_period: text("from_period").notNull(),
+    until_period: text("until_period"),
+    note: text("note"),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+    created_by: integer("created_by"),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
+  },
+  (t) => [index("idx_hr_allowances_employee").on(t.company_id, t.employee_id)],
+);
 
 // ── sales_entries (mig 041 / 051) ──────────────────────────
 export const sales_entries = pgTable("sales_entries", {

@@ -113,6 +113,9 @@ export function PayrollTab() {
       render: (s) => <span className="font-mono text-[11px]">{h2(s.otWeekdayHours)} / {h2(s.otSundayHours)} / {h2(s.otHolidayHours)}</span>,
     },
     { key: "ot", label: "OT Pay", align: "right", getValue: (s) => s.otPaySen, render: (s) => fmtSen(s.otPaySen) },
+    { key: "commission", label: "Commission", align: "right", getValue: (s) => s.commissionSen, render: (s) => (s.commissionSen ? fmtSen(s.commissionSen) : null) },
+    { key: "tripAllowance", label: "Trip Allowance", align: "right", getValue: (s) => s.tripAllowanceSen, render: (s) => (s.tripAllowanceSen ? fmtSen(s.tripAllowanceSen) : null) },
+    { key: "allowances", label: "Allowances", align: "right", getValue: (s) => s.allowancesSen, render: (s) => (s.allowancesSen ? fmtSen(s.allowancesSen) : null) },
     { key: "gross", label: "Gross", align: "right", getValue: (s) => s.grossSen, render: (s) => <span className="font-semibold">{fmtSen(s.grossSen)}</span>, total: (r) => fmtSen(r.reduce((a, s) => a + s.grossSen, 0)) },
     { key: "epf", label: "EPF EE", align: "right", getValue: (s) => s.epfEmployeeSen, render: (s) => fmtSen(s.epfEmployeeSen) },
     { key: "epfEr", label: "EPF ER", align: "right", defaultHidden: true, getValue: (s) => s.epfEmployerSen, render: (s) => fmtSen(s.epfEmployerSen) },
@@ -120,6 +123,7 @@ export function PayrollTab() {
     { key: "eis", label: "EIS", align: "right", getValue: (s) => s.eisEmployeeSen, render: (s) => fmtSen(s.eisEmployeeSen) },
     { key: "pcb", label: "PCB", align: "right", getValue: (s) => s.pcbSen, render: pcbCell },
     { key: "advance", label: "Advance", align: "right", getValue: (s) => s.advanceSen, render: (s) => (s.advanceSen ? `-${fmtSen(s.advanceSen)}` : null) },
+    { key: "backpay", label: "Backpay", align: "right", getValue: (s) => s.backpaySen, render: (s) => (s.backpaySen ? `-${fmtSen(s.backpaySen)}` : null) },
     { key: "penalty", label: "Penalty", align: "right", getValue: (s) => s.penaltySen, render: (s) => (s.penaltySen ? `-${fmtSen(s.penaltySen)}` : null) },
     {
       key: "net",
@@ -247,6 +251,11 @@ function SlipDrawer({ slip: s, projected, onClose }: { slip: Payslip; projected:
           {s.otWeekdayPaySen > 0 && line(`OT weekday ${h2(s.otWeekdayHours)} h`, fmtSen(s.otWeekdayPaySen))}
           {s.otSundayPaySen > 0 && line(`OT Sunday ${h2(s.otSundayHours)} h`, fmtSen(s.otSundayPaySen))}
           {s.otHolidayPaySen > 0 && line(`OT public holiday ${h2(s.otHolidayHours)} h`, fmtSen(s.otHolidayPaySen))}
+          {s.detail.trip?.commission.lines.map((l) => line(`Commission ${fmtSen(l.baseSen)} x ${(l.rateBps / 100).toFixed(2)}%`, fmtSen(l.amountSen)))}
+          {s.detail.trip?.lines.map((l) => line(`${l.label} x ${l.count}`, fmtSen(l.amountSen)))}
+          {(s.detail.allowances ?? []).filter((a) => a.kind !== "BACKPAY").map((a, i) => (
+            <div key={`al-${i}`}>{line(a.label, fmtSen(a.amountSen))}</div>
+          ))}
           {line("Gross", fmtSen(s.grossSen), "bold")}
         </section>
         <section>
@@ -256,6 +265,7 @@ function SlipDrawer({ slip: s, projected, onClose }: { slip: Payslip; projected:
           {line("EIS", fmtSen(s.eisEmployeeSen))}
           {line("PCB", s.pcbStatus === "DISABLED" ? "not registered" : pcbHasFigure(s.pcbStatus) ? fmtSen(s.pcbSen) : "not computed")}
           {s.advanceSen > 0 && line(`Advance (${s.detail.advanceDates.map(formatDate).join(", ")})`, fmtSen(s.advanceSen))}
+          {s.backpaySen > 0 && line("Backpay (company advance)", fmtSen(s.backpaySen))}
           {s.penaltySen > 0 && line("Penalty", fmtSen(s.penaltySen))}
           {line("Net pay", fmtSen(s.netSen), "bold")}
         </section>
@@ -263,6 +273,12 @@ function SlipDrawer({ slip: s, projected, onClose }: { slip: Payslip; projected:
           <div>Employer: EPF {fmtSen(s.epfEmployerSen)}, SOCSO {fmtSen(s.socsoEmployerSen)}, EIS {fmtSen(s.eisEmployerSen)}</div>
           <div>Day rate {fmtSen(s.dayRateSen)}, hour rate {fmtSen(s.hourRateSen)}</div>
           {s.detail.absentDates.length > 0 && <div>Absent: {s.detail.absentDates.map(formatDate).join(", ")}</div>}
+          {(s.detail.paidLeaveDates?.length ?? 0) > 0 && <div>Paid leave: {s.detail.paidLeaveDates?.map(formatDate).join(", ")}</div>}
+          {s.detail.trip && s.detail.trip.commission.cutBps > 0 && (
+            <div>
+              Commission rate cut {(s.detail.trip.commission.cutBps / 100).toFixed(2)}% for {s.detail.trip.commission.missedDays} missed day(s)
+            </div>
+          )}
           {s.detail.otDays.length > 0 && <div>OT: {s.detail.otDays.map((o) => `${formatDate(o.date)} ${o.hours}h${o.kind === "WEEKDAY" ? "" : o.kind === "SUNDAY" ? " Sun" : " PH"}`).join(", ")}</div>}
           {!pcbHasFigure(s.pcbStatus) && s.pcbStatus !== "DISABLED" && <div className="text-amber-800">{s.detail.pcbNote}</div>}
           <div>Paid by {s.paymentMethod === "CASH" ? "cash" : `${s.bankName ?? "bank"} ${s.bankAccount ?? ""}`}</div>

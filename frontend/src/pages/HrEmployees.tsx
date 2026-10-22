@@ -3,8 +3,9 @@
  * Rules), phase 2 the punch clock (Attendance, Punch Sites; the phone half is
  * mobile/MobilePunch.tsx), phase 3 the hours pay reads (Working Hours, Labor
  * Cost with the short-hour docks), phase 4 the pay (Payroll, Advances,
- * Penalty; the phone half is My pay in mobile/MobilePunch.tsx). The URL
- * carries the tab. */
+ * Penalty; the phone half is My pay in mobile/MobilePunch.tsx), phase 5 the
+ * driver commission and trip allowances (Trip Pay) and the monthly
+ * Allowances. The URL carries the tab. */
 import { useSearchParams } from "react-router-dom";
 import { PageHeader } from "../components/Layout";
 import { TabStrip, type TabOption } from "../components/TabStrip";
@@ -18,14 +19,18 @@ import { LaborCostTab } from "./hr/LaborCostTab";
 import { PayrollTab } from "./hr/PayrollTab";
 import { AdvancesTab } from "./hr/AdvancesTab";
 import { PenaltiesTab } from "./hr/PenaltiesTab";
+import { TripPayTab } from "./hr/TripPayTab";
+import { AllowancesTab } from "./hr/AllowancesTab";
 
-type Tab = "employees" | "attendance" | "hours" | "labor" | "payroll" | "advances" | "penalties" | "sites" | "holidays" | "pay-rules";
+type Tab = "employees" | "attendance" | "hours" | "labor" | "payroll" | "trip-pay" | "allowances" | "advances" | "penalties" | "sites" | "holidays" | "pay-rules";
 const TABS: TabOption<Tab>[] = [
   { value: "employees", label: "Employee Master" },
   { value: "attendance", label: "Attendance" },
   { value: "hours", label: "Working Hours" },
   { value: "labor", label: "Labor Cost" },
   { value: "payroll", label: "Payroll" },
+  { value: "trip-pay", label: "Trip Pay" },
+  { value: "allowances", label: "Allowances" },
   { value: "advances", label: "Advances" },
   { value: "penalties", label: "Penalty" },
   { value: "sites", label: "Punch Sites" },
@@ -54,6 +59,11 @@ const HEADER: Record<Tab, { title: string; description: string }> = {
     title: "Payroll",
     description: "The month's payslips from the logged hours and docks: absences, late and short hours, OT by day type, EPF / SOCSO / EIS / PCB, advances and penalties. Generate, approve (locks the month), mark paid.",
   },
+  "trip-pay": {
+    title: "Trip Pay",
+    description: "Driver commission and trip allowances for a trip month (23rd to 22nd): paste the Trip Report or read Delivery Planning, fix a job type or a name, and each person's pay lands on that month's payslip.",
+  },
+  allowances: { title: "Allowances", description: "Leadership, transport, overnight and KPI allowances for one month or every month, and Backpay (company advance), which is deducted." },
   advances: { title: "Advances", description: "Cash given ahead of payday, taken back in full from the payslip of the month it was given." },
   penalties: { title: "Penalty", description: "A penalty for an incident, approved by someone other than who raised it, then deducted in the payroll month it lands in." },
   sites: {
@@ -86,6 +96,8 @@ export function HrEmployees() {
       {active === "hours" && <WorkingHoursTab />}
       {active === "labor" && <LaborCostTab />}
       {active === "payroll" && <PayrollTab />}
+      {active === "trip-pay" && <TripPayTab />}
+      {active === "allowances" && <AllowancesTab />}
       {active === "advances" && <AdvancesTab />}
       {active === "penalties" && <PenaltiesTab />}
       {active === "sites" && <PunchSitesTab />}

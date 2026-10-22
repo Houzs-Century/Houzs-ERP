@@ -258,6 +258,10 @@ GET,/api/hr/advances,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAny
 POST,/api/hr/advances,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-payroll.ts
 DELETE,/api/hr/advances/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-payroll.ts
 PATCH,/api/hr/advances/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-payroll.ts
+GET,/api/hr/allowances,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,NO,DECLARED_GATE,backend/src/routes/hr-trip-pay.ts
+POST,/api/hr/allowances,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-trip-pay.ts
+DELETE,/api/hr/allowances/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-trip-pay.ts
+PATCH,/api/hr/allowances/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-trip-pay.ts
 GET,/api/hr/attendance,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,NO,DECLARED_GATE,backend/src/routes/hr-attendance.ts
 PUT,/api/hr/attendance,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-attendance.ts
 DELETE,/api/hr/attendance/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-attendance.ts
@@ -291,6 +295,16 @@ POST,/api/hr/penalties/:id/:action{submit|approve|reject|revoke},AUTHENTICATED_M
 GET,/api/hr/punch-sites,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,NO,DECLARED_GATE,backend/src/routes/hr-attendance.ts
 POST,/api/hr/punch-sites,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-attendance.ts
 PATCH,/api/hr/punch-sites/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-attendance.ts
+GET,/api/hr/trip-pay,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,NO,DECLARED_GATE,backend/src/routes/hr-trip-pay.ts
+POST,/api/hr/trip-pay/import,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-trip-pay.ts
+PUT,/api/hr/trip-pay/missed,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-trip-pay.ts
+POST,/api/hr/trip-pay/pull,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-trip-pay.ts
+POST,/api/hr/trip-pay/rows,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-trip-pay.ts
+DELETE,/api/hr/trip-pay/rows/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-trip-pay.ts
+PATCH,/api/hr/trip-pay/rows/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-trip-pay.ts
+GET,/api/hr/trip-rates,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,NO,DECLARED_GATE,backend/src/routes/hr-trip-pay.ts
+POST,/api/hr/trip-rates,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-trip-pay.ts
+DELETE,/api/hr/trip-rates/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-trip-pay.ts
 GET,/api/hr/working-hours,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,NO,DECLARED_GATE,backend/src/routes/hr-labor.ts
 POST,/api/hr/working-hours,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-labor.ts
 DELETE,/api/hr/working-hours/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-labor.ts

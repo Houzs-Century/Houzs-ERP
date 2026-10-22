@@ -27,7 +27,8 @@ import { todayMyt } from "../scm/lib/my-time";
 import { hasPermission } from "../services/permissions";
 import { audit } from "../services/audit";
 import { computePeriod, lockedPeriods, payslipRow, periodBounds } from "./lib/hr-payroll-store";
-import { penaltyPeriod } from "./lib/hr-payslip";
+import { penaltyPeriod, type AllowanceLine } from "./lib/hr-payslip";
+import type { TripCommission, TripPayLine } from "../scm/shared/hr-trip-pay";
 
 type Ctx = Context<{ Bindings: Env }>;
 type Db = ReturnType<typeof getDb>;
@@ -75,6 +76,9 @@ export function slipOut(r: SlipRow) {
     otHolidayPaySen: Number(r.ot_holiday_pay_sen),
     otPaySen: Number(r.ot_pay_sen),
     allowancesSen: Number(r.allowances_sen),
+    commissionSen: Number(r.commission_sen),
+    tripAllowanceSen: Number(r.trip_allowance_sen),
+    backpaySen: Number(r.backpay_sen),
     grossSen: Number(r.gross_sen),
     epfEmployeeSen: Number(r.epf_employee_sen),
     epfEmployerSen: Number(r.epf_employer_sen),
@@ -91,7 +95,15 @@ export function slipOut(r: SlipRow) {
     paymentMethod: r.payment_method,
     bankName: r.bank_name,
     bankAccount: r.bank_account,
-    detail: r.detail as { absentDates: string[]; otDays: { date: string; hours: number; kind: string }[]; advanceDates: string[]; pcbNote: string },
+    detail: r.detail as {
+      absentDates: string[];
+      paidLeaveDates?: string[];
+      otDays: { date: string; hours: number; kind: string }[];
+      advanceDates: string[];
+      pcbNote: string;
+      allowances?: AllowanceLine[];
+      trip?: { commission: TripCommission; lines: TripPayLine[] } | null;
+    },
     approvedAt: r.approved_at ?? null,
     paidAt: r.paid_at ?? null,
   };

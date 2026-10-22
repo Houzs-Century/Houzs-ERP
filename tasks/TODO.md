@@ -72,7 +72,15 @@ Phases, one PR each, `staging` first for Nico, then main:
 - Ask Nico: drivers on long runs are judged against the one company shift (08:00 to 18:00), so a late start or a late return reads as late / OT. Per-department shifts, or no auto dock for drivers? — 2026-10-22
 4. Payroll / payslips + Advances + Penalty + phone My pay: branch `feat/hc0125-phase4` on top of phase 3, mig `20261022T0900_hr_payroll`, not merged yet. Statutory kept as Hookka (flat EPF % on salary, flat SOCSO / EIS from Pay Rules; Samuel 2026-10-22) - NOT the KWSP / PERKESO wage tables; PCB = LHDN computerised method; penalty reference is free text; no allowance (Hookka's efficiency allowance is production) - 2026-10-22
 - Owner to decide before the first real payroll: statutory by KWSP / PERKESO wage tables instead of the flat Hookka rates? Who fills each employee's PCB tax profile? Proration on joining (Hookka counts days before joining as absent)? - 2026-10-22
-5. Driver / helper monthly commission from delivered DOs (`scm.delivery_order_crew` driver_1/2, helper_1/2 + POD `delivered_at`) into payroll — waiting on Nico for the rate rules — 2026-10-20
+5. Trip pay (driver commission + trip allowances) + monthly allowances into payroll: branch `feat/hc0125-phase5` on top of phase 4 (Samuel OK 2026-10-22). Rules from Nico's sheet "9. Houzs_Driver Comm + Worker Allowance_[23 Aug 2026- 22 Sep 2026]" and WhatsApp 2026-10-22:
+   - Trip month = 23rd of the previous month to the 22nd; paid on that month's payslip.
+   - Commission, driver only (driver 1 and driver 2 alike): % of the Local Total of every DO carried; 0.5% for a 2-person crew (1 driver + 1 helper), 0.4% for 3 (1 + 2 or 2 + 1). Cut for a working day with no clock-in / out AND no approved leave: 1st day 0.05%, 2nd 0.05%, 3rd 0.10%, read cumulatively (2 days 0.4% -> 0.3% matches the sheet); further days editable.
+   - Driver allowances, one per day per kind: fair FA RM100, Fair Night RM150 + RM50 weekend, Fair Noon RM120 + RM50, 2nd trip RM85 + RM50, 2 booths RM150, overnight RM50; outstation per area per day (Melaka / Seremban / Ipoh RM30, Johor / Penang RM80, Terengganu / Pahang RM120, Kelantan RM150; Singapore not separate, fair days count); service pickup / delivery / inspection RM15 per case; supplier RM15 per trip, RM30 full load; transfer RM15.
+   - Helpers: area transport allowance only, per day per area at the same four amounts.
+   - Source: Delivery Planning trips (`scm.trips` / `trip_stops` / `delivery_order_crew`, crew -> `drivers.user_id` / `helpers.user_id` -> `hr_employees.user_id`); until Nico runs planning (from about early Nov), the month's Trip Report tab pasted in. Every rate editable.
+   - Monthly lines per employee: leadership / transport / overnight / KPI (one month or every month), Backpay (Company Advance) = deduction. Approved leave marked on the Attendance day.
+   - Payslip: allowances_sen (today hard-coded 0) + commission line + backpay deduction; PDF and phone My pay show them.
+   - Check: September's Trip Report reproduces the sheet's per-person totals (Amir RM1,600.10 after Nico's JB fix 2026-10-22) — in progress 2026-10-22
 
 ## Purchase return, phase 2 — the receive-back leg (owner 2026-09-28)
 
