@@ -929,12 +929,12 @@ app.post("/:id/resolve-creditor", requirePermission("service_cases.manage"), asy
 
   try {
     const { resolveCreditorForCase } = await import("../services/stockItems");
-    const creditorCode = await resolveCreditorForCase(c.env, id, row.item_code, { force: true });
+    const { code: creditorCode, soMissing } = await resolveCreditorForCase(c.env, id, row.item_code, { force: true });
     return c.json({
       ok: true,
       item_code: row.item_code,
       creditor_code: creditorCode,
-      message: creditorCode
+      message: soMissing ? "SO not in the ERP; supplier kept" : creditorCode
         ? `Resolved ${row.item_code} → ${creditorCode}`
         : `${row.item_code} has no supplier on its PO or SO — pick one by hand`,
     });

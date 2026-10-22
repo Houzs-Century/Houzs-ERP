@@ -97,9 +97,11 @@ export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void 
             <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th>Ended</Th><Th>Rental</Th><Th>Sales Orders</Th><Th left>Problem</Th></tr></thead>
             <tbody>{rentalRows.map((r) => (
               <tr key={r.id} className="cursor-pointer hover:bg-surface-2/50" onClick={() => onOpen(r.id)}>
-                {eventCell(r)}<Td>{r.endDate}</Td><Td className={r.rental > 0 ? "" : "font-semibold text-err"}>{r.rental > 0 ? money(r.rental) : "missing"}</Td>
+                {/* A rental below zero shows its figure, never "missing" (owner
+                    2026-10-22: 下面写missing，但是上面是有amount的). */}
+                {eventCell(r)}<Td>{r.endDate}</Td><Td className={r.rental > 0 ? "" : "font-semibold text-err"}>{r.rental !== 0 && Number.isFinite(r.rental) ? money(r.rental) : "missing"}</Td>
                 <Td className={r.soSen > 0 ? "" : "font-semibold text-err"}>{sen(r.soSen)}</Td>
-                <Td left className="text-err">{!(r.rental > 0) ? "No rental keyed" : "Rental keyed, no sales"}</Td>
+                <Td left className="text-err">{r.rental < 0 ? "Rental below zero" : !(r.rental > 0) ? "No rental keyed" : "Rental keyed, no sales"}</Td>
               </tr>
             ))}
               {rentalRows.length === 0 && <tr><Td left className="text-ink-muted">Every finished event has its rental and sales.</Td></tr>}

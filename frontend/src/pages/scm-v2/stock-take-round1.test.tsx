@@ -136,7 +136,7 @@ describe('Stock Take detail — round 1', () => {
     await waitFor(() => expect(screen.queryByText(/Added, not saved yet/)).toBeNull());
   });
 
-  test('every added line has a delete button: an unsaved one goes at once, a saved one on Save Counts', async () => {
+  test('a delete button on each line: an unsaved add goes at once, a saved sheet or added line on Save Counts', async () => {
     addLine.mockClear(); delLine.mockClear();
     draw();
     fireEvent.change(screen.getByPlaceholderText('Type or pick a SKU code…'), { target: { value: 'PILLOW' } });
@@ -145,12 +145,19 @@ describe('Stock Take detail — round 1', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove added line PILLOW' }));
     expect(screen.queryByText(/Added, not saved yet/)).toBeNull();
 
-    expect(screen.queryByRole('button', { name: 'Delete line MATT-A' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete line MATT-A' }));
+    expect(screen.queryByLabelText('Counted qty for MATT-A')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(screen.getByLabelText('Counted qty for MATT-A')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete line MATT-A' }));
     fireEvent.click(screen.getByRole('button', { name: 'Delete line PILLOW' }));
+    expect(screen.getByText(/2 lines deleted on Save Counts/)).toBeTruthy();
     expect(screen.queryByText('Added')).toBeNull();
     expect(delLine).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: /Save Counts/ }));
     await waitFor(() => expect(delLine).toHaveBeenCalledWith({ id: 'st-1', lineId: 'l3' }));
+    expect(delLine).toHaveBeenCalledWith({ id: 'st-1', lineId: 'l1' });
     expect(addLine).not.toHaveBeenCalled();
   });
 

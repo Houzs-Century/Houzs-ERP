@@ -79,4 +79,15 @@ describe('purchase return found by its LINE link, not only the header grn_id', (
     const f = await flow(harness(t), '/document-flow/po/po-1');
     expect(hasEdge(f, 'grn:grn-2', 'pr:pr-1')).toBe(true);
   });
+
+  test('no-SO PO (orphan branch): PO-raised return hangs off both GRNs', async () => {
+    const t = family(null);
+    t.mfg_sales_orders = [];
+    t.mfg_sales_order_items = [];
+    t.purchase_order_items = t.purchase_order_items!.map((l) => ({ ...l, so_item_id: null }));
+    const f = await flow(harness(t), '/document-flow/po/po-1');
+    expect(f.nodes.map((n) => n.label)).toContain('HC-PRT-2610-001');
+    expect(hasEdge(f, 'grn:grn-1', 'pr:pr-1')).toBe(true);
+    expect(hasEdge(f, 'grn:grn-2', 'pr:pr-1')).toBe(true);
+  });
 });

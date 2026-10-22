@@ -25,8 +25,9 @@ export type CreditNote = {
   status: NoteStatus; je_no: string | null;
   created_at: string; created_by: string | null; posted_at: string | null; cancelled_at: string | null;
 };
-export type CreditNoteLine = { id: string; line_no: number; description: string | null; account_code: string; amount_sen: number };
-export type CreditNoteLineInput = { description?: string | null; accountCode?: string | null; amountSen: number };
+/** project_id / projectId: the event the line's money is for (owner 2026-10-22). */
+export type CreditNoteLine = { id: string; line_no: number; description: string | null; account_code: string; amount_sen: number; project_id?: number | null };
+export type CreditNoteLineInput = { description?: string | null; accountCode?: string | null; amountSen: number; projectId?: number | null };
 export type CreditNoteCreate = {
   kind: NoteKind; noteDate: string; reason?: string | null; sourceDocNo?: string | null; notes?: string | null;
   soDocNo?: string | null; salesInvoiceId?: string | null; partyName?: string | null; partyCode?: string | null;

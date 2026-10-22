@@ -2370,6 +2370,18 @@ function ProjectTeamSection({
   };
   const filteredAvailable = availableReps.filter((r) => matches(r.code, r.name));
   const filteredOthers = others.filter((s) => matches(s.name, s.email));
+  // Peter 2026-10-21: the picker was two separate A→Z blocks (reps, then the
+  // 2026-10-19 "not in Sales Team" staff), so the combined list RESTARTED the
+  // alphabet at the divider and read as un-sorted ("messy, not alphabet").
+  // Merge both into ONE continuous A→Z list, by the shown name; non-roster
+  // staff keep a small inline tag so "adding puts them in the team" stays clear.
+  type PickItem =
+    | { kind: "rep"; id: number; name: string; code: string | null; phone: string | null }
+    | { kind: "staff"; id: number; name: string; email: string };
+  const pickItems: PickItem[] = [
+    ...filteredAvailable.map((r): PickItem => ({ kind: "rep", id: r.id, name: r.name ?? "", code: r.code, phone: r.phone ?? null })),
+    ...filteredOthers.map((s): PickItem => ({ kind: "staff", id: s.user_id, name: s.name || s.email, email: s.email })),
+  ].sort((a, b) => a.name.localeCompare(b.name));
 
   function toggleSelected(id: number) {
     setSelected((prev) => {
@@ -2564,55 +2576,40 @@ function ProjectTeamSection({
                   className={SPEC_INPUT_CLASS}
                 />
                 <div className="mt-1 max-h-44 overflow-auto rounded-md border border-border">
-                  {filteredAvailable.length === 0 && filteredOthers.length === 0 ? (
+                  {pickItems.length === 0 ? (
                     <div className="px-2 py-2 text-[10.5px] text-ink-muted">
                       No matches.
                     </div>
                   ) : (
-                    filteredAvailable.map((r) => (
+                    pickItems.map((it) => (
                       <label
-                        key={r.id}
+                        key={it.kind === "rep" ? `rep-${it.id}` : `staff-${it.id}`}
                         className="flex cursor-pointer items-center gap-2 border-t border-border px-2 py-1.5 text-[11px] first:border-t-0 hover:bg-bg/60"
                       >
                         <input
                           type="checkbox"
-                          checked={selected.has(r.id)}
-                          onChange={() => toggleSelected(r.id)}
+                          checked={it.kind === "rep" ? selected.has(it.id) : selectedStaff.has(it.id)}
+                          onChange={() => (it.kind === "rep" ? toggleSelected(it.id) : toggleStaff(it.id))}
                         />
-                        <span className="font-mono text-[9px] text-ink-muted">
-                          {r.code}
-                        </span>
-                        <span className="truncate text-ink">{r.name}</span>
-                        {r.phone && (
+                        {it.kind === "rep" && (
+                          <span className="font-mono text-[9px] text-ink-muted">{it.code}</span>
+                        )}
+                        <span className="truncate text-ink">{it.name}</span>
+                        {it.kind === "rep" && it.phone && (
                           <span className="ml-auto shrink-0 font-mono text-[9.5px] text-ink-muted">
-                            {formatPhone(r.phone)}
+                            {formatPhone(it.phone)}
+                          </span>
+                        )}
+                        {it.kind === "staff" && (
+                          <span
+                            className="ml-auto shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-wider text-amber-700"
+                            title="Not in the Sales Team yet — adding puts them in it"
+                          >
+                            + team
                           </span>
                         )}
                       </label>
                     ))
-                  )}
-                  {filteredOthers.length > 0 && (
-                    <>
-                      <div className="border-t border-border bg-bg/60 px-2 py-1 text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
-                        Not in the Sales Team yet — adding puts them in it
-                      </div>
-                      {filteredOthers.map((s) => (
-                        <label
-                          key={`staff-${s.user_id}`}
-                          className="flex cursor-pointer items-center gap-2 border-t border-border px-2 py-1.5 text-[11px] hover:bg-bg/60"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={selectedStaff.has(s.user_id)}
-                            onChange={() => toggleStaff(s.user_id)}
-                          />
-                          <span className="truncate text-ink">{s.name || s.email}</span>
-                          {s.name && (
-                            <span className="ml-auto shrink-0 truncate font-mono text-[9.5px] text-ink-muted">{s.email}</span>
-                          )}
-                        </label>
-                      ))}
-                    </>
                   )}
                 </div>
                 <button

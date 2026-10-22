@@ -71,6 +71,38 @@ export function QuickRentalField({
     }
   };
 
+  /* Only money coming back in the books (a partner's share billed on an Other
+     Debtor bill, a credit note) does not replace the typed rental — it comes
+     off it, as the P&L takes it (owner 2026-10-22: 「改成跟 P&L 一样显示
+     22,950（手填 45,900 − 收回 22,950）」). The typed figure stays editable. */
+  const paidInBooks = fromBooks.some((l) => (l.amount || 0) > 0);
+  if (fromBooks.length > 0 && !paidInBooks) {
+    const back = fromBooks.reduce((s, l) => s + (l.amount || 0), 0);
+    const docs = [...new Set(fromBooks.map((l) => l.doc_no).filter(Boolean))].join(", ");
+    const fmt = (n: number) => n.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return (
+      <span className="flex items-center gap-1.5">
+        <input
+          className={SPEC_INPUT_CLASS}
+          type="number"
+          inputMode="decimal"
+          value={val}
+          placeholder="—"
+          disabled={saving}
+          aria-label="Rental typed"
+          onChange={(e) => setVal(e.target.value)}
+          onBlur={save}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+          }}
+        />
+        <span className="whitespace-nowrap text-[11.5px] text-ink-muted" title={`Taken off — from the books: ${docs}`}>
+          − {fmt(-back)} <span className="rounded bg-accent-soft px-1 py-px text-[10px] font-semibold text-accent">入账</span> = <span className="font-semibold text-ink">{fmt(current + back)}</span>
+        </span>
+      </span>
+    );
+  }
+
   if (fromBooks.length > 0) {
     const docs = [...new Set(fromBooks.map((l) => l.doc_no).filter(Boolean))].join(", ");
     return (
