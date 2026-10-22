@@ -59,6 +59,14 @@ Phase 1 shipped the two kinds (`CREDIT` / `REPAIR`), the mandatory reason code a
 - a list filter for **what is still at the supplier**, so nobody has to remember to chase it;
 - decide then whether to back-fill documents for the 18 hand-made stock transfers into KL SERVICE (2026-09-18 → 09-24). They are real stock in the right place with no paperwork; the owner deferred this until the leg exists.
 
+## Performance — whole Century, after HC-0002 (owner 2026-10-22)
+
+Measured on prod 2026-10-22, warm: Overview `procurement-overview` 5.5 s, Inventory `inventory/products` 5.4 s, Delivery Planning 4.6 s, PO / GRN / PI `list-mrp-enrichment` 2.1-2.3 s, `projects/overview` 1.5 s, `logistic-overview` 1.2 s, SO / DO list 1.3-1.6 s, SO `funnel-values` 1.2-1.5 s (138 KB), `customers` 126 KB on the SO / DO / SI lists. #4856 shipped the SO / DO detail warm-up, the shared live MRP run and parallel Service Case pages. Each batch is one PR, measured on prod after merge.
+
+- Batch A, no behaviour change (owner OK 2026-10-22): (1) persist the `*-paged` list keys in `lib/query-persist.ts` so a reopened list paints its last page; (2) PO / GRN / PI enrichment take `sharedLiveMrp` and stop reading the delivered ledger and PO header twice; (3) independent reads in `procurement-overview`, `logistic-overview`, `projects/overview` run together; (4) SO / DO list line-attach in waves, DO counts beside the page; (5) `inventory/products` filters finished SO demand in the database and runs its reads together; (6) Delivery Planning's serial PO-number loops go through `chunkIn` — dev
+- Batch B, payload, changes what a screen offers — waiting on owner: `customers` names only; `funnel-values` without the near-unique columns (phone, e-mail, address, doc no., money, note), which become typed filters; Inventory rows without the SO / PO drill arrays, fetched on expand — 2026-10-22
+- Batch C, needs a decision each — waiting on owner: Delivery Planning reads delivered SOs from the last 90 days only; list Stock columns from a 15-min MRP snapshot stored with undated lines; Overview procurement from a snapshot; Smart Placement for the Worker (browser served from NRT while the DB is in Singapore slowed every call 5-7x); `auth/me` on the signed-pass fast path; ETag / 304 on the app-wide polls; Server-Timing step timing — 2026-10-22
+
 ## Recurring
 - Monthly: read every `docs/modules/*.md` against the code it describes and correct what drifted; the guides are orientation, the code is the authority (last done 2026-09-16) — dev
 
