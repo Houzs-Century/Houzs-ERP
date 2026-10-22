@@ -51,7 +51,7 @@ afterEach(() => {
 });
 
 function chooseCsv() {
-  const input = screen.getByLabelText("选择角色权限文件");
+  const input = screen.getByLabelText("Choose role permissions file");
   fireEvent.change(input, { target: { files: [new File(["x"], "matrix.csv", { type: "text/csv" })] } });
 }
 
@@ -76,9 +76,9 @@ describe("RoleMatrixImportModal", () => {
 
     // Preview: one role changes, and its name is shown.
     await waitFor(() => expect(screen.getByText("Test Role")).toBeTruthy());
-    expect(screen.getByText("应用 1 个角色的改动")).toBeTruthy();
+    expect(screen.getByText("Apply changes to 1 role")).toBeTruthy();
 
-    fireEvent.click(screen.getByText("应用 1 个角色的改动"));
+    fireEvent.click(screen.getByText("Apply changes to 1 role"));
 
     await waitFor(() =>
       expect(apiPatch.mock.calls.find((c) => c[0] === "/api/roles/7/page-access")).toBeTruthy(),
@@ -96,14 +96,14 @@ describe("RoleMatrixImportModal", () => {
     expect(perms).toContain("scm.access"); // reconciled from the SCM page level
 
     expect(onApplied).toHaveBeenCalled();
-    await waitFor(() => expect(screen.getByText(/已导入/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/Imported/)).toBeTruthy());
   });
 
   it("rejects a file with no role columns or keys", async () => {
     nextSheets = [{ name: "junk", aoa: [["a", "b"], ["c", "d"]] }];
     render(<RoleMatrixImportModal open onClose={() => {}} snapshot={snap()} onApplied={() => {}} />);
     chooseCsv();
-    await waitFor(() => expect(screen.getByText(/没找到角色列或功能\/页面的 key/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/Couldn't find a role column/)).toBeTruthy());
     expect(apiPatch).not.toHaveBeenCalled();
   });
 
@@ -121,9 +121,9 @@ describe("RoleMatrixImportModal", () => {
     ];
     render(<RoleMatrixImportModal open onClose={() => {}} snapshot={snap()} onApplied={() => {}} />);
     chooseCsv();
-    await waitFor(() => expect(screen.getByText("应用 1 个角色的改动")).toBeTruthy());
-    fireEvent.click(screen.getByText("应用 1 个角色的改动"));
-    await waitFor(() => expect(screen.getByText(/没有保存成功/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Apply changes to 1 role")).toBeTruthy());
+    fireEvent.click(screen.getByText("Apply changes to 1 role"));
+    await waitFor(() => expect(screen.getByText(/didn't save/)).toBeTruthy());
     expect(screen.getByText(/role is locked by the server/)).toBeTruthy();
   });
 });

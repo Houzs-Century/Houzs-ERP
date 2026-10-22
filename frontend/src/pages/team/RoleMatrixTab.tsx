@@ -14,7 +14,6 @@ import type { Role, PermissionDef } from "../../types";
 import { isLockedRole } from "../../lib/rolesPermissionModel";
 import {
   MATRIX_LEVELS,
-  MATRIX_LEVEL_LABEL,
   MATRIX_LEVEL_LABEL_EN,
   buildMatrixModules,
   normalizeStoredLevel,
@@ -299,7 +298,7 @@ export function RoleMatrixTab() {
 
   // One template string drives the header and every row, so the column boundary
   // stays aligned as the width is dragged.
-  const gridTemplate = `${moduleCol}px minmax(140px, 1fr)`;
+  const gridTemplate = `${moduleCol}px minmax(210px, 1fr)`;
 
   return (
     <div className={cn("relative", dirtyIds.length > 0 && "pb-20")}>
@@ -338,7 +337,7 @@ export function RoleMatrixTab() {
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="搜索模块或页面…"
+              placeholder="Search modules or pages…"
               className="h-8 w-56 rounded-md border border-border bg-surface pl-7 pr-2 text-[12.5px] text-ink outline-none placeholder:text-ink-muted hover:border-accent/50 focus:border-primary focus:ring-2 focus:ring-primary/20"
             />
           </div>
@@ -346,7 +345,7 @@ export function RoleMatrixTab() {
 
         <div className="ml-auto flex items-center gap-2">
           <Button variant="ghost" icon={<FileDown size={14} />} onClick={onExport}>
-            导出 Excel
+            Export Excel
           </Button>
           {canManage && (
             <Button
@@ -354,9 +353,9 @@ export function RoleMatrixTab() {
               icon={<FileUp size={14} />}
               onClick={() => setImporting(true)}
               disabled={dirtyIds.length > 0}
-              title={dirtyIds.length > 0 ? "先保存或放弃当前改动，再导入" : undefined}
+              title={dirtyIds.length > 0 ? "Save or discard changes before importing" : undefined}
             >
-              导入 Excel
+              Import Excel
             </Button>
           )}
         </div>
@@ -402,19 +401,19 @@ export function RoleMatrixTab() {
                 <span
                   role="separator"
                   aria-orientation="vertical"
-                  title="拖动调整列宽"
+                  title="Drag to resize column"
                   onMouseDown={startResize}
                   className="absolute right-0 top-1/2 h-5 w-1.5 -translate-y-1/2 translate-x-1/2 cursor-col-resize rounded-full bg-border transition-colors hover:bg-primary"
                 />
               </div>
               <span className="justify-self-end font-mono text-[10px] uppercase tracking-wider text-ink-muted">
-                无 / 看 / 改 / 批
+                None / View / Edit / Full
               </span>
             </div>
 
             {visibleModules.length === 0 && (
               <div className="px-4 py-6 text-center text-[12.5px] text-ink-muted">
-                没有匹配「{query.trim()}」的模块或页面
+                No modules or pages match “{query.trim()}”
               </div>
             )}
 
@@ -454,10 +453,7 @@ export function RoleMatrixTab() {
                         <span className="w-[14px] flex-none" />
                       )}
                       <span className="min-w-0 truncate">
-                        <span className="text-[13px] font-semibold text-ink">{m.labelZh}</span>
-                        <span className="ml-2 font-mono text-[10px] uppercase tracking-wider text-ink-muted">
-                          {m.labelEn}
-                        </span>
+                        <span className="text-[13px] font-semibold text-ink">{m.labelEn}</span>
                       </span>
                     </button>
                     <div className="justify-self-end">
@@ -508,10 +504,10 @@ export function RoleMatrixTab() {
           <div className="mt-3 flex items-start gap-3 rounded-lg border border-border bg-surface p-3 shadow-stone">
             <Badge tone="accent">How it works</Badge>
             <p className="mb-0 text-[12px] leading-relaxed text-ink-secondary">
-              无 hides the page (nav + direct URL). 看 / 改 / 批 open it at that level. A module's level
-              also grants its ordinary function keys; cancellation, amendment-approval and money keys
-              stay on the Roles tab and are never changed here. Supply Chain areas control page
-              visibility and the Supply Chain access switch.
+              None hides the page (nav + direct URL). View / Edit / Full open it at that level. A
+              module's level also grants its ordinary function keys; cancellation, amendment-approval
+              and money keys stay on the Roles tab and are never changed here. Supply Chain areas
+              control page visibility and the Supply Chain access switch.
             </p>
           </div>
         </>
@@ -548,7 +544,7 @@ function LevelPicker({
   return (
     <div className="flex items-center gap-1">
       {value === "mixed" && (
-        <span className="mr-1 font-mono text-[10px] uppercase tracking-wider text-ink-muted">混</span>
+        <span className="mr-1 font-mono text-[10px] uppercase tracking-wider text-ink-muted">Mix</span>
       )}
       {MATRIX_LEVELS.map((lv) => {
         const active = value === lv;
@@ -560,14 +556,14 @@ function LevelPicker({
             onClick={() => onChange(lv)}
             title={MATRIX_LEVEL_LABEL_EN[lv]}
             className={cn(
-              "h-6 w-7 rounded text-[12.5px] transition-colors",
+              "h-6 w-12 rounded text-[11.5px] transition-colors",
               active
                 ? "bg-primary font-semibold text-white"
                 : "text-ink-muted hover:bg-surface-2",
               disabled && "cursor-default opacity-60 hover:bg-transparent",
             )}
           >
-            {MATRIX_LEVEL_LABEL[lv]}
+            {MATRIX_LEVEL_LABEL_EN[lv]}
           </button>
         );
       })}

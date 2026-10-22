@@ -1,4 +1,4 @@
-// RoleMatrixTab — the owner sets a module to 无/看/改/批 and saves. This drives
+// RoleMatrixTab — the owner sets a module to None/View/Edit/Full and saves. This drives
 // the REAL component (no prod: the page-access API is branch-only and the dev
 // build talks to prod, so an end-to-end save would write live RBAC) and asserts
 // the exact payloads: page access through PATCH /api/roles/:id/page-access, the
@@ -76,44 +76,44 @@ describe("RoleMatrixTab", () => {
   it("renders the owner's modules for the selected role", async () => {
     mockApi();
     render(<RoleMatrixTab />);
-    await waitFor(() => expect(screen.getByText("供应链·销售")).toBeTruthy());
-    expect(screen.getByText("供应链·仓库")).toBeTruthy();
-    expect(screen.getByText("项目")).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("SCM · Sales")).toBeTruthy());
+    expect(screen.getByText("SCM · Warehouse")).toBeTruthy();
+    expect(screen.getByText("Projects")).toBeTruthy();
   });
 
   it("search narrows the list to the matching module", async () => {
     mockApi();
     render(<RoleMatrixTab />);
-    await waitFor(() => expect(screen.getByText("供应链·仓库")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("SCM · Warehouse")).toBeTruthy());
 
-    fireEvent.change(screen.getByPlaceholderText("搜索模块或页面…"), { target: { value: "仓库" } });
+    fireEvent.change(screen.getByPlaceholderText("Search modules or pages…"), { target: { value: "Warehouse" } });
 
-    expect(screen.getByText("供应链·仓库")).toBeTruthy();
-    expect(screen.queryByText("供应链·销售")).toBeNull();
-    expect(screen.queryByText("项目")).toBeNull();
+    expect(screen.getByText("SCM · Warehouse")).toBeTruthy();
+    expect(screen.queryByText("SCM · Sales")).toBeNull();
+    expect(screen.queryByText("Projects")).toBeNull();
   });
 
   it("a sub-page match forces its module open and hides the rest", async () => {
     mockApi();
     render(<RoleMatrixTab />);
-    await waitFor(() => expect(screen.getByText("供应链·仓库")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("SCM · Warehouse")).toBeTruthy());
 
-    // "Inventory" is a sub-page of 供应链·仓库 only — the module shows (no manual
-    // expand) with just that row, and the other modules drop out.
-    fireEvent.change(screen.getByPlaceholderText("搜索模块或页面…"), { target: { value: "Inventory" } });
+    // "Inventory" is a sub-page of SCM · Warehouse only — the module shows (no
+    // manual expand) with just that row, and the other modules drop out.
+    fireEvent.change(screen.getByPlaceholderText("Search modules or pages…"), { target: { value: "Inventory" } });
 
-    expect(screen.getByText("供应链·仓库")).toBeTruthy();
+    expect(screen.getByText("SCM · Warehouse")).toBeTruthy();
     expect(screen.getByText("Inventory")).toBeTruthy();
-    expect(screen.queryByText("供应链·销售")).toBeNull();
+    expect(screen.queryByText("SCM · Sales")).toBeNull();
   });
 
-  it("set 供应链·销售=看 and 供应链·仓库=无, save → page-access + scm.access payloads", async () => {
+  it("set SCM · Sales=View and SCM · Warehouse=None, save → page-access + scm.access payloads", async () => {
     mockApi();
     render(<RoleMatrixTab />);
-    await waitFor(() => expect(screen.getByText("供应链·销售")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("SCM · Sales")).toBeTruthy());
 
-    fireEvent.click(within(rowFor("供应链·销售")).getByText("看"));
-    fireEvent.click(within(rowFor("供应链·仓库")).getByText("无"));
+    fireEvent.click(within(rowFor("SCM · Sales")).getByText("View"));
+    fireEvent.click(within(rowFor("SCM · Warehouse")).getByText("None"));
 
     const save = await screen.findByText("Save changes");
     fireEvent.click(save);
@@ -142,19 +142,19 @@ describe("RoleMatrixTab", () => {
   it("shows the Excel export/import toolbar and opens the import modal", async () => {
     mockApi();
     render(<RoleMatrixTab />);
-    await waitFor(() => expect(screen.getByText("供应链·销售")).toBeTruthy());
-    expect(screen.getByText("导出 Excel")).toBeTruthy();
-    fireEvent.click(screen.getByText("导入 Excel"));
+    await waitFor(() => expect(screen.getByText("SCM · Sales")).toBeTruthy());
+    expect(screen.getByText("Export Excel")).toBeTruthy();
+    fireEvent.click(screen.getByText("Import Excel"));
     // The modal's pick step appears (file chooser).
-    expect(await screen.findByText("选择文件")).toBeTruthy();
+    expect(await screen.findByText("Choose file")).toBeTruthy();
   });
 
-  it("set 项目=批 grants the Projects CRUD keys but never an approval key", async () => {
+  it("set Projects=Full grants the Projects CRUD keys but never an approval key", async () => {
     mockApi();
     render(<RoleMatrixTab />);
-    await waitFor(() => expect(screen.getByText("项目")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Projects")).toBeTruthy());
 
-    fireEvent.click(within(rowFor("项目")).getByText("批"));
+    fireEvent.click(within(rowFor("Projects")).getByText("Full"));
     fireEvent.click(await screen.findByText("Save changes"));
 
     await waitFor(() => expect(apiPatch.mock.calls.find((c) => c[0] === "/api/roles/7")).toBeTruthy());
