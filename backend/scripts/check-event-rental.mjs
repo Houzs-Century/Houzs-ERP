@@ -16,7 +16,7 @@ try {
   for (const ev of events) {
     console.log(`\n=== #${ev.id} ${ev.name} ${ev.s}..${ev.e} co${ev.company_id}`);
     const typed = await sql`
-      SELECT kind, category, amount::text AS amount, auto_source, note, created_at::date::text AS d
+      SELECT kind, category, amount::text AS amount, auto_source, coalesce(description, '') || ' ' || coalesce(notes, '') AS note, created_at::text AS d
         FROM project_finance_lines
        WHERE project_id = ${ev.id} AND archived_at IS NULL AND (category = 'rental' OR kind = 'cost')
        ORDER BY category, id`;
