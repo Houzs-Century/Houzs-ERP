@@ -26,11 +26,12 @@ async function migrationSql(suffix: string): Promise<string> {
 }
 
 const CO = 1;
+const SCHEMA = 'hr_mig_test';
 let sql: Sql;
 
 async function insertEmployee(empNo: string, extra: Record<string, unknown> = {}): Promise<number> {
   const row = { company_id: CO, emp_no: empNo, name: `Name ${empNo}`, ...extra };
-  const [r] = await sql<Array<{ id: number }>>`INSERT INTO public.hr_employees ${sql(row)} RETURNING id`;
+  const [r] = await sql<Array<{ id: number }>>`INSERT INTO hr_employees ${sql(row)} RETURNING id`;
   return Number(r!.id);
 }
 
@@ -41,23 +42,29 @@ describePg('hr_* tables (real postgres)', () => {
       throw new Error('PG integration tests refuse any non-local TEST_DATABASE_URL');
     }
     sql = postgres(url, { max: 1, onnotice: () => {} });
+    /* Its own schema: the pg suite shares one database, and another file
+       creates public.users with a uuid id, which the integer user_id FK
+       cannot reference. Production's users.id is serial (0000_baseline). */
     await sql.unsafe(`
-      DROP TABLE IF EXISTS public.hr_employee_salary_history, public.hr_employees, public.hr_public_holidays, public.hr_pay_rule_versions CASCADE;
-      CREATE TABLE IF NOT EXISTS public.users (id serial PRIMARY KEY);
-      CREATE TABLE IF NOT EXISTS public.departments (id serial PRIMARY KEY);
+      DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE;
+      CREATE SCHEMA ${SCHEMA};
+      CREATE TABLE ${SCHEMA}.users (id serial PRIMARY KEY);
+      CREATE TABLE ${SCHEMA}.departments (id serial PRIMARY KEY);
+      SET search_path TO ${SCHEMA};
     `);
-    const migration = await migrationSql('_hr_employees.sql');
+    const migration = (await migrationSql('_hr_employees.sql')).replaceAll('public.', `${SCHEMA}.`);
     await sql.unsafe(migration);
     await sql.unsafe(migration);
   });
 
   afterAll(async () => {
+    await sql?.unsafe(`DROP SCHEMA IF EXISTS ${SCHEMA} CASCADE`);
     await sql?.end();
   });
 
   test('a new employee gets the Hookka defaults', async () => {
     const id = await insertEmployee('EMP-001');
-    const [r] = await sql`SELECT status, pay_mode, basic_salary_sen, working_hours_per_day::text AS h, working_days_per_month, ot_multiplier::text AS ot, payment_method, epf_enabled FROM public.hr_employees WHERE id = ${id}`;
+    const [r] = await sql`SELECT status, pay_mode, basic_salary_sen, working_hours_per_day::text AS h, working_days_per_month, ot_multiplier::text AS ot, payment_method, epf_enabled FROM hr_employees WHERE id = ${id}`;
     expect(r).toEqual({ status: 'ACTIVE', pay_mode: 'MONTHLY', basic_salary_sen: '0', h: '9.0', working_days_per_month: 26, ot: '1.50', payment_method: 'TRANSFER', epf_enabled: false });
   });
 
@@ -81,20 +88,20 @@ describePg('hr_* tables (real postgres)', () => {
 
   test('one salary row per employee per date; removing the employee removes its history', async () => {
     const id = await insertEmployee('EMP-009');
-    await sql`INSERT INTO public.hr_employee_salary_history (company_id, employee_id, basic_salary_sen, effective_from) VALUES (${CO}, ${id}, 200000, '2026-01-01')`;
+    await sql`INSERT INTO hr_employee_salary_history (company_id, employee_id, basic_salary_sen, effective_from) VALUES (${CO}, ${id}, 200000, '2026-01-01')`;
     await expect(
-      sql`INSERT INTO public.hr_employee_salary_history (company_id, employee_id, basic_salary_sen, effective_from) VALUES (${CO}, ${id}, 210000, '2026-01-01')`,
+      sql`INSERT INTO hr_employee_salary_history (company_id, employee_id, basic_salary_sen, effective_from) VALUES (${CO}, ${id}, 210000, '2026-01-01')`,
     ).rejects.toThrow(/uq_hr_salary_history_date/);
-    await sql`DELETE FROM public.hr_employees WHERE id = ${id}`;
-    const [{ n }] = await sql<Array<{ n: number }>>`SELECT count(*)::int AS n FROM public.hr_employee_salary_history WHERE employee_id = ${id}`;
+    await sql`DELETE FROM hr_employees WHERE id = ${id}`;
+    const [{ n }] = await sql<Array<{ n: number }>>`SELECT count(*)::int AS n FROM hr_employee_salary_history WHERE employee_id = ${id}`;
     expect(n).toBe(0);
   });
 
   test('one public holiday per date, one pay-rule version per date, per company', async () => {
-    await sql`INSERT INTO public.hr_public_holidays (company_id, holiday_date, name) VALUES (${CO}, '2026-12-25', 'Christmas Day')`;
-    await expect(sql`INSERT INTO public.hr_public_holidays (company_id, holiday_date) VALUES (${CO}, '2026-12-25')`).rejects.toThrow();
-    await sql`INSERT INTO public.hr_pay_rule_versions (company_id, effective_from, rules) VALUES (${CO}, '2026-11-01', '{}'::jsonb)`;
-    await expect(sql`INSERT INTO public.hr_pay_rule_versions (company_id, effective_from, rules) VALUES (${CO}, '2026-11-01', '{}'::jsonb)`).rejects.toThrow(/uq_hr_pay_rule_versions_date/);
-    await expect(sql`INSERT INTO public.hr_pay_rule_versions (company_id, effective_from, rules) VALUES (2, '2026-11-01', '{}'::jsonb)`).resolves.toBeDefined();
+    await sql`INSERT INTO hr_public_holidays (company_id, holiday_date, name) VALUES (${CO}, '2026-12-25', 'Christmas Day')`;
+    await expect(sql`INSERT INTO hr_public_holidays (company_id, holiday_date) VALUES (${CO}, '2026-12-25')`).rejects.toThrow();
+    await sql`INSERT INTO hr_pay_rule_versions (company_id, effective_from, rules) VALUES (${CO}, '2026-11-01', '{}'::jsonb)`;
+    await expect(sql`INSERT INTO hr_pay_rule_versions (company_id, effective_from, rules) VALUES (${CO}, '2026-11-01', '{}'::jsonb)`).rejects.toThrow(/uq_hr_pay_rule_versions_date/);
+    await expect(sql`INSERT INTO hr_pay_rule_versions (company_id, effective_from, rules) VALUES (2, '2026-11-01', '{}'::jsonb)`).resolves.toBeDefined();
   });
 });

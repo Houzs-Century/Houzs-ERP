@@ -5,7 +5,8 @@ import { useState } from "react";
 import { api } from "../../api/client";
 import { useDialog } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
-import { formatDate } from "../../lib/utils";
+import { formatCurrency, formatDate } from "../../lib/utils";
+import { fmtSen } from "../../vendor/shared/format";
 import { DateField } from "../../vendor/scm/components/DateField";
 import { DEFAULT_PAY_RULES, hhmmToMin, minToHhmm, normalizePayRules, payRulesProblem, type PayRulesConfig } from "../../vendor/shared/hr-pay-rules";
 import { Empty, Field, Toggle, errText, ghostBtn, inputCls, primaryBtn } from "../pos-admin/posAdminUi";
@@ -63,7 +64,7 @@ const rulesOf = (d: Draft): PayRulesConfig =>
 const dayLabel = (r: PayRulesConfig) => (r.dayRateDivisorMode === "calendarDays" ? "calendar days (28 to 31)" : r.dayRateDivisorMode === "workingDays" ? "the month's working days" : "26 (Days / month)");
 const hourLabel = (r: PayRulesConfig) =>
   r.hourRateDivisorMode === "fixed" ? `${r.rateHoursPerDay} (fixed)` : r.hourRateDivisorMode === "hoursOnly" ? "the employee's hours" : `(hours + ${r.lunchMin / 60}h lunch)`;
-const rm = (v: number) => `RM${v.toFixed(2)}`;
+const rm = (v: number) => formatCurrency(v);
 
 /* Worked example, RM2,050 on a 9h day in the current month, recomputed from
  * the draft on every keystroke so the effect of a setting is seen before saving. */
@@ -138,8 +139,8 @@ function Summary({ r }: { r: PayRulesConfig }) {
       {box(
         "Statutory",
         <>
-          EPF {r.epfEmployeePct}% / {r.epfEmployerPct}%, SOCSO RM{(r.socsoEmployeeSen / 100).toFixed(2)} / {(r.socsoEmployerSen / 100).toFixed(2)}, EIS RM
-          {(r.eisEmployeeSen / 100).toFixed(2)} / {(r.eisEmployerSen / 100).toFixed(2)} (employee / employer), for employees with the toggle on.
+          EPF {r.epfEmployeePct}% / {r.epfEmployerPct}%, SOCSO {fmtSen(r.socsoEmployeeSen)} / {fmtSen(r.socsoEmployerSen)}, EIS 
+          {fmtSen(r.eisEmployeeSen)} / {fmtSen(r.eisEmployerSen)} (employee / employer), for employees with the toggle on.
         </>,
       )}
     </div>
