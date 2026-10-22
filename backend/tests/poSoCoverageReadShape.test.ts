@@ -40,9 +40,10 @@
  * test differs between the arms — on origin/main it fails with
  * `expected 21 to be less than 4`, which is the sequencing this change removed.
  */
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, it, expect } from 'vitest';
 import type { Context } from 'hono';
 import { resolvePoSoCoveragePerSkuForPos } from '../src/scm/routes/po-so-coverage';
+import { forgetLiveMrp } from '../src/scm/lib/live-mrp-memo';
 import { makeFakePostgrest, type FakeDb, type Relationship, type Row } from './fakePostgrest';
 
 /* The foreign keys PostgREST resolves the embeds through — MRP's demand read
@@ -189,6 +190,12 @@ function ctx(): Context<never> {
 }
 
 describe('resolvePoSoCoveragePerSkuForPos — the answer, the cost and the overlap', () => {
+  /* The MRP run is the isolate-wide shared one (lib/live-mrp-memo.ts, HC-0002).
+     Every test here uses company 1 within its 30 s window, so without this the
+     second test would read the first one's run and the counts below would lose
+     the engine's reads. Each test computes fresh, so the pins are unchanged. */
+  beforeEach(() => forgetLiveMrp());
+
   it('merges all three precedence layers, and the delivered lock wins', async () => {
     const db = makeFakePostgrest(fixture(), RELATIONSHIPS);
     const inst = instrument(db);

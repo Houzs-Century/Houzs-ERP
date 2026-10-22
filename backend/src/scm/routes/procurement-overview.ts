@@ -23,6 +23,7 @@ import { procurementCategory, promisedDate, PROCUREMENT_CATEGORIES, type Procure
 import { procurementPeriod, deadStock, turnoverAndSellers, STOCK_SCOPES, stockScopeKeeps, type PLine, type OpenDemand, type StockScope, type LocationKind } from '../lib/procurement-period';
 import { computeVariantKey, type VariantAttrs } from '../shared';
 import { attributeStockPos, type StockReceipt, type StockOut } from '../lib/stock-po-attribution';
+import { eager, mapBounded } from '../lib/concurrency';
 
 export const procurementOverview = new Hono<{ Bindings: Env; Variables: Variables }>();
 procurementOverview.use('*', supabaseAuth);
@@ -45,28 +46,62 @@ procurementOverview.get('/', async (c) => {
   const windowStart = new Date(Date.parse(`${to}T00:00:00Z`) - 365 * 86400000).toISOString().slice(0, 10);
   const fail = (what: string, e: { message: string }) => c.json({ error: 'load_failed', reason: `${what}: ${e.message}` }, 500);
 
-  /* ── PO headers and lines ─────────────────────────────────────────────── */
-  const pos = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('purchase_orders')
+  /* Every read below that takes no input from another goes out here, so their
+     round trips overlap instead of queueing (prod 5.5 s, ~70 in series). Each is
+     still awaited at its own site, so the first failure reported is the one the
+     serial order reported. The stock half's paged reads share a pool of 2, so
+     the request holds at most 8 connections: these six plus the pool, then the
+     pool plus one chunkIn wave (<= 6). Reads keyed on another read's rows stay
+     where they were. */
+  const posProm = eager(paginateAll<Row>((f, t) => scopeToCompany(sb.from('purchase_orders')
     .select('id, po_number, po_date, supplier_id, expected_at').gte('po_date', windowStart).lte('po_date', to)
-    .not('status', 'in', '("DRAFT","CANCELLED")'), c).order('id').range(f, t));
+    .not('status', 'in', '("DRAFT","CANCELLED")'), c).order('id').range(f, t)));
+  const itemsAllProm = eager(paginateAll<Row>((f, t) => scopeToCompany(sb.from('purchase_order_items')
+    .select('id, purchase_order_id, item_code, item_group, description, qty, received_qty, unit_price_sen, line_total_sen, delivery_date, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, so_item_id, po:purchase_orders!inner(po_date, status), si:mfg_sales_order_items(doc_no, so:mfg_sales_orders(customer_delivery_date, amended_delivery_date))')
+    .gte('po.po_date', windowStart).lte('po.po_date', to).not('po.status', 'in', '("DRAFT","CANCELLED")'), c).order('id').range(f, t)));
+  const grnAllProm = eager(paginateAll<Row>((f, t) => scopeToCompany(sb.from('grn_items')
+    .select('grn_id, purchase_order_item_id, qty_received, qty_rejected, grn:grns!inner(received_at, status)')
+    .not('purchase_order_item_id', 'is', null).gte('grn.received_at', windowStart), c).order('id').range(f, t)));
+  const settingsProm = eager(Promise.resolve(scopeToCompany(sb.from('mrp_category_lead_times').select('category, lead_days, warehouse_id'), c)));
+  const pisProm = eager(paginateAll<Row>((f, t) => scopeToCompany(sb.from('purchase_invoices')
+    .select('id, supplier_id, total_sen').gte('invoice_date', from).lte('invoice_date', to)
+    .not('status', 'in', '("DRAFT","CANCELLED")'), c).order('id').range(f, t)));
+  const whsProm = eager(Promise.resolve(scopeToCompany(sb.from('warehouses').select('id, code, type'), c)));
+  /* Longest first, so the pool's tail is short. eager per read: the pool never
+     rejects, each read's error waits for its own site. */
+  const stockReads = mapBounded([
+    () => paginateAll<Row>((f, t) => scopeToCompany(sb.from('inventory_movements')
+      .select('warehouse_id, item_code, variant_key, movement_type, movement_date, created_at, total_cost_sen, qty'), c).order('id').range(f, t)),
+    () => paginateAll<Row>((f, t) => scopeToCompany(sb
+      .from('mfg_sales_order_items').select('id, item_code, item_group, variants, qty, line_delivery_date, so:mfg_sales_orders!inner(status, customer_delivery_date)')
+      .eq('cancelled', false).not('so.status', 'in', SO_TERMINAL_STATES_PGREST), c).order('id').range(f, t)),
+    () => paginateAll<Row>((f, t) => scopeToCompany(sb
+      .from('delivery_order_items').select('so_item_id, qty, do:delivery_orders!inner(status)').not('so_item_id', 'is', null), c).order('id').range(f, t)),
+    () => paginateAll<Row>((f, t) => scopeToCompany(sb.from('v_inventory_value')
+      .select('warehouse_id, warehouse_code, item_code, variant_key, product_name, qty_on_hand, value_sen').gt('qty_on_hand', 0), c)
+      .order('warehouse_id').order('item_code').order('variant_key').range(f, t)),
+    () => paginateAll<Row>((f, t) => scopeToCompany(sb.from('inventory_lots')
+      .select('item_code, variant_key, received_at').gt('qty_remaining', 0), c).order('id').range(f, t)),
+    () => paginateAll<Row>((f, t) => scopeToCompany(sb.from('mfg_sales_orders')
+      .select('doc_no').gte('so_date', from).lte('so_date', to).not('status', 'in', '("DRAFT","CANCELLED")'), c).order('doc_no').range(f, t)),
+  ], 2, (run) => eager(run()));
+
+  /* ── PO headers and lines ─────────────────────────────────────────────── */
+  const pos = (await posProm)();
   if (pos.error) return fail('purchase orders', pos.error);
   const poById = new Map((pos.data ?? []).map((r) => [String(r.id), r]));
   /* Lines, their receipts and their sales order read with the rows they hang
      off (embedded), filtered in the database: batching a year of PO and line
      uuids into the filter cost ~100 serial round trips in production. */
   const one = (x: unknown) => (Array.isArray(x) ? x[0] : x) as Row | null | undefined;
-  const itemsAll = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('purchase_order_items')
-    .select('id, purchase_order_id, item_code, item_group, description, qty, received_qty, unit_price_sen, line_total_sen, delivery_date, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, so_item_id, po:purchase_orders!inner(po_date, status), si:mfg_sales_order_items(doc_no, so:mfg_sales_orders(customer_delivery_date, amended_delivery_date))')
-    .gte('po.po_date', windowStart).lte('po.po_date', to).not('po.status', 'in', '("DRAFT","CANCELLED")'), c).order('id').range(f, t));
+  const itemsAll = (await itemsAllProm)();
   if (itemsAll.error) return fail('PO lines', itemsAll.error);
   const items = { data: (itemsAll.data ?? []).filter((r) => poById.has(String(r.purchase_order_id))) };
   const itemIds = new Set(items.data.map((r) => String(r.id)));
 
   /* ── Receipts of those lines ──────────────────────────────────────────── */
   /* A receipt of a PO raised in the window comes in after that PO's date. */
-  const grnAll = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('grn_items')
-    .select('grn_id, purchase_order_item_id, qty_received, qty_rejected, grn:grns!inner(received_at, status)')
-    .not('purchase_order_item_id', 'is', null).gte('grn.received_at', windowStart), c).order('id').range(f, t));
+  const grnAll = (await grnAllProm)();
   if (grnAll.error) return fail('goods received lines', grnAll.error);
   const receiptsByLine = new Map<string, PLine['receipts']>();
   for (const g of grnAll.data ?? []) {
@@ -99,7 +134,7 @@ procurementOverview.get('/', async (c) => {
   const prodCat = new Map(prods.data.map((r) => [String(r.code), str(r.category)]));
   /* The company-wide MRP setting per category (warehouse overrides aside) —
      the value "Apply" on the page writes back. */
-  const settings = await scopeToCompany(sb.from('mrp_category_lead_times').select('category, lead_days, warehouse_id'), c);
+  const settings = (await settingsProm)();
   if (settings.error) return fail('lead time settings', settings.error);
   const currentLead: Record<string, number> = {};
   const leadOverrides: Record<string, Array<{ warehouseId: string; days: number }>> = {};
@@ -110,9 +145,7 @@ procurementOverview.get('/', async (c) => {
   }
 
   /* ── Supplier bills in the period ─────────────────────────────────────── */
-  const pis = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('purchase_invoices')
-    .select('id, supplier_id, total_sen').gte('invoice_date', from).lte('invoice_date', to)
-    .not('status', 'in', '("DRAFT","CANCELLED")'), c).order('id').range(f, t));
+  const pis = (await pisProm)();
   if (pis.error) return fail('supplier bills', pis.error);
   const piLines = await chunkIn<Row>((pis.data ?? []).map((r) => String(r.id)), (b, f, t) => scopeToCompany(sb.from('purchase_invoice_items')
     .select('purchase_invoice_id, item_code, item_group, line_total_sen').in('purchase_invoice_id', b), c).order('id').range(f, t));
@@ -186,12 +219,10 @@ procurementOverview.get('/', async (c) => {
   });
 
   /* ── Dead stock: on hand now, by how long since it last went out ──────── */
-  const stock = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('v_inventory_value')
-    .select('warehouse_id, warehouse_code, item_code, variant_key, product_name, qty_on_hand, value_sen').gt('qty_on_hand', 0), c)
-    .order('warehouse_id').order('item_code').order('variant_key').range(f, t));
+  const [movesRead, allDemandRead, allShippedRead, stockRead, lotsRead, periodSosRead] = await stockReads;
+  const stock = stockRead();
   if (stock.error) return fail('stock on hand', stock.error);
-  const moves = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('inventory_movements')
-    .select('warehouse_id, item_code, variant_key, movement_type, movement_date, created_at, total_cost_sen, qty'), c).order('id').range(f, t));
+  const moves = movesRead();
   if (moves.error) return fail('stock movements', moves.error);
   const keyOf = (r: Row) => `${String(r.warehouse_id)}|${String(r.item_code)}|${String(r.variant_key ?? '')}`;
   const lastOut = new Map<string, string>(); const firstMove = new Map<string, string>();
@@ -211,7 +242,7 @@ procurementOverview.get('/', async (c) => {
      by default, or leave out display (display + showroom) and service, or one
      kind alone. Kinds come from warehouses.type: warehouse, display (display
      and showroom), service, others. */
-  const whs = await scopeToCompany(sb.from('warehouses').select('id, code, type'), c);
+  const whs = (await whsProm)();
   if (whs.error) return fail('warehouses', whs.error);
   const whCode = new Map((whs.data as Row[]).map((w) => [String(w.id), String(w.code ?? '—')]));
   const kindOf = new Map<string, LocationKind>((whs.data as Row[]).map((w): [string, LocationKind] => {
@@ -230,9 +261,7 @@ procurementOverview.get('/', async (c) => {
   /* Every open order line at once, filtered in the database; batching by the
      stock's item codes (long names, few per URL) made ~200 round trips. */
   const heldCodes = new Set((stock.data ?? []).map((r) => String(r.item_code)));
-  const allDemand = await paginateAll<Row>((f, t) => scopeToCompany(sb
-    .from('mfg_sales_order_items').select('id, item_code, item_group, variants, qty, line_delivery_date, so:mfg_sales_orders!inner(status, customer_delivery_date)')
-    .eq('cancelled', false).not('so.status', 'in', SO_TERMINAL_STATES_PGREST), c).order('id').range(f, t));
+  const allDemand = allDemandRead();
   const demandLines = { error: allDemand.error, data: (allDemand.data ?? []).filter((r) => heldCodes.has(String(r.item_code))) };
   if (demandLines.error) return fail('open order lines', demandLines.error);
   const soOf = (r: Row) => (Array.isArray(r.so) ? r.so[0] : r.so) as Row | null;
@@ -240,8 +269,7 @@ procurementOverview.get('/', async (c) => {
   /* Every DO line tied to an order line, then kept for the open ones: a few
      pages, where batching 13,000 order-line uuids into the filter was ~180. */
   const openIds = new Set(openLines.map((r) => String(r.id)));
-  const allShipped = await paginateAll<Row>((f, t) => scopeToCompany(sb
-    .from('delivery_order_items').select('so_item_id, qty, do:delivery_orders!inner(status)').not('so_item_id', 'is', null), c).order('id').range(f, t));
+  const allShipped = allShippedRead();
   const shippedLines = { error: allShipped.error, data: (allShipped.data ?? []).filter((l) => openIds.has(String(l.so_item_id))) };
   if (shippedLines.error) return fail('shipped order lines', shippedLines.error);
   const shipped = new Map<string, number>();
@@ -265,8 +293,7 @@ procurementOverview.get('/', async (c) => {
      receipt (no lot) falls back to its IN movement. */
   const lastIn = new Map<string, string>();
   const keep = (k: string, d: string | null) => { if (d && (!lastIn.has(k) || d > (lastIn.get(k) as string))) lastIn.set(k, d); };
-  const lots = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('inventory_lots')
-    .select('item_code, variant_key, received_at').gt('qty_remaining', 0), c).order('id').range(f, t));
+  const lots = lotsRead();
   if (lots.error) return fail('stock lots', lots.error);
   for (const l of lots.data ?? []) keep(`${String(l.item_code)}|${String(l.variant_key ?? '')}`, day(l.received_at));
   for (const m of moves.data ?? []) {
@@ -303,8 +330,7 @@ procurementOverview.get('/', async (c) => {
     if (!d || d < turnFrom || d > today) return [];
     return [{ warehouse: whCode.get(String(m.warehouse_id)) ?? '—', category: catOf(m), costSen: num(m.total_cost_sen), zeroCost: !num(m.total_cost_sen) }];
   });
-  const periodSos = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('mfg_sales_orders')
-    .select('doc_no').gte('so_date', from).lte('so_date', to).not('status', 'in', '("DRAFT","CANCELLED")'), c).order('doc_no').range(f, t));
+  const periodSos = periodSosRead();
   if (periodSos.error) return fail('sales orders in the period', periodSos.error);
   const soLines = await chunkIn<Row>((periodSos.data ?? []).map((r) => String(r.doc_no)), (b, f, t) => scopeToCompany(sb.from('mfg_sales_order_items')
     .select('item_code, item_group, description, qty, total_sen, cancelled').in('doc_no', b), c).order('id').range(f, t));
