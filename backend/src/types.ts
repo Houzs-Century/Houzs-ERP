@@ -25,6 +25,8 @@ export type Env = {
   // (/api/assr-form-intake). GitHub secret, injected at deploy; the
   // endpoint 401s on every request while unset.
   FORM_INTAKE_KEY?: string;
+  /** Where the Houzs POS app is served; the pairing link points there. */
+  POS_APP_ORIGIN?: string;
   /** Shared secret for the sheet status-export pull (Nick 2026-07-14) —
    *  a separate key from FORM_INTAKE_KEY because the form-intake script
    *  lives in a different Google account than the HC Delivery sheet's. */

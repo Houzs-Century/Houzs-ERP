@@ -169,11 +169,14 @@ page, and the POS Admin menu. This guide carries only what is built.
   discount, net and stock left (`scm.inventory_balances` at the event's
   stock source, else the POS store, else the company total, flagged);
   Export Excel (the shared rows plus the stock column) / PDF.
-- Demo mode (`pos/src/demo.ts`, button on Device setup): the POS opens on a
-  sample catalog (8 items with barcodes) and 2 sample cashiers (PIN 1234),
-  no token, Test mode locked on, the sync engine, heartbeat and backup off.
-  Prepare device from the gear on the login screen replaces it with a real
-  terminal and turns Test mode off again.
+- Pairing (replaces the ERP sign-in on the device): POS Admin > Terminals >
+  Pair device (`POST /api/pos-admin/terminals/:id/pairing`, event must be
+  set and linked) issues a one-time 8-character code, stored as a hash with
+  a 15-minute expiry (`scm/shared/pos-pairing.ts`, vendored). The device
+  (first screen `pos/src/screens/Pair.tsx`, or the `?pair=` link) redeems
+  it at `POST /api/pos-device/pair` (pre-auth, no token yet): a fresh device
+  token is minted, the code is spent, the bundle comes back. Pair again from
+  Device setup (gear, supervisor PIN) moves a device; the old token dies.
 - Shared, vendored byte-identical to `frontend/src/vendor/shared/`:
   `scm/shared/pos-vocabulary.ts` (payment methods, receipt status word,
   `pos-backup-crypto.ts` (the backup file cipher and shape), `pos-report.ts`
