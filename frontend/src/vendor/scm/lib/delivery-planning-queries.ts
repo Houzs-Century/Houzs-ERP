@@ -17,6 +17,7 @@ import { authedFetch } from './authed-fetch';
 import { invalidateSoLists } from './sales-order-queries';
 import { serviceNotify } from './dialog-service';
 import { idempotentInit, newIdempotencyKey } from '../../../lib/idempotency';
+import { soExemptionExpiryOf } from '../../../lib/so-exemption-expiry';
 
 export const DELIVERY_STATES = [
   'PENDING_DELIVERY', 'PENDING_SCHEDULE', 'OVERDUE', 'DELIVERED',
@@ -30,12 +31,18 @@ export const DELIVERY_STATE_LABEL: Record<DeliveryState, string> = {
   DELIVERED: 'Delivered',
 };
 
-/* The value the board's "Sales Exemption Expiry Date" column shows: the AutoCount
-   book exemption date for most rows (BUG-51), but a service case (ASSR) has no
-   book, so it shows its own SERVICE date (customer_delivery_date) there instead,
-   and leaves "Delivery Date" blank for admin to propose (owner 2026-10-22). */
-export const sxeDateOf = (o: PlanningOrder): string | null =>
-  (o.row_type === 'assr' ? o.customer_delivery_date : o.ac_sales_exemption_expiry) ?? null;
+/* The value the board's "Sales Exemption Expiry Date" column shows. Owner
+   2026-10-22: it must hold the ORIGINAL delivery date, the SAME value the SO list
+   shows in its column of that name — so the two surfaces agree. An SO row therefore
+   uses soExemptionExpiryOf (frozen original -> AutoCount book -> current delivery
+   date), exactly the SO-list rule. A service case (ASSR) has no SO, so it shows its
+   own SERVICE date (customer_delivery_date) and leaves "Delivery Date" blank for
+   admin to propose. DP / project synthetic rows keep their book value (null). */
+export const sxeDateOf = (o: PlanningOrder): string | null => {
+  if (o.row_type === 'assr') return o.customer_delivery_date ?? null;
+  if (o.row_type === 'so') return soExemptionExpiryOf(o) ?? null;
+  return o.ac_sales_exemption_expiry ?? null;
+};
 
 /* The customer-message follow-up workflow statuses shown/edited in the "Delivery
    Status" column (owner 2026-09-22). The backend whitelists this exact set; the
@@ -135,6 +142,11 @@ export type PlanningOrder = {
      synthetic (ASSR/DP/project) rows. Drives the board's "Sales Exemption Expiry
      Date" column (owner 2026-10-15). */
   ac_sales_exemption_expiry?: string | null;
+  /* The FROZEN original delivery date (BUG-51). With ac_sales_exemption_expiry and
+     customer_delivery_date it feeds soExemptionExpiryOf — the SAME "Sales Exemption
+     Expiry Date" value the SO list shows (owner 2026-10-22). Null off-book / on
+     synthetic (ASSR / DP / project) rows. */
+  sales_exemption_expiry?: string | null;
   /* Amendment dates (migration 0199): the customer's requested NEW date and the
      date WE confirmed (the proposed/amended delivery date). effective = amended ??
      original, what Days Left / OVERDUE actually use. */

@@ -421,6 +421,10 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     agent: string | null; salesperson_id: string | null; salespersonId?: string | null; venue: string | null;
     customer_state: string | null; customer_country: string | null;
     customer_delivery_date: string | null; processing_date: string | null;
+    // The FROZEN original delivery date (BUG-51 / migration seed). Feeds the
+    // board's "Sales Exemption Expiry Date" column via soExemptionExpiryOf, the
+    // SAME rule the SO list uses, so the two surfaces agree (owner 2026-10-22).
+    sales_exemption_expiry: string | null; salesExemptionExpiry?: string | null;
     so_date: string | null; address1: string | null; address2: string | null;
     postcode: string | null; building_type: string | null;
     local_total_sen: number | null; balance_sen: number | null;
@@ -448,7 +452,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         /* NO `id` column here: scm.mfg_sales_orders is keyed by doc_no (TEXT PK) and
            has no `id` column: selecting it makes PostgREST reject the whole query and
            the board 500s. Identity here is doc_no; every join below keys on it. */
-        .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, agent, salesperson_id, venue, customer_state, customer_country, customer_delivery_date, amend_date_from_customer, amended_delivery_date, amend_reason, amend_reason_from_customer, processing_date, so_date, address1, address2, postcode, building_type, local_total_sen, balance_sen, possession_date, house_type, replacement_disposal, referral, ref, customer_so_no, delivery_message_status, disposal_request, dp_remark, linked_ac_docno')
+        .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, agent, salesperson_id, venue, customer_state, customer_country, customer_delivery_date, sales_exemption_expiry, amend_date_from_customer, amended_delivery_date, amend_reason, amend_reason_from_customer, processing_date, so_date, address1, address2, postcode, building_type, local_total_sen, balance_sen, possession_date, house_type, replacement_disposal, referral, ref, customer_so_no, delivery_message_status, disposal_request, dp_remark, linked_ac_docno')
         .neq('status', 'DRAFT')
         .neq('status', 'CANCELLED')
         .order('customer_delivery_date', { ascending: true, nullsFirst: false }),
@@ -830,6 +834,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     const remaining = remainingByDoc.get(docNo) ?? 0;
     const status = String(r.status ?? '').toUpperCase();
     const customerDD = r.customer_delivery_date ?? null;
+    const salesExemptionExpiry = r.salesExemptionExpiry ?? r.sales_exemption_expiry ?? null;
     const procDate = r.processing_date ?? null;
     /* Amendment dates. The ORIGINAL is never overwritten; the amended date (when
        set) is what we now commit to. effectiveSoDelivery is the ONE reader of that
@@ -921,6 +926,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       so_date: r.so_date ?? null,
       // ORIGINAL date (the customer's pick — never overwritten) stays here.
       customer_delivery_date: customerDD,
+      // Frozen original delivery date — what the "Sales Exemption Expiry Date"
+      // column shows (soExemptionExpiryOf), matching the SO list (owner 2026-10-22).
+      sales_exemption_expiry: salesExemptionExpiry,
       // Amendment dates: the customer's requested new date and the date WE
       // confirmed. The Original column above is unchanged.
       amend_date_from_customer: amendDateFromCustomer,
@@ -1120,6 +1128,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           // BLANK — it is the date admin proposes to the customer when scheduling
           // (owner 2026-10-22: ASSR follows the SO-sync date convention).
           customer_delivery_date: leg.date,
+          sales_exemption_expiry: null, // synthetic row — no frozen SO date
           amend_date_from_customer: null,
           amended_delivery_date: null,
           amend_reason: null, amend_reason_from_customer: null,
@@ -1289,6 +1298,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         })(),
         so_date: null,
         customer_delivery_date: date,
+        sales_exemption_expiry: null, // synthetic row — no frozen SO date
         amend_date_from_customer: null,
         amended_delivery_date: date,
         amend_reason: null, amend_reason_from_customer: null,
@@ -1429,6 +1439,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           })(),
           so_date: null,
           customer_delivery_date: leg.date,
+          sales_exemption_expiry: null, // synthetic row — no frozen SO date
           amend_date_from_customer: null,
           amended_delivery_date: leg.date,
           amend_reason: null, amend_reason_from_customer: null,

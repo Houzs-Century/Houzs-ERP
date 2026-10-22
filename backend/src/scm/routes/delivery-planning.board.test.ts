@@ -212,10 +212,10 @@ describe('GET /delivery-planning — cross-company means GRANTED companies', () 
    own fake DB with the AutoCount mirror) so the shared harness above — whose SOs
    carry no linked_ac_docno and so never hit the mirror read — stays untouched. */
 describe('GET /delivery-planning — Sales Exemption Expiry Date column', () => {
-  const soLinked = (docNo: string, linkedAc: string | null): Row => ({
+  const soLinked = (docNo: string, linkedAc: string | null, frozen: string | null = null): Row => ({
     doc_no: docNo, company_id: 1, debtor_code: 'C1', debtor_name: 'A Customer',
     status: 'CONFIRMED', delivery_state: null, customer_state: 'Selangor', customer_country: 'Malaysia',
-    customer_delivery_date: '2026-09-01', processing_date: '2026-08-20',
+    customer_delivery_date: '2026-09-01', sales_exemption_expiry: frozen, processing_date: '2026-08-20',
     local_total_sen: 100_000, balance_sen: 0, linked_ac_docno: linkedAc,
   });
   const line = (docNo: string, id: string): Row => ({
@@ -226,7 +226,7 @@ describe('GET /delivery-planning — Sales Exemption Expiry Date column', () => 
     const sb = fakeSb({
       warehouses: [],
       mfg_sales_orders: [
-        soLinked('HC-SO-2608-001', 'SO-000111'), // linked, book has an expiry
+        soLinked('HC-SO-2608-001', 'SO-000111', '2026-06-30'), // linked; book expiry + a frozen original date
         soLinked('HC-SO-2608-002', 'SO-000222'), // linked, book has NO expiry
         soLinked('HC-SO-2608-003', null),        // not in AutoCount at all
       ],
@@ -261,6 +261,19 @@ describe('GET /delivery-planning — Sales Exemption Expiry Date column', () => 
     expect(byDoc['HC-SO-2608-001']).toBe('2026-12-31'); // the real exemption date, NOT the delivery date 2026-09-01
     expect(byDoc['HC-SO-2608-002']).toBeNull();          // linked but the book carries no expiry
     expect(byDoc['HC-SO-2608-003']).toBeNull();          // not in AutoCount
+  });
+
+  /* Owner 2026-10-22: the board also carries the FROZEN original delivery date
+     (sales_exemption_expiry) so the frontend's "Sales Exemption Expiry Date"
+     column can show it via soExemptionExpiryOf — the SAME value the SO list shows. */
+  it('carries the frozen original delivery date (sales_exemption_expiry) on the SO row', async () => {
+    const res = await build().request('/delivery-planning');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { orders?: Array<{ so_doc_no: string; sales_exemption_expiry?: string | null }> };
+    const byDoc = Object.fromEntries((body.orders ?? []).map((o) => [o.so_doc_no, o.sales_exemption_expiry ?? null]));
+    expect(byDoc['HC-SO-2608-001']).toBe('2026-06-30'); // the frozen original, independent of the book expiry 2026-12-31
+    expect(byDoc['HC-SO-2608-002']).toBeNull();
+    expect(byDoc['HC-SO-2608-003']).toBeNull();
   });
 });
 

@@ -38,16 +38,24 @@ describe('filterOrdersByRegion', () => {
   });
 });
 
-/* The "Sales Exemption Expiry Date" column value — ASSR rows show their own
-   service date (customer_delivery_date), everyone else the AutoCount book value
-   (owner 2026-10-22). sxeDateOf reads only these three fields. */
+/* The "Sales Exemption Expiry Date" column value (owner 2026-10-22). An SO row
+   shows the ORIGINAL delivery date via the SO-list rule soExemptionExpiryOf
+   (frozen sales_exemption_expiry -> AutoCount book -> current delivery date), so
+   the board and the SO list agree. An ASSR row shows its own service date; a
+   DP / project synthetic row keeps its (null) book value. */
 const order = (p: Partial<PlanningOrder>): PlanningOrder => (p as PlanningOrder);
 describe('sxeDateOf', () => {
   it('an ASSR row shows its own service date, not the (null) book value', () => {
     expect(sxeDateOf(order({ row_type: 'assr', customer_delivery_date: '2026-09-05', ac_sales_exemption_expiry: null }))).toBe('2026-09-05');
   });
-  it('an SO row shows the AutoCount book exemption date, never its delivery date', () => {
-    expect(sxeDateOf(order({ row_type: 'so', customer_delivery_date: '2026-09-01', ac_sales_exemption_expiry: '2026-12-31' }))).toBe('2026-12-31');
+  it('an SO row prefers the frozen original delivery date over book and current date', () => {
+    expect(sxeDateOf(order({ row_type: 'so', sales_exemption_expiry: '2026-06-30', ac_sales_exemption_expiry: '2026-12-31', customer_delivery_date: '2026-09-01' }))).toBe('2026-06-30');
+  });
+  it('an SO row with no frozen date falls back to the AutoCount book value', () => {
+    expect(sxeDateOf(order({ row_type: 'so', sales_exemption_expiry: null, ac_sales_exemption_expiry: '2026-12-31', customer_delivery_date: '2026-09-01' }))).toBe('2026-12-31');
+  });
+  it('an SO row with neither falls back to the current delivery date (SO-list rule)', () => {
+    expect(sxeDateOf(order({ row_type: 'so', sales_exemption_expiry: null, ac_sales_exemption_expiry: null, customer_delivery_date: '2026-09-01' }))).toBe('2026-09-01');
   });
   it('a project / DP row with no book value stays blank', () => {
     expect(sxeDateOf(order({ row_type: 'project', customer_delivery_date: '2026-09-10', ac_sales_exemption_expiry: null }))).toBeNull();
