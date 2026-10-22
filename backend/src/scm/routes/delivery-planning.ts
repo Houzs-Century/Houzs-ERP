@@ -107,6 +107,7 @@ import { echoTripCrew } from '../lib/trip-crew-echo';
 import { latestLiveDoIdForSo, applyScheduleCrew, assignSoCrew, setAssrLegCrew, staleRunOfSo, hasSeatPatch } from '../lib/trip-crew-sync';
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { planningPoNosByDoc } from '../lib/planning-po-nos';
+import { stepClock } from '../../lib/step-timing';
 
 export const deliveryPlanning = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryPlanning.use('*', supabaseAuth);
@@ -380,6 +381,7 @@ const NOT_YOUR_JOB = "You can only update a delivery job assigned to you.";
 export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   const sb = c.get('supabase');
   const today = todayMyt();
+  const lap = stepClock(); // HC-0002: where the board's time goes, as Server-Timing steps
 
   /* Per-assignee ROW SCOPE (owner rule): a Driver/Helper sees ONLY the jobs
      assigned to their own name; every dispatcher / ops / management caller keeps
@@ -387,6 +389,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
      with a resolvable fleet identity — see lib/deliveryScope.ts. `all` (the
      common case) leaves the entire assembly below untouched. */
   const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
+  lap('dp-scope');
 
   const regionParam = (c.req.query('region') ?? 'ALL').trim().toUpperCase();
   const stateParam = (c.req.query('state') ?? 'ALL').trim().toUpperCase();
@@ -395,12 +398,14 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         region master + per-state MULTI mapping once per request. regionList()
         (the tabs) + each order's region(s) derive from this. */
   const regionCfg = await loadRegionConfig(sb);
+  lap('dp-region');
 
   /* 1. Warehouse master → code + name maps (read-only label lookup for the
         Warehouse column). */
   const { data: whRows, error: whErr } = await sb
     .from('warehouses')
     .select('id, code, name');
+  lap('dp-warehouses');
   if (whErr) return c.json(readFailure('warehouses', whErr), 500);
   const whCode = new Map<string, string>();
   const whName = new Map<string, string>();
@@ -459,6 +464,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       c,
     ).range(from, to),
   );
+  lap('dp-so-headers');
   if (soErr) return c.json(readFailure('sales_orders', soErr), 500);
   /* Only SOs that actually need delivering — they carry a date signal
      (customer_delivery_date OR processing_date). Filtered
@@ -507,6 +513,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   const liveBalanceByDoc = new Map<string, number>();
   {
     const { data: balRows, error: balErr } = await liveBalanceReadP;
+    lap('dp-balances');
     noteDegradedRead('live_balance', balErr);
     for (const b of (balRows ?? [])) {
       if (b.doc_no != null && b.balance_sen_live != null) {
@@ -523,6 +530,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         item fetch so the FIRST line we see per doc_no is its earliest-created
         one; that drives the SO-list-matching Branding derivation below. */
   const { data: itemRowsRaw, error: itemErr } = await itemRowsReadP;
+  lap('dp-items');
   noteDegradedRead('so_lines', itemErr);
   const linesByDoc = new Map<string, ReadinessLine[]>();
   const warehousesByDoc = new Map<string, Set<string>>();
@@ -570,6 +578,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           c,
         ).range(from, to),
       );
+      lap('dp-products');
       for (const p of (prodRows ?? [])) {
         if (p.category) productCategory.set(p.code, normCategory(p.category));
         if (p.branding && p.branding.trim()) productBranding.set(p.code, p.branding);
@@ -603,6 +612,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   let remainingByDoc: Map<string, number>;
   {
     const dRes = await deliverableReadP;
+    lap('dp-deliverable');
     if ('err' in dRes) return c.json(readFailure('delivered_sum', dRes.err), 500);
     ({ deliveredByDoc, remainingByDoc } = dRes.ok);
   }
@@ -613,6 +623,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
      ./delivery-planning-fields for the file-size ceiling). dual-read camelCase
      (the pg driver camelCases result columns). */
   const { data: doRowsRaw, error: doErr } = await doRowsReadP;
+  lap('dp-dos');
   noteDegradedRead('do_headers', doErr);
   const doByDoc = new Map<string, Array<{ id: string; doNumber: string; status: string }>>();
   /* DO header driver_id by DO id — half the row-scope assignment (crew ids are
@@ -703,6 +714,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         const { data: stopRows } = await chunkIn<StopRow>(doIds, (batch, from, to) => sb.from('trip_stops')
           .select('dp_no, do_id, trip_id, stop_no, eta_offset_s').in('do_id', batch)
           .order('do_id').range(from, to));
+        lap('dp-trip-stops');
         take(stopRows.filter((s) => s.dp_no != null));
 
         /* Resolve the stops' trips (bounded .in) and keep only live ones —
@@ -715,6 +727,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         if (tripIds.length) {
           const { data: tripRowsRaw } = await chunkIn<Record<string, unknown>>(tripIds, (batch, from, to) => sb.from('trips')
             .select('id, trip_no, trip_date, status').in('id', batch).order('id').range(from, to));
+          lap('dp-trips');
           const liveTripById = new Map<string, { id: string; trip_no: string | null; trip_date: string | null }>();
           for (const t of tripRowsRaw as Array<{
             id: string; trip_no?: string | null; tripNo?: string | null;
@@ -771,6 +784,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         .select('do_id, driver_1_id, driver_2_id, helper_1_id, helper_2_id, driver_1_name, driver_1_ic, driver_1_contact, driver_2_name, helper_1_name, helper_2_name, lorry_plate')
         .in('do_id', batch).order('do_id').range(from, to),
     );
+    lap('dp-crew');
     for (const cr of crewRows) {
       crewIdsByDo.set(cr.do_id, {
         driverIds: [cr.driver1Id ?? cr.driver_1_id, cr.driver2Id ?? cr.driver_2_id].filter((x): x is string => !!x),
@@ -809,6 +823,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
      a per-row query; Houzs doc numbers are filtered out inside it, so a
      Houzs-only board costs nothing. */
   const poLockedDocs = await soPoLockedMany(sb, docNos);
+  lap('dp-po-locked');
   const orders = soRows.map((r) => {
     const docNo = String(r.doc_no ?? '');
     /* Branding — derived 1:1 with the SO list (never the empty header field).
@@ -1048,6 +1063,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     // Kicked off up top (kickOffSubBoardReads); a read error re-throws into this
     // same try, which logs and leaves the SO rows untouched — unchanged behaviour.
     const assrR = await assrRowsP;
+    lap('dp-assr');
     if ('err' in assrR) throw assrR.err;
     const assrRows = assrR.ok;
 
@@ -1217,6 +1233,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         const lorryIds = [...new Set(trips.map((t) => t.lorry_id).filter((x): x is string => !!x))];
         const { data: drvRaw } = driverIds.length ? await sb.from('drivers').select('id, name').in('id', driverIds) : { data: [] };
         const { data: lryRaw } = lorryIds.length ? await sb.from('lorries').select('id, plate').in('id', lorryIds) : { data: [] };
+        lap('dp-assr-crew');
         const driverName = new Map(((drvRaw ?? []) as Array<{ id: string; name: string | null }>).map((d) => [String(d.id), d.name]));
         const lorryPlate = new Map(((lryRaw ?? []) as Array<{ id: string; plate: string | null }>).map((l) => [String(l.id), l.plate]));
         const stopByKey = new Map<string, { driver: string | null; lorry: string | null }>();
@@ -1260,6 +1277,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   try {
     const dpR = await dpResP; // kicked off up top; a read error re-throws into this try (logs, leaves the rest)
     if ('err' in dpR) throw dpR.err;
+    lap('dp-dp-rows');
     const dpRes = dpR.ok;
     for (const d of (dpRes.data ?? []) as Array<Record<string, unknown>>) {
       const dpState = (d.state as string | null) ?? null;
@@ -1366,6 +1384,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     console.warn(`[delivery-planning] DP-order union skipped: ${String((e as Error).message).slice(0, 120)}`);
   }
   await echoTripCrew(sb, dpBoardRows).catch((e: Error) => console.warn(`[delivery-planning] DP crew echo skipped: ${e.message.slice(0, 120)}`));
+  lap('dp-crew-echo');
 
   /* ── PMS project SETUP / DISMANTLE union (READ-ONLY mirror) ───────────────────
      The fleet (drivers / lorries) is SHARED across deliveries, service cases AND
@@ -1381,6 +1400,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   try {
     const projR = await projRowsP; // kicked off up top; a read error re-throws into this try (logs, leaves the rest)
     if ('err' in projR) throw projR.err;
+    lap('dp-projects');
     const projRows = projR.ok;
 
     for (const p of (projRows.results ?? [])) {
@@ -1511,9 +1531,11 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
 
   const poNosRes = await poNosByDocP; // "PO No." column: POs raised from the SO, walked per company (lib/planning-po-nos.ts); kicked off right after soRows
   if ('err' in poNosRes) throw poNosRes.err;
+  lap('dp-po-nos');
   const poNosByDoc = poNosRes.ok;
   await attachBoardAcExemptionExpiry(sb, c, soRows, orders); // BUG-51 repoint: the board's exemption-expiry column (shared lib keeps the route under its size ceiling)
   const allOrders = [...orders.map((o) => ({ ...o, po_nos: poNosByDoc.get(o.so_doc_no) ?? [] })), ...assrOrders, ...dpBoardRows, ...projectOrders];
+  lap('dp-ac-exemption');
 
   /* 7c. PER-ASSIGNEE ROW SCOPE. For a self-scoped caller (Driver/Helper), keep
         ONLY the rows assigned to them; unassigned rows and other crews' jobs drop
@@ -1526,6 +1548,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   const scopedBase = new Set(await applyDeliveryRowScope(sb, scope, allOrders, {
     doByDoc, doDriverById, crewIdsByDo, dpTripIdByKey,
   }));
+  lap('dp-row-scope');
   const ownExtra = scope.mode === 'all' ? null
     : await ownServiceAndProjectRowKeys(sb, c.env, scope, Number(c.get('houzsUser')?.id), c.get('houzsUser')?.name ?? null, allOrders);
   const scopedOrders = allOrders.filter((o) => scopedBase.has(o) || !!ownExtra?.has(o.so_doc_no));

@@ -245,7 +245,7 @@ function corsOriginAllowed(origin: string | undefined | null): string | undefine
    browser hides is a renewal that silently never happens. It carries no secret:
    the pass is signed, token-bound and revocable, and the client already holds it.
    docs/bugs/0593-*. */
-app.use("*", cors({ origin: corsOriginAllowed, exposeHeaders: ["X-Request-Id", "X-Company-Code", "X-Session-Pass"] }));
+app.use("*", cors({ origin: corsOriginAllowed, exposeHeaders: ["X-Request-Id", "X-Company-Code", "X-Session-Pass", "Server-Timing"] }));
 
 // Baseline security headers on every Worker response. Deliberately conservative:
 // the cross-origin isolation family (CORP/COOP/COEP) is DISABLED because the API
