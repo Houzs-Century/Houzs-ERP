@@ -25,7 +25,7 @@ export interface DispatchStop {
 }
 
 export function isDispatched(o: DispatchStop): boolean {
-  const hasDo = (o.delivery_orders ?? []).some((d) => !!d && !!d.id);
-  const hasDriver = !!o.crew?.driver && o.crew.driver.trim().length > 0;
+  const hasDo = (o.delivery_orders ?? []).some((d) => !!d.id);
+  const hasDriver = (o.crew?.driver ?? "").trim().length > 0;
   return hasDo || hasDriver;
 }
