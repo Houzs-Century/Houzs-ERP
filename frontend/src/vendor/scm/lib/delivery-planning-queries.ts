@@ -30,6 +30,13 @@ export const DELIVERY_STATE_LABEL: Record<DeliveryState, string> = {
   DELIVERED: 'Delivered',
 };
 
+/* The value the board's "Sales Exemption Expiry Date" column shows: the AutoCount
+   book exemption date for most rows (BUG-51), but a service case (ASSR) has no
+   book, so it shows its own SERVICE date (customer_delivery_date) there instead,
+   and leaves "Delivery Date" blank for admin to propose (owner 2026-10-22). */
+export const sxeDateOf = (o: PlanningOrder): string | null =>
+  (o.row_type === 'assr' ? o.customer_delivery_date : o.ac_sales_exemption_expiry) ?? null;
+
 /* The customer-message follow-up workflow statuses shown/edited in the "Delivery
    Status" column (owner 2026-09-22). The backend whitelists this exact set; the
    label IS the value. `(D)` = original delivery-date round, `(A)` = amended round.

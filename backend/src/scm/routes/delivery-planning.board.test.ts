@@ -380,7 +380,7 @@ describe('GET /delivery-planning — the ASSR / DP / project sub-boards union on
     const res = await build().request('/delivery-planning', undefined, { DB: fakeD1 } as never);
     expect(res.status).toBe(200);
     type Crew = { driver_1_name: string | null; driver_1_contact: string | null; helper_1_name: string | null; helper_2_name: string | null; lorry_plate: string | null } | null;
-    const body = (await res.json()) as { orders?: Array<{ row_type: string; so_doc_no: string; ref: string | null; dp_no: string | null; branding: string | null; delivery_state: string | null; crew: Crew }> };
+    const body = (await res.json()) as { orders?: Array<{ row_type: string; so_doc_no: string; ref: string | null; dp_no: string | null; branding: string | null; delivery_state: string | null; customer_delivery_date: string | null; amended_delivery_date: string | null; crew: Crew }> };
     const byType = (t: string) => (body.orders ?? []).filter((o) => o.row_type === t);
     expect(byType('so').map((o) => o.so_doc_no)).toEqual(['HC-SO-2608-001']);
     expect(byType('assr')).toHaveLength(1);       // the fake ASSR union row, delivery leg
@@ -393,6 +393,11 @@ describe('GET /delivery-planning — the ASSR / DP / project sub-boards union on
     // pending (and a dated DP job that is not yet delivered is pending too).
     expect(byType('project')[0]?.delivery_state).toBe('DELIVERED'); // setup 2026-09-10 is in the past
     expect(byType('assr')[0]?.delivery_state).toBe('PENDING_DELIVERY'); // OPEN case, no closed_at
+    // Owner 2026-10-22: an ASSR row carries its SERVICE date in customer_delivery_date
+    // (shown in the "Sales Exemption Expiry Date" column) and leaves "Delivery Date"
+    // (amended_delivery_date) blank for admin to propose.
+    expect(byType('assr')[0]?.customer_delivery_date).toBe('2026-09-05'); // the seeded do_date leg
+    expect(byType('assr')[0]?.amended_delivery_date).toBeNull();
     // Crew (driver + phone, both helpers, lorry) is pulled from the per-phase crew
     // JSON and OVERRIDES the stale scalar driver/lorry fallback (Driver A / WXX1).
     const projCrew = byType('project')[0]?.crew;
