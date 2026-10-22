@@ -33,17 +33,11 @@
 // ----------------------------------------------------------------------------
 
 import { effectiveDelivery } from '../shared/effective-delivery';
-import { mapBounded } from './concurrency';
 
 /** PostgREST `.in()` caps out on URL length, and the un-paginated SO list can
  *  hand us 500 docs → well over a thousand line ids. Chunk every `.in()` set so
  *  a wide list can't blow the query-string limit. */
 const IN_CHUNK = 200;
-
-/* The chunks of one step are independent reads. mapBounded hands results back
-   in input order, so the maps below fill exactly as the serial loop filled them
-   (Delivery Planning runs this once per company). */
-const IN_FLIGHT = 6;
 
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
@@ -180,11 +174,11 @@ export async function soConvertedPos(
     //    against a line that was later cancelled still exists and still counts
     //    as a conversion of that SO.)
     const docByItemId = new Map<string, string>();
-    const itemReads = await mapBounded(chunk(docs, IN_CHUNK), IN_FLIGHT, async (part) => scoped(sb
-      .from('mfg_sales_order_items')
-      .select('id, doc_no'))
-      .in('doc_no', part));
-    for (const { data, error } of itemReads) {
+    for (const part of chunk(docs, IN_CHUNK)) {
+      const { data, error } = await scoped(sb
+        .from('mfg_sales_order_items')
+        .select('id, doc_no'))
+        .in('doc_no', part);
       if (error) return out;
       for (const r of (data ?? []) as Array<{ id: string | null; doc_no: string | null }>) {
         if (r.id && r.doc_no) docByItemId.set(r.id, r.doc_no);
@@ -196,12 +190,12 @@ export async function soConvertedPos(
     // 2. PO lines raised from those SO lines → (SO line id, PO id).
     const links: Array<{ so_item_id: string; purchase_order_id: string }> = [];
     const poIds = new Set<string>();
-    const linkReads = await mapBounded(chunk(itemIds, IN_CHUNK), IN_FLIGHT, async (part) => scoped(sb
-      .from('purchase_order_items')
-      .select('so_item_id, purchase_order_id'))
-      .in('so_item_id', part)
-      .not('purchase_order_id', 'is', null));
-    for (const { data, error } of linkReads) {
+    for (const part of chunk(itemIds, IN_CHUNK)) {
+      const { data, error } = await scoped(sb
+        .from('purchase_order_items')
+        .select('so_item_id, purchase_order_id'))
+        .in('so_item_id', part)
+        .not('purchase_order_id', 'is', null);
       if (error) return out;
       for (const r of (data ?? []) as Array<{ so_item_id: string | null; purchase_order_id: string | null }>) {
         if (r.so_item_id && r.purchase_order_id) {
@@ -215,11 +209,11 @@ export async function soConvertedPos(
     // 3. PO id → po_number, dropping CANCELLED (filtered app-side so a schema
     //    without the status column can't silently widen the set).
     const numById = new Map<string, string>();
-    const headReads = await mapBounded(chunk([...poIds], IN_CHUNK), IN_FLIGHT, async (part) => scoped(sb
-      .from('purchase_orders')
-      .select('id, po_number, status'))
-      .in('id', part));
-    for (const { data, error } of headReads) {
+    for (const part of chunk([...poIds], IN_CHUNK)) {
+      const { data, error } = await scoped(sb
+        .from('purchase_orders')
+        .select('id, po_number, status'))
+        .in('id', part);
       if (error) return out;
       for (const p of (data ?? []) as Array<{ id: string; po_number: string | null; status: string | null }>) {
         if ((p.status ?? '').toUpperCase() === 'CANCELLED') continue;
