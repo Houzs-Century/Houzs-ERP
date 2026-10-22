@@ -47,6 +47,10 @@ import { reportServerFailure, reportAccessDenied, reportSlowRequest } from '../.
 // Same threshold as api/client.ts, so both halves of the app report alike.
 const SLOW_FETCH_MS = 800;
 
+/** Doc numbers (HC-SO-2609-004, PO-2607-001) are ids, so one endpoint stays one telemetry signature. */
+export const scmTelemetryPath = (path: string): string =>
+  path.replace(/\/[A-Z]+(?:-[A-Z]+)*-\d{4}-\d+(?:-[A-Z0-9]+)*(?=[/?#]|$)/gi, '/:id');
+
 // `||` not `??`: the CI build inlines VITE_API_URL as an EMPTY STRING when the
 // repo var is unset, and `'' ?? default` keeps `''`. PROD fallback is now
 // same-origin — /api/* is proxied to the Worker by the Pages Function
@@ -328,7 +332,7 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
       if (ms >= SLOW_FETCH_MS) {
         const m = String(init?.method ?? 'GET').toUpperCase();
         console.warn(`[perf] slow ${m} /api/scm${path} - ${ms}ms id=${requestIdFromResponse(res)}`);
-        try { reportSlowRequest(m, path, ms); } catch { /* never let telemetry break the request path */ }
+        try { reportSlowRequest(m, scmTelemetryPath(path), ms); } catch { /* never let telemetry break the request path */ }
       }
     } catch (e) {
       if (init?.signal?.aborted) throw e;
@@ -496,8 +500,8 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
        500 into two failures. */
     try {
       const m = String(init?.method ?? 'GET').toUpperCase();
-      if (res.status >= 500) reportServerFailure(m, path, res.status);
-      else if (res.status === 403) reportAccessDenied(m, path);
+      if (res.status >= 500) reportServerFailure(m, scmTelemetryPath(path), res.status);
+      else if (res.status === 403) reportAccessDenied(m, scmTelemetryPath(path));
     } catch { /* never let telemetry break the request path */ }
     // Plain-language message for the operator (Wei Siang 2026-06-08: every error
     // shown must be 白话文 — no HTTP codes, no raw JSON, no DB internals). The

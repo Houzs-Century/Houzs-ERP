@@ -24,7 +24,7 @@
 
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { DoDetailWarmup } from "./DetailWarmup";
+import { useDocumentFlow } from "../../vendor/scm/lib/flow-queries";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import {
   ArrowLeft,
@@ -1764,3 +1764,12 @@ function Divider() {
 }
 
 export default DeliveryOrderDetailV2;
+
+/* HC-0002: the relationship map and the rack card start their reads with the
+   header rather than after it (document flow began at ~0.8s on prod). Same
+   hooks, same arguments as those panels; renders nothing. */
+function DoDetailWarmup({ id }: { id: string | undefined }) {
+  useDocumentFlow("do", id ?? null);
+  useRacks();
+  return null;
+}

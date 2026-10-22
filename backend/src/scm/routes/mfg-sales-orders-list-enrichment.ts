@@ -76,8 +76,8 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
   const companyId = activeCompanyId(c) ?? null;
   /* HC-0002: the global MRP run needs nothing read below, so it starts first and
      overlaps them, and it is the run /:docNo/coverage shares (lib/live-mrp-memo.ts).
-     Same fail-soft as before: a failed run is null here. */
-  const mrpProm: Promise<MrpResult | null> = sharedLiveMrp(sb, c.env.DB, companyId).result.catch(() => null);
+     Same fail-soft as before: a failed run reads as null at step 5. */
+  const mrpProm = eager(sharedLiveMrp(sb, c.env.DB, companyId).result);
   const nonSellingProm = eager(loadNonSellingWarehouses(sb));
   // Same row-level visibility the list applies (self + downline, or all for a
   // view-all caller). The docs come from a page the client already received, so
@@ -172,7 +172,8 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
   }
 
   // 5. READY-arm source-PO chips (fail-soft internally), once the MRP run lands.
-  const mrp = await mrpProm;
+  let mrp: MrpResult | null = null;
+  try { mrp = (await mrpProm)(); } catch { mrp = null; }
   const readyByItem = await soLineReadySourcePos(sb, companyId, mrp, readyItems);
 
   /* 6. Delivered/remaining per line → fully-shipped ids (suppress READY chips
