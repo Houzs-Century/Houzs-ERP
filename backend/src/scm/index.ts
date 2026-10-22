@@ -152,6 +152,7 @@ import { scmAreaGuard } from "./middleware/area-guard";
 import { hasPositionCapability } from "../services/positionCapabilities";
 import { scmWriteFreeze } from "./lib/write-freeze";
 import { venturePortalKick } from "./lib/venture-portal-kick";
+import { forgetLiveMrpOnWrite } from "./lib/live-mrp-memo";
 import { migratedSoReadonly, migratedSoAmendmentReadonly } from "./lib/migrated-so-readonly";
 import { writeFreezeStatus } from "./routes/write-freeze-status";
 
@@ -181,6 +182,10 @@ scm.use('/*', scmWriteFreeze());
    are the zero-loss guarantee and this is only the accelerator. Cost of an idle
    kick, and what it cannot see: lib/venture-portal-kick.ts. */
 scm.use('/*', venturePortalKick());
+
+/* HC-0002: the SO list and detail share one live MRP run for 30s per isolate;
+   a successful write here drops it so the next read is fresh. lib/live-mrp-memo.ts. */
+scm.use('/*', forgetLiveMrpOnWrite());
 
 /* Read-only view of that value for the operator making the go/no-go call —
    GET, so the freeze never blocks it, and no area guard because it is not an
