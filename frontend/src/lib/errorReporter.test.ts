@@ -18,6 +18,14 @@ describe("request telemetry signature stability", () => {
     expect(a).toBe(b);
   });
 
+  test("collapses SCM doc numbers", () => {
+    expect(normalizeApiPath("/mfg-sales-orders/HC-SO-2609-004/coverage")).toBe(
+      "/mfg-sales-orders/:id/coverage",
+    );
+    expect(normalizeApiPath("/purchase-orders/PO-2607-001")).toBe("/purchase-orders/:id");
+    expect(normalizeApiPath("/grns/GRN-2609-001")).toBe(normalizeApiPath("/grns/GRN-2610-117"));
+  });
+
   test("drops the query string — filters must not multiply signatures", () => {
     expect(normalizeApiPath("/api/assr?page=1&per_page=50&stage=review")).toBe("/api/assr");
     expect(normalizeApiPath("/api/assr?page=2")).toBe(normalizeApiPath("/api/assr?page=7"));

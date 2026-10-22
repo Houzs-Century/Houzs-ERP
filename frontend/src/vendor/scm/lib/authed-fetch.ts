@@ -42,7 +42,10 @@ import {
 } from '../../../lib/requestCorrelation';
 import { companyHeader } from '../../../lib/activeCompany';
 import { abortableDelay, combineAbortSignals } from '../../../lib/abort';
-import { reportServerFailure, reportAccessDenied } from '../../../lib/errorReporter';
+import { reportServerFailure, reportAccessDenied, reportSlowRequest } from '../../../lib/errorReporter';
+
+// Same threshold as api/client.ts, so both halves of the app report alike.
+const SLOW_FETCH_MS = 800;
 
 // `||` not `??`: the CI build inlines VITE_API_URL as an EMPTY STRING when the
 // repo var is unset, and `'' ?? default` keeps `''`. PROD fallback is now
@@ -317,7 +320,16 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
   let res: Response;
   for (let attempt = 0; ; attempt++) {
     try {
+      const startedAt = performance.now();
       res = await fetchWithTimeout(`${API_URL}${path}`, { ...init, headers }, path);
+      /* HC-0002: the SO / DO screens all read through here, not api/client.ts,
+         so without this the slow-request baseline never saw the slowest pages. */
+      const ms = Math.round(performance.now() - startedAt);
+      if (ms >= SLOW_FETCH_MS) {
+        const m = String(init?.method ?? 'GET').toUpperCase();
+        console.warn(`[perf] slow ${m} /api/scm${path} - ${ms}ms id=${requestIdFromResponse(res)}`);
+        try { reportSlowRequest(m, path, ms); } catch { /* never let telemetry break the request path */ }
+      }
     } catch (e) {
       if (init?.signal?.aborted) throw e;
       if (isGet && attempt < 4) { await abortableDelay(600 + attempt * 1200, init?.signal); continue; }

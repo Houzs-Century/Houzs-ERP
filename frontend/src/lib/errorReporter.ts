@@ -229,7 +229,9 @@ export function normalizeApiPath(path: string): string {
     .split("/")
     .map((seg) =>
       /^\d+$/.test(seg) ||
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(seg)
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(seg) ||
+      // SCM doc numbers (HC-SO-2609-004, PO-2607-001) are ids too.
+      /^[A-Z]+(?:-[A-Z]+)*-\d{4}-\d+(?:-[A-Z0-9]+)*$/i.test(seg)
         ? ":id"
         : seg,
     )
