@@ -1940,7 +1940,7 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
     return c.json({ error: 'invalid_substatus', reason: `delivery_substatus must be one of: ${HC_SUBSTATUS_VALUES.join(', ')} (or blank).` }, 400);
   }
 
-  // Whitelist delivery_message_status to the 23 known workflow values (blank/null ok).
+  // Whitelist delivery_message_status to the 28 known workflow values (blank/null ok).
   if (p.deliveryMessageStatus != null && p.deliveryMessageStatus !== '' &&
       !(HC_MESSAGE_STATUS_VALUES as readonly string[]).includes(String(p.deliveryMessageStatus))) {
     return c.json({ error: 'invalid_message_status', reason: 'delivery_message_status is not one of the allowed workflow values.' }, 400);

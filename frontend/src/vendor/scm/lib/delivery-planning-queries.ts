@@ -53,6 +53,11 @@ export const MESSAGE_STATUSES = [
   'Done Remind (1)', 'Done Remind (2)', 'Done Remind (3)',
   'Done Scheduling', 'Pending Reschedule (D)',
   'Not Sent (D)', 'Not Sent (A)', 'Invalid Data',
+  // East Malaysia / Singapore shipping + the (A)-round reschedule and customer-reply
+  // statuses the HC Delivery sheet actually uses — added so the sheet backfill's
+  // real statuses are first-class dropdown values (owner 2026-10-22).
+  'Done Shipout', 'Pending Delivery (EM)', 'Customer Confirm Shipment',
+  'Pending Reschedule (A)', 'Pending Customer Reply (D)',
 ] as const;
 export type MessageStatus = (typeof MESSAGE_STATUSES)[number];
 
