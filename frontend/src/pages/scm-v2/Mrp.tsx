@@ -1367,6 +1367,24 @@ const ModelDrilldown = ({
 /* Tiny helper so multi-element returns inside .map keep a single key. */
 const FragmentRow = ({ children }: { children: ReactNode }) => <>{children}</>;
 
+/* Column widths for the SO-line child tables (see .childTableFixed). The
+   unclassed <col> is Customer, the elastic one. */
+const SoLineCols = ({ module }: { module?: boolean }) => (
+  <colgroup>
+    <col className={styles.colSelect} />
+    <col className={styles.cSoNo} />
+    <col className={styles.cWh} />
+    {module && <col className={styles.cModule} />}
+    <col />
+    <col className={styles.cState} />
+    <col className={styles.cDate} />
+    <col className={styles.cDate} />
+    <col className={styles.cQty} />
+    <col className={styles.cCoverage} />
+    <col className={styles.cSupplier} />
+  </colgroup>
+);
+
 /* The SO-order child table — shared by every leaf level. Each shortage line has
    its own select checkbox + supplier dropdown; covered lines show the covering
    PO's supplier read-only (Commander 2026-05-31). */
@@ -1377,7 +1395,8 @@ const OrderLines = ({ sku, selected, onToggleLine, lineSupplier, onLineSupplierC
   lineSupplier: Partial<Record<string, string>>;
   onLineSupplierChange: (soItemId: string, supplierId: string) => void;
 }) => (
-  <table className={styles.childTable}>
+  <table className={`${styles.childTable} ${styles.childTableFixed}`}>
+    <SoLineCols />
     <thead>
       <tr>
         <th className={styles.colSelect} />
@@ -1496,7 +1515,8 @@ const SofaSoTable = ({ group, selected, onToggleLine, lineSupplier, onLineSuppli
   accessoryRiders: AccessoryRider[];
   poMode: 'combined' | 'per-so';
 }) => (
-  <table className={styles.childTable}>
+  <table className={`${styles.childTable} ${styles.childTableFixed}`}>
+    <SoLineCols module />
     <thead>
       <tr>
         <th className={styles.colSelect} />
