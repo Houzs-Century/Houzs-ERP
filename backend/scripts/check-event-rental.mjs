@@ -20,7 +20,7 @@ try {
         FROM project_finance_lines
        WHERE project_id = ${ev.id} AND archived_at IS NULL AND (category = 'rental' OR kind = 'cost')
        ORDER BY category, id`;
-    for (const t of typed) console.log(`typed ${t.kind}/${t.category} ${t.amount}${t.auto_source ? ` auto=${t.auto_source}` : ''} ${t.d} ${String(t.note ?? '').slice(0, 60)}`);
+    for (const t of typed) console.log(`ROW|typed ${t.kind}/${t.category} ${t.amount}${t.auto_source ? ` auto=${t.auto_source}` : ''} ${t.d} ${String(t.note ?? '').slice(0, 60)}`);
     const legs = await sql`
       SELECT je.je_no, je.entry_date::text AS d, je.source_type, je.source_doc_no, je.posted, je.reversed,
              l.account_code, a.account_name, a.pms_row, l.debit_sen, l.credit_sen, left(coalesce(l.notes, ''), 70) AS notes
@@ -34,8 +34,8 @@ try {
       const net = (Number(g.debit_sen ?? 0) - Number(g.credit_sen ?? 0)) / 100;
       const counts = g.posted && !g.reversed;
       if (g.pms_row === 'rental' && counts) rentalNet += net;
-      console.log(`leg ${g.d} ${g.je_no} ${g.source_type}/${g.source_doc_no} ${g.account_code} ${g.account_name} row=${g.pms_row ?? '-'} Dr ${(Number(g.debit_sen ?? 0) / 100).toFixed(2)} Cr ${(Number(g.credit_sen ?? 0) / 100).toFixed(2)} posted=${g.posted} reversed=${g.reversed} | ${g.notes}`);
+      console.log(`ROW|leg ${g.d} ${g.je_no} ${g.source_type}/${g.source_doc_no} ${g.account_code} ${g.account_name} row=${g.pms_row ?? '-'} Dr ${(Number(g.debit_sen ?? 0) / 100).toFixed(2)} Cr ${(Number(g.credit_sen ?? 0) / 100).toFixed(2)} posted=${g.posted} reversed=${g.reversed} | ${g.notes}`);
     }
-    console.log(`rental net from books (posted, not reversed): ${rentalNet.toFixed(2)}`);
+    console.log(`ROW|rental net from books (posted, not reversed): ${rentalNet.toFixed(2)}`);
   }
 } finally { await sql.end(); }
