@@ -1,4 +1,4 @@
-/* Houzs POS shell: boot from IndexedDB, then Device setup (not prepared),
+/* Houzs POS shell: boot from IndexedDB, then Pair (no terminal yet),
  * Login, or Sell. Online state is the ERP ping, not the radio. */
 import { useCallback, useEffect, useState } from "react";
 import { erpReachable } from "./api";
@@ -10,6 +10,7 @@ import { heartbeat, onDeviceStateChanged, setSyncCashier, startSyncEngine, syncN
 import { Login } from "./screens/Login";
 import { Sell } from "./screens/Sell";
 import { Setup } from "./screens/Setup";
+import { Pair } from "./screens/Pair";
 import type { BundleCashier, DeviceState, Session } from "./types";
 
 type Screen = "boot" | "setup" | "login" | "sell";
@@ -82,9 +83,9 @@ export function App() {
 
   if (bootError) return <div className="screen"><div className="card">The POS cannot open its local storage: {bootError}. Use Chrome, not a private window.</div></div>;
   if (screen === "boot") return <div className="screen"><p className="muted">Opening Houzs POS…</p></div>;
-  if (screen === "setup") return <Setup state={state} onPrepared={(s) => { setState(s); setScreen("login"); }} onExit={() => setScreen(state ? "login" : "setup")} onToggleTest={(on) => void toggleTest(on)} />;
+  if (screen === "setup" && state) return <Setup state={state} onPrepared={(s) => { setState(s); setScreen("login"); }} onExit={() => setScreen("login")} onToggleTest={(on) => void toggleTest(on)} />;
   const leave = leaving != null && <LeaveDialog pending={leaving} onCancel={() => setLeaving(null)} onSyncNow={() => { void syncNow("logout").then(() => { if (syncStatus().pending === 0) doLogout(); else setLeaving(syncStatus().pending); }); }} onLeave={doLogout} />;
   if (screen === "sell" && state && session) return <><Sell state={state} session={session} online={online} onLogout={logout} onStateChanged={setState} />{leave}</>;
   if (state) return <><Login state={state} online={online} updateWaiting={updateWaiting} onLogin={(c) => void login(c)} onOpenSetup={() => setScreen("setup")} onStateChanged={setState} />{leave}</>;
-  return <Setup state={null} onPrepared={(s) => { setState(s); setScreen("login"); }} onExit={() => setScreen("setup")} onToggleTest={() => {}} />;
+  return <Pair prev={state} onPaired={(s) => { setState(s); setScreen("login"); }} />;
 }
