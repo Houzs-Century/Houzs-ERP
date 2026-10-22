@@ -61,13 +61,23 @@ export function eventsFromApInvoice<L extends { code: string; projectId?: number
   });
 }
 
-/** The lines of an AP invoice, for eventsFromApInvoice. A failed read leaves
-    the lines as they are — the note is still raised, untagged. */
-export async function apInvoiceEventLines(sb: Db, companyId: number, apInvoiceId: string | null | undefined): Promise<Array<{ debit_account_code: string; project_id: number | string | null }>> {
-  if (!apInvoiceId) return [];
-  const { data, error } = await sb.from('ap_invoice_lines').select('debit_account_code, project_id').eq('company_id', companyId).eq('invoice_id', apInvoiceId);
+/** The lines of the AP invoices a supplier note names or knocks off, for
+    eventsFromApInvoice. A failed read leaves the lines as they are — the note
+    is still raised, untagged (the event page reads the knock-off itself,
+    scm/lib/event-books.ts). */
+export async function apInvoiceEventLines(sb: Db, companyId: number, apInvoiceIds: ReadonlyArray<string | null | undefined>): Promise<Array<{ debit_account_code: string; project_id: number | string | null }>> {
+  const ids = [...new Set(apInvoiceIds.filter((v): v is string => !!v))];
+  if (ids.length === 0) return [];
+  const { data, error } = await sb.from('ap_invoice_lines').select('debit_account_code, project_id').eq('company_id', companyId).in('invoice_id', ids);
   if (error || !Array.isArray(data)) return [];
   return data as Array<{ debit_account_code: string; project_id: number | string | null }>;
+}
+
+/** The AP invoices a stored note knocks off. A failed read is none. */
+async function knockedOffApInvoices(sb: Db, companyId: number, noteId: unknown): Promise<string[]> {
+  const { data, error } = await sb.from('acc_credit_note_allocations').select('ap_invoice_id').eq('company_id', companyId).eq('note_id', noteId);
+  if (error || !Array.isArray(data)) return [];
+  return (data as Array<{ ap_invoice_id: string | null }>).map((r) => r.ap_invoice_id).filter((v): v is string => !!v);
 }
 
 export type InsertCreditNoteInput = {
@@ -94,6 +104,9 @@ export type InsertCreditNoteInput = {
   notes?: string | null;
   /** Every line already carries its account — the caller resolved the kind's default. */
   lines: CreditNoteLineInput[];
+  /** The AP invoices a supplier note's knock-off ticks — their events fill
+      the lines that name none, as the named invoice's do. */
+  knockOffApInvoiceIds?: string[];
   createdBy: string | null;
 };
 
@@ -104,8 +117,9 @@ export async function insertCreditNote(sb: Db, p: InsertCreditNoteInput): Promis
   const total = p.lines.reduce((s, l) => s + l.amountSen, 0);
   /* Every path that raises a supplier note against an AP invoice — the screen,
      the scan — takes the invoice's events here. */
-  const lines = p.kind === 'SCN' && p.apInvoiceId
-    ? eventsFromApInvoice(p.lines, await apInvoiceEventLines(sb, p.companyId, p.apInvoiceId))
+  const sources = [p.apInvoiceId, ...(p.knockOffApInvoiceIds ?? [])].filter((v): v is string => !!v);
+  const lines = p.kind === 'SCN' && sources.length > 0
+    ? eventsFromApInvoice(p.lines, await apInvoiceEventLines(sb, p.companyId, sources))
     : p.lines;
   const noteNumber = await mintMonthlyDocNo(sb, 'acc_credit_notes', 'note_number', `${p.docPrefix}${p.kind}-${docMonthTag(p.noteDate)}`);
   const { data: note, error: insErr } = await sb.from('acc_credit_notes').insert({
@@ -161,8 +175,9 @@ export async function postCreditNote(
   /* A supplier note that credits an AP invoice posts with the invoice's events
      (owner 2026-10-22: 「我cn 本身是link 着ap invoice 的， ap invoice 已经link
      event 了」) — a draft raised before lines carried events included. */
-  if (kind === 'SCN' && note.ap_invoice_id) {
-    const tagged = eventsFromApInvoice(lines.map((l) => ({ ...l, code: l.accountCode })), await apInvoiceEventLines(sb, p.companyId, String(note.ap_invoice_id)));
+  if (kind === 'SCN') {
+    const sources = [note.ap_invoice_id ? String(note.ap_invoice_id) : null, ...await knockedOffApInvoices(sb, p.companyId, note.id)];
+    const tagged = eventsFromApInvoice(lines.map((l) => ({ ...l, code: l.accountCode })), await apInvoiceEventLines(sb, p.companyId, sources));
     tagged.forEach((t, i) => { lines[i] = { ...lines[i]!, projectId: t.projectId ?? null }; });
   }
   const party: NoteParty = { code: note.party_code ?? null, name: note.party_name ?? null };
