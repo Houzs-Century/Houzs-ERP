@@ -410,9 +410,15 @@ type CrewSeatWrite = (order: PlanningOrder, seat: {
 function DriverPickCell({ order, drivers, sched, writeSeat, pending }: {
   order: PlanningOrder; drivers: DriverRow[]; sched: SchedMutation; writeSeat: CrewSeatWrite; pending: boolean;
 }) {
-  const items = drivers.map((d) => ({ id: d.id, label: d.name }));
+  // SCROLL PERF (owner 2026-10-21 "滚动变顺"): the board re-renders every visible
+  // cell on each scroll frame / tick / keystroke. These option lists must be
+  // MEMOISED — rebuilt per render they handed SearchCombo a new array identity
+  // every time, forcing its own chosen/hits/rows useMemos to recompute on all
+  // ~200 crew pickers on screen. drivers is react-query-stable, so this is free.
+  const items = useMemo(() => drivers.map((d) => ({ id: d.id, label: d.name })), [drivers]);
   const currentName = order.crew?.driver_1_name ?? null;
-  const chosen = crewComboValue(items, currentName);
+  const options = useMemo(() => crewComboOptions(items, currentName), [items, currentName]);
+  const chosen = useMemo(() => crewComboValue(items, currentName), [items, currentName]);
   const [val, setVal] = useState(chosen);
   useEffect(() => { setVal(chosen); }, [chosen]);
   if (isDp(order) && !order.trip_id) return <NotApplicable />;
@@ -422,7 +428,7 @@ function DriverPickCell({ order, drivers, sched, writeSeat, pending }: {
     <span {...stopRow} style={{ display: 'flex', width: '100%', minWidth: 0 }}>
       <SearchCombo
         fill aria-label="Driver" placeholder="— pick a driver —"
-        options={crewComboOptions(items, currentName)}
+        options={options}
         value={val}
         disabled={pending}
         onChange={(picked) => {
@@ -445,9 +451,12 @@ function DriverPickCell({ order, drivers, sched, writeSeat, pending }: {
 function LorryPickCell({ order, lorries, sched, writeSeat, pending }: {
   order: PlanningOrder; lorries: LorryRow[]; sched: SchedMutation; writeSeat: CrewSeatWrite; pending: boolean;
 }) {
-  const items = lorries.map((l) => ({ id: l.id, label: l.plate }));
+  // SCROLL PERF: memoise the option list (see DriverPickCell) — stable identity
+  // keeps SearchCombo's internal memos from recomputing on every board re-render.
+  const items = useMemo(() => lorries.map((l) => ({ id: l.id, label: l.plate })), [lorries]);
   const currentPlate = order.crew?.lorry_plate ?? null;
-  const chosen = crewComboValue(items, currentPlate);
+  const options = useMemo(() => crewComboOptions(items, currentPlate), [items, currentPlate]);
+  const chosen = useMemo(() => crewComboValue(items, currentPlate), [items, currentPlate]);
   const [val, setVal] = useState(chosen);
   useEffect(() => { setVal(chosen); }, [chosen]);
   if (isDp(order) && !order.trip_id) return <NotApplicable />;
@@ -457,7 +466,7 @@ function LorryPickCell({ order, lorries, sched, writeSeat, pending }: {
     <span {...stopRow} style={{ display: 'flex', width: '100%', minWidth: 0 }}>
       <SearchCombo
         fill aria-label="Lorry plate" placeholder="— pick a lorry —"
-        options={crewComboOptions(items, currentPlate)}
+        options={options}
         value={val}
         disabled={pending}
         onChange={(picked) => {
@@ -482,17 +491,22 @@ function LorryPickCell({ order, lorries, sched, writeSeat, pending }: {
 function HelperPickCell({ order, helpers, writeSeat, pending, slot }: {
   order: PlanningOrder; helpers: HelperRow[]; writeSeat: CrewSeatWrite; pending: boolean; slot: 1 | 2;
 }) {
-  const items = helpers.map((h) => ({ id: h.id, label: h.name }));
+  // SCROLL PERF: memoise the option list (see DriverPickCell).
+  const items = useMemo(() => helpers.map((h) => ({ id: h.id, label: h.name })), [helpers]);
   const currentName = (slot === 1 ? order.crew?.helper_1_name : order.crew?.helper_2_name) ?? null;
-  const chosen = crewComboValue(items, currentName);
+  const options = useMemo(() => crewComboOptions(items, currentName), [items, currentName]);
+  const chosen = useMemo(() => crewComboValue(items, currentName), [items, currentName]);
   const [val, setVal] = useState(chosen);
   useEffect(() => { setVal(chosen); }, [chosen]);
-  if (isAssr(order) || isDp(order) || isProject(order)) return <NotApplicable />;
+  // Project rows are a read-only PMS mirror — show the helper the project crewed
+  // (owner 2026-10-21), like the Driver / Lorry cells. ASSR / DP have no seat.
+  if (isProject(order)) return <span style={{ color: '#767b6e' }}>{currentName || '—'}</span>;
+  if (isAssr(order) || isDp(order)) return <NotApplicable />;
   return (
     <span {...stopRow} style={{ display: 'flex', width: '100%', minWidth: 0 }}>
       <SearchCombo
         fill aria-label={`Helper ${slot}`} placeholder="— pick a helper —"
-        options={crewComboOptions(items, currentName)}
+        options={options}
         value={val}
         disabled={pending}
         onChange={(picked) => {

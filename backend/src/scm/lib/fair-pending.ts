@@ -14,16 +14,19 @@
 //     linked. Older NULL orders (the AutoCount years) stay out — they would
 //     bury the ones that matter under years of history.
 // A cancelled order is not a sale and is never listed; an order that HAS a link
-// is never listed either, whatever its verdict column says.
+// is never listed either, whatever its verdict column says; nor is one a person
+// PUT ASIDE (owner 2026-10-21, fair-put-aside.ts) until it is brought back.
 //
 // The sidebar badge counts exactly this list (countFairPending), so the number
 // on the menu and the rows on the page cannot disagree.
 // ----------------------------------------------------------------------------
 
 /** What the page shows. Every value is already on the order — nothing is joined
- *  or computed, so the page cannot disagree with the order list. */
+ *  or computed, so the page cannot disagree with the order list. `ref` and
+ *  `customer_so_no` are the order's Ref No. — the slip number the evening
+ *  sales report lists (owner 2026-10-21: 「我这里也需要这个reference」). */
 export const FAIR_PENDING_COLUMNS =
-  'doc_no, so_date, venue, branding, project_id, fair_match, status, local_total_sen, salesperson_id';
+  'doc_no, so_date, venue, branding, project_id, fair_match, status, local_total_sen, salesperson_id, ref, customer_so_no';
 
 /** Verdicts listed whatever the order's date. */
 export const LISTED_VERDICTS = ['PENDING', 'AMBIGUOUS', 'UNMATCHED', 'NO_FAIR'] as const;
@@ -45,6 +48,10 @@ export type FairPendingRow = {
   status: string | null;
   local_total_sen: number | null;
   salesperson_id: string | null;
+  /** The Ref No., `ref` first (frontend lib/customer-ref.ts). Optional so a
+   *  row built without them still types. */
+  ref?: string | null;
+  customer_so_no?: string | null;
 };
 
 /* TWO READS, ONE LIST. The listed set is "a verdict in LISTED_VERDICTS" OR "no
@@ -53,10 +60,10 @@ export type FairPendingRow = {
    reader has to decode; two plain reads with the same shared filters say it
    once each, and the merge below is the whole of the OR. */
 function withVerdicts(q: any): any {
-  return q.in('fair_match', [...LISTED_VERDICTS]).is('project_id', null).neq('status', 'CANCELLED');
+  return q.in('fair_match', [...LISTED_VERDICTS]).is('project_id', null).neq('status', 'CANCELLED').is('fair_put_aside_at', null);
 }
 function withoutVerdict(q: any): any {
-  return q.is('fair_match', null).is('project_id', null).neq('status', 'CANCELLED').gte('so_date', NO_VERDICT_LISTED_FROM);
+  return q.is('fair_match', null).is('project_id', null).neq('status', 'CANCELLED').gte('so_date', NO_VERDICT_LISTED_FROM).is('fair_put_aside_at', null);
 }
 
 /** Newest first; a day's orders by document number, newest number first. */

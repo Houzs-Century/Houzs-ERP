@@ -60,6 +60,8 @@ import type { Context, MiddlewareHandler } from "hono";
 import { normalizePhone } from "../scm/shared/phone";
 import { ASSR_SUB_STATUS_KEYS } from "../scm/shared/assr-sub-statuses";
 import { pickupTrackingError } from "../scm/shared/assr-pickup-tracking";
+import { verificationFieldsError } from "../scm/shared/assr-verification-fields";
+import { getVerificationNotes, saveVerificationNotes, takeVerificationNotes } from "../services/assrVerificationNotes";
 import { sendCompletionSurvey } from "../services/assrCompletionSurvey";
 
 /* The context the extracted handlers below receive. They are exported so the
@@ -427,6 +429,16 @@ app.get("/lookups/:kind", requireServiceCaseAccess(), async (c) => {
        FROM ${table}
       ${includeInactive ? "" : "WHERE active = 1"}
       ORDER BY sort_order ASC, name ASC`,
+  ).all();
+  return c.json({ data: rows.results ?? [] });
+});
+
+// HC-0129 Pickup PIC picker. Names only: /api/scm/drivers needs Transportation
+// access and returns phone + IC. The roster is one list across companies
+// (scm/routes/drivers.ts), so no company predicate.
+app.get("/pickup-pic-drivers", requireServiceCaseAccess(), async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT name, in_house FROM scm."drivers" WHERE active = true ORDER BY name ASC`,
   ).all();
   return c.json({ data: rows.results ?? [] });
 });
@@ -924,11 +936,11 @@ app.post("/:id/resolve-creditor", requirePermission("service_cases.manage"), asy
       creditor_code: creditorCode,
       message: creditorCode
         ? `Resolved ${row.item_code} → ${creditorCode}`
-        : `${row.item_code} has no supplier on its PO or in AutoCount`,
+        : `${row.item_code} has no supplier on its PO or SO — pick one by hand`,
     });
   } catch {
     // Plain-language rule: never surface raw exception text to the user.
-    return c.json({ error: "Couldn't reach AutoCount to resolve the supplier. Try again shortly." }, 502);
+    return c.json({ error: "Couldn't look up the supplier. Try again shortly." }, 502);
   }
 });
 
@@ -1575,6 +1587,7 @@ app.get("/:id{[0-9]+}", requireServiceCaseAccess(), async (c) => {
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
   const detail = await getAssrDetail(c.env, id);
   if (!detail) return c.json({ error: "Not found" }, 404);
+  Object.assign((detail as { case: Record<string, unknown> }).case, await getVerificationNotes(c.env, id));
   /* Multi-company: a case must fall inside the caller's ASSR company scope
      (same rule as the list). Rank-and-file SALES are pinned to HOUZS; office /
      backend / directors get their allowed set. A case tagged with a company
@@ -1881,7 +1894,7 @@ app.patch("/:id{[0-9]+}", requirePermission("service_cases.write"), async (c) =>
   ) {
     return c.json({ error: "Unknown sub-status" }, 400);
   }
-  const trackingError = pickupTrackingError(body);
+  const trackingError = pickupTrackingError(body) ?? verificationFieldsError(body);
   if (trackingError) return c.json({ error: trackingError }, 400);
   // Snapshot the responsible fields BEFORE the patch so we notify only on an
   // ACTUAL change (owner 2026-07-15). A doc_no re-match inside patchAssrCase can
@@ -1894,8 +1907,10 @@ app.patch("/:id{[0-9]+}", requirePermission("service_cases.write"), async (c) =>
     .bind(id)
     .first<{ assigned_to: number | null; assigned_to_2: number | null; sales_agent: string | null }>();
 
+  const notes = takeVerificationNotes(body);
   const ok = await patchAssrCase(c.env, id, body, userId);
-  if (!ok) return c.json({ error: "Not found or no changes" }, 404);
+  const notesOk = notes ? await saveVerificationNotes(c.env, id, notes, userId) : false;
+  if (!ok && !notesOk) return c.json({ error: "Not found or no changes" }, 404);
 
   // Notify newly-responsible people (+ their recursive upline) when an assignee
   // or the sales_agent changed. Best-effort: never fails the PATCH.

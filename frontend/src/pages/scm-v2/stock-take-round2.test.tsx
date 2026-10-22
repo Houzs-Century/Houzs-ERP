@@ -41,7 +41,7 @@ const DETAIL = {
     viewer: { isAssignee: false, canSupervise: false, blindActive: false },
   },
 };
-const updateLines = vi.fn();
+const updateLines = vi.fn((_vars: { lines: Array<Record<string, unknown>> }) => Promise.resolve({}));
 const readSheet = vi.fn();
 const updateHeader = vi.fn();
 const addLine = vi.fn();
@@ -51,7 +51,7 @@ vi.mock('../../vendor/scm/lib/stock-queries', async (importOriginal) => {
   return {
     ...real,
     useStockTakeDetail: () => DETAIL,
-    useUpdateStockTakeLines: () => ({ isPending: false, mutate: updateLines }),
+    useUpdateStockTakeLines: () => ({ isPending: false, mutateAsync: updateLines }),
     useStockTakeRacks: () => RACKS,
     readStockTakeSheet: (...args: unknown[]) => readSheet(...args),
     usePostStockTake: () => idle,
@@ -100,7 +100,6 @@ describe('Stock Take detail — round 2', () => {
     fireEvent.click(screen.getByRole('button', { name: /Save Counts/ }));
     expect(updateLines).toHaveBeenCalledWith(
       { id: 'st-1', lines: [expect.objectContaining({ id: 'l1', rackId: 'r2' })] },
-      expect.anything(),
     );
   });
 
@@ -112,7 +111,6 @@ describe('Stock Take detail — round 2', () => {
     fireEvent.click(screen.getByRole('button', { name: /Save Counts/ }));
     expect(updateLines).toHaveBeenCalledWith(
       { id: 'st-1', lines: [expect.objectContaining({ id: 'l2', notes: 'torn box' })] },
-      expect.anything(),
     );
     /* A note alone must not re-send the count (that re-stamps Counted By). */
     expect(updateLines.mock.calls[0][0].lines[0]).not.toHaveProperty('countedQty');
@@ -159,7 +157,6 @@ describe('Stock Take detail — round 2', () => {
     fireEvent.click(screen.getByRole('button', { name: /Save Counts/ }));
     expect(updateLines).toHaveBeenLastCalledWith(
       { id: 'st-1', lines: [expect.objectContaining({ id: 'l2', countedQty: 5, rackId: 'r1' })] },
-      expect.anything(),
     );
   });
 });

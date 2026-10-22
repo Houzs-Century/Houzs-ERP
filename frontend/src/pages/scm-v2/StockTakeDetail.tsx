@@ -46,6 +46,7 @@ import {
   useDeleteStockTake,
   useUpdateStockTakeHeader,
   useAddStockTakeLine,
+  useDeleteStockTakeLine,
   useStockTakeBucketOptions,
   useStockTakeRacks,
   stockTakeAssignees,
@@ -99,6 +100,9 @@ type LineDraft = {
   /* What was typed in the Rack box; null = untouched (the box shows rackId's label). */
   rackInput: string | null;
 };
+
+/* HC-0140: a line found on the shelf, on screen only until Save Counts. */
+type PendingLine = { key: string; itemCode: string; variantKey: string; variantLabel: string | null; countedQty: number };
 
 const toDraft = (l: StockTakeLine): LineDraft => ({
   id:               l.id,
@@ -158,6 +162,8 @@ export const StockTakeDetail = () => {
   const cancel  = useCancelStockTake();
   const reverse = useReverseStockTake();
   const del     = useDeleteStockTake();
+  const addLine = useAddStockTakeLine();
+  const delLine = useDeleteStockTakeLine();
 
   const askConfirm = useConfirm();
   const notify = useNotify();
@@ -165,6 +171,13 @@ export const StockTakeDetail = () => {
   const [lines,  setLines]  = useState<LineDraft[]>([]);
   const [search, setSearch] = useState<string>('');
   const [dirty,  setDirty]  = useState<boolean>(false);
+  /* HC-0140: Add line and an added line's Delete wait for Save Counts, so
+     neither reloads the sheet over unsaved counts. */
+  const [pendingAdds, setPendingAdds] = useState<PendingLine[]>([]);
+  const [deleteIds, setDeleteIds] = useState<Set<string>>(new Set());
+  const [saving, setSaving] = useState(false);
+  const unsaved = dirty || pendingAdds.length > 0 || deleteIds.size > 0;
+  const shownLines = useMemo(() => lines.filter((l) => !deleteIds.has(l.id)), [lines, deleteIds]);
   /* Model view is the DEFAULT — variant-heavy categories are why it exists.
      Flat is the toggle (owner phase 1). */
   const [view, setView] = useState<'model' | 'flat'>('model');
@@ -238,13 +251,13 @@ export const StockTakeDetail = () => {
 
   const filteredLines = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return lines;
-    return lines.filter((l) =>
+    if (!q) return shownLines;
+    return shownLines.filter((l) =>
       l.itemCode.toLowerCase().includes(q) ||
       (l.productName ?? '').toLowerCase().includes(q) ||
       (l.variantLabel ?? '').toLowerCase().includes(q),
     );
-  }, [lines, search]);
+  }, [shownLines, search]);
 
   /* Model groups over the FILTERED lines — search narrows, then groups. */
   const groups = useMemo(() => groupByModel(filteredLines), [filteredLines]);
@@ -259,7 +272,7 @@ export const StockTakeDetail = () => {
     let valuePosSen = 0;
     let valueNegSen = 0;
     let uncostedVarianceLines = 0;
-    for (const l of lines) {
+    for (const l of shownLines) {
       /* Counted-ness is judged on the ENTRY, not the variance — on a blind
          take variance is unknowable here, but "how many cells are done" must
          still be right. */
@@ -283,9 +296,9 @@ export const StockTakeDetail = () => {
       nonZeroVarianceLines,
       valuePosSen, valueNegSen, valueNetSen: valuePosSen + valueNegSen,
       uncostedVarianceLines,
-      totalLines: lines.length,
+      totalLines: shownLines.length,
     };
-  }, [lines]);
+  }, [shownLines]);
 
   /* ── Print ──────────────────────────────────────────────────────────────
      This document had no print handler at all until now, on any surface.
@@ -373,14 +386,17 @@ export const StockTakeDetail = () => {
   };
 
   // ── Mutations ────────────────────────────────────────────────────────
-  const onSave = () => {
+  /* Counts first, then added-line deletes, then new lines: each step is
+     dropped from the pending state as it lands, so a failure part-way leaves
+     only the unsaved part on screen to retry. */
+  const onSave = async () => {
     if (!id) return;
     // Build diff payload — only lines whose counted or notes changed.
-    const changed = lines.filter((l) => {
+    const changed = shownLines.filter((l) => {
       const parsedCounted = parseCounted(l.countedQtyInput);
       return parsedCounted !== l.origCountedQty || l.notes !== l.origNotes || l.rackId !== l.origRackId;
     });
-    const unknownRacks = lines.filter(rackUnknown);
+    const unknownRacks = shownLines.filter(rackUnknown);
     if (unknownRacks.length > 0) {
       void notify({
         title: `${unknownRacks.length} rack${unknownRacks.length === 1 ? '' : 's'} not found in this warehouse`,
@@ -389,29 +405,45 @@ export const StockTakeDetail = () => {
       });
       return;
     }
-    if (changed.length === 0) { setDirty(false); return; }
-    update.mutate(
-      {
-        id,
-        lines: changed.map((l) => ({
-          id:         l.id,
-          /* Only a changed count is sent: the server re-stamps Counted By on
-             every countedQty it receives, so a note-only edit must not. */
-          ...(parseCounted(l.countedQtyInput) !== l.origCountedQty ? { countedQty: parseCounted(l.countedQtyInput) } : {}),
-          notes:      l.notes.trim() ? l.notes.trim() : null,
-          ...(l.rackId !== l.origRackId ? { rackId: l.rackId } : {}),
-        })),
-      },
-      {
-        onSuccess: () => { setDirty(false); detail.refetch(); },
-        onError:   (err) => notify({ title: 'Save failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
-      },
-    );
+    if (changed.length === 0 && pendingAdds.length === 0 && deleteIds.size === 0) { setDirty(false); return; }
+    setSaving(true);
+    let step = 'Save';
+    try {
+      if (changed.length > 0) {
+        await update.mutateAsync({
+          id,
+          lines: changed.map((l) => ({
+            id:         l.id,
+            /* Only a changed count is sent: the server re-stamps Counted By on
+               every countedQty it receives, so a note-only edit must not. */
+            ...(parseCounted(l.countedQtyInput) !== l.origCountedQty ? { countedQty: parseCounted(l.countedQtyInput) } : {}),
+            notes:      l.notes.trim() ? l.notes.trim() : null,
+            ...(l.rackId !== l.origRackId ? { rackId: l.rackId } : {}),
+          })),
+        });
+        setDirty(false);
+      }
+      for (const lineId of deleteIds) {
+        step = 'Delete line';
+        await delLine.mutateAsync({ id, lineId });
+        setDeleteIds((cur) => { const next = new Set(cur); next.delete(lineId); return next; });
+      }
+      for (const p of pendingAdds) {
+        step = `Add line ${p.itemCode}`;
+        await addLine.mutateAsync({ id, itemCode: p.itemCode, variantKey: p.variantKey, countedQty: p.countedQty });
+        setPendingAdds((cur) => cur.filter((x) => x.key !== p.key));
+      }
+    } catch (err) {
+      void notify({ title: `${step} failed`, body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
+    } finally {
+      setSaving(false);
+      void detail.refetch();
+    }
   };
 
   const onPost = async () => {
     if (!id) return;
-    if (dirty) { notify({ title: 'Save your counts before posting.', tone: 'error' }); return; }
+    if (unsaved) { notify({ title: 'Save your counts before posting.', tone: 'error' }); return; }
     const summary = blindActive
       /* Blind counter: the variance figures are exactly what they must not
          see before posting, so the confirm speaks only of coverage. */
@@ -558,10 +590,10 @@ export const StockTakeDetail = () => {
                   <Button variant="ghost" size="md" onClick={() => setSheetOpen(true)}>
                     <Camera {...ICON} /> Upload counted sheet
                   </Button>
-                  <Button variant="ghost" size="md" onClick={onSave} disabled={!dirty || update.isPending}>
-                    <Save {...ICON} /> {update.isPending ? 'Saving…' : 'Save Counts'}
+                  <Button variant="ghost" size="md" onClick={() => { void onSave(); }} disabled={!unsaved || saving}>
+                    <Save {...ICON} /> {saving ? 'Saving…' : 'Save Counts'}
                   </Button>
-                  <Button variant="primary" size="md" onClick={onPost} disabled={post.isPending || dirty}>
+                  <Button variant="primary" size="md" onClick={onPost} disabled={post.isPending || unsaved}>
                     <Send {...ICON} /> {post.isPending ? 'Posting…' : 'Post'}
                   </Button>
                 </>
@@ -966,6 +998,18 @@ export const StockTakeDetail = () => {
                               Match
                             </button>
                           )}
+                          {ln.addedOnCount && (
+                            <button
+                              type="button"
+                              onClick={() => setDeleteIds((cur) => new Set(cur).add(ln.id))}
+                              className={styles.chip}
+                              aria-label={`Delete line ${ln.itemCode}`}
+                              title="Remove this added line (on Save Counts)"
+                              style={{ fontSize: 'var(--fs-11)', cursor: 'pointer', marginLeft: 4 }}
+                            >
+                              <Trash2 size={12} strokeWidth={1.75} />
+                            </button>
+                          )}
                         </td>
                       )}
                     </tr>
@@ -1072,8 +1116,9 @@ export const StockTakeDetail = () => {
           {isDraft && (
             <AddFoundLine
               takeId={t.id}
-              dirty={dirty}
-              onAdded={() => { void detail.refetch(); }}
+              pending={pendingAdds}
+              onQueue={(p) => setPendingAdds((cur) => [...cur, p])}
+              onRemove={(key) => setPendingAdds((cur) => cur.filter((x) => x.key !== key))}
             />
           )}
 
@@ -1181,12 +1226,17 @@ const fmtSignedRM = (sen: number): string =>
 
 /* Add line (owner 2026-10-06): stock found on the shelf that the sheet does not
    list. Pick the SKU (and, for a SKU the business holds in variants, which
-   one), type the count, Add — it lands counted. Unsaved counts must be saved
-   first, because adding re-reads the take and would drop them. */
-function AddFoundLine({ takeId, dirty, onAdded }: { takeId: string; dirty: boolean; onAdded: () => void }) {
+   one), type the count, Add. HC-0140: the row waits on screen with its own
+   remove button; Save Counts sends it, and the server's checks (variant
+   required, already on the sheet) answer then. */
+function AddFoundLine({ takeId, pending, onQueue, onRemove }: {
+  takeId: string;
+  pending: PendingLine[];
+  onQueue: (p: PendingLine) => void;
+  onRemove: (key: string) => void;
+}) {
   const notify = useNotify();
   const products = useMfgProducts();
-  const add = useAddStockTakeLine();
   const [code, setCode] = useState('');
   const [variantKey, setVariantKey] = useState('');
   const [qty, setQty] = useState('');
@@ -1195,16 +1245,20 @@ function AddFoundLine({ takeId, dirty, onAdded }: { takeId: string; dirty: boole
   const opts = options.data ?? [];
 
   const submit = () => {
-    if (dirty) { void notify({ title: 'Save your counts first', body: 'Adding a line reloads the sheet.', tone: 'error' }); return; }
     if (!known) { void notify({ title: 'Pick a SKU from the list.', tone: 'error' }); return; }
     if (qty === '') { void notify({ title: 'Type the counted quantity.', tone: 'error' }); return; }
-    add.mutate(
-      { id: takeId, itemCode: code.trim(), variantKey, countedQty: Number(qty) },
-      {
-        onSuccess: () => { setCode(''); setVariantKey(''); setQty(''); onAdded(); },
-        onError: (err) => { void notify({ title: 'Add line failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }); },
-      },
-    );
+    const itemCode = code.trim();
+    if (pending.some((p) => p.itemCode === itemCode && p.variantKey === variantKey)) {
+      void notify({ title: 'This SKU / variant is already added below.', body: 'Remove it and add it again to change the count.', tone: 'error' });
+      return;
+    }
+    const opt = opts.find((o) => o.variantKey === variantKey);
+    onQueue({
+      key: `${itemCode}|${variantKey}`, itemCode, variantKey,
+      variantLabel: variantKey ? opt?.variantLabel ?? variantKey : null,
+      countedQty: Number(qty),
+    });
+    setCode(''); setVariantKey(''); setQty('');
   };
 
   return (
@@ -1236,9 +1290,26 @@ function AddFoundLine({ takeId, dirty, onAdded }: { takeId: string; dirty: boole
         <input className={styles.fieldInput} inputMode="numeric" value={qty} aria-label="Counted qty for the new line"
           onChange={(e) => setQty(e.target.value.replace(/[^0-9]/g, ''))} style={{ textAlign: 'right', fontFamily: 'var(--font-mono)' }} />
       </label>
-      <Button variant="secondary" size="md" onClick={submit} disabled={add.isPending}>
-        <Plus size={14} strokeWidth={1.75} /> {add.isPending ? 'Adding…' : 'Add line'}
+      <Button variant="secondary" size="md" onClick={submit}>
+        <Plus size={14} strokeWidth={1.75} /> Add line
       </Button>
+      {pending.length > 0 && (
+        <div style={{ flex: '1 1 100%' }}>
+          <span className={styles.fieldLabel}>Added, not saved yet — Save Counts to keep them</span>
+          {pending.map((p) => (
+            <div key={p.key} style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', fontSize: 'var(--fs-13)', padding: '4px 0' }}>
+              <span style={{ fontFamily: 'var(--font-mono)', flex: '1 1 auto' }}>
+                {p.itemCode}{p.variantLabel ? ` · ${p.variantLabel}` : ''}
+              </span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{p.countedQty}</span>
+              <button type="button" className={styles.chip} onClick={() => onRemove(p.key)}
+                aria-label={`Remove added line ${p.itemCode}`} style={{ cursor: 'pointer' }}>
+                <Trash2 size={12} strokeWidth={1.75} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

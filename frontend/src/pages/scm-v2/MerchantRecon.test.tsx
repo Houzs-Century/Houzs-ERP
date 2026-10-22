@@ -9,7 +9,7 @@
 //     SettlementSetup.test.tsx: three jobs, three screens, as the owner asked.
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 import type { AcquirerSetup, SettlementRow } from './settlement-queries';
 
@@ -64,6 +64,8 @@ const SUGGESTED_ROW: SettlementRow = {
 const confirmMutate = vi.fn();
 const unconfirmMutate = vi.fn();
 const confirmMatchedMutate = vi.fn();
+const confirmMatchedBatch = vi.fn();
+const refreshAfterPosting = vi.fn();
 const uploadMutateAsync = vi.fn();
 const saveMutate = vi.fn();
 
@@ -117,6 +119,8 @@ vi.mock('./settlement-queries', () => ({
   useConfirmSettlementRow: () => ({ mutate: confirmMutate, isPending: false, isError: false, error: null }),
   useUnconfirmSettlementRow: () => ({ mutate: unconfirmMutate, isPending: false }),
   useConfirmMatched: () => ({ mutate: confirmMatchedMutate, isPending: false, data: null }),
+  confirmMatchedBatch: (id: number) => confirmMatchedBatch(id),
+  useInvalidateAfterPosting: () => refreshAfterPosting,
   useIgnoreSettlementRow: () => ({ mutate: vi.fn(), isPending: false }),
   /* "Find the sale" (docs/bugs/0792): what the server would answer for the
      lonely line — the sale keyed twelve days late, at the exact gross. */
@@ -383,33 +387,110 @@ describe('the reconcile tab', () => {
   });
 });
 
+/* Owner 2026-10-21: 我从 merchant recon 点开 SO，返回也要返回 merchant recon —
+   the order's Back returns to this page's address, so the open report has to
+   live in it. */
+describe('the open report lives in the address', () => {
+  function Where() {
+    const l = useLocation();
+    return <output data-testid="where">{l.search}</output>;
+  }
+
+  test('opening a report puts it in the address; the address opens it again; All reports takes it out', () => {
+    render(<MemoryRouter initialEntries={['/scm/merchant-recon']}><MerchantRecon /><Where /></MemoryRouter>);
+    fireEvent.click(screen.getByText('Reconcile'));
+    expect(screen.getByTestId('where').textContent).toBe('?batch=1');
+    expect(screen.getByText(/still to decide/)).toBeTruthy();
+  });
+
+  test('coming back to ?batch=1 lands on that report, not on the list', () => {
+    render(<MemoryRouter initialEntries={['/scm/merchant-recon?batch=1']}><MerchantRecon /><Where /></MemoryRouter>);
+    expect(screen.getByText(/still to decide/)).toBeTruthy();
+    expect(screen.queryByText('Reconcile')).toBeNull();
+  });
+});
+
+/* Owner 2026-10-21: 点开那个 HC-SO-013512 这些 sales order 直接打开整张 sales
+   order — on the work list, inside a report, and on the watch list. */
+describe('an order number opens the whole order', () => {
+  const hrefOf = (name: string) => screen.getAllByRole('link', { name })[0]!.getAttribute('href');
+
+  test('on the work list and the watch list, each order number links to that order', () => {
+    draw();
+    expect(hrefOf('SO-2608-043')).toBe('/scm/sales-orders/SO-2608-043');   // matched by reference
+    expect(hrefOf('SO-2608-050')).toBe('/scm/sales-orders/SO-2608-050');   // the system's guess
+    expect(hrefOf('SO-2607-088')).toBe('/scm/sales-orders/SO-2607-088');   // not on a report yet
+  });
+
+  test('inside a report, the candidates and the matched order are links too — in their own cell, apart from the tick', () => {
+    draw();
+    fireEvent.click(screen.getByText('Reconcile'));
+    expect(hrefOf('SO-2608-001')).toBe('/scm/sales-orders/SO-2608-001');
+    expect(hrefOf('SO-2608-002')).toBe('/scm/sales-orders/SO-2608-002');
+    expect(hrefOf('SO-2608-043')).toBe('/scm/sales-orders/SO-2608-043');
+    /* The tick and the number are separate cells, so opening the order never ticks it. */
+    const link = screen.getAllByRole('link', { name: 'SO-2608-001' })[0]!;
+    expect(link.closest('label')).toBeNull();
+    expect(link.closest('td')?.querySelector('input[type="checkbox"]')).toBeNull();
+  });
+});
+
 /* 但是当我upload 很多时我要一个一个按confirm? — no. The reports waiting on the
    work list take ONE press for every line that matched by its approval code,
    and that press must not touch the lines that need a person. */
 describe('confirming a pile of reports', () => {
-  test('the work list offers one press for every matched line, and says what it leaves alone', () => {
-    confirmMatchedMutate.mockClear();
+  /* Owner 2026-10-21, on "Posted 0. 52 could not be — Network error": every
+     open report got a request and the whole screen was read again after each,
+     so one press sent thousands. Now only the reports with something to post,
+     and one refresh at the end. */
+  const NOTHING_TO_POST = { ...BATCH, id: 2, file_name: 'sep.csv', to_confirm_count: 0, to_choose_count: 2, open_count: 2 };
+  const CHARGE_ONLY = { ...BATCH, id: 3, file_name: 'aeon.csv', to_confirm_count: 0, adjustment_sen: 48984, adjustment_je_no: null };
+
+  test('the work list offers one press for every matched line, sends only the reports with work in them, and refreshes once', async () => {
+    confirmMatchedBatch.mockReset();
+    refreshAfterPosting.mockReset();
+    confirmMatchedBatch.mockResolvedValue({ attempted: 1, confirmed: 1, failed: [], statementCharge: { status: 'nothing_to_post' } });
+    setBatchList([BATCH, NOTHING_TO_POST, CHARGE_ONLY]);
     draw();
 
-    /* The mocked batch: 1 matched by reference, 1 to choose, 1 with no sale. */
-    const button = screen.getByText(/Confirm all 1 matched, across 1 report/);
-    expect(screen.getByText(/the 2 line\(s\) needing you are left alone/)).toBeTruthy();
+    /* 1 matched by reference; the report holding only lines to choose is not
+       counted, the one with an unbooked statement charge is. */
+    const button = screen.getByText(/Confirm all 1 matched, across 2 reports/);
+    expect(screen.getByText(/line\(s\) needing you are left alone/)).toBeTruthy();
 
     fireEvent.click(button);
-    expect(confirmMatchedMutate).toHaveBeenCalledTimes(1);
-    expect(confirmMatchedMutate.mock.calls[0]![0]).toBe(1);
+    await waitFor(() => expect(refreshAfterPosting).toHaveBeenCalledTimes(1));
+    expect(confirmMatchedBatch.mock.calls.map((c) => c[0])).toEqual([1, 3]);
+    setBatchList([BATCH]);
   });
 
-  test('it reports what got through, per report, rather than failing the pile', () => {
-    confirmMatchedMutate.mockImplementation((_id, opts) => {
-      opts.onSuccess({ confirmed: 4, failed: [{ rowId: 9, reason: 'no_account' }] });
+  test('it says what posted — lines and statement charges — and which report could not, in the server\'s words', async () => {
+    confirmMatchedBatch.mockReset();
+    confirmMatchedBatch.mockResolvedValueOnce({
+      attempted: 5, confirmed: 4, statementCharge: { status: 'posted', jeNo: 'JE-2609-1354' },
+      failed: [{ rowId: 9, reason: 'The selected payments add up to RM 3,500.00, but the statement line is RM 4,000.00' }],
     });
     draw();
 
     fireEvent.click(screen.getByText(/Confirm all 1 matched, across 1 report/));
-    expect(screen.getByText(/Posted 4\./)).toBeTruthy();
-    expect(screen.getByText(/1 could not be/)).toBeTruthy();
-    confirmMatchedMutate.mockReset();
+    expect(await screen.findByText(/Posted 4 lines and 1 statement charge\. 1 could not be:/)).toBeTruthy();
+    expect(screen.getByText(/but the statement line is RM 4,000\.00/).textContent).toContain('aug.csv');
+  });
+
+  test('a report that fails is named, and the others still post', async () => {
+    confirmMatchedBatch.mockReset();
+    refreshAfterPosting.mockReset();
+    confirmMatchedBatch
+      .mockRejectedValueOnce(new Error('Network error — please check your connection and try again.'))
+      .mockResolvedValueOnce({ attempted: 2, confirmed: 2, failed: [], statementCharge: null });
+    setBatchList([BATCH, { ...BATCH, id: 4, file_name: 'oct.csv', to_confirm_count: 2 }]);
+    draw();
+
+    fireEvent.click(screen.getByText(/Confirm all 3 matched, across 2 reports/));
+    expect(await screen.findByText(/Posted 2 lines\. 1 could not be:/)).toBeTruthy();
+    expect(screen.getByText(/Network error/).textContent).toContain('aug.csv');
+    expect(refreshAfterPosting).toHaveBeenCalledTimes(1);
+    setBatchList([BATCH]);
   });
 });
 

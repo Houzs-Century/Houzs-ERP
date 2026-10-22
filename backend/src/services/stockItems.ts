@@ -1,7 +1,7 @@
 import type { Env } from "../types";
 import { AutoCountClient } from "./autocount";
 import { writeLog } from "./logger";
-import { orderPoSupplierCode } from "./assrOrderPos";
+import { orderSupplierCode } from "./assrOrderPos";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 
 /**
@@ -13,8 +13,8 @@ import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
  * and rely on the refresh endpoint (or the nightly cron if we add one)
  * to keep it fresh.
  *
- * `resolveCreditorForCase` is the glue that writes `creditor_code` onto
- * a case row using the cached item's `main_supplier`.
+ * `resolveCreditorForCase` writes `creditor_code` onto a case from its
+ * PO / SO supplier (HC-0130); it no longer reads `main_supplier`.
  */
 
 export interface StockItemRow {
@@ -154,12 +154,10 @@ export async function getStockItemCached(
  * must not block case creation) and from `patchAssrCase` when the
  * item_code changes.
  *
- * Manual picks win: a case with creditor_source='manual' (staff chose
- * the supplier because AutoCount has no MainSupplier) is left alone —
- * the check runs before the AutoCount lookup so manual rows cost
- * nothing. HC-0130: the supplier on the item's PO comes first (source
- * 'po'), AutoCount the fallback. "Resolve now" passes force=true to hand
- * the link back to the auto path.
+ * Manual picks win: a case with creditor_source='manual' is left alone.
+ * HC-0130: PO supplier ('po'), else the SO item's bound supplier ('so'),
+ * else blank. "Resolve now" passes force=true to hand the link back to
+ * the auto path.
  */
 export async function resolveCreditorForCase(
   env: Env,
@@ -179,29 +177,18 @@ export async function resolveCreditorForCase(
     return existing.creditor_code;
   }
 
-  // HC-0130: the supplier on the item's own PO wins; AutoCount's
-  // MainSupplier is the fallback when no PO was raised.
-  let creditorCode: string | null = isSupabaseConfigured(env)
-    ? await orderPoSupplierCode(getSupabaseService(env), existing.doc_no, itemCode, Number(existing.company_id))
+  // HC-0130 (Farra's rule): the item's PO supplier, else the SO item's bound
+  // supplier, else blank for Service Team. AutoCount's MainSupplier is not used.
+  const fromOrder = isSupabaseConfigured(env)
+    ? await orderSupplierCode(getSupabaseService(env), existing.doc_no, itemCode, Number(existing.company_id))
     : null;
-  const source = creditorCode ? "po" : "auto";
-  if (!creditorCode) {
-    try {
-      const item = await getStockItemCached(env, itemCode);
-      creditorCode = item?.main_supplier ?? null;
-    } catch (e: any) {
-      console.warn(
-        `[resolveCreditorForCase] case=${caseId} item=${itemCode} lookup failed:`,
-        e?.message || e
-      );
-      return null;
-    }
-  }
+  const creditorCode: string | null = fromOrder?.code ?? null;
+  const source: string | null = fromOrder?.source ?? null;
 
   const same = (existing.creditor_code ?? null) === (creditorCode ?? null);
-  // Same value AND same owner (po/auto) → nothing to do. When force
+  // Same value AND same owner (po/so/blank) → nothing to do. When force
   // re-resolves a manual row to the same code, still fall through so
-  // ownership flips back to po/auto.
+  // ownership flips back to po/so.
   if (same && existing.creditor_source === source) return creditorCode;
 
   await env.DB.prepare(
@@ -213,18 +200,21 @@ export async function resolveCreditorForCase(
   if (!same) {
     // Activity trail — mirrors other auto-resolved transitions.
     await env.DB.prepare(
-      `INSERT INTO assr_activity (assr_id, action, from_value, to_value, note, created_by)
-       VALUES (?, 'creditor_resolved', ?, ?, ?, NULL)`
+      `INSERT INTO assr_activity (assr_id, action, from_value, to_value, note, user_id, category)
+       VALUES (?, 'creditor_resolved', ?, ?, ?, NULL, 'supplier')`
     )
       .bind(
         caseId,
         existing.creditor_code ?? null,
         creditorCode,
-        source === "po" ? `Auto-resolved from the PO of item ${itemCode}` : `Auto-resolved from item ${itemCode}`
+        source === "po" ? `Auto-resolved from the PO of item ${itemCode}`
+          : source === "so" ? `Auto-resolved from the SO supplier of item ${itemCode}`
+          : `No PO or SO supplier found for item ${itemCode}`
       )
       .run()
-      .catch(() => {
-        // assr_activity may not exist in older deployments; don't break.
+      .catch((e: any) => {
+        // A failed trail row must not undo the link; log it so it is seen.
+        console.warn(`[resolveCreditorForCase] case=${caseId} activity insert failed:`, e?.message || e);
       });
   }
 
@@ -241,8 +231,7 @@ export interface RefreshResult {
 /**
  * Bulk refresh: pull stock_items for every distinct item_code
  * referenced by non-archived cases (optionally constrained to a
- * caller-provided list), then recompute `assr_cases.creditor_code`
- * for any case whose item_code's main_supplier changed.
+ * caller-provided list). Cases are not touched (HC-0130).
  */
 export async function runStockItemsRefresh(
   env: Env,
@@ -280,26 +269,9 @@ export async function runStockItemsRefresh(
       }
     }
 
-    // Re-point creditor_code for every case whose item is now in the
-    // cache. Single UPDATE — cheap compared to N round-trips.
-    const update = await env.DB.prepare(
-      `UPDATE assr_cases
-          SET creditor_code = (
-            SELECT si.main_supplier FROM stock_items si
-             WHERE si.item_code = assr_cases.item_code
-          ),
-              updated_at = datetime('now')
-        WHERE item_code IS NOT NULL AND item_code != ''
-          AND archived_at IS NULL
-          AND COALESCE(creditor_source, '') NOT IN ('manual', 'po')
-          AND (
-            COALESCE(creditor_code, '') != COALESCE(
-              (SELECT si.main_supplier FROM stock_items si
-                WHERE si.item_code = assr_cases.item_code), ''
-            )
-          )`
-    ).run();
-    const casesUpdated = update.meta.changes ?? 0;
+    // HC-0130 (Farra's rule): a case's supplier comes from its PO / SO, never
+    // from AutoCount MainSupplier, so the refresh no longer writes to cases.
+    const casesUpdated = 0;
 
     const message = `Refreshed ${fetched}/${itemCodes.length} items (${upserted} upserted); updated ${casesUpdated} cases.`;
     await writeLog(env, {

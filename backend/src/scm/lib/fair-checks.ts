@@ -23,6 +23,12 @@
 //   (「对的上就不要显示 venue differs」). An order in REPORT_ELSEWHERE is not
 //   listed again under 要查 or 等加人 — its fair is the thing to fix first.
 //
+// A REPORT_ELSEWHERE row carries both booths on two lines — where the order
+// is now (`current`) and where the report puts it (`target`) — so the page
+// shows one row per order (owner 2026-10-21: 这个表很乱).
+//
+// An order a person PUT ASIDE (fair-put-aside.ts) is in none of them.
+//
 // All are read from the order, PMS and the chat as they are NOW. Nothing is
 // stored, so re-linking, correcting the venue or PMS adding the person clears
 // the row at once — there is no flag to forget to reset.
@@ -32,6 +38,7 @@ import { chunkIn, paginateAll, type PageResult } from './paginate-all';
 import {
   attendingNote,
   fairOptionLabel,
+  labelOrganizer,
   linkedFairOf,
   sameVenue,
   venueDiffersNote,
@@ -45,7 +52,7 @@ import {
   type FairPendingRow,
   type FairPendingScope,
 } from './fair-pending';
-import { fmtDayMonth } from '../shared/format';
+import { fmtDayMonth, fmtDayMonthRange } from '../shared/format';
 import { loadReportEvidence, reportVerdict, type ReportVerdict } from '../../routes/lib/sales-report-evidence';
 
 /** Linked orders are checked from the day Houzs opened its books in the ERP —
@@ -62,14 +69,25 @@ export const SCAN_RULE_FROM = '2026-10-19';
 export const REPORTS_FROM = '2026-08-01';
 
 export type FairCheck = 'VENUE_DIFFERS' | 'NEEDS_ATTENDING' | 'REPORT_ELSEWHERE';
-/** Where an evening report puts an order: the booth to move it to. */
-export type FairCheckTarget = { projectId: number; label: string; reportDate: string | null };
-export type FairCheckRow = FairPendingRow & { check: FairCheck; note: string; target?: FairCheckTarget | null };
+/** One booth on two lines, as Project Overview names a project (owner
+ *  2026-10-21): "[AKEMI] HOMELOVE" over "IOIGECC · 10/09 - 10/11". */
+export type FairCheckBooth = { projectId: number; title: string; detail: string };
+/** Where an evening report puts an order: the booth to move it to. `label` is
+ *  the one-line name the page showed before the two lines. */
+export type FairCheckTarget = FairCheckBooth & { label: string; reportDate: string | null };
+export type FairCheckRow = FairPendingRow & {
+  check: FairCheck;
+  note: string;
+  target?: FairCheckTarget | null;
+  /** REPORT_ELSEWHERE: the booth the order is under now; null with none. */
+  current?: FairCheckBooth | null;
+  /** REPORT_ELSEWHERE with no target: the booths whose reports both list it. */
+  candidates?: FairCheckBooth[];
+};
 
 type ScanJob = { so_doc_no: string; houzs_user_id: number | string | null; created_at: string | null };
-type CheckedOrder = FairPendingRow & { customer_so_no?: string | null; ref?: string | null };
-
-const CHECK_COLUMNS = `${FAIR_PENDING_COLUMNS}, customer_so_no, ref`;
+/** The order as read here; its Ref No. is what the evening reports list. */
+type CheckedOrder = FairPendingRow;
 
 /** "AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11)": one booth, as Fair Links
  *  names a choice. */
@@ -79,23 +97,36 @@ export function boothText(id: number, row: FairProjectRow | undefined): string {
   return `${(row?.brand ?? '').trim() || 'No brand'} — ${fairOptionLabel(fair)}`;
 }
 
+/** "[AKEMI] HOMELOVE" over "IOIGECC · 10/09 - 10/11". A booth with no brand
+ *  is named by its event; one PMS no longer has is "event #id". */
+export function boothLines(id: number, row: FairProjectRow | undefined): FairCheckBooth {
+  const fair = row ? linkedFairOf(row) : null;
+  if (!fair) return { projectId: id, title: `event #${id}`, detail: '' };
+  const brand = (row?.brand ?? '').trim();
+  const event = labelOrganizer(fair);
+  return { projectId: id, title: brand ? `[${brand}] ${event}` : event, detail: `${fair.venue} · ${fmtDayMonthRange(fair.startDate, fair.endDate)}` };
+}
+
 /** The REPORT_ELSEWHERE row for one order, or null when the reports do not
  *  put it elsewhere. */
 function reportRow(o: CheckedOrder, v: ReportVerdict, booths: ReadonlyMap<number, FairProjectRow>): FairCheckRow | null {
-  const now = o.project_id != null ? `the order is under ${boothText(Number(o.project_id), booths.get(Number(o.project_id)))}` : 'the order has no event';
+  const nowId = o.project_id != null ? Number(o.project_id) : null;
+  const now = nowId != null ? `the order is under ${boothText(nowId, booths.get(nowId))}` : 'the order has no event';
+  const current = nowId != null ? boothLines(nowId, booths.get(nowId)) : null;
   if (v.kind === 'elsewhere') {
     const id = v.sighting.projectId;
     const label = boothText(id, booths.get(id));
     const on = v.sighting.reportDate ? ` on ${fmtDayMonth(v.sighting.reportDate)}` : '';
     return {
-      ...o, check: 'REPORT_ELSEWHERE',
-      target: { projectId: id, label, reportDate: v.sighting.reportDate },
+      ...o, check: 'REPORT_ELSEWHERE', current,
+      target: { ...boothLines(id, booths.get(id)), label, reportDate: v.sighting.reportDate },
       note: `The evening report of ${label} lists it${on}; ${now}.`,
     };
   }
   if (v.kind === 'conflict') {
     return {
-      ...o, check: 'REPORT_ELSEWHERE', target: null,
+      ...o, check: 'REPORT_ELSEWHERE', current, target: null,
+      candidates: v.projectIds.map((id) => boothLines(id, booths.get(id))),
       note: `The evening reports of ${v.projectIds.map((id) => boothText(id, booths.get(id))).join(' and ')} both list it; ${now}. Pick the right one on the order.`,
     };
   }
@@ -115,10 +146,11 @@ export async function loadFairChecks(args: {
   const { sb, db, companySql, scope } = args;
   try {
     const read = (linkedOnes: boolean) => paginateAll<CheckedOrder>((from, to) => {
-      const q = sb.from('mfg_sales_orders').select(CHECK_COLUMNS);
+      const q = sb.from('mfg_sales_orders').select(FAIR_PENDING_COLUMNS);
       return scope(
         (linkedOnes ? q.not('project_id', 'is', null) : q.is('project_id', null))
           .neq('status', 'CANCELLED')
+          .is('fair_put_aside_at', null)
           .gte('so_date', FAIR_CHECKS_FROM)
           .order('so_date', { ascending: false }),
       ).range(from, to) as PromiseLike<PageResult<CheckedOrder>>;

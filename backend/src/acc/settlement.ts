@@ -38,6 +38,8 @@ import { companyCodeById } from '../scm/lib/doc-no';
 import type { PaymentCandidate } from './settlement-match';
 import { fmtSen } from '../scm/shared/format';
 import { checkReceiptCharge, postReceiptCharge, undoReceiptCharge, type ReceiptChargeInput } from './charge-account';
+import { chunkIn, paginateAll } from '../scm/lib/paginate-all';
+import { keyedAs, merchantNamesOf } from './merchant-names';
 
 export type AcquirerRow = {
   company_id: number;
@@ -56,6 +58,10 @@ export type AcquirerRow = {
   /** For a statement whose fee is stated once, in its own summary table. */
   summary_totals?: { rowLabel: string; fee?: string; net?: string } | null;
   is_active: boolean;
+  /** The OTHER names the sales team keys this merchant as on a payment —
+      Setup's "Also keyed on Sales Orders as" (owner 2026-10-21: Pinelabs =
+      AEON, Public = PBB). Absent before migration 20261021T1400. */
+  so_names?: string[] | null;
 };
 
 /** One acquirer as this company uses it: global config joined to the company's
@@ -67,7 +73,7 @@ export async function loadAcquirer(
 ): Promise<{ ok: true; acquirer: AcquirerRow } | { ok: false; reason: string }> {
   const { data, error } = await sb
     .from('acc_acquirers')
-    .select('company_id, code, display_name, transit_account_code, fee_account_code, bank_account_code, statement_format, has_unique_ref, fee_method, date_tolerance_days, column_map, total_net_label, summary_totals, is_active')
+    .select('company_id, code, display_name, transit_account_code, fee_account_code, bank_account_code, statement_format, has_unique_ref, fee_method, date_tolerance_days, column_map, total_net_label, summary_totals, is_active, so_names')
     .eq('company_id', companyId)
     .eq('code', code)
     .maybeSingle();
@@ -137,13 +143,23 @@ const shiftDays = (date: string, days: number): string =>
  * untagged candidate is a QUESTION, not an answer: the matcher only ever
  * auto-takes on a unique reference, everything else waits for a human, and
  * confirming stamps the tag on (see confirmSettlementRow).
+ *
+ * "This acquirer" is any of its NAMES (acc/merchant-names): the till keys
+ * AEON's swipes as Pinelabs and Public Bank's as Public, and those are the
+ * same merchant, not somebody else's stream (owner 2026-10-21: 48 of 77 AEON
+ * lines and 74 of 110 PBB lines carried their sale's own approval code and
+ * amount and still read "2 possible / you choose").
  */
-export function couldBeAcquirers(method: string, provider: string | null | undefined, acquirerName: string): boolean {
+export function couldBeAcquirers(method: string, provider: string | null | undefined, acquirerNames: string | readonly string[]): boolean {
   const p = provider == null ? '' : String(provider).trim();
-  if (p !== '' && p !== acquirerName) return false;
+  const names = typeof acquirerNames === 'string' ? [acquirerNames] : acquirerNames;
+  if (p !== '' && !keyedAs(p, names)) return false;
   if (method === 'merchant' || method === 'installment') return true;
   return method === 'imported';
 }
+
+const PAYMENT_COLUMNS_SO = 'id, so_doc_no, paid_at, amount_sen, approval_code, method, merchant_provider, collected_by, created_by';
+const PAYMENT_COLUMNS_SI = 'id, sales_invoice_id, paid_at, amount_sen, approval_code, method, merchant_provider, collected_by, created_by';
 
 /**
  * Every card payment this company recorded that could belong to this acquirer
@@ -157,7 +173,7 @@ export function couldBeAcquirers(method: string, provider: string | null | undef
 export async function loadPaymentCandidates(
   sb: any,
   companyId: number,
-  acquirer: Pick<AcquirerRow, 'display_name' | 'date_tolerance_days'>,
+  acquirer: Pick<AcquirerRow, 'display_name' | 'date_tolerance_days'> & { so_names?: readonly string[] | null },
   from: string,
   to: string,
   /**
@@ -181,7 +197,7 @@ export async function loadPaymentCandidates(
 ): Promise<{ ok: true; payments: PaymentCandidate[] } | { ok: false; reason: string }> {
   const lo = shiftDays(from, -Math.max(0, acquirer.date_tolerance_days));
   const hi = `${shiftDays(to, Math.max(0, acquirer.date_tolerance_days))}T23:59:59.999`;
-  const name = acquirer.display_name.trim();
+  const names = merchantNamesOf(acquirer);
   /* Deduplicated and blank-free: a statement of 300 lines shares a handful of
      references, and an empty one would ask the database for every payment that
      has no approval code at all. */
@@ -189,54 +205,46 @@ export async function loadPaymentCandidates(
 
   /* The window is read WHOLE and filtered here, not by `.eq('merchant_provider',
      name)` in the query — that filter was how a NULL-tagged payment could never
-     be found, however exactly its amount and date agreed with the statement. */
-  const { data: soAll, error: soErr } = await sb
-    .from('mfg_sales_order_payments')
-    .select('id, so_doc_no, paid_at, amount_sen, approval_code, method, merchant_provider, collected_by, created_by')
-    .eq('company_id', companyId)
-    .gte('paid_at', lo)
-    .lte('paid_at', hi);
-  if (soErr) return { ok: false, reason: `SO payments: ${soErr.message}` };
+     be found, however exactly its amount and date agreed with the statement.
+
+     WHOLE MEANS PAGED. PostgREST hands back at most 1000 rows and says nothing
+     about the rest; Houzs keys ~1,700 Sales Order payments in the watch list's
+     three months, so a single read stopped in late September and every October
+     card payment was simply absent (owner 2026-10-21: 为什么看没有10月的
+     payment). Every read below pages (paginateAll) or chunks (chunkIn). */
+  const soAll = await paginateAll<Record<string, any>>((f, t) => sb
+    .from('mfg_sales_order_payments').select(PAYMENT_COLUMNS_SO)
+    .eq('company_id', companyId).gte('paid_at', lo).lte('paid_at', hi)
+    .order('id').range(f, t));
+  if (soAll.error) return { ok: false, reason: `SO payments: ${soAll.error.message}` };
 
   /* The same payments again, by reference, with no date bound. A read that
      FAILS is a failure, not "no references matched" — a silently empty result
      here would put the module back where it started, with the payment present
      and the screen saying it is not. */
-  let soByRef: Array<Record<string, any>> = [];
-  if (wanted.length > 0) {
-    const { data, error } = await sb
-      .from('mfg_sales_order_payments')
-      .select('id, so_doc_no, paid_at, amount_sen, approval_code, method, merchant_provider, collected_by, created_by')
-      .eq('company_id', companyId)
-      .in('approval_code', wanted);
-    if (error) return { ok: false, reason: `SO payments by reference: ${error.message}` };
-    soByRef = (data ?? []) as Array<Record<string, any>>;
-  }
+  const soByRef = wanted.length === 0 ? { data: [] as Array<Record<string, any>>, error: null } : await chunkIn<Record<string, any>>(wanted, (batch, f, t) => sb
+    .from('mfg_sales_order_payments').select(PAYMENT_COLUMNS_SO)
+    .eq('company_id', companyId).in('approval_code', batch)
+    .order('id').range(f, t));
+  if (soByRef.error) return { ok: false, reason: `SO payments by reference: ${soByRef.error.message}` };
 
-  const soRaw = dedupeById([...((soAll ?? []) as Array<Record<string, any>>), ...soByRef])
-    .filter((r) => couldBeAcquirers(String(r.method), r.merchant_provider as string | null, name));
+  const soRaw = dedupeById([...(soAll.data ?? []), ...soByRef.data])
+    .filter((r) => couldBeAcquirers(String(r.method), r.merchant_provider as string | null, names));
 
-  const { data: siAll, error: siErr } = await sb
-    .from('sales_invoice_payments')
-    .select('id, sales_invoice_id, paid_at, amount_sen, approval_code, method, merchant_provider, collected_by, created_by')
-    .eq('company_id', companyId)
-    .gte('paid_at', lo)
-    .lte('paid_at', hi);
-  if (siErr) return { ok: false, reason: `SI payments: ${siErr.message}` };
+  const siAll = await paginateAll<Record<string, any>>((f, t) => sb
+    .from('sales_invoice_payments').select(PAYMENT_COLUMNS_SI)
+    .eq('company_id', companyId).gte('paid_at', lo).lte('paid_at', hi)
+    .order('id').range(f, t));
+  if (siAll.error) return { ok: false, reason: `SI payments: ${siAll.error.message}` };
 
-  let siByRef: Array<Record<string, any>> = [];
-  if (wanted.length > 0) {
-    const { data, error } = await sb
-      .from('sales_invoice_payments')
-      .select('id, sales_invoice_id, paid_at, amount_sen, approval_code, method, merchant_provider, collected_by, created_by')
-      .eq('company_id', companyId)
-      .in('approval_code', wanted);
-    if (error) return { ok: false, reason: `SI payments by reference: ${error.message}` };
-    siByRef = (data ?? []) as Array<Record<string, any>>;
-  }
+  const siByRef = wanted.length === 0 ? { data: [] as Array<Record<string, any>>, error: null } : await chunkIn<Record<string, any>>(wanted, (batch, f, t) => sb
+    .from('sales_invoice_payments').select(PAYMENT_COLUMNS_SI)
+    .eq('company_id', companyId).in('approval_code', batch)
+    .order('id').range(f, t));
+  if (siByRef.error) return { ok: false, reason: `SI payments by reference: ${siByRef.error.message}` };
 
-  const siRaw = dedupeById([...((siAll ?? []) as Array<Record<string, any>>), ...siByRef])
-    .filter((r) => couldBeAcquirers(String(r.method), r.merchant_provider as string | null, name));
+  const siRaw = dedupeById([...(siAll.data ?? []), ...siByRef.data])
+    .filter((r) => couldBeAcquirers(String(r.method), r.merchant_provider as string | null, names));
 
   /* WHOSE sale it was. The operator is reconciling money against documents,
      and a document number alone does not tell him which customer he is looking
@@ -252,21 +260,25 @@ export async function loadPaymentCandidates(
      status rides on the same read as the customer's name. */
   const cancelledDocs = new Set<string>();
   if (soDocs.length > 0) {
-    const { data, error } = await sb.from('mfg_sales_orders')
-      .select('doc_no, debtor_name, status').eq('company_id', companyId).in('doc_no', soDocs); // debtor_name — docs/bugs/0655
+    /* Chunked: a busy window names hundreds of orders, and one IN list of them
+       outgrows the request line before it outgrows the row cap. */
+    const { data, error } = await chunkIn<{ doc_no: string; debtor_name: string | null; status?: string | null }>(soDocs, (batch, f, t) => sb
+      .from('mfg_sales_orders').select('doc_no, debtor_name, status') // debtor_name — docs/bugs/0655
+      .eq('company_id', companyId).in('doc_no', batch).order('doc_no').range(f, t));
     /* Failed is not "nameless": a blank customer column across the whole
        screen reads as data, so the read fails like its siblings above. */
     if (error) return { ok: false, reason: `SO customers: ${error.message}` };
-    for (const r of (data ?? []) as Array<{ doc_no: string; debtor_name: string | null; status?: string | null }>) {
+    for (const r of data) {
       if (r.debtor_name) customerOf.set(`SO:${r.doc_no}`, r.debtor_name);
       if (String(r.status ?? '').toUpperCase() === 'CANCELLED') cancelledDocs.add(String(r.doc_no));
     }
   }
   if (siIds.length > 0) {
-    const { data, error } = await sb.from('sales_invoices')
-      .select('id, invoice_number, debtor_name').eq('company_id', companyId).in('id', siIds);
+    const { data, error } = await chunkIn<{ id: string; invoice_number: string | null; debtor_name: string | null }>(siIds, (batch, f, t) => sb
+      .from('sales_invoices').select('id, invoice_number, debtor_name')
+      .eq('company_id', companyId).in('id', batch).order('id').range(f, t));
     if (error) return { ok: false, reason: `SI customers: ${error.message}` };
-    for (const r of (data ?? []) as Array<{ id: string; invoice_number: string | null; debtor_name: string | null }>) {
+    for (const r of data) {
       if (r.debtor_name) customerOf.set(`SI:${r.id}`, r.debtor_name);
       if (r.invoice_number) customerOf.set(`SI#:${r.id}`, r.invoice_number);
     }
@@ -410,24 +422,21 @@ export async function findPaymentsForRow(
   const settled = await loadSettledKeys(sb, companyId);
   if (!settled.ok) return { ok: false, status: 'load_failed', reason: settled.reason };
 
-  const { data: soRaw, error: soErr } = await sb
-    .from('mfg_sales_order_payments')
-    .select('id, so_doc_no, paid_at, amount_sen, approval_code, method, merchant_provider, collected_by, created_by')
-    .eq('company_id', companyId)
-    .in('method', [...CARD_METHODS])
-    .order('paid_at', { ascending: false })
-    .limit(3000);
-  if (soErr) return { ok: false, status: 'load_failed', reason: `SO payments: ${soErr.message}` };
-  const { data: siRaw, error: siErr } = await sb
-    .from('sales_invoice_payments')
-    .select('id, sales_invoice_id, paid_at, amount_sen, approval_code, method, merchant_provider, collected_by, created_by')
-    .eq('company_id', companyId)
-    .in('method', [...CARD_METHODS])
-    .order('paid_at', { ascending: false })
-    .limit(3000);
-  if (siErr) return { ok: false, status: 'load_failed', reason: `SI payments: ${siErr.message}` };
-  const soRows = ((soRaw ?? []) as CardPaymentRow[]).filter((r) => !settled.keys.has(`SOPAY:${String(r.id)}`));
-  const siRows = ((siRaw ?? []) as CardPaymentRow[]).filter((r) => !settled.keys.has(`SIPAY:${String(r.id)}`));
+  /* EVERY card payment, paged: `.limit(3000)` asked for more than PostgREST's
+     1000-row ceiling, which answers with the newest 1000 and no error — so an
+     older sale could not be found by any search. */
+  const soRes = await paginateAll<CardPaymentRow>((f, t) => sb
+    .from('mfg_sales_order_payments').select(PAYMENT_COLUMNS_SO)
+    .eq('company_id', companyId).in('method', [...CARD_METHODS])
+    .order('paid_at', { ascending: false }).order('id').range(f, t));
+  if (soRes.error) return { ok: false, status: 'load_failed', reason: `SO payments: ${soRes.error.message}` };
+  const siRes = await paginateAll<CardPaymentRow>((f, t) => sb
+    .from('sales_invoice_payments').select(PAYMENT_COLUMNS_SI)
+    .eq('company_id', companyId).in('method', [...CARD_METHODS])
+    .order('paid_at', { ascending: false }).order('id').range(f, t));
+  if (siRes.error) return { ok: false, status: 'load_failed', reason: `SI payments: ${siRes.error.message}` };
+  const soRows = (soRes.data ?? []).filter((r) => !settled.keys.has(`SOPAY:${String(r.id)}`));
+  const siRows = (siRes.data ?? []).filter((r) => !settled.keys.has(`SIPAY:${String(r.id)}`));
 
   /* The customer, off the document — read in chunks, because the name is one
      of the things a person searches by. A read that fails is a refusal. */
@@ -438,22 +447,26 @@ export async function findPaymentsForRow(
   const orderOfSi = new Map<string, string>();
   const refsOf = new Map<string, string[]>();
   const siIds = [...new Set(siRows.map((r) => String(r.sales_invoice_id ?? '')).filter(Boolean))];
-  for (let i = 0; i < siIds.length; i += 200) {
-    const { data, error } = await sb.from('sales_invoices').select('id, invoice_number, debtor_name, so_doc_no').eq('company_id', companyId).in('id', siIds.slice(i, i + 200));
-    if (error) return { ok: false, status: 'load_failed', reason: `SI customers: ${error.message}` };
-    for (const r of (data ?? []) as Array<{ id: string; invoice_number: string | null; debtor_name: string | null; so_doc_no: string | null }>) {
-      if (r.debtor_name) nameOf.set(`SI:${r.id}`, r.debtor_name);
-      if (r.invoice_number) invoiceNoOf.set(r.id, r.invoice_number);
-      if (r.so_doc_no) orderOfSi.set(r.id, r.so_doc_no);
-    }
+  /* chunkIn sizes each IN list by its bytes (200 uuids is ~7.8 KB of URL) and
+     pages each chunk. */
+  const siDocs = await chunkIn<{ id: string; invoice_number: string | null; debtor_name: string | null; so_doc_no: string | null }>(siIds, (batch, f, t) => sb
+    .from('sales_invoices').select('id, invoice_number, debtor_name, so_doc_no')
+    .eq('company_id', companyId).in('id', batch).order('id').range(f, t));
+  if (siDocs.error) return { ok: false, status: 'load_failed', reason: `SI customers: ${siDocs.error.message}` };
+  for (const r of siDocs.data) {
+    if (r.debtor_name) nameOf.set(`SI:${r.id}`, r.debtor_name);
+    if (r.invoice_number) invoiceNoOf.set(r.id, r.invoice_number);
+    if (r.so_doc_no) orderOfSi.set(r.id, r.so_doc_no);
   }
   const soPayDocs = new Set(soRows.map((r) => String(r.so_doc_no ?? '')).filter(Boolean));
   const soDocs = [...new Set([...soPayDocs, ...orderOfSi.values()])];
   const cancelledDocs = new Set<string>();
-  for (let i = 0; i < soDocs.length; i += 200) {
-    const { data, error } = await sb.from('mfg_sales_orders').select('doc_no, debtor_name, status, ref, customer_so_no').eq('company_id', companyId).in('doc_no', soDocs.slice(i, i + 200));
+  {
+    const { data, error } = await chunkIn<{ doc_no: string; debtor_name: string | null; status?: string | null; ref?: string | null; customer_so_no?: string | null }>(soDocs, (batch, f, t) => sb
+      .from('mfg_sales_orders').select('doc_no, debtor_name, status, ref, customer_so_no')
+      .eq('company_id', companyId).in('doc_no', batch).order('doc_no').range(f, t));
     if (error) return { ok: false, status: 'load_failed', reason: `SO customers: ${error.message}` };
-    for (const r of (data ?? []) as Array<{ doc_no: string; debtor_name: string | null; status?: string | null; ref?: string | null; customer_so_no?: string | null }>) {
+    for (const r of data) {
       refsOf.set(r.doc_no, [r.ref, r.customer_so_no].filter((v): v is string => typeof v === 'string' && v !== ''));
       if (!soPayDocs.has(r.doc_no)) continue;
       if (r.debtor_name) nameOf.set(`SO:${r.doc_no}`, r.debtor_name);
@@ -530,15 +543,14 @@ export async function linesAlreadyOnFile(
   const refs = [...new Set(parsed.rows.map((r) => r.ref).filter((r): r is string => typeof r === 'string' && r.trim() !== ''))];
   if (refs.length === 0) return untouched;
 
-  const { data: onFileRaw, error } = await sb.from('acc_settlement_rows')
-    .select('batch_id, line_no, txn_date, ref, gross_sen')
-    .eq('company_id', companyId)
-    .eq('acquirer_code', acquirer.code)
-    .in('ref', refs);
+  const { data: onFileRaw, error } = await chunkIn<{ batch_id: number; line_no: number; txn_date: string; ref: string | null; gross_sen: number }>(refs, (batch, f, t) => sb
+    .from('acc_settlement_rows').select('batch_id, line_no, txn_date, ref, gross_sen')
+    .eq('company_id', companyId).eq('acquirer_code', acquirer.code).in('ref', batch)
+    .order('id').range(f, t));
   if (error) return { ok: false, reason: `earlier lines: ${error.message}` };
   const keyOf = (day: string, ref: string, grossSen: number) => `${day}|${ref.trim()}|${grossSen}`;
   const onFile = new Map<string, { batchId: number; lineNo: number }>();
-  for (const r of (onFileRaw ?? []) as Array<{ batch_id: number; line_no: number; txn_date: string; ref: string | null; gross_sen: number }>) {
+  for (const r of onFileRaw) {
     const key = keyOf(String(r.txn_date).slice(0, 10), String(r.ref ?? ''), Number(r.gross_sen));
     if (!onFile.has(key)) onFile.set(key, { batchId: Number(r.batch_id), lineNo: Number(r.line_no) });
   }
@@ -584,13 +596,16 @@ export async function loadSettledKeys(
   sb: any,
   companyId: number,
 ): Promise<{ ok: true; keys: Set<string> } | { ok: false; reason: string }> {
-  const { data, error } = await sb
-    .from('acc_settlement_matches')
-    .select('payment_source, payment_id')
-    .eq('company_id', companyId);
+  /* PAGED: one link per settled payment, so this grows with every line ever
+     confirmed. Past PostgREST's 1000-row ceiling a single read would drop the
+     rest without an error, and the dropped payments — already cleared — would
+     come back as candidates for a second statement. */
+  const { data, error } = await paginateAll<{ payment_source: string; payment_id: string }>((f, t) => sb
+    .from('acc_settlement_matches').select('payment_source, payment_id')
+    .eq('company_id', companyId).order('id').range(f, t));
   if (error) return { ok: false, reason: error.message };
   const keys = new Set<string>();
-  for (const r of (data ?? []) as Array<{ payment_source: string; payment_id: string }>) {
+  for (const r of data ?? []) {
     keys.add(`${r.payment_source}:${r.payment_id}`);
   }
   return { ok: true, keys };
@@ -854,8 +869,13 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
      account. Done BEFORE anything posts, so a failure here stops a clean
      confirm instead of unwinding one; done twice it writes nothing. */
   const tag = acq.acquirer.display_name;
+  /* Keyed under one of this merchant's OWN names — its display name, or a name
+     the sales team uses for it (Pinelabs is AEON's terminal, Public is PBB) —
+     is not the wrong bank: the payment keeps what the till typed, and its
+     order's history gets no "corrected" line for a correction nobody needed. */
+  const ownNames = merchantNamesOf(acq.acquirer);
   for (const p of chosen) {
-    if (p.provider === tag) continue;
+    if (keyedAs(p.provider, ownNames)) continue;
     const table = p.source === 'SOPAY' ? 'mfg_sales_order_payments' : 'sales_invoice_payments';
     const sheetWasBank = p.sheet == null || p.sheet.trim() === '' || p.sheet === deriveAccountSheet(p.method, p.provider, null);
     const patch: Record<string, unknown> = { merchant_provider: tag };

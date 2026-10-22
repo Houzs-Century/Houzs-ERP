@@ -846,3 +846,54 @@ describe('our PO number with the location inside it (DGSN26002263)', () => {
     expect(printedPoWhy('HC-SRW-PO-2610-091', [{ poNumber: 'HC-PO-2610-091', status: 'RECEIVED' }], 'sup-1')).toBe('PO HC-PO-2610-091 is marked Received');
   });
 });
+
+// HC-0137 (2026-10-21, Hana): NICE FUTURE DO 202610-051, nine rows over seven of
+// our POs in KL, PG and SRW, each row printing its PO. Four rows were dropped as
+// "not on the PO": the single-line POs 2609-136 / 2609-300 needed MATT or
+// MATTRESS printed, and PO 2610-240 holds FLEXICARE-C and FLEXICARE-S, which
+// shared every model word. POs as read from production on 2026-10-21.
+describe('a delivery order across seven POs and three warehouses (NICE FUTURE 202610-051)', () => {
+  const nf = (poItemId: string, poNumber: string, itemCode: string, materialName: string, remaining: number, locationCode: string): OpenPoLine =>
+    line({ poItemId, poNumber, supplierId: 'nf', itemCode, materialName, remaining, locationCode, itemGroup: 'MATTRESS' });
+  const open: OpenPoLine[] = [
+    nf('pi-136', 'HC-PO-2609-136', 'EG-ECOZONE-C MATT (K)', 'ERGOTEX ECOZONE-C MATTRESS (183x190x30CM)', 1, 'KL WAREHOUSE'),
+    nf('pi-300', 'HC-PO-2609-300', 'EG-CLOUDREST MATT (SK)', 'ERGOTEX CLOUDREST MATTRESS (200x200x40CM)', 1, 'KL WAREHOUSE'),
+    nf('pi-056', 'HC-PO-2610-056', 'EG-ERGOLITE MATT (Q)', 'ERGOTEX ERGOLITE MATTRESS (152x190x30CM)', 3, 'KL WAREHOUSE'),
+    nf('pi-093', 'HC-PO-2610-093', 'EG-ERGOLITE MATT (SS)', 'ERGOTEX ERGOLITE MATTRESS (107x190x30CM)', 4, 'PG WAREHOUSE'),
+    nf('pi-167s', 'HC-PO-2610-167', 'EG-ERGOLITE MATT (S)', 'ERGOTEX ERGOLITE MATTRESS (91x190x30CM)', 3, 'KL WAREHOUSE'),
+    nf('pi-167f', 'HC-PO-2610-167', 'EG-FLEXICARE-S MATT (Q)', 'ERGOTEX FLEXICARE-S MATTRESS (152x190x30CM)', 1, 'KL WAREHOUSE'),
+    nf('pi-240c', 'HC-PO-2610-240', 'EG-FLEXICARE-C MATT (Q)', 'ERGOTEX FLEXICARE-C MATTRESS (152x190x30CM)', 1, 'SRW WAREHOUSE'),
+    nf('pi-240s', 'HC-PO-2610-240', 'EG-FLEXICARE-S MATT (Q)', 'ERGOTEX FLEXICARE-S MATTRESS (152x190x30CM)', 1, 'SRW WAREHOUSE'),
+    nf('pi-241', 'HC-PO-2610-241', 'EG-ERGOLITE MATT (Q)', 'ERGOTEX ERGOLITE MATTRESS (152x190x30CM)', 2, 'PG WAREHOUSE'),
+  ];
+  const row = (description: string, qty: number, poNo: string): ScannedGrnLine => scan({ description, qty, poNo });
+  const do051 = [
+    row('ERGOTEX ECOZONE-C - W183 X L190 X H30CM', 1, 'HC-PO-2609-136'),
+    row('ERGOTEX CLOUDREST MATT - W200 X L200 X H40.5CM', 1, 'HC-PO-2609-300'),
+    row('ERGOTEX ERGOLITE MATTRESS - W152 X L190 X H30.5CM', 3, 'HC-PO-2610-056'),
+    row('ERGOTEX ERGOLITE MATTRESS - W107 X L190 X H30.5CM', 4, 'HC-PO-2610-093'),
+    row('ERGOTEX ERGOLITE MATTRESS - W91 X L190 X H30.5CM', 3, 'HC-PO-2610-167'),
+    row('ERGOTEX FLEXICARE-S MATT - W152 X L190 X H30CM', 1, 'HC-PO-2610-167'),
+    row('ERGOTEX FLEXICARE-C MATT - W152 X L190 X H30CM', 1, 'HC-PO-2610-240'),
+    row('ERGOTEX FLEXICARE-S MATT - W152 X L190 X H30CM', 1, 'HC-PO-2610-240'),
+    row('ERGOTEX ERGOLITE MATTRESS - W152 X L190 X H30.5CM', 2, 'HC-PO-2610-241'),
+  ];
+
+  test('every one of the nine rows lands on its own PO line', () => {
+    const res = matchGrnScanToPoLines(null, do051, open, [], 'nf');
+    expect(res.unmatched).toEqual([]);
+    expect(res.picks).toEqual([
+      { poItemId: 'pi-136', qty: 1 }, { poItemId: 'pi-300', qty: 1 }, { poItemId: 'pi-056', qty: 3 },
+      { poItemId: 'pi-093', qty: 4 }, { poItemId: 'pi-167s', qty: 3 }, { poItemId: 'pi-167f', qty: 1 },
+      { poItemId: 'pi-240c', qty: 1 }, { poItemId: 'pi-240s', qty: 1 }, { poItemId: 'pi-241', qty: 2 },
+    ]);
+  });
+
+  test('FLEXICARE-C is never taken for FLEXICARE-S', () => {
+    expect(nameMatchItem('ERGOTEX FLEXICARE-C MATT - W152 X L190 X H30CM', [open[5]])).toBeNull();
+  });
+
+  test('a gift naming the brand alone still matches nothing', () => {
+    expect(nameMatchItem('ERGOTEX PILLOW', [open[0]])).toBeNull();
+  });
+});

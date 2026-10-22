@@ -145,6 +145,7 @@ import { type PhasePhoto, PhasePhotosSection, PhotoGroup } from "./projects/phas
 import { FinanceAttachmentsSection, SnapshotKpi, SnapshotRow } from "./projects/financeLedgerParts";
 import { EventPnlTable } from "./projects/EventPnlTable";
 import { ProjectOverviewPage } from "./projects/ProjectOverviewPage";
+import { projectBackTo, rememberBackTo } from "./projects/projectOverviewView";
 
 interface ProjectDetail {
   project: ProjectRow & {
@@ -733,6 +734,8 @@ function ProjectsListView() {
     try {
       sessionStorage.setItem("projects:listScroll", String(document.querySelector("main")?.scrollTop ?? 0));
     } catch {}
+    /* And where this project's Back goes: this list, its filters and page with it. */
+    rememberBackTo(id, `${window.location.pathname}${window.location.search}`);
     navigate(`/projects/${id}`);
   };
   const hasRows = !!list.data;
@@ -1999,7 +2002,7 @@ function ProjectDetailContent({
   return (
     <DetailLayout
       breadcrumbs={[
-        { label: "Projects", to: "/projects" },
+        { label: "Projects", to: projectBackTo(id) },
         { label: detailName || "Loading…" },
       ]}
       eyebrow="Project"
@@ -2008,7 +2011,10 @@ function ProjectDetailContent({
       // Owner 2026-07-29: keep the event title (+ actions) pinned while
       // scrolling the project detail — same sticky chrome ASSR detail uses.
       stickyTitle
-      backTo="/projects"
+      /* Back to the Projects page this project was opened from — its period,
+         sort and filters (owner 2026-10-21: 我点9月的project，按 back 后又跳回
+         10月，然后会跑回最上面); the bare list when it was opened some other way. */
+      backTo={projectBackTo(id)}
       loading={detail.loading && !p}
       error={detail.error}
       actions={
@@ -5966,11 +5972,11 @@ function PhaseCrewEditor({
     save({ ...pc, lorryCrew: lorries.map((l, i) => (i === li ? { ...l, ...p } : l)) });
   const addLorry = () => save({ ...pc, lorryCrew: [...lorries, { plate: "", drivers: [], helpers: [] }] });
   const removeLorry = (li: number) => save({ ...pc, lorryCrew: lorries.filter((_, i) => i !== li) });
-  // Owner 2026-07-22: the Driver 2 / Helper 2 rows stay HIDDEN until needed —
-  // most lorries run one driver + one helper, so the empty second slots were
-  // noise. A filled slot always shows; an empty one shows only after its
-  // "+ Add …" button (styled like "+ Add lorry") is clicked. UI-only state:
-  // collapsing back happens by clearing the name (row hides on next open).
+  // Owner 2026-07-22 / 2026-10-21: the Driver 2 row stays HIDDEN until needed
+  // (most lorries run one driver), revealed by its "+ Add driver" button. BOTH
+  // helper slots always show — setup/dismantle lorries usually ride two helpers,
+  // so Helper 1 and Helper 2 are directly fillable (leave blank if unused).
+  // UI-only state; a hidden Driver 2 re-collapses by clearing its name.
   const [openSlot2, setOpenSlot2] = useState<Set<string>>(new Set());
   const showSlot2 = (li: number, kind: "d" | "h") => setOpenSlot2((s) => new Set(s).add(`${li}${kind}`));
   return (
@@ -6009,27 +6015,18 @@ function PhaseCrewEditor({
               <CrewSlotRow label="Driver 2" color="text-synced" options={drivers} slot={lorry.drivers[1]} onChange={(s) => setLorrySlot(li, "drivers", 1, s)} readOnly={readOnly} />
             )}
             <CrewSlotRow label="Helper 1" color="text-warning-text" options={helpers} slot={lorry.helpers[0]} onChange={(s) => setLorrySlot(li, "helpers", 0, s)} readOnly={readOnly} />
-            {(!!lorry.helpers[1]?.name || openSlot2.has(`${li}h`)) && (
-              <CrewSlotRow label="Helper 2" color="text-warning-text" options={helpers} slot={lorry.helpers[1]} onChange={(s) => setLorrySlot(li, "helpers", 1, s)} readOnly={readOnly} />
-            )}
-            {!readOnly && (!(lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) || !(lorry.helpers[1]?.name || openSlot2.has(`${li}h`))) && (
+            {/* Owner 2026-10-21: both helper slots show directly — setup/dismantle
+                lorries usually ride two helpers, so Helper 2 is always fillable
+                (leave blank if unused), no "+ Add" step. */}
+            <CrewSlotRow label="Helper 2" color="text-warning-text" options={helpers} slot={lorry.helpers[1]} onChange={(s) => setLorrySlot(li, "helpers", 1, s)} readOnly={readOnly} />
+            {!readOnly && !(lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) && (
               <div className="flex gap-1.5 pt-0.5">
-                {!(lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) && (
-                  <button
-                    onClick={() => showSlot2(li, "d")}
-                    className="rounded-md border border-dashed border-border bg-surface px-2.5 py-1 text-[10.5px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent"
-                  >
-                    + Add driver
-                  </button>
-                )}
-                {!(lorry.helpers[1]?.name || openSlot2.has(`${li}h`)) && (
-                  <button
-                    onClick={() => showSlot2(li, "h")}
-                    className="rounded-md border border-dashed border-border bg-surface px-2.5 py-1 text-[10.5px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent"
-                  >
-                    + Add helper
-                  </button>
-                )}
+                <button
+                  onClick={() => showSlot2(li, "d")}
+                  className="rounded-md border border-dashed border-border bg-surface px-2.5 py-1 text-[10.5px] font-semibold text-ink-secondary hover:border-accent/40 hover:text-accent"
+                >
+                  + Add driver
+                </button>
               </div>
             )}
           </div>
