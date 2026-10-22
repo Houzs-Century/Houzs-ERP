@@ -22,6 +22,7 @@ import type { PnlColumn } from "../services/eventPnl";
 import { LEDGER_COST_CATEGORIES } from "../services/projects";
 import { collectReport, indexOrdersByToken, matchBill, type NoteRow, type OrderRow } from "./lib/sales-report-bills";
 import { financeHiddenForUser } from "../services/pmsAccess";
+import { eager } from "../scm/lib/concurrency";
 
 export const projectOverview = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -45,6 +46,21 @@ projectOverview.get("/", async (c) => {
   const COGS = "('cogs','cogs_matt_sofa','cogs_bedframe','cogs_accessories')";
   const sum = (where: string) =>
     `COALESCE((SELECT SUM(l.amount) FROM project_finance_lines l WHERE l.project_id = p.id AND l.archived_at IS NULL AND ${where}), 0)`;
+  /* The chat notes and the payment ledger are keyed on nothing but the company,
+     so they go out beside the projects read; the two order reads keyed on the
+     project ids go out together once it lands (prod 1.5 s, 8 stages in series).
+     Each is awaited at its own site, so the first failure surfaced is the
+     serial one. */
+  const recent = new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10);
+  // company-scope: chat notes of this company's projects (activeCompanySql on p.company_id).
+  const noteRowsProm = eager(c.env.DB.prepare(
+    `SELECT a.id, a.project_id, a.note, a.created_at, u.email AS author_email, ps.name AS author_position
+       FROM project_activity a JOIN projects p ON p.id = a.project_id
+       LEFT JOIN users u ON u.id = a.user_id LEFT JOIN positions ps ON ps.id = u.position_id
+      WHERE a.action = 'note' AND a.archived_at IS NULL AND substr(COALESCE(p.start_date, p.end_date), 1, 10) >= ?${activeCompanySql(c, "p.company_id")}`,
+  ).bind(recent).all<NoteRow & { project_id: number }>());
+  const paysProm = eager(paginateAll<{ so_doc_no: string; amount_sen: number | null; is_deposit: boolean | null }>((f, t) =>
+    scopeToCompany(c.get("supabase").from("mfg_sales_order_payments").select("so_doc_no, amount_sen, is_deposit"), c).order("id").range(f, t)));
   // company-scope: finance lines are read per project of the active company (activeCompanySql on p.company_id at the end of this statement).
   const rows = await c.env.DB.prepare(
     `SELECT p.id, p.code, p.name, p.brand, p.organizer, p.venue, p.state, p.stage, p.start_date, p.end_date,
@@ -69,10 +85,15 @@ projectOverview.get("/", async (c) => {
   ).all<ProjectRow>();
   const projects = rows.results;
 
-  const sos = await chunkIn<{ doc_no: string; project_id: number; local_total_sen: number | null; total_cost_sen: number | null }>(projects.map((p) => String(p.id)), (b, f, t) =>
+  const sosProm = eager(chunkIn<{ doc_no: string; project_id: number; local_total_sen: number | null; total_cost_sen: number | null }>(projects.map((p) => String(p.id)), (b, f, t) =>
     scopeToCompany(c.get("supabase").from("mfg_sales_orders")
       .select("doc_no, project_id, local_total_sen, total_cost_sen").in("project_id", b)
-      .not("status", "in", '("DRAFT","CANCELLED")'), c).order("doc_no").range(f, t));
+      .not("status", "in", '("DRAFT","CANCELLED")'), c).order("doc_no").range(f, t)));
+  const collOrdersProm = eager(chunkIn<Record<string, unknown> & { doc_no: string; project_id: number }>(projects.map((p) => String(p.id)), (b, f, t) =>
+    scopeToCompany(c.get("supabase").from("mfg_sales_orders")
+      .select("doc_no, project_id, local_total_sen, total_revenue_sen, deposit_sen").in("project_id", b)
+      .neq("status", "CANCELLED"), c).order("doc_no").range(f, t)));
+  const sos = (await sosProm)();
   if (sos.error) return c.json({ error: "load_failed", reason: `sales orders: ${sos.error.message}` }, 500);
   type SoCost = { sen: number; costSen: number; count: number; costSplit: { mattSofa: number; bedframe: number; accessories: number } };
   const so = new Map<number, SoCost>();
@@ -107,15 +128,8 @@ projectOverview.get("/", async (c) => {
      the bills read from the chat with collectReport, as the event page does
      (the saved bills table holds only part of them), every bill opened as an
      order under this event = daily. Events of the last 180 days. */
-  const recent = new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10);
   const recentIds = new Set(projects.filter((p) => String(p.start_date ?? p.end_date ?? "").slice(0, 10) >= recent).map((p) => p.id));
-  // company-scope: chat notes of this company's projects (activeCompanySql on p.company_id).
-  const noteRows = await c.env.DB.prepare(
-    `SELECT a.id, a.project_id, a.note, a.created_at, u.email AS author_email, ps.name AS author_position
-       FROM project_activity a JOIN projects p ON p.id = a.project_id
-       LEFT JOIN users u ON u.id = a.user_id LEFT JOIN positions ps ON ps.id = u.position_id
-      WHERE a.action = 'note' AND a.archived_at IS NULL AND substr(COALESCE(p.start_date, p.end_date), 1, 10) >= ?${activeCompanySql(c, "p.company_id")}`,
-  ).bind(recent).all<NoteRow & { project_id: number }>();
+  const noteRows = (await noteRowsProm)();
   const notesOf = new Map<number, NoteRow[]>();
   for (const n of noteRows.results) notesOf.set(Number(n.project_id), [...(notesOf.get(Number(n.project_id)) ?? []), { ...n, id: Number(n.id) }]);
   const billsOf = new Map<number, Array<{ ref_token: string; amount_sen: number }>>();
@@ -151,13 +165,9 @@ projectOverview.get("/", async (c) => {
      ledger, against their total - the event page's Sales Orders header, by the
      same functions (scm/shared/so-outstanding.ts). Every payment of the company
      is read once: a few pages, where batching thousands of doc numbers was not. */
-  const collOrders = await chunkIn<Record<string, unknown> & { doc_no: string; project_id: number }>(projects.map((p) => String(p.id)), (b, f, t) =>
-    scopeToCompany(c.get("supabase").from("mfg_sales_orders")
-      .select("doc_no, project_id, local_total_sen, total_revenue_sen, deposit_sen").in("project_id", b)
-      .neq("status", "CANCELLED"), c).order("doc_no").range(f, t));
+  const collOrders = (await collOrdersProm)();
   if (collOrders.error) return c.json({ error: "load_failed", reason: `orders for collection: ${collOrders.error.message}` }, 500);
-  const pays = await paginateAll<{ so_doc_no: string; amount_sen: number | null; is_deposit: boolean | null }>((f, t) =>
-    scopeToCompany(c.get("supabase").from("mfg_sales_order_payments").select("so_doc_no, amount_sen, is_deposit"), c).order("id").range(f, t));
+  const pays = (await paysProm)();
   if (pays.error) return c.json({ error: "load_failed", reason: `payments: ${pays.error.message}` }, 500);
   const ledger = new Map<string, { paid: number; deposit: boolean }>();
   for (const p of pays.data ?? []) {
