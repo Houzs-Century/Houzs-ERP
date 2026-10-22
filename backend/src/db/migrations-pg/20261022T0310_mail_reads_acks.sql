@@ -1,4 +1,4 @@
--- 20261016T1700_mail_reads_acks.sql
+-- 20261022T0310_mail_reads_acks.sql
 -- REVERSAL: DROP TABLE IF EXISTS email_message_acks;
 --           DROP TABLE IF EXISTS email_thread_reads;
 --           ALTER TABLE email_messages DROP COLUMN IF EXISTS needs_ack,
