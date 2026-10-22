@@ -177,12 +177,6 @@ page, and the POS Admin menu. This guide carries only what is built.
   it at `POST /api/pos-device/pair` (pre-auth, no token yet): a fresh device
   token is minted, the code is spent, the bundle comes back. Pair again from
   Device setup (gear, supervisor PIN) moves a device; the old token dies.
-- Demo mode (`pos/src/demo.ts`, button on the Pair screen): the POS opens on a
-  sample catalog (8 items with barcodes) and 2 sample cashiers (PIN 1234),
-  no token, Test mode locked on, the sync engine, heartbeat and backup off.
-  Prepare device from the gear on the login screen replaces it with a real
-  terminal and turns Test mode off again. `POST /api/pos-admin/device/register`
-  (the old on-device sign-in) stays mounted but the app no longer calls it.
 - Shared, vendored byte-identical to `frontend/src/vendor/shared/`:
   `scm/shared/pos-vocabulary.ts` (payment methods, receipt status word,
   `pos-backup-crypto.ts` (the backup file cipher and shape), `pos-report.ts`

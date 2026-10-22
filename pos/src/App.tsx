@@ -66,7 +66,7 @@ export function App() {
     return () => window.removeEventListener("beforeunload", h);
   }, []);
   useEffect(() => {
-    if (!state || state.demo) return;
+    if (!state) return;
     const stop = startSyncEngine(state.bundle.settings.general.heartbeat_minutes);
     const off = onDeviceStateChanged(setState);
     return () => { stop(); off(); };
@@ -75,7 +75,7 @@ export function App() {
   }, [state?.token]);
 
   const toggleTest = useCallback(async (on: boolean) => {
-    if (!state || state.demo) return;
+    if (!state) return;
     const next = { ...state, test_mode: on };
     setState(next);
     await saveDeviceState(next);

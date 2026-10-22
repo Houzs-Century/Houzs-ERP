@@ -29,7 +29,7 @@ export function Setup({ state, onPrepared, onExit, onToggleTest }: {
   const [online, setOnline] = useState<boolean | null>(null);
   const [storage, setStorage] = useState<{ persisted: boolean; usage: number; quota: number } | null>(null);
   const [code, setCode] = useState("");
-  const [deviceName, setDeviceName] = useState(state.demo ? "" : state.device_name);
+  const [deviceName, setDeviceName] = useState(state.device_name);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
   const [printer, setPrinter] = useState<PrinterStatus>({ connected: false, name: null, transport: null, error: null });
@@ -111,7 +111,7 @@ export function Setup({ state, onPrepared, onExit, onToggleTest }: {
       <div className="card">
         <h2>Status</h2>
         <div className="status-line"><Dot tone={online == null ? "none" : online ? "ok" : "bad"} /> ERP connection: {online == null ? "checking…" : online ? "reachable" : "not reachable (pairing and refresh need internet; selling does not)"}</div>
-        <div className="status-line"><Dot tone={state.demo ? "warn" : "ok"} /> Terminal: {state.demo ? "demo (sample data, not a real terminal)" : `${b.terminal.code} prepared ${fmtMyt(state.prepared_at)} for ${b.event.name}`}</div>
+        <div className="status-line"><Dot tone="ok" /> Terminal: {b.terminal.code} prepared {fmtMyt(state.prepared_at)} for {b.event.name}</div>
         <div className="status-line">
           <Dot tone={printer.connected ? "ok" : "bad"} /> Printer: {printer.connected ? `${printer.name} ready (${printer.transport === "USB" ? "USB" : "Bluetooth"})` : printer.error ? `not connected (${printer.error})` : "not found"}
           {!printer.connected && <span className="row" style={{ marginLeft: "auto", gap: 6 }}>
@@ -133,17 +133,17 @@ export function Setup({ state, onPrepared, onExit, onToggleTest }: {
           <li><Dot tone={storage?.persisted ? "ok" : "warn"} /> Persistent storage {storage?.persisted ? "granted" : "not granted"}</li>
         </ul>
         <div className="row" style={{ marginTop: 10 }}>
-          <button type="button" className="btn" disabled={busy !== null || !online || state.demo} onClick={() => void refresh()}>Refresh catalog</button>
+          <button type="button" className="btn" disabled={busy !== null || !online} onClick={() => void refresh()}>Refresh catalog</button>
           <button type="button" className="btn" disabled={busy !== null || !printer.connected} onClick={() => void testPrint()}>Test print</button>
           <span className="grow" />
-          <label className="row small"><input type="checkbox" checked={state.test_mode} disabled={state.demo} onChange={(e) => onToggleTest(e.target.checked)} /> Test mode{state.demo ? " (always on in demo)" : ""}</label>
+          <label className="row small"><input type="checkbox" checked={state.test_mode} onChange={(e) => onToggleTest(e.target.checked)} /> Test mode</label>
           <button type="button" className="btn" disabled={busy !== null} onClick={() => void clearTests()} title="Delete every TEST sale on this device">Clear test sales</button>
         </div>
       </div>
 
       <div className="card">
-        <h2>{state.demo ? "Pair a real terminal" : "Pair again (move this device to another terminal or event)"}</h2>
-        <p className="muted" style={{ marginTop: 0 }}>In the ERP open POS Admin, Terminals, and press <b>Pair device</b> on the terminal. Type the code it shows. {state.demo ? "The demo data is replaced." : "The old pairing stops working; unsynced bills stay on this device and sync under the new terminal only if it is the same terminal."}</p>
+        <h2>Pair again (move this device to another terminal or event)</h2>
+        <p className="muted" style={{ marginTop: 0 }}>In the ERP open POS Admin, Terminals, and press <b>Pair device</b> on the terminal. Type the code it shows. The old pairing stops working; unsynced bills stay on this device and sync under the new terminal only if it is the same terminal.</p>
         <form onSubmit={(e) => { e.preventDefault(); void pair(); }}>
           <label className="field"><span>Pairing code</span><input value={code} onChange={(e) => setCode(formatPairingCode(e.target.value))} placeholder="H7K2-9QPD" autoComplete="off" autoCapitalize="characters" spellCheck={false} maxLength={9} style={{ fontFamily: "ui-monospace, monospace", letterSpacing: "0.12em" }} /></label>
           <label className="field"><span>Device name</span><input value={deviceName} onChange={(e) => setDeviceName(e.target.value)} placeholder="e.g. Tab A9 #1" /></label>

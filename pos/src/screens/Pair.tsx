@@ -1,20 +1,19 @@
 /* The first screen of a device that is not paired yet: type the one-time
  * code POS Admin > Terminals > Pair device shows (or open its link, which
  * fills the code), and the login screen appears. No ERP sign-in on the
- * device. Demo mode sits underneath for a look around without any setup. */
+ * device. */
 import { useEffect, useState } from "react";
 import { formatPairingCode, isPairingCode, normalizePairingCode, pairingCodeFromUrl } from "@shared/pos-pairing";
 import { deviceApi, erpReachable } from "../api";
 import { requestPersistentStorage } from "../db";
-import { demoState } from "../demo";
 import { platformName, saveDeviceState, stateFromBundle } from "../deviceStore";
 import { APP_VERSION } from "../pwa";
 import type { DeviceState, PosBundle } from "../types";
 
 export function Pair({ prev, onPaired }: { prev: DeviceState | null; onPaired: (s: DeviceState) => void }) {
   const [code, setCode] = useState("");
-  const [deviceName, setDeviceName] = useState(prev?.device_name && !prev.demo ? prev.device_name : "");
-  const [busy, setBusy] = useState<"pair" | "demo" | null>(null);
+  const [deviceName, setDeviceName] = useState(prev?.device_name ?? "");
+  const [busy, setBusy] = useState<"pair" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [online, setOnline] = useState<boolean | null>(null);
 
@@ -49,20 +48,6 @@ export function Pair({ prev, onPaired }: { prev: DeviceState | null; onPaired: (
       setBusy(null);
     }
   }
-  async function startDemo() {
-    setBusy("demo");
-    setError(null);
-    try {
-      const next = await demoState(prev);
-      await saveDeviceState(next);
-      onPaired(next);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not start the demo");
-    } finally {
-      setBusy(null);
-    }
-  }
-
   return (
     <div className="screen setup">
       <h1>Houzs POS <span className="muted small">{APP_VERSION}</span></h1>
@@ -80,11 +65,6 @@ export function Pair({ prev, onPaired }: { prev: DeviceState | null; onPaired: (
           </div>
         </form>
         {error && <div className="banner offline" style={{ marginTop: 10 }}>{error}</div>}
-      </div>
-      <div className="card">
-        <h2>No terminal yet? Try the POS with sample data</h2>
-        <p className="muted" style={{ marginTop: 0 }}>Opens the login and sell screens with 8 sample items and 2 sample cashiers (PIN 1234). Every sale is a TEST sale; nothing reaches the ERP. Pair a real terminal above whenever it exists.</p>
-        <button type="button" className="btn" disabled={busy !== null} onClick={() => void startDemo()}>{busy === "demo" ? "Loading…" : "Open demo POS"}</button>
       </div>
       <p className="muted small">Recommended: Android tablet or Windows laptop with Chrome, installed as an app. iPad only if added to the Home Screen.</p>
     </div>
