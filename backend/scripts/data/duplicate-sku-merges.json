@@ -48,5 +48,13 @@
       { "drop": "MYLATEX VELVETON MATT (SK)",     "keep": "VELVETON MATT (SK)" },
       { "drop": "MYLATEX VELVETON MATT (SS)",     "keep": "VELVETON MATT (SS)" }
     ]
+  },
+  "HC-0147": {
+    "ruling": "Sim 2026-10-22 (HC-0147): ROY is a typo, keep the ROYAL codes. Both codes of each size already bind the same supplier to the same AutoCount item (DL-ROYAL EXECUTIVE LUXE 2.0(K)/(Q), LUXE2.0(SK)), so AutoCount is unchanged.",
+    "pairs": [
+      { "drop": "DUNLOPILLO ROY EXECUTIVE LUXE 2.0 MATT (K)",  "keep": "DUNLOPILLO ROYAL EXECUTIVE LUXE 2.0 MATT (K)" },
+      { "drop": "DUNLOPILLO ROY EXECUTIVE LUXE 2.0 MATT (Q)",  "keep": "DUNLOPILLO ROYAL EXECUTIVE LUXE 2.0 MATT (Q)" },
+      { "drop": "DUNLOPILLO ROY EXECUTIVE LUXE 2.0 MATT (SK)", "keep": "DUNLOPILLO ROYAL EXECUTIVE LUXE2.0 MATT (SK)" }
+    ]
   }
 }
