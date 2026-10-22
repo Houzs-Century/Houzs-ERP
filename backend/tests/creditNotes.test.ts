@@ -274,6 +274,13 @@ describe('a note line and its event', () => {
     expect(legs(sb, posted.jeNo)).toEqual([['405-0000', null], ['900-A001', 2259]]);
   });
 
+  test('a supplier note that knocks an AP invoice off takes the invoice event on its line too (owner 2026-10-22)', async () => {
+    /* HC-SCN-2610-004 named no invoice; it ticked HC-API-2610-030 in Knock off. */
+    const { app, sb } = harness(PV_KEYS, AP);
+    const note = await raise(app, { kind: 'SCN', supplierId: 'sup-h', allocations: [{ kind: 'API', id: 'api-1', amountSen: 80_000 }], noteDate: '2026-10-14', lines: [{ accountCode: '612-0000', amountSen: 80_000 }] });
+    expect((sb.tables.acc_credit_note_lines as Row[]).find((l) => l.note_id === note.id)?.project_id).toBe(2259);
+  });
+
   test('an event the company does not have is refused; a line may name none', async () => {
     const { app } = harness(PV_KEYS);
     const bad = await send(app, '/credit-notes', 'POST', { kind: 'SCN', supplierId: 'sup-h', noteDate: '2026-10-20', lines: [{ amountSen: 5_000, projectId: 999 }] });
