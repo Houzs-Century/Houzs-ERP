@@ -14,6 +14,7 @@ import type { Env, Variables } from '../env';
 import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
 import { lookupByIds, type ExportWindow } from './document-line-export';
 import { chunkIn } from './paginate-all';
+import { eager } from './concurrency';
 import { filterDoList, fromDoList, orderDoList, type DoListParams } from './do-list-read';
 import { buildDoListRows, type DoListRowDeps } from './do-list-rows';
 import { doLineRemaining } from './do-line-remaining';
@@ -109,34 +110,76 @@ export async function attachDoLines(
   const ids = [...new Set(rows.map((r) => r.id))];
   if (ids.length === 0) return { error: null, lineCount: 0 };
 
+  /* Three waves instead of eleven serial reads: what needs only the DO ids or
+     the rows, then what needs the lines, then the headers those lines point at.
+     Every result is still checked in the serial order, so the same error wins;
+     eager keeps a later read's rejection until its turn. */
   /* The company predicate on the LINE read too: a parent id is not company
      scope (CLAUDE.md R105 b). */
-  const lineRead = await chunkIn<LineRow>(ids, (batch, from, to) =>
+  const lineReadP = eager(chunkIn<LineRow>(ids, (batch, from, to) =>
     scopeToCompany(sb.from('delivery_order_items').select(DO_LINE_READ_COLS), c)
       .in('delivery_order_id', batch).order('delivery_order_id', { ascending: true }).order('id', { ascending: true })
-      .range(from, to) as Res<never>);
+      .range(from, to) as Res<never>));
+  /* AutoCount's number — not in the list's HEADER select. */
+  const acNoP = eager(lookupByIds<{ id: string; linked_ac_docno: string | null }>(ids, (batch, from, to) =>
+    scopeToCompany(sb.from('delivery_orders').select('id, linked_ac_docno'), c)
+      .in('id', batch).order('id', { ascending: true }).range(from, to) as Res<never>));
+  /* Invoiced / Returned / Uninvoiced — the app's own Pending ledger. Fails closed. */
+  const pendingP = eager(doLineRemaining(sb, ids, 'invoiceable'));
+  const whP = eager(lookupByIds<{ id: string; code: string | null; name: string | null }>(
+    rows.map((r) => r.warehouse_id ?? null),
+    (batch, from, to) => sb.from('warehouses').select('id, code, name')
+      .in('id', batch).order('id', { ascending: true }).range(from, to) as Res<never>));
+  const staffP = eager(lookupByIds<{ id: string; name: string | null }>(
+    rows.map((r) => r.salesperson_id ?? null),
+    (batch, from, to) => sb.from('staff').select('id, name')
+      .in('id', batch).order('id', { ascending: true }).range(from, to) as Res<never>));
+
+  const lineRead = (await lineReadP)();
   if (lineRead.error) return { error: `lines: ${lineRead.error.message}`, lineCount: 0 };
   const all = lineRead.data;
 
-  /* AutoCount's number — not in the list's HEADER select. */
-  const acNo = await lookupByIds<{ id: string; linked_ac_docno: string | null }>(ids, (batch, from, to) =>
-    scopeToCompany(sb.from('delivery_orders').select('id, linked_ac_docno'), c)
-      .in('id', batch).order('id', { ascending: true }).range(from, to) as Res<never>);
+  type SiLine = { id: string; do_item_id: string | null; sales_invoice_id: string | null };
+  const siChainP = eager((async () => {
+    const lines = await chunkIn<SiLine>(all.map((l) => l.id), (batch, from, to) =>
+      scopeToCompany(sb.from('sales_invoice_items').select('id, do_item_id, sales_invoice_id'), c)
+        .in('do_item_id', batch).order('id', { ascending: true }).range(from, to) as Res<never>);
+    if (lines.error) return { lines, heads: null };
+    return { lines, heads: await lookupByIds<{ id: string; invoice_number: string | null; status: string | null }>(
+      lines.data.map((l) => l.sales_invoice_id),
+      (batch, from, to) => scopeToCompany(sb.from('sales_invoices').select('id, invoice_number, status'), c)
+        .in('id', batch).order('id', { ascending: true }).range(from, to) as Res<never>) };
+  })());
+  /* The Sales Order line each DO line was raised from (company-scoped), and the
+     purchase orders raised for that SO line — AutoCount's "PO Doc No.". */
+  const soP = eager(lookupByIds<{ id: string; doc_no: string | null }>(
+    all.map((l) => l.so_item_id),
+    (batch, from, to) => scopeToCompany(sb.from('mfg_sales_order_items').select('id, doc_no'), c)
+      .in('id', batch).order('id', { ascending: true }).range(from, to) as Res<never>));
+  type PoLine = { id: string; so_item_id: string | null; purchase_order_id: string | null };
+  const soItemIds = [...new Set(all.map((l) => l.so_item_id).filter((x): x is string => !!x))];
+  const poChainP = eager((async () => {
+    const lines = await chunkIn<PoLine>(soItemIds, (batch, from, to) =>
+      scopeToCompany(sb.from('purchase_order_items').select('id, so_item_id, purchase_order_id'), c)
+        .in('so_item_id', batch).order('id', { ascending: true }).range(from, to) as Res<never>);
+    if (lines.error) return { lines, heads: null };
+    return { lines, heads: await lookupByIds<{ id: string; po_number: string | null; status: string | null }>(
+      lines.data.map((l) => l.purchase_order_id),
+      (batch, from, to) => scopeToCompany(sb.from('purchase_orders').select('id, po_number, status'), c)
+        .in('id', batch).order('id', { ascending: true }).range(from, to) as Res<never>) };
+  })());
+  const bindingsP = eager(bindingsFor(sb as never, (c.get('companyId') as number | undefined) ?? null, all.map((l) => l.item_code ?? '')));
+
+  const acNo = (await acNoP)();
   if (acNo.error) return { error: `delivery order numbers: ${acNo.error}`, lineCount: 0 };
 
-  /* Invoiced / Returned / Uninvoiced — the app's own Pending ledger. Fails closed. */
-  const pending = await doLineRemaining(sb, ids, 'invoiceable');
+  const pending = (await pendingP)();
   if (!pending.ok) return { error: `invoiced quantities: ${pending.reason}`, lineCount: 0 };
 
-  type SiLine = { id: string; do_item_id: string | null; sales_invoice_id: string | null };
-  const siLines = await chunkIn<SiLine>(all.map((l) => l.id), (batch, from, to) =>
-    scopeToCompany(sb.from('sales_invoice_items').select('id, do_item_id, sales_invoice_id'), c)
-      .in('do_item_id', batch).order('id', { ascending: true }).range(from, to) as Res<never>);
+  const siChain = (await siChainP)();
+  const siLines = siChain.lines;
   if (siLines.error) return { error: `sales invoice lines: ${siLines.error.message}`, lineCount: 0 };
-  const sis = await lookupByIds<{ id: string; invoice_number: string | null; status: string | null }>(
-    siLines.data.map((l) => l.sales_invoice_id),
-    (batch, from, to) => scopeToCompany(sb.from('sales_invoices').select('id, invoice_number, status'), c)
-      .in('id', batch).order('id', { ascending: true }).range(from, to) as Res<never>);
+  const sis = siChain.heads!;
   if (sis.error) return { error: `sales invoices: ${sis.error}`, lineCount: 0 };
   const invoiceNos = new Map<string, Set<string>>();
   for (const l of siLines.data) {
@@ -145,23 +188,12 @@ export async function attachDoLines(
     invoiceNos.set(l.do_item_id, (invoiceNos.get(l.do_item_id) ?? new Set()).add(si.invoice_number));
   }
 
-  /* The Sales Order line each DO line was raised from (company-scoped), and the
-     purchase orders raised for that SO line — AutoCount's "PO Doc No.". */
-  const so = await lookupByIds<{ id: string; doc_no: string | null }>(
-    all.map((l) => l.so_item_id),
-    (batch, from, to) => scopeToCompany(sb.from('mfg_sales_order_items').select('id, doc_no'), c)
-      .in('id', batch).order('id', { ascending: true }).range(from, to) as Res<never>);
+  const so = (await soP)();
   if (so.error) return { error: `sales order numbers: ${so.error}`, lineCount: 0 };
-  type PoLine = { id: string; so_item_id: string | null; purchase_order_id: string | null };
-  const soItemIds = [...new Set(all.map((l) => l.so_item_id).filter((x): x is string => !!x))];
-  const poLines = await chunkIn<PoLine>(soItemIds, (batch, from, to) =>
-    scopeToCompany(sb.from('purchase_order_items').select('id, so_item_id, purchase_order_id'), c)
-      .in('so_item_id', batch).order('id', { ascending: true }).range(from, to) as Res<never>);
+  const poChain = (await poChainP)();
+  const poLines = poChain.lines;
   if (poLines.error) return { error: `purchase order lines: ${poLines.error.message}`, lineCount: 0 };
-  const pos = await lookupByIds<{ id: string; po_number: string | null; status: string | null }>(
-    poLines.data.map((l) => l.purchase_order_id),
-    (batch, from, to) => scopeToCompany(sb.from('purchase_orders').select('id, po_number, status'), c)
-      .in('id', batch).order('id', { ascending: true }).range(from, to) as Res<never>);
+  const pos = poChain.heads!;
   if (pos.error) return { error: `purchase orders: ${pos.error}`, lineCount: 0 };
   const poNosBySoItem = new Map<string, Set<string>>();
   for (const l of poLines.data) {
@@ -170,20 +202,14 @@ export async function attachDoLines(
     poNosBySoItem.set(l.so_item_id, (poNosBySoItem.get(l.so_item_id) ?? new Set()).add(p.po_number));
   }
 
-  const wh = await lookupByIds<{ id: string; code: string | null; name: string | null }>(
-    rows.map((r) => r.warehouse_id ?? null),
-    (batch, from, to) => sb.from('warehouses').select('id, code, name')
-      .in('id', batch).order('id', { ascending: true }).range(from, to) as Res<never>);
+  const wh = (await whP)();
   if (wh.error) return { error: `warehouses: ${wh.error}`, lineCount: 0 };
-  const staff = await lookupByIds<{ id: string; name: string | null }>(
-    rows.map((r) => r.salesperson_id ?? null),
-    (batch, from, to) => sb.from('staff').select('id, name')
-      .in('id', batch).order('id', { ascending: true }).range(from, to) as Res<never>);
+  const staff = (await staffP)();
   if (staff.error) return { error: `staff: ${staff.error}`, lineCount: 0 };
 
   let bindings: Map<string, string>;
   try {
-    bindings = await bindingsFor(sb as never, (c.get('companyId') as number | undefined) ?? null, all.map((l) => l.item_code ?? ''));
+    bindings = (await bindingsP)();
   } catch (e) {
     return { error: `item bindings: ${(e as Error).message}`, lineCount: 0 };
   }

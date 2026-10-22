@@ -73,7 +73,7 @@ import { maybeSendDeliveryOrderEmail } from '../lib/do-email';
 import { maybeSendPodDeliveredWhatsApp } from '../lib/pod-delivered-message';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { todayMyt } from '../lib/my-time';
-import { paginateAll, chunkIn } from '../lib/paginate-all';
+import { paginateAll, chunkIn } from '../lib/paginate-all'; import { eager } from '../lib/concurrency';
 import { netDeliveredBySoItem } from '../lib/do-unlinked-coverage';
 import { buildDoListRows } from '../lib/do-list-rows';
 import { attachDoLines } from '../lib/do-list-lines';
@@ -2580,21 +2580,10 @@ deliveryOrdersMfg.get('/', async (c) => {
     const psRaw = Number(c.req.query('pageSize'));
     pageSize = Number.isFinite(psRaw) && psRaw > 0 ? Math.min(100, Math.max(1, Math.trunc(psRaw))) : 50;
 
-    /* Tab + search + sort + company + sales scope: the ONE filter the list and
-       the line export share (lib/do-list-read.ts), so the two cannot match
-       different delivery orders. */
-    const listParams = await withSoRefDocNos(sb, c, readDoListParams((k) => c.req.query(k)));
-    let q = filterDoList(orderDoList(fromDoList(sb, HEADER, { count: 'exact' }), listParams.sort), listParams, c, scopeIds);
-    q = q.range(page * pageSize, page * pageSize + pageSize - 1);
-    const res = await q;
-    data = res.data;
-    error = res.error;
-    total = res.count ?? (res.data?.length ?? 0);
-
     /* Status counts mirror the FE filter-pill buckets (open / in_transit /
        delivered / cancelled) over the SAME scope filter but WITHOUT status /
        search / pagination. Scoped to the active company like the list, so the
-       tab counts can't leak the other company's DO totals. */
+       tab counts can't leak the other company's DO totals. Started before the page read: no shared input. */
     const countBase = () => {
       let cq = scopeToCompany(sb.from('delivery_orders').select('*', { count: 'exact', head: true }), c);
       if (scopeIds) cq = cq.in('salesperson_id', scopeIds);
@@ -2607,11 +2596,22 @@ deliveryOrdersMfg.get('/', async (c) => {
        exhaustive partition of scm.do_status (statusBucketsEnumMembership.test.mjs)
        and this is a column. Counted here as an OVERLAY: a held DO is counted
        under its real status too, so these do not sum to `all`. */
-    const [allC, heldC, ...bucketC] = await Promise.all([
+    const countsP = eager(Promise.all([
       countBase(),
       countBase().eq('on_hold', true), // marker only — see the tab filter above
       ...bucketNames.map((b) => countBase().in('status', DO_STATUS_BUCKETS[b])),
-    ]);
+    ]));
+    /* Tab + search + sort + company + sales scope: the ONE filter the list and
+       the line export share (lib/do-list-read.ts), so the two cannot match
+       different delivery orders. */
+    const listParams = await withSoRefDocNos(sb, c, readDoListParams((k) => c.req.query(k)));
+    let q = filterDoList(orderDoList(fromDoList(sb, HEADER, { count: 'exact' }), listParams.sort), listParams, c, scopeIds);
+    q = q.range(page * pageSize, page * pageSize + pageSize - 1);
+    const res = await q;
+    data = res.data;
+    error = res.error;
+    total = res.count ?? (res.data?.length ?? 0);
+    const [allC, heldC, ...bucketC] = (await countsP)();
     // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
     const counted = readStatusCounts(Object.fromEntries([
       ['all', allC], ['on_hold', heldC], ...bucketNames.map((b, i) => [b, bucketC[i]]),
