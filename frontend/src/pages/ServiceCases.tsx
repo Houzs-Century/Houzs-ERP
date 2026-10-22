@@ -275,11 +275,14 @@ function isoLocal(d: Date): string {
 async function fetchAllCases(filters: CaseFilters, signal: AbortSignal | undefined): Promise<Paginated<AssrCase>> {
   const per = 200;
   const first = await api.get<Paginated<AssrCase>>(`/api/assr${buildQuery({ ...filters, page: 1, per_page: per })}`, { signal });
-  const rows = [...first.data];
-  for (let pg = 2; pg <= Math.ceil(first.total / per); pg++) {
-    const next = await api.get<Paginated<AssrCase>>(`/api/assr${buildQuery({ ...filters, page: pg, per_page: per })}`, { signal });
-    rows.push(...next.data);
-  }
+  // HC-0002: the rest go out together once page 1 says how many there are;
+  // walked one by one, five pages cost ~1.7s on prod.
+  const rest = await Promise.all(
+    Array.from({ length: Math.max(0, Math.ceil(first.total / per) - 1) }, (_, i) =>
+      api.get<Paginated<AssrCase>>(`/api/assr${buildQuery({ ...filters, page: i + 2, per_page: per })}`, { signal }),
+    ),
+  );
+  const rows = [...first.data, ...rest.flatMap((p) => p.data)];
   return { ...first, data: rows, page: 1, per_page: rows.length };
 }
 
