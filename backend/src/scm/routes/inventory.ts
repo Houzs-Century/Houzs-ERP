@@ -31,6 +31,7 @@ import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr } from '../lib/postgrest-search';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
+import { eager } from '../lib/concurrency';
 import { reconcileLedger } from '../lib/reconcile-ledger';
 import { inventoryValuationHandler } from './inventory-valuation';
 import {
@@ -618,14 +619,86 @@ export const productTotalsHandler = async (
   const nonSellingQty = new Map<string, number>();
 
   if (codes.length > 0) {
+    /* READ PLAN. Every read below needs only `codes`; just two feed another:
+         warehouses master -> non-selling balances
+         SO demand -> deliveredReturnedBySoItem (DO lines -> DOs -> DR lines -> DRs)
+       Warehouse balances, PO lines and open lots stand alone. Awaited in series
+       this was 5.4 s on prod. They now run as TWO lanes, each a chain, so at most
+       2 x chunkIn's 6 batches hit the pool at once. Each read is `eager` and is
+       unwrapped below at its old site in the old order, so log lines and any
+       thrown error surface exactly as the sequential code produced them. */
+    type DemandSoHead = { status: string; customer_delivery_date: string | null; debtor_name: string | null; so_date: string | null };
+    const laneA = (async () => {
+      // chunkIn — codes can now exceed 1000 (un-truncated catalogue), so batch the
+      // .in() lists and page each batch (PostgREST default cap is 1000 rows).
+      // Scope demand to the active company — the stock figure (v_inventory_product_totals)
+      // and the open-lots query below are already company-scoped, so leaving demand
+      // un-scoped would subtract OTHER companies' claims on a shared SKU from THIS
+      // company's stock (mfg_sales_order_items carries company_id, mig 0083).
+      /* The so.status pre-filter drops exactly what SO_DONE drops below: status is
+         the NOT NULL enum scm.mfg_so_status, all four labels exist in it, the
+         !inner embed removes the line with its header, and both sides compare
+         case-sensitively. It only stops every finished order in history coming
+         back; the JS filter stays the gate. */
+      const demand = await eager(chunkIn(codes, (batch, from, to) => {
+        let dq = pgrestIn(scopeToCompany(sb
+          .from('mfg_sales_order_items')
+          .select('id, doc_no, item_code, qty, warehouse_id, line_delivery_date, cancelled, so:mfg_sales_orders!inner(status, customer_delivery_date, debtor_name, so_date)'), c), 'item_code', batch)
+          .eq('cancelled', false)
+          .not('so.status', 'in', `(${[...SO_DONE].map((st) => `"${st}"`).join(',')})`);
+        if (warehouseId) dq = dq.eq('warehouse_id', warehouseId); // ask A — scope demand to this warehouse (mig 0118)
+        return dq.range(from, to);
+      }).then(({ data, error }) => ({
+        error,
+        rows: ((data ?? []) as Array<{ id: string; doc_no: string; item_code: string; qty: number; line_delivery_date: string | null; so: DemandSoHead | DemandSoHead[] | null }>)
+          .map((r) => ({ id: r.id, doc_no: r.doc_no, item_code: r.item_code, qty: Number(r.qty ?? 0), line_delivery_date: r.line_delivery_date, so: Array.isArray(r.so) ? r.so[0] : r.so }))
+          .filter((r) => r.so != null && !SO_DONE.has(r.so.status) && r.qty > 0),
+      })));
+      const netting = await eager((async () => deliveredReturnedBySoItem(sb, demand().rows.map((r) => r.id)))());
+      const lots = await eager(chunkIn(codes, (batch, from, to) => {
+        let lq = pgrestIn(scopeToCompany(sb
+          .from('v_inventory_lots_open')
+          // source_doc_type/no classify each lot OWNED vs CONSIGNMENT; remaining_value_sen
+          // (= qty_remaining * unit_cost_sen) is the per-lot owned-value basis, identical
+          // to the drawer's buildStockBreakdown formula.
+          .select('item_code, received_at, qty_remaining, remaining_value_sen, source_doc_type, source_doc_no'), c), 'item_code', batch); // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
+        if (warehouseId) lq = lq.eq('warehouse_id', warehouseId); // ask A — oldest lot within this warehouse
+        return lq.range(from, to);
+      }));
+      return { demand, netting, lots };
+    })();
+    const laneB = (async () => {
+      const whBal = warehouseId
+        ? await eager(chunkIn(codes, (batch, from, to) => pgrestIn(scopeToCompany(sb
+          .from('inventory_balances').select('item_code, qty'), c)
+          .eq('warehouse_id', warehouseId), 'item_code', batch).range(from, to)))
+        : null;
+      const nsBal = await eager((async () => {
+        const nonSellingIds = await loadNonSellingWarehouseIds(sb, c);
+        const scopedNonSelling = warehouseId
+          ? (nonSellingIds.has(warehouseId) ? [warehouseId] : [])
+          : [...nonSellingIds];
+        if (scopedNonSelling.length === 0) return null;
+        return chunkIn(codes, (batch, from, to) => pgrestIn(scopeToCompany(sb
+          .from('inventory_balances').select('item_code, qty'), c)
+          .in('warehouse_id', scopedNonSelling), 'item_code', batch).range(from, to));
+      })());
+      /* No po.status pre-filter here: incoming_pos sorts by eta alone, so POs with
+         the same eta keep DB row order, and a new predicate on the embed can
+         change the plan and with it that order. */
+      const po = await eager(chunkIn(codes, (batch, from, to) => pgrestIn(scopeToCompany(sb
+        .from('purchase_order_items')
+        .select('item_code, qty, received_qty, delivery_date, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, warehouse_id, po:purchase_orders!inner(po_number, status, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, purchase_location_id)'), c), 'item_code', batch).range(from, to)));
+      return { whBal, nsBal, po };
+    })();
+    const [readsA, readsB] = await Promise.all([laneA, laneB]);
+
     // Warehouse-scoped Stock: the totals view is a cross-warehouse rollup, so a
     // per-warehouse view must recompute on-hand qty (balances) for the chosen
     // warehouse only. Value is (re)computed from the open lots below for BOTH
     // scopes, so it no longer reads v_inventory_value (which counts consignment).
-    if (warehouseId) {
-      const { data: bal, error: balErr } = await chunkIn(codes, (batch, from, to) => pgrestIn(scopeToCompany(sb
-        .from('inventory_balances').select('item_code, qty'), c)
-        .eq('warehouse_id', warehouseId), 'item_code', batch).range(from, to));
+    if (readsB.whBal) {
+      const { data: bal, error: balErr } = readsB.whBal();
       if (balErr) {
         // eslint-disable-next-line no-console
         console.error('[inventory] warehouse balances read failed:', (balErr as { message?: unknown }).message ?? balErr);
@@ -640,14 +713,9 @@ export const productTotalsHandler = async (
        warehouse when there is one, so a showroom view reports all of its stock as
        non-selling and a KL view reports none of it. Skipped entirely when the
        company has no showroom/display/service warehouse — the common case. */
-    const nonSellingIds = await loadNonSellingWarehouseIds(sb, c);
-    const scopedNonSelling = warehouseId
-      ? (nonSellingIds.has(warehouseId) ? [warehouseId] : [])
-      : [...nonSellingIds];
-    if (scopedNonSelling.length > 0) {
-      const { data: nsBal, error: nsErr } = await chunkIn(codes, (batch, from, to) => pgrestIn(scopeToCompany(sb
-        .from('inventory_balances').select('item_code, qty'), c)
-        .in('warehouse_id', scopedNonSelling), 'item_code', batch).range(from, to));
+    const nsRead = readsB.nsBal();
+    if (nsRead) {
+      const { data: nsBal, error: nsErr } = nsRead;
       if (nsErr) {
         // eslint-disable-next-line no-console
         console.error('[inventory] non-selling balances read failed:', (nsErr as { message?: unknown }).message ?? nsErr);
@@ -657,35 +725,18 @@ export const productTotalsHandler = async (
       }
     }
 
-    // chunkIn — codes can now exceed 1000 (un-truncated catalogue), so batch the
-    // .in() lists and page each batch (PostgREST default cap is 1000 rows).
-    // Scope demand to the active company — the stock figure (v_inventory_product_totals)
-    // and the open-lots query below are already company-scoped, so leaving demand
-    // un-scoped would subtract OTHER companies' claims on a shared SKU from THIS
-    // company's stock (mfg_sales_order_items carries company_id, mig 0083).
-    const { data: demand, error: demandErr } = await chunkIn(codes, (batch, from, to) => {
-      let dq = pgrestIn(scopeToCompany(sb
-        .from('mfg_sales_order_items')
-        .select('id, doc_no, item_code, qty, warehouse_id, line_delivery_date, cancelled, so:mfg_sales_orders!inner(status, customer_delivery_date, debtor_name, so_date)'), c), 'item_code', batch)
-        .eq('cancelled', false);
-      if (warehouseId) dq = dq.eq('warehouse_id', warehouseId); // ask A — scope demand to this warehouse (mig 0118)
-      return dq.range(from, to);
-    });
+    const { error: demandErr, rows: demandRows } = readsA.demand();
     if (demandErr) {
       // eslint-disable-next-line no-console
       console.error('[inventory] SO demand read failed:', (demandErr as { message?: unknown }).message ?? demandErr);
     }
-    type DemandSoHead = { status: string; customer_delivery_date: string | null; debtor_name: string | null; so_date: string | null };
-    const demandRows = ((demand ?? []) as Array<{ id: string; doc_no: string; item_code: string; qty: number; line_delivery_date: string | null; so: DemandSoHead | DemandSoHead[] | null }>)
-      .map((r) => ({ id: r.id, doc_no: r.doc_no, item_code: r.item_code, qty: Number(r.qty ?? 0), line_delivery_date: r.line_delivery_date, so: Array.isArray(r.so) ? r.so[0] : r.so }))
-      .filter((r) => r.so != null && !SO_DONE.has(r.so.status) && r.qty > 0);
 
     // Net-of-delivered per line — mirror so-stock-allocation: an open SO line's
     // live claim is qty − Σ delivered + Σ returned, floored at 0. Summing gross
     // qty double-counts the shipped units of a partially-delivered SO and drives
     // available_qty wrongly negative. (Delivered lines net out here — this is the
     // logic the PART 3 committed/delivered verification traces.)
-    const { deliveredBySoItem, returnedBySoItem } = await deliveredReturnedBySoItem(sb, demandRows.map((r) => r.id));
+    const { deliveredBySoItem, returnedBySoItem } = readsA.netting();
 
     for (const r of demandRows) {
       const so = r.so!;
@@ -711,9 +762,7 @@ export const productTotalsHandler = async (
     // cross-company leak. Undated / >30-day PO lines are intentionally excluded
     // from the near-term figure (the owner framed Incoming as "arriving within
     // ~30 days").
-    const { data: poItems, error: poErr } = await chunkIn(codes, (batch, from, to) => pgrestIn(scopeToCompany(sb
-      .from('purchase_order_items')
-      .select('item_code, qty, received_qty, delivery_date, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, warehouse_id, po:purchase_orders!inner(po_number, status, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, purchase_location_id)'), c), 'item_code', batch).range(from, to));
+    const { data: poItems, error: poErr } = readsB.po();
     if (poErr) {
       // eslint-disable-next-line no-console
       console.error('[inventory] incoming PO lines read failed:', (poErr as { message?: unknown }).message ?? poErr);
@@ -742,16 +791,7 @@ export const productTotalsHandler = async (
       incomingPos.set(r.item_code, arr);
     }
 
-    const { data: lots, error: lotsErr } = await chunkIn(codes, (batch, from, to) => {
-      let lq = pgrestIn(scopeToCompany(sb
-        .from('v_inventory_lots_open')
-        // source_doc_type/no classify each lot OWNED vs CONSIGNMENT; remaining_value_sen
-        // (= qty_remaining * unit_cost_sen) is the per-lot owned-value basis, identical
-        // to the drawer's buildStockBreakdown formula.
-        .select('item_code, received_at, qty_remaining, remaining_value_sen, source_doc_type, source_doc_no'), c), 'item_code', batch); // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
-      if (warehouseId) lq = lq.eq('warehouse_id', warehouseId); // ask A — oldest lot within this warehouse
-      return lq.range(from, to);
-    });
+    const { data: lots, error: lotsErr } = readsA.lots();
     if (lotsErr) {
       // eslint-disable-next-line no-console
       console.error('[inventory] open lots read failed:', (lotsErr as { message?: unknown }).message ?? lotsErr);
