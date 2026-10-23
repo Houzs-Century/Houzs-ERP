@@ -38,6 +38,7 @@ import { useIdempotencyKey } from '../../lib/idempotency';
 import { serviceConfirm } from '../../vendor/scm/lib/dialog-service';
 import { readScmHandoff, removeScmHandoff, writeScmHandoff } from '../../lib/scmHandoffStorage';
 import { useMfgProducts, useMaintenanceConfig, useSpecialAddons, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
+import { pickableBindings } from '../../vendor/scm/lib/pickable-bindings';
 import { withMasterPickerPools } from '../../vendor/scm/lib/picker-maint';
 import { activeOptions, maintPickerValues, fmtMoneySen } from '@2990s/shared';
 import { useFabricTrackings, fabricOptionLabel } from '../../vendor/scm/lib/fabric-queries';
@@ -181,6 +182,7 @@ export const PurchaseOrderNew = () => {
   //   N bindings  → show a hint banner so commander picks above
   //   0 bindings  → one-off purchase, commander enters everything manually
   const allSkus = useMfgProducts();
+  const pickable = useMemo(() => pickableBindings(bindings, allSkus.data ?? []), [bindings, allSkus.data]);
   /* PR #126 — Pull maintenance config + fabrics list so per-category variant
      editors can render the same dropdowns SO uses (single source of truth).
      PR #208 — when a supplier is picked, surcharges resolve from the supplier
@@ -994,8 +996,8 @@ export const PurchaseOrderNew = () => {
           <h2 className={styles.cardTitle}>Items</h2>
           <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
             {supplierId
-              ? (bindings.length > 0
-                  ? `${bindings.length} item(s) bound to this supplier — picker filters to these`
+              ? (pickable.length > 0
+                  ? `${pickable.length} item(s) bound to this supplier — picker filters to these`
                   // PR — Commander 2026-05-28: a supplier with no SKU bindings used
                   // to leave the Item Code picker empty (dead field). Fall back to
                   // the full catalogue so a one-off purchase is still pickable.
@@ -1110,7 +1112,7 @@ export const PurchaseOrderNew = () => {
                         const code = e.target.value;
                         // Bound match wins (autofills supplier SKU + price).
                         const match = supplierId
-                          ? bindings.find((b) => b.item_code === code)
+                          ? pickable.find((b) => b.item_code === code)
                           : undefined;
                         if (match) { pickBinding(l.rid, match); return; }
                         // No binding (no supplier yet, OR supplier has no binding
@@ -1135,8 +1137,8 @@ export const PurchaseOrderNew = () => {
                       {/* PR — Commander 2026-05-28: only show bound SKUs when the
                           supplier actually HAS bindings; otherwise fall back to
                           the full catalogue so the picker is never dead. */}
-                      {supplierId && bindings.length > 0
-                        ? sortByText(bindings).map((b) => (
+                      {supplierId && pickable.length > 0
+                        ? sortByText(pickable).map((b) => (
                             <option key={b.id} value={b.item_code}>
                               {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_sen, b.currency)}
                             </option>
@@ -1164,7 +1166,7 @@ export const PurchaseOrderNew = () => {
                       onChange={(e) => {
                         const sku = e.target.value;
                         if (supplierId) {
-                          const match = bindings.find((b) => b.supplier_sku === sku);
+                          const match = pickable.find((b) => b.supplier_sku === sku);
                           if (match) {
                             pickBinding(l.rid, match);
                           } else {
@@ -1181,7 +1183,7 @@ export const PurchaseOrderNew = () => {
                       style={{ fontFamily: 'var(--font-mono)' }}
                     />
                     <datalist id={`supplier-skus-${l.rid}`}>
-                      {supplierId && sortByText(bindings).map((b) => (
+                      {supplierId && sortByText(pickable).map((b) => (
                         <option key={b.id} value={b.supplier_sku || ''}>
                           {b.item_code} · {b.material_name} · {fmtRm(b.unit_price_sen, b.currency)}
                         </option>
