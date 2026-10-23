@@ -126,7 +126,7 @@ export function buildPayslip(input: {
   const backpaySen = allowanceLines.filter((a) => a.kind === "BACKPAY").reduce((s, a) => s + a.amountSen, 0);
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
   const cfgEnd = input.rulesOn(`${period}-${String(lastDay).padStart(2, "0")}`);
-  const statutory = statutoryFor(salarySen, { epf: e.epf, socso: e.socso, eis: e.eis }, cfgEnd);
+  const statutory = statutoryFor(salarySen + commissionSen, { epf: e.epf, socso: e.socso, eis: e.eis }, cfgEnd);
   const pcb = resolvePcb({
     pcbEnabled: e.pcb,
     year,

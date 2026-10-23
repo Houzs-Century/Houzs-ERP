@@ -4,8 +4,9 @@
  * on the Attendance tab, or HR's own count when the punches cannot say). Used by the Trip Pay tab, by payroll
  * (the trip month of the same name lands on that payslip) and by My pay.
  * Also reads Delivery Planning's lorry runs into rows. */
-import { and, asc, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNotNull, lte, ne, sql } from "drizzle-orm";
 import { APPROVED_LEAVE_STATUSES } from "../../scm/shared/hr-attendance";
+import { asDate } from "./hr-attendance-view";
 import { ASSR_LEG_BY_STOP, assrBoardLocation } from "../../scm/lib/assr-board-scope";
 import { getDb } from "../../db/client";
 import { hr_attendance, hr_employees, hr_payslips, hr_public_holidays, hr_trip_missed_days, hr_trip_rate_versions, hr_trip_rows, hr_working_hours } from "../../db/schema";
@@ -13,6 +14,7 @@ import {
   computeTripPay,
   missedWorkingDays,
   normName,
+  overnightDates,
   resolveTripRatesAsOf,
   tripMonthBounds,
   type TripKind,
@@ -80,7 +82,7 @@ export type TripMonth = {
 
 export async function loadTripMonth(db: Db, companyId: number, month: string, today: string): Promise<TripMonth> {
   const { first, last } = tripMonthBounds(month);
-  const [rows, people, holidays, worked, leave, overrides, ratesOn] = await Promise.all([
+  const [rows, people, holidays, worked, leave, overrides, ratesOn, punches] = await Promise.all([
     db
       .select()
       .from(hr_trip_rows)
@@ -122,6 +124,10 @@ export async function loadTripMonth(db: Db, companyId: number, month: string, to
       .from(hr_trip_missed_days)
       .where(and(eq(hr_trip_missed_days.company_id, companyId), eq(hr_trip_missed_days.trip_month, month))),
     tripRatesResolver(db, companyId),
+    db
+      .select({ employee_id: hr_attendance.employee_id, workDate: hr_attendance.work_date, inAt: hr_attendance.clock_in_at, outAt: hr_attendance.clock_out_at })
+      .from(hr_attendance)
+      .where(and(eq(hr_attendance.company_id, companyId), gte(hr_attendance.work_date, first), lte(hr_attendance.work_date, last), isNotNull(hr_attendance.clock_out_at))),
   ]);
   const rates = ratesOn(last);
   const byName = nameIndex(people);
@@ -171,7 +177,13 @@ export async function loadTripMonth(db: Db, companyId: number, month: string, to
     return info;
   };
 
-  const pay = computeTripPay({ rows: tripRows, rates, employeeOf, missedDaysOf: (id) => missedOf(id).days });
+  const punchesBy = new Map<number, typeof punches>();
+  for (const p of punches) {
+    const iso = (v: string | null) => (v ? asDate(v).toISOString() : null);
+    punchesBy.set(p.employee_id, [...(punchesBy.get(p.employee_id) ?? []), { ...p, inAt: iso(p.inAt), outAt: iso(p.outAt) }]);
+  }
+  const overnight = new Map([...punchesBy].map(([id, list]) => [id, overnightDates(list, rates.overnightMinHours)] as const).filter(([, d]) => d.length > 0));
+  const pay = computeTripPay({ rows: tripRows, rates, employeeOf, missedDaysOf: (id) => missedOf(id).days, overnight });
   for (const [id, p] of pay) if (p.drove) missedOf(id);
   return {
     month,

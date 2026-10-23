@@ -63,7 +63,10 @@ const HEADER: Record<Tab, { title: string; description: string }> = {
     title: "Trip Pay",
     description: "Driver commission and trip allowances for a trip month (23rd to 22nd): paste the Trip Report or read Delivery Planning, fix a job type or a name, and each person's pay lands on that month's payslip.",
   },
-  allowances: { title: "Allowances", description: "Leadership, transport, overnight and KPI allowances for one month or every month, and Backpay (company advance), which is deducted." },
+  allowances: {
+    title: "Allowances",
+    description: "Leadership, transport and KPI allowances for one month or every month, and Backpay (company advance), which is deducted. Overnight is paid on Trip Pay from the punches; add one here only for a night the punches missed.",
+  },
   advances: { title: "Advances", description: "Cash given ahead of payday, taken back in full from the payslip of the month it was given." },
   penalties: { title: "Penalty", description: "A penalty for an incident, approved by someone other than who raised it, then deducted in the payroll month it lands in." },
   sites: {

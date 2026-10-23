@@ -101,6 +101,33 @@ describe("buildPayslip", () => {
     expect(s.netSen).toBe(s.grossSen - 15000);
     expect(buildPayslip(base).pay.absentDays).toBe(2);
   });
+
+  test("EPF is worked out on salary plus commission (Nico 2026-10-23)", () => {
+    const s = buildPayslip({
+      employee: { ...emp, socso: false, eis: false, pcb: false },
+      period: "2026-09",
+      salaryHistory: [],
+      days: fullMonth(),
+      holidays: new Set<string>(),
+      absenceThroughDay: 30,
+      shortHours: 0,
+      rulesOn: () => DEFAULT_PAY_RULES,
+      advances: [],
+      penaltySen: 0,
+      ytd: { remunerationSen: 0, epfSen: 0, pcbSen: 0 },
+      trip: {
+        employeeId: 1,
+        drove: true,
+        helped: false,
+        commission: { lines: [], baseSen: 0, missedDays: 0, cutBps: 0, amountSen: 66010 },
+        lines: [{ key: "FAIR", label: "Fair", count: 4, unitSen: 10000, amountSen: 40000, dates: [] }],
+        allowanceSen: 40000,
+        totalSen: 106010,
+      },
+    });
+    expect(s.statutory.epfEmployeeSen).toBe(Math.round(((260000 + 66010) * 11) / 100));
+    expect(s.statutory.epfEmployerSen).toBe(Math.round(((260000 + 66010) * 13) / 100));
+  });
 });
 
 describe("onPayroll", () => {

@@ -12,7 +12,10 @@
  *   - a driver earns a fair allowance per fair day (Fair Night RM150 + RM50:
  *     the sheet paid RM200 on a Tuesday too), RM15 a service case, supplier
  *     trip or transfer, and an outstation allowance per day per area;
- *   - a helper earns only the outstation (transport) allowance, per day per area.
+ *   - a helper earns only the outstation (transport) allowance, per day per area;
+ *   - anyone whose punch runs past midnight and lasts over 8 hours earns the
+ *     overnight allowance, RM50 a time (Nico 2026-10-23: a Sunday trip to
+ *     Pahang from 12pm to 4am).
  * Every amount is a rate the HR editor can change (effective-dated).
  *
  * ONE home. backend/src/scm/shared/hr-trip-pay.ts is the original and
@@ -90,6 +93,9 @@ export type TripRates = {
   supplierTripSen: number;
   supplierFullSen: number;
   transferSen: number;
+  /** A punch past midnight lasting over overnightMinHours, per time. */
+  overnightSen: number;
+  overnightMinHours: number;
   /** Per day per area: the driver's outstation allowance and the helper's transport allowance. */
   driverOutstationSen: Record<OutstationArea, number>;
   helperTransportSen: Record<OutstationArea, number>;
@@ -111,6 +117,8 @@ export const DEFAULT_TRIP_RATES: TripRates = {
   supplierTripSen: 1500,
   supplierFullSen: 3000,
   transferSen: 1500,
+  overnightSen: 5000,
+  overnightMinHours: 8,
   driverOutstationSen: { MIS: 3000, JP: 8000, TP: 12000, KEL: 15000 },
   helperTransportSen: { MIS: 3000, JP: 8000, TP: 12000, KEL: 15000 },
 };
@@ -144,6 +152,8 @@ export function normalizeTripRates(raw: unknown): TripRates {
     supplierTripSen: num("supplierTripSen"),
     supplierFullSen: num("supplierFullSen"),
     transferSen: num("transferSen"),
+    overnightSen: num("overnightSen"),
+    overnightMinHours: num("overnightMinHours"),
     driverOutstationSen: areas("driverOutstationSen"),
     helperTransportSen: areas("helperTransportSen"),
   };
@@ -325,6 +335,8 @@ export function computeTripPay(input: {
   rates: TripRates;
   employeeOf: (p: { name: string; employeeId: number | null }) => number | null;
   missedDaysOf: (employeeId: number) => number;
+  /** Each employee's overnight work dates (overnightDates). */
+  overnight?: ReadonlyMap<number, readonly string[]>;
 }): Map<number, TripPay> {
   const { rates } = input;
   type Acc = {
@@ -410,6 +422,10 @@ export function computeTripPay(input: {
       if (area) addDay(a, `TRANSPORT_${area}`, `Transport (${OUTSTATION_LABEL[area]})`, rates.helperTransportSen[area], row.tripDate);
     }
   }
+  for (const [id, dates] of input.overnight ?? []) {
+    const a = acc(id);
+    for (const d of dates) addDay(a, "OVERNIGHT", "Overnight", rates.overnightSen, d);
+  }
 
   const out = new Map<number, TripPay>();
   for (const [id, a] of accs) {
@@ -470,4 +486,17 @@ export function missedWorkingDays(input: {
     out.push(ymd);
   }
   return out;
+}
+
+/** The work dates whose punch ran past midnight (Malaysia time) and lasted over
+ *  minHours: the overnight allowance, once per punch. */
+export function overnightDates(punches: ReadonlyArray<{ workDate: string; inAt: string | null; outAt: string | null }>, minHours: number): string[] {
+  const myt = (iso: string) => new Date(Date.parse(iso) + 8 * 3600000).toISOString().slice(0, 10);
+  const out: string[] = [];
+  for (const p of punches) {
+    if (!p.inAt || !p.outAt) continue;
+    const span = Date.parse(p.outAt) - Date.parse(p.inAt);
+    if (myt(p.outAt) > p.workDate && span > minHours * 3600000) out.push(p.workDate);
+  }
+  return out.sort();
 }

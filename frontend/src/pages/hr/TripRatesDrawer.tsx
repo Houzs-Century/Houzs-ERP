@@ -15,7 +15,7 @@ import { OUTSTATION_AREAS, OUTSTATION_LABEL, normalizeTripRates, tripRatesProble
 import { Field, errText, ghostBtn, inputCls, primaryBtn } from "../pos-admin/posAdminUi";
 import { HR, rmFromSen, senFromRm, useTripRates } from "./hrApi";
 
-type MoneyKey = Exclude<keyof TripRates, "commission2Bps" | "commission3Bps" | "leaveCutBps" | "leaveCutAfterBps" | "driverOutstationSen" | "helperTransportSen">;
+type MoneyKey = Exclude<keyof TripRates, "commission2Bps" | "commission3Bps" | "leaveCutBps" | "leaveCutAfterBps" | "driverOutstationSen" | "helperTransportSen" | "overnightSen" | "overnightMinHours">;
 const MONEY: { key: MoneyKey; label: string }[] = [
   { key: "fairSen", label: "Fair, per day" },
   { key: "fairNightSen", label: "Fair night" },
@@ -40,6 +40,8 @@ const draftOf = (r: TripRates): Draft => {
     commission2: pctText(r.commission2Bps),
     cuts: r.leaveCutBps.map(pctText).join(", "),
     cutAfter: pctText(r.leaveCutAfterBps),
+    overnight: rmFromSen(r.overnightSen),
+    overnightHours: String(r.overnightMinHours),
   };
   for (const m of MONEY) d[m.key] = rmFromSen(r[m.key]);
   for (const a of OUTSTATION_AREAS) {
@@ -59,6 +61,8 @@ const ratesOf = (d: Draft): TripRates => {
       .filter(Boolean)
       .map(bpsOf),
     leaveCutAfterBps: bpsOf(d.cutAfter),
+    overnightSen: senFromRm(d.overnight),
+    overnightMinHours: Number(d.overnightHours),
     driverOutstationSen: Object.fromEntries(OUTSTATION_AREAS.map((a) => [a, senFromRm(d[`driver_${a}`])])),
     helperTransportSen: Object.fromEntries(OUTSTATION_AREAS.map((a) => [a, senFromRm(d[`helper_${a}`])])),
   };
@@ -165,6 +169,15 @@ export function TripRatesDrawer({ onClose, onSaved }: { onClose: () => void; onS
           <section>
             <h3 className="mb-2 text-[10.5px] font-bold uppercase tracking-brand text-ink-muted">Driver allowances</h3>
             <div className="grid grid-cols-2 gap-3 max-sm:grid-cols-1">{MONEY.map((m) => money(m.key, m.label))}</div>
+          </section>
+          <section>
+            <h3 className="mb-2 text-[10.5px] font-bold uppercase tracking-brand text-ink-muted">Overnight, driver and helper</h3>
+            <div className="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
+              {money("overnight", "Per time")}
+              <Field label="When a punch runs past midnight and lasts over (hours)">
+                <input className={inputCls} value={form.overnightHours} disabled={!d?.canManage} onChange={(e) => set("overnightHours", e.target.value)} inputMode="decimal" />
+              </Field>
+            </div>
           </section>
           <section>
             <h3 className="mb-2 text-[10.5px] font-bold uppercase tracking-brand text-ink-muted">Outstation, per day per area</h3>

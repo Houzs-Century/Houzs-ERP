@@ -10,6 +10,7 @@ import {
   missedWorkingDays,
   normName,
   normalizeTripRates,
+  overnightDates,
   parseTripReport,
   tripMonthBounds,
   tripMonthOf,
@@ -183,6 +184,34 @@ describe("computeTripPay", () => {
     const { rows } = parseTripReport(AMIR_TAB);
     const pay = computeTripPay({ rows, rates: DEFAULT_TRIP_RATES, employeeOf: () => null, missedDaysOf: () => 0 });
     expect(pay.size).toBe(0);
+  });
+});
+
+describe("overnight", () => {
+  test("Nico's Sunday Pahang trip, 12pm to 4am, earns it; a long day that ends before midnight and a short night shift do not", () => {
+    expect(
+      overnightDates(
+        [
+          { workDate: "2026-10-04", inAt: "2026-10-04T04:00:00.000Z", outAt: "2026-10-04T20:00:00.000Z" },
+          { workDate: "2026-10-05", inAt: "2026-10-05T00:00:00.000Z", outAt: "2026-10-05T14:30:00.000Z" },
+          { workDate: "2026-10-06", inAt: "2026-10-06T12:00:00.000Z", outAt: "2026-10-06T17:00:00.000Z" },
+          { workDate: "2026-10-07", inAt: "2026-10-07T01:00:00.000Z", outAt: null },
+        ],
+        8,
+      ),
+    ).toEqual(["2026-10-04"]);
+  });
+
+  test("paid RM50 a time, to whoever worked it, even with no trip row", () => {
+    const pay = computeTripPay({
+      rows: [],
+      rates: DEFAULT_TRIP_RATES,
+      employeeOf: () => null,
+      missedDaysOf: () => 0,
+      overnight: new Map([[9, ["2026-10-04", "2026-10-11"]]]),
+    }).get(9)!;
+    expect(pay.lines).toEqual([{ key: "OVERNIGHT", label: "Overnight", count: 2, unitSen: 5000, amountSen: 10000, dates: ["2026-10-04", "2026-10-11"] }]);
+    expect(pay.totalSen).toBe(10000);
   });
 });
 

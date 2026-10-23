@@ -81,7 +81,7 @@ Phases, one PR each, `staging` first for Nico, then main:
    - Monthly lines per employee: leadership / transport / overnight / KPI (one month or every month), Backpay (Company Advance) = deduction. Approved leave marked on the Attendance day.
    - Payslip: allowances_sen (today hard-coded 0) + commission line + backpay deduction; PDF and phone My pay show them.
    - Built: PR #4888 on top of #4859, mig `20261022T1500_hr_trip_pay`. September from Nico's 5 driver tabs: Amir RM1,600.10 (sheet + JB fix), Farhan exact; Shamsul / Khalid / Faslie differ by the 0.5% 2-person-crew rule and hand-counted service rows. Leave = Attendance status (annual / medical / rest day paid, new UNPAID_LEAVE); backpay deducted - 2026-10-22
-   - Owner / Nico to confirm: KWSP on commission (with the wage-table decision); Overnight RM50 as a monthly line, not a trip line - 2026-10-22
+   - Nico 2026-10-23: EPF counts commission (EPF % on salary + commission); Overnight RM50 per time, for a punch past midnight lasting over 8 h (her example: Sunday Pahang trip 12pm to 4am), driver and helpers, from the punches on Trip Pay - done on #4859 - 2026-10-23
 
 ## Purchase return, phase 2 — the receive-back leg (owner 2026-09-28)
 

@@ -228,13 +228,14 @@ export function computeMonthlyPay(input: {
 
 export type Statutory = { epfEmployeeSen: number; epfEmployerSen: number; socsoEmployeeSen: number; socsoEmployerSen: number; eisEmployeeSen: number; eisEmployerSen: number };
 
-/* Hookka's calcStatutory: EPF a percentage of the month's full salary (not
- * reduced by absences; a daily-paid employee's salary is 0, so no EPF);
+/* Hookka's calcStatutory: EPF a percentage of the wages it is given, which the
+ * caller makes the month's full salary (not reduced by absences; a daily-paid
+ * employee's salary is 0) plus the driver's commission (Nico 2026-10-23);
  * SOCSO and EIS the flat amounts in Pay Rules. Each only when on. */
-export function statutoryFor(salarySen: number, flags: { epf: boolean; socso: boolean; eis: boolean }, cfg: PayRulesConfig): Statutory {
+export function statutoryFor(epfWagesSen: number, flags: { epf: boolean; socso: boolean; eis: boolean }, cfg: PayRulesConfig): Statutory {
   return {
-    epfEmployeeSen: flags.epf ? Math.round((salarySen * cfg.epfEmployeePct) / 100) : 0,
-    epfEmployerSen: flags.epf ? Math.round((salarySen * cfg.epfEmployerPct) / 100) : 0,
+    epfEmployeeSen: flags.epf ? Math.round((epfWagesSen * cfg.epfEmployeePct) / 100) : 0,
+    epfEmployerSen: flags.epf ? Math.round((epfWagesSen * cfg.epfEmployerPct) / 100) : 0,
     socsoEmployeeSen: flags.socso ? cfg.socsoEmployeeSen : 0,
     socsoEmployerSen: flags.socso ? cfg.socsoEmployerSen : 0,
     eisEmployeeSen: flags.eis ? cfg.eisEmployeeSen : 0,
