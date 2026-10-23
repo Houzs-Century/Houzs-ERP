@@ -647,6 +647,7 @@ function StageTable({ data, stage, hidden, loading, onOpen }: {
         key: 'deliveryLocation', label: 'Delivery Location', getValue: (r) => r.delivery_location ?? '',
         render: (r) => <span title={r.delivery_address ?? undefined}>{r.delivery_location ?? '—'}</span>,
       },
+      textCol('location', 'Location', (r) => r.location),
       textCol('project', 'Project / Fair', (r) => r.project),
       textCol('branding', 'Branding', (r) => r.branding),
       {
@@ -1077,9 +1078,9 @@ function buildExport(data: NonNullable<FairReportData>): { headers: string[]; bo
   if (data.stage === 'do') {
     return {
       name: 'fair-report-delivery-orders.csv',
-      headers: ['Delivery Date', 'Venue', 'Delivery Location', 'Delivery Address', 'Project', 'Branding', 'DO No', 'Linked SO', 'Qty', 'SO Amount', 'Total SO Cost', 'Total DO Cost', 'Cost Delta', 'SO Margin %', 'DO Margin %', 'Legacy'],
+      headers: ['Delivery Date', 'Venue', 'Delivery Location', 'Delivery Address', 'Location', 'Project', 'Branding', 'DO No', 'Linked SO', 'Qty', 'SO Amount', 'Total SO Cost', 'Total DO Cost', 'Cost Delta', 'SO Margin %', 'DO Margin %', 'Legacy'],
       body: data.rows.map((r) => [
-        formatDate(r.delivery_date), r.venue, r.delivery_location, r.delivery_address, r.project, r.branding, r.do_no, r.so_no, r.qty,
+        formatDate(r.delivery_date), r.venue, r.delivery_location, r.delivery_address, r.location, r.project, r.branding, r.do_no, r.so_no, r.qty,
         r.so_amount_sen == null ? '' : c(r.so_amount_sen),
         c(r.total_so_cost_sen), c(r.total_do_cost_sen), c(r.cost_delta_sen),
         r.so_margin_pct == null ? '' : r.so_margin_pct.toFixed(1), r.do_margin_pct == null ? '' : r.do_margin_pct.toFixed(1), r.do_cost_is_legacy ? 'Yes' : '',
