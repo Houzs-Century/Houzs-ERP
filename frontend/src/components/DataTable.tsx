@@ -2000,13 +2000,21 @@ function DataTableInner<T, L>({
     selectableKeys.some((k) => selection.selectedIds.has(k));
 
   // ── Row windowing (page-scroll-preserving) ─────────────────────────────────
-  // Only the common flat case: grouped / expandable tables and short lists render
-  // in full (unchanged). The tbody is measured against the viewport on scroll
-  // (from ANY ancestor — a capturing window listener catches non-bubbling scroll
-  // events) and on resize; only the visible slice of rows is rendered, bracketed
-  // by two spacer <tr>s that reserve the off-screen height so the page scrollbar
-  // and sticky header behave exactly as before. Row height is measured from a
-  // real row so the spacers can't drift (avoids the HOOKKA getTotalSize lag).
+  // Short lists and (while a row is open) expandable tables render in full. The
+  // tbody is measured against the viewport on scroll (from ANY ancestor — a
+  // capturing window listener catches non-bubbling scroll events) and on resize;
+  // only the visible slice of `renderList` is rendered, bracketed by two spacer
+  // <tr>s that reserve the off-screen height so the page scrollbar and sticky
+  // header behave exactly as before. Row height is the AVERAGE of the drawn items
+  // so the spacers can't drift (avoids the HOOKKA getTotalSize lag).
+  //
+  // GROUPED lists window too (owner follow-up 2026-10-23). `renderList` already
+  // interleaves non-sticky group-header items with row items and already drops
+  // collapsed groups' rows, so the slice path and collapse-shrinks-the-DOM both
+  // work unchanged; the height average blends header (`data-vgrp`) and row
+  // (`data-vrow`) heights (near-equal one-liners) so the per-item spacer estimate
+  // stays honest. A flat list has no `data-vgrp` rows, so its behaviour is
+  // byte-identical to before.
   // `expandable` used to disqualify a table outright. That excluded the single
   // largest list in the app: /scm/inventory's balances table is expandable (the
   // chevron opens per-warehouse / variant detail) and measured 2026-08-01 at
@@ -2023,7 +2031,7 @@ function DataTableInner<T, L>({
   // risky state is simply never the windowed one. Collapsing the last row
   // returns it to the windowed path.
   const canVirtualize =
-    showTable && !effectiveLoading && !error && groupLevels.length === 0 &&
+    showTable && !effectiveLoading && !error &&
     (!expandable || expandedRowsEffective.size === 0) &&
     renderList.length > VIRTUAL_ROW_THRESHOLD;
   const tbodyRef = useRef<HTMLTableSectionElement>(null);
@@ -2068,9 +2076,10 @@ function DataTableInner<T, L>({
       raf = 0;
       const el = tbodyRef.current;
       if (!el) return;
-      /* The average of the rows drawn, not the first one: with text wrapped the
-         rows are no longer one height. */
-      const drawn = el.querySelectorAll<HTMLElement>("tr[data-vrow]");
+      /* The average of the items drawn, not the first one: with text wrapped the
+         rows are no longer one height, and a grouped list mixes row heights with
+         group-header (data-vgrp) heights. */
+      const drawn = el.querySelectorAll<HTMLElement>("tr[data-vrow], tr[data-vgrp]");
       let sum = 0;
       drawn.forEach((tr) => { sum += tr.offsetHeight; });
       if (drawn.length > 0 && sum > 0) rowHeightRef.current = sum / drawn.length;
@@ -2648,6 +2657,7 @@ function DataTableInner<T, L>({
                     return (
                       <tr
                         key={`grp:${item.path}`}
+                        data-vgrp=""
                         onClick={() => toggleGroup(item.path)}
                         className="cursor-pointer select-none bg-surface-dim/70 transition-colors hover:bg-surface-dim"
                       >
