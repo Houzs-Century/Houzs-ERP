@@ -18,14 +18,15 @@ import type { Context } from "hono";
 import { and, asc, eq } from "drizzle-orm";
 import type { Env } from "../types";
 import { getDb } from "../db/client";
-import { departments, hr_attendance, hr_employees, hr_punch_sites } from "../db/schema";
+import { departments, hr_attendance, hr_employees, hr_punch_sites, hr_working_hours } from "../db/schema";
 import { requireActiveCompanyId } from "../scm/lib/companyScope";
 import { todayMyt } from "../scm/lib/my-time";
 import { hasPermission } from "../services/permissions";
 import { audit } from "../services/audit";
 import { ATTENDANCE_STATUSES, instantOnWorkDate, type AttendanceStatus } from "../scm/shared/hr-attendance";
 import { asDate, attendanceView, correctionTimes, type AttendanceRow } from "./lib/hr-attendance-view";
-import { closeForgottenPunches, loadSites, rulesResolver } from "./lib/hr-attendance-store";
+import { loadSites, rulesResolver } from "./lib/hr-attendance-store";
+import { applyDayDock, closeForgottenAndSync, syncDayFromPunch } from "./lib/hr-labor-store";
 
 type Ctx = Context<{ Bindings: Env }>;
 
@@ -49,7 +50,7 @@ hrAttendance.get("/attendance", async (c) => {
   if (!YMD.test(date)) return c.json({ error: "bad_date", message: "Pick a date." }, 400);
   const db = getDb(c.env);
   const now = new Date();
-  await closeForgottenPunches(db, co.companyId, null, now);
+  await closeForgottenAndSync(db, co.companyId, null, now);
   const [rows, employees, rulesFor, sites] = await Promise.all([
     db.select().from(hr_attendance).where(and(eq(hr_attendance.company_id, co.companyId), eq(hr_attendance.work_date, date))),
     db
@@ -140,10 +141,16 @@ hrAttendance.put("/attendance", async (c) => {
     updated_at: now,
     updated_by: by,
   };
-  if (existing) {
-    await db.update(hr_attendance).set(values).where(eq(hr_attendance.id, existing.id));
+  const attendanceId = existing
+    ? (await db.update(hr_attendance).set(values).where(eq(hr_attendance.id, existing.id)).returning({ id: hr_attendance.id }))[0].id
+    : (await db.insert(hr_attendance).values({ ...values, company_id: co.companyId, employee_id: employeeId, work_date: date }).returning({ id: hr_attendance.id }))[0].id;
+  /* The day's Working Hours follow the corrected punch; a day with no times
+     (leave, absent) loses its AUTO hours and so its dock. HR-typed hours stay. */
+  if (inAt && outAt) {
+    await syncDayFromPunch(db, co.companyId, attendanceId);
   } else {
-    await db.insert(hr_attendance).values({ ...values, company_id: co.companyId, employee_id: employeeId, work_date: date });
+    await db.delete(hr_working_hours).where(and(eq(hr_working_hours.attendance_id, attendanceId), eq(hr_working_hours.source, "AUTO")));
+    await applyDayDock(db, co.companyId, employeeId, date, 0, "");
   }
   await audit(c, {
     action: "hr.attendance.set",
@@ -166,6 +173,7 @@ hrAttendance.delete("/attendance/:id", async (c) => {
     .where(and(eq(hr_attendance.company_id, co.companyId), eq(hr_attendance.id, id)))
     .returning({ employee_id: hr_attendance.employee_id, work_date: hr_attendance.work_date, clock_in_at: hr_attendance.clock_in_at, clock_out_at: hr_attendance.clock_out_at });
   if (!done.length) return c.json({ error: "not_found_in_company" }, 404);
+  await applyDayDock(getDb(c.env), co.companyId, done[0].employee_id, done[0].work_date, 0, "");
   await audit(c, { action: "hr.attendance.delete", entityType: "hr_employee", entityId: done[0].employee_id, summary: `Removed attendance ${done[0].work_date}`, meta: done[0] });
   return c.json({ ok: true });
 });

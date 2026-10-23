@@ -8,21 +8,26 @@
 //   GET  /me                      my employee, today, an open punch, last 14 days
 //   POST /punch                   multipart: action, lat, lng, accuracy, photo
 //   GET  /me/photo/:id?which=in   my own selfie back
+//   GET  /me/pay                  My pay: this month so far, and approved payslips
+//   GET  /me/payslip/:period      one approved or paid payslip
 //
 // The selfie and GPS are evidence, not gates (as in Hookka): a punch with no
 // photo or no location still records, and HR sees which.
 // ----------------------------------------------------------------------------
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { and, desc, eq, gte, isNotNull, isNull } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { Env } from "../types";
 import { getDb } from "../db/client";
-import { hr_attendance, hr_employees } from "../db/schema";
+import { hr_attendance, hr_employees, hr_payslips } from "../db/schema";
 import { requireActiveCompanyId } from "../scm/lib/companyScope";
 import { todayMyt } from "../scm/lib/my-time";
 import { checkPunchLocation } from "../scm/shared/hr-attendance";
 import { attendanceView, planPunch, type AttendanceRow } from "./lib/hr-attendance-view";
-import { closeForgottenPunches, loadSites, rulesResolver } from "./lib/hr-attendance-store";
+import { loadSites, rulesResolver } from "./lib/hr-attendance-store";
+import { closeForgottenAndSync, syncDayFromPunch } from "./lib/hr-labor-store";
+import { computePeriod } from "./lib/hr-payroll-store";
+import { slipOut, type SlipRow } from "./hr-payroll";
 
 type Ctx = Context<{ Bindings: Env }>;
 type Db = ReturnType<typeof getDb>;
@@ -68,7 +73,7 @@ attendance.get("/me", async (c) => {
   const emp = await myEmployee(db, co.companyId, c.get("user").id);
   if (!emp || emp.status !== "ACTIVE") return c.json({ linked: false });
   const now = new Date();
-  await closeForgottenPunches(db, co.companyId, emp.id, now);
+  await closeForgottenAndSync(db, co.companyId, emp.id, now);
   const since = todayMyt(-13);
   const [rows, rulesFor, sites] = await Promise.all([
     db
@@ -122,7 +127,7 @@ attendance.post("/punch", async (c) => {
 
   const now = new Date();
   const today = todayMyt();
-  await closeForgottenPunches(db, co.companyId, emp.id, now);
+  await closeForgottenAndSync(db, co.companyId, emp.id, now);
   const [todayRow, open] = await Promise.all([
     db
       .select()
@@ -180,6 +185,7 @@ attendance.post("/punch", async (c) => {
       .update(hr_attendance)
       .set({ clock_out_at: at, out_source: "PHONE", ...evidence, updated_at: at, updated_by: userId })
       .where(and(eq(hr_attendance.id, plan.rowId), isNull(hr_attendance.clock_out_at)));
+    await syncDayFromPunch(db, co.companyId, plan.rowId);
   }
 
   return c.json({
@@ -211,4 +217,71 @@ attendance.get("/me/photo/:id", async (c: Ctx) => {
   const obj = await c.env.POD_BUCKET.get(key);
   if (!obj) return c.json({ error: "not_found", message: "No photo for that punch." }, 404);
   return new Response(obj.body, { headers: { "content-type": obj.httpMetadata?.contentType ?? "image/jpeg", "cache-control": "private, max-age=300" } });
+});
+
+/* My pay (Hookka's worker pay screen): this month's running estimate (the
+   same pipeline as Generate, nothing stored) and the slips HR has approved.
+   A draft slip is not shown: the figures can still change. */
+attendance.get("/me/pay", async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const db = getDb(c.env);
+  const emp = await myEmployee(db, co.companyId, c.get("user").id);
+  if (!emp) return c.json({ linked: false });
+  const today = todayMyt();
+  const period = today.slice(0, 7);
+  const own = await db
+    .select()
+    .from(hr_payslips)
+    .where(and(eq(hr_payslips.company_id, co.companyId), eq(hr_payslips.employee_id, emp.id), inArray(hr_payslips.status, ["APPROVED", "PAID"])))
+    .orderBy(desc(hr_payslips.period))
+    .limit(12);
+  const currentFinal = own.find((s) => s.period === period);
+  const estimate = currentFinal ? null : (await computePeriod(db, co.companyId, period, today, emp.id)).at(0) ?? null;
+  return c.json({
+    linked: true,
+    employee: { empNo: emp.emp_no, name: emp.name },
+    period,
+    estimate: estimate && {
+      period,
+      fullSalarySen: estimate.pay.fullSalarySen,
+      daysWorked: estimate.pay.daysWorked,
+      absentDays: estimate.pay.absentDays,
+      absentDates: estimate.pay.absentDates,
+      absenceDeductionSen: estimate.pay.absenceDeductionSen,
+      shortHours: estimate.pay.shortHours,
+      shortHourDeductionSen: estimate.pay.shortHourDeductionSen,
+      otPaySen: estimate.pay.otPaySen,
+      otDays: estimate.pay.otDays,
+      commissionSen: estimate.commissionSen,
+      tripAllowanceSen: estimate.tripAllowanceSen,
+      tripLines: estimate.trip?.lines.map((l) => ({ label: l.label, count: l.count, amountSen: l.amountSen })) ?? [],
+      allowances: estimate.allowanceLines.filter((l) => l.kind !== "BACKPAY").map((l) => ({ label: l.label, amountSen: l.amountSen })),
+      grossSen: estimate.grossSen,
+      statutoryEmployeeSen: estimate.statutoryEmployeeSen,
+      pcbKnown: estimate.pcbStatus !== "UNKNOWN",
+      advanceSen: estimate.advanceSen,
+      backpaySen: estimate.backpaySen,
+      penaltySen: estimate.penaltySen,
+      netSen: estimate.netSen,
+    },
+    payslips: own.map((s) => ({ period: s.period, status: s.status, grossSen: Number(s.gross_sen), netSen: Number(s.net_sen) })),
+  });
+});
+
+attendance.get("/me/payslip/:period", async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const db = getDb(c.env);
+  const emp = await myEmployee(db, co.companyId, c.get("user").id);
+  if (!emp) return c.json(NOT_LINKED, 403);
+  const row = (
+    await db
+      .select()
+      .from(hr_payslips)
+      .where(and(eq(hr_payslips.company_id, co.companyId), eq(hr_payslips.employee_id, emp.id), eq(hr_payslips.period, c.req.param("period")), inArray(hr_payslips.status, ["APPROVED", "PAID"])))
+      .limit(1)
+  ).at(0);
+  if (!row) return c.json({ error: "not_found", message: "That payslip is not approved yet." }, 404);
+  return c.json({ slip: slipOut(row as SlipRow) });
 });
