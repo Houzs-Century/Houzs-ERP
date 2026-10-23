@@ -143,6 +143,7 @@ import { attachSoLines } from '../lib/so-list-lines';
 import { SO_TAB_STATUSES, soStatusesForTab } from '../lib/so-tab-statuses';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { tallyStatusRows, type StatusTally } from '../lib/status-counts';
+import { readAggregate } from '../lib/postgrest-aggregate';
 /* "A PO is already out for this SO" — the second road to the same soft lock
    (owner 2026-08-12, 2990 only). See lib/so-po-lock.ts. */
 import { soHasLivePo, soHasUnreceivedPo, soPoLocked } from '../lib/so-po-lock';
@@ -1047,11 +1048,11 @@ export async function soListMoneyKpis(
 ): Promise<{ data: SoListMoneyKpis | null; error: { message: string } | null }> {
   /* FAST PATH — all aggregates, no plain column → one implicit group → one row.
      Idiom: outstanding.ts /summary. */
-  const agg = await applyMoneyFilters(
+  const agg = await readAggregate(() => applyMoneyFilters(
     sb
       .from('mfg_sales_orders_with_payment_totals')
       .select('rev:local_total_sen.sum(),outLive:balance_sen_live.sum(),paid:paid_total_sen.sum()'),
-  );
+  ));
   if (!agg.error) {
     const row = ((agg.data ?? []) as Array<Record<string, unknown>>)[0] ?? {};
     return {
@@ -1075,7 +1076,7 @@ export async function soListMoneyKpis(
       sb
         .from('mfg_sales_orders_with_payment_totals')
         .select('local_total_sen, balance_sen, balance_sen_live, paid_total_sen'),
-    ).range(mfrom, mto),
+    ).order('doc_no', { ascending: true }).range(mfrom, mto), // ordered: unordered pages repeat / skip rows
   );
   if (fb.error) return { data: null, error: fb.error };
   let revenueSen = 0, outstandingSen = 0, paidSen = 0;
@@ -1223,10 +1224,10 @@ mfgSalesOrders.get('/', async (c) => {
       return { ok: true, n: r.count ?? 0 };
     })();
     const countsProm = (async (): Promise<StatusTally> => {
-      const agg = await scopedCountQ(sb.from(read.countFrom).select('status, cnt:doc_no.count()'));
+      const agg = await readAggregate<{ data: Array<{ status: string | null; cnt: number }> | null; error: { message: string } | null }>(() => scopedCountQ(sb.from(read.countFrom).select('status, cnt:doc_no.count()')));
       if (!agg.error) return tallyStatusRows<{ status: string | null; cnt: number }>(agg, (r) => Number(r.cnt ?? 0));
       const fb = await paginateAll<{ status: string | null }>((cfrom, cto) =>
-        scopedCountQ(sb.from(read.countFrom).select('status')).range(cfrom, cto));
+        scopedCountQ(sb.from(read.countFrom).select('status')).order('doc_no', { ascending: true }).range(cfrom, cto));
       /* Named separately from tallyStatusRows' own error branch so the 500 says
          which of the TWO reads died, not just that the second one did. */
       if (fb.error) return { ok: false, reason: `status counts failed: aggregate ${agg.error.message}; fallback ${fb.error.message}` };
