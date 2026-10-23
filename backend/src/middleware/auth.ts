@@ -1,6 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import type { Env } from "../types";
-import { getUserBySession, timingSafeEqualStr, type AuthUser, mintSessionPass } from "../services/auth";
+import { getUserBySession, timingSafeEqualStr, type AuthUser, mintSessionPassFor } from "../services/auth";
 import { tryPassAuth } from "../services/session-pass";
 import { hasPermission } from "../services/permissions";
 import { canViewItPages } from "../services/itAccess";
@@ -190,8 +190,9 @@ export const auth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
 
      Costs one authoritative read per 8 hours per session instead of one per
      request, and stays a no-op while SESSION_SIGNING_KEY is unset —
-     mintSessionPass returns null without it. */
-  const reissued = await mintSessionPass(c.env, token, Date.now());
+     mintSessionPassFor returns null without it. Signed from the `user` just
+     read above: re-reading it here cost a second session read (HC-0002). */
+  const reissued = await mintSessionPassFor(c.env, user, token, Date.now());
   if (reissued) c.header("X-Session-Pass", reissued);
 
   c.set("authPath", "session-db");
