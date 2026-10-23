@@ -1041,15 +1041,18 @@ function erpReconcileApply() { return erpReconcile_(false); }
 //     Order row 2 labels "From AutoCount" / "From Admin" whose row-3 header the
 //     target also has (a blank EM value never clears the target; a value the
 //     target's dropdown rejects is skipped);
-//   - appends orders the target lacks: ESB every order, BS a Sabah order whose
-//     col A is not "Done Delivered" (owner 2026-10-23: new orders only).
+//   - appends orders the target lacks: ESB every order, BS an order ESB has
+//     marked "TO BRIGHTSUN" (owner 2026-10-23).
 // Transporter-owned columns are never written on an existing row.
 // Spreadsheet ids live in Script properties (this file is in a public repo):
 // TRANSPORTER_ESB_SS_ID, TRANSPORTER_BS_SS_ID.
 const ERP_TRANSPORTERS = [
-  { name: "ESB", prop: "TRANSPORTER_ESB_SS_ID", sheet: "EM Delivery", wants: function () { return true; } },
-  { name: "BS", prop: "TRANSPORTER_BS_SS_ID", sheet: "SABAH EM Delivery",
-    wants: function (loc, status) { return /^SBH/i.test(loc) && !/^done delivered$/i.test(status); } }
+  { name: "ESB", prop: "TRANSPORTER_ESB_SS_ID", sheet: "EM Delivery", pullLabel: "From ESB Sheet", wants: function () { return true; } },
+  // BS = Brightsun: an order goes to BS once ESB marks it "TO BRIGHTSUN" in its
+  // delivery-status remarks (owner 2026-10-23). ESB pulls run first, so the
+  // mark is already on EM Order when this is asked.
+  { name: "BS", prop: "TRANSPORTER_BS_SS_ID", sheet: "SABAH EM Delivery", pullLabel: "From BS Sheet",
+    wants: function (field) { return /to\s*brightsun/i.test(field("em order delivery status esb remarks")); } }
 ];
 
 function erpCellText_(v) {
@@ -1057,20 +1060,65 @@ function erpCellText_(v) {
   return String(v == null ? "" : v).trim();
 }
 
+// EM Order's col A is "DELIVERY MESSAGE STATUS"; ESB / BS call the same status
+// "EM Order Shipment Status". EM Order owns it (2026-10-23: of 18 conflicting
+// rows, 17 had EM ahead), so it pushes like an EM-owned column.
+const ERP_TRANSPORTER_HEADER_ALIAS = { "em order shipment status": "delivery message status" };
+
+/** target header (normalised, aliases folded to EM's name) -> 0-based column. */
+function erpTargetColumns_(headers) {
+  const tCol = {};
+  headers.forEach(function (h, i) {
+    let k = erpNormHeader_(h);
+    if (ERP_TRANSPORTER_HEADER_ALIAS[k]) k = ERP_TRANSPORTER_HEADER_ALIAS[k];
+    if (k && tCol[k] === undefined) tCol[k] = i;
+  });
+  return tCol;
+}
+
+/** Pure: transporter-owned values to copy BACK into EM Order. Columns are the
+ *  ones EM row 2 labels `sourceLabel` ("From ESB Sheet" / "From BS Sheet"),
+ *  matched by header. A blank transporter cell never clears EM. */
+function erpPlanTransporterPull_(master, target, sourceLabel) {
+  const tCol = erpTargetColumns_(target.headers);
+  const want = erpNormHeader_(sourceLabel);
+  const cols = [];
+  master.labels.forEach(function (lab, i) {
+    const k = erpNormHeader_(master.headers[i]);
+    if (erpNormHeader_(lab) === want && k && tCol[k] !== undefined) cols.push({ m: i, t: tCol[k] });
+  });
+  const docM = master.headers.map(erpNormHeader_).indexOf("doc. no.");
+  const docT = tCol["doc. no."];
+  const tRow = {};
+  target.rows.forEach(function (r, i) { const d = erpCellText_(r[docT]); if (d && tRow[d] === undefined) tRow[d] = i; });
+  const updates = [];
+  master.rows.forEach(function (r, mi) {
+    const doc = erpCellText_(r[docM]);
+    const ti = doc ? tRow[doc] : undefined;
+    if (ti === undefined) return;
+    cols.forEach(function (c) {
+      const tv = erpCellText_(target.rows[ti][c.t]);
+      if (tv === "" || tv === erpCellText_(r[c.m])) return;
+      updates.push({ row: mi, col: c.m, value: target.rows[ti][c.t], doc: doc });
+    });
+  });
+  return updates;
+}
+
 /** Pure: what to write to one transporter sheet. Exported for the test. */
 function erpPlanTransporterPush_(master, target, wants) {
   // master: { labels[], headers[], rows[][] } (EM Order rows 2, 3, 4..)
   // target: { headers[], rows[][], allowed: {colIdx: {value:1}} } (row 1, rows 2..)
-  const tCol = {};
-  target.headers.forEach(function (h, i) { const k = erpNormHeader_(h); if (k && tCol[k] === undefined) tCol[k] = i; });
+  const tCol = erpTargetColumns_(target.headers);
   const owned = [];
   master.labels.forEach(function (lab, i) {
     const l = erpNormHeader_(lab);
     const k = erpNormHeader_(master.headers[i]);
-    if ((l === "from autocount" || l === "from admin") && k && tCol[k] !== undefined) owned.push({ m: i, t: tCol[k] });
+    const isStatus = k === "delivery message status";
+    if ((isStatus || l === "from autocount" || l === "from admin") && k && tCol[k] !== undefined) owned.push({ m: i, t: tCol[k] });
   });
   const mCol = function (name) { return master.headers.map(erpNormHeader_).indexOf(name); };
-  const docM = mCol("doc. no."), locM = mCol("sales location"), statusM = 0;
+  const docM = mCol("doc. no.");
   const docT = tCol["doc. no."];
   const tRow = {};
   target.rows.forEach(function (r, i) { const d = erpCellText_(r[docT]); if (d && tRow[d] === undefined) tRow[d] = i; });
@@ -1082,7 +1130,7 @@ function erpPlanTransporterPush_(master, target, wants) {
     if (!doc) return;
     const ti = tRow[doc];
     if (ti === undefined) {
-      if (!wants(erpCellText_(r[locM]), erpCellText_(r[statusM]))) return;
+      if (!wants(function (name) { const i = mCol(name); return i < 0 ? "" : erpCellText_(r[i]); })) return;
       const row = target.headers.map(function () { return ""; });
       master.headers.forEach(function (h, i) { const k = erpNormHeader_(h); if (k && tCol[k] !== undefined) row[tCol[k]] = r[i]; });
       appends.push(row);
@@ -1139,13 +1187,23 @@ function erpPushToTransporters_(triggerType) {
             }
           });
         }
+        // Pull first: the transporter's own columns come back into EM Order, on
+        // the row that holds the DocNo NOW (staff may sort EM mid-run).
+        const pulls = erpPlanTransporterPull_(master, target, t.pullLabel);
+        const rowState = { index: erpDocNoIndex_(em, 4), moved: 0 };
+        let pulled = 0;
+        pulls.forEach(function (u) {
+          const r = erpRowOfDoc_(em, 4, u.doc, u.row + 4, rowState);
+          if (!r) return;
+          try { em.getRange(r, u.col + 1).setValue(u.value); master.rows[u.row][u.col] = u.value; pulled++; } catch (e) {}
+        });
         const plan = erpPlanTransporterPush_(master, target, t.wants);
         let written = 0, failed = 0;
         plan.updates.forEach(function (u) {
           try { sh.getRange(u.row + 2, u.col + 1).setValue(u.value); written++; } catch (e) { failed++; }
         });
         if (plan.appends.length) sh.getRange(sh.getLastRow() + 1, 1, plan.appends.length, tlc).setValues(plan.appends);
-        parts.push(t.name + ": " + written + " cell(s) updated, " + plan.appends.length + " order(s) added" +
+        parts.push(t.name + ": " + pulled + " cell(s) pulled into EM, " + written + " cell(s) updated, " + plan.appends.length + " order(s) added" +
           (plan.blocked ? ", " + plan.blocked + " skipped by dropdown" : "") + (failed ? ", " + failed + " failed" : ""));
         if (failed) status = "PARTIAL";
       } catch (e) {
