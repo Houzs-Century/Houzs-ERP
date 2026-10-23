@@ -13,7 +13,7 @@
 // in a tagged template where `\(` and `\s` lose their backslash, so it matched no
 // mattress at all.
 
-export const HARD_BOUND_GROUPS = Object.freeze(['bedframe', 'sofa', 'fabric_accessory']);
+export const HARD_BOUND_GROUPS = Object.freeze(['bedframe', 'sofa', 'fabric_accessory', 'dining']);
 
 const SP_SUFFIX = /\(SP\)\s*$/i;
 

@@ -114,7 +114,7 @@ Company scope
 - A NULL company means Houzs to the customer-resolve RPC. Create and header PATCH use `requireActiveCompanyId` (409); never pass `?? null`.
 - `pwp_codes` is keyed `(company_id, code)`. Every claim, rollback, exchange, re-stamp and kept-code read carries the company (409 `company_unresolved` when it is unknown). Never widen to all companies.
 - Only `so-stock-allocation.ts` and `resolveDoSofaBatchMap` read the catalog without a company filter, and only to classify categories.
-- Allocation split (`HARD_BOUND_COMPANY_ID = 1`): Houzs bedframe, sofa, (SP) mattress and Sofa Accessory lines are allocated only from their own PO receipt (sofas try a covering dye lot first). 2990 tries the dedicated PO, then pooled FIFO by (warehouse, code, variant).
+- Allocation split (`HARD_BOUND_COMPANY_ID = 1`): Houzs bedframe, sofa, (SP) mattress, Sofa Accessory and Dining lines are allocated only from their own PO receipt (sofas try a covering dye lot first). 2990 tries the dedicated PO, then pooled FIFO by (warehouse, code, variant).
 - No Processing Date means no allocation: lines stay PENDING (`allocGated` reads only `processing_date`).
 - Stock in non-selling warehouses (showroom, display, service; `lib/non-selling-warehouse.ts`) is never allocated. To sell a display piece, stock-transfer it to a selling warehouse first.
 - The warehouse follows the order: header `sales_location` (plus a `warehouse_id` snapshot), resolved by `lib/so-warehouse.ts`. A line with no warehouse uses the header's in MRP. Create default: explicit Location, then State mapping, then the operator's own store. A goods line saved without a warehouse logs `[null-warehouse]`.
