@@ -643,6 +643,10 @@ function StageTable({ data, stage, hidden, loading, onOpen }: {
     const columns: Column<FairDoRow>[] = [
       dateCol('date', 'Delivery Date', (r) => r.delivery_date),
       textCol('venue', 'Venue', (r) => r.venue),
+      {
+        key: 'deliveryLocation', label: 'Delivery Location', getValue: (r) => r.delivery_location ?? '',
+        render: (r) => <span title={r.delivery_address ?? undefined}>{r.delivery_location ?? '—'}</span>,
+      },
       textCol('project', 'Project / Fair', (r) => r.project),
       textCol('branding', 'Branding', (r) => r.branding),
       {
@@ -807,6 +811,7 @@ function StageCards({ data, stage, loading, onOpen }: {
               <span className="ml-auto text-[13px] font-bold tabular-nums text-ink">{pct(r.do_margin_pct)}</span>
             </div>
             <div className="mt-1.5 text-[12px] text-ink-secondary">{r.venue ?? '—'} · <span className="tabular-nums">{formatDate(r.delivery_date)}</span> · SO {r.so_no ?? '—'}</div>
+            <div className="mt-1 text-[12px] text-ink-secondary">Deliver to {r.delivery_location ?? '—'}</div>
             <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border/60 pt-3">
               {stat('SO Cost', cell(r.total_so_cost_sen))}{stat('DO Cost', cell(r.total_do_cost_sen))}{stat('Cost Δ', signedMoney(r.cost_delta_sen))}
             </div>
@@ -1072,9 +1077,9 @@ function buildExport(data: NonNullable<FairReportData>): { headers: string[]; bo
   if (data.stage === 'do') {
     return {
       name: 'fair-report-delivery-orders.csv',
-      headers: ['Delivery Date', 'Venue', 'Project', 'Branding', 'DO No', 'Linked SO', 'Qty', 'SO Amount', 'Total SO Cost', 'Total DO Cost', 'Cost Delta', 'SO Margin %', 'DO Margin %', 'Legacy'],
+      headers: ['Delivery Date', 'Venue', 'Delivery Location', 'Delivery Address', 'Project', 'Branding', 'DO No', 'Linked SO', 'Qty', 'SO Amount', 'Total SO Cost', 'Total DO Cost', 'Cost Delta', 'SO Margin %', 'DO Margin %', 'Legacy'],
       body: data.rows.map((r) => [
-        formatDate(r.delivery_date), r.venue, r.project, r.branding, r.do_no, r.so_no, r.qty,
+        formatDate(r.delivery_date), r.venue, r.delivery_location, r.delivery_address, r.project, r.branding, r.do_no, r.so_no, r.qty,
         r.so_amount_sen == null ? '' : c(r.so_amount_sen),
         c(r.total_so_cost_sen), c(r.total_do_cost_sen), c(r.cost_delta_sen),
         r.so_margin_pct == null ? '' : r.so_margin_pct.toFixed(1), r.do_margin_pct == null ? '' : r.do_margin_pct.toFixed(1), r.do_cost_is_legacy ? 'Yes' : '',
