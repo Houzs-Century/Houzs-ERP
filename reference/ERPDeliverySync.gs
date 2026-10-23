@@ -1082,11 +1082,11 @@ function erpTargetColumns_(headers) {
  *  matched by header. A blank transporter cell never clears EM. */
 function erpPlanTransporterPull_(master, target, sourceLabel) {
   const tCol = erpTargetColumns_(target.headers);
-  const want = erpNormHeader_(sourceLabel);
+  const source = erpLabelSource_(sourceLabel);
   const cols = [];
   master.labels.forEach(function (lab, i) {
     const k = erpNormHeader_(master.headers[i]);
-    if (erpNormHeader_(lab) === want && k && tCol[k] !== undefined) cols.push({ m: i, t: tCol[k] });
+    if (source && erpLabelSource_(lab) === source && k && tCol[k] !== undefined) cols.push({ m: i, t: tCol[k] });
   });
   const docM = master.headers.map(erpNormHeader_).indexOf("doc. no.");
   const docT = tCol["doc. no."];
@@ -1103,7 +1103,18 @@ function erpPlanTransporterPull_(master, target, sourceLabel) {
       updates.push({ row: mi, col: c.m, value: target.rows[ti][c.t], doc: doc });
     });
   });
-  return updates;
+  return { updates: updates, columns: cols.length };
+}
+
+/** "ESB" / "BS" / "" for an EM row-2 owner label. Rows 1-2 of EM Order are
+ *  hidden and the exact wording is not fixed ("From ESB Sheet", "From ESB",
+ *  "ESB"...), so match the word: an exact "From ESB Sheet" compare found no
+ *  column on 2026-10-23 and pulled nothing. */
+function erpLabelSource_(label) {
+  const l = erpNormHeader_(label);
+  if (/\besb\b/.test(l)) return "ESB";
+  if (/\bbs\b/.test(l)) return "BS";
+  return "";
 }
 
 /** Pure: what to write to one transporter sheet. Exported for the test. */
@@ -1195,7 +1206,7 @@ function erpPushToTransporters_(triggerType) {
         const pulls = erpPlanTransporterPull_(master, target, t.pullLabel);
         const rowState = { index: erpDocNoIndex_(em, 4), moved: 0 };
         let pulled = 0;
-        pulls.forEach(function (u) {
+        pulls.updates.forEach(function (u) {
           const r = erpRowOfDoc_(em, 4, u.doc, u.row + 4, rowState);
           if (!r) return;
           try { em.getRange(r, u.col + 1).setValue(u.value); master.rows[u.row][u.col] = u.value; pulled++; } catch (e) {}
@@ -1213,7 +1224,7 @@ function erpPushToTransporters_(triggerType) {
           try { sh.getRange(u.row + 2, u.col + 1).setValue(u.value); written++; } catch (e) { failed++; }
         });
         if (plan.appends.length) sh.getRange(sh.getLastRow() + 1, 1, plan.appends.length, tlc).setValues(plan.appends);
-        parts.push(t.name + ": " + pulled + " cell(s) pulled into EM, " + written + " cell(s) updated, " + plan.appends.length + " order(s) added" +
+        parts.push(t.name + ": " + pulled + " cell(s) pulled into EM (" + (pulls.columns || 0) + " column(s) matched), " + written + " cell(s) updated, " + plan.appends.length + " order(s) added" +
           (plan.blocked ? ", " + plan.blocked + " skipped by dropdown" : "") + (failed ? ", " + failed + " failed" : ""));
         if (failed) status = "PARTIAL";
       } catch (e) {
