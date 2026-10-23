@@ -99,7 +99,8 @@ describe('HC-0153 pairs file', () => {
   const book = JSON.parse(fs.readFileSync(path.join(DATA, 'duplicate-sku-merges.json'), 'utf8'));
   const pairs = book['HC-0153'].pairs;
   const solace = pairs.filter((p) => p.drop.includes('SOLACE'));
-  const bedframes = pairs.filter((p) => !p.drop.includes('SOLACE'));
+  const generasi = pairs.filter((p) => p.drop.includes('GENERASI'));
+  const bedframes = pairs.filter((p) => !p.drop.includes('SOLACE') && !p.drop.includes('GENERASI'));
   const mapping = () => readMappingCsv(fs.readFileSync(path.join(DATA, 'autocount-erp-mapping-1561.csv'), 'utf8'));
 
   /* S / SK / SP are discontinued: the kept HAPPI SLEEP SOLACE rows are INACTIVE
@@ -133,6 +134,14 @@ describe('HC-0153 pairs file', () => {
       expect(erpCodes.has(p.drop)).toBe(true);
       expect(erpCodes.has(p.keep)).toBe(false);
     }
+  });
+
+  /* The cutover map names neither code (it carries "OTHOREST GENERASI 3.0 MATT",
+     no 20CM): AutoCount resolves the survivor by its own 400-D001 binding. */
+  it('drops GENERASI 3.0 20CM into OTHOREST GENERASI 3.0 20CM, size for size', () => {
+    expect(generasi.map((p) => [p.drop, p.keep])).toEqual(
+      ['K', 'Q', 'S', 'SS'].map((s) => [`DUNLOPILLO GENERASI 3.0 20CM MATT (${s})`, `DUNLOPILLO OTHOREST GENERASI 3.0 20CM MATT (${s})`]),
+    );
   });
 });
 
