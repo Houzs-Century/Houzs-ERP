@@ -290,7 +290,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/inventory.ts": {
-      "reads": 13,
+      "reads": 9,
       "catches": 0
     },
     "backend/src/scm/routes/lorry-capacity.ts": {

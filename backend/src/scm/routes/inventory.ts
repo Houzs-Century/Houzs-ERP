@@ -26,7 +26,6 @@
 // separate `scm.warehouse.adjustments` permission — see that file + scm/index.ts.
 // ----------------------------------------------------------------------------
 
-import { doCountsAsDelivered } from '../shared/do-shipped-states';
 import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr } from '../lib/postgrest-search';
@@ -51,6 +50,7 @@ import type { Env, Variables } from '../env';
 import { canViewScmFinance } from '../lib/houzs-perms';
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { isStockBucket } from '../lib/stock-bucket';
+import { NETTING_EMBED, deliveredReturnedBySoItem, nettingFromEmbedded, type EmbeddedDemandLine } from '../lib/inventory-netting';
 
 /* FINANCE GATE — owner decision 2026-08-13, asked directly: "加财务门,仓管看
    不到成本".
@@ -439,75 +439,6 @@ inventory.get('/', listInventoryHandler);
    inventory-valuation.ts, replay shared with the month-end close. */
 inventory.get('/valuation', inventoryValuationHandler);
 
-/* Σ delivered / Σ returned per SO line id (net-of-delivered). Only
-   non-cancelled AND non-draft DOs count as delivered (a DRAFT DO hasn't
-   shipped); only non-cancelled DRs traced back through the active DO line count
-   as returned. Used to net gross open SO-line qty down to the still-open claim
-   for the Reserved / Available KPIs so a partially-shipped SO isn't
-   double-counted. Mirrors so-readiness's soDeliverableRemaining leak guard. */
-async function deliveredReturnedBySoItem(
-  sb: any,
-  soItemIds: string[],
-): Promise<{ deliveredBySoItem: Map<string, number>; returnedBySoItem: Map<string, number> }> {
-  const deliveredBySoItem = new Map<string, number>();
-  const returnedBySoItem = new Map<string, number>();
-  if (soItemIds.length === 0) return { deliveredBySoItem, returnedBySoItem };
-
-  const { data: doLines } = await chunkIn<{ id: string; so_item_id: string | null; qty: number; delivery_order_id: string }>(soItemIds, (batch, from, to) => sb
-    .from('delivery_order_items')
-    .select('id, so_item_id, qty, delivery_order_id')
-    .in('so_item_id', batch)
-    .range(from, to));
-  const doLineRows = (doLines ?? []) as Array<{ id: string; so_item_id: string | null; qty: number; delivery_order_id: string }>;
-  const doIds = [...new Set(doLineRows.map((l) => l.delivery_order_id).filter(Boolean))];
-  const activeDoIds = new Set<string>();
-  const doLineToSoItem = new Map<string, string>();
-  if (doIds.length > 0) {
-    const { data: dos } = await chunkIn<{ id: string; status: string | null }>(doIds, (batch, from, to) =>
-      sb.from('delivery_orders').select('id, status').in('id', batch).range(from, to));
-    for (const d of (dos ?? []) as Array<{ id: string; status: string | null }>) {
-      // A PRE-SHIP DO hasn't shipped and hasn't moved stock — excluding it
-      // (like soDeliverableRemaining's LEAK GUARD) keeps its units in Reserved
-      // so a free-to-sell KPI can't be inflated into over-sell. DRAFT *and*
-      // LOADED: this read named only DRAFT until 2026-08-20. (DRs have no
-      // DRAFT.)
-      if (doCountsAsDelivered(d.status)) activeDoIds.add(d.id);
-    }
-  }
-  for (const l of doLineRows) {
-    if (!l.so_item_id || !activeDoIds.has(l.delivery_order_id)) continue;
-    doLineToSoItem.set(l.id, l.so_item_id);
-    deliveredBySoItem.set(l.so_item_id, (deliveredBySoItem.get(l.so_item_id) ?? 0) + Number(l.qty ?? 0));
-  }
-
-  const activeDoLineIds = [...doLineToSoItem.keys()];
-  if (activeDoLineIds.length > 0) {
-    const { data: drLines } = await chunkIn<{ do_item_id: string | null; qty_returned: number; delivery_return_id: string }>(activeDoLineIds, (batch, from, to) => sb
-      .from('delivery_return_items')
-      .select('do_item_id, qty_returned, delivery_return_id')
-      .in('do_item_id', batch)
-      .range(from, to));
-    const drLineRows = (drLines ?? []) as Array<{ do_item_id: string | null; qty_returned: number; delivery_return_id: string }>;
-    const drIds = [...new Set(drLineRows.map((l) => l.delivery_return_id).filter(Boolean))];
-    const activeDrIds = new Set<string>();
-    if (drIds.length > 0) {
-      const { data: drs } = await chunkIn<{ id: string; status: string | null }>(drIds, (batch, from, to) =>
-        sb.from('delivery_returns').select('id, status').in('id', batch).range(from, to));
-      for (const d of (drs ?? []) as Array<{ id: string; status: string | null }>) {
-        if ((d.status ?? '').toUpperCase() !== 'CANCELLED') activeDrIds.add(d.id);
-      }
-    }
-    for (const l of drLineRows) {
-      if (!l.do_item_id || !activeDrIds.has(l.delivery_return_id)) continue;
-      const soItemId = doLineToSoItem.get(l.do_item_id);
-      if (!soItemId) continue;
-      returnedBySoItem.set(soItemId, (returnedBySoItem.get(soItemId) ?? 0) + Number(l.qty_returned ?? 0));
-    }
-  }
-
-  return { deliveredBySoItem, returnedBySoItem };
-}
-
 /* ── Product totals (AutoCount-style list view) — PR #38 ─────────────────
    One row per item_code with summed qty across all warehouses + main
    supplier. Double-click a row in the UI to drill into per-warehouse
@@ -663,29 +594,49 @@ export const productTotalsHandler = async (
     // and the open-lots query below are already company-scoped, so leaving demand
     // un-scoped would subtract OTHER companies' claims on a shared SKU from THIS
     // company's stock (mfg_sales_order_items carries company_id, mig 0083).
-    const { data: demand, error: demandErr } = await chunkIn(codes, (batch, from, to) => {
+    /* HC-0002 (prod 2026-10-22: the netting below took 13.6 s, four serial
+       uuid-chunked reads over thousands of open lines). The read now drops
+       finished orders in the database — the same not.in filter on the !inner
+       `so` embed MRP's demand read uses; SO_DONE below stays the gate — and
+       brings each line's DO lines and returns with it (NETTING_EMBED), so
+       netting costs no extra round trip. If that read is refused it is read
+       the old way and netted by the old four reads. */
+    const SO_DONE_SQL = `(${[...SO_DONE].map((st) => `"${st}"`).join(',')})`;
+    const readDemand = (embedNetting: boolean) => chunkIn(codes, (batch, from, to) => {
       let dq = pgrestIn(scopeToCompany(sb
         .from('mfg_sales_order_items')
-        .select('id, doc_no, item_code, qty, warehouse_id, line_delivery_date, cancelled, so:mfg_sales_orders!inner(status, customer_delivery_date, debtor_name, so_date)'), c), 'item_code', batch)
+        .select(`id, doc_no, item_code, qty, warehouse_id, line_delivery_date, cancelled, so:mfg_sales_orders!inner(status, customer_delivery_date, debtor_name, so_date)${embedNetting ? `, ${NETTING_EMBED}` : ''}`), c), 'item_code', batch)
         .eq('cancelled', false);
+      if (embedNetting) dq = dq.not('so.status', 'in', SO_DONE_SQL);
       if (warehouseId) dq = dq.eq('warehouse_id', warehouseId); // ask A — scope demand to this warehouse (mig 0118)
       return dq.range(from, to);
     });
+    let nettingEmbedded = true;
+    let { data: demand, error: demandErr } = await readDemand(true);
+    if (demandErr) {
+      // eslint-disable-next-line no-console
+      console.warn('[inventory] embedded SO demand read refused, reading it the old way:', (demandErr as { message?: unknown }).message ?? demandErr);
+      nettingEmbedded = false;
+      ({ data: demand, error: demandErr } = await readDemand(false));
+    }
     if (demandErr) {
       // eslint-disable-next-line no-console
       console.error('[inventory] SO demand read failed:', (demandErr as { message?: unknown }).message ?? demandErr);
     }
     type DemandSoHead = { status: string; customer_delivery_date: string | null; debtor_name: string | null; so_date: string | null };
-    const demandRows = ((demand ?? []) as Array<{ id: string; doc_no: string; item_code: string; qty: number; line_delivery_date: string | null; so: DemandSoHead | DemandSoHead[] | null }>)
-      .map((r) => ({ id: r.id, doc_no: r.doc_no, item_code: r.item_code, qty: Number(r.qty ?? 0), line_delivery_date: r.line_delivery_date, so: Array.isArray(r.so) ? r.so[0] : r.so }))
+    const openDemand = ((demand ?? []) as unknown as Array<EmbeddedDemandLine & { doc_no: string; item_code: string; qty: number; line_delivery_date: string | null; so: DemandSoHead | DemandSoHead[] | null }>)
+      .map((r) => ({ ...r, qty: Number(r.qty ?? 0), so: Array.isArray(r.so) ? r.so[0] : r.so }))
       .filter((r) => r.so != null && !SO_DONE.has(r.so.status) && r.qty > 0);
+    const demandRows = openDemand.map((r) => ({ id: r.id, doc_no: r.doc_no, item_code: r.item_code, qty: r.qty, line_delivery_date: r.line_delivery_date, so: r.so }));
 
     // Net-of-delivered per line — mirror so-stock-allocation: an open SO line's
     // live claim is qty − Σ delivered + Σ returned, floored at 0. Summing gross
     // qty double-counts the shipped units of a partially-delivered SO and drives
     // available_qty wrongly negative. (Delivered lines net out here — this is the
     // logic the PART 3 committed/delivered verification traces.)
-    const { deliveredBySoItem, returnedBySoItem } = await deliveredReturnedBySoItem(sb, demandRows.map((r) => r.id));
+    const { deliveredBySoItem, returnedBySoItem } = nettingEmbedded
+      ? nettingFromEmbedded(openDemand)
+      : await deliveredReturnedBySoItem(sb, demandRows.map((r) => r.id));
 
     for (const r of demandRows) {
       const so = r.so!;
