@@ -277,7 +277,7 @@ export async function planningRows(db: Db, companyId: number, month: string, peo
            COALESCE(cr.driver_1_id, t.driver_id)::text AS d1, cr.driver_2_id::text AS d2,
            COALESCE(cr.helper_1_id, t.helper_1_id)::text AS h1, COALESCE(cr.helper_2_id, t.helper_2_id)::text AS h2
       FROM scm.trip_stops s
-      JOIN scm.trips t ON t.id = s.trip_id
+      JOIN scm.trips t ON t.id = s.trip_id AND t.company_id = ${companyId} AND s.company_id = ${companyId}
       LEFT JOIN scm.delivery_orders d ON d.id = s.do_id
       LEFT JOIN scm.delivery_order_crew cr ON cr.do_id = s.do_id
       LEFT JOIN scm.dp_orders dp ON dp.trip_stop_id = s.id
@@ -288,7 +288,7 @@ export async function planningRows(db: Db, companyId: number, month: string, peo
             WHERE o.doc_no = ac.doc_no OR o.linked_ac_docno = ac.doc_no
             ORDER BY (o.doc_no = ac.doc_no) DESC
             LIMIT 1) so ON ac.id IS NOT NULL
-     WHERE t.company_id = ${companyId} AND t.trip_date BETWEEN ${first} AND ${last}
+     WHERE t.trip_date BETWEEN ${first} AND ${last}
        AND t.status::text <> 'CANCELLED' AND t.is_outsourced = false
      ORDER BY t.trip_date, t.trip_no, s.stop_no`);
   const crewIds = [...new Set(stops.flatMap((s) => [s.d1, s.d2, s.h1, s.h2]).filter((x): x is string => !!x))];
