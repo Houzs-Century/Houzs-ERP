@@ -48,19 +48,15 @@ export function deliveryMonthKey(o: DeliveryDateRow): string {
   return effectiveDeliveryDay(o)?.slice(0, 7) ?? '';
 }
 
-const MONTH_SHORT = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-] as const;
-
-/** The month group's banner label: 'YYYY-MM' -> 'Oct 2026'; '' -> 'No date'.
- *  Formatted from the key digits (no Date parsing) so it can't drift by
- *  timezone. An unparseable key falls back to itself. */
+/** The month group's banner label: 'YYYY-MM' -> 'YYYY/MM' (e.g. '2026/10');
+ *  '' -> 'No date'. The SAME digits in the SAME order (year then month, slash-
+ *  separated) as every date in this app — a month NAME would be a second date
+ *  format, the thing the owner ruled out app-wide on 2026-08-18 and that
+ *  check-date-formatting.mjs fails a build over (see vendor/shared/format.ts).
+ *  Formatted from the key's digits (no Date parsing) so it can't drift by
+ *  timezone; an unparseable key falls back to itself. */
 export function deliveryMonthLabel(key: string): string {
   if (!key) return 'No date';
   const m = /^(\d{4})-(\d{2})$/.exec(key);
-  if (!m) return key;
-  const month = Number(m[2]);
-  const name = month >= 1 && month <= 12 ? MONTH_SHORT[month - 1] : m[2];
-  return `${name} ${m[1]}`;
+  return m ? `${m[1]}/${m[2]}` : key;
 }

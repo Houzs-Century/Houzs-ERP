@@ -49,9 +49,9 @@ describe('deliveryMonthKey / deliveryMonthLabel — month buckets', () => {
     expect(deliveryMonthKey(row(null, null))).toBe('');
   });
 
-  test('label is a short month + year; empty key -> "No date"', () => {
-    expect(deliveryMonthLabel('2026-10')).toBe('Oct 2026');
-    expect(deliveryMonthLabel('2026-01')).toBe('Jan 2026');
+  test('label is YYYY/MM (app date order, no month name); empty key -> "No date"', () => {
+    expect(deliveryMonthLabel('2026-10')).toBe('2026/10');
+    expect(deliveryMonthLabel('2026-01')).toBe('2026/01');
     expect(deliveryMonthLabel('')).toBe('No date');
   });
 });

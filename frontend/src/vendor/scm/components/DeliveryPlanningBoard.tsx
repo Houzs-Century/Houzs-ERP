@@ -1206,7 +1206,8 @@ export function DeliveryPlanningBoard({
          key the All tab groups by (owner follow-up 2026-10-23). Default-HIDDEN:
          it exists for grouping, not as a day-to-day column. groupValue is the raw
          'YYYY-MM' (or '' for no date, which sorts/buckets last); the group banner
-         pretty-prints it to e.g. "Oct 2026" / "No date" via MONTH_GROUP_BY.label. */
+         pretty-prints it to e.g. "2026/10" / "No date" via MONTH_GROUP_BY.label
+         (digits in the app's date order — a month NAME is forbidden app-wide). */
       key: 'delivery_month', label: 'Delivery Month', width: 130, groupable: true, defaultHidden: true,
       accessor: (o) => detail(deliveryMonthLabel(deliveryMonthKey(o))),
       searchValue: (o) => deliveryMonthLabel(deliveryMonthKey(o)),
