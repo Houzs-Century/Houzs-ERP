@@ -6,6 +6,7 @@
  * Also reads Delivery Planning's lorry runs into rows. */
 import { and, asc, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
 import { APPROVED_LEAVE_STATUSES } from "../../scm/shared/hr-attendance";
+import { ASSR_LEG_BY_STOP, assrBoardLocation } from "../../scm/lib/assr-board-scope";
 import { getDb } from "../../db/client";
 import { hr_attendance, hr_employees, hr_payslips, hr_public_holidays, hr_trip_missed_days, hr_trip_rate_versions, hr_trip_rows, hr_working_hours } from "../../db/schema";
 import {
@@ -187,7 +188,7 @@ export async function loadTripMonth(db: Db, companyId: number, month: string, to
 
 /* ── Delivery Planning -> rows ─────────────────────────────────────────── */
 
-const STOP_KIND: Record<string, TripKind> = {
+const STOP_KIND: Partial<Record<string, TripKind>> = {
   DELIVERY: "DO",
   PICKUP: "SERVICE_PICKUP",
   SERVICE: "SERVICE_DELIVERY",
@@ -198,13 +199,20 @@ const STOP_KIND: Record<string, TripKind> = {
   TRANSFER: "TRANSFER",
   LORRY_SERVICE: "NONE",
 };
+/* A service case's legs ride stops carrying assr_case_id, typed by the board's
+   own ASSR_LEG_BY_STOP, so its delivery leg is a DELIVERY stop that is NOT a DO. */
+const CASE_LEG_KIND: Partial<Record<string, TripKind>> = { customer_pickup: "SERVICE_PICKUP", delivery: "SERVICE_DELIVERY", inspection: "SERVICE_INSPECTION" };
 
-type PlanningStop = {
+export type PlanningStop = {
   stop_id: string;
   stop_type: string;
   trip_date: string;
   trip_no: string;
   plate: string | null;
+  /** The stop's own snapshot: the DO's or SO's total when it was scheduled. */
+  revenue_sen: string | number | null;
+  customer_name: string | null;
+  stop_dp_no: string | null;
   do_number: string | null;
   so_doc_no: string | null;
   do_status: string | null;
@@ -212,20 +220,60 @@ type PlanningStop = {
   do_state: string | null;
   dp_state: string | null;
   dp_no: string | null;
-  customer_name: string | null;
+  assr_case_id: string | number | null;
+  assr_no: string | null;
+  case_addr3: string | null;
+  case_addr4: string | null;
+  case_so_state: string | null;
   d1: string | null;
   d2: string | null;
   h1: string | null;
   h2: string | null;
 };
 
+type Seat = { name: string; employeeId: number | null };
+
+/** One stop as a trip row. The amount is the DO's Local Total, else the stop's
+ *  own snapshot (an SO scheduled before its DO is never linked to it afterwards);
+ *  the state is the DO's, else the service case's (its address, then its order,
+ *  as the board shows it), else the manual job's. A row with no state earns no
+ *  outstation until HR fills it. Pure. */
+export function planningRowOf(s: PlanningStop, who: (id: string | null) => Seat) {
+  const [d1, d2, h1, h2] = [who(s.d1), who(s.d2), who(s.h1), who(s.h2)];
+  const isCase = s.assr_case_id != null;
+  const caseState = isCase ? assrBoardLocation(s.case_addr3, s.case_addr4, s.case_so_state, null).state : null;
+  const amount = s.local_total_sen ?? (isCase ? 0 : s.revenue_sen);
+  return {
+    source: "PLANNING",
+    source_ref: s.stop_id,
+    trip_date: s.trip_date,
+    doc_no: (isCase ? s.assr_no : s.so_doc_no) ?? s.dp_no ?? s.stop_dp_no ?? s.customer_name ?? "",
+    transfer_to: s.do_number ?? "",
+    ref_no: s.stop_dp_no ?? s.trip_no,
+    kind: (isCase ? CASE_LEG_KIND[ASSR_LEG_BY_STOP[s.stop_type] ?? ""] : undefined) ?? STOP_KIND[s.stop_type] ?? "NONE",
+    local_total_sen: Math.max(0, Math.round(Number(amount ?? 0)) || 0),
+    state: s.do_state || caseState || s.dp_state || "",
+    lorry_plate: s.plate ?? "",
+    driver_1_name: d1.name,
+    driver_2_name: d2.name,
+    helper_1_name: h1.name,
+    helper_2_name: h2.name,
+    driver_1_employee_id: d1.employeeId,
+    driver_2_employee_id: d2.employeeId,
+    helper_1_employee_id: h1.employeeId,
+    helper_2_employee_id: h2.employeeId,
+  };
+}
+
 /** The month's lorry runs as trip rows: each stop one row, its crew from the DO's crew record, else the run's. Outsourced and cancelled runs are left out. */
-export async function planningRows(db: Db, companyId: number, month: string, people: ReadonlyArray<Person>): Promise<Array<Omit<typeof hr_trip_rows.$inferInsert, "company_id" | "trip_month" | "created_by">>> {
+export async function planningRows(db: Db, companyId: number, month: string, people: ReadonlyArray<Person>): Promise<Array<ReturnType<typeof planningRowOf>>> {
   const { first, last } = tripMonthBounds(month);
   const stops = await db.execute<PlanningStop>(sql`
     SELECT s.id::text AS stop_id, s.stop_type::text AS stop_type, t.trip_date::text AS trip_date, t.trip_no,
-           l.plate, d.do_number, d.so_doc_no, d.status::text AS do_status, d.local_total_sen,
-           COALESCE(NULLIF(d.state, ''), d.customer_state) AS do_state, dp.state AS dp_state, dp.dp_no, s.customer_name,
+           l.plate, s.revenue_sen, s.customer_name, s.dp_no AS stop_dp_no,
+           d.do_number, d.so_doc_no, d.status::text AS do_status, d.local_total_sen,
+           COALESCE(NULLIF(d.state, ''), d.customer_state) AS do_state, dp.state AS dp_state, dp.dp_no,
+           s.assr_case_id, ac.assr_no, ac.addr3 AS case_addr3, ac.addr4 AS case_addr4, so.customer_state AS case_so_state,
            COALESCE(cr.driver_1_id, t.driver_id)::text AS d1, cr.driver_2_id::text AS d2,
            COALESCE(cr.helper_1_id, t.helper_1_id)::text AS h1, COALESCE(cr.helper_2_id, t.helper_2_id)::text AS h2
       FROM scm.trip_stops s
@@ -234,6 +282,12 @@ export async function planningRows(db: Db, companyId: number, month: string, peo
       LEFT JOIN scm.delivery_order_crew cr ON cr.do_id = s.do_id
       LEFT JOIN scm.dp_orders dp ON dp.trip_stop_id = s.id
       LEFT JOIN scm.lorries l ON l.id = t.lorry_id
+      LEFT JOIN public.assr_cases ac ON ac.id = s.assr_case_id
+      LEFT JOIN LATERAL (
+           SELECT o.customer_state FROM scm.mfg_sales_orders o
+            WHERE o.doc_no = ac.doc_no OR o.linked_ac_docno = ac.doc_no
+            ORDER BY (o.doc_no = ac.doc_no) DESC
+            LIMIT 1) so ON ac.id IS NOT NULL
      WHERE t.company_id = ${companyId} AND t.trip_date BETWEEN ${first} AND ${last}
        AND t.status::text <> 'CANCELLED' AND t.is_outsourced = false
      ORDER BY t.trip_date, t.trip_no, s.stop_no`);
@@ -246,35 +300,11 @@ export async function planningRows(db: Db, companyId: number, month: string, peo
     : [];
   const crewBy = new Map(crew.map((c) => [c.id, c]));
   const employeeOfUser = new Map(people.filter((p) => p.userId != null).map((p) => [p.userId!, p.id]));
-  const who = (id: string | null) => {
+  const who = (id: string | null): Seat => {
     const c = id ? crewBy.get(id) : undefined;
     return { name: c?.name ?? "", employeeId: c?.user_id != null ? (employeeOfUser.get(c.user_id) ?? null) : null };
   };
-  return stops
-    .filter((s) => s.do_status !== "CANCELLED")
-    .map((s) => {
-      const [d1, d2, h1, h2] = [who(s.d1), who(s.d2), who(s.h1), who(s.h2)];
-      return {
-        source: "PLANNING",
-        source_ref: s.stop_id,
-        trip_date: s.trip_date,
-        doc_no: s.so_doc_no ?? s.dp_no ?? s.customer_name ?? "",
-        transfer_to: s.do_number ?? "",
-        ref_no: s.trip_no,
-        kind: STOP_KIND[s.stop_type] ?? "NONE",
-        local_total_sen: Math.max(0, Number(s.local_total_sen ?? 0)),
-        state: s.do_state ?? s.dp_state ?? "",
-        lorry_plate: s.plate ?? "",
-        driver_1_name: d1.name,
-        driver_2_name: d2.name,
-        helper_1_name: h1.name,
-        helper_2_name: h2.name,
-        driver_1_employee_id: d1.employeeId,
-        driver_2_employee_id: d2.employeeId,
-        helper_1_employee_id: h1.employeeId,
-        helper_2_employee_id: h2.employeeId,
-      };
-    });
+  return stops.filter((s) => s.do_status !== "CANCELLED").map((s) => planningRowOf(s, who));
 }
 
 /** A trip month is frozen once the payslip month of the same name is approved or paid. */

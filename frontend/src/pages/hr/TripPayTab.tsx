@@ -254,6 +254,11 @@ export function TripPayTab() {
           <span className="font-semibold">{d.unmatched.map((u) => `${u.name} (${u.rows})`).join(", ")}</span>. Type each under Trip sheet names on the person in Employee Master.
         </div>
       )}
+      {d && d.rows.some((r) => !r.state.trim() && r.kind !== "NONE") && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[11.5px] text-amber-900">
+          {d.rows.filter((r) => !r.state.trim() && r.kind !== "NONE").length} row(s) have no state, so no outstation or transport allowance is worked out for them. An order scheduled before its DO was issued has no state: edit the row and fill it in.
+        </div>
+      )}
       {people.some((p) => p.missed?.noAttendance && p.missed.override == null) && (
         <div className="rounded-md border border-border bg-surface px-3 py-2 text-[11.5px] text-ink-secondary">
           Some drivers have no punches this trip month, so their missed days read 0. Open the driver to enter the days missed without leave.
