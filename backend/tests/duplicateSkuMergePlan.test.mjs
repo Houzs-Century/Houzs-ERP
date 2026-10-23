@@ -98,19 +98,38 @@ describe('HC-0147 pairs file', () => {
 describe('HC-0153 pairs file', () => {
   const book = JSON.parse(fs.readFileSync(path.join(DATA, 'duplicate-sku-merges.json'), 'utf8'));
   const pairs = book['HC-0153'].pairs;
-  const sizes = ['K', 'Q', 'S', 'SK', 'SP', 'SS'];
+  const solace = pairs.filter((p) => p.drop.includes('SOLACE'));
+  const bedframes = pairs.filter((p) => !p.drop.includes('SOLACE'));
+  const mapping = () => readMappingCsv(fs.readFileSync(path.join(DATA, 'autocount-erp-mapping-1561.csv'), 'utf8'));
 
   it('drops AKEMI HS SOLACE into HAPPI SLEEP SOLACE, size for size', () => {
-    expect(pairs.map((p) => p.drop)).toEqual(sizes.map((s) => `AKEMI HS SOLACE MATT (${s})`));
-    expect(pairs.map((p) => p.keep)).toEqual(sizes.map((s) => `HAPPI SLEEP SOLACE MATT (${s})`));
+    const sizes = ['K', 'Q', 'S', 'SK', 'SP', 'SS'];
+    expect(solace.map((p) => p.drop)).toEqual(sizes.map((s) => `AKEMI HS SOLACE MATT (${s})`));
+    expect(solace.map((p) => p.keep)).toEqual(sizes.map((s) => `HAPPI SLEEP SOLACE MATT (${s})`));
   });
 
-  it('keeps the code AutoCount already maps to', () => {
-    const mapping = readMappingCsv(fs.readFileSync(path.join(DATA, 'autocount-erp-mapping-1561.csv'), 'utf8'));
-    const erpCodes = new Set([...mapping.values()].map((m) => m.erp));
-    for (const p of pairs) {
+  it('SOLACE keeps the code AutoCount already maps to', () => {
+    const erpCodes = new Set([...mapping().values()].map((m) => m.erp));
+    for (const p of solace) {
       expect(erpCodes.has(p.keep)).toBe(true);
       expect(erpCodes.has(p.drop)).toBe(false);
+    }
+  });
+
+  it('drops the plain PEBBLE GREY / SANDY BEACH bedframes into their AKEMI twins, size for size', () => {
+    expect(bedframes.map((p) => [p.drop, p.keep])).toEqual([
+      ...['K', 'Q', 'S', 'SK', 'SS'].map((s) => [`PEBBLE GREY-(${s})`, `AKEMI -PEBBLE GREY-(${s})`]),
+      ...['K', 'Q', 'S', 'SS'].map((s) => [`SANDY BEACH-(${s})`, `AKEMI -SANDY BEACH-(${s})`]),
+    ]);
+  });
+
+  /* Like HC-0147: the cutover map opened the AKBF- items as the plain codes, so
+     AutoCount resolves the AKEMI survivor by its own 400-D002 binding. */
+  it('the cutover map names the dropped bedframe codes, so AutoCount resolves the survivor by its binding', () => {
+    const erpCodes = new Set([...mapping().values()].map((m) => m.erp));
+    for (const p of bedframes) {
+      expect(erpCodes.has(p.drop)).toBe(true);
+      expect(erpCodes.has(p.keep)).toBe(false);
     }
   });
 });
