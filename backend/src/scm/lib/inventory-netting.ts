@@ -67,6 +67,7 @@ export async function deliveredReturnedBySoItem(sb: any, soItemIds: string[]): P
     .from('delivery_order_items')
     .select('id, so_item_id, qty, delivery_order_id')
     .in('so_item_id', batch)
+    .order('id')
     .range(from, to));
   // The old copy read these as empty on failure and netted nothing — a wrong
   // Available rather than an error. A failed read now fails the request.
@@ -77,7 +78,7 @@ export async function deliveredReturnedBySoItem(sb: any, soItemIds: string[]): P
   const doLineToSoItem = new Map<string, string>();
   if (doIds.length > 0) {
     const { data: dos, error: dosErr } = await chunkIn<{ id: string; status: string | null }>(doIds, (batch, from, to) =>
-      sb.from('delivery_orders').select('id, status').in('id', batch).range(from, to));
+      sb.from('delivery_orders').select('id, status').in('id', batch).order('id').range(from, to));
     if (dosErr) throw new Error(`delivery orders: ${dosErr.message}`);
     for (const d of (dos ?? []) as Array<{ id: string; status: string | null }>) {
       // A PRE-SHIP DO hasn't shipped and hasn't moved stock — excluding it
@@ -100,6 +101,7 @@ export async function deliveredReturnedBySoItem(sb: any, soItemIds: string[]): P
       .from('delivery_return_items')
       .select('do_item_id, qty_returned, delivery_return_id')
       .in('do_item_id', batch)
+      .order('id')
       .range(from, to));
     if (drLinesErr) throw new Error(`delivery return lines: ${drLinesErr.message}`);
     const drLineRows = (drLines ?? []) as Array<{ do_item_id: string | null; qty_returned: number; delivery_return_id: string }>;
@@ -107,7 +109,7 @@ export async function deliveredReturnedBySoItem(sb: any, soItemIds: string[]): P
     const activeDrIds = new Set<string>();
     if (drIds.length > 0) {
       const { data: drs, error: drsErr } = await chunkIn<{ id: string; status: string | null }>(drIds, (batch, from, to) =>
-        sb.from('delivery_returns').select('id, status').in('id', batch).range(from, to));
+        sb.from('delivery_returns').select('id, status').in('id', batch).order('id').range(from, to));
       if (drsErr) throw new Error(`delivery returns: ${drsErr.message}`);
       for (const d of (drs ?? []) as Array<{ id: string; status: string | null }>) {
         if ((d.status ?? '').toUpperCase() !== 'CANCELLED') activeDrIds.add(d.id);

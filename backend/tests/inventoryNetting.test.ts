@@ -90,7 +90,7 @@ describe('inventory netting', () => {
   });
 
   it('the fallback reads fail loudly instead of netting nothing', async () => {
-    const failing = { from: () => ({ select: () => ({ in: () => ({ range: async () => ({ data: null, error: { message: 'boom' } }) }) }) }) };
+    const failing = { from: () => ({ select: () => ({ in: () => ({ order: () => ({ range: async () => ({ data: null, error: { message: 'boom' } }) }) }) }) }) };
     await expect(deliveredReturnedBySoItem(failing, ['L1'])).rejects.toThrow('delivery order lines: boom');
   });
 });

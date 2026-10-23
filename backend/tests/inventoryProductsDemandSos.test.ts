@@ -14,7 +14,8 @@ class FakeQuery {
   private cols = '';
   constructor(private rows: Array<Record<string, unknown>>) {}
   select(cols = '') { this.cols = cols; return this; }
-  order() { return this; }
+  private ordered = false;
+  order() { this.ordered = true; return this; }
   or() { return this; }
   filter() { return this; }
   eq(col: string, val: unknown) { this.preds.push((r) => String(r[col]) === String(val)); return this; }
@@ -28,7 +29,14 @@ class FakeQuery {
     this.preds.push((r) => !s.has(String(field ? (r[head!] as Record<string, unknown> | null)?.[field] : r[col])));
     return this;
   }
-  range(from: number, to: number) { this._range = [from, to]; return this; }
+  /* A paged read with no total order can repeat or skip rows between pages —
+     the 2026-10-23 Inventory bug (paginate-all.ts). Refuse it here so a new read
+     in this handler cannot ship without one. */
+  range(from: number, to: number) {
+    if (!this.ordered) throw new Error('paged read without an order');
+    this._range = [from, to];
+    return this;
+  }
   then(res: (v: { data: unknown[]; error: null }) => unknown, rej?: (e: unknown) => unknown) {
     let out = this.rows.filter((r) => this.preds.every((p) => p(r)));
     if (this._range) out = out.slice(this._range[0], this._range[1] + 1);
