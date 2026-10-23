@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { stepClock, stepTimingEntries, timed, withStepTiming, type StepMark } from '../src/lib/step-timing';
+import { recordStep, stepClock, stepTimingEntries, timed, withStepTiming, type StepMark } from '../src/lib/step-timing';
 
 /* HC-0002: steps a handler times reach the request's Server-Timing header;
    outside a request (tests, cron) the helpers only run the work. */
@@ -46,6 +46,17 @@ describe('step timing', () => {
       lap('second');
     });
     expect(marks.map((m) => m.name)).toEqual(['first', 'second']);
+  });
+
+  it('database round trips recorded by the clients count per request', async () => {
+    const marks: StepMark[] = [];
+    await withStepTiming(marks, async () => {
+      recordStep('db-rest', 40);
+      recordStep('db-rest', 60);
+      recordStep('db-sql', 5);
+    });
+    expect(stepTimingEntries(marks)).toEqual(['s-db-rest;dur=100;desc="2x"', 's-db-sql;dur=5;desc="1x"']);
+    expect(() => recordStep('db-sql', 1)).not.toThrow();
   });
 
   it('sums repeats per name, slowest first, as header-safe tokens', () => {
