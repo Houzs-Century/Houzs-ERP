@@ -138,8 +138,29 @@ describe('FairPending', () => {
     for (const title of ['Pick one (1)', 'Waiting for the fair (1)', 'Marked No fair (1)']) {
       const group = screen.getByText(title).closest('section') as HTMLElement;
       expect(within(group).getAllByRole('columnheader').map((h) => h.textContent))
-        .toEqual(['SO No.', 'Ref No.', 'SO date', 'Salesperson', 'Venue', 'Brand', 'Amount', 'Fair', '']);
+        .toEqual(['SO No.', 'Ref No.', 'SO date', 'Salesperson', 'Venue', 'Brand', 'Amount', 'Fair']);
     }
+  });
+
+  /* Owner 2026-10-23: 「为什么变这样了？」 — the Fair column had shrunk to 54px on a
+     1230px table, the box and the report line one letter wide. */
+  it('the Fair cell takes the room the other columns leave, and keeps the buttons', () => {
+    show();
+    const group = screen.getByText('Pick one (1)').closest('section') as HTMLElement;
+    const cols = [...group.querySelectorAll('col')].map((c) => (c as HTMLElement).style.width);
+    expect(cols).toHaveLength(8);
+    expect(cols.at(-1)).toBe('');
+    /* Fixed widths leave the Fair cell at least 300px at the table's narrowest. */
+    const table = group.querySelector('table') as HTMLTableElement;
+    const min = parseInt(table.style.minWidth, 10);
+    const fixed = cols.filter((w) => w.endsWith('px')).reduce((s, w) => s + parseInt(w, 10), 0);
+    const share = cols.filter((w) => w.endsWith('%')).reduce((s, w) => s + parseFloat(w) / 100, 0);
+    expect(min - fixed - min * share).toBeGreaterThanOrEqual(300);
+    const row = screen.getByText('HC-SO-2609-064').closest('tr') as HTMLTableRowElement;
+    expect(row.cells).toHaveLength(8);
+    expect(within(row.cells[7]!).getByLabelText('Fair for HC-SO-2609-064')).toBeTruthy();
+    expect(within(row.cells[7]!).getByRole('button', { name: 'Link' })).toBeTruthy();
+    expect(within(row.cells[7]!).getByRole('button', { name: 'Put aside' })).toBeTruthy();
   });
 
   it('every group shows who sold the order after its date, a dash when the roster has nobody', () => {
@@ -469,7 +490,7 @@ describe('FairPending — report says another fair (owner 2026-10-20)', () => {
     show();
     const group = screen.getByText('Report says another fair (2)').closest('section') as HTMLElement;
     const heads = within(group).getAllByRole('columnheader');
-    expect(heads.map((h) => h.textContent)).toEqual(['SO No.', 'Ref No.', 'SO date', 'Salesperson', 'Now under', 'Brand', 'Amount', 'Fair', '']);
+    expect(heads.map((h) => h.textContent)).toEqual(['SO No.', 'Ref No.', 'SO date', 'Salesperson', 'Now under', 'Brand', 'Amount', 'Fair']);
     /* The tick sits first in the SO No. cell, ahead of the number. */
     expect(heads[0]!.querySelector('input[type="checkbox"]')).toBeTruthy();
     const body = group.querySelector('tbody') as HTMLTableSectionElement;
@@ -483,7 +504,8 @@ describe('FairPending — report says another fair (owner 2026-10-20)', () => {
     /* The Fair box holds the booth the report names, what the report says under it. */
     expect(fairInput('HC-SO-2610-167').value).toBe('AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11)');
     expect(linked.cells[7]!.textContent).toContain('Report says [AKEMI] HOMELOVE · IOIGECC · 10/09 - 10/11 · reported 10/10');
-    expect(linked.cells).toHaveLength(9);
+    expect(linked.cells).toHaveLength(8);
+    expect(within(linked.cells[7]!).getByRole('button', { name: 'Link' })).toBeTruthy();
     expect(body.rows[1]!.cells[4]!.textContent).toBe('Not linkedSUNWAY PYRAMID CONVENTION CENTRE');
   });
 
