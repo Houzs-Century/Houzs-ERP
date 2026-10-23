@@ -1790,10 +1790,16 @@ function DataTableInner<T, L>({
   // Per-column filters apply first (client-side, loaded rows only), then
   // sort — the SAME functions the line export runs over every fetched row
   // (dataTableRows.ts).
-  const searchBlobs = useMemo(
-    () => (clientSearching && rows ? new Map(rows.map((r) => [r, buildSearchBlob(r, allColumns)])) : null),
-    [clientSearching, rows, allColumns],
-  );
+  /* Only build the per-row search index when the box actually has a query.
+     filteredRows already no-ops the index when the trimmed query is empty
+     (`searchBlobs && q ? … : rows`), so gating here is behaviour-identical — but
+     it skips scanning every row × every column on each refetch / poll while the
+     box is empty (the common case), and rebuilds only as the (150ms-debounced)
+     query changes. PERF 2026-10-23. */
+  const searchBlobs = useMemo(() => {
+    const q = clientQuery.trim();
+    return clientSearching && rows && q ? new Map(rows.map((r) => [r, buildSearchBlob(r, allColumns)])) : null;
+  }, [clientSearching, rows, allColumns, clientQuery]);
   const filteredRows = useMemo(() => {
     if (!rows) return rows;
     const q = clientQuery.trim().toLowerCase();
