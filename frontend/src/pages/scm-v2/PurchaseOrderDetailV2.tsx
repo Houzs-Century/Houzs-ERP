@@ -17,6 +17,7 @@ import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity, fmtQty } 
 import { formatPhone } from "@2990s/shared/phone";
 import {
   ArrowLeft,
+  Copy,
   History,
   Printer,
   Mail,
@@ -1199,6 +1200,10 @@ function PurchaseOrderDetailV2ReadOnly() {
             </Button>
             <Button variant="ghost" icon={<Share2 size={14} />} onClick={() => setRelMapOpen(true)}>
               Relationship Map
+            </Button>
+            <Button variant="ghost" icon={<Copy size={14} />}
+              onClick={() => navigate(`/scm/purchase-orders/new?copyFrom=${purchaseOrder.id}`)}>
+              Copy as new
             </Button>
             <Button variant="secondary" icon={<Printer size={14} />} onClick={print.openPreview}>
               Print PDF

@@ -358,7 +358,7 @@ export const SalesOrderNew = () => {
     setEmergencyRel(h.emergency_contact_relationship ?? '');
     setEmergencyPhone(h.emergency_contact_phone ?? '');
     if (Array.isArray(srcItems) && srcItems.length > 0) {
-      setLines(srcItems.map((it: any) => ({
+      setLines(srcItems.filter((it) => !it.cancelled).map((it: any) => ({
         ...newLine(),
         itemCode:       it.item_code ?? '',
         itemGroup:      it.item_group ?? 'others',

@@ -203,6 +203,9 @@ const norm = (s: string | null | undefined) => String(s ?? "").toUpperCase();
 export function salesOrderRowMenu<R extends StatusRow & SoChainRow & MigratedRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
+  /* HC-0149: a new order seeded from this one; any status, migrated included,
+     because the copy is a fresh order and touches nothing on the source. */
+  copyAsNew: (r: R) => void;
   print: (t: PrintTarget) => void;
   confirm: (r: R) => void;
   transferToDo: (r: R) => void;
@@ -240,6 +243,7 @@ export function salesOrderRowMenu<R extends StatusRow & SoChainRow & MigratedRow
       return buildRowMenu(
         [
           { label: "Open", onClick: () => h.open(r) },
+          { label: "Copy as new", onClick: () => h.copyAsNew(r) },
           ...printEntries(salesOrderPrintChain(r), { print: h.print, open: () => h.open(r) }),
         ],
         [], [], [],
@@ -249,6 +253,7 @@ export function salesOrderRowMenu<R extends StatusRow & SoChainRow & MigratedRow
       [
         { label: "Open", onClick: () => h.open(r) },
         { label: "Edit", onClick: () => h.edit(r) },
+        { label: "Copy as new", onClick: () => h.copyAsNew(r) },
         ...printEntries(salesOrderPrintChain(r), { print: h.print, open: () => h.open(r) }),
       ],
       [
@@ -424,6 +429,8 @@ export function deliveryOrderRowMenu<R extends StatusRow & DoChainRow>(h: {
 export function purchaseOrderRowMenu<R extends StatusRow & PoChainRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
+  /* HC-0149: a new PO seeded from this one; any status. */
+  copyAsNew: (r: R) => void;
   print: (t: PrintTarget) => void;
   transferToGrn: (r: R) => void;
   setHold: (r: R, onHold: boolean) => void;
@@ -437,6 +444,7 @@ export function purchaseOrderRowMenu<R extends StatusRow & PoChainRow>(h: {
     [
       { label: "Open", onClick: () => h.open(r) },
       { label: "Edit", onClick: () => h.edit(r) },
+      { label: "Copy as new", onClick: () => h.copyAsNew(r) },
       ...printEntries(purchaseOrderPrintChain(r), { print: h.print, open: () => h.open(r) }),
     ],
     [h.canReceive(r) && { label: transferToLabel("grn"), onClick: () => h.transferToGrn(r) }],

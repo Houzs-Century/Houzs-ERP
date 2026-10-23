@@ -1149,6 +1149,7 @@ export function PurchaseOrdersListV2() {
   const setPoHold = (r: PoHeaderRow, onHold: boolean) => holdAction(r.id, r.po_number, onHold);
   const poContextMenu = purchaseOrderRowMenu<PoHeaderRow>({
     open: goFullPage, edit: goEdit, print: printDocument,
+    copyAsNew: (r) => navigate(`/scm/purchase-orders/new?copyFrom=${r.id}`),
     transferToGrn: goGrnFromPo, cancel: (r) => doCancel(r), setHold: setPoHold,
     canReceive: (r) => !rowIsHeld(r) && ["SUBMITTED", "PARTIALLY_RECEIVED"].includes(r.status.toUpperCase()),
     canCancel: (r) => !["CANCELLED", "RECEIVED"].includes(r.status.toUpperCase()),

@@ -192,7 +192,7 @@ export const ConsignmentOrderNew = () => {
     setEmergencyPhone(h.emergency_contact_phone ?? '');
     if (Array.isArray(srcItems) && srcItems.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      setLines(srcItems.map((it: any) => ({
+      setLines(srcItems.filter((it: any) => !it.cancelled).map((it: any) => ({
         ...newLine(),
         itemCode:       it.item_code ?? '',
         itemGroup:      it.item_group ?? 'others',

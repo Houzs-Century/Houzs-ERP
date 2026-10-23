@@ -394,6 +394,7 @@ export const PurchaseConsignmentOrders = () => {
           if (!hasChildren) {
             menu.push({ label: 'Edit', onClick: () => navigate(`/scm/purchase-consignment-orders/${po.id}?edit=1`) });
           }
+          menu.push({ label: 'Copy as new', onClick: () => navigate(`/scm/purchase-consignment-orders/new?copyFrom=${po.id}`) });
           if (po.status !== 'CANCELLED' && po.status !== 'RECEIVED' && !hasChildren) {
             menu.push({ divider: true as const });
             menu.push({ label: 'Cancel', danger: true, onClick: () => doCancelPo(po) });

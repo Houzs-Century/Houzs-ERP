@@ -28,7 +28,7 @@ import {
 } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
-  ArrowLeft, FileText, Pencil, Plus, Printer, Save, X, ChevronDown,
+  ArrowLeft, Copy, FileText, Pencil, Plus, Printer, Save, X, ChevronDown,
 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { buildVariantSummary, fmtDateOrDash, fmtMoneySen, orderLineIdentity } from '@2990s/shared';
@@ -530,6 +530,10 @@ export const ConsignmentOrderDetail = () => {
             </span>
           </div>
           <RelationshipMapButton type="cso" id={header.doc_no} />
+          <Button variant="ghost" size="md"
+            onClick={() => navigate(`/scm/consignment-orders/new?copyFrom=${encodeURIComponent(header.doc_no)}`)}>
+            <Copy {...ICON} /><span>Copy as new</span>
+          </Button>
           <Button variant="ghost" size="md" onClick={print.openPreview}>
             <Printer {...ICON} /><span>Print PDF</span>
           </Button>
