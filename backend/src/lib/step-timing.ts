@@ -36,6 +36,11 @@ export async function timed<T>(name: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
+/** Record a step measured elsewhere (a no-op outside a request). */
+export function recordStep(name: string, ms: number): void {
+  store.getStore()?.push({ name, ms });
+}
+
 /**
  * Laps for a long handler whose reads are started in many places: each
  * `lap(name)` records the time since the previous lap (or since stepClock was
