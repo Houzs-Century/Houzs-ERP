@@ -36,6 +36,7 @@ projectOverview.use("*", supabaseAuth);
 type ProjectRow = {
   id: number; code: string; name: string; brand: string | null; organizer: string | null; venue: string | null;
   state: string | null; stage: string | null; start_date: string | null; end_date: string | null; event_type: string | null;
+  size_sqm: number | null;
   income: number; cogs: number; rental: number; commission: number; setup: number; transport: number; merchandise: number; other_cost: number;
   cogs_matt_sofa: number; cogs_bedframe: number; cogs_accessories: number; transport_fee: number; transport_setup: number;
   total_sales: number | null;
@@ -47,7 +48,7 @@ projectOverview.get("/", async (c) => {
     `COALESCE((SELECT SUM(l.amount) FROM project_finance_lines l WHERE l.project_id = p.id AND l.archived_at IS NULL AND ${where}), 0)`;
   // company-scope: finance lines are read per project of the active company (activeCompanySql on p.company_id at the end of this statement).
   const rows = await c.env.DB.prepare(
-    `SELECT p.id, p.code, p.name, p.brand, p.organizer, p.venue, p.state, p.stage, p.start_date, p.end_date,
+    `SELECT p.id, p.code, p.name, p.brand, p.organizer, p.venue, p.state, p.stage, p.start_date, p.end_date, p.size_sqm,
             et.name AS event_type,
             (SELECT f.total_sales FROM project_finance f WHERE f.project_id = p.id LIMIT 1) AS total_sales,
             ${sum("l.kind = 'income'")} AS income,
@@ -205,6 +206,7 @@ projectOverview.get("/", async (c) => {
     projects: projects.map((p) => ({
       id: p.id, code: p.code, name: p.name, brand: p.brand, organizer: p.organizer, venue: p.venue, state: p.state, stage: p.stage,
       startDate: p.start_date ? String(p.start_date).slice(0, 10) : null, endDate: p.end_date ? String(p.end_date).slice(0, 10) : null,
+      sizeSqm: p.size_sqm == null ? null : Number(p.size_sqm),
       eventType: p.event_type,
       keyed: {
         income: Number(p.income), cogs: Number(p.cogs), rental: Number(p.rental), commission: Number(p.commission),

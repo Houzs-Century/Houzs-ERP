@@ -11,7 +11,8 @@ import { useQuery } from "../../hooks/useQuery";
 import { api } from "../../api/client";
 import { formatCurrency, cn } from "../../lib/utils";
 import { todayMY } from "../../vendor/shared/format";
-import { Panel, Th, Td, Toggle, SELECT_CLS } from "../../components/scm-v2/OverviewKit";
+import { Panel, Th, Td, Toggle, SELECT_CLS, SortTh, useTableSort } from "../../components/scm-v2/OverviewKit";
+import { VenueRentPanel } from "./VenueRentPanel";
 import { Columns, TONE, PALETTE } from "../../components/scm-v2/Charts";
 import { DashboardPeriodPicker, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
 import { ProjectDataGapsPanel, ProjectStuckPanel } from "./ProjectOverviewParts";
@@ -86,6 +87,10 @@ export function ProjectOverviewPage() {
   const inPeriod = useMemo(() => all.filter((p) => !!p.startDate && p.startDate >= period.from && p.startDate <= period.to), [all, period.from, period.to]);
   const t = totalsOf(inPeriod);
   const groups = groupBy(inPeriod, (p) => p[dim]);
+  /* Click a Breakdown header to rank by it (owner 2026-10-23). */
+  const gSort = useTableSort(groups, (g, k) =>
+    k === "key" ? g.key : k === "projects" ? g.projects : k === "sales" ? g.sales : k === "gpPct" ? pctOf(g.gp, g.sales)
+      : k === "rental" ? g.rental : k === "rentalPct" ? pctOf(g.rental, g.sales) : k === "cost" ? g.rental + g.otherCost : k === "np" ? g.np : pctOf(g.np, g.sales));
   const trend = drillOf(all, drill, today);
   /* Breadcrumb back up the drill: All years > 2026 > Q4 > Oct. */
   const crumbs: Array<[string, Drill]> = [["All years", { level: "years" }]];
@@ -186,11 +191,17 @@ export function ProjectOverviewPage() {
         </Panel>
       </div>
 
-      <Panel title="Breakdown" hint="largest sales first · click a row to list its projects below" right={<Toggle value={dim} options={DIMS} onChange={(v) => setView({ dim: v, pick: null })} />}>
+      <Panel title="Breakdown" hint="largest sales first · click a header to rank · click a row to list its projects below" right={<Toggle value={dim} options={DIMS} onChange={(v) => setView({ dim: v, pick: null })} />}>
         <div className="max-h-[420px] overflow-auto">
           <table className="w-full border-collapse">
-            <thead className="sticky top-0 bg-surface"><tr><Th left>{DIMS.find(([d]) => d === dim)?.[1]}</Th><Th>Projects</Th><Th>Sales</Th><Th>GP %</Th><Th>Rental</Th><Th>Rental %</Th><Th>Event costs</Th><Th>Net profit</Th><Th left> </Th><Th>NP %</Th></tr></thead>
-            <tbody>{groups.map((g) => (
+            <thead className="sticky top-0 bg-surface"><tr>
+              <SortTh left k="key" sort={gSort.sort} onSort={gSort.toggle}>{DIMS.find(([d]) => d === dim)?.[1]}</SortTh><SortTh k="projects" sort={gSort.sort} onSort={gSort.toggle}>Projects</SortTh>
+              <SortTh k="sales" sort={gSort.sort} onSort={gSort.toggle}>Sales</SortTh><SortTh k="gpPct" sort={gSort.sort} onSort={gSort.toggle}>GP %</SortTh>
+              <SortTh k="rental" sort={gSort.sort} onSort={gSort.toggle}>Rental</SortTh><SortTh k="rentalPct" sort={gSort.sort} onSort={gSort.toggle}>Rental %</SortTh>
+              <SortTh k="cost" sort={gSort.sort} onSort={gSort.toggle}>Event costs</SortTh><SortTh k="np" sort={gSort.sort} onSort={gSort.toggle}>Net profit</SortTh>
+              <Th left> </Th><SortTh k="npPct" sort={gSort.sort} onSort={gSort.toggle}>NP %</SortTh>
+            </tr></thead>
+            <tbody>{gSort.sorted.map((g) => (
               <tr key={g.key} onClick={() => setView({ pick: pick === g.key ? null : g.key })} className={cn("cursor-pointer hover:bg-surface-2/50", pick === g.key && "bg-primary-soft/50")}>
                 <Td left className="max-w-[220px] truncate">{g.key}</Td><Td>{g.projects}</Td><Td>{money(g.sales)}</Td><Td>{pctTxt(pctOf(g.gp, g.sales))}</Td><Td>{money(g.rental)}</Td><Td className="text-ink-secondary">{pctTxt(pctOf(g.rental, g.sales))}</Td><Td>{money(g.rental + g.otherCost)}</Td>
                 <Td className={g.np < 0 ? "font-semibold text-err" : "font-semibold text-synced"}>{money(g.np)}</Td>
@@ -202,6 +213,8 @@ export function ProjectOverviewPage() {
           </table>
         </div>
       </Panel>
+
+      <VenueRentPanel projects={inPeriod} periodLabel={period.label} />
 
       <Panel title={`Projects${pick ? ` · ${pick}` : ""}`} hint={`${listed.length} projects · amounts in RM · click one to open it`}
         right={<span className="flex items-center gap-2">
