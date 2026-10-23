@@ -1110,6 +1110,15 @@ function erpPlanTransporterPull_(master, target, source) {
 const ERP_ESB_COLUMNS = ["em order delivery status esb remarks", "consignment no", "vessel & voyage",
   "etd port klang", "eta em port", "done delivery", "esb remarks"];
 const ERP_BS_COLUMNS = ["bs kk - delivery date", "bs remarks"];
+// The ONLY columns pushed EM -> ESB / BS. An allowlist, never "everything not
+// ESB / BS": the 2026-10-23 14:19 run pushed EM's stale freight columns
+// (SEAFREIGHT .. TOTAL, Supplier Invoice) plus Attention / Sync Status over
+// ESB's own, 976 cells. Freight is the transporter's; Attention / Sync Status
+// are each sheet's own bookkeeping.
+const ERP_PUSH_COLUMNS = ["delivery message status", "transfer to", "ref.", "debtor name", "phone",
+  "sales location", "local total", "balance", "remark 4", "sales exemption expiry date",
+  "shipout date = do date", "houzs remark 2", "address 1", "address 2", "address 3", "address 4",
+  "ctn", "houzs remarks"];
 function erpColumnOwner_(header) {
   const k = erpNormHeader_(header);
   const hit = function (list) {
@@ -1130,7 +1139,7 @@ function erpPlanTransporterPush_(master, target, wants, esbRemark) {
   const owned = [];
   master.headers.forEach(function (h, i) {
     const k = erpNormHeader_(h);
-    if (k && erpColumnOwner_(k) === "EM" && tCol[k] !== undefined) owned.push({ m: i, t: tCol[k] });
+    if (k && ERP_PUSH_COLUMNS.indexOf(k) >= 0 && tCol[k] !== undefined) owned.push({ m: i, t: tCol[k] });
   });
   const mCol = function (name) { return master.headers.map(erpNormHeader_).indexOf(name); };
   const docM = mCol("doc. no.");
@@ -1147,7 +1156,7 @@ function erpPlanTransporterPush_(master, target, wants, esbRemark) {
     if (ti === undefined) {
       if (!wants(function (name) { const i = mCol(name); return i < 0 ? "" : erpCellText_(r[i]); }, doc, esbRemark || function () { return ""; })) return;
       const row = target.headers.map(function () { return ""; });
-      master.headers.forEach(function (h, i) { const k = erpNormHeader_(h); if (k && tCol[k] !== undefined) row[tCol[k]] = r[i]; });
+      master.headers.forEach(function (h, i) { const k = erpNormHeader_(h); if (k && tCol[k] !== undefined && (k === "doc. no." || ERP_PUSH_COLUMNS.indexOf(k) >= 0 || erpColumnOwner_(k) !== "EM")) row[tCol[k]] = r[i]; });
       appends.push(row);
       tRow[doc] = -1;
       return;
