@@ -746,17 +746,6 @@ export function boothLabel(row: Pick<FairProjectRow, 'brand' | 'venue' | 'startD
   return brand ? `${brand} @ ${place}` : place;
 }
 
-/** Why a SCANNED order waits as a draft (owner 2026-10-19): the person who
- *  scanned it must be on the Sales Attending of the booth it belongs to — 「他被
- *  assign 去 akemi 就只能 save akemi 的 brand」 — and PMS adds them, not the
- *  system. The owner approved the first-person sentence; `scannerName` is set
- *  only when someone else presses Confirm, so it names whom to add. */
-export function attendingMessage(booth: Pick<FairProjectRow, 'brand' | 'venue' | 'startDate' | 'endDate'>, scannerName: string | null): string {
-  return scannerName
-    ? `${scannerName} is not on Sales Attending for ${boothLabel(booth)}. Ask the person in charge to add ${scannerName}, then confirm again.`
-    : `You are not on Sales Attending for ${boothLabel(booth)}. Ask the person in charge to add you, then confirm again.`;
-}
-
 /** "Venue differs" (owner 2026-10-19): the place written on the slip is not
  *  where the order was placed. A flag by default; a refusal at Confirm once
  *  the Fair rules switch says so. */
@@ -787,9 +776,10 @@ export function venueDiffersReason(venue: string, soDate: string, atVenue: reado
   return `${clean(venue)} has ${clean(nearest.organizer)} (${fmtDayMonthRange(nearest.startDate, nearest.endDate)}) in PMS — re-link if it was sold there`;
 }
 
-/** The "等加人" line: who is missing from which booth's Sales Attending. */
-export function attendingNote(booth: Pick<FairProjectRow, 'brand' | 'venue' | 'startDate' | 'endDate'>, scannerName: string, draft: boolean): string {
-  return `${scannerName} is not on Sales Attending for ${boothLabel(booth)}.${draft ? ' The draft cannot be confirmed until PMS adds them.' : ''}`;
+/** The "等加人" line: who is missing from which booth's Sales Attending, for
+ *  PMS to add. It no longer stops Confirm (owner 2026-10-22). */
+export function attendingNote(booth: Pick<FairProjectRow, 'brand' | 'venue' | 'startDate' | 'endDate'>, scannerName: string): string {
+  return `${scannerName} is not on Sales Attending for ${boothLabel(booth)}. PMS adds them in the project.`;
 }
 
 /** Same place? Case/space-insensitive, as every venue compare here. */

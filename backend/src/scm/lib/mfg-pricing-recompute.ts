@@ -37,6 +37,7 @@ import { pgrestInList } from './pgrest-in-list';
 import { autoDeriveEnabled } from './auto-derive-cost';
 import { resolveMfgProductCostAsOf } from './supplier-price-history';
 import { todayMyt } from './my-time';
+import { scopeToCompanyIdOrOpen } from './companyScope';
 import {
   computeSofaSellingSen,
   comboChargedPrices,
@@ -864,10 +865,15 @@ export async function loadProductsByCodes(sb: any, codes: Array<string | null | 
  *  option-group extraSen) instead of the legacy maintenance_config.specials pool.
  *  Returns [] on empty/error (recompute then prices any picked codes at 0 — no
  *  crash, no reject). */
-export async function loadSpecialAddons(sb: any): Promise<SpecialAddonDef[]> {
-  const { data } = await sb
-    .from('special_addons')
-    .select('code, selling_price_sen, cost_price_sen, option_groups')
+export async function loadSpecialAddons(
+  sb: any,
+  companyId: number | null | undefined,
+): Promise<SpecialAddonDef[]> {
+  // Codes repeat across companies and the pool is keyed by code (HC-0134).
+  const { data } = await scopeToCompanyIdOrOpen(
+    sb.from('special_addons').select('code, selling_price_sen, cost_price_sen, option_groups'),
+    companyId,
+  )
     .eq('active', true);
   return ((data as any[]) ?? []).map((r) => ({
     code:            r.code,
@@ -1006,10 +1012,15 @@ export async function loadFabricsByCodes(sb: any, codes: Array<string | null | u
 /** Load the master maintenance config in effect today (MYT): newest
  *  effective_from <= today, latest save wins a same-day tie. Same pick as
  *  GET /maintenance-config/resolved, so a future-dated change can't price early. */
-export async function loadMaintenanceConfig(sb: any): Promise<MaintenanceConfig | null> {
-  const { data } = await sb
-    .from('maintenance_config_history')
-    .select('config')
+export async function loadMaintenanceConfig(
+  sb: any,
+  companyId: number | null | undefined,
+): Promise<MaintenanceConfig | null> {
+  // Unscoped, the newest master row of ANY company priced the SO (HC-0134).
+  const { data } = await scopeToCompanyIdOrOpen(
+    sb.from('maintenance_config_history').select('config'),
+    companyId,
+  )
     .eq('scope', 'master')
     .lte('effective_from', todayMyt())
     .order('effective_from', { ascending: false })
@@ -1194,7 +1205,7 @@ export async function recomputeOneLine(
   companyId: number | null | undefined,
   opts?: { trustOperatorSelling?: TrustSelling; asOf?: string | null },
 ): Promise<RecomputedLine> {
-  const config = cachedConfig ?? await loadMaintenanceConfig(sb);
+  const config = cachedConfig ?? await loadMaintenanceConfig(sb, companyId);
   const [productLoaded, fabric, sellingTiers, fabricAddonConfig, modelOverrides, compartmentOverrides] = await Promise.all([
     loadProductByCode(sb, item.itemCode, companyId),
     loadFabricByCode(sb, item.variants?.fabricCode ?? null),

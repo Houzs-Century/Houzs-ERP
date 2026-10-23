@@ -333,7 +333,7 @@ function DoCard({ r, onOpen }: { r: FairDoRow; onOpen: () => void }) {
         <CardStat k="Drift" v={pts(r.do_margin_pct, r.so_margin_pct)} tone={(r.do_margin_pct ?? 0) < (r.so_margin_pct ?? 0) ? "err" : undefined} />
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 11, fontSize: 11.5 }}>
-        <span style={{ color: "var(--ink2)" }}>Delivered</span>
+        <span style={{ color: "var(--ink2)" }}>Deliver to <b>{r.delivery_location ?? "—"}</b></span>
         <span style={{ marginLeft: "auto", color: "var(--brand)", fontWeight: 600 }}>Tap ›</span>
       </div>
     </div>

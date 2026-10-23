@@ -701,12 +701,28 @@ documentFlow.get('/:type/:id', async (c) => {
           if (notes?.size) for (const gid of notes) addEdge(keyOf('grn', gid), k, 'full');
           else if (p.grn_id) addEdge(keyOf('grn', p.grn_id), k, 'full');
         }
-        const prs = await readIn('orphan purchase_returns', grnIds, (b, f, t) =>
+        // Returns: line link UNION header FK, same as the main builder's section 9.
+        const prLineLinks = await readIn('orphan purchase_return_items', myGrnItemIds, (b, f, t) =>
+          scopeToCompany(sb.from('purchase_return_items').select('id, purchase_return_id, grn_item_id').in('grn_item_id', b), c).order('id').range(f, t));
+        const notesByPr = new Map<string, Set<string>>();
+        for (const l of prLineLinks) {
+          const gid = l.grn_item_id ? grnIdByItem.get(l.grn_item_id) : undefined;
+          if (!gid) continue;
+          const set = notesByPr.get(l.purchase_return_id) ?? new Set<string>();
+          set.add(gid);
+          notesByPr.set(l.purchase_return_id, set);
+        }
+        const prsByHeader = await readIn('orphan purchase_returns', grnIds, (b, f, t) =>
           scopeToCompany(sb.from('purchase_returns').select('id, return_number, status, grn_id').in('grn_id', b), c).order('id').range(f, t));
-        for (const p of prs) {
+        const seenPr = new Set(prsByHeader.map((p) => p.id));
+        const prsByLine = await readIn('orphan purchase_returns(by line)', [...notesByPr.keys()].filter((pid) => !seenPr.has(pid)), (b, f, t) =>
+          scopeToCompany(sb.from('purchase_returns').select('id, return_number, status, grn_id').in('id', b), c).order('id').range(f, t));
+        for (const p of [...prsByHeader, ...prsByLine]) {
           const k = keyOf('pr', p.id);
           nodes.set(k, { key: k, type: 'pr', id: p.id, label: p.return_number ?? p.id, status: p.status ?? null, isAnchor: false });
-          if (p.grn_id) addEdge(keyOf('grn', p.grn_id), k, 'full');
+          const notes = notesByPr.get(p.id);
+          if (notes?.size) for (const gid of notes) addEdge(keyOf('grn', gid), k, 'full');
+          else if (p.grn_id) addEdge(keyOf('grn', p.grn_id), k, 'full');
         }
       }
       // PO amendments still branch off an orphan PO (same shape as section 11).

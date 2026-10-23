@@ -36,6 +36,7 @@ import {
   type MaterialKind,
 } from '../../vendor/scm/lib/suppliers-queries';
 import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
+import { pickableBindings } from '../../vendor/scm/lib/pickable-bindings';
 import { withMasterPickerPools } from '../../vendor/scm/lib/picker-maint';
 import { useFabricTrackings } from '../../vendor/scm/lib/fabric-queries';
 import { PcVariantEditor } from '../../vendor/scm/components/PcVariantEditor';
@@ -168,6 +169,7 @@ export const PurchaseConsignmentOrderNew = () => {
   // Item-first picking — item input is enabled even when supplier is unset; the
   // datalist falls back to the full mfg_products list when no supplier is picked.
   const allSkus = useMfgProducts();
+  const pickable = useMemo(() => pickableBindings(bindings, allSkus.data ?? []), [bindings, allSkus.data]);
   const supplierMaintQ = useMaintenanceConfig(
     supplierId ? `supplier:${supplierId}` : '',
     { enabled: Boolean(supplierId) },
@@ -598,8 +600,8 @@ export const PurchaseConsignmentOrderNew = () => {
           <h2 className={styles.cardTitle}>Items</h2>
           <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
             {supplierId
-              ? (bindings.length > 0
-                  ? `${bindings.length} item(s) bound to this supplier — picker filters to these`
+              ? (pickable.length > 0
+                  ? `${pickable.length} item(s) bound to this supplier — picker filters to these`
                   : `No SKUs bound to this supplier yet — picker shows all ${(allSkus.data ?? []).length} SKUs (one-off purchase)`)
               : `Pick any item from ${(allSkus.data ?? []).length} SKUs — supplier auto-narrows`}
           </span>
@@ -680,7 +682,7 @@ export const PurchaseConsignmentOrderNew = () => {
                       onChange={(e) => {
                         const code = e.target.value;
                         const match = supplierId
-                          ? bindings.find((b) => b.item_code === code)
+                          ? pickable.find((b) => b.item_code === code)
                           : undefined;
                         if (match) { pickBinding(l.rid, match); return; }
                         const sku = (allSkus.data ?? []).find((p) => p.code === code);
@@ -697,8 +699,8 @@ export const PurchaseConsignmentOrderNew = () => {
                       style={{ fontFamily: 'var(--font-mono)' }}
                     />
                     <datalist id={`bindings-${l.rid}`}>
-                      {supplierId && bindings.length > 0
-                        ? sortByText(bindings).map((b) => (
+                      {supplierId && pickable.length > 0
+                        ? sortByText(pickable).map((b) => (
                             <option key={b.id} value={b.item_code}>
                               {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_sen, b.currency)}
                             </option>
@@ -720,7 +722,7 @@ export const PurchaseConsignmentOrderNew = () => {
                       onChange={(e) => {
                         const sku = e.target.value;
                         if (supplierId) {
-                          const match = bindings.find((b) => b.supplier_sku === sku);
+                          const match = pickable.find((b) => b.supplier_sku === sku);
                           if (match) {
                             pickBinding(l.rid, match);
                           } else {
@@ -737,7 +739,7 @@ export const PurchaseConsignmentOrderNew = () => {
                       style={{ fontFamily: 'var(--font-mono)' }}
                     />
                     <datalist id={`supplier-skus-${l.rid}`}>
-                      {supplierId && sortByText(bindings).map((b) => (
+                      {supplierId && sortByText(pickable).map((b) => (
                         <option key={b.id} value={b.supplier_sku || ''}>
                           {b.item_code} · {b.material_name} · {fmtRm(b.unit_price_sen, b.currency)}
                         </option>

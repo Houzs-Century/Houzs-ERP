@@ -10,7 +10,7 @@
    projects.finances page access in index.ts, then the finance-viewer rule here,
    BEFORE supabaseAuth replaces `user`. Company scope: the projects read carries
    the active-company predicate, the Sales Orders read scopeToCompany. */
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import type { Env, Variables } from "../scm/env";
 import type { AuthUser } from "../services/auth";
 import { supabaseAuth } from "../scm/middleware/auth";
@@ -22,6 +22,8 @@ import type { PnlColumn } from "../services/eventPnl";
 import { LEDGER_COST_CATEGORIES } from "../services/projects";
 import { collectReport, indexOrdersByToken, matchBill, type NoteRow, type OrderRow } from "./lib/sales-report-bills";
 import { financeHiddenForUser } from "../services/pmsAccess";
+import { serveSwr, type SwrBuild } from "../scm/lib/kv-swr";
+import { todayMyt } from "../scm/lib/my-time";
 
 export const projectOverview = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -36,18 +38,26 @@ projectOverview.use("*", supabaseAuth);
 type ProjectRow = {
   id: number; code: string; name: string; brand: string | null; organizer: string | null; venue: string | null;
   state: string | null; stage: string | null; start_date: string | null; end_date: string | null; event_type: string | null;
+  size_sqm: number | null;
   income: number; cogs: number; rental: number; commission: number; setup: number; transport: number; merchandise: number; other_cost: number;
   cogs_matt_sofa: number; cogs_bedframe: number; cogs_accessories: number; transport_fee: number; transport_setup: number;
   total_sales: number | null;
 };
 
-projectOverview.get("/", async (c) => {
+/* HC-0002: every open of the home Overview and Project Overview ran this
+   (8 stages, ~1.5 s on prod, every payment of the company paged). Served
+   stale-while-revalidate from KV (scm/lib/kv-swr.ts), keyed by company and
+   day; the finance gate above still runs first. Up to 5 minutes old. */
+projectOverview.get("/", (c) =>
+  serveSwr(c, { family: "projov", parts: [todayMyt()], softSeconds: 5 * 60, hardSeconds: 2 * 60 * 60, build: () => buildProjectOverview(c) }));
+
+async function buildProjectOverview(c: Context<{ Bindings: Env; Variables: Variables }>): Promise<SwrBuild> {
   const COGS = "('cogs','cogs_matt_sofa','cogs_bedframe','cogs_accessories')";
   const sum = (where: string) =>
     `COALESCE((SELECT SUM(l.amount) FROM project_finance_lines l WHERE l.project_id = p.id AND l.archived_at IS NULL AND ${where}), 0)`;
   // company-scope: finance lines are read per project of the active company (activeCompanySql on p.company_id at the end of this statement).
   const rows = await c.env.DB.prepare(
-    `SELECT p.id, p.code, p.name, p.brand, p.organizer, p.venue, p.state, p.stage, p.start_date, p.end_date,
+    `SELECT p.id, p.code, p.name, p.brand, p.organizer, p.venue, p.state, p.stage, p.start_date, p.end_date, p.size_sqm,
             et.name AS event_type,
             (SELECT f.total_sales FROM project_finance f WHERE f.project_id = p.id LIMIT 1) AS total_sales,
             ${sum("l.kind = 'income'")} AS income,
@@ -73,7 +83,7 @@ projectOverview.get("/", async (c) => {
     scopeToCompany(c.get("supabase").from("mfg_sales_orders")
       .select("doc_no, project_id, local_total_sen, total_cost_sen").in("project_id", b)
       .not("status", "in", '("DRAFT","CANCELLED")'), c).order("doc_no").range(f, t));
-  if (sos.error) return c.json({ error: "load_failed", reason: `sales orders: ${sos.error.message}` }, 500);
+  if (sos.error) return { ok: false, status: 500, body: { error: "load_failed", reason: `sales orders: ${sos.error.message}` } };
   type SoCost = { sen: number; costSen: number; count: number; costSplit: { mattSofa: number; bedframe: number; accessories: number } };
   const so = new Map<number, SoCost>();
   for (const s of sos.data) {
@@ -92,7 +102,7 @@ projectOverview.get("/", async (c) => {
     const items = await chunkIn<{ doc_no: string; item_group: string | null; line_cost_sen: number | null }>([...projectOfDoc.keys()], (b, f, t) =>
       scopeToCompany(c.get("supabase").from("mfg_sales_order_items")
         .select("doc_no, item_group, line_cost_sen").in("doc_no", b).eq("cancelled", false), c).order("id").range(f, t));
-    if (items.error) return c.json({ error: "load_failed", reason: `sales order lines: ${items.error.message}` }, 500);
+    if (items.error) return { ok: false, status: 500, body: { error: "load_failed", reason: `sales order lines: ${items.error.message}` } };
     for (const it of items.data) {
       const g = so.get(projectOfDoc.get(it.doc_no) ?? -1);
       if (!g) continue;
@@ -132,7 +142,7 @@ projectOverview.get("/", async (c) => {
     const orders = await paginateAll<OrderRow>((f, t) => scopeToCompany(c.get("supabase").from("mfg_sales_orders")
       .select("doc_no, project_id, status, customer_so_no, ref, salesperson_id, local_total_sen, total_revenue_sen")
       .neq("status", "CANCELLED").gte("so_date", from), c).order("doc_no").range(f, t));
-    if (orders.error) return c.json({ error: "load_failed", reason: `orders for the sales report: ${orders.error.message}` }, 500);
+    if (orders.error) return { ok: false, status: 500, body: { error: "load_failed", reason: `orders for the sales report: ${orders.error.message}` } };
     const index = indexOrdersByToken(orders.data ?? []);
     for (const p of withBills) {
       const r = { bills: 0, billsSen: 0, opened: 0, openedSen: 0, otherEvent: 0 };
@@ -155,10 +165,10 @@ projectOverview.get("/", async (c) => {
     scopeToCompany(c.get("supabase").from("mfg_sales_orders")
       .select("doc_no, project_id, local_total_sen, total_revenue_sen, deposit_sen").in("project_id", b)
       .neq("status", "CANCELLED"), c).order("doc_no").range(f, t));
-  if (collOrders.error) return c.json({ error: "load_failed", reason: `orders for collection: ${collOrders.error.message}` }, 500);
+  if (collOrders.error) return { ok: false, status: 500, body: { error: "load_failed", reason: `orders for collection: ${collOrders.error.message}` } };
   const pays = await paginateAll<{ so_doc_no: string; amount_sen: number | null; is_deposit: boolean | null }>((f, t) =>
     scopeToCompany(c.get("supabase").from("mfg_sales_order_payments").select("so_doc_no, amount_sen, is_deposit"), c).order("id").range(f, t));
-  if (pays.error) return c.json({ error: "load_failed", reason: `payments: ${pays.error.message}` }, 500);
+  if (pays.error) return { ok: false, status: 500, body: { error: "load_failed", reason: `payments: ${pays.error.message}` } };
   const ledger = new Map<string, { paid: number; deposit: boolean }>();
   for (const p of pays.data ?? []) {
     const cur = ledger.get(p.so_doc_no) ?? { paid: 0, deposit: false };
@@ -201,10 +211,11 @@ projectOverview.get("/", async (c) => {
     };
   };
 
-  return c.json({
+  return { ok: true, body: {
     projects: projects.map((p) => ({
       id: p.id, code: p.code, name: p.name, brand: p.brand, organizer: p.organizer, venue: p.venue, state: p.state, stage: p.stage,
       startDate: p.start_date ? String(p.start_date).slice(0, 10) : null, endDate: p.end_date ? String(p.end_date).slice(0, 10) : null,
+      sizeSqm: p.size_sqm == null ? null : Number(p.size_sqm),
       eventType: p.event_type,
       keyed: {
         income: Number(p.income), cogs: Number(p.cogs), rental: Number(p.rental), commission: Number(p.commission),
@@ -217,8 +228,8 @@ projectOverview.get("/", async (c) => {
       pnl: compact(p.id),
       collection: collection.get(p.id) ?? { totalSen: 0, paidSen: 0 },
     })),
-  });
-});
+  } };
+}
 
 /* GET /api/projects/overview/tasks — every live event with what the project
    stage tracker needs (owner, 2026-10-17: "group the events by the project

@@ -36,7 +36,7 @@ import { inPoLineOrder, nextPoLineNo, sortBySourceSoLine, stampPoLineNos } from 
 import { poConvertLineRows } from '../lib/po-convert-line';
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { changedPoIdentityLockCols, poIdentityLockedRefusal } from '../shared/po-identity-lock';
-import { poVariantGaps, poVariantCheckFailedBody, poVariantConfirmRefusal, poWarehouseGap, PO_WAREHOUSE_REQUIRED } from './po-gates';
+import { poVariantGaps, poVariantCheckFailedBody, poVariantConfirmRefusal, poWarehouseGap, PO_WAREHOUSE_REQUIRED, poInactivePickRefusal } from './po-gates';
 import { VALID_CURRENCIES, VALID_KINDS } from '../lib/purchase-doc-vocab';
 import { resolveMaintenanceConfigForSupplier, poVariantPricingInput } from '../lib/po-pricing';
 import { readMfgProductBindings } from '../lib/supplier-bindings';
@@ -1063,6 +1063,7 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
      manual lines (no soItemId) skip this — a PO can be raised with no SO link,
      unchanged. Mirror of the DO create-gate. */
   const groupOf = await skuCategoryResolver(supabase, items, activeCompanyId(c) ?? null); // SKU wins — lib/sku-category.ts
+  { const inactive = await poInactivePickRefusal(supabase, activeCompanyId(c) ?? null, items); if (inactive) return c.json(inactive, 409); }
   {
     const lineSoItemIds = items
       .map((it) => it.soItemId as string | undefined)
@@ -2966,6 +2967,7 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
     const refusal = await soLinkTargetRefusal(sb, c, soItemId, String(it.itemCode ?? ''), addGroupOf(it));
     if (refusal) return c.json(refusal.body, refusal.status);
   }
+  { const inactive = await poInactivePickRefusal(sb, co.companyId ?? null, [{ materialKind: it.materialKind, itemCode: it.itemCode, soItemId }]); if (inactive) return c.json(inactive, 409); }
   /* Remaining-qty cap — a NEW line contributes nothing to po_qty_picked yet, so
      its own headroom is the raw remainder (ownCurrentQty = 0). */
   if (it.confirmOverConvert !== true) {
@@ -3175,8 +3177,8 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
     if (refusal) return c.json(refusal.body, refusal.status);
     if (soItemKeySent) updates['so_item_id'] = nextSoItemId;
   }
-  const unlinkRefusal = hardBoundUnlinkRefusal(co.companyId ?? null, { item_group: effGroup, item_code: effCode }, prevSoItemId, nextSoItemId);
-  if (unlinkRefusal) return c.json(unlinkRefusal, 409);
+  const lineRefusal = hardBoundUnlinkRefusal(co.companyId ?? null, { item_group: effGroup, item_code: effCode }, prevSoItemId, nextSoItemId) ?? (effCode !== String(prev.item_code ?? '') ? await poInactivePickRefusal(sb, co.companyId ?? null, [{ materialKind: prev.material_kind, itemCode: effCode, soItemId: nextSoItemId }]) : null);
+  if (lineRefusal) return c.json(lineRefusal, 409);
 
   /* Remaining-qty cap — runs even when the bind key is ABSENT, because raising
      qty on an ALREADY-bound line over-orders just as surely as binding a new

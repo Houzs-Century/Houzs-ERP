@@ -20,6 +20,11 @@
 import { lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { coverageStateOf } from "../../components/coverage-state";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useOrderMoney, useConvertSources } from "../../vendor/scm/lib/so-money-queries";
+import { useCancelRequest } from "../../vendor/scm/lib/document-cancel-queries";
+import { useSoBackdateRequests } from "../../vendor/scm/lib/payment-backdate-queries";
+import { useDocumentFlow } from "../../vendor/scm/lib/flow-queries";
+import { useSoDropdownOptions } from "../../vendor/scm/lib/so-dropdown-options-queries";
 import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import { returnToWorkspaceOpener, useWorkspaceOpener } from "../../lib/useWorkspaceOpener";
@@ -1071,6 +1076,7 @@ function SalesOrderDetailV2ReadOnly() {
   if (detail.isPending) {
     return (
       <div className="animate-fade-in p-8 text-center text-ink-muted">
+        <SoDetailWarmup docNo={docNo} />
         Loading {docNo}…
       </div>
     );
@@ -1844,3 +1850,21 @@ function Divider() {
 }
 
 export default SalesOrderDetailV2;
+
+/* HC-0002. The panels below mount only once the header lands, so each one's
+   read started a wave later (prod 2026-10-22: money / convert-sources /
+   document-flow at ~1.2s). This calls the SAME hooks with the same arguments
+   from the URL while the header loads, so each panel finds its read already in
+   flight. Every one of them mounts for any saved order, so nothing extra is
+   asked for; it renders nothing, so nothing above it re-renders. Not the
+   refund source: its hook has no staleTime, so the panel would read it twice. */
+function SoDetailWarmup({ docNo }: { docNo: string | undefined }) {
+  const key = docNo ?? null;
+  useOrderMoney(key);
+  useConvertSources(key);
+  useCancelRequest("so", key);
+  useSoBackdateRequests(key);
+  useDocumentFlow("so", key);
+  useSoDropdownOptions("payment_method");
+  return null;
+}

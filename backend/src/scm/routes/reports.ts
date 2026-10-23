@@ -48,16 +48,20 @@ import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { deriveDisplayBrandingByDoc } from '../lib/so-display-branding';
 import { isPlaceholderBrandText } from '../shared/so-branding-label';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
+import { warehouseLabel } from '../lib/warehouse-label';
+import { bookSpellingOrOwn } from '../../services/autocount-writeback';
+import { LOCATION_MAP } from '../../services/autocount-master-maps';
 import { salesJdDenial } from '../../services/salesJdAccess';
 import { resolveSalesScopeIds } from '../lib/salesScope';
 import { SO_FINANCE_KEYS, SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { soPaidSen, soPaidInputsOf } from '../shared/so-outstanding';
 import {
   parseStage, fairReportAccess, fairSoMoney, depositByTender, paymentMethodsUsed,
-  belowDeposit, fairBalanceSen, doCostTotal, siCostTotal, marginPct, resolveDateWindow,
+  belowDeposit, fairBalanceSen, doCostTotal, siCostTotal, siGoodsTotals, marginPct, resolveDateWindow,
   summarizeSo, summarizeDo, summarizeInvoice,
   fairPnlLineCost, summarizeFairPnl,
   type FairStage, type FairFilters, type PaymentRow, type FairCostRate, type FairPnlSummaryRow,
+  type DoCostLine, type SiGoodsLine,
 } from '../lib/fair-report';
 import type { AuthUser } from '../../services/auth';
 
@@ -855,6 +859,9 @@ async function fetchPaymentsByDoc(c: any, docNos: string[]): Promise<Map<string,
   return byDoc;
 }
 
+const joinParts = (parts: Array<string | null | undefined>, sep: string): string | null =>
+  parts.map((p) => p?.trim()).filter(Boolean).join(sep) || null;
+
 /* Shared "fair identity" columns emitted on every stage row. */
 function fairDims(
   h: FairSoHeader,
@@ -981,6 +988,7 @@ export const fairReportHandler = async (c: FairCtx) => {
         service_rev_sen: money.service_rev_sen,
         cost_by_category: money.cost_by_category,
         total_so_cost_sen: money.total_so_cost_sen,
+        goods_cost_sen: money.goods_cost_sen,
         margin_pct: money.margin_pct,
         balance_sen: balanceSen,
         paid_total_sen: paidTotal,
@@ -1139,31 +1147,50 @@ export const fairReportHandler = async (c: FairCtx) => {
     // DOs whose SO is in the fair (link by so_doc_no text — no FK to embed on).
     const { data: doData, error: doErr } = await chunkIn(docNos, (batch: string[], pFrom: number, pTo: number) => scopeToCompany(sb
       .from('delivery_orders')
-      .select('id, do_number, so_doc_no, do_date, delivered_at, status')
+      .select('id, do_number, so_doc_no, do_date, delivered_at, status, address1, address2, city, postcode, state, warehouse_id, sales_location')
       .in('so_doc_no', batch), c)
       .range(pFrom, pTo));
     if (doErr) return c.json({ error: 'load_failed', reason: doErr.message }, 500);
-    const dos = (doData ?? []) as Array<{ id: string; do_number: string; so_doc_no: string | null; do_date: string | null; delivered_at: string | null; status: string | null }>;
+    const dos = (doData ?? []) as Array<{
+      id: string; do_number: string; so_doc_no: string | null; do_date: string | null; delivered_at: string | null; status: string | null;
+      address1: string | null; address2: string | null; city: string | null; postcode: string | null; state: string | null;
+      warehouse_id: string | null; sales_location: string | null;
+    }>;
 
-    // Their lines (cost), grouped per DO id.
-    const linesByDo = new Map<string, Array<{ qty: number | null; unit_cost_sen: number | null; ship_cost_sen: number | null }>>();
+    // Same Location the Delivery Orders list shows: the DO's warehouse code, else its sales_location.
+    const whById = new Map<string, { code: string | null; name: string | null }>();
+    const whIds = [...new Set(dos.map((d) => d.warehouse_id).filter((x): x is string => !!x))];
+    if (whIds.length > 0) {
+      const { data: whData, error: whErr } = await chunkIn(whIds, (batch: string[], pFrom: number, pTo: number) => sb
+        .from('warehouses')
+        .select('id, code, name')
+        .in('id', batch)
+        .range(pFrom, pTo));
+      if (whErr) return c.json({ error: 'load_failed', reason: whErr.message }, 500);
+      for (const w of whData as Array<{ id: string; code: string | null; name: string | null }>) whById.set(w.id, w);
+    }
+
+    // Their lines (cost), grouped per DO id. item_group / item_code tell the
+    // service lines apart: they are left out of the goods-only margin.
+    const linesByDo = new Map<string, DoCostLine[]>();
     const doIds = dos.map((d) => d.id);
     if (doIds.length > 0) {
       const { data: liData, error: liErr } = await chunkIn(doIds, (batch: string[], pFrom: number, pTo: number) => scopeToCompany(sb
         .from('delivery_order_items')
-        .select('delivery_order_id, qty, unit_cost_sen, ship_cost_sen')
+        .select('delivery_order_id, qty, unit_cost_sen, ship_cost_sen, item_group, item_code')
         .in('delivery_order_id', batch), c)
         .range(pFrom, pTo));
       if (liErr) return c.json({ error: 'load_failed', reason: liErr.message }, 500);
-      for (const l of (liData ?? []) as Array<{ delivery_order_id: string; qty: number | null; unit_cost_sen: number | null; ship_cost_sen: number | null }>) {
+      for (const l of (liData ?? []) as Array<DoCostLine & { delivery_order_id: string }>) {
         const arr = linesByDo.get(l.delivery_order_id) ?? [];
-        arr.push({ qty: l.qty, unit_cost_sen: l.unit_cost_sen, ship_cost_sen: l.ship_cost_sen });
+        arr.push({ qty: l.qty, unit_cost_sen: l.unit_cost_sen, ship_cost_sen: l.ship_cost_sen, item_group: l.item_group, item_code: l.item_code });
         linesByDo.set(l.delivery_order_id, arr);
       }
     }
 
     const rows = dos.map((d) => {
       const h = d.so_doc_no ? soByDoc.get(d.so_doc_no) : undefined;
+      const money = h ? fairSoMoney(h) : null;
       const doCost = doCostTotal(linesByDo.get(d.id) ?? []);
       const totalSoCost = Number(h?.total_cost_sen ?? 0);
       const costDelta = doCost.total_do_cost_sen - totalSoCost;
@@ -1173,10 +1200,14 @@ export const fairReportHandler = async (c: FairCtx) => {
         do_no: d.do_number,
         so_no: d.so_doc_no,
         status: d.status,
+        location: bookSpellingOrOwn(
+          warehouseLabel(d.warehouse_id ? whById.get(d.warehouse_id) : null) ?? d.sales_location, LOCATION_MAP),
+        delivery_location: joinParts([d.city, d.state], ', '),
+        delivery_address: joinParts([d.address1, d.address2, joinParts([d.postcode, d.city], ' '), d.state], ', '),
         qty: doCost.qty,
         // The linked SO's amount (product + service) — same value the SO tab
         // shows in its Amount column, so the two stages reconcile per SO.
-        so_amount_sen: h ? fairSoMoney(h).amount_sen : null,
+        so_amount_sen: money ? money.amount_sen : null,
         total_so_cost_sen: totalSoCost,
         total_do_cost_sen: doCost.total_do_cost_sen,
         do_cost_is_legacy: doCost.is_legacy,
@@ -1184,8 +1215,9 @@ export const fairReportHandler = async (c: FairCtx) => {
            would otherwise read as a naked 100% margin (2990-DO-2607-021). */
         do_cost_ship_anyway: doCost.has_zero_frozen,
         cost_delta_sen: costDelta,
-        so_margin_pct: marginPct(Number(h?.local_total_sen ?? 0), totalSoCost),
-        do_margin_pct: marginPct(Number(h?.local_total_sen ?? 0), doCost.total_do_cost_sen),
+        // Goods only, both sides over the SO's goods sales (see marginPct).
+        so_margin_pct: money ? money.margin_pct : null,
+        do_margin_pct: money ? marginPct(money.selling_sen, doCost.goods_do_cost_sen) : null,
       };
     });
     const summary = summarizeDo(rows);
@@ -1203,19 +1235,23 @@ export const fairReportHandler = async (c: FairCtx) => {
   if (siErr) return c.json({ error: 'load_failed', reason: siErr.message }, 500);
   const sis = (siData ?? []) as Array<{ id: string; invoice_number: string; so_doc_no: string | null; delivery_order_id: string | null; invoice_date: string | null; total_sen: number | null; status: string | null }>;
 
-  // SI line costs grouped per SI id.
-  const siLinesById = new Map<string, Array<{ qty: number | null; unit_cost_sen: number | null; line_cost_sen: number | null }>>();
+  // SI line costs grouped per SI id. line_total / item_group / item_code give
+  // the goods side the margin is worked on.
+  const siLinesById = new Map<string, SiGoodsLine[]>();
   const siIds = sis.map((s) => s.id);
   if (siIds.length > 0) {
     const { data: liData, error: liErr } = await chunkIn(siIds, (batch: string[], pFrom: number, pTo: number) => scopeToCompany(sb
       .from('sales_invoice_items')
-      .select('sales_invoice_id, qty, unit_cost_sen, line_cost_sen')
+      .select('sales_invoice_id, qty, unit_cost_sen, line_cost_sen, line_total_sen, item_group, item_code')
       .in('sales_invoice_id', batch), c)
       .range(pFrom, pTo));
     if (liErr) return c.json({ error: 'load_failed', reason: liErr.message }, 500);
-    for (const l of (liData ?? []) as Array<{ sales_invoice_id: string; qty: number | null; unit_cost_sen: number | null; line_cost_sen: number | null }>) {
+    for (const l of (liData ?? []) as Array<SiGoodsLine & { sales_invoice_id: string }>) {
       const arr = siLinesById.get(l.sales_invoice_id) ?? [];
-      arr.push({ qty: l.qty, unit_cost_sen: l.unit_cost_sen, line_cost_sen: l.line_cost_sen });
+      arr.push({
+        qty: l.qty, unit_cost_sen: l.unit_cost_sen, line_cost_sen: l.line_cost_sen,
+        line_total_sen: l.line_total_sen, item_group: l.item_group, item_code: l.item_code,
+      });
       siLinesById.set(l.sales_invoice_id, arr);
     }
   }
@@ -1243,7 +1279,9 @@ export const fairReportHandler = async (c: FairCtx) => {
     const invoiced = Number(s.total_sen ?? 0);
     const soCost = Number(h?.total_cost_sen ?? 0);
     const doCost = s.delivery_order_id ? doCostById.get(s.delivery_order_id) ?? 0 : 0;
-    const siCost = siCostTotal(siLinesById.get(s.id) ?? []);
+    const siLines = siLinesById.get(s.id) ?? [];
+    const siCost = siCostTotal(siLines);
+    const goods = siGoodsTotals(siLines);
     return {
       ...(h ? fairDims(h, staffNames, projects) : {}),
       invoice_date: s.invoice_date,
@@ -1255,7 +1293,9 @@ export const fairReportHandler = async (c: FairCtx) => {
       so_cost_sen: soCost,
       do_cost_sen: doCost,
       si_cost_sen: siCost,
-      margin_pct: marginPct(invoiced, siCost),
+      goods_invoiced_sen: goods.goods_invoiced_sen,
+      goods_si_cost_sen: goods.goods_cost_sen,
+      margin_pct: marginPct(goods.goods_invoiced_sen, goods.goods_cost_sen),
     };
   });
   const summary = summarizeInvoice(rows);

@@ -12,7 +12,7 @@
        Projects.tsx NAMED_COSTS, the snapshot's own rows. */
 
 import { describe, expect, test } from 'vitest';
-import { applyEventBooks, booksLinesFor, readEventBooks, rowOfCategory, type BooksLeg } from '../src/scm/lib/event-books';
+import { applyEventBooks, booksLinesFor, readEventBooks, readEventBooksMany, rowOfCategory, withScnCredits, type BooksLeg } from '../src/scm/lib/event-books';
 import { LEDGER_COST_CATEGORIES } from '../src/services/projects';
 
 const leg = (over: Partial<BooksLeg> = {}): BooksLeg => ({
@@ -185,15 +185,19 @@ describe('reading the books', () => {
       prepare: (sql: string) => ({
         bind: (...args: unknown[]) => {
           calls.push([sql, ...args]);
-          return { all: async () => ({ results: [leg()] }) };
+          /* The supplier notes' credits are a read of their own (none here). */
+          return { all: async () => ({ results: /acc_credit_notes/.test(sql) ? [] : [leg()] }) };
         },
       }),
     } as unknown as D1Database;
     expect(await readEventBooks(db, 7, 1)).toEqual({ ok: true, legs: [leg()] });
     expect(calls[0]!.slice(1)).toEqual([7, 1]);
     expect(String(calls[0]![0])).toMatch(/WHERE l\.project_id = \? AND l\.company_id = \?/);
+    /* The supplier notes' credits, by the same event and company (owner 2026-10-22). */
+    expect(String(calls[1]![0])).toMatch(/acc_credit_notes/);
+    expect(calls[1]!.slice(1)).toEqual([7, 1]);
     await readEventBooks(db, 7, null);
-    expect(calls[1]!.slice(1)).toEqual([7]);
+    expect(calls[2]!.slice(1)).toEqual([7]);
 
     const broken = { prepare: () => { throw new Error('no such table: scm.journal_entry_lines'); } } as unknown as D1Database;
     expect(await readEventBooks(broken, 7, 1)).toEqual({ ok: false, reason: 'no such table: scm.journal_entry_lines' });
@@ -212,5 +216,51 @@ describe('the row of each typed category', () => {
       contractor: 'others', license: 'others', deposit: 'others', permit: 'others',
       accommodation: 'others', staffing: 'others', marketing: 'others', misc: 'others',
     });
+  });
+});
+
+/* A supplier credit note comes off the row of the AP invoice it knocks off
+   (owner 2026-10-22: 「这几张cn 不是knock off 着ap invoice…」, 「我不想要把他放在
+   others」) — read at P&L time, the ledger untouched. */
+describe('a supplier credit note knocking off an event\'s invoice', () => {
+  /* HC-API-2610-030: the ZANOTTI booth's rental at IOIGECC, 18,000. */
+  const bill = leg({ leg_id: 'api', debit_sen: 1_800_000, source_type: 'API', source_doc_no: 'HC-API-2610-030', je_no: 'JE-2610-0470' });
+  /* HC-SCN-2610-004 knocks 8,000 off it — read as a credit on the invoice line's account. */
+  const credit = leg({ leg_id: 'scn:n4:l1', debit_sen: 0, credit_sen: 800_000, source_type: 'SCN', source_doc_no: 'HC-SCN-2610-004', je_no: 'JE-2610-0505', notes: 'Credit note HC-SCN-2610-004 knocks off HC-API-2610-030' });
+  /* Its own leg, had it been tagged: DISCOUNT RECEIVED — Others, were it counted. */
+  const ownLeg = leg({ leg_id: 'own', account_code: '610-0001', account_name: 'DISCOUNT RECEIVED', pms_row: null, debit_sen: 0, credit_sen: 800_000, source_type: 'SCN', source_doc_no: 'HC-SCN-2610-004', je_no: 'JE-2610-0505' });
+
+  test('comes off the invoice line\'s row — Rental 18,000 less 8,000 — never Others, never twice', () => {
+    const legs = withScnCredits([bill, ownLeg], [credit]);
+    expect(legs.map((l) => l.leg_id)).toEqual(['api', 'scn:n4:l1']);
+    const { lines, books } = applyEventBooks(7, [typed(1, 'rental', 18000)], { ok: true, legs }, LEDGER_COST_CATEGORIES);
+    expect(books.rows).toEqual(['rental']);
+    expect(sumOf(lines, 'rental')).toBe(10000);
+    expect(sumOf(lines, 'others')).toBe(0);
+  });
+
+  test('another supplier note\'s own legs are kept; no credits change nothing', () => {
+    const other = { ...ownLeg, leg_id: 'other', source_doc_no: 'HC-SCN-2610-009' };
+    expect(withScnCredits([bill, other], [credit]).map((l) => l.leg_id)).toEqual(['api', 'other', 'scn:n4:l1']);
+    expect(withScnCredits([bill, ownLeg], []).map((l) => l.leg_id)).toEqual(['api', 'own']);
+  });
+
+  test('the page of events reads the credits too, each its own event\'s', async () => {
+    const db = {
+      prepare: (sql: string) => ({
+        bind: () => ({
+          all: async () => ({
+            results: /acc_credit_notes/.test(sql) ? [{ ...credit, project_id: 2267 }]
+              : /payment_voucher_lines/.test(sql) ? []
+              : [{ ...bill, project_id: 2267 }, { ...ownLeg, project_id: 2267 }, { ...bill, leg_id: 'b2', project_id: 307 }],
+          }),
+        }),
+      }),
+    } as unknown as D1Database;
+    const read = await readEventBooksMany(db, [2267, 307], 1);
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(read.byProject.get(2267)!.map((l) => l.leg_id)).toEqual(['api', 'scn:n4:l1']);
+    expect(read.byProject.get(307)!.map((l) => l.leg_id)).toEqual(['b2']);
   });
 });

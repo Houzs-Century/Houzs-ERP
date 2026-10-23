@@ -43,6 +43,8 @@ import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
 import { DataTable, type Column, type ColumnLayoutPreset } from "../../components/DataTable";
 import { fetchDoExportRows } from "../../vendor/scm/lib/so-list-export";
+import type { DoDateBy } from "../../vendor/scm/lib/delivery-order-queries";
+import { DoDateFilter } from "./DoDateFilter";
 import { doLineColumns, financeColumns, moneyColumn } from "./so-do-list-columns";
 import { DO_LABELS, doStatusWord, type DoBookHeader, type DoListLine } from "../../vendor/scm/lib/do-line-export-columns";
 import {
@@ -812,6 +814,9 @@ export function MfgDeliveryOrdersListV2() {
   const status = (params.get("status") ?? "all") as StatusTab;
   const view = (params.get("view") ?? "table") as "table" | "cards";
   const search = params.get("q") ?? "";
+  const dateFrom = params.get("from") ?? "";
+  const dateTo = params.get("to") ?? "";
+  const dateBy: DoDateBy = params.get("dateBy") === "do" ? "do" : "delivery";
   // URL is state — the 0-based page index lives in `?page=`. pageSize is a
   // fixed 50 (backend caps at 100). Server-side paging + search + counts + sort
   // span the FULL scoped set, not just the visible page.
@@ -851,6 +856,9 @@ export function MfgDeliveryOrdersListV2() {
     status: apiStatus,
     q: debouncedSearch,
     sort,
+    from: dateFrom || undefined,
+    to: dateTo || undefined,
+    dateBy,
     ...serverFunnels,
   });
   const searchTransition = useSearchResultTransition({
@@ -923,6 +931,17 @@ export function MfgDeliveryOrdersListV2() {
     next.delete("page"); // status change → back to page 0
     setParams(next, { replace: true });
   };
+  const setDateWindow = (w: { from: string; to: string; dateBy: DoDateBy }) => {
+    const next = new URLSearchParams(params);
+    for (const [k, v] of [["from", w.from], ["to", w.to]] as const) {
+      if (v) next.set(k, v);
+      else next.delete(k);
+    }
+    if (w.dateBy === "do") next.set("dateBy", "do");
+    else next.delete("dateBy");
+    next.delete("page");
+    setParams(next, { replace: true });
+  };
   const setView = (v: "table" | "cards") => {
     const next = new URLSearchParams(params);
     if (v === "table") next.delete("view");
@@ -969,7 +988,7 @@ export function MfgDeliveryOrdersListV2() {
     setParams(new URLSearchParams(), { replace: true });
   };
   const filtersActive =
-    status !== "all" || view !== "table" || search.trim().length > 0;
+    status !== "all" || view !== "table" || search.trim().length > 0 || !!(dateFrom || dateTo);
 
   const onPullToRefresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ["mfg-delivery-orders"] });
@@ -1670,6 +1689,7 @@ export function MfgDeliveryOrdersListV2() {
               value={status}
               onChange={(v) => setStatusChip(v)}
             />
+            <DoDateFilter from={dateFrom} to={dateTo} dateBy={dateBy} onChange={setDateWindow} />
             <div className="flex-1" />
             <ViewToggle value={view} onChange={setView} />
           </div>
@@ -1696,6 +1716,7 @@ export function MfgDeliveryOrdersListV2() {
           value={status}
           onChange={(v) => setStatusChip(v)}
         />
+        <DoDateFilter from={dateFrom} to={dateTo} dateBy={dateBy} onChange={setDateWindow} />
       </div>
 
       {/* Phone → Cards */}
@@ -1802,7 +1823,7 @@ export function MfgDeliveryOrdersListV2() {
                  search and sort match, not the page; one row per line; the
                  visible columns, funnels and sort. */
               exportLines={{
-                fetchRows: () => fetchDoExportRows<DoRow>({ status: apiStatus, q: debouncedSearch, sort }),
+                fetchRows: () => fetchDoExportRows<DoRow>({ status: apiStatus, q: debouncedSearch, sort, from: dateFrom || undefined, to: dateTo || undefined, dateBy }),
                 linesOf: (r) => r.lines ?? [],
                 sheetName: "Delivery Orders",
                 onError: (e) => void notify({ title: "Export failed", body: e.message || "The export could not be completed.", tone: "error" }),

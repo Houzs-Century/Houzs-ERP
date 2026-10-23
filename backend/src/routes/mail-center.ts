@@ -33,8 +33,19 @@ import { validateMailAttachments } from "../lib/mail-attachments";
 import { isSalesDirectorUser } from "../services/pmsAccess";
 import { activeCompanyCodePred, activeCompanyId, activeCompanySql } from "../scm/lib/companyScope";
 import { toArray, stripHtml, safeIso, base64ToBytes, safeFilename } from "../services/mail-parse";
+import {
+  backfillOutboundMessageIds,
+  deliveryStatus,
+  recordOutboundMessage,
+  threadForReferences,
+  threadingHeaders,
+  threadMessageIds,
+} from "../lib/mail-threading";
+import { MY_READ_JOIN, MY_UNREAD_SQL, isThreadUnreadFor, setThreadRead, threadReaders } from "../lib/mail-reads";
+import { acksForMessages, myOwedOnThread, requestAcks, staffRecipients } from "../lib/mail-acks";
 
 const app = new Hono<{ Bindings: Env }>();
+const NO_STAFF_TO_ACK = "None of the To / Cc recipients is a staff member, so nobody can acknowledge it.";
 
 // ---------------------------------------------------------------------------
 // Multi-company scoping (merge: HOUZS=1, 2990=2). Every PER-COMPANY mail table
@@ -292,14 +303,15 @@ export async function ingestInboundEmail(
     .slice(0, 240);
 
   // Idempotency — the inbound worker may retry. Skip if we already stored this
-  // Message-ID. BUT: if the existing message has NO attachments yet and this
+  // Message-ID in THIS company (one mail copied to both companies is stored in
+  // each). BUT: if the existing message has NO attachments yet and this
   // (re)delivery carries some, backfill them onto the already-ingested message.
   if (payload.messageId) {
     const dup = await db
       .prepare(
-        `SELECT id, thread_id FROM email_messages WHERE message_id = ? LIMIT 1`,
+        `SELECT id, thread_id FROM email_messages WHERE message_id = ?${stampCo ? " AND company_id = ?" : ""} LIMIT 1`,
       )
-      .bind(payload.messageId)
+      .bind(payload.messageId, ...(stampCo ? [companyId] : []))
       .first<{ id: string; thread_id?: string }>();
     if (dup?.id) {
       if (payload.attachments && payload.attachments.length > 0) {
@@ -324,20 +336,16 @@ export async function ingestInboundEmail(
   }
 
   // Thread resolution: follow In-Reply-To / References back to an existing
-  // message's thread. Otherwise start a new thread.
-  let threadId = "";
+  // message's thread IN THIS COMPANY (a forged header must not reach the other
+  // company's thread). Our own sends learn their Message-ID from Resend after
+  // the fact, so on a miss fill those in once and look again.
   const refs = [payload.inReplyTo, ...toArray(payload.references)].filter(
     Boolean,
   ) as string[];
-  if (refs.length) {
-    const placeholders = refs.map(() => "?").join(", ");
-    const ref = await db
-      .prepare(
-        `SELECT thread_id FROM email_messages WHERE message_id IN (${placeholders}) LIMIT 1`,
-      )
-      .bind(...refs)
-      .first<{ thread_id?: string }>();
-    if (ref?.thread_id) threadId = ref.thread_id;
+  const co = stampCo ? companyId : null;
+  let threadId = (await threadForReferences(db, refs, co)) ?? "";
+  if (!threadId && refs.length && env && (await backfillOutboundMessageIds(db, env, co, 10)) > 0) {
+    threadId = (await threadForReferences(db, refs, co)) ?? "";
   }
 
   if (!threadId) {
@@ -347,35 +355,28 @@ export async function ingestInboundEmail(
         `INSERT INTO email_threads
            (id, mailbox_address, subject, counterparty_email,
             counterparty_name, status, last_message_at, last_direction,
-            last_snippet, message_count, unread, created_at${stampCo ? ", company_id" : ""})
-         VALUES (?, ?, ?, ?, ?, 'open', ?, 'inbound', ?, 1, 1, ?${stampCo ? ", ?" : ""})`,
+            last_snippet, message_count, unread, last_inbound_at, created_at${stampCo ? ", company_id" : ""})
+         VALUES (?, ?, ?, ?, ?, 'open', ?, 'inbound', ?, 1, 1, ?, ?${stampCo ? ", ?" : ""})`,
       )
-      .bind(
-        threadId,
-        mailbox,
-        subject,
-        from,
-        payload.fromName ?? null,
-        sentAt,
-        snippet,
-        now,
-        ...(stampCo ? [companyId] : []),
-      )
+      .bind(threadId, mailbox, subject, from, payload.fromName ?? null, sentAt, snippet, now, now, ...(stampCo ? [companyId] : []))
       .run();
   } else {
-    // Re-open a closed thread when a new inbound message lands.
+    // Re-open a closed thread when a new inbound message lands. last_inbound_at
+    // is the ERP's receipt time, which each person's read_at is compared with.
     await db
       .prepare(
         `UPDATE email_threads
             SET last_message_at = ?, last_direction = 'inbound',
                 last_snippet = ?, message_count = message_count + 1,
-                unread = 1,
+                unread = 1, last_inbound_at = ?,
                 status = CASE WHEN status = 'closed' THEN 'open' ELSE status END
           WHERE id = ?`,
       )
-      .bind(sentAt, snippet, threadId)
+      .bind(sentAt, snippet, now, threadId)
       .run();
   }
+  // DEV-03 R2: mail reaching a personal address proves it exists in Google.
+  await db.prepare(`UPDATE email_addresses SET mail_host_status = 'live', mail_host_confirmed_at = ? WHERE lower(address) = ? AND mail_host_status = 'pending'`).bind(now, mailbox.toLowerCase()).run();
 
   const msgId = crypto.randomUUID();
   await db
@@ -437,6 +438,8 @@ type ThreadRow = {
   // Computed (not a column): EXISTS roll-up of any outbound message, so the
   // frontend's Sent folder is accurate instead of relying on last_direction.
   has_outbound?: number | boolean | null;
+  my_unread?: number | string | null;
+  last_inbound_at?: string | null;
 };
 
 function rowToThread(r: ThreadRow) {
@@ -453,7 +456,8 @@ function rowToThread(r: ThreadRow) {
     lastDirection: r.last_direction ?? "inbound",
     lastSnippet: r.last_snippet ?? "",
     messageCount: Number(r.message_count ?? 0),
-    unread: Number(r.unread ?? 0) === 1,
+    // The caller's own read state (lib/mail-reads.ts) when the query joined it.
+    unread: Number(r.my_unread ?? r.unread ?? 0) === 1,
     starred: Number(r.starred ?? 0) === 1,
     labels: parseJsonArray(r.labels),
     trashedAt: r.trashed_at ?? null,
@@ -480,6 +484,7 @@ type MessageRow = {
   sent_by_user_id: number | null;
   sent_by_name: string | null;
   created_at: string | null;
+  outbox_status?: string | null;
 };
 
 function parseJsonArray(s: string | null): string[] {
@@ -511,6 +516,7 @@ function rowToMessage(r: MessageRow) {
     sentByUserId: r.sent_by_user_id ?? undefined,
     sentByName: r.sent_by_name ?? undefined,
     createdAt: r.created_at ?? "",
+    deliveryStatus: deliveryStatus(r.outbox_status),
   };
 }
 
@@ -597,7 +603,7 @@ type MailScopeLevel = (typeof MAIL_SCOPE_LEVELS)[number];
 
 // A user is a Mail Center admin (sees all) if they hold the "*" wildcard or the
 // mail_center.manage permission.
-function isMailAdmin(user: AuthUser | undefined): boolean {
+export function isMailAdmin(user: AuthUser | undefined): boolean {
   if (!user) return false;
   const granted = user.permissions_set ?? user.permissions;
   return (
@@ -605,7 +611,7 @@ function isMailAdmin(user: AuthUser | undefined): boolean {
   );
 }
 
-async function getMailScope(c: Context<{ Bindings: Env }>): Promise<{
+export async function getMailScope(c: Context<{ Bindings: Env }>): Promise<{
   isAdmin: boolean;
   userId: number | null;
   addresses: string[];
@@ -747,7 +753,7 @@ async function getMailScope(c: Context<{ Bindings: Env }>): Promise<{
 // The caller's OWN outward alias (users.email_alias), lowercased — their personal
 // sending identity under the free-alias model. A member may send FROM this even
 // when it isn't a shared/dept mailbox in their getMailScope set. "" when none.
-async function ownAliasFor(
+export async function ownAliasFor(
   c: Context<{ Bindings: Env }>,
 ): Promise<string> {
   const user = c.get("user");
@@ -830,6 +836,7 @@ app.get("/threads", async (c) => {
   const q = c.req.query("q");
   const starredOnly = c.req.query("starred") === "1";
   const sentOnly = c.req.query("sent") === "1";
+  const sentByMe = c.req.query("sentBy") === "me";
   const label = c.req.query("label");
   const mailboxesCsv = c.req.query("mailboxes");
 
@@ -885,6 +892,10 @@ app.get("/threads", async (c) => {
   }
   // Sent folder: the thread has at least one outbound message (mirrors the
   // has_outbound flag below, but as a WHERE filter).
+  if (sentByMe) {
+    where.push("EXISTS (SELECT 1 FROM email_messages m WHERE m.thread_id = t.id AND m.direction = 'outbound' AND m.sent_by_user_id = ?)");
+    binds.push(scope.userId ?? 0);
+  }
   if (sentOnly) {
     where.push(
       "EXISTS (SELECT 1 FROM email_messages m WHERE m.thread_id = t.id AND m.direction = 'outbound')",
@@ -911,8 +922,9 @@ app.get("/threads", async (c) => {
        EXISTS (
          SELECT 1 FROM email_messages m
           WHERE m.thread_id = t.id AND m.direction = 'outbound'
-       ) AS has_outbound
-       FROM email_threads t ${whereSql}`;
+       ) AS has_outbound, ${MY_UNREAD_SQL} AS my_unread
+       FROM email_threads t ${MY_READ_JOIN} ${whereSql}`;
+  const selectBinds = [scope.userId ?? 0, ...binds];
   const orderSql = " ORDER BY t.last_message_at DESC NULLS LAST";
 
   if (paginated) {
@@ -933,7 +945,7 @@ app.get("/threads", async (c) => {
     const res = await c.env.DB.prepare(
       selectSql + orderSql + " LIMIT ? OFFSET ?",
     )
-      .bind(...binds, pageSize, offset)
+      .bind(...selectBinds, pageSize, offset)
       .all<ThreadRow>();
     const threadsPage = (res.results ?? []).map(rowToThread);
     return c.json({
@@ -946,7 +958,7 @@ app.get("/threads", async (c) => {
   }
 
   const res = await c.env.DB.prepare(selectSql + orderSql + " LIMIT 300")
-    .bind(...binds)
+    .bind(...selectBinds)
     .all<ThreadRow>();
   return c.json((res.results ?? []).map(rowToThread));
 });
@@ -970,7 +982,9 @@ app.get("/threads/:id", async (c) => {
   }
 
   const msgs = await c.env.DB.prepare(
-    `SELECT * FROM email_messages WHERE thread_id = ? ORDER BY created_at ASC`,
+    `SELECT m.*, o.status AS outbox_status FROM email_messages m
+       LEFT JOIN email_outbox o ON o.id = m.outbox_id
+      WHERE m.thread_id = ? ORDER BY m.created_at ASC`,
   )
     .bind(id)
     .all<MessageRow>();
@@ -1003,20 +1017,20 @@ app.get("/threads/:id", async (c) => {
     console.error("[mail-center] loading attachments failed:", e);
   }
 
-  // Clear the unread flag on open.
-  try {
-    await c.env.DB.prepare(`UPDATE email_threads SET unread = 0 WHERE id = ?`)
-      .bind(id)
-      .run();
-  } catch {
-    /* read view must not fail if the mark-read write blips */
-  }
+  // Read for the opener only; colleagues keep their own state (A4).
+  const me = scope.userId;
+  if (me != null) await setThreadRead(c.env.DB, id, me, true).catch((e) => console.error("[mail-center] mark read:", e));
+  const acks = await acksForMessages(c.env.DB, mappedMsgs.map((m) => m.id));
+  const owed = me != null ? await myOwedOnThread(c.env.DB, me, mappedMsgs) : new Map<string, string>();
 
   return c.json({
-    thread: rowToThread(thread),
+    thread: { ...rowToThread(thread), unread: false },
+    readers: await threadReaders(c.env.DB, thread, activeCompanyId(c) ?? null),
     messages: mappedMsgs.map((m) => ({
       ...m,
       attachments: attByMsg.get(m.id) ?? [],
+      acks: acks.get(m.id) ?? [],
+      ackRequestId: owed.get(m.id) ?? null,
     })),
   });
 });
@@ -1826,13 +1840,8 @@ function escapeHtml(s: string): string {
 // POST /api/mail-center/threads/:id/reply — send an outbound reply via Houzs
 // sendEmail (Resend), then record it. The From identity (domain/company) tracks
 // Branding inside deliverViaResend; the operator's chosen mailbox is honoured
-// only when it's in their scope.
-//
-// NOTE: sendEmail has no custom In-Reply-To / References header support, so this
-// reply is NOT RFC-threaded on the recipient's side for v1 — local threading is
-// still correct. Attachments ARE now forwarded to Resend on the immediate send
-// (contentBase64 -> base64 content); they are not persisted to the outbox row,
-// so a drained retry would send body-only.
+// only when it's in their scope. The reply carries In-Reply-To / References
+// built from the thread's Message-IDs, so the customer's client threads it.
 app.post("/threads/:id/reply", async (c) => {
   const id = c.req.param("id");
   const scope = await getMailScope(c);
@@ -1848,6 +1857,7 @@ app.post("/threads/:id/reply", async (c) => {
     cc?: string | string[];
     bcc?: string | string[];
     attachments?: Array<{ filename: string; contentBase64: string }>;
+    needsAck?: boolean;
   };
   const body: ReplyBody = await c.req
     .json<ReplyBody>()
@@ -1938,6 +1948,8 @@ app.post("/threads/:id/reply", async (c) => {
   // Resolve the From: an explicit fromAddress is honoured only when the caller
   // may send from it (admin = any; non-admin = a mailbox in scope OR their own
   // alias). Otherwise fall back to the thread's mailbox (ownership-checked above).
+  const ackPeople = body.needsAck ? await staffRecipients(c.env.DB, [...toList, ...ccList], scope.userId) : [];
+  if (body.needsAck && ackPeople.length === 0) return c.json({ error: NO_STAFF_TO_ACK }, 400);
   const requestedFrom = (body.fromAddress ?? "").trim();
   let fromAddress = mailbox;
   if (requestedFrom && (await canSendFrom(c, scope, requestedFrom))) {
@@ -1948,6 +1960,7 @@ app.post("/threads/:id/reply", async (c) => {
   const subject = /^re:/i.test(baseSubject) ? baseSubject : `Re: ${baseSubject}`;
 
   const htmlBody = html || `<p>${escapeHtml(text).replace(/\n/g, "<br/>")}</p>`;
+  const headers = threadingHeaders(await threadMessageIds(c.env.DB, id));
 
   // Send via Houzs sendEmail. purpose:"generic" (caller opted in). The From is
   // the operator's chosen mailbox (owner ask: replies come FROM the mailbox, not
@@ -1967,12 +1980,15 @@ app.post("/threads/:id/reply", async (c) => {
     from: fromAddress || undefined,
     replyTo: fromAddress || undefined,
     companyCode: companyCodeForRecipient([fromAddress]),
+    headers,
     attachments: attachments.map((a) => ({
       filename: a.filename,
       content: a.contentBase64.replace(/^data:[^;]+;base64,/, ""),
     })),
   });
-  if (result.status !== "sent") {
+  // A failed send the outbox will retry is recorded as queued: answering 502
+  // would make the operator send it again on top of the retry.
+  if (result.status !== "sent" && !result.retrying) {
     return c.json(
       { error: result.reason || "failed to send reply" },
       result.status === "skipped" ? 400 : 502,
@@ -1984,51 +2000,37 @@ app.post("/threads/:id/reply", async (c) => {
 
   const now = new Date().toISOString();
   const snippet = (text || stripHtml(htmlBody)).slice(0, 240);
-  const messageId = crypto.randomUUID();
-  // Stamp the active company (the thread was verified in it above). Guarded —
-  // omitted when unresolved, so the column DEFAULT (HOUZS) applies.
-  const companyId = activeCompanyId(c);
-  const stampCo = companyId != null;
-  await c.env.DB.prepare(
-    `INSERT INTO email_messages
-       (id, thread_id, direction, from_address, from_name,
-        to_addresses, cc_addresses, subject, text_body, html_body, sent_at, received_at,
-        sent_by_user_id, sent_by_name, provider_message_id, created_at${stampCo ? ", company_id" : ""})
-     VALUES (?, ?, 'outbound', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${stampCo ? ", ?" : ""})`,
-  )
-    .bind(
-      messageId,
-      id,
-      fromAddress || null,
-      fromName || null,
-      /* The full lists, so the thread shows who actually received this and the
-         NEXT reply-all reads them back. Bcc is not stored: it was blind, and a
-         thread anyone on the mailbox can open is the wrong place to record it. */
-      JSON.stringify(toList),
-      JSON.stringify(ccList),
-      subject,
-      text || null,
-      htmlBody,
-      now,
-      now,
-      userId,
-      fromName || null,
-      result.providerId ?? null,
-      now,
-      ...(stampCo ? [companyId] : []),
-    )
-    .run();
+  // The active company (the thread was verified in it above); unresolved =
+  // the column DEFAULT (HOUZS).
+  const messageId = await recordOutboundMessage(c.env.DB, {
+    threadId: id,
+    fromAddress,
+    fromName,
+    to: toList,
+    cc: ccList,
+    subject,
+    text: text || null,
+    html: htmlBody,
+    userId,
+    providerId: result.providerId ?? null,
+    outboxId: result.outboxId ?? null,
+    inReplyTo: headers?.["In-Reply-To"] ?? null,
+    references: headers?.References ?? null,
+    companyId: activeCompanyId(c) ?? null,
+  });
 
   await c.env.DB.prepare(
     `UPDATE email_threads
         SET last_message_at = ?, last_direction = 'outbound',
-            last_snippet = ?, message_count = message_count + 1, unread = 0
+            last_snippet = ?, message_count = message_count + 1
       WHERE id = ?`,
   )
     .bind(now, snippet, id)
     .run();
 
-  return c.json({ ok: true, messageId });
+  if (scope.userId != null) await setThreadRead(c.env.DB, id, scope.userId, true);
+  if (ackPeople.length) await requestAcks(c.env, messageId, ackPeople, { subject, senderName: fromName });
+  return c.json({ ok: true, messageId, queued: result.status !== "sent" });
 });
 
 // POST /api/mail-center/compose — start a NEW outbound conversation. Sends via
@@ -2049,6 +2051,7 @@ app.post("/compose", async (c) => {
     subject?: string;
     text?: string;
     attachments?: Array<{ filename: string; contentBase64: string }>;
+    needsAck?: boolean;
   };
   const body: ComposeBody = await c.req
     .json<ComposeBody>()
@@ -2091,6 +2094,8 @@ app.post("/compose", async (c) => {
   // Authorize the From: non-admins may only send from a mailbox they own or have
   // been granted, OR their own outward alias (users.email_alias). addresses are
   // already lowercased in getMailScope.
+  const ackPeople = body.needsAck ? await staffRecipients(c.env.DB, [...toList, ...ccList], scope.userId) : [];
+  if (body.needsAck && ackPeople.length === 0) return c.json({ error: NO_STAFF_TO_ACK }, 400);
   if (!(await canSendFrom(c, scope, fromAddress))) {
     return c.json({ error: "not allowed to send from " + fromAddress }, 403);
   }
@@ -2120,7 +2125,8 @@ app.post("/compose", async (c) => {
       content: a.contentBase64.replace(/^data:[^;]+;base64,/, ""),
     })),
   });
-  if (result.status !== "sent") {
+  // Queued for the outbox retry = recorded, not an error (see the reply route).
+  if (result.status !== "sent" && !result.retrying) {
     return c.json(
       { error: result.reason || "send failed" },
       result.status === "skipped" ? 400 : 502,
@@ -2133,7 +2139,6 @@ app.post("/compose", async (c) => {
   const now = new Date().toISOString();
   const snippet = text.slice(0, 200);
   const threadId = crypto.randomUUID();
-  const messageId = crypto.randomUUID();
   // Stamp the active company on the new thread + message. Guarded — omitted when
   // unresolved, so the column DEFAULT (HOUZS) applies.
   const companyId = activeCompanyId(c);
@@ -2158,39 +2163,25 @@ app.post("/compose", async (c) => {
     )
     .run();
 
-  await c.env.DB.prepare(
-    `INSERT INTO email_messages
-       (id, thread_id, direction, from_address, from_name,
-        to_addresses, cc_addresses, subject, text_body, html_body, sent_at,
-        sent_by_user_id, sent_by_name, provider_message_id, created_at${stampCo ? ", company_id" : ""})
-     VALUES (?, ?, 'outbound', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${stampCo ? ", ?" : ""})`,
-  )
-    .bind(
-      messageId,
-      threadId,
-      fromAddress,
-      fromName || null,
-      /* The FULL recipient lists, not just the first address. This row is what
-         the thread view renders and what a reply-all reads back — a message
-         stored as one recipient makes everyone else invisible in the history
-         and drops them from every later reply. Bcc is deliberately NOT stored:
-         it is blind, and a thread anyone on the mailbox can open is the wrong
-         place to record who was quietly copied. */
-      JSON.stringify(toList),
-      JSON.stringify(ccList),
-      subject,
-      text,
-      htmlBody,
-      now,
-      userId,
-      fromName || null,
-      result.providerId ?? null,
-      now,
-      ...(stampCo ? [companyId] : []),
-    )
-    .run();
+  const messageId = await recordOutboundMessage(c.env.DB, {
+    threadId,
+    fromAddress,
+    fromName,
+    to: toList,
+    cc: ccList,
+    subject,
+    text,
+    html: htmlBody,
+    userId,
+    providerId: result.providerId ?? null,
+    outboxId: result.outboxId ?? null,
+    inReplyTo: null,
+    references: null,
+    companyId: companyId ?? null,
+  });
 
-  return c.json({ ok: true, threadId, messageId }, 201);
+  if (ackPeople.length) await requestAcks(c.env, messageId, ackPeople, { subject, senderName: fromName });
+  return c.json({ ok: true, threadId, messageId, queued: result.status !== "sent" }, 201);
 });
 
 // PATCH /api/mail-center/threads/:id — mutate a thread: assign / resolve /
@@ -2255,30 +2246,24 @@ app.patch("/threads/:id", async (c) => {
     sets.push("labels = ?");
     binds.push(JSON.stringify(clean));
   }
-  if (body.unread !== undefined) {
-    sets.push("unread = ?");
-    binds.push(body.unread ? 1 : 0);
-  }
+  // Per person (A4): only the caller's own read row changes.
+  if (body.unread !== undefined && scope.userId != null) await setThreadRead(c.env.DB, id, scope.userId, !body.unread);
   if (body.trashed !== undefined) {
     sets.push("trashed_at = ?");
     binds.push(body.trashed ? new Date().toISOString() : null);
   }
-  if (sets.length === 0) {
+  if (sets.length === 0 && body.unread === undefined) {
     return c.json({ error: "no fields to update" }, 400);
   }
-
-  await c.env.DB.prepare(
-    `UPDATE email_threads SET ${sets.join(", ")} WHERE id = ?`,
-  )
-    .bind(...binds, id)
-    .run();
+  if (sets.length) await c.env.DB.prepare(`UPDATE email_threads SET ${sets.join(", ")} WHERE id = ?`).bind(...binds, id).run();
 
   const row = await c.env.DB.prepare(
     `SELECT * FROM email_threads WHERE id = ? LIMIT 1`,
   )
     .bind(id)
     .first<ThreadRow>();
-  return c.json(row ? rowToThread(row) : { id });
+  const unread = scope.userId != null ? await isThreadUnreadFor(c.env.DB, id, scope.userId) : false;
+  return c.json(row ? { ...rowToThread(row), unread } : { id });
 });
 
 export default app;

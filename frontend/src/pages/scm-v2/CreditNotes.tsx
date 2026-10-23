@@ -33,6 +33,8 @@ import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { AccountSelect } from '../../vendor/scm/components/AccountSelect';
 import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
+import { EventSelect, eventCellText } from '../../vendor/scm/components/EventSelect';
+import { useEventLabels } from '../../vendor/scm/lib/event-queries';
 import { useAccounts, leafAccounts } from '../../vendor/scm/lib/accounting-queries';
 import { useSuppliers } from '../../vendor/scm/lib/suppliers-queries';
 import {
@@ -70,7 +72,8 @@ const danger = 'var(--c-festive-b, #B8331F)';
 const good = 'var(--c-secondary-a, #2F5D4F)';
 const input: React.CSSProperties = { padding: '5px 8px', fontSize: 'var(--fs-13)', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 6, minWidth: 180 };
 
-type FormLine = { rid: number; description: string; accountCode: string; amountRm: string };
+/** projectId: a supplier note line's event (owner 2026-10-22) — null = none, or the AP invoice's at save. */
+type FormLine = { rid: number; description: string; accountCode: string; amountRm: string; projectId: number | null };
 type FormValues = {
   kind: NoteKind; noteDate: string; soDocNo: string; partyName: string; supplierId: string;
   sourceDocNo: string; reason: string; lines: FormLine[];
@@ -79,7 +82,7 @@ type FormValues = {
   /** A supplier note's knock-off ticks — the plan the post carries out (2026-10-02). */
   knockOff?: KnockOffPick;
 };
-const emptyLine = (rid: number): FormLine => ({ rid, description: '', accountCode: '', amountRm: '' });
+const emptyLine = (rid: number): FormLine => ({ rid, description: '', accountCode: '', amountRm: '', projectId: null });
 const emptyForm = (kind: NoteKind = 'CN'): FormValues => ({ kind, noteDate: myt(), soDocNo: '', partyName: '', supplierId: '', sourceDocNo: '', reason: '', lines: [emptyLine(1)], creditedDoc: null, knockOff: {} });
 
 /** The invoice the paper names, ticked — as much of the credit as it owes. */
@@ -99,7 +102,7 @@ export const fromScan = (r: ScnScan): FormValues => ({
   sourceDocNo: r.read.cnNumber ?? '',
   reason: r.read.remark ?? '',
   lines: r.lines.length > 0
-    ? r.lines.map((l, i) => ({ rid: i + 1, description: l.description ?? '', accountCode: l.accountCode ?? '', amountRm: (l.amountSen / 100).toFixed(2) }))
+    ? r.lines.map((l, i) => ({ rid: i + 1, description: l.description ?? '', accountCode: l.accountCode ?? '', amountRm: (l.amountSen / 100).toFixed(2), projectId: null }))
     : [emptyLine(1)],
   creditedDoc: r.suggested ? { kind: r.suggested.kind, id: r.suggested.id } : null,
   knockOff: scanKnockOff(r),
@@ -119,7 +122,7 @@ export const bodyOf = (v: FormValues): { kind: NoteKind; noteDate: string; reaso
   ...(v.kind === 'SCN' ? { allocations: pickTargets(v.knockOff ?? {}) } : {}),
   lines: v.lines
     .filter((l) => l.amountRm.trim() !== '')
-    .map((l) => ({ description: l.description.trim() || null, accountCode: l.accountCode || null, amountSen: toSen(l.amountRm) })),
+    .map((l) => ({ description: l.description.trim() || null, accountCode: l.accountCode || null, amountSen: toSen(l.amountRm), ...(l.projectId != null ? { projectId: l.projectId } : {}) })),
 });
 
 const StatusPill = ({ status }: { status: NoteStatus }) => (
@@ -240,7 +243,7 @@ export const CreditNotes = () => {
               values: {
                 kind: n.kind, noteDate: n.note_date, soDocNo: n.so_doc_no ?? '', partyName: n.party_name ?? '', supplierId: n.supplier_id ?? '',
                 sourceDocNo: n.source_doc_no ?? '', reason: n.reason ?? '',
-                lines: lines.length > 0 ? lines.map((l, i) => ({ rid: i + 1, description: l.description ?? '', accountCode: l.account_code, amountRm: (l.amount_sen / 100).toFixed(2) })) : [emptyLine(1)],
+                lines: lines.length > 0 ? lines.map((l, i) => ({ rid: i + 1, description: l.description ?? '', accountCode: l.account_code, amountRm: (l.amount_sen / 100).toFixed(2), projectId: l.project_id ?? null })) : [emptyLine(1)],
                 creditedDoc: null,
                 knockOff: Object.fromEntries(allocations.map((a) => [a.docId, { kind: a.kind, id: a.docId, amountSen: a.amountSen }])),
               },
@@ -278,13 +281,16 @@ const Field = ({ label, children }: { label: string; children: React.ReactNode }
   </label>
 );
 
-const NoteDetail = ({ id, onClose, onEdit }: { id: string; onClose: () => void; onEdit: (n: CreditNote, lines: Array<{ description: string | null; account_code: string; amount_sen: number }>, allocations: CreditAllocation[]) => void }) => {
+const NoteDetail = ({ id, onClose, onEdit }: { id: string; onClose: () => void; onEdit: (n: CreditNote, lines: CreditNoteLine[], allocations: CreditAllocation[]) => void }) => {
   const q = useCreditNoteDetail(id);
   const post = usePostCreditNote();
   const cancel = useCancelCreditNote();
   const askConfirm = useConfirm();
   const n = q.data?.note;
   const lines = q.data?.lines ?? [];
+  /* A supplier note shows each line's event (owner 2026-10-22); any note that carries one does. */
+  const eventLabelsQ = useEventLabels(lines.map((l) => l.project_id ?? null));
+  const withEvents = n?.kind === 'SCN' || lines.some((l) => l.project_id != null);
   const busy = post.isPending || cancel.isPending;
   const failed = post.isError ? post.error : cancel.isError ? cancel.error : null;
   const [printing, setPrinting] = useState(false);
@@ -331,12 +337,14 @@ const NoteDetail = ({ id, onClose, onEdit }: { id: string; onClose: () => void; 
             <div style={{ gridColumn: '1 / -1' }}><div style={soft}>Reason</div>{n.reason ?? '—'}</div>
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th}>#</th><th style={th}>Description</th><th style={th}>Account</th><th style={{ ...th, textAlign: 'right' }}>Amount</th></tr></thead>
+            <thead><tr><th style={th}>#</th><th style={th}>Description</th><th style={th}>Account</th>{withEvents && <th style={th}>Event</th>}<th style={{ ...th, textAlign: 'right' }}>Amount</th></tr></thead>
             <tbody>
               {lines.map((l) => (
-                <tr key={l.id}><td style={td}>{l.line_no}</td><td style={td}>{l.description ?? '—'}</td><td style={{ ...td, fontFamily: 'var(--font-mono)' }}>{l.account_code}</td><td style={{ ...td, ...num }}>{fmtSen(l.amount_sen)}</td></tr>
+                <tr key={l.id}><td style={td}>{l.line_no}</td><td style={td}>{l.description ?? '—'}</td><td style={{ ...td, fontFamily: 'var(--font-mono)' }}>{l.account_code}</td>
+                  {withEvents && <td style={{ ...td, ...(l.project_id == null ? soft : {}) }}>{eventCellText(eventLabelsQ.data, l.project_id)}</td>}
+                  <td style={{ ...td, ...num }}>{fmtSen(l.amount_sen)}</td></tr>
               ))}
-              <tr><td colSpan={3} style={{ ...td, fontWeight: 700 }}>Total</td><td style={{ ...td, ...num, fontWeight: 700 }}>{fmtSen(n.total_sen)}</td></tr>
+              <tr><td colSpan={withEvents ? 4 : 3} style={{ ...td, fontWeight: 700 }}>Total</td><td style={{ ...td, ...num, fontWeight: 700 }}>{fmtSen(n.total_sen)}</td></tr>
             </tbody>
           </table>
           {n.kind === 'SCN' && n.status !== 'CANCELLED' && <NoteKnockOff noteId={n.id} posted={n.status === 'POSTED'} totalSen={n.total_sen} />}
@@ -431,12 +439,20 @@ const NoteForm = ({ mode, id, initial, scan, scanFiles, onClose, onSaved }: { mo
         </div>
 
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead><tr><th style={th}>Description</th><th style={th}>Account (blank = the kind's default)</th><th style={{ ...th, textAlign: 'right' }}>Amount (RM)</th><th style={th} /></tr></thead>
+          <thead><tr><th style={th}>Description</th><th style={th}>Account (blank = the kind's default)</th>{v.kind === 'SCN' && <th style={th}>Event</th>}<th style={{ ...th, textAlign: 'right' }}>Amount (RM)</th><th style={th} /></tr></thead>
           <tbody>
             {v.lines.map((l) => (
               <tr key={l.rid}>
                 <td style={td}><input value={l.description} onChange={(e) => setLine(l.rid, { description: e.target.value })} aria-label={`Line ${l.rid} description`} style={{ ...input, minWidth: 220 }} /></td>
                 <td style={td}><AccountSelect accounts={leaves} value={l.accountCode} onChange={(code) => setLine(l.rid, { accountCode: code })} placeholder="— default for this kind —" /></td>
+                {/* The event the line's money is for (owner 2026-10-22). Credited
+                    against an AP invoice, a blank line takes the invoice's. */}
+                {v.kind === 'SCN' && (
+                  <td style={{ ...td, minWidth: 220 }}>
+                    <EventSelect value={l.projectId} around={v.noteDate || null} onChange={(id) => setLine(l.rid, { projectId: id })}
+                      placeholder={v.creditedDoc?.kind === 'API' ? '— the AP invoice’s event —' : '— No event —'} aria-label={`Line ${l.rid} event`} />
+                  </td>
+                )}
                 <td style={{ ...td, ...num }}><input type="number" min={0} step="0.01" value={l.amountRm} onChange={(e) => setLine(l.rid, { amountRm: e.target.value })} aria-label={`Line ${l.rid} amount`} style={{ ...input, minWidth: 120, textAlign: 'right' }} /></td>
                 <td style={td}>
                   {v.lines.length > 1 && (
@@ -446,7 +462,7 @@ const NoteForm = ({ mode, id, initial, scan, scanFiles, onClose, onSaved }: { mo
               </tr>
             ))}
             <tr>
-              <td colSpan={2} style={td}>
+              <td colSpan={v.kind === 'SCN' ? 3 : 2} style={td}>
                 <AddLineButton variant="ghost" onClick={() => setV({ ...v, lines: [...v.lines, emptyLine(Math.max(0, ...v.lines.map((x) => x.rid)) + 1)] })} />
               </td>
               <td style={{ ...td, ...num, fontWeight: 700 }}>{fmtSen(totalSen)}</td>

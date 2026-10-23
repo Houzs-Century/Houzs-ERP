@@ -152,6 +152,7 @@ import { scmAreaGuard } from "./middleware/area-guard";
 import { hasPositionCapability } from "../services/positionCapabilities";
 import { scmWriteFreeze } from "./lib/write-freeze";
 import { venturePortalKick } from "./lib/venture-portal-kick";
+import { forgetLiveMrpOnWrite } from "./lib/live-mrp-memo";
 import { migratedSoReadonly, migratedSoAmendmentReadonly } from "./lib/migrated-so-readonly";
 import { writeFreezeStatus } from "./routes/write-freeze-status";
 
@@ -181,6 +182,10 @@ scm.use('/*', scmWriteFreeze());
    are the zero-loss guarantee and this is only the accelerator. Cost of an idle
    kick, and what it cannot see: lib/venture-portal-kick.ts. */
 scm.use('/*', venturePortalKick());
+
+/* HC-0002: the SO list and detail share one live MRP run for 30s per isolate;
+   a successful write here drops it so the next read is fresh. lib/live-mrp-memo.ts. */
+scm.use('/*', forgetLiveMrpOnWrite());
 
 /* Read-only view of that value for the operator making the go/no-go call —
    GET, so the freeze never blocks it, and no area guard because it is not an
@@ -833,13 +838,24 @@ scm.route("/drivers", drivers);
 // ── Delivery Planning + TMS (scm.transportation.*) — stage 2, ported 2026-06-28 ─
 // Mounted under the existing transportation area key; owner/* bypasses, no lockout.
 // Finer per-route L2 keys (planning / fleet / trips) can be added later.
-scm.use("/delivery-planning/*", scmAreaGuard("scm.transportation.drivers"));
-// The crew's On the way / Arrived / POD on a non-DO job. writeBypass — a driver
-// or helper holds view on transportation plus scm.do.dispatch, not edit; the
-// handlers admit only the caller's OWN job (delivery scope) unless scope is 'all'.
+// readInheritsFrom (2026-10-22) — the driver run-sheet ("Last Mile Delivery
+// (Driver)") READS the board here, but the Driver role carries
+// scm.transportation.last_mile=view and scm.transportation.drivers=none, so an
+// L2-configured driver 403'd on GET / and the page showed "Couldn't load".
+// A Last Mile page viewer may READ its own board (every row is still delivery-
+// scoped to the caller); every WRITE (scheduling / crew assignment) still needs
+// `edit` on scm.transportation.drivers, so dispatch stays dispatcher-only.
+scm.use("/delivery-planning/*", scmAreaGuard("scm.transportation.drivers", { readInheritsFrom: "scm.transportation.last_mile" }));
+// The crew's On the way / Arrived / POD on a non-DO job. readInheritsFrom — the
+// SAME run-sheet READS this job-progress feed (On the way / Arrived state), so a
+// Last Mile viewer must read it too, or the driver's stop pills stay blank.
+// writeBypass — a driver or helper holds view on transportation plus
+// scm.do.dispatch, not edit; the handlers admit only the caller's OWN job
+// (delivery scope) unless scope is 'all'.
 scm.use(
   "/delivery-jobs/*",
   scmAreaGuard("scm.transportation.drivers", {
+    readInheritsFrom: "scm.transportation.last_mile",
     writeBypass: (c) =>
       c.req.method === "POST" &&
       hasPositionCapability(

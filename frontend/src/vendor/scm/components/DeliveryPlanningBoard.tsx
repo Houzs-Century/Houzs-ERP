@@ -38,6 +38,7 @@ import {
   useAssignDoCrew,
   DELIVERY_STATES,
   DELIVERY_STATE_LABEL,
+  sxeDateOf,
   MESSAGE_STATUSES,
   AMEND_REASONS,
   dpJobTypeLabel,
@@ -1118,14 +1119,16 @@ export function DeliveryPlanningBoard({
     },
     {
       /* BUG-51 repoint (owner 2026-10-15): the REAL AutoCount sales-exemption
-         expiry, not the customer delivery date. SO rows only; blank off-book and
-         on synthetic rows. Grid key kept as customer_delivery_date so saved
-         layouts keep the column. */
+         expiry, not the customer delivery date. SO rows only; blank off-book.
+         EXCEPT ASSR rows (owner 2026-10-22): a service case has no AutoCount book,
+         so its own SERVICE date shows here (sxeDateOf), and its "Delivery Date"
+         column is left blank for admin to propose. DP / project rows stay blank.
+         Grid key kept as customer_delivery_date so saved layouts keep the column. */
       key: 'customer_delivery_date', label: 'Sales Exemption Expiry Date', width: 170, sortable: true,
-      accessor: (o) => detail(fmtDateOrDash(o.ac_sales_exemption_expiry)),
-      searchValue: (o) => o.ac_sales_exemption_expiry ?? '',
-      sortFn: (a, b) => String(a.ac_sales_exemption_expiry ?? '').localeCompare(String(b.ac_sales_exemption_expiry ?? '')),
-      filterType: 'date', dateValue: (o) => o.ac_sales_exemption_expiry,
+      accessor: (o) => detail(fmtDateOrDash(sxeDateOf(o))),
+      searchValue: (o) => sxeDateOf(o) ?? '',
+      sortFn: (a, b) => String(sxeDateOf(a) ?? '').localeCompare(String(sxeDateOf(b) ?? '')),
+      filterType: 'date', dateValue: (o) => sxeDateOf(o),
     },
     /* Amendment dates (migration 0199). "Amended" (the date WE confirmed / the
        proposed delivery date) default-SHOWS — it's the firm date the board commits

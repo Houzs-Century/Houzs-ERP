@@ -93,7 +93,8 @@ export function Login({ state, online, updateWaiting, onLogin, onOpenSetup, onSt
       {updateWaiting && !updateLater && (
         <div className="banner update"><span className="grow">Update available for Houzs POS.</span><button type="button" className="btn primary" onClick={applyUpdate}>Restart now</button><button type="button" className="btn" onClick={() => setUpdateLater(true)}>Later</button></div>
       )}
-      {online === false && <div className="banner offline">Offline. Login and selling work; sales will sync when the connection returns.</div>}
+      {state.demo && <div className="banner update">Demo: sample catalog, PIN 1234 for every cashier, nothing reaches the ERP. Gear, then Prepare device, links a real terminal.</div>}
+      {online === false && !state.demo && <div className="banner offline">Offline. Login and selling work; sales will sync when the connection returns.</div>}
 
       <div className="screen">
         <div className="login">
