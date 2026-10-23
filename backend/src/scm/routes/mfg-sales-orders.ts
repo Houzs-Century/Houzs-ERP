@@ -1332,13 +1332,13 @@ mfgSalesOrders.get('/', async (c) => {
   /* Every per-row field the list shows — ONE builder the list and the line
      export share (lib/so-list-rows.ts), so a screen cell and a file cell come
      from the same reads. The finance gate runs inside it. */
-  const deliverable = await buildSoListRows(sb, c, rows);
+  const prior = await buildSoListRows(sb, c, rows);
   if (paginate) {
     /* The page's lines and AutoCount header spellings, for the grid's line
        columns — the same read the export uses (lib/so-list-lines.ts), so the
        screen and the file agree cell for cell. The legacy unpaged path does not
        carry them: its callers never render a line column. */
-    const withLines = await attachSoLines(sb, c, rows, deliverable);
+    const withLines = await attachSoLines(sb, c, rows, prior);
     if (withLines.error) return c.json({ error: 'lines_read_failed', reason: withLines.error }, 500);
   }
 
