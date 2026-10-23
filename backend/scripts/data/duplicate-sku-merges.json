@@ -56,5 +56,16 @@
       { "drop": "DUNLOPILLO ROY EXECUTIVE LUXE 2.0 MATT (Q)",  "keep": "DUNLOPILLO ROYAL EXECUTIVE LUXE 2.0 MATT (Q)" },
       { "drop": "DUNLOPILLO ROY EXECUTIVE LUXE 2.0 MATT (SK)", "keep": "DUNLOPILLO ROYAL EXECUTIVE LUXE2.0 MATT (SK)" }
     ]
+  },
+  "HC-0153": {
+    "ruling": "Sim 2026-10-23 (HC-0153): merge Modular HS SOLACE into HAPPI SLEEP SOLACE and keep HAPPI SLEEP SOLACE. Same shape as BUG-38: AutoCount's AK-HS SOLACE (K/Q/S/SK/SP/SS) already maps to the HAPPI SLEEP SOLACE codes, so AutoCount is unchanged. The HS SOLACE Model is already inactive.",
+    "pairs": [
+      { "drop": "AKEMI HS SOLACE MATT (K)",  "keep": "HAPPI SLEEP SOLACE MATT (K)" },
+      { "drop": "AKEMI HS SOLACE MATT (Q)",  "keep": "HAPPI SLEEP SOLACE MATT (Q)" },
+      { "drop": "AKEMI HS SOLACE MATT (S)",  "keep": "HAPPI SLEEP SOLACE MATT (S)" },
+      { "drop": "AKEMI HS SOLACE MATT (SK)", "keep": "HAPPI SLEEP SOLACE MATT (SK)" },
+      { "drop": "AKEMI HS SOLACE MATT (SP)", "keep": "HAPPI SLEEP SOLACE MATT (SP)" },
+      { "drop": "AKEMI HS SOLACE MATT (SS)", "keep": "HAPPI SLEEP SOLACE MATT (SS)" }
+    ]
   }
 }

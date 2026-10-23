@@ -95,6 +95,26 @@ describe('HC-0147 pairs file', () => {
   });
 });
 
+describe('HC-0153 pairs file', () => {
+  const book = JSON.parse(fs.readFileSync(path.join(DATA, 'duplicate-sku-merges.json'), 'utf8'));
+  const pairs = book['HC-0153'].pairs;
+  const sizes = ['K', 'Q', 'S', 'SK', 'SP', 'SS'];
+
+  it('drops AKEMI HS SOLACE into HAPPI SLEEP SOLACE, size for size', () => {
+    expect(pairs.map((p) => p.drop)).toEqual(sizes.map((s) => `AKEMI HS SOLACE MATT (${s})`));
+    expect(pairs.map((p) => p.keep)).toEqual(sizes.map((s) => `HAPPI SLEEP SOLACE MATT (${s})`));
+  });
+
+  it('keeps the code AutoCount already maps to', () => {
+    const mapping = readMappingCsv(fs.readFileSync(path.join(DATA, 'autocount-erp-mapping-1561.csv'), 'utf8'));
+    const erpCodes = new Set([...mapping.values()].map((m) => m.erp));
+    for (const p of pairs) {
+      expect(erpCodes.has(p.keep)).toBe(true);
+      expect(erpCodes.has(p.drop)).toBe(false);
+    }
+  });
+});
+
 describe('planDuplicateSkuMerge', () => {
   it('re-keys documents and stock, leaves catalogue-side rows, and retires the dropped row', () => {
     const r = plan({
