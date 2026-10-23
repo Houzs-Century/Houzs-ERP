@@ -1217,11 +1217,12 @@ function erpPushToTransporters_(triggerType) {
         // the row that holds the DocNo NOW (staff may sort EM mid-run).
         const pulls = erpPlanTransporterPull_(master, target, t.pullOwner);
         const rowState = { index: erpDocNoIndex_(em, 4), moved: 0 };
-        let pulled = 0;
+        let pulled = 0, pullFailed = 0, pullMissing = 0, pullError = "";
         pulls.updates.forEach(function (u) {
           const r = erpRowOfDoc_(em, 4, u.doc, u.row + 4, rowState);
-          if (!r) return;
-          try { em.getRange(r, u.col + 1).setValue(u.value); master.rows[u.row][u.col] = u.value; pulled++; } catch (e) {}
+          if (!r) { pullMissing++; return; }
+          try { em.getRange(r, u.col + 1).setValue(u.value); master.rows[u.row][u.col] = u.value; pulled++; }
+          catch (e) { pullFailed++; if (!pullError) pullError = master.headers[u.col] + ": " + e.message; }
         });
         if (t.name === "ESB") {
           const tc = erpTargetColumns_(target.headers);
@@ -1236,7 +1237,9 @@ function erpPushToTransporters_(triggerType) {
           try { sh.getRange(u.row + 2, u.col + 1).setValue(u.value); written++; } catch (e) { failed++; }
         });
         if (plan.appends.length) sh.getRange(sh.getLastRow() + 1, 1, plan.appends.length, tlc).setValues(plan.appends);
-        parts.push(t.name + ": " + pulled + " cell(s) pulled into EM (" + (pulls.columns || 0) + " column(s) matched), " + written + " cell(s) updated, " + plan.appends.length + " order(s) added" +
+        parts.push(t.name + ": " + pulled + " of " + pulls.updates.length + " cell(s) pulled into EM (" + (pulls.columns || 0) + " column(s) matched" +
+          (pullMissing ? ", " + pullMissing + " row(s) not found" : "") +
+          (pullFailed ? ", " + pullFailed + " failed - " + pullError.slice(0, 120) : "") + "), " + written + " cell(s) updated, " + plan.appends.length + " order(s) added" +
           (plan.blocked ? ", " + plan.blocked + " skipped by dropdown" : "") + (failed ? ", " + failed + " failed" : ""));
         if (failed) status = "PARTIAL";
       } catch (e) {
