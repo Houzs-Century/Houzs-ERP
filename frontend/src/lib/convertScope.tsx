@@ -46,7 +46,7 @@
 export const CONVERT_LINKS = {
   poToGrn:  { path: '/scm/grns/from-po',               param: 'poId'    },
   grnToPi:  { path: '/scm/purchase-invoices/from-grn', param: 'grnId'   },
-  grnToPr:  { path: '/scm/purchase-returns/new',       param: 'grnId'   },
+  grnToPr:  { path: '/scm/purchase-returns/from-grn',  param: 'grnId'   },
   poToPr:   { path: '/scm/purchase-returns/new',       param: 'poId'    },
   doToSi:   { path: '/scm/sales-invoices/from-do',     param: 'doId'    },
   doToDr:   { path: '/scm/delivery-returns/from-do',   param: 'doId'    },

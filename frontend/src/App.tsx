@@ -155,6 +155,7 @@ const ScmHrSettings = lazy(() => import("./pages/scm-v2/HrSettings").then((m) =>
 // pages (this wave), parallel to the native /scm/* routes below.
 const ScmPurchaseReturnsV2 = lazy(() => import("./pages/scm-v2/PurchaseReturnsListV2").then((m) => ({ default: m.PurchaseReturnsListV2 })));
 const ScmPurchaseReturnNewV2 = lazy(() => import("./pages/scm-v2/PurchaseReturnNew").then((m) => ({ default: m.PurchaseReturnNew })));
+const ScmPurchaseReturnFromGrnV2 = lazy(() => import("./pages/scm-v2/PurchaseReturnFromGrn").then((m) => ({ default: m.PurchaseReturnFromGrn })));
 const ScmPurchaseReturnDetailV2 = lazy(() => import("./pages/scm-v2/PurchaseReturnDetailV2").then((m) => ({ default: m.PurchaseReturnDetailV2 })));
 const ScmInventoryV2 = lazy(() => import("./pages/scm-v2/Inventory").then((m) => ({ default: m.Inventory })));
 const ScmStockCardV2 = lazy(() => import("./pages/scm-v2/StockCard").then((m) => ({ default: m.StockCard })));
@@ -874,6 +875,7 @@ export default function App() {
             precede the /:id routes so they match first. */}
         <Route path="/scm/purchase-returns" element={<ScmGuard area="scm.procurement.pr"><Scm2990Shell><ScmPurchaseReturnsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-returns/new" element={<ScmGuard area="scm.procurement.pr"><Scm2990Shell><ScmPurchaseReturnNewV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/purchase-returns/from-grn" element={<ScmGuard area="scm.procurement.pr"><Scm2990Shell><ScmPurchaseReturnFromGrnV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-returns/:id" element={<ScmGuard area="scm.procurement.pr"><Scm2990Shell><ScmPurchaseReturnDetailV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/inventory" element={<ScmGuard area="scm.warehouse.inventory"><Scm2990Shell><ScmInventoryV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/inventory/stock-card/:itemCode" element={<ScmGuard area="scm.warehouse.inventory"><Scm2990Shell><ScmStockCardV2 /></Scm2990Shell></ScmGuard>} />

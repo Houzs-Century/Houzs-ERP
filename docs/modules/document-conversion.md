@@ -11,7 +11,7 @@ Every conversion is a picker page owned by the DESTINATION document; source-side
   - SO -> PO: `/scm/purchase-orders/from-so` (PO editor appends with `?poId=`); MRP page "Proceed PO". No transfer button on the SO list or SO detail.
   - DO -> SI: `/scm/sales-invoices/from-do`. DO -> Delivery Return: `/scm/delivery-returns/from-do`.
   - PO -> GRN: `/scm/grns/from-po` (GRN appends with `?appendToGrn=`); PO detail, PO list row, PO list bulk bar.
-  - GRN -> PI: `/scm/purchase-invoices/from-grn`. GRN -> PR and PO -> PR: `/scm/purchase-returns/new` with `grnId` / `poId` (no from-grn picker page).
+  - GRN -> PI: `/scm/purchase-invoices/from-grn`. GRN -> PR: `/scm/purchase-returns/from-grn` (pick one posted GRN, tick its lines; Continue hands `{ grnId, picks }` to `/new?fromPicks=1` via `prFromGrnPicks`, HC-0135). PO -> PR: `/scm/purchase-returns/new` with `poId`.
   - Consignment Order -> Consignment Note: `/scm/consignment-notes/from-order`; CO list/detail "Create Consignment Note" prefills the WHOLE order via `?fromConsignmentOrder=`.
   - Consignment Note -> Consignment Return: `/scm/consignment-returns/from-note`; CN detail "Create Consignment Return" (`?fromConsignmentNote=`).
   - PC Order -> PC Receive: `/scm/purchase-consignment-receives/from-pc-order`; PC Receive -> PC Return: `/scm/purchase-consignment-returns/from-receive` (no source-side button on either).
