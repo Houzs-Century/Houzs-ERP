@@ -5,6 +5,7 @@ import { useQuery, type QueryState } from "../../hooks/useQuery";
 import type { EmployeeInput } from "../../vendor/shared/hr-employee";
 import type { PayRuleVersion, PayRulesConfig } from "../../vendor/shared/hr-pay-rules";
 import type { AttendanceStatus } from "../../vendor/shared/hr-attendance";
+import type { TripCommission, TripKind, TripPay, TripPayLine, TripRates } from "../../vendor/shared/hr-trip-pay";
 
 export const HR = "/api/hr";
 
@@ -146,3 +147,163 @@ export const useLaborCost = (from: string, to: string): QueryState<LaborCostResp
 
 export const useHourDeductions = (period: string): QueryState<{ period: string; deductions: HourDeduction[]; totalHours: number; canManage: boolean }> =>
   useQuery(`${HR}/hour-deductions`, () => api.get<{ period: string; deductions: HourDeduction[]; totalHours: number; canManage: boolean }>(`${HR}/hour-deductions?period=${period}`), [period]);
+
+export type Payslip = {
+  id: number | null;
+  employeeId: number;
+  period: string;
+  status: "DRAFT" | "APPROVED" | "PAID";
+  empNo: string;
+  employeeName: string;
+  departmentName: string | null;
+  payMode: "MONTHLY" | "DAILY";
+  fullSalarySen: number;
+  dayRateSen: number;
+  hourRateSen: number;
+  daysWorked: number;
+  absentDays: number;
+  absenceDeductionSen: number;
+  shortHours: number;
+  shortHourDeductionSen: number;
+  basicEarnedSen: number;
+  otWeekdayHours: number;
+  otSundayHours: number;
+  otHolidayHours: number;
+  otWeekdayPaySen: number;
+  otSundayPaySen: number;
+  otHolidayPaySen: number;
+  otPaySen: number;
+  allowancesSen: number;
+  commissionSen: number;
+  tripAllowanceSen: number;
+  backpaySen: number;
+  grossSen: number;
+  epfEmployeeSen: number;
+  epfEmployerSen: number;
+  socsoEmployeeSen: number;
+  socsoEmployerSen: number;
+  eisEmployeeSen: number;
+  eisEmployerSen: number;
+  pcbSen: number;
+  pcbStatus: "DISABLED" | "COMPUTED" | "ZERO_PROVEN" | "UNKNOWN";
+  statutoryEmployeeSen: number;
+  advanceSen: number;
+  penaltySen: number;
+  netSen: number;
+  paymentMethod: "TRANSFER" | "CASH";
+  bankName: string | null;
+  bankAccount: string | null;
+  detail: {
+    absentDates: string[];
+    paidLeaveDates?: string[];
+    otDays: { date: string; hours: number; kind: string }[];
+    advanceDates: string[];
+    pcbNote: string;
+    allowances?: { kind: AllowanceKind; label: string; amountSen: number; note: string | null }[];
+    trip?: { commission: TripCommission; lines: TripPayLine[] } | null;
+  };
+  approvedAt: string | null;
+  paidAt: string | null;
+};
+export type PayrollResponse = {
+  period: string;
+  stored: boolean;
+  projected: boolean;
+  locked: boolean;
+  status: "DRAFT" | "APPROVED" | "PAID" | "MIXED" | null;
+  monthFinished: boolean;
+  slips: Payslip[];
+  canManage: boolean;
+  canApprove: boolean;
+};
+export type Advance = { id: number; employeeId: number; empNo: string; name: string; date: string; amountSen: number; note: string | null; status: "UNSETTLED" | "SETTLED" };
+export type Penalty = {
+  id: number;
+  penaltyNo: string;
+  date: string;
+  reference: string | null;
+  reason: string;
+  remarks: string | null;
+  status: "DRAFT" | "PENDING_APPROVAL" | "APPROVED" | "POSTED";
+  createdBy: number | null;
+  createdByName: string | null;
+  approvedByName: string | null;
+  approvedAt: string | null;
+  rejectedReason: string | null;
+  lines: { id: number; employeeId: number; empNo: string; name: string; amountSen: number; payrollPeriod: string | null; posted: boolean }[];
+};
+
+export const usePayroll = (period: string): QueryState<PayrollResponse> => useQuery(`${HR}/payroll`, () => api.get<PayrollResponse>(`${HR}/payroll?period=${period}`), [period]);
+export const useAdvances = (period: string): QueryState<{ period: string; advances: Advance[]; totalSen: number; canManage: boolean }> =>
+  useQuery(`${HR}/advances`, () => api.get<{ period: string; advances: Advance[]; totalSen: number; canManage: boolean }>(`${HR}/advances?period=${period}`), [period]);
+export const usePenalties = (): QueryState<{ penalties: Penalty[]; me: number; canManage: boolean; canApprove: boolean }> =>
+  useQuery(`${HR}/penalties`, () => api.get<{ penalties: Penalty[]; me: number; canManage: boolean; canApprove: boolean }>(`${HR}/penalties`));
+
+export const ALLOWANCE_KINDS = [
+  { value: "LEADERSHIP", label: "Leadership allowance" },
+  { value: "TRANSPORT", label: "Transport allowance" },
+  { value: "OVERNIGHT", label: "Overnight allowance" },
+  { value: "KPI", label: "KPI allowance" },
+  { value: "OTHER", label: "Allowance" },
+  { value: "BACKPAY", label: "Backpay (company advance)" },
+] as const;
+export type AllowanceKind = (typeof ALLOWANCE_KINDS)[number]["value"];
+export type Allowance = {
+  id: number;
+  employeeId: number;
+  empNo: string;
+  name: string;
+  kind: AllowanceKind;
+  label: string;
+  amountSen: number;
+  fromPeriod: string;
+  untilPeriod: string | null;
+  note: string | null;
+};
+export type AllowancesResponse = { period: string; allowances: Allowance[]; paidSen: number; deductedSen: number; locked: boolean; canManage: boolean };
+export const useAllowances = (period: string): QueryState<AllowancesResponse> =>
+  useQuery(`${HR}/allowances`, () => api.get<AllowancesResponse>(`${HR}/allowances?period=${period}`), [period]);
+
+export type TripPerson = { name: string; employeeId: number | null };
+export type TripRowOut = {
+  id: number;
+  source: "SHEET" | "PLANNING" | "MANUAL";
+  tripDate: string;
+  docNo: string;
+  transferTo: string;
+  refNo: string;
+  kind: TripKind;
+  localTotalSen: number;
+  state: string;
+  lorryPlate: string;
+  driver1: TripPerson;
+  driver2: TripPerson;
+  helper1: TripPerson;
+  helper2: TripPerson;
+  /** Who each named person resolved to; null = nobody, absent = no one in that seat. */
+  matched: { driver1?: number | null; driver2?: number | null; helper1?: number | null; helper2?: number | null };
+};
+export type TripPersonPay = TripPay & {
+  empNo: string;
+  name: string;
+  missed: { days: number; dates: string[]; override: number | null; note: string | null; noAttendance: boolean } | null;
+};
+export type TripPayResponse = {
+  month: string;
+  first: string;
+  last: string;
+  locked: boolean;
+  rates: TripRates;
+  rows: TripRowOut[];
+  people: TripPersonPay[];
+  unmatched: { name: string; rows: number }[];
+  totals: { commissionSen: number; allowanceSen: number };
+  sources: string[];
+  canManage: boolean;
+};
+export const useTripPay = (month: string): QueryState<TripPayResponse> =>
+  useQuery(`${HR}/trip-pay`, () => api.get<TripPayResponse>(`${HR}/trip-pay?month=${month}`), [month]);
+
+export type TripRateVersion = { id: number; effectiveFrom: string; rates: TripRates; note: string | null; createdAt: string };
+export type TripRatesResponse = { versions: TripRateVersion[]; defaults: TripRates; effectiveToday: TripRates; today: string; canManage: boolean };
+export const useTripRates = (): QueryState<TripRatesResponse> => useQuery(`${HR}/trip-rates`, () => api.get<TripRatesResponse>(`${HR}/trip-rates`));
