@@ -36,7 +36,7 @@ describe('inArm', () => {
 describe('list searches match the SO link resolved from the SO reference', () => {
   it('DO list', () => {
     const { self, calls } = recorder();
-    const p: DoListParams = { status: null, q: 'PO-778', sort: null, from: null, to: null, debtorNames: null, currencies: null, soRefDocNos: ['HC-SO-2609-001'] };
+    const p: DoListParams = { status: null, q: 'PO-778', sort: null, from: null, to: null, dateBy: 'do_date', debtorNames: null, currencies: null, soRefDocNos: ['HC-SO-2609-001'] };
     filterDoList(self, p, ctx, null);
     expect(orString(calls)).toContain('so_doc_no.in.("HC-SO-2609-001")');
     expect(orString(calls)).toContain('ref.ilike.%PO-778%');
