@@ -170,6 +170,9 @@ PUT,/api/assr/settings,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePe
 GET,/api/assr/so-cases/:docNo,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,requireServiceCaseAccess(),,NO,INHERITED_ONLY,backend/src/routes/assr.ts
 GET,/api/assr/summary,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.read"")",,NO,DECLARED_GATE,backend/src/routes/assr.ts
 POST,/api/assr/sync-delivery-orders,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""service_cases.manage"")",,YES,DECLARED_GATE,backend/src/routes/assr.ts
+GET,/api/attendance/me,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/attendance.ts
+GET,/api/attendance/me/photo/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/attendance.ts
+POST,/api/attendance/punch,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/attendance.ts
 GET,/api/audit,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""settings.manage"")",,NO,DECLARED_GATE,backend/src/routes/audit.ts
 POST,/api/auth/accept-invite,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/auth.ts
 POST,/api/auth/bootstrap,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/auth.ts
@@ -249,6 +252,26 @@ DELETE,/api/fleet-work-order-files/:woId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEX
 PUT,/api/fleet-work-order-files/:woId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.write"")",,YES,DECLARED_GATE,backend/src/scm/routes/fleet-work-order-files.ts
 GET,/api/fleet-work-order-files/:woId/file,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,supabaseAuth,"requireHouzsPerm(""fleet.read"")",,NO,DECLARED_GATE,backend/src/scm/routes/fleet-work-order-files.ts
 GET,/api/fleet/staff,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermissionOrSalesView(""users.read"")",,NO,DECLARED_GATE,backend/src/routes/fleet.ts
+GET,/api/hr/attendance,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,NO,DECLARED_GATE,backend/src/routes/hr-attendance.ts
+PUT,/api/hr/attendance,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-attendance.ts
+DELETE,/api/hr/attendance/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-attendance.ts
+GET,/api/hr/attendance/:id/photo,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,NO,DECLARED_GATE,backend/src/routes/hr-attendance.ts
+GET,/api/hr/employees,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,NO,DECLARED_GATE,backend/src/routes/hr.ts
+POST,/api/hr/employees,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr.ts
+DELETE,/api/hr/employees/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr.ts
+PATCH,/api/hr/employees/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr.ts
+GET,/api/hr/employees/:id/salary-history,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,NO,DECLARED_GATE,backend/src/routes/hr.ts
+DELETE,/api/hr/employees/:id/salary-history/:rowId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr.ts
+GET,/api/hr/employees/options,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,NO,DECLARED_GATE,backend/src/routes/hr.ts
+GET,/api/hr/holidays,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,NO,DECLARED_GATE,backend/src/routes/hr.ts
+POST,/api/hr/holidays,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr.ts
+DELETE,/api/hr/holidays/:date,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr.ts
+GET,/api/hr/pay-rules,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,NO,DECLARED_GATE,backend/src/routes/hr.ts
+POST,/api/hr/pay-rules,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr.ts
+DELETE,/api/hr/pay-rules/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr.ts
+GET,/api/hr/punch-sites,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,NO,DECLARED_GATE,backend/src/routes/hr-attendance.ts
+POST,/api/hr/punch-sites,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-attendance.ts
+PATCH,/api/hr/punch-sites/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireAnyPermission([""hr.employees.read"", ""hr.employees.manage""])",,,,YES,DECLARED_GATE,backend/src/routes/hr-attendance.ts
 GET,/api/inbox,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/inbox.ts
 GET,/api/it-support/attachments/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/itSupport.ts
 GET,/api/it-support/status,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/itSupport.ts

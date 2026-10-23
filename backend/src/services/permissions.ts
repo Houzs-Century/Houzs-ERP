@@ -281,6 +281,13 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "scm.hr.close",  resource: "Supply Chain", verb: "manage", label: "Close HR payout period", description: "Freeze a commission period so later rate changes cannot alter what it pays — the payroll approval step" },
   { key: "scm.hr.reopen", resource: "Supply Chain", verb: "manage", label: "Reopen HR payout period", description: "Un-freeze a closed commission period so it recomputes again — reverses an approved payout and is always recorded with a reason" },
 
+  // HR Employees & Attendance (HC-0125, ported from Hookka): the Employee
+  // Master with salaries and bank accounts, public holidays and the dated pay
+  // rules. Own keys, not scm.hr.*: commission and payroll are granted to
+  // different people. Owner + IT Admin cover both via "*".
+  { key: "hr.employees.read",   resource: "HR", verb: "read",   label: "View employees",   description: "See Employees & Attendance: every employee's pay basis, salary, bank and statutory flags, the public holidays and the pay rules (read-only)" },
+  { key: "hr.employees.manage", resource: "HR", verb: "manage", label: "Manage employees", description: "Add and edit employees and their salary, link the ERP account they punch with, keep the public holidays and schedule pay-rule changes — changes what people are paid" },
+
   // AutoCount write-back queue (scm.autocount_outbox, mig 0277) — the READ of
   // what the ERP has told the licensed account book and what came back. It is a
   // narrow key rather than a reuse of scm.access because the queue names every
