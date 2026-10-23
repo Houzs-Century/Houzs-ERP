@@ -1,13 +1,12 @@
 // Project Overview · Venue rent (owner 2026-10-23): what each venue costs per
-// square foot and per day, and - click a venue - what each operator (organizer)
+// square metre (the booth size is keyed in m2, as on the event page) and per day, and - click a venue - what each operator (organizer)
 // charges there, to see who charges the most. Events of the period with a
-// rental and a booth size; the booth is keyed in square metres.
+// rental and a booth size.
 import { Fragment, useState } from "react";
 import { Panel, SortTh, Td, useTableSort } from "../../components/scm-v2/OverviewKit";
 import { formatCurrency, cn } from "../../lib/utils";
 import { figuresOf, type OvProject } from "./projectOverviewModel";
 
-const SQFT_PER_SQM = 10.7639;
 const money = (n: number | null) => (n == null ? "—" : formatCurrency(n));
 const days = (p: OvProject) => {
   if (!p.startDate) return 0;
@@ -15,27 +14,27 @@ const days = (p: OvProject) => {
   return Number.isFinite(a) && Number.isFinite(b) && b >= a ? Math.round((b - a) / 86400000) + 1 : 0;
 };
 
-type Row = { key: string; events: number; rent: number; sqft: number; sqftDays: number; eventDays: number };
+type Row = { key: string; events: number; rent: number; sqm: number; sqmDays: number; eventDays: number };
 const rowOf = (key: string, ps: OvProject[]): Row => {
-  const r: Row = { key, events: 0, rent: 0, sqft: 0, sqftDays: 0, eventDays: 0 };
+  const r: Row = { key, events: 0, rent: 0, sqm: 0, sqmDays: 0, eventDays: 0 };
   for (const p of ps) {
-    const rent = figuresOf(p).rental; const sqft = (p.sizeSqm ?? 0) * SQFT_PER_SQM; const d = days(p);
-    r.events += 1; r.rent += rent; r.sqft += sqft; r.sqftDays += sqft * d; r.eventDays += d;
+    const rent = figuresOf(p).rental; const sqm = p.sizeSqm ?? 0; const d = days(p);
+    r.events += 1; r.rent += rent; r.sqm += sqm; r.sqmDays += sqm * d; r.eventDays += d;
   }
   return r;
 };
 /* Totals over totals, so a big booth weighs what it costs. */
-const perSqft = (r: Row) => (r.sqft > 0 ? r.rent / r.sqft : null);
-const perSqftDay = (r: Row) => (r.sqftDays > 0 ? r.rent / r.sqftDays : null);
+const perSqm = (r: Row) => (r.sqm > 0 ? r.rent / r.sqm : null);
+const perSqmDay = (r: Row) => (r.sqmDays > 0 ? r.rent / r.sqmDays : null);
 const perDay = (r: Row) => (r.eventDays > 0 ? r.rent / r.eventDays : null);
 const perEvent = (r: Row) => (r.events > 0 ? r.rent / r.events : null);
 const value = (r: Row, k: string) =>
-  k === "key" ? r.key : k === "events" ? r.events : k === "perEvent" ? perEvent(r) : k === "perSqft" ? perSqft(r) : k === "perSqftDay" ? perSqftDay(r) : perDay(r);
+  k === "key" ? r.key : k === "events" ? r.events : k === "perEvent" ? perEvent(r) : k === "perSqm" ? perSqm(r) : k === "perSqmDay" ? perSqmDay(r) : perDay(r);
 
 function cells(r: Row) {
   return <>
     <Td>{r.events}</Td><Td>{money(perEvent(r))}</Td>
-    <Td className="font-semibold">{money(perSqft(r))}</Td><Td>{money(perSqftDay(r))}</Td><Td>{money(perDay(r))}</Td>
+    <Td className="font-semibold">{money(perSqm(r))}</Td><Td>{money(perSqmDay(r))}</Td><Td>{money(perDay(r))}</Td>
   </>;
 }
 
@@ -55,14 +54,14 @@ export function VenueRentPanel({ projects, periodLabel }: { projects: OvProject[
       <table className="w-full border-collapse">
         <thead><tr>
           <SortTh left k="key" sort={sort} onSort={toggle}>Venue / operator</SortTh><SortTh k="events" sort={sort} onSort={toggle}>Events</SortTh>
-          <SortTh k="perEvent" sort={sort} onSort={toggle}>Rent per event</SortTh><SortTh k="perSqft" sort={sort} onSort={toggle}>Rent per sq ft</SortTh>
-          <SortTh k="perSqftDay" sort={sort} onSort={toggle}>Per sq ft per day</SortTh><SortTh k="perDay" sort={sort} onSort={toggle}>Rent per day</SortTh>
+          <SortTh k="perEvent" sort={sort} onSort={toggle}>Rent per event</SortTh><SortTh k="perSqm" sort={sort} onSort={toggle}>Rent per m²</SortTh>
+          <SortTh k="perSqmDay" sort={sort} onSort={toggle}>Per m² per day</SortTh><SortTh k="perDay" sort={sort} onSort={toggle}>Rent per day</SortTh>
         </tr></thead>
         <tbody>{sorted.map((v) => {
           const isOpen = open === v.key;
           const ops = isOpen ? [...new Map(byVenue.get(v.key)!.map((p) => [(p.organizer ?? "—").trim(), 0])).keys()]
             .map((o) => rowOf(o, byVenue.get(v.key)!.filter((p) => (p.organizer ?? "—").trim() === o)))
-            .sort((a, b) => (perSqft(b) ?? 0) - (perSqft(a) ?? 0)) : [];
+            .sort((a, b) => (perSqm(b) ?? 0) - (perSqm(a) ?? 0)) : [];
           return (
             <Fragment key={v.key}>
               <tr className={cn("cursor-pointer hover:bg-surface-2/50", isOpen && "bg-primary-soft/50")} onClick={() => setOpen(isOpen ? null : v.key)}>
@@ -79,7 +78,7 @@ export function VenueRentPanel({ projects, periodLabel }: { projects: OvProject[
           {venues.length === 0 && <tr><Td left className="text-ink-muted">No event in this period has both a rental and a booth size.</Td></tr>}
         </tbody>
       </table>
-      <p className="mt-1 text-[11px] text-ink-muted">Rent per sq ft = the venue&apos;s total rent ÷ total booth area (booth keyed in m², × 10.764 for sq ft); per day uses the event&apos;s days, start to end. Operators under a venue: dearest per sq ft first.{skipped ? ` ${skipped} event${skipped === 1 ? "" : "s"} with a rental but no booth size are left out.` : ""}</p>
+      <p className="mt-1 text-[11px] text-ink-muted">Rent per m² = the venue&apos;s total rent ÷ total booth area (m², as keyed on the event); per day uses the event&apos;s days, start to end. Operators under a venue: dearest per m² first.{skipped ? ` ${skipped} event${skipped === 1 ? "" : "s"} with a rental but no booth size are left out.` : ""}</p>
     </Panel>
   );
 }
