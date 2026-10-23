@@ -58,10 +58,12 @@ function loadScript() {
     console,
   };
   vm.createContext(sandbox);
-  vm.runInContext(`${src}\nthis.__w = erpWriteRecords_;`, sandbox);
+  vm.runInContext(`${src}\nthis.__w = erpWriteRecords_; this.__plan = erpPlanTransporterPush_; this.__regions = erpRegionalSheets_;`, sandbox);
+  lastSandbox = sandbox;
   return sandbox.__w as (ss: unknown, name: string, recs: unknown[], rid: string) => { success: number; appended: number; restoredStatus: number };
 }
 
+let lastSandbox: Record<string, unknown> = {};
 const row = (a: string, doc: string) => { const r: Cell[] = Array(COLS).fill(''); r[0] = a; r[1] = doc; return r; };
 
 describe('erpWriteRecords_ — a row is found by DocNo at write time', () => {
@@ -115,5 +117,55 @@ describe('erpWriteRecords_ — a row is found by DocNo at write time', () => {
     expect(r[43]).toBe('PENDING');
     expect(r[18]).toBe('MI3008003-25');
     expect(r[0]).toBe('Done Scheduling');
+  });
+});
+
+describe('EM Order push to the ERP and to the ESB / BS transporter sheets', () => {
+  test('EM Order reads PENDING from AR (44), the column onEdit marks', () => {
+    loadScript();
+    const regions = (lastSandbox.__regions as () => { name: string; statusCol: number }[])();
+    expect(regions.find((r) => r.name === 'EM Order')!.statusCol).toBe(44);
+  });
+
+  const master = {
+    labels: ['', 'From AutoCount', 'From AutoCount', 'From ESB Sheet', 'From Admin'],
+    headers: ['DELIVERY MESSAGE STATUS', 'Doc. No.', 'Sales Location', 'Consignment No', 'BALANCE'],
+    rows: [
+      ['Done Shipout', 'SO-1', 'SBH', 'MASTER-CN', '120.00'],
+      ['Done Delivered', 'SO-2', 'SBH', '', '0.00'],
+      ['Customer Confirm Shipment', 'SO-3', 'SRW', '', '50.00'],
+      ['Done Shipout', 'SO-4', 'SBH', '', ''],
+    ],
+  };
+  const plan = (m: unknown, t: unknown, w: unknown) => (lastSandbox.__plan as Function)(m, t, w);
+
+  test('an existing row gets only EM-owned columns; transporter columns and blank EM values never overwrite', () => {
+    loadScript();
+    const p = plan(master, {
+      headers: ['EM Order Shipment Status', 'Doc. No.', 'Sales Location', 'Consignment No', 'BALANCE'],
+      rows: [['', 'SO-1', 'SBH', 'ESB-CN', '99.00'], ['', 'SO-4', 'SBH', '', '10.00']],
+      allowed: {},
+    }, () => false);
+    expect(p.updates).toEqual([{ row: 0, col: 4, value: '120.00' }]);
+    expect(p.appends).toEqual([]);
+  });
+
+  test('BS gets a Sabah order that is not Done Delivered; ESB gets every missing order', () => {
+    loadScript();
+    const target = { headers: ['EM Order Shipment Status', 'Doc. No.', 'Sales Location', 'Consignment No', 'BALANCE'], rows: [], allowed: {} };
+    const bsWants = (loc: string, status: string) => /^SBH/i.test(loc) && !/^done delivered$/i.test(status);
+    expect(plan(master, target, bsWants).appends.map((r: string[]) => r[1])).toEqual(['SO-1', 'SO-4']);
+    expect(plan(master, target, () => true).appends.map((r: string[]) => r[1])).toEqual(['SO-1', 'SO-2', 'SO-3', 'SO-4']);
+  });
+
+  test('a value the target dropdown rejects is skipped, not written', () => {
+    loadScript();
+    const p = plan(master, {
+      headers: ['x', 'Doc. No.', 'Sales Location', 'Consignment No', 'BALANCE'],
+      rows: [['', 'SO-1', 'SBH', '', '1.00']],
+      allowed: { 4: { '1.00': 1 } },
+    }, () => false);
+    expect(p.updates).toEqual([]);
+    expect(p.blocked).toBe(1);
   });
 });
