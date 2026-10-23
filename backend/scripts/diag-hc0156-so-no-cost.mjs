@@ -79,7 +79,7 @@ async function main() {
 
   const [lines, prods, binds] = await sql.begin('read only', async (t) => [
     await t`SELECT i.id, i.doc_no, i.item_code, i.item_group, i.qty, i.variants, i.unit_cost_sen, i.line_cost_sen,
-                   h.project_id, h.status::text AS status
+                   h.project_id, h.status::text AS status, h.created_at
               FROM scm.mfg_sales_order_items i
               JOIN scm.mfg_sales_orders h ON h.company_id = i.company_id AND h.doc_no = i.doc_no
              WHERE i.company_id = ${CO} AND coalesce(i.cancelled, false) = false
@@ -131,6 +131,20 @@ async function main() {
   log(`zero-cost lines (non-service, live orders): ${rows.length} across ${new Set(rows.map((x) => x.l.doc_no)).size} orders`);
   log(`  all orders:   ${count(rows)}`);
   log(`  event orders: ${count(rows.filter((x) => x.l.project_id != null))}`);
+
+  /* Sofa lines with no usable seat size: would "every priced seat size costs the
+     same" settle them? UNIFORM = one PRICE_2 figure across the product's grid. */
+  for (const r of ['SOFA_NO_HEIGHT', 'SOFA_HEIGHT_MISSING']) {
+    const hit = rows.filter((x) => x.reason === r);
+    const uniform = hit.filter((x) => {
+      const p2 = (prodBy.get(x.l.item_code)?.seat_height_prices ?? [])
+        .filter((e) => e && (e.tier ?? 'PRICE_2') === 'PRICE_2' && Number(e.priceSen) > 0).map((e) => Number(e.priceSen));
+      return p2.length > 0 && new Set(p2).size === 1;
+    });
+    const months = {};
+    for (const x of hit) { const m = String(x.l.created_at?.toISOString?.() ?? x.l.created_at ?? '').slice(0, 7); months[m] = (months[m] ?? 0) + 1; }
+    log(`  ${r}: ${hit.length} lines; one price at every seat size ${uniform.length} (events ${uniform.filter((x) => x.l.project_id != null).length}); by order month ${JSON.stringify(months)}`);
+  }
 
   const bindText = (code) => (bindBy.get(code) ?? []).map((b) =>
     `${b.supplier_code ?? b.supplier_id}${b.is_main_supplier ? '*' : ''} flat ${rm(b.unit_price_sen)} matrix ${clip(JSON.stringify(b.price_matrix ?? null), 90)}`).join(' | ') || 'none';
