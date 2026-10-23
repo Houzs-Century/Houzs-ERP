@@ -23,7 +23,8 @@
 // Strictly SELECTs. No DDL, no writes. Exits 0 for every answer.
 //
 // Env: DATABASE_URL (required); COMPANY_ID (default 1); DOC_NOS (comma list,
-// print those orders line by line); LIST_LIMIT (codes per reason, default 40).
+// print those orders line by line); LIST_LIMIT (codes per reason, default 40);
+// EVENTS_ONLY=1 (list only event orders, the Finance list's scope).
 import postgres from 'postgres';
 import { deriveProductCostFromSuppliers } from '../src/scm/lib/derive-product-cost-from-suppliers.ts';
 
@@ -149,8 +150,9 @@ async function main() {
   const bindText = (code) => (bindBy.get(code) ?? []).map((b) =>
     `${b.supplier_code ?? b.supplier_id}${b.is_main_supplier ? '*' : ''} flat ${rm(b.unit_price_sen)} matrix ${clip(JSON.stringify(b.price_matrix ?? null), 90)}`).join(' | ') || 'none';
 
+  const listed = process.env.EVENTS_ONLY === '1' ? rows.filter((x) => x.l.project_id != null) : rows;
   for (const r of order) {
-    const hit = rows.filter((x) => x.reason === r);
+    const hit = listed.filter((x) => x.reason === r);
     if (hit.length === 0) continue;
     const byCode = new Map();
     for (const x of hit) {
