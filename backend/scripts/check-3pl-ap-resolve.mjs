@@ -33,16 +33,16 @@ try {
   const soByNo = new Map(soRows.map((s) => [s.doc_no, s]));
   const doRows = await sql`SELECT company_id, do_number, so_doc_no FROM scm.delivery_orders WHERE do_number IN ${sql(doWanted.size ? [...doWanted] : ['-'])}`;
   const doByNo = new Map(doRows.map((d) => [d.do_number, d]));
-  const soNos = [...new Set([...soRows.map((s) => s.doc_no)])];
-  const dosOfSo = soNos.length ? await sql`SELECT company_id, do_number, so_doc_no FROM scm.delivery_orders WHERE so_doc_no IN ${sql(soNos)}` : [];
-  const dosBySo = new Map();
-  for (const d of dosOfSo) { const a = dosBySo.get(d.so_doc_no) ?? []; a.push(d); dosBySo.set(d.so_doc_no, a); }
   const slips = [...new Set(parsed.flatMap((r) => r.t.slip))];
   const slipHit = new Map();
   for (const s of slips) {
     const hit = await sql`SELECT company_id, doc_no FROM scm.mfg_sales_orders WHERE upper(regexp_replace(coalesce(customer_so_no,'') || ' ' || coalesce(ref,''), '\\s', '', 'g')) LIKE ${'%' + s + '%'} LIMIT 2`;
     if (hit.length === 1) slipHit.set(s, hit[0]);
   }
+  const soNos = [...new Set([...soRows.map((s) => s.doc_no), ...[...slipHit.values()].map((s) => s.doc_no)])];
+  const dosOfSo = soNos.length ? await sql`SELECT company_id, do_number, so_doc_no FROM scm.delivery_orders WHERE so_doc_no IN ${sql(soNos)}` : [];
+  const dosBySo = new Map();
+  for (const d of dosOfSo) { const a = dosBySo.get(d.so_doc_no) ?? []; a.push(d); dosBySo.set(d.so_doc_no, a); }
   const assrs = [...new Set(parsed.flatMap((r) => r.t.assr))];
   const assrHit = new Set();
   if (assrs.length) {
@@ -69,5 +69,7 @@ try {
     if (numbered && !dos.length && !assr && misses.length < 40) misses.push(r.inv + ' ' + text(r) + ' RM ' + r.rm);
   }
   for (const [k, s] of stat) console.log('ROW|' + k + ': rows ' + s.rows + ' RM ' + s.rm.toFixed(2) + ' | with a number ' + s.numbered + ' | SO found ' + s.so + ' | DO found ' + s.do + ' (RM ' + s.doRm.toFixed(2) + ') | ASSR found ' + s.assr + ' | 2990 orders ' + s.co2 + ' | no number RM ' + s.noNumberRm.toFixed(2));
+  const range = await sql`SELECT company_id, min(do_number) AS lo, max(do_number) AS hi, count(*)::int AS n, min(do_date)::text AS d0 FROM scm.delivery_orders WHERE do_number ~ '^(HC|2990)-DO-0[0-9]{5}$' GROUP BY 1`;
+  for (const r of range) console.log('ROW|old-style DO numbers co' + r.company_id + ': ' + r.n + ' from ' + r.lo + ' (' + r.d0 + ') to ' + r.hi);
   for (const m of misses) console.log('ROW|  not found: ' + m);
 } finally { await sql.end(); }
