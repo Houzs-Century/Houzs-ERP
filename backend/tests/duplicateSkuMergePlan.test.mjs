@@ -102,8 +102,10 @@ describe('HC-0153 pairs file', () => {
   const bedframes = pairs.filter((p) => !p.drop.includes('SOLACE'));
   const mapping = () => readMappingCsv(fs.readFileSync(path.join(DATA, 'autocount-erp-mapping-1561.csv'), 'utf8'));
 
-  it('drops AKEMI HS SOLACE into HAPPI SLEEP SOLACE, size for size', () => {
-    const sizes = ['K', 'Q', 'S', 'SK', 'SP', 'SS'];
+  /* S / SK / SP are discontinued: the kept HAPPI SLEEP SOLACE rows are INACTIVE
+     (the planner refuses that) and nothing is on the AKEMI ones. */
+  it('drops AKEMI HS SOLACE into HAPPI SLEEP SOLACE for K, Q and SS only', () => {
+    const sizes = ['K', 'Q', 'SS'];
     expect(solace.map((p) => p.drop)).toEqual(sizes.map((s) => `AKEMI HS SOLACE MATT (${s})`));
     expect(solace.map((p) => p.keep)).toEqual(sizes.map((s) => `HAPPI SLEEP SOLACE MATT (${s})`));
   });

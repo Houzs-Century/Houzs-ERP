@@ -58,13 +58,10 @@
     ]
   },
   "HC-0153": {
-    "ruling": "Sim 2026-10-23 (HC-0153): merge Modular HS SOLACE into HAPPI SLEEP SOLACE (keep HAPPI SLEEP SOLACE), PEBBLE GREY into AKEMI -PEBBLE GREY and SANDY BEACH into AKEMI -SANDY BEACH (keep the AKEMI ones). SOLACE: AutoCount's AK-HS SOLACE already maps to the kept codes. PEBBLE GREY / SANDY BEACH: the cutover map names the dropped codes, but each kept AKEMI code binds 400-D002 to the same AKBF- AutoCount item, and the binding wins, so AutoCount is unchanged.",
+    "ruling": "Sim 2026-10-23 (HC-0153): merge Modular HS SOLACE into HAPPI SLEEP SOLACE (keep HAPPI SLEEP SOLACE; S/SK/SP are discontinued and stay out, nothing is on them), PEBBLE GREY into AKEMI -PEBBLE GREY and SANDY BEACH into AKEMI -SANDY BEACH (keep the AKEMI ones; all three are discontinued, so the AKEMI codes need no new supplier price). SOLACE: AutoCount's AK-HS SOLACE already maps to the kept codes. PEBBLE GREY / SANDY BEACH: the cutover map names the dropped codes, but each kept AKEMI code binds 400-D002 to the same AKBF- AutoCount item, and the binding wins, so AutoCount is unchanged.",
     "pairs": [
       { "drop": "AKEMI HS SOLACE MATT (K)",  "keep": "HAPPI SLEEP SOLACE MATT (K)" },
       { "drop": "AKEMI HS SOLACE MATT (Q)",  "keep": "HAPPI SLEEP SOLACE MATT (Q)" },
-      { "drop": "AKEMI HS SOLACE MATT (S)",  "keep": "HAPPI SLEEP SOLACE MATT (S)" },
-      { "drop": "AKEMI HS SOLACE MATT (SK)", "keep": "HAPPI SLEEP SOLACE MATT (SK)" },
-      { "drop": "AKEMI HS SOLACE MATT (SP)", "keep": "HAPPI SLEEP SOLACE MATT (SP)" },
       { "drop": "AKEMI HS SOLACE MATT (SS)", "keep": "HAPPI SLEEP SOLACE MATT (SS)" },
       { "drop": "PEBBLE GREY-(K)",  "keep": "AKEMI -PEBBLE GREY-(K)" },
       { "drop": "PEBBLE GREY-(Q)",  "keep": "AKEMI -PEBBLE GREY-(Q)" },
