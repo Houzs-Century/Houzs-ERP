@@ -19,13 +19,14 @@ import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useRef, useState } from 'react';
 // HOUZS VENDOR — Link lives on 'react-router-dom' in react-router v6 (the
 // version Houzs ships). Only the import specifier changed.
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Save, Trash2, X, ArrowRightLeft } from 'lucide-react';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { Button } from '@2990s/design-system';
 import { formatPhone } from '@2990s/shared/phone';
 import {
   useCreatePurchaseOrder,
+  usePurchaseOrderDetail,
   useSuppliers,
   useSupplierDetail,
   useSuppliersForMaterial,
@@ -475,6 +476,44 @@ export const PurchaseOrderNew = () => {
     } catch { /* malformed — ignore */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [suppliers.isLoading]);
+
+  /* Copy as new (HC-0149): ?copyFrom=<poId> seeds supplier, purchase location,
+     notes and lines from an existing PO. Dates, the SO link (soItemId would
+     re-pick the SO quota), received qty and the number stay with the source.
+     The copied price is kept as the operator's own (priceTouched), the same
+     rule the SO copy applies, so auto-pricing does not silently re-cost it. */
+  const [searchParams] = useSearchParams();
+  const copyFrom = searchParams.get('copyFrom');
+  const copySource = usePurchaseOrderDetail(copyFrom);
+  const copyApplied = useRef(false);
+  useEffect(() => {
+    if (!copyFrom || copyApplied.current || !copySource.data) return;
+    copyApplied.current = true;
+    const h = copySource.data.purchaseOrder;
+    setSupplierId(h.supplier_id);
+    if (h.purchase_location_id) setPurchaseLocationId(h.purchase_location_id);
+    if (h.notes) setNotes(h.notes);
+    const items = copySource.data.items;
+    if (items.length > 0) {
+      setLines(items.map((it) => ({
+        ...newLine(),
+        bindingId:    it.binding_id ?? undefined,
+        materialKind: it.material_kind,
+        itemCode:     it.item_code,
+        materialName: it.material_name,
+        notes:        it.notes ?? '',
+        supplierSku:  it.supplier_sku ?? undefined,
+        qty:          it.qty,
+        unitPriceSen: it.unit_price_sen,
+        discountSen:  it.discount_sen ?? 0,
+        warehouseId:  it.warehouse_id ?? h.purchase_location_id ?? undefined,
+        category:     it.item_group ?? categoryForCode(it.item_code),
+        variants:     it.variants ?? {},
+        priceTouched: true,
+      })));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- categoryForCode is a stable code→category lookup, not a reactive trigger
+  }, [copyFrom, copySource.data]);
 
   /* Persist the in-progress draft, then go to the full-page From-SO picker.
      Restored on return (see the effect above) so the picked lines APPEND to
