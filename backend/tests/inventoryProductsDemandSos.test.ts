@@ -11,17 +11,41 @@ import { productTotalsHandler } from '../src/scm/routes/inventory';
 class FakeQuery {
   private preds: Array<(r: Record<string, unknown>) => boolean> = [];
   private _range: [number, number] | null = null;
+  private cols = '';
   constructor(private rows: Array<Record<string, unknown>>) {}
-  select() { return this; }
-  order() { return this; }
+  select(cols = '') { this.cols = cols; return this; }
+  private ordered = false;
+  order() { this.ordered = true; return this; }
   or() { return this; }
   filter() { return this; }
   eq(col: string, val: unknown) { this.preds.push((r) => String(r[col]) === String(val)); return this; }
   in(col: string, vals: unknown[]) { const s = new Set(vals.map(String)); this.preds.push((r) => s.has(String(r[col]))); return this; }
-  range(from: number, to: number) { this._range = [from, to]; return this; }
+  /* The demand read drops finished orders on the !inner `so` embed (HC-0002),
+     as PostgREST would; the handler's own SO_DONE filter still runs behind it. */
+  not(col: string, op: string, list: string) {
+    if (op !== 'in') return this;
+    const s = new Set([...list.matchAll(/"([^"]*)"/g)].map((m) => m[1]));
+    const [head, field] = col.split('.');
+    this.preds.push((r) => !s.has(String(field ? (r[head!] as Record<string, unknown> | null)?.[field] : r[col])));
+    return this;
+  }
+  /* A paged read with no total order can repeat or skip rows between pages —
+     the 2026-10-23 Inventory bug (paginate-all.ts). Refuse it here so a new read
+     in this handler cannot ship without one. */
+  range(from: number, to: number) {
+    if (!this.ordered) throw new Error('paged read without an order');
+    this._range = [from, to];
+    return this;
+  }
   then(res: (v: { data: unknown[]; error: null }) => unknown, rej?: (e: unknown) => unknown) {
     let out = this.rows.filter((r) => this.preds.every((p) => p(r)));
     if (this._range) out = out.slice(this._range[0], this._range[1] + 1);
+    /* NETTING_EMBED (HC-0002): each SO line carries its DO lines with their DO,
+       and those lines' returns, the way PostgREST embeds them. */
+    if (this.cols.includes('do_lines:') && refuseEmbed) {
+      return Promise.resolve({ data: null as unknown as unknown[], error: { message: 'Could not find a relationship' } as never }).then(res, rej);
+    }
+    if (this.cols.includes('do_lines:')) out = out.map((r) => ({ ...r, do_lines: embedDoLines(String(r.id)) }));
     return Promise.resolve({ data: out, error: null as null }).then(res, rej);
   }
 }
@@ -49,6 +73,16 @@ const data: Record<string, Array<Record<string, unknown>>> = {
   delivery_order_items: [{ id: 'doi1', so_item_id: 'c', qty: 3, delivery_order_id: 'do1' }],
   delivery_orders: [{ id: 'do1', status: 'DELIVERED' }],
 };
+
+let refuseEmbed = false;
+
+function embedDoLines(soItemId: string) {
+  return (data.delivery_order_items ?? []).filter((l) => l.so_item_id === soItemId).map((l) => ({
+    id: l.id, qty: l.qty,
+    delivery_order: (data.delivery_orders ?? []).find((d) => d.id === l.delivery_order_id) ?? null,
+    returns: [],
+  }));
+}
 
 async function getRow() {
   const app = new Hono();
@@ -84,5 +118,16 @@ describe('GET /inventory/products — demand_sos names the SOs behind Scheduled 
     expect(r.unscheduled_qty).toBe(13);
     expect(sum(false)).toBe(r.unscheduled_qty);
     expect(sum(true)).toBe(r.committed_scheduled);
+  });
+
+  test('when the embedded read is refused it nets the old way and gives the same rows', async () => {
+    refuseEmbed = true;
+    try {
+      const r = await getRow();
+      expect(r.unscheduled_qty).toBe(13);
+      expect(r.demand_sos.find((x) => x.doc_no === 'SO-003')?.qty).toBe(2);
+    } finally {
+      refuseEmbed = false;
+    }
   });
 });

@@ -14,6 +14,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   normalizeImportHeader, looksLikeGridExport, mapGridHeaders, isGridNoPrice, missingGridFacts,
+  gridToSkuRecords, importFailureMessage,
 } from './products-import-headers';
 
 /** The owner's actual file, header row verbatim (sku-master-2026-09-07). */
@@ -136,5 +137,32 @@ describe('what the file cannot say, the export now says', () => {
 
   test('a sheet with no size columns needs no tier at all', () => {
     expect(missingGridFacts(['product_code', 'description', 'category']).needsTier).toBe(false);
+  });
+});
+
+/* HC-0141 (2026-10-22): a hand-made sheet headed `Product Code,Description,
+   category` has no size column, so it is not the grid export — and it used to
+   be read with the raw keys, so every row lacked a `code`. */
+describe('a hand-made sheet with label headers and no size column', () => {
+  const grid = [['Product Code', 'Description', 'category'], ['MT-001', 'Mattress Queen', 'mattress']];
+
+  test('its labels are translated, so the rows have a code and a name', () => {
+    expect(gridToSkuRecords(grid)).toEqual([{ code: 'MT-001', name: 'Mattress Queen', category: 'mattress' }]);
+  });
+
+  test('a file that already has `code` keeps its real `description` column', () => {
+    expect(gridToSkuRecords([['code', 'name', 'description'], ['A', 'N', 'D']]))
+      .toEqual([{ code: 'A', name: 'N', description: 'D' }]);
+  });
+
+  test('a label is not mapped onto a key the sheet already has', () => {
+    expect(gridToSkuRecords([['Product Code', 'name', 'description'], ['A', 'N', 'D']]))
+      .toEqual([{ code: 'A', name: 'N', description: 'D' }]);
+  });
+
+  test('with no code column at all, the message says the headers were not recognised', () => {
+    const msg = importFailureMessage(['item', 'description']);
+    expect(msg).toMatch(/recognised as the product code/);
+    expect(msg).not.toMatch(/missing a category/);
   });
 });

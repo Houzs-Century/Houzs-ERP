@@ -27,6 +27,9 @@ export type DoListParams = {
   sort: string | null;
   from: string | null;
   to: string | null;
+  /** Which date `from`/`to` window: the DO date (default) or the customer's
+     delivery date (HC-0151 — Finance closes a month by delivery date). */
+  dateBy: 'do_date' | 'customer_delivery_date';
   /** Server-filterable column funnels (owner 2026-09-16): Customer (debtor) Name
      and Currency (base columns on delivery_orders). Debtor CODE and line-level /
      MRP funnels stay client-side on the loaded page. */
@@ -60,6 +63,7 @@ export function readDoListParams(query: (key: string) => string | undefined): Do
     sort: param(query('sort')),
     from: param(query('from')),
     to: param(query('to')),
+    dateBy: query('dateBy') === 'delivery' ? 'customer_delivery_date' : 'do_date',
     debtorNames: jsonArrayParam(query('debtorNames')),
     currencies: jsonArrayParam(query('currencies')),
     soRefDocNos: [],
@@ -103,6 +107,15 @@ export function fromDoList(
   return sb.from('delivery_orders').select(cols, opts);
 }
 
+/** The list's date window alone — the status-tab counts take it too, so a
+ *  month's tabs count that month (HC-0151). */
+export function windowDoList<Q>(q: Q, p: Pick<DoListParams, 'from' | 'to' | 'dateBy'>): Q {
+  let out = q as unknown as Filterable;
+  if (p.from) out = out.gte(p.dateBy, p.from);
+  if (p.to) out = out.lte(p.dateBy, p.to);
+  return out as unknown as Q;
+}
+
 /** COMPANY + sales scope + tab + search + date window. `scopeIds` is the
  *  caller's row-level sales scope (resolveSalesScopeIds; null = view-all). */
 export function filterDoList<Q>(q: Q, p: DoListParams, c: CompanyScopeCtx, scopeIds: string[] | null): Q {
@@ -130,8 +143,7 @@ export function filterDoList<Q>(q: Q, p: DoListParams, c: CompanyScopeCtx, scope
       ...inArm('so_doc_no', p.soRefDocNos),
     ].join(','));
   }
-  if (p.from) out = out.gte('do_date', p.from);
-  if (p.to) out = out.lte('do_date', p.to);
+  out = windowDoList(out, p);
   /* Server-filterable column funnels (owner 2026-09-16) — Customer Name /
      Currency pushed down so the pager runs over the filtered set. */
   if (p.debtorNames && p.debtorNames.length > 0) out = out.in('debtor_name', p.debtorNames);

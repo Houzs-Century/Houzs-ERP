@@ -58,6 +58,8 @@ export type DeviceState = {
   last_login: { cashier: string; at: string } | null;
   test_mode: boolean;
   device_name: string;
+  /** Sample catalog, no token, forced test mode (src/demo.ts); absent on a real device. */
+  demo?: boolean;
 };
 
 export type Session = { cashier: BundleCashier; started_at: string };

@@ -26,6 +26,20 @@ export function parseRecipients(raw: string): string[] {
   return out;
 }
 
+// The field with `picked` appended, skipping anyone already on it.
+export function addRecipients(raw: string, picked: string[]): string {
+  const have = new Set(parseRecipients(raw).map((a) => a.toLowerCase()));
+  const extra = picked.filter((a) => {
+    const key = a.trim().toLowerCase();
+    if (!key || have.has(key)) return false;
+    have.add(key);
+    return true;
+  });
+  if (extra.length === 0) return raw;
+  const kept = raw.trim().replace(/[,;]\s*$/, "");
+  return [kept, ...extra].filter(Boolean).join(", ");
+}
+
 // The first entry in the field that is not a valid address, or null. Returning
 // the ADDRESS rather than a boolean is deliberate: "a valid recipient is
 // required" over a five-address field names nothing the operator can fix.

@@ -69,6 +69,32 @@ describe('HC-0141 pairs file', () => {
   });
 });
 
+describe('HC-0147 pairs file', () => {
+  const book = JSON.parse(fs.readFileSync(path.join(DATA, 'duplicate-sku-merges.json'), 'utf8'));
+  const pairs = book['HC-0147'].pairs;
+
+  it('drops the ROY typo into ROYAL for K, Q and SK, keeping the SK row ROYAL already has', () => {
+    expect(pairs.map((p) => p.drop)).toEqual(['K', 'Q', 'SK'].map((s) => `DUNLOPILLO ROY EXECUTIVE LUXE 2.0 MATT (${s})`));
+    expect(pairs.map((p) => p.keep)).toEqual([
+      'DUNLOPILLO ROYAL EXECUTIVE LUXE 2.0 MATT (K)',
+      'DUNLOPILLO ROYAL EXECUTIVE LUXE 2.0 MATT (Q)',
+      'DUNLOPILLO ROYAL EXECUTIVE LUXE2.0 MATT (SK)',
+    ]);
+  });
+
+  /* The cutover map opened these AutoCount items as the ROY codes, so the map
+     cannot carry the survivor: the ROYAL rows' own supplier bindings name the same
+     AutoCount items, and a binding the map has no candidate for wins. */
+  it('the cutover map names the dropped ROY codes, so AutoCount resolves the survivor by its binding', () => {
+    const mapping = readMappingCsv(fs.readFileSync(path.join(DATA, 'autocount-erp-mapping-1561.csv'), 'utf8'));
+    const erpCodes = new Set([...mapping.values()].map((m) => m.erp));
+    for (const p of pairs) {
+      expect(erpCodes.has(p.drop)).toBe(true);
+      expect(erpCodes.has(p.keep)).toBe(false);
+    }
+  });
+});
+
 describe('planDuplicateSkuMerge', () => {
   it('re-keys documents and stock, leaves catalogue-side rows, and retires the dropped row', () => {
     const r = plan({

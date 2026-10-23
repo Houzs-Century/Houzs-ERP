@@ -998,18 +998,16 @@ export const StockTakeDetail = () => {
                               Match
                             </button>
                           )}
-                          {ln.addedOnCount && (
-                            <button
-                              type="button"
-                              onClick={() => setDeleteIds((cur) => new Set(cur).add(ln.id))}
-                              className={styles.chip}
-                              aria-label={`Delete line ${ln.itemCode}`}
-                              title="Remove this added line (on Save Counts)"
-                              style={{ fontSize: 'var(--fs-11)', cursor: 'pointer', marginLeft: 4 }}
-                            >
-                              <Trash2 size={12} strokeWidth={1.75} />
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            onClick={() => setDeleteIds((cur) => new Set(cur).add(ln.id))}
+                            className={styles.chip}
+                            aria-label={`Delete line ${ln.itemCode}`}
+                            title="Remove this line (on Save Counts)"
+                            style={{ fontSize: 'var(--fs-11)', cursor: 'pointer', marginLeft: 4 }}
+                          >
+                            <Trash2 size={12} strokeWidth={1.75} />
+                          </button>
                         </td>
                       )}
                     </tr>
@@ -1120,6 +1118,24 @@ export const StockTakeDetail = () => {
               onQueue={(p) => setPendingAdds((cur) => [...cur, p])}
               onRemove={(key) => setPendingAdds((cur) => cur.filter((x) => x.key !== key))}
             />
+          )}
+
+          {/* A misclicked trash would otherwise only come back by reloading, which drops every unsaved count. */}
+          {isDraft && deleteIds.size > 0 && (
+            <div style={{
+              marginTop: 'var(--space-3)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)',
+              fontSize: 'var(--fs-13)', color: 'var(--fg-muted)',
+            }}>
+              <span style={{ flex: '1 1 auto' }}>
+                <strong>{deleteIds.size} line{deleteIds.size === 1 ? '' : 's'} deleted on Save Counts:</strong>{' '}
+                <span style={{ fontFamily: 'var(--font-mono)' }}>
+                  {lines.filter((l) => deleteIds.has(l.id)).map((l) => l.itemCode).join(', ')}
+                </span>
+              </span>
+              <button type="button" className={styles.chip} onClick={() => setDeleteIds(new Set())} style={{ cursor: 'pointer' }}>
+                Undo
+              </button>
+            </div>
           )}
 
           {isDraft && totals.uncounted > 0 && (

@@ -20,10 +20,14 @@ import { describe, expect, test } from "vitest";
    just a string, and every table has the on_hold column — nothing in the types
    knows that one enum lacks the label. */
 
-const src = readFileSync(
-  join(__dirname, "../src/scm/routes/delivery-orders-mfg.ts"),
-  "utf8",
-);
+/* The route plus the two modules its hold filtering lives in since HC-0002:
+   the list tab filter (lib/do-list-read.ts) and the pill counts
+   (lib/do-status-counts.ts). */
+const src = [
+  "../src/scm/routes/delivery-orders-mfg.ts",
+  "../src/scm/lib/do-list-read.ts",
+  "../src/scm/lib/do-status-counts.ts",
+].map((f) => readFileSync(join(__dirname, f), "utf8")).join("\n");
 
 // Comments may cite the names while explaining the rule; code may not.
 const code = src

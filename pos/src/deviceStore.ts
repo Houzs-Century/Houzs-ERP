@@ -19,7 +19,7 @@ export function stateFromBundle(token: string, bundle: PosBundle, prev: DeviceSt
     prepared_at: bundle.prepared_at,
     last_sync_at: bundle.prepared_at,
     last_login: prev?.last_login ?? null,
-    test_mode: prev?.test_mode ?? false,
+    test_mode: prev?.demo ? false : prev?.test_mode ?? false,
     device_name: deviceName,
   };
 }

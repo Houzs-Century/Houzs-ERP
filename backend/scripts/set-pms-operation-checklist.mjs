@@ -11,17 +11,26 @@
    (HOUZS CENTURY), the owner's own account.
 
    WHAT IT SETS. Company 1, active (archived_at IS NULL), OPERATION-section items
-   that are still PENDING (items already Done or N/A are left alone), on PAST
-   fairs (end_date before today in Asia/Kuala_Lumpur):
+   that are still PENDING (items already Done or N/A are left alone), on the fairs
+   the DATE SCOPE below selects:
 
-     A. Past EXHIBITIONS: every pending OPERATION item -> 'na', EXCEPT a ZANOTTI
+     A. EXHIBITIONS: every pending OPERATION item -> 'na', EXCEPT a ZANOTTI
         exhibition's Decoration item (handled by B).
-     B. Past ZANOTTI exhibitions: the pending Decoration item -> 'done'.
-     C. Past SOLO fairs: the pending Decoration item -> 'done'. Solo fairs' other
-        OPERATION items are left untouched (the N/A sweep is exhibitions only).
+     B. ZANOTTI exhibitions: the pending Decoration item -> 'done'.
+     C. SOLO fairs: the pending Decoration item -> 'done'. Solo fairs' other
+        OPERATION items are left untouched UNLESS SOLO_NA_SWEEP=1 (see D).
+     D. (SOLO_NA_SWEEP=1 only) SOLO fairs: every OTHER pending OPERATION item
+        -> 'na' -- the same sweep A does for exhibitions, so a solo fair's flow
+        reaches DONE too. The owner's 2026-10-22 follow-up.
 
-   The three sets are disjoint and each requires status = 'pending', so order does
+   The sets are disjoint and each requires status = 'pending', so order does
    not matter and nothing is touched twice.
+
+   DATE SCOPE. Default: PAST fairs only (end_date before today, Asia/Kuala_Lumpur)
+   -- the 2026-10-21 run. Set ALL_DATES=1 (or INCLUDE_FUTURE=1) to drop the
+   "before today" bound and run the SAME three changes on every remaining fair,
+   upcoming ones included -- the owner's 2026-10-22 request to close the OPERATION
+   flow on all fairs. A fair still needs an end_date to be in scope.
 
    MODE=plan (default) lists every item it WOULD change -- id, project code/name,
    brand, item, current status -> target -- and writes nothing. That list is the
@@ -40,6 +49,8 @@ const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
 const CO = Number(process.env.COMPANY || 1);
 const ACTOR = Number(process.env.ACTOR || 1); // HOUZS CENTURY — the acting user stamped on done/activity
+const ALL_DATES = process.env.ALL_DATES === '1' || process.env.INCLUDE_FUTURE === '1';
+const SOLO_NA_SWEEP = process.env.SOLO_NA_SWEEP === '1';
 const APPLY = (process.env.MODE || 'plan').toLowerCase() === 'apply';
 const CONFIRM_PHRASE = 'I HAVE REVIEWED THE PLAN';
 
@@ -54,6 +65,12 @@ if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
 const TODAY_MYT = `(now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date`;
 const NOW_UTC = `to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')`;
 
+/* The fair-date bound shared by all three changes. Default keeps the original
+   PAST-only behaviour; ALL_DATES widens it to every fair with an end_date. */
+const DATE_PRED = ALL_DATES
+  ? `p.end_date IS NOT NULL`
+  : `p.end_date IS NOT NULL AND p.end_date::date < ${TODAY_MYT}`;
+
 /* Each change: its target status, whether it stamps completion, and the
    PROJECT/ITEM scope predicate. `ref` is the checklist table reference, so the
    same predicate serves the aliased SELECTs (c) and the un-aliased UPDATE. */
@@ -63,7 +80,7 @@ const CHANGES = [
     target: 'na',
     done: false,
     scope: (ref) => `et.slug = 'exhibition'
-            AND p.end_date IS NOT NULL AND p.end_date::date < ${TODAY_MYT}
+            AND ${DATE_PRED}
             AND (p.brand IS DISTINCT FROM 'ZANOTTI' OR ${ref}.title <> 'Decoration')`,
   },
   {
@@ -71,7 +88,7 @@ const CHANGES = [
     target: 'done',
     done: true,
     scope: (ref) => `et.slug = 'exhibition'
-            AND p.end_date IS NOT NULL AND p.end_date::date < ${TODAY_MYT}
+            AND ${DATE_PRED}
             AND p.brand = 'ZANOTTI' AND ${ref}.title = 'Decoration'`,
   },
   {
@@ -79,10 +96,25 @@ const CHANGES = [
     target: 'done',
     done: true,
     scope: (ref) => `et.slug = 'solo'
-            AND p.end_date IS NOT NULL AND p.end_date::date < ${TODAY_MYT}
+            AND ${DATE_PRED}
             AND ${ref}.title = 'Decoration'`,
   },
 ];
+
+/* D is opt-in (SOLO_NA_SWEEP=1): the owner's 2026-10-22 follow-up to finish the
+   solo fairs' flow by sweeping their remaining OPERATION items the way A does for
+   exhibitions. Disjoint from C (Decoration, handled there); kept behind a flag so
+   a default run still leaves solo non-Decoration items untouched. */
+if (SOLO_NA_SWEEP) {
+  CHANGES.push({
+    name: 'D. Solo fairs: pending OPERATION (non-Decoration) -> N/A',
+    target: 'na',
+    done: false,
+    scope: (ref) => `et.slug = 'solo'
+            AND ${DATE_PRED}
+            AND ${ref}.title <> 'Decoration'`,
+  });
+}
 
 /* Conditions common to every change, minus the project_id = p.id join (added per
    query) and minus the spec scope. */
@@ -110,7 +142,7 @@ function listTargets(client, ch) {
 }
 
 async function main() {
-  note(`mode=${APPLY ? 'APPLY' : 'PLAN (writes nothing)'} company=${CO} actor=${ACTOR}`);
+  note(`mode=${APPLY ? 'APPLY' : 'PLAN (writes nothing)'} company=${CO} actor=${ACTOR} dates=${ALL_DATES ? 'ALL (incl. upcoming)' : 'past only'} solo_na=${SOLO_NA_SWEEP ? 'on' : 'off'}`);
 
   const planned = [];
   for (const ch of CHANGES) {

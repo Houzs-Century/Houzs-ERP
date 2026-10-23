@@ -27,7 +27,8 @@ describe('the real middleware still does this', () => {
     expect(at, 'the authoritative read moved — re-anchor this test').toBeGreaterThan(-1);
     /* The re-issue sits just BEFORE the read's result is consumed; search the
        whole handler rather than a slice so a reorder does not fail spuriously. */
-    expect(src).toContain('const reissued = await mintSessionPass(c.env, token, Date.now());');
+    // Signs the user read just above, without a second read (HC-0002).
+    expect(src).toContain('const reissued = await mintSessionPassFor(c.env, user, token, Date.now());');
     expect(src).toContain('if (reissued) c.header("X-Session-Pass", reissued);');
   });
 });

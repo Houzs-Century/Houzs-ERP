@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import type { Env } from "../types";
+import { recordStep } from "../lib/step-timing";
 
 /**
  * supabase-js / PostgREST client for the SCM modules ported from 2990's.
@@ -41,7 +42,10 @@ async function retryingFetch(input: RequestInfo | URL, init?: RequestInit): Prom
   let lastErr: unknown;
   for (let i = 0; ; i++) {
     try {
+      const t0 = Date.now();
       const res = await fetch(input, init);
+      // Per request: how many REST round trips and their summed time (Server-Timing s-db-rest).
+      recordStep("db-rest", Date.now() - t0);
       if ((res.status === 502 || res.status === 503 || res.status === 504) && method === "GET" && i < REST_RETRIES) {
         await new Promise((r) => setTimeout(r, 300 + i * 500));
         continue;

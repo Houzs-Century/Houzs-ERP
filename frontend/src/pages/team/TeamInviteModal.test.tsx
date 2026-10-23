@@ -17,6 +17,7 @@ vi.mock("../../api/client", () => ({
   },
 }));
 vi.mock("../../hooks/useToast", () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
+vi.mock("../../hooks/useBranding", () => ({ useBranding: () => ({ email: "hello@houzscentury.com" }) }));
 
 import { TeamInviteModal } from "./TeamInviteModal";
 import type { Role } from "../../types";
@@ -61,7 +62,7 @@ describe("TeamInviteModal — Role", () => {
     expect(select.value).toBe("328");
 
     fireEvent.change(select, { target: { value: "8" } });
-    fireEvent.change(screen.getByPlaceholderText(/@/), { target: { value: "new.member@houzs.test" } });
+    fireEvent.change(screen.getByPlaceholderText("name@houzscentury.com"), { target: { value: "new.member@houzs.test" } });
     fireEvent.click(screen.getByRole("button", { name: /Send invite/i }));
 
     await waitFor(() => expect(post).toHaveBeenCalled());
@@ -69,6 +70,25 @@ describe("TeamInviteModal — Role", () => {
     expect(path).toBe("/api/users/invite");
     expect(body.role_id).toBe(8);
     expect(body.email).toBe("new.member@houzs.test");
+  });
+
+  test("the company email defaults to first.last from the name, and a typed one is sent", async () => {
+    mount();
+    fireEvent.change(screen.getByPlaceholderText("Full name"), { target: { value: "Nur Aina Rahman" } });
+    expect(screen.getByPlaceholderText("nur.rahman@houzscentury.com")).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText("name@houzscentury.com"), { target: { value: "aina@houzs.test" } });
+    fireEvent.click(screen.getByRole("button", { name: /Send invite/i }));
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect((post.mock.calls[0] as unknown as [string, Record<string, unknown>])[1].email_alias).toBeUndefined();
+
+    post.mockClear();
+    cleanup();
+    mount();
+    fireEvent.change(screen.getByPlaceholderText("name@houzscentury.com"), { target: { value: "aina@houzs.test" } });
+    fireEvent.change(screen.getByPlaceholderText("first.last@houzscentury.com"), { target: { value: "aina.r@houzscentury.com" } });
+    fireEvent.click(screen.getByRole("button", { name: /Send invite/i }));
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect((post.mock.calls[0] as unknown as [string, Record<string, unknown>])[1].email_alias).toBe("aina.r@houzscentury.com");
   });
 
   test("a scoped Sales Director gets no Role field", () => {

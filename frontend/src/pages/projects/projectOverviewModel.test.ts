@@ -5,7 +5,7 @@ const NO_SPLIT = { mattSofa: 0, bedframe: 0, accessories: 0 };
 
 const p = (o: Partial<OvProject>): OvProject => ({
   id: 1, code: "P1", name: "Fair", brand: "AKEMI", organizer: "MLE", venue: "MV", state: "KL", stage: "draft",
-  startDate: "2026-10-02", endDate: "2026-10-04", eventType: "Exhibition",
+  startDate: "2026-10-02", endDate: "2026-10-04", eventType: "Exhibition", sizeSqm: null,
   keyed: { income: 0, cogs: 0, rental: 0, commission: 0, setup: 0, transport: 0, merchandise: 0, other: 0, cogsMattSofa: 0, cogsBedframe: 0, cogsAccessories: 0, transportFee: 0, transportSetup: 0 },
   salesOrders: { sen: 0, costSen: 0, count: 0, costSplit: NO_SPLIT }, chatReport: null, pnl: null, collection: { totalSen: 0, paidSen: 0 }, ...o,
 });

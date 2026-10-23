@@ -38,8 +38,9 @@ import { resolveRoles, type NoteParty } from '../../acc/rules';
 import { customerPartyCode } from '../../acc/payments';
 import {
   CREDIT_NOTE_HEADER as HEADER, CREDIT_NOTE_LINE as LINE, NOTE_KINDS as KINDS, NOTE_KIND_WORD as KIND_WORD,
-  cancelCreditNote, insertCreditNote, postCreditNote, type NoteKind as Kind,
+  apInvoiceEventLines, cancelCreditNote, eventsFromApInvoice, insertCreditNote, postCreditNote, type NoteKind as Kind,
 } from '../../acc/credit-notes';
+import { parseEventId, unknownEventRefusal } from '../lib/event-tags';
 import { requireLeafAccount } from './accounting-chart';
 import { supabaseAuth } from '../middleware/auth';
 import { scanSupplierCreditNoteHandler } from './credit-note-scan';
@@ -58,7 +59,8 @@ const NO_PERM = (what: string) => ({ error: `You don't have permission to ${what
    may not live here. This file keeps the caller's half: permissions, the
    party lookup, the leaf check on a typed account, the draft edit. */
 
-type CleanLine = { description: string | null; code: string | null; amountSen: number };
+/** projectId: the event the line's money is for (owner 2026-10-22) — null = none. */
+type CleanLine = { description: string | null; code: string | null; amountSen: number; projectId: number | null };
 
 function buildLines(raw: unknown): { lines: CleanLine[]; total: number } | { error: string; message: string } {
   const arr = Array.isArray(raw) ? raw : [];
@@ -70,7 +72,9 @@ function buildLines(raw: unknown): { lines: CleanLine[]; total: number } | { err
     if (!Number.isInteger(amount) || amount <= 0) {
       return { error: 'bad_line', message: `Line ${i + 1}: amountSen must be a positive integer (got ${String(l?.amountSen)}).` };
     }
-    lines.push({ description: l?.description ? String(l.description).trim() : null, code, amountSen: amount });
+    const projectId = parseEventId(l?.projectId);
+    if (projectId === 'invalid') return { error: 'bad_line', message: `Line ${i + 1}: projectId must be an event id (got ${String(l?.projectId)}).` };
+    lines.push({ description: l?.description ? String(l.description).trim() : null, code, amountSen: amount, projectId });
   }
   return { lines, total: lines.reduce((s, l) => s + l.amountSen, 0) };
 }
@@ -223,6 +227,8 @@ export const createCreditNoteHandler = async (c: any): Promise<Response> => {
     const leafErr = await requireLeafAccount(c, co.companyId, code);
     if (leafErr) return leafErr;
   }
+  const eventErr = await unknownEventRefusal(c, lines.map((l) => l.projectId));
+  if (eventErr) return eventErr;
 
   /* The invoice a supplier note credits (owner 2026-10-01: 这个 cn 可能会 link 去
      相对应的 supplier invoice) — one of this supplier's own, in this company. */
@@ -283,7 +289,8 @@ export const createCreditNoteHandler = async (c: any): Promise<Response> => {
     noteDate,
     reason: String(body.reason ?? '').trim() || null,
     notes: String(body.notes ?? '').trim() || null,
-    lines: lines.map((l) => ({ description: l.description, code: l.code, amountSen: l.amountSen })),
+    lines: lines.map((l) => ({ description: l.description, code: l.code, amountSen: l.amountSen, projectId: l.projectId })),
+    knockOffApInvoiceIds: plan.filter((t) => t.kind === 'API').map((t) => t.id),
     createdBy: who(c),
   });
   if (!raised.ok) return c.json({ error: 'save_failed', reason: raised.reason }, 500);
@@ -345,15 +352,31 @@ export const updateCreditNoteHandler = async (c: any): Promise<Response> => {
   if (body.sourceDocNo !== undefined) patch.source_doc_no = String(body.sourceDocNo ?? '').trim() || null;
   if (built) {
     const fallback = note.kind === 'SCN' ? roles.PURCHASE_RETURNS : roles.SALES_RETURNS;
-    const lines = built.lines.map((l) => ({ ...l, code: l.code ?? fallback }));
-    for (const code of [...new Set(lines.map((l) => l.code))]) {
+    const typed = built.lines.map((l) => ({ ...l, code: l.code ?? fallback }));
+    for (const code of [...new Set(typed.map((l) => l.code))]) {
       const leafErr = await requireLeafAccount(c, co.companyId, code);
       if (leafErr) return leafErr;
     }
+    const eventErr = await unknownEventRefusal(c, typed.map((l) => l.projectId));
+    if (eventErr) return eventErr;
+    /* A supplier note takes the events of the AP invoices it names or knocks
+       off (acc/credit-notes.ts) — the ticks in this body, else the ones it has. */
+    let sources: string[] = [];
+    if (note.kind === 'SCN') {
+      const ticked = plan ? plan.filter((t) => t.kind === 'API').map((t) => t.id) : null;
+      if (ticked) sources = ticked;
+      else {
+        const al = await noteAllocations(sb, co.companyId, note);
+        sources = al.ok ? al.allocations.filter((a) => a.kind === 'API').map((a) => a.docId) : [];
+      }
+      if (note.ap_invoice_id) sources.push(String(note.ap_invoice_id));
+    }
+    const lines = sources.length > 0 ? eventsFromApInvoice(typed, await apInvoiceEventLines(sb, co.companyId, sources)) : typed;
     const { error: delErr } = await sb.from('acc_credit_note_lines').delete().eq('company_id', co.companyId).eq('note_id', note.id);
     if (delErr) return c.json({ error: 'save_failed', reason: delErr.message }, 500);
     const { error: insErr } = await sb.from('acc_credit_note_lines').insert(lines.map((l, i) => ({
       company_id: co.companyId, note_id: note.id, line_no: i + 1, description: l.description, account_code: l.code, amount_sen: l.amountSen,
+      project_id: l.projectId,
     })));
     if (insErr) return c.json({ error: 'save_failed', reason: insErr.message }, 500);
     patch.total_sen = built.total;

@@ -39,6 +39,7 @@ import { useModelAllowedOptionsByCode, mfgCategoryLabel } from '../lib/mfg-produ
 import { SpecialOrders } from './SpecialOrders';
 import { specialOrderSurface } from '../lib/special-order-surface';
 import type { BindingRow, MaterialKind } from '../lib/suppliers-queries';
+import { pickableBindings } from '../lib/pickable-bindings';
 import { activeOptions, maintPickerValues, restrictPricedToPool, restrictStringsToPool, fmtMoneySen } from '@2990s/shared';
 import { fabricOptionLabel, type FabricTrackingRow } from '../lib/fabric-queries';
 import { sortByText, sortByNumeric, byText } from '../lib/sort-options';
@@ -252,6 +253,7 @@ export const PoLineCard = ({
   // T12 — identity (code/SKU/description) + variants lock for GRN-sourced PI
   // lines; the whole card's `disabled` (locked doc) still wins over everything.
   const identityLocked = disabled || identityReadOnly;
+  const pickable = pickableBindings(bindings, allSkus);
 
   return (
     <div data-grid-row
@@ -366,7 +368,7 @@ export const PoLineCard = ({
               const code = e.target.value;
               // Bound match wins (autofills supplier SKU + price).
               const match = supplierId
-                ? bindings.find((b) => b.item_code === code)
+                ? pickable.find((b) => b.item_code === code)
                 : undefined;
               if (match) { onPickBinding(match); return; }
               // No binding (no supplier yet, OR supplier has no binding for this
@@ -390,8 +392,8 @@ export const PoLineCard = ({
             {/* Only show bound SKUs when the supplier actually HAS bindings;
                 otherwise fall back to the full catalogue so the picker is never
                 dead. */}
-            {supplierId && bindings.length > 0
-              ? [...bindings].sort((a, b) => byText(a.material_name, b.material_name)).map((b) => (
+            {supplierId && pickable.length > 0
+              ? [...pickable].sort((a, b) => byText(a.material_name, b.material_name)).map((b) => (
                   <option key={b.id} value={b.item_code}>
                     {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_sen, b.currency)}
                   </option>
@@ -420,7 +422,7 @@ export const PoLineCard = ({
             onChange={(e) => {
               const sku = e.target.value;
               if (supplierId) {
-                const match = bindings.find((b) => b.supplier_sku === sku);
+                const match = pickable.find((b) => b.supplier_sku === sku);
                 if (match) {
                   onPickBinding(match);
                 } else {
@@ -437,7 +439,7 @@ export const PoLineCard = ({
             style={{ fontFamily: 'var(--font-mono)' }}
           />
           <datalist id={`supplier-skus-${l.rid}`}>
-            {supplierId && [...bindings].sort((a, b) => byText(a.item_code, b.item_code)).map((b) => (
+            {supplierId && [...pickable].sort((a, b) => byText(a.item_code, b.item_code)).map((b) => (
               <option key={b.id} value={b.supplier_sku || ''}>
                 {b.item_code} · {b.material_name} · {fmtRm(b.unit_price_sen, b.currency)}
               </option>

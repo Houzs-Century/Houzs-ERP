@@ -12,6 +12,8 @@ import type { TeamMember, Department, Position, Role } from "../../types";
 import { defaultRoleId, deriveDeptLead, divisionOf, Eyebrow, FIELD_SELECT_CLS } from "./teamShared";
 import { showsPosPinCard } from "./posPinEligibility";
 import { isExternalPosition, EXTERNAL_POSITION_MESSAGE } from "../../lib/externalPosition";
+import { useBranding } from "../../hooks/useBranding";
+import { defaultPersonalLocalPart, mailDomainOf } from "../MailCenter/mail-personal";
 
 /* Invite Member — design handoff screen 03. One centered modal: person &
  * email, an assignment summary prefilled from the Directory's current
@@ -31,6 +33,7 @@ type SendResult = {
   invite_url?: string;
   email_sent?: boolean;
   activated: boolean;
+  email_alias?: string | null;
 };
 
 type BulkResult = { email: string; ok: boolean; error?: string };
@@ -87,6 +90,9 @@ export function TeamInviteModal({
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [emailAlias, setEmailAlias] = useState("");
+  const mailDomain = mailDomainOf(useBranding().email);
+  const defaultLocal = defaultPersonalLocalPart(name);
   const [deptId, setDeptId] = useState<number | null>(presetDeptId);
   const [division, setDivision] = useState("");
   const [managerId, setManagerId] = useState<number | null>(null);
@@ -119,6 +125,7 @@ export function TeamInviteModal({
     setName("");
     setEmail("");
     setPhone("");
+    setEmailAlias("");
     setDeptId(presetDeptId);
     setDivision("");
     setPositionId(null);
@@ -179,10 +186,12 @@ export function TeamInviteModal({
       const res = await api.post<{
         invite_url?: string;
         email_sent?: boolean;
+        email_alias?: string | null;
       }>("/api/users/invite", {
         email: email.trim(),
         name: name.trim() || undefined,
         phone: phone.trim() || undefined,
+        ...(emailAlias.trim() ? { email_alias: emailAlias.trim() } : {}),
         department_id: deptId,
         position_id: positionId,
         manager_id: managerId,
@@ -211,6 +220,7 @@ export function TeamInviteModal({
         invite_url: res.invite_url,
         email_sent: res.email_sent,
         activated: withPassword && !!password,
+        email_alias: res.email_alias,
       });
       onInvited();
     } catch (e) {
@@ -399,6 +409,13 @@ export function TeamInviteModal({
                   : "Email didn't go out automatically — share the invite link below directly."}
             </p>
           </div>
+          {sent.email_alias && (
+            <div className="rounded-lg border border-border bg-surface-2 p-3 text-[12px] leading-relaxed text-ink-secondary">
+              Company email: <span className="font-mono text-ink">{sent.email_alias}</span>. It can send now. To receive mail,
+              add it in Google Workspace as an alias of an account Mail Center already reads; Team, Mailboxes lists the
+              addresses still waiting.
+            </div>
+          )}
           {sent.invite_url && (
             <div className="flex items-center gap-2">
               <input
@@ -519,6 +536,19 @@ export function TeamInviteModal({
                   placeholder="12-345 6789 (optional)"
                   className={cn(inputCls, "mt-1")}
                 />
+              </div>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <div className="text-[11.5px] text-ink-muted">Company email (their own Mail Center inbox)</div>
+                <input
+                  value={emailAlias}
+                  onChange={(e) => setEmailAlias(e.target.value)}
+                  placeholder={defaultLocal ? `${defaultLocal}@${mailDomain}` : `first.last@${mailDomain}`}
+                  type="email"
+                  className={cn(inputCls, "mt-1 font-mono text-[12.5px]")}
+                />
+                <div className="mt-1 text-[11px] text-ink-muted">
+                  Leave blank to use {defaultLocal ? `${defaultLocal}@${mailDomain}` : "first.last from the name"}; a number is added if it is taken.
+                </div>
               </div>
             </div>
           ) : (

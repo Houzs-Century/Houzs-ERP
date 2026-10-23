@@ -7,21 +7,20 @@
 // /delivery-orders-mfg/export/rows) produce the identical row shape. The
 // comments below are the handler's own, moved with the code. The reads are sized
 // for ONE page of rows (several send every row id in one request), so a caller
-// with more rows passes them in pages. The two things the route owns —
-// computeDoLifecycle and its finance-key list — are passed in, so this module
-// never imports the route that imports it.
+// with more rows passes them in pages. The one thing the route owns —
+// its finance-key list — is passed in, so this module never imports the route
+// that imports it.
 // ----------------------------------------------------------------------------
 
 import type { Context } from 'hono';
 import type { Env, Variables } from '../env';
 import { canViewScmFinance } from './houzs-perms';
 import { resolveDoHeaderSources, resolveDoSourceSos } from './source-po-trace';
+import { doLifecycleFrom, type DoLifecycle, type DoLifecycleDr, type DoLifecycleSi } from './do-lifecycle';
 
 export type DoListRowDeps = {
-  computeDoLifecycle: (sb: unknown, ids: string[]) => Promise<Map<string, 'shipped' | 'invoiced' | 'returned'>>;
   financeKeys: readonly string[];
 };
-type DoLifecycle = 'shipped' | 'invoiced' | 'returned';
 
 export async function buildDoListRows(
   sb: Variables['supabase'],
@@ -29,7 +28,6 @@ export async function buildDoListRows(
   rows: Array<{ id: string } & Record<string, unknown>>,
   deps: DoListRowDeps,
 ): Promise<Array<{ id: string } & Record<string, unknown>>> {
-  const computeDoLifecycle = deps.computeDoLifecycle;
   const DO_FINANCE_KEYS = deps.financeKeys;
   /* Tier 2 downstream-lock — one extra batched read per doc set: pull every
      non-cancelled DR/SI that points back to a listed DO and stamp has_children
@@ -40,19 +38,22 @@ export async function buildDoListRows(
      invoiced into and the DR number(s) returned against it. Derived from the
      SAME batched child reads that already stamp has_children — one added column
      in each select, no extra round-trip, and never touches DO status/lifecycle
-     (which stays computeDoLifecycle below). */
+     (which stays lib/do-lifecycle.ts below). */
   const invoicedSiByDo = new Map<string, Set<string>>();
   const returnedDrByDo = new Map<string, Set<string>>();
   let lifecycleByDo = new Map<string, DoLifecycle>();
   if (rows.length > 0) {
     const ids = rows.map((r) => r.id);
-    const [drRes, siRes, lc] = await Promise.all([
-      sb.from('delivery_returns').select('delivery_order_id, return_number').in('delivery_order_id', ids).neq('status', 'CANCELLED'),
-      sb.from('sales_invoices').select('delivery_order_id, invoice_number').in('delivery_order_id', ids).neq('status', 'CANCELLED'),
-      computeDoLifecycle(sb, ids),
+    /* The lifecycle badge's dates ride these two reads (lib/do-lifecycle.ts):
+       computeDoLifecycle read the same tables with the same filter a second time. */
+    const [drRes, siRes] = await Promise.all([
+      sb.from('delivery_returns').select('delivery_order_id, return_number, return_date, created_at').in('delivery_order_id', ids).neq('status', 'CANCELLED'),
+      sb.from('sales_invoices').select('delivery_order_id, invoice_number, invoice_date, created_at').in('delivery_order_id', ids).neq('status', 'CANCELLED'),
     ]);
-    lifecycleByDo = lc;
-    for (const d of ((drRes.data ?? []) as Array<{ delivery_order_id: string | null; return_number: string | null }>)) {
+    const drRows = (drRes.data ?? []) as Array<DoLifecycleDr & { return_number: string | null }>;
+    const siRows = (siRes.data ?? []) as Array<DoLifecycleSi & { invoice_number: string | null }>;
+    lifecycleByDo = doLifecycleFrom([...new Set(ids.filter(Boolean))], siRows, drRows);
+    for (const d of drRows) {
       if (!d.delivery_order_id) continue;
       childIds.add(d.delivery_order_id);
       if (d.return_number) {
@@ -61,7 +62,7 @@ export async function buildDoListRows(
         returnedDrByDo.set(d.delivery_order_id, set);
       }
     }
-    for (const s of ((siRes.data ?? []) as Array<{ delivery_order_id: string | null; invoice_number: string | null }>)) {
+    for (const s of siRows) {
       if (!s.delivery_order_id) continue;
       childIds.add(s.delivery_order_id);
       if (s.invoice_number) {

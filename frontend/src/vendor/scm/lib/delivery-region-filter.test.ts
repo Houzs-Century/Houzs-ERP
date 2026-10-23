@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { filterOrdersByRegion, planningCountsFrom } from './delivery-planning-queries';
-import type { DeliveryState } from './delivery-planning-queries';
+import { filterOrdersByRegion, planningCountsFrom, sxeDateOf } from './delivery-planning-queries';
+import type { DeliveryState, PlanningOrder } from './delivery-planning-queries';
 
 /* The region chip now filters in the browser (region=ALL fetch, local filter) —
    the regression guard that it behaves like the backend's matchesRegion:
@@ -35,6 +35,30 @@ describe('filterOrdersByRegion', () => {
   it('does not mutate or alias the input array', () => {
     const out = filterOrdersByRegion(orders, 'ALL', KNOWN);
     expect(out).not.toBe(orders);
+  });
+});
+
+/* The "Sales Exemption Expiry Date" column value (owner 2026-10-22). An SO row
+   shows the ORIGINAL delivery date via the SO-list rule soExemptionExpiryOf
+   (frozen sales_exemption_expiry -> AutoCount book -> current delivery date), so
+   the board and the SO list agree. An ASSR row shows its own service date; a
+   DP / project synthetic row keeps its (null) book value. */
+const order = (p: Partial<PlanningOrder>): PlanningOrder => (p as PlanningOrder);
+describe('sxeDateOf', () => {
+  it('an ASSR row shows its own service date, not the (null) book value', () => {
+    expect(sxeDateOf(order({ row_type: 'assr', customer_delivery_date: '2026-09-05', ac_sales_exemption_expiry: null }))).toBe('2026-09-05');
+  });
+  it('an SO row prefers the frozen original delivery date over book and current date', () => {
+    expect(sxeDateOf(order({ row_type: 'so', sales_exemption_expiry: '2026-06-30', ac_sales_exemption_expiry: '2026-12-31', customer_delivery_date: '2026-09-01' }))).toBe('2026-06-30');
+  });
+  it('an SO row with no frozen date falls back to the AutoCount book value', () => {
+    expect(sxeDateOf(order({ row_type: 'so', sales_exemption_expiry: null, ac_sales_exemption_expiry: '2026-12-31', customer_delivery_date: '2026-09-01' }))).toBe('2026-12-31');
+  });
+  it('an SO row with neither falls back to the current delivery date (SO-list rule)', () => {
+    expect(sxeDateOf(order({ row_type: 'so', sales_exemption_expiry: null, ac_sales_exemption_expiry: null, customer_delivery_date: '2026-09-01' }))).toBe('2026-09-01');
+  });
+  it('a project / DP row with no book value stays blank', () => {
+    expect(sxeDateOf(order({ row_type: 'project', customer_delivery_date: '2026-09-10', ac_sales_exemption_expiry: null }))).toBeNull();
   });
 });
 
