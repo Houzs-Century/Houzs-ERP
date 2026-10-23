@@ -219,7 +219,9 @@ export const useMfgDeliveryOrders = (status?: string) => useQuery({
 // express (open/in_transit/delivered), so those show all rows still counted.
 /** The Delivery Order list's filter as query parameters, no paging: the list
  *  request and the list's export (do-list-export.ts) send exactly these. */
-export function doListSearchParams(f: { status?: string; q?: string; sort?: string; debtorNames?: string[]; currencies?: string[] }): URLSearchParams {
+export type DoDateBy = 'delivery' | 'do';
+
+export function doListSearchParams(f: { status?: string; q?: string; sort?: string; debtorNames?: string[]; currencies?: string[]; from?: string; to?: string; dateBy?: DoDateBy }): URLSearchParams {
   const usp = new URLSearchParams();
   if (f.status) usp.set('status', f.status);
   if (f.q && f.q.trim()) usp.set('q', f.q.trim());
@@ -228,17 +230,21 @@ export function doListSearchParams(f: { status?: string; q?: string; sort?: stri
   // Currency, JSON arrays (a customer name may contain a comma).
   if (f.debtorNames && f.debtorNames.length) usp.set('debtorNames', JSON.stringify(f.debtorNames));
   if (f.currencies && f.currencies.length) usp.set('currencies', JSON.stringify(f.currencies));
+  // Date window (HC-0151): inclusive ISO days on the chosen date column.
+  if (f.from) usp.set('from', f.from);
+  if (f.to) usp.set('to', f.to);
+  if ((f.from || f.to) && f.dateBy) usp.set('dateBy', f.dateBy);
   return usp;
 }
 
-export function useMfgDeliveryOrdersPaged(params: { enabled: boolean; page: number; pageSize: number; status?: string; q?: string; sort?: string; debtorNames?: string[]; currencies?: string[] }) {
-  const { enabled, page, pageSize, status, q, sort, debtorNames, currencies } = params;
-  const usp = doListSearchParams({ status, q, sort, debtorNames, currencies });
+export function useMfgDeliveryOrdersPaged(params: { enabled: boolean; page: number; pageSize: number; status?: string; q?: string; sort?: string; debtorNames?: string[]; currencies?: string[]; from?: string; to?: string; dateBy?: DoDateBy }) {
+  const { enabled, page, pageSize, status, q, sort, debtorNames, currencies, from, to, dateBy } = params;
+  const usp = doListSearchParams({ status, q, sort, debtorNames, currencies, from, to, dateBy });
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
   return useQuery({
     enabled,
-    queryKey: ['mfg-delivery-orders-paged', page, pageSize, status ?? '', q ?? '', sort ?? '', JSON.stringify(debtorNames ?? []), JSON.stringify(currencies ?? [])],
+    queryKey: ['mfg-delivery-orders-paged', page, pageSize, status ?? '', q ?? '', sort ?? '', JSON.stringify(debtorNames ?? []), JSON.stringify(currencies ?? []), from ?? '', to ?? '', dateBy ?? ''],
     queryFn: ({ signal }) => authedFetch<{ deliveryOrders: any[]; total: number; page: number; pageSize: number; statusCounts: { all: number; open: number; in_transit: number; delivered: number; cancelled: number } }>(`/delivery-orders-mfg?${usp.toString()}`, { signal }),
     placeholderData: (prev: any) => prev,
     staleTime: 30_000,

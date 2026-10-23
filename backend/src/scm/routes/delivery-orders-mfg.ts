@@ -84,7 +84,7 @@ import {
   soLineShippedSourcePosImpl,
 } from '../lib/source-po-trace';
 export { soLineShippedSources, resolveDoSources } from '../lib/source-po-trace';
-import { filterDoList, fromDoList, orderDoList, readDoListParams } from '../lib/do-list-read';
+import { filterDoList, fromDoList, orderDoList, readDoListParams, windowDoList } from '../lib/do-list-read';
 import { readStatusCounts } from '../lib/status-counts';
 import { resolveSalesScopeIds, salesDocOutOfScope } from '../lib/salesScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
@@ -2592,13 +2592,13 @@ deliveryOrdersMfg.get('/', async (c) => {
     total = res.count ?? (res.data?.length ?? 0);
 
     /* Status counts mirror the FE filter-pill buckets (open / in_transit /
-       delivered / cancelled) over the SAME scope filter but WITHOUT status /
-       search / pagination. Scoped to the active company like the list, so the
+       delivered / cancelled) over the SAME scope filter and date window but
+       WITHOUT status / search / pagination. Scoped to the active company like the list, so the
        tab counts can't leak the other company's DO totals. */
     const countBase = () => {
       let cq = scopeToCompany(sb.from('delivery_orders').select('*', { count: 'exact', head: true }), c);
       if (scopeIds) cq = cq.in('salesperson_id', scopeIds);
-      return cq;
+      return windowDoList(cq, listParams);
     };
     /* One count per BUCKET, derived from the map — a bucket added there cannot
        be left without a count, the shape that renders a tab beside a silent 0. */
