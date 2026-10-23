@@ -62,6 +62,8 @@ function fakeSb(tables: Record<string, Row[]>) {
     // optimisation; the JS-side SO_DONE / PO_DEAD filters stay authoritative and
     // are what these tests exercise.
     not() { return this; }
+    // readUnlinkedDoLines: `so_item_id IS NULL`.
+    is(col: string, val: unknown) { this.rows = this.rows.filter((r) => (r[col] ?? null) === val); return this; }
     // sofa-set-coverage reads open lots with .gt('qty_remaining', 0).
     gt(col: string, val: number) { this.rows = this.rows.filter((r) => Number(r[col] ?? 0) > val); return this; }
     // An UPPER bound only, exactly like the real one — it can lower the ceiling,
