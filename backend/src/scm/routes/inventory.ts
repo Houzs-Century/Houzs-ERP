@@ -556,7 +556,7 @@ export const productTotalsHandler = async (
     if (warehouseId) {
       const { data: bal, error: balErr } = await chunkIn(codes, (batch, from, to) => pgrestIn(scopeToCompany(sb
         .from('inventory_balances').select('item_code, qty'), c)
-        .eq('warehouse_id', warehouseId), 'item_code', batch).range(from, to));
+        .eq('warehouse_id', warehouseId), 'item_code', batch).order('item_code').order('warehouse_id').order('variant_key').order('company_id').range(from, to));
       if (balErr) {
         // eslint-disable-next-line no-console
         console.error('[inventory] warehouse balances read failed:', (balErr as { message?: unknown }).message ?? balErr);
@@ -578,7 +578,7 @@ export const productTotalsHandler = async (
     if (scopedNonSelling.length > 0) {
       const { data: nsBal, error: nsErr } = await chunkIn(codes, (batch, from, to) => pgrestIn(scopeToCompany(sb
         .from('inventory_balances').select('item_code, qty'), c)
-        .in('warehouse_id', scopedNonSelling), 'item_code', batch).range(from, to));
+        .in('warehouse_id', scopedNonSelling), 'item_code', batch).order('item_code').order('warehouse_id').order('variant_key').order('company_id').range(from, to));
       if (nsErr) {
         // eslint-disable-next-line no-console
         console.error('[inventory] non-selling balances read failed:', (nsErr as { message?: unknown }).message ?? nsErr);
@@ -590,6 +590,11 @@ export const productTotalsHandler = async (
 
     // chunkIn — codes can now exceed 1000 (un-truncated catalogue), so batch the
     // .in() lists and page each batch (PostgREST default cap is 1000 rows).
+    /* Every paged read in this handler carries a TOTAL order (paginate-all.ts:
+       "apply all filters/ordering INSIDE the factory"). Unordered, the 1000-row
+       windows of one batch could repeat or skip rows: on prod 2026-10-23 the
+       demand read counted HC-SO-009362's bolster line twice (6 for 3) and left
+       READY_TO_SHIP lines such as HC-SO-007851 out — a wrong Available. */
     // Scope demand to the active company — the stock figure (v_inventory_product_totals)
     // and the open-lots query below are already company-scoped, so leaving demand
     // un-scoped would subtract OTHER companies' claims on a shared SKU from THIS
@@ -609,7 +614,7 @@ export const productTotalsHandler = async (
         .eq('cancelled', false);
       if (embedNetting) dq = dq.not('so.status', 'in', SO_DONE_SQL);
       if (warehouseId) dq = dq.eq('warehouse_id', warehouseId); // ask A — scope demand to this warehouse (mig 0118)
-      return dq.range(from, to);
+      return dq.order('id').range(from, to);
     });
     let nettingEmbedded = true;
     let { data: demand, error: demandErr } = await readDemand(true);
@@ -664,7 +669,7 @@ export const productTotalsHandler = async (
     // ~30 days").
     const { data: poItems, error: poErr } = await chunkIn(codes, (batch, from, to) => pgrestIn(scopeToCompany(sb
       .from('purchase_order_items')
-      .select('item_code, qty, received_qty, delivery_date, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, warehouse_id, po:purchase_orders!inner(po_number, status, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, purchase_location_id)'), c), 'item_code', batch).range(from, to));
+      .select('item_code, qty, received_qty, delivery_date, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, warehouse_id, po:purchase_orders!inner(po_number, status, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, purchase_location_id)'), c), 'item_code', batch).order('id').range(from, to));
     if (poErr) {
       // eslint-disable-next-line no-console
       console.error('[inventory] incoming PO lines read failed:', (poErr as { message?: unknown }).message ?? poErr);
@@ -701,7 +706,7 @@ export const productTotalsHandler = async (
         // to the drawer's buildStockBreakdown formula.
         .select('item_code, received_at, qty_remaining, remaining_value_sen, source_doc_type, source_doc_no'), c), 'item_code', batch); // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
       if (warehouseId) lq = lq.eq('warehouse_id', warehouseId); // ask A — oldest lot within this warehouse
-      return lq.range(from, to);
+      return lq.order('received_at').order('id').range(from, to);
     });
     if (lotsErr) {
       // eslint-disable-next-line no-console
