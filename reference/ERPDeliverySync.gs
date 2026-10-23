@@ -1037,9 +1037,9 @@ function erpReconcileApply() { return erpReconcile_(false); }
 // ERP pull writes into EM Order never reached them, and the daily backfill
 // (Diagnostic.gs backfillMissingToESB) adds missing orders to ESB only.
 // This push, from the "Push to ESB / BS Sheet" menu item and a daily trigger:
-//   - updates, on rows the transporter sheet already has, every column EM
-//     Order row 2 labels "From AutoCount" / "From Admin" whose row-3 header the
-//     target also has (a blank EM value never clears the target; a value the
+//   - updates, on rows the transporter sheet already has, every column
+//     erpColumnOwner_ gives to Houzs ("EM") whose row-3 header the target
+//     also has (a blank EM value never clears the target; a value the
 //     target's dropdown rejects is skipped);
 //   - appends orders the target lacks: ESB every order, BS an order ESB has
 //     marked "TO BRIGHTSUN" (owner 2026-10-23).
@@ -1047,12 +1047,12 @@ function erpReconcileApply() { return erpReconcile_(false); }
 // Spreadsheet ids live in Script properties (this file is in a public repo):
 // TRANSPORTER_ESB_SS_ID, TRANSPORTER_BS_SS_ID.
 const ERP_TRANSPORTERS = [
-  { name: "ESB", prop: "TRANSPORTER_ESB_SS_ID", sheet: "EM Delivery", pullLabel: "From ESB Sheet", wants: function () { return true; } },
+  { name: "ESB", prop: "TRANSPORTER_ESB_SS_ID", sheet: "EM Delivery", pullOwner: "ESB", wants: function () { return true; } },
   // BS = Brightsun: an order goes to BS once the ESB SHEET marks it "TO
   // BRIGHTSUN" in its delivery-status remarks (owner 2026-10-23; every one of
   // BS's 29 original rows carried it, any other ESB remark did not). Read from
   // ESB itself, which is processed first, not from EM Order's copy.
-  { name: "BS", prop: "TRANSPORTER_BS_SS_ID", sheet: "SABAH EM Delivery", pullLabel: "From BS Sheet",
+  { name: "BS", prop: "TRANSPORTER_BS_SS_ID", sheet: "SABAH EM Delivery", pullOwner: "BS",
     wants: function (field, doc, esbRemark) { return /to\s*brightsun/i.test(esbRemark(doc)); } }
 ];
 
@@ -1078,15 +1078,13 @@ function erpTargetColumns_(headers) {
 }
 
 /** Pure: transporter-owned values to copy BACK into EM Order. Columns are the
- *  ones EM row 2 labels `sourceLabel` ("From ESB Sheet" / "From BS Sheet"),
- *  matched by header. A blank transporter cell never clears EM. */
-function erpPlanTransporterPull_(master, target, sourceLabel) {
+ *  ones erpColumnOwner_ gives to `source` ("ESB" / "BS"), matched by header. A blank transporter cell never clears EM. */
+function erpPlanTransporterPull_(master, target, source) {
   const tCol = erpTargetColumns_(target.headers);
-  const source = erpLabelSource_(sourceLabel);
   const cols = [];
-  master.labels.forEach(function (lab, i) {
-    const k = erpNormHeader_(master.headers[i]);
-    if (source && erpLabelSource_(lab) === source && k && tCol[k] !== undefined) cols.push({ m: i, t: tCol[k] });
+  master.headers.forEach(function (h, i) {
+    const k = erpNormHeader_(h);
+    if (k && erpColumnOwner_(k) === source && tCol[k] !== undefined) cols.push({ m: i, t: tCol[k] });
   });
   const docM = master.headers.map(erpNormHeader_).indexOf("doc. no.");
   const docT = tCol["doc. no."];
@@ -1106,15 +1104,22 @@ function erpPlanTransporterPull_(master, target, sourceLabel) {
   return { updates: updates, columns: cols.length };
 }
 
-/** "ESB" / "BS" / "" for an EM row-2 owner label. Rows 1-2 of EM Order are
- *  hidden and the exact wording is not fixed ("From ESB Sheet", "From ESB",
- *  "ESB"...), so match the word: an exact "From ESB Sheet" compare found no
- *  column on 2026-10-23 and pulled nothing. */
-function erpLabelSource_(label) {
-  const l = erpNormHeader_(label);
-  if (/\besb\b/.test(l)) return "ESB";
-  if (/\bbs\b/.test(l)) return "BS";
-  return "";
+/** Who owns an EM Order column, decided by its row-3 HEADER (owner
+ *  2026-10-23: the hidden rows 1-2 are unused). Transport legs belong to the
+ *  transporter that runs them; everything else is Houzs / the ERP ("EM"). */
+const ERP_ESB_COLUMNS = ["em order delivery status esb remarks", "consignment no", "vessel & voyage",
+  "etd port klang", "eta em port", "done delivery", "esb remarks"];
+const ERP_BS_COLUMNS = ["bs kk - delivery date", "bs remarks"];
+function erpColumnOwner_(header) {
+  const k = erpNormHeader_(header);
+  const hit = function (list) {
+    return list.some(function (x) {
+      return k === x || k.indexOf(x + " ") === 0 || k.indexOf(x + "\uff08") === 0 || k.indexOf(x + "(") === 0;
+    });
+  };
+  if (hit(ERP_ESB_COLUMNS)) return "ESB";
+  if (hit(ERP_BS_COLUMNS)) return "BS";
+  return "EM";
 }
 
 /** Pure: what to write to one transporter sheet. Exported for the test. */
@@ -1123,11 +1128,9 @@ function erpPlanTransporterPush_(master, target, wants, esbRemark) {
   // target: { headers[], rows[][], allowed: {colIdx: {value:1}} } (row 1, rows 2..)
   const tCol = erpTargetColumns_(target.headers);
   const owned = [];
-  master.labels.forEach(function (lab, i) {
-    const l = erpNormHeader_(lab);
-    const k = erpNormHeader_(master.headers[i]);
-    const isStatus = k === "delivery message status";
-    if ((isStatus || l === "from autocount" || l === "from admin") && k && tCol[k] !== undefined) owned.push({ m: i, t: tCol[k] });
+  master.headers.forEach(function (h, i) {
+    const k = erpNormHeader_(h);
+    if (k && erpColumnOwner_(k) === "EM" && tCol[k] !== undefined) owned.push({ m: i, t: tCol[k] });
   });
   const mCol = function (name) { return master.headers.map(erpNormHeader_).indexOf(name); };
   const docM = mCol("doc. no.");
@@ -1203,7 +1206,7 @@ function erpPushToTransporters_(triggerType) {
         }
         // Pull first: the transporter's own columns come back into EM Order, on
         // the row that holds the DocNo NOW (staff may sort EM mid-run).
-        const pulls = erpPlanTransporterPull_(master, target, t.pullLabel);
+        const pulls = erpPlanTransporterPull_(master, target, t.pullOwner);
         const rowState = { index: erpDocNoIndex_(em, 4), moved: 0 };
         let pulled = 0;
         pulls.updates.forEach(function (u) {
