@@ -144,6 +144,9 @@ async function main() {
     });
     const months = {};
     for (const x of hit) { const m = String(x.l.created_at?.toISOString?.() ?? x.l.created_at ?? '').slice(0, 7); months[m] = (months[m] ?? 0) + 1; }
+    const keys = {};
+    for (const x of hit) for (const k of Object.keys(x.l.variants ?? {})) keys[k] = (keys[k] ?? 0) + 1;
+    log(`  ${r} variant keys: ${JSON.stringify(keys)}`);
     log(`  ${r}: ${hit.length} lines; one price at every seat size ${uniform.length} (events ${uniform.filter((x) => x.l.project_id != null).length}); by order month ${JSON.stringify(months)}`);
   }
 
