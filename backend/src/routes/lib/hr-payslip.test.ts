@@ -60,6 +60,47 @@ describe("buildPayslip", () => {
     });
     expect(s).toMatchObject({ bankName: null, bankAccount: null, pcbStatus: "UNKNOWN", pcbSen: 0 });
   });
+
+  test("trip pay and allowances add to gross, backpay comes off net, paid leave is not absent", () => {
+    const days = fullMonth().filter((d) => d.date !== "2026-09-08" && d.date !== "2026-09-09");
+    const base = {
+      employee: { ...emp, epf: false, socso: false, eis: false, pcb: false },
+      period: "2026-09",
+      salaryHistory: [],
+      days,
+      holidays: new Set<string>(),
+      absenceThroughDay: 30,
+      shortHours: 0,
+      rulesOn: () => DEFAULT_PAY_RULES,
+      advances: [],
+      penaltySen: 0,
+      ytd: { remunerationSen: 0, epfSen: 0, pcbSen: 0 },
+    };
+    const trip = {
+      employeeId: 1,
+      drove: true,
+      helped: false,
+      commission: { lines: [{ crew: 3 as const, baseSen: 16502600, rateBps: 40, amountSen: 66010 }], baseSen: 16502600, missedDays: 0, cutBps: 0, amountSen: 66010 },
+      lines: [{ key: "FAIR", label: "Fair", count: 4, unitSen: 10000, amountSen: 40000, dates: [] }],
+      allowanceSen: 40000,
+      totalSen: 106010,
+    };
+    const s = buildPayslip({
+      ...base,
+      paidLeave: new Set(["2026-09-08"]),
+      trip,
+      allowances: [
+        { kind: "LEADERSHIP", amountSen: 20000, note: null },
+        { kind: "BACKPAY", amountSen: 15000, note: "company advance" },
+      ],
+    });
+    expect(s.pay.absentDates).toEqual(["2026-09-09"]);
+    expect(s.pay.paidLeaveDates).toEqual(["2026-09-08"]);
+    expect(s).toMatchObject({ commissionSen: 66010, tripAllowanceSen: 40000, allowancesSen: 20000, backpaySen: 15000 });
+    expect(s.grossSen).toBe(s.pay.grossSen + 66010 + 40000 + 20000);
+    expect(s.netSen).toBe(s.grossSen - 15000);
+    expect(buildPayslip(base).pay.absentDays).toBe(2);
+  });
 });
 
 describe("onPayroll", () => {

@@ -1,9 +1,24 @@
 /* One payslip from one employee's month (HC-0125 phase 4), pure: the
  * pipeline of Hookka's POST /api/payslips for a single worker, minus the
- * production pieces (efficiency allowance). Tested without a database. */
+ * production pieces (efficiency allowance). Tested without a database.
+ * Phase 5 adds the trip month's commission and trip allowances, the monthly
+ * allowances and the backpay deduction. */
 import { computeMonthlyPay, effectiveSalaryForMonth, statutoryFor, type MonthlyPay } from "../../scm/shared/hr-payroll";
 import { resolvePcb, type PcbCategory, type PcbStatus } from "../../scm/shared/hr-pcb";
 import type { PayRulesConfig } from "../../scm/shared/hr-pay-rules";
+import type { TripPay } from "../../scm/shared/hr-trip-pay";
+
+export const ALLOWANCE_KINDS = ["LEADERSHIP", "TRANSPORT", "OVERNIGHT", "KPI", "OTHER", "BACKPAY"] as const;
+export type AllowanceKind = (typeof ALLOWANCE_KINDS)[number];
+export const ALLOWANCE_LABEL: Record<AllowanceKind, string> = {
+  LEADERSHIP: "Leadership allowance",
+  TRANSPORT: "Transport allowance",
+  OVERNIGHT: "Overnight allowance",
+  KPI: "KPI allowance",
+  OTHER: "Allowance",
+  BACKPAY: "Backpay (company advance)",
+};
+export type AllowanceLine = { kind: AllowanceKind; label: string; amountSen: number; note: string | null };
 
 export type PayslipEmployee = {
   id: number;
@@ -37,7 +52,13 @@ export type PayslipFigures = {
   departmentName: string | null;
   payMode: "MONTHLY" | "DAILY";
   pay: MonthlyPay;
+  /** The monthly allowances (not backpay). */
   allowancesSen: number;
+  allowanceLines: AllowanceLine[];
+  commissionSen: number;
+  tripAllowanceSen: number;
+  trip: TripPay | null;
+  backpaySen: number;
   grossSen: number;
   statutory: ReturnType<typeof statutoryFor>;
   pcbSen: number;
@@ -74,6 +95,11 @@ export function buildPayslip(input: {
   rulesOn: (ymd: string) => PayRulesConfig;
   advances: ReadonlyArray<{ date: string; amountSen: number }>;
   penaltySen: number;
+  paidLeave?: ReadonlySet<string>;
+  /** The trip month of the same name (23rd to 22nd), or null. */
+  trip?: TripPay | null;
+  /** Monthly allowance lines in force this month; BACKPAY is a deduction. */
+  allowances?: ReadonlyArray<{ kind: AllowanceKind; amountSen: number; note: string | null }>;
   /** Earlier months of the same year, for PCB: normal remuneration, employee EPF, PCB withheld. */
   ytd: { remunerationSen: number; epfSen: number; pcbSen: number };
 }): PayslipFigures {
@@ -90,7 +116,14 @@ export function buildPayslip(input: {
     absenceThroughDay: input.absenceThroughDay,
     shortHours: input.shortHours,
     rulesOn: input.rulesOn,
+    paidLeave: input.paidLeave,
   });
+  const trip = input.trip ?? null;
+  const commissionSen = trip?.commission.amountSen ?? 0;
+  const tripAllowanceSen = trip?.allowanceSen ?? 0;
+  const allowanceLines: AllowanceLine[] = (input.allowances ?? []).map((a) => ({ kind: a.kind, label: ALLOWANCE_LABEL[a.kind], amountSen: a.amountSen, note: a.note }));
+  const allowancesSen = allowanceLines.filter((a) => a.kind !== "BACKPAY").reduce((s, a) => s + a.amountSen, 0);
+  const backpaySen = allowanceLines.filter((a) => a.kind === "BACKPAY").reduce((s, a) => s + a.amountSen, 0);
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
   const cfgEnd = input.rulesOn(`${period}-${String(lastDay).padStart(2, "0")}`);
   const statutory = statutoryFor(salarySen, { epf: e.epf, socso: e.socso, eis: e.eis }, cfgEnd);
@@ -101,14 +134,14 @@ export function buildPayslip(input: {
     residency: e.taxResidency,
     category: e.taxCategory,
     childReliefSen: e.taxChildReliefSen,
-    currentRemunerationSen: pay.grossSen,
+    /* Allowances stay out of PCB as in Hookka (and the YTD sum); commission is pay. */
+    currentRemunerationSen: pay.grossSen + commissionSen,
     currentEpfSen: statutory.epfEmployeeSen,
     ytdRemunerationSen: input.ytd.remunerationSen,
     ytdEpfSen: input.ytd.epfSen,
     ytdPcbSen: input.ytd.pcbSen,
   });
-  const allowancesSen = 0;
-  const grossSen = pay.grossSen + allowancesSen;
+  const grossSen = pay.grossSen + commissionSen + tripAllowanceSen + allowancesSen;
   const statutoryEmployeeSen = statutory.epfEmployeeSen + statutory.socsoEmployeeSen + statutory.eisEmployeeSen + pcb.pcbSen;
   const advanceSen = input.advances.reduce((s, a) => s + a.amountSen, 0);
   const cash = e.paymentMethod === "CASH";
@@ -120,6 +153,11 @@ export function buildPayslip(input: {
     payMode: e.payMode,
     pay,
     allowancesSen,
+    allowanceLines,
+    commissionSen,
+    tripAllowanceSen,
+    trip,
+    backpaySen,
     grossSen,
     statutory,
     pcbSen: pcb.pcbSen,
@@ -130,7 +168,7 @@ export function buildPayslip(input: {
     advanceDates: input.advances.map((a) => a.date).sort(),
     penaltySen: input.penaltySen,
     /* Not clamped, as in Hookka: a negative net shows in red and HR decides. */
-    netSen: grossSen - statutoryEmployeeSen - advanceSen - input.penaltySen,
+    netSen: grossSen - statutoryEmployeeSen - advanceSen - backpaySen - input.penaltySen,
     paymentMethod: e.paymentMethod,
     bankName: cash ? null : e.bankName || null,
     bankAccount: cash ? null : e.bankAccount || null,

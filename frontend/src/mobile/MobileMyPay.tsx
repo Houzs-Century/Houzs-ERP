@@ -27,10 +27,15 @@ type Pay =
         shortHourDeductionSen: number;
         otPaySen: number;
         otDays: { date: string; hours: number; kind: string }[];
+        commissionSen: number;
+        tripAllowanceSen: number;
+        tripLines: { label: string; count: number; amountSen: number }[];
+        allowances: { label: string; amountSen: number }[];
         grossSen: number;
         statutoryEmployeeSen: number;
         pcbKnown: boolean;
         advanceSen: number;
+        backpaySen: number;
         penaltySen: number;
         netSen: number;
       } | null;
@@ -84,14 +89,24 @@ export function MyPayBody() {
           {e.absenceDeductionSen > 0 && <Row label={`Absent ${e.absentDays} day(s)`} value={`-${fmtSen(e.absenceDeductionSen)}`} tone="neg" />}
           {e.shortHourDeductionSen > 0 && <Row label={`Late / short ${e.shortHours} h`} value={`-${fmtSen(e.shortHourDeductionSen)}`} tone="neg" />}
           {e.otPaySen > 0 && <Row label={`Overtime (${e.otDays.length} day(s))`} value={fmtSen(e.otPaySen)} />}
+          {e.commissionSen > 0 && <Row label="Commission" value={fmtSen(e.commissionSen)} />}
+          {e.tripLines.map((l) => (
+            <Row key={l.label} label={`${l.label} x ${l.count}`} value={fmtSen(l.amountSen)} />
+          ))}
+          {e.allowances.map((a, i) => (
+            <Row key={`${a.label}-${i}`} label={a.label} value={fmtSen(a.amountSen)} />
+          ))}
           <Row label="Gross" value={fmtSen(e.grossSen)} tone="bold" />
           <Row label="EPF / SOCSO / EIS / tax" value={`-${fmtSen(e.statutoryEmployeeSen)}`} />
           {e.advanceSen > 0 && <Row label="Advance" value={`-${fmtSen(e.advanceSen)}`} />}
+          {e.backpaySen > 0 && <Row label="Backpay (company advance)" value={`-${fmtSen(e.backpaySen)}`} />}
           {e.penaltySen > 0 && <Row label="Penalty" value={`-${fmtSen(e.penaltySen)}`} />}
           <Row label="Net so far" value={fmtSen(e.netSen)} tone="bold" />
           {e.absentDates.length > 0 && <div style={{ fontSize: 11.5, color: "var(--mut)", marginTop: 6 }}>Absent: {e.absentDates.map(formatDate).join(", ")}</div>}
           {!e.pcbKnown && <div style={{ fontSize: 11.5, color: "var(--warn, #9a6b00)", marginTop: 6 }}>Income tax is not worked out yet; HR is completing your tax details.</div>}
-          <div style={{ fontSize: 11, color: "var(--mut)", marginTop: 8 }}>Changes until HR approves the month. A missed day counts as absent only after two working days.</div>
+          <div style={{ fontSize: 11, color: "var(--mut)", marginTop: 8 }}>
+            Changes until HR approves the month. A missed day counts as absent only after two working days. Trip pay counts jobs from the 23rd of last month to the 22nd.
+          </div>
         </div>
       )}
       <div style={{ marginTop: 18, fontSize: 11, fontWeight: 700, letterSpacing: 0.6, color: "var(--mut)", textTransform: "uppercase" }}>Payslips</div>

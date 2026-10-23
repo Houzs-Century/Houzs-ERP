@@ -92,6 +92,8 @@ export type MonthlyPay = {
   daysWorked: number;
   absentDays: number;
   absentDates: string[];
+  /** Working days with no hours that HR marked as paid leave: not absences. */
+  paidLeaveDates: string[];
   otDays: { date: string; hours: number; kind: "WEEKDAY" | "SUNDAY" | "HOLIDAY" }[];
   otWeekdayHours: number;
   otSundayHours: number;
@@ -122,6 +124,8 @@ export function computeMonthlyPay(input: {
   /** Total short hours docked this month. */
   shortHours: number;
   rulesOn: (ymd: string) => PayRulesConfig;
+  /** Days HR marked as paid leave (phase 5). */
+  paidLeave?: ReadonlySet<string>;
 }): MonthlyPay {
   const { employee: e, year, month, holidays } = input;
   const prefix = `${year}-${String(month).padStart(2, "0")}-`;
@@ -177,12 +181,14 @@ export function computeMonthlyPay(input: {
 
   const through = Math.min(input.absenceThroughDay, last);
   const absentDates: string[] = [];
+  const paidLeaveDates: string[] = [];
   if (!daily) {
     for (let d = 1; d <= last; d++) {
       const ymd = ymdOf(year, month, d);
       if (!isWorkingDay(ymd, holidays) || (hoursByDate.get(ymd) ?? 0) > 0) continue;
       const afterResign = e.resignedOn !== "" && ymd > e.resignedOn;
-      if (d <= through || afterResign) absentDates.push(ymd);
+      if (!afterResign && input.paidLeave?.has(ymd)) paidLeaveDates.push(ymd);
+      else if (d <= through || afterResign) absentDates.push(ymd);
     }
   }
   const absentDays = absentDates.length;
@@ -200,6 +206,7 @@ export function computeMonthlyPay(input: {
     daysWorked,
     absentDays,
     absentDates,
+    paidLeaveDates,
     otDays,
     otWeekdayHours: round2(otWeekdayHours),
     otSundayHours: round2(otSundayHours),

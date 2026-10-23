@@ -2,13 +2,15 @@
  * POST /api/payslips pipeline over Century's tables. Used by Generate (which
  * stores the result), by the projected view of a month with no slips, and
  * by the phone's My pay estimate. */
-import { and, asc, eq, gte, inArray, lt, lte, ne, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import { getDb } from "../../db/client";
 import {
   departments,
   hr_advances,
+  hr_allowances,
   hr_employee_salary_history,
   hr_employees,
+  hr_attendance,
   hr_hour_deductions,
   hr_payslips,
   hr_penalties,
@@ -17,9 +19,11 @@ import {
   hr_working_hours,
 } from "../../db/schema";
 import { absenceCutoffDay } from "../../scm/shared/hr-payroll";
+import { PAID_LEAVE_STATUSES } from "../../scm/shared/hr-attendance";
 import type { PcbCategory } from "../../scm/shared/hr-pcb";
 import { payRulesResolver } from "./hr-attendance-store";
-import { buildPayslip, onPayroll, type PayslipFigures } from "./hr-payslip";
+import { buildPayslip, onPayroll, type AllowanceKind, type PayslipFigures } from "./hr-payslip";
+import { loadTripMonth } from "./hr-trip-store";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -37,7 +41,7 @@ export async function lockedPeriods(db: Db, companyId: number): Promise<Set<stri
 export async function computePeriod(db: Db, companyId: number, period: string, today: string, onlyEmployeeId: number | null = null): Promise<PayslipFigures[]> {
   const { first, last, year, month } = periodBounds(period);
   const empWhere = onlyEmployeeId != null ? and(eq(hr_employees.company_id, companyId), eq(hr_employees.id, onlyEmployeeId)) : eq(hr_employees.company_id, companyId);
-  const [employees, holidays, hours, docks, advances, penalties, ytd, rulesOn] = await Promise.all([
+  const [employees, holidays, hours, docks, advances, penalties, ytd, rulesOn, allowances, paidLeave, trip] = await Promise.all([
     db
       .select({ e: hr_employees, department: departments.name })
       .from(hr_employees)
@@ -72,7 +76,7 @@ export async function computePeriod(db: Db, companyId: number, period: string, t
     db
       .select({
         employee_id: hr_payslips.employee_id,
-        rem: sql<string>`SUM(${hr_payslips.gross_sen} - ${hr_payslips.allowances_sen})`,
+        rem: sql<string>`SUM(${hr_payslips.gross_sen} - ${hr_payslips.allowances_sen} - ${hr_payslips.trip_allowance_sen})`,
         epf: sql<string>`SUM(${hr_payslips.epf_employee_sen})`,
         pcb: sql<string>`SUM(${hr_payslips.pcb_sen})`,
       })
@@ -80,6 +84,30 @@ export async function computePeriod(db: Db, companyId: number, period: string, t
       .where(and(eq(hr_payslips.company_id, companyId), gte(hr_payslips.period, `${year}-01`), lt(hr_payslips.period, period)))
       .groupBy(hr_payslips.employee_id),
     payRulesResolver(db, companyId),
+    db
+      .select({ employee_id: hr_allowances.employee_id, kind: hr_allowances.kind, amount: hr_allowances.amount_sen, note: hr_allowances.note })
+      .from(hr_allowances)
+      .where(
+        and(
+          eq(hr_allowances.company_id, companyId),
+          lte(hr_allowances.from_period, period),
+          or(isNull(hr_allowances.until_period), gte(hr_allowances.until_period, period)),
+        ),
+      )
+      .orderBy(asc(hr_allowances.id)),
+    /* Annual / medical leave and rest days keyed on the Attendance tab are paid: not absences. */
+    db
+      .select({ employee_id: hr_attendance.employee_id, date: hr_attendance.work_date })
+      .from(hr_attendance)
+      .where(
+        and(
+          eq(hr_attendance.company_id, companyId),
+          inArray(hr_attendance.status, [...PAID_LEAVE_STATUSES]),
+          gte(hr_attendance.work_date, first),
+          lte(hr_attendance.work_date, last),
+        ),
+      ),
+    loadTripMonth(db, companyId, period, today),
   ]);
   const ids = employees.map((r) => r.e.id);
   const history = ids.length
@@ -97,6 +125,8 @@ export async function computePeriod(db: Db, companyId: number, period: string, t
   };
   const hoursBy = by(hours);
   const advBy = by(advances);
+  const allowBy = by(allowances);
+  const leaveBy = by(paidLeave);
   const histBy = by(history);
   const dockBy = new Map(docks.map((d) => [d.employee_id, Number(d.hours)]));
   const penBy = new Map(penalties.map((p) => [p.employee_id, Number(p.amount)]));
@@ -139,6 +169,9 @@ export async function computePeriod(db: Db, companyId: number, period: string, t
         rulesOn,
         advances: (advBy.get(e.id) ?? []).map((a) => ({ date: a.date, amountSen: Number(a.amount) })),
         penaltySen: penBy.get(e.id) ?? 0,
+        paidLeave: new Set((leaveBy.get(e.id) ?? []).map((l) => l.date)),
+        trip: trip.pay.get(e.id) ?? null,
+        allowances: (allowBy.get(e.id) ?? []).map((a) => ({ kind: a.kind as AllowanceKind, amountSen: Number(a.amount), note: a.note })),
         ytd: ytdBy.get(e.id) ?? { remunerationSen: 0, epfSen: 0, pcbSen: 0 },
       }),
     );
@@ -173,6 +206,9 @@ export function payslipRow(companyId: number, period: string, s: PayslipFigures,
     ot_holiday_pay_sen: p.otHolidayPaySen,
     ot_pay_sen: p.otPaySen,
     allowances_sen: s.allowancesSen,
+    commission_sen: s.commissionSen,
+    trip_allowance_sen: s.tripAllowanceSen,
+    backpay_sen: s.backpaySen,
     gross_sen: s.grossSen,
     epf_employee_sen: s.statutory.epfEmployeeSen,
     epf_employer_sen: s.statutory.epfEmployerSen,
@@ -189,7 +225,15 @@ export function payslipRow(companyId: number, period: string, s: PayslipFigures,
     payment_method: s.paymentMethod,
     bank_name: s.bankName,
     bank_account: s.bankAccount,
-    detail: { absentDates: p.absentDates, otDays: p.otDays, advanceDates: s.advanceDates, pcbNote: s.pcbNote },
+    detail: {
+      absentDates: p.absentDates,
+      paidLeaveDates: p.paidLeaveDates,
+      otDays: p.otDays,
+      advanceDates: s.advanceDates,
+      pcbNote: s.pcbNote,
+      allowances: s.allowanceLines,
+      trip: s.trip ? { commission: s.trip.commission, lines: s.trip.lines } : null,
+    },
     created_by: by,
   };
 }
