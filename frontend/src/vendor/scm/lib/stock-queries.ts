@@ -175,6 +175,8 @@ export type StockAdjustmentLineInput = {
   variants?: Record<string, unknown> | null;
   batchNo?: string | null;
   variantKey?: string | null;
+  // INCREASE only: the server opens the lot at this cost (stock-adjustment-doc.ts parseAdjustmentLines).
+  unitCostSen?: number;
 };
 
 export function useStockAdjustments(opts?: { warehouseId?: string; dateFrom?: string; dateTo?: string }) {

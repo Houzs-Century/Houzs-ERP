@@ -67,6 +67,8 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { FreshMount } from '../../lib/freshMount';
+import { useAuth } from '../../auth/AuthContext';
+import { canViewProductCost } from '../../auth/salesAccess';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
 import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
@@ -111,9 +113,12 @@ type LineDraft = {
   // as-is so an untouched legacy line never reads as a different bucket.
   // Cleared the moment its SKU or variants change.
   storedKey: boolean;
+  // INCREASE only — the operator's unit cost in RM. null = let the server fall
+  // back to the bucket's known cost; it refuses (cost_required) when there is none.
+  costRm: number | null;
 };
 
-const blankLine = (): LineDraft => ({
+export const blankLine = (): LineDraft => ({
   _key: newKey(),
   itemCode: '',
   productName: '',
@@ -128,6 +133,7 @@ const blankLine = (): LineDraft => ({
   origQty: 0,
   origBucketKey: NO_BUCKET_PICKED,
   storedKey: false,
+  costRm: null,
 });
 
 const lineFromDoc = (l: StockAdjustmentLine): LineDraft => {
@@ -147,10 +153,11 @@ const lineFromDoc = (l: StockAdjustmentLine): LineDraft => {
     origQty: l.qty,
     origBucketKey: key,
     storedKey: true,
+    costRm: null,
   };
 };
 
-const lineInput = (it: LineDraft): StockAdjustmentLineInput => {
+export const lineInput = (it: LineDraft): StockAdjustmentLineInput => {
   const hasVariantGroup = it.itemGroup === 'sofa' || it.itemGroup === 'bedframe';
   const isDecrease = directionOf(it.qty) === 'decrease';
   return {
@@ -165,6 +172,7 @@ const lineInput = (it: LineDraft): StockAdjustmentLineInput => {
     batchNo: it.batchNo.trim() || undefined,
     // DECREASE: the picked bucket. INCREASE: only a saved line's own key.
     variantKey: isDecrease ? (it.variantKey || undefined) : (it.storedKey ? it.variantKey : undefined),
+    unitCostSen: !isDecrease && it.costRm != null && it.costRm > 0 ? Math.round(it.costRm * 100) : undefined,
   };
 };
 
@@ -235,7 +243,7 @@ const FabricSelect = ({
 // rules of hooks forbid a variable-length loop of hook calls, so each repeated
 // row has to be its own component.
 function AdjustmentLineRow({
-  line, warehouseId, allSkus, maint, fabrics, specialsPools, setLine, removeLine, canRemove, reportState,
+  line, warehouseId, allSkus, maint, fabrics, specialsPools, setLine, removeLine, canRemove, reportState, canEnterCost,
 }: {
   line: LineDraft;
   warehouseId: string;
@@ -251,6 +259,7 @@ function AdjustmentLineRow({
   // — but only this row has the bucket/breakdown data either verdict depends
   // on, so it reports up instead of the parent re-deriving it.
   reportState: (key: string, state: LineState) => void;
+  canEnterCost: boolean;
 }) {
   const type = directionOf(line.qty);
   const magnitude = Math.abs(line.qty);
@@ -418,6 +427,19 @@ function AdjustmentLineRow({
               color: line.qty < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--c-ink)',
             }}
           />
+          {canEnterCost && line.qty > 0 && (
+            <NumberInput
+              value={line.costRm}
+              sign="unsigned"
+              decimal
+              onValueChange={(n) => setLine(line._key, { costRm: n })}
+              className={styles.fieldInput}
+              placeholder="Unit cost (RM)"
+              aria-label={`Unit cost (RM) for ${line.itemCode || 'line'}`}
+              title="Unit cost of the found stock, in RM. Blank = the cost this item already carries here."
+              style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', marginTop: 4 }}
+            />
+          )}
         </td>
 
         {/* Reason — structured, required for audit trail */}
@@ -679,6 +701,8 @@ const StockAdjustmentForm = ({ onStartNew, existing }: { onStartNew: () => void;
   // ── Data ───────────────────────────────────────────────────────────
   const warehouses = useWarehouses();
   const allSkus    = useMfgProducts();
+  // Cost ENTRY, so the product-cost cohort, not the finance display switch (backend scm/lib/costing-enabled.ts).
+  const canEnterCost = canViewProductCost(useAuth().user);
 
   // Dropdown pools for the sofa / bedframe variant editor — same sources the
   // GRN / PO forms use (divan/leg height, gap, seat size; specials by category).
@@ -908,6 +932,7 @@ const StockAdjustmentForm = ({ onStartNew, existing }: { onStartNew: () => void;
                   removeLine={removeLine}
                   canRemove={lines.length > 1}
                   reportState={reportState}
+                  canEnterCost={canEnterCost}
                 />
               ))}
             </tbody>

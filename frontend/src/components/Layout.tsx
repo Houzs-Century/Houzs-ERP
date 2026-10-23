@@ -359,7 +359,9 @@ export function PageHeader({
         )}
       </div>
       {hasActions && (
-        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 md:shrink-0">
+        <div className="flex max-w-full flex-wrap items-center gap-1.5 sm:gap-2 md:shrink-0">
+          {/* max-w-full: md:shrink-0 alone let a rail wider than the header run
+              off-screen at tablet width instead of wrapping (HC-0149). */}
           {actions}
           {/* Desktop (sm+): secondary actions render as inline buttons.
               h-9 matches <Button> — actions / secondary / primaryAction all land

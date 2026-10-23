@@ -22,6 +22,7 @@ const transferCalls: TransferCall[] = [];
 // One entry per posted adjustment DOCUMENT (BUG-66: one POST per Save).
 const adjustCalls: Array<{ warehouseId: string; lines: Array<{ itemCode: string; qty: number; reasonCode: string }> }> = [];
 
+vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: { id: 1 }, can: () => false }) }));
 vi.mock('../../vendor/scm/lib/stock-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/stock-queries')>()),
   useInventoryBuckets: (itemCode: string | null, warehouseId: string | null) => ({
