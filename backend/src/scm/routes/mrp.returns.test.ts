@@ -4,10 +4,11 @@
 // order, and a customer who still wants the item gets a new SO.
 import { describe, expect, test, vi } from 'vitest';
 
-const deliverable = new Map<string, { delivered: number; returned: number }>();
+/* Delivered rides MRP's demand read as embedded DO lines (lib/mrp-delivered.ts,
+   HC-0002); the batched soDeliverableRemaining path is only the fallback, so it
+   must not run here. */
 vi.mock('./delivery-orders-mfg', () => ({
-  soDeliverableRemaining: async (_sb: unknown, docNos: string[]) =>
-    new Map([...deliverable].filter(([id]) => docNos.some((d) => id.startsWith(d)))),
+  soDeliverableRemaining: async () => { throw new Error('the batched delivered path ran'); },
 }));
 
 import { computeMrp } from './mrp';
@@ -26,6 +27,7 @@ function fakeSb(tables: Record<string, Row[]>) {
     in(col: string, vals: unknown[]) { this.rows = this.rows.filter((r) => vals.includes(r[col])); return this; }
     filter(col: string, _op: string, val: string) { return this.in(col, parsePgrestInList(val)); }
     not() { return this; }
+    is(col: string, val: unknown) { this.rows = this.rows.filter((r) => (r[col] ?? null) === val); return this; }
     gt(col: string, val: number) { this.rows = this.rows.filter((r) => Number(r[col] ?? 0) > val); return this; }
     order() { return this; }
     range(from: number, to: number) { this.window = [from, to]; return this; }
@@ -37,16 +39,21 @@ function fakeSb(tables: Record<string, Row[]>) {
   return { from: (table: string) => new Q(tables[table] ?? []) };
 }
 
-const sofaLine = (docNo: string, delivery: string): Row => ({
+const sofaLine = (docNo: string, delivery: string, doLines: Row[] = []): Row => ({
   id: `${docNo}:1`, doc_no: docNo, item_code: 'XAMMAR-2A(LHF)', description: 'XAMMAR 2A(LHF)',
   item_group: 'sofa', variants: { fabricCode: 'EZ-003', seatHeight: '28', legHeight: '6"' }, qty: 1,
   warehouse_id: 'KL', line_delivery_date: delivery, line_no: 1, created_at: '2026-06-11T00:00:00Z',
-  cancelled: false, allocated_batch_no: null,
+  cancelled: false, allocated_batch_no: null, do_lines: doLines,
   so: { debtor_name: 'x', status: 'READY_TO_SHIP', so_date: '2026-06-11', customer_delivery_date: delivery, processing_date: '2026-06-17', customer_state: null },
 });
 
+/* The 2606-001 set shipped on a DELIVERED DO. Whether it came back is not read:
+   MRP nets delivered GROSS of returns, so a returned set is stock, not demand. */
+const shipped = [{ qty: 1, delivery_order: { status: 'DELIVERED' } }];
 const run = () => computeMrp(fakeSb({
-  mfg_sales_order_items: [sofaLine('2990-SO-2606-001', '2026-07-19'), sofaLine('2990-SO-2611-001', '2026-12-01')],
+  mfg_sales_order_items: [sofaLine('2990-SO-2606-001', '2026-07-19', shipped), sofaLine('2990-SO-2611-001', '2026-12-01')],
+  delivery_order_items: [],
+  delivery_return_items: [{ do_item_id: 'dl-1', qty_returned: 1, delivery_return_id: 'dr-1' }],
   v_inventory_lots_open: [{
     warehouse_id: 'KL', item_code: 'XAMMAR-2A(LHF)', variant_key: 'fabriccode=ez-003|seatheight=28|legheight=6"',
     batch_no: '2990-PO-2606-010', qty_remaining: 1, received_at: '2026-10-19T08:50:58Z',
@@ -55,8 +62,6 @@ const run = () => computeMrp(fakeSb({
 
 describe('computeMrp — a returned unit is not demand again (2990-0011)', () => {
   test('the returned order drops off MRP and its set is ready stock for the next matching order', async () => {
-    deliverable.set('2990-SO-2606-001:1', { delivered: 1, returned: 1 });
-
     const res = await run();
 
     expect(res.sofaSets.map((s) => s.soDocNo)).toEqual(['2990-SO-2611-001']);
@@ -66,9 +71,7 @@ describe('computeMrp — a returned unit is not demand again (2990-0011)', () =>
     expect(next.batchNo).toBe('2990-PO-2606-010');
   });
 
-  test('an order still out with the customer stays off MRP as before', async () => {
-    deliverable.set('2990-SO-2606-001:1', { delivered: 1, returned: 0 });
-
+  test('a delivered order stays off MRP, returned or not', async () => {
     const res = await run();
 
     expect(res.sofaSets.map((s) => s.soDocNo)).toEqual(['2990-SO-2611-001']);
