@@ -7,6 +7,9 @@ import { fakeSb, type Row } from './fake-postgrest';
    on_hold) instead of nine head counts. Both paths run over the same rows here
    and must give the same counts, key order included (it is the wire shape). */
 
+const OWN_COMPANY = 1;
+const inScope = (r: Row) => r.company_id === OWN_COMPANY;
+
 const STATUSES = Object.values(DO_STATUS_BUCKETS).flat();
 
 function rows(): Row[] {
@@ -54,9 +57,9 @@ describe('doListStatusCounts', () => {
     if (!grouped.ok || !counted.ok) return;
     expect(Object.keys(grouped.counts)).toEqual(['all', 'on_hold', ...Object.keys(DO_STATUS_BUCKETS)]);
     expect(JSON.stringify(grouped.counts)).toBe(JSON.stringify(counted.counts));
-    expect(grouped.counts.all).toBe(t.filter((r) => r.company_id === 1).length);
-    expect(grouped.counts.delivered).toBe(t.filter((r) => r.company_id === 1 && (r.status === 'SIGNED' || r.status === 'DELIVERED')).length);
-    expect(grouped.counts.on_hold).toBe(t.filter((r) => r.company_id === 1 && r.on_hold === true).length);
+    expect(grouped.counts.all).toBe(t.filter(inScope).length);
+    expect(grouped.counts.delivered).toBe(t.filter((r) => inScope(r) && (r.status === 'SIGNED' || r.status === 'DELIVERED')).length);
+    expect(grouped.counts.on_hold).toBe(t.filter((r) => inScope(r) && r.on_hold === true).length);
   });
 
   it('an empty scope answers zeros, not a failure', async () => {
