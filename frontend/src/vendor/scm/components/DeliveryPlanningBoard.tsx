@@ -49,6 +49,7 @@ import {
   type DeliveryState,
   type PlanningOrder,
 } from '../lib/delivery-planning-queries';
+import { deliveryMonthKey, deliveryMonthLabel } from '../lib/delivery-date-group';
 import type { LayoutSeed } from '../../../lib/tableLayouts';
 import { type DriverRow } from '../lib/drivers-queries';
 import { type LorryRow } from '../lib/lorries-queries';
@@ -292,6 +293,14 @@ const BoardPendingContext = createContext<BoardPending>({ fields: false, sched: 
    so the columns memo no longer depends on the mutation objects themselves. */
 type ScheduleMutate = SchedMutation['mutate'];
 type UpdateFieldsMutate = UpdateFieldsMutation['mutate'];
+
+/* All-view month grouping (owner follow-up 2026-10-23): ONLY the full board's
+   All state tab buckets rows by their effective-delivery-date month, through
+   DataTable's groupBy reading the hidden `delivery_month` column's groupValue.
+   Module constant so its identity is stable — passing it never rebuilds
+   DataTable's group levels. The other state tabs (and the Trips panel, which has
+   no state tabs) stay flat by passing groupBy=undefined. */
+const MONTH_GROUP_BY = { key: 'delivery_month', label: deliveryMonthLabel } as const;
 
 /* The "Delivery Status" column's inline editor — the customer-message follow-up
    workflow status (owner 2026-09-22), one of the 23 MESSAGE_STATUSES or blank.
@@ -1193,6 +1202,19 @@ export function DeliveryPlanningBoard({
       filterType: 'date', dateValue: (o) => o.amended_delivery_date,
     },
     {
+      /* Derived month of the EFFECTIVE delivery date (amended ?? original) — the
+         key the All tab groups by (owner follow-up 2026-10-23). Default-HIDDEN:
+         it exists for grouping, not as a day-to-day column. groupValue is the raw
+         'YYYY-MM' (or '' for no date, which sorts/buckets last); the group banner
+         pretty-prints it to e.g. "2026/10" / "No date" via MONTH_GROUP_BY.label
+         (digits in the app's date order — a month NAME is forbidden app-wide). */
+      key: 'delivery_month', label: 'Delivery Month', width: 130, groupable: true, defaultHidden: true,
+      accessor: (o) => detail(deliveryMonthLabel(deliveryMonthKey(o))),
+      searchValue: (o) => deliveryMonthLabel(deliveryMonthKey(o)),
+      groupValue: (o) => deliveryMonthKey(o),
+      exportValue: (o) => deliveryMonthLabel(deliveryMonthKey(o)),
+    },
+    {
       key: 'amend_date_from_customer', label: 'Customer Request Date', width: 140, sortable: true,
       accessor: (o) => detail(fmtDateOrDash(o.amend_date_from_customer)),
       searchValue: (o) => o.amend_date_from_customer ?? '',
@@ -1684,6 +1706,10 @@ export function DeliveryPlanningBoard({
         rowKey={rowIdOf}
         searchPlaceholder={searchPlaceholder}
         groupBanner={false}
+        /* All-view month grouping (owner follow-up 2026-10-23): group by the
+           effective-delivery-date month ONLY on the full board's All tab; every
+           other state tab, and the Trips panel (no stateTabs), stays flat. */
+        groupBy={stateTabs && activeState === 'ALL' ? MONTH_GROUP_BY : undefined}
         isLoading={isLoading}
         emptyMessage={emptyMessage}
         /* First-class multi-select (prefixed so:/assr: keys) → the bulk bar. The
