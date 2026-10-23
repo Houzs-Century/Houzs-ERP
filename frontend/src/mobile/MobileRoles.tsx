@@ -11,7 +11,7 @@ import { snapshotFromApi } from "../lib/roleMatrixExcel";
 import { RoleMatrixImportModal } from "../pages/team/RoleMatrixImportModal";
 import {
   MATRIX_LEVELS,
-  MATRIX_LEVEL_LABEL,
+  MATRIX_LEVEL_LABEL_EN,
   buildMatrixModules,
   normalizeStoredLevel,
   applyLevelToPages,
@@ -218,11 +218,11 @@ function RoleList({
         />
         <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
           <button onClick={onExport} style={MATRIX_BTN}>
-            <FileDown size={14} /> 导出 Excel
+            <FileDown size={14} /> Export Excel
           </button>
           {canManage && (
             <button onClick={onImport} style={MATRIX_BTN}>
-              <FileUp size={14} /> 导入 Excel
+              <FileUp size={14} /> Import Excel
             </button>
           )}
         </div>
@@ -447,7 +447,7 @@ function RoleDetail({
           <>
           {!hasRows && (
             <div className="card" style={{ padding: 12, marginBottom: 10, border: "1px solid var(--warning-text, #6e4d12)", background: "var(--warning-bg, #f6efd9)" }}>
-              <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--ink)" }}>页面权限未配置 · Not configured</div>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--ink)" }}>Not configured</div>
               <div style={{ fontSize: 11.5, color: "var(--ink2)", marginTop: 4, lineHeight: 1.4 }}>
                 Members still see pages by the old position rule. Set the levels below and save once to make the role the source of truth.
               </div>
@@ -455,7 +455,7 @@ function RoleDetail({
           )}
           {matrixModules.length > 0 && (
             <div style={{ marginBottom: 10 }}>
-              <div className="ey" style={{ color: "var(--gold)", padding: "0 2px 8px" }}>页面权限 · Page access</div>
+              <div className="ey" style={{ color: "var(--gold)", padding: "0 2px 8px" }}>Page access</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {matrixModules.map((m) => {
                   const lv = moduleLevel(m, pageStaged, staged);
@@ -472,9 +472,9 @@ function RoleDetail({
                           {expandable && (
                             <span style={{ flex: "none", color: "var(--mut2)", fontSize: 12, transform: isOpen ? "rotate(0deg)" : "rotate(-90deg)", transition: "transform 120ms" }}>▾</span>
                           )}
-                          <span style={{ fontSize: 13.5, fontWeight: 700, color: "var(--ink)" }}>{m.labelZh}</span>
+                          <span style={{ fontSize: 13.5, fontWeight: 700, color: "var(--ink)" }}>{m.labelEn}</span>
                           {lv === "mixed" && (
-                            <span style={{ flex: "none", fontSize: 10, color: "var(--mut)" }}>混</span>
+                            <span style={{ flex: "none", fontSize: 10, color: "var(--mut)" }}>Mix</span>
                           )}
                         </button>
                         <MLevelPicker value={lv} disabled={readOnly} onChange={(next) => setMatrixModule(m, next)} />
@@ -497,7 +497,7 @@ function RoleDetail({
               </div>
             </div>
           )}
-          <div className="ey" style={{ color: "var(--gold)", padding: "0 2px 8px" }}>功能权限 · Functions</div>
+          <div className="ey" style={{ color: "var(--gold)", padding: "0 2px 8px" }}>Functions</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {modules.map((mod) => {
               const on = mod.keys.filter((k) => staged.has(k)).length;
@@ -609,7 +609,7 @@ const miniBtn: React.CSSProperties = {
   cursor: "pointer",
 };
 
-/** 无/看/改/批 segmented picker for the mobile page-access cards. */
+/** None/View/Edit/Full segmented picker for the mobile page-access cards. */
 function MLevelPicker({
   value,
   disabled,
@@ -630,12 +630,12 @@ function MLevelPicker({
             disabled={disabled}
             onClick={() => onChange(lv)}
             style={{
-              width: 28,
+              width: 42,
               height: 28,
               borderRadius: 7,
               border: "none",
               fontFamily: "inherit",
-              fontSize: 13,
+              fontSize: 11.5,
               fontWeight: active ? 800 : 500,
               cursor: disabled ? "default" : "pointer",
               color: active ? "#fff" : "var(--mut)",
@@ -643,7 +643,7 @@ function MLevelPicker({
               opacity: disabled ? 0.5 : 1,
             }}
           >
-            {MATRIX_LEVEL_LABEL[lv]}
+            {MATRIX_LEVEL_LABEL_EN[lv]}
           </button>
         );
       })}
