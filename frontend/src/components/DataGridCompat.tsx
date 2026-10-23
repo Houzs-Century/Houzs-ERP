@@ -91,6 +91,10 @@ export type DataGridCompatProps<T> = {
     checkboxOnly?: boolean;
   };
   embedded?: boolean;
+  /** Opt-in single-level group-by (forwarded to DataTable). The key must match a
+   *  column exposing a group/search value; `label` pretty-prints the bucket
+   *  value for the collapsible header. Absent = flat rows. */
+  groupBy?: { key: string; label?: (val: string) => string };
   defaultSort?: (a: T, b: T) => number;
   sortForSessionOnly?: boolean;
   /** See DataTable `persistFilters`; absent = funnels kept for the visit only. */
@@ -192,6 +196,7 @@ export function DataGridCompat<T>({
   expandable,
   selectable,
   embedded = false,
+  groupBy,
   defaultSort,
   sortForSessionOnly = false,
   persistFilters,
@@ -233,6 +238,7 @@ export function DataGridCompat<T>({
       exportXlsx
       groupBanner={groupBanner && !embedded}
       embedded={embedded}
+      groupBy={groupBy}
       defaultSort={defaultSort}
       persistSort={!sortForSessionOnly}
       persistFilters={persistFilters}
