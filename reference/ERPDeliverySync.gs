@@ -1048,11 +1048,12 @@ function erpReconcileApply() { return erpReconcile_(false); }
 // TRANSPORTER_ESB_SS_ID, TRANSPORTER_BS_SS_ID.
 const ERP_TRANSPORTERS = [
   { name: "ESB", prop: "TRANSPORTER_ESB_SS_ID", sheet: "EM Delivery", pullLabel: "From ESB Sheet", wants: function () { return true; } },
-  // BS = Brightsun: an order goes to BS once ESB marks it "TO BRIGHTSUN" in its
-  // delivery-status remarks (owner 2026-10-23). ESB pulls run first, so the
-  // mark is already on EM Order when this is asked.
+  // BS = Brightsun: an order goes to BS once the ESB SHEET marks it "TO
+  // BRIGHTSUN" in its delivery-status remarks (owner 2026-10-23; every one of
+  // BS's 29 original rows carried it, any other ESB remark did not). Read from
+  // ESB itself, which is processed first, not from EM Order's copy.
   { name: "BS", prop: "TRANSPORTER_BS_SS_ID", sheet: "SABAH EM Delivery", pullLabel: "From BS Sheet",
-    wants: function (field) { return /to\s*brightsun/i.test(field("em order delivery status esb remarks")); } }
+    wants: function (field, doc, esbRemark) { return /to\s*brightsun/i.test(esbRemark(doc)); } }
 ];
 
 function erpCellText_(v) {
@@ -1106,7 +1107,7 @@ function erpPlanTransporterPull_(master, target, sourceLabel) {
 }
 
 /** Pure: what to write to one transporter sheet. Exported for the test. */
-function erpPlanTransporterPush_(master, target, wants) {
+function erpPlanTransporterPush_(master, target, wants, esbRemark) {
   // master: { labels[], headers[], rows[][] } (EM Order rows 2, 3, 4..)
   // target: { headers[], rows[][], allowed: {colIdx: {value:1}} } (row 1, rows 2..)
   const tCol = erpTargetColumns_(target.headers);
@@ -1130,7 +1131,7 @@ function erpPlanTransporterPush_(master, target, wants) {
     if (!doc) return;
     const ti = tRow[doc];
     if (ti === undefined) {
-      if (!wants(function (name) { const i = mCol(name); return i < 0 ? "" : erpCellText_(r[i]); })) return;
+      if (!wants(function (name) { const i = mCol(name); return i < 0 ? "" : erpCellText_(r[i]); }, doc, esbRemark || function () { return ""; })) return;
       const row = target.headers.map(function () { return ""; });
       master.headers.forEach(function (h, i) { const k = erpNormHeader_(h); if (k && tCol[k] !== undefined) row[tCol[k]] = r[i]; });
       appends.push(row);
@@ -1165,6 +1166,8 @@ function erpPushToTransporters_(triggerType) {
       headers: em.getRange(3, 1, 1, lc).getValues()[0],
       rows: last >= 4 ? em.getRange(4, 1, last - 3, lc).getValues() : []
     };
+    const esbRemarks = {};
+    const esbRemark = function (doc) { return esbRemarks[doc] || ""; };
     ERP_TRANSPORTERS.forEach(function (t) {
       try {
         const id = PropertiesService.getScriptProperties().getProperty(t.prop);
@@ -1197,7 +1200,14 @@ function erpPushToTransporters_(triggerType) {
           if (!r) return;
           try { em.getRange(r, u.col + 1).setValue(u.value); master.rows[u.row][u.col] = u.value; pulled++; } catch (e) {}
         });
-        const plan = erpPlanTransporterPush_(master, target, t.wants);
+        if (t.name === "ESB") {
+          const tc = erpTargetColumns_(target.headers);
+          const dc = tc["doc. no."], rc = tc["em order delivery status esb remarks"];
+          if (dc !== undefined && rc !== undefined) {
+            target.rows.forEach(function (r) { const d = erpCellText_(r[dc]); if (d) esbRemarks[d] = erpCellText_(r[rc]); });
+          }
+        }
+        const plan = erpPlanTransporterPush_(master, target, t.wants, esbRemark);
         let written = 0, failed = 0;
         plan.updates.forEach(function (u) {
           try { sh.getRange(u.row + 2, u.col + 1).setValue(u.value); written++; } catch (e) { failed++; }

@@ -163,7 +163,9 @@ describe('EM Order push to the ERP and to the ESB / BS transporter sheets', () =
       rows: [['Done Shipout', 'SO-1', 'TO BRIGHTSUN'], ['Done Shipout', 'SO-2', ''], ['', 'SO-3', 'PLEASE COLLECT PAYMENT']],
     };
     const t = { headers: ['EM Order Shipment Status', 'Doc. No.'], rows: [], allowed: {} };
-    expect(plan(m, t, lastSandbox.__bsWants).appends.map((r: string[]) => r[1])).toEqual(['SO-1']);
+    // The decision reads the ESB SHEET's remark, not EM's copy: SO-2 is marked on ESB only.
+    const esbRemark = (d: string) => ({ 'SO-1': 'TO BRIGHTSUN - 2026/09/07', 'SO-2': 'TO BRIGHTSUN', 'SO-3': 'PLEASE COLLECT PAYMENT' } as Record<string, string>)[d] ?? '';
+    expect((lastSandbox.__plan as Function)(m, t, lastSandbox.__bsWants, esbRemark).appends.map((r: string[]) => r[1])).toEqual(['SO-1', 'SO-2']);
     expect(plan(m, t, () => true).appends.map((r: string[]) => r[1])).toEqual(['SO-1', 'SO-2', 'SO-3']);
   });
 
