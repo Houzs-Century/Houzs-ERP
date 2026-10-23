@@ -99,6 +99,8 @@ export type FairDoRow = FairDims & {
   do_no: string;
   so_no: string | null;
   status: string | null;
+  delivery_location: string | null; // the DO's own city, state
+  delivery_address: string | null;
   qty: number;
   so_amount_sen: number | null;   // linked SO's amount (matches the SO tab)
   total_so_cost_sen: number;

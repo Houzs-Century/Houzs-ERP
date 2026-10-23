@@ -856,6 +856,9 @@ async function fetchPaymentsByDoc(c: any, docNos: string[]): Promise<Map<string,
   return byDoc;
 }
 
+const joinParts = (parts: Array<string | null | undefined>, sep: string): string | null =>
+  parts.map((p) => p?.trim()).filter(Boolean).join(sep) || null;
+
 /* Shared "fair identity" columns emitted on every stage row. */
 function fairDims(
   h: FairSoHeader,
@@ -1141,11 +1144,14 @@ export const fairReportHandler = async (c: FairCtx) => {
     // DOs whose SO is in the fair (link by so_doc_no text — no FK to embed on).
     const { data: doData, error: doErr } = await chunkIn(docNos, (batch: string[], pFrom: number, pTo: number) => scopeToCompany(sb
       .from('delivery_orders')
-      .select('id, do_number, so_doc_no, do_date, delivered_at, status')
+      .select('id, do_number, so_doc_no, do_date, delivered_at, status, address1, address2, city, postcode, state')
       .in('so_doc_no', batch), c)
       .range(pFrom, pTo));
     if (doErr) return c.json({ error: 'load_failed', reason: doErr.message }, 500);
-    const dos = (doData ?? []) as Array<{ id: string; do_number: string; so_doc_no: string | null; do_date: string | null; delivered_at: string | null; status: string | null }>;
+    const dos = (doData ?? []) as Array<{
+      id: string; do_number: string; so_doc_no: string | null; do_date: string | null; delivered_at: string | null; status: string | null;
+      address1: string | null; address2: string | null; city: string | null; postcode: string | null; state: string | null;
+    }>;
 
     // Their lines (cost), grouped per DO id. item_group / item_code tell the
     // service lines apart: they are left out of the goods-only margin.
@@ -1177,6 +1183,8 @@ export const fairReportHandler = async (c: FairCtx) => {
         do_no: d.do_number,
         so_no: d.so_doc_no,
         status: d.status,
+        delivery_location: joinParts([d.city, d.state], ', '),
+        delivery_address: joinParts([d.address1, d.address2, joinParts([d.postcode, d.city], ' '), d.state], ', '),
         qty: doCost.qty,
         // The linked SO's amount (product + service) — same value the SO tab
         // shows in its Amount column, so the two stages reconcile per SO.

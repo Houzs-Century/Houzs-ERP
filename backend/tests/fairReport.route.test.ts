@@ -121,7 +121,8 @@ function fixture(): DataSet {
       { so_doc_no: 'SO-2', method: 'merchant', amount_sen: 50000, merchant_provider: 'Maybank', installment_months: null, is_deposit: false },
     ],
     delivery_orders: [
-      { id: 'do-1', do_number: 'DO-1', so_doc_no: 'SO-1', do_date: '2026-07-08', delivered_at: '2026-07-08', status: 'DELIVERED' },
+      { id: 'do-1', do_number: 'DO-1', so_doc_no: 'SO-1', do_date: '2026-07-08', delivered_at: '2026-07-08', status: 'DELIVERED',
+        address1: 'No 12, Jalan Mutiara 3', address2: ' ', city: 'Bukit Mertajam', postcode: '14000', state: 'Penang' },
       { id: 'do-2', do_number: 'DO-2', so_doc_no: 'SO-2', do_date: '2026-07-09', delivered_at: null, status: 'LOADED' },
     ],
     delivery_order_items: [
@@ -214,7 +215,10 @@ describe('stage=do', () => {
     expect(do1.do_cost_is_legacy).toBe(false);   // the fee line has no frozen cost and must not flag it
     expect(do1.so_margin_pct).toBeCloseTo(50);   // goods: (70000-35000)/70000
     expect(do1.do_margin_pct).toBeCloseTo(((70000 - 52000) / 70000) * 100);
+    expect(do1.delivery_location).toBe('Bukit Mertajam, Penang');
+    expect(do1.delivery_address).toBe('No 12, Jalan Mutiara 3, 14000 Bukit Mertajam, Penang');
     const do2 = body.rows.find((r: any) => r.do_no === 'DO-2');
+    expect(do2.delivery_location).toBeNull();
     expect(do2.total_do_cost_sen).toBe(21000);   // fell back to unit cost
     expect(do2.do_cost_is_legacy).toBe(true);
     expect(body.summary.deliveries).toBe(2);
