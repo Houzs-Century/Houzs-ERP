@@ -122,8 +122,12 @@ function fixture(): DataSet {
     ],
     delivery_orders: [
       { id: 'do-1', do_number: 'DO-1', so_doc_no: 'SO-1', do_date: '2026-07-08', delivered_at: '2026-07-08', status: 'DELIVERED',
-        address1: 'No 12, Jalan Mutiara 3', address2: ' ', city: 'Bukit Mertajam', postcode: '14000', state: 'Penang' },
-      { id: 'do-2', do_number: 'DO-2', so_doc_no: 'SO-2', do_date: '2026-07-09', delivered_at: null, status: 'LOADED' },
+        address1: 'No 12, Jalan Mutiara 3', address2: ' ', city: 'Bukit Mertajam', postcode: '14000', state: 'Penang',
+        warehouse_id: 'wh-pg', sales_location: 'KL' },
+      { id: 'do-2', do_number: 'DO-2', so_doc_no: 'SO-2', do_date: '2026-07-09', delivered_at: null, status: 'LOADED', sales_location: 'KL WAREHOUSE' },
+    ],
+    warehouses: [
+      { id: 'wh-pg', code: 'PG', name: 'PG WAREHOUSE' },
     ],
     delivery_order_items: [
       { delivery_order_id: 'do-1', qty: 2, unit_cost_sen: 30000, ship_cost_sen: 26000, item_group: 'mattress', item_code: 'M1' }, // 52000
@@ -218,7 +222,9 @@ describe('stage=do', () => {
     expect(do1.delivery_location).toBe('Bukit Mertajam, Penang');
     expect(do1.delivery_address).toBe('No 12, Jalan Mutiara 3, 14000 Bukit Mertajam, Penang');
     const do2 = body.rows.find((r: any) => r.do_no === 'DO-2');
+    expect(do1.location).toBe('PG');             // the DO's warehouse wins over its sales_location
     expect(do2.delivery_location).toBeNull();
+    expect(do2.location).toBe('KL');             // no warehouse: sales_location, in AutoCount spelling
     expect(do2.total_do_cost_sen).toBe(21000);   // fell back to unit cost
     expect(do2.do_cost_is_legacy).toBe(true);
     expect(body.summary.deliveries).toBe(2);
