@@ -196,9 +196,24 @@ describe('EM Order push to the ERP and to the ESB / BS transporter sheets', () =
     };
     const esb = { headers: ["EM Order Shipment Status", "Doc. No.", "Vessel & Voyage", "BS KK - Delivery Date", "BALANCE"],
       rows: [["x", "SO-1", "DANUM 159", "2026/11/01", "99"], ["x", "SO-2", "DANUM 160", "", "99"], ["x", "SO-3", "", "", ""]], allowed: {} };
-    const pull = (lastSandbox.__pull as Function)(m, esb, "From ESB Sheet");
+    const pull = (lastSandbox.__pull as Function)(m, esb, "From ESB Sheet").updates;
     expect(pull).toEqual([{ row: 0, col: 2, value: "DANUM 159", doc: "SO-1" }, { row: 1, col: 2, value: "DANUM 160", doc: "SO-2" }]);
-    const bsPull = (lastSandbox.__pull as Function)(m, esb, "From BS Sheet");
+    const bsPull = (lastSandbox.__pull as Function)(m, esb, "From BS Sheet").updates;
     expect(bsPull).toEqual([{ row: 0, col: 3, value: "2026/11/01", doc: "SO-1" }]);
+  });
+
+  test('the pull matches the owner label by word, whatever its exact wording', () => {
+    loadScript();
+    const m = {
+      labels: ['', 'From AutoCount', 'From ESB', 'ESB Sheet', 'FROM BS', 'From Admin'],
+      headers: ['DELIVERY MESSAGE STATUS', 'Doc. No.', 'Vessel & Voyage', 'ETA EM Port', 'BS Remarks', 'BALANCE'],
+      rows: [['', 'SO-1', '', '', '', '1']],
+    };
+    const t = { headers: ['EM Order Shipment Status', 'Doc. No.', 'Vessel & Voyage', 'ETA EM Port', 'BS Remarks', 'BALANCE'],
+      rows: [['', 'SO-1', 'V1', '2026/11/01', 'KK ok', '9']], allowed: {} };
+    const esb = (lastSandbox.__pull as Function)(m, t, 'From ESB Sheet').updates;
+    expect(esb.map((u: { col: number }) => u.col)).toEqual([2, 3]);
+    const bs = (lastSandbox.__pull as Function)(m, t, 'From BS Sheet').updates;
+    expect(bs.map((u: { col: number }) => u.col)).toEqual([4]);
   });
 });
