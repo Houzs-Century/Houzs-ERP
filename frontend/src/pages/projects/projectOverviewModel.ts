@@ -7,6 +7,8 @@
 export interface OvProject {
   id: number; code: string; name: string; brand: string | null; organizer: string | null; venue: string | null;
   state: string | null; stage: string | null; startDate: string | null; endDate: string | null; eventType: string | null;
+  /** Booth area in square metres; null when not keyed. */
+  sizeSqm: number | null;
   keyed: {
     income: number; cogs: number; rental: number; commission: number; setup: number; transport: number; merchandise: number; other: number;
     /** The same lines as fine as the Financial Snapshot (owner 2026-10-19). */
