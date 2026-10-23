@@ -25,6 +25,7 @@ type AdjustCall = {
 const adjustCalls: AdjustCall[] = [];
 const postCalls: Array<{ warehouseId: string; lines: Array<Omit<AdjustCall, 'warehouseId' | 'qtyDelta'> & { qty: number }> }> = [];
 
+vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: { id: 1 }, can: () => false }) }));
 vi.mock('../../vendor/scm/lib/stock-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/stock-queries')>()),
   // A single open lot: plain (no variant, no batch), 50 on hand.
