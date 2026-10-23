@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { cachedSwr, writeSwr } from '../src/scm/lib/kv-swr';
+import { Hono } from 'hono';
+import { cachedSwr, serveSwr, writeSwr, type SwrBuild } from '../src/scm/lib/kv-swr';
 import { procurementOverviewKey, procurementOverviewParams } from '../src/scm/routes/procurement-overview';
 
 function fakeKv() {
@@ -94,5 +95,49 @@ describe('procurement overview cache key', () => {
     expect(procurementOverviewKey(1, page)).not.toBe(procurementOverviewKey(1, home));
     expect(procurementOverviewKey(1, page)).not.toBe(procurementOverviewKey(1, { ...page, today: '2026-10-23' }));
     expect(procurementOverviewKey(1, page)).not.toBe(procurementOverviewKey(1, { ...page, scope: 'warehouse' as never }));
+  });
+});
+
+describe('serveSwr', () => {
+  function app(build: () => Promise<SwrBuild>, companyId: number | undefined, kv: KVNamespace) {
+    const a = new Hono<{ Bindings: { SESSION_CACHE: KVNamespace }; Variables: { companyId?: number } }>();
+    a.use('*', async (c, next) => { if (companyId != null) c.set('companyId', companyId); await next(); });
+    a.get('/r', (c) => serveSwr(c, { family: 't', parts: ['2026-10-23'], softSeconds: 300, hardSeconds: 600, build }));
+    return (req = '/r') => a.request(req, {}, { SESSION_CACHE: kv });
+  }
+
+  it('the second reader of a company gets the stored copy', async () => {
+    const kv = fakeKv();
+    const build = vi.fn(async (): Promise<SwrBuild> => ({ ok: true, body: { n: 1 } }));
+    const get = app(build, 1, kv);
+    const first = await get();
+    expect(first.headers.get('X-Cache')).toBe('miss');
+    expect(await first.json()).toEqual({ n: 1 });
+    const second = await get();
+    expect(second.headers.get('X-Cache')).toBe('fresh');
+    expect(await second.json()).toEqual({ n: 1 });
+    expect(build).toHaveBeenCalledTimes(1);
+  });
+
+  it('companies never share a copy', async () => {
+    const kv = fakeKv();
+    await app(async () => ({ ok: true, body: { co: 1 } }), 1, kv)();
+    const other = await app(async () => ({ ok: true, body: { co: 2 } }), 2, kv)();
+    expect(await other.json()).toEqual({ co: 2 });
+  });
+
+  it('with no active company it builds every time and stores nothing', async () => {
+    const kv = fakeKv();
+    const res = await app(async () => ({ ok: true, body: { n: 1 } }), undefined, kv)();
+    expect(res.headers.get('X-Cache')).toBe('bypass');
+    expect(kv.m.size).toBe(0);
+  });
+
+  it('a failed build is answered as before and not stored', async () => {
+    const kv = fakeKv();
+    const res = await app(async () => ({ ok: false, status: 500, body: { error: 'load_failed', reason: 'x' } }), 1, kv)();
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: 'load_failed', reason: 'x' });
+    expect(kv.m.size).toBe(0);
   });
 });

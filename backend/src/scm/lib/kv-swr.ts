@@ -15,6 +15,9 @@
 // cross-company leak); a null key bypasses the cache entirely.
 // ----------------------------------------------------------------------------
 
+import type { Context } from 'hono';
+import { activeCompanyId } from './companyScope';
+
 export type SwrEnvelope<T> = { __swr: 1; v: T; soft: number; at: string };
 export type SwrSource = 'fresh' | 'stale' | 'miss' | 'bypass';
 
@@ -83,4 +86,39 @@ export async function cachedSwr<R>(opts: {
   if (opts.waitUntil) opts.waitUntil(storeLogged(result));
   else await storeLogged(result);
   return { result, source: 'miss', at: null };
+}
+
+/** What a cached report's build returns: its JSON body, or the error to send uncached. */
+export type SwrBuild = { ok: true; body: unknown } | { ok: false; status: 500; body: unknown };
+
+/**
+ * A route's whole answer through cachedSwr: keyed by `family`, the active
+ * company and `parts` (every input that changes the body, today's date among
+ * them), with X-Cache / X-Cache-At saying which copy went out. No active
+ * company = no cache. Only for a body that depends on nothing per user once the
+ * route's own gates have passed.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- any Hono route context; only env, executionCtx and the company var are read
+export async function serveSwr(c: Context<any>, opts: {
+  family: string;
+  parts: Array<string | number>;
+  softSeconds: number;
+  hardSeconds: number;
+  build: () => Promise<SwrBuild>;
+}): Promise<Response> {
+  const companyId = activeCompanyId(c);
+  let waitUntil: ((p: Promise<unknown>) => void) | null = null;
+  try { const ec = c.executionCtx; waitUntil = (p) => ec.waitUntil(p); } catch { waitUntil = null; }
+  const { result, source, at } = await cachedSwr({
+    kv: (c.env as { SESSION_CACHE?: KVNamespace }).SESSION_CACHE,
+    key: companyId == null ? null : `swr:${opts.family}:v1:${companyId}:${opts.parts.join(':')}`,
+    softSeconds: opts.softSeconds,
+    hardSeconds: opts.hardSeconds,
+    compute: opts.build,
+    cacheable: (r) => r.ok,
+    waitUntil,
+  });
+  c.header('X-Cache', source);
+  if (at) c.header('X-Cache-At', at);
+  return result.ok ? c.json(result.body as object) : c.json(result.body as object, result.status);
 }
