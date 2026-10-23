@@ -31,6 +31,7 @@ import { Hono } from "hono";
 import { supabaseAuth } from "../middleware/auth";
 import type { Env, Variables } from "../env";
 import { paginateAll } from "../lib/paginate-all";
+import { readAggregate } from "../lib/postgrest-aggregate";
 import { resolvePoEstimateDates } from "../lib/po-line-export";
 import {
   scopeToCompany,
@@ -334,10 +335,10 @@ outstanding.get("/summary", async (c) => {
        apply to them and there is no reason to make them pay for it. */
     if (slug === "si") {
       const aggRow = agg
-        ? await applyFilters(
+        ? await readAggregate(() => applyFilters(
             sb.from(view).select(`cnt:${agg.pkCol}.count(),amt:${agg.amtCol}.sum(),outs:${agg.outCol}.sum()`),
             slug, dateCol,
-          )
+          ))
         : { data: null, error: { message: "no aggregate configured" } };
       const r0 = ((aggRow.data ?? []) as Array<Record<string, unknown>>)[0] ?? {};
       const aggregate = aggRow.error
@@ -346,7 +347,7 @@ outstanding.get("/summary", async (c) => {
       try {
         summary[slug] = await summariseSiOutstanding(
           sb,
-          (pFrom, pTo) => applyFilters(sb.from(view).select(SI_SUMMARY_COLS), slug, dateCol).range(pFrom, pTo),
+          (pFrom, pTo) => applyFilters(sb.from(view).select(SI_SUMMARY_COLS), slug, dateCol).order("id", { ascending: true }).range(pFrom, pTo),
           activeCompanyId(c) ?? null,
           aggregate,
         );
@@ -364,11 +365,11 @@ outstanding.get("/summary", async (c) => {
       const parts = [`cnt:${agg.pkCol}.count()`];
       if (agg.amtCol) parts.push(`amt:${agg.amtCol}.sum()`);
       if (agg.outCol) parts.push(`outs:${agg.outCol}.sum()`);
-      const { data, error } = await applyFilters(
+      const { data, error } = await readAggregate(() => applyFilters(
         sb.from(view).select(parts.join(",")),
         slug,
         dateCol,
-      );
+      ));
       if (!error) {
         const row = ((data ?? []) as Array<Record<string, unknown>>)[0] ?? {};
         summary[slug] = {
@@ -384,8 +385,9 @@ outstanding.get("/summary", async (c) => {
     if (!done) {
       // Fallback — original paginate-all + JS reduce. Preserves exact numbers and
       // the missing-view graceful degradation (error → data null → zeroed module).
+      // Ordered by the view's key: unordered pages repeat / skip rows (lib/paginate-all.ts).
       const { data } = await paginateAll((pFrom, pTo) =>
-        applyFilters(sb.from(view).select("*"), slug, dateCol).range(pFrom, pTo),
+        applyFilters(sb.from(view).select("*"), slug, dateCol).order(agg?.pkCol ?? "id", { ascending: true }).range(pFrom, pTo),
       );
       const rows = (data ?? []) as Array<Record<string, unknown>>;
       summary[slug] = {

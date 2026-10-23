@@ -48,6 +48,9 @@ import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { deriveDisplayBrandingByDoc } from '../lib/so-display-branding';
 import { isPlaceholderBrandText } from '../shared/so-branding-label';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
+import { warehouseLabel } from '../lib/warehouse-label';
+import { bookSpellingOrOwn } from '../../services/autocount-writeback';
+import { LOCATION_MAP } from '../../services/autocount-master-maps';
 import { salesJdDenial } from '../../services/salesJdAccess';
 import { resolveSalesScopeIds } from '../lib/salesScope';
 import { SO_FINANCE_KEYS, SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
@@ -1144,14 +1147,28 @@ export const fairReportHandler = async (c: FairCtx) => {
     // DOs whose SO is in the fair (link by so_doc_no text — no FK to embed on).
     const { data: doData, error: doErr } = await chunkIn(docNos, (batch: string[], pFrom: number, pTo: number) => scopeToCompany(sb
       .from('delivery_orders')
-      .select('id, do_number, so_doc_no, do_date, delivered_at, status, address1, address2, city, postcode, state')
+      .select('id, do_number, so_doc_no, do_date, delivered_at, status, address1, address2, city, postcode, state, warehouse_id, sales_location')
       .in('so_doc_no', batch), c)
       .range(pFrom, pTo));
     if (doErr) return c.json({ error: 'load_failed', reason: doErr.message }, 500);
     const dos = (doData ?? []) as Array<{
       id: string; do_number: string; so_doc_no: string | null; do_date: string | null; delivered_at: string | null; status: string | null;
       address1: string | null; address2: string | null; city: string | null; postcode: string | null; state: string | null;
+      warehouse_id: string | null; sales_location: string | null;
     }>;
+
+    // Same Location the Delivery Orders list shows: the DO's warehouse code, else its sales_location.
+    const whById = new Map<string, { code: string | null; name: string | null }>();
+    const whIds = [...new Set(dos.map((d) => d.warehouse_id).filter((x): x is string => !!x))];
+    if (whIds.length > 0) {
+      const { data: whData, error: whErr } = await chunkIn(whIds, (batch: string[], pFrom: number, pTo: number) => sb
+        .from('warehouses')
+        .select('id, code, name')
+        .in('id', batch)
+        .range(pFrom, pTo));
+      if (whErr) return c.json({ error: 'load_failed', reason: whErr.message }, 500);
+      for (const w of whData as Array<{ id: string; code: string | null; name: string | null }>) whById.set(w.id, w);
+    }
 
     // Their lines (cost), grouped per DO id. item_group / item_code tell the
     // service lines apart: they are left out of the goods-only margin.
@@ -1183,6 +1200,8 @@ export const fairReportHandler = async (c: FairCtx) => {
         do_no: d.do_number,
         so_no: d.so_doc_no,
         status: d.status,
+        location: bookSpellingOrOwn(
+          warehouseLabel(d.warehouse_id ? whById.get(d.warehouse_id) : null) ?? d.sales_location, LOCATION_MAP),
         delivery_location: joinParts([d.city, d.state], ', '),
         delivery_address: joinParts([d.address1, d.address2, joinParts([d.postcode, d.city], ' '), d.state], ', '),
         qty: doCost.qty,

@@ -12,7 +12,7 @@ const keyed = (o: Partial<OvProject["keyed"]>): OvProject["keyed"] => ({
 });
 const project = (o: Partial<OvProject>): OvProject => ({
   id: 1, code: "P1", name: "Fair", brand: "AKEMI", organizer: "MYHOME", venue: "MV", state: "Selangor", stage: "confirmed",
-  startDate: "2026-10-16", endDate: "2026-10-18", eventType: "Exhibition", keyed: keyed({}),
+  startDate: "2026-10-16", endDate: "2026-10-18", eventType: "Exhibition", sizeSqm: null, keyed: keyed({}),
   salesOrders: { sen: 0, costSen: 0, count: 0, costSplit: { mattSofa: 0, bedframe: 0, accessories: 0 } },
   chatReport: null, pnl: null, collection: { totalSen: 0, paidSen: 0 }, ...o,
 });

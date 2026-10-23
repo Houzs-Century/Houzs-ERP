@@ -58,7 +58,7 @@ function loadScript() {
     console,
   };
   vm.createContext(sandbox);
-  vm.runInContext(`${src}\nthis.__w = erpWriteRecords_; this.__plan = erpPlanTransporterPush_; this.__regions = erpRegionalSheets_;`, sandbox);
+  vm.runInContext(`${src}\nthis.__w = erpWriteRecords_; this.__plan = erpPlanTransporterPush_; this.__pull = erpPlanTransporterPull_; this.__bsWants = ERP_TRANSPORTERS[1].wants; this.__regions = erpRegionalSheets_;`, sandbox);
   lastSandbox = sandbox;
   return sandbox.__w as (ss: unknown, name: string, recs: unknown[], rid: string) => { success: number; appended: number; restoredStatus: number };
 }
@@ -146,16 +146,27 @@ describe('EM Order push to the ERP and to the ESB / BS transporter sheets', () =
       rows: [['', 'SO-1', 'SBH', 'ESB-CN', '99.00'], ['', 'SO-4', 'SBH', '', '10.00']],
       allowed: {},
     }, () => false);
-    expect(p.updates).toEqual([{ row: 0, col: 4, value: '120.00' }]);
+    // col A status (alias "EM Order Shipment Status") fills the blank target status; BALANCE updates; Consignment (From ESB) never.
+    expect(p.updates).toEqual([
+      { row: 0, col: 0, value: 'Done Shipout' },
+      { row: 0, col: 4, value: '120.00' },
+      { row: 1, col: 0, value: 'Done Shipout' },
+    ]);
     expect(p.appends).toEqual([]);
   });
 
-  test('BS gets a Sabah order that is not Done Delivered; ESB gets every missing order', () => {
+  test('BS gets an order ESB marked TO BRIGHTSUN; ESB gets every missing order', () => {
     loadScript();
-    const target = { headers: ['EM Order Shipment Status', 'Doc. No.', 'Sales Location', 'Consignment No', 'BALANCE'], rows: [], allowed: {} };
-    const bsWants = (loc: string, status: string) => /^SBH/i.test(loc) && !/^done delivered$/i.test(status);
-    expect(plan(master, target, bsWants).appends.map((r: string[]) => r[1])).toEqual(['SO-1', 'SO-4']);
-    expect(plan(master, target, () => true).appends.map((r: string[]) => r[1])).toEqual(['SO-1', 'SO-2', 'SO-3', 'SO-4']);
+    const m = {
+      labels: ['', 'From AutoCount', 'From ESB Sheet'],
+      headers: ['DELIVERY MESSAGE STATUS', 'Doc. No.', 'EM Order Delivery Status ESB Remarks'],
+      rows: [['Done Shipout', 'SO-1', 'TO BRIGHTSUN'], ['Done Shipout', 'SO-2', ''], ['', 'SO-3', 'PLEASE COLLECT PAYMENT']],
+    };
+    const t = { headers: ['EM Order Shipment Status', 'Doc. No.'], rows: [], allowed: {} };
+    // The decision reads the ESB SHEET's remark, not EM's copy: SO-2 is marked on ESB only.
+    const esbRemark = (d: string) => ({ 'SO-1': 'TO BRIGHTSUN - 2026/09/07', 'SO-2': 'TO BRIGHTSUN', 'SO-3': 'PLEASE COLLECT PAYMENT' } as Record<string, string>)[d] ?? '';
+    expect((lastSandbox.__plan as Function)(m, t, lastSandbox.__bsWants, esbRemark).appends.map((r: string[]) => r[1])).toEqual(['SO-1', 'SO-2']);
+    expect(plan(m, t, () => true).appends.map((r: string[]) => r[1])).toEqual(['SO-1', 'SO-2', 'SO-3']);
   });
 
   test('a value the target dropdown rejects is skipped, not written', () => {
@@ -167,5 +178,61 @@ describe('EM Order push to the ERP and to the ESB / BS transporter sheets', () =
     }, () => false);
     expect(p.updates).toEqual([]);
     expect(p.blocked).toBe(1);
+  });
+
+  test("EM col A status pushes to the transporter 'EM Order Shipment Status' column (header alias)", () => {
+    loadScript();
+    const m = { labels: ["", "From AutoCount"], headers: ["DELIVERY MESSAGE STATUS", "Doc. No."], rows: [["Done Shipout", "SO-1"], ["Done Delivered", "SO-2"]] };
+    const p = plan(m, { headers: ["EM Order Shipment Status", "Doc. No."], rows: [["", "SO-1"], ["Peding Delivery (EM)", "SO-2"]], allowed: {} }, () => false);
+    expect(p.updates).toEqual([{ row: 0, col: 0, value: "Done Shipout" }, { row: 1, col: 0, value: "Done Delivered" }]);
+  });
+
+  test("transporter-owned columns come back into EM Order; blanks never clear, other columns untouched", () => {
+    loadScript();
+    const m = {
+      labels: ["", "From AutoCount", "From ESB Sheet", "From BS Sheet", "From Admin"],
+      headers: ["DELIVERY MESSAGE STATUS", "Doc. No.", "Vessel & Voyage", "BS KK - Delivery Date", "BALANCE"],
+      rows: [["Done Shipout", "SO-1", "", "", "10.00"], ["Done Shipout", "SO-2", "OLD", "", "0.00"], ["", "SO-3", "KEEP", "", ""]],
+    };
+    const esb = { headers: ["EM Order Shipment Status", "Doc. No.", "Vessel & Voyage", "BS KK - Delivery Date", "BALANCE"],
+      rows: [["x", "SO-1", "DANUM 159", "2026/11/01", "99"], ["x", "SO-2", "DANUM 160", "", "99"], ["x", "SO-3", "", "", ""]], allowed: {} };
+    const pull = (lastSandbox.__pull as Function)(m, esb, "ESB").updates;
+    expect(pull).toEqual([{ row: 0, col: 2, value: "DANUM 159", doc: "SO-1" }, { row: 1, col: 2, value: "DANUM 160", doc: "SO-2" }]);
+    const bsPull = (lastSandbox.__pull as Function)(m, esb, "BS").updates;
+    expect(bsPull).toEqual([{ row: 0, col: 3, value: "2026/11/01", doc: "SO-1" }]);
+  });
+
+  test('ownership comes from the row-3 header: transport columns are the transporter\'s, the rest Houzs\'', () => {
+    loadScript();
+    const m = {
+      labels: ['', '', '', '', '', '', ''],
+      headers: ['DELIVERY MESSAGE STATUS', 'Doc. No.', 'ETA EM Port \uff08YYYY/MM/DD\uff09', 'EM Order Delivery Status ESB Remarks', 'BS KK - Delivery Date \uff08YYYY/MM/DD\uff09', 'Houzs Remark 2', 'BALANCE'],
+      rows: [['Done Shipout', 'SO-1', '', '', '', 'H2', '5']],
+    };
+    const t = { headers: m.headers.map((h) => (h === 'DELIVERY MESSAGE STATUS' ? 'EM Order Shipment Status' : h)),
+      rows: [['', 'SO-1', '2026/11/01', 'TO BRIGHTSUN', '2026/11/09', 'old', '9']], allowed: {} };
+    const esb = (lastSandbox.__pull as Function)(m, t, 'ESB').updates;
+    expect(esb.map((u: { col: number }) => u.col)).toEqual([2, 3]);
+    const bs = (lastSandbox.__pull as Function)(m, t, 'BS').updates;
+    expect(bs.map((u: { col: number }) => u.col)).toEqual([4]);
+    const push = plan(m, t, () => false).updates.map((u: { col: number }) => u.col);
+    expect(push).toEqual([0, 5, 6]);
+  });
+
+  test('freight, Attention and Sync Status are never pushed, nor copied onto a new row (14:19 regression)', () => {
+    loadScript();
+    const headers = ['DELIVERY MESSAGE STATUS', 'Doc. No.', 'BALANCE', 'Attention', 'Sync Status', 'SEAFREIGHT', 'TOTAL', 'Supplier Invoice'];
+    const m = { labels: headers.map(() => ''), headers, rows: [
+      ['Done Shipout', 'SO-1', '10', 'SEAMPIFY', 'SYNCED', '371.98', '0.00', 'INV-OLD'],
+      ['Done Shipout', 'SO-2', '20', 'SEAMPIFY', 'SYNCED', '100.00', '0.00', 'INV-X'],
+    ] };
+    const t = { headers: headers.map((h) => (h === 'DELIVERY MESSAGE STATUS' ? 'EM Order Shipment Status' : h)),
+      rows: [['Done Shipout', 'SO-1', '99', '', 'PENDING', '500.00', '812.40', 'INV-NEW']], allowed: {} };
+    const p = plan(m, t, () => true);
+    expect(p.updates).toEqual([{ row: 0, col: 2, value: '10' }]);
+    const appended = p.appends[0] as string[];
+    expect(appended[1]).toBe('SO-2');
+    expect(appended[2]).toBe('20');
+    expect(appended.slice(3)).toEqual(['', '', '', '', '']);
   });
 });

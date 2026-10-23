@@ -11,7 +11,7 @@ import { DrillDrawer, col, type Drill } from "../components/scm-v2/DrillDrawer";
 import { useQuery } from "../hooks/useQuery";
 import { api } from "../api/client";
 import { cn } from "../lib/utils";
-import { Panel, Th, Td, Toggle, StepTabs } from "../components/scm-v2/OverviewKit";
+import { Panel, Th, Td, Toggle, StepTabs, SortTh, useTableSort } from "../components/scm-v2/OverviewKit";
 import { Columns, HBars, TONE, PALETTE } from "../components/scm-v2/Charts";
 
 type StageDays = Partial<Record<string, { avgDays: number | null; cases: number }>>;
@@ -61,6 +61,9 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, break
   const q = useQuery<Quality>("/api/assr/quality-overview?from=:&to=:", () => api.get(`/api/assr/quality-overview?from=${from}&to=${to}`), [from, to]);
   const d = q.data;
   const enough = (d?.suppliers ?? []).filter((x) => x.receivedQty >= MIN_RECEIVED);
+  /* Click a header to rank the suppliers by it (owner 2026-10-23). */
+  const supSort = useTableSort(enough, (x, k) =>
+    k === "name" ? x.name : k === "rate" ? x.ratePct : k === "received" ? x.receivedQty : k === "cases" ? x.cases : k === "open" ? x.open : k === "overdue" ? x.overdue : x.avgDaysToClose);
   const thin = (d?.suppliers.length ?? 0) - enough.length;
   const [stageTab, setStageTab] = useState<string>("all");
   /* Time per stage over the last 30 or 90 days (owner 2026-10-18). */
@@ -168,8 +171,13 @@ export function QualitySummary({ from, to, periodLabel, breachNow, funnel, break
         <Panel title="Suppliers" hint={`cases opened ${d.rateFrom} – ${to} against goods received from the same supplier over the same dates · at least 3 months, since a defect shows up weeks after delivery`}>
           <div className="overflow-x-auto">
             <table className="w-full border-collapse">
-              <thead><tr><Th left>Supplier</Th><Th>Service case rate</Th><Th>Items in cases / received</Th><Th>Cases</Th><Th>Still open</Th><Th>Overdue</Th><Th>Average to close</Th></tr></thead>
-              <tbody>{enough.map((s) => (
+              <thead><tr>
+                <SortTh left k="name" sort={supSort.sort} onSort={supSort.toggle}>Supplier</SortTh><SortTh k="rate" sort={supSort.sort} onSort={supSort.toggle}>Service case rate</SortTh>
+                <SortTh k="received" sort={supSort.sort} onSort={supSort.toggle}>Items in cases / received</SortTh><SortTh k="cases" sort={supSort.sort} onSort={supSort.toggle}>Cases</SortTh>
+                <SortTh k="open" sort={supSort.sort} onSort={supSort.toggle}>Still open</SortTh><SortTh k="overdue" sort={supSort.sort} onSort={supSort.toggle}>Overdue</SortTh>
+                <SortTh k="close" sort={supSort.sort} onSort={supSort.toggle}>Average to close</SortTh>
+              </tr></thead>
+              <tbody>{supSort.sorted.map((s) => (
                 <tr key={s.creditor} className="cursor-pointer hover:bg-surface-2/50" onClick={() => openCases(`${s.name} · cases opened`, (c) => c.openedInPeriod && !!c.creditor && s.codes.includes(c.creditor))}>
                   <Td left className="max-w-[260px] truncate text-primary">{s.name}</Td>
                   <Td className={s.ratePct == null ? "text-ink-muted" : s.ratePct > 100 ? "text-warning-text" : s.ratePct >= 5 ? "font-semibold text-err" : s.ratePct >= 2 ? "text-warning-text" : "text-synced"}>{s.ratePct == null ? "—" : s.ratePct > 100 ? "check code" : `${s.ratePct}%`}</Td>

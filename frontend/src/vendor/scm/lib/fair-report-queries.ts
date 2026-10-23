@@ -99,6 +99,7 @@ export type FairDoRow = FairDims & {
   do_no: string;
   so_no: string | null;
   status: string | null;
+  location: string | null;          // warehouse code, as the Delivery Orders list shows it
   delivery_location: string | null; // the DO's own city, state
   delivery_address: string | null;
   qty: number;

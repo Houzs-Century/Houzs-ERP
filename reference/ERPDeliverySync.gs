@@ -1037,19 +1037,23 @@ function erpReconcileApply() { return erpReconcile_(false); }
 // ERP pull writes into EM Order never reached them, and the daily backfill
 // (Diagnostic.gs backfillMissingToESB) adds missing orders to ESB only.
 // This push, from the "Push to ESB / BS Sheet" menu item and a daily trigger:
-//   - updates, on rows the transporter sheet already has, every column EM
-//     Order row 2 labels "From AutoCount" / "From Admin" whose row-3 header the
-//     target also has (a blank EM value never clears the target; a value the
+//   - updates, on rows the transporter sheet already has, every column
+//     erpColumnOwner_ gives to Houzs ("EM") whose row-3 header the target
+//     also has (a blank EM value never clears the target; a value the
 //     target's dropdown rejects is skipped);
-//   - appends orders the target lacks: ESB every order, BS a Sabah order whose
-//     col A is not "Done Delivered" (owner 2026-10-23: new orders only).
+//   - appends orders the target lacks: ESB every order, BS an order ESB has
+//     marked "TO BRIGHTSUN" (owner 2026-10-23).
 // Transporter-owned columns are never written on an existing row.
 // Spreadsheet ids live in Script properties (this file is in a public repo):
 // TRANSPORTER_ESB_SS_ID, TRANSPORTER_BS_SS_ID.
 const ERP_TRANSPORTERS = [
-  { name: "ESB", prop: "TRANSPORTER_ESB_SS_ID", sheet: "EM Delivery", wants: function () { return true; } },
-  { name: "BS", prop: "TRANSPORTER_BS_SS_ID", sheet: "SABAH EM Delivery",
-    wants: function (loc, status) { return /^SBH/i.test(loc) && !/^done delivered$/i.test(status); } }
+  { name: "ESB", prop: "TRANSPORTER_ESB_SS_ID", sheet: "EM Delivery", pullOwner: "ESB", wants: function () { return true; } },
+  // BS = Brightsun: an order goes to BS once the ESB SHEET marks it "TO
+  // BRIGHTSUN" in its delivery-status remarks (owner 2026-10-23; every one of
+  // BS's 29 original rows carried it, any other ESB remark did not). Read from
+  // ESB itself, which is processed first, not from EM Order's copy.
+  { name: "BS", prop: "TRANSPORTER_BS_SS_ID", sheet: "SABAH EM Delivery", pullOwner: "BS",
+    wants: function (field, doc, esbRemark) { return /to\s*brightsun/i.test(esbRemark(doc)); } }
 ];
 
 function erpCellText_(v) {
@@ -1057,20 +1061,88 @@ function erpCellText_(v) {
   return String(v == null ? "" : v).trim();
 }
 
+// EM Order's col A is "DELIVERY MESSAGE STATUS"; ESB / BS call the same status
+// "EM Order Shipment Status". EM Order owns it (2026-10-23: of 18 conflicting
+// rows, 17 had EM ahead), so it pushes like an EM-owned column.
+const ERP_TRANSPORTER_HEADER_ALIAS = { "em order shipment status": "delivery message status" };
+
+/** target header (normalised, aliases folded to EM's name) -> 0-based column. */
+function erpTargetColumns_(headers) {
+  const tCol = {};
+  headers.forEach(function (h, i) {
+    let k = erpNormHeader_(h);
+    if (ERP_TRANSPORTER_HEADER_ALIAS[k]) k = ERP_TRANSPORTER_HEADER_ALIAS[k];
+    if (k && tCol[k] === undefined) tCol[k] = i;
+  });
+  return tCol;
+}
+
+/** Pure: transporter-owned values to copy BACK into EM Order. Columns are the
+ *  ones erpColumnOwner_ gives to `source` ("ESB" / "BS"), matched by header. A blank transporter cell never clears EM. */
+function erpPlanTransporterPull_(master, target, source) {
+  const tCol = erpTargetColumns_(target.headers);
+  const cols = [];
+  master.headers.forEach(function (h, i) {
+    const k = erpNormHeader_(h);
+    if (k && erpColumnOwner_(k) === source && tCol[k] !== undefined) cols.push({ m: i, t: tCol[k] });
+  });
+  const docM = master.headers.map(erpNormHeader_).indexOf("doc. no.");
+  const docT = tCol["doc. no."];
+  const tRow = {};
+  target.rows.forEach(function (r, i) { const d = erpCellText_(r[docT]); if (d && tRow[d] === undefined) tRow[d] = i; });
+  const updates = [];
+  master.rows.forEach(function (r, mi) {
+    const doc = erpCellText_(r[docM]);
+    const ti = doc ? tRow[doc] : undefined;
+    if (ti === undefined) return;
+    cols.forEach(function (c) {
+      const tv = erpCellText_(target.rows[ti][c.t]);
+      if (tv === "" || tv === erpCellText_(r[c.m])) return;
+      updates.push({ row: mi, col: c.m, value: target.rows[ti][c.t], doc: doc });
+    });
+  });
+  return { updates: updates, columns: cols.length };
+}
+
+/** Who owns an EM Order column, decided by its row-3 HEADER (owner
+ *  2026-10-23: the hidden rows 1-2 are unused). Transport legs belong to the
+ *  transporter that runs them; everything else is Houzs / the ERP ("EM"). */
+const ERP_ESB_COLUMNS = ["em order delivery status esb remarks", "consignment no", "vessel & voyage",
+  "etd port klang", "eta em port", "done delivery", "esb remarks"];
+const ERP_BS_COLUMNS = ["bs kk - delivery date", "bs remarks"];
+// The ONLY columns pushed EM -> ESB / BS. An allowlist, never "everything not
+// ESB / BS": the 2026-10-23 14:19 run pushed EM's stale freight columns
+// (SEAFREIGHT .. TOTAL, Supplier Invoice) plus Attention / Sync Status over
+// ESB's own, 976 cells. Freight is the transporter's; Attention / Sync Status
+// are each sheet's own bookkeeping.
+const ERP_PUSH_COLUMNS = ["delivery message status", "transfer to", "ref.", "debtor name", "phone",
+  "sales location", "local total", "balance", "remark 4", "sales exemption expiry date",
+  "shipout date = do date", "houzs remark 2", "address 1", "address 2", "address 3", "address 4",
+  "ctn", "houzs remarks"];
+function erpColumnOwner_(header) {
+  const k = erpNormHeader_(header);
+  const hit = function (list) {
+    return list.some(function (x) {
+      return k === x || k.indexOf(x + " ") === 0 || k.indexOf(x + "\uff08") === 0 || k.indexOf(x + "(") === 0;
+    });
+  };
+  if (hit(ERP_ESB_COLUMNS)) return "ESB";
+  if (hit(ERP_BS_COLUMNS)) return "BS";
+  return "EM";
+}
+
 /** Pure: what to write to one transporter sheet. Exported for the test. */
-function erpPlanTransporterPush_(master, target, wants) {
+function erpPlanTransporterPush_(master, target, wants, esbRemark) {
   // master: { labels[], headers[], rows[][] } (EM Order rows 2, 3, 4..)
   // target: { headers[], rows[][], allowed: {colIdx: {value:1}} } (row 1, rows 2..)
-  const tCol = {};
-  target.headers.forEach(function (h, i) { const k = erpNormHeader_(h); if (k && tCol[k] === undefined) tCol[k] = i; });
+  const tCol = erpTargetColumns_(target.headers);
   const owned = [];
-  master.labels.forEach(function (lab, i) {
-    const l = erpNormHeader_(lab);
-    const k = erpNormHeader_(master.headers[i]);
-    if ((l === "from autocount" || l === "from admin") && k && tCol[k] !== undefined) owned.push({ m: i, t: tCol[k] });
+  master.headers.forEach(function (h, i) {
+    const k = erpNormHeader_(h);
+    if (k && ERP_PUSH_COLUMNS.indexOf(k) >= 0 && tCol[k] !== undefined) owned.push({ m: i, t: tCol[k] });
   });
   const mCol = function (name) { return master.headers.map(erpNormHeader_).indexOf(name); };
-  const docM = mCol("doc. no."), locM = mCol("sales location"), statusM = 0;
+  const docM = mCol("doc. no.");
   const docT = tCol["doc. no."];
   const tRow = {};
   target.rows.forEach(function (r, i) { const d = erpCellText_(r[docT]); if (d && tRow[d] === undefined) tRow[d] = i; });
@@ -1082,9 +1154,9 @@ function erpPlanTransporterPush_(master, target, wants) {
     if (!doc) return;
     const ti = tRow[doc];
     if (ti === undefined) {
-      if (!wants(erpCellText_(r[locM]), erpCellText_(r[statusM]))) return;
+      if (!wants(function (name) { const i = mCol(name); return i < 0 ? "" : erpCellText_(r[i]); }, doc, esbRemark || function () { return ""; })) return;
       const row = target.headers.map(function () { return ""; });
-      master.headers.forEach(function (h, i) { const k = erpNormHeader_(h); if (k && tCol[k] !== undefined) row[tCol[k]] = r[i]; });
+      master.headers.forEach(function (h, i) { const k = erpNormHeader_(h); if (k && tCol[k] !== undefined && (k === "doc. no." || ERP_PUSH_COLUMNS.indexOf(k) >= 0 || erpColumnOwner_(k) !== "EM")) row[tCol[k]] = r[i]; });
       appends.push(row);
       tRow[doc] = -1;
       return;
@@ -1117,6 +1189,8 @@ function erpPushToTransporters_(triggerType) {
       headers: em.getRange(3, 1, 1, lc).getValues()[0],
       rows: last >= 4 ? em.getRange(4, 1, last - 3, lc).getValues() : []
     };
+    const esbRemarks = {};
+    const esbRemark = function (doc) { return esbRemarks[doc] || ""; };
     ERP_TRANSPORTERS.forEach(function (t) {
       try {
         const id = PropertiesService.getScriptProperties().getProperty(t.prop);
@@ -1139,13 +1213,33 @@ function erpPushToTransporters_(triggerType) {
             }
           });
         }
-        const plan = erpPlanTransporterPush_(master, target, t.wants);
+        // Pull first: the transporter's own columns come back into EM Order, on
+        // the row that holds the DocNo NOW (staff may sort EM mid-run).
+        const pulls = erpPlanTransporterPull_(master, target, t.pullOwner);
+        const rowState = { index: erpDocNoIndex_(em, 4), moved: 0 };
+        let pulled = 0, pullFailed = 0, pullMissing = 0, pullError = "";
+        pulls.updates.forEach(function (u) {
+          const r = erpRowOfDoc_(em, 4, u.doc, u.row + 4, rowState);
+          if (!r) { pullMissing++; return; }
+          try { em.getRange(r, u.col + 1).setValue(u.value); master.rows[u.row][u.col] = u.value; pulled++; }
+          catch (e) { pullFailed++; if (!pullError) pullError = master.headers[u.col] + ": " + e.message; }
+        });
+        if (t.name === "ESB") {
+          const tc = erpTargetColumns_(target.headers);
+          const dc = tc["doc. no."], rc = tc["em order delivery status esb remarks"];
+          if (dc !== undefined && rc !== undefined) {
+            target.rows.forEach(function (r) { const d = erpCellText_(r[dc]); if (d) esbRemarks[d] = erpCellText_(r[rc]); });
+          }
+        }
+        const plan = erpPlanTransporterPush_(master, target, t.wants, esbRemark);
         let written = 0, failed = 0;
         plan.updates.forEach(function (u) {
           try { sh.getRange(u.row + 2, u.col + 1).setValue(u.value); written++; } catch (e) { failed++; }
         });
         if (plan.appends.length) sh.getRange(sh.getLastRow() + 1, 1, plan.appends.length, tlc).setValues(plan.appends);
-        parts.push(t.name + ": " + written + " cell(s) updated, " + plan.appends.length + " order(s) added" +
+        parts.push(t.name + ": " + pulled + " of " + pulls.updates.length + " cell(s) pulled into EM (" + (pulls.columns || 0) + " column(s) matched" +
+          (pullMissing ? ", " + pullMissing + " row(s) not found" : "") +
+          (pullFailed ? ", " + pullFailed + " failed - " + pullError.slice(0, 120) : "") + "), " + written + " cell(s) updated, " + plan.appends.length + " order(s) added" +
           (plan.blocked ? ", " + plan.blocked + " skipped by dropdown" : "") + (failed ? ", " + failed + " failed" : ""));
         if (failed) status = "PARTIAL";
       } catch (e) {

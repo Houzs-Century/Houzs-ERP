@@ -1,11 +1,33 @@
 // Shared building blocks of the module Overview pages (Procurement, Logistic,
 // Project): a titled panel, compact table cells and a segmented toggle. The
 // period picker is DashboardPeriod.tsx.
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { cn } from "../../lib/utils";
 
 export const Th = ({ children, left }: { children: ReactNode; left?: boolean }) => (
   <th className={cn("whitespace-nowrap border-b border-border px-2.5 py-2 text-[10.5px] font-semibold uppercase tracking-wider text-ink-muted", left ? "text-left" : "text-right")}>{children}</th>
+);
+/* Click a header to rank the rows by it, again to flip (owner 2026-10-23: "这些地方
+   还是要可以 filter 和 sort 的" - which state has the highest rental rate). */
+export type SortState = { key: string; dir: "asc" | "desc" } | null;
+export function useTableSort<T>(rows: readonly T[], value: (row: T, key: string) => number | string | null) {
+  const [sort, setSort] = useState<SortState>(null);
+  const sorted = sort == null ? rows : [...rows].sort((a, b) => {
+    const x = value(a, sort.key); const y = value(b, sort.key);
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    const c = typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y));
+    return sort.dir === "asc" ? c : -c;
+  });
+  const toggle = (key: string) => setSort((s) => (s?.key !== key ? { key, dir: "desc" } : s.dir === "desc" ? { key, dir: "asc" } : null));
+  return { sorted, sort, toggle };
+}
+export const SortTh = ({ children, left, k, sort, onSort }: { children: ReactNode; left?: boolean; k: string; sort: SortState; onSort: (k: string) => void }) => (
+  <th onClick={() => onSort(k)} aria-sort={sort?.key === k ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
+    className={cn("cursor-pointer select-none whitespace-nowrap border-b border-border px-2.5 py-2 text-[10.5px] font-semibold uppercase tracking-wider hover:text-primary", sort?.key === k ? "text-primary" : "text-ink-muted", left ? "text-left" : "text-right")}>
+    {children}{sort?.key === k ? (sort.dir === "desc" ? " ▼" : " ▲") : ""}
+  </th>
 );
 export const Td = ({ children, left, className }: { children: ReactNode; left?: boolean; className?: string }) => (
   <td className={cn("whitespace-nowrap border-b border-border px-2.5 py-1.5 text-[12.5px] tabular-nums", left ? "text-left" : "text-right", className)}>{children}</td>
