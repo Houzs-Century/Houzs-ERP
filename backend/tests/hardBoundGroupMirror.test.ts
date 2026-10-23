@@ -10,7 +10,7 @@ const CASES: Array<[string | null, string | null]> = [
   ['sofa', '8030-1A(LHF)'], ['SOFA', '8030-CNR'], ['bedframe', 'JAGER-(Q)'], ['fabric_accessory', 'SQUARE PILLOW'],
   ['FABRIC_ACCESSORY', 'BC04'], ['accessory', 'SQUARE PILLOW'], ['mattress', 'AKEMI BULWARK MATT (SP)'],
   ['mattress', 'AKEMI BULWARK MATT (SP)  '], ['mattress', 'AKEMI BULWARK MATT (K)'], ['others', 'X (SP)'],
-  [null, null], ['', 'SOFA'], ['service', 'DELIVERY'],
+  [null, null], ['', 'SOFA'], ['service', 'DELIVERY'], ['dining', 'AN-DINING LEG'], ['others', 'AN-DINING LEG'],
 ];
 
 describe('scripts/lib/hard-bound-group.mjs mirrors isHardBoundLine', () => {
