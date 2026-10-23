@@ -38,7 +38,10 @@ const num = (v: unknown) => Number(v ?? 0) || 0;
 const day = (v: unknown) => (v == null ? null : String(v).slice(0, 10));
 
 export type ProcurementOverviewParams = { today: string; from: string; to: string; basis: 'original' | 'promised'; dueTo: string; scope: StockScope };
-export type ProcurementOverviewResult = { ok: true; body: Record<string, unknown> } | { ok: false; body: { error: string; reason: string } };
+export type ProcurementOverviewFailure = { ok: false; body: { error: string; reason: string } };
+export type ProcurementOverviewResult = { ok: true; body: Record<string, unknown> } | ProcurementOverviewFailure;
+/** One read pass; `view` adds the only part that depends on "due to". */
+export type ProcurementOverviewRead = { ok: true; view: (dueTo: string) => Record<string, unknown> } | ProcurementOverviewFailure;
 
 /** The query as the report reads it, every default resolved, so a cache key built from it names one answer. */
 export function procurementOverviewParams(q: (k: string) => string | undefined, today: string): ProcurementOverviewParams {
@@ -87,7 +90,9 @@ procurementOverview.get('/', async (c) => {
  * The 15-minute cron: recompute the two views people open by default (the page:
  * this month, due to month end; the home Overview: this month, due today) for
  * each live company and store them, so a viewer is served without waiting.
- * One company / view at a time; a failure is logged and the stale copy stays.
+ * The two differ only in "due to", which no read uses: each company is read
+ * once and both are built from it (the run took 105 s at the 2026-10-23
+ * peak reading every company twice). A failure is logged and the stale copies stay.
  */
 export async function refreshProcurementOverviewSnapshots(env: WorkerEnv, today: string): Promise<void> {
   const kv = env.SESSION_CACHE;
@@ -101,24 +106,29 @@ export async function refreshProcurementOverviewSnapshots(env: WorkerEnv, today:
   const sb = getSupabaseService(env);
   for (const companyId of MRP_REFRESH_COMPANY_IDS) {
     const ctx = { get: (k: string) => (k === 'companyId' ? companyId : undefined) };
-    for (const p of views) {
-      try {
-        const r = await buildProcurementOverview(sb, ctx, p);
-        if (r.ok) await writeSwr(kv, procurementOverviewKey(companyId, p), r, PROCOV_SOFT_SECONDS, PROCOV_HARD_SECONDS);
-        else console.error(`[cron procurement-overview] company=${companyId} dueTo=${p.dueTo}`, r.body.reason);
-      } catch (e) {
-        console.error(`[cron procurement-overview] company=${companyId} dueTo=${p.dueTo}`, e);
-      }
+    try {
+      const r = await readProcurementOverview(sb, ctx, views[0]);
+      if (!r.ok) { console.error(`[cron procurement-overview] company=${companyId}`, r.body.reason); continue; }
+      for (const p of views) await writeSwr(kv, procurementOverviewKey(companyId, p), { ok: true, body: r.view(p.dueTo) }, PROCOV_SOFT_SECONDS, PROCOV_HARD_SECONDS);
+    } catch (e) {
+      console.error(`[cron procurement-overview] company=${companyId}`, e);
     }
   }
 }
 
-/** The report itself, for the route and the cron alike: `ctx` carries only the company. */
+/** The report for one view, for the route: `ctx` carries only the company. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the untyped supabase-js client every SCM read helper takes (companyScope.ts header)
 export async function buildProcurementOverview(sb: any, ctx: CompanyScopeCtx, p: ProcurementOverviewParams): Promise<ProcurementOverviewResult> {
-  const { today, from, to, basis, dueTo, scope } = p;
+  const r = await readProcurementOverview(sb, ctx, p);
+  return r.ok ? { ok: true, body: r.view(p.dueTo) } : r;
+}
+
+/** Every read and everything that does not depend on "due to". */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the untyped supabase-js client every SCM read helper takes (companyScope.ts header)
+export async function readProcurementOverview(sb: any, ctx: CompanyScopeCtx, p: Omit<ProcurementOverviewParams, 'dueTo'>): Promise<ProcurementOverviewRead> {
+  const { today, from, to, basis, scope } = p;
   const windowStart = new Date(Date.parse(`${to}T00:00:00Z`) - 365 * 86400000).toISOString().slice(0, 10);
-  const fail = (what: string, e: { message: string }): ProcurementOverviewResult => ({ ok: false, body: { error: 'load_failed', reason: `${what}: ${e.message}` } });
+  const fail = (what: string, e: { message: string }): ProcurementOverviewFailure => ({ ok: false, body: { error: 'load_failed', reason: `${what}: ${e.message}` } });
 
   /* ── PO headers and lines ─────────────────────────────────────────────── */
   const pos = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('purchase_orders')
@@ -414,7 +424,7 @@ export async function buildProcurementOverview(sb: any, ctx: CompanyScopeCtx, p:
     ),
   };
 
-  return { ok: true, body: {
+  const body = {
     today, from, to,
     deadStock: dead,
     turnover,
@@ -426,9 +436,8 @@ export async function buildProcurementOverview(sb: any, ctx: CompanyScopeCtx, p:
     warehouseKinds: Object.fromEntries((whs.data as Row[]).map((w) => [String(w.code ?? '—'), kindOf.get(String(w.id)) ?? 'others'])),
     leadOverrides: Object.fromEntries(Object.entries(leadOverrides).map(([k, xs]) => [k, xs.map((x) => ({ warehouse: whCode.get(x.warehouseId) ?? '—', days: x.days }))])),
     billed: { totalSen: (pis.data ?? []).reduce((a, r) => a + num(r.total_sen), 0), count: (pis.data ?? []).length, bySupplier: billedBySupplier, byCategory: billedByCategory },
-    dueTo,
-    ...procurementPeriod(lines, from, to, dueTo, today, basis),
-  } };
+  };
+  return { ok: true, view: (dueTo) => ({ ...body, dueTo, ...procurementPeriod(lines, from, to, dueTo, today, basis) }) };
 }
 
 /* GET /api/scm/procurement-overview/stock-ordering — how far ahead stock POs
