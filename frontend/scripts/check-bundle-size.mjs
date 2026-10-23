@@ -254,11 +254,9 @@ const CEILINGS = {
   // NO eager module — its edits are in lazy chunks only (authed-fetch, the SO /
   // DO detail pages, Service Cases), whose new hashed names in the entry's
   // lazy-chunk map measured +0.1 KB. Same mechanism as 2026-10-15.
-  // 173 -> 174 on 2026-10-22: main sat AT 173.0 and Employees & Attendance
-  // (HC-0125, PR #4812) added NO eager module: one lazy() route for
-  // /hr/employees, one Sidebar entry under HR (the Users icon the shell already
-  // loads), its route label, and the phone menu's Punch In / Out row with its
-  // lazy screen. Measured +0.2 KB on the entry. Same shell-growth mechanism.
+  // Employees & Attendance (HC-0125, PR #4812) then added no eager module (a
+  // lazy() route, one Sidebar entry, its route label, the phone Punch row):
+  // 173.3 KB measured 2026-10-23, under this ceiling.
   INITIAL_JS_GZIP: 174 * KB,
   // Everything the app can lazy-load (users only fetch the routes they visit).
   // A soft guard against unbounded total growth, not a first-paint cost. Left
