@@ -218,4 +218,21 @@ describe('EM Order push to the ERP and to the ESB / BS transporter sheets', () =
     const push = plan(m, t, () => false).updates.map((u: { col: number }) => u.col);
     expect(push).toEqual([0, 5, 6]);
   });
+
+  test('freight, Attention and Sync Status are never pushed, nor copied onto a new row (14:19 regression)', () => {
+    loadScript();
+    const headers = ['DELIVERY MESSAGE STATUS', 'Doc. No.', 'BALANCE', 'Attention', 'Sync Status', 'SEAFREIGHT', 'TOTAL', 'Supplier Invoice'];
+    const m = { labels: headers.map(() => ''), headers, rows: [
+      ['Done Shipout', 'SO-1', '10', 'SEAMPIFY', 'SYNCED', '371.98', '0.00', 'INV-OLD'],
+      ['Done Shipout', 'SO-2', '20', 'SEAMPIFY', 'SYNCED', '100.00', '0.00', 'INV-X'],
+    ] };
+    const t = { headers: headers.map((h) => (h === 'DELIVERY MESSAGE STATUS' ? 'EM Order Shipment Status' : h)),
+      rows: [['Done Shipout', 'SO-1', '99', '', 'PENDING', '500.00', '812.40', 'INV-NEW']], allowed: {} };
+    const p = plan(m, t, () => true);
+    expect(p.updates).toEqual([{ row: 0, col: 2, value: '10' }]);
+    const appended = p.appends[0] as string[];
+    expect(appended[1]).toBe('SO-2');
+    expect(appended[2]).toBe('20');
+    expect(appended.slice(3)).toEqual(['', '', '', '', '']);
+  });
 });

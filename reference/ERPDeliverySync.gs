@@ -1110,6 +1110,15 @@ function erpPlanTransporterPull_(master, target, source) {
 const ERP_ESB_COLUMNS = ["em order delivery status esb remarks", "consignment no", "vessel & voyage",
   "etd port klang", "eta em port", "done delivery", "esb remarks"];
 const ERP_BS_COLUMNS = ["bs kk - delivery date", "bs remarks"];
+// The ONLY columns pushed EM -> ESB / BS. An allowlist, never "everything not
+// ESB / BS": the 2026-10-23 14:19 run pushed EM's stale freight columns
+// (SEAFREIGHT .. TOTAL, Supplier Invoice) plus Attention / Sync Status over
+// ESB's own, 976 cells. Freight is the transporter's; Attention / Sync Status
+// are each sheet's own bookkeeping.
+const ERP_PUSH_COLUMNS = ["delivery message status", "transfer to", "ref.", "debtor name", "phone",
+  "sales location", "local total", "balance", "remark 4", "sales exemption expiry date",
+  "shipout date = do date", "houzs remark 2", "address 1", "address 2", "address 3", "address 4",
+  "ctn", "houzs remarks"];
 function erpColumnOwner_(header) {
   const k = erpNormHeader_(header);
   const hit = function (list) {
@@ -1130,7 +1139,7 @@ function erpPlanTransporterPush_(master, target, wants, esbRemark) {
   const owned = [];
   master.headers.forEach(function (h, i) {
     const k = erpNormHeader_(h);
-    if (k && erpColumnOwner_(k) === "EM" && tCol[k] !== undefined) owned.push({ m: i, t: tCol[k] });
+    if (k && ERP_PUSH_COLUMNS.indexOf(k) >= 0 && tCol[k] !== undefined) owned.push({ m: i, t: tCol[k] });
   });
   const mCol = function (name) { return master.headers.map(erpNormHeader_).indexOf(name); };
   const docM = mCol("doc. no.");
@@ -1147,7 +1156,7 @@ function erpPlanTransporterPush_(master, target, wants, esbRemark) {
     if (ti === undefined) {
       if (!wants(function (name) { const i = mCol(name); return i < 0 ? "" : erpCellText_(r[i]); }, doc, esbRemark || function () { return ""; })) return;
       const row = target.headers.map(function () { return ""; });
-      master.headers.forEach(function (h, i) { const k = erpNormHeader_(h); if (k && tCol[k] !== undefined) row[tCol[k]] = r[i]; });
+      master.headers.forEach(function (h, i) { const k = erpNormHeader_(h); if (k && tCol[k] !== undefined && (k === "doc. no." || ERP_PUSH_COLUMNS.indexOf(k) >= 0 || erpColumnOwner_(k) !== "EM")) row[tCol[k]] = r[i]; });
       appends.push(row);
       tRow[doc] = -1;
       return;
@@ -1208,11 +1217,12 @@ function erpPushToTransporters_(triggerType) {
         // the row that holds the DocNo NOW (staff may sort EM mid-run).
         const pulls = erpPlanTransporterPull_(master, target, t.pullOwner);
         const rowState = { index: erpDocNoIndex_(em, 4), moved: 0 };
-        let pulled = 0;
+        let pulled = 0, pullFailed = 0, pullMissing = 0, pullError = "";
         pulls.updates.forEach(function (u) {
           const r = erpRowOfDoc_(em, 4, u.doc, u.row + 4, rowState);
-          if (!r) return;
-          try { em.getRange(r, u.col + 1).setValue(u.value); master.rows[u.row][u.col] = u.value; pulled++; } catch (e) {}
+          if (!r) { pullMissing++; return; }
+          try { em.getRange(r, u.col + 1).setValue(u.value); master.rows[u.row][u.col] = u.value; pulled++; }
+          catch (e) { pullFailed++; if (!pullError) pullError = master.headers[u.col] + ": " + e.message; }
         });
         if (t.name === "ESB") {
           const tc = erpTargetColumns_(target.headers);
@@ -1227,7 +1237,9 @@ function erpPushToTransporters_(triggerType) {
           try { sh.getRange(u.row + 2, u.col + 1).setValue(u.value); written++; } catch (e) { failed++; }
         });
         if (plan.appends.length) sh.getRange(sh.getLastRow() + 1, 1, plan.appends.length, tlc).setValues(plan.appends);
-        parts.push(t.name + ": " + pulled + " cell(s) pulled into EM (" + (pulls.columns || 0) + " column(s) matched), " + written + " cell(s) updated, " + plan.appends.length + " order(s) added" +
+        parts.push(t.name + ": " + pulled + " of " + pulls.updates.length + " cell(s) pulled into EM (" + (pulls.columns || 0) + " column(s) matched" +
+          (pullMissing ? ", " + pullMissing + " row(s) not found" : "") +
+          (pullFailed ? ", " + pullFailed + " failed - " + pullError.slice(0, 120) : "") + "), " + written + " cell(s) updated, " + plan.appends.length + " order(s) added" +
           (plan.blocked ? ", " + plan.blocked + " skipped by dropdown" : "") + (failed ? ", " + failed + " failed" : ""));
         if (failed) status = "PARTIAL";
       } catch (e) {
