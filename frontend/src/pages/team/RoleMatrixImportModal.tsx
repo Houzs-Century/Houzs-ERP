@@ -26,7 +26,7 @@ import {
   type SheetData,
   type BlankMode,
 } from "../../lib/roleMatrixExcel";
-import { MATRIX_LEVEL_LABEL } from "../../lib/roleMatrixModel";
+import { MATRIX_LEVEL_LABEL_EN } from "../../lib/roleMatrixModel";
 
 type Failure = { role: string; message: string };
 
@@ -70,7 +70,7 @@ export function useRoleMatrixImport(onApplied: () => void) {
       setState({
         step: "pick",
         error:
-          "没找到角色列或功能/页面的 key。先用「导出 Excel」生成文件，编辑后再导入。",
+          "Couldn't find a role column or any function/page keys. Use Export Excel to generate the file, edit it, then import.",
       });
       return;
     }
@@ -166,19 +166,19 @@ function RoleRow({ r }: { r: RoleImportResult }) {
               <span className="text-ink-secondary">{c.label}</span>
               <span className="font-mono text-[10px] text-ink-muted">{c.pageKey}</span>
               <span className="ml-auto font-mono text-ink-muted">
-                {MATRIX_LEVEL_LABEL[c.from]} → <span className="text-ink">{MATRIX_LEVEL_LABEL[c.to]}</span>
+                {MATRIX_LEVEL_LABEL_EN[c.from]} → <span className="text-ink">{MATRIX_LEVEL_LABEL_EN[c.to]}</span>
               </span>
             </div>
           ))}
           {r.functionsAdded.map((k) => (
             <div key={`a-${k}`} className="flex items-center gap-2">
-              <span className="text-primary">授予 grant</span>
+              <span className="text-primary">Grant</span>
               <span className="font-mono text-[10px] text-ink-secondary">{k}</span>
             </div>
           ))}
           {r.functionsRemoved.map((k) => (
             <div key={`r-${k}`} className="flex items-center gap-2">
-              <span className="text-err">收回 remove</span>
+              <span className="text-err">Remove</span>
               <span className="font-mono text-[10px] text-ink-secondary">{k}</span>
             </div>
           ))}
@@ -191,17 +191,17 @@ function RoleRow({ r }: { r: RoleImportResult }) {
 function Notices({ parsed }: { parsed: ParsedImport }) {
   const notes: Array<{ tone: "warn" | "info"; text: string }> = [];
   if (parsed.lockedWithEdits.length > 0)
-    notes.push({ tone: "warn", text: `锁定角色不会被修改 (System / 全权限): ${parsed.lockedWithEdits.join(", ")}.` });
+    notes.push({ tone: "warn", text: `Locked roles won't be changed (System / full access): ${parsed.lockedWithEdits.join(", ")}.` });
   if (parsed.ambiguousColumns.length > 0)
-    notes.push({ tone: "warn", text: `重名角色列已跳过 (表头请用唯一名称，或加「ID ·」前缀): ${parsed.ambiguousColumns.join(", ")}.` });
+    notes.push({ tone: "warn", text: `Duplicate-name role columns were skipped (use a unique header, or add an "ID ·" prefix): ${parsed.ambiguousColumns.join(", ")}.` });
   if (parsed.ignoredColumns.length > 0)
-    notes.push({ tone: "info", text: `无法对应的角色列已忽略: ${parsed.ignoredColumns.join(", ")}.` });
+    notes.push({ tone: "info", text: `Unmatched role columns were ignored: ${parsed.ignoredColumns.join(", ")}.` });
   if (parsed.unknownKeys.length > 0)
-    notes.push({ tone: "info", text: `本版本没有的 key 已跳过: ${parsed.unknownKeys.join(", ")}.` });
+    notes.push({ tone: "info", text: `Keys this build doesn't have were skipped: ${parsed.unknownKeys.join(", ")}.` });
   if (parsed.badCells.length > 0)
     notes.push({
       tone: "warn",
-      text: `${parsed.badCells.length} 个无法识别的格子已跳过 (例: ${parsed.badCells
+      text: `${parsed.badCells.length} unreadable cell${parsed.badCells.length === 1 ? "" : "s"} skipped (e.g. ${parsed.badCells
         .slice(0, 3)
         .map((b) => `${b.sheet}!${b.cell}="${b.value}"`)
         .join(", ")}).`,
@@ -242,10 +242,10 @@ export function RoleMatrixImportPreview({
   return (
     <div className="flex flex-col gap-4 text-[13px]">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <Count label="角色改动 Roles changing" value={parsed.changedRoles.length} tone="add" />
-        <Count label="授予 Added" value={parsed.totalAdded} tone="add" />
-        <Count label="收回 Removed" value={parsed.totalRemoved} tone="remove" />
-        <Count label="不变 Unchanged" value={unchanged} />
+        <Count label="Roles changing" value={parsed.changedRoles.length} tone="add" />
+        <Count label="Added" value={parsed.totalAdded} tone="add" />
+        <Count label="Removed" value={parsed.totalRemoved} tone="remove" />
+        <Count label="Unchanged" value={unchanged} />
       </div>
 
       {blankMode && onBlankMode && (
@@ -257,8 +257,9 @@ export function RoleMatrixImportPreview({
             onChange={(e) => onBlankMode(e.target.checked ? "unchanged" : "none")}
           />
           <span>
-            <span className="font-semibold text-ink">只应用我填写的格子（空格 = 不改动）。</span>{" "}
-            默认情况下，这是一张完整权限表：空格 = 不给 / 不可见，会收回没填的权限。只改了几格就勾上这个。
+            <span className="font-semibold text-ink">Only apply the cells I filled in (blank = no change).</span>{" "}
+            By default this is a complete permission sheet: a blank cell = not granted / hidden, so any
+            permission you left blank is removed. Tick this if you only changed a few cells.
           </span>
         </label>
       )}
@@ -267,15 +268,15 @@ export function RoleMatrixImportPreview({
 
       <section aria-label="Per-role changes">
         <div className="mb-1.5 flex items-center justify-between gap-2">
-          <h3 className="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">角色 · 改动明细</h3>
+          <h3 className="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">Per-role changes</h3>
           <label className="flex items-center gap-1.5 text-[12px] text-ink-muted">
             <input type="checkbox" checked={showUnchanged} onChange={(e) => setShowUnchanged(e.target.checked)} />
-            显示未改动角色
+            Show unchanged roles
           </label>
         </div>
         {rows.length === 0 ? (
           <p className="rounded-lg border border-border px-3 py-3 text-ink-muted">
-            这个文件没有任何改动 — 所有角色与现状一致。
+            This file has no changes — every role matches the current state.
           </p>
         ) : (
           <div className="overflow-hidden rounded-lg border border-border">
@@ -316,14 +317,14 @@ export function RoleMatrixImportModal({
         <span className="truncate text-[12px] text-ink-muted">{state.fileName}</span>
         <div className="flex items-center gap-2">
           <Button variant="ghost" onClick={reset} disabled={state.applying}>
-            换文件
+            Change file
           </Button>
           <Button variant="brass" onClick={() => void confirm()} disabled={n === 0 || state.applying}>
             {state.applying
-              ? `应用中… ${state.progress}/${n}`
+              ? `Applying… ${state.progress}/${n}`
               : n === 0
-                ? "没有要应用的改动"
-                : `应用 ${n} 个角色的改动`}
+                ? "No changes to apply"
+                : `Apply changes to ${n} role${n === 1 ? "" : "s"}`}
           </Button>
         </div>
       </div>
@@ -332,14 +333,14 @@ export function RoleMatrixImportModal({
     footer = (
       <div className="flex w-full justify-end">
         <Button variant="primary" onClick={close}>
-          完成
+          Done
         </Button>
       </div>
     );
   }
 
   return (
-    <ModalOverlay open={open} onClose={close} title="导入角色权限 Excel" icon={<FileUp size={16} />} size="lg" footer={footer}>
+    <ModalOverlay open={open} onClose={close} title="Import role permissions (Excel)" icon={<FileUp size={16} />} size="lg" footer={footer}>
       {(state.step === "pick" || state.step === "reading") && (
         <PickStep state={state} onFile={(f) => void chooseFile(f, snapshot)} />
       )}
@@ -355,13 +356,14 @@ export function RoleMatrixImportModal({
       )}
       {state.step === "done" && (
         <div className="flex flex-col gap-2 text-[13px]" role="status">
-          <p className="font-semibold text-ink">已导入 {state.fileName}。</p>
+          <p className="font-semibold text-ink">Imported {state.fileName}.</p>
           <p className="text-ink-secondary">
-            {state.applied} 个角色已更新。成员在下次请求时看到新权限。
+            {state.applied} role{state.applied === 1 ? "" : "s"} updated. Members see the new
+            permissions on their next request.
           </p>
           {state.failures.length > 0 && (
             <div className={ERROR_BOX}>
-              {state.failures.length} 个角色没有保存成功:
+              {state.failures.length} role{state.failures.length === 1 ? "" : "s"} didn't save:
               <ul className="mt-1 list-disc pl-4">
                 {state.failures.map((f, i) => (
                   <li key={i}>
@@ -388,20 +390,23 @@ function PickStep({
   return (
     <div className="flex flex-col gap-4 text-[13px]">
       <p className="text-ink-secondary">
-        导入你编辑过的「角色权限矩阵」文件 (先用「导出 Excel」生成，改好再导入)。功能格子{" "}
-        <strong className="text-ink">✓ = 给、空 = 不给</strong>；页面格子{" "}
-        <strong className="text-ink">看 / 改 / 批</strong>，<strong className="text-ink">空 = 不可见</strong>。
+        Import an edited role-permission matrix file (generate it with Export Excel first, then import).
+        Function cells{" "}
+        <strong className="text-ink">✓ = grant, blank = don't grant</strong>; page cells{" "}
+        <strong className="text-ink">View / Edit / Full</strong>, <strong className="text-ink">blank = hidden</strong>.
       </p>
       <p className="text-[12px] text-ink-muted">
-        默认当作一张完整权限表（空格会收回没填的权限）。应用前你会看到每个角色的「授予 / 收回 / 不变」，
-        确认后才写入；系统角色与全权限角色不会被修改。只改了几格，就在预览里勾「只应用我填写的格子」。
+        Treated by default as a complete permission sheet (a blank cell removes any permission you left
+        blank). Before applying you'll see each role's Added / Removed / Unchanged, and nothing is written
+        until you confirm; system and full-access roles are never changed. If you only changed a few cells,
+        tick "Only apply the cells I filled in" in the preview.
       </p>
       <label className="w-max">
         <input
           type="file"
           accept={ROLE_MATRIX_IMPORT_ACCEPT}
           className="hidden"
-          aria-label="选择角色权限文件"
+          aria-label="Choose role permissions file"
           onChange={(e) => {
             const f = e.target.files?.[0];
             e.target.value = "";
@@ -414,7 +419,7 @@ function PickStep({
           }`}
         >
           <FileUp size={14} />
-          {reading ? `读取 ${state.fileName}…` : "选择文件"}
+          {reading ? `Reading ${state.fileName}…` : "Choose file"}
         </span>
       </label>
       {state.step === "pick" && state.error && (

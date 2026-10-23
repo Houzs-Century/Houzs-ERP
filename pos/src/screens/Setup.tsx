@@ -9,6 +9,7 @@ import { adminApi, deviceApi, erpReachable } from "../api";
 import { requestPersistentStorage, storageEstimate } from "../db";
 import { refreshBundle, saveDeviceState, stateFromBundle, platformName } from "../deviceStore";
 import { fmtMyt } from "../loginRules";
+import { demoState } from "../demo";
 import { connectPrinter, onPrinterStatus, printerSupported, type PrinterStatus } from "../printer";
 import { printTestPage } from "../printing";
 import { clearTestSales } from "../salesStore";
@@ -72,6 +73,20 @@ export function Setup({ state, onPrepared, onExit, onToggleTest }: {
       setEvents((e.data ?? []).filter((x) => x.link));
     } catch (e) {
       setMsg({ tone: "bad", text: e instanceof Error ? (e.message.includes("403") || e.message.includes("permission") ? "This account cannot manage POS (needs Manage POS)." : e.message) : "Sign-in failed" });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function startDemo() {
+    setBusy("demo");
+    setMsg(null);
+    try {
+      const next = await demoState(state);
+      await saveDeviceState(next);
+      onPrepared(next);
+    } catch (e) {
+      setMsg({ tone: "bad", text: e instanceof Error ? e.message : "Could not start the demo" });
     } finally {
       setBusy(null);
     }
@@ -173,12 +188,23 @@ export function Setup({ state, onPrepared, onExit, onToggleTest }: {
             <button type="button" className="btn" disabled={busy !== null || !printer.connected} onClick={() => void testPrint()}>Test print</button>
             <button type="button" className="btn" disabled title="Arrives with the sync step">Import backup</button>
             <span className="grow" />
-            <label className="row small"><input type="checkbox" checked={state?.test_mode ?? false} onChange={(e) => onToggleTest(e.target.checked)} /> Test mode</label>
+            <label className="row small"><input type="checkbox" checked={state?.test_mode ?? false} disabled={state?.demo} onChange={(e) => onToggleTest(e.target.checked)} /> Test mode{state?.demo ? " (always on in demo)" : ""}</label>
             <button type="button" className="btn" disabled={busy !== null} onClick={() => void clearTests()} title="Delete every TEST sale on this device">Clear test sales</button>
           </div>
         </div>
       )}
 
+      {(!b || state?.demo) && (
+        <div className="card">
+          <h2>{state?.demo ? "Demo mode is on" : "No device yet? Try the POS with sample data"}</h2>
+          <p className="muted" style={{ marginTop: 0 }}>
+            {state?.demo
+              ? "The sell screen runs on a sample catalog; every sale is a TEST sale and nothing reaches the ERP. Prepare a real terminal below when it exists."
+              : "Opens the login and sell screens with 8 sample items and 2 sample cashiers (PIN 1234). Every sale is a TEST sale; nothing reaches the ERP. Prepare a real terminal below whenever it exists."}
+          </p>
+          {!state?.demo && <button type="button" className="btn primary" disabled={busy !== null} onClick={() => void startDemo()}>{busy === "demo" ? "Loading…" : "Open demo POS"}</button>}
+        </div>
+      )}
       <div className="card">
         <h2>{b ? "Re-prepare this device" : "Prepare this device"}</h2>
         {!token ? (

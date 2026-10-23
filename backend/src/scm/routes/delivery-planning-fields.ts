@@ -11,18 +11,26 @@ export const HC_SUBSTATUS_VALUES = [
 ] as const;
 
 /* The customer-message follow-up workflow statuses shown/edited in the "Delivery
-   Status" column (owner 2026-09-22). One of these 23 values, or blank. The
+   Status" column. One of these 28 values, or blank (owner 2026-10-22). The
    coarse scm.delivery_state (the top state tabs) is a separate, derived field
-   and is NOT one of these — the tabs get their own rework later. */
+   and is NOT one of these — the tabs get their own rework later. Byte-synced with
+   the frontend MESSAGE_STATUSES (delivery-planning-queries.ts). */
 export const HC_MESSAGE_STATUS_VALUES = [
-  'To Send Delivery Date', 'Pending Customer Reply (D)', 'Pending Reschedule (D)',
-  'Done Scheduling', 'Not Sent (D)', 'Pending Reschedule (A)', 'Not Sent (A)',
-  'Invalid Data', '3 Days Reminder Sent (Time)', '1 Day Reminder Sent (Driver)',
-  '7 Days Balance Reminder Sent', 'To Send Delivery Time', 'Done Delivery Time',
-  'To Send Driver Info', 'Done Driver Information', 'To Send Collect Balance',
-  'Done Balance Collection', 'To Send Postpone Reason', 'Done Postpone Reason',
-  'To Remind Customer Reply (1)', 'To Remind Customer Reply (2)',
-  'To Remind Customer Reply (3)', 'Done Remind',
+  'To Send Delivery Date', 'Done Send',
+  'To Send Driver Info', 'Done Driver Information',
+  'To Send Collect Balance', 'Done Balance Collection',
+  'To Send Postpone Reason', 'Done Postpone Reason',
+  'To Send Postage', 'Done Postage',
+  'Done Amend', 'Done Delivered',
+  'To Remind Customer Reply (1)', 'To Remind Customer Reply (2)', 'To Remind Customer Reply (3)',
+  'Done Remind (1)', 'Done Remind (2)', 'Done Remind (3)',
+  'Done Scheduling', 'Pending Reschedule (D)',
+  'Not Sent (D)', 'Not Sent (A)', 'Invalid Data',
+  // East Malaysia / Singapore shipping + the (A)-round reschedule and customer-reply
+  // statuses the HC Delivery sheet actually uses — added so the sheet backfill's
+  // real statuses are first-class dropdown values (owner 2026-10-22).
+  'Done Shipout', 'Pending Delivery (EM)', 'Customer Confirm Shipment',
+  'Pending Reschedule (A)', 'Pending Customer Reply (D)',
 ] as const;
 
 export const fieldsSchema = z.object({

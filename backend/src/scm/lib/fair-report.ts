@@ -17,6 +17,7 @@
 
 import { isFinanceViewer, isSalesDirectorUser } from '../../services/pmsAccess';
 import { signedBalanceSen } from '../shared/so-outstanding';
+import { isServiceLine } from '../shared/service-sku';
 import type { AuthUser } from '../../services/auth';
 
 // ── Stage ────────────────────────────────────────────────────────────────────
@@ -147,7 +148,14 @@ export function paymentMethodsUsed(payments: readonly PaymentRow[]): TenderLabel
 const n = (v: number | null | undefined): number => Number(v ?? 0);
 
 /** margin% = (revenue − cost) / revenue × 100. null when revenue is 0 (a
- *  percentage off a zero base is a lie, not a 0%). */
+ *  percentage off a zero base is a lie, not a 0%).
+ *
+ *  The SO / DO / Invoice stages feed it GOODS only (owner 2026-10-22: 「transport
+ *  不算」). Delivery and installation income carries no cost — service lines
+ *  carry none by design — so counting it lifted every margin; on 2990 it read
+ *  36.3% where the goods earn 30.9%. Amount, Invoiced and Balance still show
+ *  the whole order. The P&L stage keeps the whole revenue: its overhead takes
+ *  transport off below. */
 export function marginPct(revenueSen: number | null | undefined, costSen: number | null | undefined): number | null {
   const rev = n(revenueSen);
   if (rev === 0) return null;
@@ -200,7 +208,8 @@ export interface FairSoMoney {
     service_cost_sen: number;
   };
   total_so_cost_sen: number;   // total_cost_sen
-  margin_pct: number | null;
+  goods_cost_sen: number;      // total_cost_sen less the service lines' cost
+  margin_pct: number | null;   // goods only: (selling − goods cost) / selling
 }
 
 /**
@@ -247,6 +256,7 @@ export function fairSoMoney(h: FairSoInputs): FairSoMoney {
   // the reconstructed sum when local_total_sen is 0/absent.
   const amount = n(h.local_total_sen) || selling + serviceRev;
   const totalCost = n(h.total_cost_sen);
+  const goodsCost = totalCost - n(h.service_cost_sen);
   return {
     amount_sen: amount,
     selling_sen: selling,
@@ -259,7 +269,8 @@ export function fairSoMoney(h: FairSoInputs): FairSoMoney {
       service_cost_sen: n(h.service_cost_sen),
     },
     total_so_cost_sen: totalCost,
-    margin_pct: marginPct(amount, totalCost),
+    goods_cost_sen: goodsCost,
+    margin_pct: marginPct(selling, goodsCost),
   };
 }
 
@@ -272,13 +283,14 @@ export type DoCostLine = {
    *  stock and never carry a frozen cost, so they must not decide the LEGACY
    *  verdict — see the note on `is_legacy`. Absent/unknown counts as stock. */
   item_group?: string | null;
+  /** SVC-… codes are service lines too (isServiceLine). */
+  item_code?: string | null;
 };
 
-const isServiceGroup = (g: string | null | undefined): boolean => (g ?? '').trim().toLowerCase() === 'service';
-
 /** total_do_cost = Σ COALESCE(ship_cost_sen, unit_cost_sen) × qty over the
- *  DO's lines (reuse of the Fulfillment Costing ② rule, #800). Also reports the
- *  delivered qty and two flags the report shows as chips:
+ *  DO's lines (reuse of the Fulfillment Costing ② rule, #800); goods_do_cost
+ *  is the same sum over the non-service lines, for the goods-only margin. Also
+ *  reports the delivered qty and two flags the report shows as chips:
  *
  *  `is_legacy` — a STOCK line fell back to the order-time estimate because it
  *  carries no frozen ship cost (a DO written before mig 0143). Owner's Sales
@@ -294,34 +306,53 @@ const isServiceGroup = (g: string | null | undefined): boolean => (g ?? '').trim
  *  a free sale. A line that is genuinely free (no estimate either) is not
  *  flagged. */
 export function doCostTotal(lines: readonly DoCostLine[]): {
-  total_do_cost_sen: number; qty: number; is_legacy: boolean; has_zero_frozen: boolean;
+  total_do_cost_sen: number; goods_do_cost_sen: number; qty: number; is_legacy: boolean; has_zero_frozen: boolean;
 } {
   let total = 0;
+  let goods = 0;
   let qty = 0;
   let legacy = false;
   let zeroFrozen = false;
   for (const l of lines) {
     const q = n(l.qty);
     qty += q;
-    const service = isServiceGroup(l.item_group);
+    const service = isServiceLine({ itemGroup: l.item_group, itemCode: l.item_code });
     const unit = l.ship_cost_sen != null ? n(l.ship_cost_sen) : n(l.unit_cost_sen);
     if (l.ship_cost_sen == null && !service) legacy = true;
     if (!service && l.ship_cost_sen != null && n(l.ship_cost_sen) === 0 && n(l.unit_cost_sen) > 0) zeroFrozen = true;
     total += unit * q;
+    if (!service) goods += unit * q;
   }
-  return { total_do_cost_sen: total, qty, is_legacy: legacy, has_zero_frozen: zeroFrozen };
+  return { total_do_cost_sen: total, goods_do_cost_sen: goods, qty, is_legacy: legacy, has_zero_frozen: zeroFrozen };
 }
 
 // ── stage=invoice cost progression ───────────────────────────────────────────
 export type SiCostLine = { qty: number | null; unit_cost_sen: number | null; line_cost_sen: number | null };
 
+const siLineCost = (l: SiCostLine): number =>
+  l.line_cost_sen != null ? n(l.line_cost_sen) : n(l.unit_cost_sen) * n(l.qty);
+
 /** landed (SI) cost = Σ line_cost_sen (fall back unit×qty) over the SI lines. */
 export function siCostTotal(lines: readonly SiCostLine[]): number {
   let total = 0;
-  for (const l of lines) {
-    total += l.line_cost_sen != null ? n(l.line_cost_sen) : n(l.unit_cost_sen) * n(l.qty);
-  }
+  for (const l of lines) total += siLineCost(l);
   return total;
+}
+
+export type SiGoodsLine = SiCostLine & { line_total_sen: number | null; item_group?: string | null; item_code?: string | null };
+
+/** The goods side of an SI, for the goods-only margin: Σ line_total_sen and
+ *  Σ landed cost over the lines that are not service lines. Every live SI
+ *  totals exactly its lines (prod 2026-10-22: 556 invoices, none off). */
+export function siGoodsTotals(lines: readonly SiGoodsLine[]): { goods_invoiced_sen: number; goods_cost_sen: number } {
+  let invoiced = 0;
+  let cost = 0;
+  for (const l of lines) {
+    if (isServiceLine({ itemGroup: l.item_group, itemCode: l.item_code })) continue;
+    invoiced += n(l.line_total_sen);
+    cost += siLineCost(l);
+  }
+  return { goods_invoiced_sen: invoiced, goods_cost_sen: cost };
 }
 
 // ── Summaries (per-stage KPI header cards) ───────────────────────────────────
@@ -331,8 +362,9 @@ export interface FairSoSummary {
   total_selling_sen: number;
   total_service_rev_sen: number;
   total_so_cost_sen: number;
-  total_margin_sen: number;
-  margin_pct: number | null;
+  total_goods_cost_sen: number;
+  total_margin_sen: number;      // goods: selling − goods cost
+  margin_pct: number | null;     // goods only
   total_balance_sen: number;
   below_deposit_count: number;
   tender_totals: TenderSplit;
@@ -344,6 +376,7 @@ export function summarizeSo(
     selling_sen: number;
     service_rev_sen: number;
     total_so_cost_sen: number;
+    goods_cost_sen: number;
     balance_sen: number;
     below_deposit: boolean;
     deposit_by_tender: TenderSplit;
@@ -355,6 +388,7 @@ export function summarizeSo(
     total_selling_sen: 0,
     total_service_rev_sen: 0,
     total_so_cost_sen: 0,
+    total_goods_cost_sen: 0,
     total_margin_sen: 0,
     margin_pct: null,
     total_balance_sen: 0,
@@ -366,12 +400,13 @@ export function summarizeSo(
     s.total_selling_sen += r.selling_sen;
     s.total_service_rev_sen += r.service_rev_sen;
     s.total_so_cost_sen += r.total_so_cost_sen;
+    s.total_goods_cost_sen += r.goods_cost_sen;
     s.total_balance_sen += r.balance_sen;
     if (r.below_deposit) s.below_deposit_count += 1;
     for (const t of TENDER_LABELS) s.tender_totals[t] += r.deposit_by_tender[t];
   }
-  s.total_margin_sen = s.total_amount_sen - s.total_so_cost_sen;
-  s.margin_pct = marginPct(s.total_amount_sen, s.total_so_cost_sen);
+  s.total_margin_sen = s.total_selling_sen - s.total_goods_cost_sen;
+  s.margin_pct = marginPct(s.total_selling_sen, s.total_goods_cost_sen);
   return s;
 }
 
@@ -402,20 +437,30 @@ export interface FairInvoiceSummary {
   total_so_cost_sen: number;
   total_do_cost_sen: number;
   total_si_cost_sen: number;   // landed
-  margin_pct: number | null;     // invoiced vs landed
+  total_goods_invoiced_sen: number;
+  total_goods_si_cost_sen: number;
+  margin_pct: number | null;     // goods only: goods invoiced vs their landed cost
 }
 
 export function summarizeInvoice(
-  rows: ReadonlyArray<{ invoiced_sen: number; so_cost_sen: number; do_cost_sen: number; si_cost_sen: number }>,
+  rows: ReadonlyArray<{
+    invoiced_sen: number; so_cost_sen: number; do_cost_sen: number; si_cost_sen: number;
+    goods_invoiced_sen: number; goods_si_cost_sen: number;
+  }>,
 ): FairInvoiceSummary {
-  const s: FairInvoiceSummary = { invoices: rows.length, total_invoiced_sen: 0, total_so_cost_sen: 0, total_do_cost_sen: 0, total_si_cost_sen: 0, margin_pct: null };
+  const s: FairInvoiceSummary = {
+    invoices: rows.length, total_invoiced_sen: 0, total_so_cost_sen: 0, total_do_cost_sen: 0, total_si_cost_sen: 0,
+    total_goods_invoiced_sen: 0, total_goods_si_cost_sen: 0, margin_pct: null,
+  };
   for (const r of rows) {
     s.total_invoiced_sen += r.invoiced_sen;
     s.total_so_cost_sen += r.so_cost_sen;
     s.total_do_cost_sen += r.do_cost_sen;
     s.total_si_cost_sen += r.si_cost_sen;
+    s.total_goods_invoiced_sen += r.goods_invoiced_sen;
+    s.total_goods_si_cost_sen += r.goods_si_cost_sen;
   }
-  s.margin_pct = marginPct(s.total_invoiced_sen, s.total_si_cost_sen);
+  s.margin_pct = marginPct(s.total_goods_invoiced_sen, s.total_goods_si_cost_sen);
   return s;
 }
 

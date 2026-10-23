@@ -87,7 +87,7 @@ describe('等加人 — a scan whose scanner is not on the booth', () => {
     );
     expect(res.ok && res.rows).toEqual([expect.objectContaining({
       check: 'NEEDS_ATTENDING',
-      note: 'Jason is not on Sales Attending for AKEMI @ MID VALLEY (10/15 - 10/18). The draft cannot be confirmed until PMS adds them.',
+      note: 'Jason is not on Sales Attending for AKEMI @ MID VALLEY (10/15 - 10/18). PMS adds them in the project.',
     })]);
   });
 
@@ -99,7 +99,7 @@ describe('等加人 — a scan whose scanner is not on the booth', () => {
       fakeDb([[KEYER, []], [BY_IDS, BOOTHS], [USERS, [{ id: 92, name: 'Jason' }]]]),
     );
     expect(res.ok && res.rows.map((r) => [r.doc_no, r.note])).toEqual([
-      ['HC-SO-2610-003', 'Jason is not on Sales Attending for AKEMI @ MID VALLEY (10/15 - 10/18).'],
+      ['HC-SO-2610-003', 'Jason is not on Sales Attending for AKEMI @ MID VALLEY (10/15 - 10/18). PMS adds them in the project.'],
     ]);
   });
 
@@ -154,6 +154,56 @@ describe('the evening report outranks the slip (owner 2026-10-20)', () => {
       [{ projectId: 340, title: '[AKEMI] REX', detail: 'MID VALLEY · 10/15 - 10/18' }, 'HC13316'],
       [null, 'HC13548'],
     ]);
+  });
+
+  /* Owner 2026-10-23 (「report says another fair 的单我不能改？」): each row has its
+     own Fair box now, so a person may settle an order somewhere the report
+     does not say. That decision stands — read from the order's History. */
+  it('a person who moved it on Fair Links with the report in has decided — until a later report', async () => {
+    const fairMove = (doc: string, source: string, at: string, field = 'fair') => ({
+      company_id: 1, so_doc_no: doc, action: 'UPDATE_FAIR', source, created_at: at,
+      field_changes: [{ field, from: 'A', to: 'B' }],
+    });
+    const linked = (doc: string, ref: string) => order({ doc_no: doc, so_date: '2026-10-12', customer_so_no: ref });
+    const res = await run(
+      {
+        mfg_sales_orders: [
+          linked('HC-SO-2610-167', 'HC13316'),
+          linked('HC-SO-2610-168', 'HC13317'),
+          linked('HC-SO-2610-169', 'HC13318'),
+          linked('HC-SO-2610-170', 'HC13319'),
+        ],
+        mfg_so_audit_log: [
+          /* Linked by hand two days after the 10/10 report: decided. */
+          fairMove('HC-SO-2610-167', 'settle', '2026-10-12T02:00:00Z'),
+          /* Linked the day before the report came in: the report is news. */
+          fairMove('HC-SO-2610-168', 'settle', '2026-10-09T02:00:00Z'),
+          /* Linked by hand, then the system moved it again: no longer a decision. */
+          fairMove('HC-SO-2610-169', 'transfer', '2026-10-12T02:00:00Z'),
+          fairMove('HC-SO-2610-169', 'nightly', '2026-10-13T02:00:00Z'),
+          /* Put aside then brought back moves no fair: the Link still stands. */
+          fairMove('HC-SO-2610-170', 'settle', '2026-10-12T02:00:00Z'),
+          fairMove('HC-SO-2610-170', 'settle', '2026-10-13T02:00:00Z', 'Fair Links'),
+          fairMove('HC-SO-2610-170', 'settle', '2026-10-14T02:00:00Z', 'Fair Links'),
+        ],
+        scan_jobs: [],
+      },
+      fakeDb([[REPORTS, [chat(307, '10/10\n1. HC13316 RM100 A\n2. HC13317 RM100 B\n3. HC13318 RM100 C\n4. HC13319 RM100 D', '2026-10-09')]], [BY_IDS, byIds], [AT_VENUE, []]]),
+    );
+    expect(res.ok && res.rows.map((r) => [r.doc_no, r.check])).toEqual([
+      ['HC-SO-2610-169', 'REPORT_ELSEWHERE'],
+      ['HC-SO-2610-168', 'REPORT_ELSEWHERE'],
+    ]);
+  });
+
+  it('History unreadable is a failure, never "nothing to check"', async () => {
+    const res = await loadFairChecks({
+      sb: fakeSb({ mfg_sales_orders: [order({ customer_so_no: 'HC13316', so_date: '2026-10-12' })], scan_jobs: [] }, { mfg_so_audit_log: ['field_changes'] }),
+      db: fakeDb([[REPORTS, [chat(307, '10/10\n1. HC13316 RM100 A', '2026-10-09')]], [BY_IDS, byIds]]),
+      companySql: ' AND p.company_id = 1',
+      scope: (q) => (q as { eq(c: string, v: unknown): typeof q }).eq('company_id', 1),
+    });
+    expect(res).toEqual({ ok: false });
   });
 
   it('two fairs\' reports: listed with no target, for a person', async () => {

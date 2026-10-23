@@ -19,8 +19,11 @@ import { useToast } from "../../hooks/useToast";
 import { useBranding } from "../../hooks/useBranding";
 import { saveDraft, deleteDraftBestEffort, type MailDraft } from "./mail-local";
 import { pickDefaultFromAddress } from "./mail-from-default";
+import { sentToast } from "./mail-delivery";
+import { NEEDS_ACK_HINT } from "./mail-acks";
 // To / Cc / Bcc parsing + validation, shared with the phone's composer.
-import { parseRecipients, firstInvalid } from "./mail-recipients";
+import { parseRecipients, firstInvalid, addRecipients } from "./mail-recipients";
+import { RecipientPicker } from "./RecipientPicker";
 import {
   MAIL_ATTACH_MAX_COUNT,
   MAIL_ATTACH_MAX_TOTAL_BYTES,
@@ -34,7 +37,7 @@ import {
   humanSize,
   type OutboundAttachment as ComposeAttachment,
 } from "./mail-attach-files";
-import { Mail, Send, Loader2, X, Save, Paperclip } from "lucide-react";
+import { Mail, Send, Loader2, X, Save, Paperclip, Users } from "lucide-react";
 
 type MailAddress = {
   id: string;
@@ -51,6 +54,7 @@ type ComposeResponse = {
   ok?: boolean;
   threadId?: string;
   messageId?: string;
+  queued?: boolean;
   error?: string;
 };
 
@@ -123,6 +127,8 @@ export function ComposeDialog({
   const [cc, setCc] = useState("");
   const [bcc, setBcc] = useState("");
   const [showCopies, setShowCopies] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [needsAck, setNeedsAck] = useState(false);
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [touchedTo, setTouchedTo] = useState(false);
@@ -146,6 +152,7 @@ export function ComposeDialog({
       setSending(false);
       setFiles([]);
       setAttachError(null);
+      setNeedsAck(false);
     }
     wasOpen.current = open;
   }, [open, initialDraft]);
@@ -243,6 +250,7 @@ export function ComposeDialog({
           subject: subject.trim(),
           text: body,
           ...(files.length > 0 ? { attachments: attachmentPayload(files) } : {}),
+          ...(needsAck ? { needsAck: true } : {}),
         },
       );
       if (!payload?.ok) {
@@ -251,7 +259,7 @@ export function ComposeDialog({
         toast.error("Failed to send email. Please try again.");
         return;
       }
-      toast.success("Email sent.");
+      toast.success(sentToast(payload.queued, "Email sent."));
       if (draftId) deleteDraftBestEffort(draftId);
       onClose();
       if (payload.threadId) {
@@ -341,15 +349,26 @@ export function ComposeDialog({
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-medium text-ink-muted">To</label>
-                  {!showCopies && (
+                  <div className="flex items-center gap-3">
                     <button
                       type="button"
-                      onClick={() => setShowCopies(true)}
-                      className="text-[11px] font-medium text-primary hover:underline"
+                      onClick={() => setPickerOpen(true)}
+                      disabled={sending}
+                      className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline disabled:opacity-50"
                     >
-                      Cc / Bcc
+                      <Users className="h-3 w-3" />
+                      Org chart
                     </button>
-                  )}
+                    {!showCopies && (
+                      <button
+                        type="button"
+                        onClick={() => setShowCopies(true)}
+                        className="text-[11px] font-medium text-primary hover:underline"
+                      >
+                        Cc / Bcc
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <input
                   type="text"
@@ -528,6 +547,13 @@ export function ComposeDialog({
                   <Save className="h-4 w-4" />
                   Save draft
                 </button>
+                <label
+                  title={NEEDS_ACK_HINT}
+                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-[12px] font-semibold text-ink-secondary hover:text-ink"
+                >
+                  <input type="checkbox" checked={needsAck} disabled={sending} onChange={(e) => setNeedsAck(e.target.checked)} />
+                  Needs acknowledgement
+                </label>
               </>
             )}
             <button
@@ -545,6 +571,19 @@ export function ComposeDialog({
           </div>
         </div>
       </div>
+      <RecipientPicker
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        already={[to, cc, bcc]}
+        onPick={(picked, field) => {
+          if (field === "cc") {
+            setCc((prev) => addRecipients(prev, picked));
+            setShowCopies(true);
+          } else {
+            setTo((prev) => addRecipients(prev, picked));
+          }
+        }}
+      />
     </div>
   );
 }

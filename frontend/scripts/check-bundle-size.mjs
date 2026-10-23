@@ -250,6 +250,10 @@ const CEILINGS = {
   // Logistic Overview), their manifest lines and four Sidebar entries renamed
   // or added (each module opens with its overview; icons the shell already
   // loads). Measured +0.2 KB on the entry. Same shell-growth mechanism.
+  // 173 -> 174 on 2026-10-22: main sat at 172.9 and HC-0002 (PR #4856) added
+  // NO eager module — its edits are in lazy chunks only (authed-fetch, the SO /
+  // DO detail pages, Service Cases), whose new hashed names in the entry's
+  // lazy-chunk map measured +0.1 KB. Same mechanism as 2026-10-15.
   // 173 -> 174 on 2026-10-22: main sat AT 173.0 and Employees & Attendance
   // (HC-0125, PR #4812) added NO eager module: one lazy() route for
   // /hr/employees, one Sidebar entry under HR (the Users icon the shell already

@@ -26,6 +26,7 @@
 // (getDb) or postgres.js (getSql) directly — do not add new callers here.
 // ---------------------------------------------------------------------------
 import type { Sql } from "postgres";
+import { recordStep } from "../lib/step-timing";
 
 /**
  * Rewrite SQLite positional placeholders to Postgres `$n`.
@@ -437,6 +438,8 @@ class PreparedStatement {
     // Every query in the app funnels through here — a single threshold log
     // turns `wrangler tail` into a slow-query dashboard (Hookka pattern).
     const ms = Date.now() - t0;
+    // Per request: how many SQL round trips and their summed time (Server-Timing s-db-sql).
+    recordStep("db-sql", ms);
     if (ms > SLOW_QUERY_MS) {
       console.warn(
         `[slow-query] ${ms}ms rows=${res.count ?? res.length} :: ${text.replace(/\s+/g, " ").slice(0, 180)}`,

@@ -116,6 +116,13 @@ vi.mock('../../vendor/scm/lib/suppliers-queries', async (importOriginal) => ({
   useSuppliers: () => ({ data: [{ id: 'sup-h', code: '405-H001', name: 'HOUZS VENTURE HOLDING SDN BHD' }, { id: 'sup-d', code: '400-D002', name: 'DIGLANT MANUFACTURING SDN BHD.' }], isLoading: false }),
 }));
 
+/* The event picker and labels (owner 2026-10-22: an event per supplier-note line). */
+vi.mock('../../vendor/scm/lib/event-queries', async (importOriginal) => ({
+  ...(await importOriginal() as object),
+  useEventLabels: () => ({ data: new Map([[2259, { id: 2259, name: 'JOHOR [AKEMI] INHOME @ SUTERA MALL', startDate: '2026-10-09', endDate: '2026-10-11' }]]), isLoading: false }),
+  useEventOptions: () => ({ data: [{ id: 2259, name: 'JOHOR [AKEMI] INHOME @ SUTERA MALL', startDate: '2026-10-09', endDate: '2026-10-11' }], isLoading: false }),
+}));
+
 const { CreditNotes, bodyOf } = await import('./CreditNotes');
 
 describe('the Credit & Debit Notes page', () => {
@@ -160,11 +167,22 @@ describe('the Credit & Debit Notes page', () => {
   });
 
   test('the body of a supplier note carries the supplier, and a typed customer name stands in for an order', () => {
-    const scn = bodyOf({ kind: 'SCN', noteDate: '2026-09-03', soDocNo: '', partyName: '', supplierId: 'sup-h', sourceDocNo: 'PRT-2609-003', reason: '', lines: [{ rid: 1, description: '', accountCode: '', amountRm: '500' }] });
+    const scn = bodyOf({ kind: 'SCN', noteDate: '2026-09-03', soDocNo: '', partyName: '', supplierId: 'sup-h', sourceDocNo: 'PRT-2609-003', reason: '', lines: [{ rid: 1, description: '', accountCode: '', amountRm: '500', projectId: null }] });
     /* A supplier note always says its ticks — none ticked is a plan too. */
     expect(scn).toEqual({ kind: 'SCN', noteDate: '2026-09-03', reason: null, sourceDocNo: 'PRT-2609-003', supplierId: 'sup-h', allocations: [], lines: [{ description: null, accountCode: null, amountSen: 50000 }] });
-    const typed = bodyOf({ kind: 'DN', noteDate: '2026-09-03', soDocNo: '', partyName: 'Walk-in Ah Meng', supplierId: '', sourceDocNo: '', reason: 'Late fee', lines: [{ rid: 1, description: 'Late fee', accountCode: '520-0000', amountRm: '20.50' }] });
+    const typed = bodyOf({ kind: 'DN', noteDate: '2026-09-03', soDocNo: '', partyName: 'Walk-in Ah Meng', supplierId: '', sourceDocNo: '', reason: 'Late fee', lines: [{ rid: 1, description: 'Late fee', accountCode: '520-0000', amountRm: '20.50', projectId: null }] });
     expect(typed).toMatchObject({ kind: 'DN', partyName: 'Walk-in Ah Meng', lines: [{ description: 'Late fee', accountCode: '520-0000', amountSen: 2050 }] });
+  });
+
+  test('a supplier note line carries the event it is for; a line with none sends none (owner 2026-10-22)', () => {
+    const scn = bodyOf({ kind: 'SCN', noteDate: '2026-10-20', soDocNo: '', partyName: '', supplierId: 'sup-h', sourceDocNo: '', reason: 'Rental refund', lines: [
+      { rid: 1, description: 'Rental credit', accountCode: '900-R032', amountRm: '2000', projectId: 2259 },
+      { rid: 2, description: 'Other', accountCode: '', amountRm: '10', projectId: null },
+    ] });
+    expect(scn.lines).toEqual([
+      { description: 'Rental credit', accountCode: '900-R032', amountSen: 200000, projectId: 2259 },
+      { description: 'Other', accountCode: null, amountSen: 1000 },
+    ]);
   });
 
   test('Print in the detail prints the one note with its lines and the chart\'s names; ticked rows print as ONE document in list order (docs/bugs/0834)', async () => {

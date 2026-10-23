@@ -669,8 +669,8 @@ consignmentOrders.post('/', async (c) => {
   let mattressSofaCost = 0, bedframeCost = 0, accessoriesCost = 0, othersCost = 0;
   const headerDeliveryDate = dateOrNull(body.customerDeliveryDate);
 
-  const cachedConfig = await loadMaintenanceConfig(sb);
-  const cachedSpecialAddons = await loadSpecialAddons(sb);
+  const cachedConfig = await loadMaintenanceConfig(sb, activeCompanyId(c));
+  const cachedSpecialAddons = await loadSpecialAddons(sb, activeCompanyId(c));
   /* allowed_options pre-flight — run BEFORE the pricing recompute so a
      disallowed variant returns the precise field/value/allowed payload. */
   for (let i = 0; i < items.length; i++) {
@@ -1526,13 +1526,13 @@ consignmentOrders.post('/:docNo/items', async (c) => {
     if (aoErr) return c.json({ ...aoErr, itemCode: itemCodeStr }, 400);
   }
   const [cachedConfig, productLite, fabricLite, sofaCombosLite, sellingTiersLite, fabricAddonConfigLite, specialAddonsLite, modelOverridesLite, compartmentOverridesLite] = await Promise.all([
-    loadMaintenanceConfig(sb),
+    loadMaintenanceConfig(sb, activeCompanyId(c)),
     loadProductByCode(sb, itemCodeStr, activeCompanyId(c)),
     loadFabricByCode(sb, variantsObj?.fabricCode ?? null),
     loadActiveSofaCombos(sb),
     loadFabricSellingTiers(sb, (variantsObj as { fabricId?: string } | null)?.fabricId ?? null),
     loadFabricTierAddonConfig(sb, activeCompanyId(c)),
-    loadSpecialAddons(sb),
+    loadSpecialAddons(sb, activeCompanyId(c)),
     loadModelFabricTierOverrides(sb),
     loadCompartmentFabricTierOverrides(sb),
   ]);
@@ -1698,13 +1698,13 @@ consignmentOrders.patch('/:docNo/items/:itemId', async (c) => {
   }
   if (shouldRecompute && itemCodeAfter) {
     const [cfg, prodLite, fabLite, sofaCombosPatch, sellingTiersPatch, fabricAddonConfigPatch, specialAddonsPatch, modelOverridesPatch, compartmentOverridesPatch] = await Promise.all([
-      loadMaintenanceConfig(sb),
+      loadMaintenanceConfig(sb, activeCompanyId(c)),
       loadProductByCode(sb, itemCodeAfter, activeCompanyId(c)),
       loadFabricByCode(sb, variantsAfter?.fabricCode ?? null),
       loadActiveSofaCombos(sb),
       loadFabricSellingTiers(sb, (variantsAfter as { fabricId?: string } | null)?.fabricId ?? null),
       loadFabricTierAddonConfig(sb, activeCompanyId(c)),
-      loadSpecialAddons(sb),
+      loadSpecialAddons(sb, activeCompanyId(c)),
       loadModelFabricTierOverrides(sb),
       loadCompartmentFabricTierOverrides(sb),
     ]);

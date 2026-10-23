@@ -42,7 +42,14 @@ import {
 } from '../../../lib/requestCorrelation';
 import { companyHeader } from '../../../lib/activeCompany';
 import { abortableDelay, combineAbortSignals } from '../../../lib/abort';
-import { reportServerFailure, reportAccessDenied } from '../../../lib/errorReporter';
+import { reportServerFailure, reportAccessDenied, reportSlowRequest } from '../../../lib/errorReporter';
+
+// Same threshold as api/client.ts, so both halves of the app report alike.
+const SLOW_FETCH_MS = 800;
+
+/** Doc numbers (HC-SO-2609-004, PO-2607-001) are ids, so one endpoint stays one telemetry signature. */
+export const scmTelemetryPath = (path: string): string =>
+  path.replace(/\/[A-Z]+(?:-[A-Z]+)*-\d{4}-\d+(?:-[A-Z0-9]+)*(?=[/?#]|$)/gi, '/:id');
 
 // `||` not `??`: the CI build inlines VITE_API_URL as an EMPTY STRING when the
 // repo var is unset, and `'' ?? default` keeps `''`. PROD fallback is now
@@ -317,7 +324,16 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
   let res: Response;
   for (let attempt = 0; ; attempt++) {
     try {
+      const startedAt = performance.now();
       res = await fetchWithTimeout(`${API_URL}${path}`, { ...init, headers }, path);
+      /* HC-0002: the SO / DO screens all read through here, not api/client.ts,
+         so without this the slow-request baseline never saw the slowest pages. */
+      const ms = Math.round(performance.now() - startedAt);
+      if (ms >= SLOW_FETCH_MS) {
+        const m = String(init?.method ?? 'GET').toUpperCase();
+        console.warn(`[perf] slow ${m} /api/scm${path} - ${ms}ms id=${requestIdFromResponse(res)}`);
+        try { reportSlowRequest(m, scmTelemetryPath(path), ms); } catch { /* never let telemetry break the request path */ }
+      }
     } catch (e) {
       if (init?.signal?.aborted) throw e;
       if (isGet && attempt < 4) { await abortableDelay(600 + attempt * 1200, init?.signal); continue; }
@@ -484,8 +500,8 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
        500 into two failures. */
     try {
       const m = String(init?.method ?? 'GET').toUpperCase();
-      if (res.status >= 500) reportServerFailure(m, path, res.status);
-      else if (res.status === 403) reportAccessDenied(m, path);
+      if (res.status >= 500) reportServerFailure(m, scmTelemetryPath(path), res.status);
+      else if (res.status === 403) reportAccessDenied(m, scmTelemetryPath(path));
     } catch { /* never let telemetry break the request path */ }
     // Plain-language message for the operator (Wei Siang 2026-06-08: every error
     // shown must be 白话文 — no HTTP codes, no raw JSON, no DB internals). The

@@ -437,7 +437,7 @@ describe('round 1 (owner 2026-10-06)', () => {
     expect(((await again.json()) as Row).error).toBe('line_exists');
   });
 
-  test('HC-0140: an added line can be deleted while OPEN; a sheet line cannot', async () => {
+  test('HC-0140: an added line and a sheet line can both be deleted while OPEN; not once POSTED', async () => {
     const t = takeFixture();
     t.mfg_products = [{ code: 'PILLOW', name: 'Pillow', category: 'ACCESSORY', company_id: CO }];
     t.stock_take_lines[0].company_id = CO;
@@ -446,13 +446,13 @@ describe('round 1 (owner 2026-10-06)', () => {
     await jsonReq(app, '/stock-takes/st-1/lines', 'POST', { itemCode: 'PILLOW', countedQty: 3 });
     const added = t.stock_take_lines.find((l) => l.item_code === 'PILLOW')!;
     added.id = 'ln-added';
-    const sheet = await jsonReq(app, '/stock-takes/st-1/lines/ln-1', 'DELETE');
-    expect(sheet.status).toBe(409);
-    expect(((await sheet.json()) as Row).error).toBe('sheet_line');
     expect((await jsonReq(app, '/stock-takes/st-1/lines/ln-added', 'DELETE')).status).toBe(200);
     expect(t.stock_take_lines.map((l) => l.id)).toEqual(['ln-1']);
     t.stock_takes[0].status = 'POSTED';
     expect((await jsonReq(app, '/stock-takes/st-1/lines/ln-1', 'DELETE')).status).toBe(409);
+    t.stock_takes[0].status = 'OPEN';
+    expect((await jsonReq(app, '/stock-takes/st-1/lines/ln-1', 'DELETE')).status).toBe(200);
+    expect(t.stock_take_lines).toEqual([]);
   });
 
   test('Add line: a sofa needs a variant; another company\'s SKU is unknown', async () => {

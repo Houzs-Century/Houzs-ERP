@@ -105,6 +105,18 @@ const LIST_ENTITIES = new Set([
   "sales-invoices",
   "grns",
 ]);
+/* The V2 list screens read through these, keyed [entity, page, pageSize, …]
+   with a numeric page, so the LIST_ENTITIES test below never matched them and
+   no list was painted from a snapshot (HC-0002, 2026-10-22). Only the first
+   page is kept: it is what a cold open shows, and a snapshot that grew past
+   MAX_BYTES would be skipped whole. */
+const PAGED_LIST_ENTITIES = new Set([
+  "mfg-sales-orders-paged",
+  "mfg-purchase-orders-paged",
+  "mfg-delivery-orders-paged",
+  "sales-invoices-paged",
+  "grns-paged",
+]);
 // Sub-resource queries share a list entity's prefix but must NOT be persisted.
 const SUBRESOURCE = new Set([
   "debtors",
@@ -119,6 +131,9 @@ function isListKey(key: readonly unknown[]): boolean {
   if (key.length < 2) return false;
   const entity = key[0];
   const second = key[1];
+  if (typeof entity === "string" && PAGED_LIST_ENTITIES.has(entity)) {
+    return second === 0 && !key.some((seg) => typeof seg === "string" && SUBRESOURCE.has(seg));
+  }
   if (typeof entity !== "string" || !LIST_ENTITIES.has(entity)) return false;
   /* Match the sub-resource name ANYWHERE in the key, not just at segment 1.
      The rule above ("must NOT be persisted") was already the intent; the test

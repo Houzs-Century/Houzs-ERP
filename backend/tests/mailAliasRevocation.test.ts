@@ -6,7 +6,7 @@ import { getUserBySession } from "../src/services/auth";
 import {
   AliasMailboxCollisionError,
   changePersonalMailboxAliasAtomically,
-} from "../src/routes/users";
+} from "../src/lib/mail-provision";
 import type { Env } from "../src/types";
 
 const liveEnv = { ...env, RESEND_API_KEY: "re_test_key" } as unknown as Env;
@@ -23,6 +23,12 @@ const sources = import.meta.glob("../src/routes/users.ts", {
   eager: true,
 }) as Record<string, string>;
 const usersRouteSource = Object.values(sources)[0] ?? "";
+const provisionSources = import.meta.glob("../src/lib/mail-provision.ts", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+}) as Record<string, string>;
+const provisionSource = Object.values(provisionSources)[0] ?? "";
 
 function auth(tokenValue: string): HeadersInit {
   return {
@@ -73,13 +79,15 @@ beforeAll(async () => {
   // is D1. Recreate the route's real table shapes here so the authorization and
   // compose handlers execute against D1 instead of replacing them with mocks.
   const mailSchema = [
-    `CREATE TABLE IF NOT EXISTS email_addresses (id TEXT PRIMARY KEY, address TEXT NOT NULL, label TEXT, assigned_user_id INTEGER, assigned_user_name TEXT, assigned_dept TEXT, assigned_position TEXT, active INTEGER NOT NULL DEFAULT 1, created_at TEXT, created_by INTEGER, company_id INTEGER NOT NULL DEFAULT 1)`,
+    `CREATE TABLE IF NOT EXISTS email_addresses (id TEXT PRIMARY KEY, address TEXT NOT NULL, label TEXT, assigned_user_id INTEGER, assigned_user_name TEXT, assigned_dept TEXT, assigned_position TEXT, active INTEGER NOT NULL DEFAULT 1, created_at TEXT, created_by INTEGER, company_id INTEGER NOT NULL DEFAULT 1, mail_host_status TEXT, mail_host_confirmed_at TEXT, mail_host_confirmed_by INTEGER)`,
     `CREATE UNIQUE INDEX IF NOT EXISTS ux_email_addresses_addr ON email_addresses (lower(address))`,
     `CREATE TABLE IF NOT EXISTS email_address_access (id TEXT PRIMARY KEY, address_id TEXT NOT NULL, user_id INTEGER NOT NULL, created_at TEXT, created_by INTEGER, company_id INTEGER NOT NULL DEFAULT 1)`,
     `CREATE UNIQUE INDEX IF NOT EXISTS ux_email_access_addr_user ON email_address_access (address_id, user_id)`,
     `CREATE TABLE IF NOT EXISTS mail_user_scope (user_id INTEGER PRIMARY KEY, level TEXT NOT NULL DEFAULT 'personal', created_at TEXT)`,
-    `CREATE TABLE IF NOT EXISTS email_threads (id TEXT PRIMARY KEY, mailbox_address TEXT, subject TEXT, counterparty_email TEXT, counterparty_name TEXT, status TEXT NOT NULL DEFAULT 'open', assigned_to_user_id INTEGER, assigned_to_name TEXT, last_message_at TEXT, last_direction TEXT, last_snippet TEXT, message_count INTEGER NOT NULL DEFAULT 0, unread INTEGER NOT NULL DEFAULT 1, starred INTEGER NOT NULL DEFAULT 0, labels TEXT, trashed_at TEXT, created_at TEXT, company_id INTEGER NOT NULL DEFAULT 1)`,
-    `CREATE TABLE IF NOT EXISTS email_messages (id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, direction TEXT NOT NULL, message_id TEXT, in_reply_to TEXT, reference_ids TEXT, from_address TEXT, from_name TEXT, to_addresses TEXT, cc_addresses TEXT, subject TEXT, text_body TEXT, html_body TEXT, sent_at TEXT, received_at TEXT, sent_by_user_id INTEGER, sent_by_name TEXT, provider_message_id TEXT, created_at TEXT, company_id INTEGER NOT NULL DEFAULT 1)`,
+    `CREATE TABLE IF NOT EXISTS email_threads (id TEXT PRIMARY KEY, mailbox_address TEXT, subject TEXT, counterparty_email TEXT, counterparty_name TEXT, status TEXT NOT NULL DEFAULT 'open', assigned_to_user_id INTEGER, assigned_to_name TEXT, last_message_at TEXT, last_direction TEXT, last_snippet TEXT, message_count INTEGER NOT NULL DEFAULT 0, unread INTEGER NOT NULL DEFAULT 1, starred INTEGER NOT NULL DEFAULT 0, labels TEXT, trashed_at TEXT, last_inbound_at TEXT, created_at TEXT, company_id INTEGER NOT NULL DEFAULT 1)`,
+    `CREATE TABLE IF NOT EXISTS email_messages (id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, direction TEXT NOT NULL, message_id TEXT, in_reply_to TEXT, reference_ids TEXT, from_address TEXT, from_name TEXT, to_addresses TEXT, cc_addresses TEXT, subject TEXT, text_body TEXT, html_body TEXT, sent_at TEXT, received_at TEXT, sent_by_user_id INTEGER, sent_by_name TEXT, provider_message_id TEXT, outbox_id TEXT, needs_ack INTEGER NOT NULL DEFAULT 0, ack_escalated_at TEXT, created_at TEXT, company_id INTEGER NOT NULL DEFAULT 1)`,
+    `CREATE TABLE IF NOT EXISTS email_thread_reads (thread_id TEXT NOT NULL, user_id INTEGER NOT NULL, read_at TEXT, PRIMARY KEY (thread_id, user_id))`,
+    `CREATE TABLE IF NOT EXISTS email_message_acks (message_id TEXT NOT NULL, user_id INTEGER NOT NULL, requested_at TEXT NOT NULL, acked_at TEXT, PRIMARY KEY (message_id, user_id))`,
   ];
   for (const statement of mailSchema) {
     await env.DB.prepare(statement).run();
@@ -145,8 +153,8 @@ afterAll(async () => {
 
 describe("personal Mail Center alias revocation", () => {
   it("does not use PostgreSQL reserved current_user as an unquoted CTE name", () => {
-    expect(usersRouteSource).not.toMatch(/\bWITH\s+current_user\s+AS\s*\(/i);
-    expect(usersRouteSource).toMatch(/\bWITH\s+target_user\s+AS\s*\(/i);
+    expect(provisionSource).not.toMatch(/\bWITH\s+current_user\s+AS\s*\(/i);
+    expect(provisionSource).toMatch(/\bWITH\s+target_user\s+AS\s*\(/i);
   });
 
   test("the production users PATCH commits mailbox reconciliation before remaining user fields", () => {
