@@ -2558,8 +2558,8 @@ deliveryOrdersMfg.get('/', async (c) => {
        delivered / cancelled) over the SAME scope filter and date window but
        WITHOUT status / search / pagination. Scoped to the active company like the list, so the
        tab counts can't leak the other company's DO totals. */
-    const counted = await doListStatusCounts((sel, opts) => {
-      let cq = scopeToCompany(sb.from('delivery_orders').select(sel, opts), c);
+    const counted = await doListStatusCounts((sel) => {
+      let cq = scopeToCompany(sb.from('delivery_orders').select(sel), c);
       if (scopeIds) cq = cq.in('salesperson_id', scopeIds);
       return windowDoList(cq, listParams);
     });
