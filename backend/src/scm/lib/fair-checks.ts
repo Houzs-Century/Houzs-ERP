@@ -26,11 +26,17 @@
 // is now (`current`) and where the report puts it (`target`) — so the page
 // shows one row per order (owner 2026-10-21: 这个表很乱).
 //
+// A PERSON'S DECISION OUTRANKS THE REPORT once it is made with the report in
+// (owner 2026-10-23: 「report says another fair 的单我不能改？」 — each row now
+// has its own Fair box). An order whose latest fair change is a Link or a
+// Transfer on Fair Links, on or after the day of every report listing it, is
+// not listed again until a later report lists it.
+//
 // An order a person PUT ASIDE (fair-put-aside.ts) is in none of them.
 //
-// All are read from the order, PMS and the chat as they are NOW. Nothing is
-// stored, so re-linking, correcting the venue or PMS adding the person clears
-// the row at once — there is no flag to forget to reset.
+// All are read from the order, its History, PMS and the chat as they are NOW.
+// Nothing is stored, so re-linking, correcting the venue or PMS adding the
+// person clears the row at once — there is no flag to forget to reset.
 // ----------------------------------------------------------------------------
 
 import { chunkIn, paginateAll, type PageResult } from './paginate-all';
@@ -52,7 +58,14 @@ import {
   type FairPendingScope,
 } from './fair-pending';
 import { fmtDayMonth, fmtDayMonthRange } from '../shared/format';
-import { loadReportEvidence, reportVerdict, type ReportVerdict } from '../../routes/lib/sales-report-evidence';
+import { mytDateOf } from './my-time';
+import {
+  loadReportEvidence,
+  reportVerdict,
+  sightingsOf,
+  type ReportSighting,
+  type ReportVerdict,
+} from '../../routes/lib/sales-report-evidence';
 
 /** Linked orders are checked from the day Houzs opened its books in the ERP —
  *  the same line the unlinked list draws. */
@@ -85,6 +98,8 @@ export type FairCheckRow = FairPendingRow & {
 };
 
 type ScanJob = { so_doc_no: string; houzs_user_id: number | string | null; created_at: string | null };
+/** One History row of a fair change (fair-audit.ts). */
+type FairChange = { so_doc_no: string; source: string | null; field_changes: unknown; created_at: string | null };
 /** The order as read here; its Ref No. is what the evening reports list. */
 type CheckedOrder = FairPendingRow;
 
@@ -132,6 +147,39 @@ function reportRow(o: CheckedOrder, v: ReportVerdict, booths: ReadonlyMap<number
   return null;
 }
 
+/** Did a person settle the order on Fair Links with every report that lists it
+ *  already in? `decidedOn` is the MYT day of that Link or Transfer; a report
+ *  of the same day counts as in. */
+export function decidedAfterReports(decidedOn: string | undefined, sightings: readonly ReportSighting[]): boolean {
+  if (!decidedOn) return false;
+  const lastReport = sightings.reduce((m, s) => (String(s.reportDate ?? '') > m ? String(s.reportDate ?? '') : m), '');
+  return decidedOn >= lastReport.slice(0, 10);
+}
+
+/** The MYT day a person last moved each order's fair on Fair Links: its latest
+ *  fair change, when that was a Link ('settle') or a Transfer. A Put aside or
+ *  Bring back row moves no fair and does not count; a later move by the system
+ *  or an edit undoes the decision. Null when History cannot be read. */
+async function decidedOnFairLinks(sb: any, scope: FairPendingScope, docNos: readonly string[]): Promise<Map<string, string> | null> {
+  const res = await chunkIn<FairChange>(docNos, (batch, from, to) =>
+    scope(sb.from('mfg_so_audit_log').select('so_doc_no, source, field_changes, created_at').eq('action', 'UPDATE_FAIR').in('so_doc_no', batch))
+      .range(from, to),
+  );
+  if (res.error) return null;
+  const latest = new Map<string, FairChange>();
+  for (const r of res.data) {
+    const movesFair = Array.isArray(r.field_changes) && r.field_changes.some((c) => (c as { field?: unknown } | null)?.field === 'fair');
+    if (!movesFair) continue;
+    const prev = latest.get(r.so_doc_no);
+    if (!prev || String(r.created_at ?? '') > String(prev.created_at ?? '')) latest.set(r.so_doc_no, r);
+  }
+  const out = new Map<string, string>();
+  for (const [doc, r] of latest) {
+    if ((r.source === 'settle' || r.source === 'transfer') && r.created_at) out.set(doc, mytDateOf(r.created_at));
+  }
+  return out;
+}
+
 /**
  * Both groups, newest first. Any failed read is a failure — never an empty
  * list, which the page would show as "nothing to check".
@@ -162,10 +210,14 @@ export async function loadFairChecks(args: {
     /* What the evening reports say about each order, linked or not. */
     const verdicts = new Map<string, ReportVerdict>();
     for (const o of [...orders, ...(unlinked.data ?? [])]) verdicts.set(o.doc_no, reportVerdict(o, evidence));
-    const elsewhere = [...orders, ...(unlinked.data ?? [])].filter((o) => {
+    const reported = [...orders, ...(unlinked.data ?? [])].filter((o) => {
       const k = verdicts.get(o.doc_no)?.kind;
       return k === 'elsewhere' || k === 'conflict';
     });
+    /* Settled on Fair Links with the report in: a person's decision (above). */
+    const decided = await decidedOnFairLinks(sb, scope, reported.map((o) => o.doc_no));
+    if (!decided) return { ok: false };
+    const elsewhere = reported.filter((o) => !decidedAfterReports(decided.get(o.doc_no), sightingsOf(o, evidence)));
     const inReport = new Set(elsewhere.map((o) => o.doc_no));
     const reportedIds = [...verdicts.values()].flatMap((v) =>
       v.kind === 'elsewhere' ? [v.sighting.projectId] : v.kind === 'conflict' ? v.projectIds : []);
