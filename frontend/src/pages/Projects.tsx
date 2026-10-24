@@ -124,7 +124,7 @@ import type {
 } from "./projects/types";
 import { composeDefaultProjectName, viewableMime, googleCalendarUrl } from "./projects/projectHelpers";
 import { itemComplete } from "./projects/checklistDone";
-import { PROJECT_STAGES, projectStage, setupArrangedOf } from "./projects/projectStage";
+import { PROJECT_STAGES, projectStage, setupArrangedOf, driverAssignedOf } from "./projects/projectStage";
 import { todayMY } from "../vendor/shared/format";
 import { salesOrderProjectLabel, shownProjectName, shownOrganizer, isSoloMasked, maskSoloOrganizer, SOLO_ORGANIZER_MASK, type SoloMaskProject } from "./projects/soloOrganizerMask";
 import { SoloSafeName, useCanSeeSoloOrganizer } from "./projects/SoloSafeName";
@@ -3458,7 +3458,7 @@ function ProjectStageStepper({
   setupCrew?: string | null;
   setupStartAt?: string | null;
 }) {
-  const { currentIdx, allDone, lastIdx } = projectStage(checklist ?? [], setupArrangedOf(setupCrew, setupStartAt), startDate, todayMY());
+  const { currentIdx, allDone, lastIdx } = projectStage(checklist ?? [], setupArrangedOf(setupCrew, setupStartAt), startDate, todayMY(), driverAssignedOf(setupCrew));
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
