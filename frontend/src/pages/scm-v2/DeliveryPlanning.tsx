@@ -382,6 +382,10 @@ export const DeliveryPlanning = () => {
                     role="menu"
                     style={{
                       position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 41, minWidth: 220,
+                      /* Expanding "One Time Send Now" makes this 11 items tall — cap it to
+                         the viewport and scroll, so the bottom entries (Postage / Delivery
+                         Completed) can't fall off-screen (owner 2026-10-23). */
+                      maxHeight: '70vh', overflowY: 'auto',
                       background: '#fff', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 10px)',
                       boxShadow: '0 8px 28px rgba(34, 31, 32, 0.14)', padding: 4,
                     }}
@@ -516,6 +520,9 @@ export const DeliveryPlanning = () => {
                   role="menu"
                   style={{
                     position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 41, minWidth: 240,
+                    /* Short today, but cap + scroll so it can't fall off-screen either
+                       if more bulk actions are added (twin of the Send Message menu). */
+                    maxHeight: '70vh', overflowY: 'auto',
                     background: '#fff', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 10px)',
                     boxShadow: '0 8px 28px rgba(34, 31, 32, 0.14)', padding: 4,
                   }}
