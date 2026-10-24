@@ -169,12 +169,14 @@ export const readApBillHandler = async (c: any) => {
 };
 
 /** A line the preview sent back, checked into the shape kept. A DO line keeps
- *  only the DOs the person kept; none kept, it waits for them. */
-function keptFromBody(raw: Row, i: number, kept: ReadonlySet<string>): KeptLine | null {
+ *  only the DOs the person kept; none kept, it waits for them — as their
+ *  choice, so the reader does not put it back on that DO. */
+function keptFromBody(raw: Row, i: number, kept: ReadonlySet<string>, person: string): KeptLine | null {
   const amount = raw.amountSen == null ? null : Number(raw.amountSen);
   if (amount != null && !Number.isInteger(amount)) return null;
   const assign = ASSIGNS.includes(raw.assign) ? (raw.assign as LineAssign) : null;
-  const doIds = Array.isArray(raw.doIds) ? (raw.doIds as unknown[]).map(String).filter((id) => kept.has(id)) : [];
+  const named = Array.isArray(raw.doIds) ? (raw.doIds as unknown[]).map(String) : [];
+  const doIds = named.filter((id) => kept.has(id));
   const projectId = raw.projectId == null ? null : Number(raw.projectId);
   const assignment: Assignment = assign === 'do'
     ? { assign: doIds.length ? 'do' : null, doIds, serviceRef: null, projectId: null }
@@ -184,6 +186,7 @@ function keptFromBody(raw: Row, i: number, kept: ReadonlySet<string>): KeptLine 
     kind: String(raw.kind ?? 'other').slice(0, 20), amountSen: amount,
     printed: Array.isArray(raw.printed) ? (raw.printed as unknown[]).map((p) => String(p).slice(0, 80)).slice(0, 40) : [],
     readStatus: String(raw.status ?? 'matched').slice(0, 20), assignment,
+    ...(assign === 'do' && named.length > 0 && doIds.length === 0 ? { assignedBy: person } : {}),
   };
 }
 
@@ -223,7 +226,7 @@ export const confirmApBillHandler = async (c: any) => {
   const kept = new Set(doIds);
   /* A preview from before the lines were kept sends only its DOs: one line each. */
   const lines: KeptLine[] = bodyLines
-    ? bodyLines.map((l, i) => keptFromBody(l, i, kept)).filter((l): l is KeptLine => !!l)
+    ? bodyLines.map((l, i) => keptFromBody(l, i, kept, personOf(c))).filter((l): l is KeptLine => !!l)
     : clean.map((r, i) => ({ lineNo: i + 1, text: String(rows[i]!.note ?? '').slice(0, 300), date: null, kind: 'delivery', amountSen: r.billedSen, printed: [], readStatus: 'matched', assignment: { assign: 'do', doIds: [r.doId as string], serviceRef: null, projectId: null } }));
   const stamp = await fileStampOf(deps, bill.inv);
   if (!stamp.ok) return refuse(c, stamp);

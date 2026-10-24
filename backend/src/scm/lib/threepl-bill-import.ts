@@ -301,7 +301,9 @@ export async function saveBill(deps: BillDeps, bill: ApBill, args: {
       line_no: l.lineNo, text: l.text.slice(0, 300), line_date: dayOrNull(l.date), kind: l.kind, amount_sen: l.amountSen,
       printed: l.printed.slice(0, 40), read_status: l.readStatus,
       assign: l.assignment.assign, do_ids: l.assignment.doIds, service_ref: l.assignment.serviceRef, project_id: l.assignment.projectId,
-      assigned_by: l.assignment.assign ? l.assignedBy ?? args.actor : null, assigned_at: l.assignment.assign ? l.assignedAt ?? now : null,
+      /* A line a person took off its DO keeps their name though it waits: a re-read leaves it waiting. */
+      assigned_by: l.assignment.assign ? l.assignedBy ?? args.actor : l.assignedBy ?? null,
+      assigned_at: l.assignment.assign || l.assignedBy ? l.assignedAt ?? now : null,
       updated_at: now,
     })));
     if (iErr) return fail(500, 'save_failed', iErr.message);
@@ -455,10 +457,11 @@ export async function billsToRead(deps: BillDeps): Promise<{ ok: true; ids: stri
 }
 
 const sameLine = (l: { text: string; amountSen: number | null; date: string | null }) =>
-  `${l.text.trim().replace(/\s+/g, ' ').toLowerCase()}|${l.amountSen ?? ''}|${l.date ?? ''}`;
+  `${l.text.trim().replace(/\s+/g, ' ').toLowerCase()}|${l.amountSen ?? ''}|${dayOrNull(l.date) ?? ''}`;
 
 /** A re-read keeps what a person decided: a line with the same words, amount
- *  and day as one they assigned stays where they put it. */
+ *  and day as one they assigned stays where they put it — or waiting, when
+ *  they took it off the DO the reader had matched. */
 export async function keepPersonChoices(deps: BillDeps, apInvoiceId: string, lines: readonly KeptLine[]): Promise<{ ok: true; lines: KeptLine[] } | BillFail> {
   const { data, error } = await scopeToCompanyId(deps.sb.from('threepl_bill_lines')
     .select('text, amount_sen, line_date, assign, do_ids, service_ref, project_id, assigned_by, assigned_at'), deps.companyId)

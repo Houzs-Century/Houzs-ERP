@@ -238,7 +238,7 @@ describe('every line kept, and where it goes', () => {
     expect(await res.json()).toEqual({ saved: 2, skipped: [] });
     expect((tables(sb)?.threepl_bill_lines ?? []).map((l) => [l.line_no, l.assign, l.do_ids, l.assigned_by])).toEqual([
       [1, 'do', ['do-1'], 'Chew'], [2, 'do', ['do-1'], 'Chew'], [3, 'do', ['do-2'], 'Chew'],
-      [4, null, [], null], [5, 'event', [], 'Chew'], [6, 'none', [], 'Chew'], [7, null, [], null],
+      [4, null, [], 'Chew'], [5, 'event', [], 'Chew'], [6, 'none', [], 'Chew'], [7, null, [], null],
     ]);
     expect(tables(sb)?.threepl_bill_reads).toEqual([expect.objectContaining({ ap_invoice_id: 'api-9', read_by: 'person', files_count: 1, error: null })]);
 

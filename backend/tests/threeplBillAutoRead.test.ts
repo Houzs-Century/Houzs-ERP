@@ -93,12 +93,16 @@ describe('a bill read by itself', () => {
     expect(await autoReadBills(env)).toMatchObject({ due: 0, read: 0 });
     expect(reader).toHaveBeenCalledTimes(1);
 
-    /* A person put the unknown line under Not counted; then the goods list is attached. */
+    /* A person put the unknown line under Not counted and took the first line
+       off its DO (misread); then the goods list is attached. */
     Object.assign(tables.threepl_bill_lines!.find((l) => l.line_no === 5)!, { assign: 'none', assigned_by: 'Chew', assigned_at: '2026-10-24T03:00:00Z' });
+    Object.assign(tables.threepl_bill_lines!.find((l) => l.line_no === 1)!, { assign: null, do_ids: [], assigned_by: 'Chew', assigned_at: '2026-10-24T03:00:00Z' });
     tables.acc_ap_invoice_files!.push({ id: 'f-10', company_id: HOUZS, ap_invoice_id: 'api-9', file_key: 'k/api-9/a.pdf', file_name: 'goods.pdf', mime: 'application/pdf', size_bytes: 8, sort_no: 2, created_at: '2026-10-24T04:00:00Z' });
     expect(await autoReadBills(env)).toMatchObject({ due: 1, read: 1 });
     expect(reader).toHaveBeenCalledTimes(2);
     expect(tables.threepl_bill_lines!.find((l) => l.line_no === 5)).toMatchObject({ assign: 'none', assigned_by: 'Chew', assigned_at: '2026-10-24T03:00:00Z' });
+    expect(tables.threepl_bill_lines!.find((l) => l.line_no === 1)).toMatchObject({ assign: null, do_ids: [], assigned_by: 'Chew' });
+    expect(tables.threepl_do_charges!.map((r) => r.do_id)).toEqual(['do-2']);
     expect(tables.threepl_bill_reads).toEqual([expect.objectContaining({ files_count: 2, files_latest: '2026-10-24T04:00:00Z' })]);
   });
 
