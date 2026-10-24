@@ -198,6 +198,48 @@ export function chargeNote(c: DoCharge, apInvoiceNumber: string): string {
   return `${head}: ${c.lines.join(' / ')}`.slice(0, 500);
 }
 
+/* ── Where a line goes (owner 2026-10-24) ────────────────────────────────────
+   「对不上的 … 我想要assign 看这个是去哪里，可能是service, 可能是setup dismantle，
+   可能不算」: every line is kept and assigned — to DOs (compared with the rate
+   card), to a service case, to a fair (setup / dismantle) or to nothing
+   (storage, handling, dispose). The reader assigns what it can tell; a line
+   it cannot — a number the system does not have, no number, a fair it cannot
+   name — waits for a person. */
+export type LineAssign = 'do' | 'service' | 'event' | 'none';
+export type Assignment = { assign: LineAssign | null; doIds: string[]; serviceRef: string | null; projectId: number | null };
+
+const UNASSIGNED: Assignment = { assign: null, doIds: [], serviceRef: null, projectId: null };
+
+/** The reader's assignment of one line. A setup / dismantle takes the fair of
+ *  the AP invoice line of the same amount when exactly one fair carries it. */
+export function preselect(line: Pick<MatchedLine, 'status' | 'kind' | 'amountSen' | 'printed' | 'dos'>, apLines: ReadonlyArray<{ amountSen: number | null; projectId: number | null }>): Assignment {
+  if (line.status === 'matched') return { ...UNASSIGNED, assign: 'do', doIds: line.dos.map((d) => d.id) };
+  if (line.status === 'service_case') return { ...UNASSIGNED, assign: 'service', serviceRef: line.printed.find((p) => /ASSR/i.test(p)) ?? null };
+  if (line.kind === 'setup' || line.kind === 'dismantle') {
+    const fairs = [...new Set(apLines.filter((a) => a.projectId != null && line.amountSen != null && a.amountSen === line.amountSen).map((a) => a.projectId as number))];
+    return { ...UNASSIGNED, assign: 'event', projectId: fairs.length === 1 ? fairs[0]! : null };
+  }
+  if (line.kind === 'storage' || line.kind === 'handling' || line.kind === 'dispose') return { ...UNASSIGNED, assign: 'none' };
+  return UNASSIGNED;
+}
+
+/** A line still waiting for a person: nothing assigned, a DO line with no DO,
+ *  a setup / dismantle with no fair. */
+export function isOpenLine(a: { assign: string | null; doIds: readonly string[]; projectId: number | null }): boolean {
+  return a.assign == null || (a.assign === 'do' && a.doIds.length === 0) || (a.assign === 'event' && a.projectId == null);
+}
+
+/** A bill's lines summed by where they went — the parts add up to the bill. */
+export function billBreakdown(lines: ReadonlyArray<{ assign: string | null; doIds: readonly string[]; projectId: number | null; amountSen: number | null }>) {
+  const t = { do: 0, service: 0, event: 0, none: 0, open: 0, openLines: 0 };
+  for (const l of lines) {
+    const v = l.amountSen ?? 0;
+    if (isOpenLine(l)) { t.open += v; t.openLines += 1; continue; }
+    t[l.assign as LineAssign] += v;
+  }
+  return t;
+}
+
 /** Sen per status, and the bill's total as read. */
 export function lineTotals(lines: readonly MatchedLine[]): Record<LineStatus | 'all', number> {
   const t: Record<LineStatus | 'all', number> = { all: 0, matched: 0, not_found: 0, no_number: 0, service_case: 0, not_delivery: 0 };

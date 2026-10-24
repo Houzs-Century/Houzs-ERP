@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { coerceTransportBill, type TransportBillLine } from './threepl-bill-read';
 import {
-  chargeNote, chargesPerDo, effectiveKind, foldTrips, lineTotals, matchLines, orderKeys, pickDo,
+  billBreakdown, chargeNote, chargesPerDo, effectiveKind, foldTrips, isOpenLine, lineTotals, matchLines, orderKeys, pickDo, preselect,
   type DoCandidate, type OrderKeys,
 } from './threepl-bill-match';
 
@@ -116,5 +116,53 @@ describe('the reader\'s answer, coerced', () => {
       { text: 'x', date: null, place: null, kind: 'other', amountSen: null, orders: [] },
     ]);
     expect(coerceTransportBill('nonsense')).toEqual([]);
+  });
+});
+
+/* Owner 2026-10-24: 「当这些对不上的我认为我想要assign 看这个是去哪里，可能是service,
+   可能是setup dismantle，可能不算」 — the reader puts what it can, the rest waits. */
+describe('where a line goes, as the reader sees it', () => {
+  type Read = Parameters<typeof preselect>[0];
+  const m = (l: Partial<Read>): Read => ({ status: 'not_found', kind: 'delivery', amountSen: 10_000, printed: [], dos: [], ...l });
+
+  it('a matched line to its DOs; a service case to Service with its ASSR number', () => {
+    expect(preselect(m({ status: 'matched', dos: [DO('a'), DO('b')] }), [])).toEqual({ assign: 'do', doIds: ['a', 'b'], serviceRef: null, projectId: null });
+    expect(preselect(m({ status: 'service_case', printed: ['HC-SO-1', 'ASSR-2610-004'] }), [])).toEqual({ assign: 'service', doIds: [], serviceRef: 'ASSR-2610-004', projectId: null });
+  });
+
+  it('a setup / dismantle takes the fair of the one AP invoice line of its amount, else waits for one', () => {
+    const ap = [{ amountSen: 110_000, projectId: 345 }, { amountSen: 5_300, projectId: null }];
+    expect(preselect(m({ status: 'not_delivery', kind: 'dismantle', amountSen: 110_000 }), ap)).toMatchObject({ assign: 'event', projectId: 345 });
+    expect(preselect(m({ status: 'not_delivery', kind: 'setup', amountSen: 90_000 }), ap)).toMatchObject({ assign: 'event', projectId: null });
+    /* Two fairs carry that amount: not guessed. */
+    expect(preselect(m({ status: 'not_delivery', kind: 'setup', amountSen: 110_000 }), [...ap, { amountSen: 110_000, projectId: 346 }])).toMatchObject({ projectId: null });
+  });
+
+  it('storage, handling and dispose are not counted; a number not found or no number waits', () => {
+    for (const kind of ['storage', 'handling', 'dispose'] as const) expect(preselect(m({ status: 'not_delivery', kind }), []).assign).toBe('none');
+    expect(preselect(m({ status: 'not_found' }), []).assign).toBeNull();
+    expect(preselect(m({ status: 'no_number' }), []).assign).toBeNull();
+  });
+
+  it('open: nothing assigned, a DO line with no DO, a setup / dismantle with no fair', () => {
+    expect(isOpenLine({ assign: null, doIds: [], projectId: null })).toBe(true);
+    expect(isOpenLine({ assign: 'do', doIds: [], projectId: null })).toBe(true);
+    expect(isOpenLine({ assign: 'event', doIds: [], projectId: null })).toBe(true);
+    expect(isOpenLine({ assign: 'event', doIds: [], projectId: 7 })).toBe(false);
+    expect(isOpenLine({ assign: 'service', doIds: [], projectId: null })).toBe(false);
+    expect(isOpenLine({ assign: 'none', doIds: [], projectId: null })).toBe(false);
+  });
+
+  it('a bill summed by where its lines went adds up to the bill as read', () => {
+    const t = billBreakdown([
+      { assign: 'do', doIds: ['a'], projectId: null, amountSen: 22_000 },
+      { assign: 'service', doIds: [], projectId: null, amountSen: 8_000 },
+      { assign: 'event', doIds: [], projectId: 345, amountSen: 110_000 },
+      { assign: 'event', doIds: [], projectId: null, amountSen: 90_000 },
+      { assign: 'none', doIds: [], projectId: null, amountSen: 5_300 },
+      { assign: null, doIds: [], projectId: null, amountSen: 60_000 },
+      { assign: null, doIds: [], projectId: null, amountSen: null },
+    ]);
+    expect(t).toEqual({ do: 22_000, service: 8_000, event: 110_000, none: 5_300, open: 150_000, openLines: 3 });
   });
 });

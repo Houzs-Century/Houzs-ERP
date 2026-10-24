@@ -10,7 +10,11 @@
      • the confirm: what the person kept is saved against the AP invoice, the
        carrier remembers its supplier, reading the bill again REPLACES its
        rows, a DO another bill already charges is left as it is;
-     • Finance only; a bill with nothing attached, or cancelled, is refused. */
+     • Finance only; a bill with nothing attached, or cancelled, is refused;
+     • (owner 2026-10-24) every line kept with where it goes; the ones waiting
+       listed under To check; a line put somewhere else — a DO by number, a
+       fair, Service, Not counted — and the bill's DO charges follow; Per bill
+       adds up to the AP invoice. */
 import { Hono } from 'hono';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { SCM_SYSTEM_STAFF_ID } from '../src/scm/middleware/auth';
@@ -94,8 +98,10 @@ function harness(perms: string[] = ['scm.finance.accounting', 'scm.transportatio
     await next();
   });
   app.route('/threepl-do-charges', threeplDoCharges);
+  /* public.projects as the fair check reads it: fair 345 is Houzs's. */
+  const DB = { prepare: () => ({ bind: (id: number) => ({ all: async () => ({ results: id === 345 ? [{ id: 345 }] : [] }) }) }) };
   const req = (path: string, method = 'GET', body?: unknown) =>
-    app.request(path, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }, { ANTHROPIC_API_KEY: 'k', SLIPS: r2 } as never);
+    app.request(path, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }, { ANTHROPIC_API_KEY: 'k', SLIPS: r2, DB } as never);
   return { req, sb };
 }
 const tables = (sb: unknown) => (sb as { tables: Record<string, Row[]> }).tables;
@@ -209,5 +215,97 @@ describe('confirming what the person kept', () => {
     expect((await req('/threepl-do-charges/from-ap/api-9/confirm', 'POST', { carrierId: 'car-other', rows: ROWS })).status).toBe(404);
     expect((await req('/threepl-do-charges/from-ap/api-9/confirm', 'POST', { carrierId: 'car-msj', rows: [ROWS[0]] })).status).toBe(409);
     expect((await req('/threepl-do-charges/from-ap/api-9/confirm', 'POST', { carrierId: 'car-msj', rows: [ROWS[0], ROWS[0]] })).status).toBe(400);
+  });
+});
+
+describe('every line kept, and where it goes', () => {
+  /* The preview's lines as the panel sends them back: do-3 left unticked. */
+  const LINES = [
+    { text: '6/10-SO-013216', date: '2026-10-06', kind: 'transport', amountSen: 12_000, printed: ['6/10-SO-013216'], status: 'matched', doIds: ['do-1'], assign: 'do' },
+    { text: '6/10-SO-013216', date: '2026-10-06', kind: 'transport', amountSen: 10_000, printed: ['6/10-SO-013216'], status: 'matched', doIds: ['do-1'], assign: 'do' },
+    { text: '2990-SO-2606-037', date: null, kind: 'delivery', amountSen: 14_500, printed: ['2990-SO-2606-037'], status: 'matched', doIds: ['do-2'], assign: 'do' },
+    { text: 'JOHOR TO SINGAPORE - HC12975', date: null, kind: 'delivery', amountSen: 5_000, printed: ['HC12975'], status: 'matched', doIds: ['do-3'], assign: 'do' },
+    { text: 'DISMANTLE SETIA SPICE (2 TRIPS)', date: null, kind: 'dismantle', amountSen: 110_000, printed: [], status: 'not_delivery', doIds: [], assign: 'event', projectId: null },
+    { text: "HANDLING OUT SEP'26", date: null, kind: 'handling', amountSen: 5_300, printed: [], status: 'not_delivery', doIds: [], assign: 'none' },
+    { text: 'DO-010676', date: null, kind: 'delivery', amountSen: 60_000, printed: ['DO-010676'], status: 'not_found', doIds: [], assign: null },
+  ];
+  const ROWS = [{ doId: 'do-1', billedSen: 22_000 }, { doId: 'do-2', billedSen: 14_500 }];
+  const lineByNo = (sb: unknown, n: number) => tables(sb)?.threepl_bill_lines?.find((l) => l.line_no === n);
+
+  test('Save keeps every line; the waiting ones are To check; Per bill adds up to the AP invoice', async () => {
+    const { req, sb } = harness();
+    const res = await req('/threepl-do-charges/from-ap/api-9/confirm', 'POST', { carrierId: 'car-msj', rows: ROWS, lines: LINES });
+    expect(await res.json()).toEqual({ saved: 2, skipped: [] });
+    expect((tables(sb)?.threepl_bill_lines ?? []).map((l) => [l.line_no, l.assign, l.do_ids, l.assigned_by])).toEqual([
+      [1, 'do', ['do-1'], 'Chew'], [2, 'do', ['do-1'], 'Chew'], [3, 'do', ['do-2'], 'Chew'],
+      [4, null, [], 'Chew'], [5, 'event', [], 'Chew'], [6, 'none', [], 'Chew'], [7, null, [], null],
+    ]);
+    expect(tables(sb)?.threepl_bill_reads).toEqual([expect.objectContaining({ ap_invoice_id: 'api-9', read_by: 'person', files_count: 1, error: null })]);
+
+    const open = await (await req('/threepl-do-charges/bill-lines?open=1')).json() as { lines: Row[] };
+    expect(open.lines.map((l) => [l.invoiceNumber, l.supplierName, l.lineNo, l.amountSen])).toEqual([
+      ['HC-API-2610-009', 'MSJ TRANSPORT SERVICE', 4, 5_000], ['HC-API-2610-009', 'MSJ TRANSPORT SERVICE', 5, 110_000], ['HC-API-2610-009', 'MSJ TRANSPORT SERVICE', 7, 60_000],
+    ]);
+    const tab = await (await req('/threepl-do-charges')).json() as { bills: Row[] };
+    expect(tab.bills).toEqual([expect.objectContaining({
+      apInvoiceId: 'api-9', invoiceNumber: 'HC-API-2610-009', totalSen: 228_000, readBy: 'person', lines: 7,
+      doSen: 36_500, serviceSen: 0, eventSen: 0, noneSen: 5_300, openSen: 175_000, openLines: 3,
+    })]);
+    const listed = await (await req('/threepl-do-charges/from-ap/invoices')).json() as { invoices: Row[] };
+    expect(listed.invoices[0]).toMatchObject({ broughtInDos: 2, waitingLines: 3 });
+  });
+
+  test('a line put on a DO by its number: the bill\'s DO charges follow', async () => {
+    const { req, sb } = harness();
+    await req('/threepl-do-charges/from-ap/api-9/confirm', 'POST', { carrierId: 'car-msj', rows: ROWS, lines: LINES });
+    const four = lineByNo(sb, 4)!;
+    const res = await req(`/threepl-do-charges/bill-lines/${four.id}`, 'PATCH', { assign: 'do', doNumber: 'HC-DO-2609-154' });
+    expect(await res.json()).toEqual({ ok: true, open: false, skipped: [] });
+    expect(lineByNo(sb, 4)).toMatchObject({ assign: 'do', do_ids: ['do-3'], assigned_by: 'Chew' });
+    expect((tables(sb)?.threepl_do_charges ?? []).map((r) => [r.do_id, r.billed_sen, r.ap_invoice_id])).toEqual([
+      ['do-1', 22_000, 'api-9'], ['do-2', 14_500, 'api-9'], ['do-3', 5_000, 'api-9'],
+    ]);
+    /* Back to To check: its DO charge goes. */
+    await req(`/threepl-do-charges/bill-lines/${four.id}`, 'PATCH', { assign: null });
+    expect((tables(sb)?.threepl_do_charges ?? []).map((r) => r.do_id)).toEqual(['do-1', 'do-2']);
+  });
+
+  test('a DO amount the person typed stays theirs when a line moves', async () => {
+    const { req, sb } = harness();
+    await req('/threepl-do-charges/from-ap/api-9/confirm', 'POST', { carrierId: 'car-msj', rows: [{ doId: 'do-1', billedSen: 21_000 }, ROWS[1]], lines: LINES });
+    expect(tables(sb)?.threepl_do_charges?.find((r) => r.do_id === 'do-1')).toMatchObject({ billed_sen: 21_000, billed_by_hand: true });
+    await req(`/threepl-do-charges/bill-lines/${lineByNo(sb, 4)!.id}`, 'PATCH', { assign: 'do', doNumber: 'HC-DO-2609-154' });
+    expect(tables(sb)?.threepl_do_charges?.find((r) => r.do_id === 'do-1')).toMatchObject({ billed_sen: 21_000, billed_by_hand: true });
+  });
+
+  test('a fair, Service, Not counted; refusals said', async () => {
+    const { req, sb } = harness();
+    await req('/threepl-do-charges/from-ap/api-9/confirm', 'POST', { carrierId: 'car-msj', rows: ROWS, lines: LINES });
+    const five = lineByNo(sb, 5)!;
+    const seven = lineByNo(sb, 7)!;
+    const noFair = await req(`/threepl-do-charges/bill-lines/${five.id}`, 'PATCH', { assign: 'event' });
+    expect(noFair.status).toBe(400);
+    expect((await req(`/threepl-do-charges/bill-lines/${five.id}`, 'PATCH', { assign: 'event', projectId: 999 })).status).toBe(404);
+    expect(await (await req(`/threepl-do-charges/bill-lines/${five.id}`, 'PATCH', { assign: 'event', projectId: 345 })).json()).toMatchObject({ ok: true, open: false });
+    expect(lineByNo(sb, 5)).toMatchObject({ assign: 'event', project_id: 345 });
+
+    const unknown = await req(`/threepl-do-charges/bill-lines/${seven.id}`, 'PATCH', { assign: 'do', doNumber: 'DO-010676' });
+    expect(unknown.status).toBe(404);
+    expect((await unknown.json() as Row).message).toBe('DO-010676 is not a DO in the system.');
+    await req(`/threepl-do-charges/bill-lines/${seven.id}`, 'PATCH', { assign: 'service', serviceRef: 'ASSR-2610-004' });
+    expect(lineByNo(sb, 7)).toMatchObject({ assign: 'service', service_ref: 'ASSR-2610-004' });
+    expect((await req(`/threepl-do-charges/bill-lines/${seven.id}`, 'PATCH', { assign: 'elsewhere' })).status).toBe(400);
+    expect((await req('/threepl-do-charges/bill-lines/nope', 'PATCH', { assign: 'none' })).status).toBe(404);
+
+    const tab = await (await req('/threepl-do-charges')).json() as { bills: Row[] };
+    expect(tab.bills[0]).toMatchObject({ doSen: 36_500, serviceSen: 60_000, eventSen: 110_000, noneSen: 5_300, openSen: 5_000, openLines: 1 });
+  });
+
+  test('Finance only', async () => {
+    const { req } = harness(['scm.transportation.drivers']);
+    expect((await req('/threepl-do-charges/bill-lines?open=1')).status).toBe(403);
+    expect((await req('/threepl-do-charges/bill-lines/x', 'PATCH', { assign: 'none' })).status).toBe(403);
+    const tab = await (await req('/threepl-do-charges')).json() as { bills: Row[] };
+    expect(tab.bills).toEqual([]);
   });
 });

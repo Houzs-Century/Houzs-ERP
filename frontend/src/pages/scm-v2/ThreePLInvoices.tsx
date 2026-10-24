@@ -9,7 +9,8 @@
 // From an AP invoice (owner 2026-10-23): the rows can come from the bill
 // attached to the AP invoice Finance keyed (ThreePLFromAp.tsx) instead of
 // being typed; the By company line shows what 2990's deliveries cost, which
-// Houzs bills back.
+// Houzs bills back. Since 2026-10-24 such a bill is read by itself every half
+// hour; what is not on a DO waits under To check (ThreePLBillLines.tsx).
 // ----------------------------------------------------------------------------
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -22,6 +23,7 @@ import { useThreePLCompanies } from '../../vendor/scm/lib/threepl-companies-quer
 import { DataTable, type Column } from '../../components/DataTable';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { ThreePLFromAp, toSen } from './ThreePLFromAp';
+import { BillsFromAp, type BillSummary } from './ThreePLBillLines';
 import styles from './Suppliers.module.css';
 
 export { toSen };
@@ -63,7 +65,7 @@ export const ThreePLInvoices = () => {
   const qs = new URLSearchParams(Object.entries(range).filter(([, v]) => v)).toString();
   const list = useQuery({
     queryKey: ['threepl-do-charges', range.from, range.to],
-    queryFn: () => authedFetch<{ rows: ChargeRow[]; invoices: InvoiceTotal[] }>(`/threepl-do-charges${qs ? `?${qs}` : ''}`),
+    queryFn: () => authedFetch<{ rows: ChargeRow[]; invoices: InvoiceTotal[]; bills?: BillSummary[] }>(`/threepl-do-charges${qs ? `?${qs}` : ''}`),
   });
   const blank = { doNumber: '', threeplCompanyId: '', invoiceNo: '', invoiceDate: '', billed: '', note: '' };
   const [form, setForm] = useState(blank);
@@ -137,7 +139,7 @@ export const ThreePLInvoices = () => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <p style={{ margin: 0, fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-        When a transporter's invoice arrives, bring it in from its AP invoice — the bill attached there is read line by line — or key in what it billed for each delivery order. The rate card amount is worked out from the DO's sets / items and delivery zone; extras (setup, dismantle, disposal) and the per-trip outstation fee are not on the DO, so they show as a difference to check.
+        When a transporter's bill is attached to its AP invoice, it is read by itself within half an hour: the lines naming a DO are kept on that DO, and the rest wait under To check for you to say where they go. You can also read a bill yourself (From AP invoice) or key in what was billed for each delivery order. The rate card amount is worked out from the DO's sets / items and delivery zone; extras (setup, dismantle, disposal) and the per-trip outstation fee are not on the DO, so they show as a difference to check.
       </p>
       {mayBringIn && (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -155,6 +157,7 @@ export const ThreePLInvoices = () => {
           }}
         />
       )}
+      {mayBringIn && (list.data?.bills?.length ?? 0) > 0 && <BillsFromAp bills={list.data?.bills ?? []} />}
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
         {field('DO number', 'doNumber')}
         <label className={styles.field} style={{ maxWidth: 220 }}>

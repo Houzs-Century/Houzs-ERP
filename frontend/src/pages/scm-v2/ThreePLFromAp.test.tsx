@@ -29,8 +29,9 @@ const READ = {
     { doId: 'do-3', doNumber: 'HC-DO-2609-154', doDate: '2026-09-24', soDocNo: 'HC-SO-012967', customer: 'Ng', companyCode: 'HOUZS', billedSen: 5_000, expectedSen: null, varianceSen: null, split: false, lines: ['HC12975 — RM 50.00'], note: 'HC-API-2610-009: HC12975', alreadyOn: { invoiceNo: 'MANUAL-1', billedSen: 4_000 } },
   ],
   lines: [
-    { index: 4, text: 'DISMANTLE SETIA SPICE (2 TRIPS)', date: null, kind: 'dismantle', amountSen: 110_000, printed: [], status: 'not_delivery', dos: [] },
-    { index: 6, text: 'DO-010676', date: null, kind: 'delivery', amountSen: 60_000, printed: ['DO-010676'], status: 'not_found', dos: [] },
+    { index: 1, text: '6/10-SO-013216', date: '2026-10-06', kind: 'transport', amountSen: 12_000, printed: ['6/10-SO-013216'], status: 'matched', dos: ['HC-DO-2610-004'], doIds: ['do-1'], assign: 'do', serviceRef: null, projectId: null },
+    { index: 4, text: 'DISMANTLE SETIA SPICE (2 TRIPS)', date: null, kind: 'dismantle', amountSen: 110_000, printed: [], status: 'not_delivery', dos: [], doIds: [], assign: 'event', serviceRef: null, projectId: 345 },
+    { index: 6, text: 'DO-010676', date: null, kind: 'delivery', amountSen: 60_000, printed: ['DO-010676'], status: 'not_found', dos: [], doIds: [], assign: null, serviceRef: null, projectId: null },
   ],
   totals: { all: 216_800, matched: 41_500, not_found: 60_000, no_number: 0, service_case: 0, not_delivery: 115_300 },
 };
@@ -67,9 +68,12 @@ describe('From an AP invoice', () => {
     expect(screen.getByText('2990-DO-2610-001')).toBeTruthy();
     expect((screen.getByLabelText('Keep HC-DO-2609-154') as HTMLInputElement).disabled).toBe(true);
     expect(screen.getByText('MANUAL-1 · RM 40.00')).toBeTruthy();
-    /* Not counted: the dismantling and the DO the system never had. */
-    expect(screen.getByText('Dismantle: not a delivery, not counted')).toBeTruthy();
+    /* Not on a DO: the dismantling, on the AP invoice line's fair, and the DO the
+       system never had, waiting under To check (owner 2026-10-24). */
+    expect(screen.getByText('Dismantle: not a delivery')).toBeTruthy();
+    expect(screen.getByText('Setup / Dismantle · the AP invoice line’s fair')).toBeTruthy();
     expect(screen.getByText('Number not in the system')).toBeTruthy();
+    expect(screen.getByText('To check')).toBeTruthy();
     expect(screen.getByText(/The bill reads RM 2,168\.00/)).toBeTruthy();
 
     /* The person drops the 2990 DO and corrects a misread amount. */
@@ -78,10 +82,17 @@ describe('From an AP invoice', () => {
     const save = screen.getByRole('button', { name: /^Save 1 DO/ });
     expect(save.textContent).toBe('Save 1 DO · RM 210.00');
     fireEvent.click(save);
-    await waitFor(() => expect(onSaved).toHaveBeenCalledWith('Saved 1 DO from HC-API-2610-009.'));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith('Saved 1 DO from HC-API-2610-009. 1 line waits under To check.'));
     const confirm = fetchMock.mock.calls.find((c) => String(c[0]).endsWith('/confirm'))!;
     expect(confirm[0]).toBe('/threepl-do-charges/from-ap/api-9/confirm');
-    expect(JSON.parse(confirm[1].body)).toEqual({ carrierId: 'car-msj', rows: [{ doId: 'do-1', billedSen: 21_000, note: 'HC-API-2610-009: 6/10-SO-013216' }] });
+    const sent = JSON.parse(confirm[1].body);
+    expect(sent.rows).toEqual([{ doId: 'do-1', billedSen: 21_000, note: 'HC-API-2610-009: 6/10-SO-013216' }]);
+    /* Every line goes with it, with where it goes. */
+    expect(sent.lines.map((l: { text: string; assign: string | null; doIds: string[]; projectId: number | null }) => [l.text, l.assign, l.doIds, l.projectId])).toEqual([
+      ['6/10-SO-013216', 'do', ['do-1'], null],
+      ['DISMANTLE SETIA SPICE (2 TRIPS)', 'event', [], 345],
+      ['DO-010676', null, [], null],
+    ]);
   });
 
   it('another 3PL is priced only after reading again; a refusal is said', async () => {

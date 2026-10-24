@@ -1,6 +1,6 @@
 // HC-0031: a 3PL invoice is keyed in per DO after delivery and shown beside the
 // rate card amount, with the difference.
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -59,6 +59,51 @@ describe('3PL invoices (HC-0031)', () => {
       await screen.findAllByText('Per invoice');
       expect(screen.queryByRole('button', { name: 'From AP invoice' })).toBeNull();
     } finally { perms.finance = true; }
+  });
+
+  /* Owner 2026-10-24: bills read by themselves; what is not on a DO waits under
+     To check for a person to say where it goes. */
+  it('To check and Per bill: a line put somewhere, the bill split by where its lines went', async () => {
+    const bill = {
+      apInvoiceId: 'api-9', invoiceNumber: 'HC-API-2610-009', supplierRef: '617797', invoiceDate: '2026-10-13', totalSen: 228_000,
+      supplierName: 'MSJ TRANSPORT SERVICE', carrierId: 'car-msj', carrierName: 'MSJ TRANSPORT', readBy: 'auto', readAt: '2026-10-24T03:00:00Z', error: null, lines: 7,
+      doSen: 36_500, serviceSen: 0, eventSen: 110_000, noneSen: 5_300, openSen: 65_000, openLines: 2,
+    };
+    const line = (id: string, lineNo: number, text: string, amountSen: number) => ({
+      id, apInvoiceId: 'api-9', invoiceNumber: 'HC-API-2610-009', supplierName: 'MSJ TRANSPORT SERVICE', lineNo, text, date: '2026-10-06', kind: 'delivery',
+      amountSen, printed: [text], readStatus: 'not_found', assign: null, doIds: [], doNumbers: [], serviceRef: null, projectId: null, assignedBy: null, assignedAt: null, open: true,
+    });
+    fetchMock.mockImplementation((p: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH') return Promise.resolve({ ok: true, open: false, skipped: [] });
+      if (p.startsWith('/threepl-do-charges/bill-lines')) return Promise.resolve({ lines: [line('bl-4', 4, 'HC12975', 5_000), line('bl-7', 7, 'DO-010676', 60_000)] });
+      if (p.startsWith('/mfg-sales-orders/fair-options')) return Promise.resolve({ fairs: [] });
+      return Promise.resolve({ rows: [], invoices: [], bills: [bill] });
+    });
+    mount();
+    expect(await screen.findByText('To check (2 lines · RM 650.00)')).toBeTruthy();
+    /* Per bill: the parts, and what no line accounts for (2,280.00 less 2,168.00). */
+    expect(screen.getByText('RM 650.00 · 2 lines')).toBeTruthy();
+    expect(screen.getByText('RM 112.00')).toBeTruthy();
+    expect(screen.getByText('By itself · 2026/10/24')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Where line 4 of HC-API-2610-009 goes'), { target: { value: 'do' } });
+    fireEvent.change(screen.getByLabelText('DO numbers for line 4 of HC-API-2610-009'), { target: { value: 'HC-DO-2609-154' } });
+    fireEvent.change(screen.getByLabelText('Where line 7 of HC-API-2610-009 goes'), { target: { value: 'none' } });
+    const saves = within(screen.getByRole('region', { name: 'Bills from AP invoices' })).getAllByRole('button', { name: 'Save' }).filter((b) => !(b as HTMLButtonElement).disabled);
+    expect(saves).toHaveLength(2);
+    fireEvent.click(saves[0]!);
+    fireEvent.click(saves[1]!);
+    await waitFor(() => expect(fetchMock.mock.calls.filter((c) => c[1]?.method === 'PATCH')).toHaveLength(2));
+    const patches = fetchMock.mock.calls.filter((c) => c[1]?.method === 'PATCH');
+    expect(patches.map((c) => [c[0], JSON.parse(c[1].body)])).toEqual([
+      ['/threepl-do-charges/bill-lines/bl-4', { assign: 'do', doNumber: 'HC-DO-2609-154', serviceRef: null, projectId: null }],
+      ['/threepl-do-charges/bill-lines/bl-7', { assign: 'none', doNumber: null, serviceRef: null, projectId: null }],
+    ]);
+
+    /* A bill's own lines open under Per bill. */
+    fireEvent.click(screen.getByRole('button', { name: 'Lines' }));
+    expect(await screen.findByText('Lines of HC-API-2610-009 · MSJ TRANSPORT SERVICE · bill 617797')).toBeTruthy();
+    await waitFor(() => expect(fetchMock.mock.calls.some((c) => c[0] === '/threepl-do-charges/bill-lines?apInvoiceId=api-9')).toBe(true));
   });
 
   it('saves a DO line with the amount in sen, and a refusal reaches the screen', async () => {

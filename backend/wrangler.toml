@@ -281,7 +281,8 @@ dataset = "houzs_erp_metrics"
 #            2026-08-19) — so the MRP page opens instantly from a fresh plan
 #   */30   → ASSR per-stage alert scan + scheduled lead-time activations
 #            + announcement overdue escalation (supervisors notified once a
-#            must-acknowledge notice is 48h old, 2026-09-06)
+#            must-acknowledge notice is 48h old, 2026-09-06) + 3PL bills read
+#            off their AP invoices, four a run (2026-10-24)
 #   0 2    → Daily batch: SLA escalation, ASSR daily digest, project
 #            checklist reminders, idempotency-key TTL sweep
 #   5 16   → Month-end stock close sweep (00:05 MYT): posts/heals the
