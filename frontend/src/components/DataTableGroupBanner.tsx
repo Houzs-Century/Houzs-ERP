@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { X } from "lucide-react";
+import { ChevronsDownUp, ChevronsUpDown, X } from "lucide-react";
 import { cn } from "../lib/utils";
 
 /**
@@ -14,6 +14,9 @@ export function DataTableGroupBanner({
   canGroup,
   onAdd,
   onRemove,
+  allCollapsed,
+  onCollapseAll,
+  onExpandAll,
 }: {
   groups: string[];
   labelOf: (key: string) => string;
@@ -21,6 +24,11 @@ export function DataTableGroupBanner({
   canGroup: (key: string) => boolean;
   onAdd: (key: string) => void;
   onRemove: (key: string) => void;
+  /* Google-Sheets-style fold-all control (owner 2026-10-24). Absent on callers
+     that don't wire it; the per-group header toggle works regardless. */
+  allCollapsed?: boolean;
+  onCollapseAll?: () => void;
+  onExpandAll?: () => void;
 }) {
   const [over, setOver] = useState(false);
   const accepts = dragKey != null && canGroup(dragKey) && !groups.includes(dragKey);
@@ -66,6 +74,16 @@ export function DataTableGroupBanner({
               </span>
             </span>
           ))}
+          {onCollapseAll && onExpandAll && (
+            <button
+              type="button"
+              onClick={allCollapsed ? onExpandAll : onCollapseAll}
+              className="ml-auto inline-flex items-center gap-1 rounded border border-border bg-surface px-2 py-0.5 font-semibold text-ink-secondary transition-colors hover:border-primary/40 hover:text-primary"
+            >
+              {allCollapsed ? <ChevronsUpDown size={13} /> : <ChevronsDownUp size={13} />}
+              {allCollapsed ? "Expand all" : "Collapse all"}
+            </button>
+          )}
         </>
       )}
     </div>
