@@ -12,6 +12,7 @@ import { fmtDate } from "../../vendor/shared/format";
 import { formatPhone } from "../../vendor/shared/phone";
 import { DataTable, type Column } from "../../components/DataTable";
 import { FilterPills } from "../../components/FilterPills";
+import { rosterRows, type StatusPill } from "./rosterRows";
 import { StatStrip } from "../../components/DetailLayout";
 import { Badge } from "../../components/Badge";
 import { Avatar } from "../../components/Avatar";
@@ -42,8 +43,6 @@ type RailSelection =
   | { kind: "dept"; id: number; division: string | null }
   | { kind: "nodept" }
   | { kind: "attention"; key: "pending" | "never" | "disabled" };
-
-type StatusPill = "all" | "active" | "invited" | "disabled";
 
 const railRow =
   "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-[12.5px] transition-colors duration-fast";
@@ -168,8 +167,14 @@ export function TeamDirectory({
   }, [users, selection]);
 
   const rows = useMemo(() => {
-    let list = scoped;
-    if (statusPill !== "all") list = list.filter((u) => u.status === statusPill);
+    // Removed (disabled) members are kept out of the default roster — they live
+    // in their own Disabled list, where they can be restored (owner 2026-10-22).
+    // The Disabled pill and the "Disabled" attention node are the two ways to
+    // view them, so both turn the exclusion off.
+    const onDisabledView =
+      statusPill === "disabled" ||
+      (selection.kind === "attention" && selection.key === "disabled");
+    let list = rosterRows(scoped, statusPill, onDisabledView);
     const q = searchQ.trim().toLowerCase();
     if (q) {
       list = list.filter((u) =>
@@ -178,7 +183,7 @@ export function TeamDirectory({
       );
     }
     return list;
-  }, [scoped, statusPill, searchQ]);
+  }, [scoped, statusPill, selection, searchQ]);
 
   const scopedCounts = useMemo(() => {
     const active = scoped.filter((u) => u.status === "active").length;
@@ -527,7 +532,7 @@ export function TeamDirectory({
   );
 
   const pillOptions = [
-    { value: "all" as const, label: "All", count: scoped.length },
+    { value: "all" as const, label: "On team", count: scopedCounts.active + scopedCounts.invited },
     { value: "active" as const, label: "Active", count: scopedCounts.active },
     { value: "invited" as const, label: "Pending", count: scopedCounts.invited },
     { value: "disabled" as const, label: "Disabled", count: scopedCounts.disabled },

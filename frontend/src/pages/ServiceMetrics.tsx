@@ -14,7 +14,7 @@ import { Donut, type Slice } from "../components/scm-v2/Charts";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { cn, formatDate } from "../lib/utils";
-import { resolutionLabel } from "../components/StatusDot";
+import { resolutionLabel, stageLabel } from "../components/StatusDot";
 import type { AssrMetrics } from "../types";
 
 // v3.1 enriched summary (mig 074 stage names + new aggregates)
@@ -105,13 +105,64 @@ export function mergeByLabel(rows: Slice[]): Slice[] {
 }
 
 /** A breakdown as a donut, in the same frame as DashboardBreakdown. */
-function DonutPanel({ title, data }: { title: string; data: Slice[] }) {
+function DonutPanel({ title, data, onPick, picked }: { title: string; data: Slice[]; onPick: (label: string) => void; picked: string | null }) {
   const total = data.reduce((a, d) => a + d.value, 0);
   return (
     <div className="rounded-lg border border-border bg-surface px-5 py-5 shadow-stone">
-      <div className="mb-4 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">{title}</div>
+      <div className="mb-4 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">{title} <span className="font-normal normal-case tracking-normal">· click one to list its cases below</span></div>
       <Donut size={112} format={(n) => n.toLocaleString()} center={{ value: total.toLocaleString(), label: "cases" }}
-        data={data.slice().sort((a, b) => b.value - a.value)} />
+        data={data.slice().sort((a, b) => b.value - a.value)} onPick={onPick} picked={picked} />
+    </div>
+  );
+}
+
+/** The cases behind the slice picked on a "What the cases are about" donut,
+ *  listed under the donuts (owner 2026-10-20, like Project Overview's breakdown
+ *  filtering its project list). */
+type WhyPick = { kind: "category" | "resolution"; label: string; value: string };
+function WhyCases({ pick, from, to, onClear }: { pick: WhyPick; from: string; to: string; onClear: () => void }) {
+  const navigate = useNavigate();
+  const [data, setData] = useState<{ cases: DrillCase[]; limited: boolean } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setData(null); setErr(null);
+    const params = new URLSearchParams({ metric: pick.kind === "category" ? "category_cases" : "resolution_cases", from, to, limit: "500" });
+    params.set(pick.kind === "category" ? "category" : "method", pick.value);
+    api.get<{ cases: DrillCase[]; limited: boolean }>(`/api/assr/metrics/drill?${params.toString()}`)
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch((e: unknown) => { if (!cancelled) setErr(e instanceof Error ? e.message : "Could not load the cases"); });
+    return () => { cancelled = true; };
+  }, [pick.kind, pick.value, from, to]);
+  return (
+    <div className="mt-3 rounded-lg border border-border bg-surface px-5 py-4 shadow-stone">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="text-[13px] font-semibold text-ink">{pick.kind === "category" ? "Issue category" : "Resolution method"} · {pick.label}
+          <span className="ml-2 text-[11.5px] font-normal text-ink-muted">{data ? `${data.cases.length} case${data.cases.length === 1 ? "" : "s"}${data.limited ? " (first 500)" : ""}` : "Loading…"} · click one to open it</span></div>
+        <button type="button" onClick={onClear} className="text-[12px] text-primary hover:underline">Show none</button>
+      </div>
+      {err ? <div className="rounded-md border border-err/40 bg-err/5 p-3 text-[12px] text-err">{err}</div> : !data ? <ListSkeleton rows={4} /> : (
+        <div className="max-h-[420px] overflow-auto">
+          <table className="w-full border-collapse text-[12px]">
+            <thead className="sticky top-0 bg-surface text-left text-[10.5px] uppercase tracking-wide text-ink-muted">
+              <tr><th className="py-1.5 pr-3">ASSR</th><th className="pr-3">Customer</th><th className="pr-3">Supplier</th><th className="pr-3">Stage</th><th className="pr-3">Complaint</th><th className="pr-3">Opened</th><th className="text-right">Age</th></tr>
+            </thead>
+            <tbody>{data.cases.map((cs) => (
+              <tr key={cs.id} className="cursor-pointer border-t border-border-subtle hover:bg-surface-2/50" onClick={() => navigate(`/assr/${cs.id}`)}>
+                <td className="whitespace-nowrap py-1.5 pr-3 font-mono font-semibold text-primary">{cs.assr_no}</td>
+                <td className="max-w-[180px] truncate pr-3">{cs.customer_name ?? "—"}</td>
+                <td className="max-w-[180px] truncate pr-3 text-ink-secondary">{cs.creditor_name ?? cs.creditor_code ?? "—"}</td>
+                <td className="whitespace-nowrap pr-3">{stageLabel(cs.stage)}</td>
+                <td className="max-w-[320px] truncate pr-3 text-ink-secondary"><span title={cs.complaint_issue ?? ""}>{cs.complaint_issue ?? "—"}</span></td>
+                <td className="whitespace-nowrap pr-3 tabular-nums">{cs.complained_date?.slice(0, 10) ?? "—"}</td>
+                <td className="whitespace-nowrap text-right tabular-nums">{cs.age_days != null ? `${Math.floor(cs.age_days)} d` : "—"}</td>
+              </tr>
+            ))}
+              {data.cases.length === 0 && <tr><td className="py-2 text-ink-muted" colSpan={7}>No cases.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -186,6 +237,7 @@ export function ServiceMetrics() {
   /* This month / quarter / year or a date range, as on every dashboard (owner 2026-10-17). */
   const [period, setPeriod] = useDashboardPeriod(today, "from", "to", []);
   const [drill, setDrill] = useState<DrillState | null>(null);
+  const [why, setWhy] = useState<WhyPick | null>(null);
 
   // OFF-NOT-HIDE: both /metrics and /summary are ORG aggregates gated behind
   // `service_cases.read`. This view is reachable via the Service Cases board
@@ -243,12 +295,20 @@ export function ServiceMetrics() {
             <DonutPanel
               title="Service Issue Categories"
               data={mergeByLabel(m?.issue_categories?.map((r) => ({ label: r.category || "Other", value: r.count, color: null })) ?? [])}
+              picked={why?.kind === "category" ? why.label : null}
+              onPick={(label) => setWhy(why?.kind === "category" && why.label === label ? null : { kind: "category", label, value: label })}
             />
             <DonutPanel
               title="Resolution Method Mix"
               data={m?.resolutions.map((r) => ({ label: r.method === "unset" ? "Not recorded" : resolutionLabel(r.method), value: r.count, color: r.method === "unset" ? "#c9cdc4" : null })) ?? []}
+              picked={why?.kind === "resolution" ? why.label : null}
+              onPick={(label) => {
+                const method = m?.resolutions.find((r) => (r.method === "unset" ? "Not recorded" : resolutionLabel(r.method)) === label)?.method ?? "unset";
+                setWhy(why?.kind === "resolution" && why.label === label ? null : { kind: "resolution", label, value: method });
+              }}
             />
           </DashboardPanels>
+          {why && <WhyCases pick={why} from={period.from} to={period.to} onClear={() => setWhy(null)} />}
           {s && s.csat_trend.length > 0 && (
             <MetricCard icon={<Smile size={13} />} title="CSAT — 13-week rolling" flat>
               <CsatTrend data={s.csat_trend} />
@@ -315,6 +375,8 @@ type DrillCase = {
   complained_date: string | null;
   deadline_at: string | null;
   issue_category: string | null;
+  complaint_issue?: string | null;
+  resolution_method?: string | null;
   creditor_code: string | null;
   creditor_name: string | null;
   age_days: number | null;

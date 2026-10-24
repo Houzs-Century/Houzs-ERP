@@ -21,10 +21,13 @@ lists only what differs for GR.
   line(s), **nothing is created** — the job lands *needs-review* (status `done`,
   `linked_doc_no` null, slip retained, a plain note) and the operator receives
   from the PO by hand. The note lists each scanned line and why, including a
-  refused PO's live status ("HC-PO-2609-223 is marked Received").
+  refused PO's live status ("HC-PO-2609-223 is marked Received"), on hold, another
+  supplier's PO ("HC-PO-010086 is OHANA STUDIO's PO"), or no open line found (`printedPoWhy`),
+  for a row's PO and the header's alike. Our number with the location inside
+  ("HC-SRW-PO-2610-091") resolves when that PO ships to that warehouse.
 - **Known PO, unknown codes.** A row whose PO is known but whose code matches
   nothing (DIGLANT prints its own `T1MAMWA0MK`) is matched by product name
-  (`nameMatchItem`: every word only that item has on the PO must be printed);
+  (`nameMatchItem`: every word only that item has on the PO must be printed; item-group words such as MATT / MATTRESS are not needed, and a hyphen suffix counts, so FLEXICARE-C is not FLEXICARE-S);
   the note says how many rows matched by name. Before the name, a row printing one of our SO numbers is a SET (Dorsettloft: "DSL8030 - 2 + L" x1 = two PO pieces): it takes every piece on its PO raised for that SO (`setLinesBySo`, narrowed by a printed model number), at the remaining qty. A row no name matches is
   "not on the PO" (free gifts). When no row lines up at all, the draft carries
   every line still owed on the named PO(s) (`poFallback`) only when the
@@ -57,12 +60,14 @@ lists only what differs for GR.
    supplier (`scm.supplier_scan_codes`, `lib/grn-scan-codes.ts`). Steps 3-4 live
    in `lib/grn-scan-draft.ts`, shared with the codes re-run. Identical lines of
    one item on one PO take a row's qty in PO line order.
-4. Confident picks → `createDraftGrnFromPoItems` → stamp `scan_jobs.linked_doc_no`
-   with the GRN number. No picks → needs-review (no doc).
+4. Confident picks → `createDraftGrnFromPoItems` (one draft per ship-to warehouse) →
+   stamp `scan_jobs.linked_doc_no` with the first GRN number; the job note names every draft. No picks → needs-review (no doc).
 5. A rack the warehouse HANDWROTE beside a row ("R11-2", read as
    `lines[].rack`) is put on that row's draft line when it names exactly one rack
    of the GRN's warehouse ("Rack R11.2", `lib/grn-scan-racks.ts`). Placement
    only on a DRAFT; an unknown rack is left blank and listed in the note.
+   After the L/R only digits follow, so look-alike letters read as digits
+   ("L1b-2" -> L16.2).
 
 **Queue routing:** the SO consumer (`processScanQueueMessage`) reads
 `document_type` and delegates `'GR'` to `processGrnScanQueueMessage` (one-way

@@ -15,7 +15,7 @@ import { idempotency } from "./middleware/idempotency";
 import { requestLog } from "./middleware/requestLog";
 // Error tracking (Sentry-protocol, no SDK). Completely inert until the owner
 // sets the SENTRY_DSN Worker secret — see services/errorTracking.ts.
-import { captureError } from "./services/errorTracking";
+import { captureError, describeErrorForLog } from "./services/errorTracking";
 import assr from "./routes/assr";
 import logs from "./routes/logs";
 import auditRoutes from "./routes/audit";
@@ -100,6 +100,8 @@ import supplierPortal from "./routes/supplierPortal";
 // read/reply/compose/label/address/access/scope router.
 import mailCenter from "./routes/mail-center";
 import mailInbound from "./routes/mail-inbound";
+import mailAcks from "./routes/mail-acks";
+import mailPersonal from "./routes/mail-personal";
 // 2990 → Houzs LIVE SO mirror receiver. PRE-AUTH (secret-guarded, called by the
 // 2990 DB via pg_net, no user JWT) — mounted at the top level, outside /api/scm.
 import { soMirror } from "./scm/routes/so-mirror";
@@ -114,9 +116,11 @@ import { pushVenturePortalCatalogue } from "./scm/lib/venture-portal-catalogue";
 import { pushVenturePortalAttendance } from "./scm/lib/venture-portal-attendance";
 import { venturePortalKick } from "./scm/lib/venture-portal-kick";
 import { reconcilePendingFairs } from "./scm/lib/fair-reconcile";
+import { autoReadBills } from "./scm/lib/threepl-bill-import";
 import { relinkHeldBackSweep } from "./scm/lib/autocount-relink-sweep";
 import { deliveryDateSweep } from "./scm/lib/autocount-delivery-date-sweep";
 import { refreshAllMrpSnapshots } from "./scm/lib/mrp-snapshot";
+import { refreshProcurementOverviewSnapshots } from "./scm/routes/procurement-overview";
 import { amendmentMirror } from "./scm/routes/amendment-mirror";
 import { customerMirror } from "./scm/routes/customer-mirror";
 import { staffMirror } from "./scm/routes/staff-mirror";
@@ -144,7 +148,9 @@ import { publicContractorCalendar } from "./routes/publicContractorCalendar";
 import { publicBrandCalendar } from "./routes/publicBrandCalendar";
 import { brandShare } from "./routes/brandShare";
 import { drainEmailOutbox } from "./services/email";
+import { backfillOutboundMessageIds } from "./lib/mail-threading";
 import { pollVelocity } from "./scm/lib/velocity-poll";
+import { runMailAckEscalation } from "./lib/mail-acks";
 import { runClientErrorDigest } from "./services/clientErrors";
 import { runSlaEscalation } from "./services/assrEscalation";
 import { runAssrAlerts, runAssrDailyDigest } from "./services/assrAlerts";
@@ -242,7 +248,7 @@ function corsOriginAllowed(origin: string | undefined | null): string | undefine
    browser hides is a renewal that silently never happens. It carries no secret:
    the pass is signed, token-bound and revocable, and the client already holds it.
    docs/bugs/0593-*. */
-app.use("*", cors({ origin: corsOriginAllowed, exposeHeaders: ["X-Request-Id", "X-Company-Code", "X-Session-Pass"] }));
+app.use("*", cors({ origin: corsOriginAllowed, exposeHeaders: ["X-Request-Id", "X-Company-Code", "X-Session-Pass", "Server-Timing"] }));
 
 // Baseline security headers on every Worker response. Deliberately conservative:
 // the cross-origin isolation family (CORP/COOP/COEP) is DISABLED because the API
@@ -537,6 +543,8 @@ app.route("/api/inbox", inbox);
 // ownership; alias/access/scope-level admin gate on mail_center.manage inside
 // the handlers (owner passes via "*"). The pre-auth /api/mail-center/inbound
 // route is mounted above, before the auth gate, and is not shadowed by this.
+app.route("/api/mail-center", mailAcks);
+app.route("/api/mail-center", mailPersonal);
 app.route("/api/mail-center", mailCenter);
 // Announcements — the banner GET, the LIST GET and the ack POST are open to
 // every authed user (the route handles it internally: the list is audience- and
@@ -591,7 +599,7 @@ function humanizeError(err: Error): { status: 500 | 503; message: string } {
 }
 
 app.onError((err, c) => {
-  console.error("[onError]", err);
+  console.error("[onError]", describeErrorForLog(err), err);
   // Preserve Hono HTTPException status/body (intentional 4xx from handlers).
   const anyErr = err as Error & { getResponse?: () => Response; status?: number };
   const base =
@@ -676,12 +684,16 @@ export default {
       // Durable email: retry outbox rows whose immediate send failed. No-op
       // without RESEND_API_KEY; bounded to 25 rows / 3 attempts so a bad batch
       // can't stall the slot.
+      // Then give Mail Center sends Resend's Message-ID, which a customer's
+      // reply quotes to land back on its thread.
       ctx.waitUntil(
         track("email-outbox", () => drainEmailOutbox(env))
           .then((r) => {
             if (r.processed) console.log(`[cron email-outbox] processed=${r.processed} sent=${r.sent} failed=${r.failed}`);
           })
           .catch((e) => console.error("[cron email-outbox]", e))
+          .then(() => backfillOutboundMessageIds(env.DB, env, null, 10))
+          .catch((e) => console.error("[cron mail-message-ids]", e))
       );
       // DEV-42: store live lorry positions from Velocity (no-op until the secret is set).
       ctx.waitUntil(
@@ -868,6 +880,11 @@ export default {
         track("mrp-snapshot", () => refreshAllMrpSnapshots(env, new Date().toISOString()))
           .catch((e) => console.error("[cron mrp-snapshot]", e))
       );
+      // HC-0145: the Procurement Overview's default views, served from KV between runs.
+      ctx.waitUntil(
+        track("procurement-overview", () => refreshProcurementOverviewSnapshots(env, todayMyt()))
+          .catch((e) => console.error("[cron procurement-overview]", e))
+      );
     } else if (event.cron === "*/30 * * * *") {
       /* Venture Portal feed BACKSTOP — the half of "not one order missed" that
          is provable rather than hoped for. The capture trigger swallows its own
@@ -922,6 +939,15 @@ export default {
               console.log(`[cron ann-escalation] ${JSON.stringify(r)}`);
           })
           .catch((e) => console.error("[cron ann-escalation]", e))
+      );
+      // Mail Center: the same 48h window for a mail that asked for
+      // acknowledgement; once per message.
+      ctx.waitUntil(
+        runMailAckEscalation(env)
+          .then((r) => {
+            if (r.chased > 0) console.log(`[cron mail-ack-escalation] ${JSON.stringify(r)}`);
+          })
+          .catch((e) => console.error("[cron mail-ack-escalation]", e))
       );
       ctx.waitUntil(
         track("lead-time-schedule", () => runScheduledLeadTimeActivations(env))
@@ -997,6 +1023,18 @@ export default {
           );
         }
       }
+      // 3PL bills (owner 2026-10-24): an AP invoice from a transport supplier
+      // with its bill attached is read by itself and kept — matched lines on
+      // their DOs, the rest waiting for Finance under "To check" — and read again
+      // when a file is added. Four bills a run; nothing posts to the ledger.
+      // scm/lib/threepl-bill-import.ts.
+      ctx.waitUntil(
+        track("threepl-bills", () => autoReadBills(env))
+          .then((r) => {
+            if (r.due > 0 || r.released > 0 || r.errors.length) console.log(`[cron threepl-bills] ${JSON.stringify(r)}`);
+          })
+          .catch((e) => console.error("[cron threepl-bills]", e))
+      );
       // Slip reaper (mirrors 2990's */10 orphan-slip sweep, which retires with
       // 2990's apps/api). Leases up to 100 orphan pending_slip_uploads rows
       // (5-min lease, SKIP LOCKED via lease_orphan_slips), deletes each R2 blob,

@@ -52,15 +52,58 @@ export type BooksRead = { ok: true; legs: BooksLeg[] } | { ok: false; reason: st
     figures and says the books could not be read. */
 export async function readEventBooks(db: D1Database, projectId: number, companyId: number | null): Promise<BooksRead> {
   try {
-    const res = await db.prepare(
-      `${GL_LEGS}
+    const one = (select: string, order: string) => db.prepare(
+      `${select}
         WHERE l.project_id = ?${companyId != null ? ' AND l.company_id = ?' : ''}
-        ${GL_ORDER}`
+        ${order}`
     ).bind(projectId, ...(companyId != null ? [companyId] : [])).all<BooksLeg>();
-    return { ok: true, legs: res.results ?? [] };
+    const [res, credits] = await Promise.all([one(GL_LEGS, GL_ORDER), one(SCN_CREDIT_LEGS, SCN_CREDIT_ORDER)]);
+    return { ok: true, legs: withScnCredits(res.results ?? [], credits.results) };
   } catch (e) {
     return { ok: false, reason: e instanceof Error ? e.message : String(e) };
   }
+}
+
+/* A SUPPLIER CREDIT NOTE COMES OFF THE ROW OF THE INVOICE IT KNOCKS OFF (owner
+   2026-10-22: 「这几张cn 不是knock off 着ap invoice，这些ap invoice 不是连接着哪
+   一场活动的了？」, 「我不想要把他放在others」). A posted supplier note that knocks
+   off — or credits — an AP invoice whose lines carry an event is read as a
+   credit on that event, on the row of the invoice line's own account (a rental
+   bill's credit comes off Rental), split over the invoice's lines by amount.
+   READ HERE, NEVER WRITTEN: the note's journal is untouched — it credits
+   PURCHASES RETURN or DISCOUNT RECEIVED, which would read as Others — and the
+   note's own legs, should they carry the event, are left out, so nothing
+   counts twice (withScnCredits). A note with no such invoice keeps its own
+   legs. The table alias `l` is the invoice LINE, for the shared WHERE. */
+const SCN_CREDIT_LEGS = `SELECT l.project_id, ('scn:' || k.note_id::text || ':' || l.id::text) AS leg_id, l.debit_account_code AS account_code,
+              0 AS debit_sen, ROUND(k.amount_sen::numeric * l.amount_sen / NULLIF(inv.total_sen, 0))::bigint AS credit_sen,
+              ('Credit note ' || k.note_number || ' knocks off ' || inv.invoice_number) AS notes,
+              k.je_no AS je_no, to_char(k.note_date, 'YYYY-MM-DD') AS entry_date,
+              'SCN' AS source_type, k.note_number AS source_doc_no,
+              true AS posted, false AS reversed, NULL::text AS reversed_by_je,
+              a.account_name, a.account_type, a.pms_row
+         FROM (
+           SELECT n.id AS note_id, n.note_number, n.je_no, n.note_date, al.ap_invoice_id, al.amount_sen
+             FROM scm.acc_credit_notes n
+             JOIN scm.acc_credit_note_allocations al ON al.note_id = n.id AND al.ap_invoice_id IS NOT NULL
+            WHERE n.kind = 'SCN' AND n.status = 'POSTED'
+           UNION ALL
+           SELECT n.id, n.note_number, n.je_no, n.note_date, n.ap_invoice_id, n.total_sen
+             FROM scm.acc_credit_notes n
+            WHERE n.kind = 'SCN' AND n.status = 'POSTED' AND n.ap_invoice_id IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM scm.acc_credit_note_allocations x WHERE x.note_id = n.id AND x.ap_invoice_id IS NOT NULL)
+         ) k
+         JOIN scm.ap_invoices inv ON inv.id = k.ap_invoice_id AND inv.status <> 'CANCELLED'
+         JOIN scm.ap_invoice_lines l ON l.invoice_id = inv.id
+         LEFT JOIN scm.accounts a ON a.company_id = l.company_id AND a.account_code = l.debit_account_code`;
+const SCN_CREDIT_ORDER = 'ORDER BY k.note_date, k.note_number, l.line_no';
+
+/** The posted legs with the supplier notes' credits in. A note read as a
+    credit gives up its own legs here, so it never counts twice. */
+export function withScnCredits(posted: readonly BooksLeg[], credits: readonly BooksLeg[]): BooksLeg[] {
+  if (credits.length === 0) return [...posted];
+  const covered = new Set(credits.map((c) => c.source_doc_no).filter((v): v is string => !!v));
+  return [...posted.filter((l) => !(l.source_type === 'SCN' && covered.has(l.source_doc_no ?? ''))), ...credits];
 }
 
 /* The ONE read of an event's tagged legs, shared by the event page (one event)
@@ -73,6 +116,10 @@ const GL_LEGS = `SELECT l.project_id, l.id::text AS leg_id, l.account_code, l.de
          JOIN scm.journal_entries je ON je.id = l.journal_entry_id
          LEFT JOIN scm.accounts a ON a.company_id = l.company_id AND a.account_code = l.account_code`;
 const GL_ORDER = 'ORDER BY je.entry_date, je.je_no, l.line_no';
+
+/** The rows the event P&L sums the books straight into; the others
+ *  (transport fee, commission) are % rows (services/eventPnl.ts pctRow). */
+const SUMMED_ROWS: ReadonlySet<PmsRow> = new Set<PmsRow>(['rental', 'setup', 'transport_setup_dismantle', 'others']);
 
 /** Marks a leg read from a voucher that is CHECKED but not yet approved. */
 export const PV_CHECKED_SOURCE = 'PV_CHECKED';
@@ -239,7 +286,14 @@ export function applyEventBooks<L extends LedgerLine>(
     return { lines: ledger, books: { ok: false, reason: read.reason, rows: [], closed_categories: [], replaced: [] } };
   }
   const booksLines = booksLinesFor(projectId, read.legs);
-  const filled = new Set<PmsRow>(booksLines.map((l) => l.category));
+  /* A row the books FILL is one Finance has paid on (a debit). On a row whose
+     books are summed straight in, money only coming BACK — a partner's share
+     billed on an Other Debtor bill, a refund — does not replace the typed
+     figure; it is taken off it (owner 2026-10-22: rental 45,900 typed and
+     HC-ODB-2609-004 billing 22,950 back read -22,950, 「下面写missing，但是上面
+     是有amount的」). A % row keeps the old rule — any leg fills it — so a credit
+     there is never lost under the rate card. */
+  const filled = new Set<PmsRow>(booksLines.filter((l) => l.amount > 0 || !SUMMED_ROWS.has(l.category)).map((l) => l.category));
   const isFilled = (category: string | null | undefined) => {
     const row = rowOfCategory(category);
     return row != null && filled.has(row);
@@ -291,12 +345,16 @@ async function readMany(db: D1Database, ids: readonly number[], companyId: numbe
  *  events (owner 2026-10-19: the Projects list shows the event page's P&L). Either
  *  read failing is a failed read. */
 export async function readEventBooksMany(db: D1Database, projectIds: readonly number[], companyId: number | null): Promise<BooksManyRead> {
-  const [posted, checked] = await Promise.all([
+  const [posted, checked, credits] = await Promise.all([
     readMany(db, projectIds, companyId, GL_LEGS, '', GL_ORDER),
     readMany(db, projectIds, companyId, CHECKED_PV_LEGS, CHECKED_NOT_APPROVED, CHECKED_ORDER),
+    readMany(db, projectIds, companyId, SCN_CREDIT_LEGS, '', SCN_CREDIT_ORDER),
   ]);
   if (!posted.ok) return posted;
   if (!checked.ok) return checked;
+  if (!credits.ok) return credits;
+  /* The supplier notes' credits, each event's own (withScnCredits). */
+  for (const [id, legs] of credits.byProject) posted.byProject.set(id, withScnCredits(posted.byProject.get(id) ?? [], legs));
   for (const [id, legs] of checked.byProject) posted.byProject.set(id, [...(posted.byProject.get(id) ?? []), ...legs]);
   return posted;
 }

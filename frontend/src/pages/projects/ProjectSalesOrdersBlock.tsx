@@ -7,9 +7,17 @@
  * their sum against that lump sum, so the office can see per event how much
  * is still on paper slips.
  *
+ * MOVING AN ORDER OUT (owner 2026-10-20), Finance or PMS: an order another
+ * fair's evening report lists shows where it belongs and moves there — ticked,
+ * or all at one click; a "Venue differs" order no report lists offers the
+ * booths at its own venue to pick from, one at a time (the slip's place is not
+ * proof enough to move many at once). A move changes the Fair, Venue and Fair
+ * Day, and History records it.
+ *
  * Own module: Projects.tsx is at its file-size ceiling. The hook is exported
  * separately so the section can put the order count in its title.
  */
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { markWorkspaceOpenIntent } from "../../lib/workspaceTabs";
 import { api } from "../../api/client";
@@ -17,10 +25,14 @@ import { useQuery, type QueryState } from "../../hooks/useQuery";
 import { cn, formatCurrency, formatDate } from "../../lib/utils";
 import { fmtSen } from "../../vendor/shared/format";
 import { formatPhone } from "../../vendor/shared/phone";
+import { transferSummary, useFairOptions, useFairTransfer } from "../../vendor/scm/lib/fair-options-queries";
+import { boothChoices } from "../../vendor/scm/lib/fair-booth-choices";
+import { announceProjectSalesChanged, useOnProjectSalesChanged } from "./projectSalesEvents";
 import {
   normalizeProjectSalesOrders,
   soStatusLabel,
   summarizeProjectSalesOrders,
+  type ProjectSalesOrderRow,
   type ProjectSalesOrdersResponse,
   type ProjectSalesOrdersSummary,
 } from "./projectSalesOrders";
@@ -79,6 +91,39 @@ function GapPill({ s }: { s: ProjectSalesOrdersSummary }) {
   );
 }
 
+/** A "Venue differs" order no report places: pick a booth at its own venue and
+ *  move it — one at a time. */
+function PickAndMove({ row, onMove, busy }: { row: ProjectSalesOrderRow; onMove: (projectId: number) => void; busy: boolean }) {
+  const optionsQ = useFairOptions(row.so_date);
+  const { choices, suggested } = boothChoices(
+    [...(optionsQ.data?.running ?? []), ...(optionsQ.data?.earlier ?? [])],
+    { venue: row.venue ?? null, branding: row.branding ?? null, so_date: row.so_date },
+  );
+  const [pick, setPick] = useState<string | null>(null);
+  const value = pick ?? (suggested != null ? String(suggested) : "");
+  return (
+    <div className="flex items-center gap-1">
+      <select
+        aria-label={`Fair to move ${row.doc_no} to`}
+        value={value}
+        disabled={busy || choices.length === 0}
+        onChange={(e) => setPick(e.target.value)}
+        className="min-w-0 max-w-[260px] flex-1 rounded border border-border bg-surface px-1 py-0.5 text-[10.5px]"
+      >
+        <option value="">{choices.length === 0 ? "No fair at its venue then" : "— pick a fair —"}</option>
+        {choices.map((ch) => <option key={ch.projectId} value={String(ch.projectId)}>{ch.label}</option>)}
+      </select>
+      <button
+        onClick={() => onMove(Number(value))}
+        disabled={busy || !value}
+        className="rounded-md border border-amber-500/50 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+      >
+        Transfer
+      </button>
+    </div>
+  );
+}
+
 export function ProjectSalesOrdersBlock({
   query,
   finalTotalRm,
@@ -89,6 +134,34 @@ export function ProjectSalesOrdersBlock({
 }) {
   const rows = query.data?.data ?? [];
   const summary = query.data ? summarizeProjectSalesOrders(query.data.totals, finalTotalRm) : null;
+  /* Moving orders out (owner 2026-10-20): the report names where, or a person picks. */
+  const canTransfer = query.data?.can_transfer === true;
+  const reported = canTransfer ? rows.filter((r) => r.report_elsewhere) : [];
+  const toPick = canTransfer ? rows.filter((r) => !r.report_elsewhere && r.venue_differs) : [];
+  const showMove = reported.length > 0 || toPick.length > 0;
+  const transfer = useFairTransfer();
+  const [ticked, setTicked] = useState<ReadonlySet<string>>(new Set());
+  const [moved, setMoved] = useState<string | null>(null);
+  const tickedRows = reported.filter((r) => ticked.has(r.doc_no));
+  useOnProjectSalesChanged(query.reload);
+  function move(items: Array<{ docNo: string; projectId: number }>) {
+    if (items.length === 0) return;
+    setMoved(null);
+    transfer.mutate(items, {
+      onSuccess: (res) => {
+        setMoved(transferSummary(res.results));
+        setTicked(new Set());
+        announceProjectSalesChanged();
+      },
+    });
+  }
+  const byReport = (list: readonly ProjectSalesOrderRow[]) =>
+    list.map((r) => ({ docNo: r.doc_no, projectId: r.report_elsewhere!.project_id }));
+  const toggle = (doc: string) => setTicked((s) => {
+    const next = new Set(s);
+    if (next.has(doc)) next.delete(doc); else next.add(doc);
+    return next;
+  });
 
   return (
     <div className="mb-2">
@@ -97,6 +170,10 @@ export function ProjectSalesOrdersBlock({
         {summary && (
           <>
             <Tile label="Opened" value={`${summary.count} · ${formatCurrency(summary.openedRm)}`} accent />
+            {/* The same split as the Financial Snapshot's By Sales Orders column
+                (owner 2026-10-20), so the two tally. */}
+            <Tile label="Sales" value={formatCurrency(summary.salesRm)} />
+            <Tile label="Service revenue" value={formatCurrency(summary.serviceRm)} />
             {summary.draftCount > 0 && (
               <span className="rounded-full border border-amber-500/40 bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-800">
                 {summary.draftCount} draft
@@ -133,6 +210,31 @@ export function ProjectSalesOrdersBlock({
           No sales orders linked to this event were found in the SO module.
         </div>
       )}
+      {reported.length > 0 && (
+        <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[10.5px]">
+          <span className="text-ink-muted">
+            {reported.length} order{reported.length === 1 ? "" : "s"} here {reported.length === 1 ? "is" : "are"} in another event&apos;s evening report.
+          </span>
+          <button
+            onClick={() => move(byReport(tickedRows))}
+            disabled={transfer.isPending || tickedRows.length === 0}
+            className="rounded-md border border-amber-500/50 bg-amber-50 px-2 py-0.5 font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+            title="Move the ticked orders to the event whose report lists them: Fair, Venue and Fair Day change, and History records it"
+          >
+            Transfer ticked ({tickedRows.length})
+          </button>
+          <button
+            onClick={() => move(byReport(reported))}
+            disabled={transfer.isPending}
+            className="rounded-md border border-amber-600/60 bg-amber-100 px-2 py-0.5 font-semibold text-amber-900 hover:bg-amber-200 disabled:opacity-50"
+            title="Move every order here that another event's report lists to that event"
+          >
+            {transfer.isPending ? "Transferring…" : `Transfer all to their reported event (${reported.length})`}
+          </button>
+        </div>
+      )}
+      {moved && <div role="status" className="mb-1.5 text-[10.5px] font-semibold text-ink">{moved}</div>}
+
       {rows.length > 0 && (
         <div className="overflow-x-auto rounded-md border border-border bg-surface">
           <table className="w-full min-w-[760px]">
@@ -147,6 +249,7 @@ export function ProjectSalesOrdersBlock({
                 <th className="px-2 py-1.5 text-right">Balance</th>
                 <th className="px-2 py-1.5">Sales Person</th>
                 <th className="px-2 py-1.5">Status</th>
+                {showMove && <th className="px-2 py-1.5">Move to</th>}
               </tr>
             </thead>
             <tbody>
@@ -199,6 +302,30 @@ export function ProjectSalesOrdersBlock({
                         </span>
                       )}
                     </td>
+                    {showMove && (
+                      <td className="px-2 py-1.5 text-[10.5px]">
+                        {r.report_elsewhere ? (
+                          <label className="flex items-start gap-1.5">
+                            <input
+                              type="checkbox"
+                              aria-label={`Tick ${r.doc_no} to transfer`}
+                              checked={ticked.has(r.doc_no)}
+                              disabled={transfer.isPending}
+                              onChange={() => toggle(r.doc_no)}
+                              className="mt-0.5"
+                            />
+                            <span>
+                              {r.report_elsewhere.label}
+                              <span className="block text-[9.5px] text-ink-muted">
+                                its evening report{r.report_elsewhere.report_date ? `, ${formatDate(r.report_elsewhere.report_date)}` : ""}
+                              </span>
+                            </span>
+                          </label>
+                        ) : canTransfer && r.venue_differs ? (
+                          <PickAndMove row={r} busy={transfer.isPending} onMove={(projectId) => move([{ docNo: r.doc_no, projectId }])} />
+                        ) : null}
+                      </td>
+                    )}
                   </tr>
                 );
               })}

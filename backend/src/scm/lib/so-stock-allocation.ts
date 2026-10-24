@@ -90,7 +90,12 @@ import { pgrestIn } from './pgrest-in-list';
    moved their lines: it kept binding a pillow moved back to Accessory, and it bound
    company 2's pillows, which are Accessory there. The random / free-gift pillows
    (AMN-SOFA PILLOW, SOFA PILLOW (FOC)) are Accessory and pool. docs/bugs/0890. */
-const HARD_BOUND_GROUPS = new Set(['bedframe', 'sofa', 'fabric_accessory']);
+/* HC-0150 (Sim, 2026-10-23): Dining binds too - 「normally this one in one out,
+   seldom have keep stock」. One code (AN-DINING LEG) covers many models whose
+   model lives only in free text, so pooled stock of one model covered an order
+   for another. Lines migrated from AutoCount before the DINING category existed
+   still carry `others` and keep pooling. */
+const HARD_BOUND_GROUPS = new Set(['bedframe', 'sofa', 'fabric_accessory', 'dining']);
 
 export function isHardBoundLine(
   itemGroup: string | null | undefined,
@@ -589,9 +594,12 @@ async function runSoStockAllocation(
         itemCode: l.item_code,
         category: serviceCodes.has(l.item_code) ? 'SERVICE' : null,
       })) continue;
-      const delivered = deliveredBySoItem.get(l.id) ?? 0;
-      const returned = returnedBySoItem.get(l.id) ?? 0;
-      const remaining = Number(l.qty ?? 0) - delivered + returned;
+      /* Returned units are NOT owed again (Sim, 2026-10-20, 2990-0011): a
+         customer-rejected return goes back to stock for the next matching
+         order, and a customer who still wants the item gets a new SO. Netting
+         the return back in handed 2990-DR-2610-001's set straight back to
+         2990-SO-2606-001. */
+      const remaining = Number(l.qty ?? 0) - (deliveredBySoItem.get(l.id) ?? 0);
       if (remaining <= 0) continue;
       const variant_key = computeVariantKey(l.item_group ?? null, l.variants ?? null);
       const whId = l.warehouse_id ?? null;

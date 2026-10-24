@@ -59,6 +59,9 @@ import type { AuthUser } from "../services/auth";
 import type { Context, MiddlewareHandler } from "hono";
 import { normalizePhone } from "../scm/shared/phone";
 import { ASSR_SUB_STATUS_KEYS } from "../scm/shared/assr-sub-statuses";
+import { pickupTrackingError } from "../scm/shared/assr-pickup-tracking";
+import { verificationFieldsError } from "../scm/shared/assr-verification-fields";
+import { getVerificationNotes, saveVerificationNotes, takeVerificationNotes } from "../services/assrVerificationNotes";
 import { sendCompletionSurvey } from "../services/assrCompletionSurvey";
 
 /* The context the extracted handlers below receive. They are exported so the
@@ -426,6 +429,16 @@ app.get("/lookups/:kind", requireServiceCaseAccess(), async (c) => {
        FROM ${table}
       ${includeInactive ? "" : "WHERE active = 1"}
       ORDER BY sort_order ASC, name ASC`,
+  ).all();
+  return c.json({ data: rows.results ?? [] });
+});
+
+// HC-0129 Pickup PIC picker. Names only: /api/scm/drivers needs Transportation
+// access and returns phone + IC. The roster is one list across companies
+// (scm/routes/drivers.ts), so no company predicate.
+app.get("/pickup-pic-drivers", requireServiceCaseAccess(), async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT name, in_house FROM scm."drivers" WHERE active = true ORDER BY name ASC`,
   ).all();
   return c.json({ data: rows.results ?? [] });
 });
@@ -916,18 +929,18 @@ app.post("/:id/resolve-creditor", requirePermission("service_cases.manage"), asy
 
   try {
     const { resolveCreditorForCase } = await import("../services/stockItems");
-    const creditorCode = await resolveCreditorForCase(c.env, id, row.item_code, { force: true });
+    const { code: creditorCode, soMissing } = await resolveCreditorForCase(c.env, id, row.item_code, { force: true });
     return c.json({
       ok: true,
       item_code: row.item_code,
       creditor_code: creditorCode,
-      message: creditorCode
+      message: soMissing ? "SO not in the ERP; supplier kept" : creditorCode
         ? `Resolved ${row.item_code} → ${creditorCode}`
-        : `${row.item_code} has no MainSupplier in AutoCount`,
+        : `${row.item_code} has no supplier on its PO or SO — pick one by hand`,
     });
   } catch {
     // Plain-language rule: never surface raw exception text to the user.
-    return c.json({ error: "Couldn't reach AutoCount to resolve the supplier. Try again shortly." }, 502);
+    return c.json({ error: "Couldn't look up the supplier. Try again shortly." }, 502);
   }
 });
 
@@ -1574,6 +1587,7 @@ app.get("/:id{[0-9]+}", requireServiceCaseAccess(), async (c) => {
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
   const detail = await getAssrDetail(c.env, id);
   if (!detail) return c.json({ error: "Not found" }, 404);
+  Object.assign((detail as { case: Record<string, unknown> }).case, await getVerificationNotes(c.env, id));
   /* Multi-company: a case must fall inside the caller's ASSR company scope
      (same rule as the list). Rank-and-file SALES are pinned to HOUZS; office /
      backend / directors get their allowed set. A case tagged with a company
@@ -1880,6 +1894,8 @@ app.patch("/:id{[0-9]+}", requirePermission("service_cases.write"), async (c) =>
   ) {
     return c.json({ error: "Unknown sub-status" }, 400);
   }
+  const trackingError = pickupTrackingError(body) ?? verificationFieldsError(body);
+  if (trackingError) return c.json({ error: trackingError }, 400);
   // Snapshot the responsible fields BEFORE the patch so we notify only on an
   // ACTUAL change (owner 2026-07-15). A doc_no re-match inside patchAssrCase can
   // also rewrite sales_agent, so we compare committed before/after values
@@ -1891,8 +1907,10 @@ app.patch("/:id{[0-9]+}", requirePermission("service_cases.write"), async (c) =>
     .bind(id)
     .first<{ assigned_to: number | null; assigned_to_2: number | null; sales_agent: string | null }>();
 
+  const notes = takeVerificationNotes(body);
   const ok = await patchAssrCase(c.env, id, body, userId);
-  if (!ok) return c.json({ error: "Not found or no changes" }, 404);
+  const notesOk = notes ? await saveVerificationNotes(c.env, id, notes, userId) : false;
+  if (!ok && !notesOk) return c.json({ error: "Not found or no changes" }, 404);
 
   // Notify newly-responsible people (+ their recursive upline) when an assignee
   // or the sales_agent changed. Best-effort: never fails the PATCH.
@@ -2541,6 +2559,8 @@ const DRILL_METRICS = new Set([
   "opening_count",
   "customer_cases",
   "item_cases",
+  "category_cases",
+  "resolution_cases",
 ] as const);
 
 app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => {
@@ -2655,6 +2675,24 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
     }
   }
 
+  /* The cases behind one slice of the Issue Categories / Resolution Method
+     donuts (owner 2026-10-20: click a category, the cases show below). Same
+     window and grouping as the donut queries: a blank category reads "Other"
+     (matched case-insensitively, as the page merges labels), a blank method
+     is "unset". */
+  if (metric === "category_cases") {
+    const cat = (c.req.query("category") || "").trim();
+    if (!cat) return c.json({ error: "Please choose a category." }, 400);
+    conds.push(`LOWER(TRIM(COALESCE(c.issue_category, 'Other'))) = LOWER(?) AND ${win.sql("COALESCE(c.complained_date, c.created_at)")}`);
+    binds.push(cat);
+  }
+  if (metric === "resolution_cases") {
+    const method = (c.req.query("method") || "").trim();
+    if (!method) return c.json({ error: "Please choose a resolution method." }, 400);
+    conds.push(`COALESCE(c.resolution_method, 'unset') = ? AND ${win.sql("COALESCE(c.complained_date, c.created_at)")}`);
+    binds.push(method);
+  }
+
   const fromClause = joinItems
     ? "FROM assr_cases c LEFT JOIN creditors cr ON cr.creditor_code = c.creditor_code JOIN assr_items i ON i.assr_id = c.id"
     : "FROM assr_cases c LEFT JOIN creditors cr ON cr.creditor_code = c.creditor_code";
@@ -2670,7 +2708,7 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
 
   const rows = await c.env.DB.prepare(
     `SELECT ${distinct} c.id, c.assr_no, c.customer_name, c.stage, c.priority,
-            c.complained_date, c.deadline_at, c.issue_category,
+            c.complained_date, c.deadline_at, c.issue_category, c.complaint_issue, c.resolution_method,
             c.creditor_code,
             cr.company_name AS creditor_name,
             (julianday('now') - julianday(c.complained_date)) AS age_days,

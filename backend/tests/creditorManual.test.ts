@@ -82,7 +82,7 @@ describe("resolveCreditorForCase vs manual picks", () => {
     await seedCase(1);
     await setCaseCreditorManual(env, 1, "400-M001", null);
     const out = await resolveCreditorForCase(env, 1, "ITEM-1");
-    expect(out).toBe("400-M001");
+    expect(out.code).toBe("400-M001");
     const row = await env.DB.prepare(
       `SELECT creditor_code, creditor_source FROM assr_cases WHERE id = 1`
     ).first();

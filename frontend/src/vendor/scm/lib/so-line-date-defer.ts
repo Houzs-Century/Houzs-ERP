@@ -25,3 +25,12 @@ export function withoutLineDate<T extends Record<string, unknown>>(body: T): Omi
   const { lineDeliveryDate: _dropped, ...rest } = body;
   return rest;
 }
+
+/* HC-0131 (Sim, 2026-10-20): the phone sent every line's date with no override
+   flag, so the server pinned each line (overridden = true) and a later
+   header-only move (the Delivery sheet, an amendment reschedule) left MRP on
+   the old line date. A date is the operator's own only when they edited it AND
+   it differs from the header's; one that matches the header follows it. */
+export function lineDatePinned(i: { lineDate: string; headerDate: string; handEdited: boolean }): boolean {
+  return i.handEdited && i.lineDate.trim() !== '' && i.lineDate !== i.headerDate;
+}

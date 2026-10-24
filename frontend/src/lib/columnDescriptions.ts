@@ -9,6 +9,8 @@ const PO_ASSIGNED_SO =
 const SOURCE_PO =
   "The Purchase Order the goods came from. STOCK ADJ: the goods entered through a stock adjustment, not a PO.";
 const FAIR_MARGIN = "(Revenue − cost) ÷ revenue.";
+const FAIR_GOODS_MARGIN =
+  "Goods only: (goods sales − goods cost) ÷ goods sales. Delivery and installation fees are left out.";
 
 const DESCRIPTIONS: Partial<Record<string, Record<string, string>>> = {
   "sales-orders-v2": {
@@ -51,7 +53,7 @@ const DESCRIPTIONS: Partial<Record<string, Record<string, string>>> = {
   },
   "fair-report-so": {
     soCost: "Cost estimated when the order was placed.",
-    margin: FAIR_MARGIN,
+    margin: FAIR_GOODS_MARGIN,
     balance: "Amount not yet paid.",
     pending: "Has paid no more than the deposit and still owes money.",
   },
@@ -59,6 +61,7 @@ const DESCRIPTIONS: Partial<Record<string, Record<string, string>>> = {
     soCost: "Cost estimated when the order was placed.",
     doCost: "Cost frozen at delivery (FIFO). Legacy: delivered before FIFO costing.",
     delta: "DO cost minus SO cost. Positive: the cost rose by delivery.",
+    doMargin: FAIR_GOODS_MARGIN,
     drift: "DO margin minus SO margin, in percentage points.",
   },
   "fair-report-pnl": {
@@ -71,7 +74,7 @@ const DESCRIPTIONS: Partial<Record<string, Record<string, string>>> = {
   },
   "fair-report-invoice": {
     siCost: "Landed cost once the supplier invoice is in.",
-    margin: FAIR_MARGIN,
+    margin: FAIR_GOODS_MARGIN,
   },
 };
 

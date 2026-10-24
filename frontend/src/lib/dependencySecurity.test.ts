@@ -176,8 +176,8 @@ describe("security-upgraded document dependencies", () => {
     // CJK font — not how it is labelled.
     expect(flattenedText.some((line) => line.includes("中文客户"))).toBe(true);
     expect(requestedFonts.sort()).toEqual([
-      "/fonts/noto-sans-sc-hanzi-400.ttf",
-      "/fonts/noto-sans-sc-hanzi-700.ttf",
+      "/fonts/noto-sans-sc-hanzi-400.9f7451f3.ttf",
+      "/fonts/noto-sans-sc-hanzi-700.7f9ab99f.ttf",
     ]);
     expect(doc.getFont().fontName).toBe("NotoSansSC");
 

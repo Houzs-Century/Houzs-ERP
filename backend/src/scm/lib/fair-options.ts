@@ -84,6 +84,9 @@ export type FairProjectRow = {
   eventType?: string | null;
 };
 
+/** One brand's booth inside a dropdown row: a project id and the brand it sells. */
+export type FairBooth = { projectId: number; brand: string | null };
+
 /** One row in the dropdown. `key` is what the client sends back on save. */
 export type FairOption = {
   /** Stable identity of the EVENT: venue + organizer + period. Not a project id —
@@ -106,6 +109,10 @@ export type FairOption = {
   /** The project ids this row covers, one per brand. For display/debug only —
    *  the server re-resolves on save and never trusts an id from the client. */
   projectIds: number[];
+  /** The same booths WITH their brand, by brand then id. The Fair Links screen
+   *  links an order to one booth and has to say whose it is (owner 2026-10-20:
+   *  「我要 link fair 时无法知道 brand」); the order forms ignore it. */
+  booths: FairBooth[];
 };
 
 export type FairOptionGroups = {
@@ -298,7 +305,7 @@ function isSoloRow(row: FairProjectRow): boolean {
 
 /** The organizer half of the label. An EXHIBITION names its organizer — that is
  *  what tells two fairs at one venue apart. A SOLO roadshow reads "SOLO". */
-function labelOrganizer(o: Pick<FairOption, 'organizer' | 'solo'>): string {
+export function labelOrganizer(o: Pick<FairOption, 'organizer' | 'solo'>): string {
   return o.solo ? 'SOLO' : o.organizer;
 }
 
@@ -322,8 +329,19 @@ function optionOf(row: FairProjectRow): FairOption {
   const end = row.endDate ? clean(row.endDate) : null;
   return {
     key: optionKey(venue, organizer, start, end), venue, organizer, solo: isSoloRow(row),
-    startDate: start, endDate: end, projectIds: [row.projectId],
+    startDate: start, endDate: end, projectIds: [row.projectId], booths: boothsOf([row]),
   };
+}
+
+/** The booths of some project rows, one per project id, by brand (no brand
+ *  last) then id. */
+function boothsOf(rows: readonly FairProjectRow[]): FairBooth[] {
+  const byId = new Map<number, FairBooth>();
+  for (const r of rows) if (!byId.has(r.projectId)) byId.set(r.projectId, { projectId: r.projectId, brand: clean(r.brand) || null });
+  return [...byId.values()].sort((a, b) =>
+    (a.brand == null ? 1 : 0) - (b.brand == null ? 1 : 0) ||
+    (a.brand ?? '').localeCompare(b.brand ?? '') ||
+    a.projectId - b.projectId);
 }
 
 /**
@@ -341,27 +359,10 @@ export function buildFairOptions(rows: FairProjectRow[], soDate: string): FairOp
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { running: [], earlier: [] };
   const { start: windowStart } = lookbackWindow(date);
 
-  const byKey = new Map<string, FairOption>();
-  for (const row of rows) {
-    if (!isPickableFair(row)) continue;
-    const option = optionOf(row);
-
-    /* Overlaps [windowStart, orderDate]. The upper bound is what keeps fairs
-       that have not happened yet out of the list — there is no separate
-       "no future" rule to forget. */
-    if (option.startDate > date) continue;
-    if ((option.endDate ?? option.startDate) < windowStart) continue;
-
-    const existing = byKey.get(option.key);
-    if (existing) {
-      if (!existing.projectIds.includes(row.projectId)) existing.projectIds.push(row.projectId);
-      continue;
-    }
-    byKey.set(option.key, option);
-  }
-
-  const all = [...byKey.values()];
-  for (const o of all) o.projectIds.sort((a, b) => a - b);
+  /* Overlaps [windowStart, orderDate]. The upper bound is what keeps fairs
+     that have not happened yet out of the list — there is no separate
+     "no future" rule to forget. */
+  const all = eventsOf(rows, (o) => o.startDate <= date && (o.endDate ?? o.startDate) >= windowStart);
 
   const running: FairOption[] = [];
   const earlier: FairOption[] = [];
@@ -383,6 +384,51 @@ export function buildFairOptions(rows: FairProjectRow[], soDate: string): FairOp
   );
 
   return { running, earlier };
+}
+
+/** The pickable projects grouped into events (one row per place + organizer +
+ *  period, each with its brand booths), keeping the events `keep` accepts.
+ *  The one grouping both lists use. */
+function eventsOf(rows: readonly FairProjectRow[], keep: (o: FairOption) => boolean): FairOption[] {
+  const byKey = new Map<string, FairOption>();
+  const rowsOf = new Map<string, FairProjectRow[]>();
+  for (const row of rows) {
+    if (!isPickableFair(row)) continue;
+    const option = optionOf(row);
+    if (!keep(option)) continue;
+    const sameEvent = rowsOf.get(option.key);
+    if (sameEvent) sameEvent.push(row); else rowsOf.set(option.key, [row]);
+    const existing = byKey.get(option.key);
+    if (existing) {
+      if (!existing.projectIds.includes(row.projectId)) existing.projectIds.push(row.projectId);
+      continue;
+    }
+    byKey.set(option.key, option);
+  }
+  const all = [...byKey.values()];
+  for (const o of all) {
+    o.projectIds.sort((a, b) => a - b);
+    o.booths = boothsOf(rowsOf.get(o.key) ?? []);
+  }
+  return all;
+}
+
+/**
+ * EVERY pickable fair, at any place and on any date, newest first — what a
+ * person settling a link on Fair Links may choose from (owner 2026-10-21: 「我
+ * 这里link fair 要可以选完全部fair」; an order whose slip names the place
+ * differently from PMS — PISA SPICE ARENA vs SETIA SPICE CONVENTION CENTRE —
+ * could not reach its fair). Finance and PMS only (the route checks); the order
+ * form keeps its four weeks at the order's own place, and so does every
+ * resolver.
+ */
+export function allFairOptions(rows: readonly FairProjectRow[]): FairOption[] {
+  return eventsOf(rows, () => true).sort(
+    (a, b) =>
+      b.startDate.localeCompare(a.startDate) ||
+      a.venue.localeCompare(b.venue) ||
+      a.organizer.localeCompare(b.organizer),
+  );
 }
 
 // ── Resolution: from a PICKED row back to one project ────────────────────────
@@ -630,8 +676,9 @@ export function keyerFairDefault(rows: FairProjectRow[], orderDate: string): Key
   const mine = rows.filter((r) => isPickableFair(r) && (r.startDate as string) <= date);
   const asEvent = (r: FairProjectRow): FairOption => {
     const event = optionOf(r);
-    event.projectIds = [...new Set(mine.filter((m) => optionOf(m).key === event.key).map((m) => m.projectId))]
-      .sort((a, b) => a - b);
+    const same = mine.filter((m) => optionOf(m).key === event.key);
+    event.projectIds = [...new Set(same.map((m) => m.projectId))].sort((a, b) => a - b);
+    event.booths = boothsOf(same);
     return event;
   };
 
@@ -699,17 +746,6 @@ export function boothLabel(row: Pick<FairProjectRow, 'brand' | 'venue' | 'startD
   return brand ? `${brand} @ ${place}` : place;
 }
 
-/** Why a SCANNED order waits as a draft (owner 2026-10-19): the person who
- *  scanned it must be on the Sales Attending of the booth it belongs to — 「他被
- *  assign 去 akemi 就只能 save akemi 的 brand」 — and PMS adds them, not the
- *  system. The owner approved the first-person sentence; `scannerName` is set
- *  only when someone else presses Confirm, so it names whom to add. */
-export function attendingMessage(booth: Pick<FairProjectRow, 'brand' | 'venue' | 'startDate' | 'endDate'>, scannerName: string | null): string {
-  return scannerName
-    ? `${scannerName} is not on Sales Attending for ${boothLabel(booth)}. Ask the person in charge to add ${scannerName}, then confirm again.`
-    : `You are not on Sales Attending for ${boothLabel(booth)}. Ask the person in charge to add you, then confirm again.`;
-}
-
 /** "Venue differs" (owner 2026-10-19): the place written on the slip is not
  *  where the order was placed. A flag by default; a refusal at Confirm once
  *  the Fair rules switch says so. */
@@ -740,9 +776,10 @@ export function venueDiffersReason(venue: string, soDate: string, atVenue: reado
   return `${clean(venue)} has ${clean(nearest.organizer)} (${fmtDayMonthRange(nearest.startDate, nearest.endDate)}) in PMS — re-link if it was sold there`;
 }
 
-/** The "等加人" line: who is missing from which booth's Sales Attending. */
-export function attendingNote(booth: Pick<FairProjectRow, 'brand' | 'venue' | 'startDate' | 'endDate'>, scannerName: string, draft: boolean): string {
-  return `${scannerName} is not on Sales Attending for ${boothLabel(booth)}.${draft ? ' The draft cannot be confirmed until PMS adds them.' : ''}`;
+/** The "等加人" line: who is missing from which booth's Sales Attending, for
+ *  PMS to add. It no longer stops Confirm (owner 2026-10-22). */
+export function attendingNote(booth: Pick<FairProjectRow, 'brand' | 'venue' | 'startDate' | 'endDate'>, scannerName: string): string {
+  return `${scannerName} is not on Sales Attending for ${boothLabel(booth)}. PMS adds them in the project.`;
 }
 
 /** Same place? Case/space-insensitive, as every venue compare here. */

@@ -21,6 +21,9 @@
 import { computeVariantKey, type VariantAttrs } from '../shared';
 import { loadSofaBatchStock, sofaStockKey } from './sofa-set-coverage';
 import { pgrestIn } from './pgrest-in-list';
+import { netDeliveredBySoItem, type CoverageSoLine } from './do-unlinked-coverage';
+import { chunkIn } from './paginate-all';
+import { readFailureError } from './read-failure';
 
 export type SofaGuardLine = {
   itemCode: string;
@@ -228,26 +231,66 @@ export async function findIncompleteSofaSets(
   // 2. Every READY sofa line of those SOs = the complete set that must ship together.
   const { data: setRows } = await sb
     .from('mfg_sales_order_items')
-    .select('id, doc_no, item_code, item_group, stock_status')
+    .select('id, doc_no, item_code, item_group, stock_status, qty')
     .in('doc_no', docs)
     .eq('stock_status', 'READY')
     .eq('cancelled', false);
-  const setLines = (setRows ?? []) as Array<{ id: string; doc_no: string; item_code: string; item_group: string | null }>;
+  const setLines = (setRows ?? []) as Array<{ id: string; doc_no: string; item_code: string; item_group: string | null; qty: number | null }>;
   const isSofaSet = await detectSofa(sb, setLines, companyId);
-  const fullByDoc = new Map<string, Array<{ id: string; item_code: string }>>();
+  const fullByDoc = new Map<string, Array<{ id: string; item_code: string; qty: number }>>();
   for (const r of setLines) {
     if (!isSofaSet(r)) continue;
     const arr = fullByDoc.get(r.doc_no) ?? [];
-    arr.push({ id: r.id, item_code: r.item_code }); fullByDoc.set(r.doc_no, arr);
+    arr.push({ id: r.id, item_code: r.item_code, qty: Number(r.qty ?? 1) }); fullByDoc.set(r.doc_no, arr);
   }
 
   // 3. Any READY sofa line of an involved SO that the DO does NOT include = partial set.
-  const out: IncompleteSofaSet[] = [];
+  const missingByDoc = new Map<string, Array<{ id: string; item_code: string; qty: number }>>();
   for (const doc of docs) {
     const full = fullByDoc.get(doc) ?? [];
     const inDo = providedByDoc.get(doc) ?? new Set<string>();
     const missing = full.filter((l) => !inDo.has(l.id));
-    if (missing.length > 0) out.push({ docNo: doc, missingItemCodes: [...new Set(missing.map((m) => m.item_code))] });
+    if (missing.length > 0) missingByDoc.set(doc, missing);
+  }
+  if (missingByDoc.size === 0) return [];
+
+  /* 4. A module already out on another delivery is not left behind (HC-0146).
+     stock_status stays READY after a line ships, so HC-SO-011007's three
+     modules on LOADED HC-DO-2610-240 read as set members and refused the DO
+     for the one corner piece still at the warehouse. Same delivered-minus-
+     returned reading as the SO page's delivered_qty. */
+  const missingLines = [...missingByDoc.entries()].flatMap(([doc, ls]) =>
+    ls.map((l) => ({ id: l.id, docNo: doc, itemCode: l.item_code, qty: l.qty })));
+  const shipped = await shippedQtyBySoItem(sb, [...missingByDoc.keys()], missingLines);
+  const out: IncompleteSofaSet[] = [];
+  for (const [doc, missing] of missingByDoc) {
+    const left = missing.filter((l) => (shipped.get(l.id) ?? 0) < l.qty);
+    if (left.length > 0) out.push({ docNo: doc, missingItemCodes: [...new Set(left.map((m) => m.item_code))] });
+  }
+  return out;
+}
+
+async function shippedQtyBySoItem(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  docNos: string[],
+  lines: CoverageSoLine[],
+): Promise<Map<string, number>> {
+  const { deliveredBySoItem, doLineToSoItem } = await netDeliveredBySoItem(sb, docNos, lines);
+  const doLineIds = [...doLineToSoItem.keys()];
+  if (doLineIds.length === 0) return deliveredBySoItem;
+  const { data: drLines, error } = await chunkIn<{ do_item_id: string | null; qty_returned: number; parent: { status: string | null } | null }>(doLineIds, (batch, from, to) => sb
+    .from('delivery_return_items')
+    .select('do_item_id, qty_returned, parent:delivery_returns(status)')
+    .in('do_item_id', batch)
+    .order('id')
+    .range(from, to));
+  if (error) throw readFailureError('sofa_set_returned_sum', error, { table: 'delivery_return_items', in_list_size: doLineIds.length });
+  const out = new Map(deliveredBySoItem);
+  for (const l of drLines) {
+    if (!l.do_item_id || !l.parent || (l.parent.status ?? '').toUpperCase() === 'CANCELLED') continue;
+    const soItemId = doLineToSoItem.get(l.do_item_id);
+    if (soItemId) out.set(soItemId, (out.get(soItemId) ?? 0) - Number(l.qty_returned ?? 0));
   }
   return out;
 }

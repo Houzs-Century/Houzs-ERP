@@ -36,7 +36,7 @@ const noop = () => {};
 
 const soMenu = (over: Partial<Parameters<typeof salesOrderRowMenu<Row>>[0]> = {}) =>
   salesOrderRowMenu<Row>({
-    open: noop, edit: noop, print: noop, confirm: noop, transferToDo: noop,
+    open: noop, edit: noop, copyAsNew: noop, print: noop, confirm: noop, transferToDo: noop,
     setStatus: noop, close: noop, setHold: noop, cancel: noop, discard: noop, reopen: noop, canDeliver: true,
     ...over,
   });
@@ -132,7 +132,7 @@ describe("Print, for the whole chain", () => {
   test("every chain document is offered, in the first group, before the separator", () => {
     const items = labels(soMenu()(withChain()));
     expect(items.slice(0, items.indexOf("—"))).toEqual([
-      "Open", "Edit", "Print",
+      "Open", "Edit", "Copy as new", "Print",
       "Print Delivery Order HC-DO-2608-003",
       "Print Delivery Order HC-DO-2608-004",
       "Print Sales Invoice HC-SI-2608-007",
@@ -156,7 +156,7 @@ describe("Print, for the whole chain", () => {
      Order" — the entry is not BUILT, so nothing renders and no separator moves. */
   test("an order with nothing downstream offers Print and nothing else", () => {
     const items = labels(soMenu()(withChain({ do_refs: [], si_refs: [] })));
-    expect(items.slice(0, items.indexOf("—"))).toEqual(["Open", "Edit", "Print"]);
+    expect(items.slice(0, items.indexOf("—"))).toEqual(["Open", "Edit", "Copy as new", "Print"]);
     expect(items.some((l) => l.startsWith("Print "))).toBe(false);
   });
 
@@ -165,7 +165,7 @@ describe("Print, for the whole chain", () => {
   test("the groups after Print are untouched", () => {
     const items = labels(soMenu()(withChain({ status: "DRAFT", do_refs: [], si_refs: [] })));
     expect(items).toEqual([
-      "Open", "Edit", "Print", "—", "Confirm", "Put On Hold", "—", "Discard draft", "Request cancellation",
+      "Open", "Edit", "Copy as new", "Print", "—", "Confirm", "Put On Hold", "—", "Discard draft", "Request cancellation",
     ]);
   });
 });
@@ -194,5 +194,25 @@ describe("Discard draft", () => {
     const m = soMenu({ discard })(R({ status: "DRAFT" }));
     m.find((x) => x.label === "Discard draft")!.onClick();
     expect(discard).toHaveBeenCalledWith(expect.objectContaining({ doc_no: "SO-0001" }));
+  });
+});
+
+/* HC-0149: Copy as new seeds a NEW order from this one, so it is offered on
+   every status and on a migrated (view-only) order too: nothing on the source
+   row changes. */
+describe("Copy as new", () => {
+  test.each(["DRAFT", "CONFIRMED", "DELIVERED", "CANCELLED", "CLOSED"])("is offered on %s", (status) => {
+    expect(labels(soMenu()(R({ status })))).toContain("Copy as new");
+  });
+
+  test("is offered on a migrated order, beside Open and Print only", () => {
+    const m = soMenu()({ ...R({ status: "CONFIRMED" }), migrated_readonly: true } as Row);
+    expect(labels(m)).toEqual(["Open", "Copy as new", "Print"]);
+  });
+
+  test("calls its handler with the row", () => {
+    const copyAsNew = vi.fn();
+    soMenu({ copyAsNew })(R({ status: "CONFIRMED" })).find((x) => x.label === "Copy as new")!.onClick();
+    expect(copyAsNew).toHaveBeenCalledWith(expect.objectContaining({ doc_no: "SO-0001" }));
   });
 });

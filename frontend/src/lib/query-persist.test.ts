@@ -216,3 +216,54 @@ describe("query snapshot scheduling", () => {
     expect(values).not.toContain("FIRST-USER-SO");
   });
 });
+
+describe("paged list snapshots (HC-0002)", () => {
+  function flushNow(qc: QueryClient): Record<string, unknown> {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    window.dispatchEvent(new Event("visibilitychange"));
+    const key = snapshotKeys()[0];
+    return key ? (JSON.parse(localStorage.getItem(key) ?? "{}") as Record<string, unknown>) : {};
+  }
+
+  it("keeps the first page of a V2 list and leaves later pages out", () => {
+    localStorage.setItem(AUTH_TOKEN_KEY, "paged-session");
+    setActiveCompanyId(7);
+    const qc = new QueryClient();
+    install(qc);
+    qc.setQueryData(["mfg-sales-orders-paged", 0, 50, "", "", ""], { salesOrders: [{ doc_no: "SO-P0" }] });
+    qc.setQueryData(["mfg-sales-orders-paged", 1, 50, "", "", ""], { salesOrders: [{ doc_no: "SO-P1" }] });
+    qc.setQueryData(["grns-paged", 0, 50, "", "", ""], { grns: [{ id: "GRN-P0" }] });
+
+    const saved = JSON.stringify(flushNow(qc));
+    expect(saved).toContain("SO-P0");
+    expect(saved).toContain("GRN-P0");
+    expect(saved).not.toContain("SO-P1");
+  });
+
+  it("paints the saved first page on the next cold open, stamped stale", () => {
+    localStorage.setItem(AUTH_TOKEN_KEY, "paged-session");
+    setActiveCompanyId(7);
+    const first = new QueryClient();
+    install(first);
+    first.setQueryData(["mfg-delivery-orders-paged", 0, 50, "", "", ""], { deliveryOrders: [{ id: "DO-P0" }] });
+    flushNow(first);
+    disposePersist?.();
+
+    const next = new QueryClient();
+    install(next);
+    const key = ["mfg-delivery-orders-paged", 0, 50, "", "", ""];
+    expect(next.getQueryData(key)).toEqual({ deliveryOrders: [{ id: "DO-P0" }] });
+    expect(next.getQueryState(key)?.dataUpdatedAt).toBe(1);
+  });
+
+  it("still never keeps a payments ledger under a paged entity", () => {
+    localStorage.setItem(AUTH_TOKEN_KEY, "paged-session");
+    setActiveCompanyId(7);
+    const qc = new QueryClient();
+    install(qc);
+    qc.setQueryData(["mfg-sales-orders-paged", 0, "payments"], [{ amount: 1 }]);
+    qc.setQueryData(["mfg-sales-orders-paged", 0, 50, "", "", ""], { salesOrders: [] });
+
+    expect(Object.keys(flushNow(qc)).some((k) => k.includes("payments"))).toBe(false);
+  });
+});

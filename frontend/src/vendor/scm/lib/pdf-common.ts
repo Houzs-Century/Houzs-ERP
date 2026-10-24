@@ -171,12 +171,16 @@ const CJK_FAMILY = 'NotoSansSC';
    punctuation — enough for an address that only picked up a stray "（" from an
    IME. `hanzi` (~1.1 MB/face) adds GB2312 level 1 (3755 hanzi, ~99.5% of modern
    text) for documents with real Chinese. Both are fetched only when a document
-   needs them, then browser-cached. */
+   needs them, then browser-cached.
+   /fonts/* is served immutable for a year, so the name carries the first 8 hex
+   of the file's sha256: #4705 regenerated these in place and browsers that had
+   printed before kept the old subset and still refused KŌRI (2026-10-20).
+   pdf-font-names.test.ts fails if a face's bytes change without a new name. */
 type CjkTier = 'punct' | 'hanzi';
 type FontAssetUrl = `/fonts/${string}.ttf`;
-const TIER_FACES: Record<CjkTier, Record<'normal' | 'bold', FontAssetUrl>> = {
-  punct: { normal: '/fonts/noto-sans-sc-punct-400.ttf', bold: '/fonts/noto-sans-sc-punct-700.ttf' },
-  hanzi: { normal: '/fonts/noto-sans-sc-hanzi-400.ttf', bold: '/fonts/noto-sans-sc-hanzi-700.ttf' },
+export const TIER_FACES: Record<CjkTier, Record<'normal' | 'bold', FontAssetUrl>> = {
+  punct: { normal: '/fonts/noto-sans-sc-punct-400.620dd6b3.ttf', bold: '/fonts/noto-sans-sc-punct-700.1c0db80c.ttf' },
+  hanzi: { normal: '/fonts/noto-sans-sc-hanzi-400.9f7451f3.ttf', bold: '/fonts/noto-sans-sc-hanzi-700.7f9ab99f.ttf' },
 };
 
 /* One plain sentence each — these surface to the user verbatim (every caller

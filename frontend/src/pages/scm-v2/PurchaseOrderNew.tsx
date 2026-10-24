@@ -19,13 +19,14 @@ import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useRef, useState } from 'react';
 // HOUZS VENDOR — Link lives on 'react-router-dom' in react-router v6 (the
 // version Houzs ships). Only the import specifier changed.
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Save, Trash2, X, ArrowRightLeft } from 'lucide-react';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { Button } from '@2990s/design-system';
 import { formatPhone } from '@2990s/shared/phone';
 import {
   useCreatePurchaseOrder,
+  usePurchaseOrderDetail,
   useSuppliers,
   useSupplierDetail,
   useSuppliersForMaterial,
@@ -38,6 +39,7 @@ import { useIdempotencyKey } from '../../lib/idempotency';
 import { serviceConfirm } from '../../vendor/scm/lib/dialog-service';
 import { readScmHandoff, removeScmHandoff, writeScmHandoff } from '../../lib/scmHandoffStorage';
 import { useMfgProducts, useMaintenanceConfig, useSpecialAddons, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
+import { pickableBindings } from '../../vendor/scm/lib/pickable-bindings';
 import { withMasterPickerPools } from '../../vendor/scm/lib/picker-maint';
 import { activeOptions, maintPickerValues, fmtMoneySen } from '@2990s/shared';
 import { useFabricTrackings, fabricOptionLabel } from '../../vendor/scm/lib/fabric-queries';
@@ -181,6 +183,7 @@ export const PurchaseOrderNew = () => {
   //   N bindings  → show a hint banner so commander picks above
   //   0 bindings  → one-off purchase, commander enters everything manually
   const allSkus = useMfgProducts();
+  const pickable = useMemo(() => pickableBindings(bindings, allSkus.data ?? []), [bindings, allSkus.data]);
   /* PR #126 — Pull maintenance config + fabrics list so per-category variant
      editors can render the same dropdowns SO uses (single source of truth).
      PR #208 — when a supplier is picked, surcharges resolve from the supplier
@@ -475,6 +478,44 @@ export const PurchaseOrderNew = () => {
     } catch { /* malformed — ignore */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [suppliers.isLoading]);
+
+  /* Copy as new (HC-0149): ?copyFrom=<poId> seeds supplier, purchase location,
+     notes and lines from an existing PO. Dates, the SO link (soItemId would
+     re-pick the SO quota), received qty and the number stay with the source.
+     The copied price is kept as the operator's own (priceTouched), the same
+     rule the SO copy applies, so auto-pricing does not silently re-cost it. */
+  const [searchParams] = useSearchParams();
+  const copyFrom = searchParams.get('copyFrom');
+  const copySource = usePurchaseOrderDetail(copyFrom);
+  const copyApplied = useRef(false);
+  useEffect(() => {
+    if (!copyFrom || copyApplied.current || !copySource.data) return;
+    copyApplied.current = true;
+    const h = copySource.data.purchaseOrder;
+    setSupplierId(h.supplier_id);
+    if (h.purchase_location_id) setPurchaseLocationId(h.purchase_location_id);
+    if (h.notes) setNotes(h.notes);
+    const items = copySource.data.items;
+    if (items.length > 0) {
+      setLines(items.map((it) => ({
+        ...newLine(),
+        bindingId:    it.binding_id ?? undefined,
+        materialKind: it.material_kind,
+        itemCode:     it.item_code,
+        materialName: it.material_name,
+        notes:        it.notes ?? '',
+        supplierSku:  it.supplier_sku ?? undefined,
+        qty:          it.qty,
+        unitPriceSen: it.unit_price_sen,
+        discountSen:  it.discount_sen ?? 0,
+        warehouseId:  it.warehouse_id ?? h.purchase_location_id ?? undefined,
+        category:     it.item_group ?? categoryForCode(it.item_code),
+        variants:     it.variants ?? {},
+        priceTouched: true,
+      })));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- categoryForCode is a stable code→category lookup, not a reactive trigger
+  }, [copyFrom, copySource.data]);
 
   /* Persist the in-progress draft, then go to the full-page From-SO picker.
      Restored on return (see the effect above) so the picked lines APPEND to
@@ -994,8 +1035,8 @@ export const PurchaseOrderNew = () => {
           <h2 className={styles.cardTitle}>Items</h2>
           <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
             {supplierId
-              ? (bindings.length > 0
-                  ? `${bindings.length} item(s) bound to this supplier — picker filters to these`
+              ? (pickable.length > 0
+                  ? `${pickable.length} item(s) bound to this supplier — picker filters to these`
                   // PR — Commander 2026-05-28: a supplier with no SKU bindings used
                   // to leave the Item Code picker empty (dead field). Fall back to
                   // the full catalogue so a one-off purchase is still pickable.
@@ -1110,7 +1151,7 @@ export const PurchaseOrderNew = () => {
                         const code = e.target.value;
                         // Bound match wins (autofills supplier SKU + price).
                         const match = supplierId
-                          ? bindings.find((b) => b.item_code === code)
+                          ? pickable.find((b) => b.item_code === code)
                           : undefined;
                         if (match) { pickBinding(l.rid, match); return; }
                         // No binding (no supplier yet, OR supplier has no binding
@@ -1135,8 +1176,8 @@ export const PurchaseOrderNew = () => {
                       {/* PR — Commander 2026-05-28: only show bound SKUs when the
                           supplier actually HAS bindings; otherwise fall back to
                           the full catalogue so the picker is never dead. */}
-                      {supplierId && bindings.length > 0
-                        ? sortByText(bindings).map((b) => (
+                      {supplierId && pickable.length > 0
+                        ? sortByText(pickable).map((b) => (
                             <option key={b.id} value={b.item_code}>
                               {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_sen, b.currency)}
                             </option>
@@ -1164,7 +1205,7 @@ export const PurchaseOrderNew = () => {
                       onChange={(e) => {
                         const sku = e.target.value;
                         if (supplierId) {
-                          const match = bindings.find((b) => b.supplier_sku === sku);
+                          const match = pickable.find((b) => b.supplier_sku === sku);
                           if (match) {
                             pickBinding(l.rid, match);
                           } else {
@@ -1181,7 +1222,7 @@ export const PurchaseOrderNew = () => {
                       style={{ fontFamily: 'var(--font-mono)' }}
                     />
                     <datalist id={`supplier-skus-${l.rid}`}>
-                      {supplierId && sortByText(bindings).map((b) => (
+                      {supplierId && sortByText(pickable).map((b) => (
                         <option key={b.id} value={b.supplier_sku || ''}>
                           {b.item_code} · {b.material_name} · {fmtRm(b.unit_price_sen, b.currency)}
                         </option>

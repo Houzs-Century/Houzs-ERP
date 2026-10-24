@@ -175,6 +175,8 @@ export type StockAdjustmentLineInput = {
   variants?: Record<string, unknown> | null;
   batchNo?: string | null;
   variantKey?: string | null;
+  // INCREASE only: the server opens the lot at this cost (stock-adjustment-doc.ts parseAdjustmentLines).
+  unitCostSen?: number;
 };
 
 export function useStockAdjustments(opts?: { warehouseId?: string; dateFrom?: string; dateTo?: string }) {
@@ -746,6 +748,18 @@ export function useAddStockTakeLine() {
   return useMutation({
     mutationFn: ({ id, ...body }: { id: string; itemCode: string; variantKey: string; countedQty: number }) =>
       authedFetch<{ line: StockTakeLine }>(`/stock-takes/${id}/lines`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: (_data, vars) => {
+      void qc.invalidateQueries({ queryKey: ['stock-takes', vars.id] });
+    },
+  });
+}
+
+/* HC-0140: remove a line added during the count (the server refuses a sheet line). */
+export function useDeleteStockTakeLine() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, lineId }: { id: string; lineId: string }) =>
+      authedFetch<{ ok: true }>(`/stock-takes/${id}/lines/${lineId}`, { method: 'DELETE' }),
     onSuccess: (_data, vars) => {
       void qc.invalidateQueries({ queryKey: ['stock-takes', vars.id] });
     },

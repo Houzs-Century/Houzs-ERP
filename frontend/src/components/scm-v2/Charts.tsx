@@ -13,7 +13,12 @@ const pctOf = (v: number, total: number) => (total > 0 ? `${((v / total) * 100).
 export interface Slice { label: string; value: number; color: string | null }
 
 /** A donut with its legend: each slice's figure and share. */
-export function Donut({ data, format, center, size }: { data: Slice[]; format: Fmt; center: { value: string; label: string } | null; size: number }) {
+export function Donut({ data, format, center, size, onPick, picked }: {
+  data: Slice[]; format: Fmt; center: { value: string; label: string } | null; size: number;
+  /** Click a legend row (e.g. list its cases below); omitted = a plain legend. */
+  onPick?: (label: string) => void;
+  picked?: string | null;
+}) {
   const rows = data.filter((d) => d.value > 0);
   const total = rows.reduce((a, d) => a + d.value, 0);
   const r = 40; const c = 2 * Math.PI * r;
@@ -43,7 +48,8 @@ export function Donut({ data, format, center, size }: { data: Slice[]; format: F
       <ul className="min-w-0 basis-full space-y-1 text-[12px] sm:basis-auto sm:min-w-[150px] sm:flex-1">
         {rows.length === 0 && <li className="text-ink-muted">No data in this period.</li>}
         {rows.map((d, i) => (
-          <li key={d.label} className="flex items-center gap-2">
+          <li key={d.label} className={cn("flex items-center gap-2", onPick && "-mx-1.5 cursor-pointer rounded px-1.5 hover:bg-surface-2/60", picked === d.label && "bg-primary-soft/60")}
+            onClick={onPick ? () => onPick(d.label) : undefined}>
             <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: d.color ?? PALETTE[i % PALETTE.length] }} />
             <span className="min-w-0 flex-1 truncate text-ink-secondary" title={d.label}>{d.label}</span>
             <span className="tabular-nums text-ink">{format(d.value)}</span>

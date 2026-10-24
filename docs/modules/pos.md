@@ -169,6 +169,11 @@ page, and the POS Admin menu. This guide carries only what is built.
   discount, net and stock left (`scm.inventory_balances` at the event's
   stock source, else the POS store, else the company total, flagged);
   Export Excel (the shared rows plus the stock column) / PDF.
+- Demo mode (`pos/src/demo.ts`, button on Device setup): the POS opens on a
+  sample catalog (8 items with barcodes) and 2 sample cashiers (PIN 1234),
+  no token, Test mode locked on, the sync engine, heartbeat and backup off.
+  Prepare device from the gear on the login screen replaces it with a real
+  terminal and turns Test mode off again.
 - Shared, vendored byte-identical to `frontend/src/vendor/shared/`:
   `scm/shared/pos-vocabulary.ts` (payment methods, receipt status word,
   `pos-backup-crypto.ts` (the backup file cipher and shape), `pos-report.ts`
@@ -246,6 +251,10 @@ page, and the POS Admin menu. This guide carries only what is built.
   mounted pre-auth, and `scm.products` / `mfg_products.pos_active` belong to
   that older retail POS. The booth POS lives under `/api/pos-admin` (and the
   device API prefixes of the later steps); do not extend `routes/pos.ts`.
+- A new company-2 SKU in a single-SKU category (not sofa / bedframe /
+  mattress) is created `pos_active false` (`scm/lib/new-sku-pos-active.ts`):
+  off the 2990 tablet until its Modular "Show in POS" switch sends `posActive`.
+  Model, SKU Master, SO and PO are unaffected.
 - `project_event_types` has no company_id (shared master) — the Cash &
   Carry type shows in every company's picker on purpose.
 - The event drawer's terminal list shows only free terminals plus the

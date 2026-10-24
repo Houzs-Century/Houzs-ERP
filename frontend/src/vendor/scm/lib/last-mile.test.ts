@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { isLastMileRow, lastMileSideOf, proposeCrewDocNos, matchCrewSuggestions, LAST_MILE_SIDE_LABEL } from './last-mile';
+import { isLastMileRow, lastMileSideOf, isToArrangeRow, lastMileListSideOf, proposeCrewDocNos, matchCrewSuggestions, LAST_MILE_SIDE_LABEL } from './last-mile';
 
 /* The Last Mile page's row derivation (owner pipeline 2026-08-07/08). The rows
  * are the SO rows whose server-stamped live trip sits on the picked day — the
@@ -9,11 +9,16 @@ import { isLastMileRow, lastMileSideOf, proposeCrewDocNos, matchCrewSuggestions,
 
 const DAY = '2026-08-10';
 
-const row = (over: Partial<Parameters<typeof isLastMileRow>[0]> = {}) => ({
+const row = (
+  over: Partial<Parameters<typeof isLastMileRow>[0] & Parameters<typeof isToArrangeRow>[0]> = {},
+) => ({
   row_type: 'so' as const,
-  trip_date: DAY,
+  trip_date: DAY as string | null,
   delivery_state: 'PENDING_SCHEDULE' as const,
   arrangement_stage: 'TIME_ARRANGED' as const,
+  effective_delivery_date: null as string | null,
+  customer_delivery_date: null as string | null,
+  processing_date: null as string | null,
   ...over,
 });
 
@@ -57,6 +62,50 @@ describe('lastMileSideOf — to-run vs delivered', () => {
   test('labels', () => {
     expect(LAST_MILE_SIDE_LABEL.TIME_ARRANGED).toBe('Time arranged');
     expect(LAST_MILE_SIDE_LABEL.DELIVERED).toBe('Delivered');
+  });
+});
+
+describe('isToArrangeRow — the day\'s orders not yet on a lorry', () => {
+  const due = (over: Parameters<typeof row>[0] = {}) =>
+    row({ trip_date: null, arrangement_stage: 'PENDING_TIME', delivery_state: 'PENDING_SCHEDULE', effective_delivery_date: DAY, ...over });
+
+  test('an SO due this day with no live trip is to-arrange', () => {
+    expect(isToArrangeRow(due(), DAY)).toBe(true);
+  });
+
+  test('due date falls back effective -> customer -> processing', () => {
+    expect(isToArrangeRow(due({ effective_delivery_date: null, customer_delivery_date: DAY }), DAY)).toBe(true);
+    expect(isToArrangeRow(due({ effective_delivery_date: null, customer_delivery_date: null, processing_date: DAY }), DAY)).toBe(true);
+  });
+
+  test('excluded once on a live trip (its trip\'s day owns it) or when delivered', () => {
+    expect(isToArrangeRow(due({ trip_date: DAY }), DAY)).toBe(false);
+    expect(isToArrangeRow(due({ delivery_state: 'DELIVERED' }), DAY)).toBe(false);
+  });
+
+  test('another day, no date, or a non-SO row is out', () => {
+    expect(isToArrangeRow(due({ effective_delivery_date: '2026-08-11' }), DAY)).toBe(false);
+    expect(isToArrangeRow(due({ effective_delivery_date: null, customer_delivery_date: null, processing_date: null }), DAY)).toBe(false);
+    expect(isToArrangeRow(due({ row_type: 'assr' }), DAY)).toBe(false);
+  });
+
+  test('a stray timestamp still matches its calendar day', () => {
+    expect(isToArrangeRow(due({ effective_delivery_date: `${DAY}T09:00:00Z` }), DAY)).toBe(true);
+  });
+});
+
+describe('lastMileListSideOf — the list merges trip rows with to-arrange', () => {
+  test('a live-trip row keeps its trip side', () => {
+    expect(lastMileListSideOf(row(), DAY)).toBe('TIME_ARRANGED');
+    expect(lastMileListSideOf(row({ delivery_state: 'DELIVERED', arrangement_stage: null }), DAY)).toBe('DELIVERED');
+  });
+
+  test('a due-this-day SO with no trip is TO_ARRANGE', () => {
+    expect(lastMileListSideOf(row({ trip_date: null, effective_delivery_date: DAY }), DAY)).toBe('TO_ARRANGE');
+  });
+
+  test('off this day entirely is null (no trip, another due date)', () => {
+    expect(lastMileListSideOf(row({ trip_date: null, effective_delivery_date: '2026-08-11' }), DAY)).toBeNull();
   });
 });
 

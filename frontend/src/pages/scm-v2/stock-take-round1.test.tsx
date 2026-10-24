@@ -3,10 +3,10 @@
      in the summary and per line;
    - several assignees, named on the header and editable while OPEN;
    - Post is not gated on being an assignee (assignee is a record);
-   - Add line for stock the sheet does not list;
+   - Add line for stock the sheet does not list (HC-0140: saved with Save Counts);
    - the counted box is a digits-only text box (no spinner / wheel nudges). */
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, expect, test, vi } from 'vitest';
@@ -39,20 +39,23 @@ const DETAIL = {
   },
 };
 const updateHeader = vi.fn();
-const addLine = vi.fn();
+const addLine = vi.fn(() => Promise.resolve({}));
+const delLine = vi.fn(() => Promise.resolve({}));
+const saveLines = vi.fn(() => Promise.resolve({}));
 vi.mock('../../vendor/scm/lib/stock-queries', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../vendor/scm/lib/stock-queries')>();
   const idle = { isPending: false, mutate: vi.fn() };
   return {
     ...real,
     useStockTakeDetail: () => DETAIL,
-    useUpdateStockTakeLines: () => idle,
+    useUpdateStockTakeLines: () => ({ isPending: false, mutateAsync: saveLines }),
     usePostStockTake: () => idle,
     useCancelStockTake: () => idle,
     useReverseStockTake: () => idle,
     useDeleteStockTake: () => idle,
     useUpdateStockTakeHeader: () => ({ isPending: false, mutate: updateHeader }),
-    useAddStockTakeLine: () => ({ isPending: false, mutate: addLine }),
+    useAddStockTakeLine: () => ({ isPending: false, mutateAsync: addLine }),
+    useDeleteStockTakeLine: () => ({ isPending: false, mutateAsync: delLine }),
     useStockTakeBucketOptions: () => ({ data: [], isLoading: false }),
   };
 });
@@ -113,16 +116,49 @@ describe('Stock Take detail — round 1', () => {
     );
   });
 
-  test('Add line posts the found SKU with its count; added lines are marked', () => {
+  /* HC-0140: Add line saved at once and reloaded the sheet, so with a count
+     typed it refused ("Save your counts first"). Now it only adds a row on
+     screen; Save Counts sends counts, then deletes, then new lines. */
+  test('Add line waits on screen next to unsaved counts; Save Counts sends it', async () => {
+    addLine.mockClear(); saveLines.mockClear();
     draw();
     expect(screen.getByText('Added')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Counted qty for MATT-A'), { target: { value: '7' } });
     fireEvent.change(screen.getByPlaceholderText('Type or pick a SKU code…'), { target: { value: 'PILLOW' } });
     fireEvent.change(screen.getByLabelText('Counted qty for the new line'), { target: { value: '3' } });
     fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
-    expect(addLine).toHaveBeenCalledWith(
-      { id: 'st-1', itemCode: 'PILLOW', variantKey: '', countedQty: 3 },
-      expect.anything(),
-    );
+    expect(addLine).not.toHaveBeenCalled();
+    expect(screen.getByText(/Added, not saved yet/)).toBeTruthy();
+    expect((screen.getByRole('button', { name: /^Post$/ }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: /Save Counts/ }));
+    await waitFor(() => expect(addLine).toHaveBeenCalledWith({ id: 'st-1', itemCode: 'PILLOW', variantKey: '', countedQty: 3 }));
+    expect(saveLines).toHaveBeenCalledWith(expect.objectContaining({ id: 'st-1', lines: [expect.objectContaining({ id: 'l1', countedQty: 7 })] }));
+    await waitFor(() => expect(screen.queryByText(/Added, not saved yet/)).toBeNull());
+  });
+
+  test('a delete button on each line: an unsaved add goes at once, a saved sheet or added line on Save Counts', async () => {
+    addLine.mockClear(); delLine.mockClear();
+    draw();
+    fireEvent.change(screen.getByPlaceholderText('Type or pick a SKU code…'), { target: { value: 'PILLOW' } });
+    fireEvent.change(screen.getByLabelText('Counted qty for the new line'), { target: { value: '3' } });
+    fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove added line PILLOW' }));
+    expect(screen.queryByText(/Added, not saved yet/)).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete line MATT-A' }));
+    expect(screen.queryByLabelText('Counted qty for MATT-A')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(screen.getByLabelText('Counted qty for MATT-A')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete line MATT-A' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete line PILLOW' }));
+    expect(screen.getByText(/2 lines deleted on Save Counts/)).toBeTruthy();
+    expect(screen.queryByText('Added')).toBeNull();
+    expect(delLine).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: /Save Counts/ }));
+    await waitFor(() => expect(delLine).toHaveBeenCalledWith({ id: 'st-1', lineId: 'l3' }));
+    expect(delLine).toHaveBeenCalledWith({ id: 'st-1', lineId: 'l1' });
+    expect(addLine).not.toHaveBeenCalled();
   });
 
   test('the counted box takes digits only and has no spinner', () => {

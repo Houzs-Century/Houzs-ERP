@@ -20,10 +20,17 @@
 import { lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { coverageStateOf } from "../../components/coverage-state";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useOrderMoney, useConvertSources } from "../../vendor/scm/lib/so-money-queries";
+import { useCancelRequest } from "../../vendor/scm/lib/document-cancel-queries";
+import { useSoBackdateRequests } from "../../vendor/scm/lib/payment-backdate-queries";
+import { useDocumentFlow } from "../../vendor/scm/lib/flow-queries";
+import { useSoDropdownOptions } from "../../vendor/scm/lib/so-dropdown-options-queries";
 import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
+import { returnToWorkspaceOpener, useWorkspaceOpener } from "../../lib/useWorkspaceOpener";
 import {
   ArrowLeft,
+  Copy,
   History,
   Share2,
   Printer,
@@ -704,10 +711,16 @@ function SalesOrderDetailV2ReadOnly() {
       : "Submit SO Amendment"
     : "Edit";
 
-  // Back always returns to the Sales Orders list (owner 2026-07-24: every
-  // details page's back button goes to its relevant list, not wherever
-  // browser history happens to point). The list restores its own sticky
-  // filters, so the prior filtered view comes back — no context lost.
+  // Back returns to the Sales Orders list (owner 2026-07-24: every details
+  // page's back button goes to its relevant list, not wherever browser history
+  // happens to point). The list restores its own sticky filters, so the prior
+  // filtered view comes back — no context lost.
+  // EXCEPT an order opened as a document from another page — Merchant Recon,
+  // Fair Links, a project, a relationship map: Back returns to THAT page, and
+  // its tab, the way it was left (owner 2026-10-21: 我从 merchant recon 点开
+  // SO，返回也要返回 merchant recon).
+  const cameFrom = useWorkspaceOpener();
+  const backLabel = cameFrom ? cameFrom.label : "Sales Orders";
   const goBack = async () => {
     if (unsavedPayments > 0 && !(await askConfirm({
       title: "Leave without saving payments?",
@@ -715,7 +728,7 @@ function SalesOrderDetailV2ReadOnly() {
       confirmLabel: "Leave anyway",
       danger: true,
     }))) return;
-    navigate(scmListReturnTo("/scm/sales-orders"));
+    navigate(returnToWorkspaceOpener() ?? scmListReturnTo("/scm/sales-orders"));
   };
   // Edit always forwards to the full editor (?edit=1). When the SO is
   // amendment-eligible the editor opens in amendment mode (Save submits an
@@ -860,6 +873,8 @@ function SalesOrderDetailV2ReadOnly() {
     onNodeClick: onChainNodeClick,
     amendments: chainAmendments,
     onAmendmentClick: onChainAmendmentClick,
+    returns: chainReturns,
+    onReturnClick: onChainReturnClick,
     pairing: chainPairing,
     choice: chainChoice,
     closeChoice: closeChainChoice,
@@ -1062,6 +1077,7 @@ function SalesOrderDetailV2ReadOnly() {
   if (detail.isPending) {
     return (
       <div className="animate-fade-in p-8 text-center text-ink-muted">
+        <SoDetailWarmup docNo={docNo} />
         Loading {docNo}…
       </div>
     );
@@ -1078,7 +1094,7 @@ function SalesOrderDetailV2ReadOnly() {
         </p>
         <div className="mt-4">
           <Button variant="secondary" onClick={goBack} icon={<ArrowLeft size={14} />}>
-            Back to Sales Orders
+            Back to {backLabel}
           </Button>
         </div>
       </div>
@@ -1100,9 +1116,9 @@ function SalesOrderDetailV2ReadOnly() {
             type="button"
             onClick={goBack}
             className="inline-flex items-center gap-1 text-[14px] font-semibold text-accent-bright"
-            aria-label="Back to Sales Orders"
+            aria-label={`Back to ${backLabel}`}
           >
-            <ArrowLeft size={16} /> Orders
+            <ArrowLeft size={16} /> {cameFrom ? cameFrom.label : "Orders"}
           </button>
           <span className="font-mono text-[12.5px] font-semibold text-sidebar-ink">
             {salesOrder.doc_no}
@@ -1145,7 +1161,8 @@ function SalesOrderDetailV2ReadOnly() {
             <button
               type="button"
               onClick={goBack}
-              aria-label="Back to Sales Orders"
+              aria-label={`Back to ${backLabel}`}
+              title={`Back to ${backLabel}`}
               className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-surface text-ink-secondary hover:border-primary/50 hover:text-primary"
             >
               <ArrowLeft size={16} />
@@ -1198,6 +1215,13 @@ function SalesOrderDetailV2ReadOnly() {
               onClick={goRelationshipMap}
             >
               Relationship Map
+            </Button>
+            <Button
+              variant="ghost"
+              icon={<Copy size={14} />}
+              onClick={() => navigate(`/scm/sales-orders/new?copyFrom=${encodeURIComponent(salesOrder.doc_no)}`)}
+            >
+              Copy as new
             </Button>
             <Button
               variant="secondary"
@@ -1773,6 +1797,10 @@ function SalesOrderDetailV2ReadOnly() {
         onAmendmentClick={(a) => {
           if (onChainAmendmentClick(a)) setRelMapOpen(false);
         }}
+        returns={chainReturns}
+        onReturnClick={(r) => {
+          if (onChainReturnClick(r)) setRelMapOpen(false);
+        }}
         pairing={chainPairing}
       />
       {/* A chain slot standing for several documents opens this chooser instead
@@ -1830,3 +1858,21 @@ function Divider() {
 }
 
 export default SalesOrderDetailV2;
+
+/* HC-0002. The panels below mount only once the header lands, so each one's
+   read started a wave later (prod 2026-10-22: money / convert-sources /
+   document-flow at ~1.2s). This calls the SAME hooks with the same arguments
+   from the URL while the header loads, so each panel finds its read already in
+   flight. Every one of them mounts for any saved order, so nothing extra is
+   asked for; it renders nothing, so nothing above it re-renders. Not the
+   refund source: its hook has no staleTime, so the panel would read it twice. */
+function SoDetailWarmup({ docNo }: { docNo: string | undefined }) {
+  const key = docNo ?? null;
+  useOrderMoney(key);
+  useConvertSources(key);
+  useCancelRequest("so", key);
+  useSoBackdateRequests(key);
+  useDocumentFlow("so", key);
+  useSoDropdownOptions("payment_method");
+  return null;
+}

@@ -77,6 +77,7 @@ import { parseProvenanceNote } from './document-flow';
 import { computeMrp, mrpReverseCoverage } from './mrp';
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
 import { tracePoDeliveredLedger } from '../lib/source-po-trace';
+import { sharedLiveMrp } from '../lib/live-mrp-memo';
 import { chunkIn, UUID_CHUNK } from '../lib/paginate-all';
 import { eager } from '../lib/concurrency';
 import type { Env, Variables } from '../env';
@@ -714,14 +715,13 @@ export async function resolvePoSoCoveragePerSkuForPos(
      it is created, so a failure still surfaces inside the same try/catch that
      caught it before and still degrades to the same empty map. The set of
      requests that run either read is unchanged too — both sit after the same
-     two early returns they always sat after. */
-  const mrpProm = eager((async () => computeMrp(sb, {
-    catFilter: null,
-    whFilter: null,
-    includeUndated: true,
-    companyId: activeCompanyId(c),
-    leadBuffers: await loadLeadBuffers(c.env.DB),
-  }))());
+     two early returns they always sat after.
+
+     HC-0002 (2026-10-22): the run is the one lib/live-mrp-memo.ts shares with
+     the SO list and SO detail — the identical options (no filters, undated
+     included, active company, stored lead buffers) — so the PO / GRN / PI lists
+     no longer pay for their own. A failed run still rejects into the same catch. */
+  const mrpProm = eager(sharedLiveMrp(sb, c.env.DB, activeCompanyId(c)).result);
   const ledgerProm = eager(tracePoDeliveredLedger(sb, poNumbers));
 
   type PoLineLinkRow = { id: string; purchase_order_id: string; item_code: string | null; so_item_id: string | null };

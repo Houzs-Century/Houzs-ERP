@@ -208,7 +208,13 @@ jobs:
 
   # Staging frontend — mirrors deploy.yml's frontend job onto the
   # houzs-erp-staging Pages project, bundle pointed at the staging Worker.
+  # Unlike prod it WAITS for the backend: staging also deploys every main push,
+  # and while a PR under review on `staging` has migrations main lacks, main's
+  # backend stops at "migration drift" but its frontend used to ship anyway,
+  # replacing the screens under review with ones the staging Worker does not
+  # match (HC-0125, 2026-10-23). A failed backend now leaves staging as it was.
   frontend:
+    needs: backend
     runs-on: ubuntu-latest
     environment: Staging
     defaults:

@@ -108,6 +108,7 @@ import { useAuth } from "../../auth/AuthContext";
 import { canViewScmCosting, canOperateDeliveryOrders } from "../../auth/salesAccess";
 import { capability } from "../../auth/capabilities";
 import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
+import { soExemptionExpiryOf } from "../../lib/so-exemption-expiry";
 import { formatPhone } from "@2990s/shared/phone";
 import { customerRefOf } from '../../lib/customer-ref';
 
@@ -192,10 +193,10 @@ type SoRow = HoldFields & {
   source_po_adj?: boolean;
   processing_date: string | null;
   customer_delivery_date: string | null;
-  /* The REAL AutoCount sales-exemption expiry (public.sales_orders.expiry_date,
+  /* The AutoCount book's sales-exemption expiry (public.sales_orders.expiry_date,
      keyed by the order's linked book doc no), server-derived in so-list-rows.ts.
-     Null for orders not in AutoCount. Drives the "Sales Exemption Expiry Date"
-     column; distinct from the ERP's frozen sales_exemption_expiry (BUG-51). */
+     Null for orders not in AutoCount. The "Sales Exemption Expiry Date" column
+     falls back to it when the ERP's frozen sales_exemption_expiry is empty. */
   ac_sales_exemption_expiry?: string | null;
   // ── Phase 2 FINANCE: cost / margin / per-category subtotals + deposit. The
   //    backend OMITS these keys entirely for non-finance callers
@@ -1320,6 +1321,7 @@ export function MfgSalesOrdersListV2() {
   };
   const soContextMenu = salesOrderRowMenu<SoRow>({
     open: goFullPage, edit: goEdit, print: printDocument,
+    copyAsNew: (r) => navigate(`/scm/sales-orders/new?copyFrom=${encodeURIComponent(r.doc_no)}`),
     confirm: doConfirm, transferToDo: doDeliver, reopen: doReopen,
     setStatus: setSoStatus, close: doCloseSo, setHold: setSoHold, cancel: doCancelSo, discard: (r) => void doDiscard(r), canDeliver,
   });
@@ -1506,11 +1508,10 @@ export function MfgSalesOrdersListV2() {
     },
     {
       key: "sales_exemption_expiry", group: "Basic", label: SO_LABELS.salesExemptionExpiryDate, width: "150px", defaultHidden: true, disableSort: true, exportFormat: "date",
-      /* BUG-51 repoint (owner 2026-10-15): the REAL AutoCount sales-exemption
-         expiry, not the frozen original delivery date. Blank for orders not in
-         AutoCount. Grid key kept as-is so saved layouts keep the column. */
-      getValue: (r) => r.ac_sales_exemption_expiry ?? "",
-      render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(r.ac_sales_exemption_expiry)}</span>,
+      /* HC-0122: the original delivery date (BUG-51), one rule with the detail
+         listing; see lib/so-exemption-expiry.ts. */
+      getValue: (r) => soExemptionExpiryOf(r) ?? "",
+      render: (r) => <span className="text-[12.5px] text-ink-secondary">{fmtDate(soExemptionExpiryOf(r))}</span>,
     },
     {
       key: "sales_location",

@@ -47,6 +47,9 @@ export type OpenPoLine = {
   description2?: string | null;
   // The sales order the line was raised for ("HC-SO-013339"), or null (stock).
   soDocNo?: string | null;
+  // The line's item group ("MATTRESS"). Its words name the product type, not
+  // the model, so a row need not print them to match by name.
+  itemGroup?: string | null;
 };
 
 // A supplier_material_bindings row, narrowed to the mapping this matcher needs:
@@ -73,7 +76,8 @@ export type ScannedGrnLine = {
 export type MatchedPick = { poItemId: string; qty: number };
 
 // Any PO in the company, open or not, for saying why a printed PO was refused.
-export type PoStatusRef = { poNumber: string; status: string };
+// Any PO in the company, open or not, for saying why a printed PO was refused.
+export type PoStatusRef = { poNumber: string; status: string; supplierId?: string | null; supplierName?: string | null; onHold?: boolean };
 
 // A suppliers row, narrowed to what resolveScannedSupplier compares against.
 export type SupplierRef = { id: string; code: string | null; name: string | null };
@@ -271,11 +275,17 @@ export function matchGrnScanToPoLines(
     // ("SRW-2610-021" for HC-PO-2610-021 into SRW WAREHOUSE). Trusted only when
     // that PO really ships to a warehouse whose code starts with the location.
     const m = /^([A-Z]+)[\s-]+(\d.*)$/.exec((printed ?? '').trim().toUpperCase());
-    if (!m) return null;
-    const po = resolvePrintedPo(m[2], openPos, true)?.poNumber ?? null;
-    const shipsThere = supplierLines.some((l) =>
-      l.poNumber === po && normalizeCode((l.locationCode ?? '').trim().split(/\s+/)[0]) === m[1]);
-    return shipsThere ? po : null;
+    const ships = (po: string | null, loc: string): boolean => po !== null && supplierLines.some((l) =>
+      l.poNumber === po && normalizeCode((l.locationCode ?? '').trim().split(/\s+/)[0]) === loc);
+    if (m) {
+      const po = resolvePrintedPo(m[2], openPos, true)?.poNumber ?? null;
+      return ships(po, m[1]) ? po : null;
+    }
+    // DIGLANT puts the location INSIDE our number: "HC-SRW-PO-2610-091".
+    const inner = splitInnerLocation(printed);
+    if (!inner) return null;
+    const po = resolvePrintedPo(inner.po, openPos, false)?.poNumber ?? null;
+    return ships(po, inner.location) ? po : null;
   };
 
   // PO-number scoping — does the scanned header P.O. No name one of our open POs?
@@ -515,8 +525,15 @@ export function matchGrnScanToPoLines(
   };
 }
 
-const nameWords = (s: string | null | undefined): string[] =>
-  (s ?? '').toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
+// Words, plus each model with its short suffix joined ("FLEXICARE-C" also
+// gives FLEXICAREC), so FLEXICARE-C and FLEXICARE-S on one PO tell apart (HC-0137).
+const nameWords = (s: string | null | undefined): string[] => {
+  const up = (s ?? '').toUpperCase();
+  return [
+    ...up.split(/[^A-Z0-9]+/).filter(Boolean),
+    ...[...up.matchAll(/([A-Z]{4,})-([A-Z0-9]{1,2})\b/g)].map((m) => `${m[1]}${m[2]}`),
+  ];
+};
 
 /**
  * The one item code on a known PO that a delivery-order row names by product,
@@ -524,7 +541,8 @@ const nameWords = (s: string | null | undefined): string[] =>
  * code and name that no other item on the PO has ("BULWARK"; "HAPPI SLEEP
  * SOLITUDE" when only one Happi Sleep item is ordered). The row must print
  * every one of them, a printed word counting when it starts with the model
- * word (MATT / MATTRESS). Exactly one item must qualify; an item with no model
+ * word (MATT / MATTRESS); words of the line's item group are not model words.
+ * A hyphen suffix counts ("FLEXICARE-C" is not "FLEXICARE-S"). Exactly one item must qualify; an item with no model
  * word of its own (three MAYBATCH sofa pieces) never does. "Happi Sleep Easy
  * Sleep Pillow" lacks SOLITUDE, so it is not the Solitude mattress.
  */
@@ -533,8 +551,12 @@ export function nameMatchItem(printed: string | null | undefined, poLines: OpenP
   if (row.length === 0) return null;
   const items = [...new Set(poLines.map((l) => l.itemCode))];
   const wordsOf = new Map(items.map((ic) => {
-    const names = poLines.filter((l) => l.itemCode === ic).map((l) => `${ic} ${l.materialName ?? ''}`).join(' ');
-    return [ic, new Set(nameWords(names).filter((w) => /^[A-Z]{4,}$/.test(w)))];
+    const lines = poLines.filter((l) => l.itemCode === ic);
+    const names = lines.map((l) => `${ic} ${l.materialName ?? ''}`).join(' ');
+    // MATT / MATTRESS under group MATTRESS: NICE FUTURE prints "ERGOTEX ECOZONE-C - W183 X L190" with no MATT.
+    const group = lines.flatMap((l) => nameWords(l.itemGroup)).filter((g) => g.length >= 4);
+    const generic = (w: string): boolean => group.some((g) => g.startsWith(w) || w.startsWith(g));
+    return [ic, new Set(nameWords(names).filter((w) => /^[A-Z]{4,}$/.test(w) && !generic(w)))];
   }));
   const hits = items.filter((ic) => {
     const model = [...wordsOf.get(ic)!].filter((w) => items.every((o) => o === ic || !wordsOf.get(o)!.has(w)));
@@ -590,13 +612,36 @@ export function pickBySpec(printed: string | null | undefined, hits: OpenPoLine[
   return hits[scores.indexOf(top)];
 }
 
-function poNotOpenWhy(l: ScannedGrnLine, allPos: PoStatusRef[]): string {
-  const po = resolvePrintedPo(l.poNo, allPos, true);
-  if (!po) return `PO ${l.poNo ?? '?'} is not one of our POs`;
-  return `PO ${po.poNumber} ${PO_STATUS_WHY[po.status] ?? `is marked ${po.status}, but is on hold or under another supplier`}`;
+/** "HC-SRW-PO-2610-091" -> { location: "SRW", po: "HC-PO-2610-091" }; else null. */
+export function splitInnerLocation(printed: string | null | undefined): { location: string; po: string } | null {
+  const m = /^([A-Z0-9]+)[\s-]+([A-Z]{2,4})[\s-]+(PO[\s-]*\d[\d\s-]*)$/.exec((printed ?? '').trim().toUpperCase());
+  return m ? { location: m[2], po: `${m[1]}-${m[3]}` } : null;
 }
 
-const UNMATCHED_WHY: Record<UnmatchedScanLine['reason'], (l: ScannedGrnLine, allPos: PoStatusRef[]) => string> = {
+/**
+ * Why a printed PO cannot take this delivery order, in words the operator can
+ * act on: its status, on hold, another supplier's PO (Hookka DO-2610-079 named
+ * OHANA STUDIO's HC-PO-010086), or no open line found for it. Null when the printed
+ * number is not a PO of ours at all.
+ */
+export function printedPoWhy(printed: string | null | undefined, allPos: PoStatusRef[], scanSupplierId: string | null): string | null {
+  const inner = splitInnerLocation(printed);
+  const po = resolvePrintedPo(printed, allPos, true) ?? (inner ? resolvePrintedPo(inner.po, allPos, false) : null);
+  if (!po) return null;
+  const known = PO_STATUS_WHY[po.status];
+  if (known) return `PO ${po.poNumber} ${known}`;
+  if (po.onHold) return `PO ${po.poNumber} is on hold`;
+  if (po.supplierName && scanSupplierId !== null && po.supplierId && po.supplierId !== scanSupplierId) {
+    return `PO ${po.poNumber} is ${po.supplierName}'s PO, not this supplier's`;
+  }
+  return `PO ${po.poNumber} shows no open line for this supplier in our search; open the PO to check its balance`;
+}
+
+function poNotOpenWhy(l: ScannedGrnLine, allPos: PoStatusRef[], scanSupplierId: string | null): string {
+  return printedPoWhy(l.poNo, allPos, scanSupplierId) ?? `PO ${l.poNo ?? '?'} is not one of our POs`;
+}
+
+const UNMATCHED_WHY: Record<UnmatchedScanLine['reason'], (l: ScannedGrnLine, allPos: PoStatusRef[], scanSupplierId: string | null) => string> = {
   no_open_po_line: () => 'no open PO line',
   ambiguous: () => 'more than one PO line fits',
   nothing_remaining: () => 'its PO line shows 0 qty remaining',
@@ -617,9 +662,9 @@ const capped = (parts: string[], max: number): string =>
  * when every line matched. Capped so a long delivery order cannot flood the
  * note. `allPos` (every company PO, any status) says why a printed PO was refused.
  */
-export function describeUnmatchedScanLines(unmatched: UnmatchedScanLine[], allPos: PoStatusRef[], max = 10): string | null {
+export function describeUnmatchedScanLines(unmatched: UnmatchedScanLine[], allPos: PoStatusRef[], scanSupplierId: string | null, max = 10): string | null {
   if (unmatched.length === 0) return null;
-  return capped(unmatched.map(({ line: l, reason }) => `${scanLineLabel(l)} x${l.qty} (${UNMATCHED_WHY[reason](l, allPos)})`), max);
+  return capped(unmatched.map(({ line: l, reason }) => `${scanLineLabel(l)} x${l.qty} (${UNMATCHED_WHY[reason](l, allPos, scanSupplierId)})`), max);
 }
 
 /** The scanned lines as read, for a draft built from the whole PO. */

@@ -17,7 +17,7 @@ import { normalizePhone } from '../shared/phone';
 import { firstUndeliverableSo, soNotDeliverableResponse } from '../lib/source-document-gates';
 import { HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
 import { mountHoldRoute } from './document-hold-routes';
-import { DO_STATUS_BUCKETS } from '../lib/do-status-buckets';
+import { doListStatusCounts } from '../lib/do-status-counts';
 import {
   DO_SHIPPED_STATES, DO_STOCK_OUT_STATES, DO_PRESHIP_STATES, doCountsAsDelivered,
   DO_STATUSES as SHARED_DO_STATUSES, CONFIRM_HOP_STATES,
@@ -70,6 +70,7 @@ import { findUnlinkedSoLines, unlinkedSoLinesResponse, itemCodeKey } from '../li
 import { findNotReadySoLines, itemsNotReadyResponse } from '../lib/do-not-ready-lines';
 import { unlinkedScanRefusal } from '../lib/unlinked-line-edit-guard';
 import { maybeSendDeliveryOrderEmail } from '../lib/do-email';
+import { maybeSendPodDeliveredWhatsApp } from '../lib/pod-delivered-message';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { todayMyt } from '../lib/my-time';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
@@ -83,8 +84,7 @@ import {
   soLineShippedSourcePosImpl,
 } from '../lib/source-po-trace';
 export { soLineShippedSources, resolveDoSources } from '../lib/source-po-trace';
-import { filterDoList, fromDoList, orderDoList, readDoListParams } from '../lib/do-list-read';
-import { readStatusCounts } from '../lib/status-counts';
+import { filterDoList, fromDoList, orderDoList, readDoListParams, windowDoList } from '../lib/do-list-read';
 import { resolveSalesScopeIds, salesDocOutOfScope } from '../lib/salesScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { scopeToCompany, scopeToAllowedCompanies, activeCompanyId, stampCompany, companyDocPrefix, docPrefixForCode, companyCodeMap,
@@ -116,6 +116,7 @@ import { buildDoReversalRows } from '../lib/do-reversal';
 import { resolveDoLineWarehouses } from '../lib/do-line-warehouses';
 import { isMigratedNoStock } from '../lib/migrated-no-stock';
 import { currentDocNoByKey, type CurrentEvent } from '../lib/current-doc';
+import { doLifecycleFrom, type DoLifecycle, type DoLifecycleSi, type DoLifecycleDr } from '../lib/do-lifecycle';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
@@ -344,7 +345,6 @@ const DO_FINANCE_KEYS = [
 /* What the list row builder (lib/do-list-rows.ts) needs from THIS file, passed in
    rather than imported there, so the lib never imports the route that imports it. */
 export const DO_LIST_ROW_DEPS = {
-  computeDoLifecycle: (sb: unknown, ids: string[]) => computeDoLifecycle(sb, ids),
   financeKeys: DO_FINANCE_KEYS as readonly string[],
 };
 
@@ -2392,23 +2392,13 @@ export async function computeSoLifecycle(
      • latest is a SI  → 'invoiced'
      • latest is a DR  → 'returned'   (Delivery Return)
    Cancelled DOs are handled by the stored status, not here. Read-only. */
-export type DoLifecycle = 'shipped' | 'invoiced' | 'returned';
+export type { DoLifecycle };
 export async function computeDoLifecycle(
   sb: any,
   doIds: string[],
 ): Promise<Map<string, DoLifecycle>> {
-  const out = new Map<string, DoLifecycle>();
   const ids = [...new Set(doIds.filter(Boolean))];
-  if (ids.length === 0) return out;
-
-  type Ev = { date: string; createdAt: string; kind: DoLifecycle };
-  const events = new Map<string, Ev[]>();
-  const push = (doId: string | null | undefined, ev: Ev) => {
-    if (!doId) return;
-    const arr = events.get(doId) ?? [];
-    arr.push(ev);
-    events.set(doId, arr);
-  };
+  if (ids.length === 0) return new Map();
 
   const [siRes, drRes] = await Promise.all([
     sb.from('sales_invoices')
@@ -2420,33 +2410,7 @@ export async function computeDoLifecycle(
       .in('delivery_order_id', ids)
       .neq('status', 'CANCELLED'),
   ]);
-  for (const s of (siRes.data ?? []) as Array<{ delivery_order_id: string | null; invoice_date: string | null; created_at: string | null }>) {
-    push(s.delivery_order_id, { date: s.invoice_date ?? s.created_at ?? '', createdAt: s.created_at ?? '', kind: 'invoiced' });
-  }
-  for (const r of (drRes.data ?? []) as Array<{ delivery_order_id: string | null; return_date: string | null; created_at: string | null }>) {
-    push(r.delivery_order_id, { date: r.return_date ?? r.created_at ?? '', createdAt: r.created_at ?? '', kind: 'returned' });
-  }
-
-  const priority: Record<DoLifecycle, number> = { shipped: 0, invoiced: 1, returned: 2 };
-  for (const id of ids) {
-    const evs = events.get(id);
-    if (!evs || evs.length === 0) { out.set(id, 'shipped'); continue; }
-    let best: Ev | null = null;
-    for (const ev of evs) {
-      if (!best) { best = ev; continue; }
-      // Bug #10 — normalize mixed plain-date / ISO-timestamp business dates to a
-      // day-level key before comparing (created_at remains the tie-breaker).
-      const dc = normalizeEventDay(ev.date).localeCompare(normalizeEventDay(best.date));
-      if (dc > 0) { best = ev; continue; }
-      if (dc < 0) continue;
-      const cc = ev.createdAt.localeCompare(best.createdAt);
-      if (cc > 0) { best = ev; continue; }
-      if (cc < 0) continue;
-      if (priority[ev.kind] > priority[best.kind]) best = ev;
-    }
-    out.set(id, best ? best.kind : 'shipped');
-  }
-  return out;
+  return doLifecycleFrom(ids, (siRes.data ?? []) as DoLifecycleSi[], (drRes.data ?? []) as DoLifecycleDr[]);
 }
 
 /* Current document per Sales Order — the number of the furthest-forward document
@@ -2591,30 +2555,14 @@ deliveryOrdersMfg.get('/', async (c) => {
     total = res.count ?? (res.data?.length ?? 0);
 
     /* Status counts mirror the FE filter-pill buckets (open / in_transit /
-       delivered / cancelled) over the SAME scope filter but WITHOUT status /
-       search / pagination. Scoped to the active company like the list, so the
+       delivered / cancelled) over the SAME scope filter and date window but
+       WITHOUT status / search / pagination. Scoped to the active company like the list, so the
        tab counts can't leak the other company's DO totals. */
-    const countBase = () => {
-      let cq = scopeToCompany(sb.from('delivery_orders').select('*', { count: 'exact', head: true }), c);
+    const counted = await doListStatusCounts((sel) => {
+      let cq = scopeToCompany(sb.from('delivery_orders').select(sel), c);
       if (scopeIds) cq = cq.in('salesperson_id', scopeIds);
-      return cq;
-    };
-    /* One count per BUCKET, derived from the map — a bucket added there cannot
-       be left without a count, the shape that renders a tab beside a silent 0. */
-    const bucketNames = Object.keys(DO_STATUS_BUCKETS);
-    /* `on_hold` is NOT in DO_STATUS_BUCKETS and must not be — that map is an
-       exhaustive partition of scm.do_status (statusBucketsEnumMembership.test.mjs)
-       and this is a column. Counted here as an OVERLAY: a held DO is counted
-       under its real status too, so these do not sum to `all`. */
-    const [allC, heldC, ...bucketC] = await Promise.all([
-      countBase(),
-      countBase().eq('on_hold', true), // marker only — see the tab filter above
-      ...bucketNames.map((b) => countBase().in('status', DO_STATUS_BUCKETS[b])),
-    ]);
-    // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
-    const counted = readStatusCounts(Object.fromEntries([
-      ['all', allC], ['on_hold', heldC], ...bucketNames.map((b, i) => [b, bucketC[i]]),
-    ]));
+      return windowDoList(cq, listParams);
+    });
     if (counted.ok) statusCounts = counted.counts; else countError = counted.reason;
   }
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
@@ -5214,6 +5162,10 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   if (toStatus === 'DELIVERED') {
     const { data: doRow } = await sb.from('delivery_orders').select('so_doc_no').eq('id', id).maybeSingle();
     await syncSoDeliveredFromDo(sb, [(doRow as { so_doc_no?: string } | null)?.so_doc_no], user.id);
+    /* #5 — auto "Delivery Completed" WhatsApp when a REAL POD completes the SO.
+       AFTER the sync so the SO's DELIVERED status is visible to the gate.
+       Best-effort, inert without Connect, once-guarded, only on real POD. */
+    await maybeSendPodDeliveredWhatsApp(c, id);
   }
 
   /* Bug #1 — cancelling a DO AUTO-REVERSES the stock OUT via reverseInventoryForDo,

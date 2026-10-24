@@ -53,6 +53,10 @@ export type FleetDayTrip = {
   depot: { lat: number; lng: number } | null;
   total_revenue_sen: number;
   total_drops: number;
+  /** Per-trip POD rollup: of the DELIVERY drops, how many are DELIVERED and how
+   *  many of those carry real POD evidence (signature/photo/GPS). */
+  total_delivered: number;
+  total_with_pod: number;
   stops: FleetDayStop[];
 };
 

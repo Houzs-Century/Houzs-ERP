@@ -177,10 +177,18 @@ export const remainingUnavailableResponse = (reason: string) => ({
  * returns a partial ledger, because a partial ledger is indistinguishable from
  * a line nobody has invoiced yet.
  */
+export type DoRemainingHeader = {
+  id: string; do_number: string; status: string | null;
+  debtor_code: string | null; debtor_name: string | null;
+};
+
 export async function doLineRemaining(
   sb: any,
   doIds: string[],
   basis: DoPendingBasis,
+  /* The DO list (lib/do-list-lines.ts) has just read these headers for the same
+     ids; passing them skips step 1's identical read (HC-0002). */
+  knownHeaders?: DoRemainingHeader[],
 ): Promise<DoRemainingResult> {
   const out = new Map<string, DoRemainingLine>();
   const ids = [...new Set(doIds.filter(Boolean))];
@@ -190,20 +198,24 @@ export async function doLineRemaining(
   //    and the status so we can drop cancelled DOs (they delivered nothing).
   //    chunkIn splits the id IN-list into ≤200 batches and pages each so a large
   //    DO set can't truncate at PostgREST's 1000-row cap.
-  const { data: doHeaders, error: headErr } = await chunkIn(ids, (batch, from, to) => sb
-    .from('delivery_orders')
-    .select('id, do_number, status, debtor_code, debtor_name')
-    .in('id', batch)
-    .range(from, to));
-  if (headErr) return { ok: false, reason: `delivery_orders: ${headErr.message}` };
+  let doHeaders: DoRemainingHeader[];
+  if (knownHeaders) {
+    const wanted = new Set(ids);
+    doHeaders = knownHeaders.filter((h) => wanted.has(h.id));
+  } else {
+    const head = await chunkIn<DoRemainingHeader>(ids, (batch, from, to) => sb
+      .from('delivery_orders')
+      .select('id, do_number, status, debtor_code, debtor_name')
+      .in('id', batch)
+      .range(from, to));
+    if (head.error) return { ok: false, reason: `delivery_orders: ${head.error.message}` };
+    doHeaders = head.data;
+  }
   const headerById = new Map<
     string,
     { do_number: string; debtor_code: string | null; debtor_name: string | null }
   >();
-  for (const d of (doHeaders ?? []) as Array<{
-    id: string; do_number: string; status: string | null;
-    debtor_code: string | null; debtor_name: string | null;
-  }>) {
+  for (const d of doHeaders) {
     // LEAK GUARD (2026-06-25 anchoring diff vs 2990) — a DO that delivered
     // nothing must never reach the "Pending" pool the downstream pickers read.
     // WHICH states those are depends on the question: a CANCELLED or DRAFT DO is

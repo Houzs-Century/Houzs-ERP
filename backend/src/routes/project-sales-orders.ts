@@ -42,6 +42,9 @@ import { supabaseAuth } from "../scm/middleware/auth";
 import { activeCompanySql, scopeToCompany } from "../scm/lib/companyScope";
 import { loadFairsByIds, type FairDb } from "../scm/lib/fair-binding";
 import { sameVenue } from "../scm/lib/fair-options";
+import { boothText, REPORTS_FROM } from "../scm/lib/fair-checks";
+import { canReassignFair } from "../scm/lib/fair-reassign";
+import { loadReportEvidence, reportVerdict, type ReportEvidence } from "./lib/sales-report-evidence";
 import { canViewAllSales } from "../scm/lib/houzs-perms";
 import { resolveSalesScopeIds, applySoScope } from "../scm/lib/salesScope";
 import { paginateAll, chunkIn, type PageResult } from "../scm/lib/paginate-all";
@@ -59,7 +62,7 @@ type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
    join (mfg-sales-orders.ts, the "customers table" note by its list). */
 const SO_COLS =
   "doc_no, so_date, ref, customer_so_no, debtor_name, phone, status, salesperson_id, " +
-  "local_total_sen, total_revenue_sen, deposit_sen, fair_match, linked_ac_docno, created_at, venue";
+  "local_total_sen, total_revenue_sen, deposit_sen, service_sen, fair_match, linked_ac_docno, created_at, venue, branding";
 
 type SoRow = {
   doc_no: string;
@@ -73,12 +76,14 @@ type SoRow = {
   status: string | null;
   salesperson_id: string | null;
   local_total_sen: number | null;
+  service_sen: number | null;
   total_revenue_sen: number | null;
   deposit_sen: number | null;
   fair_match: string | null;
   linked_ac_docno: string | null;
   created_at: string | null;
   venue: string | null;
+  branding: string | null;
 };
 
 export type ProjectSalesOrderRow = {
@@ -92,13 +97,22 @@ export type ProjectSalesOrderRow = {
   amount_sen: number;
   paid_sen: number;
   balance_sen: number;
+  /** The order's service lines, inside amount_sen. */
+  service_sen: number;
   fair_match: string | null;
   linked_ac_docno: string | null;
   created_at: string | null;
   /** "Venue differs" (owner 2026-10-19): the venue on the order when it is NOT
    *  this fair's venue — the slip said one place, the order was placed here.
-   *  Null when they agree, or when the order carries no venue. */
+   *  Null when they agree, when the order carries no venue, or when this fair's
+   *  evening report lists the order (2026-10-20: the report proves the link). */
   venue_differs: string | null;
+  /** The order's own venue and brand, for the transfer pick. */
+  venue: string | null;
+  branding: string | null;
+  /** Another fair's evening report lists this order (owner 2026-10-20) — the
+   *  booth to transfer it to. Null when no report, or this one, lists it. */
+  report_elsewhere: { project_id: number; label: string; report_date: string | null } | null;
 };
 
 export type ProjectSalesOrderTotals = {
@@ -107,19 +121,23 @@ export type ProjectSalesOrderTotals = {
   amount_sen: number;
   paid_sen: number;
   balance_sen: number;
+  /** The orders' service lines, inside amount_sen (owner 2026-10-20: the header
+   *  splits Sales from Service Revenue, as the Financial Snapshot does). */
+  service_sen: number;
 };
 
 /** The header tiles' numbers. DRAFT counts as opened — it is keyed in, which is
  *  the question the page asks — and is reported separately so the page can say
  *  so; CANCELLED never reaches here. */
 export function projectSalesOrderTotals(rows: readonly ProjectSalesOrderRow[]): ProjectSalesOrderTotals {
-  const t: ProjectSalesOrderTotals = { count: 0, draft_count: 0, amount_sen: 0, paid_sen: 0, balance_sen: 0 };
+  const t: ProjectSalesOrderTotals = { count: 0, draft_count: 0, amount_sen: 0, paid_sen: 0, balance_sen: 0, service_sen: 0 };
   for (const r of rows) {
     t.count += 1;
     if (r.status === "DRAFT") t.draft_count += 1;
     t.amount_sen += r.amount_sen;
     t.paid_sen += r.paid_sen;
     t.balance_sen += r.balance_sen;
+    t.service_sen += r.service_sen;
   }
   return t;
 }
@@ -191,11 +209,32 @@ export async function projectSalesOrdersHandler(c: Ctx): Promise<Response> {
   /* The fair's own venue, for "Venue differs". A display hint only: when PMS
      cannot be read the rows still list, with no flag rather than a wrong one. */
   const db = c.env?.DB as unknown as FairDb | undefined;
+  const companySql = activeCompanySql(c, "p.company_id");
   const booth = db
-    ? (await loadFairsByIds(db, activeCompanySql(c, "p.company_id"), [projectId]).catch(() => new Map<number, never>())).get(projectId)
+    ? (await loadFairsByIds(db, companySql, [projectId]).catch(() => new Map<number, never>())).get(projectId)
     : undefined;
-  const venueDiffers = (v: string | null): string | null =>
-    v && v.trim() && booth?.venue && !sameVenue(v, booth.venue) ? v.trim() : null;
+  /* What the evening reports say (owner 2026-10-20): this fair's report
+     listing an order proves its link — no "Venue differs" — and another fair's
+     report listing it names where to transfer it. A hint like the flag: a chat
+     that cannot be read leaves both as before. */
+  const evidence: ReportEvidence = db && headers.length > 0
+    ? await loadReportEvidence(db, companySql, { since: REPORTS_FROM }).catch(() => new Map())
+    : new Map();
+  const verdictOf = new Map(headers.map((h) => [h.doc_no, reportVerdict({ ...h, project_id: projectId }, evidence)] as const));
+  const elsewhereIds = [...verdictOf.values()].flatMap((v) => (v.kind === "elsewhere" ? [v.sighting.projectId] : []));
+  const elsewhereBooths = db && elsewhereIds.length > 0
+    ? await loadFairsByIds(db, companySql, elsewhereIds).catch(() => new Map())
+    : new Map();
+  const venueDiffers = (h: SoRow): string | null =>
+    h.venue && h.venue.trim() && booth?.venue && !sameVenue(h.venue, booth.venue) && verdictOf.get(h.doc_no)?.kind !== "confirmed"
+      ? h.venue.trim()
+      : null;
+  const reportElsewhere = (h: SoRow): ProjectSalesOrderRow["report_elsewhere"] => {
+    const v = verdictOf.get(h.doc_no);
+    if (v?.kind !== "elsewhere") return null;
+    const id = v.sighting.projectId;
+    return { project_id: id, label: boothText(id, elsewhereBooths.get(id)), report_date: v.sighting.reportDate };
+  };
 
   const rows: ProjectSalesOrderRow[] = headers.map((h) => {
     const led = ledger.get(h.doc_no);
@@ -211,16 +250,21 @@ export async function projectSalesOrdersHandler(c: Ctx): Promise<Response> {
       salesperson_name: h.salesperson_id ? staffNames.get(h.salesperson_id) ?? null : null,
       status: h.status ?? "",
       amount_sen: amountSen,
+      service_sen: Number(h.service_sen ?? 0),
       paid_sen: paidSen,
       balance_sen: signedBalanceSen(amountSen, paidSen),
       fair_match: h.fair_match,
       linked_ac_docno: h.linked_ac_docno,
       created_at: h.created_at,
-      venue_differs: venueDiffers(h.venue),
+      venue_differs: venueDiffers(h),
+      venue: h.venue,
+      branding: h.branding,
+      report_elsewhere: reportElsewhere(h),
     };
   });
 
-  return c.json({ data: rows, totals: projectSalesOrderTotals(rows), scoped: scopeIds !== null });
+  /* Who may move an order from here: Finance or PMS, as on Fair Links. */
+  return c.json({ data: rows, totals: projectSalesOrderTotals(rows), scoped: scopeIds !== null, can_transfer: canReassignFair(c) });
 }
 
 export const projectSalesOrders = new Hono<{ Bindings: Env; Variables: Variables }>();

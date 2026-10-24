@@ -1,6 +1,11 @@
 {
   "reviewed": [
     {
+      "check": "D1",
+      "key": "EDIT,FULL,NONE,VIEW|backend/src/services/pageAccess.ts frontend/src/lib/roleMatrixModel.ts",
+      "why": "THE 4-LEVEL PAGE-ACCESS VOCABULARY (none/view/edit/full). Two homes by necessity: POSITION_ACCESS_LEVELS (pageAccess.ts) is the server's writable set that isValidPositionLevel validates every role_page_access write against (PATCH /api/roles/:id/page-access); MATRIX_LEVELS (roleMatrixModel.ts) is the RBAC-matrix UI's dropdown order + 无/看/改/批 labels in the browser. The two packages share no build graph, the set is closed to the code, and a divergence costs a dropdown option, never a wrong grant — the server is the referee. Recorded rather than collapsed because the frontend cannot import backend/src and the matrix needs the ordered list for its control."
+    },
+    {
       "check": "D2",
       "key": "APPROVED,REJECTED,REQUESTED ~ APPROVED,REJECTED,REQUESTED,WITHDRAWN",
       "why": "TWO DIFFERENT ENUMS that share three words: scm.so_payment_backdate_requests.status (mig 20260930T1500) has WITHDRAWN as its own fourth terminal state, and BackdateRequestQuickView STATUS_TONE draws each of the four in its own tone; the amendment bucket (status-pill.ts BUCKET_ENTRY / PO_AMENDMENT / AMENDMENT_BUCKET_ORDER) folds a withdrawal INTO Rejected on purpose, so it has three. Not one rule with two homes. Divergence costs a pill colour, never money or stock."
@@ -66,9 +71,9 @@
       "why": "ONE vocabulary, one definition and one PRESENTATION of it — classifyJournal (journal-class.ts) is the rule; JOURNALS (JournalEntries.tsx, once JOURNAL_CHIPS in Accounting.tsx) is the chip strip's render order over labels the SERVER already stamped on each row (journal_class). The frontend cannot import backend/src/acc (the shared package here is a pair of vendored copies, not a workspace import), and a chip the backend stopped emitting filters to an empty list — a blank chip, not a wrong number."
     },
     {
-      "check": "D1",
-      "key": "BEDFRAME,FABRIC_ACCESSORY,SOFA|backend/src/scm/lib/so-stock-allocation.ts frontend/src/vendor/scm/lib/variant-editor-groups.ts",
-      "why": "TWO QUESTIONS that today have the same answer: HARD_BOUND_GROUPS decides which sales lines MRP binds per order (backend allocation); VARIANT_EDITOR_GROUPS decides which purchase-form lines show the fabric/seat/leg pickers (frontend). The Sofa Accessory category (2026-09-14) joined both because a custom pillow is both made per order and picks a fabric, but a group could be one without the other (a mattress with a size editor need not bind). Each is already one home for its own question; the four PO/PC form copies were collapsed into VARIANT_EDITOR_GROUPS."
+      "check": "D2",
+      "key": "BEDFRAME,DINING,FABRIC_ACCESSORY,SOFA ~ BEDFRAME,FABRIC_ACCESSORY,SOFA",
+      "why": "TWO QUESTIONS, differing by DINING on purpose: HARD_BOUND_GROUPS (so-stock-allocation.ts) decides which sales lines MRP binds per order (backend allocation); VARIANT_EDITOR_GROUPS (variant-editor-groups.ts) decides which purchase-form lines show the fabric/seat/leg pickers (frontend). Dining joined the binding (HC-0150, 2026-10-23: one in one out, the model is free text) but has no fabric/seat/leg to pick. The Sofa Accessory category joined both because a custom pillow is both made per order and picks a fabric. Each is one home for its own question."
     },
     {
       "check": "D1",
@@ -147,8 +152,8 @@
     },
     {
       "check": "D1",
-      "key": "1 DAY REMINDER SENT (DRIVER),3 DAYS REMINDER SENT (TIME),7 DAYS BALANCE REMINDER SENT,DONE BALANCE COLLECTION,DONE DELIVERY TIME,DONE DRIVER INFORMATION,DONE POSTPONE REASON,DONE REMIND,DONE SCHEDULING,INVALID DATA,NOT SENT (A),NOT SENT (D),PENDING CUSTOMER REPLY (D),PENDING RESCHEDULE (A),PENDING RESCHEDULE (D),TO REMIND CUSTOMER REPLY (1),TO REMIND CUSTOMER REPLY (2),TO REMIND CUSTOMER REPLY (3),TO SEND COLLECT BALANCE,TO SEND DELIVERY DATE,TO SEND DELIVERY TIME,TO SEND DRIVER INFO,TO SEND POSTPONE REASON|backend/src/scm/routes/delivery-planning-fields.ts frontend/src/vendor/scm/lib/delivery-planning-queries.ts",
-      "why": "THE DELIVERY MESSAGE-STATUS VALUES (owner 2026-09-22) — the 23-step customer-communication workflow shown and edited in the 'Delivery Message Status' column. HC_MESSAGE_STATUS_VALUES (delivery-planning-fields.ts) is the server whitelist the /fields route validates against; MESSAGE_STATUSES (delivery-planning-queries.ts) is the frontend dropdown's option list. Same shape as HC_SUBSTATUS_VALUES above: front and back share no build graph, the set is closed to the code, and a drift costs a refused edit (400 invalid_message_status), never a wrong number. The backend list is pinned by delivery-planning.fields.test.ts."
+      "key": "CUSTOMER CONFIRM SHIPMENT,DONE AMEND,DONE BALANCE COLLECTION,DONE DELIVERED,DONE DRIVER INFORMATION,DONE POSTAGE,DONE POSTPONE REASON,DONE REMIND (1),DONE REMIND (2),DONE REMIND (3),DONE SCHEDULING,DONE SEND,DONE SHIPOUT,INVALID DATA,NOT SENT (A),NOT SENT (D),PENDING CUSTOMER REPLY (D),PENDING DELIVERY (EM),PENDING RESCHEDULE (A),PENDING RESCHEDULE (D),TO REMIND CUSTOMER REPLY (1),TO REMIND CUSTOMER REPLY (2),TO REMIND CUSTOMER REPLY (3),TO SEND COLLECT BALANCE,TO SEND DELIVERY DATE,TO SEND DRIVER INFO,TO SEND POSTAGE,TO SEND POSTPONE REASON|backend/src/scm/routes/delivery-planning-fields.ts frontend/src/vendor/scm/lib/delivery-planning-queries.ts",
+      "why": "THE DELIVERY MESSAGE-STATUS VALUES (owner 2026-10-21, extended 2026-10-22) — the customer-communication workflow shown and edited in the 'Delivery Message Status' column. HC_MESSAGE_STATUS_VALUES (delivery-planning-fields.ts) is the server whitelist the /fields route validates against; MESSAGE_STATUSES (delivery-planning-queries.ts) is the frontend dropdown's option list. Front and back share no build graph, the set is closed to the code, and a drift costs a refused edit (400 invalid_message_status), never a wrong number; the backend list is pinned by delivery-planning.fields.test.ts. Every outbound send lands on a Done X; the inbound chat tap (chat-request-patch.ts) sets Done Scheduling / Pending Reschedule (D), so those inbound values stay in the set. Extended with the East Malaysia / Singapore shipping and (A)-round statuses the HC Delivery sheet uses (Done Shipout, Pending Delivery (EM), Customer Confirm Shipment, Pending Reschedule (A), Pending Customer Reply (D)) so the sheet backfill's statuses are first-class."
     },
     {
       "check": "D1",
@@ -632,7 +637,7 @@
     },
     {
       "check": "D2",
-      "key": "ACTION_REMARK,ADDR1,ADDR2,ADDR3,ADDR4,ASSIGNED_TO,ASSIGNED_TO_2,COMPLAINT_ISSUE,COMPLETION_DATE,COST_NOTES,CUSTOMER_AMOUNT,CUSTOMER_EMAIL,CUSTOMER_NAME,CUSTOMER_PICKUP_AT,DEADLINE_AT,DELIVERY_BY,DELIVERY_ORDER,DOC_NO,DO_DATE,EMAIL_FOR_SURVEY,GOODS_RETURNED_NOTE,INSPECTION_BY,INSPECTION_RESULT,INSPECTION_VISIT_AT,ISSUE_CATEGORY,ITEMS_READY_AT,ITEM_CODE,LOCATION,NCR_CATEGORY,PHONE,PICKUP_BY,PO_AMOUNT,PO_NO,PRIORITY,QC_ISSUE_RESULT,QC_RECEIPT_DATE,QUALITY_REVIEW_PASSED,REF_NO,RESOLUTION_METHOD,SALES_AGENT,SATISFACTION_NOTES,SATISFACTION_RATING,SERVICE_CATEGORY,SLA_HOURS,SUB_STATUS,SUPPLIER_INVOICE_REF,SUPPLIER_PICKUP_AT,SUPPLIER_SERVICE_NOTE,VERIFICATION_OUTCOME,VERIFIED_ROOT_CAUSE,VOID_REASON ~ ACTION_REMARK,ADDR1,ADDR2,ADDR3,ADDR4,COMPLAINT_ISSUE,COMPLETION_DATE,COST_NOTES,CUSTOMER_AMOUNT,CUSTOMER_EMAIL,CUSTOMER_NAME,CUSTOMER_PICKUP_AT,DEADLINE_AT,DELIVERY_BY,DELIVERY_ORDER,DOC_NO,DO_DATE,EMAIL_FOR_SURVEY,GOODS_RETURNED_NOTE,INSPECTION_BY,INSPECTION_RESULT,INSPECTION_VISIT_AT,ISSUE_CATEGORY,ITEMS_READY_AT,ITEM_CODE,LOCATION,NCR_CATEGORY,PHONE,PICKUP_BY,PO_AMOUNT,PO_NO,PRIORITY,QC_ISSUE_RESULT,QC_RECEIPT_DATE,QUALITY_REVIEW_PASSED,REF_NO,RESOLUTION_METHOD,SALES_AGENT,SATISFACTION_NOTES,SATISFACTION_RATING,SERVICE_CATEGORY,SLA_HOURS,SUPPLIER_INVOICE_REF,SUPPLIER_PICKUP_AT,SUPPLIER_SERVICE_NOTE,VERIFICATION_OUTCOME,VERIFIED_ROOT_CAUSE",
+      "key": "ACTION_REMARK,ACTUAL_PICKUP_AT,ADDR1,ADDR2,ADDR3,ADDR4,ASSIGNED_TO,ASSIGNED_TO_2,COMPLAINT_ISSUE,COMPLETION_DATE,COST_NOTES,CUSTOMER_AMOUNT,CUSTOMER_EMAIL,CUSTOMER_NAME,CUSTOMER_PICKUP_AT,DEADLINE_AT,DELIVERY_BY,DELIVERY_ORDER,DOC_NO,DO_DATE,EMAIL_FOR_SURVEY,GOODS_RETURNED_NOTE,INSPECTION_BY,INSPECTION_RESULT,INSPECTION_VISIT_AT,ISSUE_CATEGORY,ITEMS_READY_AT,ITEM_CODE,ITEM_LOCATION,LOCATION,NCR_CATEGORY,PHONE,PICKUP_BY,PICKUP_PIC,PICKUP_STATUS,PO_AMOUNT,PO_NO,PRIORITY,QC_ISSUE_RESULT,QC_RECEIPT_DATE,QUALITY_REVIEW_PASSED,REF_NO,RESOLUTION_METHOD,SALES_AGENT,SATISFACTION_NOTES,SATISFACTION_RATING,SERVICE_CATEGORY,SLA_HOURS,SUB_STATUS,SUPPLIER_INVOICE_REF,SUPPLIER_PICKUP_AT,SUPPLIER_SERVICE_NOTE,VERIFICATION_OUTCOME,VERIFIED_ROOT_CAUSE,VOID_REASON ~ ACTION_REMARK,ACTUAL_PICKUP_AT,ADDR1,ADDR2,ADDR3,ADDR4,COMPLAINT_ISSUE,COMPLETION_DATE,COST_NOTES,CUSTOMER_AMOUNT,CUSTOMER_EMAIL,CUSTOMER_NAME,CUSTOMER_PICKUP_AT,DEADLINE_AT,DELIVERY_BY,DELIVERY_ORDER,DOC_NO,DO_DATE,EMAIL_FOR_SURVEY,GOODS_RETURNED_NOTE,INSPECTION_BY,INSPECTION_RESULT,INSPECTION_VISIT_AT,ISSUE_CATEGORY,ITEMS_READY_AT,ITEM_CODE,ITEM_LOCATION,LOCATION,NCR_CATEGORY,PHONE,PICKUP_BY,PICKUP_PIC,PICKUP_STATUS,PO_AMOUNT,PO_NO,PRIORITY,QC_ISSUE_RESULT,QC_RECEIPT_DATE,QUALITY_REVIEW_PASSED,REF_NO,RESOLUTION_METHOD,SALES_AGENT,SATISFACTION_NOTES,SATISFACTION_RATING,SERVICE_CATEGORY,SLA_HOURS,SUPPLIER_INVOICE_REF,SUPPLIER_PICKUP_AT,SUPPLIER_SERVICE_NOTE,VERIFICATION_OUTCOME,VERIFIED_ROOT_CAUSE",
       "why": "THE ASSR PATCHABLE FIELDS VERSUS THE ASSR FIELD LABELS, in one file. Four fields are patchable without ever being shown as a labelled diff (assignments, sub-status, void reason). Same file, two lists, deliberate."
     },
     {
@@ -717,8 +722,8 @@
     },
     {
       "check": "D2",
-      "key": "AGING,BREACH_NOW,BREACH_PERIOD,CLOSED_PERIOD,CUSTOMER_CASES,ITEM_CASES,OPENING_COUNT,OPEN_NOW,OVER_1_MONTH,OVER_2_WEEKS,OVER_3_WEEKS,PENDING_REVIEW,QA_PASSED,TOTAL_PERIOD ~ AGING,BREACH_NOW,BREACH_PERIOD,CLOSED_PERIOD,OPENING_COUNT,OPEN_NOW,OVER_1_MONTH,OVER_2_WEEKS,OVER_3_WEEKS,PENDING_REVIEW,QA_PASSED,TOTAL_PERIOD",
-      "why": "THE SERVICE DRILL METRICS VERSUS THEIR LABELS, differing by two metrics the UI does not offer as a drill-down. Deliberate."
+      "key": "AGING,BREACH_NOW,BREACH_PERIOD,CATEGORY_CASES,CLOSED_PERIOD,CUSTOMER_CASES,ITEM_CASES,OPENING_COUNT,OPEN_NOW,OVER_1_MONTH,OVER_2_WEEKS,OVER_3_WEEKS,PENDING_REVIEW,QA_PASSED,RESOLUTION_CASES,TOTAL_PERIOD ~ AGING,BREACH_NOW,BREACH_PERIOD,CLOSED_PERIOD,OPENING_COUNT,OPEN_NOW,OVER_1_MONTH,OVER_2_WEEKS,OVER_3_WEEKS,PENDING_REVIEW,QA_PASSED,TOTAL_PERIOD",
+      "why": "THE SERVICE DRILL METRICS VERSUS THEIR LABELS, differing by the metrics whose panel titles itself (customer, item, and since 2026-10-20 the category / resolution slice of the Quality donuts) rather than take a fixed label. Deliberate."
     },
     {
       "check": "D2",
@@ -1432,12 +1437,12 @@
     },
     {
       "check": "D1",
-      "key": "ADDRESS,AMENDED_DELIVERY_DATE,AMEND_DATE_FROM_CUSTOMER,AMEND_REASON,AMEND_REASON_FROM_CUSTOMER,ARRIVAL_AT,ARRIVES_EM_WAREHOUSE_DATE,BALANCE_SEN,BRANDING,BS_DELIVERY_DATE,BS_REMARKS,COMPANY_CODE,CONSIGNMENT_NO,CTN,CUSTOMER_DELIVERY_DATE,DEBTOR_NAME,DELIVERY_MESSAGE_STATUS,DELIVERY_SUBSTATUS,DEPARTURE_AT,DISPOSAL_REQUEST,DO,DO_DATE,DP_REMARK,DRIVER,DRIVER_2,DRIVER_CONTACT,DRIVER_IC,EM_DELIVERY_STATUS,ESB_REMARKS,ETA_ARRIVING_PORT,ETD_PORT_KLANG,HELPER_1,HELPER_2,HOUSE_TYPE,LORRY,PHONE,POSTCODE,PO_NOS,PROCESSING_DATE,REGION,REPLACEMENT_DISPOSAL,ROW_TYPE,SALESPERSON,SHIPOUT_DATE,SO_DATE,SO_DOC_NO,SO_REF,STOCK_REMARK,TIME_CONFIRMED,TIME_RANGE,TOTAL_AMOUNT,TRIP_NO,VENUE,VESSEL_VOYAGE,WAREHOUSE,WA_MESSAGE|frontend/src/vendor/scm/components/DeliveryPlanningBoard.tsx frontend/src/vendor/scm/lib/deliveryPlanningLayouts.ts",
+      "key": "ADDRESS,AMENDED_DELIVERY_DATE,AMEND_DATE_FROM_CUSTOMER,AMEND_REASON,AMEND_REASON_FROM_CUSTOMER,ARRIVAL_AT,ARRIVES_EM_WAREHOUSE_DATE,BALANCE_SEN,BRANDING,BS_DELIVERY_DATE,BS_REMARKS,COMPANY_CODE,CONSIGNMENT_NO,CTN,CUSTOMER_DELIVERY_DATE,DEBTOR_NAME,DELIVERED_AT,DELIVERY_MESSAGE_STATUS,DELIVERY_SUBSTATUS,DEPARTURE_AT,DISPOSAL_REQUEST,DO,DO_DATE,DP_REMARK,DRIVER,DRIVER_2,DRIVER_CONTACT,DRIVER_IC,EM_DELIVERY_STATUS,ESB_REMARKS,ETA_ARRIVING_PORT,ETD_PORT_KLANG,HELPER_1,HELPER_2,HOUSE_TYPE,LORRY,PHONE,POD,POSTCODE,PO_NOS,PROCESSING_DATE,REGION,REPLACEMENT_DISPOSAL,ROW_TYPE,SALESPERSON,SHIPOUT_DATE,SO_DATE,SO_DOC_NO,SO_REF,STOCK_REMARK,TIME_CONFIRMED,TIME_RANGE,TOTAL_AMOUNT,TRIP_NO,VENUE,VESSEL_VOYAGE,WAREHOUSE,WA_MESSAGE|frontend/src/vendor/scm/components/DeliveryPlanningBoard.tsx frontend/src/vendor/scm/lib/deliveryPlanningLayouts.ts",
       "why": "DP_DEFAULT_ORDER (the board's pristine column order) and the layout presets (BASE_ORDER + EM_ORDER in deliveryPlanningLayouts.ts) list the SAME Delivery Planning column set in different orders on purpose; deliveryPlanningLayouts.test.ts asserts the presets cover exactly the board's columns, so the two cannot drift."
     },
     {
       "check": "D2",
-      "key": "ARRIVAL_AT,ARRIVES_EM_WAREHOUSE_DATE,BS_DELIVERY_DATE,BS_REMARKS,COMPANY_CODE,CONSIGNMENT_NO,CTN,DEPARTURE_AT,DO_DATE,DRIVER,DRIVER_2,DRIVER_CONTACT,DRIVER_IC,EM_DELIVERY_STATUS,ESB_REMARKS,ETA_ARRIVING_PORT,ETD_PORT_KLANG,HELPER_1,HELPER_2,LORRY,SHIPOUT_DATE,TIME_CONFIRMED,TIME_RANGE,TRIP_NO,VENUE,VESSEL_VOYAGE,WAREHOUSE ~ ARRIVAL_AT,ARRIVES_EM_WAREHOUSE_DATE,BS_DELIVERY_DATE,BS_REMARKS,COMPANY_CODE,CONSIGNMENT_NO,CTN,DEPARTURE_AT,DO_DATE,DRIVER,DRIVER_2,DRIVER_CONTACT,DRIVER_IC,EM_DELIVERY_STATUS,ESB_REMARKS,ETA_ARRIVING_PORT,ETD_PORT_KLANG,HELPER_1,HELPER_2,LORRY,TIME_CONFIRMED,TIME_RANGE,TRIP_NO,VENUE,VESSEL_VOYAGE,WAREHOUSE",
+      "key": "ARRIVAL_AT,ARRIVES_EM_WAREHOUSE_DATE,BS_DELIVERY_DATE,BS_REMARKS,COMPANY_CODE,CONSIGNMENT_NO,CTN,DELIVERED_AT,DEPARTURE_AT,DO_DATE,DRIVER,DRIVER_2,DRIVER_CONTACT,DRIVER_IC,EM_DELIVERY_STATUS,ESB_REMARKS,ETA_ARRIVING_PORT,ETD_PORT_KLANG,HELPER_1,HELPER_2,LORRY,SHIPOUT_DATE,TIME_CONFIRMED,TIME_RANGE,TRIP_NO,VENUE,VESSEL_VOYAGE,WAREHOUSE ~ ARRIVAL_AT,ARRIVES_EM_WAREHOUSE_DATE,BS_DELIVERY_DATE,BS_REMARKS,COMPANY_CODE,CONSIGNMENT_NO,CTN,DELIVERED_AT,DEPARTURE_AT,DO_DATE,DRIVER,DRIVER_2,DRIVER_CONTACT,DRIVER_IC,EM_DELIVERY_STATUS,ESB_REMARKS,ETA_ARRIVING_PORT,ETD_PORT_KLANG,HELPER_1,HELPER_2,LORRY,TIME_CONFIRMED,TIME_RANGE,TRIP_NO,VENUE,VESSEL_VOYAGE,WAREHOUSE",
       "why": "The Delivery Date and SG Order presets hide almost the same columns, differing only by SHIPOUT_DATE (SG shows the cross-border ship-out date) — both are the owner's 2026-09-24 per-layout choices in deliveryPlanningLayouts.ts, not one rule enforced at N-1 of N places."
     },
     {
@@ -1512,7 +1517,7 @@
     },
     {
       "check": "D1",
-      "key": "AMOUNT_SEN,BALANCE_SEN,COUNT,DRAFT_COUNT,PAID_SEN|backend/src/routes/project-sales-orders.ts frontend/src/pages/projects/projectSalesOrders.ts",
+      "key": "AMOUNT_SEN,BALANCE_SEN,COUNT,DRAFT_COUNT,PAID_SEN,SERVICE_SEN|backend/src/routes/project-sales-orders.ts frontend/src/pages/projects/projectSalesOrders.ts",
       "why": "ONE WIRE SHAPE seen from its two ends, not two answers to one question: routes/project-sales-orders.ts builds the totals object GET /api/project-sales-orders/:projectId sends, and the page-side ZERO_TOTALS in projectSalesOrders.ts is the empty value of that same object, used only when the read came back in another shape (normalizeProjectSalesOrders). The keys are the response contract; nothing is decided twice. Cost of divergence is a 0 in the Sales header, caught by the route test on one side and the normalize test on the other."
     },
     {
@@ -1619,6 +1624,21 @@
       "check": "D1",
       "key": "AMBIGUOUS,NO_FAIR,PENDING,UNMATCHED|backend/src/scm/lib/fair-audit.ts backend/src/scm/lib/fair-pending.ts",
       "why": "ONE vocabulary (scm.mfg_sales_orders.fair_match), two different jobs: fair-pending.ts LISTED_VERDICTS is WHICH unlinked verdicts the Fair Links to Settle page lists; fair-audit.ts UNLINKED is how an order's History NAMES an unlinked state (owner 2026-10-19, every fair move named). Presentation of the same vocabulary, not a second answer to what the verdicts are. A verdict added to one and not the other costs a History row reading \"Not linked\", never a wrong list."
+    },
+    {
+      "check": "D1",
+      "key": "COMPLETED,PENDING,SCHEDULED|backend/src/scm/shared/assr-pickup-tracking.ts frontend/src/vendor/scm/lib/assr-pickup-tracking.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: PICKUP_STATUS_OPTIONS."
+    },
+    {
+      "check": "D1",
+      "key": "CUSTOMER,SUPPLIER,WAREHOUSE|backend/src/scm/shared/assr-pickup-tracking.ts frontend/src/vendor/scm/lib/assr-pickup-tracking.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: ITEM_LOCATION_OPTIONS."
+    },
+    {
+      "check": "D1",
+      "key": "CUSTOMER,LOGISTICS,MANAGEMENT,PRODUCTION,SUPPLIER|backend/src/scm/shared/assr-verification-fields.ts frontend/src/vendor/scm/lib/assr-verification-fields.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: PENDING_WITH_OPTIONS."
     }
   ]
 }

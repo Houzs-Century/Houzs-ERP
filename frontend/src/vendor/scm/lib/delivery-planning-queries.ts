@@ -12,11 +12,12 @@
 // to drop (it only used authedFetch). Everything else is copied verbatim.
 
 import { useRef } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { invalidateSoLists } from './sales-order-queries';
 import { serviceNotify } from './dialog-service';
 import { idempotentInit, newIdempotencyKey } from '../../../lib/idempotency';
+import { soExemptionExpiryOf } from '../../../lib/so-exemption-expiry';
 
 export const DELIVERY_STATES = [
   'PENDING_DELIVERY', 'PENDING_SCHEDULE', 'OVERDUE', 'DELIVERED',
@@ -30,20 +31,40 @@ export const DELIVERY_STATE_LABEL: Record<DeliveryState, string> = {
   DELIVERED: 'Delivered',
 };
 
+/* The value the board's "Sales Exemption Expiry Date" column shows. Owner
+   2026-10-22: it must hold the ORIGINAL delivery date, the SAME value the SO list
+   shows in its column of that name — so the two surfaces agree. An SO row therefore
+   uses soExemptionExpiryOf (frozen original -> AutoCount book -> current delivery
+   date), exactly the SO-list rule. A service case (ASSR) has no SO, so it shows its
+   own SERVICE date (customer_delivery_date) and leaves "Delivery Date" blank for
+   admin to propose. DP / project synthetic rows keep their book value (null). */
+export const sxeDateOf = (o: PlanningOrder): string | null => {
+  if (o.row_type === 'assr') return o.customer_delivery_date ?? null;
+  if (o.row_type === 'so') return soExemptionExpiryOf(o) ?? null;
+  return o.ac_sales_exemption_expiry ?? null;
+};
+
 /* The customer-message follow-up workflow statuses shown/edited in the "Delivery
    Status" column (owner 2026-09-22). The backend whitelists this exact set; the
    label IS the value. `(D)` = original delivery-date round, `(A)` = amended round.
    The coarse DELIVERY_STATES above (the top state tabs) is a SEPARATE, derived
    field — the tabs get their own rework later. */
 export const MESSAGE_STATUSES = [
-  'To Send Delivery Date', 'Pending Customer Reply (D)', 'Pending Reschedule (D)',
-  'Done Scheduling', 'Not Sent (D)', 'Pending Reschedule (A)', 'Not Sent (A)',
-  'Invalid Data', '3 Days Reminder Sent (Time)', '1 Day Reminder Sent (Driver)',
-  '7 Days Balance Reminder Sent', 'To Send Delivery Time', 'Done Delivery Time',
-  'To Send Driver Info', 'Done Driver Information', 'To Send Collect Balance',
-  'Done Balance Collection', 'To Send Postpone Reason', 'Done Postpone Reason',
-  'To Remind Customer Reply (1)', 'To Remind Customer Reply (2)',
-  'To Remind Customer Reply (3)', 'Done Remind',
+  'To Send Delivery Date', 'Done Send',
+  'To Send Driver Info', 'Done Driver Information',
+  'To Send Collect Balance', 'Done Balance Collection',
+  'To Send Postpone Reason', 'Done Postpone Reason',
+  'To Send Postage', 'Done Postage',
+  'Done Amend', 'Done Delivered',
+  'To Remind Customer Reply (1)', 'To Remind Customer Reply (2)', 'To Remind Customer Reply (3)',
+  'Done Remind (1)', 'Done Remind (2)', 'Done Remind (3)',
+  'Done Scheduling', 'Pending Reschedule (D)',
+  'Not Sent (D)', 'Not Sent (A)', 'Invalid Data',
+  // East Malaysia / Singapore shipping + the (A)-round reschedule and customer-reply
+  // statuses the HC Delivery sheet actually uses — added so the sheet backfill's
+  // real statuses are first-class dropdown values (owner 2026-10-22).
+  'Done Shipout', 'Pending Delivery (EM)', 'Customer Confirm Shipment',
+  'Pending Reschedule (A)', 'Pending Customer Reply (D)',
 ] as const;
 export type MessageStatus = (typeof MESSAGE_STATUSES)[number];
 
@@ -126,6 +147,11 @@ export type PlanningOrder = {
      synthetic (ASSR/DP/project) rows. Drives the board's "Sales Exemption Expiry
      Date" column (owner 2026-10-15). */
   ac_sales_exemption_expiry?: string | null;
+  /* The FROZEN original delivery date (BUG-51). With ac_sales_exemption_expiry and
+     customer_delivery_date it feeds soExemptionExpiryOf — the SAME "Sales Exemption
+     Expiry Date" value the SO list shows (owner 2026-10-22). Null off-book / on
+     synthetic (ASSR / DP / project) rows. */
+  sales_exemption_expiry?: string | null;
   /* Amendment dates (migration 0199): the customer's requested NEW date and the
      date WE confirmed (the proposed/amended delivery date). effective = amended ??
      original, what Days Left / OVERDUE actually use. */
@@ -189,6 +215,17 @@ export type PlanningOrder = {
   /* The latest DO's OWN document date (delivery_orders.do_date); null when this
      SO has no (non-DRAFT/CANCELLED) DO yet — drives the "DO Date" grid column. */
   do_date: string | null;
+  /* POD (proof of delivery) off the latest DO. has_pod is true when the driver
+     left evidence (a photo or a GPS fix) — it separates a REAL driver POD from
+     an evidence-free "mark delivered" (office advance / QR scan), which is the
+     "No POD" flag on the board. delivered_at is the real delivered instant (vs
+     the manually-typed customer_delivered_date). The signature/photo themselves
+     are viewed on the DO detail, not carried on the row. Absent on synthetic
+     (service / project / manual) rows that have no DO. */
+  has_pod?: boolean;
+  delivered_at?: string | null;
+  pod_r2_key?: string | null;
+  pod_lat?: number | null;
   /* A STATUS: 'READY' | 'PENDING' only. There is no third value — the string
      "READY (PARTIAL)" was removed on 2026-08-16 because the board grouped by
      this field and produced a header that contradicted every row under it. */
@@ -440,6 +477,46 @@ export type HcFieldsResult = {
   no_do_hint: string | null;
 };
 
+/* ── Coalesced board refresh (perf, 2026-10-23) ───────────────────────────────
+   Every inline cell edit (status / date / driver / lorry / HC field / crew) used
+   to fire an immediate full refetch of the whole board (~1.4k rows + DOs + crew +
+   trips) the moment it settled. onMutate already patches the edited row across
+   every cached board, so the visible cell is correct at once; the settle-refetch
+   only reconciled the SERVER-DERIVED fields the optimistic patch can't know
+   (delivery_state transitions, arrangement_stage, the top-tab counts, days_left).
+   Landing that large refetch after every commit was the board's main stutter,
+   worst when it arrived mid-edit. We keep the reconcile but COALESCE it: the first
+   settle arms a short timer, each further settle inside the window resets it, and a
+   single invalidation runs once the operator stops. Net: no per-edit refetch; at
+   most one refetch per burst; the board reconciles within ~BOARD_REFRESH_MS of the
+   last edit, the optimistic patch (+ onError rollback) holding the edited cells
+   correct meanwhile.
+
+   Keys are UNIONED across the hooks that share a burst (schedule / fields / crew),
+   each still naming exactly the query roots it always invalidated — so the flush
+   invalidates no root a hook did not ask for. The timer is module-level so it
+   survives the editing component unmounting (navigating away mid-edit) and the
+   reconcile still lands. Refresh ONLY the roots, never the whole cache. */
+export const BOARD_REFRESH_MS = 500;
+let boardRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let boardRefreshQc: QueryClient | null = null;
+const boardRefreshKeys = new Map<string, readonly unknown[]>();
+
+export function scheduleBoardRefresh(qc: QueryClient, keys: readonly (readonly unknown[])[]): void {
+  boardRefreshQc = qc;
+  for (const key of keys) boardRefreshKeys.set(JSON.stringify(key), key);
+  if (boardRefreshTimer) clearTimeout(boardRefreshTimer);
+  boardRefreshTimer = setTimeout(() => {
+    boardRefreshTimer = null;
+    const client = boardRefreshQc;
+    const toInvalidate = [...boardRefreshKeys.values()];
+    boardRefreshKeys.clear();
+    boardRefreshQc = null;
+    if (!client) return;
+    for (const key of toInvalidate) void client.invalidateQueries({ queryKey: key });
+  }, BOARD_REFRESH_MS);
+}
+
 /* Save the HC raw-data fields for an order. type = 'so' | 'do'; id = SO doc_no
    or DO id. Calls PATCH /delivery-planning/:type/:id/fields and invalidates the
    planning board. The result's no_do_hint tells the UI when DO-execution fields
@@ -451,7 +528,7 @@ export function useUpdateDeliveryFields() {
       authedFetch<HcFieldsResult>(`/delivery-planning/${type}/${id}/fields`, {
         method: 'PATCH', body: JSON.stringify(body),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery-planning'] }),
+    onSuccess: () => scheduleBoardRefresh(qc, [['delivery-planning']]),
   });
 }
 
@@ -905,10 +982,13 @@ export function useScheduleDelivery() {
         tone: 'error',
       });
     },
+    /* Reconcile server-derived fields (state / arrangement_stage / counts /
+       days_left) after the operator stops editing — coalesced so a burst of cell
+       commits no longer fires a full board refetch each, and none lands mid-edit.
+       The onMutate optimistic patch (+ onError rollback above) keeps the edited
+       cells correct in the gap. */
     onSettled: () => {
-      void qc.invalidateQueries({ queryKey: ['delivery-planning'] });
-      void qc.invalidateQueries({ queryKey: ['fleet-day'] });
-      void qc.invalidateQueries({ queryKey: ['scm-trips'] });
+      scheduleBoardRefresh(qc, [['delivery-planning'], ['fleet-day'], ['scm-trips']]);
     },
   });
 }
@@ -940,11 +1020,10 @@ export function useAssignDoCrew() {
         method: 'PUT', body: JSON.stringify(body),
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['delivery-planning'] });
-      qc.invalidateQueries({ queryKey: ['mfg-delivery-orders'] });
-      // The run and its other DOs follow a DO crew edit (server side).
-      void qc.invalidateQueries({ queryKey: ['fleet-day'] });
-      void qc.invalidateQueries({ queryKey: ['scm-trips'] });
+      // The run and its other DOs follow a DO crew edit (server side). Coalesced
+      // so a run of seat edits reconciles once the operator stops, not per seat;
+      // the picker's own local state shows the chosen crew immediately meanwhile.
+      scheduleBoardRefresh(qc, [['delivery-planning'], ['mfg-delivery-orders'], ['fleet-day'], ['scm-trips']]);
     },
   });
 }

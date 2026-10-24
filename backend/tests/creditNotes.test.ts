@@ -49,7 +49,7 @@ const INVOICES: Row[] = [
   { id: 'si-1', company_id: CO, invoice_number: '2990-SI-2609-001', so_doc_no: '2990-SO-2607-019', debtor_code: 'D-LARDING', debtor_name: 'Larding Chen' },
 ];
 
-function harness(perms: readonly string[] = PV_KEYS) {
+function harness(perms: readonly string[] = PV_KEYS, extra: Record<string, Row[]> = {}) {
   const sb = fakeSb({
     accounts: CHART.map((r) => ({ ...r })),
     suppliers: SUPPLIERS.map((r) => ({ ...r })),
@@ -58,6 +58,7 @@ function harness(perms: readonly string[] = PV_KEYS) {
     acc_account_roles: [],
     acc_credit_notes: [], acc_credit_note_lines: [],
     journal_entries: [], journal_entry_lines: [],
+    ...extra,
   }, {}, [], ['journal_entry_lines']);
   const app = new Hono();
   app.use('*', async (c, next) => {
@@ -226,5 +227,66 @@ describe('posting and cancelling', () => {
     expect(all.rows.find((r) => r.id === plain.id)?.sales_invoice_number).toBeNull();
     const detail = await (await app.request(`/credit-notes/${fromSi.id}`)).json() as { note: Row };
     expect(detail.note.sales_invoice_number).toBe('2990-SI-2609-001');
+  });
+});
+
+/* A note line names the event its money is for (owner 2026-10-22: 「这个rental
+   如果是有cn, 显示的是扣了cn的？」; 「我cn 本身是link 着ap invoice 的， ap invoice
+   已经link event 了」). Posted, the line's leg carries it — never the party's
+   control leg — and the event page nets it off that row. */
+describe('a note line and its event', () => {
+  const EVENTS: Row[] = [{ id: 343, name: 'Putrajaya [AKEMI] MALL MGT @ IOI CITY MALL PUTRAJAYA', company_id: CO }, { id: 2259, name: 'JOHOR [AKEMI] INHOME @ SUTERA MALL', company_id: CO }];
+  const env = {
+    DB: {
+      prepare: (q: string) => ({
+        bind: (...ids: unknown[]) => ({
+          all: async () => ({ results: /FROM projects p/.test(q) ? EVENTS.filter((e) => ids.includes(e.id)) : [] }),
+        }),
+      }),
+    },
+  };
+  const send = (app: Hono, path: string, method: string, body?: unknown) =>
+    app.request(path, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }, env);
+  const raise = async (app: Hono, body: unknown) => (await (await send(app, '/credit-notes', 'POST', body)).json() as { note: Row }).note;
+  const legs = (sb: ReturnType<typeof harness>['sb'], jeNo: string) => {
+    const je = (sb.tables.journal_entries as Row[]).find((j) => j.je_no === jeNo)!;
+    return (sb.tables.journal_entry_lines as Row[]).filter((l) => l.journal_entry_id === je.id).map((l) => [l.account_code, l.project_id ?? null]);
+  };
+  const AP = {
+    ap_invoices: [{ id: 'api-1', company_id: CO, invoice_number: '2990-API-2610-001', supplier_id: 'sup-h', total_sen: 1_600_000, paid_sen: 0, status: 'POSTED' }],
+    ap_invoice_lines: [{ id: 'apl-1', company_id: CO, invoice_id: 'api-1', line_no: 1, debit_account_code: '900-A001', amount_sen: 1_600_000, project_id: 2259 }],
+  };
+
+  test('the event a line names is on its own leg, never on the supplier\'s control leg', async () => {
+    const { app, sb } = harness(PV_KEYS);
+    const note = await raise(app, { kind: 'SCN', supplierId: 'sup-h', noteDate: '2026-10-20', lines: [{ accountCode: '900-A001', amountSen: 2_295_000, projectId: 343 }] });
+    const posted = await (await send(app, `/credit-notes/${note.id}/post`, 'POST')).json() as { jeNo: string };
+    expect(legs(sb, posted.jeNo)).toEqual([['405-0000', null], ['900-A001', 343]]);
+  });
+
+  test('a supplier note against an AP invoice takes the invoice\'s event — and so does a draft raised before lines carried one', async () => {
+    const { app, sb } = harness(PV_KEYS, AP);
+    const note = await raise(app, { kind: 'SCN', supplierId: 'sup-h', apInvoiceId: 'api-1', allocations: [], noteDate: '2026-10-20', lines: [{ accountCode: '900-A001', amountSen: 100_000 }] });
+    expect((sb.tables.acc_credit_note_lines as Row[]).find((l) => l.note_id === note.id)?.project_id).toBe(2259);
+    /* An older draft: its line stored no event. */
+    (sb.tables.acc_credit_note_lines as Row[]).filter((l) => l.note_id === note.id).forEach((l) => { l.project_id = null; });
+    const posted = await (await send(app, `/credit-notes/${note.id}/post`, 'POST')).json() as { jeNo: string };
+    expect(legs(sb, posted.jeNo)).toEqual([['405-0000', null], ['900-A001', 2259]]);
+  });
+
+  test('a supplier note that knocks an AP invoice off takes the invoice event on its line too (owner 2026-10-22)', async () => {
+    /* HC-SCN-2610-004 named no invoice; it ticked HC-API-2610-030 in Knock off. */
+    const { app, sb } = harness(PV_KEYS, AP);
+    const note = await raise(app, { kind: 'SCN', supplierId: 'sup-h', allocations: [{ kind: 'API', id: 'api-1', amountSen: 80_000 }], noteDate: '2026-10-14', lines: [{ accountCode: '612-0000', amountSen: 80_000 }] });
+    expect((sb.tables.acc_credit_note_lines as Row[]).find((l) => l.note_id === note.id)?.project_id).toBe(2259);
+  });
+
+  test('an event the company does not have is refused; a line may name none', async () => {
+    const { app } = harness(PV_KEYS);
+    const bad = await send(app, '/credit-notes', 'POST', { kind: 'SCN', supplierId: 'sup-h', noteDate: '2026-10-20', lines: [{ amountSen: 5_000, projectId: 999 }] });
+    expect(bad.status).toBe(400);
+    expect((await bad.json() as { error: string }).error).toBe('event_not_found');
+    const none = await send(app, '/credit-notes', 'POST', { kind: 'SCN', supplierId: 'sup-h', noteDate: '2026-10-20', lines: [{ amountSen: 5_000 }] });
+    expect(none.status).toBe(201);
   });
 });

@@ -7,6 +7,8 @@
 export interface OvProject {
   id: number; code: string; name: string; brand: string | null; organizer: string | null; venue: string | null;
   state: string | null; stage: string | null; startDate: string | null; endDate: string | null; eventType: string | null;
+  /** Booth area in square metres; null when not keyed. */
+  sizeSqm: number | null;
   keyed: {
     income: number; cogs: number; rental: number; commission: number; setup: number; transport: number; merchandise: number; other: number;
     /** The same lines as fine as the Financial Snapshot (owner 2026-10-19). */
@@ -54,7 +56,7 @@ export function figuresOf(p: OvProject): Figures {
     return {
       sales: e.sales, cogs, rental: e.rental, commission: e.commission, setup: e.setup, transport, merchandise: e.merchandise, other: e.others,
       otherCost, gp: e.sales - cogs, np: e.sales + e.serviceRevenue - cogs - e.rental - otherCost,
-      salesSource: e.fromOrders ? "sales_orders" : "none", cogsFromSalesOrders: e.fromOrders,
+      salesSource: e.fromOrders ? "sales_orders" : e.sales > 0 ? "keyed" : "none", cogsFromSalesOrders: e.fromOrders,
       serviceRevenue: e.serviceRevenue, cogsLines: e.cogs, transportFee: e.transportFee, transportSetup: e.transportSetup,
     };
   }

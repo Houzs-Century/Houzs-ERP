@@ -27,6 +27,7 @@ import { customerRefOf } from '../../lib/customer-ref';
 import { useCallback, useMemo } from 'react';
 import { useOpenDocInTab } from '../../lib/openDocInTab';
 import { useAuth } from '../../auth/AuthContext';
+import { isSalesStaff } from '../../auth/salesAccess';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useDocumentFlow, useCandidatePos, type FlowNode } from '../../vendor/scm/lib/flow-queries';
 import type { ChainNode, AmendmentChip, PairingKind } from '../../components/scm-v2/DocumentRelationshipMapModal';
@@ -83,6 +84,8 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
   onNodeClick: (n: ChainNode) => boolean;
   amendments: AmendmentChip[];
   onAmendmentClick: (a: AmendmentChip) => boolean;
+  returns: AmendmentChip[];
+  onReturnClick: (r: AmendmentChip) => boolean;
   /* The SO ↓ PO hop is PROVENANCE when the graph carries stored raise-links —
      muted, "bought for", never an execution binding ("soft until DO, hard
      from DO"). The SO map shows no FLOATING hop: usePoSoCoverage is keyed by
@@ -99,7 +102,7 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
   const openDoc = useOpenDocInTab();
   const { choice, openChoice, closeChoice, pickChoice } = useDocChoice();
   const showCustomerPo = useCustomerPoNotice();
-  const { can, pageAccess } = useAuth();
+  const { can, pageAccess, user } = useAuth();
 
   const docNo = salesOrder?.doc_no ?? null;
   // Downstream docs generated from this SO. Company-scoped server-side.
@@ -113,6 +116,13 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
   // purchase_invoices); the chain just never showed them.
   const poNodes = useMemo(() => flowNodesOf(flow.data, 'po'), [flow.data]);
   const piNodes = useMemo(() => flowNodesOf(flow.data, 'pi'), [flow.data]);
+  /* Delivery Returns off this SO's DOs (2990-0011). document-flow has always
+     returned them; the map dropped them, so a returned order looked like it
+     was still out with the customer. */
+  const returns: AmendmentChip[] = useMemo(
+    () => flowNodesOf(flow.data, 'dr').map((n) => ({ id: n.id, label: n.label, status: n.status })),
+    [flow.data],
+  );
 
   /* Amendments (SO revision requests) hang off this SO. document-flow returns
      them as a read-only side list; the map branches them off the Sales Order,
@@ -155,6 +165,22 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
   // /scm/purchase-invoices/:id guard on their own areas, no allowSales).
   const canOpenPo = can('scm.access') || pageAccess('scm.procurement.po') !== 'none';
   const canOpenPi = can('scm.access') || pageAccess('scm.procurement.pi') !== 'none';
+  // Mirrors App.tsx DeliveryReturnsGuard: Sales staff are refused outright.
+  const canOpenDr = !isSalesStaff(user) && (can('scm.access') || pageAccess('scm.sales.returns') !== 'none');
+  const onReturnClick = useCallback(
+    (r: AmendmentChip): boolean => {
+      if (!canOpenDr) {
+        void notify({
+          title: 'Delivery Returns are not open to you',
+          body: `Goods on this order came back on ${r.label}. Opening a return needs Delivery Returns access — ask an admin if you need it.`,
+        });
+        return false;
+      }
+      openDoc(`/scm/delivery-returns/${r.id}`);
+      return true;
+    },
+    [canOpenDr, notify, openDoc],
+  );
 
   const poRef = customerRefOf(salesOrder);
 
@@ -409,5 +435,5 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
     [poNodes],
   );
 
-  return { nodes, onNodeClick, amendments, onAmendmentClick, pairing, choice, openChoice, closeChoice, pickChoice };
+  return { nodes, onNodeClick, amendments, onAmendmentClick, returns, onReturnClick, pairing, choice, openChoice, closeChoice, pickChoice };
 }

@@ -140,7 +140,7 @@ type Screen =
      tab, which is right when POD was opened from a document card — but the
      delivery-planning board sends the driver here MID-RUN, and dumping them on
      the home tab loses the run sheet they were working through. */
-  | { t: "pod"; docNo: string; from?: "delivery-planning" }
+  | { t: "pod"; docNo: string; from?: "delivery-planning" | "delivery-planning-driver" }
   /* Fleet Maintenance Phase 2 — the driver's day-complete odometer capture.
      Mobile mounts this for /fleet-health; desktop mounts the full Fleet Health
      admin dashboard at the same URL (one product, two presentations). */
@@ -154,6 +154,10 @@ type Screen =
   | { t: "product-requests" }
   | { t: "service"; startNew?: boolean }
   | { t: "delivery-planning"; completedDoNumber?: string | null }
+  /* Driver run-sheet — the same board component as `delivery-planning`, reached
+     from the "Last Mile Delivery (Driver)" menu row. Rows are the caller's own
+     jobs (server scope); a separate screen so its own menu entry resolves here. */
+  | { t: "delivery-planning-driver"; completedDoNumber: string | null }
   | { t: "overview"; kind: "logistic" | "procurement" }
   | { t: "pms"; projectId?: number }
   | { t: "mail" }
@@ -197,6 +201,7 @@ export function destinationScreen(to: string, label: string): DestinationTarget 
   if (path === "/roles") return { t: "roles" };
   if (path === "/titles") return { t: "titles" };
   if (path === "/scm/delivery-planning") return { t: "delivery-planning" };
+  if (path === "/scm/delivery-planning-driver") return { t: "delivery-planning-driver", completedDoNumber: null };
   if (path === "/scm/logistic-overview") return { t: "overview", kind: "logistic" };
   if (path === "/scm/procurement-overview") return { t: "overview", kind: "procurement" };
   if (path === "/scm/warehouses/racks") return { t: "racks" };
@@ -416,7 +421,8 @@ export const MOBILE_MENU_GROUPS: { group: string; items: MobileMenuItem[] }[] = 
   ]},
   { group: "Logistics", items: [
     { to: "/scm/logistic-overview", label: "Logistic Overview" },
-    { to: "/scm/delivery-planning", label: "Delivery Planning" },
+    { to: "/scm/delivery-planning", label: "Last Mile Delivery" },
+    { to: "/scm/delivery-planning-driver", label: "Last Mile Delivery (Driver)", gateVia: "/scm/delivery-planning" },
     { to: "/scm/fleet", label: "Fleet", gateVia: "/scm/delivery-maintenance" },
     /* KEPT, unlike the retired DESKTOP /scm/drivers page — mobile is NOT the
        same shape and the owner's "fleet 里面也是有 driver" is not true here.
@@ -1048,16 +1054,22 @@ function MobileAppInner() {
     overlay = <MobileDoHeaderEdit id={String(screen.row.id)} onBack={backToDoc} onSaved={backToDoc} />;
   }
   else if (screen.t === "pod") {
-    const fromSheet = screen.from === "delivery-planning";
-    const leavePod = fromSheet ? () => setScreen({ t: "delivery-planning", completedDoNumber: null }) : back;
+    const fromDriver = screen.from === "delivery-planning-driver";
+    const fromSheet = fromDriver || screen.from === "delivery-planning";
+    const toSheet = (completedDoNumber: string | null) =>
+      setScreen(fromDriver
+        ? { t: "delivery-planning-driver", completedDoNumber }
+        : { t: "delivery-planning", completedDoNumber });
+    const leavePod = fromSheet ? () => toSheet(null) : back;
     // Confirmed from the run-sheet: go back to it and on to the next stop.
-    const donePod = fromSheet ? () => setScreen({ t: "delivery-planning", completedDoNumber: screen.docNo }) : back;
+    const donePod = fromSheet ? () => toSheet(screen.docNo) : back;
     overlay = <MobilePOD docNo={screen.docNo} onBack={leavePod} onDone={donePod} />;
   }
   else if (screen.t === "mileage-capture") overlay = <MobileMileageCapture onBack={back} />;
   else if (screen.t === "overview") overlay = <MobileOverview kind={screen.kind} onBack={back} />;
   else if (screen.t === "service") overlay = <MobileServiceCase onBack={back} startNew={screen.startNew} />;
   else if (screen.t === "delivery-planning") overlay = <MobileDeliveryPlanning onBack={back} completedDoNumber={screen.completedDoNumber ?? null} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} onPod={(doNumber) => setScreen({ t: "pod", docNo: doNumber, from: "delivery-planning" })} />;
+  else if (screen.t === "delivery-planning-driver") overlay = <MobileDeliveryPlanning onBack={back} completedDoNumber={screen.completedDoNumber} onOpen={(doc) => setScreen({ t: "so-detail", docNo: doc })} onPod={(doNumber) => setScreen({ t: "pod", docNo: doNumber, from: "delivery-planning-driver" })} />;
   else if (screen.t === "pms") overlay = <MobilePMS onBack={back} initialProjectId={screen.projectId} />;
   else if (screen.t === "mail") overlay = <MobileMailCenter onBack={back} />;
   else if (screen.t === "roles") overlay = can("roles.read") ? <MobileRoles onBack={back} /> : <TabLocked title="Roles" />;

@@ -1,8 +1,10 @@
 /* PMS Sales Attending — staff not on the Sales Team roster can be picked
    (owner 2026-10-19: 「不需要改部门啊，就让他们可以去 sales attending 不就好了？」).
-   Pinned here: the picker lists them under their own heading, and adding one
-   sends their LOGIN (user_id) so the server puts them on the roster; a roster
-   rep still goes by sales_rep_id. */
+   Pinned here: the picker shows reps and non-roster staff in ONE continuous
+   A→Z list (Peter 2026-10-21 — two separate A→Z sections restarted the
+   alphabet and read as un-sorted), the staff carry a "+ team" tag, and adding
+   one sends their LOGIN (user_id) so the server puts them on the roster; a
+   roster rep still goes by sales_rep_id. */
 import type { ReactNode } from "react";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
@@ -92,15 +94,26 @@ describe("Sales Attending — staff not on the Sales Team roster", () => {
     vi.mocked(api.post).mockClear();
   });
 
-  it("lists them under their own heading, beside the roster reps", async () => {
+  it("lists the Sales Team; other staff only behind \"Show other staff\", then in one A→Z list, tagged", async () => {
     renderDetail();
-    expect(await screen.findByText("Not in the Sales Team yet — adding puts them in it")).toBeTruthy();
-    expect(screen.getByText("Lim")).toBeTruthy();
-    expect(screen.getByText("Jason")).toBeTruthy();
+    // Owner 2026-10-24: the Sales Team by default, other departments on request.
+    const jason = await screen.findByText("Jason");
+    expect(screen.queryByText("Lim")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Show other staff \(1\)/ }));
+    const lim = screen.getByText("Lim");
+    expect(jason).toBeTruthy();
+    expect(lim).toBeTruthy();
+    expect(screen.queryByText("Not in the Sales Team yet — adding puts them in it")).toBeNull();
+    // Sorted A→Z by shown name: Jason before Lim.
+    expect(jason.compareDocumentPosition(lim) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The non-roster staff member carries the inline "+ team" tag.
+    const limRow = lim.closest("label") as HTMLElement;
+    expect(limRow.textContent).toContain("team");
   });
 
   it("adds a picked staff member by their login, and a rep by the roster id", async () => {
     renderDetail();
+    fireEvent.click(await screen.findByRole("button", { name: /Show other staff/ }));
     const lim = (await screen.findByText("Lim")).closest("label") as HTMLElement;
     const jason = screen.getByText("Jason").closest("label") as HTMLElement;
     fireEvent.click(lim.querySelector("input") as HTMLInputElement);

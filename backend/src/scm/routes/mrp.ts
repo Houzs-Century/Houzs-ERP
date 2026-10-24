@@ -88,8 +88,10 @@ import { loadSofaBatchStock } from '../lib/sofa-set-coverage';
 import { planSofaSets, type SofaPlan, type SofaSetLine, type SofaSetPoSupply } from '../lib/sofa-set-plan';
 import { WH_NONE, composite, loadCommittedShipments } from '../lib/committed-shipments';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
+import { MRP_DELIVERED_EMBED, compareDelivered, deliveredBySoItemFrom, readUnlinkedDoLines, type MrpDemandLine, type NettingCheck } from '../lib/mrp-delivered';
 import { pgrestInList } from '../lib/pgrest-in-list';
 import { readMfgProductBindings } from '../lib/supplier-bindings';
+import { NB_FABRIC_SERIES, NB_SUPPLIER_CODE, needsNbSupplier } from '../lib/mrp-rule-supplier';
 import { mapBounded, eager } from '../lib/concurrency';
 import type { Env, Variables } from '../env';
 import { SO_TERMINAL_STATES } from '../shared/so-terminal-states';
@@ -296,6 +298,10 @@ export type MrpLine = {
      supplier can't change). NULL for stock / shortage lines. */
   poSupplierId: string | null;
   poSupplierName: string | null;
+  /* HC-0128 — the supplier this line's content routes to (Hydraulic / NB
+     fabric -> NB FURNITURE), when that supplier is bound to the SKU; the UI
+     pre-selects it instead of the SKU's main supplier. NULL = no rule fired. */
+  ruleSupplierId: string | null;
 };
 
 export type MrpSku = {
@@ -414,6 +420,8 @@ export type UnmatchedCommitment = {
 
 export type MrpResult = {
   asOf: string;
+  /** Only with `opts.nettingCheck`: batched vs embedded delivered, per demand line. */
+  nettingCheck?: NettingCheck;
   categories: string[];
   warehouses: unknown[];
   skus: MrpSku[];
@@ -518,6 +526,8 @@ export async function computeMrp(
        is the drift this codebase keeps paying for. Making it required means a
        new caller cannot forget; pass NO_BUFFERS explicitly to opt out. */
     leadBuffers: LeadBuffers;
+    /** Diagnostic: also run the batched delivered reading and report lines that differ. */
+    nettingCheck?: boolean;
   },
 ): Promise<MrpResult> {
   const { catFilter, whFilter, includeUndated, companyId, leadBuffers } = opts;
@@ -574,6 +584,13 @@ export async function computeMrp(
   /* The category walk (section 2), the two warehouse masters (section 2) and the
      stock + PO-supply reads (sections 3 and 4). Each is byte-identical to the
      query that stood at its own site; only the moment it is ISSUED moved. */
+  /* HC-0128 — the NB-series fabric codes (NB FURNITURE routing). Keyed off
+     nothing but the company, so it rides this wave instead of adding a round
+     trip after the bindings. */
+  const nbFabricsProm = eager(Promise.resolve(scoped(sb
+    .from('fabric_trackings')
+    .select('fabric_code')
+    .eq('series', NB_FABRIC_SERIES))));
   const catRowsProm = eager(paginateAll<{ category: string | null }>((from, to) =>
     scoped(sb.from('mfg_products').select('category')).order('id').range(from, to)));
   const balancesProm = eager(paginateAll<BalanceRow>((from, to) => {
@@ -641,17 +658,22 @@ export async function computeMrp(
   // spend read budget; ORDER BY id so the page boundaries are stable across
   // requests (paginateAll's `.range()` windows are only coherent under a total
   // order); PAGED so the plan sees every open line, not the first 1000.
-  const { data: demandRaw, error: demandErr } = await paginateAll<DemandRow>((from, to) => scoped(sb
+  // Each line's DO lines ride along (lib/mrp-delivered.ts); without them, the batched reading below.
+  const readDemand = (embedDelivered: boolean) => paginateAll<DemandRow>((from, to) => scoped(sb
     .from('mfg_sales_order_items')
     .select(`
       id, doc_no, item_code, description, item_group, variants, qty, warehouse_id, line_delivery_date, line_delivery_date_overridden, line_no, created_at, cancelled, allocated_batch_no,
-      so:mfg_sales_orders!inner ( debtor_name, status, so_date, customer_delivery_date, amended_delivery_date, processing_date, customer_state, sales_location )
+      so:mfg_sales_orders!inner ( debtor_name, status, so_date, customer_delivery_date, amended_delivery_date, processing_date, customer_state, sales_location )${embedDelivered ? `, ${MRP_DELIVERED_EMBED}` : ''}
     `)
     .eq('cancelled', false)
     .not('so.status', 'in', SO_DONE_SQL)
     .not(`so.${SO_PROCESSING_DATE_COLUMN}`, 'is', null))
     .order('id')
     .range(from, to));
+  let demandRes = await readDemand(true);
+  const deliveredEmbedded = !demandRes.error;
+  if (!deliveredEmbedded) demandRes = await readDemand(false);
+  const { data: demandRaw, error: demandErr } = demandRes;
   if (demandErr) throw new Error(`mrp_load_failed: ${demandErr.message}`);
 
   /* NO PROCESSING DATE, NO DEMAND (owner 2026-09-15, BUG-39 2026-09-29).
@@ -685,60 +707,40 @@ export async function computeMrp(
   // A partially-delivered SO keeps its header status active (the header only
   // flips to DELIVERED once EVERY line is fully covered), so already-delivered
   // lines would otherwise phantom back in as demand and over-order. Subtract
-  // delivered-net-of-returns per line and drop any line with nothing left to
-  // fulfil. Single source of truth: soDeliverableRemaining (same query the DO
-  // convert flow uses), so MRP can never disagree with the SO's remaining.
-  //
-  /* BATCHED BY THE CALLER, and the caller is the reason. Paging the demand read
-     above changed this call's scale by more than an order of magnitude: MRP used
-     to hand over the ~700 doc numbers riding on a 1000-row demand slice, and now
-     hands over every open sales order — ~2,800 docs / ~13,900 lines in prod on
-     2026-08-16. soDeliverableRemaining puts its argument straight into
-     `.in('doc_no', …)` and then puts the resulting line ids into
-     `.in('so_item_id', …)`; those are uuids, so the un-batched form is a ~500KB
-     request line. That is a 414, not a query — the page would have gone from
-     wrong to broken.
-
-     Batching HERE rather than inside soDeliverableRemaining is deliberate. Every
-     other caller (the DO picker, the convert flow) passes a handful of docs and
-     is unaffected, so the scale problem belongs to MRP, not to the shared
-     function — and a chunk size of 200 docs reproduces almost exactly the ~1000
-     lines per call that this code path has been running against in production all
-     along, rather than inventing an untested shape for every consumer.
-
-     Safe to split because the function is already per-document internally: it
-     groups by doc_no and walks each SO's own build order ("the walk MUST run per
-     doc"), and it returns a Map keyed by mfg_sales_order_items.id, so merging the
-     partial maps is a union of disjoint key sets. */
-  /* RUN THE BATCHES CONCURRENTLY, BOUNDED (2026-08-17). This loop is the single
-     largest cost in the engine: ~2,800 open docs / 200 = ~14 batches, each of
-     which is itself ~5 sequential reads, so ~70 of the engine's ~105 round trips
-     were spent here one at a time. Nothing about them is sequential — the very
-     paragraph above establishes it, because "merging the partial maps is a union
-     of disjoint key sets" is exactly the property that makes batch order
-     irrelevant. `mapBounded` preserves INPUT order anyway, so the merge below
-     writes the same keys in the same sequence a `for` loop did; a key can only
-     be written once either way.
-
-     BOUNDED, not Promise.all: Hyperdrive pools a finite number of connections
-     and an unbounded fan-out over every batch would trade latency for pool
-     exhaustion. The bound is stated once, here, rather than defaulted inside the
-     helper — see concurrency.ts on why it is a required argument. */
+  // delivered per line and drop any line with nothing left to fulfil.
+  /* Delivered from the DO lines embedded in the demand read (lib/mrp-delivered.ts,
+     HC-0002): the number soDeliverableRemaining gives, without re-reading every
+     open order in 200-doc batches (~70 of the engine's ~90 round trips). The
+     batched reading stays as the fallback and as `nettingCheck`'s yardstick —
+     200 docs per call keeps each `.in()` request line under the gateway limit
+     (~2,800 open orders would be a ~500KB URL), and the batches run BOUNDED
+     because Hyperdrive pools a finite number of connections. */
   const demandDocNos = [...new Set(demandActive.map((d) => d.doc_no).filter(Boolean))];
-  const docBatches: string[][] = [];
-  for (let i = 0; i < demandDocNos.length; i += 200) docBatches.push(demandDocNos.slice(i, i + 200));
-  const deliverable: Awaited<ReturnType<typeof soDeliverableRemaining>> = new Map();
-  const parts = await mapBounded(docBatches, MRP_READ_CONCURRENCY, (batch) =>
-    soDeliverableRemaining(sb, batch));
-  for (const part of parts) {
-    for (const [soItemId, d] of part) deliverable.set(soItemId, d);
-  }
-  const deliveredNetOf = (soItemId: string): number => {
-    const d = deliverable.get(soItemId);
-    if (!d) return 0;
-    return Math.max(0, (d.delivered ?? 0) - (d.returned ?? 0));
+  const deliveredBatched = async (): Promise<Map<string, number>> => {
+    const docBatches: string[][] = [];
+    for (let i = 0; i < demandDocNos.length; i += 200) docBatches.push(demandDocNos.slice(i, i + 200));
+    const out = new Map<string, number>();
+    for (const part of await mapBounded(docBatches, MRP_READ_CONCURRENCY, (batch) => soDeliverableRemaining(sb, batch))) {
+      for (const [soItemId, d] of part) out.set(soItemId, d.delivered);
+    }
+    return out;
   };
-  const effQtyOf = (r: DemandRow): number => Math.max(0, r.qty - deliveredNetOf(r.id));
+  const demandDocSet = new Set(demandDocNos);
+  const delivered = deliveredEmbedded
+    ? deliveredBySoItemFrom(demandRaw as unknown as MrpDemandLine[], demandDocSet, await readUnlinkedDoLines(sb, scoped, demandDocSet))
+    : await deliveredBatched();
+  /* Delivered GROSS of returns (Sim, 2026-10-20, 2990-0011): a returned unit
+     is not demand again. The rejected goods go back to stock for the next
+     matching order; a customer who still wants the item gets a new SO, and
+     that SO is what purchasing orders against. The stock allocator applies
+     the same rule. */
+  const deliveredOf = (soItemId: string): number => Math.max(0, delivered.get(soItemId) ?? 0);
+  let nettingCheck: NettingCheck | undefined;
+  if (opts.nettingCheck && deliveredEmbedded) {
+    const batched = await deliveredBatched();
+    nettingCheck = compareDelivered(demandActive, (id) => Math.max(0, batched.get(id) ?? 0), deliveredOf);
+  }
+  const effQtyOf = (r: DemandRow): number => Math.max(0, r.qty - deliveredOf(r.id));
   const demand = demandActive.filter((r) => effQtyOf(r) > 0);
 
   // Stamp variants.fabricSupplierCode on the demand lines (ONE batched read,
@@ -1131,6 +1133,20 @@ export async function computeMrp(
     }
   }
 
+  /* HC-0128 — NB-series fabrics (Fabric Converter) route to NB FURNITURE. A
+     failed read fails the plan like every other read here: an empty set would
+     silently send NB lines to the main supplier. */
+  const nbFabricCodes = new Set<string>();
+  {
+    const { data: nbFabrics, error: nbErr } = (await nbFabricsProm)();
+    if (nbErr) throw new Error(`mrp_load_failed: ${nbErr.message}`);
+    for (const f of (nbFabrics ?? []) as Array<{ fabric_code: string | null }>) {
+      if (f.fabric_code) nbFabricCodes.add(f.fabric_code.trim().toUpperCase());
+    }
+  }
+  const nbSupplierIdOf = (code: string): string | null =>
+    suppliersByCode.get(code)?.find((s) => s.code === NB_SUPPLIER_CODE)?.supplierId ?? null;
+
   // ── 6. Group demand by (warehouse + SKU + variant), apply category filter ─
   // Commander 2026-05-31 — warehouse is part of the bucket: the same SKU+variant
   // in two warehouses is two rows (no cross-WH pooling). When whFilter is set,
@@ -1151,6 +1167,24 @@ export async function computeMrp(
     if (s.includes('ACCESSOR')) return 'ACCESSORY';
     if (s.includes('SERVICE')) return 'SERVICE';
     return null;
+  };
+
+  /* HC-0128 — once one bedframe of an SO goes to NB, every bedframe of that SO
+     does too: two makers' bedframes side by side get compared by the customer
+     (Sim 2026-10-20). Decided over ALL of the SO's open lines, so a line already
+     on an NB PO still pulls its shortage siblings along. */
+  const isBedframeLine = (r: DemandRow): boolean =>
+    (prodByCode.get(r.item_code)?.category ?? catFromGroup(r.item_group)) === 'BEDFRAME';
+  const nbBedframeDocs = new Set(
+    demand
+      .filter((r) => isBedframeLine(r) && nbSupplierIdOf(r.item_code) && needsNbSupplier(r.variants, nbFabricCodes))
+      .map((r) => r.doc_no),
+  );
+  const ruleSupplierIdOf = (r: DemandRow): string | null => {
+    const nb = nbSupplierIdOf(r.item_code);
+    if (!nb) return null;
+    if (needsNbSupplier(r.variants, nbFabricCodes)) return nb;
+    return isBedframeLine(r) && nbBedframeDocs.has(r.doc_no) ? nb : null;
   };
   const demandByKey = new Map<string, Bucket>();
   for (const d of demand) {
@@ -1251,7 +1285,7 @@ export async function computeMrp(
     const lines: MrpLine[] = [];
     let qtyNeeded = 0;
     for (const r of rows) {
-      const eff = effQtyOf(r);                              // qty still to fulfil (ordered − delivered + returned)
+      const eff = effQtyOf(r);                              // qty still to fulfil (ordered − delivered)
       let need = eff;
       /* BOUND LINE (company 1, bedframe / `(SP)` mattress / custom pillow). Drawn at
          STOCK, and only at stock, and the distinction is the whole design:
@@ -1364,6 +1398,7 @@ export async function computeMrp(
         // Only covered-by-PO lines carry a read-only supplier; stock/shortage = null.
         poSupplierId: source === 'po' ? poSupplierId : null,
         poSupplierName: source === 'po' && poSupplierId ? (supplierNameById.get(poSupplierId) ?? null) : null,
+        ruleSupplierId: ruleSupplierIdOf(r),
       });
     }
 
@@ -1535,7 +1570,7 @@ export async function computeMrp(
         ? cells.map((c) => sstr(c.moduleId)).filter(Boolean)
         : [sstr(splitSofaCode(d.item_code).sizeCode)].filter(Boolean);
       const colour = [sstr(v.fabricCode), sstr(v.colorCode) || sstr(v.colourCode)].filter(Boolean).join(' ');
-      const eff = effQtyOf(d);                        // set qty still to fulfil (ordered − delivered + returned)
+      const eff = effQtyOf(d);                        // set qty still to fulfil (ordered − delivered)
       const prod = prodByCode.get(d.item_code);
       const setDelivery = deliveryOf(d);
       const plan = sofaPlanByLine.get(d.id)
@@ -1600,6 +1635,7 @@ export async function computeMrp(
 
   return {
     asOf: new Date().toISOString(),
+    ...(nettingCheck ? { nettingCheck } : {}),
     categories: [...categorySet].sort(),
     warehouses: warehouses ?? [],
     skus,
@@ -1896,7 +1932,7 @@ mrp.get('/', async (c) => {
       const snap = await readMrpSnapshot(sb, companyId);
       if (snap) return c.json({ ...snap.result, computedAt: snap.computedAt, stored: true });
     }
-    const result = await computeMrp(sb, { catFilter, whFilter, includeUndated, companyId, leadBuffers: await loadLeadBuffers(c.env.DB) });
+    const result = await computeMrp(sb, { catFilter, whFilter, includeUndated, companyId, leadBuffers: await loadLeadBuffers(c.env.DB), nettingCheck: c.req.query('nettingCheck') === '1' });
     return c.json({ ...result, computedAt: new Date().toISOString(), stored: false });
   } catch (e) {
     return c.json({ error: 'load_failed', reason: e instanceof Error ? e.message : String(e) }, 500);

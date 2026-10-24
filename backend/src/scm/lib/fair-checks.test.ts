@@ -87,7 +87,7 @@ describe('等加人 — a scan whose scanner is not on the booth', () => {
     );
     expect(res.ok && res.rows).toEqual([expect.objectContaining({
       check: 'NEEDS_ATTENDING',
-      note: 'Jason is not on Sales Attending for AKEMI @ MID VALLEY (10/15 - 10/18). The draft cannot be confirmed until PMS adds them.',
+      note: 'Jason is not on Sales Attending for AKEMI @ MID VALLEY (10/15 - 10/18). PMS adds them in the project.',
     })]);
   });
 
@@ -99,7 +99,7 @@ describe('等加人 — a scan whose scanner is not on the booth', () => {
       fakeDb([[KEYER, []], [BY_IDS, BOOTHS], [USERS, [{ id: 92, name: 'Jason' }]]]),
     );
     expect(res.ok && res.rows.map((r) => [r.doc_no, r.note])).toEqual([
-      ['HC-SO-2610-003', 'Jason is not on Sales Attending for AKEMI @ MID VALLEY (10/15 - 10/18).'],
+      ['HC-SO-2610-003', 'Jason is not on Sales Attending for AKEMI @ MID VALLEY (10/15 - 10/18). PMS adds them in the project.'],
     ]);
   });
 
@@ -109,6 +109,114 @@ describe('等加人 — a scan whose scanner is not on the booth', () => {
       fakeDb([[KEYER, (binds) => (binds.at(-1) === 57 ? [{ id: 340 }] : [])], [BY_IDS, BOOTHS]]),
     );
     expect(res).toEqual({ ok: true, rows: [] });
+  });
+});
+
+describe('the evening report outranks the slip (owner 2026-10-20)', () => {
+  const REPORTS = /FROM project_activity a/;
+  const ummu = { author_email: 'ummuaimanlm@gmail.com', author_position: 'Operation Executive' };
+  const chat = (projectId: number, note: string, start = '2026-10-15') => ({ id: projectId, project_id: projectId, note, created_at: '2026-10-18 22:00:00', start_date: start, ...ummu });
+  const IOIGECC = project({ id: 307, venue: 'IOIGECC', organizer: 'HOMELOVE', startdate: '2026-10-09', enddate: '2026-10-11' });
+  const byIds = (binds: unknown[]) => [...BOOTHS, IOIGECC].filter((b) => binds.includes(b.id));
+
+  it('a slip venue its own fair\'s report lists is right — not 要查', async () => {
+    const res = await run(
+      { mfg_sales_orders: [order({ venue: 'MVEC SOUTHKEY', customer_so_no: 'HC13420' })], scan_jobs: [] },
+      fakeDb([[REPORTS, [chat(340, '16/10\n1. HC13420 RM11776 Melvin')]], [BY_IDS, byIds], [AT_VENUE, []]]),
+    );
+    expect(res).toEqual({ ok: true, rows: [] });
+  });
+
+  it('another fair\'s report names where it belongs — linked elsewhere or to nothing — and it is listed once', async () => {
+    const res = await run(
+      {
+        mfg_sales_orders: [
+          order({ doc_no: 'HC-SO-2610-167', so_date: '2026-10-12', venue: 'IOI MALL PUTRAJAYA', customer_so_no: 'HC13316', status: 'DRAFT' }),
+          order({ doc_no: 'HC-SO-2610-166', so_date: '2026-10-12', venue: 'IOI MALL KULAI', customer_so_no: 'HC13548', project_id: null, fair_match: 'PENDING' }),
+        ],
+        scan_jobs: [{ company_id: 1, so_doc_no: 'HC-SO-2610-167', houzs_user_id: 32, created_at: '2026-10-12T01:42:00Z' }],
+      },
+      fakeDb([[REPORTS, [chat(307, '10/10\n1. HC13316 RM3388 Shawn\n2. HC13548 RM4300 Shawn', '2026-10-09')]], [KEYER, []], [BY_IDS, byIds], [AT_VENUE, []], [USERS, [{ id: 32, name: 'Shawn' }]]]),
+    );
+    const toIoigecc = {
+      projectId: 307, title: '[AKEMI] HOMELOVE', detail: 'IOIGECC · 10/09 - 10/11',
+      label: 'AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11)', reportDate: '2026-10-10',
+    };
+    expect(res.ok && res.rows.map((r) => [r.doc_no, r.check, r.target, r.note])).toEqual([
+      ['HC-SO-2610-167', 'REPORT_ELSEWHERE', toIoigecc,
+        'The evening report of AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11) lists it on 10/10; the order is under AKEMI — MID VALLEY — REX (10/15 - 10/18).'],
+      ['HC-SO-2610-166', 'REPORT_ELSEWHERE', toIoigecc,
+        'The evening report of AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11) lists it on 10/10; the order has no event.'],
+    ]);
+    /* Where each is now, on two lines too (owner 2026-10-21: one row per order),
+       and the Ref No. the report listed it by. */
+    expect(res.ok && res.rows.map((r) => [r.current, r.customer_so_no])).toEqual([
+      [{ projectId: 340, title: '[AKEMI] REX', detail: 'MID VALLEY · 10/15 - 10/18' }, 'HC13316'],
+      [null, 'HC13548'],
+    ]);
+  });
+
+  /* Owner 2026-10-23 (「report says another fair 的单我不能改？」): each row has its
+     own Fair box now, so a person may settle an order somewhere the report
+     does not say. That decision stands — read from the order's History. */
+  it('a person who moved it on Fair Links with the report in has decided — until a later report', async () => {
+    const fairMove = (doc: string, source: string, at: string, field = 'fair') => ({
+      company_id: 1, so_doc_no: doc, action: 'UPDATE_FAIR', source, created_at: at,
+      field_changes: [{ field, from: 'A', to: 'B' }],
+    });
+    const linked = (doc: string, ref: string) => order({ doc_no: doc, so_date: '2026-10-12', customer_so_no: ref });
+    const res = await run(
+      {
+        mfg_sales_orders: [
+          linked('HC-SO-2610-167', 'HC13316'),
+          linked('HC-SO-2610-168', 'HC13317'),
+          linked('HC-SO-2610-169', 'HC13318'),
+          linked('HC-SO-2610-170', 'HC13319'),
+        ],
+        mfg_so_audit_log: [
+          /* Linked by hand two days after the 10/10 report: decided. */
+          fairMove('HC-SO-2610-167', 'settle', '2026-10-12T02:00:00Z'),
+          /* Linked the day before the report came in: the report is news. */
+          fairMove('HC-SO-2610-168', 'settle', '2026-10-09T02:00:00Z'),
+          /* Linked by hand, then the system moved it again: no longer a decision. */
+          fairMove('HC-SO-2610-169', 'transfer', '2026-10-12T02:00:00Z'),
+          fairMove('HC-SO-2610-169', 'nightly', '2026-10-13T02:00:00Z'),
+          /* Put aside then brought back moves no fair: the Link still stands. */
+          fairMove('HC-SO-2610-170', 'settle', '2026-10-12T02:00:00Z'),
+          fairMove('HC-SO-2610-170', 'settle', '2026-10-13T02:00:00Z', 'Fair Links'),
+          fairMove('HC-SO-2610-170', 'settle', '2026-10-14T02:00:00Z', 'Fair Links'),
+        ],
+        scan_jobs: [],
+      },
+      fakeDb([[REPORTS, [chat(307, '10/10\n1. HC13316 RM100 A\n2. HC13317 RM100 B\n3. HC13318 RM100 C\n4. HC13319 RM100 D', '2026-10-09')]], [BY_IDS, byIds], [AT_VENUE, []]]),
+    );
+    expect(res.ok && res.rows.map((r) => [r.doc_no, r.check])).toEqual([
+      ['HC-SO-2610-169', 'REPORT_ELSEWHERE'],
+      ['HC-SO-2610-168', 'REPORT_ELSEWHERE'],
+    ]);
+  });
+
+  it('History unreadable is a failure, never "nothing to check"', async () => {
+    const res = await loadFairChecks({
+      sb: fakeSb({ mfg_sales_orders: [order({ customer_so_no: 'HC13316', so_date: '2026-10-12' })], scan_jobs: [] }, { mfg_so_audit_log: ['field_changes'] }),
+      db: fakeDb([[REPORTS, [chat(307, '10/10\n1. HC13316 RM100 A', '2026-10-09')]], [BY_IDS, byIds]]),
+      companySql: ' AND p.company_id = 1',
+      scope: (q) => (q as { eq(c: string, v: unknown): typeof q }).eq('company_id', 1),
+    });
+    expect(res).toEqual({ ok: false });
+  });
+
+  it('two fairs\' reports: listed with no target, for a person', async () => {
+    const res = await run(
+      { mfg_sales_orders: [order({ customer_so_no: 'HC20000', project_id: null, fair_match: 'PENDING' })], scan_jobs: [] },
+      fakeDb([[REPORTS, [chat(307, '10/10\n1. HC20000 RM100 A', '2026-10-09'), chat(2228, '26/9\n1. HC20000 RM100 A', '2026-09-25')]], [BY_IDS, byIds]]),
+    );
+    expect(res.ok && res.rows.map((r) => [r.check, r.target])).toEqual([['REPORT_ELSEWHERE', null]]);
+    /* Both booths are named for the person who picks. */
+    expect(res.ok && res.rows[0]!.candidates).toEqual([
+      { projectId: 307, title: '[AKEMI] HOMELOVE', detail: 'IOIGECC · 10/09 - 10/11' },
+      { projectId: 2228, title: '[DUNLOPILLO] MALL MGT', detail: 'SUNWAY CARNIVAL MALL · 09/25 - 09/29' },
+    ]);
   });
 });
 
@@ -123,6 +231,14 @@ describe('what is never listed, and a read that fails', () => {
       ],
       scan_jobs: [],
     }, fakeDb([[BY_IDS, BOOTHS], [AT_VENUE, []]]));
+    expect(res).toEqual({ ok: true, rows: [] });
+  });
+
+  it('an order a person put aside is in no group (owner 2026-10-21)', async () => {
+    const res = await run(
+      { mfg_sales_orders: [order({ doc_no: 'HC-SO-2610-066', venue: 'KLCC', branding: 'SERVICE', fair_put_aside_at: '2026-10-21T09:00:00Z' })], scan_jobs: [] },
+      fakeDb([[BY_IDS, BOOTHS], [AT_VENUE, []]]),
+    );
     expect(res).toEqual({ ok: true, rows: [] });
   });
 

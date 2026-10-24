@@ -31,25 +31,83 @@
  *                              placed. Re-link it to the fair at its venue here.
  *   WAITING FOR SALES ATTENDING 等加人: the person who scanned it is not on that
  *                              booth's Sales Attending. PMS adds them in the
- *                              project; a draft cannot be confirmed until then.
+ *                              project (it no longer stops Confirm, 2026-10-22).
  *
- * There is no bulk "link them all" action, deliberately: every button here
- * writes an attribution into exhibition P&L and somebody's commission, and a
- * bulk action over rows nobody read is how a wrong one gets in.
+ * ONE TABLE SHAPE FOR EVERY GROUP (owner 2026-10-20: 「很乱不整齐，然我要 link
+ * fair 时无法知道 brand」): SO No. | SO date | Venue | Brand | Amount | Fair |
+ * Link, fixed columns so the groups line up under each other. Each choice is ONE
+ * BOOTH and says whose — BRAND — VENUE — ORGANIZER (dates), the venue kept
+ * (「地点照样要显示」) — with the order's own brand first. The order's-brand
+ * booth nearest its date is filled in (「可以」), and nothing is linked until a
+ * person presses Link. The SO number opens the order in its own tab (「这里可以
+ * 直接点开 so 看那张 so」).
+ *
+ * REPORT SAYS ANOTHER FAIR (owner 2026-10-20) sits first: another fair's
+ * evening sales report lists the order — linked elsewhere or to nothing — so
+ * the report names where it belongs. Only there may orders move in bulk
+ * (ticked, or all at one click: 「也要支持一键按钮转」): the floor's own report
+ * is the evidence. Everywhere else a person picks per order, deliberately —
+ * every button here writes an attribution into exhibition P&L and somebody's
+ * commission, and a bulk action over rows nobody read is how a wrong one gets
+ * in. A transfer moves the Fair, the Venue and the Fair Day together.
+ *
+ * REF NO. AND ONE ROW PER ORDER (owner 2026-10-21: 「我这里也需要这个reference，
+ * 然后这个表很乱」). Every group shows the order's Ref No. beside its SO number —
+ * the slip number the evening report lists, by the SO page's own rule
+ * (lib/customer-ref.ts). The report group is one row per order: the tick on the
+ * left, then where the order is NOW on two lines — "[AKEMI] HOMELOVE" over
+ * "IOIGECC · 10/09 - 10/11" — and where the REPORT puts it, in place of the
+ * sentence that used to sit under each row. Every group keeps the tick
+ * column, empty where nothing is ticked, so the tables still line up.
+ *
+ * EVERY FAIR, FOR THE PEOPLE WHO SETTLE (owner 2026-10-21: 「我这里link fair 要可以
+ * 选完全部fair」). A row offers the order's own place first — the same four weeks
+ * the salesperson saw, its brand filled in — then, for Finance / PMS, every
+ * other fair: the same place on other dates, then everywhere else, nearest the
+ * order's date first, in one list that typing narrows. A slip saying PISA SPICE
+ * ARENA could not otherwise reach the fair PMS calls SETIA SPICE CONVENTION
+ * CENTRE. The order form keeps its four weeks at the order's place.
+ *
+ * SALESPERSON (owner 2026-10-22: 「这里也帮我显示sales person」). Every group
+ * shows who sold the order, after its date — the name the SO list shows, from
+ * the same roster (hooks/useStaffLookup), a dash when the order names nobody.
+ *
+ * A FAIR BOX IN THE REPORT GROUP TOO (owner 2026-10-23: 「report says another
+ * fair 的单我不能改？只能直接transfer?」). Each order there has the Fair box, Link
+ * and Put aside every group has, the booth the report names filled in and
+ * listed first, what the report says on a grey line under it. Transfer moves
+ * the ticked orders to the fair in their own box, so a box a person changed is
+ * what moves. Linked where the report does not say, the order leaves the group
+ * (scm/lib/fair-checks.ts); Put aside leaves it where it is. A long Ref No.
+ * wraps inside its cell (「refer no. 跑出格子了」). The buttons sit under the box
+ * in the Fair cell, which keeps at least 300px (COLUMNS, 「为什么变这样了？」).
  */
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { ChevronDown, ChevronRight } from 'lucide-react';
+import { Button } from '@2990s/design-system';
 import { useAuth } from '../../auth/AuthContext';
 import { canCreateEvent } from '../../auth/salesAccess';
+import { useStaffLookup } from '../../hooks/useStaffLookup';
+import { customerRefOf } from '../../lib/customer-ref';
+import { cn } from '../../lib/utils';
+import { markWorkspaceOpenIntent } from '../../lib/workspaceTabs';
+import { fmtDateOrDash, fmtDayMonth } from '../../vendor/shared/format';
 import {
   useFairChecks,
   useFairPending,
+  useFairPutAside,
+  usePutAside,
   useAssignFair,
   useFairOptions,
-  fairLabel,
+  useAllFairOptions,
+  useFairTransfer,
+  transferSummary,
   type FairCheckRow,
   type FairPendingRow,
 } from '../../vendor/scm/lib/fair-options-queries';
+import { allBoothChoices, boothChoices } from '../../vendor/scm/lib/fair-booth-choices';
+import { SearchableSelect, type SearchableSelectOption } from '../../vendor/scm/components/SearchableSelect';
 
 /** The group of an order with no verdict at all (fair_match NULL). */
 const NO_VERDICT = 'NO_VERDICT';
@@ -67,8 +125,41 @@ const GROUPS = [
 /* The LINKED orders to look at, above the unlinked ones (owner 2026-10-19). */
 const CHECK_GROUPS = [
   { key: 'VENUE_DIFFERS', title: 'To check — venue differs', hint: 'The venue on the order is not where it was placed. Re-link it to the fair at its venue, or leave it if the link is right.' },
-  { key: 'NEEDS_ATTENDING', title: 'Waiting for Sales Attending', hint: 'The person who scanned the order is not on that booth’s Sales Attending. PMS adds them in the project; a draft cannot be confirmed until then.' },
+  { key: 'NEEDS_ATTENDING', title: 'Waiting for Sales Attending', hint: 'The person who scanned the order is not on that booth’s Sales Attending. PMS adds them in the project.' },
 ] as const;
+
+const soft: CSSProperties = { color: 'var(--fg-muted)' };
+const mono: CSSProperties = { fontFamily: 'var(--font-mono)' };
+/* The second line of a booth: where and when. */
+const detailLine: CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
+
+/* A boxed table, its heading drawn as the system's lists draw theirs
+   (components/DataTable.tsx: surface-dim, bold ink, Title Case, a 2px rule
+   under it) — owner 2026-10-21: 「做成好看的table 有线条的那种」, 「header
+   颜色…可以refer 其他的table」. Every cell is ruled; the sentence under an order
+   sits in that order's box, on a grey ground, with no line between them. */
+const TABLE_BOX = 'overflow-x-auto rounded-lg border border-border bg-surface';
+const TH = 'whitespace-nowrap border-b-2 border-r border-border bg-surface-dim px-3 py-2 text-left text-[11.5px] font-semibold text-ink last:border-r-0';
+const TD = 'border-r border-t border-border px-3 py-2 align-middle text-[13px] text-ink [overflow-wrap:anywhere] last:border-r-0';
+const TD_NOWRAP = cn(TD, 'whitespace-nowrap');
+const TD_AMOUNT = cn(TD, 'whitespace-nowrap text-right tabular-nums');
+const NOTE = 'bg-surface-2 px-3 pb-2 pt-1.5 text-[12px] text-ink-muted';
+
+/* The same column widths in every group, so the tables line up: SO No. (with
+   the report group's tick), Ref No., SO date, Salesperson, Venue (Now under),
+   Brand, Amount, and the Fair cell — the box, what the report says, and the
+   buttons under it. The Fair cell takes what the others leave; it had shrunk
+   to 54px on a 1230px table once the Salesperson column came and the buttons
+   kept a column of their own (owner 2026-10-23: 「为什么变这样了？」). The buttons
+   now sit in it, and the table is never narrower than TABLE_MIN, where the
+   Fair cell still has 300px: on a smaller screen the box scrolls sideways. */
+const COLUMNS: Array<number | string | undefined> = [172, 116, 96, 112, '15%', 110, 124, undefined];
+const COLS = COLUMNS.length;
+const TABLE_MIN = 1212;
+/* The Fair cell: the box, a grey line, the buttons — one under the other. The
+   items stretch, so the box (SearchableSelect: an input in a plain div) fills
+   the cell; a lone button keeps its own width with self-start. */
+const FAIR_CELL = 'flex flex-col gap-1.5';
 
 function money(sen: number | null): string {
   if (sen == null) return '—';
@@ -78,24 +169,32 @@ function money(sen: number | null): string {
 export function FairPending() {
   const rowsQ = useFairPending(LIST_LIMIT);
   const checksQ = useFairChecks();
+  const asideQ = useFairPutAside(LIST_LIMIT);
   const assign = useAssignFair();
+  const putAside = usePutAside();
   /* Finance or PMS re-assign here (owner 2026-10-16); the API enforces the same
      (scm/lib/fair-reassign.ts), this only stops a button that would be refused. */
   const { can, user } = useAuth();
   const canReassign = can('scm.finance.accounting') || canCreateEvent(user);
-  const busy = assign.isPending || !canReassign;
+  const busy = assign.isPending || putAside.isPending || !canReassign;
+  /* Owner 2026-10-21: 「还有一些我看了是 service 要 put aside 的」. */
+  const setAside = (docNo: string, aside: boolean) => putAside.mutate({ docNo, aside });
   const rows = rowsQ.data ?? [];
   const checks = checksQ.data ?? [];
+  const reported = useMemo(() => checks.filter((r) => r.check === 'REPORT_ELSEWHERE'), [checks]);
 
+  /* An unlinked order a report names is listed once — under the report. */
   const byGroup = useMemo(() => {
+    const inReport = new Set(reported.map((r) => r.doc_no));
     const m = new Map<string, FairPendingRow[]>();
     for (const r of rows) {
+      if (inReport.has(r.doc_no)) continue;
       const k = r.fair_match ?? NO_VERDICT;
       const list = m.get(k);
       if (list) list.push(r); else m.set(k, [r]);
     }
     return m;
-  }, [rows]);
+  }, [rows, reported]);
 
   if (rowsQ.isLoading) return <div style={{ padding: 16 }}>Loading…</div>;
 
@@ -127,19 +226,19 @@ export function FairPending() {
         )}
       </div>
 
+      {reported.length > 0 && (
+        <ReportGroup rows={reported} busy={busy} reachAll={canReassign} onAssign={assign.mutate} onPutAside={setAside} />
+      )}
+
       {CHECK_GROUPS.map((g) => {
         const list = checks.filter((r) => r.check === g.key);
         if (list.length === 0) return null;
         return (
-          <section key={g.key}>
-            <h2 style={{ margin: '0 0 2px', fontSize: 15 }}>{g.title} ({list.length})</h2>
-            <p style={{ margin: '0 0 8px', opacity: 0.7, fontSize: 12 }}>{g.hint}</p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {list.map((r) => (g.key === 'VENUE_DIFFERS'
-                ? <PendingRow key={r.doc_no} row={r} note={r.note} onAssign={assign.mutate} busy={busy} />
-                : <CheckRow key={r.doc_no} row={r} />))}
-            </div>
-          </section>
+          <Group key={g.key} title={`${g.title} (${list.length})`} hint={g.hint} last={g.key === 'VENUE_DIFFERS' ? 'Fair' : 'Status'}>
+            {list.map((r) => (g.key === 'VENUE_DIFFERS'
+              ? <PendingRow key={r.doc_no} row={r} note={r.note} onAssign={assign.mutate} onPutAside={setAside} busy={busy} reachAll={canReassign} />
+              : <CheckRow key={r.doc_no} row={r} />))}
+          </Group>
         );
       })}
 
@@ -147,89 +246,449 @@ export function FairPending() {
         const list = byGroup.get(g.key) ?? [];
         if (list.length === 0) return null;
         return (
-          <section key={g.key}>
-            <h2 style={{ margin: '0 0 2px', fontSize: 15 }}>{g.title} ({list.length})</h2>
-            <p style={{ margin: '0 0 8px', opacity: 0.7, fontSize: 12 }}>{g.hint}</p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {list.map((r) => (
-                <PendingRow key={r.doc_no} row={r} onAssign={assign.mutate} busy={busy} />
-              ))}
-            </div>
-          </section>
+          <Group key={g.key} title={`${g.title} (${list.length})`} hint={g.hint} last="Fair">
+            {list.map((r) => (
+              <PendingRow key={r.doc_no} row={r} onAssign={assign.mutate} onPutAside={setAside} busy={busy} reachAll={canReassign} />
+            ))}
+          </Group>
         );
       })}
+
+      <PutAsideGroup rows={asideQ.data ?? []} busy={busy} onBringBack={(docNo) => setAside(docNo, false)} />
     </div>
   );
+}
+
+/** The orders a person put aside (owner 2026-10-21), folded at the bottom: they
+ *  are out of every group above and the menu's count until brought back. */
+function PutAsideGroup({ rows, busy, onBringBack }: { rows: FairPendingRow[]; busy: boolean; onBringBack: (docNo: string) => void }) {
+  const [open, setOpen] = useState(false);
+  if (rows.length === 0) return null;
+  const Chevron = open ? ChevronDown : ChevronRight;
+  const heading = (
+    <button
+      type="button"
+      aria-expanded={open}
+      onClick={() => setOpen(!open)}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: 0, border: 0, background: 'none', font: 'inherit', cursor: 'pointer' }}
+    >
+      <Chevron size={15} aria-hidden />Put aside ({rows.length})
+    </button>
+  );
+  const hint = 'Orders put aside here: not in the groups above or the menu’s count. Bring one back to list it again.';
+  if (!open) {
+    return (
+      <section>
+        <h2 style={{ margin: '0 0 2px', fontSize: 15 }}>{heading}</h2>
+        <p style={{ margin: 0, opacity: 0.7, fontSize: 12 }}>{hint}</p>
+      </section>
+    );
+  }
+  return (
+    <Group title={heading} hint={hint} last="Put aside">
+      {rows.map((r) => (
+        <tr key={r.doc_no}>
+          <OrderCells row={r} />
+          <td className={TD}>
+            <div className={FAIR_CELL}>
+              <span>{[r.fair_put_aside_by, r.fair_put_aside_at ? fmtDateOrDash(r.fair_put_aside_at) : ''].filter(Boolean).join(' · ') || '—'}</span>
+              <Button variant="secondary" size="sm" className="self-start" disabled={busy} onClick={() => onBringBack(r.doc_no)}>Bring back</Button>
+            </div>
+          </td>
+        </tr>
+      ))}
+    </Group>
+  );
+}
+
+/** REPORT SAYS ANOTHER FAIR — each order with its own Fair box, the booth the
+ *  report names filled in (owner 2026-10-23); move the ticked orders, or all of
+ *  them at one click, to the fair in their box (owner 2026-10-20). */
+function ReportGroup({ rows, busy, reachAll, onAssign, onPutAside }: {
+  rows: FairCheckRow[];
+  /** A write is under way, or the person may not re-assign. */
+  busy: boolean;
+  /** Finance / PMS: every fair may be picked. */
+  reachAll: boolean;
+  onAssign: (v: { docNo: string; projectId: number | null }) => void;
+  onPutAside: (docNo: string, aside: boolean) => void;
+}) {
+  const transfer = useFairTransfer();
+  const [ticked, setTicked] = useState<ReadonlySet<string>>(new Set());
+  /* A box a person changed; one left alone holds the booth the report names. */
+  const [picked, setPicked] = useState<ReadonlyMap<string, string>>(new Map());
+  const [said, setSaid] = useState<string | null>(null);
+  const boxOf = (r: FairCheckRow): string => picked.get(r.doc_no) ?? (r.target ? String(r.target.projectId) : '');
+  const movable = rows.filter((r) => boxOf(r) !== '');
+  const tickedRows = movable.filter((r) => ticked.has(r.doc_no));
+  const off = transfer.isPending || busy;
+  const allTicked = movable.length > 0 && tickedRows.length === movable.length;
+  const toggle = (doc: string) => setTicked((s) => {
+    const next = new Set(s);
+    if (next.has(doc)) next.delete(doc); else next.add(doc);
+    return next;
+  });
+  const move = (list: FairCheckRow[]) => {
+    setSaid(null);
+    transfer.mutate(
+      list.map((r) => ({ docNo: r.doc_no, projectId: Number(boxOf(r)) })),
+      { onSuccess: (res) => { setSaid(transferSummary(res.results)); setTicked(new Set()); } },
+    );
+  };
+  return (
+    <Group
+      title={`Report says another fair (${rows.length})`}
+      hint="The evening sales report of another fair lists these orders. Each Fair box holds the fair the report names: change it if the report is wrong, or put the order aside to leave it where it is. Link and Transfer move the Fair, the Venue and the Fair Day, and History records it."
+      place="Now under"
+      last="Fair"
+      lead={(
+        <input
+          type="checkbox"
+          aria-label="Tick every order"
+          checked={allTicked}
+          disabled={off || movable.length === 0}
+          onChange={() => setTicked(allTicked ? new Set() : new Set(movable.map((r) => r.doc_no)))}
+        />
+      )}
+      actions={(
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', margin: '0 0 8px' }}>
+          <Button variant="secondary" size="sm" disabled={off || tickedRows.length === 0} onClick={() => move(tickedRows)}>
+            Transfer ticked ({tickedRows.length})
+          </Button>
+          <Button variant="primary" size="sm" disabled={off || movable.length === 0} onClick={() => move(movable)}>
+            Transfer all ({movable.length})
+          </Button>
+          {said && <span role="status" style={{ fontSize: 'var(--fs-12)' }}>{said}</span>}
+        </div>
+      )}
+    >
+      {rows.map((r) => (
+        <ReportRow
+          key={r.doc_no}
+          row={r}
+          value={boxOf(r)}
+          onPick={(v) => setPicked((m) => new Map(m).set(r.doc_no, v))}
+          tick={(
+            <input
+              type="checkbox"
+              aria-label={`Tick ${r.doc_no}`}
+              checked={ticked.has(r.doc_no) && boxOf(r) !== ''}
+              disabled={off || boxOf(r) === ''}
+              onChange={() => toggle(r.doc_no)}
+            />
+          )}
+          busy={busy}
+          reachAll={reachAll}
+          onAssign={onAssign}
+          onPutAside={onPutAside}
+        />
+      ))}
+    </Group>
+  );
+}
+
+/** The booths the reports name for an order — what its Fair box lists first —
+ *  with a name for each in case the box's own lists do not carry it. */
+type ReportedBooths = { ids: readonly number[]; names: ReadonlyMap<number, string> };
+
+function reportedBooths(row: FairCheckRow): ReportedBooths {
+  const t = row.target;
+  if (t) return { ids: [t.projectId], names: new Map([[t.projectId, t.label]]) };
+  const both = row.candidates ?? [];
+  return { ids: both.map((c) => c.projectId), names: new Map(both.map((c) => [c.projectId, c.detail ? `${c.title} · ${c.detail}` : c.title])) };
+}
+
+/** Where the evening report puts the order, and the day of that report, on one
+ *  line under its Fair box. Two fairs' reports: both named. */
+function reportLine(row: FairCheckRow): string {
+  const t = row.target;
+  if (t) {
+    const on = t.reportDate ? `reported ${fmtDayMonth(t.reportDate)}` : '';
+    /* An older server sends one line only. */
+    const where = t.title ? [t.title, t.detail].filter(Boolean).join(' · ') : t.label;
+    return `Report says ${[where, on].filter(Boolean).join(' · ')}`;
+  }
+  const both = (row.candidates ?? []).map((c) => (c.detail ? `${c.title} (${c.detail})` : c.title)).join(' / ');
+  return both ? `Two reports list it: ${both}` : 'Two reports list it';
+}
+
+/** One order the report puts elsewhere: where it is now, its Fair box with the
+ *  booth the report names first, Link and Put aside. */
+function ReportRow({ row, value, onPick, tick, busy, reachAll, onAssign, onPutAside }: {
+  row: FairCheckRow;
+  value: string;
+  onPick: (value: string) => void;
+  tick: ReactNode;
+  busy: boolean;
+  reachAll: boolean;
+  onAssign: (v: { docNo: string; projectId: number | null }) => void;
+  onPutAside: (docNo: string, aside: boolean) => void;
+}) {
+  const reported = useMemo(() => reportedBooths(row), [row]);
+  const { options } = useFairChoices(row, reachAll, reported);
+  /* Already under the fair in the box: nothing to link — Put aside leaves it there. */
+  const already = value !== '' && row.project_id != null && Number(value) === Number(row.project_id);
+  return (
+    <tr>
+      <OrderCells row={row} lead={tick} place={<NowUnder row={row} />} />
+      <td className={TD}>
+        <div className={FAIR_CELL}>
+          <FairBox docNo={row.doc_no} value={value} options={options} disabled={busy} onChange={onPick} />
+          <div style={detailLine}>{reportLine(row)}</div>
+          <SettleButtons
+            docNo={row.doc_no}
+            value={value}
+            busy={busy}
+            linkOff={already}
+            linkTitle={already ? 'Already under this fair. Put aside leaves it there.' : undefined}
+            onAssign={onAssign}
+            onPutAside={onPutAside}
+          />
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+/** A booth on two lines: "[AKEMI] HOMELOVE" over "IOIGECC · 10/09 - 10/11". */
+function BoothLines({ title, detail }: { title: string; detail: string }) {
+  return (
+    <>
+      <div style={{ fontWeight: 600 }}>{title}</div>
+      {detail && <div style={detailLine}>{detail}</div>}
+    </>
+  );
+}
+
+/** Where the order is now: its booth, or "Not linked" over the venue it records. */
+function NowUnder({ row }: { row: FairCheckRow }) {
+  if (row.current) return <BoothLines title={row.current.title} detail={row.current.detail} />;
+  if (row.project_id == null) {
+    return <><div style={soft}>Not linked</div>{row.venue && <div style={detailLine}>{row.venue}</div>}</>;
+  }
+  return <span style={soft}>—</span>;
+}
+
+/** One group: its title, what to do, and its orders in the shared columns. */
+function Group({ title, hint, place = 'Venue', last, lead, actions, children }: {
+  title: ReactNode;
+  hint: string;
+  /** The fifth column: the order's venue, or (report group) where it is now. */
+  place?: 'Venue' | 'Now under';
+  /** The column before the buttons. */
+  last: 'Fair' | 'Status' | 'Put aside';
+  /** The report group's tick-all box, ahead of "SO No.". */
+  lead?: ReactNode;
+  /** Buttons above the table. */
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section>
+      <h2 style={{ margin: '0 0 2px', fontSize: 15 }}>{title}</h2>
+      <p style={{ margin: '0 0 8px', opacity: 0.7, fontSize: 12 }}>{hint}</p>
+      {actions}
+      <div className={TABLE_BOX}>
+        <table style={{ width: '100%', minWidth: TABLE_MIN, tableLayout: 'fixed', borderCollapse: 'collapse' }}>
+          <colgroup>
+            {COLUMNS.map((w, i) => <col key={i} style={w == null ? undefined : { width: w }} />)}
+          </colgroup>
+          <thead>
+            <tr>
+              <th className={TH}>{lead ? <span className="inline-flex items-center gap-2">{lead}SO No.</span> : 'SO No.'}</th>
+              <th className={TH}>Ref No.</th>
+              <th className={TH}>SO date</th>
+              <th className={TH}>Salesperson</th>
+              <th className={TH}>{place}</th>
+              <th className={TH}>Brand</th>
+              <th className={cn(TH, 'text-right')}>Amount</th>
+              <th className={TH}>{last}</th>
+            </tr>
+          </thead>
+          <tbody>{children}</tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+/** The order number, opening the order in its OWN tab of the in-app strip so
+ *  this list stays one click away (owner 2026-10-20; the convention of the
+ *  project page's SO list, lib/openDocInTab.ts). Ctrl/Cmd-click still opens a
+ *  browser window. */
+function SoLink({ docNo }: { docNo: string }) {
+  return (
+    <Link
+      to={`/scm/sales-orders/${encodeURIComponent(docNo)}`}
+      onClick={(e) => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey) markWorkspaceOpenIntent(true); }}
+      style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, whiteSpace: 'nowrap' }}
+    >
+      {docNo}
+    </Link>
+  );
+}
+
+type OrderRow = Pick<FairPendingRow, 'doc_no' | 'so_date' | 'venue' | 'branding' | 'local_total_sen' | 'ref' | 'customer_so_no' | 'salesperson_id'>;
+
+/** The cells every group shares: number (the report group's tick ahead of it),
+ *  Ref No., date, salesperson, venue, brand, amount. The report group puts
+ *  where the order is now in the venue's place. */
+function OrderCells({ row, lead, place }: { row: OrderRow; lead?: ReactNode; place?: ReactNode }) {
+  const ref = customerRefOf(row);
+  const seller = useStaffLookup().nameOf(null, row.salesperson_id, '');
+  return (
+    <>
+      <td className={TD_NOWRAP}>
+        {lead ? <span className="inline-flex items-center gap-2">{lead}<SoLink docNo={row.doc_no} /></span> : <SoLink docNo={row.doc_no} />}
+      </td>
+      {/* A long Ref No. ("znt6762+HC13245") wraps inside its cell (owner 2026-10-23). */}
+      <td className={TD} style={mono}>{ref || <span style={soft}>—</span>}</td>
+      <td className={TD_NOWRAP}>{fmtDateOrDash(row.so_date)}</td>
+      <td className={TD}>{seller || <span style={soft}>—</span>}</td>
+      <td className={TD}>{place ?? (row.venue || <span style={soft}>(no place)</span>)}</td>
+      <td className={TD}>{row.branding || <span style={soft}>no brand</span>}</td>
+      <td className={TD_AMOUNT} style={mono}>{money(row.local_total_sen)}</td>
+    </>
+  );
+}
+
+/** The server's sentence under an order, inside that order's box. */
+function NoteRow({ note }: { note: string }) {
+  return <tr><td colSpan={COLS} className={NOTE}>{note}</td></tr>;
 }
 
 /** A 等加人 row: nothing to pick here — PMS adds the person in the project. */
 function CheckRow({ row }: { row: FairCheckRow }) {
   return (
-    <div style={{ border: '1px solid var(--c-border, #ddd)', borderRadius: 8, padding: 10, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
-      <Link to={`/scm/sales-orders/${encodeURIComponent(row.doc_no)}`} style={{ fontFamily: 'monospace', fontSize: 13 }}>{row.doc_no}</Link>
-      <span style={{ fontSize: 13, opacity: 0.8 }}>{row.so_date ?? '—'}</span>
-      <span style={{ fontSize: 12, opacity: 0.7 }}>{row.status === 'DRAFT' ? 'Draft' : 'Confirmed'}</span>
-      <span style={{ fontSize: 13, marginInlineStart: 'auto' }}>{money(row.local_total_sen)}</span>
-      <span style={{ flexBasis: '100%', fontSize: 12.5 }}>{row.note}</span>
-    </div>
+    <>
+      <tr>
+        <OrderCells row={row} />
+        <td className={TD}>{row.status === 'DRAFT' ? 'Draft' : 'Confirmed'}</td>
+      </tr>
+      <NoteRow note={row.note} />
+    </>
   );
 }
 
 function PendingRow(props: {
-  row: Pick<FairPendingRow, 'doc_no' | 'so_date' | 'venue' | 'branding' | 'local_total_sen'>;
+  row: OrderRow;
   /** The server's 要查 sentence, shown under the row. */
   note?: string;
   onAssign: (v: { docNo: string; projectId: number | null }) => void;
+  /** Put the order aside (owner 2026-10-21) — out of the list until brought back. */
+  onPutAside: (docNo: string, aside: boolean) => void;
   busy: boolean;
+  /** Finance / PMS: every fair may be picked, not only the order's own place. */
+  reachAll: boolean;
 }) {
-  const { row, note, onAssign, busy } = props;
-  const [pick, setPick] = useState<string>('');
+  const { row, note, onAssign, onPutAside, busy, reachAll } = props;
+  /* null = untouched, so the suggestion shows; '' = the person cleared it. */
+  const [pick, setPick] = useState<string | null>(null);
+  const { options, suggested } = useFairChoices(row, reachAll);
+  const value = pick ?? (suggested != null ? String(suggested) : '');
+
+  return (
+    <>
+      <tr>
+        <OrderCells row={row} />
+        <td className={TD}>
+          <div className={FAIR_CELL}>
+            <FairBox docNo={row.doc_no} value={value} options={options} disabled={busy} onChange={setPick} />
+            <SettleButtons docNo={row.doc_no} value={value} busy={busy} onAssign={onAssign} onPutAside={onPutAside} />
+          </div>
+        </td>
+      </tr>
+      {note && <NoteRow note={note} />}
+    </>
+  );
+}
+
+/** The fairs a row may be linked to, in the order a person reads them. */
+function useFairChoices(row: OrderRow, reachAll: boolean, reported?: ReportedBooths): {
+  options: SearchableSelectOption[];
+  suggested: number | null;
+} {
   /* The SAME options the salesperson saw, resolved for THIS order's date — not
      today's. An order from last week must be settled against the fairs that were
      running last week, or the screen offers an attribution that is wrong by
-     construction. */
+     construction. They come first, the order's own brand filled in. */
   const optionsQ = useFairOptions(row.so_date);
-  const options = [...(optionsQ.data?.running ?? []), ...(optionsQ.data?.earlier ?? [])];
-  /* Only fairs at the venue the order already records. The place is evidence
-     from the floor; this screen decides WHICH BOOTH, never where the sale
-     happened. */
-  const atVenue = options.filter(
-    (o) => o.venue.trim().toLowerCase() === (row.venue ?? '').trim().toLowerCase(),
+  const { choices, suggested } = boothChoices(
+    [...(optionsQ.data?.running ?? []), ...(optionsQ.data?.earlier ?? [])],
+    row,
   );
+  /* Then, for Finance / PMS, EVERY other fair — the same place on other dates,
+     then everywhere else, nearest the order's date first (owner 2026-10-21: 「我
+     这里link fair 要可以选完全部fair」: a slip saying PISA SPICE ARENA could not
+     reach the fair PMS calls SETIA SPICE CONVENTION CENTRE). Never filled in;
+     typing narrows the list. In the report group the booths the report names
+     sit above them all (owner 2026-10-23). */
+  const allQ = useAllFairOptions(reachAll);
+  const options = useMemo((): SearchableSelectOption[] => {
+    const all = allBoothChoices(allQ.data ?? [], row);
+    const top = reported?.ids ?? [];
+    const nameOf = (id: number) =>
+      choices.find((ch) => ch.projectId === id)?.label ?? all.find((ch) => ch.projectId === id)?.label ?? reported?.names.get(id) ?? `Fair #${id}`;
+    const here = choices.filter((ch) => !top.includes(ch.projectId));
+    const offered = new Set([...top, ...here.map((ch) => ch.projectId)]);
+    const rest = all.filter((ch) => !offered.has(ch.projectId));
+    return [
+      ...top.map((id) => ({ value: String(id), label: nameOf(id), group: 'Report says' })),
+      ...here.map((ch) => ({ value: String(ch.projectId), label: ch.label, group: 'At this place' })),
+      ...rest.filter((ch) => ch.samePlace).map((ch) => ({ value: String(ch.projectId), label: ch.label, group: 'At this place — other dates' })),
+      ...rest.filter((ch) => !ch.samePlace).map((ch) => ({ value: String(ch.projectId), label: ch.label, group: 'Other places' })),
+    ];
+  }, [choices, allQ.data, row, reported]);
+  return { options, suggested };
+}
 
+/** A row's Fair box: one list that typing narrows. */
+function FairBox({ docNo, value, options, disabled, onChange }: {
+  docNo: string;
+  value: string;
+  options: SearchableSelectOption[];
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
   return (
-    <div style={{ border: '1px solid var(--c-border, #ddd)', borderRadius: 8, padding: 10, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
-      <span style={{ fontFamily: 'monospace', fontSize: 13 }}>{row.doc_no}</span>
-      <span style={{ fontSize: 13, opacity: 0.8 }}>{row.so_date ?? '—'}</span>
-      <span style={{ fontSize: 13 }}>{row.venue || '(no place)'}</span>
-      <span style={{ fontSize: 12, opacity: 0.7 }}>{row.branding || 'no brand'}</span>
-      <span style={{ fontSize: 13, marginInlineStart: 'auto' }}>{money(row.local_total_sen)}</span>
-      <select
-        aria-label={`Fair for ${row.doc_no}`}
-        value={pick}
-        disabled={busy || atVenue.length === 0}
-        onChange={(e) => setPick(e.target.value)}
-      >
-        <option value="">
-          {atVenue.length === 0 ? 'No fair at that place on that date' : '— choose a fair —'}
-        </option>
-        {atVenue.map((o) => (
-          /* One row can cover several brand booths. Offer each project id, since
-             the point of this screen is choosing between them. */
-          o.projectIds.map((id) => (
-            <option key={`${o.key}:${id}`} value={String(id)}>{`${fairLabel(o)} #${id}`}</option>
-          ))
-        ))}
-      </select>
-      <button
-        type="button"
-        disabled={busy || !pick}
-        onClick={() => onAssign({ docNo: row.doc_no, projectId: Number(pick) })}
+    <SearchableSelect
+      ariaLabel={`Fair for ${docNo}`}
+      value={value}
+      options={options}
+      disabled={disabled || options.length === 0}
+      onChange={onChange}
+      placeholder={options.length === 0 ? 'No fair at that place on that date' : '— choose a fair — (type to search)'}
+      className="w-full rounded-md border border-border bg-surface px-2 py-1 text-[13px]"
+    />
+  );
+}
+
+/** Link the order to the fair in its box, or put it aside (owner 2026-10-21). */
+function SettleButtons({ docNo, value, busy, linkOff = false, linkTitle, onAssign, onPutAside }: {
+  docNo: string;
+  value: string;
+  busy: boolean;
+  /** Nothing to link: the order is already under the fair in its box. */
+  linkOff?: boolean;
+  linkTitle?: string;
+  onAssign: (v: { docNo: string; projectId: number | null }) => void;
+  onPutAside: (docNo: string, aside: boolean) => void;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <Button
+        variant="secondary"
+        size="sm"
+        disabled={busy || !value || linkOff}
+        title={linkTitle}
+        onClick={() => onAssign({ docNo, projectId: Number(value) })}
       >
         Link
-      </button>
-      {note && <span style={{ flexBasis: '100%', fontSize: 12.5 }}>{note}</span>}
-    </div>
+      </Button>
+      <Button variant="secondary" size="sm" disabled={busy} onClick={() => onPutAside(docNo, true)}>
+        Put aside
+      </Button>
+    </span>
   );
 }
 

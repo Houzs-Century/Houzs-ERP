@@ -111,7 +111,20 @@ export function gridSizeHeaderToKey(h: string): string | null {
  *  A passed-through heading the importer has no use for costs nothing: the row
  *  builder reads the keys it knows and ignores the rest. */
 export function mapGridHeaders(header: string[]): string[] {
-  return header.map((h) => GRID_LABEL_TO_KEY[asLabel(h)] ?? gridSizeHeaderToKey(h) ?? h);
+  return header.map((h) => {
+    const key = GRID_LABEL_TO_KEY[asLabel(h)];
+    /* A sheet with its own `name` keeps `description` as the real field it is. */
+    return (key && !header.includes(key) ? key : null) ?? gridSizeHeaderToKey(h) ?? h;
+  });
+}
+
+/** The keys a sheet's rows are read under. A sheet with a `code` column already
+ *  speaks the importer's keys (the round-trip export, which also writes a real
+ *  `description`); any other sheet is read through the label map, grid export
+ *  or hand-made (HC-0141: `Product Code,Description,category`, no size column).
+ *  Reading and the failure message both route through here so they agree. */
+export function skuHeaderKeys(raw: string[]): string[] {
+  return raw.includes('code') ? raw : mapGridHeaders(raw);
 }
 
 /** THE GRID'S "NO PRICE" MARKER. `getValue` returns -1 when a size has no price
@@ -130,7 +143,7 @@ export function isGridNoPrice(raw: string): boolean {
  *  column is present — answered NO on every file. Caught by the test over the
  *  owner's own header row. */
 export function missingGridFacts(rawHeader: string[]): { needsCategory: boolean; needsTier: boolean } {
-  const mapped = mapGridHeaders(rawHeader);
+  const mapped = skuHeaderKeys(rawHeader);
   return {
     needsCategory: !mapped.includes('category'),
     needsTier: rawHeader.some((h) => gridSizeHeaderToKey(h) !== null) && !mapped.includes('price_tier'),
@@ -148,6 +161,11 @@ export function missingGridFacts(rawHeader: string[]): { needsCategory: boolean;
  *  `headersSeen` are the RAW normalised headings, so the missing-facts test can
  *  see a size column before it is mapped. */
 export function importFailureMessage(headersSeen: string[]): string {
+  const columns = headersSeen.join(', ') || '(none)';
+  if (!skuHeaderKeys(headersSeen).includes('code')) {
+    return `No column in this file was recognised as the product code. The columns are: ${columns}.`
+      + ' Head that column `code` (or `Product Code`, as the table export writes it).';
+  }
   const missing = missingGridFacts(headersSeen);
   const lacks = [
     missing.needsCategory ? 'a category column' : '',
@@ -158,7 +176,7 @@ export function importFailureMessage(headersSeen: string[]): string {
       + ' now writes them, so export the page again and edit THAT file. They are not'
       + ' guessed here: a price filed under the wrong tier is worse than one not filed.';
   }
-  return `No rows had a code. The columns in this file are: ${headersSeen.join(', ') || '(none)'}.`
+  return `No rows had a code. The columns in this file are: ${columns}.`
     + ' A row needs a `code`; a code the system does not have yet also needs `name`'
     + ' and `category`.';
 }
@@ -201,7 +219,7 @@ export function gridToSkuRecords(grid: string[][]): Array<Record<string, string 
   if (grid.length < 1) return [];
   const raw = (grid[0] ?? []).map(normalizeImportHeader);
   const fromGrid = looksLikeGridExport(raw);
-  const header = fromGrid ? mapGridHeaders(raw) : raw;
+  const header = skuHeaderKeys(raw);
   const out: Array<Record<string, string | undefined>> = [];
   for (const cells of grid.slice(1)) {
     if (cells.every((c) => c.trim() === '')) continue;

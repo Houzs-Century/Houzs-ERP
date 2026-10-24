@@ -15,7 +15,7 @@ function recorder() {
 }
 
 const ctx = { get: (k: string) => (k === 'companyId' ? 1 : undefined) } as { get(key: string): unknown };
-const base: DoListParams = { status: null, q: null, sort: null, from: null, to: null, debtorNames: null, currencies: null, soRefDocNos: [] };
+const base: DoListParams = { status: null, q: null, sort: null, from: null, to: null, dateBy: 'do_date', debtorNames: null, currencies: null, soRefDocNos: [] };
 
 describe('readDoListParams — server-filterable funnel params', () => {
   it('parses debtorNames / currencies as JSON arrays, commas in names survive', () => {
@@ -40,5 +40,22 @@ describe('filterDoList — pushes the server-filterable funnels into the query',
     const { self, calls } = recorder();
     filterDoList(self, base, ctx, null);
     expect(calls.some((c) => c.col === 'debtor_name' || c.col === 'currency')).toBe(false);
+  });
+});
+
+describe('date window (HC-0151) — DO date by default, delivery date on request', () => {
+  it('reads dateBy=delivery as the customer delivery date, anything else as the DO date', () => {
+    const q: Record<string, string> = { from: '2026-10-01', to: '2026-10-31', dateBy: 'delivery' };
+    expect(readDoListParams((k) => q[k])).toMatchObject({ from: '2026-10-01', to: '2026-10-31', dateBy: 'customer_delivery_date' });
+    expect(readDoListParams(() => undefined).dateBy).toBe('do_date');
+    expect(readDoListParams((k) => (k === 'dateBy' ? 'status' : undefined)).dateBy).toBe('do_date');
+  });
+
+  it('windows the chosen column, both ends inclusive', () => {
+    const { self, calls } = recorder();
+    filterDoList(self, { ...base, from: '2026-10-01', to: '2026-10-31', dateBy: 'customer_delivery_date' }, ctx, null);
+    expect(calls).toContainEqual({ m: 'gte', col: 'customer_delivery_date', vals: '2026-10-01' });
+    expect(calls).toContainEqual({ m: 'lte', col: 'customer_delivery_date', vals: '2026-10-31' });
+    expect(calls.some((c) => c.col === 'do_date')).toBe(false);
   });
 });

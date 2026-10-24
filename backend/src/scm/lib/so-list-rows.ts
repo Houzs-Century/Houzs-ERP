@@ -40,6 +40,14 @@ import { derivePlanningState } from '../routes/delivery-planning';
 
 export type SoListRow = { doc_no?: string } & Record<string, unknown>;
 export type SoDeliverableMap = Awaited<ReturnType<typeof soDeliverableRemaining>>;
+type ReadResult<T> = { data: T[] | null; error: { message: string } | null };
+/** What buildSoListRows already read for these orders, handed to the line attach
+ *  (lib/so-list-lines.ts) so it does not read the same rows again. */
+export type SoListPrior = {
+  deliverable: SoDeliverableMap | null;
+  base: ReadResult<{ doc_no: string; linked_ac_docno: string | null }> | null;
+  warehouses: ReadResult<{ id: string; code: string | null; name: string | null }> | null;
+};
 
 /* The SO list "Sales Exemption Expiry Date" keying lives in ONE home now
    (lib/ac-exemption-expiry.ts), shared with the Delivery Planning board. Re-exported
@@ -50,11 +58,13 @@ export async function buildSoListRows(
   sb: Variables['supabase'],
   c: Context<{ Bindings: Env; Variables: Variables }>,
   rows: SoListRow[],
-): Promise<SoDeliverableMap | null> {
+): Promise<SoListPrior> {
   /* Returned so the line attach (lib/so-list-lines.ts) reuses the delivered /
-     returned / remaining reading this builder already made, instead of a second
-     identical read. */
+     returned / remaining reading, the base-table headers and the warehouses this
+     builder already read, instead of a second identical read of each. */
   let deliverable: SoDeliverableMap | null = null;
+  let baseRes: SoListPrior['base'] = null;
+  let whRes: SoListPrior['warehouses'] = null;
   const docNos = rows.map((r) => r.doc_no).filter((x): x is string => !!x);
   if (docNos.length > 0) {
     /* PERF: every per-doc_no enrichment read below only needs `docNos`, so they
@@ -80,11 +90,16 @@ export async function buildSoListRows(
       computeSoLifecycle(sb, docNos),
       soCurrentDocNo(sb, docNos),
     ]);
-    const whRowsProm = (async () =>
-      (await sb.from('warehouses').select('id, code, name')).data ?? [])();
-    const baseRowsProm = (async () =>
-      (await chunkIn(docNos, (batch, from, to) => sb.from('mfg_sales_orders')
-        .select('doc_no, delivery_state, amended_delivery_date, linked_ac_docno').in('doc_no', batch).order('doc_no').range(from, to))).data)();
+    const whRowsProm = (async () => {
+      whRes = await sb.from('warehouses').select('id, code, name');
+      return whRes.data ?? [];
+    })();
+    const baseRowsProm = (async () => {
+      const res = await chunkIn(docNos, (batch, from, to) => sb.from('mfg_sales_orders')
+        .select('doc_no, delivery_state, amended_delivery_date, linked_ac_docno').in('doc_no', batch).order('doc_no').range(from, to));
+      baseRes = res as unknown as SoListPrior['base'];
+      return res.data;
+    })();
     /* PO No. column (owner 2026-07-24): the system Purchase Order numbers this
        SO was converted into. Its own SO-line→PO-item→PO chain, independent of
        every other enrichment above, so it rides the same concurrent wave.
@@ -498,5 +513,5 @@ export async function buildSoListRows(
       for (const k of SO_FINANCE_KEYS) delete (r as Record<string, unknown>)[k];
     }
   }
-  return deliverable;
+  return { deliverable, base: baseRes, warehouses: whRes };
 }

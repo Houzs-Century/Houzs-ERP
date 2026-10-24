@@ -20,12 +20,21 @@ export type ProjectSalesOrderRow = {
   amount_sen: number;
   paid_sen: number;
   balance_sen: number;
+  /** The order's service lines, inside amount_sen. */
+  service_sen?: number;
   fair_match: string | null;
   linked_ac_docno: string | null;
   created_at: string | null;
   /** "Venue differs" (owner 2026-10-19): the venue on the order when it is not
-   *  this fair's — absent from an older server. */
+   *  this fair's — absent from an older server. Since 2026-10-20 also absent
+   *  when this fair's evening report lists the order (the report proves it). */
   venue_differs?: string | null;
+  /** The order's own venue and brand — the pick of where to transfer it. */
+  venue?: string | null;
+  branding?: string | null;
+  /** Another fair's evening report lists the order: the booth to move it to
+   *  (owner 2026-10-20). */
+  report_elsewhere?: { project_id: number; label: string; report_date: string | null } | null;
 };
 
 export type ProjectSalesOrderTotals = {
@@ -34,6 +43,8 @@ export type ProjectSalesOrderTotals = {
   amount_sen: number;
   paid_sen: number;
   balance_sen: number;
+  /** The orders' service lines, inside amount_sen (absent from an older server). */
+  service_sen?: number;
 };
 
 export type ProjectSalesOrdersResponse = {
@@ -43,9 +54,12 @@ export type ProjectSalesOrdersResponse = {
    *  totals are a partial view of the fair and the gap must not be read as
    *  the fair's. */
   scoped: boolean;
+  /** The caller may transfer an order to another fair from here (Finance or
+   *  PMS) — false from an older server. */
+  can_transfer?: boolean;
 };
 
-const ZERO_TOTALS: ProjectSalesOrderTotals = { count: 0, draft_count: 0, amount_sen: 0, paid_sen: 0, balance_sen: 0 };
+const ZERO_TOTALS: ProjectSalesOrderTotals = { count: 0, draft_count: 0, amount_sen: 0, paid_sen: 0, balance_sen: 0, service_sen: 0 };
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
@@ -65,8 +79,10 @@ export function normalizeProjectSalesOrders(raw: unknown): ProjectSalesOrdersRes
       amount_sen: num(t.amount_sen),
       paid_sen: num(t.paid_sen),
       balance_sen: num(t.balance_sen),
+      service_sen: num(t.service_sen),
     },
     scoped: r.scoped === true,
+    can_transfer: r.can_transfer === true,
   };
 }
 
@@ -75,6 +91,9 @@ export type ProjectSalesOrdersSummary = {
   draftCount: number;
   /** Sum of the orders' totals, in RM. */
   openedRm: number;
+  /** openedRm split as the Financial Snapshot splits it: the goods, and the service lines. */
+  salesRm: number;
+  serviceRm: number;
   paidRm: number;
   balanceRm: number;
   /** The project's lump-sum Total Sales, in RM; null when none was typed. */
@@ -107,6 +126,8 @@ export function summarizeProjectSalesOrders(
     count: totals.count,
     draftCount: totals.draft_count,
     openedRm,
+    salesRm: Math.round(totals.amount_sen - (totals.service_sen ?? 0)) / 100,
+    serviceRm: rm(totals.service_sen ?? 0),
     paidRm: rm(totals.paid_sen),
     balanceRm: rm(totals.balance_sen),
     finalTotalRm: hasFinal ? finalTotalRm : null,

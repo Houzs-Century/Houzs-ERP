@@ -50,6 +50,6 @@ export function fetchSoExportRows<T extends { doc_no: string }>(f: { status?: st
   return readWindows('/mfg-sales-orders/export/rows', soListSearchParams(f), 'salesOrders', (r: T) => r.doc_no, 'sales orders');
 }
 
-export function fetchDoExportRows<T extends { id: string }>(f: { status?: string; q?: string; sort?: string }): Promise<T[]> {
+export function fetchDoExportRows<T extends { id: string }>(f: Parameters<typeof doListSearchParams>[0]): Promise<T[]> {
   return readWindows('/delivery-orders-mfg/export/rows', doListSearchParams(f), 'deliveryOrders', (r: T) => r.id, 'delivery orders');
 }

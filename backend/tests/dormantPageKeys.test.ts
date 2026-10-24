@@ -29,23 +29,17 @@ describe("dormant page keys — the greyed rows", () => {
     }
   });
 
-  test("the list is exactly the seven measured dead cells", () => {
-    // feat/jd-rules-from-record counted six; `team.members` was the seventh — the
-    // Team nav gates on the PARENT key `team` plus a flat users.read, so all four
-    // team.* children are read by nothing. Re-swept 2026-07-17.
-    // `scm.warehouse.adjustments` was briefly the eighth (fused onto
-    // scm.warehouse.inventory), but the owner split stock ADJUSTMENT off Inventory
-    // on 2026-07-18: it now has a real area-guard (POST /inventory/adjustments), a
-    // live FE nav + route, and (under the new position policy) the full cohort's
-    // grant — so it is no longer dormant.
+  test("the list is exactly the two remaining dead cells", () => {
+    // Once seven (feat/jd-rules-from-record counted six; `team.members` was the
+    // seventh). RBAC rebuild batch 3 (owner 2026-10-20 "全部拆开") WIRED five of
+    // them: the Team nav repointed Directory / Roles & Permissions / Org Chart /
+    // Departments off the parent `team` onto team.members / .roles / .org_chart /
+    // .departments, and service_cases.settings now gates the Service Maintenance
+    // tab. Only two stay dormant — no sidebar entry reads them: by_creditor has
+    // no nav row, and pnl is an in-page figure, not a tab.
     expect([...DORMANT_PAGE_KEYS].sort()).toEqual([
       "service_cases.by_creditor",
       "service_cases.pnl",
-      "service_cases.settings",
-      "team.departments",
-      "team.members",
-      "team.org_chart",
-      "team.roles",
     ]);
   });
 
@@ -62,21 +56,19 @@ describe("dormant page keys — the greyed rows", () => {
   });
 
   /* THE ONE THAT MATTERS. A dormant key carrying an explicit `= none` must keep
-     meaning "none" — the seed writes exactly this for hr_manager (team.roles +
-     team.departments, seed-user-management.mjs:71). If greying ever severed it,
-     the value would move the moment someone wires the key. */
+     meaning "none". If greying ever severed it, the value would move the moment
+     someone wires the key. (Pre-batch-3 this was shown with hr_manager's seeded
+     team.roles / team.departments = none; those keys are now WIRED, so the proof
+     moved to the two service_cases keys that remain dormant.) */
   test("POSITION: an explicit `none` on a dormant key still resolves none, under a full parent", async () => {
     const out = resolvePositionAccessFromRows([
-      { page_key: "team", level: "full" },
-      { page_key: "team.roles", level: "none" },
-      { page_key: "team.departments", level: "none" },
+      { page_key: "service_cases", level: "full" },
+      { page_key: "service_cases.pnl", level: "none" },
     ]);
-    expect(out["team"]).toBe("full");
-    expect(out["team.roles"]).toBe("none");
-    expect(out["team.departments"]).toBe("none");
+    expect(out["service_cases"]).toBe("full");
+    expect(out["service_cases.pnl"]).toBe("none");
     // …and a dormant key with NO row still INHERITS. Absent is not "none".
-    expect(out["team.members"]).toBe("full");
-    expect(out["team.org_chart"]).toBe("full");
+    expect(out["service_cases.by_creditor"]).toBe("full");
   });
 
   test("ROLE: the legacy matrix resolves dormant keys by its own cascade, unchanged", async () => {

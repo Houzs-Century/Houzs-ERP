@@ -64,19 +64,19 @@ const KIND_TITLE: Record<SendMessageKind, string> = {
 
 /* The customer-message workflow status the board shows after a successful send
    of each kind (the sheet-era vocabulary, delivery-planning-queries
-   MESSAGE_STATUSES; owner 2026-09-22 for the delivery send). null = the send
-   does not move the status. Fire-and-forget per successfully-sent doc. */
+   MESSAGE_STATUSES). Owner 2026-10-21: every send lands the row on its "Done X".
+   Fire-and-forget per successfully-sent doc. */
 export const KIND_AFTER_STATUS: Record<SendMessageKind, string | null> = {
-  delivery: 'Pending Customer Reply (D)',
-  amend: 'Pending Reschedule (A)',
+  delivery: 'Done Send',
+  amend: 'Done Amend',
   postpone: 'Done Postpone Reason',
   driver_info: 'Done Driver Information',
   balance_reminder: 'Done Balance Collection',
-  reminder_1: 'To Remind Customer Reply (1)',
-  reminder_2: 'To Remind Customer Reply (2)',
-  reminder_3: 'To Remind Customer Reply (3)',
-  postage: null,
-  delivery_completed: null,
+  reminder_1: 'Done Remind (1)',
+  reminder_2: 'Done Remind (2)',
+  reminder_3: 'Done Remind (3)',
+  postage: 'Done Postage',
+  delivery_completed: 'Done Delivered',
 };
 
 export const SKIP_LABEL: Record<string, string> = {

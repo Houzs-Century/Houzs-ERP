@@ -99,6 +99,7 @@ import { reorderKeys } from "../lib/reorder";
 import { useDragAutoScroll } from "./useDragAutoScroll";
 
 import type { Column, DataTableProps, SortDir, SortState } from "./dataTableTypes";
+import { DataRowCells } from "./DataTableRowCells";
 import {
   DEFAULT_COL_WIDTH,
   DebouncedSearchInput,
@@ -126,11 +127,6 @@ type Props<T, L = never> = DataTableProps<T, L>;
  * epoch bumps at most once per session, and only when hydration actually moved
  * something, so this is a no-op on every warm load.
  */
-/* One mark for "nothing here" in every table (owner 2026-09-25): a cell that
-   renders nothing reads as a dash, not as a blank a user might think failed. */
-const showDash = (node: React.ReactNode): React.ReactNode =>
-  node == null || node === "" || node === false ? <span className="text-ink-muted">—</span> : node;
-
 export function DataTable<T, L = never>(props: Props<T, L>) {
   const { epoch } = useSyncExternalStore(
     subscribeTableLayouts,
@@ -1794,10 +1790,16 @@ function DataTableInner<T, L>({
   // Per-column filters apply first (client-side, loaded rows only), then
   // sort — the SAME functions the line export runs over every fetched row
   // (dataTableRows.ts).
-  const searchBlobs = useMemo(
-    () => (clientSearching && rows ? new Map(rows.map((r) => [r, buildSearchBlob(r, allColumns)])) : null),
-    [clientSearching, rows, allColumns],
-  );
+  /* Only build the per-row search index when the box actually has a query.
+     filteredRows already no-ops the index when the trimmed query is empty
+     (`searchBlobs && q ? … : rows`), so gating here is behaviour-identical — but
+     it skips scanning every row × every column on each refetch / poll while the
+     box is empty (the common case), and rebuilds only as the (150ms-debounced)
+     query changes. PERF 2026-10-23. */
+  const searchBlobs = useMemo(() => {
+    const q = clientQuery.trim();
+    return clientSearching && rows && q ? new Map(rows.map((r) => [r, buildSearchBlob(r, allColumns)])) : null;
+  }, [clientSearching, rows, allColumns, clientQuery]);
   const filteredRows = useMemo(() => {
     if (!rows) return rows;
     const q = clientQuery.trim().toLowerCase();
@@ -1958,6 +1960,22 @@ function DataTableInner<T, L>({
     return out;
   }, [limitedRows, groupLevels, collapsedGroupSet]);
 
+  /* Collapse-all / Expand-all (owner "like Google Sheets" row outline, 2026-10-24):
+     one control to fold every group to its header row or open them all, on top of
+     the existing per-group collapse (clicking a header). Folds the TOP level, so a
+     nested outline collapses to its outermost groups, exactly as a sheet does. */
+  const topGroupPaths = useMemo(
+    () => renderList.flatMap((it) => (it.kind === "group" && it.level === 0 ? [it.path] : [])),
+    [renderList],
+  );
+  const allGroupsCollapsed =
+    topGroupPaths.length > 0 && topGroupPaths.every((p) => collapsedGroupSet.has(p));
+  const collapseAllGroups = useCallback(
+    () => setCollapsedGroups((prev) => [...new Set([...prev, ...topGroupPaths])]),
+    [topGroupPaths, setCollapsedGroups],
+  );
+  const expandAllGroups = useCallback(() => setCollapsedGroups([]), [setCollapsedGroups]);
+
   // Density-aware cell padding. Tightened on 2026-05-08 — every row
   // is one line of data, full stop. Old comfy (py-3.5) and old
   // compact (py-2) both wasted vertical space; the new values
@@ -1998,13 +2016,21 @@ function DataTableInner<T, L>({
     selectableKeys.some((k) => selection.selectedIds.has(k));
 
   // ── Row windowing (page-scroll-preserving) ─────────────────────────────────
-  // Only the common flat case: grouped / expandable tables and short lists render
-  // in full (unchanged). The tbody is measured against the viewport on scroll
-  // (from ANY ancestor — a capturing window listener catches non-bubbling scroll
-  // events) and on resize; only the visible slice of rows is rendered, bracketed
-  // by two spacer <tr>s that reserve the off-screen height so the page scrollbar
-  // and sticky header behave exactly as before. Row height is measured from a
-  // real row so the spacers can't drift (avoids the HOOKKA getTotalSize lag).
+  // Short lists and (while a row is open) expandable tables render in full. The
+  // tbody is measured against the viewport on scroll (from ANY ancestor — a
+  // capturing window listener catches non-bubbling scroll events) and on resize;
+  // only the visible slice of `renderList` is rendered, bracketed by two spacer
+  // <tr>s that reserve the off-screen height so the page scrollbar and sticky
+  // header behave exactly as before. Row height is the AVERAGE of the drawn items
+  // so the spacers can't drift (avoids the HOOKKA getTotalSize lag).
+  //
+  // GROUPED lists window too (owner follow-up 2026-10-23). `renderList` already
+  // interleaves non-sticky group-header items with row items and already drops
+  // collapsed groups' rows, so the slice path and collapse-shrinks-the-DOM both
+  // work unchanged; the height average blends header (`data-vgrp`) and row
+  // (`data-vrow`) heights (near-equal one-liners) so the per-item spacer estimate
+  // stays honest. A flat list has no `data-vgrp` rows, so its behaviour is
+  // byte-identical to before.
   // `expandable` used to disqualify a table outright. That excluded the single
   // largest list in the app: /scm/inventory's balances table is expandable (the
   // chevron opens per-warehouse / variant detail) and measured 2026-08-01 at
@@ -2021,7 +2047,7 @@ function DataTableInner<T, L>({
   // risky state is simply never the windowed one. Collapsing the last row
   // returns it to the windowed path.
   const canVirtualize =
-    showTable && !effectiveLoading && !error && groupLevels.length === 0 &&
+    showTable && !effectiveLoading && !error &&
     (!expandable || expandedRowsEffective.size === 0) &&
     renderList.length > VIRTUAL_ROW_THRESHOLD;
   const tbodyRef = useRef<HTMLTableSectionElement>(null);
@@ -2066,9 +2092,10 @@ function DataTableInner<T, L>({
       raf = 0;
       const el = tbodyRef.current;
       if (!el) return;
-      /* The average of the rows drawn, not the first one: with text wrapped the
-         rows are no longer one height. */
-      const drawn = el.querySelectorAll<HTMLElement>("tr[data-vrow]");
+      /* The average of the items drawn, not the first one: with text wrapped the
+         rows are no longer one height, and a grouped list mixes row heights with
+         group-header (data-vgrp) heights. */
+      const drawn = el.querySelectorAll<HTMLElement>("tr[data-vrow], tr[data-vgrp]");
       let sum = 0;
       drawn.forEach((tr) => { sum += tr.offsetHeight; });
       if (drawn.length > 0 && sum > 0) rowHeightRef.current = sum / drawn.length;
@@ -2302,6 +2329,9 @@ function DataTableInner<T, L>({
             endHeaderDrag();
           }}
           onRemove={(k) => setUserGroups((prev) => prev.filter((x) => x !== k))}
+          allCollapsed={allGroupsCollapsed}
+          onCollapseAll={collapseAllGroups}
+          onExpandAll={expandAllGroups}
         />
       )}
       {showTable && (
@@ -2321,7 +2351,14 @@ function DataTableInner<T, L>({
             // sum (it scrolls) and at least the container (the filler takes it).
             style={layoutFixed ? { tableLayout: "fixed", minWidth: fixedTableWidth } : undefined}
           >
-            <thead className="sticky top-0 z-10">
+            {/* z-30, ABOVE the body sticky cells (z-20): the thead's own z-index
+                opens a stacking context, so a frozen header <th>'s inline z-30 is
+                scoped to it and cannot out-stack a body sticky cell at the ROOT
+                level. At z-10 the frozen-left/right BODY cells (z-20) painted OVER
+                the frozen header on scroll-down — the header's own corner showed
+                a data row where its heading should be. Lifting the whole thead
+                above z-20 keeps the frozen header on top on both axes. */}
+            <thead className="sticky top-0 z-30">
               <tr>
                 {selection && (
                   <th
@@ -2401,9 +2438,11 @@ function DataTableInner<T, L>({
                   if (isSticky) {
                     cellStyle.position = "sticky";
                     cellStyle.left = stickyLeft[i];
-                    // Above body sticky cells (z-20) and the sticky header
-                    // baseline (the thead is z-10); 30 keeps frozen headers
-                    // on top of everything during a two-axis scroll.
+                    // Above the scrollable header cells WITHIN the thead's own
+                    // stacking context (thead is z-30), so a frozen corner header
+                    // stays on top of the scrolling header during a two-axis
+                    // scroll. The thead being z-30 (> body sticky z-20) is what
+                    // keeps the whole header above the body — see the thead above.
                     cellStyle.zIndex = 30;
                   } else if (isStickyRight) {
                     cellStyle.position = "sticky";
@@ -2637,6 +2676,7 @@ function DataTableInner<T, L>({
                     return (
                       <tr
                         key={`grp:${item.path}`}
+                        data-vgrp=""
                         onClick={() => toggleGroup(item.path)}
                         className="cursor-pointer select-none bg-surface-dim/70 transition-colors hover:bg-surface-dim"
                       >
@@ -2808,96 +2848,24 @@ function DataTableInner<T, L>({
                             )}
                           </td>
                         )}
-                        {displayColumns.map((c, i) => {
-                          const isSticky = i < stickyCount;
-                          const isLastSticky = isSticky && i === stickyCount - 1;
-                          const isStickyRight = stickyRight[i] !== undefined;
-                          const isFirstStickyRight =
-                            isStickyRight && i === displayColumns.length - stickyRightCount;
-                          const userW = widths[c.key];
-                          const cellStyle: React.CSSProperties = {};
-                          if (typeof userW === "number") {
-                            cellStyle.width = userW;
-                            cellStyle.minWidth = userW;
-                            cellStyle.maxWidth = userW;
-                          } else if (c.width) {
-                            cellStyle.width = c.width;
-                            // Same cap as the header cell: a px width means
-                            // "clip here", never "stretch to the longest value".
-                            const px = parsePxWidth(c.width);
-                            if (px != null) cellStyle.maxWidth = px;
-                          }
-                          if (isSticky) {
-                            cellStyle.position = "sticky";
-                            cellStyle.left = stickyLeft[i];
-                            cellStyle.zIndex = 20;
-                            cellStyle.background = stickyBg;
-                          } else if (isStickyRight) {
-                            cellStyle.position = "sticky";
-                            cellStyle.right = stickyRight[i];
-                            cellStyle.zIndex = 20;
-                            // Opaque for the same reason the left run is: the
-                            // scrolling middle passes UNDER these cells.
-                            cellStyle.background = stickyBg;
-                          }
-                          // Full raw value as a native tooltip so a clipped
-                          // cell is still readable on hover. Strings only:
-                          // numeric getValues are raw centi/ISO shapes that
-                          // would contradict the formatted cell text.
-                          const rawVal = c.getValue?.(row);
-                          const cellTitle =
-                            typeof rawVal === "string" && rawVal !== ""
-                              ? rawVal
-                              : undefined;
-                          return (
-                            <Fragment key={c.key}>
-                            {i === fillerAt && fillerCount > 0 && <td aria-hidden className="border-b border-border-subtle p-0 group-hover:bg-[#3f6b53]/25" />}
-                            <td
-                              data-col-key={c.key}
-                              style={cellStyle}
-                              title={cellTitle}
-                              className={cn(
-                                "border-b border-border-subtle text-[13px] text-ink transition-colors",
-                                cellPad,
-                                // Single-line rule (2026-05-08) + clip rule
-                                // (owner 2026-07-24). Cells stop wrapping AND
-                                // stop painting past their own column: a value
-                                // longer than the column is cropped with an
-                                // ellipsis (full text in the title tooltip)
-                                // instead of overlapping the neighbour cell.
-                                // Render functions that genuinely need
-                                // multi-line wrap via an inner block element
-                                // or `c.className` ("whitespace-normal") —
-                                // still overflow-hidden within the column.
-                                wrapOn
-                                  ? "whitespace-normal break-words align-top"
-                                  : "overflow-hidden text-ellipsis whitespace-nowrap",
-                                // Pine-green tint on hover (matches the
-                                // calendar's "on track" green). Reads clearly
-                                // on both zebra shades. (Was a pale brass
-                                // `accent-soft` wash that looked yellow.)
-                                "group-hover:bg-[#3f6b53]/25",
-                                c.align === "right" && "text-right",
-                                c.align === "center" && "text-center",
-                                // Leading gutter belongs to the select /
-                                // chevron cell when present; otherwise the
-                                // first column.
-                                i === 0 && !expandable && !selection && "pl-5",
-                                i === displayColumns.length - 1 && "pr-5",
-                                // Freeze line on the last sticky column.
-                                isLastSticky && "border-r border-border",
-                                isFirstStickyRight && "border-l border-border",
-                                c.className
-                              )}
-                            >
-                              {showDash(c.render(row))}
-                            </td>
-                            </Fragment>
-                          );
-                        })}
-                        {fillerAt === displayColumns.length && fillerCount > 0 && (
-                          <td aria-hidden className="border-b border-border-subtle p-0 group-hover:bg-[#3f6b53]/25" />
-                        )}
+                        {/* The data cells are memoised (see DataRowCells): a
+                            scroll / selection / search re-render skips every row
+                            whose data + columns + layout are unchanged. */}
+                        <DataRowCells
+                          row={row}
+                          columns={displayColumns}
+                          widths={widths}
+                          stickyLeft={stickyLeft}
+                          stickyRight={stickyRight}
+                          stickyCount={stickyCount}
+                          stickyRightCount={stickyRightCount}
+                          cellPad={cellPad}
+                          wrapOn={wrapOn}
+                          fillerAt={fillerAt}
+                          fillerCount={fillerCount}
+                          stickyBg={stickyBg}
+                          firstColGutter={!expandable && !selection}
+                        />
                       </tr>
                       {/* Inline expanded sub-row (opt-in `expandable`). Spans
                           the full width; renders the caller's drill-down.
@@ -2939,7 +2907,7 @@ function DataTableInner<T, L>({
               )}
             </tbody>
             {footerTotals && (
-              <tfoot className="sticky bottom-0 z-10">
+              <tfoot className="sticky bottom-0 z-30">
                 <tr title={footerTotals.picked ? "Total of the ticked rows" : "Total of the rows shown"}>
                   {selectColCount + expandColCount > 0 && (
                     <td colSpan={selectColCount + expandColCount} className="border-t-2 border-border bg-surface-dim" />

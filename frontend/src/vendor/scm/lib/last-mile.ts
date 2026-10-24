@@ -44,6 +44,60 @@ export function lastMileSideOf(o: LastMileRow, date: string): LastMileSide | nul
   return o.delivery_state === 'DELIVERED' ? 'DELIVERED' : 'TIME_ARRANGED';
 }
 
+// ── The LIST side (owner 2026-10-21): the dispatcher wanted to pick tomorrow and
+//    SEE tomorrow's orders here, before any trip exists. The day MAP already
+//    showed them (its geo read keys on the delivery date); the left board did
+//    not, because it keyed on the live trip only — so "20 on the map, 0 in the
+//    list". The list gains a THIRD side, TO_ARRANGE: an SO due this day that is
+//    not on a lorry run yet. lastMileSideOf above stays trip-only on purpose —
+//    map focus, crew proposal and stop-status must still see trip rows ONLY (a
+//    TO_ARRANGE row has no trip / stop to colour or crew). The list is the one
+//    place the two merge (lastMileListSideOf).
+export type LastMileListSide = LastMileSide | 'TO_ARRANGE';
+
+/* The list sides in rail order, each with its chip label. ONE home for the
+   vocabulary: FleetDay's chips, its per-side counts and its labels all derive
+   from this array, so a fourth side is added here and nowhere else. */
+export const LAST_MILE_LIST_SIDES: ReadonlyArray<{ side: LastMileListSide; label: string }> = [
+  { side: 'TO_ARRANGE', label: 'To arrange' },
+  { side: 'TIME_ARRANGED', label: 'Time arranged' },
+  { side: 'DELIVERED', label: 'Delivered' },
+];
+
+export const LAST_MILE_LIST_SIDE_LABEL = Object.fromEntries(
+  LAST_MILE_LIST_SIDES.map((s) => [s.side, s.label]),
+) as Record<LastMileListSide, string>;
+
+type ToArrangeRow = Pick<
+  PlanningOrder,
+  'row_type' | 'trip_date' | 'delivery_state' | 'effective_delivery_date' | 'customer_delivery_date' | 'processing_date'
+>;
+
+/* The day a not-yet-arranged order is DUE — the same effective date the board
+   and the mobile run-sheet bucket on (amended ?? original, then processing). */
+const toArrangeDateOf = (o: ToArrangeRow): string | null =>
+  o.effective_delivery_date || o.customer_delivery_date || o.processing_date || null;
+
+/** An SO due this day that is NOT on a lorry run yet — the list's TO_ARRANGE
+ *  side. SO rows only; excluded once a live trip carries it (its trip's day owns
+ *  it then, as lastMileSideOf decides) or once it is delivered. */
+export function isToArrangeRow(o: ToArrangeRow, date: string): boolean {
+  if (o.row_type !== 'so') return false;
+  if (o.trip_date != null) return false;
+  if (o.delivery_state === 'DELIVERED') return false;
+  const d = toArrangeDateOf(o);
+  return d != null && String(d).slice(0, 10) === date;
+}
+
+/** The list's side for a row: a live-trip row keeps its trip side (TIME_ARRANGED
+ *  / DELIVERED); otherwise a due-this-day SO with no trip is TO_ARRANGE; else it
+ *  is off this day's list. */
+export function lastMileListSideOf(o: LastMileRow & ToArrangeRow, date: string): LastMileListSide | null {
+  const trip = lastMileSideOf(o, date);
+  if (trip) return trip;
+  return isToArrangeRow(o, date) ? 'TO_ARRANGE' : null;
+}
+
 /** The "Propose crew" candidate set (owner's final division 2026-08-08: Last
  *  Mile owns the intelligent driver + lorry assignment). Crew is proposed ONLY
  *  for the picked day's already-sequenced runs — the TIME_ARRANGED side of the

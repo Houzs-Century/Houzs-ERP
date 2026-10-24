@@ -16,7 +16,7 @@ import { lookupByIds, type ExportWindow } from './document-line-export';
 import { chunkIn } from './paginate-all';
 import { filterDoList, fromDoList, orderDoList, type DoListParams } from './do-list-read';
 import { buildDoListRows, type DoListRowDeps } from './do-list-rows';
-import { doLineRemaining } from './do-line-remaining';
+import { doLineRemaining, type DoRemainingHeader } from './do-line-remaining';
 import { warehouseLabel } from './warehouse-label';
 import { bindingsFor } from './autocount-outbox';
 import { buildVariantSummary } from '../shared/variant-summary';
@@ -118,14 +118,15 @@ export async function attachDoLines(
   if (lineRead.error) return { error: `lines: ${lineRead.error.message}`, lineCount: 0 };
   const all = lineRead.data;
 
-  /* AutoCount's number — not in the list's HEADER select. */
-  const acNo = await lookupByIds<{ id: string; linked_ac_docno: string | null }>(ids, (batch, from, to) =>
-    scopeToCompany(sb.from('delivery_orders').select('id, linked_ac_docno'), c)
+  /* AutoCount's number — not in the list's HEADER select. The Pending ledger's
+     header columns ride the same read, so doLineRemaining does not repeat it. */
+  const acNo = await lookupByIds<DoRemainingHeader & { linked_ac_docno: string | null }>(ids, (batch, from, to) =>
+    scopeToCompany(sb.from('delivery_orders').select('id, linked_ac_docno, do_number, status, debtor_code, debtor_name'), c)
       .in('id', batch).order('id', { ascending: true }).range(from, to) as Res<never>);
   if (acNo.error) return { error: `delivery order numbers: ${acNo.error}`, lineCount: 0 };
 
   /* Invoiced / Returned / Uninvoiced — the app's own Pending ledger. Fails closed. */
-  const pending = await doLineRemaining(sb, ids, 'invoiceable');
+  const pending = await doLineRemaining(sb, ids, 'invoiceable', [...acNo.byId.values()]);
   if (!pending.ok) return { error: `invoiced quantities: ${pending.reason}`, lineCount: 0 };
 
   type SiLine = { id: string; do_item_id: string | null; sales_invoice_id: string | null };

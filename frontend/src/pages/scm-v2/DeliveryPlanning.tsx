@@ -55,6 +55,7 @@ import { DELIVERY_PLANNING_LAYOUT_PRESETS } from '../../vendor/scm/lib/deliveryP
 import { RowColorModal } from './RowColorModal';
 import { useDeliveryRowMarks, type RowMarkColour } from '../../vendor/scm/lib/delivery-row-mark';
 import { useDeliveryRowOrder, useSetRowOrder, orderComparator } from '../../vendor/scm/lib/delivery-row-order';
+import { compareByDeliveryDate } from '../../vendor/scm/lib/delivery-date-group';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { transferToLabel } from '../../lib/convertScope';
@@ -105,12 +106,19 @@ export const DeliveryPlanning = () => {
   const [coloringRow, setColoringRow] = useState<PlanningOrder | null>(null);
   const rowMarks = useDeliveryRowMarks().data;
   /* Manual drag order (owner 2026-09-26): the board sorts by it while no column
-     sort is active; a drag persists the new order of the displayed rows. */
+     sort is active; a drag persists the new order of the displayed rows. The
+     DEFAULT beneath it (owner follow-up 2026-10-23) is EFFECTIVE delivery date,
+     earliest first — so a board nobody has dragged opens date-ordered, and
+     within each All-view month bucket the rows stay date-ordered. A manual drag
+     still wins for the rows it placed (orderComparator ranks them first; the
+     rest, and a board with no saved order, fall through to the date sort), and a
+     clicked column header overrides both as always. */
   const rowOrder = useDeliveryRowOrder().data;
   const setRowOrder = useSetRowOrder();
   const orderSort = useMemo(() => {
     const cmp = orderComparator(rowOrder ?? []);
-    return (a: PlanningOrder, b: PlanningOrder) => cmp(rowIdOf(a), rowIdOf(b));
+    return (a: PlanningOrder, b: PlanningOrder) =>
+      cmp(rowIdOf(a), rowIdOf(b)) || compareByDeliveryDate(a, b);
   }, [rowOrder]);
   const [showNewDp, setShowNewDp] = useState(false);
   /* The DP job being scheduled (Schedule drawer open when non-null). */
@@ -307,6 +315,7 @@ export const DeliveryPlanning = () => {
   const [sendingRows, setSendingRows] = useState<PlanningOrder[] | null>(null);
   const [sendKind, setSendKind] = useState<SendMessageKind>('delivery');
   const [sendMenuOpen, setSendMenuOpen] = useState(false);
+  const [oneTimeOpen, setOneTimeOpen] = useState(false);
   const [bulkMenuOpen, setBulkMenuOpen] = useState(false);
   const openSendModal = (kind: SendMessageKind) => {
     const docs = new Set(selectedSoDocNos());
@@ -360,7 +369,7 @@ export const DeliveryPlanning = () => {
                 style={{ background: '#1D9E75', borderColor: '#1D9E75' }}
                 disabled={selectedSoDocNos().length === 0}
                 title={selectedSoDocNos().length === 0 ? 'Tick the orders to message first' : 'Send a WhatsApp message to the selected customers'}
-                onClick={() => setSendMenuOpen((v) => !v)}
+                onClick={() => { setSendMenuOpen((v) => !v); setOneTimeOpen(false); }}
               >
                 <MessageSquare size={16} strokeWidth={1.75} />
                 Send Message ({selectedSoDocNos().length})
@@ -368,42 +377,75 @@ export const DeliveryPlanning = () => {
               </Button>
               {sendMenuOpen && (
                 <>
-                  <div onClick={() => setSendMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+                  <div onClick={() => { setSendMenuOpen(false); setOneTimeOpen(false); }} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
                   <div
                     role="menu"
                     style={{
                       position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 41, minWidth: 220,
+                      /* Expanding "One Time Send Now" makes this 11 items tall — cap it to
+                         the viewport and scroll, so the bottom entries (Postage / Delivery
+                         Completed) can't fall off-screen (owner 2026-10-23). */
+                      maxHeight: '70vh', overflowY: 'auto',
                       background: '#fff', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 10px)',
                       boxShadow: '0 8px 28px rgba(34, 31, 32, 0.14)', padding: 4,
                     }}
                   >
-                    {([
-                      ['delivery', 'Send Now', 'Delivery-date message (Confirm / Amend)'],
-                      ['amend', 'Amend Now', 'Amend / reschedule message (Confirm / Amend)'],
-                      ['postpone', 'Postpone', 'We must move the date — reason + proposed date'],
-                      ['driver_info', 'Driver Info', 'Day-before: date · time · driver · lorry plate'],
-                      ['balance_reminder', 'Balance Reminder', 'Outstanding balance + bank details (owing orders only)'],
-                      ['reminder_1', 'Reminder 1', 'No reply yet — first nudge'],
-                      ['reminder_2', 'Reminder 2', 'No reply yet — second nudge'],
-                      ['reminder_3', 'Reminder 3', 'No reply yet — final nudge'],
-                      ['postage', 'Postage Confirm', 'Confirm the postage address'],
-                      ['delivery_completed', 'Delivery Completed', 'Thank-you after delivery'],
-                    ] as const).map(([k, label, hint]) => (
-                      <button
-                        key={k}
-                        type="button"
-                        role="menuitem"
-                        onClick={() => { setSendMenuOpen(false); if (k === 'postpone') sendPostponeDirect(); else openSendModal(k); }}
-                        style={{ display: 'block', width: '100%', padding: '8px 10px', background: 'transparent', border: 'none', borderRadius: 8, cursor: 'pointer', textAlign: 'left' }}
-                        onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg, #f4f2ec)'; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                      >
-                        <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-13, 13px)', fontWeight: 600, color: 'var(--ink, #221f20)' }}>
-                          <MessageSquare size={14} strokeWidth={1.75} /> {label}
-                        </span>
-                        <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, #767b6e)' }}>{hint}</span>
-                      </button>
-                    ))}
+                    {(() => {
+                      const renderKind = (
+                        [k, label, hint]: readonly [SendMessageKind, string, string],
+                        sub: boolean,
+                      ) => (
+                        <button
+                          key={k}
+                          type="button"
+                          role="menuitem"
+                          onClick={() => { setSendMenuOpen(false); setOneTimeOpen(false); if (k === 'postpone') sendPostponeDirect(); else openSendModal(k); }}
+                          style={{ display: 'block', width: '100%', padding: sub ? '8px 10px 8px 24px' : '8px 10px', background: 'transparent', border: 'none', borderRadius: 8, cursor: 'pointer', textAlign: 'left' }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg, #f4f2ec)'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                        >
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-13, 13px)', fontWeight: 600, color: 'var(--ink, #221f20)' }}>
+                            <MessageSquare size={14} strokeWidth={1.75} /> {label}
+                          </span>
+                          <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, #767b6e)' }}>{hint}</span>
+                        </button>
+                      );
+                      return (
+                        <>
+                          {([
+                            ['delivery', 'Send Now', 'Delivery-date message (Confirm / Amend)'],
+                            ['amend', 'Amend Now', 'Amend / reschedule message (Confirm / Amend)'],
+                          ] as const).map((it) => renderKind(it, false))}
+                          {/* One Time Send Now (owner 2026-10-21): the ad-hoc sends
+                              fold under one entry, opened on demand. */}
+                          <button
+                            type="button"
+                            role="menuitem"
+                            aria-expanded={oneTimeOpen}
+                            onClick={() => setOneTimeOpen((v) => !v)}
+                            style={{ display: 'block', width: '100%', padding: '8px 10px', background: 'transparent', border: 'none', borderRadius: 8, cursor: 'pointer', textAlign: 'left' }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg, #f4f2ec)'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                          >
+                            <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-13, 13px)', fontWeight: 600, color: 'var(--ink, #221f20)' }}>
+                              <MessageSquare size={14} strokeWidth={1.75} /> One Time Send Now
+                              <ChevronDown size={13} strokeWidth={1.75} style={{ marginLeft: 'auto', transform: oneTimeOpen ? 'rotate(180deg)' : 'none' }} />
+                            </span>
+                            <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, #767b6e)' }}>Pick one: postpone, driver info, balance, reminders, postage, thanks</span>
+                          </button>
+                          {oneTimeOpen && ([
+                            ['postpone', 'Postpone', 'Move the date - reads the order reason and new date'],
+                            ['driver_info', 'Driver Info', 'Day-before: date, time, driver, lorry plate'],
+                            ['balance_reminder', 'Balance Reminder', 'Outstanding balance + bank details (owing orders only)'],
+                            ['reminder_1', 'Reminder 1', 'No reply yet - first nudge'],
+                            ['reminder_2', 'Reminder 2', 'No reply yet - second nudge'],
+                            ['reminder_3', 'Reminder 3', 'No reply yet - final nudge'],
+                            ['postage', 'Postage Confirm', 'Confirm the postage address'],
+                            ['delivery_completed', 'Delivery Completed', 'Thank-you after delivery'],
+                          ] as const).map((it) => renderKind(it, true))}
+                        </>
+                      );
+                    })()}
                   </div>
                 </>
               )}
@@ -478,6 +520,9 @@ export const DeliveryPlanning = () => {
                   role="menu"
                   style={{
                     position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 41, minWidth: 240,
+                    /* Short today, but cap + scroll so it can't fall off-screen either
+                       if more bulk actions are added (twin of the Send Message menu). */
+                    maxHeight: '70vh', overflowY: 'auto',
                     background: '#fff', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 10px)',
                     boxShadow: '0 8px 28px rgba(34, 31, 32, 0.14)', padding: 4,
                   }}

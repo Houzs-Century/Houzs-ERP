@@ -3,7 +3,7 @@ import type { AuthUser } from '../../services/auth';
 import {
   parseStage, fairReportAccess, isFairManagement,
   tenderLabel, depositByTender, paymentMethodsUsed,
-  marginPct, belowDeposit, fairSoMoney, fairBalanceSen, doCostTotal, siCostTotal,
+  marginPct, belowDeposit, fairSoMoney, fairBalanceSen, doCostTotal, siCostTotal, siGoodsTotals,
   resolveDateWindow, summarizeSo, summarizeDo, summarizeInvoice,
   type FairStage,
 } from './fair-report';
@@ -147,7 +147,8 @@ describe('fairSoMoney — product/service split + per-category cost + margin', (
     expect(m.service_rev_sen).toBe(30000);
     expect(m.total_so_cost_sen).toBe(50000);
     expect(m.cost_by_category.service_cost_sen).toBe(15000);
-    expect(m.margin_pct).toBeCloseTo(50);      // (100000-50000)/100000
+    expect(m.goods_cost_sen).toBe(35000);      // 50000 less the service cost
+    expect(m.margin_pct).toBeCloseTo(50);      // goods: (70000-35000)/70000
     // Balance is no longer a header pass-through: it is amount minus what the
     // LEDGER says was paid. Same 40000, now derived (see fairBalanceSen).
     expect(fairBalanceSen(m.amount_sen, 60000)).toBe(40000);
@@ -161,6 +162,32 @@ describe('fairSoMoney — product/service split + per-category cost + margin', (
       total_cost_sen: 0, deposit_sen: 0,
     });
     expect(m.amount_sen).toBe(15000);
+  });
+
+  /* Owner 2026-10-22 (「transport 不算」): the delivery / installation fee has no
+     cost, so on the whole order it lifted the margin — this order read 70%
+     where its goods earn 50%. Margin is goods only; Amount stays the order. */
+  test('margin is on goods only — the fee does not lift it', () => {
+    const m = fairSoMoney({
+      local_total_sen: 30000,
+      mattress_sofa_sen: 20000, bedframe_sen: 0, accessories_sen: 0, others_sen: 0,
+      service_sen: 10000,
+      mattress_sofa_cost_sen: 10000, bedframe_cost_sen: 0, accessories_cost_sen: 0, others_cost_sen: 0, service_cost_sen: 0,
+      total_cost_sen: 10000, deposit_sen: 0,
+    });
+    expect(m.amount_sen).toBe(30000);
+    expect(marginPct(m.amount_sen, m.total_so_cost_sen)).toBeCloseTo(66.67, 1); // what it used to read
+    expect(m.margin_pct).toBeCloseTo(50);                                       // (20000-10000)/20000
+  });
+  test('a service-only order has no goods margin', () => {
+    const m = fairSoMoney({
+      local_total_sen: 15000,
+      mattress_sofa_sen: 0, bedframe_sen: 0, accessories_sen: 0, others_sen: 0,
+      service_sen: 15000,
+      mattress_sofa_cost_sen: 0, bedframe_cost_sen: 0, accessories_cost_sen: 0, others_cost_sen: 0, service_cost_sen: 0,
+      total_cost_sen: 0, deposit_sen: 0,
+    });
+    expect(m.margin_pct).toBeNull();
   });
 });
 
@@ -204,6 +231,16 @@ describe('doCostTotal — COALESCE(ship_cost, unit_cost) × qty, legacy flag', (
     const r = doCostTotal([{ qty: 1, unit_cost_sen: 0, ship_cost_sen: 0, item_group: 'accessory' }]);
     expect(r.has_zero_frozen).toBe(false);
   });
+  test('goods cost leaves out service lines, by group or by SVC- code', () => {
+    const r = doCostTotal([
+      { qty: 2, unit_cost_sen: 500, ship_cost_sen: 400, item_group: 'sofa', item_code: 'SF-1' },
+      { qty: 1, unit_cost_sen: 300, ship_cost_sen: null, item_group: 'service', item_code: 'SVC-INSTALL' },
+      { qty: 1, unit_cost_sen: 200, ship_cost_sen: null, item_group: null, item_code: 'SVC-DELIVERY' },
+    ]);
+    expect(r.total_do_cost_sen).toBe(1300);  // 800 + 300 + 200, as before
+    expect(r.goods_do_cost_sen).toBe(800);
+    expect(r.is_legacy).toBe(false);         // the SVC- line without a group does not flag it either
+  });
 });
 
 describe('siCostTotal — landed cost from SI lines', () => {
@@ -212,6 +249,14 @@ describe('siCostTotal — landed cost from SI lines', () => {
       { qty: 2, unit_cost_sen: 500, line_cost_sen: 900 },
       { qty: 3, unit_cost_sen: 100, line_cost_sen: null },
     ])).toBe(1200); // 900 + 300
+  });
+  test('siGoodsTotals sums the non-service lines only', () => {
+    expect(siGoodsTotals([
+      { qty: 2, unit_cost_sen: 500, line_cost_sen: 900, line_total_sen: 3000, item_group: 'mattress', item_code: 'M-1' },
+      { qty: 3, unit_cost_sen: 100, line_cost_sen: null, line_total_sen: 1500, item_group: 'others', item_code: 'P-9' },
+      { qty: 1, unit_cost_sen: 50, line_cost_sen: 50, line_total_sen: 800, item_group: 'service', item_code: 'SVC-INSTALL' },
+      { qty: 1, unit_cost_sen: 0, line_cost_sen: 0, line_total_sen: 400, item_group: null, item_code: 'SVC-DELIVERY' },
+    ])).toEqual({ goods_invoiced_sen: 4500, goods_cost_sen: 1200 });
   });
 });
 
@@ -235,16 +280,17 @@ describe('resolveDateWindow — month + from/to AND-ing', () => {
 describe('summaries', () => {
   test('summarizeSo aggregates money + tender + below-deposit', () => {
     const s = summarizeSo([
-      { amount_sen: 100000, selling_sen: 70000, service_rev_sen: 30000, total_so_cost_sen: 50000, balance_sen: 40000, below_deposit: true, deposit_by_tender: { Cash: 10000, Merchant: 0, Installment: 0, Online: 0 } },
-      { amount_sen: 50000, selling_sen: 50000, service_rev_sen: 0, total_so_cost_sen: 20000, balance_sen: 0, below_deposit: false, deposit_by_tender: { Cash: 0, Merchant: 5000, Installment: 0, Online: 0 } },
+      { amount_sen: 100000, selling_sen: 70000, service_rev_sen: 30000, total_so_cost_sen: 50000, goods_cost_sen: 35000, balance_sen: 40000, below_deposit: true, deposit_by_tender: { Cash: 10000, Merchant: 0, Installment: 0, Online: 0 } },
+      { amount_sen: 50000, selling_sen: 50000, service_rev_sen: 0, total_so_cost_sen: 20000, goods_cost_sen: 20000, balance_sen: 0, below_deposit: false, deposit_by_tender: { Cash: 0, Merchant: 5000, Installment: 0, Online: 0 } },
     ]);
     expect(s.orders).toBe(2);
     expect(s.total_amount_sen).toBe(150000);
     expect(s.total_selling_sen).toBe(120000);
     expect(s.total_service_rev_sen).toBe(30000);
     expect(s.total_so_cost_sen).toBe(70000);
-    expect(s.total_margin_sen).toBe(80000);
-    expect(s.margin_pct).toBeCloseTo((80000 / 150000) * 100);
+    expect(s.total_goods_cost_sen).toBe(55000);
+    expect(s.total_margin_sen).toBe(65000);                      // goods: 120000 − 55000
+    expect(s.margin_pct).toBeCloseTo((65000 / 120000) * 100);
     expect(s.below_deposit_count).toBe(1);
     expect(s.tender_totals).toEqual({ Cash: 10000, Merchant: 5000, Installment: 0, Online: 0 });
   });
@@ -257,12 +303,13 @@ describe('summaries', () => {
     expect(s.cost_delta_sen).toBe(200); // 1700 - 1500
     expect(s.legacy_count).toBe(1);
   });
-  test('summarizeInvoice computes landed margin', () => {
+  test('summarizeInvoice computes the landed margin on goods', () => {
     const s = summarizeInvoice([
-      { invoiced_sen: 10000, so_cost_sen: 4000, do_cost_sen: 4200, si_cost_sen: 4500 },
+      { invoiced_sen: 10000, so_cost_sen: 4000, do_cost_sen: 4200, si_cost_sen: 4500, goods_invoiced_sen: 9000, goods_si_cost_sen: 4500 },
     ]);
     expect(s.total_invoiced_sen).toBe(10000);
     expect(s.total_si_cost_sen).toBe(4500);
-    expect(s.margin_pct).toBeCloseTo(55); // (10000-4500)/10000
+    expect(s.total_goods_invoiced_sen).toBe(9000);
+    expect(s.margin_pct).toBeCloseTo(50); // (9000-4500)/9000 — the RM 10 fee is out
   });
 });

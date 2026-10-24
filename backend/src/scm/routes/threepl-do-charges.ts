@@ -7,10 +7,14 @@
 //   PUT  /               { doNumber, threeplCompanyId, invoiceNo, invoiceDate,
 //                          billedSen, note } - upsert on (company, DO, carrier)
 //   DELETE /:id
+//   /from-ap/*           fill the rows from an AP invoice's attached bill
+//                        (threepl-from-ap.ts, owner 2026-10-23)
 //
 // Why per DO, not per trip: prod has 0 trips; 3PL work is not planned in
 // Delivery Planning (read-only probe 14 Oct). The pricing is the pure
-// lib/threepl-do-charge.ts over the existing cards (delivery-rate-cards.ts).
+// lib/threepl-do-charge.ts over the existing cards (delivery-rate-cards.ts),
+// read by lib/threepl-charge-load.ts so a bill brought in from an AP invoice
+// is tallied against the same Rate card amount this list shows.
 //
 // company_id is the PAYING company (active). The DO may belong to any company
 // the caller is allowed (HOUZS pays a 3PL for 2990 deliveries), which is also
@@ -23,13 +27,22 @@ import { paginateAll } from '../lib/paginate-all';
 import {
   scopeToCompanyId, scopeToAllowedCompanies, requireActiveCompanyId, companyCodeMap,
 } from '../lib/companyScope';
-import { DEFAULT_ZONE_PREFIX_MAP, zoneForAddress } from '../lib/zone-classify';
-import type { SetLine } from '../lib/set-count';
-import { doFacts, expectedSen, invoiceTotals, varianceSen } from '../lib/threepl-do-charge';
-import { cardOut, ruleOut, toCardSpec } from './delivery-rate-cards';
+import { expectedSen, invoiceTotals, varianceSen } from '../lib/threepl-do-charge';
+import { loadCarrierCards, loadDoFacts } from '../lib/threepl-charge-load';
+import { billSummaries } from '../lib/threepl-bill-import';
+import { hasHouzsPerm } from '../lib/houzs-perms';
+import {
+  assignBillLineHandler, confirmApBillHandler, listApBillsHandler, listBillLinesHandler, readApBillHandler,
+} from './threepl-from-ap';
 
 export const threeplDoCharges = new Hono<{ Bindings: Env; Variables: Variables }>();
 threeplDoCharges.use('*', supabaseAuth);
+
+threeplDoCharges.get('/from-ap/invoices', listApBillsHandler);
+threeplDoCharges.post('/from-ap/:apInvoiceId/read', readApBillHandler);
+threeplDoCharges.post('/from-ap/:apInvoiceId/confirm', confirmApBillHandler);
+threeplDoCharges.get('/bill-lines', listBillLinesHandler);
+threeplDoCharges.patch('/bill-lines/:id', assignBillLineHandler);
 
 type Row = Record<string, unknown>;
 // The new table is not in the generated Supabase types until it merges; same
@@ -48,7 +61,7 @@ threeplDoCharges.get('/', async (c) => {
 
   const { data: charges, error } = await paginateAll<Row>((lo, hi) => {
     let q = scopeToCompanyId(db(sb).from('threepl_do_charges')
-      .select('id, do_id, threepl_company_id, invoice_no, invoice_date, billed_sen, note, created_at'), co.companyId)
+      .select('id, do_id, threepl_company_id, invoice_no, invoice_date, billed_sen, note, ap_invoice_id, created_at'), co.companyId)
       .order('invoice_date', { ascending: false, nullsFirst: false }).range(lo, hi);
     if (from && ISO.test(from)) q = q.gte('invoice_date', from);
     if (to && ISO.test(to)) q = q.lte('invoice_date', to);
@@ -57,19 +70,9 @@ threeplDoCharges.get('/', async (c) => {
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   const rows = charges ?? [];
 
-  const [{ data: carriers, error: e1 }, { data: cardRows, error: e2 }] = await Promise.all([
-    scopeToCompanyId(db(sb).from('threepl_companies').select('id, name'), co.companyId),
-    scopeToCompanyId(db(sb).from('delivery_rate_cards').select('*'), co.companyId).eq('is_active', true),
-  ]);
-  if (e1 || e2) return c.json({ error: 'load_failed', reason: (e1 ?? e2).message }, 500);
-  const carrierName = new Map<string, string>(((carriers ?? []) as Row[]).map((r) => [String(r.id), String(r.name ?? '')]));
-  const cards = ((cardRows ?? []) as Row[]).map(cardOut).filter((cd) => cd.carrierCompanyId);
-  const { data: ruleRows, error: e3 } = cards.length
-    ? await scopeToCompanyId(db(sb).from('delivery_rate_rules').select('*'), co.companyId).in('card_id', cards.map((x) => x.id))
-    : { data: [] as Row[], error: null };
-  if (e3) return c.json({ error: 'load_failed', reason: e3.message }, 500);
-  const rules = ((ruleRows ?? []) as Row[]).map(ruleOut);
-  const specByCarrier = new Map(cards.map((cd) => [cd.carrierCompanyId as string, { name: cd.name, spec: toCardSpec(cd, rules.filter((r) => r.cardId === cd.id)) }]));
+  const loaded = await loadCarrierCards(sb, co.companyId);
+  if (!loaded.ok) return c.json({ error: 'load_failed', reason: loaded.reason }, 500);
+  const { carrierName, specByCarrier } = loaded.cards;
 
   const doIds = [...new Set(rows.map((r) => String(r.do_id)))];
   const doById = new Map<string, Row>();
@@ -79,39 +82,17 @@ threeplDoCharges.get('/', async (c) => {
     if (e4) return c.json({ error: 'load_failed', reason: e4.message }, 500);
     for (const d of (data ?? []) as Row[]) doById.set(String(d.id), d);
   }
-  const soDocs = [...new Set([...doById.values()].map((d) => str(d.so_doc_no)).filter((x): x is string => !!x))];
-  const linesBySo = new Map<string, SetLine[]>();
-  const zoneBySo = new Map<string, string | null>();
-  const addressBySo = new Map<string, string>();
-  if (soDocs.length) {
-    const [{ data: lineRows, error: e5 }, { data: soRows, error: e6 }] = await Promise.all([
-      scopeToAllowedCompanies(sb.from('mfg_sales_order_items').select('doc_no, item_group, qty, cancelled'), c).in('doc_no', soDocs),
-      scopeToAllowedCompanies(sb.from('mfg_sales_orders').select('doc_no, postcode, address1, address2'), c).in('doc_no', soDocs),
-    ]);
-    if (e5 || e6) return c.json({ error: 'load_failed', reason: (e5 ?? e6)!.message }, 500);
-    for (const l of (lineRows ?? []) as Row[]) {
-      const arr = linesBySo.get(String(l.doc_no)) ?? [];
-      const g = String(l.item_group ?? '').toUpperCase();
-      arr.push({
-        category: g.includes('BEDFRAME') ? 'BEDFRAME' : g.includes('SOFA') ? 'SOFA' : g.includes('MATTRESS') ? 'MATTRESS' : 'OTHERS',
-        qty: Number(l.qty ?? 1), cancelled: l.cancelled === true,
-      });
-      linesBySo.set(String(l.doc_no), arr);
-    }
-    for (const so of (soRows ?? []) as Row[]) {
-      addressBySo.set(String(so.doc_no), [str(so.address1), str(so.address2), str(so.postcode)].filter(Boolean).join(' '));
-      zoneBySo.set(String(so.doc_no), zoneForAddress({ postcode: str(so.postcode), address1: str(so.address1), address2: str(so.address2) }, [...DEFAULT_ZONE_PREFIX_MAP]).zone);
-    }
-  }
+  const facts = await loadDoFacts((q) => scopeToAllowedCompanies(q, c), sb, [...doById.values()].map((d) => ({ id: String(d.id), soDocNo: str(d.so_doc_no) })));
+  if (!facts.ok) return c.json({ error: 'load_failed', reason: facts.reason }, 500);
 
   const codes = companyCodeMap(c);
   const out = rows.map((r) => {
     const d = doById.get(String(r.do_id));
-    const soDoc = d ? str(d.so_doc_no) : null;
     const carrierId = String(r.threepl_company_id);
     const card = specByCarrier.get(carrierId) ?? null;
     const billed = Number(r.billed_sen ?? 0);
-    const expected = d && soDoc ? expectedSen(card?.spec ?? null, doFacts(linesBySo.get(soDoc) ?? [], zoneBySo.get(soDoc) ?? null, addressBySo.get(soDoc) ?? null)) : null;
+    const f = facts.facts.get(String(r.do_id));
+    const expected = d && f ? expectedSen(card?.spec ?? null, f) : null;
     return {
       id: String(r.id),
       doId: String(r.do_id),
@@ -129,9 +110,18 @@ threeplDoCharges.get('/', async (c) => {
       expectedSen: expected,
       varianceSen: varianceSen(billed, expected),
       note: str(r.note),
+      apInvoiceId: str(r.ap_invoice_id),
     };
   });
-  return c.json({ rows: out, invoices: invoiceTotals(out).map((t) => ({ ...t, carrierName: carrierName.get(t.carrierId) ?? null })) });
+  /* The bills read off AP invoices and their parts (DOs / service / fairs / not
+     counted / waiting) — Finance's, as the AP invoice is. */
+  let bills: unknown[] = [];
+  if (hasHouzsPerm(c, 'scm.finance.accounting')) {
+    const sum = await billSummaries({ sb, companyId: co.companyId, allowedIds: [co.companyId], usage: null });
+    if (!sum.ok) return c.json({ error: 'load_failed', reason: sum.reason }, 500);
+    bills = sum.bills;
+  }
+  return c.json({ rows: out, invoices: invoiceTotals(out).map((t) => ({ ...t, carrierName: carrierName.get(t.carrierId) ?? null })), bills });
 });
 
 threeplDoCharges.put('/', async (c) => {

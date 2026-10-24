@@ -19,9 +19,16 @@ function recordingSb(row: unknown) {
 describe('loadMaintenanceConfig', () => {
   it('ignores future-dated rows and tie-breaks same-day saves by latest save', async () => {
     const { sb, calls } = recordingSb({ config: { gaps: [] } });
-    const cfg = await loadMaintenanceConfig(sb);
+    const cfg = await loadMaintenanceConfig(sb, null);
     expect(cfg).toEqual({ gaps: [] });
     expect(calls).toContainEqual(['lte', 'effective_from', todayMyt()]);
     expect(calls).toContainEqual(['order', 'created_at', { ascending: false }]);
+  });
+
+  // HC-0134: unscoped, a 2990 master config row could price a Houzs Century SO.
+  it("reads only the order's own company's config", async () => {
+    const { sb, calls } = recordingSb({ config: { gaps: [] } });
+    await loadMaintenanceConfig(sb, 1);
+    expect(calls).toContainEqual(['eq', 'company_id', 1]);
   });
 });

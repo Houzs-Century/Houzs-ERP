@@ -427,11 +427,6 @@
       "fresh-verify",
       "rerun-note"
     ],
-    "seed-delivery-zones.mjs": [
-      "confirm-phrase",
-      "fresh-verify",
-      "rerun-note"
-    ],
     "seed-fleet-maintenance.mjs": [
       "confirm-phrase",
       "fresh-verify",

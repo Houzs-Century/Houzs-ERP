@@ -49,6 +49,10 @@ export const IT_SUPPORT_UNREAD_KEY = ["it-support", "unread-count"] as const;
    there (vendor/scm/lib/fair-options-queries.ts useAssignFair) moves the badge. */
 export const FAIR_LINKS_TO_SETTLE_KEY = ["fair-pending", "count"] as const;
 const FAIR_LINKS_TO_SETTLE_PATH = "/api/scm/mfg-sales-orders/fair-pending/count";
+/* Product requests waiting for the Purchaser (HC-0136: 「same like SO amendment」).
+   Under the request queries' own prefix ['product-requests'], so every request
+   write (vendor/scm/lib/product-request-queries.ts) moves the badge. */
+export const PRODUCT_REQUEST_APPROVALS_KEY = ["product-requests", "pending-count"] as const;
 const IT_SUPPORT_UNREAD_PATH = "/api/it-support/unread-count";
 
 interface PendingCountResponse {
@@ -58,7 +62,7 @@ interface PendingCountResponse {
 /** The badge sources a nav entry can name. Mirrored by NavTab["badge"]. */
 export type ApprovalBadgeSource =
   | "amendment-approvals" | "po-amendment-approvals" | "payment-backdate-approvals" | "payment-requests-waiting" | "it-support-replies"
-  | "fair-links-to-settle";
+  | "fair-links-to-settle" | "product-request-approvals";
 
 /** What the count is, in the entry's tooltip ("Payment Requests · 3 waiting for Finance"). */
 export const BADGE_MEANING: Record<ApprovalBadgeSource, string> = {
@@ -68,6 +72,7 @@ export const BADGE_MEANING: Record<ApprovalBadgeSource, string> = {
   "payment-requests-waiting": "waiting for Finance",
   "it-support-replies": "with a new reply from IT",
   "fair-links-to-settle": "orders with no fair",
+  "product-request-approvals": "awaiting your approval",
 };
 
 /**
@@ -135,6 +140,11 @@ export function useApprovalBadgeCounts(): Record<ApprovalBadgeSource, number> {
     /* SCM staff only — the same permission the entry asks for. The count is the
        page's own list, company-scoped by the server. */
     "fair-links-to-settle": usePendingCount(FAIR_LINKS_TO_SETTLE_KEY, FAIR_LINKS_TO_SETTLE_PATH, enabled && can("scm.access")),
+    "product-request-approvals": usePendingCount(
+      PRODUCT_REQUEST_APPROVALS_KEY,
+      "/api/scm/product-requests/pending-count",
+      enabled && can("scm.product_request.approve"),
+    ),
   };
 }
 

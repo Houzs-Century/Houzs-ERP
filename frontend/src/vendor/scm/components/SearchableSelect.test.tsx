@@ -191,3 +191,34 @@ describe("SearchableSelect clearing", () => {
     expect(picked).toEqual(["Arau"]);
   });
 });
+
+/* Grouped options (Fair Links, owner 2026-10-21: every fair, the order's own
+   place first): a small heading over each run, kept only where a match is. */
+describe("SearchableSelect groups", () => {
+  const fairs = [
+    { value: "340", label: "AKEMI — MID VALLEY — REX (09/11 - 09/13)", group: "At this place" },
+    { value: "300", label: "AKEMI — MID VALLEY — BIGHOME (08/28 - 08/31)", group: "At this place — other dates" },
+    { value: "2235", label: "AKEMI — SETIA SPICE CONVENTION CENTRE — HOMEDEC (10/02 - 10/04)", group: "Other places" },
+  ];
+  const headings = () => Array.from(menu().querySelectorAll('li[role="presentation"]')).map((li) => li.textContent);
+  const options = () => Array.from(menu().querySelectorAll('li[role="option"]')).map((li) => li.textContent);
+
+  test("each run of a group carries its heading, in the order given", () => {
+    render(<SearchableSelect value="" onChange={() => {}} options={fairs} />);
+    openMenu();
+    expect(headings()).toEqual(["At this place", "At this place — other dates", "Other places"]);
+    expect(options()).toHaveLength(3);
+  });
+
+  test("a search keeps only the headings that still have a match, and a heading is not a pick", () => {
+    const picked: string[] = [];
+    render(<SearchableSelect value="" onChange={(v) => picked.push(v)} options={fairs} />);
+    openMenu();
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "setia" } });
+    expect(headings()).toEqual(["Other places"]);
+    fireEvent.mouseDown(screen.getByText("Other places"));
+    expect(picked).toEqual([]);
+    fireEvent.mouseDown(screen.getByText("AKEMI — SETIA SPICE CONVENTION CENTRE — HOMEDEC (10/02 - 10/04)"));
+    expect(picked).toEqual(["2235"]);
+  });
+});

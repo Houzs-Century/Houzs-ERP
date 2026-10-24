@@ -69,7 +69,8 @@ export type FairSoRow = FairDims & {
   service_rev_sen: number;
   cost_by_category: FairCostByCategory;
   total_so_cost_sen: number;
-  margin_pct: number | null;
+  goods_cost_sen: number;       // total cost less the service lines' cost
+  margin_pct: number | null;    // goods only: (selling − goods cost) / selling
   balance_sen: number;
   paid_total_sen: number;
   deposit_sen: number;
@@ -84,8 +85,9 @@ export type FairSoSummary = {
   total_selling_sen: number;
   total_service_rev_sen: number;
   total_so_cost_sen: number;
-  total_margin_sen: number;
-  margin_pct: number | null;
+  total_goods_cost_sen: number;
+  total_margin_sen: number;     // goods: selling − goods cost
+  margin_pct: number | null;    // goods only
   total_balance_sen: number;
   below_deposit_count: number;
   tender_totals: FairTenderSplit;
@@ -97,14 +99,17 @@ export type FairDoRow = FairDims & {
   do_no: string;
   so_no: string | null;
   status: string | null;
+  location: string | null;          // warehouse code, as the Delivery Orders list shows it
+  delivery_location: string | null; // the DO's own city, state
+  delivery_address: string | null;
   qty: number;
   so_amount_sen: number | null;   // linked SO's amount (matches the SO tab)
   total_so_cost_sen: number;
   total_do_cost_sen: number;
   do_cost_is_legacy: boolean;
   cost_delta_sen: number;       // do − so (positive = cost grew at delivery)
-  so_margin_pct: number | null;
-  do_margin_pct: number | null;
+  so_margin_pct: number | null; // goods only, over the SO's goods sales
+  do_margin_pct: number | null; // goods only
 };
 
 export type FairDoSummary = {
@@ -126,7 +131,9 @@ export type FairInvoiceRow = FairDims & {
   so_cost_sen: number;
   do_cost_sen: number;
   si_cost_sen: number;          // landed
-  margin_pct: number | null;      // invoiced vs landed
+  goods_invoiced_sen: number;   // the invoice less its service lines
+  goods_si_cost_sen: number;    // their landed cost
+  margin_pct: number | null;      // goods only: goods invoiced vs their landed cost
 };
 
 export type FairInvoiceSummary = {
@@ -135,7 +142,9 @@ export type FairInvoiceSummary = {
   total_so_cost_sen: number;
   total_do_cost_sen: number;
   total_si_cost_sen: number;
-  margin_pct: number | null;
+  total_goods_invoiced_sen: number;
+  total_goods_si_cost_sen: number;
+  margin_pct: number | null;    // goods only
 };
 
 // ── stage=pnl (exhibition P&L) ───────────────────────────────────────────────

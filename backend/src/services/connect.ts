@@ -33,6 +33,10 @@ export interface ConnectOrder {
    *  linked). /api/chat-callback resolves either number back to the SO, so a
    *  conversation opened under the old rule still records. */
   ref: string;
+  /** The customer Reference No. from scm.mfg_sales_orders.ref, e.g. "HC 11063"
+   *  — distinct from `ref`, which is the SO doc_no. Connect shows it on the
+   *  contact's order card; blank is fine, Connect hides an empty field. */
+  orderRef: string;
   branding: string;
   /** yyyy/mm/dd, already the effective (amended ?? original) date. */
   deliveryDate: string;
@@ -156,8 +160,8 @@ export function isConnectConfigured(env: ConnectConfig): boolean {
 }
 
 /** The delivery templates render at most this many order lines
- *  (ref_1..3 / delivery_date_1..3 / brand_1..3) — Connect's contact schema also
- *  carries only three. A customer with more orders still gets ONE message:
+ *  (ref_1..3 / ref_no_1..3 / delivery_date_1..3 / brand_1..3) — Connect's contact
+ *  schema also carries only three. A customer with more orders still gets ONE message:
  *  order_total carries the true count and the N>=4 template shows the first 3
  *  plus "you have {order_total} orders" (owner's master list, 2026-10-01). */
 export const CONNECT_ORDER_LINES = 3;
@@ -184,6 +188,7 @@ export function buildDeliveryFollowUp(
   orders.slice(0, CONNECT_ORDER_LINES).forEach((o, i) => {
     const n = i + 1;
     attributes[`ref_${n}`] = o.ref;
+    attributes[`ref_no_${n}`] = o.orderRef;
     attributes[`delivery_date_${n}`] = o.deliveryDate;
     attributes[`brand_${n}`] = o.branding;
   });

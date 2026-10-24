@@ -33,10 +33,6 @@
       "reads": 0,
       "catches": 3
     },
-    "backend/src/routes/mail-inbound.ts": {
-      "reads": 0,
-      "catches": 1
-    },
     "backend/src/routes/projects.ts": {
       "reads": 0,
       "catches": 2
@@ -294,7 +290,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/inventory.ts": {
-      "reads": 13,
+      "reads": 9,
       "catches": 0
     },
     "backend/src/scm/routes/lorry-capacity.ts": {
@@ -454,10 +450,6 @@
       "catches": 1
     },
     "backend/src/services/photoThumbs.ts": {
-      "reads": 0,
-      "catches": 1
-    },
-    "backend/src/services/stockItems.ts": {
       "reads": 0,
       "catches": 1
     },

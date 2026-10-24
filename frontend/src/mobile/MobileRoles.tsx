@@ -1,10 +1,35 @@
 import { useEffect, useMemo, useState } from "react";
+import { FileDown, FileUp } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { useQuery } from "../hooks/useQuery";
 import { useToast } from "../hooks/useToast";
 import { api } from "../api/client";
 import type { PermissionDef, Role } from "../types";
 import { buildModules, diffGrants, isLockedRole } from "../lib/rolesPermissionModel";
+import { exportRoleMatrix } from "../lib/roleMatrixExcelFile";
+import { snapshotFromApi } from "../lib/roleMatrixExcel";
+import { RoleMatrixImportModal } from "../pages/team/RoleMatrixImportModal";
+import {
+  MATRIX_LEVELS,
+  MATRIX_LEVEL_LABEL_EN,
+  buildMatrixModules,
+  normalizeStoredLevel,
+  applyLevelToPages,
+  applyLevelToPerms,
+  reconcileScmAccess,
+  moduleLevel,
+  pageRowsToSend,
+  permsDiffer,
+  pageLevelsDiffCount,
+  type PageLite,
+  type MatrixLevel,
+} from "../lib/roleMatrixModel";
+
+type PageAccessPayload = {
+  pages: PageLite[];
+  roles: Array<{ role_id: number; has_rows: boolean; levels: Record<string, string> }>;
+};
+type PageLevels = Record<string, MatrixLevel>;
 
 /**
  * Mobile Roles & Permissions — the phone presentation of the desktop
@@ -16,14 +41,32 @@ import { buildModules, diffGrants, isLockedRole } from "../lib/rolesPermissionMo
  * phone by design.
  */
 export function MobileRoles({ onBack }: { onBack: () => void }) {
+  const { can } = useAuth();
+  const toast = useToast();
   const rolesQ = useQuery<{ roles: Role[] }>("/api/roles", () => api.get("/api/roles"));
   const permsQ = useQuery<{ permissions: PermissionDef[] }>("/api/roles/permissions", () =>
     api.get("/api/roles/permissions")
   );
+  const pageQ = useQuery<PageAccessPayload>("/api/roles/page-access", () =>
+    api.get("/api/roles/page-access")
+  );
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [importing, setImporting] = useState(false);
 
   const roles = rolesQ.data?.roles ?? [];
   const selected = selectedId != null ? roles.find((r) => r.id === selectedId) ?? null : null;
+
+  // Whole-matrix snapshot for Excel export/import — the SAME pure engine as the
+  // desktop Matrix tab (one product, one logic layer).
+  const snapshot = useMemo(
+    () => snapshotFromApi(roles, pageQ.data?.pages ?? [], permsQ.data?.permissions ?? [], pageQ.data?.roles ?? []),
+    [roles, permsQ.data, pageQ.data]
+  );
+  function onExport() {
+    void exportRoleMatrix(snapshot).catch((e) =>
+      toast.error((e instanceof Error && e.message) || "Export failed.")
+    );
+  }
 
   // A role that vanished under us (deleted elsewhere) drops back to the list.
   useEffect(() => {
@@ -33,23 +76,45 @@ export function MobileRoles({ onBack }: { onBack: () => void }) {
   }, [selectedId, roles]);
 
   if (selected) {
+    const pa = pageQ.data;
+    const paRole = pa?.roles.find((r) => r.role_id === selected.id);
     return (
       <RoleDetail
         role={selected}
         permissions={permsQ.data?.permissions ?? []}
+        pages={pa?.pages ?? []}
+        storedLevels={paRole?.levels ?? {}}
+        hasRows={paRole?.has_rows ?? false}
         onBack={() => setSelectedId(null)}
-        onSaved={() => rolesQ.reload()}
+        onSaved={() => {
+          rolesQ.reload();
+          pageQ.reload();
+        }}
       />
     );
   }
   return (
-    <RoleList
-      roles={roles}
-      permissions={permsQ.data?.permissions ?? []}
-      loading={rolesQ.loading || permsQ.loading}
-      onBack={onBack}
-      onOpen={setSelectedId}
-    />
+    <>
+      <RoleList
+        roles={roles}
+        permissions={permsQ.data?.permissions ?? []}
+        loading={rolesQ.loading || permsQ.loading}
+        canManage={can("roles.manage")}
+        onBack={onBack}
+        onOpen={setSelectedId}
+        onExport={onExport}
+        onImport={() => setImporting(true)}
+      />
+      <RoleMatrixImportModal
+        open={importing}
+        onClose={() => setImporting(false)}
+        snapshot={snapshot}
+        onApplied={() => {
+          rolesQ.reload();
+          pageQ.reload();
+        }}
+      />
+    </>
   );
 }
 
@@ -68,19 +133,42 @@ const HDR_BACK: React.CSSProperties = {
 };
 const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
 
+const MATRIX_BTN: React.CSSProperties = {
+  flex: 1,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 6,
+  height: 38,
+  border: "1px solid var(--line-card)",
+  background: "var(--bg)",
+  borderRadius: "var(--r-btn, 10px)",
+  fontFamily: "inherit",
+  fontSize: 13,
+  fontWeight: 700,
+  color: "var(--ink2)",
+  cursor: "pointer",
+};
+
 // ── List view ────────────────────────────────────────────────
 function RoleList({
   roles,
   permissions,
   loading,
+  canManage,
   onBack,
   onOpen,
+  onExport,
+  onImport,
 }: {
   roles: Role[];
   permissions: PermissionDef[];
   loading: boolean;
+  canManage: boolean;
   onBack: () => void;
   onOpen: (id: number) => void;
+  onExport: () => void;
+  onImport: () => void;
 }) {
   const [query, setQuery] = useState("");
   const keyLabel = useMemo(() => {
@@ -128,6 +216,16 @@ function RoleList({
             outline: "none",
           }}
         />
+        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+          <button onClick={onExport} style={MATRIX_BTN}>
+            <FileDown size={14} /> Export Excel
+          </button>
+          {canManage && (
+            <button onClick={onImport} style={MATRIX_BTN}>
+              <FileUp size={14} /> Import Excel
+            </button>
+          )}
+        </div>
       </header>
 
       <div className="scroll" style={{ padding: "12px 14px 32px" }}>
@@ -180,11 +278,17 @@ function RoleList({
 function RoleDetail({
   role,
   permissions,
+  pages,
+  storedLevels,
+  hasRows,
   onBack,
   onSaved,
 }: {
   role: Role;
   permissions: PermissionDef[];
+  pages: PageLite[];
+  storedLevels: Record<string, string>;
+  hasRows: boolean;
   onBack: () => void;
   onSaved: () => void;
 }) {
@@ -195,6 +299,7 @@ function RoleDetail({
   const readOnly = !canManage || locked;
 
   const modules = useMemo(() => buildModules(permissions), [permissions]);
+  const matrixModules = useMemo(() => buildMatrixModules(pages, permissions), [pages, permissions]);
   const defByKey = useMemo(() => {
     const m = new Map<string, PermissionDef>();
     for (const p of permissions) m.set(p.key, p);
@@ -202,7 +307,14 @@ function RoleDetail({
   }, [permissions]);
 
   const baseline = useMemo(() => new Set(role.permissions), [role.permissions]);
+  const pageBase = useMemo(() => {
+    const out: PageLevels = {};
+    for (const p of pages) out[p.key] = normalizeStoredLevel(storedLevels[p.key]);
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role.id, pages]);
   const [staged, setStaged] = useState<Set<string>>(() => new Set(role.permissions));
+  const [pageStaged, setPageStaged] = useState<PageLevels>(() => ({ ...pageBase }));
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
 
@@ -210,14 +322,20 @@ function RoleDetail({
   // a save+reload does not clobber the edits we just persisted).
   useEffect(() => {
     setStaged(new Set(role.permissions));
+    setPageStaged({ ...pageBase });
     setOpen({});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [role.id]);
 
-  const dirty = useMemo(
+  const permDirty = useMemo(
     () => diffGrants({ [role.id]: staged }, { [role.id]: baseline }),
     [staged, baseline, role.id]
   );
+  const pageDirtyCount = useMemo(
+    () => pageLevelsDiffCount(pages, pageStaged, pageBase),
+    [pages, pageStaged, pageBase]
+  );
+  const dirtyTotal = permDirty.total + pageDirtyCount;
 
   function toggle(key: string) {
     if (readOnly) return;
@@ -239,13 +357,38 @@ function RoleDetail({
       return next;
     });
   }
+  function setMatrixModule(m: (typeof matrixModules)[number], level: MatrixLevel) {
+    if (readOnly) return;
+    const nextPages = applyLevelToPages(pageStaged, m, level);
+    setPageStaged(nextPages);
+    setStaged((prev) => {
+      let next = applyLevelToPerms(prev, m, level);
+      if (m.scmArea) next = reconcileScmAccess(next, nextPages);
+      return next;
+    });
+  }
+  function setPageLevel(pageKey: string, level: MatrixLevel) {
+    if (readOnly) return;
+    const nextPages = { ...pageStaged, [pageKey]: level };
+    setPageStaged(nextPages);
+    if (pageKey.startsWith("scm.")) {
+      setStaged((prev) => reconcileScmAccess(prev, nextPages));
+    }
+  }
 
   async function save() {
-    if (dirty.total === 0) return;
+    if (dirtyTotal === 0) return;
     setBusy(true);
     try {
-      await api.patch(`/api/roles/${role.id}`, { permissions: Array.from(staged) });
-      toast.success("Permissions saved.");
+      if (pageDirtyCount > 0) {
+        await api.patch(`/api/roles/${role.id}/page-access`, {
+          entries: pageRowsToSend(pages, pageStaged),
+        });
+      }
+      if (permsDiffer(staged, baseline)) {
+        await api.patch(`/api/roles/${role.id}`, { permissions: Array.from(staged) });
+      }
+      toast.success("Saved. Members see it on their next request.");
       onSaved();
     } catch (e) {
       toast.error((e instanceof Error && e.message) || "Save failed. Please try again.");
@@ -271,7 +414,7 @@ function RoleDetail({
         )}
       </header>
 
-      <div className="scroll" style={{ padding: "12px 14px", paddingBottom: dirty.total > 0 ? 96 : 32 }}>
+      <div className="scroll" style={{ padding: "12px 14px", paddingBottom: dirtyTotal > 0 ? 96 : 32 }}>
         {(role.unknown_permissions?.length ?? 0) > 0 && (
           <div className="card" style={{ padding: 12, marginBottom: 10, border: "1px solid var(--amber)", background: "var(--amber-bg)" }}>
             <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--amber)" }}>
@@ -301,6 +444,60 @@ function RoleDetail({
             </div>
           </div>
         ) : (
+          <>
+          {!hasRows && (
+            <div className="card" style={{ padding: 12, marginBottom: 10, border: "1px solid var(--warning-text, #6e4d12)", background: "var(--warning-bg, #f6efd9)" }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--ink)" }}>Not configured</div>
+              <div style={{ fontSize: 11.5, color: "var(--ink2)", marginTop: 4, lineHeight: 1.4 }}>
+                Members still see pages by the old position rule. Set the levels below and save once to make the role the source of truth.
+              </div>
+            </div>
+          )}
+          {matrixModules.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <div className="ey" style={{ color: "var(--gold)", padding: "0 2px 8px" }}>Page access</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {matrixModules.map((m) => {
+                  const lv = moduleLevel(m, pageStaged, staged);
+                  const isOpen = !!open[`pa:${m.id}`];
+                  const expandable = m.pages.length > 1;
+                  return (
+                    <div key={m.id} className="card" style={{ overflow: "hidden", border: "1px solid var(--line-card)" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "11px 14px" }}>
+                        <button
+                          onClick={() => expandable && setOpen((p) => ({ ...p, [`pa:${m.id}`]: !p[`pa:${m.id}`] }))}
+                          disabled={!expandable}
+                          style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", fontFamily: "inherit", textAlign: "left", cursor: expandable ? "pointer" : "default", padding: 0 }}
+                        >
+                          {expandable && (
+                            <span style={{ flex: "none", color: "var(--mut2)", fontSize: 12, transform: isOpen ? "rotate(0deg)" : "rotate(-90deg)", transition: "transform 120ms" }}>▾</span>
+                          )}
+                          <span style={{ fontSize: 13.5, fontWeight: 700, color: "var(--ink)" }}>{m.labelEn}</span>
+                          {lv === "mixed" && (
+                            <span style={{ flex: "none", fontSize: 10, color: "var(--mut)" }}>Mix</span>
+                          )}
+                        </button>
+                        <MLevelPicker value={lv} disabled={readOnly} onChange={(next) => setMatrixModule(m, next)} />
+                      </div>
+                      {isOpen && expandable && (
+                        <div style={{ borderTop: "1px solid var(--line2)" }}>
+                          {m.pages.filter((p) => p.key !== m.topPageKey).map((p) => (
+                            <div key={p.key} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 14px 9px 26px", borderTop: "1px solid var(--line2)" }}>
+                              <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: p.dormant ? "var(--mut2)" : "var(--ink2)", textDecoration: p.dormant ? "line-through" : "none" }}>
+                                {p.label}
+                              </span>
+                              <MLevelPicker value={pageStaged[p.key] ?? "none"} disabled={readOnly || !!p.dormant} onChange={(next) => setPageLevel(p.key, next)} />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          <div className="ey" style={{ color: "var(--gold)", padding: "0 2px 8px" }}>Functions</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {modules.map((mod) => {
               const on = mod.keys.filter((k) => staged.has(k)).length;
@@ -375,19 +572,23 @@ function RoleDetail({
               );
             })}
           </div>
+          </>
         )}
       </div>
 
-      {dirty.total > 0 && !readOnly && (
+      {dirtyTotal > 0 && !readOnly && (
         <div className="actbar" style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <button
-            onClick={() => setStaged(new Set(role.permissions))}
+            onClick={() => {
+              setStaged(new Set(role.permissions));
+              setPageStaged({ ...pageBase });
+            }}
             style={{ flex: "none", height: 48, padding: "0 16px", border: "1px solid var(--line-card)", background: "#fff", borderRadius: "var(--r-btn)", fontFamily: "inherit", fontSize: 14, fontWeight: 700, color: "var(--ink2)", cursor: "pointer" }}
           >
             Discard
           </button>
           <button className="btn" disabled={busy} onClick={save} style={{ flex: 1, width: "auto" }}>
-            {busy ? "Saving…" : `Save ${dirty.total} change${dirty.total === 1 ? "" : "s"}`}
+            {busy ? "Saving…" : `Save ${dirtyTotal} change${dirtyTotal === 1 ? "" : "s"}`}
           </button>
         </div>
       )}
@@ -407,3 +608,45 @@ const miniBtn: React.CSSProperties = {
   color: "var(--ink2)",
   cursor: "pointer",
 };
+
+/** None/View/Edit/Full segmented picker for the mobile page-access cards. */
+function MLevelPicker({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: MatrixLevel | "mixed";
+  disabled: boolean;
+  onChange: (level: MatrixLevel) => void;
+}) {
+  return (
+    <div style={{ flex: "none", display: "flex", gap: 2 }}>
+      {MATRIX_LEVELS.map((lv) => {
+        const active = value === lv;
+        return (
+          <button
+            key={lv}
+            type="button"
+            disabled={disabled}
+            onClick={() => onChange(lv)}
+            style={{
+              width: 42,
+              height: 28,
+              borderRadius: 7,
+              border: "none",
+              fontFamily: "inherit",
+              fontSize: 11.5,
+              fontWeight: active ? 800 : 500,
+              cursor: disabled ? "default" : "pointer",
+              color: active ? "#fff" : "var(--mut)",
+              background: active ? "var(--brand, #16695f)" : "var(--bg)",
+              opacity: disabled ? 0.5 : 1,
+            }}
+          >
+            {MATRIX_LEVEL_LABEL_EN[lv]}
+          </button>
+        );
+      })}
+    </div>
+  );
+}

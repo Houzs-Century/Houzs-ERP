@@ -509,7 +509,7 @@ export async function applySoAmendment(
 
   // Config loaded ONCE and threaded into every per-line recompute (the create
   // path's `cachedConfig` — one maintenance_config read for the whole apply).
-  const cachedConfig = await loadMaintenanceConfig(sb);
+  const cachedConfig = await loadMaintenanceConfig(sb, soCompanyId);
 
   /* (3) Apply each line diff to mfg_sales_order_items, carrying ALL variant
      columns. SPEC rewrites item_code + variants (+ optional qty/price); QTY

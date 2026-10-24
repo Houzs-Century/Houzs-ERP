@@ -7,5 +7,75 @@
       { "drop": "AKEMI SOLITUDE MATT (SK)", "keep": "HAPPI SLEEP SOLITUDE MATT (SK)" },
       { "drop": "AKEMI SOLITUDE MATT (SP)", "keep": "HAPPI SLEEP SOLITUDE MATT (SP)" }
     ]
+  },
+  "HC-0141": {
+    "ruling": "YH 2026-10-21 (HC-0141, Sim): keep the plain codes. They carry the prices (30/36), supplier costs (30/36), the main-supplier binding and the stock (26 units); the MYLATEX twins carry none. Both sides already send the same AutoCount item (MYLATEX <M> (size)), so AutoCount is unchanged. BACKSHIRE (Q) and VELVETON (K) are refused until their MYLATEX code stops showing -1 stock.",
+    "pairs": [
+      { "drop": "MYLATEX AURORA MATT (K)",        "keep": "AURORA MATT (K)" },
+      { "drop": "MYLATEX AURORA MATT (Q)",        "keep": "AURORA MATT (Q)" },
+      { "drop": "MYLATEX AURORA MATT (S)",        "keep": "AURORA MATT (S)" },
+      { "drop": "MYLATEX AURORA MATT (SK)",       "keep": "AURORA MATT (SK)" },
+      { "drop": "MYLATEX AURORA MATT (SP)",       "keep": "AURORA MATT (SP)" },
+      { "drop": "MYLATEX AURORA MATT (SS)",       "keep": "AURORA MATT (SS)" },
+      { "drop": "MYLATEX BACKSHIRE MATT (K)",     "keep": "BACKSHIRE MATT (K)" },
+      { "drop": "MYLATEX BACKSHIRE MATT (Q)",     "keep": "BACKSHIRE MATT (Q)" },
+      { "drop": "MYLATEX BACKSHIRE MATT (S)",     "keep": "BACKSHIRE MATT (S)" },
+      { "drop": "MYLATEX BACKSHIRE MATT (SK)",    "keep": "BACKSHIRE MATT (SK)" },
+      { "drop": "MYLATEX BACKSHIRE MATT (SS)",    "keep": "BACKSHIRE MATT (SS)" },
+      { "drop": "MYLATEX BACKTON MATT (K)",       "keep": "BACKTON MATT (K)" },
+      { "drop": "MYLATEX BACKTON MATT (Q)",       "keep": "BACKTON MATT (Q)" },
+      { "drop": "MYLATEX BACKTON MATT (S)",       "keep": "BACKTON MATT (S)" },
+      { "drop": "MYLATEX BACKTON MATT (SK)",      "keep": "BACKTON MATT (SK)" },
+      { "drop": "MYLATEX BACKTON MATT (SS)",      "keep": "BACKTON MATT (SS)" },
+      { "drop": "MYLATEX CELESTIA MATT (K)",      "keep": "CELESTIA MATT (K)" },
+      { "drop": "MYLATEX CELESTIA MATT (Q)",      "keep": "CELESTIA MATT (Q)" },
+      { "drop": "MYLATEX CELESTIA MATT (S)",      "keep": "CELESTIA MATT (S)" },
+      { "drop": "MYLATEX CELESTIA MATT (SK)",     "keep": "CELESTIA MATT (SK)" },
+      { "drop": "MYLATEX CELESTIA MATT (SS)",     "keep": "CELESTIA MATT (SS)" },
+      { "drop": "MYLATEX CRESTLAKE MATT (K)",     "keep": "CRESTLAKE MATT (K)" },
+      { "drop": "MYLATEX CRESTLAKE MATT (Q)",     "keep": "CRESTLAKE MATT (Q)" },
+      { "drop": "MYLATEX CRESTLAKE MATT (S)",     "keep": "CRESTLAKE MATT (S)" },
+      { "drop": "MYLATEX CRESTLAKE MATT (SK)",    "keep": "CRESTLAKE MATT (SK)" },
+      { "drop": "MYLATEX CRESTLAKE MATT (SS)",    "keep": "CRESTLAKE MATT (SS)" },
+      { "drop": "MYLATEX LUMBARIA MATT (K)",      "keep": "LUMBARIA MATT (K)" },
+      { "drop": "MYLATEX LUMBARIA MATT (Q)",      "keep": "LUMBARIA MATT (Q)" },
+      { "drop": "MYLATEX LUMBARIA MATT (S)",      "keep": "LUMBARIA MATT (S)" },
+      { "drop": "MYLATEX LUMBARIA MATT (SK)",     "keep": "LUMBARIA MATT (SK)" },
+      { "drop": "MYLATEX LUMBARIA MATT (SS)",     "keep": "LUMBARIA MATT (SS)" },
+      { "drop": "MYLATEX VELVETON MATT (K)",      "keep": "VELVETON MATT (K)" },
+      { "drop": "MYLATEX VELVETON MATT (Q)",      "keep": "VELVETON MATT (Q)" },
+      { "drop": "MYLATEX VELVETON MATT (S)",      "keep": "VELVETON MATT (S)" },
+      { "drop": "MYLATEX VELVETON MATT (SK)",     "keep": "VELVETON MATT (SK)" },
+      { "drop": "MYLATEX VELVETON MATT (SS)",     "keep": "VELVETON MATT (SS)" }
+    ]
+  },
+  "HC-0147": {
+    "ruling": "Sim 2026-10-22 (HC-0147): ROY is a typo, keep the ROYAL codes. Both codes of each size already bind the same supplier to the same AutoCount item (DL-ROYAL EXECUTIVE LUXE 2.0(K)/(Q), LUXE2.0(SK)), so AutoCount is unchanged.",
+    "pairs": [
+      { "drop": "DUNLOPILLO ROY EXECUTIVE LUXE 2.0 MATT (K)",  "keep": "DUNLOPILLO ROYAL EXECUTIVE LUXE 2.0 MATT (K)" },
+      { "drop": "DUNLOPILLO ROY EXECUTIVE LUXE 2.0 MATT (Q)",  "keep": "DUNLOPILLO ROYAL EXECUTIVE LUXE 2.0 MATT (Q)" },
+      { "drop": "DUNLOPILLO ROY EXECUTIVE LUXE 2.0 MATT (SK)", "keep": "DUNLOPILLO ROYAL EXECUTIVE LUXE2.0 MATT (SK)" }
+    ]
+  },
+  "HC-0153": {
+    "ruling": "Sim 2026-10-23 (HC-0153): merge Modular HS SOLACE into HAPPI SLEEP SOLACE (keep HAPPI SLEEP SOLACE; S/SK/SP are discontinued and stay out, nothing is on them), PEBBLE GREY into AKEMI -PEBBLE GREY and SANDY BEACH into AKEMI -SANDY BEACH (keep the AKEMI ones; all three are discontinued, so the AKEMI codes need no new supplier price). SOLACE: AutoCount's AK-HS SOLACE already maps to the kept codes. PEBBLE GREY / SANDY BEACH: the cutover map names the dropped codes, but each kept AKEMI code binds 400-D002 to the same AKBF- AutoCount item, and the binding wins, so AutoCount is unchanged. Sim 17:18: GENERASI 3.0 20CM was only switched off at the Model, its SO lines (HC-SO-2610-084, HC-SO-2609-374) still carry it; keep DUNLOPILLO OTHOREST GENERASI 3.0 20CM, which holds the 400-D001 main binding, the prices and the same DL-GENERASI 3.0 20CM AutoCount items.",
+    "pairs": [
+      { "drop": "AKEMI HS SOLACE MATT (K)",  "keep": "HAPPI SLEEP SOLACE MATT (K)" },
+      { "drop": "AKEMI HS SOLACE MATT (Q)",  "keep": "HAPPI SLEEP SOLACE MATT (Q)" },
+      { "drop": "AKEMI HS SOLACE MATT (SS)", "keep": "HAPPI SLEEP SOLACE MATT (SS)" },
+      { "drop": "PEBBLE GREY-(K)",  "keep": "AKEMI -PEBBLE GREY-(K)" },
+      { "drop": "PEBBLE GREY-(Q)",  "keep": "AKEMI -PEBBLE GREY-(Q)" },
+      { "drop": "PEBBLE GREY-(S)",  "keep": "AKEMI -PEBBLE GREY-(S)" },
+      { "drop": "PEBBLE GREY-(SK)", "keep": "AKEMI -PEBBLE GREY-(SK)" },
+      { "drop": "PEBBLE GREY-(SS)", "keep": "AKEMI -PEBBLE GREY-(SS)" },
+      { "drop": "SANDY BEACH-(K)",  "keep": "AKEMI -SANDY BEACH-(K)" },
+      { "drop": "SANDY BEACH-(Q)",  "keep": "AKEMI -SANDY BEACH-(Q)" },
+      { "drop": "SANDY BEACH-(S)",  "keep": "AKEMI -SANDY BEACH-(S)" },
+      { "drop": "SANDY BEACH-(SS)", "keep": "AKEMI -SANDY BEACH-(SS)" },
+      { "drop": "DUNLOPILLO GENERASI 3.0 20CM MATT (K)",  "keep": "DUNLOPILLO OTHOREST GENERASI 3.0 20CM MATT (K)" },
+      { "drop": "DUNLOPILLO GENERASI 3.0 20CM MATT (Q)",  "keep": "DUNLOPILLO OTHOREST GENERASI 3.0 20CM MATT (Q)" },
+      { "drop": "DUNLOPILLO GENERASI 3.0 20CM MATT (S)",  "keep": "DUNLOPILLO OTHOREST GENERASI 3.0 20CM MATT (S)" },
+      { "drop": "DUNLOPILLO GENERASI 3.0 20CM MATT (SS)", "keep": "DUNLOPILLO OTHOREST GENERASI 3.0 20CM MATT (SS)" }
+    ]
   }
 }

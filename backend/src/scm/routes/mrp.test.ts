@@ -62,6 +62,8 @@ function fakeSb(tables: Record<string, Row[]>) {
     // optimisation; the JS-side SO_DONE / PO_DEAD filters stay authoritative and
     // are what these tests exercise.
     not() { return this; }
+    // readUnlinkedDoLines: `so_item_id IS NULL`.
+    is(col: string, val: unknown) { this.rows = this.rows.filter((r) => (r[col] ?? null) === val); return this; }
     // sofa-set-coverage reads open lots with .gt('qty_remaining', 0).
     gt(col: string, val: number) { this.rows = this.rows.filter((r) => Number(r[col] ?? 0) > val); return this; }
     // An UPPER bound only, exactly like the real one — it can lower the ceiling,
@@ -1868,5 +1870,85 @@ describe('company 2: a sofa set is planned whole — one batch (= one PO) or not
       v_inventory_lots_open: [lot(RHF, '2990-PO-2607-018')],
     })), opts);
     expect(mrpStockAssignment(res).get(stockAssignmentKey('W1', RHF, VKEY))).toBeUndefined();
+  });
+});
+
+describe('computeMrp — HC-0128 Hydraulic / NB fabric lines pre-select NB FURNITURE', () => {
+  const bind = (supplierId: string, code: string, isMain: boolean): Row => ({
+    item_code: 'BF-100', material_kind: 'mfg_product', is_main_supplier: isMain,
+    supplier_id: supplierId, supplier: { code, name: code },
+  });
+  const line = (id: string, variants: Row): Row => ({ ...demandRed(1), id, doc_no: `SO-${id}`, variants });
+  const tables = (bindings: Row[]): Record<string, Row[]> => ({
+    ...BASE_TABLES,
+    mfg_sales_order_items: [
+      line('si-hyd', { fabricCode: 'RED', specials: ['Hydraulic'] }),
+      line('si-note', { fabricCode: 'RED', extraAddonNote: '12”divan no leg with hydraulic.' }),
+      line('si-nb', { fabricCode: 'NB-04' }),
+      line('si-plain', { fabricCode: 'RED' }),
+    ],
+    supplier_material_bindings: bindings,
+    fabric_trackings: [{ fabric_code: 'NB-04', series: 'NB' }, { fabric_code: 'RED', series: 'R' }],
+  });
+  const ruleOf = (res: Awaited<ReturnType<typeof computeMrp>>): Record<string, string | null> =>
+    Object.fromEntries(res.skus.flatMap((s) => s.lines).map((l) => [l.soItemId, l.ruleSupplierId]));
+
+  test('routes hydraulic (special or note) and NB-series fabric to the bound NB supplier', async () => {
+    const res = await computeMrp(asSb(fakeSb(tables([bind('hk', '400-H004', true), bind('nb', '400-N002', false)]))), opts);
+    expect(ruleOf(res)).toEqual({ 'si-hyd': 'nb', 'si-note': 'nb', 'si-nb': 'nb', 'si-plain': null });
+  });
+
+  test('one NB bedframe pulls the other bedframes of the SAME SO to NB, nothing else', async () => {
+    const sb = fakeSb({
+      ...tables([bind('hk', '400-H004', true), bind('nb', '400-N002', false)]),
+      mfg_sales_order_items: [
+        { ...line('si-hyd', { fabricCode: 'RED', specials: ['Hydraulic'] }), doc_no: 'SO-A' },
+        { ...line('si-sib', { fabricCode: 'RED' }), doc_no: 'SO-A' },
+        { ...line('si-matt', {}), doc_no: 'SO-A', item_group: 'mattress' },
+        { ...line('si-other', { fabricCode: 'RED' }), doc_no: 'SO-B' },
+      ],
+    });
+    const res = await computeMrp(asSb(sb), opts);
+    expect(ruleOf(res)).toEqual({ 'si-hyd': 'nb', 'si-sib': 'nb', 'si-matt': null, 'si-other': null });
+  });
+
+  test('no rule when NB FURNITURE is not bound to the SKU (the PO would fall back to main)', async () => {
+    const res = await computeMrp(asSb(fakeSb(tables([bind('hk', '400-H004', true)]))), opts);
+    expect(Object.values(ruleOf(res)).every((v) => v === null)).toBe(true);
+  });
+});
+
+describe('company 1: Dining is planned from its own purchase order only (HC-0150)', () => {
+  /* Sim's case: one code, two models in free text, one unit in stock. Pooled, the
+     unit covered whichever order sorted first, whatever model it was. */
+  const line = (id: string, docNo: string, group: string, model: string, due: string): Row => ({
+    id, doc_no: docNo, item_code: 'AN-DINING LEG', description: 'ANNEX DINING LEG',
+    item_group: group, variants: { extraAddonNote: model }, qty: 1,
+    warehouse_id: 'W1', line_delivery_date: due, line_no: 1, created_at: '2026-10-01T00:00:00Z', cancelled: false,
+    so: { debtor_name: docNo, status: 'CONFIRMED', so_date: '2026-10-01', customer_delivery_date: due, processing_date: '2026-10-02', customer_state: null },
+  });
+  const world = (group: string) => fakeSb(Object.fromEntries(Object.entries({
+    ...BASE_TABLES,
+    warehouses: [{ id: 'W1', code: 'W1', name: 'Main', is_active: true }],
+    mfg_products: [{ id: 'p1', code: 'AN-DINING LEG', name: 'ANNEX DINING LEG', category: 'DINING' }],
+    mfg_sales_order_items: [
+      line('si-a', 'SO-A', group, 'MDL-5094R', '2026-11-01'),
+      line('si-b', 'SO-B', group, 'MDL- A201', '2026-11-15'),
+    ],
+    inventory_balances: [{ item_code: 'AN-DINING LEG', warehouse_id: 'W1', variant_key: '', qty: 1 }],
+  }).map(([t, rows]) => [t, (rows as Row[]).map((r) => ({ company_id: 1, ...r }))])));
+
+  test('a dining line is short without its own PO, even with a unit of the same code in stock', async () => {
+    const res = await computeMrp(asSb(world('dining')), { ...opts, companyId: 1 });
+    const row = res.skus.find((s) => s.itemCode === 'AN-DINING LEG')!;
+    expect(row.stock).toBe(1);
+    expect(row.qtyNeeded).toBe(2);
+    expect(row.shortage).toBe(2);
+  });
+
+  test('a line migrated as others still pools, so one of the two reads covered', async () => {
+    const res = await computeMrp(asSb(world('others')), { ...opts, companyId: 1 });
+    const row = res.skus.find((s) => s.itemCode === 'AN-DINING LEG')!;
+    expect(row.shortage).toBe(1);
   });
 });

@@ -11,18 +11,26 @@ export const HC_SUBSTATUS_VALUES = [
 ] as const;
 
 /* The customer-message follow-up workflow statuses shown/edited in the "Delivery
-   Status" column (owner 2026-09-22). One of these 23 values, or blank. The
+   Status" column. One of these 28 values, or blank (owner 2026-10-22). The
    coarse scm.delivery_state (the top state tabs) is a separate, derived field
-   and is NOT one of these — the tabs get their own rework later. */
+   and is NOT one of these — the tabs get their own rework later. Byte-synced with
+   the frontend MESSAGE_STATUSES (delivery-planning-queries.ts). */
 export const HC_MESSAGE_STATUS_VALUES = [
-  'To Send Delivery Date', 'Pending Customer Reply (D)', 'Pending Reschedule (D)',
-  'Done Scheduling', 'Not Sent (D)', 'Pending Reschedule (A)', 'Not Sent (A)',
-  'Invalid Data', '3 Days Reminder Sent (Time)', '1 Day Reminder Sent (Driver)',
-  '7 Days Balance Reminder Sent', 'To Send Delivery Time', 'Done Delivery Time',
-  'To Send Driver Info', 'Done Driver Information', 'To Send Collect Balance',
-  'Done Balance Collection', 'To Send Postpone Reason', 'Done Postpone Reason',
-  'To Remind Customer Reply (1)', 'To Remind Customer Reply (2)',
-  'To Remind Customer Reply (3)', 'Done Remind',
+  'To Send Delivery Date', 'Done Send',
+  'To Send Driver Info', 'Done Driver Information',
+  'To Send Collect Balance', 'Done Balance Collection',
+  'To Send Postpone Reason', 'Done Postpone Reason',
+  'To Send Postage', 'Done Postage',
+  'Done Amend', 'Done Delivered',
+  'To Remind Customer Reply (1)', 'To Remind Customer Reply (2)', 'To Remind Customer Reply (3)',
+  'Done Remind (1)', 'Done Remind (2)', 'Done Remind (3)',
+  'Done Scheduling', 'Pending Reschedule (D)',
+  'Not Sent (D)', 'Not Sent (A)', 'Invalid Data',
+  // East Malaysia / Singapore shipping + the (A)-round reschedule and customer-reply
+  // statuses the HC Delivery sheet actually uses — added so the sheet backfill's
+  // real statuses are first-class dropdown values (owner 2026-10-22).
+  'Done Shipout', 'Pending Delivery (EM)', 'Customer Confirm Shipment',
+  'Pending Reschedule (A)', 'Pending Customer Reply (D)',
 ] as const;
 
 export const fieldsSchema = z.object({
@@ -105,6 +113,11 @@ export type DeliveryOrderExecRow = {
   id: string; do_number: string | null; so_doc_no: string | null; status: string | null;
   driver_id: string | null; driverId?: string | null;
   delivery_state: string | null; customer_delivery_date: string | null; do_date: string | null;
+  // POD (proof of delivery) — the real delivered instant + evidence presence.
+  // signature_data (the base64 blob) is deliberately NOT read here; the board
+  // surfaces only has_pod + delivered_at, and the evidence preview is fetched
+  // on demand from the DO detail.
+  delivered_at: string | null; pod_r2_key: string | null; pod_lat: number | null;
   time_range: string | null; time_confirmed: boolean | null;
   arrival_at: string | null; departure_at: string | null;
   shipout_date: string | null; customer_delivered_date: string | null;
@@ -115,6 +128,7 @@ export type DeliveryOrderExecRow = {
   bs_delivery_date: string | null; esb_remarks: string | null;
   bs_remarks: string | null; ctn: string | null; em_delivered_date: string | null;
   doDate?: string | null;
+  deliveredAt?: string | null; podR2Key?: string | null; podLat?: number | null;
   timeRange?: string | null; timeConfirmed?: boolean | null;
   arrivalAt?: string | null; departureAt?: string | null;
   shipoutDate?: string | null; customerDeliveredDate?: string | null;
@@ -124,4 +138,27 @@ export type DeliveryOrderExecRow = {
   vesselVoyage?: string | null; etdPortKlang?: string | null;
   bsDeliveryDate?: string | null; esbRemarks?: string | null;
   bsRemarks?: string | null; emDeliveredDate?: string | null;
+};
+
+/* The per-DO exec fields the board attaches to each SO row — the shaped output
+   of DeliveryOrderExecRow (the LAST non-DRAFT/CANCELLED DO wins, same DO whose
+   crew is shown). Declared here (rather than inline in the router) to keep
+   delivery-planning.ts under its file-size ceiling. */
+export type DoExecOut = {
+  time_range: string | null; time_confirmed: boolean | null;
+  arrival_at: string | null; departure_at: string | null;
+  shipout_date: string | null; customer_delivered_date: string | null;
+  eta_arriving_port: string | null; delivery_substatus: string | null;
+  arrives_em_warehouse_date: string | null;
+  em_delivery_status: string | null; consignment_no: string | null;
+  vessel_voyage: string | null; etd_port_klang: string | null;
+  bs_delivery_date: string | null; esb_remarks: string | null;
+  bs_remarks: string | null; ctn: string | null; em_delivered_date: string | null;
+  do_date: string | null;
+  // POD: the real delivered instant, the photo key, and whether ANY evidence
+  // (photo or GPS) was captured — distinguishes a real driver POD from an
+  // evidence-free "mark delivered" (office advance / QR scan). The signature
+  // and full geo are fetched on demand for the preview, not carried per row.
+  delivered_at: string | null; pod_r2_key: string | null; pod_lat: number | null;
+  has_pod: boolean;
 };

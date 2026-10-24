@@ -15,7 +15,7 @@ import { loadScanCodes } from './grn-scan-codes';
 import { applyScanRacks, scanRackNote } from './grn-scan-racks';
 import { scopeToCompanyIdOrOpen } from './companyScope';
 import {
-  describeUnmatchedScanLines, listScanLines, matchGrnScanToPoLines, resolveScannedSupplier,
+  describeUnmatchedScanLines, listScanLines, matchGrnScanToPoLines, printedPoWhy, resolveScannedSupplier,
   type GrnMatchResult, type OpenPoLine, type PoStatusRef, type ScannedGrnLine,
 } from './grn-scan-match';
 
@@ -33,14 +33,14 @@ export const toScanned = (l: GrnExtracted['lines'][number]): ScannedGrnLine => (
 
 // A plain-language note for a NEEDS-REVIEW job (no GRN created): tell the
 // operator what we saw, line by line, so they can receive from the PO by hand.
-export function buildNeedsReviewNote(parsed: GrnExtracted, match: GrnMatchResult, allPos: PoStatusRef[]): string {
-  const head = buildNeedsReviewHead(parsed, match);
+export function buildNeedsReviewNote(parsed: GrnExtracted, match: GrnMatchResult, allPos: PoStatusRef[], scanSupplierId: string | null): string {
+  const head = buildNeedsReviewHead(parsed, match, allPos, scanSupplierId);
   if (match.qtyMismatch) return `${head} What we read: ${listScanLines(parsed.lines.map(toScanned).filter((l) => l.qty > 0))}`;
-  const lines = describeUnmatchedScanLines(match.unmatched, allPos);
+  const lines = describeUnmatchedScanLines(match.unmatched, allPos, scanSupplierId);
   return lines ? `${head} What we read: ${lines}` : head;
 }
 
-function buildNeedsReviewHead(parsed: GrnExtracted, match: GrnMatchResult): string {
+function buildNeedsReviewHead(parsed: GrnExtracted, match: GrnMatchResult, allPos: PoStatusRef[], scanSupplierId: string | null): string {
   const po = parsed.poNo ? `P.O. ${parsed.poNo}` : 'this delivery order';
   const doRef = parsed.doNo ? ` (D.O. ${parsed.doNo})` : '';
   const poMatched = match.matchedPoNumberValue;
@@ -59,6 +59,9 @@ function buildNeedsReviewHead(parsed: GrnExtracted, match: GrnMatchResult): stri
   if (poMatched) {
     return `We read ${po}${doRef} but could not line its items up to open PO ${poMatched} automatically. Please open that PO and receive against it.`;
   }
+  // The header named a PO of ours that cannot take it (DGSN26002263: HC-PO-2610-091 already received).
+  const why = parsed.poNo ? printedPoWhy(parsed.poNo, allPos, scanSupplierId) : null;
+  if (why) return `We read ${po}${doRef}, but ${why}, so no receipt was created. Please check the PO before receiving by hand.`;
   return `We could not match ${po}${doRef} to an open purchase order automatically. Please open the PO and create the goods receipt from it.`;
 }
 
@@ -94,10 +97,10 @@ export async function draftFromScan(
   job: { uploaderStaffId: string; houzsUserId: number | null; companyId: number | null; id: string },
   parsed: GrnExtracted,
 ): Promise<ScanDraftOutcome> {
-  const { match, allPos } = await matchScan(svc, job.companyId, parsed);
+  const { match, allPos, supplierId } = await matchScan(svc, job.companyId, parsed);
   if (match.picks.length === 0) {
     // No confident PO line — never fabricate a standalone GRN or a wrong link.
-    return { kind: 'needs_review', note: buildNeedsReviewNote(parsed, match, allPos) };
+    return { kind: 'needs_review', note: buildNeedsReviewNote(parsed, match, allPos, supplierId) };
   }
 
   // Resolve the company doc prefix from the captured company (headless — no
@@ -118,7 +121,7 @@ export async function draftFromScan(
   // Scanned lines the operator must add by hand, by name, so the draft itself
   // says what is missing. A draft built from the whole PO lists what the
   // delivery order says instead, since every PO line is already on it.
-  const unmatchedLines = describeUnmatchedScanLines(match.unmatched, allPos);
+  const unmatchedLines = describeUnmatchedScanLines(match.unmatched, allPos, supplierId);
   const unmatchedNote = match.poFallback
     ? `Check every line: no scanned line matched ${match.poFallback} by item, so this draft lists everything still owed on ${match.poFallback.includes(',') ? 'those POs' : 'that PO'} at the PO quantity. Change it to what was delivered before posting. The delivery order lists: ${listScanLines(parsed.lines.map(toScanned).filter((l) => l.qty > 0))}`
     : unmatchedLines ? `Not added to this draft: ${unmatchedLines}` : null;
@@ -151,12 +154,22 @@ export async function draftFromScan(
   }
   const rackNote = scanRackNote(await applyScanRacks(svc, job.companyId, res.created.map((g) => g.id), match.racks));
   if (rackNote) await appendGrnNote(svc, job.companyId, res.created.map((g) => g.id), rackNote);
+  const grnNumbers = res.created.map((g) => g.grnNumber);
   return {
     kind: 'draft',
-    grnNumbers: res.created.map((g) => g.grnNumber),
+    grnNumbers,
     poNumbers: [...new Set(res.created.flatMap((g) => g.poNumbers))],
-    jobNote: [weakNote, nameNote, soNote, unmatchedNote, rackNote].filter(Boolean).join(' ') || null,
+    jobNote: [splitNote(grnNumbers), weakNote, nameNote, soNote, unmatchedNote, rackNote].filter(Boolean).join(' ') || null,
   };
+}
+
+// The scan card links only the first draft (scan_jobs.linked_doc_no), so a
+// delivery order split across warehouses names every draft (HC-0137: the
+// operator saw HC-GRN-2610-169 and missed 2610-170).
+export function splitNote(grnNumbers: string[]): string | null {
+  return grnNumbers.length > 1
+    ? `This delivery order made ${grnNumbers.length} draft goods receipts, one per warehouse: ${grnNumbers.join(', ')}.`
+    : null;
 }
 
 // The rack outcome is known only once the drafts exist (their warehouse picks
