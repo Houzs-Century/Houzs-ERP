@@ -45,9 +45,10 @@ import { expectedSen } from './threepl-do-charge';
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped as in every SCM lib */
 type Row = Record<string, any>;
 const str = (v: unknown) => (v == null || v === '' ? null : String(v));
-/** A real calendar day or null — a misread "2026-13-45" must not sink the whole bill. */
+/** A real calendar day or null — a blank, or a misread "2026-13-45", must not
+ *  sink the whole bill. */
 const dayOrNull = (v: string | null): string | null => {
-  if (!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
+  if (v == null || v.trim() === '' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
   const t = Date.parse(`${v}T00:00:00Z`);
   return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === v ? v : null;
 };
