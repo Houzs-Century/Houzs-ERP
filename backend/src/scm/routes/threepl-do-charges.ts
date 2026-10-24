@@ -29,7 +29,11 @@ import {
 } from '../lib/companyScope';
 import { expectedSen, invoiceTotals, varianceSen } from '../lib/threepl-do-charge';
 import { loadCarrierCards, loadDoFacts } from '../lib/threepl-charge-load';
-import { confirmApBillHandler, listApBillsHandler, readApBillHandler } from './threepl-from-ap';
+import { billSummaries } from '../lib/threepl-bill-import';
+import { hasHouzsPerm } from '../lib/houzs-perms';
+import {
+  assignBillLineHandler, confirmApBillHandler, listApBillsHandler, listBillLinesHandler, readApBillHandler,
+} from './threepl-from-ap';
 
 export const threeplDoCharges = new Hono<{ Bindings: Env; Variables: Variables }>();
 threeplDoCharges.use('*', supabaseAuth);
@@ -37,6 +41,8 @@ threeplDoCharges.use('*', supabaseAuth);
 threeplDoCharges.get('/from-ap/invoices', listApBillsHandler);
 threeplDoCharges.post('/from-ap/:apInvoiceId/read', readApBillHandler);
 threeplDoCharges.post('/from-ap/:apInvoiceId/confirm', confirmApBillHandler);
+threeplDoCharges.get('/bill-lines', listBillLinesHandler);
+threeplDoCharges.patch('/bill-lines/:id', assignBillLineHandler);
 
 type Row = Record<string, unknown>;
 // The new table is not in the generated Supabase types until it merges; same
@@ -76,7 +82,7 @@ threeplDoCharges.get('/', async (c) => {
     if (e4) return c.json({ error: 'load_failed', reason: e4.message }, 500);
     for (const d of (data ?? []) as Row[]) doById.set(String(d.id), d);
   }
-  const facts = await loadDoFacts(c, sb, [...doById.values()].map((d) => ({ id: String(d.id), soDocNo: str(d.so_doc_no) })));
+  const facts = await loadDoFacts((q) => scopeToAllowedCompanies(q, c), sb, [...doById.values()].map((d) => ({ id: String(d.id), soDocNo: str(d.so_doc_no) })));
   if (!facts.ok) return c.json({ error: 'load_failed', reason: facts.reason }, 500);
 
   const codes = companyCodeMap(c);
@@ -107,7 +113,15 @@ threeplDoCharges.get('/', async (c) => {
       apInvoiceId: str(r.ap_invoice_id),
     };
   });
-  return c.json({ rows: out, invoices: invoiceTotals(out).map((t) => ({ ...t, carrierName: carrierName.get(t.carrierId) ?? null })) });
+  /* The bills read off AP invoices and their parts (DOs / service / fairs / not
+     counted / waiting) — Finance's, as the AP invoice is. */
+  let bills: unknown[] = [];
+  if (hasHouzsPerm(c, 'scm.finance.accounting')) {
+    const sum = await billSummaries({ sb, companyId: co.companyId, allowedIds: [co.companyId], usage: null });
+    if (!sum.ok) return c.json({ error: 'load_failed', reason: sum.reason }, 500);
+    bills = sum.bills;
+  }
+  return c.json({ rows: out, invoices: invoiceTotals(out).map((t) => ({ ...t, carrierName: carrierName.get(t.carrierId) ?? null })), bills });
 });
 
 threeplDoCharges.put('/', async (c) => {

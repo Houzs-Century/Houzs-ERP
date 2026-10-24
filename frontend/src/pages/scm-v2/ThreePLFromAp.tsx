@@ -7,6 +7,10 @@
 // Save. Storage, handling, setup, dismantle and dispose are listed beside the
 // DOs and never counted into one (「仓储，搬运不算」). A 2990 DO shows its
 // company: Houzs delivers for 2990 and bills it back.
+//
+// The same reading runs by itself every half hour (owner 2026-10-24: 「手动还是要
+// 保留」 — this panel is the manual one). Save keeps every line with where it
+// goes; what is not on a DO is listed under To check (ThreePLBillLines.tsx).
 // Route: backend/src/scm/routes/threepl-from-ap.ts.
 // ----------------------------------------------------------------------------
 import { useState } from 'react';
@@ -15,6 +19,7 @@ import { Button } from '@2990s/design-system';
 import { fmtDate, fmtSen } from '@2990s/shared';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { DataTable, type Column } from '../../components/DataTable';
+import { ASSIGN_LABEL, type LineAssign } from './ThreePLBillLines';
 import styles from './Suppliers.module.css';
 
 /** "1,234.50" / "RM 80" -> sen; null when it is not a non-negative amount. */
@@ -27,6 +32,8 @@ export interface ApBill {
   id: string; invoiceNumber: string; supplierRef: string | null; invoiceDate: string | null; totalSen: number;
   status: string; supplierId: string; supplierName: string; files: number;
   broughtInDos: number; broughtInSen: number; carrierId: string | null;
+  /** Lines kept off this bill still waiting for a person (To check). */
+  waitingLines?: number;
 }
 interface Carrier { id: string; name: string }
 export interface ReadDo {
@@ -37,6 +44,8 @@ export interface ReadDo {
 export interface ReadLine {
   index: number; text: string; date: string | null; kind: string; amountSen: number | null;
   printed: string[]; status: 'matched' | 'not_found' | 'no_number' | 'service_case' | 'not_delivery'; dos: string[];
+  /** Where the line goes as the reader sees it; null waits under To check. */
+  doIds?: string[]; assign?: LineAssign | null; serviceRef?: string | null; projectId?: number | null;
 }
 interface ReadResult {
   invoice: { id: string; invoiceNumber: string; supplierRef: string | null; invoiceDate: string | null; totalSen: number; supplierName: string };
@@ -100,13 +109,20 @@ export function ThreePLFromAp({ onClose, onSaved }: { onClose: () => void; onSav
     if (!carrierId) { setErr('Choose the 3PL this bill is from.'); return; }
     const rows = result.dos.filter((d) => ticked.has(d.doId)).map((d) => ({ doId: d.doId, billedSen: toSen(billed[d.doId] ?? ''), note: d.note }));
     if (rows.some((r) => r.billedSen == null)) { setErr('Enter each kept DO’s amount in RM.'); return; }
+    /* Every line is kept with where it goes; a DO line keeps only the ticked DOs. */
+    const lines = result.lines.map((l) => ({
+      text: l.text, date: l.date, kind: l.kind, amountSen: l.amountSen, printed: l.printed, status: l.status,
+      doIds: l.doIds ?? [], assign: l.assign ?? null, serviceRef: l.serviceRef ?? null, projectId: l.projectId ?? null,
+    }));
     setBusy('saving'); setErr(null);
     try {
       const res = await authedFetch<{ saved: number; skipped: Array<{ doId: string; invoiceNo: string | null }> }>(
-        `/threepl-do-charges/from-ap/${picked.id}/confirm`, { method: 'POST', body: JSON.stringify({ carrierId, rows }) },
+        `/threepl-do-charges/from-ap/${picked.id}/confirm`, { method: 'POST', body: JSON.stringify({ carrierId, rows, lines }) },
       );
       const left = res.skipped.length ? ` ${res.skipped.length} already on another bill, left as they were.` : '';
-      onSaved(`Saved ${res.saved} DO${res.saved === 1 ? '' : 's'} from ${picked.invoiceNumber}.${left}`);
+      const waiting = lines.filter((l) => !l.assign || (l.assign === 'do' && !l.doIds.some((id) => ticked.has(id))) || (l.assign === 'event' && !l.projectId)).length;
+      const check = waiting ? ` ${waiting} line${waiting === 1 ? '' : 's'} wait${waiting === 1 ? 's' : ''} under To check.` : '';
+      onSaved(`Saved ${res.saved} DO${res.saved === 1 ? '' : 's'} from ${picked.invoiceNumber}.${left}${check}`);
     } catch (e) { setErr(errText(e)); } finally { setBusy(null); }
   };
 
@@ -121,11 +137,17 @@ export function ThreePLFromAp({ onClose, onSaved }: { onClose: () => void; onSav
     { key: 'ref', label: 'Bill no.', render: (r) => r.supplierRef ?? '—', getValue: (r) => r.supplierRef ?? '' },
     { key: 'date', label: 'Date', render: (r) => (r.invoiceDate ? fmtDate(r.invoiceDate) : '—'), getValue: (r) => r.invoiceDate, exportFormat: 'date' },
     { key: 'total', label: 'Amount', ...money, render: (r) => fmtSen(r.totalSen), getValue: (r) => r.totalSen },
-    { key: 'in', label: 'Brought in', render: (r) => (r.broughtInDos ? `${r.broughtInDos} DO${r.broughtInDos === 1 ? '' : 's'} · ${fmtSen(r.broughtInSen)}` : '—'), getValue: (r) => r.broughtInDos },
+    {
+      key: 'in', label: 'Brought in', getValue: (r) => r.broughtInDos,
+      render: (r) => [
+        r.broughtInDos ? `${r.broughtInDos} DO${r.broughtInDos === 1 ? '' : 's'} · ${fmtSen(r.broughtInSen)}` : '',
+        r.waitingLines ? `${r.waitingLines} to check` : '',
+      ].filter(Boolean).join(' · ') || '—',
+    },
     {
       key: 'go', label: '', render: (r) => (
         <Button variant="secondary" size="sm" disabled={busy != null} onClick={() => void read(r)}>
-          {r.broughtInDos ? 'Read again' : 'Read the bill'}
+          {r.broughtInDos || r.waitingLines ? 'Read again' : 'Read the bill'}
         </Button>
       ),
     },
@@ -155,7 +177,13 @@ export function ThreePLFromAp({ onClose, onSaved }: { onClose: () => void; onSav
     { key: 'amt', label: 'Amount', ...money, render: (r) => (r.amountSen == null ? '—' : fmtSen(r.amountSen)), getValue: (r) => r.amountSen },
     {
       key: 'why', label: 'What happened', getValue: (r) => r.status,
-      render: (r) => (r.status === 'matched' ? '' : r.status === 'not_delivery' ? `${KIND[r.kind] ?? 'Other'}: not a delivery, not counted` : WHY[r.status]),
+      render: (r) => (r.status === 'matched' ? '' : r.status === 'not_delivery' ? `${KIND[r.kind] ?? 'Other'}: not a delivery` : WHY[r.status]),
+    },
+    {
+      key: 'goes', label: 'Goes to', getValue: (r) => (r.assign ? ASSIGN_LABEL[r.assign] : 'To check'),
+      render: (r) => (r.assign
+        ? `${ASSIGN_LABEL[r.assign]}${r.assign === 'service' && r.serviceRef ? ` · ${r.serviceRef}` : ''}${r.assign === 'event' && r.projectId ? ' · the AP invoice line’s fair' : ''}`
+        : <span style={{ color: 'var(--c-warning, #b45309)' }}>To check</span>),
     },
   ];
 
@@ -241,7 +269,10 @@ export function ThreePLFromAp({ onClose, onSaved }: { onClose: () => void; onSav
           />
           {result.lines.some((l) => l.status !== 'matched') && (
             <>
-              <h4 style={{ margin: '4px 0 0', fontSize: 'var(--fs-13)' }}>Not counted into a DO</h4>
+              <h4 style={{ margin: '4px 0 0', fontSize: 'var(--fs-13)' }}>Not on a DO</h4>
+              <p style={{ margin: 0, fontSize: 'var(--fs-12)', ...muted }}>
+                Saved with the bill. A line marked To check waits under To check, where you say where it goes — it can be changed there later too.
+              </p>
               <DataTable<ReadLine>
                 tableId="threepl-from-ap-lines" columns={lineColumns} rows={result.lines.filter((l) => l.status !== 'matched')}
                 getRowKey={(r) => String(r.index)}
@@ -249,8 +280,8 @@ export function ThreePLFromAp({ onClose, onSaved }: { onClose: () => void; onSav
             </>
           )}
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <Button variant="primary" size="sm" disabled={busy != null || ticked.size === 0 || !carrierId} onClick={() => void save()}>
-              {`Save ${ticked.size} DO${ticked.size === 1 ? '' : 's'} · ${fmtSen(keptSen)}`}
+            <Button variant="primary" size="sm" disabled={busy != null || (ticked.size === 0 && result.lines.length === 0) || !carrierId} onClick={() => void save()}>
+              {ticked.size ? `Save ${ticked.size} DO${ticked.size === 1 ? '' : 's'} · ${fmtSen(keptSen)}` : 'Save the bill’s lines'}
             </Button>
             <Button variant="secondary" size="sm" disabled={busy != null} onClick={() => { setPicked(null); setResult(null); setErr(null); }}>Back to the list</Button>
           </div>

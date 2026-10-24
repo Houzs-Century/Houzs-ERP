@@ -5,7 +5,7 @@
 // and the read of an AP invoice's bill (threepl-from-ap.ts), so the Rate card
 // amount a bill is tallied against is the one the list then shows.
 // ----------------------------------------------------------------------------
-import { scopeToCompanyId, scopeToAllowedCompanies } from './companyScope';
+import { scopeToCompanyId } from './companyScope';
 import { DEFAULT_ZONE_PREFIX_MAP, zoneForAddress } from './zone-classify';
 import type { SetLine } from './set-count';
 import type { DeliveryFacts, RateCardSpec } from './delivery-rate-card';
@@ -42,18 +42,22 @@ export async function loadCarrierCards(sb: unknown, companyId: number): Promise<
   return { ok: true, cards: { carrierName, specByCarrier } };
 }
 
+/** Narrows a read to the companies whose orders may be priced — the caller's
+ *  allowed companies in a request, every company in the cron (Houzs delivers
+ *  for 2990). */
+export type CompanyScopeFn = <Q>(query: Q) => Q;
+
 /** Each DO's facts for the rate card, read from its order: the order's lines
  *  (sets / items) and its address (zone). A DO with no order has none. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function loadDoFacts(c: any, sb: unknown, dos: ReadonlyArray<{ id: string; soDocNo: string | null }>): Promise<{ ok: true; facts: Map<string, DeliveryFacts> } | { ok: false; reason: string }> {
+export async function loadDoFacts(scope: CompanyScopeFn, sb: unknown, dos: ReadonlyArray<{ id: string; soDocNo: string | null }>): Promise<{ ok: true; facts: Map<string, DeliveryFacts> } | { ok: false; reason: string }> {
   const soDocs = [...new Set(dos.map((d) => d.soDocNo).filter((x): x is string => !!x))];
   const linesBySo = new Map<string, SetLine[]>();
   const zoneBySo = new Map<string, string | null>();
   const addressBySo = new Map<string, string>();
   if (soDocs.length) {
     const [{ data: lineRows, error: e5 }, { data: soRows, error: e6 }] = await Promise.all([
-      scopeToAllowedCompanies(db(sb).from('mfg_sales_order_items').select('doc_no, item_group, qty, cancelled'), c).in('doc_no', soDocs),
-      scopeToAllowedCompanies(db(sb).from('mfg_sales_orders').select('doc_no, postcode, address1, address2'), c).in('doc_no', soDocs),
+      scope(db(sb).from('mfg_sales_order_items').select('doc_no, item_group, qty, cancelled')).in('doc_no', soDocs),
+      scope(db(sb).from('mfg_sales_orders').select('doc_no, postcode, address1, address2')).in('doc_no', soDocs),
     ]);
     if (e5 || e6) return { ok: false, reason: (e5 ?? e6)!.message };
     for (const l of (lineRows ?? []) as Row[]) {
