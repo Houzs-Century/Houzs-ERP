@@ -38,6 +38,11 @@ const TD = cn(TD_BASE, "whitespace-nowrap text-right");
 const TH_LEFT = cn(TH_BASE, "whitespace-nowrap text-left");
 const TD_LEFT = cn(TD_BASE, "text-left");
 const SEP = "border-l border-border";
+/* The Total row stays at the foot of the table's box while the projects scroll;
+   its own strings, not TD plus a border override (cn only joins). */
+const TOT_BASE = "border-t-2 border-border bg-surface px-2.5 py-2 text-[12.5px] tabular-nums";
+const TOT = cn(TOT_BASE, "whitespace-nowrap text-right");
+const TOT_LEFT = cn(TOT_BASE, "text-left");
 
 export function ProjectOverviewPage() {
   const navigate = useNavigate();
@@ -119,6 +124,15 @@ export function ProjectOverviewPage() {
   const listed = inPeriod.filter((p) => !pick || (p[dim] || "—") === pick)
     .map((p) => ({ p, f: figuresOf(p) }))
     .sort((a, b) => sort === "sales" ? b.f.sales - a.f.sales : sort === "np" ? b.f.np - a.f.np : sort === "npPct" ? (pctOf(b.f.np, b.f.sales) ?? -1e9) - (pctOf(a.f.np, a.f.sales) ?? -1e9) : (b.p.startDate ?? "").localeCompare(a.p.startDate ?? ""));
+  /* The Total row (owner 2026-10-25: 这个表需要有total): the projects listed,
+     each column added up; the % columns worked out from the added-up figures. */
+  const sumOf = (pick: (x: (typeof listed)[number]) => number) => listed.reduce((s, x) => s + pick(x), 0);
+  const tot = {
+    sales: sumOf((x) => x.f.sales), service: sumOf((x) => x.f.serviceRevenue), cogs: sumOf((x) => x.f.cogs), gp: sumOf((x) => x.f.gp),
+    rental: sumOf((x) => x.f.rental), setup: sumOf((x) => x.f.setup), transport: sumOf((x) => x.f.transport), commission: sumOf((x) => x.f.commission),
+    merchandise: sumOf((x) => x.f.merchandise), other: sumOf((x) => x.f.other), np: sumOf((x) => x.f.np),
+    paidSen: sumOf((x) => x.p.collection.paidSen), orderedSen: sumOf((x) => x.p.collection.totalSen),
+  };
   const options = (key: "brand" | "eventType" | "organizer") => [...new Set((q.data?.projects ?? []).map((p) => p[key]).filter((x): x is string => !!x))].sort();
 
   return (
@@ -214,8 +228,8 @@ export function ProjectOverviewPage() {
         </div>
       </Panel>
 
-      <VenueRentPanel projects={inPeriod} periodLabel={period.label} />
-
+      {/* The project list first, the venue rent after it (owner 2026-10-25:
+          把venue rent 和 project 倒反位置). */}
       <Panel title={`Projects${pick ? ` · ${pick}` : ""}`} hint={`${listed.length} projects · amounts in RM · click one to open it`}
         right={<span className="flex items-center gap-2">
           {pick && <button type="button" className="text-[12px] text-primary hover:underline" onClick={() => setView({ pick: null })}>Show all</button>}
@@ -274,9 +288,29 @@ export function ProjectOverviewPage() {
               })}
               {listed.length === 0 && <tr><td colSpan={17} className={cn(TD_LEFT, "text-ink-muted")}>No projects in this period.</td></tr>}
             </tbody>
+            {listed.length > 0 && (
+              <tfoot className="sticky bottom-0 z-20 bg-surface font-semibold">
+                <tr>
+                  <td className={cn(TOT_LEFT, "sticky left-0 z-30 bg-surface")}>Total · {listed.length} project{listed.length === 1 ? "" : "s"}</td>
+                  <td className={cn(TOT, SEP)}>{tableAmount(tot.sales)}</td><td className={TOT}>{tableAmount(tot.service)}</td>
+                  <td className={cn(TOT, SEP)}>{tableAmount(tot.cogs)}</td><td className={TOT}>{tableAmount(tot.gp)}</td>
+                  <td className={TOT}>{pctTxt(pctOf(tot.gp, tot.sales))}</td>
+                  <td className={cn(TOT, SEP)}>{tableAmount(tot.rental)}</td><td className={TOT}>{tableAmount(tot.setup)}</td>
+                  <td className={TOT}>{tableAmount(tot.transport)}</td><td className={TOT}>{tableAmount(tot.commission)}</td>
+                  <td className={TOT}>{tableAmount(tot.merchandise)}</td><td className={TOT}>{tableAmount(tot.other)}</td>
+                  <td className={cn(TOT, SEP, tot.np < 0 && "text-err")}>{tableAmount(tot.np)}</td>
+                  <td className={cn(TOT, tot.np < 0 && "text-err")}>{pctTxt(pctOf(tot.np, tot.sales))}</td>
+                  <td className={cn(TOT, SEP)}>{tableAmount(tot.paidSen / 100)}</td>
+                  <td className={TOT}>{pctTxt(pctOf(tot.paidSen, tot.orderedSen))}</td>
+                  <td className={cn(TOT_LEFT, SEP)} />
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       </Panel>
+
+      <VenueRentPanel projects={inPeriod} periodLabel={period.label} />
 
       <ProjectStuckPanel onOpen={openProject} />
       <ProjectDataGapsPanel onOpen={openProject} />
