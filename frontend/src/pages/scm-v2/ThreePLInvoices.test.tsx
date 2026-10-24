@@ -9,6 +9,8 @@ vi.mock('../../vendor/scm/lib/authed-fetch', () => ({ authedFetch: (...a: unknow
 vi.mock('../../vendor/scm/lib/threepl-companies-queries', () => ({
   useThreePLCompanies: () => ({ data: [{ id: 'msj', code: 'MSJ', name: 'MSJ TRANSPORT' }] }),
 }));
+const perms = vi.hoisted(() => ({ finance: true }));
+vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: (p: string) => perms.finance && p === 'scm.finance.accounting' }) }));
 
 import { ThreePLInvoices, toSen } from './ThreePLInvoices';
 
@@ -33,6 +35,30 @@ describe('3PL invoices (HC-0031)', () => {
     mount();
     await screen.findByText('DO-1');
     expect(screen.getAllByText(/\+.*20\.00/).length).toBeGreaterThan(0);
+  });
+
+  /* Owner 2026-10-23: Houzs delivers for 2990 and bills it back — what each
+     company's deliveries cost on the list, and the bill brought in from its
+     AP invoice (Finance only: the AP invoice is Finance's). */
+  it('shows what each company\'s deliveries cost, and opens From AP invoice for Finance', async () => {
+    fetchMock.mockImplementation((p: string) => Promise.resolve(p.startsWith('/threepl-do-charges/from-ap')
+      ? { invoices: [], carriers: [] }
+      : { rows: [row, { ...row, id: 'c2', doNumber: 'DO-2', doCompanyCode: 'HOUZS', billedSen: 5000 }], invoices: [] }));
+    mount();
+    await screen.findByText('DO-2');
+    expect(screen.getByText(/By company:/).textContent).toBe('By company: 2990 1 DO · RM 120.00  ·  HOUZS 1 DO · RM 50.00');
+    fireEvent.click(screen.getByRole('button', { name: 'From AP invoice' }));
+    expect(await screen.findByRole('region', { name: 'From an AP invoice' })).toBeTruthy();
+  });
+
+  it('no From AP invoice for someone without Finance', async () => {
+    perms.finance = false;
+    try {
+      fetchMock.mockResolvedValue({ rows: [], invoices: [] });
+      mount();
+      await screen.findAllByText('Per invoice');
+      expect(screen.queryByRole('button', { name: 'From AP invoice' })).toBeNull();
+    } finally { perms.finance = true; }
   });
 
   it('saves a DO line with the amount in sen, and a refusal reaches the screen', async () => {
