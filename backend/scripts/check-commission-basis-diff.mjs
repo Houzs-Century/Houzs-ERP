@@ -73,6 +73,26 @@ async function main() {
       console.log(`ROW|${g.side}: ${g.n} lines RM ${rm(g.sen)} — ${g.reason}`);
       for (const e of g.eg) console.log(`ROW|   e.g. ${e}`);
     }
+    /* Part 1 — the orders each basis puts in its fairs table. */
+    const part1 = (r) => new Map(r.fairs.flatMap((f) => f.sos.map((o) => [o.docNo, { ...o, fairName: f.name, start: f.startDate }])));
+    const p1f = part1(fair); const p1s = part1(so);
+    const sides = new Map();
+    const put = (side, o) => {
+      const why = o.start < FROM && (o.soDate ?? '') >= FROM ? 'fair started before the range, order opened in it'
+        : o.start > TO ? 'fair starts AFTER the range, order opened in it'
+        : (o.soDate ?? '') < FROM && o.start >= FROM ? 'order opened before the range, fair starts in it'
+        : 'other';
+      const g = sides.get(side + '|' + why) ?? { side, why, n: 0, sen: 0, earned: 0, eg: [] };
+      g.n += 1; g.sen += o.commissionSen; if (o.commissionSen) g.earned += 1;
+      if (g.eg.length < 5) g.eg.push(o.docNo + ' SO ' + o.soDate + ' · ' + o.fairName + ' (starts ' + o.start + ') RM ' + rm(o.commissionSen));
+      sides.set(side + '|' + why, g);
+    };
+    for (const [d, o] of p1s) if (!p1f.has(d)) put('PART 1 ONLY BY SO DATE', o);
+    for (const [d, o] of p1f) if (!p1s.has(d)) put('PART 1 ONLY BY FAIR', o);
+    for (const g of sides.values()) {
+      console.log('ROW|' + g.side + ': ' + g.n + ' orders (' + g.earned + ' earning) RM ' + rm(g.sen) + ' — ' + g.why);
+      for (const e of g.eg) console.log('ROW|   e.g. ' + e);
+    }
     /* The same lines differing in amount (an order counted on both bases). */
     for (const [k, a] of inFair) {
       const b = inSo.get(k);
