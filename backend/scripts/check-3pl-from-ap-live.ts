@@ -48,6 +48,7 @@ async function resolve(keys: OrderKeys[]) {
   };
 }
 
+async function main(): Promise<void> {
 try {
   const dir = mkdtempSync(path.join(tmpdir(), 'ap3pl-'));
   for (const no of INVOICES) {
@@ -73,3 +74,5 @@ try {
     for (const l of lines) console.log(`ROW|   ${l.status.padEnd(12)} RM ${rm(l.amountSen).padStart(8)} ${l.kind.padEnd(9)} [${l.printed.join(', ')}] → ${l.dos.map((d) => d.doNumber + '/co' + d.companyId).join(', ') || '-'} | ${l.text.slice(0, 60)}`);
   }
 } finally { await sql.end(); }
+}
+void main();

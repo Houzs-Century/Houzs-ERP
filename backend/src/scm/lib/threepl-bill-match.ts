@@ -19,6 +19,7 @@
 //     price, so the trip still tallies to the sen;
 //   * an order delivered in two DOs — the DO dated nearest the line's day.
 // ----------------------------------------------------------------------------
+import { fmtSen } from '../shared/format';
 import { extractRefTokens } from '../shared/sales-report-parse';
 import type { BillLineKind, PrintedOrder, TransportBillLine } from './threepl-bill-read';
 
@@ -180,7 +181,7 @@ export function chargesPerDo(lines: readonly MatchedLine[], expectedOf: (doId: s
     l.dos.forEach((d, i) => {
       const share = i === n - 1 ? l.amountSen! - given : Math.round((l.amountSen! * (weighted ? weights[i]! : 1)) / total);
       given += share;
-      const words = l.printed.length > 0 ? `${l.text} — RM ${(l.amountSen! / 100).toFixed(2)}${n > 1 ? ` for ${n} DOs` : ''}` : l.text;
+      const words = l.printed.length > 0 ? `${l.text} — ${fmtSen(l.amountSen)}${n > 1 ? ` for ${n} DOs` : ''}` : l.text;
       const c = by.get(d.id) ?? { doId: d.id, billedSen: 0, lines: [], split: false };
       c.billedSen += share;
       c.lines.push(words);
