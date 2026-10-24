@@ -294,14 +294,6 @@ const BoardPendingContext = createContext<BoardPending>({ fields: false, sched: 
 type ScheduleMutate = SchedMutation['mutate'];
 type UpdateFieldsMutate = UpdateFieldsMutation['mutate'];
 
-/* All-view month grouping (owner follow-up 2026-10-23): ONLY the full board's
-   All state tab buckets rows by their effective-delivery-date month, through
-   DataTable's groupBy reading the hidden `delivery_month` column's groupValue.
-   Module constant so its identity is stable — passing it never rebuilds
-   DataTable's group levels. The other state tabs (and the Trips panel, which has
-   no state tabs) stay flat by passing groupBy=undefined. */
-const MONTH_GROUP_BY = { key: 'delivery_month', label: deliveryMonthLabel } as const;
-
 /* The "Delivery Status" column's inline editor — the customer-message follow-up
    workflow status (owner 2026-09-22), one of the 23 MESSAGE_STATUSES or blank.
    SO rows only; ASSR / DP / project rows show a dash (this is a customer-
@@ -1195,23 +1187,29 @@ export function DeliveryPlanningBoard({
        to. "Amend (Cust)" (the customer's requested new date) default-HIDES. The
        ORIGINAL "Delivery Date" column above is unchanged. */
     {
-      key: 'amended_delivery_date', label: 'Delivery Date', width: 170, sortable: true,
+      key: 'amended_delivery_date', label: 'Delivery Date', width: 170, sortable: true, groupable: true,
       accessor: (o) => <DeliveryDateEditCell order={o} onSchedule={scheduleMutate} />,
       searchValue: (o) => o.amended_delivery_date ?? '',
+      /* Group by the DAY (owner 2026-10-24: day/month toggle = group by this
+         column for by-day, or "Delivery Month" for by-month). Formatted YYYY/MM/DD
+         so the header reads in the app's date order; no date -> "No date" (sorts
+         last, N > digits). */
+      groupValue: (o) => (o.amended_delivery_date ? fmtDate(o.amended_delivery_date) : 'No date'),
       sortFn: (a, b) => String(a.amended_delivery_date ?? '').localeCompare(String(b.amended_delivery_date ?? '')),
       filterType: 'date', dateValue: (o) => o.amended_delivery_date,
     },
     {
-      /* Derived month of the EFFECTIVE delivery date (amended ?? original) — the
-         key the All tab groups by (owner follow-up 2026-10-23). Default-HIDDEN:
-         it exists for grouping, not as a day-to-day column. groupValue is the raw
-         'YYYY-MM' (or '' for no date, which sorts/buckets last); the group banner
-         pretty-prints it to e.g. "2026/10" / "No date" via MONTH_GROUP_BY.label
-         (digits in the app's date order — a month NAME is forbidden app-wide). */
+      /* Derived month of the EFFECTIVE delivery date (amended ?? original). The
+         BY-MONTH half of the owner's day/month grouping (2026-10-24): he groups by
+         this column for by-month, or by "Delivery Date" above for by-day. Default-
+         HIDDEN; it exists for grouping, not as a day-to-day column. The group value
+         is the display label "2026/10" (digits in the app's date order — a month
+         NAME is forbidden app-wide; see vendor/shared/format.ts) or "No date",
+         which sorts/buckets last (N > digits). */
       key: 'delivery_month', label: 'Delivery Month', width: 130, groupable: true, defaultHidden: true,
       accessor: (o) => detail(deliveryMonthLabel(deliveryMonthKey(o))),
       searchValue: (o) => deliveryMonthLabel(deliveryMonthKey(o)),
-      groupValue: (o) => deliveryMonthKey(o),
+      groupValue: (o) => deliveryMonthLabel(deliveryMonthKey(o)),
       exportValue: (o) => deliveryMonthLabel(deliveryMonthKey(o)),
     },
     {
@@ -1705,11 +1703,13 @@ export function DeliveryPlanningBoard({
         exportName={exportName}
         rowKey={rowIdOf}
         searchPlaceholder={searchPlaceholder}
-        groupBanner={false}
-        /* All-view month grouping (owner follow-up 2026-10-23): group by the
-           effective-delivery-date month ONLY on the full board's All tab; every
-           other state tab, and the Trips panel (no stateTabs), stays flat. */
-        groupBy={stateTabs && activeState === 'ALL' ? MONTH_GROUP_BY : undefined}
+        /* User-controlled grouping (owner 2026-10-24, "like Google Sheets"):
+           default OFF (no forced group). The operator groups by a column of his
+           choice — Delivery Message Status, or Delivery Date (by day) / Delivery
+           Month (by month) — by dragging its header here or via the header menu,
+           then folds groups with the per-group chevron or the Collapse-all control
+           in the banner. The grouped list still virtualizes. */
+        groupBanner
         isLoading={isLoading}
         emptyMessage={emptyMessage}
         /* First-class multi-select (prefixed so:/assr: keys) → the bulk bar. The

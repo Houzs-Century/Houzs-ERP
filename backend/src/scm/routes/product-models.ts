@@ -39,6 +39,7 @@ import { invalidModelDefault } from '../shared/model-default-variants';
 import { moveModelCategory } from '../lib/model-category-move';
 import { MFG_PRODUCT_CATEGORIES } from './mfg-products';
 import { isSingleSkuCategory } from '../shared/product-categories';
+import { newSkuPosActive } from '../lib/new-sku-pos-active';
 
 export const productModels = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -755,7 +756,8 @@ function resolveSizeInfoServer(
   return { label, dim, w, l };
 }
 
-productModels.post('/:id/generate-skus', async (c) => {
+/* Exported so the new-SKU defaults (newSkuPosActive) can be driven by a test. */
+export const generateModelSkusHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   const id = c.req.param('id');
   const supabase = c.get('supabase');
   // Multi-company: scope the model load so SKUs can only be minted for THIS
@@ -1051,6 +1053,7 @@ productModels.post('/:id/generate-skus', async (c) => {
       branding:   model.branding ?? null,
       model_id:   model.id,
       status:     'ACTIVE',
+      pos_active: newSkuPosActive(co.companyId, model.category),
       created_at: now,
       updated_at: now,
     };
@@ -1070,7 +1073,8 @@ productModels.post('/:id/generate-skus', async (c) => {
     // still lets the caller bind suppliers to every SKU, not only the new ones.
     codes: wantedFiltered.map((w) => w.code),
   });
-});
+};
+productModels.post('/:id/generate-skus', generateModelSkusHandler);
 
 // ── DELETE /:id ────────────────────────────────────────────────────────────
 productModels.delete('/:id', async (c) => {

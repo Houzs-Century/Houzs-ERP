@@ -2369,7 +2369,11 @@ function ProjectTeamSection({
     return !q || texts.some((t) => (t ?? "").toLowerCase().includes(q));
   };
   const filteredAvailable = availableReps.filter((r) => matches(r.code, r.name));
-  const filteredOthers = others.filter((s) => matches(s.name, s.email));
+  /* Owner 2026-10-24: "就显示 sales 的 department 就行了" - the list shows the
+     Sales Team; staff of other departments stay behind "Show other staff" (or
+     a search), so Lim / Nancy / Syasya can still be added (2026-10-19). */
+  const [showOthers, setShowOthers] = useState(false);
+  const filteredOthers = showOthers || search.trim() ? others.filter((s) => matches(s.name, s.email)) : [];
   // Peter 2026-10-21: the picker was two separate A→Z blocks (reps, then the
   // 2026-10-19 "not in Sales Team" staff), so the combined list RESTARTED the
   // alphabet at the divider and read as un-sorted ("messy, not alphabet").
@@ -2610,6 +2614,12 @@ function ProjectTeamSection({
                         )}
                       </label>
                     ))
+                  )}
+                  {others.length > 0 && !search.trim() && (
+                    <button type="button" onClick={() => setShowOthers(!showOthers)}
+                      className="block w-full border-t border-border px-2 py-1.5 text-left text-[10.5px] text-primary hover:bg-bg/60">
+                      {showOthers ? "Hide staff outside the Sales Team" : `Show other staff (${others.length}) - not in the Sales Team`}
+                    </button>
                   )}
                 </div>
                 <button

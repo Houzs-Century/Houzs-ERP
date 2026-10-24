@@ -24,9 +24,9 @@ describe('isConnectConfigured', () => {
 });
 
 describe('buildDeliveryFollowUp', () => {
-  it('single order → ref_1 only, order_total 1, automation by name', () => {
+  it('single order → ref_1 + ref_no_1, order_total 1, automation by name', () => {
     const contact = buildDeliveryFollowUp('+60123', 'Wong', [
-      { ref: 'HC13234', branding: 'AKEMI', deliveryDate: '2026/10/05' },
+      { ref: 'HC13234', orderRef: 'HC 11063', branding: 'AKEMI', deliveryDate: '2026/10/05' },
     ], null, CTX);
     expect(contact).toEqual({
       phone: '+60123',
@@ -42,6 +42,7 @@ describe('buildDeliveryFollowUp', () => {
         amend_date_reason: '',
         date_amended: '',
         ref_1: 'HC13234',
+        ref_no_1: 'HC 11063',
         delivery_date_1: '2026/10/05',
         brand_1: 'AKEMI',
         refs_all: 'HC13234',
@@ -52,10 +53,10 @@ describe('buildDeliveryFollowUp', () => {
 
   it('refs_all carries EVERY bundled order, including the 4th+ the lines do not show', () => {
     const contact = buildDeliveryFollowUp('+60123', 'Wong', [
-      { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05' },
-      { ref: 'B2', branding: 'SLUMBERLAND', deliveryDate: '2026/10/06' },
-      { ref: 'C3', branding: 'GOODNITE', deliveryDate: '2026/10/07' },
-      { ref: 'D4', branding: 'VONO', deliveryDate: '2026/10/08' },
+      { ref: 'A1', orderRef: 'HC 11001', branding: 'AKEMI', deliveryDate: '2026/10/05' },
+      { ref: 'B2', orderRef: 'HC 11002', branding: 'SLUMBERLAND', deliveryDate: '2026/10/06' },
+      { ref: 'C3', orderRef: 'HC 11003', branding: 'GOODNITE', deliveryDate: '2026/10/07' },
+      { ref: 'D4', orderRef: 'HC 11004', branding: 'VONO', deliveryDate: '2026/10/08' },
     ], null, CTX);
     expect(contact.attributes.refs_all).toBe('A1,B2,C3,D4');
     expect(contact.attributes.ref_4).toBeUndefined();
@@ -66,7 +67,7 @@ describe('buildDeliveryFollowUp', () => {
     // reset the previous order's Confirm would lock this order's Amend tap and
     // a settled balance would print again.
     const contact = buildDeliveryFollowUp('+60123', 'Wong', [
-      { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05' },
+      { ref: 'A1', orderRef: 'HC 11001', branding: 'AKEMI', deliveryDate: '2026/10/05' },
     ], null, CTX);
     for (const key of CONNECT_RESET_ATTRIBUTES) expect(contact.attributes[key]).toBe('');
     expect(CONNECT_RESET_ATTRIBUTES).toContain('button_status');
@@ -75,25 +76,25 @@ describe('buildDeliveryFollowUp', () => {
 
   it('amount = the owed sum over EVERY bundled order, formatted RM, only when > 0', () => {
     const contact = buildDeliveryFollowUp('+60123', 'Wong', [
-      { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05', balanceSen: 150000 },
-      { ref: 'B2', branding: 'SLUMBERLAND', deliveryDate: '2026/10/06', balanceSen: -5000 }, // over-paid: ignored
-      { ref: 'C3', branding: 'GOODNITE', deliveryDate: '2026/10/07', balanceSen: null },
-      { ref: 'D4', branding: 'VONO', deliveryDate: '2026/10/08', balanceSen: 2550 }, // 4th order still counts
+      { ref: 'A1', orderRef: 'HC 11001', branding: 'AKEMI', deliveryDate: '2026/10/05', balanceSen: 150000 },
+      { ref: 'B2', orderRef: 'HC 11002', branding: 'SLUMBERLAND', deliveryDate: '2026/10/06', balanceSen: -5000 }, // over-paid: ignored
+      { ref: 'C3', orderRef: 'HC 11003', branding: 'GOODNITE', deliveryDate: '2026/10/07', balanceSen: null },
+      { ref: 'D4', orderRef: 'HC 11004', branding: 'VONO', deliveryDate: '2026/10/08', balanceSen: 2550 }, // 4th order still counts
     ], null, CTX);
     expect(contact.attributes.amount).toBe('1,525.50');
   });
 
   it('nothing owed → amount is the empty reset, so has_balance stays quiet', () => {
     const contact = buildDeliveryFollowUp('+60123', 'Wong', [
-      { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05', balanceSen: 0 },
-      { ref: 'B2', branding: 'AKEMI', deliveryDate: '2026/10/05', balanceSen: -100 },
+      { ref: 'A1', orderRef: 'HC 11001', branding: 'AKEMI', deliveryDate: '2026/10/05', balanceSen: 0 },
+      { ref: 'B2', orderRef: 'HC 11002', branding: 'AKEMI', deliveryDate: '2026/10/05', balanceSen: -100 },
     ], null, CTX);
     expect(contact.attributes.amount).toBe('');
   });
 
   it('a kind picks its automation by name and merges its extra variables last', () => {
     const contact = buildDeliveryFollowUp('+60123', 'Wong', [
-      { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05' },
+      { ref: 'A1', orderRef: 'HC 11001', branding: 'AKEMI', deliveryDate: '2026/10/05' },
     ], null, { ...CTX, automation: 'Driver Info', extra: { drivers_name: 'Ali', car_plate: 'WXY 1234' } });
     expect(contact.automation).toBe('Driver Info');
     expect(contact.attributes.drivers_name).toBe('Ali');
@@ -103,7 +104,7 @@ describe('buildDeliveryFollowUp', () => {
 
   it('resetConversation:false leaves the conversation state alone (a reminder must not unlock Delivery Lock)', () => {
     const contact = buildDeliveryFollowUp('+60123', 'Wong', [
-      { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05', balanceSen: 1000 },
+      { ref: 'A1', orderRef: 'HC 11001', branding: 'AKEMI', deliveryDate: '2026/10/05', balanceSen: 1000 },
     ], null, { ...CTX, automation: 'Balance Reminder', resetConversation: false });
     expect(contact.attributes.button_status).toBeUndefined();
     expect(contact.attributes.last_button).toBeUndefined();
@@ -112,38 +113,49 @@ describe('buildDeliveryFollowUp', () => {
 
   it('callback_url is the send context, verbatim', () => {
     const contact = buildDeliveryFollowUp('+60123', 'Wong', [
-      { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05' },
+      { ref: 'A1', orderRef: 'HC 11001', branding: 'AKEMI', deliveryDate: '2026/10/05' },
     ], null, { callbackUrl: 'https://houzs-erp-staging.pages.dev/api/chat-callback' });
     expect(contact.attributes.callback_url).toBe('https://houzs-erp-staging.pages.dev/api/chat-callback');
   });
 
-  it('bundles multiple orders as 1-indexed ref_N / delivery_date_N / brand_N', () => {
+  it('bundles multiple orders as 1-indexed ref_N / ref_no_N / delivery_date_N / brand_N', () => {
     const contact = buildDeliveryFollowUp('+60123', 'Wong', [
-      { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05' },
-      { ref: 'B2', branding: 'SLUMBERLAND', deliveryDate: '2026/10/06' },
-      { ref: 'C3', branding: 'GOODNITE', deliveryDate: '2026/10/07' },
+      { ref: 'A1', orderRef: 'HC 11001', branding: 'AKEMI', deliveryDate: '2026/10/05' },
+      { ref: 'B2', orderRef: 'HC 11002', branding: 'SLUMBERLAND', deliveryDate: '2026/10/06' },
+      { ref: 'C3', orderRef: 'HC 11003', branding: 'GOODNITE', deliveryDate: '2026/10/07' },
     ], null, CTX);
     expect(contact.attributes.order_total).toBe('3');
     expect(contact.attributes.ref_1).toBe('A1');
     expect(contact.attributes.ref_2).toBe('B2');
     expect(contact.attributes.ref_3).toBe('C3');
+    expect(contact.attributes.ref_no_1).toBe('HC 11001');
+    expect(contact.attributes.ref_no_2).toBe('HC 11002');
+    expect(contact.attributes.ref_no_3).toBe('HC 11003');
     expect(contact.attributes.delivery_date_2).toBe('2026/10/06');
     expect(contact.attributes.brand_3).toBe('GOODNITE');
   });
 
+  it('a blank customer Ref No. still pushes ref_no_N (Connect hides an empty field)', () => {
+    const contact = buildDeliveryFollowUp('+60123', 'Wong', [
+      { ref: 'A1', orderRef: '', branding: 'AKEMI', deliveryDate: '2026/10/05' },
+    ], null, CTX);
+    expect(contact.attributes.ref_no_1).toBe('');
+  });
+
   it('4+ orders → shows the first 3 lines but order_total carries the TRUE count', () => {
     const contact = buildDeliveryFollowUp('+60123', 'Wong', [
-      { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05' },
-      { ref: 'B2', branding: 'SLUMBERLAND', deliveryDate: '2026/10/06' },
-      { ref: 'C3', branding: 'GOODNITE', deliveryDate: '2026/10/07' },
-      { ref: 'D4', branding: 'VONO', deliveryDate: '2026/10/08' },
-      { ref: 'E5', branding: 'DREAMLAND', deliveryDate: '2026/10/09' },
+      { ref: 'A1', orderRef: 'HC 11001', branding: 'AKEMI', deliveryDate: '2026/10/05' },
+      { ref: 'B2', orderRef: 'HC 11002', branding: 'SLUMBERLAND', deliveryDate: '2026/10/06' },
+      { ref: 'C3', orderRef: 'HC 11003', branding: 'GOODNITE', deliveryDate: '2026/10/07' },
+      { ref: 'D4', orderRef: 'HC 11004', branding: 'VONO', deliveryDate: '2026/10/08' },
+      { ref: 'E5', orderRef: 'HC 11005', branding: 'DREAMLAND', deliveryDate: '2026/10/09' },
     ], null, CTX);
     expect(contact.attributes.order_total).toBe('5');
     expect(contact.attributes.ref_1).toBe('A1');
     expect(contact.attributes.ref_3).toBe('C3');
     expect(contact.attributes.brand_3).toBe('GOODNITE');
     expect(contact.attributes.ref_4).toBeUndefined();
+    expect(contact.attributes.ref_no_4).toBeUndefined();
     expect(contact.attributes.delivery_date_4).toBeUndefined();
     expect(contact.attributes.brand_4).toBeUndefined();
   });
@@ -155,7 +167,7 @@ describe('buildDeliveryFollowUp', () => {
       disposalBlock: 'Disposal: sample',
     };
     const contact = buildDeliveryFollowUp('+60123', 'Wong', [
-      { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05' },
+      { ref: 'A1', orderRef: 'HC 11001', branding: 'AKEMI', deliveryDate: '2026/10/05' },
     ], profile, CTX);
     expect(contact.attributes.company_signature).toBe('2990s Home');
     expect(contact.attributes.bank_block).toBe('Bank: Test\nAcc: 000');
@@ -164,7 +176,7 @@ describe('buildDeliveryFollowUp', () => {
 
   it('a null profile adds no per-company attributes', () => {
     const contact = buildDeliveryFollowUp('+60123', 'Wong', [
-      { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05' },
+      { ref: 'A1', orderRef: 'HC 11001', branding: 'AKEMI', deliveryDate: '2026/10/05' },
     ], null, CTX);
     expect(contact.attributes.company_signature).toBeUndefined();
     expect(contact.attributes.bank_block).toBeUndefined();
@@ -223,7 +235,7 @@ describe('postConnectContact', () => {
 
   const env = { CONNECT_WEBHOOK_URL: 'https://chat.houzscentury.com/', CONNECT_WEBHOOK_KEY: 'secret48' };
   const contact = buildDeliveryFollowUp('+60123', 'Wong', [
-    { ref: 'A1', branding: 'AKEMI', deliveryDate: '2026/10/05' },
+    { ref: 'A1', orderRef: 'HC 11001', branding: 'AKEMI', deliveryDate: '2026/10/05' },
   ], null, CTX);
 
   it('posts to /api/webhooks/erp with the X-Connect-Key header, trimming a trailing slash', async () => {
