@@ -1960,6 +1960,22 @@ function DataTableInner<T, L>({
     return out;
   }, [limitedRows, groupLevels, collapsedGroupSet]);
 
+  /* Collapse-all / Expand-all (owner "like Google Sheets" row outline, 2026-10-24):
+     one control to fold every group to its header row or open them all, on top of
+     the existing per-group collapse (clicking a header). Folds the TOP level, so a
+     nested outline collapses to its outermost groups, exactly as a sheet does. */
+  const topGroupPaths = useMemo(
+    () => renderList.flatMap((it) => (it.kind === "group" && it.level === 0 ? [it.path] : [])),
+    [renderList],
+  );
+  const allGroupsCollapsed =
+    topGroupPaths.length > 0 && topGroupPaths.every((p) => collapsedGroupSet.has(p));
+  const collapseAllGroups = useCallback(
+    () => setCollapsedGroups((prev) => [...new Set([...prev, ...topGroupPaths])]),
+    [topGroupPaths, setCollapsedGroups],
+  );
+  const expandAllGroups = useCallback(() => setCollapsedGroups([]), [setCollapsedGroups]);
+
   // Density-aware cell padding. Tightened on 2026-05-08 — every row
   // is one line of data, full stop. Old comfy (py-3.5) and old
   // compact (py-2) both wasted vertical space; the new values
@@ -2313,6 +2329,9 @@ function DataTableInner<T, L>({
             endHeaderDrag();
           }}
           onRemove={(k) => setUserGroups((prev) => prev.filter((x) => x !== k))}
+          allCollapsed={allGroupsCollapsed}
+          onCollapseAll={collapseAllGroups}
+          onExpandAll={expandAllGroups}
         />
       )}
       {showTable && (
