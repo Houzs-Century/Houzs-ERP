@@ -1148,6 +1148,11 @@ export interface ListProjectsFilters {
    *  Cancelled events are excluded from both. */
   phase?: "setup" | "dismantle";
   brand?: string;
+  /** Organizer name(s) — COMMA-SEPARATED, multi-select (owner 2026-10-22,
+   *  "add on organizer"). Matches projects.organizer (free text) exactly, the
+   *  same way `brand` matches projects.brand. A single value collapses to
+   *  equality; unset ⇒ all organizers. */
+  organizer?: string;
   event_type_id?: number;
   search?: string;
   /** Year(s) on start_date. `number` for legacy single-value callers, or a
@@ -1345,6 +1350,11 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   if (statusList.length) {
     where.push(`p.status IN (${statusList.map(() => "?").join(",")})`);
     binds.push(...statusList);
+  }
+  const organizerList = csvList(f.organizer);
+  if (organizerList.length) {
+    where.push(`p.organizer IN (${organizerList.map(() => "?").join(",")})`);
+    binds.push(...organizerList);
   }
   if (f.event_type_id != null) {
     where.push("p.event_type_id = ?");

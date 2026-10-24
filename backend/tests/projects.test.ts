@@ -200,6 +200,47 @@ describe("Projects module — smoke pack", () => {
     expect(allIds).toContain(id);
   });
 
+  test("GET /api/projects?organizer= filters by organizer, comma-separated multi-select", async () => {
+    // Owner 2026-10-22 ("add on organizer"): the list narrows to the picked
+    // organizer(s). A single value matches one; a comma-separated list matches
+    // any of them. Mirrors the brand filter (p.organizer IN (...)).
+    const alpha = await api("POST", "/api/projects", adminBearer, {
+      name: "Alpha event", brand: "AKEMI", state: "SELANGOR", venue: "VENUE A", organizer: "ORG ALPHA",
+    });
+    const beta = await api("POST", "/api/projects", adminBearer, {
+      name: "Beta event", brand: "AKEMI", state: "SELANGOR", venue: "VENUE B", organizer: "ORG BETA",
+    });
+    expect(alpha.status).toBe(201);
+    expect(beta.status).toBe(201);
+
+    const idsOf = (r: { json: any }) =>
+      ((r.json?.data ?? []) as { id: number }[]).map((p) => p.id).sort((a, b) => a - b);
+    const both = [alpha.json.id, beta.json.id].sort((a: number, b: number) => a - b);
+
+    // Single organizer -> only its event.
+    const onlyAlpha = await api(
+      "GET",
+      `/api/projects?per_page=200&organizer=${encodeURIComponent("ORG ALPHA")}`,
+      adminBearer,
+    );
+    expect(onlyAlpha.status).toBe(200);
+    expect(idsOf(onlyAlpha)).toEqual([alpha.json.id]);
+
+    // Comma-separated list -> both events (the multi-select case).
+    const listed = await api(
+      "GET",
+      `/api/projects?per_page=200&organizer=${encodeURIComponent("ORG ALPHA")},${encodeURIComponent("ORG BETA")}`,
+      adminBearer,
+    );
+    expect(listed.status).toBe(200);
+    expect(idsOf(listed)).toEqual(both);
+
+    // No organizer param -> unfiltered.
+    const all = await api("GET", "/api/projects?per_page=200", adminBearer);
+    expect(all.status).toBe(200);
+    expect(idsOf(all)).toEqual(both);
+  });
+
   test("PIC assignment no longer requires the picked user's brand allow-list (ACL removed 2026-08-19)", async () => {
     const rep = await seedUser({
       email: "rep_a@test.local",

@@ -1,10 +1,9 @@
-/* PMS Sales Attending — staff not on the Sales Team roster can be picked
-   (owner 2026-10-19: 「不需要改部门啊，就让他们可以去 sales attending 不就好了？」).
-   Pinned here: the picker shows reps and non-roster staff in ONE continuous
-   A→Z list (Peter 2026-10-21 — two separate A→Z sections restarted the
-   alphabet and read as un-sorted), the staff carry a "+ team" tag, and adding
-   one sends their LOGIN (user_id) so the server puts them on the roster; a
-   roster rep still goes by sales_rep_id. */
+/* PMS Sales Attending — the picker lists ONLY Sales Persons (the sales_reps
+   roster). The 2026-10-19 "add any staff to Sales Attending" feature was
+   removed (owner 2026-10-22: the list should show sales person names only).
+   Pinned here: a non-roster staff member is never offered (no "+ team" row),
+   even if the endpoint still carried an `others` array, and adding a rep sends
+   its roster id (sales_rep_id). */
 import type { ReactNode } from "react";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
@@ -34,6 +33,7 @@ vi.mock("../api/client", async () => {
       get: vi.fn(async (path: string) => {
         if (/^\/api\/projects\/\d+$/.test(path)) return DETAIL;
         if (path.startsWith("/api/projects/sales-rep-options")) {
+          // A stray `others` is included on purpose: the picker must ignore it.
           return {
             data: [{ id: 92, code: "SR-092", name: "Jason", phone: null }],
             others: [{ user_id: 4, name: "Lim", email: "lim@example.com" }],
@@ -88,36 +88,33 @@ function renderDetail() {
   );
 }
 
-describe("Sales Attending — staff not on the Sales Team roster", () => {
+describe("Sales Attending — sales persons only", () => {
   afterEach(() => {
     cleanup();
     vi.mocked(api.post).mockClear();
   });
 
-  it("lists reps and non-roster staff in one A→Z list, staff tagged", async () => {
+  it("lists sales reps and never offers a non-roster staff member", async () => {
     renderDetail();
-    // Both appear in the single merged picker — no separate section heading.
-    const jason = await screen.findByText("Jason");
-    const lim = screen.getByText("Lim");
-    expect(jason).toBeTruthy();
-    expect(lim).toBeTruthy();
-    expect(screen.queryByText("Not in the Sales Team yet — adding puts them in it")).toBeNull();
-    // Sorted A→Z by shown name: Jason before Lim.
-    expect(jason.compareDocumentPosition(lim) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // The non-roster staff member carries the inline "+ team" tag.
-    const limRow = lim.closest("label") as HTMLElement;
-    expect(limRow.textContent).toContain("team");
+    expect(await screen.findByText("Jason")).toBeTruthy();
+    // The non-roster staff member (and the "+ team" tag) must not appear.
+    expect(screen.queryByText("Lim")).toBeNull();
+    expect(screen.queryByText("team")).toBeNull();
   });
 
-  it("adds a picked staff member by their login, and a rep by the roster id", async () => {
+  it("adds a picked rep by the roster id, never a login", async () => {
     renderDetail();
-    const lim = (await screen.findByText("Lim")).closest("label") as HTMLElement;
-    const jason = screen.getByText("Jason").closest("label") as HTMLElement;
-    fireEvent.click(lim.querySelector("input") as HTMLInputElement);
+    const jason = (await screen.findByText("Jason")).closest("label") as HTMLElement;
     fireEvent.click(jason.querySelector("input") as HTMLInputElement);
-    fireEvent.click(screen.getByRole("button", { name: /Add 2 selected/ }));
-    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
-    expect(api.post).toHaveBeenCalledWith("/api/projects/157/sales-attendees", { sales_rep_id: 92 });
-    expect(api.post).toHaveBeenCalledWith("/api/projects/157/sales-attendees", { user_id: 4 });
+    fireEvent.click(screen.getByRole("button", { name: /Add 1 selected/ }));
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith("/api/projects/157/sales-attendees", { sales_rep_id: 92 }),
+    );
+    // The ONLY attendee call carries a roster id — never a user_id (the removed
+    // "+ team" path). Other calls (e.g. the project /read ping) are ignored.
+    const attendeeCalls = vi
+      .mocked(api.post)
+      .mock.calls.filter(([url]) => url === "/api/projects/157/sales-attendees");
+    expect(attendeeCalls).toEqual([["/api/projects/157/sales-attendees", { sales_rep_id: 92 }]]);
   });
 });

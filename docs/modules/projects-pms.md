@@ -208,11 +208,11 @@ list. Holding `projects.write` escapes crew scoping entirely on both.
   (`…/notify`, `source=sales_report_fair_mismatch`). The red amount beside a
   name under Sales Attending is that rep's bills not yet opened.
   `public.project_sales_bills` is unused (see tasks/TODO.md).
-- Sales Attending picks from the Sales Team roster (`sales_reps`, auto-made for
-  Sales-department logins). `GET /projects/sales-rep-options` also returns
-  `others`: active staff of the company not on it; adding one (`POST
-  /:id/sales-attendees { user_id }`) puts them on the roster without changing their
-  department (`ensureSalesRepForUser`, owner 2026-10-19).
+- Sales Attending picks ONLY from the Sales Team roster (`sales_reps`, auto-made
+  for Sales-department logins); `GET /projects/sales-rep-options` returns just
+  that roster and `POST /:id/sales-attendees` takes a `sales_rep_id`. To attend,
+  a person must be on the roster (owner 2026-10-22: the picker lists sales person
+  names only).
 
 ## Gotchas
 

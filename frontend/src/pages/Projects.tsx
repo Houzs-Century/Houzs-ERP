@@ -580,6 +580,9 @@ function ProjectsListView() {
   const csvParam = (v: string) => v.split(",").map((s) => s.trim()).filter(Boolean);
   const taskPendingList = useMemo(() => csvParam(taskPending), [taskPending]);
   const status = params.get("status") || "";
+  // Organizer filter (owner 2026-10-22, "add on organizer") — comma-separated
+  // multi-select of organizer names, matched server-side against projects.organizer.
+  const organizer = params.get("organizer") || "";
   // Date-range filter (owner 2026-08-11) — replaces the year/month dropdowns.
   // from/to are ISO YYYY-MM-DD; the list scopes to events overlapping the window.
   const from = params.get("from") || "";
@@ -591,6 +594,7 @@ function ProjectsListView() {
   const yearList = useMemo(() => csvParam(year), [year]);
   const monthList = useMemo(() => csvParam(month), [month]);
   const statusList = useMemo(() => csvParam(status), [status]);
+  const organizerList = useMemo(() => csvParam(organizer), [organizer]);
   // Cohort "Setup"/"Dismantle" pick a date-derived event PHASE (not the stale
   // `stage` enum) — see the field/sales slim bar below + backend f.phase.
   const phase = params.get("phase") || "";
@@ -605,6 +609,7 @@ function ProjectsListView() {
   }
   const setSearch = (v: string) => patchParams({ search: v, page: "1" });
   const setBrand = (v: string) => patchParams({ brand: v, page: "1" });
+  const setOrganizer = (v: string) => patchParams({ organizer: v, page: "1" });
   const setYear = (v: string) => patchParams({ year: v, page: "1" });
   const setMonth = (v: string) => patchParams({ month: v, page: "1" });
   const setSection = (v: string) => patchParams({ section: v, page: "1" });
@@ -700,6 +705,7 @@ function ProjectsListView() {
           // brand / year / month / status / my_pending filters are hidden from
           // them, so force those undefined to keep their list unfiltered.
           brand: restrictedCohort ? undefined : brand || undefined,
+          organizer: restrictedCohort ? undefined : organizer || undefined,
           year: restrictedCohort ? undefined : year || undefined,
           month: restrictedCohort ? undefined : month || undefined,
           from: restrictedCohort ? undefined : from || undefined,
@@ -722,7 +728,7 @@ function ProjectsListView() {
         })}`,
         { signal },
       ),
-    [brand, year, month, from, to, section, taskPending, status, phase, restrictedCohort, sendAssignedToMe, excludeDoneParam, myPending, search, page, perPage, showArchived, sort?.key, sort?.dir],
+    [brand, organizer, year, month, from, to, section, taskPending, status, phase, restrictedCohort, sendAssignedToMe, excludeDoneParam, myPending, search, page, perPage, showArchived, sort?.key, sort?.dir],
     // Paginated + filter-switched list: keep the current rows on screen while
     // the next page/filter loads instead of flashing an empty table.
     { keepPreviousData: true }
@@ -784,6 +790,7 @@ function ProjectsListView() {
             // Mirror the on-screen filter set, incl. the cohort's slim bar
             // (stage + assigned_to_me), so the export matches what they see.
             brand: restrictedCohort ? undefined : brand || undefined,
+            organizer: restrictedCohort ? undefined : organizer || undefined,
             year: restrictedCohort ? undefined : year || undefined,
             month: restrictedCohort ? undefined : month || undefined,
             from: restrictedCohort ? undefined : from || undefined,
@@ -890,6 +897,11 @@ function ProjectsListView() {
   const summaryUnknown = !!summary.error || !summary.data;
 
   const brands = useQuery<{ data: string[] }>("/api/projects/brands", () => api.get("/api/projects/brands"));
+  // Organizer pool (picker-backed, same source as the New Project organizer
+  // picker + the Analytics filter) — drives the toolbar's Organizer dropdown.
+  const organizers = useQuery<{ data: { id: number; name: string }[] }>("/api/projects/organizers", () =>
+    api.get("/api/projects/organizers")
+  );
   const eventTypes = useQuery<{ data: EventType[] }>("/api/projects/event-types", () =>
     api.get("/api/projects/event-types")
   );
@@ -1379,6 +1391,26 @@ function ProjectsListView() {
             { name: null, options: (brands.data?.data ?? []).map((b) => ({ value: b, label: b })) },
           ]}
         />
+        {/* Organizer filter (owner 2026-10-22, "add on organizer"). Multi-select
+            like brand/status. Gated on seeOrg (canSeeSoloOrganizer: BD/Owner/
+            weisiang) because the dropdown enumerates organizer names, and a
+            solo roadshow's organizer (mall mgmt) is masked to "SOLO" everywhere
+            else for users without that permission — listing the raw names here
+            would leak them. Exhibition organizers aren't secret, but the pool
+            mixes both and can't tell them apart, so the whole control is gated. */}
+        {seeOrg && (
+          <MultiSelectFilter
+            placeholder="All organizers"
+            title="Filter by organizer"
+            summary={(n) => `${n} organizers`}
+            panelWidth="w-[240px]"
+            selected={organizerList}
+            onChange={(next) => setOrganizer(next.join(","))}
+            groups={[
+              { name: null, options: (organizers.data?.data ?? []).map((o) => ({ value: o.name, label: o.name })) },
+            ]}
+          />
+        )}
         <DateRangeFilter from={from} to={to} onChange={setDateRange} />
         <MultiSelectFilter
           placeholder="All statuses"
@@ -1396,7 +1428,7 @@ function ProjectsListView() {
             dropdown keeps its own in-panel "Clear (n)"; this resets them all
             together so the owner doesn't have to open each one. Shown only when
             at least one dropdown is active. Search + My-pending are left alone. */}
-        {(section || taskPending || brand || from || to || status) && (
+        {(section || taskPending || brand || organizer || from || to || status) && (
           <button
             type="button"
             onClick={() =>
@@ -1404,6 +1436,7 @@ function ProjectsListView() {
                 section: "",
                 task: "",
                 brand: "",
+                organizer: "",
                 year: "",
                 month: "",
                 from: "",
@@ -1619,10 +1652,10 @@ function ProjectsListView() {
             totalRecords: list.data?.total,
           }}
           resetFilters={{
-            active: !!(search || brand || year || month || section || taskPending || status),
+            active: !!(search || brand || organizer || year || month || section || taskPending || status),
             onReset: () => {
               const next = new URLSearchParams(params);
-              ["search", "brand", "year", "month", "section", "task", "status", "page"].forEach((k) =>
+              ["search", "brand", "organizer", "year", "month", "section", "task", "status", "page"].forEach((k) =>
                 next.delete(k)
               );
               setParams(next, { replace: true });
@@ -2304,13 +2337,6 @@ interface SalesRepBrief {
   brands_csv?: string | null;
 }
 
-/** An active staff member who is not on the Sales Team roster yet. */
-interface StaffBrief {
-  user_id: number;
-  name: string | null;
-  email: string;
-}
-
 function ProjectTeamSection({
   projectId,
   project: p,
@@ -2345,7 +2371,7 @@ function ProjectTeamSection({
   // Sales-attending picker — gated on projects.write, role-filtered to
   // sales_person. Brand-relaxed (owner: Option A): lists ALL active
   // Sales Persons regardless of brand. See GET /api/projects/sales-rep-options.
-  const repsQ = useQuery<{ data: SalesRepBrief[]; others?: StaffBrief[] }>("/api/projects/sales-rep-options",
+  const repsQ = useQuery<{ data: SalesRepBrief[] }>("/api/projects/sales-rep-options",
     () => api.get(`/api/projects/sales-rep-options`),
     []
   );
@@ -2354,34 +2380,21 @@ function ProjectTeamSection({
   const reps = [...(repsQ.data?.data ?? [])].sort((a, b) =>
     (a.name ?? "").localeCompare(b.name ?? ""),
   );
-  /* Staff NOT on the Sales Team roster (owner 2026-10-19: 「不需要改部门啊，就让
-     他们可以去 sales attending 不就好了？」). Adding one puts them on the roster;
-     their department stays as it is. */
-  const others = repsQ.data?.others ?? [];
   const takenRepIds = new Set(attendees.map((a) => a.sales_rep_id));
   const availableReps = reps.filter((r) => !takenRepIds.has(r.id));
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [selectedStaff, setSelectedStaff] = useState<Set<number>>(new Set());
   const matches = (...texts: Array<string | null | undefined>) => {
     const q = search.trim().toLowerCase();
     return !q || texts.some((t) => (t ?? "").toLowerCase().includes(q));
   };
   const filteredAvailable = availableReps.filter((r) => matches(r.code, r.name));
-  const filteredOthers = others.filter((s) => matches(s.name, s.email));
-  // Peter 2026-10-21: the picker was two separate A→Z blocks (reps, then the
-  // 2026-10-19 "not in Sales Team" staff), so the combined list RESTARTED the
-  // alphabet at the divider and read as un-sorted ("messy, not alphabet").
-  // Merge both into ONE continuous A→Z list, by the shown name; non-roster
-  // staff keep a small inline tag so "adding puts them in the team" stays clear.
-  type PickItem =
-    | { kind: "rep"; id: number; name: string; code: string | null; phone: string | null }
-    | { kind: "staff"; id: number; name: string; email: string };
-  const pickItems: PickItem[] = [
-    ...filteredAvailable.map((r): PickItem => ({ kind: "rep", id: r.id, name: r.name ?? "", code: r.code, phone: r.phone ?? null })),
-    ...filteredOthers.map((s): PickItem => ({ kind: "staff", id: s.user_id, name: s.name || s.email, email: s.email })),
-  ].sort((a, b) => a.name.localeCompare(b.name));
+  // A→Z by the shown name (owner 2026-07-28).
+  type PickItem = { id: number; name: string; code: string | null; phone: string | null };
+  const pickItems: PickItem[] = filteredAvailable
+    .map((r): PickItem => ({ id: r.id, name: r.name ?? "", code: r.code, phone: r.phone ?? null }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   function toggleSelected(id: number) {
     setSelected((prev) => {
@@ -2391,22 +2404,13 @@ function ProjectTeamSection({
       return next;
     });
   }
-  function toggleStaff(userId: number) {
-    setSelectedStaff((prev) => {
-      const next = new Set(prev);
-      if (next.has(userId)) next.delete(userId);
-      else next.add(userId);
-      return next;
-    });
-  }
-  const pickedCount = selected.size + selectedStaff.size;
+  const pickedCount = selected.size;
 
   // Owner 2026-06-25: multi-select — tick several reps + add them in one go
   // (was one-at-a-time). POSTs each selected id sequentially, then reloads once.
   async function addSelected() {
     const ids = [...selected].filter((id) => availableReps.some((r) => r.id === id));
-    const staffIds = [...selectedStaff].filter((id) => others.some((s) => s.user_id === id));
-    if (ids.length === 0 && staffIds.length === 0) return;
+    if (ids.length === 0) return;
     setBusy(true);
     try {
       for (const repId of ids) {
@@ -2414,11 +2418,7 @@ function ProjectTeamSection({
           sales_rep_id: repId,
         });
       }
-      for (const userId of staffIds) {
-        await api.post(`/api/projects/${projectId}/sales-attendees`, { user_id: userId });
-      }
       setSelected(new Set());
-      setSelectedStaff(new Set());
       setSearch("");
       onChanged();
     } catch (e: any) {
@@ -2553,7 +2553,7 @@ function ProjectTeamSection({
           <div className="mt-2">
             {/* Multi-select (owner 2026-06-25: "直接可以 multiselect 多选,不用
                 一个一个按") — filter + tick several + "Add N" in one go. */}
-            {reps.length === 0 && others.length === 0 ? (
+            {reps.length === 0 ? (
               !repsQ.loading && (
                 <div className="text-[9.5px] leading-snug text-warning-text">
                   No Sales Persons found. This picker reads the active Sales Reps
@@ -2562,7 +2562,7 @@ function ProjectTeamSection({
                   make sure that rep exists and is active (not archived).
                 </div>
               )
-            ) : availableReps.length === 0 && others.length === 0 ? (
+            ) : availableReps.length === 0 ? (
               <div className="text-[11px] italic text-ink-muted">
                 All sales reps added.
               </div>
@@ -2583,29 +2583,19 @@ function ProjectTeamSection({
                   ) : (
                     pickItems.map((it) => (
                       <label
-                        key={it.kind === "rep" ? `rep-${it.id}` : `staff-${it.id}`}
+                        key={`rep-${it.id}`}
                         className="flex cursor-pointer items-center gap-2 border-t border-border px-2 py-1.5 text-[11px] first:border-t-0 hover:bg-bg/60"
                       >
                         <input
                           type="checkbox"
-                          checked={it.kind === "rep" ? selected.has(it.id) : selectedStaff.has(it.id)}
-                          onChange={() => (it.kind === "rep" ? toggleSelected(it.id) : toggleStaff(it.id))}
+                          checked={selected.has(it.id)}
+                          onChange={() => toggleSelected(it.id)}
                         />
-                        {it.kind === "rep" && (
-                          <span className="font-mono text-[9px] text-ink-muted">{it.code}</span>
-                        )}
+                        <span className="font-mono text-[9px] text-ink-muted">{it.code}</span>
                         <span className="truncate text-ink">{it.name}</span>
-                        {it.kind === "rep" && it.phone && (
+                        {it.phone && (
                           <span className="ml-auto shrink-0 font-mono text-[9.5px] text-ink-muted">
                             {formatPhone(it.phone)}
-                          </span>
-                        )}
-                        {it.kind === "staff" && (
-                          <span
-                            className="ml-auto shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-wider text-amber-700"
-                            title="Not in the Sales Team yet — adding puts them in it"
-                          >
-                            + team
                           </span>
                         )}
                       </label>
