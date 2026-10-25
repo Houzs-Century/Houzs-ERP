@@ -26,6 +26,8 @@ export type DeliveryGeoPoint = {
   /** The order's primary REGION bucket (customer-state classification). */
   region: string;
   state: string | null;
+  /** Customer country — 'Singapore' marks an SG stop the Last Mile map omits. */
+  country: string | null;
   postcode: string | null;
   sets: number;
   revenueSen: number;

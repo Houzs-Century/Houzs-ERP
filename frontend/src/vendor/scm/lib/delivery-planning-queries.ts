@@ -247,6 +247,8 @@ export type PlanningOrder = {
   warehouse_code: string | null;
   warehouse_name: string | null;
   customer_state: string | null;
+  // Country — present on SO rows; lets the Last Mile surfaces keep Singapore off.
+  customer_country?: string | null;
   delivered_qty: number;
   remaining_qty: number;
   crew: {

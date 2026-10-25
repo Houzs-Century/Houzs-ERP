@@ -993,6 +993,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       warehouse_code: primaryWh ? (whCode.get(primaryWh) ?? null) : null,
       warehouse_name: primaryWh ? (whName.get(primaryWh) ?? null) : null,
       customer_state: r.customer_state ?? null,
+      // Country — lets the Last Mile surfaces keep Singapore off their board
+      // (East Malaysia is caught by region 'EM'); the DP board ignores it.
+      customer_country: r.customer_country ?? null,
       // delivery progress
       delivered_qty: delivered,
       remaining_qty: remaining,
@@ -1169,6 +1172,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           // The real customer state (case address first, then linked order) —
           // NOT `location`, the branch the case was raised at.
           customer_state: realState,
+          customer_country: null, // ASSR rows never reach the Last Mile board (SO-only)
           delivered_qty: 0,
           remaining_qty: 0,
           crew: null,
@@ -1330,6 +1334,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         warehouse_code: null,
         warehouse_name: null,
         customer_state: dpState,
+        customer_country: null, // DP rows never reach the Last Mile board (SO-only)
         delivered_qty: 0,
         remaining_qty: 0,
         crew: null,
@@ -1471,6 +1476,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           warehouse_code: null,
           warehouse_name: null,
           customer_state: p.state ?? null,
+          customer_country: null, // project rows never reach the Last Mile board (SO-only)
           delivered_qty: 0,
           remaining_qty: 0,
           // Show the crew PMS assigned to this window (read-only on the board) —
@@ -1797,7 +1803,7 @@ deliveryPlanning.get('/geo', async (c) => {
   /* 6. Assemble the points; every failure lands in `ungeocoded` with a reason. */
   const points: Array<{
     ref: string; so_doc_no: string; lat: number; lng: number;
-    zone: string | null; region: Region; state: string | null; postcode: string | null;
+    zone: string | null; region: Region; state: string | null; country: string | null; postcode: string | null;
     sets: number; revenueSen: number; customer: string | null; address: string;
   }> = [];
   const ungeocoded: Array<{ ref: string; reason: string }> = [];
@@ -1838,6 +1844,9 @@ deliveryPlanning.get('/geo', async (c) => {
       zone: zr.zone,
       region: (regionsByDoc.get(dn) ?? [])[0] ?? FALLBACK_DEFAULT_REGION,
       state: r.customerState ?? r.customer_state ?? null,
+      // Country — the day map excludes Singapore stops from Last Mile (EM is
+      // caught by region 'EM'); the DP board's map ignores it.
+      country: r.customerCountry ?? r.customer_country ?? null,
       postcode: r.postcode ?? null,
       sets: sc.sets,
       revenueSen: Number(r.localTotalSen ?? r.local_total_sen ?? 0) || 0,

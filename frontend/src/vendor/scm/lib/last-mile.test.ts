@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { isLastMileRow, lastMileSideOf, isToArrangeRow, lastMileListSideOf, proposeCrewDocNos, matchCrewSuggestions, LAST_MILE_SIDE_LABEL } from './last-mile';
+import { isLastMileRow, lastMileSideOf, isToArrangeRow, lastMileListSideOf, proposeCrewDocNos, matchCrewSuggestions, LAST_MILE_SIDE_LABEL, isEastMalaysiaOrSingaporeStop } from './last-mile';
 
 /* The Last Mile page's row derivation (owner pipeline 2026-08-07/08). The rows
  * are the SO rows whose server-stamped live trip sits on the picked day — the
@@ -169,5 +169,32 @@ describe('matchCrewSuggestions — crew labels only the day\'s already-sequenced
     ], tripIdByDocNo);
     expect(out.size).toBe(1);
     expect(out.get('trip-A')?.driverId).toBe('drv-1');
+  });
+});
+
+describe('isEastMalaysiaOrSingaporeStop — kept off Last Mile (owner 2026-10-25)', () => {
+  test('Singapore is caught by country, even though it folds into the Southern region', () => {
+    expect(isEastMalaysiaOrSingaporeStop({ region: 'Southern', state: 'Central', country: 'Singapore' })).toBe(true);
+    expect(isEastMalaysiaOrSingaporeStop({ region: 'Southern', state: 'West', country: ' singapore ' })).toBe(true);
+  });
+
+  test('East Malaysia is caught by the EM region bucket', () => {
+    expect(isEastMalaysiaOrSingaporeStop({ region: 'EM', state: 'Sabah', country: 'Malaysia' })).toBe(true);
+  });
+
+  test('East Malaysia states are a fallback when the region was not classified EM', () => {
+    expect(isEastMalaysiaOrSingaporeStop({ region: '', state: 'Sarawak', country: null })).toBe(true);
+    expect(isEastMalaysiaOrSingaporeStop({ state: 'labuan' })).toBe(true);
+  });
+
+  test('peninsular Malaysia and Southern-Malaysia stops stay ON the board', () => {
+    expect(isEastMalaysiaOrSingaporeStop({ region: 'KL', state: 'Selangor', country: 'Malaysia' })).toBe(false);
+    // Johor is Southern too, but it is NOT Singapore — must not be dropped.
+    expect(isEastMalaysiaOrSingaporeStop({ region: 'Southern', state: 'Johor', country: 'Malaysia' })).toBe(false);
+  });
+
+  test('empty / missing geography does not drop a stop', () => {
+    expect(isEastMalaysiaOrSingaporeStop({})).toBe(false);
+    expect(isEastMalaysiaOrSingaporeStop({ region: null, state: null, country: null })).toBe(false);
   });
 });
