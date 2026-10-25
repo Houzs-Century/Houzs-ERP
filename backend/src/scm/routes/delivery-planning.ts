@@ -992,7 +992,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       warehouse_id: primaryWh as string | null,
       warehouse_code: primaryWh ? (whCode.get(primaryWh) ?? null) : null,
       warehouse_name: primaryWh ? (whName.get(primaryWh) ?? null) : null,
-      customer_state: r.customer_state ?? null,
+      customer_state: r.customer_state ?? null, customer_country: r.customer_country ?? null, // country: Last Mile keeps SG off; DP board ignores it
       // delivery progress
       delivered_qty: delivered,
       remaining_qty: remaining,
@@ -1168,7 +1168,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           warehouse_name: null,
           // The real customer state (case address first, then linked order) —
           // NOT `location`, the branch the case was raised at.
-          customer_state: realState,
+          customer_state: realState, customer_country: null, // not on Last Mile (SO-only)
           delivered_qty: 0,
           remaining_qty: 0,
           crew: null,
@@ -1329,7 +1329,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         warehouse_id: null,
         warehouse_code: null,
         warehouse_name: null,
-        customer_state: dpState,
+        customer_state: dpState, customer_country: null, // not on Last Mile (SO-only)
         delivered_qty: 0,
         remaining_qty: 0,
         crew: null,
@@ -1470,7 +1470,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           warehouse_id: null,
           warehouse_code: null,
           warehouse_name: null,
-          customer_state: p.state ?? null,
+          customer_state: p.state ?? null, customer_country: null, // not on Last Mile (SO-only)
           delivered_qty: 0,
           remaining_qty: 0,
           // Show the crew PMS assigned to this window (read-only on the board) —
@@ -1797,7 +1797,7 @@ deliveryPlanning.get('/geo', async (c) => {
   /* 6. Assemble the points; every failure lands in `ungeocoded` with a reason. */
   const points: Array<{
     ref: string; so_doc_no: string; lat: number; lng: number;
-    zone: string | null; region: Region; state: string | null; postcode: string | null;
+    zone: string | null; region: Region; state: string | null; country: string | null; postcode: string | null;
     sets: number; revenueSen: number; customer: string | null; address: string;
   }> = [];
   const ungeocoded: Array<{ ref: string; reason: string }> = [];
@@ -1837,7 +1837,7 @@ deliveryPlanning.get('/geo', async (c) => {
       lng: hit.lng,
       zone: zr.zone,
       region: (regionsByDoc.get(dn) ?? [])[0] ?? FALLBACK_DEFAULT_REGION,
-      state: r.customerState ?? r.customer_state ?? null,
+      state: r.customerState ?? r.customer_state ?? null, country: r.customerCountry ?? r.customer_country ?? null, // country: Last Mile map keeps SG off
       postcode: r.postcode ?? null,
       sets: sc.sets,
       revenueSen: Number(r.localTotalSen ?? r.local_total_sen ?? 0) || 0,
