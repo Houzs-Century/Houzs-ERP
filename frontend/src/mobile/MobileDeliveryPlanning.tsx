@@ -124,6 +124,9 @@ type BoardRow = {
   customer_delivered_date?: string | null;
   eta_arriving_port?: string | null;
   delivery_substatus?: string | null;
+  // The latest DO's own document date (= its delivery date). The run-sheet keeps
+  // a delivery only when this matches the order's Delivery Date (runSheetDispatch).
+  do_date?: string | null;
   crew: Crew;
   delivery_orders?: DeliveryOrderRef[];
 };
