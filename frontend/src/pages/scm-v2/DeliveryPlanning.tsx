@@ -306,10 +306,9 @@ export const DeliveryPlanning = () => {
      region exactly as the server's region-scoped counts did. */
   const counts = useMemo<PlanningCounts>(() => {
     const c = planningCountsFrom(allOrders);
-    const byRegion = data?.delivered_by_region;
-    if (!byRegion) return c;
+    if (!data?.delivered_by_region) return c;
     // OPEN fetch: Delivered rows were left out, their per-region count came along.
-    const delivered = activeRegion === 'ALL' ? (data?.counts.DELIVERED ?? 0) : (byRegion[activeRegion] ?? 0);
+    const delivered = activeRegion === 'ALL' ? data.counts.DELIVERED : (data.delivered_by_region[activeRegion] ?? 0);
     return { ...c, DELIVERED: delivered, ALL: c.ALL + delivered };
   }, [allOrders, data, activeRegion]);
 
