@@ -35,6 +35,7 @@
    coordinator's board to only the cases they personally handled is a different
    decision nobody has made, and it would empty the board for dispatchers. */
 import { assrCompanySql } from '../../routes/assr';
+import { ASSR_TERMINAL_STAGES } from '../../services/assrStages';
 import { PAST_PICKUP_STAGES } from '../../lib/delivery-sheet-assr-feed';
 import type { CompanyScopeCtx } from './companyScope';
 import { canonicalizeMyState, isCanonicalMyState } from './canonical-state';
@@ -70,6 +71,15 @@ export const ASSR_CONFIRMED_COL = {
 /* Stages AFTER each leg's own step (the HC sheet feed's rule): that leg is done. */
 const PAST_PICKUP = PAST_PICKUP_STAGES;
 const PAST_INSPECTION = new Set(['pending_supplier_pickup', ...PAST_PICKUP_STAGES]);
+
+/** A case is done when it carries a closed / archived stamp, a terminal stage,
+ *  or (cases from before the stamp existed) the status "Closed". Only the stamps
+ *  were read until 2026-10-26, so 56 old Closed cases showed as pending jobs. */
+export function assrCaseClosed(a: { closed_at: string | null; archived_at: string | null; stage: string | null; status: string | null }): boolean {
+  return Boolean(a.closed_at) || Boolean(a.archived_at)
+    || (ASSR_TERMINAL_STAGES as readonly string[]).includes(a.stage ?? '')
+    || String(a.status ?? '').trim().toLowerCase() === 'closed';
+}
 
 export type AssrBoardCase = {
   stage: string | null;
