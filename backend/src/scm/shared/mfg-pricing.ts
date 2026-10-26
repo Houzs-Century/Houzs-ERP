@@ -277,30 +277,61 @@ const sumSpecialsCost = (
  * (each entry's sellingPriceSen already bakes in base + chosen-choice extras). */
 export type SpecialAddonChoiceDef = { label: string; extraSen: number };
 export type SpecialAddonGroupDef = { label: string; required?: boolean; choices: SpecialAddonChoiceDef[] };
+/** "Detect by compartment" (2990 owner 2026-10-26): the add-on's price when the
+ *  sofa build carries this compartment — e.g. a Latex Seat costs more on a build
+ *  with a corner (CNR). SELLING only, like a choice's extraSen. */
+export type SpecialAddonCompartmentPriceDef = { compartment: string; sellingPriceSen: number };
 export type SpecialAddonDef = {
   code: string;
   sellingPriceSen: number;
   costPriceSen?: number;
   optionGroups?: SpecialAddonGroupDef[];
+  compartmentPrices?: SpecialAddonCompartmentPriceDef[];
 };
+
+/** The add-on's base SELLING price for one sofa build. A compartment price
+ *  replaces the base when the build carries that compartment; when several
+ *  match, the highest wins (the rule of the per-compartment fabric prices). No
+ *  build, no compartment prices or no match → the add-on's own base. Codes
+ *  compare exactly, so pass canonical codes (sofa-build normalizeCompartmentCode)
+ *  — this module imports nothing, so it cannot normalize them itself. */
+export function specialAddonBaseSellingSen(
+  def: Pick<SpecialAddonDef, 'sellingPriceSen' | 'compartmentPrices'>,
+  buildCompartments: readonly string[] | null,
+): number {
+  const rows = def.compartmentPrices ?? [];
+  if (rows.length === 0 || !buildCompartments || buildCompartments.length === 0) return def.sellingPriceSen;
+  const built = new Set(buildCompartments);
+  let best: number | null = null;
+  for (const r of rows) {
+    if (!built.has(r.compartment) || !Number.isFinite(r.sellingPriceSen)) continue;
+    if (best === null || r.sellingPriceSen > best) best = r.sellingPriceSen;
+  }
+  return best ?? def.sellingPriceSen;
+}
 
 /** Build the per-line specials pool (MfgPricedOption[]) from special_addons defs
  *  + the line's picked codes + chosen choice labels (code → [labels]). Each
- *  entry's `sellingPriceSen` = base + Σ matched choice `extraSen`; `priceSen`
- *  (cost) = the add-on's cost base (choices are selling-only). Picks with no
- *  matching def resolve to 0 (tolerant — mirrors the engine's lookup). Feed the
- *  result in as maintenanceConfig.specials / .sofaSpecials for that line. */
+ *  entry's `sellingPriceSen` = base (specialAddonBaseSellingSen: a matched
+ *  compartment price, else the add-on's own) + Σ matched choice `extraSen`;
+ *  `priceSen` (cost) = the add-on's cost base (choices and compartment prices
+ *  are selling-only). Picks with no matching def resolve to 0 (tolerant —
+ *  mirrors the engine's lookup). Feed the result in as maintenanceConfig
+ *  .specials / .sofaSpecials for that line. `buildCompartments` = the line's
+ *  sofa build compartment codes; null when the line has no build (bedframe,
+ *  mattress, a sofa without cells). */
 export function buildSpecialsPoolFromAddons(
   defs: SpecialAddonDef[] | null | undefined,
   picks: string[] | null | undefined,
   choices: Record<string, string[]> | null | undefined,
+  buildCompartments: readonly string[] | null,
 ): MfgPricedOption[] {
   if (!picks || picks.length === 0) return [];
   const byCode = new Map((defs ?? []).map((d) => [d.code, d]));
   return picks.map((code) => {
     const def = byCode.get(code);
     if (!def) return { value: code, priceSen: 0, sellingPriceSen: 0 };
-    let selling = def.sellingPriceSen;
+    let selling = specialAddonBaseSellingSen(def, buildCompartments);
     for (const label of choices?.[code] ?? []) {
       for (const g of def.optionGroups ?? []) {
         const hit = g.choices.find((c) => c.label === label);
@@ -318,8 +349,9 @@ export function specialAddonsSurchargeSen(
   defs: SpecialAddonDef[] | null | undefined,
   picks: string[] | null | undefined,
   choices: Record<string, string[]> | null | undefined,
+  buildCompartments: readonly string[] | null,
 ): number {
-  return buildSpecialsPoolFromAddons(defs, picks, choices)
+  return buildSpecialsPoolFromAddons(defs, picks, choices, buildCompartments)
     .reduce((acc, o) => acc + (o.sellingPriceSen ?? 0), 0);
 }
 
