@@ -34,6 +34,16 @@
 // fair's start — Part 1 the orders opened in the range (grouped by fair), Part 2
 // what happened in the range to orders opened before it. Orders with no fair are
 // in neither (「不算」).
+//
+// ONE ROW PER ORDER (owner 2026-10-26, 「一张单改了两次我不理，我看final结果」):
+// the earlier orders and the upsales / drop sales are also read per order — its
+// Original (before the range's counted changes), Latest (as at `to`) and Amended
+// (the difference), at the fair's BRAND rate (「percentage 还要根据不同brand」).
+// An order changed only on its opening day is not an upsale or drop, so it is
+// not listed. Changes back-filled from the SO's modification history for 1–19
+// October (「10月的我也要算」 / 「本身不是有history吗？」) carry source 'history';
+// the system's own price wipes and put-backs found there carry 'history-ignored'
+// — kept so "goods on a day" stays right, never an upsale or a drop.
 // ----------------------------------------------------------------------------
 
 /** Which date puts an order in the range: its fair's start, or its own SO date. */
@@ -48,6 +58,10 @@ export type CommissionFair = {
   /** The event page's Total Sales (RM) and its Commission row (RM) — the estimate. */
   totalSalesRm: number | null;
   estimateRm: number | null;
+  /** The project's own organizer, venue and state — a column each on the page. */
+  organizer?: string | null;
+  venue?: string | null;
+  state?: string | null;
 };
 
 export type CommissionSo = {
@@ -77,9 +91,11 @@ export type ChangeView = {
   deltaGoodsSen: number;
   kind: 'upsale' | 'drop';
   /** Why it is not an upsale / drop; null when it is one. */
-  notCounted: 'opening_day' | 'first_price' | null;
+  notCounted: 'opening_day' | 'first_price' | 'system_fix' | null;
   source: string;
   changedBy: string | null;
+  /** Back-filled from the SO's modification history (1–19 October 2026). */
+  fromHistory: boolean;
 };
 
 export type SoRow = {
@@ -101,6 +117,9 @@ export type FairRow = {
   id: number;
   name: string;
   brand: string | null;
+  organizer: string | null;
+  venue: string | null;
+  state: string | null;
   startDate: string;
   endDate: string | null;
   ratePct: number | null;
@@ -124,16 +143,52 @@ export type AdjustmentRow = {
   beforeReach: boolean;
 };
 
+/** Where an order sits on the page: its fair, and that fair's place. */
+type OrderPlace = {
+  docNo: string; fairId: number; fairName: string;
+  brand: string | null; organizer: string | null; venue: string | null; state: string | null;
+  salesperson: string | null; customer: string | null; ratePct: number | null;
+};
+
+/** An earlier order, once, with what happened to it in the range. */
+export type EarlierOrderRow = OrderPlace & {
+  events: Array<{ date: string; kind: AdjustmentRow['kind']; beforeReach: boolean }>;
+  lastDate: string;
+  /** Goods before the range's counted changes, as at `to`, and the difference. */
+  originalSen: number; latestSen: number; amendedSen: number;
+  /** The order's commission lines in the range, summed. */
+  commissionSen: number;
+  fromHistory: boolean;
+};
+
+/** An order whose goods the range changed (upsales / drop sales), once, final. */
+export type ChangedOrderRow = OrderPlace & {
+  /** 'range' — this range's fairs (the effect is inside their commission);
+      'earlier' — an earlier order (inside the earlier lines). */
+  part: 'range' | 'earlier';
+  lastChange: string;
+  originalSen: number; latestSen: number; amendedSen: number;
+  reachedOn: string | null;
+  /** Amended × the brand rate once the order has reached 30% by `to`, else 0. */
+  effectSen: number;
+  fromHistory: boolean;
+};
+
 export type EventCommissionReport = {
   basis: CommissionBasis;
   from: string;
   to: string;
   fairs: FairRow[];
   adjustments: AdjustmentRow[];
+  earlierOrders: EarlierOrderRow[];
+  changedOrders: ChangedOrderRow[];
   totals: { payableSen: number; adjustmentsSen: number; totalSen: number };
 };
 
 export const COMMISSION_PAID_SHARE = 0.3;
+/** so_total_changes.source of the rows back-filled from the modification history. */
+export const HISTORY = 'history';
+export const HISTORY_IGNORED = 'history-ignored';
 const FIRST_PRICE_MAX_SEN = 100;
 
 /** The calendar day in Malaysia of a stamp (a bare date passes through). */
@@ -175,10 +230,14 @@ export function changeView(ch: CommissionChange, so: Pick<CommissionSo, 'created
   const delta = ch.afterGoodsSen - ch.beforeGoodsSen;
   if (delta === 0) return null; // the total moved (a fee), not the goods
   const date = mytDay(ch.changedAt);
-  const notCounted = date === mytDay(so.createdAt) ? 'opening_day'
+  const notCounted = ch.source === HISTORY_IGNORED ? 'system_fix'
+    : date === mytDay(so.createdAt) ? 'opening_day'
     : ch.beforeTotalSen <= FIRST_PRICE_MAX_SEN ? 'first_price'
     : null;
-  return { date, deltaGoodsSen: delta, kind: delta > 0 ? 'upsale' : 'drop', notCounted, source: ch.source, changedBy: ch.changedBy };
+  return {
+    date, deltaGoodsSen: delta, kind: delta > 0 ? 'upsale' : 'drop', notCounted, source: ch.source, changedBy: ch.changedBy,
+    fromHistory: ch.source === HISTORY || ch.source === HISTORY_IGNORED,
+  };
 }
 
 export function buildEventCommission(input: {
@@ -209,6 +268,35 @@ export function buildEventCommission(input: {
   }
   const rateOf = (f: CommissionFair): number | null => input.ratePctByBrand.get((f.brand ?? '').trim()) ?? null;
   const fairById = new Map(input.fairs.map((f) => [f.id, f]));
+  const placeOf = (so: CommissionSo, f: CommissionFair): OrderPlace => ({
+    docNo: so.docNo, fairId: f.id, fairName: f.name,
+    brand: f.brand, organizer: f.organizer ?? null, venue: f.venue ?? null, state: f.state ?? null,
+    salesperson: so.salesperson, customer: so.customer, ratePct: rateOf(f),
+  });
+  /* The range's counted changes of an order (before `until`, when it was cancelled). */
+  const countedIn = (so: CommissionSo, chs: readonly CommissionChange[], until: string | null = null): ChangeView[] =>
+    chs.map((ch) => changeView(ch, so))
+      .filter((v): v is ChangeView => v != null && v.notCounted == null && v.date >= from && v.date <= to && (until == null || v.date < until));
+  const changedOrders: ChangedOrderRow[] = [];
+  /* An order whose goods the range changed, once: Original before the counted
+     changes, Latest as at `to`. Nothing to list when they cancel out. */
+  const noteChanged = (so: CommissionSo, f: CommissionFair, part: ChangedOrderRow['part']) => {
+    const chs = changesOf.get(so.docNo) ?? [];
+    const counted = countedIn(so, chs);
+    if (counted.length === 0) return;
+    const amended = counted.reduce((s, v) => s + v.deltaGoodsSen, 0);
+    if (amended === 0) return;
+    const latest = goodsAt(so.goodsSen, chs, to);
+    const reached = reachedOn(so.totalSen, paymentsOf.get(so.docNo) ?? [], to);
+    const place = placeOf(so, f);
+    changedOrders.push({
+      ...place, part,
+      lastChange: counted.reduce((m, v) => (v.date > m ? v.date : m), counted[0]!.date),
+      originalSen: latest - amended, latestSen: latest, amendedSen: amended, reachedOn: reached,
+      effectSen: reached ? commissionOf(amended, place.ratePct) : 0,
+      fromHistory: counted.some((v) => v.fromHistory),
+    });
+  };
 
   /* One order as at `to`: its goods that day, earned only if 30% was paid by then.
      Null when it earns nothing at all (draft, held, cancelled by `to`). */
@@ -239,8 +327,10 @@ export function buildEventCommission(input: {
     const rate = rateOf(f);
     const sos = members.map((so) => soRowAsAt(so, rate)).filter((r): r is SoRow => r != null)
       .sort((a, b) => (a.docNo < b.docNo ? -1 : 1));
+    for (const so of members) if (sos.some((r) => r.docNo === so.docNo)) noteChanged(so, f, 'range');
     return {
-      id: f.id, name: f.name, brand: f.brand, startDate: f.startDate, endDate: f.endDate,
+      id: f.id, name: f.name, brand: f.brand, organizer: f.organizer ?? null, venue: f.venue ?? null, state: f.state ?? null,
+      startDate: f.startDate, endDate: f.endDate,
       ratePct: rate, totalSalesRm: f.totalSalesRm, estimateRm: f.estimateRm,
       payableSen: sos.reduce((s, r) => s + r.commissionSen, 0),
       sos,
@@ -272,9 +362,11 @@ export function buildEventCommission(input: {
   const earlier = (so: CommissionSo, f: CommissionFair): boolean =>
     basis === 'fair' ? f.startDate < from : so.soDate != null && so.soDate < from;
   const adjustments: AdjustmentRow[] = [];
+  const earlierOrders: EarlierOrderRow[] = [];
   for (const so of input.sos) {
     const f = fairById.get(so.projectId);
     if (!f || !earlier(so, f)) continue;
+    const firstLine = adjustments.length;
     if (so.status === 'DRAFT' || so.onHold || so.status === 'ON_HOLD') continue;
     const rate = rateOf(f);
     const pays = paymentsOf.get(so.docNo) ?? [];
@@ -306,10 +398,30 @@ export function buildEventCommission(input: {
       const goods = goodsAt(so.goodsSen, chs, cancelled);
       adjustments.push({ ...base, date: cancelled, kind: 'cancelled', goodsSen: goods, commissionSen: -commissionOf(goods, rate), beforeReach: false });
     }
+    /* The same order once, its final result in the range. */
+    const mine = adjustments.slice(firstLine);
+    if (mine.length > 0) {
+      const counted = countedIn(so, chs, cancelled);
+      const amended = counted.reduce((s, v) => s + v.deltaGoodsSen, 0);
+      const latest = goodsAt(so.goodsSen, chs, to);
+      earlierOrders.push({
+        ...placeOf(so, f),
+        events: mine.map((a) => ({ date: a.date, kind: a.kind, beforeReach: a.beforeReach })),
+        lastDate: mine.reduce((m, a) => (a.date > m ? a.date : m), mine[0]!.date),
+        originalSen: latest - amended, latestSen: latest, amendedSen: amended,
+        commissionSen: mine.reduce((s, a) => s + a.commissionSen, 0),
+        fromHistory: counted.some((v) => v.fromHistory),
+      });
+    }
+    if (cancelled == null || cancelled > to) noteChanged(so, f, 'earlier');
   }
-  adjustments.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.docNo < b.docNo ? -1 : 1));
+  const byDateThenDoc = <R extends { docNo: string }>(day: (r: R) => string) => (a: R, b: R) =>
+    (day(a) < day(b) ? -1 : day(a) > day(b) ? 1 : a.docNo < b.docNo ? -1 : 1);
+  adjustments.sort(byDateThenDoc((a) => a.date));
+  earlierOrders.sort(byDateThenDoc((r) => r.lastDate));
+  changedOrders.sort(byDateThenDoc((r) => r.lastChange));
 
   const payableSen = fairs.reduce((s, f) => s + f.payableSen, 0);
   const adjustmentsSen = adjustments.reduce((s, a) => s + a.commissionSen, 0);
-  return { basis, from, to, fairs, adjustments, totals: { payableSen, adjustmentsSen, totalSen: payableSen + adjustmentsSen } };
+  return { basis, from, to, fairs, adjustments, earlierOrders, changedOrders, totals: { payableSen, adjustmentsSen, totalSen: payableSen + adjustmentsSen } };
 }

@@ -51,8 +51,11 @@ type SoRead = {
 };
 const SO_COLS = 'doc_no, project_id, salesperson_id, debtor_name, status, on_hold, mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, local_total_sen, total_revenue_sen, created_at, so_date';
 
-type FairRead = { id: number | string; name: string | null; brand: string | null; start_date: string | null; end_date: string | null; archived_at: string | null; status: string | null; total_sales: number | string | null };
-const FAIR_SQL = `SELECT p.id, p.name, p.brand, p.start_date, p.end_date, p.archived_at, p.status, pf.total_sales
+type FairRead = {
+  id: number | string; name: string | null; brand: string | null; start_date: string | null; end_date: string | null; archived_at: string | null; status: string | null; total_sales: number | string | null;
+  organizer: string | null; venue: string | null; state: string | null;
+};
+const FAIR_SQL = `SELECT p.id, p.name, p.brand, p.start_date, p.end_date, p.archived_at, p.status, pf.total_sales, p.organizer, p.venue, p.state
                     FROM projects p LEFT JOIN project_finance pf ON pf.project_id = p.id`;
 
 const fail = (c: any, what: string, reason: string) =>
@@ -185,6 +188,7 @@ export const eventCommissionHandler = async (c: any): Promise<Response> => {
         endDate: dayOf(f.end_date),
         totalSalesRm: p ? p.sales : (f.total_sales == null ? null : n(f.total_sales)),
         estimateRm: p ? p.commission.amount : null,
+        organizer: f.organizer ?? null, venue: f.venue ?? null, state: f.state ?? null,
       };
     });
   const report = buildEventCommission({
