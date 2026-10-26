@@ -49,6 +49,9 @@ export const ENTITY_TYPES = [
   /* A product request (owner 2026-10-06): raised, edited, withdrawn, approved or
      rejected by the Purchaser, its Model + SKU built, its PC Order raised. */
   'PRODUCT_REQUEST',
+  /* An Event Commission month (owner 2026-10-26, 关月): closed (POST) and
+     reopened (REVERSE), keyed "<company id>:<YYYY-MM>". Write-only so far. */
+  'COMMISSION_MONTH',
 ] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 

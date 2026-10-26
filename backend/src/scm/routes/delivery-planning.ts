@@ -72,6 +72,7 @@ import { todayMyt } from '../lib/my-time';
 import { attachLineCategories } from '../lib/so-readiness-category';
 import { deriveBranding } from '../lib/so-display-branding';
 /* chunkIn on every id/doc-no filter: the list rides in the URL and an unbounded one is refused. */
+import { docsEnteringPendingSchedule, stampPendingSchedule } from '../lib/pending-schedule-stays';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { attachBoardAcExemptionExpiry } from '../lib/ac-exemption-expiry';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
@@ -86,7 +87,7 @@ import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMa
 /* Service-Case rows on this board are company-scoped (owner ruling 2026-08-21).
    Both statements live in ONE module, with the reasoning, so the predicate is
    assertable and cannot be re-derived by hand here. */
-import { assrBoardLocation, assrOpenCaseGuardSql, ASSR_BOARD_LEGS, assrBoardLegs } from '../lib/assr-board-scope';
+import { assrBoardLocation, assrOpenCaseGuardSql, ASSR_BOARD_LEGS, ASSR_CONFIRMED_COL, assrBoardLegs } from '../lib/assr-board-scope';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
@@ -1062,13 +1063,12 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       // A closed / archived case's legs are DONE → they belong on Delivered.
       const caseClosed = Boolean(a.closed_at) || Boolean(a.archived_at);
 
-      // Dated legs + the undated leg its stage waits on. Stock columns are '—' here.
-      const legs = assrBoardLegs(a, caseClosed);
-
-      for (const leg of legs) {
+      // Own-team legs: Service's date = request, Logistics' = confirmed (assrBoardLegs).
+      for (const leg of assrBoardLegs(a, caseClosed)) {
+        const legDate = leg.confirmed ?? leg.requested;
         // A CLOSED case's leg only shows when it is recent (owner 2026-10-21: last
         // 90 days); older done service work stays off the board.
-        if (caseClosed && (leg.date ?? '').slice(0, 10) < recentClosedSince) continue;
+        if (leg.state === 'DELIVERED' && (legDate ?? '').slice(0, 10) < recentClosedSince) continue;
         // so_doc_no is the React rowKey on the board — a case with two legs must
         // yield two DISTINCT keys, so suffix with the job_kind.
         const rowKey = `${assrNo}#${leg.jobKind}`;
@@ -1087,7 +1087,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           status: a.status ?? '',
           // Closed case's dated leg = done → Delivered; an open dated leg surfaces
           // under Pending Delivery until it's scheduled out (owner 2026-10-21).
-          delivery_state: caseClosed ? 'DELIVERED' : leg.date ? 'PENDING_DELIVERY' : 'PENDING_SCHEDULE',
+          delivery_state: leg.state,
           delivery_state_override: null,
           balance_sen: 0,
           balance_sen_live: null,
@@ -1106,23 +1106,19 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
             };
           })(),
           so_date: null,
-          // The trigger date is the SERVICE date: it drives the schedule /
-          // Days-Left column like an SO's effective date AND shows in the "Sales
-          // Exemption Expiry Date" column (via customer_delivery_date, the
-          // frontend's ASSR arm). "Delivery Date" (amended_delivery_date) is LEFT
-          // BLANK — it is the date admin proposes to the customer when scheduling
-          // (owner 2026-10-22: ASSR follows the SO-sync date convention).
-          customer_delivery_date: leg.date, sales_exemption_expiry: null,
+          // Service's requested date shows where an SO shows the customer's date;
+          // "Delivery Date" (amended_delivery_date) is the date Logistics confirmed.
+          customer_delivery_date: leg.requested, sales_exemption_expiry: null,
           amend_date_from_customer: null,
-          amended_delivery_date: null,
+          amended_delivery_date: leg.confirmed,
           amend_reason: null, amend_reason_from_customer: null,
-          effective_delivery_date: leg.date,
-          processing_date: leg.date,
+          effective_delivery_date: legDate,
+          processing_date: legDate,
           /* Synthetic job row — its so_doc_no is a ROW KEY, not a real SO doc
              number, and it carries no replacement_disposal for the drawer to
              lock. Always false; a Set lookup on a row key would be meaningless. */
           po_locked: false,
-          days_left: daysBetween(today, leg.date),
+          days_left: daysBetween(today, legDate),
           address,
           postcode: realPostcode,
           building_type: null,
@@ -1145,7 +1141,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           em_delivery_status: null, consignment_no: null, vessel_voyage: null,
           etd_port_klang: null, bs_delivery_date: null, esb_remarks: null,
           bs_remarks: null, ctn: null, em_delivered_date: null,
-          do_date: leg.jobKind === 'delivery' ? leg.date : null,
+          do_date: leg.jobKind === 'delivery' ? legDate : null,
           delivered_at: null, pod_r2_key: null, pod_lat: null, has_pod: false,
           // Stock columns are not meaningful for a Service Case.
           ...NO_STOCK_ROW,
@@ -1173,7 +1169,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           trip_date: null,
           trip_stop_no: null,
           trip_eta_offset_s: null,
-          arrangement_stage: !caseClosed && !leg.date ? 'PENDING_DATE' : null,
+          arrangement_stage: leg.state === 'PENDING_SCHEDULE' ? 'PENDING_DATE' : null,
         });
       }
     }
@@ -1516,6 +1512,12 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         tab badges reflect the active region. The state filter is applied AFTER
         counting (so switching state tabs doesn't change the badge numbers). The
         region param is validated against the config's region codes. */
+  if (scope.mode === 'all') {
+    const entering = docsEnteringPendingSchedule(allOrders);
+    await stampPendingSchedule(sb, c, entering);
+    const stamped = new Set(entering);
+    for (const o of allOrders) if (stamped.has(o.so_doc_no) && o.row_type === 'so') o.delivery_state_override = 'PENDING_SCHEDULE';
+  }
   const regionFiltered = scopedOrders.filter((o) => matchesRegion(o, regionParam, regionCfg.validCodes));
   const counts = emptyCounts();
   for (const o of regionFiltered) counts[o.delivery_state] += 1;
@@ -2257,9 +2259,8 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
       p.jobKind === 'customer_pickup' ? 'customer_pickup'
       : p.jobKind === 'inspection' ? 'inspection'
       : 'delivery';
-    const col = jobKind === 'customer_pickup' ? 'customer_pickup_at'
-      : jobKind === 'inspection' ? 'inspection_visit_at'
-      : 'do_date';
+    // Logistics' date is the CONFIRMED one; Service's requested date stays as keyed.
+    const col = ASSR_CONFIRMED_COL[jobKind];
     /* The case must EXIST and be OPEN before ANYTHING is written. The date write
        below carries that guard in its own WHERE clause, but a crew-only edit (a
        lorry with no scheduleDate — now reachable because the board's Driver /
@@ -2775,9 +2776,10 @@ async function scheduleAssrOntoTrip(
   try {
     const user = c.get('user') as { id?: string } | null;
     const stopType = ASSR_STOP_TYPE[jobKind];
-    const dateCol = jobKind === 'customer_pickup' ? 'customer_pickup_at'
+    const requestedCol = jobKind === 'customer_pickup' ? 'customer_pickup_at'
       : jobKind === 'inspection' ? 'inspection_visit_at'
       : 'do_date';
+    const dateCol = `COALESCE(${ASSR_CONFIRMED_COL[jobKind]}, ${requestedCol})`;
 
     /* Case snapshot (customer / address) + the leg's own date, from public.assr_cases
        via c.env.DB (same path the ASSR board union uses). The leg date is the trip's

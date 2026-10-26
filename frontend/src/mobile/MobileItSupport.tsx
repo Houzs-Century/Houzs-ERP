@@ -80,7 +80,7 @@ function Files({ files, onChange }: { files: File[]; onChange: (f: File[]) => vo
           <Paperclip size={16} /> Add a screenshot or file
         </button>
       )}
-      <div style={{ fontSize: 11.5, color: "var(--mut2)" }}>Pictures, MP4 or MOV video, or PDF. Up to 5 files, 10 MB each.</div>
+      <div style={{ fontSize: 11.5, color: "var(--mut2)" }}>Pictures, MP4 or MOV video, PDF or ZIP. Up to 5 files, 10 MB each.</div>
       {refused && <div role="alert" style={{ fontSize: 12.5, color: "var(--red)" }}>{refused}</div>}
     </div>
   );
