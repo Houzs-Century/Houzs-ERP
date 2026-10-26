@@ -38,6 +38,7 @@ import postgres from "postgres";
 
 import { PRODUCT_CODE_CASCADE } from "../src/scm/lib/product-code-rename.ts";
 import { planDuplicateSkuMerge, confirmPhrase } from "./lib/duplicate-sku-merge-plan.mjs";
+import { readMergeColumns, readMergeWorld, applyMerge, verifyMerge, rekeyIds } from "./lib/duplicate-sku-merge-run.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -55,95 +56,6 @@ if (!BOOK[TICKET]) { console.error(`REFUSED: TICKET must be one of ${Object.keys
 const PAIRS = BOOK[TICKET].pairs;
 
 const log = (m = "") => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
-
-async function readColumns(sql) {
-  const rows = await sql`
-    SELECT table_name, column_name FROM information_schema.columns
-     WHERE table_schema = 'scm' AND table_name = ANY(${[...new Set(PRODUCT_CODE_CASCADE.map((c) => c.table))]})`;
-  const cols = new Map();
-  for (const r of rows) cols.set(r.table_name, (cols.get(r.table_name) ?? new Set()).add(r.column_name));
-  return cols;
-}
-
-const kindClause = (sql, c) => (c.kind ? sql`AND material_kind::text = 'mfg_product'` : sql``);
-
-async function readWorld(sql, cols) {
-  const drops = PAIRS.map((p) => p.drop);
-  const codes = [...drops, ...PAIRS.map((p) => p.keep)];
-
-  const products = await sql`
-    SELECT id::text AS id, code, status::text AS status, category::text AS category
-      FROM scm.mfg_products WHERE company_id = ${CO} AND code = ANY(${codes})`;
-
-  const refs = [];
-  const ids = new Map();
-  const missing = [];
-  for (const c of PRODUCT_CODE_CASCADE) {
-    const have = cols.get(c.table);
-    if (!have?.has(c.col) || !have.has("company_id")) { missing.push(`${c.table}.${c.col}`); continue; }
-    const hasId = have.has("id");
-    const rows = await sql`
-      SELECT ${sql(c.col)} AS code, ${hasId ? sql`id::text` : sql`NULL::text`} AS id
-        FROM ${sql(`scm.${c.table}`)}
-       WHERE company_id = ${CO} AND ${sql(c.col)} = ANY(${drops}) ${kindClause(sql, c)}`;
-    for (const code of new Set(rows.map((r) => r.code))) {
-      const mine = rows.filter((r) => r.code === code);
-      refs.push({ table: c.table, col: c.col, code, rows: mine.length, hasId });
-      ids.set(`${c.table}.${c.col}|${code}`, mine.map((r) => r.id));
-    }
-  }
-
-  const warehouses = await sql`SELECT id::text AS id, code FROM scm.warehouses WHERE company_id = ${CO}`;
-  const whCode = new Map(warehouses.map((w) => [w.id, String(w.code).toUpperCase()]));
-  const whOf = (id) => (id == null ? "(NO WAREHOUSE)" : whCode.get(String(id)) ?? `(OTHER ${id})`);
-  const ledger = await sql`
-    SELECT item_code, warehouse_id::text AS warehouse_id,
-           SUM(CASE movement_type WHEN 'IN' THEN qty WHEN 'OUT' THEN -qty
-                                  WHEN 'ADJUSTMENT' THEN qty WHEN 'TRANSFER' THEN qty ELSE 0 END)::int AS qty
-      FROM scm.inventory_movements WHERE company_id = ${CO} AND item_code = ANY(${codes})
-     GROUP BY item_code, warehouse_id`;
-  const lots = await sql`
-    SELECT item_code, warehouse_id::text AS warehouse_id, SUM(qty_remaining)::int AS qty
-      FROM scm.inventory_lots WHERE company_id = ${CO} AND item_code = ANY(${codes}) AND qty_remaining <> 0
-     GROUP BY item_code, warehouse_id`;
-  const stockMap = new Map();
-  const cell = (code, wh) => {
-    const k = `${code}|${wh}`;
-    if (!stockMap.has(k)) stockMap.set(k, { code, warehouseCode: whOf(wh), ledgerQty: 0, lotQty: 0 });
-    return stockMap.get(k);
-  };
-  for (const r of ledger) cell(r.item_code, r.warehouse_id).ledgerQty += Number(r.qty);
-  for (const r of lots) cell(r.item_code, r.warehouse_id).lotQty += Number(r.qty);
-  const stock = [...stockMap.values()].filter((s) => s.ledgerQty !== 0 || s.lotQty !== 0);
-
-  const uniques = await sql`
-    SELECT tablename, indexdef FROM pg_indexes
-     WHERE schemaname = 'scm' AND indexdef ILIKE 'CREATE UNIQUE%'
-       AND tablename = ANY(${[...new Set(refs.map((r) => r.table))]})`;
-
-  const masters = await sql`
-    SELECT code, to_jsonb(p) AS j FROM scm.mfg_products p WHERE company_id = ${CO} AND code = ANY(${codes})`;
-  const mainSuppliers = await sql`
-    SELECT b.item_code, s.code AS supplier
-      FROM scm.supplier_material_bindings b LEFT JOIN scm.suppliers s ON s.id = b.supplier_id
-     WHERE b.company_id = ${CO} AND b.item_code = ANY(${codes})
-       AND b.material_kind::text = 'mfg_product' AND b.is_main_supplier = true`;
-
-  /* A take lists every SKU of its scope, so both codes usually sit in the same take. */
-  const takeRows = await sql`
-    SELECT l.id::text AS id, l.stock_take_id::text AS take_id, l.item_code, l.variant_key,
-           l.system_qty::int AS system_qty, l.counted_qty::int AS counted_qty, t.status::text AS take_status
-      FROM scm.stock_take_lines l JOIN scm.stock_takes t ON t.id = l.stock_take_id
-     WHERE l.company_id = ${CO} AND l.item_code = ANY(${codes})`;
-  const keepOf = new Map(PAIRS.map((p) => [p.drop, p.keep]));
-  const stockTakeLines = takeRows.filter((l) => keepOf.has(l.item_code)).map((l) => ({
-    id: l.id, code: l.item_code, takeStatus: l.take_status, systemQty: l.system_qty, countedQty: l.counted_qty,
-    collides: takeRows.some((k) => k.take_id === l.take_id && k.item_code === keepOf.get(l.item_code)
-      && (k.variant_key ?? "") === (l.variant_key ?? "")),
-  }));
-
-  return { products, refs, ids, missing, stock, uniques, masters, mainSuppliers, stockTakeLines };
-}
 
 /* The kept row is what every moved line prices and costs against from now on, so
    a difference is the thing to settle in SKU Master before the apply. Same /
@@ -169,14 +81,14 @@ async function main() {
   log(`ruling: ${BOOK[TICKET].ruling}`);
 
   const sql = postgres(DST, { ssl: "require", prepare: false, max: 1 });
-  const cols = await readColumns(sql);
-  const world = await readWorld(sql, cols);
+  const cols = await readMergeColumns(sql, PRODUCT_CODE_CASCADE);
+  const world = await readMergeWorld(sql, { co: CO, pairs: PAIRS, cascade: PRODUCT_CODE_CASCADE, cols });
   for (const m of world.missing) log(`   cascade column ${m} is not on this database - skipped`);
 
   const result = planDuplicateSkuMerge({
     pairs: PAIRS, products: world.products, refs: world.refs, stock: world.stock, stockTakeLines: world.stockTakeLines,
   });
-  const idsOf = (p, r) => r.ids ?? world.ids.get(`${r.table}.${r.col}|${p.drop}`);
+  const idsOf = (p, r) => rekeyIds(world, p, r);
 
   log("");
   log("PER PAIR  (dropped code -> kept code)");
@@ -229,64 +141,15 @@ async function main() {
     if (p.retire) log(`   undo "${p.drop}" scm.mfg_products: ["${p.dropRowId}"]`);
   }
 
-  const committed = [];
-  const problems = [];
-  let rekeyed = 0;
-  for (const p of work) {
-    try {
-      let n = 0;
-      await sql.begin(async (tx) => {
-        for (const r of p.rekey) {
-          const c = PRODUCT_CODE_CASCADE.find((x) => x.table === r.table && x.col === r.col);
-          const ids = idsOf(p, r);
-          const staying = world.ids.get(`${r.table}.${r.col}|${p.drop}`).length - ids.length;
-          const done = await tx`
-            UPDATE ${tx(`scm.${r.table}`)} SET ${tx(r.col)} = ${p.keep}
-             WHERE company_id = ${CO} AND ${tx(r.col)} = ${p.drop} AND id::text = ANY(${ids}) ${kindClause(tx, c)}
-            RETURNING id`;
-          if (done.length !== ids.length) throw new Error(`scm.${r.table}: re-keyed ${done.length} of ${ids.length} - a row changed since the plan`);
-          const [left] = await tx`
-            SELECT COUNT(*)::int AS n FROM ${tx(`scm.${r.table}`)}
-             WHERE company_id = ${CO} AND ${tx(r.col)} = ${p.drop} ${kindClause(tx, c)}`;
-          if (left.n !== staying) throw new Error(`scm.${r.table}: ${left.n} row(s) still carry "${p.drop}" after the re-key, planned ${staying}`);
-          n += done.length;
-        }
-        if (p.retire) {
-          const [stock] = await tx`
-            SELECT COALESCE(SUM(CASE movement_type WHEN 'IN' THEN qty WHEN 'OUT' THEN -qty
-                                  WHEN 'ADJUSTMENT' THEN qty WHEN 'TRANSFER' THEN qty ELSE 0 END), 0)::int AS qty,
-                   (SELECT COUNT(*)::int FROM scm.inventory_lots
-                     WHERE company_id = ${CO} AND item_code = ${p.drop} AND qty_remaining <> 0) AS open_lots
-              FROM scm.inventory_movements WHERE company_id = ${CO} AND item_code = ${p.drop}`;
-          if (stock.qty !== 0 || stock.open_lots !== 0) throw new Error(`"${p.drop}" still holds stock ${stock.qty} / open lots ${stock.open_lots}, so not switched off`);
-          const off = await tx`
-            UPDATE scm.mfg_products SET status = 'INACTIVE', updated_at = now()
-             WHERE company_id = ${CO} AND id::text = ${p.dropRowId} AND code = ${p.drop} AND status = 'ACTIVE'
-            RETURNING id`;
-          if (off.length !== 1) throw new Error("the dropped catalogue row was not ACTIVE any more");
-        }
-      });
-      committed.push(p);
-      rekeyed += n;
-    } catch (e) {
-      problems.push(`"${p.drop}" ROLLED BACK, nothing of it was written: ${String(e?.message ?? e)}`);
-    }
-  }
+  const { committed, problems, rekeyed } = await applyMerge(sql, {
+    co: CO, plan: result, world, cascade: PRODUCT_CODE_CASCADE, audit: null,
+  });
   log(`WRITTEN: ${rekeyed} row(s) re-keyed, ${committed.filter((p) => p.retire).length} row(s) switched off; ${committed.length} of ${work.length} pair(s) committed`);
   await sql.end();
 
-  /* ---- verification on a connection this run has not used, asserting what the
-     rows now SAY, not how many were touched ----------------------------------- */
   const v = postgres(DST, { ssl: "require", prepare: false, max: 1 });
+  problems.push(...await verifyMerge(v, { co: CO, committed, world }));
   for (const p of committed) {
-    for (const r of p.rekey) {
-      const ids = idsOf(p, r);
-      const rows = await v`SELECT id::text AS id, ${v(r.col)} AS code FROM ${v(`scm.${r.table}`)} WHERE id::text = ANY(${ids})`;
-      for (const row of rows) if (row.code !== p.keep) problems.push(`scm.${r.table} ${row.id} carries "${row.code}", wanted "${p.keep}"`);
-      if (rows.length !== ids.length) problems.push(`scm.${r.table}: ${ids.length - rows.length} re-keyed row(s) are gone`);
-    }
-    const [row] = await v`SELECT code, status::text AS status FROM scm.mfg_products WHERE id::text = ${p.dropRowId}`;
-    if (p.retire && row?.status !== "INACTIVE") problems.push(`"${p.drop}" is ${row?.status ?? "gone"}, wanted INACTIVE`);
     const keepStock = await v`
       SELECT w.code, SUM(CASE m.movement_type WHEN 'IN' THEN m.qty WHEN 'OUT' THEN -m.qty
                                               WHEN 'ADJUSTMENT' THEN m.qty WHEN 'TRANSFER' THEN m.qty ELSE 0 END)::int AS qty
@@ -296,7 +159,6 @@ async function main() {
     log(`   VERIFY "${p.keep}": ${lines.n} sales-order line(s); stock ${keepStock.map((s) => `${s.code} ${s.qty}`).join(", ") || "none"}`);
   }
   await v.end();
-
   if (problems.length > 0) {
     for (const x of problems) log(`   VERIFY FAILED: ${x}`);
     log("FAILED. The UNDO lists above cover every write that landed.");
