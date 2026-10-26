@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildEventCommission, changeView, goodsAt, mytDay, reachedOn,
-  type CommissionChange, type CommissionFair, type CommissionSo,
+  buildEventCommission, changeView, goodsAt, monthAdjustmentsOf, mytDay, paidByOrder, reachedOn, withMonthAdjustments,
+  type CommissionChange, type CommissionFair, type CommissionPayment, type CommissionSo,
 } from './event-commission';
 
 /* Event Commission (owner 2026-10-20): goods × the fair's brand rate, earned on
@@ -75,7 +75,7 @@ describe('Part 1 — fairs that start in the range, as at its last day', () => {
     expect(f.sos[0]).toMatchObject({ reachedOn: '2026-10-02', commissionSen: 140_00, paidPct: 36.4 });
     expect(f.sos[1]).toMatchObject({ reachedOn: null, commissionSen: 0, paidPct: 20 });
     expect(f).toMatchObject({ ratePct: 14, payableSen: 140_00, estimateRm: 67864 });
-    expect(r.totals).toEqual({ payableSen: 140_00, adjustmentsSen: 0, totalSen: 140_00 });
+    expect(r.totals).toEqual({ payableSen: 140_00, adjustmentsSen: 0, monthAdjustmentsSen: 0, totalSen: 140_00 });
   });
 
   it('as at the range\'s last day: a later payment, a later upsale and a later cancellation are not in it', () => {
@@ -139,7 +139,7 @@ describe('Part 2 — what happened in the range to orders of earlier fairs', () 
       ['2026-10-10', 'reached', 1_100_00, 143_00, false],
       ['2026-10-20', 'upsale', 200_00, 26_00, false],
     ]);
-    expect(r.totals).toEqual({ payableSen: 0, adjustmentsSen: 169_00, totalSen: 169_00 });
+    expect(r.totals).toEqual({ payableSen: 0, adjustmentsSen: 169_00, monthAdjustmentsSen: 0, totalSen: 169_00 });
   });
 
   it('a cancellation takes back what the order had earned; one re-opened since is live again', () => {
@@ -225,8 +225,8 @@ describe('by SO date — the same two parts keyed on the order\'s own SO date', 
     };
     const bySo = buildEventCommission({ ...input, basis: 'so_date' });
     const byFair = buildEventCommission(input);
-    expect(bySo.totals).toEqual({ payableSen: 130_00, adjustmentsSen: 0, totalSen: 130_00 });
-    expect(byFair.totals).toEqual({ payableSen: 0, adjustmentsSen: 130_00, totalSen: 130_00 });
+    expect(bySo.totals).toEqual({ payableSen: 130_00, adjustmentsSen: 0, monthAdjustmentsSen: 0, totalSen: 130_00 });
+    expect(byFair.totals).toEqual({ payableSen: 0, adjustmentsSen: 130_00, monthAdjustmentsSen: 0, totalSen: 130_00 });
   });
 });
 
@@ -298,5 +298,51 @@ describe('one row per order, its final result', () => {
     });
     expect(changeView(change({ source: 'history-ignored' }), so())).toMatchObject({ notCounted: 'system_fix', fromHistory: true });
     expect(r.changedOrders).toEqual([expect.objectContaining({ originalSen: 1_000_00, latestSen: 1_200_00, amendedSen: 200_00, reachedOn: null, effectSen: 0 })]);
+  });
+});
+
+describe('closing a month — 关月 (owner 2026-10-26)', () => {
+  /* A closed month never changes; what later moves its orders' commission is
+     that month recalculated today minus what it paid, paid in the first open
+     month — and once a later month has paid it, it is not paid again. */
+  const SEPF = fair({ id: 2, name: 'SELANGOR [ZANOTTI] BIGHOME @ SUNWAY PYRAMID', brand: 'ZANOTTI', startDate: '2026-09-04', endDate: '2026-09-07' });
+  const sep = (o: Partial<CommissionSo> = {}) => so({ docNo: 'HC-SO-2609-050', projectId: 2, createdAt: '2026-09-05T03:00:00Z', soDate: '2026-09-05', ...o });
+  const september = (payments: CommissionPayment[]) => buildEventCommission({
+    from: '2026-09-01', to: '2026-09-30', fairs: [SEPF], ratePctByBrand: RATES,
+    sos: [sep(), sep({ docNo: 'HC-SO-2609-051', salesperson: 'Wei Pin' })], payments, changes: [], cancels: [],
+  });
+  const october = () => buildEventCommission({ ...OCT, fairs: [], ratePctByBrand: RATES, sos: [], payments: [], changes: [], cancels: [] });
+  const PAID_050 = { docNo: 'HC-SO-2609-050', paidAt: '2026-09-05', amountSen: 400_00 };
+  const closedSep = () => ({ month: '2026-09', paid: paidByOrder(september([PAID_050])), carried: [] });
+
+  it('a month pays each order its fair commission and its earlier lines, nothing for an order under 30%', () => {
+    expect(paidByOrder(september([PAID_050]))).toEqual({ 'HC-SO-2609-050': 130_00 });
+  });
+
+  it('a payment keyed later but dated back into the closed month pays the order in the first open month', () => {
+    const now = september([PAID_050, { docNo: 'HC-SO-2609-051', paidAt: '2026-09-28', amountSen: 400_00 }]);
+    const rows = monthAdjustmentsOf([closedSep()], new Map([['2026-09', now]]));
+    expect(rows).toEqual([{
+      month: '2026-09', docNo: 'HC-SO-2609-051', fairId: 2, fairName: SEPF.name, brand: 'ZANOTTI', salesperson: 'Wei Pin', customer: 'Tan',
+      wasSen: 0, nowSen: 130_00, adjustmentSen: 130_00,
+    }]);
+  });
+
+  it('a payment deleted takes the commission back; nothing moved, nothing listed', () => {
+    expect(monthAdjustmentsOf([closedSep()], new Map([['2026-09', september([])]])).map((a) => [a.docNo, a.wasSen, a.nowSen, a.adjustmentSen]))
+      .toEqual([['HC-SO-2609-050', 130_00, 0, -130_00]]);
+    expect(monthAdjustmentsOf([closedSep()], new Map([['2026-09', september([PAID_050])]]))).toEqual([]);
+  });
+
+  it('once October has closed carrying a September adjustment, November does not pay it again', () => {
+    const now = september([PAID_050, { docNo: 'HC-SO-2609-051', paidAt: '2026-09-28', amountSen: 400_00 }]);
+    const octClosed = { month: '2026-10', paid: {}, carried: [{ month: '2026-09', docNo: 'HC-SO-2609-051', sen: 130_00 }] };
+    expect(monthAdjustmentsOf([closedSep(), octClosed], new Map([['2026-09', now], ['2026-10', october()]]))).toEqual([]);
+  });
+
+  it('the adjustments add to the month they are paid in', () => {
+    const rows = monthAdjustmentsOf([closedSep()], new Map([['2026-09', september([])]]));
+    expect(withMonthAdjustments(october(), rows).totals).toEqual({ payableSen: 0, adjustmentsSen: 0, monthAdjustmentsSen: -130_00, totalSen: -130_00 });
+    expect(october().monthAdjustments).toEqual([]);
   });
 });

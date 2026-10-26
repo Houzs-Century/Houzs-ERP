@@ -3,10 +3,12 @@
    to its orders and their upsales / drop sales, and what happened to earlier
    fairs' orders in the range. 2026-10-26: brand / organizer / venue / state a
    column each, the earlier orders once per order (Original → Latest, Amended),
-   and every order the range changed in an Upsales / Drop sales table. */
+   and every order the range changed in an Upsales / Drop sales table. 2026-10-27:
+   closing a month (关月) — a closed month shown as closed, Close / Reopen behind
+   a confirm, and the first open month carrying the closed months' adjustments. */
 
-import { fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, test, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { EventCommission } from '../../vendor/scm/lib/event-queries';
 
 const ZAN_PLACE = { fairId: 2214, fairName: 'SELANGOR [ZANOTTI] BIGHOME @ SUNWAY PYRAMID', brand: 'ZANOTTI', organizer: 'BIGHOME', venue: 'SUNWAY PYRAMID', state: 'Selangor', salesperson: 'Jason', customer: 'Wong', ratePct: 13 };
@@ -68,14 +70,23 @@ const BY_SO_DATE: EventCommission = {
   totals: { payableSen: 130_00, adjustmentsSen: 0, totalSen: 130_00 },
 };
 const asked: string[] = [];
+/* A test that needs another report (a closed month, the adjustments) sets it here. */
+let current: EventCommission | null = null;
+const closeMonth = vi.fn();
+const reopenMonth = vi.fn();
+const confirmAsk = vi.fn(async () => true);
 
 vi.mock('../../vendor/scm/lib/event-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/event-queries')>()),
   useEventCommission: (_from: string, _to: string, basis = 'fair') => {
     asked.push(basis);
-    return { data: basis === 'so_date' ? BY_SO_DATE : REPORT, isLoading: false, isError: false, error: null };
+    return { data: current ?? (basis === 'so_date' ? BY_SO_DATE : REPORT), isLoading: false, isError: false, error: null };
   },
+  useCloseCommissionMonth: () => ({ mutate: closeMonth, isPending: false }),
+  useReopenCommissionMonth: () => ({ mutate: reopenMonth, isPending: false }),
 }));
+vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => confirmAsk }));
+afterEach(() => { current = null; vi.useRealTimers(); });
 
 import { EventCommissionTab, basisOf, brandsOf, eventCommissionCsv, fairLines, fairPlace, forBrand } from './EventCommission';
 
@@ -215,7 +226,7 @@ describe('the Event Commission layout', () => {
     expect(z.adjustments).toHaveLength(3);
     expect(z.earlierOrders).toHaveLength(3);
     expect(z.changedOrders!.map((o) => o.docNo)).toEqual(['HC-SO-2609-053']);
-    expect(z.totals).toEqual({ payableSen: 0, adjustmentsSen: 13_00, totalSen: 13_00 });
+    expect(z.totals).toEqual({ payableSen: 0, adjustmentsSen: 13_00, monthAdjustmentsSen: 0, totalSen: 13_00 });
     expect(forBrand(REPORT, '')).toBe(REPORT);
 
     render(<EventCommissionTab />);
@@ -225,5 +236,55 @@ describe('the Event Commission layout', () => {
     expect(screen.queryByText('MID VALLEY')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'All brands' }));
     expect(screen.getAllByText('MID VALLEY').length).toBeGreaterThan(0);
+  });
+});
+
+describe('closing a month — 关月 (owner 2026-10-26)', () => {
+  const MONTH_ADJ = [{
+    month: '2026-09', docNo: 'HC-SO-2609-051', fairId: 2214, fairName: ZAN_PLACE.fairName, brand: 'ZANOTTI', salesperson: 'Wei Pin', customer: 'Lim',
+    wasSen: 0, nowSen: 130_00, adjustmentSen: 130_00,
+  }];
+
+  test('a closed month reads as closed — when and by whom — and the latest offers Reopen behind a confirm', async () => {
+    current = {
+      ...REPORT, from: '2026-09-01', to: '2026-09-30',
+      closed: { month: '2026-09', closedAt: '2026-10-26T09:00:00Z', closedBy: 'Finance Chew' }, closes: { months: ['2026-09'], openFrom: '2026-10' },
+    };
+    render(<EventCommissionTab />);
+    expect(screen.getByText('September 2026 is closed')).toBeTruthy();
+    expect(screen.getByText(/by Finance Chew/).textContent).toContain('paid in October 2026');
+    fireEvent.click(screen.getByRole('button', { name: 'Reopen September 2026' }));
+    await waitFor(() => expect(reopenMonth).toHaveBeenCalledWith('2026-09'));
+    expect(confirmAsk).toHaveBeenCalledWith(expect.objectContaining({ title: 'Reopen September 2026?' }));
+  });
+
+  test('a whole month that has ended and is next in line can be closed; the month not ended yet cannot', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-26T04:00:00Z'));
+    current = { ...REPORT, closes: { months: [], openFrom: null } };
+    render(<EventCommissionTab />);
+    expect(screen.getByText('No month closed yet.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^Close / })).toBeNull(); // October has not ended
+    fireEvent.click(screen.getByRole('button', { name: 'Last month' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close September 2026' }));
+    await waitFor(() => expect(closeMonth).toHaveBeenCalledWith('2026-09'));
+    expect(confirmAsk).toHaveBeenCalledWith(expect.objectContaining({ title: 'Close September 2026?', body: expect.stringContaining('RM 153.00') }));
+  });
+
+  test('the first open month pays the closed months\' adjustments: a card, its table, in the total and the export', () => {
+    current = {
+      ...REPORT, monthAdjustments: MONTH_ADJ, closes: { months: ['2026-09'], openFrom: '2026-10' },
+      totals: { ...REPORT.totals, monthAdjustmentsSen: 130_00, totalSen: 283_00 },
+    };
+    render(<EventCommissionTab />);
+    expect(screen.getByText('Closed up to September 2026.')).toBeTruthy();
+    expect(screen.getByText('Total commission').parentElement!.textContent).toContain('RM 283.00');
+    expect(screen.getByText('Closed months — adjustments', { selector: 'div' }).parentElement!.textContent).toContain('1 order · Sep 2026');
+    const cells = cellsOf(rowOf(tables()[2]!, 'HC-SO-2609-051'));
+    for (const t of ['Sep 2026', 'ZANOTTI', 'Wei Pin', '+130.00']) expect(cells).toContain(t);
+    const csv = eventCommissionCsv(current);
+    expect(csv).toContain('"Closed months — adjustments","Month","Order"');
+    expect(csv).toContain('"2026-09","HC-SO-2609-051","Wei Pin","0.00","130.00","130.00"');
+    expect(forBrand(current, 'AKEMI').totals).toEqual({ payableSen: 140_00, adjustmentsSen: 0, monthAdjustmentsSen: 0, totalSen: 140_00 });
   });
 });
