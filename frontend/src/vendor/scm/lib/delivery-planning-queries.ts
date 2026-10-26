@@ -334,6 +334,8 @@ export type PlanningResponse = {
   orders: PlanningOrder[];
   counts: PlanningCounts;
   regions: Array<{ key: RegionKey; label: string }>;
+  /** Only on state=OPEN (no Delivered rows): Delivered count per region key. */
+  delivered_by_region?: Record<string, number>;
 };
 
 /* ── Client-side region bucketing (owner 2026-10-19 "filter 没反应") ───────────

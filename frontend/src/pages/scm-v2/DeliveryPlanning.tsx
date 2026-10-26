@@ -262,7 +262,11 @@ export const DeliveryPlanning = () => {
      old per-region fetch re-ran the whole server board assembly on every chip
      click, so the region row felt frozen (owner 2026-10-19 "filter 没反应");
      locally it is instant and the region chip no longer triggers a load. */
-  const { data, isLoading, error } = useDeliveryPlanning({ region: 'ALL', state: 'ALL' });
+  /* The working tabs skip Delivered rows (72% of the payload, re-downloaded on
+     every edit - 2026-10-26); All and Delivered still read every row. */
+  const needsDelivered = activeState === 'ALL' || activeState === 'DELIVERED';
+  const { data, isLoading: firstLoad, isPlaceholderData, error } = useDeliveryPlanning({ region: 'ALL', state: needsDelivered ? 'ALL' : 'OPEN' });
+  const isLoading = firstLoad || (needsDelivered && isPlaceholderData);
 
   /* Region chips = the CONFIG-DRIVEN buckets from the API master (+ "All"
      prepended). Falls back to the five geographic defaults if the API hasn't
@@ -300,7 +304,14 @@ export const DeliveryPlanning = () => {
   );
   /* State-tab badges over the region-filtered set, so they reflect the active
      region exactly as the server's region-scoped counts did. */
-  const counts = useMemo<PlanningCounts>(() => planningCountsFrom(allOrders), [allOrders]);
+  const counts = useMemo<PlanningCounts>(() => {
+    const c = planningCountsFrom(allOrders);
+    const byRegion = data?.delivered_by_region;
+    if (!byRegion) return c;
+    // OPEN fetch: Delivered rows were left out, their per-region count came along.
+    const delivered = activeRegion === 'ALL' ? (data?.counts.DELIVERED ?? 0) : (byRegion[activeRegion] ?? 0);
+    return { ...c, DELIVERED: delivered, ALL: c.ALL + delivered };
+  }, [allOrders, data, activeRegion]);
 
   /* The SO order objects behind the current selection — fed to the scheduling
      drawer as its ordered stop list. Resolved from the region-scoped board (all

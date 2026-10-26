@@ -73,6 +73,7 @@ import { attachLineCategories } from '../lib/so-readiness-category';
 import { deriveBranding } from '../lib/so-display-branding';
 /* chunkIn on every id/doc-no filter: the list rides in the URL and an unbounded one is refused. */
 import { docsEnteringPendingSchedule, stampPendingSchedule } from '../lib/pending-schedule-stays';
+import { boardSlice } from '../lib/delivery-board-slice';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { attachBoardAcExemptionExpiry } from '../lib/ac-exemption-expiry';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
@@ -1523,11 +1524,8 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   for (const o of regionFiltered) counts[o.delivery_state] += 1;
   counts.ALL = regionFiltered.length;
 
-  const stateFiltered = stateParam === 'ALL'
-    ? regionFiltered
-    : regionFiltered.filter((o) => o.delivery_state === stateParam);
-
-  return c.json({ orders: stateFiltered, counts, regions: regionCfg.regions });
+  const slice = boardSlice(regionFiltered, stateParam);
+  return c.json({ orders: slice.orders, counts, regions: regionCfg.regions, ...(slice.deliveredByRegion ? { delivered_by_region: slice.deliveredByRegion } : {}) });
 };
 deliveryPlanning.get('/', deliveryPlanningBoardHandler);
 
