@@ -1130,6 +1130,17 @@ export const StockTakeDetail = () => {
                           >
                             All zero
                           </button>
+                          {/* HC-0158: the collapsed header had no trash, so a whole model meant expanding and deleting line by line. */}
+                          <button
+                            type="button"
+                            onClick={() => setDeleteIds((cur) => new Set([...cur, ...g.lines.map((l) => l.id)]))}
+                            className={styles.chip}
+                            aria-label={`Delete all ${g.lines.length} lines of ${g.itemCode}`}
+                            title="Remove every line of this model shown here (on Save Counts)"
+                            style={{ fontSize: 'var(--fs-11)', cursor: 'pointer', marginLeft: 4 }}
+                          >
+                            <Trash2 size={12} strokeWidth={1.75} />
+                          </button>
                         </td>
                       )}
                     </tr>
@@ -1158,7 +1169,7 @@ export const StockTakeDetail = () => {
               <span style={{ flex: '1 1 auto' }}>
                 <strong>{deleteIds.size} line{deleteIds.size === 1 ? '' : 's'} deleted on Save Counts:</strong>{' '}
                 <span style={{ fontFamily: 'var(--font-mono)' }}>
-                  {lines.filter((l) => deleteIds.has(l.id)).map((l) => l.itemCode).join(', ')}
+                  {[...new Set(lines.filter((l) => deleteIds.has(l.id)).map((l) => l.itemCode))].join(', ')}
                 </span>
               </span>
               <button type="button" className={styles.chip} onClick={() => setDeleteIds(new Set())} style={{ cursor: 'pointer' }}>
