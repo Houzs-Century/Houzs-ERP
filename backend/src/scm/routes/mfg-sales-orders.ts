@@ -8451,23 +8451,6 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
     loadModelFabricTierOverrides(sb),
     loadCompartmentFabricTierOverrides(sb),
   ]);
-  /* Two snapshots, identical base inputs — only `variants` (and its fabric
-     row) differ, so base / combo / PWP terms cancel in the difference. The
-     fabric-tier Δ inputs (sellingTiers / addonConfig) are deliberately NOT
-     passed: the Δ is applied once, below, never double-counted. */
-  const snap = (variants: Record<string, unknown>, fab: typeof fabPrev) =>
-    recomputeFromSnapshot(
-      {
-        itemCode:       prev.item_code,
-        itemGroup:      String(prev.item_group ?? 'others'),
-        qty:            Number(prev.qty),
-        unitPriceSen: Number(prev.unit_price_sen),
-        variants:       variants as MfgItemForRecompute['variants'],
-      },
-      prodLite, fab, cfg, null, null, null, null, null, null, specialDefs, null, null,
-    );
-  const before = snap(prevVariants, fabPrev);
-  const after  = snap(nextVariants, fabNext);
   const category = String(prodLite?.category ?? '').toUpperCase();
   // migration 0175 — per-Model Δ override (same for prev/next; the Model doesn't
   // change on a TBC fill-in). Resolved by the line's model_id, replaces global.
@@ -8479,7 +8462,8 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
      resolved model-only, under-charging a build that carries a per-compartment
      Δ (the POS preview showed the higher Δ but the server billed less; no drift
      gate here). Reconstruct them from the SIBLING module lines' item_code suffix,
-     the same way the create path does. */
+     the same way the create path does. They also price an add-on set by
+     compartment (2990 owner 2026-10-26), so they are read BEFORE the snapshots. */
   let tbcCells: string[] = [];
   if (category === 'SOFA') {
     const buildKeyForCells = (prevVariants.buildKey as string | undefined) ?? null;
@@ -8501,6 +8485,26 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
         : [];
     }
   }
+  /* Two snapshots, identical base inputs — only `variants` (and its fabric
+     row) differ, so base / combo / PWP terms cancel in the difference. The
+     fabric-tier Δ inputs (sellingTiers / addonConfig) are deliberately NOT
+     passed: the Δ is applied once, below, never double-counted. Both carry the
+     build's compartments, so an add-on priced by compartment moves the bill by
+     what create would have charged for it. */
+  const snap = (variants: Record<string, unknown>, fab: typeof fabPrev) =>
+    recomputeFromSnapshot(
+      {
+        itemCode:          prev.item_code,
+        itemGroup:         String(prev.item_group ?? 'others'),
+        qty:               Number(prev.qty),
+        unitPriceSen:      Number(prev.unit_price_sen),
+        variants:          variants as MfgItemForRecompute['variants'],
+        buildCompartments: tbcCells,
+      },
+      prodLite, fab, cfg, null, null, null, null, null, null, specialDefs, null, null,
+    );
+  const before = snap(prevVariants, fabPrev);
+  const after  = snap(nextVariants, fabNext);
   const tbcOverride = resolveFabricTierOverride(tbcCells, tbcBaseOverride, compartmentOverrides ?? new Map());
   const tierDeltaSen = (addonCfg && (category === 'SOFA' || category === 'BEDFRAME'))
     ? (fabricTierAddon(category, (category === 'SOFA' ? tiersNext?.sofaTier : tiersNext?.bedframeTier) ?? null, addonCfg, tbcOverride)

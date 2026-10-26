@@ -210,6 +210,7 @@ describe("/api/it-support", () => {
     form.set("legacy_code", "DEV-1");
     form.append("files", new File(["png-bytes"], "shot.png", { type: "image/png" }));
     form.append("files", new File([], "empty.png", { type: "image/png" }));
+    form.append("files", new File(["zip-bytes"], "logs.zip", { type: "" }));
 
     const res = await appAs(AINA).request("/api/it-support/tickets", {
       method: "POST", body: form, headers: { "User-Agent": "Mozilla/Test" },
@@ -230,9 +231,10 @@ describe("/api/it-support", () => {
     expect(sent.get("user_agent")).toBe("Mozilla/Test");
     expect(sent.get("legacy_code")).toBeNull();
     const files = sent.getAll("files") as File[];
-    expect(files).toHaveLength(1);
+    expect(files).toHaveLength(2);
     expect(files[0].name).toBe("shot.png");
     expect(await files[0].text()).toBe("png-bytes");
+    expect(files[1].name).toBe("logs.zip");
   });
 
   test("report a problem: bad input is refused before the hub; a nameless user reports under their email", async () => {
