@@ -3868,11 +3868,13 @@ app.post("/:id/sections", requirePermission("projects.write"), async (c) => {
       .first<{ s: number }>();
     order = (max?.s ?? 0) + 10;
   }
+  const secCoId = activeCompanyId(c);
+  const secStampCo = secCoId != null;
   const r = await c.env.DB.prepare(
-    `INSERT INTO project_checklist_sections (project_id, name, sort_order)
-     VALUES (?, ?, ?)`
+    `INSERT INTO project_checklist_sections (project_id, name, sort_order${secStampCo ? ", company_id" : ""})
+     VALUES (?, ?, ?${secStampCo ? ", ?" : ""})`
   )
-    .bind(id, name, order)
+    .bind(id, name, order, ...(secStampCo ? [secCoId] : []))
     .run();
   return c.json({ id: r.meta.last_row_id, name, sort_order: order }, 201);
 });
@@ -4026,12 +4028,17 @@ app.put(
       `image/${ext === "jpg" ? "jpeg" : ext}`;
     const key = taskAttachmentKey(itemId, ext);
     await c.env.POD_BUCKET.put(key, body, { httpMetadata: { contentType } });
+    // Stamp the attachment with the active company so it isn't left on the
+    // HOUZS DEFAULT (mig 0093). Column-when-resolved idiom (createProject):
+    // omitted in the D1 test mirror / single-company where it degrades.
+    const coId = activeCompanyId(c);
+    const stampCo = coId != null;
     const r = await c.env.DB.prepare(
       `INSERT INTO project_checklist_attachments
-         (item_id, r2_key, file_name, content_type, size_bytes, uploaded_by, caption)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+         (item_id, r2_key, file_name, content_type, size_bytes, uploaded_by, caption${stampCo ? ", company_id" : ""})
+       VALUES (?, ?, ?, ?, ?, ?, ?${stampCo ? ", ?" : ""})`
     )
-      .bind(itemId, key, fileName, contentType, body.byteLength, user?.id ?? null, caption)
+      .bind(itemId, key, fileName, contentType, body.byteLength, user?.id ?? null, caption, ...(stampCo ? [coId] : []))
       .run();
     // Per-item history — record the upload as a comment so the task history
     // panel shows "Uploaded X.pdf · Sim · 06/08 10:34" alongside approve/reject.
@@ -4039,10 +4046,10 @@ app.put(
     // after a re-upload with no explanation of WHY, then wonders "no new file
     // was uploaded but why approval reappear?". The comment closes that gap.
     await c.env.DB.prepare(
-      `INSERT INTO project_checklist_comments (item_id, kind, body, user_id)
-       VALUES (?, 'upload', ?, ?)`
+      `INSERT INTO project_checklist_comments (item_id, kind, body, user_id${stampCo ? ", company_id" : ""})
+       VALUES (?, 'upload', ?, ?${stampCo ? ", ?" : ""})`
     )
-      .bind(itemId, fileName, user?.id ?? null)
+      .bind(itemId, fileName, user?.id ?? null, ...(stampCo ? [coId] : []))
       .run();
     // SERVER-side auto-submit (owner 2026-08-21, docs/bugs/0490): uploading to
     // a gated document IS the submission. Desktop called /review submit after
@@ -4154,11 +4161,13 @@ app.delete(
       .bind(attId)
       .run();
     if (rmMeta) {
+      const rmCoId = activeCompanyId(c);
+      const rmStampCo = rmCoId != null;
       await c.env.DB.prepare(
-        `INSERT INTO project_checklist_comments (item_id, kind, body, user_id)
-         VALUES (?, 'remove', ?, ?)`
+        `INSERT INTO project_checklist_comments (item_id, kind, body, user_id${rmStampCo ? ", company_id" : ""})
+         VALUES (?, 'remove', ?, ?${rmStampCo ? ", ?" : ""})`
       )
-        .bind(rmMeta.item_id, rmMeta.file_name, user?.id ?? null)
+        .bind(rmMeta.item_id, rmMeta.file_name, user?.id ?? null, ...(rmStampCo ? [rmCoId] : []))
         .run();
     }
     return c.json({ ok: true });

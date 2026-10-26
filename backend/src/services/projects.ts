@@ -203,9 +203,12 @@ export async function createProject(env: Env, input: CreateProjectInput) {
       event_type_slug: eventTypeSlug,
     });
   // Multi-company: stamp the active company (sales.ts idiom — column + bind
-  // appended only when resolved). Child rows (finance / cloned checklist)
-  // inherit the PG DEFAULT and are always read through project_id, so the
-  // project row is the single source of company truth.
+  // appended only when resolved). project_finance stays 1:1 and read via
+  // project_id, but the cloned CHECKLIST rows must carry the company too: the
+  // upload / review gate scopes project_checklist on its OWN company_id (mig
+  // 0093, shape "own"), so a child left on the HOUZS DEFAULT makes every write
+  // to a non-HOUZS project's tasks 404 (HC bug: 2990's Home floorplan upload).
+  // instantiateChecklistFromEventType below is passed input.company_id for that.
   const stampCo = input.company_id != null;
   const r = await env.DB.prepare(
     `INSERT INTO projects (
@@ -242,7 +245,7 @@ export async function createProject(env: Env, input: CreateProjectInput) {
 
   // If event type has a default template, clone its items now.
   if (input.event_type_id) {
-    await instantiateChecklistFromEventType(env, projectId, input.event_type_id, input.start_date ?? null);
+    await instantiateChecklistFromEventType(env, projectId, input.event_type_id, input.start_date ?? null, input.company_id ?? null);
   }
 
   await logProjectActivity(env, projectId, "created", null, code, null, input.created_by);
@@ -262,7 +265,11 @@ export async function instantiateChecklistFromEventType(
   env: Env,
   projectId: number,
   eventTypeId: number,
-  startDate: string | null
+  startDate: string | null,
+  // The project's company_id, so cloned rows carry it (the upload / review gate
+  // scopes project_checklist on its own company_id). Omitted → DB DEFAULT, as in
+  // the D1 test mirror / single-company — same column-when-resolved idiom as createProject.
+  companyId?: number | null,
 ) {
   const et = await env.DB.prepare(
     `SELECT default_template_id FROM project_event_types WHERE id = ?`
@@ -271,6 +278,11 @@ export async function instantiateChecklistFromEventType(
     .first<{ default_template_id: number | null }>();
   const templateId = et?.default_template_id;
   if (!templateId) return;
+
+  // Stamp the project's company on cloned rows when resolved (multi-company pg
+  // runtime); omitted in the D1 test mirror / single-company where the column
+  // doesn't exist and the DEFAULT is correct.
+  const stampCo = companyId != null;
 
   // 1. Clone sections, keeping a map from template section id → new
   //    project section id so we can translate item.section_id below.
@@ -296,10 +308,10 @@ export async function instantiateChecklistFromEventType(
       operationSectionIds.add(s.id);
     }
     const ins = await env.DB.prepare(
-      `INSERT INTO project_checklist_sections (project_id, name, sort_order, display_mode)
-       VALUES (?, ?, ?, ?)`
+      `INSERT INTO project_checklist_sections (project_id, name, sort_order, display_mode${stampCo ? ", company_id" : ""})
+       VALUES (?, ?, ?, ?${stampCo ? ", ?" : ""})`
     )
-      .bind(projectId, s.name, s.sort_order, s.display_mode || "list")
+      .bind(projectId, s.name, s.sort_order, s.display_mode || "list", ...(stampCo ? [companyId] : []))
       .run();
     sectionIdMap.set(s.id, ins.meta.last_row_id as number);
   }
@@ -347,8 +359,8 @@ export async function instantiateChecklistFromEventType(
     await env.DB.prepare(
       `INSERT INTO project_checklist
          (project_id, section_id, seq, title, description, required_perm,
-          role_label, crew_visible, due_date, due_offset_days, status, pill_kind, pill_value)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          role_label, crew_visible, due_date, due_offset_days, status, pill_kind, pill_value${stampCo ? ", company_id" : ""})
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${stampCo ? ", ?" : ""})`
     )
       .bind(
         projectId,
@@ -363,7 +375,8 @@ export async function instantiateChecklistFromEventType(
         item.due_offset_days,
         seedStatus,
         item.pill_kind,
-        item.pill_value
+        item.pill_value,
+        ...(stampCo ? [companyId] : [])
       )
       .run();
   }
