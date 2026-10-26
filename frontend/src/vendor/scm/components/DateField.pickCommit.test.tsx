@@ -17,7 +17,7 @@ describe('DateField calendar pick', () => {
     vi.useFakeTimers();
     const onSave = vi.fn();
     const { container } = render(<BlurCommitHost saved="2026-10-20" onSave={onSave} />);
-    const native = container.querySelector('input[type="date"]') as HTMLInputElement;
+    const native = container.querySelector('input[tabindex="-1"]') as HTMLInputElement; // the calendar's hidden input
     fireEvent.change(native, { target: { value: '2026-10-28' } });
     vi.runAllTimers();
     vi.useRealTimers();
