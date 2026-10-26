@@ -10,7 +10,7 @@ describe("job Window", () => {
     expect(windowLabel("2026-10-26T02:00:00Z", null)).toBe("2026/10/26 10:00");
   });
   it("is what a dismantle job shows", () => {
-    const rows = detailRows({ kind: "DISMANTLE", window_start: "2026-10-26T02:00:00Z", window_end: "2026-10-26T10:00:00Z" } as never);
+    const rows = detailRows({ kind: "DISMANTLE", window_start: "2026-10-26T02:00:00Z", window_end: "2026-10-26T10:00:00Z" });
     expect(rows.find(([k]) => k === "Window")?.[1]).toBe("2026/10/26 10:00 – 18:00");
   });
 });
