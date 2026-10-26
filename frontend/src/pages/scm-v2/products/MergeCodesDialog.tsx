@@ -3,7 +3,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '../../../components/Button';
 import { Modal } from '../../../vendor/scm/components/Modal';
 import { authedFetch } from '../../../vendor/scm/lib/authed-fetch';
-import { writeFailedAs } from '../../../vendor/scm/lib/mutation-error';
 
 /* Merge duplicate SKU codes into one kept code (POST /mfg-products/merge/*).
    Check plans and writes nothing; Merge sends back the phrase Check returned,
@@ -66,7 +65,7 @@ export const MergeCodesDialog = ({ codes, onClose }: { codes: string[]; onClose:
       setPlan(null); setDrops([]);
       void qc.invalidateQueries({ queryKey: ['mfg-products'] });
     } catch (e) {
-      writeFailedAs('The merge was not done')(e);
+      setError(`The merge was not done: ${e instanceof Error ? e.message : 'please try again.'}`);
     } finally { setBusy(false); }
   };
 
