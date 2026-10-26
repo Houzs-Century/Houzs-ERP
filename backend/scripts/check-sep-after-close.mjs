@@ -7,6 +7,7 @@
 // commission they move, measured by removing them inside a transaction that is
 // rolled back), payments deleted, fair moves and holds since 1 October.
 // Writes nothing. Env: DATABASE_URL, COMPANY_ID (default 1).
+import { readFileSync } from 'node:fs';
 import postgres from 'postgres';
 import { pgrestShim } from './lib/pgrest-shim.mjs';
 import { d1Compat } from '../src/db/d1-compat.ts';
@@ -36,6 +37,9 @@ async function main() {
     out(`fair moves since 1/10: ${fairs[0].n}`);
 
     await sql.begin(async (tx) => {
+      /* The route reads the closes table, not deployed yet: create it inside this transaction. */
+      const exists = await tx`SELECT to_regclass('scm.event_commission_closes') IS NOT NULL AS t`;
+      if (!exists[0].t) await tx.unsafe(readFileSync(new URL('./data/try-20261026T1700.sql', import.meta.url), 'utf8'));
       const sb = pgrestShim(tx, 'scm');
       const ctx = (basis) => ({
         env: { DB: d1Compat(() => tx) },
