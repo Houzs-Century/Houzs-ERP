@@ -1,6 +1,7 @@
 /* HC-0158: in the By model view a model's collapsed header row has its own
    trash. It queues every shown line of the model with the per-line deletes:
-   hidden until Save Counts, one Undo bar, the code named once. */
+   hidden until Save Counts, one Undo bar, the code named once. The header also
+   splits a sum that hides +2 / -1 buckets, and each line names its source PO. */
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -25,8 +26,8 @@ const DETAIL = {
   data: {
     take,
     lines: [
-      line({}),
-      line({ id: 'l2', variant_key: 'b', variant_label: 'Fabric B' }),
+      line({ variant_key: '', variant_label: null, system_qty: 2, source_pos: [{ po: 'HC-PO-009630', qty: 1 }] }),
+      line({ id: 'l2', variant_key: 'b', variant_label: 'Fabric B', system_qty: -1 }),
       line({ id: 'l3', item_code: 'HB109NL', product_name: 'LATEX PILLOW', variant_key: '', variant_label: null, system_qty: 1 }),
     ],
     viewer: { isAssignee: false, canSupervise: false, blindActive: false },
@@ -81,6 +82,15 @@ const draw = () => render(
 );
 
 describe('Stock Take detail — HC-0158 model delete', () => {
+  test('a model of +2 and -1 buckets says so on its header; an open line names its PO and the rest', () => {
+    draw();
+    expect(screen.getByText('+2 / −1')).toBeTruthy();
+    expect(screen.queryByText('HC-PO-009630')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'FENRIR-(Q)' }));
+    expect(screen.getByText('HC-PO-009630')).toBeTruthy();
+    expect(screen.getByText('1 without PO')).toBeTruthy();
+  });
+
   test('the header trash queues the whole model; Undo brings it back; Save Counts deletes each line', async () => {
     delLine.mockClear();
     draw();
