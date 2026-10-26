@@ -129,7 +129,16 @@ export function useFrozenTableHeader(enabled: boolean, from: "toolbar" | "table"
          component restores exactly that missing runway, so page-scroll always
          lands on the frozen composition; `position: sticky` on the table box
          is then just the safety net for measurement drift. */
-      const anchorRestingTop = anchorRect.top + (main?.scrollTop ?? 0);
+      /* In "table" mode the anchor IS the sticky box, whose rect is clamped once it
+         sticks, so its resting top moved with the scroll and every resize re-solved
+         the runway against a moving target (2026-10-26: the board went sluggish).
+         Read the resting top off the non-sticky element right above the box. */
+      const boxEl = el.parentElement;
+      const prevEl = from === "table" ? (boxEl?.previousElementSibling as HTMLElement | null) : null;
+      const anchorTopNow = from === "table"
+        ? (prevEl ? prevEl.getBoundingClientRect().bottom + (parseFloat(getComputedStyle(boxEl as Element).marginTop) || 0) : rootRect.top)
+        : anchorRect.top;
+      const anchorRestingTop = anchorTopNow + (main?.scrollTop ?? 0);
       const target = Math.max(0, Math.ceil(anchorRestingTop - pageTop));
       /* The spacer supplies only the MISSING scroll — the page already scrolls
          by whatever sits below the capped table (pager, margins, page footer),
