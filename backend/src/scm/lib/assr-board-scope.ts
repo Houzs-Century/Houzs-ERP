@@ -57,28 +57,58 @@ export const ASSR_LEG_BY_STOP: Record<string, string> = {
   PICKUP: 'customer_pickup', INSPECTION: 'inspection', DELIVERY: 'delivery', SERVICE: 'delivery',
 };
 
-/** Stages whose leg the fleet must still put a date on (owner 2026-10-26, option
- *  A): an open case here with no date for that leg sits in Pending Schedule. */
+/** Stages whose leg the fleet must arrange even before Service gives a date. */
 export const ASSR_AWAITING_DATE_STAGES = ['pending_supplier_pickup', 'pending_delivery_service'] as const;
-export const ASSR_LEG_AWAITING_DATE: Record<(typeof ASSR_AWAITING_DATE_STAGES)[number], 'customer_pickup' | 'delivery'> = {
-  pending_supplier_pickup: 'customer_pickup',
-  pending_delivery_service: 'delivery',
+
+/** The date Logistics CONFIRMS for each leg - written by the board ("Set job
+ *  date"), shown back on the case. Service's own date on the case is the request. */
+export const ASSR_CONFIRMED_COL = {
+  customer_pickup: 'sched_pickup_date', inspection: 'sched_inspection_date', delivery: 'sched_delivery_date',
+} as const;
+
+const STAGE_ORDER = ['pending_review', 'pending_solution', 'under_verification', 'pending_supplier_pickup', 'pending_item_ready', 'pending_delivery_service', 'completed'];
+
+export type AssrBoardCase = {
+  stage: string | null;
+  pickup_by: string | null; pickup_pic: string | null; customer_pickup_at: string | null; actual_pickup_at: string | null; sched_pickup_date: string | null;
+  inspection_by: string | null; inspection_visit_at: string | null; sched_inspection_date: string | null;
+  delivery_by: string | null; do_date: string | null; sched_delivery_date: string | null;
+};
+export type AssrBoardLeg = {
+  jobKind: 'customer_pickup' | 'delivery' | 'inspection';
+  requested: string | null; confirmed: string | null;
+  state: 'PENDING_SCHEDULE' | 'PENDING_DELIVERY' | 'DELIVERED';
 };
 
-/** One board row per SET driving date (job_kind = the date that drives it), plus
- *  an UNDATED row for the leg an open case's stage is waiting on - that row sits
- *  in Pending Schedule until the fleet gives it a date. */
-export function assrBoardLegs(
-  a: { stage: string | null; customer_pickup_at: string | null; inspection_visit_at: string | null; inspection_by: string | null; do_date: string | null },
-  caseClosed: boolean,
-): Array<{ jobKind: 'customer_pickup' | 'delivery' | 'inspection'; date: string | null }> {
-  const legs: Array<{ jobKind: 'customer_pickup' | 'delivery' | 'inspection'; date: string | null }> = [];
-  if (a.customer_pickup_at) legs.push({ jobKind: 'customer_pickup', date: a.customer_pickup_at });
-  // Supplier-done inspections are handled on the supplier side, never a fleet leg.
-  if (a.inspection_visit_at && a.inspection_by === 'own') legs.push({ jobKind: 'inspection', date: a.inspection_visit_at });
-  if (a.do_date) legs.push({ jobKind: 'delivery', date: a.do_date });
-  const awaiting = ASSR_LEG_AWAITING_DATE[a.stage as keyof typeof ASSR_LEG_AWAITING_DATE];
-  if (awaiting && !caseClosed && !legs.some((l) => l.jobKind === awaiting)) legs.push({ jobKind: awaiting, date: null });
+/** A Service Case's fleet legs on Delivery Planning (owner 2026-10-26):
+ *  - only OWN-TEAM legs (Own team pickup / Own team delivery / own inspection);
+ *    a supplier leg never reaches the board. A blank choice counts as own only
+ *    when a date was already keyed (cases older than the choice).
+ *  - Service's date is a REQUEST -> Pending Schedule; Logistics confirms a date
+ *    -> Pending Delivery, and that date shows back on the case.
+ *  - a leg the case has moved past (picked up, inspected, case closed) is done:
+ *    Delivered, never left in Pending Delivery. */
+export function assrBoardLegs(a: AssrBoardCase, caseClosed: boolean): AssrBoardLeg[] {
+  const at = STAGE_ORDER.indexOf(a.stage ?? '');
+  const legs: AssrBoardLeg[] = [];
+  const add = (jobKind: AssrBoardLeg['jobKind'], req: string | null | undefined, conf: string | null | undefined, done: boolean) => {
+    const requested = req ?? null; const confirmed = conf ?? null;
+    if (done) { if (requested || confirmed) legs.push({ jobKind, requested, confirmed, state: 'DELIVERED' }); return; }
+    legs.push({ jobKind, requested, confirmed, state: confirmed ? 'PENDING_DELIVERY' : 'PENDING_SCHEDULE' });
+  };
+  const pickupDated = Boolean(a.customer_pickup_at || a.sched_pickup_date);
+  const pickupOwn = a.pickup_by === 'customer' || (a.pickup_by == null && (pickupDated || a.pickup_pic === 'Logistic'));
+  if (pickupOwn && (pickupDated || a.stage === 'pending_supplier_pickup')) {
+    add('customer_pickup', a.customer_pickup_at, a.sched_pickup_date, caseClosed || Boolean(a.actual_pickup_at) || at > STAGE_ORDER.indexOf('pending_supplier_pickup'));
+  }
+  if (a.inspection_by === 'own' && (a.inspection_visit_at || a.sched_inspection_date)) {
+    add('inspection', a.inspection_visit_at, a.sched_inspection_date, caseClosed || at > STAGE_ORDER.indexOf('under_verification'));
+  }
+  const deliveryDated = Boolean(a.do_date || a.sched_delivery_date);
+  const deliveryOwn = a.delivery_by === 'own' || (a.delivery_by == null && deliveryDated);
+  if (deliveryOwn && (deliveryDated || a.stage === 'pending_delivery_service')) {
+    add('delivery', a.do_date, a.sched_delivery_date, caseClosed);
+  }
   return legs;
 }
 
@@ -102,6 +132,13 @@ export function assrBoardUnionSql(c: CompanyScopeCtx, recentClosedSince: string)
               assr_cases.inspection_visit_at AS inspection_visit_at,
               assr_cases.inspection_by AS inspection_by,
               assr_cases.do_date       AS do_date,
+              assr_cases.delivery_by   AS delivery_by,
+              assr_cases.pickup_by     AS pickup_by,
+              assr_cases.pickup_pic    AS pickup_pic,
+              assr_cases.actual_pickup_at AS actual_pickup_at,
+              assr_cases.sched_pickup_date AS sched_pickup_date,
+              assr_cases.sched_inspection_date AS sched_inspection_date,
+              assr_cases.sched_delivery_date AS sched_delivery_date,
               assr_cases.closed_at     AS closed_at,
               assr_cases.archived_at   AS archived_at,
               assr_cases.addr1 AS addr1, assr_cases.addr2 AS addr2, assr_cases.addr3 AS addr3, assr_cases.addr4 AS addr4,
@@ -114,6 +151,7 @@ export function assrBoardUnionSql(c: CompanyScopeCtx, recentClosedSince: string)
                ORDER BY (o.doc_no = assr_cases.doc_no) DESC
                LIMIT 1) so ON TRUE
         WHERE (assr_cases.customer_pickup_at IS NOT NULL OR assr_cases.do_date IS NOT NULL
+               OR assr_cases.sched_pickup_date IS NOT NULL OR assr_cases.sched_delivery_date IS NOT NULL
                OR (assr_cases.inspection_visit_at IS NOT NULL AND assr_cases.inspection_by = 'own')
                OR assr_cases.stage IN (${ASSR_AWAITING_DATE_STAGES.map((s) => `'${s}'`).join(', ')}))
           AND ((assr_cases.closed_at IS NULL AND assr_cases.archived_at IS NULL)

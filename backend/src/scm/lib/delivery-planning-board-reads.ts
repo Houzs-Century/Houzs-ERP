@@ -148,6 +148,8 @@ export function kickOffSubBoardReads(
         customer_name: string | null; phone: string | null; location: string | null;
         customer_pickup_at: string | null; inspection_visit_at: string | null;
         inspection_by: string | null; do_date: string | null;
+        delivery_by: string | null; pickup_by: string | null; pickup_pic: string | null; actual_pickup_at: string | null;
+        sched_pickup_date: string | null; sched_inspection_date: string | null; sched_delivery_date: string | null;
         closed_at: string | null; archived_at: string | null;
         addr1: string | null; addr2: string | null; addr3: string | null; addr4: string | null;
         so_state: string | null; so_postcode: string | null; so_country: string | null;
