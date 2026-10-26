@@ -541,3 +541,52 @@ describe('round 2 — racks and the paper sheet (owner 2026-10-06)', () => {
     expect(other.proposals).toEqual([]);
   });
 });
+
+describe('stock sources — the PO(s) holding each line (Sim 2026-10-26)', () => {
+  const lot = (over: Row): Row => ({
+    company_id: CO, warehouse_id: 'w1', item_code: 'CODY', variant_key: '', unit_cost_sen: 1000,
+    batch_no: null, source_doc_type: 'GRN', source_doc_id: null, received_at: '2026-08-01T00:00:00Z', ...over,
+  });
+
+  test('every PO still holding stock, with qty, oldest first; no-PO stock says where it came from', async () => {
+    const t = takeFixture();
+    t.inventory_lots = [
+      lot({ id: 'l3', batch_no: 'HC-PO-010120', qty_remaining: 2, received_at: '2026-10-01T00:00:00Z' }),
+      lot({ id: 'l1', source_doc_type: 'AC_CUTOVER', qty_remaining: 3, received_at: '2026-07-01T00:00:00Z' }),
+      lot({ id: 'l2', source_doc_id: 'grn-1', qty_remaining: 1, received_at: '2026-09-01T00:00:00Z' }),
+      lot({ id: 'l4', batch_no: 'HC-PO-010089', qty_remaining: 0 }), // fully shipped: not a holder any more
+      lot({ id: 'l5', batch_no: 'HC-PO-OTHER', qty_remaining: 5, warehouse_id: 'w2' }), // another warehouse
+    ];
+    t.grns = [{ id: 'grn-1', company_id: CO, purchase_order_id: 'po-1' }];
+    t.purchase_orders = [{ id: 'po-1', company_id: CO, po_number: 'HC-PO-010100' }];
+    const { app, log } = harness(t);
+    const body = await (await app.request('/stock-takes/st-1')).json() as Row;
+    expect(body.lines[0].stock_sources).toEqual([
+      { label: 'AC opening', po: false, qty: 3 },
+      { label: 'HC-PO-010100', po: true, qty: 1 },
+      { label: 'HC-PO-010120', po: true, qty: 2 },
+    ]);
+    expect(body.lines[0].est_unit_cost_sen).toBe(1000);
+    expect(log).toContain('grns.select:eq:company_id');
+    expect(log).toContain('purchase_orders.select:eq:company_id');
+  });
+
+  test('a GRN of another company never names its PO', async () => {
+    const t = takeFixture();
+    t.inventory_lots = [lot({ id: 'l1', source_doc_id: 'grn-x', qty_remaining: 1 })];
+    t.grns = [{ id: 'grn-x', company_id: 2, purchase_order_id: 'po-x' }];
+    t.purchase_orders = [{ id: 'po-x', company_id: 2, po_number: 'OTHER-PO' }];
+    const body = await (await harness(t).app.request('/stock-takes/st-1')).json() as Row;
+    expect(body.lines[0].stock_sources).toEqual([{ label: 'GRN, no PO', po: false, qty: 1 }]);
+  });
+
+  test('a line with no open lots gets an empty list; a blind OPEN take withholds it', async () => {
+    const t = takeFixture();
+    t.inventory_lots = [];
+    const body = await (await harness(t).app.request('/stock-takes/st-1')).json() as Row;
+    expect(body.lines[0].stock_sources).toEqual([]);
+    const blind = takeFixture({ blind: true });
+    const b2 = await (await harness(blind).app.request('/stock-takes/st-1')).json() as Row;
+    expect(b2.lines[0].stock_sources).toBeNull();
+  });
+});

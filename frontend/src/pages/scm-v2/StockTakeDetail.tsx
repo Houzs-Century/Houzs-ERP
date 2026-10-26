@@ -62,6 +62,7 @@ import { PageHeader } from '../../components/Layout';
 import { EntityHistoryPanel } from './EntityHistoryPanel';
 import { STOCK_TAKE_AUDIT_LABELS } from './entity-audit-labels';
 import { groupByModel } from './stock-take-grouping';
+import { mergeStockSources, type StockSource } from '../../vendor/scm/lib/stock-take-sources';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import { warehouseLabel } from '../../vendor/scm/lib/warehouse-label';
@@ -76,6 +77,25 @@ const scopeLabel = (scopeType: string, scopeValue: string | null): string => {
   if (scopeType === 'CODE_PREFIX') return `Prefix · ${scopeValue ?? '—'}`;
   return scopeType;
 };
+
+/* The PO(s) holding a line's stock, one per row under the SKU: a PO number in
+   mono, PO-less stock ("AC opening") muted. Nothing when none (or blind). */
+function StockSourcesCell({ sources, indent }: { sources: StockSource[] | null; indent: number }) {
+  if (!sources || sources.length === 0) return null;
+  return (
+    <>
+      {sources.map((s) => (
+        <div key={s.label} style={{
+          fontSize: 'var(--fs-12)', whiteSpace: 'nowrap', paddingLeft: indent, marginTop: 2,
+          fontFamily: s.po ? 'var(--font-mono)' : undefined,
+          color: s.po ? 'var(--c-ink)' : 'var(--fg-muted)',
+        }}>
+          {s.label} <span style={{ color: 'var(--fg-muted)' }}>({fmtQty(s.qty)})</span>
+        </div>
+      ))}
+    </>
+  );
+}
 
 // Local row state: counted_qty as string so empty input = null, not 0.
 type LineDraft = {
@@ -94,6 +114,8 @@ type LineDraft = {
   countedAt: string | null;
   /* Round 1: unit cost (sen) the post would value a variance at; null = none. */
   estUnitCostSen: number | null;
+  /* The PO(s) holding this stock now (Sim 2026-10-26); null = withheld (blind). */
+  stockSources: StockSource[] | null;
   addedOnCount: boolean;
   /* Round 2: where the counter found the goods (moved there at post). */
   rackId: string | null;
@@ -118,6 +140,7 @@ const toDraft = (l: StockTakeLine): LineDraft => ({
   countedBy:        l.counted_by ?? null,
   countedAt:        l.counted_at ?? null,
   estUnitCostSen:   l.est_unit_cost_sen ?? null,
+  stockSources:     l.stock_sources ?? null,
   addedOnCount:     l.added_on_count === true,
   rackId:           l.rack_id ?? null,
   origRackId:       l.rack_id ?? null,
@@ -905,6 +928,8 @@ export const StockTakeDetail = () => {
                           <span className={styles.chip} title="Added during the count — not on the original sheet"
                             style={{ marginLeft: 6, fontSize: 'var(--fs-11)' }}>Added</span>
                         )}
+                        {/* Under the code, not a column of its own: the item and the PO it came in on read together, and the Variant column keeps its width. */}
+                        <StockSourcesCell sources={ln.stockSources} indent={inGroup ? 22 : 0} />
                       </td>
                       <td style={{ fontSize: 'var(--fs-13)' }}>
                         {ln.productName || <span className={styles.muted}>—</span>}
@@ -1074,6 +1099,8 @@ export const StockTakeDetail = () => {
                             : <ChevronRight size={14} strokeWidth={1.75} />}
                           {g.itemCode}
                         </button>
+                        {/* Collapsed: the model's POs summed; open: each line shows its own. */}
+                        {!isOpen && <StockSourcesCell sources={mergeStockSources(g.lines.map((l) => l.stockSources))} indent={20} />}
                       </td>
                       <td style={{ fontSize: 'var(--fs-13)', fontWeight: 600 }}>
                         {g.productName || <span className={styles.muted}>—</span>}

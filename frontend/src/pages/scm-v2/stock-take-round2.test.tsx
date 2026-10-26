@@ -34,7 +34,7 @@ const DETAIL = {
   data: {
     take,
     lines: [
-      line({}),
+      line({ stock_sources: [{ label: 'AC opening', po: false, qty: 1 }, { label: 'HC-PO-010089', po: true, qty: 3 }] }),
       line({ id: 'l2', item_code: 'MATT-B', system_qty: 3, counted_qty: 1, variance: -2, est_unit_cost_sen: 20_000 }),
       line({ id: 'l3', item_code: 'PILLOW', system_qty: 0, counted_qty: 2, variance: 2, est_unit_cost_sen: null, added_on_count: true }),
     ],
@@ -94,6 +94,14 @@ const draw = () => render(
 );
 
 describe('Stock Take detail — round 2', () => {
+  /* Sim 2026-10-26: the PO(s) holding the stock, under the SKU, to trace it. */
+  test('each line names the PO(s) its stock came in on, with qty', () => {
+    draw();
+    expect(screen.getByText('HC-PO-010089')).toBeTruthy();
+    expect(screen.getByText('AC opening')).toBeTruthy();
+    expect(screen.getByText('(3)')).toBeTruthy();
+  });
+
   test('a rack typed on a line is matched to this warehouse rack and saved with the counts', () => {
     draw();
     fireEvent.change(screen.getByLabelText('Rack for MATT-A'), { target: { value: 'r1.1' } });

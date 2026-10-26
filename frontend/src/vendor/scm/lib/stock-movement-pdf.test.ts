@@ -351,6 +351,7 @@ type TakeLineFixture = {
   variant_key: string; variant_label: string | null;
   system_qty: number | null; counted_qty: number | null; variance: number | null;
   notes: string | null;
+  stock_sources?: Array<{ label: string; po: boolean; qty: number }> | null;
 };
 
 const TAKE_HEADER: TakeHeaderFixture = {
@@ -503,6 +504,28 @@ describe('Stock Take PDF', () => {
     const { printVariant } = await import('./stock-take-pdf');
     expect(printVariant('fabriccode pc151-01 · gap 12" · divanheight 10" · legheight 1" · special hb fully covered'))
       .toBe('pc151-01 · gap 12" · divan 10" · leg 1" · hb fully covered');
+  });
+
+  /* Sim 2026-10-26: the PO(s) holding each line, to trace a sofa / bedframe. */
+  test('an OPEN sheet prints the PO column when the server sent the sources', async () => {
+    const { draws } = await renderTake(
+      { ...TAKE_HEADER, status: 'OPEN', posted_at: null },
+      TAKE_LINES.map((l, i) => ({
+        ...l,
+        stock_sources: i === 0
+          ? [{ label: 'AC opening', po: false, qty: 1 }, { label: 'HC-PO-010089', po: true, qty: 9 }]
+          : [],
+      })),
+    );
+    const text = draws.map((d) => d.text);
+    expect(text).toContain('PO');
+    expect(text.some((t) => t.includes('HC-PO-010089 (9)'))).toBe(true);
+    expect(text).toContain('Rack');
+  });
+
+  test('no PO column when the sources were not sent', async () => {
+    const { draws } = await renderTake(TAKE_HEADER, TAKE_LINES);
+    expect(draws.map((d) => d.text)).not.toContain('PO');
   });
 
   test('a POSTED sheet shows Variance in place of Rack', async () => {

@@ -15,6 +15,7 @@
 // `useWarehouses` is NOT re-declared — the pages import it from the existing
 // vendored inventory-queries slice.
 
+import type { StockSource } from './stock-take-sources';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { idempotentInit } from '../../../lib/idempotency';
@@ -533,6 +534,9 @@ export type StockTakeLine = {
   /* Best-known unit cost (sen) the post would value this variance at; null =
      no cost basis, or withheld on a blind take. */
   est_unit_cost_sen?: number | null;
+  /* The PO(s) still holding this line's stock at the take's warehouse, live,
+     oldest first (Sim 2026-10-26); null = withheld on a blind take. */
+  stock_sources?: StockSource[] | null;
 };
 
 /* Server-decided viewer facts (one shared logic layer — the frontend must not

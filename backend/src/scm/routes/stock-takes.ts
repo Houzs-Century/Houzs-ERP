@@ -61,6 +61,7 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { readStockTakeSheetHandler } from './stock-take-sheet-read';
 import { applyStockTakeRacks } from '../lib/stock-take-racks';
+import { foldStockSources, poNumbersForGrnLots, type SourceLot } from '../lib/stock-take-sources';
 
 export const stockTakes = new Hono<{ Bindings: Env; Variables: Variables }>();
 stockTakes.use('*', supabaseAuth);
@@ -328,31 +329,43 @@ export const readAssignees = async (
   return { ok: true, ids };
 };
 
-/* Best-known unit cost per (item_code, variant_key) at a warehouse — the ladder
-   the post itself uses. A read failure leaves every estimate null (shown "—"),
-   never 0: an RM0 estimate would read as "this variance costs nothing". */
-const estimateUnitCosts = async (
+/* One read of the take's open-lot ledger at its warehouse, feeding both the
+   RM estimate and the PO column. A read failure returns null: every estimate
+   then shows "—" (never RM0 — that would read as "this variance costs
+   nothing") and every PO cell shows "—". */
+type TakeLot = { item_code: string; variant_key: string | null } & LotCostRow & SourceLot;
+const readTakeLots = async (
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client / Hono context without generated types; same as every handler in this file
   sb: any, c: any, warehouseId: string,
   lines: Array<{ item_code: string; variant_key: string | null }>,
-): Promise<Map<string, number | null>> => {
-  const lotsByKey = new Map<string, LotCostRow[]>();
+): Promise<Map<string, TakeLot[]> | null> => {
+  const lotsByKey = new Map<string, TakeLot[]>();
   const codes = [...new Set(lines.map((l) => l.item_code))];
   for (let i = 0; i < codes.length; i += 200) {
     const chunk = codes.slice(i, i + 200);
     const { data: lots, error } = await paginateAll((pFrom, pTo) => scopeToCompany(
       pgrestIn(sb.from('inventory_lots')
-        .select('item_code, variant_key, unit_cost_sen, qty_remaining, source_doc_type, received_at')
+        .select('id, item_code, variant_key, unit_cost_sen, qty_remaining, source_doc_type, source_doc_id, batch_no, received_at')
         .eq('warehouse_id', warehouseId), 'item_code', chunk),
       c,
     ).range(pFrom, pTo));
-    if (error) return new Map();
-    for (const l of (lots as Array<{ item_code: string; variant_key: string | null } & LotCostRow> | null) ?? []) {
+    if (error) return null;
+    for (const l of (lots as TakeLot[] | null) ?? []) {
       const key = `${l.item_code} ${l.variant_key ?? ''}`;
       (lotsByKey.get(key) ?? lotsByKey.set(key, []).get(key)!).push(l);
     }
   }
+  return lotsByKey;
+};
+
+/* Best-known unit cost per (item_code, variant_key) at a warehouse — the ladder
+   the post itself uses. */
+const estimateUnitCosts = (
+  lotsByKey: Map<string, TakeLot[]> | null,
+  lines: Array<{ item_code: string; variant_key: string | null }>,
+): Map<string, number | null> => {
   const out = new Map<string, number | null>();
+  if (!lotsByKey) return out;
   for (const l of lines) {
     const key = `${l.item_code} ${l.variant_key ?? ''}`;
     if (out.has(key)) continue;
@@ -406,15 +419,27 @@ export const getStockTakeDetailHandler = async (c: any) => {
      lot (resolveForcedUnitCostSen over the bucket's lots at this warehouse);
      null when the SKU has no cost basis. Withheld with the variance on a blind
      take — RM x qty would give the hidden variance straight back. */
-  const costByKey = blindActive
-    ? new Map<string, number | null>()
-    : await estimateUnitCosts(sb, c, take.warehouse_id, rawLines as Array<{ item_code: string; variant_key: string | null }>);
+  /* stock_sources (Sim 2026-10-26): the PO(s) still holding this bucket's
+     stock, with qty, oldest first; non-PO stock named by source ("AC
+     opening"). Live, not a snapshot. Withheld on a blind take too — the qtys
+     add up to the system qty. */
+  const lineKeys = rawLines as Array<{ item_code: string; variant_key: string | null }>;
+  const lotsByKey = blindActive ? null : await readTakeLots(sb, c, take.warehouse_id, lineKeys);
+  const costByKey = estimateUnitCosts(lotsByKey, lineKeys);
+  const companyId = activeCompanyId(c);
+  const poByGrnId = lotsByKey && companyId != null
+    ? await poNumbersForGrnLots(sb, companyId, [...lotsByKey.values()].flat())
+    : new Map<string, string>();
   const lines = blindActive
-    ? rawLines.map((l) => ({ ...l, system_qty: null, variance: null, est_unit_cost_sen: null }))
-    : rawLines.map((l) => ({
-        ...l,
-        est_unit_cost_sen: costByKey.get(`${String(l.item_code)} ${String(l.variant_key ?? '')}`) ?? null,
-      }));
+    ? rawLines.map((l) => ({ ...l, system_qty: null, variance: null, est_unit_cost_sen: null, stock_sources: null }))
+    : rawLines.map((l) => {
+        const key = `${String(l.item_code)} ${String(l.variant_key ?? '')}`;
+        return {
+          ...l,
+          est_unit_cost_sen: costByKey.get(key) ?? null,
+          stock_sources: lotsByKey ? foldStockSources(lotsByKey.get(key) ?? [], poByGrnId) : null,
+        };
+      });
 
   return c.json({
     take: headerRes.data,
