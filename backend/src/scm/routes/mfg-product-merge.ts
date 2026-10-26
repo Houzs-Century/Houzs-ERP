@@ -33,6 +33,11 @@ mfgProductMerge.use('*', requireHouzsPerm(MERGE_PERMISSION));
 
 type MergeBody = { keep: string; drops: string[] };
 
+/** A body that is not JSON becomes null, which parseMergeBody refuses with a 400. */
+function jsonOrNull(text: string): unknown {
+  try { return JSON.parse(text); } catch { return null; }
+}
+
 /** The request's pairs, or the reason it cannot be planned. */
 export function parseMergeBody(raw: unknown): { ok: true; pairs: Array<{ drop: string; keep: string }> } | { ok: false; error: string } {
   const b = (raw ?? {}) as Partial<MergeBody>;
@@ -88,7 +93,8 @@ function view(world: any, plan: any, ac: Array<{ code: string; acItemCode: strin
 }
 
 mfgProductMerge.post('/plan', async (c) => {
-  const parsed = parseMergeBody(await c.req.json().catch(() => null));
+  const text = await c.req.text();
+  const parsed = parseMergeBody(jsonOrNull(text));
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
   const scope = requireActiveCompanyId(c);
   if (!scope.ok) return c.json(scope.refusal, 409);
@@ -100,7 +106,7 @@ mfgProductMerge.post('/plan', async (c) => {
 });
 
 mfgProductMerge.post('/apply', async (c) => {
-  const body = await c.req.json().catch(() => null);
+  const body = jsonOrNull(await c.req.text());
   const parsed = parseMergeBody(body);
   if (!parsed.ok) return c.json({ error: parsed.error }, 400);
   const scope = requireActiveCompanyId(c);
