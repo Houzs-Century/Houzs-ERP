@@ -30,8 +30,11 @@ import { useLayoutEffect, useRef, useState } from "react";
 export type FreezeBox = { top: number; maxH: number; runway: number };
 
 /** @param enabled false while the table is not rendered (mobile card view, an
- *  empty state) — the freeze disarms and the page returns to plain flow. */
-export function useFrozenTableHeader(enabled: boolean) {
+ *  empty state) — the freeze disarms and the page returns to plain flow.
+ *  @param from "toolbar": search / Export / Columns stay on screen with the rows;
+ *  "table": they scroll away too and the grid alone fills the screen (owner on
+ *  Delivery Planning 2026-10-26: "把整个页面看满了，有一种 data grid 的感觉"). */
+export function useFrozenTableHeader(enabled: boolean, from: "toolbar" | "table") {
   // ── Frozen table header (owner 2026-07-24: "每个table的header都要freeze") ──
   // The <thead> is position:sticky, but in the app's page-scroll layout the
   // horizontal-scroll wrapper captures the vertical sticky context yet never
@@ -97,9 +100,11 @@ export function useFrozenTableHeader(enabled: boolean) {
       const main = el.closest("main");
       const cand = (main ?? document).querySelector("[data-freeze-anchor]") as HTMLElement | null;
       const anchorEl =
-        cand && (cand.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
-          ? cand
-          : rootEl;
+        from === "table"
+          ? (el.parentElement ?? el)
+          : cand && (cand.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+            ? cand
+            : rootEl;
       const rootRect = rootEl.getBoundingClientRect();
       const anchorRect = anchorEl.getBoundingClientRect();
       const boxRect = el.getBoundingClientRect();
@@ -195,7 +200,7 @@ export function useFrozenTableHeader(enabled: boolean) {
       ro?.disconnect();
       window.removeEventListener("resize", recompute);
     };
-  }, [enabled]);
+  }, [enabled, from]);
 
   return {
     /** Root of the frozen composition — everything that must stay on screen. */
