@@ -14,6 +14,7 @@
 import { useRef } from 'react';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { scheduleRowRefresh } from './board-row-refresh';
 import { invalidateSoLists } from './sales-order-queries';
 import { serviceNotify } from './dialog-service';
 import { idempotentInit, newIdempotencyKey } from '../../../lib/idempotency';
@@ -532,7 +533,10 @@ export function useUpdateDeliveryFields() {
       authedFetch<HcFieldsResult>(`/delivery-planning/${type}/${id}/fields`, {
         method: 'PATCH', body: JSON.stringify(body),
       }),
-    onSuccess: () => scheduleBoardRefresh(qc, [['delivery-planning']]),
+    // An SO row re-reads just itself (board-row-refresh.ts); a DO edit still re-reads the board.
+    onSuccess: (_res, vars) => (vars.type === 'so'
+      ? scheduleRowRefresh(qc, [vars.id])
+      : scheduleBoardRefresh(qc, [['delivery-planning']])),
   });
 }
 
@@ -991,7 +995,13 @@ export function useScheduleDelivery() {
        commits no longer fires a full board refetch each, and none lands mid-edit.
        The onMutate optimistic patch (+ onError rollback above) keeps the edited
        cells correct in the gap. */
-    onSettled: () => {
+    onSettled: (_res, _err, vars) => {
+      // An SO row re-reads just itself (board-row-refresh.ts): the whole board took 2-12 s.
+      if (vars.type === 'so') {
+        scheduleRowRefresh(qc, [vars.id]);
+        scheduleBoardRefresh(qc, [['fleet-day'], ['scm-trips']]);
+        return;
+      }
       scheduleBoardRefresh(qc, [['delivery-planning'], ['fleet-day'], ['scm-trips']]);
     },
   });
