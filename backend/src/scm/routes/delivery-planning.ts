@@ -87,7 +87,7 @@ import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMa
 /* Service-Case rows on this board are company-scoped (owner ruling 2026-08-21).
    Both statements live in ONE module, with the reasoning, so the predicate is
    assertable and cannot be re-derived by hand here. */
-import { assrBoardLocation, assrOpenCaseGuardSql, ASSR_BOARD_LEGS, ASSR_CONFIRMED_COL, assrBoardLegs } from '../lib/assr-board-scope';
+import { assrBoardLocation, assrOpenCaseGuardSql, ASSR_BOARD_LEGS, ASSR_CONFIRMED_COL, assrBoardLegs, assrCaseClosed } from '../lib/assr-board-scope';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
@@ -1061,7 +1061,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       const regionSet = new Set<Region>(stateRegions);
       const address = [a.addr1, a.addr2, a.addr3, a.addr4].filter(Boolean).join(', ') || null;
       // A closed / archived case's legs are DONE → they belong on Delivered.
-      const caseClosed = Boolean(a.closed_at) || Boolean(a.archived_at);
+      const caseClosed = assrCaseClosed(a);
 
       // Own-team legs: Service's date = request, Logistics' = confirmed (assrBoardLegs).
       for (const leg of assrBoardLegs(a, caseClosed)) {

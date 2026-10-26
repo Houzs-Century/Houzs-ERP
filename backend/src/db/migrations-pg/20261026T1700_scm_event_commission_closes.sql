@@ -8,6 +8,9 @@
 --
 -- WHAT THIS CHANGES, and why it is safe to run against production: one new
 -- empty table; nothing existing is altered.
+-- Verified against: production, in a rolled-back transaction (run-script.yml
+-- run 40292854808, try-month-close.mjs): the table, its grants, and the app's
+-- own close / read / reopen of September 2026 on it — nothing kept.
 --
 -- WHY (owner 2026-10-26, Event Commission, 「可以」 to closing a month, Finance
 -- only): once a month's commission is paid it must never change. A closed
