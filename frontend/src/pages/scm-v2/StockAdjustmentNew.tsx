@@ -702,9 +702,7 @@ const StockAdjustmentForm = ({ onStartNew, existing }: { onStartNew: () => void;
   const warehouses = useWarehouses();
   const allSkus    = useMfgProducts();
   // Cost ENTRY, so the product-cost cohort, not the finance display switch (backend scm/lib/costing-enabled.ts).
-  const authUser = useAuth().user;
-  // HC-0141 TEMPORARY: IT enters the two found-stock costs itself; revert this line once that adjustment is posted.
-  const canEnterCost = canViewProductCost(authUser) || authUser?.role_name === 'IT Admin';
+  const canEnterCost = canViewProductCost(useAuth().user);
 
   // Dropdown pools for the sofa / bedframe variant editor — same sources the
   // GRN / PO forms use (divan/leg height, gap, seat size; specials by category).
