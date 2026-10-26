@@ -13,6 +13,9 @@
      • a request cannot raise a PC Order until EVERY new-Model line has its Model
        + SKU built — each lands ACTIVE, off POS, and names the line's SKU; the
        PC Order door then accepts it and the request reads PCO_ISSUED;
+     • a Purchase Order raised instead (2990-0015) claims it through
+       POST /:id/link-po — PO_ISSUED with po_id — under the same rules, and a
+       request carries one order of either kind;
      • requireScmAccess admits a Sales caller and the keys for /product-requests
        and nothing else.
    Same fake-PostgREST harness as tests/paymentRequests.test.ts. */
@@ -53,6 +56,10 @@ function world() {
       { id: 'sup-other', company_id: 2, code: '400-O001', name: 'OTHER CO SUPPLIER', status: 'ACTIVE' },
     ],
     purchase_consignment_orders: [],
+    purchase_orders: [
+      { id: 'po-1', company_id: CO, po_number: 'HC-PO-2610-001', status: 'SUBMITTED', expected_at: '2026-10-30' },
+      { id: 'po-other', company_id: 2, po_number: 'OT-PO-2610-001', status: 'SUBMITTED', expected_at: null },
+    ],
     entity_audit_log: [],
   }, {}, [{ table: 'mfg_products', column: 'code', name: 'mfg_products_code_key' }]);
   sb.rpcHandlers.entity_audit_writable = () => true;
@@ -318,6 +325,34 @@ describe('product request — the new Models, then the PC Order', () => {
     const issued = await loadRequestForPco(sb as never, CO, id);
     expect(issued.ok).toBe(false);
     if (!issued.ok) expect(issued.body.error).toBe('request_already_issued');
+    expect((await purchaser(`/product-requests/${id}/close`, 'POST', {})).status).toBe(200);
+    expect(sb.tables.product_requests[0].status).toBe('CLOSED');
+  });
+
+  test('a Purchase Order raised instead claims the request (2990-0015): PO_ISSUED with po_id, once, and only for the Purchaser', async () => {
+    const sb = world();
+    const id = String(((await as(sb, AMY)('/product-requests', 'POST', { ...NEW_SOFA, lines: [LINE_5530] })).body.request as Row).id);
+    const purchaser = as(sb, PURCHASER);
+    /* Not approved yet: refused, nothing linked. */
+    const early = await purchaser(`/product-requests/${id}/link-po`, 'POST', { poId: 'po-1' });
+    expect(early.status).toBe(409);
+    expect(early.body).toMatchObject({ error: 'request_not_approved', message: expect.stringContaining('raises a Purchase Order') });
+    expect((await purchaser(`/product-requests/${id}/approve`, 'POST', {})).status).toBe(200);
+    /* The requester cannot claim it; a PO in another company is not a PO; the body must name one. */
+    expect((await as(sb, AMY)(`/product-requests/${id}/link-po`, 'POST', { poId: 'po-1' })).status).toBe(403);
+    expect((await purchaser(`/product-requests/${id}/link-po`, 'POST', { poId: 'po-other' })).status).toBe(404);
+    expect((await purchaser(`/product-requests/${id}/link-po`, 'POST', {})).body.error).toBe('po_id_required');
+    const linked = await purchaser(`/product-requests/${id}/link-po`, 'POST', { poId: 'po-1' });
+    expect(linked.status, JSON.stringify(linked.body)).toBe(200);
+    expect(linked.body.poNumber).toBe('HC-PO-2610-001');
+    const after = (await purchaser(`/product-requests/${id}`)).body.request as Row;
+    expect(after).toMatchObject({ status: 'PO_ISSUED', po_id: 'po-1', pco: null, po: { id: 'po-1', poNumber: 'HC-PO-2610-001', status: 'SUBMITTED' } });
+    expect(sb.tables.entity_audit_log.some((a) => a.entity_type === 'PRODUCT_REQUEST' && a.status_snapshot === 'PO_ISSUED')).toBe(true);
+    /* One order per request: a second PO, or a PC Order on top, is refused. */
+    expect((await purchaser(`/product-requests/${id}/link-po`, 'POST', { poId: 'po-1' })).body.error).toBe('request_already_issued');
+    const pco = await loadRequestForPco(sb as never, CO, id);
+    expect(pco.ok).toBe(false);
+    if (!pco.ok) expect(pco.body).toMatchObject({ error: 'request_already_issued', message: expect.stringContaining('already has a Purchase Order') });
     expect((await purchaser(`/product-requests/${id}/close`, 'POST', {})).status).toBe(200);
     expect(sb.tables.product_requests[0].status).toBe('CLOSED');
   });

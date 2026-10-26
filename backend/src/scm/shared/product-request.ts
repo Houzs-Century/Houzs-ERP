@@ -9,7 +9,8 @@
 // header plus lines, the shape a PC Order has, so dozens of showroom pieces go
 // in one request). The Purchaser answers the WHOLE request: approve or reject;
 // for each new-Model line, build the Model + SKU from it; then raise ONE
-// Purchase Consignment Order carrying every line.
+// Purchase Consignment Order carrying every line — or ONE Purchase Order, when
+// the goods are bought outright (2990-0015).
 
 export const PRODUCT_REQUEST_TYPES = ['NEW_PRODUCT', 'REPACK'] as const;
 export type ProductRequestType = (typeof PRODUCT_REQUEST_TYPES)[number];
@@ -17,10 +18,10 @@ export type ProductRequestType = (typeof PRODUCT_REQUEST_TYPES)[number];
 export const PRODUCT_REQUEST_APPLICATIONS = ['SHOWROOM', 'CUSTOMER_ORDER', 'SAMPLE', 'FAIR_EXHIBITION'] as const;
 export type ProductRequestApplication = (typeof PRODUCT_REQUEST_APPLICATIONS)[number];
 
-export const PRODUCT_REQUEST_STATUSES = ['REQUESTED', 'APPROVED', 'REJECTED', 'WITHDRAWN', 'PCO_ISSUED', 'CLOSED'] as const;
+export const PRODUCT_REQUEST_STATUSES = ['REQUESTED', 'APPROVED', 'REJECTED', 'WITHDRAWN', 'PCO_ISSUED', 'PO_ISSUED', 'CLOSED'] as const;
 export type ProductRequestStatus = (typeof PRODUCT_REQUEST_STATUSES)[number];
 
-export type ProductRequestAction = 'approve' | 'reject' | 'withdraw' | 'resubmit' | 'issue_pco' | 'close';
+export type ProductRequestAction = 'approve' | 'reject' | 'withdraw' | 'resubmit' | 'issue_pco' | 'issue_po' | 'close';
 
 const FLOW: Record<ProductRequestAction, { from: ProductRequestStatus[]; to: ProductRequestStatus }> = {
   // The Purchaser's yes. Model/SKU builds and a PC Order may follow.
@@ -33,8 +34,10 @@ const FLOW: Record<ProductRequestAction, { from: ProductRequestStatus[]; to: Pro
   resubmit:  { from: ['REJECTED'], to: 'REQUESTED' },
   // A Purchase Consignment Order was raised from it.
   issue_pco: { from: ['APPROVED'], to: 'PCO_ISSUED' },
+  // A Purchase Order was raised from it instead.
+  issue_po:  { from: ['APPROVED'], to: 'PO_ISSUED' },
   // Nothing more to do: the goods came in, or the Purchaser ends it.
-  close:     { from: ['APPROVED', 'PCO_ISSUED'], to: 'CLOSED' },
+  close:     { from: ['APPROVED', 'PCO_ISSUED', 'PO_ISSUED'], to: 'CLOSED' },
 };
 
 export const canTransition = (s: ProductRequestStatus, a: ProductRequestAction): boolean => FLOW[a].from.includes(s);
@@ -79,14 +82,18 @@ export function linesRefusal(count: number): { error: string; message: string } 
   return null;
 }
 
-/** Why a Purchase Consignment Order may not be raised from this request, or
-    null when it may: the Purchaser must have approved it, and every line's
-    product must exist in the catalogue (a new Model is built first, from its
-    line). */
-export function pcoFromRequestRefusal(r: { status: string; request_no: string; lines: ReadonlyArray<{ item_code: string | null }> }): { error: string; message: string } | null {
+const ORDER_WORD = { PCO: 'Purchase Consignment Order', PO: 'Purchase Order' } as const;
+
+/** Why an order (a Purchase Consignment Order, or a Purchase Order) may not be
+    raised from this request, or null when it may: the Purchaser must have
+    approved it, and every line's product must exist in the catalogue (a new
+    Model is built first, from its line). A request carries one order, of
+    either kind. */
+export function orderFromRequestRefusal(r: { status: string; request_no: string; lines: ReadonlyArray<{ item_code: string | null }> }, order: 'PCO' | 'PO'): { error: string; message: string } | null {
   if (r.status !== 'APPROVED') {
     if (r.status === 'PCO_ISSUED') return { error: 'request_already_issued', message: `${r.request_no} already has a Purchase Consignment Order.` };
-    return { error: 'request_not_approved', message: `${r.request_no} is ${r.status.toLowerCase().replace('_', ' ')} — only an approved request raises a Purchase Consignment Order.` };
+    if (r.status === 'PO_ISSUED') return { error: 'request_already_issued', message: `${r.request_no} already has a Purchase Order.` };
+    return { error: 'request_not_approved', message: `${r.request_no} is ${r.status.toLowerCase().replace('_', ' ')} — only an approved request raises a ${ORDER_WORD[order]}.` };
   }
   if (r.lines.length === 0) return { error: 'lines_required', message: `${r.request_no} has no product line to order.` };
   const pending = r.lines.filter((l) => !(l.item_code ?? '').trim()).length;
