@@ -36,10 +36,11 @@
 
    WHAT DOES NOT COUNT (the 2026-10-13 rules, owner agreed 「可以」):
      - the price-zeroing bug (BUG-63): a line's price X→0 in a save that also
-       swapped its code or changed its spec, or an approved SPEC amendment that
-       carried a price of 0 for a line that had one;
+       re-picked it (code swap or spec change) BEFORE the fix went live
+       (#4509, 2026-10-07), or an approved SPEC amendment that carried a price
+       of 0 for a line that had one (that path stayed open);
      - its put-back: the same line (by id, else code) 0→X after such a zeroing,
-       and every row of the repair script;
+       up to the amount zeroed, and every row of the repair script;
    Opening-day edits and the first price of an unpriced order are left to the
    report, which decides them from the row's date and before-total. */
 
@@ -374,29 +375,46 @@ export function totalsAt(steps, at, nowTotals) {
   return last ? last.after : nowTotals;
 }
 
+const mytDay = (ms) => new Date(ms + 8 * 3600_000).toISOString().slice(0, 10);
+
 /**
  * Which line moves do not count: the zeroing bug and its put-backs.
- * `amendZero` = Set of SO line ids an applied SPEC amendment carried at price 0
- * while the line had a price (so_amendment_lines).
- * Marks diff.ignored = 'zeroed' | 'put_back' in place.
+ *  - a direct edit zeroed a line by the bug only BEFORE the fix went live
+ *    (`bugFixedAt`, BUG-63 #4509): re-picking a product with no sell price
+ *    seeded RM 0 and the PATCH saved it. After the fix a price set to 0 is a
+ *    person's choice and counts like any change;
+ *  - an approved SPEC amendment that carried 0 for a priced line (`amendZero`,
+ *    SO line ids from so_amendment_lines) is the bug at any date;
+ *  - a zeroing on the order's opening day is left to the report's opening-day
+ *    rule, and then its later put-back counts — so the order nets right
+ *    against its amount after the opening day;
+ *  - a put-back restores at most what was zeroed: the part above it counts.
+ * Sets diff.ignored ('zeroed' | 'put_back') and diff.ignoredSen in place.
  */
-export function classify(steps, amendZero = new Set()) {
-  const pending = new Set();
+export function classify(steps, amendZero = new Set(), { bugFixedAt = Infinity, openedAt = null } = {}) {
+  const pending = new Map(); // line id / code -> the amount the bug took
+  const openedDay = openedAt == null ? null : mytDay(openedAt);
+  const take = (d, amount) => { pending.set(d.lineId, amount); pending.set(d.code, amount); };
+  const clear = (d) => { pending.delete(d.lineId); pending.delete(d.code); };
   for (const s of steps) {
     for (const d of s.diffs) {
       if (!d.isGoods) continue;
-      const zeroedHere = d.beforeUnit > 0 && d.afterUnit === 0 && (
-        (s.kind === 'edit' && (s.zeroed.includes(d.lineId) || s.zeroed.includes(d.code)))
-        || (s.kind === 'amendment' && amendZero.has(d.lineId)));
-      if (zeroedHere) {
+      const bugEdit = s.kind === 'edit' && s.at < bugFixedAt && (s.zeroed.includes(d.lineId) || s.zeroed.includes(d.code));
+      const bugAmendment = s.kind === 'amendment' && amendZero.has(d.lineId);
+      const zeroedHere = d.beforeUnit > 0 && d.afterUnit === 0 && (bugEdit || bugAmendment);
+      if (zeroedHere && mytDay(s.at) !== openedDay) {
         d.ignored = 'zeroed';
-        pending.add(d.lineId); pending.add(d.code);
+        d.ignoredSen = d.afterTotal - d.beforeTotal;
+        take(d, d.beforeTotal - d.afterTotal);
       } else if (s.repair) {
         d.ignored = 'put_back';
-        pending.delete(d.lineId); pending.delete(d.code);
+        d.ignoredSen = d.afterTotal - d.beforeTotal;
+        clear(d);
       } else if (d.beforeUnit === 0 && d.afterUnit > 0 && (pending.has(d.lineId) || pending.has(d.code))) {
+        const owed = pending.get(d.lineId) ?? pending.get(d.code) ?? 0;
         d.ignored = 'put_back';
-        pending.delete(d.lineId); pending.delete(d.code);
+        d.ignoredSen = Math.min(d.afterTotal - d.beforeTotal, owed);
+        clear(d);
       }
     }
   }
@@ -421,7 +439,7 @@ export function rowsFor(steps, from, to, { HISTORY = 'history', HISTORY_IGNORED 
   for (const save of saves) {
     const first = save[0];
     const last = save.at(-1);
-    const ignored = save.flatMap((s) => s.diffs).filter((d) => d.isGoods && d.ignored).reduce((sum, d) => sum + (d.afterTotal - d.beforeTotal), 0);
+    const ignored = save.flatMap((s) => s.diffs).filter((d) => d.isGoods && d.ignored).reduce((sum, d) => sum + d.ignoredSen, 0);
     const goodsMoved = last.after.goods - first.before.goods;
     const counted = goodsMoved - ignored;
     const base = { at: last.at, actor: last.actor ?? first.actor ?? null, kind: save.some((s) => s.kind === 'amendment') ? 'amendment' : 'edit', reliable: save.every((s) => s.reliable), steps: save.length };

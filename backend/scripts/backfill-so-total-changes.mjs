@@ -22,7 +22,8 @@
 
    Env: DATABASE_URL, FROM (default 2026-09-30T16:00:00Z = 1/10 00:00 MYT),
         FLOOR (default 2026-07-31T16:00:00Z: how far back the zeroing bug is
-        traced), SKIP_ORDERS, INCLUDE_ORDERS.
+        traced), BUG_FIXED_AT (default 2026-10-07T10:00:00Z), SKIP_ORDERS,
+        INCLUDE_ORDERS.
 
    RE-RUN: refuses to apply when any 'history' / 'history-ignored' row already
    exists — the back-fill happens once. To redo it: delete those rows first
@@ -38,6 +39,8 @@ const APPLY = MODE === 'apply' || process.env.APPLY === '1';
 const PHRASE = 'WRITE OCTOBER HISTORY ROWS';
 const FROM = process.env.FROM || '2026-09-30T16:00:00Z';
 const FLOOR = process.env.FLOOR || '2026-07-31T16:00:00Z';
+/* BUG-63's fix (#4509, merged 2026-10-07 09:31 UTC): a direct edit's zeroing after it is a person's price. */
+const BUG_FIXED_AT = process.env.BUG_FIXED_AT || '2026-10-07T10:00:00Z';
 const list = (v) => new Set(String(v ?? '').split(/[\s,]+/).map((s) => s.trim()).filter(Boolean));
 const SKIP = list(process.env.SKIP_ORDERS);
 const INCLUDE = list(process.env.INCLUDE_ORDERS);
@@ -105,7 +108,7 @@ async function main() {
         revisions: (revBy.get(doc) ?? []).map((r) => ({ at: new Date(r.created_at).getTime(), amendmentId: r.amendment_id, lines: r.lines ?? [] })),
         headerFeeSen: n(h.delivery_fee_sen),
       });
-      classify(w.steps, amendZero);
+      classify(w.steps, amendZero, { bugFixedAt: Date.parse(BUG_FIXED_AT), openedAt: new Date(h.created_at).getTime() });
       const rows = rowsFor(w.steps, fromMs, toMs, { HISTORY, HISTORY_IGNORED });
 
       // CHECK 1: the rebuilt order at CREATE is what CREATE recorded.
