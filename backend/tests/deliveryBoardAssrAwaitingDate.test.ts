@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { assrBoardLegs, assrBoardUnionSql, type AssrBoardCase } from "../src/scm/lib/assr-board-scope";
+import { assrBoardLegs, assrBoardUnionSql, assrCaseClosed, type AssrBoardCase } from "../src/scm/lib/assr-board-scope";
 
 /* Owner 2026-10-26: a Service Case's own-team leg is a REQUEST until Logistics
    confirms it. Service keys Own team + a date -> Pending Schedule; Logistics sets
@@ -41,5 +41,18 @@ describe("Service Case legs on Delivery Planning", () => {
 
   test("a closed case's dated legs are Delivered", () => {
     expect(assrBoardLegs({ ...blank, stage: "completed", delivery_by: "own", do_date: "2026-10-01" }, true)[0].state).toBe("DELIVERED");
+  });
+});
+
+/* 2026-10-26: 56 old cases with status "Closed" but no closed_at stamp showed as
+   pending deliveries once the confirmed date was read. */
+describe("assrCaseClosed", () => {
+  const open = { closed_at: null, archived_at: null, stage: "pending_delivery_service", status: "Open" };
+  test("a Closed status, a terminal stage or a stamp all close the case", () => {
+    expect(assrCaseClosed(open)).toBe(false);
+    expect(assrCaseClosed({ ...open, status: "Closed" })).toBe(true);
+    expect(assrCaseClosed({ ...open, stage: "completed" })).toBe(true);
+    expect(assrCaseClosed({ ...open, stage: "voided" })).toBe(true);
+    expect(assrCaseClosed({ ...open, closed_at: "2026-03-01" })).toBe(true);
   });
 });
