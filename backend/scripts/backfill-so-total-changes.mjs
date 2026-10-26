@@ -177,14 +177,23 @@ async function main() {
     if (!APPLY) {
       try {
         await sql.begin(async (tx) => {
+          const beforeOf = {};
           for (const basis of ['fair', 'so_date']) {
-            const before = brief(await report(tx, basis, 1));
-            out(`REPORT Oct 1–31 by ${basis}, before: ${JSON.stringify(before)}`);
+            beforeOf[basis] = await report(tx, basis, 1);
+            out(`REPORT Oct 1–31 by ${basis}, before: ${JSON.stringify(brief(beforeOf[basis]))}`);
           }
           await insertRows(tx);
+          const partOne = (rep) => new Map(rep.fairs.flatMap((f) => f.sos.map((s) => [s.docNo, { ...s, fair: f.name }])));
           for (const basis of ['fair', 'so_date']) {
             const rep = await report(tx, basis, 1);
             out(`REPORT Oct 1–31 by ${basis}, after: ${JSON.stringify(brief(rep))}`);
+            const b = partOne(beforeOf[basis]);
+            const a = partOne(rep);
+            for (const doc of new Set([...b.keys(), ...a.keys()])) {
+              const x = b.get(doc); const y = a.get(doc);
+              if ((x?.commissionSen ?? null) === (y?.commissionSen ?? null)) continue;
+              out(`    ${basis} PART 1 MOVED ${doc} ${y?.fair ?? x?.fair}: commission ${rm(x?.commissionSen)} → ${rm(y?.commissionSen)} · goods ${rm(x?.goodsSen)} → ${rm(y?.goodsSen)} · reached ${x?.reachedOn ?? '-'} → ${y?.reachedOn ?? '-'} · total ${rm(x?.totalSen)} → ${rm(y?.totalSen)}`);
+            }
             for (const o of (rep.changedOrders ?? []).filter((x) => x.fromHistory)) {
               out(`    ${basis} changed ${o.docNo} ${o.part} ${o.brand ?? '-'} · ${o.fairName ?? '-'} · original ${rm(o.originalSen)} latest ${rm(o.latestSen)} amended ${rm(o.amendedSen)} · ${o.reachedOn ? `effect ${rm(o.effectSen)}` : 'not yet 30%'} · ${o.salesperson ?? '-'}`);
             }
