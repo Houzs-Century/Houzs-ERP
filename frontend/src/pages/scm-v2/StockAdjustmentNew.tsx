@@ -69,6 +69,7 @@ import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { FreshMount } from '../../lib/freshMount';
 import { useAuth } from '../../auth/AuthContext';
 import { canViewProductCost } from '../../auth/salesAccess';
+import { capability } from '../../auth/capabilities';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
 import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
@@ -702,7 +703,9 @@ const StockAdjustmentForm = ({ onStartNew, existing }: { onStartNew: () => void;
   const warehouses = useWarehouses();
   const allSkus    = useMfgProducts();
   // Cost ENTRY, so the product-cost cohort, not the finance display switch (backend scm/lib/costing-enabled.ts).
-  const canEnterCost = canViewProductCost(useAuth().user);
+  const authUser = useAuth().user;
+  // HC-0141 TEMPORARY: IT enters the two found-stock costs itself; revert this line once that adjustment is posted.
+  const canEnterCost = canViewProductCost(authUser) || capability(authUser, 'it.pages.view');
 
   // Dropdown pools for the sofa / bedframe variant editor — same sources the
   // GRN / PO forms use (divan/leg height, gap, seat size; specials by category).
