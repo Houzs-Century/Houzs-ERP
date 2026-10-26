@@ -123,6 +123,7 @@ import { pushVenturePortalCatalogue } from "./scm/lib/venture-portal-catalogue";
 import { pushVenturePortalAttendance } from "./scm/lib/venture-portal-attendance";
 import { venturePortalKick } from "./scm/lib/venture-portal-kick";
 import { reconcilePendingFairs } from "./scm/lib/fair-reconcile";
+import { autoReadBills } from "./scm/lib/threepl-bill-import";
 import { relinkHeldBackSweep } from "./scm/lib/autocount-relink-sweep";
 import { deliveryDateSweep } from "./scm/lib/autocount-delivery-date-sweep";
 import { refreshAllMrpSnapshots } from "./scm/lib/mrp-snapshot";
@@ -1049,6 +1050,18 @@ export default {
           );
         }
       }
+      // 3PL bills (owner 2026-10-24): an AP invoice from a transport supplier
+      // with its bill attached is read by itself and kept — matched lines on
+      // their DOs, the rest waiting for Finance under "To check" — and read again
+      // when a file is added. Four bills a run; nothing posts to the ledger.
+      // scm/lib/threepl-bill-import.ts.
+      ctx.waitUntil(
+        track("threepl-bills", () => autoReadBills(env))
+          .then((r) => {
+            if (r.due > 0 || r.released > 0 || r.errors.length) console.log(`[cron threepl-bills] ${JSON.stringify(r)}`);
+          })
+          .catch((e) => console.error("[cron threepl-bills]", e))
+      );
       // Slip reaper (mirrors 2990's */10 orphan-slip sweep, which retires with
       // 2990's apps/api). Leases up to 100 orphan pending_slip_uploads rows
       // (5-min lease, SKIP LOCKED via lease_orphan_slips), deletes each R2 blob,

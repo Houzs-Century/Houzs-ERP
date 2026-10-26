@@ -12,7 +12,7 @@
 // to drop (it only used authedFetch). Everything else is copied verbatim.
 
 import { useRef } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { invalidateSoLists } from './sales-order-queries';
 import { serviceNotify } from './dialog-service';
@@ -247,6 +247,8 @@ export type PlanningOrder = {
   warehouse_code: string | null;
   warehouse_name: string | null;
   customer_state: string | null;
+  // Country — present on SO rows; lets the Last Mile surfaces keep Singapore off.
+  customer_country?: string | null;
   delivered_qty: number;
   remaining_qty: number;
   crew: {
@@ -477,6 +479,46 @@ export type HcFieldsResult = {
   no_do_hint: string | null;
 };
 
+/* ── Coalesced board refresh (perf, 2026-10-23) ───────────────────────────────
+   Every inline cell edit (status / date / driver / lorry / HC field / crew) used
+   to fire an immediate full refetch of the whole board (~1.4k rows + DOs + crew +
+   trips) the moment it settled. onMutate already patches the edited row across
+   every cached board, so the visible cell is correct at once; the settle-refetch
+   only reconciled the SERVER-DERIVED fields the optimistic patch can't know
+   (delivery_state transitions, arrangement_stage, the top-tab counts, days_left).
+   Landing that large refetch after every commit was the board's main stutter,
+   worst when it arrived mid-edit. We keep the reconcile but COALESCE it: the first
+   settle arms a short timer, each further settle inside the window resets it, and a
+   single invalidation runs once the operator stops. Net: no per-edit refetch; at
+   most one refetch per burst; the board reconciles within ~BOARD_REFRESH_MS of the
+   last edit, the optimistic patch (+ onError rollback) holding the edited cells
+   correct meanwhile.
+
+   Keys are UNIONED across the hooks that share a burst (schedule / fields / crew),
+   each still naming exactly the query roots it always invalidated — so the flush
+   invalidates no root a hook did not ask for. The timer is module-level so it
+   survives the editing component unmounting (navigating away mid-edit) and the
+   reconcile still lands. Refresh ONLY the roots, never the whole cache. */
+export const BOARD_REFRESH_MS = 500;
+let boardRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let boardRefreshQc: QueryClient | null = null;
+const boardRefreshKeys = new Map<string, readonly unknown[]>();
+
+export function scheduleBoardRefresh(qc: QueryClient, keys: readonly (readonly unknown[])[]): void {
+  boardRefreshQc = qc;
+  for (const key of keys) boardRefreshKeys.set(JSON.stringify(key), key);
+  if (boardRefreshTimer) clearTimeout(boardRefreshTimer);
+  boardRefreshTimer = setTimeout(() => {
+    boardRefreshTimer = null;
+    const client = boardRefreshQc;
+    const toInvalidate = [...boardRefreshKeys.values()];
+    boardRefreshKeys.clear();
+    boardRefreshQc = null;
+    if (!client) return;
+    for (const key of toInvalidate) void client.invalidateQueries({ queryKey: key });
+  }, BOARD_REFRESH_MS);
+}
+
 /* Save the HC raw-data fields for an order. type = 'so' | 'do'; id = SO doc_no
    or DO id. Calls PATCH /delivery-planning/:type/:id/fields and invalidates the
    planning board. The result's no_do_hint tells the UI when DO-execution fields
@@ -488,7 +530,7 @@ export function useUpdateDeliveryFields() {
       authedFetch<HcFieldsResult>(`/delivery-planning/${type}/${id}/fields`, {
         method: 'PATCH', body: JSON.stringify(body),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery-planning'] }),
+    onSuccess: () => scheduleBoardRefresh(qc, [['delivery-planning']]),
   });
 }
 
@@ -942,10 +984,13 @@ export function useScheduleDelivery() {
         tone: 'error',
       });
     },
+    /* Reconcile server-derived fields (state / arrangement_stage / counts /
+       days_left) after the operator stops editing — coalesced so a burst of cell
+       commits no longer fires a full board refetch each, and none lands mid-edit.
+       The onMutate optimistic patch (+ onError rollback above) keeps the edited
+       cells correct in the gap. */
     onSettled: () => {
-      void qc.invalidateQueries({ queryKey: ['delivery-planning'] });
-      void qc.invalidateQueries({ queryKey: ['fleet-day'] });
-      void qc.invalidateQueries({ queryKey: ['scm-trips'] });
+      scheduleBoardRefresh(qc, [['delivery-planning'], ['fleet-day'], ['scm-trips']]);
     },
   });
 }
@@ -977,11 +1022,10 @@ export function useAssignDoCrew() {
         method: 'PUT', body: JSON.stringify(body),
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['delivery-planning'] });
-      qc.invalidateQueries({ queryKey: ['mfg-delivery-orders'] });
-      // The run and its other DOs follow a DO crew edit (server side).
-      void qc.invalidateQueries({ queryKey: ['fleet-day'] });
-      void qc.invalidateQueries({ queryKey: ['scm-trips'] });
+      // The run and its other DOs follow a DO crew edit (server side). Coalesced
+      // so a run of seat edits reconciles once the operator stops, not per seat;
+      // the picker's own local state shows the chosen crew immediately meanwhile.
+      scheduleBoardRefresh(qc, [['delivery-planning'], ['mfg-delivery-orders'], ['fleet-day'], ['scm-trips']]);
     },
   });
 }

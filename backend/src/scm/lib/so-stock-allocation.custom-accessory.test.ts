@@ -38,6 +38,12 @@ describe('isHardBoundLine — the Sofa Accessory category', () => {
     expect('CUSTOM_ACCESSORY_CODES' in allocation).toBe(false);
   });
 
+  test('Dining binds per order; a pre-category AutoCount line filed others still pools (HC-0150)', () => {
+    expect(isHardBoundLine('dining', 'AN-DINING LEG')).toBe(true);
+    expect(isHardBoundLine('DINING', 'MAJ-TABLE TOP')).toBe(true);
+    expect(isHardBoundLine('others', 'AN-DINING LEG')).toBe(false);
+  });
+
   test('the existing bound groups are unchanged', () => {
     expect(isHardBoundLine('sofa', '8030-1NA')).toBe(true);
     expect(isHardBoundLine('bedframe', 'JAGER-(Q)')).toBe(true);

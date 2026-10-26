@@ -90,7 +90,12 @@ import { pgrestIn } from './pgrest-in-list';
    moved their lines: it kept binding a pillow moved back to Accessory, and it bound
    company 2's pillows, which are Accessory there. The random / free-gift pillows
    (AMN-SOFA PILLOW, SOFA PILLOW (FOC)) are Accessory and pool. docs/bugs/0890. */
-const HARD_BOUND_GROUPS = new Set(['bedframe', 'sofa', 'fabric_accessory']);
+/* HC-0150 (Sim, 2026-10-23): Dining binds too - 「normally this one in one out,
+   seldom have keep stock」. One code (AN-DINING LEG) covers many models whose
+   model lives only in free text, so pooled stock of one model covered an order
+   for another. Lines migrated from AutoCount before the DINING category existed
+   still carry `others` and keep pooling. */
+const HARD_BOUND_GROUPS = new Set(['bedframe', 'sofa', 'fabric_accessory', 'dining']);
 
 export function isHardBoundLine(
   itemGroup: string | null | undefined,

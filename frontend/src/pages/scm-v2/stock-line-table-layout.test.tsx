@@ -16,6 +16,7 @@ import styles from './SalesOrderDetail.module.css';
 
 const LONG = 'fabriccode=pc151-01|gap=12"|divanheight=10"|special=hb fully covered instead of divan';
 
+vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: { id: 1 }, can: () => false }) }));
 vi.mock('../../vendor/scm/lib/stock-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/stock-queries')>()),
   useInventoryBuckets: (itemCode: string | null, warehouseId: string | null) => ({

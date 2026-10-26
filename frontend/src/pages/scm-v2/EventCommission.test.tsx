@@ -69,10 +69,10 @@ describe('the Event Commission tab', () => {
     expect(akemi.textContent).toContain('484,746.00');
     expect(akemi.textContent).toContain('67,864.44');
     expect(akemi.textContent).toContain('140.00');
-    /* A fair with no orders yet is folded away at the bottom — open it to see it. */
+    /* A fair with no orders yet is folded away under the table — open it to see it. */
     expect(within(fairs).queryByText('no rate card')).toBeNull();
-    fireEvent.click(within(fairs).getByText('1 fair with no orders yet'));
-    expect(within(fairs).getByText('no rate card')).toBeTruthy();
+    fireEvent.click(screen.getByText('1 fair with no orders yet'));
+    expect(within(screen.getAllByRole('table')[0]!).getByText('no rate card')).toBeTruthy();
     expect(screen.getByText('Total commission').parentElement!.textContent).toContain('RM 153.00');
   });
 
@@ -80,7 +80,7 @@ describe('the Event Commission tab', () => {
     render(<EventCommissionTab />);
     fireEvent.click(screen.getByText('[AKEMI] BIGHOME'));
     const first = screen.getByText('HC-SO-2610-001').closest('tr')!;
-    expect(first.textContent).toContain('(36.4%)');
+    expect(first.textContent).toContain('36.4%');
     expect(first.textContent).toContain('+RM 150.00');
     expect(first.textContent).toContain('amendment');
     expect(first.textContent).toContain('opening-day fix, not counted');
@@ -123,8 +123,38 @@ describe('the Event Commission tab', () => {
   });
 });
 
-/* Owner 2026-10-21: 这个页面优化，很乱 → 1 可以，2 不要，3 要，做，要有header. */
+/* Owner 2026-10-21: 这个页面优化，很乱 → 1 可以，2 不要，3 要，做，要有header.
+   2026-10-25: 这个header，table 要和 pv 那边一样能调整，能换位 / 这个点开排版好看一点. */
 describe('the Event Commission layout', () => {
+  test('the tables are the system table: Columns to hide or move them, a Total row at the foot', () => {
+    render(<EventCommissionTab />);
+    /* The fairs table and the earlier one each have their Columns drawer. */
+    expect(screen.getAllByRole('button', { name: /columns/i }).length).toBeGreaterThanOrEqual(2);
+    const fairs = screen.getAllByRole('table')[0]!;
+    const foot = fairs.querySelector('tfoot')!;
+    expect(foot.textContent).toContain('484,746.00');
+    expect(foot.textContent).toContain('140.00');
+    const earlierFoot = screen.getAllByRole('table')[1]!.querySelector('tfoot')!;
+    expect(earlierFoot.textContent).toContain('13.00');
+  });
+
+  test('a fair opens to a compact table of its orders: what they came to, Paid and Paid % apart, upsales green, drops red, a subtotal', () => {
+    render(<EventCommissionTab />);
+    fireEvent.click(screen.getByText('[AKEMI] BIGHOME'));
+    expect(screen.getByText(/reached 30%/).parentElement!.textContent).toContain('2 orders · 1 reached 30% · commission RM 140.00');
+    const first = screen.getByText('HC-SO-2610-001').closest('tr')!;
+    const cells = [...first.querySelectorAll('td')].map((td) => td.textContent);
+    expect(cells).toContain('400.00');
+    expect(cells).toContain('36.4%');
+    expect(within(first).getByText('+RM 150.00').className).toContain('text-synced');
+    const orders = screen.getByText('HC-SO-2610-001').closest('table')!;
+    const foot = orders.querySelector('tfoot')!.textContent;
+    expect(foot).toContain('1,500.00');
+    expect(foot).toContain('500.00');
+    expect(foot).toContain('140.00');
+    expect(foot).toContain('31.3%');
+  });
+
   test('a fair is named on two lines with the state capitals evened out; any other name is kept whole', () => {
     expect(fairLines('Kuala Lumpur [AKEMI] BIGHOME @ MID VALLEY')).toEqual({ title: '[AKEMI] BIGHOME', detail: 'MID VALLEY · Kuala Lumpur', brand: 'AKEMI' });
     expect(fairLines('PULAU PINANG [ZANOTTI] HOMEDEC @ SETIA SPICE CONVENTION CENTRE').detail).toBe('SETIA SPICE CONVENTION CENTRE · Pulau Pinang');

@@ -28,7 +28,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
-  ArrowLeft, Pencil, Plus, Printer, Save, Ban, ChevronDown,
+  ArrowLeft, Copy, Pencil, Plus, Printer, Save, Ban, ChevronDown,
 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { formatPhone } from '@2990s/shared/phone';
@@ -508,6 +508,10 @@ export const PurchaseConsignmentOrderDetail = () => {
             </div>
             <StatusPill docType="po" status={po.status} />
             <RelationshipMapButton type="pco" id={po.id} />
+            <Button variant="ghost" size="md"
+              onClick={() => navigate(`/scm/purchase-consignment-orders/new?copyFrom=${po.id}`)}>
+              <Copy {...ICON} /><span>Copy as new</span>
+            </Button>
             <Button variant="ghost" size="md" onClick={print.openPreview}>
               <Printer {...ICON} /><span>Print PDF</span>
             </Button>

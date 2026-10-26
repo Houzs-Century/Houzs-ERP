@@ -16,7 +16,11 @@
 // on two lines ("[AKEMI] BIGHOME" over "MID VALLEY · Kuala Lumpur"); the fairs
 // with no orders yet folded away at the bottom; a brand filter that every card,
 // table and the export follow; amounts without "RM" and a dash for nothing; the
-// column headings stay on screen while the list scrolls.
+// column headings stay on screen while the list scrolls. Since 2026-10-25 (这个
+// header，table 要和 pv 那边一样能调整，能换位 / 这个点开排版好看一点) every table
+// is the system's DataTable — headings move and widen, columns hide, each person's
+// layout kept — and a fair opens to its orders in a compact one, Paid and Paid %
+// apart, upsales in green and drops in red, its own subtotal at the foot.
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
@@ -24,11 +28,12 @@ import { ChevronDown, ChevronRight, Download } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
   useEventCommission,
-  type CommissionAdjustment, type CommissionBasis, type CommissionChange, type CommissionFairRow, type EventCommission,
+  type CommissionAdjustment, type CommissionBasis, type CommissionChange, type CommissionFairRow, type CommissionSoRow, type EventCommission,
 } from '../../vendor/scm/lib/event-queries';
 import { fmtDateOrDash, fmtDayMonthRange } from '../../vendor/shared/format';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { Panel, Toggle } from '../../components/scm-v2/OverviewKit';
+import { DataTable, type Column } from '../../components/DataTable';
 import { cn } from '../../lib/utils';
 
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
@@ -132,22 +137,17 @@ const downloadText = (name: string, text: string) => {
   URL.revokeObjectURL(url);
 };
 
-/* Table cells. Alignment and wrapping are set per kind, never added on top of a
-   shared string: `cn` only joins, so a cell adding text-left to one that says
-   text-right gets both and the stylesheet picks (Project Overview, 2026-10-21). */
-const TH_BASE = 'border-b border-border bg-surface px-2.5 py-2 text-[10.5px] font-semibold uppercase tracking-wider text-ink-muted';
-const TH_L = cn(TH_BASE, 'whitespace-nowrap text-left');
-const TH_R = cn(TH_BASE, 'whitespace-nowrap text-right');
-const TD_BASE = 'border-b border-border px-2.5 py-2 align-top text-[12.5px]';
-const TD_L = cn(TD_BASE, 'text-left');
-const TD_R = cn(TD_BASE, 'whitespace-nowrap text-right tabular-nums');
-/** The table's own box: the headings stay at its top while the rows scroll. */
-const SCROLL = 'max-h-[70vh] overflow-auto';
+/* The tables are the system's own (owner 2026-10-25: 这个header，table 要和 pv
+   那边一样能调整，能换位): drag a heading to move it, drag its edge to widen it,
+   hide a column from Columns — each kept per person under the table's id. A
+   fair opens to its orders in the same table, compact (这个点开排版好看一点). */
+const sum = <T,>(rows: readonly T[], pick: (r: T) => number): number => rows.reduce((s, r) => s + pick(r), 0);
+const num = (text: string) => <span className="tabular-nums">{text}</span>;
 
 const FairName = ({ name, dim }: { name: string; dim?: boolean }) => {
   const { title, detail } = fairLines(name);
   return (
-    <div className="min-w-[220px]">
+    <div className="min-w-[200px] whitespace-normal">
       <div className={cn('font-semibold', dim ? 'text-ink-secondary' : 'text-ink')}>{title}</div>
       {detail && <div className="mt-0.5 text-[11px] leading-snug text-ink-muted">{detail}</div>}
     </div>
@@ -162,11 +162,143 @@ const Kpi = ({ label, value, sub, main }: { label: string; value: string; sub?: 
   </div>
 );
 
+const fairColumns = (byFair: boolean): Column<CommissionFairRow>[] => [
+  {
+    key: 'fair', label: 'Fair', alwaysVisible: true,
+    render: (f) => <FairName name={f.name} dim={f.sos.length === 0} />,
+    getValue: (f) => fairLines(f.name).title, searchValue: (f) => f.name, exportValue: (f) => f.name,
+  },
+  {
+    key: 'dates', label: 'Dates',
+    render: (f) => <span className="whitespace-nowrap">{fmtDayMonthRange(f.startDate, f.endDate)}</span>,
+    getValue: (f) => f.startDate, exportValue: (f) => fmtDayMonthRange(f.startDate, f.endDate),
+  },
+  {
+    key: 'rate', label: 'Rate', align: 'right',
+    render: (f) => (f.ratePct == null ? <span className="text-ink-muted">no rate card</span> : num(`${f.ratePct}%`)),
+    getValue: (f) => f.ratePct,
+  },
+  ...(byFair ? [
+    {
+      key: 'totalSales', label: 'Total sales', align: 'right' as const, description: "The event page's Total Sales.",
+      render: (f: CommissionFairRow) => num(amtRm(f.totalSalesRm)), getValue: (f: CommissionFairRow) => f.totalSalesRm,
+      total: (rows: CommissionFairRow[]) => num(amtRm(sum(rows, (f) => f.totalSalesRm ?? 0))),
+    },
+    {
+      key: 'estimate', label: 'Estimate', align: 'right' as const, description: "Total sales × the rate — the event page's Commission row.",
+      render: (f: CommissionFairRow) => num(amtRm(f.estimateRm)), getValue: (f: CommissionFairRow) => f.estimateRm,
+      total: (rows: CommissionFairRow[]) => num(amtRm(sum(rows, (f) => f.estimateRm ?? 0))),
+    },
+  ] : []),
+  {
+    key: 'orders', label: 'Orders', align: 'right',
+    render: (f) => num(f.sos.length ? String(f.sos.length) : '–'), getValue: (f) => f.sos.length,
+    total: (rows) => num(String(sum(rows, (f) => f.sos.length))),
+  },
+  {
+    key: 'commission', label: 'Commission', align: 'right', description: 'What its orders earned: goods × rate, once 30% of the order is paid.',
+    render: (f) => <span className="font-semibold tabular-nums">{amt(f.payableSen)}</span>, getValue: (f) => f.payableSen,
+    exportValue: (f) => f.payableSen / 100,
+    total: (rows) => num(fmtRm(sum(rows, (f) => f.payableSen))),
+  },
+];
+
+/** Each upsale / drop sale on its own line: + in green, − in red, the day and
+    how it came in after it; one that does not count is grey and says why. */
+const Changes = ({ changes }: { changes: CommissionChange[] }) => (changes.length === 0
+  ? <span className="text-ink-muted">—</span>
+  : (
+    <div className="space-y-0.5">
+      {changes.map((ch, i) => (
+        <div key={`${ch.date}-${i}`} className="whitespace-nowrap">
+          <span className={cn('font-medium tabular-nums', ch.notCounted ? 'text-ink-muted' : ch.kind === 'upsale' ? 'text-synced' : 'text-err')}>
+            {ch.kind === 'upsale' ? '+' : '−'}RM {fmtRm(Math.abs(ch.deltaGoodsSen))}
+          </span>
+          <span className="text-ink-muted">
+            {' · '}{fmtDateOrDash(ch.date)}{ch.source === 'amendment' ? ' · amendment' : ''}{ch.notCounted ? ` · ${NOT_COUNTED[ch.notCounted]}` : ''}
+          </span>
+        </div>
+      ))}
+    </div>
+  ));
+
+const ORDER_COLUMNS: Column<CommissionSoRow>[] = [
+  { key: 'order', label: 'Order', render: (s) => <span className="whitespace-nowrap font-mono">{s.docNo}</span>, getValue: (s) => s.docNo },
+  { key: 'soDate', label: 'SO date', render: (s) => <span className="whitespace-nowrap">{fmtDateOrDash(s.soDate)}</span>, getValue: (s) => s.soDate },
+  { key: 'salesperson', label: 'Salesperson', render: (s) => s.salesperson ?? '—', getValue: (s) => s.salesperson },
+  { key: 'customer', label: 'Customer', render: (s) => s.customer ?? '—', getValue: (s) => s.customer },
+  {
+    key: 'goods', label: 'Goods', align: 'right', render: (s) => num(fmtRm(s.goodsSen)), getValue: (s) => s.goodsSen,
+    exportValue: (s) => s.goodsSen / 100, total: (rows) => num(fmtRm(sum(rows, (s) => s.goodsSen))),
+  },
+  {
+    key: 'paid', label: 'Paid', align: 'right', render: (s) => num(fmtRm(s.paidSen)), getValue: (s) => s.paidSen,
+    exportValue: (s) => s.paidSen / 100, total: (rows) => num(fmtRm(sum(rows, (s) => s.paidSen))),
+  },
+  {
+    key: 'paidPct', label: 'Paid %', align: 'right', description: 'Paid ÷ the order total. Commission is earned once it reaches 30%.',
+    render: (s) => <span className={cn('tabular-nums', s.paidPct < 30 && 'text-ink-muted')}>{s.paidPct}%</span>, getValue: (s) => s.paidPct,
+    total: (rows) => {
+      const total = sum(rows, (s) => s.totalSen);
+      return num(total > 0 ? `${(Math.round((sum(rows, (s) => s.paidSen) / total) * 1000) / 10).toFixed(1)}%` : '–');
+    },
+  },
+  {
+    key: 'reached', label: '30% reached',
+    render: (s) => (s.reachedOn ? <span className="whitespace-nowrap">{fmtDateOrDash(s.reachedOn)}</span> : <span className="text-ink-muted">not yet</span>),
+    getValue: (s) => s.reachedOn ?? '',
+  },
+  {
+    key: 'commission', label: 'Commission', align: 'right',
+    render: (s) => <span className="font-semibold tabular-nums">{amt(s.commissionSen)}</span>, getValue: (s) => s.commissionSen,
+    exportValue: (s) => s.commissionSen / 100, total: (rows) => num(fmtRm(sum(rows, (s) => s.commissionSen))),
+  },
+  {
+    key: 'changes', label: 'Upsales / drop sales', render: (s) => <Changes changes={s.changes} />,
+    getValue: (s) => sum(s.changes.filter((ch) => !ch.notCounted), (ch) => ch.deltaGoodsSen),
+    exportValue: (s) => s.changes.map((ch) => `${ch.kind === 'upsale' ? '+' : '-'}${fmtRm(Math.abs(ch.deltaGoodsSen))} ${ch.date}${ch.notCounted ? ' (not counted)' : ''}`).join('; '),
+  },
+];
+
+/** A fair opened: one line on what its orders came to, then the orders. */
+const FairOrders = ({ fair }: { fair: CommissionFairRow }) => {
+  if (fair.sos.length === 0) return <div className="pl-6 text-[12px] text-ink-muted">No orders at this fair yet.</div>;
+  const reached = fair.sos.filter((s) => s.reachedOn).length;
+  return (
+    <div className="space-y-2 pl-6">
+      <div className="text-[12px] text-ink-secondary">
+        <span className="font-semibold text-ink">{fair.sos.length} order{fair.sos.length === 1 ? '' : 's'}</span>
+        {' · '}{reached} reached 30%{' · '}commission <span className="font-semibold tabular-nums text-ink">RM {fmtRm(fair.payableSen)}</span>
+      </div>
+      <DataTable<CommissionSoRow> tableId="event-commission-orders" embedded columns={ORDER_COLUMNS} rows={fair.sos} getRowKey={(s) => s.docNo} />
+    </div>
+  );
+};
+
+const EARLIER_COLUMNS: Column<CommissionAdjustment>[] = [
+  { key: 'date', label: 'Date', render: (a) => <span className="whitespace-nowrap">{fmtDateOrDash(a.date)}</span>, getValue: (a) => a.date },
+  {
+    key: 'what', label: 'What',
+    render: (a) => <>{KIND_LABEL[a.kind]}{a.beforeReach ? <span className="text-ink-muted"> · before 30% — counted when reached</span> : null}</>,
+    getValue: (a) => KIND_LABEL[a.kind],
+  },
+  { key: 'order', label: 'Order', render: (a) => <span className="whitespace-nowrap font-mono">{a.docNo}</span>, getValue: (a) => a.docNo },
+  { key: 'fair', label: 'Fair', render: (a) => <FairName name={a.fairName} />, getValue: (a) => fairLines(a.fairName).title, exportValue: (a) => a.fairName },
+  { key: 'salesperson', label: 'Salesperson', render: (a) => a.salesperson ?? '—', getValue: (a) => a.salesperson },
+  { key: 'goods', label: 'Goods', align: 'right', render: (a) => num(fmtRm(a.goodsSen)), getValue: (a) => a.goodsSen, exportValue: (a) => a.goodsSen / 100 },
+  {
+    key: 'commission', label: 'Commission', align: 'right',
+    render: (a) => <span className={cn('tabular-nums', a.commissionSen < 0 && 'text-err')}>{fmtRm(a.commissionSen)}</span>,
+    getValue: (a) => a.commissionSen, exportValue: (a) => a.commissionSen / 100,
+    total: (rows) => num(fmtRm(sum(rows, (a) => a.commissionSen))),
+  },
+];
+
 export const EventCommissionTab = () => {
   const [range, setRange] = useState(() => monthOf(myt()));
   const [basis, setBasis] = useState<CommissionBasis>('fair');
   const [brand, setBrand] = useState('');
-  const [open, setOpen] = useState<Set<number>>(new Set());
+  const [open, setOpen] = useState<Set<string>>(new Set());
   const [showIdle, setShowIdle] = useState(false);
   const q = useEventCommission(range.from, range.to, basis);
   const full = q.data;
@@ -175,7 +307,7 @@ export const EventCommissionTab = () => {
   const r = useMemo(() => (full ? forBrand(full, brands.includes(brand) ? brand : '') : undefined), [full, brand, brands]);
   const words = BASIS_WORDS[basis];
   const byFair = basis === 'fair';
-  const toggle = (id: number) => setOpen((prev) => {
+  const toggle = (id: string) => setOpen((prev) => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
@@ -183,7 +315,8 @@ export const EventCommissionTab = () => {
 
   const active = r ? r.fairs.filter((f) => f.sos.length > 0) : [];
   const idle = r ? r.fairs.filter((f) => f.sos.length === 0) : [];
-  const cols = byFair ? 7 : 5;
+  const columns = useMemo(() => fairColumns(byFair), [byFair]);
+  const keyOf = useMemo(() => new Map((r?.adjustments ?? []).map((a, i) => [a, `${a.docNo}|${a.kind}|${a.date}|${i}`] as const)), [r]);
 
   return (
     <div className="space-y-3">
@@ -227,42 +360,22 @@ export const EventCommissionTab = () => {
             <Toggle<string> value={brands.includes(brand) ? brand : ''} options={[['', 'All brands'], ...brands.map((b): [string, string] => [b, b])]} onChange={setBrand} />
           )}>
           {r.fairs.length === 0 ? <div className="px-1 py-2 text-[12px] text-ink-muted">{words.part1Empty}</div> : (
-            <div className={SCROLL}>
-              <table className="w-full border-separate border-spacing-0">
-                <thead className="sticky top-0 z-10">
-                  <tr>
-                    <th className={TH_L}>Fair</th>
-                    <th className={TH_L}>Dates</th>
-                    <th className={TH_R}>Rate</th>
-                    {byFair && <th className={TH_R}>Total sales</th>}
-                    {byFair && <th className={TH_R}>Estimate</th>}
-                    <th className={TH_R}>Orders</th>
-                    <th className={TH_R}>Commission</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {active.map((f) => <FairRows key={f.id} fair={f} byFair={byFair} open={open.has(f.id)} onToggle={() => toggle(f.id)} />)}
-                  {idle.length > 0 && (
-                    <tr className="cursor-pointer hover:bg-surface-2/50" onClick={() => setShowIdle((v) => !v)} aria-expanded={showIdle}>
-                      <td className={cn(TD_L, 'text-ink-secondary')} colSpan={cols}>
-                        <span className="inline-flex items-center gap-1">
-                          {showIdle ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                          {idle.length} fair{idle.length === 1 ? '' : 's'} with no orders yet
-                        </span>
-                      </td>
-                    </tr>
-                  )}
-                  {showIdle && idle.map((f) => <FairRows key={f.id} fair={f} byFair={byFair} open={false} onToggle={() => {}} dim />)}
-                  <tr className="font-semibold">
-                    <td className={TD_L} colSpan={3}>Total</td>
-                    {byFair && <td className={TD_R}>{amtRm(r.fairs.reduce((s, f) => s + (f.totalSalesRm ?? 0), 0))}</td>}
-                    {byFair && <td className={TD_R}>{amtRm(r.fairs.reduce((s, f) => s + (f.estimateRm ?? 0), 0))}</td>}
-                    <td className={TD_R}>{r.fairs.reduce((s, f) => s + f.sos.length, 0)}</td>
-                    <td className={TD_R}>{fmtRm(r.totals.payableSen)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+            <>
+              <DataTable<CommissionFairRow>
+                tableId="event-commission-fairs" exportName={`event-commission-fairs-${range.from}-${range.to}`}
+                columns={columns} rows={showIdle ? [...active, ...idle] : active} getRowKey={(f) => f.id}
+                emptyLabel="Every fair in this range has no orders yet."
+                onRowClick={(f) => toggle(String(f.id))}
+                expandable={{ render: (f) => <FairOrders fair={f} />, rowKey: (f) => String(f.id), expandedIds: open, onExpandedChange: setOpen }}
+              />
+              {idle.length > 0 && (
+                <button type="button" aria-expanded={showIdle} onClick={() => setShowIdle((v) => !v)}
+                  className="mt-2 inline-flex items-center gap-1 text-[12px] text-ink-secondary hover:text-primary">
+                  {showIdle ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  {idle.length} fair{idle.length === 1 ? '' : 's'} with no orders yet
+                </button>
+              )}
+            </>
           )}
         </Panel>
       )}
@@ -270,108 +383,13 @@ export const EventCommissionTab = () => {
       {r && (
         <Panel title={words.part2} hint="amounts in RM">
           {r.adjustments.length === 0 ? <div className="px-1 py-2 text-[12px] text-ink-muted">{words.part2Empty}</div> : (
-            <div className={SCROLL}>
-              <table className="w-full border-separate border-spacing-0">
-                <thead className="sticky top-0 z-10">
-                  <tr>
-                    <th className={TH_L}>Date</th>
-                    <th className={TH_L}>What</th>
-                    <th className={TH_L}>Order</th>
-                    <th className={TH_L}>Fair</th>
-                    <th className={TH_L}>Salesperson</th>
-                    <th className={TH_R}>Goods</th>
-                    <th className={TH_R}>Commission</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {r.adjustments.map((a, i) => (
-                    <tr key={`${a.docNo}-${a.kind}-${i}`}>
-                      <td className={cn(TD_L, 'whitespace-nowrap')}>{fmtDateOrDash(a.date)}</td>
-                      <td className={TD_L}>{KIND_LABEL[a.kind]}{a.beforeReach ? <span className="text-ink-muted"> · before 30% — counted when reached</span> : null}</td>
-                      <td className={cn(TD_L, 'whitespace-nowrap font-mono')}>{a.docNo}</td>
-                      <td className={TD_L}><FairName name={a.fairName} /></td>
-                      <td className={TD_L}>{a.salesperson ?? '—'}</td>
-                      <td className={TD_R}>{fmtRm(a.goodsSen)}</td>
-                      <td className={cn(TD_R, a.commissionSen < 0 && 'text-err')}>{fmtRm(a.commissionSen)}</td>
-                    </tr>
-                  ))}
-                  <tr className="font-semibold">
-                    <td className={TD_L} colSpan={6}>Total</td>
-                    <td className={TD_R}>{fmtRm(r.totals.adjustmentsSen)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+            <DataTable<CommissionAdjustment>
+              tableId="event-commission-earlier" exportName={`event-commission-earlier-${range.from}-${range.to}`}
+              columns={EARLIER_COLUMNS} rows={r.adjustments} getRowKey={(a) => keyOf.get(a) ?? a.docNo}
+            />
           )}
         </Panel>
       )}
     </div>
   );
 };
-
-function FairRows({ fair, byFair, open, onToggle, dim }: { fair: CommissionFairRow; byFair: boolean; open: boolean; onToggle: () => void; dim?: boolean }) {
-  const has = fair.sos.length > 0;
-  return (
-    <>
-      <tr className={cn(has && 'cursor-pointer hover:bg-surface-2/50', dim && 'text-ink-secondary')}
-        onClick={has ? onToggle : undefined} aria-expanded={has ? open : undefined}>
-        <td className={TD_L}>
-          <div className="flex items-start gap-1">
-            <span className="mt-0.5 w-[14px] shrink-0 text-ink-muted">{has ? (open ? <ChevronDown size={14} /> : <ChevronRight size={14} />) : null}</span>
-            <FairName name={fair.name} dim={dim} />
-          </div>
-        </td>
-        <td className={cn(TD_L, 'whitespace-nowrap')}>{fmtDayMonthRange(fair.startDate, fair.endDate)}</td>
-        <td className={TD_R}>{fair.ratePct == null ? <span className="text-ink-muted">no rate card</span> : `${fair.ratePct}%`}</td>
-        {byFair && <td className={TD_R}>{amtRm(fair.totalSalesRm)}</td>}
-        {byFair && <td className={TD_R}>{amtRm(fair.estimateRm)}</td>}
-        <td className={TD_R}>{fair.sos.length || '–'}</td>
-        <td className={cn(TD_R, 'font-semibold')}>{amt(fair.payableSen)}</td>
-      </tr>
-      {open && (
-        <tr>
-          <td colSpan={byFair ? 7 : 5} className="border-b border-border bg-surface-2/40 px-3 py-2">
-            <table className="w-full border-separate border-spacing-0 text-[12px]">
-              <thead>
-                <tr>
-                  <th className={TH_L}>Order</th>
-                  <th className={TH_L}>SO date</th>
-                  <th className={TH_L}>Salesperson</th>
-                  <th className={TH_L}>Customer</th>
-                  <th className={TH_R}>Goods</th>
-                  <th className={TH_R}>Paid</th>
-                  <th className={TH_L}>30% reached</th>
-                  <th className={TH_R}>Commission</th>
-                  <th className={TH_L}>Upsales / drop sales</th>
-                </tr>
-              </thead>
-              <tbody>
-                {fair.sos.map((s) => (
-                  <tr key={s.docNo}>
-                    <td className={cn(TD_L, 'whitespace-nowrap font-mono')}>{s.docNo}</td>
-                    <td className={cn(TD_L, 'whitespace-nowrap')}>{fmtDateOrDash(s.soDate)}</td>
-                    <td className={TD_L}>{s.salesperson ?? '—'}</td>
-                    <td className={TD_L}>{s.customer ?? '—'}</td>
-                    <td className={TD_R}>{fmtRm(s.goodsSen)}</td>
-                    <td className={TD_R}>{fmtRm(s.paidSen)} <span className="text-ink-muted">({s.paidPct}%)</span></td>
-                    <td className={cn(TD_L, 'whitespace-nowrap')}>{s.reachedOn ? fmtDateOrDash(s.reachedOn) : <span className="text-ink-muted">not yet</span>}</td>
-                    <td className={TD_R}>{amt(s.commissionSen)}</td>
-                    <td className={TD_L}>
-                      {s.changes.length === 0 ? <span className="text-ink-muted">—</span> : s.changes.map((ch, i) => (
-                        <div key={`${ch.date}-${i}`} className={ch.notCounted ? 'text-ink-muted' : undefined}>
-                          {ch.kind === 'upsale' ? '+' : '−'}RM {fmtRm(Math.abs(ch.deltaGoodsSen))} · {fmtDateOrDash(ch.date)}
-                          {ch.source === 'amendment' ? ' · amendment' : ''}
-                          {ch.notCounted ? ` · ${NOT_COUNTED[ch.notCounted]}` : ''}
-                        </div>
-                      ))}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </td>
-        </tr>
-      )}
-    </>
-  );
-}

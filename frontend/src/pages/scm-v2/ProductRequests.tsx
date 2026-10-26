@@ -16,8 +16,8 @@
 //   • the Purchaser (scm.product_request.approve) sees every request, approves
 //     or rejects it as a whole, builds each new-Model line's Model + SKU,
 //     raises the Purchase Consignment Order from it (PC Order New,
-//     ?fromProductRequest=) and closes it. Every rule is the server's; this
-//     page only asks.
+//     ?fromProductRequest=) — or a Purchase Order (PO New, same parameter;
+//     2990-0015) — and closes it. Every rule is the server's; this page only asks.
 // ----------------------------------------------------------------------------
 
 import { useMemo, useRef, useState } from 'react';
@@ -27,7 +27,7 @@ import { Button } from '@2990s/design-system';
 import { activeOptions, maintPickerValues } from '@2990s/shared';
 import {
   APPLICATION_LABEL, REQUEST_STATUS, REQUEST_TYPE_LABEL, awaitsPurchaser, emptyRequestLine, lineProductText, lineToInput, linesNeedingModel,
-  mayClose, mayRaisePco, needsModel, pcoNewFromRequestPath, productText, requesterMayChange, specText, totalQty,
+  mayClose, mayRaisePco, needsModel, pcoNewFromRequestPath, poNewFromRequestPath, productText, requesterMayChange, specText, totalQty,
   fetchProductRequestFileBlobUrl, useApproveProductRequest, useCloseProductRequest, useCreateModelFromRequest, useCreateProductRequest, useDeleteProductRequestFile,
   useProductRequest, useProductRequestFiles, useProductRequestSupplierOptions, useProductRequests, useRejectProductRequest, useUpdateProductRequest, useUploadProductRequestFile, useWithdrawProductRequest,
   type ProductRequest, type ProductRequestApplication, type ProductRequestInput, type ProductRequestLine, type ProductRequestLineInput, type ProductRequestType,
@@ -66,12 +66,12 @@ const StatusChip = ({ r }: { r: Pick<ProductRequest, 'status'> }) => (
 );
 
 type Filter = 'all' | 'waiting' | 'approved' | 'issued' | 'closed';
-const FILTERS: Array<[Filter, string]> = [['all', 'All'], ['waiting', 'Waiting for the Purchaser'], ['approved', 'Approved'], ['issued', 'PC Order raised'], ['closed', 'Rejected / withdrawn / closed']];
+const FILTERS: Array<[Filter, string]> = [['all', 'All'], ['waiting', 'Waiting for the Purchaser'], ['approved', 'Approved'], ['issued', 'Order raised'], ['closed', 'Rejected / withdrawn / closed']];
 const inFilter = (r: ProductRequest, f: Filter): boolean => {
   if (f === 'all') return true;
   if (f === 'waiting') return r.status === 'REQUESTED';
   if (f === 'approved') return r.status === 'APPROVED';
-  if (f === 'issued') return r.status === 'PCO_ISSUED';
+  if (f === 'issued') return r.status === 'PCO_ISSUED' || r.status === 'PO_ISSUED';
   return r.status === 'REJECTED' || r.status === 'WITHDRAWN' || r.status === 'CLOSED';
 };
 
@@ -123,6 +123,7 @@ export const ProductRequests = () => {
       <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2 }}>
         <StatusChip r={r} />
         {r.pco && <span style={{ ...soft, ...mono }}>{r.pco.pcNumber}</span>}
+        {r.po && <span style={{ ...soft, ...mono }}>{r.po.poNumber}</span>}
       </span>
     ), getValue: (r) => REQUEST_STATUS[r.status].label },
   ], [approver]);
@@ -158,7 +159,7 @@ export const ProductRequests = () => {
     reject.mutate({ id: r.id, note });
   };
   const onClose = async (r: ProductRequest) => {
-    const ok = await askConfirm({ title: `Close ${r.request_no}?`, body: 'Nothing more will be done on it. The PC Order, if any, stays as it is.', confirmLabel: 'Close request' });
+    const ok = await askConfirm({ title: `Close ${r.request_no}?`, body: 'Nothing more will be done on it. The PC Order or Purchase Order, if any, stays as it is.', confirmLabel: 'Close request' });
     if (!ok) return;
     close.mutate({ id: r.id });
   };
@@ -228,11 +229,17 @@ export const ProductRequests = () => {
               {approver && mayRaisePco(detail) && (
                 <Button variant="primary" size="sm" onClick={() => navigate(pcoNewFromRequestPath(detail.id))}>Raise PC Order</Button>
               )}
+              {approver && mayRaisePco(detail) && (
+                <Button variant="secondary" size="sm" onClick={() => navigate(poNewFromRequestPath(detail.id))}>Raise PO</Button>
+              )}
               {approver && mayClose(detail) && (
                 <Button variant="ghost" size="sm" onClick={() => void onClose(detail)} disabled={close.isPending}>Close request</Button>
               )}
               {detail.pco && (
                 <Link to={`/scm/purchase-consignment-orders/${detail.pco.id}`} style={{ fontSize: 'var(--fs-12)', color: 'var(--c-orange)' }}>Open {detail.pco.pcNumber} →</Link>
+              )}
+              {detail.po && (
+                <Link to={`/scm/purchase-orders/${detail.po.id}`} style={{ fontSize: 'var(--fs-12)', color: 'var(--c-orange)' }}>Open {detail.po.poNumber} →</Link>
               )}
             </>
           )}
@@ -244,7 +251,7 @@ export const ProductRequests = () => {
           )}
           {needsModel(detail) && approver && (
             <div style={{ padding: 'var(--space-3)', borderRadius: 8, background: 'var(--c-cream, #faf8f3)', fontSize: 'var(--fs-13)' }}>
-              {linesNeedingModel(detail).length === 1 ? 'One line asks' : `${linesNeedingModel(detail).length} lines ask`} for a Model the catalogue does not have yet. Build the Model and its first SKU on each of those lines, then raise the Purchase Consignment Order — a consignment receive books stock by SKU code.
+              {linesNeedingModel(detail).length === 1 ? 'One line asks' : `${linesNeedingModel(detail).length} lines ask`} for a Model the catalogue does not have yet. Build the Model and its first SKU on each of those lines, then raise the PC Order or Purchase Order — a receive books stock by SKU code.
             </div>
           )}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-3)', fontSize: 'var(--fs-13)' }}>
@@ -258,7 +265,9 @@ export const ProductRequests = () => {
             {detail.status !== 'REJECTED' && detail.decided_by && (
               <Meta label="Decided by" value={`${detail.decided_by}${detail.decided_at ? ` · ${fmtDateOrDash(detail.decided_at)}` : ''}${detail.decision_note ? ` · ${detail.decision_note}` : ''}`} />
             )}
-            <Meta label="PC Order" value={detail.pco ? <>{detail.pco.pcNumber} <span style={soft}>· {detail.pco.status.toLowerCase().replace('_', ' ')}</span></> : '—'} />
+            {detail.po
+              ? <Meta label="Purchase Order" value={<>{detail.po.poNumber} <span style={soft}>· {detail.po.status.toLowerCase().replace('_', ' ')}</span></>} />
+              : <Meta label="PC Order" value={detail.pco ? <>{detail.pco.pcNumber} <span style={soft}>· {detail.pco.status.toLowerCase().replace('_', ' ')}</span></> : '—'} />}
           </div>
           <LinesTable
             request={detail}

@@ -5,7 +5,7 @@
 // route and the rule must not be re-typed there.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { pcoFromRequestRefusal } from '../shared/product-request';
+import { orderFromRequestRefusal } from '../shared/product-request';
 import { recordEntityAudit, compactChanges, fieldChange, type AuditActor } from './entity-audit';
 
 type Row = Record<string, any>;
@@ -28,7 +28,7 @@ export async function loadRequestForPco(
     .eq('company_id', companyId).eq('request_id', requestId).order('line_no');
   if (lErr) return { ok: false, status: 500, body: { error: 'load_failed', reason: lErr.message } };
   const request = { ...(data as Row), lines: (lines ?? []) as Row[] };
-  const refusal = pcoFromRequestRefusal(request as { status: string; request_no: string; lines: Array<{ item_code: string | null }> });
+  const refusal = orderFromRequestRefusal(request as { status: string; request_no: string; lines: Array<{ item_code: string | null }> }, 'PCO');
   if (refusal) return { ok: false, status: 409, body: refusal };
   return { ok: true, request };
 }

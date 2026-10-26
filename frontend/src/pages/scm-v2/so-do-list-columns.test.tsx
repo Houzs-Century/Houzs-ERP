@@ -4,7 +4,7 @@
  * function the Export button runs (buildLineExportMatrix). */
 import { describe, expect, test, vi } from "vitest";
 import { buildLineExportMatrix } from "../../components/dataTableLineExport";
-import { doLineColumns, financeColumns, moneyColumn, soLineColumns } from "./so-do-list-columns";
+import { doChargeColumns, doLineColumns, financeColumns, moneyColumn, soLineColumns } from "./so-do-list-columns";
 import { SO_LABELS, type SoListLine } from "../../vendor/scm/lib/so-line-export-columns";
 import { DO_LABELS, type DoListLine } from "../../vendor/scm/lib/do-line-export-columns";
 
@@ -46,6 +46,31 @@ describe("no sen in the Sales Order file", () => {
     expect(col.exportFormat).toBe("date");
     const m = buildLineExportMatrix([{ doc_no: "X", local_total_sen: 0, lines: [soLine({ po_delivery_date: "2026-10-01" })] }], (r) => r.lines ?? [], [col]);
     expect(m.body).toEqual([["2026-10-01"]]);
+  });
+});
+
+describe("Transport and Storage columns (HC-0151)", () => {
+  const doLine = (over: Partial<DoListLine>): DoListLine => ({
+    id: "dl", line_no: 1, item_code: "X", erp_item_code: "X", description: null, description2: null, item_group: "service",
+    uom: "UNIT", location: "KL", qty: 1, m3: null, delivery_date: null, remark: null, invoiced_qty: null, returned_qty: null,
+    uninvoiced_qty: null, so_doc_no: null, invoice_nos: [], po_nos: [], ...over,
+  });
+  const row = { lines: [
+    doLine({ id: "a", item_code: "AKEMI MATT", transport_sen: null, storage_sen: null }),
+    doLine({ id: "b", item_code: "TRANSPORTATION CHARGES", transport_sen: 74000, storage_sen: null }),
+    doLine({ id: "c", item_code: "STORAGE", transport_sen: null, storage_sen: 30000 }),
+  ] };
+  const [transport, storage] = doChargeColumns<typeof row>();
+
+  test("the row sums its lines; each column starts hidden", () => {
+    expect([transport!.getValue!(row), storage!.getValue!(row)]).toEqual([74000, 30000]);
+    expect([transport!.defaultHidden, storage!.defaultHidden]).toEqual([true, true]);
+  });
+
+  test("the file puts each amount in ringgit on its own line only, so a sheet sum is right", () => {
+    const m = buildLineExportMatrix([row], (r) => r.lines, [transport!, storage!]);
+    expect(m.header).toEqual(["Transport Charges", "Storage Charges"]);
+    expect(m.body).toEqual([[null, null], [740, null], [null, 300]]);
   });
 });
 

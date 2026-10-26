@@ -1790,10 +1790,16 @@ function DataTableInner<T, L>({
   // Per-column filters apply first (client-side, loaded rows only), then
   // sort — the SAME functions the line export runs over every fetched row
   // (dataTableRows.ts).
-  const searchBlobs = useMemo(
-    () => (clientSearching && rows ? new Map(rows.map((r) => [r, buildSearchBlob(r, allColumns)])) : null),
-    [clientSearching, rows, allColumns],
-  );
+  /* Only build the per-row search index when the box actually has a query.
+     filteredRows already no-ops the index when the trimmed query is empty
+     (`searchBlobs && q ? … : rows`), so gating here is behaviour-identical — but
+     it skips scanning every row × every column on each refetch / poll while the
+     box is empty (the common case), and rebuilds only as the (150ms-debounced)
+     query changes. PERF 2026-10-23. */
+  const searchBlobs = useMemo(() => {
+    const q = clientQuery.trim();
+    return clientSearching && rows && q ? new Map(rows.map((r) => [r, buildSearchBlob(r, allColumns)])) : null;
+  }, [clientSearching, rows, allColumns, clientQuery]);
   const filteredRows = useMemo(() => {
     if (!rows) return rows;
     const q = clientQuery.trim().toLowerCase();
@@ -1954,6 +1960,22 @@ function DataTableInner<T, L>({
     return out;
   }, [limitedRows, groupLevels, collapsedGroupSet]);
 
+  /* Collapse-all / Expand-all (owner "like Google Sheets" row outline, 2026-10-24):
+     one control to fold every group to its header row or open them all, on top of
+     the existing per-group collapse (clicking a header). Folds the TOP level, so a
+     nested outline collapses to its outermost groups, exactly as a sheet does. */
+  const topGroupPaths = useMemo(
+    () => renderList.flatMap((it) => (it.kind === "group" && it.level === 0 ? [it.path] : [])),
+    [renderList],
+  );
+  const allGroupsCollapsed =
+    topGroupPaths.length > 0 && topGroupPaths.every((p) => collapsedGroupSet.has(p));
+  const collapseAllGroups = useCallback(
+    () => setCollapsedGroups((prev) => [...new Set([...prev, ...topGroupPaths])]),
+    [topGroupPaths, setCollapsedGroups],
+  );
+  const expandAllGroups = useCallback(() => setCollapsedGroups([]), [setCollapsedGroups]);
+
   // Density-aware cell padding. Tightened on 2026-05-08 — every row
   // is one line of data, full stop. Old comfy (py-3.5) and old
   // compact (py-2) both wasted vertical space; the new values
@@ -1994,13 +2016,21 @@ function DataTableInner<T, L>({
     selectableKeys.some((k) => selection.selectedIds.has(k));
 
   // ── Row windowing (page-scroll-preserving) ─────────────────────────────────
-  // Only the common flat case: grouped / expandable tables and short lists render
-  // in full (unchanged). The tbody is measured against the viewport on scroll
-  // (from ANY ancestor — a capturing window listener catches non-bubbling scroll
-  // events) and on resize; only the visible slice of rows is rendered, bracketed
-  // by two spacer <tr>s that reserve the off-screen height so the page scrollbar
-  // and sticky header behave exactly as before. Row height is measured from a
-  // real row so the spacers can't drift (avoids the HOOKKA getTotalSize lag).
+  // Short lists and (while a row is open) expandable tables render in full. The
+  // tbody is measured against the viewport on scroll (from ANY ancestor — a
+  // capturing window listener catches non-bubbling scroll events) and on resize;
+  // only the visible slice of `renderList` is rendered, bracketed by two spacer
+  // <tr>s that reserve the off-screen height so the page scrollbar and sticky
+  // header behave exactly as before. Row height is the AVERAGE of the drawn items
+  // so the spacers can't drift (avoids the HOOKKA getTotalSize lag).
+  //
+  // GROUPED lists window too (owner follow-up 2026-10-23). `renderList` already
+  // interleaves non-sticky group-header items with row items and already drops
+  // collapsed groups' rows, so the slice path and collapse-shrinks-the-DOM both
+  // work unchanged; the height average blends header (`data-vgrp`) and row
+  // (`data-vrow`) heights (near-equal one-liners) so the per-item spacer estimate
+  // stays honest. A flat list has no `data-vgrp` rows, so its behaviour is
+  // byte-identical to before.
   // `expandable` used to disqualify a table outright. That excluded the single
   // largest list in the app: /scm/inventory's balances table is expandable (the
   // chevron opens per-warehouse / variant detail) and measured 2026-08-01 at
@@ -2017,7 +2047,7 @@ function DataTableInner<T, L>({
   // risky state is simply never the windowed one. Collapsing the last row
   // returns it to the windowed path.
   const canVirtualize =
-    showTable && !effectiveLoading && !error && groupLevels.length === 0 &&
+    showTable && !effectiveLoading && !error &&
     (!expandable || expandedRowsEffective.size === 0) &&
     renderList.length > VIRTUAL_ROW_THRESHOLD;
   const tbodyRef = useRef<HTMLTableSectionElement>(null);
@@ -2062,9 +2092,10 @@ function DataTableInner<T, L>({
       raf = 0;
       const el = tbodyRef.current;
       if (!el) return;
-      /* The average of the rows drawn, not the first one: with text wrapped the
-         rows are no longer one height. */
-      const drawn = el.querySelectorAll<HTMLElement>("tr[data-vrow]");
+      /* The average of the items drawn, not the first one: with text wrapped the
+         rows are no longer one height, and a grouped list mixes row heights with
+         group-header (data-vgrp) heights. */
+      const drawn = el.querySelectorAll<HTMLElement>("tr[data-vrow], tr[data-vgrp]");
       let sum = 0;
       drawn.forEach((tr) => { sum += tr.offsetHeight; });
       if (drawn.length > 0 && sum > 0) rowHeightRef.current = sum / drawn.length;
@@ -2298,6 +2329,9 @@ function DataTableInner<T, L>({
             endHeaderDrag();
           }}
           onRemove={(k) => setUserGroups((prev) => prev.filter((x) => x !== k))}
+          allCollapsed={allGroupsCollapsed}
+          onCollapseAll={collapseAllGroups}
+          onExpandAll={expandAllGroups}
         />
       )}
       {showTable && (
@@ -2642,6 +2676,7 @@ function DataTableInner<T, L>({
                     return (
                       <tr
                         key={`grp:${item.path}`}
+                        data-vgrp=""
                         onClick={() => toggleGroup(item.path)}
                         className="cursor-pointer select-none bg-surface-dim/70 transition-colors hover:bg-surface-dim"
                       >

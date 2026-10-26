@@ -25,7 +25,7 @@ import { Save, Trash2, X } from 'lucide-react';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { Button } from '@2990s/design-system';
 import { formatPhone } from '@2990s/shared/phone';
-import { useCreatePurchaseConsignmentOrder } from '../../vendor/scm/lib/purchase-consignment-order-queries';
+import { useCreatePurchaseConsignmentOrder, usePurchaseConsignmentOrderDetail } from '../../vendor/scm/lib/purchase-consignment-order-queries';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import {
   useSuppliers,
@@ -157,6 +157,39 @@ export const PurchaseConsignmentOrderNew = () => {
     if (seeded.length > 0) setLines(seeded);
     setRequestSeeded(true);
   }, [fromProductRequest, requestSeeded, sourceRequest]);
+
+  /* Copy as new (HC-0149): ?copyFrom=<orderId> seeds supplier, purchase location,
+     notes and lines from an existing order; dates, received qty, the product
+     request link and the number stay with the source. The copied price is kept
+     (priceTouched), the same rule the PO copy applies. */
+  const copyFrom = searchParams.get('copyFrom');
+  const copySource = usePurchaseConsignmentOrderDetail(copyFrom);
+  const [copySeeded, setCopySeeded] = useState(false);
+  useEffect(() => {
+    if (!copyFrom || copySeeded || !copySource.data) return;
+    const h = copySource.data.purchaseOrder;
+    setSupplierId(h.supplier_id);
+    if (h.purchase_location_id) setPurchaseLocationId(h.purchase_location_id);
+    if (h.notes) setNotes(h.notes);
+    if (copySource.data.items.length > 0) {
+      setLines(copySource.data.items.map((it): DraftLine => ({
+        ...newLine(),
+        bindingId:    it.binding_id ?? undefined,
+        materialKind: it.material_kind,
+        itemCode:     it.item_code,
+        materialName: it.material_name,
+        supplierSku:  it.supplier_sku ?? undefined,
+        qty:          it.qty,
+        unitPriceSen: it.unit_price_sen,
+        discountSen:  it.discount_sen ?? 0,
+        warehouseId:  it.warehouse_id ?? h.purchase_location_id ?? undefined,
+        category:     it.item_group ?? undefined,
+        variants:     it.variants ?? {},
+        priceTouched: true,
+      })));
+    }
+    setCopySeeded(true);
+  }, [copyFrom, copySeeded, copySource.data]);
 
   // ── Data ────────────────────────────────────────────────────────────
   const suppliers       = useSuppliers({ status: 'ACTIVE' });

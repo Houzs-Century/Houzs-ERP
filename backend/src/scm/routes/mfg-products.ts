@@ -38,6 +38,7 @@ import { categorySwapAllowed } from '../shared/category-swap';
 import { PRODUCT_CODE_CASCADE } from '../lib/product-code-rename';
 import { moveModelCategory, planModelCategoryMoves, type ImportModelMove } from '../lib/model-category-move';
 import { ensureModelForSku, modelCodeForSku } from '../lib/ensure-model-for-sku';
+import { newSkuPosActive } from '../lib/new-sku-pos-active';
 import { MFG_PRODUCT_CATEGORIES, MFG_CATEGORY_LABELS, mfgCategoryLabel, parseMfgCategory } from '../shared/product-categories';
 
 export const mfgProducts = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -309,7 +310,8 @@ mfgProducts.get('/bound-codes', async (c) => {
    have always imported it from this file. */
 export { MFG_PRODUCT_CATEGORIES };
 const VALID_CATEGORIES = new Set<string>(MFG_PRODUCT_CATEGORIES);
-mfgProducts.post('/', async (c) => {
+/* Exported so the new-SKU defaults (newSkuPosActive) can be driven by a test. */
+export const createMfgProductHandler = async (c: AppContext) => {
   const gate = await requireRole(c);
   if (!gate.ok) return gate.res;
   let body: Record<string, unknown>;
@@ -343,6 +345,7 @@ mfgProducts.post('/', async (c) => {
     name,
     category,
     status: 'ACTIVE',
+    pos_active: newSkuPosActive(co.companyId, category),
     description: (body.description as string) ?? null,
     base_model: (body.baseModel as string) ?? null,
     size_code: (body.sizeCode as string) ?? null,
@@ -387,7 +390,8 @@ mfgProducts.post('/', async (c) => {
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
   return c.json(data, 201);
-});
+};
+mfgProducts.post('/', createMfgProductHandler);
 
 // ── POST /batch-import ─────────────────────────────────────────────────
 // Bulk upsert from a CSV import. Body: { rows: [{ code, name, category, ... }] }.
@@ -590,7 +594,9 @@ export const batchImportMfgProductsHandler = async (c: AppContext) => {
         ? crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
       const id = `mfg-${rand.replace(/-/g, '').slice(0, 12)}`;
-      ({ error } = await supabase.from('mfg_products').insert({ ...row, id, company_id: activeCompanyId(c) }));
+      ({ error } = await supabase.from('mfg_products').insert({
+        ...row, id, company_id: activeCompanyId(c), pos_active: newSkuPosActive(co.companyId, skuCategory),
+      }));
     }
     if (error) {
       failures.push({ code, reason: error.message });
@@ -782,7 +788,9 @@ export const patchMfgProductHandler = async (c: AppContext) => {
     status?: 'ACTIVE' | 'INACTIVE';
     /** D5 (cost/sell split Phase 2) — selling-only POS catalog visibility.
         Master Account (POS) writes this; SEPARATE from `status` (cost/PO).
-        The Backend cost editor never sends it. */
+        The Backend cost editor never sends it. EXTERNAL CLIENT: 2990's POS
+        Modular "Show in POS" switch (apps/pos/src/pages/Products.tsx), which
+        new single-SKU products wait on (lib/new-sku-pos-active.ts). */
     posActive?: boolean;
     /** D7 (Phase 3) — permanent free gifts ({addonId, qty}[]). Master Account
         sets; Configurator renders "× N INCLUDED". Display-only, no inventory. */
