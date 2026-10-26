@@ -18,6 +18,25 @@ const CO = Number(process.env.COMPANY_ID || 1);
 const MONTH = process.env.MONTH || '2026-09';
 const rm = (sen) => (Number(sen ?? 0) / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const out = (s) => console.log(`ROW|${s}`);
+
+/* PostgREST runs every call in its own transaction; this script runs them all in
+   ONE. A failed rpc (the audit pre-flight's probe, where the function is not
+   deployed) would abort the whole transaction here and nowhere in production —
+   so each rpc runs in its own savepoint, which a failure rolls back alone. */
+const savepointRpc = (tx, sb) => {
+  sb.rpc = async (name, args) => {
+    try {
+      return await tx.savepoint(async (sp) => {
+        const r = await pgrestShim(sp, 'scm').rpc(name, args);
+        if (r.error) throw Object.assign(new Error(r.error.message), { rpcError: r.error });
+        return r;
+      });
+    } catch (e) {
+      return { data: null, error: e.rpcError ?? { message: e instanceof Error ? e.message : String(e) } };
+    }
+  };
+  return sb;
+};
 const lastDay = (m) => new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 0)).toISOString().slice(0, 10);
 const next = (m) => new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 1)).toISOString().slice(0, 7);
 
@@ -36,7 +55,7 @@ async function main() {
         WHERE table_schema = 'scm' AND grantee = 'service_role' AND table_name = 'event_commission_closes'`;
       out(`service_role: ${grants[0]?.p ?? 'NONE'}`);
 
-      const sb = pgrestShim(tx, 'scm');
+      const sb = savepointRpc(tx, pgrestShim(tx, 'scm'));
       const ctx = ({ query = {}, body = {} } = {}) => ({
         env: { DB: d1Compat(() => tx) },
         req: { query: (k) => query[k], json: async () => body, path: '/api/scm/acc-events/commission' },
