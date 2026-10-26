@@ -106,6 +106,8 @@
 //      BEFORE_TS=<ISO> optional cutoff (default: now) — only OUTs created before it
 //      are eligible, mirroring the function's temporal guard (retro-cost mode).
 //      DOS=<comma-separated DO numbers> — basis-cost mode only, REQUIRED there.
+//      ITEM_CODES=<comma-separated item codes> — retro-cost only, optional: repair only
+//      these codes' buckets (blank = every bucket).
 // Mirrors the read-only shape of check-inventory-integrity.mjs; this one WRITES
 // only under APPLY=true.
 // ----------------------------------------------------------------------------
@@ -147,12 +149,17 @@ const APPLY = /^(1|true|yes)$/i.test(process.env.APPLY ?? "");
 const BEFORE_TS = process.env.BEFORE_TS || new Date().toISOString();
 const MODE = (process.env.MODE || "retro-cost").trim().toLowerCase();
 const DOS = (process.env.DOS || "").split(",").map((s) => s.trim()).filter(Boolean);
+const ITEM_CODES = (process.env.ITEM_CODES || "").split(",").map((s) => s.trim()).filter(Boolean);
 if (!["retro-cost", "relabel", "basis-cost", "reconstruct", "doc-relabel"].includes(MODE)) {
   console.error(`MODE must be retro-cost | relabel | basis-cost | reconstruct | doc-relabel (got "${MODE}")`);
   process.exit(2);
 }
 if (MODE === "basis-cost" && DOS.length === 0) {
   console.error("MODE=basis-cost requires DOS=<comma-separated DO numbers> — this mode seeds a REFERENCE cost and must never run open-ended.");
+  process.exit(2);
+}
+if (ITEM_CODES.length > 0 && MODE !== "retro-cost") {
+  console.error(`ITEM_CODES limits retro-cost only; MODE=${MODE} would ignore it and run open-ended.`);
   process.exit(2);
 }
 
@@ -233,7 +240,7 @@ async function main() {
 
   // ── Candidate buckets: every bucket whose Σ(OUT qty) ≠ Σ(consumed qty).
   //    This is the repairable lens — the uncosted-OUT set the detector reports.
-  const buckets = await pg.unsafe(`
+  const allBuckets = await pg.unsafe(`
     WITH out_mov AS (
       SELECT ${coSel},
              m.warehouse_id::text AS warehouse_id,
@@ -256,6 +263,8 @@ async function main() {
       FROM out_mov
      WHERE out_qty <> costed_qty
      ORDER BY (out_qty - costed_qty) DESC, item_code ASC`);
+  const buckets = ITEM_CODES.length > 0 ? allBuckets.filter((b) => ITEM_CODES.includes(b.item_code)) : allBuckets;
+  if (ITEM_CODES.length > 0) notice(`ITEM_CODES limit: ${ITEM_CODES.join(" | ")} (${allBuckets.length} uncosted buckets in total, ${buckets.length} kept)`);
 
   notice(`buckets with uncosted OUT units (Σ OUT qty ≠ Σ consumed): ${buckets.length}`);
   notice("");
