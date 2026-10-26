@@ -2574,7 +2574,7 @@ deliveryOrdersMfg.get('/', async (c) => {
   if (paginate) {
     /* The page's lines and AutoCount header spellings, for the grid's line
        columns — the same read the export uses (lib/do-list-lines.ts). */
-    const withLines = await attachDoLines(sb, c, deliveryOrders);
+    const withLines = await attachDoLines(sb, c, deliveryOrders, { charges: canViewScmFinance(c) });
     if (withLines.error) return c.json({ error: 'lines_read_failed', reason: withLines.error }, 500);
     return c.json({ deliveryOrders, total, page, pageSize, statusCounts });
   }

@@ -14,6 +14,7 @@ import type { Column } from "../../components/DataTable";
 import { lineSumColumn, lineTextColumn } from "../../components/dataTableLineCells";
 import { SO_LABELS, senToRinggit, type SoListLine } from "../../vendor/scm/lib/so-line-export-columns";
 import { DO_LABELS, type DoListLine } from "../../vendor/scm/lib/do-line-export-columns";
+import { COLUMN_GROUPS } from "../../lib/columnGroups";
 
 type Sen = number | null | undefined;
 
@@ -143,6 +144,24 @@ export function soLineColumns<R extends { lines?: SoListLine[] }>(): Record<stri
     erp_item_code: text("erp_item_code", SO_LABELS.erpItemCode, (l) => l.erp_item_code, { width: "180px", mono: true, hidden: true }),
     line_id: text("line_id", SO_LABELS.lineId, (l) => l.id, { width: "300px", mono: true, hidden: true }),
   };
+}
+
+/** HC-0151 (Finance): the transport and storage charges, each line's own amount
+ *  in the file (a document-level amount would repeat on every line row and sum
+ *  wrong), the delivery order's total on screen. Finance viewers only — the
+ *  backend sends the amounts to no one else. Hidden by default like Amount. */
+export function doChargeColumns<R extends { lines?: DoListLine[] }>(): Column<R, DoListLine>[] {
+  const linesOf = (r: R): readonly DoListLine[] => r.lines ?? [];
+  const charge = (key: string, label: string, pick: (l: DoListLine) => number | null | undefined) =>
+    lineSumColumn<R, DoListLine>({
+      key, label, linesOf, pick: (l) => pick(l) ?? null, exportFormat: "money",
+      toExport: (sen) => senToRinggit(sen, 2), format: (sum) => fmtSen(sum), defaultHidden: true,
+      group: COLUMN_GROUPS.amounts, // "transport" alone would file it under Logistics
+    });
+  return [
+    charge("transport_charges", "Transport Charges", (l) => l.transport_sen),
+    charge("storage_charges", "Storage Charges", (l) => l.storage_sen),
+  ];
 }
 
 /** The Delivery Order grid's line columns, keyed. No price or amount exists on
