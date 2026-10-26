@@ -39,6 +39,7 @@ import { DeliveryFieldsDrawer } from '../../vendor/scm/components/DeliveryFields
 import { NewDpOrderDrawer } from '../../vendor/scm/components/NewDpOrderDrawer';
 import { SetJobDateDrawer } from '../../vendor/scm/components/SetJobDateDrawer';
 import { ScheduleDpOrderDrawer } from '../../vendor/scm/components/ScheduleDpOrderDrawer';
+import { useBoardChangePoll } from '../../vendor/scm/lib/board-change-poll';
 import { ScheduleTripDrawer } from '../../vendor/scm/components/ScheduleTripDrawer';
 import { SendDeliveryMessageModal, KIND_AFTER_STATUS, SKIP_LABEL, type SendMessageKind } from '../../vendor/scm/components/SendDeliveryMessageModal';
 import {
@@ -264,6 +265,8 @@ export const DeliveryPlanning = () => {
      locally it is instant and the region chip no longer triggers a load. */
   /* The working tabs skip Delivered rows (72% of the payload, re-downloaded on
      every edit - 2026-10-26); All and Delivered still read every row. */
+  // Others' changes show within 30 s, only the changed orders re-read (board-change-poll.ts).
+  useBoardChangePoll();
   const needsDelivered = activeState === 'ALL' || activeState === 'DELIVERED';
   const { data, isLoading: firstLoad, isPlaceholderData, error } = useDeliveryPlanning({ region: 'ALL', state: needsDelivered ? 'ALL' : 'OPEN' });
   const isLoading = firstLoad || (needsDelivered && isPlaceholderData);

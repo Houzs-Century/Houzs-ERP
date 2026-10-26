@@ -74,6 +74,7 @@ import { deriveBranding } from '../lib/so-display-branding';
 /* chunkIn on every id/doc-no filter: the list rides in the URL and an unbounded one is refused. */
 import { docsEnteringPendingSchedule, stampPendingSchedule } from '../lib/pending-schedule-stays';
 import { boardSlice, splitDeliveredForOpen, addSkippedDelivered, parseOnlyDocs, onlyDocsFilter } from '../lib/delivery-board-slice';
+import { boardChangesHandler } from './delivery-planning-changes';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { attachBoardAcExemptionExpiry } from '../lib/ac-exemption-expiry';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
@@ -1535,6 +1536,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   return c.json({ orders: slice.orders, counts, regions: regionCfg.regions, ...(slice.deliveredByRegion ? { delivered_by_region: slice.deliveredByRegion } : {}) });
 };
 deliveryPlanning.get('/', deliveryPlanningBoardHandler);
+deliveryPlanning.get('/changes', boardChangesHandler);
 
 /* ──────────────────────────────────────────────────────────────────────────
    GET /delivery-planning/geo?date=YYYY-MM-DD&region=<ALL|code>
