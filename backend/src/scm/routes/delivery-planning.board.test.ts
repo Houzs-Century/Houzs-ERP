@@ -505,3 +505,27 @@ describe('GET /delivery-planning — an order that reaches Pending Schedule stay
     ])).toEqual(['A']);
   });
 });
+
+/* 2026-10-26: state=OPEN skips the per-order reads for status-DELIVERED orders
+   and still counts them on the Delivered badge. */
+describe('GET /delivery-planning?state=OPEN', () => {
+  it('leaves a delivered order out of the rows and in the Delivered count', async () => {
+    const delivered = { ...so('HC-SO-2608-009', 1), status: 'DELIVERED' };
+    const sb = fakeSb({ warehouses: [], mfg_sales_orders: [so('HC-SO-2608-001', 1), delivered], mfg_sales_order_items: [soLine('HC-SO-2608-001', 'li-1'), soLine('HC-SO-2608-009', 'li-9')], delivery_order_items: [], delivery_orders: [] }, {});
+    const app = new Hono<{ Bindings: Env; Variables: Variables }>();
+    app.use('*', async (c, next) => {
+      c.set('supabase', sb as unknown as Variables['supabase']);
+      c.set('companyId', 1 as Variables['companyId']);
+      c.set('user', { id: 'u1' } as unknown as Variables['user']);
+      c.set('houzsUser', { id: 9, name: 'Tester', permissions_set: new Set(['*']) } as unknown as Variables['houzsUser']);
+      await next();
+    });
+    app.get('/delivery-planning', deliveryPlanningBoardHandler);
+    const open = (await (await app.request('/delivery-planning?state=OPEN')).json()) as { orders: Array<{ so_doc_no: string }>; counts: Record<string, number>; delivered_by_region: Record<string, number> };
+    const all = (await (await app.request('/delivery-planning')).json()) as { counts: Record<string, number> };
+    expect(open.orders.map((o) => o.so_doc_no)).toEqual(['HC-SO-2608-001']);
+    expect(open.counts.DELIVERED).toBe(all.counts.DELIVERED);
+    expect(open.counts.ALL).toBe(all.counts.ALL);
+    expect(Object.values(open.delivered_by_region).reduce((a, b) => a + b, 0)).toBe(1);
+  });
+});

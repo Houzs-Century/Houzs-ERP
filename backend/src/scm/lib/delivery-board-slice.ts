@@ -17,3 +17,33 @@ export function boardSlice<T extends { delivery_state: string; regions: readonly
   }
   return { orders, deliveredByRegion };
 }
+
+/** For state=OPEN, set the status-DELIVERED orders aside before the per-order
+ *  reads (lines, deliverable sums, DOs, balances, PO numbers): their board state
+ *  is DELIVERED no matter what those reads say (derivePlanningState), so the
+ *  board only needs to count them. */
+export function splitDeliveredForOpen<T extends { status: string | null }>(rows: T[], open: boolean): { kept: T[]; skipped: T[] } {
+  if (!open) return { kept: rows, skipped: [] };
+  const kept: T[] = []; const skipped: T[] = [];
+  for (const r of rows) (String(r.status ?? '').toUpperCase() === 'DELIVERED' ? skipped : kept).push(r);
+  return { kept, skipped };
+}
+
+/** Fold the set-aside Delivered orders into the badges: the region-scoped
+ *  counts and the per-region Delivered tally. */
+export function addSkippedDelivered<T>(
+  skipped: T[],
+  regionsOf: (r: T) => readonly string[],
+  regionParam: string,
+  counts: Record<string, number>,
+  deliveredByRegion: Record<string, number> | null,
+): void {
+  for (const r of skipped) {
+    const regions = regionsOf(r);
+    if (deliveredByRegion) for (const g of regions) deliveredByRegion[g] = (deliveredByRegion[g] ?? 0) + 1;
+    if (regionParam === 'ALL' || regionParam === '' || regions.includes(regionParam)) {
+      counts.DELIVERED = (counts.DELIVERED ?? 0) + 1;
+      counts.ALL = (counts.ALL ?? 0) + 1;
+    }
+  }
+}
