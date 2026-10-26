@@ -39,6 +39,12 @@ describe('stock take Excel export', () => {
     expect(ws.I5!.z).toBe(AMOUNT_FORMAT);
   });
 
+  it('works the variance out as counted − system, like the screen, when the stored one is null', async () => {
+    const { rows } = await grid([line({ system_qty: 3, counted_qty: 3, variance: null }), line({ id: 'l2', system_qty: 2, counted_qty: 5, variance: null })]);
+    expect(rows[4]![7]).toBe(0);
+    expect(rows[5]!.slice(7, 9)).toEqual([3, 1500]);
+  });
+
   it('leaves out System, Variance and Value when the server withheld the system qty', async () => {
     const { rows } = await grid([line({ system_qty: null, variance: null, est_unit_cost_sen: null })]);
     expect(rows[3]).toEqual(['SKU', 'Name', 'Variant', 'Counted Qty', 'Rack', 'Notes', 'Counted By']);

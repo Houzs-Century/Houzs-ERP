@@ -31,9 +31,11 @@ const INK = '#11140f';
 const text = (v: string | null | undefined): Cell => (v ? { value: v, type: String } : null);
 const qty = (v: number | null | undefined): Cell => (v == null ? null : { value: v, type: Number, align: 'right' });
 
-/* An UNCOUNTED line has no variance — a 0 there would say the count agreed. */
+/* counted − system, as the screen works it out: the stored `variance` column
+   came back null on prod for counted lines (HC-STK-2610-005). An UNCOUNTED
+   line has no variance — a 0 there would say the count agreed. */
 const varianceOf = (l: StockTakeLine): number | null =>
-  l.counted_qty == null || l.variance == null ? null : l.variance;
+  l.counted_qty == null || l.system_qty == null ? null : l.counted_qty - l.system_qty;
 
 export const systemQtyWithheld = (lines: StockTakeLine[]): boolean =>
   lines.length > 0 && lines.every((l) => l.system_qty == null);
