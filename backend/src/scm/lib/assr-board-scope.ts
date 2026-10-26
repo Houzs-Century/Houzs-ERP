@@ -35,6 +35,7 @@
    coordinator's board to only the cases they personally handled is a different
    decision nobody has made, and it would empty the board for dispatchers. */
 import { assrCompanySql } from '../../routes/assr';
+import { PAST_PICKUP_STAGES } from '../../lib/delivery-sheet-assr-feed';
 import type { CompanyScopeCtx } from './companyScope';
 import { canonicalizeMyState, isCanonicalMyState } from './canonical-state';
 
@@ -66,7 +67,9 @@ export const ASSR_CONFIRMED_COL = {
   customer_pickup: 'sched_pickup_date', inspection: 'sched_inspection_date', delivery: 'sched_delivery_date',
 } as const;
 
-const STAGE_ORDER = ['pending_review', 'pending_solution', 'under_verification', 'pending_supplier_pickup', 'pending_item_ready', 'pending_delivery_service', 'completed'];
+/* Stages AFTER each leg's own step (the HC sheet feed's rule): that leg is done. */
+const PAST_PICKUP = PAST_PICKUP_STAGES;
+const PAST_INSPECTION = new Set(['pending_supplier_pickup', ...PAST_PICKUP_STAGES]);
 
 export type AssrBoardCase = {
   stage: string | null;
@@ -89,7 +92,6 @@ export type AssrBoardLeg = {
  *  - a leg the case has moved past (picked up, inspected, case closed) is done:
  *    Delivered, never left in Pending Delivery. */
 export function assrBoardLegs(a: AssrBoardCase, caseClosed: boolean): AssrBoardLeg[] {
-  const at = STAGE_ORDER.indexOf(a.stage ?? '');
   const legs: AssrBoardLeg[] = [];
   const add = (jobKind: AssrBoardLeg['jobKind'], req: string | null | undefined, conf: string | null | undefined, done: boolean) => {
     const requested = req ?? null; const confirmed = conf ?? null;
@@ -99,10 +101,10 @@ export function assrBoardLegs(a: AssrBoardCase, caseClosed: boolean): AssrBoardL
   const pickupDated = Boolean(a.customer_pickup_at || a.sched_pickup_date);
   const pickupOwn = a.pickup_by === 'customer' || (a.pickup_by == null && (pickupDated || a.pickup_pic === 'Logistic'));
   if (pickupOwn && (pickupDated || a.stage === 'pending_supplier_pickup')) {
-    add('customer_pickup', a.customer_pickup_at, a.sched_pickup_date, caseClosed || Boolean(a.actual_pickup_at) || at > STAGE_ORDER.indexOf('pending_supplier_pickup'));
+    add('customer_pickup', a.customer_pickup_at, a.sched_pickup_date, caseClosed || Boolean(a.actual_pickup_at) || PAST_PICKUP.has(a.stage ?? ''));
   }
   if (a.inspection_by === 'own' && (a.inspection_visit_at || a.sched_inspection_date)) {
-    add('inspection', a.inspection_visit_at, a.sched_inspection_date, caseClosed || at > STAGE_ORDER.indexOf('under_verification'));
+    add('inspection', a.inspection_visit_at, a.sched_inspection_date, caseClosed || PAST_INSPECTION.has(a.stage ?? ''));
   }
   const deliveryDated = Boolean(a.do_date || a.sched_delivery_date);
   const deliveryOwn = a.delivery_by === 'own' || (a.delivery_by == null && deliveryDated);
