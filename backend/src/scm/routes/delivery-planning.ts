@@ -86,7 +86,7 @@ import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMa
 /* Service-Case rows on this board are company-scoped (owner ruling 2026-08-21).
    Both statements live in ONE module, with the reasoning, so the predicate is
    assertable and cannot be re-derived by hand here. */
-import { assrBoardLocation, assrOpenCaseGuardSql, ASSR_BOARD_LEGS } from '../lib/assr-board-scope';
+import { assrBoardLocation, assrOpenCaseGuardSql, ASSR_BOARD_LEGS, assrBoardLegs } from '../lib/assr-board-scope';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
@@ -1062,22 +1062,13 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       // A closed / archived case's legs are DONE → they belong on Delivered.
       const caseClosed = Boolean(a.closed_at) || Boolean(a.archived_at);
 
-      // One row per SET trigger date. job_kind = which date drives THIS row; the
-      // effective/board date is that trigger date so it lands in the schedule
-      // column. A date-but-not-yet-delivered case = PENDING_SCHEDULE (reuse the
-      // existing enum). Stock columns are null/'—' for ASSR rows.
-      const legs: Array<{ jobKind: 'customer_pickup' | 'delivery' | 'inspection'; date: string }> = [];
-      if (a.customer_pickup_at) legs.push({ jobKind: 'customer_pickup', date: a.customer_pickup_at });
-      // Own-team on-site inspection visit — a distinct fleet leg. Supplier-done
-      // inspections are handled on the supplier side, so they never surface here
-      // (the SELECT already gates this to inspection_by = 'own').
-      if (a.inspection_visit_at && a.inspection_by === 'own') legs.push({ jobKind: 'inspection', date: a.inspection_visit_at });
-      if (a.do_date)            legs.push({ jobKind: 'delivery',        date: a.do_date });
+      // Dated legs + the undated leg its stage waits on. Stock columns are '—' here.
+      const legs = assrBoardLegs(a, caseClosed);
 
       for (const leg of legs) {
         // A CLOSED case's leg only shows when it is recent (owner 2026-10-21: last
         // 90 days); older done service work stays off the board.
-        if (caseClosed && leg.date.slice(0, 10) < recentClosedSince) continue;
+        if (caseClosed && (leg.date ?? '').slice(0, 10) < recentClosedSince) continue;
         // so_doc_no is the React rowKey on the board — a case with two legs must
         // yield two DISTINCT keys, so suffix with the job_kind.
         const rowKey = `${assrNo}#${leg.jobKind}`;
@@ -1096,7 +1087,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           status: a.status ?? '',
           // Closed case's dated leg = done → Delivered; an open dated leg surfaces
           // under Pending Delivery until it's scheduled out (owner 2026-10-21).
-          delivery_state: caseClosed ? 'DELIVERED' : 'PENDING_DELIVERY',
+          delivery_state: caseClosed ? 'DELIVERED' : leg.date ? 'PENDING_DELIVERY' : 'PENDING_SCHEDULE',
           delivery_state_override: null,
           balance_sen: 0,
           balance_sen_live: null,
@@ -1182,7 +1173,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           trip_date: null,
           trip_stop_no: null,
           trip_eta_offset_s: null,
-          arrangement_stage: null,
+          arrangement_stage: !caseClosed && !leg.date ? 'PENDING_DATE' : null,
         });
       }
     }

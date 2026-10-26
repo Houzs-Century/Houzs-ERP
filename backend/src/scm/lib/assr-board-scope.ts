@@ -57,6 +57,31 @@ export const ASSR_LEG_BY_STOP: Record<string, string> = {
   PICKUP: 'customer_pickup', INSPECTION: 'inspection', DELIVERY: 'delivery', SERVICE: 'delivery',
 };
 
+/** Stages whose leg the fleet must still put a date on (owner 2026-10-26, option
+ *  A): an open case here with no date for that leg sits in Pending Schedule. */
+export const ASSR_AWAITING_DATE_STAGES = ['pending_supplier_pickup', 'pending_delivery_service'] as const;
+export const ASSR_LEG_AWAITING_DATE: Record<(typeof ASSR_AWAITING_DATE_STAGES)[number], 'customer_pickup' | 'delivery'> = {
+  pending_supplier_pickup: 'customer_pickup',
+  pending_delivery_service: 'delivery',
+};
+
+/** One board row per SET driving date (job_kind = the date that drives it), plus
+ *  an UNDATED row for the leg an open case's stage is waiting on - that row sits
+ *  in Pending Schedule until the fleet gives it a date. */
+export function assrBoardLegs(
+  a: { stage: string | null; customer_pickup_at: string | null; inspection_visit_at: string | null; inspection_by: string | null; do_date: string | null },
+  caseClosed: boolean,
+): Array<{ jobKind: 'customer_pickup' | 'delivery' | 'inspection'; date: string | null }> {
+  const legs: Array<{ jobKind: 'customer_pickup' | 'delivery' | 'inspection'; date: string | null }> = [];
+  if (a.customer_pickup_at) legs.push({ jobKind: 'customer_pickup', date: a.customer_pickup_at });
+  // Supplier-done inspections are handled on the supplier side, never a fleet leg.
+  if (a.inspection_visit_at && a.inspection_by === 'own') legs.push({ jobKind: 'inspection', date: a.inspection_visit_at });
+  if (a.do_date) legs.push({ jobKind: 'delivery', date: a.do_date });
+  const awaiting = ASSR_LEG_AWAITING_DATE[a.stage as keyof typeof ASSR_LEG_AWAITING_DATE];
+  if (awaiting && !caseClosed && !legs.some((l) => l.jobKind === awaiting)) legs.push({ jobKind: awaiting, date: null });
+  return legs;
+}
+
 export function assrBoardUnionSql(c: CompanyScopeCtx, recentClosedSince: string): string {
   // The State / Postcode columns (and the region bucket) come from the LINKED
   // Sales Order's real customer address, NOT from `location` (the branch/
@@ -69,6 +94,7 @@ export function assrBoardUnionSql(c: CompanyScopeCtx, recentClosedSince: string)
               assr_cases.assr_no       AS assr_no,
               assr_cases.company_id    AS company_id,
               assr_cases.status        AS status,
+              assr_cases.stage         AS stage,
               assr_cases.customer_name AS customer_name,
               assr_cases.phone         AS phone,
               assr_cases.location      AS location,
@@ -88,7 +114,8 @@ export function assrBoardUnionSql(c: CompanyScopeCtx, recentClosedSince: string)
                ORDER BY (o.doc_no = assr_cases.doc_no) DESC
                LIMIT 1) so ON TRUE
         WHERE (assr_cases.customer_pickup_at IS NOT NULL OR assr_cases.do_date IS NOT NULL
-               OR (assr_cases.inspection_visit_at IS NOT NULL AND assr_cases.inspection_by = 'own'))
+               OR (assr_cases.inspection_visit_at IS NOT NULL AND assr_cases.inspection_by = 'own')
+               OR assr_cases.stage IN (${ASSR_AWAITING_DATE_STAGES.map((s) => `'${s}'`).join(', ')}))
           AND ((assr_cases.closed_at IS NULL AND assr_cases.archived_at IS NULL)
                OR GREATEST(COALESCE(assr_cases.customer_pickup_at, ''), COALESCE(assr_cases.do_date, ''),
                            COALESCE(CASE WHEN assr_cases.inspection_by = 'own' THEN assr_cases.inspection_visit_at END, '')) >= '${recentClosedSince}')${assrCompanySql(c)}`;
