@@ -94,6 +94,7 @@ type LineDraft = {
   countedAt: string | null;
   /* Round 1: unit cost (sen) the post would value a variance at; null = none. */
   estUnitCostSen: number | null;
+  sourcePos: Array<{ po: string; qty: number }>;
   addedOnCount: boolean;
   /* Round 2: where the counter found the goods (moved there at post). */
   rackId: string | null;
@@ -118,6 +119,7 @@ const toDraft = (l: StockTakeLine): LineDraft => ({
   countedBy:        l.counted_by ?? null,
   countedAt:        l.counted_at ?? null,
   estUnitCostSen:   l.est_unit_cost_sen ?? null,
+  sourcePos:        l.source_pos ?? [],
   addedOnCount:     l.added_on_count === true,
   rackId:           l.rack_id ?? null,
   origRackId:       l.rack_id ?? null,
@@ -915,6 +917,7 @@ export const StockTakeDetail = () => {
                         {ln.variantLabel
                           ? <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)' }}>{ln.variantLabel}</span>
                           : <span className={styles.muted}>—</span>}
+                        <SourcePoNote line={ln} inGroup={inGroup} />
                       </td>
                       {!blindActive && (
                         <td className={styles.tableRight}
@@ -1086,6 +1089,7 @@ export const StockTakeDetail = () => {
                         <td className={styles.tableRight}
                             style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-13)', fontWeight: 600 }}>
                           {g.systemTotal == null ? '—' : fmtQty(g.systemTotal)}
+                          <BucketSplit lines={g.lines} />
                         </td>
                       )}
                       <td className={styles.tableRight}
@@ -1130,6 +1134,17 @@ export const StockTakeDetail = () => {
                           >
                             All zero
                           </button>
+                          {/* HC-0158: the collapsed header had no trash, so a whole model meant expanding and deleting line by line. */}
+                          <button
+                            type="button"
+                            onClick={() => setDeleteIds((cur) => new Set([...cur, ...g.lines.map((l) => l.id)]))}
+                            className={styles.chip}
+                            aria-label={`Delete all ${g.lines.length} lines of ${g.itemCode}`}
+                            title="Remove every line of this model shown here (on Save Counts)"
+                            style={{ fontSize: 'var(--fs-11)', cursor: 'pointer', marginLeft: 4 }}
+                          >
+                            <Trash2 size={12} strokeWidth={1.75} />
+                          </button>
                         </td>
                       )}
                     </tr>
@@ -1158,7 +1173,7 @@ export const StockTakeDetail = () => {
               <span style={{ flex: '1 1 auto' }}>
                 <strong>{deleteIds.size} line{deleteIds.size === 1 ? '' : 's'} deleted on Save Counts:</strong>{' '}
                 <span style={{ fontFamily: 'var(--font-mono)' }}>
-                  {lines.filter((l) => deleteIds.has(l.id)).map((l) => l.itemCode).join(', ')}
+                  {[...new Set(lines.filter((l) => deleteIds.has(l.id)).map((l) => l.itemCode))].join(', ')}
                 </span>
               </span>
               <button type="button" className={styles.chip} onClick={() => setDeleteIds(new Set())} style={{ cursor: 'pointer' }}>
@@ -1274,6 +1289,46 @@ const fmtSignedRM = (sen: number): string =>
    one), type the count, Add. HC-0140: the row waits on screen with its own
    remove button; Save Counts sends it, and the server's checks (variant
    required, already on the sheet) answer then. */
+/* HC-0158: a model whose variants hold +2 on one bucket and -1 / -1 on others
+   sums to 0 and read as "no stock"; the split says the buckets disagree. */
+function BucketSplit({ lines }: { lines: LineDraft[] }) {
+  let plus = 0;
+  let minus = 0;
+  for (const l of lines) {
+    if (l.systemQty == null) continue;
+    if (l.systemQty > 0) plus += l.systemQty;
+    else minus += l.systemQty;
+  }
+  if (plus === 0 || minus === 0) return null;
+  return (
+    <div title="Stock sits on some variants and is negative on others"
+      style={{ fontSize: 'var(--fs-11)', fontWeight: 400, color: 'var(--c-festive-b, #B8331F)', whiteSpace: 'nowrap' }}>
+      +{fmtQty(plus)} / −{fmtQty(-minus)}
+    </div>
+  );
+}
+
+/* HC-0158: the PO(s) behind the bucket's open lots, so sofa / bedframe stock
+   can be traced; the rest of a positive system qty came in without one. That
+   remainder is only named beside a PO or on a variant model's line: on a plain
+   SKU it is AC opening stock on every row and says nothing. */
+function SourcePoNote({ line, inGroup }: { line: LineDraft; inGroup: boolean }) {
+  const traced = line.sourcePos.reduce((s, p) => s + p.qty, 0);
+  const untraced = (inGroup || traced > 0) && line.systemQty != null && line.systemQty > traced
+    ? line.systemQty - traced : 0;
+  if (line.sourcePos.length === 0 && untraced === 0) return null;
+  return (
+    <div style={{ marginTop: 2, fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
+      {line.sourcePos.map((p) => (
+        <span key={p.po} style={{ marginRight: 8, whiteSpace: 'nowrap' }}>
+          <span style={{ fontFamily: 'var(--font-mono)' }}>{p.po}</span> × {fmtQty(p.qty)}
+        </span>
+      ))}
+      {untraced > 0 && <span style={{ whiteSpace: 'nowrap' }}>{fmtQty(untraced)} without PO</span>}
+    </div>
+  );
+}
+
 function AddFoundLine({ takeId, pending, onQueue, onRemove }: {
   takeId: string;
   pending: PendingLine[];

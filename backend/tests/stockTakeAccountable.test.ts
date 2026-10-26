@@ -476,6 +476,38 @@ describe('round 1 (owner 2026-10-06)', () => {
     const hidden = await (await harness(blind).app.request('/stock-takes/st-1')).json() as Row;
     expect(hidden.lines[0].est_unit_cost_sen).toBeNull();
   });
+
+  test('HC-0158: detail names the PO behind each bucket\'s open lots; a blind OPEN take withholds them', async () => {
+    const lot = (over: Row): Row => ({
+      company_id: CO, warehouse_id: 'w1', item_code: 'CODY', variant_key: '', unit_cost_sen: 1000,
+      qty_remaining: 1, source_doc_type: 'GRN', source_doc_id: null, batch_no: null,
+      received_at: '2026-08-01T00:00:00Z', ...over,
+    });
+    const t = takeFixture();
+    t.stock_take_lines.push({ ...t.stock_take_lines[0], id: 'ln-2', variant_key: 'fabric=a', system_qty: -1 });
+    t.inventory_lots = [
+      lot({ batch_no: 'HC-PO-009630', qty_remaining: 2 }),
+      lot({ source_doc_id: 'grn-1', qty_remaining: 3 }),
+      lot({ source_doc_id: 'grn-1', qty_remaining: 1 }),
+      lot({ source_doc_id: 'grn-2', qty_remaining: 0 }),
+      lot({ source_doc_type: 'AC_OPENING', qty_remaining: 4 }),
+      lot({ variant_key: 'fabric=a', source_doc_id: 'grn-2', qty_remaining: 0 }),
+    ];
+    t.grns = [
+      { id: 'grn-1', company_id: CO, purchase_order_id: 'po-1' },
+      { id: 'grn-2', company_id: CO, purchase_order_id: 'po-2' },
+    ];
+    t.purchase_orders = [
+      { id: 'po-1', company_id: CO, po_number: 'HC-PO-010086' },
+      { id: 'po-2', company_id: CO, po_number: 'HC-PO-010100' },
+    ];
+    const body = await (await harness(t).app.request('/stock-takes/st-1')).json() as Row;
+    expect(body.lines[0].source_pos).toEqual([{ po: 'HC-PO-009630', qty: 2 }, { po: 'HC-PO-010086', qty: 4 }]);
+    expect(body.lines[1].source_pos).toEqual([]);
+    const hidden = await (await harness({ ...t, stock_takes: [{ ...t.stock_takes[0], blind: true }] })
+      .app.request('/stock-takes/st-1')).json() as Row;
+    expect(hidden.lines[0].source_pos).toEqual([]);
+  });
 });
 
 describe('round 2 — racks and the paper sheet (owner 2026-10-06)', () => {
