@@ -963,6 +963,35 @@ export async function computeMrp(
     boundCompany
     && !!r.so_item_id
     && (isHardBoundLine(r.item_group, r.item_code) || demandBoundById.has(String(r.so_item_id)));
+  /* ── OWN PO FIRST (company 2 Sofa Accessory, 2990-0019) ─────────────────────
+     Sim 2026-10-26: 2990-PO-2610-059 was raised from 2990-SO-2610-049 (XAMMAR
+     + SQUARE PILLOW EZ-002), yet the pooled walk handed its pillow to
+     2990-SO-2610-046 (same fabric, same 11-24 delivery, smaller doc no) — a
+     HOOKKA pillow for a DORSETTLOFT sofa, and 049 asked to buy its pillow
+     twice. Every new pillow PO then slid one order up the queue (048's PO-062
+     went to 049). A Sofa Accessory is made in the customer's fabric with its
+     sofa, so its PO belongs to the line it was raised for — 「HC rules wont
+     have this kind of issue」.
+
+     Company 2 still pools; this only puts the line's OWN PO in front of the
+     pool, which is what the stored allocator already does at receipt (its
+     bound pass, so-stock-allocation.ts step 6b, is not company-gated): a linked
+     line takes its own received units, then its own open quantity, then the
+     pool like anyone else. Whatever its PO carries beyond the line's need, and
+     any link to a line that is no longer demand or sits in another bucket,
+     stays pooled. */
+  const ownPoFirst = new Map<string, { bucketKey: string; need: number }>();
+  if (!boundCompany) {
+    for (const d of demand) {
+      if ((d.item_group ?? '').toLowerCase() !== 'fabric_accessory') continue;
+      ownPoFirst.set(d.id, {
+        bucketKey: composite(d.warehouse_id ?? null, d.item_code, variantKeyOf(d.item_group, d.variants)),
+        need: effQtyOf(d),
+      });
+    }
+  }
+  const ownReceivedByLine = new Map<string, number>();
+  const ownOpenByLine = new Map<string, PoSupply[]>();
   const poRaisedFor = new Map<string, Set<string>>();
   for (const r of (poRaw ?? []) as unknown as PoLineRow[]) {
     if (!r.po || PO_DEAD.has(r.po.status)) continue;
@@ -1006,14 +1035,46 @@ export async function computeMrp(
       }
       continue;   // dedicated: never free supply for another line's bucket
     }
-    if (left <= 0) continue;
     const poWh = r.warehouse_id ?? r.po.purchase_location_id ?? null;
     if (whFilter && poWh !== whFilter) continue;
     const k = composite(poWh, r.item_code, variantKeyOf(r.item_group, r.variants));
+    const own = r.so_item_id ? ownPoFirst.get(String(r.so_item_id)) : undefined;
+    if (own && own.bucketKey === k) {
+      const soItemId = String(r.so_item_id);
+      const got = Number(r.received_qty ?? 0);
+      if (got > 0) ownReceivedByLine.set(soItemId, (ownReceivedByLine.get(soItemId) ?? 0) + got);
+      if (left > 0) {
+        const open = ownOpenByLine.get(soItemId) ?? [];
+        open.push({ poNumber: r.po.po_number, eta, qtyLeft: left, supplierId: r.po.supplier_id ?? null });
+        ownOpenByLine.set(soItemId, open);
+        if (r.po.supplier_id) poSupplierIds.add(r.po.supplier_id);
+      }
+      continue;   // split between the line and the pool below, once its receipts are summed
+    }
+    if (left <= 0) continue;
     poDrafts.push({
       bucketKey: k, poNumber: r.po.po_number, eta, qtyLeft: left, supplierId: r.po.supplier_id ?? null,
     });
     if (r.po.supplier_id) poSupplierIds.add(r.po.supplier_id);
+  }
+  for (const [soItemId, open] of ownOpenByLine) {
+    const own = ownPoFirst.get(soItemId)!;
+    let room = Math.max(0, own.need - (ownReceivedByLine.get(soItemId) ?? 0));
+    const kept: PoSupply[] = [];
+    for (const p of open.sort((a, b) => byDateAsc(a.eta, b.eta))) {
+      const keep = Math.min(room, p.qtyLeft);
+      room -= keep;
+      if (keep > 0) kept.push({ ...p, qtyLeft: keep });
+      if (p.qtyLeft > keep) {
+        poDrafts.push({ bucketKey: own.bucketKey, poNumber: p.poNumber, eta: p.eta, qtyLeft: p.qtyLeft - keep, supplierId: p.supplierId });
+      }
+    }
+    if (kept.length === 0) continue;
+    dedicatedOpenByLine.set(soItemId, kept);
+    /* Still on order for this bucket — the SKU row's PO Outstanding keeps
+       counting it, only the walk stops handing it to another line. */
+    const keptQty = kept.reduce((acc, p) => acc + p.qtyLeft, 0);
+    poOutstandingByKey.set(own.bucketKey, (poOutstandingByKey.get(own.bucketKey) ?? 0) + keptQty);
   }
 
   /* ── 4b. Remove what is already spoken for (2026-07-31) ─────────────────────
@@ -1082,6 +1143,15 @@ export async function computeMrp(
       ?? (d as unknown as Record<string, string | null>).allocatedBatchNo ?? null,
     remainingQty: effQtyOf(d),
   })));
+  /* The own-PO-first line's received units are on hand in its bucket: carve
+     them out of the free pool for that line, the same pairing as a batch lock. */
+  for (const [soItemId, got] of ownReceivedByLine) {
+    const own = ownPoFirst.get(soItemId)!;
+    const claim = Math.min(got, own.need);
+    if (claim <= 0 || batchClaims.qtyByLine.has(soItemId)) continue;
+    batchClaims.qtyByLine.set(soItemId, claim);
+    batchClaims.qtyByBucket.set(own.bucketKey, (batchClaims.qtyByBucket.get(own.bucketKey) ?? 0) + claim);
+  }
 
   // Resolve PO supplier ids → names for the read-only covered-line display.
   const supplierNameById = new Map<string, string>();
@@ -1344,7 +1414,8 @@ export async function computeMrp(
       let poSupplierId: string | null = null;
       /* An unbound line still takes its OWN linked purchase order first: that PO
          left the pool because the PO side is bound (see `isDedicated`), and nothing
-         else can draw it. Company 2 dedicates nothing, so its own queue is empty. */
+         else can draw it. On company 2 only a Sofa Accessory line has one (own PO
+         first, section 4a), and it falls through to the pool for the rest. */
       const queues = bound
         ? [dedicatedOpenByLine.get(r.id) ?? []]
         : [dedicatedOpenByLine.get(r.id) ?? [], poQueue];
