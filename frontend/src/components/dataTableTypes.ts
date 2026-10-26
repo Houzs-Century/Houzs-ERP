@@ -461,6 +461,14 @@ export interface DataTableProps<T, L = never> {
    *  search / Export / Columns above the rows; "table" lets them scroll away so
    *  the grid fills the screen (Delivery Planning, owner 2026-10-26). */
   freezeFrom?: "toolbar" | "table";
+  /** How tall a frozen table may be, for a page that stacks several tables:
+   *  "screen" — it fills the screen below the page header. By default a table
+   *  with more page below it shrinks (to the 240px minimum) so the page's scroll
+   *  can end on it, which on a report of several tables left each one six rows
+   *  in a box (owner on Event Commission 2026-10-26: 这个可以做宽一点吗？ → 做);
+   *  "off" — never frozen: the rows run in the page (a table opened inside
+   *  another table's row, whose own box already scrolls them). */
+  freezeHeight?: "screen" | "off";
   groupBy?: {
     /** Column key to group on. Must match a column with `getValue`. */
     key: string;

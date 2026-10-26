@@ -33,8 +33,12 @@ export type FreezeBox = { top: number; maxH: number; runway: number };
  *  empty state) — the freeze disarms and the page returns to plain flow.
  *  @param from "toolbar": search / Export / Columns stay on screen with the rows;
  *  "table": they scroll away too and the grid alone fills the screen (owner on
- *  Delivery Planning 2026-10-26: "把整个页面看满了，有一种 data grid 的感觉"). */
-export function useFrozenTableHeader(enabled: boolean, from: "toolbar" | "table") {
+ *  Delivery Planning 2026-10-26: "把整个页面看满了，有一种 data grid 的感觉").
+ *  @param fillScreen one of several tables stacked on a page (a report): once
+ *  frozen it is as tall as the screen allows and gives nothing back — the page
+ *  goes on below it, so there is no scroll end to land on and no runway to add
+ *  (owner on Event Commission 2026-10-26: six rows in a box → 做宽一点). */
+export function useFrozenTableHeader(enabled: boolean, from: "toolbar" | "table", fillScreen = false) {
   // ── Frozen table header (owner 2026-07-24: "每个table的header都要freeze") ──
   // The <thead> is position:sticky, but in the app's page-scroll layout the
   // horizontal-scroll wrapper captures the vertical sticky context yet never
@@ -118,6 +122,12 @@ export function useFrozenTableHeader(enabled: boolean, from: "toolbar" | "table"
          so a short table keeps its plain flow and never grows a scrollbar. */
       if (maxH < MIN_FREEZE_H || el.scrollHeight <= maxH) {
         setFreezeBox((prev) => (prev === null ? prev : null));
+        return;
+      }
+      if (fillScreen) {
+        setFreezeBox((prev) =>
+          prev && prev.top === stickTop && prev.maxH === maxH && prev.runway === 0 ? prev : { top: stickTop, maxH, runway: 0 }
+        );
         return;
       }
       /* The runway spacer is the load-bearing half of the design. Page scroll
@@ -209,7 +219,7 @@ export function useFrozenTableHeader(enabled: boolean, from: "toolbar" | "table"
       ro?.disconnect();
       window.removeEventListener("resize", recompute);
     };
-  }, [enabled, from]);
+  }, [enabled, from, fillScreen]);
 
   return {
     /** Root of the frozen composition — everything that must stay on screen. */

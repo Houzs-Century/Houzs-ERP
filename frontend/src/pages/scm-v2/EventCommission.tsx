@@ -37,6 +37,11 @@
 // moves its orders' commission — a payment dated back into it, a payment
 // deleted, an order moved to another fair or put on hold — is paid in the first
 // open month, in its own table, one row per order (「X 月调整」).
+//
+// Every table fills the screen (owner 2026-10-26: 这个可以做宽一点吗？ → 做): a
+// page of four stacked tables left each frozen one at the six-row minimum; each
+// is now as tall as the screen allows, its heading still frozen, and a fair's
+// orders open in the page under it rather than in a box of their own.
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
@@ -341,7 +346,7 @@ const FairOrders = ({ fair }: { fair: CommissionFairRow }) => {
         <span className="font-semibold text-ink">{fair.sos.length} order{fair.sos.length === 1 ? '' : 's'}</span>
         {' · '}{reached} reached 30%{' · '}commission <span className="font-semibold tabular-nums text-ink">RM {fmtRm(fair.payableSen)}</span>
       </div>
-      <DataTable<CommissionSoRow> tableId="event-commission-orders" embedded columns={ORDER_COLUMNS} rows={fair.sos} getRowKey={(s) => s.docNo} />
+      <DataTable<CommissionSoRow> tableId="event-commission-orders" embedded freezeHeight="off" columns={ORDER_COLUMNS} rows={fair.sos} getRowKey={(s) => s.docNo} />
     </div>
   );
 };
@@ -544,7 +549,7 @@ export const EventCommissionTab = () => {
           {r.fairs.length === 0 ? <div className="px-1 py-2 text-[12px] text-ink-muted">{words.part1Empty}</div> : (
             <>
               <DataTable<CommissionFairRow>
-                tableId="event-commission-fairs" exportName={`event-commission-fairs-${range.from}-${range.to}`}
+                tableId="event-commission-fairs" exportName={`event-commission-fairs-${range.from}-${range.to}`} freezeHeight="screen"
                 columns={columns} rows={showIdle ? [...active, ...idle] : active} getRowKey={(f) => f.id}
                 emptyLabel="Every fair in this range has no orders yet."
                 onRowClick={(f) => toggle(String(f.id))}
@@ -566,7 +571,7 @@ export const EventCommissionTab = () => {
         <Panel title={words.part2} hint="one row per order · amounts in RM">
           {earlierRows.length === 0 ? <div className="px-1 py-2 text-[12px] text-ink-muted">{words.part2Empty}</div> : (
             <DataTable<CommissionEarlierOrder>
-              tableId="event-commission-earlier-orders" exportName={`event-commission-earlier-${range.from}-${range.to}`}
+              tableId="event-commission-earlier-orders" exportName={`event-commission-earlier-${range.from}-${range.to}`} freezeHeight="screen"
               columns={EARLIER_COLUMNS} rows={earlierRows} getRowKey={(o) => o.docNo}
             />
           )}
@@ -576,7 +581,7 @@ export const EventCommissionTab = () => {
       {r && monthAdjRows.length > 0 && (
         <Panel title="Closed months — adjustments" hint="what changed for a closed month's orders after it closed · paid in this month · amounts in RM">
           <DataTable<CommissionMonthAdjustment>
-            tableId="event-commission-month-adjustments" exportName={`event-commission-month-adjustments-${range.from}-${range.to}`}
+            tableId="event-commission-month-adjustments" exportName={`event-commission-month-adjustments-${range.from}-${range.to}`} freezeHeight="screen"
             columns={MONTH_ADJ_COLUMNS} rows={monthAdjRows} getRowKey={(a) => `${a.month}-${a.docNo}`}
           />
         </Panel>
@@ -586,7 +591,7 @@ export const EventCommissionTab = () => {
         <Panel title="Upsales / Drop sales" hint="each order once, its final amount in the range · the effect is already inside the commission above">
           {changedRows.length === 0 ? <div className="px-1 py-2 text-[12px] text-ink-muted">No upsale or drop sale in this range.</div> : (
             <DataTable<CommissionChangedOrder>
-              tableId="event-commission-changes" exportName={`event-commission-upsales-drops-${range.from}-${range.to}`}
+              tableId="event-commission-changes" exportName={`event-commission-upsales-drops-${range.from}-${range.to}`} freezeHeight="screen"
               columns={CHANGED_COLUMNS} rows={changedRows} getRowKey={(o) => o.docNo}
             />
           )}
