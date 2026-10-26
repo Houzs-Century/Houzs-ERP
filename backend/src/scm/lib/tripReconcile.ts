@@ -105,6 +105,12 @@ export type TripReconcile =
   | { state: 'NOT_REQUESTED' }
   | { state: 'FAILED'; reason: string };
 
+/** Which overrides a removed stop clears. A Pending Schedule stamp is KEPT: an
+ *  order that reached Pending Schedule stays there (lib/pending-schedule-stays.ts). */
+export function overrideToClear(state: string | null): boolean {
+  return state !== null && state !== 'PENDING_SCHEDULE';
+}
+
 /**
  * Clear the scheduled-looking delivery_state override on the source order(s) of
  * the given DELIVERY stops, so the board's live derivation returns them to
@@ -142,7 +148,7 @@ export async function reconcileStopsToBoard(
           delivery_orders has no generation guard, so a plain update mirrors the
           forward type='do' schedule path exactly. */
     const doIdsWithOverride = doRows
-      .filter((r) => (dual<string | null>(r, 'delivery_state') ?? null) !== null)
+      .filter((r) => overrideToClear(dual<string | null>(r, 'delivery_state') ?? null))
       .map((r) => String(dual<string>(r, 'id')));
     let clearedDo = 0;
     if (doIdsWithOverride.length > 0) {
@@ -182,7 +188,7 @@ export async function reconcileStopsToBoard(
       const soWithOverride: string[] = [];
       for (const r of (soRowsRaw ?? []) as Array<Record<string, unknown>>) {
         const state = dual<string | null>(r, 'delivery_state') ?? null;
-        if (state !== null) {
+        if (overrideToClear(state)) {
           const docNo = String(dual<string>(r, 'doc_no'));
           soWithOverride.push(docNo);
           prevByDoc.set(docNo, state);

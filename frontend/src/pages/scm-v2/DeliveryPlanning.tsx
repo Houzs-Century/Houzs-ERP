@@ -123,10 +123,9 @@ export const DeliveryPlanning = () => {
   const [showNewDp, setShowNewDp] = useState(false);
   /* The DP job being scheduled (Schedule drawer open when non-null). */
   const [schedulingDp, setSchedulingDp] = useState<PlanningOrder | null>(null);
-  /* Single-row scheduling, from the row menu. The board's "Sched. Date" column
-     was removed in the owner's 2026-08-04 column pass ("删列但保留排期") — an SO
-     goes to the full trip drawer, a service case to the one-field date drawer. */
-  const [schedulingOne, setSchedulingOne] = useState<PlanningOrder | null>(null);
+  /* A service case's date is confirmed from its row menu (one-field drawer). An
+     SO's date, driver and lorry are set in their own cells, so its row menu no
+     longer opens the trip drawer (owner 2026-10-26); the bulk bar still does. */
   const [datingAssr, setDatingAssr] = useState<PlanningOrder | null>(null);
   const cancelDp = useCancelDpOrder();
 
@@ -213,8 +212,10 @@ export const DeliveryPlanning = () => {
     try {
       await sched.mutateAsync({ type: 'so', id: o.so_doc_no, deliveryState: state });
       void notify({
-        title: state ? 'Moved to Pending Schedule' : 'Back to automatic status',
-        body: state ? `${o.so_doc_no} can be arranged now; its Stock column still shows what is ready.` : `${o.so_doc_no} follows its stock again.`,
+        title: state ? 'Moved to Pending Schedule' : 'Back to Pending Delivery',
+        body: state
+          ? `${o.so_doc_no} can be arranged now; its Stock column still shows what is ready.`
+          : `${o.so_doc_no} follows its stock again: if every item is still ready it stays in Pending Schedule.`,
       });
     } catch (e) {
       void notify({ title: 'Not moved', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
@@ -581,14 +582,13 @@ export const DeliveryPlanning = () => {
                 { label: 'Open Service Case', onClick: () => openRow(row) },
               ]
             : [
-                { label: 'Schedule…', onClick: () => setSchedulingOne(row) },
                 /* Arrange before the goods are ready (owner 2026-10-26): the row
                    moves to Pending Schedule while its Stock column stays live. */
                 ...(row.delivery_state === 'PENDING_DELIVERY' || row.delivery_state === 'OVERDUE'
                   ? [{ label: 'Move to Pending Schedule', onClick: () => moveState(row, 'PENDING_SCHEDULE') }]
                   : []),
                 ...(row.delivery_state_override
-                  ? [{ label: 'Back to automatic status', onClick: () => moveState(row, null) }]
+                  ? [{ label: 'Back to Pending Delivery', onClick: () => moveState(row, null) }]
                   : []),
                 { label: 'Edit HC fields…', onClick: () => setEditing(row) },
                 { label: 'Send WhatsApp…', onClick: () => { setSendKind('delivery'); setSendingRows([row]); } },
@@ -614,15 +614,6 @@ export const DeliveryPlanning = () => {
         <ScheduleTripDrawer
           orders={selectedOrders}
           onClose={() => setScheduling(false)}
-          onOpenTrips={() => navigate('/scm/trips')}
-        />
-      )}
-
-      {/* Same drawer as the bulk bar, handed a single row from its menu. */}
-      {schedulingOne && (
-        <ScheduleTripDrawer
-          orders={[schedulingOne]}
-          onClose={() => setSchedulingOne(null)}
           onOpenTrips={() => navigate('/scm/trips')}
         />
       )}
