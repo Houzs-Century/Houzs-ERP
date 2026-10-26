@@ -2613,8 +2613,14 @@ function DataTableInner<T, L>({
                           e.stopPropagation();
                           autoFitColumn(c.key);
                         }}
-                        className="absolute right-0 top-0 z-10 h-full w-1.5 cursor-col-resize touch-none select-none opacity-0 transition-opacity hover:bg-primary/40 group-hover/th:opacity-100"
-                      />
+                        className="group/rs absolute right-0 top-0 z-10 flex h-full w-1.5 cursor-col-resize touch-none select-none justify-end transition-colors hover:bg-primary/40"
+                      >
+                        {/* The column edge, always drawn (owner 2026-10-26:
+                            header 之间调整的距离看不到线条) — a thin rule where a
+                            drag widens the column; the strip lights up under
+                            the pointer. */}
+                        <span aria-hidden className="my-auto h-3/5 w-px bg-ink-muted/45 group-hover/rs:bg-transparent" />
+                      </span>
                       {/* Insertion bar — where the carried column will land.
                           Owner 2026-07-24 asked for a BOLD line ("加粗线条"),
                           drawn on the side the column is arriving FROM so it
