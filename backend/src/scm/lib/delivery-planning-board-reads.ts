@@ -144,7 +144,7 @@ export function kickOffSubBoardReads(
   const assrRowsP = (async () => {
     try {
       return { ok: await c.env.DB.prepare(assrBoardUnionSql(c, recentClosedSince)).all<{
-        id: number | null; assr_no: string | null; company_id: number | null; status: string | null;
+        id: number | null; assr_no: string | null; company_id: number | null; status: string | null; stage: string | null;
         customer_name: string | null; phone: string | null; location: string | null;
         customer_pickup_at: string | null; inspection_visit_at: string | null;
         inspection_by: string | null; do_date: string | null;
