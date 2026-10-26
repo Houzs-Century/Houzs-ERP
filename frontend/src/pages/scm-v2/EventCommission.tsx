@@ -62,10 +62,8 @@ const monthOf = (day: string, shift = 0): { from: string; to: string } => {
   return { from: first.toISOString().slice(0, 10), to: last.toISOString().slice(0, 10) };
 };
 
-const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-/** "2026-09" → "September 2026". */
-export const monthLabel = (month: string): string => `${MONTH_NAMES[Number(month.slice(5, 7)) - 1] ?? month} ${month.slice(0, 4)}`;
-const shortMonth = (month: string): string => `${(MONTH_NAMES[Number(month.slice(5, 7)) - 1] ?? month).slice(0, 3)} ${month.slice(0, 4)}`;
+/** "2026-09" → "2026/09": a month in the one date format (year first, numeric). */
+export const monthLabel = (month: string): string => month.replace('-', '/');
 /** The one calendar month [from, to] is, if it is exactly one. */
 export const wholeMonthOf = (range: { from: string; to: string }): string | null => {
   const m = range.from.slice(0, 7);
@@ -398,7 +396,7 @@ const CHANGED_COLUMNS: Column<CommissionChangedOrder>[] = [
 ];
 
 const MONTH_ADJ_COLUMNS: Column<CommissionMonthAdjustment>[] = [
-  { key: 'month', label: 'Month', width: '85px', description: 'The closed month this belongs to.', render: (a) => <span className="whitespace-nowrap">{shortMonth(a.month)}</span>, getValue: (a) => a.month },
+  { key: 'month', label: 'Month', width: '85px', description: 'The closed month this belongs to.', render: (a) => <span className="whitespace-nowrap">{monthLabel(a.month)}</span>, getValue: (a) => a.month },
   { key: 'order', label: 'Order', width: '125px', render: (a) => <span className="whitespace-nowrap font-mono">{a.docNo}</span>, getValue: (a) => a.docNo },
   ...placeColumns<CommissionMonthAdjustment>((a) => fairPlace({ name: a.fairName, brand: a.brand }), { brand: '85px', organizer: '115px', venue: '150px', state: '100px' })
     .map((c) => (c.key === 'state' ? { ...c, defaultHidden: true } : c)),
@@ -525,7 +523,7 @@ export const EventCommissionTab = () => {
             sub={`${earlierRows.length} order${earlierRows.length === 1 ? '' : 's'}`} />
           {monthAdjRows.length > 0 && (
             <Kpi label="Closed months — adjustments" value={`RM ${fmtRm(r.totals.monthAdjustmentsSen ?? 0)}`}
-              sub={`${monthAdjRows.length} order${monthAdjRows.length === 1 ? '' : 's'} · ${[...new Set(monthAdjRows.map((a) => shortMonth(a.month)))].join(', ')}`} />
+              sub={`${monthAdjRows.length} order${monthAdjRows.length === 1 ? '' : 's'} · ${[...new Set(monthAdjRows.map((a) => monthLabel(a.month)))].join(', ')}`} />
           )}
           <Kpi label="Fairs" value={String(r.fairs.length)} sub={idle.length > 0 ? `${idle.length} with no orders yet` : 'all with orders'} />
         </div>

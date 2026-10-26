@@ -68,7 +68,7 @@ describe('months close in order, once each has ended, once only', () => {
 
   test('the refusals name the month to close first', async () => {
     const res = await run(closeCommissionMonthHandler, ctx(sb(), { body: { month: '2026-11' } }));
-    expect(res.body.message).toBe('Months close in order — close October 2026 first.');
+    expect(res.body.message).toBe('Months close in order — close 2026/10 first.');
   });
 });
 
@@ -77,7 +77,7 @@ describe('only the latest closed month reopens', () => {
     const tables = { event_commission_closes: [closed('2026-09'), closed('2026-10')], entity_audit_log: [] as Row[] };
     const sb = fakeSb(tables);
     const early = await run(reopenCommissionMonthHandler, ctx(sb, { body: { month: '2026-09' } }));
-    expect([early.status, early.body.error, early.body.message]).toEqual([409, 'not_latest', 'Only the latest closed month can be reopened — October 2026.']);
+    expect([early.status, early.body.error, early.body.message]).toEqual([409, 'not_latest', 'Only the latest closed month can be reopened — 2026/10.']);
     const res = await run(reopenCommissionMonthHandler, ctx(sb, { body: { month: '2026-10' } }));
     expect(res.body).toMatchObject({ ok: true });
     expect(res.body.closes).toEqual({ months: ['2026-09'], openFrom: '2026-10' });

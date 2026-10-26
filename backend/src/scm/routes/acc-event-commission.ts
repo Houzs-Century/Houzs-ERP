@@ -233,8 +233,8 @@ const nextMonth = (month: string): string => {
   d.setUTCMonth(d.getUTCMonth() + 1);
   return d.toISOString().slice(0, 7);
 };
-const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-export const monthLabel = (month: string): string => `${MONTH_NAMES[Number(month.slice(5, 7)) - 1] ?? month} ${month.slice(0, 4)}`;
+/** "2026-09" → "2026/09": a month in the one date format (year first, numeric — owner 2026-08-18 / 2026-09-25). */
+export const monthLabel = (month: string): string => month.replace('-', '/');
 
 async function readCloses(sb: any, companyId: number): Promise<{ closes: Closed[] } | { error: string }> {
   const { data, error } = await scopeToCompanyId(
@@ -250,10 +250,12 @@ const closesMeta = (closes: readonly Closed[]) => ({
 /** The closed months' outstanding adjustments by one basis, each month recalculated now. */
 async function adjustmentsFor(c: any, companyId: number, basis: CommissionBasis, closes: readonly Closed[]): Promise<{ rows: MonthAdjustmentRow[] } | { response: Response }> {
   const live = new Map<string, EventCommissionReport>();
-  for (const k of closes.slice(-ADJUST_MONTHS_BACK)) {
-    const r = await liveReport(c, companyId, `${k.month}-01`, monthEnd(`${k.month}-01`), basis);
+  const recent = closes.slice(-ADJUST_MONTHS_BACK);
+  const reads = await Promise.all(recent.map((k) => liveReport(c, companyId, `${k.month}-01`, monthEnd(`${k.month}-01`), basis)));
+  for (let i = 0; i < recent.length; i += 1) {
+    const r = reads[i]!;
     if ('response' in r) return r;
-    live.set(k.month, r.report);
+    live.set(recent[i]!.month, r.report);
   }
   const paid: ClosedMonthPaid[] = closes.map((k) => ({ month: k.month, paid: k.read?.paid?.[basis] ?? {}, carried: k.read?.carried?.[basis] ?? [] }));
   return { rows: monthAdjustmentsOf(paid, live) };
@@ -289,16 +291,17 @@ export const eventCommissionHandler = async (c: any): Promise<Response> => {
     return c.json({ ...frozen, closed: { month: exact.month, closedAt: exact.closedAt, closedBy: exact.closedBy }, closes: meta });
   }
 
-  const live = await liveReport(c, companyId, from, to, basis);
-  if ('response' in live) return live.response;
-  let report = live.report;
-  /* The first open month pays what changed for the closed months' orders. */
+  /* The first open month pays what changed for the closed months' orders — read
+     beside the range itself rather than after it. */
   const openDay = meta.openFrom ? `${meta.openFrom}-01` : null;
-  if (openDay && from <= openDay && openDay <= to) {
-    const adj = await adjustmentsFor(c, companyId, basis, closes);
-    if ('response' in adj) return adj.response;
-    report = withMonthAdjustments(report, adj.rows);
-  }
+  const carries = openDay != null && from <= openDay && openDay <= to;
+  const [live, adj] = await Promise.all([
+    liveReport(c, companyId, from, to, basis),
+    carries ? adjustmentsFor(c, companyId, basis, closes) : Promise.resolve(null),
+  ]);
+  if ('response' in live) return live.response;
+  if (adj && 'response' in adj) return adj.response;
+  const report = adj ? withMonthAdjustments(live.report, adj.rows) : live.report;
   return c.json({ ...report, closes: meta });
 };
 
@@ -317,9 +320,9 @@ export const closeCommissionMonthHandler = async (c: any): Promise<Response> => 
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return c.json({ error: 'bad_month', message: 'Pick a month to close.' }, 400);
   const sb = c.get('supabase');
   const companyId = co.companyId;
-  const read = await readCloses(sb, companyId);
-  if ('error' in read) return fail(c, 'closed months', read.error);
-  const closes = read.closes;
+  const known = await readCloses(sb, companyId);
+  if ('error' in known) return fail(c, 'closed months', known.error);
+  const closes = known.closes;
   if (closes.some((k) => k.month === month)) return c.json({ error: 'already_closed', message: `${monthLabel(month)} is already closed.` }, 409);
   const latest = closes.length > 0 ? closes[closes.length - 1]!.month : null;
   if (latest && month !== nextMonth(latest)) {
@@ -328,16 +331,16 @@ export const closeCommissionMonthHandler = async (c: any): Promise<Response> => 
   if (monthEnd(`${month}-01`) >= todayMyt()) return c.json({ error: 'not_ended', message: `${monthLabel(month)} has not ended yet.` }, 409);
 
   const reports = {} as Record<CommissionBasis, EventCommissionReport>;
-  for (const basis of ['fair', 'so_date'] as const) {
-    const live = await liveReport(c, companyId, `${month}-01`, monthEnd(`${month}-01`), basis);
+  const bases = ['fair', 'so_date'] as const;
+  const read = await Promise.all(bases.map((basis) => Promise.all([
+    liveReport(c, companyId, `${month}-01`, monthEnd(`${month}-01`), basis),
+    closes.length > 0 ? adjustmentsFor(c, companyId, basis, closes) : Promise.resolve(null),
+  ])));
+  for (let i = 0; i < bases.length; i += 1) {
+    const [live, adj] = read[i]!;
     if ('response' in live) return live.response;
-    let report = live.report;
-    if (closes.length > 0) {
-      const adj = await adjustmentsFor(c, companyId, basis, closes);
-      if ('response' in adj) return adj.response;
-      report = withMonthAdjustments(report, adj.rows);
-    }
-    reports[basis] = report;
+    if (adj && 'response' in adj) return adj.response;
+    reports[bases[i]!] = adj ? withMonthAdjustments(live.report, adj.rows) : live.report;
   }
   const carriedOf = (r: EventCommissionReport) => r.monthAdjustments.map((a) => ({ month: a.month, docNo: a.docNo, sen: a.adjustmentSen }));
   const actor = actorOf(c);

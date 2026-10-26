@@ -251,11 +251,11 @@ describe('closing a month — 关月 (owner 2026-10-26)', () => {
       closed: { month: '2026-09', closedAt: '2026-10-26T09:00:00Z', closedBy: 'Finance Chew' }, closes: { months: ['2026-09'], openFrom: '2026-10' },
     };
     render(<EventCommissionTab />);
-    expect(screen.getByText('September 2026 is closed')).toBeTruthy();
-    expect(screen.getByText(/by Finance Chew/).textContent).toContain('paid in October 2026');
-    fireEvent.click(screen.getByRole('button', { name: 'Reopen September 2026' }));
+    expect(screen.getByText('2026/09 is closed')).toBeTruthy();
+    expect(screen.getByText(/by Finance Chew/).textContent).toContain('paid in 2026/10');
+    fireEvent.click(screen.getByRole('button', { name: 'Reopen 2026/09' }));
     await waitFor(() => expect(reopenMonth).toHaveBeenCalledWith('2026-09'));
-    expect(confirmAsk).toHaveBeenCalledWith(expect.objectContaining({ title: 'Reopen September 2026?' }));
+    expect(confirmAsk).toHaveBeenCalledWith(expect.objectContaining({ title: 'Reopen 2026/09?' }));
   });
 
   test('a whole month that has ended and is next in line can be closed; the month not ended yet cannot', async () => {
@@ -266,9 +266,9 @@ describe('closing a month — 关月 (owner 2026-10-26)', () => {
     expect(screen.getByText('No month closed yet.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /^Close / })).toBeNull(); // October has not ended
     fireEvent.click(screen.getByRole('button', { name: 'Last month' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Close September 2026' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close 2026/09' }));
     await waitFor(() => expect(closeMonth).toHaveBeenCalledWith('2026-09'));
-    expect(confirmAsk).toHaveBeenCalledWith(expect.objectContaining({ title: 'Close September 2026?', body: expect.stringContaining('RM 153.00') }));
+    expect(confirmAsk).toHaveBeenCalledWith(expect.objectContaining({ title: 'Close 2026/09?', body: expect.stringContaining('RM 153.00') }));
   });
 
   test('the first open month pays the closed months\' adjustments: a card, its table, in the total and the export', () => {
@@ -277,11 +277,11 @@ describe('closing a month — 关月 (owner 2026-10-26)', () => {
       totals: { ...REPORT.totals, monthAdjustmentsSen: 130_00, totalSen: 283_00 },
     };
     render(<EventCommissionTab />);
-    expect(screen.getByText('Closed up to September 2026.')).toBeTruthy();
+    expect(screen.getByText('Closed up to 2026/09.')).toBeTruthy();
     expect(screen.getByText('Total commission').parentElement!.textContent).toContain('RM 283.00');
-    expect(screen.getByText('Closed months — adjustments', { selector: 'div' }).parentElement!.textContent).toContain('1 order · Sep 2026');
+    expect(screen.getByText('Closed months — adjustments', { selector: 'div' }).parentElement!.textContent).toContain('1 order · 2026/09');
     const cells = cellsOf(rowOf(tables()[2]!, 'HC-SO-2609-051'));
-    for (const t of ['Sep 2026', 'ZANOTTI', 'Wei Pin', '+130.00']) expect(cells).toContain(t);
+    for (const t of ['2026/09', 'ZANOTTI', 'Wei Pin', '+130.00']) expect(cells).toContain(t);
     const csv = eventCommissionCsv(current);
     expect(csv).toContain('"Closed months — adjustments","Month","Order"');
     expect(csv).toContain('"2026-09","HC-SO-2609-051","Wei Pin","0.00","130.00","130.00"');
