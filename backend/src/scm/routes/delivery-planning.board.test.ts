@@ -405,7 +405,8 @@ describe('GET /delivery-planning — the ASSR / DP / project sub-boards union on
     // whose date has already passed is done, while an OPEN service case is still
     // pending (and a dated DP job that is not yet delivered is pending too).
     expect(byType('project')[0]?.delivery_state).toBe('DELIVERED'); // setup 2026-09-10 is in the past
-    expect(byType('assr')[0]?.delivery_state).toBe('PENDING_DELIVERY'); // OPEN case, no closed_at
+    // Owner 2026-10-26: Service's date is a request until Logistics confirms it.
+    expect(byType('assr')[0]?.delivery_state).toBe('PENDING_SCHEDULE'); // OPEN case, nothing confirmed
     // Owner 2026-10-22: an ASSR row carries its SERVICE date in customer_delivery_date
     // (shown in the "Sales Exemption Expiry Date" column) and leaves "Delivery Date"
     // (amended_delivery_date) blank for admin to propose.

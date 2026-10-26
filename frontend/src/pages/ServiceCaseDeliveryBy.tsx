@@ -1,5 +1,6 @@
 import { InlineEdit } from "../components/InlineEdit";
 import { cn } from "../lib/utils";
+import { LogisticsConfirmedNote } from "../components/assr/LogisticsConfirmedNote";
 
 /**
  * Delivery-by own-team gate for a Service Case's delivery-back leg. Own team =
@@ -15,7 +16,7 @@ export function DeliveryByCard({
   c,
   patch,
 }: {
-  c: { delivery_by?: string | null; do_date?: string | null };
+  c: { delivery_by?: string | null; do_date?: string | null; sched_delivery_date?: string | null };
   patch: (body: Record<string, unknown>) => Promise<void>;
 }) {
   return (
@@ -53,11 +54,7 @@ export function DeliveryByCard({
             value={c.do_date}
             onSave={(v) => patch({ do_date: v || null })}
           />
-          <div className="rounded-md bg-bg/60 px-3 py-2 text-[11.5px] leading-relaxed text-ink-secondary">
-            {c.do_date
-              ? "Own-team delivery — syncs to the HC Delivery sheet as a delivery job on this date."
-              : "Set the delivery date — the own-team delivery then syncs to the HC Delivery sheet."}
-          </div>
+          <LogisticsConfirmedNote requested={c.do_date} confirmed={c.sched_delivery_date} />
         </>
       )}
       {c.delivery_by === "supplier" && (
