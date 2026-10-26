@@ -457,6 +457,10 @@ export interface DataTableProps<T, L = never> {
    * to the desktop table only — the mobile card branch is untouched.
    * Absent (default) = flat rows, render path byte-identical to before.
    */
+  /** What stays on screen once the page scrolls down: "toolbar" (default) keeps
+   *  search / Export / Columns above the rows; "table" lets them scroll away so
+   *  the grid fills the screen (Delivery Planning, owner 2026-10-26). */
+  freezeFrom?: "toolbar" | "table";
   groupBy?: {
     /** Column key to group on. Must match a column with `getValue`. */
     key: string;

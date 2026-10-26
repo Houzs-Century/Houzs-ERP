@@ -185,6 +185,7 @@ function DataTableInner<T, L>({
   fixedColumnWidths,
   contextMenu,
   groupBy,
+  freezeFrom,
   selection,
   onFilteredRowsChange,
 }: Props<T, L>) {
@@ -2131,7 +2132,7 @@ function DataTableInner<T, L>({
     freezeBox,
     boxStyle: freezeBoxStyle,
     scrollStyle: freezeScrollStyle,
-  } = useFrozenTableHeader(showTable);
+  } = useFrozenTableHeader(showTable, freezeFrom ?? "toolbar");
 
   return (
     <div ref={freezeRootRef}>
