@@ -7,7 +7,7 @@ Used by dispatchers/logistics on desktop and by drivers, helpers and storekeeper
 
 - The board has no table: `GET /delivery-planning` unions four sources per request:
   - Sales Orders not DRAFT/CANCELLED that carry `customer_delivery_date` or `processing_date` (paged past the 1,000-row cap).
-  - Service Case legs from `public.assr_cases` (open, dated): one row per set date — `customer_pickup_at`, `inspection_visit_at` when `inspection_by = 'own'`, `do_date`; key `<ASSR-NO>#<job_kind>`; always `PENDING_DELIVERY`.
+  - Service Case legs from `public.assr_cases` (open, dated): one row per set date — `customer_pickup_at`, `inspection_visit_at` when `inspection_by = 'own'`, `do_date`; key `<ASSR-NO>#<job_kind>`; dated = `PENDING_DELIVERY`. An open case at Pickup / Return or Delivery with no date for that leg adds an undated row in `PENDING_SCHEDULE` (`assrBoardLegs`).
   - Manual DP orders (`scm.dp_orders` with no `so_doc_no` / `assr_case_id` / `do_id`, not DELIVERED/CANCELLED).
   - PMS project setup/dismantle windows (read-only crew mirror; edit in Projects).
   - A failing non-SO union logs and leaves SO rows intact.

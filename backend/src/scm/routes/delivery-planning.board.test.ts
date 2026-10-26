@@ -25,7 +25,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { fakeSb, type Row } from '../lib/fake-postgrest';
 import type { Env, Variables } from '../env';
-import { deliveryPlanningBoardHandler } from './delivery-planning';
+import { deliveryPlanningBoardHandler, derivePlanningState } from './delivery-planning';
 
 const so = (docNo: string, companyId: number): Row => ({
   doc_no: docNo,
@@ -419,5 +419,53 @@ describe('GET /delivery-planning — the ASSR / DP / project sub-boards union on
     expect(projCrew?.helper_1_name).toBe('Helper One');
     expect(projCrew?.helper_2_name).toBe('Helper Two');
     expect(projCrew?.lorry_plate).toBe('VRH1');
+  });
+});
+
+/* Owner 2026-10-26: 7 of 2,331 SOs came back twice (and as many not at all). The
+   header read paged on customer_delivery_date alone, which ties, so pages overlapped. */
+describe('GET /delivery-planning — the SO header read pages on a total order', () => {
+  it('orders by doc_no after the delivery date', async () => {
+    const orders: string[] = [];
+    const sb = fakeSb({
+      warehouses: [], mfg_sales_orders: [so('HC-SO-2608-001', 1)],
+      mfg_sales_order_items: [soLine('HC-SO-2608-001', 'li-1')], delivery_order_items: [], delivery_orders: [],
+    }, {});
+    const spy = (q: Record<string, unknown>): unknown => new Proxy(q, {
+      get: (t, prop) => {
+        const v = (t as Record<string | symbol, unknown>)[prop];
+        if (typeof v !== 'function') return v;
+        return (...args: unknown[]) => {
+          if (prop === 'order') orders.push(String(args[0]));
+          const r = (v as (...a: unknown[]) => unknown).apply(t, args);
+          return r === t ? spy(t) : r;
+        };
+      },
+    });
+    const client = { from: (t: string) => (t === 'mfg_sales_orders' ? spy(sb.from(t) as unknown as Record<string, unknown>) : sb.from(t)) };
+    const app = new Hono<{ Bindings: Env; Variables: Variables }>();
+    app.use('*', async (c, next) => {
+      c.set('supabase', client as unknown as Variables['supabase']);
+      c.set('companyId', 1 as Variables['companyId']);
+      c.set('user', { id: 'u1' } as unknown as Variables['user']);
+      c.set('houzsUser', { id: 9, name: 'Tester', permissions_set: new Set(['*']) } as unknown as Variables['houzsUser']);
+      await next();
+    });
+    app.get('/delivery-planning', deliveryPlanningBoardHandler);
+    expect((await app.request('/delivery-planning')).status).toBe(200);
+    expect(orders.slice(0, 2)).toEqual(['customer_delivery_date', 'doc_no']);
+  });
+});
+
+/* Owner 2026-10-26: right-click "Move to Pending Schedule" arranges an order before
+   its goods are ready; once it is delivered it must still leave the queue. */
+describe('derivePlanningState — a manual Pending Schedule', () => {
+  const base = { status: 'CONFIRMED', readiness: { isShipReady: false }, effectiveDD: '2026-10-27', today: '2026-10-26' };
+  it('puts a not-ready (even overdue) order in Pending Schedule', () => {
+    expect(derivePlanningState({ ...base, storedOverride: null, delivered: 0, remaining: 1 })).toBe('OVERDUE');
+    expect(derivePlanningState({ ...base, storedOverride: 'PENDING_SCHEDULE', delivered: 0, remaining: 1 })).toBe('PENDING_SCHEDULE');
+  });
+  it('gives way to Delivered', () => {
+    expect(derivePlanningState({ ...base, storedOverride: 'PENDING_SCHEDULE', delivered: 1, remaining: 0 })).toBe('DELIVERED');
   });
 });

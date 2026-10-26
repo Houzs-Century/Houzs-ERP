@@ -91,9 +91,11 @@ export type CommissionChange = {
   date: string;
   deltaGoodsSen: number;
   kind: 'upsale' | 'drop';
-  notCounted: 'opening_day' | 'first_price' | null;
+  notCounted: 'opening_day' | 'first_price' | 'system_fix' | null;
   source: string;
   changedBy: string | null;
+  /** Back-filled from the SO's modification history (1–19 October 2026); absent from older servers. */
+  fromHistory?: boolean;
 };
 export type CommissionSoRow = {
   docNo: string;
@@ -112,6 +114,11 @@ export type CommissionFairRow = {
   id: number;
   name: string;
   brand: string | null;
+  /** The project's own place — absent from a server before 2026-10-26 (read
+      through fairPlace, which falls back to the name). */
+  organizer?: string | null;
+  venue?: string | null;
+  state?: string | null;
   startDate: string;
   endDate: string | null;
   ratePct: number | null;
@@ -131,6 +138,29 @@ export type CommissionAdjustment = {
   commissionSen: number;
   beforeReach: boolean;
 };
+/** Where an order sits: its fair and that fair's place (owner 2026-10-26). */
+export type CommissionOrderPlace = {
+  docNo: string; fairId: number; fairName: string;
+  brand: string | null; organizer: string | null; venue: string | null; state: string | null;
+  salesperson: string | null; customer: string | null; ratePct: number | null;
+};
+/** An earlier order once, its final result in the range (「我看final结果」). */
+export type CommissionEarlierOrder = CommissionOrderPlace & {
+  events: Array<{ date: string; kind: CommissionAdjustment['kind']; beforeReach: boolean }>;
+  lastDate: string;
+  originalSen: number; latestSen: number; amendedSen: number;
+  commissionSen: number;
+  fromHistory: boolean;
+};
+/** An order the range's upsales / drop sales changed, once, final. */
+export type CommissionChangedOrder = CommissionOrderPlace & {
+  part: 'range' | 'earlier';
+  lastChange: string;
+  originalSen: number; latestSen: number; amendedSen: number;
+  reachedOn: string | null;
+  effectSen: number;
+  fromHistory: boolean;
+};
 /** Which date puts an order in the range: its fair's start, or its own SO date. */
 export type CommissionBasis = 'fair' | 'so_date';
 export type EventCommission = {
@@ -140,6 +170,9 @@ export type EventCommission = {
   to: string;
   fairs: CommissionFairRow[];
   adjustments: CommissionAdjustment[];
+  /** Absent from a server before 2026-10-26 — read as empty. */
+  earlierOrders?: CommissionEarlierOrder[];
+  changedOrders?: CommissionChangedOrder[];
   totals: { payableSen: number; adjustmentsSen: number; totalSen: number };
 };
 

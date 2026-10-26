@@ -9,9 +9,10 @@
 // a fabric, seat size and leg size — for a use, delivered where and by when.
 // The Purchaser approves or rejects the whole request, builds each new-Model
 // line's Model + SKU, then raises ONE Purchase Consignment Order from it on PC
-// Order New (?fromProductRequest=). The desktop page, the phone screen and the
-// PC Order form all read and write through these hooks; the status words live
-// here once.
+// Order New (?fromProductRequest=) — or ONE Purchase Order on PO New, same
+// parameter, when the goods are bought outright (2990-0015). The desktop page,
+// the phone screen and both order forms read and write through these hooks;
+// the status words live here once.
 // ----------------------------------------------------------------------------
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -21,7 +22,7 @@ import { fetchDocFileBlobUrl, type PvFile, type PvFilePayload } from './payment-
 
 export type ProductRequestType = 'NEW_PRODUCT' | 'REPACK';
 export type ProductRequestApplication = 'SHOWROOM' | 'CUSTOMER_ORDER' | 'SAMPLE' | 'FAIR_EXHIBITION';
-export type ProductRequestStatus = 'REQUESTED' | 'APPROVED' | 'REJECTED' | 'WITHDRAWN' | 'PCO_ISSUED' | 'CLOSED';
+export type ProductRequestStatus = 'REQUESTED' | 'APPROVED' | 'REJECTED' | 'WITHDRAWN' | 'PCO_ISSUED' | 'PO_ISSUED' | 'CLOSED';
 
 export type ProductRequestLine = {
   id: string;
@@ -60,11 +61,14 @@ export type ProductRequest = {
   decided_by: string | null;
   decided_at: string | null;
   pco_id: string | null;
+  po_id: string | null;
   created_at: string;
   updated_at: string;
   lines: ProductRequestLine[];
   /** The PC Order raised from it, when one was. */
   pco: { id: string; pcNumber: string; status: string; expectedAt: string | null } | null;
+  /** The Purchase Order raised from it instead, when one was. */
+  po: { id: string; poNumber: string; status: string; expectedAt: string | null } | null;
   deliveryLocation: { id: string; code: string; name: string } | null;
   supplier: { id: string; code: string; name: string } | null;
 };
@@ -118,6 +122,7 @@ export const REQUEST_STATUS: Record<ProductRequestStatus, { label: string; tone:
   REJECTED: { label: 'Rejected', tone: 'var(--c-festive-b, #B8331F)' },
   WITHDRAWN: { label: 'Withdrawn', tone: 'var(--fg-muted)' },
   PCO_ISSUED: { label: 'PC Order raised', tone: 'var(--c-secondary-a, #2F5D4F)' },
+  PO_ISSUED: { label: 'PO raised', tone: 'var(--c-secondary-a, #2F5D4F)' },
   CLOSED: { label: 'Closed', tone: 'var(--fg-muted)' },
 };
 export const REQUEST_TYPE_LABEL: Record<ProductRequestType, string> = { NEW_PRODUCT: 'New product', REPACK: 'Repack' };
@@ -132,10 +137,12 @@ export const awaitsPurchaser = (r: Pick<ProductRequest, 'status'>): boolean => r
 export const linesNeedingModel = (r: Pick<ProductRequest, 'lines'>): ProductRequestLine[] => r.lines.filter((l) => !l.item_code);
 /** Approved and some line asks for a Model the catalogue has not got yet — the Purchaser builds it first. */
 export const needsModel = (r: Pick<ProductRequest, 'status' | 'lines'>): boolean => r.status === 'APPROVED' && linesNeedingModel(r).length > 0;
-/** Approved, every line's SKU known — a PC Order may be raised from it. */
+/** Approved, every line's SKU known — a PC Order, or a Purchase Order, may be raised from it. */
 export const mayRaisePco = (r: Pick<ProductRequest, 'status' | 'lines'>): boolean => r.status === 'APPROVED' && r.lines.length > 0 && linesNeedingModel(r).length === 0;
 /** The Purchaser may close it. */
-export const mayClose = (r: Pick<ProductRequest, 'status'>): boolean => r.status === 'APPROVED' || r.status === 'PCO_ISSUED';
+export const mayClose = (r: Pick<ProductRequest, 'status'>): boolean => r.status === 'APPROVED' || r.status === 'PCO_ISSUED' || r.status === 'PO_ISSUED';
+/** An order — of either kind — has been raised from it. */
+export const orderIssued = (r: Pick<ProductRequest, 'status'>): boolean => r.status === 'PCO_ISSUED' || r.status === 'PO_ISSUED';
 
 /** One line's product, in a word: the SKU code, or the proposed Model name marked new. */
 export const lineProductText = (l: Pick<ProductRequestLine, 'item_code' | 'proposed_model_name'>): string =>
@@ -243,6 +250,18 @@ export const useCreateModelFromRequest = () => {
   });
 };
 
+/** PO New, once the Purchase Order stands: the PO claims the request
+    (PO_ISSUED). A refusal leaves the PO standing, unlinked. */
+export const useLinkProductRequestPo = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, poId }: { id: string; poId: string }) =>
+      authedFetch<{ ok: true; poNumber: string }>(`/product-requests/${id}/link-po`, { method: 'POST', body: JSON.stringify({ poId }) }),
+    onSuccess: () => invalidate(qc),
+    onError: writeFailedAs('The Purchase Order was not linked to the product request'),
+  });
+};
+
 export const useCloseProductRequest = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -291,3 +310,5 @@ export const fetchProductRequestFileBlobUrl = (id: string, fileId: string): Prom
 /** Where the Purchaser raises the PC Order from a request: PC Order New,
     prefilled from it. One home, so the desktop and the phone land on the same door. */
 export const pcoNewFromRequestPath = (id: string): string => `/scm/purchase-consignment-orders/new?fromProductRequest=${encodeURIComponent(id)}`;
+/** Where the Purchaser raises a Purchase Order from a request instead (2990-0015). */
+export const poNewFromRequestPath = (id: string): string => `/scm/purchase-orders/new?fromProductRequest=${encodeURIComponent(id)}`;

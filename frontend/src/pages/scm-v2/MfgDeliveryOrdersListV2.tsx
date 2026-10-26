@@ -45,7 +45,7 @@ import { DataTable, type Column, type ColumnLayoutPreset } from "../../component
 import { fetchDoExportRows } from "../../vendor/scm/lib/so-list-export";
 import type { DoDateBy } from "../../vendor/scm/lib/delivery-order-queries";
 import { DoDateFilter } from "./DoDateFilter";
-import { doLineColumns, financeColumns, moneyColumn } from "./so-do-list-columns";
+import { doChargeColumns, doLineColumns, financeColumns, moneyColumn } from "./so-do-list-columns";
 import { DO_LABELS, doStatusWord, type DoBookHeader, type DoListLine } from "../../vendor/scm/lib/do-line-export-columns";
 import {
   DocumentLinesExpansion,
@@ -1350,6 +1350,7 @@ export function MfgDeliveryOrdersListV2() {
        customers, so it carries no amount unless someone picks the column
        (owner 2026-09-15). */
     moneyColumn<DoRow, DoListLine>({ key: "amount", label: "Amount", width: "128px", defaultHidden: true, strong: true, sen: (r) => r.local_total_sen }),
+    ...(canFinance ? doChargeColumns<DoRow>() : []),
     {
       key: "currency", label: DO_LABELS.currency, width: "96px", defaultHidden: true, disableSort: true,
       getValue: (r) => r.currency,

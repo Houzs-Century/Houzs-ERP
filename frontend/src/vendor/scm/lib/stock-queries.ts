@@ -533,6 +533,9 @@ export type StockTakeLine = {
   /* Best-known unit cost (sen) the post would value this variance at; null =
      no cost basis, or withheld on a blind take. */
   est_unit_cost_sen?: number | null;
+  /* HC-0158: the PO(s) behind this bucket's open lots, qty per PO; empty when
+     none traces (AC opening / adjustment stock, a negative bucket, blind). */
+  source_pos?: Array<{ po: string; qty: number }>;
 };
 
 /* Server-decided viewer facts (one shared logic layer — the frontend must not

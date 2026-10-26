@@ -1702,6 +1702,9 @@ export function DeliveryPlanningBoard({
         onRowReorder={onRowReorder}
         exportName={exportName}
         rowKey={rowIdOf}
+        /* The full board scrolls its tabs and toolbar away so the grid fills the
+           screen (owner 2026-10-26); the embedded Trips panel keeps its toolbar. */
+        freezeFrom={stateTabs ? 'table' : 'toolbar'}
         searchPlaceholder={searchPlaceholder}
         /* User-controlled grouping (owner 2026-10-24, "like Google Sheets"):
            default OFF (no forced group). The operator groups by a column of his

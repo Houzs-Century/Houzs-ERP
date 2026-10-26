@@ -229,3 +229,74 @@ describe('by SO date — the same two parts keyed on the order\'s own SO date', 
     expect(byFair.totals).toEqual({ payableSen: 0, adjustmentsSen: 130_00, totalSen: 130_00 });
   });
 });
+
+/* Owner 2026-10-26: 「一张单改了两次我不理，我看final结果」 — the earlier orders and
+   the upsales / drop sales once per order: Original, Latest, Amended, at the
+   fair's brand rate; an opening-day change is not listed; the October back-fill
+   from the modification history ('history') counts, the system's own price
+   wipes found there ('history-ignored') never do. */
+describe('one row per order, its final result', () => {
+  const ZAN = fair({ id: 3, name: 'SELANGOR [ZANOTTI] BIGHOME @ SUNWAY PYRAMID', brand: 'ZANOTTI', startDate: '2026-09-10', endDate: '2026-09-13', organizer: 'BIGHOME', venue: 'SUNWAY PYRAMID', state: 'Selangor' });
+
+  it('an earlier order changed twice in the range reads once: Original, Latest, Amended and its commission lines summed', () => {
+    const r = buildEventCommission({
+      ...OCT, fairs: [ZAN], ratePctByBrand: RATES,
+      sos: [so({ docNo: 'HC-SO-2609-050', projectId: 3, goodsSen: 1_150_00, totalSen: 1_250_00, createdAt: '2026-09-11T03:00:00Z', soDate: '2026-09-11' })],
+      payments: [{ docNo: 'HC-SO-2609-050', paidAt: '2026-09-11', amountSen: 500_00 }],
+      changes: [
+        change({ docNo: 'HC-SO-2609-050', changedAt: '2026-10-05T03:00:00Z', beforeGoodsSen: 1_000_00, afterGoodsSen: 1_200_00, source: 'history' }),
+        change({ docNo: 'HC-SO-2609-050', changedAt: '2026-10-22T03:00:00Z', beforeGoodsSen: 1_200_00, afterGoodsSen: 1_150_00 }),
+      ],
+      cancels: [],
+    });
+    expect(r.earlierOrders).toEqual([expect.objectContaining({
+      docNo: 'HC-SO-2609-050', brand: 'ZANOTTI', organizer: 'BIGHOME', venue: 'SUNWAY PYRAMID', state: 'Selangor', ratePct: 13,
+      originalSen: 1_000_00, latestSen: 1_150_00, amendedSen: 150_00,
+      commissionSen: 19_50, lastDate: '2026-10-22', fromHistory: true,
+    })]);
+    expect(r.earlierOrders[0]!.events.map((e) => e.kind)).toEqual(['upsale', 'drop']);
+    expect(r.changedOrders).toEqual([expect.objectContaining({
+      docNo: 'HC-SO-2609-050', part: 'earlier', originalSen: 1_000_00, latestSen: 1_150_00, amendedSen: 150_00, effectSen: 19_50, lastChange: '2026-10-22',
+    })]);
+    /* Totals are the lines', untouched by the one-row view. */
+    expect(r.totals.adjustmentsSen).toBe(19_50);
+  });
+
+  it('this range\'s fairs list their changed orders too — the effect already inside the fair, nothing added', () => {
+    const r = buildEventCommission({
+      ...OCT, fairs: [fair({ organizer: 'BIGHOME', venue: 'MID VALLEY', state: 'Kuala Lumpur' })], ratePctByBrand: RATES,
+      sos: [
+        so({ goodsSen: 900_00 }),
+        so({ docNo: 'HC-SO-2610-002', goodsSen: 500_00, totalSen: 500_00 }),
+      ],
+      payments: [{ docNo: 'HC-SO-2610-001', paidAt: '2026-10-02', amountSen: 400_00 }],
+      changes: [
+        change({ changedAt: '2026-10-21T03:00:00Z', beforeGoodsSen: 1_000_00, afterGoodsSen: 900_00 }),
+        /* An opening-day fix on the second order: not an upsale, not listed. */
+        change({ docNo: 'HC-SO-2610-002', changedAt: '2026-10-02T09:00:00Z', beforeGoodsSen: 800_00, afterGoodsSen: 500_00 }),
+      ],
+      cancels: [],
+    });
+    expect(r.fairs[0]).toMatchObject({ organizer: 'BIGHOME', venue: 'MID VALLEY', state: 'Kuala Lumpur', payableSen: 126_00 });
+    expect(r.changedOrders).toEqual([expect.objectContaining({
+      docNo: 'HC-SO-2610-001', part: 'range', originalSen: 1_000_00, latestSen: 900_00, amendedSen: -100_00, reachedOn: '2026-10-02', effectSen: -14_00,
+    })]);
+    expect(r.totals.totalSen).toBe(126_00);
+  });
+
+  it('a change that has not reached 30% moves no commission yet; a system price wipe from the history is never an upsale or drop', () => {
+    const r = buildEventCommission({
+      ...OCT, fairs: [fair()], ratePctByBrand: RATES,
+      sos: [so({ goodsSen: 1_200_00, totalSen: 1_300_00 })],
+      payments: [{ docNo: 'HC-SO-2610-001', paidAt: '2026-10-02', amountSen: 100_00 }],
+      changes: [
+        change({ changedAt: '2026-10-06T03:00:00Z', beforeGoodsSen: 1_000_00, afterGoodsSen: 0, source: 'history-ignored' }),
+        change({ changedAt: '2026-10-08T03:00:00Z', beforeGoodsSen: 0, afterGoodsSen: 1_000_00, beforeTotalSen: 1_100_00, source: 'history-ignored' }),
+        change({ changedAt: '2026-10-21T03:00:00Z', beforeGoodsSen: 1_000_00, afterGoodsSen: 1_200_00 }),
+      ],
+      cancels: [],
+    });
+    expect(changeView(change({ source: 'history-ignored' }), so())).toMatchObject({ notCounted: 'system_fix', fromHistory: true });
+    expect(r.changedOrders).toEqual([expect.objectContaining({ originalSen: 1_000_00, latestSen: 1_200_00, amendedSen: 200_00, reachedOn: null, effectSen: 0 })]);
+  });
+});
