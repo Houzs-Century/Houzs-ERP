@@ -16,6 +16,7 @@
 //   POST   /:id/reject                       the Purchaser says no, saying why
 //   POST   /:id/lines/:lineId/create-model   the Purchaser builds a line's new Model + SKU
 //   POST   /:id/close                        the Purchaser ends it
+//   POST   /:id/link-po                      a Purchase Order raised from it claims it (PO_ISSUED)
 //   POST   /:id/files, GET /:id/files, GET + DELETE /:id/files/:fileId
 //                                            the request's evidence (quotation, photos) — lib/doc-files.ts
 //
@@ -31,7 +32,10 @@
 // The PC Order is raised on PC Order New (?fromProductRequest=), one order line
 // per request line; its create door reads the request through
 // lib/product-request-link.ts and, once the order stands, the request reads
-// PCO_ISSUED with pco_id.
+// PCO_ISSUED with pco_id. Goods bought outright go on a Purchase Order instead
+// (2990-0015): PO New (?fromProductRequest=) seeds the same way and, once the
+// PO stands, claims the request through POST /:id/link-po — PO_ISSUED with
+// po_id. A request carries one order, of either kind.
 //
 // NO area guard (scm/index.ts): a salesperson has no consignment or procurement
 // area, and the Purchaser has no sales area. requireScmAccess admits a Sales
@@ -52,7 +56,7 @@ import { callerUserId } from '../lib/payment-request';
 import { notifyProductRequest } from '../../services/productRequestNotify';
 import { MFG_PRODUCT_CATEGORIES } from '../shared/product-categories';
 import {
-  PRODUCT_REQUEST_APPLICATIONS, PRODUCT_REQUEST_TYPES, canTransition, defaultSkuCode, linesRefusal, productRefusal, requesterMayChange,
+  PRODUCT_REQUEST_APPLICATIONS, PRODUCT_REQUEST_TYPES, canTransition, defaultSkuCode, linesRefusal, orderFromRequestRefusal, productRefusal, requesterMayChange,
   type ProductRequestStatus,
 } from '../shared/product-request';
 
@@ -64,7 +68,7 @@ export const PRODUCT_REQUEST_APPROVE_KEY = 'scm.product_request.approve';
 export const productRequests = new Hono<{ Bindings: Env; Variables: Variables }>();
 productRequests.use('*', supabaseAuth);
 
-const COLS = 'id, company_id, request_no, request_type, application, requested_by, requested_by_name, special_remarks, delivery_location_id, expected_delivery_date, supplier_id, status, decision_note, decided_by, decided_at, pco_id, created_at, updated_at';
+const COLS = 'id, company_id, request_no, request_type, application, requested_by, requested_by_name, special_remarks, delivery_location_id, expected_delivery_date, supplier_id, status, decision_note, decided_by, decided_at, pco_id, po_id, created_at, updated_at';
 const LINE_COLS = 'id, company_id, request_id, line_no, item_code, proposed_model_name, model_id, category, compartment, fabric_code, seat_size, leg_size, qty, unit_price_sen, remarks, created_at, updated_at';
 const NO_PERM = { error: "You don't have permission to do that." };
 /** Special remarks are a few lines to the Purchaser, not a document. */
@@ -114,8 +118,9 @@ async function loadLines(c: any, companyId: number, requestIds: string[]): Promi
   return { byRequest };
 }
 
-/** Each request with its lines and what it links to: the PC Order raised from
-    it, the delivery location's name, the supplier, and each line's Model. */
+/** Each request with its lines and what it links to: the PC Order or the
+    Purchase Order raised from it, the delivery location's name, the supplier,
+    and each line's Model. */
 async function withLinks(c: any, companyId: number, rows: Row[]): Promise<{ rows: Row[] } | { resp: Response }> {
   const sb = c.get('supabase');
   const lines = await loadLines(c, companyId, rows.map((r) => String(r.id)));
@@ -127,6 +132,14 @@ async function withLinks(c: any, companyId: number, rows: Row[]): Promise<{ rows
       .eq('company_id', companyId).in('id', pcoIds);
     if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
     for (const p of (data ?? []) as Row[]) pcos.set(String(p.id), p);
+  }
+  const poIds = [...new Set(rows.map((r) => r.po_id).filter(Boolean))] as string[];
+  const pos = new Map<string, Row>();
+  if (poIds.length > 0) {
+    const { data, error } = await sb.from('purchase_orders').select('id, po_number, status, expected_at')
+      .eq('company_id', companyId).in('id', poIds);
+    if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
+    for (const p of (data ?? []) as Row[]) pos.set(String(p.id), p);
   }
   const whIds = [...new Set(rows.map((r) => r.delivery_location_id).filter(Boolean))] as string[];
   const warehouses = new Map<string, Row>();
@@ -153,6 +166,7 @@ async function withLinks(c: any, companyId: number, rows: Row[]): Promise<{ rows
   return {
     rows: rows.map((r) => {
       const pco = r.pco_id ? pcos.get(String(r.pco_id)) ?? null : null;
+      const po = r.po_id ? pos.get(String(r.po_id)) ?? null : null;
       const wh = r.delivery_location_id ? warehouses.get(String(r.delivery_location_id)) ?? null : null;
       const supplier = r.supplier_id ? suppliers.get(String(r.supplier_id)) ?? null : null;
       return {
@@ -162,6 +176,7 @@ async function withLinks(c: any, companyId: number, rows: Row[]): Promise<{ rows
           return { ...l, model: model ? { id: model.id, modelCode: model.model_code, name: model.name } : null };
         }),
         pco: pco ? { id: pco.id, pcNumber: pco.pc_number, status: pco.status, expectedAt: pco.expected_at ?? null } : null,
+        po: po ? { id: po.id, poNumber: po.po_number, status: po.status, expectedAt: po.expected_at ?? null } : null,
         deliveryLocation: wh ? { id: wh.id, code: wh.code, name: wh.name } : null,
         supplier: supplier ? { id: supplier.id, code: supplier.code, name: supplier.name } : null,
       };
@@ -722,3 +737,42 @@ export const closeProductRequestHandler = async (c: any): Promise<Response> => {
   return c.json({ ok: true });
 };
 productRequests.post('/:id/close', closeProductRequestHandler);
+
+/* ── POST /:id/link-po — a Purchase Order raised from it claims it ────────────
+   Body: { poId }. Called by PO New (?fromProductRequest=) once the PO stands:
+   the PO route is not touched, so the PO is created first and claims the
+   request after. The same rules as the PC Order's door (approved, every line a
+   SKU, no order yet); a refusal leaves the PO standing, unlinked, and says so.
+   Guarded on APPROVED, so a PC Order and a PO raised at once cannot both claim it. */
+export const linkPurchaseOrderHandler = async (c: any): Promise<Response> => {
+  if (!isApprover(c)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  let body: Row;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const poId = text(body.poId);
+  if (!poId) return c.json({ error: 'po_id_required', message: 'Say which Purchase Order was raised from the request.' }, 400);
+  const found = await loadVisible(c, c.req.param('id'));
+  if ('resp' in found) return found.resp;
+  const r = found.req;
+  const lines = await loadLines(c, co.companyId, [String(r.id)]);
+  if ('resp' in lines) return lines.resp;
+  const refusal = orderFromRequestRefusal({ status: String(r.status), request_no: String(r.request_no), lines: (lines.byRequest.get(String(r.id)) ?? []).map((l) => ({ item_code: l.item_code ?? null })) }, 'PO');
+  if (refusal) return c.json(refusal, 409);
+  const sb = c.get('supabase');
+  const { data: po, error: poErr } = await sb.from('purchase_orders').select('id, po_number')
+    .eq('company_id', co.companyId).eq('id', poId).maybeSingle();
+  if (poErr) return c.json({ error: 'load_failed', reason: poErr.message }, 500);
+  if (!po) return c.json({ error: 'po_not_found', message: 'That Purchase Order is not in the company you are working in.' }, 404);
+  const pf = await assertAuditWritable(sb, { entityType: 'PRODUCT_REQUEST', entityId: String(r.id), action: 'UPDATE', companyId: co.companyId });
+  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+  const moved = await moveStatus(c, co.companyId, r, 'PO_ISSUED', { po_id: po.id });
+  if ('resp' in moved) return moved.resp;
+  await recordEntityAudit(sb, {
+    entityType: 'PRODUCT_REQUEST', entityId: String(r.id), entityDocNo: r.request_no, action: 'UPDATE',
+    actor: c.get('houzsUser'), companyId: co.companyId, statusSnapshot: 'PO_ISSUED',
+    fieldChanges: compactChanges([fieldChange('poNumber', null, po.po_number)]),
+  });
+  return c.json({ ok: true, poNumber: po.po_number });
+};
+productRequests.post('/:id/link-po', linkPurchaseOrderHandler);

@@ -64,6 +64,7 @@ import { PageHeader } from '../../components/Layout';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { showsVariantEditor } from '../../vendor/scm/lib/variant-editor-groups';
+import { useLinkProductRequestPo, useProductRequest } from '../../vendor/scm/lib/product-request-queries';
 
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -517,6 +518,46 @@ export const PurchaseOrderNew = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- categoryForCode is a stable code→category lookup, not a reactive trigger
   }, [copyFrom, copySource.data]);
 
+  /* Raised from a product request instead of a PC Order (2990-0015,
+     ?fromProductRequest=): the PC Order New seed — supplier, purchase location,
+     expected delivery, one line per request line with its fabric / seat / leg —
+     with each line remark on the PO line's own notes. The binding and the
+     price resolve once the supplier's bindings load. On save the PO claims the
+     request (PO_ISSUED). */
+  const fromProductRequest = searchParams.get('fromProductRequest');
+  const requestQ = useProductRequest(fromProductRequest);
+  const sourceRequest = requestQ.data?.request ?? null;
+  const linkRequest = useLinkProductRequestPo();
+  const requestApplied = useRef(false);
+  useEffect(() => {
+    if (!fromProductRequest || requestApplied.current || !sourceRequest) return;
+    requestApplied.current = true;
+    if (sourceRequest.supplier_id) setSupplierId(sourceRequest.supplier_id);
+    if (sourceRequest.delivery_location_id) setPurchaseLocationId(sourceRequest.delivery_location_id);
+    if (sourceRequest.expected_delivery_date) setExpectedAt(sourceRequest.expected_delivery_date);
+    setNotes((prev) => prev || [`From Product Request ${sourceRequest.request_no}`, sourceRequest.special_remarks].filter(Boolean).join(' · '));
+    const seeded = sourceRequest.lines.filter((l) => !!l.item_code).map((l): DraftLine => {
+      const variants: Record<string, unknown> = {};
+      if (l.fabric_code) variants.fabricCode = l.fabric_code;
+      if (l.seat_size) variants.seatHeight = l.seat_size;
+      if (l.leg_size) variants.legHeight = l.leg_size;
+      return {
+        ...newLine(),
+        itemCode: l.item_code!,
+        materialName: l.model?.name ?? l.proposed_model_name ?? l.item_code!,
+        notes: l.remarks ?? '',
+        qty: l.qty,
+        category: categoryForCode(l.item_code!) ?? (l.category.toLowerCase() || undefined),
+        variants,
+        deliveryDate: sourceRequest.expected_delivery_date ?? undefined,
+        warehouseId: sourceRequest.delivery_location_id ?? undefined,
+        ...(l.unit_price_sen != null && l.unit_price_sen > 0 ? { unitPriceSen: l.unit_price_sen, priceTouched: true } : {}),
+      };
+    });
+    if (seeded.length > 0) setLines(seeded);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- categoryForCode is a stable code→category lookup, not a reactive trigger
+  }, [fromProductRequest, sourceRequest]);
+
   /* Persist the in-progress draft, then go to the full-page From-SO picker.
      Restored on return (see the effect above) so the picked lines APPEND to
      what's already here instead of resetting the form. */
@@ -760,6 +801,13 @@ export const PurchaseOrderNew = () => {
                (a creditor code, a duplicate item to retire) is master data this
                buyer does not own. */
             await notifyAcNotSent(notify, res, 'Purchase order');
+            if (fromProductRequest) {
+              try {
+                await linkRequest.mutateAsync({ id: fromProductRequest, poId: res.id });
+              } catch {
+                /* writeFailedAs already said why; the PO stands, unlinked. */
+              }
+            }
             navigate(`/scm/purchase-orders/${res.id}`);
           },
           onError: async (err) => {

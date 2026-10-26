@@ -1,14 +1,14 @@
 # Product Request
 
-A salesperson's request for new products or repacks: a HEADER (new product or repack; use — showroom / customer order / sample / fair exhibition; delivery location; expected date; supplier if agreed; remarks to the Purchaser) plus LINES, one per product — an existing SKU, or a Model the catalogue does not have yet, in a fabric, seat size and leg size, a qty, the agreed unit price, a line remark. The shape a Purchase Consignment Order has (owner 2026-10-15, 方案 A: dozens of showroom pieces go in one request). Screen text is English only. The Purchaser answers the whole request — approve or reject, build each new-Model line's Model + SKU, raise ONE Purchase Consignment Order from it, close it. Numbered `{co}PDR-YYMM-NNN`. Owner 2026-10-06.
+A salesperson's request for new products or repacks: a HEADER (new product or repack; use — showroom / customer order / sample / fair exhibition; delivery location; expected date; supplier if agreed; remarks to the Purchaser) plus LINES, one per product — an existing SKU, or a Model the catalogue does not have yet, in a fabric, seat size and leg size, a qty, the agreed unit price, a line remark. The shape a Purchase Consignment Order has (owner 2026-10-15, 方案 A: dozens of showroom pieces go in one request). Screen text is English only. The Purchaser answers the whole request — approve or reject, build each new-Model line's Model + SKU, raise ONE Purchase Consignment Order from it — or ONE Purchase Order when the goods are bought outright (2990-0015) — close it. Numbered `{co}PDR-YYMM-NNN`. Owner 2026-10-06.
 
 ## Statuses and flow
 
-`REQUESTED -> APPROVED -> PCO_ISSUED -> CLOSED`, plus `REJECTED` (goes back to `REQUESTED` when the requester fixes and resends it) and `WITHDRAWN`. `WITHDRAWN` and `CLOSED` are terminal. Approval is for the whole request, never per line. The pure state machine is `backend/src/scm/shared/product-request.ts`.
+`REQUESTED -> APPROVED -> PCO_ISSUED | PO_ISSUED -> CLOSED`, plus `REJECTED` (goes back to `REQUESTED` when the requester fixes and resends it) and `WITHDRAWN`. `WITHDRAWN` and `CLOSED` are terminal. Approval is for the whole request, never per line. A request carries one order, of either kind. The pure state machine is `backend/src/scm/shared/product-request.ts`.
 
 | Method | Path | Who | Effect |
 |---|---|---|---|
-| GET | `/product-requests`, `/:id` | requester (own only), Purchaser (all; `?mine=1` for own) | list / detail, each with its `lines` (and each line's Model), the linked PC Order, delivery location and supplier |
+| GET | `/product-requests`, `/:id` | requester (own only), Purchaser (all; `?mine=1` for own) | list / detail, each with its `lines` (and each line's Model), the linked PC Order (`pco`) or Purchase Order (`po`), delivery location and supplier |
 | GET | `/product-requests/pending-count` | anyone | `{count}` of `REQUESTED` requests in the company for a LITERAL holder of `scm.product_request.approve` (`*` gets 0), else 0; fails soft to 0 — the red count on the Consignment > Product Request entry |
 | GET | `/product-requests/supplier-options` | anyone who may open requests | ACTIVE suppliers of the company as id / code / name only — the requester's picker (a salesperson holds no `scm.procurement.suppliers`) |
 | POST | `/product-requests` | any Sales caller, or `scm.product_request.create` | raise, header + `lines[]` (1 to 200), lands `REQUESTED` |
@@ -17,10 +17,13 @@ A salesperson's request for new products or repacks: a HEADER (new product or re
 | POST | `/:id/approve` | `scm.product_request.approve` | `REQUESTED` -> `APPROVED` (optional note); answer carries `needsModel` + `pendingModels` (lines still without a SKU) |
 | POST | `/:id/reject` | `scm.product_request.approve` | `REQUESTED` -> `REJECTED`, note required |
 | POST | `/:id/lines/:lineId/create-model` | `scm.product_request.approve` | `APPROVED`, a line with no SKU: creates the Model (find-or-create) + first SKU, stamps the line's `item_code` / `model_id`; status unchanged |
-| POST | `/:id/close` | `scm.product_request.approve` | `APPROVED` / `PCO_ISSUED` -> `CLOSED` |
+| POST | `/:id/close` | `scm.product_request.approve` | `APPROVED` / `PCO_ISSUED` / `PO_ISSUED` -> `CLOSED` |
+| POST | `/:id/link-po` | `scm.product_request.approve` | body `{poId}`, called by PO New once the PO stands: same refusals as the PC Order door, PO must be in the company (`po_not_found`); `APPROVED` -> `PO_ISSUED` with `po_id` |
 | POST / GET | `/:id/files`, GET + DELETE `/:id/files/:fileId` | requester (own), Purchaser (any) | the request's files (quotation, photos, drawing; image or PDF, 20 MB each) through `lib/doc-files.ts` on `scm.product_request_files`, bytes in the SLIPS R2 bucket under `product-request-files/<company>/<request>/` |
 
 The PC Order is raised on PC Order New (`?fromProductRequest=<id>`), which seeds the header's Purchase Location + Expected Delivery + supplier, and ONE ORDER LINE PER REQUEST LINE (SKU, qty, fabric / seat / leg as the variant bag, the agreed price with `priceTouched`); the request's remarks and the line remarks ride the order notes. `POST /purchase-consignment-orders` takes `productRequestId`: it refuses a request not `APPROVED` (`request_not_approved`), already issued (`request_already_issued`) or with any line without a SKU (`model_not_created`); once the order stands the request reads `PCO_ISSUED` with `pco_id`, and the order carries `source_product_request_id` (`lib/product-request-link.ts`).
+
+The Purchase Order is raised on PO New (`?fromProductRequest=<id>`) with the same seed, except each line remark goes on the PO line's own notes. The PO route is untouched: the PO is created first, then `POST /:id/link-po` claims the request. A refusal there leaves the PO standing, unlinked, and PO New says so. The PO carries no back-link column; the request's `po_id` is the only link.
 
 ## Permissions
 
@@ -46,15 +49,15 @@ The PC Order is raised on PC Order New (`?fromProductRequest=<id>`), which seeds
 
 ## Gotchas
 
-- The PC Order form is desktop-only, so on the phone an approved request says to raise the order on the computer; the phone approves, rejects, builds each line's Model and closes.
+- The PC Order and PO forms are desktop-only, so on the phone an approved request says to raise the order on the computer; the phone approves, rejects, builds each line's Model and closes.
 - `decision_note` holds the Purchaser's words for approve, reject and close alike; a resubmit clears it.
 - A line's `category` defaults to `SOFA`; seat sizes read `sofaSizes`, leg sizes read `sofaLegHeights` for a sofa and `legHeights` otherwise. `compartment` stays on the row and the API (owner 2026-10-15: removed from the form), so a new Model's default SKU code is the model code and the Purchaser types `<MODEL>-<compartment>` when a sofa needs it.
 - `scm.product_requests` lost its one-product columns on 2026-10-15 (migration `20261015T0540`, 0 rows on production then); anything reading `product_requests.item_code` is stale.
 
 ## Where the code is
 
-- `backend/src/scm/routes/product-requests.ts` — API surface. `backend/src/scm/shared/product-request.ts` — state machine + line / PC-Order refusals. `backend/src/scm/lib/product-request-link.ts` — the PC Order's door.
-- `backend/src/db/migrations-pg/20261006T0741_scm_product_requests.sql` (header + `purchase_consignment_orders.source_product_request_id`), `20261015T0540_scm_product_request_lines.sql` (`scm.product_request_lines`, header columns dropped), `20261015T0930_scm_product_request_files.sql` (`scm.product_request_files`).
-- `frontend/src/vendor/scm/lib/product-request-queries.ts` — hooks, status words, line helpers, `pcoNewFromRequestPath`.
-- `frontend/src/pages/scm-v2/ProductRequests.tsx` (desktop), `frontend/src/mobile/MobileProductRequests.tsx` (phone), `PurchaseConsignmentOrderNew.tsx` (`?fromProductRequest=` seed).
+- `backend/src/scm/routes/product-requests.ts` — API surface (incl. `link-po`). `backend/src/scm/shared/product-request.ts` — state machine + line / order refusals (`orderFromRequestRefusal`). `backend/src/scm/lib/product-request-link.ts` — the PC Order's door.
+- `backend/src/db/migrations-pg/20261006T0741_scm_product_requests.sql` (header + `purchase_consignment_orders.source_product_request_id`), `20261015T0540_scm_product_request_lines.sql` (`scm.product_request_lines`, header columns dropped), `20261015T0930_scm_product_request_files.sql` (`scm.product_request_files`), `20261026T1000_scm_product_requests_po_link.sql` (`po_id`, `PO_ISSUED`).
+- `frontend/src/vendor/scm/lib/product-request-queries.ts` — hooks, status words, line helpers, `pcoNewFromRequestPath`, `poNewFromRequestPath`, `useLinkProductRequestPo`.
+- `frontend/src/pages/scm-v2/ProductRequests.tsx` (desktop), `frontend/src/mobile/MobileProductRequests.tsx` (phone), `PurchaseConsignmentOrderNew.tsx` and `PurchaseOrderNew.tsx` (`?fromProductRequest=` seed).
 - Tests: `backend/tests/productRequests.test.ts`, `backend/src/scm/shared/product-request.test.ts`, `frontend/src/pages/scm-v2/ProductRequests.test.tsx`.
