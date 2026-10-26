@@ -31,6 +31,7 @@ import {
 } from './pdf-common';
 import { warehouseLabel, type WarehouseLabelSource } from './warehouse-label';
 import { variantKeyLabel } from './variant-key-label';
+import { fmtSourcePos } from './stock-take-source-pos';
 /* The status WORD comes from the one home for it, never from a caser here:
    what this document prints and what the screen shows must be the same word.
    docs/modules/document-status-vocabulary.md §1. */
@@ -69,6 +70,8 @@ type StkLine = {
   counted_qty: number | null;
   variance: number | null;
   notes?: string | null;
+  /* HC-0158: the PO(s) behind the bucket's open lots; absent = not sent. */
+  source_pos?: Array<{ po: string; qty: number }>;
 };
 
 const SCOPE_LABEL = (scopeType: string, scopeValue: string | null): string => {
@@ -179,9 +182,14 @@ export async function renderStockTakeInto(
      paper) gives way to a blank RACK column for where the goods actually sit.
      Server order is kept as it comes (`.order('item_code')`). */
   const counting = header.status === 'OPEN';
+  /* Sim 2026-10-26: the PO on paper too, to trace sofa / bedframe stock while
+     counting. Printed only when some line traces to a PO (never on a blind
+     take: the server withholds it there). */
+  const showPo = !withheld && lines.some((l) => (l.source_pos ?? []).length > 0);
   const rows = lines.map((l, idx) => {
     const variant = printVariant(l.variant_label ?? variantKeyLabel(l.variant_key, ''));
-    const base = [String(idx + 1), l.item_code, l.product_name || '—', variant];
+    const base = [String(idx + 1), l.item_code, l.product_name || '—', variant,
+      ...(showPo ? [fmtSourcePos(l.source_pos)] : [])];
     const counted = l.counted_qty == null ? '' : String(l.counted_qty);
     if (withheld) return [...base, counted, '', l.notes ?? ''];
     return [
@@ -196,7 +204,7 @@ export async function renderStockTakeInto(
   });
   const head = withheld
     ? ['#', 'Item', 'Description', 'Variant', 'Counted', 'Rack', 'Notes']
-    : ['#', 'Item', 'Description', 'Variant', 'System', 'Counted', counting ? 'Rack' : 'Variance', 'Notes'];
+    : ['#', 'Item', 'Description', 'Variant', ...(showPo ? ['PO'] : []), 'System', 'Counted', counting ? 'Rack' : 'Variance', 'Notes'];
   /* 182mm of A4 between the margins. */
   const columnStyles = withheld
     ? {
@@ -207,6 +215,17 @@ export async function renderStockTakeInto(
       4: { cellWidth: 15, halign: 'right' },
       5: { cellWidth: 16 },
       6: { cellWidth: 20 },
+    }
+    : showPo ? {
+      0: { cellWidth: 7, halign: 'right' },
+      1: { cellWidth: 32, fontSize: 7 },
+      2: { cellWidth: 20, overflow: 'ellipsize' },
+      3: { cellWidth: 38, fontSize: 6.5 },
+      4: { cellWidth: 24, fontSize: 6.5 },
+      5: { cellWidth: 12, halign: 'right' },
+      6: { cellWidth: 14, halign: 'right' },
+      7: { cellWidth: 16, halign: counting ? 'left' : 'right' },
+      8: { cellWidth: 19 },
     }
     : {
       0: { cellWidth: 7, halign: 'right' },

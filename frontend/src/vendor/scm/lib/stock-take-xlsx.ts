@@ -10,6 +10,7 @@
 
 import type { Cell, SheetData } from 'write-excel-file';
 import type { StockTakeLine } from './stock-queries';
+import { fmtSourcePos } from './stock-take-source-pos';
 import { AMOUNT_FORMAT, sheetName } from './report-sheet-xlsx';
 
 export type StockTakeXlsxHeader = {
@@ -46,6 +47,7 @@ export function stockTakeColumns(lines: StockTakeLine[], names: StockTakeXlsxNam
     { label: 'SKU', width: 26, cell: (l) => text(l.item_code) },
     { label: 'Name', width: 34, cell: (l) => text(l.product_name) },
     { label: 'Variant', width: 40, cell: (l) => text(l.variant_label) },
+    !withheld && { label: 'PO', width: 30, cell: (l) => text(fmtSourcePos(l.source_pos)) },
     !withheld && { label: 'System Qty', width: 11, num: true, cell: (l) => qty(l.system_qty) },
     { label: 'Counted Qty', width: 12, num: true, cell: (l) => qty(l.counted_qty) },
     { label: 'Rack', width: 12, cell: (l) => text(l.rack_id ? names.rackOf(l.rack_id) : null) },
