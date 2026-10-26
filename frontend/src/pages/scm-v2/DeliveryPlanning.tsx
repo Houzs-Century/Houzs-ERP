@@ -209,6 +209,17 @@ export const DeliveryPlanning = () => {
 
   /* Single-row convert (context-menu action). */
   const convertOne = (o: PlanningOrder) => { void runConvert([o.so_doc_no]); };
+  const moveState = async (o: PlanningOrder, state: 'PENDING_SCHEDULE' | null) => {
+    try {
+      await sched.mutateAsync({ type: 'so', id: o.so_doc_no, deliveryState: state });
+      void notify({
+        title: state ? 'Moved to Pending Schedule' : 'Back to automatic status',
+        body: state ? `${o.so_doc_no} can be arranged now; its Stock column still shows what is ready.` : `${o.so_doc_no} follows its stock again.`,
+      });
+    } catch (e) {
+      void notify({ title: 'Not moved', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
 
   /* Open a row's underlying document: an ASSR row goes to the SERVICE CASE detail
      (/assr/:id, keyed on the numeric case id); an SO row keeps its Sales Order
@@ -571,6 +582,14 @@ export const DeliveryPlanning = () => {
               ]
             : [
                 { label: 'Schedule…', onClick: () => setSchedulingOne(row) },
+                /* Arrange before the goods are ready (owner 2026-10-26): the row
+                   moves to Pending Schedule while its Stock column stays live. */
+                ...(row.delivery_state === 'PENDING_DELIVERY' || row.delivery_state === 'OVERDUE'
+                  ? [{ label: 'Move to Pending Schedule', onClick: () => moveState(row, 'PENDING_SCHEDULE') }]
+                  : []),
+                ...(row.delivery_state_override
+                  ? [{ label: 'Back to automatic status', onClick: () => moveState(row, null) }]
+                  : []),
                 { label: 'Edit HC fields…', onClick: () => setEditing(row) },
                 { label: 'Send WhatsApp…', onClick: () => { setSendKind('delivery'); setSendingRows([row]); } },
                 ...(canConvertToDo

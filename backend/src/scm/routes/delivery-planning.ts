@@ -287,10 +287,11 @@ export function derivePlanningState(input: {
 }): DeliveryState {
   const { storedOverride, status, readiness, delivered, remaining, effectiveDD, today } = input;
   const stored = storedOverride ?? null;
-  if (stored && (DELIVERY_STATES as string[]).includes(stored)) return stored as DeliveryState;
-
+  /* Delivered beats a manual override: an order moved early into Pending
+     Schedule must still leave the queue once it is handed over. */
   const st = String(status ?? '').toUpperCase();
   if (st === 'DELIVERED' || (delivered > 0 && remaining <= 0)) return 'DELIVERED';
+  if (stored && (DELIVERY_STATES as string[]).includes(stored)) return stored as DeliveryState;
 
   /* "Ready to ship" gate — see summariseReadiness.isShipReady. The narrowed
      parameter type above is what now keeps the wrong flag out of reach. */
@@ -451,7 +452,8 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, agent, salesperson_id, venue, customer_state, customer_country, customer_delivery_date, sales_exemption_expiry, amend_date_from_customer, amended_delivery_date, amend_reason, amend_reason_from_customer, processing_date, so_date, address1, address2, postcode, building_type, local_total_sen, balance_sen, possession_date, house_type, replacement_disposal, referral, ref, customer_so_no, delivery_message_status, disposal_request, dp_remark, linked_ac_docno')
         .neq('status', 'DRAFT')
         .neq('status', 'CANCELLED')
-        .order('customer_delivery_date', { ascending: true, nullsFirst: false }),
+        .order('customer_delivery_date', { ascending: true, nullsFirst: false })
+        .order('doc_no'), // breaks date ties: pages overlapped, 7 SOs came back twice (2026-10-26)
       c,
     ).range(from, to),
   ); lap('dp-so-headers');
