@@ -224,3 +224,18 @@ describe("mobile menu permission gates", () => {
     expect(mobileDestinationMatches("/team?tab=directory", "/team?tab=departments2")).toBe(false);
   });
 });
+
+/* Owner 2026-10-26: a driver could not find his run-sheet on the phone. The Driver
+   role holds scm.transportation.last_mile but not .planning, and the row borrowed
+   Delivery Planning's gate. It must carry the same key as the desktop row. */
+describe("Last Mile Delivery (Driver) on the phone", () => {
+  it("gates on last_mile, the key the Driver role holds", () => {
+    const row = MOBILE_MENU_GROUPS.flatMap((g) => g.items).find((it) => it.to === "/scm/delivery-planning-driver")!;
+    const gate = row.gateVia ?? row.to;
+    const find = (ts: NavTab[]): NavTab | undefined => {
+      for (const t of ts) { if (t.to === gate) return t; const c = find(t.children ?? []); if (c) return c; }
+      return undefined;
+    };
+    expect(find(NAV_TABS)?.anyAccess).toEqual(["scm.transportation.last_mile"]);
+  });
+});
