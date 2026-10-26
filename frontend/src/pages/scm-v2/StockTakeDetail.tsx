@@ -30,7 +30,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { History, Save, X, Trash2, Send, Ban, AlertTriangle, Search, Wand2, Undo2, ChevronRight, ChevronDown, EyeOff, Rows3, List, Printer, Pencil, Plus, Camera } from 'lucide-react';
+import { History, Save, X, Trash2, Send, Ban, AlertTriangle, Search, Wand2, Undo2, ChevronRight, ChevronDown, EyeOff, Rows3, List, Printer, Pencil, Plus, Camera, Download } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -66,6 +66,7 @@ import { useStaffLookup } from '../../hooks/useStaffLookup';
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import { warehouseLabel } from '../../vendor/scm/lib/warehouse-label';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
+import { statusLabel } from '../../vendor/scm/lib/status-pill';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -337,6 +338,31 @@ export const StockTakeDetail = () => {
       }));
   };
   const print = usePrintPreview(deliverPrintPdf);
+
+  /* 2990-0014: the same server rows as the PDF, as a workbook. */
+  const exportExcel = () => {
+    const d = detail.data;
+    if (!d) return;
+    const tk = d.take;
+    const subtitle = [
+      tk.warehouse ? `${tk.warehouse.code} · ${tk.warehouse.name}` : tk.warehouse_id,
+      fmtDateOrDash(tk.take_date),
+      scopeLabel(tk.scope_type, tk.scope_value),
+      statusLabel('stockTake', tk.status),
+      stockTakeAssignees(tk).map((x) => actorNameOf(x)).join(', '),
+    ].filter(Boolean).join(' · ');
+    import('../../vendor/scm/lib/stock-take-xlsx')
+      .then(({ downloadStockTakeXlsx }) => downloadStockTakeXlsx(
+        { takeNo: tk.take_no, subtitle },
+        d.lines,
+        { rackOf: rackLabel, staffOf: actorNameOf },
+      ))
+      .catch((e) => notify({
+        title: 'Excel export failed',
+        body: e instanceof Error ? e.message : 'Something went wrong.',
+        tone: 'error',
+      }));
+  };
   /* The list's right-click Print navigates here with ?print=1 — same contract
      every other document's row menu uses. */
   useOpenPrintPreviewFromUrl(print.openPreview, !!detail.data);
@@ -578,6 +604,9 @@ export const StockTakeDetail = () => {
                   the variance record. Both are wanted. */}
               <Button variant="ghost" size="md" onClick={print.openPreview}>
                 <Printer {...ICON} /> Print PDF
+              </Button>
+              <Button variant="ghost" size="md" onClick={exportExcel}>
+                <Download {...ICON} /> Export Excel
               </Button>
               {isDraft && (
                 <>
