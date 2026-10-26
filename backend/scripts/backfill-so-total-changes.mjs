@@ -194,6 +194,19 @@ async function main() {
               if ((x?.commissionSen ?? null) === (y?.commissionSen ?? null)) continue;
               out(`    ${basis} PART 1 MOVED ${doc} ${y?.fair ?? x?.fair}: commission ${rm(x?.commissionSen)} → ${rm(y?.commissionSen)} · goods ${rm(x?.goodsSen)} → ${rm(y?.goodsSen)} · reached ${x?.reachedOn ?? '-'} → ${y?.reachedOn ?? '-'} · total ${rm(x?.totalSen)} → ${rm(y?.totalSen)}`);
             }
+            const lines = (rep) => {
+              const m = new Map();
+              for (const l of rep.adjustments) m.set(l.docNo, [...(m.get(l.docNo) ?? []), l]);
+              return m;
+            };
+            const lb = lines(beforeOf[basis]);
+            const la = lines(rep);
+            for (const doc of new Set([...lb.keys(), ...la.keys()])) {
+              const sum = (ls) => (ls ?? []).reduce((s, l) => s + n(l.commissionSen), 0);
+              if (sum(lb.get(doc)) === sum(la.get(doc))) continue;
+              const say = (ls) => (ls ?? []).map((l) => `${l.kind}${l.beforeReach ? '(before 30%)' : ''} ${l.date} goods ${rm(l.goodsSen)} = ${rm(l.commissionSen)}`).join(' + ') || 'nothing';
+              out(`    ${basis} EARLIER MOVED ${doc} ${(la.get(doc) ?? lb.get(doc))[0].fairName}: ${rm(sum(lb.get(doc)))} → ${rm(sum(la.get(doc)))} · was ${say(lb.get(doc))} · now ${say(la.get(doc))}`);
+            }
             for (const o of (rep.changedOrders ?? []).filter((x) => x.fromHistory)) {
               out(`    ${basis} changed ${o.docNo} ${o.part} ${o.brand ?? '-'} · ${o.fairName ?? '-'} · original ${rm(o.originalSen)} latest ${rm(o.latestSen)} amended ${rm(o.amendedSen)} · ${o.reachedOn ? `effect ${rm(o.effectSen)}` : 'not yet 30%'} · ${o.salesperson ?? '-'}`);
             }
