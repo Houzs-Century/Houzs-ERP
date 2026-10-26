@@ -11,7 +11,7 @@ Used by dispatchers/logistics on desktop and by drivers, helpers and storekeeper
   - Manual DP orders (`scm.dp_orders` with no `so_doc_no` / `assr_case_id` / `do_id`, not DELIVERED/CANCELLED).
   - PMS project setup/dismantle windows (read-only crew mirror; edit in Projects).
   - A failing non-SO union logs and leaves SO rows intact.
-- `scm.delivery_state` (`derivePlanningState` in `routes/delivery-planning.ts`, shared with the `/mfg-sales-orders` list): a stored header override wins; else `DELIVERED` (status DELIVERED, or delivered > 0 and remaining <= 0); `PENDING_SCHEDULE` (ready to ship, `isShipReady`); `OVERDUE` (not ready and <= 3 days to/past the effective date); `PENDING_DELIVERY` (otherwise).
+- `scm.delivery_state` (`derivePlanningState` in `routes/delivery-planning.ts`, shared with the `/mfg-sales-orders` list): a stored header override wins; else `DELIVERED` (status DELIVERED, or delivered > 0 and remaining <= 0); `PENDING_SCHEDULE` (ready to ship, `isShipReady`); `OVERDUE` (not ready and <= 3 days to/past the effective date); `PENDING_DELIVERY` (otherwise). An order that reaches `PENDING_SCHEDULE` stays: the board (office scope) stamps the override the first time it derives it (`lib/pending-schedule-stays.ts`), a removed trip stop keeps that stamp, and only Delivered or the right-click "Back to Pending Delivery" moves it out.
 - Effective delivery date = `amended_delivery_date ?? customer_delivery_date` (`effectiveSoDelivery`, `scm/shared/effective-delivery.ts`), the same function MRP, the stock allocator and the delivery agent use.
 - Counts are computed on the region-filtered set BEFORE the state filter (tabs do not move badges).
 - Pipeline, four pages over one shared board (`DeliveryPlanningBoard`):

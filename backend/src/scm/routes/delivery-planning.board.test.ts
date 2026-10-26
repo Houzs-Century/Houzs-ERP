@@ -24,6 +24,7 @@ import { Hono } from 'hono';
 import { describe, expect, it, vi } from 'vitest';
 
 import { fakeSb, type Row } from '../lib/fake-postgrest';
+import { docsEnteringPendingSchedule } from '../lib/pending-schedule-stays';
 import type { Env, Variables } from '../env';
 import { deliveryPlanningBoardHandler, derivePlanningState } from './delivery-planning';
 
@@ -468,5 +469,39 @@ describe('derivePlanningState — a manual Pending Schedule', () => {
   });
   it('gives way to Delivered', () => {
     expect(derivePlanningState({ ...base, storedOverride: 'PENDING_SCHEDULE', delivered: 1, remaining: 0 })).toBe('DELIVERED');
+  });
+});
+
+/* Owner 2026-10-26: 「如果进到来 pending schedule 就不要出去了」 - the board stamps an
+   order the first time it reaches Pending Schedule, so a later stock move cannot
+   drop it back to Pending Delivery / Overdue on its own. */
+describe('GET /delivery-planning — an order that reaches Pending Schedule stays there', () => {
+  it('stamps the override on a ready order, and only for the office view', async () => {
+    const rows = { warehouses: [], mfg_sales_orders: [so('HC-SO-2608-001', 1)], mfg_sales_order_items: [soLine('HC-SO-2608-001', 'li-1')], delivery_order_items: [], delivery_orders: [] };
+    const sb = fakeSb(rows, {});
+    const app = new Hono<{ Bindings: Env; Variables: Variables }>();
+    app.use('*', async (c, next) => {
+      c.set('supabase', sb as unknown as Variables['supabase']);
+      c.set('companyId', 1 as Variables['companyId']);
+      c.set('user', { id: 'u1' } as unknown as Variables['user']);
+      c.set('houzsUser', { id: 9, name: 'Tester', permissions_set: new Set(['*']) } as unknown as Variables['houzsUser']);
+      await next();
+    });
+    app.get('/delivery-planning', deliveryPlanningBoardHandler);
+    const body = (await (await app.request('/delivery-planning')).json()) as { orders: Array<{ so_doc_no: string; delivery_state: string; delivery_state_override: string | null }> };
+    const row = body.orders.find((o) => o.so_doc_no === 'HC-SO-2608-001')!;
+    expect(row.delivery_state).toBe('PENDING_SCHEDULE');
+    expect(row.delivery_state_override).toBe('PENDING_SCHEDULE');
+    const stored = await sb.from('mfg_sales_orders').select('doc_no, delivery_state').eq('doc_no', 'HC-SO-2608-001');
+    expect((stored.data as Array<{ delivery_state: string | null }>)[0]?.delivery_state).toBe('PENDING_SCHEDULE');
+  });
+
+  it('only stamps SO rows that are in Pending Schedule without an override', () => {
+    expect(docsEnteringPendingSchedule([
+      { row_type: 'so', so_doc_no: 'A', delivery_state: 'PENDING_SCHEDULE', delivery_state_override: null },
+      { row_type: 'so', so_doc_no: 'B', delivery_state: 'PENDING_DELIVERY', delivery_state_override: null },
+      { row_type: 'so', so_doc_no: 'C', delivery_state: 'PENDING_SCHEDULE', delivery_state_override: 'PENDING_SCHEDULE' },
+      { row_type: 'assr', so_doc_no: 'D#delivery', delivery_state: 'PENDING_SCHEDULE', delivery_state_override: null },
+    ])).toEqual(['A']);
   });
 });

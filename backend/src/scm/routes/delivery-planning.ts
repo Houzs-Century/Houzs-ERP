@@ -72,6 +72,7 @@ import { todayMyt } from '../lib/my-time';
 import { attachLineCategories } from '../lib/so-readiness-category';
 import { deriveBranding } from '../lib/so-display-branding';
 /* chunkIn on every id/doc-no filter: the list rides in the URL and an unbounded one is refused. */
+import { docsEnteringPendingSchedule, stampPendingSchedule } from '../lib/pending-schedule-stays';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { attachBoardAcExemptionExpiry } from '../lib/ac-exemption-expiry';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
@@ -1511,6 +1512,12 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         tab badges reflect the active region. The state filter is applied AFTER
         counting (so switching state tabs doesn't change the badge numbers). The
         region param is validated against the config's region codes. */
+  if (scope.mode === 'all') {
+    const entering = docsEnteringPendingSchedule(allOrders);
+    await stampPendingSchedule(sb, c, entering);
+    const stamped = new Set(entering);
+    for (const o of allOrders) if (stamped.has(o.so_doc_no) && o.row_type === 'so') o.delivery_state_override = 'PENDING_SCHEDULE';
+  }
   const regionFiltered = scopedOrders.filter((o) => matchesRegion(o, regionParam, regionCfg.validCodes));
   const counts = emptyCounts();
   for (const o of regionFiltered) counts[o.delivery_state] += 1;
