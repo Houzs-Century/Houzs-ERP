@@ -84,6 +84,7 @@ import {
   type PoSupplyEntry,
 } from '../lib/ship-commitment';
 import { collectBatchClaims, openBucketStock, drawBucketStock } from '../lib/batch-claimed-stock';
+import { isOwnPoFirstGroup, openOwnPoFirst, takeOwnPoLine, settleOwnPoFirst, claimOwnReceived } from '../lib/own-po-first';
 import { loadSofaBatchStock } from '../lib/sofa-set-coverage';
 import { planSofaSets, type SofaPlan, type SofaSetLine, type SofaSetPoSupply } from '../lib/sofa-set-plan';
 import { WH_NONE, composite, loadCommittedShipments } from '../lib/committed-shipments';
@@ -963,6 +964,11 @@ export async function computeMrp(
     boundCompany
     && !!r.so_item_id
     && (isHardBoundLine(r.item_group, r.item_code) || demandBoundById.has(String(r.so_item_id)));
+  /* Company 2 Sofa Accessory: the line's own PO before the pool (2990-0019,
+     lib/own-po-first.ts). */
+  const ownPoFirst = openOwnPoFirst(boundCompany ? [] : demand.filter((d) => isOwnPoFirstGroup(d.item_group)).map((d) => ({
+    soItemId: d.id, bucketKey: composite(d.warehouse_id ?? null, d.item_code, variantKeyOf(d.item_group, d.variants)), need: effQtyOf(d),
+  })));
   const poRaisedFor = new Map<string, Set<string>>();
   for (const r of (poRaw ?? []) as unknown as PoLineRow[]) {
     if (!r.po || PO_DEAD.has(r.po.status)) continue;
@@ -1006,15 +1012,24 @@ export async function computeMrp(
       }
       continue;   // dedicated: never free supply for another line's bucket
     }
-    if (left <= 0) continue;
     const poWh = r.warehouse_id ?? r.po.purchase_location_id ?? null;
     if (whFilter && poWh !== whFilter) continue;
     const k = composite(poWh, r.item_code, variantKeyOf(r.item_group, r.variants));
+    const open = left > 0 ? { poNumber: r.po.po_number, eta, qtyLeft: left, supplierId: r.po.supplier_id ?? null } : null;
+    if (takeOwnPoLine(ownPoFirst, r.so_item_id ? String(r.so_item_id) : null, k, Number(r.received_qty ?? 0), open)) {
+      if (open && r.po.supplier_id) poSupplierIds.add(r.po.supplier_id);
+      continue;
+    }
+    if (left <= 0) continue;
     poDrafts.push({
       bucketKey: k, poNumber: r.po.po_number, eta, qtyLeft: left, supplierId: r.po.supplier_id ?? null,
     });
     if (r.po.supplier_id) poSupplierIds.add(r.po.supplier_id);
   }
+  const ownSettled = settleOwnPoFirst(ownPoFirst);
+  for (const [soItemId, kept] of ownSettled.dedicatedByLine) dedicatedOpenByLine.set(soItemId, kept);
+  poDrafts.push(...ownSettled.pooled);
+  for (const [k, n] of ownSettled.outstandingByBucket) poOutstandingByKey.set(k, (poOutstandingByKey.get(k) ?? 0) + n);
 
   /* ── 4b. Remove what is already spoken for (2026-07-31) ─────────────────────
      Units a ship-before-arrival already owns are not supply: the receipt is
@@ -1082,6 +1097,7 @@ export async function computeMrp(
       ?? (d as unknown as Record<string, string | null>).allocatedBatchNo ?? null,
     remainingQty: effQtyOf(d),
   })));
+  claimOwnReceived(ownPoFirst, batchClaims);
 
   // Resolve PO supplier ids → names for the read-only covered-line display.
   const supplierNameById = new Map<string, string>();
@@ -1344,7 +1360,8 @@ export async function computeMrp(
       let poSupplierId: string | null = null;
       /* An unbound line still takes its OWN linked purchase order first: that PO
          left the pool because the PO side is bound (see `isDedicated`), and nothing
-         else can draw it. Company 2 dedicates nothing, so its own queue is empty. */
+         else can draw it. On company 2 only a Sofa Accessory line has one
+         (lib/own-po-first.ts), and it falls through to the pool for the rest. */
       const queues = bound
         ? [dedicatedOpenByLine.get(r.id) ?? []]
         : [dedicatedOpenByLine.get(r.id) ?? [], poQueue];

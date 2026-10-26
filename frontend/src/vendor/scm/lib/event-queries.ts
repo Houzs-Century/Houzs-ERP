@@ -161,6 +161,23 @@ export type CommissionChangedOrder = CommissionOrderPlace & {
   effectSen: number;
   fromHistory: boolean;
 };
+/** A closed month's commission for one order, then and now — paid in the first
+ *  open month as that month's adjustment (owner 2026-10-26, 关月). */
+export type CommissionMonthAdjustment = {
+  /** The closed month it belongs to, YYYY-MM. */
+  month: string;
+  docNo: string;
+  fairId: number | null;
+  fairName: string;
+  brand: string | null;
+  salesperson: string | null;
+  customer: string | null;
+  /** What that month paid for the order: as closed, plus adjustments paid since. */
+  wasSen: number;
+  /** That month recalculated today. */
+  nowSen: number;
+  adjustmentSen: number;
+};
 /** Which date puts an order in the range: its fair's start, or its own SO date. */
 export type CommissionBasis = 'fair' | 'so_date';
 export type EventCommission = {
@@ -173,7 +190,13 @@ export type EventCommission = {
   /** Absent from a server before 2026-10-26 — read as empty. */
   earlierOrders?: CommissionEarlierOrder[];
   changedOrders?: CommissionChangedOrder[];
-  totals: { payableSen: number; adjustmentsSen: number; totalSen: number };
+  /** Closed months' commission that changed after they closed, paid here — absent before 2026-10-27. */
+  monthAdjustments?: CommissionMonthAdjustment[];
+  totals: { payableSen: number; adjustmentsSen: number; monthAdjustmentsSen?: number; totalSen: number };
+  /** Set when the range is a closed month, served as it was closed. */
+  closed?: { month: string; closedAt: string; closedBy: string | null };
+  /** The company's closed months (YYYY-MM) and the first open one. */
+  closes?: { months: string[]; openFrom: string | null };
 };
 
 /** Event Commission for [from, to]: by fair, the fairs starting in it (as at
@@ -184,6 +207,31 @@ export function useEventCommission(from: string, to: string, basis: CommissionBa
     queryKey: ['acc-events', 'commission', from, to, basis],
     queryFn: () => authedFetch<EventCommission>(`/acc-events/commission?from=${from}&to=${to}${basis === 'so_date' ? '&basis=so_date' : ''}`),
     staleTime: 30_000,
+  });
+}
+
+/** Close a month of Event Commission (Finance): frozen as it stands, both ways
+ *  of looking at it; what changes for its orders later is paid in the next one. */
+export function useCloseCommissionMonth() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (month: string) => authedFetch<{ ok: true; month: string }>('/acc-events/commission/close', {
+      method: 'POST', body: JSON.stringify({ month }),
+    }),
+    onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['acc-events', 'commission'] }); },
+    onError: writeFailedAs('Month not closed'),
+  });
+}
+
+/** Reopen the latest closed month: it is recalculated from today's data again. */
+export function useReopenCommissionMonth() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (month: string) => authedFetch<{ ok: true; month: string }>('/acc-events/commission/reopen', {
+      method: 'POST', body: JSON.stringify({ month }),
+    }),
+    onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['acc-events', 'commission'] }); },
+    onError: writeFailedAs('Month not reopened'),
   });
 }
 

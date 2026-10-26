@@ -182,8 +182,95 @@ export type EventCommissionReport = {
   adjustments: AdjustmentRow[];
   earlierOrders: EarlierOrderRow[];
   changedOrders: ChangedOrderRow[];
-  totals: { payableSen: number; adjustmentsSen: number; totalSen: number };
+  /** Closed months' commission that changed after they closed, paid here (「X 月调整」). */
+  monthAdjustments: MonthAdjustmentRow[];
+  totals: { payableSen: number; adjustmentsSen: number; monthAdjustmentsSen: number; totalSen: number };
 };
+
+/* ── Closing a month (owner 2026-10-26: 关月, Finance) ────────────────────────
+   A closed month never changes: the page shows it as it was closed. What later
+   moves its orders' commission — a payment dated back into it, a payment
+   deleted, an order moved to another fair, an order put on hold — is that month
+   recalculated today minus what it paid, and is paid in the first open month as
+   that month's adjustment. Nothing here reads the database; the route stores
+   and reads the closes. */
+
+/** A closed month's commission for one order, then and now. */
+export type MonthAdjustmentRow = {
+  /** The closed month it belongs to, YYYY-MM. */
+  month: string;
+  docNo: string;
+  fairId: number | null;
+  fairName: string;
+  brand: string | null;
+  salesperson: string | null;
+  customer: string | null;
+  /** What that month paid for the order: as closed, plus the adjustments paid since. */
+  wasSen: number;
+  /** That month recalculated today. */
+  nowSen: number;
+  adjustmentSen: number;
+};
+
+/** A closed month as the adjustments need it: what it paid each order, and the
+ *  adjustments for earlier closed months it carried when it closed. */
+export type ClosedMonthPaid = {
+  month: string;
+  paid: Record<string, number>;
+  carried: Array<{ month: string; docNo: string; sen: number }>;
+};
+
+/** What a month's report pays each order: its fair commission and its earlier
+ *  lines. The adjustments for closed months it carries are not the month's own. */
+export function paidByOrder(r: Pick<EventCommissionReport, 'fairs' | 'adjustments'>): Record<string, number> {
+  const out: Record<string, number> = {};
+  const add = (doc: string, sen: number) => { if (sen !== 0) out[doc] = (out[doc] ?? 0) + sen; };
+  for (const f of r.fairs) for (const so of f.sos) add(so.docNo, so.commissionSen);
+  for (const a of r.adjustments) add(a.docNo, a.commissionSen);
+  return out;
+}
+
+/** Each closed month's commission per order, recalculated today (`live`, by
+ *  month), against what it paid — as closed plus what later months carried for
+ *  it. Only the orders that moved. */
+export function monthAdjustmentsOf(closed: readonly ClosedMonthPaid[], live: ReadonlyMap<string, EventCommissionReport>): MonthAdjustmentRow[] {
+  const rows: MonthAdjustmentRow[] = [];
+  for (const k of closed) {
+    const now = live.get(k.month);
+    if (!now) continue;
+    const was: Record<string, number> = { ...k.paid };
+    for (const m of closed) {
+      if (m.month <= k.month) continue;
+      for (const c of m.carried) if (c.month === k.month) was[c.docNo] = (was[c.docNo] ?? 0) + c.sen;
+    }
+    const nowPaid = paidByOrder(now);
+    const where = new Map<string, Omit<MonthAdjustmentRow, 'month' | 'docNo' | 'wasSen' | 'nowSen' | 'adjustmentSen'>>();
+    for (const f of now.fairs) for (const so of f.sos) {
+      where.set(so.docNo, { fairId: f.id, fairName: f.name, brand: f.brand, salesperson: so.salesperson, customer: so.customer });
+    }
+    for (const o of now.earlierOrders) {
+      if (!where.has(o.docNo)) where.set(o.docNo, { fairId: o.fairId, fairName: o.fairName, brand: o.brand, salesperson: o.salesperson, customer: o.customer });
+    }
+    for (const doc of new Set([...Object.keys(was), ...Object.keys(nowPaid)])) {
+      const w = was[doc] ?? 0;
+      const n = nowPaid[doc] ?? 0;
+      if (w === n) continue;
+      const at = where.get(doc) ?? { fairId: null, fairName: '', brand: null, salesperson: null, customer: null };
+      rows.push({ month: k.month, docNo: doc, ...at, wasSen: w, nowSen: n, adjustmentSen: n - w });
+    }
+  }
+  return rows.sort((a, b) => (a.month < b.month ? -1 : a.month > b.month ? 1 : a.docNo < b.docNo ? -1 : 1));
+}
+
+/** The report with the closed months' adjustments added to it and its total. */
+export function withMonthAdjustments(r: EventCommissionReport, rows: MonthAdjustmentRow[]): EventCommissionReport {
+  const monthAdjustmentsSen = rows.reduce((s, a) => s + a.adjustmentSen, 0);
+  return {
+    ...r,
+    monthAdjustments: rows,
+    totals: { ...r.totals, monthAdjustmentsSen, totalSen: r.totals.payableSen + r.totals.adjustmentsSen + monthAdjustmentsSen },
+  };
+}
 
 export const COMMISSION_PAID_SHARE = 0.3;
 /** so_total_changes.source of the rows back-filled from the modification history. */
@@ -423,5 +510,8 @@ export function buildEventCommission(input: {
 
   const payableSen = fairs.reduce((s, f) => s + f.payableSen, 0);
   const adjustmentsSen = adjustments.reduce((s, a) => s + a.commissionSen, 0);
-  return { basis, from, to, fairs, adjustments, earlierOrders, changedOrders, totals: { payableSen, adjustmentsSen, totalSen: payableSen + adjustmentsSen } };
+  return {
+    basis, from, to, fairs, adjustments, earlierOrders, changedOrders, monthAdjustments: [],
+    totals: { payableSen, adjustmentsSen, monthAdjustmentsSen: 0, totalSen: payableSen + adjustmentsSen },
+  };
 }
