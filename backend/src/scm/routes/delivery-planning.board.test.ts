@@ -529,3 +529,17 @@ describe('GET /delivery-planning?state=OPEN', () => {
     expect(Object.values(open.delivered_by_region).reduce((a, b) => a + b, 0)).toBe(1);
   });
 });
+
+/* 2026-10-27, owner option A: after an edit the board re-reads only the edited
+   order (?docs=) instead of the whole board. */
+describe('GET /delivery-planning?docs=', () => {
+  it('rebuilds only the named SO rows', async () => {
+    const { status, body } = await get(harness({}), '?docs=HC-SO-2608-002');
+    expect(status).toBe(200);
+    expect((body.orders ?? []).map((o) => o.so_doc_no)).toEqual(['HC-SO-2608-002']);
+  });
+  it('an empty list reads nothing', async () => {
+    const { body } = await get(harness({}), '?docs=');
+    expect(body.orders).toEqual([]);
+  });
+});

@@ -47,3 +47,15 @@ export function addSkippedDelivered<T>(
     }
   }
 }
+
+/** ?docs=A,B,... -> the SO doc numbers a row refresh rebuilds (at most 100,
+ *  trimmed, de-duplicated); null when the parameter is absent = the whole board. */
+export function parseOnlyDocs(raw: string | undefined): string[] | null {
+  if (raw == null) return null;
+  return [...new Set(raw.split(',').map((d) => d.trim()).filter(Boolean))].slice(0, 100);
+}
+
+/** Narrow the SO header read to the row-refresh docs; the whole board otherwise. */
+export function onlyDocsFilter<Q extends { in: (col: string, values: string[]) => Q }>(q: Q, onlyDocs: string[] | null): Q {
+  return onlyDocs ? q.in('doc_no', onlyDocs) : q;
+}

@@ -126,12 +126,21 @@ const PROJECT_UNION_SQL =
         WHERE p.archived_at IS NULL
           AND (p.setup_start_at IS NOT NULL OR p.dismantle_start_at IS NOT NULL)`;
 
+/** The sub-boards were deliberately not read (row refresh); not a failure to log. */
+export const SUB_BOARD_SKIPPED = new Error('sub-board skipped for a row refresh');
+
 export function kickOffSubBoardReads(
   c: Context<{ Bindings: Env; Variables: Variables }>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- sb is the scm service client, as in kickOffBoardReads
   sb: any,
   recentClosedSince: string,
+  /** true for a ?docs= row refresh: SO rows only, the three sub-boards are not read. */
+  skip: boolean,
 ) {
+  if (skip) {
+    const none = Promise.resolve({ err: SUB_BOARD_SKIPPED } as const);
+    return { assrRowsP: none, dpResP: none, projRowsP: none };
+  }
   /* Each read is built AND awaited inside an async try/catch so a SYNCHRONOUS throw
      (e.g. c.env.DB absent — the handler used to call these inside the sub-board
      try/catch, which caught that) becomes an {err} result, never an unhandled throw

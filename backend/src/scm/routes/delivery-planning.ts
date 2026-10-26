@@ -73,14 +73,14 @@ import { attachLineCategories } from '../lib/so-readiness-category';
 import { deriveBranding } from '../lib/so-display-branding';
 /* chunkIn on every id/doc-no filter: the list rides in the URL and an unbounded one is refused. */
 import { docsEnteringPendingSchedule, stampPendingSchedule } from '../lib/pending-schedule-stays';
-import { boardSlice, splitDeliveredForOpen, addSkippedDelivered } from '../lib/delivery-board-slice';
+import { boardSlice, splitDeliveredForOpen, addSkippedDelivered, parseOnlyDocs, onlyDocsFilter } from '../lib/delivery-board-slice';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { attachBoardAcExemptionExpiry } from '../lib/ac-exemption-expiry';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { summariseReadiness, normCategory, type ReadinessLine } from '../lib/so-readiness';
 import { effectiveSoDelivery } from '../shared';
 import { readinessRowFields, NO_STOCK_ROW } from '../lib/so-readiness-row';
-import { kickOffBoardReads, kickOffSubBoardReads, flattenProjectCrew } from '../lib/delivery-planning-board-reads';
+import { kickOffBoardReads, kickOffSubBoardReads, flattenProjectCrew, SUB_BOARD_SKIPPED } from '../lib/delivery-planning-board-reads';
 import { readFailure, noteDegradedRead } from '../lib/read-failure';
 import { soProcessingLocked } from './mfg-sales-orders';
 import { soPoLocked, soPoLockedMany } from '../lib/so-po-lock';
@@ -393,6 +393,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
 
   const regionParam = (c.req.query('region') ?? 'ALL').trim().toUpperCase();
   const stateParam = (c.req.query('state') ?? 'ALL').trim().toUpperCase();
+  // ?docs=A,B: rebuild ONLY these SO rows (the board's after-edit row refresh), see lib/delivery-board-slice.ts.
+  const onlyDocs = parseOnlyDocs(c.req.query('docs'));
+  if (onlyDocs?.length === 0) return c.json({ orders: [], counts: emptyCounts(), regions: [] });
 
   /* 0. CONFIG-DRIVEN region model (migration 0053) — load the owner-maintained
         region master + per-state MULTI mapping once per request. regionList()
@@ -445,7 +448,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     dp_remark: string | null; dpRemark?: string | null;
   };
   /* CROSS-COMPANY = the caller's GRANTED companies; unscoped, this read took every tenant's. */
-  const { data: soRowsRaw, error: soErr } = await paginateAll<SoHeaderRow>((from, to) =>
+  const { data: soRowsRaw, error: soErr } = await paginateAll<SoHeaderRow>((from, to) => onlyDocsFilter(
     scopeToAllowedCompanies(
       sb.from('mfg_sales_orders')
         /* NO `id` column here: scm.mfg_sales_orders is keyed by doc_no (TEXT PK) and
@@ -457,7 +460,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         .order('customer_delivery_date', { ascending: true, nullsFirst: false })
         .order('doc_no'), // breaks date ties: pages overlapped, 7 SOs came back twice (2026-10-26)
       c,
-    ).range(from, to),
+    ).range(from, to), onlyDocs),
   ); lap('dp-so-headers');
   if (soErr) return c.json(readFailure('sales_orders', soErr), 500);
   /* Only SOs that actually need delivering — they carry a date signal
@@ -492,7 +495,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   // the Delivered tab; older done work stays off the board (owner 2026-10-21).
   // today is YYYY-MM-DD, so the cutoff is too.
   const recentClosedSince = new Date(new Date(`${today}T00:00:00Z`).getTime() - 90 * 86400000).toISOString().slice(0, 10);
-  const { assrRowsP, dpResP, projRowsP } = kickOffSubBoardReads(c, sb, recentClosedSince);
+  const { assrRowsP, dpResP, projRowsP } = kickOffSubBoardReads(c, sb, recentClosedSince, onlyDocs !== null);
 
   /* 2b. LIVE balance per SO — same source-of-truth as the SO list Balance column
         (mfg_sales_orders_with_payment_totals.balance_sen_live = local_total −
@@ -1179,7 +1182,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     }
   } catch (e) {
     // Defensive: a malformed / edge ASSR case must NEVER break the SO rows.
-    console.warn(`[delivery-planning] ASSR union skipped: ${String((e as Error).message).slice(0, 120)}`);
+    if (e !== SUB_BOARD_SKIPPED) console.warn(`[delivery-planning] ASSR union skipped: ${String((e as Error).message).slice(0, 120)}`);
   }
 
   /* ── ASSR crew echo (P3) ──────────────────────────────────────────────────────
@@ -1346,7 +1349,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       });
     }
   } catch (e) {
-    console.warn(`[delivery-planning] DP-order union skipped: ${String((e as Error).message).slice(0, 120)}`);
+    if (e !== SUB_BOARD_SKIPPED) console.warn(`[delivery-planning] DP-order union skipped: ${String((e as Error).message).slice(0, 120)}`);
   }
   await echoTripCrew(sb, dpBoardRows).catch((e: Error) => console.warn(`[delivery-planning] DP crew echo skipped: ${e.message.slice(0, 120)}`)); lap('dp-crew-echo');
 
@@ -1488,7 +1491,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       }
     }
   } catch (e) {
-    console.warn(`[delivery-planning] project union skipped: ${String((e as Error).message).slice(0, 120)}`);
+    if (e !== SUB_BOARD_SKIPPED) console.warn(`[delivery-planning] project union skipped: ${String((e as Error).message).slice(0, 120)}`);
   }
 
   const poNosRes = await poNosByDocP; // "PO No." column: POs raised from the SO, walked per company (lib/planning-po-nos.ts); kicked off right after soRows
