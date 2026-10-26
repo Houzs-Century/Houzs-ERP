@@ -453,9 +453,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         .neq('status', 'DRAFT')
         .neq('status', 'CANCELLED')
         .order('customer_delivery_date', { ascending: true, nullsFirst: false })
-        /* doc_no breaks the date ties: without a total order the pages overlap, so
-           some SOs came back twice and as many never came back (owner 2026-10-26). */
-        .order('doc_no'),
+        .order('doc_no'), // breaks date ties: pages overlapped, 7 SOs came back twice (2026-10-26)
       c,
     ).range(from, to),
   ); lap('dp-so-headers');
