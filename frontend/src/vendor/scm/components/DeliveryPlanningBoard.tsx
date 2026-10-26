@@ -342,9 +342,14 @@ function DeliveryDateEditCell({ order, onSchedule }: { order: PlanningOrder; onS
   const { sched: schedPending } = useContext(BoardPendingContext);
   // Follow the row when its date changes underneath (optimistic save, poll).
   useEffect(() => { setVal(current); }, [current]);
-  if (isAssr(order) || isDp(order) || isProject(order)) {
+  if (isDp(order) || isProject(order)) {
     return detail(fmtDateOrDash(order.amended_delivery_date));
   }
+  /* A service case's Delivery Date is the date Logistics CONFIRMS (owner
+     2026-10-26): typed here like an SO's, it moves the leg to Pending Delivery. */
+  const commit = (value: string | null) => (isAssr(order)
+    ? onSchedule({ type: 'assr', id: String(order.assr_id ?? ''), scheduleDate: value, jobKind: order.job_kind })
+    : onSchedule({ type: 'so', id: order.so_doc_no, scheduleDate: value }));
   return (
     <span {...stopRow} style={{ display: 'flex', width: '100%', minWidth: 0 }}>
       <DateField
@@ -355,7 +360,7 @@ function DeliveryDateEditCell({ order, onSchedule }: { order: PlanningOrder; onS
         onChange={setVal}
         onBlur={() => {
           const next = deliveryDateChange(current, val);
-          if (next.changed) onSchedule({ type: 'so', id: order.so_doc_no, scheduleDate: next.value });
+          if (next.changed) commit(next.value);
         }}
       />
     </span>
