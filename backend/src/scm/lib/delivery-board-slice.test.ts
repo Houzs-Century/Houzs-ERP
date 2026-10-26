@@ -1,7 +1,7 @@
 /* 2026-10-26: the board re-downloaded 5.4 MB on every edit, 72% of it Delivered
    rows. state=OPEN leaves them out and carries their per-region count. */
 import { describe, expect, it } from 'vitest';
-import { boardSlice } from './delivery-board-slice';
+import { addSkippedDelivered, boardSlice, splitDeliveredForOpen } from './delivery-board-slice';
 
 const rows = [
   { id: 1, delivery_state: 'PENDING_SCHEDULE', regions: ['KL'] },
@@ -20,5 +20,19 @@ describe('boardSlice', () => {
     expect(boardSlice(rows, 'ALL').orders).toHaveLength(4);
     expect(boardSlice(rows, 'DELIVERED').orders.map((o) => o.id)).toEqual([2, 3]);
     expect(boardSlice(rows, 'ALL').deliveredByRegion).toBeNull();
+  });
+});
+
+describe('splitDeliveredForOpen / addSkippedDelivered', () => {
+  it('sets status-DELIVERED orders aside only for OPEN and counts them into the badges', () => {
+    const rows = [{ status: 'CONFIRMED', st: 'KL' }, { status: 'DELIVERED', st: 'KL' }, { status: 'delivered', st: 'NORTHERN' }];
+    expect(splitDeliveredForOpen(rows, false).skipped).toHaveLength(0);
+    const { kept, skipped } = splitDeliveredForOpen(rows, true);
+    expect(kept.map((r) => r.status)).toEqual(['CONFIRMED']);
+    const counts: Record<string, number> = { ALL: 1, DELIVERED: 0 };
+    const byRegion: Record<string, number> = { KL: 1 };
+    addSkippedDelivered(skipped, (r) => [r.st], 'ALL', counts, byRegion);
+    expect(counts).toEqual({ ALL: 3, DELIVERED: 2 });
+    expect(byRegion).toEqual({ KL: 2, NORTHERN: 1 });
   });
 });

@@ -73,7 +73,7 @@ import { attachLineCategories } from '../lib/so-readiness-category';
 import { deriveBranding } from '../lib/so-display-branding';
 /* chunkIn on every id/doc-no filter: the list rides in the URL and an unbounded one is refused. */
 import { docsEnteringPendingSchedule, stampPendingSchedule } from '../lib/pending-schedule-stays';
-import { boardSlice } from '../lib/delivery-board-slice';
+import { boardSlice, splitDeliveredForOpen, addSkippedDelivered } from '../lib/delivery-board-slice';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { attachBoardAcExemptionExpiry } from '../lib/ac-exemption-expiry';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
@@ -463,9 +463,12 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   /* Only SOs that actually need delivering — they carry a date signal
      (customer_delivery_date OR processing_date). Filtered
      in JS (not a PostgREST .or()) to keep the paginated query's row type clean. */
-  const soRows = (soRowsRaw ?? []).filter(
+  const datedRows = (soRowsRaw ?? []).filter(
     (r) => r.customer_delivery_date != null || r.processing_date != null,
   );
+  // state=OPEN (office view): a status-DELIVERED order is Delivered whatever else
+  // holds, so it is counted here and skips every per-order read (lib/delivery-board-slice.ts).
+  const { kept: soRows, skipped: skippedDelivered } = splitDeliveredForOpen(datedRows, stateParam === 'OPEN' && scope.mode === 'all');
   const docNos = soRows.map((r) => String(r.doc_no ?? '')).filter(Boolean);
 
   if (docNos.length === 0) {
@@ -1525,6 +1528,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   counts.ALL = regionFiltered.length;
 
   const slice = boardSlice(regionFiltered, stateParam);
+  addSkippedDelivered(skippedDelivered, (r) => stateToRegionsFromConfig(regionCfg, r.customer_state, r.customer_country), regionParam, counts, slice.deliveredByRegion);
   return c.json({ orders: slice.orders, counts, regions: regionCfg.regions, ...(slice.deliveredByRegion ? { delivered_by_region: slice.deliveredByRegion } : {}) });
 };
 deliveryPlanning.get('/', deliveryPlanningBoardHandler);
