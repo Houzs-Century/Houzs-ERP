@@ -65,6 +65,8 @@ export type SoLineSourceFields = {
   non_selling_warehouse?: {
     code: string | null; name: string | null; type: string | null; notice: string;
   } | null;
+  /** HC-0159: the order has no Processing Date, so no stock is set aside for any line. */
+  awaiting_processing_date?: boolean;
 };
 
 /* 2990-parity stock pill (one home — formerly drillStock in the SO list):
@@ -120,6 +122,13 @@ export function SoStockPill({ line }: { line: SoLineSourceFields }) {
           title={ns.notice}
         >
           {ns.code ?? ns.name ?? "Display"} — transfer to sell
+        </span>
+      ) : !ns && line.awaiting_processing_date && stock.label === "PENDING" ? (
+        <span
+          className="text-[9px] font-semibold uppercase leading-tight tracking-wide text-warning-text"
+          title="Stock is only set aside once the order has a Processing Date."
+        >
+          No Processing Date
         </span>
       ) : null}
     </span>
