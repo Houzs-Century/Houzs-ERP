@@ -1,6 +1,6 @@
 /* POS Admin > Events (layout E3): the projects linked to POS — type, dates,
- * terminals with prepared status, cashiers, catalog version, RUNNING /
- * ENDED / NOT LINKED. The drawer sets terminals, cashiers (= login tiles),
+ * terminals with paired status, cashiers, catalog version, COMING / ON GOING /
+ * DONE plus LINKED / NOT LINKED. The drawer sets terminals, cashiers (= login tiles),
  * catalog scope, stock source, event price overrides, SST default, receipt
  * header, and pushes a catalog update. Cash & Carry projects are listed
  * automatically; any other project can be linked by search. */
@@ -17,7 +17,21 @@ import { SearchInput } from "../../components/Button";
 import { POS_ADMIN, rm, toSen, useAdminCashiers, useAdminEvents, useAdminItems, useAdminTerminals, type PosEvent } from "./posAdminApi";
 import { Empty, Field, Pill, Table, Toggle, errText, ghostBtn, inputCls, primaryBtn, td, th } from "./posAdminUi";
 
-const statusTone = (s: PosEvent["status"]): "ok" | "info" | "muted" | "warn" => (s === "RUNNING" ? "ok" : s === "UPCOMING" ? "info" : s === "ENDED" ? "muted" : "warn");
+const statusTone = (s: PosEvent["status"]): "ok" | "info" | "muted" => (s === "ON GOING" ? "ok" : s === "COMING" ? "info" : "muted");
+type Chip = "ALL" | "COMING" | "ON GOING" | "DONE";
+const CHIPS: { value: Chip; label: string }[] = [{ value: "ALL", label: "All" }, { value: "COMING", label: "Coming" }, { value: "ON GOING", label: "On going" }, { value: "DONE", label: "Done" }];
+
+/** Coming and on-going fairs first (soonest start first), then done ones (latest first). */
+export function orderEvents<T extends { status: PosEvent["status"]; start_date: string | null }>(rows: readonly T[]): T[] {
+  const rank = (s: PosEvent["status"]) => (s === "ON GOING" ? 0 : s === "COMING" ? 1 : 2);
+  return [...rows].sort((a, b) => {
+    const r = rank(a.status) - rank(b.status);
+    if (r !== 0) return r;
+    const da = a.start_date ?? "";
+    const db = b.start_date ?? "";
+    return a.status === "DONE" ? db.localeCompare(da) : da.localeCompare(db);
+  });
+}
 
 export function PosEventsTab() {
   const toast = useToast();
@@ -25,7 +39,9 @@ export function PosEventsTab() {
   const events = useAdminEvents();
   const [editing, setEditing] = useState<PosEvent | null>(null);
   const [linking, setLinking] = useState(false);
-  const rows = events.data ?? [];
+  const [chip, setChip] = useState<Chip>("ALL");
+  const rows = useMemo(() => orderEvents((events.data ?? []).filter((e) => chip === "ALL" || e.status === chip)), [events.data, chip]);
+  const counts = useMemo(() => { const c = { ALL: 0, COMING: 0, "ON GOING": 0, DONE: 0 } as Record<Chip, number>; for (const e of events.data ?? []) { c.ALL += 1; c[e.status] += 1; } return c; }, [events.data]);
 
   async function push(e: PosEvent) {
     try {
@@ -50,31 +66,37 @@ export function PosEventsTab() {
   return (
     <div>
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="text-[11px] text-ink-muted">Cash & Carry projects appear here on their own; a fair with Sales Orders can be linked too.</span>
-        <span className="ml-auto"><button type="button" className={primaryBtn} onClick={() => setLinking(true)}><Link2 size={11} /> Link a project</button></span>
+        <span className="flex gap-1">
+          {CHIPS.map((c) => <button key={c.value} type="button" className={cn(ghostBtn, chip === c.value && "border-accent bg-accent/10 text-accent")} onClick={() => setChip(c.value)}>{c.label} <span className="text-ink-muted">{counts[c.value]}</span></button>)}
+        </span>
+        <span className="text-[11px] text-ink-muted">Every fair of the last 60 days and every coming one is listed; pick a row to set it up for the booth.</span>
+        <span className="ml-auto"><button type="button" className={ghostBtn} onClick={() => setLinking(true)} title="Find an older project by name"><Link2 size={11} /> Older project</button></span>
       </div>
       {events.loading && !events.data && <div className="text-[11px] text-ink-muted">Loading events…</div>}
       {events.error && <div className="rounded-md border border-err/40 bg-err/5 p-2 text-[11px] text-err">{events.error}</div>}
-      {events.data && rows.length === 0 && <Empty>No Cash & Carry project and no linked event yet. Create a Cash & Carry project under Projects, or link one here.</Empty>}
+      {events.data && rows.length === 0 && <Empty>{chip === "ALL" ? "No recent or coming fair. Create the project under Projects first; it appears here on its own." : "Nothing in this group."}</Empty>}
       {rows.length > 0 && (
-        <Table minWidth={980} head={<>
-          <th className={th}>Project</th><th className={th}>Type</th><th className={th}>Dates</th><th className={th}>Terminals</th><th className={th}>Cashiers</th><th className={th}>Catalog</th><th className={th}>Status</th><th className={th} />
+        <Table minWidth={1040} head={<>
+          <th className={th}>Project</th><th className={th}>Type</th><th className={th}>Dates</th><th className={th}>When</th><th className={th}>POS</th><th className={th}>Terminals</th><th className={th}>Cashiers</th><th className={th}>Catalog</th><th className={th} />
         </>}>
           {rows.map((e) => (
-            <tr key={e.project_id} className="cursor-pointer border-t border-border-subtle hover:bg-bg/40" onClick={() => setEditing(e)}>
+            <tr key={e.project_id} className={cn("cursor-pointer border-t border-border-subtle hover:bg-bg/40", e.status === "DONE" && !e.linked && "opacity-60")} onClick={() => setEditing(e)}>
               <td className={td}><div className="font-semibold text-ink">{e.name}</div><div className="font-mono text-[9.5px] text-ink-muted">{e.code ?? ""}{e.venue ? ` · ${e.venue}` : ""}</div></td>
-              <td className={td}>{e.type_label}</td>
+              <td className={td}>{e.event_type_name ?? e.type_label}</td>
               <td className={cn(td, "font-mono text-[10.5px] text-ink-secondary")}>{e.start_date ? formatDate(e.start_date) : "--"}{e.end_date ? ` - ${formatDate(e.end_date)}` : ""}</td>
+              <td className={td}><Pill tone={statusTone(e.status)}>{e.status}</Pill></td>
+              <td className={td}>{e.linked ? <Pill tone="ok">LINKED</Pill> : <Pill tone="warn">NOT LINKED</Pill>}</td>
               <td className={cn(td, "text-[10.5px]")}>
                 {e.terminals.length === 0 ? <span className="text-ink-muted">none</span> : e.terminals.map((t) => (
-                  <div key={t.id}><span className="font-mono">{t.code}</span> {t.prepared_at ? <Pill tone="ok">PREPARED</Pill> : <Pill tone="warn">NOT PREPARED</Pill>}{t.last_sync_at && <span className="ml-1 text-ink-muted">sync {formatDateTime(t.last_sync_at)}</span>}</div>
+                  <div key={t.id}><span className="font-mono">{t.code}</span> {t.prepared_at ? <Pill tone="ok">PAIRED</Pill> : <Pill tone="warn">NOT PAIRED</Pill>}{t.last_sync_at && <span className="ml-1 text-ink-muted">sync {formatDateTime(t.last_sync_at)}</span>}</div>
                 ))}
               </td>
               <td className={cn(td, "text-[10.5px]")}>{e.link ? (e.link.cashiers.length === 0 ? <span className="text-amber-800">none assigned</span> : e.link.cashiers.map((c) => c.name).join(", ")) : <span className="text-ink-muted">--</span>}</td>
               <td className={cn(td, "font-mono text-[10.5px]")}>{e.link ? <>v{e.link.catalog_version}{e.link.pushed_at && <div className="text-[9.5px] text-ink-muted">{formatDateTime(e.link.pushed_at)}</div>}</> : "--"}</td>
-              <td className={td}><Pill tone={statusTone(e.status)}>{e.status}</Pill></td>
-              <td className={td} onClick={(ev) => ev.stopPropagation()}>
-                {e.link && <span className="flex gap-1"><button type="button" className={ghostBtn} onClick={() => void push(e)} title="Push catalog update"><RefreshCw size={11} /> Push</button><button type="button" className={ghostBtn} onClick={() => void unlink(e)} title="Unlink"><Unlink size={11} /></button></span>}
+              <td className={cn(td, "whitespace-nowrap")} onClick={(ev) => ev.stopPropagation()}>
+                {e.link
+                  ? <span className="flex gap-1"><button type="button" className={ghostBtn} onClick={() => void push(e)} title="Push catalog update"><RefreshCw size={11} /> Push</button><button type="button" className={ghostBtn} onClick={() => void unlink(e)} title="Unlink"><Unlink size={11} /></button></span>
+                  : <button type="button" className={primaryBtn} onClick={() => setEditing(e)}><Link2 size={11} /> Link to POS</button>}
               </td>
             </tr>
           ))}
