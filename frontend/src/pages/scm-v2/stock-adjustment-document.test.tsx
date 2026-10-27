@@ -26,6 +26,7 @@ const DOC: StockAdjustmentDoc = {
 };
 
 const updateCalls: Array<{ notes?: string | null; lines?: Array<{ itemCode: string; qty: number; variantKey?: string | null }> }> = [];
+vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: { id: 1 }, can: () => false }) }));
 vi.mock('../../vendor/scm/lib/stock-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/stock-queries')>()),
   useStockAdjustments: () => ({ data: [DOC], isLoading: false, error: null }),

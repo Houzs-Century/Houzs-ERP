@@ -43,15 +43,12 @@
 //   * A bucket whose shortfall exceeds its CURRENT open lots is partially repaired
 //     (as much as stock covers) and the residual is reported — it catches up on
 //     the next receipt via the existing path, or via a re-run after restocking.
-//
 // ── MODES (2026-08-01, ledger-perfection W3/W4) ──────────────────────────────
 // The audit + detector split the remaining divergence into three classes, and
 // each class gets its own explicit mode — never one blanket pass:
-//
 //   MODE=retro-cost (default — the original behaviour, unchanged). Drives
 //     scm.fn_reconcile_uncosted_out over every uncosted-OUT bucket; consumes
 //     REAL open lots at REAL cost. Never fabricates a cost.
-//
 //   MODE=relabel (W4). The 2990-import variant-key split: a movement's
 //     variant_key disagrees with the lot its OWN consumptions (or its own
 //     opened lot, via inventory_lots.movement_id) point at, so per-bucket sums
@@ -63,7 +60,6 @@
 //     per movement is its own ledger trail, decided by classifyMovementRelabel
 //     (lib/ledger-repair-core.mjs); movements whose lots disagree among
 //     themselves, or that touch no lot, are reported and refused.
-//
 //   MODE=basis-cost (W3). OUTs that shipped when NOTHING was on hand and no
 //     later receipt ever retro-costed them: fn_reconcile_uncosted_out is
 //     correct to book nothing (it never fabricates), so their COGS is RM0
@@ -106,6 +102,7 @@
 //      BEFORE_TS=<ISO> optional cutoff (default: now) — only OUTs created before it
 //      are eligible, mirroring the function's temporal guard (retro-cost mode).
 //      DOS=<comma-separated DO numbers> — basis-cost mode only, REQUIRED there.
+//      ITEM_CODES=<comma-separated item codes> — retro-cost only: only these codes' buckets.
 // Mirrors the read-only shape of check-inventory-integrity.mjs; this one WRITES
 // only under APPLY=true.
 // ----------------------------------------------------------------------------
@@ -147,6 +144,7 @@ const APPLY = /^(1|true|yes)$/i.test(process.env.APPLY ?? "");
 const BEFORE_TS = process.env.BEFORE_TS || new Date().toISOString();
 const MODE = (process.env.MODE || "retro-cost").trim().toLowerCase();
 const DOS = (process.env.DOS || "").split(",").map((s) => s.trim()).filter(Boolean);
+const ITEM_CODES = (process.env.ITEM_CODES || "").split(",").map((s) => s.trim()).filter(Boolean);
 if (!["retro-cost", "relabel", "basis-cost", "reconstruct", "doc-relabel"].includes(MODE)) {
   console.error(`MODE must be retro-cost | relabel | basis-cost | reconstruct | doc-relabel (got "${MODE}")`);
   process.exit(2);
@@ -155,6 +153,7 @@ if (MODE === "basis-cost" && DOS.length === 0) {
   console.error("MODE=basis-cost requires DOS=<comma-separated DO numbers> — this mode seeds a REFERENCE cost and must never run open-ended.");
   process.exit(2);
 }
+if (ITEM_CODES.length > 0 && MODE !== "retro-cost") { console.error(`ITEM_CODES limits retro-cost only; MODE=${MODE} would ignore it.`); process.exit(2); }
 
 const notice = (m) =>
   console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
@@ -233,7 +232,7 @@ async function main() {
 
   // ── Candidate buckets: every bucket whose Σ(OUT qty) ≠ Σ(consumed qty).
   //    This is the repairable lens — the uncosted-OUT set the detector reports.
-  const buckets = await pg.unsafe(`
+  const allBuckets = await pg.unsafe(`
     WITH out_mov AS (
       SELECT ${coSel},
              m.warehouse_id::text AS warehouse_id,
@@ -256,6 +255,8 @@ async function main() {
       FROM out_mov
      WHERE out_qty <> costed_qty
      ORDER BY (out_qty - costed_qty) DESC, item_code ASC`);
+  const buckets = ITEM_CODES.length > 0 ? allBuckets.filter((b) => ITEM_CODES.includes(b.item_code)) : allBuckets;
+  if (ITEM_CODES.length > 0) notice(`ITEM_CODES limit: ${ITEM_CODES.join(" | ")} (${allBuckets.length} uncosted buckets in total, ${buckets.length} kept)`);
 
   notice(`buckets with uncosted OUT units (Σ OUT qty ≠ Σ consumed): ${buckets.length}`);
   notice("");
@@ -1209,7 +1210,6 @@ async function runReconstruct() {
   notice(APPLY ? "APPLIED — committed." : "DRY-RUN — every family was exercised inside a transaction and rolled back; nothing was written.");
   notice("=== END ===");
 }
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MODE=doc-relabel (document-evidence round, 2026-08-01) — resolve the

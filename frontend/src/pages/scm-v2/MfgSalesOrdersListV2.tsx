@@ -1321,6 +1321,7 @@ export function MfgSalesOrdersListV2() {
   };
   const soContextMenu = salesOrderRowMenu<SoRow>({
     open: goFullPage, edit: goEdit, print: printDocument,
+    copyAsNew: (r) => navigate(`/scm/sales-orders/new?copyFrom=${encodeURIComponent(r.doc_no)}`),
     confirm: doConfirm, transferToDo: doDeliver, reopen: doReopen,
     setStatus: setSoStatus, close: doCloseSo, setHold: setSoHold, cancel: doCancelSo, discard: (r) => void doDiscard(r), canDeliver,
   });

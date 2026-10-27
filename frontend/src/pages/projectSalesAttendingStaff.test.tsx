@@ -94,10 +94,12 @@ describe("Sales Attending — staff not on the Sales Team roster", () => {
     vi.mocked(api.post).mockClear();
   });
 
-  it("lists reps and non-roster staff in one A→Z list, staff tagged", async () => {
+  it("lists the Sales Team; other staff only behind \"Show other staff\", then in one A→Z list, tagged", async () => {
     renderDetail();
-    // Both appear in the single merged picker — no separate section heading.
+    // Owner 2026-10-24: the Sales Team by default, other departments on request.
     const jason = await screen.findByText("Jason");
+    expect(screen.queryByText("Lim")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Show other staff \(1\)/ }));
     const lim = screen.getByText("Lim");
     expect(jason).toBeTruthy();
     expect(lim).toBeTruthy();
@@ -111,6 +113,7 @@ describe("Sales Attending — staff not on the Sales Team roster", () => {
 
   it("adds a picked staff member by their login, and a rep by the roster id", async () => {
     renderDetail();
+    fireEvent.click(await screen.findByRole("button", { name: /Show other staff/ }));
     const lim = (await screen.findByText("Lim")).closest("label") as HTMLElement;
     const jason = screen.getByText("Jason").closest("label") as HTMLElement;
     fireEvent.click(lim.querySelector("input") as HTMLInputElement);

@@ -96,6 +96,23 @@ describe('Supplier bindings: Export CSV imports back', () => {
       main: b.is_main_supplier, matrix: b.price_matrix,
     })));
   });
+
+  test('the file starts with a UTF-8 BOM so Excel keeps KŌRI-style codes (HC-0165)', async () => {
+    let blob: Blob | null = null;
+    vi.spyOn(URL, 'createObjectURL').mockImplementation((b) => { blob = b as Blob; return 'blob:x'; });
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    const code = 'AKEMI KŌRI EIKO MATT (S)';
+    exportBindingsCsv([binding({ item_code: code, unit_price_sen: 100 })], 'SUP', [],
+      [{ code, name: 'AKEMI KŌRI EIKO MATTRESS', category: 'MATTRESS' }] as MfgProductRow[]);
+
+    const bytes = await new Promise<Uint8Array>((ok) => { const r = new FileReader(); r.onload = () => ok(new Uint8Array(r.result as ArrayBuffer)); r.readAsArrayBuffer(blob!); });
+    expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    /* Keep the BOM in the text: the importer's parser is what must drop it. */
+    const grid = parseCSV(new TextDecoder('utf-8', { ignoreBOM: true }).decode(bytes));
+    expect(grid[0]![0]).toBe('internal_code');
+    expect(grid[1]![0]).toBe(code);
+  });
 });
 
 describe('PO lines: the line export imports back', () => {

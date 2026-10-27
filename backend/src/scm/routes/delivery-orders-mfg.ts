@@ -2558,8 +2558,8 @@ deliveryOrdersMfg.get('/', async (c) => {
        delivered / cancelled) over the SAME scope filter and date window but
        WITHOUT status / search / pagination. Scoped to the active company like the list, so the
        tab counts can't leak the other company's DO totals. */
-    const counted = await doListStatusCounts((sel, opts) => {
-      let cq = scopeToCompany(sb.from('delivery_orders').select(sel, opts), c);
+    const counted = await doListStatusCounts((sel) => {
+      let cq = scopeToCompany(sb.from('delivery_orders').select(sel), c);
       if (scopeIds) cq = cq.in('salesperson_id', scopeIds);
       return windowDoList(cq, listParams);
     });
@@ -2574,7 +2574,7 @@ deliveryOrdersMfg.get('/', async (c) => {
   if (paginate) {
     /* The page's lines and AutoCount header spellings, for the grid's line
        columns — the same read the export uses (lib/do-list-lines.ts). */
-    const withLines = await attachDoLines(sb, c, deliveryOrders);
+    const withLines = await attachDoLines(sb, c, deliveryOrders, { charges: canViewScmFinance(c) });
     if (withLines.error) return c.json({ error: 'lines_read_failed', reason: withLines.error }, 500);
     return c.json({ deliveryOrders, total, page, pageSize, statusCounts });
   }

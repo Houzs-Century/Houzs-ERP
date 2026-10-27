@@ -61,7 +61,8 @@ export const DO_DEFAULT_COLUMNS = [
   DO_LABELS.uom, DO_LABELS.location, DO_LABELS.qty, DO_LABELS.poDocNo, DO_LABELS.itemGroup,
 ] as const;
 
-/** One DO line as the list endpoint and the export send it. No money. */
+/** One DO line as the list endpoint and the export send it. No price; the
+ *  two charge amounts below reach a finance viewer only. */
 export type DoListLine = {
   id: string;
   line_no: number | null;
@@ -82,6 +83,10 @@ export type DoListLine = {
   so_doc_no: string | null;
   invoice_nos: string[];
   po_nos: string[];
+  /** HC-0151: this line's amount when it is a transport / storage charge, else
+   *  null. Absent for a caller who is not a finance viewer. */
+  transport_sen?: number | null;
+  storage_sen?: number | null;
 };
 
 /** The delivery order's header values as AutoCount holds them. For a delivery

@@ -47,7 +47,7 @@ to decide what to buy, and read by SO/PO/GRN/PI/Inventory screens as
   `POST /from-sos` refuses a sofa set resolving to two suppliers
   (`409 sofa_set_supplier_split`).
 - Company-1 hard-bound categories (bedframe, sofa, Sofa Accessory /
-  `fabric_accessory`, `(SP)` mattress) cover **only** from their own
+  `fabric_accessory`, `dining`, `(SP)` mattress) cover **only** from their own
   dedicated PO line — never the pooled bucket, in either direction (a bound
   demand line never reads pooled stock; a bound PO line is dedicated and
   leaves the pool). Company 2 stays fully pooled/soft.

@@ -53,8 +53,18 @@ class FakeQuery {
   // PostgREST or() — not exercised by these fixtures; a no-op keeps the fast
   // path and the fallback in lockstep when a caller does pass it.
   or() { return this; }
-  range(from: number, to: number) { this.stats.rangeReads++; this.rangeFrom = from; this.rangeTo = to; return this; }
-  private filtered(): Row[] { return this.rows.filter((r) => this.preds.every((p) => p(r))); }
+  private orderCol: string | null = null;
+  order(col: string) { this.orderCol = col; return this; }
+  /* An unordered page window repeats and skips rows on real PostgREST (lib/paginate-all.ts), so the fallback must order before it pages. */
+  range(from: number, to: number) {
+    if (!this.orderCol) throw new Error('range() without order()');
+    this.stats.rangeReads++; this.rangeFrom = from; this.rangeTo = to; return this;
+  }
+  private filtered(): Row[] {
+    const out = this.rows.filter((r) => this.preds.every((p) => p(r)));
+    const col = this.orderCol;
+    return col ? [...out].sort((a, b) => String(a[col]).localeCompare(String(b[col]))) : out;
+  }
   then(res: (v: any) => any, rej?: (e: any) => any) {
     if (this.mode === 'agg') {
       this.stats.aggReads++;

@@ -72,6 +72,7 @@ import {
 import {
   lastMileSideOf,
   lastMileListSideOf,
+  isEastMalaysiaOrSingaporeStop,
   proposeCrewDocNos,
   matchCrewSuggestions,
   LAST_MILE_LIST_SIDES,
@@ -153,8 +154,22 @@ export function FleetDay() {
      because a delivered order leaves Pending Schedule but not the day. */
   const [boardRegion, setBoardRegion] = useState<string>('ALL');
   const board = useDeliveryPlanning({ region: boardRegion, state: 'ALL' });
-  const boardOrders = useMemo<PlanningOrder[]>(() => board.data?.orders ?? [], [board.data]);
-  const boardRegionTabs = useMemo(() => regionTabsFrom(board.data?.regions), [board.data?.regions]);
+  // East Malaysia + Singapore ship by their own freight channel, not the local
+  // lorry run, so they are kept off the Last Mile board (owner 2026-10-25); they
+  // stay on the Delivery Planning board and their own EM / SG modules.
+  const boardOrders = useMemo<PlanningOrder[]>(
+    () => (board.data?.orders ?? []).filter(
+      (o) => !isEastMalaysiaOrSingaporeStop({ region: o.region, state: o.customer_state, country: o.customer_country }),
+    ),
+    [board.data],
+  );
+  // Drop the now-empty East Malaysia region chip — its orders are excluded from
+  // Last Mile (owner 2026-10-25), so the tab would only ever read zero. Singapore
+  // has no tab of its own (it folds into Southern), so nothing to drop there.
+  const boardRegionTabs = useMemo(
+    () => regionTabsFrom(board.data?.regions).filter((t) => t.key !== 'EM'),
+    [board.data?.regions],
+  );
 
   const [side, setSide] = useState<'ALL' | LastMileListSide>('ALL');
   const sideCounts = useMemo(() => {
@@ -230,17 +245,25 @@ export function FleetDay() {
   const [mapCompact, setMapCompact] = useMapCompactColumns('last-mile');
   const [mapRegion, setMapRegion] = useState<string>('ALL');
   const geo = useDeliveryGeo({ date, region: mapRegion, enabled: mapOpen });
-  const mapPins = useMemo(() => pinsFromGeoPoints(geo.data?.points ?? []), [geo.data?.points]);
-  const mapTotals = useMemo(() => geoTotals(geo.data?.points ?? []), [geo.data?.points]);
+  // Same EM / SG exclusion as the board rows, so the day map's pins and its
+  // order / set / revenue totals match the list instead of counting freight.
+  const geoPoints = useMemo(
+    () => (geo.data?.points ?? []).filter(
+      (p) => !isEastMalaysiaOrSingaporeStop({ region: p.region, state: p.state, country: p.country }),
+    ),
+    [geo.data?.points],
+  );
+  const mapPins = useMemo(() => pinsFromGeoPoints(geoPoints), [geoPoints]);
+  const mapTotals = useMemo(() => geoTotals(geoPoints), [geoPoints]);
   const mapZones = useMemo(
-    () => zoneSummary(geo.data?.points ?? [], boardRegionTabs, mapRegion),
-    [geo.data?.points, boardRegionTabs, mapRegion],
+    () => zoneSummary(geoPoints, boardRegionTabs, mapRegion),
+    [geoPoints, boardRegionTabs, mapRegion],
   );
   const pointByRef = useMemo(() => {
     const m = new Map<string, MapLatLng>();
-    for (const p of geo.data?.points ?? []) m.set(p.ref, { lat: p.lat, lng: p.lng });
+    for (const p of geoPoints) m.set(p.ref, { lat: p.lat, lng: p.lng });
     return m;
-  }, [geo.data?.points]);
+  }, [geoPoints]);
   const panelRoutes = useMemo(() => {
     const depotLL = geo.data?.depot ? { lat: geo.data.depot.lat, lng: geo.data.depot.lng } : null;
     const staged = stagedRoutesFromRows(boardOrders, date, pointByRef, depotLL);

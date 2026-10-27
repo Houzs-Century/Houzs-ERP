@@ -35,6 +35,8 @@
    coordinator's board to only the cases they personally handled is a different
    decision nobody has made, and it would empty the board for dispatchers. */
 import { assrCompanySql } from '../../routes/assr';
+import { ASSR_TERMINAL_STAGES } from '../../services/assrStages';
+import { PAST_PICKUP_STAGES } from '../../lib/delivery-sheet-assr-feed';
 import type { CompanyScopeCtx } from './companyScope';
 import { canonicalizeMyState, isCanonicalMyState } from './canonical-state';
 
@@ -57,6 +59,71 @@ export const ASSR_LEG_BY_STOP: Record<string, string> = {
   PICKUP: 'customer_pickup', INSPECTION: 'inspection', DELIVERY: 'delivery', SERVICE: 'delivery',
 };
 
+/** Stages whose leg the fleet must arrange even before Service gives a date. */
+export const ASSR_AWAITING_DATE_STAGES = ['pending_supplier_pickup', 'pending_delivery_service'] as const;
+
+/** The date Logistics CONFIRMS for each leg - written by the board ("Set job
+ *  date"), shown back on the case. Service's own date on the case is the request. */
+export const ASSR_CONFIRMED_COL = {
+  customer_pickup: 'sched_pickup_date', inspection: 'sched_inspection_date', delivery: 'sched_delivery_date',
+} as const;
+
+/* Stages AFTER each leg's own step (the HC sheet feed's rule): that leg is done. */
+const PAST_PICKUP = PAST_PICKUP_STAGES;
+const PAST_INSPECTION = new Set(['pending_supplier_pickup', ...PAST_PICKUP_STAGES]);
+
+/** A case is done when it carries a closed / archived stamp, a terminal stage,
+ *  or (cases from before the stamp existed) the status "Closed". Only the stamps
+ *  were read until 2026-10-26, so 56 old Closed cases showed as pending jobs. */
+export function assrCaseClosed(a: { closed_at: string | null; archived_at: string | null; stage: string | null; status: string | null }): boolean {
+  return Boolean(a.closed_at) || Boolean(a.archived_at)
+    || (ASSR_TERMINAL_STAGES as readonly string[]).includes(a.stage ?? '')
+    || String(a.status ?? '').trim().toLowerCase() === 'closed';
+}
+
+export type AssrBoardCase = {
+  stage: string | null;
+  pickup_by: string | null; pickup_pic: string | null; customer_pickup_at: string | null; actual_pickup_at: string | null; sched_pickup_date: string | null;
+  inspection_by: string | null; inspection_visit_at: string | null; sched_inspection_date: string | null;
+  delivery_by: string | null; do_date: string | null; sched_delivery_date: string | null;
+};
+export type AssrBoardLeg = {
+  jobKind: 'customer_pickup' | 'delivery' | 'inspection';
+  requested: string | null; confirmed: string | null;
+  state: 'PENDING_SCHEDULE' | 'PENDING_DELIVERY' | 'DELIVERED';
+};
+
+/** A Service Case's fleet legs on Delivery Planning (owner 2026-10-26):
+ *  - only OWN-TEAM legs (Own team pickup / Own team delivery / own inspection);
+ *    a supplier leg never reaches the board. A blank choice counts as own only
+ *    when a date was already keyed (cases older than the choice).
+ *  - Service's date is a REQUEST -> Pending Schedule; Logistics confirms a date
+ *    -> Pending Delivery, and that date shows back on the case.
+ *  - a leg the case has moved past (picked up, inspected, case closed) is done:
+ *    Delivered, never left in Pending Delivery. */
+export function assrBoardLegs(a: AssrBoardCase, caseClosed: boolean): AssrBoardLeg[] {
+  const legs: AssrBoardLeg[] = [];
+  const add = (jobKind: AssrBoardLeg['jobKind'], req: string | null | undefined, conf: string | null | undefined, done: boolean) => {
+    const requested = req ?? null; const confirmed = conf ?? null;
+    if (done) { if (requested || confirmed) legs.push({ jobKind, requested, confirmed, state: 'DELIVERED' }); return; }
+    legs.push({ jobKind, requested, confirmed, state: confirmed ? 'PENDING_DELIVERY' : 'PENDING_SCHEDULE' });
+  };
+  const pickupDated = Boolean(a.customer_pickup_at || a.sched_pickup_date);
+  const pickupOwn = a.pickup_by === 'customer' || (a.pickup_by == null && (pickupDated || a.pickup_pic === 'Logistic'));
+  if (pickupOwn && (pickupDated || a.stage === 'pending_supplier_pickup')) {
+    add('customer_pickup', a.customer_pickup_at, a.sched_pickup_date, caseClosed || Boolean(a.actual_pickup_at) || PAST_PICKUP.has(a.stage ?? ''));
+  }
+  if (a.inspection_by === 'own' && (a.inspection_visit_at || a.sched_inspection_date)) {
+    add('inspection', a.inspection_visit_at, a.sched_inspection_date, caseClosed || PAST_INSPECTION.has(a.stage ?? ''));
+  }
+  const deliveryDated = Boolean(a.do_date || a.sched_delivery_date);
+  const deliveryOwn = a.delivery_by === 'own' || (a.delivery_by == null && deliveryDated);
+  if (deliveryOwn && (deliveryDated || a.stage === 'pending_delivery_service')) {
+    add('delivery', a.do_date, a.sched_delivery_date, caseClosed);
+  }
+  return legs;
+}
+
 export function assrBoardUnionSql(c: CompanyScopeCtx, recentClosedSince: string): string {
   // The State / Postcode columns (and the region bucket) come from the LINKED
   // Sales Order's real customer address, NOT from `location` (the branch/
@@ -69,6 +136,7 @@ export function assrBoardUnionSql(c: CompanyScopeCtx, recentClosedSince: string)
               assr_cases.assr_no       AS assr_no,
               assr_cases.company_id    AS company_id,
               assr_cases.status        AS status,
+              assr_cases.stage         AS stage,
               assr_cases.customer_name AS customer_name,
               assr_cases.phone         AS phone,
               assr_cases.location      AS location,
@@ -76,6 +144,13 @@ export function assrBoardUnionSql(c: CompanyScopeCtx, recentClosedSince: string)
               assr_cases.inspection_visit_at AS inspection_visit_at,
               assr_cases.inspection_by AS inspection_by,
               assr_cases.do_date       AS do_date,
+              assr_cases.delivery_by   AS delivery_by,
+              assr_cases.pickup_by     AS pickup_by,
+              assr_cases.pickup_pic    AS pickup_pic,
+              assr_cases.actual_pickup_at AS actual_pickup_at,
+              assr_cases.sched_pickup_date AS sched_pickup_date,
+              assr_cases.sched_inspection_date AS sched_inspection_date,
+              assr_cases.sched_delivery_date AS sched_delivery_date,
               assr_cases.closed_at     AS closed_at,
               assr_cases.archived_at   AS archived_at,
               assr_cases.addr1 AS addr1, assr_cases.addr2 AS addr2, assr_cases.addr3 AS addr3, assr_cases.addr4 AS addr4,
@@ -88,7 +163,9 @@ export function assrBoardUnionSql(c: CompanyScopeCtx, recentClosedSince: string)
                ORDER BY (o.doc_no = assr_cases.doc_no) DESC
                LIMIT 1) so ON TRUE
         WHERE (assr_cases.customer_pickup_at IS NOT NULL OR assr_cases.do_date IS NOT NULL
-               OR (assr_cases.inspection_visit_at IS NOT NULL AND assr_cases.inspection_by = 'own'))
+               OR assr_cases.sched_pickup_date IS NOT NULL OR assr_cases.sched_delivery_date IS NOT NULL
+               OR (assr_cases.inspection_visit_at IS NOT NULL AND assr_cases.inspection_by = 'own')
+               OR assr_cases.stage IN (${ASSR_AWAITING_DATE_STAGES.map((s) => `'${s}'`).join(', ')}))
           AND ((assr_cases.closed_at IS NULL AND assr_cases.archived_at IS NULL)
                OR GREATEST(COALESCE(assr_cases.customer_pickup_at, ''), COALESCE(assr_cases.do_date, ''),
                            COALESCE(CASE WHEN assr_cases.inspection_by = 'own' THEN assr_cases.inspection_visit_at END, '')) >= '${recentClosedSince}')${assrCompanySql(c)}`;

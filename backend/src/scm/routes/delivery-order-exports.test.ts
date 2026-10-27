@@ -15,7 +15,7 @@ vi.mock('../lib/do-list-rows', () => ({
 }));
 
 import { fakeSb } from '../lib/fake-postgrest';
-import { attachDoLines } from '../lib/do-list-lines';
+import { attachDoLines, doChargeKind } from '../lib/do-list-lines';
 import { acBookItemIndex } from '../../services/autocount-book-item';
 import { AC_ITEM_MAP_TSV } from '../../services/autocount-item-map';
 import { doExportRowsHandler } from './delivery-order-exports';
@@ -124,7 +124,7 @@ describe('attachDoLines — one line shape for the screen and the file, no price
     const own = dOrder({ linked_ac_docno: null, do_number: '2990-DO-000009', debtor_code: '300-X' });
     const t = { dos: [d, own], lines: [doLine(d, { item_code: erpCode, item_group: 'bedframe' }), doLine(own, { item_code: erpCode, item_group: 'bedframe' })] };
     const rows = [{ ...d }, { ...own }] as Array<Row & { id: string; lines?: Row[] }>;
-    expect((await attachDoLines(sbFor(t), ctx(1), rows)).error).toBeNull();
+    expect((await attachDoLines(sbFor(t), ctx(1), rows, { charges: false })).error).toBeNull();
     expect(rows[0]).toMatchObject({ ac_doc_no: 'DO-2609-0100', ac_debtor_code: '300-C002' });
     const line = rows[0]!.lines![0]!;
     expect(line).toMatchObject({ item_code: acCode, erp_item_code: erpCode, item_group: book.itemGroup, uom: book.baseUom, location: 'PG', m3: 1.85, delivery_date: '2026-09-05' });
@@ -149,14 +149,49 @@ describe('attachDoLines — one line shape for the screen and the file, no price
       ],
     };
     const rows = [{ ...d }] as Array<Row & { id: string; lines?: Row[] }>;
-    expect((await attachDoLines(sbFor(t), ctx(1), rows)).error).toBeNull();
+    expect((await attachDoLines(sbFor(t), ctx(1), rows, { charges: false })).error).toBeNull();
     expect(rows[0]!.lines![0]).toMatchObject({ invoiced_qty: 1, returned_qty: 0, uninvoiced_qty: 2, invoice_nos: ['HC-IV-50'] });
+  });
+});
+
+describe('Transport / Storage amounts for a finance viewer (HC-0151)', () => {
+  it('names a line by its code or description; goods lines never count', () => {
+    const k = (item_code: string, description: string, item_group = 'service') => doChargeKind({ item_code, description, item_group });
+    expect(k('TRANSPORTATION CHARGES', 'TRANSPORTATION CHARGES')).toBe('transport');
+    expect(k('SHIPPING COST', 'TRANSPORTATION CHARGES', 'others')).toBe('transport');
+    expect(k('SVC-DELIVERY-CROSS', 'Delivery fee')).toBe('transport');
+    expect(k('TC-01', 'Transport Cost')).toBe('transport');
+    expect(k('STORAGE', 'STORAGE CHARGES', 'others')).toBe('storage');
+    expect(k('SVC-LIFT-CARRY-F3', 'Lift access')).toBeNull();
+    expect(k('TRANSPORT PILLOW', 'TRAVEL PILLOW', 'accessory')).toBeNull();
+  });
+
+  it('puts each charge amount on its own line only, and nothing without the flag', async () => {
+    const d = dOrder();
+    const t = {
+      dos: [d],
+      lines: [
+        doLine(d, { item_code: 'AKEMI ULTIMATE MATT (K)', item_group: 'mattress', line_total_sen: 400000 }),
+        doLine(d, { item_code: 'TRANSPORTATION CHARGES', description: 'TRANSPORTATION CHARGES', item_group: 'service', line_total_sen: 74000 }),
+        doLine(d, { item_code: 'STORAGE', description: 'STORAGE CHARGES', item_group: 'service', line_total_sen: 30000 }),
+      ],
+    };
+    const rows = [{ ...d }] as Array<Row & { id: string; lines?: Row[] }>;
+    expect((await attachDoLines(sbFor(t), ctx(1), rows, { charges: true })).error).toBeNull();
+    expect(rows[0]!.lines!.map((l) => [l.erp_item_code, l.transport_sen, l.storage_sen])).toEqual([
+      ['AKEMI ULTIMATE MATT (K)', null, null],
+      ['TRANSPORTATION CHARGES', 74000, null],
+      ['STORAGE', null, 30000],
+    ]);
+    const plain = [{ ...d }] as Array<Row & { id: string; lines?: Row[] }>;
+    expect((await attachDoLines(sbFor(t), ctx(1), plain, { charges: false })).error).toBeNull();
+    expect(plain[0]!.lines!.some((l) => 'transport_sen' in l || 'storage_sen' in l)).toBe(false);
   });
 });
 
 describe('the list page reads lines through the same attach', () => {
   it('GET / attaches lines with attachDoLines', () => {
-    expect(routeSource).toContain('const withLines = await attachDoLines(sb, c, deliveryOrders);');
+    expect(routeSource).toContain('const withLines = await attachDoLines(sb, c, deliveryOrders, { charges: canViewScmFinance(c) });');
     expect(routeSource).toContain('const deliveryOrders = await buildDoListRows(sb, c,');
   });
 });

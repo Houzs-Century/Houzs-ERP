@@ -79,7 +79,8 @@
  * the ticked orders to the fair in their own box, so a box a person changed is
  * what moves. Linked where the report does not say, the order leaves the group
  * (scm/lib/fair-checks.ts); Put aside leaves it where it is. A long Ref No.
- * wraps inside its cell (「refer no. 跑出格子了」).
+ * wraps inside its cell (「refer no. 跑出格子了」). The buttons sit under the box
+ * in the Fair cell, which keeps at least 300px (COLUMNS, 「为什么变这样了？」).
  */
 import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
@@ -146,9 +147,19 @@ const NOTE = 'bg-surface-2 px-3 pb-2 pt-1.5 text-[12px] text-ink-muted';
 
 /* The same column widths in every group, so the tables line up: SO No. (with
    the report group's tick), Ref No., SO date, Salesperson, Venue (Now under),
-   Brand, Amount, Fair, Link. */
-const COLUMNS: Array<number | string | undefined> = [172, 136, 100, 128, '18%', 110, 124, undefined, 184];
+   Brand, Amount, and the Fair cell — the box, what the report says, and the
+   buttons under it. The Fair cell takes what the others leave; it had shrunk
+   to 54px on a 1230px table once the Salesperson column came and the buttons
+   kept a column of their own (owner 2026-10-23: 「为什么变这样了？」). The buttons
+   now sit in it, and the table is never narrower than TABLE_MIN, where the
+   Fair cell still has 300px: on a smaller screen the box scrolls sideways. */
+const COLUMNS: Array<number | string | undefined> = [172, 116, 96, 112, '15%', 110, 124, undefined];
 const COLS = COLUMNS.length;
+const TABLE_MIN = 1212;
+/* The Fair cell: the box, a grey line, the buttons — one under the other. The
+   items stretch, so the box (SearchableSelect: an input in a plain div) fills
+   the cell; a lone button keeps its own width with self-start. */
+const FAIR_CELL = 'flex flex-col gap-1.5';
 
 function money(sen: number | null): string {
   if (sen == null) return '—';
@@ -278,9 +289,11 @@ function PutAsideGroup({ rows, busy, onBringBack }: { rows: FairPendingRow[]; bu
       {rows.map((r) => (
         <tr key={r.doc_no}>
           <OrderCells row={r} />
-          <td className={TD}>{[r.fair_put_aside_by, r.fair_put_aside_at ? fmtDateOrDash(r.fair_put_aside_at) : ''].filter(Boolean).join(' · ') || '—'}</td>
-          <td className={cn(TD, 'text-right')}>
-            <Button variant="secondary" size="sm" disabled={busy} onClick={() => onBringBack(r.doc_no)}>Bring back</Button>
+          <td className={TD}>
+            <div className={FAIR_CELL}>
+              <span>{[r.fair_put_aside_by, r.fair_put_aside_at ? fmtDateOrDash(r.fair_put_aside_at) : ''].filter(Boolean).join(' · ') || '—'}</span>
+              <Button variant="secondary" size="sm" className="self-start" disabled={busy} onClick={() => onBringBack(r.doc_no)}>Bring back</Button>
+            </div>
           </td>
         </tr>
       ))}
@@ -419,19 +432,19 @@ function ReportRow({ row, value, onPick, tick, busy, reachAll, onAssign, onPutAs
     <tr>
       <OrderCells row={row} lead={tick} place={<NowUnder row={row} />} />
       <td className={TD}>
-        <FairBox docNo={row.doc_no} value={value} options={options} disabled={busy} onChange={onPick} />
-        <div style={{ ...detailLine, marginTop: 4 }}>{reportLine(row)}</div>
-      </td>
-      <td className={cn(TD, 'text-right')}>
-        <SettleButtons
-          docNo={row.doc_no}
-          value={value}
-          busy={busy}
-          linkOff={already}
-          linkTitle={already ? 'Already under this fair. Put aside leaves it there.' : undefined}
-          onAssign={onAssign}
-          onPutAside={onPutAside}
-        />
+        <div className={FAIR_CELL}>
+          <FairBox docNo={row.doc_no} value={value} options={options} disabled={busy} onChange={onPick} />
+          <div style={detailLine}>{reportLine(row)}</div>
+          <SettleButtons
+            docNo={row.doc_no}
+            value={value}
+            busy={busy}
+            linkOff={already}
+            linkTitle={already ? 'Already under this fair. Put aside leaves it there.' : undefined}
+            onAssign={onAssign}
+            onPutAside={onPutAside}
+          />
+        </div>
       </td>
     </tr>
   );
@@ -476,7 +489,7 @@ function Group({ title, hint, place = 'Venue', last, lead, actions, children }: 
       <p style={{ margin: '0 0 8px', opacity: 0.7, fontSize: 12 }}>{hint}</p>
       {actions}
       <div className={TABLE_BOX}>
-        <table style={{ width: '100%', minWidth: 1200, tableLayout: 'fixed', borderCollapse: 'collapse' }}>
+        <table style={{ width: '100%', minWidth: TABLE_MIN, tableLayout: 'fixed', borderCollapse: 'collapse' }}>
           <colgroup>
             {COLUMNS.map((w, i) => <col key={i} style={w == null ? undefined : { width: w }} />)}
           </colgroup>
@@ -490,7 +503,6 @@ function Group({ title, hint, place = 'Venue', last, lead, actions, children }: 
               <th className={TH}>Brand</th>
               <th className={cn(TH, 'text-right')}>Amount</th>
               <th className={TH}>{last}</th>
-              <th className={TH} />
             </tr>
           </thead>
           <tbody>{children}</tbody>
@@ -552,7 +564,6 @@ function CheckRow({ row }: { row: FairCheckRow }) {
       <tr>
         <OrderCells row={row} />
         <td className={TD}>{row.status === 'DRAFT' ? 'Draft' : 'Confirmed'}</td>
-        <td className={TD} />
       </tr>
       <NoteRow note={row.note} />
     </>
@@ -581,10 +592,10 @@ function PendingRow(props: {
       <tr>
         <OrderCells row={row} />
         <td className={TD}>
-          <FairBox docNo={row.doc_no} value={value} options={options} disabled={busy} onChange={setPick} />
-        </td>
-        <td className={cn(TD, 'text-right')}>
-          <SettleButtons docNo={row.doc_no} value={value} busy={busy} onAssign={onAssign} onPutAside={onPutAside} />
+          <div className={FAIR_CELL}>
+            <FairBox docNo={row.doc_no} value={value} options={options} disabled={busy} onChange={setPick} />
+            <SettleButtons docNo={row.doc_no} value={value} busy={busy} onAssign={onAssign} onPutAside={onPutAside} />
+          </div>
         </td>
       </tr>
       {note && <NoteRow note={note} />}

@@ -151,7 +151,18 @@
 .inlineEdit:disabled { opacity: 0.6; cursor: default; }
 
 /* ── Bulk-edit bar (compact single row above the grid) ─────────────────────── */
+/* Floats at the bottom of the screen while rows are ticked: the board scrolls its
+   toolbar away (grid fills the screen), and a bar up there looked like a tick
+   that did nothing (owner 2026-10-26). */
 .bulkBar {
+  position: fixed;
+  bottom: var(--space-4);
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  z-index: 40;
+  box-shadow: 0 8px 28px rgba(34, 31, 32, 0.18);
   display: flex;
   align-items: center;
   gap: var(--space-2);

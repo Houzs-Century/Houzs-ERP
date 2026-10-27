@@ -98,6 +98,31 @@ export function lastMileListSideOf(o: LastMileRow & ToArrangeRow, date: string):
   return isToArrangeRow(o, date) ? 'TO_ARRANGE' : null;
 }
 
+/* East Malaysia (Sabah / Sarawak / Labuan) and Singapore ship by their OWN
+   channel — consolidated out of KL and sent by freight, not on the local
+   last-mile lorry run — so they are kept OFF the Last Mile board (owner
+   2026-10-25). They still appear on the Delivery Planning board and in their own
+   EM / SG modules; this exclusion is Last-Mile-only, applied by FleetDay (the
+   admin board + its day map) and the mobile driver run-sheet, never in the
+   shared backend feed.
+
+   'EM' is the config region bucket for East Malaysia. Singapore folds into
+   'Southern', so it is caught by COUNTRY, not region. The state check is a
+   belt-and-braces fallback for East Malaysia in case the region config is
+   renamed. Takes the three geography fields by generic name so the SAME rule
+   serves both a board row (region / customer_state / customer_country) and a
+   day-map point (region / state / country). */
+export function isEastMalaysiaOrSingaporeStop(loc: {
+  region?: string | null;
+  state?: string | null;
+  country?: string | null;
+}): boolean {
+  if ((loc.country ?? '').trim().toLowerCase() === 'singapore') return true;
+  if ((loc.region ?? '') === 'EM') return true;
+  const st = (loc.state ?? '').trim().toLowerCase();
+  return st === 'sabah' || st === 'sarawak' || st === 'labuan';
+}
+
 /** The "Propose crew" candidate set (owner's final division 2026-08-08: Last
  *  Mile owns the intelligent driver + lorry assignment). Crew is proposed ONLY
  *  for the picked day's already-sequenced runs — the TIME_ARRANGED side of the

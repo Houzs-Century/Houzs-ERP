@@ -128,7 +128,11 @@ const component = (over: Partial<ComponentView> = {}): ComponentView => ({
 });
 
 /** Every refusal the fleet routes actually answer with. */
-const refused = () => Promise.reject(new Error("illegal_transition"));
+// Shaped like the real HttpError: message already humanised, code kept in rawBody.
+const refused = () => Promise.reject(Object.assign(
+  new Error("That conflicts with existing data. Please refresh and try again."),
+  { isHttp: true, rawBody: JSON.stringify({ error: "illegal_transition" }) },
+));
 
 describe("a refused Fleet Health write is said out loud", () => {
   it("breakdown status: a refused PATCH does not leave the row reading Resolved in silence", async () => {

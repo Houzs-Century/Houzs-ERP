@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { stopReconcileKeyFor, reconcileFieldsFor } from "../src/scm/lib/tripReconcile";
+import { stopReconcileKeyFor, reconcileFieldsFor, overrideToClear } from "../src/scm/lib/tripReconcile";
 import { derivePlanningState } from "../src/scm/routes/delivery-planning";
 
 /* THE REVERSE HALF OF THE BOARD <-> TRIPS SYNC.
@@ -203,5 +203,15 @@ describe("trips.ts — the reverse sync is wired into every trip write endpoint"
     const count = stripped.split("reconcileFieldsFor(reconcile)").length - 1;
     // status-cancel, single-stop delete, hard delete, soft cancel = 4 call sites.
     expect(count).toBeGreaterThanOrEqual(4);
+  });
+});
+
+/* Owner 2026-10-26: an order that reached Pending Schedule stays there, so a
+   cancelled trip keeps that stamp and clears only scheduled-looking ones. */
+describe("overrideToClear", () => {
+  test("keeps a Pending Schedule stamp, clears the rest", () => {
+    expect(overrideToClear("PENDING_SCHEDULE")).toBe(false);
+    expect(overrideToClear("PENDING_DELIVERY")).toBe(true);
+    expect(overrideToClear(null)).toBe(false);
   });
 });

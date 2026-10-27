@@ -91,9 +91,11 @@ export type CommissionChange = {
   date: string;
   deltaGoodsSen: number;
   kind: 'upsale' | 'drop';
-  notCounted: 'opening_day' | 'first_price' | null;
+  notCounted: 'opening_day' | 'first_price' | 'system_fix' | null;
   source: string;
   changedBy: string | null;
+  /** Back-filled from the SO's modification history (1–19 October 2026); absent from older servers. */
+  fromHistory?: boolean;
 };
 export type CommissionSoRow = {
   docNo: string;
@@ -112,6 +114,11 @@ export type CommissionFairRow = {
   id: number;
   name: string;
   brand: string | null;
+  /** The project's own place — absent from a server before 2026-10-26 (read
+      through fairPlace, which falls back to the name). */
+  organizer?: string | null;
+  venue?: string | null;
+  state?: string | null;
   startDate: string;
   endDate: string | null;
   ratePct: number | null;
@@ -131,6 +138,46 @@ export type CommissionAdjustment = {
   commissionSen: number;
   beforeReach: boolean;
 };
+/** Where an order sits: its fair and that fair's place (owner 2026-10-26). */
+export type CommissionOrderPlace = {
+  docNo: string; fairId: number; fairName: string;
+  brand: string | null; organizer: string | null; venue: string | null; state: string | null;
+  salesperson: string | null; customer: string | null; ratePct: number | null;
+};
+/** An earlier order once, its final result in the range (「我看final结果」). */
+export type CommissionEarlierOrder = CommissionOrderPlace & {
+  events: Array<{ date: string; kind: CommissionAdjustment['kind']; beforeReach: boolean }>;
+  lastDate: string;
+  originalSen: number; latestSen: number; amendedSen: number;
+  commissionSen: number;
+  fromHistory: boolean;
+};
+/** An order the range's upsales / drop sales changed, once, final. */
+export type CommissionChangedOrder = CommissionOrderPlace & {
+  part: 'range' | 'earlier';
+  lastChange: string;
+  originalSen: number; latestSen: number; amendedSen: number;
+  reachedOn: string | null;
+  effectSen: number;
+  fromHistory: boolean;
+};
+/** A closed month's commission for one order, then and now — paid in the first
+ *  open month as that month's adjustment (owner 2026-10-26, 关月). */
+export type CommissionMonthAdjustment = {
+  /** The closed month it belongs to, YYYY-MM. */
+  month: string;
+  docNo: string;
+  fairId: number | null;
+  fairName: string;
+  brand: string | null;
+  salesperson: string | null;
+  customer: string | null;
+  /** What that month paid for the order: as closed, plus adjustments paid since. */
+  wasSen: number;
+  /** That month recalculated today. */
+  nowSen: number;
+  adjustmentSen: number;
+};
 /** Which date puts an order in the range: its fair's start, or its own SO date. */
 export type CommissionBasis = 'fair' | 'so_date';
 export type EventCommission = {
@@ -140,7 +187,16 @@ export type EventCommission = {
   to: string;
   fairs: CommissionFairRow[];
   adjustments: CommissionAdjustment[];
-  totals: { payableSen: number; adjustmentsSen: number; totalSen: number };
+  /** Absent from a server before 2026-10-26 — read as empty. */
+  earlierOrders?: CommissionEarlierOrder[];
+  changedOrders?: CommissionChangedOrder[];
+  /** Closed months' commission that changed after they closed, paid here — absent before 2026-10-27. */
+  monthAdjustments?: CommissionMonthAdjustment[];
+  totals: { payableSen: number; adjustmentsSen: number; monthAdjustmentsSen?: number; totalSen: number };
+  /** Set when the range is a closed month, served as it was closed. */
+  closed?: { month: string; closedAt: string; closedBy: string | null };
+  /** The company's closed months (YYYY-MM) and the first open one. */
+  closes?: { months: string[]; openFrom: string | null };
 };
 
 /** Event Commission for [from, to]: by fair, the fairs starting in it (as at
@@ -151,6 +207,31 @@ export function useEventCommission(from: string, to: string, basis: CommissionBa
     queryKey: ['acc-events', 'commission', from, to, basis],
     queryFn: () => authedFetch<EventCommission>(`/acc-events/commission?from=${from}&to=${to}${basis === 'so_date' ? '&basis=so_date' : ''}`),
     staleTime: 30_000,
+  });
+}
+
+/** Close a month of Event Commission (Finance): frozen as it stands, both ways
+ *  of looking at it; what changes for its orders later is paid in the next one. */
+export function useCloseCommissionMonth() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (month: string) => authedFetch<{ ok: true; month: string }>('/acc-events/commission/close', {
+      method: 'POST', body: JSON.stringify({ month }),
+    }),
+    onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['acc-events', 'commission'] }); },
+    onError: writeFailedAs('Month not closed'),
+  });
+}
+
+/** Reopen the latest closed month: it is recalculated from today's data again. */
+export function useReopenCommissionMonth() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (month: string) => authedFetch<{ ok: true; month: string }>('/acc-events/commission/reopen', {
+      method: 'POST', body: JSON.stringify({ month }),
+    }),
+    onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['acc-events', 'commission'] }); },
+    onError: writeFailedAs('Month not reopened'),
   });
 }
 

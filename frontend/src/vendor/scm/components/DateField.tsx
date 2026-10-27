@@ -178,6 +178,13 @@ export function DateField({
   onBlur,
   required = false,
 }: DateFieldProps) {
+  /* The host's LATEST onBlur. A calendar pick commits a tick after onChange, by
+     which time the host has re-rendered with the picked value; calling the
+     onBlur captured at pick time handed it the OLD value, so a blur-committing
+     host compared old with old and saved nothing (2026-10-26: HC-SO-2609-164's
+     Delivery Date showed 28, stayed 20 in the database, WhatsApp sent 20). */
+  const onBlurRef = useRef(onBlur);
+  onBlurRef.current = onBlur;
   // `editing` is non-null only while the text box has focus; the rest of the
   // time the display is derived straight from the canonical ISO `value`, so the
   // field can never drift out of sync with the parent.
@@ -311,7 +318,7 @@ export function DateField({
           // input; a blur-committing host (InlineEdit saves on blur) would
           // otherwise miss it (2026-08-20: a Service-case Supplier Pickup
           // Date chosen via the icon showed in the field, never saved).
-          setTimeout(() => onBlur?.(), 0);
+          setTimeout(() => onBlurRef.current?.(), 0);
         }}
       />
     </span>

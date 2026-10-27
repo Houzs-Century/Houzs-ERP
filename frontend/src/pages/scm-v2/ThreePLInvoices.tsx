@@ -5,23 +5,36 @@
 //
 // Per DO, not per trip: 3PL work is not planned as trips (prod had 0 trips on
 // 14 Oct), so the Reconciliation tab next door stays empty for them.
+//
+// From an AP invoice (owner 2026-10-23): the rows can come from the bill
+// attached to the AP invoice Finance keyed (ThreePLFromAp.tsx) instead of
+// being typed; the By company line shows what 2990's deliveries cost, which
+// Houzs bills back. Since 2026-10-24 such a bill is read by itself every half
+// hour; what is not on a DO waits under To check (ThreePLBillLines.tsx).
 // ----------------------------------------------------------------------------
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Trash2 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { fmtDate, fmtSen } from '@2990s/shared';
+import { useAuth } from '../../auth/AuthContext';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { useThreePLCompanies } from '../../vendor/scm/lib/threepl-companies-queries';
 import { DataTable, type Column } from '../../components/DataTable';
 import { DateField } from '../../vendor/scm/components/DateField';
+import { ThreePLFromAp, toSen } from './ThreePLFromAp';
+import { BillsFromAp, type BillSummary } from './ThreePLBillLines';
 import styles from './Suppliers.module.css';
+
+export { toSen };
 
 export interface ChargeRow {
   id: string; doNumber: string | null; doDate: string | null; doStatus: string | null;
   customer: string | null; doCompanyCode: string | null; carrierId: string; carrierName: string | null;
   cardName: string | null; invoiceNo: string | null; invoiceDate: string | null;
   billedSen: number; expectedSen: number | null; varianceSen: number | null; note: string | null;
+  /** The AP invoice the row was brought in from; null when keyed by hand. */
+  apInvoiceId?: string | null;
 }
 interface InvoiceTotal {
   carrierId: string; carrierName: string | null; invoiceNo: string | null; dos: number;
@@ -29,11 +42,6 @@ interface InvoiceTotal {
 }
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : 'Something went wrong.');
-/** "1,234.50" / "RM 80" -> sen; null when it is not a non-negative amount. */
-export const toSen = (v: string): number | null => {
-  const n = Number(v.replace(/rm|,|\s/gi, ''));
-  return v.trim() !== '' && Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null;
-};
 const variance = (v: number | null) => (v == null
   ? <span style={{ color: 'var(--fg-muted)' }}>no rate card</span>
   : <span style={{ color: v === 0 ? 'var(--c-secondary-a, #16a34a)' : 'var(--c-danger, #dc2626)', fontWeight: v === 0 ? 400 : 600 }}>
@@ -57,14 +65,27 @@ export const ThreePLInvoices = () => {
   const qs = new URLSearchParams(Object.entries(range).filter(([, v]) => v)).toString();
   const list = useQuery({
     queryKey: ['threepl-do-charges', range.from, range.to],
-    queryFn: () => authedFetch<{ rows: ChargeRow[]; invoices: InvoiceTotal[] }>(`/threepl-do-charges${qs ? `?${qs}` : ''}`),
+    queryFn: () => authedFetch<{ rows: ChargeRow[]; invoices: InvoiceTotal[]; bills?: BillSummary[] }>(`/threepl-do-charges${qs ? `?${qs}` : ''}`),
   });
   const blank = { doNumber: '', threeplCompanyId: '', invoiceNo: '', invoiceDate: '', billed: '', note: '' };
   const [form, setForm] = useState(blank);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [fromAp, setFromAp] = useState(false);
+  const [said, setSaid] = useState<string | null>(null);
+  /* The AP invoice is Finance's — the API refuses anyone else (threepl-from-ap.ts). */
+  const mayBringIn = useAuth().can('scm.finance.accounting');
   const set = (k: keyof typeof blank) => (v: string) => setForm((s) => ({ ...s, [k]: v }));
   const refresh = () => qc.invalidateQueries({ queryKey: ['threepl-do-charges'] });
+  /* What each company's deliveries cost on this list — 2990's are Houzs's to
+     bill back (owner 2026-10-23). Shown only when more than one company. */
+  const byCompany = Object.entries((list.data?.rows ?? []).reduce<Record<string, { dos: number; sen: number }>>((m, r) => {
+    const k = r.doCompanyCode ?? '—';
+    const t = m[k] ?? { dos: 0, sen: 0 };
+    t.dos += 1; t.sen += r.billedSen;
+    m[k] = t;
+    return m;
+  }, {}));
 
   const save = async () => {
     const billedSen = toSen(form.billed);
@@ -118,8 +139,25 @@ export const ThreePLInvoices = () => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <p style={{ margin: 0, fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-        When a transporter's invoice arrives, key in what it billed for each delivery order. The rate card amount is worked out from the DO's sets / items and delivery zone; extras (setup, dismantle, disposal) and the per-trip outstation fee are not on the DO, so they show as a difference to check.
+        When a transporter's bill is attached to its AP invoice, it is read by itself within half an hour: the lines naming a DO are kept on that DO, and the rest wait under To check for you to say where they go. You can also read a bill yourself (From AP invoice) or key in what was billed for each delivery order. The rate card amount is worked out from the DO's sets / items and delivery zone; extras (setup, dismantle, disposal) and the per-trip outstation fee are not on the DO, so they show as a difference to check.
       </p>
+      {mayBringIn && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <Button variant="primary" size="sm" onClick={() => { setFromAp(true); setSaid(null); }} disabled={fromAp}>From AP invoice</Button>
+          {said && <span role="status" style={{ fontSize: 'var(--fs-12)' }}>{said}</span>}
+        </div>
+      )}
+      {fromAp && (
+        <ThreePLFromAp
+          onClose={() => setFromAp(false)}
+          onSaved={(m) => {
+            setFromAp(false); setSaid(m);
+            void refresh();
+            void qc.invalidateQueries({ queryKey: ['threepl-from-ap'] });
+          }}
+        />
+      )}
+      {mayBringIn && (list.data?.bills?.length ?? 0) > 0 && <BillsFromAp bills={list.data?.bills ?? []} />}
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
         {field('DO number', 'doNumber')}
         <label className={styles.field} style={{ maxWidth: 220 }}>
@@ -148,6 +186,11 @@ export const ThreePLInvoices = () => {
         getRowKey={(r) => `${r.carrierId}|${r.invoiceNo ?? ''}`}
       />
       <h3 style={{ margin: '8px 0 0', fontSize: 'var(--fs-13)' }}>Per delivery order</h3>
+      {byCompany.length > 1 && (
+        <p style={{ margin: 0, fontSize: 'var(--fs-12)' }}>
+          By company: {byCompany.map(([code, t]) => `${code} ${t.dos} DO${t.dos === 1 ? '' : 's'} · ${fmtSen(t.sen)}`).join('  ·  ')}
+        </p>
+      )}
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
         {(['from', 'to'] as const).map((k) => (
           <label key={k} className={styles.field} style={{ maxWidth: 150 }}>

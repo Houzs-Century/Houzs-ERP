@@ -71,9 +71,9 @@
       "why": "ONE vocabulary, one definition and one PRESENTATION of it — classifyJournal (journal-class.ts) is the rule; JOURNALS (JournalEntries.tsx, once JOURNAL_CHIPS in Accounting.tsx) is the chip strip's render order over labels the SERVER already stamped on each row (journal_class). The frontend cannot import backend/src/acc (the shared package here is a pair of vendored copies, not a workspace import), and a chip the backend stopped emitting filters to an empty list — a blank chip, not a wrong number."
     },
     {
-      "check": "D1",
-      "key": "BEDFRAME,FABRIC_ACCESSORY,SOFA|backend/src/scm/lib/so-stock-allocation.ts frontend/src/vendor/scm/lib/variant-editor-groups.ts",
-      "why": "TWO QUESTIONS that today have the same answer: HARD_BOUND_GROUPS decides which sales lines MRP binds per order (backend allocation); VARIANT_EDITOR_GROUPS decides which purchase-form lines show the fabric/seat/leg pickers (frontend). The Sofa Accessory category (2026-09-14) joined both because a custom pillow is both made per order and picks a fabric, but a group could be one without the other (a mattress with a size editor need not bind). Each is already one home for its own question; the four PO/PC form copies were collapsed into VARIANT_EDITOR_GROUPS."
+      "check": "D2",
+      "key": "BEDFRAME,DINING,FABRIC_ACCESSORY,SOFA ~ BEDFRAME,FABRIC_ACCESSORY,SOFA",
+      "why": "TWO QUESTIONS, differing by DINING on purpose: HARD_BOUND_GROUPS (so-stock-allocation.ts) decides which sales lines MRP binds per order (backend allocation); VARIANT_EDITOR_GROUPS (variant-editor-groups.ts) decides which purchase-form lines show the fabric/seat/leg pickers (frontend). Dining joined the binding (HC-0150, 2026-10-23: one in one out, the model is free text) but has no fabric/seat/leg to pick. The Sofa Accessory category joined both because a custom pillow is both made per order and picks a fabric. Each is one home for its own question."
     },
     {
       "check": "D1",
@@ -1302,7 +1302,7 @@
     },
     {
       "check": "D1",
-      "key": "DELIVERY_ORDER,GRN,INVENTORY_ADJUSTMENT,PAYMENT_REQUEST,PAYMENT_VOUCHER,PRODUCT_REQUEST,PURCHASE_INVOICE,PURCHASE_ORDER,PURCHASE_RETURN,SALES_INVOICE,STOCK_TAKE,STOCK_TRANSFER|backend/src/scm/lib/entity-audit.ts frontend/src/vendor/scm/lib/entity-audit-queries.ts",
+      "key": "COMMISSION_MONTH,DELIVERY_ORDER,GRN,INVENTORY_ADJUSTMENT,PAYMENT_REQUEST,PAYMENT_VOUCHER,PRODUCT_REQUEST,PURCHASE_INVOICE,PURCHASE_ORDER,PURCHASE_RETURN,SALES_INVOICE,STOCK_TAKE,STOCK_TRANSFER|backend/src/scm/lib/entity-audit.ts frontend/src/vendor/scm/lib/entity-audit-queries.ts",
       "why": "PINNED BY A TEST, which is this checker's own prescribed remedy for a pair that must stay two. The list cannot be imported across the app boundary (the frontend does not build backend sources), so frontend/src/vendor/scm/lib/entity-audit-queries.test.ts READS backend/src/scm/lib/entity-audit.ts and asserts the two are equal, with a second assertion that the read found more than five names so a dead matcher cannot report a pass. Recorded rather than collapsed because this pair already cost four documents their change log while the comment said 'must stay in step' and nothing made it - docs/bugs/0847-four-documents-kept-a-change-log-nobody-could-read.md."
     },
     {

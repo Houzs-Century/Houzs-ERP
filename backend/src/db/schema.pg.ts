@@ -849,6 +849,9 @@ export const pos_terminals = pgTable(
     status: text("status").notNull().default("NEW"),
     active: boolean("active").notNull().default(true),
     token_hash: text("token_hash"),
+    // Mig 20261022T0533: the one-time pairing code (hash) and when it dies.
+    pairing_code_hash: text("pairing_code_hash"),
+    pairing_expires_at: timestamp("pairing_expires_at", { withTimezone: true, mode: "string" }),
     // Mig 20261014T1445: the last heartbeat that still reported pending bills,
     // so an empty device reconnecting is recognised as DATA LOST.
     last_known_pending_count: integer("last_known_pending_count").notNull().default(0),

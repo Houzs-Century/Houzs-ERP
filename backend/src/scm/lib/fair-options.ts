@@ -738,6 +738,27 @@ export function fairMissingMessage(why: FairWhy | null): string {
   return 'Pick the Fair, or mark it No fair (showroom).';
 }
 
+/** Why an EDIT's picked event links to no booth (HC-0161: a pillow-only scan at
+ *  a 3-booth MLE was saved "with" the fair and then refused at Confirm with no
+ *  reason). Null when there is no verdict to give: linked, or PENDING (the event
+ *  is not in PMS, or the read failed). `booths` are the picked event's rows. */
+export function fairEditUnlinkedMessage(input: {
+  match: FairMatch;
+  booths: readonly FairProjectRow[];
+  brand: string | null;
+}): string | null {
+  if (input.match !== 'AMBIGUOUS' && input.match !== 'UNMATCHED') return null;
+  const booths = input.booths.filter(isPickableFair);
+  if (booths.length === 0) return null;
+  const linked = linkedFairOf(booths[0]);
+  const event = linked ? fairOptionLabel(linked) : clean(booths[0].venue);
+  const brands = [...new Set(booths.map((b) => clean(b.brand) || 'no brand'))].join(', ');
+  const why = input.match === 'AMBIGUOUS'
+    ? `${event} has booths for ${brands}, and nothing on this order has a brand that picks one`
+    : `${event} has no ${clean(input.brand)} booth, only ${brands}`;
+  return `${why}. The person who keyed it is not on the Sales Attending of just one of those booths either, so the fair cannot be linked. Ask PMS to add them to their booth's Sales Attending and pick the fair again, or ask Finance or PMS to link it on Fair Links to Settle.`;
+}
+
 /** "DUNLOPILLO @ MID VALLEY (10/15 - 10/18)" — one BOOTH, as the scan rules
  *  name it to a salesperson. A booth with no brand reads as its event. */
 export function boothLabel(row: Pick<FairProjectRow, 'brand' | 'venue' | 'startDate' | 'endDate'>): string {
