@@ -6,12 +6,21 @@ import { Button } from "../../components/Button";
 import { Eyebrow } from "./teamShared";
 import { fmtDate } from "../../vendor/shared/format";
 
-type Pending = { id: string; address: string; name: string; createdAt: string | null };
+type Pending = {
+  id: string;
+  address: string;
+  name: string;
+  createdAt: string | null;
+  userId: number | null;
+  requestedDepartment: { id: number; name: string } | null;
+};
 
 /* DEV-03 R2: a personal address the ERP gave a new member receives mail only
  * once it is added in Google Workspace, as an alias of an account Mail Center
  * already syncs. Each row leaves the list when an admin marks it, or by itself
- * when the first mail to it arrives. */
+ * when the first mail to it arrives. A member who claimed their own address
+ * with no department yet (HC-0157 A) asked for one; putting them in it goes
+ * through the member screen's own route, as a department opens its mailboxes. */
 export function MailHostPending() {
   const toast = useToast();
   const [busy, setBusy] = useState<string | null>(null);
@@ -34,6 +43,20 @@ export function MailHostPending() {
     }
   }
 
+  async function placeInDepartment(row: Pending) {
+    if (row.userId == null || !row.requestedDepartment) return;
+    setBusy(row.id);
+    try {
+      await api.patch(`/api/users/${row.userId}`, { department_id: row.requestedDepartment.id });
+      toast.success(`${row.name || row.address} is now in ${row.requestedDepartment.name}`);
+      reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not set the department");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <div className="rounded-lg border border-accent bg-warning-bg p-4 lg:col-span-2">
       <Eyebrow>Waiting to be added in Google Workspace ({rows.length})</Eyebrow>
@@ -49,11 +72,19 @@ export function MailHostPending() {
               <span className="text-ink-secondary">
                 {r.name ? ` · ${r.name}` : ""}
                 {r.createdAt ? ` · since ${fmtDate(r.createdAt)}` : ""}
+                {r.requestedDepartment ? ` · asks to be in ${r.requestedDepartment.name}` : ""}
               </span>
             </span>
-            <Button variant="secondary" disabled={busy === r.id} onClick={() => void confirm(r)}>
-              {busy === r.id ? "Saving…" : "Mark added"}
-            </Button>
+            <span className="flex gap-2">
+              {r.requestedDepartment && (
+                <Button variant="secondary" disabled={busy === r.id} onClick={() => void placeInDepartment(r)}>
+                  Put in {r.requestedDepartment.name}
+                </Button>
+              )}
+              <Button variant="secondary" disabled={busy === r.id} onClick={() => void confirm(r)}>
+                {busy === r.id ? "Saving…" : "Mark added"}
+              </Button>
+            </span>
           </div>
         ))}
       </div>

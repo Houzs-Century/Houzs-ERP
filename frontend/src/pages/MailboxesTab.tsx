@@ -53,6 +53,7 @@ import {
   setScopeLevel,
   type MailAddress,
   type MailScopeLevel,
+  DEFAULT_MAIL_SCOPE_LEVEL,
 } from "./MailCenter/mail-actions";
 
 const inputCls =
@@ -715,7 +716,7 @@ function AccessMatrix({
     return s;
   }, [accessQ.data]);
 
-  // Server levels, by user. Absent ⇒ personal.
+  // Server levels, by user. Absent ⇒ DEFAULT_MAIL_SCOPE_LEVEL.
   const serverLevels = useMemo(() => {
     const m = new Map<number, MailScopeLevel>();
     for (const l of levelsQ.data ?? []) m.set(l.userId, l.level);
@@ -728,7 +729,7 @@ function AccessMatrix({
     new Map(),
   );
   function levelOf(userId: number): MailScopeLevel {
-    return savedLevels.get(userId) ?? serverLevels.get(userId) ?? "personal";
+    return savedLevels.get(userId) ?? serverLevels.get(userId) ?? DEFAULT_MAIL_SCOPE_LEVEL;
   }
 
   // ── Edit→Save draft (no naked edits) ──────────────────────────────────
@@ -785,7 +786,7 @@ function AccessMatrix({
     // Diff levels.
     const levelChanges: { userId: number; level: MailScopeLevel }[] = [];
     for (const u of users) {
-      const want = draftLevels.get(u.id) ?? "personal";
+      const want = draftLevels.get(u.id) ?? DEFAULT_MAIL_SCOPE_LEVEL;
       const have = levelOf(u.id);
       if (want !== have) levelChanges.push({ userId: u.id, level: want });
     }
@@ -847,7 +848,7 @@ function AccessMatrix({
     return editMode ? draftGrants.has(k) : serverGrants.has(k);
   };
   const userLevel = (userId: number): MailScopeLevel =>
-    editMode ? draftLevels.get(userId) ?? "personal" : levelOf(userId);
+    editMode ? draftLevels.get(userId) ?? DEFAULT_MAIL_SCOPE_LEVEL : levelOf(userId);
 
   // ── Row windowing (page-scroll-preserving) ────────────────────────────────
   // A capturing window scroll listener catches scroll from any ancestor; the

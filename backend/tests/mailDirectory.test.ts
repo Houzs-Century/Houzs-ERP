@@ -61,7 +61,7 @@ const names = (list: Entry[]) => list.map((e) => e.name);
 
 beforeAll(async () => {
   for (const statement of [
-    `CREATE TABLE IF NOT EXISTS email_addresses (id TEXT PRIMARY KEY, address TEXT NOT NULL, label TEXT, assigned_user_id INTEGER, assigned_user_name TEXT, assigned_dept TEXT, assigned_position TEXT, active INTEGER NOT NULL DEFAULT 1, created_at TEXT, created_by INTEGER, company_id INTEGER NOT NULL DEFAULT 1, mail_host_status TEXT, mail_host_confirmed_at TEXT, mail_host_confirmed_by INTEGER)`,
+    `CREATE TABLE IF NOT EXISTS email_addresses (id TEXT PRIMARY KEY, address TEXT NOT NULL, label TEXT, assigned_user_id INTEGER, assigned_user_name TEXT, assigned_dept TEXT, assigned_position TEXT, department_id INTEGER, requested_department_id INTEGER, active INTEGER NOT NULL DEFAULT 1, created_at TEXT, created_by INTEGER, company_id INTEGER NOT NULL DEFAULT 1, mail_host_status TEXT, mail_host_confirmed_at TEXT, mail_host_confirmed_by INTEGER)`,
     `CREATE TABLE IF NOT EXISTS departments (id INTEGER PRIMARY KEY, name TEXT)`,
     `CREATE TABLE IF NOT EXISTS positions (id INTEGER PRIMARY KEY, slug TEXT, name TEXT)`,
     `INSERT OR REPLACE INTO departments (id, name) VALUES (60, 'P4 Sales'), (61, 'P4 Warehouse')`,
@@ -97,15 +97,15 @@ beforeAll(async () => {
   await user("gone", { managerKey: "me", status: "disabled" });
   await user("nomail", { roleId: noMailRole, deptId: null });
 
-  const box = (address: string, assignedUser: number | null, dept: string | null, label: string | null) =>
+  const box = (address: string, assignedUser: number | null, dept: string | null, deptId: number | null, label: string | null) =>
     env.DB.prepare(
-      `INSERT INTO email_addresses (id, address, label, assigned_user_id, assigned_dept, active, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)`,
+      `INSERT INTO email_addresses (id, address, label, assigned_user_id, assigned_dept, department_id, active, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
     )
-      .bind(crypto.randomUUID(), address, label, assignedUser, dept, new Date().toISOString())
+      .bind(crypto.randomUUID(), address, label, assignedUser, dept, deptId, new Date().toISOString())
       .run();
-  await box("P4.Rep@houzscentury.com", ids.rep, null, null);
-  await box("p4-sales@houzscentury.com", null, "P4 Sales", "Sales team");
-  await box("p4-wh@houzscentury.com", null, "P4 Warehouse", "Warehouse");
+  await box("P4.Rep@houzscentury.com", ids.rep, null, null, null);
+  await box("p4-sales@houzscentury.com", null, "Sales", 60, "Sales team");
+  await box("p4-wh@houzscentury.com", null, "P4 Warehouse", 61, "Warehouse");
 });
 
 afterAll(async () => {
