@@ -2164,7 +2164,7 @@ export function MobileNewSO({
         /* The picked event's PERIOD — same contract as the desktop form. */
         fairStart: fairPick.startDate ?? undefined,
         fairEnd: fairPick.endDate ?? undefined,
-        fairDate: fairPick.day ?? undefined, // which day of it (owner 2026-09-24)
+        fairDate: fairPick.day ?? undefined, fairProjectId: fairPick.booth ?? undefined, // which day of it, and the booth when asked (FairPicker rule 9)
         /* EXPLICIT draft flag — the backend statuses DRAFT only on
            body.asDraft === true; nulling the dates alone saves CONFIRMED. */
         asDraft: asDraft === true,
@@ -2407,7 +2407,7 @@ export function MobileNewSO({
                       value={fairPick}
                       soDate={orderDate}
                       onChange={onFairChange} disabled={identityLocked}
-                      selectClassName="fld-i"
+                      selectClassName="fld-i" boothFor={{ docNo: isEdit ? docNo ?? null : null, items: isEdit ? [] : namedLines.map((l) => ({ itemCode: l.itemCode, itemGroup: l.itemGroup })) }}
                     />
                   </Field>
                 </div>

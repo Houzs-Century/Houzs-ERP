@@ -3434,7 +3434,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 id="so-detail-fair"
                 value={fairPickValue(form.venue || null, form.fair)}
                 soDate={header.so_date}
-                disabled={inputsDisabled}
+                disabled={inputsDisabled} boothFor={{ docNo: header.doc_no, items: [] }}
                 onChange={(next) => setForm((s) => ({
                   ...s,
                   fair: fairEventOf(next), noFair: fairEventOf(next) ? false : s.noFair,

@@ -1618,7 +1618,7 @@ export const SalesOrderNew = () => {
         venue: effectiveVenueName || undefined,
         /* The picked event's ORGANIZER. Together with the venue, the order date
            and the brand derived from the lines, this is what identifies one
-           fair; the server never trusts a project id from here. */
+           fair; a booth id is taken only where those cannot tell (rule 9). */
         noFair: noFair || undefined,
         fairOrganizer: fairPick.organizer ?? undefined,
         /* The picked event's PERIOD. Venue + organizer + period is what names
@@ -1629,6 +1629,7 @@ export const SalesOrderNew = () => {
         fairEnd: fairPick.endDate ?? undefined,
         /* Which DAY of that event (owner 2026-09-24) — kept only as one of its days. */
         fairDate: fairPick.day ?? undefined,
+        fairProjectId: fairPick.booth ?? undefined, // the booth, when the form asked (FairPicker rule 9)
         /* Address handling: address1/2 skipped when fill-later is on, but
            State/City/Postcode/BuildingType always submit. */
         address1: fillAddressLater ? undefined : (address1 || undefined),
@@ -1969,6 +1970,7 @@ export const SalesOrderNew = () => {
                    the fair that was running on the order's real date. */
                 soDate={fairDate}
                 onChange={onFairChange}
+                boothFor={{ docNo: null, items: lines.filter((l) => l.itemCode).map((l) => ({ itemCode: l.itemCode, itemGroup: l.itemGroup })) }}
                 wrapClassName={styles.selectWrap}
                 selectClassName={`${styles.fieldSelect} ${editedClass('venueId', effectiveVenueId ?? '')}`}
               />
