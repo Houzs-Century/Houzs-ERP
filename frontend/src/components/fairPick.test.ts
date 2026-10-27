@@ -34,14 +34,14 @@ describe('an edit save and the Fair picker', () => {
 
   it('a recorded pick reads back as its event: venue, organizer, dates and the day', () => {
     expect(session('MID VALLEY', MLE, '2026-08-09').seeded)
-      .toEqual({ venue: 'MID VALLEY', organizer: 'MLE', startDate: '2026-08-08', endDate: '2026-08-09', day: '2026-08-09' });
+      .toEqual({ venue: 'MID VALLEY', organizer: 'MLE', startDate: '2026-08-08', endDate: '2026-08-09', day: '2026-08-09', booth: null });
   });
 
   it('picking another event sends that event whole', () => {
     const s = session('MID VALLEY', MLE);
     const bighome = { venue: 'MID VALLEY', organizer: 'BIGHOME', startDate: '2026-08-15', endDate: '2026-08-17', day: '2026-08-16' };
     expect(s.sent(bighome))
-      .toEqual({ fairVenue: 'MID VALLEY', fairOrganizer: 'BIGHOME', fairStart: '2026-08-15', fairEnd: '2026-08-17', fairDate: '2026-08-16' });
+      .toEqual({ fairVenue: 'MID VALLEY', fairOrganizer: 'BIGHOME', fairStart: '2026-08-15', fairEnd: '2026-08-17', fairDate: '2026-08-16', fairProjectId: null });
   });
 
   it('the unchanged parts of the new event travel too — never half an event', () => {
@@ -50,32 +50,41 @@ describe('an edit save and the Fair picker', () => {
        one-day fair and match nothing. */
     const s = session('MID VALLEY', MLE);
     expect(s.sent({ venue: 'MID VALLEY', organizer: 'REX', startDate: '2026-08-07', endDate: '2026-08-09', day: null }))
-      .toEqual({ fairVenue: 'MID VALLEY', fairOrganizer: 'REX', fairStart: '2026-08-07', fairEnd: '2026-08-09', fairDate: null });
+      .toEqual({ fairVenue: 'MID VALLEY', fairOrganizer: 'REX', fairStart: '2026-08-07', fairEnd: '2026-08-09', fairDate: null, fairProjectId: null });
   });
 
   it('another day of the same event sends the event with it — the server checks a day against its event', () => {
     const s = session('MID VALLEY', MLE, '2026-08-08');
     expect(s.sent({ ...s.seeded, day: '2026-08-09' }))
-      .toEqual({ fairVenue: 'MID VALLEY', fairOrganizer: 'MLE', fairStart: '2026-08-08', fairEnd: '2026-08-09', fairDate: '2026-08-09' });
+      .toEqual({ fairVenue: 'MID VALLEY', fairOrganizer: 'MLE', fairStart: '2026-08-08', fairEnd: '2026-08-09', fairDate: '2026-08-09', fairProjectId: null });
   });
 
   it('backfilling an order that had no event sends the picked one', () => {
     const s = session(null, null);
     expect(s.sent({ venue: 'MID VALLEY', organizer: 'MLE', startDate: '2026-08-08', endDate: '2026-08-09', day: '2026-08-08' }))
-      .toEqual({ fairVenue: 'MID VALLEY', fairOrganizer: 'MLE', fairStart: '2026-08-08', fairEnd: '2026-08-09', fairDate: '2026-08-08' });
+      .toEqual({ fairVenue: 'MID VALLEY', fairOrganizer: 'MLE', fairStart: '2026-08-08', fairEnd: '2026-08-09', fairDate: '2026-08-08', fairProjectId: null });
+  });
+
+  it('a booth picked where the form asked travels with its event', () => {
+    const s = session(null, null);
+    expect(s.sent({ venue: 'MID VALLEY', organizer: 'MLE', startDate: '2026-08-08', endDate: '2026-08-09', day: '2026-08-08', booth: 316 }))
+      .toEqual({ fairVenue: 'MID VALLEY', fairOrganizer: 'MLE', fairStart: '2026-08-08', fairEnd: '2026-08-09', fairDate: '2026-08-08', fairProjectId: 316 });
+    const linked = session('MID VALLEY', MLE, '2026-08-08');
+    expect(linked.sent({ ...linked.seeded, booth: 313 }))
+      .toEqual({ fairVenue: 'MID VALLEY', fairOrganizer: 'MLE', fairStart: '2026-08-08', fairEnd: '2026-08-09', fairDate: '2026-08-08', fairProjectId: 313 });
   });
 
   it('falling back to Others (a place alone) sends the event and its day as cleared', () => {
     const s = session('MID VALLEY', MLE, '2026-08-08');
     expect(s.sent({ venue: 'IOI CITY MALL', organizer: null, startDate: null, endDate: null, day: null }))
-      .toEqual({ fairVenue: null, fairOrganizer: null, fairStart: null, fairEnd: null, fairDate: null });
+      .toEqual({ fairVenue: null, fairOrganizer: null, fairStart: null, fairEnd: null, fairDate: null, fairProjectId: null });
   });
 });
 
 describe('linkedEvent — the link is shown only under its own venue', () => {
   it('matches the order venue case- and space-insensitively, spelled as the ORDER spells it', () => {
     expect(linkedEvent('Mid  Valley ', MLE, '2026-08-09'))
-      .toEqual({ venue: 'Mid  Valley ', organizer: 'MLE', startDate: '2026-08-08', endDate: '2026-08-09', day: '2026-08-09' });
+      .toEqual({ venue: 'Mid  Valley ', organizer: 'MLE', startDate: '2026-08-08', endDate: '2026-08-09', day: '2026-08-09', booth: null });
   });
 
   it('a link to a fair at ANOTHER venue is not shown as this order\'s event', () => {
@@ -159,7 +168,7 @@ describe('soleFairDay — filled in only when there is nothing to choose', () =>
 
 describe('fairDayCheck — what the submit check is asked about the day', () => {
   const event = (day: string | null) =>
-    fairEditPatch({ venue: 'MID VALLEY', organizer: 'MLE', startDate: '2026-08-08', endDate: '2026-08-09', day });
+    fairEditPatch({ venue: 'MID VALLEY', organizer: 'MLE', startDate: '2026-08-08', endDate: '2026-08-09', day, booth: null });
 
   it('a create that picked an event sends it, so a missing day is caught', () => {
     expect(fairDayCheck(event(null), {}))

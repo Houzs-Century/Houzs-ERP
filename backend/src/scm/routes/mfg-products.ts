@@ -40,8 +40,10 @@ import { moveModelCategory, planModelCategoryMoves, type ImportModelMove } from 
 import { ensureModelForSku, modelCodeForSku } from '../lib/ensure-model-for-sku';
 import { newSkuPosActive } from '../lib/new-sku-pos-active';
 import { MFG_PRODUCT_CATEGORIES, MFG_CATEGORY_LABELS, mfgCategoryLabel, parseMfgCategory } from '../shared/product-categories';
+import { mfgProductMerge } from './mfg-product-merge';
 
 export const mfgProducts = new Hono<{ Bindings: Env; Variables: Variables }>();
+mfgProducts.route('/merge', mfgProductMerge);
 
 mfgProducts.use('*', supabaseAuth);
 

@@ -168,8 +168,8 @@ import {
   type VenueSource,
   type VenueBindingSb,
 } from '../lib/venue-binding';
-import { bindVenueOnCreate, fairConfirmProblems, fairLinkForEdit, fairLinkOnCreate, fairRequiredProblem, loadLinkedFair, resolveFairForSave, SCAN_STEP_NOTE, type FairDb } from '../lib/fair-binding';
-import { fairDayMissing, fairDayOnSave, fairWhyOf } from '../lib/fair-options';
+import { bindVenueOnCreate, editFairKeyerId, fairConfirmProblems, fairLinkForEdit, fairLinkOnCreate, fairRequiredProblem, loadLinkedFair, resolveFairForSave, SCAN_STEP_NOTE, type FairDb } from '../lib/fair-binding';
+import { companyUsesKeyerFair, fairDayMissing, fairDayOnSave, fairWhyOf } from '../lib/fair-options';
 import { loadVpBrandAsk, type VpBrandDb } from '../lib/vp-brand-ask';
 import { recordSoAudit, diffFields, type FieldChange } from '../lib/so-audit';
 import { fairStateOf, recordFairChange } from '../lib/fair-audit';
@@ -6025,7 +6025,16 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
   /* A picked EVENT is recorded exactly (owner 2026-09-24). Resolved BEFORE the
      unchanged fields drop out: another event at the same venue changes no mapped
      column, and the save would otherwise answer "nothing to do". */
-  const fairLink = await fairLinkForEdit({ db: c.env?.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), body, stored: beforeRecord });
+  const fairLink = await fairLinkForEdit({
+    db: c.env?.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), body, stored: beforeRecord,
+    keyerId: () => editFairKeyerId({ sb, scope: (q) => scopeToCompany(q, c), docNo, editorId: Number(c.get('houzsUser')?.id ?? NaN) }),
+  });
+  /* HC-0161: a DRAFT whose re-picked fair links to no booth would only be
+     refused at Confirm, with no reason given — say it here, at Save. A
+     confirmed order still saves; Fair Links settles it. */
+  if (fairLink?.problem && beforeRecord.status === 'DRAFT' && companyUsesKeyerFair(c.get('companyCode'))) {
+    return c.json(validationFailedBody([fairLink.problem]), 422);
+  }
   if (fairLink && (fairLink.project_id !== (beforeRecord.project_id == null ? null : Number(beforeRecord.project_id)) || fairLink.fair_match !== beforeRecord.fair_match)) {
     updates['project_id'] = fairLink.project_id;
     updates['fair_match'] = fairLink.fair_match;

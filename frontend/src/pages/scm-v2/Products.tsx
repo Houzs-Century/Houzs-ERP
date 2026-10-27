@@ -116,6 +116,7 @@ import { formatSizeRich, formatSizeRichWithCfg, resolveSizeInfo } from '../../ve
 import { formatPhone } from '../../vendor/shared/phone';
 import { ProductModels, NewModelDialog } from './ProductModels';
 import { VariantsTab } from './products/VariantsTab';
+import { MergeCodesDialog } from './products/MergeCodesDialog';
 import { describeRenameCounts } from './products/compartmentRename';
 import { Categories } from './Categories';
 import { useBrandingPool, useProductModel } from '../../vendor/scm/lib/product-models-queries';
@@ -394,6 +395,7 @@ const SkuMasterTab = () => {
   const [newSkuOpen, setNewSkuOpen] = useState(false);
   const [suppliersRow, setSuppliersRow] = useState<MfgProductRow | null>(null);
   const [importing, setImporting] = useState(false);
+  const [merging, setMerging] = useState(false);
   // PR #73 — "+ New SKU" now opens the Model creation dialog (with the
   // active category filter pre-filled). The legacy single-SKU drawer
   // stays around in `newSkuOpen` for the ACCESSORY / SERVICE fall-back
@@ -848,6 +850,9 @@ const SkuMasterTab = () => {
             <Upload {...ICON_PROPS} />
             <span>Import SKUs</span>
           </Button>
+          <Button variant="secondary" onClick={() => setMerging(true)}>
+            <span>Merge codes</span>
+          </Button>
           <Button variant="secondary" onClick={() => setNewModelOpen(true)}>
             <Plus {...ICON_PROPS} />
             <span>New SKU</span>
@@ -1109,6 +1114,7 @@ const SkuMasterTab = () => {
       )}
       {suppliersRow && <ProductSuppliersDrawer row={suppliersRow} onClose={() => setSuppliersRow(null)} />}
       {importing && <ImportSkusDialog sofaSizes={sofaSizes} onClose={() => setImporting(false)} />}
+      {merging && <MergeCodesDialog codes={rows.map((r) => r.code)} onClose={() => setMerging(false)} />}
     </>
   );
 };
@@ -4589,7 +4595,8 @@ function exportSkusCsv(rows: MfgProductRow[], sofaSizes: string[], tier: SofaPri
     }
   }
 
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  // BOM: without it Excel opens the file in the PC's codepage and KŌRI-style codes come out garbled (HC-0165).
+  const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

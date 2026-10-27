@@ -22,17 +22,16 @@ export function nextCode(prefix: string, existing: readonly string[]): string {
   return `${prefix}${Date.now().toString(36).toUpperCase()}`;
 }
 
-export type PosEventStatus = "RUNNING" | "UPCOMING" | "ENDED" | "NOT LINKED";
+export type PosEventStatus = "COMING" | "ON GOING" | "DONE";
 
-/** RUNNING while today is inside the dates, ENDED after, UPCOMING before;
- *  a project with no link is NOT LINKED whatever its dates. */
-export function posEventStatus(p: { linked: boolean; start_date: string | null; end_date: string | null }, today: string): PosEventStatus {
-  if (!p.linked) return "NOT LINKED";
+/** Where the fair is in time, whatever its POS link: ON GOING while today is
+ *  inside the dates, DONE after, COMING before. No dates = ON GOING. */
+export function posEventStatus(p: { start_date: string | null; end_date: string | null }, today: string): PosEventStatus {
   const start = p.start_date ? p.start_date.slice(0, 10) : null;
   const end = p.end_date ? p.end_date.slice(0, 10) : start;
-  if (end && today > end) return "ENDED";
-  if (start && today < start) return "UPCOMING";
-  return "RUNNING";
+  if (end && today > end) return "DONE";
+  if (start && today < start) return "COMING";
+  return "ON GOING";
 }
 
 export type ImportRowInput = Record<string, unknown>;

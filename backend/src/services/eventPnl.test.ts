@@ -102,13 +102,13 @@ describe('rows both P&Ls share, and who wins a % row', () => {
   });
 });
 
-describe('service lines are Service revenue, their cost sits in Transport Fee (owner 2026-10-20)', () => {
-  it('By Sales Orders: Sales is the goods, service beside it; transport = rate card on the goods + the service cost', () => {
+describe('service lines are wiped from the Event P&L (HC-0134, owner 2026-10-27)', () => {
+  it('By Sales Orders: Sales is the goods; no Service revenue and no service cost in Transport Fee', () => {
     /* 8 orders, RM 48,352 in all of which RM 2,000 is a delivery / service charge costing RM 600. */
     const { by_so: c } = run({ so: { ...SO_2214, salesRm: 46352, serviceRm: 2000, serviceCostRm: 600 } });
-    expect(c).toMatchObject({ sales: 46352, serviceRevenue: 2000 });
-    expect(c!.transportFee).toEqual({ amount: 2317.6 + 600, from: 'rate', pct: 5, serviceCost: 600 });
-    expect(c!.netProfit).toBeCloseTo(46352 + 2000 - c!.totalCost, 2);
+    expect(c).toMatchObject({ sales: 46352, serviceRevenue: 0 });
+    expect(c!.transportFee).toEqual({ amount: 2317.6, from: 'rate', pct: 5, serviceCost: 0 });
+    expect(c!.netProfit).toBeCloseTo(46352 - c!.totalCost, 2);
   });
 
   it('when the books fill Transport Fee, the Finance figure stands and the service cost is not added again', () => {

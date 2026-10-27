@@ -58,6 +58,7 @@ import { loadReportSales } from "./lib/pos-report-load";
 import { aggregateSales } from "../scm/shared/pos-report";
 import { posReceiptStatusLabel } from "../scm/shared/pos-vocabulary";
 import { decryptBackupPayload, isPosBackupFile, type PosBackupFile } from "../scm/shared/pos-backup-crypto";
+import { PAIRING_MINUTES, formatPairingCode, mintPairingCode, pairingCodeHash } from "../scm/shared/pos-pairing";
 import {
   isCashierRole,
   isPosCashierPin,
@@ -506,14 +507,17 @@ posAdmin.post("/cashiers/:id/pin", async (c) => {
 
 type EventProjectRow = { id: number; code: string | null; name: string; start_date: string | null; end_date: string | null; event_type_slug: string | null; event_type_name: string | null; venue: string | null };
 
-async function eventProjects(db: Db, companyId: number, opts: { linkedProjectIds: number[]; search: string | null; limit: number }): Promise<EventProjectRow[]> {
+/** Every fair that matters to the booth, on its own: Cash & Carry projects, the
+ *  projects of the booth brands (General > booth_brands, e.g. AKEMI Cash & Carry,
+ *  AKEMI FRAGRANCE) and whatever is linked; anything else through the search. */
+async function eventProjects(db: Db, companyId: number, opts: { linkedProjectIds: number[]; search: string | null; limit: number; brands: string[] }): Promise<EventProjectRow[]> {
   const like = opts.search ? `%${opts.search.replace(/[%_]/g, "")}%` : null;
   return db.execute<EventProjectRow>(sql`
     SELECT p.id, p.code, p.name, p.start_date, p.end_date, et.slug AS event_type_slug, et.name AS event_type_name, p.venue
       FROM projects p
       LEFT JOIN project_event_types et ON et.id = p.event_type_id
      WHERE p.company_id = ${companyId} AND p.archived_at IS NULL
-       AND (et.slug = ${CASH_CARRY_SLUG} ${opts.linkedProjectIds.length ? sql`OR p.id IN ${opts.linkedProjectIds}` : sql``} ${like ? sql`OR p.name ILIKE ${like} OR p.code ILIKE ${like}` : sql``})
+       AND (et.slug = ${CASH_CARRY_SLUG} ${opts.brands.length ? sql`OR p.brand IN ${opts.brands}` : sql``} ${opts.linkedProjectIds.length ? sql`OR p.id IN ${opts.linkedProjectIds}` : sql``} ${like ? sql`OR p.name ILIKE ${like} OR p.code ILIKE ${like}` : sql``})
      ORDER BY p.start_date DESC NULLS LAST, p.id DESC
      LIMIT ${opts.limit}`);
 }
@@ -536,7 +540,8 @@ async function eventPayload(db: Db, companyId: number, projects: EventProjectRow
       project_id: pid, code: p.code, name: p.name, start_date: p.start_date, end_date: p.end_date, venue: p.venue,
       event_type_slug: p.event_type_slug, event_type_name: p.event_type_name,
       type_label: p.event_type_slug === CASH_CARRY_SLUG ? "Cash & Carry" : "Fair + SO",
-      status: posEventStatus({ linked: !!link, start_date: p.start_date, end_date: p.end_date }, today),
+      status: posEventStatus({ start_date: p.start_date, end_date: p.end_date }, today),
+      linked: !!link,
       link: link
         ? {
             id: link.id, catalog_scope: link.catalog_scope, stock_source_warehouse_id: link.stock_source_warehouse_id, sst_default: link.sst_default,
@@ -556,7 +561,7 @@ posAdmin.get("/events", async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const db = getDb(c.env);
   const linked = (await db.select({ project_id: pos_event_links.project_id }).from(pos_event_links).where(eq(pos_event_links.company_id, co.companyId))).map((l) => l.project_id);
-  const projects = await eventProjects(db, co.companyId, { linkedProjectIds: linked, search: null, limit: 300 });
+  const projects = await eventProjects(db, co.companyId, { linkedProjectIds: linked, search: null, limit: 300, brands: (await generalSettings(db, co.companyId)).booth_brands });
   return c.json({ data: await eventPayload(db, co.companyId, projects) });
 });
 
@@ -566,7 +571,7 @@ posAdmin.get("/events/candidates", async (c) => {
   const q = (c.req.query("q") ?? "").trim();
   if (q.length < 2) return c.json({ data: [] });
   const db = getDb(c.env);
-  const rows = await eventProjects(db, co.companyId, { linkedProjectIds: [], search: q, limit: 20 });
+  const rows = await eventProjects(db, co.companyId, { linkedProjectIds: [], search: q, limit: 20, brands: [] });
   return c.json({ data: rows.map((p) => ({ project_id: Number(p.id), code: p.code, name: p.name, start_date: p.start_date, end_date: p.end_date, event_type_name: p.event_type_name })) });
 });
 
@@ -917,6 +922,86 @@ posAdmin.get("/report", async (c) => {
     stock_location: warehouseId,
     count: sales.length,
   });
+});
+
+
+/* ── pairing a device from the ERP (POS Admin > Terminals > Pair device) ── */
+
+/** Hand out a one-time pairing code for a terminal whose event is set. The
+ *  device redeems it at POST /api/pos-device/pair (no ERP sign-in on the
+ *  device); the code lives PAIRING_MINUTES and is stored only as a hash. */
+posAdmin.post("/terminals/:id/pairing", async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const id = intParam(c, "id");
+  if (!id) return c.json({ error: "invalid_id" }, 400);
+  const db = getDb(c.env);
+  const rows = await db.select({ id: pos_terminals.id, code: pos_terminals.code, project_id: pos_terminals.project_id, active: pos_terminals.active }).from(pos_terminals).where(and(eq(pos_terminals.id, id), eq(pos_terminals.company_id, co.companyId))).limit(1);
+  if (rows.length === 0) return c.json({ error: "Not found" }, 404);
+  const t = rows[0];
+  if (!t.active) return c.json({ error: "terminal_inactive", reason: "Reactivate the terminal first." }, 409);
+  if (t.project_id == null) return c.json({ error: "event_required", reason: "Set the terminal's event first; the device downloads that event's catalog." }, 409);
+  const link = await db.select({ id: pos_event_links.id }).from(pos_event_links).where(and(eq(pos_event_links.company_id, co.companyId), eq(pos_event_links.project_id, t.project_id))).limit(1);
+  if (link.length === 0) return c.json({ error: "event_not_linked", reason: "Link that event to POS in POS Admin > Events first." }, 409);
+  const code = mintPairingCode();
+  const expires = new Date(Date.now() + PAIRING_MINUTES * 60_000).toISOString();
+  await db.update(pos_terminals).set({ pairing_code_hash: await pairingCodeHash(code), pairing_expires_at: expires, updated_at: nowIso() }).where(eq(pos_terminals.id, id));
+  await audit(db, co.companyId, c, "pos_terminal", id, "pairing_code_issued", null, expires);
+  const origin = (c.env.POS_APP_ORIGIN ?? "https://pos.houzscentury.com").replace(/\/$/, "");
+  return c.json({ code: formatPairingCode(code), expires_at: expires, url: `${origin}/?pair=${code}`, terminal: t.code });
+});
+
+
+/* ── the manager sign-in on the POS front (owner / admin with pos.manage) ── */
+
+/** What an ERP account signed in on the POS needs before the device is set
+ *  up: who they are, the company block for the receipt header, the settings.
+ *  The mount already requires pos.manage, so a plain staff account gets 403. */
+posAdmin.get("/device/context", async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const u = c.get("user");
+  const db = getDb(c.env);
+  const rows = await db.select().from(pos_settings).where(eq(pos_settings.company_id, co.companyId));
+  const raw: Partial<Record<PosSettingsGroup, unknown>> = {};
+  for (const r of rows) raw[r.group as PosSettingsGroup] = r.value;
+  return c.json({ user: { id: u?.id ?? 0, name: u?.name ?? u?.email ?? "Manager" }, company: await companyBlock(c.env, co.companyId), settings: normalizePosSettings(raw) });
+});
+
+
+/* ── one press: every sellable inventory product becomes a POS item ─────── */
+
+/** Tags every ACTIVE inventory product with a selling price that is not a POS
+ *  item yet, at that price (cost copied too), no preset discount. Existing POS
+ *  items are left exactly as they are, so it can be pressed again whenever new
+ *  products arrive. `dry_run` answers the counts without writing. */
+posAdmin.post("/items/add-all", async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const body = await c.req.json<{ dry_run?: boolean }>().catch(() => ({} as { dry_run?: boolean }));
+  const db = getDb(c.env);
+  const rows = await db.execute<{ product_id: string; code: string; name: string; sell_price_sen: number | string | null; cost_price_sen: number | string | null; tagged: boolean }>(sql`
+    SELECT p.id AS product_id, p.code, p.name,
+           COALESCE(p.sell_price_sen, p.price1_sen, p.base_price_sen) AS sell_price_sen, p.cost_price_sen,
+           EXISTS (SELECT 1 FROM pos_items i WHERE i.company_id = ${co.companyId} AND i.product_id = p.id) AS tagged
+      FROM scm.mfg_products p
+     WHERE p.company_id = ${co.companyId} AND p.status = 'ACTIVE'
+     ORDER BY p.code`);
+  const already = rows.filter((r) => r.tagged).length;
+  const noPrice = rows.filter((r) => !r.tagged && !(Number(r.sell_price_sen ?? 0) > 0));
+  const toAdd = rows.filter((r) => !r.tagged && Number(r.sell_price_sen ?? 0) > 0);
+  if (body.dry_run === true) return c.json({ dry_run: true, to_add: toAdd.length, already, no_price: noPrice.length, total_active: rows.length });
+  let added = 0;
+  for (let i = 0; i < toAdd.length; i += 200) {
+    const chunk = toAdd.slice(i, i + 200);
+    await db.insert(pos_items).values(chunk.map((r) => ({
+      company_id: co.companyId, product_id: r.product_id, item_code: r.code, name: r.name,
+      price_sen: Math.round(Number(r.sell_price_sen)), cost_sen: r.cost_price_sen == null ? null : Math.round(Number(r.cost_price_sen)),
+    })));
+    added += chunk.length;
+  }
+  await audit(db, co.companyId, c, "pos_items", "add-all", "added", null, `${added} added, ${already} already, ${noPrice.length} without a selling price`);
+  return c.json({ ok: true, added, already, no_price: noPrice.length, total_active: rows.length });
 });
 
 export { posAdmin };

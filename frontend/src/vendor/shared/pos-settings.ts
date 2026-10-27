@@ -54,6 +54,9 @@ export type GeneralSettings = {
   /** scm.warehouses.id of the main POS stock location; null = not set. */
   pos_store_warehouse_id: string | null;
   return_window: "EVENT" | "SAME_DAY";
+  /** Project brands whose fairs the Events tab lists for the booth, beside
+   *  every Cash & Carry project (projects.brand, exact text). */
+  booth_brands: string[];
 };
 
 export type PosSettingsGroup = "sst_receipt" | "printer_scanner" | "general";
@@ -108,6 +111,7 @@ export function posSettingsDefaults(): PosSettings {
       customer_field: "OPTIONAL",
       pos_store_warehouse_id: null,
       return_window: "EVENT",
+      booth_brands: ["AKEMI Cash & Carry", "AKEMI FRAGRANCE"],
     },
   };
 }

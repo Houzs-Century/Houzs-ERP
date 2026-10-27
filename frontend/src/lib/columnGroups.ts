@@ -52,12 +52,12 @@ const RULES: Rule[] = [
   // ── Money on the document ────────────────────────────────────────────────
   {
     group: COLUMN_GROUPS.amounts,
-    any: /\b(net|gross|fee|merchant|acquirer|statement|method|symbol|inclusive|others?|amount|total|subtotal|tax|discount|disc|paid|balance|deposit|refund|refunded|credit|debit|price|rate|currency|curr|value|revenue|sales|income|outstanding|owed|payment|billed|invoice|invoiced|rental|rent|due|overdue|aging|age|bucket|finances|account|merchandise|mattress|sofa|bedframe|accessories|specials)\b|_sen\b|\(rm\)/,
+    any: /\b(net|gross|fee|merchant|acquirer|statement|method|symbol|inclusive|others?|amount|total|subtotal|tax|discount|disc|paid|balance|deposit|refund|refunded|credit|debit|price|rate|currency|curr|value|revenue|sales|income|outstanding|owed|payment|billed|invoice|invoiced|rental|rent|due|overdue|aging|age|bucket|finances|account|merchandise|mattress|sofa|bedframe|accessories|specials|salary|basic|ot pay|absence|advance|penalty|statutory|epf|socso|eis|pcb|ot x)\b|_sen\b|\(rm\)/,
   },
   // ── Getting it made, moved and delivered ─────────────────────────────────
   {
     group: COLUMN_GROUPS.logistics,
-    any: /\bm3\b|\b(mileage|insurance|puspakom|downtime|problem|drops|stops|dos|volume|sets|dispose|disposal|inspection|services?|duration|transfer|ctn|etd|vessel|voyage|port|slot|replacement|consignment|card|delivery|deliveries|deliver|delivered|dispatch|shipout|carrier|tracking|eta|arrival|arrives|departure|driver|helper|lorry|vehicle|plate|fleet|registration|trip|route|zone|warehouse|whse|rack|shelf|venue|location|transport|pickup|pickups|scheduled|unscheduled|sched|processing date|collected|setup|dismantle|lift booking|do|transfer to|transfer from|stock status|expected|earliest|latest|when|time|days left|work days|repair days|utilisation|covers|areas)\b/,
+    any: /\bm3\b|\b(mileage|insurance|puspakom|downtime|problem|drops|stops|dos|volume|sets|dispose|disposal|inspection|services?|duration|transfer|ctn|etd|vessel|voyage|port|slot|replacement|consignment|card|delivery|deliveries|deliver|delivered|dispatch|shipout|carrier|tracking|eta|arrival|arrives|departure|driver|helper|lorry|vehicle|plate|fleet|registration|trip|route|zone|warehouse|whse|rack|shelf|venue|location|transport|pickup|pickups|scheduled|unscheduled|sched|processing date|collected|setup|dismantle|lift booking|do|transfer to|transfer from|stock status|expected|earliest|latest|when|time|days left|work days|repair days|utilisation|covers|areas|radius)\b/,
   },
   // ── What there is, and how much of it ────────────────────────────────────
   {
@@ -72,7 +72,7 @@ const RULES: Rule[] = [
   // ── Staff, roles, the org ────────────────────────────────────────────────
   {
     group: COLUMN_GROUPS.people,
-    any: /\b(approval|level 1|level 2|recipients|last login|people|audience|salesperson|agent|pic|assignee|assigned|owner|approver|requested by|created by|invited|member|role|position|department|division|reports to|direct reports|joined|last seen|presence|team|organizer|in house|outsourced|lead|by)\b/,
+    any: /\b(approval|level 1|level 2|recipients|last login|people|audience|salesperson|agent|pic|assignee|assigned|owner|approver|requested by|created by|invited|member|role|position|department|division|reports to|direct reports|joined|last seen|presence|team|organizer|in house|outsourced|lead|by|nationality|clock in|clock out|punch|logged|late|hours|ot)\b/,
   },
   // ── The document itself ──────────────────────────────────────────────────
   {

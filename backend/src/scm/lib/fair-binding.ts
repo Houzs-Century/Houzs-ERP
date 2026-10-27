@@ -11,12 +11,17 @@
 // ----------------------------------------------------------------------------
 
 import {
+  boothsOf,
   companyUsesKeyerFair,
   editFairPick,
+  fairBoothAskMessage,
+  fairBoothOf,
+  fairEditUnlinkedMessage,
   fairEventKey,
   fairKeyPart,
   fairMissingMessage,
   fairPickedPeriod,
+  isPickableFair,
   keyerFairDefault,
   linkedFairOf,
   lookbackWindow,
@@ -24,6 +29,8 @@ import {
   resolveFairWithKeyer,
   sameVenue,
   venueDiffersMessage,
+  withBoothPick,
+  type FairBooth,
   type FairMatch,
   type FairProjectRow,
   type FairResolution,
@@ -343,26 +350,63 @@ const KEYER_ON_PROJECT = `(p.pic_id = ? OR EXISTS (
 
 /**
  * `resolveFairForSave` for a NEW order: the same lookup, then the keyer's booth
- * where the brand cannot decide (`resolveFairWithKeyer`). Create only — an edit,
- * the nightly reconcile and a re-detect keep the plain rule, so an order already
- * saved never moves because of who happens to open it.
+ * where the brand cannot decide (`resolveFairWithKeyer`). Also an edit that
+ * re-picks an event (`fairLinkForEdit`, HC-0161), with the order's keyer, not
+ * whoever opens it. The nightly reconcile and a re-detect keep the plain rule,
+ * so an order already saved never moves on its own.
  *
  * @param keyerId `public.users.id` of the person keying the order (the scan
  *   uploader on a scan) — not the order's salesperson (owner: 「看打单的人」).
+ * @param booth The booth the operator picked under Fair (`fairBoothOf`), used
+ *   only where neither the brand nor the keyer decides (`withBoothPick`).
  */
-export async function resolveFairForCreate(args: FairSaveArgs & { keyerId: number }): Promise<FairResolution> {
+export async function resolveFairForCreate(args: KeyerFairArgs): Promise<FairResolution> {
+  return (await resolveWithKeyer(args)).fair;
+}
+
+type KeyerFairArgs = FairSaveArgs & { keyerId: number; booth: number | null };
+
+/** `resolveFairForCreate`, plus the rows it chose between (the edit names them). */
+async function resolveWithKeyer(args: KeyerFairArgs): Promise<{ fair: FairResolution; candidates: FairProjectRow[] }> {
   const venue = (args.venue ?? '').trim();
-  if (!venue) return { projectId: null, match: 'PENDING', candidateIds: [] };
+  const pending = { fair: { projectId: null, match: 'PENDING' as const, candidateIds: [] }, candidates: [] };
+  if (!venue) return pending;
   let candidates: FairProjectRow[];
   try {
     candidates = await loadSaveCandidates(args, venue);
   } catch {
-    return { projectId: null, match: 'PENDING', candidateIds: [] };
+    return pending;
   }
   /* Not knowing where the keyer stands is not a reason to drop the brand's
      answer: on a failed read the plain rule still runs, with no keyer step. */
   const keyerProjectIds = await keyerProjectIdsAmong(args.db, args.companySql, args.keyerId, candidates).catch(() => new Set<number>());
-  return resolveFairWithKeyer({ candidates, brand: args.brand, organizer: args.organizer, keyerProjectIds });
+  const fair = resolveFairWithKeyer({ candidates, brand: args.brand, organizer: args.organizer, keyerProjectIds });
+  /* A booth is picked inside an EVENT; a place alone spans several fairs. */
+  const event = args.picked != null && (args.organizer ?? '').trim() !== '';
+  return { fair: event ? withBoothPick(fair, candidates, args.booth) : fair, candidates };
+}
+
+/**
+ * Whether the form must ask which BOOTH of a picked event the order is for
+ * (owner 2026-10-27: only when the system cannot tell) — the same rule the save
+ * runs, with no booth picked. `booths` are what the form offers, and `message`
+ * says why it asks. Never an error: a failed read asks nothing, and the save
+ * and Fair Links still stand behind it.
+ */
+export async function fairBoothQuestion(args: {
+  db: FairDb;
+  companySql: string;
+  event: { venue: string; organizer: string; startDate: string; endDate: string | null };
+  brand: string | null;
+  keyerId: number;
+}): Promise<{ ask: boolean; booths: FairBooth[]; message: string | null }> {
+  const { fair, candidates } = await resolveWithKeyer({
+    db: args.db, companySql: args.companySql, venue: args.event.venue, organizer: args.event.organizer,
+    picked: { startDate: args.event.startDate, endDate: args.event.endDate },
+    soDate: args.event.startDate, brand: args.brand, keyerId: args.keyerId, booth: null,
+  });
+  const message = fair.projectId == null ? fairBoothAskMessage(fair.match, candidates, args.brand) : null;
+  return message ? { ask: true, booths: boothsOf(candidates.filter(isPickableFair)), message } : { ask: false, booths: [], message: null };
 }
 
 /** The projects among `rows` the keyer stands at (PIC or Sales Attending).
@@ -678,7 +722,7 @@ export async function fairLinkOnCreate(args: {
     /* The PICKED row's period — the only way to know WHICH occurrence was meant:
        the order date is the day it was keyed, not a day the fair was on. */
     picked: fairPickedPeriod(body),
-    soDate: args.soDate, brand: args.brand,
+    soDate: args.soDate, brand: args.brand, booth: fairBoothOf(body),
   });
   const linkedId = fair.projectId ?? (keyerRule ? null : args.bindingProjectId);
   return { columns: { project_id: linkedId, fair_match: linkedId != null ? 'PICKED' : fair.match }, step: null };
@@ -746,14 +790,10 @@ export async function fairConfirmProblems(args: {
   ).maybeSingle();
   if (head.error) return [checkFailed(`order: ${head.error.message}`)];
   const order = (head.data ?? {}) as { project_id?: number | string | null; fair_match?: string | null; venue?: string | null };
-  const jobs = await args.scope(
-    args.sb.from('scan_jobs').select('houzs_user_id').eq('so_doc_no', args.docNo),
-  ).order('created_at', { ascending: false }).limit(1);
-  if (jobs.error) return [checkFailed(`scan: ${jobs.error.message}`)];
-  const job = ((jobs.data ?? []) as ScanJobRow[])[0];
-  const scanned = job !== undefined;
-  const scannerId = job?.houzs_user_id != null ? Number(job.houzs_user_id) : NaN;
-  const keyerId = scanned && Number.isFinite(scannerId) ? scannerId : args.confirmerId;
+  const scan = await loadScanKeyer(args);
+  if ('error' in scan) return [checkFailed(`scan: ${scan.error}`)];
+  const { scanned } = scan;
+  const keyerId = scanned && Number.isFinite(scan.scannerId) ? scan.scannerId : args.confirmerId;
 
   const projectId = order.project_id != null ? Number(order.project_id) : null;
   if (projectId == null || !Number.isInteger(projectId)) {
@@ -786,6 +826,30 @@ export async function fairConfirmProblems(args: {
   }
 }
 
+/** Whether the order came from a slip scan, and who scanned it (NaN when the job
+ *  names nobody) — the keyer of a scan for Confirm and for an edit's re-pick. */
+async function loadScanKeyer(args: { sb: FairConfirmSb; scope: <Q>(q: Q) => Q; docNo: string }): Promise<{ scanned: boolean; scannerId: number } | { error: string }> {
+  const jobs = await args.scope(
+    args.sb.from('scan_jobs').select('houzs_user_id').eq('so_doc_no', args.docNo),
+  ).order('created_at', { ascending: false }).limit(1);
+  if (jobs.error) return { error: jobs.error.message };
+  const job = ((jobs.data ?? []) as ScanJobRow[])[0];
+  return { scanned: job !== undefined, scannerId: job?.houzs_user_id != null ? Number(job.houzs_user_id) : NaN };
+}
+
+/** The keyer an EDIT's re-pick is resolved for: the scanner on a scan, else the
+ *  person saving. Not knowing (a failed read) is NaN — the plain brand rule, as
+ *  before, never the editor's booth for someone else's scan. */
+export async function editFairKeyerId(args: { sb: FairConfirmSb; scope: <Q>(q: Q) => Q; docNo: string; editorId: number }): Promise<number> {
+  try {
+    const scan = await loadScanKeyer(args);
+    if ('error' in scan) return NaN;
+    return scan.scanned ? scan.scannerId : args.editorId;
+  } catch {
+    return NaN;
+  }
+}
+
 /* The switch is OFF unless the row says ON — an absent row is the default
    (flag only). A failed read refuses nothing extra: the switch can only ADD a
    refusal, and the rest of the gate has already looked. */
@@ -798,32 +862,43 @@ async function venueDiffersBlocks(args: { sb: FairConfirmSb; scope: <Q>(q: Q) =>
  * The fair link a header EDIT writes when the operator picked an EVENT (owner
  * 2026-09-24). It used to be dropped: the edit sent the place only, the link
  * went PENDING, and the next morning's reconcile guessed from venue + date +
- * brand. Now the pick is matched exactly, as on create.
+ * brand. Now the pick is matched exactly, as on create — the brand's booth, then
+ * the keyer's own (HC-0161: a pillow-only scan at a 3-booth event could never
+ * link on edit, even after PMS put its scanner on the booth).
  *
  * Null when the body picked no event, so the caller keeps its venue rule. A pick
  * that cannot be linked still answers — PENDING / AMBIGUOUS / UNMATCHED — so the
- * pending screen can show why.
+ * pending screen can show why; `problem` says it to the operator (null when
+ * linked or PENDING).
+ *
+ * @param keyerId Asked only when an event was picked (`editFairKeyerId`).
  */
 export async function fairLinkForEdit(args: {
   db: FairDb;
   companySql: string;
   body: Record<string, unknown>;
   stored: Record<string, unknown>;
-}): Promise<{ project_id: number | null; fair_match: FairMatch } | null> {
+  keyerId: () => Promise<number>;
+}): Promise<{ project_id: number | null; fair_match: FairMatch; problem: SaveProblem | null } | null> {
   const storedVenue = typeof args.stored.venue === 'string' ? args.stored.venue : null;
   const pick = editFairPick(args.body, storedVenue);
   if (!pick) return null;
-  const brand = typeof args.body.branding === 'string' ? args.body.branding : args.stored.branding;
-  const fair = await resolveFairForSave({
+  const rawBrand = typeof args.body.branding === 'string' ? args.body.branding : args.stored.branding;
+  const brand = typeof rawBrand === 'string' ? rawBrand : null;
+  const { fair, candidates } = await resolveWithKeyer({
     db: args.db,
     companySql: args.companySql,
     venue: pick.venue,
     organizer: pick.organizer,
     picked: pick.picked,
     soDate: String(args.stored.so_date ?? '').slice(0, 10),
-    brand: typeof brand === 'string' ? brand : null,
+    brand,
+    keyerId: await args.keyerId(),
+    booth: fairBoothOf(args.body),
   });
-  return { project_id: fair.projectId, fair_match: fair.projectId != null ? 'PICKED' : fair.match };
+  if (fair.projectId != null) return { project_id: fair.projectId, fair_match: 'PICKED', problem: null };
+  const message = fairEditUnlinkedMessage({ match: fair.match, booths: candidates, brand });
+  return { project_id: null, fair_match: fair.match, problem: message ? { code: 'fair_not_linked', message, field: 'Fair' } : null };
 }
 
 /**

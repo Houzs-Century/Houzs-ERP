@@ -14,6 +14,9 @@ import {
   keyerFairDefault,
   fairWhyOf,
   fairMissingMessage,
+  fairBoothOf,
+  fairEditUnlinkedMessage,
+  withBoothPick,
   companyUsesKeyerFair,
   resolveFairWithKeyer,
   allFairOptions,
@@ -622,5 +625,59 @@ describe("resolveFairWithKeyer — the brand's booth first, then the keyer's own
 
   it('nothing there at all stays PENDING', () => {
     expect(resolveFairWithKeyer({ candidates: [], brand: 'AKEMI', organizer: 'REX', keyerProjectIds: new Set([1]) }).match).toBe('PENDING');
+  });
+});
+
+describe('fairEditUnlinkedMessage — why a re-picked fair links to no booth (HC-0161)', () => {
+  const HOMELOVE = [fair({ projectId: 2260, organizer: 'HOMELOVE', brand: 'AKEMI', startDate: '2026-10-15', endDate: '2026-10-18' })];
+
+  it("a brand the event has no booth for names the brand and the booths there", () => {
+    expect(fairEditUnlinkedMessage({ match: 'UNMATCHED', booths: HOMELOVE, brand: 'BEDFRAME' }))
+      .toMatch(/^MID VALLEY — HOMELOVE \(10\/15 - 10\/18\) has no BEDFRAME booth, only AKEMI\. /);
+  });
+
+  it('nothing to say when it linked, or when there is no verdict (PENDING)', () => {
+    expect(fairEditUnlinkedMessage({ match: 'PICKED', booths: HOMELOVE, brand: 'AKEMI' })).toBeNull();
+    expect(fairEditUnlinkedMessage({ match: 'PENDING', booths: [], brand: null })).toBeNull();
+    expect(fairEditUnlinkedMessage({ match: 'AMBIGUOUS', booths: [], brand: null })).toBeNull();
+  });
+
+  it('points at the Booth pick under Fair', () => {
+    expect(fairEditUnlinkedMessage({ match: 'UNMATCHED', booths: HOMELOVE, brand: 'BEDFRAME' }))
+      .toContain('Pick the booth this order belongs to under Fair');
+  });
+});
+
+describe('withBoothPick — a person picks the booth only where the rule cannot (owner 2026-10-27)', () => {
+  const MLE = [
+    fair({ projectId: 313, organizer: 'MLE', brand: 'AKEMI' }),
+    fair({ projectId: 314, organizer: 'MLE', brand: 'ZANOTTI' }),
+    fair({ projectId: 320, organizer: 'MLE', brand: 'ERGOTEX', status: 'cancelled' }),
+  ];
+  const unlinked = { projectId: null, match: 'AMBIGUOUS' as const, candidateIds: [313, 314] };
+
+  it('an undecided order takes a picked booth of the event', () => {
+    expect(withBoothPick(unlinked, MLE, 314)).toEqual({ projectId: 314, match: 'PICKED', candidateIds: [313, 314] });
+    expect(withBoothPick({ ...unlinked, match: 'UNMATCHED' }, MLE, 313).projectId).toBe(313);
+  });
+
+  it('an id outside the event, or a cancelled booth, is ignored', () => {
+    expect(withBoothPick(unlinked, MLE, 999)).toBe(unlinked);
+    expect(withBoothPick(unlinked, MLE, 320)).toBe(unlinked);
+  });
+
+  it('a decided order, or no fair found, never takes it', () => {
+    const decided = { projectId: 313, match: 'PICKED' as const, candidateIds: [313, 314] };
+    expect(withBoothPick(decided, MLE, 314)).toBe(decided);
+    const pending = { projectId: null, match: 'PENDING' as const, candidateIds: [] };
+    expect(withBoothPick(pending, MLE, 314)).toBe(pending);
+  });
+
+  it('fairBoothOf reads a positive integer id, else null', () => {
+    expect(fairBoothOf({ fairProjectId: 314 })).toBe(314);
+    expect(fairBoothOf({ fairProjectId: '314' })).toBe(314);
+    expect(fairBoothOf({ fairProjectId: 3.5 })).toBeNull();
+    expect(fairBoothOf({ fairProjectId: null })).toBeNull();
+    expect(fairBoothOf({})).toBeNull();
   });
 });
