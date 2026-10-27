@@ -76,7 +76,7 @@ describe("PosAdmin", () => {
 
     const c = mount("events");
     expect(screen.getByText("ON GOING")).toBeTruthy();
-    expect(screen.getByText("NOT PREPARED")).toBeTruthy();
+    expect(screen.getByText("NOT PAIRED")).toBeTruthy();
     expect(screen.getByText("v2")).toBeTruthy();
     fireEvent.click(screen.getByText("AEON C&C"));
     expect(screen.getByText("Cashiers assigned (= login tiles, max 8 shown)")).toBeTruthy();
