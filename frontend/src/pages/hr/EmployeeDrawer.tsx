@@ -7,6 +7,7 @@ import { Trash2 } from "lucide-react";
 import { api } from "../../api/client";
 import { ResizableDrawer } from "../../components/ResizableDrawer";
 import { DateField } from "../../vendor/scm/components/DateField";
+import { SearchableSelect, type SearchableSelectOption } from "../../vendor/scm/components/SearchableSelect";
 import { useDialog } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
 import { cn, formatDate } from "../../lib/utils";
@@ -113,6 +114,18 @@ export function EmployeeDrawer({ employee, canManage, onClose, onSaved }: { empl
     () => new Set(accounts.filter((a) => a.linkedEmpNo && a.linkedEmpNo !== employee?.empNo).map((a) => a.id)),
     [accounts, employee?.empNo],
   );
+  /* Nico 2026-10-27: too many accounts to scroll, so type to search. Accounts
+     another employee already uses stay listed, under their own heading. */
+  const accountOptions = useMemo<SearchableSelectOption[]>(() => {
+    const label = (a: (typeof accounts)[number]) => `${a.name ?? a.email}${a.position ? ` · ${a.position}` : ""}`;
+    const current = d.userId != null && !accounts.some((a) => a.id === d.userId) ? [{ value: String(d.userId), label: employee?.userName ?? employee?.userEmail ?? `Account #${d.userId}` }] : [];
+    return [
+      { value: "", label: "Not linked (cannot punch in)" },
+      ...current,
+      ...accounts.filter((a) => !linkedElsewhere.has(a.id)).map((a) => ({ value: String(a.id), label: label(a) })),
+      ...accounts.filter((a) => linkedElsewhere.has(a.id)).map((a) => ({ value: String(a.id), label: `${label(a)} (${a.linkedEmpNo})`, group: "Already an employee" })),
+    ];
+  }, [accounts, linkedElsewhere, d.userId, employee?.userName, employee?.userEmail]);
 
   async function save() {
     if (problem) {
@@ -200,19 +213,19 @@ export function EmployeeDrawer({ employee, canManage, onClose, onSaved }: { empl
       <fieldset disabled={ro} className="space-y-3 p-3">
         <Section title="Details">
           <Field label="ERP account" hint="The account they punch in / out with on the phone." className="col-span-2 max-sm:col-span-1">
-            <select className={inputCls} value={d.userId ?? ""} onChange={(e) => pickAccount(e.target.value)}>
-              <option value="">Not linked (cannot punch in)</option>
-              {d.userId != null && !accounts.some((a) => a.id === d.userId) && (
-                <option value={d.userId}>{employee?.userName ?? employee?.userEmail ?? `Account #${d.userId}`}</option>
-              )}
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id} disabled={linkedElsewhere.has(a.id)}>
-                  {a.name ?? a.email}
-                  {a.position ? ` · ${a.position}` : ""}
-                  {linkedElsewhere.has(a.id) ? ` (already ${a.linkedEmpNo})` : ""}
-                </option>
-              ))}
-            </select>
+            <SearchableSelect
+              className={inputCls}
+              ariaLabel="ERP account"
+              placeholder="Type a name to search"
+              disabled={ro}
+              value={d.userId == null ? "" : String(d.userId)}
+              options={accountOptions}
+              onChange={(v) => {
+                const taken = v ? accounts.find((a) => String(a.id) === v && linkedElsewhere.has(a.id)) : undefined;
+                if (taken) toast.error(`${taken.name ?? taken.email} is already linked to ${taken.linkedEmpNo}.`);
+                else pickAccount(v);
+              }}
+            />
           </Field>
           <Field label="Employee No" hint={isNew ? "Next free number; type over it if you keep your own." : undefined}>
             <input
