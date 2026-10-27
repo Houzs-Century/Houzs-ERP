@@ -48,7 +48,7 @@ export function applySupplierCombos(
       rows,
     );
     if (!match || match.comboPriceSen <= 0) continue;
-    const matched = match.matchedIndices.map((i) => members[i]).filter((m): m is ComboLine => !!m);
+    const matched = match.matchedIndices.map((i) => members[i]);
     // Mixed quantities have no clean set count: skip rather than under-book.
     if (matched.length === 0 || new Set(matched.map((m) => Math.max(1, m.qty))).size !== 1) continue;
     const spread = spreadComboTotal(matched.map((m) => m.unitPriceSen), match.comboPriceSen);
