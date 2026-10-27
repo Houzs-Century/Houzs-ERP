@@ -40,6 +40,7 @@ import { useWarehouses } from '../lib/inventory-queries';
 import { SearchableSelect } from './SearchableSelect';
 import { useNotify } from './NotifyDialog';
 import { writeFailedAs } from '../lib/mutation-error';
+import { eventDateLabel } from '../lib/event-date-label';
 // App-level client for the PMS project list (/api/projects lives outside the
 // /api/scm mount that the vendored authed-fetch targets). Same app-import
 // precedent as DataGrid's activeCompany subscription.
@@ -66,7 +67,9 @@ function sourceMeta(jobType: DpOrderCreate['jobType']): { label: string; hint: s
   }
 }
 
-/* The slice of a PMS project row this picker needs (GET /api/projects → { data }). */
+/* The slice of a PMS project row this picker needs (GET /api/projects → { data }).
+   start_date / end_date come back on the list row already (snake_case, the same
+   spelling the Projects list reads) — the picker just surfaces them in the label. */
 type ProjectPickRow = {
   id: number;
   code: string | null;
@@ -74,6 +77,8 @@ type ProjectPickRow = {
   venue: string | null;
   organizer: string | null;
   state: string | null;
+  start_date: string | null;
+  end_date: string | null;
 };
 
 /* The slice of the workshop master this picker needs — mig 0241, served by
@@ -190,10 +195,15 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
     [suppliersQ.data],
   );
   const projectOptions = useMemo(
-    () => (projectsQ.data?.data ?? []).map((p) => ({
-      value: String(p.id),
-      label: `${p.code ?? p.id} — ${p.name ?? ''}${p.venue ? ` · ${p.venue}` : ''}`,
-    })),
+    () => (projectsQ.data?.data ?? []).map((p) => {
+      // Date sits right after the code — where the leading year-month lives — so
+      // it stays visible before the long venue text and is searchable too.
+      const when = eventDateLabel(p.start_date, p.end_date);
+      return {
+        value: String(p.id),
+        label: `${p.code ?? p.id}${when ? ` · ${when}` : ''} — ${p.name ?? ''}${p.venue ? ` · ${p.venue}` : ''}`,
+      };
+    }),
     [projectsQ.data],
   );
 
