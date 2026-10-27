@@ -17,6 +17,7 @@ import { soRouterSource } from './lib/so-router-source';
 import soListRows from '../src/scm/lib/so-list-rows.ts?raw';
 import listEnrichmentRoute from '../src/scm/routes/mfg-sales-orders-list-enrichment.ts?raw';
 import listEnrichmentLib from '../src/scm/lib/so-list-mrp-enrichment.ts?raw';
+import liveMrpMemo from '../src/scm/lib/live-mrp-memo.ts?raw';
 import { effectiveLineStockStatus } from '../src/scm/lib/so-line-effective-stock';
 import { summariseReadiness } from '../src/scm/lib/so-readiness';
 const mfgSalesOrders = soRouterSource();
@@ -235,17 +236,20 @@ describe('the SO list rolls up the shared rule, not a raw stored column', () => 
     expect(listEnrichmentRoute.split('stock_status_effective:').length - 1).toBe(1);
   });
 
-  it('the list no longer runs computeMrp — the deferred endpoint does, exactly once', () => {
+  it('the list no longer runs computeMrp — the deferred endpoint does, through the one shared run', () => {
     /* The whole point of the deferral: opening the list must not pay a full MRP
-       run. mfg-sales-orders.ts keeps a single computeMrp, inside the exported
-       soCoverage (called inline by GET /:docNo/items, and by the deferred
-       GET /:docNo/coverage that imports it); the list-load call is gone, and as
-       of 2026-09-01 so is GET /:docNo's inline call. */
+       run. Neither route calls computeMrp itself any more: soCoverage (called
+       inline by GET /:docNo/items, and by the deferred GET /:docNo/coverage) and
+       the list enrichment both take the ONE run lib/live-mrp-memo.ts holds
+       (HC-0002, 2026-10-22), so a list then an order pays for it once. */
     expect(mfgSalesOrders).not.toContain('mrpForListProm');
-    expect(mfgSalesOrders.split('computeMrp(').length - 1).toBe(1); // soCoverage only
-    /* The enrichment endpoint runs it once, OFF the list's critical path, and
-       flattens it with the pure mrpLineCoverage — never a second computeMrp. */
-    expect(listEnrichmentRoute.split('computeMrp(').length - 1).toBe(1);
+    expect(mfgSalesOrders.split('computeMrp(').length - 1).toBe(0);
+    expect(mfgSalesOrders.split('sharedLiveMrp(').length - 1).toBe(1); // soCoverage only
+    expect(liveMrpMemo.split('computeMrp(').length - 1).toBe(1);
+    /* The enrichment endpoint takes it once, OFF the list's critical path, and
+       flattens it with the pure mrpLineCoverage — never a second run. */
+    expect(listEnrichmentRoute.split('computeMrp(').length - 1).toBe(0);
+    expect(listEnrichmentRoute.split('sharedLiveMrp(').length - 1).toBe(1);
     expect(listEnrichmentRoute).toContain('mrpLineCoverage(mrp)');
   });
 });

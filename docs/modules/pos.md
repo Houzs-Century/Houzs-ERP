@@ -254,6 +254,10 @@ page, and the POS Admin menu. This guide carries only what is built.
   mounted pre-auth, and `scm.products` / `mfg_products.pos_active` belong to
   that older retail POS. The booth POS lives under `/api/pos-admin` (and the
   device API prefixes of the later steps); do not extend `routes/pos.ts`.
+- A new company-2 SKU in a single-SKU category (not sofa / bedframe /
+  mattress) is created `pos_active false` (`scm/lib/new-sku-pos-active.ts`):
+  off the 2990 tablet until its Modular "Show in POS" switch sends `posActive`.
+  Model, SKU Master, SO and PO are unaffected.
 - `project_event_types` has no company_id (shared master) — the Cash &
   Carry type shows in every company's picker on purpose.
 - The event drawer's terminal list shows only free terminals plus the

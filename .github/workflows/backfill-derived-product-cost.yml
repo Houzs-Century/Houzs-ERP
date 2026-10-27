@@ -1,0 +1,65 @@
+name: Backfill derived product cost from supplier prices (DRY-RUN gated)
+
+# HC-0156: SO lines take their cost from the product's Price 2, which supplier
+# prices fill only when a binding is saved with scm.auto_derive_product_cost ON.
+# Bindings loaded before the flag (or in bulk) never set off that recompute, so
+# a SKU can carry a supplier price and still sit at RM0 — and every SO line on
+# it stays costless. backfill-derived-product-cost.mjs is the one-shot catch-up;
+# it had no runner, and running it locally needs the prod DATABASE_URL.
+#
+# It re-derives EVERY bound SKU's cost to its dearest supplier, so the plan
+# output needs owner sign-off before mode=apply. The nightly restamp then fills
+# existing 0-cost SO lines from the new cost.
+#
+# DRY-RUN unless mode=apply AND confirm is the script's exact phrase.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan = DRY-RUN; apply = write"
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'apply only: type I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+        type: string
+      company:
+        description: "company_id (blank = every company)"
+        required: false
+        default: "1"
+        type: string
+      list_limit:
+        description: "max SKUs to print per list"
+        required: false
+        default: "40"
+        type: string
+
+concurrency:
+  group: backfill-derived-product-cost
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/backfill-derived-product-cost.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+          LIST_LIMIT: ${{ inputs.list_limit }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

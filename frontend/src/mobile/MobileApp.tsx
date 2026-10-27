@@ -422,7 +422,10 @@ export const MOBILE_MENU_GROUPS: { group: string; items: MobileMenuItem[] }[] = 
   { group: "Logistics", items: [
     { to: "/scm/logistic-overview", label: "Logistic Overview" },
     { to: "/scm/delivery-planning", label: "Last Mile Delivery" },
-    { to: "/scm/delivery-planning-driver", label: "Last Mile Delivery (Driver)", gateVia: "/scm/delivery-planning" },
+    /* Gates on its OWN nav entry (scm.transportation.last_mile), like the desktop
+       row. Borrowing /scm/delivery-planning hid it from the Driver role, which has
+       last_mile but not planning (owner 2026-10-26). */
+    { to: "/scm/delivery-planning-driver", label: "Last Mile Delivery (Driver)" },
     { to: "/scm/fleet", label: "Fleet", gateVia: "/scm/delivery-maintenance" },
     /* KEPT, unlike the retired DESKTOP /scm/drivers page — mobile is NOT the
        same shape and the owner's "fleet 里面也是有 driver" is not true here.

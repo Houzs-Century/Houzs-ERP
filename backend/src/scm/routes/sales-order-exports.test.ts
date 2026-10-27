@@ -173,6 +173,44 @@ describe('attachSoLines — one line shape for the screen and the file', () => {
     expect(rows[1]!.lines![0]).toMatchObject({ item_code: erpCode, item_group: 'bedframe', description: 'OUR WORDS' });
   });
 
+  it('reuses the builder\'s base-table and warehouse reads instead of reading them again (HC-0002)', async () => {
+    const h = so();
+    const t = {
+      sos: [h],
+      lines: [soLine(h, { warehouse_id: 'wh-pg' })],
+      base: [{ doc_no: h.doc_no, company_id: 1, debtor_code: null, debtor_name: 'ALICE TAN', linked_ac_docno: 'SO-777777' }],
+    };
+    const spy = () => {
+      const sb = sbFor(t);
+      const read: string[] = [];
+      return { read, sb: { from: (table: string) => { read.push(table); return sb.from(table); } } };
+    };
+    const times = (read: string[], table: string) => read.filter((x) => x === table).length;
+
+    const a = spy();
+    const fresh = [{ ...h }] as Array<Row & { lines?: Row[] }>;
+    expect((await attachSoLines(a.sb, ctx(1), fresh, null)).error).toBeNull();
+
+    const b = spy();
+    const reused = [{ ...h }] as Array<Row & { lines?: Row[] }>;
+    const prior = {
+      deliverable: null,
+      base: { data: t.base as Array<{ doc_no: string; linked_ac_docno: string | null }>, error: null },
+      warehouses: { data: [{ id: 'wh-pg', code: 'PG WAREHOUSE', name: 'PENANG WAREHOUSE' }], error: null },
+    };
+    expect((await attachSoLines(b.sb, ctx(1), reused, prior)).error).toBeNull();
+    expect(JSON.stringify(reused)).toBe(JSON.stringify(fresh));
+    expect(reused[0]).toMatchObject({ ac_doc_no: 'SO-777777' });
+    expect(times(b.read, 'mfg_sales_orders')).toBe(times(a.read, 'mfg_sales_orders') - 1);
+    expect(times(a.read, 'warehouses')).toBe(1);
+    expect(times(b.read, 'warehouses')).toBe(0);
+
+    /* A builder read that failed is read again here, so the list still fails loud. */
+    const c2 = spy();
+    await attachSoLines(c2.sb, ctx(1), [{ ...h }], { ...prior, base: { data: null, error: { message: 'boom' } } });
+    expect(times(c2.read, 'mfg_sales_orders')).toBe(times(a.read, 'mfg_sales_orders'));
+  });
+
   it('carries the app\'s delivered / remaining reading, what sits on an unshipped DO, and DO numbers', async () => {
     const h = so();
     const l = soLine(h, { qty: 3 });
@@ -211,7 +249,7 @@ describe('attachSoLines — one line shape for the screen and the file', () => {
 
 describe('the list page reads lines through the same attach', () => {
   it('GET / attaches lines with attachSoLines, reusing the builder\'s delivered reading', () => {
-    expect(routeSource).toContain('const deliverable = await buildSoListRows(sb, c, rows);');
-    expect(routeSource).toContain('const withLines = await attachSoLines(sb, c, rows, deliverable);');
+    expect(routeSource).toContain('const prior = await buildSoListRows(sb, c, rows);');
+    expect(routeSource).toContain('const withLines = await attachSoLines(sb, c, rows, prior);');
   });
 });

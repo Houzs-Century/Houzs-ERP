@@ -37,7 +37,7 @@ import { missingVariantAxes } from '@2990s/shared/so-variant-rule';
 import { computeTotalHeight, totalHeightPatch } from '../../shared/total-height';
 import { restrictPricedToPool, restrictStringsToPool } from '../../shared/maintenance-pools';
 import { fabricAllowedByPool } from '../../shared/fabric-pool';
-import { activeOptions, CONSOLE_ATTACH_KEY, isColourKiv, isDeliveryFeeServiceCode, isServiceCategory, lineIdentity, maintPickerValues, fmtMoneySen } from '@2990s/shared';
+import { activeOptions, CONSOLE_ATTACH_KEY, isColourKiv, isDeliveryFeeServiceCode, isServiceCategory, lineIdentity, maintPickerValues, fmtMoneySen, normalizeCompartmentCode } from '@2990s/shared';
 import {
   useMfgProducts,
   matchesProductQuery,
@@ -624,7 +624,16 @@ const SoLineCardInner = ({
     const choices = (draft.variants.specialChoices && typeof draft.variants.specialChoices === 'object')
       ? (draft.variants.specialChoices as Record<string, string[]>)
       : null;
-    const specialsPool = buildSpecialsPoolFromAddons(specialDefs, specs, choices);
+    /* An add-on priced by compartment (2990 POS, 2026-10-26) reads the build's
+       cells, as the recompute does for this same line. A split module row has
+       none, so it previews the base — the server's figure for that row too. */
+    const lineCells = catU === 'SOFA' && Array.isArray(draft.variants.cells)
+      ? (draft.variants.cells as Array<{ moduleId?: unknown } | null>)
+      : null;
+    const buildCompartments = lineCells
+      ? lineCells.map((cl) => normalizeCompartmentCode(String(cl?.moduleId ?? ''))).filter(Boolean)
+      : null;
+    const specialsPool = buildSpecialsPoolFromAddons(specialDefs, specs, choices, buildCompartments);
     const effMaint = maint ? { ...maint, specials: specialsPool, sofaSpecials: specialsPool } : maint;
     return computeMfgLinePrice(
       {

@@ -386,12 +386,26 @@ export async function mintSessionPass(
   token: string,
   nowMs: number,
 ): Promise<string | null> {
-  const secret = sessionSigningSecret(env);
-  if (!secret) return null;
+  if (!sessionSigningSecret(env)) return null;
   const user = await getUserBySession(env, token);
   if (!user) return null;
-  const sid = await sidFor(token);
-  return issueSessionPass(user, secret, nowMs, sid);
+  return mintSessionPassFor(env, user, token, nowMs);
+}
+
+/**
+ * The same pass for a user the caller has JUST read authoritatively for this
+ * token — the auth middleware's DB path, which used to read the session a
+ * second time here (KV + two joined reads per re-issue, HC-0002).
+ */
+export async function mintSessionPassFor(
+  env: Env,
+  user: AuthUser,
+  token: string,
+  nowMs: number,
+): Promise<string | null> {
+  const secret = sessionSigningSecret(env);
+  if (!secret) return null;
+  return issueSessionPass(user, secret, nowMs, await sidFor(token));
 }
 
 export async function deleteSession(env: Env, token: string): Promise<void> {

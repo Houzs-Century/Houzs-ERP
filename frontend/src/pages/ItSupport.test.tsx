@@ -173,9 +173,11 @@ describe("IT Support — report a problem", () => {
     open("/it-support?new=1");
     const zone = screen.getByText(/Drop files here/).closest("label") as HTMLLabelElement;
     fireEvent.drop(zone, { dataTransfer: { types: ["Files"], files: [new File(["x"], "notes.docx", { type: "application/msword" })] } });
-    expect(screen.getByText("notes.docx is not a picture, MP4 or MOV video, or PDF.")).toBeTruthy();
+    expect(screen.getByText("notes.docx is not a picture, MP4 or MOV video, PDF or ZIP.")).toBeTruthy();
     fireEvent.drop(zone, { dataTransfer: { types: ["Files"], files: [new File(["x"], "clip.mp4", { type: "video/mp4" })] } });
     expect(screen.getByLabelText("Remove clip.mp4")).toBeTruthy();
+    fireEvent.drop(zone, { dataTransfer: { types: ["Files"], files: [new File(["x"], "logs.ZIP", { type: "application/x-zip-compressed" })] } });
+    expect(screen.getByLabelText("Remove logs.ZIP")).toBeTruthy();
 
     const paste = new Event("paste", { bubbles: true, cancelable: true });
     const shot = new File(["x"], "image.png", { type: "image/png" });

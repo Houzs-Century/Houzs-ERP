@@ -30,8 +30,15 @@ import { useLayoutEffect, useRef, useState } from "react";
 export type FreezeBox = { top: number; maxH: number; runway: number };
 
 /** @param enabled false while the table is not rendered (mobile card view, an
- *  empty state) — the freeze disarms and the page returns to plain flow. */
-export function useFrozenTableHeader(enabled: boolean) {
+ *  empty state) — the freeze disarms and the page returns to plain flow.
+ *  @param from "toolbar": search / Export / Columns stay on screen with the rows;
+ *  "table": they scroll away too and the grid alone fills the screen (owner on
+ *  Delivery Planning 2026-10-26: "把整个页面看满了，有一种 data grid 的感觉").
+ *  @param fillScreen one of several tables stacked on a page (a report): once
+ *  frozen it is as tall as the screen allows and gives nothing back — the page
+ *  goes on below it, so there is no scroll end to land on and no runway to add
+ *  (owner on Event Commission 2026-10-26: six rows in a box → 做宽一点). */
+export function useFrozenTableHeader(enabled: boolean, from: "toolbar" | "table", fillScreen = false) {
   // ── Frozen table header (owner 2026-07-24: "每个table的header都要freeze") ──
   // The <thead> is position:sticky, but in the app's page-scroll layout the
   // horizontal-scroll wrapper captures the vertical sticky context yet never
@@ -97,9 +104,11 @@ export function useFrozenTableHeader(enabled: boolean) {
       const main = el.closest("main");
       const cand = (main ?? document).querySelector("[data-freeze-anchor]") as HTMLElement | null;
       const anchorEl =
-        cand && (cand.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
-          ? cand
-          : rootEl;
+        from === "table"
+          ? (el.parentElement ?? el)
+          : cand && (cand.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+            ? cand
+            : rootEl;
       const rootRect = rootEl.getBoundingClientRect();
       const anchorRect = anchorEl.getBoundingClientRect();
       const boxRect = el.getBoundingClientRect();
@@ -115,6 +124,12 @@ export function useFrozenTableHeader(enabled: boolean) {
         setFreezeBox((prev) => (prev === null ? prev : null));
         return;
       }
+      if (fillScreen) {
+        setFreezeBox((prev) =>
+          prev && prev.top === stickTop && prev.maxH === maxH && prev.runway === 0 ? prev : { top: stickTop, maxH, runway: 0 }
+        );
+        return;
+      }
       /* The runway spacer is the load-bearing half of the design. Page scroll
          must be able to carry the component root up to the pinned page
          header's bottom edge — but capping the row area shrinks the page so
@@ -124,7 +139,16 @@ export function useFrozenTableHeader(enabled: boolean) {
          component restores exactly that missing runway, so page-scroll always
          lands on the frozen composition; `position: sticky` on the table box
          is then just the safety net for measurement drift. */
-      const anchorRestingTop = anchorRect.top + (main?.scrollTop ?? 0);
+      /* In "table" mode the anchor IS the sticky box, whose rect is clamped once it
+         sticks, so its resting top moved with the scroll and every resize re-solved
+         the runway against a moving target (2026-10-26: the board went sluggish).
+         Read the resting top off the non-sticky element right above the box. */
+      const boxEl = el.parentElement;
+      const prevEl = from === "table" ? (boxEl?.previousElementSibling as HTMLElement | null) : null;
+      const anchorTopNow = from === "table"
+        ? (prevEl ? prevEl.getBoundingClientRect().bottom + (parseFloat(getComputedStyle(boxEl as Element).marginTop) || 0) : rootRect.top)
+        : anchorRect.top;
+      const anchorRestingTop = anchorTopNow + (main?.scrollTop ?? 0);
       const target = Math.max(0, Math.ceil(anchorRestingTop - pageTop));
       /* The spacer supplies only the MISSING scroll — the page already scrolls
          by whatever sits below the capped table (pager, margins, page footer),
@@ -195,7 +219,7 @@ export function useFrozenTableHeader(enabled: boolean) {
       ro?.disconnect();
       window.removeEventListener("resize", recompute);
     };
-  }, [enabled]);
+  }, [enabled, from, fillScreen]);
 
   return {
     /** Root of the frozen composition — everything that must stay on screen. */

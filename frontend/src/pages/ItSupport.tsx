@@ -141,7 +141,7 @@ function Files({ files, onChange }: { files: File[]; onChange: (f: File[]) => vo
           onChange={(e) => { add(e.target.files); e.target.value = ""; }} />
         <Upload size={20} className="text-primary" />
         <span className="text-[12.5px] font-semibold text-ink">Drop files here, click to browse, or paste a screenshot</span>
-        <span className="text-[11.5px] text-ink-muted">Pictures, MP4 or MOV video, or PDF. Up to {MAX_FILES} files, 10 MB each.</span>
+        <span className="text-[11.5px] text-ink-muted">Pictures, MP4 or MOV video, PDF or ZIP. Up to {MAX_FILES} files, 10 MB each.</span>
       </label>
       {refused && <p className="text-[12px] text-err" role="alert">{refused}</p>}
       {files.length > 0 && (

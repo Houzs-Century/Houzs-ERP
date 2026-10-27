@@ -143,6 +143,7 @@ import { attachSoLines } from '../lib/so-list-lines';
 import { SO_TAB_STATUSES, soStatusesForTab } from '../lib/so-tab-statuses';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { tallyStatusRows, type StatusTally } from '../lib/status-counts';
+import { readAggregate } from '../lib/postgrest-aggregate';
 /* "A PO is already out for this SO" — the second road to the same soft lock
    (owner 2026-08-12, 2990 only). See lib/so-po-lock.ts. */
 import { soHasLivePo, soHasUnreceivedPo, soPoLocked } from '../lib/so-po-lock';
@@ -158,7 +159,7 @@ import { hasHouzsPerm, canViewAllSales, isSalesCaller, canViewScmFinance } from 
    cannot drift apart — a typo on either side would silently disarm the pricing
    envelope, and no test would fail. */
 import { SESSION_ORIGIN_POS } from '../../services/auth';
-import { loadLeadBuffers } from '../../services/agents/procurement-learning';
+import { sharedLiveMrp } from '../lib/live-mrp-memo';
 import { SO_FINANCE_KEYS, SO_ITEM_FINANCE_KEYS, stripAuditFinance } from '../lib/finance-keys';
 import { resolveSalesScopeIds, applySoScope, soDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
 import { recordAmendmentRequested, notifyAmendmentsRaised } from '../lib/amendment-raised-effects';
@@ -305,7 +306,7 @@ import { soLineBoundPoNumbers } from '../lib/so-converted-po';
 /* Shared 4-state delivery-planning derivation — the SO list emits planning_state
    (the mobile Orders-list card's status) from the SAME helper the Delivery
    Planning board uses, so the two can never drift. */
-import { computeMrp, mrpLineCoverage, type MrpResult } from './mrp';
+import { mrpLineCoverage, type MrpResult } from './mrp';
 import type { Env, Variables } from '../env';
 /* scan-bg-job — the headless createDraftSalesOrder below runs the create core
    without a request-scoped client; it uses the scm-scoped service client. */
@@ -427,11 +428,11 @@ type SoCoverage = { coverage: Map<string, { source: string; po: string | null; e
 /* Exported for the deferred `GET /:docNo/coverage` handler, which lives in
    mfg-sales-orders-list-enrichment.ts (this file is at its size ceiling). Same
    engine, same call — it must not re-implement the MRP logic. */
-export async function soCoverage(c: any, sb: unknown): Promise<SoCoverage> {
+export async function soCoverage(c: any, sb: unknown, savedAt: string | null = null): Promise<SoCoverage> {
   /* Best-effort, exactly as before: a failed allocation drops every line to
-     Pending and the page still loads. */
+     Pending and the page still loads. The run is shared with the list's Stock column (lib/live-mrp-memo.ts). */
   try {
-    const mrp = await computeMrp(sb, { catFilter: null, whFilter: null, includeUndated: true, companyId: activeCompanyId(c), leadBuffers: await loadLeadBuffers(c.env.DB) });
+    const mrp = await sharedLiveMrp(sb, c.env.DB, activeCompanyId(c), savedAt).result;
     return { coverage: mrpLineCoverage(mrp), mrp };
   } catch {
     return { coverage: new Map(), mrp: null };
@@ -1047,11 +1048,11 @@ export async function soListMoneyKpis(
 ): Promise<{ data: SoListMoneyKpis | null; error: { message: string } | null }> {
   /* FAST PATH — all aggregates, no plain column → one implicit group → one row.
      Idiom: outstanding.ts /summary. */
-  const agg = await applyMoneyFilters(
+  const agg = await readAggregate(() => applyMoneyFilters(
     sb
       .from('mfg_sales_orders_with_payment_totals')
       .select('rev:local_total_sen.sum(),outLive:balance_sen_live.sum(),paid:paid_total_sen.sum()'),
-  );
+  ));
   if (!agg.error) {
     const row = ((agg.data ?? []) as Array<Record<string, unknown>>)[0] ?? {};
     return {
@@ -1075,7 +1076,7 @@ export async function soListMoneyKpis(
       sb
         .from('mfg_sales_orders_with_payment_totals')
         .select('local_total_sen, balance_sen, balance_sen_live, paid_total_sen'),
-    ).range(mfrom, mto),
+    ).order('doc_no', { ascending: true }).range(mfrom, mto), // ordered: unordered pages repeat / skip rows
   );
   if (fb.error) return { data: null, error: fb.error };
   let revenueSen = 0, outstandingSen = 0, paidSen = 0;
@@ -1223,10 +1224,10 @@ mfgSalesOrders.get('/', async (c) => {
       return { ok: true, n: r.count ?? 0 };
     })();
     const countsProm = (async (): Promise<StatusTally> => {
-      const agg = await scopedCountQ(sb.from(read.countFrom).select('status, cnt:doc_no.count()'));
+      const agg = await readAggregate<{ data: Array<{ status: string | null; cnt: number }> | null; error: { message: string } | null }>(() => scopedCountQ(sb.from(read.countFrom).select('status, cnt:doc_no.count()')));
       if (!agg.error) return tallyStatusRows<{ status: string | null; cnt: number }>(agg, (r) => Number(r.cnt ?? 0));
       const fb = await paginateAll<{ status: string | null }>((cfrom, cto) =>
-        scopedCountQ(sb.from(read.countFrom).select('status')).range(cfrom, cto));
+        scopedCountQ(sb.from(read.countFrom).select('status')).order('doc_no', { ascending: true }).range(cfrom, cto));
       /* Named separately from tallyStatusRows' own error branch so the 500 says
          which of the TWO reads died, not just that the second one did. */
       if (fb.error) return { ok: false, reason: `status counts failed: aggregate ${agg.error.message}; fallback ${fb.error.message}` };
@@ -1332,13 +1333,13 @@ mfgSalesOrders.get('/', async (c) => {
   /* Every per-row field the list shows — ONE builder the list and the line
      export share (lib/so-list-rows.ts), so a screen cell and a file cell come
      from the same reads. The finance gate runs inside it. */
-  const deliverable = await buildSoListRows(sb, c, rows);
+  const prior = await buildSoListRows(sb, c, rows);
   if (paginate) {
     /* The page's lines and AutoCount header spellings, for the grid's line
        columns — the same read the export uses (lib/so-list-lines.ts), so the
        screen and the file agree cell for cell. The legacy unpaged path does not
        carry them: its callers never render a line column. */
-    const withLines = await attachSoLines(sb, c, rows, deliverable);
+    const withLines = await attachSoLines(sb, c, rows, prior);
     if (withLines.error) return c.json({ error: 'lines_read_failed', reason: withLines.error }, 500);
   }
 
@@ -2640,8 +2641,8 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     dropdownErr,
     productRowByCode,
   ] = await Promise.all([
-    loadMaintenanceConfig(sb),
-    loadSpecialAddons(sb),
+    loadMaintenanceConfig(sb, companyId),
+    loadSpecialAddons(sb, companyId),
     loadProductsAndModels(sb, itemCodes, companyId),
     loadFabricTierAddonConfig(sb, companyId),
     loadModelFabricTierOverrides(sb),
@@ -7239,13 +7240,13 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     }
   }
   const [cachedConfig, productLite, fabricLite, sofaCombosLite, sellingTiersLite, fabricAddonConfigLite, specialAddonsLite, modelOverridesLite, compartmentOverridesLite] = await Promise.all([
-    loadMaintenanceConfig(sb),
+    loadMaintenanceConfig(sb, activeCompanyId(c)),
     loadProductByCode(sb, itemCodeStr, activeCompanyId(c)),
     loadFabricByCode(sb, variantsObj?.fabricCode ?? null),
     loadSellingSofaCombos(sb, c),
     loadFabricSellingTiers(sb, (variantsObj as { fabricId?: string } | null)?.fabricId ?? null),
     loadFabricTierAddonConfig(sb, activeCompanyId(c)),
-    loadSpecialAddons(sb),
+    loadSpecialAddons(sb, activeCompanyId(c)),
     loadModelFabricTierOverrides(sb),
     loadCompartmentFabricTierOverrides(sb),
   ]);
@@ -7948,13 +7949,13 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   }
   if (shouldRecompute && itemCodeAfter) {
     const [cfg, prodLite, fabLite, sofaCombosPatch, sellingTiersPatch, fabricAddonConfigPatch, specialAddonsPatch, modelOverridesPatch, compartmentOverridesPatch] = await Promise.all([
-      loadMaintenanceConfig(sb),
+      loadMaintenanceConfig(sb, activeCompanyId(c)),
       loadProductByCode(sb, itemCodeAfter, activeCompanyId(c)),
       loadFabricByCode(sb, variantsAfter?.fabricCode ?? null),
       loadSellingSofaCombos(sb, c),
       loadFabricSellingTiers(sb, (variantsAfter as { fabricId?: string } | null)?.fabricId ?? null),
       loadFabricTierAddonConfig(sb, activeCompanyId(c)),
-      loadSpecialAddons(sb),
+      loadSpecialAddons(sb, activeCompanyId(c)),
       loadModelFabricTierOverrides(sb),
       loadCompartmentFabricTierOverrides(sb),
     ]);
@@ -8439,34 +8440,17 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
   }
 
   const [cfg, prodLite, fabPrev, fabNext, tiersPrev, tiersNext, addonCfg, specialDefs, modelOverrides, compartmentOverrides] = await Promise.all([
-    loadMaintenanceConfig(sb),
+    loadMaintenanceConfig(sb, activeCompanyId(c)),
     loadProductByCode(sb, prev.item_code, activeCompanyId(c)),
     loadFabricByCode(sb, (prevVariants.fabricCode as string | undefined) ?? null),
     loadFabricByCode(sb, (nextVariants.fabricCode as string | undefined) ?? null),
     loadFabricSellingTiers(sb, (prevVariants.fabricId as string | undefined) ?? null),
     loadFabricSellingTiers(sb, (nextVariants.fabricId as string | undefined) ?? null),
     loadFabricTierAddonConfig(sb, activeCompanyId(c)),
-    loadSpecialAddons(sb),
+    loadSpecialAddons(sb, activeCompanyId(c)),
     loadModelFabricTierOverrides(sb),
     loadCompartmentFabricTierOverrides(sb),
   ]);
-  /* Two snapshots, identical base inputs — only `variants` (and its fabric
-     row) differ, so base / combo / PWP terms cancel in the difference. The
-     fabric-tier Δ inputs (sellingTiers / addonConfig) are deliberately NOT
-     passed: the Δ is applied once, below, never double-counted. */
-  const snap = (variants: Record<string, unknown>, fab: typeof fabPrev) =>
-    recomputeFromSnapshot(
-      {
-        itemCode:       prev.item_code,
-        itemGroup:      String(prev.item_group ?? 'others'),
-        qty:            Number(prev.qty),
-        unitPriceSen: Number(prev.unit_price_sen),
-        variants:       variants as MfgItemForRecompute['variants'],
-      },
-      prodLite, fab, cfg, null, null, null, null, null, null, specialDefs, null, null,
-    );
-  const before = snap(prevVariants, fabPrev);
-  const after  = snap(nextVariants, fabNext);
   const category = String(prodLite?.category ?? '').toUpperCase();
   // migration 0175 — per-Model Δ override (same for prev/next; the Model doesn't
   // change on a TBC fill-in). Resolved by the line's model_id, replaces global.
@@ -8478,7 +8462,8 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
      resolved model-only, under-charging a build that carries a per-compartment
      Δ (the POS preview showed the higher Δ but the server billed less; no drift
      gate here). Reconstruct them from the SIBLING module lines' item_code suffix,
-     the same way the create path does. */
+     the same way the create path does. They also price an add-on set by
+     compartment (2990 owner 2026-10-26), so they are read BEFORE the snapshots. */
   let tbcCells: string[] = [];
   if (category === 'SOFA') {
     const buildKeyForCells = (prevVariants.buildKey as string | undefined) ?? null;
@@ -8500,6 +8485,26 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
         : [];
     }
   }
+  /* Two snapshots, identical base inputs — only `variants` (and its fabric
+     row) differ, so base / combo / PWP terms cancel in the difference. The
+     fabric-tier Δ inputs (sellingTiers / addonConfig) are deliberately NOT
+     passed: the Δ is applied once, below, never double-counted. Both carry the
+     build's compartments, so an add-on priced by compartment moves the bill by
+     what create would have charged for it. */
+  const snap = (variants: Record<string, unknown>, fab: typeof fabPrev) =>
+    recomputeFromSnapshot(
+      {
+        itemCode:          prev.item_code,
+        itemGroup:         String(prev.item_group ?? 'others'),
+        qty:               Number(prev.qty),
+        unitPriceSen:      Number(prev.unit_price_sen),
+        variants:          variants as MfgItemForRecompute['variants'],
+        buildCompartments: tbcCells,
+      },
+      prodLite, fab, cfg, null, null, null, null, null, null, specialDefs, null, null,
+    );
+  const before = snap(prevVariants, fabPrev);
+  const after  = snap(nextVariants, fabNext);
   const tbcOverride = resolveFabricTierOverride(tbcCells, tbcBaseOverride, compartmentOverrides ?? new Map());
   const tierDeltaSen = (addonCfg && (category === 'SOFA' || category === 'BEDFRAME'))
     ? (fabricTierAddon(category, (category === 'SOFA' ? tiersNext?.sofaTier : tiersNext?.bedframeTier) ?? null, addonCfg, tbcOverride)
@@ -8934,9 +8939,9 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
   if (rewardLinesToRevert.length > 0 || pwpDeleteCodes.length > 0 || pwpRevertCodes.length > 0 || pwpNewlyTriggered.length > 0) {
     // Loaders only when the re-evaluation actually has work to do.
     const [cfgX, addonCfgX, specialDefsX, modelOverridesX, compartmentOverridesX] = await Promise.all([
-      loadMaintenanceConfig(sb),
+      loadMaintenanceConfig(sb, activeCompanyId(c)),
       loadFabricTierAddonConfig(sb, activeCompanyId(c)),
-      loadSpecialAddons(sb),
+      loadSpecialAddons(sb, activeCompanyId(c)),
       loadModelFabricTierOverrides(sb),
       loadCompartmentFabricTierOverrides(sb),
     ]);
@@ -9151,13 +9156,13 @@ async function planSofaRewardRevert(
      stored `depth`. */
   const depth = String(leadV.depth ?? leadV.seatHeight ?? '24');
   const [cfg, prodLite, fabLite, combos, sellingTiers, addonCfg, specialDefs, modulePrices, modelOverridesLead, compartmentOverridesLead] = await Promise.all([
-    loadMaintenanceConfig(sb),
+    loadMaintenanceConfig(sb, activeCompanyId(c)),
     loadProductByCode(sb, lead.item_code, activeCompanyId(c)),
     loadFabricByCode(sb, (leadV.fabricCode as string | undefined) ?? null),
     loadSellingSofaCombos(sb, c),
     loadFabricSellingTiers(sb, (leadV.fabricId as string | undefined) ?? null),
     loadFabricTierAddonConfig(sb, activeCompanyId(c)),
-    loadSpecialAddons(sb),
+    loadSpecialAddons(sb, activeCompanyId(c)),
     loadModelSofaModulePrices(sb, splitSofaCode(lead.item_code).baseModel, depth, activeCompanyId(c)),
     loadModelFabricTierOverrides(sb),
     loadCompartmentFabricTierOverrides(sb),
@@ -9336,12 +9341,12 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
      `depth`. recomputeFromSnapshot below also reads `depth ?? seatHeight`. */
   const depth = String((newVariants as { depth?: unknown; seatHeight?: unknown }).depth ?? (newVariants as { seatHeight?: unknown }).seatHeight ?? '24');
   const [cfg, fabLite, combos, sellingTiers, fabricAddonCfg, specialDefs, modulePrices, moduleCostRows, modelOverridesSwap, compartmentOverridesSwap] = await Promise.all([
-    loadMaintenanceConfig(sb),
+    loadMaintenanceConfig(sb, activeCompanyId(c)),
     loadFabricByCode(sb, (newVariants.fabricCode as string | undefined) ?? null),
     loadSellingSofaCombos(sb, c),
     loadFabricSellingTiers(sb, (newVariants.fabricId as string | undefined) ?? null),
     loadFabricTierAddonConfig(sb, activeCompanyId(c)),
-    loadSpecialAddons(sb),
+    loadSpecialAddons(sb, activeCompanyId(c)),
     loadModelSofaModulePrices(sb, prodLite.base_model, depth, activeCompanyId(c)),
     loadModelSofaModuleCostRows(sb, prodLite.base_model, activeCompanyId(c)),
     loadModelFabricTierOverrides(sb),

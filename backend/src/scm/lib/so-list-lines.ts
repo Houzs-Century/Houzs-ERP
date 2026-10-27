@@ -23,7 +23,7 @@ import { lookupByIds, type ExportWindow } from './document-line-export';
 import { chunkIn } from './paginate-all';
 import { pageWithTruncation } from './outstanding-po-lines';
 import { fromSoList, orderSoList, type SoListRead } from './so-list-read';
-import { buildSoListRows, type SoDeliverableMap, type SoListRow } from './so-list-rows';
+import { buildSoListRows, type SoListPrior, type SoListRow } from './so-list-rows';
 import { warehouseLabel } from './warehouse-label';
 import { bindingsFor } from './autocount-outbox';
 import { doCountsAsDelivered } from '../shared/do-shipped-states';
@@ -138,15 +138,15 @@ type HeaderFields = SoListRow & {
 
 /**
  * Attach `lines` (SoListLine[], printed order) and the order's AutoCount header
- * spellings (SoBookHeader) to each row. `deliverable` is the delivered /
- * returned / remaining reading buildSoListRows already made for these orders;
- * pass null to read it here.
+ * spellings (SoBookHeader) to each row. `prior` is what buildSoListRows already
+ * read for these orders (delivered / returned / remaining, base-table headers,
+ * warehouses); pass null to read them here.
  */
 export async function attachSoLines(
   sbIn: unknown,
   c: CompanyScopeCtx,
   rows: HeaderFields[],
-  deliverable: SoDeliverableMap | null,
+  prior: SoListPrior | null,
 ): Promise<{ error: string | null; lineCount: number }> {
   const sb = sbIn as Sb;
   const docNos = [...new Set(rows.map((r) => r.doc_no).filter((d): d is string => !!d))];
@@ -159,14 +159,17 @@ export async function attachSoLines(
   const all = lineRead.data;
   const lineIds = all.map((l) => l.id);
 
-  /* AutoCount's number — a base-table column the list's view does not carry. */
-  const base = await chunkIn<{ doc_no: string; linked_ac_docno: string | null }>(docNos, (batch, from, to) =>
-    scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, linked_ac_docno'), c)
-      .in('doc_no', batch).order('doc_no', { ascending: true }).range(from, to) as Res<never>);
+  /* AutoCount's number — a base-table column the list's view does not carry.
+     doc_no is the primary key, so the builder's read of the same orders is the same rows. */
+  const base = prior?.base?.data && !prior.base.error
+    ? { data: prior.base.data, error: null }
+    : await chunkIn<{ doc_no: string; linked_ac_docno: string | null }>(docNos, (batch, from, to) =>
+      scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, linked_ac_docno'), c)
+        .in('doc_no', batch).order('doc_no', { ascending: true }).range(from, to) as Res<never>);
   if (base.error) return { error: `sales order headers: ${base.error.message}`, lineCount: 0 };
   const acDocNo = new Map(base.data.map((b) => [b.doc_no, text(b.linked_ac_docno)]));
 
-  let reading = deliverable;
+  let reading = prior?.deliverable ?? null;
   if (!reading) {
     try {
       reading = await soDeliverableRemaining(sb, docNos);
@@ -217,10 +220,12 @@ export async function attachSoLines(
   }
 
   /* Warehouses and staff by the ids of rows already read under the company scope. */
-  const wh = await lookupByIds<{ id: string; code: string | null; name: string | null }>(
-    all.map((l) => l.warehouse_id),
-    (batch, from, to) => sb.from('warehouses').select('id, code, name')
-      .in('id', batch).order('id', { ascending: true }).range(from, to) as Res<never>);
+  const wh = prior?.warehouses?.data && !prior.warehouses.error
+    ? { error: null, byId: new Map(prior.warehouses.data.map((w) => [w.id, w])) }
+    : await lookupByIds<{ id: string; code: string | null; name: string | null }>(
+      all.map((l) => l.warehouse_id),
+      (batch, from, to) => sb.from('warehouses').select('id, code, name')
+        .in('id', batch).order('id', { ascending: true }).range(from, to) as Res<never>);
   if (wh.error) return { error: `warehouses: ${wh.error}`, lineCount: 0 };
   const staff = await lookupByIds<{ id: string; name: string | null }>(
     rows.map((r) => r.salesperson_id ?? null),
@@ -309,8 +314,8 @@ export async function buildSoExportRows(
   let lineCount = 0;
   for (let i = 0; i < rows.length; i += ROW_PAGE) {
     const page = rows.slice(i, i + ROW_PAGE);
-    const deliverable = await buildSoListRows(sb, c, page);
-    const attached = await attachSoLines(sb, c, page, deliverable);
+    const prior = await buildSoListRows(sb, c, page);
+    const attached = await attachSoLines(sb, c, page, prior);
     if (attached.error) return { error: attached.error };
     lineCount += attached.lineCount;
   }

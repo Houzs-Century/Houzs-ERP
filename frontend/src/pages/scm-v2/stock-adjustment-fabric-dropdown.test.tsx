@@ -6,6 +6,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 
+vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: { id: 1 }, can: () => false }) }));
 vi.mock('../../vendor/scm/lib/stock-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/stock-queries')>()),
   useInventoryBuckets: () => ({ data: [], isLoading: false }),

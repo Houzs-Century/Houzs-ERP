@@ -40,9 +40,10 @@
  * test differs between the arms — on origin/main it fails with
  * `expected 21 to be less than 4`, which is the sequencing this change removed.
  */
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, it, expect } from 'vitest';
 import type { Context } from 'hono';
 import { resolvePoSoCoveragePerSkuForPos } from '../src/scm/routes/po-so-coverage';
+import { forgetLiveMrp } from '../src/scm/lib/live-mrp-memo';
 import { makeFakePostgrest, type FakeDb, type Relationship, type Row } from './fakePostgrest';
 
 /* The foreign keys PostgREST resolves the embeds through — MRP's demand read
@@ -52,6 +53,8 @@ const RELATIONSHIPS: Relationship[] = [
   { child: 'mfg_sales_order_items', childCol: 'doc_no', parent: 'mfg_sales_orders', parentCol: 'doc_no' },
   { child: 'purchase_order_items', childCol: 'purchase_order_id', parent: 'purchase_orders', parentCol: 'id' },
   { child: 'delivery_order_items', childCol: 'delivery_order_id', parent: 'delivery_orders', parentCol: 'id' },
+  /* MRP's demand read embeds each SO line's DO lines (lib/mrp-delivered.ts). */
+  { child: 'delivery_order_items', childCol: 'so_item_id', parent: 'mfg_sales_order_items', parentCol: 'id' },
   { child: 'delivery_return_items', childCol: 'delivery_return_id', parent: 'delivery_returns', parentCol: 'id' },
   { child: 'supplier_material_bindings', childCol: 'supplier_id', parent: 'suppliers', parentCol: 'id' },
 ];
@@ -189,6 +192,12 @@ function ctx(): Context<never> {
 }
 
 describe('resolvePoSoCoveragePerSkuForPos — the answer, the cost and the overlap', () => {
+  /* The MRP run is the isolate-wide shared one (lib/live-mrp-memo.ts, HC-0002).
+     Every test here uses company 1 within its 30 s window, so without this the
+     second test would read the first one's run and the counts below would lose
+     the engine's reads. Each test computes fresh, so the pins are unchanged. */
+  beforeEach(() => forgetLiveMrp());
+
   it('merges all three precedence layers, and the delivered lock wins', async () => {
     const db = makeFakePostgrest(fixture(), RELATIONSHIPS);
     const inst = instrument(db);
@@ -271,8 +280,12 @@ describe('resolvePoSoCoveragePerSkuForPos — the answer, the cost and the overl
       purchase_orders: 1,                 // header: po_number + "From SOs:" notes
       purchase_order_items: 2,            // stored-link chain 1 + MRP supply page 1
       purchase_order_item_allocations: 1, // mig 0235 links for the page's PO lines
-      mfg_sales_order_items: 5,           // stored chain 2, MRP demand 1, deliverable 1, DO-lock 1
-      mfg_sales_orders: 3,                // stored validation, deliverable heads, DO-lock validation
+      /* HC-0002 (2026-10-23): MRP's delivered-per-line rides its demand read as
+         embedded DO lines (lib/mrp-delivered.ts), so soDeliverableRemaining's
+         re-read of the SO lines and heads, its linked DO-line pages, its
+         by-so_doc_no DO header read and its return-line read are gone: -5. */
+      mfg_sales_order_items: 4,           // stored chain 2, MRP demand 1 (DO lines embedded), DO-lock 1
+      mfg_sales_orders: 2,                // stored validation, DO-lock validation
       mfg_products: 2,                    // MRP category walk + by-code
       inventory_lots: 1,                  // delivered ledger
       inventory_lot_consumptions: 1,
@@ -284,18 +297,11 @@ describe('resolvePoSoCoveragePerSkuForPos — the answer, the cost and the overl
       mrp_category_lead_times: 1,
       mrp_supplier_category_lead_times: 1, // owner's per-supplier lead override, loaded beside the base
 
-      /* 3, not 2, since fix/unbounded-in-list-chunking landed. The deliverable-
-         remaining read of this table was previously unbounded at BOTH ends: no
-         chunking of the .in() list AND no paging, so it silently dropped any row
-         past PostgREST's 1000-row cap. chunkIn pages each batch, which costs one
-         extra request to see the short page that ends it. The read is not wider
-         — it is the same filter, now honest about where it stops. */
-      delivery_order_items: 3,
-      delivery_orders: 2,                 // DO-lock headers + MRP committed shipments
-      delivery_return_items: 1,
+      delivery_order_items: 2,            // DO-lock 1 + MRP's unlinked-line read 1 (the fake has no .is(), so it degrades to link-only)
+      delivery_orders: 1,                 // MRP committed shipments
       fabric_trackings: 1,                // HC-0128 NB-series fabric codes (NB FURNITURE routing), issued in the MRP read wave so it adds no wait
     });
-    expect(db.totalReads()).toBe(31); // +1: the per-supplier lead override, loaded beside the base; +1: HC-0128 NB fabric codes
+    expect(db.totalReads()).toBe(26); // +1: the per-supplier lead override, loaded beside the base; +1: HC-0128 NB fabric codes; -5: HC-0002 embedded delivered
   });
 
   it('has the delivered ledger and the MRP engine in flight before the stored-origin chain validates its SOs', async () => {

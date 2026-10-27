@@ -11,7 +11,8 @@ import { useQuery } from "../../hooks/useQuery";
 import { api } from "../../api/client";
 import { formatCurrency, cn } from "../../lib/utils";
 import { todayMY } from "../../vendor/shared/format";
-import { Panel, Th, Td, Toggle, SELECT_CLS } from "../../components/scm-v2/OverviewKit";
+import { Panel, Th, Td, Toggle, SELECT_CLS, SortTh, useTableSort } from "../../components/scm-v2/OverviewKit";
+import { VenueRentPanel } from "./VenueRentPanel";
 import { Columns, TONE, PALETTE } from "../../components/scm-v2/Charts";
 import { DashboardPeriodPicker, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
 import { ProjectDataGapsPanel, ProjectStuckPanel } from "./ProjectOverviewParts";
@@ -37,6 +38,11 @@ const TD = cn(TD_BASE, "whitespace-nowrap text-right");
 const TH_LEFT = cn(TH_BASE, "whitespace-nowrap text-left");
 const TD_LEFT = cn(TD_BASE, "text-left");
 const SEP = "border-l border-border";
+/* The Total row stays at the foot of the table's box while the projects scroll;
+   its own strings, not TD plus a border override (cn only joins). */
+const TOT_BASE = "border-t-2 border-border bg-surface px-2.5 py-2 text-[12.5px] tabular-nums";
+const TOT = cn(TOT_BASE, "whitespace-nowrap text-right");
+const TOT_LEFT = cn(TOT_BASE, "text-left");
 
 export function ProjectOverviewPage() {
   const navigate = useNavigate();
@@ -86,6 +92,10 @@ export function ProjectOverviewPage() {
   const inPeriod = useMemo(() => all.filter((p) => !!p.startDate && p.startDate >= period.from && p.startDate <= period.to), [all, period.from, period.to]);
   const t = totalsOf(inPeriod);
   const groups = groupBy(inPeriod, (p) => p[dim]);
+  /* Click a Breakdown header to rank by it (owner 2026-10-23). */
+  const gSort = useTableSort(groups, (g, k) =>
+    k === "key" ? g.key : k === "projects" ? g.projects : k === "sales" ? g.sales : k === "gpPct" ? pctOf(g.gp, g.sales)
+      : k === "rental" ? g.rental : k === "rentalPct" ? pctOf(g.rental, g.sales) : k === "cost" ? g.rental + g.otherCost : k === "np" ? g.np : pctOf(g.np, g.sales));
   const trend = drillOf(all, drill, today);
   /* Breadcrumb back up the drill: All years > 2026 > Q4 > Oct. */
   const crumbs: Array<[string, Drill]> = [["All years", { level: "years" }]];
@@ -114,6 +124,15 @@ export function ProjectOverviewPage() {
   const listed = inPeriod.filter((p) => !pick || (p[dim] || "—") === pick)
     .map((p) => ({ p, f: figuresOf(p) }))
     .sort((a, b) => sort === "sales" ? b.f.sales - a.f.sales : sort === "np" ? b.f.np - a.f.np : sort === "npPct" ? (pctOf(b.f.np, b.f.sales) ?? -1e9) - (pctOf(a.f.np, a.f.sales) ?? -1e9) : (b.p.startDate ?? "").localeCompare(a.p.startDate ?? ""));
+  /* The Total row (owner 2026-10-25: 这个表需要有total): the projects listed,
+     each column added up; the % columns worked out from the added-up figures. */
+  const sumOf = (pick: (x: (typeof listed)[number]) => number) => listed.reduce((s, x) => s + pick(x), 0);
+  const tot = {
+    sales: sumOf((x) => x.f.sales), service: sumOf((x) => x.f.serviceRevenue), cogs: sumOf((x) => x.f.cogs), gp: sumOf((x) => x.f.gp),
+    rental: sumOf((x) => x.f.rental), setup: sumOf((x) => x.f.setup), transport: sumOf((x) => x.f.transport), commission: sumOf((x) => x.f.commission),
+    merchandise: sumOf((x) => x.f.merchandise), other: sumOf((x) => x.f.other), np: sumOf((x) => x.f.np),
+    paidSen: sumOf((x) => x.p.collection.paidSen), orderedSen: sumOf((x) => x.p.collection.totalSen),
+  };
   const options = (key: "brand" | "eventType" | "organizer") => [...new Set((q.data?.projects ?? []).map((p) => p[key]).filter((x): x is string => !!x))].sort();
 
   return (
@@ -186,11 +205,17 @@ export function ProjectOverviewPage() {
         </Panel>
       </div>
 
-      <Panel title="Breakdown" hint="largest sales first · click a row to list its projects below" right={<Toggle value={dim} options={DIMS} onChange={(v) => setView({ dim: v, pick: null })} />}>
+      <Panel title="Breakdown" hint="largest sales first · click a header to rank · click a row to list its projects below" right={<Toggle value={dim} options={DIMS} onChange={(v) => setView({ dim: v, pick: null })} />}>
         <div className="max-h-[420px] overflow-auto">
           <table className="w-full border-collapse">
-            <thead className="sticky top-0 bg-surface"><tr><Th left>{DIMS.find(([d]) => d === dim)?.[1]}</Th><Th>Projects</Th><Th>Sales</Th><Th>GP %</Th><Th>Rental</Th><Th>Rental %</Th><Th>Event costs</Th><Th>Net profit</Th><Th left> </Th><Th>NP %</Th></tr></thead>
-            <tbody>{groups.map((g) => (
+            <thead className="sticky top-0 bg-surface"><tr>
+              <SortTh left k="key" sort={gSort.sort} onSort={gSort.toggle}>{DIMS.find(([d]) => d === dim)?.[1]}</SortTh><SortTh k="projects" sort={gSort.sort} onSort={gSort.toggle}>Projects</SortTh>
+              <SortTh k="sales" sort={gSort.sort} onSort={gSort.toggle}>Sales</SortTh><SortTh k="gpPct" sort={gSort.sort} onSort={gSort.toggle}>GP %</SortTh>
+              <SortTh k="rental" sort={gSort.sort} onSort={gSort.toggle}>Rental</SortTh><SortTh k="rentalPct" sort={gSort.sort} onSort={gSort.toggle}>Rental %</SortTh>
+              <SortTh k="cost" sort={gSort.sort} onSort={gSort.toggle}>Event costs</SortTh><SortTh k="np" sort={gSort.sort} onSort={gSort.toggle}>Net profit</SortTh>
+              <Th left> </Th><SortTh k="npPct" sort={gSort.sort} onSort={gSort.toggle}>NP %</SortTh>
+            </tr></thead>
+            <tbody>{gSort.sorted.map((g) => (
               <tr key={g.key} onClick={() => setView({ pick: pick === g.key ? null : g.key })} className={cn("cursor-pointer hover:bg-surface-2/50", pick === g.key && "bg-primary-soft/50")}>
                 <Td left className="max-w-[220px] truncate">{g.key}</Td><Td>{g.projects}</Td><Td>{money(g.sales)}</Td><Td>{pctTxt(pctOf(g.gp, g.sales))}</Td><Td>{money(g.rental)}</Td><Td className="text-ink-secondary">{pctTxt(pctOf(g.rental, g.sales))}</Td><Td>{money(g.rental + g.otherCost)}</Td>
                 <Td className={g.np < 0 ? "font-semibold text-err" : "font-semibold text-synced"}>{money(g.np)}</Td>
@@ -203,6 +228,8 @@ export function ProjectOverviewPage() {
         </div>
       </Panel>
 
+      {/* The project list first, the venue rent after it (owner 2026-10-25:
+          把venue rent 和 project 倒反位置). */}
       <Panel title={`Projects${pick ? ` · ${pick}` : ""}`} hint={`${listed.length} projects · amounts in RM · click one to open it`}
         right={<span className="flex items-center gap-2">
           {pick && <button type="button" className="text-[12px] text-primary hover:underline" onClick={() => setView({ pick: null })}>Show all</button>}
@@ -261,9 +288,29 @@ export function ProjectOverviewPage() {
               })}
               {listed.length === 0 && <tr><td colSpan={17} className={cn(TD_LEFT, "text-ink-muted")}>No projects in this period.</td></tr>}
             </tbody>
+            {listed.length > 0 && (
+              <tfoot className="sticky bottom-0 z-20 bg-surface font-semibold">
+                <tr>
+                  <td className={cn(TOT_LEFT, "sticky left-0 z-30 bg-surface")}>Total · {listed.length} project{listed.length === 1 ? "" : "s"}</td>
+                  <td className={cn(TOT, SEP)}>{tableAmount(tot.sales)}</td><td className={TOT}>{tableAmount(tot.service)}</td>
+                  <td className={cn(TOT, SEP)}>{tableAmount(tot.cogs)}</td><td className={TOT}>{tableAmount(tot.gp)}</td>
+                  <td className={TOT}>{pctTxt(pctOf(tot.gp, tot.sales))}</td>
+                  <td className={cn(TOT, SEP)}>{tableAmount(tot.rental)}</td><td className={TOT}>{tableAmount(tot.setup)}</td>
+                  <td className={TOT}>{tableAmount(tot.transport)}</td><td className={TOT}>{tableAmount(tot.commission)}</td>
+                  <td className={TOT}>{tableAmount(tot.merchandise)}</td><td className={TOT}>{tableAmount(tot.other)}</td>
+                  <td className={cn(TOT, SEP, tot.np < 0 && "text-err")}>{tableAmount(tot.np)}</td>
+                  <td className={cn(TOT, tot.np < 0 && "text-err")}>{pctTxt(pctOf(tot.np, tot.sales))}</td>
+                  <td className={cn(TOT, SEP)}>{tableAmount(tot.paidSen / 100)}</td>
+                  <td className={TOT}>{pctTxt(pctOf(tot.paidSen, tot.orderedSen))}</td>
+                  <td className={cn(TOT_LEFT, SEP)} />
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       </Panel>
+
+      <VenueRentPanel projects={inPeriod} periodLabel={period.label} />
 
       <ProjectStuckPanel onOpen={openProject} />
       <ProjectDataGapsPanel onOpen={openProject} />

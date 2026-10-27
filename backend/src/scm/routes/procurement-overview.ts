@@ -14,7 +14,11 @@ import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
-import { scopeToCompany, activeCompanyId } from '../lib/companyScope';
+import { scopeToCompany, activeCompanyId, type CompanyScopeCtx } from '../lib/companyScope';
+import { cachedSwr, writeSwr } from '../lib/kv-swr';
+import { MRP_REFRESH_COMPANY_IDS } from '../lib/mrp-snapshot';
+import { getSupabaseService } from '../../db/supabase';
+import type { Env as WorkerEnv } from '../../types';
 import { allocateReceipts, loadStockDemand, type StockReceipt as ReceiptForSo } from '../lib/receipt-so-assignment';
 import { todayMyt } from '../lib/my-time';
 import { doCountsAsDelivered, DO_STOCK_OUT_STATES } from '../shared/do-shipped-states';
@@ -33,22 +37,93 @@ const str = (v: unknown) => (v == null ? null : String(v));
 const num = (v: unknown) => Number(v ?? 0) || 0;
 const day = (v: unknown) => (v == null ? null : String(v).slice(0, 10));
 
-procurementOverview.get('/', async (c) => {
-  const sb = c.get('supabase');
-  const today = todayMyt();
-  const qFrom = c.req.query('from') ?? ''; const qTo = c.req.query('to') ?? '';
+export type ProcurementOverviewParams = { today: string; from: string; to: string; basis: 'original' | 'promised'; dueTo: string; scope: StockScope };
+export type ProcurementOverviewResult = { ok: true; body: Record<string, unknown> } | { ok: false; body: { error: string; reason: string } };
+
+/** The query as the report reads it, every default resolved, so a cache key built from it names one answer. */
+export function procurementOverviewParams(q: (k: string) => string | undefined, today: string): ProcurementOverviewParams {
+  const qFrom = q('from') ?? ''; const qTo = q('to') ?? '';
   const from = ISO.test(qFrom) ? qFrom : `${today.slice(0, 7)}-01`;
   const to = ISO.test(qTo) && qTo >= from ? qTo : today;
-  const basis = c.req.query('basis') === 'promised' ? 'promised' : 'original';
-  const qDueTo = c.req.query('dueTo') ?? '';
+  const basis = q('basis') === 'promised' ? 'promised' : 'original';
+  const qDueTo = q('dueTo') ?? '';
   const dueTo = ISO.test(qDueTo) && qDueTo >= to ? qDueTo : to;
+  const scope = STOCK_SCOPES.includes(q('scope') as StockScope) ? q('scope') as StockScope : 'all';
+  return { today, from, to, basis, dueTo, scope };
+}
+
+/* HC-0145 (owner 2026-10-22: "couldn't load over a minute" at the afternoon
+   peak). ~70 reads in series, three of them whole tables, run on every open of
+   this page AND of the home Overview. Served stale-while-revalidate from KV
+   (lib/kv-swr.ts, HOOKKA's dashboard pattern) and kept warm for the two default
+   views by the 15-minute cron, so the database does this once per refresh
+   instead of once per viewer. Figures can be up to PROCOV_SOFT_SECONDS old. */
+export const PROCOV_SOFT_SECONDS = 20 * 60;
+export const PROCOV_HARD_SECONDS = 2 * 60 * 60;
+export function procurementOverviewKey(companyId: number, p: ProcurementOverviewParams): string {
+  return `swr:procov:v1:${companyId}:${p.today}:${p.from}:${p.to}:${p.dueTo}:${p.basis}:${p.scope}`;
+}
+
+procurementOverview.get('/', async (c) => {
+  const p = procurementOverviewParams((k) => c.req.query(k), todayMyt());
+  const companyId = activeCompanyId(c);
+  let waitUntil: ((x: Promise<unknown>) => void) | null = null;
+  try { const ec = c.executionCtx; waitUntil = (x) => ec.waitUntil(x); } catch { waitUntil = null; }
+  const { result, source, at } = await cachedSwr({
+    kv: c.env.SESSION_CACHE,
+    key: companyId == null ? null : procurementOverviewKey(companyId, p),
+    softSeconds: PROCOV_SOFT_SECONDS,
+    hardSeconds: PROCOV_HARD_SECONDS,
+    compute: () => buildProcurementOverview(c.get('supabase'), c, p),
+    cacheable: (r) => r.ok,
+    waitUntil,
+  });
+  c.header('X-Cache', source);
+  if (at) c.header('X-Cache-At', at);
+  return result.ok ? c.json(result.body) : c.json(result.body, 500);
+});
+
+/**
+ * The 15-minute cron: recompute the two views people open by default (the page:
+ * this month, due to month end; the home Overview: this month, due today) for
+ * each live company and store them, so a viewer is served without waiting.
+ * One company / view at a time; a failure is logged and the stale copy stays.
+ */
+export async function refreshProcurementOverviewSnapshots(env: WorkerEnv, today: string): Promise<void> {
+  const kv = env.SESSION_CACHE;
+  if (!kv) return;
+  const [y, m] = today.split('-').map(Number);
+  const monthEnd = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+  const views = [
+    procurementOverviewParams((k) => (k === 'dueTo' ? monthEnd : undefined), today),
+    procurementOverviewParams(() => undefined, today),
+  ];
+  const sb = getSupabaseService(env);
+  for (const companyId of MRP_REFRESH_COMPANY_IDS) {
+    const ctx = { get: (k: string) => (k === 'companyId' ? companyId : undefined) };
+    for (const p of views) {
+      try {
+        const r = await buildProcurementOverview(sb, ctx, p);
+        if (r.ok) await writeSwr(kv, procurementOverviewKey(companyId, p), r, PROCOV_SOFT_SECONDS, PROCOV_HARD_SECONDS);
+        else console.error(`[cron procurement-overview] company=${companyId} dueTo=${p.dueTo}`, r.body.reason);
+      } catch (e) {
+        console.error(`[cron procurement-overview] company=${companyId} dueTo=${p.dueTo}`, e);
+      }
+    }
+  }
+}
+
+/** The report itself, for the route and the cron alike: `ctx` carries only the company. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the untyped supabase-js client every SCM read helper takes (companyScope.ts header)
+export async function buildProcurementOverview(sb: any, ctx: CompanyScopeCtx, p: ProcurementOverviewParams): Promise<ProcurementOverviewResult> {
+  const { today, from, to, basis, dueTo, scope } = p;
   const windowStart = new Date(Date.parse(`${to}T00:00:00Z`) - 365 * 86400000).toISOString().slice(0, 10);
-  const fail = (what: string, e: { message: string }) => c.json({ error: 'load_failed', reason: `${what}: ${e.message}` }, 500);
+  const fail = (what: string, e: { message: string }): ProcurementOverviewResult => ({ ok: false, body: { error: 'load_failed', reason: `${what}: ${e.message}` } });
 
   /* ── PO headers and lines ─────────────────────────────────────────────── */
   const pos = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('purchase_orders')
     .select('id, po_number, po_date, supplier_id, expected_at').gte('po_date', windowStart).lte('po_date', to)
-    .not('status', 'in', '("DRAFT","CANCELLED")'), c).order('id').range(f, t));
+    .not('status', 'in', '("DRAFT","CANCELLED")'), ctx).order('id').range(f, t));
   if (pos.error) return fail('purchase orders', pos.error);
   const poById = new Map((pos.data ?? []).map((r) => [String(r.id), r]));
   /* Lines, their receipts and their sales order read with the rows they hang
@@ -57,7 +132,7 @@ procurementOverview.get('/', async (c) => {
   const one = (x: unknown) => (Array.isArray(x) ? x[0] : x) as Row | null | undefined;
   const itemsAll = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('purchase_order_items')
     .select('id, purchase_order_id, item_code, item_group, description, qty, received_qty, unit_price_sen, line_total_sen, delivery_date, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, so_item_id, po:purchase_orders!inner(po_date, status), si:mfg_sales_order_items(doc_no, so:mfg_sales_orders(customer_delivery_date, amended_delivery_date))')
-    .gte('po.po_date', windowStart).lte('po.po_date', to).not('po.status', 'in', '("DRAFT","CANCELLED")'), c).order('id').range(f, t));
+    .gte('po.po_date', windowStart).lte('po.po_date', to).not('po.status', 'in', '("DRAFT","CANCELLED")'), ctx).order('id').range(f, t));
   if (itemsAll.error) return fail('PO lines', itemsAll.error);
   const items = { data: (itemsAll.data ?? []).filter((r) => poById.has(String(r.purchase_order_id))) };
   const itemIds = new Set(items.data.map((r) => String(r.id)));
@@ -66,7 +141,7 @@ procurementOverview.get('/', async (c) => {
   /* A receipt of a PO raised in the window comes in after that PO's date. */
   const grnAll = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('grn_items')
     .select('grn_id, purchase_order_item_id, qty_received, qty_rejected, grn:grns!inner(received_at, status)')
-    .not('purchase_order_item_id', 'is', null).gte('grn.received_at', windowStart), c).order('id').range(f, t));
+    .not('purchase_order_item_id', 'is', null).gte('grn.received_at', windowStart), ctx).order('id').range(f, t));
   if (grnAll.error) return fail('goods received lines', grnAll.error);
   const receiptsByLine = new Map<string, PLine['receipts']>();
   for (const g of grnAll.data ?? []) {
@@ -90,16 +165,16 @@ procurementOverview.get('/', async (c) => {
 
   /* ── Names, categories, lead-time settings ────────────────────────────── */
   const sups = await chunkIn<Row>([...new Set((pos.data ?? []).map((r) => str(r.supplier_id)).filter((x): x is string => !!x))], (b, f, t) =>
-    scopeToCompany(sb.from('suppliers').select('id, name').in('id', b), c).order('id').range(f, t));
+    scopeToCompany(sb.from('suppliers').select('id, name').in('id', b), ctx).order('id').range(f, t));
   if (sups.error) return fail('suppliers', sups.error);
   const supName = new Map(sups.data.map((r) => [String(r.id), String(r.name ?? '—')]));
   const prods = await chunkIn<Row>([...new Set(items.data.map((r) => str(r.item_code)).filter((x): x is string => !!x))], (b, f, t) =>
-    scopeToCompany(sb.from('mfg_products').select('code, category').in('code', b), c).order('code').range(f, t));
+    scopeToCompany(sb.from('mfg_products').select('code, category').in('code', b), ctx).order('code').range(f, t));
   if (prods.error) return fail('products', prods.error);
   const prodCat = new Map(prods.data.map((r) => [String(r.code), str(r.category)]));
   /* The company-wide MRP setting per category (warehouse overrides aside) —
      the value "Apply" on the page writes back. */
-  const settings = await scopeToCompany(sb.from('mrp_category_lead_times').select('category, lead_days, warehouse_id'), c);
+  const settings = await scopeToCompany(sb.from('mrp_category_lead_times').select('category, lead_days, warehouse_id'), ctx);
   if (settings.error) return fail('lead time settings', settings.error);
   const currentLead: Record<string, number> = {};
   const leadOverrides: Record<string, Array<{ warehouseId: string; days: number }>> = {};
@@ -112,14 +187,14 @@ procurementOverview.get('/', async (c) => {
   /* ── Supplier bills in the period ─────────────────────────────────────── */
   const pis = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('purchase_invoices')
     .select('id, supplier_id, total_sen').gte('invoice_date', from).lte('invoice_date', to)
-    .not('status', 'in', '("DRAFT","CANCELLED")'), c).order('id').range(f, t));
+    .not('status', 'in', '("DRAFT","CANCELLED")'), ctx).order('id').range(f, t));
   if (pis.error) return fail('supplier bills', pis.error);
   const piLines = await chunkIn<Row>((pis.data ?? []).map((r) => String(r.id)), (b, f, t) => scopeToCompany(sb.from('purchase_invoice_items')
-    .select('purchase_invoice_id, item_code, item_group, line_total_sen').in('purchase_invoice_id', b), c).order('id').range(f, t));
+    .select('purchase_invoice_id, item_code, item_group, line_total_sen').in('purchase_invoice_id', b), ctx).order('id').range(f, t));
   if (piLines.error) return fail('supplier bill lines', piLines.error);
   const piSupIds = [...new Set((pis.data ?? []).map((r) => str(r.supplier_id)).filter((x): x is string => !!x && !supName.has(x)))];
   if (piSupIds.length) {
-    const more = await chunkIn<Row>(piSupIds, (b, f, t) => scopeToCompany(sb.from('suppliers').select('id, name').in('id', b), c).order('id').range(f, t));
+    const more = await chunkIn<Row>(piSupIds, (b, f, t) => scopeToCompany(sb.from('suppliers').select('id, name').in('id', b), ctx).order('id').range(f, t));
     if (more.error) return fail('suppliers', more.error);
     for (const r of more.data) supName.set(String(r.id), String(r.name ?? '—'));
   }
@@ -127,7 +202,7 @@ procurementOverview.get('/', async (c) => {
   for (const r of pis.data ?? []) { const k = supName.get(String(r.supplier_id ?? '')) ?? '—'; billedBySupplier[k] = (billedBySupplier[k] ?? 0) + num(r.total_sen); }
   const piCodes = [...new Set(piLines.data.map((r) => str(r.item_code)).filter((x): x is string => !!x && !prodCat.has(x)))];
   if (piCodes.length) {
-    const more = await chunkIn<Row>(piCodes, (b, f, t) => scopeToCompany(sb.from('mfg_products').select('code, category').in('code', b), c).order('code').range(f, t));
+    const more = await chunkIn<Row>(piCodes, (b, f, t) => scopeToCompany(sb.from('mfg_products').select('code, category').in('code', b), ctx).order('code').range(f, t));
     if (more.error) return fail('products', more.error);
     for (const r of more.data) prodCat.set(String(r.code), str(r.category));
   }
@@ -151,7 +226,7 @@ procurementOverview.get('/', async (c) => {
   const derivedNeed = new Map<string, string>();
   const keepNeed = (poItemId: string, d: string | null) => { if (d && (!derivedNeed.has(poItemId) || d < (derivedNeed.get(poItemId) as string))) derivedNeed.set(poItemId, d); };
   const stored = await chunkIn<Row>(stockLineIds, (b, f, t) => scopeToCompany(sb.from('po_receipt_so_assignments')
-    .select('purchase_order_item_id, need_date').in('purchase_order_item_id', b), c).order('id').range(f, t));
+    .select('purchase_order_item_id, need_date').in('purchase_order_item_id', b), ctx).order('id').range(f, t));
   if (stored.error) return fail('receipt assignments', stored.error);
   for (const a of stored.data) keepNeed(String(a.purchase_order_item_id), day(a.need_date));
   const storedLines = new Set(stored.data.map((a) => String(a.purchase_order_item_id)));
@@ -160,7 +235,7 @@ procurementOverview.get('/', async (c) => {
     const receipts: ReceiptForSo[] = toEstimate.flatMap((r) => (receiptsByLine.get(String(r.id)) ?? []).filter((x) => x.qty > 0)
       .map((x, i) => ({ key: `${String(r.id)}|${i}`, grnId: '', poItemId: String(r.id), itemCode: String(r.item_code), qty: x.qty, receivedAt: x.date })));
     try {
-      const demand = await loadStockDemand(sb, activeCompanyId(c) as number, [...new Set(receipts.map((x) => x.itemCode))], today, true);
+      const demand = await loadStockDemand(sb, activeCompanyId(ctx) as number, [...new Set(receipts.map((x) => x.itemCode))], today, true);
       for (const a of allocateReceipts(receipts, demand)) keepNeed(a.poItemId, a.needDate);
     } catch (e) { return fail('stock demand', e as { message: string }); }
   }
@@ -187,11 +262,11 @@ procurementOverview.get('/', async (c) => {
 
   /* ── Dead stock: on hand now, by how long since it last went out ──────── */
   const stock = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('v_inventory_value')
-    .select('warehouse_id, warehouse_code, item_code, variant_key, product_name, qty_on_hand, value_sen').gt('qty_on_hand', 0), c)
+    .select('warehouse_id, warehouse_code, item_code, variant_key, product_name, qty_on_hand, value_sen').gt('qty_on_hand', 0), ctx)
     .order('warehouse_id').order('item_code').order('variant_key').range(f, t));
   if (stock.error) return fail('stock on hand', stock.error);
   const moves = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('inventory_movements')
-    .select('warehouse_id, item_code, variant_key, movement_type, movement_date, created_at, total_cost_sen, qty'), c).order('id').range(f, t));
+    .select('warehouse_id, item_code, variant_key, movement_type, movement_date, created_at, total_cost_sen, qty'), ctx).order('id').range(f, t));
   if (moves.error) return fail('stock movements', moves.error);
   const keyOf = (r: Row) => `${String(r.warehouse_id)}|${String(r.item_code)}|${String(r.variant_key ?? '')}`;
   const lastOut = new Map<string, string>(); const firstMove = new Map<string, string>();
@@ -203,7 +278,7 @@ procurementOverview.get('/', async (c) => {
   }
   const stockCodes = [...new Set((stock.data ?? []).map((r) => String(r.item_code)).filter((x) => !prodCat.has(x)))];
   if (stockCodes.length) {
-    const more = await chunkIn<Row>(stockCodes, (b, f, t) => scopeToCompany(sb.from('mfg_products').select('code, category').in('code', b), c).order('code').range(f, t));
+    const more = await chunkIn<Row>(stockCodes, (b, f, t) => scopeToCompany(sb.from('mfg_products').select('code, category').in('code', b), ctx).order('code').range(f, t));
     if (more.error) return fail('products', more.error);
     for (const r of more.data) prodCat.set(String(r.code), str(r.category));
   }
@@ -211,14 +286,13 @@ procurementOverview.get('/', async (c) => {
      by default, or leave out display (display + showroom) and service, or one
      kind alone. Kinds come from warehouses.type: warehouse, display (display
      and showroom), service, others. */
-  const whs = await scopeToCompany(sb.from('warehouses').select('id, code, type'), c);
+  const whs = await scopeToCompany(sb.from('warehouses').select('id, code, type'), ctx);
   if (whs.error) return fail('warehouses', whs.error);
   const whCode = new Map((whs.data as Row[]).map((w) => [String(w.id), String(w.code ?? '—')]));
   const kindOf = new Map<string, LocationKind>((whs.data as Row[]).map((w): [string, LocationKind] => {
     const t = String(w.type ?? '').toLowerCase();
     return [String(w.id), t === 'showroom' || t === 'display' ? 'display' : t === 'service' ? 'service' : t === 'warehouse' ? 'warehouse' : 'others'];
   }));
-  const scope = STOCK_SCOPES.includes(c.req.query('scope') as StockScope) ? c.req.query('scope') as StockScope : 'all';
   const inScope = (warehouseId: unknown) => stockScopeKeeps(scope, kindOf.get(String(warehouseId)) ?? 'others');
   const outOfScope = (r: Row) => !inScope(r.warehouse_id);
   /* What open sales orders still wait for, per item AND variant (owner: a
@@ -232,7 +306,7 @@ procurementOverview.get('/', async (c) => {
   const heldCodes = new Set((stock.data ?? []).map((r) => String(r.item_code)));
   const allDemand = await paginateAll<Row>((f, t) => scopeToCompany(sb
     .from('mfg_sales_order_items').select('id, item_code, item_group, variants, qty, line_delivery_date, so:mfg_sales_orders!inner(status, customer_delivery_date)')
-    .eq('cancelled', false).not('so.status', 'in', SO_TERMINAL_STATES_PGREST), c).order('id').range(f, t));
+    .eq('cancelled', false).not('so.status', 'in', SO_TERMINAL_STATES_PGREST), ctx).order('id').range(f, t));
   const demandLines = { error: allDemand.error, data: (allDemand.data ?? []).filter((r) => heldCodes.has(String(r.item_code))) };
   if (demandLines.error) return fail('open order lines', demandLines.error);
   const soOf = (r: Row) => (Array.isArray(r.so) ? r.so[0] : r.so) as Row | null;
@@ -241,7 +315,7 @@ procurementOverview.get('/', async (c) => {
      pages, where batching 13,000 order-line uuids into the filter was ~180. */
   const openIds = new Set(openLines.map((r) => String(r.id)));
   const allShipped = await paginateAll<Row>((f, t) => scopeToCompany(sb
-    .from('delivery_order_items').select('so_item_id, qty, do:delivery_orders!inner(status)').not('so_item_id', 'is', null), c).order('id').range(f, t));
+    .from('delivery_order_items').select('so_item_id, qty, do:delivery_orders!inner(status)').not('so_item_id', 'is', null), ctx).order('id').range(f, t));
   const shippedLines = { error: allShipped.error, data: (allShipped.data ?? []).filter((l) => openIds.has(String(l.so_item_id))) };
   if (shippedLines.error) return fail('shipped order lines', shippedLines.error);
   const shipped = new Map<string, number>();
@@ -266,7 +340,7 @@ procurementOverview.get('/', async (c) => {
   const lastIn = new Map<string, string>();
   const keep = (k: string, d: string | null) => { if (d && (!lastIn.has(k) || d > (lastIn.get(k) as string))) lastIn.set(k, d); };
   const lots = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('inventory_lots')
-    .select('item_code, variant_key, received_at').gt('qty_remaining', 0), c).order('id').range(f, t));
+    .select('item_code, variant_key, received_at').gt('qty_remaining', 0), ctx).order('id').range(f, t));
   if (lots.error) return fail('stock lots', lots.error);
   for (const l of lots.data ?? []) keep(`${String(l.item_code)}|${String(l.variant_key ?? '')}`, day(l.received_at));
   for (const m of moves.data ?? []) {
@@ -304,10 +378,10 @@ procurementOverview.get('/', async (c) => {
     return [{ warehouse: whCode.get(String(m.warehouse_id)) ?? '—', category: catOf(m), costSen: num(m.total_cost_sen), zeroCost: !num(m.total_cost_sen) }];
   });
   const periodSos = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('mfg_sales_orders')
-    .select('doc_no').gte('so_date', from).lte('so_date', to).not('status', 'in', '("DRAFT","CANCELLED")'), c).order('doc_no').range(f, t));
+    .select('doc_no').gte('so_date', from).lte('so_date', to).not('status', 'in', '("DRAFT","CANCELLED")'), ctx).order('doc_no').range(f, t));
   if (periodSos.error) return fail('sales orders in the period', periodSos.error);
   const soLines = await chunkIn<Row>((periodSos.data ?? []).map((r) => String(r.doc_no)), (b, f, t) => scopeToCompany(sb.from('mfg_sales_order_items')
-    .select('item_code, item_group, description, qty, total_sen, cancelled').in('doc_no', b), c).order('id').range(f, t));
+    .select('item_code, item_group, description, qty, total_sen, cancelled').in('doc_no', b), ctx).order('id').range(f, t));
   /* Sellers leave out service lines (delivery, disposal, lift — not stock), and
      count a sofa by its model: KABBIN-L(RHF) and KABBIN-2A(LHF) are KABBIN. */
   const isService = (r: Row) => String(r.item_group ?? '').toLowerCase() === 'service' || String(r.item_code ?? '').toUpperCase().startsWith('SVC-')
@@ -316,7 +390,7 @@ procurementOverview.get('/', async (c) => {
   if (soLines.error) return fail('sales order lines', soLines.error);
   const soldCodes = [...new Set(soLines.data.map((r) => str(r.item_code)).filter((x): x is string => !!x && !prodCat.has(x)))];
   if (soldCodes.length) {
-    const more = await chunkIn<Row>(soldCodes, (b, f, t) => scopeToCompany(sb.from('mfg_products').select('code, category').in('code', b), c).order('code').range(f, t));
+    const more = await chunkIn<Row>(soldCodes, (b, f, t) => scopeToCompany(sb.from('mfg_products').select('code, category').in('code', b), ctx).order('code').range(f, t));
     if (more.error) return fail('products', more.error);
     for (const r of more.data) prodCat.set(String(r.code), str(r.category));
   }
@@ -340,7 +414,7 @@ procurementOverview.get('/', async (c) => {
     ),
   };
 
-  return c.json({
+  return { ok: true, body: {
     today, from, to,
     deadStock: dead,
     turnover,
@@ -354,8 +428,8 @@ procurementOverview.get('/', async (c) => {
     billed: { totalSen: (pis.data ?? []).reduce((a, r) => a + num(r.total_sen), 0), count: (pis.data ?? []).length, bySupplier: billedBySupplier, byCategory: billedByCategory },
     dueTo,
     ...procurementPeriod(lines, from, to, dueTo, today, basis),
-  });
-});
+  } };
+}
 
 /* GET /api/scm/procurement-overview/stock-ordering — how far ahead stock POs
    (raised with no customer behind them) were ordered, matched first in first

@@ -16,17 +16,19 @@ import { lookupByIds, type ExportWindow } from './document-line-export';
 import { chunkIn } from './paginate-all';
 import { filterDoList, fromDoList, orderDoList, type DoListParams } from './do-list-read';
 import { buildDoListRows, type DoListRowDeps } from './do-list-rows';
-import { doLineRemaining } from './do-line-remaining';
+import { canViewScmFinance } from './houzs-perms';
+import { doLineRemaining, type DoRemainingHeader } from './do-line-remaining';
 import { warehouseLabel } from './warehouse-label';
 import { bindingsFor } from './autocount-outbox';
 import { buildVariantSummary } from '../shared/variant-summary';
+import { isDeliveryFeeServiceCode } from '../shared/service-sku';
 import { bookSpellingOrOwn, resolveAcAgent, AC_DEBTOR_CODE } from '../../services/autocount-writeback';
 import { LOCATION_MAP } from '../../services/autocount-master-maps';
 import { bookLineItem } from '../../services/autocount-book-item';
 import type { DoBookHeader, DoListLine } from './do-line-export-columns';
 
-/* No unit_price_sen / discount_sen / line_total_sen: the file carries no money,
-   so the read does not fetch it either. */
+/* No unit_price_sen / discount_sen: the file carries no price. line_total_sen
+   is read only for a finance viewer's Transport / Storage columns (HC-0151). */
 export const DO_LINE_READ_COLS =
   'id, delivery_order_id, line_no, created_at, item_code, description, description2, variants, notes, item_group, uom, ' +
   'qty, m3_milli, line_delivery_date, so_item_id';
@@ -47,6 +49,7 @@ type LineRow = {
   m3_milli: number | string | null;
   line_delivery_date: string | null;
   so_item_id: string | null;
+  line_total_sen?: number | string | null;
 };
 
 type Res<T> = PromiseLike<{ data: T[] | null; error: { message: string } | null }>;
@@ -87,6 +90,18 @@ function lineDescription2(itemGroup: string | null, variants: unknown, stored: s
   return summary || text(stored);
 }
 
+/* HC-0151 (Finance): Transport and Storage as their own columns. Matched on the
+   line's code and description, not a code list: the catalog spells transport
+   several ways (TRANSPORTATION CHARGES, SHIPPING COST, Transport Cost, the
+   SVC-DELIVERY fees AutoCount books as TRANSPORTATION CHARGES). Goods never count. */
+export function doChargeKind(l: { item_code: string | null; description: string | null; item_group: string | null }): 'transport' | 'storage' | null {
+  if (/mattress|sofa|bedframe|accessor/i.test(l.item_group ?? '')) return null;
+  const s = `${l.item_code ?? ''} ${l.description ?? ''}`.toUpperCase();
+  if (s.includes('STORAGE')) return 'storage';
+  if (s.includes('TRANSPORT') || s.includes('SHIPPING') || isDeliveryFeeServiceCode(l.item_code)) return 'transport';
+  return null;
+}
+
 type HeaderFields = { id: string } & Record<string, unknown> & {
   do_number?: string | null;
   customer_delivery_date?: string | null;
@@ -99,11 +114,13 @@ type HeaderFields = { id: string } & Record<string, unknown> & {
 };
 
 /** Attach `lines` (DoListLine[], printed order) and the AutoCount header
- *  spellings (DoBookHeader) to each delivery order row. */
+ *  spellings (DoBookHeader) to each delivery order row. `charges` (a finance
+ *  viewer) adds each line's transport_sen / storage_sen. */
 export async function attachDoLines(
   sbIn: unknown,
   c: CompanyScopeCtx,
   rows: HeaderFields[],
+  opts: { charges: boolean },
 ): Promise<{ error: string | null; lineCount: number }> {
   const sb = sbIn as Sb;
   const ids = [...new Set(rows.map((r) => r.id))];
@@ -112,20 +129,21 @@ export async function attachDoLines(
   /* The company predicate on the LINE read too: a parent id is not company
      scope (CLAUDE.md R105 b). */
   const lineRead = await chunkIn<LineRow>(ids, (batch, from, to) =>
-    scopeToCompany(sb.from('delivery_order_items').select(DO_LINE_READ_COLS), c)
+    scopeToCompany(sb.from('delivery_order_items').select(opts.charges ? `${DO_LINE_READ_COLS}, line_total_sen` : DO_LINE_READ_COLS), c)
       .in('delivery_order_id', batch).order('delivery_order_id', { ascending: true }).order('id', { ascending: true })
       .range(from, to) as Res<never>);
   if (lineRead.error) return { error: `lines: ${lineRead.error.message}`, lineCount: 0 };
   const all = lineRead.data;
 
-  /* AutoCount's number — not in the list's HEADER select. */
-  const acNo = await lookupByIds<{ id: string; linked_ac_docno: string | null }>(ids, (batch, from, to) =>
-    scopeToCompany(sb.from('delivery_orders').select('id, linked_ac_docno'), c)
+  /* AutoCount's number — not in the list's HEADER select. The Pending ledger's
+     header columns ride the same read, so doLineRemaining does not repeat it. */
+  const acNo = await lookupByIds<DoRemainingHeader & { linked_ac_docno: string | null }>(ids, (batch, from, to) =>
+    scopeToCompany(sb.from('delivery_orders').select('id, linked_ac_docno, do_number, status, debtor_code, debtor_name'), c)
       .in('id', batch).order('id', { ascending: true }).range(from, to) as Res<never>);
   if (acNo.error) return { error: `delivery order numbers: ${acNo.error}`, lineCount: 0 };
 
   /* Invoiced / Returned / Uninvoiced — the app's own Pending ledger. Fails closed. */
-  const pending = await doLineRemaining(sb, ids, 'invoiceable');
+  const pending = await doLineRemaining(sb, ids, 'invoiceable', [...acNo.byId.values()]);
   if (!pending.ok) return { error: `invoiced quantities: ${pending.reason}`, lineCount: 0 };
 
   type SiLine = { id: string; do_item_id: string | null; sales_invoice_id: string | null };
@@ -229,11 +247,18 @@ export async function attachDoLines(
         so_doc_no: (l.so_item_id ? text(so.byId.get(l.so_item_id)?.doc_no) : null) ?? text(r.so_doc_no),
         invoice_nos: [...(invoiceNos.get(l.id) ?? [])].sort(),
         po_nos: l.so_item_id ? [...(poNosBySoItem.get(l.so_item_id) ?? [])].sort() : [],
+        ...(opts.charges ? chargeAmounts(l) : {}),
       };
     });
     Object.assign(r, book, { lines });
   }
   return { error: null, lineCount: all.length };
+}
+
+function chargeAmounts(l: LineRow): { transport_sen: number | null; storage_sen: number | null } {
+  const kind = doChargeKind(l);
+  const sen = num(l.line_total_sen) ?? 0;
+  return { transport_sen: kind === 'transport' ? sen : null, storage_sen: kind === 'storage' ? sen : null };
 }
 
 const ROW_PAGE = 100;
@@ -262,7 +287,7 @@ export async function buildDoExportRows(
   let lineCount = 0;
   for (let i = 0; i < raw.length; i += ROW_PAGE) {
     const page = await buildDoListRows(sb, c, raw.slice(i, i + ROW_PAGE), deps);
-    const attached = await attachDoLines(sb, c, page);
+    const attached = await attachDoLines(sb, c, page, { charges: canViewScmFinance(c) });
     if (attached.error) return { error: attached.error };
     lineCount += attached.lineCount;
     out.push(...page);

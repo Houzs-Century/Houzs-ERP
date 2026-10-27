@@ -84,10 +84,12 @@ import {
   type PoSupplyEntry,
 } from '../lib/ship-commitment';
 import { collectBatchClaims, openBucketStock, drawBucketStock } from '../lib/batch-claimed-stock';
+import { isOwnPoFirstGroup, openOwnPoFirst, takeOwnPoLine, settleOwnPoFirst, claimOwnReceived } from '../lib/own-po-first';
 import { loadSofaBatchStock } from '../lib/sofa-set-coverage';
 import { planSofaSets, type SofaPlan, type SofaSetLine, type SofaSetPoSupply } from '../lib/sofa-set-plan';
 import { WH_NONE, composite, loadCommittedShipments } from '../lib/committed-shipments';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
+import { MRP_DELIVERED_EMBED, compareDelivered, deliveredBySoItemFrom, readUnlinkedDoLines, type MrpDemandLine, type NettingCheck } from '../lib/mrp-delivered';
 import { pgrestInList } from '../lib/pgrest-in-list';
 import { readMfgProductBindings } from '../lib/supplier-bindings';
 import { NB_FABRIC_SERIES, NB_SUPPLIER_CODE, needsNbSupplier } from '../lib/mrp-rule-supplier';
@@ -419,6 +421,8 @@ export type UnmatchedCommitment = {
 
 export type MrpResult = {
   asOf: string;
+  /** Only with `opts.nettingCheck`: batched vs embedded delivered, per demand line. */
+  nettingCheck?: NettingCheck;
   categories: string[];
   warehouses: unknown[];
   skus: MrpSku[];
@@ -523,6 +527,8 @@ export async function computeMrp(
        is the drift this codebase keeps paying for. Making it required means a
        new caller cannot forget; pass NO_BUFFERS explicitly to opt out. */
     leadBuffers: LeadBuffers;
+    /** Diagnostic: also run the batched delivered reading and report lines that differ. */
+    nettingCheck?: boolean;
   },
 ): Promise<MrpResult> {
   const { catFilter, whFilter, includeUndated, companyId, leadBuffers } = opts;
@@ -653,17 +659,22 @@ export async function computeMrp(
   // spend read budget; ORDER BY id so the page boundaries are stable across
   // requests (paginateAll's `.range()` windows are only coherent under a total
   // order); PAGED so the plan sees every open line, not the first 1000.
-  const { data: demandRaw, error: demandErr } = await paginateAll<DemandRow>((from, to) => scoped(sb
+  // Each line's DO lines ride along (lib/mrp-delivered.ts); without them, the batched reading below.
+  const readDemand = (embedDelivered: boolean) => paginateAll<DemandRow>((from, to) => scoped(sb
     .from('mfg_sales_order_items')
     .select(`
       id, doc_no, item_code, description, item_group, variants, qty, warehouse_id, line_delivery_date, line_delivery_date_overridden, line_no, created_at, cancelled, allocated_batch_no,
-      so:mfg_sales_orders!inner ( debtor_name, status, so_date, customer_delivery_date, amended_delivery_date, processing_date, customer_state, sales_location )
+      so:mfg_sales_orders!inner ( debtor_name, status, so_date, customer_delivery_date, amended_delivery_date, processing_date, customer_state, sales_location )${embedDelivered ? `, ${MRP_DELIVERED_EMBED}` : ''}
     `)
     .eq('cancelled', false)
     .not('so.status', 'in', SO_DONE_SQL)
     .not(`so.${SO_PROCESSING_DATE_COLUMN}`, 'is', null))
     .order('id')
     .range(from, to));
+  let demandRes = await readDemand(true);
+  const deliveredEmbedded = !demandRes.error;
+  if (!deliveredEmbedded) demandRes = await readDemand(false);
+  const { data: demandRaw, error: demandErr } = demandRes;
   if (demandErr) throw new Error(`mrp_load_failed: ${demandErr.message}`);
 
   /* NO PROCESSING DATE, NO DEMAND (owner 2026-09-15, BUG-39 2026-09-29).
@@ -697,60 +708,39 @@ export async function computeMrp(
   // A partially-delivered SO keeps its header status active (the header only
   // flips to DELIVERED once EVERY line is fully covered), so already-delivered
   // lines would otherwise phantom back in as demand and over-order. Subtract
-  // delivered per line and drop any line with nothing left to fulfil. The
-  // delivered count comes from soDeliverableRemaining (same query the DO
-  // convert flow uses); its returned count is deliberately not added back.
-  //
-  /* BATCHED BY THE CALLER, and the caller is the reason. Paging the demand read
-     above changed this call's scale by more than an order of magnitude: MRP used
-     to hand over the ~700 doc numbers riding on a 1000-row demand slice, and now
-     hands over every open sales order — ~2,800 docs / ~13,900 lines in prod on
-     2026-08-16. soDeliverableRemaining puts its argument straight into
-     `.in('doc_no', …)` and then puts the resulting line ids into
-     `.in('so_item_id', …)`; those are uuids, so the un-batched form is a ~500KB
-     request line. That is a 414, not a query — the page would have gone from
-     wrong to broken.
-
-     Batching HERE rather than inside soDeliverableRemaining is deliberate. Every
-     other caller (the DO picker, the convert flow) passes a handful of docs and
-     is unaffected, so the scale problem belongs to MRP, not to the shared
-     function — and a chunk size of 200 docs reproduces almost exactly the ~1000
-     lines per call that this code path has been running against in production all
-     along, rather than inventing an untested shape for every consumer.
-
-     Safe to split because the function is already per-document internally: it
-     groups by doc_no and walks each SO's own build order ("the walk MUST run per
-     doc"), and it returns a Map keyed by mfg_sales_order_items.id, so merging the
-     partial maps is a union of disjoint key sets. */
-  /* RUN THE BATCHES CONCURRENTLY, BOUNDED (2026-08-17). This loop is the single
-     largest cost in the engine: ~2,800 open docs / 200 = ~14 batches, each of
-     which is itself ~5 sequential reads, so ~70 of the engine's ~105 round trips
-     were spent here one at a time. Nothing about them is sequential — the very
-     paragraph above establishes it, because "merging the partial maps is a union
-     of disjoint key sets" is exactly the property that makes batch order
-     irrelevant. `mapBounded` preserves INPUT order anyway, so the merge below
-     writes the same keys in the same sequence a `for` loop did; a key can only
-     be written once either way.
-
-     BOUNDED, not Promise.all: Hyperdrive pools a finite number of connections
-     and an unbounded fan-out over every batch would trade latency for pool
-     exhaustion. The bound is stated once, here, rather than defaulted inside the
-     helper — see concurrency.ts on why it is a required argument. */
+  // delivered per line and drop any line with nothing left to fulfil.
+  /* Delivered from the DO lines embedded in the demand read (lib/mrp-delivered.ts,
+     HC-0002): the number soDeliverableRemaining gives, without re-reading every
+     open order in 200-doc batches (~70 of the engine's ~90 round trips). The
+     batched reading stays as the fallback and as `nettingCheck`'s yardstick —
+     200 docs per call keeps each `.in()` request line under the gateway limit
+     (~2,800 open orders would be a ~500KB URL), and the batches run BOUNDED
+     because Hyperdrive pools a finite number of connections. */
   const demandDocNos = [...new Set(demandActive.map((d) => d.doc_no).filter(Boolean))];
-  const docBatches: string[][] = [];
-  for (let i = 0; i < demandDocNos.length; i += 200) docBatches.push(demandDocNos.slice(i, i + 200));
-  const deliverable: Awaited<ReturnType<typeof soDeliverableRemaining>> = new Map();
-  const parts = await mapBounded(docBatches, MRP_READ_CONCURRENCY, (batch) =>
-    soDeliverableRemaining(sb, batch));
-  for (const part of parts) {
-    for (const [soItemId, d] of part) deliverable.set(soItemId, d);
-  }
+  const deliveredBatched = async (): Promise<Map<string, number>> => {
+    const docBatches: string[][] = [];
+    for (let i = 0; i < demandDocNos.length; i += 200) docBatches.push(demandDocNos.slice(i, i + 200));
+    const out = new Map<string, number>();
+    for (const part of await mapBounded(docBatches, MRP_READ_CONCURRENCY, (batch) => soDeliverableRemaining(sb, batch))) {
+      for (const [soItemId, d] of part) out.set(soItemId, d.delivered);
+    }
+    return out;
+  };
+  const demandDocSet = new Set(demandDocNos);
+  const delivered = deliveredEmbedded
+    ? deliveredBySoItemFrom(demandRaw as unknown as MrpDemandLine[], demandDocSet, await readUnlinkedDoLines(sb, scoped, demandDocSet))
+    : await deliveredBatched();
   /* Delivered GROSS of returns (Sim, 2026-10-20, 2990-0011): a returned unit
      is not demand again. The rejected goods go back to stock for the next
      matching order; a customer who still wants the item gets a new SO, and
      that SO is what purchasing orders against. The stock allocator applies
      the same rule. */
-  const deliveredOf = (soItemId: string): number => Math.max(0, deliverable.get(soItemId)?.delivered ?? 0);
+  const deliveredOf = (soItemId: string): number => Math.max(0, delivered.get(soItemId) ?? 0);
+  let nettingCheck: NettingCheck | undefined;
+  if (opts.nettingCheck && deliveredEmbedded) {
+    const batched = await deliveredBatched();
+    nettingCheck = compareDelivered(demandActive, (id) => Math.max(0, batched.get(id) ?? 0), deliveredOf);
+  }
   const effQtyOf = (r: DemandRow): number => Math.max(0, r.qty - deliveredOf(r.id));
   const demand = demandActive.filter((r) => effQtyOf(r) > 0);
 
@@ -974,6 +964,11 @@ export async function computeMrp(
     boundCompany
     && !!r.so_item_id
     && (isHardBoundLine(r.item_group, r.item_code) || demandBoundById.has(String(r.so_item_id)));
+  /* Company 2 Sofa Accessory: the line's own PO before the pool (2990-0019,
+     lib/own-po-first.ts). */
+  const ownPoFirst = openOwnPoFirst(boundCompany ? [] : demand.filter((d) => isOwnPoFirstGroup(d.item_group)).map((d) => ({
+    soItemId: d.id, bucketKey: composite(d.warehouse_id ?? null, d.item_code, variantKeyOf(d.item_group, d.variants)), need: effQtyOf(d),
+  })));
   const poRaisedFor = new Map<string, Set<string>>();
   for (const r of (poRaw ?? []) as unknown as PoLineRow[]) {
     if (!r.po || PO_DEAD.has(r.po.status)) continue;
@@ -1017,15 +1012,24 @@ export async function computeMrp(
       }
       continue;   // dedicated: never free supply for another line's bucket
     }
-    if (left <= 0) continue;
     const poWh = r.warehouse_id ?? r.po.purchase_location_id ?? null;
     if (whFilter && poWh !== whFilter) continue;
     const k = composite(poWh, r.item_code, variantKeyOf(r.item_group, r.variants));
+    const open = left > 0 ? { poNumber: r.po.po_number, eta, qtyLeft: left, supplierId: r.po.supplier_id ?? null } : null;
+    if (takeOwnPoLine(ownPoFirst, r.so_item_id ? String(r.so_item_id) : null, k, Number(r.received_qty ?? 0), open)) {
+      if (open && r.po.supplier_id) poSupplierIds.add(r.po.supplier_id);
+      continue;
+    }
+    if (left <= 0) continue;
     poDrafts.push({
       bucketKey: k, poNumber: r.po.po_number, eta, qtyLeft: left, supplierId: r.po.supplier_id ?? null,
     });
     if (r.po.supplier_id) poSupplierIds.add(r.po.supplier_id);
   }
+  const ownSettled = settleOwnPoFirst(ownPoFirst);
+  for (const [soItemId, kept] of ownSettled.dedicatedByLine) dedicatedOpenByLine.set(soItemId, kept);
+  poDrafts.push(...ownSettled.pooled);
+  for (const [k, n] of ownSettled.outstandingByBucket) poOutstandingByKey.set(k, (poOutstandingByKey.get(k) ?? 0) + n);
 
   /* ── 4b. Remove what is already spoken for (2026-07-31) ─────────────────────
      Units a ship-before-arrival already owns are not supply: the receipt is
@@ -1093,6 +1097,7 @@ export async function computeMrp(
       ?? (d as unknown as Record<string, string | null>).allocatedBatchNo ?? null,
     remainingQty: effQtyOf(d),
   })));
+  claimOwnReceived(ownPoFirst, batchClaims);
 
   // Resolve PO supplier ids → names for the read-only covered-line display.
   const supplierNameById = new Map<string, string>();
@@ -1355,7 +1360,8 @@ export async function computeMrp(
       let poSupplierId: string | null = null;
       /* An unbound line still takes its OWN linked purchase order first: that PO
          left the pool because the PO side is bound (see `isDedicated`), and nothing
-         else can draw it. Company 2 dedicates nothing, so its own queue is empty. */
+         else can draw it. On company 2 only a Sofa Accessory line has one
+         (lib/own-po-first.ts), and it falls through to the pool for the rest. */
       const queues = bound
         ? [dedicatedOpenByLine.get(r.id) ?? []]
         : [dedicatedOpenByLine.get(r.id) ?? [], poQueue];
@@ -1646,6 +1652,7 @@ export async function computeMrp(
 
   return {
     asOf: new Date().toISOString(),
+    ...(nettingCheck ? { nettingCheck } : {}),
     categories: [...categorySet].sort(),
     warehouses: warehouses ?? [],
     skus,
@@ -1942,7 +1949,7 @@ mrp.get('/', async (c) => {
       const snap = await readMrpSnapshot(sb, companyId);
       if (snap) return c.json({ ...snap.result, computedAt: snap.computedAt, stored: true });
     }
-    const result = await computeMrp(sb, { catFilter, whFilter, includeUndated, companyId, leadBuffers: await loadLeadBuffers(c.env.DB) });
+    const result = await computeMrp(sb, { catFilter, whFilter, includeUndated, companyId, leadBuffers: await loadLeadBuffers(c.env.DB), nettingCheck: c.req.query('nettingCheck') === '1' });
     return c.json({ ...result, computedAt: new Date().toISOString(), stored: false });
   } catch (e) {
     return c.json({ error: 'load_failed', reason: e instanceof Error ? e.message : String(e) }, 500);

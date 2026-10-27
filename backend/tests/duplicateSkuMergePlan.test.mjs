@@ -69,6 +69,82 @@ describe('HC-0141 pairs file', () => {
   });
 });
 
+describe('HC-0147 pairs file', () => {
+  const book = JSON.parse(fs.readFileSync(path.join(DATA, 'duplicate-sku-merges.json'), 'utf8'));
+  const pairs = book['HC-0147'].pairs;
+
+  it('drops the ROY typo into ROYAL for K, Q and SK, keeping the SK row ROYAL already has', () => {
+    expect(pairs.map((p) => p.drop)).toEqual(['K', 'Q', 'SK'].map((s) => `DUNLOPILLO ROY EXECUTIVE LUXE 2.0 MATT (${s})`));
+    expect(pairs.map((p) => p.keep)).toEqual([
+      'DUNLOPILLO ROYAL EXECUTIVE LUXE 2.0 MATT (K)',
+      'DUNLOPILLO ROYAL EXECUTIVE LUXE 2.0 MATT (Q)',
+      'DUNLOPILLO ROYAL EXECUTIVE LUXE2.0 MATT (SK)',
+    ]);
+  });
+
+  /* The cutover map opened these AutoCount items as the ROY codes, so the map
+     cannot carry the survivor: the ROYAL rows' own supplier bindings name the same
+     AutoCount items, and a binding the map has no candidate for wins. */
+  it('the cutover map names the dropped ROY codes, so AutoCount resolves the survivor by its binding', () => {
+    const mapping = readMappingCsv(fs.readFileSync(path.join(DATA, 'autocount-erp-mapping-1561.csv'), 'utf8'));
+    const erpCodes = new Set([...mapping.values()].map((m) => m.erp));
+    for (const p of pairs) {
+      expect(erpCodes.has(p.drop)).toBe(true);
+      expect(erpCodes.has(p.keep)).toBe(false);
+    }
+  });
+});
+
+describe('HC-0153 pairs file', () => {
+  const book = JSON.parse(fs.readFileSync(path.join(DATA, 'duplicate-sku-merges.json'), 'utf8'));
+  const pairs = book['HC-0153'].pairs;
+  const solace = pairs.filter((p) => p.drop.includes('SOLACE'));
+  const generasi = pairs.filter((p) => p.drop.includes('GENERASI'));
+  const bedframes = pairs.filter((p) => !p.drop.includes('SOLACE') && !p.drop.includes('GENERASI'));
+  const mapping = () => readMappingCsv(fs.readFileSync(path.join(DATA, 'autocount-erp-mapping-1561.csv'), 'utf8'));
+
+  /* S / SK / SP are discontinued: the kept HAPPI SLEEP SOLACE rows are INACTIVE
+     (the planner refuses that) and nothing is on the AKEMI ones. */
+  it('drops AKEMI HS SOLACE into HAPPI SLEEP SOLACE for K, Q and SS only', () => {
+    const sizes = ['K', 'Q', 'SS'];
+    expect(solace.map((p) => p.drop)).toEqual(sizes.map((s) => `AKEMI HS SOLACE MATT (${s})`));
+    expect(solace.map((p) => p.keep)).toEqual(sizes.map((s) => `HAPPI SLEEP SOLACE MATT (${s})`));
+  });
+
+  it('SOLACE keeps the code AutoCount already maps to', () => {
+    const erpCodes = new Set([...mapping().values()].map((m) => m.erp));
+    for (const p of solace) {
+      expect(erpCodes.has(p.keep)).toBe(true);
+      expect(erpCodes.has(p.drop)).toBe(false);
+    }
+  });
+
+  it('drops the plain PEBBLE GREY / SANDY BEACH bedframes into their AKEMI twins, size for size', () => {
+    expect(bedframes.map((p) => [p.drop, p.keep])).toEqual([
+      ...['K', 'Q', 'S', 'SK', 'SS'].map((s) => [`PEBBLE GREY-(${s})`, `AKEMI -PEBBLE GREY-(${s})`]),
+      ...['K', 'Q', 'S', 'SS'].map((s) => [`SANDY BEACH-(${s})`, `AKEMI -SANDY BEACH-(${s})`]),
+    ]);
+  });
+
+  /* Like HC-0147: the cutover map opened the AKBF- items as the plain codes, so
+     AutoCount resolves the AKEMI survivor by its own 400-D002 binding. */
+  it('the cutover map names the dropped bedframe codes, so AutoCount resolves the survivor by its binding', () => {
+    const erpCodes = new Set([...mapping().values()].map((m) => m.erp));
+    for (const p of bedframes) {
+      expect(erpCodes.has(p.drop)).toBe(true);
+      expect(erpCodes.has(p.keep)).toBe(false);
+    }
+  });
+
+  /* The cutover map names neither code (it carries "OTHOREST GENERASI 3.0 MATT",
+     no 20CM): AutoCount resolves the survivor by its own 400-D001 binding. */
+  it('drops GENERASI 3.0 20CM into OTHOREST GENERASI 3.0 20CM, size for size', () => {
+    expect(generasi.map((p) => [p.drop, p.keep])).toEqual(
+      ['K', 'Q', 'S', 'SS'].map((s) => [`DUNLOPILLO GENERASI 3.0 20CM MATT (${s})`, `DUNLOPILLO OTHOREST GENERASI 3.0 20CM MATT (${s})`]),
+    );
+  });
+});
+
 describe('planDuplicateSkuMerge', () => {
   it('re-keys documents and stock, leaves catalogue-side rows, and retires the dropped row', () => {
     const r = plan({

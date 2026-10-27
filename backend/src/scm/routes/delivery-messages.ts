@@ -107,7 +107,7 @@ export async function sendDeliveryMessageForDocs(
   // Address columns feed the Postage kind only; the rest read nothing extra.
   const { data: rowsRaw, error: readErr } = await scopeToAllowedCompanies(
     sb.from('mfg_sales_orders')
-      .select('doc_no, debtor_name, phone, branding, customer_delivery_date, amended_delivery_date, amend_reason, delivery_address1, delivery_address2, delivery_address3, delivery_address4, address1, address2, address3, address4, postcode, city, customer_state')
+      .select('doc_no, ref, debtor_name, phone, branding, customer_delivery_date, amended_delivery_date, amend_reason, delivery_address1, delivery_address2, delivery_address3, delivery_address4, address1, address2, address3, address4, postcode, city, customer_state')
       .in('doc_no', docNos),
     c,
   );
@@ -196,6 +196,10 @@ export async function sendDeliveryMessageForDocs(
       // resolves either, so an in-flight conversation opened under the old rule
       // is unaffected.
       ref: String(r.doc_no ?? ''),
+      // The customer Reference No. (scm.mfg_sales_orders.ref, e.g. "HC 11063"),
+      // which Connect shows on the contact's order card — distinct from `ref`
+      // (the SO doc_no). Blank on ~1/4 of SOs; Connect hides an empty field.
+      orderRef: String(r.ref ?? ''),
       branding: String(r.branding ?? ''),
       deliveryDate: payloadDate(effectiveSoDelivery(r as SoDeliveryDateRow)),
       balanceSen: balanceByDoc.get(String(r.doc_no)) ?? null,

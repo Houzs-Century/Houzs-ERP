@@ -92,7 +92,7 @@ function RequestListScreen({ onBack, onNew, onOpen }: { onBack: () => void; onNe
   const shown = rows.filter((r) =>
     filter === "all" ? true
       : filter === "waiting" ? r.status === "REQUESTED"
-        : filter === "approved" ? r.status === "APPROVED" || r.status === "PCO_ISSUED"
+        : filter === "approved" ? r.status === "APPROVED" || r.status === "PCO_ISSUED" || r.status === "PO_ISSUED"
           : r.status === "REJECTED" || r.status === "WITHDRAWN" || r.status === "CLOSED");
   const chips: Array<[Filter, string]> = [["all", "All"], ["waiting", "Waiting"], ["approved", "Approved"], ["closed", "Closed"]];
 
@@ -111,7 +111,7 @@ function RequestListScreen({ onBack, onNew, onOpen }: { onBack: () => void; onNe
           {r.request_no} · {REQUEST_TYPE_LABEL[r.request_type]} · {fmtDateOrDash(r.created_at)}{approver && r.requested_by_name ? ` · ${r.requested_by_name}` : ""}
         </div>
         <div style={{ fontSize: 11.5, marginTop: 2 }}>{r.lines.length} line{r.lines.length === 1 ? "" : "s"} · {APPLICATION_LABEL[r.application]}{r.supplier ? ` · ${r.supplier.name}` : ""}</div>
-        <div style={{ marginTop: 4 }}><StatusText r={r} />{r.pco ? <span style={{ fontSize: 11, color: "var(--mut)" }}> · {r.pco.pcNumber}</span> : null}</div>
+        <div style={{ marginTop: 4 }}><StatusText r={r} />{r.pco ? <span style={{ fontSize: 11, color: "var(--mut)" }}> · {r.pco.pcNumber}</span> : null}{r.po ? <span style={{ fontSize: 11, color: "var(--mut)" }}> · {r.po.poNumber}</span> : null}</div>
       </button>
     ));
   };
@@ -205,7 +205,7 @@ function RequestDetailScreen({ id, onBack, onEdit }: { id: string; onBack: () =>
     try {
       const res = await build.mutateAsync({ id: r.id, lineId: l.id, modelCode: code.trim() });
       const left = linesNeedingModel(res.request).length;
-      void notify({ title: `${res.sku.code} created`, body: `Model ${res.model.modelCode}. ${left === 0 ? "Every line has its SKU — raise the Purchase Consignment Order on the computer." : `${left} line${left === 1 ? "" : "s"} still need${left === 1 ? "s" : ""} a Model.`}` });
+      void notify({ title: `${res.sku.code} created`, body: `Model ${res.model.modelCode}. ${left === 0 ? "Every line has its SKU — raise the PC Order or Purchase Order on the computer." : `${left} line${left === 1 ? "" : "s"} still need${left === 1 ? "s" : ""} a Model.`}` });
     } catch { /* the mutation's own onError told the user */ }
   };
   const onClose = async () => {
@@ -237,10 +237,10 @@ function RequestDetailScreen({ id, onBack, onEdit }: { id: string; onBack: () =>
           <div style={{ fontSize: 12.5, color: "var(--red)" }}>Rejected by {r.decided_by ?? "the Purchaser"}: {r.decision_note}</div>
         )}
         {approver && needsModel(r) && (
-          <div style={{ fontSize: 12, color: "var(--mut)" }}>{pending} line{pending === 1 ? "" : "s"} ask{pending === 1 ? "s" : ""} for a Model not in the catalogue yet — build the Model and SKU on each line below, then raise the Purchase Consignment Order on the computer.</div>
+          <div style={{ fontSize: 12, color: "var(--mut)" }}>{pending} line{pending === 1 ? "" : "s"} ask{pending === 1 ? "s" : ""} for a Model not in the catalogue yet — build the Model and SKU on each line below, then raise the PC Order or Purchase Order on the computer.</div>
         )}
         {approver && mayRaisePco(r) && (
-          <div style={{ fontSize: 12, color: "var(--mut)" }}>Approved. Raise the Purchase Consignment Order from this request on the computer (PC Order New).</div>
+          <div style={{ fontSize: 12, color: "var(--mut)" }}>Approved. Raise the PC Order or Purchase Order from this request on the computer.</div>
         )}
         {row("Type", REQUEST_TYPE_LABEL[r.request_type])}
         {row("Application", APPLICATION_LABEL[r.application])}
@@ -252,6 +252,7 @@ function RequestDetailScreen({ id, onBack, onEdit }: { id: string; onBack: () =>
         {r.special_remarks && row("Remarks", r.special_remarks)}
         {r.status !== "REJECTED" && r.decided_by && row("Decided by", `${r.decided_by}${r.decision_note ? ` · ${r.decision_note}` : ""}`)}
         {r.pco && row("PC Order", `${r.pco.pcNumber} · ${r.pco.status.toLowerCase().replace("_", " ")}`)}
+        {r.po && row("Purchase Order", `${r.po.poNumber} · ${r.po.status.toLowerCase().replace("_", " ")}`)}
       </div>
       {r.lines.map((l) => (
         <div key={l.id} className="card" style={{ padding: 12, display: "flex", flexDirection: "column", gap: 4 }}>

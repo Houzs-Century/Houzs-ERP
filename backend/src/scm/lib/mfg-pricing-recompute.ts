@@ -29,6 +29,7 @@ import {
   type MfgPricingBreakdown,
   type MfgFabricTier,
   type MfgSeatHeightPrice,
+  type SpecialAddonCompartmentPriceDef,
   type SpecialAddonDef,
 } from '../shared/mfg-pricing';
 import { compareSpecialLabels } from '../shared/variant-summary';
@@ -37,6 +38,7 @@ import { pgrestInList } from './pgrest-in-list';
 import { autoDeriveEnabled } from './auto-derive-cost';
 import { resolveMfgProductCostAsOf } from './supplier-price-history';
 import { todayMyt } from './my-time';
+import { scopeToCompanyIdOrOpen } from './companyScope';
 import {
   computeSofaSellingSen,
   comboChargedPrices,
@@ -109,6 +111,11 @@ export type MfgItemForRecompute = {
   qty:            number;
   unitPriceSen: number;          // what the client SAID — to be drift-checked
   variants?:      MfgItemVariants | null;
+  /** The sofa build's compartment codes when `variants.cells` is gone — a
+   *  persisted split module line, whose siblings' item codes still name them
+   *  (tbc-update). An add-on priced by compartment reads them. Absent → the
+   *  codes come from `variants.cells`. */
+  buildCompartments?: string[];
 };
 
 export type RecomputedLine = {
@@ -381,17 +388,33 @@ export function recomputeFromSnapshot(
   const variants = item.variants ?? {};
   const specials = normalizeSpecials(variants.specials ?? variants.special);
 
+  /* A configurator sofa arrives as ONE line carrying variants.cells. Its
+     compartment codes price an add-on set "by compartment" here and, below,
+     fold the per-compartment fabric Δ (migration 0025). A persisted split
+     module line has lost its cells, so its caller passes the codes
+     (item.buildCompartments). Quick-Pick bundles and non-sofa lines have
+     neither → [] → the add-on's base and the Model-only fabric override. */
+  const sofaCells = category === 'SOFA'
+    ? (item.variants as { cells?: unknown } | null | undefined)?.cells
+    : null;
+  const buildCompartments = (Array.isArray(sofaCells)
+    ? (sofaCells as Array<{ moduleId?: unknown } | null>).map((cl) => String(cl?.moduleId ?? ''))
+    : category === 'SOFA' ? (item.buildCompartments ?? []) : [])
+    .map((code) => normalizeCompartmentCode(code))
+    .filter(Boolean);
+
   // Special Add-ons (migration 0134): build THIS line's specials pool from the
-  // special_addons defs (base sellingPriceSen + Σ chosen-choice extraSen) and use
-  // a config whose .specials/.sofaSpecials IS that pool — the pure engine then
-  // prices it unchanged. Falls back to the legacy maintenance config when no defs
-  // are passed (backward-compatible). cost path reads the pool's priceSen too.
+  // special_addons defs (base sellingPriceSen — or the build's compartment price
+  // — + Σ chosen-choice extraSen) and use a config whose .specials/.sofaSpecials
+  // IS that pool — the pure engine then prices it unchanged. Falls back to the
+  // legacy maintenance config when no defs are passed (backward-compatible).
+  // cost path reads the pool's priceSen too.
   const specialChoices =
     variants.specialChoices && typeof variants.specialChoices === 'object'
       ? (variants.specialChoices as Record<string, string[]>)
       : null;
   const specialsAddonPool = specialAddons
-    ? buildSpecialsPoolFromAddons(specialAddons, specials, specialChoices)
+    ? buildSpecialsPoolFromAddons(specialAddons, specials, specialChoices, buildCompartments)
     : null;
   const effectiveConfig: MaintenanceConfig | null =
     specialsAddonPool && config
@@ -582,10 +605,7 @@ export function recomputeFromSnapshot(
      shared computeSofaSellingSen → computeSofaPrice, so the drift gate can't
      diverge from the POS submission. Sofa lines WITHOUT cells (a backend manual
      module row) or with no loaded module prices keep the operator's price — no
-     false reject. */
-  const sofaCells = category === 'SOFA'
-    ? (item.variants as { cells?: unknown } | null | undefined)?.cells
-    : null;
+     false reject. (`sofaCells` is read at the top, with the add-ons.) */
   const canPriceSofa = Array.isArray(sofaCells) && sofaCells.length > 0 && sofaModulePrices != null;
 
   /* ── BUILD COST = Σ module costs (audit 2026-06-11 C2) ─────────────────────
@@ -651,11 +671,9 @@ export function recomputeFromSnapshot(
     ? (modelFabricOverrides.get(product.model_id) ?? null)
     : null;
   // migration 0025 — fold the Model override with any matching per-compartment
-  // Δ (MAX per tier) over the custom build's cells. Quick-Pick / non-sofa lines
-  // have no cells → empty list → resolve returns the Model override unchanged.
-  const buildCompartments = (category === 'SOFA' && Array.isArray(sofaCells))
-    ? (sofaCells as Array<{ moduleId?: unknown }>).map((cl) => String(cl?.moduleId ?? '')).filter(Boolean)
-    : [];
+  // Δ (MAX per tier) over the custom build's cells (`buildCompartments`, read at
+  // the top). Quick-Pick / non-sofa lines have no cells → empty list → resolve
+  // returns the Model override unchanged.
   const modelOverride = resolveFabricTierOverride(
     buildCompartments,
     baseModelOverride,
@@ -864,17 +882,34 @@ export async function loadProductsByCodes(sb: any, codes: Array<string | null | 
  *  option-group extraSen) instead of the legacy maintenance_config.specials pool.
  *  Returns [] on empty/error (recompute then prices any picked codes at 0 — no
  *  crash, no reject). */
-export async function loadSpecialAddons(sb: any): Promise<SpecialAddonDef[]> {
-  const { data } = await sb
-    .from('special_addons')
-    .select('code, selling_price_sen, cost_price_sen, option_groups')
+export async function loadSpecialAddons(
+  sb: any,
+  companyId: number | null | undefined,
+): Promise<SpecialAddonDef[]> {
+  // Codes repeat across companies and the pool is keyed by code (HC-0134).
+  const { data } = await scopeToCompanyIdOrOpen(
+    sb.from('special_addons').select('code, selling_price_sen, cost_price_sen, option_groups, compartment_prices'),
+    companyId,
+  )
     .eq('active', true);
   return ((data as any[]) ?? []).map((r) => ({
-    code:            r.code,
-    sellingPriceSen: r.selling_price_sen ?? 0,
-    costPriceSen:    r.cost_price_sen ?? 0,
-    optionGroups:    Array.isArray(r.option_groups) ? r.option_groups : [],
+    code:              r.code,
+    sellingPriceSen:   r.selling_price_sen ?? 0,
+    costPriceSen:      r.cost_price_sen ?? 0,
+    optionGroups:      Array.isArray(r.option_groups) ? r.option_groups : [],
+    compartmentPrices: compartmentPricesFromRow(r.compartment_prices),
   }));
+}
+
+/** `special_addons.compartment_prices` (jsonb) → pricing rows, canonical codes.
+ *  The route validates on write; this keeps a malformed entry from pricing. */
+export function compartmentPricesFromRow(raw: unknown): SpecialAddonCompartmentPriceDef[] {
+  if (!Array.isArray(raw)) return [];
+  return (raw as Array<{ compartment?: unknown; sellingPriceSen?: unknown } | null>).flatMap((e) => {
+    const compartment = normalizeCompartmentCode(String(e?.compartment ?? ''));
+    const sellingPriceSen = Number(e?.sellingPriceSen);
+    return compartment && Number.isInteger(sellingPriceSen) ? [{ compartment, sellingPriceSen }] : [];
+  });
 }
 
 /** Load a Model's sofa module SELLING prices (per-Model module→sen map) from
@@ -1006,10 +1041,15 @@ export async function loadFabricsByCodes(sb: any, codes: Array<string | null | u
 /** Load the master maintenance config in effect today (MYT): newest
  *  effective_from <= today, latest save wins a same-day tie. Same pick as
  *  GET /maintenance-config/resolved, so a future-dated change can't price early. */
-export async function loadMaintenanceConfig(sb: any): Promise<MaintenanceConfig | null> {
-  const { data } = await sb
-    .from('maintenance_config_history')
-    .select('config')
+export async function loadMaintenanceConfig(
+  sb: any,
+  companyId: number | null | undefined,
+): Promise<MaintenanceConfig | null> {
+  // Unscoped, the newest master row of ANY company priced the SO (HC-0134).
+  const { data } = await scopeToCompanyIdOrOpen(
+    sb.from('maintenance_config_history').select('config'),
+    companyId,
+  )
     .eq('scope', 'master')
     .lte('effective_from', todayMyt())
     .order('effective_from', { ascending: false })
@@ -1194,7 +1234,7 @@ export async function recomputeOneLine(
   companyId: number | null | undefined,
   opts?: { trustOperatorSelling?: TrustSelling; asOf?: string | null },
 ): Promise<RecomputedLine> {
-  const config = cachedConfig ?? await loadMaintenanceConfig(sb);
+  const config = cachedConfig ?? await loadMaintenanceConfig(sb, companyId);
   const [productLoaded, fabric, sellingTiers, fabricAddonConfig, modelOverrides, compartmentOverrides] = await Promise.all([
     loadProductByCode(sb, item.itemCode, companyId),
     loadFabricByCode(sb, item.variants?.fabricCode ?? null),

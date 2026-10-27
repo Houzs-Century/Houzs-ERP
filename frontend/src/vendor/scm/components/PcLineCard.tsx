@@ -35,6 +35,7 @@ import { Trash2 } from 'lucide-react';
 import type { MfgProductRow, MaintenanceConfig } from '../lib/mfg-products-queries';
 import { mfgCategoryLabel } from '../lib/mfg-products-queries';
 import type { BindingRow, MaterialKind } from '../lib/suppliers-queries';
+import { pickableBindings } from '../lib/pickable-bindings';
 import type { FabricLite } from '../lib/fabric-queries';
 import type { Warehouse } from '../lib/inventory-queries';
 import { PcVariantEditor } from './PcVariantEditor';
@@ -156,6 +157,7 @@ export const PcLineCard = ({
   // The whole card's `disabled` (locked doc) wins over everything; identityLocked
   // additionally freezes the identity + variant inputs on a sourced line.
   const identityLocked = disabled || identityReadOnly;
+  const pickable = pickableBindings(bindings, allSkus);
 
   return (
     <div data-grid-row
@@ -230,7 +232,7 @@ export const PcLineCard = ({
             onChange={(e) => {
               const code = e.target.value;
               const match = supplierId
-                ? bindings.find((b) => b.item_code === code)
+                ? pickable.find((b) => b.item_code === code)
                 : undefined;
               if (match) { onPickBinding(match); return; }
               const sku = allSkus.find((p) => p.code === code);
@@ -247,8 +249,8 @@ export const PcLineCard = ({
             style={{ fontFamily: 'var(--font-mono)' }}
           />
           <datalist id={`pc-bindings-${l.rid}`}>
-            {supplierId && bindings.length > 0
-              ? bindings.map((b) => (
+            {supplierId && pickable.length > 0
+              ? pickable.map((b) => (
                   <option key={b.id} value={b.item_code}>
                     {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_sen, b.currency)}
                   </option>
@@ -271,7 +273,7 @@ export const PcLineCard = ({
             onChange={(e) => {
               const sku = e.target.value;
               if (supplierId) {
-                const match = bindings.find((b) => b.supplier_sku === sku);
+                const match = pickable.find((b) => b.supplier_sku === sku);
                 if (match) {
                   onPickBinding(match);
                 } else {
@@ -288,7 +290,7 @@ export const PcLineCard = ({
             style={{ fontFamily: 'var(--font-mono)' }}
           />
           <datalist id={`pc-supplier-skus-${l.rid}`}>
-            {supplierId && bindings.map((b) => (
+            {supplierId && pickable.map((b) => (
               <option key={b.id} value={b.supplier_sku || ''}>
                 {b.item_code} · {b.material_name} · {fmtRm(b.unit_price_sen, b.currency)}
               </option>

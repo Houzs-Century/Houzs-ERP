@@ -24,8 +24,9 @@ import { Hono } from 'hono';
 import { describe, expect, it, vi } from 'vitest';
 
 import { fakeSb, type Row } from '../lib/fake-postgrest';
+import { docsEnteringPendingSchedule } from '../lib/pending-schedule-stays';
 import type { Env, Variables } from '../env';
-import { deliveryPlanningBoardHandler } from './delivery-planning';
+import { deliveryPlanningBoardHandler, derivePlanningState } from './delivery-planning';
 
 const so = (docNo: string, companyId: number): Row => ({
   doc_no: docNo,
@@ -212,10 +213,10 @@ describe('GET /delivery-planning — cross-company means GRANTED companies', () 
    own fake DB with the AutoCount mirror) so the shared harness above — whose SOs
    carry no linked_ac_docno and so never hit the mirror read — stays untouched. */
 describe('GET /delivery-planning — Sales Exemption Expiry Date column', () => {
-  const soLinked = (docNo: string, linkedAc: string | null): Row => ({
+  const soLinked = (docNo: string, linkedAc: string | null, frozen: string | null = null): Row => ({
     doc_no: docNo, company_id: 1, debtor_code: 'C1', debtor_name: 'A Customer',
     status: 'CONFIRMED', delivery_state: null, customer_state: 'Selangor', customer_country: 'Malaysia',
-    customer_delivery_date: '2026-09-01', processing_date: '2026-08-20',
+    customer_delivery_date: '2026-09-01', sales_exemption_expiry: frozen, processing_date: '2026-08-20',
     local_total_sen: 100_000, balance_sen: 0, linked_ac_docno: linkedAc,
   });
   const line = (docNo: string, id: string): Row => ({
@@ -226,7 +227,7 @@ describe('GET /delivery-planning — Sales Exemption Expiry Date column', () => 
     const sb = fakeSb({
       warehouses: [],
       mfg_sales_orders: [
-        soLinked('HC-SO-2608-001', 'SO-000111'), // linked, book has an expiry
+        soLinked('HC-SO-2608-001', 'SO-000111', '2026-06-30'), // linked; book expiry + a frozen original date
         soLinked('HC-SO-2608-002', 'SO-000222'), // linked, book has NO expiry
         soLinked('HC-SO-2608-003', null),        // not in AutoCount at all
       ],
@@ -261,6 +262,19 @@ describe('GET /delivery-planning — Sales Exemption Expiry Date column', () => 
     expect(byDoc['HC-SO-2608-001']).toBe('2026-12-31'); // the real exemption date, NOT the delivery date 2026-09-01
     expect(byDoc['HC-SO-2608-002']).toBeNull();          // linked but the book carries no expiry
     expect(byDoc['HC-SO-2608-003']).toBeNull();          // not in AutoCount
+  });
+
+  /* Owner 2026-10-22: the board also carries the FROZEN original delivery date
+     (sales_exemption_expiry) so the frontend's "Sales Exemption Expiry Date"
+     column can show it via soExemptionExpiryOf — the SAME value the SO list shows. */
+  it('carries the frozen original delivery date (sales_exemption_expiry) on the SO row', async () => {
+    const res = await build().request('/delivery-planning');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { orders?: Array<{ so_doc_no: string; sales_exemption_expiry?: string | null }> };
+    const byDoc = Object.fromEntries((body.orders ?? []).map((o) => [o.so_doc_no, o.sales_exemption_expiry ?? null]));
+    expect(byDoc['HC-SO-2608-001']).toBe('2026-06-30'); // the frozen original, independent of the book expiry 2026-12-31
+    expect(byDoc['HC-SO-2608-002']).toBeNull();
+    expect(byDoc['HC-SO-2608-003']).toBeNull();
   });
 });
 
@@ -380,7 +394,7 @@ describe('GET /delivery-planning — the ASSR / DP / project sub-boards union on
     const res = await build().request('/delivery-planning', undefined, { DB: fakeD1 } as never);
     expect(res.status).toBe(200);
     type Crew = { driver_1_name: string | null; driver_1_contact: string | null; helper_1_name: string | null; helper_2_name: string | null; lorry_plate: string | null } | null;
-    const body = (await res.json()) as { orders?: Array<{ row_type: string; so_doc_no: string; ref: string | null; dp_no: string | null; branding: string | null; delivery_state: string | null; crew: Crew }> };
+    const body = (await res.json()) as { orders?: Array<{ row_type: string; so_doc_no: string; ref: string | null; dp_no: string | null; branding: string | null; delivery_state: string | null; customer_delivery_date: string | null; amended_delivery_date: string | null; crew: Crew }> };
     const byType = (t: string) => (body.orders ?? []).filter((o) => o.row_type === t);
     expect(byType('so').map((o) => o.so_doc_no)).toEqual(['HC-SO-2608-001']);
     expect(byType('assr')).toHaveLength(1);       // the fake ASSR union row, delivery leg
@@ -392,7 +406,13 @@ describe('GET /delivery-planning — the ASSR / DP / project sub-boards union on
     // whose date has already passed is done, while an OPEN service case is still
     // pending (and a dated DP job that is not yet delivered is pending too).
     expect(byType('project')[0]?.delivery_state).toBe('DELIVERED'); // setup 2026-09-10 is in the past
-    expect(byType('assr')[0]?.delivery_state).toBe('PENDING_DELIVERY'); // OPEN case, no closed_at
+    // Owner 2026-10-26: Service's date is a request until Logistics confirms it.
+    expect(byType('assr')[0]?.delivery_state).toBe('PENDING_SCHEDULE'); // OPEN case, nothing confirmed
+    // Owner 2026-10-22: an ASSR row carries its SERVICE date in customer_delivery_date
+    // (shown in the "Sales Exemption Expiry Date" column) and leaves "Delivery Date"
+    // (amended_delivery_date) blank for admin to propose.
+    expect(byType('assr')[0]?.customer_delivery_date).toBe('2026-09-05'); // the seeded do_date leg
+    expect(byType('assr')[0]?.amended_delivery_date).toBeNull();
     // Crew (driver + phone, both helpers, lorry) is pulled from the per-phase crew
     // JSON and OVERRIDES the stale scalar driver/lorry fallback (Driver A / WXX1).
     const projCrew = byType('project')[0]?.crew;
@@ -401,5 +421,125 @@ describe('GET /delivery-planning — the ASSR / DP / project sub-boards union on
     expect(projCrew?.helper_1_name).toBe('Helper One');
     expect(projCrew?.helper_2_name).toBe('Helper Two');
     expect(projCrew?.lorry_plate).toBe('VRH1');
+  });
+});
+
+/* Owner 2026-10-26: 7 of 2,331 SOs came back twice (and as many not at all). The
+   header read paged on customer_delivery_date alone, which ties, so pages overlapped. */
+describe('GET /delivery-planning — the SO header read pages on a total order', () => {
+  it('orders by doc_no after the delivery date', async () => {
+    const orders: string[] = [];
+    const sb = fakeSb({
+      warehouses: [], mfg_sales_orders: [so('HC-SO-2608-001', 1)],
+      mfg_sales_order_items: [soLine('HC-SO-2608-001', 'li-1')], delivery_order_items: [], delivery_orders: [],
+    }, {});
+    const spy = (q: Record<string, unknown>): unknown => new Proxy(q, {
+      get: (t, prop) => {
+        const v = (t as Record<string | symbol, unknown>)[prop];
+        if (typeof v !== 'function') return v;
+        return (...args: unknown[]) => {
+          if (prop === 'order') orders.push(String(args[0]));
+          const r = (v as (...a: unknown[]) => unknown).apply(t, args);
+          return r === t ? spy(t) : r;
+        };
+      },
+    });
+    const client = { from: (t: string) => (t === 'mfg_sales_orders' ? spy(sb.from(t) as unknown as Record<string, unknown>) : sb.from(t)) };
+    const app = new Hono<{ Bindings: Env; Variables: Variables }>();
+    app.use('*', async (c, next) => {
+      c.set('supabase', client as unknown as Variables['supabase']);
+      c.set('companyId', 1 as Variables['companyId']);
+      c.set('user', { id: 'u1' } as unknown as Variables['user']);
+      c.set('houzsUser', { id: 9, name: 'Tester', permissions_set: new Set(['*']) } as unknown as Variables['houzsUser']);
+      await next();
+    });
+    app.get('/delivery-planning', deliveryPlanningBoardHandler);
+    expect((await app.request('/delivery-planning')).status).toBe(200);
+    expect(orders.slice(0, 2)).toEqual(['customer_delivery_date', 'doc_no']);
+  });
+});
+
+/* Owner 2026-10-26: right-click "Move to Pending Schedule" arranges an order before
+   its goods are ready; once it is delivered it must still leave the queue. */
+describe('derivePlanningState — a manual Pending Schedule', () => {
+  const base = { status: 'CONFIRMED', readiness: { isShipReady: false }, effectiveDD: '2026-10-27', today: '2026-10-26' };
+  it('puts a not-ready (even overdue) order in Pending Schedule', () => {
+    expect(derivePlanningState({ ...base, storedOverride: null, delivered: 0, remaining: 1 })).toBe('OVERDUE');
+    expect(derivePlanningState({ ...base, storedOverride: 'PENDING_SCHEDULE', delivered: 0, remaining: 1 })).toBe('PENDING_SCHEDULE');
+  });
+  it('gives way to Delivered', () => {
+    expect(derivePlanningState({ ...base, storedOverride: 'PENDING_SCHEDULE', delivered: 1, remaining: 0 })).toBe('DELIVERED');
+  });
+});
+
+/* Owner 2026-10-26: 「如果进到来 pending schedule 就不要出去了」 - the board stamps an
+   order the first time it reaches Pending Schedule, so a later stock move cannot
+   drop it back to Pending Delivery / Overdue on its own. */
+describe('GET /delivery-planning — an order that reaches Pending Schedule stays there', () => {
+  it('stamps the override on a ready order, and only for the office view', async () => {
+    const rows = { warehouses: [], mfg_sales_orders: [so('HC-SO-2608-001', 1)], mfg_sales_order_items: [soLine('HC-SO-2608-001', 'li-1')], delivery_order_items: [], delivery_orders: [] };
+    const sb = fakeSb(rows, {});
+    const app = new Hono<{ Bindings: Env; Variables: Variables }>();
+    app.use('*', async (c, next) => {
+      c.set('supabase', sb as unknown as Variables['supabase']);
+      c.set('companyId', 1 as Variables['companyId']);
+      c.set('user', { id: 'u1' } as unknown as Variables['user']);
+      c.set('houzsUser', { id: 9, name: 'Tester', permissions_set: new Set(['*']) } as unknown as Variables['houzsUser']);
+      await next();
+    });
+    app.get('/delivery-planning', deliveryPlanningBoardHandler);
+    const body = (await (await app.request('/delivery-planning')).json()) as { orders: Array<{ so_doc_no: string; delivery_state: string; delivery_state_override: string | null }> };
+    const row = body.orders.find((o) => o.so_doc_no === 'HC-SO-2608-001')!;
+    expect(row.delivery_state).toBe('PENDING_SCHEDULE');
+    expect(row.delivery_state_override).toBe('PENDING_SCHEDULE');
+    const stored = await sb.from('mfg_sales_orders').select('doc_no, delivery_state').eq('doc_no', 'HC-SO-2608-001');
+    expect((stored.data as Array<{ delivery_state: string | null }>)[0]?.delivery_state).toBe('PENDING_SCHEDULE');
+  });
+
+  it('only stamps SO rows that are in Pending Schedule without an override', () => {
+    expect(docsEnteringPendingSchedule([
+      { row_type: 'so', so_doc_no: 'A', delivery_state: 'PENDING_SCHEDULE', delivery_state_override: null },
+      { row_type: 'so', so_doc_no: 'B', delivery_state: 'PENDING_DELIVERY', delivery_state_override: null },
+      { row_type: 'so', so_doc_no: 'C', delivery_state: 'PENDING_SCHEDULE', delivery_state_override: 'PENDING_SCHEDULE' },
+      { row_type: 'assr', so_doc_no: 'D#delivery', delivery_state: 'PENDING_SCHEDULE', delivery_state_override: null },
+    ])).toEqual(['A']);
+  });
+});
+
+/* 2026-10-26: state=OPEN skips the per-order reads for status-DELIVERED orders
+   and still counts them on the Delivered badge. */
+describe('GET /delivery-planning?state=OPEN', () => {
+  it('leaves a delivered order out of the rows and in the Delivered count', async () => {
+    const delivered = { ...so('HC-SO-2608-009', 1), status: 'DELIVERED' };
+    const sb = fakeSb({ warehouses: [], mfg_sales_orders: [so('HC-SO-2608-001', 1), delivered], mfg_sales_order_items: [soLine('HC-SO-2608-001', 'li-1'), soLine('HC-SO-2608-009', 'li-9')], delivery_order_items: [], delivery_orders: [] }, {});
+    const app = new Hono<{ Bindings: Env; Variables: Variables }>();
+    app.use('*', async (c, next) => {
+      c.set('supabase', sb as unknown as Variables['supabase']);
+      c.set('companyId', 1 as Variables['companyId']);
+      c.set('user', { id: 'u1' } as unknown as Variables['user']);
+      c.set('houzsUser', { id: 9, name: 'Tester', permissions_set: new Set(['*']) } as unknown as Variables['houzsUser']);
+      await next();
+    });
+    app.get('/delivery-planning', deliveryPlanningBoardHandler);
+    const open = (await (await app.request('/delivery-planning?state=OPEN')).json()) as { orders: Array<{ so_doc_no: string }>; counts: Record<string, number>; delivered_by_region: Record<string, number> };
+    const all = (await (await app.request('/delivery-planning')).json()) as { counts: Record<string, number> };
+    expect(open.orders.map((o) => o.so_doc_no)).toEqual(['HC-SO-2608-001']);
+    expect(open.counts.DELIVERED).toBe(all.counts.DELIVERED);
+    expect(open.counts.ALL).toBe(all.counts.ALL);
+    expect(Object.values(open.delivered_by_region).reduce((a, b) => a + b, 0)).toBe(1);
+  });
+});
+
+/* 2026-10-27, owner option A: after an edit the board re-reads only the edited
+   order (?docs=) instead of the whole board. */
+describe('GET /delivery-planning?docs=', () => {
+  it('rebuilds only the named SO rows', async () => {
+    const { status, body } = await get(harness({}), '?docs=HC-SO-2608-002');
+    expect(status).toBe(200);
+    expect((body.orders ?? []).map((o) => o.so_doc_no)).toEqual(['HC-SO-2608-002']);
+  });
+  it('an empty list reads nothing', async () => {
+    const { body } = await get(harness({}), '?docs=');
+    expect(body.orders).toEqual([]);
   });
 });

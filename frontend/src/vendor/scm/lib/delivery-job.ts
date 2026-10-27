@@ -1,6 +1,7 @@
 /* One delivery-run job, as both the phone run-sheet and the desktop job panel
    see it: its /delivery-jobs address, its label, and what the crew / office is
    shown for it by job type. Shared so the two screens cannot drift. */
+import { fmtDateTime } from "@2990s/shared";
 
 export type JobRef = { sourceType: "dp" | "project" | "assr"; sourceId: string; leg: string };
 
@@ -52,8 +53,16 @@ export type JobCtx = Record<string, unknown> & { kind: string; title?: string | 
 export type JobResponse = { job: JobRef & { trip_id: string | null }; context: JobCtx; progress: JobProgress | null; people?: Record<string, string> };
 
 export const str = (v: unknown): string | null => (v == null || v === "" ? null : String(v));
-export const hm = (iso: string | null | undefined) =>
-  iso ? new Date(iso).toLocaleString("en-GB", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" }) : null;
+/* The app's one date-time format, "2026/10/26 13:00" (24-hour, Malaysian time).
+   Was en-GB in the viewer's zone, which printed "26/10, 13:00" (owner 2026-10-26). */
+export const hm = (iso: string | null | undefined) => (iso ? fmtDateTime(iso) : null);
+
+/** "2026/10/26 10:00 – 18:00"; the end keeps its date only when it is another day. */
+export const windowLabel = (start: string | null, end: string | null): string | null => {
+  const a = hm(start); const b = hm(end);
+  if (a && b) return `${a} – ${b.slice(0, 10) === a.slice(0, 10) ? b.slice(11) : b}`;
+  return a ?? b;
+};
 
 /* What the crew needs to see, by job type (owner, 2026-10-08). */
 export function detailRows(c: JobCtx): Array<[string, string | null]> {
@@ -64,7 +73,7 @@ export function detailRows(c: JobCtx): Array<[string, string | null]> {
   switch (c.kind) {
     case "SETUP": case "DISMANTLE":
       return [["Venue", str(c.venue)], ...common, ["Booth", str(c.booth_no)], ["Size (sqm)", str(c.size_sqm)],
-        ["Window", [hm(str(c.window_start)), hm(str(c.window_end))].filter(Boolean).join(" – ") || null],
+        ["Window", windowLabel(str(c.window_start), str(c.window_end))],
         ["Organizer / brand", [str(c.organizer), str(c.brand)].filter(Boolean).join(" · ") || null],
         ["Contractor", str(c.contractor)], ["Remark", str(c.remark)]];
     case "customer_pickup": case "inspection": case "delivery":

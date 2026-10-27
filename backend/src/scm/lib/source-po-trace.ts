@@ -96,7 +96,7 @@ const freeze = (m: Map<string, MutableTrace>): Map<string, BucketTrace> => {
 /* Resolve GRN ids → their PO numbers (the read-time twin of the durable
    backfill). Company is NOT filtered here: the caller's DO set already scopes
    the lots, and a lot's GRN is by construction the same company's. */
-async function poNumbersByGrnId(sb: any, grnIds: string[]): Promise<Map<string, string>> {
+export async function poNumbersByGrnId(sb: any, grnIds: string[]): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   const ids = [...new Set(grnIds.filter(Boolean))];
   if (ids.length === 0) return out;

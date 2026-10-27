@@ -50,6 +50,8 @@ import {
 } from "../../lib/activeCompany";
 import { ComposeDialog } from "./Compose";
 import { MailThread } from "./Thread";
+import { PendingAcks } from "./mail-acks";
+import { FolderItem, MyMailboxNav, VisibilityPanel } from "./mail-sidebar";
 import {
   subscribe as subscribeLocal,
   getSnapshot as getLocalSnapshot,
@@ -191,6 +193,7 @@ type Folder =
   | "inbox"
   | "starred"
   | "sent"
+  | "sentbyme"
   // Auto-sent system notices (the outbox_emails log) — Delivery Order /
   // Invoice / CN / PO notices the system sends from a noreply sender, so there
   // is no human "Sent" copy to read. Rendered by its own OutboxPanel, not the
@@ -1011,6 +1014,7 @@ export function MailInbox() {
     if (apiStatus !== "all") p.set("status", apiStatus);
     if (folder === "starred") p.set("starred", "1");
     if (folder === "sent") p.set("sent", "1");
+    if (folder === "sentbyme") p.set("sentBy", "me");
     if (filter.kind === "mailbox") p.set("mailbox", filter.value);
     if (filter.kind === "dept") {
       const addrs = addressesByDept.get(filter.value);
@@ -1488,6 +1492,18 @@ export function MailInbox() {
             </p>
           )}
 
+          <MyMailboxNav
+            folder={folder}
+            mailbox={filter.kind === "mailbox" ? filter.value : null}
+            unread={(a) => unreadByMailbox.get(a) ?? 0}
+            drafts={drafts.length}
+            onPick={(pick, address) => {
+              setLabelFilter(null);
+              setFolder(pick);
+              setFilter(pick === "inbox" ? { kind: "mailbox", value: address } : { kind: "all" });
+            }}
+          />
+
           {/* FOLDERS */}
           <nav className="space-y-0.5">
             <FolderItem icon={InboxIcon} label="Inbox" active={folder === "inbox"} badge={folderCounts.inboxUnread}
@@ -1507,6 +1523,7 @@ export function MailInbox() {
             <FolderItem icon={Layers} label="All mail" active={folder === "all"}
               onClick={() => { setFolder("all"); setLabelFilter(null); }} />
           </nav>
+          <PendingAcks onOpen={setSelectedId} />
 
           {/* LABELS */}
           <div className="space-y-0.5">
@@ -1604,6 +1621,7 @@ export function MailInbox() {
               </>
             )}
           </div>
+          <VisibilityPanel />
         </aside>
 
         {/* MIDDLE+RIGHT — "Auto-sent" renders the read-only outbox panel across
@@ -2308,54 +2326,6 @@ function SegButton({
     >
       <Icon className="h-3.5 w-3.5" />
       {label}
-    </button>
-  );
-}
-
-// ── Folder row ──────────────────────────────────────────────────────────────
-function FolderItem({
-  icon: Icon,
-  label,
-  active,
-  badge,
-  badgeTone = "accent",
-  onClick,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  active: boolean;
-  badge?: number;
-  badgeTone?: "accent" | "muted";
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm transition",
-        active ? "bg-accent-soft font-semibold text-primary-ink" : "text-ink/80 hover:bg-surface-dim",
-      )}
-    >
-      <span className="flex min-w-0 items-center gap-2.5">
-        <Icon className={cn("h-4 w-4 shrink-0", active ? "text-primary" : "text-ink-muted/60")} />
-        <span className="truncate">{label}</span>
-      </span>
-      {badge !== undefined && badge > 0 && (
-        <span
-          className={cn(
-            "shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
-            badgeTone === "accent"
-              ? active
-                ? "bg-primary/20 text-primary-ink"
-                : "bg-accent-soft text-primary-ink"
-              : active
-                ? "bg-primary/20 text-primary-ink"
-                : "bg-surface-dim text-ink-muted",
-          )}
-        >
-          {badge}
-        </span>
-      )}
     </button>
   );
 }

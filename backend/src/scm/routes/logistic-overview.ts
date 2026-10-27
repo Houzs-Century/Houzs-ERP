@@ -8,12 +8,13 @@
    owe money (the sheet's "Overdue balance > 30 days"), and DOs never closed
    or carrying no cost.
    Company scope: every read is scoped to the active company. */
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { scopeToCompany } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
+import { serveSwr, type SwrBuild } from '../lib/kv-swr';
 import { logisticPeriod, regionOf, type PeriodDo, type DoCatLine } from '../lib/logistic-period';
 import { DO_NOT_DELIVERED_IN_LIST, DO_STOCK_OUT_STATES } from '../shared/do-shipped-states';
 
@@ -37,7 +38,13 @@ export function mondayOf(day: string): string {
   return iso(t - dow * DAY);
 }
 
-logisticOverview.get('/', async (c) => {
+/* HC-0002: every open of the home Overview and Logistic Overview ran this
+   (12 stages, ~1.2 s on prod). Served stale-while-revalidate from KV
+   (lib/kv-swr.ts), keyed by company, day and the query. Up to 5 minutes old. */
+logisticOverview.get('/', (c) =>
+  serveSwr(c, { family: 'logov', parts: [todayMyt(), c.req.query('warehouse') ?? '', c.req.query('from') ?? '', c.req.query('to') ?? ''], softSeconds: 5 * 60, hardSeconds: 2 * 60 * 60, build: () => buildLogisticOverview(c) }));
+
+async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Variables }>): Promise<SwrBuild> {
   const sb = c.get('supabase');
   const today = todayMyt();
   /* ?warehouse=<id>: delivery orders and lorry runs of that warehouse only;
@@ -49,7 +56,7 @@ logisticOverview.get('/', async (c) => {
   const thisMonday = mondayOf(today);
   const firstWeek = iso(Date.parse(`${thisMonday}T00:00:00Z`) - 8 * 7 * DAY);
   const yearAgo = `${iso(Date.parse(`${today.slice(0, 7)}-01T00:00:00Z`) - 330 * DAY).slice(0, 7)}-01`;
-  const fail = (what: string, e: { message: string }) => c.json({ error: 'load_failed', reason: `${what}: ${e.message}` }, 500);
+  const fail = (what: string, e: { message: string }): SwrBuild => ({ ok: false, status: 500, body: { error: 'load_failed', reason: `${what}: ${e.message}` } });
 
   const dos = await paginateAll<Row>((f, t) => scopeToCompany(byWh(sb.from('delivery_orders')
     .select('id, do_date, delivered_at, status, local_total_sen').gte('do_date', yearAgo)
@@ -182,7 +189,7 @@ logisticOverview.get('/', async (c) => {
     })),
   };
 
-  return c.json({
+  return { ok: true, body: {
     today, thisMonday,
     period,
     doNotClosed, doNoCost,
@@ -190,5 +197,5 @@ logisticOverview.get('/', async (c) => {
     months: [...months.values()].sort((a, b) => a.month.localeCompare(b.month)),
     deliveredOwing: outstanding,
     deliveredOwingOver30: overdue30,
-  });
-});
+  } };
+}

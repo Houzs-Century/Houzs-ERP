@@ -72,13 +72,16 @@ import { todayMyt } from '../lib/my-time';
 import { attachLineCategories } from '../lib/so-readiness-category';
 import { deriveBranding } from '../lib/so-display-branding';
 /* chunkIn on every id/doc-no filter: the list rides in the URL and an unbounded one is refused. */
+import { docsEnteringPendingSchedule, stampPendingSchedule } from '../lib/pending-schedule-stays';
+import { boardSlice, splitDeliveredForOpen, addSkippedDelivered, parseOnlyDocs, onlyDocsFilter } from '../lib/delivery-board-slice';
+import { boardChangesHandler } from './delivery-planning-changes';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { attachBoardAcExemptionExpiry } from '../lib/ac-exemption-expiry';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { summariseReadiness, normCategory, type ReadinessLine } from '../lib/so-readiness';
 import { effectiveSoDelivery } from '../shared';
 import { readinessRowFields, NO_STOCK_ROW } from '../lib/so-readiness-row';
-import { kickOffBoardReads, kickOffSubBoardReads, flattenProjectCrew } from '../lib/delivery-planning-board-reads';
+import { kickOffBoardReads, kickOffSubBoardReads, flattenProjectCrew, SUB_BOARD_SKIPPED } from '../lib/delivery-planning-board-reads';
 import { readFailure, noteDegradedRead } from '../lib/read-failure';
 import { soProcessingLocked } from './mfg-sales-orders';
 import { soPoLocked, soPoLockedMany } from '../lib/so-po-lock';
@@ -86,7 +89,7 @@ import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMa
 /* Service-Case rows on this board are company-scoped (owner ruling 2026-08-21).
    Both statements live in ONE module, with the reasoning, so the predicate is
    assertable and cannot be re-derived by hand here. */
-import { assrBoardLocation, assrOpenCaseGuardSql, ASSR_BOARD_LEGS } from '../lib/assr-board-scope';
+import { assrBoardLocation, assrOpenCaseGuardSql, ASSR_BOARD_LEGS, ASSR_CONFIRMED_COL, assrBoardLegs, assrCaseClosed } from '../lib/assr-board-scope';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
@@ -106,7 +109,7 @@ import { dateOrNull } from '../lib/date-coerce';
 import { echoTripCrew } from '../lib/trip-crew-echo';
 import { latestLiveDoIdForSo, applyScheduleCrew, assignSoCrew, setAssrLegCrew, staleRunOfSo, hasSeatPatch } from '../lib/trip-crew-sync';
 import { pgrestIn } from '../lib/pgrest-in-list';
-import { planningPoNosByDoc } from '../lib/planning-po-nos';
+import { planningPoNosByDoc } from '../lib/planning-po-nos'; import { stepClock } from '../../lib/step-timing';
 
 export const deliveryPlanning = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryPlanning.use('*', supabaseAuth);
@@ -287,10 +290,11 @@ export function derivePlanningState(input: {
 }): DeliveryState {
   const { storedOverride, status, readiness, delivered, remaining, effectiveDD, today } = input;
   const stored = storedOverride ?? null;
-  if (stored && (DELIVERY_STATES as string[]).includes(stored)) return stored as DeliveryState;
-
+  /* Delivered beats a manual override: an order moved early into Pending
+     Schedule must still leave the queue once it is handed over. */
   const st = String(status ?? '').toUpperCase();
   if (st === 'DELIVERED' || (delivered > 0 && remaining <= 0)) return 'DELIVERED';
+  if (stored && (DELIVERY_STATES as string[]).includes(stored)) return stored as DeliveryState;
 
   /* "Ready to ship" gate — see summariseReadiness.isShipReady. The narrowed
      parameter type above is what now keeps the wrong flag out of reach. */
@@ -379,28 +383,31 @@ const NOT_YOUR_JOB = "You can only update a delivery job assigned to you.";
    ─────────────────────────────────────────────────────────────────────────*/
 export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   const sb = c.get('supabase');
-  const today = todayMyt();
+  const today = todayMyt(); const lap = stepClock(); // HC-0002: board time as Server-Timing steps
 
   /* Per-assignee ROW SCOPE (owner rule): a Driver/Helper sees ONLY the jobs
      assigned to their own name; every dispatcher / ops / management caller keeps
      the whole board. resolveDeliveryScope narrows ONLY a policy-restricted caller
      with a resolvable fleet identity — see lib/deliveryScope.ts. `all` (the
      common case) leaves the entire assembly below untouched. */
-  const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
+  const scope = await resolveDeliveryScope(sb, c.get('houzsUser')); lap('dp-scope');
 
   const regionParam = (c.req.query('region') ?? 'ALL').trim().toUpperCase();
   const stateParam = (c.req.query('state') ?? 'ALL').trim().toUpperCase();
+  // ?docs=A,B: rebuild ONLY these SO rows (the board's after-edit row refresh), see lib/delivery-board-slice.ts.
+  const onlyDocs = parseOnlyDocs(c.req.query('docs'));
+  if (onlyDocs?.length === 0) return c.json({ orders: [], counts: emptyCounts(), regions: [] });
 
   /* 0. CONFIG-DRIVEN region model (migration 0053) — load the owner-maintained
         region master + per-state MULTI mapping once per request. regionList()
         (the tabs) + each order's region(s) derive from this. */
-  const regionCfg = await loadRegionConfig(sb);
+  const regionCfg = await loadRegionConfig(sb); lap('dp-region');
 
   /* 1. Warehouse master → code + name maps (read-only label lookup for the
         Warehouse column). */
   const { data: whRows, error: whErr } = await sb
     .from('warehouses')
-    .select('id, code, name');
+    .select('id, code, name'); lap('dp-warehouses');
   if (whErr) return c.json(readFailure('warehouses', whErr), 500);
   const whCode = new Map<string, string>();
   const whName = new Map<string, string>();
@@ -420,7 +427,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     phone: string | null; branding: string | null; status: string | null; delivery_state: string | null;
     agent: string | null; salesperson_id: string | null; salespersonId?: string | null; venue: string | null;
     customer_state: string | null; customer_country: string | null;
-    customer_delivery_date: string | null; processing_date: string | null;
+    customer_delivery_date: string | null; sales_exemption_expiry: string | null; salesExemptionExpiry?: string | null; processing_date: string | null;
     so_date: string | null; address1: string | null; address2: string | null;
     postcode: string | null; building_type: string | null;
     local_total_sen: number | null; balance_sen: number | null;
@@ -442,26 +449,30 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     dp_remark: string | null; dpRemark?: string | null;
   };
   /* CROSS-COMPANY = the caller's GRANTED companies; unscoped, this read took every tenant's. */
-  const { data: soRowsRaw, error: soErr } = await paginateAll<SoHeaderRow>((from, to) =>
+  const { data: soRowsRaw, error: soErr } = await paginateAll<SoHeaderRow>((from, to) => onlyDocsFilter(
     scopeToAllowedCompanies(
       sb.from('mfg_sales_orders')
         /* NO `id` column here: scm.mfg_sales_orders is keyed by doc_no (TEXT PK) and
            has no `id` column: selecting it makes PostgREST reject the whole query and
            the board 500s. Identity here is doc_no; every join below keys on it. */
-        .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, agent, salesperson_id, venue, customer_state, customer_country, customer_delivery_date, amend_date_from_customer, amended_delivery_date, amend_reason, amend_reason_from_customer, processing_date, so_date, address1, address2, postcode, building_type, local_total_sen, balance_sen, possession_date, house_type, replacement_disposal, referral, ref, customer_so_no, delivery_message_status, disposal_request, dp_remark, linked_ac_docno')
+        .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, agent, salesperson_id, venue, customer_state, customer_country, customer_delivery_date, sales_exemption_expiry, amend_date_from_customer, amended_delivery_date, amend_reason, amend_reason_from_customer, processing_date, so_date, address1, address2, postcode, building_type, local_total_sen, balance_sen, possession_date, house_type, replacement_disposal, referral, ref, customer_so_no, delivery_message_status, disposal_request, dp_remark, linked_ac_docno')
         .neq('status', 'DRAFT')
         .neq('status', 'CANCELLED')
-        .order('customer_delivery_date', { ascending: true, nullsFirst: false }),
+        .order('customer_delivery_date', { ascending: true, nullsFirst: false })
+        .order('doc_no'), // breaks date ties: pages overlapped, 7 SOs came back twice (2026-10-26)
       c,
-    ).range(from, to),
-  );
+    ).range(from, to), onlyDocs),
+  ); lap('dp-so-headers');
   if (soErr) return c.json(readFailure('sales_orders', soErr), 500);
   /* Only SOs that actually need delivering — they carry a date signal
      (customer_delivery_date OR processing_date). Filtered
      in JS (not a PostgREST .or()) to keep the paginated query's row type clean. */
-  const soRows = (soRowsRaw ?? []).filter(
+  const datedRows = (soRowsRaw ?? []).filter(
     (r) => r.customer_delivery_date != null || r.processing_date != null,
   );
+  // state=OPEN (office view): a status-DELIVERED order is Delivered whatever else
+  // holds, so it is counted here and skips every per-order read (lib/delivery-board-slice.ts).
+  const { kept: soRows, skipped: skippedDelivered } = splitDeliveredForOpen(datedRows, stateParam === 'OPEN' && scope.mode === 'all');
   const docNos = soRows.map((r) => String(r.doc_no ?? '')).filter(Boolean);
 
   if (docNos.length === 0) {
@@ -485,7 +496,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   // the Delivered tab; older done work stays off the board (owner 2026-10-21).
   // today is YYYY-MM-DD, so the cutoff is too.
   const recentClosedSince = new Date(new Date(`${today}T00:00:00Z`).getTime() - 90 * 86400000).toISOString().slice(0, 10);
-  const { assrRowsP, dpResP, projRowsP } = kickOffSubBoardReads(c, sb, recentClosedSince);
+  const { assrRowsP, dpResP, projRowsP } = kickOffSubBoardReads(c, sb, recentClosedSince, onlyDocs !== null);
 
   /* 2b. LIVE balance per SO — same source-of-truth as the SO list Balance column
         (mfg_sales_orders_with_payment_totals.balance_sen_live = local_total −
@@ -502,7 +513,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
      view). Adding any of those here will 500 the Delivery Planning board. */
   const liveBalanceByDoc = new Map<string, number>();
   {
-    const { data: balRows, error: balErr } = await liveBalanceReadP;
+    const { data: balRows, error: balErr } = await liveBalanceReadP; lap('dp-balances');
     noteDegradedRead('live_balance', balErr);
     for (const b of (balRows ?? [])) {
       if (b.doc_no != null && b.balance_sen_live != null) {
@@ -518,7 +529,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         Ordered (doc_no, line_no, created_at ASC) — IDENTICAL to the SO list's
         item fetch so the FIRST line we see per doc_no is its earliest-created
         one; that drives the SO-list-matching Branding derivation below. */
-  const { data: itemRowsRaw, error: itemErr } = await itemRowsReadP;
+  const { data: itemRowsRaw, error: itemErr } = await itemRowsReadP; lap('dp-items');
   noteDegradedRead('so_lines', itemErr);
   const linesByDoc = new Map<string, ReadinessLine[]>();
   const warehousesByDoc = new Map<string, Set<string>>();
@@ -565,7 +576,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
             .select('code, category, branding'), 'code', chunk),
           c,
         ).range(from, to),
-      );
+      ); lap('dp-products');
       for (const p of (prodRows ?? [])) {
         if (p.category) productCategory.set(p.code, normCategory(p.category));
         if (p.branding && p.branding.trim()) productBranding.set(p.code, p.branding);
@@ -598,7 +609,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   let deliveredByDoc: Map<string, number>;
   let remainingByDoc: Map<string, number>;
   {
-    const dRes = await deliverableReadP;
+    const dRes = await deliverableReadP; lap('dp-deliverable');
     if ('err' in dRes) return c.json(readFailure('delivered_sum', dRes.err), 500);
     ({ deliveredByDoc, remainingByDoc } = dRes.ok);
   }
@@ -608,7 +619,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   /* HC DO-execution raw-data fields surface alongside the DO (DoExecOut lives in
      ./delivery-planning-fields for the file-size ceiling). dual-read camelCase
      (the pg driver camelCases result columns). */
-  const { data: doRowsRaw, error: doErr } = await doRowsReadP;
+  const { data: doRowsRaw, error: doErr } = await doRowsReadP; lap('dp-dos');
   noteDegradedRead('do_headers', doErr);
   const doByDoc = new Map<string, Array<{ id: string; doNumber: string; status: string }>>();
   /* DO header driver_id by DO id — half the row-scope assignment (crew ids are
@@ -698,7 +709,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
            in take(), same rows either way. */
         const { data: stopRows } = await chunkIn<StopRow>(doIds, (batch, from, to) => sb.from('trip_stops')
           .select('dp_no, do_id, trip_id, stop_no, eta_offset_s').in('do_id', batch)
-          .order('do_id').range(from, to));
+          .order('do_id').range(from, to)); lap('dp-trip-stops');
         take(stopRows.filter((s) => s.dp_no != null));
 
         /* Resolve the stops' trips (bounded .in) and keep only live ones —
@@ -710,7 +721,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           .filter((x): x is string => !!x))];
         if (tripIds.length) {
           const { data: tripRowsRaw } = await chunkIn<Record<string, unknown>>(tripIds, (batch, from, to) => sb.from('trips')
-            .select('id, trip_no, trip_date, status').in('id', batch).order('id').range(from, to));
+            .select('id, trip_no, trip_date, status').in('id', batch).order('id').range(from, to)); lap('dp-trips');
           const liveTripById = new Map<string, { id: string; trip_no: string | null; trip_date: string | null }>();
           for (const t of tripRowsRaw as Array<{
             id: string; trip_no?: string | null; tripNo?: string | null;
@@ -766,7 +777,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       sb.from('delivery_order_crew')
         .select('do_id, driver_1_id, driver_2_id, helper_1_id, helper_2_id, driver_1_name, driver_1_ic, driver_1_contact, driver_2_name, helper_1_name, helper_2_name, lorry_plate')
         .in('do_id', batch).order('do_id').range(from, to),
-    );
+    ); lap('dp-crew');
     for (const cr of crewRows) {
       crewIdsByDo.set(cr.do_id, {
         driverIds: [cr.driver1Id ?? cr.driver_1_id, cr.driver2Id ?? cr.driver_2_id].filter((x): x is string => !!x),
@@ -804,7 +815,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
      request it. ONE batched chain for the whole board (see soPoLockedMany), not
      a per-row query; Houzs doc numbers are filtered out inside it, so a
      Houzs-only board costs nothing. */
-  const poLockedDocs = await soPoLockedMany(sb, docNos);
+  const poLockedDocs = await soPoLockedMany(sb, docNos); lap('dp-po-locked');
   const orders = soRows.map((r) => {
     const docNo = String(r.doc_no ?? '');
     /* Branding — derived 1:1 with the SO list (never the empty header field).
@@ -919,8 +930,8 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       })(),
       // dates
       so_date: r.so_date ?? null,
-      // ORIGINAL date (the customer's pick — never overwritten) stays here.
-      customer_delivery_date: customerDD,
+      // ORIGINAL date (never overwritten); sales_exemption_expiry = frozen original, shown in the SXE column via soExemptionExpiryOf (owner 2026-10-22).
+      customer_delivery_date: customerDD, sales_exemption_expiry: r.salesExemptionExpiry ?? r.sales_exemption_expiry ?? null,
       // Amendment dates: the customer's requested new date and the date WE
       // confirmed. The Original column above is unchanged.
       amend_date_from_customer: amendDateFromCustomer,
@@ -992,7 +1003,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       warehouse_id: primaryWh as string | null,
       warehouse_code: primaryWh ? (whCode.get(primaryWh) ?? null) : null,
       warehouse_name: primaryWh ? (whName.get(primaryWh) ?? null) : null,
-      customer_state: r.customer_state ?? null,
+      customer_state: r.customer_state ?? null, customer_country: r.customer_country ?? null, // country: Last Mile keeps SG off; DP board ignores it
       // delivery progress
       delivered_qty: delivered,
       remaining_qty: remaining,
@@ -1039,7 +1050,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   try {
     // Kicked off up top (kickOffSubBoardReads); a read error re-throws into this
     // same try, which logs and leaves the SO rows untouched — unchanged behaviour.
-    const assrR = await assrRowsP;
+    const assrR = await assrRowsP; lap('dp-assr');
     if ('err' in assrR) throw assrR.err;
     const assrRows = assrR.ok;
 
@@ -1058,24 +1069,14 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       const regionSet = new Set<Region>(stateRegions);
       const address = [a.addr1, a.addr2, a.addr3, a.addr4].filter(Boolean).join(', ') || null;
       // A closed / archived case's legs are DONE → they belong on Delivered.
-      const caseClosed = Boolean(a.closed_at) || Boolean(a.archived_at);
+      const caseClosed = assrCaseClosed(a);
 
-      // One row per SET trigger date. job_kind = which date drives THIS row; the
-      // effective/board date is that trigger date so it lands in the schedule
-      // column. A date-but-not-yet-delivered case = PENDING_SCHEDULE (reuse the
-      // existing enum). Stock columns are null/'—' for ASSR rows.
-      const legs: Array<{ jobKind: 'customer_pickup' | 'delivery' | 'inspection'; date: string }> = [];
-      if (a.customer_pickup_at) legs.push({ jobKind: 'customer_pickup', date: a.customer_pickup_at });
-      // Own-team on-site inspection visit — a distinct fleet leg. Supplier-done
-      // inspections are handled on the supplier side, so they never surface here
-      // (the SELECT already gates this to inspection_by = 'own').
-      if (a.inspection_visit_at && a.inspection_by === 'own') legs.push({ jobKind: 'inspection', date: a.inspection_visit_at });
-      if (a.do_date)            legs.push({ jobKind: 'delivery',        date: a.do_date });
-
-      for (const leg of legs) {
+      // Own-team legs: Service's date = request, Logistics' = confirmed (assrBoardLegs).
+      for (const leg of assrBoardLegs(a, caseClosed)) {
+        const legDate = leg.confirmed ?? leg.requested;
         // A CLOSED case's leg only shows when it is recent (owner 2026-10-21: last
         // 90 days); older done service work stays off the board.
-        if (caseClosed && leg.date.slice(0, 10) < recentClosedSince) continue;
+        if (leg.state === 'DELIVERED' && (legDate ?? '').slice(0, 10) < recentClosedSince) continue;
         // so_doc_no is the React rowKey on the board — a case with two legs must
         // yield two DISTINCT keys, so suffix with the job_kind.
         const rowKey = `${assrNo}#${leg.jobKind}`;
@@ -1094,7 +1095,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           status: a.status ?? '',
           // Closed case's dated leg = done → Delivered; an open dated leg surfaces
           // under Pending Delivery until it's scheduled out (owner 2026-10-21).
-          delivery_state: caseClosed ? 'DELIVERED' : 'PENDING_DELIVERY',
+          delivery_state: leg.state,
           delivery_state_override: null,
           balance_sen: 0,
           balance_sen_live: null,
@@ -1113,19 +1114,19 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
             };
           })(),
           so_date: null,
-          // The trigger date maps into the board date fields so it lands in the
-          // schedule / Days-Left column exactly like an SO's effective date.
-          customer_delivery_date: leg.date,
+          // Service's requested date shows where an SO shows the customer's date;
+          // "Delivery Date" (amended_delivery_date) is the date Logistics confirmed.
+          customer_delivery_date: leg.requested, sales_exemption_expiry: null,
           amend_date_from_customer: null,
-          amended_delivery_date: leg.date,
+          amended_delivery_date: leg.confirmed,
           amend_reason: null, amend_reason_from_customer: null,
-          effective_delivery_date: leg.date,
-          processing_date: leg.date,
+          effective_delivery_date: legDate,
+          processing_date: legDate,
           /* Synthetic job row — its so_doc_no is a ROW KEY, not a real SO doc
              number, and it carries no replacement_disposal for the drawer to
              lock. Always false; a Set lookup on a row key would be meaningless. */
           po_locked: false,
-          days_left: daysBetween(today, leg.date),
+          days_left: daysBetween(today, legDate),
           address,
           postcode: realPostcode,
           building_type: null,
@@ -1148,7 +1149,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           em_delivery_status: null, consignment_no: null, vessel_voyage: null,
           etd_port_klang: null, bs_delivery_date: null, esb_remarks: null,
           bs_remarks: null, ctn: null, em_delivered_date: null,
-          do_date: leg.jobKind === 'delivery' ? leg.date : null,
+          do_date: leg.jobKind === 'delivery' ? legDate : null,
           delivered_at: null, pod_r2_key: null, pod_lat: null, has_pod: false,
           // Stock columns are not meaningful for a Service Case.
           ...NO_STOCK_ROW,
@@ -1164,7 +1165,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           warehouse_name: null,
           // The real customer state (case address first, then linked order) —
           // NOT `location`, the branch the case was raised at.
-          customer_state: realState,
+          customer_state: realState, customer_country: null, // not on Last Mile (SO-only)
           delivered_qty: 0,
           remaining_qty: 0,
           crew: null,
@@ -1176,13 +1177,13 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           trip_date: null,
           trip_stop_no: null,
           trip_eta_offset_s: null,
-          arrangement_stage: null,
+          arrangement_stage: leg.state === 'PENDING_SCHEDULE' ? 'PENDING_DATE' : null,
         });
       }
     }
   } catch (e) {
     // Defensive: a malformed / edge ASSR case must NEVER break the SO rows.
-    console.warn(`[delivery-planning] ASSR union skipped: ${String((e as Error).message).slice(0, 120)}`);
+    if (e !== SUB_BOARD_SKIPPED) console.warn(`[delivery-planning] ASSR union skipped: ${String((e as Error).message).slice(0, 120)}`);
   }
 
   /* ── ASSR crew echo (P3) ──────────────────────────────────────────────────────
@@ -1203,7 +1204,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         const driverIds = [...new Set(trips.map((t) => t.driver_id).filter((x): x is string => !!x))];
         const lorryIds = [...new Set(trips.map((t) => t.lorry_id).filter((x): x is string => !!x))];
         const { data: drvRaw } = driverIds.length ? await sb.from('drivers').select('id, name').in('id', driverIds) : { data: [] };
-        const { data: lryRaw } = lorryIds.length ? await sb.from('lorries').select('id, plate').in('id', lorryIds) : { data: [] };
+        const { data: lryRaw } = lorryIds.length ? await sb.from('lorries').select('id, plate').in('id', lorryIds) : { data: [] }; lap('dp-assr-crew');
         const driverName = new Map(((drvRaw ?? []) as Array<{ id: string; name: string | null }>).map((d) => [String(d.id), d.name]));
         const lorryPlate = new Map(((lryRaw ?? []) as Array<{ id: string; plate: string | null }>).map((l) => [String(l.id), l.plate]));
         const stopByKey = new Map<string, { driver: string | null; lorry: string | null }>();
@@ -1246,7 +1247,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   const dpTripIdByKey = new Map<string, string | null>();
   try {
     const dpR = await dpResP; // kicked off up top; a read error re-throws into this try (logs, leaves the rest)
-    if ('err' in dpR) throw dpR.err;
+    if ('err' in dpR) throw dpR.err; lap('dp-dp-rows');
     const dpRes = dpR.ok;
     for (const d of (dpRes.data ?? []) as Array<Record<string, unknown>>) {
       const dpState = (d.state as string | null) ?? null;
@@ -1284,7 +1285,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           return { decision: g.decision, remaining_sen: g.remainingSen, collect_on_delivery_sen: g.collectOnDeliverySen, reason: 'DP job — no order balance' };
         })(),
         so_date: null,
-        customer_delivery_date: date,
+        customer_delivery_date: date, sales_exemption_expiry: null,
         amend_date_from_customer: null,
         amended_delivery_date: date,
         amend_reason: null, amend_reason_from_customer: null,
@@ -1325,7 +1326,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         warehouse_id: null,
         warehouse_code: null,
         warehouse_name: null,
-        customer_state: dpState,
+        customer_state: dpState, customer_country: null, // not on Last Mile (SO-only)
         delivered_qty: 0,
         remaining_qty: 0,
         crew: null,
@@ -1349,9 +1350,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       });
     }
   } catch (e) {
-    console.warn(`[delivery-planning] DP-order union skipped: ${String((e as Error).message).slice(0, 120)}`);
+    if (e !== SUB_BOARD_SKIPPED) console.warn(`[delivery-planning] DP-order union skipped: ${String((e as Error).message).slice(0, 120)}`);
   }
-  await echoTripCrew(sb, dpBoardRows).catch((e: Error) => console.warn(`[delivery-planning] DP crew echo skipped: ${e.message.slice(0, 120)}`));
+  await echoTripCrew(sb, dpBoardRows).catch((e: Error) => console.warn(`[delivery-planning] DP crew echo skipped: ${e.message.slice(0, 120)}`)); lap('dp-crew-echo');
 
   /* ── PMS project SETUP / DISMANTLE union (READ-ONLY mirror) ───────────────────
      The fleet (drivers / lorries) is SHARED across deliveries, service cases AND
@@ -1366,7 +1367,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   const projectOrders: BoardRow[] = [];
   try {
     const projR = await projRowsP; // kicked off up top; a read error re-throws into this try (logs, leaves the rest)
-    if ('err' in projR) throw projR.err;
+    if ('err' in projR) throw projR.err; lap('dp-projects');
     const projRows = projR.ok;
 
     for (const p of (projRows.results ?? [])) {
@@ -1424,7 +1425,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
             return { decision: g.decision, remaining_sen: g.remainingSen, collect_on_delivery_sen: g.collectOnDeliverySen, reason: 'PMS project — no order balance' };
           })(),
           so_date: null,
-          customer_delivery_date: leg.date,
+          customer_delivery_date: leg.date, sales_exemption_expiry: null,
           amend_date_from_customer: null,
           amended_delivery_date: leg.date,
           amend_reason: null, amend_reason_from_customer: null,
@@ -1466,7 +1467,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           warehouse_id: null,
           warehouse_code: null,
           warehouse_name: null,
-          customer_state: p.state ?? null,
+          customer_state: p.state ?? null, customer_country: null, // not on Last Mile (SO-only)
           delivered_qty: 0,
           remaining_qty: 0,
           // Show the crew PMS assigned to this window (read-only on the board) —
@@ -1491,14 +1492,14 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       }
     }
   } catch (e) {
-    console.warn(`[delivery-planning] project union skipped: ${String((e as Error).message).slice(0, 120)}`);
+    if (e !== SUB_BOARD_SKIPPED) console.warn(`[delivery-planning] project union skipped: ${String((e as Error).message).slice(0, 120)}`);
   }
 
   const poNosRes = await poNosByDocP; // "PO No." column: POs raised from the SO, walked per company (lib/planning-po-nos.ts); kicked off right after soRows
-  if ('err' in poNosRes) throw poNosRes.err;
+  if ('err' in poNosRes) throw poNosRes.err; lap('dp-po-nos');
   const poNosByDoc = poNosRes.ok;
   await attachBoardAcExemptionExpiry(sb, c, soRows, orders); // BUG-51 repoint: the board's exemption-expiry column (shared lib keeps the route under its size ceiling)
-  const allOrders = [...orders.map((o) => ({ ...o, po_nos: poNosByDoc.get(o.so_doc_no) ?? [] })), ...assrOrders, ...dpBoardRows, ...projectOrders];
+  const allOrders = [...orders.map((o) => ({ ...o, po_nos: poNosByDoc.get(o.so_doc_no) ?? [] })), ...assrOrders, ...dpBoardRows, ...projectOrders]; lap('dp-ac-exemption');
 
   /* 7c. PER-ASSIGNEE ROW SCOPE. For a self-scoped caller (Driver/Helper), keep
         ONLY the rows assigned to them; unassigned rows and other crews' jobs drop
@@ -1510,7 +1511,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
             (ownServiceAndProjectRowKeys). DO-less SO → never matches a self scope. */
   const scopedBase = new Set(await applyDeliveryRowScope(sb, scope, allOrders, {
     doByDoc, doDriverById, crewIdsByDo, dpTripIdByKey,
-  }));
+  })); lap('dp-row-scope');
   const ownExtra = scope.mode === 'all' ? null
     : await ownServiceAndProjectRowKeys(sb, c.env, scope, Number(c.get('houzsUser')?.id), c.get('houzsUser')?.name ?? null, allOrders);
   const scopedOrders = allOrders.filter((o) => scopedBase.has(o) || !!ownExtra?.has(o.so_doc_no));
@@ -1519,18 +1520,23 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         tab badges reflect the active region. The state filter is applied AFTER
         counting (so switching state tabs doesn't change the badge numbers). The
         region param is validated against the config's region codes. */
+  if (scope.mode === 'all') {
+    const entering = docsEnteringPendingSchedule(allOrders);
+    await stampPendingSchedule(sb, c, entering);
+    const stamped = new Set(entering);
+    for (const o of allOrders) if (stamped.has(o.so_doc_no) && o.row_type === 'so') o.delivery_state_override = 'PENDING_SCHEDULE';
+  }
   const regionFiltered = scopedOrders.filter((o) => matchesRegion(o, regionParam, regionCfg.validCodes));
   const counts = emptyCounts();
   for (const o of regionFiltered) counts[o.delivery_state] += 1;
   counts.ALL = regionFiltered.length;
 
-  const stateFiltered = stateParam === 'ALL'
-    ? regionFiltered
-    : regionFiltered.filter((o) => o.delivery_state === stateParam);
-
-  return c.json({ orders: stateFiltered, counts, regions: regionCfg.regions });
+  const slice = boardSlice(regionFiltered, stateParam);
+  addSkippedDelivered(skippedDelivered, (r) => stateToRegionsFromConfig(regionCfg, r.customer_state, r.customer_country), regionParam, counts, slice.deliveredByRegion);
+  return c.json({ orders: slice.orders, counts, regions: regionCfg.regions, ...(slice.deliveredByRegion ? { delivered_by_region: slice.deliveredByRegion } : {}) });
 };
 deliveryPlanning.get('/', deliveryPlanningBoardHandler);
+deliveryPlanning.get('/changes', boardChangesHandler);
 
 /* ──────────────────────────────────────────────────────────────────────────
    GET /delivery-planning/geo?date=YYYY-MM-DD&region=<ALL|code>
@@ -1793,7 +1799,7 @@ deliveryPlanning.get('/geo', async (c) => {
   /* 6. Assemble the points; every failure lands in `ungeocoded` with a reason. */
   const points: Array<{
     ref: string; so_doc_no: string; lat: number; lng: number;
-    zone: string | null; region: Region; state: string | null; postcode: string | null;
+    zone: string | null; region: Region; state: string | null; country: string | null; postcode: string | null;
     sets: number; revenueSen: number; customer: string | null; address: string;
   }> = [];
   const ungeocoded: Array<{ ref: string; reason: string }> = [];
@@ -1833,7 +1839,7 @@ deliveryPlanning.get('/geo', async (c) => {
       lng: hit.lng,
       zone: zr.zone,
       region: (regionsByDoc.get(dn) ?? [])[0] ?? FALLBACK_DEFAULT_REGION,
-      state: r.customerState ?? r.customer_state ?? null,
+      state: r.customerState ?? r.customer_state ?? null, country: r.customerCountry ?? r.customer_country ?? null, // country: Last Mile map keeps SG off
       postcode: r.postcode ?? null,
       sets: sc.sets,
       revenueSen: Number(r.localTotalSen ?? r.local_total_sen ?? 0) || 0,
@@ -1936,7 +1942,7 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
     return c.json({ error: 'invalid_substatus', reason: `delivery_substatus must be one of: ${HC_SUBSTATUS_VALUES.join(', ')} (or blank).` }, 400);
   }
 
-  // Whitelist delivery_message_status to the 23 known workflow values (blank/null ok).
+  // Whitelist delivery_message_status to the known workflow values (blank/null ok).
   if (p.deliveryMessageStatus != null && p.deliveryMessageStatus !== '' &&
       !(HC_MESSAGE_STATUS_VALUES as readonly string[]).includes(String(p.deliveryMessageStatus))) {
     return c.json({ error: 'invalid_message_status', reason: 'delivery_message_status is not one of the allowed workflow values.' }, 400);
@@ -2260,9 +2266,8 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
       p.jobKind === 'customer_pickup' ? 'customer_pickup'
       : p.jobKind === 'inspection' ? 'inspection'
       : 'delivery';
-    const col = jobKind === 'customer_pickup' ? 'customer_pickup_at'
-      : jobKind === 'inspection' ? 'inspection_visit_at'
-      : 'do_date';
+    // Logistics' date is the CONFIRMED one; Service's requested date stays as keyed.
+    const col = ASSR_CONFIRMED_COL[jobKind];
     /* The case must EXIST and be OPEN before ANYTHING is written. The date write
        below carries that guard in its own WHERE clause, but a crew-only edit (a
        lorry with no scheduleDate — now reachable because the board's Driver /
@@ -2778,9 +2783,10 @@ async function scheduleAssrOntoTrip(
   try {
     const user = c.get('user') as { id?: string } | null;
     const stopType = ASSR_STOP_TYPE[jobKind];
-    const dateCol = jobKind === 'customer_pickup' ? 'customer_pickup_at'
+    const requestedCol = jobKind === 'customer_pickup' ? 'customer_pickup_at'
       : jobKind === 'inspection' ? 'inspection_visit_at'
       : 'do_date';
+    const dateCol = `COALESCE(${ASSR_CONFIRMED_COL[jobKind]}, ${requestedCol})`;
 
     /* Case snapshot (customer / address) + the leg's own date, from public.assr_cases
        via c.env.DB (same path the ASSR board union uses). The leg date is the trip's

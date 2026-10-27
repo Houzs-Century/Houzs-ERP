@@ -25,7 +25,7 @@ import { Save, Trash2, X } from 'lucide-react';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { Button } from '@2990s/design-system';
 import { formatPhone } from '@2990s/shared/phone';
-import { useCreatePurchaseConsignmentOrder } from '../../vendor/scm/lib/purchase-consignment-order-queries';
+import { useCreatePurchaseConsignmentOrder, usePurchaseConsignmentOrderDetail } from '../../vendor/scm/lib/purchase-consignment-order-queries';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import {
   useSuppliers,
@@ -36,6 +36,7 @@ import {
   type MaterialKind,
 } from '../../vendor/scm/lib/suppliers-queries';
 import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
+import { pickableBindings } from '../../vendor/scm/lib/pickable-bindings';
 import { withMasterPickerPools } from '../../vendor/scm/lib/picker-maint';
 import { useFabricTrackings } from '../../vendor/scm/lib/fabric-queries';
 import { PcVariantEditor } from '../../vendor/scm/components/PcVariantEditor';
@@ -157,6 +158,39 @@ export const PurchaseConsignmentOrderNew = () => {
     setRequestSeeded(true);
   }, [fromProductRequest, requestSeeded, sourceRequest]);
 
+  /* Copy as new (HC-0149): ?copyFrom=<orderId> seeds supplier, purchase location,
+     notes and lines from an existing order; dates, received qty, the product
+     request link and the number stay with the source. The copied price is kept
+     (priceTouched), the same rule the PO copy applies. */
+  const copyFrom = searchParams.get('copyFrom');
+  const copySource = usePurchaseConsignmentOrderDetail(copyFrom);
+  const [copySeeded, setCopySeeded] = useState(false);
+  useEffect(() => {
+    if (!copyFrom || copySeeded || !copySource.data) return;
+    const h = copySource.data.purchaseOrder;
+    setSupplierId(h.supplier_id);
+    if (h.purchase_location_id) setPurchaseLocationId(h.purchase_location_id);
+    if (h.notes) setNotes(h.notes);
+    if (copySource.data.items.length > 0) {
+      setLines(copySource.data.items.map((it): DraftLine => ({
+        ...newLine(),
+        bindingId:    it.binding_id ?? undefined,
+        materialKind: it.material_kind,
+        itemCode:     it.item_code,
+        materialName: it.material_name,
+        supplierSku:  it.supplier_sku ?? undefined,
+        qty:          it.qty,
+        unitPriceSen: it.unit_price_sen,
+        discountSen:  it.discount_sen ?? 0,
+        warehouseId:  it.warehouse_id ?? h.purchase_location_id ?? undefined,
+        category:     it.item_group ?? undefined,
+        variants:     it.variants ?? {},
+        priceTouched: true,
+      })));
+    }
+    setCopySeeded(true);
+  }, [copyFrom, copySeeded, copySource.data]);
+
   // ── Data ────────────────────────────────────────────────────────────
   const suppliers       = useSuppliers({ status: 'ACTIVE' });
   const supplierDetail  = useSupplierDetail(supplierId || null);
@@ -168,6 +202,7 @@ export const PurchaseConsignmentOrderNew = () => {
   // Item-first picking — item input is enabled even when supplier is unset; the
   // datalist falls back to the full mfg_products list when no supplier is picked.
   const allSkus = useMfgProducts();
+  const pickable = useMemo(() => pickableBindings(bindings, allSkus.data ?? []), [bindings, allSkus.data]);
   const supplierMaintQ = useMaintenanceConfig(
     supplierId ? `supplier:${supplierId}` : '',
     { enabled: Boolean(supplierId) },
@@ -598,8 +633,8 @@ export const PurchaseConsignmentOrderNew = () => {
           <h2 className={styles.cardTitle}>Items</h2>
           <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
             {supplierId
-              ? (bindings.length > 0
-                  ? `${bindings.length} item(s) bound to this supplier — picker filters to these`
+              ? (pickable.length > 0
+                  ? `${pickable.length} item(s) bound to this supplier — picker filters to these`
                   : `No SKUs bound to this supplier yet — picker shows all ${(allSkus.data ?? []).length} SKUs (one-off purchase)`)
               : `Pick any item from ${(allSkus.data ?? []).length} SKUs — supplier auto-narrows`}
           </span>
@@ -680,7 +715,7 @@ export const PurchaseConsignmentOrderNew = () => {
                       onChange={(e) => {
                         const code = e.target.value;
                         const match = supplierId
-                          ? bindings.find((b) => b.item_code === code)
+                          ? pickable.find((b) => b.item_code === code)
                           : undefined;
                         if (match) { pickBinding(l.rid, match); return; }
                         const sku = (allSkus.data ?? []).find((p) => p.code === code);
@@ -697,8 +732,8 @@ export const PurchaseConsignmentOrderNew = () => {
                       style={{ fontFamily: 'var(--font-mono)' }}
                     />
                     <datalist id={`bindings-${l.rid}`}>
-                      {supplierId && bindings.length > 0
-                        ? sortByText(bindings).map((b) => (
+                      {supplierId && pickable.length > 0
+                        ? sortByText(pickable).map((b) => (
                             <option key={b.id} value={b.item_code}>
                               {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_sen, b.currency)}
                             </option>
@@ -720,7 +755,7 @@ export const PurchaseConsignmentOrderNew = () => {
                       onChange={(e) => {
                         const sku = e.target.value;
                         if (supplierId) {
-                          const match = bindings.find((b) => b.supplier_sku === sku);
+                          const match = pickable.find((b) => b.supplier_sku === sku);
                           if (match) {
                             pickBinding(l.rid, match);
                           } else {
@@ -737,7 +772,7 @@ export const PurchaseConsignmentOrderNew = () => {
                       style={{ fontFamily: 'var(--font-mono)' }}
                     />
                     <datalist id={`supplier-skus-${l.rid}`}>
-                      {supplierId && sortByText(bindings).map((b) => (
+                      {supplierId && sortByText(pickable).map((b) => (
                         <option key={b.id} value={b.supplier_sku || ''}>
                           {b.item_code} · {b.material_name} · {fmtRm(b.unit_price_sen, b.currency)}
                         </option>

@@ -48,6 +48,8 @@ const REQUEST_FIELDS = ["title", "description", "type", "priority", "page_url", 
 const MAX_FILES = 5;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const FILE_KINDS = /^(image\/|video\/mp4$|video\/quicktime$|application\/pdf$)/;
+// A .zip goes by its name: browsers label it application/zip, application/x-zip-compressed or nothing.
+const isZip = (f: File) => f.name.toLowerCase().endsWith(".zip");
 
 const NOT_CONNECTED = "IT Support is not connected on this system yet. Please tell IT directly for now.";
 const UNREACHABLE = "IT Support could not be reached. Please try again in a moment.";
@@ -140,8 +142,8 @@ function filesRefusal(files: File[]): string | null {
   if (files.length > MAX_FILES) return `Attach at most ${MAX_FILES} files.`;
   const big = files.find((f) => f.size > MAX_FILE_BYTES);
   if (big) return `${big.name} is larger than 10 MB.`;
-  const odd = files.find((f) => !FILE_KINDS.test(f.type));
-  return odd ? `${odd.name} is not a picture, an MP4 or MOV video, or a PDF.` : null;
+  const odd = files.find((f) => !isZip(f) && !FILE_KINDS.test(f.type));
+  return odd ? `${odd.name} is not a picture, an MP4 or MOV video, a PDF or a ZIP.` : null;
 }
 
 // ---- Is IT Support connected in this environment? --------------------------

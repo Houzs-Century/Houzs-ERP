@@ -30,6 +30,8 @@ import { MobileTrackingBanner } from "./MobileTrackingBanner";
 import "./mobile.css";
 import { MobileJobStop, jobRefOf, jobKey, jobLabelOf, useJobProgressMap } from "./MobileJobStop";
 import { LEG_LABEL } from "../vendor/scm/lib/delivery-job";
+import { isEastMalaysiaOrSingaporeStop } from "../vendor/scm/lib/last-mile";
+import { isDispatched } from "./runSheetDispatch";
 
 /* ------------------------------------------------------------------ *
  * Mobile Delivery Planning — driver run-sheet screen (v2 job card).
@@ -105,6 +107,7 @@ type BoardRow = {
   warehouse_code: string | null;
   warehouse_name: string | null;
   customer_state: string | null;
+  customer_country?: string | null;
   time_range?: string | null;
   time_confirmed?: boolean | null;
   arrival_at?: string | null;
@@ -121,6 +124,9 @@ type BoardRow = {
   customer_delivered_date?: string | null;
   eta_arriving_port?: string | null;
   delivery_substatus?: string | null;
+  // The latest DO's own document date (= its delivery date). The run-sheet keeps
+  // a delivery only when this matches the order's Delivery Date (runSheetDispatch).
+  do_date?: string | null;
   crew: Crew;
   delivery_orders?: DeliveryOrderRef[];
 };
@@ -313,7 +319,11 @@ export function MobileDeliveryPlanning({
      DO; fold them onto the row's own timestamps so stopFlags reads every stop
      the same way. */
   const progressMap = useJobProgressMap();
-  const allOrders = useMemo(() => (data?.orders ?? []).map((o) => {
+  // East Malaysia + Singapore ride their own freight channel, not the local
+  // lorry run, so they never belong on a driver's run-sheet (owner 2026-10-25).
+  const allOrders = useMemo(() => (data?.orders ?? [])
+    .filter((o) => !isEastMalaysiaOrSingaporeStop({ region: o.region, state: o.customer_state, country: o.customer_country }))
+    .map((o) => {
     const ref = jobRefOf(o);
     const p = ref ? progressMap.get(jobKey(ref)) : undefined;
     return p ? { ...o, departure_at: p.departed_at ?? o.departure_at, arrival_at: p.arrived_at ?? o.arrival_at,
@@ -344,6 +354,10 @@ export function MobileDeliveryPlanning({
       return dayKey(d.toISOString());
     })();
     for (const o of allOrders) {
+      // Only stops actually on a run — a cut DO or an assigned driver. An order
+      // that merely carries today's customer date (no DO, no driver) is not yet
+      // dispatched and stays on the desktop board. See runSheetDispatch.ts.
+      if (!isDispatched(o)) continue;
       const k = dayKey(runDateOf(o));
       /* A finished stop STAYS on its day, so Today reads "3 / 8 delivered"
          instead of always 0 / n — it used to be moved to History on completion. */
