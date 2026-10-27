@@ -246,3 +246,46 @@ export function planSofaSets(
   }
   return planByLine;
 }
+
+/** An SO's own PO that the walk planned onto another order. */
+export type SofaPoSlot = { poNumber: string; soDocNo: string; deliveryDate: string | null };
+
+/**
+ * 2990-0018 (owner 2026-10-26): the pooled walk stays — an earlier-delivery
+ * order may take a PO raised for an older one, and the older one orders again.
+ * Purchasing still needs to SEE that, or the older order reads "SHORT" while
+ * its own PO sits on the screen and looks forgotten. Per short line: each PO
+ * raised for this line that the walk planned onto another SO, and which SO.
+ */
+export function ownPoSlottedElsewhere(
+  lines: SofaSetLine[],
+  plans: ReadonlyMap<string, SofaPlan>,
+  poRaisedFor: SofaPoRaisedFor,
+): Map<string, SofaPoSlot[]> {
+  const takersByBatch = new Map<string, Map<string, string | null>>();
+  for (const l of lines) {
+    const batch = plans.get(l.soItemId)?.batchNo;
+    if (!batch) continue;
+    const takers = takersByBatch.get(batch) ?? new Map<string, string | null>();
+    if (!takers.has(l.docNo) || byDateAsc(l.delivery, takers.get(l.docNo) ?? null) < 0) takers.set(l.docNo, l.delivery);
+    takersByBatch.set(batch, takers);
+  }
+  const posByLine = new Map<string, string[]>();
+  for (const [po, ids] of poRaisedFor) {
+    for (const id of ids) posByLine.set(id, [...(posByLine.get(id) ?? []), po]);
+  }
+  const out = new Map<string, SofaPoSlot[]>();
+  for (const l of lines) {
+    const plan = plans.get(l.soItemId);
+    if (!plan || plan.need <= 0) continue;
+    const slots: SofaPoSlot[] = [];
+    for (const po of posByLine.get(l.soItemId) ?? []) {
+      if (po === plan.batchNo) continue;
+      for (const [docNo, deliveryDate] of takersByBatch.get(po) ?? []) {
+        if (docNo !== l.docNo) slots.push({ poNumber: po, soDocNo: docNo, deliveryDate });
+      }
+    }
+    if (slots.length > 0) out.set(l.soItemId, slots);
+  }
+  return out;
+}
