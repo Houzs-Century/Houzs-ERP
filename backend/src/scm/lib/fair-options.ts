@@ -749,10 +749,9 @@ export function fairEditUnlinkedMessage(input: {
 }): string | null {
   if (input.match !== 'AMBIGUOUS' && input.match !== 'UNMATCHED') return null;
   const booths = input.booths.filter(isPickableFair);
-  const first = booths[0];
-  if (!first) return null;
-  const linked = linkedFairOf(first);
-  const event = linked ? fairOptionLabel(linked) : clean(first.venue);
+  if (booths.length === 0) return null;
+  const linked = linkedFairOf(booths[0]);
+  const event = linked ? fairOptionLabel(linked) : clean(booths[0].venue);
   const brands = [...new Set(booths.map((b) => clean(b.brand) || 'no brand'))].join(', ');
   const why = input.match === 'AMBIGUOUS'
     ? `${event} has booths for ${brands}, and nothing on this order has a brand that picks one`
