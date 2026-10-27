@@ -20,11 +20,11 @@ describe("pos-admin-rules", () => {
   });
 
   test("event status follows the link and the dates", () => {
-    expect(posEventStatus({ linked: false, start_date: "2026-10-01", end_date: "2026-10-20" }, "2026-10-14")).toBe("NOT LINKED");
-    expect(posEventStatus({ linked: true, start_date: "2026-10-01", end_date: "2026-10-20" }, "2026-10-14")).toBe("RUNNING");
-    expect(posEventStatus({ linked: true, start_date: "2026-10-01", end_date: "2026-10-13" }, "2026-10-14")).toBe("ENDED");
-    expect(posEventStatus({ linked: true, start_date: "2026-10-20", end_date: null }, "2026-10-14")).toBe("UPCOMING");
-    expect(posEventStatus({ linked: true, start_date: null, end_date: null }, "2026-10-14")).toBe("RUNNING");
+    expect(posEventStatus({ start_date: "2026-10-01", end_date: "2026-10-20" }, "2026-10-14")).toBe("ON GOING");
+    expect(posEventStatus({ start_date: "2026-10-01", end_date: "2026-10-14" }, "2026-10-14")).toBe("ON GOING");
+    expect(posEventStatus({ start_date: "2026-10-01", end_date: "2026-10-13" }, "2026-10-14")).toBe("DONE");
+    expect(posEventStatus({ start_date: "2026-10-20", end_date: null }, "2026-10-14")).toBe("COMING");
+    expect(posEventStatus({ start_date: null, end_date: null }, "2026-10-14")).toBe("ON GOING");
   });
 
   test("an import row maps the sheet's columns, RM to sen, % or RM discounts, and refuses what it cannot read", () => {
