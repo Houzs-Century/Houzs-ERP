@@ -134,7 +134,9 @@ export function GrabHelperBox({
 // intentionally omitted — they don't belong in the project view, and the
 // endpoint no longer serves them to this page's wide Sales-view gate.
 export type CrewMember = {
-  id: number;
+  // number for a users-master row (/api/fleet/staff); a prefixed string for an
+  // outsource Fleet-roster row folded in by outsourceCrew.ts.
+  id: number | string;
   name: string;
   phone: string | null;
   user_type: string | null;
