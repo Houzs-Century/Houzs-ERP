@@ -12,7 +12,8 @@
 //   API   AP invoices dated around the window, supplier + their own ref
 //   PV    payment vouchers dated in the window
 //   JE    every posted journal dated in the window: number, date, source, doc, Dr
-// Writes nothing. Env: DATABASE_URL; FROM / TO / COMPANY_ID override.
+// Writes nothing. Env: DATABASE_URL; FROM / TO / COMPANY_ID override; AROUND_FROM /
+// AROUND_TO widen the PI / AP invoice dates; SUP_ALL=1 lists every company's suppliers.
 import postgres from 'postgres';
 
 const FROM = process.env.FROM || '2026-09-01';
@@ -50,7 +51,8 @@ async function main() {
     {
       const cols = await columnsOf('suppliers');
       const sel = pick(cols, ['id', 'code', 'name', 'company_id', 'currency', 'for_purchasing']);
-      const rows = await sql.unsafe(`SELECT ${sel.join(', ')} FROM scm.suppliers ${cols.has('company_id') ? 'WHERE company_id = $1' : ''} ORDER BY code`, cols.has('company_id') ? [CO] : []);
+      const all = process.env.SUP_ALL === '1' || !cols.has('company_id');
+      const rows = await sql.unsafe(`SELECT ${sel.join(', ')} FROM scm.suppliers ${all ? '' : 'WHERE company_id = $1'} ORDER BY code`, all ? [] : [CO]);
       for (const r of rows) out('SUP', r);
     }
 
