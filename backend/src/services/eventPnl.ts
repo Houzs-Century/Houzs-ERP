@@ -201,9 +201,11 @@ export function eventPnl(input: {
     }, salesFrom === 'so' ? 'so' : 'so_ratio');
   } else bySalesCogs = withTotal({ mattSofa: 0, bedframe: 0, accessories: 0, other: 0 }, 'none');
 
-  const soService = { revenue: so?.serviceRm ?? 0, cost: so?.serviceCostRm ?? 0 };
+  /* HC-0134 (owner 2026-10-27): the orders' service lines (delivery) are in
+     neither Service revenue nor Transport Fee here; Sales is already the goods. */
+  const soService = { revenue: 0, cost: 0 };
   return {
-    by_sales: column(sales, salesFrom, bySalesCogs, salesFrom === 'so' ? soService : { revenue: 0, cost: 0 }),
+    by_sales: column(sales, salesFrom, bySalesCogs, soService),
     by_so: so && soCogs ? column(round2(so.salesRm), 'so', withTotal(soCogs, 'so'), soService) : null,
     so_count: so?.count ?? 0,
   };
