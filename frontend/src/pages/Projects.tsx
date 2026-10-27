@@ -6359,7 +6359,7 @@ function LogisticsCrewSection({
   const [lorryOptions, setLorryOptions] = useState<string[]>([]);
   // Outsource Fleet-roster crew (scm.drivers / scm.helpers, in_house = false),
   // folded into the Driver/Helper pickers so an outsource name added once is
-  // reusable. Loaded SILENTLY (see the two `.catch(() => {})` below): the Fleet
+  // reusable. The two reads below recover to an empty list on failure: the Fleet
   // routes sit behind scm.transportation.drivers, so a user without that access
   // simply gets no outsource options and the in-house staff list is unaffected.
   const [fleetDrivers, setFleetDrivers] = useState<CrewMember[]>([]);
@@ -6390,16 +6390,19 @@ function LogisticsCrewSection({
       .get<{ lorries: { plate: string }[] }>("/api/scm/lorries")
       .then((r) => { if (live) setLorryOptions((r.lorries ?? []).map((l) => l.plate).filter(Boolean)); })
       .catch(fail);
-    // Outsource Fleet crew — SILENT on failure (see the state declaration): no
-    // Fleet access just means no outsource options, never a blanked picker.
+    // Outsource Fleet crew — the roster is OPTIONAL here (gated by
+    // scm.transportation.drivers). A failure (most often a 403 for a scheduler
+    // without Fleet access) must NOT blank the in-house pickers or raise
+    // refError: it just means no outsource options, so we recover to an empty
+    // list rather than swallow the rejection or surface an alarm.
     api
       .get<{ drivers?: FleetDriverRow[] }>("/api/scm/drivers")
       .then((r) => { if (live) setFleetDrivers(outsourceOnly(r.drivers ?? []).map(driverToCrew)); })
-      .catch(() => {});
+      .catch(() => { if (live) setFleetDrivers([]); });
     api
       .get<{ helpers?: FleetHelperRow[] }>("/api/scm/helpers")
       .then((r) => { if (live) setFleetHelpers(outsourceOnly(r.helpers ?? []).map(helperToCrew)); })
-      .catch(() => {});
+      .catch(() => { if (live) setFleetHelpers([]); });
     return () => { live = false; };
   }, []);
   const isType = (u: CrewMember, kind: string) =>
