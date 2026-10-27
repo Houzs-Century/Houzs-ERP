@@ -52,6 +52,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
+import { afterCreatePath, sourceDocPath } from '../../lib/returnToSource';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -108,6 +109,7 @@ export const PurchaseConsignmentReceiveNew = () => {
   //    ?fromPcOrder= deep link from a PC Order detail "Receive Goods"). ──────
   const [selPoId, setSelPoId] = useState<string>(params.get('fromPcOrder') ?? '');
   const fromPicks = params.get('fromPicks') === '1';
+  const backToOrder = selPoId && selPoId === params.get('fromPcOrder') ? sourceDocPath.purchaseConsignmentOrder(selPoId) : null;
   const poListQ = usePurchaseConsignmentOrders();
   const poQ     = usePurchaseConsignmentOrderDetail(selPoId || null);
 
@@ -140,7 +142,7 @@ export const PurchaseConsignmentReceiveNew = () => {
   const [lines, setLines]                     = useState<DraftLine[]>([]);
   const [warehouseId, setWarehouseId]         = useState<string>('');
   const warehousesQ = useWarehouses();
-  const [dialog, setDialog] = useState<{ title: string; body: string; goTo?: string } | null>(null);
+  const [dialog, setDialog] = useState<{ title: string; body: string; goTo?: string; goLabel?: string } | null>(null);
   // Multi-select item picker (purchaser 2026-06: "multiple select to choose item").
   const [pickerOpen, setPickerOpen]     = useState(false);
   const [pickerSel, setPickerSel]       = useState<Set<string>>(new Set());
@@ -410,7 +412,8 @@ export const PurchaseConsignmentReceiveNew = () => {
       setDialog({
         title: `Receive ${createRes.grnNumber} created`,
         body: 'Received & posted.',
-        goTo: `/scm/purchase-consignment-receives/${createRes.id}`,
+        goTo: afterCreatePath(`/scm/purchase-consignment-receives/${createRes.id}`, backToOrder),
+        goLabel: backToOrder ? 'Back to Order' : undefined,
       });
     } catch (err) {
       setDialog({ title: 'Save failed', body: err instanceof Error ? err.message : 'Something went wrong.' });
@@ -903,7 +906,7 @@ export const PurchaseConsignmentReceiveNew = () => {
         <ActionResultDialog
           title={dialog.title}
           body={dialog.body}
-          primaryLabel={dialog.goTo ? 'Open Receive' : undefined}
+          primaryLabel={dialog.goTo ? (dialog.goLabel ?? 'Open Receive') : undefined}
           onPrimary={dialog.goTo ? () => { const g = dialog.goTo!; setDialog(null); navigate(g); } : undefined}
           onClose={() => setDialog(null)}
         />
