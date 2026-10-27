@@ -58,20 +58,41 @@ async function main() {
     });
 
     await section('payment vouchers', async () => {
-      const rows = await sql`SELECT status::text AS st, count(*)::int AS n, coalesce(sum(total_centi), 0)::bigint AS sen
+      const rows = await sql`SELECT status::text AS st, count(*)::int AS n, coalesce(sum(total_sen), 0)::bigint AS sen
         FROM scm.payment_vouchers WHERE company_id = ${CO} AND voucher_date >= ${FROM} AND voucher_date <= ${TO}
         GROUP BY 1 ORDER BY 1`;
       for (const r of rows) console.log(`ROW|PV dated in month ${r.st}: ${r.n} ${rm(r.sen)}`);
-      const byBank = await sql`SELECT credit_account_code AS acc, purpose::text AS purpose, count(*)::int AS n, coalesce(sum(total_centi), 0)::bigint AS sen
+      const byBank = await sql`SELECT credit_account_code AS acc, purpose::text AS purpose, count(*)::int AS n, coalesce(sum(total_sen), 0)::bigint AS sen
         FROM scm.payment_vouchers WHERE company_id = ${CO} AND voucher_date >= ${FROM} AND voucher_date <= ${TO}
         GROUP BY 1, 2 ORDER BY 1, 2`;
       for (const r of byBank) console.log(`ROW|  PV from ${r.acc} ${r.purpose}: ${r.n} ${rm(r.sen)}`);
       const created = await sql`SELECT to_char(created_at AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM') AS m, count(*)::int AS n
         FROM scm.payment_vouchers WHERE company_id = ${CO} AND voucher_date >= ${FROM} AND voucher_date <= ${TO} GROUP BY 1 ORDER BY 1`;
       for (const r of created) console.log(`ROW|  PV dated in month, keyed in ${r.m}: ${r.n}`);
-      const after = await sql`SELECT to_char(voucher_date, 'YYYY-MM') AS m, status::text AS st, count(*)::int AS n, coalesce(sum(total_centi), 0)::bigint AS sen
+      const after = await sql`SELECT to_char(voucher_date, 'YYYY-MM') AS m, status::text AS st, count(*)::int AS n, coalesce(sum(total_sen), 0)::bigint AS sen
         FROM scm.payment_vouchers WHERE company_id = ${CO} AND voucher_date > ${TO} GROUP BY 1, 2 ORDER BY 1, 2`;
       for (const r of after) console.log(`ROW|  PV later ${r.m} ${r.st}: ${r.n} ${rm(r.sen)}`);
+    });
+
+    await section('pv allocations', async () => {
+      const r = await sql`SELECT count(DISTINCT a.pv_id)::int AS pvs, count(*)::int AS n
+        FROM scm.pv_allocations a JOIN scm.payment_vouchers v ON v.id = a.pv_id
+        WHERE v.company_id = ${CO} AND v.voucher_date >= ${FROM} AND v.voucher_date <= ${TO}`;
+      console.log(`ROW|  PV dated in month that apply to bills: ${r[0].pvs} (${r[0].n} allocations)`);
+    });
+
+    await section('unpaid bills', async () => {
+      for (const t of ['purchase_invoices', 'ap_invoices']) {
+        const rows = await sql.unsafe(
+          `SELECT CASE WHEN invoice_date < $2 THEN 'before' WHEN invoice_date <= $3 THEN 'in month' ELSE 'after' END AS w,
+              count(*)::int AS n, coalesce(sum(total_sen - paid_sen), 0)::bigint AS owed
+           FROM scm.${t} WHERE company_id = $1 AND status NOT IN ('CANCELLED', 'DRAFT', 'PAID') AND total_sen > paid_sen
+           GROUP BY 1 ORDER BY 1`, [CO, FROM, TO]);
+        for (const r of rows) console.log(`ROW|${t} unpaid, dated ${r.w}: ${r.n} owed ${rm(r.owed)}`);
+      }
+      const mig = await sql`SELECT count(*)::int AS n, coalesce(sum(total_sen - paid_sen), 0)::bigint AS owed
+        FROM scm.purchase_invoices WHERE company_id = ${CO} AND migrated_no_stock AND status NOT IN ('CANCELLED', 'PAID') AND total_sen > paid_sen`;
+      console.log(`ROW|  of which migrated from AutoCount (no stock): ${mig[0].n} owed ${rm(mig[0].owed)}`);
     });
 
     await section('AP invoices', async () => {
@@ -86,7 +107,7 @@ async function main() {
         const cols = await columnsOf(table);
         console.log(`ROW|${table} columns: ${cols.join(', ')}`);
         const dateCol = ['invoice_date', 'pi_date', 'si_date', 'doc_date', 'date'].find((c) => cols.includes(c));
-        const totalCol = ['total_sen', 'grand_total_sen', 'local_total_sen', 'total_centi', 'amount_sen'].find((c) => cols.includes(c));
+        const totalCol = ['total_sen', 'grand_total_sen', 'local_total_sen', 'total_sen', 'amount_sen'].find((c) => cols.includes(c));
         const statusCol = cols.includes('status') ? 'status' : null;
         const coCol = cols.includes('company_id') ? 'company_id' : null;
         if (!dateCol || !coCol) { console.log(`ROW|${table}: no date or company column`); return; }
