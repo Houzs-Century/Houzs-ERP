@@ -62,6 +62,13 @@ const ALLOWLIST = new Map([
     // sql.json() would send a jsonb value into a text column instead.
     'roles.permissions is text, not jsonb (0000_baseline.sql:471); the string is the intended value',
   ],
+  [
+    'backend/scripts/lib/duplicate-sku-merge-run.mjs',
+    // The merge's undo list goes to audit_events.meta, declared `meta text` in
+    // migrations-pg/0006_audit_events.sql:20 - writeAudit() binds a
+    // JSON.stringify string to it the same way.
+    'audit_events.meta is text, not jsonb (0006_audit_events.sql:20); the string is the intended value',
+  ],
 ]);
 
 function* walk(dir) {

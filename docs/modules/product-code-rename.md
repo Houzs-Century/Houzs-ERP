@@ -134,6 +134,25 @@ Editing a code in place in Maintenance -> Sofa Compartments (master scope) calls
 - The new code has no spaces (the sofa canvas cannot parse one) and keeps
   `<longest SOFA model code>-<code>` within 30 characters.
 
+## 5b. Merge codes (many into one)
+
+SKU Master -> "Merge codes": pick the kept code, add the old codes one by one,
+Check, then Merge. Gate `scm.products.merge`. `POST /api/scm/mfg-products/merge/plan|apply`
+(`backend/src/scm/routes/mfg-product-merge.ts`) runs the same planner and writer
+as `backend/scripts/merge-duplicate-skus.mjs` (`scripts/lib/duplicate-sku-merge-plan.mjs`, `-run.mjs`).
+
+- Moves every column in section 3 off each old code, then sets the old row INACTIVE.
+  Catalogue-side rows (`STAYS_ON_DROP`: bindings, price and cost history) stay on the old code.
+- Cost: lots are re-keyed, each keeping its own date and unit cost. Nothing is re-costed.
+- Refused per old code: ledger qty differs from open lots (repair with a scoped retro-cost first),
+  negative stock, an open stock take that counts both codes, different category, kept code not ACTIVE.
+- Apply sends back the plan's confirm phrase; a world that changed since Check is refused (409).
+- Each old code commits in its own transaction together with its undo list in `audit_events`
+  (action `scm.sku.merge`).
+- After a merge, SO stock allocation is queued for recompute (docs/bugs/0675).
+- AutoCount is not merged: staff merge the listed AutoCount items by hand (Change Item Code,
+  "Perform Merge"). The ERP holds no live AutoCount item list to check against.
+
 ## 6. Open
 
 - **UNKNOWN:** whether documents carrying a renamed SKU still post to AutoCount
