@@ -38,6 +38,8 @@ import {
 } from '../../vendor/scm/lib/purchase-return-queries';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { readConvertScope, UnrecognisedScopeNotice } from '../../lib/convertScope';
+import { readScmHandoff, removeScmHandoff } from '../../lib/scmHandoffStorage';
+import type { PrFromGrnPicks } from './PurchaseReturnFromGrn';
 import { useGrnDetail } from '../../vendor/scm/lib/grn-queries';
 import { usePurchaseOrderDetail, useSuppliers } from '../../vendor/scm/lib/suppliers-queries';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
@@ -130,8 +132,12 @@ export const PurchaseReturnNew = () => {
      through lib/convertScope). The scope read now goes through the same module,
      and a parameter this page does not understand is SHOWN rather than dropped
      — a silent drop is what let that mismatch survive. */
-  const scope    = readConvertScope('grnToPr', params, ['poId']);
-  const grnId    = params.get('grnId');
+  const scope    = readConvertScope('grnToPr', params, ['poId', 'fromPicks']);
+  /* From the GRN line picker (HC-0135): the note and the ticked lines arrive in
+     the hand-off, so only those lines are built, at the picked qty. */
+  const [grnPicks] = useState(() =>
+    params.get('fromPicks') === '1' ? readScmHandoff<PrFromGrnPicks>('prFromGrnPicks') : null);
+  const grnId    = params.get('grnId') ?? grnPicks?.grnId ?? null;
   const poId     = params.get('poId');
 
   const grnQ       = useGrnDetail(grnId);
@@ -209,8 +215,9 @@ export const PurchaseReturnNew = () => {
     if (!grnQ.data) return;
     const grn = grnQ.data.grn as { supplier_id?: string } | null;
     setSupplierId(grn?.supplier_id ?? '');
+    const pickedQty = grnPicks ? new Map(grnPicks.picks.map((p) => [p.grnItemId, p.qty])) : null;
     const items: DraftLine[] = (grnQ.data.items ?? [])
-      .filter((it: any) => (it.qty_accepted ?? 0) > 0)
+      .filter((it: any) => (it.qty_accepted ?? 0) > 0 && (!pickedQty || pickedQty.has(it.id)))
       .map((it: any) => ({
         rid:            `r${it.id}`,
         grnItemId:      it.id,
@@ -219,13 +226,14 @@ export const PurchaseReturnNew = () => {
         materialName:   it.material_name,
         itemGroup:      it.item_group ?? null,
         variants:       (it.variants as Record<string, unknown> | null) ?? null,
-        qtyReturned:    it.qty_rejected ?? 0,        // pre-fill with rejected qty if any
+        qtyReturned:    pickedQty?.get(it.id) ?? it.qty_rejected ?? 0,  // picked qty, else the rejected qty
         unitPriceSen: it.unit_price_sen ?? 0,
         reason:         it.rejection_reason ?? '',
         notes:          '',
       }));
     if (items.length > 0) setLines(items);
-  }, [grnQ.data]);
+    if (grnPicks) removeScmHandoff('prFromGrnPicks');
+  }, [grnQ.data, grnPicks]);
 
   /* Pre-fill from PO — via its RECEIPTS, not its own lines (2026-08-21, audit
      B6). The old prefill mapped PO lines with grnItemId:null, which made every
@@ -388,9 +396,7 @@ export const PurchaseReturnNew = () => {
         title={`New Purchase Return ${sourceTitle}`}
         actions={
           <div className={styles.actions}>
-            {/* Pull lines from a Goods Receipt — routes to the GRN list where the
-                user right-clicks "Transfer to Purchase Return" (no dedicated picker page). */}
-            <Button variant="ghost" size="md" onClick={() => navigate('/scm/grns')}>
+            <Button variant="ghost" size="md" onClick={() => navigate('/scm/purchase-returns/from-grn')}>
               <ArrowRightLeft {...ICON} /> From Goods Receipt
             </Button>
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/purchase-returns')}>

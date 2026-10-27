@@ -109,7 +109,9 @@ describe("executable route contract", () => {
     // the module dashboards, each first in its Sidebar group.
     // 179 since 2026-10-21: /scm/delivery-planning-driver — the driver run-sheet
     // ("Last Mile Delivery (Driver)") brought to desktop beside the admin board.
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(179);
+    // 180 since 2026-10-21: /scm/purchase-returns/from-grn — tick the GRN lines
+    // going back to the supplier (HC-0135).
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(180);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -164,7 +166,8 @@ describe("executable route contract", () => {
     // 185 — /ocr (DEV-35).
     // 187 since 2026-10-17 — the Logistic and Procurement Overviews.
     // 188 since 2026-10-21 — /scm/delivery-planning-driver; see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(188);
+    // 189 since 2026-10-21 — /scm/purchase-returns/from-grn (HC-0135).
+    expect(ROUTE_CONTRACT).toHaveLength(189);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {

@@ -27,7 +27,7 @@ describe("convertToLink — the caller half", () => {
 
   /* The exact bug: the GRN screens sent ?fromGrn= to a page reading grnId. */
   it("sends a Purchase Return the name that page actually reads", () => {
-    expect(convertToLink("grnToPr", "grn-1")).toBe("/scm/purchase-returns/new?grnId=grn-1");
+    expect(convertToLink("grnToPr", "grn-1")).toBe("/scm/purchase-returns/from-grn?grnId=grn-1");
     expect(convertToLink("grnToPr", "grn-1")).not.toContain("fromGrn");
   });
 
@@ -109,6 +109,9 @@ describe("no site hand-builds a convert link", () => {
   const NON_SCOPE_PARAMS: Record<string, readonly string[]> = {
     "/scm/grns/from-po": ["appendToGrn"],
     "/scm/purchase-invoices/from-grn": ["q"],
+    // The GRN line picker hands its note + lines over in scmHandoffStorage;
+    // `fromPicks` only says "read the hand-off" and scopes nothing itself.
+    "/scm/purchase-returns/new": ["fromPicks"],
   };
   // This module writes the table; these two suites deliberately write the OLD
   // spellings to prove they are REPORTED rather than honoured.
