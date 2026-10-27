@@ -185,7 +185,11 @@ page, and the POS Admin menu. This guide carries only what is built.
   (`pos/src/manager.ts`, token "", never saved or synced) and sets the device
   up in Settings: terminal + fair from the POS Admin lists, one button
   (`POST /api/pos-admin/device/register`). On a set-up device the manager
-  sign-in stays under the tiles as the second way in.
+  sign-in stays under the tiles as the second way in. The device remembers
+  the last email; "Keep me signed in on this device" keeps the ERP token in
+  localStorage so the front offers "Continue as <name>" (one tap) and a
+  Logout keeps it; "Not you? Sign out" or an ended ERP session clears it. The
+  password is never stored.
 - Pairing code (for a device with no ERP login on it): POS Admin > Terminals >
   Pair device (`POST /api/pos-admin/terminals/:id/pairing`, event must be
   set and linked) issues a one-time 8-character code, stored as a hash with
