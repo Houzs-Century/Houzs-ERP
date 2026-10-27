@@ -12,15 +12,17 @@
 // terminal, and that terminal's company is the scope of everything read.
 //   POST /sales/batch         the receipts (routes/lib/pos-ingest.ts books them)
 //   GET  /report              the event bills for the all-terminals report (P13)
+//   POST /pair                redeem the pairing code from POS Admin (no token yet)
 // ----------------------------------------------------------------------------
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { and, eq, sql } from "drizzle-orm";
 import type { Env } from "../types";
 import { getDb } from "../db/client";
-import { pos_heartbeats, pos_terminals } from "../db/schema";
+import { pos_audit, pos_heartbeats, pos_terminals } from "../db/schema";
 import { getBrandingForCompany } from "../services/branding";
-import { deviceTokenHash, isDeviceToken } from "./lib/pos-bundle";
+import { deviceTokenHash, isDeviceToken, mintDeviceToken } from "./lib/pos-bundle";
+import { isPairingCode, pairingCodeHash } from "../scm/shared/pos-pairing";
 import { loadPosBundle, type BundleCompany } from "./lib/pos-bundle-load";
 import { parseIncomingSale, type BatchResult } from "./lib/pos-sync";
 import { ingestSale, stockLocationFor } from "./lib/pos-ingest";
@@ -36,7 +38,7 @@ posDevice.get("/ping", (c) => c.json({ ok: true, at: new Date().toISOString() })
 
 /** The device guard: resolve the token to its active terminal or answer 401. */
 posDevice.use("*", async (c, next) => {
-  if (c.req.path.endsWith("/ping")) return next();
+  if (c.req.path.endsWith("/ping") || c.req.path.endsWith("/pair")) return next();
   const token = c.req.header("X-POS-Device");
   if (!isDeviceToken(token)) return c.json({ error: "device_token_required" }, 401);
   const hash = await deviceTokenHash(token);
@@ -95,6 +97,36 @@ posDevice.post("/heartbeat", async (c: Ctx) => {
     sql`SELECT catalog_version FROM pos_event_links WHERE company_id = ${t.company_id} AND project_id = ${t.project_id ?? -1}`,
   );
   return c.json({ ok: true, at: now, catalog_version: link.length ? link[0].catalog_version : null, event_project_id: t.project_id });
+});
+
+/* ── pairing: the device redeems the code POS Admin handed out ──────────── */
+
+/** No token yet: the code identifies the terminal (hash match, not expired,
+ *  active, event still linked). A fresh device token is minted, the code is
+ *  spent, and the bundle comes back with the token. A wrong or stale code
+ *  answers the same 404 either way. */
+posDevice.post("/pair", async (c: Ctx) => {
+  type PairBody = { code?: unknown; device_name?: unknown; platform?: unknown };
+  const body = await c.req.json<PairBody>().catch(() => ({} as PairBody));
+  const raw = typeof body.code === "string" ? body.code : "";
+  if (!isPairingCode(raw)) return c.json({ error: "code_invalid", reason: "A pairing code has 8 letters and digits." }, 400);
+  const db = getDb(c.env);
+  const hash = await pairingCodeHash(raw);
+  const now = new Date().toISOString();
+  const found = await db.select().from(pos_terminals).where(and(eq(pos_terminals.pairing_code_hash, hash), eq(pos_terminals.active, true))).limit(1);
+  const t = found.length ? found[0] : null;
+  if (!t || !t.pairing_expires_at || t.pairing_expires_at < now || t.project_id == null) return c.json({ error: "code_unknown", reason: "This code is not valid any more. Ask for a new one in POS Admin > Terminals." }, 404);
+  const token = mintDeviceToken();
+  const deviceName = typeof body.device_name === "string" && body.device_name.trim() ? body.device_name.trim().slice(0, 80) : null;
+  const platform = typeof body.platform === "string" && body.platform.trim() ? body.platform.trim().slice(0, 40) : null;
+  await db.update(pos_terminals).set({
+    token_hash: await deviceTokenHash(token), prepared_at: now, last_seen_at: now, status: "PREPARED", pairing_code_hash: null, pairing_expires_at: null,
+    device_name: deviceName ?? undefined, platform: platform ?? undefined, updated_at: now,
+  }).where(eq(pos_terminals.id, t.id));
+  const bundle = await loadPosBundle(db, t.company_id, t.id, await companyBlock(c.env, t.company_id));
+  if (!bundle) return c.json({ error: "bundle_failed" }, 500);
+  await db.insert(pos_audit).values({ company_id: t.company_id, entity: "pos_terminal", entity_id: String(t.id), field: "paired", from_value: null, to_value: `${t.code} -> project ${t.project_id}${deviceName ? ` (${deviceName})` : ""}`, by_name: "device" });
+  return c.json({ token, bundle });
 });
 
 /* ── the event's bills for the device report, all terminals (layout P13) ── */
