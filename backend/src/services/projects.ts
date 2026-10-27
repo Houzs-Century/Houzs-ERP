@@ -9,7 +9,10 @@ import { checklistRowDone } from "./checklistProgress";
 import { eventFinanceLines } from "./projectFinanceLines";
 import { loadEventPnl } from "./eventPnlInputs";
 import { pnlForProjects, withPnlColumns } from "./eventPnlBatch";
+import { earliestLorryDate } from "./earliest-lorry-date";
 export { deriveProjectCode, deriveProjectName };
+// Re-exported from here so projects.earliestLorryDate.test.ts still resolves it.
+export { earliestLorryDate };
 
 /** Disambiguate against existing codes by appending -2, -3, … */
 export async function uniqueProjectCode(env: Env, base: string): Promise<string> {
@@ -426,31 +429,6 @@ export const MALAYSIA_STATES = [
 export const PAYMENT_STATUSES = [
   "not_started", "deposit_paid", "paid", "refund_pending", "refunded",
 ] as const;
-
-/** Earliest per-lorry date in a setup_crew / dismantle_crew JSON blob, or null.
- *  Owner 2026-10-26: the Setup & Dismantle editor dropped the single shared date
- *  box — each lorry carries its own date+time under `lorry_crew[].at`
- *  ("YYYY-MM-DDTHH:mm", which sorts lexically = chronologically). We derive the
- *  earliest so projects.setup_start_at / dismantle_start_at stay populated for
- *  the delivery-planning board, the printed Event Summary and the stage stepper,
- *  which still read one representative window date. */
-export function earliestLorryDate(crewJson: unknown): string | null {
-  if (typeof crewJson !== "string" || !crewJson) return null;
-  let parsed: any;
-  try {
-    parsed = JSON.parse(crewJson);
-  } catch {
-    return null;
-  }
-  const lorries = Array.isArray(parsed?.lorry_crew) ? parsed.lorry_crew : [];
-  let earliest: string | null = null;
-  for (const l of lorries) {
-    const at = typeof l?.at === "string" ? l.at.trim() : "";
-    if (!at) continue;
-    if (earliest === null || at < earliest) earliest = at;
-  }
-  return earliest;
-}
 
 export async function patchProject(
   env: Env,
