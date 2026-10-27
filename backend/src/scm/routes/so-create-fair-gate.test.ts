@@ -61,3 +61,11 @@ describe('a header edit can say No fair (owner 2026-10-19)', () => {
     expect(raw).toContain('if (!fairLink && body.noFair !== true) {');
   });
 });
+
+describe('a header edit re-picking a fair (HC-0161)', () => {
+  it("resolves for the order's keyer and tells a DRAFT at Save when it cannot link", () => {
+    expect(raw).toContain("keyerId: () => editFairKeyerId({ sb, scope: (q) => scopeToCompany(q, c), docNo, editorId: Number(c.get('houzsUser')?.id ?? NaN) }),");
+    expect(raw).toContain("if (fairLink?.problem && beforeRecord.status === 'DRAFT' && companyUsesKeyerFair(c.get('companyCode'))) {");
+    expect(raw).toContain('return c.json(validationFailedBody([fairLink.problem]), 422);');
+  });
+});
