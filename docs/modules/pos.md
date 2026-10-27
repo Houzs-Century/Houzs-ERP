@@ -22,8 +22,9 @@ page, and the POS Admin menu. This guide carries only what is built.
   bills grouped by receipt with lines + payments, filters `date` (Malaysia
   calendar day) / `terminal` / `cashier` / `method` / `status`, totals, and
   the filter options. Pure grouping + totals in `routes/lib/pos-sales-list.ts`.
-- Events tab lists every fair on its own: Cash & Carry projects, any project
-  of any type that ended in the last 60 days or is still to come, and every
+- Events tab lists every fair on its own: Cash & Carry projects, the projects
+  whose `projects.brand` is one of General `booth_brands` (default AKEMI Cash
+  & Carry, AKEMI FRAGRANCE; picked from the project brands), and every
   linked one; each row carries a time status (`COMING` / `ON GOING` / `DONE`,
   `pos-admin-rules.ts posEventStatus`) and a separate LINKED mark; older
   projects are reachable by search. A row click opens the booth settings.

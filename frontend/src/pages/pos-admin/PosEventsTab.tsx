@@ -69,7 +69,7 @@ export function PosEventsTab() {
         <span className="flex gap-1">
           {CHIPS.map((c) => <button key={c.value} type="button" className={cn(ghostBtn, chip === c.value && "border-accent bg-accent/10 text-accent")} onClick={() => setChip(c.value)}>{c.label} <span className="text-ink-muted">{counts[c.value]}</span></button>)}
         </span>
-        <span className="text-[11px] text-ink-muted">Every fair of the last 60 days and every coming one is listed; pick a row to set it up for the booth.</span>
+        <span className="text-[11px] text-ink-muted">Cash & Carry projects and the fairs of the booth brands (General tab) are listed on their own; pick a row to set it up for the booth.</span>
         <span className="ml-auto"><button type="button" className={ghostBtn} onClick={() => setLinking(true)} title="Find an older project by name"><Link2 size={11} /> Older project</button></span>
       </div>
       {events.loading && !events.data && <div className="text-[11px] text-ink-muted">Loading events…</div>}
