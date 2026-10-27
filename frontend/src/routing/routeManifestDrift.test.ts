@@ -109,7 +109,8 @@ describe("executable route contract", () => {
     // the module dashboards, each first in its Sidebar group.
     // 179 since 2026-10-21: /scm/delivery-planning-driver — the driver run-sheet
     // ("Last Mile Delivery (Driver)") brought to desktop beside the admin board.
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(179);
+    // 180 since 2026-10-21: /hr/employees, Employees & Attendance (HC-0125).
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(180);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -164,7 +165,8 @@ describe("executable route contract", () => {
     // 185 — /ocr (DEV-35).
     // 187 since 2026-10-17 — the Logistic and Procurement Overviews.
     // 188 since 2026-10-21 — /scm/delivery-planning-driver; see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(188);
+    // 189 since 2026-10-21 — /hr/employees; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(189);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {
@@ -211,7 +213,9 @@ describe("mobile route drift gate", () => {
     // first in Logistics and in Procurement & MRP, as on the desktop Sidebar.
     // 43 since 2026-10-21: /scm/delivery-planning-driver, "Last Mile Delivery
     // (Driver)", beside Last Mile Delivery in the Logistics group.
-    expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(43);
+    // 44 since 2026-10-22: /hr/punch, Punch In / Out (HC-0125), the Attendance
+    // group's one row: the employee's own clock.
+    expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(44);
     // 6 since 2026-09-10: /roles, the rebuilt Roles & Permissions screen, reached
     // from a Profile row (gated via the Team hub tab).
     // 7 since 2026-09-17: /titles, the phone Titles editor (position_policy),
@@ -219,9 +223,9 @@ describe("mobile route drift gate", () => {
     // 8 since 2026-10-13: /it-support, report a problem to IT from the phone;
     // the row shows only where IT Support is connected, as on desktop.
     expect(PROFILE_ORG_ITEMS).toHaveLength(8);
-    expect(allMobile).toHaveLength(51);
-    expect(new Set(allMobile.map((item) => item.to)).size).toBe(51);
-    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(50);
+    expect(allMobile).toHaveLength(52);
+    expect(new Set(allMobile.map((item) => item.to)).size).toBe(52);
+    expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(51);
   });
 
   it("maps every declared mobile row to a real screen, never a placeholder stub", () => {

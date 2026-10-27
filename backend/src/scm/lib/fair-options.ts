@@ -335,7 +335,7 @@ function optionOf(row: FairProjectRow): FairOption {
 
 /** The booths of some project rows, one per project id, by brand (no brand
  *  last) then id. */
-function boothsOf(rows: readonly FairProjectRow[]): FairBooth[] {
+export function boothsOf(rows: readonly FairProjectRow[]): FairBooth[] {
   const byId = new Map<number, FairBooth>();
   for (const r of rows) if (!byId.has(r.projectId)) byId.set(r.projectId, { projectId: r.projectId, brand: clean(r.brand) || null });
   return [...byId.values()].sort((a, b) =>
@@ -747,16 +747,48 @@ export function fairEditUnlinkedMessage(input: {
   booths: readonly FairProjectRow[];
   brand: string | null;
 }): string | null {
-  if (input.match !== 'AMBIGUOUS' && input.match !== 'UNMATCHED') return null;
-  const booths = input.booths.filter(isPickableFair);
+  const why = unlinkedWhy(input.match, input.booths, input.brand);
+  return why ? `${why}. Pick the booth this order belongs to under Fair, or ask Finance or PMS to link it on Fair Links to Settle.` : null;
+}
+
+/** The line under the form's Booth pick: why it is asked (`fairBoothQuestion`). */
+export function fairBoothAskMessage(match: FairMatch, booths: readonly FairProjectRow[], brand: string | null): string | null {
+  const why = unlinkedWhy(match, booths, brand);
+  return why ? `${why}. Pick the booth this order belongs to.` : null;
+}
+
+function unlinkedWhy(match: FairMatch, rows: readonly FairProjectRow[], brand: string | null): string | null {
+  if (match !== 'AMBIGUOUS' && match !== 'UNMATCHED') return null;
+  const booths = rows.filter(isPickableFair);
   if (booths.length === 0) return null;
   const linked = linkedFairOf(booths[0]);
   const event = linked ? fairOptionLabel(linked) : clean(booths[0].venue);
   const brands = [...new Set(booths.map((b) => clean(b.brand) || 'no brand'))].join(', ');
-  const why = input.match === 'AMBIGUOUS'
+  return match === 'AMBIGUOUS'
     ? `${event} has booths for ${brands}, and nothing on this order has a brand that picks one`
-    : `${event} has no ${clean(input.brand)} booth, only ${brands}`;
-  return `${why}. The person who keyed it is not on the Sales Attending of just one of those booths either, so the fair cannot be linked. Ask PMS to add them to their booth's Sales Attending and pick the fair again, or ask Finance or PMS to link it on Fair Links to Settle.`;
+    : `${event} has no ${clean(brand)} booth, only ${brands}`;
+}
+
+/** The booth the operator picked under Fair (`fairProjectId`), or null. */
+export function fairBoothOf(body: { fairProjectId?: unknown }): number | null {
+  const id = typeof body.fairProjectId === 'string' ? Number(body.fairProjectId) : body.fairProjectId;
+  return typeof id === 'number' && Number.isInteger(id) && id > 0 ? id : null;
+}
+
+/**
+ * The booth a person picked, where the system could not decide one (owner
+ * 2026-10-27, HC-0161 / Lim: 「判不出才让 sales 选」). The brand's booth and the
+ * keyer's own still come first, so a pick never moves an order the rule placed.
+ *
+ * Taken only as one of `booths` — the rows the server itself loaded for the
+ * picked EVENT, already company-scoped and live — so the id is checked, not
+ * trusted: a stale or hand-built id that is not a booth of that event is
+ * ignored and the rule's own answer stands.
+ */
+export function withBoothPick(fair: FairResolution, booths: readonly FairProjectRow[], booth: number | null): FairResolution {
+  if (booth == null || fair.projectId != null) return fair;
+  if (fair.match !== 'AMBIGUOUS' && fair.match !== 'UNMATCHED') return fair;
+  return booths.some((r) => r.projectId === booth && isPickableFair(r)) ? { ...fair, projectId: booth, match: 'PICKED' } : fair;
 }
 
 /** "DUNLOPILLO @ MID VALLEY (10/15 - 10/18)" — one BOOTH, as the scan rules

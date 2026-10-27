@@ -67,6 +67,7 @@ import { PageHeader } from '../../components/Layout';
 import { resolveFxRate } from './fx-rate';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 import { DateField } from "../../vendor/scm/components/DateField";
+import { afterCreatePath, sourceDocPath } from '../../lib/returnToSource';
 
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -204,7 +205,7 @@ export const PurchaseInvoiceNew = () => {
      Mirrors GrnNew's "Charge allocation"; the server does the authoritative split. */
   const [allocationMethod, setAllocationMethod] = useState<'QTY' | 'VALUE' | 'CBM'>('QTY');
   const [lines, setLines]             = useState<DraftLine[]>([]);
-  const [dialog, setDialog] = useState<{ title: string; body: string; goTo?: string } | null>(null);
+  const [dialog, setDialog] = useState<{ title: string; body: string; goTo?: string; goLabel?: string } | null>(null);
 
   // ── GRN-sourced lines (only when ?grnId= present). ──────────────────────
   /* Every loaded note's lines, primary first (multi-note invoices). Waits for
@@ -604,7 +605,8 @@ export const PurchaseInvoiceNew = () => {
         body: asDraft
           ? 'Saved as Draft — review, then Confirm to post the AP liability.'
           : 'Created + posted — AP liability recorded.',
-        goTo: `/scm/purchase-invoices/${createRes.id}`,
+        goTo: afterCreatePath(`/scm/purchase-invoices/${createRes.id}`, sourceDocPath.goodsReceipt(grnId)),
+        goLabel: grnId ? 'Back to GRN' : undefined,
       });
     } catch (err) {
       setDialog({ title: 'Save failed', body: err instanceof Error ? err.message : 'Something went wrong.' });
@@ -1076,7 +1078,7 @@ export const PurchaseInvoiceNew = () => {
         <ActionResultDialog
           title={dialog.title}
           body={dialog.body}
-          primaryLabel={dialog.goTo ? 'Open PI' : undefined}
+          primaryLabel={dialog.goTo ? (dialog.goLabel ?? 'Open PI') : undefined}
           onPrimary={dialog.goTo ? () => { const g = dialog.goTo!; setDialog(null); navigate(g); } : undefined}
           /* Owner 2026-07-23: "Need a button to new purchase invoice" — the
              billing loop keys one PI per GRN back-to-back, so success offers a

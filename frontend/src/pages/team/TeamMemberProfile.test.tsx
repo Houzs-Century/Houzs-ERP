@@ -183,6 +183,34 @@ describe("TeamMemberProfile — Account access", () => {
   });
 });
 
+describe("TeamMemberProfile — Name", () => {
+  const nameField = () => screen.getByRole("textbox", { name: "Name" }) as HTMLInputElement;
+
+  test("the name is editable and saves trimmed, as name alone", async () => {
+    mount();
+    expect(nameField().value).toBe("PG WH Assistant");
+    fireEvent.change(nameField(), { target: { value: "  Shamsul Fiqri  " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch).toHaveBeenCalledWith("/api/users/151", { name: "Shamsul Fiqri" });
+  });
+
+  test("an edit that leaves the name alone does not send one", async () => {
+    mount();
+    fireEvent.change(screen.getByPlaceholderText("e.g. Driver Fleet"), { target: { value: "Penang" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch).toHaveBeenCalledWith("/api/users/151", { division: "Penang" });
+  });
+
+  test("a viewer who cannot manage members sees the name read-only, not an input", () => {
+    mount({ canManage: false });
+    expect(screen.queryByRole("textbox", { name: "Name" })).toBeNull();
+    // Shown as text (identity card + drawer breadcrumb), never an editable field.
+    expect(screen.getAllByText("PG WH Assistant").length).toBeGreaterThan(0);
+  });
+});
+
 describe("roleOptions", () => {
   test("lists the roles by name", () => {
     expect(roleOptions(ROLES, { id: 328, name: "Position Preview" }).map((o) => o.label)).toEqual([

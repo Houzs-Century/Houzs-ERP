@@ -8,9 +8,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { PinPad } from "../PinPad";
 import { afterWrongPin, findCashierById, fmtDateRange, fmtMyt, freshLock, lockedFor, loginTiles, syncTone, type LockState } from "../loginRules";
-import { managerLogin, type Manager, type ManagerContext } from "../manager";
+import { currentManager, forgetManager, lastEmail, managerLogin, resumeManager, type Manager, type ManagerContext } from "../manager";
 import { verifyPin } from "../pin";
-import { APP_VERSION, applyUpdate } from "../pwa";
+import { APP_VERSION, applyUpdate, isStandalone, onInstallAvailable, promptInstall } from "../pwa";
 import { SyncPanel } from "../sell/SyncPanel";
 import type { BundleCashier, DeviceState } from "../types";
 
@@ -38,8 +38,13 @@ export function Login({ state, online, updateWaiting, onLogin, onManager, onOpen
   const [checking, setChecking] = useState(false);
   const [gear, setGear] = useState(false);
   const [updateLater, setUpdateLater] = useState(false);
+  const [canInstall, setCanInstall] = useState(false);
+  const [installLater, setInstallLater] = useState(false);
+  useEffect(() => onInstallAvailable(setCanInstall), []);
   const [managerOpen, setManagerOpen] = useState(!state || state.provisional === true);
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(() => lastEmail());
+  const [keep, setKeep] = useState(true);
+  const [kept, setKept] = useState<Manager | null>(() => currentManager());
   const [password, setPassword] = useState("");
   const [managerBusy, setManagerBusy] = useState(false);
   const [managerError, setManagerError] = useState<string | null>(null);
@@ -73,12 +78,25 @@ export function Login({ state, online, updateWaiting, onLogin, onManager, onOpen
     }
   }
 
+  async function continueAs() {
+    setManagerBusy(true);
+    setManagerError(null);
+    try {
+      const r = await resumeManager();
+      if (!r) { setKept(null); setManagerError("That sign-in has ended. Please sign in again."); return; }
+      onManager(r.manager, r.context);
+    } catch (e) {
+      setManagerError(e instanceof Error ? e.message : "Could not continue");
+    } finally {
+      setManagerBusy(false);
+    }
+  }
   async function signInManager() {
     if (!email.trim() || !password) { setManagerError("Email and password, please."); return; }
     setManagerBusy(true);
     setManagerError(null);
     try {
-      const r = await managerLogin(email, password);
+      const r = await managerLogin(email, password, keep);
       setPassword("");
       onManager(r.manager, r.context);
     } catch (e) {
@@ -124,6 +142,9 @@ export function Login({ state, online, updateWaiting, onLogin, onManager, onOpen
       {updateWaiting && !updateLater && (
         <div className="banner update"><span className="grow">Update available for Houzs POS.</span><button type="button" className="btn primary" onClick={applyUpdate}>Restart now</button><button type="button" className="btn" onClick={() => setUpdateLater(true)}>Later</button></div>
       )}
+      {canInstall && !installLater && !isStandalone() && (
+        <div className="banner update"><span className="grow">Install Houzs POS on this device: it opens in its own window from the Start menu and works offline.</span><button type="button" className="btn primary" onClick={() => void promptInstall()}>Install</button><button type="button" className="btn" onClick={() => setInstallLater(true)}>Later</button></div>
+      )}
       {online === false && <div className="banner offline">{setUp ? "Offline. Login and selling work; sales will sync when the connection returns." : "Offline. The first sign-in on a new device needs internet."}</div>}
 
       <div className="screen">
@@ -153,12 +174,24 @@ export function Login({ state, online, updateWaiting, onLogin, onManager, onOpen
                 <p style={{ marginTop: 14 }}><button type="button" className="btn link" onClick={() => { setManagerOpen((v) => !v); setSelected(null); setGear(false); }}>{managerOpen ? "Hide manager sign-in" : "Manager sign-in with ERP account"}</button></p>
               </>
             )}
-            {(managerOpen || !setUp) && (
+            {(managerOpen || !setUp) && kept && (
+              <div className="card" style={{ maxWidth: 440 }}>
+                <h2 style={{ marginTop: 0 }}>Welcome back</h2>
+                <p className="muted" style={{ marginTop: 0 }}>This device remembers {kept.user.name}.</p>
+                <div className="row">
+                  <button type="button" className="btn primary" disabled={managerBusy} onClick={() => void continueAs()}>{managerBusy ? "One moment…" : `Continue as ${kept.user.name}`}</button>
+                  <button type="button" className="btn link" onClick={() => { forgetManager(); setKept(null); }}>Not you? Sign out</button>
+                </div>
+                {managerError && <div className="banner offline" style={{ marginTop: 10 }}>{managerError}</div>}
+              </div>
+            )}
+            {(managerOpen || !setUp) && !kept && (
               <form className="card" style={{ maxWidth: 440 }} onSubmit={(e) => { e.preventDefault(); void signInManager(); }}>
                 <h2 style={{ marginTop: 0 }}>{setUp ? "Manager sign-in" : "Sign in to Houzs POS"}</h2>
                 <p className="muted" style={{ marginTop: 0 }}>{setUp ? "Owner or admin: your ERP account opens the POS as a supervisor." : "Owner or admin: sign in with your ERP account. Cashiers get their name tiles once the device is set up in Settings."}</p>
                 <label className="field"><span>ERP email</span><input type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus={!setUp} /></label>
-                <label className="field"><span>Password</span><input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
+                <label className="field"><span>Password</span><input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus={!setUp && !!email} /></label>
+                <label className="row small" style={{ marginBottom: 10 }}><input type="checkbox" checked={keep} onChange={(e) => setKeep(e.target.checked)} /> Keep me signed in on this device</label>
                 {managerError && <div className="banner offline" style={{ marginBottom: 10 }}>{managerError}</div>}
                 <button type="submit" className="btn primary" disabled={managerBusy || online === false}>{managerBusy ? "Signing in…" : "Sign in"}</button>
               </form>
@@ -183,6 +216,7 @@ export function Login({ state, online, updateWaiting, onLogin, onManager, onOpen
       <footer className="footer">
         {setUp && <button type="button" className="btn link" onClick={() => { setTyping((v) => !v); setGear(false); }}>Keyboard</button>}
         <button type="button" className="btn link" onClick={() => window.location.reload()}>Exit</button>
+        {canInstall && !isStandalone() && <button type="button" className="btn link" onClick={() => void promptInstall()}>Install app</button>}
         <span className="grow" />
         <span>{setUp && state && b ? `Set up on ${fmtMyt(state.prepared_at)} · ${b.items.length} items · ` : ""}v{APP_VERSION}</span>
       </footer>

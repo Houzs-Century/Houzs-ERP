@@ -141,6 +141,16 @@ import { ProjectsCalendarView } from "./projects/ProjectsCalendarView";
 export { buildCalendarWindow, buildProjectsCalendarModel } from "./projects/calendarModel";
 import { SPEC_INPUT_CLASS, QuickRentalField, SpecTextField, SpecCell, SpecValue } from "./projects/specFields";
 import { LogisticsDateTimeField, GrabHelperBox, type CrewMember } from "./projects/logisticsParts";
+import {
+  driverToCrew,
+  helperToCrew,
+  outsourceOnly,
+  mergeCrewOptions,
+  validateOutsourceCrew,
+  type CrewKind,
+  type FleetDriverRow,
+  type FleetHelperRow,
+} from "./projects/outsourceCrew";
 import { type PhasePhoto, PhasePhotosSection, PhotoGroup } from "./projects/phasePhotos";
 import { FinanceAttachmentsSection, SnapshotKpi, SnapshotRow } from "./projects/financeLedgerParts";
 import { EventPnlTable } from "./projects/EventPnlTable";
@@ -5693,7 +5703,11 @@ type CrewSlot = { name: string; phone: string };
 // Per-lorry crew (owner 2026-07-13): each lorry carries its OWN drivers + helpers.
 // provider (owner 2026-07-23): a trip that is NOT an internal lorry is done by
 // Grab or Lalamove — chosen per lorry card. "" = internal lorry (use plate).
-type LorryCrew = { plate: string; provider?: string; drivers: CrewSlot[]; helpers: CrewSlot[] };
+// at (owner 2026-10-26): each lorry carries its OWN setup / dismantle date+time
+// ("YYYY-MM-DDTHH:mm", local-ish — the same shape the old single Setup Time box
+// wrote). Different lorries can set up / dismantle on different days, so there is
+// no longer one shared date for every lorry. "" / absent = not scheduled yet.
+type LorryCrew = { plate: string; provider?: string; at?: string | null; drivers: CrewSlot[]; helpers: CrewSlot[] };
 // Outsourced trip (owner 2026-07-23): Setup & Dismantle offer three providers.
 // Outsource / Lalamove carry a manual name·phone·plate; Grab carries two staff
 // helpers (helper1/helper2) instead. `provider` absent = legacy Outsource entry.
@@ -5750,6 +5764,7 @@ function parsePhaseCrew(s: string | null | undefined): PhaseCrew {
       lorryCrew = p.lorry_crew.map((l: any) => ({
         plate: typeof l?.plate === "string" ? l.plate : "",
         provider: typeof l?.provider === "string" ? l.provider : "",
+        at: typeof l?.at === "string" ? l.at : "",
         drivers: Array.isArray(l?.drivers) ? l.drivers : [],
         helpers: Array.isArray(l?.helpers) ? l.helpers : [],
       }));
@@ -5787,57 +5802,129 @@ function serializePhaseCrew(pc: PhaseCrew): string {
   });
 }
 
+// A <select> value that no real name can take, used as the "+ Add new" sentinel.
+const ADD_OUTSOURCE_SENTINEL = "__add_outsource__";
+
 function CrewSlotRow({
   label,
   color,
+  kind,
   options,
   slot,
   onChange,
+  onCreate,
   readOnly = false,
 }: {
   label: string;
   color: string;
+  /** Driver vs helper — decides which Fleet roster a manual add is created in. */
+  kind?: CrewKind;
   options: CrewMember[];
   slot: CrewSlot | undefined;
   onChange: (s: CrewSlot) => void;
+  /** Create a manual OUTSOURCE member in the Fleet roster and return it. Absent
+   *  (or no kind) hides the "+ Add new" option and keeps the plain picker. */
+  onCreate?: (name: string, phone: string) => Promise<CrewMember>;
   /** View-only for Sales (owner 2026-07): disable both controls. */
   readOnly?: boolean;
 }) {
   const cur = slot ?? { name: "", phone: "" };
+  const canAdd = !readOnly && !!onCreate && !!kind;
+  // Inline "add a name not in the list" mode. The new member is created in the
+  // Fleet roster (outsource), selected into this slot, and — via onCreate's
+  // state update in the parent — folded into `options` so it stays pickable.
+  const [adding, setAdding] = useState(false);
+  const [draftName, setDraftName] = useState("");
+  const [draftPhone, setDraftPhone] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const startAdd = () => { setDraftName(""); setDraftPhone(cur.phone ?? ""); setErr(null); setAdding(true); };
+  const cancelAdd = () => { setAdding(false); setErr(null); };
+  const confirmAdd = async () => {
+    const msg = validateOutsourceCrew(kind ?? "helper", draftName, draftPhone);
+    if (msg) { setErr(msg); return; }
+    setSaving(true);
+    setErr(null);
+    try {
+      const m = await onCreate!(draftName.trim(), draftPhone.trim());
+      onChange({ name: m.name, phone: m.phone ?? "" });
+      setAdding(false);
+    } catch (e) {
+      setErr(e instanceof Error && e.message ? e.message : "Couldn't add. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[minmax(0,1fr)_6.75rem] sm:items-center">
-      <div className="flex min-w-0 items-center gap-1">
-        <UserCircle2 size={12} className={cn("shrink-0", color)} />
-        <span className="w-11 shrink-0 text-[9px] font-semibold uppercase tracking-wider text-ink-muted">
-          {label}
-        </span>
-        <select
-          className="min-w-0 flex-1 rounded-md border border-border bg-surface px-1.5 py-1 text-[12px] disabled:bg-bg/40 disabled:opacity-70"
-          value={cur.name}
-          disabled={readOnly}
-          onChange={(e) => {
-            const u = options.find((o) => o.name === e.target.value);
-            onChange({ name: e.target.value, phone: u?.phone ?? (e.target.value ? cur.phone : "") });
-          }}
-        >
-          <option value="">Name…</option>
-          {options.map((o) => (
-            <option key={o.id} value={o.name}>
-              {o.name}
-            </option>
-          ))}
-          {cur.name && !options.some((o) => o.name === cur.name) && (
-            <option value={cur.name}>{cur.name}</option>
+    <div className="space-y-1">
+      <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[minmax(0,1fr)_6.75rem] sm:items-center">
+        <div className="flex min-w-0 items-center gap-1">
+          <UserCircle2 size={12} className={cn("shrink-0", color)} />
+          <span className="w-11 shrink-0 text-[9px] font-semibold uppercase tracking-wider text-ink-muted">
+            {label}
+          </span>
+          {adding ? (
+            <>
+              <input
+                autoFocus
+                className="min-w-0 flex-1 rounded-md border border-accent/50 bg-surface px-1.5 py-1 text-[12px]"
+                placeholder="New outsource name…"
+                value={draftName}
+                disabled={saving}
+                onChange={(e) => setDraftName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") { e.preventDefault(); void confirmAdd(); }
+                  if (e.key === "Escape") cancelAdd();
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => void confirmAdd()}
+                disabled={saving}
+                title="Add to fleet"
+                className="shrink-0 rounded-md bg-synced/90 px-1.5 py-1 text-[11px] font-semibold text-white hover:bg-synced disabled:opacity-60"
+              >
+                {saving ? "…" : "Add"}
+              </button>
+              <button type="button" onClick={cancelAdd} disabled={saving} title="Cancel" className="shrink-0 text-ink-muted hover:text-err">
+                <X size={13} />
+              </button>
+            </>
+          ) : (
+            <select
+              className="min-w-0 flex-1 rounded-md border border-border bg-surface px-1.5 py-1 text-[12px] disabled:bg-bg/40 disabled:opacity-70"
+              value={cur.name}
+              disabled={readOnly}
+              onChange={(e) => {
+                if (e.target.value === ADD_OUTSOURCE_SENTINEL) { startAdd(); return; }
+                const u = options.find((o) => o.name === e.target.value);
+                onChange({ name: e.target.value, phone: u?.phone ?? (e.target.value ? cur.phone : "") });
+              }}
+            >
+              <option value="">Name…</option>
+              {options.map((o) => (
+                <option key={o.id} value={o.name}>
+                  {o.name}
+                </option>
+              ))}
+              {cur.name && !options.some((o) => o.name === cur.name) && (
+                <option value={cur.name}>{cur.name}</option>
+              )}
+              {canAdd && <option value={ADD_OUTSOURCE_SENTINEL}>+ Add new (outsource)…</option>}
+            </select>
           )}
-        </select>
+        </div>
+        <input
+          className="min-w-0 rounded-md border border-border bg-surface px-1.5 py-1 text-[11px] disabled:bg-bg/40"
+          placeholder={adding ? (kind === "driver" ? "Phone… (required)" : "Phone… (optional)") : cur.name ? "Phone…" : "(pick a name first)"}
+          value={adding ? draftPhone : cur.phone}
+          disabled={adding ? saving : readOnly || !cur.name}
+          onChange={(e) => (adding ? setDraftPhone(e.target.value) : onChange({ name: cur.name, phone: e.target.value }))}
+        />
       </div>
-      <input
-        className="min-w-0 rounded-md border border-border bg-surface px-1.5 py-1 text-[11px] disabled:bg-bg/40"
-        placeholder={cur.name ? "Phone…" : "(pick a name first)"}
-        value={cur.phone}
-        disabled={readOnly || !cur.name}
-        onChange={(e) => onChange({ name: cur.name, phone: e.target.value })}
-      />
+      {adding && err && <div className="pl-[52px] text-[10px] text-err">{err}</div>}
     </div>
   );
 }
@@ -5922,9 +6009,11 @@ function PhaseCrewEditor({
   patch,
   emptyHint,
   headerExtra,
+  lorryDateLabel,
   showRemark = false,
   remarkLabel = "Remark",
   readOnly = false,
+  onCreateCrew,
 }: {
   title: string;
   field: "setup_crew" | "dismantle_crew" | "service_crew";
@@ -5936,12 +6025,20 @@ function PhaseCrewEditor({
   emptyHint?: string;
   /** Rendered above the "{title} Drivers" heading (e.g. the Dismantle Time field). */
   headerExtra?: React.ReactNode;
+  /** When set (Setup / Dismantle), each lorry card shows its OWN date+time field
+   *  under this label — there is no single shared date for all lorries. Omitted
+   *  for Service / Exchange, which has no scheduled window. */
+  lorryDateLabel?: string;
   /** Show a free-text remark box under the crew (Service / Exchange phase). */
   showRemark?: boolean;
   remarkLabel?: string;
   /** View-only for Sales (owner 2026-07): render current crew/plates but
    *  disable every control and suppress the add/remove/save actions. */
   readOnly?: boolean;
+  /** Create a manually-typed OUTSOURCE driver/helper in the Fleet roster and
+   *  fold it into the picker. Absent = no "+ Add new" option (the picker still
+   *  lists whatever crew it was given). */
+  onCreateCrew?: (kind: CrewKind, name: string, phone: string) => Promise<CrewMember>;
 }) {
   const [pc, setPc] = useState<PhaseCrew>(() => parsePhaseCrew(value));
   useEffect(() => {
@@ -5986,6 +6083,10 @@ function PhaseCrewEditor({
   // UI-only state; a hidden Driver 2 re-collapses by clearing its name.
   const [openSlot2, setOpenSlot2] = useState<Set<string>>(new Set());
   const showSlot2 = (li: number, kind: "d" | "h") => setOpenSlot2((s) => new Set(s).add(`${li}${kind}`));
+  // Bind the Fleet-roster creator to each slot's kind, or leave it off when the
+  // editor was given none (the picker then has no "+ Add new" option).
+  const onCreateDriver = onCreateCrew ? (name: string, phone: string) => onCreateCrew("driver", name, phone) : undefined;
+  const onCreateHelper = onCreateCrew ? (name: string, phone: string) => onCreateCrew("helper", name, phone) : undefined;
   return (
     <div className="mt-3 space-y-2">
       {emptyHint && <div className="text-[9px] italic text-ink-muted">{emptyHint}</div>}
@@ -6017,15 +6118,28 @@ function PhaseCrewEditor({
                 </button>
               )}
             </div>
-            <CrewSlotRow label="Driver 1" color="text-synced" options={drivers} slot={lorry.drivers[0]} onChange={(s) => setLorrySlot(li, "drivers", 0, s)} readOnly={readOnly} />
-            {(!!lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) && (
-              <CrewSlotRow label="Driver 2" color="text-synced" options={drivers} slot={lorry.drivers[1]} onChange={(s) => setLorrySlot(li, "drivers", 1, s)} readOnly={readOnly} />
+            {/* Per-lorry date+time (owner 2026-10-26): each lorry sets up /
+                dismantles on its OWN day, so the date lives on the lorry card,
+                not once for the whole phase. Setup / Dismantle only. */}
+            {lorryDateLabel && (
+              <div className="pt-0.5">
+                <LogisticsDateTimeField
+                  label={`${lorryDateLabel} date & time`}
+                  value={lorry.at ?? ""}
+                  onSave={(v) => updateLorry(li, { at: v })}
+                  readOnly={readOnly}
+                />
+              </div>
             )}
-            <CrewSlotRow label="Helper 1" color="text-warning-text" options={helpers} slot={lorry.helpers[0]} onChange={(s) => setLorrySlot(li, "helpers", 0, s)} readOnly={readOnly} />
+            <CrewSlotRow label="Driver 1" color="text-synced" kind="driver" onCreate={onCreateDriver} options={drivers} slot={lorry.drivers[0]} onChange={(s) => setLorrySlot(li, "drivers", 0, s)} readOnly={readOnly} />
+            {(!!lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) && (
+              <CrewSlotRow label="Driver 2" color="text-synced" kind="driver" onCreate={onCreateDriver} options={drivers} slot={lorry.drivers[1]} onChange={(s) => setLorrySlot(li, "drivers", 1, s)} readOnly={readOnly} />
+            )}
+            <CrewSlotRow label="Helper 1" color="text-warning-text" kind="helper" onCreate={onCreateHelper} options={helpers} slot={lorry.helpers[0]} onChange={(s) => setLorrySlot(li, "helpers", 0, s)} readOnly={readOnly} />
             {/* Owner 2026-10-21: both helper slots show directly — setup/dismantle
                 lorries usually ride two helpers, so Helper 2 is always fillable
                 (leave blank if unused), no "+ Add" step. */}
-            <CrewSlotRow label="Helper 2" color="text-warning-text" options={helpers} slot={lorry.helpers[1]} onChange={(s) => setLorrySlot(li, "helpers", 1, s)} readOnly={readOnly} />
+            <CrewSlotRow label="Helper 2" color="text-warning-text" kind="helper" onCreate={onCreateHelper} options={helpers} slot={lorry.helpers[1]} onChange={(s) => setLorrySlot(li, "helpers", 1, s)} readOnly={readOnly} />
             {!readOnly && !(lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) && (
               <div className="flex gap-1.5 pt-0.5">
                 <button
@@ -6131,6 +6245,7 @@ function ServiceExchangeBlock({
   lorryOptions,
   patch,
   readOnly,
+  onCreateCrew,
 }: {
   serviceCrew: string | null | undefined;
   projectId: number;
@@ -6139,6 +6254,7 @@ function ServiceExchangeBlock({
   lorryOptions: string[];
   patch: (body: Record<string, any>) => Promise<void>;
   readOnly: boolean;
+  onCreateCrew?: (kind: CrewKind, name: string, phone: string) => Promise<CrewMember>;
 }) {
   const hasData = useMemo(() => {
     const pc = parsePhaseCrew(serviceCrew);
@@ -6186,6 +6302,7 @@ function ServiceExchangeBlock({
             emptyHint="Optional — a mid-fair service visit or part exchange"
             showRemark
             remarkLabel="Service / Exchange — what"
+            onCreateCrew={onCreateCrew}
           />
           <ServicePhotos projectId={projectId} readOnly />
         </div>
@@ -6240,6 +6357,13 @@ function LogisticsCrewSection({
     canEditSchedule || /logistic/.test(_pos) || /logistic/.test(_role);
   const [crew, setCrew] = useState<CrewMember[]>([]);
   const [lorryOptions, setLorryOptions] = useState<string[]>([]);
+  // Outsource Fleet-roster crew (scm.drivers / scm.helpers, in_house = false),
+  // folded into the Driver/Helper pickers so an outsource name added once is
+  // reusable. The two reads below recover to an empty list on failure: the Fleet
+  // routes sit behind scm.transportation.drivers, so a user without that access
+  // simply gets no outsource options and the in-house staff list is unaffected.
+  const [fleetDrivers, setFleetDrivers] = useState<CrewMember[]>([]);
+  const [fleetHelpers, setFleetHelpers] = useState<CrewMember[]>([]);
   // A failed reference read must not render as an empty list. `.catch(() => {})`
   // here meant a 403 (or a cold-pool 503, or a network drop) left `crew` and
   // `lorryOptions` at [], and the crew/lorry pickers then said "no drivers" —
@@ -6266,12 +6390,46 @@ function LogisticsCrewSection({
       .get<{ lorries: { plate: string }[] }>("/api/scm/lorries")
       .then((r) => { if (live) setLorryOptions((r.lorries ?? []).map((l) => l.plate).filter(Boolean)); })
       .catch(fail);
+    // Outsource Fleet crew — the roster is OPTIONAL here (gated by
+    // scm.transportation.drivers). A failure (most often a 403 for a scheduler
+    // without Fleet access) must NOT blank the in-house pickers or raise
+    // refError: it just means no outsource options, so we recover to an empty
+    // list rather than swallow the rejection or surface an alarm.
+    api
+      .get<{ drivers?: FleetDriverRow[] }>("/api/scm/drivers")
+      .then((r) => { if (live) setFleetDrivers(outsourceOnly(r.drivers ?? []).map(driverToCrew)); })
+      .catch(() => { if (live) setFleetDrivers([]); });
+    api
+      .get<{ helpers?: FleetHelperRow[] }>("/api/scm/helpers")
+      .then((r) => { if (live) setFleetHelpers(outsourceOnly(r.helpers ?? []).map(helperToCrew)); })
+      .catch(() => { if (live) setFleetHelpers([]); });
     return () => { live = false; };
   }, []);
   const isType = (u: CrewMember, kind: string) =>
     (u.role_name || "").toLowerCase() === kind || (u.user_type || "").toLowerCase() === kind;
-  const drivers = useMemo(() => crew.filter((u) => isType(u, "driver") && (u.name || "").trim() !== ""), [crew]);
-  const helpers = useMemo(() => crew.filter((u) => isType(u, "helper") && (u.name || "").trim() !== ""), [crew]);
+  const drivers = useMemo(
+    () => mergeCrewOptions(crew.filter((u) => isType(u, "driver") && (u.name || "").trim() !== ""), fleetDrivers),
+    [crew, fleetDrivers],
+  );
+  const helpers = useMemo(
+    () => mergeCrewOptions(crew.filter((u) => isType(u, "helper") && (u.name || "").trim() !== ""), fleetHelpers),
+    [crew, fleetHelpers],
+  );
+  // Create a manually-typed outsource driver/helper in the Fleet roster and fold
+  // it into the picker so it stays selectable. Rejects on failure; the row shows
+  // the message. Drivers post `phone` (required); helpers post `contact`.
+  const createOutsourceCrew = async (kind: CrewKind, name: string, phone: string): Promise<CrewMember> => {
+    if (kind === "driver") {
+      const r = await api.post<{ driver: FleetDriverRow }>("/api/scm/drivers", { name, phone, inHouse: false });
+      const member = driverToCrew(r.driver);
+      setFleetDrivers((prev) => [...prev, member]);
+      return member;
+    }
+    const r = await api.post<{ helper: FleetHelperRow }>("/api/scm/helpers", { name, contact: phone || undefined, inHouse: false });
+    const member = helperToCrew(r.helper);
+    setFleetHelpers((prev) => [...prev, member]);
+    return member;
+  };
   return (
     <PanelSection
       muted
@@ -6310,12 +6468,14 @@ function LogisticsCrewSection({
           onSaveRemark={(v) => patch({ schedule_remark: v })}
         />
       )}
-      <div>
-        <LogisticsDateTimeField label="Setup Time" value={project.setup_start_at} onSave={(v) => patch({ setup_start_at: v })} readOnly={readOnly} />
-      </div>
-      <PhaseCrewEditor title="Setup" field="setup_crew" value={project.setup_crew} drivers={drivers} helpers={helpers} lorryOptions={lorryOptions} patch={patch} readOnly={readOnly} />
+      {/* Owner 2026-10-26: the single "Setup Time" / "Dismantle Time" box is
+          gone — each lorry now carries its OWN date+time (on its card below),
+          since lorries set up / dismantle on different days. The project-level
+          setup_start_at / dismantle_start_at columns are now DERIVED on save
+          (earliest lorry date) so the delivery-planning board, print and the
+          stage stepper keep reading one representative window date. */}
+      <PhaseCrewEditor title="Setup" field="setup_crew" value={project.setup_crew} drivers={drivers} helpers={helpers} lorryOptions={lorryOptions} patch={patch} readOnly={readOnly} lorryDateLabel="Setup" onCreateCrew={createOutsourceCrew} />
       <div className="my-3 border-t border-dashed border-border" />
-      {/* Dismantle Time sits above Dismantle Drivers, mirroring Setup. */}
       <PhaseCrewEditor
         title="Dismantle"
         field="dismantle_crew"
@@ -6326,9 +6486,8 @@ function LogisticsCrewSection({
         patch={patch}
         readOnly={readOnly}
         emptyHint="Leave empty if same as setup"
-        headerExtra={
-          <LogisticsDateTimeField label="Dismantle Time" value={project.dismantle_start_at} onSave={(v) => patch({ dismantle_start_at: v })} readOnly={readOnly} />
-        }
+        lorryDateLabel="Dismantle"
+        onCreateCrew={createOutsourceCrew}
       />
       {/* Service / Exchange (owner 2026-07-22; collapsible 2026-08-10): an
           OPTIONAL mid-fair service visit or part exchange. Hidden behind its own
@@ -6344,6 +6503,7 @@ function LogisticsCrewSection({
         lorryOptions={lorryOptions}
         patch={patch}
         readOnly={readOnly}
+        onCreateCrew={createOutsourceCrew}
       />
     </PanelSection>
   );

@@ -10,9 +10,12 @@
 // preview mirrors it so what you see is what is sent.
 //
 // `kind` picks the Connect automation (backend scm/lib/delivery-message-kinds
-// .ts is the source of truth). Two kinds need the operator's input because the
-// ERP does not hold the data: Driver Info (driver / lorry / time) and Postpone
-// (reason / proposed date) — their fields appear here and gate the Send button.
+// .ts is the source of truth). Driver Info reads the driver (name / IC / contact
+// / plate) off each order's own crew — the board's Driver / Lorry columns — so
+// the operator does not pick it again; the one thing the ERP does not hold is the
+// delivery-time window, and it differs per customer, so EACH customer carries its
+// own time field. Ready customers send one Connect call each (owner 2026-10-27).
+// Postpone likewise reads the row's Amend Reason + Delivery Date.
 //
 // Mirrors ScheduleDpOrderDrawer's chrome + the Suppliers CSS module. In-app
 // NotifyDialog only. While Connect is unconfigured the backend answers 503 —
@@ -28,20 +31,13 @@ import {
   type PlanningOrder,
   type SendMessageKind,
 } from '../lib/delivery-planning-queries';
-import { useDrivers } from '../lib/drivers-queries';
-import { useLorries } from '../lib/lorries-queries';
+import { phoneKey, planDriverInfoGroup, type DriverGroupPlan } from '../lib/driver-info-send';
 import { useNotify } from './NotifyDialog';
 import styles from '../../../pages/scm-v2/Suppliers.module.css';
 
 export type { SendMessageKind } from '../lib/delivery-planning-queries';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
-
-/** Same rule as the backend: digits only, '+' prefix, ≥8 digits or unusable. */
-const phoneKey = (raw: string | null | undefined): string | null => {
-  const digits = String(raw ?? '').replace(/\D/g, '');
-  return digits.length >= 8 ? `+${digits}` : null;
-};
 
 const effectiveDate = (o: PlanningOrder): string =>
   (o.amended_delivery_date ?? o.customer_delivery_date ?? '').slice(0, 10) || '—';
@@ -88,37 +84,32 @@ export const SKIP_LABEL: Record<string, string> = {
   postpone_needs_reason_date: 'set Amend Reason + Delivery Date on the row first',
 };
 
+/** The per-customer block reasons, phrased for the operator. */
+const DRIVER_BLOCK_HINT: Record<NonNullable<DriverGroupPlan['block']>, string> = {
+  no_driver: 'No driver on these orders — set the Driver column on the row first.',
+  no_contact: 'This driver has no contact on file — add it in Fleet first.',
+  no_time: 'Type a delivery time to send this customer.',
+};
+
 const fieldStyle = { display: 'grid', gap: 4, fontSize: 'var(--fs-12)' } as const;
 const inputStyle = { padding: '6px 8px', border: '1px solid var(--line)', borderRadius: 8, fontSize: 'var(--fs-13)', background: '#fff' } as const;
+const noteStyle = { marginBottom: 'var(--space-3)', padding: 'var(--space-3)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-12)', color: 'var(--c-muted, #767b6e)' } as const;
 
 export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: { rows: PlanningOrder[]; onClose: () => void; kind?: SendMessageKind }) => {
   const send = useSendDeliveryMessages();
   const updateFields = useUpdateDeliveryFields();
   const notify = useNotify();
 
-  // Operator input for the kinds whose data the ERP does not hold.
   const needsDriver = kind === 'driver_info';
   // Postpone takes no input here: it reads each order's Amend Reason and
   // Delivery Date straight off the board (set those columns on the row first).
   const isPostpone = kind === 'postpone';
-  const drivers = useDrivers();
-  const lorries = useLorries();
-  const [driverId, setDriverId] = useState('');
-  const [lorryId, setLorryId] = useState('');
-  const [deliveryTime, setDeliveryTime] = useState('');
 
-  const driver = (drivers.data ?? []).find((d) => d.id === driverId) ?? null;
-  const lorry = (lorries.data ?? []).find((l) => l.id === lorryId) ?? null;
-  const driverInfo = needsDriver && driver && deliveryTime.trim()
-    ? {
-        driverName: driver.name,
-        driverContact: driver.phone,
-        driverIc: driver.ic_number ?? '',
-        carPlate: lorry?.plate ?? driver.vehicle ?? '',
-        deliveryTime: deliveryTime.trim(),
-      }
-    : null;
-  const inputReady = !needsDriver || (!!driverInfo && !!driverInfo.driverContact);
+  // Driver Info only: the per-customer delivery-time window, keyed by phone.
+  const [timeByPhone, setTimeByPhone] = useState<Record<string, string>>({});
+  // Sequential per-customer sends run across several awaits, so a local flag
+  // keeps the button disabled for the whole run (send.isPending toggles per call).
+  const [busy, setBusy] = useState(false);
 
   // Preview grouping — mirrors the backend's phone grouping.
   const groups = new Map<string, PlanningOrder[]>();
@@ -132,43 +123,76 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
   }
   const sendableDocs = [...groups.values()].flat().map((r) => r.so_doc_no);
 
-  const submit = () => {
-    if (sendableDocs.length === 0 || send.isPending || !inputReady) return;
-    send.mutate({
-      docNos: sendableDocs,
-      kind,
-      ...(driverInfo ? { driverInfo } : {}),
-    }, {
-      onSuccess: (res) => {
-        // A successful send advances the customer-message workflow status for
-        // that kind (KIND_AFTER_STATUS). The SEND status ("Done All") is derived
-        // separately from the wa_message_log record; the board re-reads on
-        // invalidate.
-        const after = KIND_AFTER_STATUS[kind];
-        if (after) {
-          for (const s of res.sent) {
-            for (const id of s.docNos) {
-              updateFields.mutate({ type: 'so', id, deliveryMessageStatus: after });
-            }
-          }
-        }
-        const parts: string[] = [];
-        if (res.sent.length) parts.push(`Sent ${res.sent.length} message${res.sent.length === 1 ? '' : 's'} (${res.sent.reduce((n, s) => n + s.docNos.length, 0)} orders).`);
-        if (res.failed.length) parts.push(`Failed ${res.failed.length}: ${res.failed.map((f) => `${f.phone} (${f.error})`).join('; ')}.`);
-        if (res.skipped.length) parts.push(`Skipped ${res.skipped.length}: ${res.skipped.map((s) => `${s.docNo} (${SKIP_LABEL[s.reason] ?? s.reason})`).join(', ')}.`);
-        notify({
-          title: res.failed.length ? 'Send finished with failures' : 'Messages sent',
-          body: parts.join(' ') || 'Nothing to send.',
-          tone: res.failed.length ? 'error' : 'info',
-        });
-        onClose();
-      },
-      onError: (err) => notify({
-        title: 'Send failed',
-        body: err instanceof Error ? err.message : 'Something went wrong.',
-        tone: 'error',
-      }),
+  // Driver Info: one plan per customer (driver pulled from the orders' crew +
+  // this customer's typed time). A customer is ready only when its plan has no
+  // block; ready customers each send their own Connect call.
+  const driverGroups = needsDriver
+    ? [...groups.entries()].map(([phone, list]) => ({
+        phone,
+        docNos: list.map((r) => r.so_doc_no),
+        plan: planDriverInfoGroup(list, timeByPhone[phone] ?? ''),
+      }))
+    : [];
+  const planByPhone = new Map(driverGroups.map((g) => [g.phone, g.plan]));
+  const readyDriverGroups = driverGroups.filter((g) => g.plan.block === null);
+
+  const messageCount = needsDriver ? readyDriverGroups.length : groups.size;
+  const canSend = !busy && !send.isPending && messageCount > 0;
+
+  type SendResult = Awaited<ReturnType<typeof send.mutateAsync>>;
+
+  /* Post-send: advance the customer-message workflow status (KIND_AFTER_STATUS)
+     per sent doc, summarise, and close. The SEND status is derived separately
+     from the wa_message_log record; the board re-reads on invalidate. */
+  const finish = (res: SendResult) => {
+    const after = KIND_AFTER_STATUS[kind];
+    if (after) {
+      for (const s of res.sent) {
+        for (const id of s.docNos) updateFields.mutate({ type: 'so', id, deliveryMessageStatus: after });
+      }
+    }
+    const parts: string[] = [];
+    if (res.sent.length) parts.push(`Sent ${res.sent.length} message${res.sent.length === 1 ? '' : 's'} (${res.sent.reduce((n, s) => n + s.docNos.length, 0)} orders).`);
+    if (res.failed.length) parts.push(`Failed ${res.failed.length}: ${res.failed.map((f) => `${f.phone} (${f.error})`).join('; ')}.`);
+    if (res.skipped.length) parts.push(`Skipped ${res.skipped.length}: ${res.skipped.map((s) => `${s.docNo} (${SKIP_LABEL[s.reason] ?? s.reason})`).join(', ')}.`);
+    void notify({
+      title: res.failed.length ? 'Send finished with failures' : 'Messages sent',
+      body: parts.join(' ') || 'Nothing to send.',
+      tone: res.failed.length ? 'error' : 'info',
     });
+    onClose();
+  };
+
+  const submit = async () => {
+    if (!canSend) return;
+
+    if (needsDriver) {
+      // One Connect call per ready customer, each with its own driver + time.
+      setBusy(true);
+      const agg: SendResult = { sent: [], failed: [], skipped: [] };
+      for (const g of readyDriverGroups) {
+        try {
+          const res = await send.mutateAsync({ docNos: g.docNos, kind, driverInfo: g.plan.payload! });
+          agg.sent.push(...res.sent);
+          agg.failed.push(...res.failed);
+          agg.skipped.push(...res.skipped);
+        } catch (err) {
+          agg.failed.push({ phone: g.phone, docNos: g.docNos, error: err instanceof Error ? err.message : 'send failed' });
+        }
+      }
+      setBusy(false);
+      finish(agg);
+      return;
+    }
+
+    // Every other kind: one call for the whole selection (postpone / balance /
+    // postage read what they need off each order server-side).
+    try {
+      const res = await send.mutateAsync({ docNos: sendableDocs, kind });
+      finish(res);
+    } catch (err) {
+      void notify({ title: 'Send failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
+    }
   };
 
   return (
@@ -185,39 +209,20 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
           </div>
 
           {needsDriver && (
-            <div style={{ display: 'grid', gap: 'var(--space-3)', marginBottom: 'var(--space-3)', padding: 'var(--space-3)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)' }}>
-              <label style={fieldStyle}>
-                <span>Driver</span>
-                <select value={driverId} onChange={(e) => setDriverId(e.target.value)} style={inputStyle}>
-                  <option value="">Choose a driver…</option>
-                  {(drivers.data ?? []).map((d) => <option key={d.id} value={d.id}>{d.name}{d.phone ? ` · ${d.phone}` : ''}</option>)}
-                </select>
-              </label>
-              <label style={fieldStyle}>
-                <span>Lorry (plate)</span>
-                <select value={lorryId} onChange={(e) => setLorryId(e.target.value)} style={inputStyle}>
-                  <option value="">{driver?.vehicle ? `Driver's own vehicle (${driver.vehicle})` : 'Choose a lorry…'}</option>
-                  {(lorries.data ?? []).map((l) => <option key={l.id} value={l.id}>{l.plate}{l.model ? ` · ${l.model}` : ''}</option>)}
-                </select>
-              </label>
-              <label style={fieldStyle}>
-                <span>Delivery time (as the customer will read it)</span>
-                <input value={deliveryTime} onChange={(e) => setDeliveryTime(e.target.value)} placeholder="e.g. 10am – 1pm" style={inputStyle} />
-              </label>
-              {driver && !driver.phone && (
-                <div style={{ color: 'var(--c-burnt)', fontSize: 'var(--fs-12)' }}>This driver has no phone on file — the message prints the contact, so add it in Fleet first.</div>
-              )}
+            <div style={noteStyle}>
+              Each customer's message uses the <strong>driver set on the row</strong> (the Driver / Lorry columns) — no need to pick it again. Type the <strong>delivery-time window</strong> for each customer below; a customer with no driver on the row is skipped.
             </div>
           )}
 
           {isPostpone && (
-            <div style={{ marginBottom: 'var(--space-3)', padding: 'var(--space-3)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-12)', color: 'var(--c-muted, #767b6e)' }}>
+            <div style={noteStyle}>
               The notice uses each order's own <strong>Amend Reason</strong> (printed after "due to") and <strong>Delivery Date</strong> (the proposed new date) from the board. Set those two columns on the row first; an order missing either is skipped.
             </div>
           )}
 
           {[...groups.entries()].map(([phone, list]) => {
             const groupOwed = list.reduce((n, r) => n + owedSen(r), 0);
+            const plan = planByPhone.get(phone) ?? null;
             return (
               <div key={phone} style={{ marginBottom: 'var(--space-3)', padding: 'var(--space-3)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
@@ -230,6 +235,39 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
                     </span>
                   )}
                 </div>
+
+                {needsDriver && plan && (
+                  <div style={{ display: 'grid', gap: 6, margin: '2px 0 8px' }}>
+                    {plan.driver ? (
+                      <div style={{ fontSize: 'var(--fs-12)' }}>
+                        Driver: <strong>{plan.driver.driverName}</strong>
+                        {plan.driver.carPlate ? ` · ${plan.driver.carPlate}` : ''}
+                        {plan.driver.driverIc ? ` · IC ${plan.driver.driverIc}` : ''}
+                        {plan.driver.driverContact ? ` · ${plan.driver.driverContact}` : ''}
+                      </div>
+                    ) : (
+                      <div style={{ color: 'var(--c-burnt)', fontSize: 'var(--fs-12)' }}>{DRIVER_BLOCK_HINT.no_driver}</div>
+                    )}
+                    {plan.mixedDrivers && plan.driver && (
+                      <div style={{ color: 'var(--c-burnt)', fontSize: 'var(--fs-12)' }}>These orders name more than one driver — the message will use {plan.driver.driverName}.</div>
+                    )}
+                    {plan.driver && (
+                      <label style={fieldStyle}>
+                        <span>Delivery time (as the customer will read it)</span>
+                        <input
+                          value={timeByPhone[phone] ?? ''}
+                          onChange={(e) => setTimeByPhone((m) => ({ ...m, [phone]: e.target.value }))}
+                          placeholder="e.g. 10am – 1pm"
+                          style={inputStyle}
+                        />
+                      </label>
+                    )}
+                    {plan.block && plan.block !== 'no_driver' && (
+                      <div style={{ color: 'var(--c-burnt)', fontSize: 'var(--fs-12)' }}>{DRIVER_BLOCK_HINT[plan.block]}</div>
+                    )}
+                  </div>
+                )}
+
                 {list.map((r) => (
                   <div key={r.so_doc_no} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 'var(--fs-12)', padding: '2px 0' }}>
                     <span>{r.so_doc_no}{r.branding ? ` · ${r.branding}` : ''}</span>
@@ -247,15 +285,15 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
           )}
         </div>
 
-        {!inputReady && (
+        {needsDriver && messageCount === 0 && (
           <div style={{ padding: '0 var(--space-4)', color: 'var(--c-burnt)', fontSize: 'var(--fs-12)' }}>
-            Pick the driver and type the delivery time to enable sending.
+            Type a delivery time for at least one customer to enable sending.
           </div>
         )}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-3)', padding: 'var(--space-4)' }}>
           <Button variant="ghost" size="md" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" size="md" onClick={submit} disabled={sendableDocs.length === 0 || send.isPending || !inputReady}>
-            {send.isPending ? 'Sending…' : `Send ${groups.size} message${groups.size === 1 ? '' : 's'}`}
+          <Button variant="primary" size="md" onClick={submit} disabled={!canSend}>
+            {busy || send.isPending ? 'Sending…' : `Send ${messageCount} message${messageCount === 1 ? '' : 's'}`}
           </Button>
         </div>
       </div>

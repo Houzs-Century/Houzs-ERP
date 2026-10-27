@@ -102,7 +102,7 @@
 //      BEFORE_TS=<ISO> optional cutoff (default: now) — only OUTs created before it
 //      are eligible, mirroring the function's temporal guard (retro-cost mode).
 //      DOS=<comma-separated DO numbers> — basis-cost mode only, REQUIRED there.
-//      ITEM_CODES=<comma-separated item codes> — retro-cost only: only these codes' buckets.
+//      ITEM_CODES=<comma-separated item codes> — retro-cost and reconstruct: only these codes' buckets / families.
 // Mirrors the read-only shape of check-inventory-integrity.mjs; this one WRITES
 // only under APPLY=true.
 // ----------------------------------------------------------------------------
@@ -153,7 +153,7 @@ if (MODE === "basis-cost" && DOS.length === 0) {
   console.error("MODE=basis-cost requires DOS=<comma-separated DO numbers> — this mode seeds a REFERENCE cost and must never run open-ended.");
   process.exit(2);
 }
-if (ITEM_CODES.length > 0 && MODE !== "retro-cost") { console.error(`ITEM_CODES limits retro-cost only; MODE=${MODE} would ignore it.`); process.exit(2); }
+if (ITEM_CODES.length > 0 && MODE !== "retro-cost" && MODE !== "reconstruct") { console.error(`ITEM_CODES limits retro-cost and reconstruct only; MODE=${MODE} would ignore it.`); process.exit(2); }
 
 const notice = (m) =>
   console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
@@ -945,13 +945,13 @@ async function runReconstruct() {
 
   const famKey = (r) => `${r.company_id ?? ""}::${r.warehouse_id}::${r.item_code}`;
   const families = new Map();
-  for (const l of candidates) {
+  for (const l of ITEM_CODES.length > 0 ? candidates.filter((c) => ITEM_CODES.includes(c.item_code)) : candidates) {
     const k = famKey(l);
     const f = families.get(k) ?? { companyId: l.company_id, warehouseId: l.warehouse_id, itemCode: l.item_code, lots: [] };
     f.lots.push(l);
     families.set(k, f);
   }
-  notice(`families (company, warehouse, product): ${families.size}`);
+  notice(`families (company, warehouse, product): ${families.size}${ITEM_CODES.length > 0 ? ` (ITEM_CODES limit: ${ITEM_CODES.join(" | ")})` : ""}`);
 
   let familiesPlanned = 0, familiesRefused = 0, rowsPlanned = 0, rmStamped = 0;
   let surplusLotsN = 0, surplusUnits = 0, surplusValueSen = 0;
