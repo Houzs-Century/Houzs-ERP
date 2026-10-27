@@ -175,6 +175,9 @@ page, and the POS Admin menu. This guide carries only what is built.
   discount, net and stock left (`scm.inventory_balances` at the event's
   stock source, else the POS store, else the company total, flagged);
   Export Excel (the shared rows plus the stock column) / PDF.
+- Install: the login screen (banner and footer link) and Settings offer
+  "Install Houzs POS" through the browser install prompt (`pos/src/pwa.ts`
+  `promptInstall`), hidden once the app runs in its own window.
 - The POS front is the login screen. A device not set up yet shows a manager
   sign-in (ERP email + password; the account must hold `pos.manage`,
   `GET /api/pos-admin/device/context` answers who / company / settings); the

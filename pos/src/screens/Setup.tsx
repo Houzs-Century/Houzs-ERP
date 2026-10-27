@@ -15,7 +15,7 @@ import type { Manager } from "../manager";
 import { connectPrinter, onPrinterStatus, printerSupported, type PrinterStatus } from "../printer";
 import { printTestPage } from "../printing";
 import { clearTestSales } from "../salesStore";
-import { APP_VERSION } from "../pwa";
+import { APP_VERSION, isStandalone, onInstallAvailable, promptInstall } from "../pwa";
 import type { DeviceState, PosBundle } from "../types";
 
 type Terminal = { id: number; code: string; device_name: string | null; project_id: number | null; project_name: string | null; prepared_at: string | null; active: boolean };
@@ -45,6 +45,8 @@ export function Setup({ state, manager, onPrepared, onExit, onToggleTest }: {
   const [msg, setMsg] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
   const [printer, setPrinter] = useState<PrinterStatus>({ connected: false, name: null, transport: null, error: null });
   const support = printerSupported();
+  const [canInstall, setCanInstall] = useState(false);
+  useEffect(() => onInstallAvailable(setCanInstall), []);
   useEffect(() => onPrinterStatus(setPrinter), []);
 
   useEffect(() => {
@@ -207,6 +209,7 @@ export function Setup({ state, manager, onPrepared, onExit, onToggleTest }: {
           </span>}
         </div>
         <div className="status-line"><Dot tone="none" /> Scanner: ready after the first successful scan on the sell screen (HID keyboard mode, no setup)</div>
+        <div className="status-line"><Dot tone={isStandalone() ? "ok" : "warn"} /> App: {isStandalone() ? "installed, running in its own window" : "running in a browser tab"}{!isStandalone() && canInstall && <span className="row" style={{ marginLeft: "auto", gap: 6 }}><button type="button" className="btn" style={{ minHeight: 34 }} onClick={() => void promptInstall()}>Install Houzs POS on this device</button></span>}{!isStandalone() && !canInstall && <span className="muted small" style={{ marginLeft: 8 }}>(already installed, or use the Install icon in the address bar)</span>}</div>
         <div className="status-line"><Dot tone={storage?.persisted ? "ok" : "warn"} /> Storage: {storage ? `${storage.persisted ? "persistent" : "best-effort"} · ${(storage.usage / 1048576).toFixed(1)} MB used` : "checking…"}</div>
       </div>
 
