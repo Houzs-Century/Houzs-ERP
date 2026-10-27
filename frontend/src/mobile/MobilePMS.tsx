@@ -1679,9 +1679,12 @@ function SalesAttending({
   type PickItem =
     | { kind: "rep"; id: number; name: string; code: string | null }
     | { kind: "staff"; id: number; name: string };
+  /* Owner 2026-10-24: the list is the Sales Team; other departments' staff
+     behind "Show other staff", as on desktop. */
+  const [showOthers, setShowOthers] = useState(false);
   const pickItems: PickItem[] = [
     ...available.map((o): PickItem => ({ kind: "rep", id: o.id, name: o.name ?? `#${o.id}`, code: o.code })),
-    ...others.map((s): PickItem => ({ kind: "staff", id: s.user_id, name: s.name || s.email })),
+    ...(showOthers ? others : []).map((s): PickItem => ({ kind: "staff", id: s.user_id, name: s.name || s.email })),
   ].sort((a, b) => a.name.localeCompare(b.name));
 
   const toggle = (id: number) =>
@@ -1766,6 +1769,12 @@ function SalesAttending({
                 )}
               </label>
             ))}
+            {others.length > 0 && (
+              <button type="button" onClick={() => setShowOthers(!showOthers)}
+                style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 11px", borderTop: "1px solid #eceee9", background: "none", border: 0, color: "#16695f", fontSize: 12 }}>
+                {showOthers ? "Hide staff outside the Sales Team" : `Show other staff (${others.length}) - not in the Sales Team`}
+              </button>
+            )}
           </div>
           <div style={{ display: "flex", gap: 7, marginTop: 7 }}>
             <button

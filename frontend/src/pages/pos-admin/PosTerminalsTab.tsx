@@ -22,6 +22,7 @@ export function PosTerminalsTab() {
   const [deviceName, setDeviceName] = useState("");
   const [platform, setPlatform] = useState("Android tablet");
   const [showInactive, setShowInactive] = useState(false);
+  const [pairing, setPairing] = useState<{ terminal: string; code: string; url: string; expires_at: string } | null>(null);
   const rows = (terminals.data ?? []).filter((t) => showInactive || t.active);
   const linkedEvents = (events.data ?? []).filter((e) => e.link);
 
@@ -42,6 +43,14 @@ export function PosTerminalsTab() {
       terminals.reload();
     } catch (e) {
       toast.error(errText(e, "Could not update the terminal."));
+    }
+  }
+  async function pairDevice(t: PosTerminal) {
+    try {
+      const r = await api.post<{ code: string; url: string; expires_at: string; terminal: string }>(`${POS_ADMIN}/terminals/${t.id}/pairing`, {});
+      setPairing(r);
+    } catch (e) {
+      toast.error(errText(e, "Could not issue a pairing code."));
     }
   }
   async function deactivate(t: PosTerminal) {
@@ -71,6 +80,25 @@ export function PosTerminalsTab() {
       {terminals.loading && !terminals.data && <div className="text-[11px] text-ink-muted">Loading terminals…</div>}
       {terminals.error && <div className="rounded-md border border-err/40 bg-err/5 p-2 text-[11px] text-err">{terminals.error}</div>}
       {terminals.data && rows.length === 0 && <Empty>No terminal yet. Create T01 for the first device; the device picks it in Device setup.</Empty>}
+      {pairing && (
+        <div className="mb-2 rounded-md border border-accent/50 bg-accent/5 p-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <div>
+              <div className="text-[10.5px] font-semibold uppercase text-ink-secondary">Pairing code for {pairing.terminal}</div>
+              <div className="font-mono text-[28px] font-bold tracking-[0.18em] text-ink">{pairing.code}</div>
+            </div>
+            <div className="text-[11.5px] text-ink-secondary">
+              On the device open the POS app and type this code, or open this link on the device:<br />
+              <a className="break-all text-accent underline" href={pairing.url} target="_blank" rel="noreferrer">{pairing.url}</a>
+              <div className="mt-1 text-ink-muted">Valid until {formatDateTime(pairing.expires_at)}, one use. Pairing again later replaces the device token.</div>
+            </div>
+            <span className="ml-auto flex gap-1">
+              <button type="button" className={ghostBtn} onClick={() => { void navigator.clipboard.writeText(pairing.url).then(() => toast.success("Link copied")); }}>Copy link</button>
+              <button type="button" className={ghostBtn} onClick={() => setPairing(null)}>Close</button>
+            </span>
+          </div>
+        </div>
+      )}
       {rows.length > 0 && (
         <Table minWidth={1040} head={<>
           <th className={th}>ID</th><th className={th}>Device</th><th className={th}>Platform</th><th className={th}>Event</th><th className={th}>Printer</th><th className={th}>Prepared</th><th className={th}>Last seen</th><th className={th}>Last sync</th><th className={cn(th, "text-right")}>Pending</th><th className={th}>App</th><th className={th}>Status</th><th className={th} />
@@ -94,7 +122,7 @@ export function PosTerminalsTab() {
               <td className={cn(td, "text-right font-mono", t.pending_count > 0 && "font-semibold text-amber-800")}>{t.pending_count}{t.pending_count > 0 && <div className="text-[9.5px]">{fmtSen(t.pending_amount_sen)}</div>}</td>
               <td className={cn(td, "font-mono text-[10px]")}>{t.app_version ?? "--"}</td>
               <td className={td}>{t.active ? <Pill tone={t.prepared_at ? "ok" : "muted"}>{t.status}</Pill> : <Pill tone="bad">INACTIVE</Pill>}</td>
-              <td className={td}>{t.active ? <button type="button" className={ghostBtn} onClick={() => void deactivate(t)}>Deactivate</button> : <button type="button" className={ghostBtn} onClick={() => void patch(t, { active: true }, `${t.code} reactivated`)}>Reactivate</button>}</td>
+              <td className={cn(td, "whitespace-nowrap")}>{t.active ? <><button type="button" className={primaryBtn} disabled={t.project_id == null} title={t.project_id == null ? "Set the event first" : "Show a one-time code for the device"} onClick={() => void pairDevice(t)}>Pair device</button>{" "}<button type="button" className={ghostBtn} onClick={() => void deactivate(t)}>Deactivate</button></> : <button type="button" className={ghostBtn} onClick={() => void patch(t, { active: true }, `${t.code} reactivated`)}>Reactivate</button>}</td>
             </tr>
           ))}
         </Table>

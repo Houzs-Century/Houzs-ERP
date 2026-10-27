@@ -36,6 +36,7 @@ import { MobileReopenControl } from "./MobileReopenControl";
 import { splitCategories } from "../lib/assrProductCategories";
 import { MobileAssrCategoryChips } from "./MobileAssrCategoryChips";
 import { LegOwnerToggle } from "./AssrLegOwnerToggle";
+import { logisticsConfirmedText } from "../components/assr/LogisticsConfirmedNote";
 import { type SoHit, SoSearchField, useSoSearch } from "./MobileAssrSoField";
 /* Pure row readers + formatters. Extracted so this screen could take the
    category picker and the survey-email field without growing past its recorded
@@ -83,7 +84,6 @@ import "./mobile.css";
 // tapping a stage chip jumps to Info with that stage's accordion open.
 // Inspection is no longer a stage (mig 0105): Inspect by + the QC-issue
 // fields live inside Under Verification.
-
 
 // ── Theme C colour tokens (design SC_T) ───────────────────────────
 const INK = "#11140f";
@@ -162,7 +162,6 @@ const PRINT_VARIANTS = [
 // Upload constraints mirror the PUT /:id/attachments backend guard.
 const ATTACH_EXTS = new Set(["jpg", "jpeg", "png", "webp", "mp4", "mov", "webm", "pdf"]);
 const ATTACH_ACCEPT = "image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm,application/pdf";
-
 // Priority meta — design SC_PRIORITY (Theme C hues).
 const PRIORITY_META: Record<string, { label: string; color: string }> = {
   low: { label: "Low", color: GREY },
@@ -170,7 +169,6 @@ const PRIORITY_META: Record<string, { label: string; color: string }> = {
   high: { label: "High", color: WARN },
   urgent: { label: "Urgent", color: "#B71C1C" },
 };
-
 const issueOf = (r: Any) => get(r, "complaintIssue", "complaint_issue");
 const hoursToDeadline = (r: Any): number | null => {
   const v = get(r, "hoursToDeadline", "hours_to_deadline");
@@ -1103,6 +1101,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
               onPick={(v) => patchCase({ pickup_by: v }, "Couldn't save pickup-by")} />
             <EditRow label="Pickup status" type="select" options={pickupTrackingOptions(PICKUP_STATUS_OPTIONS)} value={get(c, "pickupStatus", "pickup_status")} busy={busy} disabled={dis} onSave={(v) => patchCase({ pickup_status: v }, "Couldn't save pickup status")} />
             <EditRow label="Scheduled pickup date (ETA)" type="date" value={get(c, "customerPickupAt", "customer_pickup_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ customer_pickup_at: v }, "Couldn't save pickup date")} />
+            {get(c, "pickupBy", "pickup_by") === "customer" && !get(c, "actualPickupAt", "actual_pickup_at") && <div style={{ fontSize: 11.5, color: MUTED, margin: "0 2px 10px" }}>{logisticsConfirmedText(get(c, "customerPickupAt", "customer_pickup_at"), get(c, "schedPickupDate", "sched_pickup_date"))}</div>}
             <EditRow label="Actual pickup date" type="date" value={get(c, "actualPickupAt", "actual_pickup_at")} busy={busy} disabled={dis} onSave={(v) => patchCase({ actual_pickup_at: v }, "Couldn't save actual pickup date")} />
             <EditRow label="Pickup PIC" type="select" options={pickupPicSelectOptions(pickupPicDrivers, get(c, "creditorName", "creditor_name") || get(c, "supplier", "supplier"), get(c, "pickupPic", "pickup_pic"))} value={get(c, "pickupPic", "pickup_pic")} busy={busy} disabled={dis} onSave={(v) => patchCase({ pickup_pic: v }, "Couldn't save pickup PIC")} />
             <EditRow label="Current item location" type="select" options={pickupTrackingOptions(ITEM_LOCATION_OPTIONS)} value={get(c, "itemLocation", "item_location")} busy={busy} disabled={dis} onSave={(v) => patchCase({ item_location: v }, "Couldn't save item location")} />
@@ -1165,6 +1164,7 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
               options={[{ v: "own", label: "Own team" }, { v: "supplier", label: "Supplier" }]}
               onPick={(v) => patchCase({ delivery_by: v }, "Couldn't save delivery-by")} />
             <EditRow label="DO date" type="date" value={get(c, "doDate", "do_date")} busy={busy} disabled={dis} onSave={(v) => patchCase({ do_date: v }, "Couldn't save DO date")} />
+            {get(c, "deliveryBy", "delivery_by") === "own" && <div style={{ fontSize: 11.5, color: MUTED, margin: "0 2px 10px" }}>{logisticsConfirmedText(get(c, "doDate", "do_date"), get(c, "schedDeliveryDate", "sched_delivery_date"))}</div>}
             <EditRow label="Ref No." value={get(c, "refNo", "ref_no")} mono busy={busy} disabled={dis} onSave={(v) => patchCase({ ref_no: v }, "Couldn't save Ref No")} />
           </>
         );

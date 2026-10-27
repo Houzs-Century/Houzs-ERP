@@ -29,6 +29,7 @@ export const JOB_CADENCE_MIN: Record<string, number> = {
   "lead-time-schedule": 30,
   "agent-heartbeat": 30,
   "slip-reaper": 30,
+  "threepl-bills": 30,
   "scan-so-warm": DAY,
   "push-reminders": DAY,
   "fair-reconcile": DAY,

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
-  canTransition, nextStatus, requesterMayChange, awaitsPurchaser, productRefusal, linesRefusal, pcoFromRequestRefusal,
+  canTransition, nextStatus, requesterMayChange, awaitsPurchaser, productRefusal, linesRefusal, orderFromRequestRefusal,
   defaultSkuCode, requestVariants, PRODUCT_REQUEST_STATUSES, PRODUCT_REQUEST_MAX_LINES, type ProductRequestStatus, type ProductRequestAction,
 } from './product-request';
 
@@ -36,8 +36,17 @@ describe('product request — state machine', () => {
     expect(canTransition('REQUESTED', 'close')).toBe(false);
   });
 
+  test('a Purchase Order is raised from an APPROVED request instead (2990-0015), never on top of a PC Order, and closes the same way', () => {
+    expect(nextStatus('APPROVED', 'issue_po')).toBe('PO_ISSUED');
+    expect(canTransition('REQUESTED', 'issue_po')).toBe(false);
+    expect(canTransition('PCO_ISSUED', 'issue_po')).toBe(false);
+    expect(canTransition('PO_ISSUED', 'issue_po')).toBe(false);
+    expect(canTransition('PO_ISSUED', 'issue_pco')).toBe(false);
+    expect(nextStatus('PO_ISSUED', 'close')).toBe('CLOSED');
+  });
+
   test('terminal states accept nothing', () => {
-    const actions: ProductRequestAction[] = ['approve', 'reject', 'withdraw', 'resubmit', 'issue_pco', 'close'];
+    const actions: ProductRequestAction[] = ['approve', 'reject', 'withdraw', 'resubmit', 'issue_pco', 'issue_po', 'close'];
     for (const s of ['WITHDRAWN', 'CLOSED'] as ProductRequestStatus[]) {
       for (const a of actions) expect(canTransition(s, a)).toBe(false);
     }
@@ -67,15 +76,22 @@ describe('product request — raising the PC Order', () => {
   const base = { request_no: 'HC-PDR-2610-001' };
   const sku = { item_code: '5530-3S' };
   test('refused until approved, and refused again once issued', () => {
-    expect(pcoFromRequestRefusal({ ...base, status: 'REQUESTED', lines: [sku] })?.error).toBe('request_not_approved');
-    expect(pcoFromRequestRefusal({ ...base, status: 'PCO_ISSUED', lines: [sku] })?.error).toBe('request_already_issued');
-    expect(pcoFromRequestRefusal({ ...base, status: 'CLOSED', lines: [sku] })?.error).toBe('request_not_approved');
+    expect(orderFromRequestRefusal({ ...base, status: 'REQUESTED', lines: [sku] }, 'PCO')?.error).toBe('request_not_approved');
+    expect(orderFromRequestRefusal({ ...base, status: 'PCO_ISSUED', lines: [sku] }, 'PCO')?.error).toBe('request_already_issued');
+    expect(orderFromRequestRefusal({ ...base, status: 'CLOSED', lines: [sku] }, 'PCO')?.error).toBe('request_not_approved');
+  });
+  test('one order per request, of either kind: a PO is refused once a PC Order or a PO stands, and the words name the order asked for', () => {
+    expect(orderFromRequestRefusal({ ...base, status: 'PCO_ISSUED', lines: [sku] }, 'PO')).toMatchObject({ error: 'request_already_issued', message: expect.stringContaining('Purchase Consignment Order') });
+    expect(orderFromRequestRefusal({ ...base, status: 'PO_ISSUED', lines: [sku] }, 'PCO')).toMatchObject({ error: 'request_already_issued', message: 'HC-PDR-2610-001 already has a Purchase Order.' });
+    expect(orderFromRequestRefusal({ ...base, status: 'REQUESTED', lines: [sku] }, 'PO')?.message).toContain('raises a Purchase Order.');
+    expect(orderFromRequestRefusal({ ...base, status: 'APPROVED', lines: [sku, { item_code: null }] }, 'PO')?.error).toBe('model_not_created');
+    expect(orderFromRequestRefusal({ ...base, status: 'APPROVED', lines: [sku] }, 'PO')).toBeNull();
   });
   test("refused while ANY line's new Model has no SKU yet — the order would carry a code the catalogue has not got", () => {
-    expect(pcoFromRequestRefusal({ ...base, status: 'APPROVED', lines: [sku, { item_code: null }] })).toMatchObject({ error: 'model_not_created', message: expect.stringContaining('a Model') });
-    expect(pcoFromRequestRefusal({ ...base, status: 'APPROVED', lines: [{ item_code: null }, { item_code: ' ' }] })).toMatchObject({ error: 'model_not_created', message: expect.stringContaining('2 Models') });
-    expect(pcoFromRequestRefusal({ ...base, status: 'APPROVED', lines: [] })?.error).toBe('lines_required');
-    expect(pcoFromRequestRefusal({ ...base, status: 'APPROVED', lines: [sku, { item_code: 'AURORA-2S' }] })).toBeNull();
+    expect(orderFromRequestRefusal({ ...base, status: 'APPROVED', lines: [sku, { item_code: null }] }, 'PCO')).toMatchObject({ error: 'model_not_created', message: expect.stringContaining('a Model') });
+    expect(orderFromRequestRefusal({ ...base, status: 'APPROVED', lines: [{ item_code: null }, { item_code: ' ' }] }, 'PCO')).toMatchObject({ error: 'model_not_created', message: expect.stringContaining('2 Models') });
+    expect(orderFromRequestRefusal({ ...base, status: 'APPROVED', lines: [] }, 'PCO')?.error).toBe('lines_required');
+    expect(orderFromRequestRefusal({ ...base, status: 'APPROVED', lines: [sku, { item_code: 'AURORA-2S' }] }, 'PCO')).toBeNull();
   });
   test('a sofa SKU code carries its compartment; other categories take the model code', () => {
     expect(defaultSkuCode('aurora', 'SOFA', '2s')).toBe('AURORA-2S');

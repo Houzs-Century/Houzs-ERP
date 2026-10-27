@@ -9,7 +9,9 @@
        shows the Purchaser's note and goes back with "Fix and send again";
      • the Purchaser approves the whole request, rejects with a note it must
        give, builds the Model + SKU PER LINE that asks for a new Model, and is
-       sent to PC Order New (?fromProductRequest=) once every line has a SKU. */
+       sent to PC Order New (?fromProductRequest=) once every line has a SKU —
+       or to PO New, same parameter, when the goods are bought outright
+       (2990-0015); a request with a PO says so and links to it. */
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -25,9 +27,9 @@ const line = (over: Line): Line => ({
 const base = (over: Req): Req => ({
   id: 'r1', request_no: 'HC-PDR-2610-001', request_type: 'NEW_PRODUCT', application: 'SHOWROOM', requested_by: 31, requested_by_name: 'Amy Tan',
   special_remarks: 'For the corner', delivery_location_id: 'wh-kl', expected_delivery_date: '2026-10-25', status: 'REQUESTED',
-  decision_note: null, decided_by: null, decided_at: null, pco_id: null, created_at: '2026-10-06T02:00:00Z', updated_at: '2026-10-06T02:00:00Z',
+  decision_note: null, decided_by: null, decided_at: null, pco_id: null, po_id: null, created_at: '2026-10-06T02:00:00Z', updated_at: '2026-10-06T02:00:00Z',
   lines: [line({})],
-  pco: null, deliveryLocation: { id: 'wh-kl', code: 'KL', name: 'KL Showroom' },
+  pco: null, po: null, deliveryLocation: { id: 'wh-kl', code: 'KL', name: 'KL Showroom' },
   supplier_id: null, supplier: null,
   ...over,
 });
@@ -79,13 +81,17 @@ const promptFn = vi.fn(async (_o: unknown) => 'We have 5530 in that fabric' as s
 vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => confirmFn, usePrompt: () => promptFn }));
 vi.mock('../../vendor/scm/components/NotifyDialog', () => ({ useNotify: () => vi.fn() }));
 
+import { useSearchParams } from 'react-router-dom';
 import { ProductRequests } from './ProductRequests';
+
+const PoNewProbe = () => <div>PO New opened from {useSearchParams()[0].get('fromProductRequest')}</div>;
 
 const draw = () => render(
   <MemoryRouter initialEntries={['/scm/product-requests']}>
     <Routes>
       <Route path="/scm/product-requests" element={<ProductRequests />} />
       <Route path="/scm/purchase-consignment-orders/new" element={<div>PC Order New opened</div>} />
+      <Route path="/scm/purchase-orders/new" element={<PoNewProbe />} />
     </Routes>
   </MemoryRouter>,
 );
@@ -254,6 +260,37 @@ describe('Product Requests — the Purchaser', () => {
     expect(within(dialog).queryByRole('button', { name: 'Create Model + SKU' })).toBeNull();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Raise PC Order' }));
     expect(await screen.findByText('PC Order New opened')).toBeTruthy();
+  });
+
+  test('2990-0015: an approved request whose lines all have a SKU also raises a Purchase Order; one with a PO shows and links it', async () => {
+    requests = [
+      base({ id: 'r3', request_no: 'HC-PDR-2610-003', requested_by: 99, status: 'APPROVED', lines: [line({}), line({ id: 'l2', line_no: 2, item_code: '5530-3S', proposed_model_name: null })] }),
+      base({ id: 'r4', request_no: 'HC-PDR-2610-004', requested_by: 99, status: 'APPROVED', lines: [line({ item_code: 'AURORA-2S', proposed_model_name: null })] }),
+      base({ id: 'r5', request_no: 'HC-PDR-2610-005', requested_by: 99, status: 'PO_ISSUED', po_id: 'po-1', po: { id: 'po-1', poNumber: 'HC-PO-2610-007', status: 'SUBMITTED', expectedAt: null }, lines: [line({ item_code: 'AURORA-2S', proposed_model_name: null })] }),
+    ];
+    approver = true;
+    draw();
+    expect(screen.getByText('HC-PO-2610-007')).toBeTruthy();
+    /* A line still without a SKU: neither order. */
+    openDetail('HC-PDR-2610-003');
+    let dialog = screen.getByRole('dialog', { name: 'Product request HC-PDR-2610-003' });
+    expect(within(dialog).queryByRole('button', { name: 'Raise PO' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    /* PO issued: no second order of either kind; the PO is named and linked, and it may be closed. */
+    openDetail('HC-PDR-2610-005');
+    dialog = screen.getByRole('dialog', { name: 'Product request HC-PDR-2610-005' });
+    expect(within(dialog).getByText('PO raised')).toBeTruthy();
+    expect(within(dialog).queryByRole('button', { name: 'Raise PO' })).toBeNull();
+    expect(within(dialog).queryByRole('button', { name: 'Raise PC Order' })).toBeNull();
+    expect(within(dialog).getByRole('link', { name: 'Open HC-PO-2610-007 →' }).getAttribute('href')).toBe('/scm/purchase-orders/po-1');
+    expect(within(dialog).getByRole('button', { name: 'Close request' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    /* Ready: both doors, and Raise PO lands on PO New carrying the request. */
+    openDetail('HC-PDR-2610-004');
+    dialog = screen.getByRole('dialog', { name: 'Product request HC-PDR-2610-004' });
+    expect(within(dialog).getByRole('button', { name: 'Raise PC Order' })).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Raise PO' }));
+    expect(await screen.findByText('PO New opened from r4')).toBeTruthy();
   });
 
   test('a built line links its SKU code to the new catalogue Model; an unbuilt line stays plain text', () => {

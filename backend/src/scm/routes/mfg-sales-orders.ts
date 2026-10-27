@@ -143,6 +143,7 @@ import { attachSoLines } from '../lib/so-list-lines';
 import { SO_TAB_STATUSES, soStatusesForTab } from '../lib/so-tab-statuses';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { tallyStatusRows, type StatusTally } from '../lib/status-counts';
+import { readAggregate } from '../lib/postgrest-aggregate';
 /* "A PO is already out for this SO" — the second road to the same soft lock
    (owner 2026-08-12, 2990 only). See lib/so-po-lock.ts. */
 import { soHasLivePo, soHasUnreceivedPo, soPoLocked } from '../lib/so-po-lock';
@@ -167,8 +168,8 @@ import {
   type VenueSource,
   type VenueBindingSb,
 } from '../lib/venue-binding';
-import { bindVenueOnCreate, fairConfirmProblems, fairLinkForEdit, fairLinkOnCreate, fairRequiredProblem, loadLinkedFair, resolveFairForSave, SCAN_STEP_NOTE, type FairDb } from '../lib/fair-binding';
-import { fairDayMissing, fairDayOnSave, fairWhyOf } from '../lib/fair-options';
+import { bindVenueOnCreate, editFairKeyerId, fairConfirmProblems, fairLinkForEdit, fairLinkOnCreate, fairRequiredProblem, loadLinkedFair, resolveFairForSave, SCAN_STEP_NOTE, type FairDb } from '../lib/fair-binding';
+import { companyUsesKeyerFair, fairDayMissing, fairDayOnSave, fairWhyOf } from '../lib/fair-options';
 import { loadVpBrandAsk, type VpBrandDb } from '../lib/vp-brand-ask';
 import { recordSoAudit, diffFields, type FieldChange } from '../lib/so-audit';
 import { fairStateOf, recordFairChange } from '../lib/fair-audit';
@@ -1047,11 +1048,11 @@ export async function soListMoneyKpis(
 ): Promise<{ data: SoListMoneyKpis | null; error: { message: string } | null }> {
   /* FAST PATH — all aggregates, no plain column → one implicit group → one row.
      Idiom: outstanding.ts /summary. */
-  const agg = await applyMoneyFilters(
+  const agg = await readAggregate(() => applyMoneyFilters(
     sb
       .from('mfg_sales_orders_with_payment_totals')
       .select('rev:local_total_sen.sum(),outLive:balance_sen_live.sum(),paid:paid_total_sen.sum()'),
-  );
+  ));
   if (!agg.error) {
     const row = ((agg.data ?? []) as Array<Record<string, unknown>>)[0] ?? {};
     return {
@@ -1075,7 +1076,7 @@ export async function soListMoneyKpis(
       sb
         .from('mfg_sales_orders_with_payment_totals')
         .select('local_total_sen, balance_sen, balance_sen_live, paid_total_sen'),
-    ).range(mfrom, mto),
+    ).order('doc_no', { ascending: true }).range(mfrom, mto), // ordered: unordered pages repeat / skip rows
   );
   if (fb.error) return { data: null, error: fb.error };
   let revenueSen = 0, outstandingSen = 0, paidSen = 0;
@@ -1223,10 +1224,10 @@ mfgSalesOrders.get('/', async (c) => {
       return { ok: true, n: r.count ?? 0 };
     })();
     const countsProm = (async (): Promise<StatusTally> => {
-      const agg = await scopedCountQ(sb.from(read.countFrom).select('status, cnt:doc_no.count()'));
+      const agg = await readAggregate<{ data: Array<{ status: string | null; cnt: number }> | null; error: { message: string } | null }>(() => scopedCountQ(sb.from(read.countFrom).select('status, cnt:doc_no.count()')));
       if (!agg.error) return tallyStatusRows<{ status: string | null; cnt: number }>(agg, (r) => Number(r.cnt ?? 0));
       const fb = await paginateAll<{ status: string | null }>((cfrom, cto) =>
-        scopedCountQ(sb.from(read.countFrom).select('status')).range(cfrom, cto));
+        scopedCountQ(sb.from(read.countFrom).select('status')).order('doc_no', { ascending: true }).range(cfrom, cto));
       /* Named separately from tallyStatusRows' own error branch so the 500 says
          which of the TWO reads died, not just that the second one did. */
       if (fb.error) return { ok: false, reason: `status counts failed: aggregate ${agg.error.message}; fallback ${fb.error.message}` };
@@ -6024,7 +6025,16 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
   /* A picked EVENT is recorded exactly (owner 2026-09-24). Resolved BEFORE the
      unchanged fields drop out: another event at the same venue changes no mapped
      column, and the save would otherwise answer "nothing to do". */
-  const fairLink = await fairLinkForEdit({ db: c.env?.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), body, stored: beforeRecord });
+  const fairLink = await fairLinkForEdit({
+    db: c.env?.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), body, stored: beforeRecord,
+    keyerId: () => editFairKeyerId({ sb, scope: (q) => scopeToCompany(q, c), docNo, editorId: Number(c.get('houzsUser')?.id ?? NaN) }),
+  });
+  /* HC-0161: a DRAFT whose re-picked fair links to no booth would only be
+     refused at Confirm, with no reason given — say it here, at Save. A
+     confirmed order still saves; Fair Links settles it. */
+  if (fairLink?.problem && beforeRecord.status === 'DRAFT' && companyUsesKeyerFair(c.get('companyCode'))) {
+    return c.json(validationFailedBody([fairLink.problem]), 422);
+  }
   if (fairLink && (fairLink.project_id !== (beforeRecord.project_id == null ? null : Number(beforeRecord.project_id)) || fairLink.fair_match !== beforeRecord.fair_match)) {
     updates['project_id'] = fairLink.project_id;
     updates['fair_match'] = fairLink.fair_match;
@@ -8450,23 +8460,6 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
     loadModelFabricTierOverrides(sb),
     loadCompartmentFabricTierOverrides(sb),
   ]);
-  /* Two snapshots, identical base inputs — only `variants` (and its fabric
-     row) differ, so base / combo / PWP terms cancel in the difference. The
-     fabric-tier Δ inputs (sellingTiers / addonConfig) are deliberately NOT
-     passed: the Δ is applied once, below, never double-counted. */
-  const snap = (variants: Record<string, unknown>, fab: typeof fabPrev) =>
-    recomputeFromSnapshot(
-      {
-        itemCode:       prev.item_code,
-        itemGroup:      String(prev.item_group ?? 'others'),
-        qty:            Number(prev.qty),
-        unitPriceSen: Number(prev.unit_price_sen),
-        variants:       variants as MfgItemForRecompute['variants'],
-      },
-      prodLite, fab, cfg, null, null, null, null, null, null, specialDefs, null, null,
-    );
-  const before = snap(prevVariants, fabPrev);
-  const after  = snap(nextVariants, fabNext);
   const category = String(prodLite?.category ?? '').toUpperCase();
   // migration 0175 — per-Model Δ override (same for prev/next; the Model doesn't
   // change on a TBC fill-in). Resolved by the line's model_id, replaces global.
@@ -8478,7 +8471,8 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
      resolved model-only, under-charging a build that carries a per-compartment
      Δ (the POS preview showed the higher Δ but the server billed less; no drift
      gate here). Reconstruct them from the SIBLING module lines' item_code suffix,
-     the same way the create path does. */
+     the same way the create path does. They also price an add-on set by
+     compartment (2990 owner 2026-10-26), so they are read BEFORE the snapshots. */
   let tbcCells: string[] = [];
   if (category === 'SOFA') {
     const buildKeyForCells = (prevVariants.buildKey as string | undefined) ?? null;
@@ -8500,6 +8494,26 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
         : [];
     }
   }
+  /* Two snapshots, identical base inputs — only `variants` (and its fabric
+     row) differ, so base / combo / PWP terms cancel in the difference. The
+     fabric-tier Δ inputs (sellingTiers / addonConfig) are deliberately NOT
+     passed: the Δ is applied once, below, never double-counted. Both carry the
+     build's compartments, so an add-on priced by compartment moves the bill by
+     what create would have charged for it. */
+  const snap = (variants: Record<string, unknown>, fab: typeof fabPrev) =>
+    recomputeFromSnapshot(
+      {
+        itemCode:          prev.item_code,
+        itemGroup:         String(prev.item_group ?? 'others'),
+        qty:               Number(prev.qty),
+        unitPriceSen:      Number(prev.unit_price_sen),
+        variants:          variants as MfgItemForRecompute['variants'],
+        buildCompartments: tbcCells,
+      },
+      prodLite, fab, cfg, null, null, null, null, null, null, specialDefs, null, null,
+    );
+  const before = snap(prevVariants, fabPrev);
+  const after  = snap(nextVariants, fabNext);
   const tbcOverride = resolveFabricTierOverride(tbcCells, tbcBaseOverride, compartmentOverrides ?? new Map());
   const tierDeltaSen = (addonCfg && (category === 'SOFA' || category === 'BEDFRAME'))
     ? (fabricTierAddon(category, (category === 'SOFA' ? tiersNext?.sofaTier : tiersNext?.bedframeTier) ?? null, addonCfg, tbcOverride)

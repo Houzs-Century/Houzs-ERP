@@ -15,6 +15,8 @@ import { canWriteScmConfig } from '../lib/houzs-perms';
 import { todayMyt } from '../lib/my-time';
 import { activeCompanyId, scopeToCompany,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
+import { compartmentPricesFromRow } from '../lib/mfg-pricing-recompute';
+import { normalizeCompartmentCode } from '../shared/sofa-build';
 import type { Env, Variables } from '../env';
 
 type AppCtx = Context<{ Bindings: Env; Variables: Variables }>;
@@ -42,16 +44,29 @@ const groupSchema = z.object({
   choices:  z.array(choiceSchema).min(1),
 });
 
+// "Detect by compartment" (2990 owner 2026-10-26): the add-on's SELLING price on
+// a sofa that carries this compartment — the highest wins when several match
+// (shared specialAddonBaseSellingSen). Codes are stored canonical, because the
+// pricing compares them exactly; one price per compartment.
+const compartmentPricesSchema = z.array(z.object({
+  compartment:     z.string().trim().min(1).transform((code) => normalizeCompartmentCode(code)),
+  sellingPriceSen: z.number().int(),   // may be negative, like the base
+})).refine(
+  (rows) => new Set(rows.map((r) => r.compartment)).size === rows.length,
+  { message: 'each compartment can have one price only' },
+);
+
 const createSchema = z.object({
-  code:            z.string().min(1),
-  label:           z.string().min(1),
-  soDescription:   z.string().default(''),
-  categories:      z.array(CATEGORY).default([]),
-  sellingPriceSen: z.number().int().default(0),   // may be negative
-  costPriceSen:    z.number().int().default(0),    // may be negative
-  optionGroups:    z.array(groupSchema).default([]),
-  active:          z.boolean().default(true),
-  sortOrder:       z.number().int().default(0),
+  code:              z.string().min(1),
+  label:             z.string().min(1),
+  soDescription:     z.string().default(''),
+  categories:        z.array(CATEGORY).default([]),
+  sellingPriceSen:   z.number().int().default(0),   // may be negative
+  costPriceSen:      z.number().int().default(0),    // may be negative
+  optionGroups:      z.array(groupSchema).default([]),
+  compartmentPrices: compartmentPricesSchema.default([]),
+  active:            z.boolean().default(true),
+  sortOrder:         z.number().int().default(0),
 });
 const patchSchema = createSchema.partial();
 
@@ -66,6 +81,7 @@ type AddonRow = {
   selling_price_sen: number;
   cost_price_sen: number;
   option_groups: OptionGroup[] | null;
+  compartment_prices: unknown;
   active: boolean;
   sort_order: number;
   created_at: string;
@@ -73,22 +89,23 @@ type AddonRow = {
 };
 
 const toApi = (r: AddonRow) => ({
-  id:              r.id,
-  code:            r.code,
-  label:           r.label,
-  soDescription:   r.so_description,
-  categories:      r.categories ?? [],
-  sellingPriceSen: r.selling_price_sen,
-  costPriceSen:    r.cost_price_sen,
-  optionGroups:    r.option_groups ?? [],
-  active:          r.active,
-  sortOrder:       r.sort_order,
-  createdAt:       r.created_at,
-  updatedAt:       r.updated_at,
+  id:                r.id,
+  code:              r.code,
+  label:             r.label,
+  soDescription:     r.so_description,
+  categories:        r.categories ?? [],
+  sellingPriceSen:   r.selling_price_sen,
+  costPriceSen:      r.cost_price_sen,
+  optionGroups:      r.option_groups ?? [],
+  compartmentPrices: compartmentPricesFromRow(r.compartment_prices),
+  active:            r.active,
+  sortOrder:         r.sort_order,
+  createdAt:         r.created_at,
+  updatedAt:         r.updated_at,
 });
 
 const SELECT =
-  'id, code, label, so_description, categories, selling_price_sen, cost_price_sen, option_groups, active, sort_order, created_at, updated_at';
+  'id, code, label, so_description, categories, selling_price_sen, cost_price_sen, option_groups, compartment_prices, active, sort_order, created_at, updated_at';
 
 // Editors-only guard — Houzs flat-key permission.
 async function requireWrite(c: AppCtx) {
@@ -165,6 +182,7 @@ specialAddons.post('/', async (c) => {
       selling_price_sen: parsed.data.sellingPriceSen,
       cost_price_sen:    parsed.data.costPriceSen,
       option_groups:     parsed.data.optionGroups,
+      compartment_prices: parsed.data.compartmentPrices,
       active:            parsed.data.active,
       sort_order:        parsed.data.sortOrder,
       created_by:        gate.userId,
@@ -199,6 +217,7 @@ specialAddons.patch('/:id', async (c) => {
   if (parsed.data.sellingPriceSen !== undefined) patch.selling_price_sen = parsed.data.sellingPriceSen;
   if (parsed.data.costPriceSen    !== undefined) patch.cost_price_sen    = parsed.data.costPriceSen;
   if (parsed.data.optionGroups    !== undefined) patch.option_groups     = parsed.data.optionGroups;
+  if (parsed.data.compartmentPrices !== undefined) patch.compartment_prices = parsed.data.compartmentPrices;
   if (parsed.data.active          !== undefined) patch.active            = parsed.data.active;
   if (parsed.data.sortOrder       !== undefined) patch.sort_order        = parsed.data.sortOrder;
 
@@ -263,6 +282,8 @@ const snapshotEntrySchema = z.object({
   sellingPriceSen: z.number().int().default(0),
   costPriceSen:    z.number().int().default(0),
   optionGroups:    z.array(groupSchema).default([]),
+  // NO default: an entry without it keeps the live value (see the apply step).
+  compartmentPrices: compartmentPricesSchema.optional(),
   active:          z.boolean().default(true),
   sortOrder:       z.number().int().default(0),
 });
@@ -340,11 +361,24 @@ specialAddons.post('/save', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
+  // 0) An entry that does not carry compartmentPrices keeps the live ones. The
+  //    ERP Specials panel versions the whole set, and a save from a panel that
+  //    predates the field must not wipe what the 2990 POS priced by compartment.
+  let fullAddons = addons;
+  if (addons.some((a) => a.compartmentPrices === undefined)) {
+    const { data: liveRows, error: liveReadErr } = await scopeToCompanyId(
+      supabase.from('special_addons').select('code, compartment_prices'), co.companyId);
+    if (liveReadErr) return c.json({ error: 'apply_failed', reason: liveReadErr.message }, 500);
+    const liveByCode = new Map(((liveRows as Array<{ code: string; compartment_prices: unknown }> | null) ?? [])
+      .map((r) => [r.code, compartmentPricesFromRow(r.compartment_prices)]));
+    fullAddons = addons.map((a) => ({ ...a, compartmentPrices: a.compartmentPrices ?? liveByCode.get(a.code) ?? [] }));
+  }
+
   // 1) Append the version-log snapshot (audit + apply-source).
   const histId = genHistId();
   const { data: hist, error: histErr } = await supabase
     .from('special_addons_history')
-    .insert({ company_id: co.companyId, id: histId, addons, effective_from: effectiveFrom, notes: notes ?? null, created_by: userId })
+    .insert({ company_id: co.companyId, id: histId, addons: fullAddons, effective_from: effectiveFrom, notes: notes ?? null, created_by: userId })
     .select('id, addons, effective_from, notes, created_at')
     .single();
   if (histErr) return c.json({ error: 'history_insert_failed', reason: histErr.message }, 500);
@@ -354,7 +388,7 @@ specialAddons.post('/save', async (c) => {
   //    deleted) so existing orders keep resolving the value.
   const nowIso = new Date().toISOString();
   const cid = activeCompanyId(c);
-  const upsertRows = addons.map((a) => ({
+  const upsertRows = fullAddons.map((a) => ({
     ...(cid != null ? { company_id: cid } : {}),
     code:              a.code,
     label:             a.label,
@@ -363,6 +397,7 @@ specialAddons.post('/save', async (c) => {
     selling_price_sen: a.sellingPriceSen,
     cost_price_sen:    a.costPriceSen,
     option_groups:     a.optionGroups,
+    compartment_prices: a.compartmentPrices ?? [],
     active:            a.active,
     sort_order:        a.sortOrder,
     created_by:        userId,

@@ -9,16 +9,25 @@
 //   · those orders' payments, recorded goods changes and cancellations, whole
 //     (reaching 30% and "goods on a day" need the full history);
 //   · each fair brand's rate card.
-// Mounted under /acc-events, behind scmAreaGuard("scm.finance.accounting").
+//
+// Closing a month (owner 2026-10-26: 关月, Finance): POST /commission/close
+// freezes a month — both bases — in scm.event_commission_closes; from then on
+// the month's own range is served as closed, and the first open month carries
+// what changed for the closed months' orders since (「X 月调整」, the lib's
+// monthAdjustmentsOf). POST /commission/reopen undoes the latest close only.
+// Mounted under /acc-events, behind scmAreaGuard("scm.finance.accounting"):
+// reading needs view, closing and reopening edit on Finance › Accounting.
 
 import { requireActiveCompanyId, scopeToCompanyId } from '../lib/companyScope';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { todayMyt } from '../lib/my-time';
 import { dateOrNull } from '../lib/date-coerce';
 import {
-  buildEventCommission,
-  type CommissionBasis, type CommissionCancel, type CommissionChange, type CommissionFair, type CommissionPayment, type CommissionSo,
+  buildEventCommission, monthAdjustmentsOf, paidByOrder, withMonthAdjustments,
+  type ClosedMonthPaid, type CommissionBasis, type CommissionCancel, type CommissionChange, type CommissionFair, type CommissionPayment,
+  type CommissionSo, type EventCommissionReport, type MonthAdjustmentRow,
 } from '../lib/event-commission';
+import { assertAuditWritable, auditUnavailableBody, recordEntityAudit } from '../lib/entity-audit';
 import { pnlForProjects } from '../../services/eventPnlBatch';
 import { loadCostRates } from '../../services/eventPnlInputs';
 import { LEDGER_COST_CATEGORIES } from '../../services/projects';
@@ -51,30 +60,27 @@ type SoRead = {
 };
 const SO_COLS = 'doc_no, project_id, salesperson_id, debtor_name, status, on_hold, mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, local_total_sen, total_revenue_sen, created_at, so_date';
 
-type FairRead = { id: number | string; name: string | null; brand: string | null; start_date: string | null; end_date: string | null; archived_at: string | null; status: string | null; total_sales: number | string | null };
-const FAIR_SQL = `SELECT p.id, p.name, p.brand, p.start_date, p.end_date, p.archived_at, p.status, pf.total_sales
+type FairRead = {
+  id: number | string; name: string | null; brand: string | null; start_date: string | null; end_date: string | null; archived_at: string | null; status: string | null; total_sales: number | string | null;
+  organizer: string | null; venue: string | null; state: string | null;
+};
+const FAIR_SQL = `SELECT p.id, p.name, p.brand, p.start_date, p.end_date, p.archived_at, p.status, pf.total_sales, p.organizer, p.venue, p.state
                     FROM projects p LEFT JOIN project_finance pf ON pf.project_id = p.id`;
 
 const fail = (c: any, what: string, reason: string) =>
   c.json({ error: 'load_failed', message: `The ${what} could not be read — try again.`, reason }, 500);
 
-export const eventCommissionHandler = async (c: any): Promise<Response> => {
-  const co = requireActiveCompanyId(c);
-  if (!co.ok) return c.json(co.refusal, 409);
-  const today = todayMyt();
-  const from = dateOrNull(c.req.query('from')) ?? monthStart(today);
-  const to = dateOrNull(c.req.query('to')) ?? monthEnd(today);
-  if (from > to) return c.json({ error: 'bad_range', message: 'The From date is after the To date.' }, 400);
-  if ((Date.parse(to) - Date.parse(from)) / 86400e3 > MAX_RANGE_DAYS) {
-    return c.json({ error: 'bad_range', message: 'Pick a range of a year or less.' }, 400);
-  }
+type Live = { report: EventCommissionReport } | { response: Response };
+
+/** The report for [from, to] as the data stands now. */
+async function liveReport(c: any, companyId: number, from: string, to: string, basis: CommissionBasis): Promise<Live> {
   const env = c.env;
   const sb = c.get('supabase');
-  const companyId = co.companyId;
   const fromTs = `${from}T00:00:00+08:00`;
   const toTs = `${to}T23:59:59.999+08:00`;
-  /* By fair (the fair's start) or by SO date (the order's own) — owner 2026-10-20. */
-  const basis: CommissionBasis = c.req.query('basis') === 'so_date' ? 'so_date' : 'fair';
+  const fail = (_c: any, what: string, reason: string): Live => ({
+    response: _c.json({ error: 'load_failed', message: `The ${what} could not be read — try again.`, reason }, 500),
+  });
 
   /* 1–2. Part 1's orders. By fair: the fairs starting in the range and all their
      orders. By SO date: the orders opened in the range that have a fair. */
@@ -185,6 +191,7 @@ export const eventCommissionHandler = async (c: any): Promise<Response> => {
         endDate: dayOf(f.end_date),
         totalSalesRm: p ? p.sales : (f.total_sales == null ? null : n(f.total_sales)),
         estimateRm: p ? p.commission.amount : null,
+        organizer: f.organizer ?? null, venue: f.venue ?? null, state: f.state ?? null,
       };
     });
   const report = buildEventCommission({
@@ -207,5 +214,182 @@ export const eventCommissionHandler = async (c: any): Promise<Response> => {
     })),
     cancels: cancels.data.map((r): CommissionCancel => ({ docNo: r.doc_no, at: stampOf(r.created_at) })),
   });
-  return c.json(report);
+  return { report };
+}
+
+/* ── Closed months ───────────────────────────────────────────────────────── */
+
+type CloseRead = {
+  month: string; closed_at: string; closed_by: string | null;
+  paid: Partial<Record<CommissionBasis, Record<string, number>>> | null;
+  carried: Partial<Record<CommissionBasis, ClosedMonthPaid['carried']>> | null;
+};
+type Closed = { month: string; closedAt: string; closedBy: string | null; read: CloseRead | null };
+/** How many closed months back the first open month still settles. */
+const ADJUST_MONTHS_BACK = 12;
+const ym = (v: unknown): string => (dayOf(v) ?? '').slice(0, 7);
+const nextMonth = (month: string): string => {
+  const d = new Date(`${month}-01T00:00:00Z`);
+  d.setUTCMonth(d.getUTCMonth() + 1);
+  return d.toISOString().slice(0, 7);
+};
+/** "2026-09" → "2026/09": a month in the one date format (year first, numeric — owner 2026-08-18 / 2026-09-25). */
+export const monthLabel = (month: string): string => month.replace('-', '/');
+
+async function readCloses(sb: any, companyId: number): Promise<{ closes: Closed[] } | { error: string }> {
+  const { data, error } = await scopeToCompanyId(
+    sb.from('event_commission_closes').select('month, closed_at, closed_by, paid, carried'), companyId).order('month');
+  if (error) return { error: error.message };
+  return { closes: ((data ?? []) as CloseRead[]).map((r) => ({ month: ym(r.month), closedAt: stampOf(r.closed_at), closedBy: r.closed_by ?? null, read: r })) };
+}
+const closesMeta = (closes: readonly Closed[]) => ({
+  months: closes.map((k) => k.month),
+  openFrom: closes.length > 0 ? nextMonth(closes[closes.length - 1]!.month) : null,
+});
+
+/** The closed months' outstanding adjustments by one basis, each month recalculated now. */
+async function adjustmentsFor(c: any, companyId: number, basis: CommissionBasis, closes: readonly Closed[]): Promise<{ rows: MonthAdjustmentRow[] } | { response: Response }> {
+  const live = new Map<string, EventCommissionReport>();
+  const recent = closes.slice(-ADJUST_MONTHS_BACK);
+  const reads = await Promise.all(recent.map((k) => liveReport(c, companyId, `${k.month}-01`, monthEnd(`${k.month}-01`), basis)));
+  for (let i = 0; i < recent.length; i += 1) {
+    const r = reads[i]!;
+    if ('response' in r) return r;
+    live.set(recent[i]!.month, r.report);
+  }
+  const paid: ClosedMonthPaid[] = closes.map((k) => ({ month: k.month, paid: k.read?.paid?.[basis] ?? {}, carried: k.read?.carried?.[basis] ?? [] }));
+  return { rows: monthAdjustmentsOf(paid, live) };
+}
+
+export const eventCommissionHandler = async (c: any): Promise<Response> => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const today = todayMyt();
+  const from = dateOrNull(c.req.query('from')) ?? monthStart(today);
+  const to = dateOrNull(c.req.query('to')) ?? monthEnd(today);
+  if (from > to) return c.json({ error: 'bad_range', message: 'The From date is after the To date.' }, 400);
+  if ((Date.parse(to) - Date.parse(from)) / 86400e3 > MAX_RANGE_DAYS) {
+    return c.json({ error: 'bad_range', message: 'Pick a range of a year or less.' }, 400);
+  }
+  const sb = c.get('supabase');
+  const companyId = co.companyId;
+  /* By fair (the fair's start) or by SO date (the order's own) — owner 2026-10-20. */
+  const basis: CommissionBasis = c.req.query('basis') === 'so_date' ? 'so_date' : 'fair';
+
+  const read = await readCloses(sb, companyId);
+  if ('error' in read) return fail(c, 'closed months', read.error);
+  const closes = read.closes;
+  const meta = closesMeta(closes);
+
+  /* A closed month, asked for whole: as it was closed. */
+  const exact = closes.find((k) => from === `${k.month}-01` && to === monthEnd(`${k.month}-01`));
+  if (exact) {
+    const col = basis === 'so_date' ? 'report_so_date' : 'report_fair';
+    const { data, error } = await scopeToCompanyId(sb.from('event_commission_closes').select(col).eq('month', `${exact.month}-01`), companyId).maybeSingle();
+    if (error || !data) return fail(c, 'closed month', error?.message ?? 'not found');
+    const frozen = (data as Record<string, unknown>)[col] as Record<string, unknown>;
+    return c.json({ ...frozen, closed: { month: exact.month, closedAt: exact.closedAt, closedBy: exact.closedBy }, closes: meta });
+  }
+
+  /* The first open month pays what changed for the closed months' orders — read
+     beside the range itself rather than after it. */
+  const openDay = meta.openFrom ? `${meta.openFrom}-01` : null;
+  const carries = openDay != null && from <= openDay && openDay <= to;
+  const [live, adj] = await Promise.all([
+    liveReport(c, companyId, from, to, basis),
+    carries ? adjustmentsFor(c, companyId, basis, closes) : Promise.resolve(null),
+  ]);
+  if ('response' in live) return live.response;
+  if (adj && 'response' in adj) return adj.response;
+  const report = adj ? withMonthAdjustments(live.report, adj.rows) : live.report;
+  return c.json({ ...report, closes: meta });
+};
+
+const actorOf = (c: any): { id?: number | null; name?: string | null; email?: string | null } | null => c.get('houzsUser') ?? null;
+const rmOf = (sen: number) => (sen / 100).toFixed(2);
+
+/* ── POST /commission/close { month: 'YYYY-MM' } ─────────────────────────────
+   Months close in order, each once it has ended (Malaysia). Both bases freeze
+   together, each with the adjustments it carries for the months closed before
+   it — what the next month's adjustments are measured against. */
+export const closeCommissionMonthHandler = async (c: any): Promise<Response> => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const body = await c.req.json().catch(() => ({}));
+  const month = String((body as { month?: unknown })?.month ?? '').trim();
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return c.json({ error: 'bad_month', message: 'Pick a month to close.' }, 400);
+  const sb = c.get('supabase');
+  const companyId = co.companyId;
+  const known = await readCloses(sb, companyId);
+  if ('error' in known) return fail(c, 'closed months', known.error);
+  const closes = known.closes;
+  if (closes.some((k) => k.month === month)) return c.json({ error: 'already_closed', message: `${monthLabel(month)} is already closed.` }, 409);
+  const latest = closes.length > 0 ? closes[closes.length - 1]!.month : null;
+  if (latest && month !== nextMonth(latest)) {
+    return c.json({ error: 'out_of_order', message: `Months close in order — close ${monthLabel(nextMonth(latest))} first.` }, 409);
+  }
+  if (monthEnd(`${month}-01`) >= todayMyt()) return c.json({ error: 'not_ended', message: `${monthLabel(month)} has not ended yet.` }, 409);
+
+  const reports = {} as Record<CommissionBasis, EventCommissionReport>;
+  const bases = ['fair', 'so_date'] as const;
+  const read = await Promise.all(bases.map((basis) => Promise.all([
+    liveReport(c, companyId, `${month}-01`, monthEnd(`${month}-01`), basis),
+    closes.length > 0 ? adjustmentsFor(c, companyId, basis, closes) : Promise.resolve(null),
+  ])));
+  for (let i = 0; i < bases.length; i += 1) {
+    const [live, adj] = read[i]!;
+    if ('response' in live) return live.response;
+    if (adj && 'response' in adj) return adj.response;
+    reports[bases[i]!] = adj ? withMonthAdjustments(live.report, adj.rows) : live.report;
+  }
+  const carriedOf = (r: EventCommissionReport) => r.monthAdjustments.map((a) => ({ month: a.month, docNo: a.docNo, sen: a.adjustmentSen }));
+  const actor = actorOf(c);
+  const pf = await assertAuditWritable(sb, { entityType: 'COMMISSION_MONTH', entityId: `${companyId}:${month}`, action: 'POST', companyId });
+  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+  const { error } = await sb.from('event_commission_closes').insert({
+    company_id: companyId,
+    month: `${month}-01`,
+    closed_by: actor?.name ?? actor?.email ?? null,
+    paid: { fair: paidByOrder(reports.fair), so_date: paidByOrder(reports.so_date) },
+    carried: { fair: carriedOf(reports.fair), so_date: carriedOf(reports.so_date) },
+    report_fair: reports.fair,
+    report_so_date: reports.so_date,
+  });
+  if (error) {
+    if (String(error.code) === '23505') return c.json({ error: 'already_closed', message: `${monthLabel(month)} is already closed.` }, 409);
+    return c.json({ error: 'close_failed', message: `${monthLabel(month)} could not be closed — try again.`, reason: error.message }, 500);
+  }
+  await recordEntityAudit(sb, {
+    entityType: 'COMMISSION_MONTH', entityId: `${companyId}:${month}`, entityDocNo: month, companyId, action: 'POST', actor,
+    note: `Event Commission ${monthLabel(month)} closed: by fair RM ${rmOf(reports.fair.totals.totalSen)}, by SO date RM ${rmOf(reports.so_date.totals.totalSen)}`,
+  });
+  const after = [...closes, { month, closedAt: new Date().toISOString(), closedBy: actor?.name ?? null, read: null }];
+  return c.json({ ok: true, month, totals: { fair: reports.fair.totals, so_date: reports.so_date.totals }, closes: closesMeta(after) });
+};
+
+/* ── POST /commission/reopen { month } — the latest closed month only. ─────── */
+export const reopenCommissionMonthHandler = async (c: any): Promise<Response> => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const body = await c.req.json().catch(() => ({}));
+  const month = String((body as { month?: unknown })?.month ?? '').trim();
+  const sb = c.get('supabase');
+  const companyId = co.companyId;
+  const read = await readCloses(sb, companyId);
+  if ('error' in read) return fail(c, 'closed months', read.error);
+  const closes = read.closes;
+  const latest = closes.length > 0 ? closes[closes.length - 1]!.month : null;
+  if (!latest) return c.json({ error: 'nothing_closed', message: 'No month is closed.' }, 409);
+  if (month !== latest) return c.json({ error: 'not_latest', message: `Only the latest closed month can be reopened — ${monthLabel(latest)}.` }, 409);
+  const pf = await assertAuditWritable(sb, { entityType: 'COMMISSION_MONTH', entityId: `${companyId}:${month}`, action: 'REVERSE', companyId });
+  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+  /* One row per company and month (the unique key): DELETE … RETURNING it. */
+  const { data, error } = await scopeToCompanyId(sb.from('event_commission_closes').delete().eq('month', `${month}-01`), companyId).select('month').maybeSingle();
+  if (error) return c.json({ error: 'reopen_failed', message: `${monthLabel(month)} could not be reopened — try again.`, reason: error.message }, 500);
+  if (!data) return c.json({ error: 'nothing_closed', message: `${monthLabel(month)} is not closed.` }, 409);
+  await recordEntityAudit(sb, {
+    entityType: 'COMMISSION_MONTH', entityId: `${companyId}:${month}`, entityDocNo: month, companyId, action: 'REVERSE', actor: actorOf(c),
+    note: `Event Commission ${monthLabel(month)} reopened`,
+  });
+  return c.json({ ok: true, month, closes: closesMeta(closes.slice(0, -1)) });
 };

@@ -56,5 +56,26 @@
       { "drop": "DUNLOPILLO ROY EXECUTIVE LUXE 2.0 MATT (Q)",  "keep": "DUNLOPILLO ROYAL EXECUTIVE LUXE 2.0 MATT (Q)" },
       { "drop": "DUNLOPILLO ROY EXECUTIVE LUXE 2.0 MATT (SK)", "keep": "DUNLOPILLO ROYAL EXECUTIVE LUXE2.0 MATT (SK)" }
     ]
+  },
+  "HC-0153": {
+    "ruling": "Sim 2026-10-23 (HC-0153): merge Modular HS SOLACE into HAPPI SLEEP SOLACE (keep HAPPI SLEEP SOLACE; S/SK/SP are discontinued and stay out, nothing is on them), PEBBLE GREY into AKEMI -PEBBLE GREY and SANDY BEACH into AKEMI -SANDY BEACH (keep the AKEMI ones; all three are discontinued, so the AKEMI codes need no new supplier price). SOLACE: AutoCount's AK-HS SOLACE already maps to the kept codes. PEBBLE GREY / SANDY BEACH: the cutover map names the dropped codes, but each kept AKEMI code binds 400-D002 to the same AKBF- AutoCount item, and the binding wins, so AutoCount is unchanged. Sim 17:18: GENERASI 3.0 20CM was only switched off at the Model, its SO lines (HC-SO-2610-084, HC-SO-2609-374) still carry it; keep DUNLOPILLO OTHOREST GENERASI 3.0 20CM, which holds the 400-D001 main binding, the prices and the same DL-GENERASI 3.0 20CM AutoCount items.",
+    "pairs": [
+      { "drop": "AKEMI HS SOLACE MATT (K)",  "keep": "HAPPI SLEEP SOLACE MATT (K)" },
+      { "drop": "AKEMI HS SOLACE MATT (Q)",  "keep": "HAPPI SLEEP SOLACE MATT (Q)" },
+      { "drop": "AKEMI HS SOLACE MATT (SS)", "keep": "HAPPI SLEEP SOLACE MATT (SS)" },
+      { "drop": "PEBBLE GREY-(K)",  "keep": "AKEMI -PEBBLE GREY-(K)" },
+      { "drop": "PEBBLE GREY-(Q)",  "keep": "AKEMI -PEBBLE GREY-(Q)" },
+      { "drop": "PEBBLE GREY-(S)",  "keep": "AKEMI -PEBBLE GREY-(S)" },
+      { "drop": "PEBBLE GREY-(SK)", "keep": "AKEMI -PEBBLE GREY-(SK)" },
+      { "drop": "PEBBLE GREY-(SS)", "keep": "AKEMI -PEBBLE GREY-(SS)" },
+      { "drop": "SANDY BEACH-(K)",  "keep": "AKEMI -SANDY BEACH-(K)" },
+      { "drop": "SANDY BEACH-(Q)",  "keep": "AKEMI -SANDY BEACH-(Q)" },
+      { "drop": "SANDY BEACH-(S)",  "keep": "AKEMI -SANDY BEACH-(S)" },
+      { "drop": "SANDY BEACH-(SS)", "keep": "AKEMI -SANDY BEACH-(SS)" },
+      { "drop": "DUNLOPILLO GENERASI 3.0 20CM MATT (K)",  "keep": "DUNLOPILLO OTHOREST GENERASI 3.0 20CM MATT (K)" },
+      { "drop": "DUNLOPILLO GENERASI 3.0 20CM MATT (Q)",  "keep": "DUNLOPILLO OTHOREST GENERASI 3.0 20CM MATT (Q)" },
+      { "drop": "DUNLOPILLO GENERASI 3.0 20CM MATT (S)",  "keep": "DUNLOPILLO OTHOREST GENERASI 3.0 20CM MATT (S)" },
+      { "drop": "DUNLOPILLO GENERASI 3.0 20CM MATT (SS)", "keep": "DUNLOPILLO OTHOREST GENERASI 3.0 20CM MATT (SS)" }
+    ]
   }
 }

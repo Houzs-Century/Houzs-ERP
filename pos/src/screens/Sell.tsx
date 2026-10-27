@@ -48,7 +48,7 @@ type Popup =
 
 type Toast = { text: string; bad?: boolean; id: number };
 
-export function Sell({ state, session, online, onLogout, onStateChanged }: { state: DeviceState; session: Session; online: boolean | null; onLogout: () => void; onStateChanged: (s: DeviceState) => void }) {
+export function Sell({ state, session, online, onLogout, onOpenSetup, onStateChanged }: { state: DeviceState; session: Session; online: boolean | null; onLogout: () => void; onOpenSetup: () => void; onStateChanged: (s: DeviceState) => void }) {
   const ss = useSyncStatus();
   const b = state.bundle;
   const s = b.settings;
@@ -276,6 +276,7 @@ export function Sell({ state, session, online, onLogout, onStateChanged }: { sta
         <button type="button" className="btn link" style={{ color: "#fff" }} onClick={actions.syncPanel} title="Sync panel">Last sync {ss.last_sync_at ?? state.last_sync_at ? fmtMyt(ss.last_sync_at ?? state.last_sync_at) : "--"}</button>
         <button type="button" className="btn" style={{ minHeight: 34, padding: "4px 10px" }} onClick={actions.syncNow}>Sync now</button>
       </header>
+      {state.provisional && <div className="banner update"><span className="grow">This device is not set up yet: no terminal, no fair, no items. Pick the terminal and the fair in Settings.</span><button type="button" className="btn primary" onClick={onOpenSetup}>Open Settings</button></div>}
       {state.test_mode && <div className="banner test">TEST MODE: every sale is a TEST sale (numbered {nextNo}), never synced, no stock deduction.</div>}
 
       <div className="sell">
@@ -371,6 +372,7 @@ export function Sell({ state, session, online, onLogout, onStateChanged }: { sta
         <button type="button" className="btn" onClick={actions.todaysSales}>Today's Sales<small>Ctrl+T</small></button>
         <button type="button" className="btn" onClick={actions.syncNow}>Sync Now<small>Ctrl+S</small></button>
         <span className="grow" />
+        {session.cashier.role === "SUPERVISOR" && <button type="button" className="btn" onClick={onOpenSetup}>Settings<small>device</small></button>}
         <button type="button" className="btn" onClick={onLogout}>Logout<small>F12</small></button>
       </div>
       <div className="status">

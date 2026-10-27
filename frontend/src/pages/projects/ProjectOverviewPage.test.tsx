@@ -82,6 +82,21 @@ describe("Project Overview — the project table", () => {
      text-right carries both and the stylesheet picks text-right — the Project
      column sat right-aligned on one line and ran over the Sales figures (owner
      2026-10-21: 这个project靠左，然后字超过格子了; sales order daily 也靠左). */
+  /* Owner 2026-10-25: 这个表需要有total, 然后把venue rent 和 project 倒反位置. */
+  it("adds a Total row at the foot — each column summed, the % worked out from the sums — and comes before Venue rent", () => {
+    show(PERIOD);
+    const foot = projectsTable().querySelector("tfoot") as HTMLTableSectionElement;
+    const cells = [...foot.querySelectorAll("td")].map((td) => td.textContent);
+    expect(cells[0]).toBe("Total · 3 projects");
+    expect(cells).toContain("347,536.00");
+    expect(cells).toContain("-12,271.54");
+    expect(cells).toContain("245,704.00");
+    expect(cells).toContain("73.4%");
+    expect(foot.className.split(/\s+/)).toContain("sticky");
+    const venueRent = screen.getByText("Venue rent");
+    expect(projectsTable().compareDocumentPosition(venueRent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("the project and the daily-report columns read left, and the project wraps inside its cell", () => {
     show(PERIOD);
     const table = projectsTable();

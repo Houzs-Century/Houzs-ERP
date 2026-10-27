@@ -107,6 +107,10 @@ on:
         description: 'retro-cost only: optional ISO cutoff (only OUTs created before it are repaired). Blank = now.'
         required: false
         default: ''
+      item_codes:
+        description: 'retro-cost only: optional comma-separated item codes; repair only their buckets. Blank = every bucket.'
+        required: false
+        default: ''
 
 concurrency:
   group: backfill-fifo-divergence
@@ -147,4 +151,5 @@ jobs:
           MODE: ${{ github.event.inputs.mode }}
           DOS: ${{ github.event.inputs.dos }}
           BEFORE_TS: ${{ github.event.inputs.before_ts }}
+          ITEM_CODES: ${{ github.event.inputs.item_codes }}
           NODE_OPTIONS: --dns-result-order=ipv4first

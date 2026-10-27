@@ -256,7 +256,7 @@ function legKey(row: AssrFeedRow, kind: AssrLegKind): string {
  *  so a done pickup / inspection leg came back as a new row when Farra moved the
  *  case to Pending Delivery/Service. There is no "pickup done" field; the stage
  *  is the only marker. */
-const PAST_PICKUP_STAGES = new Set(["pending_item_ready", "pending_delivery_service", "completed", "voided"]);
+export const PAST_PICKUP_STAGES = new Set(["pending_item_ready", "pending_delivery_service", "completed", "voided"]);
 
 export function toAssrLegRecords(row: AssrFeedRow): AssrLegRecord[] {
   const base = legBase(row);

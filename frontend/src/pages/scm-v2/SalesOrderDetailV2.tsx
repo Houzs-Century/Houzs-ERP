@@ -30,6 +30,7 @@ import { scmListReturnTo } from "../../lib/scmListReturn";
 import { returnToWorkspaceOpener, useWorkspaceOpener } from "../../lib/useWorkspaceOpener";
 import {
   ArrowLeft,
+  Copy,
   History,
   Share2,
   Printer,
@@ -1214,6 +1215,13 @@ function SalesOrderDetailV2ReadOnly() {
               onClick={goRelationshipMap}
             >
               Relationship Map
+            </Button>
+            <Button
+              variant="ghost"
+              icon={<Copy size={14} />}
+              onClick={() => navigate(`/scm/sales-orders/new?copyFrom=${encodeURIComponent(salesOrder.doc_no)}`)}
+            >
+              Copy as new
             </Button>
             <Button
               variant="secondary"

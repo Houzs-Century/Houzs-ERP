@@ -196,24 +196,43 @@ describe('EM Order push to the ERP and to the ESB / BS transporter sheets', () =
     };
     const esb = { headers: ["EM Order Shipment Status", "Doc. No.", "Vessel & Voyage", "BS KK - Delivery Date", "BALANCE"],
       rows: [["x", "SO-1", "DANUM 159", "2026/11/01", "99"], ["x", "SO-2", "DANUM 160", "", "99"], ["x", "SO-3", "", "", ""]], allowed: {} };
-    const pull = (lastSandbox.__pull as Function)(m, esb, "From ESB Sheet").updates;
+    const pull = (lastSandbox.__pull as Function)(m, esb, "ESB").updates;
     expect(pull).toEqual([{ row: 0, col: 2, value: "DANUM 159", doc: "SO-1" }, { row: 1, col: 2, value: "DANUM 160", doc: "SO-2" }]);
-    const bsPull = (lastSandbox.__pull as Function)(m, esb, "From BS Sheet").updates;
+    const bsPull = (lastSandbox.__pull as Function)(m, esb, "BS").updates;
     expect(bsPull).toEqual([{ row: 0, col: 3, value: "2026/11/01", doc: "SO-1" }]);
   });
 
-  test('the pull matches the owner label by word, whatever its exact wording', () => {
+  test('ownership comes from the row-3 header: transport columns are the transporter\'s, the rest Houzs\'', () => {
     loadScript();
     const m = {
-      labels: ['', 'From AutoCount', 'From ESB', 'ESB Sheet', 'FROM BS', 'From Admin'],
-      headers: ['DELIVERY MESSAGE STATUS', 'Doc. No.', 'Vessel & Voyage', 'ETA EM Port', 'BS Remarks', 'BALANCE'],
-      rows: [['', 'SO-1', '', '', '', '1']],
+      labels: ['', '', '', '', '', '', ''],
+      headers: ['DELIVERY MESSAGE STATUS', 'Doc. No.', 'ETA EM Port \uff08YYYY/MM/DD\uff09', 'EM Order Delivery Status ESB Remarks', 'BS KK - Delivery Date \uff08YYYY/MM/DD\uff09', 'Houzs Remark 2', 'BALANCE'],
+      rows: [['Done Shipout', 'SO-1', '', '', '', 'H2', '5']],
     };
-    const t = { headers: ['EM Order Shipment Status', 'Doc. No.', 'Vessel & Voyage', 'ETA EM Port', 'BS Remarks', 'BALANCE'],
-      rows: [['', 'SO-1', 'V1', '2026/11/01', 'KK ok', '9']], allowed: {} };
-    const esb = (lastSandbox.__pull as Function)(m, t, 'From ESB Sheet').updates;
+    const t = { headers: m.headers.map((h) => (h === 'DELIVERY MESSAGE STATUS' ? 'EM Order Shipment Status' : h)),
+      rows: [['', 'SO-1', '2026/11/01', 'TO BRIGHTSUN', '2026/11/09', 'old', '9']], allowed: {} };
+    const esb = (lastSandbox.__pull as Function)(m, t, 'ESB').updates;
     expect(esb.map((u: { col: number }) => u.col)).toEqual([2, 3]);
-    const bs = (lastSandbox.__pull as Function)(m, t, 'From BS Sheet').updates;
+    const bs = (lastSandbox.__pull as Function)(m, t, 'BS').updates;
     expect(bs.map((u: { col: number }) => u.col)).toEqual([4]);
+    const push = plan(m, t, () => false).updates.map((u: { col: number }) => u.col);
+    expect(push).toEqual([0, 5, 6]);
+  });
+
+  test('freight, Attention and Sync Status are never pushed, nor copied onto a new row (14:19 regression)', () => {
+    loadScript();
+    const headers = ['DELIVERY MESSAGE STATUS', 'Doc. No.', 'BALANCE', 'Attention', 'Sync Status', 'SEAFREIGHT', 'TOTAL', 'Supplier Invoice'];
+    const m = { labels: headers.map(() => ''), headers, rows: [
+      ['Done Shipout', 'SO-1', '10', 'SEAMPIFY', 'SYNCED', '371.98', '0.00', 'INV-OLD'],
+      ['Done Shipout', 'SO-2', '20', 'SEAMPIFY', 'SYNCED', '100.00', '0.00', 'INV-X'],
+    ] };
+    const t = { headers: headers.map((h) => (h === 'DELIVERY MESSAGE STATUS' ? 'EM Order Shipment Status' : h)),
+      rows: [['Done Shipout', 'SO-1', '99', '', 'PENDING', '500.00', '812.40', 'INV-NEW']], allowed: {} };
+    const p = plan(m, t, () => true);
+    expect(p.updates).toEqual([{ row: 0, col: 2, value: '10' }]);
+    const appended = p.appends[0] as string[];
+    expect(appended[1]).toBe('SO-2');
+    expect(appended[2]).toBe('20');
+    expect(appended.slice(3)).toEqual(['', '', '', '', '']);
   });
 });
