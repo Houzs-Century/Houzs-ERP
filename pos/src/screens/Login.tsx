@@ -10,7 +10,7 @@ import { PinPad } from "../PinPad";
 import { afterWrongPin, findCashierById, fmtDateRange, fmtMyt, freshLock, lockedFor, loginTiles, syncTone, type LockState } from "../loginRules";
 import { managerLogin, type Manager, type ManagerContext } from "../manager";
 import { verifyPin } from "../pin";
-import { APP_VERSION, applyUpdate } from "../pwa";
+import { APP_VERSION, applyUpdate, isStandalone, onInstallAvailable, promptInstall } from "../pwa";
 import { SyncPanel } from "../sell/SyncPanel";
 import type { BundleCashier, DeviceState } from "../types";
 
@@ -38,6 +38,9 @@ export function Login({ state, online, updateWaiting, onLogin, onManager, onOpen
   const [checking, setChecking] = useState(false);
   const [gear, setGear] = useState(false);
   const [updateLater, setUpdateLater] = useState(false);
+  const [canInstall, setCanInstall] = useState(false);
+  const [installLater, setInstallLater] = useState(false);
+  useEffect(() => onInstallAvailable(setCanInstall), []);
   const [managerOpen, setManagerOpen] = useState(!state || state.provisional === true);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -124,6 +127,9 @@ export function Login({ state, online, updateWaiting, onLogin, onManager, onOpen
       {updateWaiting && !updateLater && (
         <div className="banner update"><span className="grow">Update available for Houzs POS.</span><button type="button" className="btn primary" onClick={applyUpdate}>Restart now</button><button type="button" className="btn" onClick={() => setUpdateLater(true)}>Later</button></div>
       )}
+      {canInstall && !installLater && !isStandalone() && (
+        <div className="banner update"><span className="grow">Install Houzs POS on this device: it opens in its own window from the Start menu and works offline.</span><button type="button" className="btn primary" onClick={() => void promptInstall()}>Install</button><button type="button" className="btn" onClick={() => setInstallLater(true)}>Later</button></div>
+      )}
       {online === false && <div className="banner offline">{setUp ? "Offline. Login and selling work; sales will sync when the connection returns." : "Offline. The first sign-in on a new device needs internet."}</div>}
 
       <div className="screen">
@@ -183,6 +189,7 @@ export function Login({ state, online, updateWaiting, onLogin, onManager, onOpen
       <footer className="footer">
         {setUp && <button type="button" className="btn link" onClick={() => { setTyping((v) => !v); setGear(false); }}>Keyboard</button>}
         <button type="button" className="btn link" onClick={() => window.location.reload()}>Exit</button>
+        {canInstall && !isStandalone() && <button type="button" className="btn link" onClick={() => void promptInstall()}>Install app</button>}
         <span className="grow" />
         <span>{setUp && state && b ? `Set up on ${fmtMyt(state.prepared_at)} · ${b.items.length} items · ` : ""}v{APP_VERSION}</span>
       </footer>

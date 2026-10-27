@@ -276,7 +276,7 @@ export function Sell({ state, session, online, onLogout, onOpenSetup, onStateCha
         <button type="button" className="btn link" style={{ color: "#fff" }} onClick={actions.syncPanel} title="Sync panel">Last sync {ss.last_sync_at ?? state.last_sync_at ? fmtMyt(ss.last_sync_at ?? state.last_sync_at) : "--"}</button>
         <button type="button" className="btn" style={{ minHeight: 34, padding: "4px 10px" }} onClick={actions.syncNow}>Sync now</button>
       </header>
-      {state.provisional && <div className="banner update">This device is not set up yet: no terminal, no fair, no items. Open <b>Settings</b> on the right, pick the terminal and the fair, and press Set up this device.</div>}
+      {state.provisional && <div className="banner update"><span className="grow">This device is not set up yet: no terminal, no fair, no items. Pick the terminal and the fair in Settings.</span><button type="button" className="btn primary" onClick={onOpenSetup}>Open Settings</button></div>}
       {state.test_mode && <div className="banner test">TEST MODE: every sale is a TEST sale (numbered {nextNo}), never synced, no stock deduction.</div>}
 
       <div className="sell">
