@@ -4,7 +4,7 @@
  * Inventory searches the SKU master; Import Excel / Export round-trip the
  * list. Changes reach devices on the next Prepare / Refresh / Push. */
 import { useMemo, useState } from "react";
-import { Download, Plus, Trash2, Upload } from "lucide-react";
+import { Download, PackagePlus, Plus, Trash2, Upload } from "lucide-react";
 import { api } from "../../api/client";
 import { useDialog } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
@@ -88,6 +88,27 @@ export function PosItemsTab() {
     await writeXlsxFile(data, { fileName: "POS_Items.xlsx", columns: header.map((h) => ({ width: Math.max(10, h.length + 4) })), stickyRowsCount: 1 });
   }
 
+  type AddAll = { to_add: number; already: number; no_price: number; total_active: number; added?: number };
+  async function addAll() {
+    setBusy(true);
+    try {
+      const p = await api.post<AddAll>(`${POS_ADMIN}/items/add-all`, { dry_run: true });
+      if (p.to_add === 0) { toast.info(`Nothing to add: ${p.already} already POS items, ${p.no_price} without a selling price.`); return; }
+      const ok = await dialog.confirm({
+        title: `Add ${p.to_add} inventory product(s) as POS items?`,
+        message: `Every active product with a selling price, at that price, no preset discount. ${p.already} already here are left as they are; ${p.no_price} without a selling price are skipped. You can edit prices, discounts and FOC per item afterwards.`,
+        confirmLabel: "Add all",
+      });
+      if (!ok) return;
+      const r = await api.post<AddAll>(`${POS_ADMIN}/items/add-all`, {});
+      toast.success(`${r.added ?? 0} POS item(s) added. Press Refresh catalog on the devices.`);
+      items.reload();
+    } catch (e) {
+      toast.error(errText(e, "Could not add the inventory."));
+    } finally {
+      setBusy(false);
+    }
+  }
   async function importExcel(file: File) {
     setBusy(true);
     try {
@@ -134,6 +155,7 @@ export function PosItemsTab() {
             <input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={busy} onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void importExcel(f); }} />
           </label>
           <button type="button" className={ghostBtn} onClick={() => void exportExcel()} disabled={rows.length === 0}><Download size={11} /> Export</button>
+          <button type="button" className={ghostBtn} disabled={busy} onClick={() => void addAll()} title="Every active inventory product with a selling price becomes a POS item; existing ones are untouched"><PackagePlus size={11} /> Add all sellable inventory</button>
           <button type="button" className={primaryBtn} onClick={() => setAdding(true)}><Plus size={11} /> Add from Inventory</button>
         </span>
       </div>

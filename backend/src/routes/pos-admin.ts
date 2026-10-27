@@ -968,4 +968,40 @@ posAdmin.get("/device/context", async (c) => {
   return c.json({ user: { id: u?.id ?? 0, name: u?.name ?? u?.email ?? "Manager" }, company: await companyBlock(c.env, co.companyId), settings: normalizePosSettings(raw) });
 });
 
+
+/* ── one press: every sellable inventory product becomes a POS item ─────── */
+
+/** Tags every ACTIVE inventory product with a selling price that is not a POS
+ *  item yet, at that price (cost copied too), no preset discount. Existing POS
+ *  items are left exactly as they are, so it can be pressed again whenever new
+ *  products arrive. `dry_run` answers the counts without writing. */
+posAdmin.post("/items/add-all", async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const body = await c.req.json<{ dry_run?: boolean }>().catch(() => ({} as { dry_run?: boolean }));
+  const db = getDb(c.env);
+  const rows = await db.execute<{ product_id: string; code: string; name: string; sell_price_sen: number | string | null; cost_price_sen: number | string | null; tagged: boolean }>(sql`
+    SELECT p.id AS product_id, p.code, p.name,
+           COALESCE(p.sell_price_sen, p.price1_sen, p.base_price_sen) AS sell_price_sen, p.cost_price_sen,
+           EXISTS (SELECT 1 FROM pos_items i WHERE i.company_id = ${co.companyId} AND i.product_id = p.id) AS tagged
+      FROM scm.mfg_products p
+     WHERE p.company_id = ${co.companyId} AND p.status = 'ACTIVE'
+     ORDER BY p.code`);
+  const already = rows.filter((r) => r.tagged).length;
+  const noPrice = rows.filter((r) => !r.tagged && !(Number(r.sell_price_sen ?? 0) > 0));
+  const toAdd = rows.filter((r) => !r.tagged && Number(r.sell_price_sen ?? 0) > 0);
+  if (body.dry_run === true) return c.json({ dry_run: true, to_add: toAdd.length, already, no_price: noPrice.length, total_active: rows.length });
+  let added = 0;
+  for (let i = 0; i < toAdd.length; i += 200) {
+    const chunk = toAdd.slice(i, i + 200);
+    await db.insert(pos_items).values(chunk.map((r) => ({
+      company_id: co.companyId, product_id: r.product_id, item_code: r.code, name: r.name,
+      price_sen: Math.round(Number(r.sell_price_sen)), cost_sen: r.cost_price_sen == null ? null : Math.round(Number(r.cost_price_sen)),
+    })));
+    added += chunk.length;
+  }
+  await audit(db, co.companyId, c, "pos_items", "add-all", "added", null, `${added} added, ${already} already, ${noPrice.length} without a selling price`);
+  return c.json({ ok: true, added, already, no_price: noPrice.length, total_active: rows.length });
+});
+
 export { posAdmin };

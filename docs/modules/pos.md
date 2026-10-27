@@ -175,6 +175,10 @@ page, and the POS Admin menu. This guide carries only what is built.
   discount, net and stock left (`scm.inventory_balances` at the event's
   stock source, else the POS store, else the company total, flagged);
   Export Excel (the shared rows plus the stock column) / PDF.
+- POS Items > Add all sellable inventory (`POST /api/pos-admin/items/add-all`,
+  `dry_run` for the counts): every ACTIVE `scm.mfg_products` row with a
+  selling price that is not a POS item yet is tagged at that price; existing
+  POS items are never touched, so it is safe to press again.
 - Install: the login screen (banner and footer link) and Settings offer
   "Install Houzs POS" through the browser install prompt (`pos/src/pwa.ts`
   `promptInstall`), hidden once the app runs in its own window.
