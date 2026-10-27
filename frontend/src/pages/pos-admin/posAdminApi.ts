@@ -96,7 +96,9 @@ export type PosEvent = {
   event_type_slug: string | null;
   event_type_name: string | null;
   type_label: string;
-  status: "RUNNING" | "UPCOMING" | "ENDED" | "NOT LINKED";
+  /** Where the fair is in time; `linked` says whether POS knows it. */
+  status: "COMING" | "ON GOING" | "DONE";
+  linked: boolean;
   link: PosEventLink | null;
   terminals: { id: number; code: string; device_name: string | null; prepared_at: string | null; last_sync_at: string | null; active: boolean }[];
 };
