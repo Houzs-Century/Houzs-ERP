@@ -104,6 +104,7 @@ export const PERMISSIONS: PermissionDef[] = [
   // to one super_admin row). Owner + IT Admin already cover all four via "*";
   // grant it to a ROLE later under Team > Roles & Permissions.
   { key: "scm.config.write",        resource: "Supply Chain", verb: "write",  label: "Edit SCM master data",         description: "Edit SCM master data: products, sofa combos, delivery fees, fabric library + tier add-ons, PWP rules, sofa quick picks, special add-ons, Maintenance config, category hero images" },
+  { key: "scm.products.merge",      resource: "Supply Chain", verb: "manage", label: "Merge product codes",          description: "Merge duplicate SKU codes into one kept code in SKU Master: moves every sales, purchase, delivery and stock line of the old codes onto the kept code and switches the old codes off" },
   { key: "scm.so.price_override",   resource: "Supply Chain", verb: "manage", label: "Override SO line unit price",  description: "Hand-override the unit price on a SCM Sales Order line (audited, admin-level)" },
   { key: "scm.so.view_all",         resource: "Supply Chain", verb: "read",   label: "View all salespersons' SOs",   description: "View every salesperson's My-Orders board (bypass per-rep attribution scoping)" },
   { key: "scm.so.attribute_other",  resource: "Supply Chain", verb: "manage", label: "Attribute SO to another rep",  description: "Create or edit a SCM Sales Order on behalf of another salesperson (stamp a different salesperson_id)" },

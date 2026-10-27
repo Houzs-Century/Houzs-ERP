@@ -168,8 +168,8 @@ import {
   type VenueSource,
   type VenueBindingSb,
 } from '../lib/venue-binding';
-import { bindVenueOnCreate, fairConfirmProblems, fairLinkForEdit, fairLinkOnCreate, fairRequiredProblem, loadLinkedFair, resolveFairForSave, SCAN_STEP_NOTE, type FairDb } from '../lib/fair-binding';
-import { fairDayMissing, fairDayOnSave, fairWhyOf } from '../lib/fair-options';
+import { bindVenueOnCreate, editFairKeyerId, fairConfirmProblems, fairLinkForEdit, fairLinkOnCreate, fairRequiredProblem, loadLinkedFair, resolveFairForSave, SCAN_STEP_NOTE, type FairDb } from '../lib/fair-binding';
+import { companyUsesKeyerFair, fairDayMissing, fairDayOnSave, fairWhyOf } from '../lib/fair-options';
 import { loadVpBrandAsk, type VpBrandDb } from '../lib/vp-brand-ask';
 import { recordSoAudit, diffFields, type FieldChange } from '../lib/so-audit';
 import { fairStateOf, recordFairChange } from '../lib/fair-audit';
@@ -6025,7 +6025,16 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
   /* A picked EVENT is recorded exactly (owner 2026-09-24). Resolved BEFORE the
      unchanged fields drop out: another event at the same venue changes no mapped
      column, and the save would otherwise answer "nothing to do". */
-  const fairLink = await fairLinkForEdit({ db: c.env?.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), body, stored: beforeRecord });
+  const fairLink = await fairLinkForEdit({
+    db: c.env?.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), body, stored: beforeRecord,
+    keyerId: () => editFairKeyerId({ sb, scope: (q) => scopeToCompany(q, c), docNo, editorId: Number(c.get('houzsUser')?.id ?? NaN) }),
+  });
+  /* HC-0161: a DRAFT whose re-picked fair links to no booth would only be
+     refused at Confirm, with no reason given — say it here, at Save. A
+     confirmed order still saves; Fair Links settles it. */
+  if (fairLink?.problem && beforeRecord.status === 'DRAFT' && companyUsesKeyerFair(c.get('companyCode'))) {
+    return c.json(validationFailedBody([fairLink.problem]), 422);
+  }
   if (fairLink && (fairLink.project_id !== (beforeRecord.project_id == null ? null : Number(beforeRecord.project_id)) || fairLink.fair_match !== beforeRecord.fair_match)) {
     updates['project_id'] = fairLink.project_id;
     updates['fair_match'] = fairLink.fair_match;
@@ -8451,23 +8460,6 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
     loadModelFabricTierOverrides(sb),
     loadCompartmentFabricTierOverrides(sb),
   ]);
-  /* Two snapshots, identical base inputs — only `variants` (and its fabric
-     row) differ, so base / combo / PWP terms cancel in the difference. The
-     fabric-tier Δ inputs (sellingTiers / addonConfig) are deliberately NOT
-     passed: the Δ is applied once, below, never double-counted. */
-  const snap = (variants: Record<string, unknown>, fab: typeof fabPrev) =>
-    recomputeFromSnapshot(
-      {
-        itemCode:       prev.item_code,
-        itemGroup:      String(prev.item_group ?? 'others'),
-        qty:            Number(prev.qty),
-        unitPriceSen: Number(prev.unit_price_sen),
-        variants:       variants as MfgItemForRecompute['variants'],
-      },
-      prodLite, fab, cfg, null, null, null, null, null, null, specialDefs, null, null,
-    );
-  const before = snap(prevVariants, fabPrev);
-  const after  = snap(nextVariants, fabNext);
   const category = String(prodLite?.category ?? '').toUpperCase();
   // migration 0175 — per-Model Δ override (same for prev/next; the Model doesn't
   // change on a TBC fill-in). Resolved by the line's model_id, replaces global.
@@ -8479,7 +8471,8 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
      resolved model-only, under-charging a build that carries a per-compartment
      Δ (the POS preview showed the higher Δ but the server billed less; no drift
      gate here). Reconstruct them from the SIBLING module lines' item_code suffix,
-     the same way the create path does. */
+     the same way the create path does. They also price an add-on set by
+     compartment (2990 owner 2026-10-26), so they are read BEFORE the snapshots. */
   let tbcCells: string[] = [];
   if (category === 'SOFA') {
     const buildKeyForCells = (prevVariants.buildKey as string | undefined) ?? null;
@@ -8501,6 +8494,26 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
         : [];
     }
   }
+  /* Two snapshots, identical base inputs — only `variants` (and its fabric
+     row) differ, so base / combo / PWP terms cancel in the difference. The
+     fabric-tier Δ inputs (sellingTiers / addonConfig) are deliberately NOT
+     passed: the Δ is applied once, below, never double-counted. Both carry the
+     build's compartments, so an add-on priced by compartment moves the bill by
+     what create would have charged for it. */
+  const snap = (variants: Record<string, unknown>, fab: typeof fabPrev) =>
+    recomputeFromSnapshot(
+      {
+        itemCode:          prev.item_code,
+        itemGroup:         String(prev.item_group ?? 'others'),
+        qty:               Number(prev.qty),
+        unitPriceSen:      Number(prev.unit_price_sen),
+        variants:          variants as MfgItemForRecompute['variants'],
+        buildCompartments: tbcCells,
+      },
+      prodLite, fab, cfg, null, null, null, null, null, null, specialDefs, null, null,
+    );
+  const before = snap(prevVariants, fabPrev);
+  const after  = snap(nextVariants, fabNext);
   const tbcOverride = resolveFabricTierOverride(tbcCells, tbcBaseOverride, compartmentOverrides ?? new Map());
   const tierDeltaSen = (addonCfg && (category === 'SOFA' || category === 'BEDFRAME'))
     ? (fabricTierAddon(category, (category === 'SOFA' ? tiersNext?.sofaTier : tiersNext?.bedframeTier) ?? null, addonCfg, tbcOverride)

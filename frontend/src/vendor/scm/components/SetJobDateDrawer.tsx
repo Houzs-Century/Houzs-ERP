@@ -37,10 +37,11 @@ export function SetJobDateDrawer({ order, onClose }: { order: PlanningOrder; onC
   const sched = useScheduleDelivery();
   const notify = useNotify();
 
-  /* The leg's current date. For an ASSR row the board puts the leg's own date on
-     amended_delivery_date, whichever leg it is — see the union's leg builder. */
+  /* The date Logistics confirmed (amended_delivery_date). Not confirmed yet: the
+     field opens on Service's requested date, so saving it confirms that date. */
   const current = (order.amended_delivery_date ?? '').slice(0, 10);
-  const [date, setDate] = useState(current);
+  const requested = (order.customer_delivery_date ?? '').slice(0, 10);
+  const [date, setDate] = useState(current || requested);
 
   const legLabel = assrJobKindLabel(order.job_kind);
   const dirty = date !== current;

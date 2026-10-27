@@ -15,10 +15,13 @@ import {
 // Re-exported so the mobile case page takes the whole Pickup / Return set from one import (it is at its size ceiling).
 export { ITEM_LOCATION_OPTIONS, PICKUP_STATUS_OPTIONS, pickupTrackingOptions } from "../../vendor/scm/lib/assr-pickup-tracking";
 
+import { LogisticsConfirmedNote } from "./LogisticsConfirmedNote";
 type Row = {
   pickup_status?: string | null;
   customer_pickup_at?: string | null;
   actual_pickup_at?: string | null;
+  pickup_by?: string | null;
+  sched_pickup_date?: string | null;
   pickup_pic?: string | null;
   item_location?: string | null;
   creditor_name?: string | null;
@@ -81,6 +84,9 @@ export function PickupTrackingFields({ c, patch }: { c: Row; patch: (body: Recor
           onSave={(v) => patch({ actual_pickup_at: v })}
         />
       </div>
+      {c.pickup_by === "customer" && !c.actual_pickup_at && (
+        <LogisticsConfirmedNote requested={c.customer_pickup_at} confirmed={c.sched_pickup_date} />
+      )}
       <InlineEdit
         label="Pickup PIC"
         value={c.pickup_pic}

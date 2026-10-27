@@ -1667,9 +1667,13 @@ describe('company 1: a custom pillow is planned from its own purchase order only
     }
   });
 
-  test('company 2 keeps the pooled model for pillows too', async () => {
-    const res = await computeMrp(asSb(world({ mfg_sales_order_items: demand, purchase_order_items: supply }, 2)), { ...opts, companyId: 2 });
-    expect(lineOf(res, 'l-013496').poNumber).not.toBeNull();
+  test('company 2 pools pillows, but each linked purchase order serves its own line first', async () => {
+    const pooled = pillowPo('2990-PO-POOL', 'LONG PILLOW', 3, 0, null, '2026-10-05');
+    const res = await computeMrp(asSb(world({ mfg_sales_order_items: demand, purchase_order_items: [...supply, pooled] }, 2)), { ...opts, companyId: 2 });
+    expect(lineOf(res, 'l-013496').poNumber).toBe('2990-PO-POOL');
+    expect(lineOf(res, 'l-013236').poNumber).toBe('HC-PO-009945');
+    expect(lineOf(res, 'l-013385').poNumber).toBe('HC-PO-010084');
+    expect(lineOf(res, 'l-013384').poNumber).toBe('HC-PO-010083');
   });
 });
 

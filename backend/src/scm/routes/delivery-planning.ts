@@ -72,13 +72,16 @@ import { todayMyt } from '../lib/my-time';
 import { attachLineCategories } from '../lib/so-readiness-category';
 import { deriveBranding } from '../lib/so-display-branding';
 /* chunkIn on every id/doc-no filter: the list rides in the URL and an unbounded one is refused. */
+import { docsEnteringPendingSchedule, stampPendingSchedule } from '../lib/pending-schedule-stays';
+import { boardSlice, splitDeliveredForOpen, addSkippedDelivered, parseOnlyDocs, onlyDocsFilter } from '../lib/delivery-board-slice';
+import { boardChangesHandler } from './delivery-planning-changes';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { attachBoardAcExemptionExpiry } from '../lib/ac-exemption-expiry';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { summariseReadiness, normCategory, type ReadinessLine } from '../lib/so-readiness';
 import { effectiveSoDelivery } from '../shared';
 import { readinessRowFields, NO_STOCK_ROW } from '../lib/so-readiness-row';
-import { kickOffBoardReads, kickOffSubBoardReads, flattenProjectCrew } from '../lib/delivery-planning-board-reads';
+import { kickOffBoardReads, kickOffSubBoardReads, flattenProjectCrew, SUB_BOARD_SKIPPED } from '../lib/delivery-planning-board-reads';
 import { readFailure, noteDegradedRead } from '../lib/read-failure';
 import { soProcessingLocked } from './mfg-sales-orders';
 import { soPoLocked, soPoLockedMany } from '../lib/so-po-lock';
@@ -86,7 +89,7 @@ import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMa
 /* Service-Case rows on this board are company-scoped (owner ruling 2026-08-21).
    Both statements live in ONE module, with the reasoning, so the predicate is
    assertable and cannot be re-derived by hand here. */
-import { assrBoardLocation, assrOpenCaseGuardSql, ASSR_BOARD_LEGS } from '../lib/assr-board-scope';
+import { assrBoardLocation, assrOpenCaseGuardSql, ASSR_BOARD_LEGS, ASSR_CONFIRMED_COL, assrBoardLegs, assrCaseClosed } from '../lib/assr-board-scope';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
@@ -287,10 +290,11 @@ export function derivePlanningState(input: {
 }): DeliveryState {
   const { storedOverride, status, readiness, delivered, remaining, effectiveDD, today } = input;
   const stored = storedOverride ?? null;
-  if (stored && (DELIVERY_STATES as string[]).includes(stored)) return stored as DeliveryState;
-
+  /* Delivered beats a manual override: an order moved early into Pending
+     Schedule must still leave the queue once it is handed over. */
   const st = String(status ?? '').toUpperCase();
   if (st === 'DELIVERED' || (delivered > 0 && remaining <= 0)) return 'DELIVERED';
+  if (stored && (DELIVERY_STATES as string[]).includes(stored)) return stored as DeliveryState;
 
   /* "Ready to ship" gate — see summariseReadiness.isShipReady. The narrowed
      parameter type above is what now keeps the wrong flag out of reach. */
@@ -390,6 +394,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
 
   const regionParam = (c.req.query('region') ?? 'ALL').trim().toUpperCase();
   const stateParam = (c.req.query('state') ?? 'ALL').trim().toUpperCase();
+  // ?docs=A,B: rebuild ONLY these SO rows (the board's after-edit row refresh), see lib/delivery-board-slice.ts.
+  const onlyDocs = parseOnlyDocs(c.req.query('docs'));
+  if (onlyDocs?.length === 0) return c.json({ orders: [], counts: emptyCounts(), regions: [] });
 
   /* 0. CONFIG-DRIVEN region model (migration 0053) — load the owner-maintained
         region master + per-state MULTI mapping once per request. regionList()
@@ -442,7 +449,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     dp_remark: string | null; dpRemark?: string | null;
   };
   /* CROSS-COMPANY = the caller's GRANTED companies; unscoped, this read took every tenant's. */
-  const { data: soRowsRaw, error: soErr } = await paginateAll<SoHeaderRow>((from, to) =>
+  const { data: soRowsRaw, error: soErr } = await paginateAll<SoHeaderRow>((from, to) => onlyDocsFilter(
     scopeToAllowedCompanies(
       sb.from('mfg_sales_orders')
         /* NO `id` column here: scm.mfg_sales_orders is keyed by doc_no (TEXT PK) and
@@ -451,17 +458,21 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, agent, salesperson_id, venue, customer_state, customer_country, customer_delivery_date, sales_exemption_expiry, amend_date_from_customer, amended_delivery_date, amend_reason, amend_reason_from_customer, processing_date, so_date, address1, address2, postcode, building_type, local_total_sen, balance_sen, possession_date, house_type, replacement_disposal, referral, ref, customer_so_no, delivery_message_status, disposal_request, dp_remark, linked_ac_docno')
         .neq('status', 'DRAFT')
         .neq('status', 'CANCELLED')
-        .order('customer_delivery_date', { ascending: true, nullsFirst: false }),
+        .order('customer_delivery_date', { ascending: true, nullsFirst: false })
+        .order('doc_no'), // breaks date ties: pages overlapped, 7 SOs came back twice (2026-10-26)
       c,
-    ).range(from, to),
+    ).range(from, to), onlyDocs),
   ); lap('dp-so-headers');
   if (soErr) return c.json(readFailure('sales_orders', soErr), 500);
   /* Only SOs that actually need delivering — they carry a date signal
      (customer_delivery_date OR processing_date). Filtered
      in JS (not a PostgREST .or()) to keep the paginated query's row type clean. */
-  const soRows = (soRowsRaw ?? []).filter(
+  const datedRows = (soRowsRaw ?? []).filter(
     (r) => r.customer_delivery_date != null || r.processing_date != null,
   );
+  // state=OPEN (office view): a status-DELIVERED order is Delivered whatever else
+  // holds, so it is counted here and skips every per-order read (lib/delivery-board-slice.ts).
+  const { kept: soRows, skipped: skippedDelivered } = splitDeliveredForOpen(datedRows, stateParam === 'OPEN' && scope.mode === 'all');
   const docNos = soRows.map((r) => String(r.doc_no ?? '')).filter(Boolean);
 
   if (docNos.length === 0) {
@@ -485,7 +496,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   // the Delivered tab; older done work stays off the board (owner 2026-10-21).
   // today is YYYY-MM-DD, so the cutoff is too.
   const recentClosedSince = new Date(new Date(`${today}T00:00:00Z`).getTime() - 90 * 86400000).toISOString().slice(0, 10);
-  const { assrRowsP, dpResP, projRowsP } = kickOffSubBoardReads(c, sb, recentClosedSince);
+  const { assrRowsP, dpResP, projRowsP } = kickOffSubBoardReads(c, sb, recentClosedSince, onlyDocs !== null);
 
   /* 2b. LIVE balance per SO — same source-of-truth as the SO list Balance column
         (mfg_sales_orders_with_payment_totals.balance_sen_live = local_total −
@@ -1058,24 +1069,14 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       const regionSet = new Set<Region>(stateRegions);
       const address = [a.addr1, a.addr2, a.addr3, a.addr4].filter(Boolean).join(', ') || null;
       // A closed / archived case's legs are DONE → they belong on Delivered.
-      const caseClosed = Boolean(a.closed_at) || Boolean(a.archived_at);
+      const caseClosed = assrCaseClosed(a);
 
-      // One row per SET trigger date. job_kind = which date drives THIS row; the
-      // effective/board date is that trigger date so it lands in the schedule
-      // column. A date-but-not-yet-delivered case = PENDING_SCHEDULE (reuse the
-      // existing enum). Stock columns are null/'—' for ASSR rows.
-      const legs: Array<{ jobKind: 'customer_pickup' | 'delivery' | 'inspection'; date: string }> = [];
-      if (a.customer_pickup_at) legs.push({ jobKind: 'customer_pickup', date: a.customer_pickup_at });
-      // Own-team on-site inspection visit — a distinct fleet leg. Supplier-done
-      // inspections are handled on the supplier side, so they never surface here
-      // (the SELECT already gates this to inspection_by = 'own').
-      if (a.inspection_visit_at && a.inspection_by === 'own') legs.push({ jobKind: 'inspection', date: a.inspection_visit_at });
-      if (a.do_date)            legs.push({ jobKind: 'delivery',        date: a.do_date });
-
-      for (const leg of legs) {
+      // Own-team legs: Service's date = request, Logistics' = confirmed (assrBoardLegs).
+      for (const leg of assrBoardLegs(a, caseClosed)) {
+        const legDate = leg.confirmed ?? leg.requested;
         // A CLOSED case's leg only shows when it is recent (owner 2026-10-21: last
         // 90 days); older done service work stays off the board.
-        if (caseClosed && leg.date.slice(0, 10) < recentClosedSince) continue;
+        if (leg.state === 'DELIVERED' && (legDate ?? '').slice(0, 10) < recentClosedSince) continue;
         // so_doc_no is the React rowKey on the board — a case with two legs must
         // yield two DISTINCT keys, so suffix with the job_kind.
         const rowKey = `${assrNo}#${leg.jobKind}`;
@@ -1094,7 +1095,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           status: a.status ?? '',
           // Closed case's dated leg = done → Delivered; an open dated leg surfaces
           // under Pending Delivery until it's scheduled out (owner 2026-10-21).
-          delivery_state: caseClosed ? 'DELIVERED' : 'PENDING_DELIVERY',
+          delivery_state: leg.state,
           delivery_state_override: null,
           balance_sen: 0,
           balance_sen_live: null,
@@ -1113,23 +1114,19 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
             };
           })(),
           so_date: null,
-          // The trigger date is the SERVICE date: it drives the schedule /
-          // Days-Left column like an SO's effective date AND shows in the "Sales
-          // Exemption Expiry Date" column (via customer_delivery_date, the
-          // frontend's ASSR arm). "Delivery Date" (amended_delivery_date) is LEFT
-          // BLANK — it is the date admin proposes to the customer when scheduling
-          // (owner 2026-10-22: ASSR follows the SO-sync date convention).
-          customer_delivery_date: leg.date, sales_exemption_expiry: null,
+          // Service's requested date shows where an SO shows the customer's date;
+          // "Delivery Date" (amended_delivery_date) is the date Logistics confirmed.
+          customer_delivery_date: leg.requested, sales_exemption_expiry: null,
           amend_date_from_customer: null,
-          amended_delivery_date: null,
+          amended_delivery_date: leg.confirmed,
           amend_reason: null, amend_reason_from_customer: null,
-          effective_delivery_date: leg.date,
-          processing_date: leg.date,
+          effective_delivery_date: legDate,
+          processing_date: legDate,
           /* Synthetic job row — its so_doc_no is a ROW KEY, not a real SO doc
              number, and it carries no replacement_disposal for the drawer to
              lock. Always false; a Set lookup on a row key would be meaningless. */
           po_locked: false,
-          days_left: daysBetween(today, leg.date),
+          days_left: daysBetween(today, legDate),
           address,
           postcode: realPostcode,
           building_type: null,
@@ -1152,7 +1149,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           em_delivery_status: null, consignment_no: null, vessel_voyage: null,
           etd_port_klang: null, bs_delivery_date: null, esb_remarks: null,
           bs_remarks: null, ctn: null, em_delivered_date: null,
-          do_date: leg.jobKind === 'delivery' ? leg.date : null,
+          do_date: leg.jobKind === 'delivery' ? legDate : null,
           delivered_at: null, pod_r2_key: null, pod_lat: null, has_pod: false,
           // Stock columns are not meaningful for a Service Case.
           ...NO_STOCK_ROW,
@@ -1180,13 +1177,13 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           trip_date: null,
           trip_stop_no: null,
           trip_eta_offset_s: null,
-          arrangement_stage: null,
+          arrangement_stage: leg.state === 'PENDING_SCHEDULE' ? 'PENDING_DATE' : null,
         });
       }
     }
   } catch (e) {
     // Defensive: a malformed / edge ASSR case must NEVER break the SO rows.
-    console.warn(`[delivery-planning] ASSR union skipped: ${String((e as Error).message).slice(0, 120)}`);
+    if (e !== SUB_BOARD_SKIPPED) console.warn(`[delivery-planning] ASSR union skipped: ${String((e as Error).message).slice(0, 120)}`);
   }
 
   /* ── ASSR crew echo (P3) ──────────────────────────────────────────────────────
@@ -1353,7 +1350,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       });
     }
   } catch (e) {
-    console.warn(`[delivery-planning] DP-order union skipped: ${String((e as Error).message).slice(0, 120)}`);
+    if (e !== SUB_BOARD_SKIPPED) console.warn(`[delivery-planning] DP-order union skipped: ${String((e as Error).message).slice(0, 120)}`);
   }
   await echoTripCrew(sb, dpBoardRows).catch((e: Error) => console.warn(`[delivery-planning] DP crew echo skipped: ${e.message.slice(0, 120)}`)); lap('dp-crew-echo');
 
@@ -1495,7 +1492,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       }
     }
   } catch (e) {
-    console.warn(`[delivery-planning] project union skipped: ${String((e as Error).message).slice(0, 120)}`);
+    if (e !== SUB_BOARD_SKIPPED) console.warn(`[delivery-planning] project union skipped: ${String((e as Error).message).slice(0, 120)}`);
   }
 
   const poNosRes = await poNosByDocP; // "PO No." column: POs raised from the SO, walked per company (lib/planning-po-nos.ts); kicked off right after soRows
@@ -1523,18 +1520,23 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         tab badges reflect the active region. The state filter is applied AFTER
         counting (so switching state tabs doesn't change the badge numbers). The
         region param is validated against the config's region codes. */
+  if (scope.mode === 'all') {
+    const entering = docsEnteringPendingSchedule(allOrders);
+    await stampPendingSchedule(sb, c, entering);
+    const stamped = new Set(entering);
+    for (const o of allOrders) if (stamped.has(o.so_doc_no) && o.row_type === 'so') o.delivery_state_override = 'PENDING_SCHEDULE';
+  }
   const regionFiltered = scopedOrders.filter((o) => matchesRegion(o, regionParam, regionCfg.validCodes));
   const counts = emptyCounts();
   for (const o of regionFiltered) counts[o.delivery_state] += 1;
   counts.ALL = regionFiltered.length;
 
-  const stateFiltered = stateParam === 'ALL'
-    ? regionFiltered
-    : regionFiltered.filter((o) => o.delivery_state === stateParam);
-
-  return c.json({ orders: stateFiltered, counts, regions: regionCfg.regions });
+  const slice = boardSlice(regionFiltered, stateParam);
+  addSkippedDelivered(skippedDelivered, (r) => stateToRegionsFromConfig(regionCfg, r.customer_state, r.customer_country), regionParam, counts, slice.deliveredByRegion);
+  return c.json({ orders: slice.orders, counts, regions: regionCfg.regions, ...(slice.deliveredByRegion ? { delivered_by_region: slice.deliveredByRegion } : {}) });
 };
 deliveryPlanning.get('/', deliveryPlanningBoardHandler);
+deliveryPlanning.get('/changes', boardChangesHandler);
 
 /* ──────────────────────────────────────────────────────────────────────────
    GET /delivery-planning/geo?date=YYYY-MM-DD&region=<ALL|code>
@@ -2264,9 +2266,8 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
       p.jobKind === 'customer_pickup' ? 'customer_pickup'
       : p.jobKind === 'inspection' ? 'inspection'
       : 'delivery';
-    const col = jobKind === 'customer_pickup' ? 'customer_pickup_at'
-      : jobKind === 'inspection' ? 'inspection_visit_at'
-      : 'do_date';
+    // Logistics' date is the CONFIRMED one; Service's requested date stays as keyed.
+    const col = ASSR_CONFIRMED_COL[jobKind];
     /* The case must EXIST and be OPEN before ANYTHING is written. The date write
        below carries that guard in its own WHERE clause, but a crew-only edit (a
        lorry with no scheduleDate — now reachable because the board's Driver /
@@ -2782,9 +2783,10 @@ async function scheduleAssrOntoTrip(
   try {
     const user = c.get('user') as { id?: string } | null;
     const stopType = ASSR_STOP_TYPE[jobKind];
-    const dateCol = jobKind === 'customer_pickup' ? 'customer_pickup_at'
+    const requestedCol = jobKind === 'customer_pickup' ? 'customer_pickup_at'
       : jobKind === 'inspection' ? 'inspection_visit_at'
       : 'do_date';
+    const dateCol = `COALESCE(${ASSR_CONFIRMED_COL[jobKind]}, ${requestedCol})`;
 
     /* Case snapshot (customer / address) + the leg's own date, from public.assr_cases
        via c.env.DB (same path the ASSR board union uses). The leg date is the trip's

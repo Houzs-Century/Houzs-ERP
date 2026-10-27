@@ -1155,15 +1155,34 @@ export function MileageSection({ readings, vehicleId, onChanged }: {
 export const FIELD_CLS = "w-full rounded-md border border-border bg-surface px-2.5 py-1.5 text-[12px] text-ink focus:border-primary focus:outline-none";
 export const FIELD_LABEL = "mb-1 block text-[10px] font-semibold uppercase tracking-brand text-ink-muted";
 
+/* HC-0160: the route's code lives in HttpError.rawBody; e.message has already
+   been rewritten into a sentence by humanHttpMessage, so matching codes against
+   it never hit and every refusal read "Could not save. Please try again." */
 export function apiErrText(e: unknown): string {
-  const m = e instanceof Error ? e.message : "";
+  // Only an HttpError's message is safe to show (humanHttpMessage made it so:
+  // 403 → no permission, 5xx → our side); any other Error may be a raw JS internal.
+  const http = e instanceof Error && (e as { isHttp?: boolean }).isHttp === true
+    ? (e as Error & { rawBody?: string }) : null;
+  let body: { error?: unknown; previousKm?: unknown } = {};
+  try {
+    const j: unknown = JSON.parse(http?.rawBody ?? "");
+    if (j && typeof j === "object") body = j;
+  } catch { /* not json */ }
+  const code = typeof body.error === "string" ? body.error : "";
+  const prevKm = Number(body.previousKm);
   const known: Record<string, string> = {
     illegal_transition: "That step is not allowed from the current state.",
     position_occupied: "Another active component already occupies that position.",
     vehicle_not_found: "Vehicle not found.",
+    odometer_rollback: Number.isFinite(prevKm) && body.previousKm != null
+      ? `That is lower than the last reading (${prevKm.toLocaleString()} km). An odometer cannot go backwards.`
+      : "That is lower than the last reading. An odometer cannot go backwards.",
+    already_captured_today: "A reading for this lorry was already captured today.",
+    invalid_odometer: "Enter the odometer as a whole number of km.",
+    invalid_reading_date: "Enter a valid reading date.",
   };
-  for (const [k, msg] of Object.entries(known)) if (m.includes(k)) return msg;
-  return "Could not save. Please try again.";
+  if (known[code]) return known[code];
+  return http?.message || "Could not save. Please try again.";
 }
 
 /** One record, closed to a single line and opened on demand.

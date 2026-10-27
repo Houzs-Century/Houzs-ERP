@@ -95,6 +95,18 @@ describe('planUncostedRetrocost stays in lockstep with fn_reconcile_uncosted_out
     ).toBe(7);
   });
 
+  test('an OUT that found no lot keeps its cost (SQL adds onto it, as the model does)', () => {
+    // The DRY-RUN of 2026-10-26 showed 46 OUTs losing ~RM42.8k: the SQL re-stamped
+    // total_cost_sen = SUM(consumptions) even when it consumed nothing.
+    const sql = newestUncostedOutSql();
+    expect(sql).toContain('IF v_added_sen > 0 THEN');
+    expect(sql).toContain('COALESCE(m.total_cost_sen, 0) + v_added_sen');
+    expect(sql).not.toContain('SUM(total_cost_sen)');
+
+    const stamped = out({ movementId: 'm-stamped', qty: 1, alreadyCostedSen: 98750 });
+    expect(planUncostedRetrocost([stamped], [], CUTOFF).lines).toEqual([]);
+  });
+
   test('the model actually applies the 0230 strict-batch exclusion', () => {
     const strict = out({ movementId: 'm-sofa', qty: 2, alreadyConsumedQty: 0, strictBatchCommitted: true });
     const plain = out({ movementId: 'm-mat', qty: 2, alreadyConsumedQty: 0, strictBatchCommitted: false });

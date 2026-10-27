@@ -39,6 +39,7 @@ import { DeliveryFieldsDrawer } from '../../vendor/scm/components/DeliveryFields
 import { NewDpOrderDrawer } from '../../vendor/scm/components/NewDpOrderDrawer';
 import { SetJobDateDrawer } from '../../vendor/scm/components/SetJobDateDrawer';
 import { ScheduleDpOrderDrawer } from '../../vendor/scm/components/ScheduleDpOrderDrawer';
+import { useBoardChangePoll } from '../../vendor/scm/lib/board-change-poll';
 import { ScheduleTripDrawer } from '../../vendor/scm/components/ScheduleTripDrawer';
 import { SendDeliveryMessageModal, KIND_AFTER_STATUS, SKIP_LABEL, type SendMessageKind } from '../../vendor/scm/components/SendDeliveryMessageModal';
 import {
@@ -123,10 +124,9 @@ export const DeliveryPlanning = () => {
   const [showNewDp, setShowNewDp] = useState(false);
   /* The DP job being scheduled (Schedule drawer open when non-null). */
   const [schedulingDp, setSchedulingDp] = useState<PlanningOrder | null>(null);
-  /* Single-row scheduling, from the row menu. The board's "Sched. Date" column
-     was removed in the owner's 2026-08-04 column pass ("删列但保留排期") — an SO
-     goes to the full trip drawer, a service case to the one-field date drawer. */
-  const [schedulingOne, setSchedulingOne] = useState<PlanningOrder | null>(null);
+  /* A service case's date is confirmed from its row menu (one-field drawer). An
+     SO's date, driver and lorry are set in their own cells, so its row menu no
+     longer opens the trip drawer (owner 2026-10-26); the bulk bar still does. */
   const [datingAssr, setDatingAssr] = useState<PlanningOrder | null>(null);
   const cancelDp = useCancelDpOrder();
 
@@ -209,6 +209,19 @@ export const DeliveryPlanning = () => {
 
   /* Single-row convert (context-menu action). */
   const convertOne = (o: PlanningOrder) => { void runConvert([o.so_doc_no]); };
+  const moveState = async (o: PlanningOrder, state: 'PENDING_SCHEDULE' | null) => {
+    try {
+      await sched.mutateAsync({ type: 'so', id: o.so_doc_no, deliveryState: state });
+      void notify({
+        title: state ? 'Moved to Pending Schedule' : 'Back to Pending Delivery',
+        body: state
+          ? `${o.so_doc_no} can be arranged now; its Stock column still shows what is ready.`
+          : `${o.so_doc_no} follows its stock again: if every item is still ready it stays in Pending Schedule.`,
+      });
+    } catch (e) {
+      void notify({ title: 'Not moved', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
 
   /* Open a row's underlying document: an ASSR row goes to the SERVICE CASE detail
      (/assr/:id, keyed on the numeric case id); an SO row keeps its Sales Order
@@ -250,7 +263,13 @@ export const DeliveryPlanning = () => {
      old per-region fetch re-ran the whole server board assembly on every chip
      click, so the region row felt frozen (owner 2026-10-19 "filter 没反应");
      locally it is instant and the region chip no longer triggers a load. */
-  const { data, isLoading, error } = useDeliveryPlanning({ region: 'ALL', state: 'ALL' });
+  /* The working tabs skip Delivered rows (72% of the payload, re-downloaded on
+     every edit - 2026-10-26); All and Delivered still read every row. */
+  // Others' changes show within 30 s, only the changed orders re-read (board-change-poll.ts).
+  useBoardChangePoll();
+  const needsDelivered = activeState === 'ALL' || activeState === 'DELIVERED';
+  const { data, isLoading: firstLoad, isPlaceholderData, error } = useDeliveryPlanning({ region: 'ALL', state: needsDelivered ? 'ALL' : 'OPEN' });
+  const isLoading = firstLoad || (needsDelivered && isPlaceholderData);
 
   /* Region chips = the CONFIG-DRIVEN buckets from the API master (+ "All"
      prepended). Falls back to the five geographic defaults if the API hasn't
@@ -288,7 +307,13 @@ export const DeliveryPlanning = () => {
   );
   /* State-tab badges over the region-filtered set, so they reflect the active
      region exactly as the server's region-scoped counts did. */
-  const counts = useMemo<PlanningCounts>(() => planningCountsFrom(allOrders), [allOrders]);
+  const counts = useMemo<PlanningCounts>(() => {
+    const c = planningCountsFrom(allOrders);
+    if (!data?.delivered_by_region) return c;
+    // OPEN fetch: Delivered rows were left out, their per-region count came along.
+    const delivered = activeRegion === 'ALL' ? data.counts.DELIVERED : (data.delivered_by_region[activeRegion] ?? 0);
+    return { ...c, DELIVERED: delivered, ALL: c.ALL + delivered };
+  }, [allOrders, data, activeRegion]);
 
   /* The SO order objects behind the current selection — fed to the scheduling
      drawer as its ordered stop list. Resolved from the region-scoped board (all
@@ -570,7 +595,14 @@ export const DeliveryPlanning = () => {
                 { label: 'Open Service Case', onClick: () => openRow(row) },
               ]
             : [
-                { label: 'Schedule…', onClick: () => setSchedulingOne(row) },
+                /* Arrange before the goods are ready (owner 2026-10-26): the row
+                   moves to Pending Schedule while its Stock column stays live. */
+                ...(row.delivery_state === 'PENDING_DELIVERY' || row.delivery_state === 'OVERDUE'
+                  ? [{ label: 'Move to Pending Schedule', onClick: () => moveState(row, 'PENDING_SCHEDULE') }]
+                  : []),
+                ...(row.delivery_state_override
+                  ? [{ label: 'Back to Pending Delivery', onClick: () => moveState(row, null) }]
+                  : []),
                 { label: 'Edit HC fields…', onClick: () => setEditing(row) },
                 { label: 'Send WhatsApp…', onClick: () => { setSendKind('delivery'); setSendingRows([row]); } },
                 ...(canConvertToDo
@@ -595,15 +627,6 @@ export const DeliveryPlanning = () => {
         <ScheduleTripDrawer
           orders={selectedOrders}
           onClose={() => setScheduling(false)}
-          onOpenTrips={() => navigate('/scm/trips')}
-        />
-      )}
-
-      {/* Same drawer as the bulk bar, handed a single row from its menu. */}
-      {schedulingOne && (
-        <ScheduleTripDrawer
-          orders={[schedulingOne]}
-          onClose={() => setSchedulingOne(null)}
           onOpenTrips={() => navigate('/scm/trips')}
         />
       )}
