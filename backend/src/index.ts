@@ -124,6 +124,7 @@ import { autoReadBills } from "./scm/lib/threepl-bill-import";
 import { relinkHeldBackSweep } from "./scm/lib/autocount-relink-sweep";
 import { deliveryDateSweep } from "./scm/lib/autocount-delivery-date-sweep";
 import { refreshAllMrpSnapshots } from "./scm/lib/mrp-snapshot";
+import { deliverDueShippedOrders } from "./scm/lib/deliver-due-shipped";
 import { refreshProcurementOverviewSnapshots } from "./scm/routes/procurement-overview";
 import { amendmentMirror } from "./scm/routes/amendment-mirror";
 import { customerMirror } from "./scm/routes/customer-mirror";
@@ -1078,6 +1079,15 @@ export default {
         track("sla", () => runSlaEscalation(env))
           .then((r) => console.log(`[cron sla] escalated ${r.escalated} case(s)`))
           .catch((e) => console.error("[cron sla]", e))
+      );
+      // Local "actually delivered" sweep (owner 2026-10-27): so-delivery-sync
+      // only SHIPS now; a SHIPPED local order whose DO date has passed and that
+      // has a driver is delivered here. East Malaysia / Singapore are left out —
+      // their delivered signal is the HC Delivery sheet, synced separately.
+      ctx.waitUntil(
+        track("deliver-due", () => deliverDueShippedOrders(getSupabaseService(env), todayMyt(), null))
+          .then((r) => console.log(`[cron deliver-due] scanned=${r.scanned} delivered=${r.delivered} skipped=${r.skipped}`))
+          .catch((e) => console.error("[cron deliver-due]", e))
       );
       // AutoCount DO-header mirror refresh (mig 0215) — feeds the ASSR list's
       // DO No column for Houzs cases. Incremental via DeliveryOrder/getSince
