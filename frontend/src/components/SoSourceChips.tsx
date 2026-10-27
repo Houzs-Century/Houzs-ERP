@@ -123,7 +123,7 @@ export function SoStockPill({ line }: { line: SoLineSourceFields }) {
         >
           {ns.code ?? ns.name ?? "Display"} — transfer to sell
         </span>
-      ) : !ns && line.awaiting_processing_date && stock.label === "PENDING" ? (
+      ) : line.awaiting_processing_date && stock.label === "PENDING" ? (
         <span
           className="text-[9px] font-semibold uppercase leading-tight tracking-wide text-warning-text"
           title="Stock is only set aside once the order has a Processing Date."
