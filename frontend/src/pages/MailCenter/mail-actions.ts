@@ -216,8 +216,8 @@ export async function createDeptMailbox(
 // 400 bad domain, 403 not-admin).
 //
 // userId / assignedUserId are NUMBERS in Houzs (users.id is serial); the
-// address `id` is text. The department picker sends the dept NAME string (the
-// backend string-matches assigned_dept), never an id.
+// address `id` is text. A department mailbox is linked to its Org Chart
+// department by `departmentId` (HC-0157); a bare name is resolved server-side.
 
 // One mailbox address row as served by GET /api/mail-center/addresses.
 export type MailAddress = {
@@ -227,6 +227,7 @@ export type MailAddress = {
   assignedUserId?: number | null;
   assignedUserName?: string;
   assignedDept?: string;
+  departmentId?: number | null;
   assignedPosition?: string;
   active: boolean;
   createdAt?: string;
@@ -234,11 +235,15 @@ export type MailAddress = {
 
 export type MailScopeLevel = "personal" | "department" | "company";
 
+// No mail_user_scope row = this level (backend DEFAULT_MAIL_SCOPE_LEVEL).
+export const DEFAULT_MAIL_SCOPE_LEVEL: MailScopeLevel = "department";
+
 export type CreateAddressInput = {
   label?: string;
   assignedUserId?: number | null;
   assignedUserName?: string;
   assignedDept?: string;
+  departmentId?: number | null;
   assignedPosition?: string;
 };
 
@@ -271,6 +276,7 @@ export function patchAddress(
     assignedUserId?: number | null;
     assignedUserName?: string | null;
     assignedDept?: string | null;
+    departmentId?: number | null;
     assignedPosition?: string | null;
     active?: boolean;
   },
