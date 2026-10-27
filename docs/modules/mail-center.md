@@ -26,6 +26,7 @@ Reply-all precedence: an explicit `to` from the caller always wins; otherwise To
 
 - Visibility (`getMailScope`): `mail_user_scope.level`, no row = `department`. personal = own + granted mailboxes; department adds every active department mailbox (no owner) whose `department_id` is the person's Org Chart `users.department_id`; company = every active mailbox. A Sales Director set to personal still gets department.
 - A department mailbox is linked to its department by `email_addresses.department_id`; `assigned_dept` is only the display name. A row with a name but no id reaches nobody (Team, Mailboxes shows it as not linked). Giving a mailbox an owner clears `department_id`, so a department never reaches personal mail.
+- Disabling a member (member edit or the Disable button) closes their personal mailbox and deletes their grants to mailboxes they do not own (`closePersonalMailOnDisable`); the mailbox keeps its owner, so the address is never handed on with the old mail. Re-enabling opens only the mailbox of their current `email_alias`; shared access comes back by an admin grant.
 - `canSendFrom()` — a non-admin may send only from a mailbox in their own scope, or their own alias (`users.email_alias`); admins may send from any mailbox.
 - `purpose` / `isChannelEnabled()` gates delivery at both send time and drain time — a channel switched off after a message is enqueued stops its retry.
 - `isMailAdmin` grants mailbox management rights only — it must never widen the company scope on outbox reads.
