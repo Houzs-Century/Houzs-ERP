@@ -22,6 +22,12 @@ page, and the POS Admin menu. This guide carries only what is built.
   bills grouped by receipt with lines + payments, filters `date` (Malaysia
   calendar day) / `terminal` / `cashier` / `method` / `status`, totals, and
   the filter options. Pure grouping + totals in `routes/lib/pos-sales-list.ts`.
+- Events tab lists every fair on its own: Cash & Carry projects, the projects
+  whose `projects.brand` is one of General `booth_brands` (default AKEMI Cash
+  & Carry, AKEMI FRAGRANCE; picked from the project brands), and every
+  linked one; each row carries a time status (`COMING` / `ON GOING` / `DONE`,
+  `pos-admin-rules.ts posEventStatus`) and a separate LINKED mark; older
+  projects are reachable by search. A row click opens the booth settings.
 - POS Admin menu (`/pos-admin`, sidebar System, key `pos.manage`; Owner +
   IT Admin via `*`): POS Items, Barcode labels, Cashiers, Events, SST &
   Receipt, Printer & Scanner, Terminals, General. API `/api/pos-admin/*`
@@ -169,11 +175,19 @@ page, and the POS Admin menu. This guide carries only what is built.
   discount, net and stock left (`scm.inventory_balances` at the event's
   stock source, else the POS store, else the company total, flagged);
   Export Excel (the shared rows plus the stock column) / PDF.
-- Pairing (replaces the ERP sign-in on the device): POS Admin > Terminals >
+- The POS front is the login screen. A device not set up yet shows a manager
+  sign-in (ERP email + password; the account must hold `pos.manage`,
+  `GET /api/pos-admin/device/context` answers who / company / settings); the
+  manager gets in as a supervisor on a provisional in-memory state
+  (`pos/src/manager.ts`, token "", never saved or synced) and sets the device
+  up in Settings: terminal + fair from the POS Admin lists, one button
+  (`POST /api/pos-admin/device/register`). On a set-up device the manager
+  sign-in stays under the tiles as the second way in.
+- Pairing code (for a device with no ERP login on it): POS Admin > Terminals >
   Pair device (`POST /api/pos-admin/terminals/:id/pairing`, event must be
   set and linked) issues a one-time 8-character code, stored as a hash with
   a 15-minute expiry (`scm/shared/pos-pairing.ts`, vendored). The device
-  (first screen `pos/src/screens/Pair.tsx`, or the `?pair=` link) redeems
+  (Settings, or the `?pair=` link on first open) redeems
   it at `POST /api/pos-device/pair` (pre-auth, no token yet): a fresh device
   token is minted, the code is spent, the bundle comes back. Pair again from
   Device setup (gear, supervisor PIN) moves a device; the old token dies.

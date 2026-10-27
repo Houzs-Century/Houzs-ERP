@@ -308,6 +308,7 @@ GET,/api/pos-admin/cashiers,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + req
 POST,/api/pos-admin/cashiers,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
 PATCH,/api/pos-admin/cashiers/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
 POST,/api/pos-admin/cashiers/:id/pin,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
+GET,/api/pos-admin/device/context,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,NO,DECLARED_GATE,backend/src/routes/pos-admin.ts
 POST,/api/pos-admin/device/register,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
 GET,/api/pos-admin/events,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,NO,DECLARED_GATE,backend/src/routes/pos-admin.ts
 DELETE,/api/pos-admin/events/:projectId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
