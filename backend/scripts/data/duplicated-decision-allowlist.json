@@ -1649,6 +1649,26 @@
       "check": "D1",
       "key": "CUSTOMER,LOGISTICS,MANAGEMENT,PRODUCTION,SUPPLIER|backend/src/scm/shared/assr-verification-fields.ts frontend/src/vendor/scm/lib/assr-verification-fields.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: PENDING_WITH_OPTIONS."
+    },
+    {
+      "check": "D1",
+      "key": "ANNUAL_LEAVE,MEDICAL_LEAVE,REST_DAY|backend/src/scm/shared/hr-attendance.ts frontend/src/vendor/shared/hr-attendance.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: PAID_LEAVE_STATUSES (HC-0125 phase 5)."
+    },
+    {
+      "check": "D1",
+      "key": "DO,FAIR,FAIR_2BOOTH,FAIR_2ND,FAIR_NIGHT,FAIR_NOON,NONE,SERVICE_DELIVERY,SERVICE_INSPECTION,SERVICE_PICKUP,SUPPLIER,SUPPLIER_FULL,TRANSFER|backend/src/scm/shared/hr-trip-pay.ts frontend/src/vendor/shared/hr-trip-pay.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: TRIP_KINDS (HC-0125 phase 5)."
+    },
+    {
+      "check": "D1",
+      "key": "JP,KEL,MIS,TP|backend/src/scm/shared/hr-trip-pay.ts frontend/src/vendor/shared/hr-trip-pay.ts",
+      "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: OUTSTATION_AREAS (HC-0125 phase 5)."
+    },
+    {
+      "check": "D1",
+      "key": "DELIVERY,DISMANTLE,INSPECTION,LORRY_SERVICE,PICKUP,SERVICE,SETUP,SUPPLIER_PICKUP,TRANSFER|backend/src/routes/lib/hr-trip-store.ts backend/src/scm/lib/rate-rule-taxonomy.ts backend/src/scm/routes/dp-orders.ts frontend/src/vendor/scm/lib/delivery-planning-queries.ts",
+      "why": "THE scm.trip_stop_type ENUM, read four ways for four jobs: dp-orders.ts and delivery-planning-queries.ts list the job types a planner may raise, rate-rule-taxonomy.ts the ones a 3PL rate card prices, and hr-trip-store.ts STOP_KIND maps each stop onto the trip-pay kind HR pays the crew for (HC-0125 phase 5; HR can still change a row's kind). The database enum is the one vocabulary; a new stop type must be added to STOP_KIND deliberately or it pays nothing (NONE)."
     }
   ]
 }
