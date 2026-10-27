@@ -951,8 +951,7 @@ async function runReconstruct() {
     f.lots.push(l);
     families.set(k, f);
   }
-  if (ITEM_CODES.length > 0) notice(`ITEM_CODES limit: ${ITEM_CODES.join(" | ")}`);
-  notice(`families (company, warehouse, product): ${families.size}`);
+  notice(`families (company, warehouse, product): ${families.size}${ITEM_CODES.length > 0 ? ` (ITEM_CODES limit: ${ITEM_CODES.join(" | ")})` : ""}`);
 
   let familiesPlanned = 0, familiesRefused = 0, rowsPlanned = 0, rmStamped = 0;
   let surplusLotsN = 0, surplusUnits = 0, surplusValueSen = 0;
