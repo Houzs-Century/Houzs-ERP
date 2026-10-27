@@ -42,7 +42,7 @@ export function applySupplierCombos(
     const tier = [...tiers][0];
     const height = [...heights][0];
     if (tiers.size !== 1 || !tier || heights.size !== 1 || !height) continue;
-    const rows = combos.filter((r) => (r.baseModel ?? '').toUpperCase() === baseModelU);
+    const rows = combos.filter((r) => r.baseModel.toUpperCase() === baseModelU);
     const match = pickComboMatch(
       { baseModel: '', modules: members.map((m) => splitSofaCode(m.itemCode).sizeCode), customerId: null, tier, height, asOf },
       rows,
@@ -50,7 +50,7 @@ export function applySupplierCombos(
     if (!match || match.comboPriceSen <= 0) continue;
     const matched = match.matchedIndices.map((i) => members[i]).filter((m): m is ComboLine => !!m);
     // Mixed quantities have no clean set count: skip rather than under-book.
-    if (matched.length === 0 || new Set(matched.map((m) => Math.max(1, m.qty || 1))).size !== 1) continue;
+    if (matched.length === 0 || new Set(matched.map((m) => Math.max(1, m.qty))).size !== 1) continue;
     const spread = spreadComboTotal(matched.map((m) => m.unitPriceSen), match.comboPriceSen);
     matched.forEach((m, i) => out.set(m.rid, spread[i] ?? 0));
   }
