@@ -19,8 +19,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { isServiceLine } from '../shared';
 import { recordSoAudit } from './so-audit';
 import { advanceSoGeneration } from './so-generation';
-import { loadUnlinkedDoCoverage } from './do-unlinked-coverage';
 import { autoFinalInvoiceBestEffort } from './auto-final-invoice';
+import { loadUnlinkedDoCoverage } from './do-unlinked-coverage';
 
 export type SoLineQty = { id: string; qty: number };
 export type DoLineQty = { soItemId: string | null; qty: number };
@@ -222,7 +222,10 @@ export async function syncSoDeliveredFromDo(
       // in play; everything else is terminal/manual and left untouched.
       if (!status) continue;
       const canAdvance = DELIVERABLE_FROM.includes(status);
-      const canRelease = status === 'DELIVERED';
+      // Reverse (un-ship) applies to a shipped-out order too, not only a
+      // delivered one: cancelling the DO of a SHIPPED order releases it to
+      // re-ship, exactly as it does for a DELIVERED one.
+      const canRelease = status === 'DELIVERED' || status === 'SHIPPED';
       if (!canAdvance && !canRelease) continue;
 
       const { data: soItemsRaw } = await sb
@@ -366,8 +369,26 @@ export async function syncSoDeliveredFromDo(
       }
 
       // Decide the reconciled status. No-op when it already matches (idempotent).
+      // Goods out (a covering non-DRAFT/CANCELLED DO) = SHIPPED, NOT delivered.
+      // DELIVERED is set only once the delivery actually happens — the daily
+      // local sweep (deliverDueShippedOrders: do_date passed + a driver) or the
+      // EM sheet sync. owner 2026-10-27: 到日子 + 有 DO + 有司机 = 已送达;
+      // 东马按 Google 表的 "Done Delivered"。
+      // Actually delivered? A covering DO that is SIGNED / DELIVERED (a POD was
+      // run) or carries a delivered timestamp means the delivery HAPPENED — the
+      // SO is DELIVERED now, and the delivered-message + invoice fire. Merely
+      // LOADED / in-transit coverage is only SHIPPED; the daily local sweep (or
+      // the EM sheet sync) delivers it later.
+      const { data: doStatesRaw } = await sb
+        .from('delivery_orders')
+        .select('status, customer_delivered_date')
+        .eq('so_doc_no', docNo)
+        .not('status', 'in', DO_NOT_DELIVERED_IN_LIST);
+      const anyDoDelivered = ((doStatesRaw ?? []) as Array<{ status: string | null; customer_delivered_date: string | null }>)
+        .some((d) => d.status === 'SIGNED' || d.status === 'DELIVERED' || !!d.customer_delivered_date);
+
       let target: string | null = null;
-      if (fullyCovered && canAdvance) target = 'DELIVERED';
+      if (fullyCovered && canAdvance) target = anyDoDelivered ? 'DELIVERED' : 'SHIPPED';
       else if (!fullyCovered && canRelease) {
         /* RELEASE ONLY ON POSITIVE EVIDENCE (2026-09-04). "Not covered" can
            mean a cancelled DO, a reduced line, a return — or a shipped
@@ -384,8 +405,10 @@ export async function syncSoDeliveredFromDo(
       if (!target || target === status) continue;
 
       const note = target === 'DELIVERED'
-        ? 'Auto: Delivery Order fully covers this SO'
-        : 'Auto: SO no longer fully delivered (DO cancelled / reduced, or goods returned) — released to re-ship';
+        ? 'Auto: Delivery Order covers this SO and is signed/delivered — delivered'
+        : target === 'SHIPPED'
+          ? 'Auto: Delivery Order fully covers this SO — goods shipped out (delivered follows on the actual-delivery sweep)'
+          : 'Auto: SO no longer fully shipped (DO cancelled / reduced, or goods returned) — released to re-ship';
       const generation = await advanceSoGeneration(sb, docNo, { status: target }, { status });
       if (!generation.applied) continue;
       // Mirror the status-PATCH audit trail (both tables) so the SO History
@@ -401,11 +424,11 @@ export async function syncSoDeliveredFromDo(
         statusSnapshot: target, source: 'automation',
         note,
       });
-      /* THE FINAL INVOICE AT DELIVERY (docs/bugs/0830): when the company's
-         deposit-invoice flow is on, the order just delivered is invoiced here,
-         by itself, off every delivered line not yet billed. Best-effort like
-         everything in this reconciler — a delivery is never blocked by its
-         invoice. */
+      /* THE FINAL INVOICE AT DELIVERY (docs/bugs/0830) fires on the DELIVERED hop
+         only: a SIGNED/DELIVERED DO (a POD) delivers the SO here and is invoiced
+         here. A merely-shipped (SHIPPED) order is NOT invoiced here — it is
+         invoiced later, when the daily local sweep (deliverDueShippedOrders) or,
+         for East Malaysia, the sheet sync flips SHIPPED -> DELIVERED. */
       if (target === 'DELIVERED') await autoFinalInvoiceBestEffort(sb, { docNo, companyId: soCompanyId, actorId: actorId ?? null });
     } catch {
       /* best-effort — a sync failure must NEVER roll back or block the DO */
