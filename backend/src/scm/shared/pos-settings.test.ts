@@ -13,6 +13,9 @@ describe("pos-settings", () => {
     expect(d.general.idle_logout_minutes).toBe(15);
     expect(d.general.alert_email).toBe("hello@houzscentury.com");
     expect(d.general.alert_pending_days).toBe(3);
+    expect(d.general.booth_brands).toEqual(["AKEMI Cash & Carry", "AKEMI FRAGRANCE"]);
+    expect(normalizePosSettingsGroup("general", { booth_brands: ["ZANOTTI", 7] }).booth_brands).toEqual(["ZANOTTI", "7"]);
+    expect(normalizePosSettingsGroup("general", { booth_brands: "AKEMI" }).booth_brands).toEqual(["AKEMI Cash & Carry", "AKEMI FRAGRANCE"]);
   });
 
   test("a stored document overrides same-typed keys only; junk and unknown keys fall back", () => {

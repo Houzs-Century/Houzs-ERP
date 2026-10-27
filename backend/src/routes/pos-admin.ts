@@ -507,14 +507,17 @@ posAdmin.post("/cashiers/:id/pin", async (c) => {
 
 type EventProjectRow = { id: number; code: string | null; name: string; start_date: string | null; end_date: string | null; event_type_slug: string | null; event_type_name: string | null; venue: string | null };
 
-async function eventProjects(db: Db, companyId: number, opts: { linkedProjectIds: number[]; search: string | null; limit: number }): Promise<EventProjectRow[]> {
+/** Every fair that matters to the booth, on its own: Cash & Carry projects, the
+ *  projects of the booth brands (General > booth_brands, e.g. AKEMI Cash & Carry,
+ *  AKEMI FRAGRANCE) and whatever is linked; anything else through the search. */
+async function eventProjects(db: Db, companyId: number, opts: { linkedProjectIds: number[]; search: string | null; limit: number; brands: string[] }): Promise<EventProjectRow[]> {
   const like = opts.search ? `%${opts.search.replace(/[%_]/g, "")}%` : null;
   return db.execute<EventProjectRow>(sql`
     SELECT p.id, p.code, p.name, p.start_date, p.end_date, et.slug AS event_type_slug, et.name AS event_type_name, p.venue
       FROM projects p
       LEFT JOIN project_event_types et ON et.id = p.event_type_id
      WHERE p.company_id = ${companyId} AND p.archived_at IS NULL
-       AND (et.slug = ${CASH_CARRY_SLUG} ${opts.linkedProjectIds.length ? sql`OR p.id IN ${opts.linkedProjectIds}` : sql``} ${like ? sql`OR p.name ILIKE ${like} OR p.code ILIKE ${like}` : sql``})
+       AND (et.slug = ${CASH_CARRY_SLUG} ${opts.brands.length ? sql`OR p.brand IN ${opts.brands}` : sql``} ${opts.linkedProjectIds.length ? sql`OR p.id IN ${opts.linkedProjectIds}` : sql``} ${like ? sql`OR p.name ILIKE ${like} OR p.code ILIKE ${like}` : sql``})
      ORDER BY p.start_date DESC NULLS LAST, p.id DESC
      LIMIT ${opts.limit}`);
 }
@@ -537,7 +540,8 @@ async function eventPayload(db: Db, companyId: number, projects: EventProjectRow
       project_id: pid, code: p.code, name: p.name, start_date: p.start_date, end_date: p.end_date, venue: p.venue,
       event_type_slug: p.event_type_slug, event_type_name: p.event_type_name,
       type_label: p.event_type_slug === CASH_CARRY_SLUG ? "Cash & Carry" : "Fair + SO",
-      status: posEventStatus({ linked: !!link, start_date: p.start_date, end_date: p.end_date }, today),
+      status: posEventStatus({ start_date: p.start_date, end_date: p.end_date }, today),
+      linked: !!link,
       link: link
         ? {
             id: link.id, catalog_scope: link.catalog_scope, stock_source_warehouse_id: link.stock_source_warehouse_id, sst_default: link.sst_default,
@@ -557,7 +561,7 @@ posAdmin.get("/events", async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const db = getDb(c.env);
   const linked = (await db.select({ project_id: pos_event_links.project_id }).from(pos_event_links).where(eq(pos_event_links.company_id, co.companyId))).map((l) => l.project_id);
-  const projects = await eventProjects(db, co.companyId, { linkedProjectIds: linked, search: null, limit: 300 });
+  const projects = await eventProjects(db, co.companyId, { linkedProjectIds: linked, search: null, limit: 300, brands: (await generalSettings(db, co.companyId)).booth_brands });
   return c.json({ data: await eventPayload(db, co.companyId, projects) });
 });
 
@@ -567,7 +571,7 @@ posAdmin.get("/events/candidates", async (c) => {
   const q = (c.req.query("q") ?? "").trim();
   if (q.length < 2) return c.json({ data: [] });
   const db = getDb(c.env);
-  const rows = await eventProjects(db, co.companyId, { linkedProjectIds: [], search: q, limit: 20 });
+  const rows = await eventProjects(db, co.companyId, { linkedProjectIds: [], search: q, limit: 20, brands: [] });
   return c.json({ data: rows.map((p) => ({ project_id: Number(p.id), code: p.code, name: p.name, start_date: p.start_date, end_date: p.end_date, event_type_name: p.event_type_name })) });
 });
 
@@ -945,6 +949,23 @@ posAdmin.post("/terminals/:id/pairing", async (c) => {
   await audit(db, co.companyId, c, "pos_terminal", id, "pairing_code_issued", null, expires);
   const origin = (c.env.POS_APP_ORIGIN ?? "https://pos.houzscentury.com").replace(/\/$/, "");
   return c.json({ code: formatPairingCode(code), expires_at: expires, url: `${origin}/?pair=${code}`, terminal: t.code });
+});
+
+
+/* ── the manager sign-in on the POS front (owner / admin with pos.manage) ── */
+
+/** What an ERP account signed in on the POS needs before the device is set
+ *  up: who they are, the company block for the receipt header, the settings.
+ *  The mount already requires pos.manage, so a plain staff account gets 403. */
+posAdmin.get("/device/context", async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const u = c.get("user");
+  const db = getDb(c.env);
+  const rows = await db.select().from(pos_settings).where(eq(pos_settings.company_id, co.companyId));
+  const raw: Partial<Record<PosSettingsGroup, unknown>> = {};
+  for (const r of rows) raw[r.group as PosSettingsGroup] = r.value;
+  return c.json({ user: { id: u?.id ?? 0, name: u?.name ?? u?.email ?? "Manager" }, company: await companyBlock(c.env, co.companyId), settings: normalizePosSettings(raw) });
 });
 
 export { posAdmin };

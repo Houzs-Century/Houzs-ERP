@@ -139,6 +139,8 @@ export function PosPrinterScannerTab() {
 export function PosGeneralTab() {
   const g = useGroup("general", pickGeneral);
   const warehouses = useWarehouses();
+  const [brands, setBrands] = useState<string[]>([]);
+  useEffect(() => { api.get<{ data: string[] }>("/api/projects/brands").then((r) => setBrands(Array.isArray(r.data) ? r.data : [])).catch(() => setBrands([])); }, []);
   const d = g.draft;
   if (!d) return <div className="text-[11px] text-ink-muted">{g.q.error ?? "Loading settings…"}</div>;
   const set = <K extends keyof GeneralSettings>(k: K, v: GeneralSettings[K]) => g.setDraft({ ...d, [k]: v });
@@ -164,6 +166,16 @@ export function PosGeneralTab() {
               <option value="">Not set</option>
               {(warehouses.data ?? []).filter((w) => w.is_active).map((w) => <option key={w.id} value={w.id}>{w.code} {w.name}</option>)}
             </select>
+          </Field>
+          <Field label="Booth brands" hint="Fairs of these brands are listed in POS Admin > Events beside every Cash & Carry project" className="col-span-2">
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
+              {Array.from(new Set([...brands, ...d.booth_brands])).sort().map((b) => (
+                <label key={b} className="flex items-center gap-1 text-[12px] text-ink">
+                  <input type="checkbox" checked={d.booth_brands.includes(b)} onChange={(e) => set("booth_brands", e.target.checked ? [...d.booth_brands, b] : d.booth_brands.filter((x) => x !== b))} /> {b}
+                </label>
+              ))}
+              {brands.length === 0 && d.booth_brands.length === 0 && <span className="text-[11px] text-ink-muted">No brand found</span>}
+            </div>
           </Field>
         </div>
       </section>

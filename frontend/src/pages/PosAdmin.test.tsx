@@ -57,7 +57,7 @@ describe("PosAdmin", () => {
       active: true, barcodes: [{ barcode: "9555000000019", kind: "FACTORY", id: null }], stock_qty: 12, sku_price_sen: 5990, event_prices: [{ project_id: 9, price_sen: 4990 }], updated_at: "2026-10-14T00:00:00Z",
     }];
     cashiers = [{ id: 1, code: "C01", name: "Aina", phone: "0123456789", role: "SUPERVISOR", max_discount_pct: 10, working_hours_note: null, bank_note: null, active: true, last_login_at: null, events: [{ project_id: 9, name: "AEON C&C" }], created_at: "2026-10-14T00:00:00Z" }];
-    events = [{ project_id: 9, code: "HC-0099", name: "AEON C&C", start_date: "2026-10-10", end_date: "2026-10-20", venue: "AEON Tebrau", event_type_slug: "cash_carry", event_type_name: "Cash & Carry", type_label: "Cash & Carry", status: "RUNNING",
+    events = [{ project_id: 9, code: "HC-0099", name: "AEON C&C", start_date: "2026-10-10", end_date: "2026-10-20", venue: "AEON Tebrau", event_type_slug: "cash_carry", event_type_name: "Cash & Carry", type_label: "Cash & Carry", status: "ON GOING", linked: true,
       link: { id: 1, catalog_scope: "ALL", stock_source_warehouse_id: null, sst_default: false, receipt_header: null, catalog_version: 2, pushed_at: null, cashiers: [{ id: 1, name: "Aina", code: "C01" }], item_ids: [], price_overrides: [{ pos_item_id: 1, price_sen: 4990 }] },
       terminals: [{ id: 1, code: "T01", device_name: "Tab A9", prepared_at: null, last_sync_at: null, active: true }] }];
     terminals = [{ id: 1, code: "T01", device_name: "Tab A9", platform: "Android tablet", project_id: 9, project_name: "AEON C&C", printer: null, prepared_at: null, last_seen_at: null, last_sync_at: null, pending_count: 3, pending_amount_sen: 12345, receipt_counter: 7, app_version: null, status: "NEW", active: true }];
@@ -75,8 +75,8 @@ describe("PosAdmin", () => {
     b.unmount();
 
     const c = mount("events");
-    expect(screen.getByText("RUNNING")).toBeTruthy();
-    expect(screen.getByText("NOT PREPARED")).toBeTruthy();
+    expect(screen.getByText("ON GOING")).toBeTruthy();
+    expect(screen.getByText("NOT PAIRED")).toBeTruthy();
     expect(screen.getByText("v2")).toBeTruthy();
     fireEvent.click(screen.getByText("AEON C&C"));
     expect(screen.getByText("Cashiers assigned (= login tiles, max 8 shown)")).toBeTruthy();
