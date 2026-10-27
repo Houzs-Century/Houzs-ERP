@@ -90,6 +90,7 @@ import { fmtDate } from "../../vendor/shared/format";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 import { buildDoHeaderBody, seedDoHeaderForm, DO_HEADER_LOCKED_NOTICE } from "../../vendor/scm/lib/do-header-form";
 import { doHeaderLocked, isDoHeaderKeyLocked } from "../../vendor/shared/do-header-lock";
+import { afterCreatePath, sourceDocPath } from "../../lib/returnToSource";
 import {
   seedFollowerVariants,
   seedableMasterVariants,
@@ -1040,7 +1041,7 @@ export function DeliveryOrderNewV2() {
              Never blocks; the DO exists and the goods have gone. */
           await notifyAcNotSent(notify, res, "Delivery order");
           if (res?.id) {
-            navigate(`/scm/delivery-orders/${res.id}`);
+            navigate(afterCreatePath(`/scm/delivery-orders/${res.id}`, sourceDocPath.salesOrder(fromSoParam)));
           } else {
             navigate("/scm/delivery-orders");
           }
