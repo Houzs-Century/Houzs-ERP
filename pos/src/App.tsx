@@ -2,7 +2,7 @@
  * Login, or Sell. Online state is the ERP ping, not the radio. */
 import { useCallback, useEffect, useState } from "react";
 import { erpReachable } from "./api";
-import { loadDeviceState, saveDeviceState } from "./deviceStore";
+import { clearDeviceState, loadDeviceState, saveDeviceState } from "./deviceStore";
 import { reconnectPrinter } from "./printer";
 import { onUpdateAvailable } from "./pwa";
 import { LeaveDialog } from "./sell/SyncPanel";
@@ -25,7 +25,12 @@ export function App() {
 
   useEffect(() => {
     loadDeviceState()
-      .then((s) => { setState(s); setScreen(s ? "login" : "setup"); if (s) void reconnectPrinter(); })
+      .then((raw) => {
+        /* A state without a token is a leftover of the retired demo mode: drop it and pair. */
+        const s = raw && raw.token ? raw : null;
+        if (raw && !s) void clearDeviceState();
+        setState(s); setScreen(s ? "login" : "setup"); if (s) void reconnectPrinter();
+      })
       .catch((e) => setBootError(e instanceof Error ? e.message : "Local storage could not be opened"));
     return onUpdateAvailable(setUpdateWaiting);
   }, []);
