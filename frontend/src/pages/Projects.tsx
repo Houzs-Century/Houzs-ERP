@@ -5693,7 +5693,11 @@ type CrewSlot = { name: string; phone: string };
 // Per-lorry crew (owner 2026-07-13): each lorry carries its OWN drivers + helpers.
 // provider (owner 2026-07-23): a trip that is NOT an internal lorry is done by
 // Grab or Lalamove — chosen per lorry card. "" = internal lorry (use plate).
-type LorryCrew = { plate: string; provider?: string; drivers: CrewSlot[]; helpers: CrewSlot[] };
+// at (owner 2026-10-26): each lorry carries its OWN setup / dismantle date+time
+// ("YYYY-MM-DDTHH:mm", local-ish — the same shape the old single Setup Time box
+// wrote). Different lorries can set up / dismantle on different days, so there is
+// no longer one shared date for every lorry. "" / absent = not scheduled yet.
+type LorryCrew = { plate: string; provider?: string; at?: string | null; drivers: CrewSlot[]; helpers: CrewSlot[] };
 // Outsourced trip (owner 2026-07-23): Setup & Dismantle offer three providers.
 // Outsource / Lalamove carry a manual name·phone·plate; Grab carries two staff
 // helpers (helper1/helper2) instead. `provider` absent = legacy Outsource entry.
@@ -5750,6 +5754,7 @@ function parsePhaseCrew(s: string | null | undefined): PhaseCrew {
       lorryCrew = p.lorry_crew.map((l: any) => ({
         plate: typeof l?.plate === "string" ? l.plate : "",
         provider: typeof l?.provider === "string" ? l.provider : "",
+        at: typeof l?.at === "string" ? l.at : "",
         drivers: Array.isArray(l?.drivers) ? l.drivers : [],
         helpers: Array.isArray(l?.helpers) ? l.helpers : [],
       }));
@@ -5922,6 +5927,7 @@ function PhaseCrewEditor({
   patch,
   emptyHint,
   headerExtra,
+  lorryDateLabel,
   showRemark = false,
   remarkLabel = "Remark",
   readOnly = false,
@@ -5936,6 +5942,10 @@ function PhaseCrewEditor({
   emptyHint?: string;
   /** Rendered above the "{title} Drivers" heading (e.g. the Dismantle Time field). */
   headerExtra?: React.ReactNode;
+  /** When set (Setup / Dismantle), each lorry card shows its OWN date+time field
+   *  under this label — there is no single shared date for all lorries. Omitted
+   *  for Service / Exchange, which has no scheduled window. */
+  lorryDateLabel?: string;
   /** Show a free-text remark box under the crew (Service / Exchange phase). */
   showRemark?: boolean;
   remarkLabel?: string;
@@ -6017,6 +6027,19 @@ function PhaseCrewEditor({
                 </button>
               )}
             </div>
+            {/* Per-lorry date+time (owner 2026-10-26): each lorry sets up /
+                dismantles on its OWN day, so the date lives on the lorry card,
+                not once for the whole phase. Setup / Dismantle only. */}
+            {lorryDateLabel && (
+              <div className="pt-0.5">
+                <LogisticsDateTimeField
+                  label={`${lorryDateLabel} date & time`}
+                  value={lorry.at ?? ""}
+                  onSave={(v) => updateLorry(li, { at: v })}
+                  readOnly={readOnly}
+                />
+              </div>
+            )}
             <CrewSlotRow label="Driver 1" color="text-synced" options={drivers} slot={lorry.drivers[0]} onChange={(s) => setLorrySlot(li, "drivers", 0, s)} readOnly={readOnly} />
             {(!!lorry.drivers[1]?.name || openSlot2.has(`${li}d`)) && (
               <CrewSlotRow label="Driver 2" color="text-synced" options={drivers} slot={lorry.drivers[1]} onChange={(s) => setLorrySlot(li, "drivers", 1, s)} readOnly={readOnly} />
@@ -6310,12 +6333,14 @@ function LogisticsCrewSection({
           onSaveRemark={(v) => patch({ schedule_remark: v })}
         />
       )}
-      <div>
-        <LogisticsDateTimeField label="Setup Time" value={project.setup_start_at} onSave={(v) => patch({ setup_start_at: v })} readOnly={readOnly} />
-      </div>
-      <PhaseCrewEditor title="Setup" field="setup_crew" value={project.setup_crew} drivers={drivers} helpers={helpers} lorryOptions={lorryOptions} patch={patch} readOnly={readOnly} />
+      {/* Owner 2026-10-26: the single "Setup Time" / "Dismantle Time" box is
+          gone — each lorry now carries its OWN date+time (on its card below),
+          since lorries set up / dismantle on different days. The project-level
+          setup_start_at / dismantle_start_at columns are now DERIVED on save
+          (earliest lorry date) so the delivery-planning board, print and the
+          stage stepper keep reading one representative window date. */}
+      <PhaseCrewEditor title="Setup" field="setup_crew" value={project.setup_crew} drivers={drivers} helpers={helpers} lorryOptions={lorryOptions} patch={patch} readOnly={readOnly} lorryDateLabel="Setup" />
       <div className="my-3 border-t border-dashed border-border" />
-      {/* Dismantle Time sits above Dismantle Drivers, mirroring Setup. */}
       <PhaseCrewEditor
         title="Dismantle"
         field="dismantle_crew"
@@ -6326,9 +6351,7 @@ function LogisticsCrewSection({
         patch={patch}
         readOnly={readOnly}
         emptyHint="Leave empty if same as setup"
-        headerExtra={
-          <LogisticsDateTimeField label="Dismantle Time" value={project.dismantle_start_at} onSave={(v) => patch({ dismantle_start_at: v })} readOnly={readOnly} />
-        }
+        lorryDateLabel="Dismantle"
       />
       {/* Service / Exchange (owner 2026-07-22; collapsible 2026-08-10): an
           OPTIONAL mid-fair service visit or part exchange. Hidden behind its own

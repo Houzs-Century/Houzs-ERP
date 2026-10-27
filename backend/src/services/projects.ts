@@ -427,6 +427,31 @@ export const PAYMENT_STATUSES = [
   "not_started", "deposit_paid", "paid", "refund_pending", "refunded",
 ] as const;
 
+/** Earliest per-lorry date in a setup_crew / dismantle_crew JSON blob, or null.
+ *  Owner 2026-10-26: the Setup & Dismantle editor dropped the single shared date
+ *  box — each lorry carries its own date+time under `lorry_crew[].at`
+ *  ("YYYY-MM-DDTHH:mm", which sorts lexically = chronologically). We derive the
+ *  earliest so projects.setup_start_at / dismantle_start_at stay populated for
+ *  the delivery-planning board, the printed Event Summary and the stage stepper,
+ *  which still read one representative window date. */
+export function earliestLorryDate(crewJson: unknown): string | null {
+  if (typeof crewJson !== "string" || !crewJson) return null;
+  let parsed: any;
+  try {
+    parsed = JSON.parse(crewJson);
+  } catch {
+    return null;
+  }
+  const lorries = Array.isArray(parsed?.lorry_crew) ? parsed.lorry_crew : [];
+  let earliest: string | null = null;
+  for (const l of lorries) {
+    const at = typeof l?.at === "string" ? l.at.trim() : "";
+    if (!at) continue;
+    if (earliest === null || at < earliest) earliest = at;
+  }
+  return earliest;
+}
+
 export async function patchProject(
   env: Env,
   id: number,
@@ -494,6 +519,19 @@ export async function patchProject(
       .bind(id).first<{ name: string | null; organizer: string | null }>();
     const synced = syncedNameForOrganizerChange(cur?.name, cur?.organizer, body.organizer as string | null);
     if (synced) body.name = synced;
+  }
+
+  // Keep the project-level window date in step with the per-lorry dates the
+  // crew editor now owns. Only override when at least one lorry carries a date,
+  // so editing a legacy project's crew (lorries saved before per-lorry dates
+  // existed) never silently wipes its existing setup_start_at / dismantle_start_at.
+  if ("setup_crew" in body) {
+    const d = earliestLorryDate(body.setup_crew);
+    if (d) body.setup_start_at = d;
+  }
+  if ("dismantle_crew" in body) {
+    const d = earliestLorryDate(body.dismantle_crew);
+    if (d) body.dismantle_start_at = d;
   }
 
   const sets: string[] = [];

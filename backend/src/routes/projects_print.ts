@@ -86,7 +86,9 @@ function fmtRange(a: string | null | undefined, b: string | null | undefined): s
 // normalise, or the printed sheet shows an empty crew for most projects (which
 // is what it did — owner 2026-08-14).
 type CrewPerson = { name: string; phone?: string };
-type CrewLorry = { plate?: string; provider?: string; drivers: CrewPerson[]; helpers: CrewPerson[] };
+// `at` (owner 2026-10-26): each lorry's own setup / dismantle date+time — the
+// editor dropped the single shared window date, so a lorry can run on its own day.
+type CrewLorry = { plate?: string; provider?: string; at?: string; drivers: CrewPerson[]; helpers: CrewPerson[] };
 type Crew = {
   lorries: CrewLorry[];
   outsourced: Array<{ name?: string; phone?: string; plate?: string }>;
@@ -127,6 +129,7 @@ function parseCrew(raw: unknown): Crew {
     lorries.push({
       plate: String(entry.plate ?? "").trim() || undefined,
       provider: String(entry.provider ?? "").trim() || undefined,
+      at: String(entry.at ?? "").trim() || undefined,
       drivers: asPeople(entry.drivers),
       helpers: asPeople(entry.helpers),
     });
@@ -207,6 +210,9 @@ function crewColumn(crew: Crew): string {
         `<span class="mono">${esc(l.plate || "—")}</span>${l.provider ? ` <span class="tel">${esc(l.provider)}</span>` : ""}`,
       ),
     );
+    // Each lorry's own date+time (owner 2026-10-26) — the phase header date is
+    // the earliest of these; a lorry on a different day shows it here.
+    if (l.at) rows.push(row("Date", `<span class="tel">${esc(fmtDateTime(l.at))}</span>`));
     if (!l.drivers.length) rows.push(row("Driver", "—"));
     l.drivers.forEach((d, n) =>
       rows.push(row(l.drivers.length > 1 ? `Driver ${n + 1}` : "Driver", person(d))),
