@@ -20,6 +20,8 @@ import { DO_NOT_DELIVERED_IN_LIST, DO_STOCK_OUT_STATES } from '../shared/do-ship
 
 /* A sales order that is a draft or cancelled has no balance to chase. */
 const SO_NOT_LIVE = `(${['DRAFT', 'CANCELLED'].join(',')})`;
+import { unreleasedOrders } from '../lib/so-unreleased';
+import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
 import { procurementCategory, PROCUREMENT_CATEGORY_LABEL } from '../lib/procurement-overview';
 
 export const logisticOverview = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -118,6 +120,11 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
     .select('local_total_sen').gte('do_date', iso(Date.parse(`${today}T00:00:00Z`) - 90 * DAY))
     .neq('status', 'CANCELLED').gt('local_total_sen', 0).or('total_cost_sen.is.null,total_cost_sen.eq.0')), c).order('id').range(f, t));
   if (noCost.error) return fail('delivery orders without cost', noCost.error);
+  /* HC-0159: confirmed orders nobody has released (no Processing Date) for over 30 days. */
+  const unreleased = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('mfg_sales_orders')
+    .select('so_date, status, on_hold, processing_date').eq('status', 'CONFIRMED').is(SO_PROCESSING_DATE_COLUMN, null).lt('so_date', monthAgo), c).order('doc_no').range(f, t));
+  if (unreleased.error) return fail('unreleased orders', unreleased.error);
+  const soNoProcessing = unreleasedOrders((unreleased.data ?? []) as Parameters<typeof unreleasedOrders>[0], today);
   const doNotClosed = { count: 0, amountSen: 0, over30: 0, over30Sen: 0 };
   for (const d of notClosed.data ?? []) {
     doNotClosed.count += 1; doNotClosed.amountSen += num(d.local_total_sen);
@@ -192,7 +199,7 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
   return { ok: true, body: {
     today, thisMonday,
     period,
-    doNotClosed, doNoCost,
+    doNotClosed, doNoCost, soNoProcessing,
     weeks,
     months: [...months.values()].sort((a, b) => a.month.localeCompare(b.month)),
     deliveredOwing: outstanding,
