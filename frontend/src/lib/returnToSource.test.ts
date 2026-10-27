@@ -20,6 +20,10 @@ describe('afterCreatePath', () => {
     expect(sourceDocPath.consignmentOrder('CO-1')).toBe('/scm/consignment-orders/CO-1');
   });
 
+  it('a payment request reopens its drawer on the list', () => {
+    expect(sourceDocPath.paymentRequest('r 1')).toBe('/scm/payment-requests?open=r%201');
+  });
+
   it('every source kind maps to its detail route', () => {
     expect(sourceDocPath.goodsReceipt('g1')).toBe('/scm/grns/g1');
     expect(sourceDocPath.purchaseOrder('p1')).toBe('/scm/purchase-orders/p1');

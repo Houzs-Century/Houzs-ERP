@@ -57,6 +57,7 @@ import { BackToPile } from '../../vendor/scm/components/BackToPile';
 import { resolveFxRate, deriveRateFromMyrPaid } from './fx-rate';
 
 import { fmtMoneySen, fmtSen } from '../../vendor/shared/format';
+import { afterCreatePath, sourceDocPath } from '../../lib/returnToSource';
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
@@ -306,7 +307,7 @@ export const PaymentVoucherNew = () => {
   /* The header's event (5a): picking one sets every line, and each line added
      after takes it; a line can still name its own. */
   const [defaultEvent, setDefaultEvent]           = useState<number | null>(null);
-  const [dialog, setDialog] = useState<{ title: string; body: string; goTo?: string } | null>(null);
+  const [dialog, setDialog] = useState<{ title: string; body: string; goTo?: string; goLabel?: string } | null>(null);
   /* ── Customer Refund state (§14). refundDocNo is the COMMITTED number (blur /
      Enter on the input); the source is read from the server by that number. */
   const [refundType, setRefundType]         = useState<'SO' | 'SI'>('SO');
@@ -778,7 +779,8 @@ export const PaymentVoucherNew = () => {
           attached > 0 ? `${attached} scanned file(s) attached.` : null,
           attachErr ? `${pendingFiles.length - attached} file(s) did not attach (${attachErr}) — add them from the voucher's Files card.` : null,
         ].filter(Boolean).join(' '),
-        goTo: `/scm/payment-vouchers/${res.id}`,
+        goTo: afterCreatePath(`/scm/payment-vouchers/${res.id}`, sourceDocPath.paymentRequest(refundForRequest ? null : fromRequest)),
+        goLabel: fromRequest && !refundForRequest ? 'Back to Request' : undefined,
       });
     } catch (err) {
       setDialog({ title: 'Save failed', body: err instanceof Error ? err.message : 'Something went wrong.' });
@@ -1320,7 +1322,7 @@ export const PaymentVoucherNew = () => {
         <ActionResultDialog
           title={dialog.title}
           body={dialog.body}
-          primaryLabel={dialog.goTo ? 'Open Voucher' : undefined}
+          primaryLabel={dialog.goTo ? (dialog.goLabel ?? 'Open Voucher') : undefined}
           onPrimary={dialog.goTo ? () => { const g = dialog.goTo!; setDialog(null); navigate(g); } : undefined}
           onClose={() => setDialog(null)}
         />

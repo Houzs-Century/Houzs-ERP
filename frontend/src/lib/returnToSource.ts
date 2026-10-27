@@ -18,4 +18,6 @@ export const sourceDocPath = {
   consignmentNote: detail('/scm/consignment-notes'),
   purchaseConsignmentOrder: detail('/scm/purchase-consignment-orders'),
   purchaseConsignmentReceive: detail('/scm/purchase-consignment-receives'),
+  // No detail page: the request list reopens the request's drawer from ?open=.
+  paymentRequest: (id: string | null | undefined): string | null => (id ? `/scm/payment-requests?open=${encodeURIComponent(id)}` : null),
 };
