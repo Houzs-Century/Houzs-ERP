@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
+  editFairKeyerId,
   fairConfirmProblems,
+  fairLinkForEdit,
   fairLinkOnCreate,
   fairRequiredProblem,
   keyerFairDefaultFor,
@@ -302,5 +304,61 @@ describe('fairConfirmProblems — what a DRAFT needs before Confirm (owner 2026-
     expect(ps[0]?.code).toBe('so_confirm_check_failed');
     const ps2 = await run(fakeSb({ ...linked(), scan_jobs: new Error('timeout') }), fakeDb([]));
     expect(ps2[0]?.code).toBe('so_confirm_check_failed');
+  });
+});
+
+describe('fairLinkForEdit — a re-picked event takes the brand, then the keyer (HC-0161)', () => {
+  /* HC-SO-2610-323: a pillow-only scan (brand null) at MLE @ MID VALLEY, which
+     had three booths. PMS put the scanner on the AKEMI booth after the scan. */
+  const MLE = (id: number, brand: string) =>
+    project({ id, brand, organizer: 'MLE', startdate: '2026-10-23', enddate: '2026-10-25' });
+  const BOOTHS = [MLE(313, 'AKEMI'), MLE(314, 'ZANOTTI'), MLE(316, 'ERGOTEX')];
+  const PICK = { fairVenue: 'MID VALLEY', fairOrganizer: 'MLE', fairStart: '2026-10-23', fairEnd: '2026-10-25' };
+  const STORED = { venue: 'MID VALLEY', so_date: '2026-10-26', branding: null };
+  const run = (db: FairDb, keyerId: () => Promise<number>, body: Row = PICK) =>
+    fairLinkForEdit({ db, companySql: CO, body, stored: STORED, keyerId });
+
+  it("the keyer's own booth links an order no brand can place", async () => {
+    const db = fakeDb([[KEYER_AMONG, [{ id: 313 }]], [EVENT_BOOTHS, BOOTHS]]);
+    expect(await run(db, async () => 149)).toEqual({ project_id: 313, fair_match: 'PICKED', problem: null });
+    expect(db.calls.find((c) => KEYER_AMONG.test(c.sql))!.binds).toEqual([313, 314, 316, 149, 149]);
+  });
+
+  it('no booth to choose: AMBIGUOUS, and the operator is told why', async () => {
+    const r = await run(fakeDb([[KEYER_AMONG, []], [EVENT_BOOTHS, BOOTHS]]), async () => 149);
+    expect(r).toMatchObject({ project_id: null, fair_match: 'AMBIGUOUS', problem: { code: 'fair_not_linked', field: 'Fair' } });
+    expect(r?.problem?.message).toContain('MID VALLEY — MLE (10/23 - 10/25) has booths for AKEMI, ZANOTTI, ERGOTEX');
+    expect(r?.problem?.message).toContain('Fair Links to Settle');
+  });
+
+  it("the brand's own booth wins over the keyer's", async () => {
+    const db = fakeDb([[KEYER_AMONG, [{ id: 313 }]], [EVENT_BOOTHS, BOOTHS]]);
+    const r = await fairLinkForEdit({ db, companySql: CO, body: PICK, stored: { ...STORED, branding: 'ZANOTTI' }, keyerId: async () => 149 });
+    expect(r?.project_id).toBe(314);
+  });
+
+  it('no event picked: nothing to resolve, and the keyer is never looked up', async () => {
+    let asked = false;
+    expect(await run(fakeDb([]), async () => { asked = true; return 149; }, { venue: 'MID VALLEY' })).toBeNull();
+    expect(asked).toBe(false);
+  });
+
+  it('an unreadable projects table is PENDING with nothing to tell — not a refusal', async () => {
+    const r = await run(fakeDb([[EVENT_BOOTHS, new Error('down')]]), async () => 149);
+    expect(r).toEqual({ project_id: null, fair_match: 'PENDING', problem: null });
+  });
+});
+
+describe('editFairKeyerId — the scanner on a scan, else the person saving', () => {
+  const run = (sb: FairConfirmSb) => editFairKeyerId({ sb, scope: (q) => q, docNo: 'HC-SO-2610-323', editorId: 57 });
+
+  it('a scan resolves for its scanner, a typed order for the editor', async () => {
+    expect(await run(fakeSb({ scan_jobs: [{ houzs_user_id: 149 }] }))).toBe(149);
+    expect(await run(fakeSb({ scan_jobs: [] }))).toBe(57);
+  });
+
+  it("not knowing who scanned it is no keyer at all, never the editor's booth", async () => {
+    expect(await run(fakeSb({ scan_jobs: new Error('timeout') }))).toBeNaN();
+    expect(await run(fakeSb({ scan_jobs: [{ houzs_user_id: null }] }))).toBeNaN();
   });
 });
