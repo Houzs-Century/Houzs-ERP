@@ -58,6 +58,8 @@ export type DeviceState = {
   last_login: { cashier: string; at: string } | null;
   test_mode: boolean;
   device_name: string;
+  /** Signed in with an ERP account but no terminal yet (src/manager.ts): in memory only, never saved, never synced. */
+  provisional?: boolean;
 };
 
 export type Session = { cashier: BundleCashier; started_at: string };

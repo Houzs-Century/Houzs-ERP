@@ -947,4 +947,21 @@ posAdmin.post("/terminals/:id/pairing", async (c) => {
   return c.json({ code: formatPairingCode(code), expires_at: expires, url: `${origin}/?pair=${code}`, terminal: t.code });
 });
 
+
+/* ── the manager sign-in on the POS front (owner / admin with pos.manage) ── */
+
+/** What an ERP account signed in on the POS needs before the device is set
+ *  up: who they are, the company block for the receipt header, the settings.
+ *  The mount already requires pos.manage, so a plain staff account gets 403. */
+posAdmin.get("/device/context", async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const u = c.get("user");
+  const db = getDb(c.env);
+  const rows = await db.select().from(pos_settings).where(eq(pos_settings.company_id, co.companyId));
+  const raw: Partial<Record<PosSettingsGroup, unknown>> = {};
+  for (const r of rows) raw[r.group as PosSettingsGroup] = r.value;
+  return c.json({ user: { id: u?.id ?? 0, name: u?.name ?? u?.email ?? "Manager" }, company: await companyBlock(c.env, co.companyId), settings: normalizePosSettings(raw) });
+});
+
 export { posAdmin };
