@@ -61,11 +61,13 @@ export async function deliverDueShippedOrders(
   today: string,
   actorId: string | null,
 ): Promise<DeliverDueResult> {
-  const { data: soRaw } = await sb
+  const { data: soRaw, error: soErr } = await sb
     .from('mfg_sales_orders')
     .select('doc_no, company_id, customer_state, customer_country')
     .eq('status', 'SHIPPED')
     .limit(5000);
+  // A failed read is not "no SHIPPED orders" — deliver nothing this run.
+  if (soErr) return { scanned: 0, delivered: 0, skipped: 0 };
   const sos = ((soRaw ?? []) as Array<{
     doc_no: string; company_id: number | null; customer_state: string | null; customer_country: string | null;
   }>).filter((s) => isLocalDeliveryGeography(s.customer_state, s.customer_country));
@@ -75,12 +77,13 @@ export async function deliverDueShippedOrders(
   for (const so of sos) {
     try {
       // Live (non-DRAFT/CANCELLED) DOs for this SO, latest delivery date first.
-      const { data: doRaw } = await sb
+      const { data: doRaw, error: doErr } = await sb
         .from('delivery_orders')
         .select('id, do_date, driver_id')
         .eq('so_doc_no', so.doc_no)
         .not('status', 'in', DO_NOT_DELIVERED_IN_LIST)
         .order('do_date', { ascending: false, nullsFirst: false });
+      if (doErr) { skipped++; continue; } // can't read its DOs → don't deliver
       const dos = (doRaw ?? []) as Array<{ id: string; do_date: string | null; driver_id: string | null }>;
       if (dos.length === 0) { skipped++; continue; }
       const latest = dos[0]!;
@@ -89,11 +92,12 @@ export async function deliverDueShippedOrders(
       // same crew the board / run-sheet reads.
       let hasDriver = !!latest.driver_id;
       if (!hasDriver) {
-        const { data: crew } = await sb
+        const { data: crew, error: crewErr } = await sb
           .from('delivery_order_crew')
           .select('driver_1_id, driver_2_id, driver_1_name, driver_2_name')
           .eq('do_id', latest.id)
           .maybeSingle();
+        if (crewErr) { skipped++; continue; } // can't confirm the driver → don't deliver
         const c = (crew ?? {}) as Record<string, string | null>;
         hasDriver = !!(c.driver_1_id || c.driver_2_id || (c.driver_1_name ?? '').trim() || (c.driver_2_name ?? '').trim());
       }

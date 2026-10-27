@@ -379,13 +379,16 @@ export async function syncSoDeliveredFromDo(
       // SO is DELIVERED now, and the delivered-message + invoice fire. Merely
       // LOADED / in-transit coverage is only SHIPPED; the daily local sweep (or
       // the EM sheet sync) delivers it later.
-      const { data: doStatesRaw } = await sb
+      const { data: doStatesRaw, error: doStatesErr } = await sb
         .from('delivery_orders')
         .select('status, customer_delivered_date')
         .eq('so_doc_no', docNo)
         .not('status', 'in', DO_NOT_DELIVERED_IN_LIST);
-      const anyDoDelivered = ((doStatesRaw ?? []) as Array<{ status: string | null; customer_delivered_date: string | null }>)
-        .some((d) => d.status === 'SIGNED' || d.status === 'DELIVERED' || !!d.customer_delivered_date);
+      // A failed read cannot PROVE delivery — treat as not-delivered (ship, don't
+      // deliver); the next sync re-evaluates once the read succeeds.
+      const anyDoDelivered = !doStatesErr
+        && ((doStatesRaw ?? []) as Array<{ status: string | null; customer_delivered_date: string | null }>)
+          .some((d) => d.status === 'SIGNED' || d.status === 'DELIVERED' || !!d.customer_delivered_date);
 
       let target: string | null = null;
       if (fullyCovered && canAdvance) target = anyDoDelivered ? 'DELIVERED' : 'SHIPPED';
