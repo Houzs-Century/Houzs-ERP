@@ -58,6 +58,7 @@ import { loadReportSales } from "./lib/pos-report-load";
 import { aggregateSales } from "../scm/shared/pos-report";
 import { posReceiptStatusLabel } from "../scm/shared/pos-vocabulary";
 import { decryptBackupPayload, isPosBackupFile, type PosBackupFile } from "../scm/shared/pos-backup-crypto";
+import { PAIRING_MINUTES, formatPairingCode, mintPairingCode, pairingCodeHash } from "../scm/shared/pos-pairing";
 import {
   isCashierRole,
   isPosCashierPin,
@@ -917,6 +918,33 @@ posAdmin.get("/report", async (c) => {
     stock_location: warehouseId,
     count: sales.length,
   });
+});
+
+
+/* ── pairing a device from the ERP (POS Admin > Terminals > Pair device) ── */
+
+/** Hand out a one-time pairing code for a terminal whose event is set. The
+ *  device redeems it at POST /api/pos-device/pair (no ERP sign-in on the
+ *  device); the code lives PAIRING_MINUTES and is stored only as a hash. */
+posAdmin.post("/terminals/:id/pairing", async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const id = intParam(c, "id");
+  if (!id) return c.json({ error: "invalid_id" }, 400);
+  const db = getDb(c.env);
+  const rows = await db.select({ id: pos_terminals.id, code: pos_terminals.code, project_id: pos_terminals.project_id, active: pos_terminals.active }).from(pos_terminals).where(and(eq(pos_terminals.id, id), eq(pos_terminals.company_id, co.companyId))).limit(1);
+  if (rows.length === 0) return c.json({ error: "Not found" }, 404);
+  const t = rows[0];
+  if (!t.active) return c.json({ error: "terminal_inactive", reason: "Reactivate the terminal first." }, 409);
+  if (t.project_id == null) return c.json({ error: "event_required", reason: "Set the terminal's event first; the device downloads that event's catalog." }, 409);
+  const link = await db.select({ id: pos_event_links.id }).from(pos_event_links).where(and(eq(pos_event_links.company_id, co.companyId), eq(pos_event_links.project_id, t.project_id))).limit(1);
+  if (link.length === 0) return c.json({ error: "event_not_linked", reason: "Link that event to POS in POS Admin > Events first." }, 409);
+  const code = mintPairingCode();
+  const expires = new Date(Date.now() + PAIRING_MINUTES * 60_000).toISOString();
+  await db.update(pos_terminals).set({ pairing_code_hash: await pairingCodeHash(code), pairing_expires_at: expires, updated_at: nowIso() }).where(eq(pos_terminals.id, id));
+  await audit(db, co.companyId, c, "pos_terminal", id, "pairing_code_issued", null, expires);
+  const origin = (c.env.POS_APP_ORIGIN ?? "https://pos.houzscentury.com").replace(/\/$/, "");
+  return c.json({ code: formatPairingCode(code), expires_at: expires, url: `${origin}/?pair=${code}`, terminal: t.code });
 });
 
 export { posAdmin };
