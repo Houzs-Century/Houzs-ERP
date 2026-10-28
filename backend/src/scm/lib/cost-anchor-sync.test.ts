@@ -62,6 +62,19 @@ describe('productToBindingPatch — SOFA product cost propagates to the binding'
     expect(patch.unit_price_sen).toBeUndefined();
   });
 
+  it('PRICE_4 maps to P4, not into the P2 cell (2990-0024)', () => {
+    const product: ProductCost = {
+      base_price_sen: null,
+      price1_sen: null,
+      seat_height_prices: [
+        { height: '24', tier: 'PRICE_2', priceSen: 300000 },
+        { height: '24', tier: 'PRICE_4', priceSen: 454000 },
+      ],
+    };
+    const patch = patchOf(productToBindingPatch(product, sofaBinding));
+    expect(patch.price_matrix).toEqual({ '24': { P2: 300000, P4: 454000 } });
+  });
+
   it('MONEY-SAFE: a seat row with no priceSen (selling-only) is skipped, never mirrored as 0', () => {
     const product: ProductCost = {
       base_price_sen: 250000,

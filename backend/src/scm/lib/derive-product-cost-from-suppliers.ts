@@ -143,7 +143,7 @@ function hasCostTier(lane: 'FLAT' | 'BEDFRAME' | 'SOFA', b: SupplierBindingCost)
 }
 
 /** Build the product's SOFA seat_height_prices COST grid from a supplier's
- *  price_matrix {height:{P1,P2,P3}} — the inverse of productToBindingPatch's
+ *  price_matrix {height:{P1,P2,P3,P4}} — the inverse of productToBindingPatch's
  *  sofa branch. */
 function sofaSeatRowsFromMatrix(price_matrix: unknown): ProductSeatCost[] {
   const rows: ProductSeatCost[] = [];
@@ -154,9 +154,11 @@ function sofaSeatRowsFromMatrix(price_matrix: unknown): ProductSeatCost[] {
     const p2 = asCent(cell.P2);
     const p1 = asCent(cell.P1);
     const p3 = asCent(cell.P3);
+    const p4 = asCent(cell.P4);
     if (p2 !== null) rows.push({ height, tier: 'PRICE_2', priceSen: p2 });
     if (p1 !== null) rows.push({ height, tier: 'PRICE_1', priceSen: p1 });
     if (p3 !== null) rows.push({ height, tier: 'PRICE_3', priceSen: p3 });
+    if (p4 !== null) rows.push({ height, tier: 'PRICE_4', priceSen: p4 });
   }
   return rows;
 }

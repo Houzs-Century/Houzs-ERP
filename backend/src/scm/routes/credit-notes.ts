@@ -50,6 +50,7 @@ import {
 } from '../../acc/credit-note-allocations';
 import { deleteCreditNoteFileHandler, listCreditNoteFilesHandler, streamCreditNoteFileHandler, uploadCreditNoteFileHandler } from './credit-note-files';
 import { fmtSen } from '../shared/format';
+import { openingDocumentRefusal } from '../../acc/books-opening';
 
 type Row = Record<string, any>;
 const NO_PERM = (what: string) => ({ error: `You don't have permission to ${what}.` });
@@ -317,6 +318,7 @@ export const updateCreditNoteHandler = async (c: any): Promise<Response> => {
   const found = await loadNote(c, c.req.param('id'));
   if ('resp' in found) return found.resp;
   const note = found.note;
+  if (note.opening === true) return c.json(openingDocumentRefusal(String(note.note_number)), 409);
   if (note.status !== 'DRAFT') {
     return c.json({ error: 'not_editable', message: `${note.note_number} is ${String(note.status).toLowerCase()} — cancel it and raise it again.` }, 409);
   }
@@ -397,6 +399,7 @@ export const postCreditNoteHandler = async (c: any): Promise<Response> => {
   const found = await loadNote(c, c.req.param('id'));
   if ('resp' in found) return found.resp;
   const note = found.note;
+  if (note.opening === true) return c.json(openingDocumentRefusal(String(note.note_number)), 409);
   if (note.status === 'CANCELLED') return c.json({ error: 'cancelled', message: `${note.note_number} is cancelled.` }, 409);
   const posted = await postCreditNote(c.get('supabase'), { companyId: co.companyId, note, actor: who(c) });
   if (!posted.ok) {
@@ -522,6 +525,7 @@ export const cancelCreditNoteHandler = async (c: any): Promise<Response> => {
   const found = await loadNote(c, c.req.param('id'));
   if ('resp' in found) return found.resp;
   const note = found.note;
+  if (note.opening === true) return c.json(openingDocumentRefusal(String(note.note_number)), 409);
   if (note.status === 'CANCELLED') return c.json({ ok: true, already: true });
   const cancelled = await cancelCreditNote(c.get('supabase'), { companyId: co.companyId, note, actor: who(c) });
   if (!cancelled.ok) {

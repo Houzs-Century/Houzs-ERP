@@ -40,11 +40,11 @@ import { useWarehouses } from '../lib/inventory-queries';
 import { SearchableSelect } from './SearchableSelect';
 import { useNotify } from './NotifyDialog';
 import { writeFailedAs } from '../lib/mutation-error';
+import { eventDateLabel } from '../lib/event-date-label';
 // App-level client for the PMS project list (/api/projects lives outside the
 // /api/scm mount that the vendored authed-fetch targets). Same app-import
 // precedent as DataGrid's activeCompany subscription.
 import { api } from '../../../api/client';
-import { formatDate } from '../../../lib/utils';
 import styles from '../../../pages/scm-v2/Suppliers.module.css';
 import { DateField } from "./DateField";
 
@@ -68,8 +68,8 @@ function sourceMeta(jobType: DpOrderCreate['jobType']): { label: string; hint: s
 }
 
 /* The slice of a PMS project row this picker needs (GET /api/projects → { data }).
-   start_date / end_date come back on the list row already (snake_case, same as
-   the Projects list reads them) — the picker just surfaces them in the label. */
+   start_date / end_date come back on the list row already (snake_case, the same
+   spelling the Projects list reads) — the picker just surfaces them in the label. */
 type ProjectPickRow = {
   id: number;
   code: string | null;
@@ -80,19 +80,6 @@ type ProjectPickRow = {
   start_date: string | null;
   end_date: string | null;
 };
-
-/* The event's full calendar date for the picker label. A project CODE only
-   carries the year-month (e.g. "2027-10-…"), so two same-month events read as
-   identical by date; this appends the real start_date — and the end_date when
-   the event runs more than a day — in the house yyyy/mm/dd format. A date-only
-   value is shown verbatim (no timezone shift). Returns '' when unset. */
-function eventDateLabel(start: string | null | undefined, end: string | null | undefined): string {
-  const s = (start ?? '').slice(0, 10);
-  const e = (end ?? '').slice(0, 10);
-  if (!s && !e) return '';
-  if (s && e && e !== s) return `${formatDate(s)}–${formatDate(e)}`;
-  return formatDate(s || e);
-}
 
 /* The slice of the workshop master this picker needs — mig 0241, served by
    GET /api/fleet-maintenance/workshops as { workshops } in camelCase. That

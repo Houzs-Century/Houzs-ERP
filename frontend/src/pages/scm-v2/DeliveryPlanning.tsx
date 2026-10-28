@@ -330,7 +330,7 @@ export const DeliveryPlanning = () => {
      Doc list from the WHOLE region fetch (not the state tab) so switching tabs
      never refires the statuses query. */
   const soDocNos = useMemo(
-    () => allOrders.filter((o) => o.row_type === 'so').map((o) => o.so_doc_no).sort(),
+    () => allOrders.filter((o) => o.row_type === 'so' || o.row_type === 'assr').map((o) => o.so_doc_no).sort(),
     [allOrders],
   );
   const { data: msgStatuses } = useDeliveryMessageStatuses(soDocNos);
@@ -342,7 +342,11 @@ export const DeliveryPlanning = () => {
   const [sendMenuOpen, setSendMenuOpen] = useState(false);
   const [oneTimeOpen, setOneTimeOpen] = useState(false);
   const [bulkMenuOpen, setBulkMenuOpen] = useState(false);
+  /* Ticked Service Case legs - they send their own Service Arrangement (HC-0171). */
+  const selectedAssrRows = allOrders.filter((o) => isAssr(o) && sel.has(rowIdOf(o)));
+  const sendCount = selectedSoDocNos().length + selectedAssrRows.length;
   const openSendModal = (kind: SendMessageKind) => {
+    if (kind === 'assr_arrangement') { setSendKind(kind); setSendingRows(selectedAssrRows); return; }
     const docs = new Set(selectedSoDocNos());
     if (docs.size === 0) return;
     setSendKind(kind);
@@ -392,12 +396,12 @@ export const DeliveryPlanning = () => {
               <Button
                 variant="primary"
                 style={{ background: '#1D9E75', borderColor: '#1D9E75' }}
-                disabled={selectedSoDocNos().length === 0}
-                title={selectedSoDocNos().length === 0 ? 'Tick the orders to message first' : 'Send a WhatsApp message to the selected customers'}
+                disabled={sendCount === 0}
+                title={sendCount === 0 ? 'Tick the orders to message first' : 'Send a WhatsApp message to the selected customers'}
                 onClick={() => { setSendMenuOpen((v) => !v); setOneTimeOpen(false); }}
               >
                 <MessageSquare size={16} strokeWidth={1.75} />
-                Send Message ({selectedSoDocNos().length})
+                Send Message ({sendCount})
                 <ChevronDown size={14} strokeWidth={1.75} />
               </Button>
               {sendMenuOpen && (
@@ -437,6 +441,7 @@ export const DeliveryPlanning = () => {
                       );
                       return (
                         <>
+                          {selectedAssrRows.length > 0 && renderKind(['assr_arrangement', 'Service Arrangement', `${selectedAssrRows.length} ASSR job${selectedAssrRows.length === 1 ? '' : 's'}: date message (Confirm / Amend)`], false)}
                           {([
                             ['delivery', 'Send Now', 'Delivery-date message (Confirm / Amend)'],
                             ['amend', 'Amend Now', 'Amend / reschedule message (Confirm / Amend)'],
@@ -591,6 +596,7 @@ export const DeliveryPlanning = () => {
             : isAssr(row)
             ? [
                 { label: 'Set job date…', onClick: () => setDatingAssr(row) },
+                { label: 'Send WhatsApp…', onClick: () => { setSendKind('assr_arrangement'); setSendingRows([row]); } },
                 { divider: true },
                 { label: 'Open Service Case', onClick: () => openRow(row) },
               ]
