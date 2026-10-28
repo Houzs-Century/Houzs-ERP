@@ -52,6 +52,10 @@ export const ENTITY_TYPES = [
   /* An Event Commission month (owner 2026-10-26, 关月): closed (POST) and
      reopened (REVERSE), keyed "<company id>:<YYYY-MM>". Write-only so far. */
   'COMMISSION_MONTH',
+  /* The books' opening (owner 2026-10-28; Finance › Setup › Opening Balance):
+     its accounts and stock re-posted, a paper added, changed or cancelled, the
+     opening locked or unlocked. Write-only so far. */
+  'OPENING_BALANCE',
 ] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
