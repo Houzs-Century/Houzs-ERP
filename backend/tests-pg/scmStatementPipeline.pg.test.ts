@@ -11,7 +11,8 @@ import { pgTransactionSupabase, settleScmStatements } from '../src/scm/lib/pg-su
  *   - the statements still commit together, in order, and read their own writes;
  *   - a failing statement still rolls the whole command back;
  *   - the round trips really are fewer: through a proxy that adds a fixed
- *     delay, ten statements finish well under three round trips each.
+ *     delay, the shim beats the old one-answer-at-a-time sequence on the same
+ *     connection by a clear margin.
  *
  * Runs against CI's postgres:16 service container; SKIPPED without
  * TEST_DATABASE_URL. */
@@ -30,6 +31,8 @@ let viaProxy: Sql;
 function startDelayProxy(target: URL): Promise<net.Server> {
   const server = net.createServer((client) => {
     const upstream = net.connect(Number(target.port || 5432), target.hostname);
+    client.setNoDelay(true);
+    upstream.setNoDelay(true);
     const relay = (from: net.Socket, to: net.Socket) =>
       from.on('data', (chunk) => setTimeout(() => { if (!to.destroyed) to.write(chunk); }, HOP_MS));
     relay(client, upstream);
@@ -53,10 +56,15 @@ describePg('SCM command statements are pipelined, not reordered', () => {
     await admin`DROP TABLE IF EXISTS scm.pipe_probe`;
     await admin`CREATE TABLE scm.pipe_probe (id text PRIMARY KEY, n integer NOT NULL)`;
     proxy = await startDelayProxy(new URL(url));
-    const target = new URL(url);
-    target.hostname = '127.0.0.1';
-    target.port = String((proxy.address() as net.AddressInfo).port);
-    viaProxy = postgres(target.toString(), PROD_OPTIONS);
+    const port = (proxy.address() as net.AddressInfo).port;
+    /* Nagle off on our side too: on loopback it can hold a small packet ~40 ms
+       (delayed ACK), the size of the simulated round trip itself. */
+    const noDelaySocket = () => new Promise<net.Socket>((resolve, reject) => {
+      const s = net.connect(port, '127.0.0.1', () => resolve(s));
+      s.setNoDelay(true);
+      s.once('error', reject);
+    });
+    viaProxy = postgres(url, { ...PROD_OPTIONS, socket: noDelaySocket } as unknown as Parameters<typeof postgres>[1]);
   });
 
   afterAll(async () => {
@@ -94,18 +102,26 @@ describePg('SCM command statements are pipelined, not reordered', () => {
     expect(await probeRows()).toEqual([]);
   });
 
-  test(`${STATEMENTS} statements take well under three round trips each`, async () => {
-    const roundTrip = HOP_MS * 2;
-    const t0 = Date.now();
-    await viaProxy.begin(async (tx) => {
+  test(`${STATEMENTS} statements wait for clearly fewer round trips than the old sequence`, async () => {
+    /* The old shim, verbatim in shape: each answer awaited before the next send. */
+    const oneByOne = async () => viaProxy.begin(async (tx) => {
+      for (let i = 0; i < STATEMENTS; i++) {
+        await tx.unsafe('SAVEPOINT old_seq');
+        await tx.unsafe('INSERT INTO scm.pipe_probe (id, n) VALUES ($1, $2)', [`o${i}`, i]);
+        await tx.unsafe('RELEASE SAVEPOINT old_seq');
+      }
+    });
+    const pipelined = async () => viaProxy.begin(async (tx) => {
       const sb = pgTransactionSupabase(tx);
       for (let i = 0; i < STATEMENTS; i++) await sb.from('pipe_probe').insert({ id: `r${i}`, n: i });
       await settleScmStatements(tx);
     });
-    const elapsed = Date.now() - t0;
-    expect((await probeRows()).length).toBe(STATEMENTS);
-    /* Awaited one by one it was 4 per statement (+ BEGIN, COMMIT): 42 x 40 ms.
-       Pipelined it is 2 per statement: about 22 x 40 ms. */
-    expect(elapsed).toBeLessThan((STATEMENTS * 3 + 2) * roundTrip);
+    const time = async (fn: () => Promise<unknown>) => { const t0 = Date.now(); await fn(); return Date.now() - t0; };
+
+    const before = await time(oneByOne);
+    const after = await time(pipelined);
+    console.log(`[pipeline] ${STATEMENTS} statements, ${HOP_MS * 2} ms round trip: one-by-one ${before} ms, pipelined ${after} ms`);
+    expect((await probeRows()).length).toBe(STATEMENTS * 2);
+    expect(after).toBeLessThan(before * 0.8);
   });
 });
