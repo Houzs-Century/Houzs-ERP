@@ -1,5 +1,5 @@
 {
- "builtAt": "2026-10-28T11:43:17.827Z",
+ "builtAt": "2026-10-28T12:41:50.355Z",
  "sources": [
   "Houzs - New GL (ERP).xlsx (AutoCount GL 01/09–30/09/2026)",
   "AP Payment Listing with KnockOff Detail 2.xlsx (01/08–30/09)",
@@ -2126,6 +2126,27 @@
    "note": "AutoCount HPV-2609-025 (September import)"
   },
   {
+   "acDoc": "HPV-2609-026",
+   "date": "2026-09-04",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "TAY CHING ENG",
+   "total": 187500,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "440-0000",
+     "sen": 187500,
+     "desc": "REFUND TO CUSTOMER DUE CUST SUSPECT WE ARE SCAMMER HC10242 — HC-SO-010231 (deposit paid before 01/09)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-026 (September import)"
+  },
+  {
    "acDoc": "HPV-2609-027",
    "date": "2026-09-04",
    "bank": "310-0020",
@@ -2441,6 +2462,27 @@
    "ticks": [],
    "advance": 0,
    "note": "AutoCount HPV-2609-034 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-035",
+   "date": "2026-09-07",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "2990 HOME SDN BHD",
+   "total": 162000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "946-0000",
+     "sen": 162000,
+     "desc": "RECEIVED PAYMENT FROM CUSTOMER ON BEHALF OF 2990 — the customer paid Houzs by mistake, passed on to 2990"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-035 (September import)"
   },
   {
    "acDoc": "HPV-2609-036",
@@ -3594,6 +3636,27 @@
    "ticks": [],
    "advance": 5000000,
    "note": "AutoCount HPV-2609-063 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-064",
+   "date": "2026-09-14",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "CHAI",
+   "total": 100000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "440-0000",
+     "sen": 100000,
+     "desc": "REFUND TO CUSTOMER DUE REMOVE HYDRAULIC HC10710 — HC-SO-011669 (deposit paid before 01/09)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-064 (September import)"
   },
   {
    "acDoc": "HPV-2609-065",
@@ -4806,6 +4869,27 @@
    "note": "AutoCount HPV-2609-087 (September import)"
   },
   {
+   "acDoc": "HPV-2609-088",
+   "date": "2026-09-18",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "CUSTOMER (HC12772)",
+   "total": 99,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "440-0000",
+     "sen": 99,
+     "desc": "REFUND TO CUSTOMER DUE WRONG PRESS EXTRA RM0.99 HC12772"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-088 (September import)"
+  },
+  {
    "acDoc": "MPV-2609-018",
    "date": "2026-09-18",
    "bank": "310-0010",
@@ -5049,6 +5133,48 @@
    "ticks": [],
    "advance": 4000000,
    "note": "AutoCount HPV-2609-094 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-095",
+   "date": "2026-09-22",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "2990 HOME SDN BHD",
+   "total": 140700,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "946-0000",
+     "sen": 140700,
+     "desc": "RECEIVED PAYMENT FROM CUSTOMER ON BEHALF OF 2990 — the customer paid Houzs by mistake, passed on to 2990"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-095 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-096",
+   "date": "2026-09-22",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "2990 HOME SDN BHD",
+   "total": 246500,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "946-0000",
+     "sen": 246500,
+     "desc": "RECEIVED PAYMENT FROM CUSTOMER ON BEHALF OF 2990 — the customer paid Houzs by mistake, passed on to 2990"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-096 (September import)"
   },
   {
    "acDoc": "MPV-2609-019",
@@ -6246,6 +6372,27 @@
    "note": "AutoCount PV-001639 (September import)"
   },
   {
+   "acDoc": "HPV-2609-128",
+   "date": "2026-09-30",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "CHEW WEE HO (980925-04-5101)",
+   "total": 106200,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "601-0003",
+     "sen": 106200,
+     "desc": "CLAIM FOR ZANOTTI LABEL"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-128 (September import)"
+  },
+  {
    "acDoc": "MPV-2609-027",
    "date": "2026-09-30",
    "bank": "310-0010",
@@ -7222,6 +7369,20 @@
  ],
  "receipts": [
   {
+   "acDoc": "OR2609-001",
+   "date": "2026-09-11",
+   "bank": "310-0010",
+   "payer": "MANESHWARAN KALIDASS",
+   "note": "AutoCount OR2609-001 (September import)",
+   "lines": [
+    {
+     "acc": "440-0000",
+     "sen": 200000,
+     "desc": "Customer balance payment HC8433 — HC-SO-006068 (the order already shows it paid)"
+    }
+   ]
+  },
+  {
    "acDoc": "OR2609-0002",
    "date": "2026-09-08",
    "bank": "310-0060",
@@ -7256,42 +7417,6 @@
    "why": "in the ERP as HC-API-2609-032 (same supplier invoice INV-26/09/201, RM 6,004.40)"
   },
   {
-   "acDoc": "HPV-2609-026",
-   "kind": "payment",
-   "sen": 187500,
-   "why": "ASK: customer refund (Dr 300-C002 CUSTOMER) — AutoCount names no customer; which sales order?"
-  },
-  {
-   "acDoc": "HPV-2609-035",
-   "kind": "payment",
-   "sen": 162000,
-   "why": "ASK: customer refund (Dr 300-C002 CUSTOMER) — AutoCount names no customer; which sales order?"
-  },
-  {
-   "acDoc": "HPV-2609-064",
-   "kind": "payment",
-   "sen": 100000,
-   "why": "ASK: customer refund (Dr 300-C002 CUSTOMER) — AutoCount names no customer; which sales order?"
-  },
-  {
-   "acDoc": "HPV-2609-088",
-   "kind": "payment",
-   "sen": 99,
-   "why": "ASK: customer refund (Dr 300-C002 CUSTOMER) — AutoCount names no customer; which sales order?"
-  },
-  {
-   "acDoc": "HPV-2609-095",
-   "kind": "payment",
-   "sen": 140700,
-   "why": "ASK: customer refund (Dr 300-C002 CUSTOMER) — AutoCount names no customer; which sales order?"
-  },
-  {
-   "acDoc": "HPV-2609-096",
-   "kind": "payment",
-   "sen": 246500,
-   "why": "ASK: customer refund (Dr 300-C002 CUSTOMER) — AutoCount names no customer; which sales order?"
-  },
-  {
    "acDoc": "HPV-2609-126",
    "kind": "payment",
    "sen": 54265,
@@ -7304,12 +7429,6 @@
    "why": "in the ERP as HC-HPV-2609-004 (TOKIO MARINE RM 4,442.75, 30/09)"
   },
   {
-   "acDoc": "HPV-2609-128",
-   "kind": "payment",
-   "sen": 106200,
-   "why": "ASK: CHEW WEE HO RM 1,062.00 30/09 — the ERP has HC-HPV-2609-005 CHEW WEE HO RM 1,746.00 30/09 (bill ZT-260926); the same payment?"
-  },
-  {
    "acDoc": "HPV-2609-129",
    "kind": "payment",
    "sen": 98010,
@@ -7320,12 +7439,6 @@
    "kind": "receipt",
    "sen": 234400,
    "why": "in the ERP: sales order HC-SO-006554 payment RM 2,344.00 on 10/09 (customer money comes from the sales orders)"
-  },
-  {
-   "acDoc": "OR2609-001",
-   "kind": "receipt",
-   "sen": 200000,
-   "why": "ASK: customer RM 2,000.00 into Maybank 11/09 — likely HC-SO-011851 transfer RM 2,000.00 on 10/09 (customer money comes from the sales orders)"
   },
   {
    "acDoc": "CN-2609-025",
