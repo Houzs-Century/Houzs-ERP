@@ -42,7 +42,7 @@ import {
 } from '../../../lib/requestCorrelation';
 import { companyHeader } from '../../../lib/activeCompany';
 import { abortableDelay, combineAbortSignals } from '../../../lib/abort';
-import { reportServerFailure, reportAccessDenied, reportSlowRequest } from '../../../lib/errorReporter';
+import { reportServerFailure, reportAccessDenied, reportSlowRequest, reportTimedOutRequest } from '../../../lib/errorReporter';
 
 // Same threshold as api/client.ts, so both halves of the app report alike.
 const SLOW_FETCH_MS = 800;
@@ -126,6 +126,7 @@ async function fetchWithTimeout(url: string, init: RequestInit, path: string): P
          Either way it fails LOUDLY — never a spinner the operator walks away
          from believing it saved (owner ruling 2026-07-19). */
       const method = String(init.method ?? 'GET').toUpperCase();
+      try { reportTimedOutRequest(method, scmTelemetryPath(path)); } catch { /* never let telemetry break the request path */ }
       if (method !== 'GET' && BILL_READER_PATH.test(path)) {
         /* A reader writes nothing — reading again is always safe; it is not
            replayed by itself, since one try already waited two minutes. */
