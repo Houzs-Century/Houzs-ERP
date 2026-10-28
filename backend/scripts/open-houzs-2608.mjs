@@ -134,8 +134,11 @@ async function run(tx, data, CUTOFF) {
       WHERE j.company_id = ${CO} AND j.posted AND NOT j.reversed AND j.reversed_by_je IS NULL AND j.entry_date <= ${CUTOFF}
         AND l.account_code IN (${role.AP}, ${role.AP_OTHER}) GROUP BY 1`;
   const erpOwed = new Map(apParty.map((r) => [r.code, Number(r.owed)]));
+  /* Every brought-over copy dated by the cutoff, and any copy the aging names whatever its date. */
+  const agingCopies = [...new Set(data.aging.map((a) => a.erpCopy).filter(Boolean))];
   const migrated = await tx`SELECT id, invoice_number, linked_ac_docno, total_sen, paid_sen, status::text AS status, invoice_date::text AS date
-      FROM scm.purchase_invoices WHERE company_id = ${CO} AND migrated_no_stock AND status::text <> 'CANCELLED' AND invoice_date <= ${CUTOFF}`;
+      FROM scm.purchase_invoices WHERE company_id = ${CO} AND migrated_no_stock AND status::text <> 'CANCELLED'
+        AND (invoice_date <= ${CUTOFF} OR invoice_number = ANY(${agingCopies}::text[]))`;
   /* The ERP's own in-book bills dated by the cutoff: kept as they stand. */
   const inBook = await tx`SELECT 'PI' AS k, p.invoice_number AS no, s.code AS supplier, p.total_sen, p.paid_sen, p.invoice_date::text AS date, p.supplier_invoice_ref AS ref
       FROM scm.purchase_invoices p JOIN scm.suppliers s ON s.id = p.supplier_id
@@ -372,7 +375,7 @@ async function run(tx, data, CUTOFF) {
         AND l.account_code = ${role.AR_OTHER} GROUP BY 1`).map((r) => [r.name, Number(r.bal)]));
   for (const d of data.otherDebtors) if ((odAfter.get(d.erpName) ?? 0) !== d.sen) bad.push(`other debtor ${d.erpName} is ${rm(odAfter.get(d.erpName) ?? 0)}, want ${rm(d.sen)}`);
   const closedSet = new Set(closing.map((c) => c.m.invoice_number));
-  for (const b of bills.filter((x) => x.copy && !closedSet.has(x.copy))) say(`! copy ${b.copy} (AutoCount ${b.acDoc}) on the aging but not among the brought-over invoices dated by ${CUTOFF} — check it`);
+  for (const b of bills.filter((x) => x.copy && !closedSet.has(x.copy))) { const m = migrated.find((x) => x.invoice_number === b.copy); say(`! copy ${b.copy} (AutoCount ${b.acDoc}) on the aging is not being closed: ${m ? `${m.status}, paid ${rm(m.paid_sen)} of ${rm(m.total_sen)}, dated ${m.date}` : 'not found (cancelled?)'}`); }
   const stillOpen = await tx`SELECT count(*)::int AS n FROM scm.purchase_invoices WHERE company_id = ${CO} AND migrated_no_stock AND status::text NOT IN ('CANCELLED', 'PAID') AND invoice_date <= ${CUTOFF}`;
 
   /* ── 9. the report ──────────────────────────────────────────────────────── */
@@ -386,7 +389,9 @@ async function run(tx, data, CUTOFF) {
   say(`other debtor bills: ${odbRows.length} RM ${rm(odbRows.reduce((s, d) => s + d.sen, 0))}; owed back on the journal: ${debtorCredits.map((d) => `${d.erpName} RM ${rm(-d.sen)}`).join('; ') || 'none'}`);
   say(`kept, already in the books at the same amount: ${skipped.map((s) => `${s.skipInBooks} (AutoCount ${s.acDoc})`).join('; ') || 'none'}`);
   say(`CONFLICT — the ERP keeps another amount under the same supplier invoice: ${conflicts.map((c) => `${c.conflictErp} ERP RM ${rm(inBookMyr.get(c.conflictErp) ?? 0)} vs AutoCount ${c.acDoc} RM ${rm(c.myrSen)} (${c.code} ${c.ref})`).join('; ') || 'none'}`);
-  say(`ERP's own bills dated by 31/08 that AutoCount does not have on its aging (kept as owed): ${inBook.filter((b) => !skipped.some((s) => s.skipInBooks === b.no) && !conflicts.some((c) => c.conflictErp === b.no)).map((b) => `${b.no} ${b.supplier} RM ${rm(inBookMyr.get(b.no) ?? b.total_sen)}${b.ref ? ` (${b.ref})` : ''}`).join('; ') || 'none'}`);
+  const own = inBook.filter((b) => !skipped.some((s) => s.skipInBooks === b.no) && !conflicts.some((c) => c.conflictErp === b.no));
+  say(`ERP's own bills in its books at 31/08 that AutoCount does not have on its aging (kept as owed): ${own.filter((b) => inBookMyr.has(b.no)).map((b) => `${b.no} ${b.supplier} RM ${rm(inBookMyr.get(b.no))}${b.ref ? ` (${b.ref})` : ''}`).join('; ') || 'none'}`);
+  say(`ERP bills dated by 31/08 but booked after it (not part of the opening): ${own.filter((b) => !inBookMyr.has(b.no)).map((b) => `${b.no} ${b.supplier} RM ${rm(b.total_sen)} dated ${b.date}${b.ref ? ` (${b.ref})` : ''}`).join('; ') || 'none'}`);
   for (const l of supplierLines) say(`  ${l}`);
   say(`brought-over purchase invoices marked PAID: ${closing.length} (${closing.filter((c) => c.note.startsWith('Replaced')).length} replaced by an opening bill, ${closing.filter((c) => c.note.startsWith('Settled')).length} settled in AutoCount); still open after: ${stillOpen[0].n}`);
   say(`journals: ${jes.length} (${jes.filter((j) => j.source === 'API').length} API, ${jes.filter((j) => j.source === 'SCN').length} SCN, ${jes.filter((j) => j.source === 'ODB').length} ODB, 1 OPENING ${jes.at(-1).no} with ${tbLines.length} lines RM ${rm(jes.at(-1).dr)})`);
