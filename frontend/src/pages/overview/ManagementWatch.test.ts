@@ -32,4 +32,12 @@ describe("management watchlist", () => {
     });
     expect(items.map((i) => i.figure)).toEqual(["MATTRESS 8 days later"]);
   });
+
+  it("flags confirmed orders that were never released (HC-0159)", () => {
+    const items = watchItems({
+      ...none,
+      logistic: { doNotClosed: { count: 0, amountSen: 0, over30: 0 }, doNoCost: { count: 0, amountSen: 0 }, deliveredOwingOver30: { count: 0, balanceSen: 0, oldestDays: 0 }, soNoProcessing: { count: 4, oldestDays: 56 } },
+    });
+    expect(items.map((i) => [i.level, i.figure])).toEqual([["bad", "4 orders · oldest 56 days"]]);
+  });
 });

@@ -12,6 +12,7 @@ export interface WatchInputs {
   logistic: {
     doNotClosed: { count: number; amountSen: number; over30: number };
     doNoCost: { count: number; amountSen: number };
+    soNoProcessing?: { count: number; oldestDays: number };
     deliveredOwingOver30: { count: number; balanceSen: number; oldestDays: number };
   } | null;
   procurement: {
@@ -43,6 +44,7 @@ export function watchItems(w: WatchInputs): Item[] {
   const l = w.logistic;
   if (l && l.doNotClosed.count > 0) out.push({ level: l.doNotClosed.over30 > 0 ? "bad" : "warn", title: "Delivery orders loaded but never closed", figure: `${l.doNotClosed.count} DO · ${rm(l.doNotClosed.amountSen)} · ${l.doNotClosed.over30} over 30 days`, why: "Without the POD the order never counts as delivered, so delivered and owing figures read low and the customer balance does not age.", to: "/scm/logistic-overview" });
   if (l && l.deliveredOwingOver30.count > 0) out.push({ level: "bad", title: "Delivered, still owing after 30 days", figure: `${l.deliveredOwingOver30.count} orders · ${rm(l.deliveredOwingOver30.balanceSen)} · oldest ${l.deliveredOwingOver30.oldestDays} days`, why: "Goods are with the customer and the money is not. Chase before it becomes bad debt.", to: "/scm/logistic-overview" });
+  if (l?.soNoProcessing && l.soNoProcessing.count > 0) out.push({ level: "bad", title: "Confirmed orders never released for ordering", figure: `${l.soNoProcessing.count} orders · oldest ${l.soNoProcessing.oldestDays} days`, why: "No Processing Date, so purchasing never orders the goods and the lines stay Pending. Set the date, or close the order.", to: "/scm/sales-orders" });
   const s = w.service;
   if (s && s.breach_count > 0) out.push({ level: "bad", title: "Service cases past their SLA", figure: `${s.breach_count} of ${s.active_count} open cases`, why: "Customers waiting longer than promised.", to: "/assr?view=metrics" });
   const p = w.procurement;

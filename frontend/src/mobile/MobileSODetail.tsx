@@ -1,7 +1,7 @@
 import { ViewOriginalScan } from "../vendor/scm/components/ViewOriginalScan";
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { formatDate } from "../lib/utils";
-import { NonSellingWarehouseNoteMobile, SourcePosRowMobile, soStockPillMobile } from "./source-chips";
+import { NoProcessingDateNoteMobile, NonSellingWarehouseNoteMobile, SourcePosRowMobile, soStockPillMobile } from "./source-chips";
 import { MobileRelationshipMap } from "./MobileRelationshipMap";
 import { ADD_LINE_LABEL } from "../vendor/scm/lib/add-line-handoff";
 import type { FlowNav } from "./relationship-map-model";
@@ -212,7 +212,7 @@ type SoItem = {
   ready_source_pos?: Array<{ po: string | null; qty: number; kind: "po" | "adjustment" }>;
   delivered_qty?: number | null; remaining_qty?: number | null;
   /* Why the line can never read READY, when the reason is WHERE it stands (2026-09-08). */
-  non_selling_warehouse?: { code: string | null; name: string | null; type: string | null; notice: string } | null;
+  non_selling_warehouse?: { code: string | null; name: string | null; type: string | null; notice: string } | null; awaiting_processing_date?: boolean;
   /* A retired line — the SO's history, not part of the live order. Returned by
      GET /:docNo like every other row; filtered out at the use site. */
   cancelled?: boolean | null;
@@ -1125,6 +1125,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                       );
                     })()}
                     <NonSellingWarehouseNoteMobile note={it.non_selling_warehouse} />
+                    {!it.non_selling_warehouse && <NoProcessingDateNoteMobile show={it.awaiting_processing_date} />}
                     {/* Bound PO wins over the shipped batch (owner 2026-09-22), like desktop SoSourceChips. */}
                     <SourcePosRowMobile
                       pos={(it.bound_source_pos && it.bound_source_pos.length > 0) ? it.bound_source_pos : (it.shipped_source_pos ?? [])}
