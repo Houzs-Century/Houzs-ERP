@@ -1,4 +1,0 @@
-- What changed:
-- How it was verified:
-- Rollback:
-- Touches production data or a migration? (no / yes: what)

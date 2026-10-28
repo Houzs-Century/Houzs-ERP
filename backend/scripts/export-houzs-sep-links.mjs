@@ -70,7 +70,7 @@ async function main() {
       refund: p.refund_source_doc_no ?? null, submitted: p.submitted_at != null, checked: p.checked_at != null, approved: p.approved_at != null, created: p.created_at, createdBy: p.created_by,
       lines: pvl.filter((l) => l.pv_id === p.id).map((l) => ({ acct: l.debit_account_code, sen: Number(l.amount_sen), desc: l.description, event: l.project_id })),
     });
-    for (const a of await sql`SELECT a.*, s.code FROM scm.acc_supplier_advances a LEFT JOIN scm.suppliers s ON s.id = a.supplier_id WHERE a.company_id = ${CO}`) {
+    for (const a of await sql`SELECT a.*, s.code FROM scm.acc_supplier_advances a LEFT JOIN scm.suppliers s ON s.id::text = a.supplier_id::text WHERE a.company_id = ${CO}`) {
       out('ADV', { supplier: a.code, pv: a.pv_number, sen: Number(a.amount_sen), applied: Number(a.applied_sen) });
     }
 
