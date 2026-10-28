@@ -45,6 +45,21 @@ export const KIND_AUTOMATION: Record<MessageKind, string> = {
   postage: 'Postage Confirm',
 };
 
+/** The Delivery Message Status a sent order lands on (owner 2026-10-21: every
+ *  send lands the row on its "Done X"; values from HC_MESSAGE_STATUS_VALUES). */
+export const KIND_AFTER_STATUS: Record<MessageKind, string> = {
+  delivery: 'Done Send',
+  amend: 'Done Amend',
+  postpone: 'Done Postpone Reason',
+  driver_info: 'Done Driver Information',
+  balance_reminder: 'Done Balance Collection',
+  reminder_1: 'Done Remind (1)',
+  reminder_2: 'Done Remind (2)',
+  reminder_3: 'Done Remind (3)',
+  postage: 'Done Postage',
+  delivery_completed: 'Done Delivered',
+};
+
 /** Kinds that OPEN a Confirm / Amend conversation. Only these reset the
  *  contact's button_status & co. — a Driver Info or Balance Reminder sent to a
  *  customer who already confirmed must not unlock the Delivery Lock guard. */

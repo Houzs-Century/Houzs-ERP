@@ -28,12 +28,14 @@ import { supabaseAuth } from '../middleware/auth';
 import { effectiveSoDelivery, type SoDeliveryDateRow } from '../shared';
 import { normalizePhone } from '../shared/phone';
 import {
+  KIND_AFTER_STATUS,
   KIND_AUTOMATION,
   MESSAGE_KINDS,
   OPENER_KINDS,
   kindAttributes,
   type SendExtras,
 } from '../lib/delivery-message-kinds';
+import { markSentStatus } from '../lib/delivery-message-status';
 import {
   isConnectConfigured,
   buildDeliveryFollowUp,
@@ -261,7 +263,11 @@ deliveryMessages.post('/send', async (c) => {
   // Date (kindAttributes), and skips any order missing either.
   const result = await sendDeliveryMessageForDocs(c, docNos, kind, extras);
   if (result.readError) return c.json({ error: result.readError.code, reason: result.readError.reason }, 500);
-  return c.json({ sent: result.sent, failed: result.failed, skipped: result.skipped });
+  // The messages have left; a status that cannot move is reported, never a 500.
+  const statusNotMoved = await markSentStatus(
+    c, result.sent.flatMap((s) => s.docNos), KIND_AFTER_STATUS[kind], KIND_AUTOMATION[kind],
+  );
+  return c.json({ sent: result.sent, failed: result.failed, skipped: result.skipped, statusNotMoved });
 });
 
 /* ── POST /statuses — latest send status per doc (board "Message" column) ──── */

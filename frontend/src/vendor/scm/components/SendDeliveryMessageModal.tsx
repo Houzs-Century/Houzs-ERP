@@ -27,8 +27,8 @@ import { X, MessageSquare } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
   useSendDeliveryMessages,
-  useUpdateDeliveryFields,
   type PlanningOrder,
+  type SendDeliveryMessagesResult,
   type SendMessageKind,
 } from '../lib/delivery-planning-queries';
 import { phoneKey, planDriverInfoGroup, type DriverGroupPlan } from '../lib/driver-info-send';
@@ -58,22 +58,19 @@ const KIND_TITLE: Record<SendMessageKind, string> = {
   delivery_completed: 'Send delivery-completed thank-you',
 };
 
-/* The customer-message workflow status the board shows after a successful send
-   of each kind (the sheet-era vocabulary, delivery-planning-queries
-   MESSAGE_STATUSES). Owner 2026-10-21: every send lands the row on its "Done X".
-   Fire-and-forget per successfully-sent doc. */
-export const KIND_AFTER_STATUS: Record<SendMessageKind, string | null> = {
-  delivery: 'Done Send',
-  amend: 'Done Amend',
-  postpone: 'Done Postpone Reason',
-  driver_info: 'Done Driver Information',
-  balance_reminder: 'Done Balance Collection',
-  reminder_1: 'Done Remind (1)',
-  reminder_2: 'Done Remind (2)',
-  reminder_3: 'Done Remind (3)',
-  postage: 'Done Postage',
-  delivery_completed: 'Done Delivered',
+/* The send itself moves each sent order to its "Done X" (backend
+   delivery-message-kinds.ts KIND_AFTER_STATUS, HC-0164); this names the orders
+   it could not move so the operator sets them by hand. */
+const NOT_MOVED_LABEL: Record<string, string> = {
+  lease: 'open in the SO editor',
+  conflict: 'changed by someone else meanwhile',
+  not_found: 'order not found',
+  read_failed: 'could not be read',
 };
+export const statusNotMovedNote = (list: SendDeliveryMessagesResult['statusNotMoved']): string | null =>
+  list && list.length > 0
+    ? `Delivery Message Status NOT updated for ${list.map((n) => `${n.docNo} (${NOT_MOVED_LABEL[n.reason] ?? n.reason})`).join(', ')} - set it on the row.`
+    : null;
 
 export const SKIP_LABEL: Record<string, string> = {
   not_found: 'order not found',
@@ -97,7 +94,6 @@ const noteStyle = { marginBottom: 'var(--space-3)', padding: 'var(--space-3)', b
 
 export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: { rows: PlanningOrder[]; onClose: () => void; kind?: SendMessageKind }) => {
   const send = useSendDeliveryMessages();
-  const updateFields = useUpdateDeliveryFields();
   const notify = useNotify();
 
   const needsDriver = kind === 'driver_info';
@@ -141,24 +137,19 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
 
   type SendResult = Awaited<ReturnType<typeof send.mutateAsync>>;
 
-  /* Post-send: advance the customer-message workflow status (KIND_AFTER_STATUS)
-     per sent doc, summarise, and close. The SEND status is derived separately
-     from the wa_message_log record; the board re-reads on invalidate. */
+  /* Post-send: summarise and close. The server already moved each sent order's
+     Delivery Message Status; only the ones it could not move are listed. */
   const finish = (res: SendResult) => {
-    const after = KIND_AFTER_STATUS[kind];
-    if (after) {
-      for (const s of res.sent) {
-        for (const id of s.docNos) updateFields.mutate({ type: 'so', id, deliveryMessageStatus: after });
-      }
-    }
+    const notMoved = statusNotMovedNote(res.statusNotMoved);
     const parts: string[] = [];
     if (res.sent.length) parts.push(`Sent ${res.sent.length} message${res.sent.length === 1 ? '' : 's'} (${res.sent.reduce((n, s) => n + s.docNos.length, 0)} orders).`);
     if (res.failed.length) parts.push(`Failed ${res.failed.length}: ${res.failed.map((f) => `${f.phone} (${f.error})`).join('; ')}.`);
     if (res.skipped.length) parts.push(`Skipped ${res.skipped.length}: ${res.skipped.map((s) => `${s.docNo} (${SKIP_LABEL[s.reason] ?? s.reason})`).join(', ')}.`);
+    if (notMoved) parts.push(notMoved);
     void notify({
       title: res.failed.length ? 'Send finished with failures' : 'Messages sent',
       body: parts.join(' ') || 'Nothing to send.',
-      tone: res.failed.length ? 'error' : 'info',
+      tone: res.failed.length || notMoved ? 'error' : 'info',
     });
     onClose();
   };
@@ -169,13 +160,14 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
     if (needsDriver) {
       // One Connect call per ready customer, each with its own driver + time.
       setBusy(true);
-      const agg: SendResult = { sent: [], failed: [], skipped: [] };
+      const agg: Required<SendDeliveryMessagesResult> = { sent: [], failed: [], skipped: [], statusNotMoved: [] };
       for (const g of readyDriverGroups) {
         try {
           const res = await send.mutateAsync({ docNos: g.docNos, kind, driverInfo: g.plan.payload! });
           agg.sent.push(...res.sent);
           agg.failed.push(...res.failed);
           agg.skipped.push(...res.skipped);
+          agg.statusNotMoved.push(...(res.statusNotMoved ?? []));
         } catch (err) {
           agg.failed.push({ phone: g.phone, docNos: g.docNos, error: err instanceof Error ? err.message : 'send failed' });
         }
