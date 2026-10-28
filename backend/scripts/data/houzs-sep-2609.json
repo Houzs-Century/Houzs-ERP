@@ -1,0 +1,7337 @@
+{
+ "builtAt": "2026-10-28T11:43:17.827Z",
+ "sources": [
+  "Houzs - New GL (ERP).xlsx (AutoCount GL 01/09–30/09/2026)",
+  "AP Payment Listing with KnockOff Detail 2.xlsx (01/08–30/09)",
+  "ERP read 2026-10-28 (export-houzs-sep-state / -links)"
+ ],
+ "bills": [
+  {
+   "acDoc": "PI-008038",
+   "kind": "API",
+   "supplier": "405-K002",
+   "ref": "IV-15942",
+   "date": "2026-09-08",
+   "total": 2100000,
+   "lines": [
+    {
+     "acc": "360-0010",
+     "sen": 2100000,
+     "desc": "HOME FAIR (MEGA HOME) SICC (AKEMI) 2-4 OCT 2026"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008040",
+   "kind": "API",
+   "supplier": "400-C006",
+   "ref": "C01573/PI1",
+   "date": "2026-09-08",
+   "total": 1590000,
+   "lines": [
+    {
+     "acc": "360-0010",
+     "sen": 1590000,
+     "desc": "HOMEDEC SPICE PENANG (ZANOTTI) 02-04 OCT 26"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008124",
+   "kind": "API",
+   "supplier": "400-C006",
+   "ref": "C02985/PI1",
+   "date": "2026-09-25",
+   "total": 2043680,
+   "lines": [
+    {
+     "acc": "360-0010",
+     "sen": 2043680,
+     "desc": "HOMEDEC SPICE PENANG (AKEMI) 02-04 OCT 26"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008109",
+   "kind": "API",
+   "supplier": "405-C003",
+   "ref": "HV-INV-202609-0028",
+   "date": "2026-09-15",
+   "total": 25522802,
+   "lines": [
+    {
+     "acc": "360-0050",
+     "sen": 25522802,
+     "desc": "REVENUE TEAM PAYROLL TO COLLECT BACK AUG26"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008024",
+   "kind": "API",
+   "supplier": "400-A004",
+   "ref": "IV-2609/018",
+   "date": "2026-09-04",
+   "total": 226000,
+   "lines": [
+    {
+     "acc": "601-0003",
+     "sen": 220000,
+     "desc": "AMN SOFA - SF9028"
+    },
+    {
+     "acc": "601-0003",
+     "sen": 6000,
+     "desc": "AMN-SQUARE PILLOW (16\"x16\") (CUSTOM)"
+    }
+   ],
+   "replacesCopy": "HC-PI-008024",
+   "copyTotal": 226000
+  },
+  {
+   "acDoc": "PI-008121",
+   "kind": "API",
+   "supplier": "400-B005",
+   "ref": "IV-KCH-260304",
+   "date": "2026-09-24",
+   "total": 88000,
+   "lines": [
+    {
+     "acc": "900-R046",
+     "sen": 42000,
+     "desc": "WAREHOUSE STORAGE JUL 2026 (AKEMI)"
+    },
+    {
+     "acc": "900-R046",
+     "sen": 46000,
+     "desc": "WAREHOUSE STORAGE JUL 2026 (ERGOTEX)"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008122",
+   "kind": "API",
+   "supplier": "400-B005",
+   "ref": "IV-KCH-260305",
+   "date": "2026-09-24",
+   "total": 88000,
+   "lines": [
+    {
+     "acc": "900-R046",
+     "sen": 42000,
+     "desc": "WAREHOUSE STORAGE AUG 2026 (AKEMI)"
+    },
+    {
+     "acc": "900-R046",
+     "sen": 46000,
+     "desc": "WAREHOUSE STORAGE AUG 2026 (ERGOTEX)"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008123",
+   "kind": "API",
+   "supplier": "400-B005",
+   "ref": "IV-KCH-260306",
+   "date": "2026-09-24",
+   "total": 65720,
+   "lines": [
+    {
+     "acc": "900-T033",
+     "sen": 58300,
+     "desc": "TRANSPORT DELIVERY FEE AUG26 (SETUP FAIR)"
+    },
+    {
+     "acc": "900-T033",
+     "sen": 7420,
+     "desc": "TRANSPORT FAIR (SBH & SWK)"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-007937",
+   "kind": "API",
+   "supplier": "400-C007",
+   "ref": "2026/ 0020",
+   "date": "2026-09-01",
+   "total": 60000,
+   "lines": [
+    {
+     "acc": "900-T006",
+     "sen": 60000,
+     "desc": "TRANSPORT TO SEGAMBUT, CHERAS, BANDAR MAHKOTA CHERAS (3TRIPS)"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008120",
+   "kind": "API",
+   "supplier": "400-C007",
+   "ref": "2026/ 0021",
+   "date": "2026-09-21",
+   "total": 78000,
+   "lines": [
+    {
+     "acc": "900-T006",
+     "sen": 78000,
+     "desc": "TRANSPORT TO TROPICANA PJ, PJU1A/30B, RE TEJA, RE DSINI, SHAH ALANM, SETIA TROPIKA (6TRIPS)"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008116",
+   "kind": "API",
+   "supplier": "400-D002",
+   "ref": "DGSIZ26001796",
+   "date": "2026-09-05",
+   "total": 1210000,
+   "lines": [
+    {
+     "acc": "601-0001",
+     "sen": 780000,
+     "desc": "AKEMI GUARDIAN MATTRESS (183x190x30CM)"
+    },
+    {
+     "acc": "601-0001",
+     "sen": 260000,
+     "desc": "AKEMI IMMORTAL MATTRESS (153x190x36CM)"
+    },
+    {
+     "acc": "601-0001",
+     "sen": 170000,
+     "desc": "AKEMI IMMORTAL MATTRESS (91x190x36CM)"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008118",
+   "kind": "API",
+   "supplier": "400-D002",
+   "ref": "DGSIZ26001805",
+   "date": "2026-09-05",
+   "total": 155000,
+   "lines": [
+    {
+     "acc": "601-0001",
+     "sen": 155000,
+     "desc": "AKEMI ULTIMATE MATTRESS (183x190x36CM)"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008119",
+   "kind": "API",
+   "supplier": "400-D002",
+   "ref": "DGSIZ26001802",
+   "date": "2026-09-05",
+   "total": 1108900,
+   "lines": [
+    {
+     "acc": "601-0001",
+     "sen": 1108900,
+     "desc": "AKE MEDI+HEALTH SKIN + MICROFIL PILLOW"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008130",
+   "kind": "API",
+   "supplier": "400-D002",
+   "ref": "DGSIZ26001801",
+   "date": "2026-09-05",
+   "total": 1125000,
+   "lines": [
+    {
+     "acc": "601-0001",
+     "sen": 1125000,
+     "desc": "AKE COOL SILK AIRLOFT PILLOW"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008131",
+   "kind": "API",
+   "supplier": "400-D002",
+   "ref": "DGSIZ26001800",
+   "date": "2026-09-05",
+   "total": 210000,
+   "lines": [
+    {
+     "acc": "601-0001",
+     "sen": 210000,
+     "desc": "AKE COOL SILK AIRLOFT PILLOW"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008132",
+   "kind": "API",
+   "supplier": "400-D002",
+   "ref": "DGSIZ26001799",
+   "date": "2026-09-05",
+   "total": 324000,
+   "lines": [
+    {
+     "acc": "601-0001",
+     "sen": 324000,
+     "desc": "AKEMI SOFT BOLSTER"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008136",
+   "kind": "API",
+   "supplier": "400-D002",
+   "ref": "DGSIZ26001965",
+   "date": "2026-09-19",
+   "total": 204000,
+   "lines": [
+    {
+     "acc": "601-0001",
+     "sen": 204000,
+     "desc": "AKEMI GUARDIAN MATTRESS (SPECIAL SIZE)"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008137",
+   "kind": "API",
+   "supplier": "400-D002",
+   "ref": "DGSIZ26001963",
+   "date": "2026-09-19",
+   "total": 156000,
+   "lines": [
+    {
+     "acc": "601-0001",
+     "sen": 156000,
+     "desc": "AKEMI EQUINOX MATTRESS (SPECIAL SIZE)"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008117",
+   "kind": "API",
+   "supplier": "400-D002",
+   "ref": "DGSIZ26001792",
+   "date": "2026-09-22",
+   "total": 105000,
+   "lines": [
+    {
+     "acc": "601-0001",
+     "sen": 105000,
+     "desc": "AKEMI BASTION MATTRESS (153x190x25CM)"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008023",
+   "kind": "API",
+   "supplier": "400-D004",
+   "ref": "IV-2609-012",
+   "date": "2026-09-04",
+   "total": 222800,
+   "lines": [
+    {
+     "acc": "601-0003",
+     "sen": 213800,
+     "desc": "DSL SOFA - 8051"
+    },
+    {
+     "acc": "601-0003",
+     "sen": 9000,
+     "desc": "DSL- SQUARE PILLOW (16\"X16\") (CUSTOM)"
+    }
+   ],
+   "replacesCopy": "HC-PI-008023",
+   "copyTotal": 222800
+  },
+  {
+   "acDoc": "PI-008138",
+   "kind": "API",
+   "supplier": "400-D004",
+   "ref": "IV-2609-015",
+   "date": "2026-09-05",
+   "total": 459000,
+   "lines": [
+    {
+     "acc": "601-0003",
+     "sen": 390000,
+     "desc": "DSL SOFA - 8030"
+    },
+    {
+     "acc": "601-0003",
+     "sen": 55000,
+     "desc": "DSL SOFA - 8051"
+    },
+    {
+     "acc": "601-0003",
+     "sen": 6000,
+     "desc": "DSL- SQUARE PILLOW (16\"X16\") (CUSTOM)"
+    },
+    {
+     "acc": "601-0003",
+     "sen": 8000,
+     "desc": "DSL-LONG PILLOW (12\"X28\")"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PR-001123",
+   "kind": "SCN",
+   "supplier": "400-E002",
+   "ref": "S226CN002",
+   "date": "2026-09-01",
+   "total": 427500,
+   "lines": [
+    {
+     "acc": "610-0001",
+     "sen": 427500,
+     "desc": "DISCOUNT RECEIVED"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-007988",
+   "kind": "API",
+   "supplier": "400-E002",
+   "ref": "S226-1011",
+   "date": "2026-09-04",
+   "total": 3420000,
+   "lines": [
+    {
+     "acc": "900-R032",
+     "sen": 3420000,
+     "desc": "HOMELOVE EXPO (ZANOTTI) SSCC PENANG, 04-06 SEPT 26"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-007971",
+   "kind": "API",
+   "supplier": "400-O002",
+   "ref": "INV-2608-082",
+   "date": "2026-09-01",
+   "total": 831450,
+   "lines": [
+    {
+     "acc": "601-0001",
+     "sen": 71000,
+     "desc": "HOK-CELENE (A) B/FRAME (K) (183X190CM)"
+    },
+    {
+     "acc": "601-0001",
+     "sen": 54750,
+     "desc": "HOK-CELENE (A) B/FRAME (SS) (107X190CM)"
+    },
+    {
+     "acc": "601-0001",
+     "sen": 64000,
+     "desc": "HOK-HILTON (A) B/FRAME (Q) (152X190CM)"
+    },
+    {
+     "acc": "601-0001",
+     "sen": 43000,
+     "desc": "HOK-JAGER B/FRAME (K) (183x190CM)"
+    },
+    {
+     "acc": "601-0001",
+     "sen": 61000,
+     "desc": "HOK-JAGER B/FRAME (Q) (152x190CM)"
+    },
+    {
+     "acc": "601-0001",
+     "sen": 27500,
+     "desc": "HOK-JAGER B/FRAME (S) (90x190CM)"
+    },
+    {
+     "acc": "601-0001",
+     "sen": 253000,
+     "desc": "HOK-TRION (A) (HB STR) B/FRAME (K) (183x190CM)"
+    },
+    {
+     "acc": "601-0003",
+     "sen": 257200,
+     "desc": "HOK SOFA - 5535"
+    }
+   ],
+   "replacesCopy": "HC-PI-007971",
+   "copyTotal": 433250
+  },
+  {
+   "acDoc": "PI-008027",
+   "kind": "API",
+   "supplier": "400-O002",
+   "ref": "INV-2609-008",
+   "date": "2026-09-02",
+   "total": 12000,
+   "lines": [
+    {
+     "acc": "601-0003",
+     "sen": 12000,
+     "desc": "HOK-LONG PILLOW (12\"X28\")"
+    }
+   ],
+   "replacesCopy": "HC-PI-008027",
+   "copyTotal": 12000
+  },
+  {
+   "acDoc": "PI-008028",
+   "kind": "API",
+   "supplier": "400-O002",
+   "ref": "INV-2609-011",
+   "date": "2026-09-02",
+   "total": 677750,
+   "lines": [
+    {
+     "acc": "601-0001",
+     "sen": 48500,
+     "desc": "HOK-CASUAL B/FRAME (Q) (152x190CM)"
+    },
+    {
+     "acc": "601-0001",
+     "sen": 61000,
+     "desc": "HOK-CODY B/FRAME(Q) (152X190CM)"
+    },
+    {
+     "acc": "601-0001",
+     "sen": 45000,
+     "desc": "HOK-DIVAN ONLY (K) (183x190CM)"
+    },
+    {
+     "acc": "601-0001",
+     "sen": 32500,
+     "desc": "HOK-DIVAN ONLY (Q) (152X190CM)"
+    },
+    {
+     "acc": "601-0001",
+     "sen": 61000,
+     "desc": "HOK-FENRIR B/FRAME (Q) (152x190CM)"
+    },
+    {
+     "acc": "601-0001",
+     "sen": 30500,
+     "desc": "HOK-JAGER B/FRAME (Q) (152x190CM)"
+    },
+    {
+     "acc": "601-0001",
+     "sen": 28750,
+     "desc": "HOK-JAGER B/FRAME (SS) (107x190CM)"
+    },
+    {
+     "acc": "601-0001",
+     "sen": 57500,
+     "desc": "HOK-REGAL (A) B/FRAME (Q) (152x190CM)"
+    },
+    {
+     "acc": "601-0001",
+     "sen": 35500,
+     "desc": "HOK-STAR B/FRAME(Q) (152X190CM)"
+    },
+    {
+     "acc": "601-0001",
+     "sen": 197500,
+     "desc": "HOK-TRION (A) (HB STR) B/FRAME (K) (183x190CM)"
+    },
+    {
+     "acc": "601-0001",
+     "sen": 80000,
+     "desc": "HOK-VICTORIA B/FRAME (Q) (152x190CM)"
+    }
+   ],
+   "replacesCopy": "HC-PI-008028",
+   "copyTotal": 533500
+  },
+  {
+   "acDoc": "PI-008029",
+   "kind": "API",
+   "supplier": "400-O002",
+   "ref": "INV-2609-012",
+   "date": "2026-09-02",
+   "total": 60000,
+   "lines": [
+    {
+     "acc": "601-0001",
+     "sen": 60000,
+     "desc": "AMN-SOFA PILLOW (RANDOM) (FREE GIFT)"
+    }
+   ],
+   "replacesCopy": "HC-PI-008029",
+   "copyTotal": 60000
+  },
+  {
+   "acDoc": "PI-008133",
+   "kind": "API",
+   "supplier": "400-O002",
+   "ref": "INV-2609-016",
+   "date": "2026-09-04",
+   "total": 132000,
+   "lines": [
+    {
+     "acc": "601-0003",
+     "sen": 132000,
+     "desc": "HOK SOFA - 5530"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008043",
+   "kind": "API",
+   "supplier": "405-C003",
+   "ref": "HV-INV-202609-0011",
+   "date": "2026-09-08",
+   "total": 298603,
+   "lines": [
+    {
+     "acc": "900-R044",
+     "sen": 298603,
+     "desc": "RENTAL OFFICE MENARA SUEZCAP - SEPT 2026"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008129",
+   "kind": "API",
+   "supplier": "405-C003",
+   "ref": "HV-INV-202609-0036",
+   "date": "2026-09-23",
+   "total": 373304,
+   "lines": [
+    {
+     "acc": "900-M001",
+     "sen": 373304,
+     "desc": "MARKETING SERVICE - SEP26"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008042",
+   "kind": "API",
+   "supplier": "405-E002",
+   "ref": "IV 2608/419",
+   "date": "2026-09-01",
+   "total": 5160000,
+   "lines": [
+    {
+     "acc": "900-R032",
+     "sen": 5160000,
+     "desc": "BIGHOME EXPO @ SUNWAY PYRAMID CONVENTION CENTRE (ZANOTTI) 4-6 SEPT 2026"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-04102",
+   "kind": "API",
+   "supplier": "405-E002",
+   "ref": "IV 2609/015",
+   "date": "2026-09-02",
+   "total": 3840000,
+   "lines": [
+    {
+     "acc": "900-R032",
+     "sen": 3840000,
+     "desc": "HOMES LIVING @ SUNWAY PYRAMID CONVENTION CENTRE (AKEMI) 4-6 SEPT 2026"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008100",
+   "kind": "API",
+   "supplier": "405-E002",
+   "ref": "IV 2609/107",
+   "date": "2026-09-09",
+   "total": 2580000,
+   "lines": [
+    {
+     "acc": "900-R032",
+     "sen": 2580000,
+     "desc": "BIG HOME EXPO @ SETIA CITY CONVENTION CENTRE (AKEMI) 18-20 SEPT 2026"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008101",
+   "kind": "API",
+   "supplier": "405-E002",
+   "ref": "IV 2609/133",
+   "date": "2026-09-14",
+   "total": 1720000,
+   "lines": [
+    {
+     "acc": "900-R032",
+     "sen": 1720000,
+     "desc": "BIG HOME EXPO @ SETIA CITY CONVENTION CENTRE (ZANOTTI) 18-20 SEPT 2026"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008036",
+   "kind": "API",
+   "supplier": "405-E003",
+   "ref": "H26080122",
+   "date": "2026-09-01",
+   "total": 6380000,
+   "lines": [
+    {
+     "acc": "900-R032",
+     "sen": 6380000,
+     "desc": "REX HOME EXPO MIDVALLEY EXHIBITION KL 11-13 SEPT 2026"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008046",
+   "kind": "API",
+   "supplier": "405-G001",
+   "ref": "GE 0824",
+   "date": "2026-09-04",
+   "total": 1200000,
+   "lines": [
+    {
+     "acc": "900-R032",
+     "sen": 1200000,
+     "desc": "HOME EXPO @ KULAI , JB  (AKEMI) 11 - 13 SEPT 2026"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008037",
+   "kind": "API",
+   "supplier": "405-K002",
+   "ref": "IV-15903",
+   "date": "2026-09-03",
+   "total": 1400000,
+   "lines": [
+    {
+     "acc": "900-R032",
+     "sen": 1400000,
+     "desc": "HOME FAIR (MEGA HOME) AICC (AKEMI) 25-27 SEPT 2026"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008106",
+   "kind": "API",
+   "supplier": "405-M002",
+   "ref": "SO26001535",
+   "date": "2026-09-07",
+   "total": 1800000,
+   "lines": [
+    {
+     "acc": "900-R032",
+     "sen": 1800000,
+     "desc": "MODERN LIVING HOME EXPO SOUTHKEY JOHOR (ZANOTTI)  18-20 SEPT 2026"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008107",
+   "kind": "API",
+   "supplier": "405-M002",
+   "ref": "SO26001528",
+   "date": "2026-09-07",
+   "total": 3500000,
+   "lines": [
+    {
+     "acc": "900-R032",
+     "sen": 3500000,
+     "desc": "MODERN LIVING HOME EXPO SOTUHKEY JOHOR (AKEMI)  18-20 SEPT 2026"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008108",
+   "kind": "API",
+   "supplier": "405-M002",
+   "ref": "SO26001537",
+   "date": "2026-09-07",
+   "total": 2800000,
+   "lines": [
+    {
+     "acc": "900-R032",
+     "sen": 2800000,
+     "desc": "MODERN LIVING HOME EXPO MCCC KUCHING (AKEMI)  24-27 SEPT 2026"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008110",
+   "kind": "API",
+   "supplier": "405-M002",
+   "ref": "SO26001601",
+   "date": "2026-09-17",
+   "total": 2800000,
+   "lines": [
+    {
+     "acc": "900-R032",
+     "sen": 2800000,
+     "desc": "MODERN LIVING HOME EXPO PWCC PENANG (AKEMI)  25-27 SEPT 2026"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008111",
+   "kind": "API",
+   "supplier": "405-M002",
+   "ref": "SO26001602",
+   "date": "2026-09-17",
+   "total": 1600000,
+   "lines": [
+    {
+     "acc": "900-R032",
+     "sen": 1600000,
+     "desc": "MODERN LIVING HOME EXPO PWCC PENANG (ZANOTTI)  25-27 SEPT 2026"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008032",
+   "kind": "API",
+   "supplier": "405-M003",
+   "ref": "618526",
+   "date": "2026-09-06",
+   "total": 272000,
+   "lines": [
+    {
+     "acc": "900-L003",
+     "sen": 4000,
+     "desc": "DISMANTLE (1 TRIPS)"
+    },
+    {
+     "acc": "900-S011",
+     "sen": 24000,
+     "desc": "S)- PART TIME WORKER (3 JOB)"
+    },
+    {
+     "acc": "900-T005",
+     "sen": 12000,
+     "desc": "TRANSPORT TO KDH (1 TRIPS)"
+    },
+    {
+     "acc": "900-T005",
+     "sen": 232000,
+     "desc": "TRANSPORT TO PG (9 TRIPS)"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008033",
+   "kind": "API",
+   "supplier": "405-M003",
+   "ref": "618527",
+   "date": "2026-09-06",
+   "total": 169000,
+   "lines": [
+    {
+     "acc": "900-T005",
+     "sen": 24000,
+     "desc": "TRANSPORT TO PG (1 TRIPS)"
+    },
+    {
+     "acc": "900-T032",
+     "sen": 35000,
+     "desc": "SETIA SPICE SET UP (1 TRIP)"
+    },
+    {
+     "acc": "900-T032",
+     "sen": 110000,
+     "desc": "SETIA SPICE SET UP (2 TRIP)"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008105",
+   "kind": "API",
+   "supplier": "405-M003",
+   "ref": "618535",
+   "date": "2026-09-12",
+   "total": 106000,
+   "lines": [
+    {
+     "acc": "900-S011",
+     "sen": 16000,
+     "desc": "S)- PART TIME WORKER / WAGES"
+    },
+    {
+     "acc": "900-T005",
+     "sen": 65000,
+     "desc": "TRANSPORT TO KELANTAN (2 TRIPS)"
+    },
+    {
+     "acc": "900-T005",
+     "sen": 25000,
+     "desc": "TRANSPORT TO PG (2 TRIPS)"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008102",
+   "kind": "API",
+   "supplier": "405-M003",
+   "ref": "618532",
+   "date": "2026-09-14",
+   "total": 122000,
+   "lines": [
+    {
+     "acc": "900-L003",
+     "sen": 36000,
+     "desc": "DISPOSE (4 TRIP)"
+    },
+    {
+     "acc": "900-T005",
+     "sen": 86000,
+     "desc": "TRANSPORT TO PG (8 TRIPS)"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008103",
+   "kind": "API",
+   "supplier": "405-M003",
+   "ref": "618533",
+   "date": "2026-09-14",
+   "total": 206000,
+   "lines": [
+    {
+     "acc": "900-T005",
+     "sen": 206000,
+     "desc": "TRANSPORT TO PG (11 TRIPS)"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008104",
+   "kind": "API",
+   "supplier": "405-M003",
+   "ref": "618534",
+   "date": "2026-09-14",
+   "total": 210000,
+   "lines": [
+    {
+     "acc": "900-L003",
+     "sen": 17000,
+     "desc": "DISPOSE (3 TRIP)"
+    },
+    {
+     "acc": "900-T005",
+     "sen": 161000,
+     "desc": "TRANSPORT TO KELANTAN (5 TRIP)"
+    },
+    {
+     "acc": "900-T005",
+     "sen": 32000,
+     "desc": "TRANSPORT TO PG (3 TRIPS)"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008112",
+   "kind": "API",
+   "supplier": "405-M003",
+   "ref": "618536",
+   "date": "2026-09-20",
+   "total": 163000,
+   "lines": [
+    {
+     "acc": "900-L003",
+     "sen": 12000,
+     "desc": "DISPOSE (2 TRIP)"
+    },
+    {
+     "acc": "900-T005",
+     "sen": 15000,
+     "desc": "TRANSPORT TO PERAK (1 TRIP)"
+    },
+    {
+     "acc": "900-T005",
+     "sen": 136000,
+     "desc": "TRANSPORT TO PG (9 TRIPS)"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008113",
+   "kind": "API",
+   "supplier": "405-M003",
+   "ref": "618537",
+   "date": "2026-09-20",
+   "total": 164000,
+   "lines": [
+    {
+     "acc": "900-L003",
+     "sen": 8000,
+     "desc": "DISPOSE (1 TRIP)"
+    },
+    {
+     "acc": "900-T005",
+     "sen": 156000,
+     "desc": "TRANSPORT TO PG (11 TRIPS)"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008115",
+   "kind": "API",
+   "supplier": "405-M003",
+   "ref": "618541",
+   "date": "2026-09-20",
+   "total": 186000,
+   "lines": [
+    {
+     "acc": "603-0000",
+     "sen": 75000,
+     "desc": "BALAKONG TO PG"
+    },
+    {
+     "acc": "900-S011",
+     "sen": 8000,
+     "desc": "S)- PART TIME WORKER / WAGES"
+    },
+    {
+     "acc": "900-T005",
+     "sen": 91000,
+     "desc": "TRANSPORT TO PERAK (5 TRIPS)"
+    },
+    {
+     "acc": "900-T005",
+     "sen": 12000,
+     "desc": "TRANSPORT TO PG (3 TRIPS)"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008125",
+   "kind": "API",
+   "supplier": "405-M003",
+   "ref": "617783",
+   "date": "2026-09-27",
+   "total": 169000,
+   "lines": [
+    {
+     "acc": "900-L003",
+     "sen": 8000,
+     "desc": "DISPOSE (2 TRIP)"
+    },
+    {
+     "acc": "900-T005",
+     "sen": 161000,
+     "desc": "TRANSPORT TO PG (10 TRIPS)"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008126",
+   "kind": "API",
+   "supplier": "405-M003",
+   "ref": "617784",
+   "date": "2026-09-27",
+   "total": 448000,
+   "lines": [
+    {
+     "acc": "900-L003",
+     "sen": 4000,
+     "desc": "DISPOSE (1TRIP)"
+    },
+    {
+     "acc": "900-T005",
+     "sen": 56000,
+     "desc": "TRANSPORT TO KEDAH (4 TRIPS)"
+    },
+    {
+     "acc": "900-T005",
+     "sen": 63000,
+     "desc": "TRANSPORT TO PERLIS (3 TRIPS)"
+    },
+    {
+     "acc": "900-T005",
+     "sen": 20000,
+     "desc": "TRANSPORT TO PG (2 TRIPS)"
+    },
+    {
+     "acc": "900-T032",
+     "sen": 110000,
+     "desc": "TRANSPORT TO PWCC SETUP FAIR (2 TRIPS)"
+    },
+    {
+     "acc": "900-T032",
+     "sen": 195000,
+     "desc": "TRANSPORT TO SUNWAY SOLO SETUP (3 TRIPS)"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  },
+  {
+   "acDoc": "PI-008127",
+   "kind": "API",
+   "supplier": "405-M003",
+   "ref": "617785",
+   "date": "2026-09-27",
+   "total": 44000,
+   "lines": [
+    {
+     "acc": "900-T005",
+     "sen": 24000,
+     "desc": "TRANSPORT TO KEDAH (1 TRIPS)"
+    },
+    {
+     "acc": "900-T005",
+     "sen": 20000,
+     "desc": "TRANSPORT TO PERLIS (1 TRIPS)"
+    }
+   ],
+   "replacesCopy": null,
+   "copyTotal": null
+  }
+ ],
+ "pvs": [
+  {
+   "acDoc": "HPV-2609-001",
+   "date": "2026-09-01",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-E003",
+   "payee": "ESH AGENCY ENTERPRISE",
+   "total": 172500,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 172500,
+     "desc": "Settle 1 invoice(s) — ESH AGENCY ENTERPRISE"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2608-105",
+     "kind": "opening",
+     "sen": 172500,
+     "acPi": "PI-007975",
+     "supInv": "000114"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-001 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-002",
+   "date": "2026-09-01",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-C003",
+   "payee": "HOUZS VENTURE SDN BHD",
+   "total": 218304,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 218304,
+     "desc": "Settle 1 invoice(s) — HOUZS VENTURE SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2608-141",
+     "kind": "opening",
+     "sen": 218304,
+     "acPi": "PI-007976",
+     "supInv": "HV-INV-202609-0004"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-002 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-003",
+   "date": "2026-09-01",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-M003",
+   "payee": "MSJ TRANSPORT SERVICE",
+   "total": 455000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 455000,
+     "desc": "Settle 2 invoice(s) — MSJ TRANSPORT SERVICE"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2608-177",
+     "kind": "opening",
+     "sen": 297000,
+     "acPi": "PI-007935",
+     "supInv": "617779"
+    },
+    {
+     "bill": "HC-API-2608-178",
+     "kind": "opening",
+     "sen": 158000,
+     "acPi": "PI-007936",
+     "supInv": "617780"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-003 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-004",
+   "date": "2026-09-01",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-C007",
+   "payee": "CV SMART ENTERPRISE",
+   "total": 60000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 60000,
+     "desc": "Settle 1 invoice(s) — CV SMART ENTERPRISE"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "NEW:PI-007937",
+     "kind": "september-new",
+     "sen": 60000,
+     "acPi": "PI-007937",
+     "supInv": "2026/ 0020"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-004 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-005",
+   "date": "2026-09-01",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "INFO TECH SYSTEMS INTEGRATIONS (M) SDN BHD",
+   "total": 28971,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-W002",
+     "sen": 28971,
+     "desc": "ADDITIONAL HEADCOUNT FOR CLOUD LEAVE SOFTWARE (QT:15675/TY)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-005 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-006",
+   "date": "2026-09-01",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "LIM WEI LIANG",
+   "total": 64512,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-P008",
+     "sen": 64512,
+     "desc": "PETRON CLAIM LWL - AUG26"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-006 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-007",
+   "date": "2026-09-01",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "T FORCE AUTO SERVICES SDN BHD",
+   "total": 200500,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-U011",
+     "sen": 200500,
+     "desc": "VQE 9058 - REPAIR LORRY -WCS00121"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-007 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-008",
+   "date": "2026-09-01",
+   "bank": "310-0020",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 321-0000 PETTY CASH - WAREHOUSE",
+   "total": 288294,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "321-0000",
+     "sen": 288294,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-008 (September import) — PETTY CASH REIMBURSEMENT 1 SPET 2026"
+  },
+  {
+   "acDoc": "MPV-2609-000",
+   "date": "2026-09-01",
+   "bank": "310-0010",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 310-0060 CASH AT BANK - MAYBANK (TRADE FINANCE)",
+   "total": 3450000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "310-0060",
+     "sen": 3450000,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-000 (September import) — TRANSFER FROM MBB TO MBB TRADE FINANCE - HOOKKA"
+  },
+  {
+   "acDoc": "MPV-2609-001",
+   "date": "2026-09-01",
+   "bank": "310-0010",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 310-0100 CASH AT BANK - MBB (564128831776)",
+   "total": 1000000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "310-0100",
+     "sen": 1000000,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-001 (September import) — TRANSFER FROM MAYBANK TO MAYBANK (564128831776)"
+  },
+  {
+   "acDoc": "MPV-2609-002",
+   "date": "2026-09-01",
+   "bank": "310-0010",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "MAYBANK BERHAD",
+   "total": 1156000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "460-0008",
+     "sen": 1156000,
+     "desc": "LOAN INSTALMENT - 11"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-002 (September import)"
+  },
+  {
+   "acDoc": "CIPV-2609-001",
+   "date": "2026-09-02",
+   "bank": "310-0050",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "NURAZIRA BINTI ALI",
+   "total": 1502535,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "410-0010",
+     "sen": 1502335,
+     "desc": "SALARY FOREIGN WORKERS AUG 2026"
+    },
+    {
+     "acc": "900-B001",
+     "sen": 200,
+     "desc": "NURAZIRA BINTI ALI"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount CIPV-2609-001 (September import)"
+  },
+  {
+   "acDoc": "CIPV-2609-002",
+   "date": "2026-09-02",
+   "bank": "310-0050",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "NURAZIRA BINTI ALI",
+   "total": 1000200,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "410-0010",
+     "sen": 1000000,
+     "desc": "SALARY FOREIGN WORKERS AUG 2026"
+    },
+    {
+     "acc": "900-B001",
+     "sen": 200,
+     "desc": "NURAZIRA BINTI ALI"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount CIPV-2609-002 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-009",
+   "date": "2026-09-02",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-E007",
+   "payee": "EU LOGISTICS",
+   "total": 845410,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 845410,
+     "desc": "Settle 8 invoice(s) — EU LOGISTICS"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2608-025",
+     "kind": "opening",
+     "sen": 251290,
+     "acPi": "PI-007977",
+     "supInv": "I-202608-0021"
+    },
+    {
+     "bill": "HC-API-2608-039",
+     "kind": "opening",
+     "sen": 76920,
+     "acPi": "PI-007978",
+     "supInv": "I-202608-0022"
+    },
+    {
+     "bill": "HC-API-2608-045",
+     "kind": "opening",
+     "sen": 128680,
+     "acPi": "PI-007979",
+     "supInv": "I-202608-0023"
+    },
+    {
+     "bill": "HC-API-2608-062",
+     "kind": "opening",
+     "sen": 174340,
+     "acPi": "PI-007980",
+     "supInv": "I-202608-0024"
+    },
+    {
+     "bill": "HC-API-2608-125",
+     "kind": "opening",
+     "sen": 93200,
+     "acPi": "PI-007981",
+     "supInv": "I-202608-0025"
+    },
+    {
+     "bill": "HC-API-2608-142",
+     "kind": "opening",
+     "sen": 25000,
+     "acPi": "PI-007982",
+     "supInv": "I-202608-0026"
+    },
+    {
+     "bill": "HC-API-2608-152",
+     "kind": "opening",
+     "sen": 60090,
+     "acPi": "PI-007983",
+     "supInv": "I-202608-0027"
+    },
+    {
+     "bill": "HC-API-2608-155",
+     "kind": "opening",
+     "sen": 35890,
+     "acPi": "PI-007984",
+     "supInv": "I-202608-0028"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-009 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-010",
+   "date": "2026-09-02",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "DARYNZ BUSINESS (M) SDN BHD",
+   "total": 2370,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-P002",
+     "sen": 2370,
+     "desc": "JNT PARCEL AUG 2026 (INV NO : VIP-PJS356-2609-0004)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-010 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-011",
+   "date": "2026-09-02",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "KLG CAPITAL BERHAD",
+   "total": 30000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-P008",
+     "sen": 30000,
+     "desc": "MONTHLY SEASON PARKING MENARA SUEZCAP SEPT 2026 (LOO WEN WEI)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-011 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-012",
+   "date": "2026-09-02",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "TM UNIFI",
+   "total": 18335,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-T014",
+     "sen": 18335,
+     "desc": "WH PNG - WIFI AUG 2026"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-012 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-013",
+   "date": "2026-09-02",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "TM UNIFI",
+   "total": 10495,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-T001",
+     "sen": 10495,
+     "desc": "WIFI AUG 2026 - 2990 HOME"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-013 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-014",
+   "date": "2026-09-02",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "TM UNIFI",
+   "total": 18335,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-T013",
+     "sen": 18335,
+     "desc": "WH BALAKONG - WIFI AUG 2026"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-014 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-015",
+   "date": "2026-09-02",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "CHOONG HUI YEE (NICO)",
+   "total": 12800,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-P003",
+     "sen": 12800,
+     "desc": "CLAIM AUG26 - STAMP DUTY FOR STAFF BALAKONG RENTAL AGREEMENT"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-015 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-016",
+   "date": "2026-09-02",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-Y001",
+   "payee": "YEN CREATIVE SDN BHD",
+   "total": 654540,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 654540,
+     "desc": "Settle 1 invoice(s) — YEN CREATIVE SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2608-143",
+     "kind": "opening",
+     "sen": 654540,
+     "acPi": "PI-007985",
+     "supInv": "INV-26/08/264"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-016 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-017",
+   "date": "2026-09-02",
+   "bank": "310-0020",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 310-0050 CASH AT BANK - CIMB",
+   "total": 3550000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "310-0050",
+     "sen": 3550000,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-017 (September import) — TRANSFER FROM HLBB TO CIMB BANK"
+  },
+  {
+   "acDoc": "MPV-2609-003",
+   "date": "2026-09-02",
+   "bank": "310-0100",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "MAYBANK BERHAD (564128831776)",
+   "total": 987800,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "460-0012",
+     "sen": 987800,
+     "desc": "LOAN INSTALMENT - 03"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-003 (September import)"
+  },
+  {
+   "acDoc": "MPV-2609-004",
+   "date": "2026-09-02",
+   "bank": "310-0010",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 310-0060 CASH AT BANK - MAYBANK (TRADE FINANCE)",
+   "total": 3100000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "310-0060",
+     "sen": 3100000,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-004 (September import) — TRANSFER FROM MBB TO MBB TRADE FINANCE - NB FURNITURE"
+  },
+  {
+   "acDoc": "MPV-2609-023",
+   "date": "2026-09-02",
+   "bank": "310-0010",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 310-0060 CASH AT BANK - MAYBANK (TRADE FINANCE)",
+   "total": 11500000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "310-0060",
+     "sen": 11500000,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-023 (September import) — TRANSFER FROM MBB TO MBB TRADE FINANCE - DIGLANT & HOOKKA"
+  },
+  {
+   "acDoc": "PV-001635",
+   "date": "2026-09-02",
+   "bank": "310-0060",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "HOUZS CENTURY SDN BHD (MAYBANK TRADE FINANCE)",
+   "total": 3099465,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "460-0009",
+     "sen": 3079500,
+     "desc": "SETTLEMENT FOR TRADE FINANCE - NB FURNITURE"
+    },
+    {
+     "acc": "900-L004",
+     "sen": 19965,
+     "desc": "INTEREST CHARGE FOR TRADE FINANCE - NB FURNITURE"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount PV-001635 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-018",
+   "date": "2026-09-03",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-C003",
+   "payee": "HOUZS VENTURE SDN BHD",
+   "total": 2576810,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 2576810,
+     "desc": "Settle 1 invoice(s) — HOUZS VENTURE SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2608-202",
+     "kind": "opening",
+     "sen": 2576810,
+     "acPi": "PI-007986",
+     "supInv": "HV-INV-202608-0033"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-018 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-019",
+   "date": "2026-09-03",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "LG",
+   "total": 12720,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-E007",
+     "sen": 12720,
+     "desc": "WATER DISPENSER 29/60 - (HQ)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-019 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-020",
+   "date": "2026-09-03",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-C003",
+   "payee": "HOUZS VENTURE SDN BHD",
+   "total": 1121691,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 1121691,
+     "desc": "Settle 1 invoice(s) — HOUZS VENTURE SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2608-203",
+     "kind": "opening",
+     "sen": 1121691,
+     "acPi": "PI-007987",
+     "supInv": "HV-INV-202608-0038"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-020 (September import)"
+  },
+  {
+   "acDoc": "MPV-2609-005",
+   "date": "2026-09-03",
+   "bank": "310-0010",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-O002",
+   "payee": "OHANA STUDIO MARKETING SDN. BHD.",
+   "total": 7000000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 7000000,
+     "desc": "prepay 70000.00 — OHANA STUDIO MARKETING SDN. BHD."
+    }
+   ],
+   "ticks": [],
+   "advance": 7000000,
+   "note": "AutoCount MPV-2609-005 (September import)"
+  },
+  {
+   "acDoc": "MPV-2609-006",
+   "date": "2026-09-03",
+   "bank": "310-0010",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-O002",
+   "payee": "OHANA STUDIO MARKETING SDN. BHD.",
+   "total": 5000000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 5000000,
+     "desc": "prepay 50000.00 — OHANA STUDIO MARKETING SDN. BHD."
+    }
+   ],
+   "ticks": [],
+   "advance": 5000000,
+   "note": "AutoCount MPV-2609-006 (September import)"
+  },
+  {
+   "acDoc": "PV-001636",
+   "date": "2026-09-03",
+   "bank": "310-0060",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "HOUZS CENTURY SDN BHD (MAYBANK TRADE FINANCE)",
+   "total": 8320962,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "460-0009",
+     "sen": 8267138,
+     "desc": "SETTLEMENT FOR TRADE FINANCE - DIGLANT (O830IFI0038902)"
+    },
+    {
+     "acc": "900-L004",
+     "sen": 53824,
+     "desc": "INTEREST CHARGE FOR TRADE FINANCE - DIGLANT (O830IFI0038902)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount PV-001636 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-021",
+   "date": "2026-09-04",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "LOO WEN WEI",
+   "total": 243940,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-P008",
+     "sen": 57815,
+     "desc": "LWW DIRECTOR - CLAIM PETROL AUG 2026"
+    },
+    {
+     "acc": "900-P008",
+     "sen": 40000,
+     "desc": "LWW DIRECTOR - CLAIM TNG AUG 2026"
+    },
+    {
+     "acc": "900-S003",
+     "sen": 146125,
+     "desc": "LWW DIRECTOR - CLAIM DINNER WITH NICE FUTURE AUG 2026"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-021 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-022",
+   "date": "2026-09-04",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "ADFORTLESS SDN BHD",
+   "total": 35640,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-W002",
+     "sen": 35640,
+     "desc": "ADD ON : MULTI NUMBER*1 (2 MONTHS) - Q-AFMY20260306"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-022 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-023",
+   "date": "2026-09-04",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-E002",
+   "payee": "EMPIRE ASIA EVENTS MARKETING SDN BHD",
+   "total": 5410000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 5410000,
+     "desc": "Settle 3 invoice(s) — EMPIRE ASIA EVENTS MARKETING SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "NEW:PI-007988",
+     "kind": "september-new",
+     "sen": 2992500,
+     "acPi": "PI-007988",
+     "supInv": "S226-1011"
+    },
+    {
+     "bill": "HC-API-2608-094",
+     "kind": "opening",
+     "sen": 617500,
+     "acPi": "PI-008007",
+     "supInv": "K426-1049"
+    },
+    {
+     "bill": "HC-API-2608-046",
+     "kind": "opening",
+     "sen": 1800000,
+     "acPi": "PI-008009",
+     "supInv": "I226-1016"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-023 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-024",
+   "date": "2026-09-04",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "SAMUEL",
+   "total": 8938,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-W002",
+     "sen": 8938,
+     "desc": "CLAIM FOR SUBSCRIBE CLAUDE AI (9MHM7BBC-0001) (21.60 USD)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-024 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-025",
+   "date": "2026-09-04",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "PETER LIM YUE ZHE",
+   "total": 3140,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-E006",
+     "sen": 3140,
+     "desc": "MEASURING TAPE & LABLE"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-025 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-027",
+   "date": "2026-09-04",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-E002",
+   "payee": "EMPIRE ASIA EVENTS MARKETING SDN BHD",
+   "total": 3204000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 3204000,
+     "desc": "Settle 2 invoice(s) — EMPIRE ASIA EVENTS MARKETING SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2608-094",
+     "kind": "opening",
+     "sen": 2204000,
+     "acPi": "PI-008007",
+     "supInv": "K426-1049"
+    },
+    {
+     "bill": "HC-API-2608-091",
+     "kind": "opening",
+     "sen": 1000000,
+     "acPi": "PI-008008",
+     "supInv": "I226-1037"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-027 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-028",
+   "date": "2026-09-04",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-E002",
+   "payee": "ECO & GREEN EXHIBITION SDN BHD",
+   "total": 1720000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 1720000,
+     "desc": "Settle 1 invoice(s) — ECO & GREEN EXHIBITION SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2608-163",
+     "kind": "opening",
+     "sen": 1720000,
+     "acPi": "PI-008010",
+     "supInv": "PI-04647"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-028 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-029",
+   "date": "2026-09-04",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "LIM WEI SIANG",
+   "total": 474057,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-A007",
+     "sen": 11158,
+     "desc": "SHOPIFY ERGOTEX - MARKETING AUG 2026"
+    },
+    {
+     "acc": "900-A010",
+     "sen": 11092,
+     "desc": "SHOPIFY ZANOTTI LIVING - MARKETING AUG 2026"
+    },
+    {
+     "acc": "900-P008",
+     "sen": 12902,
+     "desc": "TNG CARD"
+    },
+    {
+     "acc": "900-P008",
+     "sen": 17464,
+     "desc": "TNG EWALLET"
+    },
+    {
+     "acc": "900-S005",
+     "sen": 98293,
+     "desc": "ANTHROPIC CLOUDE - AI CLAUDE AUG26 ( 88.47 + 894.46 ) - NO ORIGINAL INVOICE"
+    },
+    {
+     "acc": "900-S005",
+     "sen": 136538,
+     "desc": "ANTHROPIC PBC - AI CLAUDE AUG26 (158.46+54+52.71+160.13+48.73+891.35)"
+    },
+    {
+     "acc": "900-S005",
+     "sen": 5722,
+     "desc": "GITHUB (17 AUG - 16 SEPT26 & 01JUL - 31JUL26)"
+    },
+    {
+     "acc": "900-S005",
+     "sen": 10947,
+     "desc": "HOSTINGER KVM 2 - AUG 2026"
+    },
+    {
+     "acc": "900-S005",
+     "sen": 4983,
+     "desc": "REGISTRATION CLOUDFARE AUG 2026 (27.48+22.35)"
+    },
+    {
+     "acc": "900-S005",
+     "sen": 119025,
+     "desc": "SUPABASE JUL - AUG26 (713.50+476.75)"
+    },
+    {
+     "acc": "900-S005",
+     "sen": 25525,
+     "desc": "TYPELESS PRO (8AUG - 8NOV26)"
+    },
+    {
+     "acc": "900-S005",
+     "sen": 20408,
+     "desc": "WHATSAPP BUSINESS ACCOUNT"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-029 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-030",
+   "date": "2026-09-04",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "MITSUBISHI HC CAPITAL MALAYSIA SDN BHD",
+   "total": 260000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "450-H005",
+     "sen": 260000,
+     "desc": "VQE 9058 - HP- INSTL 48/06"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-030 (September import)"
+  },
+  {
+   "acDoc": "MPV-2609-007",
+   "date": "2026-09-04",
+   "bank": "310-0010",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 310-0030 CASH AT BANK - ALLIANCE",
+   "total": 9500000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "310-0030",
+     "sen": 9500000,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-007 (September import) — TRANSFER FROM MAYBANK TO ALLIANCE"
+  },
+  {
+   "acDoc": "APV-2609-001",
+   "date": "2026-09-05",
+   "bank": "310-0030",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "SALARY - AUG'26",
+   "total": 6815569,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "410-0010",
+     "sen": 6815569,
+     "desc": "SALARY - AUG'26"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount APV-2609-001 (September import)"
+  },
+  {
+   "acDoc": "UPV-2609-001",
+   "date": "2026-09-05",
+   "bank": "310-0040",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "UNITED OVERSEAS BANK",
+   "total": 1088900,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "460-0010",
+     "sen": 1088900,
+     "desc": "LOAN INSTALLMENT - 11/36"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount UPV-2609-001 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-031",
+   "date": "2026-09-07",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-C003",
+   "payee": "HOUZS VENTURE SDN BHD",
+   "total": 12439,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 12439,
+     "desc": "Settle 1 invoice(s) — HOUZS VENTURE SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2608-204",
+     "kind": "opening",
+     "sen": 12439,
+     "acPi": "PI-008031",
+     "supInv": "HV-INV-202608-0040"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-031 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-032",
+   "date": "2026-09-07",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "AIR SELANGOR (JOMPAY)",
+   "total": 6890,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-W009",
+     "sen": 6890,
+     "desc": "WATER BIL STAFF WH BALAKONG AUG 2026"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-032 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-033",
+   "date": "2026-09-07",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "AIR SELANGOR (JOMPAY)",
+   "total": 26840,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-W007",
+     "sen": 26840,
+     "desc": "WH BALAKONG - WATER BIL (AUG 2026)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-033 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-034",
+   "date": "2026-09-07",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "TENAGA NASIONAL BERHAD",
+   "total": 189470,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-W001",
+     "sen": 189470,
+     "desc": "PUCHONG LEGENDA ELECTRIC AUG 2026"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-034 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-036",
+   "date": "2026-09-07",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "LG",
+   "total": 5000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-E007",
+     "sen": 5000,
+     "desc": "WATER DISPENSER 17/84 - (PUCHONG)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-036 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-037",
+   "date": "2026-09-07",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "SOH KIM YING (LANDLORD)",
+   "total": 280000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-H005",
+     "sen": 280000,
+     "desc": "RENTAL SEPT 2026 PARAGON HEIGHTS"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-037 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-038",
+   "date": "2026-09-07",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "HLH RESOURCES SDN BHD",
+   "total": 1891952,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-R004",
+     "sen": 1891952,
+     "desc": "RENTAL - SEPT 2026 (WAREHOUSE PENANG)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-038 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-039",
+   "date": "2026-09-07",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "GEOPANCAR SDN BHD",
+   "total": 2756000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-R005",
+     "sen": 2756000,
+     "desc": "RENTAL - SEPT 2026 (WAREHOUSE BALAKONG)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-039 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-040",
+   "date": "2026-09-07",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "CHEE MEI KOOK",
+   "total": 120000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-H004",
+     "sen": 120000,
+     "desc": "HOSTEL SERI KEMBANGAN - RENTAL SEPT 2026 (STAFF WH BALAKONG)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-040 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-041",
+   "date": "2026-09-07",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-M003",
+   "payee": "MSJ TRANSPORT SERVICE",
+   "total": 441000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 441000,
+     "desc": "Settle 2 invoice(s) — MSJ TRANSPORT SERVICE"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "NEW:PI-008032",
+     "kind": "september-new",
+     "sen": 272000,
+     "acPi": "PI-008032",
+     "supInv": "618526"
+    },
+    {
+     "bill": "NEW:PI-008033",
+     "kind": "september-new",
+     "sen": 169000,
+     "acPi": "PI-008033",
+     "supInv": "618527"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-041 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-042",
+   "date": "2026-09-07",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "IOI CITY MALL SDN BHD",
+   "total": 4590000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-R031",
+     "sen": 4590000,
+     "desc": "SOLO IOI CITY MALL AKEMI ROADSHOW  ( 16 - 20 SEPT 2026 )"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-042 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-043",
+   "date": "2026-09-07",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-E003",
+   "payee": "EG GROUPS HOLDING SDN BHD",
+   "total": 6380000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 6380000,
+     "desc": "Settle 1 invoice(s) — EG GROUPS HOLDING SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "NEW:PI-008036",
+     "kind": "september-new",
+     "sen": 6380000,
+     "acPi": "PI-008036",
+     "supInv": "H26080122"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-043 (September import)"
+  },
+  {
+   "acDoc": "MPV-2609-008",
+   "date": "2026-09-07",
+   "bank": "310-0010",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-D003",
+   "payee": "DREAM ART (M) SDN BHD",
+   "total": 16370790,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 16370790,
+     "desc": "Settle 28 invoice(s) — DREAM ART (M) SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2607-191",
+     "kind": "opening",
+     "sen": 875520,
+     "acPi": "PI-007709",
+     "supInv": "51236"
+    },
+    {
+     "bill": "HC-API-2607-192",
+     "kind": "opening",
+     "sen": 129600,
+     "acPi": "PI-007710",
+     "supInv": "51237"
+    },
+    {
+     "bill": "HC-API-2607-193",
+     "kind": "opening",
+     "sen": 393836,
+     "acPi": "PI-007711",
+     "supInv": "51238"
+    },
+    {
+     "bill": "HC-API-2607-194",
+     "kind": "opening",
+     "sen": 129600,
+     "acPi": "PI-007712",
+     "supInv": "51239"
+    },
+    {
+     "bill": "HC-API-2607-195",
+     "kind": "opening",
+     "sen": 455250,
+     "acPi": "PI-007713",
+     "supInv": "51240"
+    },
+    {
+     "bill": "HC-API-2607-196",
+     "kind": "opening",
+     "sen": 543360,
+     "acPi": "PI-007714",
+     "supInv": "51241"
+    },
+    {
+     "bill": "HC-API-2607-197",
+     "kind": "opening",
+     "sen": 270510,
+     "acPi": "PI-007715",
+     "supInv": "51242"
+    },
+    {
+     "bill": "HC-API-2607-198",
+     "kind": "opening",
+     "sen": 308266,
+     "acPi": "PI-007716",
+     "supInv": "51243"
+    },
+    {
+     "bill": "HC-API-2607-199",
+     "kind": "opening",
+     "sen": 546120,
+     "acPi": "PI-007717",
+     "supInv": "51244"
+    },
+    {
+     "bill": "HC-API-2607-200",
+     "kind": "opening",
+     "sen": 323636,
+     "acPi": "PI-007718",
+     "supInv": "51245"
+    },
+    {
+     "bill": "HC-API-2607-201",
+     "kind": "opening",
+     "sen": 235640,
+     "acPi": "PI-007719",
+     "supInv": "51246"
+    },
+    {
+     "bill": "HC-API-2607-202",
+     "kind": "opening",
+     "sen": 901032,
+     "acPi": "PI-007720",
+     "supInv": "51247"
+    },
+    {
+     "bill": "HC-API-2607-203",
+     "kind": "opening",
+     "sen": 568480,
+     "acPi": "PI-007721",
+     "supInv": "51248"
+    },
+    {
+     "bill": "HC-API-2607-211",
+     "kind": "opening",
+     "sen": 711150,
+     "acPi": "PI-007722",
+     "supInv": "51249"
+    },
+    {
+     "bill": "HC-API-2607-212",
+     "kind": "opening",
+     "sen": 619306,
+     "acPi": "PI-007723",
+     "supInv": "51250"
+    },
+    {
+     "bill": "HC-API-2607-213",
+     "kind": "opening",
+     "sen": 1307988,
+     "acPi": "PI-007724",
+     "supInv": "51251"
+    },
+    {
+     "bill": "HC-API-2607-214",
+     "kind": "opening",
+     "sen": 474120,
+     "acPi": "PI-007725",
+     "supInv": "51252"
+    },
+    {
+     "bill": "HC-API-2607-215",
+     "kind": "opening",
+     "sen": 760968,
+     "acPi": "PI-007726",
+     "supInv": "51253"
+    },
+    {
+     "bill": "HC-API-2607-216",
+     "kind": "opening",
+     "sen": 777600,
+     "acPi": "PI-007727",
+     "supInv": "51254"
+    },
+    {
+     "bill": "HC-API-2607-217",
+     "kind": "opening",
+     "sen": 494276,
+     "acPi": "PI-007728",
+     "supInv": "51255"
+    },
+    {
+     "bill": "HC-API-2607-218",
+     "kind": "opening",
+     "sen": 743688,
+     "acPi": "PI-007729",
+     "supInv": "51256"
+    },
+    {
+     "bill": "HC-API-2607-219",
+     "kind": "opening",
+     "sen": 502200,
+     "acPi": "PI-007730",
+     "supInv": "51257"
+    },
+    {
+     "bill": "HC-API-2607-220",
+     "kind": "opening",
+     "sen": 546880,
+     "acPi": "PI-007731",
+     "supInv": "51258"
+    },
+    {
+     "bill": "HC-API-2607-221",
+     "kind": "opening",
+     "sen": 618640,
+     "acPi": "PI-007732",
+     "supInv": "51259"
+    },
+    {
+     "bill": "HC-API-2607-222",
+     "kind": "opening",
+     "sen": 494700,
+     "acPi": "PI-007733",
+     "supInv": "51260"
+    },
+    {
+     "bill": "HC-API-2607-223",
+     "kind": "opening",
+     "sen": 531792,
+     "acPi": "PI-007734",
+     "supInv": "51261"
+    },
+    {
+     "bill": "HC-API-2607-224",
+     "kind": "opening",
+     "sen": 1624752,
+     "acPi": "PI-007735",
+     "supInv": "51262"
+    },
+    {
+     "bill": "HC-API-2607-225",
+     "kind": "opening",
+     "sen": 481880,
+     "acPi": "PI-007736",
+     "supInv": "51263"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-008 (September import)"
+  },
+  {
+   "acDoc": "MPV-2609-009",
+   "date": "2026-09-07",
+   "bank": "310-0010",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 310-0020 CASH AT BANK - HLBB",
+   "total": 15000000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "310-0020",
+     "sen": 15000000,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-009 (September import) — TRANSFER FROM MAYBANK TO HONG LEONG BANK"
+  },
+  {
+   "acDoc": "HPV-2609-044",
+   "date": "2026-09-08",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-N001",
+   "payee": "NAKI SDN BHD",
+   "total": 339510,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 339510,
+     "desc": "Settle 2 invoice(s) — NAKI SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2607-105",
+     "kind": "opening",
+     "sen": 101310,
+     "acPi": "PI-007702",
+     "supInv": "IN-N2607110"
+    },
+    {
+     "bill": "HC-API-2607-131",
+     "kind": "opening",
+     "sen": 238200,
+     "acPi": "PI-007761",
+     "supInv": "IV-N2607113"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-044 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-045",
+   "date": "2026-09-08",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "LG",
+   "total": 11660,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-E007",
+     "sen": 11660,
+     "desc": "WATER DISPENSER 17/60 - (WH BALAKONG)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-045 (September import)"
+  },
+  {
+   "acDoc": "OR2609-0002",
+   "date": "2026-09-08",
+   "bank": "310-0060",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "MAYBANK BERHAD",
+   "total": 5400,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-B001",
+     "sen": 5400,
+     "desc": "MAYBANK BERHAD — the charge on AutoCount OR2609-0002"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount OR2609-0002 bank charge (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-046",
+   "date": "2026-09-09",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-R002",
+   "payee": "RADIUS BUSINESS (MALAYSIA) SDN BHD",
+   "total": 725474,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 725474,
+     "desc": "Settle 1 invoice(s) — RADIUS BUSINESS (MALAYSIA) SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2608-179",
+     "kind": "opening",
+     "sen": 725474,
+     "acPi": "PI-008041",
+     "supInv": ""
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-046 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-047",
+   "date": "2026-09-09",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-E002",
+   "payee": "ECO & GREEN EXHIBITION SDN BHD",
+   "total": 9000000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 9000000,
+     "desc": "Settle 2 invoice(s) — ECO & GREEN EXHIBITION SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "NEW:PI-008042",
+     "kind": "september-new",
+     "sen": 5160000,
+     "acPi": "PI-008042",
+     "supInv": "IV 2608/419"
+    },
+    {
+     "bill": "NEW:PI-04102",
+     "kind": "september-new",
+     "sen": 3840000,
+     "acPi": "PI-04102",
+     "supInv": "IV 2609/015"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-047 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-048",
+   "date": "2026-09-09",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-C003",
+   "payee": "HOUZS VENTURE SDN BHD",
+   "total": 298603,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 298603,
+     "desc": "Settle 1 invoice(s) — HOUZS VENTURE SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "NEW:PI-008043",
+     "kind": "september-new",
+     "sen": 298603,
+     "acPi": "PI-008043",
+     "supInv": "HV-INV-202609-0011"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-048 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-049",
+   "date": "2026-09-09",
+   "bank": "310-0020",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 321-0000 PETTY CASH - WAREHOUSE",
+   "total": 186440,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "321-0000",
+     "sen": 186440,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-049 (September import) — PETTY CASH REIMBURSEMENT 09 SEPT 2026"
+  },
+  {
+   "acDoc": "HPV-2609-050",
+   "date": "2026-09-09",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "TAN CHAI HAK",
+   "total": 14075,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-W003",
+     "sen": 14075,
+     "desc": "BAL PAY WORSHIPPING FOR PENANG WAREHOUSE 2026"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-050 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-051",
+   "date": "2026-09-09",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "KKJ OLIVER RESOURCES",
+   "total": 20000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "603-0000",
+     "sen": 20000,
+     "desc": "TRANSPORT WH  PENANG TO WH BLK (PO-008730) - OHANA STUDIO"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-051 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-052",
+   "date": "2026-09-09",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "YSL MANAGEMENT CONSULTANCY SDN BHD",
+   "total": 184010,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "350-0020",
+     "sen": 184010,
+     "desc": "SECRETARY FEE FOR AUDITED REPORT BEHALF (ZANOTTI (M) SDN BHD)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-052 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-053",
+   "date": "2026-09-09",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "GEOPANCAR SDN BHD",
+   "total": 145749,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-W007",
+     "sen": 145749,
+     "desc": "ELECTRICITY AUG 2026 (WAREHOUSE BALAKONG) - METER READING 40647 - 38020= 2,627kWh"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-053 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-054",
+   "date": "2026-09-09",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "PUBLIC BANK - HIRE PURCHASE FOR VNB 9058",
+   "total": 252100,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "450-H002",
+     "sen": 252100,
+     "desc": "VNB 9058 - INSTALLMENT 23/60"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-054 (September import)"
+  },
+  {
+   "acDoc": "MPV-2609-010",
+   "date": "2026-09-09",
+   "bank": "310-0010",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 310-0020 CASH AT BANK - HLBB",
+   "total": 10000000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "310-0020",
+     "sen": 10000000,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-010 (September import) — TRANSFER FROM MAYBANK TO HONG LEONG BANK"
+  },
+  {
+   "acDoc": "HPV-2609-055",
+   "date": "2026-09-10",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "ET PRINT STUDIO",
+   "total": 76000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-P001",
+     "sen": 76000,
+     "desc": "WH BALAKONG - BANNER"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-055 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-056",
+   "date": "2026-09-10",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "T FORCE AUTO SERVICES SDN BHD",
+   "total": 116200,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-U010",
+     "sen": 116200,
+     "desc": "VPC 9058 - REPAIR LORRY - WC00165"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-056 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-057",
+   "date": "2026-09-10",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-B006",
+   "payee": "BRIGHTSUN LOGISTICS AND WAREHOUSING SDN. BHD. (SABAH)",
+   "total": 160770,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 160770,
+     "desc": "Settle 2 invoice(s) — BRIGHTSUN LOGISTICS AND WAREHOUSING SDN. BHD. (SABAH)"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2608-205",
+     "kind": "opening",
+     "sen": 50000,
+     "acPi": "PI-008044",
+     "supInv": "IV-26080479"
+    },
+    {
+     "bill": "HC-API-2608-206",
+     "kind": "opening",
+     "sen": 110770,
+     "acPi": "PI-008045",
+     "supInv": "IV-26080480"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-057 (September import)"
+  },
+  {
+   "acDoc": "MPV-2609-011",
+   "date": "2026-09-10",
+   "bank": "310-0010",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 310-0060 CASH AT BANK - MAYBANK (TRADE FINANCE)",
+   "total": 8000000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "310-0060",
+     "sen": 8000000,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-011 (September import) — TRANSFER FROM MBB TO MBB TRADE FINANCE - DIGLANT"
+  },
+  {
+   "acDoc": "MPV-2609-012",
+   "date": "2026-09-10",
+   "bank": "310-0010",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-N002",
+   "payee": "NB FURNITURE (M) SDN BHD",
+   "total": 2338100,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 2338100,
+     "desc": "Settle 9 invoice(s) — NB FURNITURE (M) SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2607-020",
+     "kind": "opening",
+     "sen": 520500,
+     "acPi": "PI-007386",
+     "supInv": "NBF2607-025"
+    },
+    {
+     "bill": "HC-API-2607-027",
+     "kind": "opening",
+     "sen": 481300,
+     "acPi": "PI-007408",
+     "supInv": "NBF2607-128"
+    },
+    {
+     "bill": "HC-API-2607-060",
+     "kind": "opening",
+     "sen": 178500,
+     "acPi": "PI-007515",
+     "supInv": "NBF2607-324"
+    },
+    {
+     "bill": "HC-API-2607-036",
+     "kind": "opening",
+     "sen": 83000,
+     "acPi": "PI-007555",
+     "supInv": "NBF2607-211"
+    },
+    {
+     "bill": "HC-API-2607-090",
+     "kind": "opening",
+     "sen": 242300,
+     "acPi": "PI-007589",
+     "supInv": "NBF2607-450"
+    },
+    {
+     "bill": "HC-API-2607-104",
+     "kind": "opening",
+     "sen": 57500,
+     "acPi": "PI-007610",
+     "supInv": "NBF2607-583"
+    },
+    {
+     "bill": "HC-API-2607-132",
+     "kind": "opening",
+     "sen": 479000,
+     "acPi": "PI-007611",
+     "supInv": "NBF2607-656"
+    },
+    {
+     "bill": "HC-API-2607-174",
+     "kind": "opening",
+     "sen": 228500,
+     "acPi": "PI-007668",
+     "supInv": "NBF2607-840"
+    },
+    {
+     "bill": "HC-API-2607-103",
+     "kind": "opening",
+     "sen": 67500,
+     "acPi": "PI-007760",
+     "supInv": "NBF2607-568"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-012 (September import)"
+  },
+  {
+   "acDoc": "MPV-2609-013",
+   "date": "2026-09-10",
+   "bank": "310-0010",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-O002",
+   "payee": "OHANA STUDIO MARKETING SDN. BHD.",
+   "total": 2000000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 2000000,
+     "desc": "prepay 20000.00 — OHANA STUDIO MARKETING SDN. BHD."
+    }
+   ],
+   "ticks": [],
+   "advance": 2000000,
+   "note": "AutoCount MPV-2609-013 (September import)"
+  },
+  {
+   "acDoc": "PV-001637",
+   "date": "2026-09-10",
+   "bank": "310-0060",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "HOUZS CENTURY SDN BHD (MAYBANK TRADE FINANCE)",
+   "total": 11127219,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "460-0009",
+     "sen": 11046300,
+     "desc": "SETTLEMENT FOR TRADE FINANCE - DIGLANT (O830IFI0039436)"
+    },
+    {
+     "acc": "900-L004",
+     "sen": 80919,
+     "desc": "INTEREST CHARGE FOR TRADE FINANCE - DIGLANT (O830IFI0039436)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount PV-001637 (September import)"
+  },
+  {
+   "acDoc": "APV-2609-002",
+   "date": "2026-09-11",
+   "bank": "310-0030",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "CHOONG HUI YEE (NICO)",
+   "total": 150000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "599-0001",
+     "sen": 150000,
+     "desc": "ADVANCE & SALARY"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount APV-2609-002 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-058",
+   "date": "2026-09-11",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-G001",
+   "payee": "GORGEOUS EVENT SDN. BHD.",
+   "total": 1200000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 1200000,
+     "desc": "Settle 1 invoice(s) — GORGEOUS EVENT SDN. BHD."
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "NEW:PI-008046",
+     "kind": "september-new",
+     "sen": 1200000,
+     "acPi": "PI-008046",
+     "supInv": "GE 0824"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-058 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-059",
+   "date": "2026-09-11",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "AIR SELANGOR (JOMPAY)",
+   "total": 13560,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-W005",
+     "sen": 13560,
+     "desc": "WATER BIL PUCHONG LAGENDA AUG26"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-059 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-060",
+   "date": "2026-09-11",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "MITSUBISHI HC CAPITAL MALAYSIA SDN BHD",
+   "total": 189300,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "450-H004",
+     "sen": 189300,
+     "desc": "NC MIGHTY FORKLIFT - HP- INSTL 48/13"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-060 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-061",
+   "date": "2026-09-14",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-T002",
+   "payee": "T.H.L. SOFA SDN BHD",
+   "total": 32000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 32000,
+     "desc": "Settle 1 invoice(s) — T.H.L. SOFA SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2608-082",
+     "kind": "opening",
+     "sen": 32000,
+     "acPi": "PI-007959",
+     "supInv": "INV/FG/2608/10346"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-061 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-062",
+   "date": "2026-09-14",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "U MOBILE SDN BHD",
+   "total": 242895,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-T001",
+     "sen": 10600,
+     "desc": "CARRESS - UMOBILE BILL AUG 2026"
+    },
+    {
+     "acc": "900-T001",
+     "sen": 76250,
+     "desc": "HOUZS - UMOBILE BILL AUG 2026"
+    },
+    {
+     "acc": "900-T001",
+     "sen": 156045,
+     "desc": "THE CONTS - UMOBILE BILL AUG 2026"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-062 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-063",
+   "date": "2026-09-14",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-O002",
+   "payee": "OHANA STUDIO MARKETING SDN. BHD.",
+   "total": 5000000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 5000000,
+     "desc": "prepay 50000.00 — OHANA STUDIO MARKETING SDN. BHD."
+    }
+   ],
+   "ticks": [],
+   "advance": 5000000,
+   "note": "AutoCount HPV-2609-063 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-065",
+   "date": "2026-09-14",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-E002",
+   "payee": "ECO & GREEN EXHIBITION SDN BHD",
+   "total": 4300000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 4300000,
+     "desc": "Settle 2 invoice(s) — ECO & GREEN EXHIBITION SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "NEW:PI-008100",
+     "kind": "september-new",
+     "sen": 2580000,
+     "acPi": "PI-008100",
+     "supInv": "IV 2609/107"
+    },
+    {
+     "bill": "NEW:PI-008101",
+     "kind": "september-new",
+     "sen": 1720000,
+     "acPi": "PI-008101",
+     "supInv": "IV 2609/133"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-065 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-066",
+   "date": "2026-09-14",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-M003",
+   "payee": "MSJ TRANSPORT SERVICE",
+   "total": 644000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 644000,
+     "desc": "Settle 4 invoice(s) — MSJ TRANSPORT SERVICE"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "NEW:PI-008102",
+     "kind": "september-new",
+     "sen": 122000,
+     "acPi": "PI-008102",
+     "supInv": "618532"
+    },
+    {
+     "bill": "NEW:PI-008103",
+     "kind": "september-new",
+     "sen": 206000,
+     "acPi": "PI-008103",
+     "supInv": "618533"
+    },
+    {
+     "bill": "NEW:PI-008104",
+     "kind": "september-new",
+     "sen": 210000,
+     "acPi": "PI-008104",
+     "supInv": "618534"
+    },
+    {
+     "bill": "NEW:PI-008105",
+     "kind": "september-new",
+     "sen": 106000,
+     "acPi": "PI-008105",
+     "supInv": "618535"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-066 (September import)"
+  },
+  {
+   "acDoc": "MPV-2609-014",
+   "date": "2026-09-14",
+   "bank": "310-0010",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 310-0020 CASH AT BANK - HLBB",
+   "total": 10000000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "310-0020",
+     "sen": 10000000,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-014 (September import) — TRANSFER FROM MAYBANK TO HONG LEONG BANK"
+  },
+  {
+   "acDoc": "PV-001630",
+   "date": "2026-09-14",
+   "bank": "310-0060",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-D002",
+   "payee": "DIGLANT MANUFACTURING SDN BHD.",
+   "total": 4708700,
+   "bankCharge": 5600,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 4708700,
+     "desc": "Settle 11 invoice(s) — DIGLANT MANUFACTURING SDN BHD."
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2607-046",
+     "kind": "opening",
+     "sen": 155000,
+     "acPi": "PI-007481",
+     "supInv": "DGSIZ26001194"
+    },
+    {
+     "bill": "HC-API-2607-047",
+     "kind": "opening",
+     "sen": 116250,
+     "acPi": "PI-007482",
+     "supInv": "DGSIZ26001195"
+    },
+    {
+     "bill": "HC-API-2607-048",
+     "kind": "opening",
+     "sen": 465000,
+     "acPi": "PI-007483",
+     "supInv": "DGSIZ26001196"
+    },
+    {
+     "bill": "HC-API-2607-049",
+     "kind": "opening",
+     "sen": 232500,
+     "acPi": "PI-007484",
+     "supInv": "DGSIZ26001197"
+    },
+    {
+     "bill": "HC-API-2607-050",
+     "kind": "opening",
+     "sen": 310000,
+     "acPi": "PI-007485",
+     "supInv": "DGSIZ26001198"
+    },
+    {
+     "bill": "HC-API-2607-051",
+     "kind": "opening",
+     "sen": 1085000,
+     "acPi": "PI-007486",
+     "supInv": "DGSIZ26001199"
+    },
+    {
+     "bill": "HC-API-2607-067",
+     "kind": "opening",
+     "sen": 238000,
+     "acPi": "PI-007507",
+     "supInv": "DGSIZ26001213"
+    },
+    {
+     "bill": "HC-API-2607-068",
+     "kind": "opening",
+     "sen": 155000,
+     "acPi": "PI-007508",
+     "supInv": "DGSIZ26001214"
+    },
+    {
+     "bill": "HC-API-2607-070",
+     "kind": "opening",
+     "sen": 1722780,
+     "acPi": "PI-007509",
+     "supInv": "DGSIZ26001216"
+    },
+    {
+     "bill": "HC-API-2607-029",
+     "kind": "opening",
+     "sen": 74170,
+     "acPi": "PI-007561",
+     "supInv": "DGSIZ26001169"
+    },
+    {
+     "bill": "HC-API-2607-028",
+     "kind": "opening",
+     "sen": 155000,
+     "acPi": "PI-007799",
+     "supInv": "DGSIZ26001166"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount PV-001630 (September import)"
+  },
+  {
+   "acDoc": "PV-001631",
+   "date": "2026-09-14",
+   "bank": "310-0060",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-D002",
+   "payee": "DIGLANT MANUFACTURING SDN BHD.",
+   "total": 8064300,
+   "bankCharge": 5600,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 8064300,
+     "desc": "Settle 8 invoice(s) — DIGLANT MANUFACTURING SDN BHD."
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2607-070",
+     "kind": "opening",
+     "sen": 406920,
+     "acPi": "PI-007509",
+     "supInv": "DGSIZ26001216"
+    },
+    {
+     "bill": "HC-API-2607-071",
+     "kind": "opening",
+     "sen": 780000,
+     "acPi": "PI-007510",
+     "supInv": "DGSIZ26001217"
+    },
+    {
+     "bill": "HC-API-2607-072",
+     "kind": "opening",
+     "sen": 1165000,
+     "acPi": "PI-007511",
+     "supInv": "DGSIZ26001219"
+    },
+    {
+     "bill": "HC-API-2607-073",
+     "kind": "opening",
+     "sen": 240000,
+     "acPi": "PI-007512",
+     "supInv": "DGSIZ26001220"
+    },
+    {
+     "bill": "HC-API-2607-074",
+     "kind": "opening",
+     "sen": 4141000,
+     "acPi": "PI-007513",
+     "supInv": "DGSIZ26001222"
+    },
+    {
+     "bill": "HC-API-2607-114",
+     "kind": "opening",
+     "sen": 170000,
+     "acPi": "PI-007618",
+     "supInv": "DGSIZ26001277"
+    },
+    {
+     "bill": "HC-API-2607-115",
+     "kind": "opening",
+     "sen": 156605,
+     "acPi": "PI-007619",
+     "supInv": "DGSIZ26001278"
+    },
+    {
+     "bill": "HC-API-2607-069",
+     "kind": "opening",
+     "sen": 1004775,
+     "acPi": "PI-007677",
+     "supInv": "DGSIZ26001215"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount PV-001631 (September import)"
+  },
+  {
+   "acDoc": "PV-001632",
+   "date": "2026-09-14",
+   "bank": "310-0060",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-D002",
+   "payee": "DIGLANT MANUFACTURING SDN BHD.",
+   "total": 7678640,
+   "bankCharge": 5600,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 7678640,
+     "desc": "Settle 12 invoice(s) — DIGLANT MANUFACTURING SDN BHD."
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2607-115",
+     "kind": "opening",
+     "sen": 258395,
+     "acPi": "PI-007619",
+     "supInv": "DGSIZ26001278"
+    },
+    {
+     "bill": "HC-API-2607-116",
+     "kind": "opening",
+     "sen": 116250,
+     "acPi": "PI-007620",
+     "supInv": "DGSIZ26001279"
+    },
+    {
+     "bill": "HC-API-2607-117",
+     "kind": "opening",
+     "sen": 1123275,
+     "acPi": "PI-007621",
+     "supInv": "DGSIZ26001280"
+    },
+    {
+     "bill": "HC-API-2607-118",
+     "kind": "opening",
+     "sen": 2760800,
+     "acPi": "PI-007622",
+     "supInv": "DGSIZ26001281"
+    },
+    {
+     "bill": "HC-API-2607-119",
+     "kind": "opening",
+     "sen": 1972000,
+     "acPi": "PI-007623",
+     "supInv": "DGSIZ26001282"
+    },
+    {
+     "bill": "HC-API-2607-120",
+     "kind": "opening",
+     "sen": 125000,
+     "acPi": "PI-007624",
+     "supInv": "DGSIZ26001283"
+    },
+    {
+     "bill": "HC-API-2607-121",
+     "kind": "opening",
+     "sen": 78750,
+     "acPi": "PI-007625",
+     "supInv": "DGSIZ26001286"
+    },
+    {
+     "bill": "HC-API-2607-122",
+     "kind": "opening",
+     "sen": 130000,
+     "acPi": "PI-007626",
+     "supInv": "DGSIZ26001296"
+    },
+    {
+     "bill": "HC-API-2607-123",
+     "kind": "opening",
+     "sen": 125850,
+     "acPi": "PI-007774",
+     "supInv": "DGSIZ26001301"
+    },
+    {
+     "bill": "HC-API-2607-124",
+     "kind": "opening",
+     "sen": 805000,
+     "acPi": "PI-007775",
+     "supInv": "DGSIZ26001302"
+    },
+    {
+     "bill": "HC-API-2607-125",
+     "kind": "opening",
+     "sen": 170000,
+     "acPi": "PI-007776",
+     "supInv": "DGSIZ26001303"
+    },
+    {
+     "bill": "HC-API-2607-126",
+     "kind": "opening",
+     "sen": 13320,
+     "acPi": "PI-007777",
+     "supInv": "DGSIZ26001304"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount PV-001632 (September import)"
+  },
+  {
+   "acDoc": "APV-2609-003",
+   "date": "2026-09-15",
+   "bank": "310-0030",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "HRDF",
+   "total": 61341,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "360-0040",
+     "sen": 61341,
+     "desc": "HRDF - AUG'26"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount APV-2609-003 (September import)"
+  },
+  {
+   "acDoc": "APV-2609-004",
+   "date": "2026-09-15",
+   "bank": "310-0030",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "SOCSO + EIS",
+   "total": 200330,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "410-0030",
+     "sen": 200330,
+     "desc": "SOCSO - AUG'26"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount APV-2609-004 (September import)"
+  },
+  {
+   "acDoc": "APV-2609-005",
+   "date": "2026-09-15",
+   "bank": "310-0030",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "LHDN",
+   "total": 361960,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "410-0050",
+     "sen": 361960,
+     "desc": "PCB - AUG'26"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount APV-2609-005 (September import)"
+  },
+  {
+   "acDoc": "APV-2609-006",
+   "date": "2026-09-15",
+   "bank": "310-0030",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "KWSP",
+   "total": 1733800,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "410-0020",
+     "sen": 1733800,
+     "desc": "EPF - AUG'26"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount APV-2609-006 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-067",
+   "date": "2026-09-15",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "MULTICODE IT CONNECTION SDN BHD",
+   "total": 74000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "200-8000",
+     "sen": 74000,
+     "desc": "PURCHASE 2 UNIT OF ACER MONITOR (INV NO : I-PJSL-016225)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-067 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-068",
+   "date": "2026-09-15",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "ENG SUI HOR",
+   "total": 116288,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-H003",
+     "sen": 116288,
+     "desc": "AIRBNB KULAI JB  EVENT (10-13 SEPT 2026) HMNARC4WWF"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-068 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-069",
+   "date": "2026-09-15",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "LIM WEI SIANG",
+   "total": 73600,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-P008",
+     "sen": 46140,
+     "desc": "PETROL CLAIM - LWS SEPT 2026"
+    },
+    {
+     "acc": "900-S003",
+     "sen": 27460,
+     "desc": "STAFF REFRESHMENT"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-069 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-070",
+   "date": "2026-09-15",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-M002",
+   "payee": "MODERN LIVING EVENT SDN BHD",
+   "total": 5300000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 5300000,
+     "desc": "Settle 2 invoice(s) — MODERN LIVING EVENT SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "NEW:PI-008106",
+     "kind": "september-new",
+     "sen": 1800000,
+     "acPi": "PI-008106",
+     "supInv": "SO26001535"
+    },
+    {
+     "bill": "NEW:PI-008107",
+     "kind": "september-new",
+     "sen": 3500000,
+     "acPi": "PI-008107",
+     "supInv": "SO26001528"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-070 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-071",
+   "date": "2026-09-15",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "LIM WEI LIANG",
+   "total": 21117,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-P008",
+     "sen": 21117,
+     "desc": "PETRON CLAIM LWL - SEPT26"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-071 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-072",
+   "date": "2026-09-15",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "MITSUBISHI HC CAPITAL MALAYSIA SDN BHD",
+   "total": 318000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "450-H003",
+     "sen": 318000,
+     "desc": "VPC 9058 - HP- INSTL 48/14"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-072 (September import)"
+  },
+  {
+   "acDoc": "MPV-2609-015",
+   "date": "2026-09-15",
+   "bank": "310-0010",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 310-0060 CASH AT BANK - MAYBANK (TRADE FINANCE)",
+   "total": 10100000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "310-0060",
+     "sen": 10100000,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-015 (September import) — TRANSFER FROM MBB TO MBB TRADE FINANCE - DIGLANT"
+  },
+  {
+   "acDoc": "MPV-2609-016",
+   "date": "2026-09-15",
+   "bank": "310-0010",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-C003",
+   "payee": "HOUZS VENTURE SDN BHD",
+   "total": 25522802,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 25522802,
+     "desc": "Settle 1 invoice(s) — HOUZS VENTURE SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "NEW:PI-008109",
+     "kind": "september-new",
+     "sen": 25522802,
+     "acPi": "PI-008109",
+     "supInv": "HV-INV-202609-0028"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-016 (September import)"
+  },
+  {
+   "acDoc": "PV-001633",
+   "date": "2026-09-15",
+   "bank": "310-0060",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-D002",
+   "payee": "DIGLANT MANUFACTURING SDN BHD.",
+   "total": 3653000,
+   "bankCharge": 5600,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 3653000,
+     "desc": "Settle 7 invoice(s) — DIGLANT MANUFACTURING SDN BHD."
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2607-162",
+     "kind": "opening",
+     "sen": 130000,
+     "acPi": "PI-007678",
+     "supInv": "DGSIZ26001344"
+    },
+    {
+     "bill": "HC-API-2607-163",
+     "kind": "opening",
+     "sen": 85000,
+     "acPi": "PI-007679",
+     "supInv": "DGSIZ26001345"
+    },
+    {
+     "bill": "HC-API-2607-164",
+     "kind": "opening",
+     "sen": 1076250,
+     "acPi": "PI-007680",
+     "supInv": "DGSIZ26001346"
+    },
+    {
+     "bill": "HC-API-2607-165",
+     "kind": "opening",
+     "sen": 345470,
+     "acPi": "PI-007681",
+     "supInv": "DGSIZ26001347"
+    },
+    {
+     "bill": "HC-API-2607-126",
+     "kind": "opening",
+     "sen": 301680,
+     "acPi": "PI-007777",
+     "supInv": "DGSIZ26001304"
+    },
+    {
+     "bill": "HC-API-2607-127",
+     "kind": "opening",
+     "sen": 1130600,
+     "acPi": "PI-007778",
+     "supInv": "DGSIZ26001305"
+    },
+    {
+     "bill": "HC-API-2607-128",
+     "kind": "opening",
+     "sen": 584000,
+     "acPi": "PI-007779",
+     "supInv": "DGSIZ26001306"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount PV-001633 (September import)"
+  },
+  {
+   "acDoc": "PV-001634",
+   "date": "2026-09-15",
+   "bank": "310-0060",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-D002",
+   "payee": "DIGLANT MANUFACTURING SDN BHD.",
+   "total": 11596740,
+   "bankCharge": 5600,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 11596740,
+     "desc": "Settle 10 invoice(s) — DIGLANT MANUFACTURING SDN BHD."
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2607-165",
+     "kind": "opening",
+     "sen": 3619330,
+     "acPi": "PI-007681",
+     "supInv": "DGSIZ26001347"
+    },
+    {
+     "bill": "HC-API-2607-166",
+     "kind": "opening",
+     "sen": 75600,
+     "acPi": "PI-007682",
+     "supInv": "DGSIZ26001348"
+    },
+    {
+     "bill": "HC-API-2607-167",
+     "kind": "opening",
+     "sen": 1654350,
+     "acPi": "PI-007683",
+     "supInv": "DGSIZ26001349"
+    },
+    {
+     "bill": "HC-API-2607-168",
+     "kind": "opening",
+     "sen": 775000,
+     "acPi": "PI-007684",
+     "supInv": "DGSIZ26001350"
+    },
+    {
+     "bill": "HC-API-2607-169",
+     "kind": "opening",
+     "sen": 4272900,
+     "acPi": "PI-007685",
+     "supInv": "DGSIZ26001351"
+    },
+    {
+     "bill": "HC-API-2607-170",
+     "kind": "opening",
+     "sen": 155000,
+     "acPi": "PI-007686",
+     "supInv": "DGSIZ26001352"
+    },
+    {
+     "bill": "HC-API-2607-171",
+     "kind": "opening",
+     "sen": 70000,
+     "acPi": "PI-007687",
+     "supInv": "DGSIZ26001353"
+    },
+    {
+     "bill": "HC-API-2607-186",
+     "kind": "opening",
+     "sen": 112000,
+     "acPi": "PI-007696",
+     "supInv": "DGSIZ26001401"
+    },
+    {
+     "bill": "HC-API-2607-184",
+     "kind": "opening",
+     "sen": 614160,
+     "acPi": "PI-007697",
+     "supInv": "DGSIZ26001398"
+    },
+    {
+     "bill": "HC-API-2607-185",
+     "kind": "opening",
+     "sen": 248400,
+     "acPi": "PI-007698",
+     "supInv": "DGSIZ26001399"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount PV-001634 (September import)"
+  },
+  {
+   "acDoc": "PV-001638",
+   "date": "2026-09-15",
+   "bank": "310-0060",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "HOUZS CENTURY SDN BHD (MAYBANK TRADE FINANCE)",
+   "total": 10066760,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "460-0009",
+     "sen": 9981700,
+     "desc": "SETTLEMENT FOR TRADE FINANCE - DIGLANT (O830IFI0039434)"
+    },
+    {
+     "acc": "900-L004",
+     "sen": 85060,
+     "desc": "INTEREST CHARGE FOR TRADE FINANCE - DIGLANT (O830IFI0039434)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount PV-001638 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-073",
+   "date": "2026-09-17",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "NC MIGHTY FORKLIFT EQUIPMENT SDN BHD",
+   "total": 18000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-E014",
+     "sen": 18000,
+     "desc": "WH BALAKONG - FORKLIFT - LABOUR CHECK, TESTING & TROUBLESHOOTING BATTERY (NC-INV2609-053)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-073 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-074",
+   "date": "2026-09-17",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "TENAGA NASIONAL BERHAD",
+   "total": 114655,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-W005",
+     "sen": 114655,
+     "desc": "S.ROOM KELANA JAYA 109 A FLOOR - ELECTRIC AUG 2026"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-074 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-075",
+   "date": "2026-09-17",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "TENAGA NASIONAL BERHAD",
+   "total": 144745,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-W005",
+     "sen": 144745,
+     "desc": "S.ROOM KELANA JAYA 109 B FLOOR - ELECTRIC AUG 2026"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-075 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-076",
+   "date": "2026-09-17",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "TENAGA NASIONAL BERHAD",
+   "total": 94300,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-W005",
+     "sen": 94300,
+     "desc": "S.ROOM KELANA JAYA 109 C FLOOR - ELECTRIC AUG 2026"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-076 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-077",
+   "date": "2026-09-17",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "TENAGA NASIONAL BERHAD",
+   "total": 41190,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-W005",
+     "sen": 41190,
+     "desc": "S.ROOM KELANA JAYA 109 G FLOOR - ELECTRIC AUG 2026"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-077 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-078",
+   "date": "2026-09-17",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "TENAGA NASIONAL BERHAD",
+   "total": 12285,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-W009",
+     "sen": 12285,
+     "desc": "WH BALAKONG STAFF ACCOMODATION - ELECTRICITY AUG 2026"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-078 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-080",
+   "date": "2026-09-17",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "TM UNIFI",
+   "total": 18335,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-T013",
+     "sen": 18335,
+     "desc": "WH BALAKONG - WIFI SEPT 2026"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-080 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-081",
+   "date": "2026-09-17",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "TM UNIFI",
+   "total": 18335,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-T014",
+     "sen": 18335,
+     "desc": "WH PNG - WIFI SEPT 2026"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-081 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-082",
+   "date": "2026-09-17",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-C006",
+   "payee": "C.I.S NETWORK SDN BHD",
+   "total": 1590000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 1590000,
+     "desc": "Settle 1 invoice(s) — C.I.S NETWORK SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "NEW:PI-008040",
+     "kind": "september-new",
+     "sen": 1590000,
+     "acPi": "PI-008040",
+     "supInv": "C01573/PI1"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-082 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-083",
+   "date": "2026-09-17",
+   "bank": "310-0020",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 321-0000 PETTY CASH - WAREHOUSE",
+   "total": 250346,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "321-0000",
+     "sen": 250346,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-083 (September import) — PETTY CASH REIMBURSEMENT 17 SEPT 2026"
+  },
+  {
+   "acDoc": "HPV-2609-084",
+   "date": "2026-09-17",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-M002",
+   "payee": "MODERN LIVING EVENT SDN BHD",
+   "total": 4400000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 4400000,
+     "desc": "Settle 2 invoice(s) — MODERN LIVING EVENT SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "NEW:PI-008110",
+     "kind": "september-new",
+     "sen": 2800000,
+     "acPi": "PI-008110",
+     "supInv": "SO26001601"
+    },
+    {
+     "bill": "NEW:PI-008111",
+     "kind": "september-new",
+     "sen": 1600000,
+     "acPi": "PI-008111",
+     "supInv": "SO26001602"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-084 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-085",
+   "date": "2026-09-17",
+   "bank": "310-0020",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 310-0040 CASH AT BANK - UOB",
+   "total": 1100000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "310-0040",
+     "sen": 1100000,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-085 (September import) — TRANSFER FROM HONG LEONG TO UOB"
+  },
+  {
+   "acDoc": "MPV-2609-017",
+   "date": "2026-09-17",
+   "bank": "310-0010",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 310-0020 CASH AT BANK - HLBB",
+   "total": 15000000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "310-0020",
+     "sen": 15000000,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-017 (September import) — TRANSFER FROM MAYBANK TO HONG LEONG BANK"
+  },
+  {
+   "acDoc": "HPV-2609-086",
+   "date": "2026-09-18",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-K002",
+   "payee": "KH EVENT MANAGEMENT SDN BHD",
+   "total": 1400000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 1400000,
+     "desc": "Settle 1 invoice(s) — KH EVENT MANAGEMENT SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "NEW:PI-008037",
+     "kind": "september-new",
+     "sen": 1400000,
+     "acPi": "PI-008037",
+     "supInv": "IV-15903"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-086 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-087",
+   "date": "2026-09-18",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "HOUZS VENTURE HOLDING SDN BHD",
+   "total": 1027600,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-H003",
+     "sen": 574630,
+     "desc": "AIRBNB (AUG 2026)"
+    },
+    {
+     "acc": "900-T002",
+     "sen": 452970,
+     "desc": "TICKET FLIGHT KL-KCH-KL (AUG 2026)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-087 (September import)"
+  },
+  {
+   "acDoc": "MPV-2609-018",
+   "date": "2026-09-18",
+   "bank": "310-0010",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 310-0020 CASH AT BANK - HLBB",
+   "total": 5000000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "310-0020",
+     "sen": 5000000,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-018 (September import) — TRANSFER FROM MAYBANK TO HONG LEONG BANK"
+  },
+  {
+   "acDoc": "APV-2609-007",
+   "date": "2026-09-21",
+   "bank": "310-0030",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "NURAZIRA BINTI ALI",
+   "total": 20000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "599-0001",
+     "sen": 20000,
+     "desc": "ADVANCE & SALARY"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount APV-2609-007 (September import)"
+  },
+  {
+   "acDoc": "APV-2609-008",
+   "date": "2026-09-21",
+   "bank": "310-0030",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "ADVAN SHAMSUL",
+   "total": 150000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-G001",
+     "sen": 150000,
+     "desc": "CONDOLENCE - ADVAN SHAMSUL"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount APV-2609-008 (September import)"
+  },
+  {
+   "acDoc": "APV-2609-009",
+   "date": "2026-09-21",
+   "bank": "310-0030",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "NURTIHANI",
+   "total": 100000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-G001",
+     "sen": 100000,
+     "desc": "CONDOLENCE - NURTIHANI"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount APV-2609-009 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-089",
+   "date": "2026-09-21",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "WONG YEW CHUNG (IT)",
+   "total": 45087,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-S005",
+     "sen": 45087,
+     "desc": "AI SUBCRIPTION - EJDTS7XS-0014 & 0002 (USD88.18 & 21.60)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-089 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-090",
+   "date": "2026-09-21",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "MUHAMMAD ZAIM BIN ZAIN NOORDIN (IT)",
+   "total": 9059,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-S005",
+     "sen": 9059,
+     "desc": "AI SUBCRIPTION - DPOTWPPO-0002 (USD21.60)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-090 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-091",
+   "date": "2026-09-21",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "SITI RAFIDAH (910721-14-5086) CLAIM",
+   "total": 2650,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-P001",
+     "sen": 1200,
+     "desc": "CERTIFIED TRUE COPY STAMP"
+    },
+    {
+     "acc": "900-P002",
+     "sen": 1450,
+     "desc": "LALAMOVE - SEND INVOICE TO MAYBANK TRADE FINANCE 21 SEPT 2026"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-091 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-092",
+   "date": "2026-09-21",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-D001",
+   "payee": "Dunlopillo (M) SDN BHD",
+   "total": 2900000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 2900000,
+     "desc": "Settle 1 invoice(s) — Dunlopillo (M) SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2607-092",
+     "kind": "opening",
+     "sen": 2900000,
+     "acPi": "PI-008114",
+     "supInv": "700000309 2027"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-092 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-093",
+   "date": "2026-09-21",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-M003",
+   "payee": "MSJ TRANSPORT SERVICE",
+   "total": 513000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 513000,
+     "desc": "Settle 3 invoice(s) — MSJ TRANSPORT SERVICE"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "NEW:PI-008112",
+     "kind": "september-new",
+     "sen": 163000,
+     "acPi": "PI-008112",
+     "supInv": "618536"
+    },
+    {
+     "bill": "NEW:PI-008113",
+     "kind": "september-new",
+     "sen": 164000,
+     "acPi": "PI-008113",
+     "supInv": "618537"
+    },
+    {
+     "bill": "NEW:PI-008115",
+     "kind": "september-new",
+     "sen": 186000,
+     "acPi": "PI-008115",
+     "supInv": "618541"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-093 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-094",
+   "date": "2026-09-22",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-H003",
+   "payee": "HOOKKA MANUFACTURING SDN. BHD.",
+   "total": 4000000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 4000000,
+     "desc": "prepay 40000.00 — HOOKKA MANUFACTURING SDN. BHD."
+    }
+   ],
+   "ticks": [],
+   "advance": 4000000,
+   "note": "AutoCount HPV-2609-094 (September import)"
+  },
+  {
+   "acDoc": "MPV-2609-019",
+   "date": "2026-09-22",
+   "bank": "310-0010",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 310-0020 CASH AT BANK - HLBB",
+   "total": 15000000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "310-0020",
+     "sen": 15000000,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-019 (September import) — TRANSFER FROM MAYBANK TO HONG LEONG BANK"
+  },
+  {
+   "acDoc": "PV-001640",
+   "date": "2026-09-22",
+   "bank": "310-0060",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-A004",
+   "payee": "ARMANI SOFA SDN. BHD.",
+   "total": 3911900,
+   "bankCharge": 5600,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 3911900,
+     "desc": "prepay 39119.00 — ARMANI SOFA SDN. BHD."
+    }
+   ],
+   "ticks": [],
+   "advance": 3911900,
+   "note": "AutoCount PV-001640 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-097",
+   "date": "2026-09-23",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-C001",
+   "payee": "CHARM EMPOWER SDN BHD",
+   "total": 3200000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 3200000,
+     "desc": "Settle 1 invoice(s) — CHARM EMPOWER SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2608-003",
+     "kind": "opening",
+     "sen": 3200000,
+     "acPi": "PI-007880",
+     "supInv": "PL3-26029"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-097 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-098",
+   "date": "2026-09-23",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-C001",
+   "payee": "CHARM EMPOWER SDN BHD",
+   "total": 1210000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 1210000,
+     "desc": "Settle 1 invoice(s) — CHARM EMPOWER SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2608-003",
+     "kind": "opening",
+     "sen": 1210000,
+     "acPi": "PI-007880",
+     "supInv": "PL3-26029"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-098 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-099",
+   "date": "2026-09-23",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-K002",
+   "payee": "KH EVENT MANAGEMENT SDN BHD",
+   "total": 2100000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 2100000,
+     "desc": "Settle 1 invoice(s) — KH EVENT MANAGEMENT SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "NEW:PI-008038",
+     "kind": "september-new",
+     "sen": 2100000,
+     "acPi": "PI-008038",
+     "supInv": "IV-15942"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-099 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-100",
+   "date": "2026-09-23",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-C007",
+   "payee": "CV SMART ENTERPRISE",
+   "total": 78000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 78000,
+     "desc": "Settle 1 invoice(s) — CV SMART ENTERPRISE"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "NEW:PI-008120",
+     "kind": "september-new",
+     "sen": 78000,
+     "acPi": "PI-008120",
+     "supInv": "2026/ 0021"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-100 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-101",
+   "date": "2026-09-23",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "AIR SELANGOR (JOMPAY)",
+   "total": 3600,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-W005",
+     "sen": 3600,
+     "desc": "S.ROOM KELANA JAYA G FLOOR- WATER BIL AUG 2026"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-101 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-102",
+   "date": "2026-09-23",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "AIR SELANGOR (JOMPAY)",
+   "total": 3600,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-W005",
+     "sen": 3600,
+     "desc": "S.ROOM KELANA JAYA 109B FLOOR- WATER BIL AUG 2026"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-102 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-103",
+   "date": "2026-09-23",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "LIM WEI LIANG",
+   "total": 200000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-R001",
+     "sen": 200000,
+     "desc": "RENTAL SEPT 2026 PUCHONG LAGENDA"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-103 (September import)"
+  },
+  {
+   "acDoc": "MPV-2609-020",
+   "date": "2026-09-23",
+   "bank": "310-0010",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "LIM WEI SIANG",
+   "total": 12300000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "430-0002",
+     "sen": 12300000,
+     "desc": "REPAY TO DIRECTOR"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-020 (September import)"
+  },
+  {
+   "acDoc": "APV-2609-010",
+   "date": "2026-09-24",
+   "bank": "310-0030",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "SALARY - AUG'26",
+   "total": 145928,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "410-0010",
+     "sen": 145928,
+     "desc": "BALANCE SALARY - AUG'26"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount APV-2609-010 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-104",
+   "date": "2026-09-24",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "COCO CLEAN PANDA",
+   "total": 110000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-C002",
+     "sen": 110000,
+     "desc": "CLEANING SARAWAK FAIR (IV-00015)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-104 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-105",
+   "date": "2026-09-24",
+   "bank": "310-0020",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 321-0000 PETTY CASH - WAREHOUSE",
+   "total": 246814,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "321-0000",
+     "sen": 246814,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-105 (September import) — PETTY CASH REIMBURSEMENT 24 SEPT 2026"
+  },
+  {
+   "acDoc": "HPV-2609-106",
+   "date": "2026-09-24",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "LIM WEI SIANG",
+   "total": 121946,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-P008",
+     "sen": 11356,
+     "desc": "PETROL CLAIM - LWS SEPT 2026"
+    },
+    {
+     "acc": "900-R005",
+     "sen": 100000,
+     "desc": "RENTAL SEPT 2026 (WAREHOUSE BALAKONG) - COMPOUND PAID BY MR LIM"
+    },
+    {
+     "acc": "900-S003",
+     "sen": 10590,
+     "desc": "STAFF REFRESHMENT"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-106 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-107",
+   "date": "2026-09-24",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-B005",
+   "payee": "BRIGHTSUN WAREHOUSING LOGISTIC (SARAWAK) SDN BHD",
+   "total": 241720,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 241720,
+     "desc": "Settle 3 invoice(s) — BRIGHTSUN WAREHOUSING LOGISTIC (SARAWAK) SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "NEW:PI-008121",
+     "kind": "september-new",
+     "sen": 88000,
+     "acPi": "PI-008121",
+     "supInv": "IV-KCH-260304"
+    },
+    {
+     "bill": "NEW:PI-008122",
+     "kind": "september-new",
+     "sen": 88000,
+     "acPi": "PI-008122",
+     "supInv": "IV-KCH-260305"
+    },
+    {
+     "bill": "NEW:PI-008123",
+     "kind": "september-new",
+     "sen": 65720,
+     "acPi": "PI-008123",
+     "supInv": "IV-KCH-260306"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-107 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-108",
+   "date": "2026-09-24",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-D004",
+   "payee": "DORSETTLOFT SOFA SDN. BHD.",
+   "total": 5000000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 5000000,
+     "desc": "prepay 50000.00 — DORSETTLOFT SOFA SDN. BHD."
+    }
+   ],
+   "ticks": [],
+   "advance": 5000000,
+   "note": "AutoCount HPV-2609-108 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-109",
+   "date": "2026-09-24",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-E001",
+   "payee": "EIGNRETEP SDN BHD",
+   "total": 3000000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 3000000,
+     "desc": "Settle 33 invoice(s) — EIGNRETEP SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2602-018",
+     "kind": "opening",
+     "sen": 52095,
+     "acPi": "PI-006407",
+     "supInv": "26/02/0034"
+    },
+    {
+     "bill": "HC-API-2602-019",
+     "kind": "opening",
+     "sen": 65210,
+     "acPi": "PI-006408",
+     "supInv": "26/02/0036"
+    },
+    {
+     "bill": "HC-API-2602-020",
+     "kind": "opening",
+     "sen": 95690,
+     "acPi": "PI-006409",
+     "supInv": "26/02/0037"
+    },
+    {
+     "bill": "HC-API-2602-021",
+     "kind": "opening",
+     "sen": 101215,
+     "acPi": "PI-006410",
+     "supInv": "26/02/0038"
+    },
+    {
+     "bill": "HC-API-2602-022",
+     "kind": "opening",
+     "sen": 135800,
+     "acPi": "PI-006411",
+     "supInv": "26/02/0039"
+    },
+    {
+     "bill": "HC-API-2602-023",
+     "kind": "opening",
+     "sen": 68740,
+     "acPi": "PI-006412",
+     "supInv": "26/02/0040"
+    },
+    {
+     "bill": "HC-API-2602-024",
+     "kind": "opening",
+     "sen": 70355,
+     "acPi": "PI-006413",
+     "supInv": "26/02/0041"
+    },
+    {
+     "bill": "HC-API-2603-057",
+     "kind": "opening",
+     "sen": 97295,
+     "acPi": "PI-006838",
+     "supInv": "26/03/0332"
+    },
+    {
+     "bill": "HC-API-2603-056",
+     "kind": "opening",
+     "sen": 90145,
+     "acPi": "PI-006839",
+     "supInv": "26/03/0331"
+    },
+    {
+     "bill": "HC-API-2603-055",
+     "kind": "opening",
+     "sen": 46810,
+     "acPi": "PI-006840",
+     "supInv": "26/03/0330"
+    },
+    {
+     "bill": "HC-API-2603-054",
+     "kind": "opening",
+     "sen": 46135,
+     "acPi": "PI-006841",
+     "supInv": "26/03/0327"
+    },
+    {
+     "bill": "HC-API-2603-053",
+     "kind": "opening",
+     "sen": 121745,
+     "acPi": "PI-006842",
+     "supInv": "26/03/0326"
+    },
+    {
+     "bill": "HC-API-2603-052",
+     "kind": "opening",
+     "sen": 59015,
+     "acPi": "PI-006843",
+     "supInv": "26/03/0325"
+    },
+    {
+     "bill": "HC-API-2603-051",
+     "kind": "opening",
+     "sen": 87020,
+     "acPi": "PI-006844",
+     "supInv": "26/03/0324"
+    },
+    {
+     "bill": "HC-API-2603-050",
+     "kind": "opening",
+     "sen": 52965,
+     "acPi": "PI-006845",
+     "supInv": "26/03/0323"
+    },
+    {
+     "bill": "HC-API-2603-049",
+     "kind": "opening",
+     "sen": 76995,
+     "acPi": "PI-006846",
+     "supInv": "26/03/0322"
+    },
+    {
+     "bill": "HC-API-2603-048",
+     "kind": "opening",
+     "sen": 147500,
+     "acPi": "PI-006847",
+     "supInv": "26/03/0321"
+    },
+    {
+     "bill": "HC-API-2603-047",
+     "kind": "opening",
+     "sen": 45740,
+     "acPi": "PI-006848",
+     "supInv": "26/03/0319"
+    },
+    {
+     "bill": "HC-API-2603-022",
+     "kind": "opening",
+     "sen": 95425,
+     "acPi": "PI-006849",
+     "supInv": "26/03/0041"
+    },
+    {
+     "bill": "HC-API-2603-013",
+     "kind": "opening",
+     "sen": 187490,
+     "acPi": "PI-006850",
+     "supInv": "26/03/0032"
+    },
+    {
+     "bill": "HC-API-2603-012",
+     "kind": "opening",
+     "sen": 51440,
+     "acPi": "PI-006853",
+     "supInv": "26/03/0031"
+    },
+    {
+     "bill": "HC-API-2603-005",
+     "kind": "opening",
+     "sen": 159105,
+     "acPi": "PI-006858",
+     "supInv": "26/03/0024"
+    },
+    {
+     "bill": "HC-API-2603-011",
+     "kind": "opening",
+     "sen": 60090,
+     "acPi": "PI-006855",
+     "supInv": "26/03/0030"
+    },
+    {
+     "bill": "HC-API-2603-010",
+     "kind": "opening",
+     "sen": 111125,
+     "acPi": "PI-006856",
+     "supInv": "26/03/0029"
+    },
+    {
+     "bill": "HC-API-2603-004",
+     "kind": "opening",
+     "sen": 211995,
+     "acPi": "PI-006857",
+     "supInv": "26/03/0023"
+    },
+    {
+     "bill": "HC-API-2603-006",
+     "kind": "opening",
+     "sen": 111385,
+     "acPi": "PI-006859",
+     "supInv": "26/03/0025"
+    },
+    {
+     "bill": "HC-API-2603-007",
+     "kind": "opening",
+     "sen": 42870,
+     "acPi": "PI-006860",
+     "supInv": "26/03/0026"
+    },
+    {
+     "bill": "HC-API-2603-008",
+     "kind": "opening",
+     "sen": 70715,
+     "acPi": "PI-006861",
+     "supInv": "26/03/0027"
+    },
+    {
+     "bill": "HC-API-2603-009",
+     "kind": "opening",
+     "sen": 179545,
+     "acPi": "PI-006862",
+     "supInv": "26/03/0028"
+    },
+    {
+     "bill": "HC-API-2603-014",
+     "kind": "opening",
+     "sen": 52885,
+     "acPi": "PI-007267",
+     "supInv": "26/03/0033"
+    },
+    {
+     "bill": "HC-API-2603-058",
+     "kind": "opening",
+     "sen": 68960,
+     "acPi": "PI-007268",
+     "supInv": "26/03/0333"
+    },
+    {
+     "bill": "HC-API-2603-066",
+     "kind": "opening",
+     "sen": 75335,
+     "acPi": "DN-000044",
+     "supInv": "DNC2603015"
+    },
+    {
+     "bill": "HC-API-2603-068",
+     "kind": "opening",
+     "sen": 61165,
+     "acPi": "DN-000045",
+     "supInv": "DNC2603017"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-109 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-110",
+   "date": "2026-09-25",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-C006",
+   "payee": "C.I.S NETWORK SDN BHD",
+   "total": 2043680,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 2043680,
+     "desc": "Settle 1 invoice(s) — C.I.S NETWORK SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "NEW:PI-008124",
+     "kind": "september-new",
+     "sen": 2043680,
+     "acPi": "PI-008124",
+     "supInv": "C02985/PI1"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-110 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-111",
+   "date": "2026-09-25",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-M002",
+   "payee": "MODERN LIVING EVENT SDN BHD",
+   "total": 2800000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 2800000,
+     "desc": "Settle 1 invoice(s) — MODERN LIVING EVENT SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "NEW:PI-008108",
+     "kind": "september-new",
+     "sen": 2800000,
+     "acPi": "PI-008108",
+     "supInv": "SO26001537"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-111 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-112",
+   "date": "2026-09-25",
+   "bank": "310-0020",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 321-0000 PETTY CASH - WAREHOUSE",
+   "total": 40370,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "321-0000",
+     "sen": 40370,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-112 (September import) — REFUND TO PETTY CASH FOR LALAMOVE PAID ON BEHALF SALES 25 SEPT 2026"
+  },
+  {
+   "acDoc": "HPV-2609-113",
+   "date": "2026-09-25",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "SITI RAFIDAH (910721-14-5086) CLAIM",
+   "total": 1600,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-P002",
+     "sen": 1600,
+     "desc": "LALAMOVE - SEND INVOICE TO UOB 25 SEPT 2026"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-113 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-114",
+   "date": "2026-09-25",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "ENG SUI HOR",
+   "total": 89700,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-H003",
+     "sen": 89700,
+     "desc": "AIRBNB AUSTIN JB  EVENT (24-27 SEPT 2026) RCJDNCYE2F"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-114 (September import)"
+  },
+  {
+   "acDoc": "MPV-2609-021",
+   "date": "2026-09-25",
+   "bank": "310-0010",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 310-0020 CASH AT BANK - HLBB",
+   "total": 10000000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "310-0020",
+     "sen": 10000000,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-021 (September import) — TRANSFER FROM MAYBANK TO HONG LEONG BANK"
+  },
+  {
+   "acDoc": "CIPV-2609-003",
+   "date": "2026-09-28",
+   "bank": "310-0050",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "HOUZS CENTURY SDN BHD (CIMB)",
+   "total": 4250000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "460-0011",
+     "sen": 4250000,
+     "desc": "LOAN INSTALLMENT - (YULON CREDIT)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount CIPV-2609-003 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-115",
+   "date": "2026-09-28",
+   "bank": "310-0020",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 310-0050 CASH AT BANK - CIMB",
+   "total": 4250000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "310-0050",
+     "sen": 4250000,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-115 (September import) — TRANSFER FROM HLBB TO CIMB BANK"
+  },
+  {
+   "acDoc": "HPV-2609-116",
+   "date": "2026-09-28",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "SAMUEL",
+   "total": 1565,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-E007",
+     "sen": 1565,
+     "desc": "CLAIM FOR HDMI CABLE"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-116 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-117",
+   "date": "2026-09-28",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-M003",
+   "payee": "MSJ TRANSPORT SERVICE",
+   "total": 661000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 661000,
+     "desc": "Settle 3 invoice(s) — MSJ TRANSPORT SERVICE"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "NEW:PI-008125",
+     "kind": "september-new",
+     "sen": 169000,
+     "acPi": "PI-008125",
+     "supInv": "617783"
+    },
+    {
+     "bill": "NEW:PI-008126",
+     "kind": "september-new",
+     "sen": 448000,
+     "acPi": "PI-008126",
+     "supInv": "617784"
+    },
+    {
+     "bill": "NEW:PI-008127",
+     "kind": "september-new",
+     "sen": 44000,
+     "acPi": "PI-008127",
+     "supInv": "617785"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-117 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-118",
+   "date": "2026-09-28",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "400-Y001",
+   "payee": "YEN CREATIVE SDN BHD",
+   "total": 600440,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "400-0000",
+     "sen": 600440,
+     "desc": "Settle 1 invoice(s) — YEN CREATIVE SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "HC-API-2609-032",
+     "kind": "september-erp",
+     "sen": 600440,
+     "acPi": "PI-008128",
+     "supInv": "INV-26/09/201"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-118 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-119",
+   "date": "2026-09-28",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "TENAGA NASIONAL BERHAD",
+   "total": 66081,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-W008",
+     "sen": 66081,
+     "desc": "WH PENANG - ELECTRICITY AUG 2026"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-119 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-120",
+   "date": "2026-09-28",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "TSS SALES & SERVICES SDN BHD",
+   "total": 32145,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-E014",
+     "sen": 32145,
+     "desc": "WH BALAKONG - RENTAL FOR PHOTOCOPY MACHINE AUG 2026 (INV-2608-0177)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-120 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-121",
+   "date": "2026-09-28",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "TT DOTCOM SDN BHD",
+   "total": 14735,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-T001",
+     "sen": 14735,
+     "desc": "PUCHONG - TIME WIFI SEPT 2026"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-121 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-122",
+   "date": "2026-09-28",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "GNEY SOFTWARE SDN BHD",
+   "total": 71280,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-W002",
+     "sen": 71280,
+     "desc": "STORAGE & USER SEPT 2026 (INV05549)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-122 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-123",
+   "date": "2026-09-28",
+   "bank": "310-0020",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "T FORCE AUTO SERVICES SDN BHD",
+   "total": 100000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-U010",
+     "sen": 100000,
+     "desc": "VNB 9058 - REPAIR LORRY - WC00179"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-123 (September import)"
+  },
+  {
+   "acDoc": "HPV-2609-124",
+   "date": "2026-09-28",
+   "bank": "310-0020",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 321-0000 PETTY CASH - WAREHOUSE",
+   "total": 214589,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "321-0000",
+     "sen": 214589,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-124 (September import) — PETTY CASH REIMBURSEMENT 28 SEPT 2026"
+  },
+  {
+   "acDoc": "HPV-2609-125",
+   "date": "2026-09-28",
+   "bank": "310-0020",
+   "kind": "AP",
+   "purpose": "SUPPLIER_PAYMENT",
+   "supplier": "405-C003",
+   "payee": "HOUZS VENTURE SDN BHD",
+   "total": 373304,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "405-0000",
+     "sen": 373304,
+     "desc": "Settle 1 invoice(s) — HOUZS VENTURE SDN BHD"
+    }
+   ],
+   "ticks": [
+    {
+     "bill": "NEW:PI-008129",
+     "kind": "september-new",
+     "sen": 373304,
+     "acPi": "PI-008129",
+     "supInv": "HV-INV-202609-0036"
+    }
+   ],
+   "advance": 0,
+   "note": "AutoCount HPV-2609-125 (September import)"
+  },
+  {
+   "acDoc": "MPV-2609-022",
+   "date": "2026-09-28",
+   "bank": "310-0010",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 310-0020 CASH AT BANK - HLBB",
+   "total": 5000000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "310-0020",
+     "sen": 5000000,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-022 (September import) — TRANSFER FROM MAYBANK TO HONG LEONG BANK"
+  },
+  {
+   "acDoc": "MPV-2609-026",
+   "date": "2026-09-28",
+   "bank": "310-0100",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "MAYBANK BERHAD (564128831776)",
+   "total": 864000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-P003",
+     "sen": 864000,
+     "desc": "SJPP ANNI RENEWAL OCGAF *0"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-026 (September import)"
+  },
+  {
+   "acDoc": "MPV-2609-024",
+   "date": "2026-09-29",
+   "bank": "310-0010",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 310-0060 CASH AT BANK - MAYBANK (TRADE FINANCE)",
+   "total": 3000000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "310-0060",
+     "sen": 3000000,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-024 (September import) — TRANSFER FROM MBB TO MBB TRADE FINANCE - NB FURNITURE"
+  },
+  {
+   "acDoc": "MPV-2609-025",
+   "date": "2026-09-29",
+   "bank": "310-0010",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 310-0100 CASH AT BANK - MBB (564128831776)",
+   "total": 4000000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "310-0100",
+     "sen": 4000000,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-025 (September import) — TRANSFER FROM MBB TO MBB 1776 - HOOKKA OCEAN"
+  },
+  {
+   "acDoc": "PV-001639",
+   "date": "2026-09-29",
+   "bank": "310-0060",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "HOUZS CENTURY SDN BHD (MAYBANK TRADE FINANCE)",
+   "total": 3007698,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "460-0009",
+     "sen": 3000000,
+     "desc": "SETTLEMENT FOR TRADE FINANCE - NB FURNITURE (O830IFI0064506)"
+    },
+    {
+     "acc": "900-L004",
+     "sen": 7698,
+     "desc": "INTEREST CHARGE FOR TRADE FINANCE - NB FURNITURE (O830IFI0064506)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount PV-001639 (September import)"
+  },
+  {
+   "acDoc": "MPV-2609-027",
+   "date": "2026-09-30",
+   "bank": "310-0010",
+   "kind": "TRANSFER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "Internal transfer to 310-0100 CASH AT BANK - MBB (564128831776)",
+   "total": 3500000,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "310-0100",
+     "sen": 3500000,
+     "desc": "Internal transfer"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-027 (September import) — TRANSFER FROM MBB TO MBB 1776 - ARMANI SOFA"
+  },
+  {
+   "acDoc": "MPV-2609-028",
+   "date": "2026-09-30",
+   "bank": "310-0100",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "HOUZS CENTURY SDN BHD (MAYBANK TRADE FINANCE)",
+   "total": 3379465,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "460-0009",
+     "sen": 3358500,
+     "desc": "SETTLEMENT FOR TRADE FINANCE - ARMANI SOFA (O830IFI0053892)"
+    },
+    {
+     "acc": "900-L004",
+     "sen": 20965,
+     "desc": "INTEREST CHARGE FOR TRADE FINANCE - ARMANI SOFA (O830IFI0053892)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-028 (September import)"
+  },
+  {
+   "acDoc": "MPV-2609-029",
+   "date": "2026-09-30",
+   "bank": "310-0100",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "HOUZS CENTURY SDN BHD (MAYBANK TRADE FINANCE)",
+   "total": 97,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-B001",
+     "sen": 97,
+     "desc": "BANK CHARGES -  MONTHLY PROFIT DEBIT"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount MPV-2609-029 (September import)"
+  },
+  {
+   "acDoc": "PV-001641",
+   "date": "2026-09-30",
+   "bank": "310-0060",
+   "kind": "OTHER",
+   "purpose": "OTHER",
+   "supplier": null,
+   "payee": "HOUZS CENTURY SDN BHD (MAYBANK TRADE FINANCE)",
+   "total": 22400,
+   "bankCharge": 0,
+   "lines": [
+    {
+     "acc": "900-B001",
+     "sen": 22400,
+     "desc": "IF BANK CHARGES - UNDER HOOKKA ( NLY & HIN LIM)"
+    }
+   ],
+   "ticks": [],
+   "advance": 0,
+   "note": "AutoCount PV-001641 (September import)"
+  }
+ ],
+ "jvs": [
+  {
+   "acDoc": "JV-2609-010",
+   "date": "2026-09-05",
+   "narration": "AutoCount JV-2609-010 — HOOKKA MEDITEX - TRADE FINANCE DUE 03 SEPT 2026 (DATE PAY : 05SEPT26)",
+   "lines": [
+    {
+     "acc": "310-0020",
+     "dr": 3036770,
+     "cr": 0,
+     "desc": "HOOKKA MEDITEX - TRADE FINANCE DUE 03 SEPT 2026 (DATE PAY : 05SEPT26)"
+    },
+    {
+     "acc": "310-0020",
+     "dr": 3423333,
+     "cr": 0,
+     "desc": "HOOKKA OCEAN - TRADE FINANCE DUE 01 SEPT 2026 (DATE PAY : 04SEPT26)"
+    },
+    {
+     "acc": "310-0060",
+     "dr": 0,
+     "cr": 3036770,
+     "desc": "HOOKKA MEDITEX - TRADE FINANCE DUE 03 SEPT 2026"
+    },
+    {
+     "acc": "310-0060",
+     "dr": 0,
+     "cr": 3423333,
+     "desc": "HOOKKA OCEAN - TRADE FINANCE DUE 01 SEPT 2026"
+    }
+   ]
+  },
+  {
+   "acDoc": "JV-2609-013",
+   "date": "2026-09-29",
+   "narration": "AutoCount JV-2609-013 — HOOKKA OCEAN - TRADE FINANCE DUE 29 SEPT 2026 (DATE PAY : 30SEPT26)",
+   "lines": [
+    {
+     "acc": "310-0020",
+     "dr": 3346649,
+     "cr": 0,
+     "desc": "HOOKKA OCEAN - TRADE FINANCE DUE 29 SEPT 2026 (DATE PAY : 30SEPT26)"
+    },
+    {
+     "acc": "310-0100",
+     "dr": 0,
+     "cr": 3346649,
+     "desc": "HOOKKA OCEAN - TRADE FINANCE DUE 29 SEPT 2026 (DATE PAY : 30SEPT26)"
+    }
+   ]
+  },
+  {
+   "acDoc": "JV-2609-002",
+   "date": "2026-09-14",
+   "narration": "AutoCount JV-2609-002 — DIGLANT - TRADE FINANCE DUE 06 NOV 2026",
+   "lines": [
+    {
+     "acc": "310-0060",
+     "dr": 4708700,
+     "cr": 0,
+     "desc": "DIGLANT - TRADE FINANCE DUE 06 NOV 2026"
+    },
+    {
+     "acc": "310-0060",
+     "dr": 8064300,
+     "cr": 0,
+     "desc": "DIGLANT - TRADE FINANCE DUE 13 NOV 2026"
+    },
+    {
+     "acc": "310-0060",
+     "dr": 7678640,
+     "cr": 0,
+     "desc": "DIGLANT - TRADE FINANCE DUE 30 OCT 2026"
+    },
+    {
+     "acc": "460-0009",
+     "dr": 0,
+     "cr": 4708700,
+     "desc": "DIGLANT - TRADE FINANCE DUE 06 NOV 2026"
+    },
+    {
+     "acc": "460-0009",
+     "dr": 0,
+     "cr": 8064300,
+     "desc": "DIGLANT - TRADE FINANCE DUE 13 NOV 2026"
+    },
+    {
+     "acc": "460-0009",
+     "dr": 0,
+     "cr": 7678640,
+     "desc": "DIGLANT - TRADE FINANCE DUE 30 OCT 2026"
+    }
+   ]
+  },
+  {
+   "acDoc": "JV-2609-011",
+   "date": "2026-09-15",
+   "narration": "AutoCount JV-2609-011 — DIGLANT - TRADE FINANCE DUE 20 NOV 2026",
+   "lines": [
+    {
+     "acc": "310-0060",
+     "dr": 11596740,
+     "cr": 0,
+     "desc": "DIGLANT - TRADE FINANCE DUE 20 NOV 2026"
+    },
+    {
+     "acc": "310-0060",
+     "dr": 3653000,
+     "cr": 0,
+     "desc": "DIGLANT - TRADE FINANCE DUE 23 NOV 2026"
+    },
+    {
+     "acc": "460-0009",
+     "dr": 0,
+     "cr": 11596740,
+     "desc": "DIGLANT - TRADE FINANCE DUE 20 NOV 2026"
+    },
+    {
+     "acc": "460-0009",
+     "dr": 0,
+     "cr": 3653000,
+     "desc": "DIGLANT - TRADE FINANCE DUE 23 NOV 2026"
+    }
+   ]
+  },
+  {
+   "acDoc": "JV-2609-012",
+   "date": "2026-09-22",
+   "narration": "AutoCount JV-2609-012 — ARMANI SOFA - TRADE FINANCE DUE 30 OCT 2026",
+   "lines": [
+    {
+     "acc": "310-0060",
+     "dr": 3911900,
+     "cr": 0,
+     "desc": "ARMANI SOFA - TRADE FINANCE DUE 30 OCT 2026"
+    },
+    {
+     "acc": "460-0009",
+     "dr": 0,
+     "cr": 3911900,
+     "desc": "ARMANI SOFA - TRADE FINANCE DUE 30 OCT 2026"
+    }
+   ]
+  },
+  {
+   "acDoc": "JV-2609-001",
+   "date": "2026-09-02",
+   "narration": "AutoCount JV-2609-001 — PETTY CASH REIM 1 SEPT 2026",
+   "lines": [
+    {
+     "acc": "321-0000",
+     "dr": 0,
+     "cr": 200,
+     "desc": "PETTY CASH REIM 1 SEPT 2026"
+    },
+    {
+     "acc": "900-T031",
+     "dr": 200,
+     "cr": 0,
+     "desc": "CONTRACTOR PASS 01.09.2026"
+    }
+   ]
+  },
+  {
+   "acDoc": "JV-2609-006",
+   "date": "2026-09-09",
+   "narration": "AutoCount JV-2609-006 — PETTY CASH REIM 09 SEPT 2026",
+   "lines": [
+    {
+     "acc": "321-0000",
+     "dr": 0,
+     "cr": 226810,
+     "desc": "PETTY CASH REIM 09 SEPT 2026"
+    },
+    {
+     "acc": "900-E014",
+     "dr": 0,
+     "cr": 35000,
+     "desc": "TABLE REFUND 07.09.2026"
+    },
+    {
+     "acc": "900-E014",
+     "dr": 38000,
+     "cr": 0,
+     "desc": "TONG SAMPAH PICKUP 02.09.2026"
+    },
+    {
+     "acc": "900-E014",
+     "dr": 1900,
+     "cr": 0,
+     "desc": "WASHER & SCREW 01.09.2026"
+    },
+    {
+     "acc": "900-P001",
+     "dr": 12365,
+     "cr": 0,
+     "desc": "A4 FILE 1 BOX 02.09.2026"
+    },
+    {
+     "acc": "900-P015",
+     "dr": 1000,
+     "cr": 0,
+     "desc": "BUY TEMPORARY TNG FOR VRH 03.09.2026"
+    },
+    {
+     "acc": "900-P015",
+     "dr": 10000,
+     "cr": 0,
+     "desc": "FUEL VRH 03.09.2026"
+    },
+    {
+     "acc": "900-P015",
+     "dr": 510,
+     "cr": 0,
+     "desc": "TNG RELOAD - VRH 03.09.2026"
+    },
+    {
+     "acc": "900-P015",
+     "dr": 11340,
+     "cr": 0,
+     "desc": "TNG RELOAD - VRH 04.09.2026"
+    },
+    {
+     "acc": "900-P015",
+     "dr": 12260,
+     "cr": 0,
+     "desc": "TOLL VRH - JB 02.09.2026"
+    },
+    {
+     "acc": "900-P015",
+     "dr": 16580,
+     "cr": 0,
+     "desc": "TOLL VRH - PG 03.09.2026"
+    },
+    {
+     "acc": "900-S003",
+     "dr": 17625,
+     "cr": 0,
+     "desc": "PANTRY GROCERIES 07.09.2026"
+    },
+    {
+     "acc": "900-T006",
+     "dr": 40370,
+     "cr": 0,
+     "desc": "LALAMOVE HC13260 05.09.2026"
+    },
+    {
+     "acc": "900-T031",
+     "dr": 700,
+     "cr": 0,
+     "desc": "CONTRACTOR PASS VPC 03.09.2026"
+    },
+    {
+     "acc": "900-T031",
+     "dr": 12850,
+     "cr": 0,
+     "desc": "LALAMOVE SOFA FROM SPCC TO WH 05.09.2026"
+    },
+    {
+     "acc": "900-T031",
+     "dr": 12430,
+     "cr": 0,
+     "desc": "LALAMOVE SOFA FROM WH TO SPCC 05.09.2026"
+    },
+    {
+     "acc": "900-U008",
+     "dr": 73880,
+     "cr": 0,
+     "desc": "VNB 9058 - SERVICE LORRY 08.09.2026"
+    }
+   ]
+  },
+  {
+   "acDoc": "JV-2609-003",
+   "date": "2026-09-17",
+   "narration": "AutoCount JV-2609-003 — PETTY CASH REIM 17 SEPT 2026",
+   "lines": [
+    {
+     "acc": "321-0000",
+     "dr": 0,
+     "cr": 250346,
+     "desc": "PETTY CASH REIM 17 SEPT 2026"
+    },
+    {
+     "acc": "900-E014",
+     "dr": 2867,
+     "cr": 0,
+     "desc": "LINT REMOVER BS KCH 15.09.2026"
+    },
+    {
+     "acc": "900-E014",
+     "dr": 3267,
+     "cr": 0,
+     "desc": "LINT REMOVER BS KK 15.09.2026"
+    },
+    {
+     "acc": "900-E014",
+     "dr": 7677,
+     "cr": 0,
+     "desc": "LINT REMOVER*2 14.09.2026"
+    },
+    {
+     "acc": "900-E014",
+     "dr": 60512,
+     "cr": 0,
+     "desc": "MOUSE*7 PCS FOR OFFICE 14.09.2026"
+    },
+    {
+     "acc": "900-E014",
+     "dr": 1889,
+     "cr": 0,
+     "desc": "SPX POSTAGE 14.09.2026"
+    },
+    {
+     "acc": "900-E014",
+     "dr": 1848,
+     "cr": 0,
+     "desc": "STAPLER GUN FOR BS KCH 15.09.2026"
+    },
+    {
+     "acc": "900-E014",
+     "dr": 1848,
+     "cr": 0,
+     "desc": "STAPLER GUN FOR BS KK 15.09.2026"
+    },
+    {
+     "acc": "900-E014",
+     "dr": 1848,
+     "cr": 0,
+     "desc": "STAPLER GUN FOR CHAI SARAWAK (DO SERVICE) 15.09.2026"
+    },
+    {
+     "acc": "900-E014",
+     "dr": 38000,
+     "cr": 0,
+     "desc": "TONG SAMPAH PICKUP 14.09.2026"
+    },
+    {
+     "acc": "900-P015",
+     "dr": 50,
+     "cr": 0,
+     "desc": "TNG RELOAD CHARGE - VRH 09.09.2026"
+    },
+    {
+     "acc": "900-P015",
+     "dr": 50,
+     "cr": 0,
+     "desc": "TNG RELOAD CHARGE - VRH14.09.2026"
+    },
+    {
+     "acc": "900-P015",
+     "dr": 3320,
+     "cr": 0,
+     "desc": "VRH TOLL 08.09.2026"
+    },
+    {
+     "acc": "900-P015",
+     "dr": 12260,
+     "cr": 0,
+     "desc": "VRH TOLL 09.09.2026"
+    },
+    {
+     "acc": "900-P015",
+     "dr": 3990,
+     "cr": 0,
+     "desc": "VRH TOLL 10.09.2026"
+    },
+    {
+     "acc": "900-P015",
+     "dr": 2130,
+     "cr": 0,
+     "desc": "VRH TOLL 11.09.2026"
+    },
+    {
+     "acc": "900-P015",
+     "dr": 2150,
+     "cr": 0,
+     "desc": "VRH TOLL 12.09.2026"
+    },
+    {
+     "acc": "900-P015",
+     "dr": 11640,
+     "cr": 0,
+     "desc": "VRH TOLL 14.09.2026"
+    },
+    {
+     "acc": "900-U008",
+     "dr": 95000,
+     "cr": 0,
+     "desc": "CHECK - CHANGE TYRE VNB 14.09.2026"
+    }
+   ]
+  },
+  {
+   "acDoc": "JV-2609-004",
+   "date": "2026-09-24",
+   "narration": "AutoCount JV-2609-004 — PETTY CASH REIM 24 SEPT 2026",
+   "lines": [
+    {
+     "acc": "321-0000",
+     "dr": 0,
+     "cr": 246814,
+     "desc": "PETTY CASH REIM 24 SEPT 2026"
+    },
+    {
+     "acc": "900-E014",
+     "dr": 14764,
+     "cr": 0,
+     "desc": "ETHERNET CABLE 21.09.2026"
+    },
+    {
+     "acc": "900-E014",
+     "dr": 28220,
+     "cr": 0,
+     "desc": "GIGABIT PORT 21.09.2026"
+    },
+    {
+     "acc": "900-E014",
+     "dr": 36000,
+     "cr": 0,
+     "desc": "SOCKET SET*3 (FOR BACKREST) 21.09.2026"
+    },
+    {
+     "acc": "900-E014",
+     "dr": 689,
+     "cr": 0,
+     "desc": "SPX POSTAGE 15.09.2026"
+    },
+    {
+     "acc": "900-E014",
+     "dr": 10759,
+     "cr": 0,
+     "desc": "SPX POSTAGE 19.09.2026"
+    },
+    {
+     "acc": "900-E014",
+     "dr": 7700,
+     "cr": 0,
+     "desc": "TOOLS BAG*2 + SPANNER T 21.09.2026"
+    },
+    {
+     "acc": "900-P001",
+     "dr": 23992,
+     "cr": 0,
+     "desc": "A4 FILE 2 BOX 21.09.2026"
+    },
+    {
+     "acc": "900-P015",
+     "dr": 10000,
+     "cr": 0,
+     "desc": "FUEL VRH 22.09.2026"
+    },
+    {
+     "acc": "900-P015",
+     "dr": 80000,
+     "cr": 0,
+     "desc": "FUEL VRH 23.09.2026"
+    },
+    {
+     "acc": "900-P015",
+     "dr": 3450,
+     "cr": 0,
+     "desc": "VRH TOLL 15.09.2026"
+    },
+    {
+     "acc": "900-P015",
+     "dr": 6610,
+     "cr": 0,
+     "desc": "VRH TOLL 17.09.2026"
+    },
+    {
+     "acc": "900-P015",
+     "dr": 7720,
+     "cr": 0,
+     "desc": "VRH TOLL 18.09.2026"
+    },
+    {
+     "acc": "900-P015",
+     "dr": 1750,
+     "cr": 0,
+     "desc": "VRH TOLL 19.09.2026"
+    },
+    {
+     "acc": "900-P015",
+     "dr": 6550,
+     "cr": 0,
+     "desc": "VRH TOLL 21.09.2026"
+    },
+    {
+     "acc": "900-P015",
+     "dr": 8610,
+     "cr": 0,
+     "desc": "VRH TOLL 22.09.2026"
+    }
+   ]
+  },
+  {
+   "acDoc": "JV-2609-005",
+   "date": "2026-09-25",
+   "narration": "AutoCount JV-2609-005 — PETTY CASH REIM 25 SEPT 2026",
+   "lines": [
+    {
+     "acc": "321-0000",
+     "dr": 0,
+     "cr": 214589,
+     "desc": "PETTY CASH REIM 25 SEPT 2026"
+    },
+    {
+     "acc": "900-E014",
+     "dr": 1589,
+     "cr": 0,
+     "desc": "SPX POSTAGE 24.09.2026"
+    },
+    {
+     "acc": "900-E014",
+     "dr": 18000,
+     "cr": 0,
+     "desc": "TOOLS 24.09.2026"
+    },
+    {
+     "acc": "900-P006",
+     "dr": 30000,
+     "cr": 0,
+     "desc": "FUEL VNB 24.09.2026"
+    },
+    {
+     "acc": "900-P010",
+     "dr": 60000,
+     "cr": 0,
+     "desc": "FUEL VPC 23.09.2026"
+    },
+    {
+     "acc": "900-P010",
+     "dr": 30000,
+     "cr": 0,
+     "desc": "FUEL VPC 24.09.2026"
+    },
+    {
+     "acc": "900-P014",
+     "dr": 15000,
+     "cr": 0,
+     "desc": "FUEL VQE 24.09.2026"
+    },
+    {
+     "acc": "900-P015",
+     "dr": 60000,
+     "cr": 0,
+     "desc": "FUEL VRH 24.09.2026"
+    }
+   ]
+  },
+  {
+   "acDoc": "JV-2609-008",
+   "date": "2026-09-30",
+   "narration": "AutoCount JV-2609-008 — PETTY CASH REIM 30 SEPT 2026",
+   "lines": [
+    {
+     "acc": "321-0000",
+     "dr": 0,
+     "cr": 16700,
+     "desc": "PETTY CASH REIM 30 SEPT 2026"
+    },
+    {
+     "acc": "900-E014",
+     "dr": 4033,
+     "cr": 0,
+     "desc": "ETHERNET CABLE 26.09.2026"
+    },
+    {
+     "acc": "900-E014",
+     "dr": 200,
+     "cr": 0,
+     "desc": "PVC CASING 30.09.2026"
+    },
+    {
+     "acc": "900-E014",
+     "dr": 10388,
+     "cr": 0,
+     "desc": "SPX POSTAGE 28.09.2026"
+    },
+    {
+     "acc": "900-E014",
+     "dr": 12449,
+     "cr": 0,
+     "desc": "TOWING ROPE FOR SETUP & DISMANTLE FAIR *4PCS 26.09.2026"
+    },
+    {
+     "acc": "900-P010",
+     "dr": 10000,
+     "cr": 0,
+     "desc": "FUEL VPC 26.09.2026"
+    },
+    {
+     "acc": "900-P014",
+     "dr": 20000,
+     "cr": 0,
+     "desc": "FUEL VQE 284.09.2026"
+    },
+    {
+     "acc": "900-T006",
+     "dr": 0,
+     "cr": 40370,
+     "desc": "PETTY CASH IN (REFUND FROM SHELDON) 26.09.2026"
+    }
+   ]
+  },
+  {
+   "acDoc": "JV-2609-007",
+   "date": "2026-09-30",
+   "narration": "AutoCount JV-2609-007 — TNG WALLET  AUG 2026",
+   "lines": [
+    {
+     "acc": "323-0000",
+     "dr": 0,
+     "cr": 291398,
+     "desc": "TNG WALLET  AUG 2026"
+    },
+    {
+     "acc": "900-P006",
+     "dr": 110092,
+     "cr": 0,
+     "desc": "VNB 9058 - TNG WALLET  SEPT 2026"
+    },
+    {
+     "acc": "900-P010",
+     "dr": 67580,
+     "cr": 0,
+     "desc": "VPC 9058 - TNG WALLET  SEPT 2026"
+    },
+    {
+     "acc": "900-P014",
+     "dr": 20248,
+     "cr": 0,
+     "desc": "VQE 9058 - TNG WALLET  SEPT 2026"
+    },
+    {
+     "acc": "900-P014",
+     "dr": 38682,
+     "cr": 0,
+     "desc": "VQE 9058 (AKT ADDITIONAL CARD) - TNG WALLET  SEPT 2026"
+    },
+    {
+     "acc": "900-P015",
+     "dr": 54796,
+     "cr": 0,
+     "desc": "VRH 9058 - TNG WALLET  SEPT 2026"
+    }
+   ]
+  },
+  {
+   "acDoc": "JV-2609-009",
+   "date": "2026-09-30",
+   "narration": "AutoCount JV-2609-009 — STAFF SALARIES -  SEPT'26",
+   "lines": [
+    {
+     "acc": "410-0010",
+     "dr": 0,
+     "cr": 9021878,
+     "desc": "STAFF SALARIES -  SEPT'26"
+    },
+    {
+     "acc": "410-0020",
+     "dr": 0,
+     "cr": 1524100,
+     "desc": "EPF -  SEPT'26"
+    },
+    {
+     "acc": "410-0030",
+     "dr": 0,
+     "cr": 38385,
+     "desc": "SKBB - SEPT'26"
+    },
+    {
+     "acc": "410-0030",
+     "dr": 0,
+     "cr": 139220,
+     "desc": "SOCSO - SEPT'26"
+    },
+    {
+     "acc": "410-0040",
+     "dr": 0,
+     "cr": 23850,
+     "desc": "EIS -  SEPT'26"
+    },
+    {
+     "acc": "410-0050",
+     "dr": 0,
+     "cr": 98265,
+     "desc": "PCB -  SEPT'26"
+    },
+    {
+     "acc": "900-S100",
+     "dr": 910000,
+     "cr": 0,
+     "desc": "IT SALARY - SEPT'26"
+    },
+    {
+     "acc": "900-S100",
+     "dr": 905926,
+     "cr": 0,
+     "desc": "LOGISTIC (ADMIN) SALARY - SEPT'26"
+    },
+    {
+     "acc": "900-S100",
+     "dr": 705000,
+     "cr": 0,
+     "desc": "MANAGEMENT SALARY -  SEPT'26"
+    },
+    {
+     "acc": "900-S100",
+     "dr": 1972089,
+     "cr": 0,
+     "desc": "OPERATION DELIVERY SALARY - SEPT'26"
+    },
+    {
+     "acc": "900-S100",
+     "dr": 1978363,
+     "cr": 0,
+     "desc": "OPERATION HELPER SALARY - SEPT'26"
+    },
+    {
+     "acc": "900-S100",
+     "dr": 1063219,
+     "cr": 0,
+     "desc": "OPERATION STOREKEEPER SALARY - SEPT'26"
+    },
+    {
+     "acc": "900-S100",
+     "dr": 334333,
+     "cr": 0,
+     "desc": "OTHER SALARY - SEPT'26"
+    },
+    {
+     "acc": "900-S100",
+     "dr": 2032533,
+     "cr": 0,
+     "desc": "WAREHOUSE OPERATIONS SALARY -  SEPT'26"
+    },
+    {
+     "acc": "900-S200",
+     "dr": 90000,
+     "cr": 0,
+     "desc": "IT EPF - SEPT'26"
+    },
+    {
+     "acc": "900-S200",
+     "dr": 114700,
+     "cr": 0,
+     "desc": "LOGISTIC (ADMIN) EPF -  SEPT'26"
+    },
+    {
+     "acc": "900-S200",
+     "dr": 84000,
+     "cr": 0,
+     "desc": "MANAGEMENT EPF -  SEPT'26"
+    },
+    {
+     "acc": "900-S200",
+     "dr": 223000,
+     "cr": 0,
+     "desc": "OPERATION DELIVERY EPF - SEPT'26"
+    },
+    {
+     "acc": "900-S200",
+     "dr": 22700,
+     "cr": 0,
+     "desc": "OPERATION HELPER EPF - SEPT'26"
+    },
+    {
+     "acc": "900-S200",
+     "dr": 17800,
+     "cr": 0,
+     "desc": "OPERATION STOREKEEPER EPF - SEPT'26"
+    },
+    {
+     "acc": "900-S200",
+     "dr": 43700,
+     "cr": 0,
+     "desc": "OTHERS EPF -  SEPT'26"
+    },
+    {
+     "acc": "900-S200",
+     "dr": 227000,
+     "cr": 0,
+     "desc": "WAREHOUSE OPERATIONS EPF -  SEPT'26"
+    },
+    {
+     "acc": "900-S300",
+     "dr": 10415,
+     "cr": 0,
+     "desc": "IT SOCSO - SEPT'26"
+    },
+    {
+     "acc": "900-S300",
+     "dr": 15305,
+     "cr": 0,
+     "desc": "LOGISTIC (ADMIN) SOCSO - SEPT'26"
+    },
+    {
+     "acc": "900-S300",
+     "dr": 10415,
+     "cr": 0,
+     "desc": "MANAGEMENT SOCSO -  SEPT'26"
+    },
+    {
+     "acc": "900-S300",
+     "dr": 32720,
+     "cr": 0,
+     "desc": "OPERATION DELIVERY SOCSO - SEPT'26"
+    },
+    {
+     "acc": "900-S300",
+     "dr": 3585,
+     "cr": 0,
+     "desc": "OPERATION HELPER SOCSO - SEPT'26"
+    },
+    {
+     "acc": "900-S300",
+     "dr": 2225,
+     "cr": 0,
+     "desc": "OPERATION STOREKEEPER SOCSO - SEPT'26"
+    },
+    {
+     "acc": "900-S300",
+     "dr": 5865,
+     "cr": 0,
+     "desc": "OTHER SOCSO -  SEPT'26"
+    },
+    {
+     "acc": "900-S300",
+     "dr": 28880,
+     "cr": 0,
+     "desc": "WAREHOUSE OPERATION SOCSO -  SEPT'26"
+    },
+    {
+     "acc": "900-S400",
+     "dr": 1190,
+     "cr": 0,
+     "desc": "IT EIS - SEPT'26"
+    },
+    {
+     "acc": "900-S400",
+     "dr": 1750,
+     "cr": 0,
+     "desc": "LOGISTIC (ADMIN) EIS - SEPT'26"
+    },
+    {
+     "acc": "900-S400",
+     "dr": 1190,
+     "cr": 0,
+     "desc": "MANAGEMENT EIS -  SEPT'26"
+    },
+    {
+     "acc": "900-S400",
+     "dr": 3160,
+     "cr": 0,
+     "desc": "OPERATION DELIVERY EIS - SEPT'26"
+    },
+    {
+     "acc": "900-S400",
+     "dr": 410,
+     "cr": 0,
+     "desc": "OPERATION HELPER EIS -  SEPT'26"
+    },
+    {
+     "acc": "900-S400",
+     "dr": 255,
+     "cr": 0,
+     "desc": "OPERATION STOREKEEPER EIS - SEPT'26"
+    },
+    {
+     "acc": "900-S400",
+     "dr": 670,
+     "cr": 0,
+     "desc": "OTHERS EIS -  SEPT'26"
+    },
+    {
+     "acc": "900-S400",
+     "dr": 3300,
+     "cr": 0,
+     "desc": "WAREHOUSE OPERATIONS EIS -  SEPT'26"
+    }
+   ]
+  }
+ ],
+ "receipts": [
+  {
+   "acDoc": "OR2609-0002",
+   "date": "2026-09-08",
+   "bank": "310-0060",
+   "payer": "MAYBANK BERHAD",
+   "lines": [
+    {
+     "acc": "460-0009",
+     "sen": 3000000,
+     "desc": "TRADE FINANCE - NB FURNITURE"
+    }
+   ],
+   "note": "AutoCount OR2609-0002 (September import)"
+  }
+ ],
+ "skipped": [
+  {
+   "acDoc": "HC-PI-2609-002",
+   "kind": "bill",
+   "sen": 245500,
+   "why": "in the ERP (HC-PI-2609-002; owner 2026-10-28: the ERP amount is right)"
+  },
+  {
+   "acDoc": "HC-PI-2609-009",
+   "kind": "bill",
+   "sen": 9000,
+   "why": "in the ERP (HC-PI-2609-009; owner 2026-10-28: the ERP amount is right)"
+  },
+  {
+   "acDoc": "PI-008128",
+   "kind": "bill",
+   "sen": 600440,
+   "why": "in the ERP as HC-API-2609-032 (same supplier invoice INV-26/09/201, RM 6,004.40)"
+  },
+  {
+   "acDoc": "HPV-2609-026",
+   "kind": "payment",
+   "sen": 187500,
+   "why": "ASK: customer refund (Dr 300-C002 CUSTOMER) — AutoCount names no customer; which sales order?"
+  },
+  {
+   "acDoc": "HPV-2609-035",
+   "kind": "payment",
+   "sen": 162000,
+   "why": "ASK: customer refund (Dr 300-C002 CUSTOMER) — AutoCount names no customer; which sales order?"
+  },
+  {
+   "acDoc": "HPV-2609-064",
+   "kind": "payment",
+   "sen": 100000,
+   "why": "ASK: customer refund (Dr 300-C002 CUSTOMER) — AutoCount names no customer; which sales order?"
+  },
+  {
+   "acDoc": "HPV-2609-088",
+   "kind": "payment",
+   "sen": 99,
+   "why": "ASK: customer refund (Dr 300-C002 CUSTOMER) — AutoCount names no customer; which sales order?"
+  },
+  {
+   "acDoc": "HPV-2609-095",
+   "kind": "payment",
+   "sen": 140700,
+   "why": "ASK: customer refund (Dr 300-C002 CUSTOMER) — AutoCount names no customer; which sales order?"
+  },
+  {
+   "acDoc": "HPV-2609-096",
+   "kind": "payment",
+   "sen": 246500,
+   "why": "ASK: customer refund (Dr 300-C002 CUSTOMER) — AutoCount names no customer; which sales order?"
+  },
+  {
+   "acDoc": "HPV-2609-126",
+   "kind": "payment",
+   "sen": 54265,
+   "why": "in the ERP as HC-HPV-2609-002 (ENG SUI HOR RM 542.65, 29/09)"
+  },
+  {
+   "acDoc": "HPV-2609-127",
+   "kind": "payment",
+   "sen": 444275,
+   "why": "in the ERP as HC-HPV-2609-004 (TOKIO MARINE RM 4,442.75, 30/09)"
+  },
+  {
+   "acDoc": "HPV-2609-128",
+   "kind": "payment",
+   "sen": 106200,
+   "why": "ASK: CHEW WEE HO RM 1,062.00 30/09 — the ERP has HC-HPV-2609-005 CHEW WEE HO RM 1,746.00 30/09 (bill ZT-260926); the same payment?"
+  },
+  {
+   "acDoc": "HPV-2609-129",
+   "kind": "payment",
+   "sen": 98010,
+   "why": "in the ERP as HC-HPV-2609-003 (PSL TECHNOLOGIES RM 980.10, 30/09)"
+  },
+  {
+   "acDoc": "OR2609-0001",
+   "kind": "receipt",
+   "sen": 234400,
+   "why": "in the ERP: sales order HC-SO-006554 payment RM 2,344.00 on 10/09 (customer money comes from the sales orders)"
+  },
+  {
+   "acDoc": "OR2609-001",
+   "kind": "receipt",
+   "sen": 200000,
+   "why": "ASK: customer RM 2,000.00 into Maybank 11/09 — likely HC-SO-011851 transfer RM 2,000.00 on 10/09 (customer money comes from the sales orders)"
+  },
+  {
+   "acDoc": "CN-2609-025",
+   "kind": "credit note",
+   "sen": 200000,
+   "why": "ASK: discount RM 2,000.00 to other debtor EASTERN DECORATOR (305-E003, Dr 520-0000 DISCOUNT ALLOWED) — the ERP has no credit note for an other debtor yet"
+  }
+ ]
+}
