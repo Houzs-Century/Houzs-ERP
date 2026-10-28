@@ -301,6 +301,8 @@ type UpdateFieldsMutate = UpdateFieldsMutation['mutate'];
    through useUpdateDeliveryFields; the blank option clears it. */
 function MessageStatusEditCell({ order, onUpdateFields }: { order: PlanningOrder; onUpdateFields: UpdateFieldsMutate }) {
   const { fields } = useContext(BoardPendingContext);
+  // ASSR: read-only, derived from the Service Arrangement WhatsApp (HC-0171).
+  if (isAssr(order) && order.delivery_message_status) return <span>{order.delivery_message_status}</span>;
   if (isAssr(order) || isDp(order) || isProject(order)) {
     return <NotApplicable />;
   }
@@ -1044,11 +1046,11 @@ export function DeliveryPlanningBoard({
       searchValue: (o) => o.phone ?? '',
     },
     {
-      /* Latest WhatsApp (Seampify) send for this SO, from scm.wa_message_log —
-         '—' until a send exists. SO-only (the send action is SO-only too). */
+      /* Latest WhatsApp send for this SO / ASSR job, from scm.wa_message_log —
+         '—' until a send exists. */
       key: 'wa_message', label: 'Send Status', width: 130,
       accessor: (o) => {
-        if (o.row_type !== 'so') return '—';
+        if (o.row_type !== 'so' && o.row_type !== 'assr') return '—';
         const s = msgStatuses?.[o.so_doc_no];
         // Default "Done All" (owner 2026-09-22): no send needed, or the last send
         // was OK. Only a FAILED latest send shows a problem.
@@ -1060,12 +1062,12 @@ export function DeliveryPlanningBoard({
         );
       },
       searchValue: (o) => {
-        if (o.row_type !== 'so') return '';
+        if (o.row_type !== 'so' && o.row_type !== 'assr') return '';
         const s = msgStatuses?.[o.so_doc_no];
         return s && !s.success ? 'Failed' : 'Done All';
       },
       exportValue: (o) => {
-        if (o.row_type !== 'so') return '';
+        if (o.row_type !== 'so' && o.row_type !== 'assr') return '';
         const s = msgStatuses?.[o.so_doc_no];
         return s && !s.success ? 'Failed' : 'Done All';
       },

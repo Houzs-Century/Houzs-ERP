@@ -22,7 +22,12 @@
 //     (customer / display / service), the GL's own 330 / 600 / 620 lines set
 //     aside; the balance sheet's stock the same way, its earnings adjusted so
 //     the self-check still reads zero; a closing the ledger has not booked
-//     yet (the open month, a mid-month date) is flagged provisional.
+//     yet (the open month, a mid-month date) is flagged provisional;
+//   • 2026-10-28 (mig 20261028T2100, Houzs: 31/08 之前我都是soft launch 的):
+//     a company whose books start on a day opens its first P&L on the books'
+//     OPENING STOCK, not on the engine's replay of the soft launch; nothing
+//     before the start carries stock; the balance sheet's earnings start from
+//     the opening stock, so the sheet still balances and earnings = the P&L.
 
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
@@ -35,6 +40,7 @@ const ACCOUNTS: Row[] = [
   { company_id: CO, account_code: '310-0010', account_name: 'BANK', account_type: 'ASSET', parent_code: null, section: 'CURRENT ASSETS' },
   { company_id: CO, account_code: '330-0000', account_name: 'STOCK', account_type: 'ASSET', parent_code: null, section: 'CURRENT ASSETS' },
   { company_id: CO, account_code: '400-0000', account_name: 'AP', account_type: 'LIABILITY', parent_code: null, section: 'CURRENT LIABILITIES' },
+  { company_id: CO, account_code: '150-0000', account_name: 'RETAINED EARNING', account_type: 'EQUITY', parent_code: null, section: 'RETAINED EARNING' },
   { company_id: CO, account_code: '501-0000', account_name: 'SALES', account_type: 'INCOME', parent_code: null, section: 'SALES' },
   { company_id: CO, account_code: '700-0000', account_name: 'Other Income', account_type: 'INCOME', parent_code: null, section: 'OTHER INCOMES' },
   { company_id: CO, account_code: '590-0000', account_name: 'RENT RECEIVED', account_type: 'INCOME', parent_code: '700-0000', section: 'OTHER INCOMES' },
@@ -68,10 +74,11 @@ const MOVES: Row[] = [
   { company_id: CO, movement_type: 'IN', qty: 1, total_cost_sen: 10_000, movement_date: '2026-08-10', created_at: '2026-08-10T02:00:00Z', item_code: 'SOFA-1', warehouse_id: null },
 ];
 
-function harness(glRows: Row[], moves: Row[] = MOVES, warehouses: Row[] = []) {
+function harness(glRows: Row[], moves: Row[] = MOVES, warehouses: Row[] = [], settings: Row[] = []) {
   const sb = fakeSb({
     v_gl_entries: glRows, accounts: ACCOUNTS.map((r) => ({ ...r })), acc_report_layouts: [],
     inventory_movements: moves.map((r) => ({ ...r })), warehouses: warehouses.map((r) => ({ ...r })), acc_account_roles: [], journal_entries: [],
+    acc_company_settings: settings.map((r) => ({ ...r })),
   });
   const app = new Hono();
   app.use('*', async (c, next) => {
@@ -275,5 +282,73 @@ describe('GET /accounting/reports/balance-sheet', () => {
     /* The liability's % is of total assets too — 60,000 / 101,000. */
     expect(flat(b.layout.liabilities)).toEqual([['CURRENT LIABILITIES', 60_000, 59.4, [['400-0000 · 400-0000', 60_000, 59.4]]]]);
     expect(b.layout.equity).toEqual([]);
+  });
+});
+
+/* The books start on 1 September; the opening (dated 31 August, flagged) is
+   AutoCount's balances: bank 500, retained earning 600, and the opening stock
+   100 on STOCKS AT THE BEGINNING — 80 customer, 20 showroom. The rows are what
+   v_gl_entries hands over once its start-day rule has run (the rule itself is
+   SQL: tests-pg/booksStart.pg.test.ts). The engine still replays the soft
+   launch — 150 of customer goods on 10 August — and 25 leave in September. */
+describe('a company whose books start on a day (mig 20261028T2100: 1744164.68就当01/09 的opening stock)', () => {
+  const OPENING_DAY = { entry_date: '2026-08-31', source_type: 'OPENING' };
+  const BOOKS: Row[] = [
+    gl('310-0010', 'ASSET', 50_000, 0, OPENING_DAY),
+    gl('600-0001', 'EXPENSE', 8_000, 0, OPENING_DAY),
+    gl('600-0004', 'EXPENSE', 2_000, 0, OPENING_DAY),
+    gl('150-0000', 'EQUITY', 0, 60_000, OPENING_DAY),
+    gl('501-0000', 'INCOME', 0, 30_000, { entry_date: '2026-09-15' }),
+    gl('310-0010', 'ASSET', 30_000, 0, { entry_date: '2026-09-15' }),
+    gl('601-0003', 'EXPENSE', 12_000, 0, { entry_date: '2026-09-20' }),
+    gl('400-0000', 'LIABILITY', 0, 12_000, { entry_date: '2026-09-20' }),
+  ];
+  const SOFT_LAUNCH_MOVES: Row[] = [
+    { company_id: CO, movement_type: 'IN', qty: 1, total_cost_sen: 15_000, movement_date: '2026-08-10', created_at: '2026-08-10T02:00:00Z', item_code: 'SOFA-1', warehouse_id: null },
+    { company_id: CO, movement_type: 'OUT', qty: 1, total_cost_sen: 2_500, movement_date: '2026-09-05', created_at: '2026-09-05T02:00:00Z', item_code: 'SOFA-1', warehouse_id: null },
+  ];
+  const SETTINGS: Row[] = [{ company_id: CO, books_start_date: '2026-09-01', opening_stock: { customer: 8_000, showroom: 2_000 } }];
+  const get = async <T>(url: string): Promise<T> => (await harness(BOOKS, SOFT_LAUNCH_MOVES, [], SETTINGS).app.request(url)).json() as Promise<T>;
+
+  test('the first month opens on the books\' opening stock, per bucket, and closes on the engine', async () => {
+    const sep = await get<{ costOfSales: Line[]; totals: Record<string, number>; stock: { closingProvisional: boolean } }>('/accounting/reports/pnl?from=2026-09-01&to=2026-09-30');
+    /* Not the engine's 150 on 31 August: the books opened on 80 + 20. */
+    expect(sep.costOfSales.map((l) => [l.code, l.amountSen])).toEqual([['601-0003', 12_000], ['600-0001', 8_000], ['600-0004', 2_000], ['620-0001', -12_500]]);
+    expect(sep.totals).toMatchObject({ tradingIncomeSen: 30_000, costOfSalesSen: 9_500, netProfitSen: 20_500 });
+    expect(sep.stock.closingProvisional).toBe(true);
+    /* A range that starts before the books reads the same: nothing before the start is in them. */
+    const span = await get<{ costOfSales: Line[]; totals: Record<string, number> }>('/accounting/reports/pnl?from=2026-07-01&to=2026-09-30');
+    expect(span.costOfSales).toEqual(sep.costOfSales);
+    expect(span.totals.netProfitSen).toBe(20_500);
+  });
+
+  test('a month before the books carries no stock and no profit', async () => {
+    const aug = await get<{ costOfSales: Line[]; totals: Record<string, number>; stock: { closingProvisional: boolean } }>('/accounting/reports/pnl?from=2026-08-01&to=2026-08-31');
+    expect(aug.costOfSales).toEqual([]);
+    expect(aug.totals.netProfitSen).toBe(0);
+    expect(aug.stock.closingProvisional).toBe(false);
+  });
+
+  test('the balance sheet: earnings = the P&L since the start, the stock the engine\'s, the self-check zero', async () => {
+    const sep = await get<{ assets: Line[]; equity: Line[]; totals: Record<string, number> }>('/accounting/reports/balance-sheet?asOf=2026-09-30');
+    expect(sep.assets.map((l) => [l.code, l.amountSen])).toEqual([['310-0010', 80_000], ['330-0001', 12_500]]);
+    expect(sep.equity.map((l) => [l.code, l.amountSen])).toEqual([['150-0000', 60_000]]);
+    expect(sep.totals).toMatchObject({ assetsSen: 92_500, liabilitiesSen: 12_000, equitySen: 60_000, earningsSen: 20_500, checkSen: 0 });
+  });
+
+  test('the balance sheet on the opening day is the opening — its stock the books\' opening stock, no earnings', async () => {
+    const open = await get<{ assets: Line[]; totals: Record<string, number> }>('/accounting/reports/balance-sheet?asOf=2026-08-31');
+    expect(open.assets.map((l) => [l.code, l.amountSen])).toEqual([['310-0010', 50_000], ['330-0001', 8_000], ['330-0004', 2_000]]);
+    expect(open.totals).toMatchObject({ assetsSen: 60_000, equitySen: 60_000, earningsSen: 0, checkSen: 0 });
+    const before = await get<{ assets: Line[]; totals: Record<string, number> }>('/accounting/reports/balance-sheet?asOf=2026-07-31');
+    expect(before.assets).toEqual([]);
+    expect(before.totals).toMatchObject({ assetsSen: 0, earningsSen: 0, checkSen: 0 });
+  });
+
+  test('an opening stock that is not whole sen per bucket stops the statement, never reads as nought', async () => {
+    const res = await harness(BOOKS, SOFT_LAUNCH_MOVES, [], [{ company_id: CO, books_start_date: '2026-09-01', opening_stock: { shelf: 100 } }]).app
+      .request('/accounting/reports/pnl?from=2026-09-01&to=2026-09-30');
+    expect(res.status).toBe(500);
+    expect((await res.json() as { reason: string }).reason).toContain('not a stock bucket');
   });
 });

@@ -848,6 +848,8 @@ export const NAV_TABS: NavTab[] = [
         groupId: "scm-finance-setup",
         children: [
           { to: "/scm/chart-of-accounts", label: "Chart of Accounts", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.setup"] },
+          // The books' opening (owner 2026-10-28: opening balance maintainence 表) — accounts, creditors, other debtors, stock; locked once final.
+          { to: "/scm/opening-balance", label: "Opening Balance", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.setup"] },
           { to: "/scm/accounting?tab=groups", label: "Item Groups", icon: SettingsIcon, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.setup"] },
           { to: "/scm/settlement-setup", label: "Recon Setup", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.setup"] },
           { to: "/scm/currencies", label: "Currencies", icon: DollarSign, anyPerm: ["*", "scm.currency.manage"] },

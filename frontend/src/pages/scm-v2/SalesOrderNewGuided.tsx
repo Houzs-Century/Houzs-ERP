@@ -64,7 +64,7 @@ import { PhoneInput } from "../../vendor/scm/components/PhoneInput";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-type Tier = "PRICE_1" | "PRICE_2" | "PRICE_3";
+type Tier = "PRICE_1" | "PRICE_2" | "PRICE_3" | "PRICE_4";
 
 type ProductModel = {
   id: string;
@@ -112,7 +112,8 @@ const STEPS = [
 const TIER_LABELS: Record<Tier, { short: string; long: string }> = {
   PRICE_1: { short: "Tier 1", long: "PRICE_1 · standard fabric" },
   PRICE_2: { short: "Tier 2", long: "PRICE_2 · premium fabric" },
-  PRICE_3: { short: "Tier 3", long: "PRICE_3 · top-end fabric / leather" },
+  PRICE_3: { short: "Tier 3", long: "PRICE_3 · half leather" },
+  PRICE_4: { short: "Tier 4", long: "PRICE_4 · full leather (sofa)" },
 };
 
 // Guarded centi→"RM …" — "—" for an absent/non-finite amount, never "RM NaN".
@@ -984,7 +985,7 @@ function StepFabric({ tier, setTier }: { tier: Tier; setTier: (t: Tier) => void 
         colour are picked on the SO detail (where the full fabric library and
         swatches live).
       </p>
-      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {(Object.keys(TIER_LABELS) as Tier[]).map((t) => {
           const isOn = tier === t;
           return (

@@ -49,6 +49,7 @@ export const JOB_CADENCE_MIN: Record<string, number> = {
   "stock-close": DAY,
   "supplier-price-apply": DAY,
   "deliver-due": DAY,
+  "ai-usage-hub": DAY,
   "scan-so-distill": 7 * DAY,
 };
 

@@ -124,6 +124,7 @@ const ScmPaymentVouchersV2 = lazy(() => import("./pages/scm-v2/PaymentVouchers")
 const ScmPaymentVoucherNewV2 = lazy(() => import("./pages/scm-v2/PaymentVoucherNew").then((m) => ({ default: m.PaymentVoucherNew })));
 const ScmPaymentVoucherScanV2 = lazy(() => import("./pages/scm-v2/PaymentVoucherScan").then((m) => ({ default: m.PaymentVoucherScan })));
 const ScmChartOfAccountsV2 = lazy(() => import("./pages/scm-v2/ChartOfAccounts").then((m) => ({ default: m.ChartOfAccounts })));
+const ScmOpeningBalanceV2 = lazy(() => import("./pages/scm-v2/OpeningBalance").then((m) => ({ default: m.OpeningBalance })));
 const ScmOtherDebtorsV2 = lazy(() => import("./pages/scm-v2/OtherDebtors").then((m) => ({ default: m.OtherDebtors })));
 const ScmReceiptsV2 = lazy(() => import("./pages/scm-v2/Receipts").then((m) => ({ default: m.Receipts })));
 const ScmOfficialReceiptsV2 = lazy(() => import("./pages/scm-v2/OfficialReceipts").then((m) => ({ default: m.OfficialReceipts })));
@@ -813,6 +814,7 @@ export default function App() {
         <Route path="/scm/payment-vouchers/new" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/payment-vouchers/scan" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherScanV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/chart-of-accounts" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmChartOfAccountsV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/opening-balance" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOpeningBalanceV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/other-debtors" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOtherDebtorsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/receipts" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmReceiptsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/official-receipts" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOfficialReceiptsV2 /></Scm2990Shell></ScmGuard>} />

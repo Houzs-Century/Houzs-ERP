@@ -24,6 +24,8 @@ type Plan = {
 
 const stockText = (s: Array<{ warehouse: string; qty: number }>) => s.map((x) => `${x.warehouse} ${x.qty}`).join(', ') || 'none';
 const mono = { fontFamily: 'var(--font-mono)' };
+const input = { ...mono, padding: '6px 8px', fontSize: 'var(--fs-13)', border: '1px solid var(--line-strong, #8a8780)', borderRadius: 6, background: 'var(--c-paper, #fff)' };
+const hint = { margin: 0, fontSize: 'var(--fs-12, 12px)', color: 'var(--fg-muted)' };
 
 export const MergeCodesDialog = ({ codes, onClose }: { codes: string[]; onClose: () => void }) => {
   const qc = useQueryClient();
@@ -70,18 +72,21 @@ export const MergeCodesDialog = ({ codes, onClose }: { codes: string[]; onClose:
   };
 
   const canMerge = plan && plan.totals.refused === 0 && plan.totals.pairs > 0;
+  const summary = !keep.trim() ? 'Step 1: choose the code to keep.'
+    : drops.length === 0 ? `Keeping ${keep.trim()}. Step 2: add at least one code to merge into it.`
+      : `Keeping ${keep.trim()}, merging ${drops.length} code(s) into it. ${plan ? (canMerge ? 'Check passed.' : 'Check found a problem.') : 'Not checked yet.'}`;
   return (
     <Modal title="Merge product codes" onClose={onClose} width="min(760px, 100%)">
       <datalist id="merge-sku-codes">{codes.map((c) => <option key={c} value={c} />)}</datalist>
       <label>
         <div style={{ fontWeight: 600, marginBottom: 4 }}>Code to keep</div>
-        <input list="merge-sku-codes" value={keep} onChange={(e) => { setKeep(e.target.value); changed(); }} style={{ ...mono, width: '100%' }} />
+        <input list="merge-sku-codes" value={keep} placeholder="Type or pick the code that stays" onChange={(e) => { setKeep(e.target.value); changed(); }} style={{ ...input, width: '100%', boxSizing: 'border-box' }} />
       </label>
       <div>
         <div style={{ fontWeight: 600, marginBottom: 4 }}>Codes to merge into it (add one by one)</div>
         <div style={{ display: 'flex', gap: 8 }}>
           <input list="merge-sku-codes" value={draft} onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') add(); }} style={{ ...mono, flex: 1 }} aria-label="Code to merge" />
+            onKeyDown={(e) => { if (e.key === 'Enter') add(); }} placeholder="Type or pick a code to merge in, then press Add" style={{ ...input, flex: 1 }} aria-label="Add a code to merge" />
           <Button variant="secondary" onClick={add}>Add</Button>
         </div>
         <ul style={{ margin: '8px 0 0', paddingLeft: 18 }}>
@@ -119,6 +124,9 @@ export const MergeCodesDialog = ({ codes, onClose }: { codes: string[]; onClose:
         </div>
       )}
 
+      <p style={{ margin: 0, fontWeight: 600 }} role="status">{summary}</p>
+      {plan && !canMerge && <p style={hint}>Merge is off: {plan.totals.pairs === 0 ? 'there is nothing to merge.' : 'some codes are refused above. Fix or remove them, then press Check again.'}</p>}
+      {!plan && <p style={hint}>Press Check first. Merge turns on only after a Check that has no refused codes. Changing any code asks for a new Check.</p>}
       {error && <p role="alert" style={{ color: 'var(--c-err, #b3261e)', margin: 0 }}>{error}</p>}
       {done && <p role="status" style={{ margin: 0 }}>{done}</p>}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>

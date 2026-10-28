@@ -4,10 +4,31 @@ import {
 import type { Sql } from 'postgres';
 import { parsePgrestInList } from './pgrest-in-list';
 import { getSql, resolveDatabaseUrl } from '../../db/pg';
+import { recordStep } from '../../lib/step-timing';
 
 type QueryResult<T = unknown> = { data: T | null; error: { message: string } | null; count?: number | null };
 type Predicate = { sql: string; values: unknown[] };
 const txQueues = new WeakMap<object, Promise<void>>();
+const pendingReleases = new WeakMap<object, Promise<unknown>>();
+const SLOW_STATEMENT_MS = 1000;
+
+/* Sent now, awaited later. postgres.js queries are lazy until execute() or
+   await; a plain promise is already running. Inside sql.begin postgres.js
+   attaches its own catch to every query, so one that fails before it is
+   awaited is not an unhandled rejection, and it still fails the transaction. */
+const send = <T>(query: Promise<T>): Promise<T> =>
+  (query as Promise<T> & { execute?: () => Promise<T> }).execute?.() ?? query;
+
+/** Wait for the last statement's RELEASE. It MUST be answered before COMMIT:
+ *  a COMMIT on an aborted transaction quietly rolls back and still reports
+ *  success. A failed RELEASE throws here. */
+export async function settleScmStatements(sql: Sql): Promise<void> {
+  const key = sql as unknown as object;
+  const pending = pendingReleases.get(key);
+  if (!pending) return;
+  pendingReleases.delete(key);
+  await pending;
+}
 let savepointSequence = 0;
 
 async function serialOnTransaction<T>(sql: Sql, operation: () => Promise<T>): Promise<T> {
@@ -295,16 +316,31 @@ class PgPostgrestQuery implements PromiseLike<QueryResult<any>> {
 
     const outcome = await serialOnTransaction(this.sql, async () => {
       const savepoint = `scm_cmd_${++savepointSequence}`;
-      await this.sql.unsafe(`SAVEPOINT ${savepoint}`);
+      /* HC-0167: awaited one by one, a statement here cost four round trips —
+         SAVEPOINT, describe + execute (prepare:false), RELEASE — about 34 ms each
+         from SIN. The SAVEPOINT now goes out with the statement, and the RELEASE
+         goes out with the NEXT statement (or is awaited before COMMIT by
+         settleScmStatements). Same statements, same order, two round trips. */
+      const t0 = Date.now();
       try {
-        const rawRows = await this.sql.unsafe(text, values as never[]);
-        const rows = normalizeReturnedRows(rawRows as unknown[]);
-        await this.sql.unsafe(`RELEASE SAVEPOINT ${savepoint}`);
-        return { rows, error: null as { message: string } | null };
-      } catch (error) {
-        await this.sql.unsafe(`ROLLBACK TO SAVEPOINT ${savepoint}`);
-        await this.sql.unsafe(`RELEASE SAVEPOINT ${savepoint}`);
-        return { rows: [] as unknown[], error: { message: error instanceof Error ? error.message : String(error) } };
+        const opened = send(this.sql.unsafe(`SAVEPOINT ${savepoint}`));
+        const run = send(this.sql.unsafe(text, values as never[]));
+        try {
+          await settleScmStatements(this.sql);
+          await opened;
+          const rows = normalizeReturnedRows(await run as unknown[]);
+          pendingReleases.set(this.sql as unknown as object, send(this.sql.unsafe(`RELEASE SAVEPOINT ${savepoint}`)));
+          return { rows, error: null as { message: string } | null };
+        } catch (error) {
+          await Promise.allSettled([opened, run]);
+          await this.sql.unsafe(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+          await this.sql.unsafe(`RELEASE SAVEPOINT ${savepoint}`);
+          return { rows: [] as unknown[], error: { message: error instanceof Error ? error.message : String(error) } };
+        }
+      } finally {
+        const ms = Date.now() - t0;
+        recordStep('db-pg', ms);
+        if (ms >= SLOW_STATEMENT_MS) console.warn(`[scm-command] slow ${this.operation} ${this.table} ${ms}ms`);
       }
     });
     if (outcome.error) {
@@ -509,6 +545,7 @@ export async function runScmPgCommand(
         }
       }
       const response = await command(pgTransactionSupabase(tx as unknown as Sql));
+      await settleScmStatements(tx as unknown as Sql);
       if (!response.ok) throw new CommandRollback(response);
       return response;
     });

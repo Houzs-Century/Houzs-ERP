@@ -25,7 +25,7 @@ describe('message kinds → Connect automation names', () => {
   });
 
   it('only the conversation openers reset the contact (Delivery Lock must survive a reminder)', () => {
-    expect([...OPENER_KINDS].sort()).toEqual(['amend', 'delivery', 'postpone']);
+    expect([...OPENER_KINDS].sort()).toEqual(['amend', 'assr_arrangement', 'delivery', 'postpone']);
     expect(OPENER_KINDS.has('driver_info')).toBe(false);
     expect(OPENER_KINDS.has('balance_reminder')).toBe(false);
   });

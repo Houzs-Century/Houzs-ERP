@@ -1,0 +1,83 @@
+name: Run a backend script on staging (plan / apply)
+
+# Same manual runner as run-script.yml, pointed at the STAGING database. Use it
+# for staging-only repairs (a ledger row left by a preview branch, a seed fix)
+# so they need no workflow file of their own. It cannot reach production: the
+# job runs in the Staging environment with STAGING_DATABASE_URL only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      script:
+        description: "File name in backend/scripts, e.g. staging-clear-preview-migration-rows.mjs"
+        required: true
+        type: string
+      mode:
+        description: "plan = read and report; apply = write"
+        required: true
+        default: plan
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "CONFIRM phrase the script asks for on apply"
+        required: false
+        type: string
+      env:
+        description: "Extra variables the script reads: KEY=VALUE separated by ;"
+        required: false
+        type: string
+
+concurrency:
+  # Shared with the staging migration run so the two never touch one ledger at once.
+  group: deploy-staging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: Staging
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Run the script
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          SCRIPT: ${{ inputs.script }}
+          MODE_INPUT: ${{ inputs.mode }}
+          CONFIRM_INPUT: ${{ inputs.confirm }}
+          EXTRA_ENV: ${{ inputs.env }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$SCRIPT" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.m?js$ ]] || [ ! -f "scripts/$SCRIPT" ]; then
+            echo "::error::backend/scripts/$SCRIPT does not exist"; exit 1
+          fi
+          if node -e 'const g = require("./scripts/release-discipline-grandfathered.json").scripts || {}; process.exit(Object.prototype.hasOwnProperty.call(g, process.argv[1]) ? 0 : 1)' "$SCRIPT"; then
+            echo "::error::$SCRIPT is on the release-discipline grandfather list, so it may write without a plan default or CONFIRM."; exit 1
+          fi
+          if [ -z "$DATABASE_URL" ]; then echo "::error::STAGING_DATABASE_URL is not set"; exit 2; fi
+          export MODE="$MODE_INPUT"
+          if [ "$MODE_INPUT" = apply ]; then export APPLY=1; fi
+          if [ -n "$CONFIRM_INPUT" ]; then export CONFIRM="$CONFIRM_INPUT"; fi
+          IFS=';' read -r -a pairs <<< "$EXTRA_ENV"
+          for pair in "${pairs[@]}"; do
+            [ -z "${pair// /}" ] && continue
+            key="${pair%%=*}"
+            value="${pair#*=}"
+            if [ "$key" = "$pair" ] || ! [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || [[ "$key" =~ ^(DATABASE_URL|PATH|HOME|NODE_OPTIONS|MODE|APPLY|CONFIRM|LD_.*|GITHUB_.*|RUNNER_.*|ACTIONS_.*)$ ]]; then
+              echo "::error::refusing variable '$key'"; exit 1
+            fi
+            export "$key=$value"
+          done
+          npx tsx "scripts/$SCRIPT"

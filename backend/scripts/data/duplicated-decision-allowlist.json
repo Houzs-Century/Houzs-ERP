@@ -37,8 +37,13 @@
     },
     {
       "check": "D1",
-      "key": "PRICE_1,PRICE_2,PRICE_3|backend/src/scm/routes/fabric-library.ts backend/src/scm/routes/fabric-tracking.ts backend/src/scm/routes/sofa-combos.ts frontend/src/pages/scm-v2/products/VariantsTab.tsx frontend/src/vendor/scm/components/FabricsTable.tsx frontend/src/vendor/scm/components/SofaComboTab.tsx",
-      "why": "THE THREE PRICE TIERS. A closed vocabulary fixed by the supplier price sheet; the copies are a validator and three label maps (VALID_TIERS, TIERS, TIER_LABELS, allTiers, TIER_NEXT). Recorded rather than merged because the validator must stay server-side and the labels must stay renderable offline."
+      "key": "PRICE_1,PRICE_2,PRICE_3,PRICE_4|backend/src/scm/routes/fabric-tracking.ts backend/src/scm/routes/sofa-combos.ts frontend/src/pages/scm-v2/products/VariantsTab.tsx frontend/src/vendor/scm/components/SofaComboTab.tsx frontend/src/vendor/scm/lib/fabric-queries.ts",
+      "why": "THE FOUR SOFA PRICE TIERS (2990-0024: supplier lists price Fabric / Acacia / Half Leather / Full Leather). A closed vocabulary fixed by the supplier price sheet; the copies are the server validators (VALID_TIERS, TIERS) and the screens that offer them (TIER_LABELS, allTiers, FABRIC_TIER_OPTIONS). The validator must stay server-side and the labels renderable offline; divergence refuses a save, never a wrong price."
+    },
+    {
+      "check": "D1",
+      "key": "PRICE_1,PRICE_2,PRICE_3|backend/src/scm/routes/fabric-library.ts backend/src/scm/routes/fabric-tracking.ts backend/src/scm/routes/pos-sofa-combos.ts",
+      "why": "THE THREE TIERS that stop short of PRICE_4, each for its own reason: fabric-library is the 2990 POS selling tier (the POS has no PRICE_4 add-on), pos_sofa_combos.tier carries its own CHECK (PRICE_1..PRICE_3), and fabric-tracking BEDFRAME_TIERS because Full Leather is a sofa-only grade. Three different gates that share words, not one rule with three homes."
     },
     {
       "check": "D1",
@@ -617,8 +622,8 @@
     },
     {
       "check": "D1",
-      "key": "P1,P2,P3|backend/src/scm/routes/suppliers.ts frontend/src/pages/scm-v2/SupplierBindingsCsv.tsx",
-      "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: TIER_KEYS, SOFA_TIERS_FOR_EXPORT. Cost of divergence is a blank chip, not a wrong number."
+      "key": "P1,P2,P3,P4|backend/src/scm/routes/suppliers.ts frontend/src/pages/scm-v2/SupplierBindingsCsv.tsx",
+      "why": "ONE vocabulary, one definition and one PRESENTATION of it: the sofa price_matrix cell keys (suppliers.ts SOFA_TIER_KEYS validates, SupplierBindingsCsv SOFA_TIERS_FOR_EXPORT writes the CSV columns). Divergence is a missing CSV column, which the server validator would refuse on import, never a wrong number."
     },
     {
       "check": "D1",
@@ -1302,8 +1307,13 @@
     },
     {
       "check": "D1",
-      "key": "COMMISSION_MONTH,DELIVERY_ORDER,GRN,INVENTORY_ADJUSTMENT,PAYMENT_REQUEST,PAYMENT_VOUCHER,PRODUCT_REQUEST,PURCHASE_INVOICE,PURCHASE_ORDER,PURCHASE_RETURN,SALES_INVOICE,STOCK_TAKE,STOCK_TRANSFER|backend/src/scm/lib/entity-audit.ts frontend/src/vendor/scm/lib/entity-audit-queries.ts",
+      "key": "COMMISSION_MONTH,DELIVERY_ORDER,GRN,INVENTORY_ADJUSTMENT,OPENING_BALANCE,PAYMENT_REQUEST,PAYMENT_VOUCHER,PRODUCT_REQUEST,PURCHASE_INVOICE,PURCHASE_ORDER,PURCHASE_RETURN,SALES_INVOICE,STOCK_TAKE,STOCK_TRANSFER|backend/src/scm/lib/entity-audit.ts frontend/src/vendor/scm/lib/entity-audit-queries.ts",
       "why": "PINNED BY A TEST, which is this checker's own prescribed remedy for a pair that must stay two. The list cannot be imported across the app boundary (the frontend does not build backend sources), so frontend/src/vendor/scm/lib/entity-audit-queries.test.ts READS backend/src/scm/lib/entity-audit.ts and asserts the two are equal, with a second assertion that the read found more than five names so a dead matcher cannot report a pass. Recorded rather than collapsed because this pair already cost four documents their change log while the comment said 'must stay in step' and nothing made it - docs/bugs/0847-four-documents-kept-a-change-log-nobody-could-read.md."
+    },
+    {
+      "check": "D1",
+      "key": "API,ODB,ODR,SCN|backend/src/acc/opening-balance.ts backend/src/scm/routes/accounting-opening.ts frontend/src/pages/scm-v2/OpeningBalance.tsx",
+      "why": "THE OPENING PAPER KINDS (owner 2026-10-28, Opening Balance page). ONE home answers which papers an opening may hold: OPENING_PAPER_KINDS in backend/src/acc/opening-balance.ts, the only list the server validates against (isKind). The other two key something ELSE by it: accounting-opening.ts PAPER is per-kind WIRING (table, number and date columns, party column, line table), and OpeningBalance.tsx KIND_WORD is PRESENTATION (the word a paper prints). Each is typed Record<OpeningPaperKind, …> on the same union, so a kind added to the union and not to a map fails to compile; a divergence that slips past costs a blank word, never a paper the server would book."
     },
     {
       "check": "D2",
@@ -1492,8 +1502,13 @@
     },
     {
       "check": "D1",
-      "key": "AMEND,BALANCE_REMINDER,DELIVERY,DELIVERY_COMPLETED,DRIVER_INFO,POSTAGE,POSTPONE,REMINDER_1,REMINDER_2,REMINDER_3|backend/src/scm/lib/delivery-message-kinds.ts frontend/src/vendor/scm/components/SendDeliveryMessageModal.tsx",
+      "key": "AMEND,ASSR_ARRANGEMENT,BALANCE_REMINDER,DELIVERY,DELIVERY_COMPLETED,DRIVER_INFO,POSTAGE,POSTPONE,REMINDER_1,REMINDER_2,REMINDER_3|backend/src/scm/lib/delivery-message-kinds.ts frontend/src/vendor/scm/components/SendDeliveryMessageModal.tsx",
       "why": "THE BOARD'S WHATSAPP MESSAGE KINDS (2026-10-05), one decision with one home: scm/lib/delivery-message-kinds.ts MESSAGE_KINDS decides which kinds exist and KIND_AUTOMATION which Connect automation each fires (the zod enum on /delivery-messages/send is built from that array). KIND_AFTER_STATUS (the status a sent order lands on) lives beside them and is written server-side by the send (HC-0164). SendDeliveryMessageModal's KIND_TITLE is PRESENTATION of the same vocabulary — the drawer heading — keyed by the frontend SendMessageKind type that mirrors the backend list; a kind added on one side without the other is a compile error on the frontend (Record<SendMessageKind, ...>) and a 400 invalid_body from the server, never a wrong message. Cost of divergence is a missing menu entry, not a wrong number."
+    },
+    {
+      "check": "D2",
+      "key": "AMEND,ASSR_ARRANGEMENT,BALANCE_REMINDER,DELIVERY,DELIVERY_COMPLETED,DRIVER_INFO,POSTAGE,POSTPONE,REMINDER_1,REMINDER_2,REMINDER_3 ~ AMEND,BALANCE_REMINDER,DELIVERY,DELIVERY_COMPLETED,DRIVER_INFO,POSTAGE,POSTPONE,REMINDER_1,REMINDER_2,REMINDER_3",
+      "why": "INTENDED, not a missed kind (HC-0164). KIND_AFTER_STATUS in delivery-message-kinds.ts is the Delivery Message Status a sent SALES ORDER lands on, written server-side by POST /delivery-messages/send. ASSR_ARRANGEMENT is a service-case message: the case has no SO status column and its row reads its state off the WhatsApp record, and /send hands that kind to sendAssrArrangement before any status write. The map is typed Record<Exclude<MessageKind, 'assr_arrangement'>, string>, so a NEW kind missing here is a compile error, not a silent gap."
     },
     {
       "check": "D1",
@@ -1649,6 +1664,16 @@
       "check": "D1",
       "key": "CUSTOMER,LOGISTICS,MANAGEMENT,PRODUCTION,SUPPLIER|backend/src/scm/shared/assr-verification-fields.ts frontend/src/vendor/scm/lib/assr-verification-fields.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: PENDING_WITH_OPTIONS."
+    },
+    {
+      "check": "D2",
+      "key": "P1,P2,P3 ~ P1,P2,P3,P4",
+      "why": "BEDFRAME vs SOFA price_matrix keys in suppliers.ts: a bedframe binding prices P1 / P2 / P3 only, a sofa binding adds P4 (Full Leather, 2990-0024). Two categories with different supplier grades, not one rule enforced at N-1 places. Divergence refuses a bedframe P4 cell, which is the intent."
+    },
+    {
+      "check": "D2",
+      "key": "PRICE_1,PRICE_2,PRICE_3 ~ PRICE_1,PRICE_2,PRICE_3,PRICE_4",
+      "why": "PRICE_4 (Full Leather) is a sofa-only cost grade (2990-0024). The three-tier sets are the bedframe tier, the 2990 POS selling tier (no PRICE_4 add-on in the POS) and pos_sofa_combos (own CHECK); the four-tier sets are sofa cost. Different scopes on purpose, not a missed home."
     }
   ]
 }

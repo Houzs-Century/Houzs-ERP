@@ -266,7 +266,7 @@ export function buildSkuImportRows(parsed: Array<Record<string, string | undefin
     if (has(first.description)) out.description = first.description;
     if (has(first.base_model)) out.base_model = first.base_model;
     if (has(first.size_label)) out.size_label = first.size_label;
-    if (has(first.status))     out.status = first.status;
+    if (has(first.status))     out.status = first.status.toUpperCase();
     if (has(first.branding))   out.branding = first.branding;
 
     // Money is read in RINGGIT (new export, e.g. 1535.00 → 153500 sen). A
@@ -333,7 +333,7 @@ export function buildSkuImportRows(parsed: Array<Record<string, string | undefin
       }
     }
     if (tierError) {
-      tierErrors.push({ code, reason: `price tier "${tierError}" not recognized — use P1, P2, or P3` });
+      tierErrors.push({ code, reason: `price tier "${tierError}" not recognized — use P1, P2, P3 or P4` });
       continue;
     }
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- senOf sets it inside a closure, which narrowing does not see

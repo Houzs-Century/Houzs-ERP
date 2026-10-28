@@ -111,7 +111,7 @@ export type SupplierRow = {
  *  Stored cell type is `number` (centi); we widen to `unknown` on the wire
  *  because the column is JSONB and the server is the source of truth.
  */
-export type SofaPriceMatrix     = Record<string, { P1?: number; P2?: number; P3?: number }>;
+export type SofaPriceMatrix     = Record<string, { P1?: number; P2?: number; P3?: number; P4?: number }>;
 export type BedframePriceMatrix = { P1?: number; P2?: number };
 export type PriceMatrix         = SofaPriceMatrix | BedframePriceMatrix | Record<string, unknown>;
 

@@ -55,6 +55,35 @@ export function stepClock(): (name: string) => void {
   };
 }
 
+/**
+ * stepClock that also LOGS each lap as it happens, with the database steps
+ * (`dbStep`, e.g. "db-pg") recorded since the previous lap. A request the
+ * browser gave up on never sends its Server-Timing header, and the access-log
+ * line is written only once the handler returns — so for a write that times out
+ * (HC-0167: approve-so past 30 s at the evening peak) these lines are the only
+ * record of where the time went.
+ */
+export function loggedStepClock(tag: string, dbStep: string): (name: string) => void {
+  const start = Date.now();
+  let last = start;
+  let seen = 0;
+  return (name) => {
+    const now = Date.now();
+    const marks = store.getStore();
+    let dbN = 0;
+    let dbMs = 0;
+    if (marks) {
+      marks.push({ name, ms: now - last });
+      for (const m of marks.slice(seen)) {
+        if (m.name === dbStep) { dbN += 1; dbMs += m.ms; }
+      }
+      seen = marks.length;
+    }
+    console.log(`[${tag}] ${name} ${now - last}ms total=${now - start}ms ${dbStep}=${dbN}x/${dbMs}ms`);
+    last = now;
+  };
+}
+
 export const STEP_LIMIT = 12;
 
 /**

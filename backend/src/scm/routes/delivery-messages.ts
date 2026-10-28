@@ -36,6 +36,7 @@ import {
   type SendExtras,
 } from '../lib/delivery-message-kinds';
 import { markSentStatus } from '../lib/delivery-message-status';
+import { sendAssrArrangement } from '../lib/assr-arrangement-message';
 import {
   isConnectConfigured,
   buildDeliveryFollowUp,
@@ -258,6 +259,16 @@ deliveryMessages.post('/send', async (c) => {
   const extras: SendExtras = { driverInfo: parsed.data.driverInfo };
   if (kind === 'driver_info' && !extras.driverInfo) {
     return c.json({ error: 'invalid_body', reason: 'Driver Info needs the driver, contact, plate and time.' }, 400);
+  }
+  // A Service Case leg has no Sales Order to read; its own sender (HC-0171).
+  // Only its case read can throw (each send / log is caught), so a throw means
+  // nothing went out.
+  if (kind === 'assr_arrangement') {
+    try {
+      return c.json(await sendAssrArrangement(c, docNos));
+    } catch (e) {
+      return c.json({ error: 'load_failed', reason: String((e as Error).message).slice(0, 200) }, 500);
+    }
   }
   // Postpone needs no request field: it reads the row's Amend Reason + Delivery
   // Date (kindAttributes), and skips any order missing either.

@@ -766,7 +766,7 @@ export const SalesOrderNew = () => {
   const masterSnapshotRef = useRef<MasterVariantSnapshot>({});
   useEffect(() => {
     const { variants, masters } = cascadeMasterVariants(
-      lines.map((l) => ({ category: l.itemGroup ?? '', variants: (l.variants ?? {}) as Record<string, unknown> })),
+      lines.map((l) => ({ category: l.itemGroup ?? '', variants: (l.variants ?? {}) as Record<string, unknown>, itemCode: l.itemCode })),
       masterSnapshotRef.current,
       /* The ONE set, shared with mobile (owner 2026-09-09: cascade is for sofa
          only). This used to be `null` — EVERY category, a mattress line's
