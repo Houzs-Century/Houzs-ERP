@@ -106,6 +106,8 @@ export type DataGridCompatProps<T> = {
   resetFilters?: { active: boolean; onReset: () => void; label?: string };
   /** Page seeds written in DataGrid's layout rules; converted here. */
   layoutPresets?: LayoutSeed[];
+  /** See DataTable `onApplyLayoutSeed`. */
+  onApplyLayoutPreset?: (presetId: string) => void;
   overlayHidden?: readonly string[];
   onUserAdjustColumns?: () => void;
   scrollToRow?: { key: string; nonce: number } | null;
@@ -205,6 +207,7 @@ export function DataGridCompat<T>({
   persistFilters,
   resetFilters,
   layoutPresets,
+  onApplyLayoutPreset,
   overlayHidden,
   onUserAdjustColumns,
   scrollToRow,
@@ -248,6 +251,7 @@ export function DataGridCompat<T>({
       persistFilters={persistFilters}
       resetFilters={resetFilters}
       layoutSeeds={layoutSeeds}
+      onApplyLayoutSeed={onApplyLayoutPreset}
       overlayHidden={overlayHidden}
       onUserAdjustColumns={onUserAdjustColumns}
       scrollToRow={scrollToRow}
