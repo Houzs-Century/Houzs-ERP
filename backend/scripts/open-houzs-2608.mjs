@@ -299,8 +299,9 @@ async function run(tx, data, CUTOFF) {
      nil, and what remains is the ERP's own difference at the cutover — its stock
      valuation, its own entries before 01/09 (the July/August stock close above
      all), its own bills — so 150-0000 RETAINED EARNING reads AutoCount's. */
-  const clearingNet = jes.reduce((s, j) => s + j.lines.filter((l) => l.a === CLEARING.code).reduce((t, l) => t + l.dr - l.cr, 0), 0);
-  const tbNet = tbLines.reduce((s, l) => s + l.dr - l.cr, 0) + clearingNet;
+  /* The journal balances itself on 190-0000; with the documents' own 190 lines that
+     leaves 190 holding exactly the ERP's difference at the cutover. */
+  const tbNet = tbLines.reduce((s, l) => s + l.dr - l.cr, 0);
   if (tbNet !== 0) tbLines.push({ a: CLEARING.code, dr: Math.max(-tbNet, 0), cr: Math.max(tbNet, 0), notes: `${TAG}: the opening documents back to nil; the rest is the ERP's own difference at the cutover (its stock, its entries before 01/09, its own bills)` });
   jes.push({ source: 'OPENING', doc: TB_DOC, date: CUTOFF, narration: `Opening balances at 31/08/2026 from AutoCount (trial balance B/F; creditors by the aging) — ${TAG}`, lines: tbLines });
 
