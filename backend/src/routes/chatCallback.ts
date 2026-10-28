@@ -63,6 +63,7 @@ import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { CHAT_EVENTS, DOC_REF_RE, parseCallbackRefs, type ChatEvent } from "../lib/chat-request-patch";
 import { blastPhone } from "../scm/routes/delivery-messages";
 import { ChatTapLogFailed, recordChatTap, type ChatTapResult } from "../lib/chat-callback-record";
+import { AssrTapFailed, isAssrLeg, recordAssrChatTap } from "../scm/lib/assr-arrangement-message";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -152,6 +153,8 @@ app.post("/", async (c) => {
     reason?: string;
     address?: string;
     note?: string;
+    // Service Case taps only: which leg of the case (`ref`) the message named.
+    leg?: string;
     // event "property": the Property Details form answers.
     house_type?: string;
     delivery_purpose?: string;
@@ -229,6 +232,26 @@ app.post("/", async (c) => {
   if (!DOC_REF_RE.test(ref)) {
     return c.json({ error: "invalid_ref", reason: "ref has characters no document number carries" }, 400);
   }
+  // A Service Case leg (HC-0171): the Service Arrangement flow sends the case
+  // number as ref plus the leg. Same key, company and idempotency rules; the
+  // tap lands on the case timeline instead of SO request columns.
+  if (body.leg !== undefined) {
+    if (!isAssrLeg(body.leg)) return c.json({ error: "invalid_leg" }, 400);
+    if (event !== "confirm" && event !== "amend") {
+      return c.json({ error: "invalid_event", reason: "a Service Case tap is confirm or amend" }, 400);
+    }
+    try {
+      const tap = await recordAssrChatTap(c.env, sb, {
+        companyId: company.id, assrNo: ref, leg: body.leg, callbackId, event, phone, requestedDate, reason, note,
+      });
+      if (!tap) return c.json({ error: "unknown_ref", reason: `no ${CHAT_KEY_COMPANY} service case ${ref}` }, 404);
+      return c.json({ ok: true, ...(tap.duplicate ? { duplicate: true } : { event, recorded: true }), id: tap.id, ref: tap.docNo, applied: false });
+    } catch (e) {
+      if (e instanceof AssrTapFailed) return c.json({ error: "log_failed", reason: e.message }, 500);
+      throw e;
+    }
+  }
+
   const refs = parseCallbackRefs(ref, body.refs);
   const list = refs.join(",");
   let soQuery = sb

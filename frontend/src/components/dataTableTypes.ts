@@ -224,6 +224,9 @@ export interface DataTableProps<T, L = never> {
    *  in the Columns picker, team-wide. A layout manager may overwrite one for
    *  everyone ("Update with current columns") and reset it back. */
   layoutSeeds?: LayoutSeed[];
+  /** Fired with the seed's own `id` when the user picks one of `layoutSeeds`,
+   *  so a page can narrow its rows to match (SG Order -> SG region chip). */
+  onApplyLayoutSeed?: (seedId: string) => void;
   /** Column keys hidden on screen only, never saved (a board narrowing itself
    *  while its map is open). */
   overlayHidden?: readonly string[];

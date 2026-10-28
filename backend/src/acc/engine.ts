@@ -47,6 +47,9 @@ export type PostJournalInput = {
   lines: EngineLine[];
   /** default true. false = manual JV draft: entry + lines written, posted stays false. */
   postNow?: boolean;
+  /** One of the books' OPENING journals (mig 20261028T2100): counted whatever its date by a company whose
+      books start on a day (scm.acc_company_settings.books_start_date). Only the Opening Balance page sets it. */
+  opening?: boolean;
 };
 
 export type PostJournalOk = {
@@ -153,8 +156,9 @@ export async function validateJournal(sb: any, input: PostJournalInput): Promise
   // 3b — control accounts are SYSTEM-maintained (brief §2.4): a MANUAL journal
   // may not name them. Every AR/AP movement must come from a document through
   // its rule, or the "control balance = detail sum" self-check stops meaning
-  // anything.
-  if (sourceType === 'MANUAL') {
+  // anything. The books' OPENING journal neither: an opening creditor or
+  // debtor is an opening bill (its own API / SCN / ODB), never a line here.
+  if (sourceType === 'MANUAL' || sourceType === 'OPENING') {
     const roles = await resolveRoles(sb, companyId);
     const controlCodes = new Set(CONTROL_ROLES.map((role) => roles[role]));
     const hit = lines.find((l) => controlCodes.has(l.accountCode));
@@ -162,7 +166,9 @@ export async function validateJournal(sb: any, input: PostJournalInput): Promise
       return {
         ok: false,
         status: 'control_account_manual',
-        reason: `${hit.accountCode} is a control account — it is maintained by documents, not manual journals`,
+        reason: sourceType === 'OPENING'
+          ? `${hit.accountCode} is a control account — its opening is the opening bills, not a line of the opening journal`
+          : `${hit.accountCode} is a control account — it is maintained by documents, not manual journals`,
       };
     }
   }
@@ -241,6 +247,7 @@ export async function postJournal(sb: any, input: PostJournalInput): Promise<Pos
         narration,
         total_debit_sen: dr,
         total_credit_sen: cr,
+        ...(input.opening === true ? { opening: true } : {}),
       })
       .select('*')
       .single();

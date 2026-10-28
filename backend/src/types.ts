@@ -212,6 +212,9 @@ export type Env = {
   // Company code whose hub key sends the daily AI cost summary to the hub
   // (services/aiUsageHub.ts), e.g. HOUZS. A secret, like IT_HUB_URL. Unset => not sent.
   IT_HUB_AI_USAGE_COMPANY?: string;
+  // SO scanning's model, a secret so it survives deploys (scm/lib/scan-ocr.ts
+  // scanSoModel): claude-sonnet-4-6 (also when unset) or claude-sonnet-5-5.
+  SCAN_SO_MODEL?: string;
   // Houzs → 2990 Product Maintenance push (scm/routes/maintenance-push.ts).
   // The push writes 2990's public.maintenance_config_history DIRECTLY with
   // 2990's service-role key — an owner-granted, table-scoped exception to D2

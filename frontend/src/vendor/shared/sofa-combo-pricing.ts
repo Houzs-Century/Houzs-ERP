@@ -40,7 +40,7 @@
 
 import { todayMY } from './format';
 
-export type SofaPriceTier = 'PRICE_1' | 'PRICE_2' | 'PRICE_3';
+export type SofaPriceTier = 'PRICE_1' | 'PRICE_2' | 'PRICE_3' | 'PRICE_4';
 
 /** A combo's ordered slots. Each slot is an OR-set of module codes. */
 export type ComboSlots = string[][];

@@ -160,6 +160,7 @@ function DataTableInner<T, L>({
   groupBanner = false,
   legacyGridKey,
   layoutSeeds,
+  onApplyLayoutSeed,
   overlayHidden,
   onUserAdjustColumns,
   scrollToRow,
@@ -1097,6 +1098,7 @@ function DataTableInner<T, L>({
     setPinnedRight(keep(layout.pinnedRight).filter((k) => !hiddenSet.has(k)));
     if (Object.keys(layout.widths).length > 0) updateWidths(layout.widths, true);
     if (groupBanner) setUserGroups(keep(layout.groupBy));
+    if (preset.seed) onApplyLayoutSeed?.(preset.id.slice("seed:".length));
   }
 
   /* ── Sync this table's layout to the account ──────────────────────────────

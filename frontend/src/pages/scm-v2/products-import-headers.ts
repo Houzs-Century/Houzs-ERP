@@ -333,7 +333,7 @@ export function buildSkuImportRows(parsed: Array<Record<string, string | undefin
       }
     }
     if (tierError) {
-      tierErrors.push({ code, reason: `price tier "${tierError}" not recognized — use P1, P2, or P3` });
+      tierErrors.push({ code, reason: `price tier "${tierError}" not recognized — use P1, P2, P3 or P4` });
       continue;
     }
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- senOf sets it inside a closure, which narrowing does not see

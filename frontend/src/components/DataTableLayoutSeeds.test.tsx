@@ -83,6 +83,20 @@ describe("DataTable layout seeds", () => {
     await waitFor(() => expect(headers()).toEqual(["Alpha"]));
   });
 
+  it("tells the page which seed was picked, by the seed's own id", async () => {
+    respond({});
+    await hydrateTableLayouts();
+    const onApplyLayoutSeed = vi.fn();
+    render(
+      <DataTable
+        tableId="seeded" columns={columns} rows={rows} getRowKey={(r) => r.id}
+        layoutSeeds={seeds} onApplyLayoutSeed={onApplyLayoutSeed}
+      />,
+    );
+    await pick("Narrow View");
+    await waitFor(() => expect(onApplyLayoutSeed).toHaveBeenCalledWith("narrow"));
+  });
+
   it("a manager's team-wide override wins over the code seed", async () => {
     respond({ sharedLayouts: { seeded: [{ id: 5, name: "narrow", layout: L({ order: ["d", "a"], hidden: ["b"] }) }] } });
     await hydrateTableLayouts();

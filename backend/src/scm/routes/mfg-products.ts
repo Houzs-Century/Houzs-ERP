@@ -43,9 +43,9 @@ import { MFG_PRODUCT_CATEGORIES, MFG_CATEGORY_LABELS, mfgCategoryLabel, parseMfg
 import { mfgProductMerge } from './mfg-product-merge';
 
 export const mfgProducts = new Hono<{ Bindings: Env; Variables: Variables }>();
-mfgProducts.route('/merge', mfgProductMerge);
-
 mfgProducts.use('*', supabaseAuth);
+// After supabaseAuth: the merge gate reads houzsUser, which only supabaseAuth sets.
+mfgProducts.route('/merge', mfgProductMerge);
 
 type AppContext = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -518,7 +518,7 @@ export const batchImportMfgProductsHandler = async (c: AppContext) => {
       incomingSeat.push({ ...e, tier: t });
     }
     if (badTier !== null) {
-      failures.push({ code, reason: `price tier "${badTier}" not recognized — use P1, P2, or P3` });
+      failures.push({ code, reason: `price tier "${badTier}" not recognized — use P1, P2, P3 or P4` });
       continue;
     }
     const tierOf = (e: SeatEntry) => e.tier ?? 'PRICE_2';
@@ -784,7 +784,7 @@ export const patchMfgProductHandler = async (c: AppContext) => {
     defaultVariants?: unknown;
     subAssemblies?: unknown;
     pieces?: unknown;
-    seatHeightPrices?: Array<{ height: string; priceSen: number; tier?: 'PRICE_1' | 'PRICE_2' | 'PRICE_3'; sellingPriceSen?: number }>;
+    seatHeightPrices?: Array<{ height: string; priceSen: number; tier?: 'PRICE_1' | 'PRICE_2' | 'PRICE_3' | 'PRICE_4'; sellingPriceSen?: number }>;
     branding?: string | null;
     /** PR #87 — per-SKU active toggle. Commander uses this from the Model
         detail "SKU variants" table to mark individual SKUs as no longer sold
@@ -927,7 +927,7 @@ export const patchMfgProductHandler = async (c: AppContext) => {
         return c.json({ error: 'invalid_selling_price' }, 400);
       }
     }
-    type Slot = { height: string; priceSen: number; tier?: 'PRICE_1' | 'PRICE_2' | 'PRICE_3'; sellingPriceSen?: number };
+    type Slot = { height: string; priceSen: number; tier?: 'PRICE_1' | 'PRICE_2' | 'PRICE_3' | 'PRICE_4'; sellingPriceSen?: number };
     const oldArr = (Array.isArray(current.seat_height_prices)
       ? (current.seat_height_prices as Slot[])
       : []);

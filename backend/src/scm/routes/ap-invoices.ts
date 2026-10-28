@@ -50,12 +50,13 @@ import { parseEventId, unknownEventRefusal } from '../lib/event-tags';
 import { linkPaymentRequest, paymentRequestLinkGuard } from '../lib/payment-request';
 import { officialActor, officialOwedFields, officialOwedUpdates } from '../lib/official-doc';
 import { eventAccountRefusal } from '../lib/event-accounts';
+import { openingDocumentRefusal } from '../../acc/books-opening';
 
 type Row = Record<string, any>;
 
 const NO_PERM = (what: string) => ({ error: `You don't have permission to ${what}.` });
 
-const HEADER = 'id, company_id, invoice_number, supplier_id, supplier_invoice_ref, invoice_date, due_date, currency, exchange_rate, total_sen, paid_sen, status, notes, created_at, created_by, posted_at, posted_by, cancelled_at, cancelled_by, official_doc, official_doc_note, official_doc_at, official_doc_by';
+const HEADER = 'id, company_id, invoice_number, supplier_id, supplier_invoice_ref, invoice_date, due_date, currency, exchange_rate, total_sen, paid_sen, status, notes, created_at, created_by, posted_at, posted_by, cancelled_at, cancelled_by, official_doc, official_doc_note, official_doc_at, official_doc_by, opening';
 const LINE = 'id, line_no, description, debit_account_code, amount_sen, project_id';
 
 /** projectId: the event the line's money is for (owner 2026-09-30, 5a; lib/event-tags.ts). */
@@ -280,6 +281,7 @@ export const updateApInvoiceHandler = async (c: any): Promise<Response> => {
   const found = await loadInvoice(c, c.req.param('id'));
   if ('resp' in found) return found.resp;
   const inv = found.inv;
+  if (inv.opening === true) return c.json(openingDocumentRefusal(String(inv.invoice_number)), 409);
   if (inv.status === 'CANCELLED') {
     return c.json({ error: 'cancelled', message: `${inv.invoice_number} is cancelled — raise it again instead.` }, 409);
   }
@@ -374,6 +376,7 @@ export const postApInvoiceHandler = async (c: any): Promise<Response> => {
   const found = await loadInvoice(c, c.req.param('id'));
   if ('resp' in found) return found.resp;
   const inv = found.inv;
+  if (inv.opening === true) return c.json(openingDocumentRefusal(String(inv.invoice_number)), 409);
   if (inv.status === 'CANCELLED') return c.json({ error: 'cancelled', message: `${inv.invoice_number} is cancelled.` }, 409);
   const sb = c.get('supabase');
   const { data: lineRows, error: lErr } = await scopeToCompany(sb.from('ap_invoice_lines').select(LINE).eq('invoice_id', inv.id), c).order('line_no');
@@ -415,6 +418,7 @@ export const cancelApInvoiceHandler = async (c: any): Promise<Response> => {
   const found = await loadInvoice(c, c.req.param('id'));
   if ('resp' in found) return found.resp;
   const inv = found.inv;
+  if (inv.opening === true) return c.json(openingDocumentRefusal(String(inv.invoice_number)), 409);
   if (inv.status === 'CANCELLED') return c.json({ ok: true, already: true });
   if (Number(inv.paid_sen ?? 0) > 0) {
     return c.json({ error: 'has_payments', message: `${inv.invoice_number} has ${fmtSen(Number(inv.paid_sen))} paid against it — cancel the payment first.` }, 409);
