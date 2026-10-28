@@ -367,7 +367,7 @@ function DeliveryDateEditCell({ order, onSchedule }: { order: PlanningOrder; onS
            other coordinators arrange deliveries from this column too. */
         onInvalid={(text) => notify({
           title: 'Invalid date format',
-          body: `"${text}" is not a date. Please use YYYY/MM/DD (e.g. 2026/10/30), or pick it from the calendar. ${order.so_doc_no ?? 'This order'}'s Delivery Date was not changed${current ? ` (still ${fmtDate(current)})` : ''}.`,
+          body: `"${text}" is not a date. Please use YYYY/MM/DD (e.g. 2026/10/30), or pick it from the calendar. ${order.so_doc_no}'s Delivery Date was not changed${current ? ` (still ${fmtDate(current)})` : ''}.`,
           tone: 'error',
         })}
       />
