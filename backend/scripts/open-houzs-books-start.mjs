@@ -69,6 +69,9 @@ const BUCKETS = ['customer', 'display', 'service', 'showroom', 'others'];
 const BUCKET_ROLE = { customer: 'CUSTOMER', display: 'DISPLAY', service: 'SERVICE', showroom: 'SHOWROOM', others: 'OTHERS' };
 const BUCKET_DEFAULT = { customer: '0001', display: '0002', service: '0003', showroom: '0004', others: '0005' };
 /* Owner 2026-10-28 「可以」: the ERP's code for these four becomes AutoCount's. */
+/* An ERP paper the aging data does not tie to its AutoCount bill, by the owner's word:
+   HC-PI-2609-048 follows AutoCount PI-008135 at RM 6,388 (owner 2026-10-28, 「可以」). */
+const REPLACES_BY_AC_DOC = { 'PI-008135': 'HC-PI-2609-048' };
 const RECODE = [
   { from: '400-0000', to: '400-B006', like: /BRIGHTSUN/i },
   { from: '5623 8450 2460', to: '405-E002', like: /ECO\s*&\s*GREEN/i },
@@ -224,7 +227,7 @@ async function run(tx, data) {
     const fc = a.fcSen != null ? ` (CNY ${rm(a.fcSen)})` : '';
     const what = a.type === 'IN' ? `AutoCount ${a.acDoc ?? ''}` : a.type === 'PV' ? `AutoCount payment not knocked off ${a.ref}` : `AutoCount debit note ${a.ref}`;
     const row = { code: a.code, date: a.date, ref: a.type === 'IN' ? (a.ref || null) : null, amt: Math.abs(a.myrSen), acDoc: a.acDoc ?? null,
-      replaces: a.erpCopy ?? a.skipInBooks ?? a.conflictErp ?? null,
+      replaces: a.erpCopy ?? a.skipInBooks ?? a.conflictErp ?? REPLACES_BY_AC_DOC[a.acDoc] ?? null,
       note: `${TAG}: ${what}${a.type === 'IN' && a.ref ? ` — supplier invoice ${a.ref}` : ''}${fc}${a.acDesc ? ` — ${a.acDesc}` : ''}` };
     (a.myrSen > 0 ? bills : credits).push(row);
   }
