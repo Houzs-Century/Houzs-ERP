@@ -19,6 +19,10 @@ async function main() {
   if (!process.env.DATABASE_URL) { console.error('DATABASE_URL is not set.'); process.exit(2); }
   const sql = postgres(process.env.DATABASE_URL, { max: 1, prepare: false });
   try {
+    if (process.env.ACCOUNTS) {
+      const acc = await sql`SELECT account_code, account_name, parent_code FROM scm.accounts WHERE company_id = ${CO} AND account_code LIKE ${process.env.ACCOUNTS + '%'} ORDER BY 1`;
+      for (const x of acc) out(`account ${x.account_code} ${x.account_name}${x.parent_code ? ` (under ${x.parent_code})` : ''}`);
+    }
     const pi = await sql`SELECT * FROM scm.purchase_invoices WHERE company_id = ${CO} AND invoice_number = ${DOC}`;
     if (!pi.length) { out(`${DOC}: not found`); return; }
     const p = pi[0];
