@@ -1,3 +1,4 @@
+import productsSrc from './mfg-products.ts?raw';
 import { describe, expect, it } from 'vitest';
 import { parseMergeBody, MERGE_PERMISSION } from './mfg-product-merge';
 import { PERMISSIONS } from '../../services/permissions';
@@ -19,5 +20,12 @@ describe('merge product codes request', () => {
 
   it('gates on a declared permission, so it can be granted in Team > Positions', () => {
     expect(PERMISSIONS.some((p) => p.key === MERGE_PERMISSION)).toBe(true);
+  });
+});
+
+describe('merge router mount order', () => {
+  it('mounts after supabaseAuth, which is the only thing that sets houzsUser for the permission gate', () => {
+    expect(productsSrc.indexOf("mfgProducts.use('*', supabaseAuth)")).toBeGreaterThan(-1);
+    expect(productsSrc.indexOf("mfgProducts.use('*', supabaseAuth)")).toBeLessThan(productsSrc.indexOf("mfgProducts.route('/merge'"));
   });
 });

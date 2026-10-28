@@ -43,9 +43,9 @@ import { MFG_PRODUCT_CATEGORIES, MFG_CATEGORY_LABELS, mfgCategoryLabel, parseMfg
 import { mfgProductMerge } from './mfg-product-merge';
 
 export const mfgProducts = new Hono<{ Bindings: Env; Variables: Variables }>();
-mfgProducts.route('/merge', mfgProductMerge);
-
 mfgProducts.use('*', supabaseAuth);
+// After supabaseAuth: the merge gate reads houzsUser, which only supabaseAuth sets.
+mfgProducts.route('/merge', mfgProductMerge);
 
 type AppContext = Context<{ Bindings: Env; Variables: Variables }>;
 
