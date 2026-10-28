@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parseMergeBody, MERGE_PERMISSION } from './mfg-product-merge';
 import { PERMISSIONS } from '../../services/permissions';
@@ -19,5 +20,13 @@ describe('merge product codes request', () => {
 
   it('gates on a declared permission, so it can be granted in Team > Positions', () => {
     expect(PERMISSIONS.some((p) => p.key === MERGE_PERMISSION)).toBe(true);
+  });
+});
+
+describe('merge router mount order', () => {
+  it('mounts after supabaseAuth, which is the only thing that sets houzsUser for the permission gate', () => {
+    const src = readFileSync(new URL('./mfg-products.ts', import.meta.url), 'utf8');
+    expect(src.indexOf("mfgProducts.use('*', supabaseAuth)")).toBeGreaterThan(-1);
+    expect(src.indexOf("mfgProducts.use('*', supabaseAuth)")).toBeLessThan(src.indexOf("mfgProducts.route('/merge'"));
   });
 });
