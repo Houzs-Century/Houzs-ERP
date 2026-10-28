@@ -13,7 +13,7 @@ const kindClause = (sql, c) => (c.kind ? sql`AND material_kind::text = 'mfg_prod
 export async function readMergeColumns(sql, cascade) {
   const rows = await sql`
     SELECT table_name, column_name FROM information_schema.columns
-     WHERE table_schema = 'scm' AND table_name = ANY(${[...new Set(cascade.map((c) => c.table))]})`;
+     WHERE table_schema = 'scm' AND table_name = ANY(ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify([...new Set(cascade.map((c) => c.table))])}::text::jsonb)))`;
   const cols = new Map();
   for (const r of rows) cols.set(r.table_name, (cols.get(r.table_name) ?? new Set()).add(r.column_name));
   return cols;
@@ -25,7 +25,7 @@ export async function readMergeWorld(sql, { co, pairs, cascade, cols }) {
 
   const products = await sql`
     SELECT id::text AS id, code, status::text AS status, category::text AS category
-      FROM scm.mfg_products WHERE company_id = ${co} AND code = ANY(${codes})`;
+      FROM scm.mfg_products WHERE company_id = ${co} AND code = ANY(ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify(codes)}::text::jsonb)))`;
 
   const refs = [];
   const ids = new Map();
@@ -37,7 +37,7 @@ export async function readMergeWorld(sql, { co, pairs, cascade, cols }) {
     const rows = await sql`
       SELECT ${sql(c.col)} AS code, ${hasId ? sql`id::text` : sql`NULL::text`} AS id
         FROM ${sql(`scm.${c.table}`)}
-       WHERE company_id = ${co} AND ${sql(c.col)} = ANY(${drops}) ${kindClause(sql, c)}`;
+       WHERE company_id = ${co} AND ${sql(c.col)} = ANY(ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify(drops)}::text::jsonb))) ${kindClause(sql, c)}`;
     for (const code of new Set(rows.map((r) => r.code))) {
       const mine = rows.filter((r) => r.code === code);
       refs.push({ table: c.table, col: c.col, code, rows: mine.length, hasId });
@@ -52,11 +52,11 @@ export async function readMergeWorld(sql, { co, pairs, cascade, cols }) {
     SELECT item_code, warehouse_id::text AS warehouse_id,
            SUM(CASE movement_type WHEN 'IN' THEN qty WHEN 'OUT' THEN -qty
                                   WHEN 'ADJUSTMENT' THEN qty WHEN 'TRANSFER' THEN qty ELSE 0 END)::int AS qty
-      FROM scm.inventory_movements WHERE company_id = ${co} AND item_code = ANY(${codes})
+      FROM scm.inventory_movements WHERE company_id = ${co} AND item_code = ANY(ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify(codes)}::text::jsonb)))
      GROUP BY item_code, warehouse_id`;
   const lots = await sql`
     SELECT item_code, warehouse_id::text AS warehouse_id, SUM(qty_remaining)::int AS qty
-      FROM scm.inventory_lots WHERE company_id = ${co} AND item_code = ANY(${codes}) AND qty_remaining <> 0
+      FROM scm.inventory_lots WHERE company_id = ${co} AND item_code = ANY(ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify(codes)}::text::jsonb))) AND qty_remaining <> 0
      GROUP BY item_code, warehouse_id`;
   const stockMap = new Map();
   const cell = (code, wh) => {
@@ -71,14 +71,14 @@ export async function readMergeWorld(sql, { co, pairs, cascade, cols }) {
   const uniques = await sql`
     SELECT tablename, indexdef FROM pg_indexes
      WHERE schemaname = 'scm' AND indexdef ILIKE 'CREATE UNIQUE%'
-       AND tablename = ANY(${[...new Set(refs.map((r) => r.table))]})`;
+       AND tablename = ANY(ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify([...new Set(refs.map((r) => r.table))])}::text::jsonb)))`;
 
   const masters = await sql`
-    SELECT code, to_jsonb(p) AS j FROM scm.mfg_products p WHERE company_id = ${co} AND code = ANY(${codes})`;
+    SELECT code, to_jsonb(p) AS j FROM scm.mfg_products p WHERE company_id = ${co} AND code = ANY(ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify(codes)}::text::jsonb)))`;
   const mainSuppliers = await sql`
     SELECT b.item_code, s.code AS supplier
       FROM scm.supplier_material_bindings b LEFT JOIN scm.suppliers s ON s.id = b.supplier_id
-     WHERE b.company_id = ${co} AND b.item_code = ANY(${codes})
+     WHERE b.company_id = ${co} AND b.item_code = ANY(ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify(codes)}::text::jsonb)))
        AND b.material_kind::text = 'mfg_product' AND b.is_main_supplier = true`;
 
   /* A take lists every SKU of its scope, so both codes usually sit in the same take. */
@@ -86,7 +86,7 @@ export async function readMergeWorld(sql, { co, pairs, cascade, cols }) {
     SELECT l.id::text AS id, l.stock_take_id::text AS take_id, l.item_code, l.variant_key,
            l.system_qty::int AS system_qty, l.counted_qty::int AS counted_qty, t.status::text AS take_status
       FROM scm.stock_take_lines l JOIN scm.stock_takes t ON t.id = l.stock_take_id
-     WHERE l.company_id = ${co} AND l.item_code = ANY(${codes})`;
+     WHERE l.company_id = ${co} AND l.item_code = ANY(ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify(codes)}::text::jsonb)))`;
   const keepOf = new Map(pairs.map((p) => [p.drop, p.keep]));
   const stockTakeLines = takeRows.filter((l) => keepOf.has(l.item_code)).map((l) => ({
     id: l.id, code: l.item_code, takeStatus: l.take_status, systemQty: l.system_qty, countedQty: l.counted_qty,
@@ -124,7 +124,7 @@ export async function applyMerge(sql, { co, plan, world, cascade, audit }) {
           const staying = world.ids.get(`${r.table}.${r.col}|${p.drop}`).length - ids.length;
           const done = await tx`
             UPDATE ${tx(`scm.${r.table}`)} SET ${tx(r.col)} = ${p.keep}
-             WHERE company_id = ${co} AND ${tx(r.col)} = ${p.drop} AND id::text = ANY(${ids}) ${kindClause(tx, c)}
+             WHERE company_id = ${co} AND ${tx(r.col)} = ${p.drop} AND id::text = ANY(ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify(ids)}::text::jsonb))) ${kindClause(tx, c)}
             RETURNING id`;
           if (done.length !== ids.length) throw new Error(`scm.${r.table}: re-keyed ${done.length} of ${ids.length} - a row changed since the plan`);
           const [left] = await tx`
@@ -174,7 +174,7 @@ export async function verifyMerge(v, { co, committed, world }) {
   for (const p of committed) {
     for (const r of p.rekey) {
       const ids = rekeyIds(world, p, r);
-      const rows = await v`SELECT id::text AS id, ${v(r.col)} AS code FROM ${v(`scm.${r.table}`)} WHERE company_id = ${co} AND id::text = ANY(${ids})`;
+      const rows = await v`SELECT id::text AS id, ${v(r.col)} AS code FROM ${v(`scm.${r.table}`)} WHERE company_id = ${co} AND id::text = ANY(ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify(ids)}::text::jsonb)))`;
       for (const row of rows) if (row.code !== p.keep) problems.push(`scm.${r.table} ${row.id} carries "${row.code}", wanted "${p.keep}"`);
       if (rows.length !== ids.length) problems.push(`scm.${r.table}: ${ids.length - rows.length} re-keyed row(s) are gone`);
     }

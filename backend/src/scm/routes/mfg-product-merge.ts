@@ -63,7 +63,7 @@ async function planFor(sql: any, co: number, pairs: Array<{ drop: string; keep: 
 async function autoCountItems(sql: any, co: number, codes: string[]) {
   const rows = await sql`
     SELECT item_code, supplier_sku FROM scm.supplier_material_bindings
-     WHERE company_id = ${co} AND item_code = ANY(${codes}) AND material_kind::text = 'mfg_product'
+     WHERE company_id = ${co} AND item_code = ANY(ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify(codes)}::text::jsonb))) AND material_kind::text = 'mfg_product'
        AND supplier_sku IS NOT NULL AND supplier_sku <> ''
      ORDER BY is_main_supplier DESC`;
   const bindings = new Map<string, string>();
