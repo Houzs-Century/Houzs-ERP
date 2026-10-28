@@ -392,12 +392,12 @@ async function run(tx, data) {
   /* ── 9. the ERP's own supplier bills dated by 31/08 ─────────────────────── */
   const replacing = new Map(bills.filter((b) => b.replaces).map((b) => [b.replaces, b]));
   const erpBills = await tx`
-    SELECT 'PI' AS k, p.id, p.invoice_number AS no, s.code AS supplier, p.supplier_invoice_ref AS ref, p.invoice_date::text AS date, p.currency, p.exchange_rate::float8 AS rate,
+    SELECT 'PI' AS k, p.id, p.invoice_number AS no, s.code AS supplier, p.supplier_invoice_ref AS ref, p.invoice_date::text AS date, p.currency::text AS currency, p.exchange_rate::float8 AS rate,
            p.total_sen, p.paid_sen, p.status::text AS status, coalesce(p.migrated_no_stock, false) AS migrated
       FROM scm.purchase_invoices p LEFT JOIN scm.suppliers s ON s.id = p.supplier_id
      WHERE p.company_id = ${CO} AND p.status::text <> 'CANCELLED' AND (p.invoice_date <= ${CUTOFF} OR p.invoice_number = ANY(${[...replacing.keys()]}::text[]))
     UNION ALL
-    SELECT 'API', a.id, a.invoice_number, s.code, a.supplier_invoice_ref, a.invoice_date::text, a.currency, a.exchange_rate::float8,
+    SELECT 'API', a.id, a.invoice_number, s.code, a.supplier_invoice_ref, a.invoice_date::text, a.currency::text, a.exchange_rate::float8,
            a.total_sen, a.paid_sen, a.status, false
       FROM scm.ap_invoices a LEFT JOIN scm.suppliers s ON s.id = a.supplier_id
      WHERE a.company_id = ${CO} AND a.status <> 'CANCELLED' AND NOT a.opening AND (a.invoice_date <= ${CUTOFF} OR a.invoice_number = ANY(${[...replacing.keys()]}::text[]))`;
