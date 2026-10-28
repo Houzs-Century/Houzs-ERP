@@ -20,7 +20,13 @@
    the transaction: every posted journal balanced, the books still balance,
    each supplier moved by exactly its papers, drafts touch no ledger, no bill
    ticked beyond what it owes.
-   Env: DATABASE_URL, COMPANY_ID (1). */
+   FIX_UNGROUPED=1 also mends the ERP's own five September purchase invoices
+   that read POSTED with no journal (Sim 22/09: a pair of split lines on each
+   lost its product group, so postPiAccounting refused line_ungrouped): the
+   group goes back on those lines (…MATT → MATTRESS, JAGER → BEDFRAME) and the
+   journal posts as postPiAccounting writes it — one Dr per group's purchase
+   account, Cr the supplier's AP control, on the invoice's own day.
+   Env: DATABASE_URL, COMPANY_ID (1), FIX_UNGROUPED (0). */
 import postgres from 'postgres';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -35,6 +41,9 @@ const TAG = '(September import)';
 const ACTOR = 'AutoCount September import (owner 2026-10-28)';
 const data = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'data', 'houzs-sep-2609.json'), 'utf8'));
 const NEW_SUPPLIERS = { '400-C007': 'CV SMART ENTERPRISE', '405-G001': 'GORGEOUS EVENT SDN. BHD.' };
+const FIX_UNGROUPED = String(process.env.FIX_UNGROUPED || '0') === '1';
+const UNGROUPED = ['HC-PI-2609-013', 'HC-PI-2609-014', 'HC-PI-2609-019', 'HC-PI-2609-025', 'HC-PI-2609-033'];
+const groupOfName = (name) => (/\bMATT\b/i.test(name) ? 'MATTRESS' : /^JAGER\b/i.test(name) ? 'BEDFRAME' : null);
 const rm = (sen) => (Number(sen ?? 0) / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const out = (s) => console.log(`ROW|${s}`);
 const emit = (tag, o) => console.log(`${tag}|${JSON.stringify(o)}`);
@@ -110,7 +119,7 @@ async function run(tx) {
   const apiBills = data.bills.filter((b) => b.kind === 'API');
   const scnBills = data.bills.filter((b) => b.kind === 'SCN');
   for (const b of data.bills) if (b.date.slice(0, 7) !== '2026-09') throw new Error(`${b.acDoc} is dated ${b.date}, not September`);
-  const jeCount = apiBills.length + scnBills.length + data.receipts.length + data.jvs.length;
+  const jeCount = apiBills.length + scnBills.length + data.receipts.length + data.jvs.length + (FIX_UNGROUPED ? UNGROUPED.length : 0);
   let nApi = await claim('HC-API-2609', 'ap_invoices', 'invoice_number', apiBills.length);
   let nScn = await claim('HC-SCN-2609', 'acc_credit_notes', 'note_number', scnBills.length);
   let nOr = await claim('HC-OR-2609', 'acc_receipts', 'receipt_number', data.receipts.length);
@@ -121,7 +130,8 @@ async function run(tx) {
   const audits = [];
 
   /* AP balance per supplier BEFORE, as the books read it (30/09) */
-  const supCodes = [...new Set(data.bills.map((b) => b.supplier))];
+  const fixSup = FIX_UNGROUPED ? (await tx`SELECT s.code FROM scm.purchase_invoices p JOIN scm.suppliers s ON s.id = p.supplier_id WHERE p.company_id = ${CO} AND p.invoice_number = ANY(${UNGROUPED}::text[])`).map((r) => r.code) : [];
+  const supCodes = [...new Set([...data.bills.map((b) => b.supplier), ...fixSup])];
   const apBefore = new Map((await tx`SELECT party_code AS code, sum(credit_sen - debit_sen)::bigint AS owed FROM scm.v_gl_entries
       WHERE company_id = ${CO} AND entry_date <= '2026-09-30' AND party_code = ANY(${supCodes}::text[]) AND account_code IN (${role.AP}, ${role.AP_OTHER}) GROUP BY 1`).map((r) => [r.code, Number(r.owed)]));
 
@@ -191,6 +201,34 @@ async function run(tx) {
       lines: j.lines.map((l) => ({ a: l.acc, dr: l.dr, cr: l.cr, notes: l.desc })) });
   }
 
+  /* ── 6b. the ERP's own five POSTED invoices with no journal (FIX_UNGROUPED) ─ */
+  const mended = [];
+  if (FIX_UNGROUPED) {
+    const binds = new Map((await tx`SELECT upper(trim(group_code)) AS g, purchase_account FROM scm.acc_item_group_accounts WHERE company_id = ${CO}`).map((b) => [b.g, b.purchase_account]));
+    for (const no of UNGROUPED) {
+      const [pi] = await tx`SELECT p.id, p.invoice_number, p.invoice_date::text AS d, p.total_sen, p.status::text AS status, coalesce(p.migrated_no_stock, false) AS migrated, coalesce(p.exchange_rate, 1)::numeric AS rate, p.currency::text AS currency, s.code, s.name
+          FROM scm.purchase_invoices p JOIN scm.suppliers s ON s.id = p.supplier_id WHERE p.company_id = ${CO} AND p.invoice_number = ${no}`;
+      if (!pi || pi.migrated || ['DRAFT', 'CANCELLED'].includes(pi.status) || pi.currency !== 'MYR') throw new Error(`${no} is not a posted MYR invoice of this company`);
+      const live = await tx`SELECT je_no FROM scm.journal_entries WHERE company_id = ${CO} AND source_type = 'PI' AND source_doc_no = ${no} AND NOT reversed AND reversed_by_je IS NULL`;
+      if (live.length) throw new Error(`${no} already has journal ${live[0].je_no}`);
+      const items = await tx`SELECT id, coalesce(item_code, material_name) AS name, item_group, line_total_sen FROM scm.purchase_invoice_items WHERE purchase_invoice_id = ${pi.id}`;
+      const fixes = items.filter((i) => !String(i.item_group ?? '').trim()).map((i) => ({ id: i.id, name: i.name, group: groupOfName(String(i.name ?? '')) }));
+      for (const f of fixes) if (!f.group) throw new Error(`${no}: no product group known for "${f.name}"`);
+      for (const f of fixes) await tx`UPDATE scm.purchase_invoice_items SET item_group = ${f.group} WHERE id = ${f.id} AND (item_group IS NULL OR trim(item_group) = '')`;
+      const by = new Map();
+      for (const i of items) { const g = String(fixes.find((f) => f.id === i.id)?.group ?? i.item_group).trim().toUpperCase(); by.set(g, (by.get(g) ?? 0) + Number(i.line_total_sen ?? 0)); }
+      const groups = [...by].map(([g, sen]) => { const a = binds.get(g); if (!a) throw new Error(`${no}: group ${g} has no purchase account`); return { g, a, sen }; });
+      const drift = Number(pi.total_sen) - sum(groups, (x) => x.sen);
+      if (drift !== 0) groups.reduce((m, x) => (x.sen > m.sen ? x : m)).sen += drift;
+      const jeNo = nextJe();
+      journals.push({ no: jeNo, date: pi.d, src: 'PI', doc: no, post: true, narration: `Purchase invoice ${no} — ${pi.name}`,
+        lines: [...groups.map((x) => ({ a: x.a, dr: x.sen, cr: 0, notes: `Purchases — ${x.g} on ${no}` })), { a: control(pi.code), dr: 0, cr: Number(pi.total_sen), pt: 'SUPPLIER', pc: pi.code, pn: pi.name, notes: `AP for ${no}` }] });
+      const note = `Journal ${jeNo} posted on ${pi.d} ${TAG}: ${fixes.length} line(s) had lost their product group (${[...new Set(fixes.map((f) => `${f.name} → ${f.group}`))].join(', ')}), so the posting was refused when Sim saved it on 22/09`;
+      audits.push({ entity_type: 'PURCHASE_INVOICE', entity_id: String(pi.id), entity_doc_no: no, action: 'UPDATE', status_snapshot: pi.status, note });
+      mended.push({ no, supplier: pi.code, name: pi.name, date: pi.d, sen: Number(pi.total_sen), je: jeNo, fixes: fixes.map((f) => `${f.name} → ${f.group}`) });
+    }
+  }
+
   /* write every journal: header (unposted), lines, then post the posting ones */
   for (const j of journals) {
     const dr = sum(j.lines, (l) => l.dr); const cr = sum(j.lines, (l) => l.cr);
@@ -245,7 +283,7 @@ async function run(tx) {
   const apAfter = new Map((await tx`SELECT party_code AS code, sum(credit_sen - debit_sen)::bigint AS owed FROM scm.v_gl_entries
       WHERE company_id = ${CO} AND entry_date <= '2026-09-30' AND party_code = ANY(${supCodes}::text[]) AND account_code IN (${role.AP}, ${role.AP_OTHER}) GROUP BY 1`).map((r) => [r.code, Number(r.owed)]));
   for (const c of supCodes) {
-    const want = sum(apiBills.filter((b) => b.supplier === c), (b) => b.total) - sum(scnBills.filter((b) => b.supplier === c), (b) => b.total);
+    const want = sum(apiBills.filter((b) => b.supplier === c), (b) => b.total) - sum(scnBills.filter((b) => b.supplier === c), (b) => b.total) + sum(mended.filter((m) => m.supplier === c), (m) => m.sen);
     const moved = (apAfter.get(c) ?? 0) - (apBefore.get(c) ?? 0);
     if (moved !== want) throw new Error(`${c} moved RM ${rm(moved)} in the books, its papers say RM ${rm(want)}`);
   }
@@ -268,6 +306,8 @@ async function run(tx) {
   for (const p of data.pvs) emit('DOC', { k: 'PV', no: p.no, ac: p.acDoc, kind: p.kind, date: p.date, bank: p.bank, payee: p.payee, supplier: p.supplier, sen: p.total, charge: p.bankCharge || 0,
     accounts: p.kind === 'AP' ? control(p.supplier) : p.lines.map((l) => `${l.acc} ${rm(l.sen)}`).join('; '), ticks: p.ticks.map((t) => `${billOf(t).no} ${rm(t.sen)} (AutoCount ${t.acPi})`).join('; '), advance: p.advance });
   for (const s of data.skipped) emit('SKIP', s);
+  for (const m of mended) emit('MEND', m);
+  if (FIX_UNGROUPED) out(`the ERP's own invoices with no journal: ${mended.length} mended RM ${rm(sum(mended, (m) => m.sen))} (${mended.map((m) => `${m.no} ${m.je}`).join(', ')})`);
   out(`AP invoices ${apiBills.length} RM ${rm(sum(apiBills, (b) => b.total))} posted (${copies.length} replace migrated copies); supplier credit notes ${scnBills.length} RM ${rm(sum(scnBills, (b) => b.total))}; receipts ${data.receipts.length} RM ${rm(sum(data.receipts, (r) => sum(r.lines, (l) => l.sen)))}`);
   out(`payment vouchers ${data.pvs.length} DRAFT RM ${rm(sum(data.pvs, (p) => p.total + (p.bankCharge || 0)))} (supplier ${data.pvs.filter((p) => p.kind === 'AP').length}, transfers ${data.pvs.filter((p) => p.kind === 'TRANSFER').length}, other ${data.pvs.filter((p) => p.kind === 'OTHER').length}); ticks ${allocs.length} RM ${rm(sum(allocs, (a) => a.amount_sen))}`);
   out(`journal vouchers ${data.jvs.length} DRAFT RM ${rm(sum(data.jvs, (j) => sum(j.lines, (l) => l.dr)))}; numbers ${journals[0]?.no ?? '-'} … ${journals.at(-1)?.no ?? '-'}, vouchers ${data.pvs[0]?.no ?? '-'} … ${data.pvs.at(-1)?.no ?? '-'}`);
