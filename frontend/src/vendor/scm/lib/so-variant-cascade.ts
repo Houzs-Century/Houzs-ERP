@@ -133,6 +133,17 @@ export const SOFA_CATEGORY = 'sofa';
  *  hand, and it stands until the sofa's colour is changed again). */
 export const FABRIC_FOLLOWER_CATEGORIES: ReadonlySet<string> = new Set(['fabric_accessory']);
 
+/** Sofa accessories that keep their OWN colour and never follow the sofa. A
+ *  square pillow is sold in a contrast colour, so the force rule above wrote
+ *  the sofa's colour over the one the rep picked every time the sofa changed.
+ *  Adrian 2026-10-28 (ZNT6316 / HC-SO-013238): fixing sofa line 1 to NICCA-03
+ *  dragged the NICCA-01 pillows along and the amendment was rejected —
+ *  "square pillow DONT NEED because confirm will be different colour".
+ *  Headrest / back cushion / arm rest / stool still follow. Matched on the code
+ *  so the supplier-prefixed SKUs (`822 SQUARE PILLOW`) are covered too. */
+export const ownColourAccessory = (itemCode: string | undefined): boolean =>
+  /SQUARE PILLOW/i.test(itemCode ?? '');
+
 /** One line, reduced to what the cascade decides on. `category` is '' for a
  *  line with no SKU picked yet — it neither masters nor follows. */
 export type CascadeLine = {
@@ -147,6 +158,8 @@ export type CascadeLine = {
    *  a Purchaser approval for a colour change the rep never made. Absent = a
    *  new line, which fills as before. */
   persisted?: boolean;
+  /** The line's SKU, read only by `ownColourAccessory`. */
+  itemCode?: string;
 };
 
 /** category -> that category's master variants at the last cascade. */
@@ -344,6 +357,7 @@ export function cascadeMasterVariants(
        2026-09-22), independent of the same-category cascade below. No sofa on the
        order, or the surface is not cascading sofas -> leave it untouched. */
     if (FABRIC_FOLLOWER_CATEGORIES.has(l.category)) {
+      if (ownColourAccessory(l.itemCode)) return l.variants;
       if (!sofaCascading || !(SOFA_CATEGORY in masterIdx)) return l.variants;
       const sofaIdx = masterIdx[SOFA_CATEGORY]!;
       return fabricFollowerVariants(lines[sofaIdx]!.variants, l.variants, previousMasters[SOFA_CATEGORY], !l.persisted);
