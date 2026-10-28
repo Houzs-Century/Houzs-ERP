@@ -111,7 +111,9 @@ describe("executable route contract", () => {
     // ("Last Mile Delivery (Driver)") brought to desktop beside the admin board.
     // 180 since 2026-10-21: /hr/employees, Employees & Attendance (HC-0125).
     // 181 since 2026-10-28: /scm/opening-balance, Finance › Setup › Opening Balance.
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(181);
+    // 182 since 2026-10-28: /scm/supplier-notes, Finance › Money out › Supplier &
+    // Other Creditor CN / DN — the supplier's notes moved off /scm/credit-notes.
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(182);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -168,7 +170,8 @@ describe("executable route contract", () => {
     // 188 since 2026-10-21 — /scm/delivery-planning-driver; see the staff-route count above.
     // 189 since 2026-10-21 — /hr/employees; see the staff-route count above.
     // 190 since 2026-10-28 — /scm/opening-balance; see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(190);
+    // 191 since 2026-10-28 — /scm/supplier-notes; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(191);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {

@@ -1277,7 +1277,9 @@ export const controlCheckHandler = async (c: any) => {
       ? new Set(['SI', 'SI_REVERSAL', 'SOPAY', 'SOPAY_REVERSAL', 'SIPAY', 'SIPAY_REVERSAL',
         'DI', 'DI_REVERSAL', 'CN', 'CN_REVERSAL', 'PV', 'PV_REVERSAL', CONVERT_SOURCE, `${CONVERT_SOURCE}_REVERSAL`])
       : role === 'AR_OTHER'
-        ? new Set(['ODB', 'ODB_REVERSAL', 'ODR', 'ODR_REVERSAL'])
+        /* OCN = a credit note to an other debtor (Cr the other-debtor control),
+           knocked off the debtor's bills — part of the family (2026-10-28). */
+        ? new Set(['ODB', 'ODB_REVERSAL', 'ODR', 'ODR_REVERSAL', 'OCN', 'OCN_REVERSAL'])
         /* API = the AP invoice (docs/bugs/0654): it credits 400 or 405 by the
            supplier's code, exactly as a PI does, and its edit re-post writes
            the reversal. Both were read as foreign until this line. */

@@ -79,7 +79,7 @@ export async function loadArAging(sb: Db, companyId: number, codes: readonly str
   const lines = got.lines;
   const docsOf = (...types: string[]) => uniq(lines.filter((l) => types.includes(l.source_type)).map((l) => l.source_doc_no));
 
-  const [pays, siPays, sisByNo, dis, notes, pvs, bills, receipts] = await Promise.all([
+  const [pays, siPays, sisByNo, dis, notes, pvs, bills, receipts, debtorNotes] = await Promise.all([
     byValues(sb, companyId, 'mfg_sales_order_payments', 'id, so_doc_no, converted_from_so_doc_no', 'id', docsOf('SOPAY', 'SOCONV')),
     byValues(sb, companyId, 'sales_invoice_payments', 'id, sales_invoice_id', 'id', docsOf('SIPAY')),
     byValues(sb, companyId, 'sales_invoices', 'id, invoice_number, so_doc_no, due_date, debtor_code, debtor_name', 'invoice_number', docsOf('SI')),
@@ -88,6 +88,7 @@ export async function loadArAging(sb: Db, companyId: number, codes: readonly str
     byValues(sb, companyId, 'payment_vouchers', 'pv_number, refund_source_type, refund_source_doc_no', 'pv_number', docsOf('PV')),
     byValues(sb, companyId, 'acc_debtor_bills', 'id, bill_number, debtor_id', 'bill_number', docsOf('ODB')),
     byValues(sb, companyId, 'acc_debtor_receipts', 'id, receipt_number, debtor_id', 'receipt_number', docsOf('ODR')),
+    byValues(sb, companyId, 'acc_credit_notes', 'id, note_number, debtor_id', 'note_number', docsOf('OCN')),
   ]);
   if (!pays.ok) return pays;
   if (!siPays.ok) return siPays;
@@ -97,6 +98,7 @@ export async function loadArAging(sb: Db, companyId: number, codes: readonly str
   if (!pvs.ok) return pvs;
   if (!bills.ok) return bills;
   if (!receipts.ok) return receipts;
+  if (!debtorNotes.ok) return debtorNotes;
 
   /* Invoices named by id (a payment's or a note's) or by number (a refund's)
      that the SI lines did not bring. */
@@ -104,14 +106,16 @@ export async function loadArAging(sb: Db, companyId: number, codes: readonly str
   const siByNo = new Map<string, Row>(sisByNo.rows.map((s) => [String(s.invoice_number), s]));
   const wantIds = uniq([...siPays.rows.map((p) => p.sales_invoice_id), ...notes.rows.map((n) => n.sales_invoice_id)]).filter((id) => !siById.has(id));
   const wantNos = uniq(pvs.rows.filter((v) => v.refund_source_type === 'SI').map((v) => v.refund_source_doc_no)).filter((n) => !siByNo.has(n));
-  const [moreById, moreByNo, allocs] = await Promise.all([
+  const [moreById, moreByNo, allocs, noteAllocs] = await Promise.all([
     byValues(sb, companyId, 'sales_invoices', 'id, invoice_number, so_doc_no, due_date, debtor_code, debtor_name', 'id', wantIds),
     byValues(sb, companyId, 'sales_invoices', 'id, invoice_number, so_doc_no, due_date, debtor_code, debtor_name', 'invoice_number', wantNos),
     byValues(sb, companyId, 'acc_debtor_receipt_allocations', 'id, receipt_id, bill_id, amount_sen', 'receipt_id', uniq(receipts.rows.map((r) => String(r.id)))),
+    byValues(sb, companyId, 'acc_credit_note_allocations', 'id, note_id, debtor_bill_id, applied_sen', 'note_id', uniq(debtorNotes.rows.map((n) => String(n.id)))),
   ]);
   if (!moreById.ok) return moreById;
   if (!moreByNo.ok) return moreByNo;
   if (!allocs.ok) return allocs;
+  if (!noteAllocs.ok) return noteAllocs;
   for (const s of [...moreById.rows, ...moreByNo.rows]) { siById.set(String(s.id), s); siByNo.set(String(s.invoice_number), s); }
 
   const payById = new Map(pays.rows.map((p) => [String(p.id), p]));
@@ -122,6 +126,7 @@ export async function loadArAging(sb: Db, companyId: number, codes: readonly str
   const billByNo = new Map(bills.rows.map((b) => [String(b.bill_number), b]));
   const billById = new Map(bills.rows.map((b) => [String(b.id), b]));
   const receiptByNo = new Map(receipts.rows.map((r) => [String(r.receipt_number), r]));
+  const debtorNoteByNo = new Map(debtorNotes.rows.map((n) => [String(n.note_number), n]));
 
   /* The orders every line points at, and the debtors of the other-debtor paper. */
   const soNos = uniq([
@@ -131,7 +136,7 @@ export async function loadArAging(sb: Db, companyId: number, codes: readonly str
     ...notes.rows.map((n) => n.so_doc_no),
     ...pvs.rows.filter((v) => v.refund_source_type === 'SO').map((v) => v.refund_source_doc_no),
   ]);
-  const debtorIds = uniq([...bills.rows.map((b) => b.debtor_id), ...receipts.rows.map((r) => r.debtor_id)].map((x) => (x == null ? null : String(x))));
+  const debtorIds = uniq([...bills.rows.map((b) => b.debtor_id), ...receipts.rows.map((r) => r.debtor_id), ...debtorNotes.rows.map((n) => n.debtor_id)].map((x) => (x == null ? null : String(x))));
   const [orders, debtors, imported] = await Promise.all([
     byValues(sb, companyId, 'mfg_sales_orders', 'doc_no, debtor_code, debtor_name, customer_id', 'doc_no', soNos),
     byValues(sb, companyId, 'acc_debtors', 'id, name', 'id', debtorIds),
@@ -236,6 +241,20 @@ export async function loadArAging(sb: Db, companyId: number, codes: readonly str
           return;
         }
         base.kind = 'Receipt';
+        break;
+      }
+      /* An other-debtor credit note comes off the bills it knocked off, as a
+         receipt does — by what each knock-off actually moved. */
+      case 'OCN': {
+        const n = debtorNoteByNo.get(doc);
+        if (n) {
+          const party = debtorParty(n.debtor_id, l);
+          const parts = (noteAllocs.rows as Row[]).filter((a) => String(a.note_id) === String(n.id) && billById.has(String(a.debtor_bill_id)))
+            .map((a) => ({ group: `ODB:${a.debtor_bill_id}`, amountSen: Number(a.applied_sen ?? 0), date: l.entry_date }));
+          entries.push(...splitLine({ ...base, kind: 'Credit note', group: `OCN:${n.id}`, party }, parts));
+          return;
+        }
+        base.kind = 'Credit note';
         break;
       }
       default:

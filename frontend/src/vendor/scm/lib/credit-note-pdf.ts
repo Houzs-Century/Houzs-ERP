@@ -18,7 +18,7 @@ import {
 
 export type CreditNotePdfHeader = {
   note_number: string;
-  kind: 'CN' | 'DN' | 'SCN';
+  kind: 'CN' | 'DN' | 'SCN' | 'OCN';
   status: string;            // DRAFT | POSTED | CANCELLED
   note_date: string;
   party_name: string | null;
@@ -32,8 +32,10 @@ export type CreditNotePdfHeader = {
 };
 export type CreditNotePdfLine = { description: string | null; account_code: string; amount_sen: number };
 
+/* An other debtor's credit note prints as the debtor's bill does — to the
+   party it billed, under CUSTOMER (2026-10-28). */
 const KIND_TITLE: Record<CreditNotePdfHeader['kind'], string> = {
-  CN: 'CREDIT NOTE', DN: 'DEBIT NOTE', SCN: 'SUPPLIER CREDIT NOTE',
+  CN: 'CREDIT NOTE', DN: 'DEBIT NOTE', SCN: 'SUPPLIER CREDIT NOTE', OCN: 'CREDIT NOTE',
 };
 
 /** A deposit invoice number under any company's prefix: {co}-DI-YYMM-NNN. */
