@@ -41,6 +41,7 @@ import { activeCompanyId, companyDocPrefix, requireActiveCompanyId, scopeToCompa
 import { docMonthTag, mintMonthlyDocNo } from '../lib/doc-no';
 import { todayMyt } from '../lib/my-time';
 import { postJournal, reverseJournal } from '../../acc/engine';
+import { openingDocumentRefusal } from '../../acc/books-opening';
 import { dateOrNull } from '../lib/date-coerce';
 import { resolveRoles, type RuleLine } from '../../acc/rules';
 import { requireLeafAccount } from './accounting-chart';
@@ -342,11 +343,12 @@ export const updateDebtorBillHandler = async (c: any): Promise<Response> => {
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
   const sb = c.get('supabase');
   const { data: billRaw, error } = await scopeToCompany(
-    sb.from('acc_debtor_bills').select('id, bill_number, debtor_id, bill_date, total_sen, received_sen, status, notes, company_id').eq('id', c.req.param('billId')), c,
+    sb.from('acc_debtor_bills').select('id, bill_number, debtor_id, bill_date, total_sen, received_sen, status, notes, company_id, opening').eq('id', c.req.param('billId')), c,
   ).maybeSingle();
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (!billRaw) return c.json({ error: 'not_found' }, 404);
   const bill = billRaw as Row;
+  if (bill.opening === true) return c.json(openingDocumentRefusal(String(bill.bill_number)), 409);
   if (bill.status === 'CANCELLED') return c.json({ error: 'cancelled', message: `${bill.bill_number} is cancelled — raise it again instead.` }, 409);
   /* Snapshot before the update — a client handing out live row references
      (the test fake does) would otherwise show the edited date to the contra. */
@@ -433,10 +435,11 @@ export const cancelDebtorBillHandler = async (c: any): Promise<Response> => {
   }
   const sb = c.get('supabase');
   const { data: bill, error } = await scopeToCompany(
-    sb.from('acc_debtor_bills').select('id, bill_number, status, received_sen, company_id').eq('id', c.req.param('billId')), c,
+    sb.from('acc_debtor_bills').select('id, bill_number, status, received_sen, company_id, opening').eq('id', c.req.param('billId')), c,
   ).maybeSingle();
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (!bill) return c.json({ error: 'not_found' }, 404);
+  if (bill.opening === true) return c.json(openingDocumentRefusal(String(bill.bill_number)), 409);
   if (bill.status === 'CANCELLED') return c.json({ error: 'already_cancelled' }, 409);
   if (Number(bill.received_sen ?? 0) > 0) {
     return c.json({ error: 'bill_has_receipts', message: 'Money was already received against this bill — it cannot be cancelled.' }, 409);
