@@ -26,6 +26,7 @@ import { useState } from 'react';
 import { X, MessageSquare } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
+  assrJobKindLabel,
   useSendDeliveryMessages,
   useUpdateDeliveryFields,
   type PlanningOrder,
@@ -56,6 +57,7 @@ const KIND_TITLE: Record<SendMessageKind, string> = {
   reminder_3: 'Send reminder 3',
   postage: 'Send postage confirmation',
   delivery_completed: 'Send delivery-completed thank-you',
+  assr_arrangement: 'Send service arrangement',
 };
 
 /* The customer-message workflow status the board shows after a successful send
@@ -73,6 +75,8 @@ export const KIND_AFTER_STATUS: Record<SendMessageKind, string | null> = {
   reminder_3: 'Done Remind (3)',
   postage: 'Done Postage',
   delivery_completed: 'Done Delivered',
+  // Not an SO column: the ASSR row reads its state off the WhatsApp record.
+  assr_arrangement: null,
 };
 
 export const SKIP_LABEL: Record<string, string> = {
@@ -82,6 +86,10 @@ export const SKIP_LABEL: Record<string, string> = {
   no_address: 'no address on the order',
   driver_info_required: 'driver details missing',
   postpone_needs_reason_date: 'set Amend Reason + Delivery Date on the row first',
+  no_job_date: 'no job date on the case',
+  case_closed: 'case is closed',
+  not_assr: 'not a Service Case job',
+  assr_only: 'Service Case jobs only',
 };
 
 /** The per-customer block reasons, phrased for the operator. */
@@ -104,6 +112,8 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
   // Postpone takes no input here: it reads each order's Amend Reason and
   // Delivery Date straight off the board (set those columns on the row first).
   const isPostpone = kind === 'postpone';
+  // One Service Case job per message: the template names one case and one date.
+  const isAssrSend = kind === 'assr_arrangement';
 
   // Driver Info only: the per-customer delivery-time window, keyed by phone.
   const [timeByPhone, setTimeByPhone] = useState<Record<string, string>>({});
@@ -115,7 +125,7 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
   const groups = new Map<string, PlanningOrder[]>();
   const noPhone: PlanningOrder[] = [];
   for (const r of rows) {
-    const key = phoneKey(r.phone);
+    const key = phoneKey(r.phone) && (isAssrSend ? r.so_doc_no : phoneKey(r.phone));
     if (!key) { noPhone.push(r); continue; }
     const arr = groups.get(key) ?? [];
     arr.push(r);
@@ -152,7 +162,7 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
       }
     }
     const parts: string[] = [];
-    if (res.sent.length) parts.push(`Sent ${res.sent.length} message${res.sent.length === 1 ? '' : 's'} (${res.sent.reduce((n, s) => n + s.docNos.length, 0)} orders).`);
+    if (res.sent.length) parts.push(`Sent ${res.sent.length} message${res.sent.length === 1 ? '' : 's'}${isAssrSend ? '.' : ` (${res.sent.reduce((n, s) => n + s.docNos.length, 0)} orders).`}`);
     if (res.failed.length) parts.push(`Failed ${res.failed.length}: ${res.failed.map((f) => `${f.phone} (${f.error})`).join('; ')}.`);
     if (res.skipped.length) parts.push(`Skipped ${res.skipped.length}: ${res.skipped.map((s) => `${s.docNo} (${SKIP_LABEL[s.reason] ?? s.reason})`).join(', ')}.`);
     void notify({
@@ -205,12 +215,18 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
 
         <div className={styles.drawerBody}>
           <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-3)', color: 'var(--c-burnt)' }}>
-            One message per customer phone — {groups.size} message{groups.size === 1 ? '' : 's'}, {sendableDocs.length} order{sendableDocs.length === 1 ? '' : 's'}
+            One message per {isAssrSend ? 'Service Case job' : 'customer phone'} — {groups.size} message{groups.size === 1 ? '' : 's'}{isAssrSend ? '' : `, ${sendableDocs.length} order${sendableDocs.length === 1 ? '' : 's'}`}
           </div>
 
           {needsDriver && (
             <div style={noteStyle}>
               Each customer's message uses the <strong>driver set on the row</strong> (the Driver / Lorry columns) — no need to pick it again. Type the <strong>delivery-time window</strong> for each customer below; a customer with no driver on the row is skipped.
+            </div>
+          )}
+
+          {isAssrSend && (
+            <div style={noteStyle}>
+              The customer gets the case number, the job and its date (the <strong>Delivery Date</strong> Logistics set, else Service's requested date), with <strong>Confirm Date / Amend Date</strong> buttons. Their answer shows in Customer Request Date and on the case timeline.
             </div>
           )}
 
@@ -228,7 +244,7 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                   <MessageSquare size={14} strokeWidth={1.75} aria-hidden style={{ color: 'var(--c-burnt)' }} />
                   <strong style={{ fontSize: 'var(--fs-13)' }}>{list[0]?.debtor_name ?? '—'}</strong>
-                  <span style={{ color: 'var(--c-muted, #767b6e)', fontSize: 'var(--fs-12)' }}>{phone}</span>
+                  <span style={{ color: 'var(--c-muted, #767b6e)', fontSize: 'var(--fs-12)' }}>{phoneKey(list[0]?.phone)}</span>
                   {kind === 'balance_reminder' && (
                     <span style={{ marginLeft: 'auto', fontSize: 'var(--fs-12)', color: groupOwed > 0 ? 'var(--ink, #221f20)' : 'var(--c-burnt)' }}>
                       {groupOwed > 0 ? `Owing RM ${rm(groupOwed)}` : 'Nothing owed — will be skipped'}
@@ -270,7 +286,7 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
 
                 {list.map((r) => (
                   <div key={r.so_doc_no} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 'var(--fs-12)', padding: '2px 0' }}>
-                    <span>{r.so_doc_no}{r.branding ? ` · ${r.branding}` : ''}</span>
+                    <span>{isAssrSend ? `${r.ref} · ${assrJobKindLabel(r.job_kind)}` : r.so_doc_no}{r.branding ? ` · ${r.branding}` : ''}</span>
                     <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--c-muted, #767b6e)' }}>{effectiveDate(r)}</span>
                   </div>
                 ))}
@@ -280,7 +296,7 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
 
           {noPhone.length > 0 && (
             <div style={{ padding: 'var(--space-3)', border: '1px dashed var(--line)', borderRadius: 'var(--radius-md)', color: 'var(--c-muted, #767b6e)', fontSize: 'var(--fs-12)' }}>
-              Skipped — no usable phone: {noPhone.map((r) => r.so_doc_no).join(', ')}
+              Skipped — no usable phone: {noPhone.map((r) => (isAssrSend ? r.ref : r.so_doc_no)).join(', ')}
             </div>
           )}
         </div>

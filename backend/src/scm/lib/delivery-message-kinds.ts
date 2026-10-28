@@ -28,6 +28,8 @@ export const MESSAGE_KINDS = [
   'balance_reminder',
   'postpone',
   'postage',
+  // Service Case (ASSR) legs only — sent by assr-arrangement-message.ts (HC-0171).
+  'assr_arrangement',
 ] as const;
 export type MessageKind = (typeof MESSAGE_KINDS)[number];
 
@@ -43,12 +45,13 @@ export const KIND_AUTOMATION: Record<MessageKind, string> = {
   balance_reminder: 'Balance Reminder',
   postpone: 'Postpone',
   postage: 'Postage Confirm',
+  assr_arrangement: 'Service Arrangement',
 };
 
 /** Kinds that OPEN a Confirm / Amend conversation. Only these reset the
  *  contact's button_status & co. — a Driver Info or Balance Reminder sent to a
  *  customer who already confirmed must not unlock the Delivery Lock guard. */
-export const OPENER_KINDS: ReadonlySet<MessageKind> = new Set<MessageKind>(['delivery', 'amend', 'postpone']);
+export const OPENER_KINDS: ReadonlySet<MessageKind> = new Set<MessageKind>(['delivery', 'amend', 'postpone', 'assr_arrangement']);
 
 export interface DriverInfoInput {
   driverName: string;
@@ -160,6 +163,11 @@ export function kindAttributes(
         },
       };
     }
+
+    case 'assr_arrangement':
+      // Not an SO message: an order sent with this kind is skipped, never
+      // handed a Service Case template.
+      return { attributes: {}, skip: 'assr_only' };
 
     case 'postage': {
       const address = joinDeliveryAddress(first);
