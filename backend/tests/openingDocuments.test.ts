@@ -2,7 +2,8 @@
    开账 = AutoCount 31/08, an Opening Balance page to maintain it). An opening
    bill, supplier credit note or other-debtor bill is posted as part of the
    opening — its journal flagged `opening`, so the books count it whatever its
-   date. Pinned: the NORMAL screens refuse to edit, post or cancel one, by
+   date (an other debtor AutoCount owes opens as a receipt not yet knocked
+   off). Pinned: the NORMAL screens refuse to edit, post or cancel one, by
    name, writing nothing. Re-posted there it would be booked as an ordinary
    entry dated before the books start — and the books would silently lose it;
    the Opening Balance page is the one place it changes. */
@@ -33,12 +34,17 @@ function harness() {
       supplier_id: 'sup-d', note_date: '2026-08-20', total_sen: 5_000, status: 'POSTED', opening: true,
     }],
     acc_credit_note_lines: [],
-    acc_debtors: [{ id: 'deb-1', company_id: CO, name: 'TANGUANYU ENTERPRISE' }],
+    acc_debtors: [{ id: 'deb-1', company_id: CO, name: 'TANGUANYU ENTERPRISE' }, { id: 'deb-2', company_id: CO, name: 'SPRINGCSY SDN. BHD.' }],
     acc_debtor_bills: [{
       id: 'odb-1', company_id: CO, bill_number: 'HC-ODB-2608-001', debtor_id: 'deb-1', bill_date: '2026-08-31', total_sen: 30_548_314,
       received_sen: 0, status: 'POSTED', notes: null, opening: true,
     }],
     acc_debtor_bill_lines: [],
+    acc_debtor_receipts: [{
+      id: 'odr-1', company_id: CO, receipt_number: 'HC-ODR-2608-001', debtor_id: 'deb-2', receipt_date: '2026-08-31', bank_account_code: '190-0000',
+      total_sen: 240_000, status: 'POSTED', opening: true,
+    }],
+    acc_debtor_receipt_allocations: [],
     journal_entries: [],
     journal_entry_lines: [],
   });
@@ -96,6 +102,13 @@ describe('an opening document is changed on the Opening Balance page, never on i
     await refusedByName(await call(app, '/other-debtors/bills/odb-1', 'PATCH', { notes: 'x' }), 'HC-ODB-2608-001');
     await refusedByName(await call(app, '/other-debtors/bills/odb-1/cancel', 'POST'), 'HC-ODB-2608-001');
     expect(sb.tables.acc_debtor_bills[0]).toMatchObject({ status: 'POSTED', total_sen: 30_548_314 });
+    expect(sb.tables.journal_entries).toHaveLength(0);
+  });
+
+  test('an opening other-debtor receipt (a debtor AutoCount owes): void is refused', async () => {
+    const { app, sb } = harness();
+    await refusedByName(await call(app, '/other-debtors/receipts/odr-1/void', 'POST'), 'HC-ODR-2608-001');
+    expect(sb.tables.acc_debtor_receipts[0]).toMatchObject({ status: 'POSTED' });
     expect(sb.tables.journal_entries).toHaveLength(0);
   });
 });

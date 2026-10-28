@@ -85,6 +85,7 @@ async function resetToPreState(sql: Sql): Promise<void> {
     DROP TABLE IF EXISTS scm.ap_invoices;
     DROP TABLE IF EXISTS scm.acc_credit_notes;
     DROP TABLE IF EXISTS scm.acc_debtor_bills;
+    DROP TABLE IF EXISTS scm.acc_debtor_receipts;
     CREATE SCHEMA IF NOT EXISTS scm;
     CREATE TABLE scm.accounts (company_id integer NOT NULL, account_code text NOT NULL, account_name text NOT NULL, account_type text NOT NULL, PRIMARY KEY (company_id, account_code));
     CREATE TABLE scm.journal_entries (id uuid PRIMARY KEY, je_no text NOT NULL, entry_date date NOT NULL, source_type text, source_doc_no text,
@@ -97,6 +98,7 @@ async function resetToPreState(sql: Sql): Promise<void> {
     CREATE TABLE scm.ap_invoices (id uuid PRIMARY KEY, company_id bigint NOT NULL);
     CREATE TABLE scm.acc_credit_notes (id uuid PRIMARY KEY, company_id bigint NOT NULL);
     CREATE TABLE scm.acc_debtor_bills (id uuid PRIMARY KEY, company_id bigint NOT NULL);
+    CREATE TABLE scm.acc_debtor_receipts (id uuid PRIMARY KEY, company_id bigint NOT NULL);
   `);
   await sql.unsafe(GL_ENTRIES_AS_LIVE);
   await sql.unsafe(ACCOUNT_BALANCES_AS_LIVE);

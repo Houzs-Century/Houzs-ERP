@@ -89,7 +89,8 @@ export async function loadBooksOpening(sb: Db, companyId: number): Promise<{ ok:
 }
 
 /** What a normal screen answers when asked to edit, post or cancel an opening
-    document (journal_entries.opening and its bill / note / debtor bill): the
+    document (journal_entries.opening and its bill / note / debtor bill or
+    receipt): the
     books' 31/08 balance is changed on the Opening Balance page, which re-posts
     it as an opening entry and honours the lock. Re-posted by the normal path
     it would be booked as an ordinary entry dated before the books start — and

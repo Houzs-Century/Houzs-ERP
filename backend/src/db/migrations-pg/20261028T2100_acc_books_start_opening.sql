@@ -7,7 +7,9 @@
 --   books_start_date, opening_stock, opening_locked_at, opening_locked_by is
 --   only possible once v_gl_entries no longer names `opening`. No data is
 --   written here: the opening import sets books_start_date and the flags in
---   its own transaction.
+--   its own transaction. The flag columns (journal_entries, ap_invoices,
+--   acc_credit_notes, acc_debtor_bills, acc_debtor_receipts) drop with
+--   ALTER TABLE … DROP COLUMN opening once the views no longer name it.
 --
 -- WHY. Houzs (company 1) opens its books in the ERP on 01/09/2026 (owner
 --   2026-10-06: 开账放01/09). Up to 31/08 AutoCount is the book of record; what
@@ -54,6 +56,9 @@ ALTER TABLE scm.journal_entries  ADD COLUMN IF NOT EXISTS opening boolean NOT NU
 ALTER TABLE scm.ap_invoices      ADD COLUMN IF NOT EXISTS opening boolean NOT NULL DEFAULT false;
 ALTER TABLE scm.acc_credit_notes ADD COLUMN IF NOT EXISTS opening boolean NOT NULL DEFAULT false;
 ALTER TABLE scm.acc_debtor_bills ADD COLUMN IF NOT EXISTS opening boolean NOT NULL DEFAULT false;
+-- An other debtor AutoCount owes (a credit balance) opens as a receipt not yet
+-- knocked off — the one paper that holds a debtor's credit.
+ALTER TABLE scm.acc_debtor_receipts ADD COLUMN IF NOT EXISTS opening boolean NOT NULL DEFAULT false;
 
 CREATE OR REPLACE VIEW scm.v_gl_entries AS
  SELECT l.id AS line_id,

@@ -734,6 +734,7 @@ export const voidDebtorReceiptHandler = async (c: any): Promise<Response> => {
   const found = await loadReceipt(c);
   if ('resp' in found) return found.resp;
   const r = found.receipt;
+  if (r.opening === true) return c.json(openingDocumentRefusal(String(r.receipt_number)), 409);
   if (r.status === 'CANCELLED') return c.json({ error: 'void_twice', message: `${r.receipt_number} is void.` }, 409);
   if (r.status !== 'POSTED') return c.json({ error: 'not_posted', message: `${r.receipt_number} is not on the books — reject the draft instead of voiding it.` }, 409);
   const sb = c.get('supabase');
