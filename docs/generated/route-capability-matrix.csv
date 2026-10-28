@@ -345,6 +345,7 @@ POST,/api/pos-admin/items/:id/barcodes,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,
 DELETE,/api/pos-admin/items/:id/barcodes/:bid,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
 POST,/api/pos-admin/items/add-all,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
 POST,/api/pos-admin/items/import,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
+POST,/api/pos-admin/items/keep-categories,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
 GET,/api/pos-admin/labels,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,NO,DECLARED_GATE,backend/src/routes/pos-admin.ts
 POST,/api/pos-admin/labels/generate,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
 GET,/api/pos-admin/report,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,NO,DECLARED_GATE,backend/src/routes/pos-admin.ts
