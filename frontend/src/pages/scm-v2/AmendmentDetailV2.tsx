@@ -64,7 +64,7 @@ import {
   useWithdrawAmendment,
   type AmendmentLine,
 } from "../../vendor/scm/lib/so-amendment-queries";
-import { humanApiError } from "../../vendor/scm/lib/authed-fetch";
+import { failedWriteTail, humanApiError } from "../../vendor/scm/lib/authed-fetch";
 import { useSalesOrderAuditLog } from "../../vendor/scm/lib/sales-order-queries";
 import {
   buildAmendmentDecisionHistory,
@@ -750,7 +750,7 @@ export function AmendmentDetailV2() {
         onError: (e) =>
           notify({
             title: lane ? "Could not apply this amendment" : "Could not approve the revision",
-            body: `${plainError(e)} The Sales Order was NOT changed — please try again.`,
+            body: `${plainError(e)}${failedWriteTail(e, "The Sales Order was NOT changed — please try again.")}`,
             tone: "error",
           }),
       }

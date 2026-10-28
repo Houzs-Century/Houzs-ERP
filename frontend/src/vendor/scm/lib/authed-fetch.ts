@@ -157,6 +157,20 @@ async function fetchWithTimeout(url: string, init: RequestInit, path: string): P
   }
 }
 
+/* The sentence a failed write's notice ends on (HC-0167). "Nothing was changed"
+   is only true when the server ANSWERED with a refusal. A timeout, a dropped
+   connection or a gateway 502/504 leaves the Worker running, so the write may
+   still commit after the operator was told it did not — and they click again.
+   The 30-second timeout's own message already says to refresh and check, so it
+   gets no tail; the other unknown outcomes get that advice here. */
+export function failedWriteTail(e: unknown, unchanged: string): string {
+  const err = e as { transient?: unknown; status?: unknown; message?: unknown } | null;
+  const gateway = err?.status === 502 || err?.status === 504;
+  if (!gateway && err?.transient !== true) return ` ${unchanged}`;
+  if (/whether it saved/.test(String(err.message ?? ''))) return '';
+  return ' Refresh this page to see whether it went through before trying again.';
+}
+
 /* Drop-ship confirm (port of 2990 07c45728) — when a sofa ship is blocked
    because no batch is received yet (sofa_no_batch) BUT every affected line is
    bound to a PO (canDropship), the supplier can ship direct. Render the
