@@ -22,7 +22,7 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { companyDocPrefix, requireActiveCompanyId } from '../lib/companyScope';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { docMonthTag, mintMonthlyDocNo } from '../lib/doc-no';
-import { dateOrNull } from '../lib/date-coerce';
+import { coerceEmptyDates, dateOrNull } from '../lib/date-coerce';
 import { fmtSen } from '../shared/format';
 import { compactChanges, fieldChange, recordEntityAudit } from '../lib/entity-audit';
 import { postJournal, reverseJournal } from '../../acc/engine';
@@ -377,13 +377,13 @@ export const openingPaperUpdate = async (c: any): Promise<Response> => {
   if (!Number.isSafeInteger(amountSen) || amountSen <= 0) return c.json({ error: 'bad_amount', message: 'amountSen must be a positive whole number of sen.' }, 400);
   if (amountSen < p.settledSen) return c.json({ error: 'below_settled', message: `${p.no} already has ${fmtSen(p.settledSen)} settled against it — it cannot fall below that.` }, 409);
   const t = PAPER[kind];
-  const patch: Row = { [t.date]: date, total_sen: amountSen };
+  const patch: Row = { [t.date]: dateOrNull(date), total_sen: amountSen };
   if (body?.ref !== undefined && (kind === 'API' || kind === 'SCN')) patch[kind === 'API' ? 'supplier_invoice_ref' : 'source_doc_no'] = body.ref ? String(body.ref).trim().slice(0, 120) : null;
   if (body?.note !== undefined) patch.notes = body.note ? String(body.note).trim().slice(0, 500) : null;
   if (kind === 'API') patch.status = p.settledSen >= amountSen ? 'PAID' : p.settledSen > 0 ? 'PARTIALLY_PAID' : 'POSTED';
   if (kind === 'ODB') patch.status = p.settledSen >= amountSen ? 'PAID' : 'POSTED';
   if (kind === 'API' || kind === 'SCN') patch.updated_at = new Date().toISOString();
-  const { error } = await w.sb.from(t.table).update(patch).eq('company_id', w.companyId).eq('id', p.id);
+  const { error } = await w.sb.from(t.table).update(coerceEmptyDates(patch)).eq('company_id', w.companyId).eq('id', p.id);
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
   if (t.lines) {
     const { error: lErr } = await w.sb.from(t.lines).update({ amount_sen: amountSen }).eq('company_id', w.companyId).eq(t.lineFk!, p.id);
@@ -427,7 +427,7 @@ export const openingPaperCancel = async (c: any): Promise<Response> => {
   if (!rev.ok) return c.json({ error: 'reverse_failed', reason: rev.reason ?? rev.status }, 500);
   const now = new Date().toISOString();
   const patch: Row = kind === 'API' || kind === 'SCN' ? { status: 'CANCELLED', cancelled_at: now, cancelled_by: who(c), updated_at: now } : { status: 'CANCELLED' };
-  const { error } = await w.sb.from(t.table).update(patch).eq('company_id', w.companyId).eq('id', p.id);
+  const { error } = await w.sb.from(t.table).update(coerceEmptyDates(patch)).eq('company_id', w.companyId).eq('id', p.id);
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
   await recordEntityAudit(w.sb, { entityType: 'OPENING_BALANCE', entityId: p.id, entityDocNo: p.no, action: 'CANCEL', actor: c.get('houzsUser'), companyId: w.companyId,
     note: `Opening ${t.word.toLowerCase()} ${p.no} cancelled (${fmtSen(p.amountSen)})`, fieldChanges: compactChanges([fieldChange('status', p.status, 'CANCELLED')]) });

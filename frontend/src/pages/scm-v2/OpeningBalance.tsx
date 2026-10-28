@@ -306,7 +306,7 @@ const PaperForm = ({ title, openingDate, initial, withRef, floorSen = 0, pending
     <Modal title={title} onClose={onCancel} width="min(560px, 100%)">
       <div className="space-y-4">
         {children}
-        <label style={{ display: 'block' }}><div style={soft}>Date · 日期</div><DateField value={v.date} onChange={(date) => setV({ ...v, date: date ?? '' })} max={openingDate} aria-label="Paper date" /></label>
+        <label style={{ display: 'block' }}><div style={soft}>Date · 日期</div><DateField value={v.date} onChange={(date) => setV({ ...v, date })} max={openingDate} aria-label="Paper date" /></label>
         {withRef && <label style={{ display: 'block' }}><div style={soft}>Reference · 发票号</div><input value={v.ref} onChange={(e) => setV({ ...v, ref: e.target.value })} aria-label="Reference" style={{ padding: '4px 6px', width: '100%' }} /></label>}
         <label style={{ display: 'block' }}><div style={soft}>Amount · 金额</div><MoneyInput valueSen={v.amountSen} onCommit={(sen) => setV({ ...v, amountSen: sen ?? 0 })} /></label>
         {why && <div style={{ ...soft, color: bad }}>{why}</div>}
