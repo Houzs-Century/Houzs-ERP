@@ -345,6 +345,39 @@ async function run(tx, data, CUTOFF) {
       status_snapshot: 'PAID', source: 'script', note: c.note })))}`;
   }
 
+  /* ── 7b. vouchers already aimed at a brought-over copy ──────────────────────
+     Finance raised payments in the ERP against the copies (drafts for October,
+     one posted). A copy the opening replaces hands its ticks to the opening bill
+     (a posted tick's money with it); a copy AutoCount says was settled keeps its
+     tick and is reported — paying it would pay twice. Amounts are never changed. */
+  const copyIds = migrated.map((m) => m.id);
+  const ticks = copyIds.length ? await tx`SELECT a.id, a.pv_id, a.amount_sen, a.applied_sen, v.pv_number, v.status::text AS pv_status, p.invoice_number
+      FROM scm.pv_allocations a JOIN scm.payment_vouchers v ON v.id = a.pv_id JOIN scm.purchase_invoices p ON p.id = a.pi_id
+      WHERE p.company_id = ${CO} AND p.id = ANY(${copyIds}::uuid[]) AND v.status::text <> 'CANCELLED'` : [];
+  const moved = [], kept = [];
+  for (const t of ticks) {
+    const b = replacedBy.get(t.invoice_number);
+    if (b) moved.push({ ...t, bill: b, apiId: apiIds.get(b.no) }); else kept.push(t);
+  }
+  if (moved.length) {
+    await tx`UPDATE scm.pv_allocations a SET pi_id = NULL, ap_invoice_id = v.api
+      FROM (SELECT unnest(${moved.map((m) => m.id)}::uuid[]) AS id, unnest(${moved.map((m) => m.apiId)}::uuid[]) AS api) v WHERE a.id = v.id`;
+    const paidBy = new Map();
+    for (const m of moved) if (Number(m.applied_sen) > 0) paidBy.set(m.apiId, (paidBy.get(m.apiId) ?? 0) + Number(m.applied_sen));
+    if (paidBy.size) {
+      await tx`UPDATE scm.ap_invoices a SET paid_sen = a.paid_sen + v.paid, updated_at = now(),
+          status = CASE WHEN a.paid_sen + v.paid >= a.total_sen THEN 'PAID' ELSE 'PARTIALLY_PAID' END
+        FROM (SELECT unnest(${[...paidBy.keys()]}::uuid[]) AS id, unnest(${[...paidBy.values()]}::bigint[]) AS paid) v WHERE a.id = v.id`;
+    }
+    await tx`INSERT INTO scm.entity_audit_log ${tx(moved.map((m) => ({ company_id: CO, entity_type: 'PAYMENT_VOUCHER', entity_id: String(m.pv_id), entity_doc_no: m.pv_number, action: 'UPDATE',
+      actor_name_snapshot: ACTOR, field_changes: tx.json([{ field: 'allocation', from: m.invoice_number, to: m.bill.no }]), status_snapshot: m.pv_status, source: 'script',
+      note: `${TAG}: the tick on ${m.invoice_number} moved to its opening bill ${m.bill.no} (AutoCount ${m.bill.acDoc})` })))}`;
+  }
+  /* What each moved draft would pay against what AutoCount says was still owed at 31/08. */
+  const plannedOn = new Map();
+  for (const m of moved) plannedOn.set(m.bill.no, (plannedOn.get(m.bill.no) ?? 0) + Number(m.amount_sen));
+  const over = [...plannedOn].map(([no, planned]) => ({ no, planned, bill: bills.find((b) => b.no === no) })).filter((x) => x.planned > x.bill.amt);
+
   /* ── 8. verify, inside the transaction ──────────────────────────────────── */
   const after = new Map((await tx`SELECT l.account_code AS code, sum(l.debit_sen - l.credit_sen)::bigint AS bal
       FROM scm.journal_entry_lines l JOIN scm.journal_entries j ON j.id = l.journal_entry_id
@@ -394,6 +427,10 @@ async function run(tx, data, CUTOFF) {
   say(`ERP bills dated by 31/08 but booked after it (not part of the opening): ${own.filter((b) => !inBookMyr.has(b.no)).map((b) => `${b.no} ${b.supplier} RM ${rm(b.total_sen)} dated ${b.date}${b.ref ? ` (${b.ref})` : ''}`).join('; ') || 'none'}`);
   for (const l of supplierLines) say(`  ${l}`);
   say(`brought-over purchase invoices marked PAID: ${closing.length} (${closing.filter((c) => c.note.startsWith('Replaced')).length} replaced by an opening bill, ${closing.filter((c) => c.note.startsWith('Settled')).length} settled in AutoCount); still open after: ${stillOpen[0].n}`);
+  say(`vouchers aimed at a copy: ${ticks.length}; moved to the opening bill ${moved.length} (${[...new Set(moved.map((m) => m.pv_number))].join(', ') || '-'}); left on a copy AutoCount settled ${kept.length}${kept.length ? ': ' + kept.map((k) => `${k.pv_number} ${k.pv_status} → ${k.invoice_number} RM ${rm(k.amount_sen)}`).join('; ') : ''}`);
+  for (const x of over) say(`! ${x.no} (AutoCount ${x.bill.acDoc}, ${x.bill.code}): AutoCount still owed RM ${rm(x.bill.amt)} at 31/08 but the vouchers plan RM ${rm(x.planned)}`);
+  for (const m of moved) console.log(`TICK|${JSON.stringify({ pv: m.pv_number, status: m.pv_status, from: m.invoice_number, to: m.bill.no, ac: m.bill.acDoc, planned: Number(m.amount_sen), applied: Number(m.applied_sen), owed: m.bill.amt })}`);
+  for (const k of kept) console.log(`TICK|${JSON.stringify({ pv: k.pv_number, status: k.pv_status, from: k.invoice_number, to: null, planned: Number(k.amount_sen), applied: Number(k.applied_sen), owed: 0 })}`);
   say(`journals: ${jes.length} (${jes.filter((j) => j.source === 'API').length} API, ${jes.filter((j) => j.source === 'SCN').length} SCN, ${jes.filter((j) => j.source === 'ODB').length} ODB, 1 OPENING ${jes.at(-1).no} with ${tbLines.length} lines RM ${rm(jes.at(-1).dr)})`);
   say('opening journal lines:');
   for (const l of tbLines) say(`  ${l.a} ${(chartBy.get(l.a)?.account_name ?? newAccounts.find((a) => a.account_code === l.a)?.account_name ?? '').slice(0, 36).padEnd(36)} ${l.dr ? 'Dr ' + rm(l.dr) : 'Cr ' + rm(l.cr)}${l.pn ? ' — ' + l.pn : ''} | ERP before ${rm(erpBal.get(l.a) ?? 0)} → after ${rm(after.get(l.a) ?? 0)}`);
