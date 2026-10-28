@@ -27,7 +27,12 @@ this step. From that moment the DO line, OUT movements, lot consumptions and
 COGS are **anchored history and never recomputed**.
 
 PO "Assigned SO" resolves by precedence per SKU: **(a) delivered DO-lock (C)**
-> **(b) stored origin (B)** > **(c) MRP floating (A)** > dash. A
+> **(b) stored origin (B)** > **(c) MRP floating (A)** > dash. A **pooled**
+company (every company but `HARD_BOUND_COMPANY_ID`, i.e. 2990) resolves
+**(a) > (c) > (b)** instead: when the pooled walk gives
+a PO to an earlier-delivery SO, the PO names that SO and the raised-for SO
+shows as the "Bought for" chip; (b) still answers when MRP has nothing for the
+SKU (received / stock). A
 `storedLink`/provenance slot is shown ALONGSIDE the precedence winner (not
 replacing it) whenever it differs. Sales docs (DO, SI) show **Source PO**
 (linkage C, physical); purchase docs (PO, GRN, PI) show **Assigned SO**
