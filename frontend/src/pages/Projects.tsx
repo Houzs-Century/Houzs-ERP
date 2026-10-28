@@ -124,7 +124,7 @@ import type {
 } from "./projects/types";
 import { composeDefaultProjectName, viewableMime, googleCalendarUrl } from "./projects/projectHelpers";
 import { itemComplete } from "./projects/checklistDone";
-import { PROJECT_STAGES, projectStage, setupArrangedOf } from "./projects/projectStage";
+import { PROJECT_STAGES, projectStage, setupArrangedOf, driverKeyedOf } from "./projects/projectStage";
 import { todayMY } from "../vendor/shared/format";
 import { salesOrderProjectLabel, shownProjectName, shownOrganizer, isSoloMasked, maskSoloOrganizer, SOLO_ORGANIZER_MASK, type SoloMaskProject } from "./projects/soloOrganizerMask";
 import { SoloSafeName, useCanSeeSoloOrganizer } from "./projects/SoloSafeName";
@@ -3454,7 +3454,7 @@ function TaskAttachmentRow({
 }
 
 // ── Project Stage stepper ─────────────────────────────────────
-// The 9-step tracker; its rule lives in projects/projectStage.ts, shared with
+// The 10-step tracker; its rule lives in projects/projectStage.ts, shared with
 // Project Overview's event list.
 function ProjectStageStepper({
   checklist,
@@ -3468,7 +3468,7 @@ function ProjectStageStepper({
   setupCrew?: string | null;
   setupStartAt?: string | null;
 }) {
-  const { currentIdx, allDone, lastIdx } = projectStage(checklist ?? [], setupArrangedOf(setupCrew, setupStartAt), startDate, todayMY());
+  const { currentIdx, allDone, lastIdx } = projectStage(checklist ?? [], setupArrangedOf(setupCrew, setupStartAt), driverKeyedOf(setupCrew), startDate, todayMY());
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
