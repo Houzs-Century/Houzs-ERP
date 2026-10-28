@@ -55,6 +55,10 @@ const PHRASE = 'OPEN HOUZS 31/08';
 const CO = Number(process.env.COMPANY_ID || 1);
 const DATA = process.env.DATA || fileURLToPath(new URL('./data/houzs-opening-2608.json', import.meta.url));
 const BOOKS_START = '2026-09-01';
+/* ERP bills dated before the start that AutoCount never had but that ARE owed
+   (the owner's call, bill by bill): their journal moves to the books' first
+   day, so September carries them; the bill keeps its own date. Comma list. */
+const SEPTEMBER_BILLS = String(process.env.SEPTEMBER_BILLS || '').split(',').map((x) => x.trim()).filter(Boolean);
 const ACTOR = 'Opening import (AutoCount 31/08)';
 const TAG = 'Opening 31/08 from AutoCount';
 const TB_DOC = 'HC-OPENING-2608';
@@ -408,11 +412,18 @@ async function run(tx, data) {
       WHERE company_id = ${CO} AND source_type IN ('PI', 'API') AND posted AND NOT reversed AND reversed_by_je IS NULL
         AND source_doc_no = ANY(${erpBills.map((b) => b.no)}::text[])`).map((r) => [r.key, r.d]));
   for (const no of replacing.keys()) if (!erpBills.some((b) => b.no === no)) say(`! the aging names ERP paper ${no} to replace, but it is not on file (cancelled?) — its opening bill stands alone`);
-  const inBooks = [], drafts = [], toClose = [];
+  const inBooks = [], drafts = [], toClose = [], toSeptember = [];
+  for (const no of SEPTEMBER_BILLS) if (!erpBills.some((b) => b.no === no)) throw new Error(`SEPTEMBER_BILLS names ${no}, which is not an ERP bill dated by 31/08`);
   for (const b of erpBills) {
     b.je = jeOf.get(`${b.k}:${b.no}`) ?? null;
     b.by = replacing.get(b.no) ?? null;
     if (b.status === 'DRAFT') { drafts.push(b); continue; }
+    if (SEPTEMBER_BILLS.includes(b.no)) {
+      if (b.by) throw new Error(`${b.no} is replaced by opening bill ${b.by.no} — it cannot also be owed in September`);
+      if (!b.je) throw new Error(`${b.no} has no journal to move to ${BOOKS_START}`);
+      if (b.je < BOOKS_START) toSeptember.push(b); else inBooks.push(b);
+      continue;
+    }
     if (b.je && b.je >= BOOKS_START) {
       if (b.by) throw new Error(`${b.no} is replaced by opening bill ${b.by.no} but its own journal is dated ${b.je}, inside the books — reverse it first`);
       inBooks.push(b);
@@ -515,6 +526,33 @@ async function run(tx, data) {
     }
   }
 
+  /* The bills owed in September: the old journal's contra on its own day, the
+     same lines again on the books' first day — numbered, posted, audited. */
+  for (const b of toSeptember) {
+    const old = await tx`SELECT id, je_no, entry_date::text AS d, total_debit_sen, narration FROM scm.journal_entries
+        WHERE company_id = ${CO} AND source_type = ${b.k} AND source_doc_no = ${b.no} AND posted AND NOT reversed AND reversed_by_je IS NULL`;
+    if (old.length !== 1) throw new Error(`${b.no}: ${old.length} live journals, want one`);
+    const ls = await tx`SELECT account_code, debit_sen, credit_sen, party_type, party_code, party_name, notes, project_id FROM scm.journal_entry_lines WHERE journal_entry_id = ${old[0].id} ORDER BY line_no`;
+    const total = Number(old[0].total_debit_sen);
+    const contraNo = `JE-${yymm(old[0].d)}-${String(await claim(`JE-${yymm(old[0].d)}`, (await floorsOf('journal_entries', 'je_no', `JE-${yymm(old[0].d)}-%`)).get(`JE-${yymm(old[0].d)}`) ?? 0, 1)).padStart(4, '0')}`;
+    const [contra] = await tx`INSERT INTO scm.journal_entries ${tx({ company_id: CO, je_no: contraNo, entry_date: old[0].d, source_type: `${b.k}_REVERSAL`, source_doc_no: b.no,
+      narration: `Reversal of ${old[0].je_no} — ${b.no} is owed in September (AutoCount has no such bill at 31/08)`, total_debit_sen: total, total_credit_sen: total, posted: false, reversed_by_je: old[0].id })} RETURNING id`;
+    await tx`INSERT INTO scm.journal_entry_lines ${tx(ls.map((l, i) => ({ company_id: CO, journal_entry_id: contra.id, line_no: i + 1, account_code: l.account_code, debit_sen: l.credit_sen, credit_sen: l.debit_sen,
+      party_type: l.party_type, party_code: l.party_code, party_name: l.party_name, notes: `Reversal — ${l.notes ?? ''}`.trim(), project_id: l.project_id })))}`;
+    await tx`UPDATE scm.journal_entries SET posted = true, posted_at = now() WHERE id = ${contra.id}`;
+    await tx`UPDATE scm.journal_entries SET reversed = true, reversed_by_je = ${contra.id} WHERE id = ${old[0].id}`;
+    const freshNo = `JE-${yymm(BOOKS_START)}-${String(await claim(`JE-${yymm(BOOKS_START)}`, (await floorsOf('journal_entries', 'je_no', `JE-${yymm(BOOKS_START)}-%`)).get(`JE-${yymm(BOOKS_START)}`) ?? 0, 1)).padStart(4, '0')}`;
+    const [fresh] = await tx`INSERT INTO scm.journal_entries ${tx({ company_id: CO, je_no: freshNo, entry_date: BOOKS_START, source_type: b.k, source_doc_no: b.no,
+      narration: `${old[0].narration ?? b.no} — owed in September: the bill is dated ${b.date}, AutoCount had no such bill at 31/08`, total_debit_sen: total, total_credit_sen: total, posted: false })} RETURNING id`;
+    await tx`INSERT INTO scm.journal_entry_lines ${tx(ls.map((l, i) => ({ company_id: CO, journal_entry_id: fresh.id, line_no: i + 1, account_code: l.account_code, debit_sen: l.debit_sen, credit_sen: l.credit_sen,
+      party_type: l.party_type, party_code: l.party_code, party_name: l.party_name, notes: l.notes, project_id: l.project_id })))}`;
+    await tx`UPDATE scm.journal_entries SET posted = true, posted_at = now() WHERE id = ${fresh.id}`;
+    await tx`INSERT INTO scm.entity_audit_log ${tx({ company_id: CO, entity_type: b.k === 'PI' ? 'PURCHASE_INVOICE' : 'AP_INVOICE', entity_id: String(b.id), entity_doc_no: b.no, action: 'UPDATE',
+      actor_name_snapshot: ACTOR, field_changes: tx.json([{ field: 'journalDate', from: old[0].d, to: BOOKS_START }]), status_snapshot: b.status, source: 'script',
+      note: `${TAG}: owed in September — ${old[0].je_no} reversed on its own day, re-posted as ${freshNo} on ${BOOKS_START} (owner 2026-10-28)` })}`;
+    b.moved = { from: old[0].je_no, contra: contraNo, fresh: freshNo, total };
+  }
+
   /* ── 11. verify, inside the transaction, through the books' own views ──── */
   const bad = [];
   const at31 = new Map((await tx`SELECT account_code AS code, sum(debit_sen - credit_sen)::bigint AS bal FROM scm.v_gl_entries
@@ -562,6 +600,7 @@ async function run(tx, data) {
   say(`opening stock RM ${rm(S0)} by bucket: ${BUCKETS.map((b) => `${b} ${rm(openingStock[b])}`).join(', ')} (the ERP's August close: ${BUCKETS.map((b) => `${b} ${rm(engineAug[b])}`).join(', ')}; total ${rm(engineAugTotal)})`);
   say(`journals: ${jes.length} (${['API', 'SCN', 'ODB', 'ODR'].map((k) => `${jes.filter((j) => j.source === k).length} ${k}`).join(', ')}, 1 OPENING ${jes.at(-1).no} with ${tbLines.length} lines RM ${rm(jes.at(-1).dr)})`);
   say(`ERP supplier papers dated by 31/08: ${erpBills.length}; closed ${closing.length} (${closing.filter((c) => c.b.by).length} replaced by their opening bill, ${closing.filter((c) => !c.b.by).length} not owed); already closed ${toClose.length - closing.length}; drafts left ${drafts.length}${drafts.length ? ': ' + drafts.map((b) => `${b.no} ${b.supplier} RM ${rm(b.total_sen)}`).join('; ') : ''}; still open after ${stillOpen[0].n} RM ${rm(stillOpen[0].sen)}`);
+  say(`owed in September (journal moved to ${BOOKS_START}): ${toSeptember.map((b) => `${b.no} ${b.supplier} RM ${rm(b.total_sen)}${b.ref ? ` (${b.ref})` : ''} — ${b.moved.from} → ${b.moved.fresh}`).join('; ') || 'none'}`);
   say(`kept in the books (journal dated from ${BOOKS_START}): ${inBooks.map((b) => `${b.no} ${b.supplier} RM ${rm(b.total_sen)} dated ${b.date}, booked ${b.je}${b.ref ? ` (${b.ref})` : ''}`).join('; ') || 'none'}`);
   say(`not owed, closed: ${closing.filter((c) => !c.b.by && !c.b.migrated).map((c) => `${c.b.no} ${c.b.supplier} RM ${rm(c.b.total_sen)}${c.b.ref ? ` (${c.b.ref})` : ''}`).join('; ') || 'none'}; + ${closing.filter((c) => !c.b.by && c.b.migrated).length} brought-over copies AutoCount had settled`);
   say(`ticks moved to an opening bill: ${pvMoves.length} payment ticks (${[...new Set(pvMoves.map((m) => m.doc))].join(', ') || '-'}), ${cnMoves.length} credit-note ticks; advances made: ${[...advances.values()].map((a) => `${a.pv_number} RM ${rm(a.sen)}`).join('; ') || 'none'}`);
