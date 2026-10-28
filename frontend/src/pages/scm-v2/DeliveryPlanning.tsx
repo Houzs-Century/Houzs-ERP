@@ -52,7 +52,7 @@ import {
   rowIdOf,
   soDocNosFromSelection,
 } from '../../vendor/scm/components/DeliveryPlanningBoard';
-import { DELIVERY_PLANNING_LAYOUT_PRESETS } from '../../vendor/scm/lib/deliveryPlanningLayouts';
+import { DELIVERY_PLANNING_LAYOUT_PRESETS, LAYOUT_PRESET_REGION } from '../../vendor/scm/lib/deliveryPlanningLayouts';
 import { RowColorModal } from './RowColorModal';
 import { useDeliveryRowMarks, type RowMarkColour } from '../../vendor/scm/lib/delivery-row-mark';
 import { useDeliveryRowOrder, useSetRowOrder, orderComparator } from '../../vendor/scm/lib/delivery-row-order';
@@ -499,6 +499,10 @@ export const DeliveryPlanning = () => {
         orders={allOrders}
         resetFilters={{ active: activeState !== 'ALL' || activeRegion !== 'ALL', onReset: resetView }}
         layoutPresets={DELIVERY_PLANNING_LAYOUT_PRESETS}
+        onApplyLayoutPreset={(id) => {
+          const region = LAYOUT_PRESET_REGION[id];
+          if (region && regionKeys.has(region)) setRegion(region);
+        }}
         initialRowLimit={200}
         defaultSort={orderSort}
         onRowReorder={(keys) => setRowOrder.mutate(keys)}

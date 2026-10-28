@@ -773,6 +773,8 @@ export type DeliveryPlanningBoardProps = {
      by the full Delivery Planning board (the date/time/crew sub-pages have their
      own storage keys and narrower views). */
   layoutPresets?: LayoutSeed[];
+  /* Picking one of `layoutPresets` — the page moves the region chip to match. */
+  onApplyLayoutPreset?: (presetId: string) => void;
   /* First-page row cap (owner 2026-09-26): the full board renders this many rows
      with a "Load more" for the rest; passed only by the main Delivery Planning
      page. Omitted on the sub-pages (they render their whole, narrower queue). */
@@ -831,6 +833,7 @@ export function DeliveryPlanningBoard({
   emptyMessage = 'No orders need delivering in this view.',
   defaultSort,
   layoutPresets,
+  onApplyLayoutPreset,
   initialRowLimit,
   onRowReorder,
   resetFilters,
@@ -1713,6 +1716,7 @@ export function DeliveryPlanningBoard({
           label: 'Reset layout',
         }}
         layoutPresets={layoutPresets}
+        onApplyLayoutPreset={onApplyLayoutPreset}
         initialRowLimit={initialRowLimit}
         onRowReorder={onRowReorder}
         exportName={exportName}
