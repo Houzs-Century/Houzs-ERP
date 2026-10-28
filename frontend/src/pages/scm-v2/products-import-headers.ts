@@ -266,7 +266,7 @@ export function buildSkuImportRows(parsed: Array<Record<string, string | undefin
     if (has(first.description)) out.description = first.description;
     if (has(first.base_model)) out.base_model = first.base_model;
     if (has(first.size_label)) out.size_label = first.size_label;
-    if (has(first.status))     out.status = first.status;
+    if (has(first.status))     out.status = first.status.toUpperCase();
     if (has(first.branding))   out.branding = first.branding;
 
     // Money is read in RINGGIT (new export, e.g. 1535.00 → 153500 sen). A
