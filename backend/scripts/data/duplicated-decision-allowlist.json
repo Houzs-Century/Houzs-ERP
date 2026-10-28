@@ -1307,8 +1307,13 @@
     },
     {
       "check": "D1",
-      "key": "COMMISSION_MONTH,DELIVERY_ORDER,GRN,INVENTORY_ADJUSTMENT,PAYMENT_REQUEST,PAYMENT_VOUCHER,PRODUCT_REQUEST,PURCHASE_INVOICE,PURCHASE_ORDER,PURCHASE_RETURN,SALES_INVOICE,STOCK_TAKE,STOCK_TRANSFER|backend/src/scm/lib/entity-audit.ts frontend/src/vendor/scm/lib/entity-audit-queries.ts",
+      "key": "COMMISSION_MONTH,DELIVERY_ORDER,GRN,INVENTORY_ADJUSTMENT,OPENING_BALANCE,PAYMENT_REQUEST,PAYMENT_VOUCHER,PRODUCT_REQUEST,PURCHASE_INVOICE,PURCHASE_ORDER,PURCHASE_RETURN,SALES_INVOICE,STOCK_TAKE,STOCK_TRANSFER|backend/src/scm/lib/entity-audit.ts frontend/src/vendor/scm/lib/entity-audit-queries.ts",
       "why": "PINNED BY A TEST, which is this checker's own prescribed remedy for a pair that must stay two. The list cannot be imported across the app boundary (the frontend does not build backend sources), so frontend/src/vendor/scm/lib/entity-audit-queries.test.ts READS backend/src/scm/lib/entity-audit.ts and asserts the two are equal, with a second assertion that the read found more than five names so a dead matcher cannot report a pass. Recorded rather than collapsed because this pair already cost four documents their change log while the comment said 'must stay in step' and nothing made it - docs/bugs/0847-four-documents-kept-a-change-log-nobody-could-read.md."
+    },
+    {
+      "check": "D1",
+      "key": "API,ODB,ODR,SCN|backend/src/acc/opening-balance.ts backend/src/scm/routes/accounting-opening.ts frontend/src/pages/scm-v2/OpeningBalance.tsx",
+      "why": "THE OPENING PAPER KINDS (owner 2026-10-28, Opening Balance page). ONE home answers which papers an opening may hold: OPENING_PAPER_KINDS in backend/src/acc/opening-balance.ts, the only list the server validates against (isKind). The other two key something ELSE by it: accounting-opening.ts PAPER is per-kind WIRING (table, number and date columns, party column, line table), and OpeningBalance.tsx KIND_WORD is PRESENTATION (the word a paper prints). Each is typed Record<OpeningPaperKind, …> on the same union, so a kind added to the union and not to a map fails to compile; a divergence that slips past costs a blank word, never a paper the server would book."
     },
     {
       "check": "D2",

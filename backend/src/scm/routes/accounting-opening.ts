@@ -50,7 +50,7 @@ const PAPER = {
   SCN: { table: 'acc_credit_notes', no: 'note_number', date: 'note_date', party: 'supplier_id', lines: 'acc_credit_note_lines', lineFk: 'note_id', lineAccount: 'account_code', word: 'Supplier credit note' },
   ODB: { table: 'acc_debtor_bills', no: 'bill_number', date: 'bill_date', party: 'debtor_id', lines: 'acc_debtor_bill_lines', lineFk: 'bill_id', lineAccount: 'credit_account_code', word: 'Debtor bill' },
   ODR: { table: 'acc_debtor_receipts', no: 'receipt_number', date: 'receipt_date', party: 'debtor_id', lines: null, lineFk: null, lineAccount: null, word: 'Debtor receipt' },
-} as const;
+} as const satisfies Record<OpeningPaperKind, unknown>;
 
 type Paper = { id: string; kind: OpeningPaperKind; no: string; partyId: string; date: string; ref: string | null; amountSen: number; settledSen: number; status: string; note: string | null };
 
