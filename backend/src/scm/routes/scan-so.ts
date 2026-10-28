@@ -64,6 +64,8 @@ import { variantNotAllowedSentence } from '../lib/allowed-options-check';
 // Document-type-agnostic OCR transport, shared with the GR/PI scanners.
 import {
   CLAUDE_MODEL,
+  modelRequestFields,
+  scanSoModel,
   anthropicFetchWithRetry,
   sha256Hex,
   stripJsonFences,
@@ -703,9 +705,9 @@ async function warmCatalogCache(
         'anthropic-beta': 'extended-cache-ttl-2025-04-11',
       },
       body: JSON.stringify({
-        model: CLAUDE_MODEL,
+        model: usage.model,
         max_tokens: 1,
-        temperature: 0,
+        ...modelRequestFields(usage.model),
         messages: [
           {
             role: 'user',
@@ -759,7 +761,7 @@ export async function warmCatalogCacheForCron(env: Env): Promise<WarmResult> {
      matching once the two companies' catalogues diverge) — never a correctness
      one. Fixing it needs a per-company warm loop; flagged, not done here.  */
   return warmCatalogCache(getSupabaseService(env), env.DB, env.ANTHROPIC_API_KEY, branding.companyName, null,
-    { env, feature: 'cache_warm', model: CLAUDE_MODEL, companyId: null, userId: null, waitUntil: null });
+    { env, feature: 'cache_warm', model: scanSoModel(env), companyId: null, userId: null, waitUntil: null });
 }
 
 // ===========================================================================
@@ -2325,7 +2327,7 @@ scanSo.get('/slip-image', async (c) => {
 scanSo.post('/warm', async (c) => {
   const sb = c.get('supabase');
   const branding = await getBranding(c.env);
-  const result = await warmCatalogCache(sb, c.env.DB, c.env.ANTHROPIC_API_KEY, branding.companyName, activeCompanyId(c), requestAiTag(c, 'cache_warm', CLAUDE_MODEL));
+  const result = await warmCatalogCache(sb, c.env.DB, c.env.ANTHROPIC_API_KEY, branding.companyName, activeCompanyId(c), requestAiTag(c, 'cache_warm', scanSoModel(c.env)));
   return c.json(result);
 });
 
@@ -2601,12 +2603,13 @@ async function callClaudeSlipExtract(
         'anthropic-beta': 'extended-cache-ttl-2025-04-11',
       },
       body: JSON.stringify({
-        model: CLAUDE_MODEL,
+        model: usage.model,
         max_tokens: 8192,
-        // temperature=0 — deterministic OCR. Same slip + same prompt must
-        // produce identical output so wrong fields are reproducible bugs,
-        // not a flaky lottery (lesson from the HOOKKA scan-po rollout).
-        temperature: 0,
+        // temperature=0 on Sonnet 4.6 — deterministic OCR. Same slip + same
+        // prompt must produce identical output so wrong fields are reproducible
+        // bugs, not a flaky lottery (lesson from the HOOKKA scan-po rollout).
+        // Sonnet 5.5 refuses temperature; see modelRequestFields.
+        ...modelRequestFields(usage.model),
         messages: [
           {
             role: 'user',
@@ -2931,7 +2934,7 @@ scanSo.post('/extract', async (c) => {
   // ONE Claude vision call + JSON coercion — callClaudeSlipExtract, shared
   // with the background job (timeout / retry / cache semantics inside).
   const { parsed, errorMsg, timedOut, claudeText, cacheHit, cacheCreated } =
-    await callClaudeSlipExtract(apiKey, cachedPrefix, inj, fileBlocks, requestAiTag(c, 'scan_so', CLAUDE_MODEL));
+    await callClaudeSlipExtract(apiKey, cachedPrefix, inj, fileBlocks, requestAiTag(c, 'scan_so', scanSoModel(c.env)));
 
   // Persist the sample row (learning pool) — insertScanSample, shared with
   // the background job. salesperson = operator's pick, else the AI's salesRep
@@ -3852,7 +3855,7 @@ async function runScanJob(
     // HC-0006 T8: this company's confirmed corrections, read before the model and applied to its output.
     const call = await readSlipWithAliases(svc, job.companyId, (hint) => callClaudeSlipExtract(
       apiKey, cachedPrefix, hint ? { ...inj, globalAliasText: [inj.globalAliasText, hint].filter(Boolean).join('\n\n') } : inj, job.fileBlocks,
-      { env, feature: 'scan_so', model: CLAUDE_MODEL, companyId: job.companyId, userId: job.houzsUserId, waitUntil: null },
+      { env, feature: 'scan_so', model: scanSoModel(env), companyId: job.companyId, userId: job.houzsUserId, waitUntil: null },
     ));
     timer.mark('model');
     const parsed = call.parsed;
