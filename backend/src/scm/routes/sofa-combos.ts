@@ -57,9 +57,9 @@ async function requireWriteRole(c: AppContext): Promise<{ ok: true } | { ok: fal
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const todayIso = () => todayMyt();
-export const TIERS = new Set(['PRICE_1', 'PRICE_2', 'PRICE_3']);
+export const TIERS = new Set(['PRICE_1', 'PRICE_2', 'PRICE_3', 'PRICE_4']);
 
-type Tier = 'PRICE_1' | 'PRICE_2' | 'PRICE_3' | null;
+type Tier = 'PRICE_1' | 'PRICE_2' | 'PRICE_3' | 'PRICE_4' | null;
 
 type Row = {
   id: string;

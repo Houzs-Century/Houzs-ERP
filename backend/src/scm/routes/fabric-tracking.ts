@@ -19,7 +19,7 @@
 //         of the import still lands. See NON_FABRIC_HEAD below for why.
 //   DELETE /fabric-tracking/:id           — delete one (PR #43)
 //   PATCH /fabric-tracking/:id/tier
-//         body: { field: 'sofaPriceTier' | 'bedframePriceTier', tier: 'PRICE_1'|'PRICE_2'|'PRICE_3' }
+//         body: { field: 'sofaPriceTier' | 'bedframePriceTier', tier: 'PRICE_1'..'PRICE_4' (PRICE_4 sofa only) }
 //   PATCH /fabric-tracking/:id/supplier-code
 //   PATCH /fabric-tracking/:id/description
 // ----------------------------------------------------------------------------
@@ -38,7 +38,9 @@ fabricTracking.use('*', supabaseAuth);
 
 const VALID_CATEGORIES = new Set(['B.M-FABR', 'S-FABR', 'S.M-FABR', 'LINING', 'WEBBING']);
 const VALID_TIER_FIELDS = new Set(['sofaPriceTier', 'bedframePriceTier']);
-const VALID_TIERS = new Set(['PRICE_1', 'PRICE_2', 'PRICE_3']);
+const VALID_TIERS = new Set(['PRICE_1', 'PRICE_2', 'PRICE_3', 'PRICE_4']);
+// PRICE_4 (Full Leather) is a sofa grade; no bedframe supplier prices it (2990-0024).
+const BEDFRAME_TIERS = new Set(['PRICE_1', 'PRICE_2', 'PRICE_3']);
 
 /* WHY A FABRIC WRITE PATH REFUSES A CODE AT ALL.
 
@@ -191,6 +193,12 @@ fabricTracking.post('/', async (c) => {
 
   const cat = body.fabricCategory as string | undefined;
   if (cat && !VALID_CATEGORIES.has(cat)) return c.json({ error: 'invalid_category' }, 400);
+  if (body.sofaPriceTier != null && !VALID_TIERS.has(body.sofaPriceTier as string)) {
+    return c.json({ error: 'invalid_sofa_price_tier', allowed: [...VALID_TIERS] }, 400);
+  }
+  if (body.bedframePriceTier != null && !BEDFRAME_TIERS.has(body.bedframePriceTier as string)) {
+    return c.json({ error: 'invalid_bedframe_price_tier', allowed: [...BEDFRAME_TIERS] }, 400);
+  }
 
   // id is text PK — use the fabric_code (uppercased) as the id by convention.
   // Allow caller to override via explicit `id`.
@@ -300,7 +308,8 @@ fabricTracking.post('/bulk-upsert', async (c) => {
     // upsert, so refuse it here, per row, like every other rejection.
     for (const col of ['sofa_price_tier', 'bedframe_price_tier']) {
       const v = row[col];
-      if (v != null && !VALID_TIERS.has(v as string)) { errors.push({ index: i, reason: `invalid_${col}` }); return; }
+      const allowed = col === 'bedframe_price_tier' ? BEDFRAME_TIERS : VALID_TIERS;
+      if (v != null && !allowed.has(v as string)) { errors.push({ index: i, reason: `invalid_${col}` }); return; }
     }
     let rowFailed = false;
     for (const [k, col] of INT_COLS) {
@@ -646,8 +655,9 @@ export const patchFabricTierHandler = async (c: Context<{ Bindings: Env; Variabl
   if (!body.field || !VALID_TIER_FIELDS.has(body.field)) {
     return c.json({ error: 'invalid_field', allowed: [...VALID_TIER_FIELDS] }, 400);
   }
-  if (!body.tier || !VALID_TIERS.has(body.tier)) {
-    return c.json({ error: 'invalid_tier', allowed: [...VALID_TIERS] }, 400);
+  const allowedTiers = body.field === 'bedframePriceTier' ? BEDFRAME_TIERS : VALID_TIERS;
+  if (!body.tier || !allowedTiers.has(body.tier)) {
+    return c.json({ error: 'invalid_tier', allowed: [...allowedTiers] }, 400);
   }
 
   const col = TIER_FIELD_TO_COL[body.field]!;

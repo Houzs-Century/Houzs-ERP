@@ -81,13 +81,13 @@ describe('deriveProductCostFromSuppliers — SOFA (whole set, NOT per-cell max)'
     expect(cell('28')).toBe(100000); // proves whole-set, not per-cell max
   });
 
-  it('carries all three tiers of the chosen supplier and the flat fallback', () => {
+  it('carries all four tiers of the chosen supplier and the flat fallback', () => {
     const r = chosen(
       deriveProductCostFromSuppliers('SOFA', [
         b({
           supplier_id: 'only',
           unit_price_sen: 111000,
-          price_matrix: { '24': { P1: 280000, P2: 300000, P3: 350000 } },
+          price_matrix: { '24': { P1: 280000, P2: 300000, P3: 350000, P4: 454000 } },
         }),
       ]),
     );
@@ -98,6 +98,7 @@ describe('deriveProductCostFromSuppliers — SOFA (whole set, NOT per-cell max)'
         { height: '24', tier: 'PRICE_2', priceSen: 300000 },
         { height: '24', tier: 'PRICE_1', priceSen: 280000 },
         { height: '24', tier: 'PRICE_3', priceSen: 350000 },
+        { height: '24', tier: 'PRICE_4', priceSen: 454000 },
       ]),
     );
   });

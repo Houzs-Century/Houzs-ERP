@@ -153,12 +153,13 @@ const BINDING_COLS =
    to translate to a 400.
 
    Shapes (centi int, ≥0):
-     SOFA      → { "<height>": { "P1"?: n, "P2"?: n, "P3"?: n }, ... }
+     SOFA      → { "<height>": { "P1"?: n, "P2"?: n, "P3"?: n, "P4"?: n }, ... }
      BEDFRAME  → { "P1"?: n, "P2"?: n }
      MATTRESS / ACCESSORY / SERVICE → must be null/undefined (single price
                                        flows via unit_price_sen).
    Unknown / null / empty → undefined (caller should write NULL). */
 const TIER_KEYS = new Set(['P1', 'P2', 'P3']);
+const SOFA_TIER_KEYS = new Set(['P1', 'P2', 'P3', 'P4']);
 export function validatePriceMatrix(
   raw: unknown,
   category: string | null,
@@ -208,7 +209,7 @@ export function validatePriceMatrix(
       }
       const tiers: Record<string, number> = {};
       for (const [tier, val] of Object.entries(inner as Record<string, unknown>)) {
-        if (!TIER_KEYS.has(tier)) {
+        if (!SOFA_TIER_KEYS.has(tier)) {
           throw new Error(`invalid_price_matrix:sofa_tier:${height}.${tier}`);
         }
         if (val === null || val === undefined || val === '') continue;
