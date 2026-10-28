@@ -62,7 +62,7 @@ import {
   AmendmentRoutingBlock,
 } from "../../vendor/scm/components/AmendmentRouting";
 import type { AmendmentFieldKind } from "../../vendor/scm/lib/amendment-routing";
-import { humanApiError } from "../../vendor/scm/lib/authed-fetch";
+import { failedWriteTail, humanApiError } from "../../vendor/scm/lib/authed-fetch";
 import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { PrintPreviewModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
@@ -368,7 +368,7 @@ export function PoAmendmentDetailV2() {
         onError: (e) =>
           notify({
             title: "Could not approve the amendment",
-            body: `${plainError(e)} The Purchase Order was NOT changed — please try again.`,
+            body: `${plainError(e)}${failedWriteTail(e, "The Purchase Order was NOT changed — please try again.")}`,
             tone: "error",
           }),
       }

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { AUTH_TOKEN_KEY } from "../../../lib/authToken";
 import { combineAbortSignals } from "../../../lib/abort";
-import { authedFetch } from "./authed-fetch";
+import { authedFetch, failedWriteTail } from "./authed-fetch";
 
 beforeEach(() => {
   localStorage.clear();
@@ -209,5 +209,41 @@ describe("the bill readers", () => {
       deadline.abort(new DOMException("Timed out", "TimeoutError"));
       await expect(pending).rejects.toThrow(/couldn't confirm whether it saved/);
     });
+  });
+
+  /* HC-0167: Sim's approve-so timed out at the evening peak and the notice
+     still promised "The Sales Order was NOT changed". */
+  test("a timed-out approve does not claim the order was unchanged", async () => {
+    await withDeadline(async (deadline) => {
+      hangUntilAborted();
+      const pending = authedFetch("/so-amendments/a1/approve-so", { method: "PATCH" });
+      deadline.abort(new DOMException("Timed out", "TimeoutError"));
+      const err = await pending.catch((e: unknown) => e);
+      expect(failedWriteTail(err, "The Sales Order was NOT changed.")).toBe("");
+    });
+  });
+});
+
+describe("failedWriteTail", () => {
+  const UNCHANGED = "The Sales Order was NOT changed — please try again.";
+
+  test("a gateway 504 on an approve sends the operator to check first", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("gateway timeout", { status: 504 }));
+    const err = await authedFetch("/so-amendments/a1/approve-so", { method: "PATCH" }).catch((e: unknown) => e);
+    expect(failedWriteTail(err, UNCHANGED)).toMatch(/Refresh this page to see whether it went through/);
+  });
+
+  test("a dropped connection sends the operator to check first", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("Failed to fetch"));
+    const err = await authedFetch("/so-amendments/a1/approve-so", { method: "PATCH" }).catch((e: unknown) => e);
+    expect(failedWriteTail(err, UNCHANGED)).toMatch(/Refresh this page to see whether it went through/);
+  });
+
+  test("a refusal the server answered keeps the unchanged sentence", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: "amendment_version_conflict" }), { status: 409 }),
+    );
+    const err = await authedFetch("/so-amendments/a1/approve-so", { method: "PATCH" }).catch((e: unknown) => e);
+    expect(failedWriteTail(err, UNCHANGED)).toBe(` ${UNCHANGED}`);
   });
 });
