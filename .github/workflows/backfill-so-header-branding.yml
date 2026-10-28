@@ -1,0 +1,93 @@
+name: Backfill SO header branding (plan / apply)
+
+# Fills a Sales Order HEADER branding that is a placeholder (NULL / blank /
+# NONE ...) with the brand the SO list already SHOWS for that order, so the
+# Branding filter and search find it. Owner 2026-09-14:
+# 「没有品牌的，你可以补到品牌吗？」
+#
+# The value comes from the list's own functions, imported by
+# backend/scripts/backfill-so-header-branding.mjs; only a brand in the
+# company's project_brands is written, everything else is listed and left.
+#
+# TWO SAFETIES, independent on purpose:
+#   1. `mode` defaults to plan, which reads inside a READ ONLY transaction.
+#   2. apply additionally requires `confirm` = backfill-so-header-branding;
+#      the script refuses and exits 2 otherwise.
+# Apply writes in one transaction guarded on the planned values, then re-reads
+# on a FRESH connection and asserts the shape. A second run reports 0 pending.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which database"
+        type: choice
+        options: [staging, prod]
+        default: staging
+      company:
+        description: "Company code"
+        type: choice
+        options: [HOUZS, "2990"]
+        default: HOUZS
+      mode:
+        description: "plan prints every change and writes nothing. apply writes."
+        type: choice
+        options: [plan, apply]
+        default: plan
+      confirm:
+        description: "Required for apply — type: backfill-so-header-branding"
+        type: string
+        default: ""
+
+# Its own group, never the deploy's; two applies must not interleave.
+concurrency:
+  group: backfill-so-header-branding-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Assert the target is STAGING
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          case "$DATABASE_URL" in *anogrigyjbduyzclzjgn*) echo "::error::points at PRODUCTION"; exit 1;; esac
+          case "$DATABASE_URL" in *minnapsemfzjmtvnnvdd*) echo "target: staging";; *) echo "::error::not the staging project"; exit 1;; esac
+      - name: Backfill (${{ inputs.mode }}, ${{ inputs.company }})
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+        run: npx tsx scripts/backfill-so-header-branding.mjs
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Backfill (${{ inputs.mode }}, ${{ inputs.company }})
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+        run: npx tsx scripts/backfill-so-header-branding.mjs

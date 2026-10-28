@@ -1,0 +1,177 @@
+// ----------------------------------------------------------------------------
+// SalesInvoiceDetailListing — Task #120 L2 page for Sales Invoices.
+// One row per sales_invoice_items line, with the SI header denormalised.
+// ----------------------------------------------------------------------------
+
+import { useCallback } from 'react';
+import { fmtDateOrDash, fmtMoneySen, fmtQty, fmtSen } from '../../vendor/shared/format';
+import { statusLabel } from '../../vendor/scm/lib/status-pill';
+import { DetailListingShell } from '../../components/scm-v2/DetailListingShell';
+import { useSalesInvoiceDetailListing, type DetailListingRow } from '../../vendor/scm/lib/reports-queries';
+import type { GridColumn } from '../../components/DataGridCompat';
+import styles from './SalesOrderDetailListing.module.css';
+import { transferFromColumnLabel } from "../../lib/convertScope";
+import { soRefOfStamp } from "../../lib/so-ref-search";
+
+type SiRow = DetailListingRow & {
+  invoice_number?: string;
+  so_doc_no?: string | null;
+  invoice_date?: string | null;
+  due_date?: string | null;
+  currency?: string;
+  total_sen_header?: number;  // header.total_sen after flatten
+  paid_sen?: number;
+  uom?: string;
+  item_group?: string | null;
+  description2?: string | null;
+  discount_sen?: number;
+  tax_sen?: number;
+  header_total_sen?: number;
+  header_paid_sen?: number;
+};
+
+const rowMoney = (centi: number | null | undefined, currency: string | null | undefined): string =>
+  !currency || currency === 'MYR' ? fmtSen(centi) : fmtMoneySen(centi, currency);
+
+export const SalesInvoiceDetailListing = () => {
+  const buildColumns = useCallback((opts: { checked: Record<string, boolean>; onToggle: (id: string) => void }): GridColumn<SiRow>[] => [
+    {
+      key: 'check', label: 'Check', width: 50, align: 'left', sortable: false, groupable: false,
+      accessor: (r) => (
+        <input type="checkbox" aria-label={`Toggle ${r.doc_no} / ${r.item_code}`}
+          checked={!!opts.checked[r.id]} onChange={() => opts.onToggle(r.id)}
+          onClick={(e) => e.stopPropagation()} />
+      ),
+      searchValue: () => '',
+    },
+    {
+      key: 'doc_no', label: 'Invoice No.', width: 130, sortable: true,
+      accessor: (r) => <span className={styles.codeCell}>{r.doc_no}</span>,
+      searchValue: (r) => r.doc_no,
+    },
+    {
+      key: 'invoice_date', label: 'Date', width: 100, sortable: true,
+      accessor: (r) => fmtDateOrDash((r.invoice_date ?? r.line_date) as string | null),
+      searchValue: (r) => String(r.invoice_date ?? r.line_date ?? ''),
+      filterType: 'date', dateValue: (r) => (r.invoice_date ?? r.line_date) as string | null,
+    },
+    {
+      key: 'due_date', label: 'Due', width: 100, sortable: true,
+      accessor: (r) => fmtDateOrDash(r.due_date ?? null),
+      searchValue: (r) => r.due_date ?? '',
+      filterType: 'date', dateValue: (r) => r.due_date,
+    },
+    {
+      key: 'so_doc_no', label: transferFromColumnLabel('so'), width: 110, sortable: true, groupable: true,
+      accessor: (r) => r.so_doc_no ?? '—',
+      searchValue: (r) => r.so_doc_no ?? '',
+    },
+    {
+      key: 'so_ref', label: 'Ref No.', width: 150, sortable: true,
+      accessor: (r) => soRefOfStamp(r) || '—',
+      searchValue: (r) => soRefOfStamp(r),
+    },
+    {
+      key: 'debtor_code', label: 'Customer', width: 110, sortable: true, groupable: true,
+      accessor: (r) => r.debtor_code ?? '—',
+      searchValue: (r) => r.debtor_code ?? '',
+    },
+    {
+      key: 'debtor_name', label: 'Customer', width: 200, sortable: true, groupable: true,
+      accessor: (r) => r.debtor_name ?? '—',
+      searchValue: (r) => r.debtor_name ?? '',
+    },
+    {
+      key: 'item_code', label: 'Item Code', width: 120, sortable: true,
+      accessor: (r) => <span className={styles.codeCell}>{r.item_code}</span>,
+      searchValue: (r) => r.item_code,
+    },
+    {
+      key: 'description', label: 'Description', width: 240, sortable: true,
+      accessor: (r) => (r.description ?? '—') as string,
+      searchValue: (r) => r.description ?? '',
+    },
+    {
+      key: 'item_group', label: 'Item Group', width: 110, sortable: true, groupable: true,
+      accessor: (r) => r.item_group ?? '—',
+      searchValue: (r) => r.item_group ?? '',
+    },
+    {
+      key: 'uom', label: 'UOM', width: 70, sortable: true, groupable: true,
+      accessor: (r) => r.uom ?? '—',
+      searchValue: (r) => r.uom ?? '',
+    },
+    {
+      key: 'qty', label: 'Qty', width: 70, align: 'right', sortable: true,
+      accessor: (r) => fmtQty(r.qty ?? 0),
+      exportValue: (r) => Number(r.qty ?? 0),
+      searchValue: (r) => String(r.qty ?? 0),
+      sortFn: (a, b) => Number(a.qty ?? 0) - Number(b.qty ?? 0),
+    },
+    {
+      key: 'unit_price', label: 'Unit Price', width: 110, align: 'right', sortable: true,
+      accessor: (r) => rowMoney(r.unit_price_sen, r.currency),
+      exportValue: (r) => Number(r.unit_price_sen ?? 0) / 100,
+      exportFormat: 'rate',
+      searchValue: (r) => rowMoney(r.unit_price_sen, r.currency),
+      sortFn: (a, b) => Number(a.unit_price_sen ?? 0) - Number(b.unit_price_sen ?? 0),
+    },
+    {
+      key: 'discount', label: 'Discount', width: 100, align: 'right', sortable: true,
+      accessor: (r) => rowMoney(r.discount_sen, r.currency),
+      exportValue: (r) => Number(r.discount_sen ?? 0) / 100,
+      exportFormat: 'money',
+      searchValue: (r) => rowMoney(r.discount_sen, r.currency),
+      sortFn: (a, b) => Number(a.discount_sen ?? 0) - Number(b.discount_sen ?? 0),
+    },
+    {
+      key: 'line_total', label: 'Line Total', width: 110, align: 'right', sortable: true,
+      accessor: (r) => rowMoney(r.total_sen, r.currency),
+      exportValue: (r) => Number(r.total_sen ?? 0) / 100,
+      exportFormat: 'money',
+      searchValue: (r) => rowMoney(r.total_sen, r.currency),
+      sortFn: (a, b) => Number(a.total_sen ?? 0) - Number(b.total_sen ?? 0),
+    },
+    {
+      key: 'header_total', label: 'Invoice Total', width: 130, align: 'right', sortable: true,
+      accessor: (r) => rowMoney(r.header_total_sen, r.currency),
+      exportValue: (r) => Number(r.header_total_sen ?? 0) / 100,
+      exportFormat: 'money',
+      searchValue: (r) => rowMoney(r.header_total_sen, r.currency),
+      sortFn: (a, b) => Number(a.header_total_sen ?? 0) - Number(b.header_total_sen ?? 0),
+    },
+    {
+      key: 'header_paid', label: 'Paid', width: 110, align: 'right', sortable: true,
+      accessor: (r) => rowMoney(r.header_paid_sen, r.currency),
+      exportValue: (r) => Number(r.header_paid_sen ?? 0) / 100,
+      exportFormat: 'money',
+      searchValue: (r) => rowMoney(r.header_paid_sen, r.currency),
+      sortFn: (a, b) => Number(a.header_paid_sen ?? 0) - Number(b.header_paid_sen ?? 0),
+    },
+    {
+      key: 'balance', label: 'Balance', width: 110, align: 'right', sortable: true,
+      accessor: (r) => rowMoney(r.balance_sen, r.currency),
+      exportValue: (r) => Number(r.balance_sen ?? 0) / 100,
+      exportFormat: 'money',
+      searchValue: (r) => rowMoney(r.balance_sen, r.currency),
+      sortFn: (a, b) => Number(a.balance_sen ?? 0) - Number(b.balance_sen ?? 0),
+    },
+    {
+      key: 'status', label: 'Status', width: 120, sortable: true, groupable: true,
+      accessor: (r) => (r.status ? statusLabel('si', String(r.status)) : '—'),
+      searchValue: (r) => r.status ?? '',
+    },
+  ], []);
+
+  return (
+    <DetailListingShell<SiRow>
+      title="Sales Invoice Detail Listing"
+      storageKey="si-detail-listing-grid"
+      docNoPlaceholder="SI-2605-001"
+      useDetailQuery={useSalesInvoiceDetailListing}
+      buildColumns={buildColumns}
+      kpiLabels={{ uniqueDocs: 'Unique Invoices' }}
+      hideKpis={{ cost: true, margin: true }}
+    />
+  );
+};

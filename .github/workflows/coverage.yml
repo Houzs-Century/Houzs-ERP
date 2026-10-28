@@ -1,0 +1,103 @@
+name: Coverage
+
+# The coverage ratchet, measured ONCE PER MERGE instead of once per push.
+#
+# WHY IT MOVED HERE. It ran inside ci.yml on every pull request from 2026-08-13
+# to 2026-08-14. Measured on 2026-08-14, across the whole backend shard set:
+#
+#     workers suite, bare          217s of test work   (run 31779735023)
+#     workers suite, instrumented  746s of test work   (run on perf/ci-critical-path)
+#
+# 529 seconds of instrumentation, on every PR, on the job that IS the critical
+# path. And the merge protocol makes that compound rather than merely cost: the
+# ruleset requires a branch to be up to date, so a PR must finish CI inside the
+# gap between two pushes to main. Measured the same day, main's median gap was
+# 6 minutes against a 4.7-minute critical path — a coin flip, and one PR lost it
+# five times running.
+#
+# Nothing about the coverage NUMBER needs to be per-push. A floor is a statement
+# about what is on main. Measuring it when something lands on main is the same
+# statement for 1/n the money.
+#
+# WHAT IS GIVEN UP, stated plainly: a PR that lowers BACKEND coverage is no
+# longer caught before it merges — it is caught on the merge, and the fix is a
+# follow-up rather than a block. That is a real regression in feedback speed and
+# it is the price of the 529s.
+#
+# WHAT IS NOT GIVEN UP: frontend/src still hard-blocks per-PR, inside
+# `frontend-checks` in ci.yml, because instrumenting the frontend suite costs
+# 2 seconds (18s -> 20s) and frontend/src is 594 of the repo's files. The
+# expensive half moved; the cheap half stayed exactly where it was.
+on:
+  push:
+    branches: [main]
+  # So the ratchet can be re-run against a tree without waiting for a merge —
+  # e.g. after --update --allow-drop, to confirm the new floors are real.
+  workflow_dispatch:
+
+# Never let two merges race the same measurement. NOT cancel-in-progress: a
+# cancelled coverage run reports neither pass nor fail, and the whole point is
+# that every merge gets a verdict.
+concurrency:
+  group: coverage-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+        working-directory: backend
+      - run: npm ci
+        working-directory: frontend
+
+      # The gate's own logic first. If these fail, nothing it says about
+      # coverage means anything — the rule this repo learned from checkers that
+      # silently matched nothing and reported clean.
+      - run: node --test scripts/check-coverage-verdict.mjs
+
+      # All three suites, instrumented. UNSHARDED on purpose: sharding trades
+      # latency for runner slots, and latency is not what this job is for — it
+      # blocks nobody. One runner, one merged report, no artifact plumbing.
+      - run: npm run test:coverage:light
+        working-directory: backend
+      - run: npm run test:coverage:workers
+        working-directory: backend
+      - run: npm run test:coverage
+        working-directory: frontend
+
+      # A file in scm/lib is executed by BOTH backend projects, so only the
+      # union is true. This is why the report has to be merged rather than
+      # checked three times.
+      - name: Check every area against its floor
+        run: |
+          set -euo pipefail
+          node scripts/coverage-ratchet.mjs --check \
+            --report backend/coverage/light/coverage-final.json \
+            --report backend/coverage/workers/coverage-final.json \
+            --report frontend/coverage/coverage-final.json
+
+      # docs/TESTING-RATCHET.md publishes the per-area numbers; this proves the
+      # published table still equals the committed baseline. A typed number in a
+      # doc is how CLAUDE.md came to claim the database was D1 SQLite for a month
+      # after the Postgres cutover.
+      - run: node scripts/coverage-ratchet.mjs --check-docs
+
+      # Keep the evidence. When a floor moves, the argument is "here is the
+      # report it moved against", not a recollection.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-${{ github.sha }}
+          path: |
+            backend/coverage/light/coverage-final.json
+            backend/coverage/workers/coverage-final.json
+            frontend/coverage/coverage-final.json
+          if-no-files-found: error
+          retention-days: 14

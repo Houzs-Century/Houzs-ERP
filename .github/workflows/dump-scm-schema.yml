@@ -1,0 +1,94 @@
+name: Dump scm schema snapshot (read-only)
+
+# Manual, read-only. pg_dump --schema-only of the `scm` schema, uploaded as an
+# artifact so it can be committed to backend/scripts/scm-schema/.
+#
+# WHY THIS EXISTS: the scm schema (~120 tables) is not reproducible from this
+# repo. 2990s-full-schema.sql captures TABLES + ENUMS as exported once from the
+# 2990's drizzle-kit, but the VIEWS are pulled by apply-scm-views.mjs from a
+# hardcoded absolute path into a sibling repo on ONE developer machine, the FIFO
+# functions live only in scripts/ while migration 0088 in the tree CALLS them,
+# and DDL has demonstrably been applied out-of-band: `DRAFT` is a live value of
+# mfg_so_status that exists in neither SQL tree, and inventory_movements.reason_code
+# is inserted by three routes with no DDL anywhere. Migration 0106 says it plainly
+# -- the DB, not the repo, is ground truth for these objects.
+#
+# That makes the live database the only complete copy of the schema. This workflow
+# ends that: the dump it produces is the authoritative snapshot, and committing it
+# means a from-scratch rebuild no longer depends on one laptop.
+#
+# Defaults to staging. No writes -- pg_dump opens a read-only transaction.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB to snapshot"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - prod
+      schema:
+        description: "Which schema to dump"
+        required: true
+        default: "scm"
+        type: choice
+        options:
+          - scm
+          - public
+          - both
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # ubuntu-latest ships pg_dump 16; Supabase runs 15/17. pg_dump refuses to
+      # dump a server newer than itself, so pin the client to 17 from PGDG.
+      - name: Install PostgreSQL 17 client
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+          /usr/lib/postgresql/17/bin/pg_dump --version
+
+      - name: Dump schema
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          TARGET: ${{ inputs.target }}
+          SCHEMA: ${{ inputs.schema }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then echo "DATABASE_URL missing"; exit 2; fi
+          mkdir -p out
+          case "$SCHEMA" in
+            scm)    ARGS="--schema=scm" ;;
+            public) ARGS="--schema=public" ;;
+            both)   ARGS="--schema=scm --schema=public" ;;
+          esac
+          OUT="out/${SCHEMA}-${TARGET}-schema.sql"
+          # --no-owner/--no-privileges: roles are environment-specific and would
+          # make the snapshot un-replayable anywhere but the box it came from.
+          # COMMENT ON statements are included (pg_dump default) -- several scm
+          # objects carry the only prose that explains them.
+          /usr/lib/postgresql/17/bin/pg_dump \
+            --schema-only --no-owner --no-privileges \
+            $ARGS "$DATABASE_URL" > "$OUT"
+          echo "--- lines ---"
+          wc -l "$OUT"
+          echo "--- object counts ---"
+          for kind in "CREATE TABLE" "CREATE VIEW" "CREATE FUNCTION" "CREATE TRIGGER" "CREATE TYPE" "CREATE INDEX"; do
+            printf '%-18s %s\n' "$kind" "$(grep -c "^$kind" "$OUT" || true)"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.schema }}-${{ inputs.target }}-schema
+          path: out/*.sql
+          if-no-files-found: error
+          retention-days: 90

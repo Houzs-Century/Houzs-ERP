@@ -1,0 +1,81 @@
+name: Open model option pools
+
+# Every option a Model offers follows Modular, not a snapshot. Owner 2026-09-12,
+# asked whether the remaining pools (sizes, compartments, specials, divan / leg /
+# total heights, gaps, thickness) should follow the way `fabrics` now does:
+# 「全部都是啊」. A restriction exists only where HE ticks one.
+#
+# APPLY takes a RESTORABLE backup first — every Model's current allowed_options
+# as one JSON document in scm.app_config['scm.model_allowed_options_backup'],
+# and refuses to clear anything if that write did not land. The restore
+# statement is in the script's footer. PLAN by default.
+# See docs/bugs/0846.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "staging"
+        type: choice
+        options: ["staging", "prod"]
+      mode:
+        description: "plan (default, writes NOTHING) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: ["plan", "apply"]
+      confirm:
+        description: "Required for apply: OPEN-OPTION-POOLS"
+        required: false
+        default: ""
+
+concurrency:
+  group: open-model-option-pools
+  cancel-in-progress: false
+
+jobs:
+  staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/open-model-option-pools.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/open-model-option-pools.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

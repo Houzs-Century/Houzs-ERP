@@ -1,0 +1,57 @@
+name: Document number prefix check (read-only)
+
+# Which document numbers do NOT carry their company's prefix?
+#
+# The owner, 2026-08-21: the Sales Order list's "PO No." cell showed two chips
+# for what he believed was one purchase order — `PO-2606-011` beside
+# `2990-PO-2606-011` — and pushed back on the guess that an un-prefixed purchase
+# order could exist at all. This answers it with a count.
+#
+# The cell de-dupes its two arms by EXACT STRING (frontend/src/lib/soPoChips.ts),
+# so two spellings of one document are two chips. Whether that is what is
+# happening is a question about DATA, and the answer lives only in production.
+#
+# NOTE what this does NOT rest on: the repair-2990-doc-refs A2 dry run reported
+# 0 batches to repair, and that is NEUTRAL here — A2 only renames a batch whose
+# stored value does not resolve, so an un-prefixed batch naming a genuinely
+# un-prefixed purchase order is correctly skipped by it. See the script header.
+#
+# SELECT only. No writes, no DDL, no transaction. Manual trigger only — it is a
+# question, not a gate. Own concurrency group so a diagnostic can never queue
+# behind or displace a release. Exit 0 for every legitimate answer.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to read"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+
+concurrency:
+  group: doc-no-prefix-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Count document numbers missing their company prefix
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: node scripts/check-doc-no-prefix.mjs

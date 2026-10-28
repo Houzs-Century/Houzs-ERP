@@ -1,0 +1,495 @@
+/* Brand web fonts. Latin = IBM Plex (Sans/Serif/Mono), CN = Noto Sans/Serif SC.
+ * Caveat (--font-script) + Archivo (--font-mark) back the 2990 brand tokens.
+ *
+ * The `@import url(...)` that used to sit here now lives in index.html as a
+ * <link>, which starts the fetch a round trip earlier — see the comment there
+ * for why, and keep the family list in sync with it. That link now points at
+ * self-hosted /fonts/fonts-v2.css (public/fonts/), so nothing is fetched from a
+ * font CDN — which also covers the offline / air-gapped installs that used
+ * to have to swap the link out by hand.
+ *
+ * Nothing font-related belongs at the top of this file any more: an @import
+ * must be the first rule in a stylesheet, so re-adding one here would silently
+ * do nothing once the bundler concatenates this file behind another. */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Resolves to IBM Plex Sans / Noto Sans SC via vendor tokens.css (--font-system) — see that file. */
+  font-family: var(--font-system, system-ui), sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: normal;
+  text-rendering: optimizeLegibility;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: #eef0ec;
+  color: #11140f;
+  font-feature-settings: normal;
+}
+
+/* ──────────────────────────────────────────────────────────
+   Paper grain — a barely-visible noise texture on the canvas.
+   This is what separates the surface from a flat hex value
+   without ever calling attention to itself.
+   ────────────────────────────────────────────────────────── */
+.paper-grain {
+  background-color: #eef0ec;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240' viewBox='0 0 240 240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.067 0 0 0 0 0.094 0 0 0 0 0.063 0 0 0 0 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  background-repeat: repeat;
+}
+
+/* The Nature Black sidebar gets its own subtle grain so it doesn't
+   read as a flat black slab in screenshots. */
+.slab-grain {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.2' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+}
+
+/* Skeleton — cool-neutral shimmer (Theme C). */
+@keyframes shimmer {
+  0% {
+    background-position: -400px 0;
+  }
+  100% {
+    background-position: 400px 0;
+  }
+}
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    #e3e6e0 0%,
+    #f4f6f3 50%,
+    #e3e6e0 100%
+  );
+  background-size: 800px 100%;
+  animation: shimmer 1.6s linear infinite;
+}
+
+/* Native date/select controls render in the platform UI font unless told
+   otherwise; inherit so they match the surrounding body text. */
+input[type="date"],
+input[type="datetime-local"],
+select {
+  font-family: inherit;
+}
+
+/* Opt `.font-mono` into tabular figures explicitly rather than relying on the
+   family to be fixed-width. Keeps counts, dates, balances and kbd hints
+   column-aligned even if the mono alias is ever repointed at a proportional
+   face — which it has been before. */
+.font-mono,
+.font-money {
+  font-variant-numeric: tabular-nums;
+}
+
+/* iOS Safari auto-zooms to a focused input when its computed font-size
+   is below 16px. Every form-input style we use is text-[12px]/[13px]
+   for desktop density. This rule overrides on mobile only — the visual
+   density is preserved on sm+, and the keyboard-up jump is suppressed.
+   `!important` is required because Tailwind's `text-[13px]` class
+   selectors win over an element-selector rule in plain CSS. */
+@media (max-width: 639px) {
+  input[type="text"],
+  input[type="search"],
+  input[type="email"],
+  input[type="tel"],
+  input[type="url"],
+  input[type="number"],
+  input[type="password"],
+  input[type="date"],
+  input[type="datetime-local"],
+  input[type="time"],
+  input[type="month"],
+  input[type="week"],
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
+/* ──────────────────────────────────────────────────────────
+   Dropdown chevron.
+   Selects with appearance-none strip the native arrow; we
+   paint one back via a data-URI SVG tinted to the muted-ink
+   colour so every dropdown in the app signals itself.
+   ────────────────────────────────────────────────────────── */
+select.appearance-none {
+  /* Chevron colour: #8a8e85 (ink-muted), URL-encoded # as %23 */
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a8e85' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 0.55rem center;
+  background-size: 12px 12px;
+  padding-right: 1.9rem;
+}
+select.appearance-none:hover,
+select.appearance-none:focus {
+  /* Brass #a16a2e on hover/focus — the chevron tracks the rest of the UI */
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a16a2e' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+}
+
+/* Hide scrollbar for sidebar nav */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Honour the user's "reduce motion" OS preference. Disables our named
+   keyframe animations (rise / fade / shimmer / toast / modal) and clamps
+   every transition + animation duration to ~instant so spring-y or
+   long transitions don't surprise users who opted out. The reveal /
+   refresh affordances themselves still trigger — only the visual
+   easing is suppressed. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise,
+  .animate-fade-in,
+  .animate-shimmer,
+  .animate-toast-in,
+  .animate-modal-in,
+  .skeleton {
+    animation: none !important;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Right-edge fade for horizontally-scrolling rows on mobile.
+   Signals "more content off-screen" without a scrollbar. Auto-disables
+   above sm where the same rows already become flex-wrap / overflow-visible. */
+.mask-fade-r {
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 32px), transparent);
+  mask-image: linear-gradient(to right, black calc(100% - 32px), transparent);
+}
+@media (min-width: 640px) {
+  .mask-fade-r {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+}
+
+/* Subtle scrollbar for main content area */
+.thin-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.thin-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.thin-scroll::-webkit-scrollbar-thumb {
+  background: #c2c6bd;
+  border-radius: 6px;
+  border: 2px solid #eef0ec;
+}
+.thin-scroll::-webkit-scrollbar-thumb:hover {
+  background: #16695f;
+}
+
+/* ──────────────────────────────────────────────────────────
+   Printing — the app hides everything and reveals ONE opted-in
+   region, so a page must name what it prints.
+
+   `.org-print-area` was written for the Org Chart export and was the
+   ONLY thing the browser could ever see: every other window.print()
+   in the app (the fleet run sheet, the supplier portal case, the SO
+   detail-listing shell) printed a BLANK sheet, because `body *` hid
+   their content and nothing revealed it again. `.print-area` is the
+   generic name for that opt-in; the org-chart class stays as its
+   zoom-aware special case.
+
+   visibility (not display) keeps the region's own layout intact; the
+   on-screen zoom transform is reset so the export is always 1:1, and
+   the scroll container is unclipped so wide content prints in full.
+   `.no-print` blanks screen-only chrome INSIDE a print area (the
+   toolbars those pages already marked up, against a rule that never
+   existed).
+   ────────────────────────────────────────────────────────── */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .org-print-area,
+  .org-print-area *,
+  .print-area,
+  .print-area * {
+    visibility: visible;
+  }
+  .no-print,
+  .no-print * {
+    visibility: hidden !important;
+    display: none !important;
+  }
+  .org-print-area,
+  .print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: auto;
+    overflow: visible !important;
+  }
+  .org-print-area .org-print-scale {
+    transform: none !important;
+    /* The Export button sets --print-zoom (= page-width / tree-width) so a
+       wide reporting tree shrinks to fit one page instead of being clipped.
+       `zoom` (not transform) is used because it shrinks the layout box too,
+       so the page no longer overflows. Defaults to 1 (no shrink). */
+    zoom: var(--print-zoom, 1);
+    transform-origin: top left !important;
+  }
+}
+
+/* ──────────────────────────────────────────────────────────
+   Project-calendar bars. Soft status tint + a status-coloured left
+   rail + ink text at rest so a month full of bars stays scannable;
+   deepen to the solid status fill (white text) on hover so the bar
+   under the pointer reads boldly. `--bar` is the status hex, set
+   inline per bar via statusBarStyle().
+   ────────────────────────────────────────────────────────── */
+.cal-bar {
+  background-color: color-mix(in srgb, var(--bar) 14%, white);
+  color: #111810;
+  box-shadow: inset 3px 0 0 var(--bar), 0 1px 2px rgba(17, 24, 16, 0.07);
+  transition: background-color 130ms ease, color 130ms ease,
+    box-shadow 130ms ease, transform 130ms ease;
+}
+.cal-bar:hover {
+  background-color: var(--bar);
+  color: #ffffff;
+  box-shadow: inset 3px 0 0 var(--bar), 0 8px 18px -8px rgba(17, 24, 16, 0.4);
+}
+
+/* ──────────────────────────────────────────────────────────
+   Auth screen ambience. A large pine glow drifts slowly behind the
+   brand lockup for a living, premium feel; the wordmark floats a few
+   pixels. Both are clamped to near-instant under prefers-reduced-motion
+   by the global rule above.
+   ────────────────────────────────────────────────────────── */
+@keyframes authDrift {
+  0% { transform: translate(0, 0) scale(1); opacity: 0.55; }
+  50% { transform: translate(48px, -34px) scale(1.18); opacity: 0.85; }
+  100% { transform: translate(0, 0) scale(1); opacity: 0.55; }
+}
+.auth-drift {
+  animation: authDrift 16s ease-in-out infinite;
+}
+@keyframes authFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-7px); }
+}
+.auth-float {
+  animation: authFloat 7s ease-in-out infinite;
+}
+/* Soft light sweep across the wordmark — a wide, heavily-blurred band so
+   the edges feather out instead of reading as a hard rectangle. */
+@keyframes authSheen {
+  0% { transform: translateX(-240%) skewX(-14deg); }
+  55%, 100% { transform: translateX(340%) skewX(-14deg); }
+}
+.auth-sheen {
+  animation: authSheen 6.5s ease-in-out infinite;
+}
+/* Second, counter-drifting glow for a living aurora behind the brand. */
+@keyframes authDrift2 {
+  0% { transform: translate(0, 0) scale(1.1); opacity: 0.4; }
+  50% { transform: translate(-40px, 30px) scale(1); opacity: 0.7; }
+  100% { transform: translate(0, 0) scale(1.1); opacity: 0.4; }
+}
+.auth-drift2 {
+  animation: authDrift2 19s ease-in-out infinite;
+}
+
+/* Selection — brass tint */
+::selection {
+  background: rgba(161, 106, 46, 0.22);
+  color: #1f211d;
+}
+
+/* Focus ring — brass at low opacity, never blue browser default */
+*:focus-visible {
+  outline: 2px solid rgba(161, 106, 46, 0.55);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline-offset: 1px;
+}
+
+/* Assistant launcher bot — eyelid blink (components/AssistantLauncher.tsx).
+   Lives here, not in a JSX <style>, purely to keep the bytes OUT of the
+   initial JS bundle (the 165KB gate). The icon's face plate is white, so a
+   white dot flashing opaque over each eye reads as a blink. */
+.hz-bot-lid {
+  position: absolute;
+  width: 13%;
+  height: 13%;
+  border-radius: 50%;
+  background: #ffffff;
+  opacity: 0;
+  animation: hz-bot-blink 4.2s ease-in-out infinite;
+}
+@keyframes hz-bot-blink {
+  0%, 93%, 100% { opacity: 0; }
+  95%, 97.5%    { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hz-bot-lid { animation: none; }
+}
+
+/* Quick-actions speed-dial entrance (components/QuickActionsFAB.tsx). In CSS,
+   not a JSX <style>, for the same initial-JS bundle-gate reason as above. */
+@keyframes qa-fab-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+/* ──────────────────────────────────────────────────────────
+   Cancelled-document rows (owner 2026-08-02: a cancelled doc must read as
+   obviously dead in every SCM list — "如果是 cancel 的可不可以变灰色").
+
+   The row's CONTENT fades to 55% while the Status cell (`dt-cancel-keep`,
+   set by each list page on its Status column) keeps full strength — WHY the
+   row is grey must stay readable. Hover lifts the content back to 85% so a
+   muted row is still consultable. Opacity-only: the Ink & Petrol values
+   underneath are untouched, and the fade sits on the cells' CHILDREN, not
+   the <td> itself, so cell/sticky backgrounds stay opaque (a translucent
+   pinned cell would let content scrolling beneath it bleed through).
+
+   Applied via DataTable's getRowClassName; the drill-down sub-<tr> inherits
+   the class from its parent row inside DataTable, so expanded lines under a
+   cancelled row mute with it. */
+tr.dt-row-cancelled > td > * {
+  opacity: 0.55;
+  transition: opacity 120ms ease;
+}
+tr.dt-row-cancelled:hover > td > * {
+  opacity: 0.85;
+}
+tr.dt-row-cancelled > td.dt-cancel-keep > *,
+tr.dt-row-cancelled:hover > td.dt-cancel-keep > * {
+  opacity: 1;
+}
+
+/* Same treatment on DataTable's stacked-card branch (<sm): label/value cells
+   and the struck doc-number title fade; the Status cell keeps full strength. */
+[data-mobile-card].dt-row-cancelled dt,
+[data-mobile-card].dt-row-cancelled dd,
+[data-mobile-card].dt-row-cancelled .dt-cancel-strike {
+  opacity: 0.55;
+}
+[data-mobile-card].dt-row-cancelled dd.dt-cancel-keep {
+  opacity: 1;
+}
+
+/* The cancelled DOC NUMBER (only — not every cell) is additionally struck
+   through, thin, in whatever ink it already renders. */
+.dt-cancel-strike {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+/* ------------------------------------------------------------------
+   Announcement rich body — components/AnnouncementRichBody.tsx renders the
+   canonical fragment from lib/announcementRichText.ts inside `.ann-rich`;
+   the composer (components/AnnouncementRichEditor.tsx) edits inside
+   `.ann-rte`, which shares the rules so what you type is what readers see.
+   Tailwind's preflight strips list markers and heading weights, so every
+   tag the grammar allows is styled explicitly here. Sizes are ABSOLUTE
+   (px, not em) on purpose: a size span nested in another must not compound.
+   ------------------------------------------------------------------ */
+.ann-rich p,
+.ann-rte p { margin: 0; min-height: 1.25em; }
+.ann-rich ol,
+.ann-rte ol { list-style: decimal; margin: 0.15em 0; padding-left: 1.6em; }
+.ann-rich ul,
+.ann-rte ul { list-style: disc; margin: 0.15em 0; padding-left: 1.6em; }
+.ann-rich ol ol,
+.ann-rte ol ol { list-style: lower-alpha; }
+.ann-rich ul ul,
+.ann-rte ul ul { list-style: circle; }
+.ann-rich li,
+.ann-rte li { margin: 0.1em 0; }
+.ann-rich b,
+.ann-rte b { font-weight: 700; }
+.ann-rich [data-size="sm"],
+.ann-rte [data-size="sm"] { font-size: 11.5px; }
+.ann-rich [data-size="lg"],
+.ann-rte [data-size="lg"] { font-size: 16px; }
+.ann-rich [data-size="xl"],
+.ann-rte [data-size="xl"] { font-size: 20px; line-height: 1.35; }
+/* 2026-09-06: numeric point sizes (the Size dropdown); sm/lg/xl above are
+   the legacy tokens older notices still carry. */
+.ann-rich [data-size="10"], .ann-rte [data-size="10"] { font-size: 10px; }
+.ann-rich [data-size="11"], .ann-rte [data-size="11"] { font-size: 11px; }
+.ann-rich [data-size="12"], .ann-rte [data-size="12"] { font-size: 12px; }
+.ann-rich [data-size="14"], .ann-rte [data-size="14"] { font-size: 14px; }
+.ann-rich [data-size="16"], .ann-rte [data-size="16"] { font-size: 16px; }
+.ann-rich [data-size="18"], .ann-rte [data-size="18"] { font-size: 18px; line-height: 1.4; }
+.ann-rich [data-size="20"], .ann-rte [data-size="20"] { font-size: 20px; line-height: 1.35; }
+.ann-rich [data-size="24"], .ann-rte [data-size="24"] { font-size: 24px; line-height: 1.3; }
+.ann-rich [data-size="28"], .ann-rte [data-size="28"] { font-size: 28px; line-height: 1.25; }
+.ann-rich [data-size="36"], .ann-rte [data-size="36"] { font-size: 36px; line-height: 1.2; }
+/* 2026-09-05 toolbar follow-up: h1 / h2 / mark / a / table / img. */
+.ann-rich h1,
+.ann-rte h1 { font-size: 18px; font-weight: 680; line-height: 1.3; margin: 0.5em 0 0.2em; color: #1f2a22; }
+.ann-rich h2,
+.ann-rte h2 { font-size: 15px; font-weight: 650; line-height: 1.35; margin: 0.45em 0 0.15em; color: #1f2a22; }
+.ann-rich h1:first-child,
+.ann-rte h1:first-child,
+.ann-rich h2:first-child,
+.ann-rte h2:first-child { margin-top: 0; }
+.ann-rich mark,
+.ann-rte mark { background: #f3ece0; color: inherit; padding: 0 3px; border-radius: 3px; box-decoration-break: clone; }
+.ann-rich a,
+.ann-rte a { color: #2d6a6f; text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
+.ann-rich a:hover { color: #1f4f53; }
+.ann-rich table,
+.ann-rte table { border-collapse: collapse; width: 100%; margin: 0.45em 0; font-size: 12.5px; line-height: 1.45; }
+.ann-rich th,
+.ann-rte th,
+.ann-rich td,
+.ann-rte td { border: 1px solid #d6d9d2; padding: 6px 9px; text-align: left; vertical-align: top; min-width: 48px; }
+.ann-rich th,
+.ann-rte th { background: #f4f6f3; font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: #5a635b; }
+.ann-rich img,
+.ann-rte img { display: block; max-width: 100%; height: auto; margin: 0.45em 0; border-radius: 6px; border: 1px solid #e3e6e0; }
+.ann-rich img:not([src]),
+.ann-rte img:not([src]),
+.ann-rich img[data-missing] { min-height: 56px; min-width: 96px; background: #f4f6f3; }
+.ann-rte img { cursor: default; }
+.ann-rte { position: relative; outline: none; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ann-rte[data-empty="true"]::before {
+  content: attr(data-placeholder);
+  position: absolute;
+  left: 0.75rem;
+  top: 0.5rem;
+  pointer-events: none;
+  color: #8c968a;
+  opacity: 0.85;
+}
+
+/* Option rows of the searchable pickers (SearchableSelect, StatePicker) grow to
+   a finger-sized target on touch screens. Their menus are portalled to <body>,
+   so a page-scoped rule cannot reach them; they read this variable instead. */
+@media (pointer: coarse) {
+  :root { --pick-opt-pad: 11px 12px; }
+}

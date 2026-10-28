@@ -1,0 +1,691 @@
+// What this file pins, all of it drawn from the real Maybank export
+// (`Bank Statement/MBB - ACCOUNTACTIVITYREPORT_564418610346.csv`, 01–15 Aug):
+//
+//   • a credit and the charge taken back against it are ONE payout;
+//   • three AEON credits sharing one reference on one day are THREE payouts,
+//     and the grouping rule must not join them — this is the trap the naive
+//     "same reference = same movement" rule falls into, and the file contains
+//     it seventeen times;
+//   • which acquirer a line belongs to comes from the rules table, never from
+//     code — teaching the system a sixth bank is a config row;
+//   • a statement is claimed only when exactly one can be, and every other
+//     outcome says what a person has to look at, with BOTH numbers when they
+//     disagree (§2.14).
+
+
+import { describe, it, expect } from 'vitest';
+import {
+  groupBankMovements, recogniseAcquirer, matchBankMovements, exactCombination,
+  type BankRecognitionRule, type PayableBatch, type PayoutAdviceForMatch, namesAgree, obviousEntryFor,
+  bankReversalPairs, type ReversalSource } from './bank-match';
+import type { BankLine } from './bank-parse';
+
+let seq = 0;
+const line = (over: Partial<BankLine> = {}): BankLine => ({
+  lineNo: (seq += 1),
+  bookedOn: '2026-08-09',
+  description: 'CR/CARD SALES MN 32410011 DATED 31072026',
+  reference: '00113107',
+  amountSen: 728448,
+  balanceSen: null,
+  ...over,
+});
+
+/* The rules exactly as docs/acquirer-statement-formats.md records them. */
+const RULES: BankRecognitionRule[] = [
+  {
+    acquirerCode: 'MBB',
+    pattern: 'CARD SALES',
+    tradingDatePattern: 'DATED\\s*(\\d{8})',
+    merchantPattern: 'M/?N\\s*(\\d+)',
+  },
+  { acquirerCode: 'PBB', pattern: 'PBB-PBCS' },
+  { acquirerCode: 'AEON', pattern: 'AEON CREDIT SERVICE' },
+  {
+    acquirerCode: 'HLB', pattern: 'CA Credit Advice',
+    tradingDatePattern: 'MERCHANT\\s+(\\d{8})',
+  },
+];
+
+/* ── The 2990 Hong Leong statement's two more shapes (2026-09-08) ──────────── */
+describe('GHL and the split "MERCHAN T" — the rules as 20260908T2100 seeds them', () => {
+  const RULES_2990: BankRecognitionRule[] = [
+    { acquirerCode: 'PBB', pattern: 'PBB-PBCS' },
+    { acquirerCode: 'HLB', pattern: 'CA Credit Advice', tradingDatePattern: 'MERCHAN\\s*T\\s+(\\d{8})', merchantPattern: '(\\d{9,})\\s+MERCHAN' },
+    { acquirerCode: 'GHL', pattern: '/GHL/|FOR GHL', merchantPattern: '/GHL/(\\d{6,})' },
+  ];
+
+  it('a GHL payout arrives as an interbank GIRO credit naming /GHL/<merchant>', () => {
+    const seen = recogniseAcquirer(RULES_2990, {
+      description: 'Cr Adv-Interbank GIRO at KLM',
+      reference: '161320P226260720 /GHL/6600030486 DMS A3 (FOR GHL)',
+    });
+    expect(seen).toEqual({ acquirerCode: 'GHL', tradingDate: null, merchantNo: '6600030486' });
+  });
+
+  it("Hong Leong's own credit reads the trading day whether the word MERCHANT is whole or split", () => {
+    const whole = recogniseAcquirer(RULES_2990, { description: 'CA Credit Advice', reference: '00005992235  MERCHANT 20260617' });
+    expect(whole).toEqual({ acquirerCode: 'HLB', tradingDate: '2026-06-17', merchantNo: '00005992235' });
+    const split = recogniseAcquirer(RULES_2990, { description: 'CA Credit Advice', reference: '00005992284 MERCHAN T 20260824' });
+    expect(split).toEqual({ acquirerCode: 'HLB', tradingDate: '2026-08-24', merchantNo: '00005992284' });
+  });
+
+  it("a Public Bank advice on the same statement is still Public Bank's", () => {
+    const seen = recogniseAcquirer(RULES_2990, { description: 'Cr Adv-Interbank GIRO at KLM', reference: '2026081200006541 03999061714 PBB-PBCS AC 3' });
+    expect(seen?.acquirerCode).toBe('PBB');
+  });
+});
+
+describe('joining a credit to the charge taken back against it', () => {
+  /* The real pair: RM 875.00 in and RM 3.94 out, same reference, same day. */
+  it('makes one payout of a credit and its charge', () => {
+    const movements = groupBankMovements([
+      line({ amountSen: 87500, reference: 'D90200808', description: 'DR/CARD SALES M/N 2259020 DATED 08082026' }),
+      line({ amountSen: -394, reference: 'D90200808', description: 'DR/CARD SALES M/N 2259020 DATED 08082026' }),
+    ]);
+    expect(movements).toHaveLength(1);
+    expect(movements[0]!.amountSen).toBe(87106);
+    expect(movements[0]!.chargeSen).toBe(394);
+    expect(movements[0]!.lines).toHaveLength(2);
+  });
+
+  /* THE TRAP. Three AEON credits, one reference, one day — in the real file
+     `MA458030163361` on 2026-08-03 carries RM 3,262.46, RM 6,619.48 and
+     RM 10,114.61. Joined, they would invent a payout of RM 19,996.55. */
+  it('never joins two credits, however much they share', () => {
+    const movements = groupBankMovements([
+      line({ amountSen: 326246, reference: 'MA458030163361', bookedOn: '2026-08-03', description: 'Book Transfer Third AEON CREDIT SERVICE' }),
+      line({ amountSen: 661948, reference: 'MA458030163361', bookedOn: '2026-08-03', description: 'Book Transfer Third AEON CREDIT SERVICE' }),
+      line({ amountSen: 1011461, reference: 'MA458030163361', bookedOn: '2026-08-03', description: 'Book Transfer Third AEON CREDIT SERVICE' }),
+    ]);
+    expect(movements).toHaveLength(3);
+    expect(movements.map((m) => m.amountSen)).toEqual([326246, 661948, 1011461]);
+    expect(movements.every((m) => m.chargeSen === 0)).toBe(true);
+  });
+
+  /* Half the retail credits in the file use the literal reference "Fund
+     Transfer" — a shared word, not a shared transaction. */
+  it('leaves alone credits that only share a generic reference', () => {
+    const movements = groupBankMovements([
+      line({ amountSen: 370000, reference: 'Fund Transfer', description: 'MBB CT- PERNIAGAAN USAHAJAY*' }),
+      line({ amountSen: 400000, reference: 'Fund Transfer', description: 'MBB CT- SOMEBODY ELSE*' }),
+    ]);
+    expect(movements).toHaveLength(2);
+  });
+
+  it('does not join across days, or where there is no reference at all', () => {
+    expect(groupBankMovements([
+      line({ amountSen: 87500, reference: 'D9020', bookedOn: '2026-08-09' }),
+      line({ amountSen: -394, reference: 'D9020', bookedOn: '2026-08-11' }),
+    ])).toHaveLength(2);
+    expect(groupBankMovements([
+      line({ amountSen: 87500, reference: null }),
+      line({ amountSen: -394, reference: null }),
+    ])).toHaveLength(2);
+  });
+
+  /* A debit bigger than the credit is not a fee. Whatever it is, it is a
+     person's problem, not a silent RM -x payout. */
+  it('refuses to call a debit larger than its credit a charge', () => {
+    const movements = groupBankMovements([
+      line({ amountSen: 10000, reference: 'X1' }),
+      line({ amountSen: -50000, reference: 'X1' }),
+    ]);
+    expect(movements).toHaveLength(2);
+  });
+
+  it('keeps the order the statement itself prints', () => {
+    const movements = groupBankMovements([
+      line({ lineNo: 30, amountSen: 100, reference: 'A' }),
+      line({ lineNo: 10, amountSen: 200, reference: 'B' }),
+      line({ lineNo: 20, amountSen: 300, reference: 'C' }),
+    ]);
+    expect(movements.map((m) => m.lines[0]!.lineNo)).toEqual([10, 20, 30]);
+  });
+});
+
+/* Maybank's statement PDF prints no reference (owner 2026-10-15, 2990's
+   September: 这一笔RM4048.00是要扣RM18.22的 … 转full amount给我们再扣). The pair
+   joins on what the acquirer rule proves instead — the same acquirer, merchant,
+   words and day — and nothing a rule cannot vouch for ever does. */
+describe('a gross-and-fee pair with no reference — joined on the acquirer rule', () => {
+  const pdf = (over: Partial<BankLine>) => line({
+    bookedOn: '2026-09-07', reference: null, description: 'DR/CARD SALES M/N 2649949 D 9', ...over,
+  });
+  const REPORT: PayableBatch = {
+    id: 96, acquirerCode: 'MBB', fileName: '027032649949_DVS04E_1_20260906.CSV',
+    periodFrom: '2026-09-06', periodTo: '2026-09-06', payableSen: 402978, outstandingSen: 402978,
+  };
+
+  it("joins 2990's real pair into the one payout its report is owed, and decides it", () => {
+    const movements = groupBankMovements([pdf({ lineNo: 11, amountSen: 404800 }), pdf({ lineNo: 13, amountSen: -1822 })], RULES);
+    expect(movements).toHaveLength(1);
+    expect(movements[0]).toMatchObject({ amountSen: 402978, chargeSen: 1822, reference: null });
+    expect(movements[0]!.lines.map((l) => l.lineNo)).toEqual([11, 13]);
+    const [d] = matchBankMovements({ movements, rules: RULES, batches: [REPORT] });
+    expect(d).toMatchObject({ kind: 'PAYOUT', batchId: 96, acquirerCode: 'MBB', merchantNo: '2649949' });
+  });
+
+  it('keeps them apart when no rules are given — the reference-only behaviour', () => {
+    expect(groupBankMovements([pdf({ amountSen: 404800 }), pdf({ amountSen: -1822 })])).toHaveLength(2);
+  });
+
+  it('never joins lines no rule recognises: a transfer in and a transfer out stay two', () => {
+    expect(groupBankMovements([
+      line({ reference: null, description: 'FUND TRANSFER', amountSen: 300000 }),
+      line({ reference: null, description: 'FUND TRANSFER', amountSen: -50000 }),
+    ], RULES)).toHaveLength(2);
+  });
+
+  it('never joins on a rule that names no merchant', () => {
+    expect(groupBankMovements([
+      line({ reference: null, description: 'Book Transfer Third AEON CREDIT SERVICE', amountSen: 326246 }),
+      line({ reference: null, description: 'Book Transfer Third AEON CREDIT SERVICE', amountSen: -500 }),
+    ], RULES)).toHaveLength(2);
+  });
+
+  it('never joins two merchants, two days, or two different prints', () => {
+    expect(groupBankMovements([pdf({ amountSen: 404800 }), pdf({ amountSen: -1822, description: 'DR/CARD SALES M/N 2649964 D 9' })], RULES)).toHaveLength(2);
+    expect(groupBankMovements([pdf({ amountSen: 404800 }), pdf({ amountSen: -1822, bookedOn: '2026-09-08' })], RULES)).toHaveLength(2);
+    expect(groupBankMovements([pdf({ amountSen: 404800 }), pdf({ amountSen: -1822, description: 'DR/CARD SALES M/N 2649949 REVERSAL' })], RULES)).toHaveLength(2);
+  });
+
+  it('never joins two credits of one merchant on one day, and never a debit bigger than its credit', () => {
+    expect(groupBankMovements([pdf({ amountSen: 404800 }), pdf({ amountSen: 100000 }), pdf({ amountSen: -1822 })], RULES)).toHaveLength(3);
+    expect(groupBankMovements([pdf({ amountSen: 1000 }), pdf({ amountSen: -5000 })], RULES)).toHaveLength(2);
+  });
+
+  it('a line WITH a reference still joins only on its reference', () => {
+    const movements = groupBankMovements([
+      pdf({ amountSen: 87500, reference: 'D90200808' }),
+      pdf({ amountSen: -394, reference: null }),
+    ], RULES);
+    expect(movements).toHaveLength(2);
+  });
+});
+
+describe('recognising whose money it is', () => {
+  it('reads the acquirer, the trading day and the merchant number off the line', () => {
+    const seen = recogniseAcquirer(RULES, {
+      description: 'CR/CARD SALES MN 32410011 DATED 31072026', reference: '00113107',
+    });
+    expect(seen?.acquirerCode).toBe('MBB');
+    /* The TRADING day (31 July), not the day the money landed (3 Aug). */
+    expect(seen?.tradingDate).toBe('2026-07-31');
+    expect(seen?.merchantNo).toBe('32410011');
+  });
+
+  it('recognises the other three real shapes', () => {
+    expect(recogniseAcquirer(RULES, { description: '03999061714 PBB-PBCS AC 3', reference: '20260803000145' })?.acquirerCode).toBe('PBB');
+    expect(recogniseAcquirer(RULES, { description: 'Book Transfer Third AEON CREDIT SERVICE', reference: 'MA458030287507' })?.acquirerCode).toBe('AEON');
+    /* Hong Leong names the trading day in the REFERENCE, not the description —
+       which is why the rules say which field to look in. */
+    const hlb = recogniseAcquirer(RULES, { description: 'CA Credit Advice', reference: '00005992235 MERCHANT 20260616' });
+    expect(hlb?.acquirerCode).toBe('HLB');
+    expect(hlb?.tradingDate).toBe('2026-06-16');
+  });
+
+  it('says nothing about a line no rule claims', () => {
+    expect(recogniseAcquirer(RULES, { description: 'CDM CASH DEPOSIT', reference: null })).toBeNull();
+    expect(recogniseAcquirer(RULES, { description: 'LAU LEE YEN *', reference: 'Jaslyn' })).toBeNull();
+  });
+
+  /* A sixth bank is a config row, not a deploy — the rule the brief sets and
+     the reason none of the four above is named in the code. */
+  it('takes a bank it has never seen from the rules it is given', () => {
+    const seen = recogniseAcquirer([{ acquirerCode: 'RHB', pattern: 'RHB MERCHANT SETTLEMENT' }],
+      { description: 'RHB MERCHANT SETTLEMENT 0099', reference: null });
+    expect(seen?.acquirerCode).toBe('RHB');
+  });
+
+  it('names the rule that carries a broken pattern instead of throwing anonymously', () => {
+    expect(() => recogniseAcquirer([{ acquirerCode: 'BAD', pattern: '(unclosed' }], { description: 'x', reference: null }))
+      .toThrow(/BAD/);
+  });
+});
+
+/* ── Claiming a statement ─────────────────────────────────────────────────── */
+
+const batch = (over: Partial<PayableBatch> = {}): PayableBatch => ({
+  id: 1, acquirerCode: 'MBB', fileName: 'mbb-0731.csv',
+  periodFrom: '2026-07-31', periodTo: '2026-07-31',
+  payableSen: 728448, outstandingSen: 728448,
+  ...over,
+});
+
+const decide = (over: Partial<BankLine>, batches: PayableBatch[]) =>
+  matchBankMovements({ movements: groupBankMovements([line(over)]), rules: RULES, batches })[0]!;
+
+describe('matching a credit to the statement it settles', () => {
+  it('claims the one statement owed exactly this, on the day the bank names', () => {
+    const d = decide({}, [batch()]);
+    expect(d.kind).toBe('PAYOUT');
+    expect(d.batchId).toBe(1);
+    expect(d.clue).toMatch(/mbb-0731\.csv/);
+    expect(d.clue).toMatch(/2026-07-31/);
+  });
+
+  /* The whole reason the charge is joined before matching: the batch expects
+     the NET, and the credit alone is the gross. */
+  it('matches a split payout on its net, not on the gross that arrived', () => {
+    const movements = groupBankMovements([
+      line({ amountSen: 87500, reference: 'D90200808', description: 'DR/CARD SALES M/N 2259020 DATED 08082026' }),
+      line({ amountSen: -394, reference: 'D90200808', description: 'DR/CARD SALES M/N 2259020 DATED 08082026' }),
+    ]);
+    const d = matchBankMovements({
+      movements, rules: RULES,
+      batches: [batch({ id: 7, periodFrom: '2026-08-08', periodTo: '2026-08-08', payableSen: 87106, outstandingSen: 87106 })],
+    })[0]!;
+    expect(d.kind).toBe('PAYOUT');
+    expect(d.batchId).toBe(7);
+  });
+
+  it('will not choose between two statements owed the same amount', () => {
+    const d = decide({}, [batch({ id: 1 }), batch({ id: 2, fileName: 'other.csv' })]);
+    expect(d.kind).toBe('PAYOUT_UNSURE');
+    expect(d.candidates.map((b) => b.id)).toEqual([1, 2]);
+    expect(d.clue).toMatch(/Pick the one/);
+  });
+
+  /* Both numbers in the sentence. A difference he can see is one he can
+     explain; one he cannot see is one he approves blind. */
+  it('names both amounts when the day agrees and the money does not', () => {
+    const d = decide({}, [batch({ outstandingSen: 700000 })]);
+    expect(d.kind).toBe('PAYOUT_UNSURE');
+    expect(d.clue).toMatch(/RM 7,000\.00/);
+    expect(d.clue).toMatch(/RM 7,284\.48/);
+  });
+
+  it('says so when the acquirer is known and nothing of theirs is waiting', () => {
+    const d = decide({}, [batch({ acquirerCode: 'PBB' })]);
+    expect(d.kind).toBe('PAYOUT_NO_BATCH');
+    expect(d.clue).toMatch(/MBB paid RM 7,284\.48 for 2026-07-31/);
+    expect(d.clue).toMatch(/Reconcile the merchant report first/);
+  });
+
+  it('ignores a statement that has already been paid in full', () => {
+    const d = decide({}, [batch({ outstandingSen: 0 })]);
+    expect(d.kind).toBe('PAYOUT_NO_BATCH');
+  });
+
+  it('leaves everything that is not an acquirer alone', () => {
+    expect(decide({ description: 'CDM CASH DEPOSIT', reference: null }, [batch()]).kind).toBe('OTHER');
+    expect(decide({ description: 'MBB TO HLBB BANK', reference: 'MPV-1' }, [batch()]).kind).toBe('OTHER');
+  });
+
+  /* An acquirer's own charge line reads exactly like its payout to a pattern;
+     only the sign tells them apart, so the sign is tested first. */
+  it('never reads money going OUT as an acquirer paying in', () => {
+    const d = decide({ amountSen: -728448 }, [batch()]);
+    expect(d.kind).toBe('OTHER');
+    expect(d.batchId).toBeNull();
+  });
+});
+
+
+/* ── One credit, several statements ───────────────────────────────────────────
+   Public Bank's real shape (migration 0335's header): one advice of 10 Aug pays
+   for trading on the 7th, 8th and 9th. The owner raised the same shape one
+   level down — 顾客可能刷一次卡，但是还两个单 — and the merchant side has handled
+   it since layer 3; the bank side did not, and told the operator his credit was
+   too big with no way to do the right thing. */
+
+describe('a credit that pays more than one statement', () => {
+  const owed = (id: number, sen: number, day: string): PayableBatch => ({
+    id, acquirerCode: 'PBB', fileName: `pbb-${day}.csv`,
+    periodFrom: day, periodTo: day, payableSen: sen, outstandingSen: sen,
+  });
+
+  it('finds the one set of statements that adds up', () => {
+    const found = exactCombination(
+      [owed(1, 100000, '2026-08-07'), owed(2, 250000, '2026-08-08'), owed(3, 400000, '2026-08-09')],
+      350000,
+    );
+    expect(found.map((b) => b.id)).toEqual([1, 2]);
+  });
+
+  it('takes three of them, which is what Public Bank actually pays', () => {
+    const found = exactCombination(
+      [owed(1, 100000, '2026-08-07'), owed(2, 250000, '2026-08-08'), owed(3, 400000, '2026-08-09')],
+      750000,
+    );
+    expect(found.map((b) => b.id)).toEqual([1, 2, 3]);
+  });
+
+  /* "Some two of these four" is not an answer a person can check, so when more
+     than one set adds up, nothing is suggested. Four statements of 1,000 /
+     2,000 / 1,000 / 2,000 make 3,000 four different ways. */
+  it('suggests nothing when more than one set adds up', () => {
+    const found = exactCombination([
+      owed(1, 100000, '2026-08-07'), owed(2, 200000, '2026-08-08'),
+      owed(3, 100000, '2026-08-09'), owed(4, 200000, '2026-08-10'),
+    ], 300000);
+    expect(found).toEqual([]);
+  });
+
+  /* And the matcher turns that into a question rather than a silent nothing:
+     the money IS a payout, it just cannot be allocated without a person. */
+  it('leaves an ambiguous split to a person, still named as a payout', () => {
+    const d = matchBankMovements({
+      movements: groupBankMovements([line({ amountSen: 300000, description: '03999061714 PBB-PBCS AC 3', reference: 'R' })]),
+      rules: RULES,
+      batches: [
+        owed(1, 100000, '2026-08-07'), owed(2, 200000, '2026-08-08'),
+        owed(3, 100000, '2026-08-09'), owed(4, 200000, '2026-08-10'),
+      ],
+    })[0]!;
+    expect(d.kind).toBe('PAYOUT_UNSURE');
+    expect(d.split).toEqual([]);
+    expect(d.candidates).toHaveLength(4);
+  });
+
+  it('will not take a near miss', () => {
+    expect(exactCombination([owed(1, 100000, '2026-08-07'), owed(2, 250000, '2026-08-08')], 350001)).toEqual([]);
+  });
+
+  it('never answers with a single statement — that is the other branch', () => {
+    expect(exactCombination([owed(1, 350000, '2026-08-07')], 350000)).toEqual([]);
+  });
+
+  it('routes the whole thing through the matcher, with the sum named', () => {
+    const d = matchBankMovements({
+      movements: groupBankMovements([line({
+        amountSen: 350000, description: '03999061714 PBB-PBCS AC 3', reference: '20260810000145',
+      })]),
+      rules: RULES,
+      batches: [owed(1, 100000, '2026-08-07'), owed(2, 250000, '2026-08-08'), owed(3, 900000, '2026-08-09')],
+    })[0]!;
+
+    expect(d.kind).toBe('PAYOUT_SPLIT');
+    expect(d.split).toEqual([{ batchId: 1, amountSen: 100000 }, { batchId: 2, amountSen: 250000 }]);
+    expect(d.clue).toMatch(/2 of PBB's reports add up to RM 3,500\.00 exactly/);
+    expect(d.clue).toMatch(/pbb-2026-08-07\.csv RM 1,000\.00 \+ pbb-2026-08-08\.csv RM 2,500\.00/);
+  });
+
+  /* A single exact statement still wins: the cheapest true answer, not the
+     most elaborate one. */
+  it('prefers one statement owed exactly that over any combination', () => {
+    const d = matchBankMovements({
+      movements: groupBankMovements([line({ amountSen: 350000, description: '03999061714 PBB-PBCS AC 3', reference: 'R' })]),
+      rules: RULES,
+      batches: [owed(9, 350000, '2026-08-10'), owed(1, 100000, '2026-08-07'), owed(2, 250000, '2026-08-08')],
+    })[0]!;
+    expect(d.kind).toBe('PAYOUT');
+    expect(d.batchId).toBe(9);
+    expect(d.split).toEqual([]);
+  });
+});
+
+/* ── The payment advice: the payer's own answer ───────────────────────────────
+   Public Bank sends ONE IBG advice naming the settlement days a credit pays
+   (acc/payout-advice). Where an uploaded advice answers for a credit, nothing
+   is searched or inferred — and nothing is CAPPED: the combination search stops
+   at four statements, which is the very limit the advice exists to remove. */
+
+describe('a credit the payment advice answers for', () => {
+  const owed = (id: number, sen: number, day: string): PayableBatch => ({
+    id, acquirerCode: 'PBB', fileName: `pbb-${day}.csv`,
+    periodFrom: day, periodTo: day, payableSen: sen, outstandingSen: sen,
+  });
+
+  /* Six days, six reports — beyond exactCombination's reach on purpose. */
+  const SIX_DAYS = ['2026-08-03', '2026-08-04', '2026-08-05', '2026-08-06', '2026-08-07', '2026-08-08'];
+  const sixBatches = SIX_DAYS.map((day, i) => owed(i + 1, 100000 + i, day));
+  const advice = (over: Partial<PayoutAdviceForMatch> = {}): PayoutAdviceForMatch => ({
+    id: 51, acquirerCode: 'PBB', fileName: 'HOUZSCENTURY_IBG_100826.pdf',
+    adviceDate: '2026-08-10',
+    netSen: SIX_DAYS.reduce((s, _d, i) => s + 100000 + i, 0),
+    days: SIX_DAYS.map((settledOn, i) => ({ settledOn, netSen: 100000 + i })),
+    ...over,
+  });
+  const pbbCredit = (amountSen: number, bookedOn = '2026-08-10') =>
+    line({ amountSen, bookedOn, description: '03999061714 PBB-PBCS AC 3', reference: '20260810000145' });
+
+  it('allocates a payout across MORE reports than the search would ever try', () => {
+    const d = matchBankMovements({
+      movements: groupBankMovements([pbbCredit(advice().netSen)]),
+      rules: RULES, batches: sixBatches, payouts: [advice()],
+    })[0]!;
+    expect(d.kind).toBe('PAYOUT_SPLIT');
+    expect(d.split).toEqual(SIX_DAYS.map((_day, i) => ({ batchId: i + 1, amountSen: 100000 + i })));
+    expect(d.clue).toMatch(/PBB's payment advice of 2026-08-10 says/);
+    expect(d.clue).toMatch(/pays 6 reports/);
+  });
+
+  it('claims a single report by the advice, and says the advice said so', () => {
+    const d = matchBankMovements({
+      movements: groupBankMovements([pbbCredit(100000)]),
+      rules: RULES,
+      batches: [owed(1, 100000, '2026-08-07')],
+      payouts: [advice({ netSen: 100000, days: [{ settledOn: '2026-08-07', netSen: 100000 }] })],
+    })[0]!;
+    expect(d.kind).toBe('PAYOUT');
+    expect(d.batchId).toBe(1);
+    expect(d.clue).toMatch(/payment advice of 2026-08-10 says this RM 1,000\.00 credit pays pbb-2026-08-07\.csv/);
+  });
+
+  /* One report can span two of the advice's days; its shares are summed, not
+     offered twice — the same report booked twice would double the money. */
+  it('adds up the advice days that fall inside one report', () => {
+    const spanning: PayableBatch = {
+      id: 4, acquirerCode: 'PBB', fileName: 'pbb-weekend.csv',
+      periodFrom: '2026-08-07', periodTo: '2026-08-08', payableSen: 350000, outstandingSen: 350000,
+    };
+    const d = matchBankMovements({
+      movements: groupBankMovements([pbbCredit(350000)]),
+      rules: RULES, batches: [spanning],
+      payouts: [advice({
+        netSen: 350000,
+        days: [{ settledOn: '2026-08-07', netSen: 100000 }, { settledOn: '2026-08-08', netSen: 250000 }],
+      })],
+    })[0]!;
+    expect(d.kind).toBe('PAYOUT');
+    expect(d.batchId).toBe(4);
+  });
+
+  /* The advice outranks the amount coincidence: a lone report owed exactly the
+     credit must not beat the payer's own written allocation. */
+  it('believes the advice over a single report owed the same amount', () => {
+    const d = matchBankMovements({
+      movements: groupBankMovements([pbbCredit(350000)]),
+      rules: RULES,
+      batches: [owed(9, 350000, '2026-08-10'), owed(1, 100000, '2026-08-07'), owed(2, 250000, '2026-08-08')],
+      payouts: [advice({
+        netSen: 350000,
+        days: [{ settledOn: '2026-08-07', netSen: 100000 }, { settledOn: '2026-08-08', netSen: 250000 }],
+      })],
+    })[0]!;
+    expect(d.kind).toBe('PAYOUT_SPLIT');
+    expect(d.split).toEqual([{ batchId: 1, amountSen: 100000 }, { batchId: 2, amountSen: 250000 }]);
+    expect(d.clue).toMatch(/payment advice/);
+  });
+
+  /* An advice naming a day with no reconciled report is HISTORY, not an answer
+     — the ordinary outcome says what a person has to do first. */
+  it('falls back to the search when a day the advice names has no report waiting', () => {
+    const d = matchBankMovements({
+      movements: groupBankMovements([pbbCredit(350000)]),
+      rules: RULES,
+      batches: [owed(1, 100000, '2026-08-07')],   // the 08-08 report is not reconciled yet
+      payouts: [advice({
+        netSen: 350000,
+        days: [{ settledOn: '2026-08-07', netSen: 100000 }, { settledOn: '2026-08-08', netSen: 250000 }],
+      })],
+    })[0]!;
+    expect(d.kind).toBe('PAYOUT_UNSURE');
+    expect(d.clue).toMatch(/no single report/);
+  });
+
+  /* A report partly paid since the advice was written no longer answers to it:
+     booking the advice's figure would book money that already arrived. */
+  it('falls back when a report has been partly paid since the advice was written', () => {
+    const d = matchBankMovements({
+      movements: groupBankMovements([pbbCredit(350000)]),
+      rules: RULES,
+      batches: [
+        { ...owed(1, 100000, '2026-08-07'), outstandingSen: 60000 },
+        owed(2, 250000, '2026-08-08'),
+      ],
+      payouts: [advice({
+        netSen: 350000,
+        days: [{ settledOn: '2026-08-07', netSen: 100000 }, { settledOn: '2026-08-08', netSen: 250000 }],
+      })],
+    })[0]!;
+    expect(d.kind).toBe('PAYOUT_UNSURE');
+  });
+
+  it('ignores another acquirer’s advice, whatever its amount', () => {
+    const d = matchBankMovements({
+      movements: groupBankMovements([pbbCredit(100000)]),
+      rules: RULES,
+      batches: [owed(1, 100000, '2026-08-07')],
+      payouts: [advice({ acquirerCode: 'MBB', netSen: 100000, days: [{ settledOn: '2026-08-07', netSen: 100000 }] })],
+    })[0]!;
+    /* Still matched — by the ordinary exact-amount path, not the advice. */
+    expect(d.kind).toBe('PAYOUT');
+    expect(d.clue).not.toMatch(/advice/);
+  });
+
+  /* Two advices for the same amount: the credit's own day picks one, and when
+     it cannot, nothing does — "some advice or other" is not an answer. */
+  it('tells two same-amount advices apart by the day the credit landed', () => {
+    const twoOfEach = [
+      owed(1, 100000, '2026-08-07'), owed(2, 250000, '2026-08-08'),
+      owed(3, 100000, '2026-09-07'), owed(4, 250000, '2026-09-08'),
+    ];
+    const august = advice({
+      id: 51, adviceDate: '2026-08-10', netSen: 350000,
+      days: [{ settledOn: '2026-08-07', netSen: 100000 }, { settledOn: '2026-08-08', netSen: 250000 }],
+    });
+    const september = advice({
+      id: 52, adviceDate: '2026-09-10', netSen: 350000,
+      days: [{ settledOn: '2026-09-07', netSen: 100000 }, { settledOn: '2026-09-08', netSen: 250000 }],
+    });
+
+    const d = matchBankMovements({
+      movements: groupBankMovements([pbbCredit(350000, '2026-09-10')]),
+      rules: RULES, batches: twoOfEach, payouts: [august, september],
+    })[0]!;
+    expect(d.kind).toBe('PAYOUT_SPLIT');
+    expect(d.split).toEqual([{ batchId: 3, amountSen: 100000 }, { batchId: 4, amountSen: 250000 }]);
+
+    /* A credit on a day NEITHER advice names decides nothing. Both sets of
+       reports also add up, so the combination search is ambiguous too, and the
+       whole thing lands with a person — which is the honest outcome. */
+    const undecided = matchBankMovements({
+      movements: groupBankMovements([pbbCredit(350000, '2026-09-12')]),
+      rules: RULES, batches: twoOfEach, payouts: [august, september],
+    })[0]!;
+    expect(undecided.kind).toBe('PAYOUT_UNSURE');
+  });
+});
+
+/* ── The obvious ones (docs/bugs/0814) ────────────────────────────────────────
+   Owner, 2026-09-11, on a RM 45,000 rental transfer with exactly one entry of
+   RM 45,000 in the books, to NAVINDER SINGH GILL, the bank line reading
+   "Rental - Jun'26 PARVEEN AND NAVINDER": 你看着 45,000 为什么我还需要自己
+   manual 匹配？ And the rule he set: 只要名字金额一样就自动都对，名字不一样不
+   确定我可以 manual 对. So: exactly one same-amount entry within the window AND
+   the bank's text names the payee → matched without a hand. */
+describe('names on the bank and in the books', () => {
+  it('agree when the bank\'s text carries a word of the payee', () => {
+    expect(namesAgree("Rental - Jun'26 PARVEEN AND NAVINDER 20260606HLBBMYKL", 'NAVINDER SINGH GILL')).toBe(true);
+    expect(namesAgree('JomPAY Bill Payment TENAGA NASIONAL BERHAD CIBJOM3004', 'TENAGA NASIONAL BERHAD')).toBe(true);
+    expect(namesAgree('2990 Home PV-000050 HOUZS VENTURE HOLDING SDN. BHD.', 'HOUZS VENTURE HOLDING SDN BHD')).toBe(true);
+  });
+
+  /* Hong Leong truncates: "PENGURUSAN AIR SELANGO". A word that is the start
+     of the other, five letters or more, still agrees. */
+  it('survive the bank cutting a name short', () => {
+    expect(namesAgree('6598159943 PENGURUSAN AIR SELANGO CIBJOM', 'AIR SELANGOR')).toBe(true);
+  });
+
+  it('do not agree on company boilerplate alone, or when the books name nobody', () => {
+    expect(namesAgree('Fund Transfer SDN BHD PAYMENT', 'CATRON TRADING SDN BHD')).toBe(false);
+    expect(namesAgree('LAU LEE YEN', null)).toBe(false);
+    expect(namesAgree('LAU LEE YEN', 'Payment received (transfer) — 2990-SO-2606-001')).toBe(false);
+  });
+});
+
+describe('the obvious entry for a movement', () => {
+  const ledger = [
+    { jeNo: 'JE-1', entryDate: '2026-06-06', sourceType: 'PV', sourceDocNo: 'HPV-2606-023', debitSen: 0, creditSen: 4500000, partyName: 'NAVINDER SINGH GILL' },
+    { jeNo: 'JE-2', entryDate: '2026-06-03', sourceType: 'PV', sourceDocNo: 'HPV-2606-003', debitSen: 0, creditSen: 287212, partyName: 'Internal transfer to 310-0030' },
+    { jeNo: 'JE-3', entryDate: '2026-06-10', sourceType: 'PV', sourceDocNo: 'HPV-2606-008', debitSen: 0, creditSen: 100000, partyName: 'VIVIAN CHOW WAI MAN' },
+    { jeNo: 'JE-4', entryDate: '2026-06-11', sourceType: 'PV', sourceDocNo: 'HPV-2606-009', debitSen: 0, creditSen: 100000, partyName: 'LOO WEN WEI' },
+  ];
+  const mv = (over: Partial<{ bookedOn: string; amountSen: number; description: string; reference: string | null }> = {}) => ({
+    bookedOn: '2026-06-06', amountSen: -4500000, description: 'CIB Instant Transfer at DIO', reference: "Rental - Jun'26 PARVEEN AND NAVINDER", ...over,
+  });
+
+  it('is the one same-amount entry the bank names, days apart or not', () => {
+    expect(obviousEntryFor(mv(), ledger, new Set())?.jeNo).toBe('JE-1');
+    expect(obviousEntryFor(mv({ bookedOn: '2026-06-10' }), ledger, new Set())?.jeNo).toBe('JE-1');
+  });
+
+  it('is nothing when the amount agrees but the name does not — that is a hand\'s call', () => {
+    expect(obviousEntryFor(mv({ reference: 'Rental - PARVEEN' }), ledger, new Set())).toBeNull();
+  });
+
+  it('is nothing when two entries carry the amount, even if one is named', () => {
+    expect(obviousEntryFor(mv({ bookedOn: '2026-06-10', amountSen: -100000, reference: 'VIVIAN CHOW' }), ledger, new Set())).toBeNull();
+  });
+
+  it('is nothing when the only entry is already claimed', () => {
+    expect(obviousEntryFor(mv(), ledger, new Set(['JE-1']))).toBeNull();
+  });
+});
+
+/* ── A movement the bank itself reversed (docs/bugs/0817) ─────────────────────
+   Hong Leong, 04/06/2026: 2990's RM 2,872.75 instant transfer to its own
+   Alliance account failed and the bank put it back the same day — "CIB
+   Instant Transfer Reversal", the SAME transaction reference — while a second
+   transfer under a fresh reference went through. The pair is the bank's own
+   business; the retry is what the books' transfer voucher is for (owner:
+   这两笔是 contra 的，bank transaction fail). */
+describe('a movement the bank itself reversed', () => {
+  const ref = (id: string) => `Alliance PV-000035 2990 HOME SDN. BHD. 20260604HLBBMYKL010OCB${id}`;
+  const mv = (id: number, over: Partial<ReversalSource> = {}): ReversalSource => ({
+    id, lineNo: id, bookedOn: '2026-06-04', description: 'CIB Instant Transfer at DIO',
+    reference: ref('02763120'), amountSen: -287275, ...over,
+  });
+  const reversal = (id: number, over: Partial<ReversalSource> = {}) =>
+    mv(id, { description: 'CIB Instant Transfer Reversal at DIO', amountSen: 287275, ...over });
+  const ids = (pairs: ReturnType<typeof bankReversalPairs<ReversalSource>>) => pairs.map((p) => [p.original.id, p.reversal.id]);
+
+  it('pairs the reversal with the movement carrying its reference, not with the retry', () => {
+    expect(ids(bankReversalPairs([
+      mv(14),
+      mv(18, { reference: '2990 Fund Tranfer 2990 HOME SDN. BHD. 20260604HLBBMYKL010OCB03546681' }),
+      reversal(20),
+    ]))).toEqual([[14, 20]]);
+  });
+
+  it('forgives the spacing and the case of the reference, and the order the lines arrive in', () => {
+    expect(ids(bankReversalPairs([
+      reversal(20, { reference: `  ${ref('02763120').toLowerCase()}  ` }),
+      mv(14),
+    ]))).toEqual([[14, 20]]);
+  });
+
+  it("refuses a pair without the bank's word, a shared reference, or the money cancelling", () => {
+    /* A credit that is not called a reversal is a credit. */
+    expect(bankReversalPairs([mv(1), mv(2, { amountSen: 287275 })])).toEqual([]);
+    /* A blank reference is not one two lines can share. */
+    expect(bankReversalPairs([mv(1, { reference: null }), reversal(2, { reference: null })])).toEqual([]);
+    expect(bankReversalPairs([mv(1, { reference: '   ' }), reversal(2, { reference: '   ' })])).toEqual([]);
+    /* Another reference is another transaction. */
+    expect(bankReversalPairs([mv(1, { reference: ref('03546681') }), reversal(2)])).toEqual([]);
+    /* The money must cancel to the sen. */
+    expect(bankReversalPairs([mv(1), reversal(2, { amountSen: 287200 })])).toEqual([]);
+    /* A reversal booked before what it reverses is not one. */
+    expect(bankReversalPairs([mv(1, { bookedOn: '2026-06-05' }), reversal(2)])).toEqual([]);
+    /* Two reversals never pair with each other. */
+    expect(bankReversalPairs([reversal(1, { amountSen: -287275 }), reversal(2)])).toEqual([]);
+  });
+
+  it('gives each reversal one original, the earliest still unpaired, and never an original twice', () => {
+    expect(ids(bankReversalPairs([mv(1), mv(2), reversal(3), reversal(4)]))).toEqual([[1, 3], [2, 4]]);
+    expect(ids(bankReversalPairs([mv(1), reversal(3), reversal(4)]))).toEqual([[1, 3]]);
+  });
+});

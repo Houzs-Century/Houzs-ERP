@@ -1,0 +1,629 @@
+/* Suppliers + Purchase Orders list pages — shared CSS module.
+   PR — Commander 2026-05-27 ("polish 整个 suppliers module 也是 PO 和 SO 都要
+   polish"): align typography + density with the SO Detail polish from
+   PR #230/#231 — fs-15 title, fs-9 card eyebrows, paper-1 inputs, tighter
+   page gap. */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  background: var(--c-cream);
+  min-height: 100%;
+}
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.title {
+  /* PR — Commander 2026-05-27: drop from fs-32/900 to fs-15/600 so the page
+     reads like an admin tool (matches SO Detail title from PR #230). */
+  font-family: var(--font-title);
+  font-size: var(--fs-15, 15px);
+  font-weight: 600;
+  color: var(--c-ink);
+  margin: 0;
+}
+
+.subtitle {
+  font-family: var(--font-sans);
+  font-size: var(--fs-11);
+  color: var(--fg-muted);
+  margin: 2px 0 0;
+}
+
+.eyebrow {
+  font-family: var(--font-button);
+  font-size: var(--fs-10);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  margin: 0;
+}
+
+.actionsRow {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.searchBox {
+  position: relative;
+  flex: 1;
+  min-width: 240px;
+  max-width: 420px;
+}
+
+.searchIcon {
+  position: absolute;
+  left: var(--space-3);
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--fg-muted);
+  pointer-events: none;
+}
+
+.searchInput {
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  background: var(--c-paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 6px 10px 6px var(--space-6);
+  color: var(--c-ink);
+  outline: none;
+}
+
+.searchInput:focus {
+  border-color: var(--c-burnt);
+  box-shadow: 0 0 0 2px rgba(232, 107, 58, 0.16);
+}
+
+.statusChips {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.tableCard {
+  background: var(--c-paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table thead th {
+  font-family: var(--font-button);
+  font-size: var(--fs-10);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  text-align: left;
+  padding: 6px var(--space-3);
+  border-bottom: 1px solid var(--line);
+  background: var(--c-cream);
+}
+
+.table tbody td {
+  padding: 6px var(--space-3);
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  color: var(--c-ink);
+}
+
+.table tbody tr {
+  cursor: pointer;
+}
+
+.table tbody tr:last-child td { border-bottom: none; }
+.table tbody tr:hover { background: var(--c-cream); }
+
+.codeChip {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  background: var(--c-cream);
+  color: var(--c-ink);
+  border: 1px solid var(--line);
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+}
+
+.statusPill {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-button);
+  font-size: var(--fs-10);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+}
+
+.statusActive   { background: rgba(47, 93, 79, 0.12);  color: var(--c-secondary-a); }
+.statusInactive { background: rgba(34, 31, 32, 0.06); color: var(--fg-muted); }
+.statusBlocked  { background: rgba(184, 51, 31, 0.10); color: var(--c-festive-b, #B8331F); }
+
+.bannerWarn {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: rgba(232, 107, 58, 0.08);
+  border: 1px solid var(--c-orange);
+  color: var(--c-burnt);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-12);
+}
+
+.emptyRow {
+  text-align: center;
+  color: var(--fg-muted);
+  padding: var(--space-6);
+}
+
+/* ── Drawer ────────────────────────────────────────────────────────── */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(34, 31, 32, 0.32);
+  z-index: 50;
+}
+
+.drawer {
+  position: fixed;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: min(720px, 92vw);
+  background: var(--c-cream);
+  border-left: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-3);
+  border-top-left-radius: var(--radius-xl);
+  border-bottom-left-radius: var(--radius-xl);
+  display: flex;
+  flex-direction: column;
+  z-index: 51;
+  overflow: hidden;
+}
+
+/* ── Batch edit modal (centered dialog; reuses drawer header/footer) ──── */
+
+.modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(440px, 92vw);
+  max-height: 88vh;
+  background: var(--c-cream);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-3);
+  border-radius: var(--radius-xl);
+  display: flex;
+  flex-direction: column;
+  z-index: 51;
+  overflow: hidden;
+}
+
+.modalBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.drawerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--line);
+  background: var(--c-paper);
+}
+
+.drawerTitle {
+  /* Same fs-15 weight 600 treatment as page title. */
+  font-family: var(--font-title);
+  font-size: var(--fs-15, 15px);
+  font-weight: 600;
+  color: var(--c-ink);
+  margin: 0;
+}
+
+.drawerBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.drawerFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--line);
+  background: var(--c-paper);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px var(--space-3);
+}
+
+.formGridFull {
+  grid-column: 1 / -1;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  position: relative;
+}
+
+.fieldLabel {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-soft);
+  line-height: 1.3;
+}
+
+.fieldInput,
+.fieldSelect,
+.fieldTextarea {
+  /* PR — Commander 2026-05-27: paper-1 (white) bg + 1px line, padding 6px 10px,
+     focus burnt with soft ring. Same treatment as SO Detail inputs. */
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  background: var(--c-paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  color: var(--c-ink);
+  outline: none;
+  width: 100%;
+  line-height: 1.3;
+}
+
+.fieldInput:focus,
+.fieldSelect:focus,
+.fieldTextarea:focus {
+  border-color: var(--c-burnt);
+  background: var(--c-paper);
+  box-shadow: 0 0 0 2px rgba(232, 107, 58, 0.16);
+}
+
+.fieldInput:disabled,
+.fieldSelect:disabled,
+.fieldInput[readonly] {
+  background: var(--c-cream);
+  border-color: var(--line);
+  color: var(--fg-muted);
+  cursor: not-allowed;
+}
+
+.fieldSelect {
+  padding-right: 32px;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: none;
+}
+.fieldSelect::-ms-expand { display: none; }
+
+.selectWrap {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.selectChevron {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--c-ink-60, var(--fg-muted));
+  pointer-events: none;
+}
+
+.fieldTextarea {
+  resize: vertical;
+  min-height: 56px;
+}
+
+.fieldRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.bindingsList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.bindingRow {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr 100px 100px 80px 40px;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  background: var(--c-paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.bindingRowMain {
+  border-color: var(--c-orange);
+  background: rgba(232, 107, 58, 0.05);
+}
+
+.bindingIcon {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  background: var(--c-cream);
+  color: var(--fg-muted);
+}
+
+.bindingIconMain {
+  background: rgba(232, 107, 58, 0.20);
+  color: var(--c-burnt);
+}
+
+.bindingMaterial {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bindingCode {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--c-ink);
+}
+
+.bindingName {
+  font-family: var(--font-sans);
+  font-size: var(--fs-11);
+  color: var(--fg-muted);
+}
+
+.bindingSku {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--c-ink);
+}
+
+.bindingPrice {
+  font-family: var(--font-mark);
+  font-size: var(--fs-13);
+  font-weight: 700;
+  font-stretch: 80%;
+  color: var(--c-burnt);
+  text-align: right;
+}
+
+.bindingMeta {
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  color: var(--fg-muted);
+  text-align: right;
+}
+
+.bindingActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.iconBtn {
+  background: transparent;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+}
+
+.iconBtn:hover {
+  background: var(--c-cream);
+  color: var(--c-ink);
+}
+
+.addBindingBtn {
+  font-family: var(--font-button);
+  font-size: var(--fs-12);
+  font-weight: 600;
+  background: var(--c-paper);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  padding: var(--space-2);
+  color: var(--c-ink);
+  cursor: pointer;
+}
+
+.addBindingBtn:hover {
+  background: var(--c-cream);
+}
+
+/* Phone (Houzs 2026-06-24) — element-level overflow clamp. */
+@media (max-width: 600px) {
+  .searchBox { min-width: 0; max-width: 100%; width: 100%; }
+  .actionsRow { flex-wrap: wrap; }
+  .tableCard { overflow-x: auto; }
+  .table { min-width: 560px; }
+  .formGrid { grid-template-columns: 1fr; }
+  .bindingRow {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-2);
+  }
+  .bindingPrice { text-align: left; }
+  .bindingMeta { text-align: left; }
+}
+
+/* ── Theme C: Table/Cards view toggle (PO list) ─────────────────────────── */
+.viewToggle {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md, 8px);
+  overflow: hidden;
+  background: var(--c-cream, #fff);
+}
+.viewToggleOn,
+.viewToggleOff {
+  height: 30px;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+}
+.viewToggleOn { background: var(--c-orange, #16695f); color: #fff; }
+.viewToggleOff { color: var(--fg-muted); }
+
+/* ── Theme C: desktop PO card list ──────────────────────────────────────── */
+.poCards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: var(--space-3);
+}
+.poCard {
+  display: flex;
+  gap: var(--space-3);
+  align-items: stretch;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md, 10px);
+  background: var(--c-cream, #fff);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(17, 24, 16, 0.05));
+  padding: var(--space-3);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+.poCard:hover {
+  border-color: var(--c-orange, #16695f);
+  box-shadow: var(--shadow-md, 0 6px 18px -10px rgba(17, 24, 16, 0.35));
+  transform: translateY(-1px);
+}
+.poCardCancelled { opacity: 0.55; filter: grayscale(0.6); }
+
+.poCardAvatar {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mark);
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--c-orange, #16695f);
+  background: var(--c-paper, #f4f6f3);
+  border: 1px solid var(--line);
+}
+.poCardBody { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 5px; }
+.poCardTop {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.poCardName {
+  min-width: 0;
+  font-family: var(--font-title);
+  font-size: 14.5px;
+  font-weight: 700;
+  color: var(--c-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.poCardMoney {
+  flex: 0 0 auto;
+  font-family: var(--font-money);
+  font-variant-numeric: tabular-nums;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--c-burnt, #0c3f39);
+}
+.poCardMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+.poCardDoc { font-weight: 700; color: var(--c-burnt, #0c3f39); }
+.poCardDot { color: var(--line); }
+.poCardFoot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: 2px;
+}
+.poProgTrack {
+  flex: 1;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--c-paper, #eef0ec);
+  overflow: hidden;
+}
+.poProgFill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--c-orange, #16695f);
+  transition: width 0.3s ease;
+}
+
+/* Outstanding report doc-number link (was read but never defined). */
+.docLink {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: #16695f;
+  text-decoration: none;
+}
+.docLink:hover { text-decoration: underline; }

@@ -1,0 +1,57 @@
+name: probe-so-lock-doors
+
+# Why a salesperson could neither SAVE nor AMEND 2990-SO-2608-020, and how many
+# other live orders sit in the same both-doors-shut shape.
+#
+# The order is CONFIRMED with no processing_date, so it is NOT locked — which
+# means the amendment route answers 409 not_locked_no_amendment_needed
+# (mfg-sales-orders.ts:11743) and the only door left is the direct edit. That
+# direct edit failed on the optimistic lock (so_version_conflict), so the
+# question this probe answers is: WHAT MOVED mfg_sales_orders.version while a
+# human had the page open — a cron (source='automation'), or his own save that
+# committed behind a 504?
+#
+# The audit trail is what tells those apart, so the probe prints it rather than
+# guessing. Read-only. See backend/scripts/probe-so-lock-doors.mjs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to read"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      doc:
+        description: "Sales Order doc_no to investigate"
+        required: false
+        default: "2990-SO-2608-020"
+        type: string
+
+concurrency:
+  group: probe-so-lock-doors
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: Ask prod which door was open
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          DOC: ${{ inputs.doc }}
+        # pipefail, or `tee` swallows a crash and a truncated answer reads as success
+        run: |
+          set -o pipefail
+          node scripts/probe-so-lock-doors.mjs | tee so-lock-doors.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-so-lock-doors
+          path: backend/so-lock-doors.txt
+          retention-days: 14

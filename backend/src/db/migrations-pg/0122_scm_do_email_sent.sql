@@ -1,0 +1,29 @@
+-- 0122_scm_do_email_sent.sql — the DO customer-email SENT STAMP, on the table
+-- that actually has the rows.
+--
+-- WHY A NEW COLUMN when mig 098 / 0009 already added one: 0009's stamp lives on
+-- `delivery_tracking.do_email_sent_at`, and that table belongs to the CORE
+-- delivery module deleted by the strip-to-core cutover (dfa1111 removed
+-- backend/src/services/delivery.ts, routes/delivery.ts and pages/
+-- DeliveryTracking.tsx). Nothing has created a delivery_tracking row since:
+-- createDeliveryRecord went with the module. Its primary key is also the CORE
+-- sales_orders.doc_no (an AutoCount SO), not an SCM Delivery Order — so it
+-- could never key an scm.delivery_orders row even if it were still populated.
+-- The table is deliberately NOT dropped (0017 left it standing) and is NOT
+-- touched here; this column is the live equivalent on the live document.
+--
+-- The stamp is the once-only guard AND the record of when the customer was
+-- told. TEXT (written as an ISO string, matching delivery_orders' other
+-- timestamp writes in delivery-orders-mfg.ts) — NOT timestamptz, per the
+-- text-timestamp rule mig 0008 established.
+--
+-- Houzs SCM port conventions (mirrors 0118 / 0121): the scm.* tables live in
+-- the separate `scm` postgres schema, so this is schema-qualified. Plain
+-- `ADD COLUMN IF NOT EXISTS` (NOT a DO block) — the pg-migrate runner splits
+-- each file on ";\n", which would fragment a dollar-quoted block; ADD COLUMN
+-- IF NOT EXISTS is already idempotent + re-run-safe, so the auto-apply on every
+-- deploy is a no-op after the first. scm.delivery_orders exists on prod (core
+-- SCM table), so this only ever adds one nullable column. No backfill: a NULL
+-- stamp means "not yet emailed", which is true of every existing row — the
+-- channel has been OFF since the column it replaces was seeded (mig 098).
+ALTER TABLE scm.delivery_orders ADD COLUMN IF NOT EXISTS do_email_sent_at text;

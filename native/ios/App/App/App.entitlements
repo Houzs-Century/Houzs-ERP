@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- APNs. Xcode rewrites this to "production" automatically when archiving
+	     for the App Store / TestFlight; "development" is what a debug build on a
+	     device needs. Ignored entirely by the unsigned CI build. -->
+	<key>aps-environment</key>
+	<string>development</string>
+</dict>
+</plist>

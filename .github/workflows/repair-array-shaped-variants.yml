@@ -1,0 +1,76 @@
+name: repair-array-shaped-variants
+
+# A `variants` block that became a jsonb ARRAY instead of an object.
+#
+# docs/jsonb-double-encoding-coe.md records the cause: a PRE-SERIALIZED STRING
+# bound to a jsonb parameter. Every consumer then reads variants->>'fabricCode'
+# as NULL, so the line has no fabric, no seat height and no leg — not wrong,
+# ABSENT.
+#
+# Found by the arrayShapeCheck that ends every fabric apply: three separate prod
+# runs on 2026-08-13 each reported "SO: 7 variants block(s) of ARRAY shape", and
+# the count never moved between them. Seven rows had been sitting like that
+# since August, invisible because nothing had ever counted them.
+#
+# Recoverable: [ {...} ] and [ "{...}" ] — the object survived, wrapped, or
+# wrapped AND stringified. Anything else is REFUSED and printed in full: a
+# variants block decides what gets built and what it costs, so a plausible guess
+# there is worse than a visible gap.
+#
+# mode=plan prints every row's actual content and writes nothing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      mode:
+        description: "plan (writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'apply ONLY: type exactly — I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+        type: string
+      company:
+        description: "company_id (1 = HOUZS, 2 = 2990)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: repair-array-shaped-variants
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: Repair array-shaped variants (${{ inputs.mode }})
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+        # pipefail, or `tee` swallows the exit code and a half-finished run reports success
+        run: |
+          set -o pipefail
+          node scripts/repair-array-shaped-variants.mjs | tee array-repair.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: repair-array-shaped-variants-${{ inputs.mode }}
+          path: backend/array-repair.txt
+          retention-days: 90

@@ -1,0 +1,705 @@
+/* Products & Maintenance page — CONTENT primitives only.
+ *
+ * Reskin (batch 3): the bespoke `.page` grey framed-card wrapper, its
+ * `--c-* / --fg / --line` token-override cascade, and the bespoke header /
+ * title / tab-switch / actions-row chrome were DELETED. The page is now
+ * full-bleed on the app background and its header rides the shared
+ * <PageHeader>; frame + tab + pill chrome is Tailwind design tokens in the
+ * TSX. What survives here is the repeated content furniture: tables, the
+ * maintenance rail + panel, drawers, modals and form fields.
+ *
+ * COLOURS ARE PINNED TO HEX ON PURPOSE. The deleted `.page` block
+ * re-declared the palette locally, and several globals differ — notably
+ * `--c-cream` (page #f4f6f3 vs global #fff) and `--c-paper` (page #fcfdfb
+ * vs global #f4f6f3) are effectively SWAPPED, and `--line` is a solid grey
+ * here but an alpha rgba globally. Re-tokenising any colour below back to
+ * `var(--c-...)` will silently re-theme this page. Structural tokens
+ * (--space-* / --fs-* / --font-* / --shadow-* / --radius-*) are global and
+ * stay as var().
+ *
+ * Palette in use: primary #16695f · primary-dark #0c3f39 · ink #11140f ·
+ * ink-muted #767b6e · ink-soft #9aa093 · border #d6d9d2 · border-strong
+ * #c2c6bd · surface #fff · surface-2 #f4f6f3 · primary-soft #e1efed ·
+ * err #b23a3a
+ */
+
+.categoryChips {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.searchBox {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.searchIcon {
+  position: absolute;
+  left: var(--space-3);
+  color: #767b6e;
+  pointer-events: none;
+}
+
+.searchInput {
+  font-family: var(--font-sans);
+  font-size: var(--fs-14);
+  background: #fff;
+  border: 1px solid #d6d9d2;
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-7);
+  color: #11140f;
+  width: 260px;
+  outline: none;
+}
+
+.searchInput::placeholder {
+  color: #9aa093;
+}
+
+.searchInput:focus {
+  border-color: #c2c6bd;
+  background: #f4f6f3;
+}
+
+.eyebrow {
+  font-family: var(--font-button);
+  font-size: var(--fs-12);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #767b6e;
+  margin: 0;
+}
+
+.tableCard {
+  background: #fff;
+  border: 1px solid #d6d9d2;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+  overflow: hidden;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table thead th {
+  font-family: var(--font-button);
+  font-size: var(--fs-12);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #767b6e;
+  text-align: left;
+  padding: var(--space-3) var(--space-4);
+  background: #fff;
+  border-bottom: 1px solid #d6d9d2;
+}
+
+.table tbody td {
+  padding: var(--space-4);
+  border-bottom: 1px solid #d6d9d2;
+  font-family: var(--font-sans);
+  font-size: var(--fs-14);
+  color: #11140f;
+  vertical-align: middle;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.table tbody tr:hover {
+  background: #f4f6f3;
+}
+
+/* Compact variant — tightens rows so a sofa Model fits across one line
+   instead of the wrap-heavy 80px tall default. Used when colsCount > 8. */
+.tableCompact tbody td {
+  padding: var(--space-3) var(--space-3);   /* 12px vs default 16px */
+  font-size: var(--fs-13);                    /* 13px vs 14 */
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.tableCompact thead th {
+  padding: var(--space-2) var(--space-3);
+}
+
+/* Viewport-fill scroll wrapper for the SKU Master table (matches the shared
+   DataGrid `.scroll` pattern). The table used to sit in a short card leaving
+   dead space below; this stretches it to nearly the full viewport height and
+   scrolls internally — horizontal scroll preserved for the wide sofa-size
+   view. Offset (~280px) reserves the topbar + page header + tabs + category
+   chips + model rail + eyebrow that sit above the table. */
+.skuScroll {
+  max-height: calc(100vh - 280px);
+  overflow-y: auto;
+  overflow-x: auto;
+}
+
+/* Sticky header so column labels stay visible while the body scrolls. Scoped
+   to the SKU scroll wrapper so other tables in this module are untouched. The
+   th already carries a surface background, so rows won't bleed through. */
+.skuScroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.rowCompact td {
+  vertical-align: middle;
+}
+
+.nameCompact {
+  font-weight: 600;
+  color: #11140f;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 360px;
+}
+
+.nameSubCompact {
+  font-size: var(--fs-11);
+  color: #767b6e;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 360px;
+}
+
+/* TIER P1 / P2 / P3 toggle (sofa view only). Matches the SkuMaster header
+   "control segment" pill cluster — neutral surface + active petrol, the same
+   emphasis colour as the reskinned tab rail and category chips. */
+.tierGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: var(--space-3);
+}
+
+.tierLabel {
+  font-family: var(--font-button);
+  font-size: var(--fs-11);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #767b6e;
+}
+
+.tierChips {
+  display: inline-flex;
+  background: #fff;
+  border: 1px solid #d6d9d2;
+  border-radius: var(--radius-pill);
+  padding: 3px;
+  gap: 2px;
+}
+
+.tierChip {
+  font-family: var(--font-button);
+  font-size: var(--fs-12);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  border: none;
+  background: transparent;
+  color: #767b6e;
+  cursor: pointer;
+  min-width: 36px;
+}
+
+.tierChip:hover {
+  background: #e1efed;
+  color: #16695f;
+}
+
+.tierChip[data-active='true'] {
+  background: #16695f;
+  color: #fff;
+}
+
+.codeChip {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-13);
+  background: #f4f6f3;
+  color: #11140f;
+  border: 1px solid #d6d9d2;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+}
+
+.nameMain {
+  font-weight: 600;
+  color: #11140f;
+}
+
+.nameSub {
+  font-size: var(--fs-12);
+  color: #767b6e;
+  margin-top: 2px;
+}
+
+/* Category pill — was a burnt-orange tint left over from the pre-petrol
+   palette, which clashed once the page went petrol. Now the design-system
+   soft-primary pill. */
+.catPill {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-button);
+  font-size: var(--fs-12);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: #e1efed;
+  color: #0c3f39;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+}
+
+.price {
+  font-family: var(--font-mark);
+  font-size: var(--fs-15);
+  color: #0c3f39;
+  font-weight: 800;
+  font-stretch: 80%;
+  text-align: right;
+}
+
+.priceEmpty {
+  color: #9aa093;
+  text-align: right;
+}
+
+.numCell {
+  font-family: var(--font-mono);
+  font-size: var(--fs-13);
+  text-align: right;
+  color: #11140f;
+}
+
+.numCellMuted {
+  font-family: var(--font-mono);
+  font-size: var(--fs-13);
+  text-align: right;
+  color: #767b6e;
+}
+
+.minSuffix {
+  font-family: var(--font-button);
+  font-size: var(--fs-11);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #767b6e;
+  margin-left: 4px;
+}
+
+.tableFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid #d6d9d2;
+  background: #fff;
+}
+
+/* ── Maintenance tab ───────────────────────────────────────────────── */
+
+.maintLayout {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.maintNav {
+  background: #fff;
+  border: 1px solid #d6d9d2;
+  border-radius: var(--radius-lg);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.maintSection {
+  font-family: var(--font-button);
+  font-size: var(--fs-11);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #767b6e;
+  padding: var(--space-3) var(--space-3) var(--space-1);
+}
+
+.maintNavItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: var(--fs-14);
+  color: #11140f;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+
+.maintNavItem:hover {
+  background: #e1efed;
+  color: #16695f;
+}
+
+/* Active rail item — petrol fill, matching the tab rail / category chips
+   (was ink-black under the old bespoke palette). */
+.maintNavItem[data-active='true'] {
+  background: #16695f;
+  color: #fff;
+}
+
+.maintCount {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: inherit;
+  opacity: 0.7;
+}
+
+/* Priced-pool "RM" tag on the rail — a priced pool carries a single surcharge
+   cost. Petrol-soft in the resting state; inverts to a translucent white chip
+   when the rail item is the active (petrol-filled) one. */
+.maintRmPill {
+  font-family: var(--font-button);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #0c3f39;
+  background: #e1efed;
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.maintNavItem[data-active='true'] .maintRmPill {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* "Cost, not selling" note above the Specials pool — a calm dashed panel
+   (matches the approved mockup's cost-only banner). */
+.maintCostNote {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: #f4f6f3;
+  border: 1px dashed #c2c6bd;
+  border-radius: var(--radius-md);
+  font-size: var(--fs-12);
+  color: #5d6357;
+  line-height: 1.4;
+}
+
+.maintCostNote svg {
+  flex: none;
+  margin-top: 1px;
+  color: #767b6e;
+}
+
+.maintPanel {
+  background: #fff;
+  border: 1px solid #d6d9d2;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+  padding: var(--space-5) var(--space-6) var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.maintHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.maintTitle {
+  font-family: var(--font-title);
+  font-size: var(--fs-20);
+  font-weight: 700;
+  color: #11140f;
+  margin: 0;
+}
+
+.maintSubtitle {
+  font-size: var(--fs-13);
+  color: #767b6e;
+  margin: 4px 0 0;
+}
+
+.maintList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.maintRow {
+  display: grid;
+  grid-template-columns: 32px 32px 1fr auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: #f4f6f3;
+  border: 1px solid #d6d9d2;
+  border-radius: var(--radius-md);
+}
+
+.maintRowIdx {
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  color: #9aa093;
+}
+
+.maintRowIcon {
+  color: #767b6e;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  padding: 0;
+  display: inline-flex;
+}
+
+.maintRowValue {
+  font-family: var(--font-sans);
+  font-size: var(--fs-16);
+  font-weight: 600;
+  color: #11140f;
+}
+
+.maintRowPrice {
+  font-family: var(--font-mono);
+  font-size: var(--fs-15);
+  color: #11140f;
+  text-align: right;
+  min-width: 120px;
+}
+
+.maintRowPriceMuted {
+  color: #767b6e;
+}
+
+.maintRowRmPrefix {
+  display: inline-block;
+  font-family: var(--font-button);
+  font-size: var(--fs-11);
+  font-weight: 600;
+  color: #767b6e;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-right: var(--space-2);
+}
+
+/* Notice banner — informational / empty-state ("no baseline found", "showing
+   the default list"). Was a stray burnt-orange rgba tint over a petrol
+   border; now the design-system soft-primary notice. For genuine failures
+   use .bannerErr below. */
+.bannerWarn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  background: #e1efed;
+  border: 1px solid #16695f;
+  color: #0c3f39;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-13);
+}
+
+/* Error banner — the "Failed to load …" surfaces. Same box as .bannerWarn on
+   the design system's err tokens (err #b23a3a at 40% border / 10% fill). */
+.bannerErr {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  background: rgba(178, 58, 58, 0.10);
+  border: 1px solid rgba(178, 58, 58, 0.40);
+  color: #b23a3a;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-13);
+}
+
+.stateInfo {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-size: var(--fs-12);
+  color: #767b6e;
+}
+
+/* ── Drawers + modals (New SKU, Configure, History dialogs) ────────── */
+
+.drawerBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(34, 31, 32, 0.32);
+  z-index: 50;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+}
+
+.drawer {
+  width: min(640px, 92vw);
+  background: #f4f6f3;
+  border-left: 1px solid #c2c6bd;
+  box-shadow: var(--shadow-3);
+  border-top-left-radius: var(--radius-xl);
+  border-bottom-left-radius: var(--radius-xl);
+  display: flex;
+  flex-direction: column;
+  z-index: 51;
+  overflow: hidden;
+}
+
+.drawerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid #d6d9d2;
+  background: #fff;
+}
+
+.drawerTitle {
+  font-family: var(--font-title);
+  font-size: var(--fs-18);
+  font-weight: 700;
+  color: #11140f;
+  margin: 0;
+}
+
+.drawerBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.drawerFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid #d6d9d2;
+  background: #fff;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+
+.formGridFull {
+  grid-column: 1 / -1;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fieldLabel {
+  font-family: var(--font-button);
+  font-size: var(--fs-11);
+  font-weight: 600;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: #9aa093;
+}
+
+.fieldInput,
+.fieldSelect {
+  font-family: var(--font-sans);
+  font-size: var(--fs-13);
+  background: #fff;
+  border: 1px solid #d6d9d2;
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  color: #11140f;
+  outline: none;
+}
+.fieldInput:focus,
+.fieldSelect:focus {
+  border-color: #c2c6bd;
+  background: #f4f6f3;
+}
+
+.iconBtn {
+  background: transparent;
+  border: none;
+  color: #767b6e;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+}
+.iconBtn:hover {
+  background: #f4f6f3;
+  color: #11140f;
+}
+
+/* Phone (Houzs 2026-06-24) — element-level overflow clamp. The .page /
+   .title / .actionsRow / .tabSwitch rules that used to live here went with
+   the frame: the shared PageHeader and the Tailwind toolbar carry their own
+   responsive behaviour. */
+@media (max-width: 600px) {
+  .categoryChips {
+    flex-wrap: wrap;
+  }
+  .searchBox {
+    width: 100%;
+  }
+  .searchInput {
+    width: 100%;
+  }
+  .tableCard {
+    overflow-x: auto;
+  }
+  .table {
+    min-width: 560px;
+  }
+  .maintLayout {
+    grid-template-columns: 1fr;
+  }
+  .maintPanel {
+    padding: var(--space-4);
+  }
+  .maintRowPrice {
+    min-width: 0;
+  }
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
+}

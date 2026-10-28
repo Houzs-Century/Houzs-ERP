@@ -1,0 +1,66 @@
+name: Seed (Staging)
+
+# Manual-only. Seeds the staging Supabase with the canonical User Management
+# fixture:
+#   • 3 departments (SALES, OPERATION, HQ)
+#   • 17 positions + org-chart hierarchy
+#   • 17 test accounts, one per position — password "houzs1234", email
+#     "<position_slug>@example.my"
+#
+# Purpose: make staging a walk-through permission-preview environment (log in
+# as each position, verify what each user sees) without touching prod.
+#
+# Idempotent: the seed script uses UPSERT (INSERT ... ON CONFLICT DO UPDATE),
+# so re-running is safe and cheap. Use mode=remove-tests to wipe the 17 test
+# accounts before a real go-live.
+#
+# Isolation: uses STAGING_DATABASE_URL from the Staging Environment secret —
+# the prod DATABASE_URL secret lives on Production and can't leak into this
+# job. Never call this workflow with any other DATABASE_URL binding.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'What to do'
+        required: true
+        default: 'apply'
+        type: choice
+        options:
+          - apply           # Insert / upsert everything (default)
+          - dry-run         # Print planned changes without touching the DB
+          - remove-tests    # Delete every @example.my test account
+
+concurrency:
+  group: seed-staging
+  cancel-in-progress: false
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Seed (${{ inputs.mode }})
+        run: |
+          case "${{ inputs.mode }}" in
+            dry-run)      node scripts/seed-user-management.mjs --dry-run ;;
+            remove-tests) node scripts/seed-user-management.mjs --remove-tests ;;
+            apply)        node scripts/seed-user-management.mjs ;;
+            *)            echo "Unknown mode: ${{ inputs.mode }}"; exit 1 ;;
+          esac
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          # See deploy-staging.yml pg-migrate step for the same note: GH runners
+          # have no IPv6 egress; forcing ipv4first sidesteps Happy-Eyeballs when
+          # the Supabase pooler hostname returns both A and AAAA records.
+          NODE_OPTIONS: --dns-result-order=ipv4first

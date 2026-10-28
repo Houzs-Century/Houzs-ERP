@@ -1,0 +1,62 @@
+name: Re-sync SO delivered status (plan by default)
+
+# Orders whose goods are all out but that still sit in In Production. The rule
+# already exists (scm/lib/so-delivery-sync.ts) and fires when a DELIVERY ORDER
+# changes status; orders whose DO last moved BEFORE the 2026-08-22 ruling were
+# judged under the old set, where LOADED did not count as delivered. This
+# re-offers them to the CURRENT rule.
+#
+# It calls the real function rather than restating it, and it does NOT touch the
+# delivery order's own stage — writing DELIVERED on a DO would fake a driver
+# scan (shared/do-scan-ladder.ts).
+#
+# Plan by default; apply needs the confirmation phrase and verifies the VALUES on
+# a fresh connection. Manual trigger only, own concurrency group.
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "a company id, or all"
+        required: false
+        default: "all"
+        type: string
+      mode:
+        description: "plan (read-only) or apply"
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      release:
+        description: "1 to ALSO re-judge orders already DELIVERED (can release them)"
+        required: false
+        default: "0"
+        type: string
+      confirm:
+        description: "On apply, type exactly: LOADED MEANS THE GOODS ARE OUT"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: resync-so-delivered-status
+  cancel-in-progress: false
+
+jobs:
+  resync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: plan or apply
+        working-directory: backend
+        env:
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+          COMPANY: "${{ inputs.company }}"
+          MODE: "${{ inputs.mode }}"
+          RELEASE: "${{ inputs.release }}"
+          CONFIRM: "${{ inputs.confirm }}"
+        run: npx tsx scripts/resync-so-delivered-status.mjs

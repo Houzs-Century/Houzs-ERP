@@ -1,0 +1,18 @@
+-- 0091: safety-net DEFAULT for every company_id column (scm + public).
+--
+-- PROD INCIDENT 2026-07-13: 0083/0086/0087/0089 added company_id NOT NULL to
+-- ~120 tables, but the multi-company design relies on each INSERT path stamping
+-- company_id by hand (activeCompanyId/stampCompany) — no DB default, no trigger.
+-- Any path that was never taught to stamp now violates NOT NULL and 500s
+-- (confirmed: scm.scan_jobs insert in scan-so.ts -> "Couldn't read the slip";
+-- 0089 config tables are exposed the same way).
+--
+-- Fix: give every company_id column DEFAULT <HOUZS id>. Unstamped inserts fall
+-- back to the base company and stop 500ing. Columns/code unchanged; explicitly
+-- stamped inserts are unaffected. NOTE this is a SAFETY NET, not the final
+-- state: before 2990 users go live every write path must stamp explicitly
+-- (a missed stamp would silently label 2990 data as HOUZS instead of failing) —
+-- the systematic stamp audit tracks that.
+-- Idempotent: SET DEFAULT is repeatable; single-line DO body survives the
+-- pg-migrate ';\n' splitter.
+DO $$ DECLARE hid bigint; r record; BEGIN SELECT id INTO hid FROM public.companies WHERE code='HOUZS'; IF hid IS NULL THEN RAISE NOTICE 'no HOUZS company row - skipping 0091'; RETURN; END IF; FOR r IN SELECT c2.table_schema AS ts, c2.table_name AS tn FROM information_schema.columns c2 JOIN information_schema.tables t ON t.table_schema = c2.table_schema AND t.table_name = c2.table_name AND t.table_type = 'BASE TABLE' WHERE c2.column_name = 'company_id' AND c2.table_schema IN ('scm','public') AND c2.table_name <> 'user_companies' LOOP EXECUTE format('ALTER TABLE %I.%I ALTER COLUMN company_id SET DEFAULT %s', r.ts, r.tn, hid); END LOOP; END $$;

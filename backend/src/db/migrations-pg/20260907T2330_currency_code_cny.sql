@@ -1,0 +1,59 @@
+-- 20260907T2330_currency_code_cny.sql
+-- Add 'CNY' to scm.currency_code so a purchase document can be RECORDED in the
+-- currency AutoCount actually holds it in.
+--
+-- WHY. `import-ac-outstanding-po.mjs:403` writes the CONSTANT 'MYR' into
+-- scm.purchase_orders.currency whatever the book says. Measured on the committed
+-- header cut (data/ac-doc-headers.json.gz, 2026-09-07 17:36+08): the AutoCount
+-- book holds 22 CNY purchase orders out of 9,408 and 0 non-MYR sales orders out
+-- of 13,365. Exactly ONE of those 22 is inside the migrated scope —
+-- `HC-PO-009335`, RM 34,334.90, SUBMITTED — and it reads 'MYR' in the ERP.
+-- The owner ruled on 2026-09-07: 改成 CNY.
+--
+-- That mislabel is not cosmetic. It is what let a repair read an exchange rate
+-- as a 38.06% discount and take RM 13,068.55 off that live document
+-- (docs/bugs/0665-*, reverted by #3070).
+--
+-- WHY A NEW LABEL AND NOT THE EXISTING 'RMB'. They are the same currency under
+-- two names: 'RMB' (renminbi, the currency's name) is what this ERP was seeded
+-- with; 'CNY' (ISO 4217) is what the account book states, and what the owner
+-- asked for. The standing rule for migrated data is that the migration COPIES
+-- the book's value and never computes one, so translating CNY into RMB on the
+-- way in is exactly the class of silent transformation that rule exists to
+-- forbid. 'RMB' is left in place and untouched — nothing in production holds it
+-- (every currency column on company 1 reads MYR: PO 574, SO 2,882, DO 171,
+-- GRN 320, PI 32, measured 2026-09-07 23:06+08).
+--
+-- NO scm.currencies ROW IS SEEDED HERE, DELIBERATELY. `rate_to_myr` is
+-- `NOT NULL DEFAULT 1`, so inserting a CNY row would hand every future CNY
+-- receipt a positive rate of 1 and `assertForeignRatePostable`
+-- (src/scm/lib/fx-guard.ts) would wave it through — capitalising a yuan figure
+-- into the FIFO lot as if it were ringgit, which is the exact R2 mis-cost that
+-- guard exists to refuse. With no master row the guard reads a null rate and
+-- BLOCKS the post until a real rate is entered. A missing rate is an honest
+-- "not known yet"; a seeded 1 is a fabricated one. (The pre-existing RMB row
+-- carries rate_to_myr = 1.000000 for that same seed reason — noted, not changed
+-- here; it is the owner's to set in the Maintenance page.)
+--
+-- ALTER TYPE ... ADD VALUE only — kept ALONE in its own file, following
+-- 0040_scm_do_status_draft.sql. pg-migrate.mjs wraps each file in ONE
+-- transaction and Postgres forbids USING a freshly-added enum value in the same
+-- transaction that adds it, so NO row may be written to 'CNY' here. The data
+-- repair is `backend/scripts/repair-migrated-currency.mjs`, dispatched
+-- separately after this has been applied. SET search_path = scm so an
+-- unqualified type resolves to scm.* (pg-migrate's default search_path excludes
+-- scm). Idempotent via IF NOT EXISTS.
+--
+-- REVERSAL: PostgreSQL cannot DROP an enum label, so this file is not literally
+-- reversible and pretending otherwise would be the lie. What IS reversible is
+-- every effect of it: `UPDATE scm.purchase_orders SET currency = 'MYR' WHERE
+-- currency = 'CNY';` (and the same on mfg_sales_orders / delivery_orders / grns
+-- / purchase_invoices / sales_invoices) puts the data back, after which the
+-- unused label sits in the type and does nothing — no row references it, no
+-- index depends on it, no read path enumerates it. Rebuilding the type to
+-- remove the label would mean dropping and recreating every column that uses it
+-- across six tables, which is strictly more dangerous than an unused label.
+
+SET search_path = scm, public;
+
+ALTER TYPE scm.currency_code ADD VALUE IF NOT EXISTS 'CNY' AFTER 'RMB';

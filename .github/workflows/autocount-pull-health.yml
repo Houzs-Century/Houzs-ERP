@@ -1,0 +1,43 @@
+name: AutoCount pull health (read-only)
+
+# Is the inbound AutoCount pull MOVING DATA, or only reporting that it ran?
+#
+# That distinction is not academic here. At the Postgres cutover the INSERT in
+# services/pull.ts named seven columns the Postgres table does not have, so every
+# sales-order row failed with 42703 — and the advance is guarded by
+# `failed === 0`, so the checkpoint froze at the cutover date and the same window
+# was refetched forever. Every per-row failure was caught and counted, so the job
+# kept reporting normal-looking runs while the mirror took nothing. Nobody saw it
+# until a salesperson could not find an order that plainly exists in AutoCount.
+#
+# The INSERT is fixed. Whether the BACKLOG was collected lives in one row of
+# system_settings, which is why this is a check and not a paragraph.
+#
+# Manual trigger only, read-only, own concurrency group.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: autocount-pull-health
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-autocount-pull-health.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

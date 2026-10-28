@@ -1,0 +1,42 @@
+name: check-mrp-unreleased-demand (read-only)
+
+# "Why does MRP list orders with an EMPTY Processing Date, and are those
+# years-old orders really undelivered?" — both asked by the owner on 2026-08-31,
+# both answered in COUNTS ONLY so the run is safe in a public Actions log.
+#
+# It reads production, and it also reads the committed AutoCount fidelity
+# snapshot, so it can answer the second question with the BOOK's own
+# TransferedQty rather than with our own links (which is a different question:
+# unlinked delivery lines exist).
+#
+# Manual trigger only, own concurrency group, SELECTs only, exit 0 for every
+# legitimate answer.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: 'Company id (1 = HOUZS / Houzs Century)'
+        required: false
+        default: '1'
+        type: string
+
+concurrency:
+  group: check-mrp-unreleased-demand
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: measure (read-only)
+        working-directory: backend
+        env:
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+          COMPANY_ID: "${{ inputs.company_id }}"
+        run: node scripts/check-mrp-unreleased-demand.mjs

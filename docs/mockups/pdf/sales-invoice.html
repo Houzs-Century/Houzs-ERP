@@ -1,0 +1,196 @@
+<!-- MOCKUP — pending owner approval. Static design mock of the UNIFIED Houzs PDF
+     template applied to a SALES INVOICE. No real data, no code path.
+     Flex vs Sales Order: full totals block (Subtotal / Discount / Tax / Grand
+     Total / Paid / Outstanding); Due date; payment terms line. -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MOCKUP — Sales Invoice (unified PDF template)</title>
+<style>
+  :root{
+    --ink:#11140f;--ink2:#414539;--muted:#767b6e;
+    --line:#d6d9d2;--line2:#c2c6bd;
+    --paper:#fff;--inset:#f4f6f3;
+    --teal:#16695f;--teal-soft:#e1efed;--teal-ink:#0c3f39;--brass:#a16a2e;--dark:#1b1e17;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:#dfe2dc;font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink);-webkit-font-smoothing:antialiased}
+  .mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
+  .mock{position:sticky;top:0;z-index:10;background:var(--teal-ink);color:#fff;font-size:12px;letter-spacing:.03em;padding:8px 16px;display:flex;justify-content:space-between;align-items:center}
+  .mock b{font-weight:600}.mock span{opacity:.72;font-weight:400}
+  .page{width:210mm;min-height:297mm;margin:16px auto;background:var(--paper);position:relative;padding:14mm 14mm 20mm}
+  .page:not(.print){box-shadow:0 2px 14px rgba(0,0,0,.14)}
+  .hd{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+  .brand{display:flex;gap:10px;align-items:flex-start}
+  .logo{width:46px;height:46px;border-radius:8px;background:var(--teal);color:#fff;display:flex;align-items:center;justify-content:center;font-family:"IBM Plex Serif",Georgia,serif;font-size:26px;font-weight:600;flex:none}
+  .co .nm{font-size:15px;font-weight:600;letter-spacing:.01em}
+  .co .rg,.co .ad{font-size:9px;color:var(--ink2);line-height:1.55}
+  .co .ad{margin-top:3px}
+  .ttl{text-align:right;flex:none}
+  .ttl h1{font-size:22px;font-weight:600;color:var(--teal);letter-spacing:.06em;text-transform:uppercase;line-height:1}
+  .ttl .meta{margin-top:8px;font-size:9.5px;color:var(--ink2);line-height:1.75}
+  .ttl .meta b{color:var(--ink);font-weight:600}
+  .rule{height:2px;background:var(--teal);margin-top:10px}
+  .party{display:flex;gap:24px;margin-top:14px}
+  .party>div{flex:1;min-width:0}
+  .lbl{font-size:9px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--teal-ink);border-bottom:1px solid var(--line);padding-bottom:3px;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+  .lbl::before{content:"";width:8px;height:8px;background:var(--teal);border-radius:2px;flex:none}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:9.5px;line-height:1.5}
+  .kv dt{color:var(--muted)}
+  .kv dd{color:var(--ink)}
+  table.items{width:100%;border-collapse:collapse;margin-top:16px;font-size:9.5px}
+  table.items thead th{background:var(--dark);color:#fff;font-weight:600;text-align:left;padding:6px 7px;border-bottom:2px solid var(--teal);font-size:9px;letter-spacing:.02em}
+  table.items thead th.num{text-align:right}
+  table.items tbody td{padding:5px 7px;border-bottom:1px solid var(--line);vertical-align:top;line-height:1.4}
+  table.items tbody tr:nth-child(even){background:var(--inset)}
+  .num{text-align:right}
+  .sub{color:var(--muted);font-size:8.5px;display:block;margin-top:1px}
+  .below{display:flex;justify-content:space-between;gap:24px;margin-top:16px;align-items:flex-start}
+  .totals{width:80mm;margin-left:auto;font-size:10px}
+  .totals .row{display:flex;justify-content:space-between;padding:3px 1px}
+  .totals .row.grand{background:var(--teal-soft);color:var(--teal-ink);font-weight:600;font-size:12px;padding:7px 8px;margin-top:5px;border-top:1px solid var(--teal)}
+  .totals .row.out{font-weight:600;border-top:1px dashed var(--line2);margin-top:3px;padding-top:5px}
+  .totals .row.out span:last-child{color:var(--brass)}
+  .terms{font-size:8.5px;color:var(--ink2);line-height:1.65;max-width:110mm;margin-top:18px}
+  .terms h4{font-size:9px;color:var(--ink);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}
+  .sign{display:flex;gap:20px;margin-top:22px}
+  .sign .box{flex:1}
+  .sign .cap{font-size:9px;font-weight:600;margin-bottom:4px}
+  .sign .pad{height:22mm;border:1px dashed var(--line2);border-radius:3px}
+  .ft{position:absolute;left:14mm;right:14mm;bottom:10mm;border-top:1px solid var(--line);padding-top:5px;display:flex;justify-content:space-between;font-size:8px;color:var(--muted)}
+  @media print{
+    html,body{background:#fff}.mock{display:none}
+    .page{margin:0;box-shadow:none;width:auto;min-height:auto}
+    @page{size:A4;margin:0}
+  }
+</style>
+</head>
+<body>
+  <div class="mock"><b>MOCKUP — pending owner approval</b><span>Unified PDF template &middot; Sales Invoice</span></div>
+
+  <div class="page">
+    <!-- ===== UNIFIED HEADER ===== -->
+    <div class="hd">
+      <div class="brand">
+        <div class="logo">H</div>
+        <div class="co">
+          <div class="nm">HOUZS CENTURY SDN BHD</div>
+          <div class="rg">Co. Reg. 201801012345 (1234567-A) &middot; SST W10-1808-32000123</div>
+          <div class="ad">No. 12, Jalan Perindustrian 4, Taman Perindustrian Puchong,<br>47160 Puchong, Selangor, Malaysia.</div>
+          <div class="ad">Tel +60 3-8060 1234 &middot; sales@houzscentury.com &middot; www.houzscentury.com</div>
+        </div>
+      </div>
+      <div class="ttl">
+        <h1>Sales Invoice</h1>
+        <div class="meta">
+          <div>Invoice No: <b>INV-2607-0388</b></div>
+          <div>Date: <b>22/07/2026</b></div>
+          <div>Status: <b>Partially Paid</b></div>
+        </div>
+      </div>
+    </div>
+    <div class="rule"></div>
+
+    <!-- ===== PARTY BLOCK: BILL TO + INVOICE DETAILS ===== -->
+    <div class="party">
+      <div>
+        <div class="lbl">Bill To</div>
+        <dl class="kv">
+          <dt>Company</dt><dd>Setia Alam Living Sdn Bhd</dd>
+          <dt>Code</dt><dd>C-01042</dd>
+          <dt>Address</dt><dd>No. 8, Jalan Setia Prima U13/A, Setia Alam, 40170 Shah Alam, Selangor.</dd>
+          <dt>Tel</dt><dd>03-3358 7788</dd>
+          <dt>Email</dt><dd>accounts@setiaalamliving.com</dd>
+        </dl>
+      </div>
+      <div>
+        <div class="lbl">Invoice Details</div>
+        <dl class="kv">
+          <dt>Invoice No</dt><dd class="mono">INV-2607-0388</dd>
+          <dt>SO Ref</dt><dd class="mono">SO-2607-0142</dd>
+          <dt>Customer PO</dt><dd class="mono">PO-RS-8890</dd>
+          <dt>Date</dt><dd>22/07/2026</dd>
+          <dt>Due</dt><dd>21/08/2026</dd>
+          <dt>Status</dt><dd>Partially Paid</dd>
+        </dl>
+      </div>
+    </div>
+
+    <!-- ===== LINE ITEMS ===== -->
+    <table class="items">
+      <thead>
+        <tr>
+          <th class="num" style="width:6%">#</th>
+          <th style="width:16%">Item</th>
+          <th>Description</th>
+          <th class="num" style="width:8%">Qty</th>
+          <th class="num" style="width:15%">Unit Price</th>
+          <th class="num" style="width:12%">Disc</th>
+          <th class="num" style="width:15%">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="num">1</td>
+          <td class="mono">BF-DVN-Q</td>
+          <td>Divan Bed Base — Queen<span class="sub">Fabric: Charcoal Linen</span></td>
+          <td class="num mono">6</td>
+          <td class="num mono">MYR 480.00</td>
+          <td class="num mono">—</td>
+          <td class="num mono">MYR 2,880.00</td>
+        </tr>
+        <tr>
+          <td class="num">2</td>
+          <td class="mono">SF-3ST-GY</td>
+          <td>3-Seater Fabric Sofa "Aspen"<span class="sub">Colour: Dove Grey</span></td>
+          <td class="num mono">3</td>
+          <td class="num mono">MYR 1,650.00</td>
+          <td class="num mono">MYR 150.00</td>
+          <td class="num mono">MYR 4,500.00</td>
+        </tr>
+        <tr>
+          <td class="num">3</td>
+          <td class="mono">MT-FM10-Q</td>
+          <td>Foam Mattress 10" — Queen<span class="sub">Medium-firm</span></td>
+          <td class="num mono">6</td>
+          <td class="num mono">MYR 620.00</td>
+          <td class="num mono">—</td>
+          <td class="num mono">MYR 3,720.00</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- ===== FULL TOTALS: Subtotal / Discount / Tax / Grand Total / Paid / Outstanding ===== -->
+    <div class="below">
+      <div></div>
+      <div class="totals">
+        <div class="row"><span>Subtotal</span><span class="mono">MYR 11,250.00</span></div>
+        <div class="row"><span>Discount</span><span class="mono">MYR 150.00</span></div>
+        <div class="row"><span>Tax</span><span class="mono">MYR 0.00</span></div>
+        <div class="row grand"><span>Grand Total</span><span class="mono">MYR 11,100.00</span></div>
+        <div class="row"><span>Paid</span><span class="mono">MYR 3,000.00</span></div>
+        <div class="row out"><span>Outstanding</span><span class="mono">MYR 8,100.00</span></div>
+      </div>
+    </div>
+
+    <!-- ===== SIGNATURES + TERMS ===== -->
+    <div class="sign">
+      <div class="box"><div class="cap">Customer Acknowledgement</div><div class="pad"></div></div>
+      <div class="box"><div class="cap">Authorised Signature (Houzs Century Sdn Bhd)</div><div class="pad"></div></div>
+    </div>
+    <div class="terms">
+      <h4>Payment Terms</h4>
+      Payment due as per invoice. Late payments may incur a service charge. Please quote the invoice number on remittance. Bank transfer, DuitNow QR, and cheque accepted.
+    </div>
+
+    <!-- ===== FOOTER ===== -->
+    <div class="ft">
+      <span class="mono">INV-2607-0388</span>
+      <span>Houzs ERP &middot; 22/07/2026</span>
+      <span>Page 1 of 1</span>
+    </div>
+  </div>
+</body>
+</html>

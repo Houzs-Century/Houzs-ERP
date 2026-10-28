@@ -1,0 +1,65 @@
+name: Delete HC test documents
+
+# Deletes ONLY the ERP-minted TEST documents in Houzs Century (HC-<TYPE>-2608-…),
+# keeping every re-imported real AutoCount document, and never touching 2990.
+# See backend/scripts/delete-hc-test-docs.mjs for the full contract and guards.
+#
+# DEFAULT is mode=plan: read-only, lists what it WOULD delete, writes nothing.
+# mode=apply deletes, and ONLY runs when confirm is typed EXACTLY — the workflow
+# passes it to the script's CONFIRM gate, which refuses otherwise.
+#
+# Manual trigger only. Never on a schedule.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, read-only) or apply (DELETES HC test docs)"
+        type: choice
+        default: plan
+        options:
+          - plan
+          - apply
+      confirm:
+        description: 'For apply ONLY, type exactly: DELETE HC TEST DOCS'
+        type: string
+        required: false
+        default: ""
+
+# Own concurrency group — never the deploy's, never the wipe's.
+concurrency:
+  group: delete-hc-test-docs
+  cancel-in-progress: false
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Run (${{ github.event.inputs.mode }})
+        run: node scripts/delete-hc-test-docs.mjs
+        env:
+          MODE: ${{ github.event.inputs.mode }}
+          CONFIRM: ${{ github.event.inputs.confirm }}
+          BACKUP_DIR: ${{ github.workspace }}/hc-test-docs-backup
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+      # apply dumps the backup BEFORE deleting; always() so a failed apply still
+      # uploads the only copy of the deleted rows.
+      - name: Upload backup (apply only)
+        if: ${{ always() && github.event.inputs.mode == 'apply' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: hc-test-docs-backup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: hc-test-docs-backup/
+          if-no-files-found: warn
+          retention-days: 90

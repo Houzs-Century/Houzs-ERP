@@ -1,0 +1,22 @@
+-- 20260917T0900_drop_legacy_page_access_tables.sql
+-- REVERSAL:
+--   Re-create the two tables from 0000_baseline.sql (role_page_access, mig 073;
+--   position_page_access, mig 094) and restore their readers from the commit
+--   before this one. The ROWS are not restorable from this file: on 2026-09-16
+--   position_page_access held 149 rows that login had not read since
+--   2026-07-18 (positionAccessSnapshot.ts is the photograph of them), and
+--   role_page_access held 53 rows read only for a member with no Title, of
+--   whom there were none.
+--
+-- Roles & Permissions review, last of the dead layers (owner 2026-09-17:
+-- 「做 6，删旧表」).
+--   position_page_access — the old per-Title page matrix. Not read at login
+--     since the Title policy moved to code (2026-07-18) and then to
+--     position_policy (2026-09-16); its editor answered 409 and the Titles page
+--     carried a "cannot be edited here" note about it.
+--   role_page_access — the per-role page matrix in the Role settings drawer.
+--     Read only for a member with NO Title; that path now resolves pages from
+--     the role's permission keys alone (the same backfill rule that already
+--     filled every page without a row).
+DROP TABLE IF EXISTS public.position_page_access;
+DROP TABLE IF EXISTS public.role_page_access;

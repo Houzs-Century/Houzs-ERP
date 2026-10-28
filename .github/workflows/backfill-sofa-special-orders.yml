@@ -1,0 +1,71 @@
+name: Backfill sofa special orders
+
+# Manual. Puts the sofa special orders written on the AutoCount slips onto the
+# migrated SO and PO lines: a scm.special_addons picker code where one exists,
+# the phrase verbatim in the same free-text field where none does.
+# Reads the picker LIVE - it is not hard-coded here or in the script.
+# DRY-RUN unless apply=1; the report is the ##[notice] lines.
+#
+# RE-RUN: safe only because it now REFUSES the rows it used to corrupt. This
+# writes the legacy string[] shape of custom_specials; the pricing recompute
+# writes the declared Array<{description, surchargeSen}>. A second run over a
+# line the recompute has since touched used to String() those objects and store
+# ["[object Object]"], replacing a surcharge breakdown that carries money. Such
+# rows are now counted and printed under "lines REFUSED because the pricing
+# engine already owns their custom_specials" - if that number is large, the
+# population has moved on and this backfill has nothing left to do.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      apply:
+        description: "1 to write, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+
+concurrency:
+  group: backfill-sofa-special-orders-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/backfill-sofa-special-orders.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/backfill-sofa-special-orders.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

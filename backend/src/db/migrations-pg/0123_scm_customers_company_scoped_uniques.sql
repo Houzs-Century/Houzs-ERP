@@ -1,0 +1,56 @@
+-- 0123_scm_customers_company_scoped_uniques.sql — re-scope the two UNIQUE
+-- indexes on scm.customers by company_id, so the 2990 customer mirror
+-- (scm/routes/customer-mirror.ts, docs/2990-live-sync/05_customer_outbox_2990.sql)
+-- cannot be wedged by a name/phone collision between two independent customer
+-- books.
+--
+-- WHY. The scm schema was ported from 2990 as pure DDL (see
+-- backend/scripts/scm-schema/2990s-full-schema.sql), where `customers` is a
+-- SINGLE-company table. It carries two GLOBAL unique indexes:
+--     customers_name_phone_unique   (lower(trim(name)), phone) WHERE phone IS NOT NULL
+--     customers_customer_code_unique (customer_code)           WHERE customer_code IS NOT NULL
+-- Migration 0083 then added company_id and made scm.customers hold TWO companies'
+-- customer books in one table, but left both uniques global. So a 2990 retail
+-- customer and a Houzs customer who are the same human — same name, same phone —
+-- cannot both exist. One of them is rejected, even though the design's §2a row 2
+-- says 2990 owns its customer book independently of Houzs's.
+--
+-- That is already a live bug and not a hypothetical: the one-time import
+-- (scripts/migrate-2990-into-houzs.mjs) inserts with a bare `ON CONFLICT DO
+-- NOTHING`, which SILENTLY DROPS a colliding row. 2990 has 67 customers, Houzs
+-- has 66 — a delta of exactly one, which a single name+phone collision explains
+-- as well as a post-cutover create does. The mirror must survive BOTH readings:
+-- ON CONFLICT (id) DO UPDATE does not swallow a violation of a DIFFERENT index,
+-- so an unscoped unique would raise, the receiver would 500, the outbox would
+-- retry forever, and the customer mirror would wedge in exactly the way the SO
+-- mirror is wedged today. Scoping the uniques makes that failure structurally
+-- unreachable rather than merely unlikely.
+--
+-- SAFETY. The new indexes are strictly WEAKER than the ones they replace: every
+-- row set that satisfies unique(name,phone) also satisfies
+-- unique(name,phone,company_id). So the re-create cannot fail on existing data,
+-- in any environment, whatever is already in the table. It only stops rejecting
+-- pairs that were never in conflict to begin with.
+--
+-- COLUMN ORDER. company_id goes LAST, not first. Uniqueness is order-independent,
+-- but upsert_customer_by_name_phone() (the live SO-create customer resolver, in
+-- backend/scripts/scm-schema/port-missing-functions-triggers.sql) looks up by
+-- (lower(btrim(name)), phone) WITHOUT a company filter. Keeping that pair as the
+-- leading prefix leaves its lookup index-served instead of demoting it to a seq
+-- scan. NOTE: that function's unscoped lookup is a SEPARATE known bug — it can
+-- bind a Houzs SO to a 2990-owned customer row and bump its last_seen_at. It is
+-- deliberately NOT touched here (it is on the live SO-create path for both
+-- companies); see BUG-HISTORY / the PR notes.
+--
+-- Guarded on the table existing (views + absent tables skipped), same shape as
+-- 0083/0089, so this is safe on prod / staging / a fresh DB. One-line DO blocks:
+-- pg-migrate splits on /;\s*\n/, so every internal `;` must not be followed by a
+-- newline.
+
+-- scm.customers — (name, phone) identity, now per-company.
+DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='scm' AND c.relname='customers' AND c.relkind IN ('r','p')) THEN DROP INDEX IF EXISTS scm.customers_name_phone_unique; CREATE UNIQUE INDEX IF NOT EXISTS customers_name_phone_unique ON scm.customers (lower(btrim(name)), phone, company_id) WHERE phone IS NOT NULL; END IF; END $$;
+
+-- scm.customers — customer_code, now per-company. Both systems mint the SAME
+-- `2990S-` prefix (Houzs runs a port of 2990's own minter), so the code carries
+-- no company information and a cross-company collision is possible in principle.
+DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='scm' AND c.relname='customers' AND c.relkind IN ('r','p')) THEN DROP INDEX IF EXISTS scm.customers_customer_code_unique; CREATE UNIQUE INDEX IF NOT EXISTS customers_customer_code_unique ON scm.customers (customer_code, company_id) WHERE customer_code IS NOT NULL; END IF; END $$;

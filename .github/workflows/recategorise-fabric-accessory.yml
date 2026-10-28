@@ -1,0 +1,56 @@
+name: Move products to Sofa Accessory + back-fill colour (plan / apply)
+
+# Owner 2026-09-14: 「这几个也是swap去sofa accessory 然后看一下之前旧的order 都帮我
+# backfill颜色」. Moves the named models / model-less SKUs to FABRIC_ACCESSORY,
+# their lines to item_group fabric_accessory, writes the fabric colour a line's
+# own text names, and relabels received stock per lot. PLAN (default) rolls
+# back; APPLY needs the confirm phrase. After an apply, run "Recompute SO
+# allocation" with write=1 so open orders re-read the relabelled stock.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (rolled back) or apply"
+        required: true
+        default: plan
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "For apply only — type: MOVE TO SOFA ACCESSORY"
+        required: false
+        default: ""
+        type: string
+      models:
+        description: "Model codes (blank = the script's default list)"
+        required: false
+        default: ""
+        type: string
+      skus:
+        description: "Model-less SKU codes (blank = the script's default list)"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: recategorise-fabric-accessory
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/recategorise-fabric-accessory.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          MODELS: ${{ inputs.models }}
+          SKUS: ${{ inputs.skus }}

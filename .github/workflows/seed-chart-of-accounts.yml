@@ -1,0 +1,61 @@
+name: Seed the chart of accounts
+
+# Manual. MODE=plan (the default) writes NOTHING — it prints, per company,
+# how many rows would be created and updated. MODE=apply needs the CONFIRM
+# sentence, exactly like every other repair workflow here. The data is
+# backend/scripts/data/chart-of-accounts-houzs.json (the accountant's parsed
+# AutoCount export); the semantics are POST /accounting/chart/import's:
+# shared rows land in every company, the company-specific series stay with
+# company 1, rows not in the file are never touched. Idempotent.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "staging"
+        type: choice
+        options: [staging, prod]
+      mode:
+        description: "plan (default, writes nothing) | apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'apply only: I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: seed-chart-of-accounts-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    # The environment is the load-bearing line (docs/bugs/0629): secrets are
+    # scope-resolved, and the REPO-scope STAGING_DATABASE_URL is a stale
+    # 2026-07-06 leftover holding the PROD direct host (IPv6-only, so every
+    # repo-scope read just ENETUNREACHes — but scoping must not lean on that).
+    # Staging's real DSN lives in the Staging ENVIRONMENT (what
+    # staging-migrate.yml connects with); prod's is the repo DATABASE_URL
+    # (what deploy.yml's pg-migrate step connects with, Production has no
+    # same-name shadow). Mirror the pipelines that demonstrably connect.
+    environment: ${{ inputs.target == 'prod' && 'Production' || 'Staging' }}
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/seed-chart-of-accounts.mjs
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          # Runners have no IPv6 route to Supabase; prefer the A record like
+          # staging-migrate.yml does (the script also pins it itself, 0628).
+          NODE_OPTIONS: --dns-result-order=ipv4first
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}

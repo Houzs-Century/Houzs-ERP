@@ -1,0 +1,140 @@
+name: Staging Migrations
+
+# ── Why this workflow exists ────────────────────────────────────────────────
+# Staging's job as a DDL rehearsal bench died quietly on 2026-07-31: the full
+# staging deploy (deploy-staging.yml) was paused off `main` because its
+# Cloudflare token had been revoked, and the pause took MIGRATION application
+# down with it — the one step that never needed Cloudflare at all. The staging
+# ledger froze at 0281 (2026-08-12, a manual re-dispatch) while main walked on
+# to 0322, and the first migration written against remembered-not-live
+# vocabulary (0321, indexing a column 0307 had renamed) sailed past the empty
+# bench and blocked PROD deploys on 2026-08-22. See docs/bugs/0514 and
+# docs/staging-bench-rot-coe.md.
+#
+# So: schema rehearsal is decoupled from the Worker/Pages deploy. This
+# workflow applies pending migrations to the staging Supabase on every push to
+# main that touches them, needs only STAGING_DATABASE_URL (which kept working
+# through the whole pause — the 2026-08-12 re-dispatches proved it), and goes
+# red ONLY when a migration that the next prod deploy will run fails against
+# staging. That red is signal, not the permanently-red noise the 2026-07-31
+# pause was right to remove.
+#
+# deploy-staging.yml (Worker + Pages) stays dispatch-only until a fresh
+# Cloudflare token is minted for the Staging environment. Restoring it does
+# not retire this workflow: the shared concurrency group below keeps the two
+# from interleaving on the same database, and a second pg-migrate over an
+# up-to-date tracker is a verified no-op.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/src/db/migrations-pg/**"
+      - "backend/scripts/pg-migrate.mjs"
+      - ".github/workflows/staging-migrate.yml"
+  workflow_dispatch:
+
+# SAME group as deploy-staging.yml, on purpose: concurrency groups are
+# repo-wide, so a full staging deploy (which also runs pg-migrate) and this
+# rehearsal queue behind each other instead of racing one tracker table.
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # Same retry loop as deploy-staging.yml, same reasons: free-tier staging
+      # Supabase can auto-pause while idle, so transient wake-up/connection
+      # failures get retried — but a real migration error is never swallowed.
+      - name: Apply staging migrations
+        shell: bash
+        run: |
+          max_attempts=3
+          for attempt in $(seq 1 "$max_attempts"); do
+            echo "Migration attempt ${attempt}/${max_attempts}"
+            if node scripts/pg-migrate.mjs; then
+              exit 0
+            else
+              status=$?
+            fi
+
+            if [ "$attempt" -lt "$max_attempts" ]; then
+              echo "::warning title=Staging migration retry::The staging database may be paused or waking. Retrying in $((attempt * 10)) seconds."
+              sleep $((attempt * 10))
+            fi
+          done
+
+          echo "::error title=Staging migration failed::A migration the next prod deploy will run has failed against staging. Fix the file before it reaches prod; if Supabase staging is paused, restore it in the dashboard and re-run this workflow."
+          exit "$status"
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          # See deploy-staging.yml: GitHub-hosted runners have no IPv6 egress
+          # and the staging hostname resolves dual-stack; force IPv4 first so
+          # Happy-Eyeballs cannot time out with ENETUNREACH.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  # A red rehearsal must become a thing with a name, not a row in a run list
+  # nobody reads — ten days of nobody reading this exact list is how the bench
+  # rotted. Mirrors deploy.yml's notify-failed-release: one open issue at a
+  # time, commented on rather than duplicated, closed by hand once a rehearsal
+  # run is green again.
+  #
+  # `failure()` only — a cancelled run is the concurrency queue collapsing a
+  # superseded push, which is normal and must not page.
+  notify-failed-rehearsal:
+    needs: [migrate]
+    if: ${{ always() && needs.migrate.result == 'failure' }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the rehearsal-failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+          # From the event, NOT `git log` — this job deliberately has no
+          # checkout so it can run whatever state the tree is in.
+          SUBJECT: ${{ github.event.head_commit.message || github.sha }}
+        run: |
+          set -euo pipefail
+          TITLE="Staging migration rehearsal failed — the next prod deploy will hit this"
+          SUBJECT="$(printf '%s' "$SUBJECT" | head -1)"
+
+          BODY="**A migration failed against the staging database.** Prod's
+          deploy pipeline runs the same files with the same runner, so unless
+          the failure is a paused/unreachable staging Supabase, the next prod
+          deploy fails the same way and blocks every release behind it —
+          exactly what migration 0321 did on 2026-08-22.
+
+          | | |
+          |---|---|
+          | commit | \`${SHA}\` |
+          | subject | ${SUBJECT} |
+          | run | ${RUN_URL} |
+
+          Read the failing file from the run log, fix it on a branch, and let
+          the merge re-trigger this rehearsal. **Close this issue only after a
+          rehearsal run goes green.**"
+
+          EXISTING="$(gh issue list --repo "$REPO" --state open --search "\"$TITLE\" in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "$REPO" --body "$BODY"
+            echo "::warning::Rehearsal failed again — commented on issue #${EXISTING}"
+          else
+            URL="$(gh issue create --repo "$REPO" --title "$TITLE" --body "$BODY")"
+            echo "::warning::Rehearsal failed — opened ${URL}"
+          fi

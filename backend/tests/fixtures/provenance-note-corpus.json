@@ -1,0 +1,120 @@
+{
+  "_comment": [
+    "THE corpus every provenance-note reader is held to. One file, read by the",
+    "backend test, the frontend test and the script-twin test, so 'the parsers",
+    "accept an identical corpus' is a fact about this file and not a claim.",
+    "",
+    "The note is a STORED DATA CONTRACT: an MRP-raised PO carries no per-line",
+    "so_item_id, so this note is the only record of which Sales Orders it was",
+    "bought for. Rows written under EVERY label below exist in production, so a",
+    "reader that drops one loses that PO's provenance with no error at all.",
+    "",
+    "Doc numbers here are fictional.",
+    "",
+    "`expect` is the SET of source doc numbers the note resolves to. Order is",
+    "the note's own order; readers de-duplicate."
+  ],
+
+  "cases": [
+    {
+      "name": "current label, one source order",
+      "note": "Transfer from Sales Order: SO-2699-001",
+      "expect": ["SO-2699-001"]
+    },
+    {
+      "name": "current label, several source orders",
+      "note": "Transfer from Sales Order: SO-2699-001, SO-2699-002, SO-2699-003",
+      "expect": ["SO-2699-001", "SO-2699-002", "SO-2699-003"]
+    },
+    {
+      "name": "current label, company-prefixed doc numbers",
+      "note": "Transfer from Sales Order: 2990-SO-2699-014, 2990-SO-2699-015",
+      "expect": ["2990-SO-2699-014", "2990-SO-2699-015"]
+    },
+    {
+      "name": "LEGACY plural label, one source order",
+      "note": "From SOs: SO-2699-001",
+      "expect": ["SO-2699-001"]
+    },
+    {
+      "name": "LEGACY plural label, several source orders",
+      "note": "From SOs: SO-2699-001, SO-2699-002, SO-2699-003",
+      "expect": ["SO-2699-001", "SO-2699-002", "SO-2699-003"]
+    },
+    {
+      "name": "LEGACY plural label, company-prefixed doc number",
+      "note": "From SOs: 2990-SO-2699-014",
+      "expect": ["2990-SO-2699-014"]
+    },
+    {
+      "name": "LEGACY singular label",
+      "note": "From SO: SO-2699-001, SO-2699-002",
+      "expect": ["SO-2699-001", "SO-2699-002"]
+    },
+    {
+      "name": "label case is not significant — notes are hand-edited too",
+      "note": "TRANSFER FROM SALES ORDER: SO-2699-001",
+      "expect": ["SO-2699-001"]
+    },
+    {
+      "name": "legacy label, lower case",
+      "note": "from sos: SO-2699-001",
+      "expect": ["SO-2699-001"]
+    },
+    {
+      "name": "leading and trailing whitespace around the whole note",
+      "note": "   Transfer from Sales Order: SO-2699-001   ",
+      "expect": ["SO-2699-001"]
+    },
+    {
+      "name": "ragged spacing around the commas",
+      "note": "Transfer from Sales Order:   SO-2699-001 ,SO-2699-002 ,  SO-2699-003",
+      "expect": ["SO-2699-001", "SO-2699-002", "SO-2699-003"]
+    },
+    {
+      "name": "repeated doc number collapses to one",
+      "note": "Transfer from Sales Order: SO-2699-001, SO-2699-001, SO-2699-002",
+      "expect": ["SO-2699-001", "SO-2699-002"]
+    },
+    {
+      "name": "trailing comma yields no empty token",
+      "note": "Transfer from Sales Order: SO-2699-001,",
+      "expect": ["SO-2699-001"]
+    },
+    {
+      "name": "the label on its own line inside a longer note — the FIRST match wins",
+      "note": "Supplier confirmed the ETA by phone.\nTransfer from Sales Order: SO-2699-001, SO-2699-002",
+      "expect": ["SO-2699-001", "SO-2699-002"]
+    },
+    {
+      "name": "LEGACY label on a later line",
+      "note": "Rush job.\nFrom SOs: SO-2699-007",
+      "expect": ["SO-2699-007"]
+    },
+    {
+      "name": "a plain free-text note is NOT provenance",
+      "note": "urgent — call the supplier first",
+      "expect": []
+    },
+    {
+      "name": "prose that merely mentions the words carries no colon and no list",
+      "note": "raised to cover a shortage, transfer from sales order handled by MRP",
+      "expect": []
+    },
+    {
+      "name": "the label mid-line is not a provenance record",
+      "note": "See remarks. Transfer from Sales Order: SO-2699-001",
+      "expect": []
+    },
+    {
+      "name": "the label with nothing after it records nothing",
+      "note": "Transfer from Sales Order:",
+      "expect": []
+    },
+    {
+      "name": "an empty note",
+      "note": "",
+      "expect": []
+    }
+  ]
+}

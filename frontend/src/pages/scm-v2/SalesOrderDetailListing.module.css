@@ -1,0 +1,26 @@
+/* ====================================================================
+   Sales Order Detail Listing — design-system reskin (2026-07-16)
+
+   The page frame is now FULL-BLEED and matches the PO/SO V2 pages
+   (PurchaseOrdersListV2 / SalesOrderMaintenance): the header is the
+   shared <PageHeader>, the KPI tiles are <StatCard>, and the DataGrid
+   wrapper is a plain Tailwind token slab — all inline in the TSX.
+
+   The old grey "framed card" chrome (.page #dcdfd9 canvas, the two-card
+   AutoCount filter row, the bespoke wide-table classes, the print
+   overrides and the token-override cascade) is gone. Only the two cell
+   primitives the DataGrid column factory still references survive here;
+   their values map to the Tailwind "Ink & Petrol" tokens:
+     primary  #16695f   ink-muted #767b6e
+   ==================================================================== */
+
+/* Doc. No. cell — the row identifier, coloured in the petrol accent. */
+.codeCell {
+  font-weight: 600;
+  color: #16695f;
+}
+
+/* Muted dash / secondary cell text. */
+.muted {
+  color: #767b6e;
+}

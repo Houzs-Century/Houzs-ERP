@@ -1,0 +1,43 @@
+name: Align export company (read-only)
+
+# Manual, read-only. Dumps the product + supplier masters (and creditor mirror)
+# for one company as JSON artifacts, so the AutoCount->ERP SKU alignment can be
+# fuzzy-matched locally. SELECT only -- no writes. Defaults to prod, company 1
+# (HOUZS / Houzs Century).
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      company_id:
+        description: "company_id to export (1=HOUZS/Houzs Century)"
+        required: true
+        default: "1"
+        type: string
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - name: Export masters
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then echo "DATABASE_URL missing"; exit 2; fi
+          node scripts/align-export-company.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: align-export-company-${{ inputs.company_id }}-${{ inputs.target }}
+          path: backend/out/*.json
+          if-no-files-found: error
+          retention-days: 30

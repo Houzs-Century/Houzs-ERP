@@ -1,0 +1,110 @@
+name: Repair SO payment from the book (plan by default, ruling required)
+
+# THE OWNER'S RULING RUNS THIS. NOTHING ELSE DOES.
+#
+# check-so-payment-census (Actions -> "SO payment census (read-only)") counts
+# the migrated sales orders whose money the ERP and AutoCount disagree about.
+# The bucket that matters is (a): the book says SETTLED and the ERP still shows
+# a balance, so we would chase a customer for money already collected.
+#
+# SAYING A CUSTOMER PAID WHEN THEY DID NOT IS WORSE THAN EVERY OTHER ERROR ON
+# THIS CUTOVER, so this workflow has NO DEFAULT RULING. With `ruling` blank it
+# prints why and exits 0 without reading a single order. The three rulings write
+# three different things:
+#
+#   balance-only      refresh the header's stored balance_sen from the book's
+#                     UDF_BALANCE and re-derive paid_sen. No payment row is
+#                     created or changed. THIS DOES NOT STOP THE WRONG CHASE -
+#                     the SO list shows local_total_sen - SUM(payments), which
+#                     this does not move.
+#   settle-collected  bucket (a) only: append ONE payment row for the amount
+#                     still shown outstanding, dated the book's own LastModified,
+#                     and zero the balance. THIS IS A PAYMENT WRITE.
+#   both              settle-collected on (a), balance-only on the rest.
+#
+# PLAN unless apply=1 AND the confirm phrase is typed in full. Run the plan and
+# read it before every apply, including a re-run - the plan is the evidence.
+#
+# Guards that REFUSE rather than adapt: a snapshot older than
+# max_snapshot_age_days refuses the WHOLE run; a non-MYR document, a cancelled
+# document, an order a person has edited the money on, an order a person owns
+# payment rows on, and an order whose ERP total does not equal the book's are
+# each listed and skipped. Every UPDATE is guarded on the value the plan read.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      ruling:
+        description: "The owner's ruling. Blank = explain and stop."
+        required: false
+        default: ""
+        type: choice
+        options: ["", "balance-only", "settle-collected", "both"]
+      apply:
+        description: "apply to WRITE. Anything else is a plan."
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'To WRITE, type exactly: I HAVE REVIEWED THE PLAN'
+        required: false
+        default: ""
+      docs:
+        description: "Optional ERP doc_no allow-list, comma separated. Narrows the plan, never widens it."
+        required: false
+        default: ""
+      max_snapshot_age_days:
+        description: "Refuse the whole run if the balance snapshot is older. Blank = 2."
+        required: false
+        default: ""
+
+concurrency:
+  group: repair-so-payment-from-book-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-so-payment-from-book.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          RULING: ${{ inputs.ruling }}
+          MODE: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          DOCS: ${{ inputs.docs }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/repair-so-payment-from-book.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          RULING: ${{ inputs.ruling }}
+          MODE: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          DOCS: ${{ inputs.docs }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -1,0 +1,25 @@
+/* Brand web fonts — mirrors src/index.css so design-sync preview cards render
+ * with IBM Plex + Noto SC (same as the live Houzs app). */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;700;900&family=Noto+Serif+SC:wght@400;500;600;700;900&family=Caveat:wght@400;600&family=Archivo:wght@500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Theme C font-money applied to money cells (mirrors index.css usage) */
+.font-money {
+  font-feature-settings: "tnum" 1, "lnum" 1;
+}
+
+/* Shimmering skeleton bar (mirrors index.css) — Skeleton / ListSkeleton /
+   TableSkeleton / PageSkeleton all rely on this class; without it they
+   render invisible in DS previews and rendered designs. */
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #e3e6e0 0%, #f4f6f3 50%, #e3e6e0 100%);
+  background-size: 800px 100%;
+  animation: shimmer 1.6s linear infinite;
+}

@@ -1,0 +1,56 @@
+name: Shorten the special orders the owner approved
+
+# Six lines on three documents carry a Further Description over AutoCount's 100
+# characters, so the whole document is refused. The owner read each line's exact
+# text and approved each replacement on 2026-09-09 —「bedframe 你给的三个方案都
+# ok」and「这个全部没问题」— and two of them are simply deleting a sentence that
+# repeats what the line already says.
+#
+# PLAN by default: it prints every line's before and after with their lengths,
+# and writes nothing. APPLY needs the matched count typed back.
+#
+# It refuses to touch a line whose CURRENT text is not character-for-character
+# what the owner was shown: Desc2 is a factory build instruction, and if somebody
+# edited the line since, the approval was for different words.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to write, anything else is a PLAN"
+        required: false
+        default: "0"
+        type: string
+      confirm:
+        description: "Type the number of matched edits to apply"
+        required: false
+        default: ""
+        type: string
+
+# Its own group. A repair must never queue behind — or displace — a deploy.
+concurrency:
+  group: shorten-specials-to-the-book
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # tsx, so the rendering is the REAL buildVariantSummary the write-back
+      # uses — a second copy would shorten against a different string.
+      - run: npx tsx scripts/shorten-specials-to-the-book.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

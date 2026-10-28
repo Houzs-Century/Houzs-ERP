@@ -1,0 +1,156 @@
+/* NO EMPTY STATE MAY CLAIM THE WORK IS DONE — the gate, and the proof it bites.
+
+   THE RULE (owner, 2026-08-17). A screen that got back nothing may say what it
+   LOOKED FOR. It may not say what is TRUE OF THE BUSINESS. Company scope fails
+   closed (`scm/lib/companyScope.ts` answers an unresolvable company with
+   `.in('company_id', [])`, and PostgREST returns `[]` with `error: null`),
+   `db-max-rows` truncates without saying so, and a swallowed read error is
+   shaped exactly like an empty result. None of those are distinguishable from
+   "there is nothing left to do", so no empty state can tell them apart.
+
+   WHY A GATE. The from-PO picker shipped the same lie TWICE inside five
+   commits: #2367 removed it and a rewritten helper five commits later put it
+   back, with a test asserting the claim was legitimate. A rule that lives in
+   prose gets reproduced.
+
+   WHAT THIS FILE PINS, and why each one is here rather than trusted:
+
+     1. THE GATE PASSES on the tree as committed. Otherwise the CI step is
+        failing for a reason nobody has looked at.
+     2. THE GATE FAILS on a planted violation. This is the whole test. A gate
+        nobody has watched fail is a gate that may be scanning nothing —
+        `check-trgm-coverage.mjs` sat in this repo with BOTH exit paths at exit 0
+        and in no workflow at all, and read as a pass for weeks. The plant goes
+        in a temp directory OUTSIDE the source tree (EMPTY_STATE_EXTRA_ROOT), so
+        proving the gate never requires writing a bad string into frontend/src.
+     3. THE ALLOWLIST CARRIES REASONS. An allowlist of bare paths is a mute
+        button. Each entry must say something a person could argue with.
+     4. THE STEP IS STILL WIRED. Two sessions found `pretest`-orphaned checks on
+        the same afternoon here; a check that cannot run reports nothing and
+        reads as a pass. Named in ci.yml and in package.json, asserted. */
+import { describe, test, expect } from "vitest";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const SCRIPT = path.join(ROOT, "backend", "scripts", "check-empty-state-claims.mjs");
+const ALLOWLIST = path.join(ROOT, "backend", "scripts", "data", "empty-state-claim-allowlist.json");
+
+function run(extraRoot?: string): { code: number; out: string } {
+  try {
+    const out = execFileSync(process.execPath, [SCRIPT, "--strict"], {
+      cwd: ROOT,
+      encoding: "utf8",
+      maxBuffer: 32 * 1024 * 1024,
+      env: extraRoot ? { ...process.env, EMPTY_STATE_EXTRA_ROOT: extraRoot } : process.env,
+    });
+    return { code: 0, out };
+  } catch (e) {
+    const err = e as { status?: number; stdout?: string; stderr?: string };
+    return { code: err.status ?? -1, out: `${err.stdout ?? ""}${err.stderr ?? ""}` };
+  }
+}
+
+/* Each of these SPAWNS the checker, which walks ~1,400 source files. Vitest
+   defaults to 5s per test and the walk alone can exceed that on a loaded
+   machine — a timeout here would read as the gate being broken. */
+const SPAWN_TIMEOUT_MS = 120_000;
+
+describe("the empty-state completion-claim gate", () => {
+  test("passes on the tree as committed", { timeout: SPAWN_TIMEOUT_MS }, () => {
+    const { code, out } = run();
+    expect(out).toContain("source files scanned");
+    expect(code, out.slice(-2000)).toBe(0);
+  });
+
+  /* THE NON-VACUITY PROOF. Exit 2 is the script's own self-test failing, and it
+     must never be confused with a caught violation — a checker that cannot run
+     is not a checker that found nothing. */
+  test("FAILS on a planted completion claim, and passes again once it is gone", { timeout: SPAWN_TIMEOUT_MS }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "empty-state-gate-"));
+    try {
+      const planted = path.join(dir, "PlantedPicker.tsx");
+      fs.writeFileSync(
+        planted,
+        'export const M = "No outstanding lines — every line has been fully received.";\n',
+      );
+      const bad = run(dir);
+      expect(bad.code, `expected a FAILURE, got:\n${bad.out.slice(-2000)}`).toBe(1);
+      expect(bad.out).toContain("NOT REVIEWED");
+      expect(bad.out).toContain("every line has been fully received");
+
+      fs.rmSync(planted);
+      const good = run(dir);
+      expect(good.code, good.out.slice(-2000)).toBe(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  /* The other half of honest: the gate must not fire on the wording the owner
+     approved, or the next person deletes the gate instead of the claim. */
+  test("does not fire on a message that says what was searched", { timeout: SPAWN_TIMEOUT_MS }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "empty-state-gate-ok-"));
+    try {
+      fs.writeFileSync(
+        path.join(dir, "HonestPicker.tsx"),
+        'export const M = "This search came back with no outstanding PO lines. That is not the same as'
+        + ' everything having been received — the list only covers the company you are working in, and'
+        + ' lines it cannot see look identical to lines that are done.";\n',
+      );
+      const { code, out } = run(dir);
+      expect(code, out.slice(-2000)).toBe(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("the reviewed allowlist", () => {
+  const doc = JSON.parse(fs.readFileSync(ALLOWLIST, "utf8")) as {
+    reviewed: Array<{ file: string; text: string; why: string }>;
+  };
+
+  test("every entry names a file, the string, and a reason", () => {
+    expect(doc.reviewed.length).toBeGreaterThan(0);
+    for (const e of doc.reviewed) {
+      expect(typeof e.file, JSON.stringify(e)).toBe("string");
+      expect(typeof e.text, JSON.stringify(e)).toBe("string");
+      // Long enough to be a sentence. A placeholder is not a review.
+      expect(e.why.trim().length, `${e.file}: the reason is too short to be one`).toBeGreaterThan(30);
+      expect(e.why, `${e.file}: placeholder reason`).not.toMatch(/^TODO|\bTBD\b|^n\/?a$/i);
+    }
+  });
+
+  test("no duplicate entries — a second copy is a second mute button", () => {
+    const keys = doc.reviewed.map((e) => `${e.file} ${e.text.trim().replace(/\s+/g, " ")}`);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  /* Deferred entries are a promise to somebody else's branch, and a promise
+     with no name on it is how these become permanent. */
+  test("a DEFERRED entry names the branch it is deferred to", () => {
+    for (const e of doc.reviewed.filter((x) => /DEFERRED/i.test(x.why))) {
+      expect(e.why, `${e.file}: deferred to nowhere`).toMatch(/branch \S+/);
+    }
+  });
+});
+
+describe("the gate is still wired", () => {
+  test("package.json runs the script with --strict", () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "backend", "package.json"), "utf8"));
+    expect(pkg.scripts["audit:empty-state-claims"]).toContain("check-empty-state-claims.mjs");
+    expect(pkg.scripts["audit:empty-state-claims"]).toContain("--strict");
+  });
+
+  test("ci.yml runs it inside the REQUIRED backend-typecheck job", () => {
+    const ci = fs.readFileSync(path.join(ROOT, ".github", "workflows", "ci.yml"), "utf8");
+    expect(ci).toContain("npm run audit:empty-state-claims");
+    // …and in that job specifically, not in some optional one added later.
+    const backendJob = ci.slice(ci.indexOf("backend-typecheck:"), ci.indexOf("backend-tests:"));
+    expect(backendJob).toContain("npm run audit:empty-state-claims");
+  });
+});

@@ -1,0 +1,78 @@
+name: Import AutoCount outstanding SO (go-live)
+
+# Manual. One-time GO-LIVE import of AutoCount OUTSTANDING Sales Orders into ERP
+# scm.mfg_sales_orders/_items/_payments for company 1 (Houzs Century). Sofa is
+# EXCLUDED this round (any sofa line => order held). Default DRY-RUN (reads only).
+# apply=1 writes; limit=N imports only the first N orders (verification run).
+# Re-run safe: header ON CONFLICT (doc_no) DO NOTHING; items/payments only for a
+# newly inserted header.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "staging"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "1 to write, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      limit:
+        description: "Import only the first N orders (0 = all). Use a small N first to verify."
+        required: false
+        default: "0"
+        type: string
+      doc:
+        description: "Import ONLY this AutoCount DocNo (e.g. SO-013152) — single-order verification."
+        required: false
+        default: ""
+        type: string
+      sofa:
+        description: "yes = include held sofa orders (per-compartment decomposition)"
+        required: false
+        default: "no"
+        type: choice
+        options: ["no", "yes"]
+
+concurrency:
+  group: import-ac-outstanding-so-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/import-ac-outstanding-so.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          LIMIT: ${{ inputs.limit }}
+          DOC: ${{ inputs.doc }}
+          SOFA: ${{ inputs.sofa == 'yes' && '1' || '' }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/import-ac-outstanding-so.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          LIMIT: ${{ inputs.limit }}
+          DOC: ${{ inputs.doc }}
+          SOFA: ${{ inputs.sofa == 'yes' && '1' || '' }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

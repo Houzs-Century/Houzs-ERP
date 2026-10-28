@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 145" width="100" height="145">
+  <title>2990s Sofa Module — 1NA(L) — Power leg, NO arms</title>
+  <desc>1-seater, no arms, Power leg (electric legrest). Footrest extends forward; "L" label on seat indicates Power leg.</desc>
+  <g transform="translate(20,20)">
+    <rect x="0" y="0" width="60" height="70" rx="3" fill="#F0E6D6" stroke="#2C2C2A" stroke-width="1.4"/>
+    <rect x="0" y="0" width="60" height="11" fill="#D9C2A0" stroke="#2C2C2A" stroke-width="0.8"/>
+    <text x="30" y="48" font-family="system-ui, -apple-system, sans-serif" font-size="24" font-weight="800" fill="#2C2C2A" text-anchor="middle">L</text>
+    <rect x="8" y="72" width="44" height="22" rx="2" fill="#F0E6D6" stroke="#2C2C2A" stroke-width="1.2"/>
+  </g>
+</svg>

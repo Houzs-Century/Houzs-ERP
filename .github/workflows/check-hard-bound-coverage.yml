@@ -1,0 +1,41 @@
+name: Hard-bound MRP coverage check (read-only)
+
+# "We raised the PO — why does MRP still say SHORT?" for every live sofa /
+# bedframe / Sofa Accessory line, on the canonical engine: mis-assigned POs,
+# short-with-own-PO, over-ordered lines, hard-bound PO lines with no SO link,
+# and DO / SI lines with no SO link. Read-only; exit 0 for every answer.
+on:
+  workflow_dispatch:
+    inputs:
+      company:
+        description: "ERP company (1 = Houzs)"
+        required: false
+        default: "1"
+        type: string
+      show:
+        description: "How many documents to print per class"
+        required: false
+        default: "25"
+        type: string
+
+concurrency:
+  group: check-hard-bound-coverage
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/check-hard-bound-coverage.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+          SHOW: ${{ inputs.show }}

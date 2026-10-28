@@ -1,0 +1,56 @@
+name: Write off the costed duplicate sofa lots (DRY-RUN gated)
+
+# The apply half of the costed-duplicate write-off (docs/bugs/0721). Its sibling
+# retire tool refuses costed lots ("the money does not move"); this one writes
+# them off — a real inventory-value removal — after the read-only plan
+# (Write-off plan — costed duplicate sofa lots) showed the exact figure and the
+# owner approved it.
+#
+# DRY-RUN by default. APPLY writes only with apply=1 AND the confirm phrase.
+# Manual trigger only; own concurrency group so it can neither queue behind nor
+# displace a release.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to WRITE. Anything else = dry-run."
+        required: false
+        default: "0"
+        type: string
+      confirm:
+        description: 'Must equal WRITE OFF THE DUPLICATE SOFA LOTS to write.'
+        required: false
+        default: ""
+        type: string
+      batch:
+        description: "Optional single PO batch to scope to (blank = all)."
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: writeoff-duplicate-sofa-lots
+  cancel-in-progress: false
+
+jobs:
+  writeoff:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/writeoff-duplicate-sofa-lots.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.apply == '1' && 'apply' || 'plan' }}
+          CONFIRM: ${{ inputs.confirm }}
+          BATCH: ${{ inputs.batch }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

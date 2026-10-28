@@ -1,0 +1,729 @@
+import { Hono } from 'hono';
+import { describe, expect, test } from 'vitest';
+import { patchMfgSalesOrderHeaderHandler } from '../src/scm/routes/mfg-sales-orders';
+
+type Row = Record<string, unknown>;
+
+class FakeQuery {
+  private predicates: Array<(row: Row) => boolean> = [];
+  private operation: 'select' | 'update' | 'insert' = 'select';
+  private patch: Row = {};
+
+  constructor(
+    private readonly rows: Row[],
+    private readonly beforeUpdate?: () => void,
+  ) {}
+
+  select() { return this; }
+  update(patch: Row) { this.operation = 'update'; this.patch = patch; return this; }
+  insert(row: Row) { this.operation = 'insert'; this.patch = row; return this; }
+  eq(column: string, value: unknown) {
+    this.predicates.push((row) => String(row[column]) === String(value));
+    return this;
+  }
+  neq(column: string, value: unknown) {
+    this.predicates.push((row) => String(row[column]) !== String(value));
+    return this;
+  }
+  or() { return this; }
+  is(column: string, value: unknown) {
+    this.predicates.push((row) => row[column] === value);
+    return this;
+  }
+
+  private run(): Row[] {
+    if (this.operation === 'insert') {
+      const row = { ...this.patch };
+      this.rows.push(row);
+      return [row];
+    }
+    if (this.operation === 'update') this.beforeUpdate?.();
+    const matched = this.rows.filter((row) => this.predicates.every((predicate) => predicate(row)));
+    if (this.operation === 'update') {
+      for (const row of matched) Object.assign(row, this.patch);
+    }
+    return matched;
+  }
+
+  maybeSingle() {
+    const rows = this.run();
+    return Promise.resolve({ data: rows[0] ?? null, error: null });
+  }
+
+  then(resolve: (value: { data: Row[]; error: null; count: number }) => unknown, reject?: (reason: unknown) => unknown) {
+    const rows = this.run();
+    return Promise.resolve({ data: rows, error: null, count: rows.length }).then(resolve, reject);
+  }
+}
+
+function harness(options: { raceBeforeCas?: boolean; followerApplied?: boolean } = {}) {
+  const tables: Record<string, Row[]> = {
+    mfg_sales_orders: [{
+      doc_no: 'SO-CAS-1',
+      company_id: 1,
+      version: 1,
+      status: 'DRAFT',
+      note: 'original',
+      debtor_name: 'Original Customer',
+      phone: '+60123456789',
+      address2: null,
+      processing_date: null,
+      proceeded_at: null,
+      edit_lease_token: null,
+      edit_lease_expires_at: null,
+      edit_lease_user_id: null,
+    }],
+    mfg_so_audit_log: [],
+    mfg_sales_order_items: [],
+    venues: [{ id: '5cafa0a2-f979-44da-9a76-5030158ebeb7', name: 'PJ SHOWROOM' }],
+  };
+  let raceInjected = false;
+  let rpcCalls = 0;
+  let lastCasArgs: Record<string, unknown> | null = null;
+  const app = new Hono();
+  app.use('*', async (c, next) => {
+    c.set('supabase' as never, {
+      from: (table: string) => new FakeQuery(
+        (tables[table] ||= []),
+        table === 'mfg_sales_orders' && options.raceBeforeCas
+          ? () => {
+              if (raceInjected) return;
+              raceInjected = true;
+              Object.assign(tables.mfg_sales_orders[0]!, { note: 'racing writer', version: 2 });
+            }
+          : undefined,
+      ),
+      rpc: async (name: string, args?: Record<string, unknown>) => {
+        rpcCalls += 1;
+        if (name === 'apply_so_header_cas') {
+          lastCasArgs = args ?? null;
+          if (options.raceBeforeCas && !raceInjected) {
+            raceInjected = true;
+            Object.assign(tables.mfg_sales_orders[0]!, { note: 'racing writer', version: 2 });
+          }
+          const row = tables.mfg_sales_orders[0]!;
+          const expected = Number(args?.p_expected_version);
+          if (Number(row.version) !== expected) {
+            return { data: [{ applied: false, current_version: row.version, conflict_reason: 'version' }], error: null };
+          }
+          /* The lease half of apply_so_header_cas, in the order the SQL checks it
+             (20260915T1200_scm_so_header_cas_skip_frozen_lines.sql): a required
+             lease must be the live one; with none required, any live lease refuses. */
+          const required = (args?.p_required_lease as string | null | undefined) ?? null;
+          const live = Boolean(row.edit_lease_token)
+            && Date.parse(String(row.edit_lease_expires_at ?? '')) > Date.now();
+          if (required !== null ? (row.edit_lease_token !== required || !live) : live) {
+            return { data: [{ applied: false, current_version: row.version, conflict_reason: 'lease' }], error: null };
+          }
+          if (options.followerApplied === false) {
+            return { data: [{ applied: false, current_version: row.version, conflict_reason: 'follower' }], error: null };
+          }
+          Object.assign(row, args?.p_patch as Row);
+          return {
+            data: [{
+              applied: true,
+              current_version: row.version,
+              resolved_customer_id: 'customer-2',
+            }],
+            error: null,
+          };
+        }
+        return { data: false, error: null };
+      },
+    } as never);
+    /* The header PATCH is a STRICT company write now, like the sibling status
+       handler: an unresolved company is REFUSED rather than defaulted. mig 0164
+       resolves a NULL p_company_id with COALESCE(p_company_id, (SELECT id FROM
+       public.companies WHERE code='HOUZS')), so "unresolved" silently meant
+       "Houzs" on the customer upsert. The fixture carries the company its own
+       row already belongs to (company_id: 1 above). */
+    c.set('companyId' as never, 1 as never);
+    c.set('user' as never, { id: 'actor-1', user_metadata: { name: 'Test User' } } as never);
+    c.set('houzsUser' as never, {
+      id: 1,
+      position_name: 'Super Admin',
+      permissions_set: new Set(['*']),
+    } as never);
+    await next();
+  });
+  app.patch('/mfg-sales-orders/:docNo', patchMfgSalesOrderHeaderHandler as never);
+  return {
+    app,
+    row: tables.mfg_sales_orders[0]!,
+    getRpcCalls: () => rpcCalls,
+    getCasArgs: () => lastCasArgs,
+  };
+}
+
+const patchHeader = (app: Hono, body: Row) => app.request('/mfg-sales-orders/SO-CAS-1', {
+  method: 'PATCH',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify(body),
+});
+
+describe('mandatory Sales Order header compare-and-swap', () => {
+  test('two sessions loaded at v1: first save reaches v2, stale second save is a stable 409 and cannot overwrite', async () => {
+    const { app, row } = harness();
+
+    const first = await patchHeader(app, { note: 'first writer', version: 1 });
+    expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({ ok: true, version: 2 });
+    expect(row).toMatchObject({ note: 'first writer', version: 2 });
+
+    const stale = await patchHeader(app, { note: 'stale second writer', version: 1 });
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({
+      error: 'so_version_conflict',
+      currentVersion: 2,
+    });
+    expect(row).toMatchObject({ note: 'first writer', version: 2 });
+
+    const sameStaleRetry = await patchHeader(app, { note: 'stale second writer', version: 1 });
+    expect(sameStaleRetry.status).toBe(409);
+    expect(await sameStaleRetry.json()).toMatchObject({ currentVersion: 2 });
+    expect(row).toMatchObject({ note: 'first writer', version: 2 });
+  });
+
+  test('a real header mutation without a loaded version returns 428 and writes nothing', async () => {
+    const { app, row } = harness();
+
+    const response = await patchHeader(app, { note: 'must not land' });
+    expect(response.status).toBe(428);
+    expect(await response.json()).toMatchObject({
+      error: 'so_version_required',
+      currentVersion: 1,
+    });
+    expect(row).toMatchObject({ note: 'original', version: 1 });
+  });
+
+  test('a writer landing after the pre-read is still stopped by the atomic version predicate', async () => {
+    const { app, row } = harness({ raceBeforeCas: true });
+
+    const response = await patchHeader(app, { note: 'must lose the race', version: 1 });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: 'so_version_conflict',
+      currentVersion: 2,
+    });
+    expect(row).toMatchObject({ note: 'racing writer', version: 2 });
+  });
+
+  test('an empty no-op does not falsely demand a version or bump the row', async () => {
+    const { app, row } = harness();
+
+    const response = await patchHeader(app, {});
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, changed: 0 });
+    expect(row).toMatchObject({ note: 'original', version: 1 });
+  });
+
+  test('recognised fields equal after normalisation are no-ops without a version or follower writes', async () => {
+    const { app, row, getRpcCalls } = harness();
+
+    const response = await patchHeader(app, { note: 'original', address2: '', recustomer: true });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, changed: 0 });
+    expect(row).toMatchObject({ note: 'original', address2: null, version: 1 });
+    expect(getRpcCalls()).toBe(0);
+  });
+
+  test('a CAS race cannot leave a pre-CAS recustomer RPC side effect', async () => {
+    const { app, row, getRpcCalls } = harness({ raceBeforeCas: true });
+
+    const response = await patchHeader(app, {
+      debtorName: 'New Customer',
+      phone: '+60129999999',
+      recustomer: true,
+      version: 1,
+    });
+    expect(response.status).toBe(409);
+    expect(row).toMatchObject({ debtor_name: 'Original Customer', version: 2 });
+    expect(getRpcCalls()).toBeGreaterThan(0);
+  });
+
+  test('line-write reservation is itself CAS-protected and does not mutate header fields', async () => {
+    const { app, row } = harness();
+    const leaseToken = 'lease-token-session-one';
+
+    const response = await patchHeader(app, { reserveLineWrites: true, lineWriteLeaseToken: leaseToken, version: 1 });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, reserved: true, version: 2, leaseToken });
+    expect(row).toMatchObject({ note: 'original', version: 2, edit_lease_token: leaseToken });
+
+    const replay = await patchHeader(app, { reserveLineWrites: true, lineWriteLeaseToken: leaseToken, version: 1 });
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({ reserved: true, version: 2 });
+
+    const stale = await patchHeader(app, { reserveLineWrites: true, lineWriteLeaseToken: 'lease-token-session-two', version: 1 });
+    expect(stale.status).toBe(409);
+    expect(row).toMatchObject({ note: 'original', version: 2 });
+  });
+
+  test('line-only completion releases the matching lease without another version bump', async () => {
+    const { app, row } = harness();
+    const leaseToken = 'lease-token-line-only';
+    await patchHeader(app, { reserveLineWrites: true, lineWriteLeaseToken: leaseToken, version: 1 });
+
+    const completed = await patchHeader(app, {
+      completeLineWrites: true,
+      lineWriteLeaseToken: leaseToken,
+      version: 2,
+    });
+    expect(completed.status).toBe(200);
+    expect(await completed.json()).toMatchObject({ released: true, version: 2 });
+    expect(row).toMatchObject({ version: 2, edit_lease_token: null, edit_lease_expires_at: null });
+  });
+
+  test('an active lease blocks an unrelated header writer before it can mutate', async () => {
+    const { app, row } = harness();
+    await patchHeader(app, {
+      reserveLineWrites: true,
+      lineWriteLeaseToken: 'lease-token-owner-one',
+      version: 1,
+    });
+    /* Held by ANOTHER person. The same person takes their own lease back
+       (docs/bugs/0630), which the describe block at the end of this file pins. */
+    row.edit_lease_user_id = 2;
+
+    const other = await patchHeader(app, { note: 'must not land', version: 2 });
+    expect(other.status).toBe(409);
+    expect(await other.json()).toMatchObject({ error: 'so_edit_lease_conflict' });
+    expect(row).toMatchObject({ note: 'original', version: 2 });
+  });
+
+  test('stamp-once filtering is a true no-op before the version gate', async () => {
+    const { app, row } = harness();
+    row.proceeded_at = '2026-07-20T01:00:00.000Z';
+
+    const response = await patchHeader(app, { proceededAt: '2026-07-20T02:00:00.000Z' });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ changed: 0 });
+    expect(row).toMatchObject({ proceeded_at: '2026-07-20T01:00:00.000Z', version: 1 });
+  });
+
+  test('a follower failure rolls back the header CAS as one transaction', async () => {
+    const { app, row } = harness({ followerApplied: false });
+
+    const response = await patchHeader(app, {
+      debtorName: 'New Customer',
+      phone: '+60129999999',
+      recustomer: true,
+      version: 1,
+    });
+    expect(response.status).toBe(409);
+    expect(row).toMatchObject({ debtor_name: 'Original Customer', version: 1 });
+  });
+});
+
+/* Owner 2026-09-01: 「为什么我的 Venue 又不见了？」 — two 2990 orders showing "—"
+   where a venue had been. The audit log settled it on 2990-SO-2608-070:
+
+     2026-08-31 07:50:31  UPDATE_DETAILS  venue:   "2990s PJ" -> ""
+     2026-08-31 07:50:31  UPDATE_DETAILS  venueId: null       -> "5cafa0a2-…"
+
+   ONE save wrote both — a client that had resolved the id and not the name. The
+   create path already resolves the name from the id in that situation; this pins
+   the header PATCH doing the same, so no caller can leave the pair half-written.
+   Clearing stays possible: send BOTH empty. */
+describe('a venue id with no name is not a request to blank the venue', () => {
+  const withVenue = () => {
+    const h = harness();
+    h.row.venue = '2990s PJ';
+    h.row.venue_id = null;
+    h.row.address1 = '1 Jalan Test';
+    h.row.postcode = '47500';
+    return h;
+  };
+
+  test('an empty venue beside a venue id is resolved from the master, not stored', async () => {
+    const { app, row } = withVenue();
+
+    const res = await patchHeader(app, {
+      venue: '', venueId: '5cafa0a2-f979-44da-9a76-5030158ebeb7', version: 1,
+    });
+
+    expect(res.status).toBe(200);
+    expect(row.venue).toBe('PJ SHOWROOM');
+    expect(row.venue_id).toBe('5cafa0a2-f979-44da-9a76-5030158ebeb7');
+  });
+
+  test('BOTH empty still clears it — "this order has no venue" is an answer', async () => {
+    const { app, row } = withVenue();
+
+    const res = await patchHeader(app, { venue: '', venueId: '', version: 1 });
+
+    expect(res.status).toBe(200);
+    expect(row.venue).toBe('');
+    expect(row.venue_id).toBeNull();
+  });
+
+  /* Owner 2026-10-05 (Weisiang): "venue is a compulsory, either sales from
+     showroom or sales from any project". Confirm already demands a venue; an
+     edit must not take it away again. Drafts above still may. */
+  test('a confirmed order cannot have its venue cleared', async () => {
+    const { app, row } = withVenue();
+    row.status = 'CONFIRMED';
+
+    const res = await patchHeader(app, { venue: '', venueId: '', version: 1 });
+
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({
+      error: 'validation_failed',
+      problems: [expect.objectContaining({ code: 'venue_required', field: 'Venue' })],
+    });
+    expect(row).toMatchObject({ venue: '2990s PJ', version: 1 });
+  });
+
+  test('a legacy confirmed order with no venue can still be edited elsewhere', async () => {
+    const { app, row } = withVenue();
+    row.status = 'CONFIRMED';
+    row.venue = null;
+
+    const res = await patchHeader(app, { note: 'still editable', version: 1 });
+
+    expect(res.status).toBe(200);
+    expect(row.note).toBe('still editable');
+  });
+});
+
+/* Owner 2026-08-31, HC-SO-013393: "我要 remove 掉我的 processing date 跟 delivery
+   date，不能的吗?" — the edit page refused with the pair message even though
+   clearing BOTH is exactly what the pair rule allows.
+
+   The date fields are the one place the desktop edit page sends JSON `null`
+   rather than `""` (SalesOrderDetail's payloadFor: `f.processingDate || null`),
+   and the handler read "is this key in the patch?" as `typeof x === 'string'` —
+   which `null` is not. So a cleared date fell through to "key absent, keep the
+   stored value", and the pair rule was judged against dates the save was about
+   to delete. Both directions are pinned here because they fail OPPOSITE ways:
+   the legal save was refused, and the illegal one was allowed through. */
+/* Owner 2026-09-15, HC-SO-2609-071: 「我第一次 save 的时候可以 ... 如果我要一瞬间再
+   edit 第二次也是可以的啊，为什么不可以呢？」 — ten 409s on this route.
+
+   Production held the answer: the order's lease (reserved 12:01:10.572Z, one
+   minute) was still on the row, never released, after a save that reported
+   success. The desktop editor had adopted the venue master's "MID VALLEY" by its
+   project id "1" — not a uuid, so this route drops it — and that was the ONLY
+   field the save sent. With a field in the body the client did not say
+   `completeLineWrites`, the server normalised the field away, and answered the
+   "nothing changed" early return: 200, lease untouched, no `version`. Every
+   Save for the next minute met the caller's own lock. */
+describe('a finished save never leaves its own lock behind', () => {
+  const liveFor = (ms: number) => new Date(Date.now() + ms).toISOString();
+
+  test('a composite save whose header fields all normalise away still releases its lease', async () => {
+    const { app, row } = harness();
+    const leaseToken = 'lease-token-venue-adoption';
+    await patchHeader(app, { reserveLineWrites: true, lineWriteLeaseToken: leaseToken, version: 1 });
+
+    const done = await patchHeader(app, { venueId: '1', lineWriteLeaseToken: leaseToken, version: 2 });
+
+    expect(done.status).toBe(200);
+    expect(await done.json()).toMatchObject({ ok: true, version: 2, released: true });
+    expect(row).toMatchObject({ version: 2, edit_lease_token: null, edit_lease_expires_at: null });
+  });
+
+  test('a nothing-changed answer still names the version, so no screen adopts a missing one', async () => {
+    const { app } = harness();
+
+    const res = await patchHeader(app, { note: 'original' });
+
+    expect(await res.json()).toMatchObject({ ok: true, changed: 0, version: 1 });
+  });
+
+  test('the same person takes back the lock their own earlier save left behind', async () => {
+    const { app, row } = harness();
+    Object.assign(row, {
+      version: 2, edit_lease_token: 'left-behind-by-my-first-save',
+      edit_lease_expires_at: liveFor(50_000), edit_lease_user_id: '1',
+    });
+
+    const res = await patchHeader(app, { reserveLineWrites: true, lineWriteLeaseToken: 'lease-token-my-second-save', version: 2 });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ reserved: true, version: 3 });
+    expect(row).toMatchObject({ version: 3, edit_lease_token: 'lease-token-my-second-save' });
+  });
+
+  test('a header-only save by the same person is not refused by their own leftover lock', async () => {
+    const { app, row } = harness();
+    Object.assign(row, {
+      version: 2, edit_lease_token: 'left-behind-by-my-first-save',
+      edit_lease_expires_at: liveFor(50_000), edit_lease_user_id: 1,
+    });
+
+    const res = await patchHeader(app, { note: 'second save', version: 2 });
+
+    expect(res.status).toBe(200);
+    expect(row).toMatchObject({ note: 'second save', version: 3, edit_lease_token: null });
+  });
+
+  test('taking a lock back never skips the version check', async () => {
+    const { app, row } = harness();
+    Object.assign(row, {
+      version: 3, edit_lease_token: 'left-behind', edit_lease_expires_at: liveFor(50_000), edit_lease_user_id: 1,
+    });
+
+    const res = await patchHeader(app, { reserveLineWrites: true, lineWriteLeaseToken: 'lease-token-stale-screen', version: 2 });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: 'so_version_conflict', currentVersion: 3 });
+    expect(row).toMatchObject({ version: 3, edit_lease_token: 'left-behind' });
+  });
+
+  test("someone else's live lock still refuses, and so does a lock with no recorded holder", async () => {
+    for (const holder of [2, null]) {
+      const { app, row } = harness();
+      Object.assign(row, {
+        version: 2, edit_lease_token: 'held-elsewhere', edit_lease_expires_at: liveFor(50_000), edit_lease_user_id: holder,
+      });
+
+      const res = await patchHeader(app, { reserveLineWrites: true, lineWriteLeaseToken: 'lease-token-mine', version: 2 });
+
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({ error: 'so_edit_lease_conflict', reason: 'held' });
+      expect(row).toMatchObject({ version: 2, edit_lease_token: 'held-elsewhere' });
+    }
+  });
+
+  test('the end of a save the same person has since superseded does not release the newer lock', async () => {
+    const { app, row } = harness();
+    Object.assign(row, {
+      version: 3, edit_lease_token: 'lease-token-newer-save', edit_lease_expires_at: liveFor(50_000), edit_lease_user_id: 1,
+    });
+
+    const res = await patchHeader(app, { completeLineWrites: true, lineWriteLeaseToken: 'lease-token-older-save', version: 3 });
+
+    expect(res.status).toBe(409);
+    expect(row).toMatchObject({ version: 3, edit_lease_token: 'lease-token-newer-save' });
+  });
+});
+
+describe('clearing the date pair from the edit page (null payload)', () => {
+  /* A complete header, so the only thing either save can fail on is the date
+     pair — the base fixture has no address, which the proceed gate reports as
+     its own 422 and would mask the shape under test. */
+  const withDates = () => {
+    const h = harness();
+    h.row.processing_date = '2026-12-01';
+    h.row.customer_delivery_date = '2026-12-15';
+    h.row.address1 = '1 Jalan Test';
+    h.row.postcode = '47500';
+    return h;
+  };
+
+  test('clearing BOTH dates saves and clears both columns', async () => {
+    const { app, row, getCasArgs } = withDates();
+
+    const response = await patchHeader(app, {
+      processingDate: null,
+      customerDeliveryDate: null,
+      version: 1,
+    });
+
+    expect(response.status).toBe(200);
+    expect(row.processing_date).toBeNull();
+    expect(getCasArgs()).toMatchObject({ p_apply_delivery_date: true, p_delivery_date: null });
+  });
+
+  test('clearing ONLY the Delivery Date is refused, not silently applied', async () => {
+    const { app, row, getCasArgs } = withDates();
+
+    const response = await patchHeader(app, { customerDeliveryDate: null, version: 1 });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: 'processing_delivery_must_pair' });
+    expect(row).toMatchObject({ processing_date: '2026-12-01', version: 1 });
+    expect(getCasArgs()).toBeNull();
+  });
+});
+
+/* Owner 2026-09-24: 「我选了那个场（Mid Valley，MLE，8 号到 9 号），选了过后，它就自动
+   记下是那个场地的…包括 venue, organiser 和那个日期」. An EDIT used to send the place
+   only and leave the link PENDING for the next morning's reconcile. */
+describe('an edit that picks a fair EVENT records that event', () => {
+  type Project = { id: number; company_id: number; venue: string; organizer: string; brand: string; start: string; end: string | null };
+  const PROJECTS: Project[] = [
+    { id: 340, company_id: 1, venue: 'MID VALLEY', organizer: 'REX', brand: 'AKEMI', start: '2026-07-24', end: '2026-07-26' },
+    { id: 500, company_id: 1, venue: 'MID VALLEY', organizer: 'MLE', brand: 'AKEMI', start: '2026-08-08', end: '2026-08-09' },
+    { id: 501, company_id: 1, venue: 'MID VALLEY', organizer: 'MLE', brand: 'ZANOTTI', start: '2026-08-08', end: '2026-08-09' },
+    /* The same event under the OTHER company: never reachable from company 1. */
+    { id: 900, company_id: 2, venue: 'MID VALLEY', organizer: 'MLE', brand: 'AKEMI', start: '2026-08-08', end: '2026-08-09' },
+  ];
+  /* The event lookup (`loadFairsForEvent`), answered from PROJECTS with the SQL's own
+     predicates, the company one included. Anything else reads empty. */
+  const fairDb = {
+    prepare: (sql: string) => ({
+      bind: (...vals: unknown[]) => ({
+        all: async () => {
+          if (!/p\.start_date = \?/.test(sql)) return { results: [] };
+          const company = Number(/p\.company_id = (\d+)/.exec(sql)?.[1]);
+          const [venue, organizer, start, end] = vals.map((v) => (v == null ? '' : String(v)));
+          const results = PROJECTS
+            .filter((p) => p.company_id === company && p.venue.toLowerCase() === venue!.trim().toLowerCase()
+              && p.organizer.toLowerCase() === organizer!.trim().toLowerCase() && p.start === start && (p.end ?? '') === end)
+            .map((p) => ({ id: p.id, venue: p.venue, organizer: p.organizer, brand: p.brand, startdate: p.start, enddate: p.end, status: 'confirmed' }));
+          return { results };
+        },
+      }),
+    }),
+  };
+  const MLE = { fairVenue: 'MID VALLEY', fairOrganizer: 'MLE', fairStart: '2026-08-08', fairEnd: '2026-08-09' };
+  const onFair = (row: Row, extra: Row) => Object.assign(row, {
+    venue: 'MID VALLEY', so_date: '2026-08-10', branding: 'AKEMI', project_id: 340, fair_match: 'PICKED', ...extra,
+  });
+  const patchWithFairs = (app: Hono, body: Row) => app.request('/mfg-sales-orders/SO-CAS-1', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  }, { DB: fairDb });
+
+  test('another event at the SAME venue is saved, not answered "nothing to do"', async () => {
+    const { app, row } = harness();
+    onFair(row, {});
+
+    const response = await patchWithFairs(app, { venue: 'MID VALLEY', ...MLE, version: 1 });
+
+    expect(response.status).toBe(200);
+    /* AKEMI's booth at MLE 08/08-09/08 — not ZANOTTI's, and never the other company's. */
+    expect(row).toMatchObject({ project_id: 500, fair_match: 'PICKED', venue: 'MID VALLEY', version: 2 });
+  });
+
+  test('a new venue with an event links that event instead of dropping to PENDING', async () => {
+    const { app, row } = harness();
+    onFair(row, { venue: 'SPICE ARENA', project_id: null, fair_match: 'PENDING' });
+
+    const response = await patchWithFairs(app, { venue: 'MID VALLEY', ...MLE, version: 1 });
+
+    expect(response.status).toBe(200);
+    expect(row).toMatchObject({ venue: 'MID VALLEY', venue_source: 'MANUAL', project_id: 500, fair_match: 'PICKED' });
+  });
+
+  test('a place alone (Others) still drops the link to PENDING for the reconcile', async () => {
+    const { app, row } = harness();
+    onFair(row, {});
+
+    const response = await patchWithFairs(app, { venue: 'IOI CITY MALL', fairVenue: null, fairOrganizer: null, fairStart: null, fairEnd: null, version: 1 });
+
+    expect(response.status).toBe(200);
+    expect(row).toMatchObject({ venue: 'IOI CITY MALL', project_id: null, fair_match: 'PENDING' });
+  });
+
+  test('the event already linked, picked again, is a no-op', async () => {
+    const { app, row, getRpcCalls } = harness();
+    onFair(row, { project_id: 500 });
+
+    const response = await patchWithFairs(app, { venue: 'MID VALLEY', ...MLE, version: 1 });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, changed: 0 });
+    expect(row).toMatchObject({ project_id: 500, version: 1 });
+    expect(getRpcCalls()).toBe(0);
+  });
+
+  test('an event the order\'s brand had no booth at is recorded UNMATCHED, not guessed', async () => {
+    const { app, row } = harness();
+    onFair(row, { branding: 'DUNLOPILLO' });
+
+    const response = await patchWithFairs(app, { venue: 'MID VALLEY', ...MLE, version: 1 });
+
+    expect(response.status).toBe(200);
+    expect(row).toMatchObject({ project_id: null, fair_match: 'UNMATCHED' });
+  });
+
+  /* Owner 2026-09-24: the event runs 7-9, 「他一选完那个 event，这边下拉菜单就要拉出来
+     7、8、9 三天给他选」 — the DAY of the event rides with it. */
+  test('the day picked with the event is recorded with it', async () => {
+    const { app, row } = harness();
+    onFair(row, { fair_date: null });
+
+    const response = await patchWithFairs(app, { venue: 'MID VALLEY', ...MLE, fairDate: '2026-08-09', version: 1 });
+
+    expect(response.status).toBe(200);
+    expect(row).toMatchObject({ project_id: 500, fair_date: '2026-08-09', version: 2 });
+  });
+
+  test('changing only the day saves the day and leaves the link alone', async () => {
+    const { app, row } = harness();
+    onFair(row, { project_id: 500, fair_date: '2026-08-08' });
+
+    const response = await patchWithFairs(app, { ...MLE, fairDate: '2026-08-09', version: 1 });
+
+    expect(response.status).toBe(200);
+    expect(row).toMatchObject({ project_id: 500, fair_match: 'PICKED', fair_date: '2026-08-09', version: 2 });
+  });
+
+  test('a day that is not a day of the picked event is not recorded', async () => {
+    const { app, row } = harness();
+    onFair(row, { project_id: 500, fair_date: '2026-08-08' });
+
+    const response = await patchWithFairs(app, { ...MLE, fairDate: '2026-08-10', version: 1 });
+
+    expect(response.status).toBe(200);
+    expect(row).toMatchObject({ project_id: 500, fair_date: null });
+  });
+
+  test('a day sent without its event names nothing to check it against, so it is ignored', async () => {
+    const { app, row } = harness();
+    onFair(row, { project_id: 500, fair_date: '2026-08-08' });
+
+    const response = await patchWithFairs(app, { fairDate: '2026-08-09', version: 1 });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, changed: 0 });
+    expect(row).toMatchObject({ fair_date: '2026-08-08', version: 1 });
+  });
+
+  test('a new place with no event clears the day, whether or not the fair keys came along', async () => {
+    const withKeys = harness();
+    onFair(withKeys.row, { project_id: 500, fair_date: '2026-08-08' });
+    await patchWithFairs(withKeys.app, { venue: 'IOI CITY MALL', fairVenue: null, fairOrganizer: null, fairStart: null, fairEnd: null, fairDate: null, version: 1 });
+    expect(withKeys.row).toMatchObject({ venue: 'IOI CITY MALL', project_id: null, fair_match: 'PENDING', fair_date: null });
+
+    const placeOnly = harness();
+    onFair(placeOnly.row, { project_id: 500, fair_date: '2026-08-08' });
+    await patchWithFairs(placeOnly.app, { venue: 'IOI CITY MALL', version: 1 });
+    expect(placeOnly.row).toMatchObject({ venue: 'IOI CITY MALL', project_id: null, fair_match: 'PENDING', fair_date: null });
+  });
+});
+
+/* HC-0094 (Chew, IT Hub, 2026-10-13): "Manual edit also will not recognized back
+   to project". Changing the venue to a place alone used to drop the link to
+   PENDING and wait for the nightly pass; it now runs the create-time detection
+   (venue + date + brand) against the fairs that already exist. */
+describe('a venue edit re-detects the fair at once', () => {
+  const fairDb = (fairs: Row[]) => ({
+    DB: {
+      prepare: () => ({
+        bind: (venue: unknown) => ({
+          all: async () => ({ results: fairs.filter((f) => f.venue === venue) }),
+        }),
+      }),
+    },
+  });
+  const MV = { venue: 'MID VALLEY', organizer: 'MLE', startdate: '2026-10-10', enddate: '2026-10-12', status: 'Confirmed' };
+
+  test('a place with one booth of the order brand links to that existing project', async () => {
+    const { app, row } = harness();
+    Object.assign(row, { venue: 'PJ SHOWROOM', so_date: '2026-10-12', branding: 'DUNLOPILLO', project_id: null, fair_match: 'NO_FAIR' });
+    const res = await app.request('/mfg-sales-orders/SO-CAS-1', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ venue: 'MID VALLEY', version: 1 }),
+    }, fairDb([{ id: 20, brand: 'AKEMI', ...MV }, { id: 21, brand: 'DUNLOPILLO', ...MV }]));
+    expect(res.status).toBe(200);
+    expect(row).toMatchObject({ venue: 'MID VALLEY', project_id: 21, fair_match: 'PICKED' });
+  });
+
+  test('a place with no fair yet stays PENDING for the reconcile', async () => {
+    const { app, row } = harness();
+    Object.assign(row, { venue: 'PJ SHOWROOM', so_date: '2026-10-12', branding: 'DUNLOPILLO', project_id: 9, fair_match: 'PICKED' });
+    const res = await app.request('/mfg-sales-orders/SO-CAS-1', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ venue: 'MID VALLEY', version: 1 }),
+    }, fairDb([]));
+    expect(res.status).toBe(200);
+    expect(row).toMatchObject({ venue: 'MID VALLEY', project_id: null, fair_match: 'PENDING' });
+  });
+});

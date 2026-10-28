@@ -1,0 +1,74 @@
+name: GRN double-post trace (read-only)
+
+# Every stock movement a goods receipt wrote, in creation order, beside the
+# receipt's own header and lines.
+#
+# check-duplicate-movements (run 34450169671) found FOUR hard double-posts, all
+# goods receipts, all created 2026-09-10 - today, not cutover residue - and
+# check-stock-vs-autocount (run 34449850723) independently reports the same
+# item/warehouse cells as the ERP holding more than the book. Goods receipts have
+# no unique-index backstop on inventory_movements, so nothing at the database
+# level stops a second post.
+#
+# A bucket COUNT cannot tell a double submit from a warehouse change and back
+# (grns.ts writes OUT(old) + IN(new) on every warehouse change, so A->B->A leaves
+# two IN(A) rows and a correct balance). Only the rows in creation order can.
+#
+# SELECT only. No writes, no DDL, no transaction. Manual trigger only. Own
+# concurrency group. Exit 0 for every legitimate answer. It proposes nothing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      docs:
+        description: "GRN numbers, comma-separated. ALL = every receipt with a repeated bucket. Blank = the four found."
+        required: false
+        default: ""
+      company_id:
+        description: "Company. Blank = 1."
+        required: false
+        default: ""
+
+concurrency:
+  group: diag-grn-double-post-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/diag-grn-double-post-2026-09-10.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          DOCS: ${{ inputs.docs }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/diag-grn-double-post-2026-09-10.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DOCS: ${{ inputs.docs }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

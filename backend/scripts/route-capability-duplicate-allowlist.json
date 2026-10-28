@@ -1,0 +1,29 @@
+[
+  {
+    "method": "POST",
+    "path": "/api/users/:id/impersonate",
+    "sources": [
+      "backend/src/routes/users.ts:1692",
+      "backend/src/routes/users.ts:1922"
+    ],
+    "reason": "Existing production-owner and staging-only handlers overlap. Remove the production-unconditional duplicate in the D3 privilege-boundary batch."
+  },
+  {
+    "method": "GET",
+    "path": "/api/scm/categories/:id/hero-blob",
+    "sources": [
+      "backend/src/scm/routes/categories.ts:178",
+      "backend/src/scm/routes/public-images.ts:36"
+    ],
+    "reason": "POS cutover #11a: categoryHeroBlobHandler is registered both by the categories router and by the pre-auth publicScmImages proxy (public-images.ts, mounted at /api/scm BEFORE the global auth in index.ts) so the cross-origin 2990 POS can load category heroes with a plain <img> (no bearer). Same exported handler; the pre-auth mount wins by ordering. Intentional."
+  },
+  {
+    "method": "GET",
+    "path": "/api/scm/product-models/:id/photo/:key",
+    "sources": [
+      "backend/src/scm/routes/product-models.ts:88",
+      "backend/src/scm/routes/public-images.ts:35"
+    ],
+    "reason": "POS cutover #11a: modelPhotoProxyHandler is registered both by the authed product-models router and by the pre-auth publicScmImages proxy (public-images.ts) so the cross-origin 2990 POS can load Model hero photos with a plain <img> (no bearer). Same exported handler; the pre-auth mount wins by ordering. Intentional."
+  }
+]

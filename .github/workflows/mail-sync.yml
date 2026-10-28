@@ -1,0 +1,65 @@
+name: Mail Sync (Gmail IMAP -> ERP)
+
+# Pulls new mail from the company Gmail (Google Workspace) mailbox into the ERP
+# Mail Center. Read-only on the mailbox; the ERP dedups by Message-ID so re-runs
+# never duplicate. No MX change required. See mail-sync/README.md for the
+# secrets to set.
+#
+# NOTE: scheduled runs only fire from the repo's DEFAULT branch. To test on a
+# feature branch first, use "Run workflow" (workflow_dispatch) and pick the
+# branch — that runs this file from whatever branch you select.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *" # every 5 minutes
+  workflow_dispatch:
+    inputs:
+      backfill:
+        description: "Import ALL history (first run) instead of just recent"
+        type: boolean
+        default: false
+      since_days:
+        description: "Incremental look-back window in days (ignored if backfill)"
+        default: "3"
+
+# Never let two syncs overlap (a slow backfill + a cron tick).
+concurrency:
+  group: mail-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+      - name: Install deps
+        working-directory: mail-sync
+        run: npm ci --no-audit --no-fund
+      - name: Sync
+        working-directory: mail-sync
+        env:
+          # URL of the ERP inbound endpoint. Set repo variable MAIL_INBOUND_URL
+          # to override; otherwise the script defaults to the prod worker URL.
+          MAIL_INBOUND_URL: ${{ vars.MAIL_INBOUND_URL }}
+          # Must equal the ERP worker's MAIL_INBOUND_SECRET (Cloudflare secret).
+          MAIL_INBOUND_SECRET: ${{ secrets.MAIL_INBOUND_SECRET }}
+          # PREFERRED: JSON array of every mailbox account to pull, each its own
+          # Google account + App Password (NOT the normal password). Example:
+          #   [{"user":"hello@houzscentury.com","password":"abcd efgh ijkl mnop"},
+          #    {"user":"sales@houzscentury.com","password":"…"}]
+          IMAP_ACCOUNTS: ${{ secrets.IMAP_ACCOUNTS }}
+          # Back-compat single-account path — used ONLY when IMAP_ACCOUNTS is
+          # unset. The Gmail address + a Google App Password.
+          IMAP_USER: ${{ secrets.IMAP_USER }}
+          IMAP_PASSWORD: ${{ secrets.IMAP_PASSWORD }}
+          # Optional overrides (script defaults: imap.gmail.com:993, INBOX).
+          IMAP_HOST: ${{ vars.IMAP_HOST }}
+          IMAP_PORT: ${{ vars.IMAP_PORT }}
+          IMAP_MAILBOX: ${{ vars.IMAP_MAILBOX }}
+          BACKFILL: ${{ inputs.backfill }}
+          SINCE_DAYS: ${{ inputs.since_days }}
+        run: npm run sync

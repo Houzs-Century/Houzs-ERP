@@ -1,0 +1,44 @@
+-- 0250_scm_trip_stop_type_transfer_lorry_service.sql
+-- Add 'TRANSFER' and 'LORRY_SERVICE' to scm.trip_stop_type — job types 8 and 9
+-- of the fleet board.
+--
+-- WHY. Owner, 2026-08-03, listing the job types a new DP order must offer:
+-- Setup / Dismantle / Supplier / **Transfer item** / **Lorry service** /
+-- ASSR-Inspection / ASSR-Pickup / ASSR-Service / Delivery order. Seven of those
+-- nine already exist on this enum (0053 + 0128 SUPPLIER_PICKUP + 0165
+-- INSPECTION). These are the two that do not.
+--
+--   TRANSFER      moving stock between our own locations — sourced from an
+--                 scm.stock_transfers document (from_warehouse -> to_warehouse)
+--                 or entered by hand for an ad-hoc move. The party is the
+--                 DESTINATION warehouse.
+--   LORRY_SERVICE taking a lorry to a workshop. The party is the WORKSHOP
+--                 (scm.workshops, mig 0241); the job's subject is the lorry
+--                 itself, not goods.
+--
+-- THIS SUPERSEDES 0243's READING OF 'TRANSFER'. That migration (2026-08-02)
+-- recorded TRANSFER as an add-on billed on whatever job carried it — "not a
+-- missing job type" — which was true of the rate rule as it then stood. The
+-- owner has since asked for Transfer item as a job the fleet is DISPATCHED to
+-- do, so the rate rule of the same name now names its job type
+-- (RULE_JOB_TYPE.TRANSFER in scm/lib/rate-rule-taxonomy.ts) instead of null.
+-- The rule type list and its CHECK are unchanged — TRANSFER was already there.
+--
+-- LORRY_SERVICE IS DELIBERATELY UNPRICED, and that is not the same omission
+-- 0243 fixed. A supplier pickup is work we do for a customer with no way to
+-- charge it; a lorry service is money flowing the OTHER way — the workshop
+-- bills us, and that spend is recorded on scm.lorry_work_orders (0204/0241),
+-- not on a rate card. `npm run audit:job-types` would otherwise fail this as an
+-- unpriced dispatchable job, so it carries a named exemption in
+-- backend/scripts/check-job-type-parity.mjs rather than a fake rate rule.
+--
+-- Standalone ALTER TYPEs so the new values are never referenced in the same
+-- transaction that adds them (Postgres rule) — mirrors 0128 and 0165. The
+-- columns that link a DP order to its transfer / lorry / workshop land in the
+-- NEXT migration for the same reason.
+--
+-- HOUSE STYLE. Additive, idempotent. RE-CHECK THE NUMBER AT MERGE — 0250 was
+-- next free above 0249.
+
+ALTER TYPE scm.trip_stop_type ADD VALUE IF NOT EXISTS 'TRANSFER';
+ALTER TYPE scm.trip_stop_type ADD VALUE IF NOT EXISTS 'LORRY_SERVICE';

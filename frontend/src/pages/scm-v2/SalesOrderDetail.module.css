@@ -1,0 +1,1087 @@
+/* ====================================================================
+   Sales Order Detail — design-system reskin (2026-07-16)
+
+   FULL-BLEED on the app background, matching SalesOrderMaintenance +
+   PurchaseOrdersListV2. The old grey framed .page wrapper (the
+   `#eef0ec` canvas + the `.page` token-override cascade + the sticky
+   .headerRow / .title / .subtitle / .actions / .totalRail chrome) is
+   GONE — the page header is now the shared <PageHeader> component and
+   the header actions are inline Tailwind utilities in the TSX.
+
+   Only the repeated CONTENT primitives that would be noisy as per-cell
+   Tailwind (the customer form grid, the line-items table, the totals
+   card, the line-editor modal, the History drawer, banners, badges)
+   live here, rewritten to the Tailwind "Ink & Petrol" token hexes so
+   the page reads as one system with the reference pages:
+     border #d6d9d2  border-subtle #e3e6e0  border-strong #c2c6bd
+     surface #fff    surface-2 #f4f6f3
+     ink #11140f     ink-secondary #414539  ink-muted #767b6e
+     primary #16695f primary-ink #0c3f39
+   Structural tokens (--space-*, --fs-*, --font-*, --shadow-*) stay as
+   var() — they're global and unaffected by the .page removal.
+   ==================================================================== */
+
+.statusPill {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-button);
+  font-size: var(--fs-11);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  background: rgba(34, 31, 32, 0.08);
+  color: #11140f;
+}
+
+.statusDraft     { background: rgba(34, 31, 32, 0.08);  color: #767b6e; }
+.statusConfirmed { background: rgba(166, 71, 30, 0.12); color: #0c3f39; }
+.statusInProd    { background: rgba(166, 71, 30, 0.18); color: #0c3f39; }
+.statusReady     { background: rgba(47, 93, 79, 0.12);  color: #2F5D4F; }
+.statusShipped   { background: rgba(47, 93, 79, 0.20);  color: #2F5D4F; }
+.statusDelivered { background: rgba(47, 93, 79, 0.28);  color: #2F5D4F; }
+.statusInvoiced  { background: rgba(34, 31, 32, 0.18);  color: #11140f; }
+.statusClosed    { background: rgba(34, 31, 32, 0.18);  color: #11140f; }
+.statusCancelled { background: rgba(184, 51, 31, 0.10); color: #B8331F; }
+.statusReturned  { background: rgba(214, 158, 46, 0.18); color: #8a5a00; }
+
+/* Costing Pending pill (Commander 2026-06-01) — a shipped line whose actual
+   cost isn't known yet (GR received with no price, no Purchase Invoice). Marked
+   on Line Cost + Total Cost; auto-clears to the real number once a price lands
+   and the recost engine fills it. Amber, calm — not an error state. */
+.pendingPill {
+  display: inline-block;
+  font-size: var(--fs-12, 0.75rem);
+  font-weight: 600;
+  line-height: 1.4;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(214, 158, 46, 0.18);
+  color: #8a5a00;
+  white-space: nowrap;
+}
+
+/* ── Cards ──────────────────────────────────────────────────────────── */
+
+.card {
+  background: #fff;
+  border: 1px solid #d6d9d2;
+  border-radius: 10px;
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+
+.cardHeader {
+  /* Section bar (Wei Siang 2026-06-04): a clear header so each section reads as
+     a section, with a brand-accent left rule. */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 8px var(--space-3);
+  border-bottom: 1px solid #d6d9d2;
+  border-left: 3px solid #0c3f39;
+  background: #f4f6f3;
+}
+
+.cardTitle {
+  /* SECTION HEADER — the second level of the page hierarchy (under the doc
+     title). Clearly larger + bolder + in the brand "emphasis type" colour so it
+     reads as a heading, distinct from the small muted field labels below it.
+     (Wei Siang 2026-06-04 — restore visual hierarchy; the prior fs-9 eyebrow had
+     become indistinguishable from the fs-10 field labels.) */
+  font-family: var(--font-button);
+  font-size: var(--fs-13, 13px);
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #0c3f39;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cardTitle svg {
+  width: 15px;
+  height: 15px;
+}
+
+.cardBody {
+  /* A little breathing room so fields don't crowd the section bar. */
+  padding: var(--space-4);
+}
+
+/* ── Customer info grid ─────────────────────────────────────────────── */
+
+.formGrid2 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  /* Houzs 2026-06-23 — was 6px row gap (fields crammed into tight rows);
+     give each row real breathing room so the form reads cleanly. */
+  gap: var(--space-3) var(--space-4);
+}
+
+/* Owner 2026-07-27 — the GRN line identity row grew a third field (Supplier
+   SKU between our code and the description), so a 3-track sibling. */
+.formGrid3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-3) var(--space-4);
+}
+
+.formGrid4 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-3) var(--space-4);
+}
+
+/* Tablet / mid-width — 4 narrow columns crush compound fields (phone with a
+   country-code prefix, selects with a chevron), so step down to 3 then 2. */
+@media (max-width: 1200px) {
+  .formGrid4 { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 820px) {
+  .formGrid4 { grid-template-columns: repeat(2, 1fr); }
+  .formGrid3 { grid-template-columns: repeat(2, 1fr); }
+  .formGrid2 { grid-template-columns: 1fr; }
+}
+/* Phone (Houzs 2026-06-23) — collapse to a SINGLE column so every field sits on
+   its own full-width row, flowing straight down (name, processing date, …)
+   instead of cramped multi-column blocks. The `grid-column: auto !important`
+   resets the inline `gridColumn:'span N'` on the wide fields (e.g. Customer
+   Name) so they don't overflow a 1-track grid. */
+@media (max-width: 600px) {
+  .formGrid4,
+  .formGrid3,
+  .formGrid2 { grid-template-columns: 1fr; }
+  .formGrid4 > .field,
+  .formGrid3 > .field,
+  .formGrid2 > .field { grid-column: auto !important; }
+
+  /* Phone density pass (Houzs 2026-06-23 — owner: "字体太大了, 手机上不漂亮").
+     Match the Service Case (ASSR) mobile card scale the owner loves:
+     ~10px uppercase labels, ~13px inputs, compact padding — so more rows fit
+     per screen. Single-column layout above is kept; this only shrinks type +
+     spacing. Phone-only — desktop/tablet untouched. */
+
+  /* Page chrome — less hero padding, tighter section gaps. */
+  .page { gap: var(--space-2); padding: var(--space-2) 0 var(--space-3); }
+
+  /* Header subtitle (Houzs 2026-06-24) — the "SO date … · N lines · Current
+     SO-… · Customer SO Ref …" meta line is redundant clutter on a phone: the
+     doc no is already the title and the customer ref lives in the form below.
+     Hide it on phone only; desktop keeps the meta line. */
+  .subtitle { display: none; }
+
+  /* Section header bar — step the title down from 13px/800 to a compact
+     11px so it reads like the ASSR card eyebrow, not a headline. */
+  .cardHeader { padding: 6px var(--space-3); }
+  .cardTitle { font-size: 11px; letter-spacing: 0.06em; }
+  .cardTitle svg { width: 13px; height: 13px; }
+
+  /* Card body — tighter so the first few fields aren't pushed off-screen. */
+  .cardBody { padding: var(--space-3); }
+
+  /* Tighten the single-column field stack. */
+  .formGrid4,
+  .formGrid2 { gap: var(--space-2) var(--space-3); }
+
+  /* Field label — uppercase ~10px, matching the ASSR mono stack labels. */
+  .field { gap: 2px; }
+  .fieldLabel { font-size: 9.5px; letter-spacing: 0.05em; }
+
+  /* Inputs — ~13px text with compact padding (still tappable), down from the
+     fs-12 + 6px/10px desktop sizing. */
+  .fieldInput,
+  .fieldSelect {
+    font-size: 13px;
+    padding: 5px 8px;
+  }
+  .fieldSelect { padding-right: 28px; }
+
+  /* Sub-section eyebrow + divider spacing tighter. */
+  .subHead { font-size: 9.5px; margin: 0 0 4px; }
+  .subSection { padding-top: var(--space-2); margin-top: var(--space-2); }
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  position: relative;
+}
+
+.fieldFull { grid-column: 1 / -1; }
+
+.fieldLabel {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #767b6e;
+  line-height: 1.3;
+}
+
+/* Label row — the field label with a right-aligned inline action beside it
+   (the PO "Apply to all" on each supplier-revised date slot, owner 2026-08-03).
+   Lives inside .field's column flow, so the action costs no extra height. */
+.fieldLabelRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+/* Inline text action beside a field label. Underlined rather than boxed so it
+   reads as a field-scoped shortcut instead of a form-level button competing
+   with Save. Disabled = that slot has no date yet, so there is nothing to
+   apply. */
+.applyAllBtn {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.3;
+  white-space: nowrap;
+  color: #0c3f39;
+  background: none;
+  border: none;
+  border-bottom: 1px solid rgba(12, 63, 57, 0.35);
+  padding: 0;
+  cursor: pointer;
+}
+.applyAllBtn:hover:not(:disabled),
+.applyAllBtn:focus-visible:not(:disabled) {
+  color: #0a332e;
+  border-bottom-color: #0a332e;
+}
+.applyAllBtn:disabled {
+  color: #a8ada0;
+  border-bottom-color: transparent;
+  cursor: not-allowed;
+}
+
+/* Transient "Applied to N lines" acknowledgement. Replaces the button in place
+   so the label row doesn't reflow while it shows. */
+.applyAllDone {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.3;
+  white-space: nowrap;
+  color: #0c3f39;
+}
+
+/* Required-field label — darker ink + heavier weight so mandatory inputs read
+   louder than the optional (soft-grey) ones. Pairs with .req below. Theme C
+   tokens (not hardcoded hex) since this stylesheet is token-bound. */
+.fieldLabelReq {
+  color: #11140f;
+  font-weight: 700;
+}
+
+/* Required marker (*) — Theme C error red, bold + a touch larger. */
+.req {
+  color: #B71C1C;
+  font-weight: 800;
+  font-size: 11px;
+  margin-left: 3px;
+}
+
+.fieldInput,
+.fieldSelect {
+  /* PR — commander 2026-05-27: "该填入资料的地方，还有 column 那些 dropdown
+     的状态切换，看起来差异不大". Editable inputs get a brighter paper
+     background + slightly heavier border so they're obviously editable; the
+     disabled override below muted them so the difference reads at a glance.
+     Padding bumps from 3px → 6px so text doesn't crowd the border. */
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  background: #fff;
+  border: 1px solid #d6d9d2;
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: #11140f;
+  outline: none;
+  width: 100%;
+  line-height: 1.3;
+}
+.fieldInput:focus,
+.fieldSelect:focus {
+  border-color: #0c3f39;
+  background: #fff;
+  box-shadow: 0 0 0 2px rgba(232, 107, 58, 0.16);
+}
+/* Scan blue-diff — a field whose value the operator changed from the
+   AI-prefilled value (fromScan SOs only). A soft blue tint + left rail so the
+   operator can see at a glance exactly what they corrected from the scan. */
+.edited {
+  background: rgba(43, 108, 176, 0.07);
+  border-color: #2B6CB0;
+  box-shadow: inset 3px 0 0 0 #2B6CB0;
+}
+.edited:focus {
+  border-color: #2B6CB0;
+  background: rgba(43, 108, 176, 0.07);
+  box-shadow: inset 3px 0 0 0 #2B6CB0, 0 0 0 2px rgba(43, 108, 176, 0.16);
+}
+/* Disabled / read-only treatment — clearly distinct from editable inputs.
+   Uses the soft cream background and a muted text color so commander can
+   tell at a glance which fields are locked. */
+.fieldInput:disabled,
+.fieldSelect:disabled,
+.fieldInput[readonly] {
+  background: #f4f6f3;
+  border-color: #d6d9d2;
+  color: #767b6e;
+  cursor: not-allowed;
+}
+/* PR — commander 2026-05-27 followup: native UA chevron varies wildly
+   across browsers and looks crude next to the rest of the rounded brand
+   icons. Hide it on .fieldSelect and lean on the wrapper-based custom
+   ChevronDown (see .selectWrap / .selectChevron below). Right padding
+   reserves room for the 14px Lucide icon plus its 10px gutter. */
+.fieldSelect {
+  padding-right: 32px;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: none;
+}
+.fieldSelect::-ms-expand { display: none; }
+
+/* .selectWrap — opt-in wrapper that places a custom Lucide ChevronDown
+   absolutely on the right edge of the select. Wrap the <select> + the
+   <ChevronDown> in a parent that uses this class. Keeps the chevron 10px
+   from the right edge, vertically centered, and ignores pointer events so
+   clicks pass through to the native select. */
+.selectWrap {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+.selectChevron {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #767b6e;
+  pointer-events: none;
+}
+
+/* ── Debtor autocomplete dropdown ───────────────────────────────────── */
+
+.suggestList {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: #fff;
+  border: 1px solid #c2c6bd;
+  border-radius: 10px;
+  box-shadow: var(--shadow-2);
+  max-height: 260px;
+  overflow-y: auto;
+  z-index: 30;
+  margin-top: 4px;
+}
+
+.suggestItem {
+  padding: 4px var(--space-2);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  color: #11140f;
+  border-bottom: 1px solid #d6d9d2;
+}
+.suggestItem:last-child { border-bottom: none; }
+.suggestItem:hover { background: #f4f6f3; }
+
+.suggestCode {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: #767b6e;
+}
+
+/* ── Line items table ───────────────────────────────────────────────── */
+
+.table {
+  /* PR — commander 2026-05-27: "MARGIN 那一列跟 ACTIONS 重叠了".
+     Fix: switch to fixed table layout so column widths stick + use `nth-child`
+     widths below for the numeric cluster. Item column flexes; everything
+     right of it gets a min width that fits the longest expected value
+     (MYR 9,999.99 → ~96px). */
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+}
+
+.table thead th {
+  /* Batch 3 theme skin — detail line tables take the SO-sample DataTable
+     header spec (sans 10px/700, tracking-brand 0.18em, surface-dim #e3e6e0,
+     ink, 2px rule). This ONE block skins the 14 detail/new pages that share
+     this module (SO/PO/PI/PV/Consignment×6/StockTransfer/StockTake/…). */
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--c-ink, #11140f);
+  text-align: left;
+  padding: 4px var(--space-2);
+  background: #e3e6e0;
+  border-bottom: 2px solid #d6d9d2;
+  white-space: nowrap;
+}
+/* PR — Tight + predictable widths for the right-side numeric cluster + the
+   actions column so margin doesn't bleed under actions. The 10-col layout
+   is: 1 Item · 2 Qty · 3 Unit · 4 Disc · 5 Delivery · 6 Total · 7 Unit Cost ·
+   8 Line Cost · 9 Margin · 10 Actions. */
+.table thead th:nth-child(2),
+.table tbody td:nth-child(2) { width: 56px; min-width: 56px; }
+.table thead th:nth-child(3),
+.table tbody td:nth-child(3),
+.table thead th:nth-child(4),
+.table tbody td:nth-child(4),
+.table thead th:nth-child(6),
+.table tbody td:nth-child(6),
+.table thead th:nth-child(7),
+.table tbody td:nth-child(7),
+.table thead th:nth-child(8),
+.table tbody td:nth-child(8),
+.table thead th:nth-child(9),
+.table tbody td:nth-child(9) {
+  width: 96px;
+  min-width: 96px;
+}
+.table thead th:nth-child(5),
+.table tbody td:nth-child(5) { width: 104px; min-width: 104px; }
+.table thead th:nth-child(10),
+.table tbody td:nth-child(10) { width: 96px; min-width: 96px; }
+
+/* A table that is NOT the SO line layout opts out of the column widths above
+   (they are keyed by position: SO col 2 = Qty at 56px). Stock Transfer's col 2
+   is the variant bucket and Stock Adjustment's is the product name; both were
+   squeezed to 56px and cut their text. Widths come from the page's own <th>. */
+.table.tableOwnWidths thead th:nth-child(n),
+.table.tableOwnWidths tbody td:nth-child(n) {
+  width: auto;
+  min-width: 0;
+}
+/* A long line table whose column header stays on screen while the page
+   scrolls (Stock Take count sheet). The page scrolls in <main>, so top: 0 is
+   the top of the content area; the card around it must not be overflow:hidden
+   (that makes the card the scroll box and the header never moves). */
+.stickyHead thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+/* The picked variant bucket, in full, under its select (Stock Transfer). */
+.bucketPicked {
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  color: var(--fg-muted);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.table tbody td {
+  padding: 6px var(--space-2);
+  border-bottom: 1px solid #d6d9d2;
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  color: #11140f;
+  vertical-align: top;
+}
+
+.table tbody tr:last-child td { border-bottom: none; }
+
+.tableRight { text-align: right; }
+
+.codeCell {
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  color: #0c3f39;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.muted { color: #767b6e; }
+
+.variantBlock {
+  margin-top: 4px;
+  font-size: var(--fs-11);
+  color: #767b6e;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.variantPill {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-sans);
+  font-size: var(--fs-11);
+  background: #f4f6f3;
+  border: 1px solid #d6d9d2;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  color: #11140f;
+  font-variant-numeric: tabular-nums;
+}
+
+.priceCell {
+  /* PR — commander 2026-05-27: "字体好像太大了，在格子里都放不下".
+     Step down to fs-12 + weight 700 (was fs-14 / 800) so the price fits the
+     ~96px column without wrapping. Still bolded + burnt so the value is
+     visually distinct from the cost/margin cells next to it. */
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  font-weight: 700;
+  font-stretch: 80%;
+  color: #0c3f39;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.iconBtn {
+  background: transparent;
+  border: none;
+  color: #767b6e;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 8px;
+  display: inline-flex;
+}
+.iconBtn:hover { background: #f4f6f3; color: #11140f; }
+.iconBtnDanger:hover { background: rgba(184, 51, 31, 0.10); color: #B8331F; }
+
+.actionsCell {
+  display: inline-flex;
+  gap: 4px;
+  justify-content: flex-end;
+  width: 100%;
+}
+
+.emptyRow {
+  text-align: center;
+  color: #767b6e;
+  padding: var(--space-6);
+  font-style: italic;
+}
+
+.addLineRow {
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid #d6d9d2;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ── Totals card ────────────────────────────────────────────────────── */
+
+.totalsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-3) var(--space-5);
+}
+
+/* Totals KPI strip (Revenue / Cost / Margin / Margin %). Moved off the inline
+   TOTALS_KPI_GRID_STYLE const (Houzs 2026-06-24) so the phone breakpoint can
+   override the column count — an inline style can't carry a media query. These
+   declarations are byte-identical to the old const; the phone override
+   (repeat(2,1fr)) lives in the @media(max-width:600px) block at end of file. */
+.totalsKpiGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid #d6d9d2;
+}
+
+.totalRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.totalLabel {
+  font-family: var(--font-sans);
+  font-size: var(--fs-11);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #767b6e;
+}
+
+.totalValue {
+  font-family: var(--font-sans);
+  font-size: var(--fs-13);
+  color: #11140f;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.grandTotalRow {
+  grid-column: 1 / -1;
+  border-top: 1px solid #d6d9d2;
+  padding-top: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.grandTotal {
+  /* PR — commander 2026-05-27: drop weight 800 → 700 and step size down so
+     "MYR 2,150.00" fits on one row inside the KPI tile. The category-row
+     totalValue cells also override this via TOTALS_KPI_VALUE_STYLE. */
+  font-family: var(--font-mark);
+  font-size: var(--fs-20, 20px);
+  font-weight: 700;
+  font-stretch: 80%;
+  color: #0c3f39;
+}
+
+.marginGood { color: #2F5D4F; }
+.marginWarn { color: #C77F3E; }
+.marginBad  { color: #B8331F; }
+
+/* ── Status transition strip ────────────────────────────────────────── */
+
+.statusBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* ── Modal (line editor) ────────────────────────────────────────────── */
+
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(34, 31, 32, 0.32);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal {
+  background: #f4f6f3;
+  border: 1px solid #c2c6bd;
+  border-radius: 14px;
+  box-shadow: var(--shadow-3);
+  width: min(720px, 95vw);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  z-index: 51;
+}
+
+.modalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid #d6d9d2;
+  background: #fff;
+  border-top-left-radius: 14px;
+  border-top-right-radius: 14px;
+}
+
+.modalTitle {
+  font-family: var(--font-title);
+  font-size: var(--fs-18);
+  font-weight: 700;
+  color: #11140f;
+  margin: 0;
+}
+
+.modalBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.modalFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid #d6d9d2;
+  background: #fff;
+  border-bottom-left-radius: 14px;
+  border-bottom-right-radius: 14px;
+}
+
+.bannerWarn {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: rgba(232, 107, 58, 0.08);
+  border: 1px solid #16695f;
+  color: #0c3f39;
+  padding: var(--space-3) var(--space-4);
+  border-radius: 10px;
+  font-size: var(--fs-13);
+}
+
+.bannerOk {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: rgba(34, 139, 81, 0.08);
+  border: 1px solid #2f9e5e;
+  color: #1d6b40;
+  padding: var(--space-3) var(--space-4);
+  border-radius: 10px;
+  font-size: var(--fs-13);
+}
+
+.bannerDismiss {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-3);
+  background: transparent;
+  border: none;
+  color: #1d6b40;
+  font-size: var(--fs-12);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* ── Product picker autocomplete ────────────────────────────────────── */
+
+.pickerWrap {
+  position: relative;
+}
+
+.previewLine {
+  font-family: var(--font-sans);
+  font-size: var(--fs-13);
+  color: #11140f;
+  background: #fff;
+  border: 1px solid #d6d9d2;
+  border-radius: 10px;
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.previewPrice {
+  font-family: var(--font-mark);
+  font-size: var(--fs-14);
+  font-weight: 800;
+  font-stretch: 80%;
+  color: #0c3f39;
+}
+
+/* ── Sub-section header ─────────────────────────────────────────────── */
+
+.subHead {
+  font-family: var(--font-sans);
+  font-size: var(--fs-10);
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: #767b6e;
+  margin: 0 0 6px;
+}
+
+/* PR #163 — Sub-section divider inside a card. Pairs with .subHead to
+   visually separate Customer / Order Info / Emergency Contact / Delivery
+   Address sub-blocks inside one card. */
+.subSection {
+  padding-top: var(--space-3);
+  margin-top: var(--space-3);
+  border-top: 1px solid #d6d9d2;
+}
+.subSection:first-child {
+  padding-top: 0;
+  margin-top: 0;
+  border-top: none;
+}
+
+/* PO-from-SO generation mode toggle (Commander 2026-05-28). */
+.modeToggle {
+  display: inline-flex;
+  border: 1px solid #d6d9d2;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  background: #fff;
+}
+.modeBtn {
+  font-family: var(--font-button);
+  font-size: var(--fs-12);
+  font-weight: 600;
+  padding: 6px var(--space-3);
+  border: none;
+  background: transparent;
+  color: #767b6e;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.modeBtn + .modeBtn { border-left: 1px solid #d6d9d2; }
+.modeBtn:hover { color: #11140f; }
+.modeBtn[data-active='true'] {
+  background: #11140f;
+  color: #f4f6f3;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PHONE REFLOW — line-items table → cards, totals KPI → 2×2 (Houzs 2026-06-24)
+
+   This block sits at the END of the file ON PURPOSE. CSS media queries do NOT
+   add specificity; ties break on source order. The base `.table`, `.totalLabel`,
+   `.totalValue`, `.totalsKpiGrid` rules are defined ABOVE — so an override
+   placed in the earlier @media block (line ~235) would LOSE the cascade to
+   them. Anchoring these phone rules last guarantees they win below 600px.
+   Desktop (>600px) is byte-identical.
+   ══════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 600px) {
+  /* ── LINE ITEMS table → stacked cards ───────────────────────────────────
+     The 10-column line-items table is ~888px wide and forced the whole page
+     to scroll sideways on a phone. Reflow each ROW into a clean stacked card
+     matching the Service-module / MfgSalesOrdersList mobile card scale:
+       - the Item cell becomes the card title,
+       - every other cell becomes a label-value row (5.5rem 1fr),
+       - the data-label="…" attributes added in the TSX supply the labels.
+     Classic responsive-table technique — display:block the table parts, hide
+     the <thead>, chrome each <tr>. The desktop <table> markup is unchanged. */
+  .table,
+  .table thead,
+  .table tbody,
+  .table tr,
+  .table td {
+    display: block;
+    width: auto;
+  }
+  /* Hide the header row off-screen — labels now live per-cell. */
+  .table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  /* Each row → a card. */
+  .table tbody tr {
+    border: 1px solid #d6d9d2;
+    border-radius: 10px;
+    background: #fff;
+    padding: var(--space-3);
+    margin: 0 0 var(--space-2);
+  }
+  .table tbody tr:last-child { margin-bottom: 0; }
+  /* Reset the desktop fixed-width nth-child rules — every cell is a full-width
+     block in a card, so the 56/96/104px widths must not apply. */
+  .table tbody td,
+  .table thead th {
+    width: auto !important;
+    min-width: 0 !important;
+  }
+  /* Cells 2-10 → label-value rows (5.5rem 1fr). */
+  .table tbody td {
+    display: grid;
+    grid-template-columns: 5.5rem 1fr;
+    column-gap: 12px;
+    row-gap: 4px;
+    align-items: baseline;
+    padding: 4px 0;
+    border-bottom: none;
+    font-size: var(--fs-12);
+    text-align: left;
+  }
+  /* data-label → the label column. The Item cell carries no data-label, so
+     this paints only on the value rows. */
+  .table tbody td[data-label]::before {
+    content: attr(data-label);
+    font-family: var(--font-sans);
+    font-size: var(--fs-10);
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: #767b6e;
+    line-height: 1.3;
+    align-self: start;
+  }
+  /* Item title cell — full width, no label column, hairline under it. */
+  .table tbody td:first-child {
+    display: block;
+    padding-bottom: var(--space-2);
+    margin-bottom: var(--space-2);
+    border-bottom: 1px solid #d6d9d2;
+  }
+  /* Numeric cells were right-aligned in the table — read left-aligned in the
+     value column now. The Total cell uses .priceCell (text-align:right +
+     nowrap) — reset both. */
+  .table tbody td.tableRight,
+  .table tbody td.priceCell { text-align: left; }
+  .table tbody td.priceCell { white-space: normal; }
+  /* Value spans wrap cleanly instead of forcing width. */
+  .table tbody td > span { white-space: normal; overflow-wrap: anywhere; }
+
+  /* Description 2 (Houzs 2026-06-24) — holds long compound text like
+     "PC151-01 / DIVAN 8\" + NO LEG / GAP 14\"" that gets crushed in the narrow
+     5.5rem 1fr value column. Break this one cell out of the label-value grid:
+     stack the label on its own line (top) and let the value span the FULL card
+     width below it. Other cells keep the 5.5rem 1fr row layout. */
+  .table tbody td[data-label="Description 2"] {
+    display: block;
+    padding: 4px 0;
+  }
+  .table tbody td[data-label="Description 2"]::before {
+    display: block;
+    margin-bottom: 2px;
+  }
+
+  /* ── TOTALS · MARGIN KPI grid → 2×2 ─────────────────────────────────────
+     Revenue / Cost / Margin / Margin% rendered as repeat(4,1fr) — 4×~80px
+     columns clip "Margin %". Drop to two columns so each tile gets real
+     width. (.totalsKpiGrid replaces the old inline TOTALS_KPI_GRID_STYLE so
+     this breakpoint can reach it.) */
+  .totalsKpiGrid { grid-template-columns: repeat(2, 1fr); }
+
+  /* ── Totals label/value → Service tokens ────────────────────────────────
+     Align the per-category totals rows to the Service label/value scale. */
+  .totalLabel {
+    font-size: var(--fs-10);
+    letter-spacing: 0.18em;
+  }
+  .totalValue {
+    font-size: var(--fs-12);
+    overflow-wrap: anywhere;
+  }
+}
+
+
+/* Header + action-row chrome restored: the 2026-07-16 reskin (#611) deleted
+   these when SalesOrderDetail moved to inline Tailwind, but ~40 other scm-v2
+   pages still read them and rendered unstyled. Pre-reskin rules, verbatim. */
+.headerRow {
+  position: sticky;
+  top: 48px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  padding: var(--space-3) 0;
+  background: #eef0ec;
+  border-bottom: 1px solid #cdd1c8;
+}
+
+.titleBlock {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.backBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-family: var(--font-button);
+  font-size: var(--fs-13);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: var(--space-2) var(--space-3);
+  background: var(--c-paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--c-ink);
+  text-decoration: none;
+  cursor: pointer;
+}
+.backBtn:hover { background: var(--c-cream); }
+
+.title {
+  /* PR — commander 2026-05-27: "字体小一点 走系统风格".
+     Step the page title down to fs-15 (was fs-16) so the SO-XXXX header
+     reads like a list-row anchor rather than a hero. Total badge moves out
+     of the title via TITLE_TOTAL_STYLE override below — we shrink it to
+     match. */
+  font-family: var(--font-title);
+  font-size: var(--fs-15, 15px);
+  font-weight: 700;
+  color: var(--c-ink);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  /* Phone (Houzs 2026-06-24) — the action group (Total rail + status pill +
+     History + RelationshipMap + Print) is wider than a phone viewport and was
+     overflowing the right edge. Allow it to wrap so the extra buttons drop onto
+     a new line under the title instead of pushing the page sideways. Harmless
+     on desktop — there's always enough width there for one row. */
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  /* Nick 2026-07-09 — "整个画面占全部, 目前只有一半". When .actions wraps to
+     its own row inside .headerRow, `space-between` collapses to flex-start
+     for a single-item row → actions ended up left-aligned with 400+ px of
+     dead space on the right. margin-left: auto keeps it flush right even
+     after wrap so the header uses the full page width. */
+  margin-left: auto;
+}
+
+/* PR — commander 2026-05-27 followup. Total badge moved out of the page
+   title <h1> into its own right-rail meta block sitting next to the action
+   group. Renders as a small "eyebrow" label above the amount so it reads
+   like a KPI tile, not another headline. */
+.totalRail {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  line-height: 1.1;
+  margin-right: var(--space-2);
+}
+.totalRailLabel {
+  font-family: var(--font-button);
+  font-size: var(--fs-10);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+.totalRailValue {
+  font-family: var(--font-mark);
+  font-size: var(--fs-15);
+  font-weight: 600;
+  font-stretch: 80%;
+  color: var(--c-burnt);
+  font-variant-numeric: tabular-nums;
+}
+
+/* "Added during the count" tag on StockTakeDetail lines. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  background: rgba(47, 93, 79, 0.12);
+  color: var(--c-secondary-a, #2F5D4F);
+  font-weight: 600;
+  white-space: nowrap;
+}

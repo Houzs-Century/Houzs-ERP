@@ -1,0 +1,74 @@
+name: Fill the cutover stock lots' variants from the book (2026-09-09)
+
+# Owner 2026-09-09: 「从 AutoCount 来的 stock 全部，你都要跟着 AutoCount 那边去拿到
+# 它的 variant、它的 stock、COGS 跟它的那个年龄」, and on the format
+# 「确保 Variant 是根据我们的写法，在我们的系统写的」.
+#
+# In plain terms: the stock that came over from AutoCount arrived as a quantity
+# with no specification, so the Stock Breakdown screen shows those pieces with an
+# empty ATTRIBUTES column. The book knows what they are — the receipt that
+# brought each piece in carries its colour, gap, divan and leg. This copies that
+# across. It writes ONE column, `variant_key`. It moves no stock and no money.
+#
+# WHICH RECEIPT IS THE WHOLE PROBLEM, and it is why this is not a one-liner.
+# Taking the item's newest spec would be wrong for most bedframes: of 276
+# bedframe codes only 85 were ever received under a single spec, and NB-KHJ02(Q)
+# has 42 different ones across 130 receipts. Each lot is therefore matched to
+# its OWN receipt through the document number our relayering recorded in the
+# movement note ("AC GR GR-004679 2026-05-28"). Measured on the 2,339 relayered
+# cells, 2,316 (99.0%) resolve. A lot with no such note is filled only when the
+# item leaves no room for a guess — every receipt of that code decodes to the
+# same answer. Everything else is left alone and listed in the run log.
+#
+# The key is composed by src/scm/shared/variant-key.ts, the same function the
+# API and the screen use — imported under tsx, never re-implemented, so a stock
+# lot and the sales-order line it belongs to land in the same bucket.
+#
+# DEFAULT IS PLAN. Apply needs the confirm phrase. Every UPDATE carries
+# `coalesce(variant_key,'') = ''`, so a lot somebody filled in the meantime is
+# skipped rather than overwritten.
+#
+# REVERSAL — every touched lot held an empty key before, and the apply log names
+# each id it wrote:
+#   UPDATE scm.inventory_lots SET variant_key = '' WHERE id IN (<ids from the run log>);
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "Required for apply: fill cutover lot variants 2026-09-09"
+        required: false
+        default: ""
+
+concurrency:
+  group: fill-cutover-lot-variants-2026-09-09
+  cancel-in-progress: false
+
+jobs:
+  fill:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # tsx so the REAL computeVariantKey is imported from src, never re-implemented
+      - run: npx tsx scripts/fill-cutover-lot-variants-2026-09-09.mjs
+        env:
+          MODE: ${{ github.event.inputs.mode }}
+          CONFIRM: ${{ github.event.inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

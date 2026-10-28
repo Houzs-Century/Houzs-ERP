@@ -1,0 +1,123 @@
+name: Postsubmit
+
+# Jobs that run AFTER merge, on main, instead of on every pull request.
+#
+# ⚠️ ONE JOB LEFT. `frontend-perf` WENT BACK TO PRESUBMIT on 2026-08-21, under
+# the last rule in this header. Read that story before moving anything else
+# here — it is the counter-example to the reasoning immediately below.
+#
+# WHY THESE WERE MOVED HERE. Measured over the last 40 ci.yml runs (2026-08-18),
+# counting each job's own conclusion:
+#
+#   scale-postgres-contract   37 success   0 failure    <- still here
+#   frontend-perf             37 success   0 failure    <- RETURNED to ci.yml
+#   backend-postgres          34 success   4 failure    <- STAYS in presubmit
+#   file-size                          2 real findings  <- STAYS in presubmit
+#
+# A presubmit job earns its place by having caught something. Neither had: they
+# spent ~180 runner-seconds on every pull request to restate a result that had
+# not changed in forty runs, against the 20-slot ceiling in
+# docs/ci-capacity-coe.md.
+#
+# ⚠️ WHAT THAT TABLE CANNOT TELL YOU, learned the expensive way. A pass count
+# measures how often a gate FIRED, not what it GUARDS. `frontend-perf` owns the
+# ONLY typecheck of frontend/perf-lab/ — a separate tsc project that `tsc -b`
+# structurally cannot reach — so its forty greens meant "nobody broke it yet",
+# not "nothing can break it". #2568 broke it, and because this workflow triggers
+# only on push to main, the gate ran 18 times AFTER each merge and blocked
+# nothing. Before moving a job here, ask what would be UNGUARDED if it never ran
+# again; if the answer is "an input nothing else checks", the pass count is not
+# the relevant evidence.
+#
+# backend-postgres and file-size were candidates for this file and were kept in
+# presubmit on purpose: both have real failures on the record (backend-postgres
+# across several pg test files at once - a broken tree, not a flake), so moving
+# them would have traded away the signal instead of the waste. Do not "finish
+# the job" by relocating them here without new evidence.
+#
+# The `if:` guards these jobs carried in ci.yml (push / pull_request /
+# merge_group) were dropped, not preserved: this workflow's own trigger is the
+# guard now. That also means the merge-queue reasoning in their old comments no
+# longer applies to them - see docs/ci-capacity-coe.md.
+#
+# If the remaining job starts failing on main, that is the signal to move it
+# back to presubmit, not to ignore it. That is not hypothetical advice: it is
+# what happened, and honouring it is what this header now records.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: postsubmit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scale-postgres-contract:
+    # The full 100k evidence run is deliberately PR-only. GitHub emits both a
+    # push and pull_request event for an open branch; running this job twice
+    # would spend twice the time without adding an independent environment.
+    #
+    # `merge_group` is included because the merge queue is the tree that
+    # actually reaches main, and a queue whose gate is weaker than the PR gate
+    # is worse than no queue: it would let a change through on evidence
+    # gathered against a different tree. Without this line the job simply never
+    # runs once the queue is switched on — silently, since a job that does not
+    # run reports nothing. See docs/ci-capacity-coe.md.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: houzs_scale_test
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d houzs_scale_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      PERF_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/houzs_scale_test
+      PERF_LOCAL_ACK: I_UNDERSTAND_THIS_IS_A_DISPOSABLE_LOCAL_DATABASE
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Mark the ephemeral database as disposable
+        run: >-
+          node --input-type=module -e
+          "import postgres from 'postgres';
+          const sql = postgres(process.env.PERF_DATABASE_URL, { max: 1 });
+          try { await sql.unsafe(\"COMMENT ON DATABASE houzs_scale_test IS 'HOUZS_DISPOSABLE_LOCAL_SCALE_V1'\"); }
+          finally { await sql.end(); }"
+      - name: Execute the full real-schema PostgreSQL scale fixture
+        run: |
+          mkdir -p artifacts
+          npm run perf:scale -- --engine=pg --orders=100000 --lines=100000 --skus=10000 --users=10000 --runs=20 --json=artifacts/scale-pg-100k.json
+      - name: Upload immutable scale evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scale-pg-100k-${{ github.sha }}
+          path: backend/artifacts/scale-pg-100k.json
+          if-no-files-found: error
+          retention-days: 30
+
+  # File-size ratchet. Cheap on purpose — no `npm ci`, no build, zero
+  # dependencies — so adding it costs the queue a few seconds, not a runner
+  # slot's worth of install. See scripts/lib/file-size-ratchet.mjs for the rules.
+  #
+  # This does NOT try to split the 39 files already over 2,000 lines. It records
+  # what each one already is and refuses to let it grow, so the problem stops
+  # getting worse while the refactors happen (or do not) on their own schedule.

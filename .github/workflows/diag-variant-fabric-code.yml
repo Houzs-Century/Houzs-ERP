@@ -1,0 +1,45 @@
+name: Which fabric code does our variant key carry (read-only)
+
+# The cutover-lot variant fill decodes the book's "Col:PC151-01" into
+# `fabriccode=pc151-01`. The Stock Breakdown screen renders `BF-01 (PC151-01)`
+# — an internal code with the supplier's in parentheses. Both cannot be what the
+# key holds, and it is not cosmetic: stock buckets by variant_key, so a lot keyed
+# one way beside order lines keyed the other is stock the system cannot match.
+#
+# This reads the rows rather than arguing from the source. Read-only: SELECTs
+# only, no DDL, no writes, no transaction, manual trigger, own concurrency group.
+
+on:
+  workflow_dispatch:
+    inputs:
+      doc:
+        description: "Sales order to dump line by line"
+        required: false
+        default: "HC-SO-010120"
+
+concurrency:
+  group: diag-variant-fabric-code
+  cancel-in-progress: false
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # tsx: a document line stores `variants` and its key is COMPUTED, so the
+      # real computeVariantKey must be imported rather than re-implemented
+      - run: npx tsx scripts/diag-variant-fabric-code.mjs
+        env:
+          DOC: ${{ github.event.inputs.doc }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

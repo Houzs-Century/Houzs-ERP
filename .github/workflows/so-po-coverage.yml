@@ -1,0 +1,51 @@
+name: SO/PO coverage (read-only)
+
+# Manual, read-only. Answers "the PO is open — are you sure this piece was not
+# ordered?" by reading the PURCHASE ORDER's own lines, not the MRP display.
+# MRP's SHORT means a SO line is not COVERED in the allocation, which is not the
+# same as no PO existing for the piece. This tells the two worlds apart:
+#   (a) a real under-order — the PO carries fewer of the piece than the SO wants;
+#   (b) a missing link — the PO carries enough, but a SO line was never tied to it.
+#
+# SELECTs only: no DDL, no writes, no transaction. Exits 0 for every legitimate
+# answer including "no such document" — the answer is the output.
+on:
+  workflow_dispatch:
+    inputs:
+      so_doc:
+        description: "Sales-order doc no"
+        required: false
+        default: "HC-SO-008166"
+        type: string
+      po_doc:
+        description: "Purchase-order doc no (optional — detail just this PO)"
+        required: false
+        default: ""
+        type: string
+      company_id:
+        description: "Company (1 = Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: so-po-coverage
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install the one dependency the script needs
+        run: npm --prefix backend install postgres --no-audit --no-fund --no-save
+      - name: Report SO/PO coverage
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SO_DOC: ${{ inputs.so_doc }}
+          PO_DOC: ${{ inputs.po_doc }}
+          COMPANY_ID: ${{ inputs.company_id }}
+        run: node backend/scripts/check-so-po-coverage.mjs

@@ -1,0 +1,570 @@
+// ----------------------------------------------------------------------------
+// so-payment-row — the ONE writer of scm.mfg_sales_order_payments' insert path,
+// with the Account Sheet rule and the column list that belong to it.
+//
+// WHY IT IS ITS OWN MODULE. Two writers reach this code and only one of them is
+// an HTTP request: POST /:docNo/payments, and scan-so.ts's background receipt
+// booking, which has no request context. Everything that must be true of a
+// payment ROW therefore has to live below the route layer or it applies to
+// whichever writer somebody remembered — the AutoCount enqueue at the bottom is
+// exactly that rule, and it was missing for both until 2026-08-15.
+//
+// Lifted out of mfg-sales-orders.ts unchanged apart from the imports. That file
+// is over its size ceiling and may only shrink; this is the split the ratchet
+// asks for, not a redesign.
+// ----------------------------------------------------------------------------
+import { enqueueSoPaymentEdit } from './ac-so-payment-edit';
+import { recordSoAudit, type FieldChange } from './so-audit';
+import { CONVERTED_METHOD, postSoPayment, reverseSoPayment, type SoPaymentRow } from '../../acc/payments';
+import { afterConvertedRowBooked, afterConvertedRowRemoved } from './so-money';
+import { mytDateOf, todayMyt } from './my-time';
+import { ledgerFactsOf, repostSoPaymentEdit } from '../../acc/payment-repost';
+import { createReceiptForPayment, removeDraftReceiptForPayment } from '../../acc/receipts';
+import { cancelDepositInvoiceForPaymentBestEffort, issueDepositInvoiceBestEffort, reissueDepositInvoiceBestEffort } from '../../acc/deposit-invoices';
+import { companyCodeById } from './doc-no';
+import { recomputeSiPaidForOrder } from './si-order-deposit';
+import { checkPaymentSlipDate } from '../shared/payment-slip-date';
+import { checkPaymentSlip } from '../shared/payment-slip-required';
+import { linkPaymentScan } from './scan-files';
+
+/* Account Sheet auto-fill (Loo 2026-06-07) — "where did the money land".
+   Derived from the payment's own method fields whenever the operator didn't
+   type one, so the Detail Listing column stops rendering dashes:
+     merchant / installment → the acquiring bank (merchant_provider)
+     transfer               → the online sub-type (DuitNow / TNG / …)
+     cash                   → 'Cash'
+   A hand-typed value (Finance, backend PaymentsTable) ALWAYS wins — this is
+   a default, not an overwrite. Hoisted `function` so the SO-create deposit
+   paths above can call it too. */
+export function deriveAccountSheet(
+  method: string,
+  merchantProvider?: string | null,
+  onlineType?: string | null,
+): string {
+  if (method === 'merchant' || method === 'installment') {
+    return merchantProvider?.trim() || 'Card terminal';
+  }
+  if (method === 'transfer') return onlineType?.trim() || 'Bank transfer';
+  return 'Cash';
+}
+
+// merchant_provider, installment_months, approval_code, payment_date,
+// paid_sen) are NOT touched here — those columns are scheduled for
+// drop in a follow-up migration once live data is migrated.
+export const PAYMENT_COLS =
+  'id, so_doc_no, paid_at, method, merchant_provider, installment_months, ' +
+  'online_type, approval_code, amount_sen, account_sheet, slip_key, collected_by, note, ' +
+  'created_at, created_by, version, updated_at, company_id, converted_from_so_doc_no, ' +
+  'converted_to_so_doc_no, mirror_of_payment_id, refund_pv_id';
+
+/* ── recordSoPaymentRow — the factored insert+audit core of
+   POST /:docNo/payments (same pattern as createSalesOrderCore). ONE place
+   derives the method-scoped fields (merchant/installment vs transfer vs cash),
+   auto-fills the Account Sheet, inserts the mfg_sales_order_payments row and
+   appends the ADD_PAYMENT audit entry. The HTTP route keeps its own guards
+   (self-scope, SO existence, overpayment, slip-session resolution + promote)
+   and calls this for the write; the background scan job (scan-so.ts) calls it
+   directly with an R2 key it already owns (scan-jobs/{jobId}/{n}) — payment
+   field derivation is never reimplemented outside this function. */
+export type SoPaymentRowInput = {
+  docNo: string;
+  paidAt: string;
+  method: 'merchant' | 'transfer' | 'cash' | 'installment' | 'converted';
+  /** A converted row (docs/bugs/0927): the order the money comes from. */
+  convertedFromDocNo?: string | null;
+  /** A MIRROR row (owner 2026-09-16): the money that left this order — a
+      negative `converted` amount following the converted row it became on
+      the other order, or the refund voucher that paid it out. */
+  convertedToDocNo?: string | null;
+  mirrorOfPaymentId?: string | null;
+  refundPvId?: string | null;
+  merchantProvider?: string | null;
+  installmentMonths?: number | null;
+  onlineType?: string | null;
+  approvalCode?: string | null;
+  amountSen: number;
+  accountSheet?: string | null;
+  slipKey: string | null;
+  collectedBy?: string | null;
+  note?: string | null;
+  /** Null only for a mirror the system writes on a voucher's behalf. */
+  createdBy: string | null;
+  actorName?: string | null;
+  /* First-deposit marker — the list/detail paid-rollup adds the header
+     deposit_sen on top of the ledger UNLESS an is_deposit row marks the
+     deposit as already booked (migration 0155 semantics). The scan job's
+     first receipt row IS the header deposit, so it sets this. */
+  isDeposit?: boolean;
+  auditSource?: string;
+  auditNote?: string;
+  /* Slip-date window escape (owner 2026-09-23). A keyed-in payment may not be
+     dated more than PAYMENT_SLIP_WINDOW_DAYS back — enforced HERE, below every
+     writer, so the gate cannot be forgotten by the next caller. The routes set
+     this from the caller's `scm.payment.backdate` permission; the background
+     scan job never does, so an OCR'd receipt older than the window is refused
+     and goes to a human (owner's call). `converted` rows — money moved from
+     another order, refund and move MIRRORS — carry the ORIGINAL money's date
+     and are never keyed, so they skip the window by method, not by this flag. */
+  allowOutOfWindowSlipDate?: boolean;
+};
+
+/** Book an SO payment row through the one posting gate, best-effort — the
+    hook the panel path always had, shared with the SO-create inserts since
+    docs/bugs/0652 (they used to write the row and stop). A refusal is logged
+    and never blocks the caller; the Self-check card's dry run and the backfill
+    are the self-heal. */
+export async function bookSoPaymentBestEffort(sb: any, row: Record<string, unknown> | null | undefined, where: string): Promise<void> {
+  if (!row) return;
+  const booked = await postSoPayment(sb, row as never);
+  if (!booked.ok) {
+    /* eslint-disable-next-line no-console */
+    console.error(`[acc] SO ${where} not booked:`, (row as { id?: string }).id, booked.status, booked.reason);
+  }
+  /* A converted row's paper is its own (docs/bugs/0927): the moved amount
+     comes off the cancelled order's deposit invoices by credit note, and the
+     new order's deposit invoice is dated the day of the move — and it was
+     receipted when the money was first received, so no receipt here. */
+  if ((row as { method?: string }).method === CONVERTED_METHOD) {
+    await afterConvertedRowBooked(sb, row, where);
+    await mirrorConvertedRowBestEffort(sb, row, where);
+    return;
+  }
+  /* THE OFFICIAL RECEIPT IS BORN HERE (GL redesign item 9) — DRAFT for
+     card/transfer, formal at once for cash. It used to be born in
+     recordSoPaymentRow alone, so the two SO-create inserts (the POS deposit,
+     the split rows) recorded money with no receipt — 12 payments since
+     2026-09-05 (docs/bugs/0935). Every row reaches this hook, so the rule is
+     written once, beside the deposit invoice's. BEST-EFFORT: the money is
+     recorded; a receipt hiccup must never un-record it, and
+     ensureReceiptForPayment heals the gap at the next print. */
+  await draftReceiptBestEffort(sb, row, where);
+  /* THE DEPOSIT INVOICE IS BORN HERE TOO (docs/bugs/0828) — every payment
+     row reaches this hook (the panel, the scan job, both SO-create deposit
+     inserts), so the rule "a deposit gets its invoice" is written once. It
+     decides for itself whether the company's switch is on, the date is on or
+     after the start, and the order has no final invoice yet. Best-effort like
+     the booking above: the money is recorded either way. */
+  await issueDepositInvoiceBestEffort(sb, row, where);
+}
+
+/** The receipt a booked SO payment row is owed, from the row as stored —
+    what `recordSoPaymentRow` used to do from its input, now for every path. */
+async function draftReceiptBestEffort(sb: any, row: Record<string, unknown>, where: string): Promise<void> {
+  try {
+    const r = row as { id?: unknown; company_id?: unknown; so_doc_no?: unknown; method?: unknown; amount_sen?: unknown; paid_at?: unknown; created_by?: unknown };
+    const paymentId = String(r.id ?? '');
+    const companyId = r.company_id == null ? null : Number(r.company_id);
+    const code = companyId != null && Number.isFinite(companyId) ? await companyCodeById(sb, companyId) : null;
+    if (!paymentId || companyId == null || !code) return;
+    await createReceiptForPayment(sb, {
+      source: 'SOPAY', paymentId, companyId, companyCode: code,
+      docNo: String(r.so_doc_no ?? ''), method: String(r.method ?? ''), amountSen: Number(r.amount_sen ?? 0),
+      paidAt: String(r.paid_at ?? '').slice(0, 10) || null, createdBy: r.created_by == null ? null : String(r.created_by),
+    });
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error(`[receipts] draft OR not created for SO ${where}:`, e);
+  }
+}
+
+/** Every column of a payment row an edit may move. `before` is the stored row;
+    `next` is what the PATCH decided each column should now be. */
+export type SoPaymentEditable = {
+  paid_at: string; method: string; amount_sen: number;
+  merchant_provider: string | null; installment_months: number | null;
+  online_type: string | null; approval_code: string | null;
+  account_sheet: string | null; collected_by: string | null;
+};
+
+/* The audit's field list, in the order the audit has always printed it. Here
+   rather than in the route because it is a fact about the ROW — the same
+   reason recordSoPaymentRow is here. It is a DIFFERENT question from
+   acc/payment-repost's ledgerBearingChange, which asks which of these reach
+   the BOOKS: the audit records nine, the ledger reads four. Keeping them apart
+   is deliberate; collapsing them would either spam the ledger with re-posts
+   for an approval code or lose an approval code from the audit trail. */
+const AUDITED_FIELDS: ReadonlyArray<[keyof SoPaymentEditable, string]> = [
+  ['paid_at', 'paidAt'], ['method', 'method'], ['amount_sen', 'amountSen'],
+  ['merchant_provider', 'merchantProvider'], ['installment_months', 'installmentMonths'],
+  ['online_type', 'onlineType'], ['approval_code', 'approvalCode'],
+  ['account_sheet', 'accountSheet'], ['collected_by', 'collectedBy'],
+];
+
+/** The UPDATE_PAYMENT audit's from → to list: only the columns that moved.
+    Blank-vs-absent counts as unchanged, the way the route always compared. */
+export function soPaymentFieldChanges(
+  before: Partial<SoPaymentEditable>,
+  next: SoPaymentEditable,
+): FieldChange[] {
+  const out: FieldChange[] = [];
+  for (const [col, name] of AUDITED_FIELDS) {
+    const was = before[col] ?? null;
+    const now = next[col] ?? null;
+    if (was !== now) out.push({ field: name, from: was, to: now });
+  }
+  return out;
+}
+
+/** Carry an EDITED payment's ledger entry with it — reverse the old, book the
+    new — on the same best-effort contract as the booking hook above: the
+    operator's edit has already committed, and a ledger refusal may not turn it
+    into a 500 they would retry. A refusal leaves the payment with no active
+    entry, which the Self-check unbooked card reports and the backfill heals;
+    the console line is what names it in the meantime. See acc/payment-repost
+    for which edits move the books, and where the contra is dated. */
+export async function repostSoPaymentBestEffort(
+  /* The same client the poster takes, borrowed rather than spelled out again —
+     this file may not grow its count of untyped clients. */
+  sb: Parameters<typeof repostSoPaymentEdit>[0],
+  p: {
+    id: string; docNo: string; companyId: number | null;
+    before: Partial<SoPaymentEditable>; next: SoPaymentEditable;
+  },
+): Promise<LedgerTouch> {
+  const after: SoPaymentRow = {
+    id: p.id,
+    so_doc_no: p.docNo,
+    paid_at: p.next.paid_at,
+    method: p.next.method,
+    merchant_provider: p.next.merchant_provider,
+    amount_sen: p.next.amount_sen,
+    company_id: p.companyId,
+  };
+  const out = await repostSoPaymentEdit(sb, { before: ledgerFactsOf(p.before), after });
+  /* The deposit invoice follows the edit the way the ledger does (docs/bugs/
+     0828): a moved amount or date cancels the standing invoice by contra and
+     issues the next number — cancelled and re-issued, never rewritten. */
+  await reissueDepositInvoiceBestEffort(sb, {
+    paymentId: p.id, docNo: p.docNo, paidAt: p.next.paid_at, amountSen: p.next.amount_sen, method: p.next.method,
+  });
+  if (!out.ok) {
+    /* eslint-disable-next-line no-console */
+    console.error('[acc] SO payment edit not re-posted:', p.id, out.status, out.reason);
+    return { originalJeNo: null, contraJeNo: null, jeNo: null };
+  }
+  return out.status === 'reposted'
+    ? { originalJeNo: out.originalJeNo, contraJeNo: out.contraJeNo, jeNo: out.jeNo }
+    : { originalJeNo: null, contraJeNo: null, jeNo: null };
+}
+
+/** What a correction did to the ledger, for the audit row to carry: the entry
+    that was voided, the contra that voided it, and the entry booked in its
+    place. Any is null when that part did not happen — a never-booked payment
+    reverses nothing, a delete books nothing new. */
+export type LedgerTouch = { originalJeNo: string | null; contraJeNo: string | null; jeNo: string | null };
+
+export async function recordSoPaymentRow(
+  sb: any,
+  p: SoPaymentRowInput,
+): Promise<{ payment: Record<string, unknown> | null; errorMessage: string | null }> {
+  // Method-scoped fields per the cascade:
+  //   merchant    → merchant_provider + installment_months (0 / null = One-off)
+  //   installment → merchant_provider + installment_months (merchant-like —
+  //                 mirrors the SO-create deposit path, which keeps both)
+  //   transfer    → online_type
+  //   cash        → no extras
+  /* Slip-date window, before anything is written. Skipped for CONVERTED rows
+     (system money movement — see allowOutOfWindowSlipDate) and for a caller the
+     route already cleared as a backdater. The message is the shared module's,
+     so the panel, the phone and this refusal all say the same sentence. */
+  if (p.method !== CONVERTED_METHOD && !p.allowOutOfWindowSlipDate) {
+    const verdict = checkPaymentSlipDate(p.paidAt, todayMyt());
+    if (!verdict.ok) return { payment: null, errorMessage: verdict.reason };
+  }
+  /* The proof (owner 2026-10-13, shared/payment-slip-required): a keyed payment
+     carries its slip or scanned receipt, or it is not written. Below every
+     writer for the same reason as the window — the routes refuse earlier with
+     the HTTP code, the scan job always owns a receipt key, and a backdate
+     approval cannot book a request that was parked without one. Converted rows
+     and their mirrors are money that was receipted when first collected. */
+  const slipVerdict = checkPaymentSlip({ converted: p.method === CONVERTED_METHOD, hasSlip: Boolean(p.slipKey) });
+  if (!slipVerdict.ok) return { payment: null, errorMessage: slipVerdict.reason };
+
+  const merchantLike      = p.method === 'merchant' || p.method === 'installment';
+  const merchantProvider  = merchantLike ? (p.merchantProvider ?? null) : null;
+  // 0 = "One-off" — store as NULL so the integer column carries semantic
+  // "no installment". Anything > 0 is the term in months.
+  const installmentMonths = merchantLike
+    ? (typeof p.installmentMonths === 'number' && p.installmentMonths > 0 ? p.installmentMonths : null)
+    : null;
+  const onlineType        = p.method === 'transfer' ? (p.onlineType ?? null) : null;
+
+  // Multi-company (mig 0061): the payment inherits the SO's company (resolved by
+  // doc_no — this factored writer has no request context). No-op when unresolved.
+  const { data: soCo, error: soCoErr } = await sb.from('mfg_sales_orders').select('company_id').eq('doc_no', p.docNo).maybeSingle();
+  /* REFUSE on a failed read rather than carrying on with a null company.
+     supabase-js does not throw, so the old `const { data }` could not tell "this
+     order is in company 1" from "the database blipped" — and the next statement
+     inserts the money either way. The SCM client is service-role, so the
+     company_id predicate is the entire tenant boundary; a company-less payment
+     row is invisible and unscoped, and it would also make the AutoCount enqueue
+     below no-op silently. A refusal the operator can retry is the better
+     failure. A row that is genuinely ABSENT still yields null, unchanged. */
+  if (soCoErr) {
+    return { payment: null, errorMessage: `could not resolve the order's company: ${soCoErr.message}` };
+  }
+  const companyId = (soCo as { company_id?: number | null } | null)?.company_id ?? null;
+
+  const converted = p.method === CONVERTED_METHOD;
+  const { data, error } = await sb.from('mfg_sales_order_payments').insert({
+    ...(companyId != null ? { company_id: companyId } : {}),
+    so_doc_no:          p.docNo,
+    paid_at:            p.paidAt,
+    method:             p.method,
+    merchant_provider:  merchantProvider,
+    installment_months: installmentMonths,
+    online_type:        onlineType,
+    approval_code:      p.approvalCode ?? null,
+    amount_sen:       p.amountSen,
+    /* Account Sheet auto-fill (Loo 2026-06-07) — a hand-typed value wins;
+       blank/whitespace falls back to the method-derived default. A converted
+       row's sheet names the order the money came from (docs/bugs/0927). */
+    account_sheet:      p.accountSheet?.trim() || (converted ? `Converted from ${p.convertedFromDocNo ?? '?'}` : deriveAccountSheet(p.method, merchantProvider, onlineType)),
+    ...(converted ? { converted_from_so_doc_no: p.convertedFromDocNo ?? null } : {}),
+    ...(p.convertedToDocNo ? { converted_to_so_doc_no: p.convertedToDocNo } : {}),
+    ...(p.mirrorOfPaymentId ? { mirror_of_payment_id: p.mirrorOfPaymentId } : {}),
+    ...(p.refundPvId ? { refund_pv_id: p.refundPvId } : {}),
+    slip_key:           p.slipKey,
+    collected_by:       p.collectedBy ?? null,
+    note:               p.note ?? null,
+    created_by:         p.createdBy,
+    /* Only set when explicitly asked — the manual route's rows are balance
+       payments and keep the column default (false). */
+    ...(p.isDeposit === true ? { is_deposit: true } : {}),
+  }).select(PAYMENT_COLS).single();
+  if (error) return { payment: null, errorMessage: error.message };
+  /* HC-0006 speed: the hooks below are independent best-effort steps, so they
+     run together instead of one after another. The one ordering that matters
+     is kept: the invoice re-roll waits for the booking, which issues the
+     deposit invoice it settles. None throws on the plain client every caller
+     passes (recordSoAudit throws only inside an atomic command). */
+  await Promise.all([
+    linkPaymentScan(sb, { companyId, slipKey: p.slipKey, paymentId: String((data as { id?: unknown } | null)?.id ?? '') }), // HC-0006 T7
+
+    /* The Official Receipt is born in bookSoPaymentBestEffort below, with the
+       booking and the deposit invoice — one hook for every path (docs/bugs/0935). */
+
+    /* Post-merge stitch — wire ADD_PAYMENT into the PR-D audit ledger.
+       Field-changes list mirrors what the user typed so the History panel
+       can render a readable diff. Best-effort inside recordSoAudit. */
+    recordSoAudit(sb, {
+      docNo: p.docNo,
+      action: 'ADD_PAYMENT',
+      actorId: p.createdBy,
+      actorName: p.actorName ?? null,
+      /* The payment this row is about (docs/bugs/0888) — what lets a later
+         correction's report say who recorded it first. */
+      paymentId: String((data as { id?: unknown } | null)?.id ?? '') || null,
+      ...(p.auditSource ? { source: p.auditSource } : {}),
+      ...(p.auditNote ? { note: p.auditNote } : {}),
+      fieldChanges: [
+        { field: 'paidAt',             from: null, to: p.paidAt },
+        { field: 'method',             from: null, to: p.method },
+        { field: 'amountSen',        from: null, to: p.amountSen },
+        ...(merchantProvider  ? [{ field: 'merchantProvider',  from: null, to: merchantProvider  } satisfies FieldChange] : []),
+        ...(installmentMonths ? [{ field: 'installmentMonths', from: null, to: installmentMonths } satisfies FieldChange] : []),
+        ...(onlineType        ? [{ field: 'onlineType',        from: null, to: onlineType        } satisfies FieldChange] : []),
+        ...(p.approvalCode    ? [{ field: 'approvalCode',      from: null, to: p.approvalCode    } satisfies FieldChange] : []),
+        ...(p.accountSheet    ? [{ field: 'accountSheet',      from: null, to: p.accountSheet    } satisfies FieldChange] : []),
+      ],
+    }),
+
+    /* AutoCount's BALANCE UDF is what the order still owes, so a payment CHANGES
+       a value the account book holds — and no other path re-sends it. Without
+       this the figure in the book stays whatever it was at the last line or
+       header save, which for a fully-settled order reads as still outstanding.
+
+       Queued from the CORE and not from the HTTP route because scan-so.ts inserts
+       through here too, with no request context. A rule written into the route
+       would cover the payments a human typed and silently miss every receipt the
+       scan job books — this module's recurring shape.
+
+       HEADER-ONLY since 2026-09-14 (docs/bugs/0896): a payment moves BALANCE and
+       PAYEMENT and no line, and composing the lines is where an edit is refused.
+       It never throws and returns false when the write-back is off or the order
+       has no AutoCount counterpart, so the payment's own success does not depend
+       on it. */
+    enqueueSoPaymentEdit(sb, {
+      companyId,
+      docNo: p.docNo,
+      /* p.createdBy is a Supabase auth uuid; the outbox's created_by is the
+         numeric houzs user id, and there is no mapping to hand here. Provenance
+         for this row lives in the ADD_PAYMENT audit entry above. */
+      createdBy: null,
+    }),
+
+    /* Accounting-module hook (需求书 §6.3, owner approved 2026-08-16): book the
+       payment through the one posting gate. Best-effort like the enqueue above —
+       a booking failure never fails the operator's save; the accounting
+       backfill endpoint is the self-heal. */
+    bookSoPaymentBestEffort(sb, data as Record<string, unknown>, 'payment')
+
+    /* The invoices raised off this order settle partly out of THIS money
+       (lib/si-order-deposit), so their status has to be re-rolled here. Without
+       it the invoice DETAIL would read correctly the moment you opened it while
+       the invoice LIST — which reads the persisted status — kept telling the
+       office to chase a customer who had just paid. Queued from the CORE for the
+       same reason the AutoCount enqueue above is: scan-so.ts books receipts
+       through here with no request context. Best-effort; a failure leaves a stale
+       status the next roll self-heals. */
+      .then(() => recomputeSiPaidForOrder(sb, p.docNo, companyId)),
+  ]);
+
+  return { payment: data as Record<string, unknown>, errorMessage: null };
+}
+
+/**
+ * Everything that must happen AFTER an order's payment row is deleted.
+ *
+ * Here rather than in the route for this module's standing reason: a rule
+ * written into `DELETE /:docNo/payments/:id` covers the payments a human
+ * deleted and nothing else. Both halves are best-effort — the operator's delete
+ * has already committed and neither a ledger nor a status roll may turn it into
+ * a 500 they would retry.
+ *
+ * `neverHappened` — Finance removing a payment from a CANCELLED order (owner
+ * 2026-09-29, 1a 2a): the row should never have been recorded (the same swipe
+ * keyed on two orders), so its contra is dated on the original entry's own
+ * day, like a correction (acc/payment-repost.ts), and its DRAFT receipt goes
+ * with it. Every other delete is an event of today, as before.
+ */
+export async function afterSoPaymentRemoved(
+  sb: any,
+  p: { paymentId: string; docNo: string; companyId: number | null; neverHappened: boolean },
+): Promise<LedgerTouch & { draftReceipt: string | null }> {
+  /* Accounting-module hook (需求书 §6.3, owner approved 2026-08-16): void the
+     deleted payment's ledger entry. A row that never booked no-ops. */
+  const unbooked = await reverseSoPayment(sb, p.paymentId, p.docNo, { onOriginalDate: p.neverHappened });
+  if (!unbooked.ok) {
+    /* eslint-disable-next-line no-console */
+    console.error('[acc] SO payment reversal failed:', p.paymentId, unbooked.status, unbooked.reason);
+  }
+  const voided = unbooked.ok && unbooked.status === 'reversed' ? unbooked : null;
+  /* Its deposit invoice goes with it — cancelled by contra, kept on file
+     (docs/bugs/0828). A converted row's notes against the cancelled order's
+     invoices go the same way (docs/bugs/0927); a row that moved nothing has
+     none. */
+  await cancelDepositInvoiceForPaymentBestEffort(sb, { paymentId: p.paymentId, reason: `payment on ${p.docNo} deleted` });
+  await afterConvertedRowRemoved(sb, { paymentId: p.paymentId, companyId: p.companyId, actor: null });
+  await removeMirrorRowsBestEffort(sb, { companyId: p.companyId, match: { mirror_of_payment_id: p.paymentId }, why: `money moved to ${p.docNo} moved back` });
+  /* The deposit just shrank, so an invoice it was settling may owe money again.
+     This is the direction that matters: an invoice left reading PAID after the
+     payment behind it was reversed tells the office to collect nothing. */
+  await recomputeSiPaidForOrder(sb, p.docNo, p.companyId);
+  let draftReceipt: string | null = null;
+  if (p.neverHappened) {
+    const gone = await removeDraftReceiptForPayment(sb, { source: 'SOPAY', paymentId: p.paymentId, companyId: p.companyId });
+    if (gone.ok) draftReceipt = gone.orNumber;
+    /* eslint-disable-next-line no-console */
+    else console.error('[acc] draft receipt not removed with its payment:', p.paymentId, gone.reason);
+  }
+  return { originalJeNo: voided?.originalJeNo ?? null, contraJeNo: voided?.jeNo ?? null, jeNo: null, draftReceipt };
+}
+
+/* ── Mirror rows — the money that LEFT an order (owner 2026-09-16) ──────────
+   Refund and Convert are not for cancelled orders only: money may leave a
+   LIVE order (convert while it keeps its deposit fraction; refund at Finance's
+   word). A live order has a balance, and every reader of an order's money
+   sums its payment rows — the totals view, the deposit gate, the lists,
+   AutoCount's balance, the invoice roll. So the leaving money is a payment
+   row too, through this same writer: method `converted`, a NEGATIVE amount,
+   on the order it left, following what took it —
+
+     moved out   converted_to_so_doc_no + mirror_of_payment_id (the converted
+                 row on the new order); written when that row is booked,
+                 removed when it is deleted
+     refunded    refund_pv_id (the posted Customer Refund voucher); written
+                 when it posts, removed when it is cancelled
+
+   A mirror books nothing — the transfer or the voucher is the accounting —
+   gets no receipt and no deposit invoice (the converted method and the sign
+   keep it out of every money-in reader), and nobody edits or deletes one by
+   hand: it follows its counterpart. The pool an order may still refund or
+   move (so-money.ts) reads booked money off the ledger and never counts one. */
+export const isMirrorRow = (r: { amount_sen?: unknown }): boolean => Number(r.amount_sen ?? 0) < 0;
+
+const mirrorLog = (...args: unknown[]): void => {
+  // eslint-disable-next-line no-console
+  console.error('[so-payment-mirror]', ...args);
+};
+
+async function mirrorExists(sb: any, match: Record<string, string>): Promise<boolean | null> {
+  let q = sb.from('mfg_sales_order_payments').select('id');
+  for (const [k, v] of Object.entries(match)) q = q.eq(k, v);
+  const { data, error } = await q.limit(1);
+  if (error) { mirrorLog('mirror lookup failed:', error.message); return null; }
+  return ((data ?? []) as unknown[]).length > 0;
+}
+
+/** After a converted row is booked: its mirror on the order the money came
+    from, dated the day of the move. Idempotent on the converted row's id. */
+export async function mirrorConvertedRowBestEffort(sb: any, row: Record<string, unknown>, where: string): Promise<void> {
+  const r = row as { id?: unknown; so_doc_no?: unknown; converted_from_so_doc_no?: unknown; amount_sen?: unknown; created_at?: unknown; created_by?: unknown; collected_by?: unknown };
+  const id = String(r.id ?? '');
+  const toDocNo = String(r.so_doc_no ?? '');
+  const fromDocNo = String(r.converted_from_so_doc_no ?? '');
+  const amountSen = Number(r.amount_sen ?? 0);
+  if (!id || !toDocNo || !fromDocNo || !(amountSen > 0)) return;
+  try {
+    const seen = await mirrorExists(sb, { mirror_of_payment_id: id });
+    if (seen !== false) return;
+    const out = await recordSoPaymentRow(sb, {
+      docNo: fromDocNo, paidAt: r.created_at ? mytDateOf(String(r.created_at)) : todayMyt(), method: CONVERTED_METHOD, amountSen: -amountSen,
+      convertedToDocNo: toDocNo, mirrorOfPaymentId: id, accountSheet: `Moved to ${toDocNo}`, note: `Moved to ${toDocNo}`, slipKey: null,
+      collectedBy: r.collected_by == null ? null : String(r.collected_by), createdBy: r.created_by == null ? null : String(r.created_by),
+      auditSource: 'automation', auditNote: `Money moved to ${toDocNo}`,
+    });
+    if (out.errorMessage) mirrorLog(`${where}: ${fromDocNo}'s mirror of the move to ${toDocNo} not written —`, out.errorMessage);
+  } catch (e) {
+    mirrorLog(`${where}: mirror hook threw:`, e);
+  }
+}
+
+/** After a Customer Refund voucher on an order posts: the refund's mirror,
+    dated the voucher. Idempotent on the voucher's id. `null` is an invoice
+    refund or a voucher naming no order, and is silent. */
+export async function mirrorRefundBestEffort(
+  sb: any, p: { companyId: number; pvId: string; pvNumber: string; voucherDate: string; soDocNo: string; amountSen: number; actor: string | null } | null,
+): Promise<void> {
+  if (!p || !(p.amountSen > 0)) return;
+  try {
+    const seen = await mirrorExists(sb, { refund_pv_id: p.pvId });
+    if (seen !== false) return;
+    const out = await recordSoPaymentRow(sb, {
+      docNo: p.soDocNo, paidAt: p.voucherDate || todayMyt(), method: CONVERTED_METHOD, amountSen: -p.amountSen,
+      refundPvId: p.pvId, accountSheet: `Refund ${p.pvNumber}`, note: `Refunded by ${p.pvNumber}`, slipKey: null,
+      createdBy: null, actorName: p.actor, auditSource: 'automation', auditNote: `Refund voucher ${p.pvNumber} posted`,
+    });
+    if (out.errorMessage) mirrorLog(`refund ${p.pvNumber}: ${p.soDocNo}'s mirror not written —`, out.errorMessage);
+  } catch (e) {
+    mirrorLog(`refund ${p.pvNumber}: mirror hook threw:`, e);
+  }
+}
+
+/** The mirror rows following a deleted converted row or a cancelled refund
+    voucher: deleted, with the audit line, the AutoCount balance and the
+    invoice roll a hand delete gets. */
+export async function removeMirrorRowsBestEffort(
+  sb: any, p: { companyId: number | null; match: { mirror_of_payment_id: string } | { refund_pv_id: string }; why: string },
+): Promise<void> {
+  try {
+    let q = sb.from('mfg_sales_order_payments').select('id, so_doc_no, paid_at, method, amount_sen');
+    for (const [k, v] of Object.entries(p.match)) q = q.eq(k, v);
+    const { data, error } = await q;
+    if (error) { mirrorLog('mirror lookup failed:', error.message); return; }
+    for (const m of (data ?? []) as Array<{ id: string; so_doc_no: string; paid_at: string; method: string; amount_sen: number }>) {
+      const { error: delErr } = await sb.from('mfg_sales_order_payments').delete().eq('id', m.id);
+      if (delErr) { mirrorLog(`mirror ${m.id} on ${m.so_doc_no} not removed —`, delErr.message); continue; }
+      await recordSoAudit(sb, {
+        docNo: m.so_doc_no, action: 'DELETE_PAYMENT', actorId: null, actorName: null, paymentId: m.id, source: 'automation', note: p.why,
+        fieldChanges: [
+          { field: 'paidAt', from: m.paid_at, to: null }, { field: 'method', from: m.method, to: null }, { field: 'amountSen', from: m.amount_sen, to: null },
+        ],
+      });
+      await enqueueSoPaymentEdit(sb, { companyId: p.companyId, docNo: m.so_doc_no, createdBy: null });
+      await recomputeSiPaidForOrder(sb, m.so_doc_no, p.companyId);
+    }
+  } catch (e) {
+    mirrorLog('mirror removal threw:', e);
+  }
+}

@@ -1,0 +1,59 @@
+name: Repair PI reversal dates (plan/apply)
+
+# Re-dates the periodic backfill's RESHAPE contras onto their originals'
+# dates — the 19 that landed on the run day and left July/August's stock and
+# payables over-stated (docs/bugs/0647). Selection is the reshape signature
+# only (a PI_REVERSAL whose invoice also carries a fresh active PI journal);
+# a cancelled invoice's contra keeps the day it was voided. plan is the
+# default and writes nothing. See backend/scripts/repair-pi-reversal-dates.mjs.
+#
+# Secrets resolve by ENVIRONMENT (docs/bugs/0629): the job declares the
+# environment the target names, so STAGING_DATABASE_URL is the Staging
+# environment's own and never the repo-scope trap.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "staging"
+        type: choice
+        options: [staging, prod]
+      mode:
+        description: "plan (report only) or apply (write)"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'apply requires: REDATE PI REVERSALS'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: repair-pi-reversal-dates-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target == 'prod' && 'Production' || 'Staging' }}
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Repair PI reversal dates
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: |
+          if [ -z "$DATABASE_URL" ]; then echo "DATABASE_URL missing"; exit 2; fi
+          node scripts/repair-pi-reversal-dates.mjs

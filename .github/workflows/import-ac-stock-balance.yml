@@ -1,0 +1,61 @@
+name: Import AC stock balances (reconcile)
+
+# Manual. Writes reconciling ADJUSTMENT movements so company-1 ERP stock matches
+# the AutoCount vItemBalQty snapshot (non-sofa; cost waterfall UTD → ItemUOM →
+# ERP product → 0-with-report; negative deltas report-only unless neg=1).
+# DRY-RUN by default; apply=1 writes.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "1 to write, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      neg:
+        description: "1 to also apply negative deltas"
+        required: false
+        default: "0"
+        type: string
+
+concurrency:
+  group: import-ac-stock-balance-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/import-ac-stock-balance.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          NEG: ${{ inputs.neg }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/import-ac-stock-balance.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          NEG: ${{ inputs.neg }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

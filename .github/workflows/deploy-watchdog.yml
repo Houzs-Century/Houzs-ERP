@@ -1,0 +1,94 @@
+# Watches the LIVE prod Worker against main and self-heals overwrites.
+#
+# Why this exists: four times now (SW v41, the v187/v188 frontend collapses,
+# PR #996's near-rollback, and the 2026-07-22 15:59 MYT Worker overwrite this
+# workflow was born from) something holding account credentials ran a bare
+# `wrangler deploy` from a stale clone and silently rolled prod back — days of
+# backend work vanish until the next merge happens to redeploy.
+#
+# CI deploys stamp the Worker with the commit they were built from
+# (deploy.yml: `wrangler deploy --var GIT_SHA:<sha>`, surfaced at GET /health).
+# A bare local deploy carries no stamp. Every 15 minutes this workflow:
+#   · stamp == main tip                          → healthy, green exit
+#   · stamp's backend/ tree == tip's backend/    → frontend-only drift, green
+#     (backend deploys are path-filtered, so the Worker legitimately lags main
+#     whenever recent commits didn't touch backend/)
+#   · a Deploy run is queued / in progress       → release mid-flight, skip
+#   · the LAST completed Deploy run was red      → deploys are broken; a
+#     redeploy loop won't help and would spam — humans needed, skip
+#   · anything else (stale sha / missing stamp / commit unknown to origin)
+#       → dispatch deploy.yml on main AND fail this run, so the red watchdog
+#         run in the Actions list IS the overwrite alarm.
+name: Deploy watchdog
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: deploy-watchdog
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Compare live Worker stamp against main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TIP=$(git rev-parse HEAD)
+          LIVE=$(curl -fsS --max-time 20 https://autocount-sync-api.houzs-erp.workers.dev/health | jq -r '.sha // "none"' || echo "unreachable")
+          echo "live worker stamp: $LIVE"
+          echo "main tip:          $TIP"
+
+          if [ "$LIVE" = "unreachable" ]; then
+            # Transient network/edge blip ≠ overwrite. The smoke check in
+            # deploy.yml owns hard-down detection; don't redeploy on a 500.
+            echo "::warning::/health unreachable — skipping this tick"
+            exit 0
+          fi
+
+          if [ "$LIVE" = "$TIP" ]; then
+            echo "healthy: live Worker is main tip"
+            exit 0
+          fi
+
+          # Worker lag is legitimate when nothing under backend/ changed since
+          # the stamped commit (deploy.yml path-filters the backend job).
+          if [ "$LIVE" != "none" ] && git fetch -q --depth=1 origin "$LIVE" 2>/dev/null; then
+            if git diff --quiet "$LIVE" "$TIP" -- backend/; then
+              echo "healthy: backend/ unchanged since stamped commit $LIVE"
+              exit 0
+            fi
+            echo "stale: backend/ differs between $LIVE and $TIP"
+          else
+            echo "rogue: live Worker has no CI stamp (or an unknown commit) — bare wrangler deploy suspected"
+          fi
+
+          # A legitimate release may already be on its way to fixing this.
+          ACTIVE=$(gh run list --workflow deploy.yml --branch main --status in_progress --json databaseId --jq 'length')
+          QUEUED=$(gh run list --workflow deploy.yml --branch main --status queued --json databaseId --jq 'length')
+          if [ "$ACTIVE" != "0" ] || [ "$QUEUED" != "0" ]; then
+            echo "a Deploy run is already queued/in progress — letting it land"
+            exit 0
+          fi
+
+          # If deploys themselves are failing, a watchdog redeploy just loops
+          # red runs — that situation needs a human, not a retry storm.
+          LAST=$(gh run list --workflow deploy.yml --branch main --status completed --limit 1 --json conclusion --jq '.[0].conclusion // "success"')
+          if [ "$LAST" != "success" ]; then
+            echo "::warning::last completed Deploy concluded '$LAST' — skipping auto-redeploy, fix the pipeline first"
+            exit 0
+          fi
+
+          echo "::error::prod Worker (stamp $LIVE) does not match main ($TIP) — dispatching redeploy"
+          gh workflow run deploy.yml --ref main
+          exit 1

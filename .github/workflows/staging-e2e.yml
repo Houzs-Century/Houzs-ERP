@@ -1,0 +1,179 @@
+name: Staging E2E (smoke)
+
+# Post-deploy end-to-end proofs against the STAGING stack. Encodes the lesson
+# "deploy green + 200/401 = shipped, NOT working": every staging deploy is
+# followed by three real browser proofs (login, SO list, company isolation).
+#
+# Deliberately NOT wired to `pull_request` and NOT a required check. An active
+# merge train gates on "zero failed checks", so a flaky external-environment
+# E2E must never sit on the critical path. Triggers instead are:
+#   - workflow_run     -> runs automatically after "Deploy (Staging)" succeeds
+#   - workflow_dispatch-> an operator can run it on demand from the Actions tab
+#   - schedule         -> a nightly proof that staging still actually works
+on:
+  workflow_run:
+    workflows: ["Deploy (Staging)"]
+    types: [completed]
+  workflow_dispatch:
+  schedule:
+    - cron: "0 18 * * *" # 02:00 MYT nightly (UTC+8)
+
+# One staging E2E run at a time — the specs share a single staging tenant and
+# the isolation spec mutates the active-company key.
+concurrency:
+  group: staging-e2e
+  cancel-in-progress: false
+
+# `issues: write` is for the notify job below and nothing else.
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    # For a workflow_run trigger, only proceed when the deploy it followed
+    # actually succeeded (no point smoke-testing a half-deployed staging).
+    # workflow_dispatch and schedule have no upstream run and always proceed.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    # A real assertion failure MUST surface red. The workflow stays non-required
+    # (not on pull_request, not in branch protection), so red informs without
+    # blocking the merge train.
+    continue-on-error: false
+    defaults:
+      run:
+        working-directory: frontend/e2e
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # workflow_run executes from the default branch by default. Pin the
+          # suite to the exact commit that Deploy (Staging) just shipped, or a
+          # later main commit could make the smoke result describe different
+          # source than the deployed frontend/Worker. Manual/nightly runs use
+          # the event's own SHA.
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/e2e/package-lock.json
+      - run: npm ci
+      # What build is this suite about to prove?
+      #
+      # On 2026-08-12 this workflow was found to have reported `success` every
+      # night for two weeks against a staging stack last deployed 2026-07-29 —
+      # 775 commits and 59 production migrations behind `main`. Every assertion
+      # was true; none of them were about current code, and nothing in a green
+      # run said so. See docs/staging-bench-rot-coe.md.
+      #
+      # This does NOT fail the run. The suite proves an ENVIRONMENT, and while
+      # Deploy (Staging) is deliberately paused a red nightly would just be the
+      # permanently-red workflow the pause was correct to remove. It makes the
+      # answer carry its own subject: every green run now states the commit it
+      # was green ABOUT.
+      - name: Report which build staging is running
+        shell: bash
+        run: |
+          api="${{ vars.STAGING_E2E_API_URL || 'https://autocount-sync-api-staging.houzs-erp.workers.dev' }}"
+          tested="${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}"
+          health=$(curl -fsS --max-time 20 "$api/health" || echo '{}')
+          deployed=$(printf '%s' "$health" | sed -n 's/.*"sha":"\([^"]*\)".*/\1/p')
+
+          {
+            echo "### Staging build under test"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Worker \`/health\` | \`$health\` |"
+            echo "| Deployed commit | \`${deployed:-unknown}\` |"
+            echo "| Suite checked out | \`$tested\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -z "$deployed" ]; then
+            echo "::warning title=Staging build is unidentifiable::/health returned no GIT_SHA, so a green run here cannot say which commit it proved. Deploy (Staging) stamps it via --var GIT_SHA; if it is absent, staging has not been deployed by that workflow since the stamp was added."
+          elif [ "$deployed" != "$tested" ]; then
+            echo "::warning title=Staging is not running the commit this suite tested::deployed=$deployed tested=$tested. The assertions below are true about the DEPLOYED build, not about the checked-out source."
+          fi
+
+          # The one thing that CAN fail this step: the Worker's PostgREST key is not
+          # a service-role key. With an anon-role key every table read succeeds and
+          # every VIEW read answers "permission denied", and no spec can tell that
+          # apart from a real bug — measured 2026-08-21..09-12, three weeks red,
+          # docs/bugs/0824 (probe run 34644526231). /health reports the key's role
+          # claim; an older Worker without the field reports nothing and is only
+          # warned about, so this cannot go red on a build that predates it.
+          rest_role=$(printf '%s' "$health" | sed -n 's/.*"rest_role":"\([^"]*\)".*/\1/p')
+          rest_ref=$(printf '%s' "$health" | sed -n 's/.*"rest_ref":"\([^"]*\)".*/\1/p')
+          rest_key_ref=$(printf '%s' "$health" | sed -n 's/.*"rest_key_ref":"\([^"]*\)".*/\1/p')
+          echo "| REST key role | \`${rest_role:-unreported}\` (project \`${rest_ref:-?}\`, key minted for \`${rest_key_ref:-?}\`) |" >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$rest_role" ]; then
+            echo "::warning title=REST key role unreported::/health carries no rest_role — this Worker predates the field; the key's role is unknown to this run."
+          elif [ "$rest_role" != "service_role" ]; then
+            echo "::error title=Staging Worker's PostgREST key is role '$rest_role', not service_role::Every view read will answer 'permission denied' and every table read will still succeed. Set SUPABASE_SERVICE_ROLE_KEY on the staging Worker to the staging project's service_role key (docs/bugs/0824). The specs below are not run: they would measure the wrong thing."
+            exit 1
+          elif [ -n "$rest_ref" ] && [ -n "$rest_key_ref" ] && [ "$rest_ref" != "$rest_key_ref" ]; then
+            echo "::error title=REST key minted for another project::SUPABASE_URL is project $rest_ref but the key was minted for $rest_key_ref."
+            exit 1
+          fi
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test
+        env:
+          CI: "true"
+          # Optional overrides. Absent -> the suite uses the in-repo public
+          # staging-seed account (hello@houzscentury.com). The required-proof
+          # policy below fails when neither path authenticates.
+          STAGING_E2E_EMAIL: ${{ secrets.STAGING_E2E_EMAIL }}
+          STAGING_E2E_PASSWORD: ${{ secrets.STAGING_E2E_PASSWORD }}
+          # A green automated smoke run must mean the authenticated proofs ran.
+          # An unavailable DB/API or an unseeded fallback fixture fails red
+          # instead of silently producing a green run with three skips.
+          STAGING_E2E_REQUIRE_PROOF: "true"
+          # Targets. The config bakes in the same defaults; these repo VARIABLES
+          # let an operator re-point the suite (e.g. at a preview) without a code
+          # change.
+          STAGING_BASE_URL: ${{ vars.STAGING_E2E_BASE_URL || 'https://houzs-erp-staging.pages.dev' }}
+          STAGING_API_URL: ${{ vars.STAGING_E2E_API_URL || 'https://autocount-sync-api-staging.houzs-erp.workers.dev' }}
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report
+          path: frontend/e2e/playwright-report/
+          retention-days: 14
+
+  # A red rehearsal that reaches nobody is not a rehearsal. Measured 2026-09-12:
+  # this workflow had concluded `failure` on every run since 2026-08-21 and no
+  # person had been told (docs/bugs/0824; the mirror of docs/bugs/0083, where a
+  # GREEN nobody verified hid a stale build for two weeks). One open issue is the
+  # signal: created on the first red, appended on every later red, closed by hand
+  # once green is confirmed. No secret needed — GITHUB_TOKEN with issues:write.
+  notify:
+    needs: smoke
+    if: ${{ failure() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open or update the "Staging rehearsal RED" issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TRIGGER: ${{ github.event_name }}
+          SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          title="Staging rehearsal RED — staging-e2e is failing"
+          body="Staging E2E failed.
+
+          - Run: $RUN_URL
+          - Trigger: $TRIGGER
+          - Commit under test: $SHA
+          - Date (UTC): $(date -u +%FT%TZ)
+
+          Read the Playwright report artifact on the run before assuming a flake. Close this issue only after a GREEN run is confirmed on the Actions tab (docs/bugs/0824)."
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body "$body"
+            echo "appended to issue #$existing"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --label "staging" --body "$body" \
+              || gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+            echo "opened a new issue"
+          fi

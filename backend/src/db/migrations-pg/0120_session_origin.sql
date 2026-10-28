@@ -1,0 +1,21 @@
+-- 0120: session ORIGIN — the DOOR a session was minted at.
+-- Arms the POS pricing envelope (scm/routes/mfg-sales-orders.ts
+-- isPosTabletCaller) with a signal the caller cannot assert about itself. The
+-- guard shipped in #644 read a self-asserted `X-Client` header, so a hostile
+-- client escaped it by simply omitting the header. Origin is written by the
+-- SERVER at mint time and lives on the session row the client never sees.
+--
+-- Only services/auth.ts createSession writes this column, and only
+-- routes/pos.ts /pin-login passes a value ('pos'). Every other door
+-- (password login, invite accept, forgot-password, TOTP) leaves it NULL.
+--
+-- NULL is the load-bearing legacy state: it means "not minted at the POS
+-- door", which is exactly the pre-#644 behaviour (price freely, no drift
+-- check). Every session minted before this migration therefore keeps working
+-- untouched -- nobody is logged out and no live SO author starts getting 400s.
+--
+-- Live-table safety: additive, nullable, NO default and NO backfill, so
+-- Postgres takes a brief catalog-only lock and rewrites zero existing rows.
+-- Re-runnable via IF NOT EXISTS. Not indexed on purpose -- origin is only ever
+-- read through the token primary key on the existing session lookup.
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS origin text;

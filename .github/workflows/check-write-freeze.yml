@@ -1,0 +1,51 @@
+name: SCM write freeze — status (read-only)
+
+# Manual. Answers "what is frozen right now?" without a SQL console and without
+# asking an agent. Strictly one SELECT — it can never change the freeze; that is
+# the separate "SCM write freeze (on/off)" workflow.
+#
+# The verdict appears as run annotations. Exits 0 for every legitimate answer,
+# including "the stored value is broken" — a red job would read as "the check
+# broke", and the answer IS the output.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+
+# Its own group: a diagnostic must never queue behind, or displace, a release.
+concurrency:
+  group: check-write-freeze-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-write-freeze.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-write-freeze.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

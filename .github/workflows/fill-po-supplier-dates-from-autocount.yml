@@ -1,0 +1,71 @@
+name: Fill PO supplier delivery dates from AutoCount (PLAN by default)
+
+# Owner 2026-09-15: AutoCount's PO chasing list carries supplier delivery dates the
+# ERP never received - 「第 6 的这样子就要解决掉了」. See docs/bugs for the entry
+# shipped with backend/scripts/fill-po-supplier-dates-from-autocount.mjs.
+#
+# WHAT IT WRITES, company 1 only, from the committed AutoCount snapshot
+# backend/scripts/data/ac-po-supplier-dates.json.gz:
+#   PO.UDF_EDate  -> supplier_delivery_date_2
+#   PO.UDF_EDate2 -> supplier_delivery_date_3
+#   PO.UDF_EDate3 -> supplier_delivery_date_4
+# on the PO header where that slot is BLANK, and on each of its lines where the
+# same slot is blank. A slot the ERP already holds is never overwritten; a
+# different value is listed. One entity_audit_log row per PO. Never AutoCount.
+#
+# PLAN (default) rolls back and re-reads on a fresh connection. mode=apply needs
+# the CONFIRM phrase and the two counts the reviewed plan printed.
+#
+# REVERSAL - the apply log lists every PO and slot it filled:
+#   UPDATE scm.purchase_orders SET <slot> = NULL WHERE po_number = '<po>';
+#   UPDATE scm.purchase_order_items SET <slot> = NULL WHERE purchase_order_id = '<id>' AND <slot> = '<date>';
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      expect_header_fills:
+        description: "Required for apply: header slot fills the reviewed plan printed"
+        required: false
+        default: ""
+      expect_line_fills:
+        description: "Required for apply: line slot fills the reviewed plan printed"
+        required: false
+        default: ""
+      confirm:
+        description: "Required for apply: I HAVE REVIEWED THE DRY-RUN"
+        required: false
+        default: ""
+
+concurrency:
+  group: fill-po-supplier-dates-from-autocount
+  cancel-in-progress: false
+
+jobs:
+  fill:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/fill-po-supplier-dates-from-autocount.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          EXPECT_HEADER_FILLS: ${{ inputs.expect_header_fills }}
+          EXPECT_LINE_FILLS: ${{ inputs.expect_line_fills }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

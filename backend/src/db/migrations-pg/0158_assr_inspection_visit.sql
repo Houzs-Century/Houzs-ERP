@@ -1,0 +1,15 @@
+-- inspection_visit_at — the date an OWN-TEAM technician goes on-site to inspect
+-- the reported issue. Distinct from customer_pickup_at (collecting the faulty
+-- item to hand to the supplier, set in the Supplier-Pickup stage). Nullable; the
+-- case manager sets it from the Verification "Inspect by = Own team" panel, and
+-- it drives a dedicated INSPECTION leg on the Delivery Planning board (gated
+-- inspection_by = 'own'). This de-conflates the on-site inspection visit from the
+-- pickup it used to share customer_pickup_at with.
+-- See docs/delivery-planning-jobtypes-spec.md (P1).
+--
+-- Forward-only: historical own-team inspection dates already stored in
+-- customer_pickup_at are NOT backfilled here. That column is genuinely
+-- dual-purpose (a real customer pickup in the Supplier-Pickup stage vs. an
+-- inspection visit in the Verification stage), so which meaning a given value
+-- carries cannot be inferred safely. New inspection visits use this column.
+ALTER TABLE assr_cases ADD COLUMN IF NOT EXISTS inspection_visit_at TEXT;

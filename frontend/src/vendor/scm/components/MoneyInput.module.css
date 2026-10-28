@@ -1,0 +1,29 @@
+/* MoneyInput — inline RM editor. Inherits the host cell's sizing; keeps a
+   light affordance so it reads as editable without a heavy box. */
+
+.wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.currency {
+  font-family: var(--font-sans);
+  font-size: var(--fs-11);
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+.input {
+  width: 84px;
+  font-family: var(--font-sans);
+  font-size: var(--fs-13);
+  text-align: right;
+  color: var(--c-ink);
+  background: var(--c-paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 4px 8px;
+  outline: none;
+}
+.input::placeholder { color: var(--fg-muted); }
+.input:hover { border-color: var(--line-strong); }
+.input:focus { border-color: var(--c-orange); background: #fff; }

@@ -1,0 +1,213 @@
+<!-- MOCKUP — pending owner approval. Static design mock of the UNIFIED Houzs PDF
+     template applied to a DELIVERY ORDER, now with REALISTIC furniture detail.
+     No real data, no code path. Faithful to delivery-order-pdf.ts:
+       - QUANTITY-only (no prices, Owner 2026-06-26): Qty + m³ + Source PO + Rack
+       - MODULAR sofa = one row per module (BOOQIT-1A(LHF)/-CNR/-2A(RHF))
+       - customer-facing fabric shown internal (external) — description (docVariantLine)
+       - Customer + Driver signature -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MOCKUP — Delivery Order (unified PDF template)</title>
+<style>
+  :root{
+    --ink:#11140f;--ink2:#414539;--muted:#767b6e;
+    --line:#d6d9d2;--line2:#c2c6bd;
+    --paper:#fff;--inset:#f4f6f3;
+    --teal:#16695f;--teal-soft:#e1efed;--teal-ink:#0c3f39;--brass:#a16a2e;--dark:#1b1e17;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:#dfe2dc;font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink);-webkit-font-smoothing:antialiased}
+  .mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
+  .mock{position:sticky;top:0;z-index:10;background:var(--teal-ink);color:#fff;font-size:12px;letter-spacing:.03em;padding:8px 16px;display:flex;justify-content:space-between;align-items:center}
+  .mock b{font-weight:600}.mock span{opacity:.72;font-weight:400}
+  .page{width:210mm;min-height:297mm;margin:16px auto;background:var(--paper);position:relative;padding:14mm 14mm 20mm}
+  .page:not(.print){box-shadow:0 2px 14px rgba(0,0,0,.14)}
+  .hd{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+  .brand{display:flex;gap:10px;align-items:flex-start}
+  .logo{width:46px;height:46px;border-radius:8px;background:var(--teal);color:#fff;display:flex;align-items:center;justify-content:center;font-family:"IBM Plex Serif",Georgia,serif;font-size:26px;font-weight:600;flex:none}
+  .co .nm{font-size:15px;font-weight:600;letter-spacing:.01em}
+  .co .rg,.co .ad{font-size:9px;color:var(--ink2);line-height:1.55}
+  .co .ad{margin-top:3px}
+  .ttl{text-align:right;flex:none}
+  .ttl h1{font-size:22px;font-weight:600;color:var(--teal);letter-spacing:.06em;text-transform:uppercase;line-height:1}
+  .ttl .meta{margin-top:8px;font-size:9.5px;color:var(--ink2);line-height:1.75}
+  .ttl .meta b{color:var(--ink);font-weight:600}
+  .rule{height:2px;background:var(--teal);margin-top:10px}
+  .party{display:flex;gap:24px;margin-top:14px}
+  .party>div{flex:1;min-width:0}
+  .lbl{font-size:9px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--teal-ink);border-bottom:1px solid var(--line);padding-bottom:3px;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+  .lbl::before{content:"";width:8px;height:8px;background:var(--teal);border-radius:2px;flex:none}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:9.5px;line-height:1.5}
+  .kv dt{color:var(--muted)}
+  .kv dd{color:var(--ink)}
+  table.items{width:100%;border-collapse:collapse;margin-top:16px;font-size:9.5px}
+  table.items thead th{background:var(--dark);color:#fff;font-weight:600;text-align:left;padding:6px 7px;border-bottom:2px solid var(--teal);font-size:9px;letter-spacing:.02em}
+  table.items thead th.num{text-align:right}
+  table.items tbody td{padding:5px 7px;border-bottom:1px solid var(--line);vertical-align:top;line-height:1.4}
+  .num{text-align:right}
+  tr.grp td{background:#ececec;color:#2a2a2a;font-weight:600;font-size:8.5px;letter-spacing:.12em;text-transform:uppercase;padding:4px 7px;border-bottom:1px solid var(--line2)}
+  .dmain{font-weight:500}
+  .spec{color:var(--teal-ink);font-size:8.5px;display:block;margin-top:2px;font-family:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;letter-spacing:-.1px}
+  .special{color:var(--brass);font-size:8.5px;display:block;margin-top:1px;font-weight:500}
+  .wip{display:inline-block;background:var(--teal-soft);color:var(--teal-ink);font-size:7px;font-weight:700;padding:1px 5px;border-radius:3px;margin-left:6px;letter-spacing:.05em;vertical-align:middle}
+  .sign{display:flex;gap:20px;margin-top:22px}
+  .sign .box{flex:1}
+  .sign .cap{font-size:9px;font-weight:600;margin-bottom:4px}
+  .sign .pad{height:22mm;border:1px dashed var(--line2);border-radius:3px}
+  .note{font-size:8px;color:var(--muted);margin-top:6px}
+  .ft{position:absolute;left:14mm;right:14mm;bottom:10mm;border-top:1px solid var(--line);padding-top:5px;display:flex;justify-content:space-between;font-size:8px;color:var(--muted)}
+  @media print{
+    html,body{background:#fff}.mock{display:none}
+    .page{margin:0;box-shadow:none;width:auto;min-height:auto}
+    @page{size:A4;margin:0}
+  }
+</style>
+</head>
+<body>
+  <div class="mock"><b>MOCKUP — pending owner approval</b><span>Unified PDF template &middot; Delivery Order (with sofa + modular detail)</span></div>
+
+  <div class="page">
+    <!-- ===== UNIFIED HEADER ===== -->
+    <div class="hd">
+      <div class="brand">
+        <div class="logo">H</div>
+        <div class="co">
+          <div class="nm">HOUZS CENTURY SDN BHD</div>
+          <div class="rg">Co. Reg. 201801012345 (1234567-A) &middot; SST W10-1808-32000123</div>
+          <div class="ad">No. 12, Jalan Perindustrian 4, Taman Perindustrian Puchong,<br>47160 Puchong, Selangor, Malaysia.</div>
+          <div class="ad">Tel +60 3-8060 1234 &middot; sales@houzscentury.com &middot; www.houzscentury.com</div>
+        </div>
+      </div>
+      <div class="ttl">
+        <h1>Delivery Order</h1>
+        <div class="meta">
+          <div>DO No: <b>DO-2607-0210</b></div>
+          <div>Date: <b>22/07/2026</b></div>
+          <div>Status: <b>Dispatched</b></div>
+        </div>
+      </div>
+    </div>
+    <div class="rule"></div>
+
+    <!-- ===== PARTY BLOCK: DELIVER TO + DELIVERY DETAILS ===== -->
+    <div class="party">
+      <div>
+        <div class="lbl">Deliver To</div>
+        <dl class="kv">
+          <dt>Company</dt><dd>Setia Alam Living Sdn Bhd</dd>
+          <dt>Code</dt><dd>C-01042</dd>
+          <dt>Address</dt><dd>No. 8, Jalan Setia Prima U13/A, Setia Alam, 40170 Shah Alam, Selangor.</dd>
+          <dt>Tel</dt><dd>03-3358 7788</dd>
+          <dt>Note</dt><dd>Call 30 min before arrival. Assemble modular sofa on site.</dd>
+        </dl>
+      </div>
+      <div>
+        <div class="lbl">Delivery Details</div>
+        <dl class="kv">
+          <dt>DO No</dt><dd class="mono">DO-2607-0210</dd>
+          <dt>SO Ref</dt><dd class="mono">SO-2607-0142</dd>
+          <dt>Date</dt><dd>22/07/2026</dd>
+          <dt>Expected</dt><dd>23/07/2026</dd>
+          <dt>Driver</dt><dd>Rahman bin Aziz</dd>
+          <dt>Vehicle</dt><dd>WML 4471</dd>
+          <dt>Volume</dt><dd>5.180 m³</dd>
+          <dt>Status</dt><dd>Dispatched</dd>
+        </dl>
+      </div>
+    </div>
+
+    <!-- ===== LINE ITEMS: QUANTITY-ONLY + picking cols; one row per sofa module ===== -->
+    <table class="items">
+      <thead>
+        <tr>
+          <th class="num" style="width:5%">#</th>
+          <th style="width:19%">Item Code</th>
+          <th>Description</th>
+          <th style="width:15%">Source PO</th>
+          <th style="width:10%">Rack</th>
+          <th class="num" style="width:7%">Qty</th>
+          <th class="num" style="width:10%">m³</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="grp"><td colspan="7">SOFA</td></tr>
+        <tr>
+          <td class="num">1</td>
+          <td class="mono">BOOQIT-1A(LHF)</td>
+          <td><span class="dmain">Sofa BOOQIT — 1-Seater<span class="wip">1A · LHF</span></span>
+              <span class="spec">EZ-003 (KN390-1) — Easy Clean Velvet / SEAT 28" / LEG 4"</span></td>
+          <td class="mono">PO-2607-0067</td>
+          <td class="mono">C-04</td>
+          <td class="num mono">1</td>
+          <td class="num mono">0.860</td>
+        </tr>
+        <tr>
+          <td class="num">2</td>
+          <td class="mono">BOOQIT-CNR</td>
+          <td><span class="dmain">Sofa BOOQIT — Corner<span class="wip">CNR</span></span>
+              <span class="spec">EZ-003 (KN390-1) — Easy Clean Velvet / SEAT 28" / LEG 4"</span></td>
+          <td class="mono">PO-2607-0067</td>
+          <td class="mono">C-04</td>
+          <td class="num mono">1</td>
+          <td class="num mono">0.860</td>
+        </tr>
+        <tr>
+          <td class="num">3</td>
+          <td class="mono">BOOQIT-2A(RHF)</td>
+          <td><span class="dmain">Sofa BOOQIT — 2-Seater<span class="wip">2A · RHF</span></span>
+              <span class="spec">EZ-003 (KN390-1) — Easy Clean Velvet / SEAT 28" / LEG 4"</span>
+              <span class="special">SPECIAL: Extra Seat Cushion + USB Console</span></td>
+          <td class="mono">PO-2607-0067</td>
+          <td class="mono">C-05</td>
+          <td class="num mono">1</td>
+          <td class="num mono">1.720</td>
+        </tr>
+
+        <tr class="grp"><td colspan="7">BEDFRAME</td></tr>
+        <tr>
+          <td class="num">4</td>
+          <td class="mono">ARIANI-Q</td>
+          <td><span class="dmain">Bedframe ARIANI — Queen<span class="wip">Divan</span><span class="wip">Headboard</span></span>
+              <span class="spec">BF-01 Sand / DIVAN 10" + LEG 1" / GAP 14" / T.Heights 24"</span>
+              <span class="special">SPECIAL: Back Cover + Right Storage Drawer</span></td>
+          <td class="mono">PO-2607-0067</td>
+          <td class="mono">A-12</td>
+          <td class="num mono">1</td>
+          <td class="num mono">1.200</td>
+        </tr>
+
+        <tr class="grp"><td colspan="7">ACCESSORY</td></tr>
+        <tr>
+          <td class="num">5</td>
+          <td class="mono">BOOQIT-STOOL</td>
+          <td><span class="dmain">Ottoman / Stool — matching BOOQIT<span class="wip">Accessory</span></span>
+              <span class="spec">EZ-003 (KN390-1) — Easy Clean Velvet / 75 &times; 75 cm</span></td>
+          <td class="mono">PO-2607-0067</td>
+          <td class="mono">B-07</td>
+          <td class="num mono">1</td>
+          <td class="num mono">0.540</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- ===== NO totals — a delivery doc shows quantity / volume, not money ===== -->
+
+    <!-- ===== SIGNATURES ===== -->
+    <div class="sign">
+      <div class="box"><div class="cap">Customer Acknowledged Receipt</div><div class="pad"></div></div>
+      <div class="box"><div class="cap">Houzs Century Sdn Bhd — Driver Signature</div><div class="pad"></div></div>
+    </div>
+    <div class="note">Note: By signing above, the customer confirms receipt of the items listed in good order and condition.</div>
+
+    <!-- ===== FOOTER ===== -->
+    <div class="ft">
+      <span class="mono">DO-2607-0210</span>
+      <span>Houzs ERP &middot; 22/07/2026</span>
+      <span>Page 1 of 1</span>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,27 @@
+name: FAIR PNL tally (step 6 - PMS vs Excel reconciliation, read-only)
+
+# Owner-triggered ONLY. READ-ONLY: reports PMS vs Excel per year/month + grand total on count,
+# revenue, COGS, rental, setup, and flags every month/metric that diverges with top contributors.
+# Writes NOTHING (no commit mode). Own concurrency group.
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: pms-fair-pnl-tally
+  cancel-in-progress: false
+
+jobs:
+  tally:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: Tally
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: node scripts/fair-pnl/reconcile-tally.mjs

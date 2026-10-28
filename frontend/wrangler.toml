@@ -1,0 +1,10 @@
+name = "houzs-erp"
+compatibility_date = "2024-12-01"
+pages_build_output_dir = "./dist"
+
+# That's it — this is a pure static React SPA. The build runs via
+# `npm run build` (tsc + vite), which reads VITE_* variables from
+# .env.production to bake in the Worker URL.
+#
+# `wrangler pages deploy` reads `name` + `pages_build_output_dir`
+# from this file, so the npm script doesn't need any CLI flags.

@@ -1,0 +1,506 @@
+// ----------------------------------------------------------------------------
+// 3PL Companies — the master where the owner registers an outsourced carrier:
+// its company particulars (SSM, contact person, office line, address) AND its
+// fleet (lorry plates, driver contacts, helper ICs). A solo operator is a
+// one-lorry company.
+//
+// The fleet a carrier is given here lands in the SAME masters as our own —
+// scm.drivers / scm.helpers / scm.lorries — carrying threepl_company_id and
+// forced OUTSOURCE by the routes (backend/src/scm/lib/threepl-link.ts). So a
+// 3PL's lorry shows up in Fleet, Fleet Health and the assignment pickers exactly
+// like ours, marked Outsource, and Module C prices it per company.
+//
+// Route /scm/threepl-companies, nav "3PL Companies" under Transportation >
+// Maintenance. Backed by scm.threepl_companies (migs 0210 + 0237).
+// ----------------------------------------------------------------------------
+
+import { useState, type ReactNode, type CSSProperties } from 'react';
+import { Button } from '@2990s/design-system';
+import { Building2, Plus, Trash2, Pencil, Check, X, ChevronRight, ChevronDown } from 'lucide-react';
+import { PageHeader } from '../../components/Layout';
+import { FormCard, FormGrid, FormField, FormInput } from '../../vendor/scm/components/FormCard';
+import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
+import { formatPhone } from '@2990s/shared/phone';
+import styles from './Suppliers.module.css';
+import {
+  useThreePLCompanies,
+  useThreePLFleet,
+  useCreateThreePLCompany,
+  useUpdateThreePLCompany,
+  useDeleteThreePLCompany,
+  type ThreePLCompanyRow,
+} from '../../vendor/scm/lib/threepl-companies-queries';
+import { useCreateDriver } from '../../vendor/scm/lib/drivers-queries';
+import { useCreateHelper } from '../../vendor/scm/lib/helpers-queries';
+import { useCreateLorry, LORRY_TYPES, LORRY_TYPE_LABEL, type LorryType } from '../../vendor/scm/lib/lorries-queries';
+import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
+
+const ICON = { size: 16, strokeWidth: 1.75 } as const;
+
+const BLANK = {
+  name: '', registrationNo: '', contactName: '', contactPhone: '',
+  officePhone: '', email: '', address: '',
+};
+type Particulars = typeof BLANK;
+
+export const ThreePLCompanies = ({ embedded = false }: { embedded?: boolean } = {}) => {
+  const companies = useThreePLCompanies();
+  const createCo = useCreateThreePLCompany();
+  const notify = useNotify();
+
+  const [form, setForm] = useState<Particulars>(BLANK);
+  const [open, setOpen] = useState<string | null>(null);
+  const set = (k: keyof Particulars) => (v: string) => setForm((p) => ({ ...p, [k]: v }));
+
+  const submit = () => {
+    if (!form.name.trim()) { notify({ title: 'Name required', body: 'Give the 3PL company a name.', tone: 'error' }); return; }
+    const trimmed = (v: string) => v.trim() || null;
+    createCo.mutate(
+      {
+        name: form.name.trim(),
+        registrationNo: trimmed(form.registrationNo),
+        contactName: trimmed(form.contactName),
+        contactPhone: trimmed(form.contactPhone),
+        officePhone: trimmed(form.officePhone),
+        email: trimmed(form.email),
+        address: trimmed(form.address),
+      },
+      {
+        onSuccess: () => {
+          setForm(BLANK);
+          notify({ title: 'Company added', body: 'Open it to register its lorries, drivers and helpers.', tone: 'info' });
+        },
+        onError: (err) => notify({ title: 'Could not add', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
+      },
+    );
+  };
+
+  const rows = companies.data ?? [];
+
+  return (
+    <div className="space-y-4">
+      {!embedded && (
+        <PageHeader
+          eyebrow="Delivery"
+          title="3PL Companies"
+          description="Register each outsourced carrier with its company particulars and its fleet. A carrier's lorries, drivers and helpers join the Fleet module automatically, marked Outsource — and its rate card is set per company, on Rate Cards."
+        />
+      )}
+
+      {/* Sales Order's card + four-column grid (owner 2026-08-02: "应该要像我们
+          Sales Order 那样子的 UI"). It replaces a wrap-flex of hand-sized inputs
+          that queued the fields in whatever order they happened to fit — the
+          company's identity sat beside its phone number with nothing between
+          them, and Address (the longest value) got the narrowest box on the row.
+
+          Grouped the way the paperwork is: WHO the company is, then HOW to
+          reach them. The formats that are now enforced server-side are stated
+          under the fields rather than hidden in a placeholder that vanishes the
+          moment you type. */}
+      <FormCard
+        title="Register a 3PL company"
+        actions={
+          <Button variant="primary" size="sm" onClick={submit} disabled={createCo.isPending}>
+            <Plus {...ICON} />
+            <span>{createCo.isPending ? 'Saving…' : 'Add company'}</span>
+          </Button>
+        }
+      >
+        <FormGrid>
+          <FormField label="Company name" required span={2}>
+            <FormInput value={form.name} onChange={(e) => set('name')(e.target.value)} placeholder="e.g. ABC Logistics Sdn Bhd" />
+          </FormField>
+          <FormField label="SSM / registration no" hint="Unique when given — two carriers cannot share one.">
+            <FormInput value={form.registrationNo} onChange={(e) => set('registrationNo')(e.target.value)} placeholder="e.g. 202301012345" />
+          </FormField>
+          <FormField label="Code" hint="Allocated on save — 3PL-001, 3PL-002…">
+            <FormInput value="Assigned automatically" readOnly disabled />
+          </FormField>
+
+          <FormField label="Contact person">
+            <FormInput value={form.contactName} onChange={(e) => set('contactName')(e.target.value)} placeholder="Name" />
+          </FormField>
+          {/* The app's own phone control, not a bare text box. Owner, 2026-08-02:
+              "你的 contact number 为什么不是加 60 的?" — because this screen was
+              built with a plain input while Sales Order, Supplier and Team all
+              use PhoneInput. It shows the country (+60 by default), stores E.164,
+              and stops the browser's contact autofill hijacking the field. */}
+          <FormField label="Contact phone" hint="Stored as +60…">
+            <PhoneInput className={styles.fieldInput} value={form.contactPhone} onChange={set('contactPhone')} />
+          </FormField>
+          <FormField label="Office phone" hint="A landline is fine.">
+            <PhoneInput className={styles.fieldInput} value={form.officePhone} onChange={set('officePhone')} placeholder="3-1234 5678" />
+          </FormField>
+          <FormField label="Email">
+            <FormInput type="email" value={form.email} onChange={(e) => set('email')(e.target.value)} placeholder="ops@carrier.com" />
+          </FormField>
+
+          <FormField label="Registered address" span={4}>
+            <FormInput value={form.address} onChange={(e) => set('address')(e.target.value)} placeholder="Registered address" />
+          </FormField>
+        </FormGrid>
+      </FormCard>
+
+      <div style={{ borderRadius: 10, border: '1px solid var(--border, rgba(0,0,0,0.12))', overflow: 'hidden' }}>
+        {companies.isLoading ? (
+          <p style={{ padding: '12px 16px', fontSize: 'var(--fs-13)', color: 'var(--fg-muted)' }}>Loading…</p>
+        ) : rows.length === 0 ? (
+          <p style={{ padding: '12px 16px', fontSize: 'var(--fs-13)', color: 'var(--fg-muted)' }}>
+            No 3PL companies yet. Register one above, then open it to add its lorries and crew.
+          </p>
+        ) : (
+          /* NOT a table. Owner, 2026-08-02, on this list inside the Rate Cards
+             drawer: "整个都被 squeeze 掉、挤爆了". Nine columns in a 700px panel
+             gave every cell ~70px, so "0 lorries · 1 drivers · 0 helpers" broke
+             across six lines and the whole thing grew a horizontal scrollbar.
+             A wrapping row has no column to starve — the fields reflow instead. */
+          rows.map((r) => (
+            <CompanyRow
+              key={r.id}
+              row={r}
+              open={open === r.id}
+              onToggleOpen={() => setOpen((p) => (p === r.id ? null : r.id))}
+            />
+          ))
+        )}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+        <Building2 {...ICON} />
+        <span>
+          A carrier&rsquo;s lorries, drivers and helpers are stored in the shared Fleet masters and flagged Outsource — you cannot mark them in-house while they belong to a 3PL.
+          Deleting a company detaches its fleet (nothing is deleted). Leave is not recorded for a 3PL&rsquo;s crew; that is their employer&rsquo;s roster.
+        </span>
+      </div>
+    </div>
+  );
+};
+
+const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open: boolean; onToggleOpen: () => void }) => {
+  const update = useUpdateThreePLCompany();
+  const del = useDeleteThreePLCompany();
+  const notify = useNotify();
+  const askConfirm = useConfirm();
+
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState<Particulars>({
+    name: row.name,
+    registrationNo: row.registrationNo ?? '',
+    contactName: row.contactName ?? '',
+    contactPhone: row.contactPhone ?? '',
+    officePhone: row.officePhone ?? '',
+    email: row.email ?? '',
+    address: row.address ?? '',
+  });
+  const set = (k: keyof Particulars) => (v: string) => setForm((p) => ({ ...p, [k]: v }));
+
+  const save = () => {
+    if (!form.name.trim()) { notify({ title: 'Name required', tone: 'error' }); return; }
+    const trimmed = (v: string) => v.trim() || null;
+    update.mutate(
+      {
+        id: row.id, name: form.name.trim(),
+        registrationNo: trimmed(form.registrationNo), contactName: trimmed(form.contactName),
+        contactPhone: trimmed(form.contactPhone), officePhone: trimmed(form.officePhone),
+        email: trimmed(form.email), address: trimmed(form.address),
+      },
+      { onSuccess: () => setEditing(false), onError: (err) => notify({ title: 'Could not save', body: err instanceof Error ? err.message : '', tone: 'error' }) },
+    );
+  };
+
+  const remove = async () => {
+    const total = row.lorryCount + row.driverCount + row.helperCount;
+    if (!(await askConfirm({
+      title: 'Delete this 3PL company?',
+      body: `${row.name} — its ${total} fleet record(s) are detached, not deleted.`,
+      confirmLabel: 'Delete',
+    }))) return;
+    del.mutate(row.id, { onError: (err) => notify({ title: 'Could not delete', body: err instanceof Error ? err.message : '', tone: 'error' }) });
+  };
+
+  /* Editing reuses the SAME grid the register form above uses. The old inline
+     edit was a <tr> of eight cells under a nine-column header, so every field
+     sat one column left of its own label — Company name under "Code", email
+     under "Fleet", and the address input under "Active". */
+  if (editing) {
+    return (
+      <div style={ROW_SHELL}>
+        <div style={{ padding: '12px' }}>
+          <FormGrid>
+            <FormField label="Company name" required span={2}>
+              <FormInput value={form.name} onChange={(e) => set('name')(e.target.value)} />
+            </FormField>
+            <FormField label="SSM / registration no">
+              <FormInput value={form.registrationNo} onChange={(e) => set('registrationNo')(e.target.value)} />
+            </FormField>
+            <FormField label="Code" hint="Allocated once, never re-issued.">
+              <FormInput value={row.code ?? '—'} readOnly disabled />
+            </FormField>
+            <FormField label="Contact person">
+              <FormInput value={form.contactName} onChange={(e) => set('contactName')(e.target.value)} />
+            </FormField>
+            <FormField label="Contact phone">
+              <PhoneInput className={styles.fieldInput} value={form.contactPhone} onChange={set('contactPhone')} />
+            </FormField>
+            <FormField label="Office phone">
+              <PhoneInput className={styles.fieldInput} value={form.officePhone} onChange={set('officePhone')} placeholder="3-1234 5678" />
+            </FormField>
+            <FormField label="Email">
+              <FormInput type="email" value={form.email} onChange={(e) => set('email')(e.target.value)} />
+            </FormField>
+            <FormField label="Registered address" span={4}>
+              <FormInput value={form.address} onChange={(e) => set('address')(e.target.value)} />
+            </FormField>
+          </FormGrid>
+          <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
+            <Button variant="primary" size="sm" onClick={save} disabled={update.isPending}><Check {...ICON} /><span>Save</span></Button>
+            <Button variant="ghost" size="sm" onClick={() => setEditing(false)}><X {...ICON} /><span>Cancel</span></Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const fleet = [
+    `${row.lorryCount} ${row.lorryCount === 1 ? 'lorry' : 'lorries'}`,
+    `${row.driverCount} ${row.driverCount === 1 ? 'driver' : 'drivers'}`,
+    `${row.helperCount} ${row.helperCount === 1 ? 'helper' : 'helpers'}`,
+  ].join(' · ');
+
+  return (
+    <div style={ROW_SHELL}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, padding: '10px 12px' }}>
+        <button onClick={onToggleOpen} title={open ? 'Collapse' : 'Open fleet'}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--fg-muted)', padding: 2, flex: '0 0 auto' }}>
+          {open ? <ChevronDown {...ICON} /> : <ChevronRight {...ICON} />}
+        </button>
+
+        {/* The minted code (mig 0242). It was stored and returned but nowhere
+            on screen, which makes an auto-allocated identifier useless — you
+            cannot quote a code you cannot see. */}
+        <div style={{ flex: '1 1 190px', minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className={styles.codeChip}>{row.code ?? '—'}</span>
+            <strong style={{ fontSize: 'var(--fs-13)' }}>{row.name}</strong>
+          </div>
+          <div style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', marginTop: 2 }}>
+            {row.registrationNo ? `SSM ${row.registrationNo}` : 'No SSM on file'} · {fleet}
+          </div>
+        </div>
+
+        <Fact label="Contact" value={row.contactName} sub={row.contactPhone ? formatPhone(row.contactPhone) : null} />
+        <Fact label="Office" value={row.officePhone ? formatPhone(row.officePhone) : null} sub={row.email} />
+
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', flex: '0 0 auto' }}>
+          <input type="checkbox" checked={row.isActive} disabled={update.isPending}
+            onChange={() => update.mutate({ id: row.id, isActive: !row.isActive }, {
+              onError: (err) => notify({ title: 'Could not update', body: err instanceof Error ? err.message : '', tone: 'error' }),
+            })} />
+          <span style={{ fontSize: 'var(--fs-12)', color: row.isActive ? 'var(--c-secondary-a, inherit)' : 'var(--fg-muted)' }}>{row.isActive ? 'Active' : 'Inactive'}</span>
+        </label>
+
+        <div style={{ display: 'inline-flex', gap: 4, flex: '0 0 auto' }}>
+          <Button variant="ghost" size="sm" onClick={() => setEditing(true)}><Pencil {...ICON} /><span>Edit</span></Button>
+          <Button variant="ghost" size="sm" onClick={remove} disabled={del.isPending}><Trash2 {...ICON} /></Button>
+        </div>
+      </div>
+
+      {open && (
+        <div style={{ padding: '0 12px 14px 40px', background: 'var(--bg-subtle, rgba(0,0,0,0.02))' }}>
+          <CarrierFleet companyId={row.id} companyName={row.name} />
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ROW_SHELL: CSSProperties = { borderTop: '1px solid var(--border, rgba(0,0,0,0.06))' };
+
+/* One labelled value that shrinks instead of wrapping to six lines. */
+const Fact = ({ label, value, sub }: { label: string; value?: string | null; sub?: string | null }) => (
+  <div style={{ flex: '1 1 150px', minWidth: 0 }}>
+    <div style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>{label}</div>
+    <div style={{ fontSize: 'var(--fs-12)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value || '—'}</div>
+    {sub && <div style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub}</div>}
+  </div>
+);
+
+/* The carrier's own fleet. Everything created here posts threeplCompanyId, so
+   the row lands OUTSOURCE — the routes refuse to let it be in-house. */
+const CarrierFleet = ({ companyId, companyName }: { companyId: string; companyName: string }) => {
+  const fleet = useThreePLFleet(companyId);
+  const notify = useNotify();
+
+  const createLorry = useCreateLorry();
+  const createDriver = useCreateDriver();
+  const createHelper = useCreateHelper();
+
+  const [plate, setPlate] = useState('');
+  /* The REAL scm.lorry_type enum, from the shared list the Fleet page uses.
+     Inventing options here is how this form shipped LORRY/VAN/TRUCK against an
+     enum that has neither LORRY nor TRUCK - every add but Van returned 400. */
+  const [lorryType, setLorryType] = useState<LorryType>('LORRY_14FT');
+  const [dims, setDims] = useState({ l: '', w: '', h: '' });
+  const [drv, setDrv] = useState({ name: '', phone: '', ic: '' });
+  const [hlp, setHlp] = useState({ name: '', contact: '', ic: '' });
+
+  const fail = (err: unknown) => notify({ title: 'Could not add', body: err instanceof Error ? err.message : '', tone: 'error' });
+  const num = (v: string) => (v.trim() === '' ? null : Number(v));
+
+  const addLorry = () => {
+    if (!plate.trim()) { notify({ title: 'Plate required', tone: 'error' }); return; }
+    createLorry.mutate(
+      {
+        plate: plate.trim(), type: lorryType, threeplCompanyId: companyId,
+        lengthFt: num(dims.l), widthFt: num(dims.w), heightFt: num(dims.h),
+      },
+      { onSuccess: () => { setPlate(''); setDims({ l: '', w: '', h: '' }); void fleet.refetch(); }, onError: fail },
+    );
+  };
+
+  const addDriver = () => {
+    if (!drv.name.trim() || !drv.phone.trim()) {
+      notify({ title: 'Name and phone are required', tone: 'error' }); return;
+    }
+    createDriver.mutate(
+      { name: drv.name.trim(), phone: drv.phone.trim(), icNumber: drv.ic.trim() || undefined, threeplCompanyId: companyId },
+      { onSuccess: () => { setDrv({ name: '', phone: '', ic: '' }); void fleet.refetch(); }, onError: fail },
+    );
+  };
+
+  const addHelper = () => {
+    if (!hlp.name.trim()) { notify({ title: 'Name is required', tone: 'error' }); return; }
+    createHelper.mutate(
+      { name: hlp.name.trim(), contact: hlp.contact.trim() || undefined, icNumber: hlp.ic.trim() || undefined, threeplCompanyId: companyId },
+      { onSuccess: () => { setHlp({ name: '', contact: '', ic: '' }); void fleet.refetch(); }, onError: fail },
+    );
+  };
+
+  const d = fleet.data;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, paddingTop: 12 }}>
+      <span style={{ fontSize: 'var(--fs-11)', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--fg-muted)' }}>
+        {companyName} — fleet
+      </span>
+
+      <FleetBlock title="Lorries" empty="No lorries registered for this carrier."
+        rows={(d?.lorries ?? []).map((l) => ({
+          id: l.id,
+          main: l.plate,
+          sub: [l.type, l.capacity_m3 != null ? `${l.capacity_m3} m3` : null,
+            l.length_ft && l.width_ft && l.height_ft ? `${l.length_ft} x ${l.width_ft} x ${l.height_ft} ft` : null]
+            .filter(Boolean).join(' · '),
+        }))}
+        loading={fleet.isLoading}
+        form={
+          <>
+            <Ctl label="Plate"><Inp value={plate} onChange={setPlate} placeholder="ABC 1234" width={120} /></Ctl>
+            <Ctl label="Type">
+              <select value={lorryType} onChange={(e) => setLorryType(e.target.value as LorryType)} style={{ ...selStyle, width: 130 }}>
+                {LORRY_TYPES.map((t) => <option key={t} value={t}>{LORRY_TYPE_LABEL[t]}</option>)}
+              </select>
+            </Ctl>
+            <Ctl label="L x W x H (ft)">
+              <div style={{ display: 'flex', gap: 4 }}>
+                <Inp value={dims.l} onChange={(v) => setDims((p) => ({ ...p, l: v }))} placeholder="L" width={54} />
+                <Inp value={dims.w} onChange={(v) => setDims((p) => ({ ...p, w: v }))} placeholder="W" width={54} />
+                <Inp value={dims.h} onChange={(v) => setDims((p) => ({ ...p, h: v }))} placeholder="H" width={54} />
+              </div>
+            </Ctl>
+            <Button variant="secondary" size="sm" onClick={addLorry} disabled={createLorry.isPending}>
+              <Plus {...ICON} /><span>Add lorry</span>
+            </Button>
+          </>
+        }
+      />
+
+      <FleetBlock title="Drivers" empty="No drivers registered for this carrier."
+        rows={(d?.drivers ?? []).map((x) => ({
+          id: x.id, main: x.name,
+          sub: [x.driver_code, x.phone ? formatPhone(x.phone) : null, x.ic_number].filter(Boolean).join(' · '),
+        }))}
+        loading={fleet.isLoading}
+        form={
+          <>
+            <Ctl label="Name"><Inp value={drv.name} onChange={(v) => setDrv((p) => ({ ...p, name: v }))} width={150} /></Ctl>
+            <Ctl label="Phone"><div style={{ width: 230 }}><PhoneInput className={styles.fieldInput} value={drv.phone} onChange={(v) => setDrv((p) => ({ ...p, phone: v }))} /></div></Ctl>
+            <Ctl label="IC"><Inp value={drv.ic} onChange={(v) => setDrv((p) => ({ ...p, ic: v }))} width={130} /></Ctl>
+            <Button variant="secondary" size="sm" onClick={addDriver} disabled={createDriver.isPending}>
+              <Plus {...ICON} /><span>Add driver</span>
+            </Button>
+          </>
+        }
+      />
+
+      <FleetBlock title="Helpers" empty="No helpers registered for this carrier."
+        rows={(d?.helpers ?? []).map((x) => ({
+          id: x.id, main: x.name,
+          sub: [x.helper_code, x.contact ? formatPhone(x.contact) : null, x.ic_number].filter(Boolean).join(' · '),
+        }))}
+        loading={fleet.isLoading}
+        form={
+          <>
+            <Ctl label="Name"><Inp value={hlp.name} onChange={(v) => setHlp((p) => ({ ...p, name: v }))} width={150} /></Ctl>
+            <Ctl label="Contact"><div style={{ width: 230 }}><PhoneInput className={styles.fieldInput} value={hlp.contact} onChange={(v) => setHlp((p) => ({ ...p, contact: v }))} /></div></Ctl>
+            <Ctl label="IC"><Inp value={hlp.ic} onChange={(v) => setHlp((p) => ({ ...p, ic: v }))} width={130} /></Ctl>
+            <Button variant="secondary" size="sm" onClick={addHelper} disabled={createHelper.isPending}>
+              <Plus {...ICON} /><span>Add helper</span>
+            </Button>
+          </>
+        }
+      />
+    </div>
+  );
+};
+
+const FleetBlock = ({ title, rows, empty, loading, form }: {
+  title: string;
+  rows: Array<{ id: string; main: string; sub: string }>;
+  empty: string;
+  loading: boolean;
+  form: ReactNode;
+}) => (
+  <div style={{ borderRadius: 8, border: '1px solid var(--border, rgba(0,0,0,0.1))', background: 'var(--bg, #fff)', overflow: 'hidden' }}>
+    <div style={{ padding: '8px 12px', fontSize: 'var(--fs-12)', fontWeight: 600, borderBottom: '1px solid var(--border, rgba(0,0,0,0.06))' }}>
+      {title} <span style={{ fontWeight: 400, color: 'var(--fg-muted)' }}>({rows.length})</span>
+    </div>
+    {loading ? (
+      <p style={{ padding: '8px 12px', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Loading…</p>
+    ) : rows.length === 0 ? (
+      <p style={{ padding: '8px 12px', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{empty}</p>
+    ) : (
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+        {rows.map((r) => (
+          <li key={r.id} style={{ padding: '6px 12px', borderBottom: '1px solid var(--border, rgba(0,0,0,0.04))', fontSize: 'var(--fs-12)' }}>
+            <strong>{r.main}</strong>
+            {r.sub && <span style={{ color: 'var(--fg-muted)' }}> — {r.sub}</span>}
+          </li>
+        ))}
+      </ul>
+    )}
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end', padding: '10px 12px', borderTop: '1px solid var(--border, rgba(0,0,0,0.06))' }}>
+      {form}
+    </div>
+  </div>
+);
+
+const Ctl = ({ label, children }: { label: string; children: ReactNode }) => (
+  <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+    <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>{label}</span>
+    {children}
+  </label>
+);
+const Inp = ({ value, onChange, placeholder, width }: {
+  value: string; onChange: (v: string) => void; placeholder?: string; width?: number;
+}) => (
+  <input type="text" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+    style={{ ...selStyle, width: width ?? 150 }} />
+);
+const selStyle: CSSProperties = {
+  padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border, rgba(0,0,0,0.2))',
+  background: 'var(--bg, #fff)', color: 'var(--fg, inherit)', fontSize: 'var(--fs-13)',
+};
+
+export default ThreePLCompanies;

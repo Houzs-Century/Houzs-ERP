@@ -1,0 +1,44 @@
+name: Probe — what a purchase order's sofa rows hold (read-only)
+
+# Five received purchase orders are refused by the sofa applier with
+# "no line matches line key(s) NNNNNN — the document does not carry it", while
+# the account book DOES carry that key. Four other probes were asked first and
+# each answered a different question; four negatives are not an answer. This one
+# prints the rows.
+#
+# Read-only. SELECTs only, one connection, no DDL, no writes, no transaction.
+# Manual trigger, NAMED documents only — it never sweeps. Exits 0 for every
+# legitimate answer including "no such document".
+on:
+  workflow_dispatch:
+    inputs:
+      docs:
+        description: "Purchase orders, comma separated (e.g. HC-PO-009467,HC-PO-009554)"
+        required: true
+        default: ""
+        type: string
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: probe-po-sofa-line-keys
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-po-sofa-line-keys.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DOCS: ${{ inputs.docs }}
+          COMPANY_ID: ${{ inputs.company_id }}

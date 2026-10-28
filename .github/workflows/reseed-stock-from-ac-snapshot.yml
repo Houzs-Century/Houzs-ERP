@@ -1,0 +1,88 @@
+name: Re-seed stock from tonight's AutoCount balance (PLAN gated)
+
+# THE OWNER'S RULING, 2026-09-07 ~23:00 (+08): 「盖，用今晚的结存为准」 — overwrite the
+# ERP's inventory balance with the AutoCount balance exported at 22:21 (+08).
+#
+# WHY OVERWRITING IS THE REMEDY, not a paper-over. create-migrated-documents.yml
+# says it in its own header: migrated goods receipts and delivery notes are
+# stamped migrated_no_stock and write NO inventory movement, because "the balance
+# snapshot already counts those receipts as IN and those deliveries as OUT". ERP
+# stock IS a balance snapshot, and a snapshot's only defect mode is age. The
+# 2026-09-07 reconcile's largest bucket — 157 cells / 410 units "ERP IS BEHIND
+# THE BOOK" — is that age. A newer snapshot closes it by construction.
+#
+# NEVER COMPUTES A BALANCE — copies AutoCount's. Every target quantity is read
+# from data/ac-live-stock-balance.json.gz.
+#
+# WHAT IT WILL NOT TOUCH: sofa (owner ruling 2 — storage stays piece-level for
+# the MRP; the fold is for the COMPARISON only), AutoCount's service pseudo-items,
+# and any ERP code or warehouse AutoCount has no vocabulary for. Each is reported.
+#
+# SAFETY. PLAN prints every stock movement that exists only in the ERP since
+# seeding; APPLY REFUSES while any exist unless ack_erp_only is set by a person
+# who read them. The pre-overwrite balance is dumped off-database in BOTH modes
+# and uploaded as an artifact — the restore is the same arithmetic in reverse.
+# Re-running is inert: delta = AutoCount MINUS the ERP's live on-hand.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default) or apply"
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "For apply only — type: RESEED STOCK FROM TONIGHT'S AUTOCOUNT BALANCE"
+        required: false
+        default: ""
+        type: string
+      ack_erp_only:
+        description: "Only if PLAN listed ERP-only movements and you have read them"
+        required: false
+        default: false
+        type: boolean
+      company_id:
+        description: "company_id (default 1 = Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+
+# Its own group, never the deploy's, and never cancel-in-progress: a half-written
+# re-seed is worse than a queued one.
+concurrency:
+  group: reseed-stock-from-ac-snapshot
+  cancel-in-progress: false
+
+jobs:
+  reseed:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/reseed-stock-from-ac-snapshot.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          ACK_ERP_ONLY_MOVEMENTS: ${{ inputs.ack_erp_only && '1' || '0' }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          DUMP_PATH: reseed-pre-balance.json
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # Always, including on a failed apply: the dump is written before any
+      # write and it is the only off-database copy of what the balance was.
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reseed-pre-balance-${{ inputs.mode }}-${{ github.run_id }}
+          path: backend/reseed-pre-balance.json
+          if-no-files-found: warn
+          retention-days: 90

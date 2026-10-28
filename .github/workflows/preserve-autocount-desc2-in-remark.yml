@@ -1,0 +1,91 @@
+name: Preserve AutoCount Desc2 in the line remark (PLAN by default)
+
+# The owner, 2026-09-02: "那个 description 2 也要记录进我们的 remarks 里面".
+#
+# AutoCount's Desc2 is the customer's own spec text on the line. The ERP holds
+# it in scm.mfg_sales_order_items.description2, which is SERVER-GENERATED on
+# every write (mfg-sales-orders.ts:4315 on create, :8581 on patch, no exemption
+# for a migrated line) — and scm.app_config 'scm.autocount_writeback' is "1",
+# so the write-back then sends our generated text back and replaces the book's
+# copy too. One save can lose the wording on BOTH sides.
+#
+# `remark` is not on the write-back path: the payload is ItemCode / Description
+# / Desc2 / Qty / UnitPrice (+ Location, DeliveryDate, Photos) and SO_ITEM_COLS
+# does not select it. So a copy parked there survives every save and never
+# reaches the account book.
+#
+# PLAN (default): every UPDATE runs inside ONE transaction and is ROLLED BACK.
+# The output prints the before/after count per column, the per-source split,
+# five worked samples, and a fresh-connection re-read asserting the rollback
+# held and description2 did not move. Nothing persists.
+# mode=apply commits the same transaction and additionally requires the CONFIRM
+# phrase, which is not defaulted here — it has to be typed into the dispatch.
+#
+# The script writes ONE column, scm.mfg_sales_order_items.remark. It never
+# writes description2, never a money column, and never touches a header field.
+#
+# The 663 migrated lines whose remark is already occupied hold OUR OWN IMPORTER
+# MACHINE NOTES and nothing else — measured 2026-09-04, all 663 grouped by
+# value: 548 sofa substitution notes, 95 UNPARSED token lists, 13 "compartment
+# corrected", 7 name-matched. Told that, the owner ruled 2026-09-04
+# 「如果是我们导入的就不需要」, so shape=overwrite is the DEFAULT: the book's
+# wording replaces the machine note under a 账本原文: label. Every replaced
+# value is printed IN FULL in the run log before the write, in the plan run and
+# the apply run alike, so the log is the record. shape=append (keep the machine
+# note, add the book text under it) and shape=fill-only remain available.
+#
+# Manual trigger only, own concurrency group — a diagnostic must never queue
+# behind or displace a release. Never scheduled.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (rolls back) or apply (commits)"
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      shape:
+        description: "overwrite = book text replaces our importer note (owner's ruling); append = keep the note and add the book text below it; fill-only = write only empty remarks"
+        required: false
+        default: "overwrite"
+        type: choice
+        options: [overwrite, append, fill-only]
+      company:
+        description: "company id (1 = Houzs Century; company 2 has no migrated lines)"
+        required: false
+        default: "1"
+        type: string
+      confirm:
+        description: 'apply ONLY: type I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: preserve-autocount-desc2-in-remark
+  cancel-in-progress: false
+
+jobs:
+  preserve:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/preserve-autocount-desc2-in-remark.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          SHAPE: ${{ inputs.shape }}
+          COMPANY: ${{ inputs.company }}
+          CONFIRM: ${{ inputs.confirm }}

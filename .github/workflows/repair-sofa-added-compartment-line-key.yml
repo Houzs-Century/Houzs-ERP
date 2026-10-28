@@ -1,0 +1,78 @@
+name: Repair sofa compartments added without their AutoCount line key
+
+# apply-sofa-compartment-corrections.mjs corrects a sofa build by matching rows
+# to the target pieces and INSERTing the pieces the document does not hold. Both
+# of its INSERTs named their columns one by one and neither named
+# `linked_ac_dtlkey`, so every compartment it ever ADDED landed keyless beside
+# siblings that carry the key.
+#
+# That is not cosmetic. src/scm/lib/autocount-line-keys.ts:155 — "Every ERP row
+# behind this AutoCount line gets the SAME key ... composeEdit later accepts the
+# build only when all of them still agree on it." A keyless compartment takes
+# the whole document's line identity away, and the reconcile — which compares
+# compartments per DtlKey — cannot see it at all.
+#
+# PLAN by default. The apply path needs the CONFIRM phrase, and this workflow
+# PASSES it to the script: a sibling workflow was written that never did, and
+# its apply run refused every time (docs/bugs/0700).
+#
+# Manual trigger only, and its own concurrency group so it can never queue
+# behind - or displace - a release.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (read-only, default) or apply (writes)"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'For apply, type exactly: I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+        type: string
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+        type: string
+      doc:
+        description: "One document (e.g. HC-SO-013475), or blank for every one"
+        required: false
+        default: ""
+        type: string
+      max_snapshot_age_days:
+        description: "Refuse if the AutoCount snapshot is older than this many days"
+        required: false
+        default: "2"
+        type: string
+
+concurrency:
+  group: repair-sofa-added-compartment-line-key
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/repair-sofa-added-compartment-line-key.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          DOC: ${{ inputs.doc }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -1,0 +1,45 @@
+name: Migration completeness diag (read-only)
+
+# GO-LIVE evidence for the 2990 -> Houzs migration (owner ask 2026-07-24): is
+# EVERYTHING from 2990 migrated into Houzs as company_2 (SO/PO/GRN/PI/DO/SI/
+# returns/suppliers/products/customers/payments/GL), plus the two integrity
+# checks (DO/SO delivered-status gap, and cost=0 drop vs never-costed). Prints a
+# per-doc-type source-vs-dest count table + both integrity sections as run
+# annotations. Strictly read-only (SELECT / count only) — see the script header.
+#
+# Manual trigger only — it is a question, not a gate, and a production DB read
+# must never become routine CI noise. Actions already holds the deploy + importer
+# secrets, so nobody handles a credential.
+on:
+  workflow_dispatch:
+
+# Own concurrency group — touches nothing, must never queue behind or displace a
+# release (and must not share the deploy's group).
+concurrency:
+  group: diag-migration-completeness
+  cancel-in-progress: true
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy + importer: that is where DATABASE_URL and
+    # the 2990 SOURCE_* secrets live.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/diag-migration-completeness.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SOURCE_SUPABASE_URL: ${{ secrets.SOURCE_SUPABASE_URL }}
+          SOURCE_SERVICE_ROLE_KEY: ${{ secrets.SOURCE_SERVICE_ROLE_KEY }}
+          # GitHub-hosted runners have no IPv6 egress; match the deploy jobs.
+          NODE_OPTIONS: --dns-result-order=ipv4first

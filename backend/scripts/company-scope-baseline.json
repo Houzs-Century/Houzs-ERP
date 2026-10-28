@@ -1,0 +1,34 @@
+{
+  "//": [
+    "GRANDFATHER BASELINE for backend/scripts/check-company-scope.mjs --check.",
+    "Each entry is one handler/statement that touches a row by id with NO company",
+    "predicate, keyed by FILE PATH + ROUTE IDENTITY (never a line number).",
+    "This is DEBT, not the standard, and it may only SHRINK. A NEW unscoped handler",
+    "is BLOCKED: it is not in this list, so --check fails and names it.",
+    "To lock in a fix: scope the handler (add a company_id predicate) or annotate a",
+    "verified-safe one with `// company-scope: <reason>`, then run",
+    "`npm --prefix backend run audit:company-scope:update` and commit the smaller list.",
+    "Generated ONLY by --update, which refuses to add an entry the committed list does",
+    "not already have — the same no-growth rule lint-ratchet.mjs enforces on ceilings.",
+    "unscopedByReference: the same, for handlers registered BY REFERENCE (an imported or",
+    "factory-built handler) whose bodies the checker could not read before it followed the",
+    "reference. Found by that change, not added by a new handler; it may only SHRINK too."
+  ],
+  "unscoped": [
+    "backend/src/routes/assr.ts :: DELETE /lookups/:kind/:id",
+    "backend/src/routes/systemHealth.ts :: GET /autocount/reconcile",
+    "backend/src/scm/routes/driver-leave.ts :: POST /",
+    "backend/src/scm/routes/fleet-maintenance.ts :: GET /vehicles/:id",
+    "backend/src/scm/routes/fleet-maintenance.ts :: POST /vehicles/:id/breakdowns",
+    "backend/src/scm/routes/fleet-maintenance.ts :: POST /vehicles/:id/mileage",
+    "backend/src/scm/routes/fleet-maintenance.ts :: POST /vehicles/:id/plans",
+    "backend/src/scm/routes/hr.ts :: GET /commission",
+    "backend/src/scm/routes/lorry-service-records.ts :: GET /",
+    "backend/src/scm/routes/lorry-service-records.ts :: GET /:id/invoice",
+    "backend/src/scm/routes/product-models.ts :: GET /:id/photo/:key",
+    "backend/src/scm/routes/scan-so.ts :: GET /jobs/:id"
+  ],
+  "unscopedByReference": [
+    "backend/src/scm/routes/public-images.ts :: GET /product-models/:id/photo/:key"
+  ]
+}

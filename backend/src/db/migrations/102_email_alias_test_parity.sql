@@ -1,0 +1,14 @@
+-- Test/D1 parity for users.email_alias.
+--
+-- email_alias was added to the Postgres schema only
+-- (migrations-pg/0039_mail_center.sql + schema.pg.ts). As of the Mail Center
+-- alias work, auth.ts hydrates u.email_alias on EVERY session lookup
+-- (getUserBySession / getUserById). Prod runs on Postgres via the d1-compat
+-- shim where the column already exists, so prod is unaffected. But the isolated
+-- D1 used by the test suite (schema.sql baseline + these migrations) had no such
+-- column, so every authenticated request 500'd and the pageAccess / projects /
+-- totp suites failed. This migration brings the D1/test schema back in parity.
+--
+-- Mirrors the 101_checklist_amendments_test_parity.sql pattern. D1-only; the
+-- deploy applies Postgres migrations separately.
+ALTER TABLE users ADD COLUMN email_alias TEXT;

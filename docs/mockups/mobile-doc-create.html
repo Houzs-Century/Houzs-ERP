@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>Houzs Mobile Mockup - Standalone Document Create</title>
+<style>
+/* ==========================================================================
+   Houzs ERP - Mobile gap mockup 1: standalone document create (DO / SI / GRN)
+   Static, self-contained. Design language ported verbatim from the owner's
+   approved prototype (docs/mobile-prototype.html) + frontend/src/mobile/
+   mobile.css tokens. Namespaced under .hz-m exactly like the shipped app.
+   MOCKUP ONLY - no data logic, interactions simulated with minimal JS.
+   ========================================================================== */
+*{box-sizing:border-box;margin:0;padding:0;}
+*{scrollbar-width:none;-ms-overflow-style:none;}
+*::-webkit-scrollbar{width:0;height:0;display:none;}
+html,body{height:100%;}
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased;background:#d9dcd5;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px 0;}
+
+/* ---- canonical mobile tokens (mobile.css Foundations) ---- */
+.hz-m{--ink:#11140f;--ink2:#414539;--mut:#767b6e;--mut2:#9aa093;--brand:#16695f;--brand-d:#0c3f39;--brand-bg:#e1efed;--gold:#a16a2e;--green:#2f8a5b;--green-bg:#e2f0e9;--amber:#8a6a2e;--amber-bg:#f6efd9;--red:#b23a3a;--red-bg:#f8eaea;--line:#e3e6e0;--line-card:#d6d9d2;--line2:#eceee9;--bg:#f4f6f3;--card:#fff;--app-bg:#eef0ec;--r-card:14px;--r-input:9px;--r-btn:12px;}
+.hz-m .money,.hz-m .tnum{font-variant-numeric:tabular-nums;}
+
+/* ---- device frame (prototype-verbatim) ---- */
+.device{position:relative;flex:none;width:392px;height:min(852px,calc(100dvh - 20px));background:#0a0a0b;border-radius:54px;padding:13px;box-shadow:0 30px 70px -22px rgba(17,24,16,.55),inset 0 0 0 2px #232325;}
+.app{position:relative;width:100%;height:100%;background:#eef0ec;border-radius:42px;overflow:hidden;display:flex;flex-direction:column;}
+.island{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:108px;height:30px;border-radius:18px;background:#000;z-index:60;}
+.statusbar{flex:none;height:46px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 26px 7px;color:#11140f;background:#fff;position:relative;z-index:30;font-size:14px;font-weight:700;}
+.homebar{position:absolute;left:50%;bottom:9px;transform:translateX(-50%);width:128px;height:5px;border-radius:3px;background:rgba(17,24,16,.32);z-index:60;pointer-events:none;}
+.mockbar{flex:none;background:#f6efd9;border-bottom:1px solid #ecd9b6;color:#8a6a2e;font-size:9.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;text-align:center;padding:5px 10px;z-index:29;}
+.viewport{flex:1;position:relative;overflow:hidden;}
+.screen{position:absolute;inset:0;display:none;flex-direction:column;background:#eef0ec;}
+.screen.active{display:flex;}
+.scroll{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;}
+
+/* ---- header / action bar ---- */
+.hz-m .hdr{position:sticky;top:0;z-index:10;background:#fff;border-bottom:1px solid #d6d9d2;padding:16px 16px 12px;}
+.hz-m .hdr-row{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.hz-m .eyebrow{font-size:10px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--gold);}
+.hz-m .scr-title{font-size:20px;font-weight:800;letter-spacing:-.01em;color:var(--ink);margin-top:2px;}
+.hz-m .back{display:flex;align-items:center;gap:3px;font-size:12.5px;font-weight:600;color:var(--brand);cursor:pointer;background:none;border:none;font-family:inherit;}
+.hz-m .back .chev{font-size:18px;line-height:1;}
+.hz-m .actbar{background:#fff;border-top:1px solid #d6d9d2;padding:12px 16px 16px;}
+.hz-m .iconbtn{width:38px;height:38px;border-radius:11px;border:1px solid #d6d9d2;background:#f4f6f3;display:flex;align-items:center;justify-content:center;cursor:pointer;}
+
+/* ---- buttons ---- */
+.hz-m .btn{text-align:center;font-size:15px;line-height:20px;font-weight:700;color:#fff;background:#16695f;padding:14px;border-radius:13px;cursor:pointer;border:none;width:100%;font-family:inherit;}
+.hz-m .btn:disabled{opacity:.5;}
+.hz-m .btn-ghost{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;height:48px;background:#fff;border:1.5px solid var(--brand);color:var(--brand);border-radius:var(--r-btn);font-family:inherit;font-size:15px;font-weight:700;cursor:pointer;}
+
+/* ---- cards ---- */
+.hz-m .card{background:#fff;border:1px solid #d6d9d2;border-radius:14px;box-shadow:0 1px 0 rgba(17,24,16,.04),0 4px 18px -8px rgba(17,24,16,.12);}
+.hz-m .card-h{display:flex;align-items:center;justify-content:space-between;padding:11px 13px;border-bottom:1px solid var(--line2);}
+.hz-m .card-t{font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--ink);}
+.hz-m .card-sub{font-size:10.5px;color:var(--mut2);}
+.hz-m .card-b{padding:12px 13px;}
+
+/* ---- rows ---- */
+.hz-m .row{display:flex;justify-content:space-between;gap:12px;padding:11px 13px;border-bottom:1px solid var(--line2);}
+.hz-m .row:last-child{border-bottom:none;}
+.hz-m .row-l{font-size:11.5px;color:var(--mut);}
+.hz-m .row-v{font-size:13px;font-weight:600;color:var(--ink);text-align:right;}
+
+/* ---- badges ---- */
+.hz-m .badge{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;padding:3px 9px;border-radius:20px;white-space:nowrap;}
+.hz-m .b-brand{background:var(--brand-bg);color:var(--brand-d);}
+.hz-m .b-green{background:var(--green-bg);color:var(--green);}
+.hz-m .b-amber{background:var(--amber-bg);color:var(--amber);}
+.hz-m .b-red{background:var(--red-bg);color:var(--red);}
+.hz-m .b-grey{background:var(--bg);color:var(--mut);}
+
+/* ---- chips ---- */
+.hz-m .chips{display:flex;gap:7px;overflow-x:auto;padding:2px 0;}
+.hz-m .chip{height:28px;padding:0 12px;border-radius:999px;font-size:11px;font-weight:600;border:1px solid var(--line);background:#fff;color:var(--mut);cursor:pointer;white-space:nowrap;flex:none;font-family:inherit;}
+.hz-m .chip.on{border-color:var(--brand);background:var(--brand-bg);color:var(--brand-d);}
+
+/* ---- search ---- */
+.hz-m .searchbar{flex:1;display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:8px 11px;}
+.hz-m .searchbar input{border:none;background:none;outline:none;font-family:inherit;font-size:12.5px;width:100%;color:var(--ink);}
+
+/* ---- form fields ---- */
+.hz-m .fld{display:flex;flex-direction:column;gap:2px;position:relative;}
+.hz-m .fld-l{font-size:9px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--mut2);line-height:1.3;}
+.hz-m .fld-i{font-family:inherit;font-size:12.5px;background:#fff;border:1px solid rgba(34,31,32,.14);border-radius:9px;padding:9px 10px;color:#11140f;width:100%;line-height:1.3;outline:none;}
+.hz-m .fld-i:focus{border-color:#16695f;box-shadow:0 0 0 2px rgba(22,105,95,.15);}
+.hz-m select.fld-i{appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239aa093' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");background-repeat:no-repeat;background-position:right 8px center;padding-right:26px;}
+.hz-m .fld-ro{font-family:inherit;font-size:12.5px;background:var(--bg);border:1px solid var(--line);border-radius:var(--r-input);padding:9px 10px;color:var(--mut);width:100%;}
+.hz-m .fld-row{display:flex;gap:9px;}
+.hz-m .fld-row>.fld{flex:1;}
+.hz-m .addline{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:11px;background:transparent;border:1px dashed #16695f;border-radius:12px;color:#16695f;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;}
+.hz-m .picker{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;background:#fff;border:1px solid rgba(34,31,32,.14);border-radius:9px;padding:11px 12px;font-family:inherit;cursor:pointer;text-align:left;}
+.hz-m .picker .pk-ph{font-size:12.5px;color:var(--mut2);}
+.hz-m .picker .pk-v{font-size:13px;font-weight:700;color:var(--ink);}
+.hz-m .picker .chev{color:#c2c6bd;font-size:18px;}
+
+/* ---- empty state ---- */
+.hz-m .empty{text-align:center;padding:30px 20px;color:var(--mut2);}
+.hz-m .empty svg{margin-bottom:10px;}
+.hz-m .empty-t{font-size:13px;font-weight:700;color:var(--mut);}
+.hz-m .empty-s{font-size:11.5px;margin-top:3px;}
+.hz-m .list-note{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--brand);background:var(--brand-bg);border-radius:5px;padding:2px 7px;display:inline-block;margin:0 0 8px;}
+
+/* ---- money ---- */
+.hz-m .money-lg{font-variant-numeric:tabular-nums;font-size:16px;font-weight:800;color:var(--brand-d);line-height:1;}
+.hz-m .money-row{font-variant-numeric:tabular-nums;font-size:13px;font-weight:700;color:var(--brand-d);}
+
+/* ---- FAB ---- */
+.hz-m .fab{position:absolute;right:16px;bottom:24px;z-index:31;width:52px;height:52px;border-radius:50%;background:#16695f;border:none;box-shadow:0 12px 32px -12px rgba(17,24,16,.45);display:flex;align-items:center;justify-content:center;cursor:pointer;}
+
+/* ---- line item card ---- */
+.hz-m .st-line{border:1px solid var(--line-card);border-radius:11px;padding:10px 11px;display:flex;flex-direction:column;gap:8px;background:#fff;}
+.hz-m .st-line .lh{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;}
+.hz-m .st-line .sku{font-size:12.5px;font-weight:800;color:var(--ink);}
+.hz-m .st-line .code{font-size:10px;color:var(--mut);font-weight:600;}
+.hz-m .st-line .x{border:none;background:none;color:var(--mut2);font-size:18px;line-height:1;cursor:pointer;font-family:inherit;padding:0 2px;}
+.hz-m .st-line .qtyrow{display:flex;align-items:center;gap:10px;justify-content:space-between;}
+.hz-m .stepper{display:flex;align-items:center;border:1px solid var(--line-card);border-radius:9px;overflow:hidden;}
+.hz-m .stepper button{width:34px;height:34px;border:none;background:var(--bg);font-size:17px;font-weight:700;color:var(--ink2);cursor:pointer;font-family:inherit;}
+.hz-m .stepper .q{width:42px;text-align:center;font-size:14px;font-weight:800;}
+
+/* ---- bottom sheet ---- */
+.sheet-bd{position:absolute;inset:0;z-index:40;background:rgba(17,20,15,.4);backdrop-filter:blur(2px);display:none;align-items:flex-end;}
+.sheet-bd.open{display:flex;}
+.sheet{width:100%;max-height:88%;background:#fff;border-radius:20px 20px 0 0;box-shadow:0 -12px 40px -10px rgba(17,24,16,.35);display:flex;flex-direction:column;overflow:hidden;}
+.sheet .grab{width:40px;height:4px;border-radius:3px;background:#c2c6bd;margin:8px auto;flex:none;}
+.sheet-head{display:flex;align-items:flex-start;justify-content:space-between;padding:2px 16px 10px;flex:none;}
+.sheet-head .st{font-size:16px;font-weight:800;color:#11140f;}
+.sheet-head .ss{font-size:11px;color:#767b6e;margin-top:2px;}
+.sheet-x{width:32px;height:32px;border-radius:9px;border:1px solid #d6d9d2;display:flex;align-items:center;justify-content:center;color:#767b6e;cursor:pointer;background:#fff;font-size:15px;}
+.sheet-scroll{overflow-y:auto;padding:0 14px 16px;display:flex;flex-direction:column;gap:9px;}
+.mgroup{border:1px solid #e6e8e2;background:#f6f7f4;border-radius:17px;padding:11px;}
+.mgh{display:flex;align-items:center;gap:8px;padding:1px 3px 9px;}
+.mgh .gl{font-size:9.5px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:#a16a2e;white-space:nowrap;}
+.mgh .gr{flex:1;height:1px;background:linear-gradient(to right,rgba(161,106,46,.3),transparent);}
+.mcard{display:flex;align-items:center;gap:11px;border:1px solid #e0e3dc;background:#fff;border-radius:12px;padding:12px 12px;cursor:pointer;text-align:left;font-family:inherit;width:100%;}
+.mcard .mi{width:38px;height:38px;flex:none;border-radius:10px;background:#e1efed;display:flex;align-items:center;justify-content:center;color:#16695f;}
+.mcard .ml{display:block;font-size:13px;font-weight:700;color:#11140f;line-height:1.2;}
+.mcard .md{display:block;font-size:11px;color:#767b6e;margin-top:2px;}
+.pickrow{display:flex;align-items:center;gap:11px;border:1px solid #e0e3dc;background:#fff;border-radius:12px;padding:11px 12px;cursor:pointer;text-align:left;font-family:inherit;width:100%;}
+.pickrow .pt{display:block;font-size:13px;font-weight:700;color:#11140f;}
+.pickrow .ps{display:block;font-size:11px;color:#767b6e;margin-top:2px;}
+
+/* ---- confirm modal (in-app useConfirm; no naked saves) ---- */
+.modal-bd{position:absolute;inset:0;z-index:50;background:rgba(0,0,0,.34);display:none;align-items:center;justify-content:center;padding:22px;}
+.modal-bd.open{display:flex;}
+.modal{background:#fff;border:1px solid #d6d9d2;border-radius:16px;box-shadow:0 24px 60px -18px rgba(17,24,16,.5);width:100%;padding:18px;}
+.modal h2{font-size:17px;font-weight:800;color:#11140f;margin-bottom:8px;}
+.modal p{font-size:12.5px;color:#414539;line-height:1.5;margin-bottom:16px;}
+.modal .mrow{display:flex;justify-content:flex-end;gap:9px;}
+.modal .mghost{border:1px solid #d6d9d2;background:#fff;color:#414539;font-family:inherit;font-size:13px;font-weight:700;padding:10px 16px;border-radius:10px;cursor:pointer;}
+.modal .mprim{border:1px solid #16695f;background:#16695f;color:#fff;font-family:inherit;font-size:13px;font-weight:700;padding:10px 16px;border-radius:10px;cursor:pointer;}
+.hz-m .toast{position:absolute;left:16px;right:16px;bottom:22px;z-index:45;background:#0c3f39;color:#fff;border-radius:12px;padding:13px 15px;font-size:12.5px;font-weight:600;box-shadow:0 16px 34px -12px rgba(12,63,57,.6);display:none;}
+.hz-m .toast.show{display:block;}
+</style>
+</head>
+<body>
+<div class="device">
+  <div class="island"></div>
+  <div class="app hz-m">
+    <div class="statusbar"><span>9:41</span><span>Houzs</span></div>
+    <div class="mockbar">Mockup - pending owner approval</div>
+    <div class="viewport">
+
+      <!-- ============ SCREEN 1: SCM module list (entry point + FAB) ============ -->
+      <section class="screen active" id="s-list">
+        <header class="hdr">
+          <div class="hdr-row">
+            <div><div class="eyebrow">Supply chain</div><div class="scr-title">Documents</div></div>
+            <button class="iconbtn" aria-label="Search">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#414539" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            </button>
+          </div>
+          <div class="chips" style="margin-top:12px">
+            <button class="chip on">All</button>
+            <button class="chip">Delivery Orders</button>
+            <button class="chip">Sales Invoices</button>
+            <button class="chip">GRN</button>
+          </div>
+        </header>
+        <div class="scroll" style="padding:14px 16px 30px">
+          <span class="list-note">Recent - all document types</span>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <div class="card" style="padding:12px 13px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <span style="font-size:14.5px;font-weight:800;color:#11140f">Sern Kou Furniture Sdn Bhd</span>
+                <span class="badge b-brand">Dispatched</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:11.5px;color:#767b6e" class="tnum"><span>DO-2507-0142 &middot; 18/07/2026</span><span class="money-row">RM 4,880.00</span></div>
+            </div>
+            <div class="card" style="padding:12px 13px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <span style="font-size:14.5px;font-weight:800;color:#11140f">Home Essence Trading</span>
+                <span class="badge b-green">Posted</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:11.5px;color:#767b6e" class="tnum"><span>INV-2507-0231 &middot; 17/07/2026</span><span class="money-row">RM 12,650.00</span></div>
+            </div>
+            <div class="card" style="padding:12px 13px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <span style="font-size:14.5px;font-weight:800;color:#11140f">Kilang Kayu Meranti Sdn Bhd</span>
+                <span class="badge b-amber">Draft</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:11.5px;color:#767b6e" class="tnum"><span>GRN-2507-0088 &middot; 16/07/2026</span><span class="money-row">RM 8,200.00</span></div>
+            </div>
+          </div>
+        </div>
+        <button class="fab" onclick="openSheet('sh-doctype')" aria-label="New document">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </section>
+
+      <!-- ============ SCREEN 2: DO blank-create form ============ -->
+      <section class="screen" id="s-form">
+        <header class="hdr">
+          <div class="hdr-row">
+            <button class="back" onclick="go('s-list')"><span class="chev">&lsaquo;</span> Documents</button>
+            <span class="badge b-amber">New draft</span>
+          </div>
+          <div class="eyebrow">Delivery Order</div>
+          <div class="scr-title">New Delivery Order</div>
+          <div style="font-size:11px;color:#767b6e;margin-top:3px">Blank create &middot; no source Sales Order</div>
+        </header>
+
+        <div class="scroll" style="padding:13px 16px;padding-bottom:20px">
+          <!-- Customer -->
+          <div class="card" style="margin-bottom:11px">
+            <div class="card-h"><span class="card-t">Customer</span><span class="card-sub" id="cust-req">Required</span></div>
+            <div class="card-b">
+              <!-- EMPTY STATE -->
+              <div id="cust-empty">
+                <button class="picker" onclick="openSheet('sh-cust')">
+                  <span class="pk-ph">Select a customer</span>
+                  <span class="chev">&rsaquo;</span>
+                </button>
+                <div class="empty" style="padding:16px 10px 4px">
+                  <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#9aa093" stroke-width="1.6"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>
+                  <div class="empty-t">No customer selected</div>
+                  <div class="empty-s">Pick the debtor this delivery is for</div>
+                </div>
+              </div>
+              <!-- FILLED STATE -->
+              <div id="cust-filled" style="display:none">
+                <button class="picker" onclick="openSheet('sh-cust')">
+                  <span><span class="pk-v" id="cust-name">Sern Kou Furniture Sdn Bhd</span><div style="font-size:11px;color:#767b6e;margin-top:2px" class="tnum" id="cust-code">DR-00214 &middot; 012-663 4471</div></span>
+                  <span class="chev">&rsaquo;</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Lines -->
+          <div class="card" style="margin-bottom:11px">
+            <div class="card-h"><span class="card-t">Items</span><span class="card-sub" id="lines-count">0 lines</span></div>
+            <div class="card-b">
+              <!-- EMPTY STATE -->
+              <div id="lines-empty" class="empty" style="padding:14px 10px">
+                <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#9aa093" stroke-width="1.6"><rect x="3" y="4" width="18" height="4" rx="1"/><rect x="3" y="10" width="18" height="4" rx="1"/><rect x="3" y="16" width="18" height="4" rx="1"/></svg>
+                <div class="empty-t">No lines yet</div>
+                <div class="empty-s">Add the products coming off the lorry</div>
+              </div>
+              <!-- FILLED lines get injected here -->
+              <div id="lines-list" style="display:none;flex-direction:column;gap:9px;margin-bottom:11px"></div>
+              <button class="addline" onclick="openSheet('sh-prod')">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16695f" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                Add item
+              </button>
+            </div>
+          </div>
+
+          <!-- Fulfillment - warehouse by STATE rule -->
+          <div class="card" style="margin-bottom:11px">
+            <div class="card-h"><span class="card-t">Fulfillment</span></div>
+            <div class="card-b" style="display:flex;flex-direction:column;gap:11px">
+              <div class="fld">
+                <label class="fld-l">Delivery State</label>
+                <select class="fld-i" id="state-sel" onchange="deriveWarehouse()">
+                  <option value="">Pick a state</option>
+                  <option>Selangor</option>
+                  <option>Kuala Lumpur</option>
+                  <option>Johor</option>
+                  <option>Pulau Pinang</option>
+                  <option>Perak</option>
+                </select>
+              </div>
+              <div class="fld">
+                <label class="fld-l">Sales Location (warehouse)</label>
+                <div class="fld-ro" id="wh-ro">Pick a state</div>
+                <div style="font-size:10px;color:#9aa093;margin-top:4px" id="wh-hint">Warehouse is decided by the delivery State, not the postcode.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Review -->
+          <div class="card" style="margin-bottom:6px">
+            <div class="card-h"><span class="card-t">Review</span></div>
+            <div class="row"><span class="row-l">Customer</span><span class="row-v" id="rv-cust">Not set</span></div>
+            <div class="row"><span class="row-l">Items</span><span class="row-v" id="rv-items">0 lines &middot; 0 units</span></div>
+            <div class="row"><span class="row-l">Warehouse</span><span class="row-v" id="rv-wh">Pick a state</span></div>
+            <div class="row"><span class="row-l">Document date</span><span class="row-v tnum">19/07/2026</span></div>
+          </div>
+          <div style="font-size:10.5px;color:#a16a2e;background:#fbf3e6;border:1px solid #ecd9b6;border-radius:10px;padding:9px 11px;margin-top:8px" id="valnote">
+            Select a customer and add at least one item before creating.
+          </div>
+        </div>
+
+        <footer class="actbar">
+          <button class="btn" id="create-btn" disabled onclick="openConfirm()">Create Delivery Order &rarr;</button>
+        </footer>
+      </section>
+
+      <!-- ============ SCREEN 3: success ============ -->
+      <section class="screen" id="s-done">
+        <div class="scroll" style="display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:40px 30px">
+          <div style="width:76px;height:76px;border-radius:50%;background:#e2f0e9;display:flex;align-items:center;justify-content:center;margin-bottom:18px">
+            <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="#2f8a5b" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+          </div>
+          <div style="font-size:19px;font-weight:800;color:#11140f">Delivery Order created</div>
+          <div style="font-size:13px;color:#767b6e;margin-top:6px" class="tnum">DO-2507-0143 &middot; <span id="done-cust">Sern Kou Furniture Sdn Bhd</span></div>
+          <div style="font-size:12px;color:#9aa093;margin-top:4px">Saved as a draft. Stock is not moved until it is dispatched.</div>
+        </div>
+        <footer class="actbar" style="display:flex;flex-direction:column;gap:9px">
+          <button class="btn" onclick="go('s-list')">Back to documents</button>
+          <button class="btn-ghost" onclick="resetForm()">Create another</button>
+        </footer>
+      </section>
+
+    </div><!-- /viewport -->
+
+    <!-- ======= SHEET: doc type picker ======= -->
+    <div class="sheet-bd" id="sh-doctype" onclick="if(event.target===this)closeSheet('sh-doctype')">
+      <div class="sheet">
+        <div class="grab"></div>
+        <div class="sheet-head"><div><div class="st">New document</div><div class="ss">What are you creating?</div></div><button class="sheet-x" onclick="closeSheet('sh-doctype')">&times;</button></div>
+        <div class="sheet-scroll">
+          <button class="mcard" onclick="pickDocType('do')">
+            <span class="mi"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#16695f" stroke-width="1.9" stroke-linecap="round"><rect x="3" y="4" width="14" height="16" rx="2"/><path d="M17 8h3l1 3v6a1 1 0 0 1-1 1h-3"/><circle cx="7.5" cy="20" r="1.5"/></svg></span>
+            <span><span class="ml">Delivery Order</span><span class="md">Deliver goods to a customer</span></span>
+          </button>
+          <button class="mcard" onclick="pickDocType('si')">
+            <span class="mi"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#16695f" stroke-width="1.9" stroke-linecap="round"><path d="M6 2h9l3 3v17l-2.5-1.5L13 22l-2.5-1.5L8 22l-2-1.5V2Z"/><path d="M9 8h6M9 12h6"/></svg></span>
+            <span><span class="ml">Sales Invoice</span><span class="md">Bill a customer for goods</span></span>
+          </button>
+          <button class="mcard" onclick="pickDocType('grn')">
+            <span class="mi"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#16695f" stroke-width="1.9" stroke-linecap="round"><path d="M3 7 12 3l9 4-9 4-9-4Z"/><path d="M3 7v10l9 4 9-4V7"/></svg></span>
+            <span><span class="ml">Goods Received Note</span><span class="md">Receive stock from a supplier</span></span>
+          </button>
+          <div style="font-size:10.5px;color:#9aa093;text-align:center;padding:6px 8px 2px;line-height:1.5">Each can be created blank, or by converting a source document (SO to DO, DO to Invoice, PO to GRN).</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======= SHEET: customer picker ======= -->
+    <div class="sheet-bd" id="sh-cust" onclick="if(event.target===this)closeSheet('sh-cust')">
+      <div class="sheet">
+        <div class="grab"></div>
+        <div class="sheet-head"><div><div class="st">Select customer</div><div class="ss">Search debtors</div></div><button class="sheet-x" onclick="closeSheet('sh-cust')">&times;</button></div>
+        <div style="padding:0 16px 10px"><div class="searchbar"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9aa093" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input placeholder="Name, code or phone" value=""></div></div>
+        <div class="sheet-scroll">
+          <button class="pickrow" onclick="pickCustomer('Sern Kou Furniture Sdn Bhd','DR-00214 &middot; 012-663 4471')"><span><span class="pt">Sern Kou Furniture Sdn Bhd</span><span class="ps tnum">DR-00214 &middot; Klang, Selangor</span></span></button>
+          <button class="pickrow" onclick="pickCustomer('Home Essence Trading','DR-00187 &middot; 03-7842 1120')"><span><span class="pt">Home Essence Trading</span><span class="ps tnum">DR-00187 &middot; Petaling Jaya, Selangor</span></span></button>
+          <button class="pickrow" onclick="pickCustomer('Syarikat Perabot Maju','DR-00301 &middot; 07-355 8890')"><span><span class="pt">Syarikat Perabot Maju</span><span class="ps tnum">DR-00301 &middot; Johor Bahru, Johor</span></span></button>
+          <button class="pickrow" onclick="pickCustomer('Cziplee Home Concept','DR-00256 &middot; 04-229 7781')"><span><span class="pt">Cziplee Home Concept</span><span class="ps tnum">DR-00256 &middot; George Town, Pulau Pinang</span></span></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======= SHEET: product picker ======= -->
+    <div class="sheet-bd" id="sh-prod" onclick="if(event.target===this)closeSheet('sh-prod')">
+      <div class="sheet">
+        <div class="grab"></div>
+        <div class="sheet-head"><div><div class="st">Add item</div><div class="ss">Search products</div></div><button class="sheet-x" onclick="closeSheet('sh-prod')">&times;</button></div>
+        <div style="padding:0 16px 10px"><div class="searchbar"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9aa093" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input placeholder="Product name or SKU"></div></div>
+        <div class="sheet-scroll">
+          <button class="pickrow" onclick="addLine('Divan Bed 6ft - King','BF-DVN-6K',1580)"><span><span class="pt">Divan Bed 6ft - King</span><span class="ps tnum">BF-DVN-6K &middot; RM 1,580.00</span></span></button>
+          <button class="pickrow" onclick="addLine('Sofa 3-Seater Rosalind','SF-ROS-3S',2280)"><span><span class="pt">Sofa 3-Seater Rosalind</span><span class="ps tnum">SF-ROS-3S &middot; RM 2,280.00</span></span></button>
+          <button class="pickrow" onclick="addLine('Headboard Aria 6ft','HB-ARIA-6','680')"><span><span class="pt">Headboard Aria 6ft</span><span class="ps tnum">HB-ARIA-6 &middot; RM 680.00</span></span></button>
+          <button class="pickrow" onclick="addLine('Mattress Dreamland 6ft','MT-DRL-6',1420)"><span><span class="pt">Mattress Dreamland 6ft</span><span class="ps tnum">MT-DRL-6 &middot; RM 1,420.00</span></span></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======= CONFIRM modal (in-app useConfirm - no naked save) ======= -->
+    <div class="modal-bd" id="confirm">
+      <div class="modal">
+        <h2>Create this Delivery Order?</h2>
+        <p id="confirm-body">This creates a draft DO for the selected customer. Stock is only moved when the DO is dispatched.</p>
+        <div class="mrow">
+          <button class="mghost" onclick="closeConfirm()">Cancel</button>
+          <button class="mprim" onclick="doCreate()">Create draft</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast">Draft saved</div>
+    <div class="homebar"></div>
+  </div><!-- /app -->
+</div>
+
+<script>
+// ---- pure presentation state; NO data logic (mockup) ----
+var st={cust:null,lines:[],state:'',wh:''};
+function go(id){document.querySelectorAll('.screen').forEach(function(s){s.classList.remove('active')});document.getElementById(id).classList.add('active');}
+function openSheet(id){document.getElementById(id).classList.add('open');}
+function closeSheet(id){document.getElementById(id).classList.remove('open');}
+function pickDocType(t){closeSheet('sh-doctype');/* SI/GRN would open their own forms; DO demonstrated */ go('s-form');}
+function pickCustomer(name,meta){st.cust={name:name,meta:meta};document.getElementById('cust-empty').style.display='none';document.getElementById('cust-filled').style.display='block';document.getElementById('cust-name').innerHTML=name;document.getElementById('cust-code').innerHTML=meta;document.getElementById('cust-req').textContent='Selected';closeSheet('sh-cust');refresh();}
+var WH={'Selangor':'Shah Alam HQ Warehouse','Kuala Lumpur':'Shah Alam HQ Warehouse','Johor':'JB Distribution Centre','Pulau Pinang':'Penang Warehouse','Perak':''};
+function deriveWarehouse(){var s=document.getElementById('state-sel').value;st.state=s;var ro=document.getElementById('wh-ro');var hint=document.getElementById('wh-hint');if(!s){ro.textContent='Pick a state';ro.style.color='var(--mut)';st.wh='';}else if(WH[s]){ro.textContent=WH[s];ro.style.color='var(--ink)';st.wh=WH[s];}else{ro.textContent='Not mapped - office to assign';ro.style.color='var(--red)';st.wh='';}refresh();}
+function addLine(name,code,price){st.lines.push({name:name,code:code,price:price,qty:1});closeSheet('sh-prod');renderLines();refresh();}
+function chQty(i,d){st.lines[i].qty=Math.max(1,st.lines[i].qty+d);renderLines();refresh();}
+function rmLine(i){st.lines.splice(i,1);renderLines();refresh();}
+function renderLines(){var list=document.getElementById('lines-list');var empty=document.getElementById('lines-empty');if(st.lines.length===0){list.style.display='none';empty.style.display='block';return;}empty.style.display='none';list.style.display='flex';list.innerHTML=st.lines.map(function(l,i){return '<div class="st-line"><div class="lh"><div><div class="sku">'+l.name+'</div><div class="code tnum">'+l.code+'</div></div><button class="x" onclick="rmLine('+i+')">&times;</button></div><div class="qtyrow"><div class="stepper"><button onclick="chQty('+i+',-1)">-</button><span class="q">'+l.qty+'</span><button onclick="chQty('+i+',1)">+</button></div><span class="money-row">RM '+(l.price*l.qty).toLocaleString('en-MY',{minimumFractionDigits:2})+'</span></div></div>';}).join('');}
+function plural(n,w){return n+' '+w+(n===1?'':'s');}
+function refresh(){var units=st.lines.reduce(function(a,l){return a+l.qty},0);document.getElementById('lines-count').textContent=plural(st.lines.length,'line');document.getElementById('rv-cust').textContent=st.cust?st.cust.name:'Not set';document.getElementById('rv-items').innerHTML=plural(st.lines.length,'line')+' &middot; '+plural(units,'unit');document.getElementById('rv-wh').textContent=st.wh?st.wh:(st.state?'Not mapped':'Pick a state');var ok=st.cust&&st.lines.length>0;document.getElementById('create-btn').disabled=!ok;document.getElementById('valnote').style.display=ok?'none':'block';}
+function openConfirm(){var units=st.lines.reduce(function(a,l){return a+l.qty},0);document.getElementById('confirm-body').innerHTML='Create a draft Delivery Order for <b>'+st.cust.name+'</b> with '+plural(st.lines.length,'line')+' ('+plural(units,'unit')+')'+(st.wh?', fulfilled from <b>'+st.wh+'</b>':'')+'. Stock is only moved when the DO is dispatched.';document.getElementById('confirm').classList.add('open');}
+function closeConfirm(){document.getElementById('confirm').classList.remove('open');}
+function doCreate(){closeConfirm();if(st.cust){document.getElementById('done-cust').textContent=st.cust.name;}go('s-done');}
+function resetForm(){st={cust:null,lines:[],state:'',wh:''};document.getElementById('cust-empty').style.display='block';document.getElementById('cust-filled').style.display='none';document.getElementById('cust-req').textContent='Required';document.getElementById('state-sel').value='';deriveWarehouse();renderLines();refresh();go('s-form');}
+</script>
+</body>
+</html>

@@ -1,0 +1,125 @@
+name: Stamp migrated source prices (plan by default)
+
+# The migrated goods receipts and delivery orders carry the QUANTITY the cutover
+# imported and none of the MONEY, so `create-migrated-invoices` refuses them on
+# its total gate. Its own report names the fix: "a price the cutover dropped —
+# writable once the AutoCount invoice price is stamped on the source lines".
+# Measured against prod 2026-09-07: 95 of 270 purchase-invoice mismatches and
+# 2 of 4 sales-invoice mismatches are ours RM 0.00.
+#
+# THE PRICE COMES FROM THE AUTOCOUNT RECEIPT / DELIVERY LINE, and it is the
+# line's SubTotal — the DISCOUNTED amount — not qty x UnitPrice. GR-000815
+# reads UnitPrice 3,373.45 / SubTotal 2,867.43 and PI-001531 bills 2,867.43.
+# The purchase order behind it states no price at all (Houzs does not price
+# factory POs in AutoCount), which is why the PO is not the source.
+#
+# PLAN IS THE DEFAULT AND WRITES NOTHING. It prints, per AutoCount invoice, what
+# the book billed, what our documents are worth now and what they would be worth
+# after, then every line it would write and every line it REFUSES.
+#
+# IT ONLY STAMPS WHERE THE WHOLE INVOICE THEN RECONCILES TO THE SEN. A migrated
+# receipt is a partial mirror — AutoCount's receipt spans several purchase
+# orders and ours covers one — so for many of them the invoice bills more than
+# our lines can ever cover. Those are the multi-purchase-order fragments with
+# the owner and this deliberately leaves them at RM 0.00: a correct price there
+# would move an owner-held decision out of the converter's "ours RM 0.00" bucket
+# and into "both sides priced and genuinely differ", where it reads as new.
+#
+# NO STOCK AND NO GL. Every document it touches is `migrated_no_stock = true`.
+#
+# The AutoCount side is the committed snapshot pair
+# backend/scripts/data/ac-reconcile-truth.json.gz (the lines) and
+# ac-invoice-refs.json.gz (the invoice totals). Two independent exports of the
+# same book agreeing to the sen IS the cross-check; the script REFUSES either of
+# them when stale rather than moving money against a book nobody can point at.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      apply:
+        description: "yes = WRITE. Anything else = PLAN only, which is the default."
+        required: false
+        default: "no"
+        type: choice
+        options: ["no", "yes"]
+      confirm:
+        description: 'Type THE PRICE COMES FROM THE AUTOCOUNT LINE to arm apply. Ignored when apply=no.'
+        required: false
+        default: ""
+        type: string
+      kind:
+        description: "Which half to run"
+        required: false
+        default: "both"
+        type: choice
+        options: [both, gr, do]
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+        type: string
+      max_snapshot_age_days:
+        description: "Refuse an AutoCount snapshot older than this many days."
+        required: false
+        default: "2"
+        type: string
+
+# Its own group, never the deploy's: this must not queue behind, or displace, a
+# release. Not cancel-in-progress — cancelling an APPLY mid-write is the one
+# thing worse than waiting.
+concurrency:
+  group: stamp-migrated-source-prices-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/stamp-migrated-source-prices.mjs
+        env:
+          MODE: ${{ inputs.apply == 'yes' && 'apply' || 'plan' }}
+          CONFIRM: ${{ inputs.confirm }}
+          KIND: ${{ inputs.kind }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/stamp-migrated-source-prices.mjs
+        env:
+          MODE: ${{ inputs.apply == 'yes' && 'apply' || 'plan' }}
+          CONFIRM: ${{ inputs.confirm }}
+          KIND: ${{ inputs.kind }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -1,0 +1,61 @@
+name: Set POS PIN (write)
+
+# Sets a staff member's POS PIN in production's scm.pos_pins — the write-side
+# sibling of soak-gate-check.yml, for the same reason: the owner should never
+# have to open a SQL console, and nobody should handle the production DSN.
+#
+# The input carries PBKDF2 HASHES (services/auth.ts format), never plaintext
+# PINs — see backend/scripts/set-pos-pin.mjs for how to hash locally and for
+# the ambiguity guardrails (a fuzzy name that matches != 1 linked staff row
+# writes nothing).
+#
+# Manual trigger only. This is a deliberate admin action, never CI noise.
+on:
+  workflow_dispatch:
+    inputs:
+      assignments:
+        description: 'JSON array of {match, pin_hash} — match is a staff name/code fragment or scm.staff uuid'
+        required: false
+        type: string
+        default: '[]'
+      dry_run:
+        description: 'Resolve and report only, write nothing'
+        required: false
+        type: boolean
+        default: true
+      lookup:
+        description: 'Read-only: report staff rows AND Houzs users matching this fragment (link/position/company facts). Ignores assignments.'
+        required: false
+        type: string
+        default: ''
+
+# Own group, never the deploy's: an admin write must not queue behind or
+# displace a release.
+concurrency:
+  group: set-pos-pin
+  cancel-in-progress: false
+
+jobs:
+  set-pin:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/set-pos-pin.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ASSIGNMENTS: ${{ inputs.assignments }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+          LOOKUP: ${{ inputs.lookup }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

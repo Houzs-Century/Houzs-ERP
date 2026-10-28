@@ -1,0 +1,29 @@
+.priceTag {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.18em;
+  color: var(--fg-accent-deep);
+  font-family: var(--font-mark);
+  font-weight: var(--w-black);
+  letter-spacing: var(--tk-tight);
+  font-stretch: 80%;
+  line-height: 1;
+}
+
+.currency {
+  /* Slightly muted — the number is the hero. */
+  font-weight: var(--w-semibold);
+  opacity: 0.78;
+}
+
+.size-sm .amount   { font-size: var(--fs-18); }
+.size-sm .currency { font-size: var(--fs-12); }
+
+.size-md .amount   { font-size: var(--fs-24); }
+.size-md .currency { font-size: var(--fs-14); }
+
+.size-lg .amount   { font-size: var(--fs-40); }
+.size-lg .currency { font-size: var(--fs-16); }
+
+.size-hero .amount   { font-size: var(--fs-72); }
+.size-hero .currency { font-size: var(--fs-24); }

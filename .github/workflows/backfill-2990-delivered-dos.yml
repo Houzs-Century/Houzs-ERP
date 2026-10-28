@@ -1,0 +1,42 @@
+name: Backfill 2990 delivered DOs (DRY-RUN gated)
+
+# One-shot correction for the 12 orders the 2990 source marks DELIVERED whose
+# imported DOs sit at DISPATCHED (2990 never had a delivered step on DOs).
+# Flips those DOs to DELIVERED and advances their SOs, with an audit row per
+# SO - the exact end-state the app's own DELIVERED transition produces.
+# Target set recomputed live each run; idempotent; DRY-RUN unless apply=1.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to write, anything else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+
+concurrency:
+  group: backfill-2990-delivered-dos
+  cancel-in-progress: true
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/backfill-2990-delivered-dos.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SOURCE_SUPABASE_URL: ${{ secrets.SOURCE_SUPABASE_URL }}
+          SOURCE_SERVICE_ROLE_KEY: ${{ secrets.SOURCE_SERVICE_ROLE_KEY }}
+          APPLY: ${{ inputs.apply }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

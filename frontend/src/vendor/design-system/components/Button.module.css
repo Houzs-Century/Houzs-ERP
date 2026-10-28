@@ -1,0 +1,80 @@
+.button {
+  font-family: var(--font-button);
+  font-weight: var(--w-semibold);
+  letter-spacing: 0.02em;
+  /* Theme C alignment (owner 2026-07-25: "右上角的 button 是黑色,没有贴合
+     主题"): shape + palette follow the Houzs Button the SO page uses,
+     MEASURED live - 6px radius, primary #16695f, white text; hovers deepen
+     to the primary-ink #0c3f39 instead of 2990's burnt orange. */
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color 120ms ease-out, color 120ms ease-out,
+              border-color 120ms ease-out, transform 80ms ease-out;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  white-space: nowrap;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.button:focus-visible {
+  outline: 2px solid #16695f;
+  outline-offset: 2px;
+}
+.button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Variants */
+.variant-primary {
+  background: #16695f;
+  color: #ffffff;
+}
+.variant-primary:hover:not(:disabled) {
+  background: #0c3f39;
+}
+
+.variant-secondary {
+  background: #fff;
+  color: var(--c-ink);
+  border-color: var(--line);
+}
+.variant-secondary:hover:not(:disabled) {
+  border-color: #16695f;
+  color: #16695f;
+}
+
+.variant-ghost {
+  background: transparent;
+  color: var(--c-ink);
+}
+.variant-ghost:hover:not(:disabled) {
+  background: rgba(34, 31, 32, 0.06);
+}
+
+/* Sizes — POS is tablet-first; touch targets must be >=44px */
+.size-sm {
+  height: 36px;
+  padding: 0 var(--space-4);
+  font-size: var(--fs-13);
+}
+.size-md {
+  height: 44px;
+  padding: 0 var(--space-5);
+  font-size: var(--fs-14);
+}
+.size-lg {
+  height: 52px;
+  padding: 0 var(--space-6);
+  font-size: var(--fs-15);
+}
+
+.fullWidth {
+  width: 100%;
+}

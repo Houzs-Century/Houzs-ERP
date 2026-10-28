@@ -1,0 +1,105 @@
+/* Shimmer skeletons. Pulse between two beige tints so it reads as
+   "warm placeholder", not a cold grey loader. */
+
+@keyframes skel-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
+.block {
+  display: inline-block;
+  background: rgba(34, 31, 32, 0.08);
+  border-radius: var(--radius-xs);
+  animation: skel-pulse 1.4s ease-in-out infinite;
+}
+
+.blockRounded {
+  border-radius: var(--radius-sm);
+}
+
+/* SkeletonText */
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+/* SkeletonCard */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-1);
+}
+
+.cardBtnRow {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+/* SkeletonTable */
+.table {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: #fff;
+}
+
+.tableHeader {
+  display: flex;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--c-paper);
+  border-bottom: 1px solid var(--line);
+}
+
+.tableRow {
+  display: flex;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+.tableRow:last-child {
+  border-bottom: 0;
+}
+
+.cell {
+  flex: 1;
+}
+
+/* SkeletonDetailPage */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-4);
+}
+
+.pageHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.pageHeaderTitles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.pageHeaderActions {
+  display: flex;
+  gap: var(--space-2);
+}

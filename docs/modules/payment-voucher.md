@@ -1,0 +1,195 @@
+# Payment Voucher (PV)
+
+Records money leaving the company — expenses, supplier settlements, internal
+transfers, and customer refunds. One route serves several document "types"
+distinguished by `purpose`. Used by Finance/AP staff; desktop only.
+
+## Statuses and flow
+
+- `DRAFT` → **Prepare** (`/submit`) → still DRAFT, `submitted_at/by` stamped →
+  **Check** (`/check`, `checked_at/by`) → **Approve** (`/approve`) → posts the
+  GL in the same request → `POSTED` (list pill reads **Approved**).
+- Four layers are marker columns on the row, not new status values: `status`
+  stays `DRAFT` until approve posts it. No fast path — every voucher walks all
+  layers; check and approve can be the same person.
+- **Prepared can still be edited**; **Checked locks editing** (409
+  `not_editable` outside DRAFT).
+- **Reject** (either check or approve key) → back to raw `DRAFT`, every mark
+  cleared, reason on the audit trail.
+- **Withdraw** — preparer's own back-out — only works before Check.
+- `CANCELLED` reverses the GL and unwinds settlement; retains any adopted FX
+  rate (does not revert to 1).
+- Batch actions (Prepare/Check/Approve&post) run in **voucher-date order**,
+  never tick order — the formal number mints at Check.
+
+## Permissions
+
+- `scm.payment_voucher.create` — create, OCR extract.
+- `scm.payment_voucher.write` — edit DRAFT, withdraw, attach/delete files.
+- `scm.payment_voucher.check` — Check step.
+- `scm.payment_voucher.approve` — Approve step (also allowed to reach `/post`).
+- `scm.payment_voucher.post` — direct post (normally reached through approve).
+- `scm.payment_voucher.cancel` — cancel a POSTED voucher.
+- All gated behind area guard `scm.finance.accounting`.
+
+## Rules that must not break
+
+- A `purchase_invoice` on hold cannot be settled — `allocationPisOnHold`
+  refuses 409 `allocation_on_hold` at the point the invoice id enters; fails
+  closed on a read error.
+- **`applied_sen`, not `amount_sen`, is what a cancel reverses** — record what
+  the DB actually applied (post-clamp), never the requested amount.
+- Never cap an allocation in the caller — the clamp is evaluated by Postgres
+  (`scm.settle_pi_paid_sen`) at write time under a row lock; a caller-side cap
+  lets two vouchers each pay their "share" and double-pay the invoice.
+- FX rate adoption (`planPvRateAdoption`) only ADOPTS when the PI's stored
+  rate is exactly 1 (never-set marker); any other stored rate is left
+  UNCHANGED (`report_mismatch`) — never overwrite a real rate.
+- The rate/recost step must never throw — the money already left the bank;
+  every failure is logged and stepped over.
+- A negative or fractional amount is refused (400), never silently clamped to
+  0.
+- **Bank Charges** (`bank_charge_sen`, header, MYR sen) is not in `total_sen`.
+  On post it adds Dr `900-B001` / Cr the PV's bank to the same journal, in MYR
+  as keyed (never through the exchange rate); a cancel's contra reverses it.
+  900-B001 not an active expense leaf of the company = post refused 409
+  `bank_charge_account`. Negative/fractional refused 400 `bank_charge_invalid`.
+- An allocation names a PI **or** an AP invoice, never both or neither
+  (`allocation_two_targets` / `allocation_pi_required`).
+- An invoice a saved unposted (Draft/Prepared/Checked) voucher already applies
+  to must be excluded/reduced in the picker (`pendingReservations`) — else two
+  vouchers can apply the same invoice in full.
+- Paid From must be a money account (`acc_money`, company `BANK_DEFAULT`
+  role); server refuses any non-money credit account.
+- Lines take only LEAF, non-control accounts (`requireLeafAccount`) — except
+  the AP control debit (AP Payment) or AR debit (Customer Refund), which are
+  the one exempted line each.
+- AP Payment debits the **supplier's own control** account (400-0000 normal,
+  405-0000 for an "other creditor"/405-prefixed supplier) — refused
+  `wrong_ap_control` otherwise.
+- `voucher_date`: create defaults to today when blank; **edit refuses a blank
+  date** (400 `voucher_date_required`) — the column is NOT NULL, do not
+  "harmonise" the two paths.
+- `POST /:id/post` and the cancel path must stay company-scoped (was
+  unscoped once — a cross-company id could post/cancel another company's GL).
+- The idempotency read before posting must report its own failure (500), never
+  treat a failed read as "no existing JE" — that caused a double-post.
+- Attachments: a CANCELLED voucher accepts no more files (409
+  `voucher_cancelled`); delete is refused once `checked_at` is stamped (409
+  `evidence_locked`).
+- Foreign-currency guards (`fx-guard.ts`) block a new/flipped non-MYR
+  GRN/PI/PV with no positive rate anywhere (422 `foreign_rate_unset`) — not a
+  PV route itself, but the PV's error message points at it.
+- `CurrencySelect` and its FX logic (`fx-rate.ts`) are shared with GRN and PI
+  — a change there touches three documents.
+- There is **no mobile surface** for this module.
+
+## Gotchas
+
+- Two logical documents ride one route/table: **Payment Voucher**
+  (`purpose='OTHER'`, free-text payee, hand-written lines, no supplier) vs
+  **AP Payment** (`purpose='SUPPLIER_PAYMENT'`, supplier required, tick
+  invoices to pay, page composes the single AP-control GL line) — do not
+  reintroduce a "Purpose" dropdown; the document type IS the purpose.
+  **Customer Refund** (`purpose='CUSTOMER_REFUND'`) is a third kind: no
+  payee/lines, names an SO/SI, composes a single Dr AR line, refundable only
+  up to booked-minus-already-refunded headroom; an SI can only be refunded
+  once CANCELLED.
+- An **AP Payment prepay** beyond ticked invoices books to
+  `scm.acc_supplier_advances`; spending it (`/apply-advance`) posts nothing
+  new, only settles `paid_sen`/`applied_sen` — a voucher whose advance has
+  been spent refuses to cancel (`advance_applied`).
+- The OCR bill reader (`/payment-vouchers/extract`) **writes nothing** — every
+  scan lands on the New page for a human to confirm before save; supplier
+  matching falls back to NO match rather than guess wrong.
+- The bill pile (`PaymentVoucherScan.tsx`, PV and AP alike) sends **one bill
+  per request, three at a time** (`READ_AT_ONCE`), at most 50 files a pile
+  (`MAX_PILE_FILES`): one request for the whole pile read the bills one after
+  another and outran the browser's wait (owner 2026-10-05). A bill that fails
+  is read again alone. The bill readers (`/payment-vouchers/extract`,
+  `/credit-notes/scan`, `/payment-requests/read-bill` — `BILL_READER_PATH` in
+  `authed-fetch.ts`) get the 120 s scan wait, and their timeout says nothing
+  was saved instead of the duplicate-save warning.
+- The pile lives in `bill-pile-store.ts` (one per company and per kind) while
+  the tab lives (owner 2026-10-06): opening a bill and coming back finds the
+  rest as read, each opened bill says so, and `BackToPile` on the AP Invoices,
+  Payment Vouchers and New voucher pages offers "Back to Scan bills (N left)".
+  A read stamped with an ended run (Clear the pile, a re-read) is dropped.
+- A bill whose printed number **and** date sit on another live request,
+  voucher or AP invoice (`lib/bill-matches.ts`, `GET
+  /payment-requests/bill-matches`) is said on the voucher form, beside each
+  read bill in the pile, and on the AP invoice form — a warning, never a block;
+  an AP invoice being edited is never its own match (`excludeApInvoice`).
+- A payment request raised from a PMS row (owner 2026-10-08) keeps the row
+  (`acc_payment_requests.checklist_item_id`,
+  `backend/src/scm/lib/pms-checklist-source.ts`): only an event's CONTRACT row,
+  not N/A, of the request's own event (none named = the row's); the event
+  stays when the request is edited (`checklist_event_locked`), and 申请付余额
+  keeps the row. The row reads its requests back through
+  `GET /payment-requests/from-checklist?items=` — a requester's own, Finance's all.
+- Requests waiting for Finance (owner 2026-10-08) are counted, never listed, by
+  `GET /payment-requests/waiting-count` — the page's 「Waiting for Finance」: SUBMITTED,
+  plus an answered one whose AP invoice (or, without one, voucher) is cancelled
+  or gone; 0 for anyone but Finance. It feeds the Payment Vouchers page's reminder
+  (`PaymentRequestsWaiting.tsx` → `/scm/payment-requests?filter=waiting`) and the
+  red count on Money out › Payment Requests; Finance sees that entry only — the
+  Workspace one is the requester's (`hidePerm`).
+- A Sales Order's Refund button raises a payment request, not a voucher (owner
+  2026-10-14; `backend/src/scm/lib/refund-request.ts`): the customer as payee,
+  the reason and the customer's bank required, a file not;
+  `refund_source_type`/`refund_source_doc_no` name the order. While it waits
+  (submitted, or its voucher cancelled) it holds that much of the order's money
+  — in `ordersMoney` and in the refund headroom (`loadRefundSource`) alike.
+  Only a Customer Refund voucher on that order answers it
+  (`refundAnswerRefusal`: `refund_request_needs_refund`, and
+  `request_not_a_refund` the other way round), and its own amount is left out
+  of the headroom (`excludeRequestId`; PV New `?type=refund&fromRequest=`);
+  Finance's Return is the rejection. It is never edited
+  (`refund_request_fixed`) and takes no balance (`refund_no_balance`). Its
+  requester reads it on Payment Requests without the key — every caller reads
+  their own requests there, a Sales caller reaches the router
+  (`requireScmAccess`), and the list says `mayRaise` so the page offers New
+  request only to the key and Finance.
+- Finance's 欠正式单 remark (what to follow up) rides the mark: written with the
+  tick on PV New / the AP invoice form (`officialDocNote`) or on the detail
+  (`POST /official-docs/:kind/:id` with `note`), at most 500 characters; a
+  blank re-mark keeps the remark that is there.
+- Vendor memory (`scm.acc_vendor_memory`) only learns from what the operator
+  actually **saved**, never from a model guess; AP payments teach nothing
+  (their one line is fixed by role).
+- Numbering: a new voucher mints on a per-company **Draft series**
+  (`{co}Draft-YYMM-NNN`); the **formal** number
+  (`{co}{bankLetter}PV-YYMM-NNN`, or fixed `{co}CPV-...` for cash) mints only
+  at Check — a bank with no configured letter refuses the check (409
+  `bank_letter_missing`).
+- Internal transfers and cash bank-ins ride this same document (non-AP mode,
+  a 付款/内部转账 toggle) — the route refuses a line debiting the Paid From
+  account itself (`same_account`).
+- Print/attachments: the bill(s) the OCR read should be attached to the
+  created voucher (`pv-file-handoff.ts` stash, module memory — never
+  `location.state`) so `print-bundle` can append them after the voucher page;
+  a print must refuse rather than silently omit files it cannot list.
+
+## Where the code is
+
+- `backend/src/scm/routes/payment-vouchers.ts` — routes, handlers.
+- `backend/src/scm/routes/pv-files.ts`, `backend/src/scm/lib/doc-files.ts` —
+  attachments + print-bundle.
+- `backend/src/scm/lib/pv-approval.ts` — the four-layer state machine.
+- `backend/src/scm/lib/pv-rate-adoption.ts` — the FX-rate decision table
+  (pure).
+- `backend/src/scm/lib/pi-settlement.ts`, `backend/src/scm/lib/recost.ts`,
+  `backend/src/scm/lib/fx.ts`, `backend/src/scm/lib/fx-guard.ts`,
+  `backend/src/scm/lib/doc-no.ts`, `backend/src/scm/lib/pv-refund.ts` —
+  settlement, costing cascade, FX helpers, numbering, refund rules.
+- `backend/src/acc/bill-extract.ts` — OCR extraction.
+- `frontend/src/pages/scm-v2/PaymentRequests.tsx` (申请付款; `?open=<id>` opens
+  one) over `PaymentRequestForm.tsx` (the request form — also opened from a
+  PMS CONTRACT row with the row's files as the bill).
+- `frontend/src/pages/scm-v2/PaymentVouchers.tsx` (list),
+  `PaymentVoucherNew.tsx` (create/AP Payment/refund/transfer),
+  `PaymentVoucherScan.tsx` (bill pile), `PaymentVoucherDetail.tsx`
+  (detail/edit).
+- `frontend/src/vendor/scm/lib/payment-voucher-queries.ts`,
+  `payment-voucher-pdf.ts`, `pv-file-handoff.ts`, `pv-type-label.ts`.
+- `frontend/src/pages/scm-v2/fx-rate.ts` — shared FX resolution (GRN/PI/PV).

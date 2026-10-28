@@ -1,0 +1,71 @@
+name: Repair receipt number months (plan/apply)
+
+# Puts a general receipt's NUMBER in the month its own date falls in.
+#
+# Owner, 2026-09-09, on 2990-OR-2609-001 whose journal is dated 2026-02-07:
+# 这个是因为之前receipt 没有办法选月份，后来才发现 — the number was minted from
+# TODAY. routes/receipts.ts was fixed on 2026-09-08 to mint from the receipt's
+# own date; the four papers created the day before are the leftovers, and the
+# owner asked for them to be renumbered (重编).
+#
+# Moves the receipt number AND every journal that names it — source_doc_no and
+# the narration — in one transaction, through a temporary so the UNIQUE index
+# is never crossed. Journal NUMBERS never move, so a bank-statement movement
+# matched to one is untouched. The vacated numbers are never re-issued.
+#
+# plan is the default and writes nothing.
+# See backend/scripts/repair-renumber-receipt-months.mjs.
+#
+# Secrets resolve by ENVIRONMENT (docs/bugs/0629): the job declares the
+# environment the target names, so STAGING_DATABASE_URL is the Staging
+# environment's own and never the repo-scope trap.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "staging"
+        type: choice
+        options: [staging, prod]
+      company_id:
+        description: "Narrow to one company (blank = every company)"
+        required: false
+        default: ""
+        type: string
+      mode:
+        description: "plan (report only) or apply (write)"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'apply requires: RENUMBER RECEIPT MONTHS'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: repair-renumber-receipt-months-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target == 'prod' && 'Production' || 'Staging' }}
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Repair receipt number months
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: node scripts/repair-renumber-receipt-months.mjs

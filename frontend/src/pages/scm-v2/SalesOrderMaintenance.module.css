@@ -1,0 +1,182 @@
+/* ====================================================================
+   Sales Order Maintenance — design-system reskin (2026-07-16)
+
+   The page frame is now FULL-BLEED and matches the PO/DO V2 list pages
+   (PurchaseOrdersListV2 / MfgDeliveryOrdersListV2): the header, the
+   section-jump pills and the info banners are all Tailwind utilities
+   inline in the TSX (see those files for the reference patterns).
+
+   Only the repeated content primitives that would be noisy as per-cell
+   Tailwind — the bespoke drill-down TABLES, their inputs, the row ghost
+   buttons and the add-row cards — live here. Every value below maps to
+   the Tailwind "Ink & Petrol" tokens in tailwind.config.js so the page
+   reads as one system with the reference lists:
+     border        #d6d9d2   border-subtle #e3e6e0
+     surface #fff  surface-2 #f4f6f3
+     ink     #11140f  ink-secondary #414539  ink-muted #767b6e
+     primary #16695f  primary-soft  #e1efed
+   The old grey inset "framed card" look (#dcdfd9 canvas, 14 px radius,
+   the .page token-override cascade) is gone.
+   ==================================================================== */
+
+/* ── Section-jump anchor target ────────────────────────────────────────
+   The three section headings (#venues / #geo / #dropdowns) that the sub-nav
+   pills jump to. Each used to carry an inline `scrollMarginTop: 96`, a guess
+   that was ~59 px SHORT of the pinned PageHeader's real bottom edge — so every
+   jump parked the heading and the first rows of the list UNDERNEATH the header
+   (the AEON venue rows the owner saw cut in half).
+
+   `--page-header-offset` is published by PageHeader itself (components/
+   Layout.tsx), measured, so this tracks the real height across breakpoints and
+   across a wrapped title. The fallback covers the first paint before the
+   ResizeObserver runs and any host that renders this page without a PageHeader;
+   +12 px is breathing room so the heading does not sit flush against the border.
+   ────────────────────────────────────────────────────────────────────── */
+.anchor {
+  scroll-margin-top: calc(var(--page-header-offset, 156px) + 12px);
+}
+
+/* ── Section shell — white card, hairline border, soft stone shadow ── */
+.tableCard,
+.venuesCard {
+  background: #fff;
+  border: 1px solid #d6d9d2;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 1px 0 rgba(17, 24, 16, 0.04), 0 4px 18px -8px rgba(17, 24, 16, 0.12);
+}
+
+/* ── Add-row inline form (its own subtle card under a section table) ── */
+.addRowCard {
+  background: #f4f6f3;
+  border: 1px solid #d6d9d2;
+  border-radius: 10px;
+  padding: 12px 16px;
+  box-shadow: 0 1px 0 rgba(17, 24, 16, 0.04), 0 4px 18px -8px rgba(17, 24, 16, 0.12);
+}
+.addRowGrid {
+  display: grid;
+  grid-template-columns: 1fr 100px 1fr 110px auto;
+  gap: 8px;
+}
+.addRowEyebrow {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #767b6e;
+  margin-bottom: 8px;
+}
+
+/* ── Breadcrumb / filter strip inside the geo drill-down ──────────── */
+.filterBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Info / breadcrumb banner ─────────────────────────────────────── */
+.banner {
+  background: #f4f6f3;
+  border: 1px solid #e3e6e0;
+  border-radius: 10px;
+  padding: 9px 14px;
+  font-size: 12px;
+  color: #414539;
+  line-height: 1.5;
+}
+.banner strong { color: #11140f; font-weight: 600; }
+
+/* ── Empty state row ──────────────────────────────────────────────── */
+.empty {
+  padding: 40px 20px;
+  text-align: center;
+  font-size: 12.5px;
+  color: #767b6e;
+}
+
+/* ── Table — dense admin density, mirrors the DataTable rhythm ────── */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.table thead th {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-weight: 600;
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #767b6e;
+  text-align: left;
+  padding: 9px 16px;
+  background: #f4f6f3;
+  border-bottom: 1px solid #e3e6e0;
+}
+.table tbody td {
+  padding: 9px 16px;
+  border-bottom: 1px solid #e3e6e0;
+  font-size: 12.5px;
+  color: #11140f;
+  vertical-align: middle;
+  line-height: 1.4;
+}
+.table tbody tr:last-child td { border-bottom: none; }
+.table tbody tr:hover td { background: rgba(22, 105, 95, 0.05); }
+
+.code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: #767b6e;
+}
+.muted { color: #767b6e; }
+
+/* ── Input — compact, petrol focus ring ───────────────────────────── */
+.input {
+  font-family: inherit;
+  font-size: 12.5px;
+  padding: 6px 10px;
+  border: 1px solid #d6d9d2;
+  border-radius: 8px;
+  background: #fff;
+  color: #11140f;
+  outline: none;
+  width: 100%;
+  height: 32px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.input:focus {
+  border-color: #16695f;
+  box-shadow: 0 0 0 3px rgba(22, 105, 95, 0.18);
+}
+.input:disabled { background: #f4f6f3; color: #767b6e; }
+/* Multi-select region picker sets its own min-height inline; let it grow. */
+select.input[multiple] { height: auto; padding: 4px; }
+
+/* ── Row-scoped ghost button (Clear / Save / delete) ──────────────── */
+.editBtn {
+  background: #fff;
+  border: 1px solid #d6d9d2;
+  border-radius: 8px;
+  padding: 4px 10px;
+  height: 28px;
+  cursor: pointer;
+  color: #414539;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.editBtn:hover {
+  background: #e1efed;
+  color: #16695f;
+  border-color: rgba(22, 105, 95, 0.4);
+}
+.editBtn:disabled { opacity: 0.5; cursor: not-allowed; }

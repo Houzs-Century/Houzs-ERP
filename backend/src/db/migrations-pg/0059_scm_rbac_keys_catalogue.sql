@@ -1,0 +1,39 @@
+-- ----------------------------------------------------------------------------
+-- 0059_scm_rbac_keys_catalogue.sql
+--
+-- Documentation-only migration. No DDL / DML.
+--
+-- Adds four new SCM flat permission keys to the code-side catalogue at
+-- backend/src/services/permissions.ts (the PERMISSIONS export). Houzs has NO
+-- DB-side permission catalogue table — `roles.permissions` stores a
+-- JSON-encoded TEXT array of keys, validated against the code catalogue at
+-- read time via parsePermissions(). So there are no rows to seed here; this
+-- file exists purely so the change is reviewable in the migration history.
+--
+-- New keys (see services/permissions.ts for the full PERMISSIONS rows):
+--   · scm.config.write        — Edit SCM master data: products, sofa combos,
+--                               delivery fees, fabric library + tier add-ons,
+--                               PWP rules, sofa quick picks, special add-ons,
+--                               Maintenance config, category hero images.
+--   · scm.so.price_override   — Hand-override the unit price on a SCM Sales
+--                               Order line (audited, admin-level).
+--   · scm.so.view_all         — View every salesperson's My-Orders board
+--                               (bypass per-rep attribution scoping).
+--   · scm.so.attribute_other  — Create or edit a SCM Sales Order on behalf of
+--                               another salesperson (stamp a different
+--                               salesperson_id).
+--
+-- Conservative default: NO explicit grants to any role. Owner (role 1) and IT
+-- Admin (role 7) already hold the wildcard "*" permission so they pass all
+-- four gates immediately. Other positions get the keys via the Team >
+-- Positions matrix (the Positions page reads PERMISSIONS, so the new keys
+-- appear in the matrix automatically with no further migration).
+--
+-- Replaces the inherited 2990-style `scm.staff.role` lookups (dead in Houzs:
+-- the SCM bridge in backend/src/scm/middleware/auth.ts pins every SCM caller
+-- to ONE seeded super_admin system staff row, so role-based gates trivially
+-- passed for nobody).
+-- ----------------------------------------------------------------------------
+
+-- No-op: this migration is documentation only.
+SELECT 1;

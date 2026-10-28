@@ -1,0 +1,36 @@
+html,
+body,
+#root {
+  min-height: 100%;
+  height: auto;
+}
+
+body {
+  margin: 0;
+}
+
+[data-scenario] {
+  box-sizing: border-box;
+  min-height: 100vh;
+  padding: 16px;
+}
+
+.lab-card {
+  box-sizing: border-box;
+  border: 1px solid #c9c9c0;
+  border-radius: 8px;
+  background: white;
+  padding: 12px;
+}
+
+.lab-card p {
+  margin: 8px 0 0;
+}
+
+.lab-card-short {
+  height: 76px;
+}
+
+.lab-card-tall {
+  height: 152px;
+}

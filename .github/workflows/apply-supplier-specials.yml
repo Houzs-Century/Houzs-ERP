@@ -1,0 +1,93 @@
+name: Carry the supplier's options onto our documents
+
+# Manual. The supplier states the drawer, the headboard, the covering and the
+# nylon after the measurements in its own Detail Description 2. Our documents
+# were aligned on the COMPARTMENT and the MEASUREMENTS on 2026-09-11; the OPTIONS
+# were never carried. Measured 2026-09-12 over the 375 supplier documents that
+# match one of our purchase orders: 616 lines pair line-for-line, 439 already
+# agree, 177 are missing an option the supplier states.
+#
+# Owner 2026-09-12: 「跟着 supplier 改完我们的 SO PO GR DO 等等先，因为我们之前是没有
+# 规格和 sofa compartment 的」.
+#
+# It writes ONLY options this company's catalogue already holds; every other
+# phrase is a free-text instruction whose home is the special-order note, and it
+# is listed rather than invented. It ADDS and never removes — an option we carry
+# that the supplier does not state may be our own later amendment.
+#
+# `specials` composes the inventory key, so where goods are already in the
+# chain's stock rows are re-keyed in the SAME transaction; a bucket shared with a
+# document outside the chain is refused and named (docs/bugs/0722).
+#
+# MODE=plan unless told otherwise; apply needs the confirm phrase and re-reads
+# every line on a FRESH connection.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      groups:
+        description: "item groups, comma-separated"
+        required: false
+        default: "SOFA,BEDFRAME"
+        type: string
+      mode:
+        description: "plan or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'type exactly: CARRY THE SUPPLIER OPTIONS (only needed for apply)'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: apply-supplier-specials-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx tsx scripts/apply-supplier-specials.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          GROUPS: ${{ inputs.groups }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx tsx scripts/apply-supplier-specials.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          GROUPS: ${{ inputs.groups }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

@@ -1,0 +1,71 @@
+name: probe-mrp-roundtrip-cost
+
+# Where do MRP's ~5 seconds go, and does bounded concurrency move them?
+#
+# PR #2300 made MRP correct by paging every read (it had been planning over
+# ~7% of the demand) and stated the price in its own body: "roughly a dozen
+# round trips to on the order of a hundred ... They are sequential." The owner
+# then reported the MRP page and the Sales Order list — which calls computeMrp
+# once per load — as very laggy: ~5.2s each on prod company 1, 2026-08-16.
+#
+# This probe times TWO ARMS over the same read shapes and the same rows:
+#   ARM A  sequential, exactly as the engine batches today
+#   ARM B  bounded-concurrent, the proposal
+# and asserts both read an IDENTICAL row set before reporting any saving. A
+# faster arm that read less would be the #2300 bug all over again, so the
+# equivalence check is the point, not a formality.
+#
+# Read-only. SELECTs only, no writes, no DDL, no transaction.
+# See backend/scripts/probe-mrp-roundtrip-cost.mjs for the full rationale,
+# including the one thing it cannot measure (PostgREST HTTP overhead — the app
+# pays more per round trip than this probe does, so its ms are a FLOOR).
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to read"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      company:
+        description: "company_id (1 = HOUZS, 2 = 2990)"
+        required: false
+        default: "1"
+        type: string
+      concurrency:
+        description: "Arm B bound (matches MRP_READ_CONCURRENCY in mrp.ts)"
+        required: false
+        default: "6"
+        type: string
+
+# Own group, never the deploy's — a diagnostic must not queue behind or
+# displace a release.
+concurrency:
+  group: probe-mrp-roundtrip-cost
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: Time the sequential and concurrent arms
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+          CONCURRENCY: ${{ inputs.concurrency }}
+        # pipefail, or `tee` swallows a crash and a truncated answer reads as success
+        run: |
+          set -o pipefail
+          node scripts/probe-mrp-roundtrip-cost.mjs | tee mrp-roundtrip.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-mrp-roundtrip-cost
+          path: backend/mrp-roundtrip.txt
+          retention-days: 14

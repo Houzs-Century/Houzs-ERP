@@ -1,0 +1,31 @@
+-- 0153_scm_mfg_sales_orders_version.sql (Postgres)
+-- Optimistic-locking version token for SO header edits (GO-LIVE charter item 3 /
+-- WO-8). Two operators can open the SAME Sales Order in the SO Detail editor,
+-- both change header fields, and both Save — today the second Save silently
+-- overwrites the first with NOTHING shown to either. This column is the
+-- concurrency token: the editor loads it, echoes it back on PATCH, and the
+-- server rejects the write (409, plain "Someone else updated this order…") when
+-- the row has moved on since it was loaded. See routes/mfg-sales-orders.ts
+-- PATCH /:docNo (compare-and-swap on `version`) and the desktop/mobile editors.
+--
+-- ⚠ MIGRATION NUMBER — RE-VERIFY AT MERGE. Chosen against a main whose latest
+-- pg migration was 0150; a train of 0151/0152 is landing tonight. If either
+-- number (or 0153) is taken at merge, rename this file to the next free integer
+-- BEFORE merging — pg-migrate tracks applied files per-FILENAME, so a gap is
+-- harmless but a DUPLICATE number breaks the ratchet for everyone.
+--
+-- WHY IT IS SAFE TO AUTO-APPLY ON DEPLOY (CI pg-migrates PROD every deploy, and
+-- a failed file blocks EVERY deploy):
+--   * ADD COLUMN IF NOT EXISTS — idempotent, a no-op after the first apply.
+--   * NOT NULL DEFAULT 1 — a constant default, so existing rows are stamped 1 in
+--     place with no table rewrite risk on the values (PG fills the default) and
+--     no backfill query that could fail on live data. Every current SO simply
+--     reads version 1 until its next header edit bumps it.
+--   * scm.mfg_sales_orders is a core table long present on prod (0053/0146 and
+--     many others ADD COLUMN to it).
+--   * ADDITIVE ONLY — no existing column, index, constraint or writer changes,
+--     so every current caller of this table is untouched. The token only starts
+--     mattering once a client opts in by sending the version it loaded.
+
+ALTER TABLE scm.mfg_sales_orders
+  ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;

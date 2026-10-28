@@ -1,0 +1,47 @@
+name: Go-live readiness (read-only)
+
+# Manual. Answers the three go-live questions with numbers: COGS/cost coverage,
+# what stock actually landed per group, and WHICH sales orders are ready vs not
+# (including the owner's case — processed SO, PO already received, line still
+# not READY). SELECT only, no writes.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+
+concurrency:
+  group: check-golive-readiness-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-golive-readiness.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-golive-readiness.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

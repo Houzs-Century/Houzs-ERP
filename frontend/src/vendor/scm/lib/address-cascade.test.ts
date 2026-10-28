@@ -1,0 +1,199 @@
+// ----------------------------------------------------------------------------
+// The shared State / City / Postcode cascade — both directions.
+//
+// localities-reverse-resolve.test.ts pins the RESOLVERS. This pins the WIRING
+// the forms now share: which options each select offers given what is already
+// picked, and what the next triple is after each pick. The properties that
+// matter most, and that the hand-copied wiring got wrong:
+//   - top-down keeps narrowing: a picked State narrows Postcode too, not only
+//     City (the copies fell back to the nationwide pool whenever City was blank)
+//   - bottom-up never destroys the pick: the postcode the resolvers back-fill
+//     from survives the State they set
+//   - all three fields are valid starting points (owner 2026-09-18: "从 postcode
+//     或者从 state 开始都行"): with no State, postcodeOptionsFor offers the
+//     cross-state pool so a bare Postcode can start the cascade and back-fill
+//     State + City. A Postcode-first gate shipped 2026-09-12 and was reversed on
+//     2026-09-18; postcode-first is pinned ON here so it cannot silently regress.
+// ----------------------------------------------------------------------------
+import { describe, it, expect } from 'vitest';
+import {
+  cityOptionsFor,
+  postcodeOptionsFor,
+  pickState,
+  pickCity,
+  pickPostcode,
+  cityPlaceholder,
+  postcodePlaceholder,
+} from './address-cascade';
+import type { LocalityRow } from './localities-queries';
+
+const row = (postcode: string, city: string, state: string): LocalityRow => ({
+  postcode, city, state, stateCode: '', country: 'Malaysia',
+});
+
+// "Taman Melati" deliberately sits under TWO states — the ambiguity the
+// resolvers refuse to guess at, and that the cascade still has to behave under.
+const ROWS: LocalityRow[] = [
+  row('43300', 'Seri Kembangan', 'Selangor'),
+  row('47810', 'Petaling Jaya', 'Selangor'),
+  row('47820', 'Petaling Jaya', 'Selangor'),
+  row('50000', 'Kuala Lumpur', 'Wilayah Persekutuan Kuala Lumpur'),
+  row('10000', 'George Town', 'Pulau Pinang'),
+  row('81100', 'Taman Melati', 'Johor'),
+  row('53100', 'Taman Melati', 'Wilayah Persekutuan Kuala Lumpur'),
+];
+
+const empty = { state: '', city: '', postcode: '' };
+
+describe('cityOptionsFor', () => {
+  it('narrows to the state when one is picked', () => {
+    expect(cityOptionsFor(ROWS, 'Selangor')).toEqual(['Petaling Jaya', 'Seri Kembangan']);
+  });
+
+  it('offers the cross-state pool when no state is picked, so City can start the cascade', () => {
+    expect(cityOptionsFor(ROWS, '')).toContain('George Town');
+    expect(cityOptionsFor(ROWS, '')).toContain('Seri Kembangan');
+  });
+});
+
+describe('postcodeOptionsFor', () => {
+  it('narrows to the (state, city) pair when both are picked', () => {
+    expect(postcodeOptionsFor(ROWS, 'Selangor', 'Petaling Jaya')).toEqual(['47810', '47820']);
+  });
+
+  /* The regression the hand-copied wiring carried: with a State picked and City
+     still blank every copy showed the NATIONWIDE list, so top-down narrowed
+     City but not Postcode. */
+  it('still narrows to the STATE when only the state is picked', () => {
+    expect(postcodeOptionsFor(ROWS, 'Selangor', '')).toEqual(['43300', '47810', '47820']);
+    expect(postcodeOptionsFor(ROWS, 'Selangor', '')).not.toContain('50000');
+  });
+
+  /* Postcode-first (owner 2026-09-18, reversing the 2026-09-12 gate): with no
+     State the field offers the cross-state pool, so a bare Postcode can start
+     the cascade. Pinned ON so the old State-first block cannot silently return. */
+  it('offers the cross-state pool when nothing is picked, so Postcode can start the cascade', () => {
+    expect(postcodeOptionsFor(ROWS, '', '')).toEqual(
+      ['10000', '43300', '47810', '47820', '50000', '53100', '81100'],
+    );
+  });
+
+  /* An ambiguous city that could not resolve a State still narrows Postcode to
+     the states that share the name, rather than the whole country. */
+  it('narrows to the city name when a city is picked but no state resolved', () => {
+    expect(postcodeOptionsFor(ROWS, '', 'Taman Melati')).toEqual(['53100', '81100']);
+  });
+});
+
+describe('pickState', () => {
+  it('resets City and Postcode — they belonged to the old state', () => {
+    expect(pickState('Johor')).toEqual({ state: 'Johor', city: '', postcode: '' });
+  });
+});
+
+describe('pickCity — bottom-up', () => {
+  it('back-fills the State from an unambiguous city', () => {
+    expect(pickCity(ROWS, empty, 'George Town')).toEqual({
+      state: 'Pulau Pinang', city: 'George Town', postcode: '',
+    });
+  });
+
+  it('REFUSES to guess a state for a city shared by two states', () => {
+    expect(pickCity(ROWS, empty, 'Taman Melati')).toEqual({
+      state: '', city: 'Taman Melati', postcode: '',
+    });
+  });
+
+  it('leaves an already-picked State alone when the city does not contradict it', () => {
+    const cur = { state: 'Selangor', city: 'Seri Kembangan', postcode: '43300' };
+    expect(pickCity(ROWS, cur, 'Petaling Jaya').state).toBe('Selangor');
+  });
+
+  it('corrects the State when the city unambiguously names a different one', () => {
+    const cur = { state: 'Selangor', city: 'Petaling Jaya', postcode: '47810' };
+    expect(pickCity(ROWS, cur, 'George Town').state).toBe('Pulau Pinang');
+  });
+
+  it('clears the Postcode, which belonged to the previous city', () => {
+    const cur = { state: 'Selangor', city: 'Petaling Jaya', postcode: '47810' };
+    expect(pickCity(ROWS, cur, 'Seri Kembangan').postcode).toBe('');
+  });
+
+  it('keeps an unknown city verbatim without touching the State', () => {
+    const cur = { state: 'Johor', city: '', postcode: '' };
+    expect(pickCity(ROWS, cur, 'Nowhere')).toEqual({ state: 'Johor', city: 'Nowhere', postcode: '' });
+  });
+});
+
+describe('pickPostcode — bottom-up', () => {
+  it('back-fills State AND City, and KEEPS the postcode just picked', () => {
+    expect(pickPostcode(ROWS, empty, '43300')).toEqual({
+      state: 'Selangor', city: 'Seri Kembangan', postcode: '43300',
+    });
+  });
+
+  /* The trap PR #2117 called out: routing the back-filled State through the
+     State picker's own handler would clear City and Postcode, so the operator
+     watches the value they just chose disappear. */
+  it('does not wipe itself when the resolved state differs from the current one', () => {
+    const cur = { state: 'Johor', city: 'Taman Melati', postcode: '81100' };
+    expect(pickPostcode(ROWS, cur, '10000')).toEqual({
+      state: 'Pulau Pinang', city: 'George Town', postcode: '10000',
+    });
+  });
+
+  it('keeps an unknown postcode and leaves State and City untouched (no guess)', () => {
+    const cur = { state: 'Selangor', city: 'Petaling Jaya', postcode: '' };
+    expect(pickPostcode(ROWS, cur, '99999')).toEqual({
+      state: 'Selangor', city: 'Petaling Jaya', postcode: '99999',
+    });
+  });
+
+  it('clearing the Postcode leaves the rest of the address standing', () => {
+    const cur = { state: 'Selangor', city: 'Petaling Jaya', postcode: '47810' };
+    expect(pickPostcode(ROWS, cur, '')).toEqual({
+      state: 'Selangor', city: 'Petaling Jaya', postcode: '',
+    });
+  });
+});
+
+describe('placeholders advertise the field as a starting point', () => {
+  it('says the State will fill in when City is the first thing picked', () => {
+    expect(cityPlaceholder('')).toBe('Pick city — State fills in');
+    expect(cityPlaceholder('Selangor')).toBe('Pick city');
+  });
+
+  it('names what a Postcode pick fills, at each starting point', () => {
+    expect(postcodePlaceholder('', '')).toBe('Pick postcode — State and City fill in');
+    expect(postcodePlaceholder('Selangor', '')).toBe('Pick postcode — City fills in');
+    expect(postcodePlaceholder('Selangor', 'Petaling Jaya')).toBe('Pick postcode');
+  });
+});
+
+describe('a round trip through both directions agrees with itself', () => {
+  /* The two directions read the SAME my_localities rows, so a postcode picked
+     bottom-up must land on a state/city pair the top-down lists would offer. */
+  it('bottom-up lands on a triple top-down would have produced', () => {
+    const viaPostcode = pickPostcode(ROWS, empty, '47810');
+    expect(cityOptionsFor(ROWS, viaPostcode.state)).toContain(viaPostcode.city);
+    expect(postcodeOptionsFor(ROWS, viaPostcode.state, viaPostcode.city)).toContain(viaPostcode.postcode);
+  });
+});
+
+// An imported / old-PMS order stores the state as "PENANG" or "KL" while the
+// dataset says "Pulau Pinang" / "Wilayah Persekutuan Kuala Lumpur". The exact
+// compare left City and Postcode empty ("No cities seeded") on edit.
+describe('legacy state spellings still narrow City and Postcode', () => {
+  it('PENANG finds the Pulau Pinang cities and postcodes', () => {
+    expect(cityOptionsFor(ROWS, 'PENANG')).toEqual(['George Town']);
+    expect(postcodeOptionsFor(ROWS, 'PENANG', '')).toEqual(['10000']);
+    expect(postcodeOptionsFor(ROWS, 'PENANG', 'GEORGE TOWN')).toEqual(['10000']);
+  });
+  it('KL and N.S. style codes resolve too', () => {
+    expect(cityOptionsFor(ROWS, 'KL')).toEqual(['Kuala Lumpur', 'Taman Melati']);
+    expect(cityOptionsFor(ROWS, 'Kuala Lumpur')).toEqual(['Kuala Lumpur', 'Taman Melati']);
+  });
+  it('an unknown state still yields nothing', () => {
+    expect(cityOptionsFor(ROWS, 'Atlantis')).toEqual([]);
+  });
+});

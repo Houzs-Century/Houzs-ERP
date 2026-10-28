@@ -1,0 +1,147 @@
+// The self-check's third finding: money on a document that never reached the
+// ledger. A booking failure does not fail the operator's save, so before this
+// the only trace was a server log — owner, asked whether the accounting page
+// should say so: 要.
+//
+// What is pinned is the CUTOFF and that the page can SEE it. About 2,700
+// historical payments are deliberately unbooked, so a card that listed
+// "everything unbooked" would open on 2,700 rows and be scrolled past — and
+// every real failure with it. The boundary is derived, and it is reported, so
+// nobody has to guess which period the card is talking about.
+
+import { Hono } from 'hono';
+import { describe, expect, test } from 'vitest';
+import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
+import { controlCheckHandler } from '../src/scm/routes/accounting';
+
+const CO = 1;
+
+const harness = (tables: Record<string, Row[]>) => {
+  const sb = fakeSb({
+    accounts: [
+      { account_code: '300-0000', account_name: 'Trade Debtor', account_type: 'ASSET', is_active: true, company_id: CO },
+      { account_code: '400-0000', account_name: 'Trade Creditor', account_type: 'LIABILITY', is_active: true, company_id: CO },
+    ],
+    acc_account_roles: [],
+    journal_entries: [], journal_entry_lines: [], v_gl_entries: [],
+    sales_invoices: [], purchase_invoices: [], ap_invoices: [],
+    mfg_sales_order_payments: [], sales_invoice_payments: [],
+    ...tables,
+  } as never);
+  const app = new Hono();
+  app.use('*', async (c, next) => {
+    c.set('supabase' as never, sb as never);
+    c.set('companyId' as never, CO as never);
+    c.set('houzsUser' as never, { name: 'Tester', permissions_set: ['scm.payment_voucher.post'] } as never);
+    await next();
+  });
+  app.get('/control-check', controlCheckHandler as never);
+  return app;
+};
+
+const pay = (id: string, docNo: string, paidAt: string, sen: number): Row =>
+  ({ id, so_doc_no: docNo, paid_at: paidAt, amount_sen: sen, method: 'merchant', company_id: CO });
+
+const je = (docNo: string, entryDate: string): Row =>
+  ({ id: `je-${docNo}`, je_no: `JE-${docNo}`, company_id: CO, source_type: 'SOPAY',
+     source_doc_no: docNo, entry_date: entryDate, posted: true, reversed: false,
+     total_debit_sen: 0, total_credit_sen: 0 });
+
+const arLine = (jeNo: string, sourceType: string, debitSen: number, creditSen: number): Row =>
+  ({ line_id: `${jeNo}-1`, je_no: jeNo, company_id: CO, account_code: '300-0000', source_type: sourceType, debit_sen: debitSen, credit_sen: creditSen });
+
+describe('the AR control check knows every source that legitimately moves AR', () => {
+  /* Deposit invoices (Dr AR), the credit notes a refund raises against them and
+     the Customer Refund voucher (Dr AR) came after the check was written and
+     were listed as foreign: 36 findings on a clean control account. */
+  test('a deposit invoice, its reversal, a credit note and a refund voucher are not findings; a manual entry still is', async () => {
+    const app = harness({
+      v_gl_entries: [
+        arLine('JE-1', 'DI', 100_000, 0), arLine('JE-2', 'DI_REVERSAL', 0, 100_000), arLine('JE-3', 'CN', 0, 40_000),
+        arLine('JE-4', 'PV', 40_000, 0), arLine('JE-5', 'SOPAY', 0, 100_000), arLine('JE-6', 'MANUAL', 500, 0),
+      ],
+    });
+    const body = await (await app.request('/control-check')).json() as any;
+    const ar = body.checks.find((x: any) => x.role === 'AR');
+    expect(ar.foreignLines.map((f: any) => `${f.jeNo} ${f.sourceType}`)).toEqual(['JE-6 MANUAL']);
+    /* Balance counts every line, findings or not: 100,000 - 100,000 - 40,000 + 40,000 - 100,000 + 500. */
+    expect(ar.glBalanceSen).toBe(-99_500);
+  });
+
+  /* A conversion moves a customer's money from one order to another: Dr and Cr
+     AR for the same party, netting to nil (acc/payments.ts CONVERT_SOURCE). The
+     owner saw 2990-JE-2609-0108's two lines listed as findings (2026-10-06). */
+  test('a conversion and its reversal are not findings, and leave the balance where it was', async () => {
+    const app = harness({
+      v_gl_entries: [
+        arLine('JE-7', 'SOCONV', 336_500, 0), { ...arLine('JE-7', 'SOCONV', 0, 336_500), line_id: 'JE-7-2' },
+        arLine('JE-8', 'SOCONV_REVERSAL', 0, 336_500), { ...arLine('JE-8', 'SOCONV_REVERSAL', 336_500, 0), line_id: 'JE-8-2' },
+        arLine('JE-9', 'MANUAL', 500, 0),
+      ],
+    });
+    const body = await (await app.request('/control-check')).json() as any;
+    const ar = body.checks.find((x: any) => x.role === 'AR');
+    expect(ar.foreignLines.map((f: any) => `${f.jeNo} ${f.sourceType}`)).toEqual(['JE-9 MANUAL']);
+    expect(ar.glBalanceSen).toBe(500);
+  });
+});
+
+describe('the self-check reports payments that never reached the ledger', () => {
+  test('names the ones that failed, and the period it is speaking about', async () => {
+    const app = harness({
+      journal_entries: [je('p1', '2026-08-01')],
+      mfg_sales_order_payments: [
+        pay('old', 'SO-OLD', '2026-01-05', 900000),   // deliberately unbooked history
+        pay('p1', 'SO-1', '2026-08-01', 50000),       // booked
+        pay('p2', 'SO-2', '2026-08-05', 12345),       // FAILED
+      ],
+    });
+    const body = await (await app.request('/control-check')).json() as any;
+
+    expect(body.payments.ok).toBe(false);
+    expect(body.payments.since).toBe('2026-08-01');
+    expect(body.payments.rows).toHaveLength(1);
+    expect(body.payments.rows[0].docNo).toBe('SO-2');
+    expect(body.payments.totalSen).toBe(12345);
+  });
+
+  test('is quiet when every payment reached the ledger', async () => {
+    const app = harness({
+      journal_entries: [je('p1', '2026-08-01')],
+      mfg_sales_order_payments: [pay('p1', 'SO-1', '2026-08-01', 50000)],
+    });
+    const body = await (await app.request('/control-check')).json() as any;
+    expect(body.payments.ok).toBe(true);
+    expect(body.payments.rows).toHaveLength(0);
+    /* Still says which period, so "all clear" cannot be mistaken for
+       "nothing was looked at". */
+    expect(body.payments.since).toBe('2026-08-01');
+  });
+
+  /* The trial-period state. No entry exists, so there is no boundary and every
+     payment would be listed — which is the noise that would kill the card. */
+  test('lists nothing at all before this company has booked its first payment — but SAYS how much is sitting there', async () => {
+    const app = harness({
+      mfg_sales_order_payments: [pay('a', 'SO-1', '2026-01-05', 900000), pay('b', 'SO-2', '2026-02-05', 700000)],
+    });
+    const body = await (await app.request('/control-check')).json() as any;
+    expect(body.payments.since).toBeNull();
+    expect(body.payments.rows).toHaveLength(0);
+    /* docs/bugs/0654: the figure was computed and dropped on the way out, so a
+       company whose hook had failed on every row read "all of them". */
+    expect(body.payments.neverBooked).toEqual({ count: 2, totalSen: 1600000, firstPaidOn: '2026-01-05', lastPaidOn: '2026-02-05' });
+    expect(body.payments.ok).toBe(false);
+  });
+
+  test('nothing booked AND nothing recorded is the one clean never-booked state', async () => {
+    const body = await (await harness({}).request('/control-check')).json() as any;
+    expect(body.payments.since).toBeNull();
+    expect(body.payments.neverBooked).toEqual({ count: 0, totalSen: 0, firstPaidOn: null, lastPaidOn: null });
+    expect(body.payments.ok).toBe(true);
+  });
+
+  test('the control-account checks still answer alongside it — AR, AP, and the 0349 split’s AP_OTHER', async () => {
+    const body = await (await harness({}).request('/control-check')).json() as any;
+    expect(body.checks.map((c: any) => c.role)).toEqual(['AR', 'AR_OTHER', 'AP', 'AP_OTHER']);
+  });
+});

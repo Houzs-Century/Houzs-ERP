@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 110" width="160" height="110">
+  <title>2990s Sofa Preset — 2S — 2-Seater (arms BOTH sides)</title>
+  <desc>Top-down plan view. 2 seats with backrest at top + hard armrests on BOTH sides; dashed seam between the two seats.</desc>
+  <g transform="translate(20,20)">
+    <rect x="0" y="0" width="120" height="70" rx="3" fill="#F0E6D6" stroke="#2C2C2A" stroke-width="1.4"/>
+    <rect x="0" y="0" width="120" height="11" fill="#D9C2A0" stroke="#2C2C2A" stroke-width="0.8"/>
+    <!-- LEFT armrest -->
+    <rect x="0" y="0" width="11" height="70" fill="#B89972" stroke="#2C2C2A" stroke-width="0.8"/>
+    <!-- RIGHT armrest -->
+    <rect x="109" y="0" width="11" height="70" fill="#B89972" stroke="#2C2C2A" stroke-width="0.8"/>
+    <!-- Seat-to-seat dashed divider -->
+    <line x1="60" y1="0" x2="60" y2="70" stroke="#2C2C2A" stroke-width="0.5" stroke-dasharray="2,2"/>
+  </g>
+</svg>

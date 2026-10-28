@@ -1,0 +1,36 @@
+-- 0141_scan_jobs_receipt_image_keys.sql
+-- Scan Order — record MULTIPLE payment receipts per background scan job.
+--
+-- WHY. The Scan flow (POST /scan-so/enqueue) now accepts a handwritten order
+-- slip PLUS one OR MORE printed card-terminal payment receipts, and books ONE
+-- payments-ledger row per receipt (deposit + balance, split card terminals).
+-- The uploaded photos already live durably in scm.scan_jobs.image_keys (every
+-- upload, slip + receipts, keyed scan-jobs/{jobId}/{n} in R2) and each booked
+-- payment row already carries its own receipt key in
+-- mfg_sales_order_payments.slip_key. What was missing is an explicit, durable
+-- record on the JOB of WHICH of those uploads the OCR classified as receipts —
+-- the audit manifest of "the receipts this scan turned into payments".
+--
+--   scm.scan_jobs.receipt_image_keys  — jsonb array of the R2 keys
+--     (scan-jobs/{jobId}/{n}) the model classified as payment receipts, in
+--     image order. Written once the OCR classifies the uploads. [] when the
+--     scan carried no receipt (draft-only) or predates this column.
+--
+-- BACKWARD-COMPATIBLE + SAFE TO AUTO-APPLY.
+--   • ADD COLUMN IF NOT EXISTS — idempotent, re-runnable.
+--   • NOT NULL with a DEFAULT '[]'::jsonb — every existing row is backfilled by
+--     the default in the same statement, so there is no NOT-NULL-without-default
+--     rewrite hazard and no separate data migration.
+--   • PURELY ADDITIVE — no existing column is touched. The SINGULAR
+--     receipt_image_key (migration 0034) on scm.so_scan_samples /
+--     scm.mfg_sales_orders is left exactly as-is: it stays the canonical
+--     "receipt 0" the SO Detail page already serves, so single-receipt jobs and
+--     every reader of that column keep working unchanged. Code reads the new
+--     manifest and falls back to the singular key when the array is empty.
+--
+-- scm.scan_jobs is Postgres-only (no D1 twin — precedent 0066/0067). Outer
+-- BEGIN;/COMMIT; omitted — pg-migrate.mjs wraps the whole file in one
+-- transaction.
+
+ALTER TABLE scm.scan_jobs
+  ADD COLUMN IF NOT EXISTS receipt_image_keys jsonb NOT NULL DEFAULT '[]'::jsonb;

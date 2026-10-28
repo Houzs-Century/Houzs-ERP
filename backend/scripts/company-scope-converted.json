@@ -1,0 +1,6 @@
+{
+  "_readme": "Files converted to scm/lib/scopedDb.ts, where a query's company scope is a REQUIRED argument (omitting it is a TS2554). check-company-scope.mjs fails --strict if a file listed here calls c.get('supabase') again, because one such line silently re-opens the whole file to unscoped queries and nothing else would notice. THIS LIST MAY ONLY GROW: add a path in the SAME PR that converts the file; never remove one. Removal is pinned by backend/tests/companyScopeConverted.test.mjs, so dropping an entry also means deleting an assertion that says why it was there — visible in the diff, which is the point.",
+  "converted": [
+    "src/scm/routes/stock-transfers.ts"
+  ]
+}

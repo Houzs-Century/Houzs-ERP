@@ -1,0 +1,73 @@
+name: Sofa direction photo worklist (read-only)
+
+# The DRAWINGS that still have to be read, and the build each one is supposed to
+# prove. Emits a JSON worklist as an artifact; it writes nothing and decides
+# nothing.
+#
+# The owner's rule is what the reader applies: 「主要是看TV的 要看TV在上还是下」 -
+# TV drawn BELOW the run means the arm on the drawing's LEFT is LHF; TV ABOVE
+# means the build is mirrored; no TV is treated as below.
+#
+# Scope is his too: NOT-proceeded documents only. A proceeded order's build comes
+# back from the supplier, who records it by compartment with every variant.
+#
+# Mirror-proof builds are excluded because their drawing settles nothing, and
+# documents with NO drawing are emitted in their own list - not as work, but so
+# the orders that nobody can decide are visible instead of silently dropped.
+#
+# SELECT only. Manual trigger. Own concurrency group. Exit 0 for every answer.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company_id:
+        description: "Company. Blank = 1."
+        required: false
+        default: ""
+
+concurrency:
+  group: dump-sofa-direction-photo-keys-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/dump-sofa-direction-photo-keys.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          OUT: sofa-direction-worklist.json
+          NODE_OPTIONS: --dns-result-order=ipv4first
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sofa-direction-worklist
+          path: backend/sofa-direction-worklist.json
+
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/dump-sofa-direction-photo-keys.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

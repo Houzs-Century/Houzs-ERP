@@ -1,0 +1,78 @@
+name: repair-superseded-colour-refs
+
+# Live lines still naming a colour that was RETIRED — the half a merge skipped.
+#
+# A merge has two halves: retire the losing colour, and repoint everything that
+# names it. The 2026-08-11 pass did the first against a sweep that knew four
+# document arms out of fifteen, so it superseded colours and left live documents
+# pointing at rows that no longer appear in any picker. The census found
+# BO315-2-FEATHER with 3 SO lines, 3 PO lines, 3 inventory_movements and 3
+# inventory_lots — on a colour_id whose library row is already inactive.
+#
+# A duplicate DETECTOR can never report these: a retired row is not a duplicate,
+# it is a merge that already happened. They have to be looked for from the other
+# end, by asking which retired colours are still NAMED.
+#
+# The destination is READ OUT OF THE LABEL the supersede wrote
+# ("[MERGED into BO315-02 on 2026-08-11 …]"), never guessed; a row whose label
+# does not record it is refused and listed. The target must exist, be ACTIVE and
+# sit in the same series.
+#
+# mode=plan writes nothing. mode=apply runs one transaction per colour and
+# verifies on a fresh connection. Nothing is deleted, nothing is re-activated.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      mode:
+        description: "plan (writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'apply ONLY: type exactly — I HAVE REVIEWED THE DRY-RUN'
+        required: false
+        default: ""
+        type: string
+      company:
+        description: "company_id (1 = HOUZS, 2 = 2990)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: repair-superseded-colour-refs
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: Repair superseded colour references (${{ inputs.mode }})
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY: ${{ inputs.company }}
+        # pipefail, or `tee` swallows the exit code and a half-finished run reports success
+        run: |
+          set -o pipefail
+          node scripts/repair-superseded-colour-refs.mjs | tee orphan-repair.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: repair-superseded-colour-refs-${{ inputs.mode }}
+          path: backend/orphan-repair.txt
+          retention-days: 90

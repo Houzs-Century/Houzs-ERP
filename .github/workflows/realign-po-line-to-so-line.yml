@@ -1,0 +1,80 @@
+name: Realign a PO line to its sales-order line (PLAN by default)
+
+# A purchase-order follow-up confirmed before PR #3629 (2026-09-11) left a bound
+# PO line on the OLD item code after the sales-order amendment changed it
+# (docs/bugs/0808). HC-PO-010086's pillow line still read SQUARE PILLOW under
+# HC-SO-013346's AMN-SOFA PILLOW.
+#
+# With no `po`: read-only LIST of every live PO line whose code differs from its
+# linked sales-order line. With `po` + `line` + `expect_code`: re-derives that ONE
+# line through the same function the amendment confirm runs
+# (src/scm/lib/po-line-rederive.ts) and writes it, the header totals if the line
+# total moves, and one audit row. Never AutoCount, never the revision number.
+#
+# PLAN (default) rolls back and re-reads on a fresh connection. mode=apply also
+# needs the CONFIRM phrase. Manual trigger only, own concurrency group.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (rolls back) or apply (commits)"
+        required: false
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      po:
+        description: "purchase-order number (blank = read-only LIST)"
+        required: false
+        default: ""
+        type: string
+      line:
+        description: "the PO line: its id, or its CURRENT item code"
+        required: false
+        default: ""
+        type: string
+      expect_code:
+        description: "the item code the line must become (= its sales-order line's)"
+        required: false
+        default: ""
+        type: string
+      company:
+        description: "company id (1 = Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+      confirm:
+        description: 'apply ONLY: type REALIGN THIS PO LINE'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: realign-po-line-to-so-line
+  cancel-in-progress: false
+
+jobs:
+  realign:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/realign-po-line-to-so-line.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          PO: ${{ inputs.po }}
+          LINE: ${{ inputs.line }}
+          EXPECT_CODE: ${{ inputs.expect_code }}
+          COMPANY: ${{ inputs.company }}
+          CONFIRM: ${{ inputs.confirm }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

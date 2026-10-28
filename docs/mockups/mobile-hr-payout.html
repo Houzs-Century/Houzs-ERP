@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>Houzs Mobile Mockup - HR Commission &amp; Payout</title>
+<style>
+/* ==========================================================================
+   Houzs ERP - Mobile gap mockup 3: HR commission for managers.
+   Team MTD list -> per-person breakdown -> payout close / reopen approval,
+   with mandatory in-app confirm and a mandatory reason on reopen.
+   Design language ported from the owner's approved prototype + mobile.css.
+   MOCKUP ONLY - interactions simulated, no data logic.
+   ========================================================================== */
+*{box-sizing:border-box;margin:0;padding:0;}
+*{scrollbar-width:none;-ms-overflow-style:none;}
+*::-webkit-scrollbar{width:0;height:0;display:none;}
+html,body{height:100%;}
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased;background:#d9dcd5;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px 0;}
+.hz-m{--ink:#11140f;--ink2:#414539;--mut:#767b6e;--mut2:#9aa093;--brand:#16695f;--brand-d:#0c3f39;--brand-bg:#e1efed;--gold:#a16a2e;--green:#2f8a5b;--green-bg:#e2f0e9;--amber:#8a6a2e;--amber-bg:#f6efd9;--red:#b23a3a;--red-bg:#f8eaea;--line:#e3e6e0;--line-card:#d6d9d2;--line2:#eceee9;--bg:#f4f6f3;--card:#fff;--app-bg:#eef0ec;--r-card:14px;--r-input:9px;--r-btn:12px;}
+.hz-m .money,.hz-m .tnum{font-variant-numeric:tabular-nums;}
+
+.device{position:relative;flex:none;width:392px;height:min(852px,calc(100dvh - 20px));background:#0a0a0b;border-radius:54px;padding:13px;box-shadow:0 30px 70px -22px rgba(17,24,16,.55),inset 0 0 0 2px #232325;}
+.app{position:relative;width:100%;height:100%;background:#eef0ec;border-radius:42px;overflow:hidden;display:flex;flex-direction:column;}
+.island{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:108px;height:30px;border-radius:18px;background:#000;z-index:60;}
+.statusbar{flex:none;height:46px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 26px 7px;color:#11140f;background:#fff;position:relative;z-index:30;font-size:14px;font-weight:700;}
+.homebar{position:absolute;left:50%;bottom:9px;transform:translateX(-50%);width:128px;height:5px;border-radius:3px;background:rgba(17,24,16,.32);z-index:60;pointer-events:none;}
+.mockbar{flex:none;background:#f6efd9;border-bottom:1px solid #ecd9b6;color:#8a6a2e;font-size:9.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;text-align:center;padding:5px 10px;z-index:29;}
+.viewport{flex:1;position:relative;overflow:hidden;}
+.screen{position:absolute;inset:0;display:none;flex-direction:column;background:#eef0ec;}
+.screen.active{display:flex;}
+.scroll{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;}
+
+.hz-m .hdr{position:sticky;top:0;z-index:10;background:#fff;border-bottom:1px solid #d6d9d2;padding:16px 16px 12px;}
+.hz-m .hdr-row{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.hz-m .eyebrow{font-size:10px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--gold);}
+.hz-m .scr-title{font-size:20px;font-weight:800;letter-spacing:-.01em;color:var(--ink);margin-top:2px;}
+.hz-m .back{display:flex;align-items:center;gap:3px;font-size:12.5px;font-weight:600;color:var(--brand);cursor:pointer;background:none;border:none;font-family:inherit;}
+.hz-m .back .chev{font-size:18px;line-height:1;}
+.hz-m .actbar{background:#fff;border-top:1px solid #d6d9d2;padding:12px 16px 16px;}
+
+.hz-m .btn{text-align:center;font-size:15px;line-height:20px;font-weight:700;color:#fff;background:#16695f;padding:14px;border-radius:13px;cursor:pointer;border:none;width:100%;font-family:inherit;}
+.hz-m .btn-danger{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;height:48px;background:#fff;border:1px solid #e6cccc;color:var(--red);border-radius:var(--r-btn);font-family:inherit;font-size:15px;font-weight:700;cursor:pointer;}
+
+.hz-m .card{background:#fff;border:1px solid #d6d9d2;border-radius:14px;box-shadow:0 1px 0 rgba(17,24,16,.04),0 4px 18px -8px rgba(17,24,16,.12);}
+.hz-m .card-h{display:flex;align-items:center;justify-content:space-between;padding:11px 13px;border-bottom:1px solid var(--line2);}
+.hz-m .card-t{font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--ink);}
+.hz-m .card-sub{font-size:10.5px;color:var(--mut2);}
+.hz-m .card-b{padding:12px 13px;}
+.hz-m .row{display:flex;justify-content:space-between;gap:12px;padding:11px 13px;border-bottom:1px solid var(--line2);align-items:center;}
+.hz-m .row:last-child{border-bottom:none;}
+.hz-m .row-l{font-size:11.5px;color:var(--mut);}
+.hz-m .row-v{font-size:13px;font-weight:600;color:var(--ink);text-align:right;}
+
+.hz-m .badge{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;padding:3px 9px;border-radius:20px;white-space:nowrap;}
+.hz-m .b-brand{background:var(--brand-bg);color:var(--brand-d);}
+.hz-m .b-green{background:var(--green-bg);color:var(--green);}
+.hz-m .b-amber{background:var(--amber-bg);color:var(--amber);}
+.hz-m .b-red{background:var(--red-bg);color:var(--red);}
+.hz-m .b-grey{background:var(--bg);color:var(--mut);}
+
+.hz-m .money-lg{font-variant-numeric:tabular-nums;font-size:16px;font-weight:800;color:var(--brand-d);line-height:1;}
+.hz-m .money-row{font-variant-numeric:tabular-nums;font-size:13px;font-weight:700;color:var(--brand-d);}
+
+.hz-m .hero{background:linear-gradient(160deg,#0c3f39,#16695f);border-radius:14px;padding:15px 16px;color:#fff;}
+.hz-m .hero .l{font-size:9.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;opacity:.8;}
+.hz-m .hero .v{font-size:28px;font-weight:800;margin-top:3px;letter-spacing:-.01em;}
+.hz-m .hero .s{font-size:11px;opacity:.82;font-weight:600;margin-top:3px;}
+
+/* month selector */
+.mrow{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:12px;}
+.mnav{width:34px;height:34px;border-radius:9px;border:1px solid #d6d9d2;background:#f4f6f3;color:#16695f;font-size:18px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+.mlabel{flex:1;text-align:center;font-size:13px;font-weight:800;color:#11140f;}
+
+/* person row */
+.prow{background:#fff;border:1px solid var(--line-card);border-radius:13px;padding:12px 13px;cursor:pointer;box-shadow:0 1px 0 rgba(17,24,16,.04),0 4px 18px -8px rgba(17,24,16,.12);display:flex;align-items:center;gap:11px;width:100%;text-align:left;font-family:inherit;}
+.pav{width:40px;height:40px;flex:none;border-radius:50%;background:#15161a;color:#d8a85a;font-size:13px;font-weight:800;display:flex;align-items:center;justify-content:center;}
+.prow .nm{font-size:13.5px;font-weight:800;color:var(--ink);}
+.prow .sub{font-size:10.5px;color:var(--mut);margin-top:2px;}
+.prow .amt{font-size:14.5px;font-weight:800;color:var(--brand-d);font-variant-numeric:tabular-nums;}
+.prow .amtl{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--mut2);text-align:right;margin-top:2px;}
+.ghead{font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#9aa093;margin:18px 2px 9px;}
+
+/* breakdown */
+.bd{display:flex;align-items:center;justify-content:space-between;padding:11px 13px;border-bottom:1px solid var(--line2);}
+.bd:last-child{border-bottom:none;}
+.bd .bl{font-size:12.5px;color:var(--ink2);}
+.bd .bs{font-size:10px;color:var(--mut2);margin-top:2px;}
+.bd .bv{font-size:13.5px;font-weight:800;color:var(--ink);font-variant-numeric:tabular-nums;}
+.so-mini{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid var(--line2);}
+.so-mini:first-child{border-top:none;}
+.so-mini .no{font-size:12px;font-weight:700;color:var(--ink);}
+.so-mini .cu{font-size:10.5px;color:var(--mut);margin-top:2px;}
+
+/* confirm modal */
+.modal-bd{position:absolute;inset:0;z-index:50;background:rgba(0,0,0,.34);display:none;align-items:center;justify-content:center;padding:22px;}
+.modal-bd.open{display:flex;}
+.modal{background:#fff;border:1px solid #d6d9d2;border-radius:16px;box-shadow:0 24px 60px -18px rgba(17,24,16,.5);width:100%;padding:18px;}
+.modal h2{font-size:17px;font-weight:800;color:#11140f;margin-bottom:8px;}
+.modal p{font-size:12.5px;color:#414539;line-height:1.5;margin-bottom:14px;}
+.modal .rlabel{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--mut2);margin-bottom:5px;display:block;}
+.modal textarea{width:100%;font-family:inherit;font-size:12.5px;border:1px solid rgba(34,31,32,.16);border-radius:9px;padding:9px 10px;color:#11140f;resize:none;outline:none;margin-bottom:6px;}
+.modal textarea:focus{border-color:#b23a3a;box-shadow:0 0 0 2px rgba(178,58,58,.14);}
+.modal .rerr{font-size:10.5px;color:var(--red);margin-bottom:12px;min-height:14px;}
+.modal .mrow{display:flex;justify-content:flex-end;gap:9px;}
+.modal .mghost{border:1px solid #d6d9d2;background:#fff;color:#414539;font-family:inherit;font-size:13px;font-weight:700;padding:10px 16px;border-radius:10px;cursor:pointer;}
+.modal .mprim{border:1px solid #16695f;background:#16695f;color:#fff;font-family:inherit;font-size:13px;font-weight:700;padding:10px 16px;border-radius:10px;cursor:pointer;}
+.modal .mdanger{border:1px solid #b23a3a;background:#b23a3a;color:#fff;font-family:inherit;font-size:13px;font-weight:700;padding:10px 16px;border-radius:10px;cursor:pointer;}
+.modal .mdanger:disabled{opacity:.4;cursor:default;}
+.hz-m .toast{position:absolute;left:16px;right:16px;bottom:22px;z-index:55;background:#0c3f39;color:#fff;border-radius:12px;padding:13px 15px;font-size:12.5px;font-weight:600;box-shadow:0 16px 34px -12px rgba(12,63,57,.6);display:none;text-align:center;}
+.hz-m .toast.show{display:block;}
+.period-note{font-size:10.5px;border-radius:10px;padding:9px 11px;margin-top:12px;line-height:1.45;}
+</style>
+</head>
+<body>
+<div class="device">
+  <div class="island"></div>
+  <div class="app hz-m">
+    <div class="statusbar"><span>9:41</span><span>Houzs</span></div>
+    <div class="mockbar">Mockup - pending owner approval</div>
+    <div class="viewport">
+
+      <!-- ============ SCREEN: Team commission (MTD) ============ -->
+      <section class="screen active" id="s-team">
+        <header class="hdr">
+          <div class="hdr-row">
+            <div><div class="eyebrow">Human resources</div><div class="scr-title">Team Commission</div></div>
+            <span class="badge b-brand" id="period-badge">Open</span>
+          </div>
+          <div class="mrow">
+            <button class="mnav">&lsaquo;</button>
+            <div class="mlabel">July 2026</div>
+            <button class="mnav">&rsaquo;</button>
+          </div>
+        </header>
+        <div class="scroll" style="padding:14px 16px 26px">
+          <div class="hero">
+            <div class="l">Team commission - month to date</div>
+            <div class="v money">RM 15,728.00</div>
+            <div class="s" id="hero-sub">5 salespeople &middot; recomputes live until closed</div>
+          </div>
+
+          <div class="period-note" id="note-open" style="background:#e1efed;color:#0c3f39;border:1px solid #bcdcd7">
+            Period is <b>open</b>. Figures recompute live from confirmed Sales Orders. Close it to freeze this month's payout.
+          </div>
+          <div class="period-note" id="note-closed" style="display:none;background:#e2f0e9;color:#2f8a5b;border:1px solid #bfe0cd">
+            Period <b>closed</b> and frozen on 19/07/2026 by you. Figures no longer change. Reopen only if a correction is needed.
+          </div>
+
+          <div class="ghead">Kepong Showroom</div>
+          <div style="display:flex;flex-direction:column;gap:9px">
+            <button class="prow" onclick="go('s-person')">
+              <span class="pav">TM</span>
+              <span style="flex:1"><span class="nm">Tan Mei Ling</span><div class="sub">Senior Sales &middot; RM 182,400 sales</div></span>
+              <span><div class="amt">RM 5,472</div><div class="amtl">Commission</div></span>
+            </button>
+            <button class="prow" onclick="go('s-person')">
+              <span class="pav">RK</span>
+              <span style="flex:1"><span class="nm">Rajesh Kumar</span><div class="sub">Sales &middot; RM 121,900 sales</div></span>
+              <span><div class="amt">RM 3,657</div><div class="amtl">Commission</div></span>
+            </button>
+            <button class="prow" onclick="go('s-person')">
+              <span class="pav">LC</span>
+              <span style="flex:1"><span class="nm">Lee Chong Wei</span><div class="sub">Junior Sales &middot; RM 54,200 sales</div></span>
+              <span><div class="amt">RM 1,355</div><div class="amtl">Commission</div></span>
+            </button>
+          </div>
+
+          <div class="ghead">Cheras Showroom</div>
+          <div style="display:flex;flex-direction:column;gap:9px">
+            <button class="prow" onclick="go('s-person')">
+              <span class="pav">WJ</span>
+              <span style="flex:1"><span class="nm">Wong Jia Hui</span><div class="sub">Sales &middot; RM 98,300 sales</div></span>
+              <span><div class="amt">RM 2,949</div><div class="amtl">Commission</div></span>
+            </button>
+            <button class="prow" onclick="go('s-person')">
+              <span class="pav">NA</span>
+              <span style="flex:1"><span class="nm">Nurul Aina</span><div class="sub">Sales &middot; RM 76,500 sales</div></span>
+              <span><div class="amt">RM 2,295</div><div class="amtl">Commission</div></span>
+            </button>
+          </div>
+        </div>
+        <footer class="actbar">
+          <button class="btn" id="close-btn" onclick="openClose()">Close payout for July 2026</button>
+          <button class="btn-danger" id="reopen-btn" style="display:none" onclick="openReopen()">Reopen payout</button>
+        </footer>
+      </section>
+
+      <!-- ============ SCREEN: Per-person detail ============ -->
+      <section class="screen" id="s-person">
+        <header class="hdr">
+          <div class="hdr-row">
+            <button class="back" onclick="go('s-team')"><span class="chev">&lsaquo;</span> Team</button>
+            <span class="badge b-brand" id="person-status">Open</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;margin-top:6px">
+            <span class="pav" style="width:46px;height:46px;font-size:15px">TM</span>
+            <div>
+              <div class="scr-title" style="font-size:19px">Tan Mei Ling</div>
+              <div style="font-size:11px;color:#767b6e;margin-top:2px">Senior Sales &middot; Kepong Showroom</div>
+            </div>
+          </div>
+        </header>
+        <div class="scroll" style="padding:14px 16px 26px">
+          <div class="hero">
+            <div class="l">Commission - July 2026 (MTD)</div>
+            <div class="v money">RM 5,472.00</div>
+            <div class="s">On RM 182,400 confirmed sales &middot; 12 orders</div>
+          </div>
+
+          <div class="card" style="margin-top:16px">
+            <div class="card-h"><span class="card-t">How it is made up</span></div>
+            <div class="bd"><span><div class="bl">Personal commission</div><div class="bs">2.5% of own confirmed sales</div></span><span class="bv">RM 4,560</span></div>
+            <div class="bd"><span><div class="bl">Showroom override</div><div class="bs">Flat lead override, Kepong</div></span><span class="bv">RM 612</span></div>
+            <div class="bd"><span><div class="bl">Item KPI bonus</div><div class="bs">Promo SKU target hit (2 of 3)</div></span><span class="bv">RM 300</span></div>
+            <div class="bd" style="background:#f7f8f5"><span><div class="bl" style="font-weight:800;color:var(--ink)">Total commission</div></span><span class="money-lg">RM 5,472.00</span></div>
+          </div>
+
+          <div class="card" style="margin-top:12px">
+            <div class="card-h"><span class="card-t">Contributing orders</span><span class="card-sub">12</span></div>
+            <div class="card-b" style="padding-top:4px;padding-bottom:4px">
+              <div class="so-mini"><span><div class="no tnum">SO-2507-0312</div><div class="cu">Furniture Direct KL</div></span><span style="text-align:right"><div class="money-row">RM 31,200</div><div style="font-size:10px;color:var(--mut);margin-top:2px">comm RM 780</div></span></div>
+              <div class="so-mini"><span><div class="no tnum">SO-2507-0288</div><div class="cu">Sern Kou Furniture Sdn Bhd</div></span><span style="text-align:right"><div class="money-row">RM 24,800</div><div style="font-size:10px;color:var(--mut);margin-top:2px">comm RM 620</div></span></div>
+              <div class="so-mini"><span><div class="no tnum">SO-2507-0301</div><div class="cu">Home Essence Trading</div></span><span style="text-align:right"><div class="money-row">RM 18,400</div><div style="font-size:10px;color:var(--mut);margin-top:2px">comm RM 460</div></span></div>
+              <div style="text-align:center;padding:11px 0 4px;font-size:11px;font-weight:700;color:var(--brand)">+ 9 more orders</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div><!-- /viewport -->
+
+    <!-- ======= CONFIRM modal: CLOSE ======= -->
+    <div class="modal-bd" id="m-close">
+      <div class="modal">
+        <h2>Close July 2026 payout?</h2>
+        <p>This freezes commission for all <b>5 salespeople</b> at <b>RM 15,728.00</b>. Once closed, figures stop recomputing and the month is locked for payout. You can reopen it later if a correction is needed.</p>
+        <div class="mrow">
+          <button class="mghost" onclick="closeModal('m-close')">Cancel</button>
+          <button class="mprim" onclick="doClose()">Close &amp; freeze</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======= CONFIRM modal: REOPEN (mandatory reason) ======= -->
+    <div class="modal-bd" id="m-reopen">
+      <div class="modal">
+        <h2>Reopen July 2026 payout?</h2>
+        <p>Reopening unlocks the period so commission recomputes live again. Anyone already paid keeps their record. A reason is required and saved to the audit log.</p>
+        <label class="rlabel">Reason for reopening (required)</label>
+        <textarea id="reopen-reason" rows="3" placeholder="e.g. SO-2507-0288 was amended after close - recompute Tan Mei Ling" oninput="checkReason()"></textarea>
+        <div class="rerr" id="reopen-err"></div>
+        <div class="mrow">
+          <button class="mghost" onclick="closeModal('m-reopen')">Cancel</button>
+          <button class="mdanger" id="reopen-confirm" disabled onclick="doReopen()">Reopen payout</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast">Payout closed</div>
+    <div class="homebar"></div>
+  </div><!-- /app -->
+</div>
+
+<script>
+var closed=false;
+function go(id){document.querySelectorAll('.screen').forEach(function(s){s.classList.remove('active')});document.getElementById(id).classList.add('active');}
+function openModal(id){document.getElementById(id).classList.add('open');}
+function closeModal(id){document.getElementById(id).classList.remove('open');}
+function toast(msg){var t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(function(){t.classList.remove('show')},2400);}
+
+function openClose(){openModal('m-close');}
+function openReopen(){document.getElementById('reopen-reason').value='';checkReason();openModal('m-reopen');}
+function checkReason(){var v=document.getElementById('reopen-reason').value.trim();var btn=document.getElementById('reopen-confirm');var err=document.getElementById('reopen-err');if(v.length>=6){btn.disabled=false;err.textContent='';}else{btn.disabled=true;err.textContent=v.length===0?'':'Please give a bit more detail (min 6 characters).';}}
+
+function setClosed(isClosed){closed=isClosed;var badge=document.getElementById('period-badge');var pbadge=document.getElementById('person-status');document.getElementById('close-btn').style.display=isClosed?'none':'block';document.getElementById('reopen-btn').style.display=isClosed?'flex':'none';document.getElementById('note-open').style.display=isClosed?'none':'block';document.getElementById('note-closed').style.display=isClosed?'block':'none';document.getElementById('hero-sub').textContent=isClosed?'5 salespeople · frozen for payout':'5 salespeople · recomputes live until closed';badge.textContent=isClosed?'Closed':'Open';badge.className='badge '+(isClosed?'b-green':'b-brand');pbadge.textContent=isClosed?'Closed':'Open';pbadge.className='badge '+(isClosed?'b-green':'b-brand');}
+
+function doClose(){closeModal('m-close');setClosed(true);toast('July 2026 payout closed and frozen');}
+function doReopen(){if(document.getElementById('reopen-confirm').disabled)return;closeModal('m-reopen');setClosed(false);toast('July 2026 payout reopened - reason logged');}
+</script>
+</body>
+</html>

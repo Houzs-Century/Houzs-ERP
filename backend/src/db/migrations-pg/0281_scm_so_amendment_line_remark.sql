@@ -1,0 +1,69 @@
+-- ----------------------------------------------------------------------------
+-- RE-CHECK NUMBER AT MERGE — parallel PRs; last on main was 0279 when branched.
+--
+-- 0280 — an SO amendment can finally carry a line's REMARK.
+--
+-- THE DEFECT (owner, 2026-08-11, on 2990-SO-2608-016)
+--   The operator added a SVC-ADDON line through the amendment editor and typed
+--   the instruction that is the ENTIRE point of that line into the line card's
+--   "Type remarks…" box:
+--
+--     Please take back Cody Bedframe (King Size) 2 units
+--
+--   The amendment was approved and the line landed on the Sales Order with
+--   remark = NULL, description = NULL, variants = {}. The instruction existed
+--   nowhere on the order: an RM0 line reading only "SVC-ADDON", and a driver
+--   with no way to know what to do at the door.
+--
+--   scm.so_amendment_lines carries FOUR fields — new_item_code, new_variants,
+--   new_qty, new_unit_price_sen. remark has no column, so the submit dropped it
+--   silently. Worse, the frontend dirtiness test (amendmentLineSig) is built
+--   from the SAME four fields, so a line changed ONLY in its remark scored as
+--   "nothing amendable moved" and produced no amendment row at all. Both
+--   halves are fixed in the same PR as this migration; the column is the part
+--   that has to exist first (migrate-before-deploy).
+--
+--   The gap was known and written down — SalesOrderDetail.tsx has carried a
+--   comment since 2026-07-16 listing the nine fields (lineDeliveryDate, remark,
+--   description, uom, itemGroup, discount, cost, …) that "have NO channel on an
+--   amendment". That comment explains why a remark-only edit was recorded as a
+--   phantom SPEC change; it was never a decision that remark should be
+--   undeliverable. This closes the one field of the nine an operator types by
+--   hand for the person executing the job.
+--
+-- SHAPE
+--   ONE nullable text column, new_remark, mirroring new_item_code's nullability
+--   semantics: NULL = "this request does not touch the remark" (every existing
+--   row, and every future line whose remark did not move), '' = "clear it".
+--   applySoAmendment writes the line's remark ONLY when new_remark is non-null,
+--   so an approved legacy amendment cannot blank a remark that was typed onto
+--   the SO after the request was raised.
+--
+--   The BEFORE value rides in the existing old_snapshot jsonb (`remark` key,
+--   stamped server-side by buildAmendmentLineRows from mfg_sales_order_items —
+--   read from the record, never trusted from the browser asking to change it),
+--   so the approver's before/after needs no second column.
+--
+-- Houzs SCM port conventions (mirrors 0119, which added the header half):
+-- schema-qualified to scm.*, plain ADD COLUMN IF NOT EXISTS (NOT a DO block —
+-- the pg-migrate runner splits each file on ";\n" and would fragment a
+-- dollar-quoted block), additive + nullable + re-run safe, so the auto-apply on
+-- every deploy is a no-op after the first.
+--
+-- VIEW-TRAP NOTE: no view projects scm.so_amendment_lines (checked 2026-08-11 —
+-- the amendment surfaces read the base table directly through the route), so
+-- adding a column cannot break a column-enumerated view the way 0189 did.
+--
+-- MIRROR NOTE: routes/amendment-mirror.ts writes 2990-authored amendment rows
+-- into D1 through createMirrorMapper, which filters the payload to the DEST
+-- table's own columns. A 2990 row simply carries no new_remark and lands NULL —
+-- correct, since 2990's amendment editor has no remark channel either.
+--
+-- Backward compatible: NULL on every existing row = today's behaviour exactly.
+-- No backfill (the lost remark on 2990-SO-2608-016 is repaired on the SO line
+-- itself, not here — an amendment record must keep saying what was requested).
+-- ----------------------------------------------------------------------------
+
+SET search_path = scm, public;
+
+ALTER TABLE scm.so_amendment_lines ADD COLUMN IF NOT EXISTS new_remark text;

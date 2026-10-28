@@ -1,0 +1,164 @@
+# Archive, sign and upload the iOS shell to App Store Connect.
+#
+# THE SIGNED SIBLING OF ios-build.yml. That workflow proves the shell compiles
+# with no Apple account; this one produces the real .ipa and hands it to
+# App Store Connect (TestFlight first, then submission from the ASC website).
+#
+# NEEDS FOUR SECRETS, none of which exist until the Apple Developer enrolment
+# completes (docs/ios-app-store.md). The owner creates the API key in
+# App Store Connect (Users and Access -> Integrations -> App Store Connect API,
+# role App Manager) and pastes:
+#   APPLE_TEAM_ID                     — 10-char Team ID (Membership page)
+#   APP_STORE_CONNECT_API_KEY_ID      — the key's ID
+#   APP_STORE_CONNECT_API_ISSUER_ID   — the issuer UUID above the key list
+#   APP_STORE_CONNECT_API_KEY         — the .p8 file's full text contents
+#
+# SIGNING: Xcode cloud-managed automatic signing, driven by that API key
+# (-allowProvisioningUpdates). No certificates repo, no fastlane match, no
+# passphrase secrets — Apple mints and stores the distribution certificate.
+# fastlane is used ONLY for the upload step (pilot), because altool is
+# deprecated and pilot ships preinstalled on the runner images.
+#
+# MANUAL ONLY. Releasing is a decision, not a side effect of a merge. The
+# unsigned build workflow remains the per-PR safety net.
+#
+# BUILD NUMBER = github.run_number: every upload to ASC must carry a build
+# number it has never seen for that version; re-running the workflow bumps it
+# automatically. MARKETING_VERSION stays in the Xcode project — bump it there
+# for a user-visible release.
+
+name: iOS release (signed upload)
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ios-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Refuse to run without the signing secrets
+        env:
+          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          ISSUER: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+          KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+        run: |
+          missing=""
+          [ -z "$TEAM" ] && missing="$missing APPLE_TEAM_ID"
+          [ -z "$KEY_ID" ] && missing="$missing APP_STORE_CONNECT_API_KEY_ID"
+          [ -z "$ISSUER" ] && missing="$missing APP_STORE_CONNECT_API_ISSUER_ID"
+          [ -z "$KEY" ] && missing="$missing APP_STORE_CONNECT_API_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing GitHub secrets:$missing — see docs/ios-app-store.md (they exist only after Apple Developer enrolment)."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Apple requires builds compiled with the current-generation SDK
+      # (iOS 26 SDK mandatory for App Store submissions since 2026-04-28).
+      # The runner images carry several Xcodes; pick the newest.
+      - name: Select the newest Xcode on the runner
+        run: |
+          XCODE=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Build the SPA
+        run: |
+          npm --prefix frontend ci
+          npm --prefix frontend run build
+
+      - name: Install the shell's dependencies and sync
+        run: |
+          npm --prefix native ci
+          npm --prefix native run sync
+
+      - name: Resolve Swift packages
+        working-directory: native/ios/App
+        run: xcodebuild -resolvePackageDependencies -project App.xcodeproj -scheme App
+
+      - name: Write the App Store Connect API key
+        env:
+          KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+        run: |
+          mkdir -p ~/private_keys
+          printf '%s' "$KEY" > ~/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}.p8
+
+      - name: Archive (cloud-managed signing)
+        working-directory: native/ios/App
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project App.xcodeproj \
+            -scheme App \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$PWD/build/App.xcarchive" \
+            archive \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}.p8 \
+            -authenticationKeyID '${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}' \
+            -authenticationKeyIssuerID '${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}' \
+            DEVELOPMENT_TEAM='${{ secrets.APPLE_TEAM_ID }}' \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            | tail -40
+
+      - name: Export the signed .ipa
+        working-directory: native/ios/App
+        run: |
+          cat > exportOptions.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>teamID</key><string>${{ secrets.APPLE_TEAM_ID }}</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>uploadSymbols</key><true/>
+          </dict></plist>
+          EOF
+          set -o pipefail
+          xcodebuild \
+            -exportArchive \
+            -archivePath "$PWD/build/App.xcarchive" \
+            -exportPath "$PWD/build/export" \
+            -exportOptionsPlist exportOptions.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}.p8 \
+            -authenticationKeyID '${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}' \
+            -authenticationKeyIssuerID '${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}' \
+            | tail -20
+          ls -la build/export
+
+      - name: Upload to App Store Connect (TestFlight)
+        working-directory: native/ios/App
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          ISSUER: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+        run: |
+          # fastlane's api_key JSON wants the .p8 CONTENT inline with correctly
+          # escaped newlines — json.dumps gets that right where printf cannot.
+          python3 - <<'EOF'
+          import json, os
+          key = open(os.path.expanduser(f"~/private_keys/AuthKey_{os.environ['KEY_ID']}.p8")).read()
+          json.dump(
+              {"key_id": os.environ["KEY_ID"], "issuer_id": os.environ["ISSUER"], "key": key, "in_house": False},
+              open("asc_api_key.json", "w"),
+          )
+          EOF
+          IPA=$(ls build/export/*.ipa | head -1)
+          fastlane pilot upload \
+            --ipa "$IPA" \
+            --api_key_path asc_api_key.json \
+            --skip_waiting_for_build_processing true
+          rm -f asc_api_key.json

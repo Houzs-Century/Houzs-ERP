@@ -1,0 +1,38 @@
+-- 0308 — Finish what 0307 started on po_amendment_lines: the one *_code column
+-- the item_code unification renamed in CODE but not in the TABLE.
+--
+-- WHY THIS EXISTS. #2447 (mig 0307) renamed material_code/product_code to
+-- item_code across the schema and rewrote every code reference — including 42
+-- references to po_amendment_lines.new_item_code across po-revision.ts,
+-- po-amendments.ts and amendment-po-followup.ts. But 0307 carries no ALTER for
+-- po_amendment_lines, so the table kept new_material_code. From the moment
+-- #2447 deployed (2026-08-18 18:03Z), every statement naming the column died:
+--
+--   · PATCH /so-amendments/:id/approve-so — the PRODUCT-lane approve applies
+--     the SO revision, then raisePoFollowUps INSERTs the follow-up PO
+--     amendment lines and threw `column "new_item_code" of relation
+--     "po_amendment_lines" does not exist`, rolling back the WHOLE approval.
+--     Caught live on 2026-08-19 (wrangler tail, amendment
+--     2990-SO-2608-006/A2, the owner's third attempt).
+--   · The po-amendments list/detail reads and the create path name the same
+--     column — the entire PO-amendment surface, not one endpoint.
+--
+-- The unit tests stayed green throughout because their fixtures were renamed
+-- WITH the code: they exercised a schema production does not have.
+--
+-- WHY RENAME THE TABLE AND NOT REVERT THE CODE. item_code is the unification's
+-- direction (the vocabulary registry enforces it), the 42 code references
+-- already say new_item_code, and the sibling so_amendment_lines has carried
+-- new_item_code all along — this rename makes the two amendment tables agree.
+-- new_material_NAME stays: *_name columns were deliberately outside 0307's
+-- scope, and code and table already agree on it.
+--
+-- Reversal: ALTER TABLE scm.po_amendment_lines RENAME COLUMN new_item_code TO new_material_code;
+--           (and redeploy code from before #2447 — the rename only makes sense
+--           paired with the code that reads the new name).
+--
+-- Verified against: prod (anogrigyjbduyzclzjgn), 2026-08-19 — information_schema
+-- shows po_amendment_lines.new_material_code present and new_item_code absent,
+-- and the live 500 above names exactly this column.
+
+ALTER TABLE scm.po_amendment_lines RENAME COLUMN new_material_code TO new_item_code;

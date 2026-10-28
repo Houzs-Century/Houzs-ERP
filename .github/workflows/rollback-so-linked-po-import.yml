@@ -1,0 +1,62 @@
+name: Rollback SO-linked PO import
+
+# Manual. Deletes the purchase orders written by import-ac-so-linked-pos.mjs so
+# the import can be re-run against a corrected script. Refuses to run if any of
+# them has a GRN line — a PO that received stock is no longer paperwork-only.
+# DRY-RUN by default; apply=1 deletes. only_sofa=1 (default) limits the delete
+# to POs carrying a sofa line.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "1 to delete, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      only_sofa:
+        description: "1 = only POs with a sofa line (default), 0 = the whole imported batch"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: rollback-so-linked-po-import-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/rollback-so-linked-po-import.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          ONLY_SOFA: ${{ inputs.only_sofa }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/rollback-so-linked-po-import.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          ONLY_SOFA: ${{ inputs.only_sofa }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

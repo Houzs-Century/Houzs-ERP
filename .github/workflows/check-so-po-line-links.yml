@@ -1,0 +1,84 @@
+name: Check SO -> PO line links (read-only)
+
+# Staff issue #18 / #19: "this sales order already has a purchase order, why
+# does the line not show it?" Prints, for each SO:PO pair, every sales-order and
+# purchase-order line with the fields that decide the link, the verdict per
+# line, what the REAL MRP engine (computeMrp over lib/pgrest-shim.mjs) answers
+# for each line today, and how many other company-1 lines are in the same shape.
+#
+# READ-ONLY: SELECTs only, the session is set READ ONLY and the engine run goes
+# through a guard that refuses any write method. Manual trigger only. Exits 0 on
+# every legitimate answer; the answer is the log.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: ["prod", "staging"]
+      pairs:
+        description: "SO:PO pairs, comma separated"
+        required: false
+        default: "HC-SO-013389:HC-PO-010087,HC-SO-011114:HC-PO-010045"
+      company:
+        description: "Company id (1 = Houzs Century, the hard-bound company)"
+        required: false
+        default: "1"
+      engine:
+        description: "1 = also run the real MRP engine (about 30s), 0 = skip"
+        required: false
+        default: "1"
+
+concurrency:
+  group: check-so-po-line-links
+  cancel-in-progress: false
+
+jobs:
+  prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/check-so-po-line-links.mjs
+        env:
+          PAIRS: ${{ inputs.pairs }}
+          COMPANY: ${{ inputs.company }}
+          ENGINE: ${{ inputs.engine }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/check-so-po-line-links.mjs
+        env:
+          PAIRS: ${{ inputs.pairs }}
+          COMPANY: ${{ inputs.company }}
+          ENGINE: ${{ inputs.engine }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

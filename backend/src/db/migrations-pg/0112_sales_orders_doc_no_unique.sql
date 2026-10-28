@@ -1,0 +1,15 @@
+-- The AutoCount inbound SO pull (services/pull.ts, restored in PR #477) upserts
+-- the sales_orders mirror with `INSERT ... ON CONFLICT(doc_no) DO UPDATE`. In the
+-- original D1/SQLite schema doc_no was the PRIMARY KEY, but the D1->PG migration
+-- gave the table a surrogate `id` PK and left doc_no as a plain column with no
+-- unique index/constraint. So every pull upsert failed with:
+--   "there is no unique or exclusion constraint matching the ON CONFLICT specification"
+-- Add a UNIQUE index on doc_no so the ON CONFLICT (doc_no) target resolves
+-- (a unique index satisfies ON CONFLICT just like a constraint does).
+-- Single idempotent statement — no DO/$$ block, because pg-migrate.mjs splits on
+-- ';' and cannot parse dollar-quoted bodies (that broke the first attempt). IF NOT
+-- EXISTS makes it a no-op on prod, where the equivalent UNIQUE constraint
+-- `sales_orders_doc_no_key` (and its backing index of the same name) was already
+-- applied directly on 2026-07-14.
+-- Verified safe: 2695 rows, 2695 distinct doc_no, 0 nulls, 0 dups.
+CREATE UNIQUE INDEX IF NOT EXISTS sales_orders_doc_no_key ON public.sales_orders (doc_no);

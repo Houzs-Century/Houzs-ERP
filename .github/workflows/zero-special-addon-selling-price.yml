@@ -1,0 +1,84 @@
+name: Special options — the price is COST, zero the selling surcharge
+
+# Manual. Owner, 2026-09-13: 「我放的都是 costing 啊 为什么会 show 在 SO 和影响 SO
+# 呢？完全都不需要有这个功能啊」 and 「正常我们的 selling price 全部自由的」.
+#
+# The design already said so (shared/mfg-pricing.ts:223-234: "variant priceSen is
+# COST, NOT selling ... surcharges contribute 0 to selling until a director sets
+# a value"). Both Maintenance screens showed ONE "Price" box and wrote it to BOTH
+# columns, so a costing figure became a customer surcharge on 11 of 35 options —
+# each with selling exactly equal to cost. docs/bugs/0859.
+#
+# Measured safe before writing (run 34745750576): 3,944 of 3,948 sofa/bedframe
+# sales lines are on a MIGRATED order where the surcharge arm is inert, and 0 of
+# the 4 native lines carry a priced option. No document's price depends on these
+# figures.
+#
+# Company-scoped: company 2's values go to the 2990s POS and are left alone; the
+# run prints their counts before and verifies they did not move.
+#
+# MODE=plan unless told otherwise; apply needs the confirm phrase and re-reads on
+# a FRESH connection, asserting every COST is byte-identical.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      mode:
+        description: "plan or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'type exactly: THE PRICE IS COST ONLY (only needed for apply)'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: zero-special-addon-selling-price-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/zero-special-addon-selling-price.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/zero-special-addon-selling-price.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

@@ -1,0 +1,32 @@
+[
+  {
+    "source": "backend/src/routes/agent-console.ts",
+    "method": "GET",
+    "expression": "`/${base}/status`",
+    "paths": ["/collection/status", "/cs/status", "/procurement/status", "/pms/status"]
+  },
+  {
+    "source": "backend/src/routes/agent-console.ts",
+    "method": "GET",
+    "expression": "`/${base}/proposals`",
+    "paths": ["/collection/proposals", "/cs/proposals", "/procurement/proposals", "/pms/proposals"]
+  },
+  {
+    "source": "backend/src/routes/agent-console.ts",
+    "method": "POST",
+    "expression": "`/${base}/proposals/decide`",
+    "paths": ["/collection/proposals/decide", "/cs/proposals/decide", "/procurement/proposals/decide", "/pms/proposals/decide"]
+  },
+  {
+    "source": "backend/src/routes/agent-console.ts",
+    "method": "GET",
+    "expression": "`/${base}/brief`",
+    "paths": ["/collection/brief", "/cs/brief", "/procurement/brief", "/pms/brief"]
+  },
+  {
+    "source": "backend/src/scm/routes/outstanding.ts",
+    "method": "GET",
+    "expression": "`/${slug}`",
+    "paths": ["/po", "/grn", "/pi", "/pr", "/so", "/do", "/si"]
+  }
+]

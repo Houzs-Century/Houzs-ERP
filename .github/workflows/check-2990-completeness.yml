@@ -1,0 +1,77 @@
+name: 2990 completeness check (read-only)
+
+# Live-count sweep across the tables the 2026-07-22 audit flagged as
+# "probably empty on company_2". Answers the owner's question — "is the P0
+# list a real problem, or was the old backend already fine without it?" —
+# without opening a SQL console.
+#
+# Read-only. No writes, no DDL. Exits 0 on every legitimate answer; the answer
+# IS the workflow annotation summary.
+#
+# Manual trigger only. Never on a schedule — a production DB read is a
+# question, not CI noise.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB to point at"
+        required: true
+        default: "prod"
+        type: choice
+        options:
+          - staging
+          - prod
+
+# Own concurrency group — must not queue behind or displace a deploy.
+concurrency:
+  group: check-2990-completeness
+  cancel-in-progress: true
+
+jobs:
+  check-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-2990-completeness.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # OPTIONAL — when set, the script also probes the 2990 upstream
+          # Supabase directly and prints a "2990 SOURCE" column alongside the
+          # Houzs counts, so the diff = exactly what didn't get imported.
+          # Same secrets the importer (migrate-2990.yml) uses.
+          SOURCE_SUPABASE_URL: ${{ secrets.SOURCE_SUPABASE_URL }}
+          SOURCE_SERVICE_ROLE_KEY: ${{ secrets.SOURCE_SERVICE_ROLE_KEY }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  check-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-2990-completeness.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          SOURCE_SUPABASE_URL: ${{ secrets.SOURCE_SUPABASE_URL }}
+          SOURCE_SERVICE_ROLE_KEY: ${{ secrets.SOURCE_SERVICE_ROLE_KEY }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

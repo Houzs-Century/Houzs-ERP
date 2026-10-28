@@ -1,0 +1,54 @@
+name: Remove the two duplicate sofa rows on HC-PO-010041 (2026-09-15)
+
+# Owner 2026-09-15: 「HC-PO-010041 删掉重复的两行（9058-1A(RHF)、9058-1NA）」.
+#
+# Two NAMED rows on ONE purchase order: the second 9058-1A(RHF) and the second
+# 9058-1NA, inserted by apply run 34507126629 with no sales link and no line
+# number. The dedicated 1NA and 1A(RHF) stay. Every guard is in the script's
+# header; each one is a refusal.
+#
+# DEFAULT IS PLAN. Apply needs the confirm phrase. Verification re-reads on a
+# fresh connection. Afterwards run repair-sofa-added-compartment-line-key with
+# doc=HC-PO-010041 so the kept rows carry the build's line key.
+#
+# REVERSAL: the apply log prints each removed row as JSON before deleting it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: "Required for apply: remove HC-PO-010041 duplicate sofa rows"
+        required: false
+        default: ""
+
+concurrency:
+  group: remove-duplicate-sofa-po-rows-2026-09-15
+  cancel-in-progress: false
+
+jobs:
+  remove:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/remove-duplicate-sofa-po-rows-2026-09-15.mjs
+        env:
+          MODE: ${{ github.event.inputs.mode }}
+          CONFIRM: ${{ github.event.inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

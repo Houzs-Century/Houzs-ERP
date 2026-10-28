@@ -1,0 +1,448 @@
+// ----------------------------------------------------------------------------
+// Commission — the payroll report for a date range, grouped by showroom.
+//
+// Reads GET /api/scm/hr/commission. The MATH is entirely server-side
+// (backend/src/scm/shared/hr-commission.ts); this page renders and exports it
+// and computes nothing, so the sheet the owner approves and the figure the
+// backend froze can never disagree.
+//
+// It is also where a period is APPROVED. An open period recalculates on every
+// load, so editing one rate silently rewrites what every past period pays;
+// closing freezes the figures and serves them from the snapshot instead.
+// Close and reopen each carry their own backend permission key
+// (scm.hr.close / scm.hr.reopen) — deliberately NOT scm.hr.manage, so whoever
+// tunes the rates cannot also approve a payroll run against the rates they just
+// set. The buttons follow those keys; the server re-checks regardless.
+//
+// Page shell is Inventory's (PageHeader + space-y-4), not the vendored 2990
+// card slab — owner 2026-07-18.
+// ----------------------------------------------------------------------------
+
+import { useMemo, useState } from 'react';
+import { Download, Lock, LockOpen } from 'lucide-react';
+import { Button } from '../../components/Button';
+import { Badge } from '../../components/Badge';
+import { PageHeader } from '../../components/Layout';
+import { EmptyState } from '../../components/EmptyState';
+import { fmtSen } from '@2990s/shared';
+import { formatDate } from '../../lib/utils';
+import { useAuth } from '../../auth/AuthContext';
+import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
+import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import { usePrompt } from '../../vendor/scm/components/PromptDialog';
+import {
+  useHrCommission, useHrPayoutPeriods, useCloseHrPayout, useReopenHrPayout,
+  type HrCommissionRow, type HrPayoutPeriod,
+} from '../../vendor/scm/lib/hr-queries';
+import { DataTable, type Column } from '../../components/DataTable';
+import { DateField } from "../../vendor/scm/components/DateField";
+import { writeLineExportXlsx } from "../../vendor/scm/lib/line-export-file";
+
+const ICON = { size: 16, strokeWidth: 1.75 } as const;
+
+const INPUT_CLASS =
+  'rounded-md border border-border bg-surface px-3 py-2 text-[13px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/20';
+
+/** bps -> a human percent. Display only; the integer bps is never mutated. */
+const fmtPct = (bps: number) => `${(bps / 100).toFixed(1)}%`;
+
+const isoDay = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/** First and last day of the current month — the default period. */
+const monthRange = () => {
+  const now = new Date();
+  return {
+    from: isoDay(new Date(now.getFullYear(), now.getMonth(), 1)),
+    to: isoDay(new Date(now.getFullYear(), now.getMonth() + 1, 0)),
+  };
+};
+
+export const HrCommission = () => {
+  const initial = useMemo(monthRange, []);
+  const [from, setFrom] = useState(initial.from);
+  const [to, setTo] = useState(initial.to);
+  const [applied, setApplied] = useState(initial);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const query = useHrCommission(applied.from, applied.to);
+  const data = query.data;
+
+  const periods = useHrPayoutPeriods();
+  const closePayout = useCloseHrPayout();
+  const reopenPayout = useReopenHrPayout();
+
+  const askConfirm = useConfirm();
+  const askPrompt = usePrompt();
+  const notify = useNotify();
+
+  /* Close and reopen are separate backend keys from scm.hr.read/manage, so the
+     buttons follow those keys and nothing else. Hiding a control the API would
+     refuse is the point: the server is still the authority (it re-checks), this
+     only stops the UI from offering an action that cannot succeed. */
+  const { can } = useAuth();
+  // can() already answers true on the `*` wildcard, so Owner / IT Admin hold
+  // both without either key being listed separately.
+  const mayClose = can('scm.hr.close');
+  const mayReopen = can('scm.hr.reopen');
+
+  const rangeValid = Boolean(from) && Boolean(to) && from <= to;
+  const busy = closePayout.isPending || reopenPayout.isPending;
+
+  const onClose = async () => {
+    if (!data || data.closed) return;
+    const total = data.showrooms.reduce(
+      (acc, s) => acc + s.rows.reduce((a, r) => a + r.totalSen, 0),
+      0,
+    );
+    const people = data.showrooms.reduce((acc, s) => acc + s.rows.length, 0);
+    const ok = await askConfirm({
+      title: 'Close this commission period?',
+      body:
+        `${formatDate(data.from)} to ${formatDate(data.to)} — ${people} salespeople, ${fmtSen(total)} in total.\n\n` +
+        'Closing saves these exact figures and stops them recalculating. After this, changing a rate, ' +
+        'a tier or an item KPI will not move what this period pays — the saved figures are what the ' +
+        'report will show from now on.\n\n' +
+        'It can only be undone by reopening the period, which is recorded with your name and a reason.',
+      confirmLabel: 'Close period',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await closePayout.mutateAsync({ from: data.from, to: data.to });
+    } catch (e) {
+      await notify({ title: 'Could not close the period', body: (e as Error)?.message, tone: 'error' });
+    }
+  };
+
+  const onReopen = async () => {
+    if (!data?.closed) return;
+    const ok = await askConfirm({
+      title: 'Reopen this closed period?',
+      body:
+        `${formatDate(data.from)} to ${formatDate(data.to)} was closed at ${fmtSen(data.closed.totalSen)}` +
+        `${data.closed.closedByName ? ` by ${data.closed.closedByName}` : ''}.\n\n` +
+        'Reopening makes it recalculate against the current rates again, so what it pays can change. ' +
+        'The figures saved at close are kept and stay readable, and closing it again saves a new revision beside them.',
+      confirmLabel: 'Continue',
+      danger: true,
+    });
+    if (!ok) return;
+    /* A reason is mandatory server-side AND in the database. Asked for here so
+       the refusal never arrives as a validation error after the fact. */
+    const reason = await askPrompt({
+      title: 'Why is this period being reopened?',
+      body: 'This is kept with the period permanently, next to your name.',
+      placeholder: 'e.g. SO-2607-018 was missed',
+      confirmLabel: 'Reopen period',
+      multiline: true,
+      validate: (v) => (v.trim().length < 3 ? 'Please give a reason (at least 3 characters).' : null),
+    });
+    if (reason == null) return;
+    try {
+      await reopenPayout.mutateAsync({ from: data.from, to: data.to, reason: reason.trim() });
+    } catch (e) {
+      await notify({ title: 'Could not reopen the period', body: (e as Error)?.message, tone: 'error' });
+    }
+  };
+
+  const onExport = async () => {
+    if (!data) return;
+    const columns = [
+      'Showroom', 'Salesperson', 'Tier', 'Goods (RM)', 'Rate', 'Personal (RM)',
+      'Override rate', 'Override (RM)', 'Item KPI (RM)', 'Total (RM)',
+    ];
+    const rows: (string | number)[][] = [];
+    for (const s of data.showrooms) {
+      for (const r of s.rows) {
+        rows.push([
+          s.showroomName, r.staffName, r.tier,
+          r.personalGoodsSen / 100,
+          fmtPct(r.personalRateBps),
+          r.personalCommissionSen / 100,
+          r.overrideRateBps === null ? 'chain' : fmtPct(r.overrideRateBps),
+          r.overrideCommissionSen / 100,
+          r.itemKpiSen / 100,
+          r.totalSen / 100,
+        ]);
+      }
+    }
+    const money = '#,##0.00';
+    await writeLineExportXlsx(
+      columns,
+      { 'Goods (RM)': money, 'Personal (RM)': money, 'Override (RM)': money, 'Item KPI (RM)': money, 'Total (RM)': money },
+      rows,
+      'Commission',
+      `Commission ${applied.from} to ${applied.to}.xlsx`,
+    );
+  };
+
+  return (
+    <div className="space-y-4">
+      <PageHeader
+        eyebrow="HR"
+        title="Commission"
+        primaryAction={
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              icon={<Download {...ICON} />}
+              onClick={onExport}
+              disabled={!data || data.showrooms.length === 0}
+            >
+              Export Excel
+            </Button>
+            {data && !data.closed && mayClose && (
+              <Button
+                variant="primary"
+                icon={<Lock {...ICON} />}
+                onClick={onClose}
+                // Closing an empty period would freeze "nobody earned anything"
+                // as an approved payroll run. Nothing to approve, so no button.
+                disabled={busy || data.showrooms.length === 0}
+              >
+                {closePayout.isPending ? 'Closing…' : 'Close period'}
+              </Button>
+            )}
+            {data?.closed && mayReopen && (
+              <Button
+                variant="secondary"
+                icon={<LockOpen {...ICON} />}
+                onClick={onReopen}
+                disabled={busy}
+              >
+                {reopenPayout.isPending ? 'Reopening…' : 'Reopen period'}
+              </Button>
+            )}
+          </div>
+        }
+      />
+
+      {/* The period picker is its own row, not a PageHeader action: the header
+          rail centres its children, which would float these labelled fields off
+          the buttons' baseline. */}
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">From</span>
+          <DateField fullWidth className={INPUT_CLASS} value={from} onChange={(iso) => setFrom(iso)}/>
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">To</span>
+          <DateField fullWidth className={INPUT_CLASS} value={to} onChange={(iso) => setTo(iso)}/>
+        </label>
+        <Button
+          variant="primary"
+          disabled={!rangeValid}
+          onClick={() => rangeValid && setApplied({ from, to })}
+        >
+          Calculate
+        </Button>
+      </div>
+
+      {!rangeValid && (
+        <div className="rounded-md border border-border bg-surface px-3 py-2 text-[12px] text-ink-secondary">
+          The From date must not be after the To date.
+        </div>
+      )}
+
+      {query.isLoading && (
+        <div className="rounded-md border border-border bg-surface px-3 py-6 text-center text-[13px] text-ink-secondary">
+          Calculating…
+        </div>
+      )}
+
+      {query.isError && (
+        <div className="rounded-md border border-err/40 bg-err/5 px-3 py-3 text-[13px] text-ink">
+          {(query.error as Error)?.message || 'The commission report could not be loaded.'}
+        </div>
+      )}
+
+      {data && (
+        <div className="flex flex-wrap items-center gap-2 text-[12px] text-ink-secondary">
+          <span>
+            {formatDate(data.from)} to {formatDate(data.to)}
+          </span>
+          {data.closed ? (
+            /* A closed period is served from frozen rows, so these figures are
+               the ones that were approved — not a fresh recompute against
+               today's rates. Saying so is the whole point of freezing them. */
+            <Badge tone="success" variant="soft" caseless>
+              <span className="inline-flex items-center gap-1">
+                <Lock size={11} strokeWidth={2} />
+                Closed rev {data.closed.revision}
+                {data.closed.closedByName ? ` by ${data.closed.closedByName}` : ''}
+                {data.closed.closedAt ? ` on ${formatDate(data.closed.closedAt)}` : ''}
+              </span>
+            </Badge>
+          ) : (
+            <Badge tone="neutral" variant="soft" caseless>
+              Open period — recalculated live
+            </Badge>
+          )}
+          {data.overrideMode === 'chain' && (
+            /* The ladder these figures were actually computed against — the
+               SNAPSHOT on a closed period, today's on an open one. Without it a
+               chain override is an amount with nothing on the page that
+               explains it, and on a closed period the live HR Settings ladder
+               may no longer be the one that produced it. */
+            <Badge tone="accent" variant="soft" caseless>
+              {data.overrideLevels.length > 0
+                ? `Chain override · ${data.overrideLevels.map((l) => `L${l.level} ${fmtPct(l.rateBps)}`).join(' · ')}`
+                : 'Chain override · no levels configured'}
+            </Badge>
+          )}
+        </div>
+      )}
+
+      {/* The reopen fields are NOT rendered here on purpose. /commission serves
+          only status='CLOSED' rows, and a reopen flips the row to 'REOPENED' and
+          leaves a fresh row behind on the next close — so closed.reopened* is
+          always null in this response. Those fields belong to the history table
+          below, which is the read that actually returns REOPENED rows. */}
+
+      {data && data.showrooms.length === 0 && (
+        <EmptyState
+          message="No salespeople configured"
+          description="Nobody has a commission profile in this company yet. Add them in HR Settings."
+        />
+      )}
+
+      {data && data.showrooms.map((s) => (
+        <section key={s.showroomId} className="space-y-2">
+          <header className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-[14px] font-semibold text-ink">{s.showroomName}</h2>
+            <Badge tone={s.showroomKpiHit ? 'success' : 'warning'} variant="soft" caseless>
+              Showroom goods {fmtSen(s.showroomGoodsSen)} ·{' '}
+              {fmtSen(data.config.showroomKpiThresholdSen)} target{' '}
+              {s.showroomKpiHit ? 'hit' : 'not hit'}
+            </Badge>
+          </header>
+
+          <DataTable<HrCommissionRow>
+            tableId="hr-commission"
+            exportName={`hr-commission-${s.showroomName}`}
+            exportXlsx
+            columns={COMMISSION_COLUMNS}
+            rows={s.rows}
+            getRowKey={(r) => r.staffId}
+            expandable={{
+              render: (r) => <CommissionBreakdown row={r} />,
+              // No breakdown to show: no chevron.
+              rowKey: (r) => (r.kpiDetail.length > 0 || (r.overrideDetail ?? []).length > 0 ? r.staffId : ''),
+              expandedIds: expanded,
+              onExpandedChange: setExpanded,
+            }}
+          />
+        </section>
+      ))}
+
+      {/* Payout history — every close and every reopen, newest first. This is
+          the audit answer to "what did we approve, when, and who moved it".
+          Clicking a row loads that period into the report above. */}
+      <section className="space-y-2">
+        <h2 className="text-[14px] font-semibold text-ink">Payout history</h2>
+
+        {periods.isError && (
+          <div className="rounded-md border border-err/40 bg-err/5 px-3 py-3 text-[13px] text-ink">
+            {(periods.error as Error)?.message || 'The payout history could not be loaded.'}
+          </div>
+        )}
+
+        <DataTable<HrPayoutPeriod>
+          tableId="hr-payout-history"
+          exportName="hr-payout-history"
+          exportXlsx
+          columns={PERIOD_COLUMNS}
+          rows={periods.data ?? (periods.isError ? [] : null)}
+          loading={periods.isLoading}
+          emptyLabel="No period has been closed yet. Every range still recalculates live."
+          getRowKey={(p) => p.id}
+          onRowClick={(p) => {
+            setFrom(p.from);
+            setTo(p.to);
+            setApplied({ from: p.from, to: p.to });
+          }}
+        />
+      </section>
+    </div>
+  );
+};
+
+const mono = 'font-mono';
+
+const overrideText = (row: HrCommissionRow): string => {
+  const overrideLevels = row.overrideDetail ?? [];
+  /* null rate = chain mode, where the override is a sum over levels of
+     different rates on different bases. Printing a blended rate would be a
+     figure nobody can reconcile against a payslip, so the amount stands alone
+     and the per-level split lives in the expansion. */
+  if (row.overrideRateBps === null) {
+    return overrideLevels.length === 0 && row.overrideCommissionSen === 0 ? '—' : fmtSen(row.overrideCommissionSen);
+  }
+  return row.overrideRateBps === 0 ? '—' : `${fmtPct(row.overrideRateBps)} · ${fmtSen(row.overrideCommissionSen)}`;
+};
+
+const money = (key: string, label: string, sen: (r: HrCommissionRow) => number, bold = false): Column<HrCommissionRow> => ({
+  key, label, align: 'right',
+  render: (r) => <span className={bold ? `${mono} font-semibold text-ink` : mono}>{fmtSen(sen(r))}</span>,
+  getValue: sen, exportValue: (r) => sen(r) / 100, exportFormat: 'money',
+});
+
+const COMMISSION_COLUMNS: Column<HrCommissionRow>[] = [
+  { key: 'salesperson', label: 'Salesperson', render: (r) => <span className="font-semibold text-ink">{r.staffName}</span>, getValue: (r) => r.staffName },
+  { key: 'tier', label: 'Tier', render: (r) => r.tier, getValue: (r) => r.tier },
+  money('goods', 'Goods', (r) => r.personalGoodsSen),
+  { key: 'rate', label: 'Rate', align: 'right', render: (r) => <span className={mono}>{fmtPct(r.personalRateBps)}</span>, getValue: (r) => r.personalRateBps },
+  money('personal', 'Personal', (r) => r.personalCommissionSen),
+  { key: 'override', label: 'Override', align: 'right', render: (r) => <span className={mono}>{overrideText(r)}</span>, getValue: (r) => r.overrideCommissionSen },
+  money('itemKpi', 'Item KPI', (r) => r.itemKpiSen),
+  money('total', 'Total', (r) => r.totalSen, true),
+];
+
+const CommissionBreakdown = ({ row }: { row: HrCommissionRow }) => (
+  <div className="space-y-1 py-1 text-[11px] text-ink-secondary">
+    {(row.overrideDetail ?? []).map((d) => (
+      <div key={`lvl${d.level}`} className="flex justify-between gap-4">
+        <span>Level {d.level} downline goods {fmtSen(d.goodsSen)} @ {fmtPct(d.rateBps)}</span>
+        <span className={mono}>{fmtSen(d.commissionSen)}</span>
+      </div>
+    ))}
+    {row.kpiDetail.map((d, i) => (
+      <div key={`kpi${i}`} className="flex justify-between gap-4">
+        <span>{d.label} × {d.qty} @ {fmtSen(d.bonusSen)}</span>
+        <span className={mono}>{fmtSen(d.lineSen)}</span>
+      </div>
+    ))}
+  </div>
+);
+
+const PERIOD_COLUMNS: Column<HrPayoutPeriod>[] = [
+  { key: 'period', label: 'Period', render: (p) => `${formatDate(p.from)} – ${formatDate(p.to)}`, getValue: (p) => p.from, exportFormat: 'date' },
+  { key: 'rev', label: 'Rev', align: 'right', render: (p) => <span className={mono}>{p.revision}</span>, getValue: (p) => p.revision },
+  {
+    key: 'status', label: 'Status',
+    render: (p) => (
+      <Badge tone={p.status === 'CLOSED' ? 'success' : 'warning'} variant="soft" caseless>
+        {p.status === 'CLOSED' ? 'Closed' : 'Reopened'}
+      </Badge>
+    ),
+    getValue: (p) => (p.status === 'CLOSED' ? 'Closed' : 'Reopened'),
+  },
+  { key: 'people', label: 'People', align: 'right', render: (p) => <span className={mono}>{p.rowCount}</span>, getValue: (p) => p.rowCount },
+  {
+    key: 'total', label: 'Total', align: 'right', render: (p) => <span className={mono}>{fmtSen(p.totalSen)}</span>,
+    getValue: (p) => p.totalSen, exportValue: (p) => p.totalSen / 100, exportFormat: 'money',
+  },
+  {
+    key: 'closedBy', label: 'Closed By',
+    render: (p) => `${p.closedByName || '—'}${p.closedAt ? ` · ${formatDate(p.closedAt)}` : ''}`,
+    getValue: (p) => p.closedByName || '',
+  },
+  {
+    key: 'reopened', label: 'Reopened',
+    render: (p) => (p.reopenedAt
+      ? `${p.reopenedByName || 'unknown'} · ${formatDate(p.reopenedAt)}${p.reopenReason ? ` — ${p.reopenReason}` : ''}`
+      : '—'),
+    getValue: (p) => p.reopenedByName || '',
+  },
+];

@@ -1,0 +1,43 @@
+-- 0119_scm_so_amendment_header_changes.sql — let an SO amendment carry HEADER
+-- field changes, not just line diffs.
+--
+-- WHY (Owner 2026-07-16): once an SO is processing-locked, the header PATCH
+-- rejects any change to the frozen schedule/location columns (409
+-- so_locked_processing — SO_PROCESSING_LOCK_COLS in scm/routes/mfg-sales-orders.ts:
+-- internal_expected_dd, customer_delivery_date, customer_state, sales_location,
+-- postcode). The amendment workflow — the sanctioned channel for changing a
+-- locked SO — only had so_amendment_lines, so those columns had NOWHERE to go: a
+-- Delivery Date change was impossible to request at all. Owner ruling: "應該是全部
+-- 可以 request 啊 然後看有沒有 approval" — everything requestable, approval decides.
+--
+-- Shape: two nullable jsonb columns on the EXISTING scm.so_amendments header.
+--   * header_changes      — { "customerDeliveryDate": "2026-08-01", ... }
+--                           ONLY the requested keys (camelCase, the same names
+--                           the SO header PATCH already accepts). Applied to
+--                           scm.mfg_sales_orders by applySoAmendment at the
+--                           approve-so gate, with the same cascades the header
+--                           PATCH runs (delivery-date -> lines, state -> derived
+--                           sales_location + line warehouse rebind).
+--   * old_header_snapshot — the same keys' PRE-amendment values, for the
+--                           before/after diff. The header mirror of
+--                           so_amendment_lines.old_snapshot.
+-- jsonb (not one column per field) so a future frozen column needs a code change
+-- only, never another migration on a live table. The server validates every key
+-- against an explicit allow-list on create, so the blob can't smuggle in an
+-- arbitrary column write.
+--
+-- Houzs SCM port conventions (mirrors 0118 / 0111 / 0090): the scm.* tables live
+-- in the separate `scm` postgres schema, so this is schema-qualified. Plain
+-- `ADD COLUMN IF NOT EXISTS` (NOT a DO block) — the pg-migrate runner splits each
+-- file on ";\n", which would fragment a dollar-quoted block; ADD COLUMN IF NOT
+-- EXISTS is already idempotent + re-run-safe, so the auto-apply on every deploy
+-- is a no-op after the first. scm.so_amendments exists on prod (created by 0080),
+-- so this only ever adds two nullable columns.
+--
+-- Backward compatible: both columns are NULL on every existing amendment, and a
+-- NULL header_changes means "line changes only" — exactly today's behaviour. No
+-- backfill. No view touches so_amendments, so there is no VIEW-TRAP here (cf.
+-- 0080's note on mfg_sales_orders_with_payment_totals).
+ALTER TABLE scm.so_amendments ADD COLUMN IF NOT EXISTS header_changes jsonb;
+
+ALTER TABLE scm.so_amendments ADD COLUMN IF NOT EXISTS old_header_snapshot jsonb;

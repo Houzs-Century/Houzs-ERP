@@ -1,0 +1,89 @@
+name: Goods receipts — stamp the order line each receipt line filled
+
+# Run 34263816266 on `main`: GOODS RECEIPTS 26 differ, 22 of them on 单据转换链
+# and all 22 on a PROCEEDED order. The reconcile names the cause per line —
+# `erp_link_missing`, 28 lines: the account book raises the receipt line from a
+# purchase order and scm.grn_items.purchase_order_item_id is NULL.
+#
+# The ERP side lives only in production, so this runs here over
+# secrets.DATABASE_URL rather than putting the production DSN in front of a
+# person. Manual trigger only.
+#
+# PLAN writes nothing. The plan file it produces is COMMITTED, and APPLY
+# recomputes the plan from live data and refuses unless the digest matches what
+# was committed — so what is applied can only ever be what was reviewed.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (writes nothing) or apply (writes scm.grn_items.purchase_order_item_id)"
+        required: true
+        default: "plan"
+        type: choice
+        options: ["plan", "apply"]
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+      max_snapshot_age_days:
+        description: "Refuse if either AutoCount snapshot is older than this"
+        required: false
+        default: "2"
+      money_diagnostic:
+        description: "Also print WHY four receipts differ on money (read-only, writes nothing)"
+        required: false
+        default: true
+        type: boolean
+
+# Its own group: this touches one column on 28 rows and must neither queue
+# behind a release nor displace one.
+concurrency:
+  group: repair-gr-po-line-links
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+
+      - name: Stamp the order-line links
+        run: node scripts/repair-gr-po-line-links.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          # Only honoured when MODE=apply; the script refuses to write without it.
+          CONFIRM: I HAVE REVIEWED THE DRY-RUN
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+      # The plan is an artifact so it can be committed without re-running the
+      # read. On an apply run it is unchanged by construction — the digest check
+      # above already refused any drift.
+      - name: Keep the plan
+        if: ${{ inputs.mode == 'plan' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: gr-po-line-links-plan
+          path: backend/scripts/data/gr-po-line-links-plan.json
+          if-no-files-found: error
+
+      - name: Why four receipts differ on money (READ-ONLY)
+        if: ${{ inputs.money_diagnostic }}
+        run: node scripts/diag-gr-money-gap.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

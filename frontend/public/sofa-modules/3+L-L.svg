@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 267 145" width="267" height="145">
+  <title>2990s Sofa Preset — 3+L-L — 3-Seater + L-Chaise on LEFT</title>
+  <desc>Top-down plan view. L-shape sofa: chaise on LEFT + a 1-seater (no arms) in the middle + a 2-seater on the RIGHT. Backrest along the full back edge; hard armrest only on the RIGHT outside corner.</desc>
+  <g transform="translate(20,20)">
+    <!-- Chaise leg (left): 60 wide x 105 tall -->
+    <rect x="0" y="0" width="60" height="105" rx="3" fill="#F0E6D6" stroke="#2C2C2A" stroke-width="1.4"/>
+    <!-- 1NA middle: 47 wide x 70 tall -->
+    <rect x="60" y="0" width="47" height="70" rx="3" fill="#F0E6D6" stroke="#2C2C2A" stroke-width="1.4"/>
+    <!-- 2-seater right: 120 wide x 70 tall -->
+    <rect x="107" y="0" width="120" height="70" rx="3" fill="#F0E6D6" stroke="#2C2C2A" stroke-width="1.4"/>
+    <!-- Top backrest spans full top row (chaise + 1NA + 2-seater) -->
+    <rect x="0" y="0" width="227" height="11" fill="#D9C2A0" stroke="#2C2C2A" stroke-width="0.8"/>
+    <!-- RIGHT armrest on the outer end of the 2-seater -->
+    <rect x="216" y="0" width="11" height="70" fill="#B89972" stroke="#2C2C2A" stroke-width="0.8"/>
+    <!-- Dashed seams between modules -->
+    <line x1="60" y1="11" x2="60" y2="70" stroke="#2C2C2A" stroke-width="0.5" stroke-dasharray="2,2"/>
+    <line x1="107" y1="11" x2="107" y2="70" stroke="#2C2C2A" stroke-width="0.5" stroke-dasharray="2,2"/>
+    <!-- Dashed seam between the two seats of the 2-seater -->
+    <line x1="161.5" y1="0" x2="161.5" y2="70" stroke="#2C2C2A" stroke-width="0.5" stroke-dasharray="2,2"/>
+  </g>
+</svg>

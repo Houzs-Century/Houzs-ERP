@@ -1,0 +1,80 @@
+name: Copy the spec onto receipts that have none
+
+# Manual. A goods-received line that carries no variants takes them from the
+# purchase line it was raised from.
+#
+# Measured before it was written (chain audit run 34587006588, 2026-09-11): 70
+# sofa/bedframe receipt lines carry no spec, ALL of them migrated paperwork from
+# the 2026-08 cutover, and ALL of them have a purchase line that does carry it.
+# The live receiving path copies the spec already (grns.ts, PR #44), so this is
+# the importer's gap, not a hole anything is still falling through.
+#
+# It REFUSES a receipt that is not migrated paperwork, and refuses again if any
+# inventory movement names it — a receipt whose goods actually moved is never
+# re-specced underneath its own lot.
+#
+# MODE=plan unless told otherwise; apply needs the confirm phrase and ends by
+# re-reading every line on a FRESH connection.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      mode:
+        description: "plan or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'type exactly: COPY THE SPEC ONTO THE RECEIPT (only needed for apply)'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: backfill-grn-variants-from-po-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/backfill-grn-variants-from-po.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/backfill-grn-variants-from-po.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

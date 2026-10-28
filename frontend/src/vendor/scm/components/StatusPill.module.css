@@ -1,0 +1,14 @@
+/* Canonical status badge shape. Lifted from the original .statusPill so pills
+   keep their look; background + text colour come from the tone (inline). */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-button);
+  font-size: var(--fs-11);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+}

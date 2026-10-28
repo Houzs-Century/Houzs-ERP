@@ -1,0 +1,71 @@
+name: Sold but never ordered (read-only)
+
+# Manual, read-only. HC-SO-012949 sells a CODY single bedframe that no purchase
+# order on company 1 carries - the gap is in the account book, not in our copy
+# of it. This answers the question that follows: is it the only one?
+#
+# It counts hard-bound lines (bedframe / sofa / (SP) mattress - the ones that on
+# company 1 can ONLY read READY through their own dedicated purchase order) that
+# sit on a PROCEEDED, still-owed order with no purchase line dedicated to them,
+# and splits them into NEVER ORDERED (the code is on zero purchase lines) and
+# UNDEDICATED (bought somewhere, pointer missing - a different repair).
+#
+# ONE statement, no writes, no DDL, no transaction. Exits 0 for every legitimate
+# answer, INCLUDING zero rows: "nothing is in this shape" is the best possible
+# answer and must not read as a broken check.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      limit:
+        description: "rows printed per section (the COUNTS are always complete)"
+        required: false
+        default: "200"
+        type: string
+
+# Its own group: a diagnostic must never queue behind or displace a release.
+concurrency:
+  group: probe-unordered-sold-lines-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-unordered-sold-lines.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          LIMIT: ${{ inputs.limit }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-unordered-sold-lines.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          LIMIT: ${{ inputs.limit }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

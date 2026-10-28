@@ -1,0 +1,169 @@
+/* ====================================================================
+   Fabric Converter — design-system reskin (2026-07-16)
+
+   The page frame is now FULL-BLEED and matches the PO/SO V2 pages
+   (PurchaseOrdersListV2 / SalesOrderMaintenance / SalesOrderDetailListing):
+   the header is the shared <PageHeader>, the toolbar CTAs are the local
+   <Button>, and the search row + both dialogs are plain Tailwind token
+   slabs — all inline in the TSX.
+
+   The old grey "framed card" chrome (.page #dcdfd9 canvas + its
+   `--c-*` / `--line` token-override cascade, .titleBlock/.title/.subtitle,
+   the .statGrid/.statCard KPI tiles, .filterRow/.searchBox/.searchInput,
+   .tableCard/.table/.recordCount and the unused .cat* / .num* / .price
+   cell classes) is gone.
+
+   What survives here are ONLY the cell primitives that
+   vendor/scm/components/FabricsTable.tsx still imports from this module
+   (that table also renders at Products → Maintenance → Fabrics, i.e.
+   OUTSIDE this page). Their colours used to resolve through the deleted
+   `.page` cascade, so they are hardcoded to the Tailwind "Ink & Petrol"
+   tokens:
+     primary  #16695f   primary-dark  #0c3f39   primary-soft #e1efed
+     ink      #11140f   ink-muted     #767b6e   ink-soft     #9aa093
+     border   #d6d9d2   surface       #ffffff   surface-2    #f4f6f3
+     err      #b23a3a
+   Structural tokens (--space-*, --fs-*, --font-*, --radius-*) stay as
+   var() — those are global and unaffected by the removed cascade.
+   ==================================================================== */
+
+/* ── Fabric code cell ───────────────────────────────────────────────── */
+
+.codeChip {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-13);
+  background: #f4f6f3;
+  color: #11140f;
+  border: 1px solid #d6d9d2;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+}
+
+/* ── Tier picker pill ───────────────────────────────────────────────── */
+/* Click-cycles PRICE_1 → PRICE_2. Petrol-tinged so the user can see which
+   rows carry a non-default tier. (Was a raw 2990 orange rgba — repainted
+   to the Ink & Petrol primary in the 2026-07-16 reskin.) */
+
+.tierPicker {
+  font-family: var(--font-button);
+  font-size: var(--fs-12);
+  font-weight: 600;
+  background: rgba(22, 105, 95, 0.10);
+  color: #0c3f39;
+  border: 1px solid rgba(22, 105, 95, 0.30);
+  border-radius: var(--radius-pill);
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.tierPicker:hover {
+  background: rgba(22, 105, 95, 0.18);
+}
+
+/* ── Active toggle ──────────────────────────────────────────────────── */
+/* Plain green "Active" text matching the Maintenance pools' active style
+   (owner 2026-06-22), not a pill. Colour is set inline by FabricsTable
+   (green when active, muted when inactive). */
+
+.activeToggle {
+  font-family: var(--font-sans);
+  font-size: var(--fs-13);
+  font-weight: 600;
+  background: transparent;
+  border: none;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+.activeToggle:hover {
+  text-decoration: underline;
+}
+
+/* ── Load-failure banner ────────────────────────────────────────────── */
+
+.bannerWarn {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: rgba(178, 58, 58, 0.10);
+  border: 1px solid rgba(178, 58, 58, 0.40);
+  color: #b23a3a;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-13);
+}
+
+/* ── Supplier code inline editor ────────────────────────────────────── */
+
+.supplierCodeChip {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-13);
+  background: #ffffff;
+  color: #11140f;
+  border: 1px dashed #d6d9d2;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+
+.supplierCodeChip:hover {
+  background: #f4f6f3;
+  border-color: #16695f;
+}
+
+.supplierCodeEmpty {
+  display: inline-block;
+  font-family: var(--font-button);
+  font-size: var(--fs-12);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  background: transparent;
+  color: #9aa093;
+  border: 1px dashed #d6d9d2;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+
+.supplierCodeEmpty:hover {
+  color: #0c3f39;
+  border-color: #16695f;
+  background: #e1efed;
+}
+
+.supplierCodeEditor {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.supplierCodeInput {
+  font-family: var(--font-mono);
+  font-size: var(--fs-13);
+  background: #f4f6f3;
+  border: 1px solid #16695f;
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  color: #11140f;
+  outline: none;
+  width: 140px;
+}
+
+/* ── Inline save/cancel icon buttons ────────────────────────────────── */
+
+.iconBtn {
+  background: transparent;
+  border: 1px solid #d6d9d2;
+  border-radius: var(--radius-sm);
+  color: #767b6e;
+  cursor: pointer;
+  padding: 3px 5px;
+  display: inline-flex;
+}
+
+.iconBtn:hover {
+  background: #f4f6f3;
+  color: #11140f;
+}

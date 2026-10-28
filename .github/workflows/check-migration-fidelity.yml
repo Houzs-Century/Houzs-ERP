@@ -1,0 +1,74 @@
+name: Migration fidelity check (read-only)
+
+# Answers the owner's question of 2026-08-11 - "我们的数据居然是 migrate 的，那就
+# 应该全部一模一样 migrate" - field by field, per LINE, for every document the
+# cutover carried over from AutoCount.
+#
+# Every earlier verification was aggregate (document counts, document numbers,
+# balances, the SO->PO->GR chain) and every one of them passed while
+# purchase_order_items.received_qty was wrong on 65 lines. An aggregate can only
+# see the sum, and the sum was right. This one compares the fields.
+#
+# READ-ONLY: SELECT only, no writes, no DDL, no transaction.
+#
+# The AutoCount half is a committed snapshot: the AutoCount host sits behind
+# ZeroTier on the office network and a GitHub runner cannot reach it. Refresh it
+# from a machine on that network with
+#   AC_CRED_FILE=<file holding only the password> \
+#     python backend/scripts/export-ac-fidelity-truth.py
+# and commit the data/ac-fidelity-* files. The check prints the snapshot's own
+# timestamp, so a stale export is visible rather than silently compared.
+#
+# Manual trigger only. A production read must never become routine CI noise.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      top:
+        description: "Example rows printed per field finding"
+        required: false
+        default: "25"
+
+# Deliberately NOT the deploy's concurrency group: a diagnostic must never queue
+# behind, or displace, a release.
+concurrency:
+  group: check-migration-fidelity-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-migration-fidelity.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          TOP: ${{ inputs.top }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-migration-fidelity.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TOP: ${{ inputs.top }}
+          # GitHub-hosted runners have no IPv6 egress.
+          NODE_OPTIONS: --dns-result-order=ipv4first

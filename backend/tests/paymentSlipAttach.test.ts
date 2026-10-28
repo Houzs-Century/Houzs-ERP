@@ -1,0 +1,116 @@
+/* POST /:docNo/payments/:id/slip — the after-the-fact proof attach
+   (owner 2026-08-07, "开放 backend 可以上传 balance payment proof").
+
+   The route's whole reason to exist is a GATE ASYMMETRY, and an asymmetry is
+   exactly what a later "tidy these three routes up" edit erases without
+   noticing:
+
+     PATCH  /payments/:id       → same-day window (it moves money)
+     DELETE /payments/:id       → same-day window (it moves money)
+     POST   /payments/:id/slip  → NO window (it moves none)
+
+   Put the window back on the slip route and the feature is silently dead again
+   for every balance whose receipt reaches the office on a later day — which is
+   most of them, and was the original gap.
+
+   WHY A SOURCE TEST: the correct behaviour here is the ABSENCE of a call, and
+   the handler is Supabase/Postgres (`c.get('supabase')`), which this suite's
+   environment does not bind. WHY `?raw` (tests/lib/so-router-source.ts) AND NOT readFileSync: this
+   suite runs in workerd, where fs is not implemented; `?raw` is expanded by
+   Vite at TRANSFORM time, in Node. Same technique, and same reasons, as
+   tests/scheduleScopeRuling.test.ts. */
+
+import { describe, expect, test } from 'vitest';
+import { soRouterSource } from './lib/so-router-source';
+
+const routeSource = soRouterSource();
+
+/** Strip comments so the assertions read CODE, not prose — the slip handler's
+ *  own docblock explains the ruling and names the routes it differs from. */
+const stripComments = (s: string): string =>
+  s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+/** Body of the handler registered for `method` + `path`, up to the next route
+ *  registration. Slicing matters: asserting over the whole file would let
+ *  PATCH's legitimate window call mask a re-added one on the slip route. */
+const handlerBody = (method: string, path: string): string => {
+  const marker = `mfgSalesOrders.${method}('${path}'`;
+  const start = routeSource.indexOf(marker);
+  expect(start, `${method.toUpperCase()} ${path} is not registered`).toBeGreaterThan(-1);
+  const rest = routeSource.slice(start + 1);
+  const next = rest.search(/\nmfgSalesOrders\.(get|post|patch|put|delete)\(/);
+  const registration = next === -1 ? rest : rest.slice(0, next);
+  /* A route registered by NAME — `mfgSalesOrders.post(path, someHandler)`,
+     the exported-handler shape the contract tests drive (docs/bugs/0927) —
+     has its body under `export const someHandler = async`, not here. */
+  const named = /^[^\n]*',\s*([A-Za-z0-9_]+)\);/.exec(registration);
+  if (named) {
+    const at = routeSource.indexOf(`export const ${named[1]} = async`);
+    expect(at, `${method.toUpperCase()} ${path}: handler ${named[1]} is not defined in the route file`).toBeGreaterThan(-1);
+    const tail = routeSource.slice(at + 1);
+    const end = tail.search(/\n(export const [A-Za-z0-9_]+ = async|mfgSalesOrders\.(get|post|patch|put|delete)\()/);
+    return stripComments(end === -1 ? tail : tail.slice(0, end));
+  }
+  return stripComments(registration);
+};
+
+describe('payment proof attach route', () => {
+  test('the source loaded (a silent empty glob must not pass)', () => {
+    expect(routeSource.length).toBeGreaterThan(1000);
+    expect(routeSource).toContain("mfgSalesOrders.post('/:docNo/payments/:id/slip'");
+  });
+
+  test('is NOT behind the same-day payment window', () => {
+    const attach = handlerBody('post', '/:docNo/payments/:id/slip');
+    expect(attach).not.toContain('paymentRowMutable');
+    expect(attach).not.toContain('paymentMayChange');
+    expect(attach).not.toContain('PAYMENT_WINDOW_CLOSED_ERROR');
+  });
+
+  test('the money routes it sits beside ARE behind that window', () => {
+    /* Without this, the assertion above could pass on a file that lost the
+       window entirely — which would be a far worse bug than the one it guards.
+
+       The gate is named `paymentMayChange` since 2026-09-10 (docs/bugs/0780):
+       the two money routes now load whether the payment has been RECONCILED
+       and hand that to `paymentRowMutable`, which is still the only place the
+       rule lives. Asserting on the wrapper rather than the predicate is the
+       stronger check of the two — a route that called the bare predicate again
+       would have quietly dropped both the reconciliation and Finance's right,
+       and this test would say so. */
+    expect(handlerBody('patch', '/:docNo/payments/:id')).toContain('paymentMayChange');
+    expect(handlerBody('delete', '/:docNo/payments/:id')).toContain('paymentMayChange');
+  });
+
+  test('keeps the guards that are about ownership, not timing', () => {
+    const attach = handlerBody('post', '/:docNo/payments/:id/slip');
+    expect(attach).toContain('selfScopedSalesBlocked');
+    expect(attach).toContain('payment_doc_mismatch');
+  });
+
+  test('writes only the slip — never an amount, method, date or collector', () => {
+    const attach = handlerBody('post', '/:docNo/payments/:id/slip');
+    // From the UPDATE's column list to the row selector that closes it. The
+    // `.eq('id', id)` search starts at the update — the row LOAD above uses the
+    // same selector, and anchoring on its earlier hit would slice backwards.
+    const updateAt = attach.indexOf('.update({');
+    expect(updateAt).toBeGreaterThan(-1);
+    const update = attach.slice(updateAt, attach.indexOf(".eq('id', id)", updateAt));
+    expect(update).toContain('slip_key');
+    for (const moneyColumn of ['amount_sen', 'method', 'paid_at', 'collected_by']) {
+      expect(update, `${moneyColumn} must not move on a proof attach`).not.toContain(moneyColumn);
+    }
+  });
+
+  test('only a finished upload resolves, and it is promoted out of the reaper', () => {
+    const attach = handlerBody('post', '/:docNo/payments/:id/slip');
+    expect(attach).toContain("slipRowT.status !== 'uploaded'");
+    expect(attach).toContain("status: 'promoted'");
+  });
+
+  test('records the swap in the audit ledger, both keys', () => {
+    const attach = handlerBody('post', '/:docNo/payments/:id/slip');
+    expect(attach).toContain("action: 'UPDATE_PAYMENT'");
+    expect(attach).toContain("field: 'slipKey', from: before.slip_key, to: nextSlipKey");
+  });
+});

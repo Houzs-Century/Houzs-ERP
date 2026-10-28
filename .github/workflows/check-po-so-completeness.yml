@@ -1,0 +1,68 @@
+name: PO + SO completeness audit (read-only)
+
+# Manual, read-only. Which sofa documents are not fully specified?
+# Scope is the owner's rule (2026-08-10): EVERY sofa line on a purchase order,
+# plus sofa lines on sales orders that have already been proceeded. An
+# un-proceeded SO is deliberately out of scope.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      list:
+        description: "1 for the per-line detail, 0 for counts only"
+        required: false
+        default: "1"
+        type: string
+      cap:
+        description: "max detail lines per section (raise to see everything)"
+        required: false
+        default: "60"
+        type: string
+
+concurrency:
+  group: check-po-so-completeness-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-po-so-completeness.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          LIST: ${{ inputs.list }}
+          CAP: ${{ inputs.cap }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-po-so-completeness.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          LIST: ${{ inputs.list }}
+          CAP: ${{ inputs.cap }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

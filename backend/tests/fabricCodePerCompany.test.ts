@@ -1,0 +1,147 @@
+// Two companies can each OWN the same fabric code (mig 0342).
+//
+// WHAT CHANGED. scm.fabric_trackings.id was a GLOBAL text primary key and the id
+// IS the fabric code, so two companies importing the same code addressed the
+// SAME row. The bulk upsert's ON CONFLICT (id) DO UPDATE re-homed the other
+// company's row, and a route-level 409 (`fabric_id_belongs_to_another_company`)
+// had to REFUSE the import to stop that — one company could not hold a code the
+// other already used.
+//
+// Migration 0342 moves the identity to the composite PRIMARY KEY (company_id,
+// id). The bulk upsert now targets ON CONFLICT (company_id, id), so the same code
+// under two companies is two DIFFERENT rows and the 409 guard is gone. This test
+// drives POST /bulk-upsert as company A then company B with the SAME code and
+// proves both rows land, neither overwrites the other, and neither request 409s.
+//
+// This file REPLACES fabricBulkUpsertCannotStealARow.test.ts, which pinned the
+// now-removed 409 guard. It was proved RED against the pre-0342 tree: on the old
+// code the company-B import returned 409 fabric_id_belongs_to_another_company and
+// only one row existed in the store.
+//
+// Bare-Hono harness like fabricTierAffectedCount.test.ts. The router declares its
+// own `use('*', supabaseAuth)`, which SHORT-CIRCUITS to next() when
+// user.id === SCM_SYSTEM_STAFF_ID (middleware/auth.ts) — so a preceding
+// middleware that pins that id plus our fake supabase mounts the real router
+// with no auth machinery.
+import { Hono } from 'hono';
+import { describe, expect, test } from 'vitest';
+import { fabricTracking } from '../src/scm/routes/fabric-tracking';
+import { SCM_SYSTEM_STAFF_ID } from '../src/scm/middleware/auth';
+
+type Row = Record<string, any>;
+
+/** Minimal fake supabase: an in-memory table store that honours .upsert with a
+ *  composite onConflict key and ignoreDuplicates, which is all the bulk-upsert
+ *  handler touches on the write path. */
+class FakeQuery {
+  constructor(private store: Row[]) {}
+  upsert(rows: Row[], opts: { onConflict: string; ignoreDuplicates?: boolean }) {
+    const keys = opts.onConflict.split(',').map((s) => s.trim());
+    const keyOf = (r: Row) => keys.map((k) => String(r[k])).join('');
+    for (const incoming of rows) {
+      const k = keyOf(incoming);
+      const idx = this.store.findIndex((r) => keyOf(r) === k);
+      if (idx === -1) this.store.push({ ...incoming });
+      else if (!opts.ignoreDuplicates) Object.assign(this.store[idx], incoming);
+      // ignoreDuplicates + existing → leave the curated row untouched.
+    }
+    return Promise.resolve({ error: null });
+  }
+}
+
+function harness() {
+  const tables: Record<string, Row[]> = { fabric_trackings: [], fabric_library: [], fabric_colours: [] };
+  let companyId = 1;
+  const app = new Hono();
+  app.use('*', async (c, next) => {
+    c.set('supabase' as never, { from: (t: string) => new FakeQuery((tables[t] ||= [])) } as never);
+    // Pin the SCM system-staff id so supabaseAuth is a pass-through.
+    c.set('user' as never, { id: SCM_SYSTEM_STAFF_ID } as never);
+    c.set('companyId' as never, companyId as never);
+    c.set('allowedCompanyIds' as never, [companyId] as never);
+    c.set('companyCode' as never, (companyId === 1 ? 'HOUZS' : '2990') as never);
+    await next();
+  });
+  app.route('/fabric-tracking', fabricTracking);
+  return { app, tables, setCompany: (id: number) => { companyId = id; } };
+}
+
+const bulkImport = (app: Hono, code: string) =>
+  app.request(
+    '/fabric-tracking/bulk-upsert',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ rows: [{ fabricCode: code, priceSen: 1234 }] }),
+    },
+    {} as never,
+  );
+
+describe('a fabric code is per-company (mig 0342)', () => {
+  test('two companies import the SAME code — both land, no 409, no re-home', async () => {
+    const h = harness();
+
+    h.setCompany(1);
+    const a = await bulkImport(h.app, 'CG-001');
+    expect(a.status).toBe(200);
+    expect(await a.json()).toEqual({ upserted: 1, errors: [] });
+
+    h.setCompany(2);
+    const b = await bulkImport(h.app, 'CG-001');
+    // The old 409 guard is gone — company 2 owning "CG-001" is now legitimate.
+    expect(b.status).toBe(200);
+    expect(await b.json()).toEqual({ upserted: 1, errors: [] });
+
+    // Two SEPARATE rows, one per company, same id — neither overwrote the other.
+    const rows = h.tables.fabric_trackings
+      .filter((r) => r.id === 'CG-001')
+      .sort((x, y) => x.company_id - y.company_id);
+    expect(rows.map((r) => r.company_id)).toEqual([1, 2]);
+    expect(rows).toHaveLength(2);
+  });
+
+  test('a re-import within one company UPDATES that company row, not the other', async () => {
+    const h = harness();
+    h.setCompany(1);
+    await bulkImport(h.app, 'CG-001');
+    h.setCompany(2);
+    await bulkImport(h.app, 'CG-001');
+
+    // Company 1 re-imports the same code with a new price → its own row updates.
+    h.setCompany(1);
+    const res = await h.app.request(
+      '/fabric-tracking/bulk-upsert',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ rows: [{ fabricCode: 'CG-001', priceSen: 9999 }] }),
+      },
+      {} as never,
+    );
+    expect(res.status).toBe(200);
+
+    const co1 = h.tables.fabric_trackings.find((r) => r.id === 'CG-001' && r.company_id === 1);
+    const co2 = h.tables.fabric_trackings.find((r) => r.id === 'CG-001' && r.company_id === 2);
+    expect(co1?.price_sen).toBe(9999); // updated in place
+    expect(co2?.price_sen).toBe(1234); // the other company's row is untouched
+    expect(h.tables.fabric_trackings.filter((r) => r.id === 'CG-001')).toHaveLength(2);
+  });
+});
+
+// A source-scan guard, in the shape the old file used: the per-company identity
+// must stay wired the way this test assumes, and the removed 409 must not creep
+// back. Comments are stripped so a comment quoting the old shape can't satisfy it.
+describe('the per-company wiring is in the source, not just the mock', () => {
+  test('bulk-upsert targets the composite key and no longer refuses a shared code', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const src = readFileSync(fileURLToPath(new URL('../src/scm/routes/fabric-tracking.ts', import.meta.url)), 'utf8');
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/[^\n]*$/gm, '');
+    expect(code, 'the bulk upsert must conflict on the composite (company_id, id)')
+      .toMatch(/from\(['"]fabric_trackings['"]\)\s*\.upsert\([^;]*onConflict:\s*['"]company_id,id['"]/);
+    expect(code, 'the cross-company 409 refusal must be gone')
+      .not.toMatch(/fabric_id_belongs_to_another_company/);
+    expect(code, 'a re-import must stay an UPDATE within a company (no ignoreDuplicates on fabric_trackings)')
+      .not.toMatch(/from\(['"]fabric_trackings['"]\)\s*\.upsert\([^;]*ignoreDuplicates/);
+  });
+});

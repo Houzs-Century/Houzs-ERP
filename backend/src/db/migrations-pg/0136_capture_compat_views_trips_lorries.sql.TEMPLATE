@@ -1,0 +1,64 @@
+-- 0136_capture_compat_views_trips_lorries.sql
+--
+-- STATUS: TEMPLATE — NOT YET RUNNABLE. This file ends in `.sql.TEMPLATE`, so
+-- scripts/pg-migrate.mjs (which globs only `*.sql`) SKIPS it and it CANNOT block
+-- a deploy. It becomes a real migration only after the two view bodies below are
+-- filled in from the probe and the file is renamed to `0136_..._lorries.sql`.
+--
+-- WHY THIS EXISTS
+-- Migration 0055 DROPped the old public.trips + public.lorries TABLES in favour
+-- of scm.*. Two compatibility VIEWs (public.trips / public.lorries over scm.*)
+-- were then created OUT-OF-BAND to keep legacy callers working — they exist in
+-- prod but in NO migration file. So a fresh env rebuilt from this tree has
+-- NEITHER view, and getProjectDetail's `LEFT JOIN lorries l1 ON l1.id =
+-- p.setup_lorry_id` (services/projects.ts) 500s on EVERY project there. Same
+-- class as the "scm PL/pgSQL restored out-of-band, not in the tree" trap; PR
+-- #674 (scm schema blueprint) is the strategic fix. This migration captures the
+-- two specific views so the tree is self-consistent.
+--
+-- HOW TO COMPLETE THIS FILE (DO NOT hand-write the bodies from imagination — a
+-- drifted column would 500 and block ALL deploys; the DB is ground truth):
+--   1. Run the "Dump public compat views (read-only)" workflow
+--      (.github/workflows/dump-compat-views.yml) against prod (or staging if the
+--      views are present there too).
+--   2. Copy each `pg_get_viewdef` body verbatim into the two CREATE OR REPLACE
+--      VIEW statements below, replacing the <<< PASTE ... >>> placeholder.
+--   3. Rename this file: drop the `.TEMPLATE` suffix so it becomes `.sql`.
+--   4. Confirm the splitter contract (see below) still holds, then commit.
+--
+-- SPLITTER CONTRACT (scripts/pg-migrate.mjs splits the file on /;\s*\n/):
+--   - Each statement's ONLY `;` must be the final one, on its own line's end.
+--   - No dollar-quoted bodies, no internal `;\n`. A plain SELECT-based view body
+--     from pg_get_viewdef satisfies this (its single terminating `;` is added by
+--     the CREATE OR REPLACE below). See 0106_report_views_company_id.sql for a
+--     worked example of pasting pg_get_viewdef bodies under this contract.
+--
+-- IDEMPOTENCY / SAFETY: CREATE OR REPLACE VIEW is safe on an env where the view
+-- already exists AS LONG AS the captured column set matches (CREATE OR REPLACE
+-- only permits appending columns) — which it will, because we capture the exact
+-- prod body. On a fresh env it simply creates the view. The views reference
+-- scm.trips / scm.lorries, so scm.* must be present first (same dependency
+-- 0106 already relies on; PR #674 formalises it).
+--
+-- search_path pinned so the (already fully-qualified) scm.* refs resolve and the
+-- views land in public.
+
+SET search_path TO public, scm;
+
+-- ── public.trips ─────────────────────────────────────────────────────────────
+-- Compat view over scm.trips. NOTE the type trap this whole task is about:
+-- scm.trips.driver_id is a scm.drivers UUID, exposed by the view as
+-- driver_user_id; legacy callers compared it to public.users.id (bigint) →
+-- `operator does not exist: bigint = uuid`. Capture the body EXACTLY as prod has
+-- it — do not "fix" the alias here; the caller-side fix already shipped (dead
+-- /api/projects/trips/* routes removed).
+-- CREATE OR REPLACE VIEW public.trips AS
+-- <<< PASTE pg_get_viewdef('public.trips', true) HERE, then add the closing ; >>>
+
+-- ── public.lorries ───────────────────────────────────────────────────────────
+-- Compat view over scm.lorries (uuid id, exposes `plate`). This is the one
+-- getProjectDetail joins as `LEFT JOIN lorries l ON l.id = p.setup_lorry_id`
+-- (projects.setup_lorry_id was ALTERed to uuid in 0055, so the join is
+-- type-consistent).
+-- CREATE OR REPLACE VIEW public.lorries AS
+-- <<< PASTE pg_get_viewdef('public.lorries', true) HERE, then add the closing ; >>>

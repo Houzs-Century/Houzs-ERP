@@ -1,0 +1,44 @@
+name: Bill-a-GRN picker window check (read-only)
+
+# Answers "does the Bill a Goods-Received Note picker hide notes that still have
+# something to bill?" without anyone opening a SQL console.
+#
+# GET /purchase-invoices/outstanding-grn-items took the newest 500 posted,
+# not-held goods-received notes BEFORE asking which of them still had unbilled
+# lines, so past 500 an older unbilled note silently leaves the picker. Whether a
+# company is past that edge is a fact only production holds; this reads it with
+# the deploy's DATABASE_URL and prints COUNTS per company — the repository is
+# public, so no document number, supplier or amount reaches the log.
+#
+# Manual trigger only: a question, not a gate.
+on:
+  workflow_dispatch:
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and
+# must never queue behind (or displace) a release.
+concurrency:
+  group: pi-grn-picker-window-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-pi-grn-picker-window.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

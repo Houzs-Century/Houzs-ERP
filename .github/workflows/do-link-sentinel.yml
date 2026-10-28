@@ -1,0 +1,62 @@
+name: DO->SO link orphan sentinel (read-only)
+
+# Watches for delivery lines that have lost `so_item_id` — the key MRP's
+# delivered-netting and the CONFIRMED -> DELIVERED flip both resolve on.
+#
+# WHY IT EXISTS EVEN THOUGH THE BUG IS FIXED. #2225 closed the write-side hole
+# and #2355 gave both engines a second reading off the DO header, so the SYMPTOM
+# (MRP re-ordering goods already delivered) is covered twice. But the CAUSE was
+# never found: the FK's ON DELETE SET NULL needs the SO line deleted and those
+# lines are all still present, while #2225's client-omits-the-field cannot
+# explain a DO raised through POST /from-sos whose SO flipped to DELIVERED six
+# seconds later. A third mechanism blanked them and it is still live — and the
+# fix makes it SILENT. This is what turns silence back into a signal.
+#
+# Read-only: the script only SELECTs. On an alarm it exits non-zero, this job
+# fails, and the owner gets the standard failed-workflow email — the same alarm
+# channel mirror-sentinel.yml uses, and the only notifier this repo has.
+#
+# Alarm conditions (see backend/scripts/do-link-orphan-sentinel.mjs):
+#   - orphan count above the committed baseline of 1 (the one deliberately
+#     refused pillow on 2990-DO-2607-013). Do NOT raise that number to get
+#     green: it counts the orphans we have an ANSWER for, not a tolerance.
+#   - any line with no per-line link AND no so_doc_no on its header, against
+#     which stock actually moved — neither coverage reading can see those, so
+#     MRP is wrong about them right now.
+#
+# It also prints the last 25h of SO-line deletes (mig 0302) next to the count,
+# so the two can be correlated by eye. If orphans rise and no delete matches,
+# the FK theory is falsified — a null result there is a real answer.
+#
+# NOTE: scheduled runs only fire from the repo's DEFAULT branch. To try it on a
+# feature branch, use "Run workflow" (workflow_dispatch) and pick the branch.
+
+on:
+  schedule:
+    - cron: "17 * * * *" # hourly, off the hour so it does not pile onto :00 jobs
+  workflow_dispatch:
+
+concurrency:
+  group: do-link-sentinel
+  cancel-in-progress: false
+
+jobs:
+  sentinel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: node scripts/do-link-orphan-sentinel.mjs
+        env:
+          # DATABASE_URL is the Houzs prod secret this repo already sets and
+          # mirror-sentinel.yml already proves live. SENTINEL_HOUZS_DB_URL wins
+          # if it is ever set, matching the other sentinel's precedence.
+          SENTINEL_HOUZS_DB_URL: ${{ secrets.SENTINEL_HOUZS_DB_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

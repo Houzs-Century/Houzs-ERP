@@ -1,0 +1,98 @@
+name: Carry the book text's options onto our documents
+
+# Manual. The supplier round (apply-supplier-specials) could only reach the 375
+# documents the supplier export names. Every other order states its options in
+# its OWN book text, already in the system on description2 / the 账本原文 remark /
+# the AutoCount Desc2 snapshot:
+#
+#     HB FULL COVERED / COL:KIV / DIVAN8+0 with side drawer / GAP:12
+#     Leftside Drawer / HeadBoard Straight / Divan:8"+No Leg / Gap:14"
+#
+# Owner 2026-09-12: 「你顺便看完 HB FULLY COVER 的东西，也是顺便标选 HB FULLY COVER，
+# 就是全部 special。你能尽量补齐的，就尽量补齐」 and 「它历史全部都要补齐到完」.
+#
+# The decoder is scripts/lib/special-order-phrase-mapper.mjs — 31 families, each
+# carrying the owner ruling that created it. It writes ONLY codes this company's
+# catalogue already holds; every other phrase is a free-text instruction whose
+# home is the special-order note, and it is listed rather than invented.
+#
+# It ADDS, and displaces exactly one thing: a drawer on the WRONG hand when the
+# line's own text names the other one (docs/bugs/0824). A drawer whose hand
+# nobody stated is left alone and reported.
+#
+# `specials` composes the inventory key, so where goods are already in the
+# chain's stock rows are re-keyed in the SAME transaction; a bucket shared with a
+# document outside the chain is refused and named (docs/bugs/0722).
+#
+# MODE=plan unless told otherwise; apply needs the confirm phrase and re-reads
+# every chain on a FRESH connection.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      mode:
+        description: "plan or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      limit:
+        description: "cap the number of chains written (0 = all)"
+        required: false
+        default: "0"
+        type: string
+      confirm:
+        description: 'type exactly: CARRY THE BOOK TEXT OPTIONS (only needed for apply)'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: apply-book-text-specials-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx tsx scripts/apply-book-text-specials.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          LIMIT: ${{ inputs.limit }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx tsx scripts/apply-book-text-specials.mjs
+        env:
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          LIMIT: ${{ inputs.limit }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

@@ -1,0 +1,56 @@
+name: Set AutoCount relink sweep (off / plan / apply)
+
+# Turns the keyless-conversion sweep on or off by writing the app_config switch
+# scm.autocount_relink_sweep. The Worker cron reads it within one 5-minute slot,
+# so no deploy is needed. Default is a dry run: 'plan' mode writes nothing.
+#
+# Not a scheduled read — it is a deliberate operator action, and its own
+# concurrency group so it never queues behind or displaces a release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sweep:
+        description: "Value to set on the sweep switch"
+        required: true
+        default: "plan"
+        type: choice
+        options: ["off", "plan", "apply"]
+      mode:
+        description: "plan (default, writes NOTHING) or apply (writes the switch)"
+        required: true
+        default: "plan"
+        type: choice
+        options: ["plan", "apply"]
+      confirm:
+        description: "Required for apply: set-relink-sweep"
+        required: false
+        default: ""
+
+concurrency:
+  group: set-relink-sweep
+  cancel-in-progress: false
+
+jobs:
+  set:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/set-relink-sweep.mjs
+        env:
+          SWEEP: ${{ inputs.sweep }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -1,0 +1,127 @@
+name: Check SO colour + amendment trace (read-only)
+
+# Staff reports #21 / #25 / #15 on HC-SO-013497 and HC-SO-013503: a fabric colour
+# the picker could not find, an amendment that would not save, and a sofa build
+# converted wrong onto its PO. Fixes are merged; this reads the rows to say
+# whether they hold on production. Prints both SOs' lines, their PO lines, every
+# amendment on them, the audit trail, and whether the colour is served by
+# GET /fabric-colours and allowed by each line's Model pool.
+#
+# READ-ONLY: selects only, no writes, no DDL, no transaction. Manual trigger only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: ["prod", "staging"]
+      company:
+        description: "Company id"
+        required: false
+        default: "1"
+      docs:
+        description: "Sales order doc numbers, comma separated"
+        required: false
+        default: "HC-SO-013497,HC-SO-013503"
+      po_numbers:
+        description: "PO number suffixes to match, comma separated"
+        required: false
+        default: "2609-053,2609-064"
+      colour:
+        description: "Fabric colour code"
+        required: false
+        default: "HR805-90"
+      probe:
+        description: "trace = the SO colour/amendment trace; amendment-writeback = did every approved SO/PO amendment queue its AutoCount edit (check-amendment-ac-writeback.mjs); refused-docs = why the amendment requeue refused its documents (check-ac-refused-amendment-docs.mjs)"
+        required: false
+        default: "trace"
+        type: choice
+        options: ["trace", "amendment-writeback", "refused-docs"]
+      refused_docs:
+        description: "refused-docs only: document numbers, comma separated (blank = the documents the 0888 requeue refused)"
+        required: false
+        default: ""
+
+concurrency:
+  group: check-so-colour-amendment-trace
+  cancel-in-progress: false
+
+jobs:
+  prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - if: ${{ inputs.probe == 'trace' }}
+        run: node scripts/check-so-colour-amendment-trace.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          DOCS: ${{ inputs.docs }}
+          PO_NUMBERS: ${{ inputs.po_numbers }}
+          COLOUR: ${{ inputs.colour }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+      - if: ${{ inputs.probe == 'amendment-writeback' }}
+        run: node scripts/check-amendment-ac-writeback.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+      - if: ${{ inputs.probe == 'refused-docs' }}
+        run: node scripts/check-ac-refused-amendment-docs.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          DOCS: ${{ inputs.refused_docs }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - if: ${{ inputs.probe == 'trace' }}
+        run: node scripts/check-so-colour-amendment-trace.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          DOCS: ${{ inputs.docs }}
+          PO_NUMBERS: ${{ inputs.po_numbers }}
+          COLOUR: ${{ inputs.colour }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+      - if: ${{ inputs.probe == 'amendment-writeback' }}
+        run: node scripts/check-amendment-ac-writeback.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+      - if: ${{ inputs.probe == 'refused-docs' }}
+        run: node scripts/check-ac-refused-amendment-docs.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          DOCS: ${{ inputs.refused_docs }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

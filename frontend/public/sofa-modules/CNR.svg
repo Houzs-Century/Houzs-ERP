@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <title>2990s Sofa Module — CNR — Corner Piece (90° L-shape connector)</title>
+  <desc>Top-down plan view. Square seat with backrest on TWO adjacent sides (top + left, forming the L corner). The other two sides are open edges for connecting perpendicular sofa segments.</desc>
+  <g transform="translate(20,20)">
+    <!-- Square body -->
+    <rect x="0" y="0" width="60" height="60" rx="3" fill="#F0E6D6" stroke="#2C2C2A" stroke-width="1.4"/>
+    <!-- TOP backrest strip -->
+    <rect x="0" y="0" width="60" height="11" fill="#D9C2A0" stroke="#2C2C2A" stroke-width="0.8"/>
+    <!-- LEFT backrest strip (forms L with top) -->
+    <rect x="0" y="0" width="11" height="60" fill="#D9C2A0" stroke="#2C2C2A" stroke-width="0.8"/>
+  </g>
+</svg>

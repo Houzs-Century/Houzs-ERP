@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>Houzs Mobile Mockup - Finance (AR / AP)</title>
+<style>
+/* ==========================================================================
+   Houzs ERP - Mobile gap mockup 2: Finance on mobile.
+   AR Outstanding (aging buckets + per-customer drill-in + WhatsApp chase
+   concept) and AP Payment Vouchers (list + approve/post confirm flow).
+   Design language ported from the owner's approved prototype + mobile.css.
+   MOCKUP ONLY - interactions simulated, no data logic.
+   ========================================================================== */
+*{box-sizing:border-box;margin:0;padding:0;}
+*{scrollbar-width:none;-ms-overflow-style:none;}
+*::-webkit-scrollbar{width:0;height:0;display:none;}
+html,body{height:100%;}
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased;background:#d9dcd5;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px 0;}
+.hz-m{--ink:#11140f;--ink2:#414539;--mut:#767b6e;--mut2:#9aa093;--brand:#16695f;--brand-d:#0c3f39;--brand-bg:#e1efed;--gold:#a16a2e;--green:#2f8a5b;--green-bg:#e2f0e9;--amber:#8a6a2e;--amber-bg:#f6efd9;--red:#b23a3a;--red-bg:#f8eaea;--line:#e3e6e0;--line-card:#d6d9d2;--line2:#eceee9;--bg:#f4f6f3;--card:#fff;--app-bg:#eef0ec;--r-card:14px;--r-input:9px;--r-btn:12px;}
+.hz-m .money,.hz-m .tnum{font-variant-numeric:tabular-nums;}
+
+.device{position:relative;flex:none;width:392px;height:min(852px,calc(100dvh - 20px));background:#0a0a0b;border-radius:54px;padding:13px;box-shadow:0 30px 70px -22px rgba(17,24,16,.55),inset 0 0 0 2px #232325;}
+.app{position:relative;width:100%;height:100%;background:#eef0ec;border-radius:42px;overflow:hidden;display:flex;flex-direction:column;}
+.island{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:108px;height:30px;border-radius:18px;background:#000;z-index:60;}
+.statusbar{flex:none;height:46px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 26px 7px;color:#11140f;background:#fff;position:relative;z-index:30;font-size:14px;font-weight:700;}
+.homebar{position:absolute;left:50%;bottom:9px;transform:translateX(-50%);width:128px;height:5px;border-radius:3px;background:rgba(17,24,16,.32);z-index:60;pointer-events:none;}
+.mockbar{flex:none;background:#f6efd9;border-bottom:1px solid #ecd9b6;color:#8a6a2e;font-size:9.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;text-align:center;padding:5px 10px;z-index:29;}
+.viewport{flex:1;position:relative;overflow:hidden;}
+.screen{position:absolute;inset:0;display:none;flex-direction:column;background:#eef0ec;}
+.screen.active{display:flex;}
+.scroll{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;}
+
+.hz-m .hdr{position:sticky;top:0;z-index:10;background:#fff;border-bottom:1px solid #d6d9d2;padding:16px 16px 12px;}
+.hz-m .hdr-row{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.hz-m .eyebrow{font-size:10px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--gold);}
+.hz-m .scr-title{font-size:20px;font-weight:800;letter-spacing:-.01em;color:var(--ink);margin-top:2px;}
+.hz-m .back{display:flex;align-items:center;gap:3px;font-size:12.5px;font-weight:600;color:var(--brand);cursor:pointer;background:none;border:none;font-family:inherit;}
+.hz-m .back .chev{font-size:18px;line-height:1;}
+.hz-m .actbar{background:#fff;border-top:1px solid #d6d9d2;padding:12px 16px 16px;}
+
+.hz-m .btn{text-align:center;font-size:15px;line-height:20px;font-weight:700;color:#fff;background:#16695f;padding:14px;border-radius:13px;cursor:pointer;border:none;width:100%;font-family:inherit;}
+.hz-m .btn-ghost{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;height:48px;background:#fff;border:1.5px solid var(--brand);color:var(--brand);border-radius:var(--r-btn);font-family:inherit;font-size:15px;font-weight:700;cursor:pointer;}
+
+.hz-m .card{background:#fff;border:1px solid #d6d9d2;border-radius:14px;box-shadow:0 1px 0 rgba(17,24,16,.04),0 4px 18px -8px rgba(17,24,16,.12);}
+.hz-m .card-h{display:flex;align-items:center;justify-content:space-between;padding:11px 13px;border-bottom:1px solid var(--line2);}
+.hz-m .card-t{font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--ink);}
+.hz-m .card-sub{font-size:10.5px;color:var(--mut2);}
+.hz-m .card-b{padding:12px 13px;}
+.hz-m .row{display:flex;justify-content:space-between;gap:12px;padding:11px 13px;border-bottom:1px solid var(--line2);}
+.hz-m .row:last-child{border-bottom:none;}
+.hz-m .row-l{font-size:11.5px;color:var(--mut);}
+.hz-m .row-v{font-size:13px;font-weight:600;color:var(--ink);text-align:right;}
+
+.hz-m .badge{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;padding:3px 9px;border-radius:20px;white-space:nowrap;}
+.hz-m .b-brand{background:var(--brand-bg);color:var(--brand-d);}
+.hz-m .b-green{background:var(--green-bg);color:var(--green);}
+.hz-m .b-amber{background:var(--amber-bg);color:var(--amber);}
+.hz-m .b-red{background:var(--red-bg);color:var(--red);}
+.hz-m .b-grey{background:var(--bg);color:var(--mut);}
+
+.hz-m .money-lg{font-variant-numeric:tabular-nums;font-size:16px;font-weight:800;color:var(--brand-d);line-height:1;}
+.hz-m .money-row{font-variant-numeric:tabular-nums;font-size:13px;font-weight:700;color:var(--brand-d);}
+
+/* segmented control (mobile.css .seg) */
+.hz-m .seg{display:flex;background:#eceee9;border-radius:9px;padding:3px;gap:3px;}
+.hz-m .seg button{flex:1;border:none;background:none;font-family:inherit;font-size:12.5px;font-weight:800;color:#767b6e;padding:8px 0;border-radius:7px;cursor:pointer;}
+.hz-m .seg button.on{background:#16695f;color:#fff;}
+
+/* dark hero (mobile.css .sc-hero) */
+.hz-m .hero{background:linear-gradient(160deg,#0c3f39,#16695f);border-radius:14px;padding:15px 16px;color:#fff;}
+.hz-m .hero .l{font-size:9.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;opacity:.8;}
+.hz-m .hero .v{font-size:28px;font-weight:800;margin-top:3px;letter-spacing:-.01em;}
+.hz-m .hero .s{font-size:11px;opacity:.82;font-weight:600;margin-top:3px;}
+
+/* aging buckets grid */
+.age-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px;}
+.age-tile{background:#fff;border:1px solid var(--line-card);border-radius:12px;padding:11px 12px;position:relative;overflow:hidden;}
+.age-tile::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--acc);}
+.age-tile .al{font-size:9px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);}
+.age-tile .av{font-size:16px;font-weight:800;color:var(--ink);margin-top:5px;font-variant-numeric:tabular-nums;}
+.age-tile .ac{font-size:10px;color:var(--mut2);margin-top:2px;}
+
+/* list rows */
+.hz-m .lrow{background:#fff;border:1px solid var(--line-card);border-radius:13px;padding:12px 13px;cursor:pointer;box-shadow:0 1px 0 rgba(17,24,16,.04),0 4px 18px -8px rgba(17,24,16,.12);display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;text-align:left;font-family:inherit;}
+.hz-m .lrow .nm{font-size:14px;font-weight:800;color:var(--ink);}
+.hz-m .lrow .sub{font-size:11px;color:var(--mut);margin-top:3px;}
+.hz-m .lrow .amt{font-size:14.5px;font-weight:800;color:var(--brand-d);font-variant-numeric:tabular-nums;}
+.hz-m .lrow .chev{color:#c2c6bd;font-size:20px;margin-left:2px;}
+.hz-m .list-note{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--brand);background:var(--brand-bg);border-radius:5px;padding:2px 7px;display:inline-block;margin:0 0 8px;}
+
+/* invoice line */
+.inv{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 0;border-top:1px solid var(--line2);}
+.inv:first-child{border-top:none;}
+.inv .no{font-size:12.5px;font-weight:700;color:var(--ink);}
+.inv .dt{font-size:10.5px;color:var(--mut);margin-top:2px;}
+.inv .amt{font-size:13px;font-weight:800;color:var(--ink);font-variant-numeric:tabular-nums;text-align:right;}
+
+/* WhatsApp chase button (concept) */
+.wa-btn{display:flex;align-items:center;justify-content:center;gap:9px;width:100%;height:48px;background:#25635b;border:none;border-radius:12px;color:#fff;font-family:inherit;font-size:14px;font-weight:700;cursor:pointer;}
+.wa-note{font-size:10px;color:#9aa093;text-align:center;margin-top:7px;}
+
+/* bottom sheet */
+.sheet-bd{position:absolute;inset:0;z-index:40;background:rgba(17,20,15,.4);backdrop-filter:blur(2px);display:none;align-items:flex-end;}
+.sheet-bd.open{display:flex;}
+.sheet{width:100%;max-height:88%;background:#fff;border-radius:20px 20px 0 0;box-shadow:0 -12px 40px -10px rgba(17,24,16,.35);display:flex;flex-direction:column;overflow:hidden;}
+.sheet .grab{width:40px;height:4px;border-radius:3px;background:#c2c6bd;margin:8px auto;flex:none;}
+.sheet-head{display:flex;align-items:flex-start;justify-content:space-between;padding:2px 16px 10px;flex:none;}
+.sheet-head .st{font-size:16px;font-weight:800;color:#11140f;}
+.sheet-head .ss{font-size:11px;color:#767b6e;margin-top:2px;}
+.sheet-x{width:32px;height:32px;border-radius:9px;border:1px solid #d6d9d2;display:flex;align-items:center;justify-content:center;color:#767b6e;cursor:pointer;background:#fff;font-size:15px;}
+.sheet-body{padding:0 16px 18px;overflow-y:auto;}
+.msg-preview{background:#f4f6f3;border:1px solid var(--line);border-radius:12px;padding:13px 14px;font-size:12.5px;color:#414539;line-height:1.55;white-space:pre-wrap;}
+
+/* confirm modal */
+.modal-bd{position:absolute;inset:0;z-index:50;background:rgba(0,0,0,.34);display:none;align-items:center;justify-content:center;padding:22px;}
+.modal-bd.open{display:flex;}
+.modal{background:#fff;border:1px solid #d6d9d2;border-radius:16px;box-shadow:0 24px 60px -18px rgba(17,24,16,.5);width:100%;padding:18px;}
+.modal h2{font-size:17px;font-weight:800;color:#11140f;margin-bottom:8px;}
+.modal p{font-size:12.5px;color:#414539;line-height:1.5;margin-bottom:16px;}
+.modal .mrow{display:flex;justify-content:flex-end;gap:9px;}
+.modal .mghost{border:1px solid #d6d9d2;background:#fff;color:#414539;font-family:inherit;font-size:13px;font-weight:700;padding:10px 16px;border-radius:10px;cursor:pointer;}
+.modal .mprim{border:1px solid #16695f;background:#16695f;color:#fff;font-family:inherit;font-size:13px;font-weight:700;padding:10px 16px;border-radius:10px;cursor:pointer;}
+.hz-m .toast{position:absolute;left:16px;right:16px;bottom:22px;z-index:55;background:#0c3f39;color:#fff;border-radius:12px;padding:13px 15px;font-size:12.5px;font-weight:600;box-shadow:0 16px 34px -12px rgba(12,63,57,.6);display:none;text-align:center;}
+.hz-m .toast.show{display:block;}
+</style>
+</head>
+<body>
+<div class="device">
+  <div class="island"></div>
+  <div class="app hz-m">
+    <div class="statusbar"><span>9:41</span><span>Houzs</span></div>
+    <div class="mockbar">Mockup - pending owner approval</div>
+    <div class="viewport">
+
+      <!-- ============ SCREEN: Finance home (AR / AP tabs) ============ -->
+      <section class="screen active" id="s-home">
+        <header class="hdr">
+          <div class="eyebrow">Finance</div>
+          <div class="scr-title">Receivables &amp; Payables</div>
+          <div class="seg" style="margin-top:12px">
+            <button class="on" id="tab-ar" onclick="tab('ar')">AR Outstanding</button>
+            <button id="tab-ap" onclick="tab('ap')">AP Vouchers</button>
+          </div>
+        </header>
+
+        <!-- ---- AR pane ---- -->
+        <div class="scroll" id="pane-ar" style="padding:14px 16px 26px">
+          <div class="hero">
+            <div class="l">Total outstanding</div>
+            <div class="v money">RM 148,320.00</div>
+            <div class="s">6 customers &middot; 14 unpaid invoices &middot; as at 19/07/2026</div>
+          </div>
+
+          <div style="font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#9aa093;margin:16px 2px 9px">Aging</div>
+          <div class="age-grid">
+            <div class="age-tile" style="--acc:#2f8a5b"><div class="al">0 - 30 days</div><div class="av money">RM 82,100</div><div class="ac">Current</div></div>
+            <div class="age-tile" style="--acc:#8a6a2e"><div class="al">31 - 60 days</div><div class="av money">RM 34,600</div><div class="ac">Watch</div></div>
+            <div class="age-tile" style="--acc:#c98a2e"><div class="al">61 - 90 days</div><div class="av money">RM 18,900</div><div class="ac">Overdue</div></div>
+            <div class="age-tile" style="--acc:#b23a3a"><div class="al">90+ days</div><div class="av money">RM 12,720</div><div class="ac">Escalate</div></div>
+          </div>
+
+          <div style="font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#9aa093;margin:18px 2px 9px">By customer</div>
+          <div style="display:flex;flex-direction:column;gap:9px">
+            <button class="lrow" onclick="go('s-cust')">
+              <span><span class="nm">Sern Kou Furniture Sdn Bhd</span><div class="sub">4 invoices &middot; oldest 98 days</div><div style="margin-top:6px"><span class="badge b-red">90+ days</span></div></span>
+              <span style="text-align:right;display:flex;align-items:center"><span class="amt">RM 38,450</span><span class="chev">&rsaquo;</span></span>
+            </button>
+            <button class="lrow" onclick="go('s-cust')">
+              <span><span class="nm">Home Essence Trading</span><div class="sub">3 invoices &middot; oldest 52 days</div><div style="margin-top:6px"><span class="badge b-amber">31-60 days</span></div></span>
+              <span style="text-align:right;display:flex;align-items:center"><span class="amt">RM 27,800</span><span class="chev">&rsaquo;</span></span>
+            </button>
+            <button class="lrow" onclick="go('s-cust')">
+              <span><span class="nm">Furniture Direct KL</span><div class="sub">2 invoices &middot; oldest 21 days</div><div style="margin-top:6px"><span class="badge b-green">0-30 days</span></div></span>
+              <span style="text-align:right;display:flex;align-items:center"><span class="amt">RM 25,000</span><span class="chev">&rsaquo;</span></span>
+            </button>
+            <button class="lrow" onclick="go('s-cust')">
+              <span><span class="nm">Syarikat Perabot Maju</span><div class="sub">3 invoices &middot; oldest 74 days</div><div style="margin-top:6px"><span class="badge b-amber" style="background:#f6e6d3;color:#a8621f">61-90 days</span></div></span>
+              <span style="text-align:right;display:flex;align-items:center"><span class="amt">RM 22,150</span><span class="chev">&rsaquo;</span></span>
+            </button>
+            <button class="lrow" onclick="go('s-cust')">
+              <span><span class="nm">Perabot Klasik Enterprise</span><div class="sub">2 invoices &middot; oldest 104 days</div><div style="margin-top:6px"><span class="badge b-red">90+ days</span></div></span>
+              <span style="text-align:right;display:flex;align-items:center"><span class="amt">RM 15,320</span><span class="chev">&rsaquo;</span></span>
+            </button>
+          </div>
+        </div>
+
+        <!-- ---- AP pane ---- -->
+        <div class="scroll" id="pane-ap" style="padding:14px 16px 26px;display:none">
+          <div class="hero">
+            <div class="l">Awaiting approval</div>
+            <div class="v money">RM 27,840.00</div>
+            <div class="s">2 draft vouchers to post &middot; 2 posted this week</div>
+          </div>
+          <span class="list-note" style="margin-top:16px">To approve</span>
+          <div style="display:flex;flex-direction:column;gap:9px">
+            <button class="lrow" onclick="go('s-voucher')">
+              <span><span class="nm">Kilang Kayu Meranti Sdn Bhd</span><div class="sub tnum">PV-2507-0056 &middot; 19/07/2026 &middot; 2 GRNs</div><div style="margin-top:6px"><span class="badge b-amber">Draft</span></div></span>
+              <span style="text-align:right;display:flex;align-items:center"><span class="amt">RM 18,600</span><span class="chev">&rsaquo;</span></span>
+            </button>
+            <button class="lrow" onclick="go('s-voucher')">
+              <span><span class="nm">Foam Supplier Meng Tat</span><div class="sub tnum">PV-2507-0055 &middot; 19/07/2026 &middot; 1 GRN</div><div style="margin-top:6px"><span class="badge b-amber">Draft</span></div></span>
+              <span style="text-align:right;display:flex;align-items:center"><span class="amt">RM 9,240</span><span class="chev">&rsaquo;</span></span>
+            </button>
+          </div>
+          <span class="list-note" style="margin-top:16px;color:var(--mut);background:var(--bg)">Recently posted</span>
+          <div style="display:flex;flex-direction:column;gap:9px">
+            <div class="lrow" style="cursor:default;opacity:.85">
+              <span><span class="nm">Fabric House Textile</span><div class="sub tnum">PV-2507-0052 &middot; 16/07/2026</div><div style="margin-top:6px"><span class="badge b-green">Posted</span></div></span>
+              <span class="amt">RM 6,180</span>
+            </div>
+            <div class="lrow" style="cursor:default;opacity:.85">
+              <span><span class="nm">Logistik Ekspres Sdn Bhd</span><div class="sub tnum">PV-2507-0050 &middot; 15/07/2026</div><div style="margin-top:6px"><span class="badge b-green">Posted</span></div></span>
+              <span class="amt">RM 3,420</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ SCREEN: AR customer drill-in ============ -->
+      <section class="screen" id="s-cust">
+        <header class="hdr">
+          <div class="hdr-row">
+            <button class="back" onclick="go('s-home')"><span class="chev">&lsaquo;</span> Receivables</button>
+            <span class="badge b-red">90+ overdue</span>
+          </div>
+          <div class="eyebrow">Customer statement</div>
+          <div class="scr-title">Sern Kou Furniture</div>
+          <div style="font-size:11px;color:#767b6e;margin-top:3px" class="tnum">DR-00214 &middot; 012-663 4471 &middot; Klang, Selangor</div>
+        </header>
+        <div class="scroll" style="padding:14px 16px 26px">
+          <div class="hero">
+            <div class="l">Outstanding</div>
+            <div class="v money">RM 38,450.00</div>
+            <div class="s">4 unpaid invoices &middot; oldest 98 days</div>
+          </div>
+
+          <div style="font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#9aa093;margin:16px 2px 9px">Aging for this customer</div>
+          <div class="age-grid">
+            <div class="age-tile" style="--acc:#2f8a5b"><div class="al">0 - 30 days</div><div class="av money">RM 7,000</div></div>
+            <div class="age-tile" style="--acc:#8a6a2e"><div class="al">31 - 60 days</div><div class="av money">RM 9,830</div></div>
+            <div class="age-tile" style="--acc:#c98a2e"><div class="al">61 - 90 days</div><div class="av money">RM 8,900</div></div>
+            <div class="age-tile" style="--acc:#b23a3a"><div class="al">90+ days</div><div class="av money">RM 12,720</div></div>
+          </div>
+
+          <div class="card" style="margin-top:16px">
+            <div class="card-h"><span class="card-t">Unpaid invoices</span><span class="card-sub">4</span></div>
+            <div class="card-b" style="padding-top:4px;padding-bottom:4px">
+              <div class="inv"><span><div class="no tnum">INV-2504-0088</div><div class="dt tnum">Issued 12/04/2026 &middot; due 12/05/2026</div></span><span style="text-align:right"><div class="amt">RM 12,720</div><div style="margin-top:4px"><span class="badge b-red">98 days</span></div></span></div>
+              <div class="inv"><span><div class="no tnum">INV-2505-0142</div><div class="dt tnum">Issued 28/05/2026 &middot; due 27/06/2026</div></span><span style="text-align:right"><div class="amt">RM 8,900</div><div style="margin-top:4px"><span class="badge b-amber" style="background:#f6e6d3;color:#a8621f">82 days</span></div></span></div>
+              <div class="inv"><span><div class="no tnum">INV-2506-0201</div><div class="dt tnum">Issued 20/06/2026 &middot; due 20/07/2026</div></span><span style="text-align:right"><div class="amt">RM 9,830</div><div style="margin-top:4px"><span class="badge b-amber">45 days</span></div></span></div>
+              <div class="inv"><span><div class="no tnum">INV-2507-0233</div><div class="dt tnum">Issued 05/07/2026 &middot; due 04/08/2026</div></span><span style="text-align:right"><div class="amt">RM 7,000</div><div style="margin-top:4px"><span class="badge b-green">14 days</span></div></span></div>
+            </div>
+          </div>
+        </div>
+        <footer class="actbar">
+          <button class="wa-btn" onclick="openSheet('sh-wa')">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M12 2a10 10 0 0 0-8.6 15l-1.3 4.8 4.9-1.3A10 10 0 1 0 12 2Zm5.6 14.2c-.24.67-1.4 1.28-1.93 1.32-.5.05-1.1.24-3.72-.78-3.13-1.23-5.13-4.4-5.28-4.6-.15-.2-1.25-1.66-1.25-3.17 0-1.5.8-2.24 1.08-2.55.28-.3.6-.38.8-.38h.58c.19 0 .44-.07.68.52.24.6.83 2.06.9 2.2.07.16.12.34.02.54-.1.2-.15.33-.3.5-.15.18-.32.4-.45.53-.15.15-.3.31-.13.6.17.3.76 1.25 1.63 2.02 1.12 1 2.06 1.3 2.36 1.45.3.15.47.12.64-.07.17-.2.74-.86.94-1.16.2-.3.4-.24.67-.15.27.1 1.7.8 2 .95.28.15.47.22.54.34.07.12.07.7-.17 1.37Z"/></svg>
+            Send payment reminder
+          </button>
+          <div class="wa-note">Concept - opens WhatsApp with a pre-filled reminder. Nothing is sent without your tap.</div>
+        </footer>
+      </section>
+
+      <!-- ============ SCREEN: AP voucher detail (approve/post) ============ -->
+      <section class="screen" id="s-voucher">
+        <header class="hdr">
+          <div class="hdr-row">
+            <button class="back" onclick="go('s-home')"><span class="chev">&lsaquo;</span> Vouchers</button>
+            <span class="badge b-amber" id="pv-status">Draft</span>
+          </div>
+          <div class="eyebrow">Payment voucher</div>
+          <div class="scr-title">PV-2507-0056</div>
+          <div style="font-size:11px;color:#767b6e;margin-top:3px">Kilang Kayu Meranti Sdn Bhd</div>
+        </header>
+        <div class="scroll" style="padding:14px 16px 26px">
+          <div class="card">
+            <div class="card-h"><span class="card-t">Payment</span></div>
+            <div class="row"><span class="row-l">Supplier</span><span class="row-v">Kilang Kayu Meranti Sdn Bhd</span></div>
+            <div class="row"><span class="row-l">Pay from</span><span class="row-v tnum">Maybank Current -5142</span></div>
+            <div class="row"><span class="row-l">Method</span><span class="row-v">Bank transfer</span></div>
+            <div class="row"><span class="row-l">Payment date</span><span class="row-v tnum">19/07/2026</span></div>
+          </div>
+
+          <div class="card" style="margin-top:12px">
+            <div class="card-h"><span class="card-t">Allocated to</span><span class="card-sub">2 GRNs</span></div>
+            <div class="card-b" style="padding-top:4px;padding-bottom:4px">
+              <div class="inv"><span><div class="no tnum">GRN-2506-0071</div><div class="dt tnum">Received 24/06/2026</div></span><span class="amt">RM 10,200</span></div>
+              <div class="inv"><span><div class="no tnum">GRN-2506-0079</div><div class="dt tnum">Received 29/06/2026</div></span><span class="amt">RM 8,400</span></div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top:12px">
+            <div class="row" style="border:none"><span class="row-l" style="font-size:13px;font-weight:700;color:var(--ink)">Total to pay</span><span class="money-lg">RM 18,600.00</span></div>
+          </div>
+
+          <div style="font-size:10.5px;color:#a16a2e;background:#fbf3e6;border:1px solid #ecd9b6;border-radius:10px;padding:9px 11px;margin-top:12px">
+            Posting writes the journal entry to the ledger and marks the voucher paid. This cannot be undone from mobile - a reversal must be raised on desktop.
+          </div>
+        </div>
+        <footer class="actbar" id="pv-foot">
+          <button class="btn" onclick="openConfirm()">Approve &amp; post voucher</button>
+        </footer>
+      </section>
+
+    </div><!-- /viewport -->
+
+    <!-- ======= SHEET: WhatsApp reminder preview ======= -->
+    <div class="sheet-bd" id="sh-wa" onclick="if(event.target===this)closeSheet('sh-wa')">
+      <div class="sheet">
+        <div class="grab"></div>
+        <div class="sheet-head"><div><div class="st">Payment reminder</div><div class="ss">To 012-663 4471 &middot; Sern Kou Furniture</div></div><button class="sheet-x" onclick="closeSheet('sh-wa')">&times;</button></div>
+        <div class="sheet-body">
+          <div class="msg-preview">Hi Sern Kou Furniture Sdn Bhd,
+
+This is a friendly reminder from Houzs. Your account currently has RM 38,450.00 outstanding, including RM 12,720.00 over 90 days (INV-2504-0088, due 12/05/2026).
+
+Kindly arrange payment at your earliest convenience. Please ignore this message if payment has already been made.
+
+Thank you.</div>
+          <button class="wa-btn" style="margin-top:14px" onclick="chased()">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M12 2a10 10 0 0 0-8.6 15l-1.3 4.8 4.9-1.3A10 10 0 1 0 12 2Zm5.6 14.2c-.24.67-1.4 1.28-1.93 1.32-.5.05-1.1.24-3.72-.78-3.13-1.23-5.13-4.4-5.28-4.6-.15-.2-1.25-1.66-1.25-3.17 0-1.5.8-2.24 1.08-2.55.28-.3.6-.38.8-.38h.58c.19 0 .44-.07.68.52.24.6.83 2.06.9 2.2.07.16.12.34.02.54-.1.2-.15.33-.3.5-.15.18-.32.4-.45.53-.15.15-.3.31-.13.6.17.3.76 1.25 1.63 2.02 1.12 1 2.06 1.3 2.36 1.45.3.15.47.12.64-.07.17-.2.74-.86.94-1.16.2-.3.4-.24.67-.15.27.1 1.7.8 2 .95.28.15.47.22.54.34.07.12.07.7-.17 1.37Z"/></svg>
+            Open in WhatsApp
+          </button>
+          <div class="wa-note">Concept - hands off to WhatsApp with this text pre-filled. You review and send it there.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======= CONFIRM modal (post voucher) ======= -->
+    <div class="modal-bd" id="confirm">
+      <div class="modal">
+        <h2>Post this voucher to the ledger?</h2>
+        <p>This posts <b>PV-2507-0056</b> for <b>RM 18,600.00</b> to Kilang Kayu Meranti Sdn Bhd, writes the journal entry and marks the two GRNs paid. This cannot be undone from mobile.</p>
+        <div class="mrow">
+          <button class="mghost" onclick="closeConfirm()">Cancel</button>
+          <button class="mprim" onclick="doPost()">Approve &amp; post</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast">Voucher posted to the ledger</div>
+    <div class="homebar"></div>
+  </div><!-- /app -->
+</div>
+
+<script>
+function go(id){document.querySelectorAll('.screen').forEach(function(s){s.classList.remove('active')});document.getElementById(id).classList.add('active');window.scrollTo&&0;}
+function tab(which){var ar=which==='ar';document.getElementById('tab-ar').classList.toggle('on',ar);document.getElementById('tab-ap').classList.toggle('on',!ar);document.getElementById('pane-ar').style.display=ar?'block':'none';document.getElementById('pane-ap').style.display=ar?'none':'block';}
+function openSheet(id){document.getElementById(id).classList.add('open');}
+function closeSheet(id){document.getElementById(id).classList.remove('open');}
+function toast(msg){var t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(function(){t.classList.remove('show')},2200);}
+function chased(){closeSheet('sh-wa');toast('WhatsApp reminder opened (concept)');}
+function openConfirm(){document.getElementById('confirm').classList.add('open');}
+function closeConfirm(){document.getElementById('confirm').classList.remove('open');}
+function doPost(){closeConfirm();document.getElementById('pv-status').textContent='Posted';document.getElementById('pv-status').className='badge b-green';document.getElementById('pv-foot').innerHTML='<div style="text-align:center;font-size:11.5px;color:var(--green);font-weight:700;padding:6px">This voucher is posted to the ledger.</div>';toast('Voucher posted to the ledger');}
+</script>
+</body>
+</html>

@@ -1,0 +1,74 @@
+name: AutoCount write-back (on/off)
+
+# Manual. Turns the ERP -> AutoCount write-back on or off by writing
+# scm.app_config['scm.autocount_writeback']. Takes effect within ~30s, no
+# deploy — the runtime reads the row with a 30s cache.
+#
+# THIS IS THE SWITCH THAT DECIDES WHETHER ERP DOCUMENTS ARE WRITTEN INTO THE
+# LIVE AutoCount ACCOUNT BOOK. On means: saving an SO, PO, or a conversion in
+# company 1 queues it, and the 5-minute cron sends it. Off means every enqueue
+# returns early and nothing accumulates.
+#
+# Turning it ON is not sufficient on its own — the send also needs AC_SYNC_URL
+# and the AC_SYNC_KEY secret, neither of which the database can see. The script
+# prints that checklist when it turns the switch on.
+#
+# Read the current state with "AutoCount outbox health", which reports the
+# switch alongside the queue.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      state:
+        description: "on = push ERP documents into AutoCount, off = stop"
+        required: true
+        default: "off"
+        type: choice
+        options: ["on", "off"]
+      companies:
+        description: "Company ids to enable (1 = Houzs only) or 'all'"
+        required: false
+        default: "1"
+        type: string
+
+# Its own group. A switch flip must never queue behind a deploy, or displace one.
+concurrency:
+  group: set-autocount-writeback-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/set-autocount-writeback.mjs
+        env:
+          STATE: ${{ inputs.state }}
+          COMPANIES: ${{ inputs.companies }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/set-autocount-writeback.mjs
+        env:
+          STATE: ${{ inputs.state }}
+          COMPANIES: ${{ inputs.companies }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

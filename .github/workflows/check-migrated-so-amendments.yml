@@ -1,0 +1,55 @@
+name: Migrated-SO open amendments — status (read-only)
+
+# Manual. Answers "how many amendments are still open on an order we carried
+# across from AutoCount?" — the population the /so-amendments guard exists for
+# (docs/migrated-so-lock.md §7). Strictly SELECTs; it can never change anything.
+#
+# The verdict appears as run annotations. Exits 0 for every legitimate answer,
+# INCLUDING zero — a red job would read as "the check broke", and the answer IS
+# the output. Only an unreachable database exits non-zero.
+#
+# No `tee`. A pipeline whose left side dies still reports the exit status of
+# `tee` unless `pipefail` is set, which is how three workflows reported green
+# runs after failing (docs/bugs/0687). The script's own exit code is the verdict.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+
+# Its own group: a diagnostic must never queue behind, or displace, a release.
+concurrency:
+  group: check-migrated-so-amendments-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-migrated-so-amendments.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/check-migrated-so-amendments.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

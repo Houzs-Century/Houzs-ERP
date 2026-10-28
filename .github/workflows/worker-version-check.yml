@@ -1,0 +1,62 @@
+name: Worker version check (read-only)
+
+# Answers ONE question the repository cannot answer by reading itself: is there a
+# Cloudflare Worker VERSION sitting above the active deployment, and what created
+# it? That state is what makes `wrangler secret bulk` fail with code 10215, which
+# on 2026-08-18 blocked every backend deploy for nine hours.
+# See docs/deploy-secret-version-deadlock-coe.md.
+#
+# Built as a workflow rather than "go and look at the dashboard" because
+# CLAUDE.md rules the latter out: if a fact lives only in a provider console, the
+# answer is a script plus a manual workflow, not an interruption.
+on:
+  workflow_dispatch:
+
+# Deliberately NOT the deploy's group: this touches nothing and must never queue
+# behind, or displace, a release.
+concurrency:
+  group: worker-version-check
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # REQUIRED, and not decoration. There are NO `CLOUDFLARE_*` secrets at repo
+    # level — `gh api repos/.../actions/secrets` lists none. They live in the
+    # `Production` ENVIRONMENT, which is why `deploy.yml`'s backend job declares
+    # `environment: Production` (deploy.yml:134). A job without this line gets
+    # them as EMPTY STRINGS, not as an error: the first dispatch of this workflow
+    # (run 32095704847) printed `CLOUDFLARE_API_TOKEN:` with nothing after it.
+    #
+    # `Production` carries no protection rules today (no reviewers, no wait
+    # timer, no branch policy — `gh api repos/.../environments/Production`), so
+    # this adds no approval step. If a rule is ever added there, this read-only
+    # check starts needing approval too; move the secrets to repo level rather
+    # than dropping the check.
+    #
+    # Cosmetic cost, accepted: jobs naming an environment appear in that
+    # environment's deployment list, so this diagnostic shows up beside real
+    # releases. It deploys nothing. It has its own concurrency group above, so it
+    # still cannot queue behind or displace one.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      # No `npm ci`. The script is dependency-free on purpose — it uses fetch and
+      # nothing else — so this answers in seconds and keeps working in a fresh
+      # worktree with no node_modules.
+      - name: List Worker versions and the active deployment
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        # Exits 0 for every legitimate answer, INCLUDING "there is a stray
+        # version" — that is a finding, not a broken check. Non-zero means
+        # Cloudflare could not be reached or refused the read.
+        run: node scripts/check-worker-versions.mjs --script autocount-sync-api

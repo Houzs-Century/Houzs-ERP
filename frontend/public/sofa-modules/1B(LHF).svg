@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 110" width="100" height="110">
+  <title>2990s Sofa Module — 1B-LHF — Bench on LEFT, no arm anywhere</title>
+  <desc>Top-down plan view. 1 seat. LEFT side = wide soft bench/chaise cushion taking the full body height (no backrest above the bench). RIGHT side = open seat edge — NO armrest. Backrest covers only the seat portion (right side, where you actually sit).</desc>
+  <g transform="translate(20,20)">
+    <!-- Body outline (cream) -->
+    <rect x="0" y="0" width="60" height="70" rx="3" fill="#F0E6D6" stroke="#2C2C2A" stroke-width="1.4"/>
+    <!-- Backrest covers ONLY the seat (right) portion — bench has no backrest above -->
+    <rect x="22" y="0" width="38" height="11" fill="#D9C2A0" stroke="#2C2C2A" stroke-width="0.8"/>
+    <!-- LEFT bench/chaise cushion — wide soft pillow, full body height -->
+    <rect x="2" y="2" width="20" height="66" rx="5" fill="#D9C2A0" stroke="#2C2C2A" stroke-width="0.8"/>
+    <!-- NO armrest on the right — commander spec: 1B has bench on one side, open on the other -->
+  </g>
+</svg>

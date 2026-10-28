@@ -1,0 +1,15 @@
+-- 0213_users_last_path.sql — presence "where": the last SPA route each user
+-- was seen on.
+--
+-- ⚠️ RE-CHECK NUMBER AT MERGE. Renumbered 0204→0213 already (main reached
+-- 0212 while this branch was open); duplicate numbers wedge the pg-migrate
+-- runner (it keys on the full filename — gaps are harmless, collisions are
+-- not). Re-list the tree at merge and renumber to highest-on-main + 1 if
+-- 0213 was taken in the meantime.
+--
+-- The top-bar "who's online" popover (feat/presence-online-popover) lists
+-- each teammate with their current location as a deep link. The 60s presence
+-- heartbeat now carries the SPA pathname and it lands here. Stays NULL until
+-- that user's client ships the new heartbeat — the popover then renders the
+-- row with the role instead of a location line, nothing breaks.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_path TEXT;

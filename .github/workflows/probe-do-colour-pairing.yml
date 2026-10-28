@@ -1,0 +1,75 @@
+name: Probe — is the delivery-order colour swap real? (read-only)
+
+# The 2026-09-08 16:45 (+08) reconcile printed four fabric colours on two
+# delivery orders as an exact SWAP. That is docs/bugs/0689, mechanism UNKNOWN —
+# and it is also the exact shape of this repo's most expensive recurring false
+# alarm: two similar rows, no line key, paired by POSITION, reported as
+# transposed. Five incidents, four of them phantoms.
+#
+# This answers "is it real" before anybody answers "how do we fix it". One fact
+# decides it per line: does the ERP row carry linked_ac_dtlkey? If it does, the
+# account book's own line number forced the pairing and a difference is a real
+# difference. If it does not, the checker GUESSED — and the probe then compares
+# the two sides' colour MULTISETS, which need no pairing at all.
+#
+# READ-ONLY: the script has no APPLY flag and issues only SELECTs.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      docs:
+        description: "AutoCount document numbers, comma-separated (blank = the six the reconcile named)"
+        required: false
+        default: ""
+        type: string
+      max_snapshot_age_days:
+        description: "Refuse if the AutoCount snapshot is older than this many days"
+        required: false
+        default: "2"
+        type: string
+
+# Read-only, so it may run beside anything — but never in the deploy's group.
+concurrency:
+  group: probe-do-colour-pairing-${{ inputs.target }}
+  cancel-in-progress: true
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-do-colour-pairing.mjs
+        env:
+          DOCS: ${{ inputs.docs }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-do-colour-pairing.mjs
+        env:
+          DOCS: ${{ inputs.docs }}
+          MAX_SNAPSHOT_AGE_DAYS: ${{ inputs.max_snapshot_age_days }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -1,0 +1,60 @@
+name: Rollback 2990 import (remove company-2990 rows)
+
+# Removes every imported 2990 row (company_id=2990 + legacy staff). Houzs data
+# untouched. target=staging default; target=prod explicit only. Dry-run unless
+# apply=1.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Set to 1 to DELETE (else dry-run counts only)"
+        required: false
+        default: "0"
+      target:
+        description: "Which DB"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - prod
+
+jobs:
+  rollback-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: node scripts/rollback-2990-from-houzs.mjs
+        env:
+          SOURCE_SUPABASE_URL: ${{ secrets.SOURCE_SUPABASE_URL }}
+          SOURCE_SERVICE_ROLE_KEY: ${{ secrets.SOURCE_SERVICE_ROLE_KEY }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          APPLY: ${{ github.event.inputs.apply }}
+
+  rollback-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: node scripts/rollback-2990-from-houzs.mjs
+        env:
+          SOURCE_SUPABASE_URL: ${{ secrets.SOURCE_SUPABASE_URL }}
+          SOURCE_SERVICE_ROLE_KEY: ${{ secrets.SOURCE_SERVICE_ROLE_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APPLY: ${{ github.event.inputs.apply }}

@@ -1,0 +1,87 @@
+name: Repair the outbox rows for the three documents sent by hand
+
+# Three documents were put into the production AutoCount book AED_HOUZS on
+# 2026-08-17 by calling AcSyncService directly on the shop-floor host, bypassing
+# the outbox drain: DO HC-DO-2608-001, DO HC-DO-2608-002 and IV HC-SI-2608-001,
+# all Cancelled=F, verified by direct SQL against the book.
+#
+# The ERP does not know. The two delivery orders are still `failed` in
+# scm.autocount_outbox and the invoice is still `skipped`, and none of the three
+# ERP documents carries a linked_ac_docno.
+#
+# THAT IS A DUPLICATE-SEND WINDOW, not untidiness. #2330 made a FAILED transfer
+# row re-sendable and #2331 gave the re-send the row's own dedupe key, so the
+# AutoCount Sync page shows a live "Send again" button on the two delivery
+# orders today. transferVerdict's duplicate guard reads linked_ac_docno, which
+# is null, so it does not fire. Whether AutoCount refuses a duplicate DocNo or
+# writes a second voucher has not been tested and must not be tested by finding
+# out — a duplicate delivery order in a licensed account book is not something a
+# revert undoes. Marking the rows `sent` closes the window at the one rung of
+# the re-send ladder that has no exception.
+#
+# The three document numbers are HARD-CODED IN THE SCRIPT. `doc` can only narrow
+# the run to one of those three and anything else is refused with exit 2.
+#
+# mode=plan (the default) runs every write inside a transaction and rolls back.
+# Manual trigger only, and its own concurrency group: a repair must never queue
+# behind or displace a release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (rolls back, writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'apply ONLY: type exactly — I HAVE SEEN ALL THREE IN AED_HOUZS'
+        required: false
+        default: ""
+        type: string
+      # `all` rather than an empty option: a choice list cannot carry one, and
+      # the GitHub `x && '' || y` ternary collapses an empty branch back to y,
+      # so the sentinel is spelled out and the script resolves it.
+      doc:
+        description: "all three, or narrow to ONE of them"
+        required: true
+        default: "all"
+        type: choice
+        options: [all, HC-DO-2608-001, HC-DO-2608-002, HC-SI-2608-001]
+      company:
+        description: "company_id (1 = HOUZS)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: repair-outbox-sent-by-hand
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: Repair the outbox state (${{ inputs.mode }})
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          DOC: ${{ inputs.doc }}
+          COMPANY: ${{ inputs.company }}
+        # pipefail, or `tee` swallows the exit code and a refused run reports success
+        run: |
+          set -o pipefail
+          node scripts/repair-outbox-sent-by-hand.mjs | tee outbox-repair.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: repair-outbox-sent-by-hand-${{ inputs.mode }}
+          path: backend/outbox-repair.txt
+          retention-days: 90

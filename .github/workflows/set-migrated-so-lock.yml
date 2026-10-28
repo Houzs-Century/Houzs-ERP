@@ -1,0 +1,117 @@
+name: Migrated sales-order lock (open / close)
+
+# Manual. Opens or re-closes MIGRATED sales orders for staff by writing
+# scm.app_config['scm.migrated_so_lock']. Takes effect within ~30s, no deploy —
+# the middleware caches the row for that long, per isolate.
+#
+# WHY IT EXISTS. Exactly the gap docs/bugs/0710 found in the write freeze, one
+# row along: docs/migrated-so-lock.md §6 and §10 both end in a raw SQL UPDATE
+# left for a person, and CLAUDE.md's standing rule is that the owner is not a
+# database console. This row decides whether ~2,900 documents can be edited by
+# the people who have to proceed them.
+#
+# IT IS A DIFFERENT ROW AND A DIFFERENT GRAMMAR FROM THE WRITE FREEZE. This one
+# has NO `- <areas>` clause: it names one module already. A value carrying a `-`
+# is a value pasted from the neighbouring row and is REFUSED, not read as "on".
+# Use "Write freeze (open / close SCM modules)" for that row.
+#
+# THE DANGEROUS DIRECTION HERE IS OPENING, which is the opposite of the freeze.
+# The owner ruled migrated orders shut on 2026-09-08; the risks behind that
+# ruling are risks to DATA, which a re-close cannot undo. So an apply that opens
+# documents is refused unless allow_open says yes out loud. What it CLOSES is
+# printed just as loudly, and is not gated: losing an edit you had is visible
+# within a minute and costs nobody their work.
+#
+# THE CONFIRM PHRASE IS PASSED ALWAYS, AND THAT IS DELIBERATE — SAID OUT LOUD SO
+# NOBODY READS IT AS A GATE IT IS NOT. The script's CONFIRM guards a human typing
+# the command directly. On this path the deliberate acts are choosing mode=apply
+# and, for the dangerous direction only, typing yes into allow_open. Pretending
+# otherwise would be the shape of docs/bugs/0700, where a workflow silently did
+# not pass the phrase its own script required, in the other direction.
+#
+# Read the CONSEQUENCE, not just the switch, with
+# "Sales orders open for NEW — status (read-only)".
+#
+# Reads stay open under every value — the guard only refuses non-GET methods, so
+# a locked order can still be looked at and printed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      mode:
+        description: "plan prints the before/after and writes nothing"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      value:
+        description: "off | all | 1 | 1,2 | verdict:1 | verdict:all   (NO `- areas` clause — that is the write freeze)"
+        required: true
+        default: "1"
+        type: string
+      allow_open:
+        description: "Type yes ONLY if this value is meant to make migrated orders editable."
+        required: false
+        default: ""
+        type: string
+      message:
+        description: "The sentence staff see on a locked order. Blank leaves the existing one alone. Ignored in verdict: mode."
+        required: false
+        default: ""
+        type: string
+
+# Its own group. A switch flip must never queue behind a deploy, or displace one.
+concurrency:
+  group: set-migrated-so-lock-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      # npx tsx, not node: this script imports the REAL parser out of
+      # src/scm/lib/migrated-so-lock.ts rather than carrying a second copy of
+      # the grammar (docs/bugs/0710). Same runner check-so-open-for-new.yml
+      # already uses for the same reason.
+      - run: npx tsx scripts/set-migrated-so-lock.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          VALUE: ${{ inputs.value }}
+          ALLOW_OPEN: ${{ inputs.allow_open }}
+          MESSAGE: ${{ inputs.message }}
+          CONFIRM: SET MIGRATED SO LOCK
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      # npx tsx, not node — see the staging job.
+      - run: npx tsx scripts/set-migrated-so-lock.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          VALUE: ${{ inputs.value }}
+          ALLOW_OPEN: ${{ inputs.allow_open }}
+          MESSAGE: ${{ inputs.message }}
+          CONFIRM: SET MIGRATED SO LOCK
+          NODE_OPTIONS: --dns-result-order=ipv4first

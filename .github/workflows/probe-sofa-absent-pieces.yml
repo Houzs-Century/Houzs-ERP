@@ -1,0 +1,68 @@
+name: Sofa piece-absent evidence (read-only)
+
+# Manual, read-only. For a build check-sofa-chain-alignment.mjs called PIECE
+# ABSENT, put the sales order, the purchase order, the WIDE search across every
+# company-1 purchase order, the slip photo links and the parse-sofa decode of
+# the book's own Desc2 on one screen - so the question is answered from evidence
+# instead of by asking the owner one drawing at a time.
+#
+# The chain audit only looks at the purchase orders a build's LINKED lines came
+# from, so a piece can sit on a different purchase order and be reported absent.
+# Section C is that wider search and it is why this exists.
+#
+# No writes, no DDL, no transaction.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      docs:
+        description: "comma-separated sales orders; blank = the 2026-09-07 piece-absent set"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: probe-sofa-absent-pieces-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-sofa-absent-pieces.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          DOCS: ${{ inputs.docs }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-sofa-absent-pieces.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          DOCS: ${{ inputs.docs }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

@@ -1,0 +1,111 @@
+name: Go-live wipe — Houzs Century (HC)
+
+# DESTRUCTIVE, but SAFE BY DEFAULT. Wipes Houzs Century's transaction + stock
+# data for a clean production go-live, keeps all master/config data, and never
+# touches 2990. See backend/scripts/golive-wipe-hc.mjs for the full contract.
+#
+# DEFAULT is mode=plan: a read-only dry run that counts what it WOULD delete and
+# writes nothing. mode=apply deletes, and ONLY runs when the confirm input is
+# typed EXACTLY — the workflow passes it to the script's CONFIRM gate, which
+# refuses otherwise.
+#
+# DOCUMENT NUMBERS ARE NOW A SEPARATE DECISION. Since migration 0316 the counter
+# is scm.doc_number_counters and deleting rows does NOT reset it. apply refuses
+# without doc_counters, because both defaults are wrong: keep would silently
+# stop doing what this workflow promised for months, and reset would silently
+# re-arm the 2026-08-20 collision, where the ERP handed out HC-SO-2608-001/002
+# again into a book that already held them. Run plan first — it prints every
+# counter row together with the evidence that set it.
+#
+# Manual trigger only. Never on a schedule — a scheduled destructive job is how
+# an accident becomes routine.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, read-only) or apply (DELETES HC data)"
+        type: choice
+        default: plan
+        options:
+          - plan
+          - apply
+      confirm:
+        description: 'For apply ONLY, type exactly: WIPE HOUZS-CENTURY TRANSACTIONS'
+        type: string
+        required: false
+        default: ""
+      doc_counters:
+        description: "For apply ONLY. keep = numbers continue upward (safe). reset = restart at 001 (can re-issue numbers AutoCount already holds)"
+        type: choice
+        default: keep
+        options:
+          - keep
+          - reset
+      confirm_doc_counters:
+        description: 'For doc_counters=reset ONLY, type exactly: RESET DOCUMENT NUMBERS TO 001'
+        type: string
+        required: false
+        default: ""
+
+# Own concurrency group — NEVER the deploy's. A wipe must not queue behind or
+# displace a release, and two wipes must never overlap.
+concurrency:
+  group: golive-wipe-hc
+  cancel-in-progress: false
+
+jobs:
+  wipe:
+    runs-on: ubuntu-latest
+    # Production, because that is where DATABASE_URL lives (secrets.DATABASE_URL
+    # is the only DB credential this repo holds).
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Run wipe (${{ github.event.inputs.mode }})
+        run: node scripts/golive-wipe-hc.mjs
+        env:
+          MODE: ${{ github.event.inputs.mode }}
+          CONFIRM: ${{ github.event.inputs.confirm }}
+          DOC_COUNTERS: ${{ github.event.inputs.doc_counters }}
+          CONFIRM_DOC_COUNTERS: ${{ github.event.inputs.confirm_doc_counters }}
+          BACKUP_DIR: ${{ github.workspace }}/golive-backup
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; match the other DB
+          # workflows (soak-gate-check.yml) so the pooler host resolves.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+      # Only apply writes a backup; upload it so the wipe is recoverable.
+      #
+      # `always()` IS THE POINT, and it was bought at full price. The script
+      # dumps the backup BEFORE it deletes, so the run that most needs its
+      # backup uploaded is the one that FAILS. Without always(), a failed step
+      # skips this one and the dump dies with the runner.
+      #
+      # Measured: on 2026-08-20 run 32357340470 deleted 35,328 HC rows, COMMITTED
+      # them, then failed its post-commit verification — so the only copy of
+      # those rows, including the 30 scm.autocount_outbox rows that were the
+      # ERP's entire memory of what it had sent to AutoCount, was written to the
+      # runner and thrown away. Run 32355449066 lost its dump the same way. The
+      # one artifact that does survive (32358148080) is from the no-op apply
+      # afterwards and contains an EMPTY outbox. That is why the seed in
+      # migration 0316 has to hardcode the account book's numbers from
+      # ac-live-proof.json: nothing else remembers them.
+      - name: Upload HC backup (apply only)
+        if: ${{ always() && github.event.inputs.mode == 'apply' }}
+        uses: actions/upload-artifact@v4
+        with:
+          # Named per run so a failed apply's dump cannot be confused with a
+          # later successful one's — the confusion that made an empty artifact
+          # look like the wipe's backup.
+          name: golive-hc-backup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: golive-backup/
+          if-no-files-found: warn
+          retention-days: 90

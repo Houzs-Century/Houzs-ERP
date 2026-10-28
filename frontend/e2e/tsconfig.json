@@ -1,0 +1,19 @@
+{
+  "// note": "Standalone tsconfig for the e2e specs only. The app build (tsconfig.app.json includes ['src'] and tsconfig.node.json includes ['vite.config.ts']) does NOT reference this directory, so `tsc -b` and `npm run typecheck` in frontend/ never compile these files. Typecheck the specs with: npx tsc --noEmit -p frontend/e2e/tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["node"],
+    "skipLibCheck": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules"]
+}

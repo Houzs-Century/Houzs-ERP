@@ -1,0 +1,46 @@
+name: Probe sofa colour misses (read-only)
+
+# READ-ONLY companion to refresh-sofa-colours.yml. That sweep reports its
+# leftovers aggregated by colour STRING, which names the matcher's gaps but not
+# the affected orders. This one prints the same unresolved lines keyed by
+# doc_no + model so the misses can actually be chased.
+#
+# There is no apply input. The script writes nothing.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      pending:
+        description: "1 to also list the TBC/KIV lines"
+        required: false
+        default: "0"
+        type: string
+
+concurrency:
+  group: probe-sofa-colour-misses-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-sofa-colour-misses.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          PENDING: ${{ inputs.pending }}
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}

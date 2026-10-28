@@ -1,0 +1,92 @@
+-- ----------------------------------------------------------------------------
+-- RE-CHECK NUMBER AT MERGE — parallel PRs; last on main was 0328 when written
+-- (0328 is this change's own predecessor, PR #2722, not yet merged).
+--
+-- 0329 — the PACKING LIST gets a public scan token too, so one scan moves the
+-- whole run.
+--
+-- THE SPEC THIS CHANGE WAS GIVEN quotes the owner: 「这三个操作都可以通过 scan DO
+-- 或 scan packing list 来达成（scan packing list 会将该 list 内的货物统一全部出
+-- 完）」 — all three scans reachable by scanning EITHER a delivery order OR a
+-- packing list, and scanning the packing list moves everything on it at once.
+-- Mig 0328 built the delivery-order half. This is the packing-list half.
+--
+-- WHY THIS COLUMN GOES ON scm.trips, AND THE MISTAKE THAT DELAYED IT. PR #2722
+-- shipped without this half on the stated reasoning that "a packing list is not
+-- a row — there is no packing_lists table, so there is nothing to hang a token
+-- on". The first clause is true and the conclusion does not follow: A PACKING
+-- LIST IS A TRIP, AND A TRIP IS A ROW. scm.trips is one row per (day, lorry)
+-- with a UUID primary key (mig 0053), and scm.lib/packing-list-view.ts says so
+-- in its own header — "A PACKING LIST IS A TRIP, RENDERED". Every property the
+-- delivery-order token depends on is present here:
+--
+--   · one row per packing list                     scm.trips, uuid PK (0053)
+--   · a non-null company ON that row               company_id bigint NOT NULL,
+--                                                  added by mig 0083 — the SAME
+--                                                  migration and the same
+--                                                  SET NOT NULL + FK + index
+--                                                  treatment scm.delivery_orders
+--                                                  got
+--   · an ordered member list                       scm.trip_stops (trip_id,
+--                                                  stop_no, do_id), 0053
+--
+-- Shape identical to 0328, deliberately: one mechanism, not two. Same nullable
+-- lazily-minted token, same UNIQUE PARTIAL index, same revocation column, same
+-- timestamptz (scm.* convention, mig 0324), same reasons.
+--
+-- THE UNIQUE INDEX IS A TENANCY CONTROL, NOT A PERFORMANCE ONE. The public
+-- route has no session, so the only thing telling it which books it may touch is
+-- the row the token resolved to. "The token resolves to exactly one row" has to
+-- be a database guarantee, not a probability argument about 256 bits. PARTIAL
+-- (WHERE qr_token IS NOT NULL) because the column is overwhelmingly NULL — every
+-- trip nobody has printed — and NULLs would otherwise pay for index pages that
+-- can never be searched.
+--
+-- ONE TOKEN SPACE, TWO TABLES, AND THAT IS SAFE. A token is looked up in
+-- delivery_orders and then in trips; both lookups are unique, and the 64-hex
+-- space (~244 bits) makes a collision between the two not worth reasoning about
+-- beyond saying so. The resolver reports which kind it found, and the caller
+-- branches on it — it never guesses from the token's shape, because both kinds
+-- have the same shape on purpose.
+--
+-- qr_revoked_at GETS NO INDEX, exactly as 0126 reasoned about
+-- case_track_tokens.revoked_at and 0328 repeated: a nullable flag read only
+-- AFTER the row has been found by its token. No query selects BY revocation.
+--
+-- NO BACKFILL, AND NO ROW CHANGES MEANING. Both columns start NULL on every
+-- existing row: NULL qr_token means "no public page yet", true of all of them,
+-- and NULL qr_revoked_at means "live". A pure add-column no-op on prod data.
+--
+-- Houzs SCM port conventions (mirrors 0328 / 0324): schema-qualified to scm.*,
+-- plain ADD COLUMN IF NOT EXISTS — NOT a DO block, because pg-migrate splits
+-- each file on ";\n" and would fragment a dollar-quoted one — additive, re-run
+-- safe, so the auto-apply on every deploy is a no-op after the first.
+--
+-- VIEW-TRAP NOTE: no view in migrations-pg does SELECT * over scm.trips; ADD
+-- COLUMN cannot break a column-enumerated view, and nothing here drops or
+-- recreates anything, so no GRANT is at risk — the direction mig 0189 was
+-- destroyed from.
+--
+-- REVERSAL:
+--   DROP INDEX IF EXISTS scm.ux_trips_qr_token;
+--   ALTER TABLE scm.trips DROP COLUMN qr_token, DROP COLUMN qr_revoked_at;
+--   Dropping qr_token INVALIDATES EVERY PRINTED PACKING LIST — the sheet in the
+--   lorry keeps pointing at a token no row carries, and re-adding the column
+--   mints fresh tokens that do not match the print. Safe only before any packing
+--   list has been printed with a QR; after that the recovery is to re-print, not
+--   to re-add. Ship the reversal as a NEW migration: this file is checksummed
+--   the moment it reaches prod and its body may never be edited.
+-- Verified against: the migration tree in this repo — 0053 (scm.trips /
+-- scm.trip_stops DDL, uuid PKs, trip_date + lorry_id indexes) and 0083, which
+-- adds company_id bigint and runs ALTER COLUMN company_id SET NOT NULL on BOTH
+-- scm.trips and scm.trip_stops. NOT verified against a live production
+-- connection: no production query or write was made for this change.
+-- ----------------------------------------------------------------------------
+
+SET search_path = scm, public;
+
+ALTER TABLE scm.trips ADD COLUMN IF NOT EXISTS qr_token text;
+ALTER TABLE scm.trips ADD COLUMN IF NOT EXISTS qr_revoked_at timestamptz;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_trips_qr_token
+  ON scm.trips (qr_token) WHERE qr_token IS NOT NULL;

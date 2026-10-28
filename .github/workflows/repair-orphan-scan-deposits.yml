@@ -1,0 +1,51 @@
+name: Repair orphan scan deposits (dry-run by default)
+
+# Zeroes the phantom header deposit_sen on scan-origin orders double-counted by
+# the orphan-deposit bug (docs/bugs/0785). DRY-RUN by default — it prints the
+# before->after plan and writes nothing; choose mode=apply to write.
+#
+# Manual trigger only. Own concurrency group so a repair never queues behind or
+# displaces the deploy. Read the plan (mode=dry-run) and confirm before apply.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      mode:
+        description: "dry-run (plan only) or apply (write)"
+        required: true
+        default: "dry-run"
+        type: choice
+        options: [dry-run, apply]
+
+concurrency:
+  group: repair-orphan-scan-deposits
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Repair orphan scan deposits
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: |
+          if [ -z "$DATABASE_URL" ]; then echo "DATABASE_URL missing"; exit 2; fi
+          node scripts/repair-orphan-scan-deposits.mjs

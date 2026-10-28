@@ -1,0 +1,81 @@
+name: Fill bedframe divan/gap/leg from the supplier listing
+
+# Manual. Writes the supplier's stated divan height, gap and leg onto our
+# bedframe purchase lines AND their sales lines. Owner 2026-09-11: 「跟着供应商…
+# 无论是 BedFrame 还是 sofa compartment 跟它们的 variant」.
+#
+# It writes only where nothing has been keyed off the current measurements — no
+# receipt, no goods-received line, no delivery line, no allocated stock. All
+# three axes compose a bedframe's inventory identity (`computeVariantKey`), so a
+# line whose goods are already in would be pointed at a bucket no lot carries:
+# docs/bugs/0722. Everything held is listed with its reason.
+#
+# Beds are matched by SIZE, never by row order, and a document holding two beds
+# of the same size that state DIFFERENT measurements is skipped — nothing in the
+# export says which bed is which.
+#
+# DRY-RUN unless apply=1, which is refused without the confirm phrase. An APPLY
+# re-reads every line it wrote on a FRESH connection and prints VERIFY OK or
+# VERIFY FAILED.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      apply:
+        description: "1 to write, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      confirm:
+        description: 'type exactly: FILL THE SUPPLIER BEDFRAME MEASUREMENTS (only needed when apply=1)'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: apply-supplier-bedframe-variants-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/apply-supplier-bedframe-variants.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/apply-supplier-bedframe-variants.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

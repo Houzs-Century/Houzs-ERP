@@ -1,0 +1,81 @@
+/* Merchant reconciliation — the line tables.
+ *
+ * Ruled like a ledger, on purpose: the owner asked for "table，有线条的" while
+ * looking at a list where only the rows were separated. A reconciliation is
+ * read ACROSS (this line against that sale) and DOWN (this fee against that
+ * one), and a cell with no side needs the eye to hold the column itself. */
+
+.grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-13);
+  background: var(--c-cream);
+}
+
+.grid th,
+.grid td {
+  border: 1px solid var(--c-line, rgba(34, 31, 32, 0.18));
+  padding: var(--space-2) var(--space-3);
+  vertical-align: top;
+}
+
+.grid thead th {
+  background: var(--c-paper);
+  text-align: left;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Right-aligned money, with figures that line up digit for digit — the point
+   of putting three reports' fees in one column. */
+.grid .num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* One report is one tbody. A heavier rule where the next one starts, so the
+   groups are readable without giving each its own header. */
+.grid tbody > tr:first-child > td {
+  border-top: 2px solid var(--c-ink);
+}
+
+.grid tbody > tr:hover > td {
+  background: rgba(17, 20, 15, 0.03);
+}
+
+.report {
+  min-width: 235px;
+  background: var(--c-paper);
+}
+
+.sub {
+  font-size: var(--fs-12);
+  color: var(--c-ink-soft, #777);
+}
+
+.good { color: var(--c-secondary-a, #2F5D4F); }
+.bad { color: var(--c-festive-b, #B8331F); }
+
+/* Two bands, one seam.
+   The owner, on a Report cell holding five different facts: 可以分成多个 column
+   吗？不然有一点点难看，太多信息 — 我理想中应该左手边都是 merchant report 的资料，
+   然后紧挨着就是订单的资料.
+
+   The band captions carry the two-tier header; the seam is the rule between
+   what the merchant said and what the ERP said, so the eye finds the join
+   without reading a single word. */
+
+.grid thead th.band {
+  text-align: center;
+  font-weight: 600;
+  font-size: var(--fs-12);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--c-ink-soft, #777);
+}
+
+.grid th.seam,
+.grid td.seam {
+  border-left: 2px solid var(--c-ink);
+}

@@ -1,0 +1,108 @@
+name: Merge truncated AutoCount codes (PLAN unless applied)
+
+# AutoCount caps an item code at 30 characters. Nine book codes were cut inside a
+# parenthesis ("DL-CS2 NN-WINTER SLEEP MATT (K"), the first cutover pass minted
+# ERP catalogue rows for them, and the stock later moved to the names the mapping
+# sheet keeps while the migrated sales-order lines kept the book's code. So a
+# King mattress read 0 on its orders' code with 2 on the other (docs/bugs/0890).
+#
+# PLAN (default) writes nothing and uploads plan.json - document numbers, lot ids
+# and costs stay in the artifact because this repository's logs are public.
+#
+# APPLY needs a PART and the CONFIRM phrase the plan printed for it:
+#   lines     re-key the sales-order lines, switch off the empty truncated rows.
+#             No quantity or value moves.
+#   writeoff  remove the units counted twice on truncated codes, then switch those
+#             rows off. Takes their cost out of inventory value.
+# After an apply, run "Recompute SO stock allocation (DRY-RUN gated)" for the
+# orders in plan.json.
+#
+# Manual trigger only, own concurrency group.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      mode:
+        description: "plan (writes nothing) or apply"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      part:
+        description: "On apply only: lines or writeoff"
+        required: false
+        default: ""
+        type: string
+      confirm:
+        description: "On apply only: the phrase the plan printed for that part"
+        required: false
+        default: ""
+        type: string
+      company_id:
+        description: "Company (1 = Houzs Century)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: merge-truncated-ac-codes-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/merge-truncated-ac-codes.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          PART: ${{ inputs.part }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          OUT_DIR: merge-truncated-ac-codes-out
+          NODE_OPTIONS: --dns-result-order=ipv4first
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: merge-truncated-ac-codes-${{ inputs.mode }}-${{ github.run_id }}
+          path: backend/merge-truncated-ac-codes-out
+          if-no-files-found: warn
+          retention-days: 30
+
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/merge-truncated-ac-codes.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          PART: ${{ inputs.part }}
+          CONFIRM: ${{ inputs.confirm }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          OUT_DIR: merge-truncated-ac-codes-out
+          NODE_OPTIONS: --dns-result-order=ipv4first
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: merge-truncated-ac-codes-staging-${{ inputs.mode }}-${{ github.run_id }}
+          path: backend/merge-truncated-ac-codes-out
+          if-no-files-found: warn
+          retention-days: 30

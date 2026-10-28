@@ -1,0 +1,85 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 1719 >>
+stream
+BT
+/F1 8 Tf
+1 0 0 1 21 800 Tm (MAKLUMAN PEMBAYARAN /) Tj
+1 0 0 1 330 800 Tm (PAYMENT ADVICE) Tj
+1 0 0 1 21 786 Tm (PUBLIC BANK BERHAD) Tj
+1 0 0 1 330 779 Tm (Nama Bank /) Tj
+1 0 0 1 390 779 Tm (Name of Bank) Tj
+1 0 0 1 456 779 Tm (:) Tj
+1 0 0 1 463 779 Tm (MALAYAN BANKING BERHAD) Tj
+1 0 0 1 330 765 Tm (Nombor Akaun /) Tj
+1 0 0 1 390 765 Tm (Account Number) Tj
+1 0 0 1 456 765 Tm (:) Tj
+1 0 0 1 463 765 Tm (514012345678) Tj
+1 0 0 1 330 751 Tm (Jumlah Besar /) Tj
+1 0 0 1 390 751 Tm (Grand Total) Tj
+1 0 0 1 456 751 Tm (:) Tj
+1 0 0 1 463 751 Tm (RM11,814.44) Tj
+1 0 0 1 330 737 Tm (Tarikh Penyata /) Tj
+1 0 0 1 390 737 Tm (Statement Date) Tj
+1 0 0 1 456 737 Tm (:) Tj
+1 0 0 1 463 737 Tm (19JUN26) Tj
+1 0 0 1 76 700 Tm (Merchant ID) Tj
+1 0 0 1 131 700 Tm (Terminal) Tj
+1 0 0 1 181 700 Tm (Batch) Tj
+1 0 0 1 232 700 Tm (Sett Date) Tj
+1 0 0 1 321 700 Tm (Gross) Tj
+1 0 0 1 402 700 Tm (Commission) Tj
+1 0 0 1 485 700 Tm (Deducted) Tj
+1 0 0 1 547 700 Tm (Net) Tj
+1 0 0 1 76 660 Tm (9999999998) Tj
+1 0 0 1 131 660 Tm (99999999) Tj
+1 0 0 1 181 660 Tm (270429) Tj
+1 0 0 1 232 660 Tm (17JUN26) Tj
+1 0 0 1 321 660 Tm (1,620.00) Tj
+1 0 0 1 402 660 Tm (8.10) Tj
+1 0 0 1 485 660 Tm (0.00) Tj
+1 0 0 1 547 660 Tm (1,611.90) Tj
+1 0 0 1 76 646 Tm (9999999999) Tj
+1 0 0 1 131 646 Tm (99999999) Tj
+1 0 0 1 181 646 Tm (270430) Tj
+1 0 0 1 232 646 Tm (17JUN26) Tj
+1 0 0 1 321 646 Tm (945.00) Tj
+1 0 0 1 402 646 Tm (8.03) Tj
+1 0 0 1 485 646 Tm (0.00) Tj
+1 0 0 1 547 646 Tm (936.97) Tj
+1 0 0 1 76 632 Tm (9999999999) Tj
+1 0 0 1 131 632 Tm (99999999) Tj
+1 0 0 1 181 632 Tm (270431) Tj
+1 0 0 1 232 632 Tm (17JUN26) Tj
+1 0 0 1 321 632 Tm (9,345.00) Tj
+1 0 0 1 402 632 Tm (79.43) Tj
+1 0 0 1 485 632 Tm (0.00) Tj
+1 0 0 1 547 632 Tm (9,265.57) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000002012 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+2080
+%%EOF

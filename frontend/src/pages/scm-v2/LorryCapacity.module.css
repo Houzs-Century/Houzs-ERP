@@ -1,0 +1,145 @@
+/* ====================================================================
+   Lorry Capacity — design-system reskin (2026-07-16)
+
+   The page frame is now FULL-BLEED and matches the PO/SO V2 pages
+   (PurchaseOrdersListV2 / SalesOrderMaintenance / SalesOrderDetailListing):
+   the header is the shared <PageHeader> (with the date-range + fleet
+   segmented controls as its `actions`), the summary metrics are <StatCard>
+   tiles, and the table card is a plain Tailwind token slab — all inline
+   in the TSX.
+
+   The old grey "framed card" chrome (.page #dcdfd9 canvas + its `--c-*` /
+   `--line` token-override cascade, .headerRow/.title/.subtitle, the
+   .controls/.segment/.segBtn/.segBtnActive segmented pills, the
+   .customRange/.dateInput/.rangeDash date row, the .cards/.card/.cardLabel/
+   .cardValue KPI tiles, .tableWrap, .bannerWarn and the unused .muted) is
+   gone.
+
+   What survives is the DENSE per-lorry metric table — a genuine content
+   primitive with no design-system equivalent (16 numeric columns, sticky
+   head, tinted utilisation pill, inline edit affordances). Its colours used
+   to resolve through the deleted `.page` cascade, so they are hardcoded to
+   the Tailwind "Ink & Petrol" tokens:
+     primary  #16695f   primary-dark #0c3f39
+     ink      #11140f   ink-muted    #767b6e
+     border   #d6d9d2   surface      #ffffff   surface-2 #f4f6f3
+     err      #b23a3a   synced       #2f8a5b
+   Structural tokens (--space-*, --fs-*, --font-*, --radius-*) stay as
+   var() — those are global and unaffected by the removed cascade.
+   ==================================================================== */
+
+/* ── Per-lorry metric table ───────────────────────────────────────────────── */
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.table thead th {
+  position: sticky;
+  top: 0;
+  background: #f4f6f3;
+  text-align: right;
+  padding: 8px 10px;
+  font-family: var(--font-button);
+  font-size: var(--fs-9, 9px);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #767b6e;
+  border-bottom: 1px solid #d6d9d2;
+}
+.table thead th.left { text-align: left; }
+.table thead th.center { text-align: center; }
+
+.table tbody td {
+  padding: 7px 10px;
+  text-align: right;
+  color: #11140f;
+  border-bottom: 1px solid #e3e6e0;
+  font-variant-numeric: tabular-nums;
+}
+.table tbody td.left { text-align: left; }
+.table tbody td.center { text-align: center; }
+.table tbody tr:last-child td { border-bottom: none; }
+.table tbody tr:hover td { background: #f4f6f3; }
+
+.plate {
+  font-family: var(--font-mark);
+  font-weight: 700;
+  color: #0c3f39;
+}
+.lorryType {
+  font-size: 10px;
+  color: #767b6e;
+  margin-left: 6px;
+}
+
+/* In-house inline checkbox cell. */
+.checkCell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+/* Repair Days inline number input. */
+.repairInput {
+  width: 56px;
+  height: 26px;
+  padding: 0 6px;
+  text-align: right;
+  border: 1px solid #d6d9d2;
+  border-radius: var(--radius-sm, 6px);
+  background: #f4f6f3;
+  font-family: var(--font-mark);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: #11140f;
+}
+.repairInput:focus {
+  outline: none;
+  border-color: #16695f;
+  background: #ffffff;
+}
+
+/* Utilisation tint — low utilisation reads red-ish, healthy reads green-ish.
+   Applied as a small pill so it stands out in the dense metric grid. */
+.utilPill {
+  display: inline-block;
+  min-width: 48px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mark);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.utilLow  { background: rgba(178, 58, 58, 0.12); color: #b23a3a; }
+.utilMid  { background: rgba(22, 105, 95, 0.12); color: #0c3f39; }
+.utilHigh { background: rgba(47, 138, 91, 0.12); color: #2f8a5b; }
+
+/* Money cells — mark face. */
+.money { font-family: var(--font-mark); font-weight: 600; }
+
+/* Totals footer row. */
+.table tfoot td {
+  padding: 8px 10px;
+  text-align: right;
+  border-top: 2px solid #d6d9d2;
+  font-family: var(--font-mark);
+  font-weight: 700;
+  color: #11140f;
+  background: rgba(22, 105, 95, 0.04);
+  font-variant-numeric: tabular-nums;
+}
+.table tfoot td.left { text-align: left; text-transform: uppercase; font-family: var(--font-button); font-size: var(--fs-9, 9px); letter-spacing: 0.06em; color: #767b6e; }
+
+.emptyState {
+  padding: var(--space-5) var(--space-4);
+  text-align: center;
+  color: #767b6e;
+  font-size: var(--fs-12);
+}

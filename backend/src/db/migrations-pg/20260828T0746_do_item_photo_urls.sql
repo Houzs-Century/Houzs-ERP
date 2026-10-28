@@ -1,0 +1,40 @@
+-- 20260828T0746_do_item_photo_urls.sql — Delivery Order lines carry photos,
+-- like Sales Order lines (native) and Purchase Order lines (0274) already do.
+--
+-- Owner 2026-08-10 rule, third document: "当我们将 Sales Order 转换成 PO 时，那个
+-- PO 也会自动带着这张照片" — and 送货时照片要跟着 line: the driver and the customer
+-- must see the same reference shot the salesperson attached to the SO line. A
+-- DO raised from an SO line therefore carries that line's photos, exactly as
+-- the SO->PO convert has since 0274. scm.delivery_order_items had no photo
+-- column at all, so every SO->DO convert dropped them.
+--
+-- EXACTLY the SO's and PO's column shape — text[] NOT NULL DEFAULT '{}' — and
+-- deliberately NO CHECK constraint and NO key-shape rule, for 0274's reason:
+-- nothing in the schema or the read path may depend on the key prefix. Today
+-- the only producer is the SO->DO carry (`so-items/...` keys), but the PO
+-- column started that way too and the AutoCount importer became its second
+-- producer; the append-safe shape (NOT NULL + '{}') is what allowed that
+-- without a rewrite.
+--
+-- SHARED KEYS, NOT COPIES, on the convert path. The DO line points at the same
+-- R2 objects (bucket binding SO_ITEM_PHOTOS) the SO line does — one photo, two
+-- documents, no duplicated bytes and no R2 round-trip inside the convert.
+-- Deleting a photo from the SO line removes the object, so it also disappears
+-- from any DO raised from that line. Deliberate, same as the PO.
+--
+-- PER LINE, NEVER DEDUPLICATED ACROSS A DO. One sofa build is many compartment
+-- lines that legitimately share a build photo; each DO line keeps its own array.
+--
+-- NOT NULL with a '{}' default means readers never handle NULL, and every
+-- existing row backfills to the empty array without a rewrite pass. No data
+-- backfill is run for historical DOs: their source SO lines still hold the
+-- photos, and re-linking them is a judgement (which DO lines trace to which SO
+-- line) that belongs to a one-shot script if the owner ever asks, not here.
+--
+-- Houzs conventions: schema-qualified to scm.*; no inner BEGIN/COMMIT
+-- (pg-migrate owns the txn); additive and idempotent.
+--
+-- REVERSAL: ALTER TABLE scm.delivery_order_items DROP COLUMN IF EXISTS photo_urls;
+--   (drops only the carried key arrays — the R2 objects and the SO/PO copies
+--   of the keys are untouched, so nothing else must be put back)
+ALTER TABLE scm.delivery_order_items ADD COLUMN IF NOT EXISTS photo_urls text[] NOT NULL DEFAULT '{}';

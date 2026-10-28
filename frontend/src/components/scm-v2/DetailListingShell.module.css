@@ -1,0 +1,274 @@
+/* DetailListingShell (DO / DR / SI detail listing) — the AutoCount-style
+   filter card + result panel chrome. The 2026-07-16 reskin moved the SO
+   listing to PageHeader/Tailwind and emptied SalesOrderDetailListing.module.css,
+   but this shell kept reading it, so these three pages rendered unstyled. */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5) var(--space-6);
+  background: var(--c-cream);
+  min-height: 100%;
+}
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.titleBlock {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.title {
+  font-family: var(--font-title);
+  font-size: var(--fs-18);
+  font-weight: 700;
+  color: var(--c-ink);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.subtitle {
+  font-family: var(--font-sans);
+  font-size: var(--fs-11);
+  color: var(--fg-muted);
+  margin: 2px 0 0;
+}
+
+/* ── Two-card filter row ──────────────────────────────────────────── */
+
+.filterRow {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: var(--space-3);
+}
+
+@media (max-width: 1100px) {
+  .filterRow { grid-template-columns: 1fr; }
+}
+
+.card {
+  background: var(--c-paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+
+.cardTitle {
+  font-family: var(--font-button);
+  font-size: var(--fs-11);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  margin: 0;
+}
+
+.cardBody {
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* Filter grid (Basic Filter card) */
+
+.filterGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-2);
+}
+
+@media (max-width: 900px) {
+  .filterGrid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* Phone (Houzs 2026-06-24) — element-level overflow clamp: single-column filter grid + date range, full-width search, lighter page padding. The wide result table already scrolls inside .tableScroll. */
+@media (max-width: 600px) {
+  .page { padding: var(--space-3) var(--space-3) var(--space-5); }
+  .filterGrid { grid-template-columns: 1fr; }
+  .filterGridSpan2 { grid-column: auto; }
+  .dateRangeRow { grid-template-columns: 1fr; }
+  .criteriaBox { grid-template-columns: 1fr; }
+  .searchInput { width: 100%; }
+}
+
+.filterGridSpan2 { grid-column: span 2; }
+.filterGridSpanAll { grid-column: 1 / -1; }
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fieldLabel {
+  font-family: var(--font-sans);
+  font-size: var(--fs-10);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-soft);
+}
+
+.fieldInput,
+.fieldSelect {
+  font-family: var(--font-sans);
+  font-size: var(--fs-13);
+  background: var(--c-paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 4px var(--space-2);
+  color: var(--c-ink);
+  outline: none;
+  width: 100%;
+  line-height: 1.4;
+}
+.fieldInput:focus,
+.fieldSelect:focus { border-color: var(--line-strong); background: var(--c-cream); }
+
+.dateRangeRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+  align-items: end;
+}
+
+/* Options card (right) */
+
+.optionsBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.checkboxRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-sans);
+  font-size: var(--fs-13);
+  color: var(--c-ink);
+}
+
+.optionsButtonRow {
+  display: inline-flex;
+  gap: var(--space-2);
+  margin-top: 6px;
+}
+
+/* ── Action bar ───────────────────────────────────────────────────── */
+
+.actionBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-3);
+  background: var(--c-paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+/* ── Criteria summary ─────────────────────────────────────────────── */
+
+.criteriaBox {
+  padding: var(--space-2) var(--space-3);
+  background: var(--c-paper);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  color: var(--c-ink);
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px var(--space-3);
+}
+
+.criteriaKey {
+  font-size: var(--fs-10);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-soft);
+}
+
+/* ── Search Result panel ──────────────────────────────────────────── */
+
+.resultCard {
+  background: var(--c-paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+  display: flex;
+  flex-direction: column;
+}
+
+.resultHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.resultTitle {
+  font-family: var(--font-button);
+  font-size: var(--fs-11);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.checkboxButtonRow {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* Hidden options state — show only the action bar + Search Result */
+.optionsHidden .filterRow { display: none; }
+
+.backBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-family: var(--font-button);
+  font-size: var(--fs-13);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: var(--space-2) var(--space-3);
+  background: var(--c-paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--c-ink);
+  text-decoration: none;
+  cursor: pointer;
+}
+.backBtn:hover { background: var(--c-cream); }

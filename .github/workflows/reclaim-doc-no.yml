@@ -1,0 +1,96 @@
+name: Reclaim a document number
+
+# Hands ONE document number back to a monthly series by lowering
+# scm.doc_number_counters.next_n. Since migration 0316 the counter only ever
+# goes up, so deleting the NEWEST document of a month skips its number forever
+# unless something lowers the counter — and until this workflow, nothing could.
+#
+# Run it as a PLAN first (mode=plan, the default): it prints the counter row,
+# the highest surviving row, what the export queue remembers, and whether the
+# number is free. To apply, set mode=apply AND retype the series in
+# confirm_series; they must match exactly or the script refuses.
+#
+# It REFUSES an HC- series outright — those are numbers the licensed AED_HOUZS
+# account book holds, and re-issuing one is the 2026-08-20 Primary Key Error
+# incident. docs/doc-number-reissue-coe.md.
+#
+# See backend/scripts/reclaim-doc-no.mjs for the full safety contract.
+on:
+  workflow_dispatch:
+    inputs:
+      series:
+        description: "The series to lower (e.g. 2990-SO-2608 — company, type, YYMM)"
+        required: true
+      target_n:
+        description: "The number the NEXT save should take (e.g. 67)"
+        required: true
+      confirm_series:
+        description: "Retype the SAME series — required only when mode=apply"
+        required: false
+        default: ""
+      mode:
+        description: "plan prints the verdict and writes nothing; apply lowers the counter"
+        required: true
+        default: "plan"
+        type: choice
+        options:
+          - plan
+          - apply
+      target:
+        description: "Destination DB"
+        required: true
+        default: "prod"
+        type: choice
+        options:
+          - staging
+          - prod
+
+# Never queue behind — or displace — a release.
+concurrency:
+  group: reclaim-doc-no
+  cancel-in-progress: false
+
+jobs:
+  reclaim-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: node scripts/reclaim-doc-no.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          SERIES: ${{ inputs.series }}
+          TARGET_N: ${{ inputs.target_n }}
+          CONFIRM_SERIES: ${{ inputs.confirm_series }}
+          MODE: ${{ inputs.mode }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  reclaim-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: node scripts/reclaim-doc-no.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SERIES: ${{ inputs.series }}
+          TARGET_N: ${{ inputs.target_n }}
+          CONFIRM_SERIES: ${{ inputs.confirm_series }}
+          MODE: ${{ inputs.mode }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

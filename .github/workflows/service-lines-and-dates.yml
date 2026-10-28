@@ -1,0 +1,46 @@
+name: Service lines, DO dates, and the seven added lines (read-only)
+
+# Three questions the owner asked on 2026-09-09:
+#
+#   1. Service and fee lines DO belong on an AutoCount sales order — he ruled
+#      that, and said the codes exist on both sides. So why are those lines
+#      keyless? This resolves them against the write-back's OWN item map.
+#   2. "We only started raising DOs in this system yesterday" contradicts the
+#      2026-06-26..2026-09-07 range the keyless check reports from `created_at`.
+#      This prints created_at AND do_date by month so the shapes settle it.
+#   3. What are the seven lines added to a document the book already had.
+#
+# Read-only. Counts, document numbers and classified reasons only — no customer
+# name, item code, amount or address is ever printed.
+on:
+  workflow_dispatch:
+
+# Its own group. A diagnostic must never queue behind — or displace — a release.
+concurrency:
+  group: service-lines-and-dates
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # tsx, so the service codes are resolved against the SAME item map the
+      # write-back uses (src/services/autocount-item-code.ts) and never a second
+      # copy of the list.
+      - run: npx tsx scripts/check-service-lines-and-dates.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first

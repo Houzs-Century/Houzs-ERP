@@ -1,0 +1,76 @@
+name: Phone backfill (E.164)
+
+# Converts stored contact numbers to E.164. Owner approved 2026-07-22 after the
+# read-only audit reported 3788 values without a country code.
+#
+# STAGING FIRST IS THE WHOLE POINT OF THIS BEING A WORKFLOW. pg-migrate runs on
+# a push to main against production, and deploy-staging.yml runs on the same
+# push against staging — a migration file would hit both at once. Here the
+# environment is an explicit choice, so staging can be inspected first.
+#
+# Defaults are the safe ones: staging, dry run. Writing to production takes two
+# deliberate changes to the form, not one.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Which database'
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
+      mode:
+        description: 'dry-run reports only; apply writes (with a reversible backup)'
+        required: true
+        default: dry-run
+        type: choice
+        options: [dry-run, apply]
+      revert_run_id:
+        description: 'Undo a previous apply: paste its run id (e.g. gh-123456). Ignores the options above.'
+        required: false
+        type: string
+
+concurrency:
+  group: phone-backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    # The GitHub Environment carries the secret AND any protection rule the
+    # owner adds later (required reviewer on production, for instance).
+    environment: ${{ inputs.target == 'production' && 'Production' || 'Staging' }}
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+
+      # Stated in the log before anything connects, so the run's own record
+      # says which database it touched and in which mode.
+      - name: Announce the target
+        run: |
+          echo "::notice::target=${{ inputs.target }} mode=${{ inputs.mode }} revert=${{ inputs.revert_run_id || 'none' }}"
+
+      - name: Backfill
+        run: |
+          if [ -n "${REVERT_ID}" ]; then
+            node scripts/normalize-stored-phones.mjs --revert="${REVERT_ID}"
+          elif [ "${MODE}" = "apply" ]; then
+            node scripts/normalize-stored-phones.mjs --apply
+          else
+            node scripts/normalize-stored-phones.mjs
+          fi
+        env:
+          # Two distinct secrets, so a mis-set input cannot reach production
+          # with the staging form filled in.
+          DATABASE_URL: ${{ inputs.target == 'production' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          REVERT_ID: ${{ inputs.revert_run_id }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -1,0 +1,169 @@
+// The rule both surfaces got wrong in opposite directions — see the module
+// header. These execute the decision rather than pinning source text, so a
+// future edit to the branch order fails here rather than in production.
+
+import { describe, it, expect } from 'vitest';
+import {
+  planAmendmentSubmit,
+  amendmentSubmittedNotice,
+  AMENDMENT_MODE_BANNER,
+  AMENDMENT_NOTHING_TO_SUBMIT,
+  AMENDMENT_DIRECT_ONLY_SAVED_TITLE,
+} from './so-amendment-submit';
+
+const plan = (over: Partial<Parameters<typeof planAmendmentSubmit>[0]> = {}) =>
+  planAmendmentSubmit({
+    hasLineChanges: false,
+    hasFrozenHeaderChanges: false,
+    hasDirectHeaderChanges: false,
+    ...over,
+  });
+
+describe('planAmendmentSubmit', () => {
+  it('nothing anywhere -> NOTHING (the only genuine error)', () => {
+    expect(plan()).toBe('NOTHING');
+  });
+
+  /* THE DEFECT. Desktop discarded this edit; mobile saved it and called it a
+     failure. Both because the old check asked only about the amendment half. */
+  it('only FREE fields moved -> DIRECT_ONLY, never an error', () => {
+    expect(plan({ hasDirectHeaderChanges: true })).toBe('DIRECT_ONLY');
+  });
+
+  it('a line change -> AMENDMENT', () => {
+    expect(plan({ hasLineChanges: true })).toBe('AMENDMENT');
+  });
+
+  it('a frozen header change alone -> AMENDMENT (header-only amendments are real)', () => {
+    expect(plan({ hasFrozenHeaderChanges: true })).toBe('AMENDMENT');
+  });
+
+  /* The direct half rides along with an amendment; it must not downgrade the
+     plan. Desktop already saved both in this case — that part was correct. */
+  it('FREE + frozen together -> AMENDMENT, not DIRECT_ONLY', () => {
+    expect(plan({ hasFrozenHeaderChanges: true, hasDirectHeaderChanges: true })).toBe('AMENDMENT');
+  });
+
+  it('FREE + lines together -> AMENDMENT', () => {
+    expect(plan({ hasLineChanges: true, hasDirectHeaderChanges: true })).toBe('AMENDMENT');
+  });
+
+  /* Mobile stages payments in this same submit. A payment-only edit used to be
+     refused "No changes to submit" and could never be booked from that screen. */
+  it('a staged payment alone -> DIRECT_ONLY, not NOTHING', () => {
+    expect(plan({ hasStagedPayments: true })).toBe('DIRECT_ONLY');
+  });
+
+  it('a staged payment never downgrades a real amendment', () => {
+    expect(plan({ hasStagedPayments: true, hasLineChanges: true })).toBe('AMENDMENT');
+  });
+
+  it('omitting hasStagedPayments (desktop) behaves as false', () => {
+    expect(planAmendmentSubmit({
+      hasLineChanges: false, hasFrozenHeaderChanges: false, hasDirectHeaderChanges: false,
+    })).toBe('NOTHING');
+  });
+});
+
+describe('amendmentSubmittedNotice', () => {
+  it('DIRECT_ONLY reports a save, never an amendment', () => {
+    expect(amendmentSubmittedNotice('DIRECT_ONLY', null).title)
+      .toBe(AMENDMENT_DIRECT_ONLY_SAVED_TITLE);
+  });
+
+  it('a split names both lanes and the role that signs each', () => {
+    const n = amendmentSubmittedNotice('AMENDMENT', {
+      amendments: [
+        { amendment_no: 'A1', lane: 'LINES' },
+        { amendment_no: 'A2', lane: 'DELIVERY' },
+      ],
+    });
+    expect(n.title).toBe('Amendment split into two approvals');
+    expect(n.body).toContain('A1 → Purchaser');
+    expect(n.body).toContain('A2 → Logistic');
+  });
+
+  it('one lane names who is waiting', () => {
+    expect(amendmentSubmittedNotice('AMENDMENT', { amendments: [{ lane: 'DELIVERY' }] }).body)
+      .toBe('Waiting for Logistic — one signature applies it to the order.');
+  });
+
+  /* A laneless row is the legacy single-gate shape; it must still say something
+     true rather than "Waiting for  —". */
+  it('a laneless amendment falls back to the plain message', () => {
+    expect(amendmentSubmittedNotice('AMENDMENT', { amendments: [{ amendment_no: 'A1' }] }).body)
+      .toBe('It now needs approval before the order is revised.');
+  });
+
+  /* Owner 2026-09-24: 「如果是 Logistic admin 修改客户信息, Delivery Date - 无需
+     approver」. When the Logistic desk raises its own header-only delivery
+     change the server offers it the shortcut, the hook applies it, and the
+     operator must be told it LANDED — 'waiting for Logistic' would send them
+     hunting for a queue row that is already signed. */
+  it('says APPLIED when every raised half applied on the spot', () => {
+    const n = amendmentSubmittedNotice('AMENDMENT', {
+      amendments: [{ amendment_no: 'A1', lane: 'DELIVERY' }],
+      autoApplied: 1,
+    });
+    expect(n.title).toBe('Change applied');
+    expect(n.body).toMatch(/straight away/);
+    expect(n.body).not.toMatch(/waiting/i);
+  });
+
+  it('still names the desks when only ONE half of a split applied', () => {
+    const n = amendmentSubmittedNotice('AMENDMENT', {
+      amendments: [
+        { amendment_no: 'A1', lane: 'LINES' },
+        { amendment_no: 'A2', lane: 'DELIVERY' },
+      ],
+      autoApplied: 1,
+    });
+    expect(n.title).toBe('Amendment split into two approvals');
+    expect(n.body).toContain('A1 → Purchaser');
+  });
+
+  /* The apply can be refused (the row is then REQUESTED, exactly where it sat
+     before this existed). The notice must not claim it applied. */
+  it('falls back to the waiting message when the apply did not land', () => {
+    expect(amendmentSubmittedNotice('AMENDMENT', {
+      amendments: [{ lane: 'DELIVERY' }], autoApplied: 0,
+    }).body).toBe('Waiting for Logistic — one signature applies it to the order.');
+  });
+
+  it('survives a response shaped nothing like the contract', () => {
+    expect(amendmentSubmittedNotice('AMENDMENT', undefined).title).toBe('Amendment submitted');
+    expect(amendmentSubmittedNotice('AMENDMENT', { amendments: [] }).title).toBe('Amendment submitted');
+  });
+});
+
+describe('operator copy', () => {
+  /* 2026-07-27 moved the address block into the CONTROLLED set. Both banners
+     kept saying it saved straight away. Pin the correction so a re-word cannot
+     quietly reinstate the promise the server stopped honouring. */
+  it('the banner does not promise that addresses save straight away', () => {
+    expect(AMENDMENT_MODE_BANNER).not.toMatch(/address(es)? .{0,24}save straight away/i);
+  });
+
+  /* 2026-08-21 moved customer name / phone / email into the CONTROLLED set
+     (so-field-policy). The banner kept promising they "save straight away"
+     for three weeks — the operator on HC-SO-013497 read that, and the server
+     409'd. Pin both halves: what rides the amendment, and what still saves. */
+  it('the banner does not promise that name / phone / email save straight away', () => {
+    expect(AMENDMENT_MODE_BANNER).not.toMatch(/(name|phone|email)[^.]{0,40}save straight away/i);
+  });
+
+  it('the banner names what DOES save straight away — the note and emergency contact', () => {
+    expect(AMENDMENT_MODE_BANNER).toMatch(/note/i);
+    expect(AMENDMENT_MODE_BANNER).toMatch(/emergency contact/i);
+    expect(AMENDMENT_MODE_BANNER).toMatch(/save straight away/i);
+  });
+
+  it('the banner tells the operator the contact block needs approval', () => {
+    expect(AMENDMENT_MODE_BANNER).toMatch(/customer name, phone/i);
+  });
+
+  it('the empty-state error asks for a line, a date or the address — the approval half', () => {
+    expect(AMENDMENT_NOTHING_TO_SUBMIT).toMatch(/line/i);
+    expect(AMENDMENT_NOTHING_TO_SUBMIT).toMatch(/date/i);
+  });
+});

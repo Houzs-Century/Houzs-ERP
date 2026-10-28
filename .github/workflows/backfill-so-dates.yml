@@ -1,0 +1,69 @@
+name: Backfill SO processing + delivery dates (go-live)
+
+# Manual. Backfills the two AutoCount dates the first export omitted, onto the
+# already-imported company-1 Sales Orders:
+#   UDF_PDate (header)  -> mfg_sales_orders.proceeded_at
+#   SODTL.DeliveryDate  -> mfg_sales_order_items.line_delivery_date, and the
+#                          earliest line date -> customer_delivery_date
+# DRY-RUN by default; apply=1 writes.
+#
+# (This header used to describe the venue-row creation and the postcode/city
+# lookup. Neither is in backfill-so-dates.mjs - both belong to
+# fix-imported-so-venues-address.mjs, which is also where the stale
+# `fix-imported-so-venues` concurrency group below comes from. Corrected
+# 2026-08-13.)
+#
+# RE-RUN: inert on a blank column, REFUSED on a document a person has touched.
+# Until 2026-08-13 every UPDATE was unconditional, so a second run wrote
+# AutoCount's dates back over a delivery date somebody had moved and over a
+# Processing Date a Super Admin had REMOVED. Both guards - IS NULL on the
+# column, and a refusal for any doc whose audit trail names one of these dates
+# - are now in the script, and the run log prints both counts.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      apply:
+        description: "1 to write, else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+
+concurrency:
+  group: fix-imported-so-venues-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/backfill-so-dates.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/backfill-so-dates.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

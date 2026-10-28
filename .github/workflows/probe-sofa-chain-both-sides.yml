@@ -1,0 +1,135 @@
+name: Both sides of ONE sofa, across every document type (read-only)
+
+# ONE sofa build spans several documents of DIFFERENT types - the sales order,
+# the purchase order raised from it, the goods receipt, the delivery order and
+# the invoices raised from those. `probe-book-line-gaps.yml` prints both sides
+# beautifully but takes ONE type per dispatch, and its concurrency group is
+# shared: reading a five-document chain there means five dispatches into a queue
+# other lanes are using, and GitHub keeps only ONE pending run per group, so the
+# fourth dispatch silently cancels the third.
+#
+# This runs the SAME script - scripts/probe-book-line-gaps.mjs, not a copy of it
+# and not a second opinion about anything - once per non-empty type, in ONE run,
+# in THIS lane's own group. Nothing is compared and no verdict is printed here
+# either; `check-ac-erp-reconcile.mjs` remains the only thing in the repository
+# that decides whether a book value and an ERP value differ (docs/bugs/0708).
+#
+# READ-ONLY: the script it calls contains no INSERT, UPDATE, DELETE, DDL or
+# transaction, and this file adds no mode, no apply input and no write step.
+#
+# Manual trigger only. Every type is blank by default, and a run with every
+# input blank REFUSES rather than sweeping the book.
+on:
+  workflow_dispatch:
+    inputs:
+      so_docs:
+        description: "Sales orders, comma separated (e.g. HC-SO-000814)"
+        required: false
+        default: ""
+        type: string
+      po_docs:
+        description: "Purchase orders (e.g. HC-PO-000254)"
+        required: false
+        default: ""
+        type: string
+      gr_docs:
+        description: "Goods receipts (e.g. HC-GR-000287)"
+        required: false
+        default: ""
+        type: string
+      do_docs:
+        description: "Delivery orders (e.g. HC-DO-000542)"
+        required: false
+        default: ""
+        type: string
+      iv_docs:
+        description: "Sales invoices - the book spells it IV (e.g. HC-I-000745)"
+        required: false
+        default: ""
+        type: string
+      pi_docs:
+        description: "Purchase invoices (e.g. HC-PI-007551)"
+        required: false
+        default: ""
+        type: string
+      book_line_keys:
+        # The other half of the same question. A chain repair often does NOT
+        # know the ERP document number - one account-book receipt covering two
+        # purchase orders becomes TWO ERP receipts and only one carries the
+        # book's number - so the book LINE KEY is the only handle that always
+        # works. Blank skips this step entirely.
+        description: "AutoCount DtlKeys, comma separated: find the ERP rows carrying them, whatever document they are on"
+        required: false
+        default: ""
+        type: string
+      company_id:
+        description: "ERP company (AED_HOUZS is company 1)"
+        required: false
+        default: "1"
+        type: string
+
+# THIS LANE'S OWN GROUP, and never cancel-in-progress: several lanes are reading
+# this book at once and asking a question must not cancel somebody else's
+# answer. That is exactly the collision this workflow exists to avoid.
+concurrency:
+  group: probe-sofa-chain-both-sides
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Refuse an empty sweep
+        env:
+          ALL: "${{ inputs.so_docs }}${{ inputs.po_docs }}${{ inputs.gr_docs }}${{ inputs.do_docs }}${{ inputs.iv_docs }}${{ inputs.pi_docs }}${{ inputs.book_line_keys }}"
+        run: |
+          if [ -z "$(printf '%s' "$ALL" | tr -d '[:space:],')" ]; then
+            echo "REFUSED: every document list is empty. This probe reads NAMED documents; it never sweeps."
+            exit 2
+          fi
+      - name: Both sides, one type at a time
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY_ID: ${{ inputs.company_id }}
+          SO_DOCS: ${{ inputs.so_docs }}
+          PO_DOCS: ${{ inputs.po_docs }}
+          GR_DOCS: ${{ inputs.gr_docs }}
+          DO_DOCS: ${{ inputs.do_docs }}
+          IV_DOCS: ${{ inputs.iv_docs }}
+          PI_DOCS: ${{ inputs.pi_docs }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: |
+          set -u
+          rc=0
+          for t in SO PO GR DO IV PI; do
+            eval "docs=\${${t}_DOCS}"
+            [ -z "$(printf '%s' "$docs" | tr -d '[:space:],')" ] && continue
+            echo "################ $t ################"
+            TYPE="$t" DOCS="$docs" node scripts/probe-book-line-gaps.mjs || rc=$?
+          done
+          exit $rc
+      - name: Where each book LINE lives in the ERP, and what triggers guard the write
+        # `!cancelled()` and not the default: one document type failing to read
+        # must not hide the line-key answer, which is often the very thing that
+        # explains the failure. The job still fails overall on the earlier step.
+        if: ${{ !cancelled() && inputs.book_line_keys != '' }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMPANY: ${{ inputs.company_id }}
+          KEYS: ${{ inputs.book_line_keys }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: node scripts/probe-book-line-in-erp.mjs

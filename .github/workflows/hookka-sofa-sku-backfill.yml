@@ -1,0 +1,52 @@
+name: Hookka sofa supplier codes — backfill
+
+# Owner 2026-08-25: 「hookka 的 9028 换 5530 / 9058 换 5536 / 8030 换 5540」、
+# 「之前 hookka 的 code 开错了」、「帮我 dry run backfill」。
+#
+# DEFAULT IS plan: reads only, writes nothing, and prints for every binding both
+# what the supplier code would become AND — computed with the real resolver —
+# what the ACCOUNT BOOK would receive before and after, with whether the book is
+# known to hold that item. That second half is the point: this column is read by
+# the purchase document AND by the AutoCount write-back, so a value that fixes
+# one changes the other (docs/bugs/0537).
+#
+# Manual trigger only. Never on a schedule.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan (default, read-only) or apply (WRITES supplier_sku)"
+        type: choice
+        default: plan
+        options: [plan, apply]
+      confirm:
+        description: 'For apply ONLY, type exactly: REWRITE HOOKKA SOFA SUPPLIER CODES'
+        type: string
+        required: false
+        default: ""
+
+concurrency:
+  group: hookka-sofa-sku-backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/hookka-sofa-sku-backfill.mjs
+        env:
+          MODE: ${{ github.event.inputs.mode }}
+          CONFIRM: ${{ github.event.inputs.confirm }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

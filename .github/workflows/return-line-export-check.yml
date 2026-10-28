@@ -1,0 +1,75 @@
+name: Return line export check (read-only)
+
+# Do the Purchase Return and Delivery Return list exports hold EVERY line their
+# list's filter (and, for delivery returns, the caller's sales scope) matches?
+# Runs each export's own code (buildPurchaseReturnExportRows,
+# buildDeliveryReturnExportRows) over the chosen database through the read-only
+# PostgREST stand-in, and compares it with a direct SQL read of the same rows,
+# per company and filter, line id by line id, money in sen line by line.
+# backend/scripts/check-return-line-export.mjs has the detail.
+#
+# Manual trigger only, own concurrency group, read-only session. Exit 0 for every
+# answer; non-zero only when the database cannot be reached.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which database"
+        required: true
+        default: "production"
+        type: choice
+        options:
+          - production
+          - staging
+
+concurrency:
+  group: return-line-export-check-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  production:
+    if: ${{ inputs.target == 'production' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/check-return-line-export.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - name: Assert the target is STAGING
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          case "$DATABASE_URL" in *anogrigyjbduyzclzjgn*) echo "::error::points at PRODUCTION"; exit 1;; esac
+          case "$DATABASE_URL" in *minnapsemfzjmtvnnvdd*) echo "target: staging";; *) echo "::error::not the staging project"; exit 1;; esac
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx tsx scripts/check-return-line-export.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

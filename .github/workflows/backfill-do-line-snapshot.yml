@@ -1,0 +1,68 @@
+name: Backfill DO line snapshot fields from the SO line (DRY-RUN gated)
+
+# create-migrated-documents.mjs wrote delivery-order lines with seven columns
+# and never item_group, variants or description2 — while the GRN writer in the
+# same file always copied them. The failure mode is silence: `WHERE item_group
+# IN ('sofa','bedframe')` matched ZERO delivery-order lines in company 1, so the
+# whole SO -> DO leg of the chain audit reported "aligned" while measuring an
+# empty set.
+#
+# A delivery order is a SNAPSHOT OF THE SALES ORDER AT DISPATCH, so the parent
+# is delivery_order_items.so_item_id. Where that link is NULL the script says so
+# and leaves the line rather than guessing from the product catalogue.
+#
+# Never overwrites a stated value — every UPDATE re-asserts that the target
+# column IS NULL. Writes no movement and touches no quantity or money column.
+#
+# DRY-RUN unless apply=1. Idempotent.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "1 to write, anything else DRY-RUN"
+        required: false
+        default: "0"
+        type: string
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+      scope:
+        description: "migrated = documents this writer made; all = every DO in the company"
+        required: false
+        default: "migrated"
+        type: choice
+        options: [migrated, all]
+      cap:
+        description: "max plan lines to print"
+        required: false
+        default: "40"
+        type: string
+
+concurrency:
+  group: backfill-do-line-snapshot
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/backfill-do-line-snapshot.mjs
+        env:
+          APPLY: ${{ inputs.apply }}
+          COMPANY: ${{ inputs.company }}
+          SCOPE: ${{ inputs.scope }}
+          CAP: ${{ inputs.cap }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

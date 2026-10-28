@@ -1,0 +1,60 @@
+name: Repair customer party codes (plan/apply)
+
+# Stamps the customer's party CODE (the debtor code when kept, else the order's
+# customer_id) onto AR journal lines that were booked with a name alone — the
+# 171 customer payments of 2026-09-08 and any refund posted before the rule
+# (owner 2026-09-08: 一个 customer 一个 account code → 做). Selection is by the
+# document behind each entry; a line whose document yields no code is listed
+# and left alone. plan is the default and writes nothing. See
+# backend/scripts/repair-customer-party-code.mjs.
+#
+# Secrets resolve by ENVIRONMENT (docs/bugs/0629): the job declares the
+# environment the target names, so STAGING_DATABASE_URL is the Staging
+# environment's own and never the repo-scope trap.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "staging"
+        type: choice
+        options: [staging, prod]
+      mode:
+        description: "plan (report only) or apply (write)"
+        required: true
+        default: "plan"
+        type: choice
+        options: [plan, apply]
+      confirm:
+        description: 'apply requires: STAMP CUSTOMER PARTY CODES'
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: repair-customer-party-code-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target == 'prod' && 'Production' || 'Staging' }}
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Repair customer party codes
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+        run: |
+          if [ -z "$DATABASE_URL" ]; then echo "DATABASE_URL missing"; exit 2; fi
+          node scripts/repair-customer-party-code.mjs

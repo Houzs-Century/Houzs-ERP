@@ -1,0 +1,547 @@
+/* Supplier detail page — CONTENT primitives only.
+
+   Reskin (2026-07-16): the page frame moved to the app design system. The
+   bespoke grey inset "framed card" shell — the `.page` wrapper (grey canvas +
+   max-width centering) and its Ink & Petrol token-override cascade, the
+   `.headerRow` / `.title` / `.subtitle` / `.backBtn` header, the `.statusPill`
+   family and the `.kpi*` tiles — has been DELETED. The page is now full-bleed:
+   a plain `space-y-4` div under the shared PageHeader, with Tailwind design
+   tokens for the frame, tabs, pills and banners, and StatCard for the KPIs.
+
+   IMPORTANT — token pinning. Dropping `.page` also dropped its local
+   `--c-` / `--fg` / `--line` overrides, and the GLOBAL `:root` values DIFFER
+   (e.g. cream #f4f6f3 vs #fff, paper #fcfdfb vs #f4f6f3). So every colour
+   below is pinned to a literal hex instead of inheriting a var that would now
+   resolve to something else. Structural tokens (`--space-`, `--fs-`,
+   `--font-`, `--shadow-`, `--radius-`) were never overridden and stay as var().
+
+   Palette pinned here (design-system Ink & Petrol):
+     primary #16695f · primary-dark #0c3f39 · ink #11140f · ink-muted #767b6e
+     border #d6d9d2 · border-strong #c2c6bd · surface #fff · surface-2 #f4f6f3
+
+   Retained history: density pass matching SO Detail PR #230/#231 — fs-15
+   titles, fs-9 card eyebrows with 12px icons, paper-1 inputs, SKU mapping
+   cells tightened. */
+
+/* ── Cards (shared shell) ─────────────────────────────────────────── */
+
+.card {
+  background: #fff;
+  border: 1px solid #d6d9d2;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+
+.cardHeader {
+  /* Section bar (Wei Siang 2026-06-04): a clear header so each section reads as
+     a section, with a brand-accent left rule. Matches SalesOrderDetail. */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 8px var(--space-3);
+  border-bottom: 1px solid #d6d9d2;
+  border-left: 3px solid #0c3f39;
+  background: #f4f6f3;
+}
+
+.cardTitle {
+  /* SECTION HEADER — second level of the page hierarchy (under the doc title).
+     Larger + bolder + in the brand emphasis colour so it reads as a heading,
+     distinct from the small muted field labels below it. (Wei Siang 2026-06-04
+     — the prior fs-9 eyebrow had become indistinguishable from the field
+     labels; restore hierarchy to match SalesOrderDetail.) */
+  font-family: var(--font-button);
+  font-size: var(--fs-13, 13px);
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #0c3f39;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cardTitle svg {
+  width: 15px;
+  height: 15px;
+}
+
+.cardTitleCount {
+  font-family: var(--font-mono);
+  font-size: var(--fs-10);
+  color: var(--fg-soft);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  margin-left: 4px;
+}
+
+.cardBody {
+  /* A little breathing room so fields don't crowd the section bar. Matches
+     SalesOrderDetail (Wei Siang 2026-06-04). */
+  padding: var(--space-3);
+}
+
+/* ── Supplier Info grid ──────────────────────────────────────────── */
+
+.infoGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px var(--space-3);
+}
+
+@media (max-width: 900px) {
+  .infoGrid { grid-template-columns: repeat(2, 1fr); }
+}
+
+.infoCell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.infoLabel {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-soft);
+  line-height: 1.3;
+}
+
+.infoValue {
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  color: #11140f;
+  word-break: break-word;
+}
+
+.infoCellFull {
+  grid-column: 1 / -1;
+}
+
+/* ── Tables (SKU mappings + last 10 POs) ─────────────────────────── */
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+}
+
+.table thead th {
+  /* Batch 3 theme skin — same measured SO-sample header spec as the
+     SalesOrderDetail module (see there). */
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--c-ink, #11140f);
+  text-align: left;
+  padding: 4px var(--space-2);
+  background: #e3e6e0;
+  border-bottom: 2px solid #d6d9d2;
+  white-space: nowrap;
+}
+
+.table tbody td {
+  padding: 4px var(--space-2);
+  border-bottom: 1px solid #d6d9d2;
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  color: #11140f;
+  vertical-align: middle;
+}
+
+.table tbody tr:last-child td { border-bottom: none; }
+.table tbody tr:hover { background: #f4f6f3; }
+
+.tableRight { text-align: end; }
+
+.codeCell {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: #0c3f39;
+  font-weight: 600;
+}
+
+.muted { color: #767b6e; }
+
+.priceCell {
+  /* PR — Commander 2026-05-27: drop to fs-12/700 so RM values fit the
+     ~96px seat-height columns without wrapping. */
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  font-weight: 700;
+  font-stretch: 80%;
+  color: #0c3f39;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.mainPill {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-button);
+  font-size: var(--fs-10);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: rgba(47, 93, 79, 0.12);
+  color: var(--c-secondary-a, #2F5D4F);
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+}
+
+.actionsCell {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  justify-content: flex-end;
+  width: 100%;
+}
+
+.iconBtn {
+  background: transparent;
+  border: none;
+  color: #767b6e;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+}
+
+.iconBtn:hover {
+  background: #f4f6f3;
+  color: #11140f;
+}
+
+.iconBtnDanger:hover {
+  background: rgba(184, 51, 31, 0.10);
+  color: var(--c-festive-b, #B8331F);
+}
+
+.emptyRow {
+  text-align: center;
+  color: #767b6e;
+  padding: var(--space-4);
+  font-style: italic;
+}
+
+/* ── Delta chip (on-time / late) ─────────────────────────────────── */
+
+.deltaOk {
+  font-family: var(--font-button);
+  font-size: var(--fs-10);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--c-secondary-a, #2F5D4F);
+  text-transform: uppercase;
+}
+
+.deltaLate {
+  font-family: var(--font-button);
+  font-size: var(--fs-10);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--c-festive-b, #B8331F);
+  text-transform: uppercase;
+}
+
+.deltaNeutral {
+  font-family: var(--font-sans);
+  font-size: var(--fs-11);
+  color: var(--fg-soft);
+}
+
+/* ── SKU form modal (Add / Edit binding) ─────────────────────────── */
+
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(34, 31, 32, 0.32);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal {
+  background: #f4f6f3;
+  border: 1px solid #c2c6bd;
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-3);
+  width: min(640px, 92vw);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  z-index: 51;
+}
+
+.modalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid #d6d9d2;
+  background: #fff;
+  border-top-left-radius: var(--radius-xl);
+  border-top-right-radius: var(--radius-xl);
+}
+
+.modalTitle {
+  font-family: var(--font-title);
+  font-size: var(--fs-15);
+  font-weight: 600;
+  color: #11140f;
+  margin: 0;
+}
+
+.modalBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-4);
+}
+
+.modalFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid #d6d9d2;
+  background: #fff;
+  border-bottom-left-radius: var(--radius-xl);
+  border-bottom-right-radius: var(--radius-xl);
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px var(--space-3);
+}
+
+.formGridFull { grid-column: 1 / -1; }
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  position: relative;
+}
+
+.fieldLabel {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-soft);
+  line-height: 1.3;
+}
+
+.fieldInput,
+.fieldSelect {
+  /* PR — Commander 2026-05-27: paper-1 bg + 1px line, padding 6px 10px,
+     focus burnt with soft ring. Matches SO Detail inputs. */
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  background: #fff;
+  border: 1px solid #d6d9d2;
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  color: #11140f;
+  outline: none;
+  width: 100%;
+  line-height: 1.3;
+}
+
+.fieldInput:focus,
+.fieldSelect:focus {
+  border-color: #0c3f39;
+  background: #fff;
+  box-shadow: 0 0 0 2px rgba(22, 105, 95, 0.16);
+}
+
+.fieldInput:disabled,
+.fieldSelect:disabled,
+.fieldInput[readonly] {
+  background: #f4f6f3;
+  border-color: #d6d9d2;
+  color: #767b6e;
+  cursor: not-allowed;
+}
+
+.fieldSelect {
+  padding-right: 32px;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: none;
+}
+.fieldSelect::-ms-expand { display: none; }
+
+.selectWrap {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.selectChevron {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--c-ink-60, #767b6e);
+  pointer-events: none;
+}
+
+.checkRow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* ── SKU Mappings sub-group header ──────────────────────────────────
+   PR — Commander 2026-05-27. The CategorySection eyebrow used inline
+   styles; surface a class so it can step down to fs-9 (was fs-12) like
+   the other eyebrows. The TSX still uses inline styles for the toggle
+   itself — those are unchanged. */
+
+.subGroupHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 4px var(--space-3);
+  background: #f4f6f3;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-button);
+  font-size: var(--fs-9, 9px);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #11140f;
+}
+
+.subGroupHeadCount {
+  font-family: var(--font-mono);
+  font-size: var(--fs-10);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--fg-soft);
+}
+
+/* ── Inline matrix cell input (sofa / bedframe SKU mapping prices) ──
+   PR — Commander 2026-05-27. The seat-height matrix cells had way too
+   much horizontal space — the SKU MAPPINGS table now uses these tighter
+   classes so 6 height columns × P1/P2/P3 stack inside the card. */
+
+.matrixCell {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  justify-content: flex-end;
+}
+
+.matrixCurrency {
+  color: #767b6e;
+  font-size: var(--fs-10);
+  font-family: var(--font-sans);
+}
+
+.matrixInput {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  background: #fff;
+  border: 1px solid #d6d9d2;
+  border-radius: var(--radius-sm);
+  padding: 3px 6px;
+  outline: none;
+  width: 64px;
+  text-align: right;
+  color: #11140f;
+}
+
+.matrixInput:focus {
+  border-color: #0c3f39;
+  box-shadow: 0 0 0 2px rgba(22, 105, 95, 0.16);
+}
+
+/* The supplier-sku inline editor + unit-price inline editor on
+   DefaultSkuMappingsTable / SofaSkuMappingsTable / BedframeSkuMappingsTable.
+   PR — Commander 2026-05-27: use the .fieldInput palette so editable cells
+   visibly read as editable (paper bg, ink border) vs the cream-bg disabled
+   look elsewhere. */
+
+.inlineSku {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  background: #fff;
+  border: 1px solid #d6d9d2;
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  outline: none;
+  width: 100%;
+  min-width: 100px;
+  color: #11140f;
+}
+
+.inlineSku:focus {
+  border-color: #0c3f39;
+  box-shadow: 0 0 0 2px rgba(22, 105, 95, 0.16);
+}
+
+.inlinePrice {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  background: #fff;
+  border: 1px solid #d6d9d2;
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  outline: none;
+  width: 88px;
+  text-align: right;
+  color: #11140f;
+}
+
+.inlinePrice:focus {
+  border-color: #0c3f39;
+  box-shadow: 0 0 0 2px rgba(22, 105, 95, 0.16);
+}
+
+/* ── Variants pills (sub-section under line items) ──────────────── */
+
+.variantBlock {
+  margin-top: 2px;
+  font-size: var(--fs-10);
+  color: #767b6e;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.variantPill {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-sans);
+  font-size: var(--fs-10);
+  background: #f4f6f3;
+  border: 1px solid #d6d9d2;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  color: #11140f;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Phone (Houzs 2026-06-24) — element-level overflow clamp. */
+@media (max-width: 600px) {
+  .infoGrid { grid-template-columns: 1fr; }
+  .formGrid { grid-template-columns: 1fr; }
+}
