@@ -57,7 +57,7 @@ import { useHelpers, type HelperRow } from '../lib/helpers-queries';
 import { useStaffLookup } from '../../../hooks/useStaffLookup';
 import styles from './DeliveryPlanningBoard.module.css';
 import { DateField } from "./DateField";
-import { deliveryDateChange } from "../lib/delivery-date-edit";
+import { deliveryDateChange, invalidDeliveryDate } from "../lib/delivery-date-edit";
 import { SearchCombo } from "./SearchCombo";
 import { crewComboOptions, crewComboValue, latestDoId, KEEP_CURRENT } from "../lib/dispatch-cell";
 import { useDeliveryRowMarks, rowMarkTint, useBulkSetRowMark, useBulkClearRowMark, ROW_MARK_PALETTE } from "../lib/delivery-row-mark";
@@ -365,13 +365,13 @@ function DeliveryDateEditCell({ order, onSchedule }: { order: PlanningOrder; onS
           const next = deliveryDateChange(current, val);
           if (next.changed) commit(next.value);
         }}
-        /* HC-0164: a wrong format pops up rather than sitting as small red text -
-           other coordinators arrange deliveries from this column too. */
-        onInvalid={(text) => notify({
-          title: 'Invalid date format',
-          body: `"${text}" is not a date. Please use YYYY/MM/DD (e.g. 2026/10/30), or pick it from the calendar. ${order.so_doc_no}'s Delivery Date was not changed${current ? ` (still ${fmtDate(current)})` : ''}.`,
-          tone: 'error',
-        })}
+        /* HC-0164 (Syu, 2026-10-28): a wrong format pops up and empties the
+           cell, as the HC Delivery sheet does. */
+        onInvalid={(text) => {
+          const { clear, body } = invalidDeliveryDate(current, text, order.so_doc_no);
+          if (clear) commit(null);
+          void notify({ title: 'Invalid date format', body, tone: 'error' });
+        }}
       />
     </span>
   );
