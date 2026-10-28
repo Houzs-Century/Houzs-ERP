@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
 import type { Sql } from 'postgres';
-import { pgTransactionSupabase } from '../src/scm/lib/pg-supabase-transaction';
+import { pgTransactionSupabase, settleScmStatements } from '../src/scm/lib/pg-supabase-transaction';
 
 describe('SCM PostgreSQL transaction adapter', () => {
   test('encodes JSON arrays as JSON while preserving native PostgreSQL arrays', async () => {
@@ -80,5 +80,31 @@ describe('SCM PostgreSQL transaction adapter', () => {
       .eq('idempotency_key', 'same-decision')
       .maybeSingle();
     expect(existing.data).toEqual({ id: 'existing-command', status: 'PENDING' });
+  });
+
+  /* HC-0167: the SAVEPOINT goes out with its statement and the RELEASE with the
+     next one, so a statement waits for two answers instead of four. */
+  test('each RELEASE is sent before the next statement, and the last is settled before commit', async () => {
+    const sent: string[] = [];
+    const unsafe = vi.fn(async (text: string) => { sent.push(text.split(' ')[0]!); return []; });
+    const sql = { unsafe } as unknown as Sql;
+    const sb = pgTransactionSupabase(sql);
+
+    await sb.from('mfg_sales_orders').update({ status: 'A' }).eq('doc_no', 'SO-1');
+    await sb.from('mfg_sales_orders').update({ status: 'B' }).eq('doc_no', 'SO-1');
+    await settleScmStatements(sql);
+
+    expect(sent).toEqual(['SAVEPOINT', 'UPDATE', 'RELEASE', 'SAVEPOINT', 'UPDATE', 'RELEASE']);
+  });
+
+  test('a RELEASE that fails surfaces when it is settled, never silently before COMMIT', async () => {
+    const unsafe = vi.fn(async (text: string) => {
+      if (text.startsWith('RELEASE')) throw new Error('current transaction is aborted');
+      return [];
+    });
+    const sql = { unsafe } as unknown as Sql;
+    await pgTransactionSupabase(sql).from('mfg_sales_orders').update({ status: 'A' }).eq('doc_no', 'SO-1');
+    await expect(settleScmStatements(sql)).rejects.toThrow(/aborted/);
+    await expect(settleScmStatements(sql)).resolves.toBeUndefined();
   });
 });

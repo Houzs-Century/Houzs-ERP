@@ -127,6 +127,7 @@ import { buildSkuImportRows, gridToSkuRecords, importFailureMessage, priceSheetR
 import { readImportGrid } from '../../lib/import-sheet';
 import { ProductRow, fmtRm, fmtUnit, priceForHeightTier, useSkuGridOrder, saveStagedEdits, stageRowEdit, type ProductEditPatch } from './products/SkuEditRow';
 import { renameCompartmentMeta } from './compartmentRename';
+import { downloadSkuImportTemplate, savedSummary } from './products/skuImportTemplate';
 
 const ICON_PROPS = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -4663,10 +4664,9 @@ const ImportSkusDialog = ({ sofaSizes, onClose }: { sofaSizes: string[]; onClose
       const res = await batchImport.mutateAsync(staged.rows);
       setResult(staged.tierErrors.length > 0
         ? {
-            upserted: res.upserted,
+            ...res,
             failed: res.failed + staged.tierErrors.length,
             failures: [...staged.tierErrors, ...(res.failures ?? [])],
-            modelsMoved: res.modelsMoved,
           }
         : res);
       setStaged(null);
@@ -4695,10 +4695,16 @@ const ImportSkusDialog = ({ sofaSizes, onClose }: { sofaSizes: string[]; onClose
           <button type="button" className={styles.iconBtn} onClick={onClose}><X {...ICON_PROPS} /></button>
         </header>
         <p style={{ fontSize: 'var(--fs-13)', color: '#767b6e' }}>
-          Pick a CSV or Excel file exported from this page. Edit the prices in Excel,
-          save, and import it back. A blank cell is left as it was — it never clears a price.
+          A code that is not in SKU Master creates a new SKU (it needs a name and a category);
+          a code already there edits that SKU. Start from the template for new SKUs, or from
+          Export SKUs to edit prices. A blank cell is left as it was — it never clears a price.
           Up to 500 SKUs per file. A new category on a SKU that belongs to a model moves the model and all its SKUs.
         </p>
+        <Button variant="secondary" onClick={() => void downloadSkuImportTemplate(sofaSizes)} style={{ marginTop: 'var(--space-3)' }}>
+          <Download {...ICON_PROPS} />
+          <span>Download template</span>
+        </Button>
+        <br />
         <input
           type="file"
           accept=".csv,.xlsx,.xls"
@@ -4754,7 +4760,7 @@ const ImportSkusDialog = ({ sofaSizes, onClose }: { sofaSizes: string[]; onClose
               color: result.failed > 0 ? '#0c3f39' : '#2F5D4F',
             }}>
               {result.upserted > 0
-                ? `Saved — ${result.upserted} SKU${result.upserted === 1 ? '' : 's'} updated${result.failed > 0 ? ` · ${result.failed} failed` : ''}`
+                ? `Saved — ${savedSummary(result)}${result.failed > 0 ? ` · ${result.failed} failed` : ''}`
                 : result.failed > 0
                   ? `Nothing saved — ${result.failed} row${result.failed === 1 ? '' : 's'} failed`
                   : 'Nothing to update — every value already matched what was saved'}

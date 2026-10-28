@@ -40,6 +40,7 @@ import tableLayouts from "./routes/tableLayouts";
 import notifications from "./routes/notifications";
 import pushDevices from "./routes/push";
 import itSupport from "./routes/itSupport";
+import { sendAiUsageToHub } from "./services/aiUsageHub";
 import { runPushFleetReminders } from "./services/pushFleetReminders";
 import presence from "./routes/presence";
 import projects from "./routes/projects";
@@ -1085,6 +1086,13 @@ export default {
         track("sla", () => runSlaEscalation(env))
           .then((r) => console.log(`[cron sla] escalated ${r.escalated} case(s)`))
           .catch((e) => console.error("[cron sla]", e))
+      );
+      // AI cost per company and feature, last 7 days, to the IT Hub (splits the
+      // Anthropic bill there). Best-effort; a missed day is re-sent the next day.
+      ctx.waitUntil(
+        track("ai-usage-hub", () => sendAiUsageToHub(env, new Date()))
+          .then((r) => console.log(r ? `[cron ai-usage-hub] sent ${r.days} day(s), ${r.rows} row(s)` : "[cron ai-usage-hub] not set up"))
+          .catch((e) => console.error("[cron ai-usage-hub]", e))
       );
       // Local "actually delivered" sweep (owner 2026-10-27): so-delivery-sync
       // only SHIPS now; a SHIPPED local order whose DO date has passed and that
