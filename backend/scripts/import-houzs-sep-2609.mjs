@@ -365,6 +365,35 @@ async function run(tx) {
     if (Number(settled[0].s ?? 0) !== sum(allocs, (a) => a.amount_sen)) throw new Error(`ticks settled RM ${rm(settled[0].s)} of RM ${rm(sum(allocs, (a) => a.amount_sen))}`);
   }
 
+  /* ── 8b. read-back for the owner's 「再三确定」: what the books now hold, as
+     the database has it, for an offline check against AutoCount's own GL and
+     knock-off listing (VERIFY_DUMP=1) ───────────────────────────────────── */
+  if (String(process.env.VERIFY_DUMP || '0') === '1') {
+    const jl = await tx`SELECT j.je_no, j.source_type, j.source_doc_no, j.narration, j.posted, l.account_code, l.debit_sen, l.credit_sen, l.party_code
+        FROM scm.journal_entries j JOIN scm.journal_entry_lines l ON l.journal_entry_id = j.id
+        WHERE j.company_id = ${CO} AND j.je_no = ANY(${journals.map((j) => j.no)}::text[]) ORDER BY j.je_no, l.line_no`;
+    const byJe = new Map();
+    for (const r of jl) { if (!byJe.has(r.je_no)) byJe.set(r.je_no, { je: r.je_no, src: r.source_type, doc: r.source_doc_no, narration: r.narration, posted: r.posted, lines: [] }); byJe.get(r.je_no).lines.push([r.account_code, Number(r.debit_sen), Number(r.credit_sen), r.party_code]); }
+    for (const j of byJe.values()) emit('JL', j);
+    for (const a of await tx`SELECT v.pv_number, v.notes AS pv_notes, v.status::text AS pv_status, a.amount_sen, a.applied_sen, coalesce(x.invoice_number, p.invoice_number) AS bill,
+        coalesce(x.notes, p.notes) AS bill_notes, coalesce(x.supplier_invoice_ref, p.supplier_invoice_ref) AS bill_ref, coalesce(x.total_sen, p.total_sen) AS bill_total, coalesce(x.paid_sen, p.paid_sen) AS bill_paid,
+        coalesce(x.status, p.status::text) AS bill_status, p.linked_ac_docno AS bill_ac
+        FROM scm.pv_allocations a JOIN scm.payment_vouchers v ON v.id = a.pv_id LEFT JOIN scm.ap_invoices x ON x.id = a.ap_invoice_id LEFT JOIN scm.purchase_invoices p ON p.id = a.pi_id
+        WHERE a.pv_id = ANY(${[...pvIds.values()]}::uuid[])`) {
+      emit('AL', { pv: a.pv_number, pvNotes: a.pv_notes, pvStatus: a.pv_status, sen: Number(a.amount_sen), applied: Number(a.applied_sen), bill: a.bill, billNotes: String(a.bill_notes ?? '').slice(0, 200), billRef: a.bill_ref,
+        billTotal: Number(a.bill_total), billPaid: Number(a.bill_paid), billStatus: a.bill_status, billAc: a.bill_ac });
+    }
+    for (const a of await tx`SELECT pv_number, amount_sen, applied_sen FROM scm.acc_supplier_advances WHERE pv_id = ANY(${[...pvIds.values()].map(String)}::text[])`) emit('ADVX', { pv: a.pv_number, sen: Number(a.amount_sen) });
+    for (const r of await tx`SELECT party_code AS code, sum(credit_sen - debit_sen)::bigint AS owed FROM scm.v_gl_entries WHERE company_id = ${CO} AND entry_date <= '2026-09-30'
+        AND account_code IN (${role.AP}, ${role.AP_OTHER}) AND party_code IS NOT NULL GROUP BY 1`) emit('APAFTER', { code: r.code, owed: Number(r.owed) });
+    for (const r of await tx`SELECT party_code AS code, source_type AS src, source_doc_no AS doc, je_no, entry_date::text AS d, sum(credit_sen - debit_sen)::bigint AS net FROM scm.v_gl_entries
+        WHERE company_id = ${CO} AND entry_date >= '2026-09-01' AND entry_date <= '2026-09-30' AND NOT opening AND account_code IN (${role.AP}, ${role.AP_OTHER}) AND party_code IS NOT NULL
+          AND je_no <> ALL(${journals.map((j) => j.no)}::text[]) GROUP BY 1, 2, 3, 4, 5`) emit('APOWN', { code: r.code, src: r.src, doc: r.doc, je: r.je_no, date: r.d, net: Number(r.net) });
+    for (const r of await tx`SELECT account_code AS acc, sum(debit_sen - credit_sen)::bigint AS bal FROM scm.v_gl_entries WHERE company_id = ${CO} AND entry_date <= '2026-09-30' GROUP BY 1`) emit('TBAFTER', { acc: r.acc, bal: Number(r.bal) });
+    for (const r of await tx`SELECT account_code AS acc, source_type AS src, sum(debit_sen - credit_sen)::bigint AS net, count(*)::int AS n FROM scm.v_gl_entries
+        WHERE company_id = ${CO} AND entry_date >= '2026-09-01' AND entry_date <= '2026-09-30' AND NOT opening AND je_no <> ALL(${journals.map((j) => j.no)}::text[]) GROUP BY 1, 2`) emit('OWNSEP', { acc: r.acc, src: r.src, net: Number(r.net), n: r.n });
+  }
+
   /* ── 9. report ──────────────────────────────────────────────────────────── */
   for (const b of apiBills) emit('DOC', { k: 'API', no: b.no, ac: b.acDoc, supplier: b.supplier, name: supOf(b.supplier).name, ref: b.ref, date: b.date, sen: b.total, replaces: b.replacesCopy, copySen: b.copyTotal,
     accounts: b.lines.map((l) => `${l.acc} ${rm(l.sen)}`).join('; '), je: journals.find((j) => j.doc === b.no).no });
