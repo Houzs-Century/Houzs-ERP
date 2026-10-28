@@ -1015,6 +1015,20 @@ posAdmin.post("/items/add-all", async (c) => {
   return c.json({ ok: true, added, categories });
 });
 
+/** Switch off the named POS items in one go (the trash on a row, many at
+ *  once). Ids outside the company are ignored, not reported. */
+posAdmin.post("/items/remove", async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const body = await c.req.json<{ ids?: unknown }>().catch(() => ({} as { ids?: unknown }));
+  const ids = Array.isArray(body.ids) ? [...new Set(body.ids.map(Number).filter((n) => Number.isInteger(n) && n > 0))] : [];
+  if (ids.length === 0) return c.json({ error: "ids_required" }, 400);
+  const db = getDb(c.env);
+  const res = await db.update(pos_items).set({ active: false, updated_at: nowIso() }).where(and(eq(pos_items.company_id, co.companyId), eq(pos_items.active, true), inArray(pos_items.id, ids))).returning({ id: pos_items.id });
+  await audit(db, co.companyId, c, "pos_items", "remove", "removed", null, `${res.length} of ${ids.length} switched off`);
+  return c.json({ ok: true, removed: res.length });
+});
+
 /** Keep only the named categories: every POS item whose inventory product is
  *  in another category (or has none) is switched off, the same as the trash on
  *  its row. Bills already sold keep their lines; Add from Inventory turns an

@@ -60,6 +60,7 @@ export function PosItemsTab() {
   const [eventFilter, setEventFilter] = useState<number | "">("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [picking, setPicking] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState<PosItem | null>(null);
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -75,6 +76,11 @@ export function PosItemsTab() {
     });
   }, [items.data, search, activeOnly, eventFilter, categoryFilter]);
   const categories = useMemo(() => [...new Set((items.data ?? []).map((i) => i.category ?? ""))].sort(), [items.data]);
+  /* Only ticks on rows that are shown and still on count; a filter change never removes something out of sight. */
+  const picked = useMemo(() => rows.filter((i) => i.active && selected.has(i.id)), [rows, selected]);
+  const allShownPicked = rows.length > 0 && rows.every((i) => !i.active || selected.has(i.id));
+  const toggleOne = (id: number) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const toggleShown = () => setSelected((s) => { const n = new Set(s); for (const i of rows) if (i.active) { if (allShownPicked) n.delete(i.id); else n.add(i.id); } return n; });
 
   const eventName = (pid: number) => events.data?.find((e) => e.project_id === pid)?.name ?? `#${pid}`;
 
@@ -114,6 +120,23 @@ export function PosItemsTab() {
     }
   }
 
+  async function removeSelected() {
+    const ids = picked.map((i) => i.id);
+    if (ids.length === 0) return;
+    if (!(await dialog.confirm({ title: `Remove ${ids.length} item(s) from POS?`, message: "They stop reaching devices on their next prepare or refresh. Bills already sold keep their lines; Add from Inventory turns an item back on.", confirmLabel: `Remove ${ids.length}`, danger: true }))) return;
+    setBusy(true);
+    try {
+      const r = await api.post<{ removed: number }>(`${POS_ADMIN}/items/remove`, { ids });
+      toast.success(`${r.removed} item(s) removed from POS`);
+      setSelected(new Set());
+      items.reload();
+    } catch (e) {
+      toast.error(errText(e, "Could not remove the items."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function deactivate(i: PosItem) {
     if (!(await dialog.confirm({ title: `Remove ${i.item_code} from POS?`, message: "The item stops reaching devices on their next prepare or refresh. Bills already sold keep their lines.", confirmLabel: "Remove", danger: true }))) return;
     try {
@@ -139,6 +162,7 @@ export function PosItemsTab() {
         </select>
         <label className="flex items-center gap-1 text-[11px] text-ink-secondary"><input type="checkbox" checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} /> POS active only</label>
         <span className="ml-auto flex items-center gap-1.5">
+          {picked.length > 0 && <button type="button" className={dangerBtn} disabled={busy} onClick={() => void removeSelected()}><Trash2 size={11} /> Remove {picked.length} selected</button>}
           <label className={cn(ghostBtn, "cursor-pointer")}>
             <Upload size={11} /> Import Excel
             <input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={busy} onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void importExcel(f); }} />
@@ -153,13 +177,15 @@ export function PosItemsTab() {
       {items.error && <div className="rounded-md border border-err/40 bg-err/5 p-2 text-[11px] text-err">{items.error}</div>}
       {items.data && rows.length === 0 && <Empty>{items.data.length === 0 ? "No POS items yet. Add from Inventory or import an Excel sheet." : "Nothing matches."}</Empty>}
       {rows.length > 0 && (
-        <Table minWidth={980} head={<>
+        <Table minWidth={1000} head={<>
+          <th className={th}><input type="checkbox" checked={allShownPicked} onChange={toggleShown} aria-label="Select all shown" title="Tick every item shown" /></th>
           <th className={th}>Code</th><th className={th}>Description</th><th className={th}>Barcode(s)</th><th className={th}>UOM</th>
           <th className={cn(th, "text-right")}>Price</th><th className={th}>Event price</th><th className={th}>Pre-set disc</th><th className={th}>FOC</th>
           <th className={cn(th, "text-right")}>Stock</th><th className={th}>Active</th><th className={th} />
         </>}>
           {rows.map((i) => (
-            <tr key={i.id} className="cursor-pointer border-t border-border-subtle hover:bg-bg/40" onClick={() => setEditing(i)}>
+            <tr key={i.id} className={cn("cursor-pointer border-t border-border-subtle hover:bg-bg/40", selected.has(i.id) && i.active && "bg-accent/5")} onClick={() => setEditing(i)}>
+              <td className={td} onClick={(e) => e.stopPropagation()}>{i.active && <input type="checkbox" checked={selected.has(i.id)} onChange={() => toggleOne(i.id)} aria-label={`Select ${i.item_code}`} />}</td>
               <td className={cn(td, "font-mono text-[10.5px] font-semibold text-accent")}>{i.item_code}</td>
               <td className={td}>{i.name}{i.receipt_name && <span className="ml-1 text-[10px] text-ink-muted">({i.receipt_name})</span>}{i.category && <span className="ml-1 text-[10px] uppercase text-ink-muted">{mfgCategoryLabel(i.category)}</span>}</td>
               <td className={cn(td, "font-mono text-[10px]")}>

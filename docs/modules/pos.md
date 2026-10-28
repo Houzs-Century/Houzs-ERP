@@ -178,7 +178,8 @@ page, and the POS Admin menu. This guide carries only what is built.
 - POS Items > Add by category (`POST /api/pos-admin/items/add-all`, `dry_run`
   for counts per `mfg_products.category`, else `categories[]`): tags the ticked
   categories' ACTIVE products with a selling price, never an existing item;
-  `POST items/keep-categories` switches off POS items outside the ticked ones.
+  `POST items/keep-categories` switches off POS items outside the ticked ones;
+  `POST items/remove { ids[] }` is the list's tick-and-remove (same switch-off).
 - Install: the login screen (banner and footer link) and Settings offer
   "Install Houzs POS" through the browser install prompt (`pos/src/pwa.ts`
   `promptInstall`), hidden once the app runs in its own window.
