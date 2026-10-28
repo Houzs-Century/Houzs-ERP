@@ -26,7 +26,7 @@ export function skuTemplateColumns(sofaSizes: string[]): TemplateCol[] {
     { key: 'size_label', required: false, width: 14, note: 'Size, for example King or Queen.' },
     { key: 'branding', required: false, width: 14, note: 'Mattress branding.' },
     { key: 'status', required: false, width: 12, note: 'ACTIVE or INACTIVE. Blank = ACTIVE.' },
-    { key: 'base_price', required: false, width: 12, note: 'Not sofa: Price 2 in RM, for example 1535.00.' },
+    { key: 'base_price', required: false, width: 12, note: 'Not sofa: Price 2 in RM, for example 1535.00 (the Mattress tab shows it as Price).' },
     { key: 'price1', required: false, width: 12, note: 'Not sofa: Price 1 in RM.' },
     { key: 'price_tier', required: false, width: 12, note: 'Sofa only: P1, P2 or P3 — the tier the price_ columns on this row belong to. For more tiers, repeat the row with the same code and another tier.' },
     ...sofaSizes.map((s) => ({ key: `price_${s}`, required: false, width: 11, note: `Sofa only: price in RM for seat size ${s}.` })),
