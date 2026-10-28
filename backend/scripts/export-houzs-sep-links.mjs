@@ -84,7 +84,7 @@ async function main() {
     const dateCol = payCols.includes('paid_at') ? 'paid_at' : payCols.includes('payment_date') ? 'payment_date' : 'created_at';
     if (amtCol) {
       const scale = amtCol === 'amount_centi' ? 1 : 1;
-      const rows = await sql.unsafe(`SELECT p.*, o.doc_no AS so_doc_no FROM scm.mfg_sales_order_payments p LEFT JOIN scm.mfg_sales_orders o ON o.id = p.sales_order_id
+      const rows = await sql.unsafe(`SELECT p.* FROM scm.mfg_sales_order_payments p
           WHERE p.company_id = $1 AND p.${dateCol} >= $2 AND p.${dateCol} <= $3 AND (p.${amtCol} < 0 OR abs(p.${amtCol}) = ANY($4::bigint[]))
           ORDER BY p.${dateCol}`, [CO, '2026-08-25', TO, AMOUNTS.map((a) => a * scale)]).catch((e) => { out('ERR', { where: 'sopay', msg: String(e.message) }); return []; });
       for (const r of rows) out('SOPAY', Object.fromEntries(Object.entries(r).filter(([k]) => !/slip|file|ocr|raw|image/i.test(k)).map(([k, v]) => [k, v instanceof Date ? v.toISOString() : v])));
@@ -92,9 +92,9 @@ async function main() {
 
     if (BILLS.length) {
       for (const p of await sql`SELECT * FROM scm.purchase_invoices WHERE company_id = ${CO} AND invoice_number = ANY(${BILLS}::text[])`) {
-        const items = await sql`SELECT item_code, material_name, description, qty, unit_price_sen, line_total_sen, linked_ac_dtlkey, grn_id FROM scm.purchase_invoice_items WHERE purchase_invoice_id = ${p.id}`;
+        const items = await sql`SELECT * FROM scm.purchase_invoice_items WHERE purchase_invoice_id = ${p.id}`;
         out('BILLX', { k: 'PI', row: Object.fromEntries(Object.entries(p).map(([k, v]) => [k, v instanceof Date ? v.toISOString() : v])), supplier: supCode.get(String(p.supplier_id)) ?? null,
-          items: items.map((i) => ({ item: i.item_code ?? i.material_name, desc: i.description, qty: Number(i.qty), unit: Number(i.unit_price_sen), sen: Number(i.line_total_sen), ac: i.linked_ac_dtlkey != null, grn: i.grn_id != null })) });
+          items: items.map((i) => ({ item: i.item_code ?? i.material_name, desc: i.description, qty: Number(i.qty), unit: Number(i.unit_price_sen), sen: Number(i.line_total_sen), ac: i.linked_ac_dtlkey != null })) });
       }
       for (const a of await sql`SELECT * FROM scm.ap_invoices WHERE company_id = ${CO} AND invoice_number = ANY(${BILLS}::text[])`) {
         out('BILLX', { k: 'API', row: Object.fromEntries(Object.entries(a).map(([k, v]) => [k, v instanceof Date ? v.toISOString() : v])), supplier: supCode.get(String(a.supplier_id)) ?? null });
