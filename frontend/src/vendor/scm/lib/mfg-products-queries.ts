@@ -770,6 +770,8 @@ export type BatchImportRow = {
 
 export type BatchImportResult = {
   upserted: number;
+  /* Of `upserted`, the rows whose code was new. */
+  created?: number;
   failed: number;
   failures: Array<{ code: string; reason: string }>;
   /* A category change on a SKU that belongs to a model moves the model and all its SKUs. */
