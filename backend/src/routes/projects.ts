@@ -4056,6 +4056,35 @@ app.put(
     ) {
       await submitChecklistForReview(c.env, itemId, user?.id ?? 0);
     }
+    // Owner (repeated ask, latest 2026-10-28): "once an image/file is uploaded,
+    // auto-tick the bullet as done — no manual click, on mobile AND PC." Done
+    // here, server-side, so BOTH clients get it from one place (same reasoning
+    // as the auto-submit just above, which moved here for the same mobile/PC
+    // parity). An upload IS the completion for an evidence row, so flip it.
+    //
+    // Scope — only a PLAIN evidence row is auto-ticked. We deliberately skip:
+    //   · gated rows (required_perm set) — their "done" is the APPROVER's call
+    //     (completion = review_status='approved', see checklistProgress.ts), and
+    //     the auto-submit block just above already routes them for review, and
+    //   · the review-document titles (Agreement / Quotation, Stock Out/In
+    //     Transfer Record, Display Floor Plan, 3D/2D Design, Exchange List) even
+    //     when a template left required_perm NULL — those carry the
+    //     submit/approve/reject loop, so forcing done on upload would skip it.
+    //     Inlined mirror of isReviewableTitle() in the frontend
+    //     vendor/scm/lib/pms-reviewable-titles.ts (kept inline to avoid a
+    //     cross-package import; the regex is identical).
+    // Guarded on status='pending', so a manual N/A, a blocked row, or a row
+    // already done is left untouched. setChecklistStatus writes completed_by /
+    // completed_at and logs the activity, exactly like a manual tick.
+    const REVIEW_DOC_TITLE_RE =
+      /^(agreement|stock\s*(out|in)\s*transfer|display\s*floor\s*plan|3d\s*design|2d\s*design|exchange\s*list)/i;
+    if (
+      !item.required_perm &&
+      (item.status ?? "") === "pending" &&
+      !REVIEW_DOC_TITLE_RE.test((item.title ?? "").trim())
+    ) {
+      await setChecklistStatus(c.env, itemId, "done", user?.id ?? 0);
+    }
     // Audit trail — log the upload to the project activity feed.
     const owner = await c.env.DB.prepare(
       `SELECT project_id, title FROM project_checklist WHERE id = ?`
