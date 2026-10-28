@@ -53,6 +53,7 @@ import { readBridgeCommandConfig, probeBridge } from '../lib/bridge-2990-command
 import { enqueueEdit } from '../lib/autocount-outbox';
 import type { Context } from 'hono';
 import { deferScmAfterCommit, runScmPgCommand } from '../lib/pg-supabase-transaction';
+import { loggedStepClock } from '../../lib/step-timing';
 import { scheduleStockAllocationAfterCommand } from '../lib/stock-allocation-job';
 
 export const soAmendments = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -740,7 +741,7 @@ soAmendments.patch('/:id/supplier-confirm', async (c) => {
 
    If the SO has NO bound PO this is the TERMINAL step — the amendment rests at
    SO_APPROVED. */
-export async function approveSoCommandHandler(c: any, sb: any): Promise<Response> {
+export async function approveSoCommandHandler(c: any, sb: any, lap: (step: string) => void = () => {}): Promise<Response> {
   const id = c.req.param('id'); const user = c.get('user');
 
   /* Two-lane rework: the gate key depends on WHICH row this is, so load first.
@@ -748,6 +749,7 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
      scm.amendment.approve_delivery (logistics), legacy NULL-lane rows keep the
      original scm.amendment.approve_so. */
   const loaded = await loadAmendmentForWrite(sb, id, c);
+  lap('load');
   if (!loaded.ok) return c.json({ error: 'not_found' }, 404);
   const lane = laneOf(loaded.amendment);
   const approveKey = lane ? LANE_APPROVE_KEY[lane] : 'scm.amendment.approve_so';
@@ -935,6 +937,7 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
     }
   }
 
+  lap('date-gates');
   /* Claim BOTH the amendment and its SO before the first apply write. The
      version predicates detect conflicts while runScmPgCommand keeps the claim,
      snapshot, line mutations, totals, audit, and final status in one database
@@ -989,6 +992,7 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
     if (soClaimError) return c.json({ error: 'update_failed', reason: soClaimError.message }, 500);
     return c.json({ error: 'so_edit_lease_conflict' }, 409);
   }
+  lap('claim');
 
   /* Apply the revision. A hard failure leaves the amendment status unchanged (we
      only advance status AFTER a clean apply) so the operator can retry — the
@@ -1007,6 +1011,7 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
       approvedByUserId: String(user.id),
       approvalPermission: approveKey,
     });
+    lap('apply');
   } catch (e) {
     await sb.from('mfg_sales_orders').update({
       edit_lease_token: null,
@@ -1049,6 +1054,7 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
     .maybeSingle();
   if (updErr) return c.json({ error: 'update_failed', reason: updErr.message }, 500);
   if (!updated) return c.json({ error: 'amendment_version_conflict' }, 409);
+  lap('status');
 
   /* Two-lane rework — the LINES lane's PO leg: raise the follow-up PO
      Amendment(s) INSIDE this same transaction (runScmPgCommand), so the SO
@@ -1080,6 +1086,7 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
     });
   }
 
+  lap('po-follow-ups');
   /* ERP -> AutoCount edit. THE SANCTIONED WAY TO CHANGE A CONFIRMED SO, and
      until now the one that told AutoCount nothing. applySoAmendment rewrites the
      header and the lines of an SO that is already PROCESSING-locked — which is
@@ -1102,6 +1109,7 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
        composeEdit requires before it honours a new line. */
     newLineIds: applied.addedLineIds,
   });
+  lap('ac-enqueue');
 
   /* Notices (owner 2026-09-02). AFTER COMMIT — an approval that rolls back
      must not leave people told their amendment went through. The audience is
@@ -1141,7 +1149,9 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
     });
   }
 
+  lap('notice-audience');
   await scheduleStockAllocationAfterCommand(c, sb, `amendment-approve-so:${amendment.so_doc_no}`);
+  lap('alloc-schedule');
   return c.json({
     amendment: updated,
     revision: applied.revision,
@@ -1149,10 +1159,14 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
     warnings: poFollowUps.warnings,
   });
 }
+/* HC-0167: logged laps, so an approve the browser gave up on at 30 s still says
+   which step took the time ('tx-begin' = waiting for a connection). */
 soAmendments.patch('/:id/approve-so', (c) => {
   const company = requireActiveCompanyId(c);
   if (!company.ok) return c.json(company.refusal, 409);
-  return runScmPgCommand(c, (sb) => approveSoCommandHandler(c, sb));
+  const lap = loggedStepClock('approve-so', 'db-pg');
+  return runScmPgCommand(c, (sb) => { lap('tx-begin'); return approveSoCommandHandler(c, sb, lap); })
+    .finally(() => lap('commit-and-notices'));
 });
 
 /* ── PATCH /:id/approve-po ─────────────────────────────────────────────────

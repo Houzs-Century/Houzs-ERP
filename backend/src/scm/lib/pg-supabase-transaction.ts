@@ -4,10 +4,12 @@ import {
 import type { Sql } from 'postgres';
 import { parsePgrestInList } from './pgrest-in-list';
 import { getSql, resolveDatabaseUrl } from '../../db/pg';
+import { recordStep } from '../../lib/step-timing';
 
 type QueryResult<T = unknown> = { data: T | null; error: { message: string } | null; count?: number | null };
 type Predicate = { sql: string; values: unknown[] };
 const txQueues = new WeakMap<object, Promise<void>>();
+const SLOW_STATEMENT_MS = 1000;
 let savepointSequence = 0;
 
 async function serialOnTransaction<T>(sql: Sql, operation: () => Promise<T>): Promise<T> {
@@ -295,16 +297,26 @@ class PgPostgrestQuery implements PromiseLike<QueryResult<any>> {
 
     const outcome = await serialOnTransaction(this.sql, async () => {
       const savepoint = `scm_cmd_${++savepointSequence}`;
-      await this.sql.unsafe(`SAVEPOINT ${savepoint}`);
+      /* HC-0167: one statement here is three round trips (savepoint, statement,
+         release). Counting them per command shows whether a slow approve is many
+         round trips or one statement waiting on a row lock. */
+      const t0 = Date.now();
       try {
-        const rawRows = await this.sql.unsafe(text, values as never[]);
-        const rows = normalizeReturnedRows(rawRows as unknown[]);
-        await this.sql.unsafe(`RELEASE SAVEPOINT ${savepoint}`);
-        return { rows, error: null as { message: string } | null };
-      } catch (error) {
-        await this.sql.unsafe(`ROLLBACK TO SAVEPOINT ${savepoint}`);
-        await this.sql.unsafe(`RELEASE SAVEPOINT ${savepoint}`);
-        return { rows: [] as unknown[], error: { message: error instanceof Error ? error.message : String(error) } };
+        await this.sql.unsafe(`SAVEPOINT ${savepoint}`);
+        try {
+          const rawRows = await this.sql.unsafe(text, values as never[]);
+          const rows = normalizeReturnedRows(rawRows as unknown[]);
+          await this.sql.unsafe(`RELEASE SAVEPOINT ${savepoint}`);
+          return { rows, error: null as { message: string } | null };
+        } catch (error) {
+          await this.sql.unsafe(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+          await this.sql.unsafe(`RELEASE SAVEPOINT ${savepoint}`);
+          return { rows: [] as unknown[], error: { message: error instanceof Error ? error.message : String(error) } };
+        }
+      } finally {
+        const ms = Date.now() - t0;
+        recordStep('db-pg', ms);
+        if (ms >= SLOW_STATEMENT_MS) console.warn(`[scm-command] slow ${this.operation} ${this.table} ${ms}ms`);
       }
     });
     if (outcome.error) {

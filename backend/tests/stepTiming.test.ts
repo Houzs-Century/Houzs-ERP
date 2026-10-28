@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { recordStep, stepClock, stepTimingEntries, timed, withStepTiming, type StepMark } from '../src/lib/step-timing';
+import { describe, expect, it, vi } from 'vitest';
+import { loggedStepClock, recordStep, stepClock, stepTimingEntries, timed, withStepTiming, type StepMark } from '../src/lib/step-timing';
+import { pgTransactionSupabase } from '../src/scm/lib/pg-supabase-transaction';
 
 /* HC-0002: steps a handler times reach the request's Server-Timing header;
    outside a request (tests, cron) the helpers only run the work. */
@@ -69,5 +70,38 @@ describe('step timing', () => {
       's-dp_so_headers;dur=900;desc="1x"',
       's-dp-items;dur=50;desc="2x"',
     ]);
+  });
+
+  /* HC-0167: an approve the browser gave up on never sends Server-Timing, so
+     each lap is logged as it happens, with the database steps since the last. */
+  it('logged laps write each step with its database round trips as they happen', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const marks: StepMark[] = [];
+    await withStepTiming(marks, async () => {
+      const lap = loggedStepClock('approve-so a1', 'db-pg');
+      recordStep('db-pg', 30);
+      recordStep('db-pg', 20);
+      recordStep('db-rest', 99);
+      lap('claim');
+      recordStep('db-pg', 7);
+      lap('apply');
+    });
+    const lines = log.mock.calls.map((call) => String(call[0]));
+    log.mockRestore();
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/^\[approve-so a1\] claim \d+ms total=\d+ms db-pg=2x\/50ms$/);
+    expect(lines[1]).toMatch(/^\[approve-so a1\] apply \d+ms total=\d+ms db-pg=1x\/7ms$/);
+    expect(marks.filter((m) => m.name === 'claim' || m.name === 'apply')).toHaveLength(2);
+  });
+
+  it('each statement of an SCM command counts as one db-pg step', async () => {
+    const sql = { unsafe: async () => [] } as unknown as Parameters<typeof pgTransactionSupabase>[0];
+    const marks: StepMark[] = [];
+    await withStepTiming(marks, async () => {
+      const sb = pgTransactionSupabase(sql);
+      await sb.from('so_amendments').select('id').eq('id', 'a1').maybeSingle();
+      await sb.from('mfg_sales_orders').update({ version: 2 }).eq('doc_no', 'SO-1');
+    });
+    expect(marks.filter((m) => m.name === 'db-pg')).toHaveLength(2);
   });
 });
