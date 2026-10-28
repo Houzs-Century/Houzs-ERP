@@ -6,7 +6,7 @@
 //   2. Products → Maintenance → Fabrics sub-tab
 //
 // Columns: Fabric Code · Description · Supplier Code (editable) · Sofa Tier
-// (cycle PRICE_1/2/3 on click) · Bedframe Tier (cycle on click).
+// (Price 1-4 picker) · Bedframe Tier (Price 1 / 2 picker).
 //
 // DataGrid conversion (owner request 2026-06-12): the plain <table> is now
 // the shared DataGrid (sort / per-column filter / column show-hide /
@@ -24,6 +24,8 @@ import {
   useUpdateFabricSeries,
   useUpdateFabricActive,
   useDeleteFabric,
+  FABRIC_TIER_OPTIONS,
+  fabricTierLabel,
   type FabricTier,
   type FabricTierField,
   type FabricTrackingRow,
@@ -32,39 +34,29 @@ import { DataGridCompat, type GridColumn } from '../../../components/DataGridCom
 import { useConfirm } from './ConfirmDialog';
 import styles from '../../../pages/scm-v2/FabricTracking.module.css';
 
-/* Commander 2026-05-27 (Fix 6): only Price 1 and Price 2 in use today.
-   Cycle collapses to a 2-state toggle; PRICE_3 in the schema stays so
-   historical rows still render, but new clicks never produce a PRICE_3.
-   When a legacy PRICE_3 row IS encountered we cycle it forward to PRICE_1
-   on the next click so commander can clean those up by tapping through. */
-const TIER_NEXT: Record<FabricTier, FabricTier> = {
-  PRICE_1: 'PRICE_2',
-  PRICE_2: 'PRICE_1',
-  PRICE_3: 'PRICE_1',
-};
-
-const tierShort = (t: FabricTier | null): string =>
-  t ? `Price ${t.replace('PRICE_', '')}` : '—';
-
-/* Tier cycle button — hooks live in a real component (NOT a column accessor
+/* Tier picker — hooks live in a real component (NOT a column accessor
    closure) so the rules of hooks hold inside the DataGrid render. */
 const TierCell = ({ row, field, tier }: {
   row: FabricTrackingRow; field: FabricTierField; tier: FabricTier | null;
 }) => {
   const updateTier = useUpdateFabricTier();
   const askConfirm = useConfirm();
-  const next = TIER_NEXT[tier ?? 'PRICE_2'];
   const label = field === 'sofaPriceTier' ? 'Sofa' : 'Bedframe';
+  // A legacy tier outside today's list (bedframe Price 3) still shows as picked.
+  const options = tier && !FABRIC_TIER_OPTIONS[field].includes(tier)
+    ? [...FABRIC_TIER_OPTIONS[field], tier]
+    : FABRIC_TIER_OPTIONS[field];
   return (
-    <button
-      type="button"
+    <select
       className={styles.tierPicker}
+      value={tier ?? ''}
       /* Commander 2026-06-15 — confirm before changing the tier (no 裸奔); the
-         tier drives the fabric's price, so a stray click must not commit. */
-      onClick={async () => {
+         tier drives the fabric's price, so a stray pick must not commit. */
+      onChange={async (e) => {
+        const next = e.target.value as FabricTier;
         if (await askConfirm({
           title: 'Change tier?',
-          body: `Set this fabric's ${label} tier to ${tierShort(next)}? This changes its price.`,
+          body: `Set this fabric's ${label} tier to ${fabricTierLabel(next, field)}? This changes its price.`,
           confirmLabel: 'Change',
         })) {
           updateTier.mutate({ id: row.id, field, tier: next });
@@ -72,8 +64,9 @@ const TierCell = ({ row, field, tier }: {
       }}
       title="Change the price tier (asks to confirm)"
     >
-      {tierShort(tier)}
-    </button>
+      {!tier && <option value="" disabled>—</option>}
+      {options.map((t) => <option key={t} value={t}>{fabricTierLabel(t, field)}</option>)}
+    </select>
   );
 };
 
@@ -191,20 +184,20 @@ const FABRIC_COLUMNS: GridColumn<FabricTrackingRow>[] = [
   {
     key: 'sofaTier',
     label: 'Sofa Tier',
-    width: 110,
+    width: 130,
     accessor: (r) => <TierCell row={r} field="sofaPriceTier" tier={sofaTier(r)} />,
-    searchValue: (r) => tierShort(sofaTier(r)),
-    filterValue: (r) => tierShort(sofaTier(r)),
-    sortFn: (a, b) => tierShort(sofaTier(a)).localeCompare(tierShort(sofaTier(b))),
+    searchValue: (r) => fabricTierLabel(sofaTier(r), 'sofaPriceTier'),
+    filterValue: (r) => fabricTierLabel(sofaTier(r), 'sofaPriceTier'),
+    sortFn: (a, b) => fabricTierLabel(sofaTier(a), 'sofaPriceTier').localeCompare(fabricTierLabel(sofaTier(b), 'sofaPriceTier')),
   },
   {
     key: 'bedframeTier',
     label: 'Bedframe Tier',
     width: 110,
     accessor: (r) => <TierCell row={r} field="bedframePriceTier" tier={bedTier(r)} />,
-    searchValue: (r) => tierShort(bedTier(r)),
-    filterValue: (r) => tierShort(bedTier(r)),
-    sortFn: (a, b) => tierShort(bedTier(a)).localeCompare(tierShort(bedTier(b))),
+    searchValue: (r) => fabricTierLabel(bedTier(r), 'bedframePriceTier'),
+    filterValue: (r) => fabricTierLabel(bedTier(r), 'bedframePriceTier'),
+    sortFn: (a, b) => fabricTierLabel(bedTier(a), 'bedframePriceTier').localeCompare(fabricTierLabel(bedTier(b), 'bedframePriceTier')),
   },
   {
     key: 'active',

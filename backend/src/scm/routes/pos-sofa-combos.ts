@@ -23,7 +23,10 @@ import { todayMyt } from '../lib/my-time';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { POS_COMBO_COLUMNS, posOwnsSellingCombos, type PosComboRow } from '../lib/pos-sofa-combos';
 import { comboSlotsKey, parseDefaultFreeGifts, type SofaPriceTier } from '../shared';
-import { TIERS, validateComboModules, validatePricesByHeight } from './sofa-combos';
+import { validateComboModules, validatePricesByHeight } from './sofa-combos';
+
+// pos_sofa_combos.tier has its own CHECK (PRICE_1..PRICE_3); PRICE_4 is cost-side only.
+const TIERS = new Set(['PRICE_1', 'PRICE_2', 'PRICE_3']);
 
 type AppContext = Context<{ Bindings: Env; Variables: Variables }>;
 

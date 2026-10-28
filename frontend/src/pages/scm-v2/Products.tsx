@@ -245,7 +245,8 @@ type Tier = SofaPriceTier;
 const TIER_CHIPS: { value: Tier; label: string }[] = [
   { value: 'PRICE_1', label: 'P1' },
   { value: 'PRICE_2', label: 'P2' },
-  { value: 'PRICE_3', label: 'P3' },
+  { value: 'PRICE_3', label: 'P3 (HL)' },
+  { value: 'PRICE_4', label: 'P4 (FL)' },
 ];
 
 
@@ -2528,6 +2529,7 @@ const SofaQuickPresetsList = ({
               <option value="PRICE_1">PRICE_1</option>
               <option value="PRICE_2">PRICE_2</option>
               <option value="PRICE_3">PRICE_3</option>
+              <option value="PRICE_4">PRICE_4</option>
             </select>
           ) : (
             <span style={{
@@ -4513,7 +4515,7 @@ const MaintenanceHistoryDialog = ({
 // mfg-products.ts) so future imports don't resurrect the data.
 //
 // Sofa per-tier export (Wei Siang) — a sofa carries a price per (size × tier).
-// The CSV is LONG form: one row per sofa tier (PRICE_1 / PRICE_2 / PRICE_3),
+// The CSV is LONG form: one row per sofa tier (PRICE_1 .. PRICE_4),
 // with one money column per size. Non-sofa rows leave the size columns blank
 // and carry base_price_sen / price1_sen instead. The old cost_price_sen column
 // is dropped entirely — it was the zeroing trap on round-trip.

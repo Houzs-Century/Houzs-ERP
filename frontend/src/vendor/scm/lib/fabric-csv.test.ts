@@ -85,11 +85,27 @@ describe('the table toolbar export imports back (BUG-88)', () => {
     ]);
   });
 
-  test('a tier that is not Price 1/2/3 refuses that row with the reason', () => {
+  test('a tier that is not Price 1-4 refuses that row with the reason', () => {
     const { rows, errors } = parseCsv('fabric_code,sofa_price_tier\r\nBF-01,PRICE_2\r\nBF-02,Gold\r\n');
 
     expect(rows).toEqual([{ fabricCode: 'BF-01', sofaPriceTier: 'PRICE_2' }]);
-    expect(errors).toEqual(['Row 3: sofa_price_tier must be Price 1, Price 2 or Price 3 ("Gold")']);
+    expect(errors).toEqual(['Row 3: sofa_price_tier must be Price 1, 2, 3 or 4 ("Gold")']);
+  });
+
+  // 2990-0024: the table export labels sofa Price 3 / 4 with their leather grade.
+  test('sofa Price 3 (HL) and Price 4 (FL) import; bedframe Price 4 is refused', () => {
+    const { rows, errors } = parseCsv(
+      'fabric_code,sofa_price_tier,bedframe_price_tier\r\n' +
+      'HL-01,Price 3 (HL),Price 2\r\n' +
+      'FL-01,P4,PRICE_1\r\n' +
+      'FL-02,Price 4 (FL),Price 4\r\n',
+    );
+
+    expect(rows).toEqual([
+      { fabricCode: 'HL-01', sofaPriceTier: 'PRICE_3', bedframePriceTier: 'PRICE_2' },
+      { fabricCode: 'FL-01', sofaPriceTier: 'PRICE_4', bedframePriceTier: 'PRICE_1' },
+    ]);
+    expect(errors).toEqual(['Row 4: bedframe_price_tier cannot be Price 4, it is a sofa-only grade ("Price 4")']);
   });
 });
 

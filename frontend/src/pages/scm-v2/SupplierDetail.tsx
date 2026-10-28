@@ -1209,10 +1209,11 @@ const DefaultSkuMappingsTable = ({
    start cases.
    ──────────────────────────────────────────────────────────────────────── */
 
-const SOFA_TIER_CHIPS: { value: 'P1' | 'P2' | 'P3'; label: string }[] = [
+const SOFA_TIER_CHIPS: { value: 'P1' | 'P2' | 'P3' | 'P4'; label: string }[] = [
   { value: 'P1', label: 'P1' },
   { value: 'P2', label: 'P2' },
-  { value: 'P3', label: 'P3' },
+  { value: 'P3', label: 'P3 (HL)' },
+  { value: 'P4', label: 'P4 (FL)' },
 ];
 
 const SOFA_HEIGHT_FALLBACK = ['24', '26', '28', '30', '32', '35'];
@@ -1236,7 +1237,7 @@ const SofaSkuMappingsTable = ({
   const update = useUpdateBinding();
   const remove = useDeleteBinding();
   const setAnchor = useSetCostAnchor();
-  const [selectedTier, setSelectedTier] = useState<'P1' | 'P2' | 'P3'>('P2');
+  const [selectedTier, setSelectedTier] = useState<'P1' | 'P2' | 'P3' | 'P4'>('P2');
 
   // Read seat-heights from the master maintenance config (Products Maintenance
   // → Sofa Compartments). Same source the Products page reads from, so the
@@ -1656,7 +1657,7 @@ const InlineUnitPrice = ({
 function readSofaCell(
   matrix: PriceMatrix | null,
   height: string,
-  tier: 'P1' | 'P2' | 'P3',
+  tier: 'P1' | 'P2' | 'P3' | 'P4',
 ): number | null {
   if (!matrix || typeof matrix !== 'object') return null;
   const m = matrix as SofaPriceMatrix;
@@ -1682,12 +1683,12 @@ function readBedframeCell(
 function setSofaCell(
   matrix: PriceMatrix | null,
   height: string,
-  tier: 'P1' | 'P2' | 'P3',
+  tier: 'P1' | 'P2' | 'P3' | 'P4',
   valueSen: number | null,
 ): SofaPriceMatrix | null {
   const next: SofaPriceMatrix = { ...(matrix as SofaPriceMatrix | null ?? {}) };
-  const innerSrc = (next[height] ?? {}) as { P1?: number; P2?: number; P3?: number };
-  const inner: { P1?: number; P2?: number; P3?: number } = { ...innerSrc };
+  const innerSrc = (next[height] ?? {}) as { P1?: number; P2?: number; P3?: number; P4?: number };
+  const inner: { P1?: number; P2?: number; P3?: number; P4?: number } = { ...innerSrc };
   if (valueSen == null || valueSen === 0) {
     delete inner[tier];
   } else {
@@ -1750,7 +1751,7 @@ const InlineSofaMatrixCell = ({
   supplierId: string;
   update: ReturnType<typeof useUpdateBinding>;
   height: string;
-  tier: 'P1' | 'P2' | 'P3';
+  tier: 'P1' | 'P2' | 'P3' | 'P4';
 }) => {
   const valueSen = readSofaCell(binding.price_matrix, height, tier);
   return (

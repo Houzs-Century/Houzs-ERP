@@ -4,7 +4,7 @@
 // item; callers multiply by qty and convert to the order's unit (×100 for *_sen).
 // COST is unaffected: this is selling-only.
 
-export type FabricTier = 'PRICE_1' | 'PRICE_2' | 'PRICE_3';
+export type FabricTier = 'PRICE_1' | 'PRICE_2' | 'PRICE_3' | 'PRICE_4';
 export type FabricAddonCategory = 'SOFA' | 'BEDFRAME';
 
 export interface FabricTierAddonConfig {
@@ -24,7 +24,9 @@ export interface FabricTierModelOverride {
 }
 
 /** Flat selling add-on (whole MYR) for ONE configured item, from its fabric's
- *  per-context tier. PRICE_1 / null / undefined → 0. Negative config → 0. When
+ *  per-context tier. PRICE_1 / PRICE_4 / null / undefined → 0 (PRICE_4 is a
+ *  cost-only sofa grade; the 2990 POS has no PRICE_4 add-on, so charging one
+ *  here would trip its drift gate). Negative config → 0. When
  *  `override` is given, its non-null tier value REPLACES the global; null/absent
  *  inherits the global (back-compatible — omitting `override` is the old fn). */
 export const fabricTierAddon = (
