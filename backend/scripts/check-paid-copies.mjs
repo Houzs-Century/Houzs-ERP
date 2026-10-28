@@ -13,7 +13,7 @@ async function main() {
     console.log(`INFO|pv_allocations columns: ${[...cols].join(', ')}`);
     const amt = cols.has('applied_sen') ? 'a.applied_sen' : cols.has('amount_sen') ? 'a.amount_sen' : 'a.amount_centi';
     const pvs = await sql.unsafe(`SELECT p.invoice_number, p.linked_ac_docno, p.total_sen, p.paid_sen, p.status::text AS status, p.invoice_date::text AS date,
-        v.pv_number, v.voucher_date::text AS pv_date, v.status::text AS pv_status, ${amt} AS sen
+        v.pv_number, v.voucher_date::text AS pv_date, v.status::text AS pv_status, a.amount_sen AS planned, ${amt} AS sen
       FROM scm.purchase_invoices p JOIN scm.pv_allocations a ON a.pi_id = p.id JOIN scm.payment_vouchers v ON v.id = a.pv_id
       WHERE p.company_id = $1 AND p.migrated_no_stock ORDER BY p.invoice_number`, [CO]);
     for (const r of pvs) console.log(`PV|${JSON.stringify(r)}`);
