@@ -31,7 +31,7 @@ export type NoteKind = 'CN' | 'DN' | 'SCN';
 export const NOTE_KINDS: ReadonlySet<string> = new Set(['CN', 'DN', 'SCN']);
 export const NOTE_KIND_WORD: Record<NoteKind, string> = { CN: 'Credit note', DN: 'Debit note', SCN: 'Supplier credit note' };
 
-export const CREDIT_NOTE_HEADER = 'id, company_id, note_number, kind, party_type, party_code, party_name, supplier_id, so_doc_no, sales_invoice_id, ap_invoice_id, purchase_invoice_id, source_doc_no, note_date, total_sen, reason, notes, status, je_no, created_at, created_by, updated_at, posted_at, posted_by, cancelled_at, cancelled_by, refund_pv_id, converted_payment_id';
+export const CREDIT_NOTE_HEADER = 'id, company_id, note_number, kind, party_type, party_code, party_name, supplier_id, so_doc_no, sales_invoice_id, ap_invoice_id, purchase_invoice_id, source_doc_no, note_date, total_sen, reason, notes, status, je_no, created_at, created_by, updated_at, posted_at, posted_by, cancelled_at, cancelled_by, refund_pv_id, converted_payment_id, opening';
 export const CREDIT_NOTE_LINE = 'id, line_no, description, account_code, amount_sen, project_id';
 
 /** projectId: the event the line's money is for (owner 2026-10-22: 「这个rental如果是

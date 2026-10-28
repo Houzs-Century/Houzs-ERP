@@ -18,6 +18,10 @@
 //  Acquirer settlement conf. | Dr fee                / Cr transit      | SETTLE      | SETTLE_REVERSAL
 //  Statement-level charge    | Dr fee                / Cr transit      | SETTLEADJ   | SETTLEADJ_REVERSAL
 //  Acquirer payout received  | Dr bank               / Cr transit      | SETTLEBANK  | SETTLEBANK_REVERSAL
+//  Books' opening balances   | each account to the old book's B/F     | OPENING     | OPENING_REVERSAL
+//    (Houzs 31/08/2026 from AutoCount; the Opening Balance page. Its bills,
+//    credits and debtor bills are ordinary API / SCN / ODB documents flagged
+//    `opening`, so the books count them whatever their date.)
 //
 //  Customer-payment debit side, by the sales panel's own method model:
 //    cash                 -> CASH role (335-0000)
@@ -142,6 +146,7 @@ export const REVERSAL_SOURCE: Record<string, string> = {
   SCN: 'SCN_REVERSAL',
   RCT: 'RCT_REVERSAL',
   DI: 'DI_REVERSAL',
+  OPENING: 'OPENING_REVERSAL',
 };
 
 export type RoleCodes = Record<AccountRole, string>;
