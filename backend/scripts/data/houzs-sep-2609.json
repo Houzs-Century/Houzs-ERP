@@ -1,5 +1,5 @@
 {
- "builtAt": "2026-10-28T12:41:50.355Z",
+ "builtAt": "2026-10-28T12:44:27.607Z",
  "sources": [
   "Houzs - New GL (ERP).xlsx (AutoCount GL 01/09–30/09/2026)",
   "AP Payment Listing with KnockOff Detail 2.xlsx (01/08–30/09)",
@@ -7369,20 +7369,6 @@
  ],
  "receipts": [
   {
-   "acDoc": "OR2609-001",
-   "date": "2026-09-11",
-   "bank": "310-0010",
-   "payer": "MANESHWARAN KALIDASS",
-   "note": "AutoCount OR2609-001 (September import)",
-   "lines": [
-    {
-     "acc": "440-0000",
-     "sen": 200000,
-     "desc": "Customer balance payment HC8433 — HC-SO-006068 (the order already shows it paid)"
-    }
-   ]
-  },
-  {
    "acDoc": "OR2609-0002",
    "date": "2026-09-08",
    "bank": "310-0060",
@@ -7395,6 +7381,20 @@
     }
    ],
    "note": "AutoCount OR2609-0002 (September import)"
+  },
+  {
+   "acDoc": "OR2609-001",
+   "date": "2026-09-11",
+   "bank": "310-0010",
+   "payer": "MANESHWARAN KALIDASS",
+   "note": "AutoCount OR2609-001 (September import)",
+   "lines": [
+    {
+     "acc": "440-0000",
+     "sen": 200000,
+     "desc": "Customer balance payment HC8433 — HC-SO-006068 (the order already shows it paid)"
+    }
+   ]
   }
  ],
  "skipped": [
