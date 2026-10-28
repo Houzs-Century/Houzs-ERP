@@ -175,6 +175,13 @@ page, and the POS Admin menu. This guide carries only what is built.
   discount, net and stock left (`scm.inventory_balances` at the event's
   stock source, else the POS store, else the company total, flagged);
   Export Excel (the shared rows plus the stock column) / PDF.
+- POS Items > Add all sellable inventory (`POST /api/pos-admin/items/add-all`,
+  `dry_run` for the counts): every ACTIVE `scm.mfg_products` row with a
+  selling price that is not a POS item yet is tagged at that price; existing
+  POS items are never touched, so it is safe to press again.
+- Install: the login screen (banner and footer link) and Settings offer
+  "Install Houzs POS" through the browser install prompt (`pos/src/pwa.ts`
+  `promptInstall`), hidden once the app runs in its own window.
 - The POS front is the login screen. A device not set up yet shows a manager
   sign-in (ERP email + password; the account must hold `pos.manage`,
   `GET /api/pos-admin/device/context` answers who / company / settings); the
@@ -182,7 +189,11 @@ page, and the POS Admin menu. This guide carries only what is built.
   (`pos/src/manager.ts`, token "", never saved or synced) and sets the device
   up in Settings: terminal + fair from the POS Admin lists, one button
   (`POST /api/pos-admin/device/register`). On a set-up device the manager
-  sign-in stays under the tiles as the second way in.
+  sign-in stays under the tiles as the second way in. The device remembers
+  the last email; "Keep me signed in on this device" keeps the ERP token in
+  localStorage so the front offers "Continue as <name>" (one tap) and a
+  Logout keeps it; "Not you? Sign out" or an ended ERP session clears it. The
+  password is never stored.
 - Pairing code (for a device with no ERP login on it): POS Admin > Terminals >
   Pair device (`POST /api/pos-admin/terminals/:id/pairing`, event must be
   set and linked) issues a one-time 8-character code, stored as a hash with

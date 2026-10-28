@@ -47,6 +47,10 @@ import { projectSalesOrders } from "./routes/project-sales-orders";
 import { projectSalesBills } from "./routes/project-sales-bills";
 import { projectPosSales } from "./routes/project-pos-sales";
 import { posAdmin } from "./routes/pos-admin";
+import { hr as hrEmployees } from "./routes/hr";
+import { hrAttendance } from "./routes/hr-attendance";
+import { attendance } from "./routes/attendance";
+import { runAutoClockOut } from "./routes/lib/hr-attendance-store";
 import { posDevice } from "./routes/pos-device";
 import projectsOutstanding from "./routes/projectsOutstanding";
 import { projectDataGaps } from "./routes/projectDataGaps";
@@ -120,6 +124,7 @@ import { autoReadBills } from "./scm/lib/threepl-bill-import";
 import { relinkHeldBackSweep } from "./scm/lib/autocount-relink-sweep";
 import { deliveryDateSweep } from "./scm/lib/autocount-delivery-date-sweep";
 import { refreshAllMrpSnapshots } from "./scm/lib/mrp-snapshot";
+import { deliverDueShippedOrders } from "./scm/lib/deliver-due-shipped";
 import { refreshProcurementOverviewSnapshots } from "./scm/routes/procurement-overview";
 import { amendmentMirror } from "./scm/routes/amendment-mirror";
 import { customerMirror } from "./scm/routes/customer-mirror";
@@ -526,6 +531,14 @@ app.route("/api/project-pos-sales", projectPosSales);
 // one key. NOT under /api/pos — that is the older 2990 tablet-POS auth.
 app.use("/api/pos-admin/*", requirePermission("pos.manage"));
 app.route("/api/pos-admin", posAdmin);
+// HR Employees & Attendance (HC-0125): reads on either key, every write checks
+// hr.employees.manage inside. Salaries, so not under the SCM umbrella.
+app.use("/api/hr/*", requireAnyPermission(["hr.employees.read", "hr.employees.manage"]));
+app.route("/api/hr", hrEmployees);
+app.route("/api/hr", hrAttendance);
+// The phone punch clock (HC-0125): any signed-in account, answered only for
+// the employee linked to it, so NOT behind the hr.employees.* gate above.
+app.route("/api/attendance", attendance);
 app.route("/api/sales", sales);
 app.route("/api/finance", finance);
 app.route("/api/stockitems", stockItems);
@@ -886,6 +899,15 @@ export default {
           .catch((e) => console.error("[cron procurement-overview]", e))
       );
     } else if (event.cron === "*/30 * * * *") {
+      // HR punch clock: close clock-ins left open 16 hours (a forgotten
+      // clock-out) at the shift end of their day. Idempotent.
+      ctx.waitUntil(
+        track("hr-auto-clockout", () => runAutoClockOut(env))
+          .then((r) => {
+            if (r.closed) console.log(`[cron hr-auto-clockout] closed=${r.closed}`);
+          })
+          .catch((e) => console.error("[cron hr-auto-clockout]", e))
+      );
       /* Venture Portal feed BACKSTOP — the half of "not one order missed" that
          is provable rather than hoped for. The capture trigger swallows its own
          errors on purpose (it must never roll back a salesperson's Save), so a
@@ -1057,6 +1079,15 @@ export default {
         track("sla", () => runSlaEscalation(env))
           .then((r) => console.log(`[cron sla] escalated ${r.escalated} case(s)`))
           .catch((e) => console.error("[cron sla]", e))
+      );
+      // Local "actually delivered" sweep (owner 2026-10-27): so-delivery-sync
+      // only SHIPS now; a SHIPPED local order whose DO date has passed and that
+      // has a driver is delivered here. East Malaysia / Singapore are left out —
+      // their delivered signal is the HC Delivery sheet, synced separately.
+      ctx.waitUntil(
+        track("deliver-due", () => deliverDueShippedOrders(getSupabaseService(env), todayMyt(), null))
+          .then((r) => console.log(`[cron deliver-due] scanned=${r.scanned} delivered=${r.delivered} skipped=${r.skipped}`))
+          .catch((e) => console.error("[cron deliver-due]", e))
       );
       // AutoCount DO-header mirror refresh (mig 0215) — feeds the ASSR list's
       // DO No column for Houzs cases. Incremental via DeliveryOrder/getSince

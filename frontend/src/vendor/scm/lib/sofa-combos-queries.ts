@@ -67,10 +67,15 @@ export type ComboFilters = {
   customerId?: string | null;  // null = '__all__' scope; undefined = no filter
   /** Supplier scope. Set = that supplier's combos; unset = sales-side. */
   supplierId?: string;
+  /** Every row incl. superseded and future-dated ones (effective-date lookups). */
+  includeAll?: boolean;
+  /** false = do not fetch yet (e.g. no supplier picked). */
+  enabled?: boolean;
 };
 
 export function useSofaCombos(filters: ComboFilters = {}) {
   return useQuery({
+    enabled: filters.enabled ?? true,
     queryKey: ['sofa-combos', filters],
     queryFn: () => {
       const params = new URLSearchParams();
@@ -78,6 +83,7 @@ export function useSofaCombos(filters: ComboFilters = {}) {
       if (filters.customerId === null) params.set('customerId', '__all__');
       else if (filters.customerId) params.set('customerId', filters.customerId);
       if (filters.supplierId) params.set('supplierId', filters.supplierId);
+      if (filters.includeAll) params.set('includeAll', '1');
       const qs = params.toString();
       return authedFetch<{ rules: SofaComboRule[] }>(
         `/sofa-combos${qs ? `?${qs}` : ''}`,

@@ -108,7 +108,7 @@ on:
         required: false
         default: ''
       item_codes:
-        description: 'retro-cost only: optional comma-separated item codes; repair only their buckets. Blank = every bucket.'
+        description: 'retro-cost and reconstruct: optional comma-separated item codes; repair only their buckets / families. Blank = everything.'
         required: false
         default: ''
 

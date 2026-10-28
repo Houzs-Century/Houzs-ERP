@@ -23,6 +23,7 @@ export const JOB_CADENCE_MIN: Record<string, number> = {
   "mrp-snapshot": 15,
   "procurement-overview": 15,
   "vp-reconcile": 30,
+  "hr-auto-clockout": 30,
   "assr-alerts": 30,
   "ann-escalation": 30,
   "lead-time-schedule": 30,
@@ -47,6 +48,7 @@ export const JOB_CADENCE_MIN: Record<string, number> = {
   "failed-logins-retention": DAY,
   "stock-close": DAY,
   "supplier-price-apply": DAY,
+  "deliver-due": DAY,
   "scan-so-distill": 7 * DAY,
 };
 

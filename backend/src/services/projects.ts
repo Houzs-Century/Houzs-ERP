@@ -9,7 +9,10 @@ import { checklistRowDone } from "./checklistProgress";
 import { eventFinanceLines } from "./projectFinanceLines";
 import { loadEventPnl } from "./eventPnlInputs";
 import { pnlForProjects, withPnlColumns } from "./eventPnlBatch";
+import { earliestLorryDate } from "./earliest-lorry-date";
 export { deriveProjectCode, deriveProjectName };
+// Re-exported from here so projects.earliestLorryDate.test.ts still resolves it.
+export { earliestLorryDate };
 
 /** Disambiguate against existing codes by appending -2, -3, … */
 export async function uniqueProjectCode(env: Env, base: string): Promise<string> {
@@ -494,6 +497,19 @@ export async function patchProject(
       .bind(id).first<{ name: string | null; organizer: string | null }>();
     const synced = syncedNameForOrganizerChange(cur?.name, cur?.organizer, body.organizer as string | null);
     if (synced) body.name = synced;
+  }
+
+  // Keep the project-level window date in step with the per-lorry dates the
+  // crew editor now owns. Only override when at least one lorry carries a date,
+  // so editing a legacy project's crew (lorries saved before per-lorry dates
+  // existed) never silently wipes its existing setup_start_at / dismantle_start_at.
+  if ("setup_crew" in body) {
+    const d = earliestLorryDate(body.setup_crew);
+    if (d) body.setup_start_at = d;
+  }
+  if ("dismantle_crew" in body) {
+    const d = earliestLorryDate(body.dismantle_crew);
+    if (d) body.dismantle_start_at = d;
   }
 
   const sets: string[] = [];
