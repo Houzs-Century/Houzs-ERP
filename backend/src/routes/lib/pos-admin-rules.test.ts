@@ -1,7 +1,7 @@
 // The POS Admin rules: PIN shape, code minting, event status word, and the
 // Excel import row.
 import { describe, expect, test } from "vitest";
-import { isPosCashierPin, nextCode, parseImportRow, posEventStatus } from "./pos-admin-rules";
+import { countByCategory, hasSellingPrice, isPosCashierPin, nextCode, parseImportRow, pickedCategories, posEventStatus } from "./pos-admin-rules";
 
 describe("pos-admin-rules", () => {
   test("a PIN is 4 to 6 digits", () => {
@@ -39,5 +39,30 @@ describe("pos-admin-rules", () => {
     expect(parseImportRow({ "Item Code": "A", "Discount Type": "%", "Discount Value": "150" })).toMatchObject({ ok: false, reason: "discount above 100%" });
     expect(parseImportRow({ "Item Code": "A", Price: "-1" })).toMatchObject({ ok: false, reason: "price below zero" });
     expect(parseImportRow({ "Item Code": "A", Barcode: "x" })).toMatchObject({ ok: true, barcode: null });
+  });
+});
+
+describe("add by category", () => {
+  test("counts each product once, in enum order, no-category last", () => {
+    const counts = countByCategory([
+      { category: "SOFA", sell_price_sen: 100, pos_active: true },
+      { category: "ACCESSORY", sell_price_sen: 100, pos_active: null },
+      { category: "ACCESSORY", sell_price_sen: "0", pos_active: null },
+      { category: "ACCESSORY", sell_price_sen: 100, pos_active: false },
+      { category: null, sell_price_sen: 100, pos_active: null },
+    ]);
+    expect(counts.map((c) => c.category)).toEqual(["SOFA", "ACCESSORY", ""]);
+    expect(counts[1]).toEqual({ category: "ACCESSORY", to_add: 1, active: 0, off: 1, no_price: 1 });
+    expect(counts[0]).toEqual({ category: "SOFA", to_add: 0, active: 1, off: 0, no_price: 0 });
+  });
+  test("a selling price is a positive number, as a number or as text", () => {
+    expect(hasSellingPrice({ sell_price_sen: "1500" })).toBe(true);
+    expect(hasSellingPrice({ sell_price_sen: 0 })).toBe(false);
+    expect(hasSellingPrice({ sell_price_sen: null })).toBe(false);
+  });
+  test("only real categories are picked, once each", () => {
+    expect(pickedCategories(["ACCESSORY", "accessory", "ACCESSORY", "DIFFUSER", 3])).toEqual(["ACCESSORY", "DIFFUSER"]);
+    expect(pickedCategories("ACCESSORY")).toEqual([]);
+    expect(pickedCategories(undefined)).toEqual([]);
   });
 });

@@ -14,6 +14,8 @@ import { fmtSen } from "../../vendor/shared/format";
 import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
 import { ResizableDrawer } from "../../components/ResizableDrawer";
 import { SearchInput } from "../../components/Button";
+import { mfgCategoryLabel } from "../../vendor/shared/product-categories";
+import { PosBoothCategoriesDrawer } from "./PosBoothCategoriesDrawer";
 import { POS_ADMIN, rm, toSen, useAdminItems, useAdminEvents, type PosItem, type SkuCandidate } from "./posAdminApi";
 import { Empty, Field, Pill, Table, Toggle, dangerBtn, errText, ghostBtn, inputCls, primaryBtn, td, th } from "./posAdminUi";
 
@@ -56,6 +58,9 @@ export function PosItemsTab() {
   const [search, setSearch] = useState("");
   const [activeOnly, setActiveOnly] = useState(true);
   const [eventFilter, setEventFilter] = useState<number | "">("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [picking, setPicking] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState<PosItem | null>(null);
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -65,10 +70,17 @@ export function PosItemsTab() {
     return (items.data ?? []).filter((i) => {
       if (activeOnly && !i.active) return false;
       if (eventFilter !== "" && !i.event_prices.some((p) => p.project_id === eventFilter)) return false;
+      if (categoryFilter !== "" && (i.category ?? "") !== categoryFilter) return false;
       if (!q) return true;
       return i.item_code.toLowerCase().includes(q) || i.name.toLowerCase().includes(q) || i.barcodes.some((b) => b.barcode.toLowerCase().includes(q));
     });
-  }, [items.data, search, activeOnly, eventFilter]);
+  }, [items.data, search, activeOnly, eventFilter, categoryFilter]);
+  const categories = useMemo(() => [...new Set((items.data ?? []).map((i) => i.category ?? ""))].sort(), [items.data]);
+  /* Only ticks on rows that are shown and still on count; a filter change never removes something out of sight. */
+  const picked = useMemo(() => rows.filter((i) => i.active && selected.has(i.id)), [rows, selected]);
+  const allShownPicked = rows.length > 0 && rows.every((i) => !i.active || selected.has(i.id));
+  const toggleOne = (id: number) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const toggleShown = () => setSelected((s) => { const n = new Set(s); for (const i of rows) if (i.active) { if (allShownPicked) n.delete(i.id); else n.add(i.id); } return n; });
 
   const eventName = (pid: number) => events.data?.find((e) => e.project_id === pid)?.name ?? `#${pid}`;
 
@@ -88,27 +100,6 @@ export function PosItemsTab() {
     await writeXlsxFile(data, { fileName: "POS_Items.xlsx", columns: header.map((h) => ({ width: Math.max(10, h.length + 4) })), stickyRowsCount: 1 });
   }
 
-  type AddAll = { to_add: number; already: number; no_price: number; total_active: number; added?: number };
-  async function addAll() {
-    setBusy(true);
-    try {
-      const p = await api.post<AddAll>(`${POS_ADMIN}/items/add-all`, { dry_run: true });
-      if (p.to_add === 0) { toast.info(`Nothing to add: ${p.already} already POS items, ${p.no_price} without a selling price.`); return; }
-      const ok = await dialog.confirm({
-        title: `Add ${p.to_add} inventory product(s) as POS items?`,
-        message: `Every active product with a selling price, at that price, no preset discount. ${p.already} already here are left as they are; ${p.no_price} without a selling price are skipped. You can edit prices, discounts and FOC per item afterwards.`,
-        confirmLabel: "Add all",
-      });
-      if (!ok) return;
-      const r = await api.post<AddAll>(`${POS_ADMIN}/items/add-all`, {});
-      toast.success(`${r.added ?? 0} POS item(s) added. Press Refresh catalog on the devices.`);
-      items.reload();
-    } catch (e) {
-      toast.error(errText(e, "Could not add the inventory."));
-    } finally {
-      setBusy(false);
-    }
-  }
   async function importExcel(file: File) {
     setBusy(true);
     try {
@@ -124,6 +115,23 @@ export function PosItemsTab() {
       items.reload();
     } catch (e) {
       toast.error(errText(e, "Import failed."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeSelected() {
+    const ids = picked.map((i) => i.id);
+    if (ids.length === 0) return;
+    if (!(await dialog.confirm({ title: `Remove ${ids.length} item(s) from POS?`, message: "They stop reaching devices on their next prepare or refresh. Bills already sold keep their lines; Add from Inventory turns an item back on.", confirmLabel: `Remove ${ids.length}`, danger: true }))) return;
+    setBusy(true);
+    try {
+      const r = await api.post<{ removed: number }>(`${POS_ADMIN}/items/remove`, { ids });
+      toast.success(`${r.removed} item(s) removed from POS`);
+      setSelected(new Set());
+      items.reload();
+    } catch (e) {
+      toast.error(errText(e, "Could not remove the items."));
     } finally {
       setBusy(false);
     }
@@ -148,14 +156,19 @@ export function PosItemsTab() {
           <option value="">Any event price</option>
           {(events.data ?? []).filter((e) => e.link).map((e) => <option key={e.project_id} value={e.project_id}>{e.name}</option>)}
         </select>
+        <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className={cn(inputCls, "w-auto")} aria-label="Category">
+          <option value="">All categories</option>
+          {categories.map((c) => <option key={c} value={c}>{c === "" ? "No category" : mfgCategoryLabel(c)}</option>)}
+        </select>
         <label className="flex items-center gap-1 text-[11px] text-ink-secondary"><input type="checkbox" checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} /> POS active only</label>
         <span className="ml-auto flex items-center gap-1.5">
+          {picked.length > 0 && <button type="button" className={dangerBtn} disabled={busy} onClick={() => void removeSelected()}><Trash2 size={11} /> Remove {picked.length} selected</button>}
           <label className={cn(ghostBtn, "cursor-pointer")}>
             <Upload size={11} /> Import Excel
             <input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={busy} onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void importExcel(f); }} />
           </label>
           <button type="button" className={ghostBtn} onClick={() => void exportExcel()} disabled={rows.length === 0}><Download size={11} /> Export</button>
-          <button type="button" className={ghostBtn} disabled={busy} onClick={() => void addAll()} title="Every active inventory product with a selling price becomes a POS item; existing ones are untouched"><PackagePlus size={11} /> Add all sellable inventory</button>
+          <button type="button" className={ghostBtn} disabled={busy} onClick={() => setPicking(true)} title="Tick the inventory categories the booth sells; add their products, switch off the rest"><PackagePlus size={11} /> Add by category</button>
           <button type="button" className={primaryBtn} onClick={() => setAdding(true)}><Plus size={11} /> Add from Inventory</button>
         </span>
       </div>
@@ -164,15 +177,17 @@ export function PosItemsTab() {
       {items.error && <div className="rounded-md border border-err/40 bg-err/5 p-2 text-[11px] text-err">{items.error}</div>}
       {items.data && rows.length === 0 && <Empty>{items.data.length === 0 ? "No POS items yet. Add from Inventory or import an Excel sheet." : "Nothing matches."}</Empty>}
       {rows.length > 0 && (
-        <Table minWidth={980} head={<>
+        <Table minWidth={1000} head={<>
+          <th className={th}><input type="checkbox" checked={allShownPicked} onChange={toggleShown} aria-label="Select all shown" title="Tick every item shown" /></th>
           <th className={th}>Code</th><th className={th}>Description</th><th className={th}>Barcode(s)</th><th className={th}>UOM</th>
           <th className={cn(th, "text-right")}>Price</th><th className={th}>Event price</th><th className={th}>Pre-set disc</th><th className={th}>FOC</th>
           <th className={cn(th, "text-right")}>Stock</th><th className={th}>Active</th><th className={th} />
         </>}>
           {rows.map((i) => (
-            <tr key={i.id} className="cursor-pointer border-t border-border-subtle hover:bg-bg/40" onClick={() => setEditing(i)}>
+            <tr key={i.id} className={cn("cursor-pointer border-t border-border-subtle hover:bg-bg/40", selected.has(i.id) && i.active && "bg-accent/5")} onClick={() => setEditing(i)}>
+              <td className={td} onClick={(e) => e.stopPropagation()}>{i.active && <input type="checkbox" checked={selected.has(i.id)} onChange={() => toggleOne(i.id)} aria-label={`Select ${i.item_code}`} />}</td>
               <td className={cn(td, "font-mono text-[10.5px] font-semibold text-accent")}>{i.item_code}</td>
-              <td className={td}>{i.name}{i.receipt_name && <span className="ml-1 text-[10px] text-ink-muted">({i.receipt_name})</span>}</td>
+              <td className={td}>{i.name}{i.receipt_name && <span className="ml-1 text-[10px] text-ink-muted">({i.receipt_name})</span>}{i.category && <span className="ml-1 text-[10px] uppercase text-ink-muted">{mfgCategoryLabel(i.category)}</span>}</td>
               <td className={cn(td, "font-mono text-[10px]")}>
                 {i.barcodes.length === 0 ? <span className="text-amber-800">none</span> : i.barcodes.map((b) => <span key={b.barcode} className="mr-1 inline-block" title={b.kind}>{b.barcode}</span>)}
               </td>
@@ -199,6 +214,7 @@ export function PosItemsTab() {
           onSaved={() => { setEditing(null); items.reload(); }}
         />
       )}
+      {picking && <PosBoothCategoriesDrawer onClose={() => setPicking(false)} onChanged={() => items.reload()} />}
       {adding && <AddFromInventory onClose={() => setAdding(false)} onAdded={() => { setAdding(false); items.reload(); }} />}
     </div>
   );
@@ -321,6 +337,18 @@ function AddFromInventory({ onClose, onAdded }: { onClose: () => void; onAdded: 
       setSearching(false);
     }
   }
+  async function turnOn(s: SkuCandidate) {
+    setBusy(s.product_id);
+    try {
+      await api.patch(`${POS_ADMIN}/items/${s.pos_item_id}`, { active: true });
+      toast.success(`${s.code} is back on the POS`);
+      onAdded();
+    } catch (e) {
+      toast.error(errText(e, "Could not turn the item on."));
+    } finally {
+      setBusy(null);
+    }
+  }
   async function add(s: SkuCandidate) {
     setBusy(s.product_id);
     try {
@@ -350,7 +378,9 @@ function AddFromInventory({ onClose, onAdded }: { onClose: () => void; onAdded: 
                 <td className={cn(td, "text-right font-mono")}>{s.sell_price_sen == null ? "--" : fmtSen(s.sell_price_sen)}</td>
                 <td className={cn(td, "text-right font-mono")}>{s.stock_qty}</td>
                 <td className={td}>
-                  {s.pos_item_id ? <Pill tone={s.pos_active ? "ok" : "muted"}>{s.pos_active ? "POS" : "POS OFF"}</Pill> : (
+                  {s.pos_item_id && s.pos_active ? <Pill tone="ok">POS</Pill> : s.pos_item_id ? (
+                    <button type="button" className={ghostBtn} disabled={busy === s.product_id} onClick={() => void turnOn(s)} title="Switched off earlier; turn it back on"><Pill tone="muted">POS OFF</Pill> Turn on</button>
+                  ) : (
                     <button type="button" className={primaryBtn} disabled={busy === s.product_id} onClick={() => void add(s)}><Plus size={11} /> Add</button>
                   )}
                 </td>

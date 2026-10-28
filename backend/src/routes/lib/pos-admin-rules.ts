@@ -4,6 +4,7 @@
 // status word is, and how one Excel import row becomes a POS item patch.
 // Tested without a database.
 // ----------------------------------------------------------------------------
+import { MFG_PRODUCT_CATEGORIES, isMfgProductCategory, type MfgProductCategory } from "../../scm/shared/product-categories";
 
 export const CASHIER_ROLES = ["PARTTIME", "SUPERVISOR"] as const;
 export type CashierRole = (typeof CASHIER_ROLES)[number];
@@ -98,3 +99,35 @@ export function parseImportRow(raw: ImportRowInput): ParsedImportRow {
   const barcode = cell(r, "barcode", "ean");
   return { ok: true, item_code, barcode: barcode && /^[0-9A-Za-z-]{4,32}$/.test(barcode) ? barcode : null, fields };
 }
+
+/* ── POS Items > Add by category ─────────────────────────────────────────── */
+
+/** One ACTIVE inventory product as the add-by-category count sees it:
+ *  `pos_active` is null when it is not a POS item yet. */
+export type CategoryProductRow = { category: string | null; sell_price_sen: number | string | null; pos_active: boolean | null };
+/** Per category: products not yet in the POS with a selling price (`to_add`),
+ *  POS items on / off, and products with no selling price (never added). */
+export type CategoryCount = { category: string; to_add: number; active: number; off: number; no_price: number };
+
+export const hasSellingPrice = (r: { sell_price_sen: number | string | null }): boolean => Number(r.sell_price_sen ?? 0) > 0;
+
+/** Counts per category in enum order; a product without a category lands
+ *  under "" at the end, so nothing is hidden from the picker. */
+export function countByCategory(rows: readonly CategoryProductRow[]): CategoryCount[] {
+  const by = new Map<string, CategoryCount>();
+  for (const r of rows) {
+    const key = r.category ?? "";
+    const c = by.get(key) ?? { category: key, to_add: 0, active: 0, off: 0, no_price: 0 };
+    if (r.pos_active === true) c.active += 1;
+    else if (r.pos_active === false) c.off += 1;
+    else if (hasSellingPrice(r)) c.to_add += 1;
+    else c.no_price += 1;
+    by.set(key, c);
+  }
+  const order = (k: string): number => { const i = (MFG_PRODUCT_CATEGORIES as readonly string[]).indexOf(k); return i < 0 ? MFG_PRODUCT_CATEGORIES.length + (k === "" ? 1 : 0) : i; };
+  return [...by.values()].sort((a, b) => order(a.category) - order(b.category) || a.category.localeCompare(b.category));
+}
+
+/** The categories a request names, each a real `mfg_product_category`; [] when none. */
+export const pickedCategories = (v: unknown): MfgProductCategory[] =>
+  Array.isArray(v) ? [...new Set(v.filter(isMfgProductCategory))] : [];
