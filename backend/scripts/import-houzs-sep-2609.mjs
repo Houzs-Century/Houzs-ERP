@@ -9,10 +9,14 @@
      • the purchase return → a supplier credit note, POSTED;
      • the trade-finance receipt → a receipt, POSTED (a receipt posts as it is
        recorded — 不需要走四层);
-     • payments → payment vouchers as DRAFTS, ticks on the opening / September
-       bills as AutoCount knocked them off — Finance Prepare → Check → Approve,
-       and the approval posts the journal, settles the bills, records advances;
-     • journal vouchers → MANUAL drafts — Finance posts them.
+     • payments → payment vouchers with ticks on the opening / September bills as
+       AutoCount knocked them off — DRAFTS for Finance's Prepare → Check →
+       Approve, or with POST_ALL=1 (owner 2026-10-28: 「这个直接帮我入账可以吗？」)
+       POSTED here the way Approve posts them: the formal number minted from the
+       bank's letter, the journal pvLines + pvBankChargeLines write, the bills
+       settled through scm.settle_api_paid_sen / settle_pi_paid_sen, the part no
+       tick takes recorded as the supplier's advance;
+     • journal vouchers → MANUAL journals, drafts or (POST_ALL=1) posted.
    Suppliers AutoCount pays that the ERP lacks are created (Finance-only).
    What the ERP already holds, and what waits on the owner, is left out
    (data.skipped). MODE=plan (default) rolls everything back; MODE=apply +
@@ -26,7 +30,7 @@
    group goes back on those lines (…MATT → MATTRESS, JAGER → BEDFRAME) and the
    journal posts as postPiAccounting writes it — one Dr per group's purchase
    account, Cr the supplier's AP control, on the invoice's own day.
-   Env: DATABASE_URL, COMPANY_ID (1), FIX_UNGROUPED (0). */
+   Env: DATABASE_URL, COMPANY_ID (1), FIX_UNGROUPED (0), POST_ALL (0). */
 import postgres from 'postgres';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -42,6 +46,8 @@ const ACTOR = 'AutoCount September import (owner 2026-10-28)';
 const data = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'data', 'houzs-sep-2609.json'), 'utf8'));
 const NEW_SUPPLIERS = { '400-C007': 'CV SMART ENTERPRISE', '405-G001': 'GORGEOUS EVENT SDN. BHD.' };
 const FIX_UNGROUPED = String(process.env.FIX_UNGROUPED || '0') === '1';
+const POST_ALL = String(process.env.POST_ALL || '0') === '1';
+const PV_BANK_CHARGE_ACCOUNT = '900-B001'; // acc/rules.ts
 const UNGROUPED = ['HC-PI-2609-013', 'HC-PI-2609-014', 'HC-PI-2609-019', 'HC-PI-2609-025', 'HC-PI-2609-033'];
 const groupOfName = (name) => (/\bMATT\b/i.test(name) ? 'MATTRESS' : /^JAGER\b/i.test(name) ? 'BEDFRAME' : null);
 const rm = (sen) => (Number(sen ?? 0) / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -119,19 +125,37 @@ async function run(tx) {
   const apiBills = data.bills.filter((b) => b.kind === 'API');
   const scnBills = data.bills.filter((b) => b.kind === 'SCN');
   for (const b of data.bills) if (b.date.slice(0, 7) !== '2026-09') throw new Error(`${b.acDoc} is dated ${b.date}, not September`);
-  const jeCount = apiBills.length + scnBills.length + data.receipts.length + data.jvs.length + (FIX_UNGROUPED ? UNGROUPED.length : 0);
+  const jeCount = apiBills.length + scnBills.length + data.receipts.length + data.jvs.length + (FIX_UNGROUPED ? UNGROUPED.length : 0) + (POST_ALL ? data.pvs.length : 0);
   let nApi = await claim('HC-API-2609', 'ap_invoices', 'invoice_number', apiBills.length);
   let nScn = await claim('HC-SCN-2609', 'acc_credit_notes', 'note_number', scnBills.length);
   let nOr = await claim('HC-OR-2609', 'acc_receipts', 'receipt_number', data.receipts.length);
   let nJe = await claim('JE-2609', 'journal_entries', 'je_no', jeCount, false);
-  let nPv = await claim('HC-Draft-2609', 'payment_vouchers', 'pv_number', data.pvs.length);
   const nextJe = () => `JE-2609-${String(nJe++).padStart(4, '0')}`;
+  /* Voucher numbers. A draft is born on {co}Draft-YYMM; a posted voucher carries
+     the FORMAL number Check mints (mintFormalPvNo): {co}{bank letter}PV-YYMM-NNN,
+     the letter from acc_bank_letters (the cash drawer is C), the width from
+     acc_numbering — claimed per series in date + AutoCount order, the order the
+     batch Check walks. */
+  if (POST_ALL) {
+    const letters = new Map((await tx`SELECT account_code, letter FROM scm.acc_bank_letters WHERE company_id = ${CO}`).map((r) => [r.account_code, r.letter]));
+    const digits = Number((await tx`SELECT doc_digits FROM scm.acc_numbering WHERE company_id = ${CO}`)[0]?.doc_digits ?? 3);
+    const seriesOf = (p) => { const l = p.bank === role.CASH ? 'C' : letters.get(p.bank); if (!l) throw new Error(`${p.acDoc}: ${p.bank} has no voucher letter`); return `HC-${l}PV-${yymm(p.date)}`; };
+    const bySeries = new Map();
+    for (const p of data.pvs) { const s = seriesOf(p); if (!bySeries.has(s)) bySeries.set(s, []); bySeries.get(s).push(p); }
+    for (const [s, ps] of [...bySeries].sort()) {
+      let n = await claim(s, 'payment_vouchers', 'pv_number', ps.length);
+      for (const p of ps) p.no = `${s}-${String(n++).padStart(digits, '0')}`;
+    }
+  } else {
+    let nPv = await claim('HC-Draft-2609', 'payment_vouchers', 'pv_number', data.pvs.length);
+    for (const p of data.pvs) p.no = `HC-Draft-2609-${String(nPv++).padStart(3, '0')}`;
+  }
   const nowIso = new Date().toISOString();
   const audits = [];
 
   /* AP balance per supplier BEFORE, as the books read it (30/09) */
   const fixSup = FIX_UNGROUPED ? (await tx`SELECT s.code FROM scm.purchase_invoices p JOIN scm.suppliers s ON s.id = p.supplier_id WHERE p.company_id = ${CO} AND p.invoice_number = ANY(${UNGROUPED}::text[])`).map((r) => r.code) : [];
-  const supCodes = [...new Set([...data.bills.map((b) => b.supplier), ...fixSup])];
+  const supCodes = [...new Set([...data.bills.map((b) => b.supplier), ...fixSup, ...(POST_ALL ? data.pvs.filter((p) => p.kind === 'AP').map((p) => p.supplier) : [])])];
   const apBefore = new Map((await tx`SELECT party_code AS code, sum(credit_sen - debit_sen)::bigint AS owed FROM scm.v_gl_entries
       WHERE company_id = ${CO} AND entry_date <= '2026-09-30' AND party_code = ANY(${supCodes}::text[]) AND account_code IN (${role.AP}, ${role.AP_OTHER}) GROUP BY 1`).map((r) => [r.code, Number(r.owed)]));
 
@@ -194,10 +218,10 @@ async function run(tx) {
     audits.push({ entity_type: 'RECEIPT', entity_id: String(id), entity_doc_no: r.no, action: 'CREATE', status_snapshot: 'POSTED', note: r.note });
   }
 
-  /* ── 6. hand journals → MANUAL drafts ───────────────────────────────────── */
+  /* ── 6. hand journals → MANUAL (drafts, or posted with POST_ALL) ─────────── */
   for (const j of data.jvs) {
     j.no = nextJe();
-    journals.push({ no: j.no, date: j.date, src: 'MANUAL', doc: j.acDoc, post: false, narration: `${j.narration} ${TAG}`.slice(0, 500),
+    journals.push({ no: j.no, date: j.date, src: 'MANUAL', doc: j.acDoc, post: POST_ALL, narration: `${j.narration} ${TAG}`.slice(0, 500),
       lines: j.lines.map((l) => ({ a: l.acc, dr: l.dr, cr: l.cr, notes: l.desc })) });
   }
 
@@ -229,6 +253,47 @@ async function run(tx) {
     }
   }
 
+  /* ── 7. payments → payment vouchers with their ticks ────────────────────── */
+  const billRows = await tx`SELECT 'API' AS k, id, invoice_number AS no, supplier_id, total_sen, paid_sen, status FROM scm.ap_invoices WHERE company_id = ${CO} AND status <> 'CANCELLED'
+      UNION ALL SELECT 'PI', id, invoice_number, supplier_id, total_sen, paid_sen, status::text FROM scm.purchase_invoices WHERE company_id = ${CO} AND status::text NOT IN ('CANCELLED', 'DRAFT')`;
+  const billBy = new Map(billRows.map((b) => [b.no, b]));
+  const billOf = (t) => {
+    const no = t.bill.startsWith('NEW:') ? apiBills.find((b) => b.acDoc === t.bill.slice(4))?.no : t.bill;
+    const b = no ? billBy.get(no) : null;
+    if (!b) throw new Error(`no ERP bill for ${t.bill} (AutoCount ${t.acPi})`);
+    return b;
+  };
+  const pvIds = new Map();
+  const marks = POST_ALL ? { status: 'POSTED', posted_at: nowIso, submitted_at: nowIso, submitted_by: ACTOR, checked_at: nowIso, checked_by: ACTOR, approved_at: nowIso, approved_by: ACTOR } : { status: 'DRAFT' };
+  for (const r of await tx`INSERT INTO scm.payment_vouchers ${tx(data.pvs.map((p) => ({ company_id: CO, pv_number: p.no, voucher_date: p.date, payee_name: p.payee.slice(0, 200), supplier_id: p.supplier ? supOf(p.supplier).id : null,
+    credit_account_code: p.bank, currency: 'MYR', exchange_rate: 1, purpose: p.purpose, notes: p.note, total_sen: p.total, bank_charge_sen: p.bankCharge || 0, ...marks })))} RETURNING id, pv_number`) pvIds.set(r.pv_number, r.id);
+  await tx`INSERT INTO scm.payment_voucher_lines ${tx(data.pvs.flatMap((p) => p.lines.map((l, i) => ({ company_id: CO, pv_id: pvIds.get(p.no), line_no: i + 1, description: l.desc,
+    debit_account_code: p.kind === 'AP' ? control(p.supplier) : l.acc, amount_sen: l.sen }))))}`;
+  const allocs = data.pvs.flatMap((p) => p.ticks.map((t) => { const b = billOf(t); if (String(b.supplier_id) !== String(supOf(p.supplier).id)) throw new Error(`${p.acDoc}: tick on ${b.no} of another supplier`);
+    return { company_id: CO, pv_id: pvIds.get(p.no), pi_id: b.k === 'PI' ? b.id : null, ap_invoice_id: b.k === 'API' ? b.id : null, amount_sen: t.sen, applied_sen: 0, from_advance: false }; }));
+  const allocRows = allocs.length ? await tx`INSERT INTO scm.pv_allocations ${tx(allocs)} RETURNING id, pv_id, pi_id, ap_invoice_id, amount_sen` : [];
+  for (const p of data.pvs) {
+    if (sum(p.lines, (l) => l.sen) !== p.total) throw new Error(`${p.acDoc}: lines ≠ total`);
+    if (sum(p.ticks, (t) => t.sen) > p.total) throw new Error(`${p.acDoc}: ticks beyond what it pays`);
+    audits.push({ entity_type: 'PAYMENT_VOUCHER', entity_id: String(pvIds.get(p.no)), entity_doc_no: p.no, action: 'CREATE', status_snapshot: POST_ALL ? 'POSTED' : 'DRAFT', note: p.note });
+    if (!POST_ALL) continue;
+    /* Approve's journal, exactly: pvLines (the supplier's own AP-control leg
+       carries the party; the bank leg names who was paid) + pvBankChargeLines. */
+    const s = p.supplier ? supOf(p.supplier) : null;
+    const fee = Number(p.bankCharge || 0);
+    const lines = p.lines.map((l) => {
+      const acc = p.kind === 'AP' ? control(p.supplier) : l.acc;
+      const onControl = p.kind === 'AP' && !!s;
+      return { a: acc, dr: l.sen, cr: 0, pt: onControl ? 'SUPPLIER' : null, pc: onControl ? s.code : null, pn: onControl ? (s.name ?? p.payee) : null, notes: `${l.desc ?? 'Payment'} — ${p.no}` };
+    });
+    lines.push({ a: p.bank, dr: 0, cr: p.total, pt: s ? 'SUPPLIER' : null, pc: s ? s.code : null, pn: s ? s.name : p.payee, notes: `Payment to ${p.payee} — ${p.no}` });
+    if (fee > 0) lines.push({ a: PV_BANK_CHARGE_ACCOUNT, dr: fee, cr: 0, notes: `Bank charges — ${p.no}` }, { a: p.bank, dr: 0, cr: fee, notes: `Bank charges — ${p.no}` });
+    p.je = nextJe();
+    journals.push({ no: p.je, date: p.date, src: 'PV', doc: p.no, post: true, narration: `Payment voucher ${p.no} — ${p.payee} — AutoCount ${p.acDoc} ${TAG}`, lines });
+    audits.push({ entity_type: 'PAYMENT_VOUCHER', entity_id: String(pvIds.get(p.no)), entity_doc_no: p.no, action: 'POST', status_snapshot: 'POSTED', note: `GL entry ${p.je}` });
+  }
+  if (POST_ALL) leaf(PV_BANK_CHARGE_ACCOUNT, 'bank charges');
+
   /* write every journal: header (unposted), lines, then post the posting ones */
   for (const j of journals) {
     const dr = sum(j.lines, (l) => l.dr); const cr = sum(j.lines, (l) => l.cr);
@@ -243,29 +308,24 @@ async function run(tx) {
   const toPost = journals.filter((j) => j.post).map((j) => jeIds.get(j.no));
   await tx`UPDATE scm.journal_entries SET posted = true, posted_at = now() WHERE id = ANY(${toPost}::uuid[])`;
 
-  /* ── 7. payments → payment vouchers, DRAFT, with their ticks ────────────── */
-  const billRows = await tx`SELECT 'API' AS k, id, invoice_number AS no, supplier_id, total_sen, paid_sen, status FROM scm.ap_invoices WHERE company_id = ${CO} AND status <> 'CANCELLED'
-      UNION ALL SELECT 'PI', id, invoice_number, supplier_id, total_sen, paid_sen, status::text FROM scm.purchase_invoices WHERE company_id = ${CO} AND status::text NOT IN ('CANCELLED', 'DRAFT')`;
-  const billBy = new Map(billRows.map((b) => [b.no, b]));
-  const billOf = (t) => {
-    const no = t.bill.startsWith('NEW:') ? apiBills.find((b) => b.acDoc === t.bill.slice(4))?.no : t.bill;
-    const b = no ? billBy.get(no) : null;
-    if (!b) throw new Error(`no ERP bill for ${t.bill} (AutoCount ${t.acPi})`);
-    return b;
-  };
-  for (const p of data.pvs) p.no = `HC-Draft-2609-${String(nPv++).padStart(3, '0')}`;
-  const pvIds = new Map();
-  for (const r of await tx`INSERT INTO scm.payment_vouchers ${tx(data.pvs.map((p) => ({ company_id: CO, pv_number: p.no, voucher_date: p.date, payee_name: p.payee.slice(0, 200), supplier_id: p.supplier ? supOf(p.supplier).id : null,
-    credit_account_code: p.bank, currency: 'MYR', exchange_rate: 1, purpose: p.purpose, notes: p.note, total_sen: p.total, bank_charge_sen: p.bankCharge || 0, status: 'DRAFT' })))} RETURNING id, pv_number`) pvIds.set(r.pv_number, r.id);
-  await tx`INSERT INTO scm.payment_voucher_lines ${tx(data.pvs.flatMap((p) => p.lines.map((l, i) => ({ company_id: CO, pv_id: pvIds.get(p.no), line_no: i + 1, description: l.desc,
-    debit_account_code: p.kind === 'AP' ? control(p.supplier) : l.acc, amount_sen: l.sen }))))}`;
-  const allocs = data.pvs.flatMap((p) => p.ticks.map((t) => { const b = billOf(t); if (String(b.supplier_id) !== String(supOf(p.supplier).id)) throw new Error(`${p.acDoc}: tick on ${b.no} of another supplier`);
-    return { company_id: CO, pv_id: pvIds.get(p.no), pi_id: b.k === 'PI' ? b.id : null, ap_invoice_id: b.k === 'API' ? b.id : null, amount_sen: t.sen, applied_sen: 0, from_advance: false }; }));
-  if (allocs.length) await tx`INSERT INTO scm.pv_allocations ${tx(allocs)}`;
-  for (const p of data.pvs) {
-    if (sum(p.lines, (l) => l.sen) !== p.total) throw new Error(`${p.acDoc}: lines ≠ total`);
-    if (sum(p.ticks, (t) => t.sen) > p.total) throw new Error(`${p.acDoc}: ticks beyond what it pays`);
-    audits.push({ entity_type: 'PAYMENT_VOUCHER', entity_id: String(pvIds.get(p.no)), entity_doc_no: p.no, action: 'CREATE', status_snapshot: 'DRAFT', note: p.note });
+  /* the posted vouchers settle their bills (the database clamps, as on Approve)
+     and leave the untaken part as the supplier's advance */
+  const advances = [];
+  if (POST_ALL) {
+    for (const a of allocRows) {
+      const [r] = a.ap_invoice_id
+        ? await tx`SELECT applied_sen, new_status, reason FROM scm.settle_api_paid_sen(${a.ap_invoice_id}::uuid, ${Number(a.amount_sen)}::bigint)`
+        : await tx`SELECT applied_sen, new_status, reason FROM scm.settle_pi_paid_sen(${a.pi_id}::uuid, ${Number(a.amount_sen)}::bigint)`;
+      if (Number(r.applied_sen) !== Number(a.amount_sen)) throw new Error(`a tick of RM ${rm(a.amount_sen)} settled only RM ${rm(r.applied_sen)} (${r.reason ?? r.new_status})`);
+      await tx`UPDATE scm.pv_allocations SET applied_sen = ${Number(r.applied_sen)} WHERE id = ${a.id}`;
+    }
+    for (const p of data.pvs.filter((x) => x.kind === 'AP')) {
+      const adv = p.total - sum(p.ticks, (t) => t.sen);
+      if (adv > 0) advances.push({ company_id: CO, supplier_id: String(supOf(p.supplier).id), pv_id: String(pvIds.get(p.no)), pv_number: p.no, amount_sen: adv, applied_sen: 0 });
+    }
+    if (advances.length) await tx`INSERT INTO scm.acc_supplier_advances ${tx(advances)}`;
+    for (const a of advances) audits.push({ entity_type: 'PAYMENT_VOUCHER', entity_id: a.pv_id, entity_doc_no: a.pv_number, action: 'UPDATE', status_snapshot: 'POSTED',
+      note: `Paid RM ${rm(a.amount_sen)} ahead of any invoice — recorded as this supplier's advance, to knock off against invoices to come` });
   }
 
   await tx`INSERT INTO scm.entity_audit_log ${tx(audits.map((a) => ({ company_id: CO, ...a, actor_name_snapshot: ACTOR, field_changes: tx.json([]), source: 'script' })))}`;
@@ -283,18 +343,26 @@ async function run(tx) {
   const apAfter = new Map((await tx`SELECT party_code AS code, sum(credit_sen - debit_sen)::bigint AS owed FROM scm.v_gl_entries
       WHERE company_id = ${CO} AND entry_date <= '2026-09-30' AND party_code = ANY(${supCodes}::text[]) AND account_code IN (${role.AP}, ${role.AP_OTHER}) GROUP BY 1`).map((r) => [r.code, Number(r.owed)]));
   for (const c of supCodes) {
-    const want = sum(apiBills.filter((b) => b.supplier === c), (b) => b.total) - sum(scnBills.filter((b) => b.supplier === c), (b) => b.total) + sum(mended.filter((m) => m.supplier === c), (m) => m.sen);
+    const paid = POST_ALL ? sum(data.pvs.filter((p) => p.kind === 'AP' && p.supplier === c), (p) => p.total) : 0;
+    const want = sum(apiBills.filter((b) => b.supplier === c), (b) => b.total) - sum(scnBills.filter((b) => b.supplier === c), (b) => b.total) + sum(mended.filter((m) => m.supplier === c), (m) => m.sen) - paid;
     const moved = (apAfter.get(c) ?? 0) - (apBefore.get(c) ?? 0);
     if (moved !== want) throw new Error(`${c} moved RM ${rm(moved)} in the books, its papers say RM ${rm(want)}`);
   }
-  const head = await tx`SELECT coalesce(a.ap_invoice_id::text, a.pi_id::text) AS bill, sum(a.amount_sen)::bigint AS planned FROM scm.pv_allocations a JOIN scm.payment_vouchers v ON v.id = a.pv_id
-      WHERE v.company_id = ${CO} AND v.status::text = 'DRAFT' AND coalesce(a.ap_invoice_id::text, a.pi_id::text) = ANY(${[...new Set(allocs.map((a) => String(a.ap_invoice_id ?? a.pi_id)))]}::text[]) GROUP BY 1`;
-  const byId = new Map(billRows.map((b) => [String(b.id), b]));
-  for (const h of head) {
-    const b = byId.get(h.bill) ?? { no: '(new)', total_sen: 0, paid_sen: 0 };
-    const nb = b.no === '(new)' ? apiBills.find((x) => String(apiIds.get(x.no)) === h.bill) : null;
-    const owed = nb ? nb.total : Number(b.total_sen) - Number(b.paid_sen);
-    if (Number(h.planned) > owed) throw new Error(`${nb ? nb.no : b.no}: unposted vouchers plan RM ${rm(h.planned)} > owed RM ${rm(owed)}`);
+  /* no bill ticked beyond what it owes: what is paid now + what any unposted
+     voucher (this import's drafts, or Finance's own) still plans */
+  const touched = [...new Set(allocs.map((a) => String(a.ap_invoice_id ?? a.pi_id)))];
+  const nowBills = touched.length ? await tx`SELECT id::text AS id, invoice_number AS no, total_sen, paid_sen FROM scm.ap_invoices WHERE id::text = ANY(${touched}::text[])
+      UNION ALL SELECT id::text, invoice_number, total_sen, paid_sen FROM scm.purchase_invoices WHERE id::text = ANY(${touched}::text[])` : [];
+  const head = touched.length ? await tx`SELECT coalesce(a.ap_invoice_id::text, a.pi_id::text) AS bill, sum(a.amount_sen)::bigint AS planned FROM scm.pv_allocations a JOIN scm.payment_vouchers v ON v.id = a.pv_id
+      WHERE v.company_id = ${CO} AND v.status::text = 'DRAFT' AND coalesce(a.ap_invoice_id::text, a.pi_id::text) = ANY(${touched}::text[]) GROUP BY 1` : [];
+  const plannedBy = new Map(head.map((h) => [h.bill, Number(h.planned)]));
+  for (const b of nowBills) {
+    const planned = plannedBy.get(b.id) ?? 0;
+    if (Number(b.paid_sen) + planned > Number(b.total_sen)) throw new Error(`${b.no}: paid RM ${rm(b.paid_sen)} + planned RM ${rm(planned)} > total RM ${rm(b.total_sen)}`);
+  }
+  if (POST_ALL) {
+    const settled = touched.length ? await tx`SELECT sum(applied_sen)::bigint AS s FROM scm.pv_allocations WHERE id = ANY(${allocRows.map((a) => a.id)}::uuid[])` : [{ s: 0 }];
+    if (Number(settled[0].s ?? 0) !== sum(allocs, (a) => a.amount_sen)) throw new Error(`ticks settled RM ${rm(settled[0].s)} of RM ${rm(sum(allocs, (a) => a.amount_sen))}`);
   }
 
   /* ── 9. report ──────────────────────────────────────────────────────────── */
@@ -304,14 +372,15 @@ async function run(tx) {
   for (const r of data.receipts) emit('DOC', { k: 'OR', no: r.no, ac: r.acDoc, payer: r.payer, bank: r.bank, date: r.date, sen: sum(r.lines, (l) => l.sen), accounts: r.lines.map((l) => `${l.acc} ${rm(l.sen)}`).join('; '), je: journals.find((j) => j.doc === r.no).no });
   for (const j of data.jvs) emit('DOC', { k: 'JV', no: j.no, ac: j.acDoc, date: j.date, sen: sum(j.lines, (l) => l.dr), narration: j.narration, lines: j.lines.length });
   for (const p of data.pvs) emit('DOC', { k: 'PV', no: p.no, ac: p.acDoc, kind: p.kind, date: p.date, bank: p.bank, payee: p.payee, supplier: p.supplier, sen: p.total, charge: p.bankCharge || 0,
-    accounts: p.kind === 'AP' ? control(p.supplier) : p.lines.map((l) => `${l.acc} ${rm(l.sen)}`).join('; '), ticks: p.ticks.map((t) => `${billOf(t).no} ${rm(t.sen)} (AutoCount ${t.acPi})`).join('; '), advance: p.advance });
+    accounts: p.kind === 'AP' ? control(p.supplier) : p.lines.map((l) => `${l.acc} ${rm(l.sen)}`).join('; '), ticks: p.ticks.map((t) => `${billOf(t).no} ${rm(t.sen)} (AutoCount ${t.acPi})`).join('; '), advance: p.advance, je: p.je ?? null });
   for (const s of data.skipped) emit('SKIP', s);
   for (const m of mended) emit('MEND', m);
   if (FIX_UNGROUPED) out(`the ERP's own invoices with no journal: ${mended.length} mended RM ${rm(sum(mended, (m) => m.sen))} (${mended.map((m) => `${m.no} ${m.je}`).join(', ')})`);
   out(`AP invoices ${apiBills.length} RM ${rm(sum(apiBills, (b) => b.total))} posted (${copies.length} replace migrated copies); supplier credit notes ${scnBills.length} RM ${rm(sum(scnBills, (b) => b.total))}; receipts ${data.receipts.length} RM ${rm(sum(data.receipts, (r) => sum(r.lines, (l) => l.sen)))}`);
-  out(`payment vouchers ${data.pvs.length} DRAFT RM ${rm(sum(data.pvs, (p) => p.total + (p.bankCharge || 0)))} (supplier ${data.pvs.filter((p) => p.kind === 'AP').length}, transfers ${data.pvs.filter((p) => p.kind === 'TRANSFER').length}, other ${data.pvs.filter((p) => p.kind === 'OTHER').length}); ticks ${allocs.length} RM ${rm(sum(allocs, (a) => a.amount_sen))}`);
-  out(`journal vouchers ${data.jvs.length} DRAFT RM ${rm(sum(data.jvs, (j) => sum(j.lines, (l) => l.dr)))}; numbers ${journals[0]?.no ?? '-'} … ${journals.at(-1)?.no ?? '-'}, vouchers ${data.pvs[0]?.no ?? '-'} … ${data.pvs.at(-1)?.no ?? '-'}`);
-  out(`VERIFIED: books at 30/09 balance (Dr = Cr RM ${rm(tb[0].dr)}); ${toPost.length} posted journals in the books as written; ${journals.length - toPost.length} drafts outside; ${supCodes.length} suppliers moved by exactly their papers; no bill ticked beyond what it owes`);
+  const series = [...new Set(data.pvs.map((p) => p.no.replace(/-\d+$/, '')))].map((s) => { const ns = data.pvs.filter((p) => p.no.startsWith(`${s}-`)).map((p) => p.no); return `${ns[0]}…${ns.at(-1)?.slice(-3)} (${ns.length})`; });
+  out(`payment vouchers ${data.pvs.length} ${POST_ALL ? 'POSTED' : 'DRAFT'} RM ${rm(sum(data.pvs, (p) => p.total + (p.bankCharge || 0)))} (supplier ${data.pvs.filter((p) => p.kind === 'AP').length}, transfers ${data.pvs.filter((p) => p.kind === 'TRANSFER').length}, other ${data.pvs.filter((p) => p.kind === 'OTHER').length}); ticks ${allocs.length} RM ${rm(sum(allocs, (a) => a.amount_sen))}${POST_ALL ? ` settled; advances ${advances.length} RM ${rm(sum(advances, (a) => a.amount_sen))}` : ''}; numbers ${series.join(', ')}`);
+  out(`journal vouchers ${data.jvs.length} ${POST_ALL ? 'POSTED' : 'DRAFT'} RM ${rm(sum(data.jvs, (j) => sum(j.lines, (l) => l.dr)))}; journals ${journals[0]?.no ?? '-'} … ${journals.at(-1)?.no ?? '-'}`);
+  out(`VERIFIED: books at 30/09 balance (Dr = Cr RM ${rm(tb[0].dr)}); ${toPost.length} posted journals in the books as written; ${journals.length - toPost.length} drafts outside; ${supCodes.length} suppliers moved by exactly their papers; no bill ticked beyond what it owes${POST_ALL ? '; every tick settled in full' : ''}`);
   out(`left out: ${data.skipped.length} — ${data.skipped.filter((s) => s.why.startsWith('ASK')).length} wait on the owner`);
 }
 
