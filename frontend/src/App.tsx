@@ -835,8 +835,11 @@ export default function App() {
         {/* Supplier Maintenance (owner 2026-10-02) — Finance's own supplier list; same area as the AP Invoices it sits beside. */}
         <Route path="/scm/supplier-maintenance" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmSupplierMaintenanceV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/ap-invoices/scan" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherScanV2 target="ap" /></Scm2990Shell></ScmGuard>} />
-        {/* Credit and debit notes (owner 2026-09-12; docs/bugs/0827). */}
-        <Route path="/scm/credit-notes" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmCreditNotesV2 /></Scm2990Shell></ScmGuard>} />
+        {/* Credit and debit notes (owner 2026-09-12; docs/bugs/0827) — two pages since
+            2026-10-28: Money in's customer & other-debtor notes, Money out's supplier
+            notes. One page component; the key keeps each page's filters its own. */}
+        <Route path="/scm/credit-notes" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmCreditNotesV2 key="AR" side="AR" /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/supplier-notes" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmCreditNotesV2 key="AP" side="AP" /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/deposit-invoices" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmDepositInvoicesV2 /></Scm2990Shell></ScmGuard>} />
         {/* The Forecast P&L (owner 2026-09-21): targets on the P&L's own tree; nothing posts. */}
         <Route path="/scm/forecast" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmForecastPnlV2 /></Scm2990Shell></ScmGuard>} />

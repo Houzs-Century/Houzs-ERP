@@ -48,6 +48,8 @@ describe('the Finance sidebar', () => {
       '/scm/ar-invoices',
       /* Card and transfer payments not matched yet, one list (2026-09-30). */
       '/scm/unmatched-payments',
+      /* The supplier's credit notes, their own page under Money out (2026-10-28). */
+      '/scm/supplier-notes',
     ]) expect(tos, `${to} is still reachable`).toContain(to);
     /* The Accounting page's tabs, now reachable by name. */
     for (const tab of ['je', 'gl', 'tb', 'close', 'check', 'pnl', 'bs', 'rp', 'ar', 'ap', 'corrections', 'collection', 'charges', 'groups', 'performance', 'products']) {
@@ -65,6 +67,15 @@ describe('the Finance sidebar', () => {
       const tab = new URLSearchParams(to.split('?')[1]).get('tab') ?? '';
       expect(ACCOUNTING_TABS as readonly string[], `${to} names a real tab`).toContain(tab);
     }
+  });
+
+  /* Owner 2026-10-28: supplier & other creditor CN / DN 和 customer & other debtor
+     CN / DN 分出来 — each beside the money it moves. */
+  it('splits the notes: the customer\'s and other debtor\'s under Money in, the supplier\'s under Money out', () => {
+    const entries = (label: string) => flatten(finance?.children?.find((g) => g.label === label)?.children ?? []);
+    expect(entries('Money in').find((t) => t.to === '/scm/credit-notes')?.label).toBe('Customer & Other Debtor CN / DN');
+    expect(entries('Money out').find((t) => t.to === '/scm/supplier-notes')?.label).toBe('Supplier & Other Creditor CN / DN');
+    expect(entries('Money out').find((t) => t.to === '/scm/supplier-notes')?.anyAccess).toEqual(['scm.finance.money_out']);
   });
 
   it('puts the reports together, the Corrections report among them', () => {

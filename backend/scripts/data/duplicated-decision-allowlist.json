@@ -1282,8 +1282,18 @@
     },
     {
       "check": "D1",
-      "key": "CN,DN,SCN|backend/src/acc/credit-notes.ts frontend/src/pages/scm-v2/CreditNotes.tsx frontend/src/vendor/scm/lib/credit-note-pdf.ts",
-      "why": "THE THREE KINDS OF NOTE (docs/bugs/0827; the vocabulary moved with the note core into acc/credit-notes.ts, docs/bugs/0831) — the migration CHECK is the one definition; the core validates the kind against it and the page labels it. The frontend cannot import the backend, and a label map is the presentation of a vocabulary, not a second answer to what the kinds are. The print (credit-note-pdf.ts, docs/bugs/0834) titles the sheet by kind — CREDIT NOTE / DEBIT NOTE / SUPPLIER CREDIT NOTE — off the same three words: the third presentation of the one vocabulary, not a fourth answer."
+      "key": "CN,DN,OCN,SCN|backend/src/acc/credit-notes.ts frontend/src/pages/scm-v2/CreditNotes.tsx frontend/src/vendor/scm/lib/credit-note-pdf.ts",
+      "why": "THE FOUR KINDS OF NOTE (docs/bugs/0827; the vocabulary moved with the note core into acc/credit-notes.ts, docs/bugs/0831; OCN — a credit note to an other debtor — joined 2026-10-28, migration 20261029T0900) — the migration CHECK is the one definition; the core validates the kind against it and the page labels it. The frontend cannot import the backend, and a label map is the presentation of a vocabulary, not a second answer to what the kinds are. The print (credit-note-pdf.ts, docs/bugs/0834) titles the sheet by kind — CREDIT NOTE / DEBIT NOTE / SUPPLIER CREDIT NOTE / CREDIT NOTE — off the same four words: the third presentation of the one vocabulary, not a fourth answer."
+    },
+    {
+      "check": "D1",
+      "key": "CN,DN,OCN|backend/src/scm/routes/credit-notes.ts frontend/src/pages/scm-v2/CreditNotes.tsx",
+      "why": "THE MONEY-IN PAGE'S KINDS (owner 2026-10-28: Customer & Other Debtor CN / DN beside Supplier & Other Creditor CN / DN). The server's SIDE_KINDS.AR decides which notes GET /credit-notes?side=AR lists; the page's SIDES.AR.kinds draws the same three as its tabs and its New note picker before any row arrives. The page asks the server by side, never by its own list, so a divergence shows a tab with no rows, never a note on the wrong page. Pinned on both ends: otherDebtorCreditNote.test.ts (side=AR / side=AP lists) and CreditNotes.test.tsx (the two pages)."
+    },
+    {
+      "check": "D2",
+      "key": "CN,DN,OCN ~ CN,DN,OCN,SCN",
+      "why": "DIFFERENT QUESTIONS ON PURPOSE: the four-word set is every kind of note (the CHECK's vocabulary); the three-word set is the Money-in page's — the customer's and the other debtor's notes. SCN is the supplier's credit note and lives on Money out › Supplier & Other Creditor CN / DN (owner 2026-10-28). Not a missed word."
     },
     {
       "check": "D1",

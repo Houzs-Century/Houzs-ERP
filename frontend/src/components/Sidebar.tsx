@@ -755,9 +755,9 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/outstanding", label: "Outstanding", icon: AlertCircle, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
           { to: "/scm/unbilled-deliveries", label: "Not Yet Billed", icon: HandCoins, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
           // Credit and debit notes (owner 2026-09-12; docs/bugs/0827) — the
-          // customer's CN / DN and the supplier's SCN; the PV key family, like
-          // the AP invoice they sit beside.
-          { to: "/scm/credit-notes", label: "Credit / Debit Notes", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_in"] },
+          // customer's CN / DN and an other debtor's CN; the supplier's moved to
+          // Money out (owner 2026-10-28). The PV key family, like the AP invoice.
+          { to: "/scm/credit-notes", label: "Customer & Other Debtor CN / DN", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_in"] },
         ],
       },
       {
@@ -774,6 +774,9 @@ export const NAV_TABS: NavTab[] = [
           // Supplier Maintenance (owner 2026-10-02: 放在 money out 的 sidebar) — Finance's own
           // supplier list: what each is owed, its bank, and the ones Finance keeps to itself.
           { to: "/scm/supplier-maintenance", label: "Supplier Maintenance", icon: Truck, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_out"] },
+          // The supplier's (and an other creditor's) credit notes, moved here from
+          // Money in (owner 2026-10-28: supplier & other creditor cn / dn 分出来).
+          { to: "/scm/supplier-notes", label: "Supplier & Other Creditor CN / DN", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_out"] },
         ],
       },
       {

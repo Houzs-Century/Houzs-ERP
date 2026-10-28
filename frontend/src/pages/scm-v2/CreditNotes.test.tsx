@@ -1,9 +1,12 @@
-/* The Credit & Debit Notes page (docs/bugs/0827): the list with kind and
+/* The Credit & Debit Notes pages (docs/bugs/0827): the list with kind and
    status filters; New note raises a draft with the customer's sales order or
-   name (a supplier for an SCN) and lines whose account may stay blank; a
-   note opens to its lines and posts or cancels; Print in the detail prints
-   the one note and ticked rows print as one document in list order
-   (docs/bugs/0834). The server half is backend/tests/creditNotes.test.ts. */
+   name (a supplier for an SCN, an other debtor for an OCN) and lines whose
+   account may stay blank (an OCN's may not); a note opens to its lines and
+   posts or cancels; Print in the detail prints the one note and ticked rows
+   print as one document in list order (docs/bugs/0834). Two pages since
+   2026-10-28: Money in's customer & other-debtor notes, Money out's supplier
+   notes. The server half is backend/tests/creditNotes.test.ts and
+   otherDebtorCreditNote.test.ts. */
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -23,6 +26,13 @@ const NOTES: CreditNote[] = [
     supplier_id: 'sup-h', so_doc_no: null, sales_invoice_id: null, ap_invoice_id: null, purchase_invoice_id: null, source_doc_no: 'PRT-2609-003',
     note_date: '2026-09-03', total_sen: 50000, reason: null, notes: null, status: 'POSTED', je_no: '2990-JE-2609-0007',
     created_at: '2026-09-03T00:00:00Z', created_by: 'Chew', posted_at: '2026-09-03T00:00:00Z', cancelled_at: null,
+  },
+  /* AutoCount's CN-2609-025: RM 2,000 off Eastern Decorator's exhibition-rental bill (2026-10-28). */
+  {
+    id: 'n4', note_number: 'HC-OCN-2609-001', kind: 'OCN', party_type: 'ODEBTOR', party_code: null, party_name: 'EASTERN DECORATOR SDN. BHD.',
+    supplier_id: null, debtor_id: 'deb-e', so_doc_no: null, sales_invoice_id: null, ap_invoice_id: null, purchase_invoice_id: null, source_doc_no: 'CN-2609-025',
+    note_date: '2026-09-02', total_sen: 200_000, reason: 'Discount for exhibition rental — HOMES LIVING 9-12 JUL KLCC', notes: null, status: 'POSTED', je_no: 'HC-JE-2609-0101',
+    created_at: '2026-10-29T00:00:00Z', created_by: 'Chew', posted_at: '2026-10-29T00:00:00Z', cancelled_at: null,
   },
 ];
 const createMutate = vi.fn(async (body: unknown) => ({ ok: true, note: { ...NOTES[0]!, id: 'n3', note_number: '2990-CN-2609-002', ...(body as object) } }));
@@ -58,6 +68,10 @@ const SUP_ROWS = [
   { kind: 'PI', id: 'pi-17', number: 'HC-PI-2610-017', invoiceRef: 'DGSIZ26001811', invoiceDate: '2026-09-07', totalSen: 260_000, owedSen: 260_000, noteSen: 0, status: 'POSTED' },
   { kind: 'PI', id: 'pi-18', number: 'HC-PI-2610-018', invoiceRef: 'DGSIZ26001811', invoiceDate: '2026-09-07', totalSen: 130_000, owedSen: 130_000, noteSen: 0, status: 'POSTED' },
 ];
+/* Eastern Decorator's bill still owing — an other-debtor note's table. */
+const ODB_ROWS = [
+  { kind: 'ODB', id: 'odb-5', number: 'HC-ODB-2608-005', invoiceRef: null, invoiceDate: '2026-08-05', totalSen: 6_920_000, owedSen: 6_920_000, noteSen: 0, status: 'POSTED' },
+];
 const setMutate = vi.fn();
 const uploadMutate = vi.fn(async (_b: unknown) => ({ ok: true }));
 const lastList = { value: '' };
@@ -78,13 +92,23 @@ vi.mock('../../vendor/scm/lib/authed-fetch', async (importOriginal) => ({
 
 vi.mock('../../vendor/scm/lib/credit-note-queries', async (importOriginal) => ({
   ...(await importOriginal() as object),
-  useCreditNotes: (kind: string, status: string) => { lastList.value = `${kind}|${status}`; return { data: { rows: NOTES }, isLoading: false, isError: false, error: null }; },
+  useCreditNotes: (side: string, kind: string, status: string) => { lastList.value = `${side}|${kind}|${status}`; return { data: { rows: NOTES }, isLoading: false, isError: false, error: null }; },
   useCreditNoteDetail: (id: string | null) => ({
     data: id ? { note: NOTES.find((n) => n.id === id)!, lines: LINES, ...(id === 'n2' ? { allocations: ALLOCS, appliedSen: 20_000, leftSen: 30_000 } : {}) } : undefined,
     isLoading: false,
   }),
-  useCreditNoteKnockOff: (id: string | null) => ({ data: id === 'n2' ? { rows: KO_ROWS, totalSen: 50_000, takenSen: 20_000, leftSen: 30_000, posted: true } : undefined, isLoading: false, isError: false, error: null }),
-  useSupplierKnockOff: (supplierId: string | null) => ({ data: supplierId === 'sup-d' ? { rows: SUP_ROWS } : supplierId ? { rows: [] } : undefined, isLoading: false, isError: false, error: null }),
+  useCreditNoteKnockOff: (id: string | null) => ({
+    data: id === 'n2' ? { rows: KO_ROWS, totalSen: 50_000, takenSen: 20_000, leftSen: 30_000, posted: true }
+      : id === 'n4' ? { rows: [{ ...ODB_ROWS[0]!, noteSen: 200_000 }], totalSen: 200_000, takenSen: 200_000, leftSen: 0, posted: true }
+        : undefined,
+    isLoading: false, isError: false, error: null,
+  }),
+  usePartyKnockOff: (party: { who: string; id: string } | null) => ({
+    data: party?.who === 'supplier' && party.id === 'sup-d' ? { rows: SUP_ROWS }
+      : party?.who === 'debtor' && party.id === 'deb-e' ? { rows: ODB_ROWS }
+        : party ? { rows: [] } : undefined,
+    isLoading: false, isError: false, error: null,
+  }),
   useSetCreditNoteAllocations: () => ({ mutate: setMutate, isPending: false, isError: false, error: null, data: undefined }),
   useCreateCreditNote: () => ({ mutateAsync: createMutate, isPending: false, isError: false, error: null }),
   useUpdateCreditNote: () => ({ mutateAsync: vi.fn(), isPending: false, isError: false, error: null }),
@@ -110,6 +134,11 @@ vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
     { account_code: '510-0000', account_name: 'RETURN INWARDS', account_type: 'INCOME', parent_code: null, is_active: true },
     { account_code: '520-0000', account_name: 'DISCOUNT ALLOWED', account_type: 'INCOME', parent_code: null, is_active: true },
   ] }, isLoading: false }),
+  /* The Other Debtors registry — a deactivated debtor is not offered. */
+  useOtherDebtors: () => ({ data: { debtors: [
+    { id: 'deb-e', name: 'EASTERN DECORATOR SDN. BHD.', phone: null, notes: null, is_active: true, outstanding_sen: 6_920_000 },
+    { id: 'deb-x', name: 'CLOSED TENANT SDN BHD', phone: null, notes: null, is_active: false, outstanding_sen: 0 },
+  ] }, isLoading: false }),
 }));
 vi.mock('../../vendor/scm/lib/suppliers-queries', async (importOriginal) => ({
   ...(await importOriginal() as object),
@@ -133,11 +162,26 @@ describe('the Credit & Debit Notes page', () => {
     expect(screen.getByText('Larding Chen')).toBeTruthy();
     expect(screen.getByText('2990-SO-2607-019 · DR-2609-001')).toBeTruthy();
     expect(screen.getByText('2990-JE-2609-0007')).toBeTruthy();
-    expect(lastList.value).toBe('ALL|ALL');
-    fireEvent.click(screen.getByRole('tab', { name: 'SCN' }));
-    expect(lastList.value).toBe('SCN|ALL');
+    expect(lastList.value).toBe('AR|ALL|ALL');
+    fireEvent.click(screen.getByRole('tab', { name: 'Other debtor CN' }));
+    expect(lastList.value).toBe('AR|OCN|ALL');
     fireEvent.change(screen.getByLabelText('Note status'), { target: { value: 'POSTED' } });
-    expect(lastList.value).toBe('SCN|POSTED');
+    expect(lastList.value).toBe('AR|OCN|POSTED');
+  });
+
+  /* Owner 2026-10-28: supplier & other creditor CN / DN 和 customer & other debtor CN / DN 分出来. */
+  test('two pages: Money in asks for the customer and other-debtor notes, Money out for the supplier notes with the scan', () => {
+    const { unmount } = render(<MemoryRouter><ConfirmProvider><CreditNotes /></ConfirmProvider></MemoryRouter>);
+    expect(screen.getByRole('heading', { name: 'Customer & Other Debtor CN / DN' })).toBeTruthy();
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['All', 'CN', 'DN', 'Other debtor CN']);
+    expect(screen.queryByLabelText('Supplier credit note pages')).toBeNull();
+    unmount();
+    render(<MemoryRouter><ConfirmProvider><CreditNotes side="AP" /></ConfirmProvider></MemoryRouter>);
+    expect(screen.getByRole('heading', { name: 'Supplier & Other Creditor CN / DN' })).toBeTruthy();
+    expect(lastList.value).toBe('AP|ALL|ALL');
+    /* One kind on the page — no kind tabs; the scan is here. */
+    expect(screen.queryByRole('tablist')).toBeNull();
+    expect(screen.getByLabelText('Supplier credit note pages')).toBeTruthy();
   });
 
   test('a note opens to its lines, and a draft posts', async () => {
@@ -172,6 +216,9 @@ describe('the Credit & Debit Notes page', () => {
     expect(scn).toEqual({ kind: 'SCN', noteDate: '2026-09-03', reason: null, sourceDocNo: 'PRT-2609-003', supplierId: 'sup-h', allocations: [], lines: [{ description: null, accountCode: null, amountSen: 50000 }] });
     const typed = bodyOf({ kind: 'DN', noteDate: '2026-09-03', soDocNo: '', partyName: 'Walk-in Ah Meng', supplierId: '', sourceDocNo: '', reason: 'Late fee', lines: [{ rid: 1, description: 'Late fee', accountCode: '520-0000', amountRm: '20.50', projectId: null }] });
     expect(typed).toMatchObject({ kind: 'DN', partyName: 'Walk-in Ah Meng', lines: [{ description: 'Late fee', accountCode: '520-0000', amountSen: 2050 }] });
+    /* An other debtor's note carries the debtor and its ticks, like a supplier's. */
+    const ocn = bodyOf({ kind: 'OCN', noteDate: '2026-09-02', soDocNo: '', partyName: '', supplierId: '', debtorId: 'deb-e', sourceDocNo: 'CN-2609-025', reason: '', lines: [{ rid: 1, description: '', accountCode: '520-0000', amountRm: '2000', projectId: null }] });
+    expect(ocn).toEqual({ kind: 'OCN', noteDate: '2026-09-02', reason: null, sourceDocNo: 'CN-2609-025', debtorId: 'deb-e', allocations: [], lines: [{ description: null, accountCode: '520-0000', amountSen: 200000 }] });
   });
 
   test('a supplier note line carries the event it is for; a line with none sends none (owner 2026-10-22)', () => {
@@ -213,7 +260,7 @@ describe('the Credit & Debit Notes page', () => {
 describe('Scan supplier CN', () => {
   test('the paper fills the New note form — supplier, CN number, date, reason, lines on their accounts, the invoice it names ticked; Save sends them and the pages attach', async () => {
     createMutate.mockClear(); scanMutate.mockClear(); uploadMutate.mockClear();
-    render(<MemoryRouter><ConfirmProvider><CreditNotes /></ConfirmProvider></MemoryRouter>);
+    render(<MemoryRouter><ConfirmProvider><CreditNotes side="AP" /></ConfirmProvider></MemoryRouter>);
     const page = new File(['%PDF'], 'DGPSC26000263.pdf', { type: 'application/pdf' });
     fireEvent.change(screen.getByLabelText('Supplier credit note pages'), { target: { files: [page] } });
     await waitFor(() => expect(scanMutate).toHaveBeenCalledWith([{ name: 'DGPSC26000263.pdf', mime: 'application/pdf', dataBase64: 'b64:DGPSC26000263.pdf' }]));
@@ -239,7 +286,7 @@ describe('Scan supplier CN', () => {
 
   test('unticking the named invoice keeps the credit with the supplier — the invoice on the paper stays its reference', async () => {
     createMutate.mockClear();
-    render(<MemoryRouter><ConfirmProvider><CreditNotes /></ConfirmProvider></MemoryRouter>);
+    render(<MemoryRouter><ConfirmProvider><CreditNotes side="AP" /></ConfirmProvider></MemoryRouter>);
     fireEvent.change(screen.getByLabelText('Supplier credit note pages'), { target: { files: [new File(['%PDF'], 'cn.pdf', { type: 'application/pdf' })] } });
     await screen.findByLabelText('What the credit note reads');
     const ko = screen.getByLabelText("Knock off the supplier's invoices");
@@ -253,7 +300,7 @@ describe('Scan supplier CN', () => {
 
   test("another of the supplier's invoices can be ticked instead", async () => {
     createMutate.mockClear();
-    render(<MemoryRouter><ConfirmProvider><CreditNotes /></ConfirmProvider></MemoryRouter>);
+    render(<MemoryRouter><ConfirmProvider><CreditNotes side="AP" /></ConfirmProvider></MemoryRouter>);
     fireEvent.change(screen.getByLabelText('Supplier credit note pages'), { target: { files: [new File(['%PDF'], 'cn.pdf', { type: 'application/pdf' })] } });
     await screen.findByLabelText('What the credit note reads');
     const ko = screen.getByLabelText("Knock off the supplier's invoices");
@@ -270,7 +317,7 @@ describe('Scan supplier CN', () => {
 describe('a posted supplier note\'s knock-off', () => {
   test('untick gives an invoice back, a tick takes another; Save knock-off carries it out', async () => {
     setMutate.mockClear();
-    render(<MemoryRouter><ConfirmProvider><CreditNotes /></ConfirmProvider></MemoryRouter>);
+    render(<MemoryRouter><ConfirmProvider><CreditNotes side="AP" /></ConfirmProvider></MemoryRouter>);
     fireEvent.click(screen.getByText('2990-SCN-2609-001'));
     const ko = await screen.findByLabelText("Knock off the supplier's invoices");
     expect((within(ko).getByLabelText('Knock off 2990-PI-2609-004') as HTMLInputElement).checked).toBe(true);
@@ -288,7 +335,7 @@ describe('a posted supplier note\'s knock-off', () => {
 
   test('a typed figure takes part; more than the credit reaches is pulled back; Undo changes puts the ticks back', async () => {
     setMutate.mockClear();
-    render(<MemoryRouter><ConfirmProvider><CreditNotes /></ConfirmProvider></MemoryRouter>);
+    render(<MemoryRouter><ConfirmProvider><CreditNotes side="AP" /></ConfirmProvider></MemoryRouter>);
     fireEvent.click(screen.getByText('2990-SCN-2609-001'));
     const ko = await screen.findByLabelText("Knock off the supplier's invoices");
     const amount = within(ko).getByLabelText('Amount off 2990-PI-2609-007');
@@ -301,5 +348,59 @@ describe('a posted supplier note\'s knock-off', () => {
     fireEvent.click(screen.getByText('Undo changes'));
     expect((within(ko).getByLabelText('Knock off 2990-PI-2609-007') as HTMLInputElement).checked).toBe(false);
     expect(screen.queryByText('Save knock-off · 保存')).toBeNull();
+  });
+});
+
+/* An other debtor's credit note (owner 2026-10-28: Customer & Other Debtor CN / DN —「可以」):
+   to one of the Other Debtors registry, every line on its own account, knocking off
+   the debtor's bills on the same table a supplier note uses. */
+describe("an other debtor's credit note", () => {
+  test('New note: pick the debtor, name each line\'s account, tick the bill it comes off; Save sends them', async () => {
+    createMutate.mockClear();
+    render(<MemoryRouter><ConfirmProvider><CreditNotes /></ConfirmProvider></MemoryRouter>);
+    fireEvent.click(screen.getByText('New note'));
+    const dialog = await screen.findByLabelText('Note form');
+    fireEvent.change(within(dialog).getByLabelText('Kind'), { target: { value: 'OCN' } });
+    expect(within(dialog).getByText("Pick the other debtor to see their bills.")).toBeTruthy();
+    /* Only the registry's active debtors are offered. */
+    fireEvent.focus(within(dialog).getByRole('combobox', { name: 'Other debtor' }));
+    expect(screen.queryByRole('option', { name: 'CLOSED TENANT SDN BHD' })).toBeNull();
+    fireEvent.mouseDown(screen.getByRole('option', { name: 'EASTERN DECORATOR SDN. BHD.' }));
+    fireEvent.change(within(dialog).getByLabelText('Reference'), { target: { value: 'CN-2609-025' } });
+    fireEvent.change(within(dialog).getByLabelText('Line 1 description'), { target: { value: 'Discount for exhibition rental' } });
+    fireEvent.change(within(dialog).getByLabelText('Line 1 amount'), { target: { value: '2000' } });
+    /* No account on the line yet — no default for this kind, so Save waits. */
+    expect(within(dialog).getByText("Pick an account on every line — an other debtor's credit note has no default account.")).toBeTruthy();
+    expect(within(dialog).getByText('Save note').closest('button')?.disabled).toBe(true);
+    fireEvent.focus(within(dialog).getByPlaceholderText('— pick the account —'));
+    fireEvent.mouseDown(screen.getByRole('option', { name: '520-0000 · DISCOUNT ALLOWED' }));
+    /* The debtor's bill, ticked for the whole credit; a bill has no supplier reference. */
+    const ko = within(dialog).getByLabelText("Knock off the debtor's bills");
+    expect(within(ko).queryByText('Supplier Ref')).toBeNull();
+    fireEvent.click(within(ko).getByLabelText('Knock off HC-ODB-2608-005'));
+    expect((within(ko).getByLabelText('Amount off HC-ODB-2608-005') as HTMLInputElement).value).toBe('2,000.00');
+    expect(within(dialog).getByLabelText('Knock-off total').textContent).toContain('credit left RM 0.00 of RM 2,000.00 — it stays with the debtor.');
+    fireEvent.click(within(dialog).getByText('Save note'));
+    await waitFor(() => expect(createMutate).toHaveBeenCalledTimes(1));
+    expect(createMutate.mock.calls[0]![0]).toEqual({
+      kind: 'OCN', noteDate: expect.any(String), reason: null, sourceDocNo: 'CN-2609-025', debtorId: 'deb-e',
+      allocations: [{ kind: 'ODB', id: 'odb-5', amountSen: 200_000 }],
+      lines: [{ description: 'Discount for exhibition rental', accountCode: '520-0000', amountSen: 200_000 }],
+    });
+  });
+
+  test('a posted one opens to the bill it knocked off — untick gives the bill back, like a receipt', async () => {
+    setMutate.mockClear();
+    render(<MemoryRouter><ConfirmProvider><CreditNotes /></ConfirmProvider></MemoryRouter>);
+    fireEvent.click(screen.getByText('HC-OCN-2609-001'));
+    const dialog = await screen.findByLabelText('Credit or debit note');
+    expect(within(dialog).getByText('Other debtor credit note HC-OCN-2609-001')).toBeTruthy();
+    const ko = within(dialog).getByLabelText("Knock off the debtor's bills");
+    expect((within(ko).getByLabelText('Knock off HC-ODB-2608-005') as HTMLInputElement).checked).toBe(true);
+    expect(within(dialog).getByText('tick to knock a bill off, untick to give it back — like a receipt')).toBeTruthy();
+    fireEvent.click(within(ko).getByLabelText('Knock off HC-ODB-2608-005'));
+    expect(within(dialog).getByLabelText('Knock-off total').textContent).toContain('credit left RM 2,000.00 of RM 2,000.00 — it stays with the debtor.');
+    fireEvent.click(within(dialog).getByText('Save knock-off · 保存'));
+    expect(setMutate).toHaveBeenCalledWith({ noteId: 'n4', targets: [] }, expect.anything());
   });
 });
