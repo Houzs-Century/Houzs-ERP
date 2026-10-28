@@ -14,6 +14,8 @@ import { fmtSen } from "../../vendor/shared/format";
 import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
 import { ResizableDrawer } from "../../components/ResizableDrawer";
 import { SearchInput } from "../../components/Button";
+import { mfgCategoryLabel } from "../../vendor/shared/product-categories";
+import { PosBoothCategoriesDrawer } from "./PosBoothCategoriesDrawer";
 import { POS_ADMIN, rm, toSen, useAdminItems, useAdminEvents, type PosItem, type SkuCandidate } from "./posAdminApi";
 import { Empty, Field, Pill, Table, Toggle, dangerBtn, errText, ghostBtn, inputCls, primaryBtn, td, th } from "./posAdminUi";
 
@@ -56,6 +58,8 @@ export function PosItemsTab() {
   const [search, setSearch] = useState("");
   const [activeOnly, setActiveOnly] = useState(true);
   const [eventFilter, setEventFilter] = useState<number | "">("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [picking, setPicking] = useState(false);
   const [editing, setEditing] = useState<PosItem | null>(null);
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -65,10 +69,12 @@ export function PosItemsTab() {
     return (items.data ?? []).filter((i) => {
       if (activeOnly && !i.active) return false;
       if (eventFilter !== "" && !i.event_prices.some((p) => p.project_id === eventFilter)) return false;
+      if (categoryFilter !== "" && (i.category ?? "") !== categoryFilter) return false;
       if (!q) return true;
       return i.item_code.toLowerCase().includes(q) || i.name.toLowerCase().includes(q) || i.barcodes.some((b) => b.barcode.toLowerCase().includes(q));
     });
-  }, [items.data, search, activeOnly, eventFilter]);
+  }, [items.data, search, activeOnly, eventFilter, categoryFilter]);
+  const categories = useMemo(() => [...new Set((items.data ?? []).map((i) => i.category ?? ""))].sort(), [items.data]);
 
   const eventName = (pid: number) => events.data?.find((e) => e.project_id === pid)?.name ?? `#${pid}`;
 
@@ -88,27 +94,6 @@ export function PosItemsTab() {
     await writeXlsxFile(data, { fileName: "POS_Items.xlsx", columns: header.map((h) => ({ width: Math.max(10, h.length + 4) })), stickyRowsCount: 1 });
   }
 
-  type AddAll = { to_add: number; already: number; no_price: number; total_active: number; added?: number };
-  async function addAll() {
-    setBusy(true);
-    try {
-      const p = await api.post<AddAll>(`${POS_ADMIN}/items/add-all`, { dry_run: true });
-      if (p.to_add === 0) { toast.info(`Nothing to add: ${p.already} already POS items, ${p.no_price} without a selling price.`); return; }
-      const ok = await dialog.confirm({
-        title: `Add ${p.to_add} inventory product(s) as POS items?`,
-        message: `Every active product with a selling price, at that price, no preset discount. ${p.already} already here are left as they are; ${p.no_price} without a selling price are skipped. You can edit prices, discounts and FOC per item afterwards.`,
-        confirmLabel: "Add all",
-      });
-      if (!ok) return;
-      const r = await api.post<AddAll>(`${POS_ADMIN}/items/add-all`, {});
-      toast.success(`${r.added ?? 0} POS item(s) added. Press Refresh catalog on the devices.`);
-      items.reload();
-    } catch (e) {
-      toast.error(errText(e, "Could not add the inventory."));
-    } finally {
-      setBusy(false);
-    }
-  }
   async function importExcel(file: File) {
     setBusy(true);
     try {
@@ -148,6 +133,10 @@ export function PosItemsTab() {
           <option value="">Any event price</option>
           {(events.data ?? []).filter((e) => e.link).map((e) => <option key={e.project_id} value={e.project_id}>{e.name}</option>)}
         </select>
+        <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className={cn(inputCls, "w-auto")} aria-label="Category">
+          <option value="">All categories</option>
+          {categories.map((c) => <option key={c} value={c}>{c === "" ? "No category" : mfgCategoryLabel(c)}</option>)}
+        </select>
         <label className="flex items-center gap-1 text-[11px] text-ink-secondary"><input type="checkbox" checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} /> POS active only</label>
         <span className="ml-auto flex items-center gap-1.5">
           <label className={cn(ghostBtn, "cursor-pointer")}>
@@ -155,7 +144,7 @@ export function PosItemsTab() {
             <input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={busy} onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void importExcel(f); }} />
           </label>
           <button type="button" className={ghostBtn} onClick={() => void exportExcel()} disabled={rows.length === 0}><Download size={11} /> Export</button>
-          <button type="button" className={ghostBtn} disabled={busy} onClick={() => void addAll()} title="Every active inventory product with a selling price becomes a POS item; existing ones are untouched"><PackagePlus size={11} /> Add all sellable inventory</button>
+          <button type="button" className={ghostBtn} disabled={busy} onClick={() => setPicking(true)} title="Tick the inventory categories the booth sells; add their products, switch off the rest"><PackagePlus size={11} /> Add by category</button>
           <button type="button" className={primaryBtn} onClick={() => setAdding(true)}><Plus size={11} /> Add from Inventory</button>
         </span>
       </div>
@@ -172,7 +161,7 @@ export function PosItemsTab() {
           {rows.map((i) => (
             <tr key={i.id} className="cursor-pointer border-t border-border-subtle hover:bg-bg/40" onClick={() => setEditing(i)}>
               <td className={cn(td, "font-mono text-[10.5px] font-semibold text-accent")}>{i.item_code}</td>
-              <td className={td}>{i.name}{i.receipt_name && <span className="ml-1 text-[10px] text-ink-muted">({i.receipt_name})</span>}</td>
+              <td className={td}>{i.name}{i.receipt_name && <span className="ml-1 text-[10px] text-ink-muted">({i.receipt_name})</span>}{i.category && <span className="ml-1 text-[10px] uppercase text-ink-muted">{mfgCategoryLabel(i.category)}</span>}</td>
               <td className={cn(td, "font-mono text-[10px]")}>
                 {i.barcodes.length === 0 ? <span className="text-amber-800">none</span> : i.barcodes.map((b) => <span key={b.barcode} className="mr-1 inline-block" title={b.kind}>{b.barcode}</span>)}
               </td>
@@ -199,6 +188,7 @@ export function PosItemsTab() {
           onSaved={() => { setEditing(null); items.reload(); }}
         />
       )}
+      {picking && <PosBoothCategoriesDrawer onClose={() => setPicking(false)} onChanged={() => items.reload()} />}
       {adding && <AddFromInventory onClose={() => setAdding(false)} onAdded={() => { setAdding(false); items.reload(); }} />}
     </div>
   );
@@ -321,6 +311,18 @@ function AddFromInventory({ onClose, onAdded }: { onClose: () => void; onAdded: 
       setSearching(false);
     }
   }
+  async function turnOn(s: SkuCandidate) {
+    setBusy(s.product_id);
+    try {
+      await api.patch(`${POS_ADMIN}/items/${s.pos_item_id}`, { active: true });
+      toast.success(`${s.code} is back on the POS`);
+      onAdded();
+    } catch (e) {
+      toast.error(errText(e, "Could not turn the item on."));
+    } finally {
+      setBusy(null);
+    }
+  }
   async function add(s: SkuCandidate) {
     setBusy(s.product_id);
     try {
@@ -350,7 +352,9 @@ function AddFromInventory({ onClose, onAdded }: { onClose: () => void; onAdded: 
                 <td className={cn(td, "text-right font-mono")}>{s.sell_price_sen == null ? "--" : fmtSen(s.sell_price_sen)}</td>
                 <td className={cn(td, "text-right font-mono")}>{s.stock_qty}</td>
                 <td className={td}>
-                  {s.pos_item_id ? <Pill tone={s.pos_active ? "ok" : "muted"}>{s.pos_active ? "POS" : "POS OFF"}</Pill> : (
+                  {s.pos_item_id && s.pos_active ? <Pill tone="ok">POS</Pill> : s.pos_item_id ? (
+                    <button type="button" className={ghostBtn} disabled={busy === s.product_id} onClick={() => void turnOn(s)} title="Switched off earlier; turn it back on"><Pill tone="muted">POS OFF</Pill> Turn on</button>
+                  ) : (
                     <button type="button" className={primaryBtn} disabled={busy === s.product_id} onClick={() => void add(s)}><Plus size={11} /> Add</button>
                   )}
                 </td>
