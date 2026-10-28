@@ -25,12 +25,14 @@
         Cr 190-0000); a debtor AutoCount owes sits on the opening journal;
      5. the OPENING journal 'HC-OPENING-2608' on 31/08: every other account to
         its AutoCount balance (the ERP's own balance there subtracted, so nothing
-        counts twice); 300-C002 CUSTOMER folded into 440-0000 DEFERRED REVENUE
-        (owner 10-27), less what the ERP already holds for customers (300-0000
-        per customer, 326-0000 card money) so the customers' total is
-        AutoCount's; 190-0000 back to nil; 150-0000 takes the balance. Stock is
-        the ERP's own (the balance sheet reads the stock engine), so AutoCount's
-        600-0000 is not posted and the difference sits in equity;
+        counts twice), 150-0000 RETAINED EARNING included; 300-C002 CUSTOMER
+        folded into 440-0000 DEFERRED REVENUE (owner 10-27), less what the ERP
+        already holds for customers (300-0000 per customer, 326-0000 card money)
+        so the customers' total is AutoCount's. Stock is the ERP's own (the
+        balance sheet reads the stock engine), so AutoCount's 600-0000 is not
+        posted. 190-0000 keeps what is left: the opening documents' clearing
+        nets to nil and the rest is the ERP's own difference at the cutover —
+        its stock, its entries before 01/09, its own bills;
      6. the purchase invoices brought over from AutoCount (migrated, never in
         these books): each one on the aging is REPLACED by its opening bill and
         each one off it was settled in AutoCount — both marked PAID, so no bill
@@ -282,7 +284,7 @@ async function run(tx, data, CUTOFF) {
   const acBf = new Map(data.tb.map((t) => [t.code, t.bfSen]));
   const target = new Map();
   for (const t of data.tb) {
-    if (PARTY_AC.test(t.code) || t.code === STOCK_AC || t.code === RE) continue;
+    if (PARTY_AC.test(t.code) || t.code === STOCK_AC) continue;
     target.set(t.code, t.bfSen);
   }
   /* 300-C002 folds into deferred revenue; what the ERP holds for customers stays. */
@@ -293,10 +295,13 @@ async function run(tx, data, CUTOFF) {
     if (line !== 0) tbLines.push({ a: code, dr: Math.max(line, 0), cr: Math.max(-line, 0), notes: `${TAG}: AutoCount ${rm(acBf.get(code) ?? 0)}${code === DEFERRED ? ' + 300-C002 CUSTOMER, less the ERP\'s own customer balances' : ''}` });
   }
   for (const d of debtorCredits) tbLines.push({ a: role.AR_OTHER, dr: 0, cr: -d.sen, pt: 'ODEBTOR', pn: d.erpName, notes: `${TAG}: AutoCount ${d.acCode} ${d.acName}` });
+  /* 190-0000 takes what is left: the opening documents' clearing comes back to
+     nil, and what remains is the ERP's own difference at the cutover — its stock
+     valuation, its own entries before 01/09 (the July/August stock close above
+     all), its own bills — so 150-0000 RETAINED EARNING reads AutoCount's. */
   const clearingNet = jes.reduce((s, j) => s + j.lines.filter((l) => l.a === CLEARING.code).reduce((t, l) => t + l.dr - l.cr, 0), 0);
-  if (clearingNet !== 0) tbLines.push({ a: CLEARING.code, dr: Math.max(-clearingNet, 0), cr: Math.max(clearingNet, 0), notes: `${TAG}: the opening documents' clearing, back to nil` });
-  const tbNet = tbLines.reduce((s, l) => s + l.dr - l.cr, 0);
-  tbLines.push({ a: RE, dr: Math.max(-tbNet, 0), cr: Math.max(tbNet, 0), notes: `${TAG}: the balance — AutoCount ${rm(acBf.get(RE) ?? 0)}, ERP stock and the ERP's own entries before 01/09` });
+  const tbNet = tbLines.reduce((s, l) => s + l.dr - l.cr, 0) + clearingNet;
+  if (tbNet !== 0) tbLines.push({ a: CLEARING.code, dr: Math.max(-tbNet, 0), cr: Math.max(tbNet, 0), notes: `${TAG}: the opening documents back to nil; the rest is the ERP's own difference at the cutover (its stock, its entries before 01/09, its own bills)` });
   jes.push({ source: 'OPENING', doc: TB_DOC, date: CUTOFF, narration: `Opening balances at 31/08/2026 from AutoCount (trial balance B/F; creditors by the aging) — ${TAG}`, lines: tbLines });
 
   for (const j of jes) {
@@ -344,7 +349,6 @@ async function run(tx, data, CUTOFF) {
   const tbTotal = [...after.values()].reduce((s, v) => s + v, 0);
   const bad = [];
   for (const [code, t] of target) if ((after.get(code) ?? 0) !== t) bad.push(`${code} is ${rm(after.get(code) ?? 0)}, want ${rm(t)}`);
-  if ((after.get(CLEARING.code) ?? 0) !== 0) bad.push(`${CLEARING.code} is ${rm(after.get(CLEARING.code))}, want nil`);
   if (tbTotal !== 0) bad.push(`the books do not balance at ${CUTOFF}: ${rm(tbTotal)}`);
   const owedAfter = new Map((await tx`SELECT l.party_code AS code, sum(l.credit_sen - l.debit_sen)::bigint AS owed
       FROM scm.journal_entry_lines l JOIN scm.journal_entries j ON j.id = l.journal_entry_id
@@ -366,6 +370,8 @@ async function run(tx, data, CUTOFF) {
       WHERE j.company_id = ${CO} AND j.posted AND NOT j.reversed AND j.reversed_by_je IS NULL AND j.entry_date <= ${CUTOFF}
         AND l.account_code = ${role.AR_OTHER} GROUP BY 1`).map((r) => [r.name, Number(r.bal)]));
   for (const d of data.otherDebtors) if ((odAfter.get(d.erpName) ?? 0) !== d.sen) bad.push(`other debtor ${d.erpName} is ${rm(odAfter.get(d.erpName) ?? 0)}, want ${rm(d.sen)}`);
+  const closedSet = new Set(closing.map((c) => c.m.invoice_number));
+  for (const b of bills.filter((x) => x.copy && !closedSet.has(x.copy))) say(`! copy ${b.copy} (AutoCount ${b.acDoc}) on the aging but not among the brought-over invoices dated by ${CUTOFF} — check it`);
   const stillOpen = await tx`SELECT count(*)::int AS n FROM scm.purchase_invoices WHERE company_id = ${CO} AND migrated_no_stock AND status::text NOT IN ('CANCELLED', 'PAID') AND invoice_date <= ${CUTOFF}`;
 
   /* ── 9. the report ──────────────────────────────────────────────────────── */
@@ -387,8 +393,16 @@ async function run(tx, data, CUTOFF) {
   for (const l of tbLines) say(`  ${l.a} ${(chartBy.get(l.a)?.account_name ?? newAccounts.find((a) => a.account_code === l.a)?.account_name ?? '').slice(0, 36).padEnd(36)} ${l.dr ? 'Dr ' + rm(l.dr) : 'Cr ' + rm(l.cr)}${l.pn ? ' — ' + l.pn : ''} | ERP before ${rm(erpBal.get(l.a) ?? 0)} → after ${rm(after.get(l.a) ?? 0)}`);
   say(`stock: the ERP's own 330 at 31/08 = RM ${rm([...after].filter(([c]) => c.startsWith('330-')).reduce((s, [, v]) => s + v, 0))}; AutoCount 600-0000 RM ${rm(acBf.get(STOCK_AC) ?? 0)} not posted`);
   say(`deferred revenue 440-0000 after: RM ${rm(after.get(DEFERRED) ?? 0)} (AutoCount 440 ${rm(acBf.get(DEFERRED) ?? 0)} + 300-C002 ${rm(acBf.get(CUSTOMER_AC) ?? 0)}; ERP keeps 300-0000 ${rm(erpBal.get(role.AR) ?? 0)} and 326-0000 ${rm(erpBal.get(TRANSIT) ?? 0)})`);
-  say(`retained earnings 150-0000 after: RM ${rm(after.get(RE) ?? 0)} (AutoCount ${rm(acBf.get(RE) ?? 0)})`);
-  say(bad.length ? `VERIFY FAILED (${bad.length}):` : 'VERIFY: every account at its target, clearing nil, books balanced, every supplier and other debtor at AutoCount (+ the ERP\'s own bills listed above).');
+  say(`retained earnings 150-0000 after: RM ${rm(after.get(RE) ?? 0)} (AutoCount ${rm(acBf.get(RE) ?? 0)}); 190-0000 after: RM ${rm(after.get(CLEARING.code) ?? 0)} = the ERP's own difference at the cutover`);
+  const pnlBefore = [...erpBal].filter(([c]) => /^[5-9]/.test(c)).reduce((s, [, v]) => s + v, 0);
+  say(`  of which: the ERP's own profit & loss before 01/09 RM ${rm(pnlBefore)} (Dr+ / Cr−; stock close included), stock 330 RM ${rm([...after].filter(([c]) => c.startsWith('330-')).reduce((s, [, v]) => s + v, 0))} vs AutoCount ${rm(acBf.get(STOCK_AC) ?? 0)}`);
+  for (const b of bills) console.log(`DOC|${JSON.stringify({ k: 'API', no: b.no, code: b.code, name: supBy.get(b.code).name, date: b.date, ref: b.ref, sen: b.amt, ac: b.acDoc, copy: b.copy, note: b.note })}`);
+  for (const c of credits) console.log(`DOC|${JSON.stringify({ k: 'SCN', no: c.no, code: c.code, name: supBy.get(c.code).name, date: c.date, ref: c.ref, sen: c.amt, note: c.note })}`);
+  for (const d of odbRows) console.log(`DOC|${JSON.stringify({ k: 'ODB', no: d.no, name: d.erpName, date: d.date, sen: d.sen, ac: d.acCode })}`);
+  for (const l of tbLines) console.log(`TB|${JSON.stringify({ a: l.a, name: chartBy.get(l.a)?.account_name ?? newAccounts.find((x) => x.account_code === l.a)?.account_name ?? '', dr: l.dr, cr: l.cr, pn: l.pn ?? null, before: erpBal.get(l.a) ?? 0, after: after.get(l.a) ?? 0, ac: acBf.get(l.a) ?? null })}`);
+  for (const c of closing) console.log(`COPY|${JSON.stringify({ no: c.m.invoice_number, ac: c.m.linked_ac_docno, date: c.m.date, sen: Number(c.m.total_sen), note: c.note })}`);
+  for (const code of new Set([...Object.keys(data.creditorOwed), ...owedAfter.keys()])) if (code) console.log(`SUP|${JSON.stringify({ code, name: supBy.get(code)?.name ?? '', ac: data.creditorOwed[code] ?? 0, before: erpOwed.get(code) ?? 0, after: owedAfter.get(code) ?? 0, bills: bills.filter((b) => b.code === code).length, billSen: bills.filter((b) => b.code === code).reduce((s, b) => s + b.amt, 0), credits: credits.filter((c) => c.code === code).length, creditSen: credits.filter((c) => c.code === code).reduce((s, c) => s + c.amt, 0) })}`);
+  say(bad.length ? `VERIFY FAILED (${bad.length}):` : 'VERIFY: every account at its target (150-0000 = AutoCount), books balanced, every supplier and other debtor at AutoCount (+ the ERP\'s own bills listed above).');
   for (const b of bad.slice(0, 60)) say(`  ✗ ${b}`);
   if (bad.length) throw new Error(`verification failed — ${bad.length} difference(s); nothing kept`);
   return report;
