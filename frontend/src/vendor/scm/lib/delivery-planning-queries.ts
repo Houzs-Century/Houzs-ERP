@@ -804,6 +804,9 @@ export type SendDeliveryMessagesResult = {
   sent: Array<{ phone: string; docNos: string[]; httpCode: number }>;
   failed: Array<{ phone: string; docNos: string[]; error: string }>;
   skipped: Array<{ docNo: string; reason: string }>;
+  /* Sent orders whose Delivery Message Status the server could not move to its
+     "Done X" (HC-0164) - e.g. 'lease' while someone has the SO open in the editor. */
+  statusNotMoved?: Array<{ docNo: string; reason: string }>;
 };
 /* Mirrors backend scm/lib/delivery-message-kinds.ts MESSAGE_KINDS. */
 export type SendMessageKind =
@@ -823,7 +826,12 @@ export function useSendDeliveryMessages() {
       authedFetch<SendDeliveryMessagesResult>(`/delivery-messages/send`, {
         method: 'POST', body: JSON.stringify(body),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery-messages'] }),
+    // The send moved each sent order's Delivery Message Status server-side;
+    // re-read just those rows so the board shows it.
+    onSuccess: (res) => {
+      void qc.invalidateQueries({ queryKey: ['delivery-messages'] });
+      scheduleRowRefresh(qc, res.sent.flatMap((s) => s.docNos));
+    },
   });
 }
 

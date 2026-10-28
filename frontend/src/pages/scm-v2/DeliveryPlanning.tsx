@@ -41,7 +41,7 @@ import { SetJobDateDrawer } from '../../vendor/scm/components/SetJobDateDrawer';
 import { ScheduleDpOrderDrawer } from '../../vendor/scm/components/ScheduleDpOrderDrawer';
 import { useBoardChangePoll } from '../../vendor/scm/lib/board-change-poll';
 import { ScheduleTripDrawer } from '../../vendor/scm/components/ScheduleTripDrawer';
-import { SendDeliveryMessageModal, KIND_AFTER_STATUS, SKIP_LABEL, type SendMessageKind } from '../../vendor/scm/components/SendDeliveryMessageModal';
+import { SendDeliveryMessageModal, SKIP_LABEL, statusNotMovedNote, type SendMessageKind } from '../../vendor/scm/components/SendDeliveryMessageModal';
 import {
   DeliveryPlanningBoard,
   regionTabsFrom,
@@ -67,7 +67,6 @@ import {
   useScheduleDelivery,
   useDeliveryMessageStatuses,
   useSendDeliveryMessages,
-  useUpdateDeliveryFields,
   filterOrdersByRegion,
   planningCountsFrom,
   type PlanningOrder,
@@ -355,25 +354,24 @@ export const DeliveryPlanning = () => {
 
   /* Postpone sends with NO modal (owner 2026-10-15): the reason and the new
      date are the row's own Amend Reason + Delivery Date, so there is nothing to
-     ask — the backend reads them per order and skips any missing either. Fire,
-     move the status on the ones that went, and report the summary. */
+     ask — the backend reads them per order and skips any missing either. Fire
+     and report the summary; the send itself moves each sent order's status. */
   const sendMsg = useSendDeliveryMessages();
-  const updateFields = useUpdateDeliveryFields();
   const sendPostponeDirect = () => {
     const docNos = selectedSoDocNos();
     if (docNos.length === 0 || sendMsg.isPending) return;
     void sendMsg.mutate({ docNos, kind: 'postpone' }, {
       onSuccess: (res: SendDeliveryMessagesResult) => {
-        const after = KIND_AFTER_STATUS['postpone'];
-        if (after) for (const g of res.sent) for (const id of g.docNos) void updateFields.mutate({ type: 'so', id, deliveryMessageStatus: after });
+        const notMoved = statusNotMovedNote(res.statusNotMoved);
         const parts: string[] = [];
         if (res.sent.length) parts.push(`Sent ${res.sent.length} message${res.sent.length === 1 ? '' : 's'} (${res.sent.reduce((n, g) => n + g.docNos.length, 0)} orders).`);
         if (res.failed.length) parts.push(`Failed ${res.failed.length}: ${res.failed.map((f) => `${f.phone} (${f.error})`).join('; ')}.`);
         if (res.skipped.length) parts.push(`Skipped ${res.skipped.length}: ${res.skipped.map((sk) => `${sk.docNo} (${SKIP_LABEL[sk.reason] ?? sk.reason})`).join(', ')}.`);
+        if (notMoved) parts.push(notMoved);
         void notify({
           title: res.failed.length ? 'Postpone finished with failures' : res.sent.length ? 'Postpone notice sent' : 'Nothing sent',
           body: parts.join(' ') || 'Nothing to send.',
-          tone: res.failed.length ? 'error' : 'info',
+          tone: res.failed.length || notMoved ? 'error' : 'info',
         });
         setSel(new Set());
       },

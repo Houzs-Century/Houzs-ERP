@@ -25,6 +25,8 @@ The return leg of the WhatsApp delivery conversation. `chat.houzscentury.com` po
 | `postage` | Postage Confirm | `customer_phone`, `delivery_address` (delivery address, else customer address, + postcode/city/state) | no address (`no_address`) | no |
 | `delivery_completed` | Delivery Completed | — | — | no |
 
+After the messages leave, the same request moves each sent order's `delivery_message_status` to its "Done X" (`KIND_AFTER_STATUS` in `delivery-message-kinds.ts`, via `advanceSoGeneration` + an SO History row; `scm/lib/delivery-message-status.ts`). An order it could not move (an open SO editor lease, a version race that outlived two retries) comes back in `statusNotMoved` and the board names it — the board used to write the status itself, fire-and-forget, and lost it silently (HC-0164).
+
 "Resets conversation" = the six reset attributes below are sent as empty. Only the openers do it: a Driver Info or Balance Reminder to a customer who already confirmed must not clear `button_status`, or the Delivery Lock guard stops protecting the confirmed date.
 
 ### What the outbound send tells Connect (the contract the flows depend on)
