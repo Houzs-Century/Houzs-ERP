@@ -1494,7 +1494,7 @@ export function MobileNewSO({
     () => lines.map((l) => ({
       category: l.itemCode.trim() && l.itemGroup ? l.itemGroup : '',
       variants: l.variants,
-      persisted: Boolean(l.itemId),
+      persisted: Boolean(l.itemId), itemCode: l.itemCode,
     })),
     [lines],
   );
