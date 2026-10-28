@@ -22,6 +22,7 @@ IT-only page (`/ai-usage`) showing what the Anthropic API costs each month, by f
 - `GET /api/admin/ai-usage?months=6` (1 to 24). Per month: total RM, per feature (calls, failures, tokens, RM), per company (RM).
 - Months before the first recorded event come from `agent_runs` tokens only and are `partial` with a note. From the first recorded month on, only `ai_usage_events` is used, so the two sources never add up in one month. The first recorded month itself is also `partial` (calls before recording started are missing).
 - This is an IT-wide report across companies by design.
+- Daily 02:00 UTC the last 7 UTC days go to the IT Hub (`services/aiUsageHub.ts`, `POST /api/v1/sys/ai-usage`): per day x company code x feature, priced with `costUsd`. The hub uses them only as shares of Anthropic's real cost. Needs secrets `IT_HUB_URL`, `IT_HUB_AI_USAGE_COMPANY` (e.g. `HOUZS`) and that company's `IT_HUB_API_KEY_<code>`; any unset => not sent.
 
 ## Gotchas
 

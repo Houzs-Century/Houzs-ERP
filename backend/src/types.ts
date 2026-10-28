@@ -209,6 +209,9 @@ export type Env = {
   // not listed here), set with `wrangler secret put`. The address or the active
   // company's key unset => the routes answer 501 and the menu row is hidden.
   IT_HUB_URL?: string;
+  // Company code whose hub key sends the daily AI cost summary to the hub
+  // (services/aiUsageHub.ts), e.g. HOUZS. A secret, like IT_HUB_URL. Unset => not sent.
+  IT_HUB_AI_USAGE_COMPANY?: string;
   // Houzs → 2990 Product Maintenance push (scm/routes/maintenance-push.ts).
   // The push writes 2990's public.maintenance_config_history DIRECTLY with
   // 2990's service-role key — an owner-granted, table-scoped exception to D2
