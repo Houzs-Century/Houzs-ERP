@@ -10,7 +10,7 @@
 //   PUT /logistics/settings         { accounts: string[] | null } — null = default
 //
 // The reads: the DOs of the whole months the range touches (a month's trips
-// divide its whole cost) with their crews, lines, 3PL charges and regions; the
+// divide its whole cost) with their crews, lines and 3PL charges; the
 // carriers' bill lines; the ticked accounts' postings; the fairs starting in the
 // range with their books (the same reader Project Overview uses).
 // ----------------------------------------------------------------------------
@@ -23,9 +23,10 @@ import { dateOrNull } from '../lib/date-coerce';
 import { countsInTheBooks } from '../../acc/reversal-pairs';
 import { booksLinesFor, readEventBooksMany } from '../lib/event-books';
 import { toEventRow } from '../lib/event-tags';
+import { ADDRESS_COLS } from '../lib/so-address-on-save';
 import {
   buildLogisticsReport, defaultOwnCostAccounts, monthOf,
-  type ChartAccount, type EventCost, type LogisticsDo, type LogisticsLorry, type LogisticsRegion, type OwnCostLeg, type ThreeplRun,
+  type ChartAccount, type EventCost, type LogisticsDo, type LogisticsLorry, type OwnCostLeg, type ThreeplRun,
 } from '../lib/logistics-cost';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped throughout the acc layer */
@@ -81,7 +82,7 @@ export const logisticsCostHandler = async (c: any): Promise<Response> => {
 
   /* The DOs going out in the whole months: by the customer delivery date Delivery
      Planning schedules, else — none scheduled — by the DO's own date. */
-  const DO_COLS = 'id, do_number, so_doc_no, status, state, do_date, customer_delivery_date';
+  const DO_COLS = 'id, do_number, so_doc_no, status, state, city, postcode, address1, address2, do_date, customer_delivery_date';
   const [scheduled, unscheduled] = await Promise.all([
     paginateAll<Row>((lo, hi) => sb.from('delivery_orders').select(DO_COLS).eq('company_id', companyId).neq('status', 'CANCELLED')
       .gte('customer_delivery_date', wholeFrom).lte('customer_delivery_date', wholeTo).order('id').range(lo, hi)),
@@ -92,23 +93,27 @@ export const logisticsCostHandler = async (c: any): Promise<Response> => {
   if (unscheduled.error) return fail(c, 'delivery orders', unscheduled.error.message);
   const doRows = [...(scheduled.data ?? []), ...(unscheduled.data ?? [])];
   const doIds = [...new Set(doRows.map((d) => String(d.id)))];
+  const soNos = [...new Set(doRows.map((d) => d.so_doc_no).filter((x) => x != null && x !== '').map(String))];
 
-  const [crew, items, charges, regionRes, stateRes] = await Promise.all([
+  /* Their orders' address lines too: a DO copies two of them, and a Singapore
+     order keyed with no state says SINGAPORE only on a later one. */
+  const [crew, items, charges, orders] = await Promise.all([
     chunkIn<Row>(doIds, (b, lo, hi) => sb.from('delivery_order_crew').select('do_id, lorry_id, lorry_plate')
       .eq('company_id', companyId).in('do_id', b).order('do_id').range(lo, hi)),
     chunkIn<Row>(doIds, (b, lo, hi) => sb.from('delivery_order_items').select('id, delivery_order_id, line_total_sen')
       .eq('company_id', companyId).in('delivery_order_id', b).order('id').range(lo, hi)),
     chunkIn<Row>(doIds, (b, lo, hi) => sb.from('threepl_do_charges').select('id, do_id, billed_sen')
       .eq('company_id', companyId).in('do_id', b).order('id').range(lo, hi)),
-    sb.from('delivery_planning_regions').select('id, code, name, sort_order, active').eq('company_id', companyId),
-    sb.from('state_delivery_regions').select('state_key, region_id').eq('company_id', companyId),
+    chunkIn<Row>(soNos, (b, lo, hi) => sb.from('mfg_sales_orders').select(['doc_no', ...ADDRESS_COLS].join(', '))
+      .eq('company_id', companyId).in('doc_no', b).order('doc_no').range(lo, hi)),
   ]);
   if (crew.error) return fail(c, 'delivery crews', crew.error.message);
   if (items.error) return fail(c, 'delivery order lines', items.error.message);
   if (charges.error) return fail(c, '3PL charges', charges.error.message);
-  if (regionRes.error) return fail(c, 'regions', regionRes.error.message);
-  if (stateRes.error) return fail(c, 'regions', stateRes.error.message);
+  if (orders.error) return fail(c, 'sales orders', orders.error.message);
 
+  const linesOf = (r: Row | undefined, keys: readonly string[]): string[] => (r ? keys.map((k) => String(r[k] ?? '').trim()).filter(Boolean) : []);
+  const orderOf = new Map(orders.data.map((o) => [String(o.doc_no), o] as const));
   const crewOf = new Map(crew.data.map((r) => [String(r.do_id), r] as const));
   const valueOf = new Map<string, number>();
   for (const it of items.data) valueOf.set(String(it.delivery_order_id), (valueOf.get(String(it.delivery_order_id)) ?? 0) + Number(it.line_total_sen ?? 0));
@@ -123,19 +128,14 @@ export const logisticsCostHandler = async (c: any): Promise<Response> => {
     const k = crewOf.get(id);
     dos.push({
       id, doNumber: String(d.do_number ?? id), soDocNo: d.so_doc_no == null ? null : String(d.so_doc_no), day: when,
-      state: d.state == null ? null : String(d.state), valueSen: valueOf.get(id) ?? 0,
+      state: d.state == null ? null : String(d.state),
+      city: d.city == null ? null : String(d.city), postcode: d.postcode == null ? null : String(d.postcode),
+      address: [...linesOf(d, ['address1', 'address2']),
+        ...linesOf(d.so_doc_no == null ? undefined : orderOf.get(String(d.so_doc_no)), ADDRESS_COLS)].join(' | ') || null,
+      valueSen: valueOf.get(id) ?? 0,
       crewLorryId: k?.lorry_id == null ? null : String(k.lorry_id), crewPlate: k?.lorry_plate == null ? null : String(k.lorry_plate),
     });
   }
-  const statesOf = new Map<string, string[]>();
-  for (const s of (stateRes.data ?? []) as Row[]) {
-    const list = statesOf.get(String(s.region_id)) ?? [];
-    list.push(String(s.state_key ?? ''));
-    statesOf.set(String(s.region_id), list);
-  }
-  const regions: LogisticsRegion[] = ((regionRes.data ?? []) as Row[]).filter((r) => r.active !== false).map((r) => ({
-    code: String(r.code), name: String(r.name ?? r.code), sortOrder: Number(r.sort_order ?? 0), states: statesOf.get(String(r.id)) ?? [],
-  }));
 
   /* The carriers' bill lines: the runs (assigned to DOs), what nobody assigned,
      and the fair lines with no fair. */
@@ -212,7 +212,7 @@ export const logisticsCostHandler = async (c: any): Promise<Response> => {
   }
 
   const report = buildLogisticsReport({
-    from, to, dos, lorries: setup.lorries, regions,
+    from, to, dos, lorries: setup.lorries,
     charges: charges.data.map((ch) => ({ doId: String(ch.do_id), billedSen: Number(ch.billed_sen ?? 0) })),
     runs, ownCost, events, openLines, eventLinesNoFair,
   });
