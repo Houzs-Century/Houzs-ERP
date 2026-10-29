@@ -28,7 +28,7 @@ import { activeOptions, maintPickerValues } from '@2990s/shared';
 import {
   APPLICATION_LABEL, REQUEST_STATUS, REQUEST_TYPE_LABEL, awaitsPurchaser, emptyRequestLine, lineProductText, lineToInput, linesNeedingModel,
   mayClose, mayRaisePco, needsModel, pcoNewFromRequestPath, poNewFromRequestPath, productText, requesterMayChange, specText, totalQty,
-  fetchProductRequestFileBlobUrl, useApproveProductRequest, useCloseProductRequest, useCreateModelFromRequest, useCreateProductRequest, useDeleteProductRequestFile,
+  fetchProductRequestFileBlobUrl, useApproveProductRequest, useCloseProductRequest, useCreateModelFromRequest, useCreateProductRequest, useDeleteProductRequestFile, useLinkSkuToRequestLine,
   useProductRequest, useProductRequestFiles, useProductRequestSupplierOptions, useProductRequests, useRejectProductRequest, useUpdateProductRequest, useUploadProductRequestFile, useWithdrawProductRequest,
   type ProductRequest, type ProductRequestApplication, type ProductRequestInput, type ProductRequestLine, type ProductRequestLineInput, type ProductRequestType,
 } from '../../vendor/scm/lib/product-request-queries';
@@ -101,7 +101,7 @@ export const ProductRequests = () => {
   const detailQ = useProductRequest(openId);
   const detail = detailQ.data?.request ?? null;
   const [form, setForm] = useState<{ mode: 'new' } | { mode: 'edit'; req: ProductRequest } | null>(null);
-  const [buildFor, setBuildFor] = useState<{ request: ProductRequest; line: ProductRequestLine } | null>(null);
+  const [buildFor, setBuildFor] = useState<{ request: ProductRequest; line: ProductRequestLine; existing: boolean } | null>(null);
   const withdraw = useWithdrawProductRequest();
   const approve = useApproveProductRequest();
   const reject = useRejectProductRequest();
@@ -251,7 +251,7 @@ export const ProductRequests = () => {
           )}
           {needsModel(detail) && approver && (
             <div style={{ padding: 'var(--space-3)', borderRadius: 8, background: 'var(--c-cream, #faf8f3)', fontSize: 'var(--fs-13)' }}>
-              {linesNeedingModel(detail).length === 1 ? 'One line asks' : `${linesNeedingModel(detail).length} lines ask`} for a Model the catalogue does not have yet. Build the Model and its first SKU on each of those lines, then raise the PC Order or Purchase Order — a receive books stock by SKU code.
+              {linesNeedingModel(detail).length === 1 ? 'One line asks' : `${linesNeedingModel(detail).length} lines ask`} for a Model the catalogue does not have yet. Build the Model and its first SKU on each of those lines (or pick the Existing SKU if it was already imported), then raise the PC Order or Purchase Order — a receive books stock by SKU code.
             </div>
           )}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-3)', fontSize: 'var(--fs-13)' }}>
@@ -271,15 +271,18 @@ export const ProductRequests = () => {
           </div>
           <LinesTable
             request={detail}
-            onBuild={approver && detail.status === 'APPROVED' ? (line) => setBuildFor({ request: detail, line }) : null}
+            onBuild={approver && detail.status === 'APPROVED' ? (line, existing) => setBuildFor({ request: detail, line, existing }) : null}
           />
           <RequestFiles request={detail} canWrite={approver || mine(detail)} approver={approver} />
         </Modal>
       )}
 
       {buildFor && (
-        <Modal title={`Create Model + SKU — ${buildFor.request.request_no} line ${buildFor.line.line_no}`} onClose={() => setBuildFor(null)} width="min(560px, 100%)" ariaLabel="Create Model and SKU">
-          <BuildModelForm request={buildFor.request} line={buildFor.line} onDone={() => setBuildFor(null)} onCancel={() => setBuildFor(null)} />
+        <Modal title={`${buildFor.existing ? 'Existing SKU' : 'Create Model + SKU'} — ${buildFor.request.request_no} line ${buildFor.line.line_no}`} onClose={() => setBuildFor(null)} width="min(560px, 100%)"
+          ariaLabel={buildFor.existing ? 'Existing SKU' : 'Create Model and SKU'}>
+          {buildFor.existing
+            ? <LinkSkuForm request={buildFor.request} line={buildFor.line} onDone={() => setBuildFor(null)} onCancel={() => setBuildFor(null)} />
+            : <BuildModelForm request={buildFor.request} line={buildFor.line} onDone={() => setBuildFor(null)} onCancel={() => setBuildFor(null)} />}
         </Modal>
       )}
 
@@ -322,7 +325,7 @@ function RequestFiles({ request, canWrite, approver }: { request: ProductRequest
 }
 
 /* ── The request's lines, read-only, with the per-line build button ───────── */
-function LinesTable({ request, onBuild }: { request: ProductRequest; onBuild: ((line: ProductRequestLine) => void) | null }) {
+function LinesTable({ request, onBuild }: { request: ProductRequest; onBuild: ((line: ProductRequestLine, existing: boolean) => void) | null }) {
   return (
     <div style={{ overflowX: 'auto' }}>
       <table style={lineTable} aria-label={`Lines of ${request.request_no}`}>
@@ -357,7 +360,12 @@ function LinesTable({ request, onBuild }: { request: ProductRequest; onBuild: ((
               <td style={td}>{l.remarks ?? '—'}</td>
               {onBuild && (
                 <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                  {!l.item_code && <Button variant="primary" size="sm" onClick={() => onBuild(l)}>Create Model + SKU</Button>}
+                  {!l.item_code && (
+                    <span style={{ display: 'inline-flex', gap: 6 }}>
+                      <Button variant="primary" size="sm" onClick={() => onBuild(l, false)}>Create Model + SKU</Button>
+                      <Button variant="secondary" size="sm" onClick={() => onBuild(l, true)}>Existing SKU</Button>
+                    </span>
+                  )}
                 </td>
               )}
             </tr>
@@ -411,6 +419,48 @@ function BuildModelForm({ request, line, onDone, onCancel }: { request: ProductR
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
         <Button variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>
         <Button variant="primary" size="sm" onClick={() => void save()} disabled={build.isPending}>{build.isPending ? 'Creating…' : 'Create Model + SKU'}</Button>
+      </div>
+    </div>
+  );
+}
+
+/* ── The line takes a SKU already in the catalogue (2990-0025) ─────────────
+   Sim imports the SKUs through SKU Master first; building here then made a
+   second SKU. Pre-filled when one SKU carries the line's proposed name. */
+function LinkSkuForm({ request, line, onDone, onCancel }: { request: ProductRequest; line: ProductRequestLine; onDone: () => void; onCancel: () => void }) {
+  const link = useLinkSkuToRequestLine();
+  const notify = useNotify();
+  const skus = useMfgProducts();
+  const skuList = useMemo(() => sortByText(skus.data ?? []), [skus.data]);
+  const named = useMemo(() => {
+    const want = (line.proposed_model_name ?? '').trim().toUpperCase();
+    const hits = want ? skuList.filter((p) => p.name.trim().toUpperCase() === want || p.code.toUpperCase() === want) : [];
+    return hits.length === 1 ? hits[0]!.code : '';
+  }, [skuList, line.proposed_model_name]);
+  const [typed, setTyped] = useState<string | null>(null);
+  const code = (typed ?? named).trim();
+  const picked = skuList.find((p) => p.code === code);
+  const save = async () => {
+    if (!picked) { void notify({ title: 'Not yet complete', body: 'Pick a SKU from the list.', tone: 'error' }); return; }
+    try {
+      const res = await link.mutateAsync({ id: request.id, lineId: line.id, itemCode: picked.code });
+      const left = linesNeedingModel(res.request).length;
+      void notify({ title: `Line ${line.line_no} is ${res.sku.code}`, body: left === 0 ? 'Every line has its SKU — raise the order next.' : `${left} line${left === 1 ? '' : 's'} still need${left === 1 ? 's' : ''} a SKU.` });
+      onDone();
+    } catch { /* the mutation's own onError told the user */ }
+  };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+      <div style={soft}>Line {line.line_no}: {line.proposed_model_name} · {mfgCategoryLabel(line.category)} · ×{line.qty}</div>
+      <label className={styles.field}>
+        <span className={styles.fieldLabel}>SKU *</span>
+        <input className={styles.fieldInput} list="pr-link-skus" value={typed ?? named} onChange={(e) => setTyped(e.target.value)} aria-label="SKU code" placeholder="Type or pick a SKU code…" style={mono} />
+        <datalist id="pr-link-skus">{skuList.map((p) => <option key={p.id} value={p.code}>{p.name}</option>)}</datalist>
+      </label>
+      <div style={soft}>{picked ? `${picked.name} · ${mfgCategoryLabel(picked.category)}` : code ? `${code} is not in the catalogue.` : 'No second SKU is made — the line uses this one.'}</div>
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        <Button variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>
+        <Button variant="primary" size="sm" onClick={() => void save()} disabled={link.isPending || !picked}>{link.isPending ? 'Saving…' : 'Use this SKU'}</Button>
       </div>
     </div>
   );
