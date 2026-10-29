@@ -16,6 +16,8 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { MemoryRouter } from 'react-router-dom';
 import { beforeAll, describe, expect, test, vi } from 'vitest';
 
+/* What the list was asked for — kind and docKind (the other debtors' debit notes, 2026-10-28). */
+const lastArList = { value: '' };
 const createBillAsync = vi.fn(async (_b: unknown) => ({ ok: true, bill: { billNumber: 'HC-ODB-2609-002', totalSen: 45000 } }));
 const updateBillAsync = vi.fn(async (_b: unknown) => ({ ok: true, bill: { id: 'b1', billNumber: 'HC-ODB-2609-001', totalSen: 65000 }, reposted: true, jeNo: 'HC-JE-2609-031' }));
 const cancelBillAsync = vi.fn(async (_b: unknown) => ({ ok: true }));
@@ -41,7 +43,7 @@ const DETAILS: Record<string, unknown> = {
 };
 
 vi.mock('../../vendor/scm/lib/ar-invoice-queries', () => ({
-  useArInvoices: () => ({ data: { rows: ROWS }, isLoading: false, isError: false, error: null }),
+  useArInvoices: (kind?: string, docKind?: string) => { lastArList.value = `${kind ?? ''}|${docKind ?? ''}`; return { data: { rows: ROWS }, isLoading: false, isError: false, error: null }; },
   useArBillDetail: (id: string | null) => ({ data: id ? DETAILS[id] : undefined, isLoading: false }),
 }));
 vi.mock('../../vendor/scm/lib/ar-invoice-listing-pdf', () => ({
@@ -350,5 +352,29 @@ describe('an event on a bill line — optional', () => {
     await waitFor(() => expect(updateBillAsync).toHaveBeenCalledWith({
       billId: 'b2', body: { billDate: '2026-08-20', lines: [{ creditAccountCode: '700-0000', amountSen: 10000, projectId: 348 }] },
     }));
+  });
+});
+
+/* Debit notes to other debtors (owner 2026-10-28: Customer & Other Debtor CN / DN): this
+   page narrowed to them, shown inside the CN / DN page's Other debtor DN tab. */
+describe('the debit notes to other debtors', () => {
+  test('docKind="DN" asks for the debit notes alone, has no page header, and New debit note raises one as a DN', async () => {
+    createBillAsync.mockClear();
+    render(<MemoryRouter initialEntries={['/scm/credit-notes']}><ArInvoices docKind="DN" /></MemoryRouter>);
+    expect(lastArList.value).toBe('ODB|DN');
+    expect(screen.queryByText('New debtor bill')).toBeNull();
+    expect(screen.getByText('Debit notes to other debtors — they owe more')).toBeTruthy();
+    fireEvent.click(screen.getByText('New debit note'));
+    const d = dialog();
+    expect(within(d).getAllByText(/New debit note to an other debtor/).length).toBeGreaterThan(0);
+    fireEvent.focus(within(d).getByLabelText('Bill debtor'));
+    fireEvent.mouseDown(screen.getByRole('option', { name: 'AHMAD BIN ALI' }));
+    const accountBox = within(d).getAllByRole('combobox').find((el) => (el as HTMLInputElement).placeholder.includes('account this line'))!;
+    fireEvent.focus(accountBox);
+    fireEvent.mouseDown(screen.getByText('700-0000 · Other Income'));
+    setAmount(d, 'line 1 amount', '120');
+    fireEvent.click(within(d).getByText('Post bill'));
+    await waitFor(() => expect(createBillAsync).toHaveBeenCalledTimes(1));
+    expect(createBillAsync.mock.calls[0]![0]).toMatchObject({ debtorId: 'd1', docKind: 'DN', lines: [{ creditAccountCode: '700-0000', amountSen: 12000 }] });
   });
 });

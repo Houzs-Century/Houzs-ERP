@@ -28,6 +28,11 @@
 // EDITED, a posted bill re-posting; a bill can be COPIED; the one form behind
 // New / Edit / Copy lives in ApInvoiceForm.tsx (Insert adds a line, amounts
 // read 1,800.00).
+//
+// Supplier debit notes (owner 2026-10-28: Supplier & Other Creditor CN / DN — 再加
+// supplier DN): a DN is an AP invoice of its own kind (series {co}SDN-), listed
+// here as "Supplier DN" beside the bills it is paid with; `docKind="DN"` is this
+// same page narrowed to them, shown on the CN / DN page's Debit notes tab.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -67,6 +72,8 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 
 const KIND_LABEL: Record<ApListRow['kind'], string> = { API: 'AP Invoice', PI: 'Purchase Invoice' };
+/* A supplier's debit note is an AP invoice of its own kind — it says so. */
+const kindLabelOf = (r: ApListRow): string => (r.kind === 'API' && r.docKind === 'DN' ? 'Supplier DN' : KIND_LABEL[r.kind]);
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
 const chip = (on: boolean): React.CSSProperties => ({
   padding: '4px 10px', borderRadius: 999, fontSize: 'var(--fs-13)', cursor: 'pointer',
@@ -105,13 +112,17 @@ const fromDetail = (d: Detail, copy: boolean): ApFormValues => ({
 
 type FormState = {
   mode: ApFormMode; initial: ApFormValues; invoiceId?: string; invoiceNumber?: string; posted?: boolean; paidSen?: number;
+  /** A new paper raised as a supplier's debit note — on the Debit notes tab, or copied from one. */
+  docKind?: 'DN';
   /** A bill handed over from the pile page: its read pages and the reader's sentence. */
   scan?: { files: PvFilePayload[]; note: string; eventSuggestions?: EventSuggestion[] };
   /** The 申请付款 this new bill answers (owner 2026-09-30, 6.1). */
   request?: { id: string; no: string };
 };
 
-export const ApInvoices = () => {
+/** docKind="DN": the supplier debit notes alone, inside the CN / DN page (no page header of its own). */
+export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
+  const debitNotes = docKind === 'DN';
   const askConfirm = useConfirm();
   const notify = useNotify();
   const { can } = useHouzsAuth();
@@ -120,7 +131,7 @@ export const ApInvoices = () => {
   const canCancel = can('scm.payment_voucher.cancel');
 
   const [kind, setKind] = useState<ApListKind>('ALL');
-  const listQ = useApInvoices(kind);
+  const listQ = useApInvoices(debitNotes ? 'API' : kind, debitNotes ? 'DN' : undefined);
   const rows = listQ.data?.rows ?? [];
   const [detailId, setDetailId] = useState<string | null>(null);
   const detailQ = useApInvoiceDetail(detailId);
@@ -159,7 +170,7 @@ export const ApInvoices = () => {
 
   /* The one form — New, Edit, Copy — in its own pop-out over the list. */
   const [form, setForm] = useState<FormState | null>(null);
-  const openNew = () => setForm({ mode: 'new', initial: emptyApForm() });
+  const openNew = () => setForm({ mode: 'new', initial: emptyApForm(), ...(debitNotes ? { docKind: 'DN' as const } : {}) });
 
   /* The pile page's hand-off (/scm/ap-invoices/scan → here): ONE BILL = ONE AP
      INVOICE (owner 2026-09-08: 每张单一张 ap invoice … 分出来一张一张). The
@@ -215,7 +226,8 @@ export const ApInvoices = () => {
     mode: 'edit', initial: fromDetail(d, false), invoiceId: d.invoice.id, invoiceNumber: d.invoice.invoice_number,
     posted: d.invoice.status !== 'DRAFT', paidSen: Number(d.invoice.paid_sen),
   });
-  const openCopy = (d: Detail) => setForm({ mode: 'copy', initial: fromDetail(d, true), invoiceNumber: d.invoice.invoice_number });
+  /* A copy of a debit note is a debit note. */
+  const openCopy = (d: Detail) => setForm({ mode: 'copy', initial: fromDetail(d, true), invoiceNumber: d.invoice.invoice_number, ...(d.invoice.doc_kind === 'DN' ? { docKind: 'DN' as const } : {}) });
 
   const submitForm = async (values: ApFormSubmit, pendingFiles: PvFilePayload[]) => {
     if (!form) return;
@@ -230,7 +242,8 @@ export const ApInvoices = () => {
         });
         return;
       }
-      const res = await create.mutateAsync(form.request ? { ...values, paymentRequestId: form.request.id } : values);
+      const body = form.request ? { ...values, paymentRequestId: form.request.id } : values;
+      const res = await create.mutateAsync(form.docKind === 'DN' ? { ...body, docKind: 'DN' } : body);
       if (form.request) {
         setSearchParams((prev) => { const next = new URLSearchParams(prev); next.delete('fromRequest'); return next; }, { replace: true });
       }
@@ -304,7 +317,7 @@ export const ApInvoices = () => {
   };
 
   const apColumns = useMemo<Column<ApListRow>[]>(() => [
-    { key: 'kind', label: 'Kind', render: (r) => <span style={{ fontSize: 'var(--fs-11)', fontWeight: 600 }}>{KIND_LABEL[r.kind]}</span>, getValue: (r) => KIND_LABEL[r.kind] },
+    { key: 'kind', label: 'Kind', render: (r) => <span style={{ fontSize: 'var(--fs-11)', fontWeight: 600 }}>{kindLabelOf(r)}</span>, getValue: (r) => kindLabelOf(r) },
     {
       key: 'number', label: 'No.',
       render: (r) => r.kind === 'PI'
@@ -333,13 +346,15 @@ export const ApInvoices = () => {
     { key: 'status', label: 'Status', render: (r) => <span style={{ fontSize: 'var(--fs-11)' }}>{humaniseStatusKey(r.status)}</span>, getValue: (r) => r.status },
   ], []);
 
+  const paperName = form?.docKind === 'DN' ? 'supplier debit note' : 'AP invoice';
   const formTitle = form?.mode === 'edit'
     ? `Edit ${form.invoiceNumber ?? 'AP invoice'}`
-    : form?.mode === 'copy' ? `New AP invoice — copied from ${form.invoiceNumber ?? 'a bill'}` : 'New AP invoice — 非库存的供应商账单';
+    : form?.mode === 'copy' ? `New ${paperName} — copied from ${form.invoiceNumber ?? 'a bill'}`
+      : form?.docKind === 'DN' ? 'New supplier debit note — 供应商 DN（多欠供应商的钱）' : 'New AP invoice — 非库存的供应商账单';
 
   return (
     <div className="space-y-4">
-      <PageHeader
+      {!debitNotes && <PageHeader
         eyebrow="Finance"
         title="AP Invoices"
         actions={canCreate ? (
@@ -357,14 +372,19 @@ export const ApInvoices = () => {
             </button>
           </span>
         ) : undefined}
-      />
+      />}
 
       {readingRequest && <div style={soft} role="status">Reading the bill on {readingRequest}…</div>}
       <section className={styles.card}>
         <div className={styles.cardHeader}>
-          <h2 className={styles.cardTitle}>Supplier invoices — both kinds</h2>
+          <h2 className={styles.cardTitle}>{debitNotes ? 'Supplier debit notes — we owe the supplier more' : 'Supplier invoices — both kinds'}</h2>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            {([['ALL', 'All'], ['API', 'AP invoices'], ['PI', 'Purchase invoices']] as const).map(([v, label]) => (
+            {debitNotes && canCreate && (
+              <button type="button" onClick={openNew} style={linkBtn}>
+                <Plus {...ICON} /> New debit note
+              </button>
+            )}
+            {!debitNotes && ([['ALL', 'All'], ['API', 'AP invoices'], ['PI', 'Purchase invoices']] as const).map(([v, label]) => (
               <button key={v} type="button" style={chip(kind === v)} onClick={() => setKind(v)}>{label}</button>
             ))}
             <div style={{ minWidth: 260 }}>
@@ -380,8 +400,8 @@ export const ApInvoices = () => {
           {/* A refused or failed read says so — an empty sentence over a 403 hid
              docs/bugs/0648 for an afternoon. */}
           <DataTable<ApListRow>
-            tableId="ap-invoices"
-            exportName="ap-invoices"
+            tableId={debitNotes ? 'supplier-debit-notes' : 'ap-invoices'}
+            exportName={debitNotes ? 'supplier-debit-notes' : 'ap-invoices'}
             exportXlsx
             columns={apColumns}
             rows={listQ.data ? visibleRows : null}
@@ -389,7 +409,9 @@ export const ApInvoices = () => {
             error={listQ.isError ? `The list could not be loaded — ${listQ.error instanceof Error ? listQ.error.message : 'something went wrong.'}` : null}
             emptyLabel={rows.length > 0
               ? 'No supplier invoices match this filter — pick another supplier or kind.'
-              : 'No supplier invoices here yet — purchase invoices show once posted on the Procurement side; raise an AP invoice for a non-stock bill.'}
+              : debitNotes
+                ? 'No supplier debit note yet — New debit note raises one; it is paid through an AP Payment like a bill.'
+                : 'No supplier invoices here yet — purchase invoices show once posted on the Procurement side; raise an AP invoice for a non-stock bill.'}
             getRowKey={(r) => `${r.kind}-${r.id}`}
             getRowClassName={(r) => cancelledRowClass(r.status)}
             getRowStyle={(r) => (r.status === 'CANCELLED' ? { opacity: 0.55 } : undefined)}
@@ -403,7 +425,7 @@ export const ApInvoices = () => {
         <Modal
           title={`${detail.invoice.invoice_number} · ${detail.supplier?.name ?? '—'}`}
           onClose={() => setDetailId(null)}
-          ariaLabel={`AP invoice ${detail.invoice.invoice_number}`}
+          ariaLabel={`${detail.invoice.doc_kind === 'DN' ? 'Supplier debit note' : 'AP invoice'} ${detail.invoice.invoice_number}`}
           actions={(
             <>
               <span style={soft}>{detail.invoice.status}</span>
@@ -420,7 +442,7 @@ export const ApInvoices = () => {
               )}
               {canCancel && detail.invoice.status !== 'CANCELLED' && Number(detail.invoice.paid_sen) === 0 && (
                 <Button variant="ghost" size="sm" onClick={() => void onCancel(detail.invoice.id, detail.invoice.invoice_number, detail.invoice.status !== 'DRAFT')} disabled={cancel.isPending}>
-                  Cancel bill
+                  {detail.invoice.doc_kind === 'DN' ? 'Cancel debit note' : 'Cancel bill'}
                 </Button>
               )}
             </>
@@ -428,11 +450,12 @@ export const ApInvoices = () => {
         >
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 'var(--space-3)', fontSize: 'var(--fs-13)' }}>
             <Meta label="Supplier" value={<span><span style={mono}>{detail.supplier?.code ?? ''}</span> {detail.supplier?.name ?? '—'}</span>} />
-            <Meta label="Supplier's invoice no." value={detail.invoice.supplier_invoice_ref ?? '—'} />
-            <Meta label="Invoice date" value={fmtDateOrDash(detail.invoice.invoice_date)} />
+            <Meta label={detail.invoice.doc_kind === 'DN' ? "Supplier's debit note no." : "Supplier's invoice no."} value={detail.invoice.supplier_invoice_ref ?? '—'} />
+            <Meta label={detail.invoice.doc_kind === 'DN' ? 'Date' : 'Invoice date'} value={fmtDateOrDash(detail.invoice.invoice_date)} />
             <Meta label="Due date" value={fmtDateOrDash(detail.invoice.due_date)} />
             <Meta label="Description" value={detail.invoice.notes ?? '—'} />
-            {detail.invoice.status !== 'CANCELLED' && (
+            {/* 欠正式单 asks after an official INVOICE — a debit note is its own paper. */}
+            {detail.invoice.status !== 'CANCELLED' && detail.invoice.doc_kind !== 'DN' && (
               <Meta label="Official invoice" value={<OfficialDocActions kind="API" id={detail.invoice.id} state={detail.invoice.official_doc ?? null} note={detail.invoice.official_doc_note ?? null} />} />
             )}
           </div>

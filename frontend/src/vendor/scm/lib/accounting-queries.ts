@@ -385,6 +385,8 @@ export type DebtorBillLine = { id: string; line_no: number; description: string 
 export type DebtorBill = {
   id: string; bill_number: string; bill_date: string;
   total_sen: number; received_sen: number; status: string; notes: string | null;
+  /** 'DN' for a debit note to the debtor (2026-10-28) — prints as DEBIT NOTE. */
+  doc_kind?: 'INV' | 'DN';
   /** The bill's lines (2026-09-06) — Edit and Copy start from them. */
   lines?: DebtorBillLine[];
 };
@@ -438,6 +440,8 @@ export const useCreateDebtorBill = () => {
     mutationFn: ({ debtorId, ...body }: {
       debtorId: string; billDate?: string; notes?: string;
       lines: Array<{ description?: string; creditAccountCode?: string; amountSen: number }>;
+      /** 'DN': a debit note to the debtor — a bill of its own kind, series {co}ODN- (2026-10-28). */
+      docKind?: 'INV' | 'DN';
     }) => authedFetch<{ ok: boolean; bill: { billNumber: string; totalSen: number } }>(
       `/other-debtors/${debtorId}/bills`, { method: 'POST', body: JSON.stringify(body) },
     ),
