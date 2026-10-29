@@ -44,6 +44,21 @@ async function main() {
       log(`      price2=${yes(p.base_price_sen)} cost=${yes(p.cost_price_sen)} price1=${yes(p.price1_sen)} seat_grid=${Array.isArray(p.seat_height_prices) ? p.seat_height_prices.length : 0} bindings=${bs.length} (${bs.map((b) => `${b.supplier ?? '?'}${b.j.is_main_supplier ? '*' : ''} priced=${priced(b.j) ? 'yes' : 'no'}`).join('; ') || 'none'})`);
     }
 
+    const models = await t`
+      SELECT m.model_code, to_jsonb(m) AS j FROM scm.product_models m
+       WHERE m.company_id = ${CO} AND m.model_code ILIKE ${LIKE} ORDER BY m.model_code`;
+    log('');
+    log(`${models.length} model row(s)`);
+    for (const { model_code, j } of models) {
+      log(`  model [${model_code}] category=${j.category} status=${j.status ?? j.is_active ?? '-'} created=${String(j.created_at ?? '').slice(0, 10)} allowed=${JSON.stringify(j.allowed_options?.sizes ?? j.allowed_options ?? null)}`);
+    }
+    const moves = codes.length ? await t`
+      SELECT item_code, to_jsonb(v) AS j FROM scm.inventory_movements v
+       WHERE v.company_id = ${CO} AND v.item_code IN ${t(codes)}` : [];
+    for (const { item_code, j } of moves) {
+      log(`  movement ${item_code} type=${j.movement_type ?? j.type ?? '-'} qty=${j.qty ?? j.quantity ?? '-'} ref_type=${j.ref_type ?? j.source_type ?? '-'} at=${String(j.created_at ?? '').slice(0, 10)}`);
+    }
+
     const present = new Set((await t`
       SELECT table_name || '.' || column_name AS k FROM information_schema.columns WHERE table_schema = 'scm'`).map((r) => r.k));
     log('');
