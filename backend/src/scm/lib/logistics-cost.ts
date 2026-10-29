@@ -42,6 +42,9 @@ export type LogisticsDo = {
   /** The address's own words — what tells a Singapore DO with no state. */
   city?: string | null;
   postcode?: string | null;
+  /** The address lines, the DO's and its sales order's: a Singapore order keyed
+      with no state writes SINGAPORE only there (the DO copies two of its lines). */
+  address?: string | null;
   /** What the DO carries, from its lines. */
   valueSen: number;
   crewLorryId: string | null;
@@ -115,17 +118,23 @@ const PG_STATES = new Set(['penang', 'pulaupinang', 'pinang', 'perlis', 'kedah',
 const EM_STATES = new Set(['sabah', 'sarawak', 'labuan', 'wplabuan']);
 /* Singapore, and the regions a Singapore address names in the state box. */
 const SG_STATES = new Set(['singapore', 'central', 'east', 'west', 'north', 'northeast', 'northwest', 'southeast', 'southwest']);
+/* KL's own states: one of these named wins over any word in the address lines. */
+const KL_STATES = new Set(['kualalumpur', 'wpkualalumpur', 'wilayahpersekutuankualalumpur', 'kl', 'selangor', 'putrajaya', 'wpputrajaya',
+  'wilayahpersekutuanputrajaya', 'melaka', 'malacca', 'johor', 'negerisembilan', 'perak']);
 
 /** A DO's region. Singapore by its state (or a Singapore region in the state box),
-    else by its address — a six-digit postcode, or SINGAPORE written in it; a state
-    named nowhere — or none — is KL's "others", and says so (noState). */
-export function regionOfDo(d: Pick<LogisticsDo, 'state' | 'city' | 'postcode'>): { code: RegionCode; noState: boolean } {
+    else by its address — a six-digit postcode, or SINGAPORE written in its city or
+    postcode, or (no Malaysian state named) in its address lines: September 2026
+    had 8 Singapore DOs keyed with no state, SINGAPORE only on the order's third
+    line. A state named nowhere — or none — is KL's "others", and says so (noState). */
+export function regionOfDo(d: Pick<LogisticsDo, 'state' | 'city' | 'postcode' | 'address'>): { code: RegionCode; noState: boolean } {
   const state = keyOf(d.state);
   if (SG_STATES.has(state)) return { code: 'SG', noState: false };
   if (PG_STATES.has(state)) return { code: 'PG', noState: false };
   if (EM_STATES.has(state)) return { code: 'EM', noState: false };
-  const address = `${d.city ?? ''} ${d.postcode ?? ''}`;
-  if (/\bsingapore\b/i.test(address) || /(^|\D)\d{6}(\D|$)/.test(address)) return { code: 'SG', noState: false };
+  const box = `${d.city ?? ''} ${d.postcode ?? ''}`;
+  if (/\bsingapore\b/i.test(box) || /(^|\D)\d{6}(\D|$)/.test(box)) return { code: 'SG', noState: false };
+  if (!KL_STATES.has(state) && /\bsingapore\b/i.test(d.address ?? '')) return { code: 'SG', noState: false };
   return { code: 'KL', noState: state === '' };
 }
 const regionName = (code: RegionCode): string => REGIONS.find((r) => r.code === code)!.name;
