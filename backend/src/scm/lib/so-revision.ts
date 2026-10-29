@@ -45,6 +45,7 @@ import {
 } from './mfg-pricing-recompute';
 import { recordSoAudit, type FieldChange } from './so-audit';
 import { skuCategoryResolver } from './sku-category';
+import { retiredLineOf, type AcRetiredLine } from './autocount-outbox';
 import { deriveMfgPoUnitCost } from './po-pricing';
 import { pickAddLineBinding, readMfgProductBindings } from './supplier-bindings';
 import { rederivePoLineFromSoLine, type RevisedSoLine } from './po-line-rederive';
@@ -1190,6 +1191,9 @@ export type ReviseBoundPoResult = {
      an orphaned line left in place because it was already received, an added item
      whose supplier has no open PO, or a PO left with no lines at all. */
   warnings: string[];
+  /* AutoCount keys of the PO lines deleted here, read before the delete, so the
+     caller's AutoCount edit retires them — as applyPoAmendment's REMOVE does (HC-0121). */
+  retired: AcRetiredLine[];
 };
 
 export class ReceivedFloorError extends Error {
@@ -1232,7 +1236,7 @@ export async function reviseBoundPo(
      Unscoped (the legacy approve-po gate) keeps the original revise-all. */
   opts?: { onlyPoId?: string },
 ): Promise<ReviseBoundPoResult> {
-  const noop = (): ReviseBoundPoResult => ({ revisedPoIds: [], perPo: [], warnings: [] });
+  const noop = (): ReviseBoundPoResult => ({ revisedPoIds: [], perPo: [], warnings: [], retired: [] });
 
   // (1) Load amendment → SO doc_no.
   const { data: amdRow, error: amdErr } = await sb
@@ -1423,6 +1427,7 @@ export async function reviseBoundPo(
      supplier bound at all, is NOT auto-resolved by inventing a PO here — it is
      warned so the operator raises one. */
   const warnings: string[] = [];
+  const retired: AcRetiredLine[] = [];
   const addedNeedingPo = addedSoItemIds.filter((id) => !boundSoItemIdSet.has(id) && revisedById.has(id));
   const addedByPo = new Map<string, Array<{ soItemId: string; line: RevisedLine; supplierSku: string | null }>>();
   if (addedNeedingPo.length > 0) {
@@ -1565,8 +1570,12 @@ export async function reviseBoundPo(
         warnings.push(`A removed item (${label}) was already received on purchase order ${po.po_number}, so it was left on the purchase order and needs manual handling (for example, a purchase return).`);
         continue;
       }
+      const retire = await retiredLineOf(
+        sb as unknown as Parameters<typeof retiredLineOf>[0], 'purchase_order_items', String(orow.id),
+      );
       const { error: delErr } = await sb.from('purchase_order_items').delete().eq('id', orow.id);
       if (delErr) throw new Error(`reviseBoundPo: orphan PO line delete failed for ${orow.id}: ${delErr.message}`);
+      retired.push(...retire);
       linesRemoved += 1;
     }
 
@@ -1695,5 +1704,5 @@ export async function reviseBoundPo(
     perPo.push({ poId: po.id, poNumber: po.po_number, revision: nextRevision, linesRederived, linesRemoved, linesAdded });
   }
 
-  return { revisedPoIds: perPo.map((p) => p.poId), perPo, warnings };
+  return { revisedPoIds: perPo.map((p) => p.poId), perPo, warnings, retired };
 }

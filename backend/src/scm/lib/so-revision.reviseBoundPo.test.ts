@@ -199,6 +199,19 @@ describe('reviseBoundPo — REMOVE reconciles the orphaned PO line', () => {
     expect(res.warnings).toEqual([]);
   });
 
+  it('names the deleted orphan AutoCount line so the PO edit retires it (HC-0121)', async () => {
+    const store = baseStore();
+    store.mfg_sales_order_items = [soLine({ id: 'L1', item_code: 'BF-1', qty: 2 })];
+    store.purchase_order_items = [
+      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', unit_price_sen: 1000, qty: 2, line_total_sen: 2000, linked_ac_dtlkey: 501 }),
+      poLine({ id: 'POI-2', so_item_id: null, item_code: 'BF-2', qty: 1, line_total_sen: 1500, linked_ac_dtlkey: 502 }),
+    ];
+
+    const res = await reviseBoundPo(fakeSb(store), AMD, 'user-1');
+
+    expect(res.retired).toEqual([{ DtlKey: 502, ItemCode: 'BF-2', Gone: 'deleted' }]);
+  });
+
   it('PRESERVES an already-received orphan and warns instead of deleting it', async () => {
     const store = baseStore();
     store.mfg_sales_order_items = [soLine({ id: 'L1', item_code: 'BF-1', qty: 2 })];
@@ -485,7 +498,7 @@ describe('reviseBoundPo — unchanged contracts still hold', () => {
     store.so_revisions = [{ amendment_id: AMD, revision: 1, snapshot: { lines: [{ id: 'L1' }], poLinks: {} } }];
 
     const res = await reviseBoundPo(fakeSb(store), AMD, 'user-1');
-    expect(res).toEqual({ revisedPoIds: [], perPo: [], warnings: [] });
+    expect(res).toEqual({ revisedPoIds: [], perPo: [], warnings: [], retired: [] });
   });
 
   it('a surviving line revised below its received qty still aborts (received floor)', async () => {
