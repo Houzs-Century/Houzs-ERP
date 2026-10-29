@@ -229,6 +229,20 @@ describe('sofa combo PUT /:id — source combo read is company-scoped', () => {
     expect(res.status).toBe(201);
     expect(t.sofa_combo_pricing.some((r) => r.company_id === CO_A && r.selling_prices_by_height?.['40'] === 120)).toBe(true);
   });
+
+  // HC-0178: the Backend cost editor sends only pricesByHeight; a combo whose
+  // stored selling grid is {} (column default) still charges its cost.
+  test('cost-only edit of a combo with an empty selling grid saves', async () => {
+    const t = { sofa_combo_pricing: combos().map((r) => (r.id === 'sc-a' ? { ...r, selling_prices_by_height: {} } : r)) };
+    const res = await jsonPut(harness(t, CO_A, ['*']).app, '/sofa-combos/sc-a', {
+      pricesByHeight: { '24': 210000, '28': 220000, '30': 230000 },
+      effectiveFrom: '2026-10-29',
+    });
+    expect(res.status).toBe(201);
+    const minted = t.sofa_combo_pricing.find((r) => r.company_id === CO_A && r.effective_from === '2026-10-29');
+    expect(minted?.prices_by_height).toEqual({ '24': 210000, '28': 220000, '30': 230000 });
+    expect(minted?.selling_prices_by_height).toEqual({});
+  });
 });
 
 // ── Finding 5 — rack create validates the target warehouse's company ─────────

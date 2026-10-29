@@ -27,7 +27,7 @@ import { Hono, type Context } from 'hono';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
-import { canonicalizeComboModulesForStorage, comboSlotsKey, sofaComboCostSen, parseDefaultFreeGifts, type ComboSlots } from '../shared';
+import { canonicalizeComboModulesForStorage, comboSlotsKey, sofaComboCostSen, parseDefaultFreeGifts, comboChargedPrices, type ComboSlots } from '../shared';
 import { loadModelSofaModuleCosts } from '../lib/mfg-pricing-recompute';
 import { canWriteScmConfig } from '../lib/houzs-perms';
 import { todayMyt } from '../lib/my-time';
@@ -152,6 +152,15 @@ export function validatePricesByHeight(v: unknown): Record<string, number | null
   }
   return out;
 }
+
+// The all-null guard checks the CHARGED grid (selling over cost), not selling
+// alone: selling_prices_by_height is NOT NULL DEFAULT '{}', so every combo
+// keyed on the Backend cost editor carries selling = {} and charges its cost.
+// Checking selling alone refused every cost edit of such a row (HC-0178).
+export const comboHasChargedPrice = (
+  selling: Record<string, number | null> | null | undefined,
+  cost: Record<string, number | null> | null | undefined,
+): boolean => Object.values(comboChargedPrices(selling, cost)).some((v) => v !== null);
 
 // ── GET / ──────────────────────────────────────────────────────────────
 // List currently-active combos (one row per scope tuple — the row with the
@@ -545,12 +554,11 @@ sofaCombos.post('/', async (c) => {
   const sellingPrices = selling ?? prices;
 
   // Never persist an all-null combo — there must be a price to charge. At least
-  // one height needs a non-null SELLING value. The Create-Combo POS modal always
-  // sends one; this rejects hand-crafted all-null payloads (Phase 5 review). COST
-  // may stay null (auto-detect can miss / Backend overrides later) — only the
-  // charged SELLING side is required.
-  if (!Object.values(sellingPrices).some((v) => v !== null)) {
-    return c.json({ error: 'selling_prices_all_null', message: 'At least one height needs a selling price' }, 400);
+  // one height needs a non-null CHARGED value (selling, else cost). The
+  // Create-Combo POS modal always sends one; this rejects hand-crafted all-null
+  // payloads (Phase 5 review).
+  if (!comboHasChargedPrice(sellingPrices, prices)) {
+    return c.json({ error: 'selling_prices_all_null', message: 'At least one height needs a price' }, 400);
   }
 
   const effectiveFrom = (body.effectiveFrom ?? '').trim();
@@ -670,8 +678,8 @@ export const sofaComboPutHandler = async (c: any) => {
   // persist an all-null combo. An empty / all-null edit would become the newest
   // effective row and match no height in the lookup, silently disabling the
   // combo (build reverts to à-la-carte with no error).
-  if (!Object.values(sellingPrices).some((v) => v !== null)) {
-    return c.json({ error: 'selling_prices_all_null', message: 'At least one height needs a selling price' }, 400);
+  if (!comboHasChargedPrice(sellingPrices, prices)) {
+    return c.json({ error: 'selling_prices_all_null', message: 'At least one height needs a price' }, 400);
   }
 
   // PWP (换购) selling price (Phase 2). Append-only edit: carry the existing PWP
