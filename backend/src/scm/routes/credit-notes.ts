@@ -176,6 +176,12 @@ export const listCreditNotesHandler = async (c: any): Promise<Response> => {
   if (KINDS.has(kind)) q = q.eq('kind', kind);
   if (SIDE_KINDS[side]) q = q.in('kind', [...SIDE_KINDS[side]]);
   if (status === 'DRAFT' || status === 'POSTED' || status === 'CANCELLED') q = q.eq('status', status);
+  /* The books' opening papers apart (owner 2026-10-29: 期初那 85 张放在 "Opening
+     31/08" 分页 — AutoCount's payments not knocked off, kept as supplier credits):
+     opening=only lists them alone, opening=exclude leaves them out, absent both. */
+  const opening = String(c.req.query('opening') ?? '').trim().toLowerCase();
+  if (opening === 'only') q = q.eq('opening', true);
+  else if (opening === 'exclude') q = q.eq('opening', false);
   const { data, error } = await q.order('note_date', { ascending: false }).order('note_number', { ascending: false }).limit(500);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   const numbered = await withInvoiceNumbers(c, (Array.isArray(data) ? data : []) as Row[]);

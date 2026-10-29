@@ -34,6 +34,13 @@ const NOTES: CreditNote[] = [
     note_date: '2026-09-02', total_sen: 200_000, reason: 'Discount for exhibition rental — HOMES LIVING 9-12 JUL KLCC', notes: null, status: 'POSTED', je_no: 'HC-JE-2609-0101',
     created_at: '2026-10-29T00:00:00Z', created_by: 'Chew', posted_at: '2026-10-29T00:00:00Z', cancelled_at: null,
   },
+  /* An opening credit (2026-10-29): AutoCount's payment to HOOKKA never knocked off at 31/08. */
+  {
+    id: 'n5', note_number: 'HC-SCN-2601-010', kind: 'SCN', party_type: 'SUPPLIER', party_code: '400-H003', party_name: 'HOOKKA MANUFACTURING SDN. BHD.',
+    supplier_id: 'sup-h', so_doc_no: null, sales_invoice_id: null, ap_invoice_id: null, purchase_invoice_id: null, source_doc_no: null,
+    note_date: '2026-01-30', total_sen: 2_000_000, reason: 'Opening 31/08 from AutoCount: AutoCount payment not knocked off HPV-2601-188', notes: null, status: 'POSTED', je_no: 'HC-JE-2608-0900',
+    created_at: '2026-10-28T00:00:00Z', created_by: 'Opening import (AutoCount 31/08)', posted_at: '2026-10-28T00:00:00Z', cancelled_at: null, opening: true,
+  },
 ];
 const createMutate = vi.fn(async (body: unknown) => ({ ok: true, note: { ...NOTES[0]!, id: 'n3', note_number: '2990-CN-2609-002', ...(body as object) } }));
 const postMutate = vi.fn(async () => ({ ok: true, jeNo: '2990-JE-2609-0008', status: 'posted' }));
@@ -92,7 +99,7 @@ vi.mock('../../vendor/scm/lib/authed-fetch', async (importOriginal) => ({
 
 vi.mock('../../vendor/scm/lib/credit-note-queries', async (importOriginal) => ({
   ...(await importOriginal() as object),
-  useCreditNotes: (side: string, kind: string, status: string) => { lastList.value = `${side}|${kind}|${status}`; return { data: { rows: NOTES }, isLoading: false, isError: false, error: null }; },
+  useCreditNotes: (side: string, kind: string, status: string, opening: string) => { lastList.value = `${side}|${kind}|${status}|${opening}`; return { data: { rows: NOTES }, isLoading: false, isError: false, error: null }; },
   useCreditNoteDetail: (id: string | null) => ({
     data: id ? { note: NOTES.find((n) => n.id === id)!, lines: LINES, ...(id === 'n2' ? { allocations: ALLOCS, appliedSen: 20_000, leftSen: 30_000 } : {}) } : undefined,
     isLoading: false,
@@ -162,11 +169,11 @@ describe('the Credit & Debit Notes page', () => {
     expect(screen.getByText('Larding Chen')).toBeTruthy();
     expect(screen.getByText('2990-SO-2607-019 · DR-2609-001')).toBeTruthy();
     expect(screen.getByText('2990-JE-2609-0007')).toBeTruthy();
-    expect(lastList.value).toBe('AR|ALL|ALL');
+    expect(lastList.value).toBe('AR|ALL|ALL|all');
     fireEvent.click(screen.getByRole('tab', { name: 'Other debtor CN' }));
-    expect(lastList.value).toBe('AR|OCN|ALL');
+    expect(lastList.value).toBe('AR|OCN|ALL|all');
     fireEvent.change(screen.getByLabelText('Note status'), { target: { value: 'POSTED' } });
-    expect(lastList.value).toBe('AR|OCN|POSTED');
+    expect(lastList.value).toBe('AR|OCN|POSTED|all');
   });
 
   /* Owner 2026-10-28: supplier & other creditor CN / DN 和 customer & other debtor CN / DN 分出来. */
@@ -178,10 +185,24 @@ describe('the Credit & Debit Notes page', () => {
     unmount();
     render(<MemoryRouter><ConfirmProvider><CreditNotes side="AP" /></ConfirmProvider></MemoryRouter>);
     expect(screen.getByRole('heading', { name: 'Supplier & Other Creditor CN / DN' })).toBeTruthy();
-    expect(lastList.value).toBe('AP|ALL|ALL');
-    /* One kind on the page — no kind tabs; the scan is here. */
-    expect(screen.queryByRole('tablist')).toBeNull();
+    /* One kind on the page — no kind tabs; the real notes first, the opening credits on their own tab; the scan is here. */
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Credit notes', 'Opening 31/08']);
+    expect(lastList.value).toBe('AP|ALL|ALL|exclude');
     expect(screen.getByLabelText('Supplier credit note pages')).toBeTruthy();
+  });
+
+  /* Owner 2026-10-29: 期初那 85 张放在 "Opening 31/08" 分页 — AutoCount's payments not knocked off. */
+  test('Money out\'s Opening 31/08 tab lists the opening credits alone; one opens with no Cancel and says where it changes', async () => {
+    render(<MemoryRouter><ConfirmProvider><CreditNotes side="AP" /></ConfirmProvider></MemoryRouter>);
+    fireEvent.click(screen.getByRole('tab', { name: 'Opening 31/08' }));
+    expect(lastList.value).toBe('AP|ALL|ALL|only');
+    expect(screen.getByText(/supplier payments not knocked off at 31\/08/)).toBeTruthy();
+    fireEvent.click(screen.getByText('HC-SCN-2601-010'));
+    const dialog = await screen.findByLabelText('Credit or debit note');
+    expect(within(dialog).getByLabelText('Opening balance').textContent).toContain('changed on Finance › Opening Balance');
+    expect(within(dialog).queryByText('Cancel note')).toBeNull();
+    fireEvent.click(screen.getByRole('tab', { name: 'Credit notes' }));
+    expect(lastList.value).toBe('AP|ALL|ALL|exclude');
   });
 
   test('a note opens to its lines, and a draft posts', async () => {

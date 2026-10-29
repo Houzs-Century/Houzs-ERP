@@ -171,4 +171,23 @@ describe('an other-debtor credit note', () => {
     const ap = await req('/credit-notes?side=AP', 'GET');
     expect((ap.body.rows as Row[]).map((r) => r.kind)).toEqual(['SCN']);
   });
+
+  /* Owner 2026-10-29: the opening's supplier credits (AutoCount payments not knocked
+     off at 31/08) on their own "Opening 31/08" tab, apart from the real notes. */
+  test('opening=exclude leaves the opening papers out, opening=only lists them alone', async () => {
+    const { req, sb } = harness();
+    await req('/credit-notes', 'POST', { kind: 'SCN', supplierId: 'sup-d', noteDate: '2026-09-21', lines: [{ description: 'Rebate', amountSen: 10_000 }] });
+    sb.tables.acc_credit_notes!.push({
+      id: 'n-open', company_id: CO, note_number: 'HC-SCN-2601-010', kind: 'SCN', party_type: 'SUPPLIER', supplier_id: 'sup-d',
+      note_date: '2026-01-30', total_sen: 2_000_000, status: 'POSTED', opening: true,
+      reason: 'Opening 31/08 from AutoCount: AutoCount payment not knocked off HPV-2601-188',
+    });
+    for (const n of sb.tables.acc_credit_notes!) if (n.opening === undefined) n.opening = false;
+    const notes = await req('/credit-notes?side=AP&opening=exclude', 'GET');
+    expect((notes.body.rows as Row[]).map((r) => r.opening)).toEqual([false]);
+    const opening = await req('/credit-notes?side=AP&opening=only', 'GET');
+    expect((opening.body.rows as Row[]).map((r) => r.note_number)).toEqual(['HC-SCN-2601-010']);
+    const both = await req('/credit-notes?side=AP', 'GET');
+    expect(both.body.rows as Row[]).toHaveLength(2);
+  });
 });
