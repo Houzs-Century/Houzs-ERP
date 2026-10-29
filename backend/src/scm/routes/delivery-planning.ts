@@ -1969,15 +1969,19 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
   let doId: string | null = null;
   /* COMPANY GATE for the whole handler: everything below keys off soDocNo /
      doId, both taken from the caller-supplied :id. Resolve the document ONCE,
-     scoped, and refuse before any write. */
+     scoped, and refuse before any write.
+     ALLOWED companies, not the active one (HC-0180): the board lists every
+     granted company's orders (MULTICOMPANY-MODULE-MAP rule 3), so pinning the
+     active company 404'd "That item could no longer be found" on a 2990 row
+     picked while switched to Houzs. Same widening as GET /:docNo/lines. */
   if (type === 'so') {
-    const { data: own, error: ownErr } = await scopeToCompany(
+    const { data: own, error: ownErr } = await scopeToAllowedCompanies(
       sb.from('mfg_sales_orders').select('doc_no').eq('doc_no', id), c,
     ).maybeSingle();
     if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
     if (!own) return c.json({ error: 'not_found' }, 404);
   } else {
-    const { data: own, error: ownErr } = await scopeToCompany(
+    const { data: own, error: ownErr } = await scopeToAllowedCompanies(
       sb.from('delivery_orders').select('id').eq('id', id), c,
     ).maybeSingle();
     if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
@@ -1987,7 +1991,7 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
   if (type === 'so') {
     soDocNo = id;
     if (Object.keys(doUpdates).length > 0) {
-      const { data: doRows, error: doRowsErr } = await scopeToCompany(sb.from('delivery_orders')
+      const { data: doRows, error: doRowsErr } = await scopeToAllowedCompanies(sb.from('delivery_orders')
         .select('id, status').eq('so_doc_no', id), c);
       if (doRowsErr) return c.json({ error: 'lookup_failed', reason: doRowsErr.message }, 500);
       const live = ((doRows ?? []) as Array<{ id: string; status: string | null }>)
@@ -2116,14 +2120,7 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
          in a company the caller holds no grant for; nothing else re-checks.
          Scoped again HERE and not only at the gate above, because doId can come
          from the so_doc_no lookup and a scoped read never protects the write
-         that follows it (MULTICOMPANY-MODULE-MAP rule 1).
-
-         UNSETTLED, left visible: the gate at the top of this handler is
-         scopeToCompany (ACTIVE company), NARROWER than this line, so the
-         widening cannot admit a second company today. But
-         MULTICOMPANY-MODULE-MAP.md rule 3 says Delivery Planning is one unified
-         board across companies, which is what this line was written for.
-         Whoever settles it should change the GATE, not this predicate. */
+         that follows it (MULTICOMPANY-MODULE-MAP rule 1). */
       const { error } = await scopeToAllowedCompanies(sb.from('delivery_orders').update(doUpdates).eq('id', doId), c);
       if (error) {
         /* DEAD BRANCH, here and at every other 42501 site in this file. 42501 is
