@@ -11,7 +11,8 @@
 //   • ensure heals a payment recorded before the module existed;
 //   • the receipt follows its payment (owner 2026-10-29: 收据跟着付款改或作废):
 //     a DRAFT is rewritten in place and keeps its number; a FORMAL one is
-//     CANCELLED (kept, why and who on it, its successor named) and re-issued —
+//     CANCELLED when its amount or day moved (kept, why and who on it, its
+//     successor named) and re-issued —
 //     formal at once on its own channel when the method is unchanged, born as a
 //     new payment's receipt when it changed; a deleted payment's draft goes and
 //     its formal receipt is cancelled; a cancelled receipt is nobody's — the
@@ -215,10 +216,18 @@ describe('the receipt follows its payment (owner 2026-10-29)', () => {
     expect(sb.tables.acc_official_receipts.map((x) => x.status)).toEqual(['CANCELLED', 'FORMAL']);
   });
 
-  test('a method change: the replacement is born as the new method\'s receipt — a transfer waits to be confirmed', async () => {
+  test('a method re-filed alone leaves a formal receipt standing — the same money on the same day', async () => {
     const sb = await formalCard();
-    const r = await edit(sb, { amountSen: 100_000, paidAt: '2026-07-05', method: 'transfer' });
+    expect(await edit(sb, { amountSen: 100_000, paidAt: '2026-07-05', method: 'transfer' })).toEqual({ ok: true, touch: null });
+    expect(sb.tables.acc_official_receipts).toHaveLength(1);
+    expect(sb.tables.acc_official_receipts[0]).toMatchObject({ status: 'FORMAL', method: 'merchant', amount_sen: 100_000 });
+  });
+
+  test('the amount and the method both moved: the replacement is born as the new method\'s receipt — a transfer waits to be confirmed', async () => {
+    const sb = await formalCard();
+    const r = await edit(sb, { amountSen: 90_000, paidAt: '2026-07-05', method: 'transfer' });
     expect(r).toMatchObject({ ok: true, touch: { from: `2990-MOR-${yymm}-001`, draft: false } });
+    expect(sb.tables.acc_official_receipts[0]!.cancel_reason).toBe(`${WHY}: amount RM 1,000.00 → RM 900.00, method merchant → transfer`);
     /* A draft number — which one is the counter's business (production's RPC never re-issues). */
     expect(r.ok && r.touch?.to).toMatch(new RegExp(`^2990-DraftOR-${yymm}-\\d{3}$`));
     expect(sb.tables.acc_official_receipts.map((x) => [x.status, x.method])).toEqual([['CANCELLED', 'merchant'], ['DRAFT', 'transfer']]);
