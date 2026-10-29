@@ -35,6 +35,47 @@ try {
   for (const d of dos) if (/singapore|\bS\(\d{6}\)|\bSG\b/i.test(text(d))) show('SG?', d);
   for (const d of dos) if (!String(d.state ?? '').trim()) show('NO STATE', d);
 
+  /* What the sales order says for the DOs with no state. */
+  const soCols = (await sql`SELECT column_name FROM information_schema.columns WHERE table_schema = 'scm' AND table_name = 'mfg_sales_orders' ORDER BY ordinal_position`).map((x) => x.column_name);
+  const soAddr = soCols.filter((x) => /addr|address|city|state|postcode|country|region|branch|outlet|currency/i.test(x) && !/_at$|_id$/i.test(x));
+  out(`mfg_sales_orders address-like columns: ${soAddr.join(', ')}`);
+  const noState = dos.filter((d) => !String(d.state ?? '').trim()).map((d) => String(d.so_doc_no ?? '')).filter(Boolean);
+  if (soAddr.length > 0 && noState.length > 0) {
+    for (const o of await sql.unsafe(`SELECT doc_no, ${soAddr.join(', ')} FROM scm.mfg_sales_orders WHERE company_id = $1 AND doc_no = ANY($2)`, [CO, noState])) {
+      out(`SO ${o.doc_no}: ${cut(soAddr.map((k) => o[k]).filter((v) => v != null && v !== '').join(' | '), 160)}`);
+    }
+  }
+
+  /* The month by the DO's own date, a Singapore address read from its lines too. */
+  const sgClue = (d) => /singapore/i.test(text(d)) || /(^|\D)\d{6}(\D|$)/.test(text(d)) || /#\s?\d{1,2}-\d{2,4}/.test(text(d));
+  const regionBy = (d) => {
+    const r = regionOfDo({ state: d.state, city: d.city, postcode: d.postcode });
+    return r.noState && sgClue(d) ? 'SG' : r.code;
+  };
+  const byDoDate = await sql.unsafe(
+    `SELECT ${sel}, do_date::text AS do_day FROM scm.delivery_orders WHERE company_id = $1 AND status <> 'CANCELLED' AND do_date BETWEEN $2::date AND $3::date ORDER BY id`,
+    [CO, FROM, TO],
+  );
+  const lineSums = await sql`
+    SELECT i.delivery_order_id::text AS id, sum(i.line_total_sen) FILTER (WHERE i.item_code = 'TRANSPORTATION CHARGES')::bigint AS tr,
+           sum(i.line_total_sen)::bigint AS total
+      FROM scm.delivery_order_items i JOIN scm.delivery_orders d ON d.id = i.delivery_order_id
+     WHERE d.company_id = ${CO} AND d.status <> 'CANCELLED'
+       AND (d.do_date BETWEEN ${FROM}::date AND ${TO}::date OR coalesce(d.customer_delivery_date, d.do_date) BETWEEN ${FROM}::date AND ${TO}::date)
+     GROUP BY 1`;
+  const sums = new Map(lineSums.map((x) => [x.id, x]));
+  for (const [tag, list] of [['by delivery day', dos], ['by DO date', byDoDate]]) {
+    const agg = new Map();
+    for (const d of list) {
+      const k = regionBy(d);
+      const a = agg.get(k) ?? { n: 0, value: 0, tr: 0 };
+      const s = sums.get(String(d.id));
+      a.n += 1; a.value += Number(s?.total ?? 0); a.tr += Number(s?.tr ?? 0);
+      agg.set(k, a);
+    }
+    for (const [k, a] of [...agg].sort()) out(`${tag} ${k}: ${a.n} DOs, value ${rm(a.value)}, transport lines ${rm(a.tr)}`);
+  }
+
   const tr = await sql`
     SELECT d.do_number, i.item_code, i.line_total_sen
       FROM scm.delivery_order_items i JOIN scm.delivery_orders d ON d.id = i.delivery_order_id
@@ -47,13 +88,13 @@ try {
   }
 
   for (const r of await sql`
-    SELECT 'AP' AS src, inv.invoice_number AS doc, inv.invoice_date::text AS day, inv.status, l.debit_account_code AS acc, l.description, l.amount_sen AS sen
+    SELECT 'AP' AS src, inv.invoice_number AS doc, inv.invoice_date::text AS day, inv.status::text AS status, l.debit_account_code AS acc, l.description, l.amount_sen AS sen
       FROM scm.ap_invoice_lines l JOIN scm.ap_invoices inv ON inv.id = l.invoice_id
      WHERE inv.company_id = ${CO} AND inv.invoice_date BETWEEN ${FROM}::date AND ${TO}::date AND l.debit_account_code ~ '-(U0[0-9]{2}|I002)$'
     UNION ALL
-    SELECT 'PV', pv.pv_number, pv.pv_date::text, pv.status, l.debit_account_code, l.description, l.amount_sen
+    SELECT 'PV', pv.pv_number, pv.voucher_date::text, pv.status::text, l.debit_account_code, l.description, l.amount_sen
       FROM scm.payment_voucher_lines l JOIN scm.payment_vouchers pv ON pv.id = l.pv_id
-     WHERE pv.company_id = ${CO} AND pv.pv_date BETWEEN ${FROM}::date AND ${TO}::date AND l.debit_account_code ~ '-(U0[0-9]{2}|I002)$'
+     WHERE pv.company_id = ${CO} AND pv.voucher_date BETWEEN ${FROM}::date AND ${TO}::date AND l.debit_account_code ~ '-(U0[0-9]{2}|I002)$'
      ORDER BY 5, 3`) {
     out(`${r.src} ${r.acc} ${r.doc} ${r.day} ${r.status}: ${cut(r.description, 60)} ${rm(r.sen)}`);
   }
