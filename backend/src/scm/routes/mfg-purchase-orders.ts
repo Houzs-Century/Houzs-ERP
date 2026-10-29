@@ -1912,7 +1912,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
   )];
   const maintBySupplier = new Map<string, MaintenanceConfig | null>();
   await Promise.all(supplierIdsInvolved.map(async (sid) => {
-    const { config } = await resolveMaintenanceConfigForSupplier(supabase, sid);
+    const { config } = await resolveMaintenanceConfigForSupplier(supabase, sid, activeCompanyId(c) ?? null);
     maintBySupplier.set(sid, config);
   }));
 
@@ -3809,7 +3809,7 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
       if (!bindByCode.has(b.item_code)) bindByCode.set(b.item_code, b);
     }
   }
-  const { config: maintCfg } = await resolveMaintenanceConfigForSupplier(sb, po.supplier_id as string);
+  const { config: maintCfg } = await resolveMaintenanceConfigForSupplier(sb, po.supplier_id as string, activeCompanyId(c) ?? null);
   const fabCodes = [...new Set(
     toInsert
       .map((r) => String((r.variants as Record<string, unknown> | null)?.fabricCode ?? ''))

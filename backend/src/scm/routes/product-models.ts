@@ -815,16 +815,17 @@ export const generateModelSkusHandler = async (c: Context<{ Bindings: Env; Varia
   // load fails we fall back to the static SIZE_INFO map below.
   let sizeOverrides: Record<string, { label?: string; dimensions?: string }> | null = null;
   try {
-    const { data: cfgRow } = await supabase
+    const { data: cfgRow } = await scopeToCompanyId(supabase
       // Audit (ported from 2990 3e288239) — was `maintenance_config`, a table that
       // does not exist (real table is maintenance_config_history, seeded by
       // mig 0022); the dead lookup meant Maintenance size-label relabels silently
       // never reached generated SKU names.
       .from('maintenance_config_history')
-      .select('config')
+      .select('config'), co.companyId)
       .eq('scope', 'master')
       .lte('effective_from', todayMyt())
       .order('effective_from', { ascending: false })
+      .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
     const blob = cfgRow?.config as { sizeLabels?: typeof sizeOverrides } | undefined;

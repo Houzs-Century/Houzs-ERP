@@ -1603,6 +1603,7 @@ export async function reviseBoundPo(
       const variants = line.variants;
       const unitPriceSen = await deriveMfgPoUnitCost(sb, {
         supplierId: po.supplier_id ?? '',
+        companyId:  po.company_id,
         itemCode:   line.item_code ?? '',
         itemGroup,
         variants:   variants ?? null,
