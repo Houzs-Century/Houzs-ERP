@@ -23,7 +23,7 @@ export function ItemSearch({ items, initial, onPick, onClose }: { items: readonl
           className="kbd-input grow"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Barcode, item code or name (2+ characters)"
+          placeholder="Barcode, item code or name; leave empty to see every item"
           inputMode={manual ? "numeric" : "text"}
           onKeyDown={(e) => {
             if (e.key === "ArrowDown") { e.preventDefault(); setSel((s) => Math.min(rows.length - 1, s + 1)); }
@@ -34,7 +34,7 @@ export function ItemSearch({ items, initial, onPick, onClose }: { items: readonl
         <button type="button" className="btn" onClick={() => setManual((v) => !v)}>{manual ? "Keyboard" : "Enter barcode manually"}</button>
       </div>
       <div className="search-rows">
-        {rows.length === 0 && <div className="muted" style={{ padding: 12 }}>{q.trim().length < 2 ? "Type at least 2 characters." : "No item matches."}</div>}
+        {rows.length === 0 && <div className="muted" style={{ padding: 12 }}>{q.trim().length === 0 ? "No items on this device yet. Refresh catalog in Settings." : q.trim().length < 2 ? "Type at least 2 characters, or clear the box to see every item." : "No item matches."}</div>}
         {rows.map((i, idx) => (
           <button key={i.id} type="button" className={`search-row${idx === sel ? " sel" : ""}${i.stock_qty <= 0 ? " out" : ""}`} onClick={() => pick(i)} onMouseEnter={() => setSel(idx)}>
             <span className="grow">
