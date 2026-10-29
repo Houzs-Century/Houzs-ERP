@@ -36,6 +36,7 @@ import { nextPoLineNo } from './po-line-order';
 import { supplierSkuFor } from './po-line-supplier-sku';
 import { skuCategoryResolver, lineIdentityFields } from './sku-category';
 import { buildVariantSummary } from '../shared';
+import { validateItemCodes, unknownItemCodeResponse } from './validate-item-codes';
 import { retiredLineOf, type AcRetiredLine } from './autocount-outbox';
 
 /* The routable field atoms a PO amendment moves — lines + header. Mirrors the
@@ -66,6 +67,26 @@ function poAmendmentFieldKinds(
 type Sb = { from: (t: string) => any };
 
 export { ReceivedFloorError };
+
+/** HC-0153: an amendment ADD names a deactivated SKU; carries the 409 body. */
+export class InactiveSkuError extends Error {
+  constructor(public body: ReturnType<typeof unknownItemCodeResponse>) { super(body.message); this.name = 'InactiveSkuError'; }
+}
+
+/** Throws InactiveSkuError when an ADD line (mfg_product) names an inactive SKU.
+ *  Only ADD is a new pick; SPEC/QTY/PRICE lines on old docs stay editable. */
+export async function assertAddedSkusActive(
+  sb: Sb,
+  lines: ReadonlyArray<{ change_type?: unknown; new_item_code?: unknown; new_variants?: Record<string, unknown> | null }>,
+  companyId: number | null,
+): Promise<void> {
+  const codes = lines
+    .filter((l) => String(l.change_type ?? '').toUpperCase() === 'ADD'
+      && String(l.new_variants?.materialKind ?? 'mfg_product') === 'mfg_product')
+    .map((l) => String(l.new_item_code ?? ''));
+  const check = await validateItemCodes(sb, codes, companyId, { requireActive: true });
+  if (!check.ok && check.inactive.length > 0) throw new InactiveSkuError(unknownItemCodeResponse([], check.inactive));
+}
 
 type PoAmendmentLine = {
   id: string;
@@ -168,6 +189,9 @@ export async function applyPoAmendment(
       throw new ReceivedFloorError(String(diff.purchase_order_item_id), Number(diff.new_qty), received);
     }
   }
+
+  // (2b) HC-0153: an ADD of a deactivated SKU aborts before any write.
+  await assertAddedSkusActive(sb, amendmentLines, companyId);
 
   // (3) Snapshot the CURRENT PO before touching a line. Returns the next revision.
   const nextRevision = await snapshotPo(sb, poId, amendmentId, userId, c);

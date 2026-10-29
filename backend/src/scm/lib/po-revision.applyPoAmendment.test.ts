@@ -10,7 +10,7 @@
 //   • a surviving line revised below its received qty ABORTS (received floor);
 //   • one AMENDMENT_PO_APPROVED row lands on entity_audit_log.
 import { describe, it, expect } from 'vitest';
-import { applyPoAmendment, ReceivedFloorError } from './po-revision';
+import { applyPoAmendment, InactiveSkuError, ReceivedFloorError } from './po-revision';
 import { parsePgrestInList } from './pgrest-in-list';
 
 type Row = Record<string, any>;
@@ -418,5 +418,34 @@ describe('applyPoAmendment — a header supplier change decides whose code a mov
     ];
     await applyPoAmendment(fakeSb(store), AMD, 'user-1');
     expect(store.purchase_order_items.find((i) => i.id === 'POI-1')!.supplier_sku).toBe('OTHER-CNR');
+  });
+});
+
+describe('applyPoAmendment — HC-0153 inactive SKU on ADD', () => {
+  const addLine = (code: string) => ({ id: 'AL-1', amendment_id: AMD, purchase_order_item_id: null, change_type: 'ADD', new_qty: 1, new_unit_price_sen: 100, new_item_code: code, new_material_name: code, new_variants: null, new_delivery_date: null, old_snapshot: null });
+  const catalogue = () => [
+    { id: 'p1', company_id: 1, code: 'OLD-SKU', status: 'INACTIVE', model: { active: true } },
+    { id: 'p2', company_id: 1, code: 'LIVE-SKU', status: 'ACTIVE', model: { active: true } },
+  ];
+
+  it('refuses an ADD of an INACTIVE SKU before any write', async () => {
+    const store = baseStore();
+    store.mfg_products = catalogue();
+    store.po_amendment_lines = [addLine('OLD-SKU')];
+    await expect(applyPoAmendment(fakeSb(store), AMD, 'user-1')).rejects.toBeInstanceOf(InactiveSkuError);
+    expect(store.purchase_order_items).toHaveLength(2);
+    expect(store.po_revisions).toHaveLength(0);
+  });
+
+  it('still adds an ACTIVE SKU, and a QTY change on a line whose SKU is inactive', async () => {
+    const store = baseStore();
+    store.mfg_products = [...catalogue(), { id: 'p3', company_id: 1, code: 'BF-1', status: 'INACTIVE', model: { active: true } }];
+    store.po_amendment_lines = [
+      addLine('LIVE-SKU'),
+      { ...addLine('x'), id: 'AL-2', purchase_order_item_id: 'POI-1', change_type: 'QTY', new_item_code: null, new_qty: 4 },
+    ];
+    const res = await applyPoAmendment(fakeSb(store), AMD, 'user-1');
+    expect(res.linesAdded).toBe(1);
+    expect(store.purchase_order_items.find((i) => i.id === 'POI-1')!.qty).toBe(4);
   });
 });
