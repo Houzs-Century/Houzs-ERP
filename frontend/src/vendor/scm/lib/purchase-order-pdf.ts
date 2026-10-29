@@ -310,6 +310,7 @@ async function renderPurchaseOrderInto(
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 10; // tighter left/right than the SO's 14 (owner 2026-06-19)
   const docTitle = opts?.docTitle ?? 'PURCHASE ORDER';
+  const firstPage = doc.getNumberOfPages();
 
   await ensureBrandingForActiveCompany();
 
@@ -909,6 +910,23 @@ async function renderPurchaseOrderInto(
   doc.text(`Authorised Signature (${COMPANY.name})`, margin + 2,            lastY + 21);
   doc.text('Supplier Acknowledgement',               margin + sigW + 8 + 2, lastY + 21);
   lastY += 28;
+
+  /* 2990-0028 (Sim 2026-10-29): a cancelled PO's paper must read as void, on
+     every one of its pages, so a re-sent copy cannot pass for a live order. */
+  if (header.status === 'CANCELLED') {
+    const pageH = doc.internal.pageSize.getHeight();
+    for (let p = firstPage; p <= doc.getNumberOfPages(); p += 1) {
+      doc.setPage(p);
+      doc.saveGraphicsState();
+      doc.setGState(doc.GState({ opacity: 0.14 }));
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(72);
+      doc.setTextColor(180, 30, 30);
+      doc.text('CANCELLED', pageW / 2, pageH / 2, { align: 'center', angle: 30 });
+      doc.restoreGraphicsState();
+      doc.setTextColor(0, 0, 0);
+    }
+  }
 
   return { supplierName: s.name ?? 'supplier' };
 }
