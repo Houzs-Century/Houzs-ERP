@@ -16,7 +16,7 @@ import { resolveCreditorForCase } from "./stockItems";
 import { getActiveStaffToken } from "./caseTracking";
 import { getSupabaseService, isSupabaseConfigured } from "../db/supabase";
 import { assrVisibilityPredicateSql } from "./assrVisibility";
-import { attachOrderPurchaseOrders, itemsWithLivePo, poKey } from "./assrOrderPos";
+import { attachOrderPosAndFill } from "./assrCreditorFill";
 import { attachOrderDeliveryDates } from "./assrOrderDos";
 
 // ── Types ─────────────────────────────────────────────────────
@@ -804,7 +804,6 @@ export async function getAssrDetail(env: Env, id: number) {
   // whose hand-entered delivery_order was never set — which is nearly
   // all of them.
   await Promise.all([attachDeliveryOrders(env, [caseRow]).then(() => attachOrderDeliveryDates(env, [caseRow])), attachOrderPos(env, [caseRow])]);
-  await fillCreditorFromNewPo(env, [caseRow as Record<string, any>]);
 
   const items = await env.DB.prepare(
     `SELECT * FROM assr_items WHERE assr_id = ? ORDER BY id`
@@ -1388,9 +1387,7 @@ export async function patchAssrCase(
   // When the case's item_code changes, re-resolve the creditor so the
   // link to the procurement supplier stays accurate. Awaited (a floating
   // promise dies with the response); a failed lookup shouldn't fail the PATCH.
-  // A corrected SO number points at a different order, so re-resolve then too.
-  const docNoChanged = "doc_no" in body && (beforeSnapshot?.doc_no ?? null) !== body.doc_no;
-  if ("item_code" in body || docNoChanged) {
+  if ("item_code" in body || ("doc_no" in body && (beforeSnapshot?.doc_no ?? null) !== body.doc_no)) {
     await resolveCreditorForCase(env, id, "item_code" in body ? body.item_code ?? null : beforeSnapshot?.item_code ?? null).catch((e) =>
       console.warn(`[assr.patch] creditor resolve failed for case=${id}:`, e?.message || e)
     );
@@ -2055,7 +2052,6 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
 
   const data = rows.results ?? [];
   await Promise.all([attachDeliveryOrders(env, data as any[]), attachOrderPos(env, data)]);
-  await fillCreditorFromNewPo(env, data as Array<Record<string, any>>);
 
   return {
     data,
@@ -2065,32 +2061,9 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
   };
 }
 
-/** HC-0130: a PO raised after the case was created never reached the Supplier.
- *  Only blank, non-manual rows with a live PO for THEIR OWN item (order_pos is
- *  any PO on the SO, so it is not enough) are resolved; once filled, no more reads. */
-export async function fillCreditorFromNewPo(env: Env, rows: Array<Record<string, any>>) {
-  let todo = rows.filter((r) => !r.creditor_code && r.creditor_source !== "manual" && r.item_code && r.order_pos?.length);
-  if (todo.length === 0 || !isSupabaseConfigured(env)) return;
-  const withPo = await itemsWithLivePo(getSupabaseService(env), todo);
-  todo = todo.filter((r) => withPo.has(poKey(r.company_id, r.doc_no, r.item_code)));
-  await Promise.all(todo.map(async (r) => {
-    const { code } = await resolveCreditorForCase(env, r.id, r.item_code, { onlyIfBlank: true }).catch(() => ({ code: null }));
-    if (!code) return;
-    const cr = await env.DB.prepare(
-      `SELECT c.creditor_code, c.creditor_source, cr.company_name, cr.email, cr.phone1
-         FROM assr_cases c LEFT JOIN creditors cr ON cr.creditor_code = c.creditor_code WHERE c.id = ?`
-    ).bind(r.id).first<any>();
-    r.creditor_code = cr?.creditor_code ?? code;
-    r.creditor_source = cr?.creditor_source ?? null;
-    r.creditor_name = cr?.company_name ?? null;
-    r.creditor_email = cr?.email ?? null;
-    r.creditor_phone = cr?.phone1 ?? null;
-  }));
-}
-
 /** `order_pos` — see services/assrOrderPos.ts. No scm in the D1 test env. */
 async function attachOrderPos(env: Env, rows: Array<Record<string, unknown>>) {
-  if (isSupabaseConfigured(env)) await attachOrderPurchaseOrders(getSupabaseService(env), rows);
+  if (isSupabaseConfigured(env)) await attachOrderPosAndFill(env, rows);
 }
 
 /** Attach live DO numbers as `do_numbers` on each row. The case table's own

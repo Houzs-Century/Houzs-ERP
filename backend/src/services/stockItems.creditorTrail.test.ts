@@ -19,7 +19,7 @@ vi.mock('./autocount', () => ({
 }));
 
 import { resolveCreditorForCase, runStockItemsRefresh } from './stockItems';
-import { fillCreditorFromNewPo } from './assr';
+import { fillCreditorFromNewPo } from './assrCreditorFill';
 import type { Env } from '../types';
 
 const ACTIVITY_COLS = new Set([
