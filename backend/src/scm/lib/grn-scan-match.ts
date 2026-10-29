@@ -556,7 +556,7 @@ const joinedBase = (s: string | null | undefined): Map<string, string> =>
 export function nameMatchItem(printed: string | null | undefined, poLines: OpenPoLine[]): string | null {
   const row = nameWords(printed);
   if (row.length === 0) return null;
-  const rowBases = new Set(joinedBase(printed).values());
+  const toks = (printed ?? '').toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
   const items = [...new Set(poLines.map((l) => l.itemCode))];
   const pick = (keepGroup: boolean): string | null => {
     const parts = new Map(items.map((ic) => {
@@ -574,8 +574,8 @@ export function nameMatchItem(printed: string | null | undefined, poLines: OpenP
       const model = [...mine.words].filter((w) => items.every((o) => o === ic || !parts.get(o)!.words.has(w)))
         // a suffix word only tells items apart while another item has the base without it
         .filter((w) => !mine.bases.has(w) || items.some((o) => o !== ic && parts.get(o)!.words.has(mine.bases.get(w)!)));
-      // a row printing another suffix of the same base ("FLEXICARE-C" for the -S item) is not this item
-      const clash = [...mine.bases].some(([w, base]) => rowBases.has(base) && !row.includes(w));
+      // a row printing another suffix after the base ("FLEXICARE-C" or "FLEXICARE C" for the -S item) is not this item
+      const clash = [...mine.bases].some(([w, base]) => toks.some((t, i) => t === base && (toks[i + 1] ?? '').length >= 1 && toks[i + 1].length <= 2 && base + toks[i + 1] !== w));
       return !clash && model.length > 0 && model.every((w) => row.some((r) => r.startsWith(w)));
     });
     return hits.length === 1 ? hits[0] : null;
