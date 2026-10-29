@@ -18,6 +18,9 @@ describe("device sales report", () => {
     expect(rangeDays({ kind: "today" }, ev, "2026-10-14T17:30:00Z")).toMatchObject({ from: "2026-10-15", to: "2026-10-15" });
     expect(rangeDays({ kind: "date", date: "2026-10-12" }, ev, "2026-10-14T06:00:00Z")).toMatchObject({ from: "2026-10-12", to: "2026-10-12" });
     expect(rangeDays({ kind: "event" }, ev, "2026-10-14T06:00:00Z")).toMatchObject({ from: "2026-10-10", to: "2026-10-20" });
+    expect(rangeDays({ kind: "range", from: "2026-10-12", to: "2026-10-14" }, ev, "2026-10-14T06:00:00Z")).toEqual({ from: "2026-10-12", to: "2026-10-14", label: "2026-10-12 to 2026-10-14" });
+    expect(rangeDays({ kind: "range", from: "2026-10-14", to: "2026-10-12" }, ev, "2026-10-14T06:00:00Z")).toMatchObject({ from: "2026-10-12", to: "2026-10-14" });
+    expect(rangeDays({ kind: "range", from: "2026-10-12", to: "2026-10-12" }, ev, "2026-10-14T06:00:00Z").label).toBe("2026-10-12");
     expect(inRange({ sold_at: "2026-10-14T17:30:00Z" }, { from: "2026-10-15", to: "2026-10-15" })).toBe(true);
     expect(inRange({ sold_at: "2026-10-14T15:30:00Z" }, { from: "2026-10-15", to: "2026-10-15" })).toBe(false);
   });

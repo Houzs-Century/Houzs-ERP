@@ -162,7 +162,7 @@ page, and the POS Admin menu. This guide carries only what is built.
   Excel sheets and the printable page all come from `reportRows`, so the
   four agree column for column.
 - Device Sales report (layout P13, Ctrl+T, `pos/src/sell/Report.tsx`, rules
-  `pos/src/report.ts`): Today / Pick date / Full event over the local bills
+  `pos/src/report.ts`): Today / Pick date / From-To / Full event over the local bills
   (offline); All terminals (supervisor PIN) asks
   `GET /api/pos-device/report?from&to` for the event's synced bills. Print
   daily report = thermal Z-report (`zReportLines`, re-printable any time,
