@@ -1767,7 +1767,7 @@ export function MobileNewSO({
       .map((k) => JSON.stringify(k) + ":" + canonJson((o as Record<string, unknown>)[k]))
       .join(",") + "}";
   };
-  const lineChanged = (l: LineItem, snap: SoItem): boolean => {
+  const lineChanged = (l: LineItem, snap: SoItem): boolean => { if (frozenItemIds.has(snap.id)) return false; // read-only on screen: any seed-vs-stored gap (an imported remark in variants) is no edit, and a PATCH 409s (HC-0159)
     if (l.itemCode !== (snap.item_code ?? "")) return true;
     if ((l.itemGroup || "others") !== ((snap.item_group ?? "others").toLowerCase())) return true;
     if ((num(l.qty) || 1) !== (snap.qty ?? 1)) return true;
