@@ -45,6 +45,8 @@ const extractRequestAsync = vi.fn(async (_id: unknown) => ({ bills: [{
 }] }));
 /* The detail's status — flipped by tests: a DRAFT may lose a file and edits plainly, a POSTED bill keeps files and re-posts on edit. */
 let detailStatus = 'DRAFT';
+/* What the list was asked for — kind and docKind (the supplier debit notes, 2026-10-28). */
+const lastApList = { value: '' };
 
 const ROWS = [
   { kind: 'API', id: 'api-1', invoiceNumber: '2990-API-2609-001', supplierId: 'sup-h', supplierCode: '405-H001', supplierName: 'HOUZS VENTURE HOLDING SDN BHD', supplierInvoiceRef: 'HVH-0912', description: 'Rent September', invoiceDate: '2026-09-01', dueDate: '2026-09-30', currency: 'MYR', totalSen: 420_000, paidSen: 0, outstandingSen: 420_000, status: 'DRAFT' },
@@ -60,7 +62,7 @@ vi.mock('../../vendor/scm/lib/official-doc-queries', async (importOriginal) => (
   useUploadOfficialDoc: () => ({ mutateAsync: uploadOfficialAsync, isPending: false }),
 }));
 vi.mock('../../vendor/scm/lib/ap-invoice-queries', () => ({
-  useApInvoices: () => ({ data: { rows: ROWS }, isLoading: false, isError: false, error: null }),
+  useApInvoices: (kind?: string, docKind?: string) => { lastApList.value = `${kind ?? ''}|${docKind ?? ''}`; return { data: { rows: ROWS }, isLoading: false, isError: false, error: null }; },
   useApInvoiceDetail: (id: string | null) => ({ data: id ? {
     invoice: { id: 'api-1', invoice_number: '2990-API-2609-001', supplier_id: 'sup-h', supplier_invoice_ref: 'HVH-0912', invoice_date: '2026-09-01', due_date: null, currency: 'MYR', total_sen: 420_000, paid_sen: 0, status: detailStatus, notes: 'Rent September', posted_at: null, posted_by: null },
     lines: [{ id: 'l1', line_no: 1, description: 'Rent Sept', debit_account_code: '900-A001', amount_sen: 400_000 }, { id: 'l2', line_no: 2, description: null, debit_account_code: '900-A002', amount_sen: 20_000 }],
@@ -509,5 +511,35 @@ describe('the same bill already entered', () => {
     const form = screen.getAllByRole('dialog')[1]!;
     expect(within(form).queryByRole('alert', { name: 'Same bill elsewhere' })).toBeNull();
     expect(billMatchAsks.at(-1)).toEqual(['HVH-0912', '2026-09-01', null, 'api-1']);
+  });
+});
+
+/* Supplier debit notes (owner 2026-10-28: Supplier & Other Creditor CN / DN — 再加 supplier DN):
+   this page narrowed to them, shown inside the CN / DN page's Debit notes tab. */
+describe('the supplier debit notes', () => {
+  test('docKind="DN" asks for the debit notes alone, has no page header, and New debit note raises one as a DN', async () => {
+    createAsync.mockClear();
+    render(<MemoryRouter><ApInvoices docKind="DN" /></MemoryRouter>);
+    expect(lastApList.value).toBe('API|DN');
+    expect(screen.queryByText('New AP invoice')).toBeNull();
+    expect(screen.getByText('Supplier debit notes — we owe the supplier more')).toBeTruthy();
+    fireEvent.click(screen.getByText('New debit note'));
+    const d = dialog();
+    expect(within(d).getAllByText(/New supplier debit note/).length).toBeGreaterThan(0);
+    fireEvent.focus(within(d).getByLabelText('AP invoice supplier'));
+    fireEvent.mouseDown(screen.getByText('405-H001 · HOUZS VENTURE HOLDING SDN BHD'));
+    fireEvent.change(within(d).getByLabelText('Supplier invoice ref'), { target: { value: 'DN-HVH-77' } });
+    const accountBox = within(d).getAllByRole('combobox').find((el) => (el as HTMLInputElement).placeholder.includes('account this line'))!;
+    fireEvent.focus(accountBox);
+    fireEvent.mouseDown(screen.getByText('900-A001 · RENTAL'));
+    setAmount('line 1 amount', '300');
+    fireEvent.click(within(d).getByText('Save as draft'));
+    await waitFor(() => expect(createAsync).toHaveBeenCalled());
+    expect(createAsync.mock.calls[0]![0]).toMatchObject({ docKind: 'DN', supplierId: 'sup-h', supplierInvoiceRef: 'DN-HVH-77', lines: [{ debitAccountCode: '900-A001', amountSen: 30_000 }] });
+  });
+
+  test('the AP Invoices page itself still asks for every kind', () => {
+    draw();
+    expect(lastApList.value).toBe('ALL|');
   });
 });

@@ -46,12 +46,14 @@ const KINDS = new Set(['ALL', 'SI', 'ODB']);
 export const SI_MIRROR_STATUSES = ['SENT', 'PARTIALLY_PAID', 'PAID', 'OVERDUE'] as const;
 
 const SI_COLS = 'id, invoice_number, so_doc_no, debtor_code, debtor_name, invoice_date, due_date, currency, total_sen, local_total_sen, paid_sen, status, notes';
-const BILL_COLS = 'id, bill_number, debtor_id, bill_date, total_sen, received_sen, status, notes, created_at';
+const BILL_COLS = 'id, bill_number, debtor_id, bill_date, total_sen, received_sen, status, notes, created_at, doc_kind';
 const DEBTOR_PARTY_COLS = DEBTOR_PARTY_FIELDS.map(([, col]) => col).join(', ');
 
 /** One row of the list — a sales invoice (mirror) or a debtor bill; `kind` says which. */
 export type ArListRow = {
   kind: ArKind;
+  /** A debtor bill raised as a debit note (2026-10-28) reads 'DN'; every other row 'INV'. */
+  docKind: 'INV' | 'DN';
   id: string;
   invoiceNumber: string;
   /** The party as the filter groups it: `C:<debtor code>` for a customer, `D:<debtor id>` for an other debtor. */
@@ -86,6 +88,7 @@ function shapeSi(r: Row): ArListRow {
   const name = r.debtor_name ? String(r.debtor_name) : null;
   return {
     kind: 'SI',
+    docKind: 'INV',
     id: String(r.id),
     invoiceNumber: String(r.invoice_number ?? ''),
     partyKey: `C:${code ?? name ?? ''}`,
@@ -110,6 +113,8 @@ function shapeBill(r: Row, debtorName: string | null): ArListRow {
   const received = Number(r.received_sen ?? 0);
   return {
     kind: 'ODB',
+    /* 'DN' for a debit note to the debtor (2026-10-28) — a bill all the same. */
+    docKind: r.doc_kind === 'DN' ? 'DN' : 'INV',
     id: String(r.id),
     invoiceNumber: String(r.bill_number ?? ''),
     partyKey: `D:${String(r.debtor_id ?? '')}`,
@@ -136,11 +141,15 @@ export const listArInvoicesHandler = async (c: any): Promise<Response> => {
   const kind = String(c.req.query('kind') ?? 'ALL').toUpperCase();
   if (!KINDS.has(kind)) return c.json({ error: 'bad_kind', message: 'kind is ALL, SI or ODB.' }, 400);
   const sb = c.get('supabase');
+  /* docKind=DN: the other debtors' debit notes alone (the CN / DN page's tab) — a
+     sales invoice is never one; docKind=INV: the bills without them. */
+  const docKind = String(c.req.query('docKind') ?? '').trim().toUpperCase();
 
   const rows: ArListRow[] = [];
   if (kind === 'ALL' || kind === 'ODB') {
-    const { data, error } = await scopeToCompany(sb.from('acc_debtor_bills').select(BILL_COLS), c)
-      .order('bill_date', { ascending: false }).limit(500);
+    let q = scopeToCompany(sb.from('acc_debtor_bills').select(BILL_COLS), c);
+    if (docKind === 'DN' || docKind === 'INV') q = q.eq('doc_kind', docKind);
+    const { data, error } = await q.order('bill_date', { ascending: false }).limit(500);
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
     const bills = (data ?? []) as Row[];
     /* The debtor's name off the registry — read whole, never assumed: a bill
@@ -154,7 +163,7 @@ export const listArInvoicesHandler = async (c: any): Promise<Response> => {
     }
     for (const b of bills) rows.push(shapeBill(b, names.get(String(b.debtor_id ?? '')) ?? null));
   }
-  if (kind === 'ALL' || kind === 'SI') {
+  if ((kind === 'ALL' || kind === 'SI') && docKind !== 'DN') {
     /* The operational invoices, read-only here: the Sales side raises and
        edits them; this list only SHOWS them beside the bills so Finance sees
        every ringgit owed to the company in one place. */

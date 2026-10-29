@@ -159,6 +159,10 @@ vi.mock('../../vendor/scm/lib/event-queries', async (importOriginal) => ({
   useEventOptions: () => ({ data: [{ id: 2259, name: 'JOHOR [AKEMI] INHOME @ SUTERA MALL', startDate: '2026-10-09', endDate: '2026-10-11' }], isLoading: false }),
 }));
 
+/* The debit-note tabs show the bills pages narrowed to debit notes — their own tests cover them. */
+vi.mock('./ApInvoices', () => ({ ApInvoices: ({ docKind }: { docKind?: string }) => <div>AP invoices page · {docKind}</div> }));
+vi.mock('./ArInvoices', () => ({ ArInvoices: ({ docKind }: { docKind?: string }) => <div>AR invoices page · {docKind}</div> }));
+
 const { CreditNotes, bodyOf } = await import('./CreditNotes');
 
 describe('the Credit & Debit Notes page', () => {
@@ -180,13 +184,13 @@ describe('the Credit & Debit Notes page', () => {
   test('two pages: Money in asks for the customer and other-debtor notes, Money out for the supplier notes with the scan', () => {
     const { unmount } = render(<MemoryRouter><ConfirmProvider><CreditNotes /></ConfirmProvider></MemoryRouter>);
     expect(screen.getByRole('heading', { name: 'Customer & Other Debtor CN / DN' })).toBeTruthy();
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['All', 'CN', 'DN', 'Other debtor CN']);
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Credit & debit notes', 'Other debtor DN', 'All', 'CN', 'DN', 'Other debtor CN']);
     expect(screen.queryByLabelText('Supplier credit note pages')).toBeNull();
     unmount();
     render(<MemoryRouter><ConfirmProvider><CreditNotes side="AP" /></ConfirmProvider></MemoryRouter>);
     expect(screen.getByRole('heading', { name: 'Supplier & Other Creditor CN / DN' })).toBeTruthy();
     /* One kind on the page — no kind tabs; the real notes first, the opening credits on their own tab; the scan is here. */
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Credit notes', 'Opening 31/08']);
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Credit notes', 'Debit notes', 'Opening 31/08']);
     expect(lastList.value).toBe('AP|ALL|ALL|exclude');
     expect(screen.getByLabelText('Supplier credit note pages')).toBeTruthy();
   });
@@ -423,5 +427,24 @@ describe("an other debtor's credit note", () => {
     expect(within(dialog).getByLabelText('Knock-off total').textContent).toContain('credit left RM 2,000.00 of RM 2,000.00 — it stays with the debtor.');
     fireEvent.click(within(dialog).getByText('Save knock-off · 保存'));
     expect(setMutate).toHaveBeenCalledWith({ noteId: 'n4', targets: [] }, expect.anything());
+  });
+});
+
+/* The debit notes (owner 2026-10-28: 再加 supplier DN; Customer & Other Debtor CN / DN) are
+   bills of their own kind: each page's tab shows the bills page narrowed to them. */
+describe('the debit-note tabs', () => {
+  test('Money out\'s Debit notes shows the AP invoices narrowed to supplier DNs; Money in\'s Other debtor DN the debtor bills narrowed to DNs', async () => {
+    const { unmount } = render(<MemoryRouter><ConfirmProvider><CreditNotes side="AP" /></ConfirmProvider></MemoryRouter>);
+    fireEvent.click(screen.getByRole('tab', { name: 'Debit notes' }));
+    expect(await screen.findByText('AP invoices page · DN')).toBeTruthy();
+    /* The page's own New note and scan step aside — the bills page raises the debit note. */
+    expect(screen.queryByText('New note')).toBeNull();
+    expect(screen.queryByLabelText('Supplier credit note pages')).toBeNull();
+    expect(screen.queryByLabelText('Note status')).toBeNull();
+    unmount();
+    render(<MemoryRouter><ConfirmProvider><CreditNotes /></ConfirmProvider></MemoryRouter>);
+    fireEvent.click(screen.getByRole('tab', { name: 'Other debtor DN' }));
+    expect(await screen.findByText('AR invoices page · DN')).toBeTruthy();
+    expect(screen.queryByRole('tab', { name: 'CN' })).toBeNull();
   });
 });
