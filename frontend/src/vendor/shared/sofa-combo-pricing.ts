@@ -45,11 +45,33 @@ export type SofaPriceTier = 'PRICE_1' | 'PRICE_2' | 'PRICE_3' | 'PRICE_4';
 /** A combo's ordered slots. Each slot is an OR-set of module codes. */
 export type ComboSlots = string[][];
 
+/** Sofa Accessory Models and quantities included in a combo's selling price. */
+export interface SofaComboAccessory {
+  modelId: string;
+  qty: number;
+}
+
+/** A physical accessory on the build. Prices are live catalogue prices in sen. */
+export interface SofaPricedAccessory {
+  id: string;
+  modelId: string;
+  cellId: string;
+  priceSen: number;
+}
+
+export interface ComboBuildArgs {
+  modules: string[];
+  cellIds?: string[];
+  accessories?: Array<Pick<SofaPricedAccessory, 'id' | 'modelId' | 'cellId'>>;
+}
+
 export interface SofaComboRow {
   id: string;
   baseModel: string;
   /** Ordered slots; each slot = OR-set of alternative module codes. */
   modules: ComboSlots;
+  /** Required pieces, included in pricesByHeight. Absent = modules only. */
+  accessories?: SofaComboAccessory[];
   tier: SofaPriceTier | null;
   customerId: string | null;
   pricesByHeight: Record<string, number | null>;
@@ -79,6 +101,9 @@ export interface PickComboArgs {
   baseModel: string;
   /** The BUILT sofa's flat list of module codes (one per laid-out cell). */
   modules: string[];
+  /** Parallel to modules; required to bind a piece to a matched module. */
+  cellIds?: string[];
+  accessories?: SofaPricedAccessory[];
   customerId: string | null;
   tier: SofaPriceTier;
   height: string;               // '24' | '28' | '30' | '32' | '35'
@@ -230,6 +255,31 @@ export function comboSlotsKey(raw: readonly (string | readonly string[])[]): str
   return JSON.stringify(slots);
 }
 
+/** Validate and aggregate quantities, preserving a stable Model-id identity.
+ * Malformed requirements return null: silently dropping one would sell an
+ * incomplete package at its inclusive price. */
+export function normalizeComboAccessories(input: unknown): SofaComboAccessory[] | null {
+  if (input == null) return [];
+  if (!Array.isArray(input)) return null;
+  const quantities = new Map<string, number>();
+  for (const value of input) {
+    if (!value || typeof value !== 'object') return null;
+    const { modelId, qty } = value as Partial<SofaComboAccessory>;
+    if (typeof modelId !== 'string' || !modelId.trim()
+      || !Number.isSafeInteger(qty) || (qty as number) <= 0) return null;
+    const id = modelId.trim();
+    const total = (quantities.get(id) ?? 0) + (qty as number);
+    if (!Number.isSafeInteger(total)) return null;
+    quantities.set(id, total);
+  }
+  return [...quantities].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+    .map(([modelId, qty]) => ({ modelId, qty }));
+}
+
+export function comboAccessoriesKey(input?: readonly SofaComboAccessory[] | null): string {
+  return JSON.stringify(normalizeComboAccessories(input));
+}
+
 /** True iff two slot-sets are equal ignoring slot order + intra-slot order. */
 function slotsEqual(
   a: readonly (string | readonly string[])[],
@@ -255,18 +305,23 @@ export function findDuplicateCombo<
   T extends {
     baseModel: string;
     modules: readonly (string | readonly string[])[];
+    accessories?: readonly SofaComboAccessory[];
     deletedAt?: string | null;
   },
 >(
   baseModel: string,
   slots: readonly (string | readonly string[])[],
   existing: readonly T[],
+  accessories?: readonly SofaComboAccessory[],
 ): T | null {
   const target = comboSlotsKey(slots);
+  const targetAccessories = normalizeComboAccessories(accessories);
+  if (!targetAccessories) return null;
+  const accessoriesKey = comboAccessoriesKey(targetAccessories);
   for (const c of existing) {
     if (c.deletedAt) continue;
     if (c.baseModel !== baseModel) continue;
-    if (comboSlotsKey(c.modules) === target) return c;
+    if (comboSlotsKey(c.modules) === target && comboAccessoriesKey(c.accessories) === accessoriesKey) return c;
   }
   return null;
 }
@@ -358,6 +413,77 @@ export interface ComboMatch {
   /** Sorted BUILT-module indices the combo consumed (one per slot). Built
    *  modules NOT in this list are extras priced at full master price. */
   matchedIndices: number[];
+  /** Pieces already covered by comboPriceSen; callers must not charge again. */
+  matchedAccessoryIds: string[];
+}
+
+/** Match the module subset and the pieces attached to that same subset.
+ * A repeated module may let several subsets cover the slots; if the usual
+ * assignment lacks the required pieces, consider the other valid subsets.
+ * Physical builds are small (normally fewer than eight compartments). */
+function matchComboComposition(
+  built: string[],
+  slots: ComboSlots,
+  requirements: SofaComboAccessory[],
+  args: ComboBuildArgs,
+): { subset: number[]; accessoryIds: string[] } | null {
+  const first = matchComboSubset(built, slots);
+  if (!first) return null;
+  if (requirements.length === 0) return { subset: first, accessoryIds: [] };
+  if (!args.cellIds || args.cellIds.length !== built.length) return null;
+
+  const piecesFor = (subset: number[]): string[] | null => {
+    const cells = new Set(subset.map((i) => args.cellIds![i]).filter(Boolean));
+    const remaining = new Map(requirements.map((a) => [a.modelId, a.qty]));
+    const seen = new Set<string>();
+    const ids: string[] = [];
+    for (const p of args.accessories ?? []) {
+      if (!p.id || seen.has(p.id)) continue;
+      seen.add(p.id);
+      const needed = remaining.get(p.modelId) ?? 0;
+      if (!cells.has(p.cellId) || needed === 0) continue;
+      remaining.set(p.modelId, needed - 1);
+      ids.push(p.id);
+    }
+    return [...remaining.values()].every((qty) => qty === 0) ? ids : null;
+  };
+  const firstPieces = piecesFor(first);
+  if (firstPieces) return { subset: first, accessoryIds: firstPieces };
+
+  const allowed = new Set(slots.flat());
+  const eligible = built.flatMap((code, i) => allowed.has(code) ? [i] : []);
+  // A requirement not present anywhere in the candidate modules cannot be
+  // rescued by a different assignment; avoid searching those subsets.
+  if (!piecesFor(eligible)) return null;
+  const selected: number[] = [];
+  const visit = (start: number): { subset: number[]; accessoryIds: string[] } | null => {
+    if (selected.length === slots.length) {
+      if (!matchComboSubset(selected.map((i) => built[i]!), slots)) return null;
+      const accessoryIds = piecesFor(selected);
+      return accessoryIds ? { subset: [...selected], accessoryIds } : null;
+    }
+    const needed = slots.length - selected.length;
+    for (let i = start; i <= eligible.length - needed; i++) {
+      selected.push(eligible[i]!);
+      const match = visit(i + 1);
+      selected.pop();
+      if (match) return match;
+    }
+    return null;
+  };
+  return visit(0);
+}
+
+/** Composition-only match for vouchers and eligibility. Prices, dates and
+ * scope are handled by the caller; required accessories are never optional. */
+export function matchComboBuild(
+  args: ComboBuildArgs,
+  row: Pick<SofaComboRow, 'modules' | 'accessories'>,
+): { matchedIndices: number[]; matchedAccessoryIds: string[] } | null {
+  const requirements = normalizeComboAccessories(row.accessories);
+  if (!requirements) return null;
+  const match = matchComboComposition(args.modules.map((m) => m.trim()), normalizeComboModules(row.modules), requirements, args);
+  return match ? { matchedIndices: match.subset, matchedAccessoryIds: match.accessoryIds } : null;
 }
 
 /**
@@ -393,17 +519,19 @@ export function pickComboMatch(
   //    null), effective on/before asOf, not soft-deleted, AND the row's slots
   //    can be covered by a subset of the built modules (extras allowed).
   const wildcardBaseModel = !args.baseModel;
-  const candidates: Array<{ row: SofaComboRow; subset: number[] }> = [];
+  const candidates: Array<{ row: SofaComboRow; subset: number[]; accessoryIds: string[] }> = [];
   for (const r of rows) {
     if (r.deletedAt) continue;
     if (!wildcardBaseModel && r.baseModel !== args.baseModel) continue;
     if (r.tier !== null && r.tier !== args.tier) continue;
     if (r.effectiveFrom > asOf) continue;
-    const subset = matchComboSubset(built, r.modules);
-    if (!subset) continue;
+    const requirements = normalizeComboAccessories(r.accessories);
+    if (!requirements) continue;
+    const composition = matchComboComposition(built, normalizeComboModules(r.modules), requirements, args);
+    if (!composition) continue;
     const centi = r.pricesByHeight?.[args.height];
     if (typeof centi !== 'number') continue;
-    candidates.push({ row: r, subset });
+    candidates.push({ row: r, ...composition });
   }
   if (candidates.length === 0) return null;
 
@@ -424,6 +552,9 @@ export function pickComboMatch(
     .filter((c) => c.p > 0)
     .sort((a, b) =>
       b.p - a.p ||
+      // Prefer the fullest matching package. A newer bare-sofa or two-piece
+      // rule must not hide the saved four-piece package on a complete build.
+      b.accessoryIds.length - a.accessoryIds.length ||
       desc(a.row.effectiveFrom, b.row.effectiveFrom) ||
       // Same scope + same effectiveFrom (duplicate rows): newest createdAt
       // wins — identical to the GET /sofa-combos "currently active" reducer,
@@ -438,7 +569,7 @@ export function pickComboMatch(
 
   const comboPriceSen = winner.row.pricesByHeight[args.height];
   if (typeof comboPriceSen !== 'number') return null;
-  return { row: winner.row, comboPriceSen, matchedIndices: winner.subset };
+  return { row: winner.row, comboPriceSen, matchedIndices: winner.subset, matchedAccessoryIds: winner.accessoryIds };
 }
 
 /**
