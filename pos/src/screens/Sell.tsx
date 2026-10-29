@@ -339,7 +339,7 @@ export function Sell({ state, session, online, onLogout, onOpenSetup, onStateCha
         </div>
 
         <div className="side">
-          <button type="button" className="btn" onClick={actions.search}>Item<small>F1</small></button>
+          <button type="button" className="btn" onClick={actions.search}>All Items<small>F1 · search</small></button>
           <button type="button" className="btn" onClick={actions.qty}>Qty<small>F2</small></button>
           <button type="button" className="btn" onClick={actions.price}>Price<small>F3</small></button>
           <button type="button" className="btn" onClick={actions.discount}>Discount<small>F10</small></button>
