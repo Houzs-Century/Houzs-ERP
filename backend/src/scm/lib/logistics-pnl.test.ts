@@ -2,8 +2,9 @@
    Report", nothing typed by hand). Pinned with the chart's real names and
    September 2026's real figures where they decide something:
      • months: a recharge billed in October for "SEP'26" is September's;
-     • accounts by name: outsource by region, transport income by region, the
-       own-lorry list split into petrol / upkeep, our lorries' HP creditors only;
+     • accounts by the Logistics row the Chart of Accounts gives each one —
+       outsource and transport income by region, petrol / upkeep / instalment /
+       road tax — and manpower from the payroll accounts no row claims;
      • setup / dismantle: one trip per venue per day, outsourced or unticked
        trips not ours, each area at its rate (none for East Malaysia);
      • spreads: each bill over its own months, 12 for insurance & road tax;
@@ -12,11 +13,12 @@
 import { describe, expect, test } from 'vitest';
 import {
   addMonths, areaOf, buildLogisticsPnl, coveredKinds, incomeLines, incomeRowOf, isManpowerLine, monthNamed,
-  outsourceRegionOf, pnlAccountsOf, setupTrips, spreadBills, transportIncomeRegionOf,
+  pnlAccountsOf, setupTrips, spreadBills,
   type BillLine, type Fair, type Leg,
 } from './logistics-pnl';
 
-const acc = (account_code: string, account_name: string, account_type = 'EXPENSE') => ({ account_code, account_name, account_type, is_active: true });
+const acc = (account_code: string, account_name: string, account_type = 'EXPENSE', logistics_row: string | null = null) =>
+  ({ account_code, account_name, account_type, is_active: true, logistics_row });
 
 describe('months', () => {
   test("the month a line names wins over the bill's date; a word that is not a month names none", () => {
@@ -29,45 +31,37 @@ describe('months', () => {
   });
 });
 
-describe('accounts by what their names say', () => {
-  test("outsource by region — the fair-transport accounts are the fairs'", () => {
-    expect(outsourceRegionOf('TRANSPORT (PNG, PERLIS, KEDAH, KELATAN, TERENGGANU, PAHANG)')).toBe('PG');
-    expect(outsourceRegionOf('TRANSPORT (KL, SLG, MLK, JHR, OTHERS)')).toBe('KL');
-    expect(outsourceRegionOf('TRANSPORT (SABAH & SARAWAK)')).toBe('EM');
-    expect(outsourceRegionOf('TRANSPORT (SBH & SWK) - SEAFREIGHT')).toBe('EM');
-    expect(outsourceRegionOf('TRANSPORT (SBH & SWK NEW)')).toBe('EM');
-    expect(outsourceRegionOf('TRANSPORT (SGD)')).toBe('SG');
-    expect(outsourceRegionOf('TRANSPORT SGD - SST 9%')).toBe('SG');
-    for (const n of ['TRANSPORT FAIR (KL, SLG, MLK, JHR, OTHERS)', 'BOOTH TRANSPORT (SABAH & SARAWAK)', 'TRANSPORTATION FEE', 'TRANSPORTATION FEES - OTHERS']) {
-      expect(outsourceRegionOf(n)).toBeNull();
-    }
-  });
-
-  test('transport income by region; the plain TRANSPORT INCOME is KL', () => {
-    expect(transportIncomeRegionOf('TRANSPORT INCOME')).toBe('KL');
-    expect(transportIncomeRegionOf('TRANSPORT INCOME (PNG, PERLIS, KEDAH, KELANTAN, TERENGGANU, PAHANG)')).toBe('PG');
-    expect(transportIncomeRegionOf('TRANSPORT INCOME (KL, SLG, MLK, JHR, OTHERS)')).toBe('KL');
-    expect(transportIncomeRegionOf('TRANSPORT INCOME (SABAH & SARAWAK)')).toBe('EM');
-    expect(transportIncomeRegionOf('TRANSPORT INCOME (SGD)')).toBe('SG');
-    expect(transportIncomeRegionOf('ADDITIONAL INCOME')).toBeNull();
-  });
-
-  test('the own-lorry list splits into petrol and upkeep; only our lorries\' HP creditors; manpower never re-reads the list', () => {
+describe('accounts by their Logistics row on the Chart of Accounts', () => {
+  test('each row its accounts; the region rows by region; a name decides nothing', () => {
     const chart = [
-      acc('900-P006', 'PETROL, TOL AND PARKING - LORI VNB 9058'), acc('900-U008', 'UPKEEP OF LORI - VNB 9058'),
-      acc('900-I002', 'INSURANCE & ROAD TAX'), acc('900-S100', 'STAFF SALARIES & OVERTIME'), acc('900-S200', "E'YER EPF"),
-      acc('450-H001', 'HP CREDITOR- JPL 9058', 'LIABILITY'), acc('450-H002', 'HP CREDITOR- VNB 9058', 'LIABILITY'),
-      acc('450-H004', 'HP CREDITOR - FORKLIFT', 'LIABILITY'), acc('900-T005', 'TRANSPORT (PNG, PERLIS, KEDAH, KELATAN, TERENGGANU, PAHANG)'),
+      acc('900-T005', 'TRANSPORT (PNG, PERLIS, KEDAH, KELATAN, TERENGGANU, PAHANG)', 'EXPENSE', 'outsource_pg'),
+      acc('900-T017', 'TRANSPORT (SBH & SWK) - SEAFREIGHT', 'EXPENSE', 'outsource_em'),
+      acc('900-T027', 'TRANSPORT SGD - SST 9%', 'EXPENSE', 'outsource_sg'),
+      acc('900-T030', 'TRANSPORT FAIR (KL, SLG, MLK, JHR, OTHERS)'),
+      acc('900-P006', 'PETROL, TOL AND PARKING - LORI VNB 9058', 'EXPENSE', 'petrol'),
+      acc('900-P008', 'PETROL, TOL AND PARKING - DIRECTOR & OTHERS'),
+      acc('900-U008', 'UPKEEP OF LORI - VNB 9058', 'EXPENSE', 'upkeep'),
+      acc('900-G001', 'LORRY GPS', 'EXPENSE', 'other_lorry'),
+      acc('900-I002', 'INSURANCE & ROAD TAX', 'EXPENSE', 'roadtax'),
+      acc('450-H002', 'HP CREDITOR- VNB 9058', 'LIABILITY', 'instalment'),
+      acc('450-H004', 'HP CREDITOR - FORKLIFT', 'LIABILITY'),
+      acc('590-0000', 'TRANSPORT INCOME', 'INCOME'),
+      acc('590-0001', 'TRANSPORT INCOME (PNG, PERLIS, KEDAH, KELANTAN, TERENGGANU, PAHANG)', 'INCOME', 'income_pg'),
+      acc('590-0004', 'TRANSPORT INCOME (SGD)', 'INCOME', 'income_sg'),
+      acc('900-S100', 'STAFF SALARIES & OVERTIME'), acc('900-S200', "E'YER EPF", 'EXPENSE', 'other_lorry'),
+      acc('900-Z001', 'ODD ROW', 'EXPENSE', 'not_a_row'),
     ];
-    const lorries = [{ id: '1', plate: 'VNB9058', isInternal: true }, { id: '2', plate: 'JPL9058', isInternal: false }];
-    const a = pnlAccountsOf(chart, lorries, ['900-P006', '900-U008', '900-S200']);
+    const a = pnlAccountsOf(chart);
+    expect([...a.outsource]).toEqual([['900-T005', 'PG'], ['900-T017', 'EM'], ['900-T027', 'SG']]);
+    expect([...a.income]).toEqual([['590-0001', 'PG'], ['590-0004', 'SG']]);
     expect([...a.petrol]).toEqual(['900-P006']);
     expect([...a.upkeep]).toEqual(['900-U008']);
-    expect([...a.otherLorry]).toEqual(['900-S200']);
+    expect([...a.otherLorry]).toEqual(['900-G001', '900-S200']);
     expect([...a.roadTax]).toEqual(['900-I002']);
     expect([...a.instalment]).toEqual(['450-H002']);
     expect([...a.salary]).toEqual(['900-S100']);
-    expect(a.outsource.get('900-T005')).toBe('PG');
+    expect(a.all).not.toContain('900-T030');
+    expect(a.all).not.toContain('590-0001');
     expect(isManpowerLine("OPERATION HELPER SALARY - SEPT'26")).toBe(true);
     expect(isManpowerLine("OPERATION DELIVERY EPF - SEPT'26")).toBe(true);
     expect(isManpowerLine("OPERATION STOREKEEPER SALARY - SEPT'26")).toBe(false);
@@ -141,14 +135,15 @@ describe('what Finance billed extra', () => {
     lineId: 'l', billNo: 'HC-ODB-2610-001', billDate: '2026-10-23', debtorName: '2990 Home Sdn Bhd', description: null,
     accountCode: '599-0000', accountName: 'ADDITIONAL INCOME', amountSen: 0, ...o,
   });
-  test('a transport income account by its region; a recharge worded so under KL; the month the line names', () => {
+  test("a Transport Income account by its row's region; a recharge worded so under KL; the month the line names", () => {
     const got = incomeLines([
       line({ lineId: 'a', description: "LOGISTICS CHARGES - SEP'26", amountSen: 444_210 }),
       line({ lineId: 'b', description: "OPERATION CHARGES - SEP'26", amountSen: 740_350 }),
       line({ lineId: 'c', debtorName: 'SG PARTNER PTE LTD', description: 'DELIVERY TO PUNGGOL', accountCode: '590-0004', accountName: 'TRANSPORT INCOME (SGD)', billDate: '2026-09-29', amountSen: 91_180 }),
       line({ lineId: 'd', debtorName: 'THE CONTS SDN BHD (OTHER DEBTOR)', description: "UMOBILE SEPT'26", accountName: 'UTILITY EXPENSE', amountSen: 170_721 }),
       line({ lineId: 'e', description: "LOGISTICS CHARGES - AUG'26", amountSen: 472_770 }),
-    ], ['2026-09']);
+      line({ lineId: 'f', debtorName: 'WALK IN', description: 'DELIVERY', accountCode: '590-0000', accountName: 'TRANSPORT INCOME', billDate: '2026-09-29', amountSen: 5_000 }),
+    ], ['2026-09'], new Map([['590-0004', 'SG' as const]]));
     expect(got.map((l) => [l.lineId, l.month, l.row, l.region, l.by])).toEqual([
       ['a', '2026-09', '2990', 'KL', 'wording'],
       ['c', '2026-09', 'houzs', 'SG', 'account'],
@@ -162,6 +157,7 @@ describe('the P&L', () => {
   const leg = (o: Partial<Leg>): Leg => ({ lineId: 'x', accountCode: '', accountName: null, day: '2026-09-15', debitSen: 0, creditSen: 0, notes: null, docNo: null, ...o });
   const accounts = {
     outsource: new Map([['900-T005', 'PG' as const], ['900-T006', 'KL' as const], ['900-T027', 'SG' as const]]),
+    income: new Map<string, 'PG' | 'KL' | 'EM' | 'SG'>(),
     petrol: new Set(['900-P015']), upkeep: new Set(['900-U010']), otherLorry: new Set<string>(),
     roadTax: new Set(['900-I002']), instalment: new Set(['450-H002']), salary: new Set(['900-S100']),
   };

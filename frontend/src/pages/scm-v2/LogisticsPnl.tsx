@@ -2,7 +2,8 @@
 // LogisticsPnl — the Logistics cost tab's P&L view: the owner's own Logistic Cost
 // Report ("Logistic - Auto" sheet), built from the books instead of typed (owner
 // 2026-10-29, 做 —「不要我填」). Penang / KL / SBH & SWK / SGD, then everything it
-// counted, each with the one thing Finance keeps on it:
+// counted, each with the one thing Finance keeps on it (which account feeds which
+// row is the Chart of Accounts' Logistics column):
 //   • the setup / dismantle trips (tick or untick one) and the rate per trip by
 //     area (「我要自己能维护」);
 //   • the upkeep and insurance bills, each spread over its own months
@@ -120,6 +121,7 @@ function PnlTable({ p }: { p: LogisticsPnl }) {
         {p.ownTrips > 0
           ? `In-house cost per trip: RM ${whole(p.inHousePerTripSen)} — ${p.ownTrips} trip${p.ownTrips === 1 ? '' : 's'} of our lorries (one lorry, one day).`
           : 'No trip of our lorries is recorded in these months, so there is no in-house cost per trip — pick the lorry on the DOs in Delivery Planning.'}
+        {' '}Which account feeds which row: Chart of Accounts › Logistics column.
       </div>
     </section>
   );
@@ -328,7 +330,7 @@ function IncomeCard({ p }: { p: LogisticsPnl }) {
     <section style={card} aria-label="Transport income billed">
       <b style={{ fontSize: 'var(--fs-13)' }}>Transport income billed — Other Debtor bills</b>
       <div style={soft}>
-        Lines on a TRANSPORT INCOME account, in the region its name gives; a line worded &ldquo;LOGISTICS CHARGES&rdquo; or &ldquo;TRANSPORT CHARGES&rdquo; on another account counts under KL.
+        Lines on an account the Chart of Accounts puts on a Transport Income row, in that row&rsquo;s region; a line worded &ldquo;LOGISTICS CHARGES&rdquo; or &ldquo;TRANSPORT CHARGES&rdquo; on another account counts under KL.
         The month is the one the line names (&ldquo;SEP&rsquo;26&rdquo;), else the bill&rsquo;s. A sales invoice&rsquo;s transport line is not counted here.
       </div>
       {p.income.length === 0

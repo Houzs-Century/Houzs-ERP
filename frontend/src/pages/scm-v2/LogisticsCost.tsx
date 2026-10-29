@@ -10,21 +10,21 @@
 //   • Per trip — each trip of ours (one lorry, one day) at the month's lorry cost
 //     ÷ the month's trips, and each 3PL run (one bill line);
 //   • Setup & Dismantle — each fair's booth setup and its transport, from its
-//     own books (the rows Project Overview shows);
-//   • Own-lorry cost — what the ticked accounts booked each month, the trips, one
-//     trip's cost, and the tick list itself (Finance).
+//     own books (the rows Project Overview shows).
+// Which account feeds which row — Petrol, Upkeep, Outsource by region … — is
+// Finance's pick on the Chart of Accounts (its Logistics column, owner 2026-10-29:
+// the tick list here 「这样显示很丑，就不能在coa 那边tick？」).
 // What could not be counted is said above the views, never folded into a zero.
 // Server: backend/src/scm/routes/acc-logistics.ts.
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useState } from 'react';
-import { Button } from '@2990s/design-system';
+import { useMemo, useState } from 'react';
 import { StatCard } from '../../components/StatCard';
 import { DataTable, type Column } from '../../components/DataTable';
 import { fmtDayMonthRange, fmtDateOrDash } from '../../vendor/shared/format';
 import {
-  useLogisticsCost, useLogisticsSettings, useSaveLogisticsSettings,
-  type LogisticsEventRow, type LogisticsMonthRow, type LogisticsRegionRow, type LogisticsReport, type LogisticsTripRow,
+  useLogisticsCost,
+  type LogisticsEventRow, type LogisticsRegionRow, type LogisticsReport, type LogisticsTripRow,
 } from '../../vendor/scm/lib/logistics-queries';
 import { PnlView } from './LogisticsPnl';
 
@@ -51,13 +51,12 @@ const pct = (part: number, whole: number): string => (whole > 0 ? `${((part / wh
 const sum = <T,>(rows: readonly T[], f: (r: T) => number): number => rows.reduce((s, r) => s + f(r), 0);
 const Num = ({ children }: { children: React.ReactNode }) => <span style={num}>{children}</span>;
 
-type View = 'pnl' | 'region' | 'trips' | 'events' | 'own';
+type View = 'pnl' | 'region' | 'trips' | 'events';
 const VIEWS: Array<{ key: View; text: string }> = [
   { key: 'pnl', text: 'P&L' },
   { key: 'region', text: 'By region' },
   { key: 'trips', text: 'Per trip' },
   { key: 'events', text: 'Setup & Dismantle' },
-  { key: 'own', text: 'Own-lorry cost' },
 ];
 
 export const LogisticsCostTab = () => {
@@ -124,7 +123,6 @@ function CostViews({ view, from, to }: { view: Exclude<View, 'pnl'>; from: strin
       {view === 'region' && <RegionView rows={r?.regions ?? null} loading={q.isLoading} noState={r?.gaps.dosNoState ?? 0} />}
       {view === 'trips' && <TripsView rows={r?.trips ?? null} loading={q.isLoading} />}
       {view === 'events' && <EventsView rows={r?.events ?? null} loading={q.isLoading} problem={r?.eventsProblem ?? null} />}
-      {view === 'own' && <OwnView rows={r?.months ?? null} loading={q.isLoading} accounts={r?.ownCostAccounts ?? []} isDefault={r?.ownCostDefault ?? true} />}
     </div>
   );
 }
@@ -245,83 +243,5 @@ function EventsView({ rows, loading, problem }: { rows: LogisticsEventRow[] | nu
         columns={columns} rows={rows} loading={loading} getRowKey={(x) => String(x.id)}
         emptyLabel="No fair starting in these months has setup or dismantle booked." />
     </>
-  );
-}
-
-/* ── Own-lorry cost, and the accounts it is read from ─────────────────────── */
-function OwnView({ rows, loading, accounts, isDefault }: { rows: LogisticsMonthRow[] | null; loading: boolean; accounts: string[]; isDefault: boolean }) {
-  const columns = useMemo<Column<LogisticsMonthRow>[]>(() => [
-    { key: 'month', label: 'Month', getValue: (x) => x.month, render: (x) => x.month, total: () => 'Total' },
-    money('cost', 'Cost booked (RM)', (x) => x.ownCostSen),
-    { key: 'trip', label: 'Trips', align: 'right', getValue: (x) => x.trips, render: (x) => <Num>{x.trips}</Num>, total: (rs) => <Num>{sum(rs, (x) => x.trips)}</Num> },
-    {
-      key: 'perTrip', label: 'Per trip (RM)', align: 'right', getValue: (x) => x.perTripSen ?? 0, exportValue: (x) => (x.perTripSen == null ? null : x.perTripSen / 100), exportFormat: 'money',
-      render: (x) => <Num>{x.perTripSen == null ? '—' : fmtRm(x.perTripSen)}</Num>,
-    },
-    { key: 'account', label: 'Booked on', getValue: (x) => x.accounts.map((a) => a.code).join(', '), render: (x) => x.accounts.map((a) => `${a.code} ${fmtRm(a.sen)}`).join(' · ') || '—' },
-  ], []);
-  return (
-    <>
-      <div style={soft}>
-        Overall: each month&rsquo;s cost on the accounts below ÷ that month&rsquo;s trips of our lorries.
-        {' '}{isDefault ? 'The accounts are the chart’s default — every expense account naming a lorry or one of our plates.' : 'The accounts are Finance’s own list.'}
-        {' '}Reading: {accounts.length > 0 ? accounts.join(', ') : 'none'}.
-      </div>
-      <DataTable<LogisticsMonthRow> tableId="logistics-own-cost" exportName="logistics-own-cost" exportXlsx
-        columns={columns} rows={rows} loading={loading} getRowKey={(x) => x.month} emptyLabel="No month chosen." />
-      <CostAccountsCard />
-    </>
-  );
-}
-
-function CostAccountsCard() {
-  const s = useLogisticsSettings();
-  const save = useSaveLogisticsSettings();
-  const [ticked, setTicked] = useState<Set<string> | null>(null);
-  const [find, setFind] = useState('');
-  const current = useMemo(() => new Set(s.data?.picked ?? s.data?.defaults ?? []), [s.data]);
-  /* A fresh read (another tab saved) resets an untouched list. */
-  useEffect(() => { setTicked(null); }, [s.data]);
-  const shown = ticked ?? current;
-  const dirty = ticked != null && (ticked.size !== current.size || [...ticked].some((x) => !current.has(x)));
-  const needle = find.trim().toLowerCase();
-  const list = (s.data?.candidates ?? []).filter((a) => !needle || `${a.code} ${a.name ?? ''}`.toLowerCase().includes(needle));
-  const flip = (code: string) => setTicked((prev) => {
-    const next = new Set(prev ?? current);
-    if (next.has(code)) next.delete(code); else next.add(code);
-    return next;
-  });
-
-  return (
-    <section style={card} aria-label="Own-lorry cost accounts">
-      <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'baseline', flexWrap: 'wrap' }}>
-        <b style={{ fontSize: 'var(--fs-13)' }}>Own-lorry cost accounts</b>
-        <span style={soft}>
-          {s.data?.picked ? 'Finance’s own list.' : 'Using the chart’s default.'} Tick a driver salary account here once there is one — it then counts in every trip.
-        </span>
-      </div>
-      {s.isError && <div style={{ ...soft, color: warn }}>The accounts could not be read.</div>}
-      <input type="search" value={find} onChange={(e) => setFind(e.target.value)} placeholder="Find an account" aria-label="Find an account"
-        style={{ margin: 'var(--space-2) 0', padding: '4px 8px', fontSize: 'var(--fs-12)', minWidth: 220 }} />
-      <div style={{ maxHeight: 260, overflowY: 'auto', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '2px 16px' }}>
-        {list.map((a) => (
-          <label key={a.code} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 'var(--fs-12)' }}>
-            <input type="checkbox" checked={shown.has(a.code)} onChange={() => flip(a.code)} aria-label={`${a.code} ${a.name ?? ''}`} />
-            <span><span style={{ fontFamily: 'var(--font-mono)' }}>{a.code}</span><br />{a.name ?? ''}</span>
-          </label>
-        ))}
-      </div>
-      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', marginTop: 'var(--space-2)', flexWrap: 'wrap' }}>
-        <Button size="sm" disabled={!dirty || save.isPending} onClick={() => save.mutate([...shown].sort(), { onSuccess: () => setTicked(null) })}>
-          {save.isPending ? 'Saving…' : 'Save the list'}
-        </Button>
-        {s.data?.picked && (
-          <Button size="sm" variant="ghost" disabled={save.isPending} onClick={() => save.mutate(null, { onSuccess: () => setTicked(null) })}>
-            Back to the default
-          </Button>
-        )}
-        {save.isError && <span style={{ ...soft, color: warn }}>{save.error instanceof Error ? save.error.message : 'Not saved.'}</span>}
-      </div>
-    </section>
   );
 }

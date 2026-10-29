@@ -15,7 +15,8 @@
 //   PUT /logistics/trip              { tripKey, inHouse | null } — tick or untick
 //                                    one setup / dismantle trip; null = the rule
 //
-// Every PUT is Finance's — the money right, like the cost-account list.
+// Every PUT is Finance's — the money right. Which account feeds which row is
+// the Chart of Accounts' Logistics column (scm/lib/logistics-rows.ts).
 // The arithmetic: scm/lib/logistics-pnl.ts.
 // ----------------------------------------------------------------------------
 
@@ -25,7 +26,7 @@ import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { todayMyt } from '../lib/my-time';
 import { dateOrNull } from '../lib/date-coerce';
 import { countsInTheBooks } from '../../acc/reversal-pairs';
-import { defaultOwnCostAccounts, delivererOf, monthOf, regionOfDo } from '../lib/logistics-cost';
+import { delivererOf, monthOf, regionOfDo } from '../lib/logistics-cost';
 import {
   AREAS, MAX_SPREAD, addMonths, buildLogisticsPnl, coveredKinds, incomeLines, isAreaKey, monthsBetween, pnlAccountsOf, rateOf, setupTrips,
   type BillLine, type Fair, type Leg, type TripKind,
@@ -61,8 +62,7 @@ export const logisticsPnlHandler = async (c: any): Promise<Response> => {
 
   const setup = await loadCostSetup(sb, companyId);
   if (!setup.ok) return fail(c, setup.what, setup.reason);
-  const ownCost = setup.picked ?? defaultOwnCostAccounts(setup.chart, setup.lorries);
-  const accounts = pnlAccountsOf(setup.chart, setup.lorries, ownCost);
+  const accounts = pnlAccountsOf(setup.chart);
   const nameOf = new Map(setup.chart.map((a) => [a.account_code, a.account_name] as const));
 
   const read = await readMonthDos(sb, companyId, wholeFrom, wholeTo);
@@ -198,7 +198,7 @@ export const logisticsPnlHandler = async (c: any): Promise<Response> => {
     from, to,
     dos: shown.map((d) => ({ region: regionOfDo(d).code, valueSen: d.valueSen })),
     doIncomeBp: setup.doIncomeBp,
-    income: incomeLines(billLines, range),
+    income: incomeLines(billLines, range, accounts.income),
     trips: setupTrips({ fairs, outsourced, marks, rates, from, to }),
     legs, accounts, spreadMonths,
     ownTrips: ownTrips.size,

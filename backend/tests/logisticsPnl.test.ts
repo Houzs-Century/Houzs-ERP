@@ -34,15 +34,15 @@ const leg = (o: Partial<Row>): Row => ({
 
 const world = (over: Record<string, Row[]> = {}) => fakeSb({
   accounts: [
-    chart('900-T005', 'TRANSPORT (PNG, PERLIS, KEDAH, KELATAN, TERENGGANU, PAHANG)'),
-    chart('900-T027', 'TRANSPORT SGD - SST 9%'),
+    chart('900-T005', 'TRANSPORT (PNG, PERLIS, KEDAH, KELATAN, TERENGGANU, PAHANG)', 'EXPENSE', { logistics_row: 'outsource_pg' }),
+    chart('900-T027', 'TRANSPORT SGD - SST 9%', 'EXPENSE', { logistics_row: 'outsource_sg' }),
     chart('900-T031', 'TRANSPORT FAIR (KL, SLG, MLK, JHR, OTHERS)', 'EXPENSE', { pms_row: 'transport_setup_dismantle' }),
-    chart('900-P015', 'PETROL, TOL AND PARKING - LORI VRH 9058'),
-    chart('900-U010', 'UPKEEP OF LORI - VPC 9058'),
-    chart('900-I002', 'INSURANCE & ROAD TAX'),
+    chart('900-P015', 'PETROL, TOL AND PARKING - LORI VRH 9058', 'EXPENSE', { logistics_row: 'petrol' }),
+    chart('900-U010', 'UPKEEP OF LORI - VPC 9058', 'EXPENSE', { logistics_row: 'upkeep' }),
+    chart('900-I002', 'INSURANCE & ROAD TAX', 'EXPENSE', { logistics_row: 'roadtax' }),
     chart('900-S100', 'STAFF SALARIES & OVERTIME'),
-    chart('450-H003', 'HP CREDITOR- VPC 9058', 'LIABILITY'),
-    chart('590-0004', 'TRANSPORT INCOME (SGD)', 'INCOME'),
+    chart('450-H003', 'HP CREDITOR- VPC 9058', 'LIABILITY', { logistics_row: 'instalment' }),
+    chart('590-0004', 'TRANSPORT INCOME (SGD)', 'INCOME', { logistics_row: 'income_sg' }),
     chart('599-0000', 'ADDITIONAL INCOME', 'INCOME'),
   ],
   lorries: [{ id: 'L1', company_id: CO, plate: 'VRH9058', is_internal: true }, { id: 'L2', company_id: CO, plate: 'VPC9058', is_internal: true }],
