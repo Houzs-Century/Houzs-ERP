@@ -32,6 +32,7 @@ import {
   useUploadConsignmentItemPhoto, useConsignmentOrderDetail,
   type DebtorSuggestion,
 } from '../../vendor/scm/lib/consignment-order-queries';
+import { withoutPwpRewardLines } from '../../lib/soCopyLines';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
 import { resolveSelfStaff } from '../../vendor/scm/lib/self-staff';
@@ -192,7 +193,7 @@ export const ConsignmentOrderNew = () => {
     setEmergencyPhone(h.emergency_contact_phone ?? '');
     if (Array.isArray(srcItems) && srcItems.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      setLines(srcItems.filter((it: any) => !it.cancelled).map((it: any) => ({
+      setLines(withoutPwpRewardLines(srcItems.filter((it: any) => !it.cancelled)).map((it: any) => ({
         ...newLine(),
         itemCode:       it.item_code ?? '',
         itemGroup:      it.item_group ?? 'others',

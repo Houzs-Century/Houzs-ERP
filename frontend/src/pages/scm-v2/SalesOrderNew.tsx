@@ -59,6 +59,7 @@ import {
   useUploadSoItemPhoto, useMfgSalesOrderDetail,
   type DebtorSuggestion,
 } from '../../vendor/scm/lib/sales-order-queries';
+import { withoutPwpRewardLines } from '../../lib/soCopyLines';
 import { zeroPriceClaim } from '../../vendor/scm/lib/zeroPriceClaim';
 import { authedFetch, humanApiError, type SaveProblem } from '../../vendor/scm/lib/authed-fetch';
 import {
@@ -358,7 +359,7 @@ export const SalesOrderNew = () => {
     setEmergencyRel(h.emergency_contact_relationship ?? '');
     setEmergencyPhone(h.emergency_contact_phone ?? '');
     if (Array.isArray(srcItems) && srcItems.length > 0) {
-      setLines(srcItems.filter((it) => !it.cancelled).map((it: any) => ({
+      setLines(withoutPwpRewardLines(srcItems.filter((it) => !it.cancelled)).map((it: any) => ({
         ...newLine(),
         itemCode:       it.item_code ?? '',
         itemGroup:      it.item_group ?? 'others',
