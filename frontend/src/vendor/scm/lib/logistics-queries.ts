@@ -9,7 +9,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { writeFailedAs } from './mutation-error';
 
-export type LogisticsRegionRow = { code: string; name: string; dos: number; valueSen: number; ownSen: number; threeplSen: number; totalSen: number };
+/** One of the four regions the books split transport by (2026-10-29): Penang, KL, SBH & SWK, SGD. */
+export type LogisticsRegionRow = { code: string; name: string; covers: string; dos: number; valueSen: number; ownSen: number; threeplSen: number; totalSen: number };
 export type LogisticsTripRow = {
   kind: 'own' | '3pl'; day: string; who: string; ref: string | null;
   dos: number; doNumbers: string[]; regions: string[]; amountSen: number | null;
@@ -25,6 +26,8 @@ export type LogisticsReport = {
   gaps: {
     dosNoDeliverer: number;
     dosOutsideNoBill: number;
+    /** DOs with no state and no Singapore address — counted under KL's "others". */
+    dosNoState: number;
     unlistedPlates: string[];
     openLines: { count: number; sen: number };
     eventLinesNoFair: { count: number; sen: number };

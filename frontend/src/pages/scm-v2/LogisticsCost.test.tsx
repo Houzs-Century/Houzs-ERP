@@ -19,16 +19,18 @@ const { fetchMock } = vi.hoisted(() => {
     from: '2026-10-01', to: '2026-10-31',
     months: [{ month: '2026-10', ownCostSen: 90_000, trips: 2, perTripSen: 45_000, accounts: [{ code: '900-P015', name: 'PETROL, TOL AND PARKING - LORI VRH 9058', sen: 90_000 }] }],
     regions: [
-      { code: 'KL', name: 'KL/SEL', dos: 3, valueSen: 160_000, ownSen: 45_000, threeplSen: 15_000, totalSen: 60_000 },
-      { code: 'NORTHERN', name: 'Northern', dos: 2, valueSen: 100_000, ownSen: 45_000, threeplSen: 30_000, totalSen: 75_000 },
+      { code: 'PG', name: 'Penang', covers: 'Penang, Perlis, Kedah, Kelantan, Terengganu, Pahang', dos: 2, valueSen: 100_000, ownSen: 45_000, threeplSen: 30_000, totalSen: 75_000 },
+      { code: 'KL', name: 'KL', covers: 'KL, Selangor, Putrajaya, Melaka, Johor, Negeri Sembilan, Perak, others', dos: 3, valueSen: 160_000, ownSen: 45_000, threeplSen: 15_000, totalSen: 60_000 },
+      { code: 'EM', name: 'SBH & SWK', covers: 'Sabah, Sarawak, Labuan', dos: 0, valueSen: 0, ownSen: 0, threeplSen: 0, totalSen: 0 },
+      { code: 'SG', name: 'SGD', covers: 'Singapore', dos: 0, valueSen: 0, ownSen: 0, threeplSen: 0, totalSen: 0 },
     ],
     trips: [
-      { kind: 'own', day: '2026-10-05', who: 'VRH9058', ref: null, dos: 2, doNumbers: ['HC-DO-1', 'HC-DO-2'], regions: ['KL/SEL'], amountSen: 45_000 },
-      { kind: 'own', day: '2026-10-06', who: 'VPC9058', ref: null, dos: 1, doNumbers: ['HC-DO-3'], regions: ['Northern'], amountSen: 45_000 },
-      { kind: '3pl', day: '2026-10-07', who: 'MSJ TRANSPORT SERVICE', ref: 'HC-API-2610-009', dos: 1, doNumbers: ['HC-DO-4'], regions: ['Northern'], amountSen: 30_000 },
+      { kind: 'own', day: '2026-10-05', who: 'VRH9058', ref: null, dos: 2, doNumbers: ['HC-DO-1', 'HC-DO-2'], regions: ['KL'], amountSen: 45_000 },
+      { kind: 'own', day: '2026-10-06', who: 'VPC9058', ref: null, dos: 1, doNumbers: ['HC-DO-3'], regions: ['Penang'], amountSen: 45_000 },
+      { kind: '3pl', day: '2026-10-07', who: 'MSJ TRANSPORT SERVICE', ref: 'HC-API-2610-009', dos: 1, doNumbers: ['HC-DO-4'], regions: ['Penang'], amountSen: 30_000 },
     ],
     events: [{ id: 7, code: 'P7', name: 'IOI CITY MALL FAIR', startDate: '2026-10-16', endDate: '2026-10-20', setupSen: 870_000, transportSen: 103_000, totalSen: 973_000 }],
-    gaps: { dosNoDeliverer: 2, dosOutsideNoBill: 0, unlistedPlates: ['ABC 123'], openLines: { count: 3, sen: 348_000 }, eventLinesNoFair: { count: 0, sen: 0 }, monthsWithoutTrips: [] },
+    gaps: { dosNoDeliverer: 2, dosOutsideNoBill: 0, dosNoState: 1, unlistedPlates: ['ABC 123'], openLines: { count: 3, sen: 348_000 }, eventLinesNoFair: { count: 0, sen: 0 }, monthsWithoutTrips: [] },
     totals: { dos: 5, valueSen: 260_000, ownSen: 90_000, threeplSen: 45_000, totalSen: 135_000, setupSen: 870_000, transportSen: 103_000 },
     ownCostAccounts: ['900-P015'], ownCostDefault: true, eventsProblem: null,
   };
@@ -87,8 +89,9 @@ describe('the Logistics cost tab', () => {
 
   test('by region, per trip, setup & dismantle and own-lorry cost are views of the one answer', async () => {
     draw();
-    await screen.findByText('KL/SEL');
-    expect(screen.getByText('Northern')).toBeTruthy();
+    await screen.findByText('Penang, Perlis, Kedah, Kelantan, Terengganu, Pahang');
+    expect(screen.getByText('SBH & SWK')).toBeTruthy();
+    expect(screen.getByText(/KL includes 1 DO with no state/)).toBeTruthy();
     fireEvent.click(screen.getByRole('tab', { name: 'Per trip' }));
     await screen.findByText('MSJ TRANSPORT SERVICE');
     expect(screen.getByText('VRH9058')).toBeTruthy();

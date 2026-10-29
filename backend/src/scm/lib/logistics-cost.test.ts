@@ -9,25 +9,23 @@
        by its DOs; a month with cost and no trip is named, not spread;
      • a DO's 3PL cost is its bill charge; a 3PL run is one bill line, on its own
        date, else its DOs' first day;
-     • by region: DOs, what they carry, our share, 3PL, total — the DOs of the
-       range only, a month's trips counted whole;
+     • four regions, the books' own (2026-10-29 「可以」): Penang, KL, SBH & SWK,
+       SGD — Singapore by its state box or its address, a state nobody names
+       KL's others; by region: DOs, what they carry, our share, 3PL, total —
+       the range's DOs only, a month's trips counted whole;
      • the default cost accounts: expense accounts naming a lorry or one of our
        plates — not the director's petrol, not the lorry asset. */
 
 import { describe, expect, test } from 'vitest';
 import {
-  buildLogisticsReport, defaultOwnCostAccounts, delivererOf, normalisePlate, platesOf, regionIndex, share,
-  type LogisticsDo, type LogisticsInput, type LogisticsLorry, type LogisticsRegion,
+  buildLogisticsReport, defaultOwnCostAccounts, delivererOf, normalisePlate, platesOf, regionOfDo, share,
+  type LogisticsDo, type LogisticsInput, type LogisticsLorry,
 } from './logistics-cost';
 
 const LORRIES: LogisticsLorry[] = [
   { id: 'L1', plate: 'VRH9058', isInternal: true },
   { id: 'L2', plate: 'VPC9058', isInternal: true },
   { id: 'L3', plate: 'W1591T', isInternal: false },
-];
-const REGIONS: LogisticsRegion[] = [
-  { code: 'KL', name: 'KL/SEL', sortOrder: 1, states: ['Kuala Lumpur', 'Selangor', 'W.P. Kuala Lumpur'] },
-  { code: 'NORTHERN', name: 'Northern', sortOrder: 2, states: ['Penang', 'Pulau Pinang', 'Kedah'] },
 ];
 const DO = (id: string, day: string, state: string | null, valueSen: number, crew: { lorryId?: string; plate?: string } = {}): LogisticsDo => ({
   id, doNumber: `HC-DO-${id}`, soDocNo: null, day, state, valueSen, crewLorryId: crew.lorryId ?? null, crewPlate: crew.plate ?? null,
@@ -49,12 +47,16 @@ describe('plates and who took a DO', () => {
     expect(delivererOf({ crewLorryId: null, crewPlate: null }, LORRIES)).toEqual({ kind: 'none' });
   });
 
-  test("a state's region, spelled any way; no state is its own row", () => {
-    const regionOf = regionIndex(REGIONS);
-    expect(regionOf('PULAU PINANG').code).toBe('NORTHERN');
-    expect(regionOf('W.P. Kuala Lumpur').code).toBe('KL');
-    expect(regionOf(null).code).toBe('NONE');
-    expect(regionOf('Sabah').code).toBe('NONE');
+  test("the four regions: the books' own split, Singapore by its state box or its address", () => {
+    const at = (state: string | null, city: string | null = null, postcode: string | null = null) => regionOfDo({ state, city, postcode });
+    expect(at('PULAU PINANG')).toEqual({ code: 'PG', noState: false });
+    for (const s of ['Perlis', 'Kedah', 'Kelantan', 'Terengganu', 'Pahang']) expect(at(s).code).toBe('PG');
+    for (const s of ['Selangor', 'W.P. Kuala Lumpur', 'Putrajaya', 'Melaka', 'Johor', 'Negeri Sembilan', 'Perak']) expect(at(s).code).toBe('KL');
+    for (const s of ['Sabah', 'Sarawak', 'W.P. Labuan']) expect(at(s).code).toBe('EM');
+    for (const s of ['Singapore', 'West', 'North-East', 'Central']) expect(at(s).code).toBe('SG');
+    expect(at(null, '099206 SINGAPORE')).toEqual({ code: 'SG', noState: false });
+    expect(at('', null, '640419')).toEqual({ code: 'SG', noState: false });
+    expect(at(null, 'Ayer Keroh', '75450')).toEqual({ code: 'KL', noState: true });
   });
 
   test('a share is whole sen and adds back up', () => {
@@ -77,7 +79,7 @@ describe('the report', () => {
       DO('d7', '2026-10-10', 'Selangor', 7_000, { plate: 'ABC 123' }),       // a plate on no list
       DO('d8', '2026-09-30', 'Selangor', 60_000, { lorryId: 'L1' }),         // September
     ],
-    lorries: LORRIES, regions: REGIONS,
+    lorries: LORRIES,
     charges: [{ doId: 'd4', billedSen: 30_000 }, { doId: 'd5', billedSen: 15_000 }, { doId: 'd8', billedSen: 999 }],
     runs: [{ lineId: 'b1', apInvoiceNo: 'HC-API-2610-009', carrier: 'MSJ TRANSPORT', lineDate: null, invoiceDate: '2026-10-20', amountSen: 30_000, doIds: ['d4'], text: 'TRANSPORT TO PENANG' }],
     ownCost: [
@@ -100,18 +102,21 @@ describe('the report', () => {
     }]);
     const own = r.trips.filter((t) => t.kind === 'own');
     expect(own.map((t) => [t.day, t.who, t.dos, t.amountSen, t.regions])).toEqual([
-      ['2026-10-05', 'VRH9058', 2, 45_000, ['KL/SEL']],
-      ['2026-10-06', 'VPC9058', 1, 45_000, ['Northern']],
+      ['2026-10-05', 'VRH9058', 2, 45_000, ['KL']],
+      ['2026-10-06', 'VPC9058', 1, 45_000, ['Penang']],
     ]);
   });
 
   test('by region: the range\'s DOs, what they carry, our share and the 3PL bill', () => {
     const r = buildLogisticsReport(input());
-    expect(r.regions).toEqual([
-      { code: 'KL', name: 'KL/SEL', dos: 4, valueSen: 167_000, ownSen: 45_000, threeplSen: 15_000, totalSen: 60_000 },
-      { code: 'NORTHERN', name: 'Northern', dos: 2, valueSen: 100_000, ownSen: 45_000, threeplSen: 30_000, totalSen: 75_000 },
-      { code: 'NONE', name: 'No state / region', dos: 1, valueSen: 5_000, ownSen: 0, threeplSen: 0, totalSen: 0 },
+    expect(r.regions.map(({ covers: _c, ...x }) => x)).toEqual([
+      { code: 'PG', name: 'Penang', dos: 2, valueSen: 100_000, ownSen: 45_000, threeplSen: 30_000, totalSen: 75_000 },
+      { code: 'KL', name: 'KL', dos: 5, valueSen: 172_000, ownSen: 45_000, threeplSen: 15_000, totalSen: 60_000 },
+      { code: 'EM', name: 'SBH & SWK', dos: 0, valueSen: 0, ownSen: 0, threeplSen: 0, totalSen: 0 },
+      { code: 'SG', name: 'SGD', dos: 0, valueSen: 0, ownSen: 0, threeplSen: 0, totalSen: 0 },
     ]);
+    /* The DO with no state is KL's "others" — and is counted as such. */
+    expect(r.gaps.dosNoState).toBe(1);
     /* September's DO and its charge are not October's. */
     expect(r.totals).toMatchObject({ dos: 7, ownSen: 90_000, threeplSen: 45_000, totalSen: 135_000, setupSen: 870_000, transportSen: 103_000 });
   });
@@ -119,7 +124,7 @@ describe('the report', () => {
   test('a 3PL run is one bill line, on its DOs\' day when the line has none', () => {
     const r = buildLogisticsReport(input());
     expect(r.trips.filter((t) => t.kind === '3pl')).toEqual([{
-      kind: '3pl', day: '2026-10-07', who: 'MSJ TRANSPORT', ref: 'HC-API-2610-009', dos: 1, doNumbers: ['HC-DO-d4'], regions: ['Northern'], amountSen: 30_000,
+      kind: '3pl', day: '2026-10-07', who: 'MSJ TRANSPORT', ref: 'HC-API-2610-009', dos: 1, doNumbers: ['HC-DO-d4'], regions: ['Penang'], amountSen: 30_000,
     }]);
   });
 

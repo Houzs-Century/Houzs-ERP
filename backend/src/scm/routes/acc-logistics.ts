@@ -10,7 +10,7 @@
 //   PUT /logistics/settings         { accounts: string[] | null } — null = default
 //
 // The reads: the DOs of the whole months the range touches (a month's trips
-// divide its whole cost) with their crews, lines, 3PL charges and regions; the
+// divide its whole cost) with their crews, lines and 3PL charges; the
 // carriers' bill lines; the ticked accounts' postings; the fairs starting in the
 // range with their books (the same reader Project Overview uses).
 // ----------------------------------------------------------------------------
@@ -25,7 +25,7 @@ import { booksLinesFor, readEventBooksMany } from '../lib/event-books';
 import { toEventRow } from '../lib/event-tags';
 import {
   buildLogisticsReport, defaultOwnCostAccounts, monthOf,
-  type ChartAccount, type EventCost, type LogisticsDo, type LogisticsLorry, type LogisticsRegion, type OwnCostLeg, type ThreeplRun,
+  type ChartAccount, type EventCost, type LogisticsDo, type LogisticsLorry, type OwnCostLeg, type ThreeplRun,
 } from '../lib/logistics-cost';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped throughout the acc layer */
@@ -81,7 +81,7 @@ export const logisticsCostHandler = async (c: any): Promise<Response> => {
 
   /* The DOs going out in the whole months: by the customer delivery date Delivery
      Planning schedules, else — none scheduled — by the DO's own date. */
-  const DO_COLS = 'id, do_number, so_doc_no, status, state, do_date, customer_delivery_date';
+  const DO_COLS = 'id, do_number, so_doc_no, status, state, city, postcode, do_date, customer_delivery_date';
   const [scheduled, unscheduled] = await Promise.all([
     paginateAll<Row>((lo, hi) => sb.from('delivery_orders').select(DO_COLS).eq('company_id', companyId).neq('status', 'CANCELLED')
       .gte('customer_delivery_date', wholeFrom).lte('customer_delivery_date', wholeTo).order('id').range(lo, hi)),
@@ -93,21 +93,17 @@ export const logisticsCostHandler = async (c: any): Promise<Response> => {
   const doRows = [...(scheduled.data ?? []), ...(unscheduled.data ?? [])];
   const doIds = [...new Set(doRows.map((d) => String(d.id)))];
 
-  const [crew, items, charges, regionRes, stateRes] = await Promise.all([
+  const [crew, items, charges] = await Promise.all([
     chunkIn<Row>(doIds, (b, lo, hi) => sb.from('delivery_order_crew').select('do_id, lorry_id, lorry_plate')
       .eq('company_id', companyId).in('do_id', b).order('do_id').range(lo, hi)),
     chunkIn<Row>(doIds, (b, lo, hi) => sb.from('delivery_order_items').select('id, delivery_order_id, line_total_sen')
       .eq('company_id', companyId).in('delivery_order_id', b).order('id').range(lo, hi)),
     chunkIn<Row>(doIds, (b, lo, hi) => sb.from('threepl_do_charges').select('id, do_id, billed_sen')
       .eq('company_id', companyId).in('do_id', b).order('id').range(lo, hi)),
-    sb.from('delivery_planning_regions').select('id, code, name, sort_order, active').eq('company_id', companyId),
-    sb.from('state_delivery_regions').select('state_key, region_id').eq('company_id', companyId),
   ]);
   if (crew.error) return fail(c, 'delivery crews', crew.error.message);
   if (items.error) return fail(c, 'delivery order lines', items.error.message);
   if (charges.error) return fail(c, '3PL charges', charges.error.message);
-  if (regionRes.error) return fail(c, 'regions', regionRes.error.message);
-  if (stateRes.error) return fail(c, 'regions', stateRes.error.message);
 
   const crewOf = new Map(crew.data.map((r) => [String(r.do_id), r] as const));
   const valueOf = new Map<string, number>();
@@ -123,19 +119,12 @@ export const logisticsCostHandler = async (c: any): Promise<Response> => {
     const k = crewOf.get(id);
     dos.push({
       id, doNumber: String(d.do_number ?? id), soDocNo: d.so_doc_no == null ? null : String(d.so_doc_no), day: when,
-      state: d.state == null ? null : String(d.state), valueSen: valueOf.get(id) ?? 0,
+      state: d.state == null ? null : String(d.state),
+      city: d.city == null ? null : String(d.city), postcode: d.postcode == null ? null : String(d.postcode),
+      valueSen: valueOf.get(id) ?? 0,
       crewLorryId: k?.lorry_id == null ? null : String(k.lorry_id), crewPlate: k?.lorry_plate == null ? null : String(k.lorry_plate),
     });
   }
-  const statesOf = new Map<string, string[]>();
-  for (const s of (stateRes.data ?? []) as Row[]) {
-    const list = statesOf.get(String(s.region_id)) ?? [];
-    list.push(String(s.state_key ?? ''));
-    statesOf.set(String(s.region_id), list);
-  }
-  const regions: LogisticsRegion[] = ((regionRes.data ?? []) as Row[]).filter((r) => r.active !== false).map((r) => ({
-    code: String(r.code), name: String(r.name ?? r.code), sortOrder: Number(r.sort_order ?? 0), states: statesOf.get(String(r.id)) ?? [],
-  }));
 
   /* The carriers' bill lines: the runs (assigned to DOs), what nobody assigned,
      and the fair lines with no fair. */
@@ -212,7 +201,7 @@ export const logisticsCostHandler = async (c: any): Promise<Response> => {
   }
 
   const report = buildLogisticsReport({
-    from, to, dos, lorries: setup.lorries, regions,
+    from, to, dos, lorries: setup.lorries,
     charges: charges.data.map((ch) => ({ doId: String(ch.do_id), billedSen: Number(ch.billed_sen ?? 0) })),
     runs, ownCost, events, openLines, eventLinesNoFair,
   });

@@ -105,7 +105,7 @@ export const LogisticsCostTab = () => {
         ))}
       </div>
 
-      {view === 'region' && <RegionView rows={r?.regions ?? null} loading={q.isLoading} />}
+      {view === 'region' && <RegionView rows={r?.regions ?? null} loading={q.isLoading} noState={r?.gaps.dosNoState ?? 0} />}
       {view === 'trips' && <TripsView rows={r?.trips ?? null} loading={q.isLoading} />}
       {view === 'events' && <EventsView rows={r?.events ?? null} loading={q.isLoading} problem={r?.eventsProblem ?? null} />}
       {view === 'own' && <OwnView rows={r?.months ?? null} loading={q.isLoading} accounts={r?.ownCostAccounts ?? []} isDefault={r?.ownCostDefault ?? true} />}
@@ -138,10 +138,19 @@ function NotCounted({ report }: { report: LogisticsReport }) {
   );
 }
 
-/* ── By region ─────────────────────────────────────────────────────────────── */
-function RegionView({ rows, loading }: { rows: LogisticsRegionRow[] | null; loading: boolean }) {
+/* ── By region — the four the books split transport by (2026-10-29): Penang
+   900-T005, KL 900-T006, SBH & SWK 900-T007, SGD 900-T027 … T029. ─────────── */
+function RegionView({ rows, loading, noState }: { rows: LogisticsRegionRow[] | null; loading: boolean; noState: number }) {
   const columns = useMemo<Column<LogisticsRegionRow>[]>(() => [
-    { key: 'zone', label: 'Region', getValue: (x) => x.name, render: (x) => x.name, total: () => 'Total' },
+    {
+      key: 'zone', label: 'Region', getValue: (x) => x.name, total: () => 'Total',
+      render: (x) => (
+        <span style={{ display: 'inline-flex', flexDirection: 'column' }}>
+          <span>{x.name}</span>
+          <span style={{ ...soft, fontSize: 'var(--fs-11)' }}>{x.covers}</span>
+        </span>
+      ),
+    },
     { key: 'dos', label: 'DOs', align: 'right', getValue: (x) => x.dos, render: (x) => <Num>{x.dos}</Num>, total: (rs) => <Num>{sum(rs, (x) => x.dos)}</Num> },
     money('value', 'Goods (RM)', (x) => x.valueSen),
     money('own', 'Our lorries (RM)', (x) => x.ownSen),
@@ -159,9 +168,12 @@ function RegionView({ rows, loading }: { rows: LogisticsRegionRow[] | null; load
     },
   ], []);
   return (
-    <DataTable<LogisticsRegionRow> tableId="logistics-by-region" exportName="logistics-by-region" exportXlsx
-      columns={columns} rows={rows} loading={loading} getRowKey={(x) => x.code}
-      emptyLabel="No DO goes out in these months." />
+    <>
+      <DataTable<LogisticsRegionRow> tableId="logistics-by-region" exportName="logistics-by-region" exportXlsx
+        columns={columns} rows={rows} loading={loading} getRowKey={(x) => x.code}
+        emptyLabel="No DO goes out in these months." />
+      {noState > 0 && <div style={soft}>KL includes {noState} DO{noState === 1 ? '' : 's'} with no state on {noState === 1 ? 'it' : 'them'} (others). A Singapore address is read from its postcode or the word Singapore.</div>}
+    </>
   );
 }
 

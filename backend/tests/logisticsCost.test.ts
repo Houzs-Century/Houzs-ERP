@@ -3,8 +3,8 @@
    除成本」). The arithmetic is scm/lib/logistics-cost.test.ts; pinned here:
      • the reads: this company's DOs (not cancelled, not another company's) of
        the whole months, by the scheduled customer delivery date, else the DO's
-       own; their crews, lines, 3PL charges and regions; the carriers' bill
-       lines; what the ticked accounts booked — a reversed pair and the opening
+       own; their crews, lines and 3PL charges, in the four regions of the
+       books (a Singapore address by its words); the carriers' bill lines; what the ticked accounts booked — a reversed pair and the opening
        left out;
      • the cost accounts: the chart's default until Finance ticks a list; only
        an active expense account may be ticked, only with the money right; an
@@ -60,14 +60,6 @@ const world = (over: Record<string, Row[]> = {}) => fakeSb({
     { id: 'i3', delivery_order_id: 'd2', company_id: CO, line_total_sen: 20_000 },
   ],
   threepl_do_charges: [{ id: 'c1', company_id: CO, do_id: 'd2', billed_sen: 30_000 }],
-  delivery_planning_regions: [
-    { id: 'r1', company_id: CO, code: 'KL', name: 'KL/SEL', sort_order: 1, active: true },
-    { id: 'r2', company_id: CO, code: 'NORTHERN', name: 'Northern', sort_order: 2, active: true },
-  ],
-  state_delivery_regions: [
-    { company_id: CO, state_key: 'Selangor', region_id: 'r1' },
-    { company_id: CO, state_key: 'Penang', region_id: 'r2' },
-  ],
   threepl_bill_lines: [
     { id: 'b1', company_id: CO, ap_invoice_id: 'a1', threepl_company_id: 't1', line_date: null, amount_sen: 30_000, do_ids: ['d2'], text: 'TRANSPORT TO PENANG', assign: 'do', project_id: null },
     { id: 'b2', company_id: CO, ap_invoice_id: 'a1', threepl_company_id: 't1', line_date: null, amount_sen: 5_000, do_ids: [], text: 'HANDLING', assign: null, project_id: null },
@@ -94,9 +86,11 @@ describe('GET /acc-events/logistics', () => {
     expect(b.ownCostDefault).toBe(true);
     expect(b.ownCostAccounts).toEqual(['900-P015', '900-U010']);
     expect(b.months).toEqual([{ month: '2026-10', ownCostSen: 60_000, trips: 1, perTripSen: 60_000, accounts: [{ code: '900-P015', name: 'PETROL, TOL AND PARKING - LORI VRH 9058', sen: 60_000 }] }]);
-    expect(b.regions).toEqual([
-      { code: 'KL', name: 'KL/SEL', dos: 1, valueSen: 100_000, ownSen: 60_000, threeplSen: 0, totalSen: 60_000 },
-      { code: 'NORTHERN', name: 'Northern', dos: 1, valueSen: 20_000, ownSen: 0, threeplSen: 30_000, totalSen: 30_000 },
+    expect(b.regions.map(({ covers: _c, ...x }: any) => x)).toEqual([
+      { code: 'PG', name: 'Penang', dos: 1, valueSen: 20_000, ownSen: 0, threeplSen: 30_000, totalSen: 30_000 },
+      { code: 'KL', name: 'KL', dos: 1, valueSen: 100_000, ownSen: 60_000, threeplSen: 0, totalSen: 60_000 },
+      { code: 'EM', name: 'SBH & SWK', dos: 0, valueSen: 0, ownSen: 0, threeplSen: 0, totalSen: 0 },
+      { code: 'SG', name: 'SGD', dos: 0, valueSen: 0, ownSen: 0, threeplSen: 0, totalSen: 0 },
     ]);
     expect(b.trips.map((t: any) => [t.kind, t.day, t.who, t.ref, t.amountSen])).toEqual([
       ['own', '2026-10-05', 'VRH9058', null, 60_000],
