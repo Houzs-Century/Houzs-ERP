@@ -325,12 +325,13 @@ async function cancelFormal(
 /**
  * After a payment is EDITED. A DRAFT is rewritten in place — its number stays,
  * the number is an id, not a date (单据存了后改日期号码不要重发). A FORMAL receipt
- * is in the customer's hand, so it is CANCELLED, with what moved as its reason,
- * and the payment gets a new receipt: formal at once on the cancelled one's
- * channel when the method is unchanged (the money was confirmed there already),
- * otherwise born as any payment's receipt is — cash formal, the rest a draft to
- * confirm. Nothing happens when the receipt already says what the payment says,
- * or when the payment has none (ensure heals that at the next print).
+ * is in the customer's hand: when its AMOUNT or DAY moved it is CANCELLED, with
+ * what moved as its reason, and the payment gets a new receipt — formal at once
+ * on the cancelled one's channel when the method is unchanged (the money was
+ * confirmed there already), otherwise born as any payment's receipt is: cash
+ * formal, the rest a draft to confirm. A method re-filed alone leaves a formal
+ * receipt standing. Nothing happens when the receipt already says what the
+ * payment says, or when the payment has none (ensure heals that at the next print).
  */
 export async function followPaymentEdit(
   sb: any,
@@ -350,6 +351,11 @@ export async function followPaymentEdit(
     if (error) return { ok: false, reason: error.message };
     return { ok: true, touch: null };
   }
+  /* A formal receipt is re-issued for the money it states — a new amount or a
+     new day (the owner's words: 按付款的新金额或新日期开一张新收据). A method
+     re-filed alone (a card payment's provider or method corrected) leaves it
+     standing: the same money on the same day. */
+  if (!receiptChange(r, { ...p.next, method: r.method ?? '' })) return { ok: true, touch: null };
 
   let companyCode: string | null;
   try { companyCode = await companyCodeById(sb, p.companyId); } catch (e) { return { ok: false, reason: String((e as Error).message ?? e) }; }
