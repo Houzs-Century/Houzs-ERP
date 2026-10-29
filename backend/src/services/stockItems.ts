@@ -163,8 +163,8 @@ export async function resolveCreditorForCase(
   env: Env,
   caseId: number,
   itemCode: string | null | undefined,
-  opts: { force?: boolean } = {}
-): Promise<{ code: string | null; soMissing: boolean }> {
+  opts: { force?: boolean; onlyIfBlank?: boolean } = {}
+): Promise<{ code: string | null; soMissing: boolean; kept?: boolean }> {
   if (!itemCode) return { code: null, soMissing: false };
 
   const existing = await env.DB.prepare(
@@ -189,7 +189,7 @@ export async function resolveCreditorForCase(
   const source: string | null = fromOrder?.source ?? null;
 
   // Resolve now with nothing to resolve from must not wipe a pick (HC-0130).
-  if (opts.force && creditorCode === null && existing.creditor_code) return { code: existing.creditor_code, soMissing: false };
+  if (opts.force && creditorCode === null && existing.creditor_code) return { code: existing.creditor_code, soMissing: false, kept: true };
 
   const same = (existing.creditor_code ?? null) === (creditorCode ?? null);
   // Same value AND same owner (po/so/blank) → nothing to do. When force
@@ -197,11 +197,15 @@ export async function resolveCreditorForCase(
   // ownership flips back to po/so.
   if (same && existing.creditor_source === source) return { code: creditorCode, soMissing: false };
 
-  await env.DB.prepare(
-    `UPDATE assr_cases SET creditor_code = ?, creditor_source = ?, updated_at = datetime('now') WHERE id = ?`
+  // The read above can be stale: never let this write land on a manual pick
+  // (unless forced) or, for the read-time fill, on a row someone just filled.
+  const upd = await env.DB.prepare(
+    `UPDATE assr_cases SET creditor_code = ?, creditor_source = ?, updated_at = datetime('now')
+      WHERE id = ?${opts.force ? "" : " AND (creditor_source IS NULL OR creditor_source <> 'manual')"}${opts.onlyIfBlank ? " AND creditor_code IS NULL" : ""}`
   )
     .bind(creditorCode, source, caseId)
     .run();
+  if (!upd.meta?.changes) return { code: existing.creditor_code, soMissing: false };
 
   if (!same) {
     // Activity trail — mirrors other auto-resolved transitions.
