@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { copyLinesWithoutPwp } from './soCopyLines';
+import { copyLinesWithoutPwp, copySeedLines } from './soCopyLines';
 
 const L = (item_code: string, variants: unknown) => ({ item_code, variants });
 const codes = (r: { kept: { item_code: string }[] }) => r.kept.map((i) => i.item_code);
@@ -28,5 +28,16 @@ describe('copy as new drops PWP reward lines (HC-0149)', () => {
     const r = copyLinesWithoutPwp([L('A', { pwp: true, pwpCode: 'X' })], 'CANCELLED');
     expect(codes(r)).toEqual(['A']);
     expect(r.dropped).toBe(0);
+  });
+});
+
+describe('copySeedLines', () => {
+  it('skips cancelled lines, drops PWP lines and notifies once', () => {
+    const calls: string[] = [];
+    const kept = copySeedLines(
+      [{ id: 1, variants: {} }, { id: 2, variants: { pwpCode: 'X' } }, { id: 3, variants: {}, cancelled: true }],
+      'CONFIRMED', (n) => calls.push(n.body));
+    expect(kept.map((i) => i.id)).toEqual([1]);
+    expect(calls).toEqual(['1 PWP line(s) left out - re-add with a new code']);
   });
 });

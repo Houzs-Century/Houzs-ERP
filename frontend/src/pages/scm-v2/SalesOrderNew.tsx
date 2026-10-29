@@ -51,7 +51,7 @@ import { PageHeader } from '../../components/Layout';
 import { api } from '../../api/client';
 import type { Department, TeamMember } from '../../types';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
-import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import { useNotify } from '../../vendor/scm/components/NotifyDialog'; import { copySeedLines } from '../../lib/soCopyLines';
 import { usePrompt } from '../../vendor/scm/components/ConfirmDialog';
 import { askNewSoBackdateReason, draftRequestBody, isBackdateRequestRow, sendNewSoBackdateRequests } from '../../vendor/scm/lib/new-so-backdate';
 import {
@@ -59,7 +59,6 @@ import {
   useUploadSoItemPhoto, useMfgSalesOrderDetail,
   type DebtorSuggestion,
 } from '../../vendor/scm/lib/sales-order-queries';
-import { copyLinesWithoutPwp, pwpDroppedNotice } from '../../lib/soCopyLines';
 import { zeroPriceClaim } from '../../vendor/scm/lib/zeroPriceClaim';
 import { authedFetch, humanApiError, type SaveProblem } from '../../vendor/scm/lib/authed-fetch';
 import {
@@ -358,9 +357,7 @@ export const SalesOrderNew = () => {
     setEmergencyName(h.emergency_contact_name ?? '');
     setEmergencyRel(h.emergency_contact_relationship ?? '');
     setEmergencyPhone(h.emergency_contact_phone ?? '');
-    const { kept: copyKept, dropped: pwpDropped } = copyLinesWithoutPwp(
-      Array.isArray(srcItems) ? srcItems.filter((it) => !it.cancelled) : [], h.status);
-    if (pwpDropped > 0) void notify({ title: 'PWP line left out', body: pwpDroppedNotice(pwpDropped) });
+    const copyKept = copySeedLines(srcItems, h.status, (n) => void notify(n));
     if (copyKept.length > 0) {
       setLines(copyKept.map((it: any) => ({
         ...newLine(),

@@ -19,3 +19,14 @@ export function copyLinesWithoutPwp<T extends { variants?: unknown }>(
 
 export const pwpDroppedNotice = (n: number): string =>
   `${n} PWP line(s) left out - re-add with a new code`;
+
+/* Call-site entry for the SO desktop and mobile copy seeds: live (non-cancelled) lines, PWP rewards
+   left out, and the operator told when any were. */
+export function copySeedLines<T extends { variants?: unknown; cancelled?: unknown }>(
+  items: T[] | null | undefined, sourceStatus: string | null | undefined,
+  notify: (n: { title: string; body: string }) => unknown,
+): T[] {
+  const { kept, dropped } = copyLinesWithoutPwp((items ?? []).filter((it) => !it.cancelled), sourceStatus);
+  if (dropped > 0) notify({ title: 'PWP line left out', body: pwpDroppedNotice(dropped) });
+  return kept;
+}
