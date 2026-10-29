@@ -63,6 +63,8 @@ Line and derived states:
 
 ## Rules that must not break
 
+- 2990 POS combos may include Sofa Accessory Model quantities. The complete package price stays on the sofa; covered accessory SKU lines carry zero selling and their real cost, while extras remain separately priced. Create validates every piece, attachment, Model and quantity against submitted SKU lines. Only the server stamps inclusion; colour fill-ins preserve it. Individual package SKU/quantity changes, sofa deletion and sofa exchange are refused until a complete-package edit is available; whole-order cancellation remains available. Module-only delivery/free-item rules and PWP trigger reservation exclude accessory-inclusive combos. Quick Picks retain module geometry and attached accessories in `layout`; list clients opt in with `includeAccessories=1` before receiving accessory-bearing combos or picks.
+
 Locks
 - Per-line freeze (HARD): a line named by a live DO or SI line (DRAFT counts) cannot be edited, deleted, TBC-filled, price-overridden or amended (409 `so_line_frozen`). Other lines, new lines and dates stay open (`shared/so-line-freeze.ts`, `readSoLineFreeze` in `lib/downstream-lock.ts`).
 - Whole-order freeze: new lines are blocked when every live line is frozen, or when any live DO/SI line names no SO line (409 `so_has_downstream`; amendment submit `so_hard_locked`). The payload flags `downstream_frozen` per line and `downstream_fully_frozen` on the header; desktop and phone grey out frozen lines.

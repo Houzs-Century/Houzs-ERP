@@ -40,7 +40,7 @@ import { resolveMfgProductCostAsOf } from './supplier-price-history';
 import { todayMyt } from './my-time';
 import { scopeToCompanyIdOrOpen } from './companyScope';
 import {
-  computeSofaSellingSen,
+  computeSofaSellingResult,
   comboChargedPrices,
   sofaModulePricesFromSkus,
   sofaModuleSellingPricesFromSkus,
@@ -58,6 +58,7 @@ import {
 } from '../shared/fabric-tier-addon';
 import { resolveFabricTierOverride } from '../shared/fabric-tier-override-resolve';
 import { type PwpRule } from '../shared/pwp';
+import type { SofaPricedAccessory } from '../shared/sofa-combo-pricing';
 import { parseDefaultFreeGifts, type DefaultFreeGift, type FreeItemCampaign, parseFreeItemEligible } from '../shared';
 
 export type MfgItemVariants = {
@@ -116,9 +117,13 @@ export type MfgItemForRecompute = {
    *  (tbc-update). An add-on priced by compartment reads them. Absent → the
    *  codes come from `variants.cells`. */
   buildCompartments?: string[];
+  /** Verified against submitted child SKU lines by validateSofaAccessoryOrder. */
+  sofaAccessories?: SofaPricedAccessory[];
 };
 
 export type RecomputedLine = {
+  sofaComboMatchedAccessoryIds?: string[];
+  sofaComboIds?: string[];
   itemCode:     string;
   /** Persistable values for mfg_sales_order_items columns. */
   unit_price_sen:       number;
@@ -686,6 +691,8 @@ export function recomputeFromSnapshot(
   /* `extraSen` (declared extra charge, spec D1) is parsed above with the
      custom_specials composition — it feeds BOTH authoritative branches below. */
 
+  let sofaComboMatchedAccessoryIds: string[] = [];
+  let sofaComboIds: string[] = [];
   let drift: boolean;
   let unitToPersistSen: number;
   if (canPriceSofa) {
@@ -712,8 +719,11 @@ export function recomputeFromSnapshot(
           ? { ...c, pricesByHeight: comboChargedPrices(c.pwpPricesByHeight, c.pricesByHeight) }
           : c))
       : lineCombos;
-    const sofaSellingSen = computeSofaSellingSen(sofaCells as Cell[], sofaDepth, sofaModulePrices, effectiveCombos);
-    if (sofaSellingSen > 0) {
+    const sofaPrice = computeSofaSellingResult(sofaCells as Cell[], sofaDepth, sofaModulePrices, effectiveCombos, item.sofaAccessories ?? []);
+    const sofaSellingSen = sofaPrice.total;
+    sofaComboIds = sofaPrice.groups.flatMap((group) => group.comboId ? [group.comboId] : []);
+    sofaComboMatchedAccessoryIds = sofaPrice.groups.flatMap((group) => group.comboMatchedAccessoryIds ?? []);
+    if (sofaSellingSen > 0 || sofaComboMatchedAccessoryIds.length > 0) {
       /* Server has authoritative per-Model module SELLING prices for this build,
          + the SELLING fabric-tier Δ (migration 0124); the POS adds the same Δ so
          the gate matches. Δ = 0 with default data (no tier / no config set).
@@ -774,6 +784,8 @@ export function recomputeFromSnapshot(
 
   return {
     itemCode:          item.itemCode,
+    sofaComboMatchedAccessoryIds,
+    sofaComboIds,
     // Persist the AUTHORITATIVE selling price on a catalog line (D4) — UNLESS a
     // trusted non-POS author entered their own price (owner ruling); the
     // operator's manual price on a sofa / custom / not-found line.
