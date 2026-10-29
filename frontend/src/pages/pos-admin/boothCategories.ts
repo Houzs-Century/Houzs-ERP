@@ -11,9 +11,14 @@ export const BOOTH_DEFAULT_CATEGORIES: readonly string[] = ["ACCESSORY", "FABRIC
 
 export const categoryTitle = (c: string): string => (c === "" ? "No category" : mfgCategoryLabel(c));
 
-/** The ticks a fresh picker opens with: the booth defaults that exist in the counts. */
-export const defaultTicks = (counts: readonly CategoryCount[]): Set<string> =>
-  new Set(counts.map((c) => c.category).filter((c) => BOOTH_DEFAULT_CATEGORIES.includes(c)));
+/** The ticks a fresh picker opens with: the categories that have items on,
+ *  so the panel shows the POS as it is; the booth defaults only while the POS
+ *  is still empty (owner 2026-10-29: a default tick on an empty category
+ *  looked like a saved choice). */
+export const defaultTicks = (counts: readonly CategoryCount[]): Set<string> => {
+  const on = counts.filter((c) => c.active > 0 && c.category !== "").map((c) => c.category);
+  return new Set(on.length > 0 ? on : counts.map((c) => c.category).filter((c) => BOOTH_DEFAULT_CATEGORIES.includes(c)));
+};
 
 export type CategoryPlan = { to_add: number; kept: number; to_remove: number };
 
