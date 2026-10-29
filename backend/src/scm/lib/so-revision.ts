@@ -58,6 +58,7 @@ import { activeCompanyId, isMirroredDocNo, houzsOwns2990 } from './companyScope'
 import { scopeToCompanyIdOrOpen } from './companyScope';
 import { todayMyt } from './my-time';
 import { dateOrNull } from './date-coerce';
+import { exemptionExpirySeed } from './so-exemption-expiry';
 import { soWarehouseIdForDoc } from './so-warehouse';
 import { variantsForCompare } from './amendment-noop-lines';
 import { inPoLineOrder, nextPoLineNo, sortBySourceSoLine } from './po-line-order';
@@ -395,7 +396,7 @@ export async function applySoAmendment(
      mig 0091 gave the column a HOUZS DEFAULT — so a blip books a 2990 order's new
      line to Houzs, silently, exactly as the note on that insert warns. */
   const { data: soHdrCo, error: soHdrCoErr } = await sb.from('mfg_sales_orders')
-    .select('company_id, linked_ac_docno, so_date, status, processing_date, customer_delivery_date').eq('doc_no', docNo).maybeSingle();
+    .select('company_id, linked_ac_docno, so_date, status, processing_date, customer_delivery_date, sales_exemption_expiry').eq('doc_no', docNo).maybeSingle();
   if (soHdrCoErr) throw new Error(`applySoAmendment: SO company load failed: ${soHdrCoErr.message}`);
   const soCompanyId = (soHdrCo as { company_id?: number | null } | null)?.company_id ?? null;
   // Stage 3c: re-price a bound line's COST as-of the order's own date (auto-derive,
@@ -864,7 +865,7 @@ export async function applySoAmendment(
      its value. Rewriting legacy spellings onto today's keys before anything
      reads them is what stops that; it is an identity map until a rename lands.
      See shared/so-processing-date.ts for the removal condition. */
-  const soHdrNow = (soHdrCo ?? {}) as { status?: string | null; processing_date?: unknown; customer_delivery_date?: unknown };
+  const soHdrNow = (soHdrCo ?? {}) as { status?: string | null; processing_date?: unknown; customer_delivery_date?: unknown; sales_exemption_expiry?: string | null };
   const storedHeaderChanges = canonicaliseSoHeaderChanges(amendment.header_changes ?? null);
   /* A Processing Date removal clears the Delivery Date with it — the same cascade
      the direct header PATCH runs (soDatePairCascadeColumns), so the order never
@@ -902,6 +903,12 @@ export async function applySoAmendment(
          is preserved in the amendment's `old_header_snapshot` and the
          `AMENDMENT_SO_APPROVED` audit row, so replacing it stays fully auditable. */
       if (key === 'customerDeliveryDate') headerUpdates['amended_delivery_date'] = value === '' ? null : value;
+      /* HC-0122: the first date an order ever gets may arrive through an amendment;
+         freeze it as the Sales Exemption Expiry exactly as create / header PATCH do. */
+      if (key === 'customerDeliveryDate') {
+        const seed = exemptionExpirySeed(soHdrNow.status === 'DRAFT' ? null : soHdrNow.sales_exemption_expiry, dateOrNull(value));
+        if (seed) headerUpdates['sales_exemption_expiry'] = seed;
+      }
       headerApplied.push(`${col}=${value ?? 'cleared'}`);
     }
 
