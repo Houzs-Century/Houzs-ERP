@@ -131,6 +131,9 @@ export async function qtyCapRefusal(
     requested: number;
     /** This line's own stored draw, added back on an edit. Omit on an add. */
     ownPriorDraw?: number;
+    /** A draw the drawnColumns do not carry (a REPAIR return's units, which
+     *  are outside the rollup but still not returnable). Omit when none. */
+    extraDrawn?: number;
     /** Human name of the capping row, for the check-failed sentence. */
     what: string;
   },
@@ -160,7 +163,7 @@ export async function qtyCapRefusal(
   if (!data) return null;
 
   const row = data as unknown as Record<string, unknown>;
-  const drawn = args.drawnColumns.reduce((s, col) => s + num(row[col]), 0);
+  const drawn = args.drawnColumns.reduce((s, col) => s + num(row[col]), 0) + (args.extraDrawn ?? 0);
   return capVerdict({
     requested: args.requested,
     cap: num(row[args.capColumn]),
