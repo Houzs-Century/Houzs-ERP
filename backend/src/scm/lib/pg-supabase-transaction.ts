@@ -330,12 +330,12 @@ class PgPostgrestQuery implements PromiseLike<QueryResult<any>> {
           await opened;
           const rows = normalizeReturnedRows(await run as unknown[]);
           pendingReleases.set(this.sql as unknown as object, send(this.sql.unsafe(`RELEASE SAVEPOINT ${savepoint}`)));
-          return { rows, error: null as { message: string } | null };
+          return { rows, error: null as { message: string; code?: string } | null };
         } catch (error) {
           await Promise.allSettled([opened, run]);
           await this.sql.unsafe(`ROLLBACK TO SAVEPOINT ${savepoint}`);
           await this.sql.unsafe(`RELEASE SAVEPOINT ${savepoint}`);
-          return { rows: [] as unknown[], error: { message: error instanceof Error ? error.message : String(error) } };
+          return { rows: [] as unknown[], error: { message: error instanceof Error ? error.message : String(error), code: (error as { code?: string } | null)?.code } };
         }
       } finally {
         const ms = Date.now() - t0;
@@ -353,7 +353,8 @@ class PgPostgrestQuery implements PromiseLike<QueryResult<any>> {
           && /duplicate key|unique constraint/i.test(outcome.error.message)) {
         return { data: null, error: outcome.error, count: 0 };
       }
-      throw new Error(outcome.error.message);
+      // Keep the SQLSTATE: callers tell a DB guard (P0409, P0411) from a bug by it.
+      throw Object.assign(new Error(outcome.error.message), { code: outcome.error.code });
     }
     const rows = outcome.rows;
     if (this.headCount) {
