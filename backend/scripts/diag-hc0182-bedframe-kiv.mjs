@@ -40,7 +40,7 @@ async function main() {
     const priced = (j) => Object.entries(j).some(([k, v]) => /_sen$/.test(k) && Number(v) > 0);
     for (const { code, j: p } of products) {
       const bs = binds.filter((b) => b.item_code === code);
-      log(`  [${code}] name="${p.name}" status=${p.status} cat=${p.category} size_code=${p.size_code ?? '-'} size_label=${p.size_label ?? '-'} model=${p.base_model ?? '-'} created=${String(p.created_at ?? '').slice(0, 10)}`);
+      log(`  [${code}] name="${p.name}" status=${p.status} cat=${p.category} size_code=${p.size_code ?? '-'} size_label=${p.size_label ?? '-'} model=${p.base_model ?? '-'} model_id=${String(p.model_id ?? '-').slice(0, 8)} created=${String(p.created_at ?? '').slice(0, 10)}`);
       log(`      price2=${yes(p.base_price_sen)} cost=${yes(p.cost_price_sen)} price1=${yes(p.price1_sen)} seat_grid=${Array.isArray(p.seat_height_prices) ? p.seat_height_prices.length : 0} bindings=${bs.length} (${bs.map((b) => `${b.supplier ?? '?'}${b.j.is_main_supplier ? '*' : ''} priced=${priced(b.j) ? 'yes' : 'no'}`).join('; ') || 'none'})`);
     }
 
@@ -50,7 +50,7 @@ async function main() {
     log('');
     log(`${models.length} model row(s)`);
     for (const { model_code, j } of models) {
-      log(`  model [${model_code}] category=${j.category} status=${j.status ?? j.is_active ?? '-'} created=${String(j.created_at ?? '').slice(0, 10)} allowed=${JSON.stringify(j.allowed_options?.sizes ?? j.allowed_options ?? null)}`);
+      log(`  model [${model_code}] id=${String(j.id).slice(0, 8)} name="${j.name}" active=${j.active} updated=${String(j.updated_at ?? '').slice(0, 19)} created=${String(j.created_at ?? '').slice(0, 10)} allowed=${JSON.stringify(j.allowed_options?.sizes ?? j.allowed_options ?? null)}`);
     }
     const moves = codes.length ? await t`
       SELECT item_code, to_jsonb(v) AS j FROM scm.inventory_movements v
