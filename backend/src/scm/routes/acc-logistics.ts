@@ -23,6 +23,7 @@ import { dateOrNull } from '../lib/date-coerce';
 import { countsInTheBooks } from '../../acc/reversal-pairs';
 import { booksLinesFor, readEventBooksMany } from '../lib/event-books';
 import { toEventRow } from '../lib/event-tags';
+import { ADDRESS_COLS } from '../lib/so-address-on-save';
 import {
   buildLogisticsReport, defaultOwnCostAccounts, monthOf,
   type ChartAccount, type EventCost, type LogisticsDo, type LogisticsLorry, type OwnCostLeg, type ThreeplRun,
@@ -103,7 +104,7 @@ export const logisticsCostHandler = async (c: any): Promise<Response> => {
       .eq('company_id', companyId).in('delivery_order_id', b).order('id').range(lo, hi)),
     chunkIn<Row>(doIds, (b, lo, hi) => sb.from('threepl_do_charges').select('id, do_id, billed_sen')
       .eq('company_id', companyId).in('do_id', b).order('id').range(lo, hi)),
-    chunkIn<Row>(soNos, (b, lo, hi) => sb.from('mfg_sales_orders').select('doc_no, address1, address2, address3, address4')
+    chunkIn<Row>(soNos, (b, lo, hi) => sb.from('mfg_sales_orders').select(['doc_no', ...ADDRESS_COLS].join(', '))
       .eq('company_id', companyId).in('doc_no', b).order('doc_no').range(lo, hi)),
   ]);
   if (crew.error) return fail(c, 'delivery crews', crew.error.message);
@@ -111,7 +112,7 @@ export const logisticsCostHandler = async (c: any): Promise<Response> => {
   if (charges.error) return fail(c, '3PL charges', charges.error.message);
   if (orders.error) return fail(c, 'sales orders', orders.error.message);
 
-  const linesOf = (r: Row | undefined, keys: string[]): string[] => (r ? keys.map((k) => String(r[k] ?? '').trim()).filter(Boolean) : []);
+  const linesOf = (r: Row | undefined, keys: readonly string[]): string[] => (r ? keys.map((k) => String(r[k] ?? '').trim()).filter(Boolean) : []);
   const orderOf = new Map(orders.data.map((o) => [String(o.doc_no), o] as const));
   const crewOf = new Map(crew.data.map((r) => [String(r.do_id), r] as const));
   const valueOf = new Map<string, number>();
@@ -130,7 +131,7 @@ export const logisticsCostHandler = async (c: any): Promise<Response> => {
       state: d.state == null ? null : String(d.state),
       city: d.city == null ? null : String(d.city), postcode: d.postcode == null ? null : String(d.postcode),
       address: [...linesOf(d, ['address1', 'address2']),
-        ...linesOf(d.so_doc_no == null ? undefined : orderOf.get(String(d.so_doc_no)), ['address1', 'address2', 'address3', 'address4'])].join(' | ') || null,
+        ...linesOf(d.so_doc_no == null ? undefined : orderOf.get(String(d.so_doc_no)), ADDRESS_COLS)].join(' | ') || null,
       valueSen: valueOf.get(id) ?? 0,
       crewLorryId: k?.lorry_id == null ? null : String(k.lorry_id), crewPlate: k?.lorry_plate == null ? null : String(k.lorry_plate),
     });
