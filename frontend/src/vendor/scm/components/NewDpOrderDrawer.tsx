@@ -21,8 +21,8 @@
 // NotifyDialog only.
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useState } from 'react';
-import type { CSSProperties } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { X } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@2990s/design-system';
@@ -37,10 +37,11 @@ import { useSuppliers, useSupplierDetail } from '../lib/suppliers-queries';
 import { useLorries } from '../lib/lorries-queries';
 import { useStockTransfers } from '../lib/stock-queries';
 import { useWarehouses } from '../lib/inventory-queries';
-import { SearchableSelect } from './SearchableSelect';
+import { SearchableSelect, type SearchableSelectOption } from './SearchableSelect';
 import { useNotify } from './NotifyDialog';
 import { writeFailedAs } from '../lib/mutation-error';
-import { eventDateLabel } from '../lib/event-date-label';
+import { projectRowParts } from '../lib/project-picker-row';
+import { splitHighlight } from '../lib/split-highlight';
 // App-level client for the PMS project list (/api/projects lives outside the
 // /api/scm mount that the vendored authed-fetch targets). Same app-import
 // precedent as DataGrid's activeCompany subscription.
@@ -68,8 +69,9 @@ function sourceMeta(jobType: DpOrderCreate['jobType']): { label: string; hint: s
 }
 
 /* The slice of a PMS project row this picker needs (GET /api/projects → { data }).
-   start_date / end_date come back on the list row already (snake_case, the same
-   spelling the Projects list reads) — the picker just surfaces them in the label. */
+   code / name / venue / state / brand / start_date / end_date all come back on the
+   list row already (snake_case, the same spelling the Projects list reads); the
+   row is composed from them in project-picker-row.ts. */
 type ProjectPickRow = {
   id: number;
   code: string | null;
@@ -77,6 +79,7 @@ type ProjectPickRow = {
   venue: string | null;
   organizer: string | null;
   state: string | null;
+  brand: string | null;
   start_date: string | null;
   end_date: string | null;
 };
@@ -194,18 +197,57 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
     () => (suppliersQ.data ?? []).map((s) => ({ value: s.id, label: `${s.name} (${s.code})` })),
     [suppliersQ.data],
   );
-  const projectOptions = useMemo(
-    () => (projectsQ.data?.data ?? []).map((p) => {
-      // Date sits right after the code — where the leading year-month lives — so
-      // it stays visible before the long venue text and is searchable too.
-      const when = eventDateLabel(p.start_date, p.end_date);
-      return {
-        value: String(p.id),
-        label: `${p.code ?? p.id}${when ? ` · ${when}` : ''} — ${p.name ?? ''}${p.venue ? ` · ${p.venue}` : ''}`,
-      };
-    }),
-    [projectsQ.data],
+  /* Project / venue dropdown rows (owner spec 2026-10-29): the date first, then
+     [BRAND], the title, and the state — newest event first. Parts are kept in a
+     Map so the custom row renderer looks them up by id without rebuilding, while
+     the plain label still fills the closed input and `search` keeps the hidden
+     code findable. */
+  const projectParts = useMemo(() => {
+    const rows = (projectsQ.data?.data ?? []).map((p) => ({ id: String(p.id), parts: projectRowParts(p) }));
+    rows.sort((a, b) => b.parts.sortKey.localeCompare(a.parts.sortKey));
+    return rows;
+  }, [projectsQ.data]);
+  const projectPartsById = useMemo(
+    () => new Map(projectParts.map((r) => [r.id, r.parts])),
+    [projectParts],
   );
+  /* Monospace date column width = the longest date in the list (in ch), so every
+     title lines up whichever events are loaded. */
+  const dateColCh = useMemo(
+    () => projectParts.reduce((w, r) => Math.max(w, r.parts.date.length), 10),
+    [projectParts],
+  );
+  const projectOptions = useMemo(
+    () => projectParts.map((r) => ({ value: r.id, label: r.parts.plain, search: r.parts.search })),
+    [projectParts],
+  );
+  /* Row renderer: date (monospace, fixed width, never cut) then [BRAND] (never
+     cut) then title + state, which truncate with an ellipsis at the end. The live
+     query is highlighted wherever it shows. */
+  const renderProjectOption = (opt: SearchableSelectOption, query: string): ReactNode => {
+    const parts = projectPartsById.get(opt.value);
+    if (!parts) return opt.label;
+    const hl = (t: string) =>
+      splitHighlight(t, query).map((seg, i) =>
+        seg.hit
+          ? <mark key={i} style={{ background: 'rgba(242, 201, 76, 0.45)', color: 'inherit', borderRadius: 2, padding: '0 1px' }}>{seg.text}</mark>
+          : <Fragment key={i}>{seg.text}</Fragment>,
+      );
+    return (
+      <span style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+        <span style={{
+          flex: `0 0 ${dateColCh}ch`,
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+          fontVariantNumeric: 'tabular-nums',
+        }}>{parts.date}</span>
+        {parts.brand && <span style={{ flexShrink: 0, fontWeight: 600 }}>[{hl(parts.brand)}]</span>}
+        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {hl(parts.title)}
+          {parts.state && <span style={{ color: 'var(--c-muted, #767b6e)' }}> · {hl(parts.state)}</span>}
+        </span>
+      </span>
+    );
+  };
 
   /* Workshops + lorries — LORRY_SERVICE only. The workshop master lives outside
      the /api/scm mount (same app-import precedent as the project list above) and
@@ -560,7 +602,8 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
                 value={form.source}
                 onChange={pickProject}
                 options={projectOptions}
-                placeholder={projectsQ.isLoading ? 'Loading projects…' : 'Search project by code, name or venue…'}
+                renderOption={renderProjectOption}
+                placeholder={projectsQ.isLoading ? 'Loading projects…' : 'Search by date, brand, venue, state or code…'}
                 className={styles.searchInput}
                 ariaLabel="Project / venue"
               />

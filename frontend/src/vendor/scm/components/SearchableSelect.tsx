@@ -12,13 +12,17 @@
 // option, so a short list still just opens-and-picks.
 
 import { Fragment, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useAnchoredPanel, anchoredPanelStyle } from "../../../lib/anchoredPanel";
 
 /** `group` (optional) heads a run of options with a small title — the list is
  *  shown in the order given, so options of one group must sit together. A
- *  search keeps the headings of the groups that still have a match. */
-export type SearchableSelectOption = { value: string; label: string; group?: string };
+ *  search keeps the headings of the groups that still have a match.
+ *  `search` (optional) overrides what the filter matches on — the default is the
+ *  label and value. Set it when the visible label drops text that must stay
+ *  findable (the DP project picker hides the code but still searches it). */
+export type SearchableSelectOption = { value: string; label: string; group?: string; search?: string };
 
 /**
  * How many options reach the DOM at once. The menu is 280px tall — about ten
@@ -71,6 +75,7 @@ export function SearchableSelect({
   invalid = false,
   ariaLabel,
   title,
+  renderOption,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -83,6 +88,10 @@ export function SearchableSelect({
   ariaLabel?: string;
   /** Hover tooltip (e.g. why a field is locked). Falls back to the selected label. */
   title?: string;
+  /** Render a rich option row (structured layout, match highlight) in place of
+   *  the plain label. Gets the option and the live query; the CLOSED input still
+   *  shows the plain `label`, so set a sensible label even with this on. */
+  renderOption?: (option: SearchableSelectOption, query: string) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -105,8 +114,10 @@ export function SearchableSelect({
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return options;
-    return options.filter(
-      (o) => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q),
+    return options.filter((o) =>
+      o.search !== undefined
+        ? o.search.toLowerCase().includes(q)
+        : o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q),
     );
   }, [options, search]);
 
@@ -241,7 +252,7 @@ export function SearchableSelect({
                         : "transparent";
                     }}
                   >
-                    {o.label}
+                    {renderOption ? renderOption(o, search) : o.label}
                   </li>
                   </Fragment>
                 );
