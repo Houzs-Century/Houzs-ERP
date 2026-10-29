@@ -226,7 +226,7 @@ export async function applyPoLineImport(
     const po = world.pos.get(ch.poId)!;
     const written = await cascadePoSupplierDate(sb, {
       companyId, poId: po.id, before: po, slot: poLineImportSpec(ch.field).slot!, date: ch.new, applyToLines: true, actor,
-      note: 'Imported from file',
+      note: 'Imported from file', requireEmpty: false,
     });
     if (!written.ok) return c.json({ error: 'update_failed', message: `Could not update ${po.po_number}, nothing was imported (${written.reason}).` }, 500);
     touchedPos.add(po.id);

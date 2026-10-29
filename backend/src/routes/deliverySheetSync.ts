@@ -640,6 +640,7 @@ app.post("/po-dates", async (c) => {
         applyToLines: true,
         actor: null,
         note: "HC Delivery sheet (Outstanding PO)",
+        requireEmpty: false,
       });
       if (!r.ok) {
         failure = r.reason;

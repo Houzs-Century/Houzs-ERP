@@ -26,9 +26,9 @@ export type SupplierDateSlot = keyof typeof SUPPLIER_DATE_SLOT_COL;
 const dayOrRaw = (v: unknown): unknown => (v instanceof Date ? v.toISOString().slice(0, 10) : v);
 
 /* A recorded supplier date is history (DEV-73), so POST /bulk-supplier-date
-   asks this before it writes and never overwrites a filled slot. Not called by
-   cascadePoSupplierDate itself: the header PATCH is the correction path, and
-   the line import / delivery-sheet sync writers are not gated (open question). */
+   asks this before it writes and never overwrites a filled slot. The header
+   PATCH is gated by recordedSupplierDateChanges below (HC-0090); the line import
+   / delivery-sheet sync writers are not gated (open question). */
 export function pickSupplierDateSlot(
   requested: SupplierDateSlot | 'next',
   header: Record<string, unknown>,
@@ -47,6 +47,19 @@ export function pickSupplierDateSlot(
     : { ok: false, reason: `Supplier Date ${requested} already recorded (${existing}).` };
 }
 
+/* HC-0090: the header PATCH may not change or clear a slot that already holds a
+   date. Same value re-sent (the editor posts every field) is not a change. */
+export function recordedSupplierDateChanges(
+  before: Record<string, unknown>,
+  updates: Record<string, unknown>,
+): SupplierDateSlot[] {
+  const day = (v: unknown): string => (v == null ? '' : String(dayOrRaw(v)).slice(0, 10));
+  return ([2, 3, 4] as const).filter((s) => {
+    const col = SUPPLIER_DATE_SLOT_COL[s];
+    return col in updates && day(before[col]) !== '' && day(updates[col]) !== day(before[col]);
+  });
+}
+
 export async function cascadePoSupplierDate(
   sb: any,
   args: {
@@ -60,16 +73,21 @@ export async function cascadePoSupplierDate(
     applyToLines: boolean;
     actor: AuditActor | null;
     note: string | null;
+    /** true = write only while the slot is still NULL (bulk route: a double click
+     *  or a concurrent edit must not overwrite a just-recorded date). */
+    requireEmpty: boolean;
   },
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const { companyId, poId, before, slot, date, applyToLines, actor, note } = args;
+  const { companyId, poId, before, slot, date, applyToLines, actor, note, requireEmpty } = args;
   const col = SUPPLIER_DATE_SLOT_COL[slot];
 
-  const { error } = await scopeToCompanyId(
-    sb.from('purchase_orders').update({ [col]: date, updated_at: new Date().toISOString() }).eq('id', poId),
-    companyId,
-  );
+  let q = sb.from('purchase_orders').update({ [col]: date, updated_at: new Date().toISOString() }).eq('id', poId);
+  if (requireEmpty) q = q.is(col, null);
+  const { data: hit, error } = await scopeToCompanyId(q, companyId).select('id').maybeSingle();
   if (error) return { ok: false, reason: error.message };
+  if (requireEmpty && !hit) {
+    return { ok: false, reason: `Supplier Date ${slot} was recorded by someone else just now.` };
+  }
 
   if (applyToLines) {
     const { error: lineErr } = await scopeToCompanyId(

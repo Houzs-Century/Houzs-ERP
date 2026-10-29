@@ -1704,7 +1704,10 @@ const SupplierCard = ({
                   )
                 )}
               </span>
-              <DateField fullWidth className={styles.fieldInput} value={draft[k]} disabled={locked} onChange={(iso) => onField(k, iso)}/>
+              <DateField fullWidth className={styles.fieldInput} value={draft[k]}
+                /* HC-0090: a date already saved in this slot is history; the server refuses a change too. */
+                disabled={locked || Boolean(po?.[`supplier_delivery_date_${k.slice(-1)}`])}
+                onChange={(iso) => onField(k, iso)}/>
             </label>
           ))}
           {/* PR #77 — Purchase Location: default ship-to warehouse for
