@@ -15,6 +15,7 @@
 //   POST   /:id/approve                      the Purchaser says yes — to the whole request
 //   POST   /:id/reject                       the Purchaser says no, saying why
 //   POST   /:id/lines/:lineId/create-model   the Purchaser builds a line's new Model + SKU
+//   POST   /:id/lines/:lineId/link-sku       the Purchaser names a SKU the catalogue already has on that line
 //   POST   /:id/close                        the Purchaser ends it
 //   POST   /:id/link-po                      a Purchase Order raised from it claims it (PO_ISSUED)
 //   POST   /:id/files, GET /:id/files, GET + DELETE /:id/files/:fileId
@@ -666,7 +667,7 @@ export const createModelFromRequestLineHandler = async (c: any): Promise<Respons
 
   const { data: taken, error: tErr } = await sb.from('mfg_products').select('id').eq('company_id', co.companyId).eq('code', skuCode).maybeSingle();
   if (tErr) return c.json({ error: 'load_failed', reason: tErr.message }, 500);
-  if (taken) return c.json({ error: 'duplicate_code', message: `${skuCode} is already a SKU — pick it on the line instead, or give the new one another code.` }, 409);
+  if (taken) return c.json({ error: 'duplicate_code', message: `${skuCode} is already a SKU — use Existing SKU on the line instead, or give the new one another code.` }, 409);
   const pf = await assertAuditWritable(sb, { entityType: 'PRODUCT_REQUEST', entityId: String(r.id), action: 'UPDATE', companyId: co.companyId });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
@@ -708,6 +709,56 @@ export const createModelFromRequestLineHandler = async (c: any): Promise<Respons
   return c.json({ ok: true, model: { id: ensured.modelId, modelCode, created: ensured.created }, sku: { id: skuId, code: skuCode }, lineId: String(line.id), request: linked.rows[0] }, 201);
 };
 productRequests.post('/:id/lines/:lineId/create-model', createModelFromRequestLineHandler);
+
+/* ── POST /:id/lines/:lineId/link-sku — a new-Model line takes a SKU that exists ─
+   Body: { itemCode }. 2990-0025 (Sim): the SKUs were imported through SKU
+   Master before the request was approved, so Create Model + SKU could only
+   refuse the code or make a second SKU beside it. The line takes the SKU's
+   category and Model, as a line that named the SKU when raised does. */
+export const linkSkuToRequestLineHandler = async (c: any): Promise<Response> => {
+  if (!isApprover(c)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  let body: Row;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const itemCode = text(body.itemCode);
+  if (!itemCode) return c.json({ error: 'item_code_required', message: 'Pick the SKU this line is.' }, 400);
+  const found = await loadVisible(c, c.req.param('id'));
+  if ('resp' in found) return found.resp;
+  const r = found.req;
+  if (r.status !== 'APPROVED') {
+    return c.json({ error: 'request_not_approved', message: `${r.request_no} is ${statusWords(r.status)} — approve it first, then name the SKU.` }, 409);
+  }
+  const sb = c.get('supabase');
+  const { data: line, error: lineErr } = await sb.from('product_request_lines').select(LINE_COLS)
+    .eq('company_id', co.companyId).eq('request_id', r.id).eq('id', c.req.param('lineId')).maybeSingle();
+  if (lineErr) return c.json({ error: 'load_failed', reason: lineErr.message }, 500);
+  if (!line) return c.json({ error: 'line_not_found', message: `That line is not on ${r.request_no}.` }, 404);
+  if (line.item_code) return c.json({ error: 'model_exists', message: `Line ${line.line_no} already names ${line.item_code}.` }, 409);
+  const { data: sku, error: sErr } = await sb.from('mfg_products').select('id, code, category, model_id')
+    .eq('company_id', co.companyId).eq('code', itemCode).maybeSingle();
+  if (sErr) return c.json({ error: 'load_failed', reason: sErr.message }, 500);
+  if (!sku) return c.json({ error: 'unknown_item', message: `${itemCode} is not in the catalogue — pick a SKU from the list.` }, 404);
+  const pf = await assertAuditWritable(sb, { entityType: 'PRODUCT_REQUEST', entityId: String(r.id), action: 'UPDATE', companyId: co.companyId });
+  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+  const { data: updated, error } = await sb.from('product_request_lines')
+    .update({
+      item_code: String(sku.code), model_id: sku.model_id ? String(sku.model_id) : null,
+      category: String(sku.category ?? line.category).toUpperCase(), updated_at: new Date().toISOString(),
+    })
+    .eq('company_id', co.companyId).eq('id', line.id).is('item_code', null).select('id').maybeSingle();
+  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+  if (!updated) return c.json({ error: 'request_moved', message: `Line ${line.line_no} changed a moment ago — open the request again.` }, 409);
+  await recordEntityAudit(sb, {
+    entityType: 'PRODUCT_REQUEST', entityId: String(r.id), entityDocNo: r.request_no, action: 'UPDATE',
+    actor: c.get('houzsUser'), companyId: co.companyId, statusSnapshot: 'APPROVED',
+    fieldChanges: compactChanges([fieldChange('lineNo', null, line.line_no), fieldChange('itemCode', null, String(sku.code))]),
+  });
+  const linked = await withLinks(c, co.companyId, [r]);
+  if ('resp' in linked) return linked.resp;
+  return c.json({ ok: true, sku: { id: String(sku.id), code: String(sku.code) }, lineId: String(line.id), request: linked.rows[0] });
+};
+productRequests.post('/:id/lines/:lineId/link-sku', linkSkuToRequestLineHandler);
 
 /* ── POST /:id/close — the Purchaser ends it ───────────────────────────────── */
 export const closeProductRequestHandler = async (c: any): Promise<Response> => {

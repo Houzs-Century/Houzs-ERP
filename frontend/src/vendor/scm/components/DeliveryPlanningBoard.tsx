@@ -578,6 +578,25 @@ function HelperPickCell({ order, helpers, writeSeat, slot }: {
 const liveBalance = (o: PlanningOrder): number =>
   typeof o.balance_sen_live === 'number' ? o.balance_sen_live : o.balance_sen;
 
+/* The ticked bills added up for the bulk bar (HC-0164, Syu: "see the total
+   amount of bill I selected", as a sheet's status bar does). Sales orders only -
+   a job row's total is a structural 0, as in the Total Amount column. */
+export function selectedBillTotals(
+  orders: readonly PlanningOrder[],
+  selectedKeys: ReadonlySet<string>,
+): { count: number; totalSen: number; balanceSen: number } {
+  let count = 0;
+  let totalSen = 0;
+  let balanceSen = 0;
+  for (const o of orders) {
+    if (o.row_type !== 'so' || !selectedKeys.has(rowIdOf(o))) continue;
+    count += 1;
+    totalSen += o.local_total_sen;
+    balanceSen += liveBalance(o);
+  }
+  return { count, totalSen, balanceSen };
+}
+
 /* The days_left cell renderer lived here until the owner's 2026-08-04 column
    pass removed that column. It is gone rather than left dangling — the Overdue
    state tab and the delivery_state derivation already act on the same number,
@@ -927,6 +946,7 @@ export function DeliveryPlanningBoard({
   );
 
   const selectedSoDocNos = (): string[] => soDocNosFromSelection(selectedKeys);
+  const selectedTotals = useMemo(() => selectedBillTotals(orders, selectedKeys), [orders, selectedKeys]);
 
   /* ── Pending Schedule sub-split (owner pipeline, 2026-08-07) ────────────────
      Counts of the DERIVED arrangement stages across the Pending Schedule rows in
@@ -1701,6 +1721,16 @@ export function DeliveryPlanningBoard({
           >
             Clear
           </button>
+
+          {selectedTotals.count > 0 && (
+            <>
+              <span className={styles.bulkSep}>·</span>
+              <span className={styles.bulkLabel}>Total Amount</span>
+              <span className={styles.bulkCount} style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtSen(selectedTotals.totalSen)}</span>
+              <span className={styles.bulkLabel}>Balance</span>
+              <span className={styles.bulkCount} style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtSen(selectedTotals.balanceSen)}</span>
+            </>
+          )}
 
           <span className={styles.bulkSpacer} />
 
