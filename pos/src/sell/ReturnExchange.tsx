@@ -133,7 +133,7 @@ export function ReturnExchange({ state, initial, onSave, onClose, say }: {
           </div>
         </div>
       )}
-      {search !== null && <ItemSearch items={b.items} initial={search} onPick={(it: BundleItem) => { setNewCart((c) => addItem(c, it, true).cart); setSearch(null); }} onClose={() => setSearch(null)} />}
+      {search !== null && <ItemSearch items={b.items} initial={search} browse={false} onPick={(it: BundleItem) => { setNewCart((c) => addItem(c, it, true).cart); setSearch(null); }} onClose={() => setSearch(null)} />}
       {pay && original && totals && (
         <PaymentPopup
           cart={{ ...emptyCart(false), lines: [{ line_no: 1, item_id: 0, product_id: "", code: "DIFF", description: "Exchange difference", receipt_name: "Exchange difference", uom: "UNIT", qty: 1, unit_price_sen: totals.difference_sen, original_price_sen: null, override_by: null, override_reason: null, discount: null, is_foc: false, foc_allowed: false, max_manual_disc_pct: null, stock_qty: 0 }] }}
