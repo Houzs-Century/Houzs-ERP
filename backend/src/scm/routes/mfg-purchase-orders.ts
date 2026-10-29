@@ -100,6 +100,7 @@ import { skuCategoryResolver, lineIdentityFields } from '../lib/sku-category';
 import { firstSoLinkCategoryMismatch, soLinkCategoryMismatch, hardBoundUnlinkRefusal, hardBoundSplitRefusal, editedLineGroup } from '../lib/hard-bound-po-line';
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { withSoRefPoIds } from '../lib/so-ref-search';
+import { releaseRequestFromCancelledPo } from '../lib/product-request-link';
 
 /* ── Supplier sofa-combo auto-pricing (Commander 2026-05-29) ─────────────────
    The supplier prices a sofa SET (a colour-matched bundle of modules) as a
@@ -4289,6 +4290,7 @@ export const cancelPurchaseOrderHandler = async (c: any) => {
         fieldChange('totalSen', null, Number(po.total_sen ?? 0)),
       ]),
     });
+    await releaseRequestFromCancelledPo(supabase, co.companyId, { id, po_number: po.po_number ?? null }, c.get('houzsUser'));
   }
 
   /* Commander 2026-05-29 (BUG 1) — "cancel 了之后 代表这些 SO 有释放出来了是吧":
@@ -4325,10 +4327,8 @@ export const cancelPurchaseOrderHandler = async (c: any) => {
   } catch { /* best-effort — PO already cancelled, don't fail on counter recount */ }
 
   const { data: after } = await scopeToCompanyId(supabase
-    .from('purchase_orders')
-    .select('id, status, cancelled_at, po_number')
-    .eq('id', id), co.companyId)
-    .maybeSingle();
+    .from('purchase_orders').select('id, status, cancelled_at, po_number')
+    .eq('id', id), co.companyId).maybeSingle();
 
   /* ERP -> AutoCount cancel. Reached only for a PO the downstream lock let
      through (poHasDownstream, checked above) — the same rule AutoCount applies
