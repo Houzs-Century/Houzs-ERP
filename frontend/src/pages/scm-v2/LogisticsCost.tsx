@@ -3,6 +3,8 @@
 // setup & dismantle —「都需要」; 自己罗厘的成本（油、过路费、司机）也要算 →「那就
 // 先算 overall … trip 除成本」). What getting goods to customers and fairs cost in
 // the chosen months:
+//   • P&L — the owner's own Logistic Cost Report from the books (LogisticsPnl.tsx,
+//     2026-10-29 做), the first view;
 //   • By region — the DOs that went out, what they carried, our lorries' share
 //     and the 3PL bills, per delivery-planning region;
 //   • Per trip — each trip of ours (one lorry, one day) at the month's lorry cost
@@ -24,6 +26,7 @@ import {
   useLogisticsCost, useLogisticsSettings, useSaveLogisticsSettings,
   type LogisticsEventRow, type LogisticsMonthRow, type LogisticsRegionRow, type LogisticsReport, type LogisticsTripRow,
 } from '../../vendor/scm/lib/logistics-queries';
+import { PnlView } from './LogisticsPnl';
 
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 const firstDay = (month: string): string => `${month}-01`;
@@ -48,8 +51,9 @@ const pct = (part: number, whole: number): string => (whole > 0 ? `${((part / wh
 const sum = <T,>(rows: readonly T[], f: (r: T) => number): number => rows.reduce((s, r) => s + f(r), 0);
 const Num = ({ children }: { children: React.ReactNode }) => <span style={num}>{children}</span>;
 
-type View = 'region' | 'trips' | 'events' | 'own';
+type View = 'pnl' | 'region' | 'trips' | 'events' | 'own';
 const VIEWS: Array<{ key: View; text: string }> = [
+  { key: 'pnl', text: 'P&L' },
   { key: 'region', text: 'By region' },
   { key: 'trips', text: 'Per trip' },
   { key: 'events', text: 'Setup & Dismantle' },
@@ -59,14 +63,9 @@ const VIEWS: Array<{ key: View; text: string }> = [
 export const LogisticsCostTab = () => {
   const [fromMonth, setFromMonth] = useState(myt().slice(0, 7));
   const [toMonth, setToMonth] = useState(myt().slice(0, 7));
-  const [view, setView] = useState<View>('region');
-  const q = useLogisticsCost(firstDay(fromMonth), lastDay(fromMonth > toMonth ? fromMonth : toMonth));
-  const r = q.data;
-
-  const ownTrips = useMemo(() => (r?.trips ?? []).filter((t) => t.kind === 'own'), [r]);
-  const runs = useMemo(() => (r?.trips ?? []).filter((t) => t.kind === '3pl'), [r]);
-  const t = r?.totals;
-  const eventsKnown = r != null && r.eventsProblem == null;
+  const [view, setView] = useState<View>('pnl');
+  const from = firstDay(fromMonth);
+  const to = lastDay(fromMonth > toMonth ? fromMonth : toMonth);
 
   return (
     <div className="space-y-3">
@@ -75,22 +74,8 @@ export const LogisticsCostTab = () => {
         <input type="month" value={fromMonth} onChange={(e) => { if (e.target.value) setFromMonth(e.target.value); }} aria-label="From month" style={{ padding: '4px 6px', fontSize: 'var(--fs-12)' }} />
         <span style={soft}>to</span>
         <input type="month" value={toMonth} onChange={(e) => { if (e.target.value) setToMonth(e.target.value); }} aria-label="To month" style={{ padding: '4px 6px', fontSize: 'var(--fs-12)' }} />
-        <span style={soft}>· by the delivery date Delivery Planning shows, else the DO date · fairs starting in these months</span>
+        <span style={soft}>· by the delivery date Delivery Planning shows, else the DO date · fairs in these months</span>
       </div>
-
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-5" aria-label="Logistics totals">
-        <StatCard label="Deliveries (DOs)" pending={!r} value={t ? t.dos.toLocaleString('en-MY') : ''} subtitle={t ? `Goods ${cardRm(t.valueSen)}` : undefined} />
-        <StatCard label="Delivery cost" pending={!r} value={t ? cardRm(t.totalSen) : ''}
-          subtitle={t ? `${t.dos > 0 ? `${cardRm(t.totalSen / t.dos)} per DO` : '—'} · ${pct(t.totalSen, t.valueSen)} of goods` : undefined} />
-        <StatCard label="Our lorries" pending={!r} value={t ? cardRm(t.ownSen) : ''}
-          subtitle={r ? `${ownTrips.length} trip${ownTrips.length === 1 ? '' : 's'}${ownTrips.length > 0 ? ` · ${cardRm(t!.ownSen / ownTrips.length)} each` : ''}` : undefined} />
-        <StatCard label="3PL" pending={!r} value={t ? cardRm(t.threeplSen) : ''} subtitle={r ? `${runs.length} bill line${runs.length === 1 ? '' : 's'}` : undefined} />
-        <StatCard label="Setup & Dismantle" pending={!eventsKnown} value={t && eventsKnown ? cardRm(t.setupSen + t.transportSen) : ''}
-          subtitle={r ? (eventsKnown ? `${r.events.length} fair${r.events.length === 1 ? '' : 's'}` : 'could not be read') : undefined} />
-      </div>
-
-      {q.isError && <div style={{ ...soft, color: warn }}>The report could not be read — {q.error instanceof Error ? q.error.message : String(q.error)}</div>}
-      {r && <NotCounted report={r} />}
 
       <div role="tablist" aria-label="Logistics views" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         {VIEWS.map((v) => (
@@ -105,13 +90,44 @@ export const LogisticsCostTab = () => {
         ))}
       </div>
 
+      {view === 'pnl' ? <PnlView from={from} to={to} /> : <CostViews view={view} from={from} to={to} />}
+    </div>
+  );
+};
+
+/* ── The cost views: one read of the Logistics cost report ────────────────── */
+function CostViews({ view, from, to }: { view: Exclude<View, 'pnl'>; from: string; to: string }) {
+  const q = useLogisticsCost(from, to);
+  const r = q.data;
+
+  const ownTrips = useMemo(() => (r?.trips ?? []).filter((t) => t.kind === 'own'), [r]);
+  const runs = useMemo(() => (r?.trips ?? []).filter((t) => t.kind === '3pl'), [r]);
+  const t = r?.totals;
+  const eventsKnown = r != null && r.eventsProblem == null;
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-5" aria-label="Logistics totals">
+        <StatCard label="Deliveries (DOs)" pending={!r} value={t ? t.dos.toLocaleString('en-MY') : ''} subtitle={t ? `Goods ${cardRm(t.valueSen)}` : undefined} />
+        <StatCard label="Delivery cost" pending={!r} value={t ? cardRm(t.totalSen) : ''}
+          subtitle={t ? `${t.dos > 0 ? `${cardRm(t.totalSen / t.dos)} per DO` : '—'} · ${pct(t.totalSen, t.valueSen)} of goods` : undefined} />
+        <StatCard label="Our lorries" pending={!r} value={t ? cardRm(t.ownSen) : ''}
+          subtitle={r ? `${ownTrips.length} trip${ownTrips.length === 1 ? '' : 's'}${ownTrips.length > 0 ? ` · ${cardRm(t!.ownSen / ownTrips.length)} each` : ''}` : undefined} />
+        <StatCard label="3PL" pending={!r} value={t ? cardRm(t.threeplSen) : ''} subtitle={r ? `${runs.length} bill line${runs.length === 1 ? '' : 's'}` : undefined} />
+        <StatCard label="Setup & Dismantle" pending={!eventsKnown} value={t && eventsKnown ? cardRm(t.setupSen + t.transportSen) : ''}
+          subtitle={r ? (eventsKnown ? `${r.events.length} fair${r.events.length === 1 ? '' : 's'}` : 'could not be read') : undefined} />
+      </div>
+
+      {q.isError && <div style={{ ...soft, color: warn }}>The report could not be read — {q.error instanceof Error ? q.error.message : String(q.error)}</div>}
+      {r && <NotCounted report={r} />}
+
       {view === 'region' && <RegionView rows={r?.regions ?? null} loading={q.isLoading} noState={r?.gaps.dosNoState ?? 0} />}
       {view === 'trips' && <TripsView rows={r?.trips ?? null} loading={q.isLoading} />}
       {view === 'events' && <EventsView rows={r?.events ?? null} loading={q.isLoading} problem={r?.eventsProblem ?? null} />}
       {view === 'own' && <OwnView rows={r?.months ?? null} loading={q.isLoading} accounts={r?.ownCostAccounts ?? []} isDefault={r?.ownCostDefault ?? true} />}
     </div>
   );
-};
+}
 
 /* ── What could not be counted ─────────────────────────────────────────────── */
 function NotCounted({ report }: { report: LogisticsReport }) {

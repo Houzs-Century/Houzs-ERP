@@ -293,7 +293,10 @@ function nextMonth(m: string): string {
    the chart answers: an expense account whose name says LORI / LORRY, or names
    one of our lorries' plates — the per-lorry fuel / toll / parking and upkeep
    accounts. A driver salary account counts once Finance ticks it. */
-export type ChartAccount = { account_code: string; account_name: string | null; account_type: string | null; is_active?: boolean | null };
+export type ChartAccount = {
+  account_code: string; account_name: string | null; account_type: string | null; is_active?: boolean | null;
+  parent_code?: string | null; pms_row?: string | null;
+};
 
 export function defaultOwnCostAccounts(chart: readonly ChartAccount[], lorries: readonly LogisticsLorry[]): string[] {
   const plates = lorries.filter((l) => l.isInternal).map((l) => normalisePlate(l.plate)).filter(Boolean);

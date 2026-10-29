@@ -40,48 +40,41 @@ const monthEnd = (ymd: string): string => {
   return d.toISOString().slice(0, 10);
 };
 const day = (v: unknown): string | null => (v == null || v === '' ? null : String(v).slice(0, 10));
-const fail = (c: any, what: string, reason: string) => c.json({ error: 'load_failed', message: `The ${what} could not be read — try again.`, reason }, 500);
+export const fail = (c: any, what: string, reason: string) => c.json({ error: 'load_failed', message: `The ${what} could not be read — try again.`, reason }, 500);
 
-/** The chart, our lorries, and the company's tick list — what both doors read. */
-async function loadCostSetup(sb: any, companyId: number): Promise<
-  { ok: true; chart: ChartAccount[]; lorries: LogisticsLorry[]; picked: string[] | null } | { ok: false; what: string; reason: string }
+/** The chart, our lorries, and the company's settings — what every door reads. */
+export async function loadCostSetup(sb: any, companyId: number): Promise<
+  { ok: true; chart: ChartAccount[]; lorries: LogisticsLorry[]; picked: string[] | null; doIncomeBp: number } | { ok: false; what: string; reason: string }
 > {
   const [chartRes, lorryRes, setRes] = await Promise.all([
-    sb.from('accounts').select('account_code, account_name, account_type, is_active').eq('company_id', companyId),
+    sb.from('accounts').select('account_code, account_name, account_type, is_active, parent_code, pms_row').eq('company_id', companyId),
     sb.from('lorries').select('id, plate, is_internal').eq('company_id', companyId),
-    sb.from('acc_logistics_settings').select('own_cost_accounts').eq('company_id', companyId).maybeSingle(),
+    sb.from('acc_logistics_settings').select('own_cost_accounts, do_income_bp').eq('company_id', companyId).maybeSingle(),
   ]);
   if (chartRes.error) return { ok: false, what: 'chart of accounts', reason: chartRes.error.message };
   if (lorryRes.error) return { ok: false, what: 'lorries', reason: lorryRes.error.message };
   if (setRes.error) return { ok: false, what: 'settings', reason: setRes.error.message };
-  const own = (setRes.data as { own_cost_accounts?: string[] | null } | null)?.own_cost_accounts ?? null;
+  const set = setRes.data as { own_cost_accounts?: string[] | null; do_income_bp?: number | null } | null;
+  const own = set?.own_cost_accounts ?? null;
   return {
     ok: true,
     chart: (chartRes.data ?? []) as ChartAccount[],
     lorries: ((lorryRes.data ?? []) as Row[]).map((l) => ({ id: String(l.id), plate: String(l.plate ?? ''), isInternal: l.is_internal === true })),
     picked: own && own.length > 0 ? own.map(String) : null,
+    doIncomeBp: set?.do_income_bp == null ? DEFAULT_DO_INCOME_BP : Number(set.do_income_bp),
   };
 }
 
-/* ── GET /logistics ───────────────────────────────────────────────────────── */
-export const logisticsCostHandler = async (c: any): Promise<Response> => {
-  const co = requireActiveCompanyId(c);
-  if (!co.ok) return c.json(co.refusal, 409);
-  const today = todayMyt();
-  const from = dateOrNull(c.req.query('from')) ?? monthStart(today);
-  const to = dateOrNull(c.req.query('to')) ?? monthEnd(today);
-  if (from > to) return c.json({ error: 'bad_range', message: 'The From date is after the To date.' }, 400);
-  const sb = c.get('supabase');
-  const companyId = co.companyId;
-  const wholeFrom = monthStart(from);
-  const wholeTo = monthEnd(to);
+/** 3% of the DOs' value — the owner's sheet — until Finance sets the company's own. */
+export const DEFAULT_DO_INCOME_BP = 300;
 
-  const setup = await loadCostSetup(sb, companyId);
-  if (!setup.ok) return fail(c, setup.what, setup.reason);
-  const accounts = setup.picked ?? defaultOwnCostAccounts(setup.chart, setup.lorries);
-
-  /* The DOs going out in the whole months: by the customer delivery date Delivery
-     Planning schedules, else — none scheduled — by the DO's own date. */
+/** The DOs going out in the whole months: by the customer delivery date Delivery
+    Planning schedules, else — none scheduled — by the DO's own date; with their
+    crews, lines, 3PL charges and their orders' address lines (a DO copies two of
+    them, and a Singapore order keyed with no state says SINGAPORE only on a later one). */
+export async function readMonthDos(sb: any, companyId: number, wholeFrom: string, wholeTo: string): Promise<
+  { ok: true; dos: LogisticsDo[]; charges: Row[] } | { ok: false; what: string; reason: string }
+> {
   const DO_COLS = 'id, do_number, so_doc_no, status, state, city, postcode, address1, address2, do_date, customer_delivery_date';
   const [scheduled, unscheduled] = await Promise.all([
     paginateAll<Row>((lo, hi) => sb.from('delivery_orders').select(DO_COLS).eq('company_id', companyId).neq('status', 'CANCELLED')
@@ -89,14 +82,12 @@ export const logisticsCostHandler = async (c: any): Promise<Response> => {
     paginateAll<Row>((lo, hi) => sb.from('delivery_orders').select(DO_COLS).eq('company_id', companyId).neq('status', 'CANCELLED')
       .is('customer_delivery_date', null).gte('do_date', wholeFrom).lte('do_date', wholeTo).order('id').range(lo, hi)),
   ]);
-  if (scheduled.error) return fail(c, 'delivery orders', scheduled.error.message);
-  if (unscheduled.error) return fail(c, 'delivery orders', unscheduled.error.message);
+  if (scheduled.error) return { ok: false, what: 'delivery orders', reason: scheduled.error.message };
+  if (unscheduled.error) return { ok: false, what: 'delivery orders', reason: unscheduled.error.message };
   const doRows = [...(scheduled.data ?? []), ...(unscheduled.data ?? [])];
   const doIds = [...new Set(doRows.map((d) => String(d.id)))];
   const soNos = [...new Set(doRows.map((d) => d.so_doc_no).filter((x) => x != null && x !== '').map(String))];
 
-  /* Their orders' address lines too: a DO copies two of them, and a Singapore
-     order keyed with no state says SINGAPORE only on a later one. */
   const [crew, items, charges, orders] = await Promise.all([
     chunkIn<Row>(doIds, (b, lo, hi) => sb.from('delivery_order_crew').select('do_id, lorry_id, lorry_plate')
       .eq('company_id', companyId).in('do_id', b).order('do_id').range(lo, hi)),
@@ -107,10 +98,10 @@ export const logisticsCostHandler = async (c: any): Promise<Response> => {
     chunkIn<Row>(soNos, (b, lo, hi) => sb.from('mfg_sales_orders').select(['doc_no', ...ADDRESS_COLS].join(', '))
       .eq('company_id', companyId).in('doc_no', b).order('doc_no').range(lo, hi)),
   ]);
-  if (crew.error) return fail(c, 'delivery crews', crew.error.message);
-  if (items.error) return fail(c, 'delivery order lines', items.error.message);
-  if (charges.error) return fail(c, '3PL charges', charges.error.message);
-  if (orders.error) return fail(c, 'sales orders', orders.error.message);
+  if (crew.error) return { ok: false, what: 'delivery crews', reason: crew.error.message };
+  if (items.error) return { ok: false, what: 'delivery order lines', reason: items.error.message };
+  if (charges.error) return { ok: false, what: '3PL charges', reason: charges.error.message };
+  if (orders.error) return { ok: false, what: 'sales orders', reason: orders.error.message };
 
   const linesOf = (r: Row | undefined, keys: readonly string[]): string[] => (r ? keys.map((k) => String(r[k] ?? '').trim()).filter(Boolean) : []);
   const orderOf = new Map(orders.data.map((o) => [String(o.doc_no), o] as const));
@@ -136,6 +127,29 @@ export const logisticsCostHandler = async (c: any): Promise<Response> => {
       crewLorryId: k?.lorry_id == null ? null : String(k.lorry_id), crewPlate: k?.lorry_plate == null ? null : String(k.lorry_plate),
     });
   }
+  return { ok: true, dos, charges: charges.data };
+}
+
+/* ── GET /logistics ───────────────────────────────────────────────────────── */
+export const logisticsCostHandler = async (c: any): Promise<Response> => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const today = todayMyt();
+  const from = dateOrNull(c.req.query('from')) ?? monthStart(today);
+  const to = dateOrNull(c.req.query('to')) ?? monthEnd(today);
+  if (from > to) return c.json({ error: 'bad_range', message: 'The From date is after the To date.' }, 400);
+  const sb = c.get('supabase');
+  const companyId = co.companyId;
+  const wholeFrom = monthStart(from);
+  const wholeTo = monthEnd(to);
+
+  const setup = await loadCostSetup(sb, companyId);
+  if (!setup.ok) return fail(c, setup.what, setup.reason);
+  const accounts = setup.picked ?? defaultOwnCostAccounts(setup.chart, setup.lorries);
+
+  const read = await readMonthDos(sb, companyId, wholeFrom, wholeTo);
+  if (!read.ok) return fail(c, read.what, read.reason);
+  const { dos, charges } = read;
 
   /* The carriers' bill lines: the runs (assigned to DOs), what nobody assigned,
      and the fair lines with no fair. */
@@ -213,7 +227,7 @@ export const logisticsCostHandler = async (c: any): Promise<Response> => {
 
   const report = buildLogisticsReport({
     from, to, dos, lorries: setup.lorries,
-    charges: charges.data.map((ch) => ({ doId: String(ch.do_id), billedSen: Number(ch.billed_sen ?? 0) })),
+    charges: charges.map((ch) => ({ doId: String(ch.do_id), billedSen: Number(ch.billed_sen ?? 0) })),
     runs, ownCost, events, openLines, eventLinesNoFair,
   });
   return c.json({ ...report, ownCostAccounts: accounts, ownCostDefault: setup.picked == null, eventsProblem });
