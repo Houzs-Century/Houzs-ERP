@@ -28,11 +28,12 @@
 // scan and knock-off). One component; `side` says which page it is.
 // ----------------------------------------------------------------------------
 
-import { Suspense, lazy, useMemo, useRef, useState } from 'react';
+import { lazy, useMemo, useRef, useState } from 'react';
 import { FileText, Plus, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { PageHeader } from '../../components/Layout';
+import { LazySlot } from '../../components/LazySlot';
 import { DataTable, type Column } from '../../components/DataTable';
 import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import { Modal } from '../../vendor/scm/components/Modal';
@@ -284,9 +285,9 @@ export const CreditNotes = ({ side = 'AR' }: { side?: NoteSide }) => {
       </div>
 
       {view === 'debit' && (
-        <Suspense fallback={<div style={soft}>Loading the debit notes…</div>}>
+        <LazySlot resetKey={`credit-notes-${side}-${view}`} fallback={<div style={soft}>Loading the debit notes…</div>}>
           {side === 'AP' ? <ApInvoicesPage docKind="DN" /> : <ArInvoicesPage docKind="DN" />}
-        </Suspense>
+        </LazySlot>
       )}
       {view !== 'debit' && ticked.size > 0 && (
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap', fontSize: 'var(--fs-13)' }} aria-label="Ticked notes">
