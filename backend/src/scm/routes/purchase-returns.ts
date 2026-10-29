@@ -220,6 +220,25 @@ export async function repairHeldQty(sb: any, grnItemIds: string[], excludeLineId
   return held;
 }
 
+/* Cap for a qty edit on a GRN-linked return line. A REPAIR line is not in
+   returned_qty, so its own prior qty is NOT given back; the OTHER live REPAIR
+   lines are still held. Every read here fails closed: a failed header read must
+   not fall through to "CREDIT" and hand a REPAIR line its own qty back. */
+export async function editLineCapRefusal(
+  sb: any,
+  a: { prId: string; itemId: string; grnItemId: string; qtyReturned: number; prevQty: number },
+) {
+  const { data: prHead, error: headErr } = await sb.from('purchase_returns').select('kind').eq('id', a.prId).maybeSingle();
+  const held = await repairHeldQty(sb, [a.grnItemId], a.itemId);
+  if (headErr || !prHead || !held) return { error: 'cap_check_failed', reason: 'repair returns unreadable' };
+  const isRepair = (prHead as { kind?: string | null }).kind === 'REPAIR';
+  return qtyCapRefusal(sb, {
+    table: 'grn_items', id: a.grnItemId,
+    capColumn: 'qty_accepted', drawnColumns: ['returned_qty'],
+    requested: a.qtyReturned, ownPriorDraw: isRepair ? 0 : a.prevQty, extraDrawn: held.get(a.grnItemId) ?? 0, what: 'GRN line',
+  });
+}
+
 /* The screen read: the list's filter + order (lib/purchase-return-list-read.ts,
    shared with GET /export/rows), capped at 300, each row with its `lines` for
    the grid's line columns. */
@@ -1871,18 +1890,8 @@ export const patchPurchaseReturnItemHandler = async (c: any) => {
   // its accepted. headroom for THIS line = accepted - (returned - prevQty).
   const delta = qtyReturned - prevQty;
   if (grnItemId && delta !== 0) {
-    /* A REPAIR line is not in returned_qty, so its own prior qty is not given
-       back; the OTHER live REPAIR lines are still held. */
-    const { data: prHead } = await sb.from('purchase_returns').select('kind').eq('id', prId).maybeSingle();
-    const heldEdit = await repairHeldQty(sb, [grnItemId], itemId);
-    if (!heldEdit) return c.json({ error: 'cap_check_failed', reason: 'repair returns unreadable' }, 500);
-    const isRepair = (prHead as { kind?: string | null } | null)?.kind === 'REPAIR';
-    const capLock = await qtyCapRefusal(sb, {
-      table: 'grn_items', id: grnItemId,
-      capColumn: 'qty_accepted', drawnColumns: ['returned_qty'],
-      requested: qtyReturned, ownPriorDraw: isRepair ? 0 : prevQty, extraDrawn: heldEdit.get(grnItemId) ?? 0, what: 'GRN line',
-    });
-    if (capLock) return c.json(capLock, 409);
+    const capLock = await editLineCapRefusal(sb, { prId, itemId, grnItemId, qtyReturned, prevQty });
+    if (capLock) return c.json(capLock, capLock.error === 'cap_check_failed' ? 500 : 409);
   }
 
   /* The EDIT half of the same back door: the cap above and adjustGrnReturnedQty
