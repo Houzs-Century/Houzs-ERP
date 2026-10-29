@@ -42,7 +42,7 @@ import { liveStatusForProcessingDate, processingDateOnConfirm } from '../shared/
 import { syncSoDeliveredFromDo } from '../lib/so-delivery-sync';
 import { exemptionExpirySeed } from '../lib/so-exemption-expiry';
 import { soIsMigrated, withSoMigratedReadonly } from '../lib/migrated-so-readonly';
-import { readSoLineFreeze, soLineWriteRefusal, soBuildLineIds, soLineFrozen, SO_FULLY_FROZEN_REFUSAL } from '../lib/downstream-lock'; // own line: autocountWritebackWiring asserts the import above verbatim
+import { readSoLineFreeze, soLineWriteRefusal, soBuildLineIds, soLineFrozen, SO_FULLY_FROZEN_REFUSAL, SO_LINE_FROZEN_REFUSAL } from '../lib/downstream-lock'; // own line: autocountWritebackWiring asserts the import above verbatim
 /* Status-transition table + the discard guards — lifted out of this file, which
    may only shrink. See lib/so-lifecycle-guards.ts. */
 import { SO_STATUS_RANK, soStatusTransitionError, soDiscardBlocked } from '../lib/so-lifecycle-guards';
@@ -8289,6 +8289,7 @@ mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
     docNo,
     itemId,
   );
+  if (isSoLineOverDelivered(error)) return c.json(SO_LINE_FROZEN_REFUSAL, 409); // a DO confirmed after the freeze read (mig 20261029T1000)
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
   // Default Free Gift (0170) — removing a trigger line (e.g. a mattress) must
   // auto-delete its free gift; reconcile drops orphaned gifts, then recomputes.

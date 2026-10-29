@@ -1221,6 +1221,21 @@ export function receivedFloorFromDb(
   return new ReceivedFloorError(poItemId, revisedQty, m ? Number(m[1]) : NaN);
 }
 
+/** Inside runScmPgCommand a refused statement THROWS (it never returns `{ error }`),
+ *  so receivedFloorFromDb on the result would never run. Await the update through
+ *  this and a P0411 comes out as the ReceivedFloorError the callers answer with 409. */
+export async function withReceivedFloor(
+  write: PromiseLike<{ error: { code?: string | null; message?: string } | null }>,
+  poItemId: string,
+  revisedQty: number,
+): Promise<{ error: { code?: string | null; message?: string } | null }> {
+  try {
+    return await write;
+  } catch (e) {
+    throw receivedFloorFromDb(e as { code?: string | null; message?: string }, poItemId, revisedQty) ?? e;
+  }
+}
+
 export async function reviseBoundPo(
   sb: Sb,
   amendmentId: string,
@@ -1546,7 +1561,7 @@ export async function reviseBoundPo(
         poLineId: pi.id, currentQty: pi.qty, po, soCompanyId, revised,
       });
       warnings.push(...lineWarnings);
-      const { error: updErr } = await sb.from('purchase_order_items').update(patch).eq('id', pi.id);
+      const { error: updErr } = await withReceivedFloor(sb.from('purchase_order_items').update(patch).eq('id', pi.id), pi.id, Number(patch.qty));
       if (updErr) {
         throw receivedFloorFromDb(updErr, pi.id, Number(patch.qty))
           ?? new Error(`reviseBoundPo: PO line update failed for ${pi.id}: ${updErr.message}`);

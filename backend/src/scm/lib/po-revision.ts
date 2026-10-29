@@ -28,7 +28,7 @@
 // ----------------------------------------------------------------------------
 
 import type { Context } from 'hono';
-import { snapshotPo, ReceivedFloorError, receivedFloorFromDb } from './so-revision';
+import { snapshotPo, ReceivedFloorError, receivedFloorFromDb, withReceivedFloor } from './so-revision';
 import { recordEntityAudit } from './entity-audit';
 import { poReceivedFloorViolation } from '../shared/po-amendment';
 import { routingNote, type AmendmentFieldKind } from '../shared/amendment-routing';
@@ -345,10 +345,10 @@ export async function applyPoAmendment(
     if (change === 'SPEC') noteFromTo(`spec_${diff.purchase_order_item_id}`, row.item_code, patch.item_code ?? row.item_code);
     if (diff.new_delivery_date != null) noteFromTo(`delivery_${row.item_code ?? diff.purchase_order_item_id}`, row.delivery_date, diff.new_delivery_date);
 
-    const { error: updErr } = await sb
+    const { error: updErr } = await withReceivedFloor(sb
       .from('purchase_order_items')
       .update(patch)
-      .eq('id', diff.purchase_order_item_id);
+      .eq('id', diff.purchase_order_item_id), String(diff.purchase_order_item_id), qty);
     if (updErr) {
       throw receivedFloorFromDb(updErr, String(diff.purchase_order_item_id), qty)
         ?? new Error(`applyPoAmendment: line update failed for ${diff.purchase_order_item_id}: ${updErr.message}`);
