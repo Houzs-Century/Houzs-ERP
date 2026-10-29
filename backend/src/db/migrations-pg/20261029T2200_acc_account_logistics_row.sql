@@ -5,7 +5,15 @@
 --     ALTER TABLE scm.accounts DROP COLUMN IF EXISTS logistics_row;
 --   Finance's picks are lost; no journal entry depends on them.
 --   GRANTS: none — a column on an existing table rides that table's grants.
--- Verified against: PENDING — the production rehearsal is named here before merge.
+-- Verified against: PRODUCTION, each run inside one transaction ROLLED BACK
+--   (backend/scripts/try-logistics-rows.mjs, run-script.yml, 2026-10-29): this file
+--   run first on branch acc/coa-logistics-row-check (runs 40880060493 company 1,
+--   40880535627 company 2), then the Logistics P&L and the Logistics cost report for
+--   September and October through the pgrest shim and d1Compat — every row, income
+--   line, spread, month, region and trip IDENTICAL to the same digest from the name
+--   rules on acc/logistics-pnl-check (runs 40880046320, 40880521461). It wrote the
+--   38 codes below (company 2 carries 31 of them); no Other Debtor line, in any
+--   company, sits on 590-0000.
 --
 -- WHAT THIS CHANGES, and why it is safe to run against production: one new
 -- nullable column on scm.accounts with a CHECK, and the row each account feeds
