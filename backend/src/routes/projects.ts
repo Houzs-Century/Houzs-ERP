@@ -3308,6 +3308,35 @@ app.post("/:id/phase-photos", async (c) => {
   )
     .bind(id, phase, body.r2_key, body.content_type ?? null, body.caption ?? null, user?.id ?? null)
     .run();
+  // Owner (repeated ask, latest 2026-10-29): "once an image/file is uploaded,
+  // auto-tick the bullet as done — no manual click, mobile AND PC." The crew
+  // Setup/Dismantle photo lands HERE (project_phase_photos), NOT in the task's
+  // own attachments, so the matching "Setup Image" / "Dismantle Image"
+  // checklist row never saw the auto-tick the attachment route got — this was
+  // the gap that kept it from working for drivers. Mirror it here.
+  //
+  // Only setup/dismantle map to a checklist evidence row (service/schedule
+  // photos don't). We tick the DRIVER-badged row, matching how the desktop
+  // merges these photos (pages/Projects.tsx pickRow); the SALES PIC "Setup
+  // Image" is ticked by ITS own task-attachment upload instead. Guarded on a
+  // plain pending row, so N/A, blocked, done, or any gated row is left alone.
+  if (phase === "setup" || phase === "dismantle") {
+    const wantTitle = phase === "setup" ? "setup image%" : "dismantle image%";
+    const row = await c.env.DB.prepare(
+      `SELECT id FROM project_checklist
+        WHERE project_id = ?
+          AND lower(trim(title)) LIKE ?
+          AND (required_perm IS NULL OR required_perm = '')
+          AND status = 'pending'
+        ORDER BY (CASE WHEN upper(coalesce(role_label, '')) LIKE '%DRIVER%' THEN 0 ELSE 1 END), id
+        LIMIT 1`
+    )
+      .bind(id, wantTitle)
+      .first<{ id: number }>();
+    if (row) {
+      await setChecklistStatus(c.env, row.id, "done", user?.id ?? 0);
+    }
+  }
   return c.json({ id: r.meta.last_row_id });
 });
 
