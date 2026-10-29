@@ -45,7 +45,7 @@ describe("PosBoothCategoriesDrawer", () => {
     expect((screen.getByLabelText("Accessory") as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText("Diffuser") as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText("Sofa") as HTMLInputElement).checked).toBe(true);
-    expect(screen.getByRole("button", { name: "Add 30 item(s)" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Add 32 item(s)" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Keep only ticked (switch off 0)" })).toBeTruthy();
     expect(screen.getByText("1113 in POS stay on")).toBeTruthy();
   });
@@ -56,7 +56,7 @@ describe("PosBoothCategoriesDrawer", () => {
     await screen.findByText("Accessory");
     fireEvent.click(screen.getByLabelText("Diffuser"));
     fireEvent.click(screen.getByLabelText("Sofa"));
-    fireEvent.click(screen.getByRole("button", { name: "Add 20 item(s)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add 22 item(s)" }));
     await waitFor(() => expect(post).toHaveBeenCalledWith("/api/pos-admin/items/add-all", { categories: ["ACCESSORY"] }));
   });
 
