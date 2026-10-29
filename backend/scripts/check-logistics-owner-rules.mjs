@@ -15,6 +15,7 @@ import postgres from 'postgres';
 const CO = Number(process.env.COMPANY_ID || 1);
 const FROM = String(process.env.FROM || '2026-09-01');
 const TO = String(process.env.TO || '2026-10-31');
+const FAIR_FROM = String(process.env.FAIR_FROM || '2026-08-01');
 const asText = (oid) => ({ to: oid, from: [oid], serialize: (x) => x, parse: (x) => x });
 const sql = postgres(process.env.DATABASE_URL, { max: 1, prepare: false, types: { dateText: asText(1082), tsText: asText(1114), tstzText: asText(1184) } });
 const rm = (sen) => `RM ${(Number(sen) / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -95,9 +96,9 @@ try {
     `SELECT id, code, name, ${placeCols.length ? placeCols.join(', ') + ',' : ''} start_date::text AS start_date, end_date::text AS end_date, status
        FROM public.projects
       WHERE company_id = $1 AND archived_at IS NULL AND lower(coalesce(status, '')) <> 'cancelled'
-        AND ((start_date BETWEEN $2::date AND $3::date) OR (end_date BETWEEN $2::date AND $3::date))
+        AND ((start_date >= $2 AND start_date <= $3) OR (end_date >= $2 AND end_date <= $3))
       ORDER BY start_date, id`,
-    [CO, FROM, TO],
+    [CO, FAIR_FROM, TO],
   );
   const ids = fairs.map((f) => Number(f.id));
   const bl = ids.length === 0 ? [] : await sql`
@@ -112,6 +113,33 @@ try {
       JOIN scm.payment_vouchers pv ON pv.id = l.pv_id
      WHERE pv.company_id = ${CO} AND pv.status::text NOT IN ('CANCELLED', 'VOID') AND l.project_id = ANY(${ids}) AND l.debit_account_code ~ '-T03[0-5]$'`;
   out(`fairs: ${fairs.length}`);
+  /* Trips: a setup on the start day and a dismantle on the end day; booths at one
+     venue on one day share the trip. Counted by month and state. */
+  const trips = new Map();
+  const add = (month, state, key, booth, outsourced) => {
+    const k = `${month} ${state}`;
+    const t = trips.get(k) ?? { keys: new Set(), booths: 0, outsourced: new Set() };
+    t.keys.add(key); t.booths += 1; if (outsourced) t.outsourced.add(key);
+    trips.set(k, t);
+  };
+  for (const f of fairs) {
+    const state = String(f.state ?? '').trim().toUpperCase() || '(no state)';
+    const venue = String(f.venue ?? '').trim().toUpperCase();
+    const out3pl = bl.some((b) => Number(b.project_id) === Number(f.id)) || legs.some((b) => Number(b.project_id) === Number(f.id));
+    if (f.start_date) add(String(f.start_date).slice(0, 7), state, `setup|${venue}|${f.start_date}`, f.id, out3pl);
+    if (f.end_date) add(String(f.end_date).slice(0, 7), state, `dismantle|${venue}|${f.end_date}`, f.id, out3pl);
+  }
+  for (const [k, t] of [...trips].sort()) out(`TRIPS ${k}: ${t.keys.size} trips (${t.booths} booth-ends), ${t.outsourced.size} with an outsourced bill on the fair`);
+
+  /* Salary by the department the salary journal names. */
+  const dept = new Map();
+  for (const l of salLines) {
+    const m = /^(.*?)\s*(SALARY|EPF|SOCSO|EIS|SKBB|ALLOWANCE|OVERTIME)\b/i.exec(String(l.notes ?? '').toUpperCase());
+    if (!m || !m[1]) continue;
+    const k = `${l.ym} ${m[1].replace(/[-–—\s]+$/, '').trim()}`;
+    dept.set(k, (dept.get(k) ?? 0) + Number(l.sen));
+  }
+  for (const [k, v] of [...dept].sort()) out(`DEPT ${k}: ${rm(v)}`);
   for (const f of fairs) {
     const mine = bl.filter((b) => Number(b.project_id) === Number(f.id));
     const t = legs.filter((b) => Number(b.project_id) === Number(f.id));
