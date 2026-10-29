@@ -8,13 +8,23 @@
 //   • settlement confirm turns the confirmed payments' receipts FORMAL on
 //     the acquirer's payout bank — and stays best-effort (no receipt, no
 //     letter → reported, never thrown);
-//   • ensure heals a payment recorded before the module existed.
+//   • ensure heals a payment recorded before the module existed;
+//   • the receipt follows its payment (owner 2026-10-29: 收据跟着付款改或作废):
+//     a DRAFT is rewritten in place and keeps its number; a FORMAL one is
+//     CANCELLED (kept, why and who on it, its successor named) and re-issued —
+//     formal at once on its own channel when the method is unchanged, born as a
+//     new payment's receipt when it changed; a deleted payment's draft goes and
+//     its formal receipt is cancelled; a cancelled receipt is nobody's — the
+//     payment gets a new one beside it, and no confirm reaches it.
 
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
-import { createReceiptForPayment, ensureReceiptForPayment, formaliseReceiptsForSettlement } from '../src/acc/receipts';
+import {
+  createReceiptForPayment, ensureReceiptForPayment, followPaymentEdit, followPaymentRemoval, formaliseReceiptsForSettlement,
+} from '../src/acc/receipts';
 import { receiptFormalise } from '../src/scm/routes/accounting-receipts';
+import { receiptFieldChange, repostSoPaymentBestEffort } from '../src/scm/lib/so-payment-row';
 
 const CO = 2;
 /* Every payment here was paid on 2026-07-05: the receipt's series follows the
@@ -36,7 +46,12 @@ const world = (over: Record<string, Row[]> = {}) => fakeSb(
   {},
   [
     { table: 'acc_official_receipts', column: 'or_number', name: 'acc_official_receipts_or_number_key' },
-    { table: 'acc_official_receipts', column: 'payment_id', name: 'acc_official_receipts_payment_once' },
+    /* One LIVE receipt per payment (migration 20261029T1500) — a cancelled one
+       stands beside its replacement. */
+    {
+      table: 'acc_official_receipts', column: 'payment_id', name: 'acc_official_receipts_payment_source_payment_id_live',
+      covers: (r) => r.status !== 'CANCELLED',
+    },
   ],
   ['acc_official_receipts'],
 );
@@ -140,5 +155,141 @@ describe('ensure heals history', () => {
     const r = await ensureReceiptForPayment(sb, 'SOPAY', 'hc1', CO);
     expect(r).toMatchObject({ ok: false });
     expect(sb.tables.acc_official_receipts).toHaveLength(0);
+  });
+});
+
+describe('the receipt follows its payment (owner 2026-10-29)', () => {
+  const WHY = 'Payment on 2990-SO-2609-001 changed';
+  const edit = (sb: ReturnType<typeof world>, next: { amountSen: number; paidAt: string; method: string }, paymentId = 'p1') =>
+    followPaymentEdit(sb, { source: 'SOPAY', paymentId, companyId: CO, next, why: WHY, actor: 'Chew' });
+  /* A card receipt the merchant recon has confirmed on the Maybank account. */
+  const formalCard = async () => {
+    const sb = world();
+    await createReceiptForPayment(sb, CARD);
+    await formaliseReceiptsForSettlement(sb, CO, '2990', [{ source: 'SOPAY', id: 'p1' }], '310-0010', 'Recon');
+    expect(sb.tables.acc_official_receipts[0]).toMatchObject({ status: 'FORMAL', or_number: `2990-MOR-${yymm}-001` });
+    return sb;
+  };
+
+  test('a DRAFT follows in place — amount, day and method — and keeps its number', async () => {
+    const sb = world();
+    await createReceiptForPayment(sb, CARD);
+    const r = await edit(sb, { amountSen: 55_800, paidAt: '2026-08-02', method: 'transfer' });
+    expect(r).toEqual({ ok: true, touch: null });
+    expect(sb.tables.acc_official_receipts).toHaveLength(1);
+    expect(sb.tables.acc_official_receipts[0]).toMatchObject({
+      or_number: `2990-DraftOR-${yymm}-001`, status: 'DRAFT', amount_sen: 55_800, paid_at: '2026-08-02', method: 'transfer',
+    });
+  });
+
+  test('a FORMAL receipt is cancelled — why and who on it — and re-issued formal on its own channel', async () => {
+    const sb = await formalCard();
+    const r = await edit(sb, { amountSen: 55_800, paidAt: '2026-07-05', method: 'merchant' });
+    expect(r).toEqual({ ok: true, touch: { from: `2990-MOR-${yymm}-001`, to: `2990-MOR-${yymm}-002`, draft: false } });
+    const [old, now] = sb.tables.acc_official_receipts;
+    expect(old).toMatchObject({
+      or_number: `2990-MOR-${yymm}-001`, status: 'CANCELLED', amount_sen: 100_000, cancelled_by: 'Chew',
+      cancel_reason: `${WHY}: amount RM 1,000.00 → RM 558.00`, replaced_by_id: now!.id,
+    });
+    expect(old!.cancelled_at).toEqual(expect.any(String));
+    expect(now).toMatchObject({
+      or_number: `2990-MOR-${yymm}-002`, status: 'FORMAL', amount_sen: 55_800, paid_at: '2026-07-05',
+      channel_account_code: '310-0010', doc_no: CARD.docNo, payment_id: 'p1',
+    });
+    /* The payment's receipt is now the new one — ensure (the print button) finds it. */
+    expect(await ensureReceiptForPayment(sb, 'SOPAY', 'p1', CO)).toMatchObject({ ok: true, orNumber: `2990-MOR-${yymm}-002` });
+  });
+
+  test('re-dated into another month: the replacement takes that month\'s number', async () => {
+    const sb = await formalCard();
+    const r = await edit(sb, { amountSen: 100_000, paidAt: '2026-06-20', method: 'merchant' });
+    expect(r).toMatchObject({ ok: true, touch: { from: `2990-MOR-${yymm}-001`, to: '2990-MOR-2606-001' } });
+    expect(sb.tables.acc_official_receipts[0]!.cancel_reason).toBe(`${WHY}: date 2026-07-05 → 2026-06-20`);
+  });
+
+  test('a cash receipt is re-issued formal on the cash series at once', async () => {
+    const sb = world();
+    await createReceiptForPayment(sb, { ...CARD, paymentId: 'p2', method: 'cash' });
+    const r = await edit(sb, { amountSen: 118_200, paidAt: '2026-07-05', method: 'cash' }, 'p2');
+    expect(r).toMatchObject({ ok: true, touch: { from: `2990-COR-${yymm}-001`, to: `2990-COR-${yymm}-002` } });
+    expect(sb.tables.acc_official_receipts.map((x) => x.status)).toEqual(['CANCELLED', 'FORMAL']);
+  });
+
+  test('a method change: the replacement is born as the new method\'s receipt — a transfer waits to be confirmed', async () => {
+    const sb = await formalCard();
+    const r = await edit(sb, { amountSen: 100_000, paidAt: '2026-07-05', method: 'transfer' });
+    expect(r).toMatchObject({ ok: true, touch: { from: `2990-MOR-${yymm}-001`, draft: false } });
+    /* A draft number — which one is the counter's business (production's RPC never re-issues). */
+    expect(r.ok && r.touch?.to).toMatch(new RegExp(`^2990-DraftOR-${yymm}-\\d{3}$`));
+    expect(sb.tables.acc_official_receipts.map((x) => [x.status, x.method])).toEqual([['CANCELLED', 'merchant'], ['DRAFT', 'transfer']]);
+  });
+
+  test('the edit hook carries it — the PATCH\'s own path — and the audit line names both receipts', async () => {
+    const sb = await formalCard();
+    const before = {
+      paid_at: '2026-07-05', method: 'merchant', amount_sen: 100_000, merchant_provider: 'MBB', installment_months: null,
+      online_type: null, approval_code: '062181', account_sheet: 'MBB', collected_by: null,
+    };
+    const out = await repostSoPaymentBestEffort(sb as never, {
+      id: 'p1', docNo: CARD.docNo, companyId: CO, before, next: { ...before, amount_sen: 55_800 }, actor: 'Scarlett',
+    });
+    expect(out.receipt).toEqual({ from: `2990-MOR-${yymm}-001`, to: `2990-MOR-${yymm}-002`, draft: false });
+    expect(receiptFieldChange(out.receipt)).toEqual([{ field: 'receipt', from: `2990-MOR-${yymm}-001`, to: `2990-MOR-${yymm}-002` }]);
+    expect(sb.tables.acc_official_receipts[0]).toMatchObject({ status: 'CANCELLED', cancelled_by: 'Scarlett' });
+    /* An approval-code typo moves nothing a receipt says. */
+    const again = await repostSoPaymentBestEffort(sb as never, {
+      id: 'p1', docNo: CARD.docNo, companyId: CO, before: { ...before, amount_sen: 55_800 }, next: { ...before, amount_sen: 55_800, approval_code: '062182' },
+    });
+    expect(again.receipt).toBeNull();
+    expect(receiptFieldChange(again.receipt)).toEqual([]);
+  });
+
+  test('nothing the receipt says moved — nothing happens', async () => {
+    const sb = await formalCard();
+    expect(await edit(sb, { amountSen: 100_000, paidAt: '2026-07-05', method: 'merchant' })).toEqual({ ok: true, touch: null });
+    expect(sb.tables.acc_official_receipts).toHaveLength(1);
+    expect(sb.tables.acc_official_receipts[0]).toMatchObject({ status: 'FORMAL' });
+  });
+
+  test('a deleted payment: its draft goes; its formal receipt is cancelled and kept', async () => {
+    const drafts = world();
+    await createReceiptForPayment(drafts, CARD);
+    const gone = await followPaymentRemoval(drafts, { source: 'SOPAY', paymentId: 'p1', companyId: CO, why: 'Payment on X deleted', actor: 'Chew' });
+    expect(gone).toEqual({ ok: true, touch: { from: `2990-DraftOR-${yymm}-001`, to: null, draft: true } });
+    expect(drafts.tables.acc_official_receipts).toHaveLength(0);
+
+    const sb = await formalCard();
+    const kept = await followPaymentRemoval(sb, { source: 'SOPAY', paymentId: 'p1', companyId: CO, why: 'Payment on X deleted', actor: 'Chew' });
+    expect(kept).toEqual({ ok: true, touch: { from: `2990-MOR-${yymm}-001`, to: null, draft: false } });
+    expect(sb.tables.acc_official_receipts).toHaveLength(1);
+    expect(sb.tables.acc_official_receipts[0]).toMatchObject({ status: 'CANCELLED', cancel_reason: 'Payment on X deleted' });
+    expect(sb.tables.acc_official_receipts[0]!.replaced_by_id ?? null).toBeNull();
+  });
+
+  test('a cancelled receipt is nobody\'s: a new one is born beside it, and no confirm reaches it', async () => {
+    const sb = await formalCard();
+    await followPaymentRemoval(sb, { source: 'SOPAY', paymentId: 'p1', companyId: CO, why: 'Payment on X deleted', actor: 'Chew' });
+    /* The payment came back (say, keyed again under the same id by a test) — its receipt is new. */
+    const born = await createReceiptForPayment(sb, CARD);
+    expect(born).toMatchObject({ ok: true, status: 'DRAFT' });
+    expect(sb.tables.acc_official_receipts).toHaveLength(2);
+    const settled = await formaliseReceiptsForSettlement(sb, CO, '2990', [{ source: 'SOPAY', id: 'p1' }], '310-0010', 'Recon');
+    expect(settled).toEqual([{ paymentId: 'p1', outcome: 'formalised' }]);
+    expect(sb.tables.acc_official_receipts.map((x) => [x.or_number, x.status])).toEqual([
+      [`2990-MOR-${yymm}-001`, 'CANCELLED'], [`2990-MOR-${yymm}-002`, 'FORMAL'],
+    ]);
+
+    const app = new Hono();
+    app.use('*', async (c, next) => {
+      c.set('supabase' as never, sb as never);
+      c.set('companyId' as never, CO as never);
+      c.set('houzsUser' as never, { name: 'Chew', permissions_set: ['scm.payment_voucher.post'] } as never);
+      c.set('allowedCompanyIds' as never, [CO] as never);
+      await next();
+    });
+    app.post('/accounting/receipts/:id/formalise', receiptFormalise as never);
+    const res = await app.request(`/accounting/receipts/${String(sb.tables.acc_official_receipts[0]!.id)}/formalise`, { method: 'POST' });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toBe('cancelled');
   });
 });

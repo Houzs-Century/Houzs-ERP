@@ -1491,7 +1491,7 @@ export const dailyBankHandler = async (c: any) => {
     const payIds = [...new Set(todays.filter((l) => (l.source_type === 'SOPAY' || l.source_type === 'SIPAY') && l.source_doc_no).map((l) => String(l.source_doc_no)))];
     if (payIds.length > 0) {
       const { data: orRows, error: orErr } = await sb.from('acc_official_receipts').select('payment_id, or_number, doc_no')
-        .eq('company_id', co.companyId).in('payment_id', payIds);
+        .eq('company_id', co.companyId).neq('status', 'CANCELLED').in('payment_id', payIds);
       if (orErr) return c.json({ error: 'load_failed', reason: orErr.message }, 500);
       for (const r of (orRows ?? []) as Array<{ payment_id: string; or_number: string | null; doc_no: string | null }>) {
         const shown = r.or_number ?? r.doc_no;

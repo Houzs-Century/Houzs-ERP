@@ -5,7 +5,9 @@
        receipts whose payment is gone;
      · the route reads the month's SO and SI payments (money that arrived —
        no converted rows, no mirrors, no zero rows) and the month's receipts
-       by their payment day; a bad month is refused; no key, no answer;
+       by their payment day; a bad month is refused; no key, no answer; a
+       CANCELLED receipt (its payment changed or went) is in no check, though
+       the list still shows it;
      · the list takes ?month= and then returns every receipt of the month,
        oldest first, past the newest-100 cap. */
 
@@ -75,6 +77,8 @@ const world = () => fakeSb({
     { id: 2, company_id: CO, or_number: '2990-DraftOR-2606-001', status: 'DRAFT', payment_source: 'SOPAY', payment_id: 'p2', doc_no: '2990-SO-2606-002', customer_name: 'B', method: 'merchant', amount_sen: 99_000, paid_at: '2026-06-09', created_at: '2026-06-09T01:00:00Z' },
     { id: 3, company_id: CO, or_number: '2990-DraftOR-2606-002', status: 'DRAFT', payment_source: 'SOPAY', payment_id: 'p-deleted', doc_no: '2990-SO-2606-005', customer_name: 'C', method: 'cash', amount_sen: 1_000, paid_at: '2026-06-20', created_at: '2026-06-20T01:00:00Z' },
     { id: 4, company_id: CO, or_number: '2990-COR-2605-001', status: 'FORMAL', payment_source: 'SOPAY', payment_id: 'p6', doc_no: '2990-SO-2605-001', customer_name: 'D', method: 'cash', amount_sen: 70_000, paid_at: '2026-05-30', created_at: '2026-05-30T01:00:00Z' },
+    /* CANCELLED (owner 2026-10-29): its payment was deleted — kept on file, listed, and in no check. */
+    { id: 5, company_id: CO, or_number: '2990-COR-2606-002', status: 'CANCELLED', payment_source: 'SOPAY', payment_id: 'p-gone', doc_no: '2990-SO-2606-006', customer_name: 'E', method: 'cash', amount_sen: 118_200, paid_at: '2026-06-21', created_at: '2026-06-02T01:00:00Z', cancelled_at: '2026-06-21T02:00:00Z', cancel_reason: 'Payment on 2990-SO-2606-006 deleted' },
   ],
 } as never);
 
@@ -116,9 +120,12 @@ describe('GET /accounting/receipts?month=', () => {
   test('every receipt of the month, oldest first; the status filter still applies', async () => {
     const app = harness(world());
     const all = await (await app.request('/accounting/receipts?month=2026-06')).json() as { receipts: Row[] };
-    expect(all.receipts.map((r) => r.or_number)).toEqual(['2990-COR-2606-001', '2990-DraftOR-2606-001', '2990-DraftOR-2606-002']);
+    expect(all.receipts.map((r) => r.or_number)).toEqual(['2990-COR-2606-001', '2990-DraftOR-2606-001', '2990-DraftOR-2606-002', '2990-COR-2606-002']);
     const drafts = await (await app.request('/accounting/receipts?month=2026-06&status=DRAFT')).json() as { receipts: Row[] };
     expect(drafts.receipts.map((r) => r.or_number)).toEqual(['2990-DraftOR-2606-001', '2990-DraftOR-2606-002']);
+    /* The cancelled one is its own pick, its reason with it. */
+    const cancelled = await (await app.request('/accounting/receipts?month=2026-06&status=CANCELLED')).json() as { receipts: Row[] };
+    expect(cancelled.receipts.map((r) => [r.or_number, r.cancel_reason])).toEqual([['2990-COR-2606-002', 'Payment on 2990-SO-2606-006 deleted']]);
     expect((await app.request('/accounting/receipts?month=nope')).status).toBe(400);
     /* Without a month: the newest first, as before. */
     const newest = await (await app.request('/accounting/receipts')).json() as { receipts: Row[] };

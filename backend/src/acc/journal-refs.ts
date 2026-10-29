@@ -117,7 +117,7 @@ export async function resolveJournalRefs(sb: Db, companyId: number, entries: Jou
       orderOfPayment.set(String(p.id), String(p.so_doc_no));
       if (p.converted_from_so_doc_no) movedFrom.set(String(p.id), String(p.converted_from_so_doc_no));
     }
-    const { data: ors, error: oErr } = await sb.from('acc_official_receipts').select('payment_id, or_number').eq('company_id', companyId).in('payment_id', ids);
+    const { data: ors, error: oErr } = await sb.from('acc_official_receipts').select('payment_id, or_number').eq('company_id', companyId).neq('status', 'CANCELLED').in('payment_id', ids);
     if (oErr) return { ok: false, reason: `receipts: ${String(oErr.message ?? oErr)}` };
     for (const r of (Array.isArray(ors) ? ors : []) as Array<{ payment_id: string; or_number: string }>) receiptOfPayment.set(String(r.payment_id), String(r.or_number));
   }

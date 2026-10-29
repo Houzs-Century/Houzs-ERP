@@ -7,7 +7,9 @@
 // uses), and a received-by box. A DRAFT receipt prints with a big diagonal
 // DRAFT watermark — the salesperson can hand something over the moment the
 // payment is keyed, and nobody can mistake it for the confirmed paper
-// (draft 的可以打印,带 DRAFT 水印 — the owner's own design).
+// (draft 的可以打印,带 DRAFT 水印 — the owner's own design). A CANCELLED one
+// (its payment changed or went — owner 2026-10-29) prints CANCELLED, its
+// reason under the payment.
 // ----------------------------------------------------------------------------
 
 import {
@@ -18,7 +20,7 @@ import { PAYMENT_METHOD_DEFAULT_LABELS } from '@2990s/shared/payment-methods';
 
 export type ReceiptPdfData = {
   or_number: string;
-  status: string;            // DRAFT | FORMAL
+  status: string;            // DRAFT | FORMAL | CANCELLED
   doc_no: string | null;
   customer_name: string | null;
   method: string | null;
@@ -26,6 +28,7 @@ export type ReceiptPdfData = {
   paid_at: string | null;
   issued_at: string | null;
   issued_by: string | null;
+  cancel_reason?: string | null;
 };
 
 /* The SHARED method vocabulary — the same labels the payment rows render, so
@@ -58,6 +61,7 @@ export async function generateReceiptPdf(r: ReceiptPdfData, opts?: { action?: Pd
       r.status === 'FORMAL' && r.issued_by
         ? `Confirmed by: ${r.issued_by}${r.issued_at ? ` · ${fmtDocDate(r.issued_at)}` : ''}`
         : null,
+      r.status === 'CANCELLED' ? `Cancelled: ${r.cancel_reason || 'its payment changed'}` : null,
     ]);
 
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
@@ -69,16 +73,17 @@ export async function generateReceiptPdf(r: ReceiptPdfData, opts?: { action?: Pd
   drawSignatureBoxes(doc, y + 4, 'Received by', 'Company chop');
 
   /* The watermark LAST, over everything: a draft must read as a draft from
-     across the counter. */
+     across the counter, and a cancelled receipt as cancelled. */
   if (r.status !== 'FORMAL') {
+    const cancelled = r.status === 'CANCELLED';
     const pageW = doc.internal.pageSize.getWidth();
     const pageH = doc.internal.pageSize.getHeight();
     doc.saveGraphicsState();
     doc.setGState(doc.GState({ opacity: 0.14 }));
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(64);
+    doc.setFontSize(cancelled ? 48 : 64);
     doc.setTextColor(180, 30, 30);
-    doc.text('DRAFT', pageW / 2, pageH / 2, { align: 'center', angle: 25 });
+    doc.text(cancelled ? 'CANCELLED' : 'DRAFT', pageW / 2, pageH / 2, { align: 'center', angle: 25 });
     doc.restoreGraphicsState();
     doc.setTextColor(0, 0, 0);
   }

@@ -56,7 +56,7 @@ import { signalNullWarehouseRows } from '../lib/null-warehouse-signal';
    moved to scm/lib so scan-so.ts's background writer reaches the same rules
    without importing a 12,000-line router. Re-exported below for the callers
    that still name this module. */
-import { deriveAccountSheet, PAYMENT_COLS, recordSoPaymentRow, afterSoPaymentRemoved, bookSoPaymentBestEffort, repostSoPaymentBestEffort, soPaymentFieldChanges, type SoPaymentRowInput } from '../lib/so-payment-row';
+import { deriveAccountSheet, PAYMENT_COLS, recordSoPaymentRow, afterSoPaymentRemoved, bookSoPaymentBestEffort, repostSoPaymentBestEffort, receiptFieldChange, soPaymentFieldChanges, type SoPaymentRowInput } from '../lib/so-payment-row';
 import { linkPaymentScan } from '../lib/scan-files';
 import { enqueueSoPaymentEdit } from '../lib/ac-so-payment-edit';
 import { paymentMethodFieldRefusal } from '../lib/payment-method-fields';
@@ -10680,14 +10680,14 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
   /* THE LEDGER FOLLOWS THE EDIT (docs/bugs/0778) — this route wrote the row and
      stopped, so a correction left its entry behind. See acc/payment-repost.
      BEFORE the audit, so the audit row can carry the two JE numbers. */
-  const ledger = await repostSoPaymentBestEffort(sb, { id, docNo, companyId: co.companyId, before, next });
+  const ledger = await repostSoPaymentBestEffort(sb, { id, docNo, companyId: co.companyId, before, next, actor: c.get('houzsUser')?.name ?? null });
   await recordSoAudit(sb, {
     docNo,
     action: 'UPDATE_PAYMENT',
     actorId: user.id,
     actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
     paymentId: id,
-    fieldChanges: [...soPaymentFieldChanges(before, next), ...ledgerFieldChange(ledger)],
+    fieldChanges: [...soPaymentFieldChanges(before, next), ...ledgerFieldChange(ledger), ...receiptFieldChange(ledger.receipt)],
     /* A correction made on the amend right is a FINANCE event: it carries the
        typed reason and is what the corrections report lists (docs/bugs/0785). */
     ...owed.audit,
@@ -10792,7 +10792,7 @@ export const deleteSoPaymentHandler = async (c: any) => {
 
   // Void the ledger entry AND re-roll the invoices this deposit was settling
   // (lib/so-payment-row afterSoPaymentRemoved). Best-effort, never blocks.
-  const delLedger = await afterSoPaymentRemoved(sb, { paymentId: id, docNo, companyId: delCo.companyId, neverHappened: soIsCancelled });
+  const delLedger = await afterSoPaymentRemoved(sb, { paymentId: id, docNo, companyId: delCo.companyId, neverHappened: soIsCancelled, actor: c.get('houzsUser')?.name ?? null });
 
   /* Post-merge stitch — DELETE_PAYMENT audit row. Carries the typed reason as a
      field change so it renders in AuditHistoryPanel alongside the amount that
@@ -10809,7 +10809,7 @@ export const deleteSoPaymentHandler = async (c: any) => {
       { field: 'amountSen',  from: rowTyped.amount_sen,  to: null },
       ...(rowTyped.approval_code ? [{ field: 'approvalCode', from: rowTyped.approval_code, to: null } satisfies FieldChange] : []),
       ...ledgerFieldChange(delLedger),
-      ...(delLedger.draftReceipt ? [{ field: 'draftReceipt', from: delLedger.draftReceipt, to: null } satisfies FieldChange] : []),
+      ...receiptFieldChange(delLedger.receipt),
     ],
     ...owed.audit,
   });

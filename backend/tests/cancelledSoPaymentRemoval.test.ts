@@ -14,8 +14,9 @@
        it; the audit row says so;
      • not while a refund or a conversion has already drawn on the order's
        money, and not when the payment is reconciled (the standing gate);
-     • every other delete is unchanged: a live order's contra is dated today
-       and its draft receipt stays.
+     • every other delete keeps its own day: a live order's contra is dated
+       today. Its draft receipt goes too since 2026-10-29 (owner: 收据跟着付款
+       改或作废 — a receipt follows its payment, whatever the order's state).
    Real handlers, fake PostgREST (fakeSb). */
 
 import { Hono } from 'hono';
@@ -228,15 +229,15 @@ describe('Finance removes a payment from a cancelled order', () => {
   });
 });
 
-describe('every other delete is unchanged', () => {
-  test('a live order: the contra is dated today and the draft receipt stays', async () => {
+describe('every other delete', () => {
+  test('a live order: the contra is dated today, and its draft receipt goes with it (2026-10-29)', async () => {
     const { app, sb } = harness(FINANCE);
     const res = await remove(app, LIVE, 'live1', 'Keyed on the wrong order');
     expect(res.status, await res.clone().text()).toBe(200);
     const contra = sb.tables.journal_entries.find((j) => j.source_type === 'SOPAY_REVERSAL' && j.source_doc_no === 'live1')!;
     expect(contra.entry_date).toBe(todayMyt());
-    expect(sb.tables.acc_official_receipts.some((r) => r.or_number === '2990-DraftOR-2609-090')).toBe(true);
+    expect(sb.tables.acc_official_receipts.some((r) => r.or_number === '2990-DraftOR-2609-090')).toBe(false);
     const audit = sb.tables.mfg_so_audit_log.find((a) => a.action === 'DELETE_PAYMENT')!;
-    expect((audit.field_changes as Array<{ field: string }>).some((f) => f.field === 'draftReceipt')).toBe(false);
+    expect(audit.field_changes).toEqual(expect.arrayContaining([{ field: 'draftReceipt', from: '2990-DraftOR-2609-090', to: null }]));
   });
 });
