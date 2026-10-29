@@ -23,8 +23,10 @@ class Rollback extends Error {}
 
 try {
   await sql.begin(async (tx) => {
-    await tx.unsafe(readFileSync(new URL('../src/db/migrations-pg/20261029T2000_acc_logistics_pnl.sql', import.meta.url), 'utf8'));
-    out('migration applied inside the transaction');
+    if (process.env.WITH_MIGRATION !== '0') {
+      await tx.unsafe(readFileSync(new URL('../src/db/migrations-pg/20261029T2000_acc_logistics_pnl.sql', import.meta.url), 'utf8'));
+      out('migration applied inside the transaction');
+    } else out('migration already live — reading as deployed');
     const sb = pgrestShim(tx, 'scm');
     for (const m of MONTHS) {
       const from = `${m}-01`;
