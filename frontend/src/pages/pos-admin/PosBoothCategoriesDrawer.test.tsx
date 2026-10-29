@@ -1,6 +1,6 @@
-/* POS Items > Add by category: the picker opens with the booth categories
- * ticked, says what each button will do, and sends only the ticked
- * categories to the backend. */
+/* POS Items > Add by category: the picker opens with the categories that
+ * have items on ticked, says what each button will do, and sends only the
+ * ticked categories to the backend. */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -37,17 +37,17 @@ function renderDrawer() {
 afterEach(() => { cleanup(); post.mockReset(); });
 
 describe("PosBoothCategoriesDrawer", () => {
-  it("opens with the booth categories ticked and says what each button does", async () => {
+  it("opens with the categories that have items on ticked and says what each button does", async () => {
     post.mockResolvedValue(DRY);
     renderDrawer();
     await screen.findByText("Accessory");
     expect(post).toHaveBeenCalledWith("/api/pos-admin/items/add-all", { dry_run: true });
     expect((screen.getByLabelText("Accessory") as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText("Diffuser") as HTMLInputElement).checked).toBe(true);
-    expect((screen.getByLabelText("Sofa") as HTMLInputElement).checked).toBe(false);
-    expect(screen.getByRole("button", { name: "Add 20 item(s)" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Keep only ticked (switch off 1000)" })).toBeTruthy();
-    expect(screen.getByText("113 in POS stay on")).toBeTruthy();
+    expect((screen.getByLabelText("Sofa") as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByRole("button", { name: "Add 30 item(s)" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Keep only ticked (switch off 0)" })).toBeTruthy();
+    expect(screen.getByText("1113 in POS stay on")).toBeTruthy();
   });
 
   it("adds only the ticked categories", async () => {
@@ -55,6 +55,7 @@ describe("PosBoothCategoriesDrawer", () => {
     renderDrawer();
     await screen.findByText("Accessory");
     fireEvent.click(screen.getByLabelText("Diffuser"));
+    fireEvent.click(screen.getByLabelText("Sofa"));
     fireEvent.click(screen.getByRole("button", { name: "Add 20 item(s)" }));
     await waitFor(() => expect(post).toHaveBeenCalledWith("/api/pos-admin/items/add-all", { categories: ["ACCESSORY"] }));
   });
@@ -63,6 +64,7 @@ describe("PosBoothCategoriesDrawer", () => {
     post.mockResolvedValue(DRY);
     renderDrawer();
     await screen.findByText("Accessory");
+    fireEvent.click(screen.getByLabelText("Sofa"));
     fireEvent.click(screen.getByRole("button", { name: "Keep only ticked (switch off 1000)" }));
     fireEvent.click(await screen.findByRole("button", { name: "Keep only ticked" }));
     await waitFor(() => expect(post).toHaveBeenCalledWith("/api/pos-admin/items/keep-categories", { categories: ["ACCESSORY", "DIFFUSER"] }));
