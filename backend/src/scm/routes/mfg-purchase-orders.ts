@@ -2493,10 +2493,8 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
      only GRN-inherited columns freeze once a GRN exists; dates + notes stay
      editable. Downstream read paid only when an inherited column changes. */
   const lockedChanges = changedPoIdentityLockCols(updates, before);
-  if (lockedChanges.length > 0 && (await poHasDownstream(sb, id))) {
-    return c.json(poIdentityLockedRefusal(lockedChanges), 409);
-  }
-  const sdGate = supplierDatePatchGate(before, updates); // HC-0090
+  if (lockedChanges.length > 0 && (await poHasDownstream(sb, id))) return c.json(poIdentityLockedRefusal(lockedChanges), 409);
+  const sdGate = supplierDatePatchGate(before, updates); // HC-0090: recorded Date 2/3/4 are history
   if (sdGate.refusal) return c.json(sdGate.refusal, 409);
   /* A cleared Supplier Date 2/3/4 posts "", which Postgres rejects on a date
      column, so every PO that left one blank failed to save (production,
@@ -2504,7 +2502,6 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
   const { data, error } = await sdGate.onlyIfEmpty(scopeToCompanyId(sb.from('purchase_orders').update(coerceEmptyDates(updates)).eq('id', id), co.companyId)).select('*').maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   if (!data) return sdGate.fill.length ? c.json(sdGate.raced, 409) : c.json(NOT_THIS_COMPANY, 404);
-
   {
     const auditPatch: Record<string, unknown> = {};
     for (const [camel, snake] of PO_AUDIT_FIELDS) {
