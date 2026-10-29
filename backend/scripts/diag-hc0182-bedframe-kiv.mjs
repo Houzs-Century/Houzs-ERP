@@ -40,7 +40,7 @@ async function main() {
     const priced = (j) => Object.entries(j).some(([k, v]) => /_sen$/.test(k) && Number(v) > 0);
     for (const { code, j: p } of products) {
       const bs = binds.filter((b) => b.item_code === code);
-      log(`  [${code}] name="${p.name}" status=${p.status} cat=${p.category} size_code=${p.size_code ?? '-'} size_label=${p.size_label ?? '-'} model=${p.base_model ?? '-'} model_id=${String(p.model_id ?? '-').slice(0, 8)} created=${String(p.created_at ?? '').slice(0, 10)}`);
+      log(`  [${code}] name="${p.name}" status=${p.status} cat=${p.category} size_code=${p.size_code ?? '-'} size_label=${p.size_label ?? '-'} model=${p.base_model ?? '-'} model_id=${String(p.model_id ?? '-').slice(0, 8)} created=${p.created_at} updated=${p.updated_at} pos_active=${p.pos_active}`);
       log(`      price2=${yes(p.base_price_sen)} cost=${yes(p.cost_price_sen)} price1=${yes(p.price1_sen)} seat_grid=${Array.isArray(p.seat_height_prices) ? p.seat_height_prices.length : 0} bindings=${bs.length} (${bs.map((b) => `${b.supplier ?? '?'}${b.j.is_main_supplier ? '*' : ''} priced=${priced(b.j) ? 'yes' : 'no'}`).join('; ') || 'none'})`);
     }
 
@@ -57,6 +57,18 @@ async function main() {
        WHERE v.company_id = ${CO} AND v.item_code IN ${t(codes)}` : [];
     for (const { item_code, j } of moves) {
       log(`  movement ${item_code} type=${j.movement_type ?? j.type ?? '-'} qty=${j.qty ?? j.quantity ?? '-'} ref_type=${j.ref_type ?? j.source_type ?? '-'} at=${String(j.created_at ?? '').slice(0, 10)}`);
+    }
+
+    const ids = [...products.map((p) => String(p.j.id)), ...models.map((m) => String(m.j.id)), ...codes];
+    const audit = await t`
+      SELECT entity_type, entity_id, entity_doc_no, action, field_changes, source, created_at
+        FROM scm.entity_audit_log
+       WHERE company_id = ${CO} AND (entity_id IN ${t(ids)} OR entity_doc_no IN ${t(codes)})
+       ORDER BY created_at`;
+    log('');
+    log(`${audit.length} audit row(s)`);
+    for (const a of audit) {
+      log(`  audit ${a.created_at.toISOString()} ${a.entity_type} ${a.entity_doc_no ?? a.entity_id} ${a.action} src=${a.source} ${JSON.stringify(a.field_changes).slice(0, 300)}`);
     }
 
     const present = new Set((await t`
