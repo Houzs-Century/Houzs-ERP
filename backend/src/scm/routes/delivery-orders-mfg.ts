@@ -4234,12 +4234,9 @@ deliveryOrdersMfg.patch('/:id', async (c) => {
 });
 
 // ── Item CRUD ─────────────────────────────────────────────────────────────
-/* Exported so the outbound-category suite can drive the ADD path directly:
-   supabaseAuth cannot run in the vitest harness. Registration unchanged. */
-export const addDeliveryOrderItemHandler = async (c: Context<{ Bindings: Env; Variables: Variables }, '/:id/items'>) => {
+const addOneDeliveryOrderItem = async (c: Context<{ Bindings: Env; Variables: Variables }, '/:id/items'>, it0: Record<string, unknown>, batchSoItemIds: string[]): Promise<Response> => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
-  let it: Record<string, unknown>;
-  try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
+  let it = it0;
   if (!it.itemCode) return c.json({ error: 'item_code_required' }, 400);
 
   /* Edge #4 — itemCode catalog guard. */
@@ -4261,7 +4258,7 @@ export const addDeliveryOrderItemHandler = async (c: Context<{ Bindings: Env; Va
      B's stock out. The selected company_id feeds the audit row, not a predicate. */
   const { data: header, error: headerErr } = await scopeToCompany(
     sb.from('delivery_orders')
-      .select('id, status, warehouse_id, do_number, company_id, so_doc_no').eq('id', id), c,
+      .select('id, status, warehouse_id, do_number, company_id, so_doc_no, debtor_code, debtor_name').eq('id', id), c,
   ).maybeSingle();
   if (headerErr) return c.json({ error: 'lookup_failed', reason: headerErr.message }, 500);
   if (!header) return c.json({ error: 'not_found' }, 404);
@@ -4283,6 +4280,28 @@ export const addDeliveryOrderItemHandler = async (c: Context<{ Bindings: Env; Va
        path: the stock check below, the commitment planner and buildItemRow all
        read this one object. */
     it = (await resolveItemGroups(sb, [linked.items[0] as typeof it], activeCompanyId(c) ?? null))[0]!;
+  }
+
+  /* A DO ships to ONE customer — the /from-sos rule. Edit-mode "Pull from SO"
+     takes a typed SO number, so the SO line named here may belong to someone else. */
+  if (it.soItemId) {
+    const { data: soLine } = await sb.from('mfg_sales_order_items').select('doc_no').eq('id', it.soItemId as string).maybeSingle();
+    const { data: soHead } = soLine
+      ? await scopeToCompany(sb.from('mfg_sales_orders').select('debtor_code, debtor_name').eq('doc_no', (soLine as { doc_no: string }).doc_no), c).maybeSingle()
+      : { data: null };
+    const so = soHead as { debtor_code: string | null; debtor_name: string | null } | null;
+    const doH = header as { debtor_code: string | null; debtor_name: string | null };
+    const norm = (v: string | null | undefined) => (v ?? '').trim().toUpperCase();
+    const same = !so ? false : (norm(so.debtor_code) && norm(doH.debtor_code))
+      ? norm(so.debtor_code) === norm(doH.debtor_code)
+      : norm(so.debtor_name) === norm(doH.debtor_name);
+    if (!same) {
+      return c.json({
+        error: 'mixed_customers',
+        message: 'This Sales Order line belongs to a different customer than the Delivery Order.',
+        customers: [doH.debtor_name ?? doH.debtor_code ?? '(none)', so?.debtor_name ?? so?.debtor_code ?? '(unknown)'],
+      }, 400);
+    }
   }
   const addShipsNow = SHIPPED_STATES.includes((h.status ?? '').toUpperCase());
   /* The added line ships from ITS OWN SO line's warehouse — the same order the
@@ -4399,6 +4418,7 @@ export const addDeliveryOrderItemHandler = async (c: Context<{ Bindings: Env; Va
     const soIds = [
       ...((existingDoLines ?? []) as Array<{ so_item_id: string | null }>).map((r) => r.so_item_id),
       (it.soItemId as string | null) ?? null,
+      ...batchSoItemIds,
     ];
     const partial = await findIncompleteSofaSets(sb, soIds, activeCompanyId(c));
     if (partial.length > 0) return c.json(sofaIncompleteSetResponse(partial), 409);
@@ -4467,6 +4487,25 @@ export const addDeliveryOrderItemHandler = async (c: Context<{ Bindings: Env; Va
 
   await queueAcDoEdit(c, id, [], ((data as { id?: unknown } | null)?.id ? [String((data as { id?: unknown }).id)] : []));
   return c.json({ item: data }, 201);
+};
+
+/* Exported so the outbound-category suite can drive the ADD path directly:
+   supabaseAuth cannot run in the vitest harness. Registration unchanged. */
+/* Body is one line, or { items: [...] } so the modules of one sofa set arrive
+   together — the set check counts the whole batch, not each line alone. */
+export const addDeliveryOrderItemHandler = async (c: Context<{ Bindings: Env; Variables: Variables }, '/:id/items'>) => {
+  let body: Record<string, unknown>;
+  try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
+  if (!Array.isArray(body.items)) return addOneDeliveryOrderItem(c, body, []);
+  const lines = body.items as Array<Record<string, unknown>>;
+  const batchSoItemIds = lines.map((l) => l?.soItemId).filter((x): x is string => typeof x === 'string' && !!x);
+  const items: unknown[] = [];
+  for (const l of lines) {
+    const res = await addOneDeliveryOrderItem(c, l ?? {}, batchSoItemIds);
+    if (res.status >= 400) return res;
+    items.push(((await res.json()) as { item: unknown }).item);
+  }
+  return c.json({ items }, 201);
 };
 deliveryOrdersMfg.post('/:id/items', addDeliveryOrderItemHandler);
 
