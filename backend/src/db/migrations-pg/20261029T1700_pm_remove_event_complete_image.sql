@@ -1,5 +1,5 @@
 -- 20261029T1700_pm_remove_event_complete_image.sql
--- IRREVERSIBLE — deletes the 'Event Complete Image' checklist rows, their
+-- REVERSAL: IRREVERSIBLE — deletes the 'Event Complete Image' checklist rows, their
 --   uploaded-photo attachment rows, and the two template items. The rows and
 --   their captions are gone for good; the orphaned R2 photo blobs are left in
 --   the bucket (harmless, out of scope). Revert the code first (the mobile
