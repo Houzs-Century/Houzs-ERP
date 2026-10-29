@@ -7,6 +7,7 @@
 // invoices, by debtor.
 // Env: DATABASE_URL, COMPANY_ID (1), FROM (2026-08-01), TO (2026-10-31).
 import postgres from 'postgres';
+import { regionOfDo } from '../src/scm/lib/logistics-cost.ts';
 
 const CO = Number(process.env.COMPANY_ID || 1);
 const FROM = String(process.env.FROM || '2026-08-01');
@@ -54,13 +55,30 @@ try {
     for (const r of await sql.unsafe(
       `SELECT to_char(h.${dt}, 'YYYY-MM') AS ym, h.${who} AS who, count(*)::int AS n, sum(i.${amt})::bigint AS sen
          FROM scm.sales_invoice_items i JOIN scm.sales_invoices h ON h.id = i.${fk}
-        WHERE h.company_id = $1 AND h.${dt} BETWEEN $2::date AND $3::date AND coalesce(h.status, '') <> 'CANCELLED'
+        WHERE h.company_id = $1 AND h.${dt} BETWEEN $2::date AND $3::date AND coalesce(h.status::text, '') <> 'CANCELLED'
           AND (i.${code} ~* '(transport|deliver)'${desc ? ` OR i.${desc} ~* '(transport|deliver)'` : ''})
           AND h.${who} ~* '(sdn|bhd|enterprise|trading|plt|company|co\\.)'
         GROUP BY 1, 2 ORDER BY 1, 4 DESC LIMIT 30`,
       [CO, FROM, TO],
     )) out(`SI ${r.ym} ${cut(r.who, 50)}: ${r.n} lines ${rm(r.sen)}`);
   } else out(`SI skipped: code ${code} amt ${amt} fk ${fk} dt ${dt} who ${who}`);
+
+  /* The DOs' transport lines in Sep, a company customer apart from a person, by region. */
+  const rows = await sql`
+    SELECT d.do_number, d.debtor_name, d.state, d.city, d.postcode,
+           concat_ws(' | ', d.address1, d.address2, o.address1, o.address2, o.address3, o.address4) AS address, i.line_total_sen
+      FROM scm.delivery_order_items i JOIN scm.delivery_orders d ON d.id = i.delivery_order_id
+      LEFT JOIN scm.mfg_sales_orders o ON o.doc_no = d.so_doc_no AND o.company_id = d.company_id
+     WHERE d.company_id = ${CO} AND d.status <> 'CANCELLED' AND i.item_code = 'TRANSPORTATION CHARGES'
+       AND coalesce(d.customer_delivery_date, d.do_date) BETWEEN '2026-09-01'::date AND '2026-09-30'::date`;
+  const agg = new Map();
+  for (const r of rows) {
+    const company = /(sdn|bhd|enterprise|trading|plt|company|pte|ltd|resources|holdings|services)/i.test(String(r.debtor_name ?? ''));
+    const k = `${regionOfDo({ state: r.state, city: r.city, postcode: r.postcode, address: r.address }).code} ${company ? 'COMPANY' : 'person'}`;
+    agg.set(k, (agg.get(k) ?? 0) + Number(r.line_total_sen ?? 0));
+    if (company) out(`DO-CO ${r.do_number} ${cut(r.debtor_name, 40)}: ${rm(r.line_total_sen)}`);
+  }
+  for (const [k, v] of [...agg].sort()) out(`DO transport Sep ${k}: ${rm(v)}`);
 } catch (e) {
   out(`FAILED: ${e?.message ?? e}`);
   process.exitCode = 1;
