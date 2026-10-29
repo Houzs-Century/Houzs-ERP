@@ -46,6 +46,7 @@ import { PerformanceTab } from './PerformancePnl';
 import { EventCostsTab } from './EventCosts';
 import { EventCommissionTab } from './EventCommission';
 import { ProductProfitTab } from './ProductProfit';
+import { LogisticsCostTab } from './LogisticsCost';
 import { cardStyle, fieldStyle, btnStyle } from './JournalEntryCards';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { fmtDateOrDash, fmtSen } from '../../vendor/shared/format';
@@ -106,6 +107,7 @@ export const Accounting = () => {
       {tab === 'events' && <EventCostsTab />}
       {tab === 'commission' && <EventCommissionTab />}
       {tab === 'products' && <ProductProfitTab />}
+      {tab === 'logistics' && <LogisticsCostTab />}
     </div>
   );
 };
