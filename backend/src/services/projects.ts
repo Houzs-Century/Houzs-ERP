@@ -1063,7 +1063,7 @@ export function stripSetupDismantle<
 
   // Document rows are identified by their cloned section NAME. Owner
   // 2026-07-16: the sales PIC's OWN deliverables — the rows badged
-  // "SALES PIC" (Setup Image / Defect List / Event Complete Image) — stay
+  // "SALES PIC" (Setup Image / Defect List) — stay
   // on the wire for the stripped caller (this strip only ever runs for
   // sales-role callers); the DRIVER / PURCHASER document rows and the crew
   // editor stay hidden. A Setup & Dismantle section is dropped outright
