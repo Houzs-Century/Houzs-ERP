@@ -4285,10 +4285,12 @@ const addOneDeliveryOrderItem = async (c: Context<{ Bindings: Env; Variables: Va
   /* A DO ships to ONE customer — the /from-sos rule. Edit-mode "Pull from SO"
      takes a typed SO number, so the SO line named here may belong to someone else. */
   if (it.soItemId) {
-    const { data: soLine } = await sb.from('mfg_sales_order_items').select('doc_no').eq('id', it.soItemId as string).maybeSingle();
-    const { data: soHead } = soLine
+    const { data: soLine, error: soLineErr } = await sb.from('mfg_sales_order_items').select('doc_no').eq('id', it.soItemId as string).maybeSingle();
+    if (soLineErr) return c.json({ error: 'lookup_failed', reason: soLineErr.message }, 500);
+    const { data: soHead, error: soHeadErr } = soLine
       ? await scopeToCompany(sb.from('mfg_sales_orders').select('debtor_code, debtor_name').eq('doc_no', (soLine as { doc_no: string }).doc_no), c).maybeSingle()
-      : { data: null };
+      : { data: null, error: null };
+    if (soHeadErr) return c.json({ error: 'lookup_failed', reason: soHeadErr.message }, 500);
     const so = soHead as { debtor_code: string | null; debtor_name: string | null } | null;
     const doH = header as { debtor_code: string | null; debtor_name: string | null };
     const norm = (v: string | null | undefined) => (v ?? '').replace(/\s+/g, ' ').trim().toUpperCase();
