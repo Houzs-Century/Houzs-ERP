@@ -830,6 +830,8 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/accounting?tab=events", label: "Event costs", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.reports"] },
           // Each fair's commission and each order's under it — goods × brand rate once 30% is paid (owner 2026-10-20).
           { to: "/scm/accounting?tab=commission", label: "Event Commission", icon: BarChart3, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.reports"] },
+          // What delivery cost — by region, per trip (our lorries overall: the month's lorry cost ÷ its trips; 3PL bill lines), setup & dismantle (owner 2026-10-29).
+          { to: "/scm/accounting?tab=logistics", label: "Logistics cost", icon: Truck, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.reports"] },
           { to: "/reports/fair-report", label: "Sales Report", icon: BarChart3, requireFairReport: true, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance", "scm.finance.reports", "scm.finance.outstanding", "projects.finances"] },
         ],
       },

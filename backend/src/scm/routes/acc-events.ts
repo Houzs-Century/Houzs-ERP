@@ -11,6 +11,10 @@
 //   POST /commission/reopen       reopen the latest closed month
 //   POST /pv-lines/:lineId/event  change the event on one voucher line — posted
 //                                 or not — and on its journal leg
+//   GET  /logistics               the Logistics cost report: ?from..?to, by region,
+//                                 per trip, setup & dismantle (acc-logistics.ts)
+//   GET  /logistics/settings      which accounts are our lorries' cost
+//   PUT  /logistics/settings      tick them (the money right)
 //
 // Mounted behind scmAreaGuard("scm.finance.accounting") (scm/index.ts): a read
 // needs view on Finance > Accounting, a write needs the money right.
@@ -27,6 +31,7 @@ import { assertAuditWritable, auditUnavailableBody, fieldChange, recordEntityAud
 import { listEventOptions, loadEventsByIds, parseEventId, pvLineEventRefusal, toEventRow, type EventRow } from '../lib/event-tags';
 import { buildEventCosts, type ChartRow, type LegEntry, type TaggedLeg } from '../lib/event-costs';
 import { closeCommissionMonthHandler, eventCommissionHandler, reopenCommissionMonthHandler } from './acc-event-commission';
+import { logisticsCostHandler, logisticsSettingsHandler, saveLogisticsSettingsHandler } from './acc-logistics';
 
 export const accEvents = new Hono<{ Bindings: Env; Variables: Variables }>();
 accEvents.use('*', supabaseAuth);
@@ -115,6 +120,9 @@ accEvents.get('/costs', eventCostsHandler);
 accEvents.get('/commission', eventCommissionHandler);
 accEvents.post('/commission/close', closeCommissionMonthHandler);
 accEvents.post('/commission/reopen', reopenCommissionMonthHandler);
+accEvents.get('/logistics', logisticsCostHandler);
+accEvents.get('/logistics/settings', logisticsSettingsHandler);
+accEvents.put('/logistics/settings', saveLogisticsSettingsHandler);
 
 /* ── POST /pv-lines/:lineId/event ─────────────────────────────────────────────
    A voucher is locked from Check on, and an approved one cannot be edited at
