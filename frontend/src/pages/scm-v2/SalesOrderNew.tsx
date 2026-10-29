@@ -59,7 +59,7 @@ import {
   useUploadSoItemPhoto, useMfgSalesOrderDetail,
   type DebtorSuggestion,
 } from '../../vendor/scm/lib/sales-order-queries';
-import { withoutPwpRewardLines } from '../../lib/soCopyLines';
+import { copyLinesWithoutPwp, pwpDroppedNotice } from '../../lib/soCopyLines';
 import { zeroPriceClaim } from '../../vendor/scm/lib/zeroPriceClaim';
 import { authedFetch, humanApiError, type SaveProblem } from '../../vendor/scm/lib/authed-fetch';
 import {
@@ -358,8 +358,11 @@ export const SalesOrderNew = () => {
     setEmergencyName(h.emergency_contact_name ?? '');
     setEmergencyRel(h.emergency_contact_relationship ?? '');
     setEmergencyPhone(h.emergency_contact_phone ?? '');
-    if (Array.isArray(srcItems) && srcItems.length > 0) {
-      setLines(withoutPwpRewardLines(srcItems.filter((it) => !it.cancelled)).map((it: any) => ({
+    const { kept: copyKept, dropped: pwpDropped } = copyLinesWithoutPwp(
+      Array.isArray(srcItems) ? srcItems.filter((it) => !it.cancelled) : [], h.status);
+    if (pwpDropped > 0) void notify({ title: 'PWP line left out', body: pwpDroppedNotice(pwpDropped) });
+    if (copyKept.length > 0) {
+      setLines(copyKept.map((it: any) => ({
         ...newLine(),
         itemCode:       it.item_code ?? '',
         itemGroup:      it.item_group ?? 'others',
