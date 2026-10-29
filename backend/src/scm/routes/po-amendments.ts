@@ -413,6 +413,7 @@ export async function approvePoAmendmentHandler(c: any, sb: any): Promise<Respon
       const mine = revised.perPo.find((p) => p.poId === amendment.po_id);
       appliedRevision = mine?.revision ?? 0;
       appliedWarnings = revised.warnings;
+      appliedRetire = revised.retired;
       if (!mine) {
         appliedWarnings = [...appliedWarnings,
           'This purchase order no longer carries lines bound to that sales order, so there was nothing to re-derive.'];

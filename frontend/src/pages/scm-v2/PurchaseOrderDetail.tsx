@@ -1024,7 +1024,7 @@ export const PurchaseOrderDetail = () => {
               the approval this button briefly routed through is gone, the
               mandatory reason it introduced is not. Same for a DRAFT and a live
               PO; the server refuses either without a reason. */}
-          {(po.status === 'DRAFT' || po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') && (
+          {(po.status === 'DRAFT' || po.status === 'SUBMITTED') && (
             <Button variant="ghost" size="md"
               onClick={() => executeCancel(po.po_number)}
               disabled={cancelling}>

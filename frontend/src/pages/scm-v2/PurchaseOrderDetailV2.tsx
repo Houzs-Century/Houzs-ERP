@@ -1101,7 +1101,8 @@ function PurchaseOrderDetailV2ReadOnly() {
   const canConfirm = confirmReason === null;
   const grnReason = grnTransferBlockReason(purchaseOrder.status);
   const canConvertToGrn = grnReason === null;
-  const canCancel = rawStatus !== "CANCELLED" && rawStatus !== "RECEIVED";
+  // A part-received PO has a GRN, which the server refuses to cancel past (poHasDownstream); close its short line by PO amendment instead.
+  const canCancel = rawStatus !== "CANCELLED" && rawStatus !== "RECEIVED" && rawStatus !== "PARTIALLY_RECEIVED";
   const canReopen = rawStatus === "CANCELLED";
   const isCancelled = rawStatus === "CANCELLED";
 
