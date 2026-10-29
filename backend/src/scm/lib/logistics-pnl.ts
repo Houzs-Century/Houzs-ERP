@@ -11,31 +11,34 @@
 //       changes it), each DO in its region.
 //     Transport Income (Houzs / The Conts / Hookka / 2990) — what Finance bills
 //       EXTRA, on Other Debtor bills (「我额外bill 的就要放过去」; a sales
-//       invoice's transport line 「另有用途」 and never counts here): a line on a
-//       TRANSPORT INCOME account, in the region the account's name gives; a line
-//       worded "LOGISTICS CHARGES" / "TRANSPORT CHARGES" on any other account
-//       counts under KL (the 2990 recharges billed before the accounts existed).
+//       invoice's transport line 「另有用途」 and never counts here): a line on an
+//       account the Chart of Accounts puts on a Transport Income row, in that
+//       row's region; a line worded "LOGISTICS CHARGES" / "TRANSPORT CHARGES" on
+//       any other account counts under KL (the 2990 recharges billed before the
+//       accounts existed).
 //       The row is the company billed; the month the one the line names
 //       ("LOGISTICS CHARGES - SEP'26" is September's), else the bill's own.
 //     Set/Dismantle Income (in-house) — every fair's setup (its first day) and
 //       dismantle (its last day), one trip per venue per day, at its area's rate
 //       per trip (Finance keeps the rates — 「我要自己能维护」). A trip an
 //       outsourced bill covers is not ours; Finance may untick or tick any trip.
-//   EXPENSE
-//     Outsource — the transport accounts, by the region their names give
-//       (900-T005 Penang, T006 KL, T007 / T017–T026 / T036 SBH & SWK, T015 /
-//       T027–T029 / T034 SGD); the fair-transport accounts are the fairs' own.
+//   EXPENSE — each account in the row the Chart of Accounts' Logistics column
+//   gives it (Finance's pick, one row per account — scm/lib/logistics-rows.ts):
+//     Outsource — by region (900-T005 Penang, T006 KL, T007 / T017–T026 / T036
+//       SBH & SWK, T015 / T027–T029 / T034 SGD); the fair-transport accounts are
+//       the fairs' own.
 //     In-house — in the KL column, as the owner's sheet keeps it:
-//       petrol — the own-lorry accounts naming petrol / toll / parking;
-//       upkeep — those naming upkeep / repair, each bill spread over the months
-//         Finance gives it (「根据情况定的，这个我可以自己定」 — its own month until then);
+//       petrol — fuel, toll and parking of our lorries;
+//       upkeep — each bill spread over the months Finance gives it
+//         (「根据情况定的，这个我可以自己定」 — its own month until then);
 //       lorry instalment — what was paid on the HP creditor of one of our lorries;
 //       road tax & insurance — spread like upkeep, 12 months until Finance says otherwise;
 //       manpower — the salary journal's OPERATION DELIVERY (drivers) and
 //         OPERATION HELPER lines (「进salary 时有分driver和helper」).
 // ----------------------------------------------------------------------------
 
-import { REGIONS, normalisePlate, share, monthOf, type ChartAccount, type LogisticsLorry, type RegionCode } from './logistics-cost';
+import { REGIONS, share, monthOf, type ChartAccount, type RegionCode } from './logistics-cost';
+import { isLogisticsRow, regionOfRow } from './logistics-rows';
 
 export type RegionSen = Record<RegionCode, number>;
 const zero = (): RegionSen => ({ PG: 0, KL: 0, EM: 0, SG: 0 });
@@ -66,55 +69,12 @@ export function monthNamed(text: string | null | undefined): string | null {
   return `${year}-${String(idx + 1).padStart(2, '0')}`;
 }
 
-/* ── The accounts, by what their names say ────────────────────────────────── */
-/** An outsourced-transport account's region, or null when it is not one (fair transport is the fairs'). */
-export function outsourceRegionOf(name: string | null | undefined): RegionCode | null {
-  const n = upper(name);
-  if (/^TRANSPORT\s*\(\s*(PNG|PENANG)\b/.test(n)) return 'PG';
-  if (/^TRANSPORT\s*\(\s*KL\b/.test(n)) return 'KL';
-  if (/^TRANSPORT\s*\(\s*(SABAH|SBH)\b/.test(n)) return 'EM';
-  if (/^TRANSPORT\s*(\(\s*)?SGD\b/.test(n)) return 'SG';
-  return null;
-}
-
-/** A transport income account's region (KL when its name names none), or null when it is not one. */
-export function transportIncomeRegionOf(name: string | null | undefined): RegionCode | null {
-  const n = upper(name);
-  if (!/\bTRANSPORT\s+INCOME\b/.test(n)) return null;
-  if (/\((PNG|PENANG)\b/.test(n)) return 'PG';
-  if (/\(\s*(SABAH|SBH|SARAWAK|SWK)\b/.test(n)) return 'EM';
-  if (/\bSGD\b|\bSINGAPORE\b/.test(n)) return 'SG';
-  return 'KL';
-}
-
+/* ── The accounts: each one's Logistics row on the Chart of Accounts ──────── */
 /** A bill line worded as a transport recharge, on whatever account. */
 export const isRechargeWording = (text: string | null | undefined): boolean =>
   /^\s*(LOGISTICS?|TRANSPORT(ATION)?)\s+(CHARGES?|FEES?|INCOME)\b/i.test(String(text ?? ''));
 
-export type OwnCostKind = 'petrol' | 'upkeep' | 'other';
-/** Which in-house row one of the own-lorry accounts feeds. */
-export function ownCostKindOf(name: string | null | undefined): OwnCostKind {
-  const n = upper(name);
-  if (/PETROL|FUEL|DIESEL|\bTOLL?\b|PARKING/.test(n)) return 'petrol';
-  if (/UPKEEP|REPAIR|SERVICE|MAINTEN|TYRE|TIRE/.test(n)) return 'upkeep';
-  return 'other';
-}
-
 const isExpense = (a: ChartAccount) => upper(a.account_type) === 'EXPENSE' && a.is_active !== false;
-
-/** Insurance & road tax: the expense accounts naming road tax. */
-export const roadTaxAccounts = (chart: readonly ChartAccount[]): string[] =>
-  chart.filter((a) => isExpense(a) && /ROAD\s*TAX/.test(upper(a.account_name))).map((a) => a.account_code).sort();
-
-/** The HP creditor of each of OUR lorries (450-H002 VNB 9058 …) — not a forklift, not a lorry we no longer run. */
-export function instalmentAccounts(chart: readonly ChartAccount[], lorries: readonly LogisticsLorry[]): string[] {
-  const plates = lorries.filter((l) => l.isInternal).map((l) => normalisePlate(l.plate)).filter(Boolean);
-  return chart
-    .filter((a) => a.is_active !== false && /\bHP\s+CREDITOR\b/.test(upper(a.account_name)))
-    .filter((a) => plates.some((p) => normalisePlate(a.account_name).includes(p)))
-    .map((a) => a.account_code)
-    .sort();
-}
 
 /** The payroll accounts the salary journal writes its department lines on. */
 export const salaryAccounts = (chart: readonly ChartAccount[]): string[] =>
@@ -124,29 +84,33 @@ export const salaryAccounts = (chart: readonly ChartAccount[]): string[] =>
 /** A salary-journal line for the drivers or the helpers. */
 export const isManpowerLine = (notes: string | null | undefined): boolean => /^\s*OPERATION\s+(DELIVERY|HELPER)\b/i.test(String(notes ?? ''));
 
-/** The chart sorted into the P&L's rows. The own-lorry list (Finance's ticks, else
-    the chart's default) gives petrol, upkeep and any other lorry cost; manpower
-    never re-reads an account that list already counts. */
-export function pnlAccountsOf(chart: readonly ChartAccount[], lorries: readonly LogisticsLorry[], ownCost: readonly string[]): PnlAccounts & { all: string[] } {
-  const nameOf = new Map(chart.map((a) => [a.account_code, a.account_name] as const));
+/** The chart sorted into the P&L's rows by the Logistics row Finance picked for
+    each account (scm/lib/logistics-rows.ts). Manpower reads the payroll accounts'
+    driver and helper lines, never an account already given a Logistics row. */
+export function pnlAccountsOf(chart: readonly ChartAccount[]): PnlAccounts & { all: string[] } {
   const outsource = new Map<string, RegionCode>();
-  for (const a of chart) {
-    const r = isExpense(a) ? outsourceRegionOf(a.account_name) : null;
-    if (r) outsource.set(a.account_code, r);
-  }
+  const income = new Map<string, RegionCode>();
   const petrol = new Set<string>();
   const upkeep = new Set<string>();
   const otherLorry = new Set<string>();
-  for (const code of ownCost) {
-    const k = ownCostKindOf(nameOf.get(code));
-    (k === 'petrol' ? petrol : k === 'upkeep' ? upkeep : otherLorry).add(code);
+  const roadTax = new Set<string>();
+  const instalment = new Set<string>();
+  const placed = new Set<string>();
+  for (const a of chart) {
+    const row = a.logistics_row;
+    if (!isLogisticsRow(row)) continue;
+    placed.add(a.account_code);
+    const region = regionOfRow(row);
+    if (region) (row.startsWith('income_') ? income : outsource).set(a.account_code, region);
+    else if (row === 'petrol') petrol.add(a.account_code);
+    else if (row === 'upkeep') upkeep.add(a.account_code);
+    else if (row === 'other_lorry') otherLorry.add(a.account_code);
+    else if (row === 'instalment') instalment.add(a.account_code);
+    else roadTax.add(a.account_code);
   }
-  const own = new Set(ownCost);
-  const roadTax = new Set(roadTaxAccounts(chart).filter((c) => !own.has(c)));
-  const instalment = new Set(instalmentAccounts(chart, lorries));
-  const salary = new Set(salaryAccounts(chart).filter((c) => !own.has(c)));
+  const salary = new Set(salaryAccounts(chart).filter((c) => !placed.has(c)));
   const all = [...new Set([...outsource.keys(), ...petrol, ...upkeep, ...otherLorry, ...roadTax, ...instalment, ...salary])].sort();
-  return { outsource, petrol, upkeep, otherLorry, roadTax, instalment, salary, all };
+  return { outsource, income, petrol, upkeep, otherLorry, roadTax, instalment, salary, all };
 }
 
 /* ── The areas a setup or dismantle trip is priced by ─────────────────────── */
@@ -299,12 +263,13 @@ export const incomeRowOf = (debtorName: string | null | undefined): IncomeRow =>
 export type BillLine = { lineId: string; billNo: string; billDate: string; debtorName: string; description: string | null; accountCode: string; accountName: string | null; amountSen: number };
 export type IncomeLine = BillLine & { month: string; row: IncomeRow; region: RegionCode; by: 'account' | 'wording' };
 
-/** The transport lines among a stack of Other Debtor bill lines, in the months asked for. */
-export function incomeLines(lines: readonly BillLine[], range: readonly string[]): IncomeLine[] {
+/** The transport lines among a stack of Other Debtor bill lines, in the months asked
+    for: a line on an account the chart puts on a Transport Income row, in its region. */
+export function incomeLines(lines: readonly BillLine[], range: readonly string[], incomeAccounts: ReadonlyMap<string, RegionCode>): IncomeLine[] {
   const inRange = new Set(range);
   const out: IncomeLine[] = [];
   for (const l of lines) {
-    const byAccount = transportIncomeRegionOf(l.accountName);
+    const byAccount = incomeAccounts.get(l.accountCode) ?? null;
     const region = byAccount ?? (isRechargeWording(l.description) ? 'KL' : null);
     if (region == null) continue;
     const month = monthNamed(l.description) ?? monthOf(l.billDate);
@@ -318,6 +283,8 @@ export function incomeLines(lines: readonly BillLine[], range: readonly string[]
 export type Leg = { lineId: string; accountCode: string; accountName: string | null; day: string; debitSen: number; creditSen: number; notes: string | null; docNo: string | null };
 export type PnlAccounts = {
   outsource: ReadonlyMap<string, RegionCode>;
+  /** The Transport Income accounts Other Debtor bill lines are read on. */
+  income: ReadonlyMap<string, RegionCode>;
   petrol: ReadonlySet<string>;
   upkeep: ReadonlySet<string>;
   otherLorry: ReadonlySet<string>;

@@ -4,7 +4,7 @@
      • who took a DO: the lorry picked, else the plate typed — spaces and case
        ignored, "A / B" read as two lorries, ours first; a plate on no list is
        said so;
-     • a trip of ours is one lorry on one day; the month's cost of the ticked
+     • a trip of ours is one lorry on one day; the month's cost of our lorries'
        accounts divided by the month's trips is one trip's cost, shared equally
        by its DOs; a month with cost and no trip is named, not spread;
      • a DO's 3PL cost is its bill charge; a 3PL run is one bill line, on its own
@@ -12,13 +12,11 @@
      • four regions, the books' own (2026-10-29 「可以」): Penang, KL, SBH & SWK,
        SGD — Singapore by its state box or its address, a state nobody names
        KL's others; by region: DOs, what they carry, our share, 3PL, total —
-       the range's DOs only, a month's trips counted whole;
-     • the default cost accounts: expense accounts naming a lorry or one of our
-       plates — not the director's petrol, not the lorry asset. */
+       the range's DOs only, a month's trips counted whole. */
 
 import { describe, expect, test } from 'vitest';
 import {
-  buildLogisticsReport, defaultOwnCostAccounts, delivererOf, normalisePlate, platesOf, regionOfDo, share,
+  buildLogisticsReport, delivererOf, normalisePlate, platesOf, regionOfDo, share,
   type LogisticsDo, type LogisticsInput, type LogisticsLorry,
 } from './logistics-cost';
 
@@ -150,19 +148,5 @@ describe('the report', () => {
     expect(r.months[0]).toMatchObject({ trips: 2, perTripSen: 45_000 });
     expect(r.trips.filter((t) => t.kind === 'own').map((t) => t.day)).toEqual(['2026-10-06']);
     expect(r.totals.ownSen).toBe(45_000);
-  });
-});
-
-describe('the default own-lorry cost accounts', () => {
-  test('expense accounts naming a lorry or one of our plates; not the director, not the asset, not an inactive one', () => {
-    const chart = [
-      { account_code: '900-P015', account_name: 'PETROL, TOL AND PARKING - LORI VRH 9058', account_type: 'EXPENSE' },
-      { account_code: '900-P010', account_name: 'PETROL, TOL AND PARKING - VPC 9058', account_type: 'EXPENSE' },
-      { account_code: '900-P008', account_name: 'PETROL, TOL AND PARKING - DIRECTOR & OTHERS', account_type: 'EXPENSE' },
-      { account_code: '900-U006', account_name: 'UPKEEP OF LORI', account_type: 'EXPENSE' },
-      { account_code: '900-U007', account_name: 'UPKEEP OF LORI - JPL 9058', account_type: 'EXPENSE', is_active: false },
-      { account_code: '207-1000', account_name: 'MOTOR VEHICLE', account_type: 'ASSET' },
-    ];
-    expect(defaultOwnCostAccounts(chart, LORRIES)).toEqual(['900-P010', '900-P015', '900-U006']);
   });
 });

@@ -14,10 +14,11 @@
 //   to the list with spaces and case ignored. An internal lorry is OURS.
 //   A TRIP of ours is one lorry on one day — the DOs are the record; Delivery
 //   Planning's own trips are barely used. OWN-LORRY COST is OVERALL (the
-//   owner's word): what the ticked accounts (fuel / toll / parking and upkeep per
-//   lorry; a driver salary account once there is one) booked in the month,
-//   divided by the month's trips — the cost of one trip, shared equally by the
-//   DOs on it. A month with cost and no trip keeps its cost unallocated, said so.
+//   owner's word): what the accounts the Chart of Accounts puts on Petrol,
+//   Upkeep or Other lorry cost (its Logistics column, scm/lib/logistics-rows.ts)
+//   booked in the month, divided by the month's trips — the cost of one trip,
+//   shared equally by the DOs on it. A month with cost and no trip keeps its cost
+//   unallocated, said so.
 //   3PL COST of a DO is its charge from the carrier's bill (threepl_do_charges —
 //   a bill line's amount already split over the DOs it names); a 3PL RUN is one
 //   bill line, as the carrier billed it.
@@ -288,24 +289,9 @@ function nextMonth(m: string): string {
   return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, '0')}`;
 }
 
-/* ── The accounts that make up OUR lorries' cost ──────────────────────────────
-   Until Finance ticks its own list (Logistics cost › Own-lorry cost accounts),
-   the chart answers: an expense account whose name says LORI / LORRY, or names
-   one of our lorries' plates — the per-lorry fuel / toll / parking and upkeep
-   accounts. A driver salary account counts once Finance ticks it. */
+/** A chart row as the logistics reports read it: the PMS row (fair transport) and
+    the Logistics row Finance picks on the Chart of Accounts (scm/lib/logistics-rows.ts). */
 export type ChartAccount = {
   account_code: string; account_name: string | null; account_type: string | null; is_active?: boolean | null;
-  parent_code?: string | null; pms_row?: string | null;
+  parent_code?: string | null; pms_row?: string | null; logistics_row?: string | null;
 };
-
-export function defaultOwnCostAccounts(chart: readonly ChartAccount[], lorries: readonly LogisticsLorry[]): string[] {
-  const plates = lorries.filter((l) => l.isInternal).map((l) => normalisePlate(l.plate)).filter(Boolean);
-  return chart
-    .filter((a) => String(a.account_type ?? '').toUpperCase() === 'EXPENSE' && a.is_active !== false)
-    .filter((a) => {
-      const name = String(a.account_name ?? '');
-      return /\bLOR(I|RY|RIES)\b/i.test(name) || plates.some((p) => normalisePlate(name).includes(p));
-    })
-    .map((a) => a.account_code)
-    .sort();
-}

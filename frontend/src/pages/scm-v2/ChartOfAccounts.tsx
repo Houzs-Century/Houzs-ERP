@@ -136,8 +136,8 @@ export const ChartOfAccounts = () => {
   const doImport = useChartImport();
   const doRename = useChartRename();
   const doUpdate = useChartUpdate();
-  /* 需要 Event / PMS row (item 4): one field at a time, a refusal said out loud. */
-  const setEventFields = async (code: string, patch: { needsEvent?: boolean; pmsRow?: string | null }) => {
+  /* 需要 Event / PMS row (item 4) / Logistics row: one field at a time, a refusal said out loud. */
+  const setEventFields = async (code: string, patch: { needsEvent?: boolean; pmsRow?: string | null; logisticsRow?: string | null }) => {
     try { await doUpdate.mutateAsync({ code, ...patch }); } catch (e) {
       void notify({ title: `${code} not saved`, body: e instanceof Error ? e.message : 'Try again.', tone: 'error' });
     }
@@ -152,6 +152,9 @@ export const ChartOfAccounts = () => {
   /* 需要 Event / PMS row (owner 2026-10-01, payment-request item 4): the rows a
      Finance account can fill on the PMS event page — the server's one list. */
   const pmsRows = useMemo(() => unionQ.data?.pmsRows ?? [], [unionQ.data]);
+  /* The Logistics P&L's rows (owner 2026-10-29: the own-lorry tick list moved here —
+     「就不能在coa 那边tick？」): each offered on accounts of the type it reads. */
+  const logisticsRows = useMemo(() => unionQ.data?.logisticsRows ?? [], [unionQ.data]);
 
   /* ── The AutoCount tree (owner 2026-09-06: 每个 account type 的 header):
      one header row per SECTION in the server's order, the accounts of that
@@ -770,6 +773,7 @@ export const ChartOfAccounts = () => {
                         <th style={stickyTh}>Type</th>
                         <th style={stickyTh} title="A voucher or AP invoice line on this account needs its Event before it is approved">需要 Event</th>
                         <th style={stickyTh} title="Which row of the PMS event page this account's money fills">PMS row</th>
+                        <th style={stickyTh} title="Which row of the Logistics P&L this account's money fills">Logistics</th>
                         {companies.map((co) => (
                           <th key={co.id} style={{ ...stickyTh, textAlign: 'center' }}>{co.code}</th>
                         ))}
@@ -789,7 +793,7 @@ export const ChartOfAccounts = () => {
                       onDrop={(e) => { e.preventDefault(); void onDropIntoSection(grp.section); }}
                       style={{ background: 'var(--c-cream, #f5f1ea)' }}
                     >
-                      <td colSpan={5 + companies.length + (canManage ? 1 : 0)} data-section={grp.section}
+                      <td colSpan={6 + companies.length + (canManage ? 1 : 0)} data-section={grp.section}
                           style={{ padding: '6px 8px', fontWeight: 700, letterSpacing: '0.04em', color: TYPE_TONE[grp.type] ?? 'inherit', whiteSpace: 'nowrap' }}>
                         <button
                           type="button"
@@ -870,6 +874,17 @@ export const ChartOfAccounts = () => {
                             style={{ fontSize: 'var(--fs-12)', maxWidth: 190 }}>
                             <option value="">—</option>
                             {pmsRows.map((r) => <option key={r.row} value={r.row}>{r.label}</option>)}
+                          </select>
+                        )}
+                      </td>
+                      {/* The Logistics row: an account a line can carry — not a header — of the type the row reads. */}
+                      <td style={{ padding: '4px 8px' }}>
+                        {!isParent && logisticsRows.some((r) => r.type === a.type) && (
+                          <select value={a.logisticsRow ?? ''} disabled={!canManage || doUpdate.isPending} aria-label={`${a.code} Logistics row`}
+                            onChange={(e) => { void setEventFields(a.code, { logisticsRow: e.target.value || null }); }}
+                            style={{ fontSize: 'var(--fs-12)', maxWidth: 190 }}>
+                            <option value="">—</option>
+                            {logisticsRows.filter((r) => r.type === a.type).map((r) => <option key={r.row} value={r.row}>{r.label}</option>)}
                           </select>
                         )}
                       </td>

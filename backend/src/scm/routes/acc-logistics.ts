@@ -5,18 +5,15 @@
 // Event Commission, behind the same Finance › Accounting guard:
 //
 //   GET /logistics?from=&to=        the report (scm/lib/logistics-cost.ts decides)
-//   GET /logistics/settings         which accounts are our lorries' cost: the
-//                                   company's own tick list, or the chart's default
-//   PUT /logistics/settings         { accounts: string[] | null } — null = default
 //
 // The reads: the DOs of the whole months the range touches (a month's trips
 // divide its whole cost) with their crews, lines and 3PL charges; the
-// carriers' bill lines; the ticked accounts' postings; the fairs starting in the
-// range with their books (the same reader Project Overview uses).
+// carriers' bill lines; the postings of the accounts the Chart of Accounts puts
+// on our lorries' rows (its Logistics column); the fairs starting in the range
+// with their books (the same reader Project Overview uses).
 // ----------------------------------------------------------------------------
 
 import { activeCompanySql, requireActiveCompanyId } from '../lib/companyScope';
-import { hasHouzsPerm } from '../lib/houzs-perms';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { todayMyt } from '../lib/my-time';
 import { dateOrNull } from '../lib/date-coerce';
@@ -25,9 +22,10 @@ import { booksLinesFor, readEventBooksMany } from '../lib/event-books';
 import { toEventRow } from '../lib/event-tags';
 import { ADDRESS_COLS } from '../lib/so-address-on-save';
 import {
-  buildLogisticsReport, defaultOwnCostAccounts, monthOf,
+  buildLogisticsReport, monthOf,
   type ChartAccount, type EventCost, type LogisticsDo, type LogisticsLorry, type OwnCostLeg, type ThreeplRun,
 } from '../lib/logistics-cost';
+import { ownLorryAccounts } from '../lib/logistics-rows';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped throughout the acc layer */
 type Row = Record<string, any>;
@@ -42,25 +40,24 @@ const monthEnd = (ymd: string): string => {
 const day = (v: unknown): string | null => (v == null || v === '' ? null : String(v).slice(0, 10));
 export const fail = (c: any, what: string, reason: string) => c.json({ error: 'load_failed', message: `The ${what} could not be read — try again.`, reason }, 500);
 
-/** The chart, our lorries, and the company's settings — what every door reads. */
+/** The chart (with each account's Logistics row), our lorries, and the company's
+    rate — what every door reads. */
 export async function loadCostSetup(sb: any, companyId: number): Promise<
-  { ok: true; chart: ChartAccount[]; lorries: LogisticsLorry[]; picked: string[] | null; doIncomeBp: number } | { ok: false; what: string; reason: string }
+  { ok: true; chart: ChartAccount[]; lorries: LogisticsLorry[]; doIncomeBp: number } | { ok: false; what: string; reason: string }
 > {
   const [chartRes, lorryRes, setRes] = await Promise.all([
-    sb.from('accounts').select('account_code, account_name, account_type, is_active, parent_code, pms_row').eq('company_id', companyId),
+    sb.from('accounts').select('account_code, account_name, account_type, is_active, parent_code, pms_row, logistics_row').eq('company_id', companyId),
     sb.from('lorries').select('id, plate, is_internal').eq('company_id', companyId),
-    sb.from('acc_logistics_settings').select('own_cost_accounts, do_income_bp').eq('company_id', companyId).maybeSingle(),
+    sb.from('acc_logistics_settings').select('do_income_bp').eq('company_id', companyId).maybeSingle(),
   ]);
   if (chartRes.error) return { ok: false, what: 'chart of accounts', reason: chartRes.error.message };
   if (lorryRes.error) return { ok: false, what: 'lorries', reason: lorryRes.error.message };
   if (setRes.error) return { ok: false, what: 'settings', reason: setRes.error.message };
-  const set = setRes.data as { own_cost_accounts?: string[] | null; do_income_bp?: number | null } | null;
-  const own = set?.own_cost_accounts ?? null;
+  const set = setRes.data as { do_income_bp?: number | null } | null;
   return {
     ok: true,
     chart: (chartRes.data ?? []) as ChartAccount[],
     lorries: ((lorryRes.data ?? []) as Row[]).map((l) => ({ id: String(l.id), plate: String(l.plate ?? ''), isInternal: l.is_internal === true })),
-    picked: own && own.length > 0 ? own.map(String) : null,
     doIncomeBp: set?.do_income_bp == null ? DEFAULT_DO_INCOME_BP : Number(set.do_income_bp),
   };
 }
@@ -145,7 +142,7 @@ export const logisticsCostHandler = async (c: any): Promise<Response> => {
 
   const setup = await loadCostSetup(sb, companyId);
   if (!setup.ok) return fail(c, setup.what, setup.reason);
-  const accounts = setup.picked ?? defaultOwnCostAccounts(setup.chart, setup.lorries);
+  const accounts = ownLorryAccounts(setup.chart);
 
   const read = await readMonthDos(sb, companyId, wholeFrom, wholeTo);
   if (!read.ok) return fail(c, read.what, read.reason);
@@ -181,7 +178,7 @@ export const logisticsCostHandler = async (c: any): Promise<Response> => {
   const openLines = tally(billLines.filter((l) => l.assign == null && Number(l.amount_sen ?? 0) !== 0));
   const eventLinesNoFair = tally(billLines.filter((l) => l.assign === 'event' && l.project_id == null));
 
-  /* Our lorries' cost: what the ticked accounts booked in the whole months — a
+  /* Our lorries' cost: what those accounts booked in the whole months — a
      cancelled or corrected document's pair left out, the opening never. */
   let ownCost: OwnCostLeg[] = [];
   if (accounts.length > 0) {
@@ -230,48 +227,5 @@ export const logisticsCostHandler = async (c: any): Promise<Response> => {
     charges: charges.map((ch) => ({ doId: String(ch.do_id), billedSen: Number(ch.billed_sen ?? 0) })),
     runs, ownCost, events, openLines, eventLinesNoFair,
   });
-  return c.json({ ...report, ownCostAccounts: accounts, ownCostDefault: setup.picked == null, eventsProblem });
-};
-
-/* ── GET /logistics/settings ──────────────────────────────────────────────── */
-export const logisticsSettingsHandler = async (c: any): Promise<Response> => {
-  const co = requireActiveCompanyId(c);
-  if (!co.ok) return c.json(co.refusal, 409);
-  const setup = await loadCostSetup(c.get('supabase'), co.companyId);
-  if (!setup.ok) return fail(c, setup.what, setup.reason);
-  const defaults = defaultOwnCostAccounts(setup.chart, setup.lorries);
-  const candidates = setup.chart
-    .filter((a) => String(a.account_type ?? '').toUpperCase() === 'EXPENSE' && a.is_active !== false)
-    .map((a) => ({ code: a.account_code, name: a.account_name }))
-    .sort((a, b) => a.code.localeCompare(b.code));
-  return c.json({ picked: setup.picked, defaults, candidates });
-};
-
-/* ── PUT /logistics/settings — { accounts: string[] | null } ─────────────────
-   Finance's call (the money right, like every setup card). Every code must be an
-   active expense account of this company; null or [] goes back to the default. */
-export const saveLogisticsSettingsHandler = async (c: any): Promise<Response> => {
-  if (!hasHouzsPerm(c, 'scm.payment_voucher.post')) return c.json({ error: "You don't have permission to change the logistics cost accounts." }, 403);
-  const co = requireActiveCompanyId(c);
-  if (!co.ok) return c.json(co.refusal, 409);
-  let body: any;
-  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
-  const raw = body?.accounts;
-  if (raw != null && !Array.isArray(raw)) return c.json({ error: 'bad_accounts', message: 'accounts must be a list of account codes, or null for the default.' }, 400);
-  const codes = [...new Set(((raw ?? []) as unknown[]).map((x) => String(x ?? '').trim()).filter(Boolean))].sort();
-  const sb = c.get('supabase');
-  if (codes.length > 0) {
-    const { data, error } = await sb.from('accounts').select('account_code, account_type, is_active').eq('company_id', co.companyId).in('account_code', codes);
-    if (error) return fail(c, 'chart of accounts', error.message);
-    const ok = new Set(((data ?? []) as Row[]).filter((a) => String(a.account_type ?? '').toUpperCase() === 'EXPENSE' && a.is_active !== false).map((a) => String(a.account_code)));
-    const bad = codes.filter((x) => !ok.has(x));
-    if (bad.length > 0) return c.json({ error: 'not_expense_accounts', message: `Not an active expense account of this company: ${bad.join(', ')}.` }, 400);
-  }
-  const actor = (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null;
-  const { error } = await sb.from('acc_logistics_settings').upsert(
-    { company_id: co.companyId, own_cost_accounts: codes, updated_at: new Date().toISOString(), updated_by: actor },
-    { onConflict: 'company_id' },
-  );
-  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
-  return c.json({ ok: true, picked: codes.length > 0 ? codes : null });
+  return c.json({ ...report, eventsProblem });
 };

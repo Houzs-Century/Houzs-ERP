@@ -4,9 +4,9 @@
        they carried, delivery cost per DO and as a share of the goods, our
        lorries' trips, the 3PL lines, setup & dismantle;
      • what could not be counted is said above the views;
-     • by region, per trip, setup & dismantle and own-lorry cost are views of
-       the one answer;
-     • the cost-account list saves what was ticked, and goes back to the default.
+     • by region, per trip and setup & dismantle are views of the one answer; the
+       own-lorry tick list is gone — the Chart of Accounts' Logistics column picks
+       the accounts (owner 2026-10-29: 「就不能在coa 那边tick？」).
    The server half is backend/tests/logisticsCost.test.ts. */
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -32,11 +32,7 @@ const { fetchMock } = vi.hoisted(() => {
     events: [{ id: 7, code: 'P7', name: 'IOI CITY MALL FAIR', startDate: '2026-10-16', endDate: '2026-10-20', setupSen: 870_000, transportSen: 103_000, totalSen: 973_000 }],
     gaps: { dosNoDeliverer: 2, dosOutsideNoBill: 0, dosNoState: 1, unlistedPlates: ['ABC 123'], openLines: { count: 3, sen: 348_000 }, eventLinesNoFair: { count: 0, sen: 0 }, monthsWithoutTrips: [] },
     totals: { dos: 5, valueSen: 260_000, ownSen: 90_000, threeplSen: 45_000, totalSen: 135_000, setupSen: 870_000, transportSen: 103_000 },
-    ownCostAccounts: ['900-P015'], ownCostDefault: true, eventsProblem: null,
-  };
-  const settings = {
-    picked: null as string[] | null, defaults: ['900-P015'],
-    candidates: [{ code: '900-P015', name: 'PETROL, TOL AND PARKING - LORI VRH 9058' }, { code: '900-S100', name: 'STAFF SALARIES & OVERTIME' }],
+    eventsProblem: null,
   };
   const r4 = (PG: number | null, KL: number | null, EM: number | null, SG: number | null) => ({ PG, KL, EM, SG });
   const pnl = {
@@ -66,14 +62,6 @@ const { fetchMock } = vi.hoisted(() => {
     fetchMock: vi.fn(async (path: string, init?: RequestInit) => {
       if (path.startsWith('/acc-events/logistics/pnl')) return pnl;
       if (init?.method === 'PUT' && /^\/acc-events\/logistics\/(income-rate|area-rate|spread|trip)$/.test(path)) return { ok: true };
-      if (path.startsWith('/acc-events/logistics/settings')) {
-        if (init?.method === 'PUT') {
-          const body = JSON.parse(String(init.body)) as { accounts: string[] | null };
-          settings.picked = body.accounts;
-          return { ok: true, picked: body.accounts };
-        }
-        return settings;
-      }
       if (path.startsWith('/acc-events/logistics')) return report;
       throw new Error(`unexpected ${path}`);
     }),
@@ -107,6 +95,7 @@ describe('the P&L view — the owner\'s Logistic Cost Report from the books', ()
     expect(totals.textContent).toContain('−RM 21,617');
     expect(totals.textContent).toContain('3 DOs');
     expect(screen.getByText(/In-house cost per trip: RM 10,354 — 2 trips of our lorries/)).toBeTruthy();
+    expect(screen.getByText(/Which account feeds which row: Chart of Accounts › Logistics column/)).toBeTruthy();
   });
 
   test('a trip unticked, an area rate, a spread and the income rate are saved', async () => {
@@ -163,7 +152,7 @@ describe('the Logistics cost tab', () => {
     expect(box.textContent).toContain('3 3PL bill lines not assigned yet (RM 3,480.00)');
   });
 
-  test('by region, per trip, setup & dismantle and own-lorry cost are views of the one answer', async () => {
+  test('by region, per trip and setup & dismantle are views of the one answer; no own-lorry tick list here', async () => {
     draw();
     fireEvent.click(await screen.findByRole('tab', { name: 'By region' }));
     await screen.findByText('Penang, Perlis, Kedah, Kelantan, Terengganu, Pahang');
@@ -175,24 +164,8 @@ describe('the Logistics cost tab', () => {
     expect(screen.getByText('HC-API-2610-009')).toBeTruthy();
     fireEvent.click(screen.getByRole('tab', { name: 'Setup & Dismantle' }));
     await screen.findByText('IOI CITY MALL FAIR');
-    fireEvent.click(screen.getByRole('tab', { name: 'Own-lorry cost' }));
-    await screen.findByText('2026-10');
-    expect(screen.getByText(/The accounts are the chart.s default/)).toBeTruthy();
-  });
-
-  test('the cost-account list saves what was ticked, and goes back to the default', async () => {
-    draw();
-    fireEvent.click(await screen.findByRole('tab', { name: 'Own-lorry cost' }));
-    const card = await screen.findByLabelText('Own-lorry cost accounts');
-    const salary = await within(card).findByLabelText('900-S100 STAFF SALARIES & OVERTIME');
-    expect((within(card).getByLabelText('900-P015 PETROL, TOL AND PARKING - LORI VRH 9058') as HTMLInputElement).checked).toBe(true);
-    fireEvent.click(salary);
-    fireEvent.click(within(card).getByText('Save the list'));
-    await waitFor(() => expect(fetchMock.mock.calls.some(([p, i]) => p === '/acc-events/logistics/settings' && i?.method === 'PUT'
-      && JSON.parse(String(i.body)).accounts.join(',') === '900-P015,900-S100')).toBe(true));
-    const back = await within(card).findByText('Back to the default');
-    fireEvent.click(back);
-    await waitFor(() => expect(fetchMock.mock.calls.some(([p, i]) => p === '/acc-events/logistics/settings' && i?.method === 'PUT'
-      && JSON.parse(String(i.body)).accounts === null)).toBe(true));
+    expect(screen.queryByRole('tab', { name: 'Own-lorry cost' })).toBeNull();
+    expect(screen.queryByLabelText('Own-lorry cost accounts')).toBeNull();
+    expect(fetchMock.mock.calls.some(([p]) => String(p).startsWith('/acc-events/logistics/settings'))).toBe(false);
   });
 });
