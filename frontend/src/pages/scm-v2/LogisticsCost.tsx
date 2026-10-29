@@ -141,7 +141,7 @@ function NotCounted({ report }: { report: LogisticsReport }) {
 /* ── By region ─────────────────────────────────────────────────────────────── */
 function RegionView({ rows, loading }: { rows: LogisticsRegionRow[] | null; loading: boolean }) {
   const columns = useMemo<Column<LogisticsRegionRow>[]>(() => [
-    { key: 'region', label: 'Region', getValue: (x) => x.name, render: (x) => x.name, total: () => 'Total' },
+    { key: 'zone', label: 'Region', getValue: (x) => x.name, render: (x) => x.name, total: () => 'Total' },
     { key: 'dos', label: 'DOs', align: 'right', getValue: (x) => x.dos, render: (x) => <Num>{x.dos}</Num>, total: (rs) => <Num>{sum(rs, (x) => x.dos)}</Num> },
     money('value', 'Goods (RM)', (x) => x.valueSen),
     money('own', 'Our lorries (RM)', (x) => x.ownSen),
@@ -153,7 +153,7 @@ function RegionView({ rows, loading }: { rows: LogisticsRegionRow[] | null; load
       total: (rs) => { const d = sum(rs, (x) => x.dos); return <Num>{d > 0 ? fmtRm(Math.round(sum(rs, (x) => x.totalSen) / d)) : '—'}</Num>; },
     },
     {
-      key: 'pct', label: '% of goods', align: 'right', getValue: (x) => (x.valueSen > 0 ? x.totalSen / x.valueSen : 0),
+      key: 'value_pct', label: '% of goods', align: 'right', getValue: (x) => (x.valueSen > 0 ? x.totalSen / x.valueSen : 0),
       render: (x) => <Num>{pct(x.totalSen, x.valueSen)}</Num>,
       total: (rs) => <Num>{pct(sum(rs, (x) => x.totalSen), sum(rs, (x) => x.valueSen))}</Num>,
     },
@@ -183,7 +183,7 @@ function TripsView({ rows, loading }: { rows: LogisticsTripRow[] | null; loading
       key: 'dos', label: 'DOs', align: 'right', getValue: (x) => x.dos,
       render: (x) => <span title={x.doNumbers.join(', ')} style={num}>{x.dos}</span>, total: (rs) => <Num>{sum(rs, (x) => x.dos)}</Num>,
     },
-    { key: 'regions', label: 'Regions', getValue: (x) => x.regions.join(', '), render: (x) => x.regions.join(', ') || '—' },
+    { key: 'route', label: 'Regions', getValue: (x) => x.regions.join(', '), render: (x) => x.regions.join(', ') || '—' },
     {
       key: 'amount', label: 'Cost (RM)', align: 'right', getValue: (x) => x.amountSen ?? 0, exportValue: (x) => (x.amountSen == null ? null : x.amountSen / 100), exportFormat: 'money',
       render: (x) => <Num>{x.amountSen == null ? <span title="This month has no lorry cost to share yet">—</span> : fmtRm(x.amountSen)}</Num>,
@@ -203,7 +203,7 @@ function TripsView({ rows, loading }: { rows: LogisticsTripRow[] | null; loading
 /* ── Setup & Dismantle ─────────────────────────────────────────────────────── */
 function EventsView({ rows, loading, problem }: { rows: LogisticsEventRow[] | null; loading: boolean; problem: string | null }) {
   const columns = useMemo<Column<LogisticsEventRow>[]>(() => [
-    { key: 'fair', label: 'Fair', getValue: (x) => x.name, render: (x) => x.name, total: () => 'Total' },
+    { key: 'project', label: 'Fair', getValue: (x) => x.name, render: (x) => x.name, total: () => 'Total' },
     { key: 'dates', label: 'Dates', getValue: (x) => x.startDate ?? '', render: (x) => fmtDayMonthRange(x.startDate, x.endDate) },
     money('setup', 'Setup (RM)', (x) => x.setupSen),
     money('transport', 'Transport setup & dismantle (RM)', (x) => x.transportSen),
@@ -225,12 +225,12 @@ function OwnView({ rows, loading, accounts, isDefault }: { rows: LogisticsMonthR
   const columns = useMemo<Column<LogisticsMonthRow>[]>(() => [
     { key: 'month', label: 'Month', getValue: (x) => x.month, render: (x) => x.month, total: () => 'Total' },
     money('cost', 'Cost booked (RM)', (x) => x.ownCostSen),
-    { key: 'trips', label: 'Trips', align: 'right', getValue: (x) => x.trips, render: (x) => <Num>{x.trips}</Num>, total: (rs) => <Num>{sum(rs, (x) => x.trips)}</Num> },
+    { key: 'trip', label: 'Trips', align: 'right', getValue: (x) => x.trips, render: (x) => <Num>{x.trips}</Num>, total: (rs) => <Num>{sum(rs, (x) => x.trips)}</Num> },
     {
       key: 'perTrip', label: 'Per trip (RM)', align: 'right', getValue: (x) => x.perTripSen ?? 0, exportValue: (x) => (x.perTripSen == null ? null : x.perTripSen / 100), exportFormat: 'money',
       render: (x) => <Num>{x.perTripSen == null ? '—' : fmtRm(x.perTripSen)}</Num>,
     },
-    { key: 'accounts', label: 'Booked on', getValue: (x) => x.accounts.map((a) => a.code).join(', '), render: (x) => x.accounts.map((a) => `${a.code} ${fmtRm(a.sen)}`).join(' · ') || '—' },
+    { key: 'account', label: 'Booked on', getValue: (x) => x.accounts.map((a) => a.code).join(', '), render: (x) => x.accounts.map((a) => `${a.code} ${fmtRm(a.sen)}`).join(' · ') || '—' },
   ], []);
   return (
     <>
