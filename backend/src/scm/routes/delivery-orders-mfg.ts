@@ -4291,10 +4291,11 @@ const addOneDeliveryOrderItem = async (c: Context<{ Bindings: Env; Variables: Va
       : { data: null };
     const so = soHead as { debtor_code: string | null; debtor_name: string | null } | null;
     const doH = header as { debtor_code: string | null; debtor_name: string | null };
-    const norm = (v: string | null | undefined) => (v ?? '').trim().toUpperCase();
-    const same = !so ? false : (norm(so.debtor_code) && norm(doH.debtor_code))
-      ? norm(so.debtor_code) === norm(doH.debtor_code)
-      : norm(so.debtor_name) === norm(doH.debtor_name);
+    const norm = (v: string | null | undefined) => (v ?? '').replace(/\s+/g, ' ').trim().toUpperCase();
+    /* Refuse only on a clear difference: both codes and they differ, or neither has a
+       code and both names exist and differ. A misspelt name on a code-less DO is not proof. */
+    const [cs, cd, ns, nd] = so ? [norm(so.debtor_code), norm(doH.debtor_code), norm(so.debtor_name), norm(doH.debtor_name)] : ['', '', '', ''];
+    const same = !so ? false : cs && cd ? cs === cd : (cs || cd || !ns || !nd) ? true : ns === nd;
     if (!same) {
       return c.json({
         error: 'mixed_customers',
@@ -4500,9 +4501,12 @@ export const addDeliveryOrderItemHandler = async (c: Context<{ Bindings: Env; Va
   const lines = body.items as Array<Record<string, unknown>>;
   const batchSoItemIds = lines.map((l) => l?.soItemId).filter((x): x is string => typeof x === 'string' && !!x);
   const items: unknown[] = [];
-  for (const l of lines) {
+  for (const [i, l] of lines.entries()) {
     const res = await addOneDeliveryOrderItem(c, l ?? {}, batchSoItemIds);
-    if (res.status >= 400) return res;
+    if (res.status >= 400) {
+      /* Lines before this one are already saved; say which line stopped the batch. */
+      return c.json({ ...((await res.json()) as object), failedIndex: i, failedItemCode: l?.itemCode ?? null, savedBefore: i }, res.status as 400);
+    }
     items.push(((await res.json()) as { item: unknown }).item);
   }
   return c.json({ items }, 201);

@@ -222,6 +222,22 @@ describe('DO add-line — Pull from SO in edit mode (HC-0146)', () => {
     expect(t.delivery_order_items).toHaveLength(0);
   });
 
+  test('a code-less DO whose name is only spelt differently is not refused', async () => {
+    const t = soTables();
+    Object.assign(t.delivery_orders[0], { debtor_code: null, debtor_name: 'Customer  x' });
+    Object.assign(t.mfg_sales_orders[0], { debtor_code: null });
+    const res = await addLine(harness(t), { items: [sofa('x1', 'SOFA-1A'), sofa('x2', 'SOFA-2A')] });
+    expect(res.status).toBe(201);
+  });
+
+  test('a failed batch names the line that stopped it', async () => {
+    const t = soTables();
+    const res = await addLine(harness(t), { items: [sofa('x1', 'SOFA-1A'), sofa('x2', 'SOFA-2A'), sofa('y1', 'SOFA-1A')] });
+    const body = await res.json() as { error?: string; failedIndex?: number; failedItemCode?: string };
+    expect(res.status).toBe(400);
+    expect(body).toMatchObject({ error: 'mixed_customers', failedIndex: 2, failedItemCode: 'SOFA-1A' });
+  });
+
   test('two modules of one sofa set go in as one batch', async () => {
     const t = soTables();
     const res = await addLine(harness(t), { items: [sofa('x1', 'SOFA-1A'), sofa('x2', 'SOFA-2A')] });
