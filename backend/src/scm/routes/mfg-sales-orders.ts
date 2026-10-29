@@ -1990,7 +1990,7 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
     // Header read is company-scoped + minimal — we only need it to exist,
     // resolve salesperson_id for the same self-scoped-sales gate the detail
     // uses, and carry processing_date for the promotion gate below.
-    scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, salesperson_id, access_staff_ids, processing_date, open_to_all').eq('doc_no', docNo), c).maybeSingle(),
+    scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, salesperson_id, access_staff_ids, processing_date, open_to_all, updated_at').eq('doc_no', docNo), c).maybeSingle(),
     // Same ITEM select + line_no ordering as the detail (nulls last → pre-0165
     // fallback to created_at, then the rule re-order below).
     sb.from('mfg_sales_order_items').select(ITEM).eq('doc_no', docNo)
@@ -2022,7 +2022,7 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
     soDeliverableRemaining(sb, [docNo]),
     soLineDeliveries(sb, itemRows.map((it) => it.id)),
     soLineShippedSources(sb, itemRows.map((it) => it.id)),
-    soCoverage(c, sb),
+    soCoverage(c, sb, (h.data as { updated_at?: string | null } | null)?.updated_at ?? null), // a just-saved order is never answered from the shared run
     // Where the live-'stock' promotion fires, so it must know which
     // warehouses may not promise (owner ruling 2026-09-08).
     loadNonSellingWarehouses(sb),
