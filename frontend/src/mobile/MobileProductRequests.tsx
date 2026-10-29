@@ -26,7 +26,7 @@ import { activeOptions, maintPickerValues } from "@2990s/shared";
 import {
   APPLICATION_LABEL, REQUEST_STATUS, REQUEST_TYPE_LABEL, awaitsPurchaser, emptyRequestLine, lineProductText, lineToInput, linesNeedingModel,
   mayClose, mayRaisePco, needsModel, productText, requesterMayChange, specText, totalQty,
-  fetchProductRequestFileBlobUrl, useApproveProductRequest, useCloseProductRequest, useCreateModelFromRequest, useCreateProductRequest, useDeleteProductRequestFile,
+  fetchProductRequestFileBlobUrl, useApproveProductRequest, useCloseProductRequest, useCreateModelFromRequest, useCreateProductRequest, useDeleteProductRequestFile, useLinkSkuToRequestLine,
   useProductRequest, useProductRequestFiles, useProductRequests, useProductRequestSupplierOptions, useRejectProductRequest, useUpdateProductRequest, useUploadProductRequestFile, useWithdrawProductRequest,
   type ProductRequest, type ProductRequestApplication, type ProductRequestInput, type ProductRequestLine, type ProductRequestLineInput, type ProductRequestType,
 } from "../vendor/scm/lib/product-request-queries";
@@ -145,6 +145,7 @@ function RequestDetailScreen({ id, onBack, onEdit }: { id: string; onBack: () =>
   const approve = useApproveProductRequest();
   const reject = useRejectProductRequest();
   const build = useCreateModelFromRequest();
+  const link = useLinkSkuToRequestLine();
   const close = useCloseProductRequest();
   const files = useProductRequestFiles(id);
   const upload = useUploadProductRequestFile();
@@ -208,6 +209,15 @@ function RequestDetailScreen({ id, onBack, onEdit }: { id: string; onBack: () =>
       void notify({ title: `${res.sku.code} created`, body: `Model ${res.model.modelCode}. ${left === 0 ? "Every line has its SKU — raise the PC Order or Purchase Order on the computer." : `${left} line${left === 1 ? "" : "s"} still need${left === 1 ? "s" : ""} a Model.`}` });
     } catch { /* the mutation's own onError told the user */ }
   };
+  const onLink = async (l: ProductRequestLine) => {
+    const code = await askPrompt({ title: `Existing SKU — line ${l.line_no}`, body: `${l.proposed_model_name ?? "The new Model"} · ${mfgCategoryLabel(l.category)}. For a SKU already in the catalogue (imported in SKU Master); no second SKU is made.`, confirmLabel: "Use SKU", input: { label: "SKU code", placeholder: "e.g. 2385-2RR", required: true } });
+    if (!code) return;
+    try {
+      const res = await link.mutateAsync({ id: r.id, lineId: l.id, itemCode: code.trim().toUpperCase() });
+      const left = linesNeedingModel(res.request).length;
+      void notify({ title: `Line ${l.line_no} is ${res.sku.code}`, body: left === 0 ? "Every line has its SKU — raise the PC Order or Purchase Order on the computer." : `${left} line${left === 1 ? "" : "s"} still need${left === 1 ? "s" : ""} a SKU.` });
+    } catch { /* the mutation's own onError told the user */ }
+  };
   const onClose = async () => {
     if (!(await askConfirm({ title: `Close ${r.request_no}?`, body: "Nothing more will be done on it.", confirmLabel: "Close request" }))) return;
     close.mutate({ id: r.id });
@@ -263,7 +273,10 @@ function RequestDetailScreen({ id, onBack, onEdit }: { id: string; onBack: () =>
           <div style={{ fontSize: 11.5, color: "var(--mut)" }}>{mfgCategoryLabel(l.category)} · {specText(l)}{l.model ? ` · Model ${l.model.modelCode}` : ""}</div>
           {l.remarks && <div style={{ fontSize: 11.5 }}>{l.remarks}</div>}
           {approver && r.status === "APPROVED" && !l.item_code && (
-            <button type="button" className="btn" style={{ marginTop: 6 }} onClick={() => void onBuild(l)} disabled={build.isPending}>Create Model + SKU</button>
+            <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+              <button type="button" className="btn" onClick={() => void onBuild(l)} disabled={build.isPending}>Create Model + SKU</button>
+              <button type="button" className="btn" onClick={() => void onLink(l)} disabled={link.isPending}>Existing SKU</button>
+            </div>
           )}
         </div>
       ))}

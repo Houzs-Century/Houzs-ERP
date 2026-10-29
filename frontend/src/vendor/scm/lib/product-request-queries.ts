@@ -250,6 +250,20 @@ export const useCreateModelFromRequest = () => {
   });
 };
 
+/** A new-Model line takes a SKU the catalogue already has (2990-0025: the SKU
+    was imported before the request was approved), instead of building one. */
+export const useLinkSkuToRequestLine = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, lineId, itemCode }: { id: string; lineId: string; itemCode: string }) =>
+      authedFetch<{ ok: true; sku: { id: string; code: string }; lineId: string; request: ProductRequest }>(
+        `/product-requests/${id}/lines/${lineId}/link-sku`, { method: 'POST', body: JSON.stringify({ itemCode }) },
+      ),
+    onSuccess: () => invalidate(qc),
+    onError: writeFailedAs('The SKU was not put on the line'),
+  });
+};
+
 /** PO New, once the Purchase Order stands: the PO claims the request
     (PO_ISSUED). A refusal leaves the PO standing, unlinked. */
 export const useLinkProductRequestPo = () => {
