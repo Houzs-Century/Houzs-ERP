@@ -5,7 +5,11 @@
 --   A company that ticked its own list loses it and reads the chart's default again.
 --   GRANTS: none to re-apply — like scm.acc_official_receipts, the table rides the
 --   scm schema's default privileges (service_role); this file grants nothing.
--- Verified against: PENDING — the production trial fills this line in before merge.
+-- Verified against: PRODUCTION, inside one transaction ROLLED BACK — this file run by
+--   backend/scripts/check-logistics-report.mjs (branch acc/logistics-check, run-script.yml
+--   run 40833809137, 2026-10-29), then GET /acc-events/logistics for October through the
+--   pgrest shim on the same transaction: the table created, read empty (the chart's
+--   default: 12 lorry accounts), the report built over 435 DOs; nothing left.
 --
 -- WHAT THIS CHANGES, and why it is safe to run against production: one new, empty
 -- table under a new name. Nothing existing is read, written or altered.
