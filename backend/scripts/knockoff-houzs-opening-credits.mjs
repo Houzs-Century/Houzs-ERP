@@ -2,8 +2,10 @@
 // knockoff-houzs-opening-credits.mjs — Houzs (company 1): the 85 AutoCount
 // supplier payments that were never knocked off (the opening credits of 31/08,
 // RM 3,039,418.64 — AutoCount's own Creditor Aging lists the same 85) knocked
-// off each supplier's opening bills, OLDEST BILL FIRST, so both close and each
-// supplier shows only what it is really owed.
+// off the supplier's opening bills AS AUTOCOUNT'S AP PAYMENT LISTING KNOCKS THEM
+// OFF (the PICKS file read off it), so both close and each supplier shows only
+// what it is really owed. Oldest-first filling (FILL=1) was the first trial; the
+// owner refused it (2026-10-29: 别乱扣) — it stays off unless asked for by name.
 //
 // WHY. Owner 2026-10-28 on the Supplier & Other Creditor CN / DN page: 感觉不太对，
 // 有这么多cn吗? — they are payments, not credit notes: HOOKKA 23 payments
@@ -21,9 +23,11 @@
 //     oldest payment first; bills: the supplier's opening AP invoices still
 //     owing, oldest first. A payment fills bills until it is used up; what no
 //     bill takes stays with the supplier as its advance.
-//   - PICKS (optional JSON file, scripts/data/<name>): the owner's re-pointing —
-//     [{ "payment": "HC-SCN-…", "bill": "HC-API-…", "amountSen": n }] — taken
-//     first, then oldest-first fills the rest.
+//   - PICKS (JSON file, scripts/data/<name>): the knock-offs to make —
+//     [{ "payment": "HC-SCN-…", "bill": "HC-API-…", "amountSen": n }] — read
+//     off AutoCount's own AP Payment Listing (owner 2026-10-29: 别乱扣，我不是有给
+//     你 ap knockoff listing 吗？). ONLY these are made: oldest-first filling is
+//     off unless FILL=1 is asked for by name, and without PICKS nothing is.
 // MODE=plan (default) runs it all in ONE transaction and rolls it back; KO| and
 // SUM| lines carry the picture for the Excel. MODE=apply with CONFIRM="KNOCK OFF
 // HOUZS OPENING CREDITS" keeps it. Verified inside the transaction (and again on
@@ -33,7 +37,8 @@
 //
 // RE-RUN: harmless — a payment already knocked off has no credit left to place.
 //
-// Env: DATABASE_URL, COMPANY_ID (1), PICKS (optional file name in scripts/data).
+// Env: DATABASE_URL, COMPANY_ID (1), PICKS (file name in scripts/data), FILL (0 — 1 also
+// fills oldest-first after the picks; the owner refused that on 2026-10-29).
 
 import { readFileSync } from 'node:fs';
 import postgres from 'postgres';
@@ -46,6 +51,7 @@ const APPLY = MODE === 'apply' || process.env.APPLY === '1';
 const PHRASE = 'KNOCK OFF HOUZS OPENING CREDITS';
 const CO = Number(process.env.COMPANY_ID || 1);
 const PICKS_FILE = String(process.env.PICKS || '').trim();
+const FILL = String(process.env.FILL || '0') === '1';
 const WHO = 'Opening credits knocked off, oldest bill first (owner 2026-10-29)';
 /* `date` as PostgREST's 'YYYY-MM-DD' text, not a JS Date — the app code reads text. */
 const DB_OPTIONS = { max: 1, prepare: false, types: { dateText: { to: 1082, from: [1082], serialize: (x) => x, parse: (x) => x } } };
@@ -55,6 +61,7 @@ if (CO !== 1) stop('This is Houzs\'s opening — COMPANY_ID must be 1.', 2);
 if (APPLY && (process.env.CONFIRM ?? '').trim() !== PHRASE) stop(`CONFIRM must be exactly "${PHRASE}" to apply. Nothing was written.`, 2);
 if (!process.env.DATABASE_URL) stop('DATABASE_URL is not set.', 2);
 if (PICKS_FILE && !/^[A-Za-z0-9._-]+\.json$/.test(PICKS_FILE)) stop('PICKS names a .json file in scripts/data.', 2);
+if (!PICKS_FILE && !FILL) stop('Nothing to knock off: name the PICKS file read off AutoCount\'s AP Payment Listing (oldest-first filling is off — the owner refused it).', 2);
 
 const rm = (sen) => `RM ${(Number(sen) / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const out = (s) => console.log(`ROW|${s}`);
@@ -132,6 +139,7 @@ function plan(credits, bills, picks) {
     if (!Number.isInteger(sen) || sen <= 0 || sen > left.get(String(c.id)) || sen > owing.get(String(b.id))) throw new Error(`pick ${p.payment} → ${p.bill}: ${p.amountSen} does not fit`);
     take(c, b, sen);
   }
+  if (!FILL) return { moves, left, owing };
   const billsBySupplier = new Map();
   for (const b of bills) {
     const k = String(b.supplier_id);
@@ -235,7 +243,8 @@ try {
     const paidOff = touched.filter((t) => t.status === 'PAID').length;
     out(`knocked off ${rm(knocked)} across ${paid.size} bills (${paidOff} now PAID); payments still open ${[...left.values()].filter((v) => v > 0).length} (${rm([...left.values()].reduce((t, v) => t + v, 0))}); every supplier's net unchanged; no journal written`);
     if (!APPLY) throw new Rollback('plan');
-    return { knocked, bills: paid.size };
+    const nets = new Map([...sumAfter].map(([id, a]) => [id, a.billOwing - a.creditLeft]));
+    return { knocked, bills: paid.size, nets, leftSen: [...left.values()].reduce((t, v) => t + v, 0) };
   });
 } catch (e) {
   await sql.end();
@@ -243,4 +252,21 @@ try {
   stop(`ROLLED BACK — nothing was written. ${String(e?.message ?? e)}`);
 }
 await sql.end();
-out(`APPLIED — ${rm(done.knocked)} knocked off across ${done.bills} bills.`);
+
+// ── Verify, on a FRESH connection: each supplier's net, and the credit left ──
+const check = postgres(process.env.DATABASE_URL, DB_OPTIONS);
+try {
+  const now = await readOpening(check);
+  const sums = bySupplier(now.credits, now.bills);
+  const bad = [];
+  for (const [id, net] of done.nets) {
+    const s = sums.get(id) ?? { billOwing: 0, creditLeft: 0 };
+    if (s.billOwing - s.creditLeft !== net) bad.push(`${now.supplierById.get(id)?.code ?? id}: net ${rm(s.billOwing - s.creditLeft)}, want ${rm(net)}`);
+  }
+  const left = now.credits.reduce((t, c) => t + Number(c.total_sen) - Number(c.applied), 0);
+  if (left !== done.leftSen) bad.push(`credit left ${rm(left)}, want ${rm(done.leftSen)}`);
+  if (bad.length > 0) stop(`VERIFY FAILED after commit:\n  ${bad.join('\n  ')}`);
+} finally {
+  await check.end();
+}
+out(`APPLIED — ${rm(done.knocked)} knocked off across ${done.bills} bills; verified on a fresh connection.`);
