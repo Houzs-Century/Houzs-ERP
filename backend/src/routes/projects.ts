@@ -54,6 +54,7 @@ import {
   stripSensitiveChecklist,
   stripSetupDismantle,
 } from "../services/projects";
+import { autoTickChecklistOnUpload, autoTickPhasePhoto } from "../services/checklistAutoTick";
 import { canCreateEvent, getPmsAccess, financeHiddenForUser, isFinanceViewer, isSalesUser } from "../services/pmsAccess";
 import { scopeSalesReportsForUser } from "../services/orgScope";
 import { audit } from "../services/audit";
@@ -3308,34 +3309,10 @@ app.post("/:id/phase-photos", async (c) => {
   )
     .bind(id, phase, body.r2_key, body.content_type ?? null, body.caption ?? null, user?.id ?? null)
     .run();
-  // Owner (repeated ask, latest 2026-10-29): "once an image/file is uploaded,
-  // auto-tick the bullet as done — no manual click, mobile AND PC." The crew
-  // Setup/Dismantle photo lands HERE (project_phase_photos), NOT in the task's
-  // own attachments, so the matching "Setup Image" / "Dismantle Image"
-  // checklist row never saw the auto-tick the attachment route got — this was
-  // the gap that kept it from working for drivers. Mirror it here.
-  //
-  // Only setup/dismantle map to a checklist evidence row (service/schedule
-  // photos don't). We tick the DRIVER-badged row, matching how the desktop
-  // merges these photos (pages/Projects.tsx pickRow); the SALES PIC "Setup
-  // Image" is ticked by ITS own task-attachment upload instead. Guarded on a
-  // plain pending row, so N/A, blocked, done, or any gated row is left alone.
+  // Crew Setup/Dismantle photo → auto-tick the matching DRIVER row DONE (these
+  // bypass task attachments). See services/checklistAutoTick.ts.
   if (phase === "setup" || phase === "dismantle") {
-    const wantTitle = phase === "setup" ? "setup image%" : "dismantle image%";
-    const row = await c.env.DB.prepare(
-      `SELECT id FROM project_checklist
-        WHERE project_id = ?
-          AND lower(trim(title)) LIKE ?
-          AND (required_perm IS NULL OR required_perm = '')
-          AND status = 'pending'
-        ORDER BY (CASE WHEN upper(coalesce(role_label, '')) LIKE '%DRIVER%' THEN 0 ELSE 1 END), id
-        LIMIT 1`
-    )
-      .bind(id, wantTitle)
-      .first<{ id: number }>();
-    if (row) {
-      await setChecklistStatus(c.env, row.id, "done", user?.id ?? 0);
-    }
+    await autoTickPhasePhoto(c.env, id, phase, user?.id ?? 0);
   }
   return c.json({ id: r.meta.last_row_id });
 });
@@ -4085,35 +4062,9 @@ app.put(
     ) {
       await submitChecklistForReview(c.env, itemId, user?.id ?? 0);
     }
-    // Owner (repeated ask, latest 2026-10-28): "once an image/file is uploaded,
-    // auto-tick the bullet as done — no manual click, on mobile AND PC." Done
-    // here, server-side, so BOTH clients get it from one place (same reasoning
-    // as the auto-submit just above, which moved here for the same mobile/PC
-    // parity). An upload IS the completion for an evidence row, so flip it.
-    //
-    // Scope — only a PLAIN evidence row is auto-ticked. We deliberately skip:
-    //   · gated rows (required_perm set) — their "done" is the APPROVER's call
-    //     (completion = review_status='approved', see checklistProgress.ts), and
-    //     the auto-submit block just above already routes them for review, and
-    //   · the review-document titles (Agreement / Quotation, Stock Out/In
-    //     Transfer Record, Display Floor Plan, 3D/2D Design, Exchange List) even
-    //     when a template left required_perm NULL — those carry the
-    //     submit/approve/reject loop, so forcing done on upload would skip it.
-    //     Inlined mirror of isReviewableTitle() in the frontend
-    //     vendor/scm/lib/pms-reviewable-titles.ts (kept inline to avoid a
-    //     cross-package import; the regex is identical).
-    // Guarded on status='pending', so a manual N/A, a blocked row, or a row
-    // already done is left untouched. setChecklistStatus writes completed_by /
-    // completed_at and logs the activity, exactly like a manual tick.
-    const REVIEW_DOC_TITLE_RE =
-      /^(agreement|stock\s*(out|in)\s*transfer|display\s*floor\s*plan|3d\s*design|2d\s*design|exchange\s*list)/i;
-    if (
-      !item.required_perm &&
-      (item.status ?? "") === "pending" &&
-      !REVIEW_DOC_TITLE_RE.test((item.title ?? "").trim())
-    ) {
-      await setChecklistStatus(c.env, itemId, "done", user?.id ?? 0);
-    }
+    // Owner (repeated ask): auto-tick a plain evidence row DONE on upload — no
+    // manual click, mobile and PC. See services/checklistAutoTick.ts.
+    await autoTickChecklistOnUpload(c.env, item, itemId, user?.id ?? 0);
     // Audit trail — log the upload to the project activity feed.
     const owner = await c.env.DB.prepare(
       `SELECT project_id, title FROM project_checklist WHERE id = ?`
