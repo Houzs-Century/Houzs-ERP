@@ -343,6 +343,7 @@ upd AS (
   UPDATE scm.mfg_sales_orders so
      SET remark4 = COALESCE(h.remark4, so.remark4),
          customer_delivery_date = COALESCE(h.delivery_date, so.customer_delivery_date),
+         sales_exemption_expiry = COALESCE(so.sales_exemption_expiry, h.delivery_date),
          updated_at = now()
     FROM hit h
    WHERE so.doc_no = h.doc_no
