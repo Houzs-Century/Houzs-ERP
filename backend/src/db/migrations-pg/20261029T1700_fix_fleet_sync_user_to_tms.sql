@@ -27,7 +27,7 @@
 -- idempotent and let a fresh rebuild match production. pg-migrate runs the file
 -- in one transaction, so there is no window where the trigger is absent.
 --
--- REVERSAL (restores the previous production behaviour; run by hand to undo):
+-- REVERSAL: restores the previous production behaviour (run by hand to undo).
 --   CREATE OR REPLACE FUNCTION scm.sync_user_to_tms() RETURNS trigger LANGUAGE plpgsql AS $function$
 --   DECLARE pos text; is_driver boolean; is_helper boolean; v_company bigint;
 --   BEGIN
