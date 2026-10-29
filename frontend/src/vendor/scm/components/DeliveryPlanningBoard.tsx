@@ -28,6 +28,7 @@ import { formatPhone } from '@2990s/shared/phone';
 import { DataGridCompat, type GridColumn, type GridContextMenuItem } from '../../../components/DataGridCompat';
 import { useConfirm } from './ConfirmDialog';
 import { useNotify } from './NotifyDialog';
+import { serviceNotify } from '../lib/dialog-service';
 import { Button } from '../../../components/Button';
 import { StockRemarkPill, stockRemarkSortFn } from '../../../components/StockRemarkPill';
 import { badgeFor } from '../lib/category-badges';
@@ -57,7 +58,7 @@ import { useHelpers, type HelperRow } from '../lib/helpers-queries';
 import { useStaffLookup } from '../../../hooks/useStaffLookup';
 import styles from './DeliveryPlanningBoard.module.css';
 import { DateField } from "./DateField";
-import { deliveryDateChange } from "../lib/delivery-date-edit";
+import { deliveryDateChange, invalidDeliveryDate } from "../lib/delivery-date-edit";
 import { SearchCombo } from "./SearchCombo";
 import { crewComboOptions, crewComboValue, latestDoId, KEEP_CURRENT } from "../lib/dispatch-cell";
 import { useDeliveryRowMarks, rowMarkTint, useBulkSetRowMark, useBulkClearRowMark, ROW_MARK_PALETTE } from "../lib/delivery-row-mark";
@@ -294,6 +295,14 @@ const BoardPendingContext = createContext<BoardPending>({ fields: false, sched: 
 type ScheduleMutate = SchedMutation['mutate'];
 type UpdateFieldsMutate = UpdateFieldsMutation['mutate'];
 
+/* The fields hook paints the pick at once and rolls it back on failure; say so,
+   or the cell just jumps back with no reason. */
+const fieldNotSaved = (err: unknown) => serviceNotify({
+  title: 'Not saved',
+  body: err instanceof Error ? err.message : 'Something went wrong.',
+  tone: 'error',
+});
+
 /* The "Delivery Status" column's inline editor — the customer-message follow-up
    workflow status (owner 2026-09-22), one of the 23 MESSAGE_STATUSES or blank.
    SO rows only; ASSR / DP / project rows show a dash (this is a customer-
@@ -316,7 +325,7 @@ function MessageStatusEditCell({ order, onUpdateFields }: { order: PlanningOrder
       onChange={(e) => {
         const next = e.target.value;
         if ((next || null) === (order.delivery_message_status ?? null)) return;
-        onUpdateFields({ type: 'so', id: order.so_doc_no, deliveryMessageStatus: next || null });
+        onUpdateFields({ type: 'so', id: order.so_doc_no, deliveryMessageStatus: next || null }, { onError: fieldNotSaved });
       }}
     >
       <option value="">—</option>
@@ -365,13 +374,13 @@ function DeliveryDateEditCell({ order, onSchedule }: { order: PlanningOrder; onS
           const next = deliveryDateChange(current, val);
           if (next.changed) commit(next.value);
         }}
-        /* HC-0164: a wrong format pops up rather than sitting as small red text -
-           other coordinators arrange deliveries from this column too. */
-        onInvalid={(text) => notify({
-          title: 'Invalid date format',
-          body: `"${text}" is not a date. Please use YYYY/MM/DD (e.g. 2026/10/30), or pick it from the calendar. ${order.so_doc_no ?? 'This order'}'s Delivery Date was not changed${current ? ` (still ${fmtDate(current)})` : ''}.`,
-          tone: 'error',
-        })}
+        /* HC-0164 (Syu, 2026-10-28): a wrong format pops up and empties the
+           cell, as the HC Delivery sheet does. */
+        onInvalid={(text) => {
+          const { clear, body } = invalidDeliveryDate(current, text, order.so_doc_no);
+          if (clear) commit(null);
+          void notify({ title: 'Invalid date format', body, tone: 'error' });
+        }}
       />
     </span>
   );
@@ -393,7 +402,7 @@ function AmendReasonEditCell({ order, onUpdateFields }: { order: PlanningOrder; 
       onChange={(e) => {
         const next = e.target.value;
         if ((next || null) === (order.amend_reason ?? null)) return;
-        onUpdateFields({ type: 'so', id: order.so_doc_no, amendReason: next || null });
+        onUpdateFields({ type: 'so', id: order.so_doc_no, amendReason: next || null }, { onError: fieldNotSaved });
       }}
     >
       <option value="">—</option>

@@ -63,6 +63,7 @@ export const AUDIT_ENTITY_TYPES = [
   'PRODUCT_REQUEST',
   'PAYMENT_REQUEST',
   'COMMISSION_MONTH',
+  'OPENING_BALANCE',
 ] as const;
 
 export type AuditEntityType = (typeof AUDIT_ENTITY_TYPES)[number];

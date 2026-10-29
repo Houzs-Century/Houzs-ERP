@@ -330,6 +330,9 @@ export type ReverseJournalInput = {
   onOriginalDate?: boolean;
   /** canonical 2-line fallback if the original somehow has no lines. */
   fallbackLines?: (totalSen: number) => EngineLine[];
+  /** The contra of an OPENING paper or journal (mig 20261028T2100) is part of
+      the opening too: flagged, it is read on the same footing as what it undoes. */
+  opening?: boolean;
 };
 
 export type ReverseJournalResult =
@@ -443,6 +446,7 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
         total_debit_sen: totalSen,
         total_credit_sen: totalSen,
         reversed_by_je: orig.id,
+        ...(input.opening === true ? { opening: true } : {}),
       })
       .select('*')
       .single();

@@ -15,10 +15,11 @@
 //   CN  — to a customer: Dr each line's account / Cr AR, party the customer.
 //   DN  — to a customer: Dr AR, party the customer / Cr each line's account.
 //   SCN — from a supplier: Dr the supplier's AP control / Cr each line's account.
+//   OCN — to an other debtor: Dr each line's account / Cr the other-debtor control.
 // ----------------------------------------------------------------------------
 
 import { postJournal, reverseJournal } from './engine';
-import { creditNoteLines, debitNoteLines, supplierCreditNoteLines, resolveRoles, type NoteLine, type NoteParty } from './rules';
+import { creditNoteLines, debitNoteLines, otherDebtorCreditNoteLines, supplierCreditNoteLines, resolveRoles, type NoteLine, type NoteParty } from './rules';
 import { docMonthTag, mintMonthlyDocNo } from '../scm/lib/doc-no';
 import { todayMyt } from '../scm/lib/my-time';
 import { removeAllAllocations } from './credit-note-allocations';
@@ -27,11 +28,13 @@ import { removeAllAllocations } from './credit-note-allocations';
 type Db = any;
 type Row = Record<string, any>;
 
-export type NoteKind = 'CN' | 'DN' | 'SCN';
-export const NOTE_KINDS: ReadonlySet<string> = new Set(['CN', 'DN', 'SCN']);
-export const NOTE_KIND_WORD: Record<NoteKind, string> = { CN: 'Credit note', DN: 'Debit note', SCN: 'Supplier credit note' };
+export type NoteKind = 'CN' | 'DN' | 'SCN' | 'OCN';
+export const NOTE_KINDS: ReadonlySet<string> = new Set(['CN', 'DN', 'SCN', 'OCN']);
+export const NOTE_KIND_WORD: Record<NoteKind, string> = { CN: 'Credit note', DN: 'Debit note', SCN: 'Supplier credit note', OCN: 'Other debtor credit note' };
+/** Who a note's party is, by kind — a customer, a supplier, or a debtor of the Other Debtors registry. */
+export const NOTE_PARTY_TYPE: Record<NoteKind, 'CUSTOMER' | 'SUPPLIER' | 'ODEBTOR'> = { CN: 'CUSTOMER', DN: 'CUSTOMER', SCN: 'SUPPLIER', OCN: 'ODEBTOR' };
 
-export const CREDIT_NOTE_HEADER = 'id, company_id, note_number, kind, party_type, party_code, party_name, supplier_id, so_doc_no, sales_invoice_id, ap_invoice_id, purchase_invoice_id, source_doc_no, note_date, total_sen, reason, notes, status, je_no, created_at, created_by, updated_at, posted_at, posted_by, cancelled_at, cancelled_by, refund_pv_id, converted_payment_id, opening';
+export const CREDIT_NOTE_HEADER = 'id, company_id, note_number, kind, party_type, party_code, party_name, supplier_id, debtor_id, so_doc_no, sales_invoice_id, ap_invoice_id, purchase_invoice_id, source_doc_no, note_date, total_sen, reason, notes, status, je_no, created_at, created_by, updated_at, posted_at, posted_by, cancelled_at, cancelled_by, refund_pv_id, converted_payment_id, opening';
 export const CREDIT_NOTE_LINE = 'id, line_no, description, account_code, amount_sen, project_id';
 
 /** projectId: the event the line's money is for (owner 2026-10-22: 「这个rental如果是
@@ -87,6 +90,8 @@ export type InsertCreditNoteInput = {
   kind: NoteKind;
   party: NoteParty;
   supplierId?: string | null;
+  /** The Other Debtors registry row an OCN is to. */
+  debtorId?: string | null;
   soDocNo?: string | null;
   salesInvoiceId?: string | null;
   apInvoiceId?: string | null;
@@ -126,10 +131,11 @@ export async function insertCreditNote(sb: Db, p: InsertCreditNoteInput): Promis
     company_id: p.companyId,
     note_number: noteNumber,
     kind: p.kind,
-    party_type: p.kind === 'SCN' ? 'SUPPLIER' : 'CUSTOMER',
+    party_type: NOTE_PARTY_TYPE[p.kind],
     party_code: p.party.code,
     party_name: p.party.name,
     supplier_id: p.supplierId ?? null,
+    debtor_id: p.debtorId ?? null,
     so_doc_no: p.soDocNo ?? null,
     sales_invoice_id: p.salesInvoiceId ?? null,
     ap_invoice_id: p.apInvoiceId ?? null,
@@ -184,6 +190,7 @@ export async function postCreditNote(
   const roles = await resolveRoles(sb, p.companyId);
   const ruleLines = kind === 'CN' ? creditNoteLines(roles, { note_number: String(note.note_number) }, party, lines)
     : kind === 'DN' ? debitNoteLines(roles, { note_number: String(note.note_number) }, party, lines)
+    : kind === 'OCN' ? otherDebtorCreditNoteLines(roles, { note_number: String(note.note_number) }, party, lines)
     : supplierCreditNoteLines(roles, { note_number: String(note.note_number) }, party, lines);
   const je = await postJournal(sb, {
     companyId: p.companyId,
@@ -212,8 +219,9 @@ export async function cancelCreditNote(
   const note = p.note;
   if (note.status === 'CANCELLED') return { ok: true, status: 'already_cancelled', contraJeNo: null };
   /* A supplier note's credit comes back off the invoices it was applied to
-     first (2026-10-01, Supplier CN part 2) — they owe it again. */
-  if (note.kind === 'SCN') {
+     first (2026-10-01, Supplier CN part 2) — they owe it again; an other
+     debtor's comes back off the bills it was knocked off. */
+  if (note.kind === 'SCN' || note.kind === 'OCN') {
     const back = await removeAllAllocations(sb, { companyId: p.companyId, note });
     if (!back.ok) return { ok: false, status: back.refusal.error, reason: back.refusal.message };
   }

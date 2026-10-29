@@ -65,6 +65,10 @@ import {
   nextCode,
   posEventStatus,
   parseImportRow,
+  countByCategory,
+  hasSellingPrice,
+  pickedCategories,
+  type CategoryProductRow,
   type ImportRowInput,
 } from "./lib/pos-admin-rules";
 
@@ -969,28 +973,35 @@ posAdmin.get("/device/context", async (c) => {
 });
 
 
-/* ── one press: every sellable inventory product becomes a POS item ─────── */
+/* ── POS Items > Add by category ─────────────────────────────────────────── */
 
-/** Tags every ACTIVE inventory product with a selling price that is not a POS
- *  item yet, at that price (cost copied too), no preset discount. Existing POS
- *  items are left exactly as they are, so it can be pressed again whenever new
- *  products arrive. `dry_run` answers the counts without writing. */
+type CategoryProduct = CategoryProductRow & { product_id: string; code: string; name: string; cost_price_sen: number | string | null };
+
+/** Every ACTIVE inventory product with its POS state (null = not a POS item). */
+const categoryProducts = (db: Db, companyId: number) => db.execute<CategoryProduct>(sql`
+    SELECT p.id AS product_id, p.code, p.name, p.category::text AS category,
+           COALESCE(p.sell_price_sen, p.price1_sen, p.base_price_sen) AS sell_price_sen, p.cost_price_sen,
+           i.active AS pos_active
+      FROM scm.mfg_products p
+      LEFT JOIN pos_items i ON i.company_id = ${companyId} AND i.product_id = p.id
+     WHERE p.company_id = ${companyId} AND p.status = 'ACTIVE'
+     ORDER BY p.code`);
+
+/** `dry_run`: the counts per inventory category (to add / in POS / off / no
+ *  price) for the picker. Otherwise tags every ACTIVE product of the named
+ *  `categories` that has a selling price and is not a POS item yet, at that
+ *  price (cost copied too), no preset discount. Existing POS items, on or
+ *  off, are never touched, so it is safe to press again. */
 posAdmin.post("/items/add-all", async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  const body = await c.req.json<{ dry_run?: boolean }>().catch(() => ({} as { dry_run?: boolean }));
+  const body = await c.req.json<{ dry_run?: boolean; categories?: unknown }>().catch(() => ({} as { dry_run?: boolean; categories?: unknown }));
   const db = getDb(c.env);
-  const rows = await db.execute<{ product_id: string; code: string; name: string; sell_price_sen: number | string | null; cost_price_sen: number | string | null; tagged: boolean }>(sql`
-    SELECT p.id AS product_id, p.code, p.name,
-           COALESCE(p.sell_price_sen, p.price1_sen, p.base_price_sen) AS sell_price_sen, p.cost_price_sen,
-           EXISTS (SELECT 1 FROM pos_items i WHERE i.company_id = ${co.companyId} AND i.product_id = p.id) AS tagged
-      FROM scm.mfg_products p
-     WHERE p.company_id = ${co.companyId} AND p.status = 'ACTIVE'
-     ORDER BY p.code`);
-  const already = rows.filter((r) => r.tagged).length;
-  const noPrice = rows.filter((r) => !r.tagged && !(Number(r.sell_price_sen ?? 0) > 0));
-  const toAdd = rows.filter((r) => !r.tagged && Number(r.sell_price_sen ?? 0) > 0);
-  if (body.dry_run === true) return c.json({ dry_run: true, to_add: toAdd.length, already, no_price: noPrice.length, total_active: rows.length });
+  const rows = await categoryProducts(db, co.companyId);
+  if (body.dry_run === true) return c.json({ dry_run: true, by_category: countByCategory(rows), total_active: rows.length });
+  const categories = pickedCategories(body.categories);
+  if (categories.length === 0) return c.json({ error: "categories_required" }, 400);
+  const toAdd = rows.filter((r) => r.pos_active == null && hasSellingPrice(r) && (categories as string[]).includes(r.category ?? ""));
   let added = 0;
   for (let i = 0; i < toAdd.length; i += 200) {
     const chunk = toAdd.slice(i, i + 200);
@@ -1000,8 +1011,44 @@ posAdmin.post("/items/add-all", async (c) => {
     })));
     added += chunk.length;
   }
-  await audit(db, co.companyId, c, "pos_items", "add-all", "added", null, `${added} added, ${already} already, ${noPrice.length} without a selling price`);
-  return c.json({ ok: true, added, already, no_price: noPrice.length, total_active: rows.length });
+  await audit(db, co.companyId, c, "pos_items", "add-all", "added", null, `${added} added in ${categories.join(", ")}`);
+  return c.json({ ok: true, added, categories });
+});
+
+/** Switch off the named POS items in one go (the trash on a row, many at
+ *  once). Ids outside the company are ignored, not reported. */
+posAdmin.post("/items/remove", async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const body = await c.req.json<{ ids?: unknown }>().catch(() => ({} as { ids?: unknown }));
+  const ids = Array.isArray(body.ids) ? [...new Set(body.ids.map(Number).filter((n) => Number.isInteger(n) && n > 0))] : [];
+  if (ids.length === 0) return c.json({ error: "ids_required" }, 400);
+  const db = getDb(c.env);
+  const res = await db.update(pos_items).set({ active: false, updated_at: nowIso() }).where(and(eq(pos_items.company_id, co.companyId), eq(pos_items.active, true), inArray(pos_items.id, ids))).returning({ id: pos_items.id });
+  await audit(db, co.companyId, c, "pos_items", "remove", "removed", null, `${res.length} of ${ids.length} switched off`);
+  return c.json({ ok: true, removed: res.length });
+});
+
+/** Keep only the named categories: every POS item whose inventory product is
+ *  in another category (or has none) is switched off, the same as the trash on
+ *  its row. Bills already sold keep their lines; Add from Inventory turns an
+ *  item back on. */
+posAdmin.post("/items/keep-categories", async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const body = await c.req.json<{ categories?: unknown }>().catch(() => ({} as { categories?: unknown }));
+  const categories = pickedCategories(body.categories);
+  if (categories.length === 0) return c.json({ error: "categories_required" }, 400);
+  const db = getDb(c.env);
+  const res = await db.execute<{ id: number }>(sql`
+    UPDATE pos_items i SET active = false, updated_at = ${nowIso()}
+      FROM scm.mfg_products p
+     WHERE p.id = i.product_id AND i.company_id = ${co.companyId} AND i.active = true
+       AND (p.category IS NULL OR p.category::text NOT IN ${categories})
+     RETURNING i.id`);
+  const removed = res.length;
+  await audit(db, co.companyId, c, "pos_items", "keep-categories", "removed", null, `${removed} switched off outside ${categories.join(", ")}`);
+  return c.json({ ok: true, removed, categories });
 });
 
 export { posAdmin };

@@ -526,6 +526,17 @@ export function scheduleBoardRefresh(qc: QueryClient, keys: readonly (readonly u
    or DO id. Calls PATCH /delivery-planning/:type/:id/fields and invalidates the
    planning board. The result's no_do_hint tells the UI when DO-execution fields
    were skipped because there's no DO. */
+const SO_FIELD_COLUMNS = [
+  ['possessionDate', 'possession_date'],
+  ['houseType', 'house_type'],
+  ['replacementDisposal', 'replacement_disposal'],
+  ['referral', 'referral'],
+  ['deliveryMessageStatus', 'delivery_message_status'],
+  ['disposalRequest', 'disposal_request'],
+  ['dpRemark', 'dp_remark'],
+  ['amendReason', 'amend_reason'],
+] as const satisfies ReadonlyArray<readonly [keyof HcFieldsPatch, keyof PlanningOrder]>;
+
 export function useUpdateDeliveryFields() {
   const qc = useQueryClient();
   return useMutation({
@@ -533,6 +544,31 @@ export function useUpdateDeliveryFields() {
       authedFetch<HcFieldsResult>(`/delivery-planning/${type}/${id}/fields`, {
         method: 'PATCH', body: JSON.stringify(body),
       }),
+    /* HC-0175: without this the inline select snapped back to the old status and
+       only showed the pick after the PATCH plus the row re-read, several seconds.
+       SO-context fields only: they land on the SO whether or not a DO exists. */
+    onMutate: async (vars) => {
+      if (vars.type !== 'so') return { snapshots: [] };
+      const patch: Partial<PlanningOrder> = {};
+      for (const [from, to] of SO_FIELD_COLUMNS) {
+        if (vars[from] !== undefined) (patch as Record<string, unknown>)[to] = vars[from] || null;
+      }
+      if (Object.keys(patch).length === 0) return { snapshots: [] };
+      await qc.cancelQueries({ queryKey: ['delivery-planning'] });
+      const snapshots: Array<[readonly unknown[], PlanningResponse]> = [];
+      for (const [key, prev] of qc.getQueriesData<PlanningResponse>({ queryKey: ['delivery-planning'] })) {
+        if (!prev || !Array.isArray(prev.orders)) continue;
+        snapshots.push([key, prev]);
+        qc.setQueryData<PlanningResponse>(key, {
+          ...prev,
+          orders: prev.orders.map((o) => (o.row_type === 'so' && o.so_doc_no === vars.id ? { ...o, ...patch } : o)),
+        });
+      }
+      return { snapshots };
+    },
+    onError: (_err, _vars, ctx) => {
+      for (const [key, prev] of ctx?.snapshots ?? []) qc.setQueryData(key, prev);
+    },
     // An SO row re-reads just itself (board-row-refresh.ts); a DO edit still re-reads the board.
     onSuccess: (_res, vars) => (vars.type === 'so'
       ? scheduleRowRefresh(qc, [vars.id])
@@ -804,6 +840,9 @@ export type SendDeliveryMessagesResult = {
   sent: Array<{ phone: string; docNos: string[]; httpCode: number }>;
   failed: Array<{ phone: string; docNos: string[]; error: string }>;
   skipped: Array<{ docNo: string; reason: string }>;
+  /* Sent orders whose Delivery Message Status the server could not move to its
+     "Done X" (HC-0164) - e.g. 'lease' while someone has the SO open in the editor. */
+  statusNotMoved?: Array<{ docNo: string; reason: string }>;
 };
 /* Mirrors backend scm/lib/delivery-message-kinds.ts MESSAGE_KINDS. */
 export type SendMessageKind =
@@ -823,7 +862,12 @@ export function useSendDeliveryMessages() {
       authedFetch<SendDeliveryMessagesResult>(`/delivery-messages/send`, {
         method: 'POST', body: JSON.stringify(body),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery-messages'] }),
+    // The send moved each sent order's Delivery Message Status server-side;
+    // re-read just those rows so the board shows it.
+    onSuccess: (res) => {
+      void qc.invalidateQueries({ queryKey: ['delivery-messages'] });
+      scheduleRowRefresh(qc, res.sent.flatMap((s) => s.docNos));
+    },
   });
 }
 

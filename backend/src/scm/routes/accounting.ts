@@ -74,6 +74,7 @@ import { merchantChargesReport } from './accounting-merchant-charges';
 import { performanceReport, savePerformanceSettingsHandler } from './accounting-performance';
 import { forecastFiguresHandler, forecastGetHandler, forecastPutHandler } from './accounting-forecast';
 import { dashboardHandler } from './accounting-dashboard';
+import { openingAccountsPut, openingGet, openingLock, openingPaperCancel, openingPaperCreate, openingPaperUpdate, openingStockPut, openingUnlock } from './accounting-opening';
 import { numberingGet, numberingPut } from './accounting-numbering';
 import { receiptsList, receiptEnsure, receiptFormalise } from './accounting-receipts';
 import { receiptsCheck } from './accounting-receipts-check';
@@ -199,6 +200,15 @@ accounting.put('/forecast', forecastPutHandler);
 accounting.get('/forecast/figures', forecastFiguresHandler);
 /* The Financial Dashboard (owner 2026-09-21): the statements per period, beside the forecast. */
 accounting.get('/dashboard', dashboardHandler);
+/* The books' opening (owner 2026-10-28; Finance › Setup › Opening Balance): routes/accounting-opening.ts. */
+accounting.get('/opening', openingGet);
+accounting.put('/opening/accounts', openingAccountsPut);
+accounting.put('/opening/stock', openingStockPut);
+accounting.post('/opening/papers', openingPaperCreate);
+accounting.patch('/opening/papers/:kind/:id', openingPaperUpdate);
+accounting.post('/opening/papers/:kind/:id/cancel', openingPaperCancel);
+accounting.post('/opening/lock', openingLock);
+accounting.post('/opening/unlock', openingUnlock);
 accounting.post('/reports/performance/settings', savePerformanceSettingsHandler);
 /* Voucher numbering — the owner's own levers (GL redesign item 8a): per-bank
    letters + suffix width. Handlers in accounting-numbering.ts. */
@@ -1267,7 +1277,9 @@ export const controlCheckHandler = async (c: any) => {
       ? new Set(['SI', 'SI_REVERSAL', 'SOPAY', 'SOPAY_REVERSAL', 'SIPAY', 'SIPAY_REVERSAL',
         'DI', 'DI_REVERSAL', 'CN', 'CN_REVERSAL', 'PV', 'PV_REVERSAL', CONVERT_SOURCE, `${CONVERT_SOURCE}_REVERSAL`])
       : role === 'AR_OTHER'
-        ? new Set(['ODB', 'ODB_REVERSAL', 'ODR', 'ODR_REVERSAL'])
+        /* OCN = a credit note to an other debtor (Cr the other-debtor control),
+           knocked off the debtor's bills — part of the family (2026-10-28). */
+        ? new Set(['ODB', 'ODB_REVERSAL', 'ODR', 'ODR_REVERSAL', 'OCN', 'OCN_REVERSAL'])
         /* API = the AP invoice (docs/bugs/0654): it credits 400 or 405 by the
            supplier's code, exactly as a PI does, and its edit re-post writes
            the reversal. Both were read as foreign until this line. */

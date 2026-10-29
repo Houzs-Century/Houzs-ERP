@@ -384,6 +384,8 @@ POST,/api/pos-admin/items/:id/barcodes,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,
 DELETE,/api/pos-admin/items/:id/barcodes/:bid,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
 POST,/api/pos-admin/items/add-all,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
 POST,/api/pos-admin/items/import,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
+POST,/api/pos-admin/items/keep-categories,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
+POST,/api/pos-admin/items/remove,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
 GET,/api/pos-admin/labels,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,NO,DECLARED_GATE,backend/src/routes/pos-admin.ts
 POST,/api/pos-admin/labels/generate,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,YES,DECLARED_GATE,backend/src/routes/pos-admin.ts
 GET,/api/pos-admin/report,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requirePermission(""pos.manage"")",,,,NO,DECLARED_GATE,backend/src/routes/pos-admin.ts
@@ -651,6 +653,14 @@ POST,/api/scm/accounting/journal-entries/:id/post,AUTHENTICATED_MIDDLEWARE,COMPA
 POST,/api/scm/accounting/journal-entries/:id/reverse,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts
 GET,/api/scm/accounting/numbering,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/accounting.ts
 PUT,/api/scm/accounting/numbering,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts
+GET,/api/scm/accounting/opening,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/accounting.ts
+PUT,/api/scm/accounting/opening/accounts,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts
+POST,/api/scm/accounting/opening/lock,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts
+POST,/api/scm/accounting/opening/papers,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts
+PATCH,/api/scm/accounting/opening/papers/:kind/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts
+POST,/api/scm/accounting/opening/papers/:kind/:id/cancel,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts
+PUT,/api/scm/accounting/opening/stock,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts
+POST,/api/scm/accounting/opening/unlock,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts
 GET,/api/scm/accounting/payment-corrections,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/accounting.ts
 POST,/api/scm/accounting/post/pi/:invoiceNumber,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts
 POST,/api/scm/accounting/post/si/:invoiceNumber,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts

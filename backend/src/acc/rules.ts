@@ -144,6 +144,7 @@ export const REVERSAL_SOURCE: Record<string, string> = {
   CN: 'CN_REVERSAL',
   DN: 'DN_REVERSAL',
   SCN: 'SCN_REVERSAL',
+  OCN: 'OCN_REVERSAL',
   RCT: 'RCT_REVERSAL',
   DI: 'DI_REVERSAL',
   OPENING: 'OPENING_REVERSAL',
@@ -286,6 +287,27 @@ export function debitNoteLines(roles: RoleCodes, note: { note_number: string }, 
       notes: l.description ?? `Debit note ${note.note_number}`,
       projectId: l.projectId ?? null,
     })),
+  ];
+}
+
+/** Other-debtor credit note posted (owner 2026-10-28): Dr each line's account
+    (the line names it — a discount, an adjustment; there is no default) / Cr
+    the other-debtor control for the debtor, named as a debtor bill names it
+    (ODEBTOR, no code, the registry name) — the debtor owes that much less. */
+export function otherDebtorCreditNoteLines(roles: RoleCodes, note: { note_number: string }, debtor: NoteParty, lines: NoteLine[]): RuleLine[] {
+  const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
+  return [
+    ...lines.map((l) => ({
+      accountCode: l.accountCode, debitSen: l.amountSen, creditSen: 0,
+      partyType: null, partyCode: null, partyName: null,
+      notes: l.description ?? `Other debtor credit note ${note.note_number}`,
+      projectId: l.projectId ?? null,
+    })),
+    {
+      accountCode: roles.AR_OTHER, debitSen: 0, creditSen: totalSen,
+      partyType: 'ODEBTOR', partyCode: null, partyName: debtor.name,
+      notes: `Other debtor credit note ${note.note_number}`,
+    },
   ];
 }
 
