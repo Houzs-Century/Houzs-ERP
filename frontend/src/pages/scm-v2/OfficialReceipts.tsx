@@ -14,6 +14,9 @@
 // against the receipts, the difference, and every row behind a difference (a
 // payment with no receipt, a receipt whose amount is not its payment's, a
 // receipt whose payment is gone). "Any month" is the newest 100, as before.
+// A receipt follows its payment (owner 2026-10-29: 收据跟着付款改或作废): a
+// draft changes with it, a formal one is CANCELLED and re-issued — the cancelled
+// row stays listed, struck through, its reason under it, and counts nowhere.
 // ----------------------------------------------------------------------------
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -31,7 +34,13 @@ type ReceiptRow = ReceiptPdfData & {
   payment_id: string;
   channel_account_code: string | null;
   created_at: string;
+  cancelled_at?: string | null;
+  cancelled_by?: string | null;
 };
+
+type StatusPick = '' | 'DRAFT' | 'FORMAL' | 'CANCELLED';
+const STATUS_WORD: Record<string, string> = { DRAFT: 'Draft', FORMAL: 'Formal', CANCELLED: 'Cancelled' };
+const isCancelled = (r: { status: string }): boolean => r.status === 'CANCELLED';
 
 export type ReceiptsCheck = {
   month: string;
@@ -68,7 +77,7 @@ const btn = (primary?: boolean, disabled?: boolean): React.CSSProperties => ({
 
 export const OfficialReceipts = () => {
   const qc = useQueryClient();
-  const [status, setStatus] = useState<'' | 'DRAFT' | 'FORMAL'>('');
+  const [status, setStatus] = useState<StatusPick>('');
   /* '' = any month: the newest 100 receipts. */
   const [month, setMonth] = useState<string>(mytMonth());
   const listPath = `/accounting/receipts${[status ? `status=${status}` : '', month ? `month=${month}` : ''].filter(Boolean).map((p, i) => (i === 0 ? `?${p}` : `&${p}`)).join('')}`;
@@ -93,20 +102,31 @@ export const OfficialReceipts = () => {
   const rows = useMemo(() => q.data?.receipts ?? [], [q.data]);
   /* The rows on screen after the table's own funnels: the total adds up THOSE. */
   const [shown, setShown] = useState<ReceiptRow[]>([]);
-  const totalSen = shown.reduce((s, r) => s + Number(r.amount_sen), 0);
+  /* A cancelled receipt stands for no payment: listed, never added up. */
+  const live = shown.filter((r) => !isCancelled(r));
+  const cancelledCount = shown.length - live.length;
+  const totalSen = live.reduce((s, r) => s + Number(r.amount_sen), 0);
   const columns = useMemo<Column<ReceiptRow>[]>(() => [
-    { key: 'or', label: 'OR No', render: (r) => <b>{r.or_number}</b>, getValue: (r) => r.or_number },
     {
-      key: 'status', label: 'Status',
-      render: (r) => <span style={{ color: r.status === 'FORMAL' ? 'var(--c-good, #2f5d4f)' : undefined }}>{r.status === 'FORMAL' ? 'Formal' : 'Draft'}</span>,
-      getValue: (r) => (r.status === 'FORMAL' ? 'Formal' : 'Draft'),
+      key: 'or', label: 'OR No', getValue: (r) => r.or_number,
+      render: (r) => <b style={isCancelled(r) ? { textDecoration: 'line-through', color: 'var(--text-soft, #8a8578)' } : undefined}>{r.or_number}</b>,
+    },
+    {
+      key: 'status', label: 'Status', getValue: (r) => STATUS_WORD[r.status] ?? r.status,
+      render: (r) => (
+        <span style={{ display: 'inline-flex', flexDirection: 'column' }}>
+          <span style={{ color: r.status === 'FORMAL' ? 'var(--c-good, #2f5d4f)' : isCancelled(r) ? bad : undefined }}>{STATUS_WORD[r.status] ?? r.status}</span>
+          {isCancelled(r) && r.cancel_reason && <span style={{ ...soft, fontSize: 'var(--fs-12)' }}>{r.cancel_reason}</span>}
+        </span>
+      ),
     },
     { key: 'paid', label: 'Paid', render: (r) => fmtDateOrDash(r.paid_at), getValue: (r) => r.paid_at, exportFormat: 'date' },
     { key: 'document', label: 'Document', render: (r) => r.doc_no ?? '—', getValue: (r) => r.doc_no ?? '' },
     { key: 'customer', label: 'Customer', render: (r) => r.customer_name ?? '—', getValue: (r) => r.customer_name ?? '' },
     { key: 'method', label: 'Method', render: (r) => methodLabel(r.method), getValue: (r) => r.method ?? '' },
     {
-      key: 'amount', label: 'Amount', align: 'right', render: (r) => fmtSen(r.amount_sen),
+      key: 'amount', label: 'Amount', align: 'right',
+      render: (r) => <span style={isCancelled(r) ? { textDecoration: 'line-through', color: 'var(--text-soft, #8a8578)' } : undefined}>{fmtSen(r.amount_sen)}</span>,
       getValue: (r) => Number(r.amount_sen), exportValue: (r) => Number(r.amount_sen) / 100, exportFormat: 'money',
     },
     {
@@ -114,7 +134,7 @@ export const OfficialReceipts = () => {
       render: (r) => (
         <span style={{ whiteSpace: 'nowrap' }}>
           <button type="button" style={btn()} onClick={() => { void generateReceiptPdf(r, { action: 'print' }); }}>Print</button>{' '}
-          {r.status !== 'FORMAL' && (
+          {r.status === 'DRAFT' && (
             <button type="button" style={btn(true, formalise.isPending)} disabled={formalise.isPending}
               onClick={() => formalise.mutate(r.id)}>
               Confirm money
@@ -131,7 +151,7 @@ export const OfficialReceipts = () => {
     <div className="space-y-3">
       <PageHeader eyebrow="Finance" title="Official Receipts" />
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        {([['', 'All'], ['DRAFT', 'Draft — money not confirmed'], ['FORMAL', 'Formal']] as const).map(([v, label]) => (
+        {([['', 'All'], ['DRAFT', 'Draft — money not confirmed'], ['FORMAL', 'Formal'], ['CANCELLED', 'Cancelled']] as const).map(([v, label]) => (
           <button key={v || 'all'} type="button" style={btn(status === v)} onClick={() => setStatus(v)}>{label}</button>
         ))}
         <span style={{ width: 12 }} />
@@ -206,7 +226,10 @@ export const OfficialReceipts = () => {
       {shown.length > 0 && (
         <div data-testid="receipts-total"
           style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', borderTop: '2px solid var(--c-ink, #221f20)', fontWeight: 700, fontSize: 'var(--fs-13)' }}>
-          <span>{shown.length} receipt{shown.length === 1 ? '' : 's'}{month ? ` in ${monthWord(month)}` : ''}{status ? ` (${status === 'FORMAL' ? 'formal' : 'draft'})` : ''}</span>
+          <span>
+            {live.length} receipt{live.length === 1 ? '' : 's'}{month ? ` in ${monthWord(month)}` : ''}{status && status !== 'CANCELLED' ? ` (${STATUS_WORD[status].toLowerCase()})` : ''}
+            {cancelledCount > 0 && <span style={{ ...soft, fontWeight: 400 }}> · {cancelledCount} cancelled, not counted</span>}
+          </span>
           <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtSen(totalSen)}</span>
         </div>
       )}

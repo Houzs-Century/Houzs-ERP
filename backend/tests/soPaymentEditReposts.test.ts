@@ -93,4 +93,18 @@ describe('editing a payment moves its journal entry', () => {
     const body = handlerBody('post', '/:docNo/payments');
     expect(body).not.toContain('repostSoPaymentBestEffort');
   });
+
+  /* The receipt follows the payment (owner 2026-10-29: 收据跟着付款改或作废) —
+     inside the two hooks, pinned against the fake in tests/officialReceipts.
+     What the routes owe is who did it, and the audit line saying what the
+     receipt did. */
+  test('the edit and the delete name who acted and put what their receipt did on the audit row', () => {
+    for (const m of ['patch', 'delete'] as const) {
+      const body = handlerBody(m, '/:docNo/payments/:id');
+      expect(body, `${m} does not audit its receipt`).toContain('receiptFieldChange(');
+      const hook = m === 'patch' ? 'repostSoPaymentBestEffort' : 'afterSoPaymentRemoved';
+      const at = body.indexOf(hook);
+      expect(body.slice(at, body.indexOf(');', at)), `${m} does not tell the hook who acted`).toContain('actor:');
+    }
+  });
 });

@@ -45,7 +45,7 @@ async function loadMissing(sb: any, companyId: number): Promise<{ ok: true; rows
   if (pays.error) return { ok: false, reason: `payments: ${pays.error.message}` };
   const receipts = await paginateAll<Row>((from, to) => sb.from('acc_official_receipts')
     .select('payment_id')
-    .eq('company_id', companyId).eq('payment_source', 'SOPAY')
+    .eq('company_id', companyId).eq('payment_source', 'SOPAY').neq('status', 'CANCELLED')
     .order('id', { ascending: true })
     .range(from, to));
   if (receipts.error) return { ok: false, reason: `receipts: ${receipts.error.message}` };

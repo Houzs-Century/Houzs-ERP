@@ -12,6 +12,10 @@
 //           merchant recon confirms that payment, transfer by a manual
 //           confirm; ANY draft can be formalised by hand after a human
 //           verified the money (客户催收据).
+//   CANCELLED a formal receipt whose payment changed or was removed (owner
+//           2026-10-29: 收据跟着付款改或作废). Kept on file, its number never
+//           reused; the payment's live receipt is a new row. A DRAFT is never
+//           cancelled — it follows its payment, or goes with it.
 //
 // The channel letters are the PV letter table (scm.acc_bank_letters) — the
 // same bank is the same letter on a voucher and a receipt; C is RESERVED for
@@ -25,11 +29,16 @@
 // any gap the next time the receipt is needed.
 // ----------------------------------------------------------------------------
 
-import { docMonthTag, mintMonthlyDocNo } from '../scm/lib/doc-no';
+import { companyCodeById, docMonthTag, mintMonthlyDocNo } from '../scm/lib/doc-no';
 import { docPrefixForCode } from '../scm/lib/companyScope';
+import { fmtSen } from '../scm/shared/format';
 import { resolveRoles } from './rules';
 
 export const CASH_SERIES_LETTER = 'C';
+/** A receipt kept on file but no longer the payment's — see the header. Every
+    read of "the receipt of a payment" leaves these out; the one-per-payment key
+    covers the others only (migration 20261029T1500). */
+export const CANCELLED = 'CANCELLED';
 
 export type ReceiptPaymentInput = {
   source: 'SOPAY' | 'SIPAY';
@@ -82,7 +91,7 @@ export async function createReceiptForPayment(
 ): Promise<{ ok: true; id: number; orNumber: string; status: string } | { ok: false; reason: string }> {
   const { data: existing, error: exErr } = await sb.from('acc_official_receipts')
     .select('id, or_number, status')
-    .eq('payment_source', p.source).eq('payment_id', p.paymentId).maybeSingle();
+    .eq('payment_source', p.source).eq('payment_id', p.paymentId).neq('status', CANCELLED).maybeSingle();
   if (exErr) return { ok: false, reason: exErr.message };
   if (existing) {
     const cur = existing as { id: number; or_number: string; status: string };
@@ -123,7 +132,7 @@ export async function createReceiptForPayment(
     const dupPayment = /payment_source|payment_id/.test(String(error.message ?? '')) && /duplicate key/i.test(String(error.message ?? ''));
     if (dupPayment) {
       const { data: again, error: againErr } = await sb.from('acc_official_receipts')
-        .select('id, or_number, status').eq('payment_source', p.source).eq('payment_id', p.paymentId).maybeSingle();
+        .select('id, or_number, status').eq('payment_source', p.source).eq('payment_id', p.paymentId).neq('status', CANCELLED).maybeSingle();
       if (againErr) return { ok: false, reason: `receipt exists but could not be read back: ${againErr.message}` };
       if (again) {
         const cur = again as { id: number; or_number: string; status: string };
@@ -152,6 +161,9 @@ export async function formaliseReceipt(
   if (!rRaw) return { ok: false, status: 'not_found', reason: `receipt ${input.receiptId} not found` };
   const r = rRaw as { id: number; or_number: string; status: string; paid_at: string | null };
   if (r.status === 'FORMAL') return { ok: true, orNumber: r.or_number, already: true };
+  if (r.status === CANCELLED) {
+    return { ok: false, status: 'cancelled', reason: `${r.or_number} was cancelled — its payment changed or was removed. Confirm the payment's current receipt instead.` };
+  }
 
   const ch = await channelLetterFor(sb, input.companyId, input.accountCode);
   if (!ch.ok) return { ok: false, status: 'load_failed', reason: ch.reason };
@@ -199,7 +211,7 @@ export async function ensureReceiptForPayment(
 ): Promise<{ ok: true; id: number; orNumber: string; status: string } | { ok: false; reason: string }> {
   let existingQuery = sb.from('acc_official_receipts')
     .select('id, or_number, status')
-    .eq('payment_source', source).eq('payment_id', paymentId);
+    .eq('payment_source', source).eq('payment_id', paymentId).neq('status', CANCELLED);
   if (activeCompanyId !== null) existingQuery = existingQuery.eq('company_id', activeCompanyId);
   const { data: existing, error: exErr } = await existingQuery.maybeSingle();
   if (exErr) return { ok: false, reason: exErr.message };
@@ -243,26 +255,151 @@ export async function ensureReceiptForPayment(
   });
 }
 
-/**
- * Remove the DRAFT receipt of a payment that is going because it should never
- * have been recorded — Finance removing a payment from a cancelled order (owner
- * 2026-09-29: the same swipe keyed on two orders; its draft goes with it). Only
- * a DRAFT: a FORMAL receipt was issued to the customer and stays on file
- * whatever becomes of the payment. `orNumber` is the draft removed, or null
- * when the payment had none.
- */
-export async function removeDraftReceiptForPayment(
-  sb: any,
-  p: { source: 'SOPAY' | 'SIPAY'; paymentId: string; companyId: number | null },
-): Promise<{ ok: true; orNumber: string | null } | { ok: false; reason: string }> {
-  let q = sb.from('acc_official_receipts').delete()
-    .eq('payment_source', p.source).eq('payment_id', p.paymentId).eq('status', 'DRAFT');
-  if (p.companyId !== null) q = q.eq('company_id', p.companyId);
-  /* One receipt per payment (UNIQUE payment_source, payment_id), so the
-     RETURNING is zero rows or one. */
-  const { data, error } = await q.select('or_number').maybeSingle();
+/* ── The receipt follows its payment (owner 2026-10-29: 收据跟着付款改或作废) ──
+   2990's October check found RM 3,359 of receipts saying what their payments no
+   longer said — a card payment corrected from RM 1,115 to RM 558 two minutes
+   after keying, a cash payment deleted a minute after keying, a transfer
+   re-dated from 13/10 to 08/09 — because nothing ever touched a receipt after
+   its birth. The deposit invoice's rule, applied to the paper the customer
+   holds: a DRAFT follows (nobody holds a confirmed one), a FORMAL receipt is
+   cancelled and re-issued, never rewritten. */
+
+/** What a receipt prints and is checked against, as the payment now stands. */
+export type ReceiptFacts = { amountSen: number; paidAt: string | null; method: string };
+
+/** What following a payment did to its receipt, for the payment's audit row:
+    `draft` names a draft removed with its payment; otherwise `from` is the
+    formal receipt cancelled and `to` its replacement (null when the payment
+    went). Null when the receipt was left as it was, or followed in place. */
+export type ReceiptTouch = { from: string; to: string | null; draft: boolean };
+
+type LiveReceipt = {
+  id: number; or_number: string; status: string; payment_source: string; payment_id: string; amount_sen: number;
+  paid_at: string | null; method: string | null; channel_account_code: string | null; doc_no: string | null; customer_name: string | null;
+};
+
+const dayOf = (v: unknown): string => String(v ?? '').slice(0, 10);
+
+async function liveReceiptOf(
+  sb: any, companyId: number | null, source: 'SOPAY' | 'SIPAY', paymentId: string,
+): Promise<{ ok: true; row: LiveReceipt | null } | { ok: false; reason: string }> {
+  let q = sb.from('acc_official_receipts')
+    .select('id, or_number, status, payment_source, payment_id, amount_sen, paid_at, method, channel_account_code, doc_no, customer_name')
+    .eq('payment_source', source).eq('payment_id', paymentId).neq('status', CANCELLED);
+  if (companyId !== null) q = q.eq('company_id', companyId);
+  const { data, error } = await q.maybeSingle();
   if (error) return { ok: false, reason: error.message };
-  return { ok: true, orNumber: (data as { or_number?: string | null } | null)?.or_number ?? null };
+  return { ok: true, row: (data as LiveReceipt | null) ?? null };
+}
+
+/** The receipt's words for what moved — empty when it already says what the
+    payment says. */
+export function receiptChange(was: { amount_sen: number; paid_at: string | null; method: string | null }, next: ReceiptFacts): string {
+  const parts: string[] = [];
+  if (Number(was.amount_sen) !== Number(next.amountSen)) parts.push(`amount ${fmtSen(Number(was.amount_sen))} → ${fmtSen(next.amountSen)}`);
+  if (dayOf(was.paid_at) !== dayOf(next.paidAt)) parts.push(`date ${dayOf(was.paid_at) || '—'} → ${dayOf(next.paidAt) || '—'}`);
+  if ((was.method ?? '') !== (next.method ?? '')) parts.push(`method ${was.method || '—'} → ${next.method || '—'}`);
+  return parts.join(', ');
+}
+
+/** The one receipt row `r` names, by its id AND its payment — a write that
+    must never reach another payment's paper. */
+const theReceipt = (q: any, r: LiveReceipt, companyId: number | null): any => {
+  const out = q.eq('id', r.id).eq('payment_source', r.payment_source).eq('payment_id', r.payment_id);
+  return companyId !== null ? out.eq('company_id', companyId) : out;
+};
+
+/** Cancel one FORMAL receipt — only while it is still formal, so two callers
+    cannot both cancel it and both issue a replacement. */
+async function cancelFormal(
+  sb: any, companyId: number | null, r: LiveReceipt, reason: string, actor: string | null,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const { data, error } = await theReceipt(sb.from('acc_official_receipts')
+    .update({ status: CANCELLED, cancelled_at: new Date().toISOString(), cancelled_by: actor, cancel_reason: reason }), r, companyId)
+    .eq('status', 'FORMAL').select('id').maybeSingle();
+  if (error) return { ok: false, reason: error.message };
+  if (!data) return { ok: false, reason: `${r.or_number} changed while it was being cancelled` };
+  return { ok: true };
+}
+
+/**
+ * After a payment is EDITED. A DRAFT is rewritten in place — its number stays,
+ * the number is an id, not a date (单据存了后改日期号码不要重发). A FORMAL receipt
+ * is in the customer's hand, so it is CANCELLED, with what moved as its reason,
+ * and the payment gets a new receipt: formal at once on the cancelled one's
+ * channel when the method is unchanged (the money was confirmed there already),
+ * otherwise born as any payment's receipt is — cash formal, the rest a draft to
+ * confirm. Nothing happens when the receipt already says what the payment says,
+ * or when the payment has none (ensure heals that at the next print).
+ */
+export async function followPaymentEdit(
+  sb: any,
+  p: { source: 'SOPAY' | 'SIPAY'; paymentId: string; companyId: number; next: ReceiptFacts; why: string; actor: string | null },
+): Promise<{ ok: true; touch: ReceiptTouch | null } | { ok: false; reason: string }> {
+  const cur = await liveReceiptOf(sb, p.companyId, p.source, p.paymentId);
+  if (!cur.ok) return cur;
+  const r = cur.row;
+  if (!r) return { ok: true, touch: null };
+  const change = receiptChange(r, p.next);
+  if (!change) return { ok: true, touch: null };
+
+  if (r.status !== 'FORMAL') {
+    const { error } = await theReceipt(sb.from('acc_official_receipts')
+      .update({ amount_sen: p.next.amountSen, paid_at: p.next.paidAt, method: p.next.method }), r, p.companyId)
+      .eq('status', 'DRAFT');
+    if (error) return { ok: false, reason: error.message };
+    return { ok: true, touch: null };
+  }
+
+  let companyCode: string | null;
+  try { companyCode = await companyCodeById(sb, p.companyId); } catch (e) { return { ok: false, reason: String((e as Error).message ?? e) }; }
+  if (!companyCode) return { ok: false, reason: `company ${p.companyId} has no code` };
+
+  const gone = await cancelFormal(sb, p.companyId, r, `${p.why}: ${change}`, p.actor);
+  if (!gone.ok) return gone;
+  const made = await createReceiptForPayment(sb, {
+    source: p.source, paymentId: p.paymentId, companyId: p.companyId, companyCode,
+    docNo: r.doc_no, customerName: r.customer_name, method: p.next.method,
+    amountSen: p.next.amountSen, paidAt: p.next.paidAt, createdBy: p.actor,
+  });
+  if (!made.ok) return { ok: false, reason: `${r.or_number} cancelled, but its replacement was not issued: ${made.reason}` };
+  let to = made.orNumber;
+  if (made.status !== 'FORMAL' && (r.method ?? '') === (p.next.method ?? '') && r.channel_account_code) {
+    const f = await formaliseReceipt(sb, {
+      companyId: p.companyId, companyCode, receiptId: made.id, accountCode: r.channel_account_code, actor: p.actor,
+    });
+    if (f.ok) to = f.orNumber;
+    // eslint-disable-next-line no-console
+    else console.error(`[receipts] ${made.orNumber} replaces ${r.or_number} but stays a draft:`, f.status, f.reason);
+  }
+  const { error: linkErr } = await theReceipt(sb.from('acc_official_receipts').update({ replaced_by_id: made.id }), r, p.companyId);
+  // eslint-disable-next-line no-console
+  if (linkErr) console.error(`[receipts] ${r.or_number} not linked to its replacement ${to}:`, linkErr.message);
+  return { ok: true, touch: { from: r.or_number, to, draft: false } };
+}
+
+/**
+ * After a payment is DELETED its receipt goes with it, whatever the order's
+ * state: a DRAFT is removed (it was never a confirmed paper — the cancelled-
+ * order removal of 2026-09-29 did only this, now every delete does), a FORMAL
+ * one is CANCELLED and kept.
+ */
+export async function followPaymentRemoval(
+  sb: any,
+  p: { source: 'SOPAY' | 'SIPAY'; paymentId: string; companyId: number | null; why: string; actor: string | null },
+): Promise<{ ok: true; touch: ReceiptTouch | null } | { ok: false; reason: string }> {
+  const cur = await liveReceiptOf(sb, p.companyId, p.source, p.paymentId);
+  if (!cur.ok) return cur;
+  const r = cur.row;
+  if (!r) return { ok: true, touch: null };
+  if (r.status !== 'FORMAL') {
+    const { error } = await theReceipt(sb.from('acc_official_receipts').delete(), r, p.companyId).eq('status', 'DRAFT');
+    if (error) return { ok: false, reason: error.message };
+    return { ok: true, touch: { from: r.or_number, to: null, draft: true } };
+  }
+  const gone = await cancelFormal(sb, p.companyId, r, p.why, p.actor);
+  if (!gone.ok) return gone;
+  return { ok: true, touch: { from: r.or_number, to: null, draft: false } };
 }
 
 /**
@@ -284,7 +421,7 @@ export async function formaliseReceiptsForSettlement(
   for (const p of payments) {
     const { data, error } = await sb.from('acc_official_receipts')
       .select('id, status')
-      .eq('payment_source', p.source).eq('payment_id', p.id).maybeSingle();
+      .eq('payment_source', p.source).eq('payment_id', p.id).neq('status', CANCELLED).maybeSingle();
     /* A blip is NOT "no receipt" — reported as its own outcome so the sweep's
        answer never lies about what it saw. */
     if (error) { out.push({ paymentId: p.id, outcome: 'read_failed' }); continue; }
