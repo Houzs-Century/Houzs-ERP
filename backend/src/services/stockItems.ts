@@ -188,6 +188,9 @@ export async function resolveCreditorForCase(
   const creditorCode: string | null = fromOrder?.code ?? null;
   const source: string | null = fromOrder?.source ?? null;
 
+  // Resolve now with nothing to resolve from must not wipe a pick (HC-0130).
+  if (opts.force && creditorCode === null && existing.creditor_code) return { code: existing.creditor_code, soMissing: false };
+
   const same = (existing.creditor_code ?? null) === (creditorCode ?? null);
   // Same value AND same owner (po/so/blank) → nothing to do. When force
   // re-resolves a manual row to the same code, still fall through so

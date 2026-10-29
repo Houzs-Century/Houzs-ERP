@@ -804,6 +804,7 @@ export async function getAssrDetail(env: Env, id: number) {
   // whose hand-entered delivery_order was never set — which is nearly
   // all of them.
   await Promise.all([attachDeliveryOrders(env, [caseRow]).then(() => attachOrderDeliveryDates(env, [caseRow])), attachOrderPos(env, [caseRow])]);
+  await fillCreditorFromNewPo(env, [caseRow as Record<string, any>]);
 
   const items = await env.DB.prepare(
     `SELECT * FROM assr_items WHERE assr_id = ? ORDER BY id`
@@ -1387,8 +1388,10 @@ export async function patchAssrCase(
   // When the case's item_code changes, re-resolve the creditor so the
   // link to the procurement supplier stays accurate. Awaited (a floating
   // promise dies with the response); a failed lookup shouldn't fail the PATCH.
-  if ("item_code" in body) {
-    await resolveCreditorForCase(env, id, body.item_code ?? null).catch((e) =>
+  // A corrected SO number points at a different order, so re-resolve then too.
+  const docNoChanged = prevDocNo !== null && "doc_no" in body && prevDocNo !== body.doc_no;
+  if ("item_code" in body || docNoChanged) {
+    await resolveCreditorForCase(env, id, "item_code" in body ? body.item_code ?? null : beforeSnapshot?.item_code ?? null).catch((e) =>
       console.warn(`[assr.patch] creditor resolve failed for case=${id}:`, e?.message || e)
     );
   }
@@ -2052,6 +2055,7 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
 
   const data = rows.results ?? [];
   await Promise.all([attachDeliveryOrders(env, data as any[]), attachOrderPos(env, data)]);
+  await fillCreditorFromNewPo(env, data as Array<Record<string, any>>);
 
   return {
     data,
@@ -2059,6 +2063,21 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
     per_page: perPage,
     total: total?.count ?? 0,
   };
+}
+
+/** HC-0130: a PO raised after the case was created never reached the Supplier.
+ *  Only blank, non-manual rows that already show a live PO (order_pos, read just
+ *  above) are resolved, so the extra reads stop once the row is filled. */
+export async function fillCreditorFromNewPo(env: Env, rows: Array<Record<string, any>>) {
+  const todo = rows.filter((r) => !r.creditor_code && r.creditor_source !== "manual" && r.item_code && r.order_pos?.length);
+  if (todo.length === 0) return;
+  await Promise.all(todo.map(async (r) => {
+    const { code } = await resolveCreditorForCase(env, r.id, r.item_code).catch(() => ({ code: null }));
+    if (!code) return;
+    r.creditor_code = code;
+    const cr = await env.DB.prepare(`SELECT company_name FROM creditors WHERE creditor_code = ?`).bind(code).first<{ company_name: string | null }>();
+    r.creditor_name = cr?.company_name ?? null;
+  }));
 }
 
 /** `order_pos` — see services/assrOrderPos.ts. No scm in the D1 test env. */

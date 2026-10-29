@@ -15,6 +15,7 @@ vi.mock('./autocount', () => ({
 }));
 
 import { resolveCreditorForCase, runStockItemsRefresh } from './stockItems';
+import { fillCreditorFromNewPo } from './assr';
 import type { Env } from '../types';
 
 const ACTIVITY_COLS = new Set([
@@ -79,11 +80,37 @@ describe('resolveCreditorForCase', () => {
     expect(inserted).toEqual([]);
   });
 
-  test('SO in the ERP with no PO and no SO supplier: an old supplier is cleared to blank', async () => {
+  test('Resolve now with no PO and no SO supplier keeps the existing pick', async () => {
     const inserted: Array<unknown[]> = [];
-    const env = fakeEnv(inserted, [], { creditor_code: '400-D002', creditor_source: 'auto' });
-    expect(await resolveCreditorForCase(env, 5, 'MAT-1', { force: true })).toEqual({ code: null, soMissing: false });
-    expect(inserted).toEqual([[5, '400-D002', null, 'No PO or SO supplier found for item MAT-1']]);
+    const sqls: string[] = [];
+    const env = fakeEnv(inserted, sqls, { creditor_code: '400-D002', creditor_source: 'manual' });
+    expect(await resolveCreditorForCase(env, 5, 'MAT-1', { force: true })).toEqual({ code: '400-D002', soMissing: false });
+    expect(sqls.filter((s) => /UPDATE\s+assr_cases/.test(s))).toEqual([]);
+    expect(inserted).toEqual([]);
+  });
+
+  test('a manual pick is not overwritten by the PO supplier without force', async () => {
+    order.result = { code: '400-H003', source: 'po' };
+    const sqls: string[] = [];
+    const env = fakeEnv([], sqls, { creditor_code: '400-D002', creditor_source: 'manual' });
+    expect(await resolveCreditorForCase(env, 5, 'MAT-1')).toEqual({ code: '400-D002', soMissing: false });
+    expect(sqls.filter((s) => /UPDATE\s+assr_cases/.test(s))).toEqual([]);
+  });
+});
+
+describe('fillCreditorFromNewPo', () => {
+  test('a blank row with a live PO gets the PO supplier; manual, filled and PO-less rows are left alone', async () => {
+    order.result = { code: '400-H003', source: 'po' };
+    const sqls: string[] = [];
+    const rows: Array<Record<string, any>> = [
+      { id: 1, item_code: 'MAT-1', creditor_code: null, creditor_source: null, order_pos: [{ id: 'p', po_number: 'PO-1' }] },
+      { id: 2, item_code: 'MAT-1', creditor_code: null, creditor_source: 'manual', order_pos: [{ id: 'p', po_number: 'PO-1' }] },
+      { id: 3, item_code: 'MAT-1', creditor_code: '400-X', creditor_source: 'so', order_pos: [{ id: 'p', po_number: 'PO-1' }] },
+      { id: 4, item_code: 'MAT-1', creditor_code: null, creditor_source: null, order_pos: [] },
+    ];
+    await fillCreditorFromNewPo(fakeEnv([], sqls), rows);
+    expect(rows.map((r) => r.creditor_code)).toEqual(['400-H003', null, '400-X', null]);
+    expect(sqls.filter((q) => /UPDATE\s+assr_cases/.test(q))).toHaveLength(1);
   });
 });
 
