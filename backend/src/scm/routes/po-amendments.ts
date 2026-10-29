@@ -28,7 +28,7 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import type { Context } from 'hono';
 import { canTransition, nextStatus, type PoAmendStatus, type PoAmendAction } from '../shared/po-amendment';
-import { applyPoAmendment, ReceivedFloorError } from '../lib/po-revision';
+import { applyPoAmendment, assertAddedSkusActive, InactiveSkuError, ReceivedFloorError } from '../lib/po-revision';
 import { recomputePoReceived } from './grns';
 import { planStockRelease, type AllocationRow } from '../lib/po-allocations';
 /* Two-lane rework: a follow-up row's approve re-derives its PO from the SO's
@@ -263,6 +263,16 @@ poAmendments.post('/', async (c) => {
     return c.json({ error: 'amendment_already_open', reason: 'An amendment is already open on this Purchase Order — resolve it before raising another.' }, 409);
   }
 
+  // HC-0153: an ADD of a deactivated SKU is refused up front (approve re-checks).
+  try {
+    await assertAddedSkusActive(sb, submittedLines.map((l) => ({
+      change_type: l.changeType, new_item_code: l.newMaterialCode, new_variants: l.newVariants as Record<string, unknown> | null,
+    })), activeCompanyId(c) ?? null);
+  } catch (e) {
+    if (e instanceof InactiveSkuError) return c.json(e.body, 409);
+    throw e;
+  }
+
   const amendmentNo = `${po.po_number}/A${prior.length + 1}`;
 
   // Header before-snapshot — only the keys actually being changed, read off the
@@ -428,6 +438,7 @@ export async function approvePoAmendmentHandler(c: any, sb: any): Promise<Respon
     // Release the lease so a retry is clean.
     await sb.from('po_amendments').update({ apply_lease_token: null, apply_lease_expires_at: null })
       .eq('id', id).eq('version', applyVersion + 1).eq('apply_lease_token', applyToken);
+    if (e instanceof InactiveSkuError) return c.json(e.body, 409);
     if (e instanceof ReceivedFloorError) {
       return c.json({
         error: 'received_floor', code: e.code, poItemId: e.poItemId,
