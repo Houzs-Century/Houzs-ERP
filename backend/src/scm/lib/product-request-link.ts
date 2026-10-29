@@ -55,3 +55,31 @@ export async function markRequestPcoIssued(
   });
   return { claimed: true };
 }
+
+/** A cancelled Purchase Order lets go of the request it was raised from: the
+    request reads APPROVED again, with no po_id, so the Purchaser can raise
+    another order from it (2990-0027 — PDR2610-009 stayed "PO raised" on a
+    cancelled PO2610-068 and nothing could be raised again). Guarded on the
+    request still naming this PO. A reopened PO does not take it back. */
+export async function releaseRequestFromCancelledPo(
+  sb: SupabaseClient,
+  companyId: number,
+  po: { id: string; po_number: string | null },
+  actor: AuditActor | null | undefined,
+): Promise<void> {
+  const { data, error } = await sb.from('product_requests').select('id, request_no')
+    .eq('company_id', companyId).eq('po_id', po.id).eq('status', 'PO_ISSUED');
+  if (error) return;
+  for (const r of (data ?? []) as Row[]) {
+    const { data: moved } = await sb.from('product_requests')
+      .update({ status: 'APPROVED', po_id: null, updated_at: new Date().toISOString() })
+      .eq('company_id', companyId).eq('id', r.id).eq('po_id', po.id).eq('status', 'PO_ISSUED').select('id').maybeSingle();
+    if (!moved) continue;
+    await recordEntityAudit(sb, {
+      entityType: 'PRODUCT_REQUEST', entityId: String(r.id), entityDocNo: String(r.request_no), action: 'UPDATE',
+      actor, companyId, statusSnapshot: 'APPROVED',
+      fieldChanges: compactChanges([fieldChange('status', 'PO_ISSUED', 'APPROVED'), fieldChange('poNumber', po.po_number, null)]),
+      note: `${po.po_number ?? 'Purchase Order'} cancelled`,
+    });
+  }
+}
