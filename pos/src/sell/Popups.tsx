@@ -9,7 +9,8 @@ import { Modal, NumKeys } from "./Modal";
 const rm = (sen: number) => (sen / 100).toFixed(2);
 
 /* ── P3 ─────────────────────────────────────────────────────────────────── */
-export function ItemSearch({ items, initial, onPick, onClose }: { items: readonly BundleItem[]; initial: string; onPick: (i: BundleItem) => void; onClose: () => void }) {
+/** `browse`: opened from View All Items, so the title says how many there are and the box only narrows the list. */
+export function ItemSearch({ items, initial, browse, onPick, onClose }: { items: readonly BundleItem[]; initial: string; browse: boolean; onPick: (i: BundleItem) => void; onClose: () => void }) {
   const [q, setQ] = useState(initial);
   const [manual, setManual] = useState(false);
   const [sel, setSel] = useState(0);
@@ -17,13 +18,13 @@ export function ItemSearch({ items, initial, onPick, onClose }: { items: readonl
   useEffect(() => setSel(0), [q]);
   const pick = (i: BundleItem | undefined) => { if (i) onPick(i); };
   return (
-    <Modal title="Item search" onClose={onClose} width={720}>
+    <Modal title={browse ? `All items (${items.length})` : "Item search"} onClose={onClose} width={720}>
       <div className="row">
         <input
           className="kbd-input grow"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Barcode, item code or name; leave empty to see every item"
+          placeholder={browse ? "Type to narrow the list" : "Barcode, item code or name; leave empty to see every item"}
           inputMode={manual ? "numeric" : "text"}
           onKeyDown={(e) => {
             if (e.key === "ArrowDown") { e.preventDefault(); setSel((s) => Math.min(rows.length - 1, s + 1)); }
