@@ -7,7 +7,7 @@ import type { User } from '@supabase/supabase-js';
 
 import { fakeSb, type Row } from '../lib/fake-postgrest';
 import type { Env, Variables } from '../env';
-import { cascadePoSupplierDate, recordedSupplierDateChanges } from '../lib/po-supplier-date-cascade';
+import { cascadePoSupplierDate, supplierDatePatchGate } from '../lib/po-supplier-date-cascade';
 
 const sb = fakeSb({
   purchase_orders: [{
@@ -54,11 +54,25 @@ describe('PATCH header: recorded supplier dates', () => {
   });
 });
 
-describe('recordedSupplierDateChanges', () => {
-  it('flags only filled slots whose value differs', () => {
+describe('supplierDatePatchGate', () => {
+  it('flags only filled slots whose value differs; lists newly filled slots', () => {
     const before = { supplier_delivery_date_2: '2026-10-14', supplier_delivery_date_3: null };
-    expect(recordedSupplierDateChanges(before, { supplier_delivery_date_2: '2026-10-14', supplier_delivery_date_3: '2026-10-21' })).toEqual([]);
-    expect(recordedSupplierDateChanges(before, { supplier_delivery_date_2: null })).toEqual([2]);
+    const ok = supplierDatePatchGate(before, { supplier_delivery_date_2: '2026-10-14', supplier_delivery_date_3: '2026-10-21' });
+    expect(ok.refusal).toBeNull();
+    expect(ok.fill).toEqual(['supplier_delivery_date_3']);
+    expect(supplierDatePatchGate(before, { supplier_delivery_date_2: null }).refusal?.slots).toEqual([2]);
+  });
+});
+
+describe('PATCH header: concurrent fill of the same empty slot', () => {
+  it('the second writer gets 409 and does not overwrite', async () => {
+    sb.tables.purchase_orders[0]!.supplier_delivery_date_4 = null;
+    // Simulates A winning between B's read and B's write: B's update is conditional on Date 4 still NULL.
+    const a = await patch({ supplierDeliveryDate4: '2026-11-01' });
+    expect(a.status).toBe(200);
+    const b = await patch({ supplierDeliveryDate4: '2026-11-09' });
+    expect(b.status).toBe(409);
+    expect(po().supplier_delivery_date_4).toBe('2026-11-01');
   });
 });
 

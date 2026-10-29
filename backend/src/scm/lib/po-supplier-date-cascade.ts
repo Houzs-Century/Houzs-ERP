@@ -47,17 +47,24 @@ export function pickSupplierDateSlot(
     : { ok: false, reason: `Supplier Date ${requested} already recorded (${existing}).` };
 }
 
-/* HC-0090: the header PATCH may not change or clear a slot that already holds a
-   date. Same value re-sent (the editor posts every field) is not a change. */
-export function recordedSupplierDateChanges(
-  before: Record<string, unknown>,
-  updates: Record<string, unknown>,
-): SupplierDateSlot[] {
+/* HC-0090: the header PATCH may fill an empty Date 2/3/4 but not change or clear
+   a filled one (same value re-sent is not a change). `fill` = slots this PATCH
+   newly fills; the write is made conditional on them still being NULL so two
+   users filling the same slot cannot overwrite each other. */
+export function supplierDatePatchGate(before: Record<string, unknown>, updates: Record<string, unknown>) {
   const day = (v: unknown): string => (v == null ? '' : String(dayOrRaw(v)).slice(0, 10));
-  return ([2, 3, 4] as const).filter((s) => {
-    const col = SUPPLIER_DATE_SLOT_COL[s];
-    return col in updates && day(before[col]) !== '' && day(updates[col]) !== day(before[col]);
-  });
+  const slots = ([2, 3, 4] as const).filter((s) => SUPPLIER_DATE_SLOT_COL[s] in updates);
+  const changed = slots.filter((s) => day(before[SUPPLIER_DATE_SLOT_COL[s]]) !== '' && day(updates[SUPPLIER_DATE_SLOT_COL[s]]) !== day(before[SUPPLIER_DATE_SLOT_COL[s]]));
+  const fill = slots.filter((s) => day(before[SUPPLIER_DATE_SLOT_COL[s]]) === '' && day(updates[SUPPLIER_DATE_SLOT_COL[s]]) !== '').map((s) => SUPPLIER_DATE_SLOT_COL[s]);
+  return {
+    refusal: changed.length === 0 ? null : {
+      error: 'supplier_date_recorded', slots: changed,
+      reason: `Supplier Date ${changed.join(', ')} already recorded; it cannot be changed. Record the next empty date instead.`,
+    },
+    fill,
+    raced: { error: 'supplier_date_recorded', slots: fill, reason: 'Someone else recorded that Supplier Date just now. Reload and try again.' },
+    onlyIfEmpty: <T extends { is: (c: string, v: null) => T }>(q: T): T => fill.reduce((acc, col) => acc.is(col, null), q),
+  };
 }
 
 export async function cascadePoSupplierDate(

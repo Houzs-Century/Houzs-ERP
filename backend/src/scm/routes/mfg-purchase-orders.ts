@@ -42,7 +42,7 @@ import { resolveMaintenanceConfigForSupplier, poVariantPricingInput } from '../l
 import { readMfgProductBindings } from '../lib/supplier-bindings';
 import { loadOutstandingSoLines } from '../lib/outstanding-so-lines';
 import { poHasDownstream } from '../lib/downstream-lock';
-import { cascadePoSupplierDate, pickSupplierDateSlot, recordedSupplierDateChanges, SUPPLIER_DATE_SLOT_COL, type SupplierDateSlot } from '../lib/po-supplier-date-cascade';
+import { cascadePoSupplierDate, pickSupplierDateSlot, supplierDatePatchGate, SUPPLIER_DATE_SLOT_COL, type SupplierDateSlot } from '../lib/po-supplier-date-cascade';
 import { description2InputsChanged } from '../lib/po-line-description2';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { todayMyt } from '../lib/my-time';
@@ -2496,21 +2496,14 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
   if (lockedChanges.length > 0 && (await poHasDownstream(sb, id))) {
     return c.json(poIdentityLockedRefusal(lockedChanges), 409);
   }
-  /* HC-0090: a recorded Supplier Date 2/3/4 is history; the editor may fill an
-     empty slot but not rewrite or clear a filled one. */
-  const recordedHit = recordedSupplierDateChanges(before, updates);
-  if (recordedHit.length > 0) {
-    return c.json({
-      error: 'supplier_date_recorded',
-      slots: recordedHit,
-      reason: `Supplier Date ${recordedHit.join(', ')} already recorded; it cannot be changed. Record the next empty date instead.`,
-    }, 409);
-  }
+  const sdGate = supplierDatePatchGate(before, updates); // HC-0090
+  if (sdGate.refusal) return c.json(sdGate.refusal, 409);
   /* A cleared Supplier Date 2/3/4 posts "", which Postgres rejects on a date
      column, so every PO that left one blank failed to save (production,
      2026-08-17). It mutates `updates`, so the audit below records the NULL. */
-  const { data, error } = await scopeToCompanyId(sb.from('purchase_orders').update(coerceEmptyDates(updates)).eq('id', id), co.companyId).select('*').single();
+  const { data, error } = await sdGate.onlyIfEmpty(scopeToCompanyId(sb.from('purchase_orders').update(coerceEmptyDates(updates)).eq('id', id), co.companyId)).select('*').maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
+  if (!data) return sdGate.fill.length ? c.json(sdGate.raced, 409) : c.json(NOT_THIS_COMPANY, 404);
 
   {
     const auditPatch: Record<string, unknown> = {};
