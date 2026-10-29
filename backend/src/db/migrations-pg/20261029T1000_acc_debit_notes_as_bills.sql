@@ -8,6 +8,11 @@
 --     ALTER TABLE scm.acc_debtor_bills DROP CONSTRAINT IF EXISTS acc_debtor_bills_doc_kind_check;
 --     ALTER TABLE scm.acc_debtor_bills DROP COLUMN IF EXISTS doc_kind;
 --   GRANTS: none — the columns ride the tables' existing privileges.
+-- Verified against: PRODUCTION, inside one transaction ROLLED BACK — this file run by
+--   backend/scripts/try-migration-dn.mjs (branch acc/commission-check, run-script.yml
+--   run 40807969369, 2026-10-29): both columns text NOT NULL DEFAULT 'INV', both
+--   CHECKs read back; all 1,395 AP invoices and 19 debtor bills read 'INV'; a row of
+--   each moved to 'DN' and 'XX' refused; nothing left after the rollback.
 --
 -- WHAT THIS CHANGES, and why it is safe to run against production: one column on
 -- each of two tables, NOT NULL with the constant default 'INV' (every existing row
