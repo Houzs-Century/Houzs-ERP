@@ -1767,21 +1767,6 @@
         null
       ],
       [
-        39,
-        1,
-        170,
-        "Event Complete Image",
-        "After event completes",
-        null,
-        1,
-        6,
-        0,
-        null,
-        0,
-        null,
-        null
-      ],
-      [
         40,
         1,
         180,
@@ -2041,21 +2026,6 @@
         2,
         160,
         "Exchange List",
-        "After event completes",
-        null,
-        1,
-        13,
-        0,
-        null,
-        0,
-        null,
-        null
-      ],
-      [
-        59,
-        2,
-        170,
-        "Event Complete Image",
         "After event completes",
         null,
         1,

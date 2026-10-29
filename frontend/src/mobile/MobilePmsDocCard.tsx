@@ -260,7 +260,6 @@ export const SALES_DOC_TILES: ReadonlyArray<DocTile> = [
   // compulsory per-photo remark.
   { label: "Defect Item Setup", match: /^defect (list|item) setup/i, requirePhotoRemark: true },
   { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, requirePhotoRemark: true },
-  { label: "Event Complete Image", match: /^event complete image/i },
 ];
 
 // Match BOTH title families — live rows are "Defect Item …", not
