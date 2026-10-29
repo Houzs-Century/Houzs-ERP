@@ -71,10 +71,10 @@ export async function releaseRequestFromCancelledPo(
     .eq('company_id', companyId).eq('po_id', po.id).eq('status', 'PO_ISSUED');
   if (error) return;
   for (const r of (data ?? []) as Row[]) {
-    const { data: moved } = await sb.from('product_requests')
+    const { data: moved, error: mErr } = await sb.from('product_requests')
       .update({ status: 'APPROVED', po_id: null, updated_at: new Date().toISOString() })
       .eq('company_id', companyId).eq('id', r.id).eq('po_id', po.id).eq('status', 'PO_ISSUED').select('id').maybeSingle();
-    if (!moved) continue;
+    if (mErr || !moved) continue;
     await recordEntityAudit(sb, {
       entityType: 'PRODUCT_REQUEST', entityId: String(r.id), entityDocNo: String(r.request_no), action: 'UPDATE',
       actor, companyId, statusSnapshot: 'APPROVED',
