@@ -48,7 +48,8 @@ describe('plates and who took a DO', () => {
   });
 
   test("the four regions: the books' own split, Singapore by its state box or its address", () => {
-    const at = (state: string | null, city: string | null = null, postcode: string | null = null) => regionOfDo({ state, city, postcode });
+    const at = (state: string | null, city: string | null = null, postcode: string | null = null, address: string | null = null) =>
+      regionOfDo({ state, city, postcode, address });
     expect(at('PULAU PINANG')).toEqual({ code: 'PG', noState: false });
     for (const s of ['Perlis', 'Kedah', 'Kelantan', 'Terengganu', 'Pahang']) expect(at(s).code).toBe('PG');
     for (const s of ['Selangor', 'W.P. Kuala Lumpur', 'Putrajaya', 'Melaka', 'Johor', 'Negeri Sembilan', 'Perak']) expect(at(s).code).toBe('KL');
@@ -57,6 +58,10 @@ describe('plates and who took a DO', () => {
     expect(at(null, '099206 SINGAPORE')).toEqual({ code: 'SG', noState: false });
     expect(at('', null, '640419')).toEqual({ code: 'SG', noState: false });
     expect(at(null, 'Ayer Keroh', '75450')).toEqual({ code: 'KL', noState: true });
+    // September 2026: Singapore orders keyed with no state — SINGAPORE only on the order's third line.
+    expect(at(null, null, null, 'BLK 511 woodlands Dr14 | #08-51 | 730511 SINGAPORE')).toEqual({ code: 'SG', noState: false });
+    expect(at('Selangor', null, null, 'No 3, Jalan Singapore')).toEqual({ code: 'KL', noState: false }); // a Malaysian state named wins
+    expect(at(null, null, null, 'Lot 100234, Jalan Kebun')).toEqual({ code: 'KL', noState: true });      // a long number in the lines is no postcode
   });
 
   test('a share is whole sen and adds back up', () => {

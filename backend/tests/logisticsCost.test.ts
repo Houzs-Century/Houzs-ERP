@@ -100,6 +100,23 @@ describe('GET /acc-events/logistics', () => {
     expect(b.eventsProblem).toBe('the event books are not reachable from here');
   });
 
+  test("a Singapore order keyed with no state is SGD by its order's address lines; one saying nothing is KL's others", async () => {
+    const sb = world({
+      delivery_orders: [
+        { id: 'd5', company_id: CO, do_number: 'HC-DO-2609-152', so_doc_no: 'HC-SO-5', status: 'LOADED', state: null, address1: 'BLK 511 woodlands Dr14', address2: '#08-51', do_date: '2026-10-08', customer_delivery_date: null },
+        { id: 'd6', company_id: CO, do_number: 'HC-DO-2609-017', so_doc_no: 'HC-SO-6', status: 'LOADED', state: null, address1: 'self pick up', address2: '00000 Tbc', do_date: '2026-10-09', customer_delivery_date: null },
+      ],
+      mfg_sales_orders: [
+        { company_id: CO, doc_no: 'HC-SO-5', address1: 'BLK 511 woodlands Dr14', address2: '#08-51', address3: '730511 SINGAPORE', address4: null },
+        { company_id: CO, doc_no: 'HC-SO-6', address1: 'self pick up', address2: '00000 Tbc', address3: null, address4: null },
+      ],
+    });
+    const res = await run(logisticsCostHandler, ctx(sb, { query: { from: '2026-10-01', to: '2026-10-31' } }));
+    expect(res.status).toBe(200);
+    expect(res.body.regions.map((g: any) => [g.code, g.dos])).toEqual([['PG', 0], ['KL', 1], ['EM', 0], ['SG', 1]]);
+    expect(res.body.gaps.dosNoState).toBe(1);
+  });
+
   test('a From after the To is refused', async () => {
     const res = await run(logisticsCostHandler, ctx(world(), { query: { from: '2026-10-31', to: '2026-10-01' } }));
     expect(res.status).toBe(400);
