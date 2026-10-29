@@ -9,7 +9,8 @@ import { Modal, NumKeys } from "./Modal";
 const rm = (sen: number) => (sen / 100).toFixed(2);
 
 /* ── P3 ─────────────────────────────────────────────────────────────────── */
-export function ItemSearch({ items, initial, onPick, onClose }: { items: readonly BundleItem[]; initial: string; onPick: (i: BundleItem) => void; onClose: () => void }) {
+/** `browse`: opened from View All Items, so the title says how many there are and the box only narrows the list. */
+export function ItemSearch({ items, initial, browse, onPick, onClose }: { items: readonly BundleItem[]; initial: string; browse: boolean; onPick: (i: BundleItem) => void; onClose: () => void }) {
   const [q, setQ] = useState(initial);
   const [manual, setManual] = useState(false);
   const [sel, setSel] = useState(0);
@@ -17,13 +18,13 @@ export function ItemSearch({ items, initial, onPick, onClose }: { items: readonl
   useEffect(() => setSel(0), [q]);
   const pick = (i: BundleItem | undefined) => { if (i) onPick(i); };
   return (
-    <Modal title="Item search" onClose={onClose} width={720}>
+    <Modal title={browse ? `All items (${items.length})` : "Item search"} onClose={onClose} width={720}>
       <div className="row">
         <input
           className="kbd-input grow"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Barcode, item code or name (2+ characters)"
+          placeholder={browse ? "Type to narrow the list" : "Barcode, item code or name; leave empty to see every item"}
           inputMode={manual ? "numeric" : "text"}
           onKeyDown={(e) => {
             if (e.key === "ArrowDown") { e.preventDefault(); setSel((s) => Math.min(rows.length - 1, s + 1)); }
@@ -34,7 +35,7 @@ export function ItemSearch({ items, initial, onPick, onClose }: { items: readonl
         <button type="button" className="btn" onClick={() => setManual((v) => !v)}>{manual ? "Keyboard" : "Enter barcode manually"}</button>
       </div>
       <div className="search-rows">
-        {rows.length === 0 && <div className="muted" style={{ padding: 12 }}>{q.trim().length < 2 ? "Type at least 2 characters." : "No item matches."}</div>}
+        {rows.length === 0 && <div className="muted" style={{ padding: 12 }}>{q.trim().length === 0 ? "No items on this device yet. Refresh catalog in Settings." : q.trim().length < 2 ? "Type at least 2 characters, or clear the box to see every item." : "No item matches."}</div>}
         {rows.map((i, idx) => (
           <button key={i.id} type="button" className={`search-row${idx === sel ? " sel" : ""}${i.stock_qty <= 0 ? " out" : ""}`} onClick={() => pick(i)} onMouseEnter={() => setSel(idx)}>
             <span className="grow">
