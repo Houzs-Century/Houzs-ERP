@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { repairHeldQty, editLineCapRefusal } from '../src/scm/routes/purchase-returns';
+import { repairHeldQty, editLineCapRefusal, addLineCapRefusal } from '../src/scm/lib/purchase-return-repair-held';
 import { capVerdict } from '../src/scm/lib/qty-cap';
 
 const fakeSb = (lines: unknown[], prs: unknown[]) => ({
@@ -92,14 +92,29 @@ describe('editLineCapRefusal', () => {
   });
 });
 
+describe('addLineCapRefusal', () => {
+  const lines = [{ id: 'L', grn_item_id: 'g', qty_returned: 1, purchase_return_id: 'P' }];
+  const prs = [{ id: 'P', status: 'POSTED', kind: 'REPAIR' }];
+  it('GRN qty 1 with a live REPAIR line: a second return of 1 is refused', async () => {
+    const r = await addLineCapRefusal(editSb({ kind: 'REPAIR', accepted: 1, lines, prs }), { grnItemId: 'g', qtyReturned: 1 });
+    expect(r).toMatchObject({ error: 'qty_exceeds_remaining', remaining: 0 });
+  });
+  it('no REPAIR line: allowed', async () => {
+    expect(await addLineCapRefusal(editSb({ kind: null, accepted: 1, lines: [], prs: [] }), { grnItemId: 'g', qtyReturned: 1 })).toBeNull();
+  });
+});
+
 describe('route wiring', () => {
   const BE = readFileSync(resolve(__dirname, '../src/scm/routes/purchase-returns.ts'), 'utf8');
   it('edit-line uses editLineCapRefusal and answers cap_check_failed with 500', () => {
     expect(BE).toContain("const capLock = await editLineCapRefusal(sb, { prId, itemId, grnItemId, qtyReturned, prevQty });");
     expect(BE).toContain("c.json(capLock, capLock.error === 'cap_check_failed' ? 500 : 409)");
   });
+  it('add-line uses addLineCapRefusal and maps cap_check_failed to 500', () => {
+    expect(BE).toContain("const capLock = await addLineCapRefusal(sb, { grnItemId, qtyReturned });");
+  });
   it('every other cap binds the held map and refuses when it is null', () => {
-    for (const v of ['repairHeld', 'heldA', 'heldB', 'heldAdd']) {
+    for (const v of ['repairHeld', 'heldA', 'heldB']) {
       expect(BE).toMatch(new RegExp(String.raw`const ${v} = await repairHeldQty\([^\n]*\);\s*\n?\s*if \(!${v}\) `));
       expect(BE).toContain(`${v}.get(`);
     }
