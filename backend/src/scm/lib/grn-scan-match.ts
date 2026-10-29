@@ -534,6 +534,9 @@ const nameWords = (s: string | null | undefined): string[] => {
     ...[...up.matchAll(/([A-Z]{4,})-([A-Z0-9]{1,2})\b/g)].map((m) => `${m[1]}${m[2]}`),
   ];
 };
+// A joined word's base ("FLEXICAREC" -> "FLEXICARE"), only for the words nameWords joined.
+const joinedBase = (s: string | null | undefined): Map<string, string> =>
+  new Map([...(s ?? '').toUpperCase().matchAll(/([A-Z]{4,})-([A-Z0-9]{1,2})\b/g)].map((m) => [`${m[1]}${m[2]}`, m[1]]));
 
 /**
  * The one item code on a known PO that a delivery-order row names by product,
@@ -541,28 +544,43 @@ const nameWords = (s: string | null | undefined): string[] => {
  * code and name that no other item on the PO has ("BULWARK"; "HAPPI SLEEP
  * SOLITUDE" when only one Happi Sleep item is ordered). The row must print
  * every one of them, a printed word counting when it starts with the model
- * word (MATT / MATTRESS); words of the line's item group are not model words.
- * A hyphen suffix counts ("FLEXICARE-C" is not "FLEXICARE-S"). Exactly one item must qualify; an item with no model
+ * word (MATT / MATTRESS). Words of the line's item group are not model words,
+ * unless that leaves no item with a model word (AKEMI BULWARK MATTRESS / PILLOW:
+ * the group word is then the only difference). A hyphen suffix ("FLEXICARE-C")
+ * is a model word only while another item has the same base without it
+ * ("FLEXICARE-S"); a lone ECOZONE-C matches a row that leaves the -C out.
+ * Exactly one item must qualify; an item with no model
  * word of its own (three MAYBATCH sofa pieces) never does. "Happi Sleep Easy
  * Sleep Pillow" lacks SOLITUDE, so it is not the Solitude mattress.
  */
 export function nameMatchItem(printed: string | null | undefined, poLines: OpenPoLine[]): string | null {
   const row = nameWords(printed);
   if (row.length === 0) return null;
+  const toks = (printed ?? '').toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
   const items = [...new Set(poLines.map((l) => l.itemCode))];
-  const wordsOf = new Map(items.map((ic) => {
-    const lines = poLines.filter((l) => l.itemCode === ic);
-    const names = lines.map((l) => `${ic} ${l.materialName ?? ''}`).join(' ');
-    // MATT / MATTRESS under group MATTRESS: NICE FUTURE prints "ERGOTEX ECOZONE-C - W183 X L190" with no MATT.
-    const group = lines.flatMap((l) => nameWords(l.itemGroup)).filter((g) => g.length >= 4);
-    const generic = (w: string): boolean => group.some((g) => g.startsWith(w) || w.startsWith(g));
-    return [ic, new Set(nameWords(names).filter((w) => /^[A-Z]{4,}$/.test(w) && !generic(w)))];
-  }));
-  const hits = items.filter((ic) => {
-    const model = [...wordsOf.get(ic)!].filter((w) => items.every((o) => o === ic || !wordsOf.get(o)!.has(w)));
-    return model.length > 0 && model.every((w) => row.some((r) => r.startsWith(w)));
-  });
-  return hits.length === 1 ? hits[0] : null;
+  const pick = (keepGroup: boolean): string | null => {
+    const parts = new Map(items.map((ic) => {
+      const lines = poLines.filter((l) => l.itemCode === ic);
+      const names = lines.map((l) => `${ic} ${l.materialName ?? ''}`).join(' ');
+      // MATT / MATTRESS under group MATTRESS: NICE FUTURE prints "ERGOTEX ECOZONE-C - W183 X L190" with no MATT.
+      const group = lines.flatMap((l) => nameWords(l.itemGroup)).filter((g) => g.length >= 4);
+      const generic = (w: string): boolean => !keepGroup && group.some((g) => g.startsWith(w) || w.startsWith(g));
+      const bases = joinedBase(names);
+      const words = nameWords(names).filter((w) => /^[A-Z]{4,}$/.test(w) && !generic(w));
+      return [ic, { words: new Set(words), bases }];
+    }));
+    const hits = items.filter((ic) => {
+      const mine = parts.get(ic)!;
+      const model = [...mine.words].filter((w) => items.every((o) => o === ic || !parts.get(o)!.words.has(w)))
+        // a suffix word only tells items apart while another item has the base without it
+        .filter((w) => !mine.bases.has(w) || items.some((o) => o !== ic && parts.get(o)!.words.has(mine.bases.get(w)!)));
+      // a row printing another suffix after the base ("FLEXICARE-C" or "FLEXICARE C" for the -S item) is not this item
+      const clash = [...mine.bases].some(([w, base]) => toks.some((t, i) => t === base && (toks[i + 1] ?? '').length >= 1 && toks[i + 1].length <= 2 && base + toks[i + 1] !== w));
+      return !clash && model.length > 0 && model.every((w) => row.some((r) => r.startsWith(w)));
+    });
+    return hits.length === 1 ? hits[0] : null;
+  };
+  return pick(false) ?? pick(true);
 }
 
 const soKey = (v: string | null | undefined): string | null => /SO-?0*(\d{4,})\b/i.exec(v ?? '')?.[1] ?? null;
