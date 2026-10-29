@@ -15,7 +15,7 @@ import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { scopeToCompany, activeCompanyId, type CompanyScopeCtx } from '../lib/companyScope';
-import { cachedSwr, writeSwr } from '../lib/kv-swr';
+import { cachedSwr, writeSwr, bustSwrPrefix } from '../lib/kv-swr';
 import { MRP_REFRESH_COMPANY_IDS } from '../lib/mrp-snapshot';
 import { getSupabaseService } from '../../db/supabase';
 import type { Env as WorkerEnv } from '../../types';
@@ -63,6 +63,10 @@ export const PROCOV_HARD_SECONDS = 2 * 60 * 60;
 export function procurementOverviewKey(companyId: number, p: ProcurementOverviewParams): string {
   return `swr:procov:v1:${companyId}:${p.today}:${p.from}:${p.to}:${p.dueTo}:${p.basis}:${p.scope}`;
 }
+
+/** Every cached view of one company's report: the lead-time settings are baked into it, so a settings write drops them all. */
+export const bustProcurementOverview = (kv: KVNamespace | undefined, companyId: number) =>
+  bustSwrPrefix(kv, `swr:procov:v1:${companyId}:`);
 
 procurementOverview.get('/', async (c) => {
   const p = procurementOverviewParams((k) => c.req.query(k), todayMyt());
