@@ -193,7 +193,7 @@ describe('every page, not the screen page', () => {
       pos.push(p);
       lines.push(line(p));
     }
-    const grns = [{ id: 'grn-1', purchase_order_id: pos[0]!.id, grn_number: 'HC-GR-000001', status: 'POSTED' }];
+    const grns = [{ id: 'grn-1', purchase_order_id: pos[0]!.id, grn_number: 'HC-GR-000001', status: 'POSTED', received_at: '2026-09-25' }];
     const { status, body } = await get(harness({ pos, lines, grns }, 1, 1_000), '?status=open');
     expect(status).toBe(200);
     expect(body.total).toBe(1_205);
@@ -202,7 +202,7 @@ describe('every page, not the screen page', () => {
     expect(body.truncated).toBe(false);
     const first = body.purchaseOrders.find((r) => r.id === pos[0]!.id)!;
     expect(first.has_children).toBe(true);
-    expect(first.transfer_to_grns).toEqual([{ id: 'grn-1', grnNumber: 'HC-GR-000001' }]);
+    expect(first.transfer_to_grns).toEqual([{ id: 'grn-1', grnNumber: 'HC-GR-000001', receivedAt: '2026-09-25' }]);
   });
 });
 

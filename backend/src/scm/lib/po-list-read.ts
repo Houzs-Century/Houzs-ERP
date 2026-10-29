@@ -192,7 +192,7 @@ export function filterPoList<Q>(q: Q, f: PoListFilters, c: CompanyScopeCtx, vali
   return out as unknown as Q;
 }
 
-type GrnRow = { id: string; purchase_order_id: string | null; grn_number: string | null };
+type GrnRow = { id: string; purchase_order_id: string | null; grn_number: string | null; received_at: string | null };
 type GrnReader = {
   from(table: 'grns'): {
     select(cols: string): {
@@ -211,7 +211,7 @@ type GrnReader = {
 
 type PoItemRow = { id: string; purchase_order_id: string | null };
 type GrnItemRow = { purchase_order_item_id: string | null; grn_id: string };
-type GrnStatusRow = { id: string; grn_number: string | null; status: string | null };
+type GrnStatusRow = { id: string; grn_number: string | null; status: string | null; received_at: string | null };
 /* The `.from(t).select(c).in(col, vals).order(col, opts).range(from, to)` shape
    the extra line-link reads use — the GrnReader above carries an extra `.neq`. */
 type PlainInReader<Row> = {
@@ -234,21 +234,23 @@ type PlainInReader<Row> = {
    and a GRN already shown stays shown. Header rows are pre-filtered
    non-cancelled; line rows carry status so a cancelled receipt is dropped here.
    Pure so it is unit-testable without a DB. */
+export type PoGrnRef = { id: string; grnNumber: string; receivedAt: string | null };
+
 export function mergePoGrnLinks(
-  headerLinks: ReadonlyArray<{ poId: string; grnId: string; grnNumber: string | null }>,
-  lineLinks: ReadonlyArray<{ poId: string; grnId: string; grnNumber: string | null; cancelled: boolean }>,
-): { childIds: Set<string>; grnsByPo: Map<string, Array<{ id: string; grnNumber: string }>> } {
+  headerLinks: ReadonlyArray<{ poId: string; grnId: string; grnNumber: string | null; receivedAt?: string | null }>,
+  lineLinks: ReadonlyArray<{ poId: string; grnId: string; grnNumber: string | null; receivedAt?: string | null; cancelled: boolean }>,
+): { childIds: Set<string>; grnsByPo: Map<string, PoGrnRef[]> } {
   const childIds = new Set<string>();
-  const grnsByPo = new Map<string, Array<{ id: string; grnNumber: string }>>();
-  const add = (poId: string, grnId: string, grnNumber: string | null) => {
+  const grnsByPo = new Map<string, PoGrnRef[]>();
+  const add = (poId: string, grnId: string, grnNumber: string | null, receivedAt: string | null) => {
     childIds.add(poId);
     if (!grnNumber) return;
     const arr = grnsByPo.get(poId) ?? [];
-    if (!arr.some((x) => x.id === grnId)) arr.push({ id: grnId, grnNumber });
+    if (!arr.some((x) => x.id === grnId)) arr.push({ id: grnId, grnNumber, receivedAt });
     grnsByPo.set(poId, arr);
   };
-  for (const h of headerLinks) add(h.poId, h.grnId, h.grnNumber);
-  for (const l of lineLinks) if (!l.cancelled) add(l.poId, l.grnId, l.grnNumber);
+  for (const h of headerLinks) add(h.poId, h.grnId, h.grnNumber, h.receivedAt ?? null);
+  for (const l of lineLinks) if (!l.cancelled) add(l.poId, l.grnId, l.grnNumber, l.receivedAt ?? null);
   return { childIds, grnsByPo };
 }
 
@@ -256,7 +258,8 @@ export function mergePoGrnLinks(
    the non-cancelled GRNs each PO was received into. Powers both `has_children`
    (the list hides Edit / Cancel on a downstream-locked PO) and the "GRN No"
    column (owner 2026-07-02); `id` rides along because GRN detail routes by UUID
-   (owner 2026-07-31). The GRN read carries no company predicate of its own: it
+   (owner 2026-07-31), `receivedAt` feeds the "GRN Date" column (HC-0179: the
+   purchaser opened each GRN through the relation map just to read its date). The GRN read carries no company predicate of its own: it
    is keyed by PO ids that were themselves read under the company scope.
 
    A GRN belongs to a PO two ways, and both are real: the header FK, and — since
@@ -274,7 +277,7 @@ export async function stampPoListGrns<R extends { id: string }>(
   includeLineLinked: boolean,
 ): Promise<{
   error: string | null;
-  rows: Array<R & { has_children: boolean; transfer_to_grns: Array<{ id: string; grnNumber: string }> }>;
+  rows: Array<R & { has_children: boolean; transfer_to_grns: PoGrnRef[] }>;
 }> {
   if (rows.length === 0) {
     return { error: null, rows: rows.map((r) => ({ ...r, has_children: false, transfer_to_grns: [] })) };
@@ -285,7 +288,7 @@ export async function stampPoListGrns<R extends { id: string }>(
   const { data: headerRows, error: hErr } = await chunkIn<GrnRow>(poIds, (batch, from, to) =>
     (sb as GrnReader)
       .from('grns')
-      .select('id, purchase_order_id, grn_number')
+      .select('id, purchase_order_id, grn_number, received_at')
       .in('purchase_order_id', batch)
       .neq('status', 'CANCELLED')
       .order('grn_number', { ascending: true })
@@ -297,9 +300,9 @@ export async function stampPoListGrns<R extends { id: string }>(
   if (hErr) return { error: hErr.message, rows: [] };
   const headerLinks = headerRows
     .filter((g) => g.purchase_order_id)
-    .map((g) => ({ poId: g.purchase_order_id as string, grnId: g.id, grnNumber: g.grn_number }));
+    .map((g) => ({ poId: g.purchase_order_id as string, grnId: g.id, grnNumber: g.grn_number, receivedAt: g.received_at }));
 
-  let lineLinks: Array<{ poId: string; grnId: string; grnNumber: string | null; cancelled: boolean }> = [];
+  let lineLinks: Array<{ poId: string; grnId: string; grnNumber: string | null; receivedAt: string | null; cancelled: boolean }> = [];
   if (includeLineLinked) {
     // Every line of these POs → which PO it belongs to.
     const { data: itemRows, error: iErr } = await chunkIn<PoItemRow>(poIds, (batch, from, to) =>
@@ -335,21 +338,21 @@ export async function stampPoListGrns<R extends { id: string }>(
       ? await chunkIn<GrnStatusRow>(lineGrnIds, (batch, from, to) =>
           (sb as PlainInReader<GrnStatusRow>)
             .from('grns')
-            .select('id, grn_number, status')
+            .select('id, grn_number, status, received_at')
             .in('id', batch)
             .order('id', { ascending: true })
             .range(from, to))
       : { data: [] as GrnStatusRow[], error: null };
     if (lgErr) return { error: lgErr.message, rows: [] };
-    const grnMeta = new Map<string, { grnNumber: string | null; cancelled: boolean }>();
-    for (const g of headerRows) grnMeta.set(g.id, { grnNumber: g.grn_number, cancelled: false });
-    for (const g of lineGrnRows) if (!grnMeta.has(g.id)) grnMeta.set(g.id, { grnNumber: g.grn_number, cancelled: (g.status ?? '').toUpperCase() === 'CANCELLED' });
+    const grnMeta = new Map<string, { grnNumber: string | null; receivedAt: string | null; cancelled: boolean }>();
+    for (const g of headerRows) grnMeta.set(g.id, { grnNumber: g.grn_number, receivedAt: g.received_at, cancelled: false });
+    for (const g of lineGrnRows) if (!grnMeta.has(g.id)) grnMeta.set(g.id, { grnNumber: g.grn_number, receivedAt: g.received_at, cancelled: (g.status ?? '').toUpperCase() === 'CANCELLED' });
 
     lineLinks = grnItemRows.flatMap((r) => {
       const poId = r.purchase_order_item_id ? itemToPo.get(r.purchase_order_item_id) : undefined;
       const meta = r.grn_id ? grnMeta.get(r.grn_id) : undefined;
       if (!poId || !meta) return [];
-      return [{ poId, grnId: r.grn_id, grnNumber: meta.grnNumber, cancelled: meta.cancelled }];
+      return [{ poId, grnId: r.grn_id, grnNumber: meta.grnNumber, receivedAt: meta.receivedAt, cancelled: meta.cancelled }];
     });
   }
 
