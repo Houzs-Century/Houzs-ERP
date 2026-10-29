@@ -341,6 +341,7 @@ export const DeliveryPlanning = () => {
   const [sendMenuOpen, setSendMenuOpen] = useState(false);
   const [oneTimeOpen, setOneTimeOpen] = useState(false);
   const [bulkMenuOpen, setBulkMenuOpen] = useState(false);
+  if (bulkMenuOpen && sel.size === 0) setBulkMenuOpen(false);
   /* Ticked Service Case legs - they send their own Service Arrangement (HC-0171). */
   const selectedAssrRows = allOrders.filter((o) => isAssr(o) && sel.has(rowIdOf(o)));
   const sendCount = selectedSoDocNos().length + selectedAssrRows.length;
@@ -551,7 +552,9 @@ export const DeliveryPlanning = () => {
                 <div
                   role="menu"
                   style={{
-                    position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 41, minWidth: 240,
+                    /* Opens UP: the bulk bar floats at the screen's bottom edge, and a
+                       menu dropped below it showed only a sliver of Schedule (HC-0164). */
+                    position: 'absolute', bottom: 'calc(100% + 4px)', right: 0, zIndex: 41, minWidth: 240,
                     /* Short today, but cap + scroll so it can't fall off-screen either
                        if more bulk actions are added (twin of the Send Message menu). */
                     maxHeight: '70vh', overflowY: 'auto',

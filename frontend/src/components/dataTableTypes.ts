@@ -212,6 +212,9 @@ export interface DataTableProps<T, L = never> {
    *  persists it and feeds it back through `defaultSort`. Rows are draggable
    *  ONLY while no column sort is active — a column sort owns the order then. */
   onRowReorder?: (orderedKeys: string[]) => void;
+  /** Excel-style range on number cells (HC-0164): press a number cell and drag
+   *  (or Shift+click) to mark a block; a pill shows its Sum / Count / Average. */
+  cellRangeSum?: boolean;
   /** Show the "drag a column header here to group" banner (SCM DataGrid
    *  parity): the user groups by any number of columns, outermost first, and
    *  the grouping is saved with the layout. Overrides `groupBy` while set. */

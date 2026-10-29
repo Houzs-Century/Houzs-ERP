@@ -72,6 +72,8 @@ export type DataGridCompatProps<T> = {
   /** Enable drag-to-reorder; called with the new order of the displayed rows
    *  (only while no column sort is active). See DataTable.onRowReorder. */
   onRowReorder?: (orderedKeys: string[]) => void;
+  /** See DataTable.cellRangeSum. */
+  cellRangeSum?: boolean;
   onFilteredRowsChange?: (rows: T[]) => void;
   toolbar?: ReactNode;
   focusSearchNonce?: number;
@@ -213,6 +215,7 @@ export function DataGridCompat<T>({
   scrollToRow,
   initialRowLimit,
   onRowReorder,
+  cellRangeSum,
 }: DataGridCompatProps<T>) {
   const tableColumns = useMemo(() => columns.map(gridColumnToTableColumn), [columns]);
   const layoutSeeds = useMemo(
@@ -234,6 +237,7 @@ export function DataGridCompat<T>({
       getRowClassName={getRowClassName}
       initialRowLimit={initialRowLimit}
       onRowReorder={onRowReorder}
+      cellRangeSum={cellRangeSum}
       onFilteredRowsChange={onFilteredRowsChange}
       toolbarExtra={toolbar}
       clientSearch={
