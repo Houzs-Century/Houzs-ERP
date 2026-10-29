@@ -28,6 +28,7 @@ import { formatPhone } from '@2990s/shared/phone';
 import { DataGridCompat, type GridColumn, type GridContextMenuItem } from '../../../components/DataGridCompat';
 import { useConfirm } from './ConfirmDialog';
 import { useNotify } from './NotifyDialog';
+import { serviceNotify } from '../lib/dialog-service';
 import { Button } from '../../../components/Button';
 import { StockRemarkPill, stockRemarkSortFn } from '../../../components/StockRemarkPill';
 import { badgeFor } from '../lib/category-badges';
@@ -294,6 +295,14 @@ const BoardPendingContext = createContext<BoardPending>({ fields: false, sched: 
 type ScheduleMutate = SchedMutation['mutate'];
 type UpdateFieldsMutate = UpdateFieldsMutation['mutate'];
 
+/* The fields hook paints the pick at once and rolls it back on failure; say so,
+   or the cell just jumps back with no reason. */
+const fieldNotSaved = (err: unknown) => serviceNotify({
+  title: 'Not saved',
+  body: err instanceof Error ? err.message : 'Something went wrong.',
+  tone: 'error',
+});
+
 /* The "Delivery Status" column's inline editor — the customer-message follow-up
    workflow status (owner 2026-09-22), one of the 23 MESSAGE_STATUSES or blank.
    SO rows only; ASSR / DP / project rows show a dash (this is a customer-
@@ -316,7 +325,7 @@ function MessageStatusEditCell({ order, onUpdateFields }: { order: PlanningOrder
       onChange={(e) => {
         const next = e.target.value;
         if ((next || null) === (order.delivery_message_status ?? null)) return;
-        onUpdateFields({ type: 'so', id: order.so_doc_no, deliveryMessageStatus: next || null });
+        onUpdateFields({ type: 'so', id: order.so_doc_no, deliveryMessageStatus: next || null }, { onError: fieldNotSaved });
       }}
     >
       <option value="">—</option>
@@ -393,7 +402,7 @@ function AmendReasonEditCell({ order, onUpdateFields }: { order: PlanningOrder; 
       onChange={(e) => {
         const next = e.target.value;
         if ((next || null) === (order.amend_reason ?? null)) return;
-        onUpdateFields({ type: 'so', id: order.so_doc_no, amendReason: next || null });
+        onUpdateFields({ type: 'so', id: order.so_doc_no, amendReason: next || null }, { onError: fieldNotSaved });
       }}
     >
       <option value="">—</option>
