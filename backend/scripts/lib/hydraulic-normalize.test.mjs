@@ -86,16 +86,14 @@ test('normalizeVariantsHydraulic — fixes specials, preserves every other key',
   assert.deepEqual(r.next, { fabricCode: 'BF-01', divanHeight: '12"', specials: ['Hydraulic'] });
 });
 
-test('normalizeVariantsHydraulic — legacy singular, recorded and labels', () => {
+test('normalizeVariantsHydraulic — legacy singular and display labels', () => {
   const r = normalizeVariantsHydraulic({
     special: 'HYDRAULIC',
-    specialsRecorded: ['hydraulic'],
     specialLabels: ['HYDRAULIC', 'Nylon Fabric'],
   });
   assert.equal(r.changed, true);
   assert.deepEqual(r.next, {
     special: 'Hydraulic',
-    specialsRecorded: ['Hydraulic'],
     specialLabels: ['Hydraulic', 'Nylon Fabric'],
   });
 });

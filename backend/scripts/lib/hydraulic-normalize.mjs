@@ -55,9 +55,14 @@ export function normalizeSpecialsArray(arr) {
 /**
  * Normalize the hydraulic token wherever a Sales Order line's variant bag
  * carries it: the canonical `specials` array, the legacy singular `special`,
- * the read-only `specialsRecorded`, the display snapshot `specialLabels`, and a
- * `specialChoices` key (renamed to the proper form, merging if both exist).
- * Every non-hydraulic value, and every other key, is preserved untouched.
+ * the display snapshot `specialLabels`, and a `specialChoices` key (renamed to
+ * the proper form, merging if both exist). Every non-hydraulic value, and every
+ * other key, is preserved untouched.
+ *
+ * The recorded-only specials key is deliberately left alone — it is sacred
+ * (its own guard test forbids this file from even naming it, because it must
+ * never feed price or cost), and prod carries no HOUZS line whose hydraulic
+ * lives only there: all 50 carry it in `specials`.
  *
  * @returns {{ next: unknown, changed: boolean }}
  */
@@ -68,7 +73,7 @@ export function normalizeVariantsHydraulic(variants) {
   const next = { ...variants };
   let changed = false;
 
-  for (const key of ['specials', 'special', 'specialsRecorded', 'specialLabels']) {
+  for (const key of ['specials', 'special', 'specialLabels']) {
     const val = next[key];
     if (Array.isArray(val)) {
       const r = normalizeSpecialsArray(val);
