@@ -81,7 +81,7 @@ describe("projectStage — Driver Info tracks the keyed crew", () => {
     expect(st.currentIdx).toBeGreaterThan(idxOf("Driver Info"));
   });
 
-  it("is all done when the return doc is absent (pre-091 events) and the crew is keyed", () => {
+  it("reaches the final stage when the return doc is absent (pre-091 events) and the crew is keyed", () => {
     const items = readyEventItems.filter((i) => i.title !== "Stock In Transfer Record");
     const crew = '{"drivers":[{"name":"Abu"}]}';
     const st = projectStage(items, setupArrangedOf(crew, null), driverKeyedOf(crew), "2026-10-23", "2026-10-27");
