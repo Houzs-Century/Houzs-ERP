@@ -8,8 +8,12 @@
 --   Finance's rates, spreads and ticks are lost; the defaults read again.
 --   GRANTS: none to re-apply — like scm.acc_logistics_settings, the tables ride
 --   the scm schema's default privileges (service_role); this file grants nothing.
--- Verified against: PENDING — run on PRODUCTION inside one transaction ROLLED BACK
---   before merge (backend/scripts/try-logistics-pnl.mjs); the run is named here.
+-- Verified against: PRODUCTION, inside one transaction ROLLED BACK — this file run by
+--   backend/scripts/try-logistics-pnl.mjs (branch acc/logistics-pnl-check, run-script.yml
+--   run 40858635463, 2026-10-29), then GET /acc-events/logistics/pnl for September and
+--   October through the pgrest shim and d1Compat on the same transaction: the column
+--   and three tables created, read empty (every default), the P&L built over 349 and
+--   435 DOs, 22 and 25 setup / dismantle trips; nothing left.
 --
 -- WHAT THIS CHANGES, and why it is safe to run against production: one new column
 -- with a default on a small settings table, three new, empty tables. Nothing
