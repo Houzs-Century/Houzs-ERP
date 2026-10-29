@@ -175,7 +175,7 @@ const soLine = (over: Partial<Row>): Row => ({
 });
 // The cost the REAL engine resolves for a bedframe SKU from the seeded binding.
 const cost = (store: Record<string, Row[]>, itemCode: string) =>
-  deriveMfgPoUnitCost(fakeSb(store) as any, { supplierId: 'S1', itemCode, itemGroup: 'bedframe', variants: null });
+  deriveMfgPoUnitCost(fakeSb(store) as any, { supplierId: 'S1', companyId: 1, itemCode, itemGroup: 'bedframe', variants: null });
 
 describe('reviseBoundPo — REMOVE reconciles the orphaned PO line', () => {
   it('deletes the orphaned PO line and drops it from the PO total', async () => {
