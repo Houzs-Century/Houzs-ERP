@@ -191,6 +191,16 @@ const PatchBody = z.object({
 
 const COLS = 'id, branding, model_code, name, category, description, photo_url, allowed_options, default_variants, active, created_at, updated_at';
 
+/* The newly ticked compartments that have no SKU yet. Case-insensitive (HC-0176):
+   the pool says "Console Wooden" while the imported SKU is `9050-CONSOLE WOODEN`,
+   and the unique index on code is case-sensitive, so an exact-case check minted
+   a second SKU — the twin that shadows the real one in the scan's UPPER(code)
+   canon (20260930T1100_deactivate_upper_console_twins.sql). */
+export function compartmentsWithoutSku(added: string[], codePrefix: string, existingCodes: string[]): string[] {
+  const have = new Set(existingCodes.map((code) => code.toUpperCase()));
+  return added.filter((comp) => !have.has(`${codePrefix}-${comp}`.toUpperCase()));
+}
+
 // ── GET / ──────────────────────────────────────────────────────────────────
 export const listProductModelsHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   const supabase = c.get('supabase');
@@ -654,18 +664,25 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
       // `scm` schema. A raw createClient() here defaulted to `public`, where
       // this table is not, so every auto-create failed and was swallowed.
       const wantCodes = added.map((comp) => `${codePrefix}-${comp}`);
-      const { data: existing, error: existingErr } = await pgrestIn(supabase
-        .from('mfg_products')
-        .select('code'), 'code', wantCodes)
-        .eq('company_id', activeCompanyId(c));
-      if (existingErr) {
+      const [{ data: existing, error: existingErr }, { data: ofModel, error: ofModelErr }] = await Promise.all([
+        pgrestIn(supabase
+          .from('mfg_products')
+          .select('code'), 'code', wantCodes)
+          .eq('company_id', activeCompanyId(c)),
+        supabase
+          .from('mfg_products')
+          .select('code')
+          .eq('model_id', id)
+          .eq('company_id', activeCompanyId(c)),
+      ]);
+      for (const err of [existingErr, ofModelErr]) {
+        if (!err) continue;
         // eslint-disable-next-line no-console
-        console.error('[product-models] existing derived-code read failed:', (existingErr as { message?: unknown }).message ?? existingErr);
+        console.error('[product-models] existing derived-code read failed:', (err as { message?: unknown }).message ?? err);
       }
-      const have = new Set((existing ?? []).map((r) => (r as { code: string }).code));
+      const haveCodes = [...(existing ?? []), ...(ofModel ?? [])].map((r) => (r as { code: string }).code);
       const now = new Date().toISOString();
-      const rows = added
-        .filter((comp) => !have.has(`${codePrefix}-${comp}`))
+      const rows = compartmentsWithoutSku(added, codePrefix, haveCodes)
         .map((comp) => {
           const rand = (typeof crypto !== 'undefined' && crypto.randomUUID)
             ? crypto.randomUUID()
