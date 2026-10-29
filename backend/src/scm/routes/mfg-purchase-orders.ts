@@ -4327,10 +4327,8 @@ export const cancelPurchaseOrderHandler = async (c: any) => {
   } catch { /* best-effort — PO already cancelled, don't fail on counter recount */ }
 
   const { data: after } = await scopeToCompanyId(supabase
-    .from('purchase_orders')
-    .select('id, status, cancelled_at, po_number')
-    .eq('id', id), co.companyId)
-    .maybeSingle();
+    .from('purchase_orders').select('id, status, cancelled_at, po_number')
+    .eq('id', id), co.companyId).maybeSingle();
 
   /* ERP -> AutoCount cancel. Reached only for a PO the downstream lock let
      through (poHasDownstream, checked above) — the same rule AutoCount applies
