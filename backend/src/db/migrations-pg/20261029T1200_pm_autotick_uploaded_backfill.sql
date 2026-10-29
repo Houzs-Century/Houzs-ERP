@@ -18,6 +18,14 @@
 -- completed_by is filled from the latest live attachment's uploader so the
 -- history reads like a normal tick; completed_at/updated_at use the same UTC
 -- text format as the rest of the table.
+--
+-- REVERSAL: no safe blanket undo. Once ticked, a backfilled row is
+-- indistinguishable from one a user completed by hand (same status/
+-- completed_at/completed_by shape), and both this migration and the live
+-- upload hook now tick on the same condition, so reverting would also undo
+-- genuine completions. If a specific project was ticked in error, hand-revert
+-- its rows: UPDATE project_checklist SET status='pending', completed_at=NULL,
+-- completed_by=NULL WHERE project_id = <id> AND id IN (<the rows>).
 UPDATE project_checklist pc
    SET status       = 'done',
        completed_at = COALESCE(
