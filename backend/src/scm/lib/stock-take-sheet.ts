@@ -130,8 +130,8 @@ export const matchSheetRows = (
 };
 
 export const SHEET_READ_PROMPT = `This is a photo (or scan) of ONE page of a printed STOCK TAKE count sheet.
-Its table columns are: #, Item, Description, Variant, System, Counted, Rack, Notes.
-The printed parts are typed. The counter has HANDWRITTEN numbers in the Counted column and rack labels (like "L5.1", "R12.2") in the Rack column.
+Its table columns are: #, Item, Description, Variant, PO, System, Counted, Rack, Notes (a sheet may have no PO or no System column).
+The printed parts are typed; the PO column is printed text like "HC-PO-010089 (1)", never a count. The counter has HANDWRITTEN numbers in the Counted column and rack labels (like "L5.1", "R12.2") in the Rack column.
 
 Return ONLY a JSON object, no prose:
 {"takeNo": string | null, "rows": [{"no": number, "itemCode": string, "counted": number | null, "rack": string | null, "unclear": boolean}]}
