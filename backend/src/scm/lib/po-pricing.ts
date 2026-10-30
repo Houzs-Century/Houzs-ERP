@@ -24,6 +24,7 @@ import {
   type PoPriceMatrix,
 } from '../shared/mfg-pricing';
 import { todayMyt } from './my-time';
+import { scopeToCompanyIdOrOpen } from './companyScope';
 
 const todayIso = () => todayMyt();
 
@@ -32,10 +33,13 @@ async function loadConfigForScope(
   sb: any,
   scope: string,
   asOf: string,
+  companyId: number | null,
 ): Promise<MaintenanceConfig | null> {
-  const { data } = await sb
-    .from('maintenance_config_history')
-    .select('config')
+  // Unscoped, the newest master of ANY company priced another company's PO (HC-0134).
+  const { data } = await scopeToCompanyIdOrOpen(
+    sb.from('maintenance_config_history').select('config'),
+    companyId,
+  )
     .eq('scope', scope)
     .lte('effective_from', asOf)
     .order('effective_from', { ascending: false })
@@ -60,13 +64,14 @@ async function loadConfigForScope(
 export async function resolveMaintenanceConfigForSupplier(
   sb: any,
   supplierId: string | null | undefined,
+  companyId: number | null,
   asOf: string = todayIso(),
 ): Promise<{ config: MaintenanceConfig | null; scope: 'supplier' | 'master' | null }> {
   if (supplierId) {
-    const supplierCfg = await loadConfigForScope(sb, `supplier:${supplierId}`, asOf);
+    const supplierCfg = await loadConfigForScope(sb, `supplier:${supplierId}`, asOf, companyId);
     if (supplierCfg) return { config: supplierCfg, scope: 'supplier' };
   }
-  const masterCfg = await loadConfigForScope(sb, 'master', asOf);
+  const masterCfg = await loadConfigForScope(sb, 'master', asOf, companyId);
   if (masterCfg) return { config: masterCfg, scope: 'master' };
   return { config: null, scope: null };
 }
@@ -138,6 +143,8 @@ export async function deriveMfgPoUnitCost(
   sb: any,
   input: {
     supplierId: string;
+    /** The PO's company: the maintenance config read is scoped to it. */
+    companyId: number | null;
     itemCode: string;
     itemGroup: string | null;
     variants: Record<string, unknown> | null;
@@ -172,7 +179,7 @@ export async function deriveMfgPoUnitCost(
   const fabricTier = await resolveFabricTierForLine(sb, input.itemGroup, variants);
 
   // (3) The supplier's maintenance config (supplier scope → master fallback).
-  const { config } = await resolveMaintenanceConfigForSupplier(sb, input.supplierId);
+  const { config } = await resolveMaintenanceConfigForSupplier(sb, input.supplierId, input.companyId);
 
   return computeMfgPoUnitCost(
     {

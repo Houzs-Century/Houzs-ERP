@@ -310,3 +310,34 @@ describe('the number follows the document date (owner 2026-09-07: 要根据文�
     expect(((await res.json()) as { invoice: Row }).invoice.invoice_number).toBe('2990-API-2603-001');
   });
 });
+
+/* A supplier's debit note (owner 2026-10-28: Supplier & Other Creditor CN / DN — 再加
+   supplier DN): the same bill — it raises what we owe, as AutoCount's A/P Debit
+   Note — with doc_kind DN, its own series and its own name in the journal. */
+describe('a supplier debit note is an AP invoice of its own kind', () => {
+  test('mints {co}SDN-YYMM-NNN, posts Dr the line / Cr the AP control as "Supplier debit note", and lists alone with docKind=DN', async () => {
+    const { app, sb } = harness({
+      purchase_invoices: [{ id: 'pi-1', company_id: CO, invoice_number: '2990-PI-2609-001', supplier_id: 'sup-t', invoice_date: '2026-09-02', total_sen: 5_000, paid_sen: 0, status: 'POSTED' }],
+    });
+    expect((await json(app, '/ap-invoices', 'POST', BILL)).status).toBe(201);
+    const res = await json(app, '/ap-invoices', 'POST', {
+      ...BILL, docKind: 'DN', supplierInvoiceRef: 'DN-INV-2609001', lines: [{ description: 'Price difference', debitAccountCode: '900-A002', amountSen: 30_000 }],
+    });
+    expect(res.status, await res.clone().text()).toBe(201);
+    const dn = (await res.json() as { invoice: Row }).invoice;
+    expect(dn).toMatchObject({ invoice_number: `2990-SDN-${yymm}-001`, doc_kind: 'DN', status: 'DRAFT', total_sen: 30_000 });
+    expect((await json(app, `/ap-invoices/${dn.id}/post`, 'POST')).status).toBe(200);
+    const je = sb.tables.journal_entries.find((j) => j.source_doc_no === `2990-SDN-${yymm}-001`)!;
+    expect(je).toMatchObject({ source_type: 'API', posted: true });
+    expect(String(je.narration)).toMatch(/^Supplier debit note 2990-SDN-2609-001 — HOUZS VENTURE HOLDING SDN BHD/);
+    const lines = sb.tables.journal_entry_lines.filter((l) => l.journal_entry_id === je.id);
+    expect(lines.map((l) => [l.account_code, Number(l.debit_sen), Number(l.credit_sen)])).toEqual([['900-A002', 30_000, 0], ['405-0000', 0, 30_000]]);
+    const dns = await (await json(app, '/ap-invoices?docKind=DN', 'GET')).json() as { rows: Row[] };
+    expect(dns.rows.map((r) => [r.invoiceNumber, r.docKind])).toEqual([[`2990-SDN-${yymm}-001`, 'DN']]);
+    const bills = await (await json(app, '/ap-invoices?docKind=INV', 'GET')).json() as { rows: Row[] };
+    expect(bills.rows.map((r) => [r.invoiceNumber, r.docKind]).sort()).toEqual([[`2990-API-${yymm}-001`, 'INV'], ['2990-PI-2609-001', 'INV']]);
+    const bad = await json(app, '/ap-invoices', 'POST', { ...BILL, docKind: 'XX' });
+    expect(bad.status).toBe(400);
+    expect((await bad.json() as { error: string }).error).toBe('bad_doc_kind');
+  });
+});

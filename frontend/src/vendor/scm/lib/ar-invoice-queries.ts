@@ -18,6 +18,8 @@ export type ArListKind = 'ALL' | 'SI' | 'ODB';
     other-debtor bill raised on the AR Invoices page; `kind` says which. */
 export type ArListRow = {
   kind: 'SI' | 'ODB';
+  /** 'DN' for a debit note to an other debtor (a bill of its own kind, series {co}ODN-); every other row 'INV'. */
+  docKind?: 'INV' | 'DN';
   id: string;
   invoiceNumber: string;
   /** The party as the filter groups it: `C:<debtor code>` for a customer, `D:<debtor id>` for an other debtor. */
@@ -41,9 +43,10 @@ export type ArListRow = {
   status: string;
 };
 
-export const useArInvoices = (kind: ArListKind = 'ALL') => useQuery({
-  queryKey: ['ar-invoices', kind],
-  queryFn: () => authedFetch<{ rows: ArListRow[] }>(`/ar-invoices?kind=${kind}`),
+/** docKind: 'DN' lists the other debtors' debit notes alone (the CN / DN page's tab). */
+export const useArInvoices = (kind: ArListKind = 'ALL', docKind?: 'INV' | 'DN') => useQuery({
+  queryKey: ['ar-invoices', kind, docKind ?? 'any'],
+  queryFn: () => authedFetch<{ rows: ArListRow[] }>(`/ar-invoices?kind=${kind}${docKind ? `&docKind=${docKind}` : ''}`),
   staleTime: 15_000,
 });
 

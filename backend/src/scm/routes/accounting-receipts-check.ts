@@ -104,9 +104,11 @@ async function loadPayments(sb: Db, companyId: number, r: { from: string; to: st
 }
 
 async function loadReceipts(sb: Db, companyId: number, r: { from: string; to: string }): Promise<{ ok: true; rows: CheckReceipt[] } | { ok: false; reason: string }> {
+  /* A CANCELLED receipt is kept on file but stands for no payment (owner
+     2026-10-29) — it is not one of the month's receipts. */
   const out = await paginateAll<Row>((from, to) => sb.from('acc_official_receipts')
     .select('id, or_number, status, payment_source, payment_id, doc_no, paid_at, amount_sen')
-    .eq('company_id', companyId).gte('paid_at', r.from).lte('paid_at', r.to)
+    .eq('company_id', companyId).neq('status', 'CANCELLED').gte('paid_at', r.from).lte('paid_at', r.to)
     .order('paid_at', { ascending: true }).order('or_number', { ascending: true })
     .range(from, to));
   if (out.error) return { ok: false, reason: `receipts: ${out.error.message}` };

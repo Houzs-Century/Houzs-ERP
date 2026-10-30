@@ -48,6 +48,7 @@ import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { postUnpostedSiPayments, reverseSiPayment } from '../../acc/payments';
 import { insertSiPaymentRow } from '../lib/si-payment-row';
+import { followPaymentRemoval } from '../../acc/receipts';
 import { recomputeSiPaid as recomputePaid, readOrderDepositForInvoice } from '../lib/si-order-deposit';
 import { invoiceReceipts } from '../lib/si-receipts';
 import { stampSoDates, stampDoNumber, stampOrderDeposit } from '../lib/si-list-stamps';
@@ -1658,6 +1659,13 @@ salesInvoices.delete('/:id/payments/:paymentId', async (c) => {
   const unbooked = await reverseSiPayment(sb, paymentId, (inv as { invoice_number?: string | null } | null)?.invoice_number ?? null);
   // eslint-disable-next-line no-console
   if (!unbooked.ok) console.error('[acc] SI payment reversal failed:', paymentId, unbooked.status, unbooked.reason);
+  /* Its receipt goes with it (owner 2026-10-29: 收据跟着付款改或作废) — a draft removed, a formal one cancelled and kept. */
+  const receipt = await followPaymentRemoval(sb, {
+    source: 'SIPAY', paymentId, companyId: co.companyId, actor: c.get('houzsUser')?.name ?? null,
+    why: `Payment on ${(inv as { invoice_number?: string | null } | null)?.invoice_number ?? 'the invoice'} deleted`,
+  }).catch((e: unknown) => ({ ok: false as const, reason: String(e) }));
+  // eslint-disable-next-line no-console
+  if (!receipt.ok) console.error('[receipts] receipt did not follow its deleted SI payment:', paymentId, receipt.reason);
   try { await reconcileSiOverpay(sb, id); }
   catch (e) { /* eslint-disable-next-line no-console */ console.error('[customer-credit] overpay reconcile failed (delete):', e); }
 
@@ -1682,6 +1690,7 @@ salesInvoices.delete('/:id/payments/:paymentId', async (c) => {
         fieldChange('paymentAmountSen', Number(doomed.amount_sen ?? 0), null),
         fieldChange('paymentMethod', doomed.method ?? null, null),
         fieldChange('paidAt', doomed.paid_at ?? null, null),
+        receipt.ok && receipt.touch ? fieldChange(receipt.touch.draft ? 'draftReceipt' : 'receipt', receipt.touch.from, null) : null,
       ]),
     });
   }

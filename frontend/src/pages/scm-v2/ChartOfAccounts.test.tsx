@@ -42,8 +42,12 @@ vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
     { code: '500-0000', name: 'SALES', type: 'INCOME', parentCode: null, accMoney: false, special: null, section: 'SALES', perCompany: { 1: { active: true } } },
     { code: '700-0000', name: 'Other Income', type: 'INCOME', parentCode: null, accMoney: false, special: null, section: 'OTHER INCOMES', perCompany: { 1: { active: true } } },
     { code: '590-0000', name: 'TRANSPORT INCOME', type: 'INCOME', parentCode: '700-0000', accMoney: false, special: null, section: 'OTHER INCOMES', perCompany: { 1: { active: true } } },
-    { code: '900-R032', name: 'RENTAL - EXHIBITION', type: 'EXPENSE', parentCode: null, accMoney: false, special: null, section: 'EXPENSES', needsEvent: true, pmsRow: 'rental', perCompany: { 1: { active: true } } },
-  ], pmsRows: [{ row: 'rental', label: 'Rental' }, { row: 'setup', label: 'Setup' }, { row: 'others', label: 'Others Costing' }] }, isLoading: false, error: null }),
+    { code: '900-R032', name: 'RENTAL - EXHIBITION', type: 'EXPENSE', parentCode: null, accMoney: false, special: null, section: 'EXPENSES', needsEvent: true, pmsRow: 'rental', logisticsRow: 'outsource_pg', perCompany: { 1: { active: true } } },
+  ], pmsRows: [{ row: 'rental', label: 'Rental' }, { row: 'setup', label: 'Setup' }, { row: 'others', label: 'Others Costing' }],
+  logisticsRows: [
+    { row: 'outsource_pg', label: 'Outsource – Penang', type: 'EXPENSE' }, { row: 'petrol', label: 'Petrol', type: 'EXPENSE' },
+    { row: 'instalment', label: 'Lorry Installment', type: 'LIABILITY' }, { row: 'income_kl', label: 'Transport Income – KL', type: 'INCOME' },
+  ] }, isLoading: false, error: null }),
   useChartTick: () => ({ mutateAsync: tickAsync, isPending: false }),
   useChartImport: () => ({ mutateAsync: importAsync, isPending: false }),
   useChartRename: () => ({ mutateAsync: renameAsync, isPending: false }),
@@ -399,5 +403,25 @@ describe('需要 Event and the PMS row', () => {
     await waitFor(() => expect(updateAsync).toHaveBeenCalledWith({ code: '900-R032', pmsRow: 'others' }));
     fireEvent.change(screen.getByLabelText('900-R032 PMS row'), { target: { value: '' } });
     await waitFor(() => expect(updateAsync).toHaveBeenCalledWith({ code: '900-R032', pmsRow: null }));
+  });
+});
+
+/* The Logistics P&L's row (owner 2026-10-29: the own-lorry tick list moved to the
+   chart —「就不能在coa 那边tick？」): one per account, of the type the row reads. */
+describe('the Logistics row', () => {
+  test('an account offers the rows of its type; a header and an asset none; a pick and an empty save on the code', async () => {
+    updateAsync.mockClear();
+    draw();
+    const options = (code: string) => [...(screen.getByLabelText(`${code} Logistics row`) as HTMLSelectElement).options].map((o) => o.value);
+    expect(options('900-A002')).toEqual(['', 'outsource_pg', 'petrol']);
+    expect(options('590-0000')).toEqual(['', 'income_kl']);
+    expect(options('400-0000')).toEqual(['', 'instalment']);
+    expect((screen.getByLabelText('900-R032 Logistics row') as HTMLSelectElement).value).toBe('outsource_pg');
+    expect(screen.queryByLabelText('310-0010 Logistics row')).toBeNull();
+    expect(screen.queryByLabelText('700-0000 Logistics row')).toBeNull();
+    fireEvent.change(screen.getByLabelText('900-A002 Logistics row'), { target: { value: 'petrol' } });
+    await waitFor(() => expect(updateAsync).toHaveBeenCalledWith({ code: '900-A002', logisticsRow: 'petrol' }));
+    fireEvent.change(screen.getByLabelText('900-R032 Logistics row'), { target: { value: '' } });
+    await waitFor(() => expect(updateAsync).toHaveBeenCalledWith({ code: '900-R032', logisticsRow: null }));
   });
 });

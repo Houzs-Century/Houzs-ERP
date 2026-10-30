@@ -1758,6 +1758,9 @@ export function DeliveryPlanningBoard({
         onApplyLayoutPreset={onApplyLayoutPreset}
         initialRowLimit={initialRowLimit}
         onRowReorder={onRowReorder}
+        /* Drag over the Total Amount / Balance cells to add them up, like Excel
+           (HC-0164, Syu). */
+        cellRangeSum
         exportName={exportName}
         rowKey={rowIdOf}
         /* The full board scrolls its tabs and toolbar away so the grid fills the

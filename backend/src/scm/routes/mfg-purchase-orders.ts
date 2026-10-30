@@ -42,7 +42,7 @@ import { resolveMaintenanceConfigForSupplier, poVariantPricingInput } from '../l
 import { readMfgProductBindings } from '../lib/supplier-bindings';
 import { loadOutstandingSoLines } from '../lib/outstanding-so-lines';
 import { poHasDownstream } from '../lib/downstream-lock';
-import { cascadePoSupplierDate, pickSupplierDateSlot, SUPPLIER_DATE_SLOT_COL, type SupplierDateSlot } from '../lib/po-supplier-date-cascade';
+import { cascadePoSupplierDate, pickSupplierDateSlot, supplierDatePatchGate, SUPPLIER_DATE_SLOT_COL, type SupplierDateSlot } from '../lib/po-supplier-date-cascade';
 import { description2InputsChanged } from '../lib/po-line-description2';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { todayMyt } from '../lib/my-time';
@@ -100,6 +100,7 @@ import { skuCategoryResolver, lineIdentityFields } from '../lib/sku-category';
 import { firstSoLinkCategoryMismatch, soLinkCategoryMismatch, hardBoundUnlinkRefusal, hardBoundSplitRefusal, editedLineGroup } from '../lib/hard-bound-po-line';
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { withSoRefPoIds } from '../lib/so-ref-search';
+import { releaseRequestFromCancelledPo } from '../lib/product-request-link';
 
 /* ── Supplier sofa-combo auto-pricing (Commander 2026-05-29) ─────────────────
    The supplier prices a sofa SET (a colour-matched bundle of modules) as a
@@ -1912,7 +1913,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
   )];
   const maintBySupplier = new Map<string, MaintenanceConfig | null>();
   await Promise.all(supplierIdsInvolved.map(async (sid) => {
-    const { config } = await resolveMaintenanceConfigForSupplier(supabase, sid);
+    const { config } = await resolveMaintenanceConfigForSupplier(supabase, sid, activeCompanyId(c) ?? null);
     maintBySupplier.set(sid, config);
   }));
 
@@ -2493,15 +2494,15 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
      only GRN-inherited columns freeze once a GRN exists; dates + notes stay
      editable. Downstream read paid only when an inherited column changes. */
   const lockedChanges = changedPoIdentityLockCols(updates, before);
-  if (lockedChanges.length > 0 && (await poHasDownstream(sb, id))) {
-    return c.json(poIdentityLockedRefusal(lockedChanges), 409);
-  }
+  if (lockedChanges.length > 0 && (await poHasDownstream(sb, id))) return c.json(poIdentityLockedRefusal(lockedChanges), 409);
+  const sdGate = supplierDatePatchGate(before, updates); // HC-0090: recorded Date 2/3/4 are history
+  if (sdGate.refusal) return c.json(sdGate.refusal, 409);
   /* A cleared Supplier Date 2/3/4 posts "", which Postgres rejects on a date
      column, so every PO that left one blank failed to save (production,
      2026-08-17). It mutates `updates`, so the audit below records the NULL. */
-  const { data, error } = await scopeToCompanyId(sb.from('purchase_orders').update(coerceEmptyDates(updates)).eq('id', id), co.companyId).select('*').single();
+  const { data, error } = await sdGate.onlyIfEmpty(scopeToCompanyId(sb.from('purchase_orders').update(coerceEmptyDates(updates)).eq('id', id), co.companyId)).select('*').maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
-
+  if (!data) return sdGate.fill.length ? c.json(sdGate.raced, 409) : c.json(NOT_THIS_COMPANY, 404);
   {
     const auditPatch: Record<string, unknown> = {};
     for (const [camel, snake] of PO_AUDIT_FIELDS) {
@@ -2670,7 +2671,7 @@ mfgPurchaseOrders.post('/bulk-supplier-date', async (c) => {
     /* Header + every line + the audit row, in lib/po-supplier-date-cascade.ts —
        the one writer the PO line import's estimate dates share. */
     const written = await cascadePoSupplierDate(sb, {
-      companyId: co.companyId, poId: id, before, slot: pick.slot, date, applyToLines, actor: c.get('houzsUser') ?? null, note: null,
+      companyId: co.companyId, poId: id, before, slot: pick.slot, date, applyToLines, actor: c.get('houzsUser') ?? null, note: null, requireEmpty: true,
     });
     if (!written.ok) { skipped.push({ id, poNumber, reason: written.reason }); continue; }
     /* ERP -> AutoCount edit, ONE PER PO THAT ACTUALLY MOVED — inside the loop
@@ -3809,7 +3810,7 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
       if (!bindByCode.has(b.item_code)) bindByCode.set(b.item_code, b);
     }
   }
-  const { config: maintCfg } = await resolveMaintenanceConfigForSupplier(sb, po.supplier_id as string);
+  const { config: maintCfg } = await resolveMaintenanceConfigForSupplier(sb, po.supplier_id as string, activeCompanyId(c) ?? null);
   const fabCodes = [...new Set(
     toInsert
       .map((r) => String((r.variants as Record<string, unknown> | null)?.fabricCode ?? ''))
@@ -4289,6 +4290,7 @@ export const cancelPurchaseOrderHandler = async (c: any) => {
         fieldChange('totalSen', null, Number(po.total_sen ?? 0)),
       ]),
     });
+    await releaseRequestFromCancelledPo(supabase, co.companyId, { id, po_number: po.po_number ?? null }, c.get('houzsUser'));
   }
 
   /* Commander 2026-05-29 (BUG 1) — "cancel 了之后 代表这些 SO 有释放出来了是吧":
@@ -4325,10 +4327,8 @@ export const cancelPurchaseOrderHandler = async (c: any) => {
   } catch { /* best-effort — PO already cancelled, don't fail on counter recount */ }
 
   const { data: after } = await scopeToCompanyId(supabase
-    .from('purchase_orders')
-    .select('id, status, cancelled_at, po_number')
-    .eq('id', id), co.companyId)
-    .maybeSingle();
+    .from('purchase_orders').select('id, status, cancelled_at, po_number')
+    .eq('id', id), co.companyId).maybeSingle();
 
   /* ERP -> AutoCount cancel. Reached only for a PO the downstream lock let
      through (poHasDownstream, checked above) — the same rule AutoCount applies

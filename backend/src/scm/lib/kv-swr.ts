@@ -35,6 +35,17 @@ export async function writeSwr<T>(
   await kv.put(key, JSON.stringify(env), { expirationTtl: hardSeconds });
 }
 
+/** Drop every cached copy under a key prefix (all date/basis variants of one company's report) so the next read recomputes. */
+export async function bustSwrPrefix(kv: KVNamespace | undefined, prefix: string): Promise<void> {
+  if (!kv) return;
+  let cursor: string | undefined;
+  do {
+    const page = await kv.list({ prefix, cursor });
+    await Promise.all(page.keys.map((k) => kv.delete(k.name)));
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+}
+
 export async function cachedSwr<R>(opts: {
   kv: KVNamespace | undefined;
   key: string | null;

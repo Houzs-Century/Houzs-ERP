@@ -14,8 +14,8 @@ describe('mergePoGrnLinks — GRN column + downstream lock union header FK with 
     const { childIds, grnsByPo } = mergePoGrnLinks(header, line);
     expect(childIds.has('po052')).toBe(true); // received -> downstream-locked
     expect(childIds.has('po933')).toBe(true);
-    expect(grnsByPo.get('po052')).toEqual([{ id: 'g057', grnNumber: 'HC-GRN-2609-057' }]);
-    expect(grnsByPo.get('po933')).toEqual([{ id: 'g057', grnNumber: 'HC-GRN-2609-057' }]);
+    expect(grnsByPo.get('po052')).toEqual([{ id: 'g057', grnNumber: 'HC-GRN-2609-057', receivedAt: null }]);
+    expect(grnsByPo.get('po933')).toEqual([{ id: 'g057', grnNumber: 'HC-GRN-2609-057', receivedAt: null }]);
   });
 
   test('a cancelled line-linked GRN is dropped: a cancelled receipt is not a lock and not a column entry', () => {
@@ -32,12 +32,23 @@ describe('mergePoGrnLinks — GRN column + downstream lock union header FK with 
       [{ poId: 'poA', grnId: 'g1', grnNumber: 'HC-GRN-1' }],
       [{ poId: 'poA', grnId: 'g1', grnNumber: 'HC-GRN-1', cancelled: false }],
     );
-    expect(grnsByPo.get('poA')).toEqual([{ id: 'g1', grnNumber: 'HC-GRN-1' }]);
+    expect(grnsByPo.get('poA')).toEqual([{ id: 'g1', grnNumber: 'HC-GRN-1', receivedAt: null }]);
   });
 
   test('a header GRN with no grn_number still locks the PO but adds no column entry', () => {
     const { childIds, grnsByPo } = mergePoGrnLinks([{ poId: 'poA', grnId: 'g1', grnNumber: null }], []);
     expect(childIds.has('poA')).toBe(true);
     expect(grnsByPo.get('poA')).toBeUndefined();
+  });
+
+  test('each GRN carries its own received date for the GRN Date column (HC-0179)', () => {
+    const { grnsByPo } = mergePoGrnLinks(
+      [{ poId: 'po150', grnId: 'g179', grnNumber: 'HC-GRN-2609-179', receivedAt: '2026-09-25' }],
+      [{ poId: 'po150', grnId: 'g005', grnNumber: 'HC-GRN-2610-005', receivedAt: '2026-10-03', cancelled: false }],
+    );
+    expect(grnsByPo.get('po150')).toEqual([
+      { id: 'g179', grnNumber: 'HC-GRN-2609-179', receivedAt: '2026-09-25' },
+      { id: 'g005', grnNumber: 'HC-GRN-2610-005', receivedAt: '2026-10-03' },
+    ]);
   });
 });

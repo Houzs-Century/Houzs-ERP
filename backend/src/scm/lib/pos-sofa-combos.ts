@@ -24,7 +24,7 @@ import { companyCodeById } from './doc-no';
 export const POS_COMBO_COMPANY_CODE = '2990';
 
 export const POS_COMBO_COLUMNS =
-  'id, company_id, base_model, modules, tier, selling_prices_by_height, pwp_prices_by_height, ' +
+  'id, company_id, base_model, modules, accessories, tier, selling_prices_by_height, pwp_prices_by_height, ' +
   'default_free_gifts, label, effective_from, deleted_at, notes, created_at, updated_at, created_by, created_by_name';
 
 export type PosComboRow = {
@@ -32,6 +32,7 @@ export type PosComboRow = {
   company_id: number;
   base_model: string;
   modules: ComboSlots;
+  accessories?: Array<{ modelId: string; qty: number }>;
   tier: SofaPriceTier | null;
   selling_prices_by_height: Record<string, number | null> | null;
   pwp_prices_by_height: Record<string, number | null> | null;
@@ -61,6 +62,7 @@ export function posComboToEngine(r: PosComboRow): SofaComboRow {
     id: r.id,
     baseModel: r.base_model,
     modules: r.modules,
+    accessories: r.accessories ?? [],
     tier: r.tier,
     customerId: null,
     // No cost column: the charged price IS the selling price.
@@ -135,12 +137,12 @@ export async function loadSellingSofaCombos(sb: Sb, c: CompanyScopeCtx): Promise
 export async function loadComboModulesById(sb: Sb, c: CompanyScopeCtx): Promise<Map<string, string[][]>> {
   const [{ data: houzsRows }, { data: posRows, error: posErr }] = await Promise.all([
     scopeToCompany(sb.from('sofa_combo_pricing').select('id, modules'), c),
-    scopeToCompany(sb.from('pos_sofa_combos').select('id, modules'), c),
+    scopeToCompany(sb.from('pos_sofa_combos').select('id, modules, accessories'), c),
   ]);
   if (posErr) throw new Error(`pos_sofa_combos read failed: ${posErr.message ?? String(posErr)}`);
   const out = new Map<string, string[][]>();
   for (const r of (houzsRows ?? []) as Array<{ id: string; modules: string[][] | null }>) out.set(r.id, r.modules ?? []);
-  for (const r of (posRows ?? []) as Array<{ id: string; modules: string[][] | null }>) out.set(r.id, r.modules ?? []);
+  for (const r of (posRows ?? []) as Array<{ id: string; modules: string[][] | null; accessories?: unknown[] }>) out.set(r.id, r.accessories?.length ? [] : (r.modules ?? []));
   return out;
 }
 
@@ -151,9 +153,9 @@ export async function loadComboModulesById(sb: Sb, c: CompanyScopeCtx): Promise<
 export async function loadLiveCombosByIds(
   sb: Sb,
   ids: readonly string[] | null,
-): Promise<Map<string, { base_model: string; modules: string[][] }>> {
+): Promise<Map<string, { base_model: string; modules: string[][]; accessories?: SofaComboRow['accessories'] }>> {
   let houzsQ = sb.from('sofa_combo_pricing').select('id, base_model, modules').is('deleted_at', null);
-  let posQ = sb.from('pos_sofa_combos').select('id, base_model, modules').is('deleted_at', null);
+  let posQ = sb.from('pos_sofa_combos').select('id, base_model, modules, accessories').is('deleted_at', null);
   if (ids == null) {
     houzsQ = houzsQ.is('customer_id', null).is('supplier_id', null);
   } else {
@@ -163,9 +165,9 @@ export async function loadLiveCombosByIds(
   }
   const [{ data: houzsRows }, { data: posRows, error: posErr }] = await Promise.all([houzsQ, posQ]);
   if (posErr) throw new Error(`pos_sofa_combos read failed: ${posErr.message ?? String(posErr)}`);
-  const out = new Map<string, { base_model: string; modules: string[][] }>();
-  type IdRow = { id: string; base_model: string; modules: string[][] | null };
+  const out = new Map<string, { base_model: string; modules: string[][]; accessories?: SofaComboRow['accessories'] }>();
+  type IdRow = { id: string; base_model: string; modules: string[][] | null; accessories?: SofaComboRow['accessories'] };
   for (const r of (houzsRows ?? []) as IdRow[]) out.set(r.id, { base_model: r.base_model, modules: r.modules ?? [] });
-  for (const r of (posRows ?? []) as IdRow[]) out.set(r.id, { base_model: r.base_model, modules: r.modules ?? [] });
+  for (const r of (posRows ?? []) as IdRow[]) out.set(r.id, { base_model: r.base_model, modules: r.modules ?? [], accessories: r.accessories ?? [] });
   return out;
 }

@@ -990,8 +990,10 @@ const categoryProducts = (db: Db, companyId: number) => db.execute<CategoryProdu
 /** `dry_run`: the counts per inventory category (to add / in POS / off / no
  *  price) for the picker. Otherwise tags every ACTIVE product of the named
  *  `categories` that has a selling price and is not a POS item yet, at that
- *  price (cost copied too), no preset discount. Existing POS items, on or
- *  off, are never touched, so it is safe to press again. */
+ *  price (cost copied too), no preset discount, and switches the category's
+ *  switched-off POS items back on (a tick means "this category sells";
+ *  owner 2026-10-29). Items already on are never touched, so it is safe to
+ *  press again. */
 posAdmin.post("/items/add-all", async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -1011,8 +1013,11 @@ posAdmin.post("/items/add-all", async (c) => {
     })));
     added += chunk.length;
   }
-  await audit(db, co.companyId, c, "pos_items", "add-all", "added", null, `${added} added in ${categories.join(", ")}`);
-  return c.json({ ok: true, added, categories });
+  const toOn = rows.filter((r) => r.pos_active === false && (categories as string[]).includes(r.category ?? ""));
+  const on = toOn.length === 0 ? [] : await db.update(pos_items).set({ active: true, updated_at: nowIso() })
+    .where(and(eq(pos_items.company_id, co.companyId), eq(pos_items.active, false), inArray(pos_items.product_id, toOn.map((r) => r.product_id)))).returning({ id: pos_items.id });
+  await audit(db, co.companyId, c, "pos_items", "add-all", "added", null, `${added} added, ${on.length} turned on in ${categories.join(", ")}`);
+  return c.json({ ok: true, added, turned_on: on.length, categories });
 });
 
 /** Switch off the named POS items in one go (the trash on a row, many at

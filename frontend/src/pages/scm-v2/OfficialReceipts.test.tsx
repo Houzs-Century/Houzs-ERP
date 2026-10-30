@@ -3,16 +3,18 @@
    2026-09-16 (owner: or 我如何查看 amount 是对的) the page opens on this month:
    the list carries the month and sums under it, and the month's CHECK reads
    the customer payments against the receipts and names every row behind a
-   difference. The server half is backend/tests/officialReceipts.test.ts and
-   backend/tests/receiptsCheck.test.ts. */
+   difference. Since 2026-10-29 (owner: 收据跟着付款改或作废) a receipt whose
+   payment changed or went is CANCELLED: listed struck through with its reason,
+   never confirmed, never added up. The server half is
+   backend/tests/officialReceipts.test.ts and backend/tests/receiptsCheck.test.ts. */
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, expect, test, vi } from 'vitest';
 
-const { fetchMock, pdfMock, check } = vi.hoisted(() => {
-  const rows = [
+const { fetchMock, pdfMock, check, list } = vi.hoisted(() => {
+  const rows: Array<Record<string, unknown>> = [
     {
       id: 5, or_number: 'HCDraftOR-2609-002', status: 'DRAFT', payment_source: 'SOPAY', payment_id: 'p2',
       doc_no: 'HC-SO-013400', customer_name: 'TAN MEI LING', method: 'transfer', amount_sen: 150000,
@@ -36,14 +38,16 @@ const { fetchMock, pdfMock, check } = vi.hoisted(() => {
       orphans: [],
     } as Record<string, unknown>,
   };
+  const list = { current: rows };
   return {
     fetchMock: vi.fn(async (path: string, _init?: RequestInit) => {
       if (path.startsWith('/accounting/receipts/check')) return check.current;
       if (path.startsWith('/accounting/receipts/')) return { ok: true, orNumber: 'HCMOR-2609-001' };
-      return { receipts: rows };
+      return { receipts: list.current };
     }),
     pdfMock: vi.fn(async (_r: unknown, _o: unknown) => {}),
     check,
+    list,
   };
 });
 vi.mock('../../vendor/scm/lib/authed-fetch', () => ({
@@ -126,5 +130,36 @@ describe('the OR book', () => {
   test('monthWord', () => {
     expect(monthWord('2026-06')).toBe('06/2026');
     expect(monthWord('')).toBe('');
+  });
+
+  test('a CANCELLED receipt is listed struck through with its reason, offers only Print, and is not added up', async () => {
+    const was = list.current;
+    list.current = [...was, {
+      id: 3, or_number: 'HCHOR-2609-007', status: 'CANCELLED', payment_source: 'SOPAY', payment_id: 'p3',
+      doc_no: 'HC-SO-013398', customer_name: 'LIM AH KOW', method: 'merchant', amount_sen: 111500,
+      paid_at: '2026-09-02', channel_account_code: '310-0020', issued_at: '2026-09-03', issued_by: 'Recon', created_at: '2026-09-02',
+      cancelled_at: '2026-10-29T06:00:00Z', cancelled_by: 'Scarlett', cancel_reason: 'Payment on HC-SO-013398 changed: amount RM 1,115.00 → RM 558.00',
+    }];
+    try {
+      fetchMock.mockClear();
+      draw();
+      await waitFor(() => expect(screen.getByText('HCHOR-2609-007')).toBeTruthy());
+      const row = screen.getByText('HCHOR-2609-007').closest('tr')!;
+      expect(row.textContent).toContain('Cancelled');
+      expect(row.textContent).toContain('Payment on HC-SO-013398 changed: amount RM 1,115.00 → RM 558.00');
+      expect(screen.getByText('HCHOR-2609-007').getAttribute('style')).toContain('line-through');
+      /* Still one Confirm money (the draft); three Prints. */
+      expect(screen.getAllByText('Confirm money')).toHaveLength(1);
+      expect(screen.getAllByText('Print')).toHaveLength(3);
+      const total = screen.getByTestId('receipts-total');
+      expect(total.textContent).toContain(`2 receipts in ${monthWord(mytMonth())}`);
+      expect(total.textContent).toContain('1 cancelled, not counted');
+      expect(total.textContent).toContain('RM 2,000.00');
+      /* Its own pick. */
+      fireEvent.click(screen.getByRole('button', { name: 'Cancelled' }));
+      await waitFor(() => expect(listPaths()).toContain(`/accounting/receipts?status=CANCELLED&month=${mytMonth()}`));
+    } finally {
+      list.current = was;
+    }
   });
 });

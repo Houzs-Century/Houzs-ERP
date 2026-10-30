@@ -35,6 +35,7 @@ import { cn } from "../lib/utils";
 import { headerLabel } from "../lib/columnHeaderLabel";
 import { columnDescription } from "../lib/columnDescriptions";
 import { rowsToTsv } from "./dataTableClipboard";
+import { useCellRange } from "./dataTableCellRange";
 import { tickedOrAll } from "./dataTableTicked";
 import { DataTableFreezeItems, keysThrough } from "./DataTableFreezeItems";
 import { parseUrlColFilters, serializeUrlColFilters, UrlFilterResync } from "./dataTableUrlFilters";
@@ -155,6 +156,7 @@ function DataTableInner<T, L>({
   getRowStyle,
   initialRowLimit,
   onRowReorder,
+  cellRangeSum = false,
   defaultSort,
   embedded = false,
   groupBanner = false,
@@ -2136,6 +2138,8 @@ function DataTableInner<T, L>({
     boxStyle: freezeBoxStyle,
     scrollStyle: freezeScrollStyle,
   } = useFrozenTableHeader(showTable && freezeHeight !== "off", freezeFrom ?? "toolbar", freezeHeight === "screen");
+  const shownRows = useMemo(() => renderList.flatMap((it) => (it.kind === "row" ? [it.row] : [])), [renderList]);
+  const cellRange = useCellRange({ enabled: cellRangeSum, scrollRef: scrollWrapRef, rows: shownRows, columns: visibleColumns, getRowKey });
 
   return (
     <div ref={freezeRootRef}>
@@ -2346,6 +2350,7 @@ function DataTableInner<T, L>({
           <div
             ref={scrollWrapRef}
             onKeyDown={handleCopyKey}
+            {...cellRange.wrapProps}
             className="thin-scroll overflow-x-auto overflow-y-auto"
             style={freezeScrollStyle}
           >
@@ -3510,6 +3515,7 @@ function DataTableInner<T, L>({
       {showTable && freezeBox && freezeBox.runway > 0 && (
         <div ref={runwaySpacerRef} aria-hidden style={{ height: freezeBox.runway }} />
       )}
+      {cellRange.overlay}
     </div>
   );
 }

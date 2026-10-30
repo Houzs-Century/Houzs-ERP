@@ -6,15 +6,20 @@
 // never used, even when the stock_items cache has one.
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-const order = vi.hoisted(() => ({ result: null as { code: string; source: 'po' | 'so' } | 'so-missing' | null }));
+const order = vi.hoisted(() => ({ result: null as { code: string; source: 'po' | 'so' } | 'so-missing' | null, withPo: new Set<string>(), updChanges: 1 }));
 vi.mock('../db/supabase', () => ({ isSupabaseConfigured: () => true, getSupabaseService: () => ({}) }));
-vi.mock('./assrOrderPos', () => ({ orderSupplierCode: async () => order.result }));
+vi.mock('./assrOrderPos', () => ({
+  orderSupplierCode: async () => order.result,
+  itemsWithLivePo: async () => order.withPo,
+  poKey: (c: unknown, d: unknown, i: unknown) => `${c}|${d}|${i}`,
+}));
 vi.mock('./logger', () => ({ writeLog: async () => undefined }));
 vi.mock('./autocount', () => ({
   AutoCountClient: class { async getStockItem(code: string) { return { ItemCode: code, MainSupplier: '400-D002' }; } },
 }));
 
 import { resolveCreditorForCase, runStockItemsRefresh } from './stockItems';
+import { fillCreditorFromNewPo } from './assrCreditorFill';
 import type { Env } from '../types';
 
 const ACTIVITY_COLS = new Set([
@@ -42,7 +47,7 @@ function fakeEnv(inserted: Array<unknown[]>, sqls: string[], current: { creditor
             if (bad.length) throw new Error(`column ${bad.join(', ')} does not exist`);
             inserted.push(args);
           }
-          return { meta: { changes: 1 } };
+          return { meta: { changes: /UPDATE\s+assr_cases/.test(sql) ? order.updChanges : 1 } };
         },
       };
       return stmt;
@@ -52,7 +57,7 @@ function fakeEnv(inserted: Array<unknown[]>, sqls: string[], current: { creditor
 }
 
 describe('resolveCreditorForCase', () => {
-  beforeEach(() => { order.result = null; });
+  beforeEach(() => { order.result = null; order.withPo = new Set(); order.updChanges = 1; });
 
   test('writes a creditor_resolved row the real assr_activity table accepts', async () => {
     order.result = { code: '400-H003', source: 'so' };
@@ -79,11 +84,66 @@ describe('resolveCreditorForCase', () => {
     expect(inserted).toEqual([]);
   });
 
-  test('SO in the ERP with no PO and no SO supplier: an old supplier is cleared to blank', async () => {
+  test('Resolve now with no PO and no SO supplier keeps the existing pick', async () => {
     const inserted: Array<unknown[]> = [];
-    const env = fakeEnv(inserted, [], { creditor_code: '400-D002', creditor_source: 'auto' });
-    expect(await resolveCreditorForCase(env, 5, 'MAT-1', { force: true })).toEqual({ code: null, soMissing: false });
-    expect(inserted).toEqual([[5, '400-D002', null, 'No PO or SO supplier found for item MAT-1']]);
+    const sqls: string[] = [];
+    const env = fakeEnv(inserted, sqls, { creditor_code: '400-D002', creditor_source: 'manual' });
+    expect(await resolveCreditorForCase(env, 5, 'MAT-1', { force: true })).toEqual({ code: '400-D002', soMissing: false, kept: true });
+    expect(sqls.filter((s) => /UPDATE\s+assr_cases/.test(s))).toEqual([]);
+    expect(inserted).toEqual([]);
+  });
+
+  test('a manual pick is not overwritten by the PO supplier without force', async () => {
+    order.result = { code: '400-H003', source: 'po' };
+    const sqls: string[] = [];
+    const env = fakeEnv([], sqls, { creditor_code: '400-D002', creditor_source: 'manual' });
+    expect(await resolveCreditorForCase(env, 5, 'MAT-1')).toEqual({ code: '400-D002', soMissing: false });
+    expect(sqls.filter((s) => /UPDATE\s+assr_cases/.test(s))).toEqual([]);
+  });
+});
+
+describe('stale read', () => {
+  beforeEach(() => { order.updChanges = 1; });
+  test('the UPDATE refuses a manual pick and a lost race logs nothing', async () => {
+    order.result = { code: '400-H003', source: 'po' };
+    order.updChanges = 0; // someone hand-picked between our read and our write
+    const inserted: Array<unknown[]> = [];
+    const sqls: string[] = [];
+    const res = await resolveCreditorForCase(fakeEnv(inserted, sqls), 5, 'MAT-1');
+    expect(sqls.find((q) => /UPDATE\s+assr_cases/.test(q))).toMatch(/creditor_source <> 'manual'/);
+    expect(res.code).toBeNull();
+    expect(inserted).toEqual([]);
+  });
+});
+
+describe('fillCreditorFromNewPo', () => {
+  beforeEach(() => { order.updChanges = 1; });
+  test('an unrelated item PO on the SO does not trigger a resolve', async () => {
+    order.result = { code: '400-H003', source: 'po' };
+    const sqls: string[] = [];
+    const rows: Array<Record<string, any>> = [
+      { id: 1, company_id: 1, doc_no: 'HC-SO-1', item_code: 'ITEM-B', creditor_code: null, order_pos: [{ id: 'p', po_number: 'PO-1' }] },
+    ];
+    order.withPo = new Set(['1|HC-SO-1|ITEM-A']);
+    await fillCreditorFromNewPo(fakeEnv([], sqls), rows);
+    expect(rows[0].creditor_code).toBeNull();
+    expect(sqls.filter((q) => /assr_cases/.test(q))).toEqual([]);
+  });
+
+  test('a blank row with a live PO gets the PO supplier; manual, filled and PO-less rows are left alone', async () => {
+    order.result = { code: '400-H003', source: 'po' };
+    const sqls: string[] = [];
+    const rows: Array<Record<string, any>> = [
+      { id: 1, company_id: 1, doc_no: 'D', item_code: 'MAT-1', creditor_code: null, creditor_source: null, order_pos: [{ id: 'p', po_number: 'PO-1' }] },
+      { id: 2, item_code: 'MAT-1', creditor_code: null, creditor_source: 'manual', order_pos: [{ id: 'p', po_number: 'PO-1' }] },
+      { id: 3, item_code: 'MAT-1', creditor_code: '400-X', creditor_source: 'so', order_pos: [{ id: 'p', po_number: 'PO-1' }] },
+      { id: 4, item_code: 'MAT-1', creditor_code: null, creditor_source: null, order_pos: [] },
+    ];
+    order.withPo = new Set(['1|D|MAT-1']);
+    for (const r of rows) { r.company_id = 1; r.doc_no = 'D'; }
+    await fillCreditorFromNewPo(fakeEnv([], sqls), rows);
+    expect(rows.map((r) => r.creditor_code)).toEqual(['400-H003', null, '400-X', null]);
+    expect(sqls.filter((q) => /UPDATE\s+assr_cases/.test(q))).toHaveLength(1);
   });
 });
 

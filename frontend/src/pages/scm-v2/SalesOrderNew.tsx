@@ -51,7 +51,7 @@ import { PageHeader } from '../../components/Layout';
 import { api } from '../../api/client';
 import type { Department, TeamMember } from '../../types';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
-import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import { useNotify } from '../../vendor/scm/components/NotifyDialog'; import { copySeedLines } from '../../lib/soCopyLines';
 import { usePrompt } from '../../vendor/scm/components/ConfirmDialog';
 import { askNewSoBackdateReason, draftRequestBody, isBackdateRequestRow, sendNewSoBackdateRequests } from '../../vendor/scm/lib/new-so-backdate';
 import {
@@ -357,8 +357,9 @@ export const SalesOrderNew = () => {
     setEmergencyName(h.emergency_contact_name ?? '');
     setEmergencyRel(h.emergency_contact_relationship ?? '');
     setEmergencyPhone(h.emergency_contact_phone ?? '');
-    if (Array.isArray(srcItems) && srcItems.length > 0) {
-      setLines(srcItems.filter((it) => !it.cancelled).map((it: any) => ({
+    const copyKept = copySeedLines(srcItems, h.status, (n) => void notify(n));
+    if (copyKept.length > 0) {
+      setLines(copyKept.map((it: any) => ({
         ...newLine(),
         itemCode:       it.item_code ?? '',
         itemGroup:      it.item_group ?? 'others',

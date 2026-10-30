@@ -97,8 +97,8 @@
     },
     {
       "check": "D1",
-      "key": "APR,AUG,DEC,FEB,JAN,JUL,JUN,MAR,MAY,NOV,OCT,SEP|backend/src/routes/finance.ts backend/src/routes/projects_print.ts backend/src/scm/lib/po.ts frontend/src/pages/Projects.tsx",
-      "why": "A CALENDAR/LOCALE vocabulary (months, weekdays, languages) — fixed by the world, not by this business, and it cannot drift into a wrong answer. 4 homes: MONTH_LABELS, MONTHS, month, mon."
+      "key": "APR,AUG,DEC,FEB,JAN,JUL,JUN,MAR,MAY,NOV,OCT,SEP|backend/src/routes/finance.ts backend/src/routes/projects_print.ts backend/src/scm/lib/logistics-pnl.ts backend/src/scm/lib/po.ts frontend/src/pages/Projects.tsx",
+      "why": "A CALENDAR/LOCALE vocabulary (months, weekdays, languages) — fixed by the world, not by this business, and it cannot drift into a wrong answer. 5 homes: MONTH_LABELS, MONTHS, month, mon, and the Logistics P&L reading the month a bill line names (\"SEP'26\")."
     },
     {
       "check": "D1",

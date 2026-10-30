@@ -35,8 +35,8 @@ export const receiptsList = async (c: any): Promise<Response> => {
   const range = month ? monthRange(month) : null;
   if (month && !range) return c.json({ error: 'bad_month', message: 'Which month? YYYY-MM.' }, 400);
 
-  const COLS = 'id, or_number, status, payment_source, payment_id, doc_no, customer_name, method, amount_sen, paid_at, channel_account_code, issued_at, issued_by, created_at';
-  const scoped = (q: any) => (status === 'DRAFT' || status === 'FORMAL' ? q.eq('status', status) : q);
+  const COLS = 'id, or_number, status, payment_source, payment_id, doc_no, customer_name, method, amount_sen, paid_at, channel_account_code, issued_at, issued_by, created_at, cancelled_at, cancelled_by, cancel_reason';
+  const scoped = (q: any) => (status === 'DRAFT' || status === 'FORMAL' || status === 'CANCELLED' ? q.eq('status', status) : q);
   if (range) {
     const all = await paginateAll<Record<string, unknown>>((from, to) => scoped(sb.from('acc_official_receipts').select(COLS)
       .eq('company_id', co.companyId).gte('paid_at', range.from).lte('paid_at', range.to))
@@ -96,7 +96,7 @@ export const receiptFormalise = async (c: any): Promise<Response> => {
   const actor = (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null;
   const r = await formaliseReceipt(sb, { companyId: co.companyId, companyCode: code, receiptId: id, accountCode, actor });
   if (!r.ok) {
-    return c.json({ error: r.status, message: r.reason }, r.status === 'bank_letter_missing' ? 409 : r.status === 'not_found' ? 404 : 500);
+    return c.json({ error: r.status, message: r.reason }, r.status === 'bank_letter_missing' || r.status === 'cancelled' ? 409 : r.status === 'not_found' ? 404 : 500);
   }
   return c.json({ ok: true, orNumber: r.orNumber, already: r.already === true });
 };

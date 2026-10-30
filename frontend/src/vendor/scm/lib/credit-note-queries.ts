@@ -30,6 +30,8 @@ export type CreditNote = {
   note_date: string; total_sen: number; reason: string | null; notes: string | null;
   status: NoteStatus; je_no: string | null;
   created_at: string; created_by: string | null; posted_at: string | null; cancelled_at: string | null;
+  /** Part of the books' opening balance (31/08 from AutoCount) — changed on Opening Balance, not here. */
+  opening?: boolean;
 };
 /** project_id / projectId: the event the line's money is for (owner 2026-10-22). */
 export type CreditNoteLine = { id: string; line_no: number; description: string | null; account_code: string; amount_sen: number; project_id?: number | null };
@@ -81,9 +83,12 @@ const invalidate = (qc: ReturnType<typeof useQueryClient>) => {
   }
 };
 
-export const useCreditNotes = (side: NoteSide, kind: NoteKind | 'ALL', status: NoteStatus | 'ALL') => useQuery({
-  queryKey: [KEY, side, kind, status],
-  queryFn: () => authedFetch<{ rows: CreditNote[] }>(`/credit-notes?side=${side}&kind=${kind === 'ALL' ? '' : kind}&status=${status === 'ALL' ? '' : status}`),
+/** The books' opening papers: listed with the rest, alone, or left out (owner 2026-10-29). */
+export type OpeningFilter = 'all' | 'only' | 'exclude';
+
+export const useCreditNotes = (side: NoteSide, kind: NoteKind | 'ALL', status: NoteStatus | 'ALL', opening: OpeningFilter = 'all') => useQuery({
+  queryKey: [KEY, side, kind, status, opening],
+  queryFn: () => authedFetch<{ rows: CreditNote[] }>(`/credit-notes?side=${side}&kind=${kind === 'ALL' ? '' : kind}&status=${status === 'ALL' ? '' : status}${opening === 'all' ? '' : `&opening=${opening}`}`),
   staleTime: 15_000,
   retry: retryUnlessClientError,
 });

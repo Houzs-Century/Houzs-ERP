@@ -166,7 +166,7 @@ export const debtorDetailHandler = async (c: any): Promise<Response> => {
   const sb = c.get('supabase');
   const [bills, receipts] = await Promise.all([
     scopeToCompany(sb.from('acc_debtor_bills')
-      .select('id, bill_number, bill_date, total_sen, received_sen, status, notes, created_at')
+      .select('id, bill_number, bill_date, total_sen, received_sen, status, notes, created_at, doc_kind')
       .eq('debtor_id', found.debtor.id), c).order('bill_number'),
     scopeToCompany(sb.from('acc_debtor_receipts')
       .select('id, receipt_number, receipt_date, bank_account_code, total_sen, status, submitted_at, submitted_by, checked_at, checked_by, approved_at, approved_by, posted_at, notes, created_at')
@@ -266,6 +266,12 @@ export const createDebtorBillHandler = async (c: any): Promise<Response> => {
   const built = buildBillLines(body.lines);
   if ('error' in built) return c.json({ error: built.error, message: built.message }, 400);
   const lines = built.lines;
+  /* A debit note to the debtor (owner 2026-10-28: Customer & Other Debtor CN / DN)
+     is this same bill — it raises what they owe and is received by the same
+     receipts — with doc_kind 'DN' and its own series {co}ODN-YYMM-NNN. */
+  const docKindRaw = String(body.docKind ?? 'INV').trim().toUpperCase();
+  if (docKindRaw !== 'INV' && docKindRaw !== 'DN') return c.json({ error: 'bad_doc_kind', message: 'docKind is INV (a bill) or DN (a debit note).' }, 400);
+  const docKind: 'INV' | 'DN' = docKindRaw;
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json({ error: 'no_company', message: 'No active company resolves for this session.' }, 409);
   const coId = co.companyId;
@@ -282,10 +288,11 @@ export const createDebtorBillHandler = async (c: any): Promise<Response> => {
   const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
 
   const sb = c.get('supabase');
-  const billNumber = await mintMonthlyDocNo(sb, 'acc_debtor_bills', 'bill_number', `${companyDocPrefix(c)}ODB-${docMonthTag(billDate)}`);
+  const billNumber = await mintMonthlyDocNo(sb, 'acc_debtor_bills', 'bill_number', `${companyDocPrefix(c)}${docKind === 'DN' ? 'ODN' : 'ODB'}-${docMonthTag(billDate)}`);
   const { data: bill, error: insErr } = await sb.from('acc_debtor_bills').insert({
     company_id: coId,
     bill_number: billNumber,
+    doc_kind: docKind,
     debtor_id: found.debtor.id,
     bill_date: billDate,
     total_sen: totalSen,
@@ -317,7 +324,7 @@ export const createDebtorBillHandler = async (c: any): Promise<Response> => {
     entryDate: billDate,
     sourceType: 'ODB',
     sourceDocNo: bill.bill_number,
-    narration: `Debtor bill ${bill.bill_number} — ${found.debtor.name}`,
+    narration: `${docKind === 'DN' ? 'Debit note' : 'Debtor bill'} ${bill.bill_number} — ${found.debtor.name}`,
     lines: ruleLines,
   });
   if (!r.ok) {
@@ -343,11 +350,12 @@ export const updateDebtorBillHandler = async (c: any): Promise<Response> => {
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
   const sb = c.get('supabase');
   const { data: billRaw, error } = await scopeToCompany(
-    sb.from('acc_debtor_bills').select('id, bill_number, debtor_id, bill_date, total_sen, received_sen, status, notes, company_id, opening').eq('id', c.req.param('billId')), c,
+    sb.from('acc_debtor_bills').select('id, bill_number, debtor_id, bill_date, total_sen, received_sen, status, notes, company_id, opening, doc_kind').eq('id', c.req.param('billId')), c,
   ).maybeSingle();
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (!billRaw) return c.json({ error: 'not_found' }, 404);
   const bill = billRaw as Row;
+  const paper = bill.doc_kind === 'DN' ? 'debit note' : 'debtor bill';
   if (bill.opening === true) return c.json(openingDocumentRefusal(String(bill.bill_number)), 409);
   if (bill.status === 'CANCELLED') return c.json({ error: 'cancelled', message: `${bill.bill_number} is cancelled — raise it again instead.` }, 409);
   /* Snapshot before the update — a client handing out live row references
@@ -400,7 +408,7 @@ export const updateDebtorBillHandler = async (c: any): Promise<Response> => {
     companyId: coId,
     sourceType: 'ODB',
     sourceDocNo: billNumber,
-    narration: (orig) => `Edit debtor bill ${billNumber} — voids ${orig.je_no}`,
+    narration: (orig) => `Edit ${paper} ${billNumber} — voids ${orig.je_no}`,
     entryDate: oldDate,
   });
   if (!rev.ok) return c.json({ error: 'reverse_failed', reason: (rev as { reason?: string }).reason ?? rev.status }, 500);
@@ -422,7 +430,7 @@ export const updateDebtorBillHandler = async (c: any): Promise<Response> => {
     entryDate: billDate,
     sourceType: 'ODB',
     sourceDocNo: billNumber,
-    narration: `Debtor bill ${billNumber} — ${found.debtor.name} — edited`,
+    narration: `${paper === 'debit note' ? 'Debit note' : 'Debtor bill'} ${billNumber} — ${found.debtor.name} — edited`,
     lines: debtorBillRuleLines(roles, String(found.debtor.name), billNumber, lines, totalSen),
   });
   if (!r.ok) return c.json({ error: 'post_failed', reason: (r as { reason?: string }).reason ?? r.status }, 500);
@@ -435,7 +443,7 @@ export const cancelDebtorBillHandler = async (c: any): Promise<Response> => {
   }
   const sb = c.get('supabase');
   const { data: bill, error } = await scopeToCompany(
-    sb.from('acc_debtor_bills').select('id, bill_number, status, received_sen, company_id, opening').eq('id', c.req.param('billId')), c,
+    sb.from('acc_debtor_bills').select('id, bill_number, status, received_sen, company_id, opening, doc_kind').eq('id', c.req.param('billId')), c,
   ).maybeSingle();
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (!bill) return c.json({ error: 'not_found' }, 404);
@@ -448,7 +456,7 @@ export const cancelDebtorBillHandler = async (c: any): Promise<Response> => {
     companyId: bill.company_id,
     sourceType: 'ODB',
     sourceDocNo: bill.bill_number,
-    narration: (orig) => `Cancel debtor bill ${bill.bill_number} — voids ${orig.je_no}`,
+    narration: (orig) => `Cancel ${bill.doc_kind === 'DN' ? 'debit note' : 'debtor bill'} ${bill.bill_number} — voids ${orig.je_no}`,
   });
   if (!rev.ok) return c.json({ error: 'reverse_failed', reason: (rev as { reason?: string }).reason ?? rev.status }, 500);
   const { error: upErr } = await sb.from('acc_debtor_bills').update({ status: 'CANCELLED' }).eq('company_id', bill.company_id).eq('id', bill.id);

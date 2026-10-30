@@ -45,6 +45,8 @@ A return is one of two things (owner 2026-09-28: 「purchase return - 是可以�
 
 **The receive-back leg is phase 2** (`tasks/TODO.md`): a *Received back* action on the same document, the QC result, and repeat rounds. Until it ships, a repair that comes back is received the way it always was; the return stays POSTED.
 
+A live REPAIR return is outside `grn_items.returned_qty` but its units are still not returnable again: every return cap (create, from-grn(s), add-line, edit-line) subtracts `repairHeldQty` on top of `returned_qty`.
+
 ## The reason is mandatory, and it is a code
 
 Owner 2026-09-28: 「when raise purchase return need input reason and put in remark」. `POST /` refuses `reason_required` / `reason_invalid` before any write (through `refuse`, so the idempotency claim is released and a corrected resubmit is not `idempotency_key_reused`). The catalogue is `backend/src/scm/shared/purchase-return-reasons.ts`, byte-mirrored to `frontend/src/vendor/shared/`: DAMAGED, WRONG_COLOUR, WRONG_ITEM, OVER_SUPPLY, QUALITY, REPAIR, OTHER. The operator's own words go in `notes` (the Remark box) and show on the detail; the per-line `reason` stays free text for the one line that differs.

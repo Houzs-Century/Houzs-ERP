@@ -11,11 +11,15 @@ import { retryUnlessClientError } from '../../../lib/retryPolicy';
 import { fetchDocFileBlobUrl, type PvFile, type PvFilePayload } from './payment-voucher-queries';
 
 export type ApListKind = 'ALL' | 'API' | 'PI';
+/** A supplier's debit note is an AP invoice of its own kind (owner 2026-10-28): it raises what we owe. */
+export type ApDocKind = 'INV' | 'DN';
 
 /** One row of the Finance list — a purchase invoice (read-only mirror) or an
     AP invoice raised here; `kind` says which. */
 export type ApListRow = {
   kind: 'API' | 'PI';
+  /** 'DN' for a supplier's debit note (series {co}SDN-); every other row 'INV'. */
+  docKind?: ApDocKind;
   id: string;
   invoiceNumber: string;
   supplierId: string | null;
@@ -39,13 +43,15 @@ export type ApInvoiceHeader = {
   status: string; notes: string | null; posted_at: string | null; posted_by: string | null;
   /** 欠正式单 (item 3): booked on a proforma — OWED, RECEIVED (to check), CHECKED. */
   official_doc?: string | null; official_doc_note?: string | null;
+  doc_kind?: ApDocKind;
 };
 /** project_id: the event the line's money is for (owner 2026-09-30, 5a). */
 export type ApInvoiceLine = { id: string; line_no: number; description: string | null; debit_account_code: string; amount_sen: number; project_id?: number | null };
 
-export const useApInvoices = (kind: ApListKind = 'ALL') => useQuery({
-  queryKey: ['ap-invoices', kind],
-  queryFn: () => authedFetch<{ rows: ApListRow[] }>(`/ap-invoices?kind=${kind}`),
+/** docKind: 'DN' lists the supplier debit notes alone (the CN / DN page's tab). */
+export const useApInvoices = (kind: ApListKind = 'ALL', docKind?: ApDocKind) => useQuery({
+  queryKey: ['ap-invoices', kind, docKind ?? 'any'],
+  queryFn: () => authedFetch<{ rows: ApListRow[] }>(`/ap-invoices?kind=${kind}${docKind ? `&docKind=${docKind}` : ''}`),
   staleTime: 15_000,
 });
 
@@ -72,7 +78,7 @@ export const useCreateApInvoice = () => {
   return useMutation({
     /* paymentRequestId: the 申请付款 this bill answers (owner 2026-09-30, 6.1) —
        the server claims it and copies its files on (requestFilesCopied). */
-    mutationFn: (body: { supplierId: string; supplierInvoiceRef?: string; invoiceDate: string; dueDate?: string | null; notes?: string; lines: ApInvoiceLineInput[]; paymentRequestId?: string }) =>
+    mutationFn: (body: { supplierId: string; supplierInvoiceRef?: string; invoiceDate: string; dueDate?: string | null; notes?: string; lines: ApInvoiceLineInput[]; paymentRequestId?: string; docKind?: ApDocKind }) =>
       authedFetch<{ ok: boolean; invoice: ApInvoiceHeader; requestFilesCopied?: number }>(`/ap-invoices`, { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => invalidate(qc),
   });
@@ -112,7 +118,7 @@ export const useCancelApInvoice = () => {
    voucher's own files. Server: backend/src/scm/routes/ap-invoice-files.ts. */
 export const useApInvoiceFiles = (invoiceId: string | null) => useQuery({
   queryKey: ['ap-invoice-files', invoiceId],
-  queryFn: () => authedFetch<{ files: PvFile[] }>(`/ap-invoices/${invoiceId}/files`),
+  queryFn: () => authedFetch<{ files: PvFile[]; locked?: boolean }>(`/ap-invoices/${invoiceId}/files`),
   enabled: !!invoiceId,
   retry: retryUnlessClientError,
 });

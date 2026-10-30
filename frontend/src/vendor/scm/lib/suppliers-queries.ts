@@ -240,7 +240,7 @@ export type PoHeaderRow = PoHoldFields & {
       and the Worker deploy independently, so a freshly-shipped bundle can talk
       to a worker that still sends it — the column renders those as plain,
       un-linkable chips instead of blank ones. */
-  transfer_to_grns?: Array<{ id: string; grnNumber: string } | string>;
+  transfer_to_grns?: Array<{ id: string; grnNumber: string; receivedAt?: string | null } | string>;
 };
 
 export type PoItemSummary = {

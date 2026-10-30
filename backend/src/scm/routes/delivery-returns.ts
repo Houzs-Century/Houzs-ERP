@@ -43,6 +43,7 @@ import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { sourceUnitCostByItemId } from '../lib/source-cost';
 import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
+import { isSoLineOverDelivered } from '../lib/so-remaining-by-item';
 import {
   DR_FINANCE_KEYS,
   DR_HEADER_COLS,
@@ -1819,6 +1820,7 @@ export const patchDeliveryReturnStatusHandler = async (c: any) => {
     const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_returns')
       .update(ts).eq('id', id), co.companyId).neq('status', 'CANCELLED')
       .select('id, status').maybeSingle();
+    if (isSoLineOverDelivered(error)) return c.json({ error: 'cancel_over_delivers', message: 'Cancelling this return would put a Sales Order line above its ordered qty, because a later Delivery Order already re-shipped the returned units. Cancel or reduce that Delivery Order first.', reason: error?.message }, 409);
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
     if (!updated) {
       // Lost the race — another concurrent cancel already flipped it. Do NOT

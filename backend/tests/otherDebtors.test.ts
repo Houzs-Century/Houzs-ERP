@@ -652,3 +652,26 @@ describe('an event on a bill line — optional, onto its own credit leg', () => 
     expect(tables.acc_debtor_bill_lines.filter((l) => l.bill_id === billRow.id).map((l) => l.project_id ?? null)).toEqual([null]);
   });
 });
+
+/* A debit note to an other debtor (owner 2026-10-28: Customer & Other Debtor CN / DN):
+   the same bill — it raises what they owe and is received by the same receipts —
+   with doc_kind DN, its own series and its own name in the journal. */
+describe('a debit note to an other debtor is a bill of its own kind', () => {
+  test('mints {co}ODN-YYMM-NNN and books ODB as "Debit note"; a bad docKind refuses', async () => {
+    const tables = baseTables();
+    const app = harness(tables);
+    const res = await post(app, '/d1/bills', { billDate: '2026-09-03', docKind: 'DN', lines: [{ description: 'Late fee', creditAccountCode: '700-0000', amountSen: 12000 }] });
+    expect(res.status, await res.clone().text()).toBe(201);
+    const bill = (await res.json() as { bill: { id: string; billNumber: string; totalSen: number } }).bill;
+    expect(bill.billNumber).toMatch(/ODN-2609-001$/);
+    expect(tables.acc_debtor_bills.find((b) => b.id === bill.id)).toMatchObject({ doc_kind: 'DN', status: 'POSTED', total_sen: 12000 });
+    const je = tables.journal_entries.find((j) => j.source_type === 'ODB' && j.source_doc_no === bill.billNumber)!;
+    expect(String(je.narration)).toMatch(/^Debit note .*ODN-2609-001 — AHMAD BIN ALI$/);
+    const jl = tables.journal_entry_lines.filter((l) => l.journal_entry_id === je.id);
+    expect(jl.find((l) => l.account_code === '305-0000')).toMatchObject({ debit_sen: 12000, party_name: 'AHMAD BIN ALI' });
+    const plain = await makeBill(app, tables);
+    expect(plain.billNumber).toMatch(/ODB-2609-001$/);
+    const bad = await post(app, '/d1/bills', { billDate: '2026-09-03', docKind: 'XX', lines: [{ creditAccountCode: '700-0000', amountSen: 100 }] });
+    expect(bad.status).toBe(400);
+  });
+});

@@ -162,7 +162,7 @@ page, and the POS Admin menu. This guide carries only what is built.
   Excel sheets and the printable page all come from `reportRows`, so the
   four agree column for column.
 - Device Sales report (layout P13, Ctrl+T, `pos/src/sell/Report.tsx`, rules
-  `pos/src/report.ts`): Today / Pick date / Full event over the local bills
+  `pos/src/report.ts`): Today / Pick date / From-To / Full event over the local bills
   (offline); All terminals (supervisor PIN) asks
   `GET /api/pos-device/report?from&to` for the event's synced bills. Print
   daily report = thermal Z-report (`zReportLines`, re-printable any time,
@@ -177,7 +177,7 @@ page, and the POS Admin menu. This guide carries only what is built.
   Export Excel (the shared rows plus the stock column) / PDF.
 - POS Items > Add by category (`POST /api/pos-admin/items/add-all`, `dry_run`
   for counts per `mfg_products.category`, else `categories[]`): tags the ticked
-  categories' ACTIVE products with a selling price, never an existing item;
+  categories' ACTIVE products with a selling price and turns their off items on;
   `POST items/keep-categories` switches off POS items outside the ticked ones;
   `POST items/remove { ids[] }` is the list's tick-and-remove (same switch-off).
 - Install: the login screen (banner and footer link) and Settings offer

@@ -225,6 +225,11 @@ test("the real backend tree classifies, and the split is not degenerate", async 
    So the protection is stated here rather than left to a side effect. Adding a
    suite to this list is a claim that its assertion must stop a MERGE. */
 const MUST_GATE_MERGE = [
+  "tests/sofaAccessoryIngress.test.ts",
+  "tests/sofaQuickPickLayouts.test.ts",
+  "src/scm/lib/sofa-accessory-order.test.ts",
+  "src/scm/lib/sofa-saved-layout.test.ts",
+  "tests/sofaComboAccessories.test.ts",
   "tests/migrationNumbers.test.ts",
   /* A bucket holding a label that is not in the enum makes the tab 500 AND its
      count fall silently to 0 — 37 delivery orders were unreachable in

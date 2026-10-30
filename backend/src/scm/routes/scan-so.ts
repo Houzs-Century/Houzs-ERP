@@ -412,11 +412,11 @@ async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: 
       .eq('is_active', true)
       .order('fabric_code')
       .range(from, to)),
-    sb
-      .from('maintenance_config_history')
-      .select('config')
+    scopeToCompanyIdOrOpen(sb.from('maintenance_config_history').select('config'), companyId)
       .eq('scope', 'master')
+      .lte('effective_from', todayMyt())
       .order('effective_from', { ascending: false })
+      .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle(),
     // SO Maintenance vocab — ACTIVE rows only (the maintenance page's

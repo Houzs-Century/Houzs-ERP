@@ -46,4 +46,8 @@ describe("Delivery sheet feed SQL survives the placeholder rewrite", () => {
       expect(pg).toContain("LIMIT $2");
     }
   });
+
+  test("the sheet's first delivery date is frozen as the Sales Exemption Expiry (HC-0122)", () => {
+    expect(updateFromSheetSql(1)).toContain("sales_exemption_expiry = COALESCE(so.sales_exemption_expiry, h.delivery_date)");
+  });
 });

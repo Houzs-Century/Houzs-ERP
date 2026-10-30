@@ -14,7 +14,7 @@ import { lineWriteFailure, lineWriteSaveMessage, type LineWriteFailure } from ".
 import { amendmentVariants, amendmentVariantsKey, amendmentRequestedUnitPriceSen, amendmentPriceFields, storedLineRemark } from "../vendor/scm/lib/so-amendment-line-diff";
 import { photoLabel, photoUploadFailure, photoUploadFailureMessage, unmatchedLinePhotos, type PhotoUploadFailure } from "../vendor/scm/lib/photo-upload-failures";
 import { runSoVersionedMutation } from "../vendor/scm/lib/so-versioned-mutation";
-import { notifySaveProblems, SaveProblemsList, saveProblemsTitle } from "../vendor/scm/components/SaveProblemsList";
+import { copySeedLines } from "../lib/soCopyLines"; import { notifySaveProblems, SaveProblemsList, saveProblemsTitle } from "../vendor/scm/components/SaveProblemsList";
 import { SaveBlockedIndicator } from "../vendor/scm/components/SaveBlockedIndicator";
 import { useSoValidate } from "../vendor/scm/lib/use-so-validate";
 import { uploadSlipFull } from "../vendor/scm/lib/slip";
@@ -1097,7 +1097,7 @@ export function MobileNewSO({
       setName(h.debtor_name ?? ""); setCustRef(h.customer_so_no ?? h.ref ?? ""); setPhone(toE164(h.phone)); setEmail(h.email ?? ""); setCustType(h.customer_type ?? "");
       setBuildingType(h.building_type ?? ""); setAddr1(h.address1 ?? ""); setAddr2(h.address2 ?? ""); setState(h.customer_state ?? ""); setCity(h.city ?? ""); setPostcode(h.postcode ?? "");
       setSalespersonId(h.salesperson_id != null ? String(h.salesperson_id) : "");
-      const copied = d.items.filter((it) => !it.cancelled).map((it) => ({ ...lineFromItem(it), itemId: "", photoKeys: [] }));
+      const copied = copySeedLines(d.items, h.status, (n) => void notify(n)).map((it) => ({ ...lineFromItem(it), itemId: "", photoKeys: [] }));
       if (copied.length) setLines(copied);
     }).catch((e: unknown) => { if (!gone) setError(e instanceof Error ? e.message : "Couldn't load the cancelled order."); })
       .finally(() => { if (!gone) setLoading(false); });
@@ -1767,7 +1767,7 @@ export function MobileNewSO({
       .map((k) => JSON.stringify(k) + ":" + canonJson((o as Record<string, unknown>)[k]))
       .join(",") + "}";
   };
-  const lineChanged = (l: LineItem, snap: SoItem): boolean => {
+  const lineChanged = (l: LineItem, snap: SoItem): boolean => { if (frozenItemIds.has(snap.id)) return false; // read-only on screen: any seed-vs-stored gap (an imported remark in variants) is no edit, and a PATCH 409s (HC-0159)
     if (l.itemCode !== (snap.item_code ?? "")) return true;
     if ((l.itemGroup || "others") !== ((snap.item_group ?? "others").toLowerCase())) return true;
     if ((num(l.qty) || 1) !== (snap.qty ?? 1)) return true;

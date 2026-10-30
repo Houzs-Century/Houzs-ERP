@@ -893,7 +893,27 @@ describe('a delivery order across seven POs and three warehouses (NICE FUTURE 20
     expect(nameMatchItem('ERGOTEX FLEXICARE-C MATT - W152 X L190 X H30CM', [open[5]])).toBeNull();
   });
 
+  test('FLEXICARE C (hyphen lost) is not the lone FLEXICARE-S', () => {
+    expect(nameMatchItem('ERGOTEX FLEXICARE C MATT - W152 X L190 X H30CM', [open[5]])).toBeNull();
+    expect(nameMatchItem('ERGOTEX FLEXICARE S MATT - W152 X L190 X H30CM', [open[5]])).toBe('EG-FLEXICARE-S MATT (Q)');
+  });
+
   test('a gift naming the brand alone still matches nothing', () => {
     expect(nameMatchItem('ERGOTEX PILLOW', [open[0]])).toBeNull();
+  });
+
+  // HC-0137 review: the -C suffix only tells items apart when another item shares the base.
+  test('a lone ECOZONE-C matches a row that leaves the -C out', () => {
+    expect(nameMatchItem('ERGOTEX ECOZONE W183 X L190', [open[0]])).toBe('EG-ECOZONE-C MATT (K)');
+  });
+
+  test('two items that differ only by item group still tell apart', () => {
+    const akemi = [
+      line({ itemCode: 'AKB1', materialName: 'AKEMI BULWARK MATTRESS', itemGroup: 'MATTRESS' }),
+      line({ itemCode: 'AKB2', materialName: 'AKEMI BULWARK PILLOW', itemGroup: 'PILLOW' }),
+    ];
+    expect(nameMatchItem('AKEMI BULWARK MATTRESS', akemi)).toBe('AKB1');
+    expect(nameMatchItem('AKEMI BULWARK PILLOW', akemi)).toBe('AKB2');
+    expect(nameMatchItem('AKEMI BULWARK', akemi)).toBeNull();
   });
 });

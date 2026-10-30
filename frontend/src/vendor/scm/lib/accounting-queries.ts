@@ -254,10 +254,17 @@ export type ChartRow = {
   /** 需要 Event and the PMS event page's row (owner 2026-10-01, payment-request item 4). */
   needsEvent?: boolean;
   pmsRow?: string | null;
+  /** The Logistics P&L's row this account feeds (owner 2026-10-29: picked here, not on the report). */
+  logisticsRow?: string | null;
   perCompany: Partial<Record<number, { active: boolean }>>;
 };
-/** pmsRows: the PMS event page's rows an account can fill — one list, from the server. */
-export const useChartUnion = () => baseQuery<{ companies: ChartCompany[]; sections: AccountSection[]; accounts: ChartRow[]; pmsRows?: Array<{ row: string; label: string }> }>(
+/** pmsRows: the PMS event page's rows an account can fill; logisticsRows: the Logistics
+    P&L's, each with the account type it reads — one list each, from the server. */
+export const useChartUnion = () => baseQuery<{
+  companies: ChartCompany[]; sections: AccountSection[]; accounts: ChartRow[];
+  pmsRows?: Array<{ row: string; label: string }>;
+  logisticsRows?: Array<{ row: string; label: string; type: ChartRow['type'] }>;
+}>(
   ['chart-union'], `/accounting/chart`,
 );
 
@@ -339,13 +346,16 @@ export const useChartRename = () => {
 export const useChartUpdate = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { code: string; name?: string; accountType?: string; accMoney?: boolean; parentCode?: string | null; section?: string; needsEvent?: boolean; pmsRow?: string | null }) =>
+    mutationFn: (body: { code: string; name?: string; accountType?: string; accMoney?: boolean; parentCode?: string | null; section?: string; needsEvent?: boolean; pmsRow?: string | null; logisticsRow?: string | null }) =>
       authedFetch<{ ok: boolean; companies: number }>(
         `/accounting/chart/update`, { method: 'PUT', body: JSON.stringify(body) },
       ),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['chart-union'] });
       void qc.invalidateQueries({ queryKey: ['accounts'] });
+      /* A Logistics row moves money between the logistics reports' rows. */
+      void qc.invalidateQueries({ queryKey: ['acc-events', 'logistics'] });
+      void qc.invalidateQueries({ queryKey: ['acc-events', 'logistics-pnl'] });
     },
   });
 };
@@ -385,6 +395,8 @@ export type DebtorBillLine = { id: string; line_no: number; description: string 
 export type DebtorBill = {
   id: string; bill_number: string; bill_date: string;
   total_sen: number; received_sen: number; status: string; notes: string | null;
+  /** 'DN' for a debit note to the debtor (2026-10-28) — prints as DEBIT NOTE. */
+  doc_kind?: 'INV' | 'DN';
   /** The bill's lines (2026-09-06) — Edit and Copy start from them. */
   lines?: DebtorBillLine[];
 };
@@ -438,6 +450,8 @@ export const useCreateDebtorBill = () => {
     mutationFn: ({ debtorId, ...body }: {
       debtorId: string; billDate?: string; notes?: string;
       lines: Array<{ description?: string; creditAccountCode?: string; amountSen: number }>;
+      /** 'DN': a debit note to the debtor — a bill of its own kind, series {co}ODN- (2026-10-28). */
+      docKind?: 'INV' | 'DN';
     }) => authedFetch<{ ok: boolean; bill: { billNumber: string; totalSen: number } }>(
       `/other-debtors/${debtorId}/bills`, { method: 'POST', body: JSON.stringify(body) },
     ),

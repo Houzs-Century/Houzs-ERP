@@ -83,6 +83,9 @@ export interface SofaProductPricing {
    *  (POS doesn't have the retail↔mfg base_model bridge yet — relies on
    *  modules-match alone). */
   combos?: import('./sofa-combo-pricing').SofaComboRow[];
+  /** Pieces placed on this build. Covered pieces are included in the combo
+   *  total; callers charge only pieces outside comboMatchedAccessoryIds. */
+  accessories?: import('./sofa-combo-pricing').SofaPricedAccessory[];
   /** Fabric tier of the currently-selected fabric (PRICE_1 / PRICE_2 / PRICE_3).
    *  Used when looking up a combo override. Combos with tier=null match any
    *  tier; combos with a specific tier require an exact match. */
@@ -147,6 +150,10 @@ export interface SofaGroupPrice {
    *  combo price covers). Extras = cellIds − comboMatchedCellIds. Lets the
    *  cart show "combo applied + extras separate" like HOOKKA. null otherwise. */
   comboMatchedCellIds?: string[] | null;
+  /** Sofa Accessory pieces already included in this group's combo price. */
+  comboMatchedAccessoryIds?: string[];
+  /** The rule that actually supplied this group's selling price. */
+  comboId?: string | null;
 }
 
 export interface SofaPriceResult {
@@ -515,17 +522,19 @@ export const sofaCompartmentsFromModulePrices = (
  *  price map + combos (sofa_combo_pricing). mfg sofas carry no bundles and
  *  `reclinerUpgradeSen` 0 at pilot, so those are fixed here. Returns whole-
  *  build SEN — the engine carries sen throughout now, so there is no ×100. */
-export const computeSofaSellingSen = (
+export const computeSofaSellingResult = (
   cells: Cell[],
   depth: Depth,
   modulePrices: SofaModulePriceSen | null | undefined,
   combos: SofaComboRow[],
-): number => {
+  accessories: import('./sofa-combo-pricing').SofaPricedAccessory[] = [],
+): SofaPriceResult => {
   const pricing: SofaProductPricing = {
     compartments: sofaCompartmentsFromModulePrices(modulePrices),
     bundles: [],
     reclinerUpgradeSen: 0,
     combos,
+    accessories,
     // Match combos at PRICE_1 — the base tier the whole sofa runs at (Chairman
     // 2026-06-01). Module seat prices load at PRICE_1 and every combo is
     // authored at PRICE_1, so the POS (Configurator sofaPricing) and this
@@ -536,8 +545,17 @@ export const computeSofaSellingSen = (
     comboHeight: String(depth),
     baseModel: '',
   };
-  return computeSofaPrice(cells, depth, pricing).total;
+  return computeSofaPrice(cells, depth, pricing);
 };
+
+/** Total-only compatibility wrapper; use the result when consuming included pieces. */
+export const computeSofaSellingSen = (
+  cells: Cell[],
+  depth: Depth,
+  modulePrices: SofaModulePriceSen | null | undefined,
+  combos: SofaComboRow[],
+  accessories: import('./sofa-combo-pricing').SofaPricedAccessory[] = [],
+): number => computeSofaSellingResult(cells, depth, modulePrices, combos, accessories).total;
 
 /** Auto-detect a Combo's COST (sen) = Σ COST of each slot's representative
  *  (first) module code. A Combo is just existing module SKUs assembled, so its
@@ -1250,12 +1268,16 @@ const groupPrice = (group: Cell[], depth: Depth, pricing: SofaProductPricing): S
   let comboSubsetALaCarte: number | null = null;
   let comboExtrasALaCarte: number | null = null;
   let comboMatchedCellIds: string[] | null = null;
+  let comboMatchedAccessoryIds: string[] = [];
+  let comboId: string | null = null;
   if (pricing.combos && pricing.combos.length > 0) {
     const heightStr = pricing.comboHeight ?? String(depth);
     const match = pickComboMatch(
       {
         baseModel: pricing.baseModel ?? '',
         modules: modIds,
+        cellIds,
+        accessories: pricing.accessories,
         customerId: null,        // 2990 B2C — only default-scope rows in play
         tier: pricing.fabricTier ?? 'PRICE_2',
         height: heightStr,
@@ -1300,9 +1322,20 @@ const groupPrice = (group: Cell[], depth: Depth, pricing: SofaProductPricing): S
       if (comboPriceSen > 0) {
         basis = 'combo';
         comboPrice = comboPriceSen;
-        comboSubsetALaCarte = subsetSum;
+        const includedIds = new Set(match.matchedAccessoryIds);
+        // Pieces are not part of aLaCarteTotal: add their value to the savings
+        // comparison only, never subtract it from the extra MODULES' total.
+        const seenPieces = new Set<string>();
+        const includedAccessoriesSen = (pricing.accessories ?? []).reduce((sum, p) => {
+          if (!includedIds.has(p.id) || seenPieces.has(p.id)) return sum;
+          seenPieces.add(p.id);
+          return sum + (Number.isFinite(p.priceSen) && p.priceSen > 0 ? p.priceSen : 0);
+        }, 0);
+        comboSubsetALaCarte = subsetSum + includedAccessoriesSen;
         comboExtrasALaCarte = Math.max(0, aLaCarteTotal - subsetSum);
         comboMatchedCellIds = match.matchedIndices.map((i) => cellIds[i]!);
+        comboMatchedAccessoryIds = match.matchedAccessoryIds;
+        comboId = match.row.id;
         // A combo match overrides the bundle path — clear bundle so
         // SofaGroupPrice.basis reads cleanly as 'combo'.
         bundle = null;
@@ -1346,6 +1379,8 @@ const groupPrice = (group: Cell[], depth: Depth, pricing: SofaProductPricing): S
     comboSubsetALaCarte,
     comboExtrasALaCarte,
     comboMatchedCellIds,
+    comboMatchedAccessoryIds,
+    comboId,
   };
 };
 
