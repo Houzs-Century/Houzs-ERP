@@ -38,7 +38,7 @@ app.get("/directory", async (c) => {
   const byId = new Map(roster.map((u) => [u.id, u]));
 
   const boxes = await c.env.DB.prepare(
-    `SELECT address, label, assigned_user_id, assigned_dept FROM email_addresses
+    `SELECT address, label, assigned_user_id, department_id FROM email_addresses
       WHERE active = 1${activeCompanySql(c)}
       ORDER BY lower(address)`,
   ).all<{
@@ -46,19 +46,20 @@ app.get("/directory", async (c) => {
     label?: string | null;
     assigned_user_id?: number | null;
     assignedUserId?: number | null;
-    assigned_dept?: string | null;
-    assignedDept?: string | null;
+    department_id?: number | null;
+    departmentId?: number | null;
   }>();
   const mailboxOf = new Map<number, string>();
-  const sharedByDept = new Map<string, Array<{ address: string; label: string }>>();
+  const sharedByDept = new Map<number, Array<{ address: string; label: string }>>();
   for (const b of boxes.results) {
     const uid = b.assignedUserId ?? b.assigned_user_id ?? null;
     if (uid != null) {
       if (!mailboxOf.has(Number(uid))) mailboxOf.set(Number(uid), b.address.toLowerCase());
       continue;
     }
-    const dept = (b.assignedDept ?? b.assigned_dept ?? "").trim().toLowerCase();
-    if (!dept) continue;
+    const deptRaw = b.departmentId ?? b.department_id ?? null;
+    if (deptRaw == null) continue;
+    const dept = Number(deptRaw);
     const list = sharedByDept.get(dept) ?? [];
     list.push({ address: b.address.toLowerCase(), label: (b.label ?? "").trim() });
     sharedByDept.set(dept, list);
@@ -95,7 +96,7 @@ app.get("/directory", async (c) => {
     const deptId = self.departmentId;
     if (deptId != null) {
       department.push(...entries(roster.filter((u) => u.departmentId === deptId).map((u) => u.id)));
-      for (const box of sharedByDept.get((self.departmentName ?? "").trim().toLowerCase()) ?? []) {
+      for (const box of sharedByDept.get(Number(deptId)) ?? []) {
         department.push({
           key: `mailbox:${box.address}`,
           userId: null,

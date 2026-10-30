@@ -71,7 +71,11 @@ export function TeamMailboxesV2() {
     return (addresses.data ?? []).map((a) => {
       const member = a.assignedUserId != null ? byId.get(a.assignedUserId) ?? null : null;
       const kind: MailboxRow["kind"] =
-        a.assignedUserId != null ? "personal" : a.assignedDept ? "department" : "unassigned";
+        a.assignedUserId != null
+          ? "personal"
+          : a.departmentId != null || a.assignedDept
+            ? "department"
+            : "unassigned";
       return {
         ...a,
         kind,
@@ -132,22 +136,13 @@ export function TeamMailboxesV2() {
     }
   }
 
-  /* Mail Center stores the department as a free-text NAME ("Operation"),
-     while departments carry fuller names ("Operation Department") — match
-     loosely in both directions, the same contains-rule the backend's
-     ?department= filter uses. */
-  const deptNode = (deptName: string | undefined) => {
-    if (!deptName) return null;
-    const q = deptName.trim().toLowerCase();
-    return (
-      nodes.find((n) => {
-        const full = n.dept.name.trim().toLowerCase();
-        return full === q || full.includes(q) || q.includes(full);
-      }) ?? null
-    );
-  };
-  const deptLeadName = (deptName: string | undefined): string | null => {
-    const node = deptNode(deptName);
+  /* A department mailbox reaches the members of its Org Chart department
+     (HC-0157), linked by id. A mailbox with only a typed name reaches nobody
+     until it is linked, so it is shown as not linked. */
+  const deptNode = (r: MailAddress) =>
+    r.departmentId == null ? null : nodes.find((n) => n.dept.id === r.departmentId) ?? null;
+  const deptLeadName = (r: MailAddress): string | null => {
+    const node = deptNode(r);
     return node?.lead ? node.lead.name || node.lead.email : null;
   };
 
@@ -198,11 +193,14 @@ export function TeamMailboxesV2() {
               </span>
             );
           if (r.kind === "department") {
-            const node = deptNode(r.assignedDept);
-            return (
+            const node = deptNode(r);
+            return node ? (
               <span className="truncate text-[12px] text-ink-secondary">
-                {r.assignedDept}
-                {node ? ` · ${node.counts.visible} people (synced with department)` : ""}
+                {node.dept.name} · {node.counts.visible} people (synced with department)
+              </span>
+            ) : (
+              <span className="truncate text-[12px] text-err">
+                {r.assignedDept} · not linked to the Org Chart, pick its department
               </span>
             );
           }
@@ -235,7 +233,7 @@ export function TeamMailboxesV2() {
         render: (r) => {
           const owner =
             r.kind === "department"
-              ? deptLeadName(r.assignedDept)
+              ? deptLeadName(r)
               : r.member?.name ?? r.assignedUserName ?? null;
           return (
             <span className={cn("truncate text-[12.5px]", owner ? "text-ink" : "text-err")}>
@@ -245,7 +243,7 @@ export function TeamMailboxesV2() {
         },
         getValue: (r) =>
           (r.kind === "department"
-            ? deptLeadName(r.assignedDept)
+            ? deptLeadName(r)
             : r.member?.name ?? r.assignedUserName) ?? "Unassigned",
       },
       {
@@ -438,9 +436,11 @@ function MailboxManagePanel({
   const [assign, setAssign] = useState(() =>
     row.assignedUserId != null
       ? `u:${row.assignedUserId}`
-      : row.assignedDept
-        ? `d:${row.assignedDept}`
-        : "none",
+      : row.departmentId != null
+        ? `d:${row.departmentId}`
+        : row.assignedDept
+          ? "unlinked"
+          : "none",
   );
   const [active, setActive] = useState(row.active);
   const [busy, setBusy] = useState(false);
@@ -455,6 +455,7 @@ function MailboxManagePanel({
       if (assign === "none") {
         patch.assignedUserId = null;
         patch.assignedDept = null;
+        patch.departmentId = null;
         patch.assignedUserName = null;
       } else if (assign.startsWith("u:")) {
         const u = users.find((x) => x.id === Number(assign.slice(2)));
@@ -462,7 +463,7 @@ function MailboxManagePanel({
         patch.assignedUserName = u?.name ?? u?.email ?? null;
         patch.assignedDept = null;
       } else if (assign.startsWith("d:")) {
-        patch.assignedDept = assign.slice(2);
+        patch.departmentId = Number(assign.slice(2));
         patch.assignedUserId = null;
         patch.assignedUserName = null;
       }
@@ -513,8 +514,11 @@ function MailboxManagePanel({
                 onChange={setAssign}
                 options={[
                   { value: "none", label: "Unassigned" },
+                  ...(assign === "unlinked"
+                    ? [{ value: "unlinked", label: `Department · ${row.assignedDept} (not linked)` }]
+                    : []),
                   ...departments.map((d) => ({
-                    value: `d:${d.name}`,
+                    value: `d:${d.id}`,
                     label: `Department · ${d.name}`,
                   })),
                   ...users
@@ -569,7 +573,7 @@ function MailboxCreatePanel({
         input.assignedUserId = u?.id ?? null;
         input.assignedUserName = u?.name ?? u?.email;
       } else if (assign.startsWith("d:")) {
-        input.assignedDept = assign.slice(2);
+        input.departmentId = Number(assign.slice(2));
       }
       await createAddress(address.trim(), input);
       toast.success(`${address.trim()} created`);
@@ -632,7 +636,7 @@ function MailboxCreatePanel({
                 options={[
                   { value: "none", label: "Unassigned" },
                   ...departments.map((d) => ({
-                    value: `d:${d.name}`,
+                    value: `d:${d.id}`,
                     label: `Department · ${d.name}`,
                   })),
                   ...users

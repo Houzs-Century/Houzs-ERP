@@ -24,6 +24,8 @@ Reply-all precedence: an explicit `to` from the caller always wins; otherwise To
 
 ## Permissions
 
+- Visibility (`getMailScope`): `mail_user_scope.level`, no row = `department`. personal = own + granted mailboxes; department adds every active department mailbox (no owner) whose `department_id` is the person's Org Chart `users.department_id`; company = every active mailbox. A Sales Director set to personal still gets department.
+- A department mailbox is linked to its department by `email_addresses.department_id`; `assigned_dept` is only the display name. A row with a name but no id reaches nobody (Team, Mailboxes shows it as not linked). Giving a mailbox an owner clears `department_id`, so a department never reaches personal mail.
 - `canSendFrom()` — a non-admin may send only from a mailbox in their own scope, or their own alias (`users.email_alias`); admins may send from any mailbox.
 - `purpose` / `isChannelEnabled()` gates delivery at both send time and drain time — a channel switched off after a message is enqueued stops its retry.
 - `isMailAdmin` grants mailbox management rights only — it must never widen the company scope on outbox reads.
@@ -42,7 +44,7 @@ Reply-all precedence: an explicit `to` from the caller always wins; otherwise To
 ## Gotchas
 
 - `outboxRetry: false` is for paths that tell the operator "not sent" and expect them to resend (PO / DO document emails); a retry there would be a second copy.
-- Never treat a department mailbox (`assigned_dept` set) as free for a personal address: the alias helper claims any UNOWNED row, so `isPersonalAddressTaken` must keep refusing it or a newcomer called "Sales" would take sales@.
+- Never treat a department mailbox (`department_id` or `assigned_dept` set) as free for a personal address: the alias helper claims any UNOWNED row, so `isPersonalAddressTaken` must keep refusing it or a newcomer called "Sales" would take sales@.
 - `email_addresses`, `email_messages`, `email_thread_reads`, `email_message_acks` and `announcements` are PG-only; tests that hit the Mail Center routes create them inline, so a new column must be added to those fixtures too.
 - `GET /threads` binds the caller's user id FIRST (for the `email_thread_reads` join) and the WHERE binds after it; the paginated COUNT has no join and binds only the WHERE values.
 - A member whose only sending identity is their `email_alias` (no `email_addresses` row) gets an EMPTY `/addresses` response from the mailbox-scope endpoint — the client must offer the alias explicitly rather than assume the list is complete.
