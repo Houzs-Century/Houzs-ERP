@@ -61,12 +61,14 @@ type AssrCrewRow = { assr_id: number | null; job_kind: string | null; crew: Crew
 export async function echoAssrCrew(sb: Sb, rows: AssrCrewRow[]): Promise<void> {
   const caseIds = [...new Set(rows.map((o) => o.assr_id).filter((x): x is number => x != null))];
   if (!caseIds.length) return;
-  const { data: stops } = await chunkIn<{ assr_case_id: number; stop_type: string; trip_id: string }, number>(caseIds,
+  const { data: stops, error: stopsErr } = await chunkIn<{ assr_case_id: number; stop_type: string; trip_id: string }, number>(caseIds,
     (batch, from, to) => sb.from('trip_stops').select('assr_case_id, stop_type, trip_id').in('assr_case_id', batch).order('assr_case_id').range(from, to));
+  if (stopsErr) throw new Error(stopsErr.message);
   if (!stops.length) return;
   const tripIds = [...new Set(stops.map((s) => s.trip_id).filter(Boolean))];
-  const { data: trips } = await chunkIn<Trip>(tripIds, (batch, from, to) => sb.from('trips')
+  const { data: trips, error: tripsErr } = await chunkIn<Trip>(tripIds, (batch, from, to) => sb.from('trips')
     .select('id, trip_no, trip_date, status, driver_id, helper_1_id, helper_2_id, lorry_id').in('id', batch).order('id').range(from, to));
+  if (tripsErr) throw new Error(tripsErr.message);
   const ids = (k: 'driver_id' | 'helper_1_id' | 'helper_2_id' | 'lorry_id') => [...new Set(trips.map((t) => t[k]).filter((x): x is string => !!x))];
   const helperIds = [...new Set([...ids('helper_1_id'), ...ids('helper_2_id')])];
   const [dr, hr, lr] = await Promise.all([

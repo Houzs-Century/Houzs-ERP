@@ -143,7 +143,7 @@ export const isDp = (o: PlanningOrder): boolean => o.row_type === 'dp';
 export const isProject = (o: PlanningOrder): boolean => o.row_type === 'project';
 /* A DP row's so_doc_no is the synthetic key `DP:<id>`; the backend date / fields
    endpoints want the bare dp_order id. Same shape ScheduleDpOrderDrawer uses. */
-export const dpIdOf = (o: PlanningOrder): string => String(o.so_doc_no ?? '').replace(/^DP:/, '');
+export const dpIdOf = (o: PlanningOrder): string => o.so_doc_no.replace(/^DP:/, '');
 /* A friendly label for a DP job type — resolved from the SHARED canonical map
    (dpJobTypeLabel) so the board's Type chip and the New-DP-Order dropdown always
    read the same wording. Empty job_type falls back to a generic 'DP job'. */
