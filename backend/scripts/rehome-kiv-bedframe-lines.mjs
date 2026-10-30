@@ -13,8 +13,10 @@
 // WHAT IT WRITES, in one transaction:
 //   1. the six level-less codes renamed to "BEDFRAME KIV LV2-(size)" (code, name,
 //      base_model). Refused if anything already uses them;
-//   2. scm.mfg_sales_order_items.item_code on each line whose text names ONE level
-//      and ONE size, re-keyed to that code, row by row by id.
+//   2. scm.mfg_sales_order_items.item_code on each line that resolves to ONE level
+//      and ONE size, re-keyed to that code, row by row by id. Size: the text, else
+//      the order's one mattress size. Level: the text (LVn or the costing model
+//      name), else LV2 only with DEFAULT_LEVEL=2 (Sim 2026-10-30, boss to rule).
 // WHAT IT NEVER TOUCHES: the lines it cannot read (they stay on the old code for
 // Sales to fill in), Desc2, variants, qty, prices, costs, the SO headers, the old
 // catalogue row; AutoCount - a raw SQL change queues no write-back.
@@ -26,6 +28,7 @@
 //   MODE          plan (default, writes nothing) | apply
 //   CONFIRM       on apply, the phrase this run prints (it carries the counts)
 //   COMPANY_ID    default 1
+//   DEFAULT_LEVEL unset (lines with no level stay) | 2
 //
 // RE-RUN: convergent. A renamed code no longer exists under its old name and a
 // moved line no longer names the old code, so a second apply plans nothing new.
@@ -42,7 +45,9 @@ const MODE = (process.env.MODE || 'plan').toLowerCase();
 const APPLY = MODE === 'apply';
 const CONFIRM = process.env.CONFIRM ?? '';
 const CO = Number(process.env.COMPANY_ID || 1);
+const DEFAULT_LEVEL = (process.env.DEFAULT_LEVEL || '').trim() || null;
 
+if (DEFAULT_LEVEL && DEFAULT_LEVEL !== '2') { console.error(`REFUSED: DEFAULT_LEVEL can only be 2 (Sim: unidentified old bills go to LV2), got "${DEFAULT_LEVEL}".`); process.exit(2); }
 if (!DSN) { console.error('REFUSED: DATABASE_URL not set.'); process.exit(2); }
 if (!['plan', 'apply'].includes(MODE)) { console.error(`REFUSED: MODE must be plan or apply, got "${MODE}".`); process.exit(2); }
 
@@ -69,21 +74,27 @@ async function readWorld(sql) {
   }
   const raw = await sql`
     SELECT i.id::text AS id, i.description2, i.remark, i.variants, h.status::text AS so_status,
+           ARRAY(SELECT DISTINCT p.size_code FROM scm.mfg_sales_order_items m
+                   JOIN scm.mfg_products p ON p.company_id = m.company_id AND p.code = m.item_code
+                  WHERE m.company_id = i.company_id AND m.doc_no = i.doc_no AND coalesce(m.cancelled, false) = false
+                    AND p.category::text = 'MATTRESS' AND p.size_code IS NOT NULL) AS mattress_sizes,
            EXISTS (SELECT 1 FROM scm.so_amendment_lines al JOIN scm.so_amendments a ON a.id = al.amendment_id
                     WHERE al.sales_order_item_id = i.id AND a.status::text IN ${sql(OPEN_AMENDMENT)}) AS open_amendment
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders h ON h.company_id = i.company_id AND h.doc_no = i.doc_no
      WHERE i.company_id = ${CO} AND i.item_code = ${OLD_CODE}
      ORDER BY i.id`;
-  const lines = raw.map((r) => ({ id: r.id, text: lineText(r), soStatus: r.so_status, openAmendment: r.open_amendment }));
+  const lines = raw.map((r) => ({
+    id: r.id, text: lineText(r), soStatus: r.so_status, openAmendment: r.open_amendment, mattressSizes: r.mattress_sizes ?? [],
+  }));
   return { products, refsOnRename, lines };
 }
 
 async function main() {
-  log(`rehome-kiv-bedframe-lines (HC-0182) mode=${MODE} company=${CO}`);
+  log(`rehome-kiv-bedframe-lines (HC-0182) mode=${MODE} company=${CO} default level=${DEFAULT_LEVEL ? `LV${DEFAULT_LEVEL}` : 'off'}`);
   const sql = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
   const world = await sql.begin('read only', readWorld);
-  const plan = planKivRehome(world);
+  const plan = planKivRehome({ ...world, defaultLevel: DEFAULT_LEVEL });
   const byCode = new Map(world.products.map((p) => [p.code, p]));
 
   log('');
@@ -97,8 +108,13 @@ async function main() {
   log(`MOVE  ${plan.moves.length} of ${world.lines.length} line(s) on "${OLD_CODE}"`);
   for (const [code, ls] of [...groups.entries()].sort()) {
     log(`  -> ${code}: ${ls.length}`);
-    for (const l of ls) log(`       line ${l.id} (${l.soStatus}) "${l.text}"`);
+    for (const l of ls) {
+      const from = [l.levelFrom === 'default' ? 'level=LV2 default' : '', l.sizeFrom === 'mattress' ? 'size=mattress' : ''].filter(Boolean).join(', ');
+      log(`       line ${l.id} (${l.soStatus}) "${l.text}"${from ? ` [${from}]` : ''}`);
+    }
   }
+  const src = (k, v) => plan.moves.filter((m) => m[k] === v).length;
+  log(`  level from text ${src('levelFrom', 'text')}, by LV2 default ${src('levelFrom', 'default')}; size from text ${src('sizeFrom', 'text')}, from the order's mattress ${src('sizeFrom', 'mattress')}`);
   const why = new Map();
   for (const s of plan.stays) { if (!why.has(s.reason)) why.set(s.reason, []); why.get(s.reason).push(s); }
   log('');

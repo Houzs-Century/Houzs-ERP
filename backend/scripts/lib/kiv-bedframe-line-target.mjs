@@ -2,10 +2,14 @@
 // belongs to, read from the level and size the salesperson typed in the line text
 // ("LV1 KING", "Level 2 (Queen)", "lvl1queen/Divan:8''").
 //
-// A line moves only when its text names exactly ONE level and exactly ONE size.
-// Two of either ("K x1 Q x1", "level 2 or level 3") or none ("tbc", divan/gap
-// specs only) stays on the old code: guessing would put a real order on the
-// wrong bed and the wrong cost.
+// The level is the costing model (Sim 2026-10-30): LV1 Jager, LV2 Cody, LV3
+// Regal, LV4 Trion. A line moves when it resolves to exactly ONE level and ONE
+// size. The size comes from the text, else from the same order's mattress when
+// the order has one mattress size only. The level comes from the text; a line
+// that names none takes DEFAULT_LEVEL only when the caller passes one (Sim:
+// "if cant identify then all put as LV2", pending the boss). Two of either
+// ("K x1 Q x1", "level 2 or level 3") or no size at all stays on the old code:
+// guessing would put a real order on the wrong bed and the wrong cost.
 
 export const OLD_CODE = 'BEDFRAME KIV LV2';
 
@@ -19,9 +23,13 @@ export const RENAMES = SIZE_CODES.map((sz) => ({
 
 export const targetCode = (level, size) => `BEDFRAME KIV LV${level}-(${size})`;
 
+const MODEL_LEVEL = { JAGER: '1', CODY: '2', REGAL: '3', TRION: '4' };
+
 export function levelsOf(text) {
   const s = String(text ?? '');
-  return [...new Set([...s.matchAll(/\b(?:LVL|LV|LEVEL|L)\s*\.?\s*([1-4])(?![0-9.])/gi)].map((m) => m[1]))].sort();
+  const found = [...s.matchAll(/\b(?:LVL|LV|LEVEL|L)\s*\.?\s*([1-4])(?![0-9.])/gi)].map((m) => m[1]);
+  for (const m of s.toUpperCase().matchAll(/\b(JAGER|CODY|REGAL|TRION)\b/g)) found.push(MODEL_LEVEL[m[1]]);
+  return [...new Set(found)].sort();
 }
 
 export function sizesOf(text) {
@@ -44,15 +52,31 @@ export function sizesOf(text) {
   return [...out].sort();
 }
 
-/** { target } for a line that moves, or { stay } with the reason it does not. */
-export function lineTarget(text) {
+/**
+ * { target, levelFrom, sizeFrom } for a line that moves, or { stay } with the
+ * reason it does not. mattressSizes: the distinct mattress size codes on the
+ * line's own order. defaultLevel: '2' to give unnamed levels LV2, else null.
+ */
+export function lineTarget(text, { mattressSizes = [], defaultLevel = null } = {}) {
   const levels = levelsOf(text);
-  const sizes = sizesOf(text);
+  let sizes = sizesOf(text);
   if (levels.length > 1 || sizes.length > 1) return { stay: 'TWO_BEDS_OR_CHOICES', levels, sizes };
-  if (levels.length === 0 && sizes.length === 0) return { stay: 'NO_LEVEL_NO_SIZE', levels, sizes };
-  if (levels.length === 0) return { stay: 'NO_LEVEL', levels, sizes };
-  if (sizes.length === 0) return { stay: 'NO_SIZE', levels, sizes };
-  return { target: targetCode(levels[0], sizes[0]), levels, sizes };
+  let sizeFrom = 'text';
+  if (sizes.length === 0) {
+    const ms = [...new Set(mattressSizes)].filter((s) => SIZE_CODES.includes(s));
+    if (ms.length > 1) return { stay: 'NO_SIZE_MATTRESSES_DIFFER', levels, sizes: ms };
+    if (ms.length === 0) return { stay: levels.length ? 'NO_SIZE' : 'NO_LEVEL_NO_SIZE', levels, sizes };
+    sizes = ms;
+    sizeFrom = 'mattress';
+  }
+  let levelFrom = 'text';
+  let level = levels[0];
+  if (!level) {
+    if (!defaultLevel) return { stay: 'NO_LEVEL', levels, sizes, sizeFrom };
+    level = defaultLevel;
+    levelFrom = 'default';
+  }
+  return { target: targetCode(level, sizes[0]), levels, sizes, levelFrom, sizeFrom };
 }
 
 /** The text a line is read from: its Desc2 and its remark, as typed. */
@@ -63,9 +87,10 @@ export const lineText = (row) => [row.description2, row.remark, row.variants?.re
  * Plan the rehome. Pure: the world comes in, the plan goes out.
  *   products: [{ code, model_id, status }] for every code involved
  *   refsOnRename: [{ code, table, rows }] cascade rows on a rename source
- *   lines: [{ id, text, openAmendment }] sales lines on OLD_CODE
+ *   lines: [{ id, text, mattressSizes, openAmendment }] sales lines on OLD_CODE
+ *   defaultLevel: '2' or null
  */
-export function planKivRehome({ products, refsOnRename, lines }) {
+export function planKivRehome({ products, refsOnRename, lines, defaultLevel = null }) {
   const by = new Map(products.map((p) => [p.code, p]));
   const refusals = [];
   const old = by.get(OLD_CODE);
@@ -88,15 +113,18 @@ export function planKivRehome({ products, refsOnRename, lines }) {
   const moves = [];
   const stays = [];
   for (const l of lines) {
-    const t = lineTarget(l.text);
+    const t = lineTarget(l.text, { mattressSizes: l.mattressSizes ?? [], defaultLevel });
     if (t.stay) { stays.push({ ...l, reason: t.stay }); continue; }
     if (!afterRename.has(t.target)) { stays.push({ ...l, reason: 'TARGET_MISSING', target: t.target }); continue; }
     if (by.get(t.target) && by.get(t.target).status !== 'ACTIVE') { stays.push({ ...l, reason: 'TARGET_INACTIVE', target: t.target }); continue; }
     if (l.openAmendment) { stays.push({ ...l, reason: 'OPEN_AMENDMENT', target: t.target }); continue; }
-    moves.push({ ...l, target: t.target });
+    moves.push({ ...l, target: t.target, levelFrom: t.levelFrom, sizeFrom: t.sizeFrom });
   }
   return { refusals, renames, moves, stays };
 }
 
-export const confirmPhrase = (plan) =>
-  `REHOME KIV: RENAME ${plan.renames.length}, MOVE ${plan.moves.length} LINES, LEAVE ${plan.stays.length}`;
+export const confirmPhrase = (plan) => {
+  const byDefault = plan.moves.filter((m) => m.levelFrom === 'default').length;
+  return `REHOME KIV: RENAME ${plan.renames.length}, MOVE ${plan.moves.length} LINES`
+    + (byDefault ? ` (${byDefault} AS LV2 BY DEFAULT)` : '') + `, LEAVE ${plan.stays.length}`;
+};

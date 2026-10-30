@@ -45,6 +45,29 @@ describe('lineTarget', () => {
     expect(t.stay).toBe(reason);
   });
 
+  it('reads the costing model name as its level (LV1 Jager, LV2 Cody, LV3 Regal, LV4 Trion)', () => {
+    expect(lineTarget('JAGER QUEEN').target).toBe('BEDFRAME KIV LV1-(Q)');
+    expect(lineTarget('cody king').target).toBe('BEDFRAME KIV LV2-(K)');
+    expect(lineTarget('Trion (Q)').target).toBe('BEDFRAME KIV LV4-(Q)');
+    expect(lineTarget('regal or trion K').stay).toBe('TWO_BEDS_OR_CHOICES');
+  });
+
+  it('takes the size from the order\'s one mattress size when the text has none (SO-001223)', () => {
+    const t = lineTarget('LVL 2 / DIVAN 8" / GAP 12"', { mattressSizes: ['Q', 'Q'] });
+    expect(t.target).toBe('BEDFRAME KIV LV2-(Q)');
+    expect(t.sizeFrom).toBe('mattress');
+    expect(lineTarget('LVL 2 / DIVAN 8"', { mattressSizes: ['Q', 'K'] }).stay).toBe('NO_SIZE_MATTRESSES_DIFFER');
+    expect(lineTarget('LVL 1 KING', { mattressSizes: ['Q'] }).target).toBe('BEDFRAME KIV LV1-(K)');
+  });
+
+  it('gives an unnamed level LV2 only when the default is switched on', () => {
+    expect(lineTarget('DIVAN 8" / GAP 12" / T.Heights 20"', { mattressSizes: ['Q'] }).stay).toBe('NO_LEVEL');
+    const t = lineTarget('DIVAN 8" / GAP 12" / T.Heights 20"', { mattressSizes: ['Q'], defaultLevel: '2' });
+    expect(t.target).toBe('BEDFRAME KIV LV2-(Q)');
+    expect(t.levelFrom).toBe('default');
+    expect(lineTarget('tbc', { defaultLevel: '2' }).stay).toBe('NO_LEVEL_NO_SIZE');
+  });
+
   it('reads Desc2 and the remark together, so a remark can contradict Desc2', () => {
     expect(lineText({ description2: 'LV1 KING', remark: null, variants: { remark: 'queen' } })).toBe('LV1 KING / queen');
     expect(lineTarget(lineText({ description2: 'LV1 KING', variants: { remark: 'queen' } })).stay).toBe('TWO_BEDS_OR_CHOICES');
@@ -84,6 +107,21 @@ describe('planKivRehome', () => {
       ['e', 'OPEN_AMENDMENT'],
     ]);
     expect(confirmPhrase(plan)).toBe('REHOME KIV: RENAME 6, MOVE 2 LINES, LEAVE 3');
+  });
+
+  it('names the default-level moves in the CONFIRM phrase', () => {
+    const plan = planKivRehome(world({
+      defaultLevel: '2',
+      lines: [
+        { id: 'a', text: 'LVL 1 QUEEN', openAmendment: false },
+        { id: 'f', text: 'queen', openAmendment: false },
+      ],
+    }));
+    expect(plan.moves.map((m) => [m.id, m.target, m.levelFrom])).toEqual([
+      ['a', 'BEDFRAME KIV LV1-(Q)', 'text'],
+      ['f', 'BEDFRAME KIV LV2-(Q)', 'default'],
+    ]);
+    expect(confirmPhrase(plan)).toBe('REHOME KIV: RENAME 6, MOVE 2 LINES (1 AS LV2 BY DEFAULT), LEAVE 0');
   });
 
   it('refuses a rename onto a code that already exists', () => {
