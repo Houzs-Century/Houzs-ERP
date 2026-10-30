@@ -1178,6 +1178,24 @@ export const listBindingPriceChangesHandler = async (c: any) => {
 };
 suppliers.get('/:id/bindings/:bindingId/price-changes', listBindingPriceChangesHandler);
 
+// GET /suppliers/:id/price-history — every dated cost row for the supplier's mfg
+// products, so a from-scratch PO can price each line as of the PO date.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- bare-Hono handler, mirrors the binding handlers
+export const listSupplierPriceHistoryHandler = async (c: any) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const { data, error } = await c.get('supabase')
+    .from('supplier_binding_price_history')
+    .select('item_code, effective_from, unit_price_sen, price_matrix, created_at')
+    .eq('company_id', co.companyId)
+    .eq('supplier_id', c.req.param('id'))
+    .eq('material_kind', 'mfg_product')
+    .limit(5000);
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  return c.json({ history: data ?? [] });
+};
+suppliers.get('/:id/price-history', listSupplierPriceHistoryHandler);
+
 // Exported so a cross-tenant test can drive it without the supabaseAuth bridge.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- bare-Hono handler, mirrors the binding handlers
 export const createBindingPriceChangeHandler = async (c: any) => {
