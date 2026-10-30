@@ -410,3 +410,32 @@ export async function provisionPersonalMailbox(
   if (change?.mailbox_id) await markMailHostPending(env.DB, change.mailbox_id);
   return next;
 }
+
+/** HC-0157 C: a disabled member keeps no Mail Center reach. Their personal
+ *  mailbox closes (it keeps its owner, so the address is never handed to
+ *  someone else along with the old mail) and every grant to a mailbox they
+ *  do not own goes; the self-grant stays for a later re-enable. */
+export async function closePersonalMailOnDisable(db: D1Database, userId: number): Promise<void> {
+  await db
+    .prepare(
+      `DELETE FROM email_address_access
+        WHERE user_id = ?
+          AND address_id NOT IN (SELECT id FROM email_addresses WHERE assigned_user_id = ?)`,
+    )
+    .bind(userId, userId)
+    .run();
+  await db.prepare(`UPDATE email_addresses SET active = 0 WHERE assigned_user_id = ? AND active = 1`).bind(userId).run();
+}
+
+/** Re-enabling opens the mailbox of their current address again; shared
+ *  mailboxes come back only when an admin grants them. */
+export async function reopenPersonalMailbox(db: D1Database, userId: number): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE email_addresses SET active = 1
+        WHERE assigned_user_id = ? AND active = 0
+          AND lower(address) = (SELECT lower(COALESCE(email_alias, '')) FROM users WHERE id = ?)`,
+    )
+    .bind(userId, userId)
+    .run();
+}

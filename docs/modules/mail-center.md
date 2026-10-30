@@ -24,6 +24,7 @@ Reply-all precedence: an explicit `to` from the caller always wins; otherwise To
 
 ## Permissions
 
+- Disabling a member (member edit or the Disable button) closes their personal mailbox and deletes their grants to mailboxes they do not own (`closePersonalMailOnDisable`); the mailbox keeps its owner, so the address is never handed on with the old mail. Re-enabling opens only the mailbox of their current `email_alias`; shared access comes back by an admin grant.
 - `canSendFrom()` — a non-admin may send only from a mailbox in their own scope, or their own alias (`users.email_alias`); admins may send from any mailbox.
 - `purpose` / `isChannelEnabled()` gates delivery at both send time and drain time — a channel switched off after a message is enqueued stops its retry.
 - `isMailAdmin` grants mailbox management rights only — it must never widen the company scope on outbox reads.
