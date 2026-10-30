@@ -172,6 +172,7 @@ import { bindVenueOnCreate, editFairKeyerId, fairConfirmProblems, fairLinkForEdi
 import { companyUsesKeyerFair, fairDayMissing, fairDayOnSave, fairWhyOf } from '../lib/fair-options';
 import { loadVpBrandAsk, type VpBrandDb } from '../lib/vp-brand-ask';
 import { recordSoAudit, diffFields, type FieldChange } from '../lib/so-audit';
+import { carrySoPhotoToPoLines } from '../lib/so-photo-po-carry';
 import { fairStateOf, recordFairChange } from '../lib/fair-audit';
 /* What changed on a LINE, for the audit trail — derived from the update about to
    be persisted rather than a hand-kept field list (owner 2026-08-12; see the
@@ -10105,6 +10106,8 @@ mfgSalesOrders.post('/:docNo/items/:itemId/photos', async (c) => {
     await deleteThumbFor(c.env.SO_ITEM_PHOTOS, photoKey);
     return c.json({ error: 'db_update_failed', reason: updErr.message }, 500);
   }
+  const carryErr = await carrySoPhotoToPoLines(sb, itemId, { add: photoKey });
+  if (carryErr) console.warn(`[so-item-photo] PO carry failed for ${photoKey}: ${carryErr}`);
 
   // PR-D — emit an ADD_LINE-style audit row noting the photo addition.
   // Reuses UPDATE_LINE so the History panel groups it with other line
@@ -10311,6 +10314,8 @@ mfgSalesOrders.delete('/:docNo/items/:itemId/photos/:photoKey', async (c) => {
     .update({ photo_urls: nextKeys })
     .eq('id', itemId);
   if (updErr) return c.json({ error: 'db_update_failed', reason: updErr.message }, 500);
+  const carryErr = await carrySoPhotoToPoLines(sb, itemId, { remove: photoKey });
+  if (carryErr) console.warn(`[so-item-photo] PO carry failed for ${photoKey}: ${carryErr}`);
 
   // R2 delete best-effort — if it fails we've already removed the key
   // from the array, so the orphan is invisible to the UI. A future

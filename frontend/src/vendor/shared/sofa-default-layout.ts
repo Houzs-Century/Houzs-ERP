@@ -53,7 +53,9 @@ import {
  * whatever the operator picked, and one base model on an order can be more
  * than one sofa: "1A(LHF), 1A(RHF), Console, 2S" drew one row with the right
  * arm mid-sofa. So the list is split first:
- *   - a module with arms on BOTH sides (1S / 2S / 3S) is a sofa on its own;
+ *   - a module with arms on BOTH sides (1S / 2S / 3S) is a sofa on its own,
+ *     and so is a STOOL: it is free-standing, so it sits in front of the
+ *     sofa, never inside the seat run (HC-0184, HC-PO-2610-438_R1);
  *   - with no CNR, a left-end module (W arm, or an armless LHF piece such as
  *     L(LHF)) opens a run, a right-end module (E arm, or L(RHF)) closes it, and
  *     armless middles (1NA / 2NA / Console) sit between the ends of the run
@@ -105,7 +107,7 @@ export const buildDefaultSofaCells = (
   const pieces: Known[][] = [];
   const rest = known.filter((k) => {
     if (isAttached(k)) return false;
-    if (k.armW && k.armE) { pieces.push([k]); return false; }
+    if ((k.armW && k.armE) || k.moduleId === 'STOOL') { pieces.push([k]); return false; }
     return true;
   });
   if (rest.some((k) => k.m.group === 'Corner')) {
@@ -157,14 +159,31 @@ export const buildDefaultSofaCells = (
   let y = 0;
   for (const { cells, bb } of laid) {
     const dx = laid.length === 1 ? 0 : (widest - bb.w) / 2 - bb.x;
-    const dy = laid.length === 1 ? 0 : y - bb.y;
+    /* A stool stands just in front of whatever is behind it, not below the
+       whole sofa: HC-PO-2610-438_R1 drew it past the 1A(LHF) leg, a long way
+       from the 2NA it sits before (Sim 2026-10-30). */
+    const stoolY = out.length > 0 && cells.length === 1 && cells[0]!.moduleId === 'STOOL'
+      ? frontOf(out, bb.x + dx, bb.w, depth) : null;
+    const dy = laid.length === 1 ? 0 : (stoolY ?? y) - bb.y;
     for (const c of cells) out.push({ ...c, x: c.x + dx, y: c.y + dy, cellIndex: out.length });
-    y += bb.h + DEFAULT_ROW_GAP_CM;
+    y = Math.max(y, bb.y + dy + bb.h + DEFAULT_ROW_GAP_CM);
   }
   return out;
 };
 
 const DEFAULT_ROW_GAP_CM = 30;
+
+/** The y one row gap in front of the cells that overlap [x, x + w). */
+const frontOf = (cells: readonly Cell[], x: number, w: number, depth: Depth): number => {
+  let back = 0;
+  for (const c of cells) {
+    const m = findModule(c.moduleId);
+    if (!m) continue;
+    const fp = moduleFootprint(m, c.rot, depth);
+    if (c.x < x + w && x < c.x + fp.w) back = Math.max(back, c.y + fp.h);
+  }
+  return back + DEFAULT_ROW_GAP_CM;
+};
 
 /** One sofa's cells from the origin, corners turning the run (see above). */
 const layoutRun = (known: RunPiece[], depth: Depth): Cell[] => {

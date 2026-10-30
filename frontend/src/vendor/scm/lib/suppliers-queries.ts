@@ -405,6 +405,17 @@ export function useSuppliersPaged(params: {
   });
 }
 
+/* Dated cost rows for one supplier's products (PO-date pricing on a from-scratch PO). */
+export function useSupplierPriceHistory(id: string | null) {
+  return useQuery({
+    queryKey: ['supplier-price-history', id],
+    queryFn: () => authedFetch<{ history: Array<{ item_code: string; effective_from: string; created_at: string; unit_price_sen: number | null; price_matrix: unknown }> }>(`/suppliers/${id}/price-history`),
+    enabled: Boolean(id),
+    staleTime: 30_000,
+    retry: retryUnlessClientError,
+  });
+}
+
 export function useSupplierDetail(id: string | null) {
   return useQuery({
     queryKey: ['supplier-detail', id],

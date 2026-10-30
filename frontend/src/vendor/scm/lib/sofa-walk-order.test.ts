@@ -17,6 +17,11 @@ describe('splitBackendSofa', () => {
     expect(split(['2A(LHF)', 'L(RHF)'])).toEqual([['2A(LHF)', 'L(RHF)']]);
   });
 
+  it('HC-0184: a corner run keeps its stored order, the STOOL goes last', () => {
+    expect(split(['STOOL', 'CNR', '2NA', '1A(RHF)', 'Console'])).toEqual([['CNR', '2NA', '1A(RHF)', 'Console', 'STOOL']]);
+    expect(split(['1A(LHF)', 'STOOL', 'CNR', '2NA', 'Console'])).toEqual([['1A(LHF)', 'CNR', '2NA', 'Console', 'STOOL']]);
+  });
+
   it('two LHF pieces: the line order is the only evidence, so it is kept', () => {
     const two = ['1A(RHF)', '1A(LHF)', '1A(LHF)', 'Console'];
     expect(split(two)).toEqual([two]);
