@@ -159,14 +159,31 @@ export const buildDefaultSofaCells = (
   let y = 0;
   for (const { cells, bb } of laid) {
     const dx = laid.length === 1 ? 0 : (widest - bb.w) / 2 - bb.x;
-    const dy = laid.length === 1 ? 0 : y - bb.y;
+    /* A stool stands just in front of whatever is behind it, not below the
+       whole sofa: HC-PO-2610-438_R1 drew it past the 1A(LHF) leg, a long way
+       from the 2NA it sits before (Sim 2026-10-30). */
+    const stoolY = out.length > 0 && cells.length === 1 && cells[0]!.moduleId === 'STOOL'
+      ? frontOf(out, bb.x + dx, bb.w, depth) : null;
+    const dy = laid.length === 1 ? 0 : (stoolY ?? y) - bb.y;
     for (const c of cells) out.push({ ...c, x: c.x + dx, y: c.y + dy, cellIndex: out.length });
-    y += bb.h + DEFAULT_ROW_GAP_CM;
+    y = Math.max(y, bb.y + dy + bb.h + DEFAULT_ROW_GAP_CM);
   }
   return out;
 };
 
 const DEFAULT_ROW_GAP_CM = 30;
+
+/** The y one row gap in front of the cells that overlap [x, x + w). */
+const frontOf = (cells: readonly Cell[], x: number, w: number, depth: Depth): number => {
+  let back = 0;
+  for (const c of cells) {
+    const m = findModule(c.moduleId);
+    if (!m) continue;
+    const fp = moduleFootprint(m, c.rot, depth);
+    if (c.x < x + w && x < c.x + fp.w) back = Math.max(back, c.y + fp.h);
+  }
+  return back + DEFAULT_ROW_GAP_CM;
+};
 
 /** One sofa's cells from the origin, corners turning the run (see above). */
 const layoutRun = (known: RunPiece[], depth: Depth): Cell[] => {
