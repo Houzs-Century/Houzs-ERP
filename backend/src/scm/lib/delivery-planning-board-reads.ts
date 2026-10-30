@@ -160,6 +160,7 @@ export function kickOffSubBoardReads(
         delivery_by: string | null; pickup_by: string | null; pickup_pic: string | null; actual_pickup_at: string | null;
         sched_pickup_date: string | null; sched_inspection_date: string | null; sched_delivery_date: string | null;
         closed_at: string | null; archived_at: string | null;
+        delivery_message_status: string | null;
         addr1: string | null; addr2: string | null; addr3: string | null; addr4: string | null;
         so_state: string | null; so_postcode: string | null; so_country: string | null;
       }>() } as const;
@@ -169,7 +170,7 @@ export function kickOffSubBoardReads(
   const dpResP = (async () => {
     try {
       let dpQuery = sb.from('dp_orders')
-        .select('id, dp_no, job_type, party_name, contact_phone, address1, address2, address3, address4, city, postcode, state, requested_date, status, trip_id')
+        .select('id, dp_no, job_type, party_name, contact_phone, address1, address2, address3, address4, city, postcode, state, requested_date, status, trip_id, delivery_message_status')
         .is('so_doc_no', null).is('assr_case_id', null).is('do_id', null)
         // Keep CANCELLED off the board, but KEEP DELIVERED (owner 2026-10-21: a
         // finished DP job belongs on the Delivered tab, not hidden).

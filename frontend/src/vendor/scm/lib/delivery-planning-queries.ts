@@ -540,7 +540,7 @@ const SO_FIELD_COLUMNS = [
 export function useUpdateDeliveryFields() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ type, id, ...body }: { type: 'so' | 'do'; id: string } & HcFieldsPatch) =>
+    mutationFn: ({ type, id, ...body }: { type: 'so' | 'do' | 'dp' | 'assr'; id: string } & HcFieldsPatch) =>
       authedFetch<HcFieldsResult>(`/delivery-planning/${type}/${id}/fields`, {
         method: 'PATCH', body: JSON.stringify(body),
       }),
@@ -910,8 +910,10 @@ export function useDeliveryMessageStatuses(docNos: string[]) {
 export type ScheduleDeliveryVars = {
   /* 'so' | 'do' are the original SO/DO schedule paths. 'assr' schedules a
      service-case job (Delivery Planning ASSR rows) — the backend now accepts it;
-     for ASSR the id is the service case's id and jobKind carries the row's kind. */
-  type: 'so' | 'do' | 'assr';
+     for ASSR the id is the service case's id and jobKind carries the row's kind.
+     'dp' writes a DP (manual job) row's date (scm.dp_orders.requested_date, and
+     the trip's date when it rides one); its id is the dp_order's id. */
+  type: 'so' | 'do' | 'assr' | 'dp';
   id: string;
   scheduleDate?: string | null;
   deliveryState?: DeliveryState | null;
@@ -999,10 +1001,14 @@ export function useScheduleDelivery() {
           ...prev,
           orders: prev.orders.map((o) => {
             /* Match by the row's identity: ASSR rows key on the numeric case id
-               (vars.id is that id as a string); SO/DO rows key on so_doc_no. */
+               (vars.id is that id as a string); DP rows key on their bare
+               dp_order id (the board row's so_doc_no is `DP:<id>`); SO/DO rows
+               key on so_doc_no. */
             const matches = vars.type === 'assr'
               ? o.row_type === 'assr' && String(o.assr_id ?? '') === vars.id
-              : o.so_doc_no === vars.id;
+              : vars.type === 'dp'
+                ? o.row_type === 'dp' && o.so_doc_no === `DP:${vars.id}`
+                : o.so_doc_no === vars.id;
             if (!matches) return o;
             const next: PlanningOrder = { ...o };
             if (vars.deliveryState !== undefined && vars.deliveryState !== null) next.delivery_state = vars.deliveryState;

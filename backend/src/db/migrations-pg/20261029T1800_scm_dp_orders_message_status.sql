@@ -1,0 +1,12 @@
+-- 20261029T1800_scm_dp_orders_message_status.sql
+-- Delivery Planning: let the DP (manual job) rows carry the customer-message
+-- follow-up workflow status, the same column the SO rows got in
+-- 20260922T0930 (owner 2026-10-29: the non-SO job types must be adjustable —
+-- message, date, driver). One of the 23 workflow values or NULL, free TEXT so
+-- the set can change without an enum; the allowed set is validated in the
+-- /delivery-planning/:type/:id/fields route. The coarse scm.delivery_state the
+-- state tabs run on is a SEPARATE derived field and is untouched.
+-- REVERSAL: ALTER TABLE scm.dp_orders DROP COLUMN IF EXISTS delivery_message_status;
+--   New and nullable; dropping it loses only the hand-set message status on a DP
+--   job. GRANTS: none touched — ALTER TABLE keeps the ACL.
+ALTER TABLE scm.dp_orders ADD COLUMN IF NOT EXISTS delivery_message_status text;
