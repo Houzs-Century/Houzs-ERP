@@ -164,6 +164,10 @@ describe('purchase-order-pdf sofa layout (reinstated 2026-07-27)', () => {
     const pdf = Buffer.from(b64, 'base64');
     const raw = pdf.toString('latin1');
     expect(raw).toMatch(/Console[^)]*\) Tj/);
+    // Sim: the console stands on the right, outside 1A(RHF), not before it.
+    // The caption wraps, so pin what may not follow or precede the console.
+    expect(raw).not.toContain('Console +');
+    expect(raw).not.toContain('2NA + Console');
     if (process.env.SOFA_PDF_OUT) writeFileSync(process.env.SOFA_PDF_OUT.replace(/\.pdf$/, '-console.pdf'), pdf);
   });
 

@@ -1,4 +1,4 @@
-import { cellEdges, parseCompartmentStructure } from '@2990s/shared';
+import { cellEdges, findModule, parseCompartmentStructure } from '@2990s/shared';
 
 /* A sofa keyed in the backend SO editor stores its pieces as separate lines
    with no layout, so the PO reads the line order as the left-to-right walk.
@@ -10,7 +10,10 @@ import { cellEdges, parseCompartmentStructure } from '@2990s/shared';
      - of the rest, the LHF piece walks first and the RHF piece last, the
        pieces between keep their stored order.
    With more than one LHF or RHF piece the line order is the only evidence of
-   which belongs where, so it is kept as stored. */
+   which belongs where, so it is kept as stored. So is a run with a corner:
+   that order is already the walk round the corner, and HC-PO-2610-438 lists
+   its console after 1A(RHF) because it stands outside that arm (Sim
+   2026-10-30, HC-0184). */
 
 const isStandalone = (moduleId: string): boolean => {
   const e = cellEdges({ moduleId, x: 0, y: 0, rot: 0 });
@@ -37,7 +40,8 @@ export function splitBackendSofa<T>(pieces: readonly T[], moduleIdOf: (p: T) => 
   if (rest.length > 0) {
     const lefts = rest.filter((p) => handOf(moduleIdOf(p)) === 'LHF');
     const rights = rest.filter((p) => handOf(moduleIdOf(p)) === 'RHF');
-    const walked = lefts.length <= 1 && rights.length <= 1
+    const cornered = rest.some((p) => findModule(moduleIdOf(p))?.group === 'Corner');
+    const walked = !cornered && lefts.length <= 1 && rights.length <= 1
       ? [...lefts, ...rest.filter((p) => handOf(moduleIdOf(p)) === null), ...rights]
       : rest;
     sofas.push({ first: restFirst, pieces: walked });
