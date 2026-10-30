@@ -30,6 +30,8 @@ import {
 } from '../lib/dp-party';
 import { assertTripInAllowedCompanies } from '../lib/ref-in-company';
 import { mintNextDpNo, plateForLorry } from '../lib/dp-no-mint';
+import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
+import { setTripCrew } from '../lib/trip-crew-sync';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { dpLorryBlockReason } from '../lib/dp-lorry-block';
 import { normalizePhone } from '../shared/phone';
@@ -542,7 +544,47 @@ const scheduleSchema = z.object({
   lorryId: z.string().uuid(),
   tripDate: z.string(), // YYYY-MM-DD
   tripId: z.string().uuid().optional(),
+  // The driver for the run (owner 2026-10-30: pick the driver when scheduling, so
+  // Driver + Lorry fill in on the board). Optional — the run can be crewed later.
+  driverId: z.string().uuid().nullable().optional(),
 });
+
+/* Find the run a scheduled DP job rides, or create one. A specific trip may be
+   named (already company-checked by the caller); otherwise reuse the lorry's
+   non-cancelled run on that date, or mint a new PLANNED trip. Trips are the
+   cross-company shared queue — read scoped to the caller's allowed companies,
+   created under the active company. Returns the trip id, or an error string: the
+   DP is already claimed when this runs, so the caller reports the failure rather
+   than rolling the schedule back (the #720 rule). */
+async function resolveScheduleTrip(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Hono ctx + the untyped scm client, as across this route
+  c: any, sb: any, lorryId: string, tripDate: string, namedTripId: string | null,
+): Promise<{ tripId: string } | { error: string }> {
+  if (namedTripId) return { tripId: namedTripId };
+  const { data: found, error: fErr } = await scopeToAllowedCompanies(
+    sb.from('trips').select('id').eq('lorry_id', lorryId).eq('trip_date', tripDate).neq('status', 'CANCELLED').limit(1), c,
+  );
+  if (fErr) return { error: fErr.message };
+  const hit = ((found ?? []) as Array<{ id: string }>)[0];
+  if (hit) return { tripId: hit.id };
+  const user = c.get('user') as { id?: string } | null;
+  const { data: lorryRow, error: lErr } = await sb.from('lorries').select('is_internal').eq('id', lorryId).maybeSingle();
+  const isOutsourced = !lErr && (((lorryRow as { isInternal?: boolean | null; is_internal?: boolean | null } | null)?.isInternal
+    ?? (lorryRow as { is_internal?: boolean | null } | null)?.is_internal) === false);
+  const d = new Date();
+  const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const { data: created, error: tErr } = await insertWithDocNoRetry<{ id: string }>(
+    () => mintMonthlyDocNo(sb, 'trips', 'trip_no', `TRIP-${yymm}`),
+    (tripNo) => sb.from('trips').insert({
+      company_id: activeCompanyId(c), trip_no: tripNo, trip_date: tripDate, lorry_id: lorryId,
+      trip_type: 'DELIVERY', status: 'PLANNED', is_outsourced: isOutsourced, created_by: user?.id ?? null,
+    }).select('id').single(),
+  );
+  if (tErr || !created) {
+    return { error: tErr ? String((tErr as { message?: string }).message ?? tErr).slice(0, 160) : 'trip insert returned no row' };
+  }
+  return { tripId: (created as { id: string }).id };
+}
 
 /* ── POST /api/scm/dp-orders/:id/schedule — assign lorry+date, MINT the DP no ─ */
 dpOrders.post('/:id/schedule', async (c) => {
@@ -605,17 +647,26 @@ dpOrders.post('/:id/schedule', async (c) => {
      committed — but the outcome is REPORTED (tripStop.failed), never a silent
      null, per the #720 lesson. */
   let tripStop: { id: string | null; failed: boolean; reason?: string } = { id: null, failed: false };
-  if (p.tripId) {
+  const d = data as Record<string, unknown>;
+  const trip = await resolveScheduleTrip(c, sb, p.lorryId, p.tripDate, p.tripId ?? null);
+  if ('error' in trip) {
+    tripStop = { id: null, failed: true, reason: `could not place the job on a trip: ${trip.error}` };
+  } else {
     try {
-      const d = data as Record<string, unknown>;
-      const stops = await sb.from('trip_stops').select('stop_no').eq('trip_id', p.tripId);
+      const effectiveTripId = trip.tripId;
+      // Link the resolved run when the first update didn't already (auto-created
+      // or reused a run instead of a named trip).
+      if (effectiveTripId !== (p.tripId ?? null)) {
+        await sb.from('dp_orders').update({ trip_id: effectiveTripId, updated_at: new Date().toISOString() }).eq('id', id);
+      }
+      const stops = await sb.from('trip_stops').select('stop_no').eq('trip_id', effectiveTripId);
       const nextStopNo = ((stops.data ?? []) as Array<{ stop_no?: number }>)
         .reduce((m, r) => Math.max(m, Number(r.stop_no ?? 0)), 0) + 1;
       const address = [d.address1, d.address2, d.address3, d.address4, d.city, d.postcode, d.state]
         .filter(Boolean).join(', ') || null;
       const ins = await sb.from('trip_stops').insert({
         company_id: activeCompanyId(c) ?? null,
-        trip_id: p.tripId,
+        trip_id: effectiveTripId,
         stop_no: nextStopNo,
         stop_type: d.job_type,
         customer_name: (d.party_name as string | null) ?? null,
@@ -633,8 +684,11 @@ dpOrders.post('/:id/schedule', async (c) => {
         await sb.from('dp_orders').update({ trip_stop_id: stopId }).eq('id', id);
         tripStop = { id: stopId, failed: false };
       }
+      // Set the driver the operator picked at schedule time (owner 2026-10-30), so
+      // Driver + Lorry show on the board without a second step. Best-effort.
+      if (p.driverId !== undefined) await setTripCrew(sb, effectiveTripId, { driverId: p.driverId });
     } catch (e) {
-      tripStop = { id: null, failed: true, reason: `trip_stop wiring failed: ${String((e as Error)?.message ?? e).slice(0, 140)}` };
+      tripStop = { id: null, failed: true, reason: `trip wiring failed: ${String((e as Error)?.message ?? e).slice(0, 140)}` };
     }
   }
 
