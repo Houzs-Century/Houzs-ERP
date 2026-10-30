@@ -5,6 +5,7 @@ import { canViewAllSales } from '../../lib/houzs-perms';
 import { chunkIn } from '../../lib/paginate-all';
 import { monthBoundsMy, rangeBoundsMy, todayMyt } from '../../lib/my-time';
 import { escapeForOr } from '../../lib/postgrest-search';
+import { applySalesPlace, readSalesPlace } from '../../lib/pos-sales-place';
 import { resolveCallerStaffId } from '../../lib/salesScope';
 import { resolveOwnerStaffId } from '../pwp-codes';
 
@@ -70,11 +71,15 @@ mfgSalesOrders.get('/mine', async (c) => {
              (the period is intentionally ignored — search is a global lookup).
        ?from=&to=  YYYY-MM-DD (MY-local, `to` inclusive) → filter created_at
              (order-placed date) to that period. Only applied when there's no q.
+       ?project= / ?venue=  one roadshow event, or one showroom's orders linked
+             to no event — the KPI tiles' pick (lib/pos-sales-place.ts). Only
+             applied when there's no q, like the period.
      The default (no params) returns everything; the POS always passes the
      current-month window, so the board mirrors the KPI cards. */
   const q = (c.req.query('q') ?? '').trim();
   const fromYmd = c.req.query('from') ?? null;
   const toYmd = c.req.query('to') ?? null;
+  const place = readSalesPlace(c.req.query('project'), c.req.query('venue'));
   const LIMIT = 300;
 
   /* ?salesperson=<id|all> — only view-all roles (super_admin / sales_director /
@@ -142,6 +147,7 @@ mfgSalesOrders.get('/mine', async (c) => {
     const { startUtc, endUtc } = rangeBoundsMy(fromYmd, toYmd);
     if (startUtc) query = query.gte('created_at', startUtc);
     if (endUtc) query = query.lt('created_at', endUtc);
+    query = applySalesPlace(query, place);
   }
 
   const { data, error } = await query
