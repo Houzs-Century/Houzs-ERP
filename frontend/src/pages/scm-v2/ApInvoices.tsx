@@ -486,7 +486,7 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
             </tbody>
           </table>
           <ApInvoiceFilesCard invoiceId={detail.invoice.id} canWrite={canCreate}
-            locked={Number(detail.invoice.paid_sen ?? 0) > 0}
+            locked={detail.invoice.paid_sen > 0}
             closed={detail.invoice.status === 'CANCELLED'} />
         </Modal>
       )}
