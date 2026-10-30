@@ -12,7 +12,7 @@ import { checkPaymentSlipDate } from '../shared/payment-slip-date';
 import { checkPaymentSlip } from '../shared/payment-slip-required';
 import {
   pickComboMatch, spreadComboTotal, splitSofaCode, sofaHeightKey,
-  buildVariantSummary, matchComboSubset, type SofaPriceTier,
+  buildVariantSummary, matchComboBuild, type SofaPriceTier,
   oneShotSofaCode, oneShotSimpleCode, remarkSlug,
   fabricTierAddon,
   validateFreeGiftClaims, buildFreeGiftTriggers,
@@ -172,6 +172,7 @@ import { bindVenueOnCreate, editFairKeyerId, fairConfirmProblems, fairLinkForEdi
 import { companyUsesKeyerFair, fairDayMissing, fairDayOnSave, fairWhyOf } from '../lib/fair-options';
 import { loadVpBrandAsk, type VpBrandDb } from '../lib/vp-brand-ask';
 import { recordSoAudit, diffFields, type FieldChange } from '../lib/so-audit';
+import { carrySoPhotoToPoLines } from '../lib/so-photo-po-carry';
 import { fairStateOf, recordFairChange } from '../lib/fair-audit';
 /* What changed on a LINE, for the audit trail — derived from the update about to
    be persisted rather than a hand-kept field list (owner 2026-08-12; see the
@@ -267,6 +268,7 @@ import { openAfterDo, readAfterDoTargets, catalogSaysService, copyCustomerDetail
    row is canonical — used at all 4 SO persist seams (create, sofa-split shared,
    add-line, add-line split, PATCH, sofa-exchange/tbc-swap-sofa) below. */
 import { canonicalizeVariants } from '../shared/so-variant-rule';
+import { validateSofaAccessoryOrder, applySofaAccessoryInclusions, isStoredIncludedSofaAccessory, sameSofaComboVariants } from '../lib/sofa-accessory-order';
 /* Default Free Gift (migration 0170/0174, D9) — ONE per-Model trigger builder
    (in ../shared) is shared by the SO-create validator below and the
    placed-SO edit reconciler, so create and reconcile can never compute a
@@ -2685,6 +2687,8 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   // Subrequest diet (Loo 2026-06-06) — one `in()` query for every line's
   // product row instead of one query per line.
   const lineProducts = items.map((it) => productRowByCode.get(String(it.itemCode ?? '').trim()) ?? null);
+  const accessoryOrder = validateSofaAccessoryOrder(items, lineProducts);
+  if (!accessoryOrder.ok) return c.json({ error: 'sofa_accessories_invalid', reason: accessoryOrder.reason }, 400);
   /* PWP Code Voucher (migration 0130) — code-driven grant + atomic claim. A
      reward line earns its per-SKU pwp_price_sen ONLY if it carries a valid
      `variants.pwpCode`: the code exists, is redeemable (AVAILABLE, or RESERVED
@@ -2860,7 +2864,11 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       const candidate = cachedCombos.filter(
         (c) => rewardComboIds.includes(c.id) && (!product.base_model || c.baseModel === product.base_model),
       );
-      if (!candidate.some((c) => matchComboSubset(built, c.modules) != null)) {
+      const rewardCells = ((it?.variants as { cells?: Array<{ id?: unknown }> } | null)?.cells ?? []);
+      if (!candidate.some((c) => matchComboBuild({
+        modules: built, cellIds: rewardCells.map((cell) => String(cell.id ?? '')),
+        accessories: accessoryOrder.context.parents.get(idx) ?? [],
+      }, c) != null)) {
         reject("sofa build doesn't match the voucher's reward combo");
         continue;
       }
@@ -3029,7 +3037,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   {
     const activeCampaigns = await loadActiveFreeItemCampaigns(sb);
     const comboModulesById = new Map<string, string[][]>(
-      cachedCombos.map((cb) => [cb.id, cb.modules]),
+      cachedCombos.map((cb) => [cb.id, cb.accessories?.length ? [] : cb.modules]),
     );
     const rejections: Array<{ idx: number; reason: string }> = [];
     for (let idx = 0; idx < items.length; idx++) {
@@ -3157,6 +3165,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       qty:            Number(it.qty ?? 1),
       unitPriceSen: Number(it.unitPriceSen ?? 0),
       variants:       (it.variants as MfgItemForRecompute['variants']) ?? null,
+      sofaAccessories: accessoryOrder.context.parents.get(idx) ?? [],
     };
     // PWP grant for this line when its code was claimed: a per-SKU base (non-
     // sofa) or the reward combo ids (sofa). Else null → normal base / price.
@@ -3167,6 +3176,17 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     const pwpSofaComboIds = pwpSofaByIdx.get(idx) ?? null;
     return recomputeFromSnapshot(draft, product, fabric, cachedConfig, cachedCombos, sofaModulePrices, sellingTiers, cachedFabricAddonConfig, pwpBaseSen, pwpSofaComboIds, cachedSpecialAddons, sofaModuleCostRows, cachedModelOverrides, cachedCompartmentOverrides, erpLineTrust(createPosTablet, Number(it.unitPriceSen ?? 0), it.zeroPriceIntended, false));
   }));
+  for (const [idx, rewardIds] of pwpSofaByIdx) {
+    if (!(recomputes[idx]?.sofaComboIds ?? []).some((id) => rewardIds.includes(id))) {
+      await rollbackPwpClaims();
+      return c.json({ error: 'pwp_code_rejected', reason: 'The selected sofa combo is outside this voucher. Remove or reselect the voucher before confirming.', lineIdx: idx }, 409);
+    }
+  }
+  const accessoryInclusionError = applySofaAccessoryInclusions(items, recomputes, accessoryOrder.context);
+  if (accessoryInclusionError) {
+    await rollbackPwpClaims();
+    return c.json({ error: 'sofa_accessories_invalid', reason: accessoryInclusionError }, 400);
+  }
   /* Commander 2026-05-29 (system-wide) — the SELLING unit price is now
      operator-authored on every SO line. The product price tables are COST,
      so there is no server-computed selling figure to enforce a combo floor /
@@ -3618,7 +3638,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        runs — no drift. Free-item lines are skipped (a free giveaway carries no
        special transport fee). */
     const comboModulesById = new Map<string, string[][]>(
-      cachedCombos.map((cb) => [cb.id, cb.modules]),
+      cachedCombos.map((cb) => [cb.id, cb.accessories?.length ? [] : cb.modules]),
     );
     const deliveryRuleLines: RuleLineInput[] = [];
     for (let idx = 0; idx < items.length; idx++) {
@@ -7096,6 +7116,14 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return refuseWithoutWriting(c, { error: 'invalid_json' }, 400); }
+  if ((it.variants as Record<string, unknown> | null)?.sofaComboIncluded !== undefined
+    || (it.variants as Record<string, unknown> | null)?.sofaAccessoryGroupKey !== undefined
+    || (it.variants as Record<string, unknown> | null)?.sofaAccessoryPieceIds !== undefined
+    || (it.variants as Record<string, unknown> | null)?.sofaAccessoryOfKey !== undefined
+    || (it.variants as Record<string, unknown> | null)?.sofaAccessories !== undefined) {
+    return refuseWithoutWriting(c, { error: 'sofa_combo_requires_complete_order', reason: 'Save the sofa and its accessories together as a complete order.' }, 400);
+  }
+
   /* Trimmed — a whitespace-only code used to pass this truthy check and then
      slide through validateItemCodes' skip-as-no-op (owner 2026-08-08: every
      line is a catalog SKU, so an add-line ALWAYS names one). */
@@ -7868,10 +7896,30 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
      audit path (POST /:docNo/items/:itemId/override → mfg_so_price_overrides)
      is unaffected — it routes around this PATCH entirely. */
   let recomputedPatch: RecomputedLine | null = null;
+  const itemCodeAfter = it.itemCode !== undefined ? String(it.itemCode) : prev.item_code;
+  const prevIsAccessoryComboParent = !!(prev.variants as Record<string, unknown> | null)?.sofaAccessoryGroupKey;
+  if (prevIsAccessoryComboParent
+    && (qty !== Number(prev.qty) || itemCodeAfter !== prev.item_code || it.cancelled === true)) {
+    return c.json({ error: 'sofa_combo_requires_complete_edit', reason: 'Change the complete sofa combo together with its included accessories.' }, 409);
+  }
+  const prevIsIncludedAccessory = isStoredIncludedSofaAccessory(prev);
+  if (prevIsIncludedAccessory && (qty !== Number(prev.qty) || itemCodeAfter !== prev.item_code)) {
+    return c.json({ error: 'sofa_combo_accessory_locked', reason: 'An accessory included in a sofa combo keeps its SKU and quantity. Add extra accessories as a new line.' }, 409);
+  }
+  if (it.variants !== undefined) {
+    const next = { ...((it.variants && typeof it.variants === 'object' && !Array.isArray(it.variants) ? it.variants : {}) as Record<string, unknown>) };
+    delete next.sofaComboIncluded;
+    delete next.sofaAccessoryGroupKey;
+    if ((prev.variants as Record<string, unknown> | null)?.sofaAccessoryGroupKey) next.sofaAccessoryGroupKey = (prev.variants as Record<string, unknown>).sofaAccessoryGroupKey;
+    if (prevIsIncludedAccessory) next.sofaComboIncluded = (prev.variants as Record<string, unknown>).sofaComboIncluded;
+    if (prevIsAccessoryComboParent && !sameSofaComboVariants(prev.variants, next)) {
+      return c.json({ error: 'sofa_combo_requires_complete_edit', reason: 'Use the colour/options editor for this sofa combo. Change its modules or accessories by rebuilding the complete combo.' }, 409);
+    }
+    it.variants = next;
+  }
   const variantsAfter = it.variants !== undefined
     ? (it.variants as MfgItemForRecompute['variants'])
     : ((prev as { variants?: MfgItemForRecompute['variants'] }).variants ?? null);
-  const itemCodeAfter = it.itemCode !== undefined ? String(it.itemCode) : prev.item_code;
   /* SKU wins — lib/sku-category.ts, docs/bugs/0514. Until 2026-09-12 this door
      took the request's group verbatim; the product master decides, the request
      is a fallback only when the code is not catalogued, and the stored value is
@@ -8014,7 +8062,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
        pwpBaseSen, so recompute returns FULL RETAIL — comparing the stored grant
        price against it always "drifts". Skip the gate for a reward line exactly
        like a free-item line; the unit below is forced back to the stored grant. */
-    if (!isFreeItemLine(prev.variants) && !prevIsReward && posTablet && recomputedPatch.drift) {
+    if (!isFreeItemLine(prev.variants) && !prevIsReward && !prevIsAccessoryComboParent && !prevIsIncludedAccessory && posTablet && recomputedPatch.drift) {
       return c.json({
         error:    'pricing_drift',
         reason:   'The price for this item is out of date — please refresh and try again.',
@@ -8029,13 +8077,13 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
      Backend sends no real selling price). POS drift rejects above; Backend
      drift saves silently. Task 6 — a persisted free-item line is grandfathered
      at RM 0 regardless of what the current recompute produced. */
-  const unit = isFreeItemLine(prev.variants)
+  const unit = (isFreeItemLine(prev.variants) || prevIsIncludedAccessory)
     ? 0
     /* PWP reward — keep the grant price locked at claim time. Recompute (no
        pwpBaseSen on the edit path) would reset it to full retail and the
        Backend, not being a POS tablet, would save that silently — turning a
        RM490 加购 into RM990 with no warning (Loo 2026-06-28). */
-    : prevIsReward
+    : (prevIsReward || prevIsAccessoryComboParent)
     ? prev.unit_price_sen
     : unitAfterLineEdit(recomputedPatch ? recomputedPatch.unit_price_sen : clientUnit, prev.unit_price_sen, patchTrust);
   /* Audit 2026-06-11 C-2 — same discount gate as POST /: the effective
@@ -8269,10 +8317,13 @@ mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
   // the row is the source of truth for which keys belong to this line.
   const { data: prev } = await scopeSoItemToDocument(
     sb.from('mfg_sales_order_items')
-      .select('item_code, qty, unit_price_sen, total_sen, photo_urls, cancelled'),
+      .select('item_code, qty, unit_price_sen, total_sen, photo_urls, cancelled, variants'),
     docNo,
     itemId,
   ).maybeSingle();
+  if ((prev as { variants?: Record<string, unknown> } | null)?.variants?.sofaAccessoryGroupKey) {
+    return c.json({ error: 'sofa_combo_requires_complete_edit', reason: 'Remove the complete sofa combo together with its included accessories.' }, 409);
+  }
   const prevTyped = prev as
     | { item_code: string; qty: number; unit_price_sen: number; total_sen: number; photo_urls: string[] | null; cancelled?: boolean }
     | null;
@@ -8526,7 +8577,7 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
   /* Task 6 — grandfathering: a line carrying variants.freeItem was made free
      at create time and must STAY at RM 0 regardless of any fabric/option delta.
      Treat it as a no-price-change TBC edit (the variant picks still land). */
-  const isFreeItemGrandfathered = isFreeItemLine(prevVariants);
+  const isFreeItemGrandfathered = isFreeItemLine(prevVariants) || isStoredIncludedSofaAccessory(prev);
   /* The total floor that stood here (Loo 2026-06-11) is GONE — owner ruling,
      relayed 2026-08-18. A TBC edit may lower the line. */
   const qty = Number(prev.qty);
@@ -8669,6 +8720,7 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
     .eq('id', itemId).eq('doc_no', docNo).maybeSingle();
   if (!prev) return c.json({ error: 'not_found' }, 404);
   if (prev.cancelled) return c.json({ error: 'line_cancelled' }, 409);
+  if (isStoredIncludedSofaAccessory(prev)) return c.json({ error: 'sofa_combo_accessory_locked', reason: 'Exchange an included accessory together with its sofa combo.' }, 409);
   const prevVariants = ((prev.variants ?? {}) as Record<string, unknown>);
   if (String(prev.item_group) === 'sofa' || prevVariants.buildKey || prevVariants.cells) {
     return c.json({ error: 'sofa_swap_not_supported', reason: 'A sofa build is exchanged by rebuilding the order, not by swapping one line.' }, 400);
@@ -9240,6 +9292,9 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
   const item = (body.item ?? null) as { itemCode?: unknown; qty?: unknown; unitPriceSen?: unknown; description?: unknown; variants?: Record<string, unknown> | null } | null;
   const newCode = String(item?.itemCode ?? '').trim();
   if (!item || !newCode) return c.json({ error: 'item_code_required' }, 400);
+  if (['sofaComboIncluded', 'sofaAccessoryGroupKey', 'sofaAccessories', 'sofaAccessoryOfKey', 'sofaAccessoryPieceIds'].some((k) => item.variants?.[k] !== undefined)) {
+    return c.json({ error: 'sofa_combo_requires_complete_edit', reason: 'Exchange the complete sofa combo together with its included accessories.' }, 409);
+  }
 
   /* The whole old build is replaced, so any frozen module of it refuses. */
   const freezeRead = await readSoLineFreeze(sb, docNo);
@@ -9270,6 +9325,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
   } | null;
   if (!prev) return c.json({ error: 'not_found' }, 404);
   if (prev.cancelled) return c.json({ error: 'line_cancelled' }, 409);
+  if (prev.variants?.sofaAccessoryGroupKey) return c.json({ error: 'sofa_combo_requires_complete_edit', reason: 'Exchange the complete sofa combo together with its included accessories.' }, 409);
   if (String(prev.item_group) !== 'sofa') {
     return c.json({ error: 'sofa_swap_only', reason: 'This exchange path only replaces sofa builds.' }, 400);
   }
@@ -9375,7 +9431,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
       const cb = comboByIdR.get(id);
       if (!cb) return false;
       if (cb.baseModel && cb.baseModel !== (prodLite.base_model ?? '')) return false;
-      return matchComboSubset(mods, cb.modules) != null;
+      return matchComboBuild({ modules: mods }, cb) != null;
     });
   })();
   const recomputed = recomputeFromSnapshot(
@@ -9503,7 +9559,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
           const cb = comboById.get(id);
           if (!cb) return false;
           if (cb.baseModel && cb.baseModel !== (prodLite.base_model ?? '')) return false;
-          return matchComboSubset(newModuleIds, cb.modules) != null;
+          return matchComboBuild({ modules: newModuleIds }, cb) != null;
         });
       }
       return String(r.trigger_category).toUpperCase() === 'SOFA'
@@ -10050,6 +10106,8 @@ mfgSalesOrders.post('/:docNo/items/:itemId/photos', async (c) => {
     await deleteThumbFor(c.env.SO_ITEM_PHOTOS, photoKey);
     return c.json({ error: 'db_update_failed', reason: updErr.message }, 500);
   }
+  const carryErr = await carrySoPhotoToPoLines(sb, itemId, { add: photoKey });
+  if (carryErr) console.warn(`[so-item-photo] PO carry failed for ${photoKey}: ${carryErr}`);
 
   // PR-D — emit an ADD_LINE-style audit row noting the photo addition.
   // Reuses UPDATE_LINE so the History panel groups it with other line
@@ -10256,6 +10314,8 @@ mfgSalesOrders.delete('/:docNo/items/:itemId/photos/:photoKey', async (c) => {
     .update({ photo_urls: nextKeys })
     .eq('id', itemId);
   if (updErr) return c.json({ error: 'db_update_failed', reason: updErr.message }, 500);
+  const carryErr = await carrySoPhotoToPoLines(sb, itemId, { remove: photoKey });
+  if (carryErr) console.warn(`[so-item-photo] PO carry failed for ${photoKey}: ${carryErr}`);
 
   // R2 delete best-effort — if it fails we've already removed the key
   // from the array, so the orphan is invisible to the UI. A future

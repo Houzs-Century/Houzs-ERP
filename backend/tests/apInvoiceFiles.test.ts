@@ -4,8 +4,9 @@
        an index row beside the bill, attach order; list walks it; stream
        hands the stored mime back;
      • a mime outside image/PDF refuses; a CANCELLED bill takes no more
-       evidence; a POSTED one still takes its scan but keeps what it has
-       (delete → evidence_locked) — the ledger is the AP invoice's lock;
+       evidence; a POSTED one still takes its scan and, while no AP Payment
+       holds it, may lose a wrong file (HC-0181); once money is paid against
+       it or a CHECKED voucher ticks it, delete → evidence_locked;
      • the AP Payment's print bundle appends each PAID bill's files after the
        voucher's own, allocation order; a purchase-invoice allocation adds
        nothing; a missing R2 object still costs a notice page.
@@ -33,6 +34,8 @@ class FakeQuery {
   insert(p: Row | Row[]) { this.op = 'insert'; this.inserted = Array.isArray(p) ? p : [p]; return this; }
   delete() { this.op = 'delete'; return this; }
   eq(col: string, val: unknown) { this.preds.push((r) => String(r[col]) === String(val)); return this; }
+  neq(col: string, val: unknown) { this.preds.push((r) => String(r[col]) !== String(val)); return this; }
+  not(col: string, _op: 'is', _val: null) { this.preds.push((r) => r[col] !== null && r[col] !== undefined); return this; }
   in(col: string, vals: unknown[]) {
     const s = new Set((vals ?? []).map(String));
     this.preds.push((r) => s.has(String(r[col])));
@@ -140,7 +143,7 @@ describe('AP invoice attachments — the supplier bill lives with the AP invoice
     expect((await refused.json() as { error: string }).error).toBe('invoice_cancelled');
   });
 
-  test('delete works while DRAFT and removes the R2 object; a POSTED bill still takes a file but keeps what it has', async () => {
+  test('delete works while DRAFT and removes the R2 object; a POSTED bill still takes a file and, unpaid, may lose a wrong one (HC-0181)', async () => {
     const tables: Record<string, Row[]> = { ap_invoices: [INVOICE()], acc_ap_invoice_files: [] };
     const { app, r2 } = harness(tables);
     await upload(app);
@@ -151,11 +154,46 @@ describe('AP invoice attachments — the supplier bill lives with the AP invoice
     expect(r2.store.size).toBe(0);
 
     tables.ap_invoices[0]!.status = 'POSTED';
+    tables.ap_invoices[0]!.paid_sen = 0;
     expect((await upload(app)).status).toBe(201);
-    const locked = await app.request(`/api/api-1/files/${tables.acc_ap_invoice_files[0]!.id}`, { method: 'DELETE' });
-    expect(locked.status).toBe(409);
-    expect((await locked.json() as { error: string }).error).toBe('evidence_locked');
+    expect((await (await app.request('/api/api-1/files')).json() as { locked: boolean }).locked).toBe(false);
+    expect((await app.request(`/api/api-1/files/${tables.acc_ap_invoice_files[0]!.id}`, { method: 'DELETE' })).status).toBe(200);
+    expect(tables.acc_ap_invoice_files).toHaveLength(0);
+    expect(r2.store.size).toBe(0);
+  });
+
+  test('a bill an AP Payment holds keeps its files: money paid against it, or a CHECKED voucher not yet posted; a draft or cancelled voucher does not hold it', async () => {
+    const tables: Record<string, Row[]> = {
+      ap_invoices: [INVOICE({ status: 'POSTED', paid_sen: 0 })], acc_ap_invoice_files: [],
+      pv_allocations: [{ pv_id: 'pv-1', ap_invoice_id: 'api-1', company_id: CO }],
+      payment_vouchers: [{ id: 'pv-1', status: 'DRAFT', checked_at: null, company_id: CO }],
+    };
+    const { app } = harness(tables);
+    await upload(app);
+    const fileId = () => tables.acc_ap_invoice_files[0]!.id;
+    const del = async () => app.request(`/api/api-1/files/${fileId()}`, { method: 'DELETE' });
+    const listLocked = async () => (await (await app.request('/api/api-1/files')).json() as { locked: boolean }).locked;
+
+    expect(await listLocked()).toBe(false);
+
+    tables.payment_vouchers[0]!.checked_at = '2026-10-30T01:00:00Z';
+    expect(await listLocked()).toBe(true);
+    const checked = await del();
+    expect(checked.status).toBe(409);
+    expect((await checked.json() as { error: string }).error).toBe('evidence_locked');
+
+    tables.payment_vouchers[0]!.status = 'CANCELLED';
+    expect(await listLocked()).toBe(false);
+
+    tables.payment_vouchers[0]!.status = 'POSTED';
+    tables.ap_invoices[0]!.status = 'PAID';
+    tables.ap_invoices[0]!.paid_sen = 89_303;
+    tables.pv_allocations = [];
+    const paid = await del();
+    expect(paid.status).toBe(409);
+    expect((await paid.json() as { error: string }).error).toBe('evidence_locked');
     expect(tables.acc_ap_invoice_files).toHaveLength(1);
+    expect((await upload(app)).status).toBe(201);
   });
 
   test('print-bundle: the voucher page, its own files, then each PAID bill\'s files in allocation order; a PI allocation adds nothing; a missing object costs a notice page', async () => {

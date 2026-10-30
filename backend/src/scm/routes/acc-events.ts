@@ -13,8 +13,12 @@
 //                                 or not — and on its journal leg
 //   GET  /logistics               the Logistics cost report: ?from..?to, by region,
 //                                 per trip, setup & dismantle (acc-logistics.ts)
-//   GET  /logistics/settings      which accounts are our lorries' cost
-//   PUT  /logistics/settings      tick them (the money right)
+//   GET  /logistics/pnl           the Logistics P&L — the owner's Logistic Cost
+//                                 Report from the books (acc-logistics-pnl.ts)
+//   PUT  /logistics/income-rate   its settings (the money right): the share of the
+//   PUT  /logistics/area-rate     DOs' value, the setup / dismantle rate by area,
+//   PUT  /logistics/spread        each upkeep / insurance bill's months, and each
+//   PUT  /logistics/trip          setup / dismantle trip ticked or not
 //
 // Mounted behind scmAreaGuard("scm.finance.accounting") (scm/index.ts): a read
 // needs view on Finance > Accounting, a write needs the money right.
@@ -31,7 +35,10 @@ import { assertAuditWritable, auditUnavailableBody, fieldChange, recordEntityAud
 import { listEventOptions, loadEventsByIds, parseEventId, pvLineEventRefusal, toEventRow, type EventRow } from '../lib/event-tags';
 import { buildEventCosts, type ChartRow, type LegEntry, type TaggedLeg } from '../lib/event-costs';
 import { closeCommissionMonthHandler, eventCommissionHandler, reopenCommissionMonthHandler } from './acc-event-commission';
-import { logisticsCostHandler, logisticsSettingsHandler, saveLogisticsSettingsHandler } from './acc-logistics';
+import { logisticsCostHandler } from './acc-logistics';
+import {
+  logisticsPnlHandler, saveAreaRateHandler, saveIncomeRateHandler, saveSpreadHandler, saveTripMarkHandler,
+} from './acc-logistics-pnl';
 
 export const accEvents = new Hono<{ Bindings: Env; Variables: Variables }>();
 accEvents.use('*', supabaseAuth);
@@ -121,8 +128,11 @@ accEvents.get('/commission', eventCommissionHandler);
 accEvents.post('/commission/close', closeCommissionMonthHandler);
 accEvents.post('/commission/reopen', reopenCommissionMonthHandler);
 accEvents.get('/logistics', logisticsCostHandler);
-accEvents.get('/logistics/settings', logisticsSettingsHandler);
-accEvents.put('/logistics/settings', saveLogisticsSettingsHandler);
+accEvents.get('/logistics/pnl', logisticsPnlHandler);
+accEvents.put('/logistics/income-rate', saveIncomeRateHandler);
+accEvents.put('/logistics/area-rate', saveAreaRateHandler);
+accEvents.put('/logistics/spread', saveSpreadHandler);
+accEvents.put('/logistics/trip', saveTripMarkHandler);
 
 /* ── POST /pv-lines/:lineId/event ─────────────────────────────────────────────
    A voucher is locked from Check on, and an approved one cannot be edited at

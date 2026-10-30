@@ -41,6 +41,7 @@ import {
   DELIVERY_STATE_LABEL,
   sxeDateOf,
   MESSAGE_STATUSES,
+  messageStatusChip,
   AMEND_REASONS,
   dpJobTypeLabel,
   assrJobKindLabel,
@@ -306,6 +307,9 @@ const fieldNotSaved = (err: unknown) => serviceNotify({
   tone: 'error',
 });
 
+/* An option inherits the select's chip colour unless it sets its own. */
+const plainOption = { backgroundColor: '#fff', color: '#11140f' };
+
 /* The "Delivery Status" column's inline editor — the customer-message follow-up
    workflow status (owner 2026-09-22), one of the 23 MESSAGE_STATUSES or blank.
    SO rows only; ASSR / DP / project rows show a dash (this is a customer-
@@ -318,15 +322,20 @@ function MessageStatusEditCell({ order, onUpdateFields }: { order: PlanningOrder
   /* SO rows write their own column; DP (manual job) rows write
      scm.dp_orders.delivery_message_status; service-case rows write
      assr_cases.delivery_message_status (owner 2026-10-29 — the non-SO job types
-     adjust it too). For a service case the Service-Arrangement WhatsApp reply
-     still overlays its own value when the customer has answered, so a hand-set
-     status shows until then. */
+     adjust it too, so the ASSR row is an editable select, not a read-only chip).
+     For a service case the Service-Arrangement WhatsApp reply still overlays its
+     own value when the customer has answered, so a hand-set status shows until
+     then. */
   const target = isDp(order) ? { type: 'dp' as const, id: dpIdOf(order) }
     : isAssr(order) ? { type: 'assr' as const, id: String(order.assr_id ?? '') }
     : { type: 'so' as const, id: order.so_doc_no };
+  // The workflow status shows as a coloured chip, on the editable select too.
+  const chip = messageStatusChip(order.delivery_message_status);
+  const chipStyle = chip ? { backgroundColor: chip.bg, color: chip.fg } : undefined;
   return (
     <select
-      className={styles.inlineEdit}
+      className={chip ? `${styles.inlineEdit} ${styles.messageChip}` : styles.inlineEdit}
+      style={chipStyle}
       value={order.delivery_message_status ?? ''}
       disabled={fields}
       title="Customer-message workflow status"
@@ -337,15 +346,16 @@ function MessageStatusEditCell({ order, onUpdateFields }: { order: PlanningOrder
         onUpdateFields({ ...target, deliveryMessageStatus: next || null }, { onError: fieldNotSaved });
       }}
     >
-      <option value="">—</option>
+      <option value="" style={plainOption}>—</option>
       {/* Keep an off-list current value selectable (robustness). */}
       {order.delivery_message_status
         && !(MESSAGE_STATUSES as readonly string[]).includes(order.delivery_message_status)
-        ? <option value={order.delivery_message_status}>{order.delivery_message_status}</option>
+        ? <option value={order.delivery_message_status} style={plainOption}>{order.delivery_message_status}</option>
         : null}
-      {MESSAGE_STATUSES.map((s) => (
-        <option key={s} value={s}>{s}</option>
-      ))}
+      {MESSAGE_STATUSES.map((s) => {
+        const c = messageStatusChip(s);
+        return <option key={s} value={s} style={c && { backgroundColor: c.bg, color: c.fg }}>{s}</option>;
+      })}
     </select>
   );
 }

@@ -27,6 +27,7 @@
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { ACCOUNT_SECTIONS, defaultSectionFor, isAccountSection, sectionType } from '../lib/account-sections';
 import { PMS_ROWS, PMS_ROW_LABELS, isPmsRow } from '../lib/event-accounts';
+import { LOGISTICS_ROWS, isLogisticsRow, logisticsRowLabel, logisticsRowType } from '../lib/logistics-rows';
 
 const requireChartPerm = (c: any): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
 
@@ -56,12 +57,14 @@ type AccountRow = {
   /** 需要 Event / the PMS event page's row (owner 2026-10-01, payment-request item 4). */
   needs_event?: boolean | null;
   pms_row?: string | null;
+  /** The Logistics P&L's row (owner 2026-10-29: 在 coa 那边选) — scm/lib/logistics-rows.ts. */
+  logistics_row?: string | null;
 };
 
 /* Every field a definition COPY carries (tick-ON, create chains, re-parent
    instantiation) — one list, so a new column cannot be copied in one walk and
    forgotten in another. */
-const DEFINITION_FIELDS = 'account_code, account_name, account_type, parent_code, acc_money, special_type, section, needs_event, pms_row';
+const DEFINITION_FIELDS = 'account_code, account_name, account_type, parent_code, acc_money, special_type, section, needs_event, pms_row, logistics_row';
 
 /** The caller's company allow-list, fail-CLOSED like every scoping helper:
     no resolved list means no cross-company picture. */
@@ -89,7 +92,7 @@ export const chartUnionHandler = async (c: any): Promise<Response> => {
   /* One row per code. Definition fields prefer the LOWEST company id that
      carries the code (company 1 = the master book where the accountant's
      import lands), so a rename there leads the union. */
-  const byCode = new Map<string, { code: string; name: string; type: string; parentCode: string | null; accMoney: boolean; special: string | null; section: string | null; needsEvent: boolean; pmsRow: string | null; definedBy: number; perCompany: Record<number, { active: boolean }> }>();
+  const byCode = new Map<string, { code: string; name: string; type: string; parentCode: string | null; accMoney: boolean; special: string | null; section: string | null; needsEvent: boolean; pmsRow: string | null; logisticsRow: string | null; definedBy: number; perCompany: Record<number, { active: boolean }> }>();
   for (const raw of (data ?? []) as AccountRow[]) {
     const cur = byCode.get(raw.account_code);
     if (!cur || raw.company_id < cur.definedBy) {
@@ -103,6 +106,7 @@ export const chartUnionHandler = async (c: any): Promise<Response> => {
         section: raw.section ?? null,
         needsEvent: raw.needs_event === true,
         pmsRow: raw.pms_row ?? null,
+        logisticsRow: raw.logistics_row ?? null,
         definedBy: raw.company_id,
         perCompany: { ...(cur?.perCompany ?? {}), [raw.company_id]: { active: raw.is_active } },
       });
@@ -121,6 +125,8 @@ export const chartUnionHandler = async (c: any): Promise<Response> => {
     sections: ACCOUNT_SECTIONS,
     /* The PMS event page's rows an account can fill (item 4) — one list, read by the page's picker. */
     pmsRows: PMS_ROWS.map((row) => ({ row, label: PMS_ROW_LABELS[row] })),
+    /* The Logistics P&L's rows an account can feed, each with the account type it takes — one list. */
+    logisticsRows: LOGISTICS_ROWS.map((row) => ({ row, label: logisticsRowLabel(row), type: logisticsRowType(row) })),
     accounts: [...byCode.values()].map(({ definedBy: _d, ...row }) => row),
   });
 };
@@ -180,6 +186,9 @@ export const chartTickHandler = async (c: any): Promise<Response> => {
         acc_money: d.acc_money === true,
         special_type: d.special_type ?? null,
         section: d.section ?? defaultSectionFor(d.account_type, d.account_code),
+        needs_event: d.needs_event === true,
+        pms_row: d.pms_row ?? null,
+        logistics_row: d.logistics_row ?? null,
         is_active: true,
       }, { onConflict: 'company_id,account_code' });
       if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
@@ -479,6 +488,9 @@ export const chartCreateHandler = async (c: any): Promise<Response> => {
         acc_money: d.acc_money === true,
         special_type: d.special_type ?? null,
         section: d.section ?? defaultSectionFor(d.account_type, d.account_code),
+        needs_event: d.needs_event === true,
+        pms_row: d.pms_row ?? null,
+        logistics_row: d.logistics_row ?? null,
         is_active: true,
       }, { onConflict: 'company_id,account_code' });
       if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
@@ -576,6 +588,14 @@ export const chartUpdateHandler = async (c: any): Promise<Response> => {
       return c.json({ error: 'bad_pms_row', message: `pmsRow must be one of ${PMS_ROWS.join(' / ')}, or empty.` }, 400);
     }
     patch.pms_row = isPmsRow(body.pmsRow) ? body.pmsRow : null;
+  }
+  /* The Logistics P&L's row (owner 2026-10-29: 在 coa 那边选): one per account, on
+     an account of the type the row reads — checked below, once the type is known. */
+  if (body.logisticsRow !== undefined) {
+    if (body.logisticsRow !== null && body.logisticsRow !== '' && !isLogisticsRow(body.logisticsRow)) {
+      return c.json({ error: 'bad_logistics_row', message: `logisticsRow must be one of ${LOGISTICS_ROWS.join(' / ')}, or empty.` }, 400);
+    }
+    patch.logistics_row = isLogisticsRow(body.logisticsRow) ? body.logisticsRow : null;
   }
 
   const sb = c.get('supabase');
@@ -691,6 +711,21 @@ export const chartUpdateHandler = async (c: any): Promise<Response> => {
   }
 
   if (Object.keys(patch).length === 0) return c.json({ error: 'nothing_to_change' }, 400);
+
+  if (isLogisticsRow(patch.logistics_row)) {
+    let type = patch.account_type as string | undefined;
+    if (type === undefined) {
+      const { data: selfRow, error: tErr } = await sb.from('accounts')
+        .select('account_type').eq('account_code', code).order('company_id').limit(1).maybeSingle();
+      if (tErr) return c.json({ error: 'load_failed', reason: tErr.message }, 500);
+      if (!selfRow) return c.json({ error: 'code_unknown', message: `${code} exists in no company's chart.` }, 404);
+      type = String((selfRow as { account_type: string }).account_type ?? '').toUpperCase();
+    }
+    const needs = logisticsRowType(patch.logistics_row);
+    if (type !== needs) {
+      return c.json({ error: 'bad_logistics_row', message: `${code} is ${type} — ${logisticsRowLabel(patch.logistics_row)} reads ${needs} accounts.` }, 400);
+    }
+  }
 
   /* A section move carries the subtree: the children take ONLY the section
      and the type it decides — their names, parents and flags are their own. */

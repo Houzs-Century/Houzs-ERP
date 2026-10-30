@@ -11,7 +11,7 @@
 // AVAILABLE code. RLS (migration 0130) is defence-in-depth.
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
-import { matchComboSubset, passesRefinementColumns } from '../shared';
+import { matchComboBuild, passesRefinementColumns } from '../shared';
 import { supabaseAuth } from '../middleware/auth';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
 import { resolveCallerStaffId } from '../lib/salesScope';
@@ -165,6 +165,8 @@ const reserveSchema = z.object({
   // SOFA trigger (Phase 2) — the build's module codes (cell.moduleId). Matched
   // server-side against a SOFA rule's trigger_combo_ids. Omitted for non-sofa.
   sofaModules: z.array(z.string()).optional(),
+  sofaCellIds: z.array(z.string()).optional(),
+  sofaAccessories: z.array(z.object({ id: z.string().min(1), modelId: z.string().min(1), cellId: z.string().min(1) })).max(200).optional(),
   // Promo is ONE-WAY (Loo 2026-06-06): when the line is itself a reward
   // (bought with a PWP/promo code) it must never mint 'promo' codes — a free
   // ARRUS can't fund the next free ARRUS. 'pwp' rules still apply (换购 may
@@ -256,7 +258,11 @@ pwpCodes.post('/reserve', async (c) => {
       const combosById = await loadLiveCombosByIds(supabase, comboIds);
       byComboRules = sofaRules.filter((r) => (r.trigger_combo_ids ?? []).some((cid) => {
         const combo = combosById.get(cid);
-        return !!combo && (!prod.base_model || combo.base_model === prod.base_model) && matchComboSubset(sofaModules, combo.modules) != null;
+        // Confirm currently finalizes these reservations without revalidating
+        // accessory children. Do not mint an inclusive-package trigger until
+        // that path can prove the full set is still being purchased.
+        return !!combo && (!prod.base_model || combo.base_model === prod.base_model)
+          && matchComboBuild({ modules: sofaModules }, combo) != null;
       }));
     }
     matching = [...byComboRules, ...byModelRules];

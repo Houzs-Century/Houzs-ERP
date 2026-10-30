@@ -69,6 +69,40 @@ export const MESSAGE_STATUSES = [
 ] as const;
 export type MessageStatus = (typeof MESSAGE_STATUSES)[number];
 
+/* Chip colours copied from the HC Delivery sheet's dropdown (HC-0188, Syu
+   2026-10-30) so the board reads the same at a glance. Sheet rule: "To Send ..."
+   light yellow, "Done ..." dark brown, Pending Reschedule dark red, Not Sent light
+   red, To Remind light purple. Statuses the sheet screenshot did not show follow
+   the same rule. A Record so a new status cannot ship without a colour. */
+type Chip = { bg: string; fg: string };
+const BLUE: Chip = { bg: '#bfe1f6', fg: '#0a53a8' };
+const TEAL: Chip = { bg: '#c6dbe1', fg: '#215a6c' };
+const YELLOW: Chip = { bg: '#ffe5a0', fg: '#473822' };
+const BROWN: Chip = { bg: '#473822', fg: '#ffe5a0' };
+const RED: Chip = { bg: '#b10202', fg: '#ffcfc9' };
+const PINK: Chip = { bg: '#ffcfc9', fg: '#b10202' };
+const PURPLE: Chip = { bg: '#e6cff2', fg: '#5a3286' };
+const RUST: Chip = { bg: '#753800', fg: '#ffc8aa' };
+const ORANGE: Chip = { bg: '#ffc8aa', fg: '#753800' };
+const GREEN: Chip = { bg: '#d4edbc', fg: '#11734b' };
+export const MESSAGE_STATUS_CHIP: Record<MessageStatus, Chip> = {
+  'To Send Delivery Date': BLUE, 'Done Send': BROWN,
+  'To Send Driver Info': YELLOW, 'Done Driver Information': BROWN,
+  'To Send Collect Balance': YELLOW, 'Done Balance Collection': BROWN,
+  'To Send Postpone Reason': YELLOW, 'Done Postpone Reason': BROWN,
+  'To Send Postage': YELLOW, 'Done Postage': BROWN,
+  'Done Amend': BROWN, 'Done Delivered': BROWN,
+  'To Remind Customer Reply (1)': PURPLE, 'To Remind Customer Reply (2)': PURPLE,
+  'To Remind Customer Reply (3)': PURPLE,
+  'Done Remind (1)': TEAL, 'Done Remind (2)': TEAL, 'Done Remind (3)': TEAL,
+  'Done Scheduling': BROWN, 'Pending Reschedule (D)': RED,
+  'Not Sent (D)': PINK, 'Not Sent (A)': PINK, 'Invalid Data': RUST,
+  'Done Shipout': BROWN, 'Pending Delivery (EM)': ORANGE, 'Customer Confirm Shipment': GREEN,
+  'Pending Reschedule (A)': RED, 'Pending Customer Reply (D)': TEAL,
+};
+export const messageStatusChip = (s: string | null | undefined): Chip | undefined =>
+  s ? MESSAGE_STATUS_CHIP[s as MessageStatus] : undefined;
+
 /* Preset amend / reschedule reasons (owner 2026-09-22) — the reason the amend
    message gives the customer. Picked from a dropdown; free text still allowed. */
 export const AMEND_REASONS = [

@@ -486,7 +486,7 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
             </tbody>
           </table>
           <ApInvoiceFilesCard invoiceId={detail.invoice.id} canWrite={canCreate}
-            locked={detail.invoice.status !== 'DRAFT' && detail.invoice.status !== 'CANCELLED'}
+            locked={detail.invoice.paid_sen > 0}
             closed={detail.invoice.status === 'CANCELLED'} />
         </Modal>
       )}
@@ -519,8 +519,10 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
 
 /* ── Files card — the supplier's bill behind this AP invoice (mig
    20260906T2100): the voucher's DocFilesCard bound to this document's hooks
-   and rule — a POSTED bill keeps its files (no check layer; the ledger is its
-   lock) but still takes a late scan, a CANCELLED one takes no more. */
+   and rule — a bill keeps its files once an AP Payment holds it (paid, or a
+   checked voucher ticks it; the server says which in `locked`), a posted
+   unpaid bill may still swap a wrong file (HC-0181), a CANCELLED one takes
+   no more. */
 const ApInvoiceFilesCard = ({ invoiceId, canWrite, locked, closed }: { invoiceId: string; canWrite: boolean; locked: boolean; closed: boolean }) => {
   const filesQ = useApInvoiceFiles(invoiceId);
   const upload = useUploadApInvoiceFile();
@@ -528,10 +530,10 @@ const ApInvoiceFilesCard = ({ invoiceId, canWrite, locked, closed }: { invoiceId
   return (
     <DocFilesCard
       files={filesQ.data?.files ?? []}
-      canWrite={canWrite} locked={locked} closed={closed}
-      lockedNote=" · locked with the posted bill"
+      canWrite={canWrite} locked={filesQ.data?.locked ?? locked} closed={closed}
+      lockedNote=" · locked with the AP Payment that holds this bill"
       emptyNote="No files yet. A bill scanned on the New form attaches its pages here by itself; use Attach file for anything else."
-      removeBody="The stored file is deleted with its row. A posted bill refuses this — evidence locks with the document."
+      removeBody="The stored file is deleted with its row. The bill itself and its posting stay as they are."
       attachAriaLabel="Attach bill files"
       uploading={upload.isPending} removing={remove.isPending}
       onUpload={(file) => upload.mutateAsync({ invoiceId, file })}

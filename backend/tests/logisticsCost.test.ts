@@ -4,17 +4,16 @@
      • the reads: this company's DOs (not cancelled, not another company's) of
        the whole months, by the scheduled customer delivery date, else the DO's
        own; their crews, lines and 3PL charges, in the four regions of the
-       books (a Singapore address by its words); the carriers' bill lines; what the ticked accounts booked — a reversed pair and the opening
-       left out;
-     • the cost accounts: the chart's default until Finance ticks a list; only
-       an active expense account may be ticked, only with the money right; an
-       empty list goes back to the default;
+       books (a Singapore address by its words); the carriers' bill lines; what
+       the accounts the Chart of Accounts puts on Petrol / Upkeep / Other lorry
+       cost booked — a reversed pair and the opening left out; an account with
+       no Logistics row counts nowhere;
      • the fairs' books need the event connection — without it the report says
        so instead of showing nothing as if nothing was spent. */
 
 import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
-import { logisticsCostHandler, logisticsSettingsHandler, saveLogisticsSettingsHandler } from '../src/scm/routes/acc-logistics';
+import { logisticsCostHandler } from '../src/scm/routes/acc-logistics';
 
 const CO = 1;
 type Res = { body: Record<string, any>; status: number };
@@ -33,8 +32,8 @@ const leg = (o: Partial<Row>): Row => ({
 
 const world = (over: Record<string, Row[]> = {}) => fakeSb({
   accounts: [
-    { company_id: CO, account_code: '900-P015', account_name: 'PETROL, TOL AND PARKING - LORI VRH 9058', account_type: 'EXPENSE', is_active: true },
-    { company_id: CO, account_code: '900-U010', account_name: 'UPKEEP OF LORI - VPC 9058', account_type: 'EXPENSE', is_active: true },
+    { company_id: CO, account_code: '900-P015', account_name: 'PETROL, TOL AND PARKING - LORI VRH 9058', account_type: 'EXPENSE', is_active: true, logistics_row: 'petrol' },
+    { company_id: CO, account_code: '900-U010', account_name: 'UPKEEP OF LORI - VPC 9058', account_type: 'EXPENSE', is_active: true, logistics_row: 'upkeep' },
     { company_id: CO, account_code: '900-P008', account_name: 'PETROL, TOL AND PARKING - DIRECTOR & OTHERS', account_type: 'EXPENSE', is_active: true },
     { company_id: CO, account_code: '900-S100', account_name: 'STAFF SALARIES & OVERTIME', account_type: 'EXPENSE', is_active: true },
     { company_id: CO, account_code: '207-1000', account_name: 'MOTOR VEHICLE', account_type: 'ASSET', is_active: true },
@@ -79,12 +78,10 @@ const world = (over: Record<string, Row[]> = {}) => fakeSb({
 });
 
 describe('GET /acc-events/logistics', () => {
-  test('this company\'s DOs of the month, our trip\'s cost from the default accounts, the 3PL run and charge', async () => {
+  test("this company's DOs of the month, our trip's cost from the accounts on our lorries' rows, the 3PL run and charge", async () => {
     const res = await run(logisticsCostHandler, ctx(world(), { query: { from: '2026-10-01', to: '2026-10-31' } }));
     expect(res.status).toBe(200);
     const b = res.body;
-    expect(b.ownCostDefault).toBe(true);
-    expect(b.ownCostAccounts).toEqual(['900-P015', '900-U010']);
     expect(b.months).toEqual([{ month: '2026-10', ownCostSen: 60_000, trips: 1, perTripSen: 60_000, accounts: [{ code: '900-P015', name: 'PETROL, TOL AND PARKING - LORI VRH 9058', sen: 60_000 }] }]);
     expect(b.regions.map(({ covers: _c, ...x }: any) => x)).toEqual([
       { code: 'PG', name: 'Penang', dos: 1, valueSen: 20_000, ownSen: 0, threeplSen: 30_000, totalSen: 30_000 },
@@ -123,35 +120,12 @@ describe('GET /acc-events/logistics', () => {
     expect(res.body.error).toBe('bad_range');
   });
 
-  test("the company's own tick list replaces the default — a driver salary account counts once ticked", async () => {
-    const res = await run(logisticsCostHandler, ctx(world({ acc_logistics_settings: [{ company_id: CO, own_cost_accounts: ['900-P015', '900-S100'] }] }), { query: { from: '2026-10-01', to: '2026-10-31' } }));
-    expect(res.body.ownCostDefault).toBe(false);
+  test('an account the chart puts on Other lorry cost counts in our trips too', async () => {
+    const accounts = [
+      { company_id: CO, account_code: '900-P015', account_name: 'PETROL, TOL AND PARKING - LORI VRH 9058', account_type: 'EXPENSE', is_active: true, logistics_row: 'petrol' },
+      { company_id: CO, account_code: '900-S100', account_name: 'STAFF SALARIES & OVERTIME', account_type: 'EXPENSE', is_active: true, logistics_row: 'other_lorry' },
+    ];
+    const res = await run(logisticsCostHandler, ctx(world({ accounts }), { query: { from: '2026-10-01', to: '2026-10-31' } }));
     expect(res.body.months[0]).toMatchObject({ ownCostSen: 460_000, trips: 1, perTripSen: 460_000 });
-  });
-});
-
-describe('the cost accounts', () => {
-  test('GET: the default, the tick list (none yet) and every active expense account to choose from', async () => {
-    const res = await run(logisticsSettingsHandler, ctx(world()));
-    expect(res.status).toBe(200);
-    expect(res.body.picked).toBeNull();
-    expect(res.body.defaults).toEqual(['900-P015', '900-U010']);
-    expect(res.body.candidates.map((x: any) => x.code)).toEqual(['900-P008', '900-P015', '900-S100', '900-U010']);
-  });
-
-  test('PUT: active expense accounts only, the money right only; an empty list is the default again', async () => {
-    const sb = world();
-    const noRight = await run(saveLogisticsSettingsHandler, ctx(sb, { body: { accounts: ['900-P015'] }, perms: [] }));
-    expect(noRight.status).toBe(403);
-    const asset = await run(saveLogisticsSettingsHandler, ctx(sb, { body: { accounts: ['900-P015', '207-1000'] } }));
-    expect(asset.status).toBe(400);
-    expect(asset.body.message).toContain('207-1000');
-    const ok = await run(saveLogisticsSettingsHandler, ctx(sb, { body: { accounts: ['900-S100', '900-P015', '900-P015'] } }));
-    expect(ok.body).toEqual({ ok: true, picked: ['900-P015', '900-S100'] });
-    expect(sb.tables.acc_logistics_settings).toEqual([expect.objectContaining({ company_id: CO, own_cost_accounts: ['900-P015', '900-S100'], updated_by: 'Finance Chew' })]);
-    expect((await run(logisticsSettingsHandler, ctx(sb))).body.picked).toEqual(['900-P015', '900-S100']);
-    const back = await run(saveLogisticsSettingsHandler, ctx(sb, { body: { accounts: null } }));
-    expect(back.body).toEqual({ ok: true, picked: null });
-    expect((await run(logisticsSettingsHandler, ctx(sb))).body.picked).toBeNull();
   });
 });
