@@ -118,7 +118,7 @@ export const useCancelApInvoice = () => {
    voucher's own files. Server: backend/src/scm/routes/ap-invoice-files.ts. */
 export const useApInvoiceFiles = (invoiceId: string | null) => useQuery({
   queryKey: ['ap-invoice-files', invoiceId],
-  queryFn: () => authedFetch<{ files: PvFile[] }>(`/ap-invoices/${invoiceId}/files`),
+  queryFn: () => authedFetch<{ files: PvFile[]; locked?: boolean }>(`/ap-invoices/${invoiceId}/files`),
   enabled: !!invoiceId,
   retry: retryUnlessClientError,
 });

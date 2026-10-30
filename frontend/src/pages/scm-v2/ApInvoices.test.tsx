@@ -45,6 +45,8 @@ const extractRequestAsync = vi.fn(async (_id: unknown) => ({ bills: [{
 }] }));
 /* The detail's status — flipped by tests: a DRAFT may lose a file and edits plainly, a POSTED bill keeps files and re-posts on edit. */
 let detailStatus = 'DRAFT';
+let detailPaidSen = 0;
+let filesLocked: boolean | undefined;
 /* What the list was asked for — kind and docKind (the supplier debit notes, 2026-10-28). */
 const lastApList = { value: '' };
 
@@ -64,7 +66,7 @@ vi.mock('../../vendor/scm/lib/official-doc-queries', async (importOriginal) => (
 vi.mock('../../vendor/scm/lib/ap-invoice-queries', () => ({
   useApInvoices: (kind?: string, docKind?: string) => { lastApList.value = `${kind ?? ''}|${docKind ?? ''}`; return { data: { rows: ROWS }, isLoading: false, isError: false, error: null }; },
   useApInvoiceDetail: (id: string | null) => ({ data: id ? {
-    invoice: { id: 'api-1', invoice_number: '2990-API-2609-001', supplier_id: 'sup-h', supplier_invoice_ref: 'HVH-0912', invoice_date: '2026-09-01', due_date: null, currency: 'MYR', total_sen: 420_000, paid_sen: 0, status: detailStatus, notes: 'Rent September', posted_at: null, posted_by: null },
+    invoice: { id: 'api-1', invoice_number: '2990-API-2609-001', supplier_id: 'sup-h', supplier_invoice_ref: 'HVH-0912', invoice_date: '2026-09-01', due_date: null, currency: 'MYR', total_sen: 420_000, paid_sen: detailPaidSen, status: detailStatus, notes: 'Rent September', posted_at: null, posted_by: null },
     lines: [{ id: 'l1', line_no: 1, description: 'Rent Sept', debit_account_code: '900-A001', amount_sen: 400_000 }, { id: 'l2', line_no: 2, description: null, debit_account_code: '900-A002', amount_sen: 20_000 }],
     supplier: { id: 'sup-h', code: '405-H001', name: 'HOUZS VENTURE HOLDING SDN BHD' },
   } : undefined, isLoading: false }),
@@ -72,7 +74,7 @@ vi.mock('../../vendor/scm/lib/ap-invoice-queries', () => ({
   useUpdateApInvoice: () => ({ mutateAsync: updateAsync, isPending: false }),
   usePostApInvoice: () => ({ mutateAsync: postAsync, isPending: false }),
   useCancelApInvoice: () => ({ mutateAsync: cancelAsync, isPending: false }),
-  useApInvoiceFiles: (id: string | null) => ({ data: id ? { files: [{ id: 'f1', file_name: 'rent.pdf', mime: 'application/pdf', size_bytes: 120_000, sort_no: 1, created_at: '2026-09-06T02:00:00Z' }] } : undefined, isLoading: false }),
+  useApInvoiceFiles: (id: string | null) => ({ data: id ? { files: [{ id: 'f1', file_name: 'rent.pdf', mime: 'application/pdf', size_bytes: 120_000, sort_no: 1, created_at: '2026-09-06T02:00:00Z' }], locked: filesLocked } : undefined, isLoading: false }),
   useUploadApInvoiceFile: () => ({ mutateAsync: uploadAsync, isPending: false }),
   useDeleteApInvoiceFile: () => ({ mutateAsync: deleteAsync, isPending: false }),
   fetchApInvoiceFileBlobUrl: vi.fn(),
@@ -316,7 +318,7 @@ describe('the bill pile hands one bill over as one AP invoice', () => {
     await waitFor(() => expect(uploadAsync).toHaveBeenCalledWith({ invoiceId: 'api-2', file: { name: 'rent.pdf', mime: 'application/pdf', dataBase64: 'b64:rent.pdf' } }));
   });
 
-  test('the Files card in the pop-out: a draft bill may lose a file; a posted bill keeps its files but still takes one', () => {
+  test('the Files card in the pop-out: a draft or posted-unpaid bill may lose a file (HC-0181); a paid one, or one the server says a checked voucher holds, keeps its files but still takes one', () => {
     detailStatus = 'DRAFT';
     const first = draw();
     fireEvent.click(screen.getByText('2990-API-2609-001'));
@@ -326,12 +328,26 @@ describe('the bill pile hands one bill over as one AP invoice', () => {
     first.unmount();
 
     detailStatus = 'POSTED';
-    draw();
+    const second = draw();
     fireEvent.click(screen.getByText('2990-API-2609-001'));
-    expect(screen.getByText('rent.pdf')).toBeTruthy();
+    expect(screen.getByLabelText('Remove rent.pdf')).toBeTruthy();
+    expect(screen.queryByText(/locked with the AP Payment/)).toBeNull();
+    second.unmount();
+
+    detailPaidSen = 100_000;
+    const third = draw();
+    fireEvent.click(screen.getByText('2990-API-2609-001'));
     expect(screen.queryByLabelText('Remove rent.pdf')).toBeNull();
     expect(screen.getByLabelText('Attach bill files')).toBeTruthy();
-    expect(screen.getByText(/locked with the posted bill/)).toBeTruthy();
+    expect(screen.getByText(/locked with the AP Payment that holds this bill/)).toBeTruthy();
+    third.unmount();
+
+    detailPaidSen = 0;
+    filesLocked = true;
+    draw();
+    fireEvent.click(screen.getByText('2990-API-2609-001'));
+    expect(screen.queryByLabelText('Remove rent.pdf')).toBeNull();
+    filesLocked = undefined;
     detailStatus = 'DRAFT';
   });
 });
