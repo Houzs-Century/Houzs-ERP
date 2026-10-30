@@ -53,7 +53,9 @@ import {
  * whatever the operator picked, and one base model on an order can be more
  * than one sofa: "1A(LHF), 1A(RHF), Console, 2S" drew one row with the right
  * arm mid-sofa. So the list is split first:
- *   - a module with arms on BOTH sides (1S / 2S / 3S) is a sofa on its own;
+ *   - a module with arms on BOTH sides (1S / 2S / 3S) is a sofa on its own,
+ *     and so is a STOOL: it is free-standing, so it sits in front of the
+ *     sofa, never inside the seat run (HC-0184, HC-PO-2610-438_R1);
  *   - with no CNR, a left-end module (W arm, or an armless LHF piece such as
  *     L(LHF)) opens a run, a right-end module (E arm, or L(RHF)) closes it, and
  *     armless middles (1NA / 2NA / Console) sit between the ends of the run
@@ -105,7 +107,7 @@ export const buildDefaultSofaCells = (
   const pieces: Known[][] = [];
   const rest = known.filter((k) => {
     if (isAttached(k)) return false;
-    if (k.armW && k.armE) { pieces.push([k]); return false; }
+    if ((k.armW && k.armE) || k.moduleId === 'STOOL') { pieces.push([k]); return false; }
     return true;
   });
   if (rest.some((k) => k.m.group === 'Corner')) {

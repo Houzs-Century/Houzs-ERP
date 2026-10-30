@@ -147,23 +147,27 @@ describe('purchase-order-pdf sofa layout (reinstated 2026-07-27)', () => {
     if (process.env.SOFA_PDF_OUT) writeFileSync(process.env.SOFA_PDF_OUT.replace(/\.pdf$/, '-p.pdf'), pdf);
   });
 
-  /* HC-0184, HC-PO-2610-438 (Sim 2026-10-30): the ENZO console SKU is
+  /* HC-0184, HC-PO-2610-438_R1 (Sim 2026-10-30): the ENZO console SKU is
      "9050-CONSOLE WOODEN", which never matched the "Console" module, so the
-     layout drew STOOL + CNR + 2NA + 1A(RHF) with no console. */
-  it('draws a CONSOLE WOODEN line as the console', async () => {
+     layout left it out. Sim's sketch: CNR + 2NA + Console along the back,
+     1A(LHF) forward under the corner, the stool free in front. */
+  it('draws a CONSOLE WOODEN line as the console, the stool apart', async () => {
     const line = (moduleId: string) => ({
       ...sofaLine(moduleId),
       item_code: `9050-${moduleId}`,
       material_name: `SOFA ENZO ${moduleId}`,
+      supplier_sku: `HOK5547-${moduleId}`,
       so_doc_no: 'HC-SO-2610-400',
     });
     const b64 = await purchaseOrderPdfBase64(
       header,
-      asItems([line('STOOL'), line('CNR'), line('2NA'), line('1A(RHF)'), line('CONSOLE WOODEN')]),
+      asItems([line('1A(LHF)'), line('STOOL'), line('CNR'), line('2NA'), line('CONSOLE WOODEN')]),
     );
     const pdf = Buffer.from(b64, 'base64');
     const raw = pdf.toString('latin1');
     expect(raw).toMatch(/Console[^)]*\) Tj/);
+    // The caption runs in drawing order: the stool, drawn apart, comes last.
+    expect(raw).not.toContain('STOOL +');
     if (process.env.SOFA_PDF_OUT) writeFileSync(process.env.SOFA_PDF_OUT.replace(/\.pdf$/, '-console.pdf'), pdf);
   });
 
