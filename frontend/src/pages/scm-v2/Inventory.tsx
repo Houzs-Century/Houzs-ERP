@@ -55,6 +55,7 @@ import {
   type InventoryMovement,
   type InventoryProductTotal,
   type InventoryReservation,
+  type InventoryWarehouseStock,
   type Warehouse,
 } from '../../vendor/scm/lib/inventory-queries';
 
@@ -135,6 +136,9 @@ const incomingPoSummary = (pos: InventoryIncomingPo[] | null | undefined): strin
     ? '—'
     : list.map((p) => `${p.po_number} · ETA ${fmtEta(p.eta)} · +${fmtQty(p.qty)}`).join('\n');
 };
+
+const warehouseStockText = (list: InventoryWarehouseStock[] | null | undefined): string =>
+  (list ?? []).map((w) => `${w.warehouse_code ?? 'Unknown'} ${fmtQty(w.qty)}`).join(', ');
 
 export const Inventory = () => {
   const [tab, setTab] = useState<Tab>('balances');
@@ -624,6 +628,29 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
               title={`Ledgers disagree: the movement ledger says ${fmtQty(r.movement_qty ?? 0)}, the lot ledger says ${fmtQty(owned + (r.held_qty ?? 0))}. This row uses the lot ledger. Run Actions → "Reconcile a SKU" to settle it against the documents.`}
             >{' ⚠'}</span>
           )}
+        </span>
+      );
+    },
+  },
+  {
+    key: 'by_warehouse',
+    label: 'By Warehouse',
+    width: '220px',
+    /* Where the Stock figure stands, without picking each warehouse in the
+       filter (Sim, HC-0187: a PG DISPLAY piece read as free stock for a PG
+       WAREHOUSE order). Own stock only, same as the Stock column. */
+    getValue: (r) => warehouseStockText(r.stock_by_warehouse),
+    render: (r) => {
+      const list = r.stock_by_warehouse ?? [];
+      if (list.length === 0) return <span className={styles.numCellZero}>—</span>;
+      return (
+        <span className="inline-flex flex-wrap gap-1">
+          {list.map((w) => (
+            <span key={w.warehouse_id}
+              className="whitespace-nowrap rounded border border-border bg-surface-2 px-1.5 py-px text-[11px]">
+              {w.warehouse_code ?? 'Unknown'} <strong className={w.qty < 0 ? styles.numCellNeg : undefined}>{fmtQty(w.qty)}</strong>
+            </span>
+          ))}
         </span>
       );
     },

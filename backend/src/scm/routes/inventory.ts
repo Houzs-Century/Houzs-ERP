@@ -51,6 +51,7 @@ import { canViewScmFinance } from '../lib/houzs-perms';
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { isStockBucket } from '../lib/stock-bucket';
 import { NETTING_EMBED, deliveredReturnedBySoItem, nettingFromEmbedded, type EmbeddedDemandLine } from '../lib/inventory-netting';
+import { warehouseStockList } from '../lib/warehouse-stock-split';
 
 /* FINANCE GATE — owner decision 2026-08-13, asked directly: "加财务门,仓管看
    不到成本".
@@ -547,6 +548,12 @@ export const productTotalsHandler = async (
      per item_code. Feeds `sellable_surplus_qty` below so the list's Dead/Spare
      badge stops calling a display piece idle. */
   const nonSellingQty = new Map<string, number>();
+  /* OWNED open-lot qty per item_code per warehouse, so the all-warehouse list can
+     say WHERE the Stock figure stands. Sim (HC-0187): the 1 pc that made MRP look
+     wrong was in PG DISPLAY, and finding it meant picking KL, PG, KL DISP, PG DISP
+     in the filter one by one. */
+  const ownedByWarehouse = new Map<string, Map<string, number>>();
+  let warehouseCodeById = new Map<string, string>();
 
   if (codes.length > 0) {
     // Warehouse-scoped Stock: the totals view is a cross-warehouse rollup, so a
@@ -704,7 +711,7 @@ export const productTotalsHandler = async (
         // source_doc_type/no classify each lot OWNED vs CONSIGNMENT; remaining_value_sen
         // (= qty_remaining * unit_cost_sen) is the per-lot owned-value basis, identical
         // to the drawer's buildStockBreakdown formula.
-        .select('item_code, received_at, qty_remaining, remaining_value_sen, source_doc_type, source_doc_no'), c), 'item_code', batch); // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
+        .select('item_code, warehouse_id, received_at, qty_remaining, remaining_value_sen, source_doc_type, source_doc_no'), c), 'item_code', batch); // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
       if (warehouseId) lq = lq.eq('warehouse_id', warehouseId); // ask A — oldest lot within this warehouse
       return lq.order('received_at').order('id').range(from, to);
     });
@@ -712,7 +719,7 @@ export const productTotalsHandler = async (
       // eslint-disable-next-line no-console
       console.error('[inventory] open lots read failed:', (lotsErr as { message?: unknown }).message ?? lotsErr);
     }
-    for (const r of (lots ?? []) as Array<{ item_code: string; received_at: string | null; qty_remaining: number | null; remaining_value_sen: number | null; source_doc_type: string | null; source_doc_no: string | null }>) {
+    for (const r of (lots ?? []) as Array<{ item_code: string; warehouse_id: string | null; received_at: string | null; qty_remaining: number | null; remaining_value_sen: number | null; source_doc_type: string | null; source_doc_no: string | null }>) {
       // Owner rule (BUG-HISTORY 2026-07-25): consignment stock shows QUANTITY but
       // is EXCLUDED from inventory VALUE. Classify by the lot SOURCE (never the
       // warehouse flag) and sum OWNED value only, so the list value column matches
@@ -720,6 +727,11 @@ export const productTotalsHandler = async (
       if (!isConsignmentLotSource(r.source_doc_type, r.source_doc_no)) {
         ownedValueSen.set(r.item_code, (ownedValueSen.get(r.item_code) ?? 0) + Number(r.remaining_value_sen ?? 0));
         ownedQty.set(r.item_code, (ownedQty.get(r.item_code) ?? 0) + Number(r.qty_remaining ?? 0));
+        if (r.warehouse_id) {
+          const byWh = ownedByWarehouse.get(r.item_code) ?? new Map<string, number>();
+          byWh.set(r.warehouse_id, (byWh.get(r.warehouse_id) ?? 0) + Number(r.qty_remaining ?? 0));
+          ownedByWarehouse.set(r.item_code, byWh);
+        }
         /* AGE from OWNED lots only. It used to read every open lot, so a row
            with zero owned stock aged by somebody else's consignment pieces —
            sorting by Age then buried the goods that had really sat longest.
@@ -737,6 +749,16 @@ export const productTotalsHandler = async (
         heldQty.set(r.item_code, (heldQty.get(r.item_code) ?? 0) + Number(r.qty_remaining ?? 0));
         heldValueSen.set(r.item_code, (heldValueSen.get(r.item_code) ?? 0) + Number(r.remaining_value_sen ?? 0));
       }
+    }
+
+    const whIds = [...new Set([...ownedByWarehouse.values()].flatMap((m) => [...m.keys()]))];
+    if (whIds.length > 0) {
+      const { data: whs, error: whErr } = await sb.from('warehouses').select('id, code').in('id', whIds);
+      if (whErr) {
+        // eslint-disable-next-line no-console
+        console.error('[inventory] warehouse codes read failed:', (whErr as { message?: unknown }).message ?? whErr);
+      }
+      warehouseCodeById = new Map(((whs ?? []) as Array<{ id: string; code: string }>).map((w) => [w.id, w.code]));
     }
   }
 
@@ -762,6 +784,7 @@ export const productTotalsHandler = async (
         committed_scheduled: 0, unscheduled_qty: 0, reserved_total: 0,
         available_qty: 0, surplus_qty: 0,
         sellable_surplus_qty: 0, non_selling_qty: 0,
+        stock_by_warehouse: [],
         incoming_qty: 0, incoming_pos: [], demand_sos: [],
         oldest_lot_at: null,
       };
@@ -867,6 +890,7 @@ export const productTotalsHandler = async (
          NOT counted: dead stock is on-hand only (owner 2026-10-15). */
       sellable_surplus_qty: deadStockQty(lotOwned, committed + unsched, Math.max(0, (nonSellingQty.get(code) ?? 0) - lotHeld)),
       non_selling_qty:     nonSellingQty.get(code) ?? 0,
+      stock_by_warehouse:  warehouseStockList(ownedByWarehouse.get(code), warehouseCodeById),
       incoming_qty:        inc,
       incoming_pos:        pos,
       demand_sos:          (demandSos.get(code) ?? []).slice().sort((a, b) =>
