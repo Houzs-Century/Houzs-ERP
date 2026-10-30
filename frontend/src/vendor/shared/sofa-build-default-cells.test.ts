@@ -89,6 +89,16 @@ describe('buildDefaultSofaCells — separate sofas and Console joins', () => {
     ], '24'))).toEqual([['1A(LHF)', 'Console', '1A(RHF)']]);
   });
 
+  it('HC-0184: a STOOL stands free in front, the corner run keeps 1A(LHF) as its leg', () => {
+    const cells = buildDefaultSofaCells(mods('1A(LHF)', 'CNR', '2NA', 'Console', 'STOOL'), '28');
+    const at = (id: string) => cells.find((c) => c.moduleId === id)!;
+    expect([at('1A(LHF)').x, at('1A(LHF)').rot]).toEqual([0, 270]);
+    expect(at('CNR').y).toBe(0);
+    expect(at('2NA').y).toBe(0);
+    expect(at('Console').x).toBeGreaterThan(at('2NA').x);
+    expect(at('STOOL').y).toBeGreaterThan(at('1A(LHF)').y);
+  });
+
   it('offers a Console line the other modules of the same model only', () => {
     const lines = [
       { itemCode: 'SOFFIO-1A(LHF)', itemGroup: 'sofa' },

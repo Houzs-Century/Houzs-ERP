@@ -7,6 +7,8 @@ import { cellEdges, findModule, parseCompartmentStructure } from '@2990s/shared'
    (owner 2026-10-03: the real sofa is 1A(LHF) + Console + 1A(RHF), and the
    2S is a separate sofa). Two rules, owner-approved the same day:
      - a piece with an arm on BOTH sides (1S/2S/3S) is a sofa of its own;
+     - a STOOL stands free, so it leaves the walk and goes last in its build
+       (the layout draws it in front of the sofa, HC-0184);
      - of the rest, the LHF piece walks first and the RHF piece last, the
        pieces between keep their stored order.
    With more than one LHF or RHF piece the line order is the only evidence of
@@ -28,23 +30,27 @@ const handOf = (moduleId: string): 'LHF' | 'RHF' | null =>
 export function splitBackendSofa<T>(pieces: readonly T[], moduleIdOf: (p: T) => string): T[][] {
   const sofas: Array<{ first: number; pieces: T[] }> = [];
   const rest: T[] = [];
+  const stools: T[] = [];
   let restFirst = -1;
   pieces.forEach((p, i) => {
     if (isStandalone(moduleIdOf(p))) {
       sofas.push({ first: i, pieces: [p] });
+    } else if (moduleIdOf(p) === 'STOOL') {
+      if (restFirst < 0) restFirst = i;
+      stools.push(p);
     } else {
       if (restFirst < 0) restFirst = i;
       rest.push(p);
     }
   });
-  if (rest.length > 0) {
+  if (rest.length > 0 || stools.length > 0) {
     const lefts = rest.filter((p) => handOf(moduleIdOf(p)) === 'LHF');
     const rights = rest.filter((p) => handOf(moduleIdOf(p)) === 'RHF');
     const cornered = rest.some((p) => findModule(moduleIdOf(p))?.group === 'Corner');
     const walked = !cornered && lefts.length <= 1 && rights.length <= 1
       ? [...lefts, ...rest.filter((p) => handOf(moduleIdOf(p)) === null), ...rights]
       : rest;
-    sofas.push({ first: restFirst, pieces: walked });
+    sofas.push({ first: restFirst, pieces: [...walked, ...stools] });
   }
   return sofas.sort((a, b) => a.first - b.first).map((s) => s.pieces);
 }
