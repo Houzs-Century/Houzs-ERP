@@ -41,6 +41,7 @@ import {
   DELIVERY_STATE_LABEL,
   sxeDateOf,
   MESSAGE_STATUSES,
+  messageStatusChip,
   AMEND_REASONS,
   dpJobTypeLabel,
   assrJobKindLabel,
@@ -303,6 +304,9 @@ const fieldNotSaved = (err: unknown) => serviceNotify({
   tone: 'error',
 });
 
+/* An option inherits the select's chip colour unless it sets its own. */
+const plainOption = { backgroundColor: '#fff', color: '#11140f' };
+
 /* The "Delivery Status" column's inline editor — the customer-message follow-up
    workflow status (owner 2026-09-22), one of the 23 MESSAGE_STATUSES or blank.
    SO rows only; ASSR / DP / project rows show a dash (this is a customer-
@@ -311,13 +315,18 @@ const fieldNotSaved = (err: unknown) => serviceNotify({
 function MessageStatusEditCell({ order, onUpdateFields }: { order: PlanningOrder; onUpdateFields: UpdateFieldsMutate }) {
   const { fields } = useContext(BoardPendingContext);
   // ASSR: read-only, derived from the Service Arrangement WhatsApp (HC-0171).
-  if (isAssr(order) && order.delivery_message_status) return <span>{order.delivery_message_status}</span>;
+  const chip = messageStatusChip(order.delivery_message_status);
+  const chipStyle = chip ? { backgroundColor: chip.bg, color: chip.fg } : undefined;
+  if (isAssr(order) && order.delivery_message_status) {
+    return <span className={chip ? styles.messageChip : undefined} style={chipStyle}>{order.delivery_message_status}</span>;
+  }
   if (isAssr(order) || isDp(order) || isProject(order)) {
     return <NotApplicable />;
   }
   return (
     <select
-      className={styles.inlineEdit}
+      className={chip ? `${styles.inlineEdit} ${styles.messageChip}` : styles.inlineEdit}
+      style={chipStyle}
       value={order.delivery_message_status ?? ''}
       disabled={fields}
       title="Customer-message workflow status"
@@ -328,15 +337,16 @@ function MessageStatusEditCell({ order, onUpdateFields }: { order: PlanningOrder
         onUpdateFields({ type: 'so', id: order.so_doc_no, deliveryMessageStatus: next || null }, { onError: fieldNotSaved });
       }}
     >
-      <option value="">—</option>
+      <option value="" style={plainOption}>—</option>
       {/* Keep an off-list current value selectable (robustness). */}
       {order.delivery_message_status
         && !(MESSAGE_STATUSES as readonly string[]).includes(order.delivery_message_status)
-        ? <option value={order.delivery_message_status}>{order.delivery_message_status}</option>
+        ? <option value={order.delivery_message_status} style={plainOption}>{order.delivery_message_status}</option>
         : null}
-      {MESSAGE_STATUSES.map((s) => (
-        <option key={s} value={s}>{s}</option>
-      ))}
+      {MESSAGE_STATUSES.map((s) => {
+        const c = messageStatusChip(s);
+        return <option key={s} value={s} style={c && { backgroundColor: c.bg, color: c.fg }}>{s}</option>;
+      })}
     </select>
   );
 }
