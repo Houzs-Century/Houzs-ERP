@@ -23,7 +23,7 @@
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import type { Env, Variables } from '../env';
-import { activeCompanyId, scopeToAllowedCompanies } from '../lib/companyScope';
+import { activeCompanyId, companyCodeMap, scopeToAllowedCompanies } from '../lib/companyScope';
 import { supabaseAuth } from '../middleware/auth';
 import { effectiveSoDelivery, type SoDeliveryDateRow } from '../shared';
 import { normalizePhone } from '../shared/phone';
@@ -91,12 +91,13 @@ export interface SendDeliveryMessagesResult {
   readError?: { code: string; reason: string };
 }
 
-/* The shared sender — group the docs by customer phone, load the per-company
-   profile + live balances, POST one Connect event per phone and log each. POST
-   /send and the DELIVERED hook both call this, so the auto "Delivery Completed"
-   message goes through the SAME path (one message per customer, same
-   wa_message_log shape) instead of a second copy of the sender. The caller MUST
-   have checked isConnectConfigured first (postConnectContact's contract). */
+/* The shared sender — group the docs by customer phone AND company, load the
+   per-company profile + live balances, POST one Connect event per (phone,
+   company) and log each. POST /send and the DELIVERED hook both call this, so
+   the auto "Delivery Completed" message goes through the SAME path (one message
+   per customer, same wa_message_log shape) instead of a second copy of the
+   sender. The caller MUST have checked isConnectConfigured first
+   (postConnectContact's contract). */
 export async function sendDeliveryMessageForDocs(
   c: Context<{ Bindings: Env; Variables: Variables }>,
   docNos: string[],
@@ -110,7 +111,7 @@ export async function sendDeliveryMessageForDocs(
   // Address columns feed the Postage kind only; the rest read nothing extra.
   const { data: rowsRaw, error: readErr } = await scopeToAllowedCompanies(
     sb.from('mfg_sales_orders')
-      .select('doc_no, ref, debtor_name, phone, branding, customer_delivery_date, amended_delivery_date, amend_reason, delivery_address1, delivery_address2, delivery_address3, delivery_address4, address1, address2, address3, address4, postcode, city, customer_state')
+      .select('doc_no, ref, debtor_name, phone, branding, company_id, customer_delivery_date, amended_delivery_date, amend_reason, delivery_address1, delivery_address2, delivery_address3, delivery_address4, address1, address2, address3, address4, postcode, city, customer_state')
       .in('doc_no', docNos),
     c,
   );
@@ -119,16 +120,23 @@ export async function sendDeliveryMessageForDocs(
 
   const byDoc = new Map(rows.map((r) => [String(r.doc_no), r]));
   const skipped: Array<{ docNo: string; reason: string }> = [];
-  // Group by normalized phone — ONE message per customer phone.
-  const byPhone = new Map<string, Array<Record<string, unknown>>>();
+  // Group by normalized phone AND company — ONE message per (customer phone,
+  // company). The balance template bakes the COMPANY's bank account, so a phone
+  // that carries orders from both companies must get one message each: this
+  // split is what lets company_code / company_signature / bank_block follow the
+  // ORDER's company rather than the sending user's active company. A homogeneous
+  // phone (the common case) is unchanged — still one message, one batch.
+  const byPhoneCompany = new Map<string, { phone: string; companyId: number | null; rows: Array<Record<string, unknown>> }>();
   for (const docNo of docNos) {
     const r = byDoc.get(docNo);
     if (!r) { skipped.push({ docNo, reason: 'not_found' }); continue; }
     const phone = blastPhone(r.phone);
     if (!phone) { skipped.push({ docNo, reason: 'no_phone' }); continue; }
-    const arr = byPhone.get(phone) ?? [];
-    arr.push(r);
-    byPhone.set(phone, arr);
+    const companyId = r.company_id == null ? null : Number(r.company_id);
+    const key = `${phone}\u0000${companyId ?? ''}`;
+    const g = byPhoneCompany.get(key) ?? { phone, companyId, rows: [] };
+    g.rows.push(r);
+    byPhoneCompany.set(key, g);
   }
 
   const sent: Array<{ phone: string; docNos: string[]; httpCode: number }> = [];
@@ -145,10 +153,17 @@ export async function sendDeliveryMessageForDocs(
   // customer a balance paragraph with no bank details and no signature, and
   // the staff would never know. Refuse; nothing has been sent yet.
   if (profileErr) return { sent, failed, skipped, readError: { code: 'profile_load_failed', reason: profileErr.message } };
-  const companyProfile: ConnectCompanyProfile | null =
-    parseConnectCompanyProfiles((profileRow as { value?: string | null } | null)?.value ?? null)[
-      String(activeCompanyId(c) ?? '')
-    ] ?? null;
+  // Parse ONCE into a company_id -> profile map; the profile is resolved PER
+  // GROUP below, by the ORDER's own company — NOT by activeCompanyId(c). Keyed
+  // by the sender, a 2990 order sent by Houzs staff printed HOUZS's signature
+  // and bank account on 2990's balance paragraph.
+  const profilesById = parseConnectCompanyProfiles(
+    (profileRow as { value?: string | null } | null)?.value ?? null,
+  );
+  // id -> company CODE (HOUZS / 2990), for the company_code attribute Connect
+  // routes the balance send on. From the companies master on the request
+  // context (the cross-company TMS pattern — companyCodeMap), so no extra read.
+  const codeByCompany = companyCodeMap(c);
 
   // LIVE balance per SO — the SO list's own source of truth
   // (mfg_sales_orders_with_payment_totals.balance_sen_live = local_total −
@@ -175,30 +190,37 @@ export async function sendDeliveryMessageForDocs(
   }
   const callbackUrl = chatCallbackUrl(c.env);
 
-  for (const [phone, group] of byPhone) {
-    const groupDocs = group.map((r) => String(r.doc_no));
+  for (const { phone, companyId, rows: groupRows } of byPhoneCompany.values()) {
+    const groupDocs = groupRows.map((r) => String(r.doc_no));
     // What this KIND adds (or why this customer is skipped): the group's first
     // order is the one the single-order templates print; the owed total is the
     // same figure `amount` carries.
-    const first = group[0] as Record<string, unknown>;
-    const owedSen = group.reduce((sum, r) => sum + Math.max(0, balanceByDoc.get(String(r.doc_no)) ?? 0), 0);
+    const first = groupRows[0] as Record<string, unknown>;
+    const owedSen = groupRows.reduce((sum, r) => sum + Math.max(0, balanceByDoc.get(String(r.doc_no)) ?? 0), 0);
     const perKind = kindAttributes(kind, first, effectiveSoDelivery(first as SoDeliveryDateRow), owedSen, extras);
     if (perKind.skip) {
       for (const docNo of groupDocs) skipped.push({ docNo, reason: perKind.skip });
       continue;
     }
+    // The ORDER's company drives BOTH the per-company profile (signature / bank
+    // / disposal) and company_code — never activeCompanyId(c), the sender's. The
+    // group is one company, so every order below shares them. An unresolved
+    // company leaves the profile null and company_code null (Connect then falls
+    // back to the SO doc_no prefix), exactly as a single-company install did.
+    const companyProfile: ConnectCompanyProfile | null = profilesById[String(companyId ?? '')] ?? null;
+    const companyCode = companyId != null ? codeByCompany.get(companyId)?.toUpperCase() ?? null : null;
     const sendCtx = {
       callbackUrl,
       automation: KIND_AUTOMATION[kind],
       extra: perKind.attributes,
       resetConversation: OPENER_KINDS.has(kind),
     };
-    // ONE message per customer phone. buildDeliveryFollowUp shows the first 3
-    // orders and carries the TRUE count in order_total, so a customer with 4+
-    // orders gets a single "first 3 of N" message, not several sends. ref = our
-    // Sales Order number; effective (amended ?? original) date as yyyy/mm/dd,
-    // same as the board.
-    const orders: ConnectOrder[] = group.map((r) => ({
+    // ONE message per customer phone and company. buildDeliveryFollowUp shows
+    // the first 3 orders and carries the TRUE count in order_total, so a customer
+    // with 4+ orders gets a single "first 3 of N" message, not several sends.
+    // ref = our Sales Order number; effective (amended ?? original) date as
+    // yyyy/mm/dd, same as the board.
+    const orders: ConnectOrder[] = groupRows.map((r) => ({
       // The ERP Sales Order number, always (owner 2026-10-06) — not the AutoCount
       // number an older / imported order may also carry; the chat-callback still
       // resolves either, so an in-flight conversation opened under the old rule
@@ -212,9 +234,12 @@ export async function sendDeliveryMessageForDocs(
       deliveryDate: payloadDate(effectiveSoDelivery(r as SoDeliveryDateRow)),
       balanceSen: balanceByDoc.get(String(r.doc_no)) ?? null,
       totalSen: totalByDoc.get(String(r.doc_no)) ?? null,
+      // Every order in this group is the same company; company_code is a per
+      // order-batch value Connect routes on (see services/connect.ts).
+      companyCode,
     }));
     const contact = buildDeliveryFollowUp(
-      phone, String(group[0]?.debtor_name ?? ''), orders, companyProfile, sendCtx,
+      phone, String(groupRows[0]?.debtor_name ?? ''), orders, companyProfile, sendCtx,
     );
 
     const result = await postConnectContact(c.env, contact);
