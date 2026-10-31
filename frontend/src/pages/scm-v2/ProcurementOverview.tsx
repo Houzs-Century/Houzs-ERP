@@ -20,6 +20,7 @@ import { useUpdateCategoryLeadTime, type LeadCategory } from "../../vendor/scm/l
 import { PoLineList, type LayerKey } from "./PoLineList";
 import { SupplierScorecard, supplierKey } from "./SupplierScorecard";
 import { api } from "../../api/client";
+import { addDays } from "../../hooks/pendingDigest";
 import { StockHealthList } from "./StockHealthList";
 
 type PeriodLine = {
@@ -114,10 +115,18 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
     staleTime: 60_000,
   });
   const d = q.data;
-  /* Quality cases per 100 received, for the supplier score; Quality Overview's own figure for the same period. */
+  /* The supplier score always reads the last 90 days to today, whatever period is picked (owner 2026-11-01):
+     early in a month "this month" has too few receipts to judge anyone. Same report, same cache. */
+  const scoreFrom = addDays(today, -89);
+  const scoreQ = useQuery({
+    queryKey: ["procurement-overview", scoreFrom, today, today, basis, scope],
+    queryFn: () => authedFetch<Payload>(`/procurement-overview?from=${scoreFrom}&to=${today}&dueTo=${today}&basis=${basis}&scope=${scope}`),
+    staleTime: 60_000,
+  });
+  /* Quality cases per 100 received, Quality Overview's own figure for the same 90 days. */
   const quality = useQuery({
-    queryKey: ["quality-overview", period.from, period.to],
-    queryFn: () => api.get<{ suppliers: Array<{ name: string; receivedQty: number; ratePct: number | null }> }>(`/api/assr/quality-overview?from=${period.from}&to=${period.to}`),
+    queryKey: ["quality-overview", scoreFrom, today],
+    queryFn: () => api.get<{ suppliers: Array<{ name: string; receivedQty: number; ratePct: number | null }> }>(`/api/assr/quality-overview?from=${scoreFrom}&to=${today}`),
     staleTime: 60_000,
   });
   const qualityRate = useMemo(() => (quality.data ? new Map(quality.data.suppliers
@@ -241,9 +250,10 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
             </Panel>
           </section>
 
-          <Panel title="Which supplier delays most" hint={`score, on time and what is late now, per supplier · ${when} · worst first · click a header to rank by it, a supplier for its overdue PO lines`}>
-            <SupplierScorecard groups={d.bySupplier} lines={d.lines} quality={qualityRate}
-              onPick={(sup) => { setBy("supplier"); setFocus(sup); setLayer("late"); document.getElementById("po-lines")?.scrollIntoView({ behavior: "smooth" }); }} />
+          <Panel title="Which supplier delays most" hint={`score, on time and what is late now, per supplier · the last 90 days, ${scoreFrom} – ${today}, whatever period is picked · worst first · click a header to rank by it, a supplier for its overdue PO lines`}>
+            {!scoreQ.data && <p className="py-2 text-[12.5px] text-ink-muted">{scoreQ.error ? "Could not load the last 90 days." : "Loading the last 90 days…"}</p>}
+            {scoreQ.data && <SupplierScorecard groups={scoreQ.data.bySupplier} lines={scoreQ.data.lines} quality={qualityRate}
+              onPick={(sup) => { setBy("supplier"); setFocus(sup); setLayer("late"); document.getElementById("po-lines")?.scrollIntoView({ behavior: "smooth" }); }} />}
           </Panel>
 
           <Panel title="Lead time" hint={`goods received ${when}`}>
