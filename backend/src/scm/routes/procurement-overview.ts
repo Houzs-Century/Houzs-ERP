@@ -10,7 +10,7 @@
    its receipts, its sales order's customer date, and its product category.
 
    Company scope: every read is scoped to the active company. */
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
@@ -68,7 +68,17 @@ export function procurementOverviewKey(companyId: number, p: ProcurementOverview
 export const bustProcurementOverview = (kv: KVNamespace | undefined, companyId: number) =>
   bustSwrPrefix(kv, `swr:procov:v1:${companyId}:`);
 
-procurementOverview.get('/', async (c) => {
+/** The page shows the 50 largest dead and buffer rows; the full lists stay in
+ *  the cached report and are served by GET /stock-health (owner 2026-10-31). */
+const PAGE_ITEMS = 50;
+export function forPage(body: Record<string, unknown>): Record<string, unknown> {
+  const dead = body.deadStock as { top?: unknown[]; bufferTop?: unknown[] } | undefined;
+  if (!dead) return body;
+  return { ...body, deadStock: { ...dead, top: (dead.top ?? []).slice(0, PAGE_ITEMS), bufferTop: (dead.bufferTop ?? []).slice(0, PAGE_ITEMS),
+    topCount: (dead.top ?? []).length, bufferCount: (dead.bufferTop ?? []).length } };
+}
+
+async function cachedReport(c: Context<{ Bindings: Env; Variables: Variables }>) {
   const p = procurementOverviewParams((k) => c.req.query(k), todayMyt());
   const companyId = activeCompanyId(c);
   let waitUntil: ((x: Promise<unknown>) => void) | null = null;
@@ -84,7 +94,22 @@ procurementOverview.get('/', async (c) => {
   });
   c.header('X-Cache', source);
   if (at) c.header('X-Cache-At', at);
-  return result.ok ? c.json(result.body) : c.json(result.body, 500);
+  return result;
+}
+
+procurementOverview.get('/', async (c) => {
+  const result = await cachedReport(c);
+  return result.ok ? c.json(forPage(result.body as Record<string, unknown>)) : c.json(result.body, 500);
+});
+
+/* GET /procurement-overview/stock-health - every dead and buffer row of the
+   same cached report (same query parameters as the page), for the full list,
+   its sort and its Excel export. */
+procurementOverview.get('/stock-health', async (c) => {
+  const result = await cachedReport(c);
+  if (!result.ok) return c.json(result.body, 500);
+  const dead = (result.body as { deadStock?: { top?: unknown[]; bufferTop?: unknown[] } }).deadStock;
+  return c.json({ dead: dead?.top ?? [], buffer: dead?.bufferTop ?? [] });
 });
 
 /**

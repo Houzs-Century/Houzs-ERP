@@ -281,8 +281,9 @@ export function deadStock(allRows: StockRow[], today: string, demand: Map<string
       const info = itemInfo.get(keyOf(r))!;
       return { ...r, qty: dead.get(r) ?? 0, onHand: r.qty, valueSen: deadSen(r), idleDays: idleOf(r),
         poolOnHand: info.onHand, scheduled: info.scheduled, unscheduled: info.unscheduled, byKind: info.byKind };
-    }).sort((a, b) => b.valueSen - a.valueSen).slice(0, 50),
-    bufferTop: bufferRows.slice(0, 50),
+    }).sort((a, b) => b.valueSen - a.valueSen),
+    // Every row (owner 2026-10-31: list them all, sort, export); the page's route sends the first 50.
+    bufferTop: bufferRows,
   };
 }
 

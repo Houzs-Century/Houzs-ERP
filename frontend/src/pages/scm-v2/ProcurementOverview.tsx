@@ -18,6 +18,7 @@ import { DashboardPeriodPicker, useDashboardPeriod, periodEnd } from "../../comp
 import { Columns, Donut, SplitBar, Tile, TONE, PALETTE } from "../../components/scm-v2/Charts";
 import { useUpdateCategoryLeadTime, type LeadCategory } from "../../vendor/scm/lib/mrp-queries";
 import { PoLineList, type LayerKey } from "./PoLineList";
+import { StockHealthList } from "./StockHealthList";
 
 type PeriodLine = {
   poId: string; poNumber: string; poDate: string; supplier: string; category: string; itemCode: string | null;
@@ -69,8 +70,8 @@ const AGES: Array<{ k: keyof Ages; label: string; color: string }> = [
   { k: "d365plus", label: "Over a year", color: TONE.bad },
 ];
 const CAT_LABEL: Record<string, string> = { MATTRESS: "Mattress", BEDFRAME: "Bedframe", SOFA: "Sofa", ACCESSORY: "Accessories", DINING: "Dining", OTHERS: "Others" };
-const catName = (k: string) => CAT_LABEL[k] ?? k;
 const rm = fmtSen;
+const catLabel = (k: string) => CAT_LABEL[k] ?? k;
 const days = (x: number | null) => (x == null ? "—" : `${x}`);
 const pctTxt = (x: number | null) => (x == null ? "—" : `${x}%`);
 const share = (part: number, whole: number) => (whole > 0 ? `${Math.round((part / whole) * 100)}%` : "—");
@@ -252,7 +253,7 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
 
           <section id="po-lines">
             <Panel title={`Outstanding PO lines${focus ? ` · ${label(focus)}` : ""}`} hint={`every PO line not yet received, ${asOfNote} · days late against the date first put on the PO · click a row above to filter, a layer to narrow`}>
-              <PoLineList lines={outstanding} focusLabel={focus ? label(focus) : null} layer={layer} onLayer={setLayer} catLabel={catName} onClearFocus={() => setFocus(null)} />
+              <PoLineList lines={outstanding} focusLabel={focus ? label(focus) : null} layer={layer} onLayer={setLayer} catLabel={catLabel} onClearFocus={() => setFocus(null)} />
             </Panel>
           </section>
 
@@ -340,31 +341,10 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
               <div className="mt-3" />
               <ExcessTable title="Warehouse" rows={d.deadStock.byWarehouse} name={(k) => <>{k} <span className="text-[10.5px] text-ink-muted">{d.warehouseKinds[k] ?? ""}</span></>} />
               <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
-                <span className="text-[12px] font-semibold text-ink">{itemsOf === "dead" ? "Largest dead items" : "Largest buffer items"}</span>
+                <span className="text-[12px] font-semibold text-ink">{itemsOf === "dead" ? "Dead items" : "Buffer items"} <span className="font-normal text-ink-muted">· every row, largest value first · click a header to sort</span></span>
                 <Toggle value={itemsOf} options={[["dead", "Dead items"], ["buffer", "Buffer items"]]} onChange={setItemsOf} />
               </div>
-              <div className="max-h-[420px] overflow-auto">
-                {itemsOf === "dead" ? (
-                  <table className="mt-1 w-full border-collapse">
-                    <thead className="sticky top-0 bg-surface"><tr><Th left>Item / variant</Th><Th left>Warehouse</Th><Th left>Category</Th><Th>Dead qty</Th><Th>Value</Th><Th>Days since it last went out</Th></tr></thead>
-                    <tbody>{d.deadStock.top.slice(0, 40).map((r, i) => (
-                      <tr key={`${r.itemCode}-${r.warehouse}-${i}`}><Td left><span title={r.name ?? ""}>{r.itemCode}</span>{r.variantKey && <span className="block max-w-[320px] truncate text-[10.5px] text-ink-muted">{r.variantKey}</span>}</Td><Td left>{r.warehouse}</Td><Td left>{CAT_LABEL[r.category] ?? r.category}</Td><Td>{r.qty}</Td><Td>{rm(r.valueSen)}</Td><Td className={(r.idleDays ?? 0) > 365 ? "text-err" : ""}>{r.idleDays ?? "—"}</Td></tr>
-                    ))}</tbody>
-                  </table>
-                ) : (
-                  <table className="mt-1 w-full border-collapse">
-                    <thead className="sticky top-0 bg-surface"><tr><Th left>Item / variant</Th><Th left>Warehouse</Th><Th left>Category</Th><Th>Buffer qty</Th><Th>Value</Th><Th>Last received</Th><Th>Held</Th></tr></thead>
-                    <tbody>{d.deadStock.bufferTop.slice(0, 40).map((r) => (
-                      <tr key={`${r.itemCode}|${r.variantKey}|${r.warehouse}`}>
-                        <Td left><span title={r.name ?? ""}>{r.itemCode}</span>{r.variantKey && <span className="block max-w-[320px] truncate text-[10.5px] text-ink-muted">{r.variantKey}</span>}</Td>
-                        <Td left>{r.warehouse}</Td><Td left>{CAT_LABEL[r.category] ?? r.category}</Td>
-                        <Td className="font-semibold">{r.bufferQty}</Td><Td>{rm(r.valueSen)}</Td>
-                        <Td>{r.lastIn ?? "—"}</Td><Td className={(r.heldDays ?? 0) > 90 ? "text-err" : ""}>{r.heldDays != null ? `${r.heldDays} days` : "—"}</Td>
-                      </tr>
-                    ))}</tbody>
-                  </table>
-                )}
-              </div>
+              <StockHealthList kind={itemsOf} query={`from=${period.from}&to=${period.to}&dueTo=${dueTo}&basis=${basis}&scope=${scope}`} catLabel={catLabel} />
               <ul className="mt-2 list-disc space-y-0.5 pl-4 text-[11px] text-ink-muted">
                 <li>Every location&apos;s stock of the same item and variant is matched against the open sales orders together. Orders take the warehouse first, then service, then display.</li>
                 <li>Buffer = stock held for orders with no delivery date yet: e.g. 30 on hand, 5 on dated orders, 25 waiting for a date = 25 buffer, valued at 25 × cost. It sells, but was bought before it was needed.</li>
