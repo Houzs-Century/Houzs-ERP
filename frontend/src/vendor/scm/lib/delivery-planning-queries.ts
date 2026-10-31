@@ -810,6 +810,31 @@ export function useScheduleDpOrder() {
   });
 }
 
+/* ── Inline crew edit on a DP (manual job) row (owner 2026-10-31) ──────────────
+   The board's Driver / Lorry / Helper cells on a DP row POST one seat here. A DP
+   job's crew is its RUN's crew, so the endpoint puts the job on a run (its confirmed
+   date — creating the run if there is none) before setting the seat, and mints the
+   DP number once a lorry is on the run. So Driver / Lorry / Trip No. / the number
+   all fill from one pick, like an SO row, with no "Schedule…" drawer. tripStop.failed
+   is surfaced so the caller can tell "crew saved but the stop never attached" from a
+   clean success (the #720 rule the endpoint documents). */
+export type DpCrewVars = { id: string; driverId?: string | null; helper1Id?: string | null; helper2Id?: string | null; lorryId?: string | null };
+export type DpCrewResult = { ok: true; trip_id: string | null; dp_no: string | null; tripStop: { id: string | null; failed: boolean; reason?: string } };
+export function useDpCrew() {
+  const qc = useQueryClient();
+  return useMutation<DpCrewResult, Error, DpCrewVars>({
+    mutationFn: ({ id, ...seat }) =>
+      authedFetch<DpCrewResult>(`/dp-orders/${id}/crew`, {
+        method: 'POST', body: JSON.stringify(seat),
+      }),
+    onSuccess: () => {
+      // The run + its number may have changed — reconcile the board and the trips
+      // views (coalesced, like the other inline crew edits).
+      scheduleBoardRefresh(qc, [['delivery-planning'], ['scm-trips'], ['scm-trip'], ['fleet-day']]);
+    },
+  });
+}
+
 /* ── DP Orders list (GET /dp-orders) ──────────────────────────────────────────
    The raw dp_orders registry, straight off the table (snake_case, newest first,
    backend-capped at 500). This is the /scm/dp-orders LIST page's feed — distinct

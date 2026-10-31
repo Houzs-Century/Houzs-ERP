@@ -37,6 +37,7 @@ import {
   useScheduleDelivery,
   useUpdateDeliveryFields,
   useAssignDoCrew,
+  useDpCrew,
   DELIVERY_STATES,
   DELIVERY_STATE_LABEL,
   sxeDateOf,
@@ -442,11 +443,13 @@ function AmendReasonEditCell({ order, onUpdateFields }: { order: PlanningOrder; 
 }
 
 /* A plain inline text editor for a free-text SO field (owner 2026-09-22:
-   Disposal Request, Remarks). SO rows only; commits on blur / Enter. */
-function TextEditCell({ order, value, onCommit, placeholder }: {
-  order: PlanningOrder; value: string | null; onCommit: (next: string | null) => void; placeholder?: string;
+   Disposal Request, Remarks). SO rows only, EXCEPT when allowDp — the Time Slot
+   is editable on DP rows too (owner 2026-10-31), where it writes
+   scm.dp_orders.time_range. Commits on blur / Enter. */
+function TextEditCell({ order, value, onCommit, placeholder, allowDp = false }: {
+  order: PlanningOrder; value: string | null; onCommit: (next: string | null) => void; placeholder?: string; allowDp?: boolean;
 }) {
-  if (isAssr(order) || isDp(order) || isProject(order)) return <NotApplicable />;
+  if (isAssr(order) || (isDp(order) && !allowDp) || isProject(order)) return <NotApplicable />;
   return (
     <input
       className={styles.inlineEdit}
@@ -496,7 +499,9 @@ function DriverPickCell({ order, drivers, onSchedule, writeSeat }: {
   const [val, setVal] = useState(chosen);
   const { crew: pending } = useContext(BoardPendingContext);
   useEffect(() => { setVal(chosen); }, [chosen]);
-  if (isDp(order) && !order.trip_id) return <NotApplicable />;
+  // A DP job writes its RUN's crew via useDpCrew (writeSeat below), which puts a
+  // trip-less job on a run first — so the cell is editable with or without a trip
+  // (owner 2026-10-31), like an SO row.
   if (isProject(order)) return <span style={{ color: '#767b6e' }}>{order.crew?.driver_1_name || '—'}</span>;
   const assrLeg = isAssr(order);
   return (
@@ -535,9 +540,9 @@ function LorryPickCell({ order, lorries, onSchedule, writeSeat }: {
   const [val, setVal] = useState(chosen);
   const { crew: pending } = useContext(BoardPendingContext);
   useEffect(() => { setVal(chosen); }, [chosen]);
-  // A DP job with no trip has no run to carry a lorry — assign one through the
-  // row menu "Schedule…", which creates the run; the cell is editable once it rides one.
-  if (isDp(order) && !order.trip_id) return <NotApplicable />;
+  // A DP job's lorry is set on its RUN via useDpCrew (writeSeat below): picking a
+  // lorry puts a trip-less job on a run and mints its DP number, so the cell is
+  // editable with or without a trip (owner 2026-10-31), like an SO row.
   // Project rows are a read-only PMS mirror (edit in Projects).
   if (isProject(order)) return <span style={{ color: '#767b6e' }}>{order.crew?.lorry_plate || '—'}</span>;
   const assrLeg = isAssr(order);
@@ -583,9 +588,8 @@ function HelperPickCell({ order, helpers, onSchedule, writeSeat, slot }: {
   // Project rows are a read-only PMS mirror — show the helper the project crewed
   // (owner 2026-10-21), like the Driver / Lorry cells.
   if (isProject(order)) return <span style={{ color: '#767b6e' }}>{currentName || '—'}</span>;
-  // A DP job with no trip has no seat yet — assign a lorry first (row menu
-  // "Schedule…"), which puts it on a run; the helper is editable once it rides one.
-  if (isDp(order) && !order.trip_id) return <NotApplicable />;
+  // A DP job's helper is set on its RUN via useDpCrew (writeSeat below), which puts
+  // a trip-less job on a run first — editable with or without a trip (owner 2026-10-31).
   const assrLeg = isAssr(order);
   return (
     <span {...stopRow} style={{ display: 'flex', width: '100%', minWidth: 0 }}>
@@ -920,6 +924,7 @@ export function DeliveryPlanningBoard({
      Helpers are fetched here (like updateFields) rather than threaded as a prop. */
   const assignCrew = useAssignDoCrew();
   const updateTrip = useUpdateTrip();
+  const dpCrew = useDpCrew();
   const helpers = useHelpers().data ?? [];
 
   /* PERF (2026-10-23): the inline-editor accessors must NOT close over these
@@ -933,6 +938,7 @@ export function DeliveryPlanningBoard({
   const updateFieldsRef = useRef(updateFields); updateFieldsRef.current = updateFields;
   const assignCrewRef = useRef(assignCrew); assignCrewRef.current = assignCrew;
   const updateTripRef = useRef(updateTrip); updateTripRef.current = updateTrip;
+  const dpCrewRef = useRef(dpCrew); dpCrewRef.current = dpCrew;
   const notifyRef = useRef(notify); notifyRef.current = notify;
   const scheduleMutate = useCallback<ScheduleMutate>((...args) => schedRef.current.mutate(...args), []);
   const updateFieldsMutate = useCallback<UpdateFieldsMutate>((...args) => updateFieldsRef.current.mutate(...args), []);
@@ -942,14 +948,20 @@ export function DeliveryPlanningBoard({
      Stable identity (reads the mutations through refs) so it lives in a column
      accessor without re-triggering the columns memo. */
   const writeCrewSeat = useCallback<CrewSeatWrite>((order, seat) => {
-    /* A DP job has no DO: its crew IS its run's crew (the server copies it to
-       the run's DOs, and the driver's phone follows the run). */
-    if (isDp(order) && order.trip_id) {
-      updateTripRef.current.mutate({ id: order.trip_id,
+    /* A DP job has no DO: its crew IS its RUN's crew. The endpoint puts a trip-less
+       job on a run first (owner 2026-10-31), so the cell writes with or without a
+       trip — no "Schedule…" drawer. A DP run has one driver, so driver2Id is n/a. */
+    if (isDp(order)) {
+      dpCrewRef.current.mutate({
+        id: dpIdOf(order),
         ...(seat.driver1Id !== undefined ? { driverId: seat.driver1Id } : {}),
         ...(seat.lorryId !== undefined ? { lorryId: seat.lorryId } : {}),
         ...(seat.helper1Id !== undefined ? { helper1Id: seat.helper1Id } : {}),
-        ...(seat.helper2Id !== undefined ? { helper2Id: seat.helper2Id } : {}) });
+        ...(seat.helper2Id !== undefined ? { helper2Id: seat.helper2Id } : {}),
+      }, {
+        onSuccess: (res) => { if (res.tripStop.failed) void notifyRef.current({ title: 'Crew saved', body: `The crew saved but the job was NOT attached to its run: ${res.tripStop.reason ?? 'unknown error'}.`, tone: 'error' }); },
+        onError: (e) => void notifyRef.current({ title: 'Crew not saved', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }),
+      });
       return true;
     }
     const doId = latestDoId(order.delivery_orders);
@@ -960,7 +972,7 @@ export function DeliveryPlanningBoard({
     assignCrewRef.current.mutate({ doId, ...seat });
     return true;
   }, []);
-  const crewPending = assignCrew.isPending || sched.isPending || updateTrip.isPending;
+  const crewPending = assignCrew.isPending || sched.isPending || updateTrip.isPending || dpCrew.isPending;
   /* The volatile "a save is running" flags for the inline editors — recomputed
      only when a mutation's isPending actually toggles, so the context value (and
      the editors' disabled state) changes on save start / stop and nothing else. */
@@ -1398,13 +1410,14 @@ export function DeliveryPlanningBoard({
     },
     {
       key: 'time_range', label: 'Time Slot', width: 130, defaultHidden: true,
-      /* Inline free-text (owner 2026-09-26: 可以输入文本) → the DO's time_range via
-         useUpdateDeliveryFields. SO rows only; no DO yet → the server saves nothing
-         and returns no_do_hint, which we surface. */
+      /* Inline free-text (owner 2026-09-26: 可以输入文本). SO rows write the DO's
+         time_range via useUpdateDeliveryFields (no DO yet → the server saves
+         nothing and returns no_do_hint, which we surface); a DP row (owner
+         2026-10-31) writes scm.dp_orders.time_range the same way, no DO needed. */
       accessor: (o) => (
-        <TextEditCell order={o} value={o.time_range} placeholder="e.g. 2-4pm"
+        <TextEditCell order={o} value={o.time_range} placeholder="e.g. 2-4pm" allowDp
           onCommit={(v) => updateFieldsMutate(
-            { type: 'so', id: o.so_doc_no, timeRange: v },
+            isDp(o) ? { type: 'dp', id: dpIdOf(o), timeRange: v } : { type: 'so', id: o.so_doc_no, timeRange: v },
             { onSuccess: (res) => { if (res.no_do_hint) void notifyRef.current({ title: 'Saved (partly)', body: res.no_do_hint }); } },
           )} />
       ),

@@ -558,19 +558,27 @@ const scheduleSchema = z.object({
    than rolling the schedule back (the #720 rule). */
 async function resolveScheduleTrip(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Hono ctx + the untyped scm client, as across this route
-  c: any, sb: any, lorryId: string, tripDate: string, namedTripId: string | null,
+  c: any, sb: any, lorryId: string | null, tripDate: string, namedTripId: string | null,
 ): Promise<{ tripId: string } | { error: string }> {
   if (namedTripId) return { tripId: namedTripId };
-  const { data: found, error: fErr } = await scopeToAllowedCompanies(
-    sb.from('trips').select('id').eq('lorry_id', lorryId).eq('trip_date', tripDate).neq('status', 'CANCELLED').limit(1), c,
-  );
-  if (fErr) return { error: fErr.message };
-  const hit = ((found ?? []) as Array<{ id: string }>)[0];
-  if (hit) return { tripId: hit.id };
+  // Reuse the lorry's run that day only when a lorry is known. A crew-first inline
+  // edit (driver / helper picked before a lorry) has none, so it always mints a new
+  // run; trips.lorry_id is nullable, and the lorry fills in when that cell is set.
+  if (lorryId) {
+    const { data: found, error: fErr } = await scopeToAllowedCompanies(
+      sb.from('trips').select('id').eq('lorry_id', lorryId).eq('trip_date', tripDate).neq('status', 'CANCELLED').limit(1), c,
+    );
+    if (fErr) return { error: fErr.message };
+    const hit = ((found ?? []) as Array<{ id: string }>)[0];
+    if (hit) return { tripId: hit.id };
+  }
   const user = c.get('user') as { id?: string } | null;
-  const { data: lorryRow, error: lErr } = await sb.from('lorries').select('is_internal').eq('id', lorryId).maybeSingle();
-  const isOutsourced = !lErr && (((lorryRow as { isInternal?: boolean | null; is_internal?: boolean | null } | null)?.isInternal
-    ?? (lorryRow as { is_internal?: boolean | null } | null)?.is_internal) === false);
+  let isOutsourced = false;
+  if (lorryId) {
+    const { data: lorryRow, error: lErr } = await sb.from('lorries').select('is_internal').eq('id', lorryId).maybeSingle();
+    isOutsourced = !lErr && (((lorryRow as { isInternal?: boolean | null; is_internal?: boolean | null } | null)?.isInternal
+      ?? (lorryRow as { is_internal?: boolean | null } | null)?.is_internal) === false);
+  }
   const d = new Date();
   const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`;
   const { data: created, error: tErr } = await insertWithDocNoRetry<{ id: string }>(
@@ -584,6 +592,44 @@ async function resolveScheduleTrip(
     return { error: tErr ? String((tErr as { message?: string }).message ?? tErr).slice(0, 160) : 'trip insert returned no row' };
   }
   return { tripId: (created as { id: string }).id };
+}
+
+/* Put a DP job onto a run as a trip_stop (the form the trip view + route optimiser
+   read) and stamp the order with the stop id. Best-effort + REPORTED, never a
+   silent null: the caller's schedule/crew write already committed, so a stop
+   failure comes back as { failed }, it is not thrown (the #720 lesson). `dp` is the
+   just-written order row (its address + job_type + party_name shape the stop); dpNo
+   is the number the stop mirrors, or null when none is minted yet (a crew-first
+   edit with no lorry). */
+async function appendDpStop(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Hono ctx + the untyped scm client, as across this route
+  c: any, sb: any, dp: Record<string, unknown>, tripId: string, dpNo: string | null,
+): Promise<{ id: string | null; failed: boolean; reason?: string }> {
+  try {
+    const stops = await sb.from('trip_stops').select('stop_no').eq('trip_id', tripId);
+    const nextStopNo = ((stops.data ?? []) as Array<{ stop_no?: number }>)
+      .reduce((m: number, r: { stop_no?: number }) => Math.max(m, Number(r.stop_no ?? 0)), 0) + 1;
+    const address = [dp.address1, dp.address2, dp.address3, dp.address4, dp.city, dp.postcode, dp.state]
+      .filter(Boolean).join(', ') || null;
+    const ins = await sb.from('trip_stops').insert({
+      company_id: activeCompanyId(c) ?? null,
+      trip_id: tripId,
+      stop_no: nextStopNo,
+      stop_type: dp.job_type,
+      customer_name: (dp.party_name as string | null) ?? null,
+      address,
+      revenue_sen: 0,
+      dp_no: dpNo,
+    }).select('id').maybeSingle();
+    const stopId = (ins.data as { id?: string } | null)?.id ?? null;
+    if (ins.error || !stopId) {
+      return { id: null, failed: true, reason: ins.error?.message ?? 'trip_stop insert returned no row' };
+    }
+    await sb.from('dp_orders').update({ trip_stop_id: stopId }).eq('id', dp.id);
+    return { id: stopId, failed: false };
+  } catch (e) {
+    return { id: null, failed: true, reason: `trip wiring failed: ${String((e as Error)?.message ?? e).slice(0, 140)}` };
+  }
 }
 
 /* ── POST /api/scm/dp-orders/:id/schedule — assign lorry+date, MINT the DP no ─ */
@@ -659,31 +705,9 @@ dpOrders.post('/:id/schedule', async (c) => {
       if (effectiveTripId !== (p.tripId ?? null)) {
         await sb.from('dp_orders').update({ trip_id: effectiveTripId, updated_at: new Date().toISOString() }).eq('id', id);
       }
-      const stops = await sb.from('trip_stops').select('stop_no').eq('trip_id', effectiveTripId);
-      const nextStopNo = ((stops.data ?? []) as Array<{ stop_no?: number }>)
-        .reduce((m, r) => Math.max(m, Number(r.stop_no ?? 0)), 0) + 1;
-      const address = [d.address1, d.address2, d.address3, d.address4, d.city, d.postcode, d.state]
-        .filter(Boolean).join(', ') || null;
-      const ins = await sb.from('trip_stops').insert({
-        company_id: activeCompanyId(c) ?? null,
-        trip_id: effectiveTripId,
-        stop_no: nextStopNo,
-        stop_type: d.job_type,
-        customer_name: (d.party_name as string | null) ?? null,
-        address,
-        revenue_sen: 0,
-        /* The SAME number the order header carries — a mirror, not a second
-           identity. Writing it here is also what keeps trip_stops the complete
-           registry the minter scans. */
-        dp_no: dpNo,
-      }).select('id').maybeSingle();
-      const stopId = (ins.data as { id?: string } | null)?.id ?? null;
-      if (ins.error || !stopId) {
-        tripStop = { id: null, failed: true, reason: ins.error?.message ?? 'trip_stop insert returned no row' };
-      } else {
-        await sb.from('dp_orders').update({ trip_stop_id: stopId }).eq('id', id);
-        tripStop = { id: stopId, failed: false };
-      }
+      // The stop mirrors the order's dp_no — a mirror, not a second identity; it
+      // also keeps trip_stops the complete registry the minter scans.
+      tripStop = await appendDpStop(c, sb, d, effectiveTripId, dpNo);
       // Set the driver the operator picked at schedule time (owner 2026-10-30), so
       // Driver + Lorry show on the board without a second step. Best-effort.
       if (p.driverId !== undefined) await setTripCrew(sb, effectiveTripId, { driverId: p.driverId });
@@ -729,6 +753,102 @@ dpOrders.post('/:id/schedule', async (c) => {
     }
   }
   return c.json({ dpOrder: data, dp_no: dpNo, tripStop, lorryBlocked });
+});
+
+/* ── POST /:id/crew — inline crew edit on a DP row (owner 2026-10-31) ───────────
+   The board's Driver / Lorry / Helper cells write DP jobs the way they write SO
+   rows now, with no "Schedule…" drawer. A DP job's crew IS its RUN's crew
+   (scm.trips) — a DP has no delivery_order_crew — so this ensures the job rides a
+   run first (its confirmed date, the picked lorry or none yet), then sets the seat.
+   A run needs a date (trips.trip_date NOT NULL): a DP with no requested_date 409s
+   "set the delivery date first". When a lorry is on the run and the job has no
+   number yet, the number is minted and the job flips to SCHEDULED — the same end
+   state the drawer reached, so the board's "not scheduled" clears the moment a
+   lorry is picked (a DP number embeds the plate, so a crew-first job with no lorry
+   stays numberless, correctly, until one is set). */
+const crewSchema = z.object({
+  driverId: z.string().uuid().nullable().optional(),
+  helper1Id: z.string().uuid().nullable().optional(),
+  helper2Id: z.string().uuid().nullable().optional(),
+  lorryId: z.string().uuid().nullable().optional(),
+});
+
+dpOrders.post('/:id/crew', async (c) => {
+  const id = c.req.param('id');
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const parsed = crewSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: 'invalid_body', reason: parsed.error.message }, 400);
+  const p = parsed.data;
+  if (p.driverId === undefined && p.helper1Id === undefined && p.helper2Id === undefined && p.lorryId === undefined) {
+    return c.json({ error: 'no_changes' }, 400);
+  }
+  const sb = c.get('supabase');
+  // Same company + ownership class as PATCH / schedule / cancel.
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const denied = await denyIfNotOwnDpJob(c, sb, id);
+  if (denied) return denied;
+
+  // The job (company-scoped): its date, run, number and address shape the rest.
+  const { data: dp, error: dpErr } = await scopeToCompanyId(
+    sb.from('dp_orders').select(
+      'id, requested_date, trip_id, trip_stop_id, dp_no, status, job_type, party_name, address1, address2, address3, address4, city, postcode, state',
+    ).eq('id', id),
+    co.companyId,
+  ).maybeSingle();
+  if (dpErr) return c.json({ error: 'lookup_failed', reason: dpErr.message }, 500);
+  if (!dp) return c.json({ error: 'not_found' }, 404);
+  const d = dp as Record<string, unknown>;
+  const requestedDate = (d.requested_date as string | null) ?? null;
+  let tripId = (d.trip_id as string | null) ?? null;
+
+  // A DP with no run yet: put it on one. A run needs a date, so a dateless job is
+  // refused with the one thing to fix first (the SO flow always has a date).
+  let tripStop: { id: string | null; failed: boolean; reason?: string } = { id: null, failed: false };
+  if (!tripId) {
+    if (!requestedDate) {
+      return c.json({ error: 'no_date', reason: 'Set the delivery date first — the crew rides that day\'s run.' }, 409);
+    }
+    const trip = await resolveScheduleTrip(c, sb, p.lorryId ?? null, requestedDate, null);
+    if ('error' in trip) return c.json({ error: 'trip_failed', reason: trip.error }, 500);
+    tripId = trip.tripId;
+    await sb.from('dp_orders').update({ trip_id: tripId, updated_at: new Date().toISOString() }).eq('id', id);
+    tripStop = await appendDpStop(c, sb, d, tripId, (d.dp_no as string | null) ?? null);
+  }
+
+  // Write the picked seat(s) — the primary action, so a failure is reported, not
+  // swallowed. The lorry is set here too (setTripCrew leaves a null lorry alone).
+  try {
+    await setTripCrew(sb, tripId, {
+      ...(p.driverId !== undefined ? { driverId: p.driverId } : {}),
+      ...(p.helper1Id !== undefined ? { helper1Id: p.helper1Id } : {}),
+      ...(p.helper2Id !== undefined ? { helper2Id: p.helper2Id } : {}),
+      ...(p.lorryId != null ? { lorryId: p.lorryId } : {}),
+    });
+  } catch (e) {
+    return c.json({ error: 'crew_save_failed', reason: String((e as Error)?.message ?? e).slice(0, 200) }, 500);
+  }
+
+  // A lorry on the run and no number yet → mint it + flip to SCHEDULED (the drawer's
+  // end state), so "not scheduled" clears. Best-effort + reported via tripStop.
+  let dpNo = (d.dp_no as string | null) ?? null;
+  if (!dpNo && requestedDate) {
+    const { data: tripRow, error: tripRowErr } = await sb.from('trips').select('lorry_id').eq('id', tripId).maybeSingle();
+    const lorryOnRun = tripRowErr ? null : (((tripRow as { lorry_id?: string | null } | null)?.lorry_id) ?? null);
+    const plate = lorryOnRun ? await plateForLorry(sb, lorryOnRun) : null;
+    const minted = plate ? await mintNextDpNo(sb, { tripDate: requestedDate, plate }) : null;
+    if (minted) {
+      await scopeToCompanyId(
+        sb.from('dp_orders').update({ dp_no: minted, status: 'SCHEDULED', updated_at: new Date().toISOString() }).eq('id', id),
+        co.companyId,
+      );
+      const stopId = tripStop.id ?? (d.trip_stop_id as string | null) ?? null;
+      if (stopId) await sb.from('trip_stops').update({ dp_no: minted }).eq('id', stopId);
+      dpNo = minted;
+    }
+  }
+  return c.json({ ok: true, trip_id: tripId, dp_no: dpNo, tripStop });
 });
 
 export default dpOrders;

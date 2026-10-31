@@ -94,7 +94,7 @@ import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
 import { mintDpNoForLorry } from '../lib/dp-no-mint';
-import { scheduleDpDate, writeNonSoMessageStatus } from '../lib/delivery-planning-nonso-edit';
+import { scheduleDpDate, writeNonSoFields } from '../lib/delivery-planning-nonso-edit';
 import { resolveDeliveryScope, scopeMatchesAssignment, type DeliveryScope, type CrewAssignment } from '../lib/deliveryScope';
 import { fetchDoCrewAssignment, doPodContextHandler, ownServiceAndProjectRowKeys } from './delivery-pod-context';
 import { deriveArrangementStage } from '../lib/arrangement-stage';
@@ -1265,7 +1265,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         delivery_message_status: (d.delivery_message_status as string | null) ?? null,
         disposal_request: null,
         dp_remark: null,
-        time_range: null,
+        time_range: (d.time_range as string | null) ?? null,
         time_confirmed: null,
         arrival_at: null,
         departure_at: null,
@@ -1916,7 +1916,10 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
      (owner 2026-10-29). The rest of fieldsSchema is SO/DO-shaped, so these two
      types write just that column and return (module keeps the router thin). */
   if (type === 'dp' || type === 'assr') {
-    const r = await writeNonSoMessageStatus(c, sb, type, id, p.deliveryMessageStatus as string | null | undefined);
+    const r = await writeNonSoFields(c, sb, type, id, {
+      deliveryMessageStatus: p.deliveryMessageStatus as string | null | undefined,
+      timeRange: p.timeRange as string | null | undefined,
+    });
     return c.json(r.body, r.status);
   }
 
