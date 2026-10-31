@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { TrendingUp, AlertTriangle, Activity, Smile, Hourglass, ExternalLink, Gauge, LineChart, PieChart } from "lucide-react";
 import { StatCard } from "../components/StatCard";
 import { DashboardGrid, DashboardPanels, DashboardBreakdown } from "../components/Dashboard";
@@ -120,7 +120,7 @@ function DonutPanel({ title, data, onPick, picked }: { title: string; data: Slic
  *  listed under the donuts (owner 2026-10-20, like Project Overview's breakdown
  *  filtering its project list). */
 type WhyPick = { kind: "category" | "resolution"; label: string; value: string };
-function WhyCases({ pick, from, to, onClear }: { pick: WhyPick; from: string; to: string; onClear: () => void }) {
+function WhyCases({ pick, from, to, fq, onClear }: { pick: WhyPick; from: string; to: string; fq: string; onClear: () => void }) {
   const navigate = useNavigate();
   const [data, setData] = useState<{ cases: DrillCase[]; limited: boolean } | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -129,11 +129,11 @@ function WhyCases({ pick, from, to, onClear }: { pick: WhyPick; from: string; to
     setData(null); setErr(null);
     const params = new URLSearchParams({ metric: pick.kind === "category" ? "category_cases" : "resolution_cases", from, to, limit: "500" });
     params.set(pick.kind === "category" ? "category" : "method", pick.value);
-    api.get<{ cases: DrillCase[]; limited: boolean }>(`/api/assr/metrics/drill?${params.toString()}`)
+    api.get<{ cases: DrillCase[]; limited: boolean }>(`/api/assr/metrics/drill?${params.toString()}${fq}`)
       .then((d) => { if (!cancelled) setData(d); })
       .catch((e: unknown) => { if (!cancelled) setErr(e instanceof Error ? e.message : "Could not load the cases"); });
     return () => { cancelled = true; };
-  }, [pick.kind, pick.value, from, to]);
+  }, [pick.kind, pick.value, from, to, fq]);
   return (
     <div className="mt-3 rounded-lg border border-border bg-surface px-5 py-4 shadow-stone">
       <div className="mb-2 flex items-center justify-between gap-3">
@@ -231,6 +231,19 @@ function MetricCard({
   );
 }
 
+const QUALITY_FILTERS = ["fSupplier", "fCategory", "fCompany"] as const;
+type QualityFilterKey = (typeof QUALITY_FILTERS)[number];
+
+function FilterSelect({ label, all, value, onChange, options }: { label: string; all: string; value: string; onChange: (v: string) => void; options: Array<[string, string]> }) {
+  return (
+    <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)}
+      className={cn("h-8 rounded-md border border-border bg-surface px-2 text-[12.5px]", value && "border-primary/60 font-semibold")}>
+      <option value="">{all}</option>
+      {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+    </select>
+  );
+}
+
 export function ServiceMetrics() {
   const { can } = useAuth();
   const today = todayMY();
@@ -238,6 +251,11 @@ export function ServiceMetrics() {
   const [period, setPeriod] = useDashboardPeriod(today, "from", "to", []);
   const [drill, setDrill] = useState<DrillState | null>(null);
   const [why, setWhy] = useState<WhyPick | null>(null);
+  /* Supplier, issue category and company narrow every figure on the page (owner 2026-11-01), kept in the URL. */
+  const [params, setParams] = useSearchParams();
+  const fq = QUALITY_FILTERS.map((k) => [k, params.get(k) ?? ""] as const).filter(([, v]) => v).map(([k, v]) => `&${k}=${encodeURIComponent(v)}`).join("");
+  const setFilter = (k: QualityFilterKey, v: string) => setParams((p) => { const n = new URLSearchParams(p); if (v) n.set(k, v); else n.delete(k); return n; }, { replace: true });
+  const companies = useQuery<{ companies: Array<{ id: number; name: string }> }>("/api/companies", () => api.get("/api/companies"));
 
   // OFF-NOT-HIDE: both /metrics and /summary are ORG aggregates gated behind
   // `service_cases.read`. This view is reachable via the Service Cases board
@@ -247,8 +265,8 @@ export function ServiceMetrics() {
   // its empty state instead.
   const canReadMetrics = can("service_cases.read");
   const metrics = useQuery<AssrMetrics>("/api/assr/metrics?from=:&to=:",
-    () => api.get(`/api/assr/metrics?from=${period.from}&to=${period.to}`),
-    [period.from, period.to],
+    () => api.get(`/api/assr/metrics?from=${period.from}&to=${period.to}${fq}`),
+    [period.from, period.to, fq],
     { enabled: canReadMetrics }
   );
   // v3.1 — pull the enriched /summary alongside the legacy metrics
@@ -257,16 +275,16 @@ export function ServiceMetrics() {
   // summary is still a fixed 13-week rolling window (it's a trend
   // chart, not a window-aware stat).
   const summary = useQuery<AssrSummaryV31>("/api/assr/summary?from=:&to=:",
-    () => api.get(`/api/assr/summary?from=${period.from}&to=${period.to}`),
-    [period.from, period.to],
+    () => api.get(`/api/assr/summary?from=${period.from}&to=${period.to}${fq}`),
+    [period.from, period.to, fq],
     { enabled: canReadMetrics }
   );
   /* "Where the cases are" shows EVERY open case, whenever it was opened (owner
      2026-10-17), so the open stages come from an unbounded read; Completed
      stays the period's own count. */
   const summaryAll = useQuery<AssrSummaryV31>("/api/assr/summary?from=:&to=:#all",
-    () => api.get(`/api/assr/summary?from=2000-01-01&to=${today}`),
-    [today],
+    () => api.get(`/api/assr/summary?from=2000-01-01&to=${today}${fq}`),
+    [today, fq],
     { enabled: canReadMetrics }
   );
 
@@ -285,7 +303,16 @@ export function ServiceMetrics() {
         <DashboardPeriodPicker period={period} today={today} onChange={setPeriod} />
       </div>
 
-      <QualitySummary from={period.from} to={period.to} periodLabel={period.label} breachNow={s?.breach_count ?? null}
+      <QualitySummary from={period.from} to={period.to} fq={fq} periodLabel={period.label} breachNow={s?.breach_count ?? null}
+        filters={(o) => o && (
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <FilterSelect label="Supplier" all="All suppliers" value={params.get("fSupplier") ?? ""} onChange={(v) => setFilter("fSupplier", v)} options={o.suppliers.map((x) => [x.code, x.name])} />
+            <FilterSelect label="Issue category" all="All issue categories" value={params.get("fCategory") ?? ""} onChange={(v) => setFilter("fCategory", v)} options={o.categories.map((x) => [x, x])} />
+            {o.companies.length > 1 && <FilterSelect label="Company" all="All companies" value={params.get("fCompany") ?? ""} onChange={(v) => setFilter("fCompany", v)}
+              options={o.companies.map((id) => [String(id), companies.data?.companies.find((x) => x.id === id)?.name ?? String(id)])} />}
+            {fq && <button type="button" className="text-[12px] text-primary hover:underline" onClick={() => setParams((p) => { const n = new URLSearchParams(p); for (const k of QUALITY_FILTERS) n.delete(k); return n; }, { replace: true })}>Clear filters</button>}
+          </div>
+        )}
         onDrill={(metric) => setDrill({ metric })}
         funnel={summaryAll.data && summaryAll.data.stage_funnel.length > 0
           ? <StageFunnel data={summaryAll.data.stage_funnel.map((r) => r.stage === "completed" ? (s?.stage_funnel.find((x) => x.stage === "completed") ?? { ...r, total: 0, breached: 0 }) : r)} />
@@ -308,7 +335,7 @@ export function ServiceMetrics() {
               }}
             />
           </DashboardPanels>
-          {why && <WhyCases pick={why} from={period.from} to={period.to} onClear={() => setWhy(null)} />}
+          {why && <WhyCases pick={why} from={period.from} to={period.to} fq={fq} onClear={() => setWhy(null)} />}
           {s && s.csat_trend.length > 0 && (
             <MetricCard icon={<Smile size={13} />} title="CSAT — 13-week rolling" flat>
               <CsatTrend data={s.csat_trend} />
@@ -331,6 +358,7 @@ export function ServiceMetrics() {
           drill={drill}
           from={period.from}
           to={period.to}
+          fq={fq}
           onClose={() => setDrill(null)}
         />
       )}
@@ -387,11 +415,13 @@ function DrillPanel({
   drill,
   from,
   to,
+  fq,
   onClose,
 }: {
   drill: DrillState;
   from: string;
   to: string;
+  fq: string;
   onClose: () => void;
 }) {
   const navigate = useNavigate();
@@ -421,7 +451,7 @@ function DrillPanel({
     }
     api
       .get<{ cases: DrillCase[]; limited: boolean }>(
-        `/api/assr/metrics/drill?${params.toString()}`
+        `/api/assr/metrics/drill?${params.toString()}${fq}`
       )
       .then((d) => {
         if (!cancelled) setData(d);
@@ -435,7 +465,7 @@ function DrillPanel({
     return () => {
       cancelled = true;
     };
-  }, [drill.metric, from, to, extraKey]);
+  }, [drill.metric, from, to, extraKey, fq]);
 
   const title = drill.title ?? DRILL_LABELS[drill.metric] ?? drill.metric;
   const count = data?.cases.length ?? 0;
