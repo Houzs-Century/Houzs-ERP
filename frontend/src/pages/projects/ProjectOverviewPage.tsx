@@ -54,7 +54,7 @@ export function ProjectOverviewPage() {
      them, the menu link (no parameters) starts on the defaults — this month,
      Newest, no filter, the trend on this year by month (projectOverviewView.ts). */
   const [params, setParams] = useSearchParams();
-  const { brand, type, organizer, drill, dim, pick, sort } = readView(params, today);
+  const { brand, type, organizer, venue, state, stage, drill, dim, pick, sort } = readView(params, today);
   const setView = (patch: Partial<OverviewView>) => setParams((prev) => writeView(prev, patch, today), { replace: true });
   const setDrill = (d: Drill) => setView({ drill: d });
   const setSort = (s: SortKey) => setView({ sort: s });
@@ -88,7 +88,8 @@ export function ProjectOverviewPage() {
   }, [q.data, here]);
 
   const all = useMemo(() => (q.data?.projects ?? []).filter((p) =>
-    (!brand || p.brand === brand) && (!type || p.eventType === type) && (!organizer || p.organizer === organizer)), [q.data, brand, type, organizer]);
+    (!brand || p.brand === brand) && (!type || p.eventType === type) && (!organizer || p.organizer === organizer)
+    && (!venue || p.venue === venue) && (!state || p.state === state) && (!stage || p.stage === stage)), [q.data, brand, type, organizer, venue, state, stage]);
   const inPeriod = useMemo(() => all.filter((p) => !!p.startDate && p.startDate >= period.from && p.startDate <= period.to), [all, period.from, period.to]);
   const t = totalsOf(inPeriod);
   const groups = groupBy(inPeriod, (p) => p[dim]);
@@ -133,7 +134,7 @@ export function ProjectOverviewPage() {
     merchandise: sumOf((x) => x.f.merchandise), other: sumOf((x) => x.f.other), np: sumOf((x) => x.f.np),
     paidSen: sumOf((x) => x.p.collection.paidSen), orderedSen: sumOf((x) => x.p.collection.totalSen),
   };
-  const options = (key: "brand" | "eventType" | "organizer") => [...new Set((q.data?.projects ?? []).map((p) => p[key]).filter((x): x is string => !!x))].sort();
+  const options = (key: "brand" | "eventType" | "organizer" | "venue" | "state" | "stage") => [...new Set((q.data?.projects ?? []).map((p) => p[key]).filter((x): x is string => !!x))].sort();
 
   return (
     <div ref={rootRef} className="space-y-4">
@@ -142,6 +143,10 @@ export function ProjectOverviewPage() {
         <select className={SELECT_CLS} value={brand} onChange={(e) => setView({ brand: e.target.value })} aria-label="Brand"><option value="">All brands</option>{options("brand").map((b) => <option key={b}>{b}</option>)}</select>
         <select className={SELECT_CLS} value={type} onChange={(e) => setView({ type: e.target.value })} aria-label="Event type"><option value="">All event types</option>{options("eventType").map((b) => <option key={b}>{b}</option>)}</select>
         <select className={SELECT_CLS} value={organizer} onChange={(e) => setView({ organizer: e.target.value })} aria-label="Organizer"><option value="">All organizers</option>{options("organizer").map((b) => <option key={b}>{b}</option>)}</select>
+        {/* Venue, state and stage too (owner 2026-11-01: every filter the page can take). */}
+        <select className={SELECT_CLS} value={venue} onChange={(e) => setView({ venue: e.target.value })} aria-label="Venue"><option value="">All venues</option>{options("venue").map((b) => <option key={b}>{b}</option>)}</select>
+        <select className={SELECT_CLS} value={state} onChange={(e) => setView({ state: e.target.value })} aria-label="State"><option value="">All states</option>{options("state").map((b) => <option key={b}>{b}</option>)}</select>
+        <select className={SELECT_CLS} value={stage} onChange={(e) => setView({ stage: e.target.value })} aria-label="Stage"><option value="">All stages</option>{options("stage").map((b) => <option key={b}>{b}</option>)}</select>
         {q.loading && <span className="text-[11.5px] text-ink-muted">Loading…</span>}
       </div>
       {q.error && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load: {q.error}</div>}

@@ -197,6 +197,13 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
       {tab === "overview" && <div className="flex flex-wrap items-center gap-2 pt-1">
         <h2 className="text-[14px] font-semibold text-ink">Breakdown</h2>
         <Toggle value={by} options={[["category", "By category"], ["supplier", "By supplier"]]} onChange={(v) => { setBy(v); setFocus(null); }} />
+        {/* A supplier or category straight from a list (owner 2026-11-01), the same pick as clicking its row. */}
+        <select className={SELECT_CLS} aria-label="Category" value={by === "category" ? focus ?? "" : ""} onChange={(e) => { setBy("category"); setFocus(e.target.value || null); }}>
+          <option value="">All categories</option>{(d?.byCategory ?? []).map((g) => <option key={g.key} value={g.key}>{catLabel(g.key)}</option>)}
+        </select>
+        <select className={SELECT_CLS} aria-label="Supplier" value={by === "supplier" ? focus ?? "" : ""} onChange={(e) => { setBy("supplier"); setFocus(e.target.value || null); }}>
+          <option value="">All suppliers</option>{(d?.bySupplier ?? []).map((g) => g.key).sort().map((k) => <option key={k} value={k}>{k}</option>)}
+        </select>
         <span className="text-[11.5px] text-ink-muted">Amounts are quantity × PO price. Click an amount for its PO lines; click a row to filter the list below.</span>
       </div>}
 
