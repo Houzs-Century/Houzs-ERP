@@ -170,7 +170,7 @@ export function kickOffSubBoardReads(
   const dpResP = (async () => {
     try {
       let dpQuery = sb.from('dp_orders')
-        .select('id, dp_no, job_type, party_name, contact_phone, address1, address2, address3, address4, city, postcode, state, requested_date, status, trip_id, delivery_message_status')
+        .select('id, dp_no, job_type, party_name, contact_phone, address1, address2, address3, address4, city, postcode, state, requested_date, status, trip_id, delivery_message_status, time_range')
         .is('so_doc_no', null).is('assr_case_id', null).is('do_id', null)
         // Keep CANCELLED off the board, but KEEP DELIVERED (owner 2026-10-21: a
         // finished DP job belongs on the Delivered tab, not hidden).

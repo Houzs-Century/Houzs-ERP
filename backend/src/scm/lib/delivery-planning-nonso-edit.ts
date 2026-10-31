@@ -54,22 +54,34 @@ export async function scheduleDpDate(c: Ctx, sb: Sb, id: string, scheduleDate: s
   return { status: 200, body: { ok: true, dp: { id, requested_date: newDate } } };
 }
 
-/* The board's inline MESSAGE-status edit on a DP or service-case row. The value
-   set is whitelisted by the caller (the route) before this runs. */
-export async function writeNonSoMessageStatus(
-  c: Ctx, sb: Sb, type: 'dp' | 'assr', id: string, deliveryMessageStatus: string | null | undefined,
+/* The board's inline NON-SO field edits on a DP or service-case row: the MESSAGE
+   status (dp + assr), and the Time Slot (dp only — a DP job has no DO to carry it,
+   so it lives on the order; owner 2026-10-31). Each value present is whitelisted by
+   the caller (the route) before this runs; the board sends one cell at a time. */
+export async function writeNonSoFields(
+  c: Ctx, sb: Sb, type: 'dp' | 'assr', id: string,
+  fields: { deliveryMessageStatus?: string | null; timeRange?: string | null },
 ): Promise<EditResult> {
-  if (deliveryMessageStatus === undefined) {
-    return { status: 400, body: { error: 'no_changes', reason: 'Only the delivery message status is editable here.' } };
+  const { deliveryMessageStatus, timeRange } = fields;
+  if (deliveryMessageStatus === undefined && timeRange === undefined) {
+    return { status: 400, body: { error: 'no_changes', reason: 'Only the delivery message status and time slot are editable here.' } };
   }
   const msg = deliveryMessageStatus === '' ? null : deliveryMessageStatus;
   if (type === 'dp') {
+    // Time Slot is DP-only — assr_cases has no such column (below writes message only).
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (deliveryMessageStatus !== undefined) patch.delivery_message_status = msg;
+    if (timeRange !== undefined) patch.time_range = timeRange === '' ? null : timeRange;
     const { data, error } = await scopeToAllowedCompanies(
-      sb.from('dp_orders').update({ delivery_message_status: msg, updated_at: new Date().toISOString() }).eq('id', id), c,
+      sb.from('dp_orders').update(patch).eq('id', id), c,
     ).select('id').maybeSingle();
     if (error) return { status: 500, body: { error: 'update_failed', reason: error.message } };
     if (!data) return { status: 404, body: { error: 'not_found' } };
     return { status: 200, body: { ...OK_FIELDS } };
+  }
+  // assr carries only the message status here; a time-only edit has nothing to write.
+  if (deliveryMessageStatus === undefined) {
+    return { status: 400, body: { error: 'no_changes', reason: 'Only the delivery message status is editable on a service case here.' } };
   }
   // assr — public.assr_cases via c.env.DB; the open-case guard carries the
   // caller's granted-company predicate, so an out-of-scope case 404s here.
