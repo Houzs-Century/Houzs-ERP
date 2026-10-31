@@ -15,7 +15,7 @@ import { fmtSen, todayMY } from "../../vendor/shared/format";
 import { cn } from "../../lib/utils";
 import { Th, Td, Panel, Toggle, SELECT_CLS } from "../../components/scm-v2/OverviewKit";
 import { DashboardPeriodPicker, useDashboardPeriod, periodEnd } from "../../components/scm-v2/DashboardPeriod";
-import { Columns, Donut, SplitBar, Tile, TONE, PALETTE } from "../../components/scm-v2/Charts";
+import { Columns, Donut, Tile, TONE, PALETTE } from "../../components/scm-v2/Charts";
 import { useUpdateCategoryLeadTime, type LeadCategory } from "../../vendor/scm/lib/mrp-queries";
 import { PoLineList, type LayerKey } from "./PoLineList";
 import { StockHealthList } from "./StockHealthList";
@@ -57,12 +57,6 @@ type Payload = {
     bufferTop: Array<{ itemCode: string; variantKey: string; name: string | null; category: string; warehouse: string; kind: string; poolOnHand: number; scheduled: number; unscheduled: number; byKind: ByKind; bufferQty: number; valueSen: number; lastIn: string | null; heldDays: number | null }> };
 };
 
-const BUCKETS: Array<{ k: BucketKey; label: string; color: string }> = [
-  { k: "late5", label: "Late 5+ days", color: TONE.bad },
-  { k: "late0to4", label: "Late up to 4 days, or due tomorrow", color: TONE.warn },
-  { k: "due2to7", label: "Due in 2–7 days", color: "#8fb3ae" },
-  { k: "due8plus", label: "Due in 8+ days", color: TONE.good },
-];
 const AGES: Array<{ k: keyof Ages; label: string; color: string }> = [
   { k: "d0to90", label: "Moved in the last 90 days", color: "#c9a77c" },
   { k: "d91to180", label: "91–180 days", color: TONE.warn },
@@ -159,7 +153,7 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
 
       <div className="flex flex-wrap items-center gap-2">
         <DashboardPeriodPicker period={period} today={today} onChange={(f, to) => { setFocus(null); setPeriod(f, to); }} />
-        <Toggle value={tab} options={[["overview", "Overview"], ["stock", "Lead time & stock"]]} onChange={setTab} />
+        <Toggle value={tab} options={[["overview", "Overdue & lead time"], ["stock", "Inventory turnover"]]} onChange={setTab} />
         {tab === "stock" && (
           <select className={cn(SELECT_CLS, "ml-auto")} value={scope} onChange={(e) => setScope(e.target.value)} aria-label="Locations">
             {STOCK_SCOPE_OPTIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
@@ -172,8 +166,9 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
       {tab === "overview" && <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Tile label={`PO raised ${when}`} value={t ? rm(t.raised.sen) : "…"} tone="brass" trend={null} onClick={() => openLines(`PO raised ${when}`, "raised", focus)}
           note={t ? `${t.raised.pos} purchase orders` : ""} />
-        <Tile label={`Due ${when}`} value={t ? rm(t.due.openSen) : "…"} tone={t?.due.openSen ? "bad" : "good"} trend={null} onClick={() => openLines(`Due ${when} · not received yet`, "due", focus)}
-          note={t ? `not received yet${dueTo !== period.to ? `, due to ${dueTo.slice(5).replace("-", "/")}` : ""} · ${rm(t.due.receivedSen)} of what fell due already came` : ""} />
+        {/* Overdue in place of Due this month (owner 2026-10-31); it opens the overdue layer of the list below. */}
+        <Tile label="Overdue" value={t ? rm(t.open.lateSen) : "…"} tone={t?.open.lateSen ? "bad" : "good"} trend={null} onClick={() => { setLayer("late"); document.getElementById("po-lines")?.scrollIntoView({ behavior: "smooth" }); }}
+          note={t ? `${t.open.late} lines past the date on the PO, ${asOfNote}` : ""} />
         <Tile label={`Received ${when}`} value={t ? rm(t.receivedSen) : "…"} tone="main" trend={null} onClick={() => openLines(`Received ${when}`, "received", focus)}
           note={t ? `${t.supplierLead.receipts} lines received` : ""} />
         <Tile label={`Supplier billed ${when}`} value={d ? rm(d.billed.totalSen) : "…"} tone="main" trend={null} onClick={null}
@@ -183,11 +178,11 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
       </div>}
 
 
-      <div className="flex flex-wrap items-center gap-2 pt-1">
+      {tab === "overview" && <div className="flex flex-wrap items-center gap-2 pt-1">
         <h2 className="text-[14px] font-semibold text-ink">Breakdown</h2>
         <Toggle value={by} options={[["category", "By category"], ["supplier", "By supplier"]]} onChange={(v) => { setBy(v); setFocus(null); }} />
-        <span className="text-[11.5px] text-ink-muted">{tab === "overview" ? "Amounts are quantity × PO price. Click an amount for its PO lines; click a row to filter the lists at the bottom." : "Lead time by category or by supplier; dead stock and turnover are by category and warehouse."}</span>
-      </div>
+        <span className="text-[11.5px] text-ink-muted">Amounts are quantity × PO price. Click an amount for its PO lines; click a row to filter the list below.</span>
+      </div>}
 
       {d && t && tab === "overview" && (
         <>
@@ -195,61 +190,27 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
             <table className="w-full border-collapse">
               <thead><tr>
                 <Th left>{by === "category" ? "Category" : "Supplier"}</Th><Th>PO raised {when}</Th><Th>POs</Th>
-                <Th>Due {when} · not received</Th><Th>Received {when}</Th><Th>Supplier billed {when}</Th><Th>Total outstanding</Th><Th>Overdue</Th><Th>Not yet due</Th>
+                <Th>Overdue</Th><Th>Received {when}</Th><Th>Supplier billed {when}</Th><Th>Total outstanding</Th><Th>Not yet due</Th>
               </tr></thead>
               <tbody>
                 {shown.map((g) => (
                   <tr key={g.key} onClick={() => setFocus(focus === g.key ? null : g.key)} className={cn("cursor-pointer hover:bg-surface-2/50", focus === g.key && "bg-primary-soft/50")}>
                     <Td left className="max-w-[240px] truncate">{label(g.key)}</Td>
                     <Td><button type="button" className="cursor-pointer underline-offset-2 hover:underline" onClick={(e) => { e.stopPropagation(); openLines(`PO raised ${when}`, "raised", g.key); }}>{rm(g.raised.sen)}</button></Td><Td>{g.raised.pos}</Td>
-                    <Td className={g.due.openSen ? "text-err" : ""}><button type="button" className="cursor-pointer underline-offset-2 hover:underline" onClick={(e) => { e.stopPropagation(); openLines(`Due ${when} · not received yet`, "due", g.key); }}>{rm(g.due.openSen)}</button></Td>
+                    <Td className={g.open.lateSen ? "text-err" : ""}><button type="button" className="cursor-pointer underline-offset-2 hover:underline" onClick={(e) => { e.stopPropagation(); setFocus(g.key); setLayer("late"); document.getElementById("po-lines")?.scrollIntoView({ behavior: "smooth" }); }}>{rm(g.open.lateSen)}</button></Td>
                     <Td><button type="button" className="cursor-pointer underline-offset-2 hover:underline" onClick={(e) => { e.stopPropagation(); openLines(`Received ${when}`, "received", g.key); }}>{rm(g.receivedSen)}</button></Td><Td>{rm(billedOf(g.key))}</Td>
                     <Td className="font-semibold"><button type="button" className="cursor-pointer underline-offset-2 hover:underline" onClick={(e) => { e.stopPropagation(); openLines("Total outstanding", "open", g.key); }}>{rm(g.open.sen)}</button></Td>
-                    <Td className={g.open.lateSen ? "text-err" : ""}><button type="button" className="cursor-pointer underline-offset-2 hover:underline" onClick={(e) => { e.stopPropagation(); setFocus(g.key); setLayer("late"); document.getElementById("po-lines")?.scrollIntoView({ behavior: "smooth" }); }}>{rm(g.open.lateSen)}</button></Td>
                     <Td>{rm(g.open.sen - g.open.lateSen)}</Td>
                   </tr>
                 ))}
                 <tr className="font-semibold">
                   <Td left>Total</Td><Td>{rm(t.raised.sen)}</Td><Td>{t.raised.pos}</Td>
-                  <Td>{rm(t.due.openSen)}</Td><Td>{rm(t.receivedSen)}</Td><Td>{rm(d.billed.totalSen)}</Td><Td>{rm(t.open.sen)}</Td>
-                  <Td className={t.open.lateSen ? "text-err" : ""}>{rm(t.open.lateSen)}</Td><Td>{rm(t.open.sen - t.open.lateSen)}</Td>
+                  <Td className={t.open.lateSen ? "text-err" : ""}>{rm(t.open.lateSen)}</Td><Td>{rm(t.receivedSen)}</Td><Td>{rm(d.billed.totalSen)}</Td><Td>{rm(t.open.sen)}</Td>
+                  <Td>{rm(t.open.sen - t.open.lateSen)}</Td>
                 </tr>
               </tbody>
             </table>
           </Panel>
-
-          <section id="overdue">
-            <Panel title="Outstanding: how late" hint={`against the date first put on the PO · ${asOfNote} · click a row to filter the lists below`}>
-              <div className="mb-1 text-[12px] text-ink-secondary">All outstanding · <span className="font-semibold text-ink">{rm(t.open.sen)}</span></div>
-              <SplitBar format={rm} parts={BUCKETS.map((b) => ({ label: b.label, value: t.open.buckets[b.k].sen, color: b.color }))} />
-              <div className="mt-4 space-y-1">
-                {(() => {
-                  const rows = groups.filter((g) => g.open.lines > 0);
-                  const max = Math.max(1, ...rows.map((g) => g.open.sen));
-                  return rows.map((g) => {
-                    const late = g.open.buckets.late5.sen + g.open.buckets.late0to4.sen;
-                    return (
-                      <button type="button" key={g.key} onClick={() => setFocus(focus === g.key ? null : g.key)}
-                        className={cn("grid w-full grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1 rounded px-2 py-1.5 text-left hover:bg-surface-2/50 sm:grid-cols-[minmax(90px,160px)_1fr_auto]", focus === g.key && "bg-primary-soft/50")}>
-                        <span className="truncate text-[12.5px] text-ink">{label(g.key)}</span>
-                        <span className="order-last col-span-2 flex h-3 overflow-hidden rounded-full bg-surface-2 sm:order-none sm:col-span-1" style={{ width: `${Math.max(4, (g.open.sen / max) * 100)}%` }}>
-                          {BUCKETS.map((b) => g.open.buckets[b.k].sen > 0 && (
-                            <span key={b.k} style={{ flexGrow: g.open.buckets[b.k].sen, flexBasis: 0, background: b.color }}
-                              title={`${b.label}: ${rm(g.open.buckets[b.k].sen)} (${share(g.open.buckets[b.k].sen, g.open.sen)})`} />
-                          ))}
-                        </span>
-                        <span className="text-right text-[12.5px] tabular-nums">
-                          <span className="font-semibold text-ink">{rm(g.open.sen)}</span>
-                          <span className={cn("block text-[11px]", late ? "text-err" : "text-ink-muted")}>{late ? `${rm(late)} late or due tomorrow` : "nothing late"}</span>
-                        </span>
-                      </button>
-                    );
-                  });
-                })()}
-              </div>
-              <p className="mt-1 text-[11px] text-ink-muted">Bar length = that row&apos;s outstanding against the largest; colours as in the bar above. Hover a colour for its amount.</p>
-            </Panel>
-          </section>
 
           <section id="po-lines">
             <Panel title={`Outstanding PO lines${focus ? ` · ${label(focus)}` : ""}`} hint={`every PO line not yet received, ${asOfNote} · days late against the date first put on the PO · click a row above to filter, a layer to narrow`}>
@@ -257,11 +218,6 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
             </Panel>
           </section>
 
-        </>
-      )}
-
-      {d && t && tab === "stock" && (
-        <>
           <Panel title="Lead time" hint={`goods received ${when}`}>
             <p className="mb-2 text-[12.5px] text-ink-secondary">
               Per row: how long the supplier really takes (PO to goods in), how often they come by the date on the PO and how late when they do not, and how many days before the customer&apos;s date we ask the supplier to deliver. If that gap is large, purchasing is asking for goods too early.
@@ -329,6 +285,13 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
             </ul>
           </Panel>
 
+        </>
+      )}
+
+      {d && t && tab === "stock" && (
+        <>
+          <TurnoverPanel t={d.turnover} when={when} kinds={d.warehouseKinds} />
+
           <section id="dead">
             <Panel title="Excess stock · dead and buffer" right={<ScopePicker value={scope} onChange={setScope} />}
               hint={`matched per item and variant · ${STOCK_SCOPE_OPTIONS.find(([k]) => k === scope)?.[1].toLowerCase()} · as of today`}>
@@ -354,7 +317,6 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
             </Panel>
           </section>
 
-          <TurnoverPanel t={d.turnover} when={when} kinds={d.warehouseKinds} />
         </>
       )}
       <DrillDrawer drill={drill} onClose={() => setDrill(null)} />
