@@ -59,6 +59,8 @@ export function procurementOverviewParams(q: (k: string) => string | undefined, 
    views by the 15-minute cron, so the database does this once per refresh
    instead of once per viewer. Figures can be up to PROCOV_SOFT_SECONDS old. */
 export const PROCOV_SOFT_SECONDS = 20 * 60;
+/** The supplier score's window, the same 90 days the page asks for (SupplierScorecard). */
+export const scoreWindowFrom = (today: string) => new Date(Date.parse(`${today}T00:00:00Z`) - 89 * 86400000).toISOString().slice(0, 10);
 export const PROCOV_HARD_SECONDS = 2 * 60 * 60;
 export function procurementOverviewKey(companyId: number, p: ProcurementOverviewParams): string {
   return `swr:procov:v1:${companyId}:${p.today}:${p.from}:${p.to}:${p.dueTo}:${p.basis}:${p.scope}`;
@@ -113,8 +115,9 @@ procurementOverview.get('/stock-health', async (c) => {
 });
 
 /**
- * The 15-minute cron: recompute the two views people open by default (the page:
- * this month, due to month end; the home Overview: this month, due today) for
+ * The 15-minute cron: recompute the views people open by default (the page:
+ * this month, due to month end; the home Overview: this month, due today; the
+ * supplier score: the last 90 days to today, owner 2026-11-01) for
  * each live company and store them, so a viewer is served without waiting.
  * One company / view at a time; a failure is logged and the stale copy stays.
  */
@@ -126,6 +129,7 @@ export async function refreshProcurementOverviewSnapshots(env: WorkerEnv, today:
   const views = [
     procurementOverviewParams((k) => (k === 'dueTo' ? monthEnd : undefined), today),
     procurementOverviewParams(() => undefined, today),
+    procurementOverviewParams((k) => (k === 'from' ? scoreWindowFrom(today) : k === 'to' || k === 'dueTo' ? today : undefined), today),
   ];
   const sb = getSupabaseService(env);
   for (const companyId of MRP_REFRESH_COMPANY_IDS) {

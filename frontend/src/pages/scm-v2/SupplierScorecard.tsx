@@ -101,9 +101,9 @@ export function SupplierScorecard({ groups, lines, quality, onPick }: {
         })}</tbody>
       </table>
       <ul className="mt-2 list-disc space-y-0.5 pl-4 text-[11px] text-ink-muted">
-        <li>Score 0–100, higher is better: on time 40% · how late when late 20% (10 days late scores 0) · overdue share 30% · quality cases 10% (20 cases per 100 received scores 0). A part with no data is left out and the others re-weighted. Under 60 red, under 80 amber; fewer than {MIN_SCORE_RECEIPTS} lines received in the period is greyed.</li>
-        <li>On time and late by: lines received in the period, against the date first put on the PO. Overdue now, share and RM × days: every PO line not yet received, as of the period&apos;s end. RM × days = each late line&apos;s amount × its days late, added up: big and long-late weighs most.</li>
-        <li>Quality cases: service cases per 100 items received, from Quality Overview for the same period. Click a supplier for its overdue PO lines.</li>
+        <li>Score 0–100, higher is better: on time 40% · how late when late 20% (10 days late scores 0) · overdue share 30% · quality cases 10% (20 cases per 100 received scores 0). A part with no data is left out and the others re-weighted. Under 60 red, under 80 amber; fewer than {MIN_SCORE_RECEIPTS} lines received in the 90 days is greyed.</li>
+        <li>On time and late by: lines received in the last 90 days, against the date first put on the PO. Overdue now, share and RM × days: every PO line not yet received, as of today. RM × days = each late line&apos;s amount × its days late, added up: big and long-late weighs most.</li>
+        <li>Quality cases: service cases per 100 items received, from Quality Overview for the same 90 days. Click a supplier for its overdue PO lines.</li>
       </ul>
     </div>
   );
