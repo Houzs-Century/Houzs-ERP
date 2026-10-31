@@ -47,6 +47,12 @@ export interface ConnectOrder {
    *  view; null when the view had no row for the doc. Drives `order_amount`,
    *  the panel-only total Connect shows — distinct from the owed `amount`. */
   totalSen?: number | null;
+  /** The order's ERP company code, uppercase (`HOUZS` / `2990`); null when the
+   *  company is unresolved. Drives `company_code` — the signal Connect routes
+   *  the balance send on so a 2990 order is not auto-sent HOUZS's bank account.
+   *  It is the ORDER's company, not the sending user's; delivery-messages.ts
+   *  groups a send by company, so every order in one build shares it. */
+  companyCode?: string | null;
 }
 
 /** Everything the ERP must tell Connect on EVERY send besides the order lines. */
@@ -92,14 +98,16 @@ export function formatRm(sen: number): string {
  *  new conversation: a stale `button_status=Confirm` makes the Delivery Lock
  *  guard refuse the new order's Amend tap, a stale `amount` prints a balance
  *  that was settled months ago, a stale `amended_delivery_date` rides into the
- *  amend callback when the date form is skipped. '' reads as "unset" to
- *  Connect's criteria_router. */
+ *  amend callback when the date form is skipped, a stale `company_code` routes
+ *  the send by the PREVIOUS order's company. '' reads as "unset" to Connect's
+ *  criteria_router. */
 export const CONNECT_RESET_ATTRIBUTES = [
   'button_status',
   'last_button',
   'amount',
   'order_amount',
   'orders_json',
+  'company_code',
   'amended_delivery_date',
   'amend_date_reason',
   'date_amended',
@@ -228,6 +236,15 @@ export function buildDeliveryFollowUp(
       })),
     );
   }
+  // The order-batch's ERP company code (uppercase, e.g. HOUZS / 2990) — the
+  // signal Connect routes the balance send on, because the Houzs balance
+  // template bakes HOUZS's bank account and a 2990 order must be tagged for
+  // manual collection instead of auto-sent that account. PER ORDER-BATCH's
+  // company (delivery-messages groups a send by company, so every bundled order
+  // carries the same code), never the sending user's active company. Unset when
+  // unresolved — Connect then falls back to the SO doc_no prefix (`2990-SO…`).
+  const companyCode = orders.find((o) => o.companyCode)?.companyCode ?? '';
+  if (companyCode) attributes.company_code = companyCode;
   attributes.callback_url = ctx.callbackUrl;
   if (profile) {
     attributes.company_signature = profile.signature;

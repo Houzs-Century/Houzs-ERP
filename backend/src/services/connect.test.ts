@@ -39,6 +39,7 @@ describe('buildDeliveryFollowUp', () => {
         last_button: '',
         amount: '',
         order_amount: '',
+        company_code: '',
         amended_delivery_date: '',
         amend_date_reason: '',
         date_amended: '',
@@ -81,6 +82,8 @@ describe('buildDeliveryFollowUp', () => {
     expect(CONNECT_RESET_ATTRIBUTES).toContain('amount');
     expect(CONNECT_RESET_ATTRIBUTES).toContain('order_amount');
     expect(CONNECT_RESET_ATTRIBUTES).toContain('orders_json');
+    // Reset so a prior order's company can't route this send's balance (merge).
+    expect(CONNECT_RESET_ATTRIBUTES).toContain('company_code');
   });
 
   it('amount = the owed sum over EVERY bundled order, formatted RM, only when > 0', () => {
@@ -240,6 +243,36 @@ describe('buildDeliveryFollowUp', () => {
     expect(contact.attributes.company_signature).toBeUndefined();
     expect(contact.attributes.bank_block).toBeUndefined();
     expect(contact.attributes.disposal_block).toBeUndefined();
+  });
+
+  it('company_code is the ORDER batch company — the signal Connect routes the balance send on', () => {
+    const contact = buildDeliveryFollowUp('+60123', 'Wong', [
+      { ref: '2990-SO-001', orderRef: 'HM 22001', branding: 'AKEMI', deliveryDate: '2026/10/05', companyCode: '2990' },
+    ], null, CTX);
+    expect(contact.attributes.company_code).toBe('2990');
+  });
+
+  it('company_code + the per-company profile carry the SAME (order) company, never the sender', () => {
+    // A 2990 order sent by HOUZS staff: both the code and the bank/signature
+    // must be 2990's, or the balance paragraph bills the wrong account.
+    const profile2990: ConnectCompanyProfile = {
+      signature: "2990's Home",
+      bankBlock: '2990 bank\nAcc: 222',
+      disposalBlock: '2990 disposal',
+    };
+    const contact = buildDeliveryFollowUp('+60123', 'Wong', [
+      { ref: '2990-SO-001', orderRef: 'HM 22001', branding: 'AKEMI', deliveryDate: '2026/10/05', companyCode: '2990' },
+    ], profile2990, CTX);
+    expect(contact.attributes.company_code).toBe('2990');
+    expect(contact.attributes.company_signature).toBe("2990's Home");
+    expect(contact.attributes.bank_block).toBe('2990 bank\nAcc: 222');
+  });
+
+  it('no company on the orders → company_code is the empty reset (Connect falls back to the doc_no prefix)', () => {
+    const contact = buildDeliveryFollowUp('+60123', 'Wong', [
+      { ref: 'HC13234', orderRef: 'HC 11063', branding: 'AKEMI', deliveryDate: '2026/10/05' },
+    ], null, CTX);
+    expect(contact.attributes.company_code).toBe('');
   });
 });
 
