@@ -6,7 +6,9 @@
 
    THE RULE. The item's main becomes the supplier of its LATEST purchase order
    (po_date, then created_at; DRAFT and CANCELLED left out), provided that
-   supplier has a binding for the item. That binding is set main and every other
+   supplier has a binding for the item. An item never ordered on its own (most
+   sofa modules and sizes) takes the latest PO of any item of the SAME MODEL
+   (mfg_products.model_id). That binding is set main and every other
    main binding on the item is set to not-main; bindings, prices and SKUs stay.
    An item with no such PO is LISTED and left for the owner.
 
@@ -47,14 +49,30 @@ const plan = (client) => client`
      WHERE po.company_id = ${CO} AND po.status NOT IN ('DRAFT', 'CANCELLED')
        AND i.item_code IN (SELECT item_code FROM multi)
      ORDER BY i.item_code, po.po_date DESC, po.created_at DESC
+  ), mdl AS (
+    SELECT m.item_code, p.model_id FROM multi m
+      JOIN scm.mfg_products p ON p.code = m.item_code AND p.company_id = ${CO}
+     WHERE p.model_id IS NOT NULL
+  ), latest_model AS (
+    SELECT DISTINCT ON (p.model_id) p.model_id, po.supplier_id, po.po_number, po.po_date::text AS po_date, i.item_code AS via
+      FROM scm.purchase_order_items i JOIN scm.purchase_orders po ON po.id = i.purchase_order_id
+      JOIN scm.mfg_products p ON p.code = i.item_code AND p.company_id = ${CO}
+     WHERE po.company_id = ${CO} AND po.status NOT IN ('DRAFT', 'CANCELLED')
+       AND p.model_id IN (SELECT model_id FROM mdl)
+     ORDER BY p.model_id, po.po_date DESC, po.created_at DESC
   )
-  SELECT m.material_kind, m.item_code, l.supplier_id::text AS latest_supplier_id, l.po_number, l.po_date,
+  SELECT m.material_kind, m.item_code,
+         COALESCE(l.supplier_id, lm.supplier_id)::text AS latest_supplier_id,
+         COALESCE(l.po_number, lm.po_number) AS po_number, COALESCE(l.po_date, lm.po_date) AS po_date,
+         CASE WHEN l.supplier_id IS NULL AND lm.supplier_id IS NOT NULL THEN lm.via END AS via,
          json_agg(json_build_object('id', b.id::text, 'supplierId', b.supplier_id::text, 'supplier', s.name, 'main', b.is_main_supplier) ORDER BY s.name) AS bindings
     FROM multi m
     JOIN scm.supplier_material_bindings b ON b.company_id = ${CO} AND b.material_kind = m.material_kind AND b.item_code = m.item_code
     JOIN scm.suppliers s ON s.id = b.supplier_id
     LEFT JOIN latest l ON l.item_code = m.item_code
-   GROUP BY m.material_kind, m.item_code, l.supplier_id, l.po_number, l.po_date
+    LEFT JOIN mdl d ON d.item_code = m.item_code
+    LEFT JOIN latest_model lm ON lm.model_id = d.model_id
+   GROUP BY m.material_kind, m.item_code, l.supplier_id, l.po_number, l.po_date, lm.supplier_id, lm.po_number, lm.po_date, lm.via
    ORDER BY m.item_code`;
 
 async function main() {
@@ -64,13 +82,13 @@ async function main() {
   for (const r of rows) {
     const pick = r.bindings.find((b) => b.supplierId === r.latest_supplier_id);
     const mains = r.bindings.filter((b) => b.main).map((b) => b.supplier).join(' / ');
-    if (!pick) { leave.push({ ...r, mains, why: r.po_number ? `latest PO ${r.po_number} is with a supplier not bound to it` : 'no purchase order for it' }); continue; }
+    if (!pick) { leave.push({ ...r, mains, why: r.po_number ? `latest PO ${r.po_number} is with a supplier not bound to it` : 'no purchase order for it or its model' }); continue; }
     fix.push({ ...r, pick, demote: r.bindings.filter((b) => b.main && b !== pick) });
   }
 
   note(`\n=== MAIN SET FROM THE LATEST PO: ${fix.length} item(s) ===`);
   for (const r of fix) {
-    note(`  ${r.item_code.padEnd(20)} ${r.pick.supplier}  (${r.po_number}, ${r.po_date})  promote [${r.pick.main ? 'already main' : r.pick.id}]; demote ${r.demote.map((b) => `${b.supplier} [${b.id}]`).join(', ') || '-'}`);
+    note(`  ${r.item_code.padEnd(20)} ${r.pick.supplier}  (${r.po_number}, ${r.po_date}${r.via ? `, same model via ${r.via}` : ''})  promote [${r.pick.main ? 'already main' : r.pick.id}]; demote ${r.demote.map((b) => `${b.supplier} [${b.id}]`).join(', ') || '-'}`);
   }
   note(`\n=== LEFT FOR THE OWNER: ${leave.length} item(s) ===`);
   for (const r of leave) note(`  ${r.item_code.padEnd(20)} ${r.mains} — ${r.why}`);
