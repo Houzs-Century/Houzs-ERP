@@ -157,16 +157,21 @@ export async function sendDeliveryMessageForDocs(
   // here, never a base-table header column added after the view was recreated.
   // Same fail-closed rule as the profile: a balance we could not read must not
   // go out as "nothing owed".
+  // local_total_sen is the SO's gross value in sen; like balance_sen_live it is
+  // a view-native column (drives `order_amount`, the panel-only order total).
   const { data: balRaw, error: balErr } = await scopeToAllowedCompanies(
     sb.from('mfg_sales_orders_with_payment_totals')
-      .select('doc_no, balance_sen_live')
+      .select('doc_no, balance_sen_live, local_total_sen')
       .in('doc_no', docNos),
     c,
   );
   if (balErr) return { sent, failed, skipped, readError: { code: 'balance_load_failed', reason: balErr.message } };
   const balanceByDoc = new Map<string, number>();
-  for (const b of (balRaw ?? []) as Array<{ doc_no: string | null; balance_sen_live: number | null }>) {
-    if (b.doc_no != null && b.balance_sen_live != null) balanceByDoc.set(String(b.doc_no), Number(b.balance_sen_live));
+  const totalByDoc = new Map<string, number>();
+  for (const b of (balRaw ?? []) as Array<{ doc_no: string | null; balance_sen_live: number | null; local_total_sen: number | null }>) {
+    if (b.doc_no == null) continue;
+    if (b.balance_sen_live != null) balanceByDoc.set(String(b.doc_no), Number(b.balance_sen_live));
+    if (b.local_total_sen != null) totalByDoc.set(String(b.doc_no), Number(b.local_total_sen));
   }
   const callbackUrl = chatCallbackUrl(c.env);
 
@@ -206,6 +211,7 @@ export async function sendDeliveryMessageForDocs(
       branding: String(r.branding ?? ''),
       deliveryDate: payloadDate(effectiveSoDelivery(r as SoDeliveryDateRow)),
       balanceSen: balanceByDoc.get(String(r.doc_no)) ?? null,
+      totalSen: totalByDoc.get(String(r.doc_no)) ?? null,
     }));
     const contact = buildDeliveryFollowUp(
       phone, String(group[0]?.debtor_name ?? ''), orders, companyProfile, sendCtx,
