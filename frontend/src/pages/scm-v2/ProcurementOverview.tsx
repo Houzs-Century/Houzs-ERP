@@ -6,7 +6,7 @@
 // By category and By supplier are one switch over the same layout.
 // Data: GET /api/scm/procurement-overview (backend lib/procurement-period.ts).
 import { useMemo, useState, type ReactNode } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { DrillDrawer, col, type Drill } from "../../components/scm-v2/DrillDrawer";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "../../components/Layout";
@@ -17,10 +17,11 @@ import { Th, Td, Panel, Toggle, SELECT_CLS } from "../../components/scm-v2/Overv
 import { DashboardPeriodPicker, useDashboardPeriod, periodEnd } from "../../components/scm-v2/DashboardPeriod";
 import { Columns, Donut, SplitBar, Tile, TONE, PALETTE } from "../../components/scm-v2/Charts";
 import { useUpdateCategoryLeadTime, type LeadCategory } from "../../vendor/scm/lib/mrp-queries";
+import { PoLineList, type LayerKey } from "./PoLineList";
 
 type PeriodLine = {
   poId: string; poNumber: string; poDate: string; supplier: string; category: string; itemCode: string | null;
-  qty: number; sen: number; raised: boolean; due: boolean; dueDate: string | null;
+  itemDesc: string | null; soDocNo: string | null; qty: number; sen: number; raised: boolean; due: boolean; dueDate: string | null;
   receivedQty: number; receivedSen: number; lastReceived: string | null; openQty: number; openSen: number; daysLate: number | null;
 };
 type BucketKey = "late5" | "late0to4" | "due2to7" | "due8plus";
@@ -68,6 +69,7 @@ const AGES: Array<{ k: keyof Ages; label: string; color: string }> = [
   { k: "d365plus", label: "Over a year", color: TONE.bad },
 ];
 const CAT_LABEL: Record<string, string> = { MATTRESS: "Mattress", BEDFRAME: "Bedframe", SOFA: "Sofa", ACCESSORY: "Accessories", DINING: "Dining", OTHERS: "Others" };
+const catName = (k: string) => CAT_LABEL[k] ?? k;
 const rm = fmtSen;
 const days = (x: number | null) => (x == null ? "—" : `${x}`);
 const pctTxt = (x: number | null) => (x == null ? "—" : `${x}%`);
@@ -92,6 +94,7 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
   const dueTo = periodEnd(period);
   const [by, setBy] = useState<"category" | "supplier">("category");
   const [focus, setFocus] = useState<string | null>(null);
+  const [layer, setLayer] = useState<LayerKey | null>(null);
   const navigate = useNavigate();
   /* The second layer (owner 2026-10-18): a figure opens the PO lines behind it. */
   const [drill, setDrill] = useState<Drill<PeriodLine> | null>(null);
@@ -117,9 +120,10 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
   const groups = (by === "category" ? d?.byCategory : d?.bySupplier) ?? [];
   const billedOf = (k: string) => (by === "category" ? d?.billed.byCategory[k] : d?.billed.bySupplier[k]) ?? 0;
   const t = d?.total;
-  const matches = (l: OpenLine) => !focus || (by === "category" ? l.category === focus : l.supplier === focus);
-  const overdue = (d?.overdue ?? []).filter(matches);
-  const dueSoon = (d?.dueSoon ?? []).filter(matches);
+  /* A row with nothing in any figure is not shown (owner 2026-10-31: "0的 not active不需要show"). */
+  const shown = groups.filter((g) => g.raised.sen || g.due.openSen || g.receivedSen || billedOf(g.key) || g.open.sen);
+  const outstanding = useMemo(() => (d?.lines ?? []).filter((l) => l.openQty > 0
+    && (!focus || (by === "category" ? l.category === focus : l.supplier === focus))), [d, focus, by]);
   /* "this month" / "this quarter" / "in 2026-08" — the period in plain words. */
   const when = period.key === "month" ? "this month" : period.key === "quarter" ? "this quarter" : period.key === "year" ? "this year" : `in ${period.label}`;
   const When = when.charAt(0).toUpperCase() + when.slice(1);
@@ -190,21 +194,24 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
             <table className="w-full border-collapse">
               <thead><tr>
                 <Th left>{by === "category" ? "Category" : "Supplier"}</Th><Th>PO raised {when}</Th><Th>POs</Th>
-                <Th>Due {when} · not received</Th><Th>Received {when}</Th><Th>Supplier billed {when}</Th><Th>Total outstanding</Th>
+                <Th>Due {when} · not received</Th><Th>Received {when}</Th><Th>Supplier billed {when}</Th><Th>Total outstanding</Th><Th>Overdue</Th><Th>Not yet due</Th>
               </tr></thead>
               <tbody>
-                {groups.map((g) => (
+                {shown.map((g) => (
                   <tr key={g.key} onClick={() => setFocus(focus === g.key ? null : g.key)} className={cn("cursor-pointer hover:bg-surface-2/50", focus === g.key && "bg-primary-soft/50")}>
                     <Td left className="max-w-[240px] truncate">{label(g.key)}</Td>
                     <Td><button type="button" className="cursor-pointer underline-offset-2 hover:underline" onClick={(e) => { e.stopPropagation(); openLines(`PO raised ${when}`, "raised", g.key); }}>{rm(g.raised.sen)}</button></Td><Td>{g.raised.pos}</Td>
                     <Td className={g.due.openSen ? "text-err" : ""}><button type="button" className="cursor-pointer underline-offset-2 hover:underline" onClick={(e) => { e.stopPropagation(); openLines(`Due ${when} · not received yet`, "due", g.key); }}>{rm(g.due.openSen)}</button></Td>
                     <Td><button type="button" className="cursor-pointer underline-offset-2 hover:underline" onClick={(e) => { e.stopPropagation(); openLines(`Received ${when}`, "received", g.key); }}>{rm(g.receivedSen)}</button></Td><Td>{rm(billedOf(g.key))}</Td>
                     <Td className="font-semibold"><button type="button" className="cursor-pointer underline-offset-2 hover:underline" onClick={(e) => { e.stopPropagation(); openLines("Total outstanding", "open", g.key); }}>{rm(g.open.sen)}</button></Td>
+                    <Td className={g.open.lateSen ? "text-err" : ""}><button type="button" className="cursor-pointer underline-offset-2 hover:underline" onClick={(e) => { e.stopPropagation(); setFocus(g.key); setLayer("late"); document.getElementById("po-lines")?.scrollIntoView({ behavior: "smooth" }); }}>{rm(g.open.lateSen)}</button></Td>
+                    <Td>{rm(g.open.sen - g.open.lateSen)}</Td>
                   </tr>
                 ))}
                 <tr className="font-semibold">
                   <Td left>Total</Td><Td>{rm(t.raised.sen)}</Td><Td>{t.raised.pos}</Td>
                   <Td>{rm(t.due.openSen)}</Td><Td>{rm(t.receivedSen)}</Td><Td>{rm(d.billed.totalSen)}</Td><Td>{rm(t.open.sen)}</Td>
+                  <Td className={t.open.lateSen ? "text-err" : ""}>{rm(t.open.lateSen)}</Td><Td>{rm(t.open.sen - t.open.lateSen)}</Td>
                 </tr>
               </tbody>
             </table>
@@ -243,16 +250,11 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
             </Panel>
           </section>
 
-          <div className="grid gap-4 xl:grid-cols-2">
-            <Panel title={`Overdue${focus ? ` · ${label(focus)}` : ""}`} hint={`${overdue.length} lines past their date ${asOfNote}`}
-              right={focus ? <button type="button" className="text-[12px] text-primary hover:underline" onClick={() => setFocus(null)}>Show all</button> : null}>
-              <LineTable rows={overdue.slice(0, 60)} empty="Nothing is past its date." mode="late" />
-              {overdue.length > 60 && <p className="mt-1 text-[11px] text-ink-muted">The 60 most overdue of {overdue.length}.</p>}
+          <section id="po-lines">
+            <Panel title={`Outstanding PO lines${focus ? ` · ${label(focus)}` : ""}`} hint={`every PO line not yet received, ${asOfNote} · days late against the date first put on the PO · click a row above to filter, a layer to narrow`}>
+              <PoLineList lines={outstanding} focusLabel={focus ? label(focus) : null} layer={layer} onLayer={setLayer} catLabel={catName} onClearFocus={() => setFocus(null)} />
             </Panel>
-            <Panel title={`Arriving in the next 3 days${focus ? ` · ${label(focus)}` : ""}`} hint={`${dueSoon.length} lines`}>
-              <LineTable rows={dueSoon.slice(0, 60)} empty="Nothing is due in the next 3 days." mode="soon" />
-            </Panel>
-          </div>
+          </section>
 
         </>
       )}
@@ -377,26 +379,6 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
       )}
       <DrillDrawer drill={drill} onClose={() => setDrill(null)} />
     </div>
-  );
-}
-
-function LineTable({ rows, empty, mode }: { rows: OpenLine[]; empty: string; mode: "late" | "soon" }) {
-  if (rows.length === 0) return <p className="py-2 text-[12.5px] text-ink-muted">{empty}</p>;
-  return (
-    <table className="w-full border-collapse">
-      <thead><tr><Th left>PO</Th><Th left>Supplier</Th><Th left>Item</Th><Th>Still to come</Th><Th>Date on PO</Th><Th>Promised</Th><Th>Customer date</Th><Th>{mode === "late" ? "Days late" : "Due in"}</Th></tr></thead>
-      <tbody>{rows.map((l, i) => (
-        <tr key={`${l.poId}-${l.itemCode}-${i}`} className="hover:bg-surface-2/50">
-          <Td left><Link to={`/scm/purchase-orders/${l.poId}`} className="text-primary hover:underline">{l.poNumber}</Link>{l.soDocNo && <span className="ml-1 text-[10.5px] text-ink-muted">{l.soDocNo}</span>}</Td>
-          <Td left className="max-w-[160px] truncate">{l.supplier}</Td>
-          <Td left><span title={l.itemDesc ?? ""}>{l.itemCode ?? "—"}</span></Td>
-          <Td>{l.openQty} · {fmtSen(l.openSen)}</Td>
-          <Td>{l.originalDue ?? "—"}</Td><Td>{l.promised ?? "—"}</Td>
-          <Td className={l.needDate && l.promised && l.promised > l.needDate ? "text-err" : ""}>{l.needDate ?? <span className="text-ink-muted" title="Raised for stock, not tied to a sales order">stock</span>}</Td>
-          <Td className={mode === "late" ? (l.daysLate >= 5 ? "font-semibold text-err" : "text-warning-text") : ""}>{mode === "late" ? l.daysLate : l.daysLate === 0 ? "today" : `${-l.daysLate} days`}</Td>
-        </tr>
-      ))}</tbody>
-    </table>
   );
 }
 
