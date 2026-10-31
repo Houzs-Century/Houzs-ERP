@@ -101,6 +101,10 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
   const setTab = (v: "overview" | "stock") => setParams((p) => { const n = new URLSearchParams(p); if (v === "overview") n.delete("tab"); else n.set("tab", v); return n; }, { replace: true });
   /* Which locations the stock figures cover (owner 2026-10-19), kept in the URL. */
   const scope = STOCK_SCOPE_OPTIONS.some(([k]) => k === params.get("loc")) ? (params.get("loc") as string) : "all";
+  /* A clicked category or location narrows the dead / buffer list (owner 2026-11-01), kept in the URL. */
+  const stockCat = params.get("scat");
+  const stockWh = params.get("swh");
+  const pickStock = (k: "scat" | "swh", v: string | null) => setParams((p) => { const n = new URLSearchParams(p); if (v == null || n.get(k) === v) n.delete(k); else n.set(k, v); return n; }, { replace: true });
   const setScope = (v: string) => setParams((p) => { const n = new URLSearchParams(p); if (v === "all") n.delete("loc"); else n.set("loc", v); return n; }, { replace: true });
   const q = useQuery({
     queryKey: ["procurement-overview", period.from, period.to, dueTo, basis, scope],
@@ -290,7 +294,7 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
 
       {d && t && tab === "stock" && (
         <>
-          <TurnoverPanel t={d.turnover} when={when} kinds={d.warehouseKinds} />
+          <TurnoverPanel t={d.turnover} kinds={d.warehouseKinds} cat={stockCat} wh={stockWh} onPick={pickStock} />
 
           <section id="dead">
             <Panel title="Excess stock · dead and buffer" right={<ScopePicker value={scope} onChange={setScope} />}
@@ -300,14 +304,17 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
                 <ExcessFigure label="Buffer · bought before it was needed" sen={d.deadStock.bufferSen} items={d.deadStock.bufferSkus} of={d.deadStock.totalSen} />
                 <ExcessFigure label="Dead + buffer" sen={d.deadStock.deadSen + d.deadStock.bufferSen} items={d.deadStock.deadSkus + d.deadStock.bufferSkus} of={d.deadStock.totalSen} />
               </div>
-              <ExcessTable title="Category" rows={d.deadStock.byCategory} name={(k) => CAT_LABEL[k] ?? k} />
+              <ExcessTable title="Category" rows={d.deadStock.byCategory} name={(k) => CAT_LABEL[k] ?? k} picked={stockCat} onPick={(k) => pickStock("scat", k)} />
               <div className="mt-3" />
-              <ExcessTable title="Warehouse" rows={d.deadStock.byWarehouse} name={(k) => <>{k} <span className="text-[10.5px] text-ink-muted">{d.warehouseKinds[k] ?? ""}</span></>} />
+              <ExcessTable title="Warehouse" rows={d.deadStock.byWarehouse} name={(k) => <>{k} <span className="text-[10.5px] text-ink-muted">{d.warehouseKinds[k] ?? ""}</span></>} picked={stockWh} onPick={(k) => pickStock("swh", k)} />
               <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
-                <span className="text-[12px] font-semibold text-ink">{itemsOf === "dead" ? "Dead items" : "Buffer items"} <span className="font-normal text-ink-muted">· every row, largest value first · click a header to sort</span></span>
+                <span className="flex flex-wrap items-center gap-1.5 text-[12px] font-semibold text-ink">{itemsOf === "dead" ? "Dead items" : "Buffer items"}
+                  {stockCat && <PickChip label={catLabel(stockCat)} onClear={() => pickStock("scat", null)} />}
+                  {stockWh && <PickChip label={stockWh} onClear={() => pickStock("swh", null)} />}
+                  <span className="font-normal text-ink-muted">· {stockCat || stockWh ? "click a category or location above to change it" : "click a category or location above to narrow it"} · click a header to sort</span></span>
                 <Toggle value={itemsOf} options={[["dead", "Dead items"], ["buffer", "Buffer items"]]} onChange={setItemsOf} />
               </div>
-              <StockHealthList kind={itemsOf} query={`from=${period.from}&to=${period.to}&dueTo=${dueTo}&basis=${basis}&scope=${scope}`} catLabel={catLabel} />
+              <StockHealthList kind={itemsOf} query={`from=${period.from}&to=${period.to}&dueTo=${dueTo}&basis=${basis}&scope=${scope}`} catLabel={catLabel} category={stockCat} warehouse={stockWh} />
               <ul className="mt-2 list-disc space-y-0.5 pl-4 text-[11px] text-ink-muted">
                 <li>Every location&apos;s stock of the same item and variant is matched against the open sales orders together. Orders take the warehouse first, then service, then display.</li>
                 <li>Buffer = stock held for orders with no delivery date yet: e.g. 30 on hand, 5 on dated orders, 25 waiting for a date = 25 buffer, valued at 25 × cost. It sells, but was bought before it was needed.</li>
@@ -317,6 +324,7 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
             </Panel>
           </section>
 
+          <SellersPanel t={d.turnover} when={when} />
         </>
       )}
       <DrillDrawer drill={drill} onClose={() => setDrill(null)} />
@@ -348,7 +356,21 @@ function ExcessFigure({ label, sen, items, of }: { label: string; sen: number; i
 }
 
 /** Dead and buffer side by side, each with the same two shares (owner 2026-10-19: one panel, same words). */
-function ExcessTable({ title, rows, name }: { title: string; rows: StockGroup[]; name: (k: string) => ReactNode }) {
+function PickChip({ label, onClear }: { label: string; onClear: () => void }) {
+  return (
+    <button type="button" onClick={onClear} className="rounded-full border border-primary/40 bg-primary-soft/60 px-2 py-0.5 text-[11.5px] font-semibold text-ink hover:border-primary" aria-label={`Show all, not only ${label}`}>
+      {label} ×
+    </button>
+  );
+}
+
+/** A clickable row: the picked one is highlighted, a second click clears it. */
+const pickRow = (key: string, picked: string | null, onPick: (k: string) => void) => ({
+  onClick: () => onPick(key), "aria-selected": picked === key,
+  className: cn("cursor-pointer hover:bg-surface-2/50", picked === key && "bg-primary-soft/50", picked != null && picked !== key && "opacity-60"),
+});
+
+function ExcessTable({ title, rows, name, picked, onPick }: { title: string; rows: StockGroup[]; name: (k: string) => ReactNode; picked: string | null; onPick: (k: string) => void }) {
   const tot = rows.reduce((a, r) => ({ v: a.v + r.valueSen, d: a.d + r.deadSen, b: a.b + r.bufferSen }), { v: 0, d: 0, b: 0 });
   const cells = (x: number, all: number, own: number, tone: string) => <>
     <Td className={x ? tone : "text-ink-muted"}>{fmtSen(x)}</Td><Td>{share(x, all)}</Td><Td className="text-ink-secondary">{share(x, own)}</Td>
@@ -364,7 +386,7 @@ function ExcessTable({ title, rows, name }: { title: string; rows: StockGroup[];
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.key}><Td left>{name(r.key)}</Td><Td>{fmtSen(r.valueSen)}</Td>
+            <tr key={r.key} {...pickRow(r.key, picked, onPick)}><Td left>{name(r.key)}</Td><Td>{fmtSen(r.valueSen)}</Td>
               {cells(r.deadSen, tot.d, r.valueSen, "text-warning-text")}
               {cells(r.bufferSen, tot.b, r.valueSen, "text-warning-text")}
               <Td className="font-semibold">{fmtSen(r.deadSen + r.bufferSen)}</Td><Td>{share(r.deadSen + r.bufferSen, r.valueSen)}</Td></tr>
@@ -379,12 +401,12 @@ function ExcessTable({ title, rows, name }: { title: string; rows: StockGroup[];
   );
 }
 
-function TurnoverPanel({ t, when, kinds }: { t: Turnover; when: string; kinds: Record<string, string> }) {
+function TurnoverPanel({ t, kinds, cat, wh, onPick }: { t: Turnover; kinds: Record<string, string>; cat: string | null; wh: string | null; onPick: (k: "scat" | "swh", v: string) => void }) {
   const early = !!t.firstOut && t.firstOut === t.turnFrom;
   const turns = (x: number | null) => (x == null ? "—" : `${x}×`);
   const daysTxt = (x: number | null) => (x == null ? "—" : `${x} days`);
   return (
-    <Panel title="Stock turnover and sellers" hint={`turnover: the last 12 months, ${t.turnFrom} – ${t.turnTo}, the same whatever period is picked · sellers: quantity on sales orders ${when}, service lines left out, sofas counted by model`}>
+    <Panel title="Stock turnover and sellers" hint={`the last 12 months, ${t.turnFrom} – ${t.turnTo}, the same whatever period is picked · click a category or location to narrow the dead / buffer list below`}>
       {early && <p className="mb-2 rounded-md bg-warning-bg px-2.5 py-1.5 text-[12px] text-warning-text">Stock movements in the ERP begin {t.firstOut}, so turnover covers {t.days} days so far; it becomes a full year as time passes.</p>}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Tile label="Turns a year" value={turns(t.total.turnsPerYear)} note={`cost of goods that left the warehouses: ${fmtSen(t.total.outSen)} in ${t.days} days, scaled to a year, ÷ stock now`} tone="main" trend={null} onClick={null} />
@@ -393,10 +415,19 @@ function TurnoverPanel({ t, when, kinds }: { t: Turnover; when: string; kinds: R
         <Tile label="Movements without cost" value={String(t.zeroCostOuts)} note="these make turnover read low" tone={t.zeroCostOuts ? "warn" : "good"} trend={null} onClick={null} />
       </div>
       <div className="mt-3 grid gap-4 xl:grid-cols-2">
-        <TurnTable title="Category" rows={t.byCategory} name={(k) => CAT_LABEL[k] ?? k} />
-        <TurnTable title="Warehouse" rows={t.byWarehouse} name={(k) => <>{k} <span className="text-[10.5px] text-ink-muted">{kinds[k] ?? ""}</span></>} />
+        <TurnTable title="Category" rows={t.byCategory} name={(k) => CAT_LABEL[k] ?? k} picked={cat} onPick={(k) => onPick("scat", k)} />
+        <TurnTable title="Warehouse" rows={t.byWarehouse} name={(k) => <>{k} <span className="text-[10.5px] text-ink-muted">{kinds[k] ?? ""}</span></>} picked={wh} onPick={(k) => onPick("swh", k)} />
       </div>
-      <div className="mt-3 grid gap-4 xl:grid-cols-2">
+    </Panel>
+  );
+}
+
+/* Top and low sellers, at the bottom of the turnover tab (owner 2026-11-01). */
+function SellersPanel({ t, when }: { t: Turnover; when: string }) {
+  const daysTxt = (x: number | null) => (x == null ? "—" : `${x} days`);
+  return (
+    <Panel title="Top and low sellers" hint={`quantity on sales orders ${when}, service lines left out, sofas counted by model`}>
+      <div className="grid gap-4 xl:grid-cols-2">
         <div>
           <div className="mb-1 text-[12px] font-semibold text-ink">Top sellers</div>
           <table className="w-full border-collapse">
@@ -422,12 +453,12 @@ function TurnoverPanel({ t, when, kinds }: { t: Turnover; when: string; kinds: R
   );
 }
 
-function TurnTable({ title, rows, name }: { title: string; rows: TurnRow[]; name: (k: string) => ReactNode }) {
+function TurnTable({ title, rows, name, picked, onPick }: { title: string; rows: TurnRow[]; name: (k: string) => ReactNode; picked: string | null; onPick: (k: string) => void }) {
   return (
     <table className="w-full border-collapse">
       <thead><tr><Th left>{title}</Th><Th>Stock now</Th><Th>Cost of goods out</Th><Th>Turns a year</Th><Th>Days of stock</Th></tr></thead>
       <tbody>{rows.filter((r) => r.stockSen > 0 || r.outSen > 0).map((r) => (
-        <tr key={r.key}><Td left>{name(r.key)}</Td><Td>{fmtSen(r.stockSen)}</Td><Td>{fmtSen(r.outSen)}</Td>
+        <tr key={r.key} {...pickRow(r.key, picked, onPick)}><Td left>{name(r.key)}</Td><Td>{fmtSen(r.stockSen)}</Td><Td>{fmtSen(r.outSen)}</Td>
           <Td className={r.turnsPerYear == null ? "" : r.turnsPerYear < 3 ? "text-err" : r.turnsPerYear < 4 ? "text-warning-text" : "text-synced"}>{r.turnsPerYear == null ? "—" : `${r.turnsPerYear}×`}</Td>
           <Td>{r.daysOfStock == null ? "—" : r.daysOfStock}</Td></tr>
       ))}</tbody>

@@ -7,7 +7,7 @@ const rows = Array.from({ length: 120 }, (_, i) => ({ warehouse: i % 2 ? "KL WAR
 vi.mock("../../vendor/scm/lib/authed-fetch", () => ({ authedFetch: vi.fn(async () => ({ dead: rows, buffer: [] })) }));
 const { StockHealthList, stockHealthSheet } = await import("./StockHealthList");
 
-const mount = () => render(<QueryClientProvider client={new QueryClient()}><StockHealthList kind="dead" query="x=1" catLabel={(k) => k} /></QueryClientProvider>);
+const mount = (warehouse: string | null = null) => render(<QueryClientProvider client={new QueryClient()}><StockHealthList kind="dead" query="x=1" catLabel={(k) => k} category={null} warehouse={warehouse} /></QueryClientProvider>);
 
 describe("StockHealthList", () => {
   it("lists every row and sorts by a clicked header", async () => {
@@ -25,6 +25,11 @@ describe("StockHealthList", () => {
     await waitFor(() => expect(document.querySelectorAll("tbody tr").length).toBe(120));
     fireEvent.change(screen.getByLabelText("Search these rows"), { target: { value: "ITEM-007" } });
     expect(document.querySelectorAll("tbody tr").length).toBe(1);
+  });
+  it("a location clicked above narrows the list to its rows (owner 2026-11-01)", async () => {
+    mount("KL WAREHOUSE");
+    await waitFor(() => expect(document.querySelectorAll("tbody tr").length).toBe(60));
+    expect([...document.querySelectorAll("tbody tr")].every((tr) => tr.textContent?.includes("KL WAREHOUSE"))).toBe(true);
   });
   it("the Excel sheet carries ringgit, not sen", () => {
     const sheet = stockHealthSheet([rows[0]!], [{ k: "value", label: "Value", value: (r) => r.valueSen, show: () => "" }]);
