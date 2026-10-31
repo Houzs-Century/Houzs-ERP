@@ -5,6 +5,7 @@
 // end + 1 day (the dominant convention in the existing data: ~253 projects at -1
 // and ~203 at +1). Pure + fill-only + confirmed-only, so it mirrors exactly what
 // the board shows and never fights a hand-set date.
+import type { Env } from "../types";
 
 /** Shift a YYYY-MM-DD (or YYYY-MM-DDThh:mm) date string by `days`, returning
  *  YYYY-MM-DD, or null when the input is empty / unparseable. UTC math so a plain
@@ -46,4 +47,25 @@ export function deriveProjectFleetDates(p: ProjectFleetDateInput): {
     if (d) out.dismantle_start_at = d;
   }
   return out;
+}
+
+/** Read a project back and, when confirming has made it eligible, fill its setup /
+ *  dismantle dates from the event window (see deriveProjectFleetDates). A no-op
+ *  when there is nothing to fill. Called from patchProject after the main write,
+ *  only when the patch touched status / start_date / end_date. */
+export async function applyProjectFleetDates(env: Env, id: number): Promise<void> {
+  const cur = await env.DB.prepare(
+    `SELECT status, archived_at, start_date, end_date, setup_start_at, dismantle_start_at
+       FROM projects WHERE id = ?`
+  )
+    .bind(id)
+    .first<ProjectFleetDateInput>();
+  const fill = cur ? deriveProjectFleetDates(cur) : {};
+  const cols = Object.keys(fill) as Array<keyof typeof fill>;
+  if (!cols.length) return;
+  await env.DB.prepare(
+    `UPDATE projects SET ${cols.map((k) => `${k} = ?`).join(", ")}, updated_at = datetime('now') WHERE id = ?`
+  )
+    .bind(...cols.map((k) => fill[k]), id)
+    .run();
 }
