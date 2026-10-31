@@ -47,6 +47,7 @@ describe('buildDeliveryFollowUp', () => {
         delivery_date_1: '2026/10/05',
         brand_1: 'AKEMI',
         refs_all: 'HC13234',
+        orders_json: '[{"so":"HC13234","ref":"HC 11063","amount":"0.00"}]',
         callback_url: 'https://erp.houzscentury.com/api/chat-callback',
       },
     });
@@ -70,10 +71,16 @@ describe('buildDeliveryFollowUp', () => {
     const contact = buildDeliveryFollowUp('+60123', 'Wong', [
       { ref: 'A1', orderRef: 'HC 11001', branding: 'AKEMI', deliveryDate: '2026/10/05' },
     ], null, CTX);
-    for (const key of CONNECT_RESET_ATTRIBUTES) expect(contact.attributes[key]).toBe('');
+    for (const key of CONNECT_RESET_ATTRIBUTES) {
+      // orders_json carries the order list whenever there are orders; it is
+      // reset-listed only to clear a prior longer list on a 0-order send (below).
+      if (key === 'orders_json') continue;
+      expect(contact.attributes[key]).toBe('');
+    }
     expect(CONNECT_RESET_ATTRIBUTES).toContain('button_status');
     expect(CONNECT_RESET_ATTRIBUTES).toContain('amount');
     expect(CONNECT_RESET_ATTRIBUTES).toContain('order_amount');
+    expect(CONNECT_RESET_ATTRIBUTES).toContain('orders_json');
   });
 
   it('amount = the owed sum over EVERY bundled order, formatted RM, only when > 0', () => {
@@ -109,6 +116,37 @@ describe('buildDeliveryFollowUp', () => {
       { ref: 'A1', orderRef: 'HC 11001', branding: 'AKEMI', deliveryDate: '2026/10/05' },
     ], null, CTX);
     expect(contact.attributes.order_amount).toBe('');
+  });
+
+  it('orders_json lists EVERY bundled order (so = doc_no, ref = customer Ref No., amount in RM), primary first, summing to order_amount', () => {
+    const contact = buildDeliveryFollowUp('+60123', 'Wong', [
+      { ref: 'A1', orderRef: 'HC 11001', branding: 'AKEMI', deliveryDate: '2026/10/05', totalSen: 150000 },
+      { ref: 'B2', orderRef: 'HC 11002', branding: 'SLUMBERLAND', deliveryDate: '2026/10/06', totalSen: 357265 },
+    ], null, CTX);
+    expect(JSON.parse(contact.attributes.orders_json)).toEqual([
+      { so: 'A1', ref: 'HC 11001', amount: '1500.00' },
+      { so: 'B2', ref: 'HC 11002', amount: '3572.65' },
+    ]);
+    // The per-order amounts sum to the grand total order_amount.
+    expect(contact.attributes.order_amount).toBe('5072.65');
+  });
+
+  it('orders_json is NOT capped at CONNECT_ORDER_LINES — it lists all 4 orders while the template shows only 3', () => {
+    const contact = buildDeliveryFollowUp('+60123', 'Wong', [
+      { ref: 'A1', orderRef: 'HC 11001', branding: 'AKEMI', deliveryDate: '2026/10/05', totalSen: 100000 },
+      { ref: 'B2', orderRef: 'HC 11002', branding: 'SLUMBERLAND', deliveryDate: '2026/10/06', totalSen: 200000 },
+      { ref: 'C3', orderRef: 'HC 11003', branding: 'GOODNITE', deliveryDate: '2026/10/07', totalSen: 300000 },
+      { ref: 'D4', orderRef: '', branding: 'VONO', deliveryDate: '2026/10/08', totalSen: 40000 },
+    ], null, CTX);
+    const list = JSON.parse(contact.attributes.orders_json);
+    expect(list).toHaveLength(4);
+    expect(list[3]).toEqual({ so: 'D4', ref: '', amount: '400.00' }); // blank customer ref → ""
+    expect(contact.attributes.ref_4).toBeUndefined(); // the template still carries only 3 lines
+  });
+
+  it('no bundled orders → orders_json is the empty reset, so a prior delivery list cannot leak', () => {
+    const contact = buildDeliveryFollowUp('+60123', 'Wong', [], null, CTX);
+    expect(contact.attributes.orders_json).toBe('');
   });
 
   it('a kind picks its automation by name and merges its extra variables last', () => {

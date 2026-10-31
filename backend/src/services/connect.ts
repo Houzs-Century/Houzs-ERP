@@ -99,6 +99,7 @@ export const CONNECT_RESET_ATTRIBUTES = [
   'last_button',
   'amount',
   'order_amount',
+  'orders_json',
   'amended_delivery_date',
   'amend_date_reason',
   'date_amended',
@@ -213,6 +214,20 @@ export function buildDeliveryFollowUp(
   // it. Unknown/zero leaves it the empty reset, so the card shows nothing.
   const totalSen = orders.reduce((sum, o) => sum + Math.max(0, Number(o.totalSen ?? 0)), 0);
   if (totalSen > 0) attributes.order_amount = (totalSen / 100).toFixed(2);
+  // The order card lists EVERY bundled order, NOT capped at CONNECT_ORDER_LINES
+  // (that cap bounds only the template's ref_N params). One entry per order,
+  // primary first: its SO doc_no (same as ref_1), its customer Ref No., and its
+  // own gross value as a PLAIN decimal — the amounts sum to order_amount. A send
+  // with no orders leaves the empty reset, so a prior longer list cannot leak.
+  if (orders.length > 0) {
+    attributes.orders_json = JSON.stringify(
+      orders.map((o) => ({
+        so: o.ref,
+        ref: o.orderRef,
+        amount: (Math.max(0, Number(o.totalSen ?? 0)) / 100).toFixed(2),
+      })),
+    );
+  }
   attributes.callback_url = ctx.callbackUrl;
   if (profile) {
     attributes.company_signature = profile.signature;
