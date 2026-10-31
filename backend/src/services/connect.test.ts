@@ -38,6 +38,7 @@ describe('buildDeliveryFollowUp', () => {
         button_status: '',
         last_button: '',
         amount: '',
+        order_amount: '',
         amended_delivery_date: '',
         amend_date_reason: '',
         date_amended: '',
@@ -72,6 +73,7 @@ describe('buildDeliveryFollowUp', () => {
     for (const key of CONNECT_RESET_ATTRIBUTES) expect(contact.attributes[key]).toBe('');
     expect(CONNECT_RESET_ATTRIBUTES).toContain('button_status');
     expect(CONNECT_RESET_ATTRIBUTES).toContain('amount');
+    expect(CONNECT_RESET_ATTRIBUTES).toContain('order_amount');
   });
 
   it('amount = the owed sum over EVERY bundled order, formatted RM, only when > 0', () => {
@@ -92,6 +94,23 @@ describe('buildDeliveryFollowUp', () => {
     expect(contact.attributes.amount).toBe('');
   });
 
+  it('order_amount = the gross-value sum over EVERY bundled order, a PLAIN decimal (no commas), only when > 0', () => {
+    const contact = buildDeliveryFollowUp('+60123', 'Wong', [
+      { ref: 'A1', orderRef: 'HC 11001', branding: 'AKEMI', deliveryDate: '2026/10/05', totalSen: 150000 },
+      { ref: 'B2', orderRef: 'HC 11002', branding: 'SLUMBERLAND', deliveryDate: '2026/10/06', totalSen: 357265 },
+    ], null, CTX);
+    // Panel-only, so no thousands separators (Connect's Number()/money() parses
+    // it) — unlike `amount`, which formatRm would render as '5,072.65'.
+    expect(contact.attributes.order_amount).toBe('5072.65');
+  });
+
+  it('no order total → order_amount is the empty reset, so the order card shows nothing', () => {
+    const contact = buildDeliveryFollowUp('+60123', 'Wong', [
+      { ref: 'A1', orderRef: 'HC 11001', branding: 'AKEMI', deliveryDate: '2026/10/05' },
+    ], null, CTX);
+    expect(contact.attributes.order_amount).toBe('');
+  });
+
   it('a kind picks its automation by name and merges its extra variables last', () => {
     const contact = buildDeliveryFollowUp('+60123', 'Wong', [
       { ref: 'A1', orderRef: 'HC 11001', branding: 'AKEMI', deliveryDate: '2026/10/05' },
@@ -109,6 +128,8 @@ describe('buildDeliveryFollowUp', () => {
     expect(contact.attributes.button_status).toBeUndefined();
     expect(contact.attributes.last_button).toBeUndefined();
     expect(contact.attributes.amount).toBe('10.00');
+    // No order total supplied and no reset: order_amount is genuinely unset.
+    expect(contact.attributes.order_amount).toBeUndefined();
   });
 
   it('callback_url is the send context, verbatim', () => {

@@ -43,6 +43,10 @@ export interface ConnectOrder {
   /** Outstanding balance in sen (local_total − Σpayments) from the SO list's
    *  own view; null when the view had no row for the doc. Drives `amount`. */
   balanceSen?: number | null;
+  /** The order's gross value in sen (local_total_sen) from the SO list's own
+   *  view; null when the view had no row for the doc. Drives `order_amount`,
+   *  the panel-only total Connect shows — distinct from the owed `amount`. */
+  totalSen?: number | null;
 }
 
 /** Everything the ERP must tell Connect on EVERY send besides the order lines. */
@@ -94,6 +98,7 @@ export const CONNECT_RESET_ATTRIBUTES = [
   'button_status',
   'last_button',
   'amount',
+  'order_amount',
   'amended_delivery_date',
   'amend_date_reason',
   'date_amended',
@@ -202,6 +207,12 @@ export function buildDeliveryFollowUp(
   // amount '' and the flow's has_balance branch stays quiet.
   const owedSen = orders.reduce((sum, o) => sum + Math.max(0, Number(o.balanceSen ?? 0)), 0);
   if (owedSen > 0) attributes.amount = formatRm(owedSen);
+  // The order card's gross value: the sum over EVERY bundled order, panel-only.
+  // Unlike `amount` (template text, so formatRm with commas), this is a PLAIN
+  // decimal — no thousands separators — so Connect's own Number()/money() parses
+  // it. Unknown/zero leaves it the empty reset, so the card shows nothing.
+  const totalSen = orders.reduce((sum, o) => sum + Math.max(0, Number(o.totalSen ?? 0)), 0);
+  if (totalSen > 0) attributes.order_amount = (totalSen / 100).toFixed(2);
   attributes.callback_url = ctx.callbackUrl;
   if (profile) {
     attributes.company_signature = profile.signature;
