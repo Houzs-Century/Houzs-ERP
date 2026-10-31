@@ -10,6 +10,7 @@ import { eventFinanceLines } from "./projectFinanceLines";
 import { loadEventPnl } from "./eventPnlInputs";
 import { pnlForProjects, withPnlColumns } from "./eventPnlBatch";
 import { earliestLorryDate } from "./earliest-lorry-date";
+import { deriveProjectFleetDates } from "./project-fleet-dates";
 export { deriveProjectCode, deriveProjectName };
 // Re-exported from here so projects.earliestLorryDate.test.ts still resolves it.
 export { earliestLorryDate };
@@ -571,6 +572,37 @@ export async function patchProject(
     );
     shifted = out.shifted;
     deltaDays = out.deltaDays;
+  }
+
+  // Auto-fill the fleet window from the event dates on confirm (owner 2026-10-31),
+  // so a confirmed project reaches the Delivery Planning board without re-keying
+  // setup/dismantle: setup = event start - 1 day, dismantle = event end + 1 day.
+  // Only when the patch could newly enable it (status / start / end changed);
+  // fill-only + confirmed-only, so a hand-set date or a pending/cancelled project
+  // is never touched (see project-fleet-dates.ts).
+  if ("status" in body || "start_date" in body || "end_date" in body) {
+    const cur = await env.DB.prepare(
+      `SELECT status, archived_at, start_date, end_date, setup_start_at, dismantle_start_at
+         FROM projects WHERE id = ?`
+    )
+      .bind(id)
+      .first<{
+        status: string | null;
+        archived_at: string | null;
+        start_date: string | null;
+        end_date: string | null;
+        setup_start_at: string | null;
+        dismantle_start_at: string | null;
+      }>();
+    const fill = cur ? deriveProjectFleetDates(cur) : {};
+    const cols = Object.keys(fill) as Array<keyof typeof fill>;
+    if (cols.length) {
+      await env.DB.prepare(
+        `UPDATE projects SET ${cols.map((k) => `${k} = ?`).join(", ")}, updated_at = datetime('now') WHERE id = ?`
+      )
+        .bind(...cols.map((k) => fill[k]), id)
+        .run();
+    }
   }
 
   return {
