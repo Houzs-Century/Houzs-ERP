@@ -299,6 +299,23 @@ describe('suppliers POST /:id/bindings[/batch] — supplier ownership', () => {
     expect(res.status).toBe(404);
     expect(t.supplier_material_bindings).toHaveLength(0);
   });
+
+  test("a batch row arriving as main demotes the item's other main in this company only (one main per item)", async () => {
+    const t = {
+      suppliers: [...suppliersRows(), { id: 'sup-a2', company_id: CO_A }],
+      supplier_material_bindings: [
+        { id: 'old', supplier_id: 'sup-a2', company_id: CO_A, material_kind: 'mfg_product', item_code: 'X', is_main_supplier: true },
+        { id: 'other-co', supplier_id: 'sup-b', company_id: CO_B, material_kind: 'mfg_product', item_code: 'X', is_main_supplier: true },
+      ] as Row[],
+    };
+    const res = await jsonPost(harness(t, CO_A, ['*']).app, '/suppliers/sup-a/bindings/batch', {
+      bindings: [{ ...bindingBody(), isMainSupplier: true }],
+    });
+    expect(res.status).toBeLessThan(300);
+    const mainsA = t.supplier_material_bindings.filter((r) => r.company_id === CO_A && r.item_code === 'X' && r.is_main_supplier);
+    expect(mainsA.map((r) => r.supplier_id)).toEqual(['sup-a']);
+    expect(t.supplier_material_bindings.find((r) => r.id === 'other-co')!.is_main_supplier).toBe(true);
+  });
 });
 
 // ── Findings 1 & 2 — source-anchored wiring (guard lives in a >10k-line core) ─
