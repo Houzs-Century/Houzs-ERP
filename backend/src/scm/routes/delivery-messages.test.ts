@@ -78,8 +78,11 @@ describe('sendDeliveryMessageForDocs — company routing', () => {
     expect(res.skipped).toHaveLength(0);
     expect(posted).toHaveLength(2);
 
-    const houzs = posted.find((p) => p.attributes.company_code === 'HOUZS');
-    const h2990 = posted.find((p) => p.attributes.company_code === '2990');
+    // Index by the code the ERP sent — a lookup keyed on company data, not a
+    // per-company branch (the company-divergence audit flags `=== 'HOUZS'`).
+    const byCode = new Map(posted.map((p) => [p.attributes.company_code, p]));
+    const houzs = byCode.get('HOUZS');
+    const h2990 = byCode.get('2990');
     expect(houzs).toBeDefined();
     expect(h2990).toBeDefined();
 
