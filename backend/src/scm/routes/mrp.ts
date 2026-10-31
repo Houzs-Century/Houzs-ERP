@@ -85,7 +85,7 @@ import {
 } from '../lib/ship-commitment';
 import { collectBatchClaims, openBucketStock, drawBucketStock } from '../lib/batch-claimed-stock';
 import { loadSofaBatchStock } from '../lib/sofa-set-coverage';
-import { planSofaSets, type SofaPlan, type SofaSetLine, type SofaSetPoSupply } from '../lib/sofa-set-plan';
+import { planSofaSets, ownPoSlottedElsewhere, type SofaPlan, type SofaPoSlot, type SofaSetLine, type SofaSetPoSupply } from '../lib/sofa-set-plan';
 import { WH_NONE, composite, loadCommittedShipments } from '../lib/committed-shipments';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { MRP_DELIVERED_EMBED, compareDelivered, deliveredBySoItemFrom, readUnlinkedDoLines, type MrpDemandLine, type NettingCheck } from '../lib/mrp-delivered';
@@ -375,6 +375,8 @@ type SofaSet = {
      when nothing covers it (order the whole set, on one PO). Company-1 bound
      lines carry their own PO here. */
   batchNo: string | null;
+  /* Company 2: this line's own POs that the pooled walk gave to another SO (2990-0018). */
+  ownPoSlottedTo: SofaPoSlot[];
   suppliers: Array<{ supplierId: string; code: string; name: string; isMain: boolean }>;
 };
 
@@ -1496,6 +1498,7 @@ export async function computeMrp(
   /* What one module line is planned from (lib/sofa-set-plan.ts). Each walk
      below writes one per demand line; the emit loop turns it into the row. */
   const sofaPlanByLine = new Map<string, SofaPlan>();
+  let poSlotted = new Map<string, SofaPoSlot[]>();
   /* camelCase trap, same as section 4c: a repair script driving this through
      the postgres shim gets allocatedBatchNo — dual-read so the lock is seen. */
   const lockOf = (d: DemandRow): string | null =>
@@ -1554,6 +1557,7 @@ export async function computeMrp(
       if (own && own.length > 0) poByBucket.set(k, own.map((p) => ({ ...p })));
     }
     for (const [id, plan] of planSofaSets(setLines, lots, poByBucket, poRaisedFor)) sofaPlanByLine.set(id, plan);
+    poSlotted = ownPoSlottedElsewhere(setLines, sofaPlanByLine, poRaisedFor);
   }
 
   for (const [, bucket] of sofaByKey.entries()) {
@@ -1620,6 +1624,7 @@ export async function computeMrp(
         poSupplierId: plan.poSupplierId,
         poSupplierName: plan.poSupplierId ? (supplierNameById.get(plan.poSupplierId) ?? null) : null,
         batchNo: plan.batchNo,
+        ownPoSlottedTo: poSlotted.get(d.id) ?? [],
         suppliers: suppliersByCode.get(d.item_code) ?? [],
       });
     }

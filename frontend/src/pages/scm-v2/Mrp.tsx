@@ -27,7 +27,7 @@ import { DataTable, type Column } from '../../components/DataTable';
 import {
   useMrp, useRegenerateMrp, useCategoryLeadTimes, useUpdateCategoryLeadTime, GLOBAL_LEAD_KEY,
   type MrpSku, type MrpLine, type MrpResponse, type LeadCategory,
-  type MrpWarehouse, type CategoryLeadTimes,
+  type MrpWarehouse, type CategoryLeadTimes, type SofaPoSlot,
 } from '../../vendor/scm/lib/mrp-queries';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { useAuth, isAdminLevel } from '../../vendor/scm/lib/auth';
@@ -1497,6 +1497,18 @@ const ChildLine = ({ ln, suppliers, whCode, whName, selected, onToggleLine, chos
   );
 };
 
+/* 2990-0018: the pooled plan may give this SO's own PO to an earlier-delivery
+   SO. One notice per (PO, taker), not per module. */
+const ownPoSlots = (group: ModelGroup): SofaPoSlot[] => {
+  const seen = new Map<string, SofaPoSlot>();
+  for (const v of group.variants) {
+    for (const ln of v.lines) {
+      for (const s of ln.ownPoSlottedTo ?? []) seen.set(`${s.poNumber}|${s.soDocNo}`, s);
+    }
+  }
+  return [...seen.values()];
+};
+
 /* Sofa-only flat view (M-S1, Wei Siang 2026-06-16): ONE table per SO, one row
    per module, with the order-line detail (coverage / supplier / delivery) on the
    SAME row — instead of the module → order-line two-level drill. Each sofa module
@@ -1585,6 +1597,16 @@ const SofaSoTable = ({ group, selected, onToggleLine, lineSupplier, onLineSuppli
           </tr>
         );
       }))}
+      {ownPoSlots(group).map((s) => (
+        <tr key={`slot-${s.poNumber}-${s.soDocNo}`} className={styles.detailRow}>
+          <td />
+          <td colSpan={10} className="py-1">
+            <span className="inline-flex items-center rounded border border-warning-text/30 bg-warning-bg px-1.5 py-0.5 text-[11px] font-semibold text-warning-text">
+              {`This SO's own PO ${s.poNumber} is planned for ${s.soDocNo} (earlier delivery${s.deliveryDate ? ` ${fmtDate(s.deliveryDate)}` : ''}). Order new for this SO.`}
+            </span>
+          </td>
+        </tr>
+      ))}
       {/* Cover / pillow riders (owner 2026-09-11). These ACCESSORY shortage lines
           belong to this SO and are pulled onto the order when the sofa set is
           proceeded. Read-along: no checkbox, because they follow the sofa's
