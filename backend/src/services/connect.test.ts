@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   buildDeliveryFollowUp,
+  buildServiceCaseReceived,
   isConnectConfigured,
   postConnectContact,
   parseConnectCompanyProfiles,
   CONNECT_DELIVERY_AUTOMATION,
+  CONNECT_SERVICE_CASE_AUTOMATION,
   CONNECT_RESET_ATTRIBUTES,
   chatCallbackUrl,
   connectUntriggeredReason,
@@ -240,6 +242,32 @@ describe('buildDeliveryFollowUp', () => {
     expect(contact.attributes.company_signature).toBeUndefined();
     expect(contact.attributes.bank_block).toBeUndefined();
     expect(contact.attributes.disposal_block).toBeUndefined();
+  });
+});
+
+describe('buildServiceCaseReceived', () => {
+  it('maps name → full_name, case number → ref_1, fires the Service Case automation by name', () => {
+    const contact = buildServiceCaseReceived('+60123', 'Wong', 'ASSR/2610-038');
+    expect(contact).toEqual({
+      phone: '+60123',
+      name: 'Wong',
+      automation: CONNECT_SERVICE_CASE_AUTOMATION,
+      attributes: { full_name: 'Wong', ref_1: 'ASSR/2610-038' },
+    });
+  });
+
+  it('the automation name matches the Connect flow, byte-for-byte', () => {
+    // Connect matches the automation BY NAME; a drift here silently stops the
+    // acknowledgement (empty `triggered`), so pin the exact string.
+    expect(CONNECT_SERVICE_CASE_AUTOMATION).toBe('Service Case Received');
+  });
+
+  it('carries no delivery conversation state (button-less template, no callback)', () => {
+    const contact = buildServiceCaseReceived('+60123', 'Wong', 'ASSR/2610-038');
+    expect(contact.attributes.callback_url).toBeUndefined();
+    expect(contact.attributes.button_status).toBeUndefined();
+    expect(contact.attributes.order_total).toBeUndefined();
+    expect(Object.keys(contact.attributes).sort()).toEqual(['full_name', 'ref_1']);
   });
 });
 

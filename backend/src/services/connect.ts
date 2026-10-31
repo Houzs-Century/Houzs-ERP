@@ -22,6 +22,12 @@
  *  Must equal the automation's name in chat.houzscentury.com exactly. */
 export const CONNECT_DELIVERY_AUTOMATION = 'New Delivery Follow-up';
 
+/** The Connect automation fired when a Service Case (ASSR) is created, matched
+ *  BY NAME — must equal the automation's name in chat.houzscentury.com exactly.
+ *  Its flow sends the button-less template hc_service_case_received (params
+ *  full_name + ref_1 = the case/ASSR number) acknowledging the request. */
+export const CONNECT_SERVICE_CASE_AUTOMATION = 'Service Case Received';
+
 export interface ConnectConfig {
   CONNECT_WEBHOOK_URL?: string;
   CONNECT_WEBHOOK_KEY?: string;
@@ -236,6 +242,24 @@ export function buildDeliveryFollowUp(
   }
   if (ctx.extra) Object.assign(attributes, ctx.extra);
   return { phone, name, automation: ctx.automation || CONNECT_DELIVERY_AUTOMATION, attributes };
+}
+
+/** Build the /api/webhooks/erp body for the one-off acknowledgement sent to the
+ *  customer when a Service Case (ASSR) is created. Unlike the delivery follow-up
+ *  this opens no Confirm / Amend conversation: the template is button-less, so
+ *  there is no callback_url and no conversation reset — just the customer name
+ *  and the case number (ref_1). */
+export function buildServiceCaseReceived(
+  phone: string,
+  name: string,
+  assrNo: string,
+): ConnectContact {
+  return {
+    phone,
+    name,
+    automation: CONNECT_SERVICE_CASE_AUTOMATION,
+    attributes: { full_name: name, ref_1: assrNo },
+  };
 }
 
 /** Connect's /api/webhooks/erp answer when it fired nothing for the named
