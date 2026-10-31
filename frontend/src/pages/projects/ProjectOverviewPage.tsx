@@ -146,7 +146,7 @@ export function ProjectOverviewPage() {
         {/* Venue, state and stage too (owner 2026-11-01: every filter the page can take). */}
         <select className={SELECT_CLS} value={venue} onChange={(e) => setView({ venue: e.target.value })} aria-label="Venue"><option value="">All venues</option>{options("venue").map((b) => <option key={b}>{b}</option>)}</select>
         <select className={SELECT_CLS} value={state} onChange={(e) => setView({ state: e.target.value })} aria-label="State"><option value="">All states</option>{options("state").map((b) => <option key={b}>{b}</option>)}</select>
-        <select className={SELECT_CLS} value={stage} onChange={(e) => setView({ stage: e.target.value })} aria-label="Stage"><option value="">All stages</option>{options("stage").map((b) => <option key={b}>{b}</option>)}</select>
+        <select className={SELECT_CLS} value={stage} onChange={(e) => setView({ stage: e.target.value })} aria-label="Stage"><option value="">All stages</option>{options("stage").map((b) => <option key={b} value={b}>{b.charAt(0).toUpperCase() + b.slice(1)}</option>)}</select>
         {q.loading && <span className="text-[11.5px] text-ink-muted">Loading…</span>}
       </div>
       {q.error && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load: {q.error}</div>}
