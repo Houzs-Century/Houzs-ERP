@@ -781,7 +781,7 @@ export function useCancelDpOrder() {
    never attached" from a clean success — a wiring failure must never look like a
    plain success (the #720 lesson the endpoint documents). A header-only schedule
    (no tripId) is valid: the number is minted, no stop is written. */
-export type ScheduleDpOrderVars = { id: string; lorryId: string; tripDate: string; tripId?: string };
+export type ScheduleDpOrderVars = { id: string; lorryId: string; tripDate: string; tripId?: string; driverId?: string };
 export type ScheduleDpOrderResult = {
   dpOrder: unknown;
   dp_no: string | null;
@@ -796,10 +796,10 @@ export type ScheduleDpOrderResult = {
 export function useScheduleDpOrder() {
   const qc = useQueryClient();
   return useMutation<ScheduleDpOrderResult, Error, ScheduleDpOrderVars>({
-    mutationFn: ({ id, lorryId, tripDate, tripId }) =>
+    mutationFn: ({ id, lorryId, tripDate, tripId, driverId }) =>
       authedFetch<ScheduleDpOrderResult>(`/dp-orders/${id}/schedule`, {
         method: 'POST',
-        body: JSON.stringify({ lorryId, tripDate, ...(tripId ? { tripId } : {}) }),
+        body: JSON.stringify({ lorryId, tripDate, ...(tripId ? { tripId } : {}), ...(driverId ? { driverId } : {}) }),
       }),
     onSuccess: () => {
       // Refresh the board AND the trips views — a new stop landed on a trip.

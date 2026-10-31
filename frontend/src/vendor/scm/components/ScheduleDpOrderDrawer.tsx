@@ -7,10 +7,12 @@
 // when a trip is given, appends the job as a trip stop) but had NO caller, so DP
 // jobs were stuck at "Pending Schedule" forever. This drawer is that caller.
 //
-// A lorry + trip date are REQUIRED (the plate + date mint the number). Attaching
-// to an existing trip is OPTIONAL — a header-only schedule (number, no stop) is
-// valid; the endpoint only writes a stop when a trip is given, and reports back
-// whether that stop actually attached (never a silent failure).
+// A lorry + trip date are REQUIRED (the plate + date mint the number); a driver
+// is optional (owner 2026-10-30: pick it here and Driver + Lorry fill in on the
+// board). The endpoint resolves the run — a named trip, else the lorry's run
+// that day, else a NEW one — so a scheduled DP always lands on a trip (its crew
+// cells are editable only once it rides one), and reports whether the stop
+// actually attached (never a silent failure).
 //
 // Mirrors NewDpOrderDrawer's chrome + the Suppliers CSS module. In-app
 // NotifyDialog only.
@@ -26,6 +28,7 @@ import {
   type PlanningOrder,
 } from '../lib/delivery-planning-queries';
 import { useLorries } from '../lib/lorries-queries';
+import { useDrivers } from '../lib/drivers-queries';
 import { useTrips } from '../lib/trips-queries';
 import { useNotify } from './NotifyDialog';
 import styles from '../../../pages/scm-v2/Suppliers.module.css';
@@ -51,9 +54,13 @@ export const ScheduleDpOrderDrawer = ({ dpRow, onClose }: { dpRow: ScheduleDpOrd
   const schedule = useScheduleDpOrder();
   const notify = useNotify();
   const { data: lorries = [] } = useLorries();
+  const { data: drivers = [] } = useDrivers();
 
   const id = dpIdOf(dpRow);
   const [lorryId, setLorryId] = useState('');
+  // Optional driver for the run (owner 2026-10-30) — set it here and Driver +
+  // Lorry fill in on the board; a run can also be crewed on the board later.
+  const [driverId, setDriverId] = useState('');
   // Prefill the date with the job's requested/effective date when it has one.
   const [tripDate, setTripDate] = useState(
     (dpRow.effective_delivery_date ?? dpRow.customer_delivery_date ?? '').slice(0, 10),
@@ -74,7 +81,7 @@ export const ScheduleDpOrderDrawer = ({ dpRow, onClose }: { dpRow: ScheduleDpOrd
   const submit = () => {
     if (!canSubmit) return;
     schedule.mutate(
-      { id, lorryId, tripDate, tripId: tripId || undefined },
+      { id, lorryId, tripDate, tripId: tripId || undefined, driverId: driverId || undefined },
       {
         onSuccess: (res) => {
           if (res?.tripStop?.failed) {
@@ -97,7 +104,7 @@ export const ScheduleDpOrderDrawer = ({ dpRow, onClose }: { dpRow: ScheduleDpOrd
             notify({
               title: 'Job scheduled',
               body: res?.dp_no
-                ? `${res.dp_no} is on the board${tripId ? ' and on its trip' : ' (no trip attached)'}.`
+                ? `${res.dp_no} is on the board and on its run${driverId ? ' with the driver assigned' : ''}.`
                 : 'The job is scheduled.',
             });
           }
@@ -129,7 +136,7 @@ export const ScheduleDpOrderDrawer = ({ dpRow, onClose }: { dpRow: ScheduleDpOrd
 
         <div className={styles.drawerBody}>
           <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-3)', color: 'var(--c-burnt)' }}>
-            {summary || 'DP Order'} — assign a lorry + date to mint its DP number
+            {summary || 'DP Order'} — assign a lorry, date (and optionally a driver) to mint its DP number
           </div>
 
           <label style={fieldRow}>
@@ -138,6 +145,17 @@ export const ScheduleDpOrderDrawer = ({ dpRow, onClose }: { dpRow: ScheduleDpOrd
               value={lorryId} onChange={(e) => { setLorryId(e.target.value); setTripId(''); }}>
               <option value="">Select a lorry…</option>
               {activeLorries.map((l) => <option key={l.id} value={l.id}>{l.plate}</option>)}
+            </select>
+          </label>
+
+          <label style={fieldRow}>
+            <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>
+              Driver <span style={hintStyle}>— optional</span>
+            </div>
+            <select className={styles.searchInput} style={inputStyle}
+              value={driverId} onChange={(e) => setDriverId(e.target.value)}>
+              <option value="">No driver yet</option>
+              {drivers.map((dv) => <option key={dv.id} value={dv.id}>{dv.name}</option>)}
             </select>
           </label>
 
@@ -158,14 +176,14 @@ export const ScheduleDpOrderDrawer = ({ dpRow, onClose }: { dpRow: ScheduleDpOrd
             </div>
             <select className={styles.searchInput} style={inputStyle}
               value={tripId} onChange={(e) => setTripId(e.target.value)} disabled={!lorryId || !tripDate}>
-              <option value="">No trip — schedule header only</option>
+              <option value="">Auto — reuse or create this lorry's run that day</option>
               {tripOptions.map((t) => (
                 <option key={t.id} value={t.id}>{t.trip_no}{t.trip_type ? ` · ${t.trip_type}` : ''}</option>
               ))}
             </select>
             {lorryId && tripDate && tripOptions.length === 0 && (
               <div className={styles.eyebrow} style={{ marginTop: 'var(--space-1)', ...hintStyle }}>
-                No planned trip for this lorry on this date — it will be scheduled without a trip.
+                No planned trip for this lorry on this date — a new run will be created for it.
               </div>
             )}
           </label>
