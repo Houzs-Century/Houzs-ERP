@@ -29,7 +29,7 @@ describe("StockHealthList", () => {
   it("a location clicked above narrows the list to its rows (owner 2026-11-01)", async () => {
     mount("KL WAREHOUSE");
     await waitFor(() => expect(document.querySelectorAll("tbody tr").length).toBe(60));
-    expect([...document.querySelectorAll("tbody tr")].every((tr) => tr.textContent?.includes("KL WAREHOUSE"))).toBe(true);
+    expect([...document.querySelectorAll("tbody tr")].every((tr) => tr.textContent.includes("KL WAREHOUSE"))).toBe(true);
   });
   it("the Excel sheet carries ringgit, not sen", () => {
     const sheet = stockHealthSheet([rows[0]!], [{ k: "value", label: "Value", value: (r) => r.valueSen, show: () => "" }]);
