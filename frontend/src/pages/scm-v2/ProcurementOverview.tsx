@@ -18,6 +18,8 @@ import { DashboardPeriodPicker, useDashboardPeriod, periodEnd } from "../../comp
 import { Columns, Donut, Tile, TONE, PALETTE } from "../../components/scm-v2/Charts";
 import { useUpdateCategoryLeadTime, type LeadCategory } from "../../vendor/scm/lib/mrp-queries";
 import { PoLineList, type LayerKey } from "./PoLineList";
+import { SupplierScorecard, supplierKey } from "./SupplierScorecard";
+import { api } from "../../api/client";
 import { StockHealthList } from "./StockHealthList";
 
 type PeriodLine = {
@@ -108,6 +110,16 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
     staleTime: 60_000,
   });
   const d = q.data;
+  /* Quality cases per 100 received, for the supplier score; Quality Overview's own figure for the same period. */
+  const quality = useQuery({
+    queryKey: ["quality-overview", period.from, period.to],
+    queryFn: () => api.get<{ suppliers: Array<{ name: string; receivedQty: number; ratePct: number | null }> }>(`/api/assr/quality-overview?from=${period.from}&to=${period.to}`),
+    staleTime: 60_000,
+  });
+  const qualityRate = useMemo(() => (quality.data ? new Map(quality.data.suppliers
+    .filter((x) => x.receivedQty >= 30 && x.ratePct != null && x.ratePct <= 100)
+    /* Quality may report a group of companies as one row ("Hookka Manufacturing + Hookka Industries + Ohana"): each takes the group's rate. */
+    .flatMap((x) => x.name.split(" + ").map((n) => [supplierKey(n), x.ratePct as number] as const))) : null), [quality.data]);
   /* Decision C (owner 2026-10-17): the system only suggests a lead time; it
      changes when someone presses Apply. */
   const applyLead = useUpdateCategoryLeadTime();
@@ -217,6 +229,11 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
               <PoLineList lines={outstanding} focusLabel={focus ? label(focus) : null} layer={layer} onLayer={setLayer} catLabel={catLabel} onClearFocus={() => setFocus(null)} />
             </Panel>
           </section>
+
+          <Panel title="Which supplier delays most" hint={`score, on time and what is late now, per supplier · ${when} · worst first · click a header to rank by it, a supplier for its overdue PO lines`}>
+            <SupplierScorecard groups={d.bySupplier} lines={d.lines} quality={qualityRate}
+              onPick={(sup) => { setBy("supplier"); setFocus(sup); setLayer("late"); document.getElementById("po-lines")?.scrollIntoView({ behavior: "smooth" }); }} />
+          </Panel>
 
           <Panel title="Lead time" hint={`goods received ${when}`}>
             <p className="mb-2 text-[12.5px] text-ink-secondary">
