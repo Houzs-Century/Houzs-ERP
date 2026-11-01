@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /* The last HOUZS items with more than one main supplier, decided by the owner
    (2026-10-31: "5152 red sofa / ricardo hookka / divan only hookka dont have
-   then nb"). The latest-PO rule (repair-main-supplier-latest-po.mjs) could not
+   then nb"; 2026-11-01: every CANVAS size on Hookka Industries). The latest-PO rule (repair-main-supplier-latest-po.mjs) could not
    decide these: no PO for them or their model, or a latest PO with a supplier
    not bound to the item.
 
@@ -30,6 +30,9 @@ const PICKS = [
   ['RICARDO-(SK)', /^HOOKKA INDUSTRIES\b/i],
   ['RICARDO-(SP)', /^HOOKKA INDUSTRIES\b/i],
   ['DIVAN ONLY', /^NB FURNITURE\b/i],
+  // Owner 2026-11-01 ("全部跟hookka industries啊"): every CANVAS size on Hookka
+  // Industries; the latest-PO rule had put (Q) on NB Furniture.
+  ...['K', 'Q', 'S', 'SK', 'SP', 'SS'].map((size) => [`CANVAS (A)-(${size})`, /^HOOKKA INDUSTRIES\b/i]),
 ];
 
 const sql = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
