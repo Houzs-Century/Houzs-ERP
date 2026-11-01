@@ -196,3 +196,65 @@ export function departureDeltaMin(plannedIso: string | null | undefined, actualI
 export function isDepartLate(deltaMin: number | null): boolean {
   return deltaMin != null && deltaMin > DEPART_LATE_MIN;
 }
+
+/* ── History (phase 3c) ─────────────────────────────────────────────────────
+   Past delivered drops (GET /trips/history), grouped by delivery day for the
+   History tab. The row shape mirrors the endpoint; the grouping + the day
+   summary (lorries / drops / POD% / total) are pure and tested. */
+export type HistoryRow = {
+  day: string;
+  soDocNo: string | null;
+  doNumber: string | null;
+  customer: string | null;
+  slot: string | null;
+  doneAt: string | null;
+  amountSen: number;
+  hasPod: boolean;
+  plate: string | null;
+  driver: string | null;
+};
+
+export type HistoryDay = {
+  day: string;
+  rows: HistoryRow[];
+  lorries: number;
+  drops: number;
+  withPod: number;
+  podPct: number | null;
+  totalSen: number;
+};
+
+/** Group delivered rows by day, latest day first, with a per-day summary. */
+export function groupHistoryByDay(rows: readonly HistoryRow[]): HistoryDay[] {
+  const byDay = new Map<string, HistoryRow[]>();
+  for (const r of rows) {
+    const arr = byDay.get(r.day);
+    if (arr) arr.push(r); else byDay.set(r.day, [r]);
+  }
+  const out: HistoryDay[] = [];
+  for (const [day, dayRows] of byDay) {
+    const plates = new Set(dayRows.map((r) => r.plate).filter((p): p is string => !!p));
+    const withPod = dayRows.filter((r) => r.hasPod).length;
+    const drops = dayRows.length;
+    out.push({
+      day, rows: dayRows, lorries: plates.size, drops, withPod,
+      podPct: drops > 0 ? Math.round((withPod / drops) * 100) : null,
+      totalSen: dayRows.reduce((n, r) => n + r.amountSen, 0),
+    });
+  }
+  out.sort((a, b) => b.day.localeCompare(a.day));
+  return out;
+}
+
+/** A YYYY-MM-DD shifted by whole days (UTC calendar — dates only). */
+export function addDays(day: string, delta: number): string {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + delta);
+  return d.toISOString().slice(0, 10);
+}
+
+/** The {from,to} for an "N days ending yesterday" history preset. */
+export function historyPreset(days: number, todayIso: string): { from: string; to: string } {
+  const to = addDays(todayIso, -1);
+  return { from: addDays(to, -(Math.max(1, days) - 1)), to };
+}
