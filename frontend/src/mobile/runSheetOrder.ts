@@ -35,11 +35,11 @@ export function timeSlotStartMin(timeRange: string | null | undefined): number |
   if (!timeRange) return null;
   // First clock token: hour, optional ":mm", optional am/pm (any spacing/case).
   const m = timeRange.match(/(\d{1,2})(?::(\d{2}))?\s*([ap]\.?m\.?)?/i);
-  if (!m || m[1] === undefined) return null;
+  if (!m) return null;
   let hh = Number(m[1]);
   const mm = m[2] ? Number(m[2]) : 0;
   if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
-  const ap = m[3]?.toLowerCase().replace(/\./g, "");
+  const ap = m[3] ? m[3].toLowerCase().replace(/\./g, "") : "";
   if (ap === "am") {
     if (hh === 12) hh = 0; // 12AM = midnight
   } else if (ap === "pm") {
