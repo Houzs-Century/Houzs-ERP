@@ -126,6 +126,7 @@ import { deliveryPlanning } from "./routes/delivery-planning";
 import { deliveryJobProgress } from "./routes/delivery-job-progress";
 import { deliveryPlanningRegions } from "./routes/delivery-planning-regions";
 import { deliveryPlanningRowMarks } from "./routes/delivery-planning-row-marks";
+import { deliveryRemarks } from "./routes/delivery-remarks";
 import { deliveryPlanningRowOrder } from "./routes/delivery-planning-row-order";
 import { deliveryResidenceRules } from "./routes/delivery-residence-rules";
 import { threeplCompanies } from "./routes/threepl-companies";
@@ -881,6 +882,10 @@ scm.use("/delivery-planning-regions/*", scmAreaGuard("scm.transportation.drivers
 scm.route("/delivery-planning-regions", deliveryPlanningRegions);
 scm.use("/delivery-planning-row-marks/*", scmAreaGuard("scm.transportation.drivers", { openRead: true }));
 scm.route("/delivery-planning-row-marks", deliveryPlanningRowMarks);
+// Last Mile order-drawer remarks thread (phase 3). Same board area gate: anyone
+// who can view the board reads; writing a note needs transportation edit.
+scm.use("/delivery-remarks/*", scmAreaGuard("scm.transportation.drivers", { openRead: true }));
+scm.route("/delivery-remarks", deliveryRemarks);
 scm.use("/delivery-planning-row-order/*", scmAreaGuard("scm.transportation.drivers", { openRead: true }));
 scm.route("/delivery-planning-row-order", deliveryPlanningRowOrder);
 // Residence delivery rules (mig 0195) — per-building-type service duration +

@@ -54,6 +54,7 @@ import { CrewModal } from './fleet-day/CrewModal';
 import { ToArrangeTab } from './fleet-day/ToArrange';
 import { AllOrdersTab, type AllOrderRow } from './fleet-day/AllOrders';
 import { HistoryTab } from './fleet-day/History';
+import { useRemarkFlags } from '../../vendor/scm/lib/delivery-remarks-queries';
 
 type Tab = 'lorries' | 'arrange' | 'all' | 'history';
 
@@ -101,6 +102,8 @@ export function FleetDay() {
   const leave = useDriverLeave();
   const staff = useStaffLookup();
   const progressMap = useJobProgressMap(true);
+  const remarkFlags = useRemarkFlags();
+  const remarkKeys = useMemo(() => new Set((remarkFlags.data ?? []).map((f) => f.soDocNo)), [remarkFlags.data]);
 
   // ── Derivation ─────────────────────────────────────────────────────────
   const clock = useMemo(() => ({ day: date, ...mytClock(new Date()) }), [date]);
@@ -233,6 +236,7 @@ export function FleetDay() {
                 searchActive={filters.query.trim().length >= 2}
                 focused={focusedId === r.trip.id}
                 selectedKey={selected?.key ?? null}
+                remarkKeys={remarkKeys}
                 onFocus={() => toggleFocus(r.trip.id)}
                 onOpenDoc={(d) => setSelected(d)}
                 onCrew={() => setCrewRun(r)}

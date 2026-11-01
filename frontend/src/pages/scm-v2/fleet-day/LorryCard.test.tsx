@@ -41,6 +41,7 @@ describe('LorryCard', () => {
         searchActive={false}
         focused={false}
         selectedKey={null}
+        remarkKeys={new Set()}
         onFocus={() => {}}
         onOpenDoc={() => {}}
         onCrew={() => {}}

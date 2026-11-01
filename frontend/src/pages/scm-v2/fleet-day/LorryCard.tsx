@@ -38,7 +38,7 @@ function CardBtn({ icon, label, onClick }: { icon: React.ReactNode; label: strin
   );
 }
 
-function UndeliveredRow({ d, color, selected, onOpen }: { d: DocRowVM; color: string; selected: boolean; onOpen: () => void }) {
+function UndeliveredRow({ d, color, selected, hasRemark, onOpen }: { d: DocRowVM; color: string; selected: boolean; hasRemark: boolean; onOpen: () => void }) {
   const meta = STATUS_META[d.status];
   return (
     <button
@@ -57,6 +57,7 @@ function UndeliveredRow({ d, color, selected, onOpen }: { d: DocRowVM; color: st
         <span className="flex items-center gap-1.5">
           <span className="truncate text-[13px] font-semibold text-ink">{d.customer || '—'}</span>
           {d.late && <span className="shrink-0 rounded-full bg-err-bg px-1.5 py-0.5 text-[9px] font-bold text-err" title={d.lateReason ?? undefined}>LATE</span>}
+          {hasRemark && <span className="shrink-0 rounded-full bg-accent-soft px-1.5 py-0.5 text-[9px] font-bold text-accent-ink" title="Has dispatch / CS remarks">REMARK</span>}
         </span>
         <span className="block truncate font-mono text-[11px] text-ink-muted">
           {[d.soDocNo, d.doNumber, d.ref].filter(Boolean).join(' · ')}
@@ -100,7 +101,7 @@ function DeliveredRow({ d, selected, onOpen }: { d: DocRowVM; selected: boolean;
 /** One lorry run as a card. `run` carries the full rollup (header); `visibleDocs`
  *  are the filter-row-narrowed drops the list shows. */
 export function LorryCard({
-  run, visibleDocs, filtersActive, searchActive, focused, selectedKey,
+  run, visibleDocs, filtersActive, searchActive, focused, selectedKey, remarkKeys,
   onFocus, onOpenDoc, onCrew, onRunSheet, onQr,
 }: {
   run: LorryRunVM;
@@ -109,6 +110,8 @@ export function LorryCard({
   searchActive: boolean;
   focused: boolean;
   selectedKey: string | null;
+  /** so_doc_no set of orders that carry >=1 remark — drives the REMARK pill. */
+  remarkKeys: Set<string>;
   onFocus: () => void;
   onOpenDoc: (d: DocRowVM) => void;
   onCrew: () => void;
@@ -200,7 +203,7 @@ export function LorryCard({
       ) : (
         <>
           {undelivered.map((d) => (
-            <UndeliveredRow key={d.key} d={d} color={run.color} selected={selectedKey === d.key} onOpen={() => onOpenDoc(d)} />
+            <UndeliveredRow key={d.key} d={d} color={run.color} selected={selectedKey === d.key} hasRemark={remarkKeys.has(d.soDocNo)} onOpen={() => onOpenDoc(d)} />
           ))}
           {delivered.length > 0 && (
             <>
