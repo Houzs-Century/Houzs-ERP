@@ -1339,16 +1339,12 @@ app.get("/search-so", requireServiceCaseAccess(), async (c) => {
         .all()
     : { results: [] as Array<Record<string, unknown>> };
 
-  // (2) SCM-native SOs. assrCompanySql pins rank-and-file SALES to HOUZS
-  // (inlining the validated int id, or "" when unresolved -> degrades to all
-  // rows, same as legacy single-company); office/backend/directors get their
-  // allowed set. This is the fix that stops 2990 orders leaking into the
-  // service-case SO picker for a both-company SALES user.
+  // (2) SCM-native SOs. assrCompanySql pins rank-and-file SALES to HOUZS (inlining the validated int id, or ""
+  // when unresolved -> degrades to all rows); office/backend/directors get their allowed set. This is the fix
+  // that stops 2990 orders leaking into the service-case SO picker for a both-company SALES user.
   const coFilter = assrCompanySql(c, "so.company_id");
-  // Migrated/写回 orders keep their AutoCount number in linked_ac_docno (doc_no is the ERP one); customers quote it.
-  // customer_so_no is the customer's own reference and is what the whole app shows as "Ref No." whenever ref is
-  // empty (customerRefOf: ref || customer_so_no). 787 of 3,920 live SOs carry ONLY customer_so_no, so searching the
-  // Ref No. the operator sees must match it too, or those orders answer "No matching sales orders" (owner 2026-11-01).
+  // linked_ac_docno holds the migrated AutoCount number; customer_so_no holds the customer's own reference and is
+  // what the app shows as "Ref No." when ref is empty. Search both, else those SOs answer "No match" (787 live, #5101).
   const scmRows = await c.env.DB.prepare(
     `SELECT so.doc_no, so.ref, so.debtor_name, so.phone,
             so.so_date AS doc_date, so.agent AS sales_agent, co.code AS company_code
