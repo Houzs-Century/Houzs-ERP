@@ -65,6 +65,36 @@ describe('docRowVM — field mapping + late', () => {
     expect(d.late).toBe(false);
     expect(d.deliveredAt).toBe('2026-11-01T03:20:00Z');
   });
+  test('an SO delivery carries no job tag; its code line is SO · DO · Ref', () => {
+    const d = docRowVM(order(), 'scheduled', CLOCK);
+    expect(d.rowType).toBe('so');
+    expect(d.jobLabel).toBeNull();
+    expect(d.codeLine).toBe('HC-SO-000123 · HC-DO-9 · pg0791');
+  });
+  test('a DP job tags its type and shows its own DP number', () => {
+    const d = docRowVM(order({
+      row_type: 'dp', so_doc_no: 'DP:42', dp_job_type: 'TRANSFER', dp_no: 'DP-261102-VRH02',
+      debtor_name: 'KL → Penang', local_total_sen: 0, delivered_qty: 0, remaining_qty: 0,
+      delivery_orders: [], so_ref: null,
+    }), 'scheduled', CLOCK);
+    expect(d.rowType).toBe('dp');
+    expect(d.jobLabel).toBe('Transfer item');
+    expect(d.codeLine).toBe('DP-261102-VRH02');
+  });
+  test('an ASSR service leg and a PMS project window each tag their job + show its document', () => {
+    const assr = docRowVM(order({
+      row_type: 'assr', so_doc_no: 'ASSR/2610-031#delivery', assr_id: 1594, job_kind: 'delivery',
+      ref: 'ASSR/2610-031', delivery_orders: [], so_ref: null,
+    }), 'scheduled', CLOCK);
+    expect(assr.jobLabel).toBe('Service / delivery back');
+    expect(assr.codeLine).toBe('ASSR/2610-031');
+    const prj = docRowVM(order({
+      row_type: 'project', so_doc_no: 'PRJ:7#DISMANTLE', dp_job_type: 'DISMANTLE',
+      ref: '2026-10-HOMEDEC-AKEMI', delivery_orders: [], so_ref: null,
+    }), 'scheduled', CLOCK);
+    expect(prj.jobLabel).toBe('Dismantle');
+    expect(prj.codeLine).toBe('2026-10-HOMEDEC-AKEMI');
+  });
 });
 
 describe('buildRuns — grouping + driver join + sort', () => {
@@ -118,6 +148,25 @@ describe('buildLorryCards — pin in-house, outsourced only when working', () =>
   test('an outsourced lorry with no work today does not appear', () => {
     const cards = buildLorryCards([], [], lorries, drivers, () => '#000');
     expect(cards.map((c) => c.plate)).toEqual(['VQE9058', 'VRH9058']);
+  });
+  test('non-SO jobs ride their lorry too — a DP job on the trip, an ASSR leg by its crew plate', () => {
+    const docs: DocRowVM[] = [
+      // a TRANSFER on VQE's trip (dp rows carry trip_id) groups via the trip
+      docRowVM(order({
+        row_type: 'dp', so_doc_no: 'DP:42', dp_job_type: 'TRANSFER', dp_no: 'DP-261102-VQE01',
+        trip_id: 't1', trip_stop_no: null, delivery_orders: [], local_total_sen: 0,
+      }), 'scheduled', CLOCK),
+      // an ASSR service leg on VRH by its echoed crew plate, no trip of its own
+      docRowVM(order({
+        row_type: 'assr', so_doc_no: 'ASSR/1#delivery', assr_id: 1, job_kind: 'delivery',
+        ref: 'ASSR/1', trip_id: null, trip_stop_no: null, delivery_orders: [], local_total_sen: 0,
+        crew: { lorry_plate: 'VRH 9058' } as PlanningOrder['crew'],
+      }), 'scheduled', CLOCK),
+    ];
+    const cards = buildLorryCards([trip()], docs, lorries, drivers, () => '#000');
+    const byPlate = Object.fromEntries(cards.map((c) => [c.plate, c] as const));
+    expect(byPlate.VQE9058!.docs.map((d) => d.jobLabel)).toEqual(['Transfer item']);
+    expect(byPlate.VRH9058!.docs.map((d) => d.jobLabel)).toEqual(['Service / delivery back']);
   });
 });
 

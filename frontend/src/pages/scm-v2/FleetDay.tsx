@@ -27,7 +27,7 @@ import {
   pinsFromGeoPoints, geoTotals, zoneSummary, stagedRoutesFromRows, type MapFocus, type MapLatLng,
 } from '../../vendor/scm/lib/delivery-map-model';
 import { useDeliveryPlanning, type PlanningOrder } from '../../vendor/scm/lib/delivery-planning-queries';
-import { lastMileSideOf, lastMileListSideOf, isAssignedNoTripRow, isEastMalaysiaOrSingaporeStop } from '../../vendor/scm/lib/last-mile';
+import { lastMileSideOf, lastMileListSideOf, isAssignedNoTripRow, isLastMileJobRow, isEastMalaysiaOrSingaporeStop } from '../../vendor/scm/lib/last-mile';
 import { regionTabsFrom } from '../../vendor/scm/components/DeliveryPlanningBoard';
 import { useDrivers } from '../../vendor/scm/lib/drivers-queries';
 import { useHelpers } from '../../vendor/scm/lib/helpers-queries';
@@ -116,7 +116,12 @@ export function FleetDay() {
     () => boardOrders.filter((o) => isAssignedNoTripRow(o, date)),
     [boardOrders, date],
   );
-  const lorryRows = useMemo(() => [...dayRows, ...assignedRows], [dayRows, assignedRows]);
+  // The lorry's NON-SO jobs of the day — ASSR service legs and the DP / PMS
+  // setup / dismantle / supplier-pickup / transfer / service work the same run
+  // carries (owner 2026-11-02). They ride the shared feed with the lorry already
+  // on them; buildLorryCards groups them under their lorry just like an SO drop.
+  const jobRows = useMemo(() => boardOrders.filter((o) => isLastMileJobRow(o, date)), [boardOrders, date]);
+  const lorryRows = useMemo(() => [...dayRows, ...assignedRows, ...jobRows], [dayRows, assignedRows, jobRows]);
   const statusByRef = useMemo(() => stopStatusByRef(
     lorryRows,
     (o) => { const j = jobRefOf(o); return j ? progressMap.get(jobKey(j)) ?? null : null; },

@@ -10,6 +10,7 @@ import type { FleetDayTrip } from '../../../vendor/scm/lib/fleet-day-queries';
 import type { DriverRow } from '../../../vendor/scm/lib/drivers-queries';
 import type { StopStatus } from '../../../vendor/scm/lib/delivery-stop-status';
 import { windowEndMinutes } from '../../../vendor/scm/lib/delivery-stop-status';
+import { jobRefOf, LEG_LABEL } from '../../../vendor/scm/lib/delivery-job';
 import {
   slotKindOf, slotLabelOf, runStatusOf, rollupRun, isLate, lateReason,
   type RunStatus, type SlotKind, type RunRollup,
@@ -68,6 +69,15 @@ export type DocRowVM = {
   /** The board-row key the grid/selection uses (so:<docNo>). */
   key: string;
   order: PlanningOrder;
+  /** The feed row type — SO deliveries vs the non-SO jobs (assr / dp / project)
+   *  the same lorry also runs. Drives the job tag + which identity line to show. */
+  rowType: PlanningOrder['row_type'];
+  /** The job-type tag for a NON-SO job ("Setup" / "Dismantle" / "Transfer item" /
+   *  "Supplier pickup" / "Service"…); null for an SO delivery, which needs no tag. */
+  jobLabel: string | null;
+  /** The identity line the card shows: SO · DO · Ref for a delivery, the job's own
+   *  document (DP / ASSR / project code) for a non-SO job. */
+  codeLine: string;
   soDocNo: string;
   doNumber: string | null;
   ref: string | null;
@@ -141,11 +151,25 @@ export function docRowVM(o: PlanningOrder, status: StopStatus, clock: DayClock):
     const s = d.status.toUpperCase();
     return s !== 'DRAFT' && s !== 'CANCELLED';
   });
+  const doNumber = live.length > 0 ? live[live.length - 1]!.do_number : null;
+  // A non-SO job (assr / dp / project): its tag comes from the shared leg vocabulary
+  // (LEG_LABEL — the same one the mobile run-sheet and job panel use) and its
+  // identity line is the job's own document (dp_no for a DP job, else the row's ref
+  // = the ASSR no. / project code). An SO delivery keeps its SO · DO · Ref line.
+  const jr = jobRefOf(o);
+  const jobLabel = jr ? (LEG_LABEL[jr.leg] ?? jr.leg) : null;
+  const jobDoc = jr ? (jr.sourceType === 'dp' ? o.dp_no ?? null : o.ref ?? null) : null;
+  const codeLine = jr
+    ? (jobDoc ?? '')
+    : [o.so_doc_no, doNumber, o.so_ref].filter(Boolean).join(' · ');
   return {
     key: `so:${o.so_doc_no}`,
     order: o,
+    rowType: o.row_type,
+    jobLabel,
+    codeLine,
     soDocNo: o.so_doc_no,
-    doNumber: live.length > 0 ? live[live.length - 1]!.do_number : null,
+    doNumber,
     ref: o.so_ref ?? null,
     customer: o.debtor_name ?? '',
     phone: o.phone ?? null,
@@ -325,7 +349,9 @@ export function searchMatch(d: DocRowVM, query: string): boolean {
   const digits = q.replace(/\D/g, '');
   const phoneDigits = (d.phone ?? '').replace(/\D/g, '');
   if (digits.length >= 3 && phoneDigits.includes(digits)) return true;
-  return [d.customer, d.soDocNo, d.doNumber, d.ref].some(
+  // codeLine carries a non-SO job's own document (DP / ASSR / project code), so a
+  // transfer or service leg is searchable by its number too, not only an SO.
+  return [d.customer, d.soDocNo, d.doNumber, d.ref, d.codeLine].some(
     (v) => (v ?? '').toLowerCase().includes(q),
   );
 }

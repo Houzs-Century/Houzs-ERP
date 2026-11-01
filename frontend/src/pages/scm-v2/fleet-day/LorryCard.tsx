@@ -26,6 +26,15 @@ function SlotTag({ label }: { label: string }) {
   return <span className="rounded bg-surface-dim px-1.5 py-0.5 text-[10px] font-bold text-ink-secondary">{label}</span>;
 }
 
+/** The job-type tag on a NON-SO drop (Setup / Dismantle / Transfer item / Supplier
+ *  pickup / Service…). A plain SO delivery carries no tag — it is the board's bulk
+ *  and reads as a delivery already; the tag is what makes the other job types
+ *  stand out on their lorry's card. */
+function JobTag({ label }: { label: string | null }) {
+  if (!label) return null;
+  return <span className="shrink-0 rounded bg-[#e6eaf4] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-brand text-learning">{label}</span>;
+}
+
 function CardBtn({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
   return (
     <button
@@ -55,17 +64,16 @@ function UndeliveredRow({ d, color, selected, hasRemark, onOpen }: { d: DocRowVM
       </span>
       <span className="min-w-0">
         <span className="flex items-center gap-1.5">
+          <JobTag label={d.jobLabel} />
           <span className="truncate text-[13px] font-semibold text-ink">{d.customer || '—'}</span>
           {d.late && <span className="shrink-0 rounded-full bg-err-bg px-1.5 py-0.5 text-[9px] font-bold text-err" title={d.lateReason ?? undefined}>LATE</span>}
           {hasRemark && <span className="shrink-0 rounded-full bg-accent-soft px-1.5 py-0.5 text-[9px] font-bold text-accent-ink" title="Has dispatch / CS remarks">REMARK</span>}
         </span>
-        <span className="block truncate font-mono text-[11px] text-ink-muted">
-          {[d.soDocNo, d.doNumber, d.ref].filter(Boolean).join(' · ')}
-        </span>
+        {d.codeLine && <span className="block truncate font-mono text-[11px] text-ink-muted">{d.codeLine}</span>}
         {d.address && <span className="block truncate text-[12px] text-ink-secondary">{d.address}</span>}
       </span>
       <span className="flex flex-col items-end gap-1">
-        <span className="font-mono text-[13px] font-semibold tabular-nums text-ink">{fmtSen(d.amountSen)}</span>
+        {d.rowType === 'so' && <span className="font-mono text-[13px] font-semibold tabular-nums text-ink">{fmtSen(d.amountSen)}</span>}
         <span className="flex items-center gap-1.5">
           <SlotTag label={d.slotLabel} />
           <span className="flex items-center gap-1 text-[11px] font-semibold">
@@ -86,11 +94,14 @@ function DeliveredRow({ d, selected, onOpen }: { d: DocRowVM; selected: boolean;
       className={cn('grid w-full grid-cols-[1fr_auto] items-center gap-3 border-t border-border-subtle px-4 py-2 text-left hover:bg-surface-2', selected && 'bg-primary-soft')}
     >
       <span className="min-w-0">
-        <span className="truncate text-[12.5px] font-semibold text-ink">{d.customer || '—'}</span>
-        <span className="block truncate font-mono text-[11px] text-ink-muted">{[d.soDocNo, d.doNumber, d.ref].filter(Boolean).join(' · ')}</span>
+        <span className="flex items-center gap-1.5">
+          <JobTag label={d.jobLabel} />
+          <span className="truncate text-[12.5px] font-semibold text-ink">{d.customer || '—'}</span>
+        </span>
+        {d.codeLine && <span className="block truncate font-mono text-[11px] text-ink-muted">{d.codeLine}</span>}
       </span>
       <span className="flex items-center gap-2">
-        <span className="font-mono text-[12.5px] tabular-nums text-ink-secondary">{fmtSen(d.amountSen)}</span>
+        {d.rowType === 'so' && <span className="font-mono text-[12.5px] tabular-nums text-ink-secondary">{fmtSen(d.amountSen)}</span>}
         {d.deliveredAt && <span className="text-[11px] text-synced">Done {clockMY(d.deliveredAt)}</span>}
         {d.hasPod && <Camera size={14} strokeWidth={1.75} className="text-ink-muted" aria-label="POD photo" />}
       </span>
