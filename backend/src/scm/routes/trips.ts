@@ -634,8 +634,9 @@ trips.get('/history', async (c) => {
   const ids = dos.map((d) => String(d.id));
   const crewByDo = new Map<string, { plate: string | null; driver: string | null }>();
   if (ids.length) {
-    const { data: crew } = await chunkIn<Record<string, unknown>>(ids, (batch) =>
+    const { data: crew, error: crewErr } = await chunkIn<Record<string, unknown>>(ids, (batch) =>
       sb.from('delivery_order_crew').select('do_id, lorry_plate, driver_1_name').in('do_id', batch));
+    if (crewErr) return c.json({ error: 'load_failed', reason: crewErr.message }, 500);
     for (const cr of crew) {
       crewByDo.set(String(cr.do_id), { plate: (cr.lorry_plate as string | null) ?? null, driver: (cr.driver_1_name as string | null) ?? null });
     }
