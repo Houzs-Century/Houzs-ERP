@@ -14,7 +14,10 @@
 export interface RunStopOrder {
   /** 1-based place in the lorry run, set by Time Arrangement. Null = not on a run. */
   trip_stop_no?: number | null;
-  /** Delivery window, e.g. "13:30–15:30" (hyphen or en-dash). Null = no slot. */
+  /**
+   * Delivery window as the free text the office types on the DO, e.g.
+   * "TIME AROUND 1:30PM TO 3:30PM", "TIME AROUND 11AM TO 1PM". Null = no slot.
+   */
   time_range?: string | null;
   so_doc_no?: string | null;
 }
@@ -22,18 +25,27 @@ export interface RunStopOrder {
 const BIG = Number.MAX_SAFE_INTEGER;
 
 /**
- * Minutes-since-midnight of a delivery window's START ("13:30–15:30" → 810).
- * Tolerates a hyphen or en-dash separator and a single-time window; null when
- * the slot is absent or unparseable (those sort last).
+ * Minutes-since-midnight of a delivery window's START, read from the office's
+ * free-text time_range ("TIME AROUND 1:30PM TO 3:30PM" → 810, "...11AM TO 1PM"
+ * → 660). It takes the FIRST clock time in the string, understands 12-hour
+ * am/pm with optional minutes, and also accepts a bare 24-hour "13:30". Null
+ * when no time can be read (those stops sort last).
  */
 export function timeSlotStartMin(timeRange: string | null | undefined): number | null {
   if (!timeRange) return null;
-  const start = timeRange.split(/[–-]/)[0]?.trim();
-  if (!start) return null;
-  const [h, m] = start.split(":");
-  const hh = Number(h);
-  const mm = Number(m);
+  // First clock token: hour, optional ":mm", optional am/pm (any spacing/case).
+  const m = timeRange.match(/(\d{1,2})(?::(\d{2}))?\s*([ap]\.?m\.?)?/i);
+  if (!m || m[1] === undefined) return null;
+  let hh = Number(m[1]);
+  const mm = m[2] ? Number(m[2]) : 0;
   if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+  const ap = m[3]?.toLowerCase().replace(/\./g, "");
+  if (ap === "am") {
+    if (hh === 12) hh = 0; // 12AM = midnight
+  } else if (ap === "pm") {
+    if (hh !== 12) hh += 12; // 12PM = noon stays 12
+  }
+  if (hh > 23 || mm > 59) return null;
   return hh * 60 + mm;
 }
 
