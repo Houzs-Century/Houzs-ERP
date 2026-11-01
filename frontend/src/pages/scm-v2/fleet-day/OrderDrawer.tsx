@@ -1,10 +1,66 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { X, Phone, Truck } from 'lucide-react';
 import { ResizableDetailDrawer } from '../../../components/ResizableDetailDrawer';
+import { Button } from '../../../components/Button';
 import { authedFetch } from '../../../vendor/scm/lib/authed-fetch';
-import { fmtSen } from '../../../vendor/shared/format';
+import { fmtSen, fmtDateTime } from '../../../vendor/shared/format';
+import { useNotify } from '../../../vendor/scm/components/NotifyDialog';
+import { useDeliveryRemarks, useAddRemark } from '../../../vendor/scm/lib/delivery-remarks-queries';
 import { DoProofOfDeliveryCard, type DoPodFields } from '../DoProofOfDeliveryCard';
 import type { LorryRunVM, DocRowVM } from './vm';
+
+/** Dispatch / customer-service remarks thread for one order (phase 3). */
+function RemarksSection({ soDocNo }: { soDocNo: string }) {
+  const remarks = useDeliveryRemarks(soDocNo);
+  const addRemark = useAddRemark();
+  const notify = useNotify();
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+  const list = remarks.data ?? [];
+
+  const submit = async () => {
+    const body = draft.trim();
+    if (!body) return;
+    setBusy(true);
+    try {
+      await addRemark.mutateAsync({ soDocNo, body });
+      setDraft('');
+    } catch (e) {
+      void notify({ title: 'Could not add remark', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="rounded-lg border border-border bg-surface p-3">
+      <div className="mb-2 font-mono text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Remarks</div>
+      {remarks.isLoading
+        ? <div className="text-[12px] text-ink-muted">Loading…</div>
+        : list.length === 0 && <div className="text-[12px] text-ink-muted">No remarks yet.</div>}
+      <div className="space-y-2">
+        {list.map((r) => (
+          <div key={r.id} className="rounded-md border border-accent/20 bg-accent-soft/50 px-2.5 py-1.5">
+            <div className="whitespace-pre-wrap text-[12.5px] text-ink">{r.body}</div>
+            <div className="mt-0.5 text-[10.5px] text-ink-muted">{r.authorName ?? 'Unknown'} · {fmtDateTime(r.createdAt)}</div>
+          </div>
+        ))}
+      </div>
+      <textarea
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        placeholder="Add a remark for dispatch / customer service…"
+        rows={2}
+        className="mt-2 w-full resize-none rounded-md border border-border bg-surface px-2 py-1.5 text-[12.5px] text-ink outline-none focus:border-primary"
+      />
+      <div className="mt-1.5 flex justify-end">
+        <Button variant="primary" onClick={() => void submit()} disabled={busy || !draft.trim()}>
+          {busy ? 'Adding…' : 'Add remark'}
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 const STATUS_PILL: Record<string, { label: string; cls: string }> = {
   done: { label: 'Delivered', cls: 'bg-synced-bg text-synced' },
@@ -117,10 +173,8 @@ export function OrderDrawer({
               <Field label="Load" value={`${doc.units} unit${doc.units === 1 ? '' : 's'}`} />
             </div>
 
-            {/* remarks — phase 3 */}
-            <div className="rounded-lg border border-dashed border-border bg-surface-2 p-3 text-[12px] text-ink-muted">
-              Dispatch &amp; customer-service remarks arrive with the remarks update.
-            </div>
+            {/* remarks thread (phase 3) */}
+            <RemarksSection soDocNo={doc.soDocNo} />
 
             {/* POD + timeline */}
             {doc.latestLiveDoId ? (
