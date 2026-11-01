@@ -46,6 +46,11 @@ export type FleetDayTrip = {
   status: string;
   is_outsourced: boolean;
   total_distance_km: number | null;
+  /** Planned departure (mig 20261101T0900) vs the actual clock-in / clock-out
+   *  departure (mig 0053). ISO; null until set. */
+  planned_depart_at: string | null;
+  clock_in_at: string | null;
+  clock_out_at: string | null;
   lorry: { id: string; plate: string } | null;
   driver: { id: string; name: string } | null;
   helpers: Array<{ id: string; name: string }>;

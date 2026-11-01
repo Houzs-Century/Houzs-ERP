@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   docRowVM, buildRuns, applyFilters, searchMatch, latestLiveDoId,
-  EMPTY_FILTERS, filtersActive, type DocRowVM, type DayClock,
+  EMPTY_FILTERS, filtersActive, isoToMytTime, mytTimeToIso, type DocRowVM, type DayClock,
 } from './vm';
 import type { PlanningOrder } from '../../../vendor/scm/lib/delivery-planning-queries';
 import type { FleetDayTrip } from '../../../vendor/scm/lib/fleet-day-queries';
@@ -116,5 +116,18 @@ describe('applyFilters + searchMatch', () => {
   test('filtersActive flags any non-default', () => {
     expect(filtersActive(EMPTY_FILTERS)).toBe(false);
     expect(filtersActive({ ...EMPTY_FILTERS, lateOnly: true })).toBe(true);
+  });
+});
+
+describe('isoToMytTime / mytTimeToIso', () => {
+  test('round-trips a Malaysian clock through the board day', () => {
+    const iso = mytTimeToIso('2026-11-01', '08:30');
+    expect(iso).toBe('2026-11-01T08:30:00+08:00');
+    expect(isoToMytTime(iso)).toBe('08:30');
+  });
+  test('blank clears; absent reads empty', () => {
+    expect(mytTimeToIso('2026-11-01', '')).toBeNull();
+    expect(isoToMytTime(null)).toBe('');
+    expect(isoToMytTime('nope')).toBe('');
   });
 });
