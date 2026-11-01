@@ -119,6 +119,8 @@ export function useUpdateTrip() {
       tripDate?: string | null;
       warehouseId?: string | null;
       notes?: string | null;
+      /** Planned departure (ISO); the Last Mile crew modal sets it. */
+      plannedDepartAt?: string | null;
     }) =>
       authedFetch<{ trip: TripRow }>(`/trips/${id}`, {
         method: 'PATCH', body: JSON.stringify(body),

@@ -32,9 +32,26 @@ export function clockMY(iso: string | null | undefined): string | null {
   return `${h}:${String(m).padStart(2, '0')} ${ap}`;
 }
 
+/** "HH:MM" (Malaysian clock) for an ISO instant — for a <input type="time">.
+ *  "" when absent/unparseable. */
+export function isoToMytTime(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return '';
+  const d = new Date(t + 8 * 3600_000);
+  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+}
+
+/** Combine the board day (YYYY-MM-DD) + a "HH:MM" into an ISO instant at
+ *  Malaysian time (UTC+8). "" time clears the stamp (null). */
+export function mytTimeToIso(day: string, time: string): string | null {
+  if (!time) return null;
+  return `${day}T${time}:00+08:00`;
+}
+
 /** The earliest moment any drop on a run went "on the way" (the DO departure
- *  stamp) — the run's actual departure until a planned-departure column exists
- *  (phase 2). null when nothing has departed. */
+ *  stamp) — the actual-departure fallback when the trip has no clock-in yet.
+ *  null when nothing has departed. */
 export function actualDepartOf(docs: ReadonlyArray<{ order: PlanningOrder }>): string | null {
   let best: number | null = null;
   for (const d of docs) {

@@ -177,3 +177,22 @@ export function progressPct(delivered: number, drops: number): number {
   if (drops <= 0) return 0;
   return Math.max(0, Math.min(100, Math.round((delivered / drops) * 100)));
 }
+
+/* ── Departure delay (phase 2) ─────────────────────────────────────────────
+   Planned departure (trips.planned_depart_at) vs actual (clock_in_at, falling
+   back to the first drop's on-the-way stamp). A run that left more than 15 min
+   after its planned time is flagged red (owner 2026-11-01). Both ISO; the delta
+   is whole minutes, positive = late; null when either side is missing. */
+export const DEPART_LATE_MIN = 15;
+
+export function departureDeltaMin(plannedIso: string | null | undefined, actualIso: string | null | undefined): number | null {
+  if (!plannedIso || !actualIso) return null;
+  const p = Date.parse(plannedIso);
+  const a = Date.parse(actualIso);
+  if (Number.isNaN(p) || Number.isNaN(a)) return null;
+  return Math.round((a - p) / 60000);
+}
+
+export function isDepartLate(deltaMin: number | null): boolean {
+  return deltaMin != null && deltaMin > DEPART_LATE_MIN;
+}

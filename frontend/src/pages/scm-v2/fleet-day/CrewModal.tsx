@@ -9,14 +9,14 @@ import { useUpdateDriver, type DriverRow } from '../../../vendor/scm/lib/drivers
 import type { FleetDayTrip } from '../../../vendor/scm/lib/fleet-day-queries';
 import type { DriverLeaveRow } from '../../../vendor/scm/lib/delivery-zones-queries';
 import { findCrewLeave, crewLeaveLabel } from '../../../vendor/shared/crew-leave';
-import type { LorryRunVM } from './vm';
+import { isoToMytTime, mytTimeToIso, type LorryRunVM } from './vm';
 
 type Named = { id: string; name: string };
 type Lorry = { id: string; plate: string };
 
 type Draft = {
   lorryId: string; driver1Id: string; driver2Id: string; helper1Id: string; helper2Id: string;
-  driver1Ic: string; driver1Phone: string;
+  driver1Ic: string; driver1Phone: string; plannedDepart: string;
 };
 
 /** Which trips THIS day already carry a given driver (for the double-book
@@ -58,6 +58,7 @@ export function CrewModal({
       helper2Id: run.trip.helpers[1]?.id ?? '',
       driver1Ic: master?.ic_number ?? '',
       driver1Phone: master?.phone ?? '',
+      plannedDepart: isoToMytTime(run.trip.planned_depart_at),
     });
   }, [run, drivers]);
 
@@ -87,7 +88,7 @@ export function CrewModal({
     setSaving(true);
     let doOk = 0; let doFailed = 0; let noDo = 0; let tripFailed: string | null = null;
     try {
-      await updateTrip.mutateAsync({ id: run.trip.id, lorryId: draft.lorryId, driverId: draft.driver1Id || null, helper1Id: draft.helper1Id || null, helper2Id: draft.helper2Id || null });
+      await updateTrip.mutateAsync({ id: run.trip.id, lorryId: draft.lorryId, driverId: draft.driver1Id || null, helper1Id: draft.helper1Id || null, helper2Id: draft.helper2Id || null, plannedDepartAt: mytTimeToIso(date, draft.plannedDepart) });
     } catch (e) { tripFailed = e instanceof Error ? e.message : 'trip update failed'; }
 
     for (const d of run.docs) {
@@ -147,6 +148,12 @@ export function CrewModal({
               <option value="">— pick a lorry —</option>
               {lorries.map((l) => <option key={l.id} value={l.id}>{l.plate}</option>)}
             </select>
+          </label>
+
+          <label className="block">
+            <span className="font-mono text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Planned departure</span>
+            <input type="time" className={inputCls} value={draft.plannedDepart} onChange={(e) => set({ plannedDepart: e.target.value })} />
+            <span className="mt-0.5 block text-[11px] text-ink-muted">The card flags a run that leaves more than 15 min after this.</span>
           </label>
 
           {/* Driver 1 + editable IC / phone */}

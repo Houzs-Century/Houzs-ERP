@@ -3,7 +3,7 @@ import { Printer, Users, QrCode, Camera, ChevronDown, ChevronRight, Phone } from
 import { cn } from '../../../lib/utils';
 import { fmtSen } from '../../../vendor/shared/format';
 import type { StopStatus } from '../../../vendor/scm/lib/delivery-stop-status';
-import { RUN_STATUS_LABEL, progressPct } from '../../../vendor/scm/lib/fleet-day-cards';
+import { RUN_STATUS_LABEL, progressPct, departureDeltaMin, isDepartLate } from '../../../vendor/scm/lib/fleet-day-cards';
 import { clockMY, actualDepartOf, type LorryRunVM, type DocRowVM } from './vm';
 
 const STATUS_META: Record<StopStatus, { label: string; dot: string; text: string }> = {
@@ -119,7 +119,10 @@ export function LorryCard({
   const undelivered = visibleDocs.filter((d) => d.status !== 'done');
   const delivered = visibleDocs.filter((d) => d.status === 'done');
   const showDone = doneOpen || searchActive;
-  const departAt = actualDepartOf(run.docs);
+  const plannedAt = run.trip.planned_depart_at;
+  const actualAt = run.trip.clock_in_at ?? actualDepartOf(run.docs);
+  const deltaMin = departureDeltaMin(plannedAt, actualAt);
+  const departLate = isDepartLate(deltaMin);
   const r = run.rollup;
 
   return (
@@ -161,10 +164,19 @@ export function LorryCard({
         </div>
       </div>
 
-      {/* depart strip */}
-      <div className="mx-3.5 mb-2 flex items-center gap-3 rounded-md bg-surface-2 px-2.5 py-2 text-[12px]">
+      {/* depart strip — planned vs actual (clock-in), delta red when >15 min late */}
+      <div className="mx-3.5 mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md bg-surface-2 px-2.5 py-2 text-[12px]">
         <span className="font-mono text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Depart</span>
-        {departAt ? <span className="font-semibold text-ink">Departed {clockMY(departAt)}</span> : <span className="text-ink-muted">Not departed yet</span>}
+        {plannedAt && <span className="text-ink-secondary">Plan <span className="font-semibold text-ink">{clockMY(plannedAt)}</span></span>}
+        {actualAt
+          ? <span className="text-ink-secondary">Actual <span className="font-semibold text-ink">{clockMY(actualAt)}</span></span>
+          : <span className="text-ink-muted">Actual not yet</span>}
+        {deltaMin != null && deltaMin !== 0 && (
+          <span className={departLate ? 'font-semibold text-err' : 'text-ink-muted'}>
+            {deltaMin > 0 ? `+${deltaMin} min` : `${deltaMin} min`}
+          </span>
+        )}
+        {!plannedAt && !actualAt && <span className="text-ink-muted">Not departed yet</span>}
       </div>
 
       {/* progress */}

@@ -9,6 +9,8 @@ import {
   rollupRun,
   dayStatsFrom,
   progressPct,
+  departureDeltaMin,
+  isDepartLate,
 } from './fleet-day-cards';
 import type { StopStatus } from './delivery-stop-status';
 
@@ -125,5 +127,23 @@ describe('progressPct', () => {
     expect(progressPct(0, 0)).toBe(0);
     expect(progressPct(5, 8)).toBe(63);
     expect(progressPct(8, 8)).toBe(100);
+  });
+});
+
+describe('departureDeltaMin / isDepartLate', () => {
+  test('positive = late, negative = early, whole minutes', () => {
+    expect(departureDeltaMin('2026-11-01T00:30:00Z', '2026-11-01T00:42:00Z')).toBe(12);
+    expect(departureDeltaMin('2026-11-01T00:30:00Z', '2026-11-01T00:25:00Z')).toBe(-5);
+  });
+  test('null when either side is missing or unparseable', () => {
+    expect(departureDeltaMin(null, '2026-11-01T00:00:00Z')).toBeNull();
+    expect(departureDeltaMin('2026-11-01T00:00:00Z', null)).toBeNull();
+    expect(departureDeltaMin('nope', '2026-11-01T00:00:00Z')).toBeNull();
+  });
+  test('late only beyond 15 min', () => {
+    expect(isDepartLate(15)).toBe(false);
+    expect(isDepartLate(16)).toBe(true);
+    expect(isDepartLate(-30)).toBe(false);
+    expect(isDepartLate(null)).toBe(false);
   });
 });

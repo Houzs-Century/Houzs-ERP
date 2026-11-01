@@ -231,7 +231,7 @@ trips.get('/day', async (c) => {
   // Trips on the date (cross-company fleet view), optional depot filter.
   const { data: tripData, error: tripErr } = await paginateAll<Record<string, unknown>>((lo, hi) => {
     let q = sb.from('trips')
-      .select('company_id, id, trip_no, trip_date, lorry_id, driver_id, helper_1_id, helper_2_id, warehouse_id, trip_type, status, is_outsourced, total_distance_km')
+      .select('company_id, id, trip_no, trip_date, lorry_id, driver_id, helper_1_id, helper_2_id, warehouse_id, trip_type, status, is_outsourced, total_distance_km, planned_depart_at, clock_in_at, clock_out_at')
       .eq('trip_date', date).neq('status', 'CANCELLED').order('trip_no', { ascending: true }).range(lo, hi);
     if (warehouseId) q = q.eq('warehouse_id', warehouseId);
     q = scopeToAllowedCompanies(q, c);
@@ -257,6 +257,9 @@ trips.get('/day', async (c) => {
     helper_2_id: dual<string | null>(r, 'helper_2_id'),
     warehouse_id: dual<string | null>(r, 'warehouse_id'),
     total_distance_km: dual<number | string | null>(r, 'total_distance_km'),
+    planned_depart_at: dual<string | null>(r, 'planned_depart_at'),
+    clock_in_at: dual<string | null>(r, 'clock_in_at'),
+    clock_out_at: dual<string | null>(r, 'clock_out_at'),
   }));
 
   if (rawTrips.length === 0) {
@@ -708,6 +711,7 @@ const tripPatchSchema = z.object({
   isOutsourced: z.boolean().optional(),
   clockInAt: z.string().nullable().optional(),
   clockOutAt: z.string().nullable().optional(),
+  plannedDepartAt: z.string().nullable().optional(),
   totalDistanceKm: z.union([z.number(), z.string()]).nullable().optional(),
   notes: z.string().nullable().optional(),
 });
@@ -733,6 +737,7 @@ export const patchTripHandler = async (c: any) => {
      TIMESTAMPTZ (mig 0053) — blank CLEARS the stamp instead of 500ing. */
   if (p.clockInAt !== undefined) updates.clock_in_at = dateOrNull(p.clockInAt);
   if (p.clockOutAt !== undefined) updates.clock_out_at = dateOrNull(p.clockOutAt);
+  if (p.plannedDepartAt !== undefined) updates.planned_depart_at = dateOrNull(p.plannedDepartAt);
   if (p.totalDistanceKm !== undefined) updates.total_distance_km = toNumericOrNull(p.totalDistanceKm);
   if (p.notes !== undefined) updates.notes = p.notes;
   // is_outsourced: explicit value wins; else re-derive when the lorry changes.
