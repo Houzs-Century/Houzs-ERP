@@ -78,22 +78,10 @@ async function main() {
   note(`  by event month:`);
   for (const r of byMonth) note(`    ${r.mth}: ${r.n}`);
 
-  // Capped sample of the actual change — id, code (an internal identifier) and the
-  // dates only; no names/venues, since Actions logs are public.
-  const sample = await sql.unsafe(`
-    SELECT id::text AS id, code,
-           substr(start_date,1,10) AS start_date, substr(end_date,1,10) AS end_date,
-           setup_start_at, dismantle_start_at,
-           CASE WHEN setup_start_at IS NULL THEN ${SETUP_EXPR} END AS new_setup,
-           CASE WHEN dismantle_start_at IS NULL AND end_date IS NOT NULL THEN ${DISMANTLE_EXPR} END AS new_dismantle
-    ${SELECT_TARGETS}
-    ORDER BY substr(start_date,1,10) LIMIT 20`);
-  note(`\n=== SAMPLE (first ${sample.length}) ===`);
-  for (const r of sample) {
-    note(`  ${String(r.code ?? r.id).padEnd(26)} event ${r.start_date}..${r.end_date ?? '-'}  ` +
-      `setup ${r.setup_start_at ?? '(none)'}->${r.new_setup ?? r.setup_start_at ?? '-'}  ` +
-      `dismantle ${r.dismantle_start_at ?? '(none)'}->${r.new_dismantle ?? r.dismantle_start_at ?? '-'}`);
-  }
+  // Counts only — no per-project lines. The repo is public, so the Actions log must
+  // not list project codes (brand / venue / organizer / date = the exhibition
+  // schedule). The derivation is start_date - 1 / end_date + 1; verify a sample
+  // against the DB directly (Supabase MCP) rather than printing it here.
 
   if (!APPLY) {
     note(`\nPLAN ONLY: nothing written. Re-run with MODE=apply CONFIRM="${CONFIRM_PHRASE}".`);
@@ -115,20 +103,14 @@ async function main() {
   await sql.end({ timeout: 5 });
 
   // Verify on a FRESH connection: no confirmed/upcoming project is left without the
-  // date its window implies (count), and a few rows now read the derived dates.
+  // date its window implies. A COUNT only (public log) — inspect individual rows via
+  // the Supabase MCP if needed.
   const check = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
   try {
     note(`\n=== VERIFIED ON A FRESH CONNECTION ===`);
     const [{ n: left }] = await check.unsafe(`SELECT COUNT(*)::int AS n ${SELECT_TARGETS}`);
     if (left) bad(`  ${left} confirmed/upcoming project(s) still missing a fleet date`);
     else note(`  0 confirmed/upcoming projects left missing a fleet date (was ${total}).`);
-    const after = await check.unsafe(`
-      SELECT code, setup_start_at, dismantle_start_at
-        FROM public.projects
-       WHERE status = 'confirmed' AND archived_at IS NULL AND start_date IS NOT NULL
-         AND substr(start_date,1,10)::date >= (now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date
-       ORDER BY substr(start_date,1,10) LIMIT 8`);
-    for (const r of after) note(`  ${String(r.code ?? '-').padEnd(26)} setup ${r.setup_start_at ?? '(none)'}  dismantle ${r.dismantle_start_at ?? '(none)'}`);
     if (left) process.exitCode = 1;
   } finally {
     await check.end({ timeout: 5 });

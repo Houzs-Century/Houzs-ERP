@@ -64,6 +64,7 @@ import { verificationFieldsError } from "../scm/shared/assr-verification-fields"
 import { getVerificationNotes, saveVerificationNotes, takeVerificationNotes } from "../services/assrVerificationNotes";
 import { sendCompletionSurvey } from "../services/assrCompletionSurvey";
 import { sendServiceCaseReceivedAck } from "../services/assrConnectAck";
+import { overviewFilter, withOverviewFilter } from "./lib/assr-overview-filter";
 
 /* The context the extracted handlers below receive. They are exported so the
    route tests can drive them directly; the shape is exactly what app.get/post
@@ -670,7 +671,7 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
   // tile below counted the whole company for a caller whose list showed only
   // their own subtree. "" for the unrestricted tier, so a director's SQL is
   // unchanged.
-  const vis = await assrVisibilityScope(c);
+  const vis = withOverviewFilter(await assrVisibilityScope(c), overviewFilter(c));
   const visC = vis("c.");
   const visBare = vis("assr_cases.");
 
@@ -2325,7 +2326,7 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
   // repeat_customers roll-up below is the reason this is not cosmetic: it
   // ships customer_name + phone, so an unscoped GROUP BY handed a caller the
   // contact details of cases outside their reporting chain.
-  const vis = await assrVisibilityScope(c);
+  const vis = withOverviewFilter(await assrVisibilityScope(c), overviewFilter(c));
   const visBare = vis("assr_cases.");
   const visC = vis("c.");
   const visA = vis("a.");
@@ -2705,7 +2706,7 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
   // unscoped drill handed the caller the rows themselves, not just a count —
   // and `total` below is the length of this fetch, so scoping here fixes both.
   // Appended last, and its binds go last, because binds are positional.
-  const visDrill = (await assrVisibilityScope(c))("c.");
+  const visDrill = withOverviewFilter(await assrVisibilityScope(c), overviewFilter(c))("c.");
   const where =
     conds.join(" AND ") + assrCompanySql(c, "c.company_id") + visDrill.sql;
   binds.push(...visDrill.binds);

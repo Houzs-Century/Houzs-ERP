@@ -10,8 +10,14 @@ const TODAY = "2026-10-21";
 describe("the overview's choices in the URL", () => {
   it("a plain URL — the menu link — is the defaults: Newest, no filter, the trend on this year by month", () => {
     expect(readView(new URLSearchParams(""), TODAY)).toEqual({
-      sort: "start", brand: "", type: "", organizer: "", dim: "brand", pick: null, drill: { level: "yearMonths", year: 2026 },
+      sort: "start", brand: "", type: "", organizer: "", venue: "", state: "", stage: "", dim: "brand", pick: null, drill: { level: "yearMonths", year: 2026 },
     });
+  });
+
+  it("venue, state and stage are kept in the URL like the other filters (owner 2026-11-01)", () => {
+    const p = writeView(new URLSearchParams(""), { venue: "MID VALLEY", state: "Selangor", stage: "" }, TODAY);
+    expect(readView(p, TODAY)).toMatchObject({ venue: "MID VALLEY", state: "Selangor", stage: "" });
+    expect(p.has(VIEW_PARAMS.stage)).toBe(false);
   });
 
   it("each choice is written, and a default is left out so the URL stays plain", () => {

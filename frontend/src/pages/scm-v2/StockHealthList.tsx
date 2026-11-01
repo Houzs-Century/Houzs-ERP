@@ -38,7 +38,8 @@ export function stockHealthSheet<R>(rows: readonly R[], cols: readonly Col<R>[])
   return rows.map((r) => Object.fromEntries(cols.map((c) => [c.label, c.k === "value" ? Number(c.value(r)) / 100 : c.value(r)])));
 }
 
-export function StockHealthList({ kind, query, catLabel }: { kind: "dead" | "buffer"; query: string; catLabel: (k: string) => string }) {
+/** `category` / `warehouse`: the row clicked in the tables above, or null for all. */
+export function StockHealthList({ kind, query, catLabel, category, warehouse }: { kind: "dead" | "buffer"; query: string; catLabel: (k: string) => string; category: string | null; warehouse: string | null }) {
   const q = useQuery({
     queryKey: ["procurement-overview", "stock-health", query],
     queryFn: () => authedFetch<{ dead: DeadRow[]; buffer: BufferRow[] }>(`/procurement-overview/stock-health?${query}`),
@@ -47,7 +48,8 @@ export function StockHealthList({ kind, query, catLabel }: { kind: "dead" | "buf
   const [search, setSearch] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const cols = useMemo(() => (kind === "dead" ? DEAD_COLS(catLabel) : BUFFER_COLS(catLabel)), [kind, catLabel]) as Col<DeadRow | BufferRow>[];
-  const all = useMemo(() => ((kind === "dead" ? q.data?.dead : q.data?.buffer) ?? []) as Array<DeadRow | BufferRow>, [q.data, kind]);
+  const all = useMemo(() => (((kind === "dead" ? q.data?.dead : q.data?.buffer) ?? []) as Array<DeadRow | BufferRow>)
+    .filter((r) => (!category || r.category === category) && (!warehouse || r.warehouse === warehouse)), [q.data, kind, category, warehouse]);
   const needle = search.trim().toLowerCase();
   const rows = useMemo(() => (needle ? all.filter((r) => `${r.itemCode} ${r.variantKey} ${r.name ?? ""} ${r.warehouse} ${catLabel(r.category)}`.toLowerCase().includes(needle)) : all), [all, needle, catLabel]);
   const byKey = useMemo(() => new Map(cols.map((c) => [c.k, c])), [cols]);
@@ -61,7 +63,7 @@ export function StockHealthList({ kind, query, catLabel }: { kind: "dead" | "buf
       const ws = XLSX.utils.json_to_sheet(stockHealthSheet(sorted, cols));
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, kind === "dead" ? "Dead items" : "Buffer items");
-      XLSX.writeFileXLSX(wb, `${kind === "dead" ? "dead" : "buffer"}-items.xlsx`);
+      XLSX.writeFileXLSX(wb, `${kind === "dead" ? "dead" : "buffer"}-items${category ? `-${category}` : ""}${warehouse ? `-${warehouse}` : ""}.xlsx`);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Could not build the Excel file.");
     }
