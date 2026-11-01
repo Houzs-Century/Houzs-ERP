@@ -11,6 +11,7 @@ import type { PlanningOrder } from '../../../vendor/scm/lib/delivery-planning-qu
 const doc = (over: Partial<DocRowVM>): DocRowVM => ({
   key: `so:${over.soDocNo ?? 'X'}`,
   order: { departure_at: null } as unknown as PlanningOrder,
+  rowType: 'so', jobLabel: null, codeLine: `${over.soDocNo ?? 'HC-SO-1'} · HC-DO-1 · pg01`,
   soDocNo: over.soDocNo ?? 'HC-SO-1', doNumber: 'HC-DO-1', ref: 'pg01',
   customer: 'Ada Wong', phone: '012', address: '12 Jalan Besar', region: 'KL/SEL',
   salespersonId: null, agent: null, branding: null, amountSen: 25000, units: 2,
@@ -59,5 +60,26 @@ describe('LorryCard', () => {
     expect(screen.getByText('1 delivered')).toBeTruthy();
     // The undelivered (late) drop's customer is visible.
     expect(screen.getAllByText('Ada Wong').length).toBeGreaterThan(0);
+  });
+
+  test('a non-SO job on the run shows its job tag + document and no order amount', () => {
+    const jobRun: LorryRunVM = {
+      ...run,
+      rollup: { drops: 1, delivered: 0, onTheWay: 0, late: 0, totalSen: 0, withPod: 0 },
+      docs: [doc({
+        soDocNo: 'DP:42', rowType: 'dp', jobLabel: 'Transfer item', codeLine: 'DP-261102-VRH02',
+        customer: 'KL → Penang', amountSen: 0, units: 0, status: 'scheduled',
+      })],
+    };
+    render(
+      <LorryCard
+        run={jobRun} visibleDocs={jobRun.docs} filtersActive={false} searchActive={false}
+        actionable focused={false} selectedKey={null} remarkKeys={new Set()}
+        onFocus={() => {}} onOpenDoc={() => {}} onCrew={() => {}} onRunSheet={() => {}} onQr={() => {}}
+      />,
+    );
+    expect(screen.getByText('Transfer item')).toBeTruthy();
+    expect(screen.getByText('DP-261102-VRH02')).toBeTruthy();
+    expect(screen.getByText('KL → Penang')).toBeTruthy();
   });
 });

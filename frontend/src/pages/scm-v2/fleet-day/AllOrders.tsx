@@ -42,14 +42,19 @@ export function AllOrdersTab({ rows, onOpen }: { rows: AllOrderRow[]; onOpen: (d
                 </td>
                 <td className={cn(td, 'tabular-nums')}>{doc.stopNo ?? '—'}</td>
                 <td className={cn(td, 'font-semibold', st.cls)}>{st.label}{doc.late && doc.status !== 'overdue' ? ' · LATE' : ''}</td>
-                <td className={cn(td, 'font-mono')}>{doc.soDocNo}</td>
+                <td className={cn(td, 'font-mono')}>{doc.rowType === 'so' ? doc.soDocNo : (doc.codeLine || doc.soDocNo)}</td>
                 <td className={cn(td, 'font-mono')}>{doc.doNumber || '—'}</td>
-                <td className={cn(td, 'font-mono')}>{doc.ref || '—'}</td>
-                <td className={td}>{doc.customer || '—'}</td>
+                <td className={cn(td, 'font-mono')}>{doc.rowType === 'so' ? (doc.ref || '—') : '—'}</td>
+                <td className={td}>
+                  <span className="inline-flex items-center gap-1.5">
+                    {doc.jobLabel && <span className="rounded bg-[#e6eaf4] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-brand text-learning">{doc.jobLabel}</span>}
+                    {doc.customer || '—'}
+                  </span>
+                </td>
                 <td className={cn(td, 'max-w-[220px] truncate')}>{doc.address || '—'}</td>
                 <td className={td}>{doc.slotLabel || '—'}</td>
                 <td className={td}>{doc.status === 'done' ? (clockMY(doc.deliveredAt) ?? 'Done') : '—'}</td>
-                <td className={cn(td, 'font-mono tabular-nums')}>{fmtSen(doc.amountSen)}</td>
+                <td className={cn(td, 'font-mono tabular-nums')}>{doc.rowType === 'so' ? fmtSen(doc.amountSen) : '—'}</td>
                 <td className={td}>{doc.hasPod ? <Camera size={14} strokeWidth={1.75} className="text-ink-muted" /> : '—'}</td>
               </tr>
             );

@@ -183,7 +183,10 @@ export function OrderDrawer({
           {/* header */}
           <div className="flex items-start justify-between border-b border-border p-4">
             <div className="min-w-0">
-              <div className="font-mono text-[11px] font-semibold text-accent">{doc.soDocNo}</div>
+              <div className="flex items-center gap-1.5">
+                <span className="font-mono text-[11px] font-semibold text-accent">{doc.rowType === 'so' ? doc.soDocNo : (doc.codeLine || doc.soDocNo)}</span>
+                {doc.jobLabel && <span className="rounded bg-[#e6eaf4] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-brand text-learning">{doc.jobLabel}</span>}
+              </div>
               <div className="mt-1 truncate text-[19px] font-bold text-ink">{doc.customer || '—'}</div>
               <div className="mt-1 flex items-center gap-2">
                 {pill && <span className={`rounded-full px-2 py-0.5 text-[10.5px] font-bold ${pill.cls}`}>{pill.label}</span>}
@@ -228,33 +231,50 @@ export function OrderDrawer({
               </div>
             </div>
 
-            {/* change lorry (phase 3b) */}
-            <ChangeLorrySection doc={doc} runs={runs} onMoved={onClose} />
+            {/* change lorry (phase 3b) — SO deliveries only; a non-SO job is
+                scheduled + crewed in its own module (DP / PMS / ASSR), not moved
+                through the DO-based mover here. */}
+            {doc.rowType === 'so' && <ChangeLorrySection doc={doc} runs={runs} onMoved={onClose} />}
 
-            {/* fields */}
+            {/* fields — an SO delivery shows SO · DO · Ref + its money/load; a non-SO
+                job shows its own job type + document and skips the order-money
+                columns it does not carry. */}
             <div className="rounded-lg border border-border bg-surface p-3">
-              <Field label="SO" value={<span className="font-mono">{doc.soDocNo}</span>} />
-              <Field label="DO" value={doc.doNumber ? <span className="font-mono">{doc.doNumber}</span> : '—'} />
-              <Field label="Ref" value={doc.ref ? <span className="font-mono">{doc.ref}</span> : '—'} />
+              {doc.rowType === 'so' ? (
+                <>
+                  <Field label="SO" value={<span className="font-mono">{doc.soDocNo}</span>} />
+                  <Field label="DO" value={doc.doNumber ? <span className="font-mono">{doc.doNumber}</span> : '—'} />
+                  <Field label="Ref" value={doc.ref ? <span className="font-mono">{doc.ref}</span> : '—'} />
+                </>
+              ) : (
+                <>
+                  <Field label="Job" value={doc.jobLabel ?? '—'} />
+                  <Field label="Document" value={doc.codeLine ? <span className="font-mono">{doc.codeLine}</span> : '—'} />
+                </>
+              )}
               <Field label="Address" value={doc.address} />
               <Field label="Region" value={doc.region} />
               <Field label="Time slot" value={doc.order.time_range || '—'} />
-              <Field label="Salesperson" value={salespersonName} />
+              {doc.rowType === 'so' && <Field label="Salesperson" value={salespersonName} />}
               <Field label="Branding" value={doc.branding} />
-              <Field label="Amount" value={<span className="font-mono tabular-nums">{fmtSen(doc.amountSen)}</span>} />
-              <Field label="Load" value={`${doc.units} unit${doc.units === 1 ? '' : 's'}`} />
+              {doc.rowType === 'so' && <Field label="Amount" value={<span className="font-mono tabular-nums">{fmtSen(doc.amountSen)}</span>} />}
+              {doc.rowType === 'so' && <Field label="Load" value={`${doc.units} unit${doc.units === 1 ? '' : 's'}`} />}
             </div>
 
-            {/* remarks thread (phase 3) */}
-            <RemarksSection soDocNo={doc.soDocNo} />
+            {/* remarks thread (phase 3) — the thread is keyed on a real SO doc no.,
+                so it is shown for SO deliveries only (a non-SO job has none). */}
+            {doc.rowType === 'so' && <RemarksSection soDocNo={doc.soDocNo} />}
 
-            {/* POD + timeline */}
-            {doc.latestLiveDoId ? (
-              pod.data?.deliveryOrder
-                ? <DoProofOfDeliveryCard h={pod.data.deliveryOrder} />
-                : <div className="rounded-lg border border-border bg-surface p-4 text-[12.5px] text-ink-muted">{pod.isLoading ? 'Loading proof of delivery…' : 'Proof of delivery unavailable.'}</div>
-            ) : (
-              <div className="rounded-lg border border-border bg-surface p-4 text-[12.5px] text-ink-muted">No delivery order cut yet — proof of delivery appears once the DO exists.</div>
+            {/* POD + timeline — off the SO's delivery order; a non-SO job has no DO,
+                its progress lives in its own module. */}
+            {doc.rowType === 'so' && (
+              doc.latestLiveDoId ? (
+                pod.data?.deliveryOrder
+                  ? <DoProofOfDeliveryCard h={pod.data.deliveryOrder} />
+                  : <div className="rounded-lg border border-border bg-surface p-4 text-[12.5px] text-ink-muted">{pod.isLoading ? 'Loading proof of delivery…' : 'Proof of delivery unavailable.'}</div>
+              ) : (
+                <div className="rounded-lg border border-border bg-surface p-4 text-[12.5px] text-ink-muted">No delivery order cut yet — proof of delivery appears once the DO exists.</div>
+              )
             )}
           </div>
         </div>
