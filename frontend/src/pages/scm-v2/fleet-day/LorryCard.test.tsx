@@ -21,6 +21,7 @@ const doc = (over: Partial<DocRowVM>): DocRowVM => ({
 
 const run: LorryRunVM = {
   trip: { id: 't1', trip_no: 'TRIP-1' } as LorryRunVM['trip'],
+  lorryId: 'l1', isInternal: true,
   plate: 'VQE9058', tripNo: 'TRIP-1', color: '#2563eb',
   driverName: 'Shamsul', driverIc: '900101-10-1', driverPhone: '019-9',
   driver2Name: null, helpers: ['Ali'], status: 'ON_THE_WAY',
@@ -39,6 +40,7 @@ describe('LorryCard', () => {
         visibleDocs={run.docs}
         filtersActive={false}
         searchActive={false}
+        actionable
         focused={false}
         selectedKey={null}
         remarkKeys={new Set()}

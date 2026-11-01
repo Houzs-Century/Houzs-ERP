@@ -93,7 +93,13 @@ export type DocRowVM = {
 };
 
 export type LorryRunVM = {
-  trip: FleetDayTrip;
+  /** The scheduled trip backing this card, or null for a lorry that carries
+   *  assigned drops (or is a pinned in-house lorry) with no run opened yet. */
+  trip: FleetDayTrip | null;
+  /** The lorry master id; null for a plate seen only as a drop's crew label. */
+  lorryId: string | null;
+  /** In-house (own fleet) vs outsourced/3PL — drives the board sectioning. */
+  isInternal: boolean;
   plate: string;
   tripNo: string | null;
   color: string;
@@ -106,6 +112,16 @@ export type LorryRunVM = {
   rollup: RunRollup;
   docs: DocRowVM[];
 };
+
+/** A lorry master row — the subset buildLorryCards needs to pin in-house
+ *  lorries and classify in-house vs outsourced. */
+export type LorryMaster = { id: string; plate: string; is_internal?: boolean | null; active: boolean };
+
+/** Normalised plate key — spaces removed, upper-cased — so an order's crew
+ *  label ("VQE 9058") and the lorry master ("VQE9058") collapse to one lorry. */
+export function platekey(plate: string | null | undefined): string {
+  return (plate ?? '').replace(/\s+/g, '').toUpperCase();
+}
 
 const unitsOf = (o: PlanningOrder): number => o.delivered_qty + o.remaining_qty;
 
@@ -152,10 +168,57 @@ export function docRowVM(o: PlanningOrder, status: StopStatus, clock: DayClock):
   };
 }
 
+/** Neutral plate/stop colour for a card with no trip (no map route to tint). */
+const NO_TRIP_COLOR = '#b4b9ad';
+
+/** Assemble one lorry card from its (optional) trip + the drops on it, sorted by
+ *  stop no. With a trip, the crew + IC/phone come off the trip and the drivers
+ *  master; without one (a lorry given drops on the DP board but no run opened),
+ *  they fall back to the drops' own crew snapshot. driver-2's NAME always comes
+ *  off the crew snapshot (its only store). */
+function makeRunVM(args: {
+  plate: string;
+  lorryId: string | null;
+  isInternal: boolean;
+  trip: FleetDayTrip | null;
+  docs: readonly DocRowVM[];
+  color: string;
+  driversById: Map<string, DriverRow>;
+}): LorryRunVM {
+  const { plate, lorryId, isInternal, trip, color, driversById } = args;
+  const docs = args.docs.slice().sort((a, b) => (a.stopNo ?? 1e9) - (b.stopNo ?? 1e9));
+  const master = trip?.driver?.id ? driversById.get(trip.driver.id) : undefined;
+  const crew = docs.map((d) => d.order.crew).find((c) => c) ?? null;
+  const driver2Name = docs.map((d) => d.order.crew?.driver_2_name).find((n) => n) ?? null;
+  const helpers = trip
+    ? trip.helpers.map((h) => h.name).filter(Boolean)
+    : [...new Set(
+      docs.flatMap((d) => [d.order.crew?.helper_1_name, d.order.crew?.helper_2_name])
+        .filter((n): n is string => !!n),
+    )];
+  const statuses = docs.map((d) => d.status);
+  const totalSen = docs.reduce((n, d) => n + d.amountSen, 0);
+  const withPod = docs.filter((d) => d.status === 'done' && d.hasPod).length;
+  return {
+    trip,
+    lorryId,
+    isInternal,
+    plate,
+    tripNo: trip?.trip_no ?? null,
+    color,
+    driverName: trip?.driver?.name ?? crew?.driver_1_name ?? crew?.driver ?? null,
+    driverIc: master?.ic_number ?? crew?.driver_1_ic ?? null,
+    driverPhone: master?.phone ?? crew?.driver_1_contact ?? null,
+    driver2Name,
+    helpers,
+    status: runStatusOf(statuses),
+    rollup: rollupRun(statuses, totalSen, withPod),
+    docs,
+  };
+}
+
 /** Build the day's lorry runs: one per trip, carrying the drops whose server-
- *  stamped trip_id points at it, sorted by stop no. Driver IC/phone join the
- *  drivers master by id; driver-2's NAME comes off the drops' crew snapshot
- *  (its only store). `colorOf` resolves each trip's route colour. */
+ *  stamped trip_id points at it. `colorOf` resolves each trip's route colour. */
 export function buildRuns(
   trips: readonly FleetDayTrip[],
   dayDocs: readonly DocRowVM[],
@@ -166,34 +229,70 @@ export function buildRuns(
   for (const d of dayDocs) {
     const tid = d.order.trip_id;
     if (!tid) continue;
-    const arr = docsByTrip.get(tid) ?? [];
-    arr.push(d);
-    docsByTrip.set(tid, arr);
+    (docsByTrip.get(tid) ?? docsByTrip.set(tid, []).get(tid)!).push(d);
   }
-  return trips.map((t) => {
-    const docs = (docsByTrip.get(t.id) ?? []).slice().sort(
-      (a, b) => (a.stopNo ?? 1e9) - (b.stopNo ?? 1e9),
-    );
-    const master = t.driver?.id ? driversById.get(t.driver.id) : undefined;
-    const driver2Name = docs.map((d) => d.order.crew?.driver_2_name).find((n) => n) ?? null;
-    const statuses = docs.map((d) => d.status);
-    const totalSen = docs.reduce((n, d) => n + d.amountSen, 0);
-    const withPod = docs.filter((d) => d.status === 'done' && d.hasPod).length;
-    return {
-      trip: t,
-      plate: t.lorry?.plate ?? '—',
-      tripNo: t.trip_no,
-      color: colorOf(t.id),
-      driverName: t.driver?.name ?? null,
-      driverIc: master?.ic_number ?? null,
-      driverPhone: master?.phone ?? null,
-      driver2Name,
-      helpers: t.helpers.map((h) => h.name).filter(Boolean),
-      status: runStatusOf(statuses),
-      rollup: rollupRun(statuses, totalSen, withPod),
+  return trips.map((t) => makeRunVM({
+    plate: t.lorry?.plate ?? '—',
+    lorryId: t.lorry?.id ?? null,
+    isInternal: false,
+    trip: t,
+    docs: docsByTrip.get(t.id) ?? [],
+    color: colorOf(t.id),
+    driversById,
+  }));
+}
+
+/** The board's lorry cards (owner rule 2026-11-01): every in-house lorry is
+ *  PINNED — shown even with no work — and an outsourced lorry appears only on a
+ *  day it carries drops. A card is backed by its trip when one exists; otherwise
+ *  it is a read-only view of the drops assigned to that plate on the DP board
+ *  (no trip was opened). Sorted in-house first, then outsourced, each A->Z by
+ *  plate. No lorry has more than one trip a day, so one card per lorry holds. */
+export function buildLorryCards(
+  trips: readonly FleetDayTrip[],
+  dayDocs: readonly DocRowVM[],
+  lorries: readonly LorryMaster[],
+  driversById: Map<string, DriverRow>,
+  colorOf: (tripId: string) => string,
+): LorryRunVM[] {
+  const masterByPlate = new Map(lorries.map((l) => [platekey(l.plate), l]));
+  const tripByPlate = new Map<string, FleetDayTrip>();
+  for (const t of trips) if (t.lorry?.plate) tripByPlate.set(platekey(t.lorry.plate), t);
+
+  // Each drop -> its lorry key: its trip's plate, else its crew's plate label.
+  const docsByKey = new Map<string, DocRowVM[]>();
+  for (const d of dayDocs) {
+    const viaTrip = d.order.trip_id ? trips.find((t) => t.id === d.order.trip_id) : undefined;
+    const key = platekey(viaTrip?.lorry?.plate ?? d.order.crew?.lorry_plate);
+    if (!key) continue;
+    (docsByKey.get(key) ?? docsByKey.set(key, []).get(key)!).push(d);
+  }
+
+  // Keys to show: every trip's lorry, every active in-house lorry (pinned), and
+  // every lorry a drop was assigned to today.
+  const keys = new Set<string>();
+  for (const t of trips) if (t.lorry?.plate) keys.add(platekey(t.lorry.plate));
+  for (const l of lorries) if (l.is_internal === true && l.active) keys.add(platekey(l.plate));
+  for (const k of docsByKey.keys()) keys.add(k);
+
+  const cards = [...keys].map((key) => {
+    const master = masterByPlate.get(key);
+    const trip = tripByPlate.get(key) ?? null;
+    const docs = docsByKey.get(key) ?? [];
+    const plate = trip?.lorry?.plate ?? master?.plate
+      ?? docs.find((d) => d.order.crew?.lorry_plate)?.order.crew?.lorry_plate ?? key;
+    return makeRunVM({
+      plate,
+      lorryId: trip?.lorry?.id ?? master?.id ?? null,
+      isInternal: master?.is_internal === true,
+      trip,
       docs,
-    };
+      color: trip ? colorOf(trip.id) : NO_TRIP_COLOR,
+      driversById,
+    });
   });
+  cards.sort((a, b) => (a.isInternal === b.isInternal ? a.plate.localeCompare(b.plate) : a.isInternal ? -1 : 1));
+  return cards;
 }
 
 /* ── Filter row + search ──────────────────────────────────────────────────*/
