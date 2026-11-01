@@ -49,9 +49,9 @@ describe('Last Mile board — render smoke', () => {
     expect(getByText(/No orders match/)).toBeTruthy();
   });
 
-  test('history placeholder mounts', () => {
+  test('history tab mounts with its range controls', () => {
     const { getByText } = wrap(<HistoryTab />);
-    expect(getByText(/Delivery history is coming/)).toBeTruthy();
+    expect(getByText('7 days')).toBeTruthy();
   });
 
   test('to-arrange empty state mounts', () => {

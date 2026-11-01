@@ -605,6 +605,63 @@ trips.get('/packing', async (c) => {
 });
 
 /* ──────────────────────────────────────────────────────────────────────────
+   GET /trips/history?from=&to= — the Last Mile History tab (phase 3c). The
+   DELIVERED delivery orders whose delivery day (do_date) falls in [from,to],
+   with the lorry + driver off the DO's crew snapshot (delivery_order_crew) so
+   no trip join is needed. Company-scoped; the frontend groups by day.
+
+   Static segment → Hono matches it before '/:id'.
+   ─────────────────────────────────────────────────────────────────────────*/
+const DO_DELIVERED = ['DELIVERED', 'SIGNED', 'INVOICED'];
+
+trips.get('/history', async (c) => {
+  const from = c.req.query('from');
+  const to = c.req.query('to');
+  if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    return c.json({ error: 'invalid_range', reason: 'from & to (YYYY-MM-DD) are required' }, 400);
+  }
+  const sb = c.get('supabase');
+  const { data: doData, error } = await scopeToAllowedCompanies(
+    sb.from('delivery_orders')
+      .select('id, do_number, so_doc_no, debtor_name, do_date, delivered_at, local_total_sen, time_range, pod_r2_key, pod_photo_keys')
+      .gte('do_date', from).lte('do_date', to).in('status', DO_DELIVERED),
+    c,
+  );
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  const dos = doData as Array<Record<string, unknown>>;
+
+  // Lorry + driver per DO from the crew snapshot (chunked — a month can be many).
+  const ids = dos.map((d) => String(d.id));
+  const crewByDo = new Map<string, { plate: string | null; driver: string | null }>();
+  if (ids.length) {
+    const { data: crew } = await chunkIn<Record<string, unknown>>(ids, (batch) =>
+      sb.from('delivery_order_crew').select('do_id, lorry_plate, driver_1_name').in('do_id', batch));
+    for (const cr of crew) {
+      crewByDo.set(String(cr.do_id), { plate: (cr.lorry_plate as string | null) ?? null, driver: (cr.driver_1_name as string | null) ?? null });
+    }
+  }
+
+  const rows = dos.map((d) => {
+    const crew = crewByDo.get(String(d.id)) ?? { plate: null, driver: null };
+    const keys = d.pod_photo_keys;
+    const hasPod = Array.isArray(keys) ? keys.length > 0 : !!d.pod_r2_key;
+    return {
+      day: String(d.do_date ?? '').slice(0, 10),
+      soDocNo: (d.so_doc_no as string | null) ?? null,
+      doNumber: (d.do_number as string | null) ?? null,
+      customer: (d.debtor_name as string | null) ?? null,
+      slot: (d.time_range as string | null) ?? null,
+      doneAt: (d.delivered_at as string | null) ?? (d.do_date as string | null) ?? null,
+      amountSen: Number(d.local_total_sen) || 0,
+      hasPod,
+      plate: crew.plate,
+      driver: crew.driver,
+    };
+  });
+  return c.json({ rows });
+});
+
+/* ──────────────────────────────────────────────────────────────────────────
    GET /trips/:id — one trip with its ordered stops.
    ─────────────────────────────────────────────────────────────────────────*/
 trips.get('/:id', async (c) => {
@@ -867,7 +924,7 @@ trips.post('/move-stop', async (c) => {
   const { data: movedRows, error: mErr } = await sb.from('trip_stops')
     .select('id, trip_id, company_id').eq('do_id', p.doId).eq('stop_type', 'DELIVERY');
   if (mErr) return c.json({ error: 'load_failed', reason: mErr.message }, 500);
-  const moved = ((movedRows ?? []) as Array<{ id: string; trip_id: string; company_id: number }>)[0];
+  const moved = (movedRows as Array<{ id: string; trip_id: string; company_id: number }>).at(0);
   if (!moved) return c.json({ error: 'stop_not_found', reason: 'This order has no delivery stop on a run yet.' }, 404);
   const sourceTripId = String(moved.trip_id);
   const companyId = moved.company_id;
@@ -877,7 +934,7 @@ trips.post('/move-stop', async (c) => {
     sb.from('trips').select('id, trip_date, company_id').in('id', [sourceTripId, p.targetTripId]), c,
   );
   if (tErr) return c.json({ error: 'load_failed', reason: tErr.message }, 500);
-  const found = (tripRows ?? []) as Array<{ id: string; trip_date: string | null }>;
+  const found = tripRows as Array<{ id: string; trip_date: string | null }>;
   const srcTrip = found.find((t) => String(t.id) === sourceTripId);
   const tgtTrip = found.find((t) => String(t.id) === p.targetTripId);
   if (!srcTrip || !tgtTrip) return c.json({ error: 'trip_not_found', reason: 'A lorry run was not found for your company.' }, 404);

@@ -12,6 +12,7 @@ import {
   departureDeltaMin,
   isDepartLate,
 } from './fleet-day-cards';
+import { groupHistoryByDay, historyPreset, addDays, type HistoryRow } from './fleet-day-cards';
 import type { StopStatus } from './delivery-stop-status';
 
 describe('slotMinutes — parse a free-text window', () => {
@@ -127,6 +128,30 @@ describe('progressPct', () => {
     expect(progressPct(0, 0)).toBe(0);
     expect(progressPct(5, 8)).toBe(63);
     expect(progressPct(8, 8)).toBe(100);
+  });
+});
+
+describe('history grouping + presets', () => {
+  const r = (over: Partial<HistoryRow>): HistoryRow => ({
+    day: '2026-10-30', soDocNo: 'S', doNumber: 'D', customer: 'C', slot: null,
+    doneAt: null, amountSen: 10000, hasPod: false, plate: 'VQE9058', driver: 'Sam', ...over,
+  });
+  test('groups by day (latest first) with a per-day summary', () => {
+    const days = groupHistoryByDay([
+      r({ day: '2026-10-30', plate: 'A', hasPod: true, amountSen: 10000 }),
+      r({ day: '2026-10-30', plate: 'B', hasPod: false, amountSen: 20000 }),
+      r({ day: '2026-10-28', plate: 'A', hasPod: true, amountSen: 5000 }),
+    ]);
+    expect(days.map((d) => d.day)).toEqual(['2026-10-30', '2026-10-28']); // latest first
+    expect(days[0]).toMatchObject({ drops: 2, lorries: 2, withPod: 1, podPct: 50, totalSen: 30000 });
+    expect(days[1]).toMatchObject({ drops: 1, lorries: 1, podPct: 100, totalSen: 5000 });
+  });
+  test('empty -> no days', () => {
+    expect(groupHistoryByDay([])).toEqual([]);
+  });
+  test('addDays + historyPreset end yesterday', () => {
+    expect(addDays('2026-11-01', -1)).toBe('2026-10-31');
+    expect(historyPreset(7, '2026-11-01')).toEqual({ from: '2026-10-25', to: '2026-10-31' });
   });
 });
 
