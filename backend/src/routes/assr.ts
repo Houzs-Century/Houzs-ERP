@@ -63,7 +63,7 @@ import { pickupTrackingError } from "../scm/shared/assr-pickup-tracking";
 import { verificationFieldsError } from "../scm/shared/assr-verification-fields";
 import { getVerificationNotes, saveVerificationNotes, takeVerificationNotes } from "../services/assrVerificationNotes";
 import { sendCompletionSurvey } from "../services/assrCompletionSurvey";
-import { buildServiceCaseReceived, isConnectConfigured, postConnectContact } from "../services/connect";
+import { sendServiceCaseReceivedAck } from "../services/assrConnectAck";
 
 /* The context the extracted handlers below receive. They are exported so the
    route tests can drive them directly; the shape is exactly what app.get/post
@@ -1869,32 +1869,8 @@ app.post(
         userIds: [row.assigned_to, row.assigned_to_2, row.created_by],
         agentNames: [row.sales_agent],
       });
-
-      // Acknowledge the request to the CUSTOMER over WhatsApp via Houzs Connect,
-      // alongside the internal notice above. Only on CREATE (never reassign),
-      // only when Connect is configured and the case has a phone. Independently
-      // guarded and best-effort: postConnectContact never throws, but the
-      // try/catch makes certain a Connect error can NEVER fail case creation.
-      // Connect's "Service Case Received" flow seeds DRAFT until its Meta
-      // template hc_service_case_received is approved; the wiring is correct
-      // regardless (a disabled automation answers an empty `triggered`, which
-      // postConnectContact logs, not throws).
-      if (isConnectConfigured(c.env)) {
-        const phone = normalizePhone(row.phone);
-        if (phone) {
-          try {
-            const res = await postConnectContact(
-              c.env,
-              buildServiceCaseReceived(phone, String(row.customer_name ?? ""), result.assr_no),
-            );
-            if (!res.ok) {
-              console.error(`[assr.create] Connect ack failed (${result.assr_no}): ${res.error}`);
-            }
-          } catch (e) {
-            console.error("[assr.create] Connect ack failed:", (e as Error).message);
-          }
-        }
-      }
+      // Customer WhatsApp ack via Houzs Connect (best-effort, create-only) — see assrConnectAck.ts.
+      await sendServiceCaseReceivedAck(c.env, result.assr_no, row.customer_name, row.phone);
     }
   } catch (e) {
     console.error("[assr.create] notify failed:", (e as Error).message);
