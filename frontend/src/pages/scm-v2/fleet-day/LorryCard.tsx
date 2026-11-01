@@ -101,13 +101,17 @@ function DeliveredRow({ d, selected, onOpen }: { d: DocRowVM; selected: boolean;
 /** One lorry run as a card. `run` carries the full rollup (header); `visibleDocs`
  *  are the filter-row-narrowed drops the list shows. */
 export function LorryCard({
-  run, visibleDocs, filtersActive, searchActive, focused, selectedKey, remarkKeys,
+  run, visibleDocs, filtersActive, searchActive, actionable, focused, selectedKey, remarkKeys,
   onFocus, onOpenDoc, onCrew, onRunSheet, onQr,
 }: {
   run: LorryRunVM;
   visibleDocs: DocRowVM[];
   filtersActive: boolean;
   searchActive: boolean;
+  /** True when the card is backed by a trip — map-focus, crew edit, run-sheet
+   *  and QR all need one. A no-trip lorry card is read-only (its drops still
+   *  open the drawer). */
+  actionable: boolean;
   focused: boolean;
   selectedKey: string | null;
   /** so_doc_no set of orders that carry >=1 remark — drives the REMARK pill. */
@@ -122,11 +126,12 @@ export function LorryCard({
   const undelivered = visibleDocs.filter((d) => d.status !== 'done');
   const delivered = visibleDocs.filter((d) => d.status === 'done');
   const showDone = doneOpen || searchActive;
-  const plannedAt = run.trip.planned_depart_at;
-  const actualAt = run.trip.clock_in_at ?? actualDepartOf(run.docs);
+  const plannedAt = run.trip?.planned_depart_at ?? null;
+  const actualAt = run.trip?.clock_in_at ?? actualDepartOf(run.docs);
   const deltaMin = departureDeltaMin(plannedAt, actualAt);
   const departLate = isDepartLate(deltaMin);
   const r = run.rollup;
+  const units = run.docs.reduce((n, d) => n + d.units, 0);
 
   return (
     <div
@@ -135,21 +140,36 @@ export function LorryCard({
     >
       {/* header */}
       <div className="flex flex-wrap items-center gap-2 p-3.5">
-        <button
-          type="button"
-          onClick={onFocus}
-          title="Focus this lorry on the map"
-          className="rounded-md bg-ink px-3 py-1 font-mono text-[18px] font-bold tracking-wider text-white"
-          style={{ borderBottom: `3px solid ${run.color}` }}
-        >
-          {run.plate}
-        </button>
+        {actionable ? (
+          <button
+            type="button"
+            onClick={onFocus}
+            title="Focus this lorry on the map"
+            className="rounded-md bg-ink px-3 py-1 font-mono text-[18px] font-bold tracking-wider text-white"
+            style={{ borderBottom: `3px solid ${run.color}` }}
+          >
+            {run.plate}
+          </button>
+        ) : (
+          <span
+            className="rounded-md bg-ink px-3 py-1 font-mono text-[18px] font-bold tracking-wider text-white"
+            style={{ borderBottom: `3px solid ${run.color}` }}
+          >
+            {run.plate}
+          </span>
+        )}
         <RunStatusPill run={run} />
         {run.tripNo && <span className="font-mono text-[11px] text-accent">{run.tripNo}</span>}
         <span className="flex-1" />
-        <CardBtn icon={<Users size={13} strokeWidth={1.75} />} label="Crew" onClick={onCrew} />
-        <CardBtn icon={<Printer size={13} strokeWidth={1.75} />} label="Run-sheet" onClick={onRunSheet} />
-        <CardBtn icon={<QrCode size={13} strokeWidth={1.75} />} label="QR" onClick={onQr} />
+        {actionable ? (
+          <>
+            <CardBtn icon={<Users size={13} strokeWidth={1.75} />} label="Crew" onClick={onCrew} />
+            <CardBtn icon={<Printer size={13} strokeWidth={1.75} />} label="Run-sheet" onClick={onRunSheet} />
+            <CardBtn icon={<QrCode size={13} strokeWidth={1.75} />} label="QR" onClick={onQr} />
+          </>
+        ) : (
+          <span className="rounded-full bg-surface-dim px-2 py-0.5 text-[10.5px] font-semibold text-ink-muted">No run yet</span>
+        )}
       </div>
 
       {/* driver + crew */}
@@ -189,6 +209,7 @@ export function LorryCard({
           {r.late > 0 && <span className="rounded-full bg-err-bg px-1.5 py-0.5 text-[9px] font-bold text-err">{r.late} late</span>}
           <span className="flex-1" />
           <span className="font-mono tabular-nums text-ink-secondary">{fmtSen(r.totalSen)}</span>
+          {r.drops > 0 && <span className="text-[11.5px] text-ink-muted">· {units} units</span>}
         </div>
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-dim">
           <div className="h-full rounded-full bg-synced" style={{ width: `${progressPct(r.delivered, r.drops)}%` }} />

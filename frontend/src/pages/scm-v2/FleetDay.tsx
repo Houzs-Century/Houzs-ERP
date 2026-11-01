@@ -11,10 +11,9 @@
 // here is a labelled placeholder). The page keeps the scm.transportation.last_mile
 // gate (applied on the route) and the real Google-Maps panel.
 // ----------------------------------------------------------------------------
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Printer, Truck, Map as MapIcon, ChevronLeft, ChevronRight } from 'lucide-react';
-import { PageHeader } from '../../components/Layout';
 import { Button } from '../../components/Button';
 import { TabStrip } from '../../components/TabStrip';
 import { DateField } from '../../vendor/scm/components/DateField';
@@ -43,7 +42,7 @@ import { useVehiclePositions } from '../../vendor/scm/lib/vehicle-positions';
 import { PackingListsSection } from '../../vendor/scm/components/PackingListsSection';
 import { dayStatsFrom } from '../../vendor/scm/lib/fleet-day-cards';
 import {
-  docRowVM, buildRuns, applyFilters, filtersActive, EMPTY_FILTERS, clockMY,
+  docRowVM, buildLorryCards, applyFilters, filtersActive, EMPTY_FILTERS, clockMY, platekey,
   type FleetFilters, type DocRowVM, type LorryRunVM,
 } from './fleet-day/vm';
 import { FleetDayStats } from './fleet-day/Stats';
@@ -120,38 +119,59 @@ export function FleetDay() {
   const driversById = useMemo(() => new Map(drivers.map((d) => [d.id, d])), [drivers]);
   const colors = useMemo(() => assignRouteColors(trips.map((t) => t.id)), [trips]);
   const runs = useMemo(
-    () => buildRuns(trips, dayDocs, driversById, (id) => routeColorFor(colors, id)),
-    [trips, dayDocs, driversById, colors],
+    () => buildLorryCards(trips, dayDocs, lorries, driversById, (id) => routeColorFor(colors, id)),
+    [trips, dayDocs, lorries, driversById, colors],
   );
-  const runByTripId = useMemo(() => new Map(runs.map((r) => [r.trip.id, r])), [runs]);
+  const runByTripId = useMemo(() => {
+    const m = new Map<string, LorryRunVM>();
+    for (const r of runs) if (r.trip) m.set(r.trip.id, r);
+    return m;
+  }, [runs]);
+  const runByPlate = useMemo(() => {
+    const m = new Map<string, LorryRunVM>();
+    for (const r of runs) m.set(platekey(r.plate), r);
+    return m;
+  }, [runs]);
+  /** The card a drop belongs to — its trip's card, else its crew plate's card. */
+  const runForDoc = useCallback((d: DocRowVM): LorryRunVM | null => {
+    if (d.order.trip_id) { const r = runByTripId.get(d.order.trip_id); if (r) return r; }
+    const p = d.order.crew?.lorry_plate;
+    return p ? runByPlate.get(platekey(p)) ?? null : null;
+  }, [runByTripId, runByPlate]);
   const toArrangeOrders = useMemo(
     () => boardOrders.filter((o) => lastMileListSideOf(o, date) === 'TO_ARRANGE'),
     [boardOrders, date],
   );
 
-  const stats = useMemo(() => dayStatsFrom(runs.map((r) => r.rollup)), [runs]);
+  // "Lorries" counts the lorries actually working today (>=1 drop); the pinned
+  // empty in-house cards still render but are not counted as out.
+  const stats = useMemo(() => dayStatsFrom(runs.filter((r) => r.rollup.drops > 0).map((r) => r.rollup)), [runs]);
   const lateCount = useMemo(() => dayDocs.filter((d) => d.late).length, [dayDocs]);
   const active = filtersActive(filters);
 
   const filteredDocs = useMemo(() => applyFilters(dayDocs, filters), [dayDocs, filters]);
-  const filteredByTrip = useMemo(() => {
+  const filteredByCard = useMemo(() => {
     const m = new Map<string, DocRowVM[]>();
-    for (const d of filteredDocs) { const t = d.order.trip_id; if (!t) continue; (m.get(t) ?? m.set(t, []).get(t)!).push(d); }
+    for (const d of filteredDocs) {
+      const r = runForDoc(d); if (!r) continue;
+      const k = platekey(r.plate);
+      (m.get(k) ?? m.set(k, []).get(k)!).push(d);
+    }
     return m;
-  }, [filteredDocs]);
+  }, [filteredDocs, runForDoc]);
   const visibleRuns = useMemo(
-    () => (active ? runs.filter((r) => (filteredByTrip.get(r.trip.id)?.length ?? 0) > 0) : runs),
-    [runs, active, filteredByTrip],
+    () => (active ? runs.filter((r) => (filteredByCard.get(platekey(r.plate))?.length ?? 0) > 0) : runs),
+    [runs, active, filteredByCard],
   );
   const allOrderRows = useMemo<AllOrderRow[]>(() => {
     const rows: AllOrderRow[] = [];
     for (const d of filteredDocs) {
-      const r = d.order.trip_id ? runByTripId.get(d.order.trip_id) : null;
+      const r = runForDoc(d);
       if (r) rows.push({ doc: d, run: r });
     }
     rows.sort((a, b) => a.run.plate.localeCompare(b.run.plate) || (a.doc.stopNo ?? 1e9) - (b.doc.stopNo ?? 1e9));
     return rows;
-  }, [filteredDocs, runByTripId]);
+  }, [filteredDocs, runForDoc]);
 
   const regionTabs = useMemo(
     () => regionTabsFrom(board.data?.regions).filter((t) => t.key !== 'EM').map((t) => ({ key: t.key, label: t.label })),
@@ -163,7 +183,7 @@ export function FleetDay() {
     return [...m].map(([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label));
   }, [dayDocs, staff]);
 
-  const selectedRun = selected?.order.trip_id ? runByTripId.get(selected.order.trip_id) ?? null : null;
+  const selectedRun = selected ? runForDoc(selected) : null;
 
   // ── Map wiring (reuses the shared Google-Maps panel) ───────────────────────
   const geo = useDeliveryGeo({ date, region: filters.region, enabled: mapOpen });
@@ -212,38 +232,58 @@ export function FleetDay() {
   // formatter (no locale date API — keeps audit:date-format clean).
   const liveTime = clockMY(new Date().toISOString()) ?? '';
 
+  // Own fleet (in-house, always pinned) above outsourced (shown only on a day it
+  // carries drops — owner rule 2026-11-01).
+  const inHouseRuns = visibleRuns.filter((r) => r.isInternal);
+  const outsourcedRuns = visibleRuns.filter((r) => !r.isInternal);
+  const renderCard = (r: LorryRunVM) => (
+    <LorryCard
+      key={r.trip?.id ?? `lorry:${platekey(r.plate)}`}
+      run={r}
+      visibleDocs={active ? (filteredByCard.get(platekey(r.plate)) ?? []) : r.docs}
+      filtersActive={active}
+      searchActive={filters.query.trim().length >= 2}
+      actionable={!!r.trip}
+      focused={!!r.trip && focusedId === r.trip.id}
+      selectedKey={selected?.key ?? null}
+      remarkKeys={remarkKeys}
+      onFocus={() => { if (r.trip) toggleFocus(r.trip.id); }}
+      onOpenDoc={(d) => setSelected(d)}
+      onCrew={() => setCrewRun(r)}
+      onRunSheet={() => { if (r.trip) goPrint(r.trip.id); }}
+      onQr={() => { if (r.trip) goPrint(r.trip.id); }}
+    />
+  );
+
   const lorriesView = (
     <div className="lg:flex lg:items-start lg:gap-4">
       <div className="min-w-0 space-y-4 lg:flex-1">
         <div className="flex items-center justify-between">
-          <span className="text-[11.5px] text-ink-muted">{visibleRuns.length} of {runs.length} lorries shown</span>
+          <span className="text-[11.5px] text-ink-muted">{visibleRuns.filter((r) => r.rollup.drops > 0).length} lorries out today</span>
           {!mapOpen && <Button variant="ghost" icon={<MapIcon size={14} strokeWidth={1.75} />} onClick={() => setMapOpen(true)}>Show map</Button>}
         </div>
         {query.isLoading ? (
           <p className="p-4 text-[13px] text-ink-muted">Loading the day…</p>
-        ) : visibleRuns.length === 0 ? (
-          <p className="rounded-md border border-border bg-surface p-6 text-center text-[12.5px] text-ink-muted">
-            {runs.length === 0 ? 'No lorry runs on this day yet — arrange orders onto a lorry in the To arrange tab.' : 'No lorries match the current filters.'}
-          </p>
         ) : (
-          <div className="grid grid-cols-1 gap-3.5 2xl:grid-cols-2">
-            {visibleRuns.map((r) => (
-              <LorryCard
-                key={r.trip.id}
-                run={r}
-                visibleDocs={active ? (filteredByTrip.get(r.trip.id) ?? []) : r.docs}
-                filtersActive={active}
-                searchActive={filters.query.trim().length >= 2}
-                focused={focusedId === r.trip.id}
-                selectedKey={selected?.key ?? null}
-                remarkKeys={remarkKeys}
-                onFocus={() => toggleFocus(r.trip.id)}
-                onOpenDoc={(d) => setSelected(d)}
-                onCrew={() => setCrewRun(r)}
-                onRunSheet={() => goPrint(r.trip.id)}
-                onQr={() => goPrint(r.trip.id)}
-              />
-            ))}
+          <div className="space-y-5">
+            <section className="space-y-2.5">
+              <h2 className="font-mono text-[11px] font-semibold uppercase tracking-brand text-ink-muted">Own fleet</h2>
+              {inHouseRuns.length === 0 ? (
+                <p className="rounded-md border border-border bg-surface p-4 text-[12.5px] text-ink-muted">No own-fleet lorry matches the current filters.</p>
+              ) : (
+                <div className="grid grid-cols-1 gap-3.5 2xl:grid-cols-2">{inHouseRuns.map(renderCard)}</div>
+              )}
+            </section>
+            <section className="space-y-2.5">
+              <h2 className="font-mono text-[11px] font-semibold uppercase tracking-brand text-ink-muted">Outsourced</h2>
+              {outsourcedRuns.length === 0 ? (
+                <p className="rounded-md border border-dashed border-border bg-surface p-4 text-center text-[12.5px] text-ink-muted">
+                  {runs.some((r) => !r.isInternal) ? 'No outsourced lorry matches the current filters.' : 'No outsourced lorries today.'}
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 gap-3.5 2xl:grid-cols-2">{outsourcedRuns.map(renderCard)}</div>
+              )}
+            </section>
           </div>
         )}
         <PackingListsSection date={date} warehouseId={warehouseId || null} />
@@ -279,28 +319,28 @@ export function FleetDay() {
 
   return (
     <div className="space-y-4">
-      <PageHeader
-        eyebrow="Delivery"
-        title="Last Mile Delivery"
-        description="Every lorry run of the day — crew, departure, progress and documents — with search, the order drawer and the day map."
-        primaryAction={
+      {/* Header — one row (design handoff v2, Layout A): title left; live clock,
+          day stepper and Print on the right. */}
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-2 font-mono text-[11px] font-semibold uppercase tracking-brand text-accent">
+            <span className="h-px w-[22px] bg-accent" />Delivery
+          </div>
+          <h1 className="text-[26px] font-bold leading-tight tracking-tight text-ink">Last Mile Delivery</h1>
+        </div>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <span className="flex items-center gap-1.5 text-[12px] text-ink-secondary">
+            <span className="h-[7px] w-[7px] rounded-full bg-synced" /> Live · {liveTime}
+          </span>
+          <div className="flex items-center overflow-hidden rounded-lg border border-border bg-surface">
+            <button type="button" aria-label="Previous day" onClick={() => { setParam('date', shiftDate(date, -1)); }} className="px-2 py-1.5 text-ink-secondary hover:bg-surface-2"><ChevronLeft size={16} /></button>
+            <DateField value={date} onChange={(iso) => setParam('date', iso || null)} className="border-0 bg-transparent px-1 py-1 text-center text-[12.5px] font-semibold text-ink" />
+            <button type="button" aria-label="Next day" onClick={() => { setParam('date', shiftDate(date, 1)); }} className="px-2 py-1.5 text-ink-secondary hover:bg-surface-2"><ChevronRight size={16} /></button>
+          </div>
           <Button variant="secondary" icon={<Printer size={14} />} onClick={() => goPrint()} disabled={trips.length === 0}>
             Print all run-sheets
           </Button>
-        }
-      />
-
-      {/* date stepper + live */}
-      <div className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-surface px-4 py-2.5">
-        <div className="flex items-center gap-1">
-          <button type="button" aria-label="Previous day" onClick={() => { setParam('date', shiftDate(date, -1)); }} className="rounded-md border border-border p-1.5 text-ink-secondary hover:bg-surface-2"><ChevronLeft size={16} /></button>
-          <DateField value={date} onChange={(iso) => setParam('date', iso || null)} className="rounded-md border border-border bg-surface px-2 py-1 text-[12.5px] text-ink" />
-          <button type="button" aria-label="Next day" onClick={() => { setParam('date', shiftDate(date, 1)); }} className="rounded-md border border-border p-1.5 text-ink-secondary hover:bg-surface-2"><ChevronRight size={16} /></button>
         </div>
-        <span className="flex-1" />
-        <span className="flex items-center gap-1.5 text-[12px] text-ink-secondary">
-          <span className="h-1.5 w-1.5 rounded-full bg-synced" /> Live · {liveTime}
-        </span>
       </div>
 
       <FleetDayStats stats={stats} />

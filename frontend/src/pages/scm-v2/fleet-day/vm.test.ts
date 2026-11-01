@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
-  docRowVM, buildRuns, applyFilters, searchMatch, latestLiveDoId,
+  docRowVM, buildRuns, buildLorryCards, applyFilters, searchMatch, latestLiveDoId,
   EMPTY_FILTERS, filtersActive, isoToMytTime, mytTimeToIso, type DocRowVM, type DayClock,
 } from './vm';
 import type { PlanningOrder } from '../../../vendor/scm/lib/delivery-planning-queries';
@@ -89,6 +89,35 @@ describe('buildRuns — grouping + driver join + sort', () => {
     expect(r.status).toBe('COMPLETED');
     expect(r.rollup).toMatchObject({ drops: 2, delivered: 2, withPod: 1 });
     expect(r.color).toBe('#2563eb');
+  });
+});
+
+describe('buildLorryCards — pin in-house, outsourced only when working', () => {
+  const drivers = new Map<string, DriverRow>();
+  const lorries = [
+    { id: 'l1', plate: 'VQE9058', is_internal: true, active: true },
+    { id: 'l2', plate: 'VRH9058', is_internal: true, active: true },
+    { id: 'l3', plate: 'MCF3084', is_internal: false, active: true },
+  ];
+  test('every in-house lorry shows (even empty); an outsourced lorry shows only with drops', () => {
+    const docs: DocRowVM[] = [
+      docRowVM(order({ so_doc_no: 'A', trip_id: 't1', trip_stop_no: 1 }), 'scheduled', CLOCK),
+      docRowVM(order({ so_doc_no: 'B', trip_id: null, trip_stop_no: null, crew: { lorry_plate: 'MCF 3084' } as PlanningOrder['crew'] }), 'scheduled', CLOCK),
+    ];
+    const cards = buildLorryCards([trip()], docs, lorries, drivers, () => '#000');
+    // In-house A->Z (VQE, VRH) then outsourced (MCF). The crew plate "MCF 3084"
+    // normalises onto the master's "MCF3084".
+    expect(cards.map((c) => c.plate)).toEqual(['VQE9058', 'VRH9058', 'MCF3084']);
+    const byPlate = Object.fromEntries(cards.map((c) => [c.plate, c] as const));
+    expect(byPlate.VQE9058!.trip).not.toBeNull();   // backed by its trip
+    expect(byPlate.VRH9058!.trip).toBeNull();        // pinned, empty
+    expect(byPlate.VRH9058!.rollup.drops).toBe(0);
+    expect(byPlate.MCF3084!.isInternal).toBe(false);
+    expect(byPlate.MCF3084!.rollup.drops).toBe(1);
+  });
+  test('an outsourced lorry with no work today does not appear', () => {
+    const cards = buildLorryCards([], [], lorries, drivers, () => '#000');
+    expect(cards.map((c) => c.plate)).toEqual(['VQE9058', 'VRH9058']);
   });
 });
 

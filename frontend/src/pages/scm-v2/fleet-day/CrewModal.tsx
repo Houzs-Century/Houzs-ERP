@@ -48,8 +48,8 @@ export function CrewModal({
 
   // (Re)seed the draft whenever a different run opens.
   useEffect(() => {
-    if (!run) { setDraft(null); return; }
-    const master = run.trip.driver?.id ? drivers.find((d) => d.id === run.trip.driver!.id) : undefined;
+    if (!run || !run.trip) { setDraft(null); return; }
+    const master = run.trip.driver?.id ? drivers.find((d) => d.id === run.trip!.driver!.id) : undefined;
     setDraft({
       lorryId: run.trip.lorry?.id ?? '',
       driver1Id: run.trip.driver?.id ?? '',
@@ -62,18 +62,19 @@ export function CrewModal({
     });
   }, [run, drivers]);
 
-  if (!run || !draft) return null;
+  if (!run || !run.trip || !draft) return null;
+  const trip = run.trip;
 
   const set = (patch: Partial<Draft>) => setDraft((d) => (d ? { ...d, ...patch } : d));
   const leaveNote = (kind: 'driver' | 'helper', id: string) => (id ? crewLeaveLabel(findCrewLeave(leave, kind, id, date)) : null);
   const master1 = draft.driver1Id ? drivers.find((d) => d.id === draft.driver1Id) : undefined;
   const icDirty = !!master1 && (draft.driver1Ic !== (master1.ic_number ?? '') || draft.driver1Phone !== master1.phone);
-  const dbl = doubleBookedPlates(trips, draft.driver1Id, run.trip.id);
+  const dbl = doubleBookedPlates(trips, draft.driver1Id, trip.id);
 
   // Propose: fill empty seats with the first active, not-on-leave person not
   // already used on another run today.
   const propose = () => {
-    const usedDrivers = new Set(trips.filter((t) => t.id !== run.trip.id).map((t) => t.driver?.id).filter(Boolean) as string[]);
+    const usedDrivers = new Set(trips.filter((t) => t.id !== trip.id).map((t) => t.driver?.id).filter(Boolean) as string[]);
     const freeDriver = drivers.find((d) => d.active && !usedDrivers.has(d.id) && !leaveNote('driver', d.id));
     const freeHelper = (exclude: string[]) => helpers.find((h) => !exclude.includes(h.id) && !leaveNote('helper', h.id));
     const patch: Partial<Draft> = {};
@@ -88,7 +89,7 @@ export function CrewModal({
     setSaving(true);
     let doOk = 0; let doFailed = 0; let noDo = 0; let tripFailed: string | null = null;
     try {
-      await updateTrip.mutateAsync({ id: run.trip.id, lorryId: draft.lorryId, driverId: draft.driver1Id || null, helper1Id: draft.helper1Id || null, helper2Id: draft.helper2Id || null, plannedDepartAt: mytTimeToIso(date, draft.plannedDepart) });
+      await updateTrip.mutateAsync({ id: trip.id, lorryId: draft.lorryId, driverId: draft.driver1Id || null, helper1Id: draft.helper1Id || null, helper2Id: draft.helper2Id || null, plannedDepartAt: mytTimeToIso(date, draft.plannedDepart) });
     } catch (e) { tripFailed = e instanceof Error ? e.message : 'trip update failed'; }
 
     for (const d of run.docs) {

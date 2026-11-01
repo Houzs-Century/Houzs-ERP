@@ -99,7 +99,7 @@ function ChangeLorrySection({ doc, runs, onMoved }: { doc: DocRowVM; runs: Lorry
   const [busy, setBusy] = useState(false);
 
   const delivered = doc.status === 'done';
-  const targetRun = runs.find((r) => r.trip.id === targetTripId) ?? null;
+  const targetRun = runs.find((r) => r.trip?.id === targetTripId) ?? null;
   const maxPos = (targetRun ? targetRun.docs.length : 0) + 1;
 
   const submit = async () => {
@@ -134,9 +134,9 @@ function ChangeLorrySection({ doc, runs, onMoved }: { doc: DocRowVM; runs: Lorry
             <span className="text-[11px] text-ink-muted">Lorry</span>
             <select className={selectCls} value={targetTripId} onChange={(e) => { setTargetTripId(e.target.value); setPosition(1); }}>
               <option value="">— pick a lorry run —</option>
-              {runs.map((r) => (
-                <option key={r.trip.id} value={r.trip.id}>
-                  {r.plate}{r.trip.id === doc.order.trip_id ? ' (current)' : ''} · {r.docs.length} drops
+              {runs.filter((r) => r.trip).map((r) => (
+                <option key={r.trip!.id} value={r.trip!.id}>
+                  {r.plate}{r.trip!.id === doc.order.trip_id ? ' (current)' : ''} · {r.docs.length} drops
                 </option>
               ))}
             </select>
