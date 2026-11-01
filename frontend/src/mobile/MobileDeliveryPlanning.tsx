@@ -32,7 +32,7 @@ import { MobileJobStop, jobRefOf, jobKey, jobLabelOf, useJobProgressMap } from "
 import { LEG_LABEL } from "../vendor/scm/lib/delivery-job";
 import { isEastMalaysiaOrSingaporeStop } from "../vendor/scm/lib/last-mile";
 import { isDispatched } from "./runSheetDispatch";
-import { runSheetTieBreak } from "./runSheetOrder";
+import { runSheetTieBreak, timeSlotEndMin } from "./runSheetOrder";
 
 /* ------------------------------------------------------------------ *
  * Mobile Delivery Planning — driver run-sheet screen (v2 job card).
@@ -233,21 +233,9 @@ const stopFlags = (
   return { started, arrived, done };
 };
 
-// Parse "HH:MM" → minutes; tolerant of the "09:00–10:00" window's end.
-const toMin = (t: string | null | undefined): number | null => {
-  if (!t) return null;
-  const p = t.split(":");
-  if (p.length < 2) return null;
-  const h = Number(p[0]);
-  const m = Number(p[1]);
-  if (isNaN(h) || isNaN(m)) return null;
-  return h * 60 + m;
-};
-const windowEndMin = (o: BoardRow): number | null => {
-  const w = o.time_range || "";
-  const end = w.split(/[–-]/)[1];
-  return toMin(end ? end.trim() : null);
-};
+// End of the delivery window in minutes, read from the office's free-text
+// time_range ("TIME AROUND 1:30PM TO 3:30PM" → 930) — drives the "late" pill.
+const windowEndMin = (o: BoardRow): number | null => timeSlotEndMin(o.time_range);
 // A today stop is "late" once we're past its delivery window and it isn't done.
 const isLate = (o: BoardRow, isToday: boolean): boolean => {
   if (!isToday) return false;

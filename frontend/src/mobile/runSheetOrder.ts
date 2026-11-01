@@ -24,29 +24,51 @@ export interface RunStopOrder {
 
 const BIG = Number.MAX_SAFE_INTEGER;
 
-/**
- * Minutes-since-midnight of a delivery window's START, read from the office's
- * free-text time_range ("TIME AROUND 1:30PM TO 3:30PM" → 810, "...11AM TO 1PM"
- * → 660). It takes the FIRST clock time in the string, understands 12-hour
- * am/pm with optional minutes, and also accepts a bare 24-hour "13:30". Null
- * when no time can be read (those stops sort last).
- */
-export function timeSlotStartMin(timeRange: string | null | undefined): number | null {
-  if (!timeRange) return null;
-  // First clock token: hour, optional ":mm", optional am/pm (any spacing/case).
-  const m = timeRange.match(/(\d{1,2})(?::(\d{2}))?\s*([ap]\.?m\.?)?/i);
-  if (!m) return null;
-  let hh = Number(m[1]);
-  const mm = m[2] ? Number(m[2]) : 0;
+// Every clock time in a string: hour, optional ":mm", optional am/pm (any case).
+const CLOCK_RE = /(\d{1,2})(?::(\d{2}))?\s*([ap]\.?m\.?)?/gi;
+
+// One clock token → minutes since midnight. 12-hour am/pm when present
+// (12AM = 00:00, 12PM = noon), else a bare 24-hour clock. Null if out of range.
+function clockToMin(h: string, min: string | undefined, ap: string | undefined): number | null {
+  let hh = Number(h);
+  const mm = min ? Number(min) : 0;
   if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
-  const ap = m[3] ? m[3].toLowerCase().replace(/\./g, "") : "";
-  if (ap === "am") {
-    if (hh === 12) hh = 0; // 12AM = midnight
-  } else if (ap === "pm") {
-    if (hh !== 12) hh += 12; // 12PM = noon stays 12
+  const a = ap ? ap.toLowerCase().replace(/\./g, "") : "";
+  if (a === "am") {
+    if (hh === 12) hh = 0;
+  } else if (a === "pm") {
+    if (hh !== 12) hh += 12;
   }
   if (hh > 23 || mm > 59) return null;
   return hh * 60 + mm;
+}
+
+const clockTokens = (timeRange: string | null | undefined): RegExpMatchArray[] =>
+  timeRange ? [...timeRange.matchAll(CLOCK_RE)] : [];
+
+/**
+ * Minutes-since-midnight of a delivery window's START, read from the office's
+ * free-text time_range ("TIME AROUND 1:30PM TO 3:30PM" → 810, "...11AM TO 1PM"
+ * → 660). Takes the FIRST clock time; understands 12-hour am/pm with optional
+ * minutes and a bare 24-hour "13:30". Null when no time can be read.
+ */
+export function timeSlotStartMin(timeRange: string | null | undefined): number | null {
+  const toks = clockTokens(timeRange);
+  if (toks.length === 0) return null;
+  const m = toks[0];
+  return clockToMin(m[1], m[2], m[3]);
+}
+
+/**
+ * Minutes-since-midnight of a delivery window's END — the LAST clock time in the
+ * same free-text time_range ("TIME AROUND 1:30PM TO 3:30PM" → 930). Used to tell
+ * whether a stop is past its window (the "late" pill). Null when none is read.
+ */
+export function timeSlotEndMin(timeRange: string | null | undefined): number | null {
+  const toks = clockTokens(timeRange);
+  if (toks.length === 0) return null;
+  const m = toks[toks.length - 1];
+  return clockToMin(m[1], m[2], m[3]);
 }
 
 /**

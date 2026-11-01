@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { runSheetTieBreak, timeSlotStartMin, type RunStopOrder } from "./runSheetOrder";
+import { runSheetTieBreak, timeSlotEndMin, timeSlotStartMin, type RunStopOrder } from "./runSheetOrder";
 
 const sortDocs = (rows: RunStopOrder[]) =>
   [...rows].sort(runSheetTieBreak).map((r) => r.so_doc_no);
@@ -25,6 +25,24 @@ describe("timeSlotStartMin", () => {
     expect(timeSlotStartMin(null)).toBeNull();
     expect(timeSlotStartMin("")).toBeNull();
     expect(timeSlotStartMin("ANYTIME")).toBeNull();
+  });
+});
+
+describe("timeSlotEndMin", () => {
+  // The END of the window = the last clock time (drives the "late" pill).
+  test("reads the end of the office free-text window", () => {
+    expect(timeSlotEndMin("TIME AROUND 1:30PM TO 3:30PM")).toBe(15 * 60 + 30);
+    expect(timeSlotEndMin("TIME AROUND 11AM TO 1PM")).toBe(13 * 60);
+    expect(timeSlotEndMin("TIME AROUND 3PM TO 5PM")).toBe(17 * 60);
+    expect(timeSlotEndMin("TIME AROUND 6:30PM TO 8PM")).toBe(20 * 60);
+  });
+  test("a single time is its own end; 24-hour accepted", () => {
+    expect(timeSlotEndMin("09:00")).toBe(9 * 60);
+    expect(timeSlotEndMin("13:30-15:30")).toBe(15 * 60 + 30);
+  });
+  test("absent or timeless → null", () => {
+    expect(timeSlotEndMin(null)).toBeNull();
+    expect(timeSlotEndMin("ANYTIME")).toBeNull();
   });
 });
 
