@@ -63,6 +63,7 @@ import { pickupTrackingError } from "../scm/shared/assr-pickup-tracking";
 import { verificationFieldsError } from "../scm/shared/assr-verification-fields";
 import { getVerificationNotes, saveVerificationNotes, takeVerificationNotes } from "../services/assrVerificationNotes";
 import { sendCompletionSurvey } from "../services/assrCompletionSurvey";
+import { sendServiceCaseReceivedAck } from "../services/assrConnectAck";
 import { overviewFilter, withOverviewFilter } from "./lib/assr-overview-filter";
 
 /* The context the extracted handlers below receive. They are exported so the
@@ -1845,7 +1846,7 @@ app.post(
   // it adds only one small insert. A raw env.DB read returns snake_case.
   try {
     const row = await c.env.DB.prepare(
-      `SELECT assigned_to, assigned_to_2, sales_agent, customer_name, created_by
+      `SELECT assigned_to, assigned_to_2, sales_agent, customer_name, phone, doc_no, created_by
          FROM assr_cases WHERE id = ?`,
     )
       .bind(result.id)
@@ -1854,6 +1855,8 @@ app.post(
         assigned_to_2: number | null;
         sales_agent: string | null;
         customer_name: string | null;
+        phone: string | null;
+        doc_no: string | null;
         created_by: number | null;
       }>();
     if (row) {
@@ -1868,6 +1871,8 @@ app.post(
         userIds: [row.assigned_to, row.assigned_to_2, row.created_by],
         agentNames: [row.sales_agent],
       });
+      // Customer WhatsApp ack via Houzs Connect (best-effort, create-only; doc_no = SO/ref_1) — see assrConnectAck.ts.
+      await sendServiceCaseReceivedAck(c.env, result.assr_no, row.doc_no, row.customer_name, row.phone);
     }
   } catch (e) {
     console.error("[assr.create] notify failed:", (e as Error).message);
