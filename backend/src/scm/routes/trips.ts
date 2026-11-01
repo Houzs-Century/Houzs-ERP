@@ -46,6 +46,7 @@ import {
 } from '../lib/packing-list-view';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { scopeToAllowedCompanies, companyCodeMap, withCompanyCode, activeCompanyId } from '../lib/companyScope';
+import { planStopMove } from '../lib/move-stop';
 import { optimizeRoute, travelTimeMatrix, type LatLngPoint } from '../lib/maps';
 import { geocodeAddressCached, composeAddress } from '../lib/geocode';
 import { proposeRoute, timeToMinutes, minutesToTime, type ProposeStopInput } from '../lib/propose-route';
@@ -836,6 +837,77 @@ export const patchTripStatusHandler = async (c: any) => {
   return c.json({ trip: data });
 };
 trips.patch('/:id/status', patchTripStatusHandler);
+
+/* ──────────────────────────────────────────────────────────────────────────
+   POST /trips/move-stop — the Last Mile "Change lorry" action (phase 3b). Move
+   an order's DELIVERY stop to another lorry run of the SAME day at a chosen
+   position, renumbering BOTH runs to a gap-free 1..n (lib/move-stop.ts). Same
+   company + same day only. There is no (trip_id, stop_no) unique index (mig
+   0053), so the plan applies stop-by-stop without collision juggling. Crew and
+   ETA are NOT recomputed here — the order simply rides the new run; re-apply
+   crew from the crew modal if it should change.
+
+   Registered before '/:id/*' — a static segment, so Hono matches it first.
+   ─────────────────────────────────────────────────────────────────────────*/
+const moveStopSchema = z.object({
+  doId: z.string().uuid(),
+  targetTripId: z.string().uuid(),
+  position: z.number().int().min(1).max(999),
+});
+
+trips.post('/move-stop', async (c) => {
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const parsed = moveStopSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: 'invalid_body', reason: parsed.error.message }, 400);
+  const p = parsed.data;
+  const sb = c.get('supabase');
+
+  // The order's DELIVERY stop — the row that moves. A DO carries one.
+  const { data: movedRows, error: mErr } = await sb.from('trip_stops')
+    .select('id, trip_id, company_id').eq('do_id', p.doId).eq('stop_type', 'DELIVERY');
+  if (mErr) return c.json({ error: 'load_failed', reason: mErr.message }, 500);
+  const moved = ((movedRows ?? []) as Array<{ id: string; trip_id: string; company_id: number }>)[0];
+  if (!moved) return c.json({ error: 'stop_not_found', reason: 'This order has no delivery stop on a run yet.' }, 404);
+  const sourceTripId = String(moved.trip_id);
+  const companyId = moved.company_id;
+
+  // Both runs must exist, be the caller's company, and fall on the SAME day.
+  const { data: tripRows, error: tErr } = await scopeToAllowedCompanies(
+    sb.from('trips').select('id, trip_date, company_id').in('id', [sourceTripId, p.targetTripId]), c,
+  );
+  if (tErr) return c.json({ error: 'load_failed', reason: tErr.message }, 500);
+  const found = (tripRows ?? []) as Array<{ id: string; trip_date: string | null }>;
+  const srcTrip = found.find((t) => String(t.id) === sourceTripId);
+  const tgtTrip = found.find((t) => String(t.id) === p.targetTripId);
+  if (!srcTrip || !tgtTrip) return c.json({ error: 'trip_not_found', reason: 'A lorry run was not found for your company.' }, 404);
+  if (String(srcTrip.trip_date).slice(0, 10) !== String(tgtTrip.trip_date).slice(0, 10)) {
+    return c.json({ error: 'cross_day', reason: 'A stop can only move between runs on the same day.' }, 400);
+  }
+
+  // Both runs' stops, as {id, stop_no}.
+  const [{ data: srcStops }, { data: tgtStops }] = await Promise.all([
+    sb.from('trip_stops').select('id, stop_no').eq('trip_id', sourceTripId),
+    sb.from('trip_stops').select('id, stop_no').eq('trip_id', p.targetTripId),
+  ]);
+  const lite = (rows: unknown) => ((rows ?? []) as Array<{ id: string; stop_no: number | string }>)
+    .map((r) => ({ id: String(r.id), stop_no: Number(r.stop_no) || 0 }));
+
+  const updates = planStopMove({
+    stopId: String(moved.id), sourceTripId, targetTripId: p.targetTripId, position: p.position,
+    sourceStops: lite(srcStops), targetStops: lite(tgtStops),
+  });
+  if (updates.length === 0) return c.json({ ok: true, moved: 0 });
+
+  let applied = 0; let failed = 0;
+  for (const u of updates) {
+    const patch: Record<string, unknown> = { stop_no: u.stop_no };
+    if (u.trip_id) patch.trip_id = u.trip_id;
+    const { error } = await sb.from('trip_stops').update(patch).eq('id', u.id).eq('company_id', companyId);
+    if (error) failed += 1; else applied += 1;
+  }
+  return c.json({ ok: failed === 0, moved: applied, failed });
+});
 
 /* ──────────────────────────────────────────────────────────────────────────
    POST /trips/:id/stops — add a stop linking a DO/SO, with stop_type + revenue.

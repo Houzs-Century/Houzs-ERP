@@ -62,7 +62,7 @@ describe('Last Mile board — render smoke', () => {
   });
 
   test('order drawer mounts closed (no doc)', () => {
-    const { container } = wrap(<OrderDrawer doc={null} run={null} salespersonName="—" onClose={vi.fn()} />);
+    const { container } = wrap(<OrderDrawer doc={null} run={null} runs={[]} salespersonName="—" onClose={vi.fn()} />);
     expect(container).toBeTruthy();
   });
 
