@@ -925,7 +925,7 @@ trips.post('/move-stop', async (c) => {
   const { data: movedRows, error: mErr } = await sb.from('trip_stops')
     .select('id, trip_id, company_id').eq('do_id', p.doId).eq('stop_type', 'DELIVERY');
   if (mErr) return c.json({ error: 'load_failed', reason: mErr.message }, 500);
-  const moved = (movedRows as Array<{ id: string; trip_id: string; company_id: number }>).at(0);
+  const moved = ((movedRows ?? []) as Array<{ id: string; trip_id: string; company_id: number }>)[0];
   if (!moved) return c.json({ error: 'stop_not_found', reason: 'This order has no delivery stop on a run yet.' }, 404);
   const sourceTripId = String(moved.trip_id);
   const companyId = moved.company_id;
@@ -935,7 +935,7 @@ trips.post('/move-stop', async (c) => {
     sb.from('trips').select('id, trip_date, company_id').in('id', [sourceTripId, p.targetTripId]), c,
   );
   if (tErr) return c.json({ error: 'load_failed', reason: tErr.message }, 500);
-  const found = tripRows as Array<{ id: string; trip_date: string | null }>;
+  const found = (tripRows ?? []) as Array<{ id: string; trip_date: string | null }>;
   const srcTrip = found.find((t) => String(t.id) === sourceTripId);
   const tgtTrip = found.find((t) => String(t.id) === p.targetTripId);
   if (!srcTrip || !tgtTrip) return c.json({ error: 'trip_not_found', reason: 'A lorry run was not found for your company.' }, 404);

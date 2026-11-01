@@ -67,12 +67,12 @@ export function isAssrLeg(v: unknown): v is AssrLeg {
 }
 
 type CaseRow = {
-  id: number; assr_no: string; company_id: number | null;
+  id: number; assr_no: string; doc_no: string | null; company_id: number | null;
   customer_name: string | null; phone: string | null;
   closed_at: string | null; archived_at: string | null;
 } & Partial<Record<string, string | null>>;
 
-const CASE_COLS = `id, assr_no, company_id, customer_name, phone, closed_at, archived_at,
+const CASE_COLS = `id, assr_no, doc_no, company_id, customer_name, phone, closed_at, archived_at,
   customer_pickup_at, inspection_visit_at, do_date,
   sched_pickup_date, sched_inspection_date, sched_delivery_date`;
 
@@ -135,12 +135,16 @@ export async function sendAssrArrangement(
     const contact = buildDeliveryFollowUp(
       phone,
       String(row.customer_name ?? ''),
+      // ref_1 stays the case number (assrNo): the flow's amend confirmation and
+      // the Confirm/Amend callback both key on it. The case number ALSO rides in
+      // assr_no (extra) so the template shows it from the dedicated ASSR No field,
+      // matching the Service Case Received ack; the Sales Order rides in ref_2.
       [{ ref: assrNo, orderRef: '', branding: '', deliveryDate: templateDate(date), balanceSen: null }],
       null,
       {
         callbackUrl,
         automation: KIND_AUTOMATION.assr_arrangement,
-        extra: { service_job: ASSR_LEG_CUSTOMER_LABEL[leg], assr_leg: leg },
+        extra: { service_job: ASSR_LEG_CUSTOMER_LABEL[leg], assr_leg: leg, ref_2: String(row.doc_no ?? ''), assr_no: assrNo },
         resetConversation: true,
       },
     );
