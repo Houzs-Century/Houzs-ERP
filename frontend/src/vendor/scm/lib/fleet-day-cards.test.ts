@@ -63,7 +63,7 @@ describe('runStatusOf', () => {
   test('empty run is Not departed', () => {
     expect(runStatusOf([])).toBe('NOT_DEPARTED');
   });
-  test('all delivered is Completed', () => {
+  test('two done drops -> COMPLETED', () => {
     expect(runStatusOf(s('done', 'done'))).toBe('COMPLETED');
   });
   test('any started (active or a partial done) is On the way', () => {
