@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import { isLastMileRow, lastMileSideOf, isToArrangeRow, lastMileListSideOf, proposeCrewDocNos, matchCrewSuggestions, LAST_MILE_SIDE_LABEL, isEastMalaysiaOrSingaporeStop } from './last-mile';
+import { isLastMileRow, lastMileSideOf, isToArrangeRow, lastMileListSideOf, isAssignedNoTripRow, proposeCrewDocNos, matchCrewSuggestions, LAST_MILE_SIDE_LABEL, isEastMalaysiaOrSingaporeStop } from './last-mile';
+import type { PlanningOrder } from './delivery-planning-queries';
 
 /* The Last Mile page's row derivation (owner pipeline 2026-08-07/08). The rows
  * are the SO rows whose server-stamped live trip sits on the picked day — the
@@ -169,6 +170,37 @@ describe('matchCrewSuggestions — crew labels only the day\'s already-sequenced
     ], tripIdByDocNo);
     expect(out.size).toBe(1);
     expect(out.get('trip-A')?.driverId).toBe('drv-1');
+  });
+});
+
+describe('isAssignedNoTripRow — a lorry assigned before a run is opened', () => {
+  const crewPlate = (plate: string | null) => ({ lorry_plate: plate } as PlanningOrder['crew']);
+  const due = (over: Record<string, unknown> = {}) => ({
+    row_type: 'so' as const,
+    trip_date: null as string | null,
+    delivery_state: 'PENDING_SCHEDULE' as const,
+    effective_delivery_date: DAY as string | null,
+    customer_delivery_date: null as string | null,
+    processing_date: null as string | null,
+    crew: null as PlanningOrder['crew'],
+    ...over,
+  });
+
+  test('due this day with a lorry on its crew = yes (belongs under that lorry)', () => {
+    expect(isAssignedNoTripRow(due({ crew: crewPlate('VQE9058') }), DAY)).toBe(true);
+  });
+
+  test('no lorry = no (stays in To arrange)', () => {
+    expect(isAssignedNoTripRow(due({ crew: null }), DAY)).toBe(false);
+    expect(isAssignedNoTripRow(due({ crew: crewPlate(null) }), DAY)).toBe(false);
+  });
+
+  test('already on a live trip = no (the trip owns it)', () => {
+    expect(isAssignedNoTripRow(due({ trip_date: DAY, crew: crewPlate('VQE9058') }), DAY)).toBe(false);
+  });
+
+  test('not due this day = no', () => {
+    expect(isAssignedNoTripRow(due({ effective_delivery_date: '2026-08-11', crew: crewPlate('VQE9058') }), DAY)).toBe(false);
   });
 });
 

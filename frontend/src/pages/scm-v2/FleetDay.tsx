@@ -27,7 +27,7 @@ import {
   pinsFromGeoPoints, geoTotals, zoneSummary, stagedRoutesFromRows, type MapFocus, type MapLatLng,
 } from '../../vendor/scm/lib/delivery-map-model';
 import { useDeliveryPlanning, type PlanningOrder } from '../../vendor/scm/lib/delivery-planning-queries';
-import { lastMileSideOf, lastMileListSideOf, isEastMalaysiaOrSingaporeStop } from '../../vendor/scm/lib/last-mile';
+import { lastMileSideOf, lastMileListSideOf, isAssignedNoTripRow, isEastMalaysiaOrSingaporeStop } from '../../vendor/scm/lib/last-mile';
 import { regionTabsFrom } from '../../vendor/scm/components/DeliveryPlanningBoard';
 import { useDrivers } from '../../vendor/scm/lib/drivers-queries';
 import { useHelpers } from '../../vendor/scm/lib/helpers-queries';
@@ -107,14 +107,24 @@ export function FleetDay() {
   // ── Derivation ─────────────────────────────────────────────────────────
   const clock = useMemo(() => ({ day: date, ...mytClock(new Date()) }), [date]);
   const dayRows = useMemo(() => boardOrders.filter((o) => lastMileSideOf(o, date) != null), [boardOrders, date]);
+  // Orders DUE this day that already have a lorry assigned (crew.lorry_plate) but
+  // no live trip yet — the dispatcher assigned the lorry on the DP board before a
+  // run was opened (owner 2026-11-01). They belong UNDER that lorry's card, not
+  // in the To-arrange bucket, so the board shows the day's plan per lorry even
+  // before trips/DOs exist. (lastMileSideOf stays trip-only for map focus + crew.)
+  const assignedRows = useMemo(
+    () => boardOrders.filter((o) => isAssignedNoTripRow(o, date)),
+    [boardOrders, date],
+  );
+  const lorryRows = useMemo(() => [...dayRows, ...assignedRows], [dayRows, assignedRows]);
   const statusByRef = useMemo(() => stopStatusByRef(
-    dayRows,
+    lorryRows,
     (o) => { const j = jobRefOf(o); return j ? progressMap.get(jobKey(j)) ?? null : null; },
     date, new Date(),
-  ), [dayRows, progressMap, date]);
+  ), [lorryRows, progressMap, date]);
   const dayDocs = useMemo(
-    () => dayRows.map((o) => docRowVM(o, statusByRef.get(o.so_doc_no) ?? 'scheduled', clock)),
-    [dayRows, statusByRef, clock],
+    () => lorryRows.map((o) => docRowVM(o, statusByRef.get(o.so_doc_no) ?? 'scheduled', clock)),
+    [lorryRows, statusByRef, clock],
   );
   const driversById = useMemo(() => new Map(drivers.map((d) => [d.id, d])), [drivers]);
   const colors = useMemo(() => assignRouteColors(trips.map((t) => t.id)), [trips]);
@@ -138,8 +148,10 @@ export function FleetDay() {
     const p = d.order.crew?.lorry_plate;
     return p ? runByPlate.get(platekey(p)) ?? null : null;
   }, [runByTripId, runByPlate]);
+  // To arrange = due this day, no trip AND no lorry assigned yet. Once a lorry is
+  // assigned (even before a run), the order moves onto that lorry's card above.
   const toArrangeOrders = useMemo(
-    () => boardOrders.filter((o) => lastMileListSideOf(o, date) === 'TO_ARRANGE'),
+    () => boardOrders.filter((o) => lastMileListSideOf(o, date) === 'TO_ARRANGE' && !isAssignedNoTripRow(o, date)),
     [boardOrders, date],
   );
 

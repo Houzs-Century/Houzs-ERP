@@ -98,6 +98,19 @@ export function lastMileListSideOf(o: LastMileRow & ToArrangeRow, date: string):
   return isToArrangeRow(o, date) ? 'TO_ARRANGE' : null;
 }
 
+/** A due-this-day SO that already has a LORRY assigned (crew.lorry_plate) but is
+ *  not yet on a live trip — the dispatcher picked the lorry on the DP board
+ *  before a run was opened (owner 2026-11-01). It belongs UNDER that lorry's Last
+ *  Mile card, not in the To-arrange bucket, so the board shows the day's plan per
+ *  lorry even before trips/DOs exist. (lastMileSideOf stays trip-only, so map
+ *  focus / crew / stop-status still see trip rows only.) */
+export function isAssignedNoTripRow(
+  o: ToArrangeRow & Pick<PlanningOrder, 'crew'>,
+  date: string,
+): boolean {
+  return isToArrangeRow(o, date) && !!o.crew?.lorry_plate;
+}
+
 /* East Malaysia (Sabah / Sarawak / Labuan) and Singapore ship by their OWN
    channel — consolidated out of KL and sent by freight, not on the local
    last-mile lorry run — so they are kept OFF the Last Mile board (owner
