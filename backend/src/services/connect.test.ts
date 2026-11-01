@@ -246,13 +246,13 @@ describe('buildDeliveryFollowUp', () => {
 });
 
 describe('buildServiceCaseReceived', () => {
-  it('maps name → full_name, SO → ref_1, case number → ref_2, fires the Service Case automation by name', () => {
+  it('maps name → full_name, SO → ref_1, case number → its own assr_no field, fires the automation by name', () => {
     const contact = buildServiceCaseReceived('+60123', 'Wong', 'HC-SO-013133', 'ASSR/2610-038');
     expect(contact).toEqual({
       phone: '+60123',
       name: 'Wong',
       automation: CONNECT_SERVICE_CASE_AUTOMATION,
-      attributes: { full_name: 'Wong', ref_1: 'HC-SO-013133', ref_2: 'ASSR/2610-038' },
+      attributes: { full_name: 'Wong', ref_1: 'HC-SO-013133', assr_no: 'ASSR/2610-038' },
     });
   });
 
@@ -267,7 +267,7 @@ describe('buildServiceCaseReceived', () => {
     expect(contact.attributes.callback_url).toBeUndefined();
     expect(contact.attributes.button_status).toBeUndefined();
     expect(contact.attributes.order_total).toBeUndefined();
-    expect(Object.keys(contact.attributes).sort()).toEqual(['full_name', 'ref_1', 'ref_2']);
+    expect(Object.keys(contact.attributes).sort()).toEqual(['assr_no', 'full_name', 'ref_1']);
   });
 });
 

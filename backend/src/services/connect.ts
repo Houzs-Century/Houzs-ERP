@@ -249,7 +249,9 @@ export function buildDeliveryFollowUp(
  *  this opens no Confirm / Amend conversation: the template is button-less, so
  *  there is no callback_url and no conversation reset — just the customer name,
  *  the Sales Order the case is about (ref_1, the delivery convention) and the
- *  service case number (ref_2), which the template features as its focus. */
+ *  service case number, which the template features as its focus. The case number
+ *  rides in assr_no, its OWN dedicated Connect field (not a shared ref_* slot) so
+ *  it never collides with a delivery ref. */
 export function buildServiceCaseReceived(
   phone: string,
   name: string,
@@ -260,7 +262,7 @@ export function buildServiceCaseReceived(
     phone,
     name,
     automation: CONNECT_SERVICE_CASE_AUTOMATION,
-    attributes: { full_name: name, ref_1: soNo, ref_2: assrNo },
+    attributes: { full_name: name, ref_1: soNo, assr_no: assrNo },
   };
 }
 
