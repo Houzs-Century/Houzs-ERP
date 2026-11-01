@@ -133,3 +133,21 @@ export function useUpdateTrip() {
     },
   });
 }
+
+/* ── Move a stop between lorry runs (Last Mile "Change lorry", phase 3b) ────────
+   POST /trips/move-stop reassigns the order's DELIVERY stop to another run of the
+   same day at a position and renumbers both runs (backend lib/move-stop.ts). */
+export function useMoveStop() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ doId, targetTripId, position }: { doId: string; targetTripId: string; position: number }) =>
+      authedFetch<{ ok: boolean; moved: number; failed?: number }>(`/trips/move-stop`, {
+        method: 'POST', body: JSON.stringify({ doId, targetTripId, position }),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['fleet-day'] });
+      void qc.invalidateQueries({ queryKey: ['delivery-planning'] });
+      void qc.invalidateQueries({ queryKey: ['scm-trips'] });
+    },
+  });
+}

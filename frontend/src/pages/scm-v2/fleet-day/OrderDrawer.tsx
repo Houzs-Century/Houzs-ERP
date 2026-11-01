@@ -7,6 +7,7 @@ import { authedFetch } from '../../../vendor/scm/lib/authed-fetch';
 import { fmtSen, fmtDateTime } from '../../../vendor/shared/format';
 import { useNotify } from '../../../vendor/scm/components/NotifyDialog';
 import { useDeliveryRemarks, useAddRemark } from '../../../vendor/scm/lib/delivery-remarks-queries';
+import { useMoveStop } from '../../../vendor/scm/lib/trips-queries';
 import { DoProofOfDeliveryCard, type DoPodFields } from '../DoProofOfDeliveryCard';
 import type { LorryRunVM, DocRowVM } from './vm';
 
@@ -87,15 +88,88 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
+/** Change-lorry: move this order's delivery stop to another lorry run of the day
+ *  at a chosen position (phase 3b). Disabled once delivered or before a DO exists. */
+function ChangeLorrySection({ doc, runs, onMoved }: { doc: DocRowVM; runs: LorryRunVM[]; onMoved: () => void }) {
+  const move = useMoveStop();
+  const notify = useNotify();
+  const [open, setOpen] = useState(false);
+  const [targetTripId, setTargetTripId] = useState('');
+  const [position, setPosition] = useState(1);
+  const [busy, setBusy] = useState(false);
+
+  const delivered = doc.status === 'done';
+  const targetRun = runs.find((r) => r.trip.id === targetTripId) ?? null;
+  const maxPos = (targetRun ? targetRun.docs.length : 0) + 1;
+
+  const submit = async () => {
+    if (!doc.latestLiveDoId || !targetTripId) return;
+    setBusy(true);
+    try {
+      const r = await move.mutateAsync({ doId: doc.latestLiveDoId, targetTripId, position });
+      if (!r.ok) void notify({ title: 'Moved with problems', body: `${r.failed ?? 0} stop update(s) failed.`, tone: 'error' });
+      setOpen(false);
+      onMoved();
+    } catch (e) {
+      void notify({ title: 'Could not change lorry', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    }
+    setBusy(false);
+  };
+
+  const selectCls = 'h-9 w-full rounded-md border border-border bg-surface px-2 text-[12.5px] text-ink outline-none focus:border-primary';
+  return (
+    <div className="rounded-lg border border-border bg-surface p-3">
+      <div className="mb-1 font-mono text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Change lorry</div>
+      {delivered ? (
+        <div className="text-[12px] text-ink-muted">Delivered — the lorry can't be changed.</div>
+      ) : !doc.latestLiveDoId ? (
+        <div className="text-[12px] text-ink-muted">No delivery order cut yet — assign a lorry from the board first.</div>
+      ) : !open ? (
+        <button type="button" onClick={() => setOpen(true)} className="text-[12.5px] font-semibold text-primary hover:underline">
+          Move this order to another lorry…
+        </button>
+      ) : (
+        <div className="space-y-2">
+          <label className="block">
+            <span className="text-[11px] text-ink-muted">Lorry</span>
+            <select className={selectCls} value={targetTripId} onChange={(e) => { setTargetTripId(e.target.value); setPosition(1); }}>
+              <option value="">— pick a lorry run —</option>
+              {runs.map((r) => (
+                <option key={r.trip.id} value={r.trip.id}>
+                  {r.plate}{r.trip.id === doc.order.trip_id ? ' (current)' : ''} · {r.docs.length} drops
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-[11px] text-ink-muted">Stop no.</span>
+            <select className={selectCls} value={position} onChange={(e) => setPosition(Number(e.target.value))} disabled={!targetRun}>
+              {Array.from({ length: maxPos }, (_, i) => i + 1).map((n) => (
+                <option key={n} value={n}>Stop {n}{n === maxPos ? ' (last)' : ''}</option>
+              ))}
+            </select>
+          </label>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button variant="primary" onClick={() => void submit()} disabled={busy || !targetTripId}>{busy ? 'Moving…' : 'Move order'}</Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** The right order-detail drawer: customer + lorry call cards, the fields, the
  *  POD/timeline (reusing DoProofOfDeliveryCard), and phase-3 placeholders for
  *  Change-lorry + Remarks. `run` is the lorry the drop sits on (null for a
  *  still-to-arrange drop). */
 export function OrderDrawer({
-  doc, run, salespersonName, onClose,
+  doc, run, runs, salespersonName, onClose,
 }: {
   doc: DocRowVM | null;
   run: LorryRunVM | null;
+  /** The day's runs, for the Change-lorry target picker. */
+  runs: LorryRunVM[];
   salespersonName: string;
   onClose: () => void;
 }) {
@@ -154,10 +228,8 @@ export function OrderDrawer({
               </div>
             </div>
 
-            {/* change lorry — phase 3 */}
-            <div className="rounded-lg border border-dashed border-border bg-surface-2 p-3 text-[12px] text-ink-muted">
-              Change lorry &amp; renumber stops arrives with the move-stop update.
-            </div>
+            {/* change lorry (phase 3b) */}
+            <ChangeLorrySection doc={doc} runs={runs} onMoved={onClose} />
 
             {/* fields */}
             <div className="rounded-lg border border-border bg-surface p-3">

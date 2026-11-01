@@ -355,6 +355,7 @@ export function FleetDay() {
       <OrderDrawer
         doc={selected}
         run={selectedRun}
+        runs={runs}
         salespersonName={selected ? staff.nameOf(selected.agent, selected.salespersonId) : '—'}
         onClose={() => setSelected(null)}
       />
