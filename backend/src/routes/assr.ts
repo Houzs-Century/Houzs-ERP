@@ -1339,13 +1339,12 @@ app.get("/search-so", requireServiceCaseAccess(), async (c) => {
         .all()
     : { results: [] as Array<Record<string, unknown>> };
 
-  // (2) SCM-native SOs. assrCompanySql pins rank-and-file SALES to HOUZS
-  // (inlining the validated int id, or "" when unresolved -> degrades to all
-  // rows, same as legacy single-company); office/backend/directors get their
-  // allowed set. This is the fix that stops 2990 orders leaking into the
-  // service-case SO picker for a both-company SALES user.
+  // (2) SCM-native SOs. assrCompanySql pins rank-and-file SALES to HOUZS (inlining the validated int id, or ""
+  // when unresolved -> degrades to all rows); office/backend/directors get their allowed set. This is the fix
+  // that stops 2990 orders leaking into the service-case SO picker for a both-company SALES user.
   const coFilter = assrCompanySql(c, "so.company_id");
-  // Migrated/写回 orders keep their AutoCount number in linked_ac_docno (doc_no is the ERP one); customers quote it.
+  // linked_ac_docno holds the migrated AutoCount number; customer_so_no holds the customer's own reference and is
+  // what the app shows as "Ref No." when ref is empty. Search both, else those SOs answer "No match" (787 live, #5101).
   const scmRows = await c.env.DB.prepare(
     `SELECT so.doc_no, so.ref, so.debtor_name, so.phone,
             so.so_date AS doc_date, so.agent AS sales_agent, co.code AS company_code
@@ -1353,13 +1352,14 @@ app.get("/search-so", requireServiceCaseAccess(), async (c) => {
        LEFT JOIN companies co ON co.id = so.company_id
       WHERE (LOWER(so.doc_no) LIKE ?
           OR LOWER(COALESCE(so.ref, '')) LIKE ?
+          OR LOWER(COALESCE(so.customer_so_no, '')) LIKE ?
           OR LOWER(COALESCE(so.debtor_name, '')) LIKE ?
           OR LOWER(COALESCE(so.linked_ac_docno, '')) LIKE ?)
         AND so.status <> 'DRAFT' AND so.status <> 'CANCELLED'${coFilter}
       ORDER BY so.so_date DESC
       LIMIT 20`
   )
-    .bind(pattern, pattern, pattern, pattern)
+    .bind(pattern, pattern, pattern, pattern, pattern)
     .all();
 
   // Merge: SCM rows first so a doc_no present in both keeps the company-tagged
