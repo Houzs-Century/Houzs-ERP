@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   buildDeliveryFollowUp,
+  buildServiceCaseReceived,
   isConnectConfigured,
   postConnectContact,
   parseConnectCompanyProfiles,
   CONNECT_DELIVERY_AUTOMATION,
+  CONNECT_SERVICE_CASE_AUTOMATION,
   CONNECT_RESET_ATTRIBUTES,
   chatCallbackUrl,
   connectUntriggeredReason,
@@ -39,6 +41,7 @@ describe('buildDeliveryFollowUp', () => {
         last_button: '',
         amount: '',
         order_amount: '',
+        company_code: '',
         amended_delivery_date: '',
         amend_date_reason: '',
         date_amended: '',
@@ -81,6 +84,8 @@ describe('buildDeliveryFollowUp', () => {
     expect(CONNECT_RESET_ATTRIBUTES).toContain('amount');
     expect(CONNECT_RESET_ATTRIBUTES).toContain('order_amount');
     expect(CONNECT_RESET_ATTRIBUTES).toContain('orders_json');
+    // Reset so a prior order's company can't route this send's balance (merge).
+    expect(CONNECT_RESET_ATTRIBUTES).toContain('company_code');
   });
 
   it('amount = the owed sum over EVERY bundled order, formatted RM, only when > 0', () => {
@@ -240,6 +245,62 @@ describe('buildDeliveryFollowUp', () => {
     expect(contact.attributes.company_signature).toBeUndefined();
     expect(contact.attributes.bank_block).toBeUndefined();
     expect(contact.attributes.disposal_block).toBeUndefined();
+  });
+
+  it('company_code is the ORDER batch company — the signal Connect routes the balance send on', () => {
+    const contact = buildDeliveryFollowUp('+60123', 'Wong', [
+      { ref: '2990-SO-001', orderRef: 'HM 22001', branding: 'AKEMI', deliveryDate: '2026/10/05', companyCode: '2990' },
+    ], null, CTX);
+    expect(contact.attributes.company_code).toBe('2990');
+  });
+
+  it('company_code + the per-company profile carry the SAME (order) company, never the sender', () => {
+    // A 2990 order sent by HOUZS staff: both the code and the bank/signature
+    // must be 2990's, or the balance paragraph bills the wrong account.
+    const profile2990: ConnectCompanyProfile = {
+      signature: "2990's Home",
+      bankBlock: '2990 bank\nAcc: 222',
+      disposalBlock: '2990 disposal',
+    };
+    const contact = buildDeliveryFollowUp('+60123', 'Wong', [
+      { ref: '2990-SO-001', orderRef: 'HM 22001', branding: 'AKEMI', deliveryDate: '2026/10/05', companyCode: '2990' },
+    ], profile2990, CTX);
+    expect(contact.attributes.company_code).toBe('2990');
+    expect(contact.attributes.company_signature).toBe("2990's Home");
+    expect(contact.attributes.bank_block).toBe('2990 bank\nAcc: 222');
+  });
+
+  it('no company on the orders → company_code is the empty reset (Connect falls back to the doc_no prefix)', () => {
+    const contact = buildDeliveryFollowUp('+60123', 'Wong', [
+      { ref: 'HC13234', orderRef: 'HC 11063', branding: 'AKEMI', deliveryDate: '2026/10/05' },
+    ], null, CTX);
+    expect(contact.attributes.company_code).toBe('');
+  });
+});
+
+describe('buildServiceCaseReceived', () => {
+  it('maps name → full_name, SO → ref_1, case number → its own assr_no field, fires the automation by name', () => {
+    const contact = buildServiceCaseReceived('+60123', 'Wong', 'HC-SO-013133', 'ASSR/2610-038');
+    expect(contact).toEqual({
+      phone: '+60123',
+      name: 'Wong',
+      automation: CONNECT_SERVICE_CASE_AUTOMATION,
+      attributes: { full_name: 'Wong', ref_1: 'HC-SO-013133', assr_no: 'ASSR/2610-038' },
+    });
+  });
+
+  it('the automation name matches the Connect flow, byte-for-byte', () => {
+    // Connect matches the automation BY NAME; a drift here silently stops the
+    // acknowledgement (empty `triggered`), so pin the exact string.
+    expect(CONNECT_SERVICE_CASE_AUTOMATION).toBe('Service Case Received');
+  });
+
+  it('carries no delivery conversation state (button-less template, no callback)', () => {
+    const contact = buildServiceCaseReceived('+60123', 'Wong', 'HC-SO-013133', 'ASSR/2610-038');
+    expect(contact.attributes.callback_url).toBeUndefined();
+    expect(contact.attributes.button_status).toBeUndefined();
+    expect(contact.attributes.order_total).toBeUndefined();
+    expect(Object.keys(contact.attributes).sort()).toEqual(['assr_no', 'full_name', 'ref_1']);
   });
 });
 
