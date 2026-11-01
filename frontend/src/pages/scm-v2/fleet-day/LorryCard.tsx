@@ -131,6 +131,7 @@ export function LorryCard({
   const deltaMin = departureDeltaMin(plannedAt, actualAt);
   const departLate = isDepartLate(deltaMin);
   const r = run.rollup;
+  const units = run.docs.reduce((n, d) => n + d.units, 0);
 
   return (
     <div
@@ -208,6 +209,7 @@ export function LorryCard({
           {r.late > 0 && <span className="rounded-full bg-err-bg px-1.5 py-0.5 text-[9px] font-bold text-err">{r.late} late</span>}
           <span className="flex-1" />
           <span className="font-mono tabular-nums text-ink-secondary">{fmtSen(r.totalSen)}</span>
+          {r.drops > 0 && <span className="text-[11.5px] text-ink-muted">· {units} units</span>}
         </div>
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-dim">
           <div className="h-full rounded-full bg-synced" style={{ width: `${progressPct(r.delivered, r.drops)}%` }} />
