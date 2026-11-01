@@ -43,7 +43,7 @@ import { useVehiclePositions } from '../../vendor/scm/lib/vehicle-positions';
 import { PackingListsSection } from '../../vendor/scm/components/PackingListsSection';
 import { dayStatsFrom } from '../../vendor/scm/lib/fleet-day-cards';
 import {
-  docRowVM, buildRuns, applyFilters, filtersActive, EMPTY_FILTERS,
+  docRowVM, buildRuns, applyFilters, filtersActive, EMPTY_FILTERS, clockMY,
   type FleetFilters, type DocRowVM, type LorryRunVM,
 } from './fleet-day/vm';
 import { FleetDayStats } from './fleet-day/Stats';
@@ -205,7 +205,9 @@ export function FleetDay() {
   };
 
   const refetchAll = () => { void board.refetch(); void query.refetch(); };
-  const liveTime = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kuala_Lumpur' });
+  // Malaysian wall-clock for the "Live · h:mm AM/PM" header, via the shared pure
+  // formatter (no locale date API — keeps audit:date-format clean).
+  const liveTime = clockMY(new Date().toISOString()) ?? '';
 
   const lorriesView = (
     <div className="lg:flex lg:items-start lg:gap-4">
