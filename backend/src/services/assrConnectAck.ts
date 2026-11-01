@@ -23,11 +23,14 @@ import type { Env } from "../types";
 import { normalizePhone } from "../scm/shared/phone";
 import { buildServiceCaseReceived, isConnectConfigured, postConnectContact } from "./connect";
 
-/** Fire the one-off customer acknowledgement for a newly-created case. Returns
- *  nothing and swallows every failure — safe to await in the create path. */
+/** Fire the one-off customer acknowledgement for a newly-created case. soNo is
+ *  the Sales Order the case is about (ref_1); assrNo is the case number (ref_2,
+ *  the message's focus). Returns nothing and swallows every failure — safe to
+ *  await in the create path. */
 export async function sendServiceCaseReceivedAck(
   env: Env,
   assrNo: string,
+  soNo: string | null,
   customerName: string | null,
   phoneRaw: string | null,
 ): Promise<void> {
@@ -37,7 +40,7 @@ export async function sendServiceCaseReceivedAck(
   try {
     const res = await postConnectContact(
       env,
-      buildServiceCaseReceived(phone, String(customerName ?? ""), assrNo),
+      buildServiceCaseReceived(phone, String(customerName ?? ""), String(soNo ?? ""), assrNo),
     );
     if (!res.ok) {
       console.error(`[assr.create] Connect ack failed (${assrNo}): ${res.error}`);

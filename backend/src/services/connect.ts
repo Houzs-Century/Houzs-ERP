@@ -247,18 +247,20 @@ export function buildDeliveryFollowUp(
 /** Build the /api/webhooks/erp body for the one-off acknowledgement sent to the
  *  customer when a Service Case (ASSR) is created. Unlike the delivery follow-up
  *  this opens no Confirm / Amend conversation: the template is button-less, so
- *  there is no callback_url and no conversation reset — just the customer name
- *  and the case number (ref_1). */
+ *  there is no callback_url and no conversation reset — just the customer name,
+ *  the Sales Order the case is about (ref_1, the delivery convention) and the
+ *  service case number (ref_2), which the template features as its focus. */
 export function buildServiceCaseReceived(
   phone: string,
   name: string,
+  soNo: string,
   assrNo: string,
 ): ConnectContact {
   return {
     phone,
     name,
     automation: CONNECT_SERVICE_CASE_AUTOMATION,
-    attributes: { full_name: name, ref_1: assrNo },
+    attributes: { full_name: name, ref_1: soNo, ref_2: assrNo },
   };
 }
 
