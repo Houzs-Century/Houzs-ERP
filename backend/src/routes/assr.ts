@@ -1346,6 +1346,9 @@ app.get("/search-so", requireServiceCaseAccess(), async (c) => {
   // service-case SO picker for a both-company SALES user.
   const coFilter = assrCompanySql(c, "so.company_id");
   // Migrated/写回 orders keep their AutoCount number in linked_ac_docno (doc_no is the ERP one); customers quote it.
+  // customer_so_no is the customer's own reference and is what the whole app shows as "Ref No." whenever ref is
+  // empty (customerRefOf: ref || customer_so_no). 787 of 3,920 live SOs carry ONLY customer_so_no, so searching the
+  // Ref No. the operator sees must match it too, or those orders answer "No matching sales orders" (owner 2026-11-01).
   const scmRows = await c.env.DB.prepare(
     `SELECT so.doc_no, so.ref, so.debtor_name, so.phone,
             so.so_date AS doc_date, so.agent AS sales_agent, co.code AS company_code
@@ -1353,13 +1356,14 @@ app.get("/search-so", requireServiceCaseAccess(), async (c) => {
        LEFT JOIN companies co ON co.id = so.company_id
       WHERE (LOWER(so.doc_no) LIKE ?
           OR LOWER(COALESCE(so.ref, '')) LIKE ?
+          OR LOWER(COALESCE(so.customer_so_no, '')) LIKE ?
           OR LOWER(COALESCE(so.debtor_name, '')) LIKE ?
           OR LOWER(COALESCE(so.linked_ac_docno, '')) LIKE ?)
         AND so.status <> 'DRAFT' AND so.status <> 'CANCELLED'${coFilter}
       ORDER BY so.so_date DESC
       LIMIT 20`
   )
-    .bind(pattern, pattern, pattern, pattern)
+    .bind(pattern, pattern, pattern, pattern, pattern)
     .all();
 
   // Merge: SCM rows first so a doc_no present in both keeps the company-tagged
