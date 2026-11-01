@@ -32,6 +32,7 @@ import { MobileJobStop, jobRefOf, jobKey, jobLabelOf, useJobProgressMap } from "
 import { LEG_LABEL } from "../vendor/scm/lib/delivery-job";
 import { isEastMalaysiaOrSingaporeStop } from "../vendor/scm/lib/last-mile";
 import { isDispatched } from "./runSheetDispatch";
+import { runSheetTieBreak } from "./runSheetOrder";
 
 /* ------------------------------------------------------------------ *
  * Mobile Delivery Planning — driver run-sheet screen (v2 job card).
@@ -371,16 +372,15 @@ export function MobileDeliveryPlanning({
       }
       // else: further-out / undated → left off the run-sheet (desktop owns it).
     }
-    // Day, then the stop's place in its lorry run (Time Arrangement's sequence),
-    // then document number for stops not yet on a run.
+    // Day first; within a day, the stop's place in its lorry run (Time
+    // Arrangement's sequence), else the delivery time slot, else document number
+    // — see runSheetTieBreak. Trips are not being filled in, so the time slot is
+    // what actually orders the list today (owner 2026-11-01).
     const bySeq = (a: BoardRow, b: BoardRow) => {
       const ak = dayKey(runDateOf(a));
       const bk = dayKey(runDateOf(b));
       if (ak !== bk) return ak < bk ? -1 : 1;
-      const as = a.trip_stop_no ?? Number.MAX_SAFE_INTEGER;
-      const bs = b.trip_stop_no ?? Number.MAX_SAFE_INTEGER;
-      if (as !== bs) return as - bs;
-      return (a.so_doc_no || "").localeCompare(b.so_doc_no || "");
+      return runSheetTieBreak(a, b);
     };
     today.sort(bySeq);
     tomorrow.sort(bySeq);
