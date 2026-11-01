@@ -43,108 +43,118 @@ const ROUTE_LABELS: Array<[RegExp, string]> = [
 
 // SCM V2 routes ship dozens of /scm/* pages — hand-rolling a regex per page
 // bloats the list. Instead the second URL segment picks the label from this
-// table: [plural, singular] where plural covers the listing (and its
-// action children like /new or /from-*) and singular covers the detail
-// page (a trailing entity id). Kept as one central table so adding a new
-// SCM route only means one map entry, not two regex lines.
-export const SCM_SEGMENT_LABELS: Record<string, [string, string]> = {
+// table. A bare string is used where the listing and the detail page read the
+// same; a [plural, singular] pair where they differ — plural covers the listing
+// (and its action children like /new or /from-*), singular the detail page (a
+// trailing entity id). One central table, so a new SCM route is one map entry,
+// not two regex lines. EVERY /scm section in routeManifest must have an entry
+// (routeLabels.test.ts walks the manifest and fails CI otherwise), so a tab
+// always shows the page's own title and never falls through to a bare "Scm".
+type SegmentLabel = string | [string, string];
+export const SCM_SEGMENT_LABELS: Record<string, SegmentLabel> = {
   // Sales chain
   "sales-orders": ["Sales Orders", "Sales Order"],
   "delivery-orders": ["Delivery Orders", "Delivery Order"],
   "sales-invoices": ["Sales Invoices", "Sales Invoice"],
   "delivery-returns": ["Delivery Returns", "Delivery Return"],
   // The DO print's "SCAN . MARK LOADED" QR lands on this one-shot page.
-  "do-load": ["Scan Delivery Order", "Scan Delivery Order"],
+  "do-load": "Scan Delivery Order",
   // Owner 2026-07-27 — the two amendment queues carry SHORT tab names so the
   // workspace strip stays scannable ("SO Amdt." / "PO Amdt."), and the two
   // sides are distinguishable at a glance. Detail pages push their own
   // breadcrumbs, so the descriptive titles live on-page, not here.
-  "amendments": ["SO Amdt.", "SO Amdt."],
+  "amendments": "SO Amdt.",
   // Procurement chain
   "purchase-orders": ["Purchase Orders", "Purchase Order"],
-  "po-amendments": ["PO Amdt.", "PO Amdt."],
+  "po-amendments": "PO Amdt.",
   "cancel-requests": ["Cancellation Requests", "Cancellation Request"],
   "payment-backdate-requests": ["Payment Backdate Requests", "Payment Backdate Request"],
   "purchase-invoices": ["Purchase Invoices", "Purchase Invoice"],
   "purchase-returns": ["Purchase Returns", "Purchase Return"],
   "grns": ["Goods Received", "Goods Received Note"],
-  "mrp": ["MRP", "MRP"],
+  "mrp": "MRP",
   "suppliers": ["Suppliers", "Supplier"],
-  "supplier-maintenance": ["Supplier Maintenance", "Supplier Maintenance"],
+  "supplier-maintenance": "Supplier Maintenance",
   // Warehouse / stock
   "warehouses": ["Warehouses", "Warehouse"],
-  "inventory": ["Inventory", "Inventory"],
+  "inventory": "Inventory",
   "stock-adjustments": ["Stock Adjustments", "Stock Adjustment"],
   "stock-transfers": ["Stock Transfers", "Stock Transfer"],
   "stock-takes": ["Stock Takes", "Stock Take"],
-  "loading-list": ["Loading List", "Loading List"],
+  "fabric-tracking": "Fabric Converter",
+  "loading-list": "Loading List",
   // Products
   "products": ["Products", "Product"],
   "categories": ["Categories", "Category"],
   "product-models": ["Product Models", "Product Model"],
-  "fabric-tracking": ["Fabric Converter", "Fabric Converter"],
+  "product-requests": ["Product Requests", "Product Request"],
   // Finance
-  "accounting": ["Accounting", "Accounting"],
-  "outstanding": ["Outstanding", "Outstanding"],
+  "accounting": "Accounting",
+  "outstanding": "Outstanding",
   "unbilled-deliveries": ["Not Billed", "Delivered, Not Yet Billed"],
   "payment-vouchers": ["Payment Vouchers", "Payment Voucher"],
   "payment-requests": ["Payment Requests", "Payment Request"],
   "currencies": ["Currencies", "Currency"],
-  "chart-of-accounts": ["Chart of Accounts", "Chart of Accounts"],
+  "chart-of-accounts": "Chart of Accounts",
   "other-debtors": ["Other Debtors", "Other Debtor"],
   "receipts": ["Receipts", "Receipt"],
   "official-receipts": ["Official Receipts", "Official Receipt"],
   "ap-invoices": ["AP Invoices", "AP Invoice"],
   "ar-invoices": ["AR Invoices", "AR Invoice"],
-  "credit-notes": ["Credit & Debit Notes", "Credit & Debit Notes"],
+  "credit-notes": "Credit & Debit Notes",
   "deposit-invoices": ["Deposit Invoices", "Deposit Invoice"],
-  "official-docs": ["Official Invoices Owed", "Official Invoices Owed"],
-  "forecast": ["Forecast P&L", "Forecast P&L"],
-  "finance-dashboard": ["Finance Dashboard", "Finance Dashboard"],
-  "daily-bank": ["Daily Bank", "Daily Bank"],
-  "merchant-recon": ["Merchant Recon", "Merchant Recon"],
-  "bank-recon": ["Bank Recon", "Bank Recon"],
-  "unmatched-payments": ["Unmatched Payments", "Unmatched Payments"],
-  "settlement-setup": ["Reconciliation Setup", "Reconciliation Setup"],
-  "fair-pending": ["Fair Links to Settle", "Fair Links to Settle"],
+  "official-docs": "Official Invoices Owed",
+  "supplier-notes": "Supplier Notes",
+  "opening-balance": "Opening Balance",
+  "forecast": "Forecast P&L",
+  "finance-dashboard": "Finance Dashboard",
+  "daily-bank": "Daily Bank",
+  "merchant-recon": "Merchant Recon",
+  "bank-recon": "Bank Recon",
+  "unmatched-payments": "Unmatched Payments",
+  "settlement-setup": "Reconciliation Setup",
+  "fair-pending": "Fair Links to Settle",
   // Transportation
   "drivers": ["Drivers", "Driver"],
-  "delivery-planning": ["Delivery Planning", "Delivery Planning"],
+  "delivery-planning": "Delivery Planning",
+  "delivery-planning-driver": "Delivery Planning (Driver)",
   "dp-orders": ["DP Orders", "DP Order"],
-  "auto-schedule": ["Delivery Date Arrangement", "Delivery Date Arrangement"],
-  "trips": ["Delivery Time Arrangement", "Delivery Time Arrangement"],
-  "fleet-day": ["Last Mile Delivery", "Last Mile Delivery"],
-  "fleet-run-sheet": ["Driver Run-Sheet", "Driver Run-Sheet"],
-  "driver-leave": ["Crew Leave", "Crew Leave"],
-  "delivery-planning-regions": ["Delivery Regions", "Delivery Regions"],
-  "delivery-residence-rules": ["Residence Rules", "Residence Rules"],
+  "auto-schedule": "Delivery Date Arrangement",
+  "trips": "Delivery Time Arrangement",
+  "fleet-day": "Last Mile Delivery",
+  "fleet-run-sheet": "Driver Run-Sheet",
+  "driver-leave": "Crew Leave",
+  "delivery-planning-regions": "Delivery Regions",
+  "delivery-residence-rules": "Residence Rules",
   "delivery-zones": ["Delivery Zones", "Delivery Zone"],
   "delivery-rate-cards": ["Delivery Rate Cards", "Delivery Rate Card"],
-  "delivery-maintenance": ["Coverage & Fleet", "Coverage & Fleet"],
+  "delivery-maintenance": "Coverage & Fleet",
   "threepl-companies": ["3PL Companies", "3PL Company"],
-  "fleet": ["Fleet", "Fleet"],
-  "lorry-capacity": ["Lorry Capacity", "Lorry Capacity"],
+  "fleet": "Fleet",
+  "lorry-capacity": "Lorry Capacity",
+  "lorry-live-map": "Lorry Live Map",
+  "logistic-overview": "Logistic Overview",
+  "procurement-overview": "Procurement Overview",
   // Consignment (sale side)
   "consignment-orders": ["Consignment Orders", "Consignment Order"],
   "consignment-notes": ["Consignment Notes", "Consignment Note"],
   "consignment-returns": ["Consignment Returns", "Consignment Return"],
   // Consignment (purchase side)
   "purchase-consignment-orders": ["Purchase Consignment Orders", "Purchase Consignment Order"],
-  "product-requests": ["Product Requests", "Product Request"],
   "purchase-consignment-receives": ["Purchase Consignment Receives", "Purchase Consignment Receive"],
   "purchase-consignment-returns": ["Purchase Consignment Returns", "Purchase Consignment Return"],
-  // Section hubs — the Level-2 sub-group landing pages (ScmSubgroupHub). Their
+  // Section hubs — the Level-2 sub-group landing pages (ScmSubgroupHub). The
   // slug is the singular group id and the label mirrors the NAV_TABS group
-  // header the hub itself renders as its title (no detail child → singular ==
-  // plural). Without these, /scm/<group> title-cased the slug to "Scm".
-  "sales-order": ["Sales Order", "Sales Order"],
-  "consignment": ["Consignment", "Consignment"],
-  "procurement": ["Procurement", "Procurement"],
-  "transportation": ["Transportation", "Transportation"],
-  "warehouse": ["Warehouse", "Warehouse"],
-  "finance": ["Finance", "Finance"],
+  // header the hub renders as its title. Without these, /scm/<group> title-cased
+  // the slug to "Scm".
+  "sales-order": "Sales Order",
+  "consignment": "Consignment",
+  "procurement": "Procurement",
+  "transportation": "Transportation",
+  "warehouse": "Warehouse",
+  "finance": "Finance",
   // Misc
-  "maintenance": ["Maintenance", "Maintenance"],
+  "maintenance": "Maintenance",
 };
 
 // /scm/reports/<report-slug> — its own table since these live one level
@@ -211,7 +221,8 @@ export function labelForPath(pathname: string): string {
     }
     const entry = SCM_SEGMENT_LABELS[segs[1]];
     if (entry) {
-      const [plural, singular] = entry;
+      // A bare string means listing and detail read the same.
+      const [plural, singular] = typeof entry === "string" ? [entry, entry] : entry;
       const isDetail = !!segs[2] && !isScmActionSegment(segs[2]);
       return isDetail ? singular : plural;
     }
