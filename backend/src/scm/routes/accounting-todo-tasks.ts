@@ -529,13 +529,13 @@ export const todoRuleAddHandler = async (c: any): Promise<Response> => {
 /** What a custom rule finds today: the bills, drafts or payments its template looks for. */
 export async function readCustomRuleItems(sb: any, companyId: number, today: string, rule: CustomRule): Promise<CustomItem[]> {
   if (rule.tpl === 'bills') {
-    /* Supplier bills still owing that fall due within N days (or already have). */
+    /* Supplier bills still owing that fall due from today to N days on — a bill already late is the AP aging's. */
     const until = addDays(today, rule.param);
     const [api, pi] = await Promise.all([
       paginateAll<Record<string, any>>((lo, hi) => sb.from('ap_invoices').select('id, invoice_number, supplier_id, due_date, total_sen, paid_sen, exchange_rate')
-        .eq('company_id', companyId).in('status', [...OPEN_AP_STATUSES]).lte('due_date', until).order('id').range(lo, hi)),
+        .eq('company_id', companyId).in('status', [...OPEN_AP_STATUSES]).gte('due_date', today).lte('due_date', until).order('id').range(lo, hi)),
       paginateAll<Record<string, any>>((lo, hi) => sb.from('purchase_invoices').select('id, invoice_number, supplier_id, due_date, total_sen, paid_sen, exchange_rate')
-        .eq('company_id', companyId).in('status', [...OPEN_PI_STATUSES]).lte('due_date', until).order('id').range(lo, hi)),
+        .eq('company_id', companyId).in('status', [...OPEN_PI_STATUSES]).gte('due_date', today).lte('due_date', until).order('id').range(lo, hi)),
     ]);
     if (api.error || pi.error) throw new Error((api.error ?? pi.error)!.message);
     const rows = [...((api.data ?? []) as Rows), ...((pi.data ?? []) as Rows)];
