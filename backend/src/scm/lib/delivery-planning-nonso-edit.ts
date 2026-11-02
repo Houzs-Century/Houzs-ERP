@@ -14,7 +14,7 @@
                            so a hand-set status shows until then (owner-accepted). */
 import { scopeToAllowedCompanies } from './companyScope';
 import { dateOrNull } from './date-coerce';
-import { assrOpenCaseGuardSql, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL } from './assr-board-scope';
+import { assrLegGuardSql, assrLegOpen, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL } from './assr-board-scope';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Hono ctx / the untyped scm PostgREST client, as elsewhere in this route
 type Ctx = any;
@@ -86,8 +86,9 @@ export async function writeNonSoFields(
   // caller's granted-company predicate, so an out-of-scope case 404s here.
   const caseId = Number(id);
   if (!Number.isFinite(caseId)) return { status: 400, body: { error: 'bad_id', reason: 'assr id must be numeric' } };
-  const openCase = (await c.env.DB.prepare(assrOpenCaseGuardSql(c)).bind(caseId).first()) as { id: number } | null;
-  if (!openCase) return { status: 404, body: { error: 'not_found' } };
+  // Judged per job: a sibling job's POD closes the case but must not lock this one.
+  const legCase = (await c.env.DB.prepare(assrLegGuardSql(c)).bind(caseId).first()) as Parameters<typeof assrLegOpen>[0] | null;
+  if (!legCase || !assrLegOpen(legCase, jobKind)) return { status: 404, body: { error: 'not_found' } };
   try {
     // The column names come from the ASSR_LEG_* maps, never from the request.
     const sets: string[] = []; const binds: unknown[] = [];
@@ -95,7 +96,7 @@ export async function writeNonSoFields(
     if (timeRange !== undefined) { sets.push(`${ASSR_LEG_TIME_COL[jobKind]} = ?`); binds.push(timeRange === '' ? null : timeRange); }
     const res = await c.env.DB.prepare(
       `UPDATE assr_cases SET ${sets.join(', ')}, updated_at = datetime('now')
-        WHERE id = ? AND closed_at IS NULL AND archived_at IS NULL`,
+        WHERE id = ? AND archived_at IS NULL`,
     ).bind(...binds, caseId).run();
     if (!res.meta.changes) return { status: 404, body: { error: 'not_found' } };
   } catch (e) {
