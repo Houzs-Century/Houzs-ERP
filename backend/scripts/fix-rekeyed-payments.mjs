@@ -43,6 +43,8 @@ const sql = postgres(process.env.DATABASE_URL, { max: 1, prepare: false, types: 
 const out = (s) => console.log(`ROW|${s}`);
 const rm = (sen) => (Number(sen) / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 class Rollback extends Error {}
+/* Finance's rights for the two doors — the correction right opens a past payment. */
+const PERMS = ['scm.so_payment.amend', 'scm.payment.backdate', 'scm.payment_voucher.post', 'scm.sales_order.view_all'];
 
 async function snapshot(tx, label) {
   out(`== ${label}`);
@@ -90,7 +92,7 @@ try {
         companyId: CO,
         allowedCompanyIds: [CO],
         user: { id: '00000000-0000-4000-8000-000000000001', user_metadata: { name: ACTOR } },
-        houzsUser: { name: ACTOR, permissions_set: ['scm.so_payment.amend', 'scm.payment.backdate', 'scm.payment_voucher.post', 'scm.sales_order.view_all'] },
+        houzsUser: { name: ACTOR, permissions: PERMS, permissions_set: new Set(PERMS) },
       })[k],
       json: (b, status = 200) => ({ body: b, status }),
     });
