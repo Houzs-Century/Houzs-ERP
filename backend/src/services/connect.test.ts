@@ -2,11 +2,13 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   buildDeliveryFollowUp,
   buildServiceCaseReceived,
+  buildSyncHeadline,
   isConnectConfigured,
   postConnectContact,
   parseConnectCompanyProfiles,
   CONNECT_DELIVERY_AUTOMATION,
   CONNECT_SERVICE_CASE_AUTOMATION,
+  CONNECT_SYNC_AUTOMATION,
   CONNECT_RESET_ATTRIBUTES,
   chatCallbackUrl,
   connectUntriggeredReason,
@@ -304,6 +306,56 @@ describe('buildServiceCaseReceived', () => {
   });
 });
 
+describe('buildSyncHeadline', () => {
+  const FIRST = {
+    doc_no: 'HC-SO-2610-044',
+    ref: 'HC 11063',
+    branding: 'AKEMI',
+    venue: 'KL Showroom',
+    agent: 'Azza',
+    customer_state: 'Selangor',
+    house_type: 'Condominium',
+    disposal_request: 'Old mattress',
+    delivery_message_status: 'Done Send',
+  };
+
+  it('maps the SO header to the panel headline fields, customer phone as +digits', () => {
+    expect(buildSyncHeadline(FIRST, '+60126989616', '2026/11/02')).toEqual({
+      reference_no: 'HC 11063',
+      brand: 'AKEMI',
+      purchase_venue: 'KL Showroom',
+      sales_person: 'Azza',
+      delivery_state: 'Selangor',
+      house_type: 'Condominium',
+      disposal: 'Old mattress',
+      delivery_message_status: 'Done Send',
+      customer_phone: '+60126989616',
+      client_delivery_date: '2026/11/02',
+    });
+  });
+
+  it('reference_no falls back to the SO doc_no when the customer Ref No. is blank', () => {
+    expect(buildSyncHeadline({ doc_no: 'HC-SO-2610-044', ref: '' }, '+60123', '').reference_no).toBe('HC-SO-2610-044');
+  });
+
+  it('drops empty values so a sync FILLS a field and never blanks one already set', () => {
+    const out = buildSyncHeadline({ doc_no: 'X', ref: 'HC 1', branding: '', venue: null, agent: '   ' }, '', '');
+    expect(out).toEqual({ reference_no: 'HC 1' });
+    expect('brand' in out).toBe(false);
+    expect('purchase_venue' in out).toBe(false);
+    expect('sales_person' in out).toBe(false);
+    expect('customer_phone' in out).toBe(false);
+    expect('client_delivery_date' in out).toBe(false);
+  });
+
+  it('the sync sentinel matches no real Connect automation, so an upsert fires nothing', () => {
+    // A send names a real automation; the sync names this sentinel on purpose so
+    // handleErpWebhook (name-matched) triggers nothing and only stores the fields.
+    expect(CONNECT_SYNC_AUTOMATION).toBe('__erp_contact_sync__');
+    expect(CONNECT_SYNC_AUTOMATION).not.toBe(CONNECT_DELIVERY_AUTOMATION);
+  });
+});
+
 describe('chatCallbackUrl / formatRm', () => {
   it('builds the callback URL off PUBLIC_APP_URL, trimming a trailing slash, prod as last resort', () => {
     expect(chatCallbackUrl({ PUBLIC_APP_URL: 'https://houzs-erp-staging.pages.dev/' }))
@@ -387,6 +439,12 @@ describe('postConnectContact', () => {
     expect((await postConnectContact(env, contact)).ok).toBe(true);
     expect(connectUntriggeredReason('not json', 'X')).toBeNull();
     expect(connectUntriggeredReason('{"triggered":[]}', 'Driver Info')).toContain('Driver Info');
+  });
+
+  it('a SYNC (expectTrigger false) treats an empty `triggered` as SUCCESS — it upserted the fields, sent nothing', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: true, contactId: 'c1', triggered: [], runs: [] }), { status: 200 })));
+    const r = await postConnectContact(env, { ...contact, automation: CONNECT_SYNC_AUTOMATION }, { expectTrigger: false });
+    expect(r).toEqual({ ok: true, httpCode: 200, error: null });
   });
 
   it('a non-2xx response is a failure carrying the body text', async () => {

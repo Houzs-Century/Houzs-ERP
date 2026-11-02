@@ -985,6 +985,25 @@ export function useSendDeliveryMessages() {
   });
 }
 
+/* Sync to Connect — push the selected orders' FULL field set into each customer's
+   Connect contact (Reference No. / Brand / Purchase Venue / Sales Person / House
+   Type / …) WITHOUT sending a WhatsApp. The contact panel only ever filled the
+   fields a prior message used; this fills the rest. One Connect upsert per (phone,
+   company); `synced` mirrors a send's `sent`. */
+export type SyncContactsResult = {
+  synced: Array<{ phone: string; docNos: string[]; httpCode: number }>;
+  failed: Array<{ phone: string; docNos: string[]; error: string }>;
+  skipped: Array<{ docNo: string; reason: string }>;
+};
+export function useSyncDeliveryContacts() {
+  return useMutation<SyncContactsResult, Error, { docNos: string[] }>({
+    mutationFn: (body) =>
+      authedFetch<SyncContactsResult>(`/delivery-messages/sync`, {
+        method: 'POST', body: JSON.stringify(body),
+      }),
+  });
+}
+
 /* Latest send status per SO doc — drives the board's "Message" column. POST
    (not GET) because a full board is ~2,000 doc numbers, far past URL limits.
    The endpoint takes at most STATUS_BATCH per call, so the list is split. */
