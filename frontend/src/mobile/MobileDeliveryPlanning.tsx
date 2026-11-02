@@ -30,6 +30,7 @@ import { MobileTrackingBanner } from "./MobileTrackingBanner";
 import "./mobile.css";
 import { MobileJobStop, jobRefOf, jobKey, jobLabelOf, useJobProgressMap } from "./MobileJobStop";
 import { LEG_LABEL } from "../vendor/scm/lib/delivery-job";
+import { useLocalities, postcodeIndex, postcodeLabel } from "../vendor/scm/lib/localities-queries";
 import { isEastMalaysiaOrSingaporeStop } from "../vendor/scm/lib/last-mile";
 import { isDispatched } from "./runSheetDispatch";
 import { runSheetTieBreak, timeSlotEndMin } from "./runSheetOrder";
@@ -1272,6 +1273,8 @@ function StopDetail({
   const qc = useQueryClient();
   const notify = useNotify();
   const confirm = useConfirm();
+  const localities = useLocalities().data;
+  const pcIndex = useMemo(() => postcodeIndex(localities ?? []), [localities]);
   /* Operating a DO — cutting one (/from-sos) AND advancing its status
      (/status: IN_TRANSIT / DELIVERED) — is the Office department's job (owner
      2026-07-17), and the backend 403s the Sales cohort on BOTH. Drivers and
@@ -1758,7 +1761,7 @@ function StopDetail({
           {pdRow("Address", order.address || EM, false)}
           {pdRow(
             "Postcode",
-            <span className="tnum">{order.postcode || EM}</span>,
+            <span className="tnum">{order.postcode ? postcodeLabel(pcIndex, order.postcode, order.customer_state) : EM}</span>,
             true,
           )}
           {pdRow(
