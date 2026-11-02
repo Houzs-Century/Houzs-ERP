@@ -942,12 +942,12 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
   /* The redesign's five tabs (owner's Claude Design, batch 3): To confirm · To
      choose · No sale found ‖ Confirmed · Set aside — the tab lives in the
      address (?tab=), and a report opens on the first with lines to work. */
-  const counts: Record<ReportTab, number> = { 'to-confirm': 0, 'to-choose': 0, 'no-sale': 0, confirmed: 0, 'set-aside': 0 };
+  const counts: Record<ReportTab, number> = { 'to-confirm': 0, 'to-choose': 0, 'no-sale': 0, done: 0, 'set-aside': 0 };
   for (const r of rows) counts[lineTab(r)] += 1;
   const [params, setParams] = useSearchParams();
   const asked = params.get('tab') as ReportTab | null;
   const tab: ReportTab = asked && asked in counts ? asked
-    : (['to-confirm', 'to-choose', 'no-sale'] as const).find((t) => counts[t] > 0) ?? 'confirmed';
+    : (['to-confirm', 'to-choose', 'no-sale'] as const).find((t) => counts[t] > 0) ?? 'done';
   const setTab = (t: ReportTab) => setParams((prev) => { const next = new URLSearchParams(prev); next.set('tab', t); return next; }, { replace: true });
   /* A CARD IS A DECISION, a table row is information: lines to choose for, or
      with no sale, and lines set aside (Put back) are cards; matched and

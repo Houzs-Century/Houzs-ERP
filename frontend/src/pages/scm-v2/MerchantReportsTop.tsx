@@ -163,31 +163,32 @@ export function ReportStrip({ code, batches, openId, missingDay, onOpen, extra }
 
 /* ── One report: where it stands, and its money ─────────────────────────── */
 
-export type ReportTab = 'to-confirm' | 'to-choose' | 'no-sale' | 'confirmed' | 'set-aside';
+/* 'done' is the Confirmed tab: the key stays clear of the stored status words (confirmRungReadsSubmitted.test.ts). */
+export type ReportTab = 'to-confirm' | 'to-choose' | 'no-sale' | 'done' | 'set-aside';
 
 /** Which tab a report's line sits in (the design's five). */
 export function lineTab(r: { confirmed_at: string | null; bucket: string; linked: unknown[]; candidates: unknown[]; suggested?: unknown[] }): ReportTab {
   if (r.bucket === 'IGNORED') return 'set-aside';
-  if (r.confirmed_at) return 'confirmed';
+  if (r.confirmed_at) return 'done';
   if (r.linked.length > 0) return 'to-confirm';
   return r.candidates.length > 0 || (r.suggested?.length ?? 0) > 0 ? 'to-choose' : 'no-sale';
 }
 
 export const TAB_LABEL: Record<ReportTab, string> = {
-  'to-confirm': 'To confirm', 'to-choose': 'To choose', 'no-sale': 'No sale found', confirmed: 'Confirmed', 'set-aside': 'Set aside',
+  'to-confirm': 'To confirm', 'to-choose': 'To choose', 'no-sale': 'No sale found', done: 'Confirmed', 'set-aside': 'Set aside',
 };
 
 export const TAB_HINT: Record<ReportTab, string> = {
   'to-confirm': 'Matched by approval code. Confirm them all with the button, or open a line.',
   'to-choose': 'More than one sale could fit, or one swipe may cover several orders.',
   'no-sale': 'No card payment in the ERP fits yet.',
-  confirmed: 'Fee posted. Undo stays open until the payout is recorded.',
+  done: 'Fee posted. Undo stays open until the payout is recorded.',
   'set-aside': 'Kept on the report, left out of the books.',
 };
 
 export const TAB_EMPTY: Record<ReportTab, string> = {
   'to-confirm': 'No line here to confirm.', 'to-choose': 'No line here to choose for.', 'no-sale': 'Every line here has a sale.',
-  confirmed: 'No line confirmed yet.', 'set-aside': 'No line set aside.',
+  done: 'No line confirmed yet.', 'set-aside': 'No line set aside.',
 };
 
 const rm = (sen: number): string => `RM ${(sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -202,7 +203,7 @@ export function ReportHead({ batch, counts }: { batch: SettlementBatch; counts: 
     { label: 'Report in', sub: `Uploaded ${fmtDate(batch.created_at)}${batch.uploaded_by ? ` · ${batch.uploaded_by}` : ''}`, state: 'done' },
     {
       label: 'Confirmed',
-      sub: toGo > 0 ? `${counts.confirmed} of ${n} lines · ${toGo} to go` : `${counts.confirmed} of ${n} lines · ${counts['set-aside']} set aside`,
+      sub: toGo > 0 ? `${counts.done} of ${n} lines · ${toGo} to go` : `${counts.done} of ${n} lines · ${counts['set-aside']} set aside`,
       state: toGo > 0 ? 'current' : 'done',
     },
     {
@@ -235,12 +236,12 @@ export function ReportHead({ batch, counts }: { batch: SettlementBatch; counts: 
 }
 
 export function ReportTabs({ tab, counts, onTab }: { tab: ReportTab; counts: Record<ReportTab, number>; onTab: (t: ReportTab) => void }) {
-  const tabs: ReportTab[] = ['to-confirm', 'to-choose', 'no-sale', 'confirmed', 'set-aside'];
+  const tabs: ReportTab[] = ['to-confirm', 'to-choose', 'no-sale', 'done', 'set-aside'];
   return (
     <div className={styles.tabsRow}>
       <span className={styles.tabs} role="tablist" aria-label="Lines">
         {tabs.map((t) => (
-          <button key={t} type="button" role="tab" aria-selected={tab === t} className={`${styles.tab} ${tab === t ? styles.tabOn : ''} ${t === 'confirmed' ? styles.tabSep : ''}`} onClick={() => onTab(t)}>
+          <button key={t} type="button" role="tab" aria-selected={tab === t} className={`${styles.tab} ${tab === t ? styles.tabOn : ''} ${t === 'done' ? styles.tabSep : ''}`} onClick={() => onTab(t)}>
             {TAB_LABEL[t]} <span className={styles.tabCount}>{counts[t]}</span>
           </button>
         ))}
