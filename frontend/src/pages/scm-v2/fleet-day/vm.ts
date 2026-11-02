@@ -162,6 +162,11 @@ export function docRowVM(o: PlanningOrder, status: StopStatus, clock: DayClock):
   const codeLine = jr
     ? (jobDoc ?? '')
     : [o.so_doc_no, doNumber, o.so_ref].filter(Boolean).join(' · ');
+  // A completed NON-SO job (an ASSR service leg, a DP transfer / dismantle, a
+  // project window) carries its done-ness on delivery_state — it has no DO status
+  // or job-progress completion the stop-status reader keys on — so fold it into
+  // the day's done list instead of showing a finished job as "Not started".
+  const effStatus: StopStatus = o.row_type !== 'so' && o.delivery_state === 'DELIVERED' ? 'done' : status;
   return {
     key: `so:${o.so_doc_no}`,
     order: o,
@@ -183,9 +188,9 @@ export function docRowVM(o: PlanningOrder, status: StopStatus, clock: DayClock):
     slotKind: slotKindOf(o.time_range),
     slotLabel: slotLabelOf(o.time_range),
     stopNo: o.trip_stop_no ?? null,
-    status,
-    late: isLate(status),
-    lateReason: lateReason(status, { day: clock.day, today: clock.today, slotEnd }),
+    status: effStatus,
+    late: isLate(effStatus),
+    lateReason: lateReason(effStatus, { day: clock.day, today: clock.today, slotEnd }),
     hasPod: !!o.has_pod,
     deliveredAt: o.delivered_at ?? o.customer_delivered_date ?? null,
     latestLiveDoId: live.length > 0 ? live[live.length - 1]!.id : null,
