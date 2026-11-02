@@ -29,7 +29,6 @@ import {
   MoveHorizontal,
   Filter,
   Rows3,
-  Shrink,
   WrapText,
 } from "lucide-react";
 import { cn } from "../lib/utils";
@@ -53,6 +52,7 @@ import { withSingleActive } from "./LayoutSection";
 import { showAllColumnPrefs, toggleColumnPrefs, type ColumnPrefs } from "./dataTableColumnPrefs";
 import { UdfCell } from "./UdfCell";
 import { useLocalStorage } from "../hooks/useLocalStorage";
+import { FitWidthButton, useTableFitWidth } from "./useTableFitWidth";
 import { useInVisitClientSearch, useInVisitColFilters, useKeptColFilters } from "./dataTableColFilterMemory";
 import { useFrozenTableHeader } from "./useFrozenTableHeader";
 import { useSmallViewport } from "../hooks/useSmallViewport";
@@ -360,11 +360,6 @@ function DataTableInner<T, L>({
      A personal preference per table, like the other dt:* keys. */
   const [wrapText, setWrapText] = useLocalStorage<boolean>(`dt:wrap:${idKey}`, false, undefined, (v) => v === true);
   const wrapOn = wrapText && layoutFixed;
-  const [fitWidth, setFitWidth] = useLocalStorage<boolean>(`dt:fit:${idKey}`, false, undefined, (v) => v === true);
-  const fitOn = fitToWidth && fitWidth && layoutFixed && !isSmallViewport;
-  const [fitScale, setFitScale] = useState(1);
-  const fitScaleRef = useRef(1);
-  fitScaleRef.current = fitOn ? fitScale : 1;
   // Pinned (frozen-left) column keys. Pinned columns render at the front
   // (after any alwaysVisible columns) and stick during horizontal scroll.
   const [pinned, setPinned] = useLocalStorage<string[]>(
@@ -1443,7 +1438,7 @@ function DataTableInner<T, L>({
       const r = resizeRef.current;
       if (r !== gesture) return;
       // Pointer px are screen px; a fitted grid draws each column px smaller.
-      const next = Math.max(MIN_COL_WIDTH, r.startW + (ev.clientX - r.startX) / fitScaleRef.current);
+      const next = Math.max(MIN_COL_WIDTH, r.startW + (ev.clientX - r.startX) / fit.scaleRef.current);
       updateWidths((prev) => ({ ...prev, [r.key]: next }), false);
     };
     const onUp = () => finish();
@@ -1905,16 +1900,7 @@ function DataTableInner<T, L>({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- scrollWrapRef is a ref
   }, [layoutFixed, showTable, effectiveLoading, sortedRows, idKey]);
 
-  useLayoutEffect(() => {
-    const wrap = scrollWrapRef.current;
-    if (!fitOn || !wrap || !fixedTableWidth) return;
-    const fit = () => setFitScale(Math.min(1, Math.floor((wrap.clientWidth / fixedTableWidth) * 1000) / 1000));
-    fit();
-    const ro = new ResizeObserver(fit);
-    ro.observe(wrap);
-    return () => ro.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- scrollWrapRef is a ref
-  }, [fitOn, fixedTableWidth, showTable]);
+  const fit = useTableFitWidth(idKey, fitToWidth && showTable && !isSmallViewport, () => scrollWrapRef.current, fixedTableWidth);
 
   // ── Group-by (opt-in) ──────────────────────────────────────
   // Flatten the sorted rows into a list of render instructions — a group
@@ -2125,8 +2111,9 @@ function DataTableInner<T, L>({
       drawn.forEach((tr) => { sum += tr.offsetHeight; });
       if (drawn.length > 0 && sum > 0) rowHeightRef.current = sum / drawn.length;
       const rh = rowHeightRef.current || ROW_HEIGHT_ESTIMATE;
-      const top = el.getBoundingClientRect().top; // tbody top relative to viewport
-      const vh = window.innerHeight;
+      // tbody top relative to viewport, both in table px (a fitted table is zoomed)
+      const top = el.getBoundingClientRect().top / fit.scaleRef.current;
+      const vh = window.innerHeight / fit.scaleRef.current;
       const first = Math.max(0, Math.floor(-top / rh) - VIRTUAL_OVERSCAN);
       const count = Math.ceil(vh / rh) + VIRTUAL_OVERSCAN * 2;
       const last = Math.min(renderList.length, first + count);
@@ -2141,7 +2128,8 @@ function DataTableInner<T, L>({
       window.removeEventListener("resize", onScroll);
       if (raf) cancelAnimationFrame(raf);
     };
-  }, [canVirtualize, renderList.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fit.scaleRef is a ref
+  }, [canVirtualize, renderList.length, fit.fitScale]);
   const vStart = canVirtualize ? winRange.start : 0;
   const vEnd = canVirtualize ? Math.min(renderList.length, winRange.end) : renderList.length;
 
@@ -2298,18 +2286,7 @@ function DataTableInner<T, L>({
             <WrapText size={13} />
             Wrap
           </button>
-          {fitToWidth && (
-            <button
-              type="button"
-              onClick={() => setFitWidth(!fitWidth)}
-              aria-pressed={fitWidth}
-              title={fitWidth ? "Show columns at full size" : "Shrink the table so every column fits the screen"}
-              className={cn(toolbarBtn, "hidden sm:inline-flex", fitWidth && "border-primary/40 bg-primary-soft text-primary")}
-            >
-              <Shrink size={13} />
-              {fitOn && fitScale < 1 ? `Fit ${Math.round(fitScale * 100)}%` : "Fit"}
-            </button>
-          )}
+          {fitToWidth && <FitWidthButton fit={fit} className={toolbarBtn} />}
           <ColumnsButton
             visibleCount={visibleCount}
             totalCount={chooserOptions.length}
@@ -2389,11 +2366,7 @@ function DataTableInner<T, L>({
             className="w-full border-separate border-spacing-0 text-sm"
             // Fixed: every column holds its width; the table is at least their
             // sum (it scrolls) and at least the container (the filler takes it).
-            style={
-              layoutFixed
-                ? { tableLayout: "fixed", minWidth: fixedTableWidth, zoom: fitOn ? fitScale : undefined }
-                : undefined
-            }
+            style={layoutFixed ? { tableLayout: "fixed", minWidth: fixedTableWidth, zoom: fit.fitOn ? fit.fitScale : undefined } : undefined}
           >
             {/* z-30, ABOVE the body sticky cells (z-20): the thead's own z-index
                 opens a stacking context, so a frozen header <th>'s inline z-30 is
