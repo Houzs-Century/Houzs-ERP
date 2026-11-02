@@ -1,8 +1,8 @@
-// PO Chasing tab (line-level, cross-company outstanding) — render test.
+// PO chasing card (line-level, cross-company outstanding) — render test.
 //
 // Proves the wiring the pure rollup unit test (po-outstanding-rollup.test.ts)
-// can't: that the tile switches to the chasing view, the rows render grouped by
-// supplier, the Detail/By set toggle actually folds sofa components in the real
+// can't: that the card switches to the chasing view, the rows render grouped by
+// supplier, the Detail/By set switch actually folds sofa components in the real
 // component, and the cross-company filter chips appear.
 
 import { fireEvent, render, screen } from '@testing-library/react';
@@ -30,14 +30,16 @@ import { Outstanding } from './Outstanding';
 
 const open = () => {
   render(<MemoryRouter><Outstanding /></MemoryRouter>);
-  fireEvent.click(screen.getByText('PO Chasing'));
+  fireEvent.click(screen.getByRole('button', { name: /PO chasing/ }));
 };
 
-describe('Outstanding — PO Chasing tab', () => {
-  test('the tile shows the outstanding line count and opens the chasing view', () => {
+describe('Outstanding — PO chasing card', () => {
+  test('the card shows the outstanding line count and opens the chasing view', () => {
     open();
-    // 4 fixture lines → the eyebrow reports the count.
-    expect(screen.getByText(/4 PO lines/)).toBeTruthy();
+    // 4 fixture lines → the card counts them, and the list is titled after it.
+    expect(screen.getByText('4 outstanding lines')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /PO chasing/ }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getAllByText('PO chasing')).toHaveLength(2);
     // grouped by supplier — both creditors are present as group headers.
     expect(screen.getAllByText('ARMANI SOFA SDN. BHD.').length).toBeGreaterThan(0);
     expect(screen.getAllByText('ZOE HOME SDN BHD').length).toBeGreaterThan(0);
