@@ -19,14 +19,44 @@
 // ----------------------------------------------------------------------------
 
 import { fmtDate } from '../scm/shared/format';
+import {
+  addDays, pendingOccurrence, repeatText, ROUTINE_ACTION_LABEL,
+  type TaskAction, type TaskLink, type TaskOccurrence, type TodoTask,
+} from './todo-tasks';
+
+export { addDays };
 
 export type TodoRule =
   | 'card-missing' | 'card-matched' | 'card-choose'
   | 'bank-missing' | 'bank-decide'
   | 'requests' | 'pv-check' | 'pv-approve'
-  | 'transfers' | 'selfcheck' | 'overdue';
+  | 'transfers' | 'selfcheck' | 'overdue'
+  | 'task' | 'routine';
 
-export type TodoGroup = 'recon' | 'pay' | 'other' | 'misc';
+/** The rules a switch in Setup › To do rules can turn off (tasks and routines have their own). */
+export const BUILT_IN_RULES = [
+  'card-missing', 'card-matched', 'card-choose', 'bank-missing', 'bank-decide',
+  'requests', 'pv-check', 'pv-approve', 'transfers', 'overdue',
+] as const satisfies readonly TodoRule[];
+
+/** One of the four piles ('recon' | 'pay' | 'other' | 'misc'), or a group Finance added (its id). */
+export type TodoGroup = string;
+export const BUILT_IN_GROUPS = ['recon', 'pay', 'other', 'misc'] as const;
+
+/** What a task or routine row carries beyond a rule's job. */
+export type TodoTaskRef = {
+  id: string;
+  occursOn: string;
+  /** The day it falls, moved or not. */
+  due: string;
+  kind: 'task' | 'routine';
+  action: TaskAction;
+  remarkCount: number;
+  link: TaskLink | null;
+  repeats: boolean;
+  /** Waiting on others only: the one-off task is done. */
+  done: boolean;
+};
 export type TodoTone = 'cards' | 'bank' | 'out' | 'money' | 'err' | 'routine' | 'manual';
 export type TodoIcon =
   | 'upload' | 'credit-card' | 'landmark' | 'send' | 'wallet' | 'receipt'
@@ -45,9 +75,11 @@ export type TodoJob = {
   since: string | null;
   action: { label: string; to: string; primary: boolean };
   who: string | null;
+  task: TodoTaskRef | null;
 };
 
-export type TodoDone = { key: string; text: string; je: string | null; at: string };
+/** `task` is set for a task or routine done today — the page can reopen it. */
+export type TodoDone = { key: string; text: string; je: string | null; at: string; task?: { id: string; occursOn: string } | null };
 export type TodoCheck = { key: string; label: string; value: string; state: 'ok' | 'open' | 'late'; to: string | null };
 
 export type FinanceTodo = {
@@ -58,7 +90,12 @@ export type FinanceTodo = {
   money: { bankCashSen: number; awaitingSen: number; onTheWaySen: number } | null;
   checklist: { month: string; daysLeft: number; items: TodoCheck[] };
   problems: string[];
+  /** Groups Finance added beside the four, in the order they were added. */
+  groups: TodoGroupDef[];
+  viewer: { id: number | null; name: string };
 };
+
+export type TodoGroupDef = { id: string; label: string };
 
 /* ── The facts the rules read ─────────────────────────────────────────────── */
 
@@ -106,9 +143,19 @@ export type TodoFacts = {
   money: FinanceTodo['money'];
   done: TodoDone[];
   problems: string[];
+  /** Tasks and routines, with the occurrences somebody touched and how many remarks each has. */
+  tasks: TodoTask[];
+  occurrences: Record<string, TaskOccurrence[]>;
+  remarkCounts: Record<string, number>;
+  /** Setup › To do rules: the built-in rules switched off, and Finance's own groups. */
+  rulesOff: string[];
+  groups: TodoGroupDef[];
 };
 
 export type TodoViewer = {
+  /** public.users id and name — whose tasks are "mine", and how "done by" reads. */
+  id: number | null;
+  name: string;
   /** Works Finance (prepares or posts vouchers): the Finance rules are theirs. */
   finance: boolean;
   /** Whose desk checking / approving is on, and the names to show when it is not the viewer's. */
@@ -120,10 +167,6 @@ export type TodoViewer = {
 
 /* ── Small helpers ───────────────────────────────────────────────────────── */
 
-const DAY_MS = 86_400_000;
-export const addDays = (ymd: string, n: number): string =>
-  new Date(Date.parse(`${ymd}T00:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
-/** YYYY/MM/DD — the ERP's date everywhere. */
 /** The ERP's one date format (YYYY/MM/DD). */
 export const showDate = (ymd: string): string => fmtDate(ymd);
 const plural = (n: number, one: string, many = `${one}s`): string => (n === 1 ? one : many);
@@ -164,7 +207,7 @@ const merchantLink = (batchIds: number[]): string => {
 
 /* ── The rules ───────────────────────────────────────────────────────────── */
 
-type Raised = Omit<TodoJob, 'who'> & { desk: 'finance' | 'checker' | 'approver' };
+type Raised = Omit<TodoJob, 'who' | 'task'> & { desk: 'finance' | 'checker' | 'approver' };
 
 function cardJobs(f: TodoFacts): Raised[] {
   const out: Raised[] = [];
@@ -366,28 +409,126 @@ function whoseDesk(desk: Raised['desk'], v: TodoViewer): { mine: boolean; who: s
   return { mine: v.finance, who: 'Finance' };
 }
 
-/** Every job the rules raise, split by whose desk it is on. */
+/* ── Tasks and routines ─────────────────────────────────────────────────── */
+
+const DAY_MS = 86_400_000;
+const daysBetween = (a: string, b: string): number => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / DAY_MS);
+/** A done one-off task stays under "Waiting on others" this many days, so whoever asked sees it was done. */
+const DONE_SHOWN_DAYS = 3;
+
+function taskRef(f: TodoFacts, t: TodoTask, occursOn: string, due: string, done = false): TodoTaskRef {
+  return {
+    id: t.id, occursOn, due, kind: t.kind, action: t.action, remarkCount: f.remarkCounts[t.id] ?? 0,
+    link: t.link, repeats: t.repeat !== 'none', done,
+  };
+}
+
+/** The tasks and routines waiting now: a routine is Finance's, a task its assignee's; whoever asked sees it waiting on them. */
+function taskJobs(f: TodoFacts, v: TodoViewer): { mine: TodoJob[]; others: TodoJob[] } {
+  const mine: TodoJob[] = [];
+  const others: TodoJob[] = [];
+  for (const t of f.tasks) {
+    if (t.isOff) continue;
+    const occ = f.occurrences[t.id] ?? [];
+    const p = pendingOccurrence(t, occ, f.today);
+    const repeats = t.repeat !== 'none' ? ` · ${repeatText(t).toLowerCase()}` : '';
+    const linked = t.link ? ` · ${t.link.no}` : '';
+    if (t.kind === 'routine') {
+      if (!p) continue;
+      const job: TodoJob = {
+        key: `task:${t.id}:${p.occursOn}`, rule: 'routine', group: t.groupKey, sub: t.groupKey === 'recon' ? 'bank' : null,
+        tone: 'routine', icon: 'calendar-days', title: t.payee ? `${t.title} · ${t.payee}` : t.title,
+        detail: repeatText(t), amountSen: t.amountSen, since: null,
+        action: {
+          label: ROUTINE_ACTION_LABEL[t.action],
+          to: t.action === 'voucher' ? '/scm/payment-vouchers/new' : t.actionTo ?? '',
+          primary: t.action === 'voucher',
+        },
+        who: null, task: taskRef(f, t, p.occursOn, p.due),
+      };
+      if (v.finance) mine.push(job); else others.push({ ...job, who: 'Finance' });
+      continue;
+    }
+    const base = {
+      rule: 'task' as const, group: t.groupKey, sub: null, tone: 'manual' as const, icon: 'pen-line' as const,
+      title: t.title, amountSen: null, since: null,
+    };
+    if (p && v.id != null && t.assigneeId === v.id) {
+      const from = t.createdById === v.id ? 'Added by you' : `From ${t.createdByName ?? 'Finance'}`;
+      mine.push({
+        ...base, key: `task:${t.id}:${p.occursOn}`, detail: `${from}${repeats}${linked}`,
+        action: { label: 'Mark done', to: '', primary: false }, who: null, task: taskRef(f, t, p.occursOn, p.due),
+      });
+      continue;
+    }
+    if (v.id == null || t.createdById !== v.id || t.assigneeId === v.id) continue;
+    if (p) {
+      others.push({
+        ...base, key: `task:${t.id}:${p.occursOn}`, detail: `You asked · due ${showDate(p.due)}${repeats}${linked}`,
+        action: { label: 'Open', to: '', primary: false }, who: t.assigneeName ?? '—', task: taskRef(f, t, p.occursOn, p.due),
+      });
+      continue;
+    }
+    /* A one-off task done lately: whoever asked sees it was done. */
+    const doneOcc = t.repeat === 'none' ? occ.find((o) => o.occursOn === t.dueDate && o.doneAt) : undefined;
+    if (doneOcc?.doneAt && daysBetween(doneOcc.doneAt.slice(0, 10), f.today) <= DONE_SHOWN_DAYS) {
+      others.push({
+        ...base, key: `task:${t.id}:${t.dueDate}`, detail: `Done by ${doneOcc.doneBy ?? t.assigneeName ?? '—'}${linked}`,
+        action: { label: 'Open', to: '', primary: false }, who: 'Done', task: taskRef(f, t, t.dueDate, t.dueDate, true),
+      });
+    }
+  }
+  return { mine, others };
+}
+
+/** Tasks and routines marked done today, by anyone in Finance. */
+function tasksDoneToday(f: TodoFacts, v: TodoViewer, doneToday: (iso: string) => boolean, clock: (iso: string) => string): TodoDone[] {
+  const out: TodoDone[] = [];
+  for (const t of f.tasks) {
+    for (const o of f.occurrences[t.id] ?? []) {
+      if (!o.doneAt || !doneToday(o.doneAt)) continue;
+      const mineDone = !o.doneBy || o.doneBy === v.name;
+      const what = t.kind === 'routine' ? `${t.title} · due ${showDate(o.movedTo ?? o.occursOn)}` : t.title;
+      out.push({
+        key: `task:${t.id}:${o.occursOn}`,
+        text: mineDone ? `${t.kind === 'routine' ? 'Routine done' : 'Task done'} · ${what}` : `${o.doneBy} marked done · ${what}`,
+        je: null, at: clock(o.doneAt), task: { id: t.id, occursOn: o.occursOn },
+      });
+    }
+  }
+  return out;
+}
+
+/** Every job the rules raise, split by whose desk it is on. A rule switched off raises nothing. */
 export function raiseJobs(f: TodoFacts, viewer: TodoViewer): { mine: TodoJob[]; others: TodoJob[]; raised: Raised[] } {
-  const raised = [...cardJobs(f), ...bankJobs(f), ...paymentJobs(f), ...otherJobs(f)];
+  const off = new Set(f.rulesOff);
+  const raised = [...cardJobs(f), ...bankJobs(f), ...paymentJobs(f), ...otherJobs(f)].filter((j) => !off.has(j.rule));
   const mine: TodoJob[] = [];
   const others: TodoJob[] = [];
   for (const { desk, ...job } of raised) {
     const d = whoseDesk(desk, viewer);
-    if (d.mine) mine.push({ ...job, who: null });
-    else others.push({ ...job, who: d.who });
+    if (d.mine) mine.push({ ...job, who: null, task: null });
+    else others.push({ ...job, who: d.who, task: null });
   }
-  return { mine, others, raised };
+  const tasks = taskJobs(f, viewer);
+  return { mine: [...mine, ...tasks.mine], others: [...others, ...tasks.others], raised };
 }
+
+/** The Malaysian day and HH:MM of an instant. */
+const mytOf = (iso: string): string => new Date(new Date(iso).getTime() + 8 * 3_600_000).toISOString();
 
 export function buildFinanceTodo(f: TodoFacts, viewer: TodoViewer): FinanceTodo {
   const { mine, others, raised } = raiseJobs(f, viewer);
+  const taskDone = tasksDoneToday(f, viewer, (iso) => mytOf(iso).slice(0, 10) === f.today, (iso) => mytOf(iso).slice(11, 16));
   return {
     today: f.today,
     mine,
     others,
-    done: [...f.done].sort((a, b) => b.at.localeCompare(a.at)),
+    done: [...f.done, ...taskDone].sort((a, b) => b.at.localeCompare(a.at)),
     money: f.money,
     checklist: checklist(f, raised),
     problems: f.problems,
+    groups: f.groups,
+    viewer: { id: viewer.id, name: viewer.name },
   };
 }

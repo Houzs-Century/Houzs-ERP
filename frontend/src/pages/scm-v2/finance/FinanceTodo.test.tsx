@@ -5,21 +5,21 @@
 // module seam; the rules themselves are pinned in backend acc/finance-todo.test.ts.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 vi.mock('../../../vendor/scm/lib/authed-fetch', () => ({ authedFetch: vi.fn() }));
 
 import { authedFetch } from '../../../vendor/scm/lib/authed-fetch';
-import { FinanceTodoPage, ageTag } from './FinanceTodo';
+import { FinanceTodoPage, ageTag, dueTag } from './FinanceTodo';
 import type { FinanceTodo, TodoJob } from './finance-todo-queries';
 
 const mockedFetch = vi.mocked(authedFetch);
 
 const job = (over: Partial<TodoJob>): TodoJob => ({
   key: 'k', rule: 'requests', group: 'pay', sub: null, tone: 'out', icon: 'send', title: 'T', detail: 'D',
-  amountSen: null, since: '2026-11-02', action: { label: 'Open', to: '/x', primary: false }, who: null, ...over,
+  amountSen: null, since: '2026-11-02', action: { label: 'Open', to: '/x', primary: false }, who: null, task: null, ...over,
 });
 
 const PAGE: FinanceTodo = {
@@ -34,6 +34,8 @@ const PAGE: FinanceTodo = {
   money: { bankCashSen: 28_428_915, awaitingSen: 1_358_000, onTheWaySen: 1_619_000 },
   checklist: { month: '2026-11', daysLeft: 28, items: [{ key: 'reports-in', label: 'Merchant reports in', value: '1 missing', state: 'open', to: '/scm/merchant-recon' }] },
   problems: [],
+  groups: [],
+  viewer: { id: 7, name: 'Mei Ling' },
 };
 
 const renderPage = () => render(
@@ -98,5 +100,36 @@ describe('FinanceTodoPage', () => {
     renderPage();
     expect(await screen.findByText(/Some of it could not be read, so it is not listed: bank lines \(timeout\)/)).toBeTruthy();
     expect(screen.getByText('Nothing is waiting on you.')).toBeTruthy();
+  });
+});
+
+describe('tasks and routines', () => {
+  test('due tags: overdue is late with a dot, today a warning, a routine names its day', () => {
+    expect(dueTag('2026-10-30', '2026-11-02', 'task')).toEqual({ text: 'Overdue 3 days', tone: 'late', dot: true });
+    expect(dueTag('2026-11-02', '2026-11-02', 'task')).toMatchObject({ text: 'Due today', tone: 'warn' });
+    expect(dueTag('2026-11-03', '2026-11-02', 'task')).toMatchObject({ text: 'Due tomorrow', tone: 'calm' });
+    expect(dueTag('2026-11-07', '2026-11-02', 'routine')).toMatchObject({ text: 'Due 2026/11/07', tone: 'info' });
+  });
+
+  test('a task row says when it is due, its remarks and link; Mark done posts the occurrence; Add task opens the form', async () => {
+    const t = job({
+      key: 'task:t1:2026-11-02', rule: 'task', group: 'pay', tone: 'manual', icon: 'pen-line', title: 'Call Kian Furniture', since: null,
+      detail: 'Added by you', action: { label: 'Mark done', to: '', primary: false },
+      task: { id: 't1', occursOn: '2026-11-02', due: '2026-11-02', kind: 'task', action: 'done', remarkCount: 2, repeats: false, done: false,
+        link: { type: 'AP invoice', no: 'HCAPI-2610-024', name: '', to: '/scm/ap-invoices?open=x' } },
+    });
+    /* Every read answers the page; the done POST only needs to succeed. */
+    mockedFetch.mockResolvedValue({ ...PAGE, mine: [t], others: [], done: [] });
+    renderPage();
+    const pay = await screen.findByLabelText('Payments');
+    expect(within(pay).getByText('Due today')).toBeTruthy();
+    expect(within(pay).getByTitle('2 remarks')).toBeTruthy();
+    expect(within(pay).getByRole('link', { name: /HCAPI-2610-024/ }).getAttribute('href')).toBe('/scm/ap-invoices?open=x');
+    fireEvent.click(within(pay).getByRole('button', { name: /Mark done/ }));
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalledWith('/accounting/todo/tasks/t1/done', expect.objectContaining({ method: 'POST' })));
+    const [, init] = mockedFetch.mock.calls.find(([p]) => p === '/accounting/todo/tasks/t1/done')!;
+    expect(JSON.parse(String(init?.body))).toMatchObject({ occursOn: '2026-11-02' });
+    fireEvent.click(screen.getByRole('button', { name: /Add task/ }));
+    expect(await screen.findByPlaceholderText(/Call Kian Furniture about the October statement/)).toBeTruthy();
   });
 });

@@ -3,19 +3,26 @@
 // done today, with the money that can move today and the month's checklist.
 // The owner's Claude Design project "Finance 模块重新设计" (Finance-1a-To-do,
 // 2026-11-02 —「帮我读这个和做」). Every job is raised on the server from the
-// live books (backend acc/finance-todo.ts) by the design's built-in rules; each
-// one says what it is, how long it has waited and where it is handled.
+// live books (backend acc/finance-todo.ts) by the design's built-in rules, or
+// is a task or routine Finance keeps (acc/todo-tasks.ts); each one says what it
+// is, how long it has waited or when it is due, and where it is handled.
 // ----------------------------------------------------------------------------
 
-import { Link } from 'react-router-dom';
+import { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, ArrowUpRight, BookOpen, CalendarDays, CheckCheck, CheckCircle2, ChevronRight, CircleDot, CreditCard,
-  FileText, HandCoins, Landmark, Layers, PenLine, Receipt, Send, Upload, Wallet, type LucideIcon,
+  FileText, HandCoins, Landmark, Layers, MessageSquare, Paperclip, PenLine, Plus, Receipt, Send, Settings2, Upload, Wallet,
+  type LucideIcon,
 } from 'lucide-react';
 import { PageHeader } from '../../../components/Layout';
 import { fmtDate, fmtSen, fmtSenPlain } from '../../../vendor/shared/format';
 import styles from './FinanceTodo.module.css';
-import { useFinanceTodo, type FinanceTodo, type TodoCheck, type TodoGroup, type TodoIcon, type TodoJob, type TodoTone } from './finance-todo-queries';
+import { AddTaskDrawer, TaskDrawer } from './TaskDrawers';
+import {
+  useFinanceTodo, useMarkTask,
+  type FinanceTodo, type TodoCheck, type TodoGroup, type TodoIcon, type TodoJob, type TodoTone,
+} from './finance-todo-queries';
 
 const ICON: Record<TodoIcon, LucideIcon> = {
   upload: Upload, 'credit-card': CreditCard, landmark: Landmark, send: Send, wallet: Wallet, receipt: Receipt,
@@ -37,13 +44,15 @@ const GROUPS: Array<{ id: TodoGroup; label: string; icon: LucideIcon }> = [
 
 /** Inside the recon group: merchant reports first, then bank statements; each runs upload → confirm → choose. */
 const RECON_ORDER: Record<string, number> = {
-  'card-missing': 0, 'card-matched': 1, 'card-choose': 2, 'bank-missing': 10, 'bank-decide': 11,
+  'card-missing': 0, 'card-matched': 1, 'card-choose': 2, 'bank-missing': 10, 'bank-decide': 11, routine: 12, task: 20,
 };
 
 const dayNo = (ymd: string): number => Math.round(Date.parse(`${ymd}T00:00:00Z`) / 86_400_000);
 
+type Tone = 'late' | 'warn' | 'info' | 'calm';
+
 /** How long a job has waited, as the design's tag: New, Waiting 1 day (calm), 2 days (warn), 3+ (late, with a dot). */
-export function ageTag(since: string | null, today: string): { text: string; tone: 'late' | 'warn' | 'info' | 'calm'; dot: boolean } | null {
+export function ageTag(since: string | null, today: string): { text: string; tone: Tone; dot: boolean } | null {
   if (!since) return null;
   const n = Math.max(0, dayNo(today) - dayNo(since));
   if (n === 0) return { text: 'New', tone: 'info', dot: false };
@@ -53,10 +62,20 @@ export function ageTag(since: string | null, today: string): { text: string; ton
   return { text, tone: 'late', dot: true };
 }
 
-const TAG_CLASS = { late: styles.tagLate, warn: styles.tagWarn, info: styles.tagInfo, calm: styles.tagCalm };
+/** When a task or routine is due, as the design's tag: a routine's day; a task overdue (late), due today (warn), tomorrow or a day (calm). */
+export function dueTag(due: string, today: string, kind: 'task' | 'routine'): { text: string; tone: Tone; dot: boolean } {
+  const n = dayNo(due) - dayNo(today);
+  if (n < 0) return { text: `Overdue ${-n} day${n < -1 ? 's' : ''}`, tone: 'late', dot: true };
+  if (kind === 'routine') return { text: n === 0 ? 'Due today' : `Due ${fmtDate(due)}`, tone: 'info', dot: false };
+  if (n === 0) return { text: 'Due today', tone: 'warn', dot: false };
+  if (n === 1) return { text: 'Due tomorrow', tone: 'calm', dot: false };
+  return { text: `Due ${fmtDate(due)}`, tone: 'calm', dot: false };
+}
 
-function Tag({ since, today }: { since: string | null; today: string }) {
-  const t = ageTag(since, today);
+const TAG_CLASS: Record<Tone, string> = { late: styles.tagLate, warn: styles.tagWarn, info: styles.tagInfo, calm: styles.tagCalm };
+
+function Tag({ job, today }: { job: TodoJob; today: string }) {
+  const t = job.task ? (job.task.done ? null : dueTag(job.task.due, today, job.task.kind)) : ageTag(job.since, today);
   if (!t) return null;
   return (
     <span className={`${styles.tag} ${TAG_CLASS[t.tone]}`}>
@@ -66,47 +85,70 @@ function Tag({ since, today }: { since: string | null; today: string }) {
   );
 }
 
-function JobRow({ job, today, others = false }: { job: TodoJob; today: string; others?: boolean }) {
+type RowHandlers = { onOpenTask: (job: TodoJob) => void; onTaskAction: (job: TodoJob) => void };
+
+function JobRow({ job, today, others = false, h }: { job: TodoJob; today: string; others?: boolean; h: RowHandlers }) {
   const Icon = ICON[job.icon];
+  const t = job.task;
+  /* A task's row opens it; its button marks it done (or, for a routine, does what the routine does). */
+  const button = t && (t.kind === 'task' || t.action === 'voucher' || others)
+    ? (
+      <button type="button" className={`${styles.action} ${job.action.primary ? styles.actionPrimary : styles.actionSecondary}`}
+        onClick={(e) => { e.stopPropagation(); if (others) h.onOpenTask(job); else h.onTaskAction(job); }}>
+        {job.action.label}<ChevronRight size={14} />
+      </button>
+    )
+    : (
+      <Link to={job.action.to} onClick={(e) => e.stopPropagation()}
+        className={`${styles.action} ${!others && job.action.primary ? styles.actionPrimary : styles.actionSecondary}`}>
+        {job.action.label}<ChevronRight size={14} />
+      </Link>
+    );
   return (
-    <div className={styles.row} data-testid={`todo-job-${job.rule}`}>
+    <div className={`${styles.row} ${t ? styles.rowClickable : ''}`} data-testid={`todo-job-${job.rule}`}
+      onClick={t ? () => h.onOpenTask(job) : undefined}>
       <span className={`${styles.tile} ${TILE[job.tone]}`}><Icon size={16} /></span>
       <div style={{ minWidth: 0 }}>
         <div className={styles.titleLine}>
           <span className={styles.title}>{job.title}</span>
-          <Tag since={job.since} today={today} />
+          <Tag job={job} today={today} />
+          {t && t.remarkCount > 0 && <span className={styles.remarkCount} title={`${t.remarkCount} remark${t.remarkCount > 1 ? 's' : ''}`}><MessageSquare size={12} />{t.remarkCount}</span>}
+          {t?.link && (
+            <Link to={t.link.to} className={styles.linkChip} onClick={(e) => e.stopPropagation()} title={`Open ${t.link.no}`}>
+              <Paperclip size={11} />{t.link.no}
+            </Link>
+          )}
         </div>
         <div className={styles.detail} title={job.detail}>{job.detail}</div>
       </div>
       <div className={styles.amount}>{job.amountSen != null && job.amountSen !== 0 ? fmtSen(job.amountSen) : ''}</div>
       {others ? (
         <span className={styles.othersSide}>
-          {job.who && <span className={styles.pill}>{job.who}</span>}
-          <Link to={job.action.to} className={`${styles.action} ${styles.actionSecondary}`}>{job.action.label}<ChevronRight size={14} /></Link>
+          {job.who && <span className={`${styles.pill} ${job.who === 'Done' ? styles.pillDone : ''}`}>{job.who}</span>}
+          {button}
         </span>
-      ) : (
-        <Link to={job.action.to} className={`${styles.action} ${job.action.primary ? styles.actionPrimary : styles.actionSecondary}`}>
-          {job.action.label}
-          <ChevronRight size={14} />
-        </Link>
-      )}
+      ) : button}
     </div>
   );
 }
 
 function sortGroup(id: TodoGroup, jobs: TodoJob[]): TodoJob[] {
-  const since = (j: TodoJob) => j.since ?? '9999-12-31';
+  const when = (j: TodoJob) => j.task?.due ?? j.since ?? '9999-12-31';
   return [...jobs].sort((a, b) => (id === 'recon' ? (RECON_ORDER[a.rule] ?? 99) - (RECON_ORDER[b.rule] ?? 99) : 0)
-    || since(a).localeCompare(since(b)) || a.title.localeCompare(b.title));
+    || when(a).localeCompare(when(b)) || a.title.localeCompare(b.title));
 }
 
-function Groups({ data }: { data: FinanceTodo }) {
+function Groups({ data, h }: { data: FinanceTodo; h: RowHandlers }) {
   const uploads = data.mine.filter((j) => j.group === 'recon' && j.icon === 'upload').length;
-  const note: Record<TodoGroup, string> = {
+  const note: Record<string, string> = {
     recon: uploads ? `${uploads} file${uploads > 1 ? 's' : ''} to upload first` : 'all files in',
-    pay: 'requests and vouchers', other: '', misc: '',
+    pay: 'requests and vouchers',
   };
-  const shown = GROUPS.map((g) => ({ ...g, jobs: sortGroup(g.id, data.mine.filter((j) => j.group === g.id)) })).filter((g) => g.jobs.length > 0);
+  const all = [...GROUPS, ...data.groups.map((g) => ({ id: g.id, label: g.label, icon: Layers }))];
+  /* A job under a group that is no longer listed still shows — under Others. */
+  const known = new Set(all.map((g) => g.id));
+  const groupOf = (j: TodoJob) => (known.has(j.group) ? j.group : 'misc');
+  const shown = all.map((g) => ({ ...g, jobs: sortGroup(g.id, data.mine.filter((j) => groupOf(j) === g.id)) })).filter((g) => g.jobs.length > 0);
   if (shown.length === 0) {
     return <div className={styles.card}><div className={styles.empty}>Nothing is waiting on you.</div></div>;
   }
@@ -118,7 +160,7 @@ function Groups({ data }: { data: FinanceTodo }) {
             <g.icon size={14} />
             <span className={styles.groupLabel}>{g.label}</span>
             <span className={styles.groupCount}>{g.jobs.length}</span>
-            <span className={styles.groupNote}>{note[g.id]}</span>
+            <span className={styles.groupNote}>{note[g.id] ?? ''}</span>
           </div>
           {g.jobs.map((j, i) => {
             const head = g.id === 'recon' && j.sub && (i === 0 || g.jobs[i - 1]!.sub !== j.sub);
@@ -130,7 +172,7 @@ function Groups({ data }: { data: FinanceTodo }) {
                     {j.sub === 'merchant' ? 'Merchant reports' : 'Bank statements'}
                   </div>
                 )}
-                <JobRow job={j} today={data.today} />
+                <JobRow job={j} today={data.today} h={h} />
               </div>
             );
           })}
@@ -154,11 +196,27 @@ const monthName = (ym: string): string =>
 
 export function FinanceTodoPage() {
   const q = useFinanceTodo();
+  const mark = useMarkTask();
+  const navigate = useNavigate();
+  const [adding, setAdding] = useState(false);
+  const [openTask, setOpenTask] = useState<{ id: string; occursOn: string; due: string } | null>(null);
   const data = q.data;
   const doneCount = data?.done.length ?? 0;
   const jobCount = doneCount + (data?.mine.length ?? 0);
   const pct = jobCount > 0 ? Math.round((doneCount / jobCount) * 100) : 0;
-  const carried = data ? data.mine.filter((j) => j.since && j.since < data.today).length : 0;
+  const carried = data ? data.mine.filter((j) => (j.task ? j.task.due : j.since ?? data.today) < data.today).length : 0;
+
+  const h: RowHandlers = {
+    onOpenTask: (j) => { if (j.task) setOpenTask({ id: j.task.id, occursOn: j.task.occursOn, due: j.task.due }); },
+    onTaskAction: (j) => {
+      const t = j.task;
+      if (!t) return;
+      mark.mutate({ id: t.id, kind: 'done', occursOn: t.occursOn }, {
+        /* A routine's voucher is drafted on the voucher page — the routine is marked as started. */
+        onSuccess: () => { if (t.kind === 'routine' && t.action === 'voucher') navigate(j.action.to); },
+      });
+    },
+  };
 
   return (
     <div>
@@ -169,6 +227,8 @@ export function FinanceTodoPage() {
           <div className={styles.headStats}>
             <span>{doneCount} of {jobCount} done today</span>
             <span className={styles.bar}><span className={styles.barFill} style={{ width: `${pct}%` }} /></span>
+            <Link to="/scm/finance/rules" className={`${styles.action} ${styles.actionSecondary}`} title="To do rules"><Settings2 size={14} />Rules</Link>
+            <button type="button" className={`${styles.action} ${styles.actionPrimary}`} onClick={() => setAdding(true)}><Plus size={14} />Add task</button>
           </div>
         )}
       />
@@ -186,7 +246,7 @@ export function FinanceTodoPage() {
                 <span className={styles.sectionCount}>{data.mine.length}</span>
                 {carried > 0 && <span className={styles.carried}>· {carried} from earlier days</span>}
               </div>
-              <Groups data={data} />
+              <Groups data={data} h={h} />
             </section>
 
             {data.others.length > 0 && (
@@ -196,7 +256,7 @@ export function FinanceTodoPage() {
                   <span className={styles.sectionCount}>{data.others.length}</span>
                 </div>
                 <div className={styles.card}>
-                  {data.others.map((j) => <JobRow key={j.key} job={j} today={data.today} others />)}
+                  {data.others.map((j) => <JobRow key={j.key} job={j} today={data.today} others h={h} />)}
                 </div>
               </section>
             )}
@@ -213,6 +273,12 @@ export function FinanceTodoPage() {
                     <CheckCircle2 size={16} />
                     <span className={styles.doneText}>{d.text}</span>
                     {d.je && <span className={styles.je}>{d.je}</span>}
+                    {d.task && (
+                      <button type="button" className={styles.reopen} disabled={mark.isPending}
+                        onClick={() => { const t = d.task; if (t) mark.mutate({ id: t.id, kind: 'reopen', occursOn: t.occursOn }); }}>
+                        Reopen
+                      </button>
+                    )}
                     <span className={styles.time}>{d.at}</span>
                   </div>
                 ))}
@@ -245,6 +311,8 @@ export function FinanceTodoPage() {
           </div>
         </div>
       )}
+      {data && <AddTaskDrawer open={adding} onClose={() => setAdding(false)} today={data.today} groups={data.groups} />}
+      {data && <TaskDrawer open={!!openTask} onClose={() => setOpenTask(null)} target={openTask} groups={data.groups} />}
     </div>
   );
 }

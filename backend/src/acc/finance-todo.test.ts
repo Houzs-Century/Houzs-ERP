@@ -24,10 +24,15 @@ const facts = (over: Partial<TodoFacts> = {}): TodoFacts => ({
   money: null,
   done: [],
   problems: [],
+  tasks: [],
+  occurrences: {},
+  remarkCounts: {},
+  rulesOff: [],
+  groups: [],
   ...over,
 });
 
-const FINANCE: TodoViewer = { finance: true, checker: true, approver: true, checkerNames: [], approverNames: [] };
+const FINANCE: TodoViewer = { id: 7, name: 'Mei Ling', finance: true, checker: true, approver: true, checkerNames: [], approverNames: [] };
 
 describe('merchant reports', () => {
   const MBB = { code: 'MBB', name: 'MBB', hasUniqueRef: true };
