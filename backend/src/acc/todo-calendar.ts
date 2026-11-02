@@ -29,6 +29,8 @@ export type CalEvent = {
   to: string | null;
   /** A task or routine — the page can open, mark or move it. */
   task: { id: string; occursOn: string; kind: 'task' | 'routine'; action: TodoTask['action']; link: TaskLink | null; mine: boolean } | null;
+  /** A supplier bill — dragged to another day, its planned payment date moves (step 7); its due date stays. */
+  bill?: { kind: 'API' | 'PI'; id: string; no: string; due: string | null; planned: string | null };
 };
 
 export type CalendarPage = {

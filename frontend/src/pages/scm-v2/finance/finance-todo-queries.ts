@@ -314,6 +314,8 @@ export type CalEvent = {
   done: boolean;
   to: string | null;
   task: { id: string; occursOn: string; kind: 'task' | 'routine'; action: TaskAction; link: TaskLink | null; mine: boolean } | null;
+  /** A supplier bill: dragged to another day, its planned payment date moves (step 7); its due date stays. */
+  bill?: { kind: 'API' | 'PI'; id: string; no: string; due: string | null; planned: string | null };
 };
 
 export type TodoCalendarPage = {

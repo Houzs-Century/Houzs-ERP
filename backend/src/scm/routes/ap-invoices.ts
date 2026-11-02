@@ -47,6 +47,7 @@ import { postJournal, reverseJournal } from '../../acc/engine';
 import { apControlRole, apInvoiceLines, resolveRoles, type RoleCodes } from '../../acc/rules';
 import { HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
 import { billPayments } from './ap-invoice-payments';
+import { billPlans, putBillPlanHandler } from './ap-bill-plans';
 import { requireLeafAccount } from './accounting-chart';
 import { learnVendorMemory } from './payment-vouchers';
 import {
@@ -144,6 +145,10 @@ export const listApInvoicesHandler = async (c: any): Promise<Response> => {
     for (const r of (data ?? []) as Row[]) rows.push(shape('PI', r, roles));
   }
   rows.sort((a, b) => String(b.invoiceDate ?? '').localeCompare(String(a.invoiceDate ?? '')) || String(b.invoiceNumber).localeCompare(String(a.invoiceNumber)));
+  /* When Finance plans to pay each bill (step 7) — beside its due date, never instead of it. */
+  const plans = await billPlans(sb, co.companyId);
+  if (!plans.ok) return c.json({ error: 'load_failed', reason: plans.reason }, 500);
+  for (const r of rows) r.plannedOn = plans.byBill.get(`${r.kind}:${r.id}`) ?? null;
   return c.json({ rows });
 };
 
@@ -197,9 +202,11 @@ export const apInvoiceDetailHandler = async (c: any): Promise<Response> => {
   if (sup.error) return c.json({ error: 'load_failed', reason: sup.error.message }, 500);
   const pay = await billPayments(sb, c, found.inv);
   if (!pay.ok) return c.json({ error: 'load_failed', reason: pay.reason }, 500);
+  const plan = await scopeToCompany(sb.from('acc_bill_plans').select('planned_on').eq('bill_kind', 'API').eq('bill_id', found.inv.id), c).maybeSingle();
+  if (plan.error) return c.json({ error: 'load_failed', reason: plan.error.message }, 500);
   const roles = await resolveRoles(sb, activeCompanyId(c) ?? null);
   const controlCode = roles[apControlRole((sup.data as { code?: string | null } | null)?.code ?? null)];
-  return c.json({ invoice: { ...found.inv, je_no: pay.jeNo }, lines: lines.data ?? [], supplier: sup.data ?? null, payments: pay.payments, controlCode });
+  return c.json({ invoice: { ...found.inv, je_no: pay.jeNo, planned_on: (plan.data as { planned_on?: string } | null)?.planned_on ?? null }, lines: lines.data ?? [], supplier: sup.data ?? null, payments: pay.payments, controlCode });
 };
 
 /* ── POST / — raise a DRAFT ──────────────────────────────────────────────── */
@@ -492,6 +499,7 @@ apInvoices.post('/:id/files', uploadApInvoiceFileHandler);
 apInvoices.get('/:id/files', listApInvoiceFilesHandler);
 apInvoices.get('/:id/files/:fileId', streamApInvoiceFileHandler);
 apInvoices.delete('/:id/files/:fileId', deleteApInvoiceFileHandler);
+apInvoices.put('/plans', putBillPlanHandler);
 apInvoices.get('/:id', apInvoiceDetailHandler);
 apInvoices.patch('/:id', updateApInvoiceHandler);
 apInvoices.post('/:id/post', postApInvoiceHandler);

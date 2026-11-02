@@ -12,6 +12,9 @@ import { ChevronLeft, ChevronRight, Paperclip } from 'lucide-react';
 import { fmtDate, fmtSen } from '../../../vendor/shared/format';
 import styles from './TodoCalendar.module.css';
 import { useMarkTask, useTodoCalendar, type CalEvent, type CalKind } from './finance-todo-queries';
+import { usePlanBill } from '../../../vendor/scm/lib/ap-invoice-queries';
+import { useToastOptional } from '../../../hooks/useToast';
+import { planMovedText } from '../BillPlanDialog';
 
 const KIND_CLASS: Record<CalKind, string> = {
   pay: styles.kindPay, in: styles.kindIn, routine: styles.kindRoutine, task: styles.kindTask, late: styles.kindLate,
@@ -73,6 +76,9 @@ export function TodoCalendar({ today, onOpenTask }: {
   const q = useTodoCalendar(month);
   const mark = useMarkTask();
   const actionOf = useItemAction();
+  /* A bill dragged to another day moves its planned payment date (step 7). */
+  const plan = usePlanBill();
+  const toast = useToastOptional();
   const sel = selected ?? (month === today.slice(0, 7) ? today : `${month}-01`);
   const byDay = useMemo(() => {
     const m = new Map<string, CalEvent[]>();
@@ -81,12 +87,23 @@ export function TodoCalendar({ today, onOpenTask }: {
   }, [q.data]);
   const days = gridDays(month);
   const selItems = byDay.get(sel) ?? [];
-  const canDrag = (e: CalEvent): boolean => !!e.task && !e.done && (e.task.kind === 'routine' || e.task.mine);
+  const canDrag = (e: CalEvent): boolean => (!!e.bill && !e.done) || (!!e.task && !e.done && (e.task.kind === 'routine' || e.task.mine));
   const drop = (day: string) => {
     const e = dragging;
     setDragging(null);
     setOver(null);
-    if (!e?.task || day === e.day) return;
+    if (!e || day === e.day) return;
+    const bill = e.bill;
+    if (bill) {
+      /* The planned day moves; the supplier's due date stays (the design's toast). */
+      if (day < today) { toast?.error('A bill cannot be planned on a past day.'); return; }
+      plan.mutate({ kind: bill.kind, id: bill.id, plannedOn: day }, {
+        onSuccess: () => toast?.success(planMovedText(bill.no, day, bill.due)),
+        onError: (err) => toast?.error(err instanceof Error ? err.message : 'The planned date was not saved.'),
+      });
+      return;
+    }
+    if (!e.task) return;
     mark.mutate({ id: e.task.id, kind: 'move', occursOn: e.task.occursOn, to: day });
   };
   const go = (by: number) => { setMonth(shiftMonth(month, by)); setSelected(null); };
@@ -119,7 +136,7 @@ export function TodoCalendar({ today, onOpenTask }: {
                 <span className={styles.num}>{Number(d.slice(8, 10))}</span>
                 {items.slice(0, SHOWN_PER_DAY).map((e) => (
                   <span key={e.key} className={`${styles.chip} ${KIND_CLASS[e.kind]} ${e.done ? styles.chipDone : ''} ${dragging?.key === e.key ? styles.chipDragging : ''}`}
-                    title={`${e.label}${e.detail ? ` — ${e.detail}` : ''}${e.amountSen ? ` — ${fmtSen(e.amountSen)}` : ''}${canDrag(e) ? ' · drag to another day to move it this time only' : ''}`}
+                    title={`${e.label}${e.detail ? ` — ${e.detail}` : ''}${e.amountSen ? ` — ${fmtSen(e.amountSen)}` : ''}${canDrag(e) ? (e.bill ? ' · drag to another day to plan its payment there' : ' · drag to another day to move it this time only') : ''}`}
                     draggable={canDrag(e)} onDragStart={(ev) => { ev.dataTransfer.effectAllowed = 'move'; setDragging(e); }} onDragEnd={() => { setDragging(null); setOver(null); }}>
                     <span className={styles.chipDot} />{e.short}
                   </span>

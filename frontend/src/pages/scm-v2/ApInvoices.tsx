@@ -60,6 +60,7 @@ import { NoteForm, emptyForm as emptyNoteForm, fromScan, type FormValues as Note
 import { useOpenDocInTab } from '../../lib/openDocInTab';
 import mo from './MoneyOut.module.css';
 import { SupplierBillsList, type BillAction } from './SupplierBillsList';
+import { BillPlanDialog } from './BillPlanDialog';
 import { listingRowOf, type BillRow } from './supplier-bills';
 import { usePaymentRequest } from '../../vendor/scm/lib/payment-request-queries';
 import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
@@ -235,6 +236,8 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
   /* Edit / Copy picked on a row: the bill's own read first, then its form —
      the pop-out stays shut in between. */
   const [pendingForm, setPendingForm] = useState<'edit' | 'copy' | null>(null);
+  /* Plan date (step 7): the bill whose planned payment date is being set. */
+  const [planning, setPlanning] = useState<BillRow | null>(null);
   const openEdit = (d: Detail) => setForm({
     mode: 'edit', initial: fromDetail(d, false), invoiceId: d.invoice.id, invoiceNumber: d.invoice.invoice_number,
     posted: d.invoice.status !== 'DRAFT', paidSen: Number(d.invoice.paid_sen),
@@ -394,6 +397,7 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
       return;
     }
     if (action === 'makeVoucher') { voucherFor(r); return; }
+    if (action === 'plan') { setPlanning(r); return; }
     if (r.kind === 'PI') { navigate(`/scm/purchase-invoices/${r.id}`); return; }
     if (action === 'post') void onPost(r.id, r.number);
     else if (action === 'cancel') void onCancel(r.id, r.number, r.status !== 'DRAFT');
@@ -519,6 +523,10 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
         </div>
       </section>}
 
+      {planning && planning.kind !== 'SCN' && (
+        <BillPlanDialog onClose={() => setPlanning(null)}
+          bill={{ kind: planning.kind, id: planning.id, number: planning.number, supplierName: planning.supplierName, outstandingSen: planning.outstandingSen, due: planning.due, planned: planning.planned }} />
+      )}
       {noteForm && (
         <NoteForm mode={noteForm.mode} id={noteForm.id} kinds={['SCN']} initial={noteForm.values} scan={noteForm.scan} scanFiles={noteForm.files}
           onClose={() => setNoteForm(null)} onSaved={(id) => { setNoteForm(null); openInTab(`/scm/supplier-notes/${id}`); }} />

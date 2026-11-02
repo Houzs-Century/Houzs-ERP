@@ -32,6 +32,8 @@ export type BillRow = {
   description: string | null;
   date: string | null;
   due: string | null;
+  /** When Finance plans to pay it (step 7); only a posted bill still owed carries one. */
+  planned: string | null;
   currency: string;
   totalSen: number;
   /** Paid on a bill; used on a credit note. */
@@ -63,6 +65,7 @@ export const fromApRow = (r: ApListRow): BillRow => ({
   description: r.description,
   date: r.invoiceDate,
   due: r.dueDate,
+  planned: lifeOf(r.status) === 'posted' && r.outstandingSen > 0 ? r.plannedOn ?? null : null,
   currency: r.currency,
   totalSen: r.totalSen,
   paidSen: r.paidSen,
@@ -87,6 +90,7 @@ export const fromNote = (n: CreditNote): BillRow => ({
   description: n.reason,
   date: n.note_date,
   due: null,
+  planned: null,
   currency: 'MYR',
   totalSen: n.total_sen,
   paidSen: n.appliedSen ?? 0,
@@ -189,11 +193,12 @@ export const controlWord = (r: BillRow): string => (r.controlRole === 'AP_OTHER'
 /** What a ticked row adds to the batch bar: a credit note takes off what we owe. */
 export const signedSen = (r: BillRow): number => (r.kind === 'SCN' ? -r.totalSen : r.totalSen);
 
-/** List order: what is still owed by its due date (soonest first); everything else newest first. */
+/** List order: what is still owed by when we will pay it — the plan, else the
+    due date — soonest first; everything else newest first. */
 export function sortBills(rows: BillRow[], chip: BillChip): BillRow[] {
   const byDue = chip === 'unpaid' || chip === 'overdue';
   return [...rows].sort((a, b) => (byDue
-    ? String(a.due ?? '9999').localeCompare(String(b.due ?? '9999'))
+    ? String(a.planned ?? a.due ?? '9999').localeCompare(String(b.planned ?? b.due ?? '9999'))
     : String(b.date ?? '').localeCompare(String(a.date ?? ''))) || b.number.localeCompare(a.number));
 }
 
@@ -207,7 +212,7 @@ export const listingRowOf = (r: BillRow, today: string): ApListingRow => ({
   ref: r.ref,
   date: r.date,
   due: r.kind === 'SCN' ? null : r.due,
-  planned: null,
+  planned: r.planned,
   description: r.description,
   currency: r.currency,
   totalSen: signedSen(r),

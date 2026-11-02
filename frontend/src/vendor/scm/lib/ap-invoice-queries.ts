@@ -41,6 +41,8 @@ export type ApListRow = {
   /** A purchase invoice held in Procurement — every voucher path refuses it. */
   held?: boolean;
   holdReason?: string | null;
+  /** When Finance plans to pay it (step 7) — beside the due date, never instead of it. */
+  plannedOn?: string | null;
 };
 
 export type ApInvoiceHeader = {
@@ -54,6 +56,8 @@ export type ApInvoiceHeader = {
   created_at?: string | null; created_by?: string | null; cancelled_at?: string | null; cancelled_by?: string | null;
   /** The journal its post wrote (the live one when an edit re-posted it); null until posted. */
   je_no?: string | null;
+  /** When Finance plans to pay it (step 7); null = by its due date. */
+  planned_on?: string | null;
 };
 
 /** What paid a bill (the bill page's Payments): a voucher by its stage — its own
@@ -74,6 +78,16 @@ export const useApInvoices = (kind: ApListKind = 'ALL', docKind?: ApDocKind) => 
   queryFn: () => authedFetch<{ rows: ApListRow[] }>(`/ap-invoices?kind=${kind}${docKind ? `&docKind=${docKind}` : ''}`),
   staleTime: 15_000,
 });
+
+/** Plan a bill's payment date, or clear the plan (null) — an AP bill or a purchase invoice; posts nothing. */
+export const usePlanBill = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (b: { kind: 'API' | 'PI'; id: string; plannedOn: string | null }) =>
+      authedFetch<{ ok: boolean; plannedOn: string | null }>('/ap-invoices/plans', { method: 'PUT', body: JSON.stringify(b) }),
+    onSuccess: () => invalidate(qc),
+  });
+};
 
 export const useApInvoiceDetail = (id: string | null) => useQuery({
   queryKey: ['ap-invoice', id],

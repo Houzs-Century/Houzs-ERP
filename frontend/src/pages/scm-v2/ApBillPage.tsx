@@ -10,7 +10,7 @@
 
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Ban, Copy, ListPlus, Pencil, Send, Wallet } from 'lucide-react';
+import { Ban, CalendarClock, Copy, ListPlus, Pencil, Send, Wallet } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { PageHeader } from '../../components/Layout';
 import { Modal } from '../../vendor/scm/components/Modal';
@@ -32,6 +32,7 @@ import { AccountCell } from './JournalEntryCards';
 import { ApInvoiceForm, type ApFormSubmit } from './ApInvoiceForm';
 import { ApInvoiceFilesCard, fromDetail } from './ApInvoices';
 import { VoucherTaskDrawer } from './PvDocParts';
+import { BillPlanDialog } from './BillPlanDialog';
 import { billTag, lifeOf, type BillRow, type BillTone } from './supplier-bills';
 import styles from './SalesOrderDetail.module.css';
 import mo from './MoneyOut.module.css';
@@ -46,7 +47,7 @@ const asRow = (d: ApInvoiceDetail): BillRow => {
   return {
     key: `API-${inv.id}`, kind: 'API', debitNote: inv.doc_kind === 'DN', id: inv.id, number: inv.invoice_number,
     supplierId: inv.supplier_id, supplierName: d.supplier?.name ?? null, supplierCode: d.supplier?.code ?? null, controlRole: null,
-    ref: inv.supplier_invoice_ref, description: inv.notes, date: inv.invoice_date, due: inv.due_date, currency: inv.currency,
+    ref: inv.supplier_invoice_ref, description: inv.notes, date: inv.invoice_date, due: inv.due_date, planned: posted ? inv.planned_on ?? null : null, currency: inv.currency,
     totalSen: Number(inv.total_sen), paidSen: Number(inv.paid_sen), outstandingSen: posted ? Math.max(0, Number(inv.total_sen) - Number(inv.paid_sen)) : null,
     unusedSen: null, status: inv.status, held: false, holdReason: null,
   };
@@ -85,6 +86,7 @@ export function ApBillPage() {
   const canCancel = can('scm.payment_voucher.cancel');
   const [form, setForm] = useState<'edit' | 'copy' | null>(null);
   const [addingTask, setAddingTask] = useState(false);
+  const [planning, setPlanning] = useState(false);
 
   const accountName = (code: string): string | null => (accountsQ.data?.accounts ?? []).find((a) => a.account_code === code)?.account_name ?? null;
   const lineAccounts = useMemo(() => postableAccounts(accountsQ.data?.accounts ?? []), [accountsQ.data]);
@@ -110,6 +112,9 @@ export function ApBillPage() {
   const debits = [...new Set(d.lines.map((l) => l.debit_account_code))].map((c) => (accountName(c) ? `${c} ${accountName(c)}` : c)).join(', ');
   const credit = d.controlCode ? (accountName(d.controlCode) ? `${d.controlCode} ${accountName(d.controlCode)}` : d.controlCode) : 'the supplier’s control';
   const booksState = life === 'posted' ? 'Posted' : life === 'cancelled' ? (inv.je_no ? 'Reversed' : 'Never posted') : 'Posts when posted';
+  /* When we plan to pay it, against the supplier's due date (the design: · Nd early / · Nd late). */
+  const planned = life === 'posted' && outstanding > 0 ? inv.planned_on ?? null : null;
+  const planGap = planned && inv.due_date ? Math.round((Date.parse(planned) - Date.parse(inv.due_date)) / 86_400_000) : 0;
 
   const onPost = async () => {
     if (!(await askConfirm({
@@ -172,6 +177,9 @@ export function ApBillPage() {
             {canCreate && life !== 'cancelled' && <Button variant="ghost" size="md" onClick={() => setForm('edit')}><Pencil {...ICON} /> Edit</Button>}
             {canCreate && <Button variant="ghost" size="md" onClick={() => setForm('copy')}><Copy {...ICON} /> Copy</Button>}
             <Button variant="ghost" size="md" onClick={() => setAddingTask(true)}><ListPlus {...ICON} /> Add task</Button>
+            {canCreate && life === 'posted' && outstanding > 0 && (
+              <Button variant="ghost" size="md" onClick={() => setPlanning(true)}><CalendarClock {...ICON} /> Plan date</Button>
+            )}
             {canCancel && life !== 'cancelled' && Number(inv.paid_sen) === 0 && (
               <Button variant="ghost" size="md" onClick={() => void onCancel()} disabled={cancel.isPending}><Ban {...ICON} /> Cancel…</Button>
             )}
@@ -195,8 +203,9 @@ export function ApBillPage() {
             <Fact label={dn ? 'Supplier’s debit note no.' : 'Supplier’s invoice no.'}>{inv.supplier_invoice_ref ?? '—'}</Fact>
             <Fact label={dn ? 'Date' : 'Invoice date'}>{fmtDateOrDash(inv.invoice_date)}</Fact>
             <Fact label="Due date">{fmtDateOrDash(inv.due_date)}</Fact>
-            {/* The planned payment date arrives with its own table (step 7). */}
-            <Fact label="Planned payment">—</Fact>
+            <Fact label="Planned payment">
+              {planned ? <>{fmtDateOrDash(planned)}{planGap !== 0 ? <span className={mo.hint}> · {Math.abs(planGap)}d {planGap < 0 ? 'early' : 'late'}</span> : null}</> : life === 'posted' && outstanding > 0 ? 'By the due date' : '—'}
+            </Fact>
             <Fact label="Outstanding"><span className={mo.money}>{life === 'posted' ? fmtSen(outstanding) : '—'}</span></Fact>
             <Fact label="Journal">{inv.je_no ?? (life === 'cancelled' ? 'Never posted' : 'Written when posted')}</Fact>
             <Fact label="Description">{inv.notes ?? '—'}</Fact>
@@ -294,6 +303,10 @@ export function ApBillPage() {
         </div>
       </section>
 
+      {planning && (
+        <BillPlanDialog onClose={() => setPlanning(false)}
+          bill={{ kind: 'API', id: inv.id, number: inv.invoice_number, supplierName: d.supplier?.name ?? null, outstandingSen: outstanding, due: inv.due_date, planned }} />
+      )}
       {addingTask && (
         <VoucherTaskDrawer onClose={() => setAddingTask(false)}
           link={{ type: 'Supplier bill', no: inv.invoice_number, name: d.supplier?.name ?? '', to: `/scm/ap-invoices/${inv.id}` }} />

@@ -28,7 +28,7 @@ import {
 import mo from './MoneyOut.module.css';
 
 /** What a row asks the page to do. */
-export type BillAction = 'open' | 'post' | 'edit' | 'copy' | 'cancel' | 'makeVoucher';
+export type BillAction = 'open' | 'post' | 'edit' | 'copy' | 'cancel' | 'makeVoucher' | 'plan';
 
 type Props = {
   /** The AP bills and purchase invoices; null until the list has loaded. */
@@ -112,6 +112,8 @@ export function SupplierBillsList({ apRows, apLoading, apError, can, onAct, onPr
     const items: MenuItem[] = [{ label: 'Open', onClick: () => onAct('open', r) }];
     if (can.create && r.kind !== 'PI' && life !== 'cancelled' && (r.kind === 'API' || life === 'draft')) items.push({ label: 'Edit', onClick: () => onAct('edit', r) });
     if (can.post && life === 'draft') items.push({ label: r.kind === 'SCN' ? 'Post to ledger' : 'Post', onClick: () => onAct('post', r) });
+    /* When we plan to pay it (step 7): a posted bill still owed. */
+    if (can.create && r.kind !== 'SCN' && life === 'posted' && isOpen(r)) items.push({ label: 'Plan date', onClick: () => onAct('plan', r) });
     if (can.create && r.kind === 'API') items.push({ label: '', onClick: () => undefined, divider: true }, { label: 'Copy as new', onClick: () => onAct('copy', r) });
     if (can.cancel && r.kind !== 'PI' && life !== 'cancelled' && r.paidSen === 0 && !(r.kind === 'SCN' && openingOnly)) {
       items.push({ label: '', onClick: () => undefined, divider: true }, { label: r.kind === 'SCN' ? 'Cancel note…' : r.debitNote ? 'Cancel debit note…' : 'Cancel bill…', onClick: () => onAct('cancel', r), danger: true });
@@ -180,8 +182,8 @@ export function SupplierBillsList({ apRows, apLoading, apError, can, onAct, onPr
         : <span className={lifeOf(r.status) === 'posted' && isOpen(r) && daysLate(r.due, today) > 0 ? mo.dueLate : undefined}>{fmtDateOrDash(r.due)}</span>),
       getValue: (r) => r.due, exportFormat: 'date',
     },
-    /* The planned payment date arrives with its own table (step 7). */
-    { key: 'planned', label: 'Planned', render: () => '—', getValue: () => null },
+    /* When we plan to pay it (step 7) — shown on what is still owed. */
+    { key: 'planned', label: 'Planned', render: (r) => (r.planned ? fmtDateOrDash(r.planned) : '—'), getValue: (r) => r.planned, exportFormat: 'date' },
     {
       key: 'total', label: 'Total', align: 'right', defaultHidden: true, render: (r) => <span className={mo.money}>{fmtSen(r.totalSen)}</span>,
       getValue: (r) => r.totalSen, exportValue: (r) => r.totalSen / 100, exportFormat: 'money',

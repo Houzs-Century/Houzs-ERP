@@ -8,7 +8,7 @@ import { billTag, inChip, listingRowOf, matchesBill, sortBills, type BillRow } f
 const TODAY = '2026-11-03';
 const bill = (over: Partial<BillRow>): BillRow => ({
   key: 'API-1', kind: 'API', debitNote: false, id: '1', number: '2990-API-2610-001', supplierId: 's', supplierName: 'TNB', supplierCode: '405-T001',
-  controlRole: 'AP_OTHER', ref: 'T-1', description: 'Electric', date: '2026-10-01', due: '2026-11-30', currency: 'MYR',
+  controlRole: 'AP_OTHER', ref: 'T-1', description: 'Electric', date: '2026-10-01', due: '2026-11-30', planned: null, currency: 'MYR',
   totalSen: 10_000, paidSen: 0, outstandingSen: 10_000, unusedSen: null, status: 'POSTED', held: false, holdReason: null, ...over,
 });
 
@@ -59,5 +59,14 @@ describe('the listing row', () => {
   test('a credit note takes off what we owe and prints its use, not a due date', () => {
     const r = listingRowOf(bill({ kind: 'SCN', number: 'SCN-1', totalSen: 5_000, paidSen: 1_000, unusedSen: 4_000, outstandingSen: null, due: '2026-12-01', controlRole: 'AP' }), TODAY);
     expect(r).toMatchObject({ kindWord: 'Credit note', control: '400', totalSen: -5_000, paidSen: 0, outstandingSen: null, due: null, status: 'To use' });
+  });
+});
+
+describe('the planned payment date (step 7)', () => {
+  test('what is owed sorts by the plan, else the due date; Overdue still reads the due date', () => {
+    const a = bill({ key: 'a', number: 'A', due: '2026-11-10', planned: '2026-12-01' });
+    const b = bill({ key: 'b', number: 'B', due: '2026-11-20', planned: null });
+    expect(sortBills([a, b], 'unpaid').map((r) => r.number)).toEqual(['B', 'A']);
+    expect(inChip(bill({ due: '2026-11-01', planned: '2026-11-30' }), 'overdue', TODAY)).toBe(true);
   });
 });
