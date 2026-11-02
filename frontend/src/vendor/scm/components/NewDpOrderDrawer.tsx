@@ -38,6 +38,7 @@ import { useLorries } from '../lib/lorries-queries';
 import { useStockTransfers } from '../lib/stock-queries';
 import { useWarehouses } from '../lib/inventory-queries';
 import { useThreePLCompanies } from '../lib/threepl-companies-queries';
+import { useSavedLocations } from '../lib/saved-locations-queries';
 import { SearchableSelect, type SearchableSelectOption } from './SearchableSelect';
 import { useNotify } from './NotifyDialog';
 import { writeFailedAs } from '../lib/mutation-error';
@@ -112,6 +113,10 @@ type WorkshopPickRow = {
   isActive: boolean;
 };
 
+/* Which master a TRANSFER's From / To is picked from (owner 2026-11-02): our own
+   warehouse, an outsourced 3PL carrier, or a saved location (方案2). */
+type DestKind = 'warehouse' | 'threepl' | 'saved';
+
 export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
   const create = useCreateDpOrder();
   const schedule = useScheduleDelivery();
@@ -141,21 +146,23 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
     /* TRANSFER only — the DESTINATION. Like the lorry above it is a second
        reference rather than the source: the transfer document (if any) says what
        is being moved, this says where the fleet is driving to, and it is the party
-       the address comes from. The destination is EITHER one of our own warehouses
-       OR an outsourced 3PL warehouse (owner 2026-11-02) — destKind switches which,
-       and only the matching id is sent. */
-    destKind: 'warehouse' as 'warehouse' | 'threepl',
+       the address comes from. The destination is one of our own warehouses, an
+       outsourced 3PL (owner 2026-11-02), or a saved location (方案2) — destKind
+       switches which, and only the matching id is sent. */
+    destKind: 'warehouse' as DestKind,
     warehouseId: '',
     threeplCompanyId: '',
+    savedLocationId: '',
     partyName: '', contactName: '', contactPhone: '',
     address1: '', address2: '', address3: '', address4: '',
     city: '', postcode: '', state: '',
     /* TRANSFER ORIGIN ("from", owner 2026-11-02 方案1) — the pickup point, picked
-       the same way as the destination (our warehouse / outsourced 3PL), its address
-       editable. Optional: a plain depot-loaded transfer leaves it blank. */
-    fromKind: 'warehouse' as 'warehouse' | 'threepl',
+       the same way as the destination (our warehouse / 3PL / saved location), its
+       address editable. Optional: a plain depot-loaded transfer leaves it blank. */
+    fromKind: 'warehouse' as DestKind,
     fromWarehouseId: '',
     fromThreeplCompanyId: '',
+    fromSavedLocationId: '',
     fromName: '',
     fromAddress1: '', fromAddress2: '',
     fromCity: '', fromPostcode: '', fromState: '',
@@ -299,6 +306,10 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
      2026-11-02). Fetched unconditionally like the warehouse list above (a small,
      cached master); only shown when the destination toggle is on "Outsourced". */
   const threeplQ = useThreePLCompanies();
+  /* Saved locations — the kept from/to address book (owner 2026-11-02 方案2). Like
+     the warehouse / 3PL lists it is fetched unconditionally (small, cached) and
+     only shown when a From / To toggle is on "Saved location". */
+  const savedLocationsQ = useSavedLocations();
 
   const transferOptions = useMemo(
     () => (transfersQ.data ?? []).map((t) => ({
@@ -319,6 +330,12 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
       .filter((t) => t.isActive)
       .map((t) => ({ value: t.id, label: `${t.name}${t.code ? ` (${t.code})` : ''}` })),
     [threeplQ.data],
+  );
+  const savedLocationOptions = useMemo(
+    () => (savedLocationsQ.data ?? [])
+      .filter((l) => l.isActive)
+      .map((l) => ({ value: l.id, label: `${l.name}${l.city ? ` — ${l.city}` : ''}` })),
+    [savedLocationsQ.data],
   );
 
   /* Supplier prefill — the DETAIL row (the list view predates the structured
@@ -418,6 +435,25 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
     }));
   };
 
+  /* Saved-location destination prefill (方案2) — a kept point with a full
+     structured address and contact, filled straight through; stays editable. */
+  const pickSavedLocation = (id: string) => {
+    const l = (savedLocationsQ.data ?? []).find((r) => r.id === id);
+    setForm((s) => ({
+      ...s,
+      savedLocationId: id,
+      partyName: (l?.name ?? '').trim(),
+      contactName: (l?.contactName ?? '').trim(),
+      contactPhone: (l?.contactPhone ?? '').trim(),
+      address1: (l?.address1 ?? '').trim(),
+      address2: (l?.address2 ?? '').trim(),
+      address3: '', address4: '',
+      city: (l?.city ?? '').trim(),
+      postcode: (l?.postcode ?? '').trim(),
+      state: (l?.state ?? '').trim(),
+    }));
+  };
+
   /* ORIGIN ("from") prefills — mirror the destination pickers, writing the from_*
      fields instead. Same masters (our warehouse / 3PL), same field precedence; the
      address stays editable. (owner 2026-11-02 方案1) */
@@ -442,6 +478,19 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
       fromName: (t?.name ?? t?.code ?? '').trim(),
       fromAddress1: (t?.address ?? '').trim(),
       fromAddress2: '', fromCity: '', fromPostcode: '', fromState: '',
+    }));
+  };
+  const pickFromSavedLocation = (id: string) => {
+    const l = (savedLocationsQ.data ?? []).find((r) => r.id === id);
+    setForm((s) => ({
+      ...s,
+      fromSavedLocationId: id,
+      fromName: (l?.name ?? '').trim(),
+      fromAddress1: (l?.address1 ?? '').trim(),
+      fromAddress2: (l?.address2 ?? '').trim(),
+      fromCity: (l?.city ?? '').trim(),
+      fromPostcode: (l?.postcode ?? '').trim(),
+      fromState: (l?.state ?? '').trim(),
     }));
   };
 
@@ -501,14 +550,18 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
        destination is edited later. Only the picked kind's id is sent — our
        warehouse or an outsourced 3PL, never both. */
     if (form.jobType === 'TRANSFER') {
-      if (form.destKind === 'threepl') {
+      if (form.destKind === 'saved') {
+        if (form.savedLocationId) body.savedLocationId = form.savedLocationId;
+      } else if (form.destKind === 'threepl') {
         if (form.threeplCompanyId) body.threeplCompanyId = form.threeplCompanyId;
       } else if (form.warehouseId) {
         body.warehouseId = form.warehouseId;
       }
       /* ORIGIN ("from") — optional, only the picked kind's id, plus any typed-over
          origin fields as fromOverrides (snapshot keys). */
-      if (form.fromKind === 'threepl') {
+      if (form.fromKind === 'saved') {
+        if (form.fromSavedLocationId) body.fromSavedLocationId = form.fromSavedLocationId;
+      } else if (form.fromKind === 'threepl') {
         if (form.fromThreeplCompanyId) body.fromThreeplCompanyId = form.fromThreeplCompanyId;
       } else if (form.fromWarehouseId) {
         body.fromWarehouseId = form.fromWarehouseId;
@@ -603,9 +656,11 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
                   destKind: 'warehouse',
                   warehouseId: '',
                   threeplCompanyId: '',
+                  savedLocationId: '',
                   fromKind: 'warehouse',
                   fromWarehouseId: '',
                   fromThreeplCompanyId: '',
+                  fromSavedLocationId: '',
                   fromName: '',
                   fromAddress1: '', fromAddress2: '',
                   fromCity: '', fromPostcode: '', fromState: '',
@@ -779,16 +834,21 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
               <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>
                 From (origin) <span style={{ textTransform: 'none', color: 'var(--c-muted, #767b6e)' }}>— optional, for a partner / point-to-point move</span>
               </div>
-              <div style={{ display: 'flex', gap: 'var(--space-3)', marginBottom: 'var(--space-2)', fontSize: 'var(--fs-12)' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)', marginBottom: 'var(--space-2)', fontSize: 'var(--fs-12)' }}>
                 <label style={{ display: 'inline-flex', gap: 'var(--space-1)', alignItems: 'center' }}>
                   <input type="radio" name="dp-from-kind" checked={form.fromKind === 'warehouse'}
-                    onChange={() => setForm((s) => ({ ...s, fromKind: 'warehouse', fromThreeplCompanyId: '' }))} />
+                    onChange={() => setForm((s) => ({ ...s, fromKind: 'warehouse', fromThreeplCompanyId: '', fromSavedLocationId: '' }))} />
                   Our warehouse
                 </label>
                 <label style={{ display: 'inline-flex', gap: 'var(--space-1)', alignItems: 'center' }}>
                   <input type="radio" name="dp-from-kind" checked={form.fromKind === 'threepl'}
-                    onChange={() => setForm((s) => ({ ...s, fromKind: 'threepl', fromWarehouseId: '' }))} />
+                    onChange={() => setForm((s) => ({ ...s, fromKind: 'threepl', fromWarehouseId: '', fromSavedLocationId: '' }))} />
                   Outsourced (3PL)
+                </label>
+                <label style={{ display: 'inline-flex', gap: 'var(--space-1)', alignItems: 'center' }}>
+                  <input type="radio" name="dp-from-kind" checked={form.fromKind === 'saved'}
+                    onChange={() => setForm((s) => ({ ...s, fromKind: 'saved', fromWarehouseId: '', fromThreeplCompanyId: '' }))} />
+                  Saved location
                 </label>
               </div>
               {form.fromKind === 'warehouse' ? (
@@ -806,7 +866,7 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
                     ariaLabel="Origin warehouse"
                   />
                 )
-              ) : (
+              ) : form.fromKind === 'threepl' ? (
                 threeplQ.isError ? (
                   <input className={styles.searchInput} style={inputStyle}
                     placeholder="3PL company id — the carrier list could not be loaded"
@@ -819,6 +879,21 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
                     placeholder={threeplQ.isLoading ? 'Loading 3PL companies…' : 'Search by name or code…'}
                     className={styles.searchInput}
                     ariaLabel="Origin 3PL"
+                  />
+                )
+              ) : (
+                savedLocationsQ.isError ? (
+                  <input className={styles.searchInput} style={inputStyle}
+                    placeholder="saved location id — the list could not be loaded"
+                    value={form.fromSavedLocationId} onChange={(e) => set('fromSavedLocationId', e.target.value)} />
+                ) : (
+                  <SearchableSelect
+                    value={form.fromSavedLocationId}
+                    onChange={pickFromSavedLocation}
+                    options={savedLocationOptions}
+                    placeholder={savedLocationsQ.isLoading ? 'Loading saved locations…' : 'Search saved locations…'}
+                    className={styles.searchInput}
+                    ariaLabel="Origin saved location"
                   />
                 )
               )}
@@ -863,16 +938,21 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
               <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>
                 Destination <span style={{ textTransform: 'none', color: 'var(--c-burnt)' }}>— required</span>
               </div>
-              <div style={{ display: 'flex', gap: 'var(--space-3)', marginBottom: 'var(--space-2)', fontSize: 'var(--fs-12)' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)', marginBottom: 'var(--space-2)', fontSize: 'var(--fs-12)' }}>
                 <label style={{ display: 'inline-flex', gap: 'var(--space-1)', alignItems: 'center' }}>
                   <input type="radio" name="dp-dest-kind" checked={form.destKind === 'warehouse'}
-                    onChange={() => setForm((s) => ({ ...s, destKind: 'warehouse', threeplCompanyId: '' }))} />
+                    onChange={() => setForm((s) => ({ ...s, destKind: 'warehouse', threeplCompanyId: '', savedLocationId: '' }))} />
                   Our warehouse
                 </label>
                 <label style={{ display: 'inline-flex', gap: 'var(--space-1)', alignItems: 'center' }}>
                   <input type="radio" name="dp-dest-kind" checked={form.destKind === 'threepl'}
-                    onChange={() => setForm((s) => ({ ...s, destKind: 'threepl', warehouseId: '' }))} />
+                    onChange={() => setForm((s) => ({ ...s, destKind: 'threepl', warehouseId: '', savedLocationId: '' }))} />
                   Outsourced (3PL)
+                </label>
+                <label style={{ display: 'inline-flex', gap: 'var(--space-1)', alignItems: 'center' }}>
+                  <input type="radio" name="dp-dest-kind" checked={form.destKind === 'saved'}
+                    onChange={() => setForm((s) => ({ ...s, destKind: 'saved', warehouseId: '', threeplCompanyId: '' }))} />
+                  Saved location
                 </label>
               </div>
               {form.destKind === 'warehouse' ? (
@@ -890,7 +970,7 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
                     ariaLabel="Destination warehouse"
                   />
                 )
-              ) : (
+              ) : form.destKind === 'threepl' ? (
                 threeplQ.isError ? (
                   <input className={styles.searchInput} style={inputStyle}
                     placeholder="3PL company id — the carrier list could not be loaded"
@@ -905,11 +985,28 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
                     ariaLabel="Outsourced 3PL warehouse"
                   />
                 )
+              ) : (
+                savedLocationsQ.isError ? (
+                  <input className={styles.searchInput} style={inputStyle}
+                    placeholder="saved location id — the list could not be loaded"
+                    value={form.savedLocationId} onChange={(e) => set('savedLocationId', e.target.value)} />
+                ) : (
+                  <SearchableSelect
+                    value={form.savedLocationId}
+                    onChange={pickSavedLocation}
+                    options={savedLocationOptions}
+                    placeholder={savedLocationsQ.isLoading ? 'Loading saved locations…' : 'Search saved locations…'}
+                    className={styles.searchInput}
+                    ariaLabel="Destination saved location"
+                  />
+                )
               )}
               <div style={{ marginTop: 'var(--space-1)', fontSize: 'var(--fs-11)', color: 'var(--c-muted, #767b6e)' }}>
                 {form.destKind === 'warehouse'
                   ? 'The warehouse master carries no contact — fill one in below if the driver needs someone to call on arrival.'
-                  : "The carrier's registered address auto-fills below — edit it if the drop-off differs."}
+                  : form.destKind === 'threepl'
+                    ? "The carrier's registered address auto-fills below — edit it if the drop-off differs."
+                    : 'The saved location’s address auto-fills below — edit it if this drop-off differs. Maintain the list on Saved Locations.'}
               </div>
             </label>
           )}
@@ -989,7 +1086,9 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
               || (isSchedule && (!docId || !jobDate))
               || (!isSchedule && form.jobType === 'LORRY_SERVICE' && !form.lorryId.trim())
               || (!isSchedule && form.jobType === 'TRANSFER'
-                && !(form.destKind === 'threepl' ? form.threeplCompanyId.trim() : form.warehouseId.trim()))
+                && !(form.destKind === 'saved' ? form.savedLocationId.trim()
+                  : form.destKind === 'threepl' ? form.threeplCompanyId.trim()
+                  : form.warehouseId.trim()))
               /* No address typed and no source the server could fill it from.
                  With a source picked the server decides and says why. */
               || (!isSchedule && !form.source.trim()

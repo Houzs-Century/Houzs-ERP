@@ -746,11 +746,16 @@ export type DpOrderCreate = {
      3PL company we don't own, picked from the carrier master instead of our own
      warehouses. Mutually exclusive with warehouseId. */
   threeplCompanyId?: string;
+  /* TRANSFER destination from the saved-locations address book (owner 2026-11-02
+     方案2). Mutually exclusive with warehouseId / threeplCompanyId. */
+  savedLocationId?: string;
   /* TRANSFER ORIGIN ("from", owner 2026-11-02 方案1): the pickup point — our
-     warehouse or an outsourced 3PL. fromOverrides use snapshot keys (party_name,
-     address1, address2, city, postcode, state) and win over the auto-fill. */
+     warehouse, an outsourced 3PL, or a saved location (方案2). fromOverrides use
+     snapshot keys (party_name, address1, address2, city, postcode, state) and win
+     over the auto-fill. */
   fromWarehouseId?: string;
   fromThreeplCompanyId?: string;
+  fromSavedLocationId?: string;
   fromOverrides?: Record<string, string | null>;
   requestedDate?: string;
   remark?: string;
@@ -927,6 +932,9 @@ export type DpOrderRow = {
   from_state?: string | null;
   from_warehouse_id?: string | null;
   from_threepl_company_id?: string | null;
+  /* Saved-location refs (owner 2026-11-02 方案2), destination + origin. */
+  saved_location_id?: string | null;
+  from_saved_location_id?: string | null;
   requested_date: string | null;
   trip_id: string | null;
   trip_stop_id: string | null;

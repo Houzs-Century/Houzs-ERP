@@ -130,6 +130,7 @@ import { deliveryRemarks } from "./routes/delivery-remarks";
 import { deliveryPlanningRowOrder } from "./routes/delivery-planning-row-order";
 import { deliveryResidenceRules } from "./routes/delivery-residence-rules";
 import { threeplCompanies } from "./routes/threepl-companies";
+import { savedLocations } from "./routes/saved-locations";
 import { deliveryZones } from "./routes/delivery-zones";
 import { deliveryRateCards } from "./routes/delivery-rate-cards";
 import { threeplDoCharges } from "./routes/threepl-do-charges";
@@ -899,6 +900,9 @@ scm.route("/delivery-residence-rules", deliveryResidenceRules);
 // area gate as the rest of the fleet masters.
 scm.use("/threepl-companies/*", scmAreaGuard("scm.transportation.drivers"));
 scm.route("/threepl-companies", threeplCompanies);
+
+scm.use("/saved-locations/*", scmAreaGuard("scm.transportation.drivers"));
+scm.route("/saved-locations", savedLocations);
 // Fleet A1 (mig 0205) — postcode -> zone map, the auto-propose delivery-date
 // action, and reversible day locks. Same Transportation area gate as the rest of
 // TMS: read the map / propose = view is enough for GET, but propose is a POST so

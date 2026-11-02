@@ -126,6 +126,7 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/auto-schedule",
   "/scm/driver-leave",
   "/scm/threepl-companies",
+  "/scm/saved-locations",
   "/scm/fleet",
   "/scm/delivery-maintenance",
   "/scm/fleet-day",
