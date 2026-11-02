@@ -18,7 +18,7 @@ import { useUploadPayoutAdvice, useUploadStatement, type AcquirerSetup, type Pay
 import { fmt, refusalText } from './settlement-ui';
 import { fmtDate } from '../../vendor/shared/format';
 import drawer from './finance/FinanceTasks.module.css';
-import styles from './MerchantUpload.module.css';
+import styles from './UploadDrawer.module.css';
 
 export type UploadKind = 'report' | 'advice';
 /** One file's answer: read (with what its lines fell into) or refused. */
