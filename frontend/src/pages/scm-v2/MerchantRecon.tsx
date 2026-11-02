@@ -620,7 +620,7 @@ const LinesTable = ({ batches, onOpen, openOnly }: {
       <tr>
         <th rowSpan={2}>Report</th>
         <th colSpan={5} className={grid.band}>What the merchant reported</th>
-        <th colSpan={5} className={`${grid.band} ${grid.seam}`}>The sale it paid for</th>
+        <th colSpan={7} className={`${grid.band} ${grid.seam}`}>The sale it paid for</th>
         <th rowSpan={2}>Status</th>
       </tr>
       <tr>
@@ -631,6 +631,8 @@ const LinesTable = ({ batches, onOpen, openOnly }: {
         <th className={grid.num}>Net</th>
         <th className={grid.seam}>Document</th>
         <th>Customer</th>
+        <th>Sales</th>
+        <th>Account sheet</th>
         <th>Paid on</th>
         <th>Approval</th>
         <th className={grid.num}>Amount</th>
@@ -670,7 +672,7 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
       <tbody>
         <tr>
           {reportCell(1)}
-          <td colSpan={11}>
+          <td colSpan={13}>
             <span className={grid.sub}>{q.isLoading ? 'Reading its lines…' : 'Nothing left on this report.'}</span>
           </td>
         </tr>
@@ -695,12 +697,15 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
             /* No document number: the payment id is shown, and it opens nothing. */
             source: l.doc_no ? l.payment_source : null,
             customer: l.customer_name ?? null,
+            sales: l.salesperson ?? null,
+            sheet: l.account_sheet ?? null,
             paidOn: l.paid_on ?? null,
             code: l.approval_code ?? null,
             amountSen: l.amount_sen,
           }))
           : guess.map((p) => ({
             key: p.id, docNo: p.docNo, source: p.source, customer: p.customerName ?? null,
+            sales: p.salesperson ?? null, sheet: p.accountSheet ?? null,
             paidOn: p.paidOn, code: p.approvalCode ?? null, amountSen: p.amountSen,
           }));
         /* One line settling several orders stacks INSIDE its cell — the rare
@@ -729,6 +734,8 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
                 : stack((o) => <DocLink source={o.source} docNo={o.docNo} bold />)}
             </td>
             <td>{stack((o) => o.customer)}</td>
+            <td>{stack((o) => o.sales)}</td>
+            <td>{stack((o) => o.sheet)}</td>
             <td>{stack((o) => o.paidOn)}</td>
             <td>{stack((o) => o.code)}</td>
             <td className={grid.num}>{stack((o) => fmt(o.amountSen))}</td>
@@ -941,7 +948,7 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
             <tr>
               <th>Date</th><th>Reference</th>
               <th className={grid.num}>Gross</th><th className={grid.num}>Fee</th><th className={grid.num}>Net</th>
-              <th className={grid.seam}>Matched to</th><th>Status</th>
+              <th className={grid.seam}>Matched to</th><th>Sales</th><th>Account sheet</th><th>Status</th>
             </tr>
           </thead>
           <tbody>
@@ -960,6 +967,8 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
                     </div>
                   ))}
                 </td>
+                <td>{r.linked.map((l) => <div key={l.payment_id}>{l.salesperson ?? '—'}</div>)}</td>
+                <td>{r.linked.map((l) => <div key={l.payment_id}>{l.account_sheet ?? '—'}</div>)}</td>
                 <td>
                   {r.confirmed_at
                     ? (
