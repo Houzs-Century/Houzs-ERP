@@ -746,23 +746,26 @@ export const NAV_TABS: NavTab[] = [
         icon: HandCoins,
         groupId: "scm-finance-in",
         children: [
-          { to: "/scm/official-receipts", label: "Official Receipts", icon: Receipt, anyPerm: ["*", "scm.access", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.money_in"] },
+          { to: "/scm/official-receipts", label: "Official receipts", icon: Receipt, anyPerm: ["*", "scm.access", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.money_in"] },
           // Deposit invoices (owner 2026-09-12; docs/bugs/0828) — born with a
           // customer payment when the company's switch is on; beside the
           // receipt the same payment is born with.
-          { to: "/scm/deposit-invoices", label: "Deposit Invoices", icon: Receipt, anyPerm: ["*", "scm.access", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.money_in"] },
+          { to: "/scm/deposit-invoices", label: "Deposit invoices", icon: Receipt, anyPerm: ["*", "scm.access", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.money_in"] },
           // AR invoices (owner 2026-09-29) — the AP list's twin: sales invoices
           // mirrored beside the other-debtor bills raised there; the PV key
           // family, like the AP invoice it mirrors.
-          { to: "/scm/ar-invoices", label: "AR Invoices", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_in"] },
+          { to: "/scm/ar-invoices", label: "AR invoices", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_in"] },
           { to: "/scm/receipts", label: "Receipts", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_in"] },
-          { to: "/scm/other-debtors", label: "Other Debtors", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_in"] },
+          { to: "/scm/other-debtors", label: "Debtor maintenance", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_in"] },
           { to: "/scm/outstanding", label: "Outstanding", icon: AlertCircle, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
-          { to: "/scm/unbilled-deliveries", label: "Not Yet Billed", icon: HandCoins, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
+          { to: "/scm/unbilled-deliveries", label: "Not yet billed", icon: HandCoins, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
           // Credit and debit notes (owner 2026-09-12; docs/bugs/0827) — the
           // customer's CN / DN and an other debtor's CN; the supplier's moved to
           // Money out (owner 2026-10-28). The PV key family, like the AP invoice.
-          { to: "/scm/credit-notes", label: "Customer & Other Debtor CN / DN", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_in"] },
+          // The redesign's names (owner's Claude Design, batch 5): Debtor
+          // maintenance, Not yet billed, Credit / debit notes — the same pages
+          // behind the same gates.
+          { to: "/scm/credit-notes", label: "Credit / debit notes", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_in"] },
         ],
       },
       {

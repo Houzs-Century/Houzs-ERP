@@ -57,3 +57,69 @@ export function dueDateTag(date: string | null | undefined, open: boolean, today
 export function unbilledAgeTone(days: number): TagTone {
   return days >= 91 ? 'late' : days >= 31 ? 'warn' : 'calm';
 }
+
+/* ── The Money-in documents (batch 5 §2–§8) ──────────────────────────────────
+   Each document's status in the design's words, read from the columns its
+   own table already has. Written as switches, not lookup tables, so no second
+   copy of a stored-status list exists beside the ERP's own. */
+
+/** The sand tint of a document still open (the design's OPEN_BG): open sales
+ *  invoices and debtor bills, debtors with money outstanding. */
+export const OPEN_BG = '#fcf7ec';
+/** A row's style for DataTable's getRowStyle: sand while it is open. */
+export const openRowStyle = (open: boolean): { background: string } | undefined => (open ? { background: OPEN_BG } : undefined);
+
+/** An official receipt: a draft waits for its money to be confirmed, a formal
+ *  one carries its channel number, a cancelled one followed its payment away. */
+export function officialReceiptTag(status: string | null | undefined): Tag {
+  switch (String(status ?? '').toUpperCase()) {
+    case 'DRAFT': return { text: 'Draft', tone: 'warn' };
+    case 'CANCELLED': return { text: 'Cancelled', tone: 'late' };
+    default: return { text: 'Formal', tone: 'calm' };
+  }
+}
+
+/** A sundry (general) receipt posts on save; a void one is reversed. */
+export function sundryReceiptTag(status: string | null | undefined): Tag {
+  return String(status ?? '').toUpperCase() === 'CANCELLED' ? { text: 'Voided', tone: 'late' } : { text: 'Posted', tone: 'calm' };
+}
+
+/** A deposit invoice: cancelled; issued but its journal refused at birth (Not
+ *  posted); closed by its credit note at the final invoice; else issued. */
+export function depositInvoiceTag(d: { status: string; je_no: string | null; credit_note_id: string | null }): Tag {
+  if (d.status === 'CANCELLED') return { text: 'Cancelled', tone: 'late' };
+  if (!d.je_no) return { text: 'Not posted', tone: 'warn' };
+  if (d.credit_note_id) return { text: 'Closed', tone: 'calm' };
+  return { text: 'Issued', tone: 'info' };
+}
+
+/** A debtor bill (or an other debtor's debit note): what is still owed on it. */
+export function debtorBillTag(b: { status: string; total_sen: number; received_sen: number }): Tag {
+  if (String(b.status).toUpperCase() === 'CANCELLED') return { text: 'Cancelled', tone: 'late' };
+  const received = Number(b.received_sen);
+  if (Number(b.total_sen) - received <= 0) return { text: 'Paid', tone: 'calm' };
+  return received > 0 ? { text: 'Partly paid', tone: 'info' } : { text: 'Unpaid', tone: 'warn' };
+}
+
+/** A sales invoice, by its money: paid; past its due date with money
+ *  outstanding (`Overdue <n>d`); part paid; unpaid. `paidSen` counts the
+ *  order's deposit applied, as the outstanding figure does. */
+export function salesInvoiceTag(si: { outstandingSen: number; paidSen: number; dueDate: string | null }, today: string): Tag {
+  if (si.outstandingSen <= 0) return { text: 'Paid', tone: 'calm' };
+  const due = String(si.dueDate ?? '').slice(0, 10);
+  const late = due && due < today ? dayDiff(due, today) : 0;
+  if (late > 0) return { text: `Overdue ${late}d`, tone: 'late' };
+  return si.paidSen > 0 ? { text: 'Partly paid', tone: 'info' } : { text: 'Unpaid', tone: 'warn' };
+}
+
+/** A credit or debit note: a draft, posted, or cancelled. */
+export function noteTag(status: string | null | undefined): Tag {
+  switch (String(status ?? '').toUpperCase()) {
+    case 'DRAFT': return { text: 'Draft', tone: 'warn' };
+    case 'CANCELLED': return { text: 'Cancelled', tone: 'late' };
+    default: return { text: 'Posted', tone: 'calm' };
+  }
+}
+
+/** An other debtor in the registry. */
+export const debtorTag = (active: boolean): Tag => (active ? { text: 'Active', tone: 'calm' } : { text: 'Inactive', tone: 'late' });

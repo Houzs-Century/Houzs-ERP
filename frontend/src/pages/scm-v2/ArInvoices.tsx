@@ -68,8 +68,9 @@ const th: React.CSSProperties = {
   textTransform: 'uppercase', color: 'var(--fg-muted)', borderBottom: '1px solid var(--border-weak, #e3e1da)', whiteSpace: 'nowrap',
 };
 const td: React.CSSProperties = { padding: '6px 8px', verticalAlign: 'middle' };
-const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)' };
-const right: React.CSSProperties = { textAlign: 'right', ...mono };
+/* Document numbers and money in tabular figures — never monospace (the redesign). */
+const figures: React.CSSProperties = { fontVariantNumeric: 'tabular-nums' };
+const right: React.CSSProperties = { textAlign: 'right', ...figures };
 const linkBtn: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--c-orange)', fontWeight: 600, cursor: 'pointer', fontSize: 'var(--fs-13)', background: 'none', border: 'none', padding: 0 };
 
 const danger = 'var(--c-festive-b, #B8331F)';
@@ -305,7 +306,7 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
     {
       key: 'number', label: 'No.',
       /* Both kinds open the same way the row does — the number reads as the link it is. */
-      render: (r) => <button type="button" onClick={(e) => { e.stopPropagation(); openRow(r); }} className={cancelledDocNoClass(r.status)} style={{ ...linkBtn, ...mono }}>{r.invoiceNumber}</button>,
+      render: (r) => <button type="button" onClick={(e) => { e.stopPropagation(); openRow(r); }} className={cancelledDocNoClass(r.status)} style={{ ...linkBtn, ...figures }}>{r.invoiceNumber}</button>,
       getValue: (r) => r.invoiceNumber,
     },
     {
@@ -313,7 +314,7 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
       render: (r) => <>{r.partyName ?? '—'}{r.partyCode ? <span style={soft}> · {r.partyCode}</span> : null}</>,
       getValue: (r) => r.partyName ?? '',
     },
-    { key: 'ref', label: 'Ref', render: (r) => r.ref ? <span style={mono}>{r.ref}</span> : '—', getValue: (r) => r.ref ?? '' },
+    { key: 'ref', label: 'Ref', render: (r) => r.ref ? <span style={figures}>{r.ref}</span> : '—', getValue: (r) => r.ref ?? '' },
     { key: 'description', label: 'Description', width: '260px', render: (r) => r.description ?? '—', getValue: (r) => r.description ?? '' },
     { key: 'date', label: 'Date', render: (r) => fmtDateOrDash(r.invoiceDate), getValue: (r) => r.invoiceDate, exportFormat: 'date' },
     { key: 'due', label: 'Due', render: (r) => fmtDateOrDash(r.dueDate), getValue: (r) => r.dueDate, exportFormat: 'date' },
@@ -330,7 +331,7 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
           title={r.depositAppliedSen > 0 ? `${fmtSen(r.depositAppliedSen)} was collected on ${r.ref ?? 'the sales order'} and settles this invoice.` : undefined}>
           {fmtSen(r.outstandingSen)}
           {r.depositAppliedSen > 0 && (
-            <span className="rounded-sm bg-surface-2 px-1 font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted" style={{ marginLeft: 4 }}>dep</span>
+            <span className="rounded-sm bg-surface-2 px-1 text-[9px] font-semibold uppercase tracking-brand text-ink-muted" style={{ marginLeft: 4 }}>dep</span>
           )}
         </span>
       ),
@@ -349,8 +350,8 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
   return (
     <div className="space-y-4">
       {!debitNotes && <PageHeader
-        eyebrow="Finance"
-        title="AR Invoices"
+        eyebrow="Finance · Money in"
+        title="AR invoices"
         actions={canCreate ? (
           <button type="button" onClick={openNew} style={linkBtn}>
             <Plus {...ICON} /> New debtor bill
@@ -446,7 +447,7 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
             <Meta label="Debtor" value={detail.debtor?.name ?? '—'} />
             <Meta label="Bill date" value={fmtDateOrDash(detail.bill.bill_date)} />
             <Meta label="Description" value={detail.bill.notes ?? '—'} />
-            <Meta label="Received" value={<span style={mono}>{fmtSen(detail.bill.received_sen)}</span>} />
+            <Meta label="Received" value={<span style={figures}>{fmtSen(detail.bill.received_sen)}</span>} />
           </div>
           <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 'var(--fs-13)' }}>
             <thead>
@@ -460,10 +461,10 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
             <tbody>
               {(detail.bill.lines ?? []).map((l) => (
                 <tr key={l.id}>
-                  <td style={{ ...td, ...mono, color: 'var(--fg-muted)' }}>{l.line_no}</td>
+                  <td style={{ ...td, ...figures, color: 'var(--fg-muted)' }}>{l.line_no}</td>
                   <td style={td}>
                     {l.credit_account_code
-                      ? <><span style={mono}>{l.credit_account_code}</span>{accountNameOf(l.credit_account_code) ? <span style={soft}> · {accountNameOf(l.credit_account_code)}</span> : null}</>
+                      ? <><span style={figures}>{l.credit_account_code}</span>{accountNameOf(l.credit_account_code) ? <span style={soft}> · {accountNameOf(l.credit_account_code)}</span> : null}</>
                       : <span style={soft}>text line</span>}
                   </td>
                   <td style={td}>{l.description ?? '—'}</td>

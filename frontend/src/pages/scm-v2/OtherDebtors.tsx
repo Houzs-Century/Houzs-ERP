@@ -40,7 +40,7 @@ const DEBTOR_COLUMNS: Column<OtherDebtor>[] = [
   { key: 'phone', label: 'Phone', render: (d) => d.phone ?? '—', getValue: (d) => d.phone ?? '' },
   {
     key: 'outstanding', label: 'Outstanding', align: 'right',
-    render: (d) => <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(d.outstanding_sen)}</span>,
+    render: (d) => <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtRm(d.outstanding_sen)}</span>,
     getValue: (d) => d.outstanding_sen, exportValue: (d) => d.outstanding_sen / 100, exportFormat: 'money',
   },
   {
@@ -92,8 +92,8 @@ export const OtherDebtors = () => {
   return (
     <div className="space-y-4">
       <PageHeader
-        eyebrow="Finance"
-        title="Other Debtors"
+        eyebrow="Finance · Money in"
+        title="Debtor maintenance"
         actions={canCreate ? (
           <button type="button" onClick={() => setPartyForm('new')}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--c-orange)', fontWeight: 600, cursor: 'pointer', fontSize: 'var(--fs-13)', background: 'none', border: 'none', padding: 0 }}>
@@ -163,7 +163,7 @@ export const OtherDebtors = () => {
               })()}
             </div>
             <div style={{ fontSize: 'var(--fs-13)' }}>
-              Outstanding <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{fmtRm(detail.outstanding_sen)}</span>
+              Outstanding <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{fmtRm(detail.outstanding_sen)}</span>
               <span style={{ color: 'var(--fg-muted)' }}> — the bills behind it, and a new one, live on AR Invoices; the money comes in on Receipts.</span>
             </div>
           </div>

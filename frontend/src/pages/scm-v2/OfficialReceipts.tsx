@@ -149,7 +149,7 @@ export const OfficialReceipts = () => {
 
   return (
     <div className="space-y-3">
-      <PageHeader eyebrow="Finance" title="Official Receipts" />
+      <PageHeader eyebrow="Finance · Money in" title="Official receipts" />
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         {([['', 'All'], ['DRAFT', 'Draft — money not confirmed'], ['FORMAL', 'Formal'], ['CANCELLED', 'Cancelled']] as const).map(([v, label]) => (
           <button key={v || 'all'} type="button" style={btn(status === v)} onClick={() => setStatus(v)}>{label}</button>
@@ -160,7 +160,7 @@ export const OfficialReceipts = () => {
         {month
           ? <button type="button" style={btn()} onClick={() => setMonth('')}>Any month</button>
           : <button type="button" style={btn()} onClick={() => setMonth(mytMonth())}>This month</button>}
-        <span style={soft}>现金当场正式;卡款等 merchant recon;转账你核对后按 Confirm money。</span>
+        <span style={soft}>Cash turns formal at the counter; card when its merchant line is confirmed; transfers when you confirm the money.</span>
       </div>
 
       {month && (

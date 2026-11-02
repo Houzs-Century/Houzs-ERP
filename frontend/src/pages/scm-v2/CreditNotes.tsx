@@ -70,10 +70,10 @@ const KIND_OPTION: Record<NoteKind, string> = {
 
 /* The two pages (owner 2026-10-28): which kinds each holds — the list asks the
    server for the side's kinds, the tabs and the New note picker offer them. */
-const SIDES: Record<NoteSide, { title: string; description: string; kinds: NoteKind[]; hint: string; tableId: string }> = {
+const SIDES: Record<NoteSide, { title: string; description?: string; kinds: NoteKind[]; hint: string; tableId: string }> = {
+  /* Money in's page by the redesign's name, no description (owner's Claude Design, batch 5). */
   AR: {
-    title: 'Customer & Other Debtor CN / DN',
-    description: 'A credit or debit note to a customer, a credit or debit note to an other debtor. A note is raised as a draft, posted to the ledger, cancelled by contra; an other debtor\'s debit note is a bill of its own kind.',
+    title: 'Credit / debit notes',
     kinds: ['CN', 'DN', 'OCN'],
     hint: 'CN: the customer owes less. DN: the customer owes more. Other debtor CN: the debtor owes less — it knocks off their bills.',
     tableId: 'credit-notes',
@@ -135,7 +135,7 @@ const accountNamer = async (): Promise<(code: string) => string | null> => {
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
 const th: React.CSSProperties = { padding: '6px 10px', fontSize: 'var(--fs-11)', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--fg-muted)', borderBottom: '1px solid var(--border-weak, #e3e1da)', whiteSpace: 'nowrap', textAlign: 'left' };
 const td: React.CSSProperties = { padding: '6px 10px', fontSize: 'var(--fs-13)', borderBottom: '1px solid var(--border-weak, #f0eee8)' };
-const num: React.CSSProperties = { textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
+const num: React.CSSProperties = { textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
 const danger = 'var(--c-festive-b, #B8331F)';
 const good = 'var(--c-secondary-a, #2F5D4F)';
 const input: React.CSSProperties = { padding: '5px 8px', fontSize: 'var(--fs-13)', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 6, minWidth: 180 };
@@ -343,7 +343,7 @@ export const CreditNotes = ({ side = 'AR' }: { side?: NoteSide }) => {
 };
 
 const NOTE_COLUMNS: Column<CreditNote>[] = [
-  { key: 'number', label: 'Number', render: (n) => <span className={cancelledDocNoClass(n.status)} style={{ fontFamily: 'var(--font-mono)' }}>{n.note_number}</span>, getValue: (n) => n.note_number },
+  { key: 'number', label: 'Number', render: (n) => <span className={cancelledDocNoClass(n.status)} style={{ fontVariantNumeric: 'tabular-nums' }}>{n.note_number}</span>, getValue: (n) => n.note_number },
   { key: 'kind', label: 'Kind', render: (n) => n.kind, getValue: (n) => n.kind },
   { key: 'date', label: 'Date', render: (n) => fmtDateOrDash(n.note_date), getValue: (n) => n.note_date, exportFormat: 'date' },
   { key: 'party', label: 'Party', render: (n) => n.party_name ?? n.party_code ?? '—', getValue: (n) => n.party_name ?? n.party_code ?? '' },
@@ -357,7 +357,7 @@ const NOTE_COLUMNS: Column<CreditNote>[] = [
     getValue: (n) => n.total_sen, exportValue: (n) => n.total_sen / 100, exportFormat: 'money',
   },
   { key: 'status', label: 'Status', render: (n) => <StatusPill status={n.status} />, getValue: (n) => n.status },
-  { key: 'journal', label: 'Journal', render: (n) => <span style={{ fontFamily: 'var(--font-mono)' }}>{n.je_no ?? '—'}</span>, getValue: (n) => n.je_no ?? '' },
+  { key: 'journal', label: 'Journal', render: (n) => <span style={{ fontVariantNumeric: 'tabular-nums' }}>{n.je_no ?? '—'}</span>, getValue: (n) => n.je_no ?? '' },
 ];
 
 const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
