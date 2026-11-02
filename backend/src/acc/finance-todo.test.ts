@@ -45,7 +45,7 @@ describe('merchant reports', () => {
     expect(mine[0]).toMatchObject({
       rule: 'card-missing', group: 'recon', sub: 'merchant', icon: 'upload', title: 'Upload MBB merchant report',
       detail: 'Swipes of 2026/10/30 – 2026/10/31 not in yet · their lines appear here after upload',
-      since: '2026-10-31', action: { label: 'Upload', primary: true },
+      since: '2026-10-31', action: { label: 'Upload', to: '/scm/merchant-recon?acq=MBB', primary: true },
     });
   });
 
@@ -69,12 +69,12 @@ describe('merchant reports', () => {
     expect(confirm).toMatchObject({
       title: 'Confirm 2 merchant lines', amountSen: 12_550, since: '2026-10-31',
       detail: 'MBB report · swiped 2026/10/30 – 2026/10/31 · every line matched by reference',
-      action: { label: 'Confirm', to: '/scm/merchant-recon?batch=7', primary: true },
+      action: { label: 'Confirm', to: '/scm/merchant-recon?acq=MBB&batch=7&tab=to-confirm', primary: true },
     });
     expect(choose).toMatchObject({
       title: 'Choose payments for 2 MBB merchant lines', amountSen: 1_000,
       detail: 'MBB report · swiped 2026/10/30 · lines that fit more than one order, or none',
-      action: { label: 'Open', to: '/scm/merchant-recon', primary: false },
+      action: { label: 'Open', to: '/scm/merchant-recon?acq=MBB&tab=to-choose', primary: false },
     });
   });
 
@@ -84,6 +84,8 @@ describe('merchant reports', () => {
       cardRows: [{ acquirer: 'GHL', batchId: 3, bucket: 'UNMATCHED', byReference: false, grossSen: 5_000, txnDate: '2026-10-28', uploadedOn: '2026-10-29' }],
     }), FINANCE);
     expect(mine[0]?.title).toBe('Choose payments for 1 GHL merchant line');
+    /* Every line with no sale at all: the job opens on No sale found, at the one report. */
+    expect(mine[0]?.action.to).toBe('/scm/merchant-recon?acq=GHL&batch=3&tab=no-sale');
     expect(mine[0]?.detail).toContain('GHL lines never match on their own, so each one is picked by amount and date');
   });
 });
@@ -97,6 +99,7 @@ describe('bank statements', () => {
     expect(late[0]).toMatchObject({
       rule: 'bank-missing', sub: 'bank', title: 'Upload Hong Leong statement', since: '2026-10-30',
       detail: '310-0001 HONG LEONG CA · the last upload stops at 2026/10/29 · 2026/10/30 onward is missing',
+      action: { label: 'Upload', to: '/scm/bank-recon?account=310-0001&view=files' },
     });
     expect(raiseJobs(facts({ bankAccounts: [HLB], lastStatementTo: { '310-0001': addDays(TODAY, -3) } }), FINANCE).mine).toEqual([]);
   });
@@ -110,14 +113,14 @@ describe('bank statements', () => {
     const { mine } = raiseJobs(facts({
       bankAccounts: [HLB], lastStatementTo: { '310-0001': TODAY },
       bankLines: [
-        { accountCode: '310-0001', statementId: 4, amountSen: -12_000, periodTo: '2026-10-31', uploadedOn: '2026-11-01' },
-        { accountCode: '310-0001', statementId: 4, amountSen: 3_000, periodTo: '2026-10-31', uploadedOn: '2026-11-01' },
+        { accountCode: '310-0001', statementId: 4, amountSen: -12_000, periodTo: '2026-10-31', uploadedOn: '2026-11-01', month: '2026-10' },
+        { accountCode: '310-0001', statementId: 4, amountSen: 3_000, periodTo: '2026-10-31', uploadedOn: '2026-11-01', month: '2026-09' },
       ],
     }), FINANCE);
     expect(mine).toHaveLength(1);
     expect(mine[0]).toMatchObject({
       rule: 'bank-decide', title: 'Decide 2 Hong Leong lines', amountSen: 15_000, since: '2026-11-01',
-      detail: '310-0001 · October statement · uploaded 2026/11/01', action: { label: 'Match', to: '/scm/bank-recon' },
+      detail: '310-0001 · October statement · uploaded 2026/11/01', action: { label: 'Match', to: '/scm/bank-recon?account=310-0001&month=2026-09' },
     });
   });
 
