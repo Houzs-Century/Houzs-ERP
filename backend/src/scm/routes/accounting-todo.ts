@@ -155,6 +155,7 @@ async function readBank(sb: any, companyId: number, today: string): Promise<Read
     bankLines.push({
       accountCode: String(s.account_code), statementId: Number(s.id), amountSen: Number(l.amount_sen ?? 0),
       periodTo: s.period_to ? String(s.period_to) : null, uploadedOn: day(s.created_at) ?? today,
+      month: String(l.booked_on).slice(0, 7),
     });
   }
   const lastMonth = addDays(`${today.slice(0, 7)}-01`, -1).slice(0, 7);

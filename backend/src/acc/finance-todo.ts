@@ -116,7 +116,8 @@ export type TodoCardRow = {
 export type TodoBankAccount = { accountCode: string; bankCode: string; accountName: string; createdOn: string };
 
 /** A statement line still OPEN, in a month that is not locked. */
-export type TodoBankLine = { accountCode: string; statementId: number; amountSen: number; periodTo: string | null; uploadedOn: string };
+/** `month` is the month the bank booked the line in (YYYY-MM) — the Bank statements month it is decided in. */
+export type TodoBankLine = { accountCode: string; statementId: number; amountSen: number; periodTo: string | null; uploadedOn: string; month: string };
 
 export type TodoRequest = { payee: string; amountSen: number; createdOn: string };
 export type TodoVoucher = { stage: 'check' | 'approve'; payee: string; amountSen: number; since: string; by: string | null };
@@ -209,11 +210,15 @@ export const bankName = (code: string): string => BANK_NAMES[code.trim().toUpper
 const MERCHANT_PAGE = '/scm/merchant-recon';
 const BANK_PAGE = '/scm/bank-recon';
 
-/** A report's lines open in Merchant reports at that report when they are all one report. */
-const merchantLink = (batchIds: number[]): string => {
+/** A job opens Merchant reports at its acquirer, at the report when its lines
+    are all one report, on the tab they sit in (the redesign's ?acq=&batch=&tab=). */
+const merchantLink = (acquirer: string, batchIds: number[], tab: 'to-confirm' | 'to-choose' | 'no-sale'): string => {
   const ids = [...new Set(batchIds)];
-  return ids.length === 1 ? `${MERCHANT_PAGE}?batch=${ids[0]}` : MERCHANT_PAGE;
+  return `${MERCHANT_PAGE}?acq=${encodeURIComponent(acquirer)}${ids.length === 1 ? `&batch=${ids[0]}` : ''}&tab=${tab}`;
 };
+/** A job opens Bank statements at its account — on a month, or on the files to upload one. */
+const bankLink = (accountCode: string, at: { month: string } | 'upload'): string =>
+  `${BANK_PAGE}?account=${encodeURIComponent(accountCode)}${at === 'upload' ? '&view=files' : `&month=${at.month}`}`;
 
 /* ── The rules ───────────────────────────────────────────────────────────── */
 
@@ -230,7 +235,7 @@ function cardJobs(f: TodoFacts): Raised[] {
         title: `Upload ${a.name} merchant report`,
         detail: `Swipes of ${dayRange(days)} not in yet · their lines appear here after upload`,
         amountSen: null, since: addDays(days[0]!, 1),
-        action: { label: 'Upload', to: MERCHANT_PAGE, primary: true }, desk: 'finance',
+        action: { label: 'Upload', to: `${MERCHANT_PAGE}?acq=${encodeURIComponent(a.code)}`, primary: true }, desk: 'finance',
       });
     }
     const rows = f.cardRows.filter((r) => r.acquirer === a.code);
@@ -243,7 +248,7 @@ function cardJobs(f: TodoFacts): Raised[] {
         title: `Confirm ${matched.length} merchant ${plural(matched.length, 'line')}`,
         detail: `${a.name} report · swiped ${dayRange(matched.map((r) => r.txnDate))} · ${byRef ? 'every line matched by reference' : 'every line matched to an order'}`,
         amountSen: sum(matched.map((r) => r.grossSen)), since: minDay(matched.map((r) => r.uploadedOn)),
-        action: { label: 'Confirm', to: merchantLink(matched.map((r) => r.batchId)), primary: true }, desk: 'finance',
+        action: { label: 'Confirm', to: merchantLink(a.code, matched.map((r) => r.batchId), 'to-confirm'), primary: true }, desk: 'finance',
       });
     }
     /* card-choose — lines that fit more than one order, or none. */
@@ -256,7 +261,11 @@ function cardJobs(f: TodoFacts): Raised[] {
           ? 'lines that fit more than one order, or none'
           : `${a.name} lines never match on their own, so each one is picked by amount and date`}`,
         amountSen: sum(choose.map((r) => r.grossSen)), since: minDay(choose.map((r) => r.uploadedOn)),
-        action: { label: 'Open', to: merchantLink(choose.map((r) => r.batchId)), primary: false }, desk: 'finance',
+        action: {
+          label: 'Open', primary: false,
+          /* Lines with no sale at all sit under No sale found; any with one to pick, under To choose. */
+          to: merchantLink(a.code, choose.map((r) => r.batchId), choose.every((r) => r.bucket === 'UNMATCHED') ? 'no-sale' : 'to-choose'),
+        }, desk: 'finance',
       });
     }
   }
@@ -285,7 +294,7 @@ function bankJobs(f: TodoFacts): Raised[] {
         ? `${b.accountCode} ${b.accountName} · the last upload stops at ${showDate(last)} · ${showDate(addDays(last, 1))} onward is missing`
         : `${b.accountCode} ${b.accountName} · no statement uploaded yet`,
       amountSen: null, since: last ? addDays(last, 1) : b.createdOn,
-      action: { label: 'Upload', to: BANK_PAGE, primary: true }, desk: 'finance',
+      action: { label: 'Upload', to: bankLink(b.accountCode, 'upload'), primary: true }, desk: 'finance',
     });
   }
   for (const b of f.bankAccounts) {
@@ -301,7 +310,8 @@ function bankJobs(f: TodoFacts): Raised[] {
         ? `${b.accountCode} · ${first.periodTo ? `${monthOf(first.periodTo)} statement` : 'statement'} · uploaded ${showDate(first.uploadedOn)}`
         : `${b.accountCode} · ${statements.length} statements${months.length ? ` · ${months.join(', ')}` : ''}`,
       amountSen: sum(lines.map((l) => Math.abs(l.amountSen))), since: minDay(lines.map((l) => l.uploadedOn)),
-      action: { label: 'Match', to: BANK_PAGE, primary: false }, desk: 'finance',
+      /* The oldest month with a line to decide: months are closed in order. */
+      action: { label: 'Match', to: bankLink(b.accountCode, { month: lines.map((l) => l.month).sort()[0]! }), primary: false }, desk: 'finance',
     });
   }
   return out;
