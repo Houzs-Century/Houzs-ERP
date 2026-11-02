@@ -35,6 +35,12 @@ export type ApListRow = {
   paidSen: number;
   outstandingSen: number;
   status: string;
+  /** The control the bill sits on, by the supplier code (the server's rule): AP = 400, AP_OTHER = 405. */
+  controlRole?: 'AP' | 'AP_OTHER';
+  controlCode?: string;
+  /** A purchase invoice held in Procurement — every voucher path refuses it. */
+  held?: boolean;
+  holdReason?: string | null;
 };
 
 export type ApInvoiceHeader = {

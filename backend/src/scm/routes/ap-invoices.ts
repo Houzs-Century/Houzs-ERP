@@ -44,7 +44,8 @@ import { docMonthTag, mintMonthlyDocNo } from '../lib/doc-no';
 import { dateOrNull } from '../lib/date-coerce';
 import { todayMyt } from '../lib/my-time';
 import { postJournal, reverseJournal } from '../../acc/engine';
-import { apInvoiceLines, resolveRoles } from '../../acc/rules';
+import { apControlRole, apInvoiceLines, resolveRoles, type RoleCodes } from '../../acc/rules';
+import { HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
 import { requireLeafAccount } from './accounting-chart';
 import { learnVendorMemory } from './payment-vouchers';
 import {
@@ -117,6 +118,9 @@ export const listApInvoicesHandler = async (c: any): Promise<Response> => {
   /* docKind=DN: the supplier debit notes alone (the CN / DN page's tab) — a
      purchase invoice is never one; docKind=INV: the bills without them. */
   const docKind = String(c.req.query('docKind') ?? '').trim().toUpperCase();
+  /* The control each bill sits on (the redesign's Control column and its
+     Trade / Other filter): the server's own rule, the roles read once. */
+  const roles = await resolveRoles(sb, co.companyId);
 
   const rows: Row[] = [];
   if (kind === 'ALL' || kind === 'API') {
@@ -124,7 +128,7 @@ export const listApInvoicesHandler = async (c: any): Promise<Response> => {
     if (docKind === 'DN' || docKind === 'INV') q = q.eq('doc_kind', docKind);
     const { data, error } = await q.order('invoice_date', { ascending: false }).limit(500);
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-    for (const r of (data ?? []) as Row[]) rows.push(shape('API', r));
+    for (const r of (data ?? []) as Row[]) rows.push(shape('API', r, roles));
   }
   if ((kind === 'ALL' || kind === 'PI') && docKind !== 'DN') {
     /* The operational invoices, read-only here: the Procurement page raises
@@ -132,20 +136,24 @@ export const listApInvoicesHandler = async (c: any): Promise<Response> => {
        the Finance side sees a supplier's whole debt. */
     const { data, error } = await scopeToCompany(
       sb.from('purchase_invoices')
-        .select('id, invoice_number, supplier_invoice_ref, supplier_id, invoice_date, due_date, currency, total_sen, paid_sen, status, notes, supplier:suppliers(id, code, name)')
+        .select(`id, invoice_number, supplier_invoice_ref, supplier_id, invoice_date, due_date, currency, total_sen, paid_sen, status, notes, ${HOLD_COLUMNS}, supplier:suppliers(id, code, name)`)
         .in('status', ['POSTED', 'PARTIALLY_PAID', 'PAID', 'ON_HOLD']), c,
     ).order('invoice_date', { ascending: false }).limit(500);
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-    for (const r of (data ?? []) as Row[]) rows.push(shape('PI', r));
+    for (const r of (data ?? []) as Row[]) rows.push(shape('PI', r, roles));
   }
   rows.sort((a, b) => String(b.invoiceDate ?? '').localeCompare(String(a.invoiceDate ?? '')) || String(b.invoiceNumber).localeCompare(String(a.invoiceNumber)));
   return c.json({ rows });
 };
 
-function shape(kind: 'API' | 'PI', r: Row): Row {
+function shape(kind: 'API' | 'PI', r: Row, roles: RoleCodes): Row {
   const sup = Array.isArray(r.supplier) ? r.supplier[0] : r.supplier;
   const total = Number(r.total_sen ?? 0);
   const paid = Number(r.paid_sen ?? 0);
+  const controlRole = apControlRole(sup?.code ?? null);
+  /* A purchase invoice held in Procurement: every voucher path refuses it
+     (payment-vouchers.ts), so the list says so before anyone tries. */
+  const held = kind === 'PI' && isDocumentHeld(r);
   return {
     kind,
     /* 'DN' for a supplier's debit note; a purchase invoice is always an invoice. */
@@ -166,6 +174,11 @@ function shape(kind: 'API' | 'PI', r: Row): Row {
     paidSen: paid,
     outstandingSen: Math.max(0, total - paid),
     status: String(r.status ?? ''),
+    /* Trade creditors (AP, 400) or Other creditors (AP_OTHER, 405) — by the supplier's code. */
+    controlRole,
+    controlCode: roles[controlRole],
+    held,
+    holdReason: held ? (r.hold_reason ?? null) : null,
   };
 }
 

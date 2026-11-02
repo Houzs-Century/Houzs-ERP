@@ -189,6 +189,26 @@ describe('the Finance list — both kinds', () => {
     const only = await (await app.request('/ap-invoices?kind=PI')).json() as { rows: Array<Row> };
     expect(only.rows.map((r) => r.kind)).toEqual(['PI']);
   });
+
+  test('each row names its control by the supplier code, and a held purchase invoice says so (Supplier bills)', async () => {
+    /* The fake reads no embeds: each row carries its supplier the way PostgREST hands it over. */
+    const { app } = harness({
+      acc_account_roles: [{ company_id: CO, role: 'AP_OTHER', account_code: '405-0000' }, { company_id: CO, role: 'AP', account_code: '400-0000' }],
+      purchase_invoices: [
+        { id: 'pi-h', company_id: CO, invoice_number: '2990-PI-2609-010', supplier_id: 'sup-t', invoice_date: '2026-09-03', total_sen: 5_000, paid_sen: 0, status: 'POSTED', on_hold: true, hold_reason: 'Short delivery', supplier: SUPPLIERS[1] },
+        { id: 'pi-o', company_id: CO, invoice_number: '2990-PI-2609-011', supplier_id: 'sup-t', invoice_date: '2026-09-02', total_sen: 5_000, paid_sen: 0, status: 'POSTED', on_hold: false, supplier: SUPPLIERS[1] },
+      ],
+      ap_invoices: [
+        { id: 'api-1', company_id: CO, invoice_number: `2990-API-${yymm}-001`, supplier_id: 'sup-h', invoice_date: '2026-09-01', total_sen: 420_000, paid_sen: 0, status: 'POSTED', supplier: SUPPLIERS[0] },
+      ],
+    });
+    const b = await (await app.request('/ap-invoices')).json() as { rows: Array<Row> };
+    expect(b.rows.map((r) => [r.invoiceNumber, r.controlRole, r.controlCode, r.held, r.holdReason])).toEqual([
+      ['2990-PI-2609-010', 'AP', '400-0000', true, 'Short delivery'],
+      ['2990-PI-2609-011', 'AP', '400-0000', false, null],
+      [`2990-API-${yymm}-001`, 'AP_OTHER', '405-0000', false, null],
+    ]);
+  });
 });
 
 describe('an AP Payment allocation may name an AP invoice', () => {

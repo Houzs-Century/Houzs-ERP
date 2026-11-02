@@ -32,6 +32,11 @@ export type CreditNote = {
   created_at: string; created_by: string | null; posted_at: string | null; cancelled_at: string | null;
   /** Part of the books' opening balance (31/08 from AutoCount) — changed on Opening Balance, not here. */
   opening?: boolean;
+  /** A posted supplier or other-debtor note on the list: what its knock-offs used, and the credit left. */
+  appliedSen?: number;
+  unusedSen?: number;
+  /** A supplier note's control, by the supplier code: AP = 400, AP_OTHER = 405. */
+  controlRole?: 'AP' | 'AP_OTHER';
 };
 /** project_id / projectId: the event the line's money is for (owner 2026-10-22). */
 export type CreditNoteLine = { id: string; line_no: number; description: string | null; account_code: string; amount_sen: number; project_id?: number | null };

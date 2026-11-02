@@ -142,7 +142,8 @@ const input: React.CSSProperties = { padding: '5px 8px', fontSize: 'var(--fs-13)
 
 /** projectId: a supplier note line's event (owner 2026-10-22) — null = none, or the AP invoice's at save. */
 type FormLine = { rid: number; description: string; accountCode: string; amountRm: string; projectId: number | null };
-type FormValues = {
+/** The note form's values — Supplier bills raises and edits a supplier's note with the same form. */
+export type FormValues = {
   kind: NoteKind; noteDate: string; soDocNo: string; partyName: string; supplierId: string;
   /** An other-debtor note's debtor (2026-10-28). */
   debtorId?: string;
@@ -153,7 +154,16 @@ type FormValues = {
   knockOff?: KnockOffPick;
 };
 const emptyLine = (rid: number): FormLine => ({ rid, description: '', accountCode: '', amountRm: '', projectId: null });
-const emptyForm = (kind: NoteKind = 'CN'): FormValues => ({ kind, noteDate: myt(), soDocNo: '', partyName: '', supplierId: '', debtorId: '', sourceDocNo: '', reason: '', lines: [emptyLine(1)], creditedDoc: null, knockOff: {} });
+export const emptyForm = (kind: NoteKind = 'CN'): FormValues => ({ kind, noteDate: myt(), soDocNo: '', partyName: '', supplierId: '', debtorId: '', sourceDocNo: '', reason: '', lines: [emptyLine(1)], creditedDoc: null, knockOff: {} });
+
+/** A draft note's form, filled from the note, its lines and its knock-off ticks (its pop-out's Edit). */
+export const noteEditValues = (n: CreditNote, lines: CreditNoteLine[], allocations: CreditAllocation[]): FormValues => ({
+  kind: n.kind, noteDate: n.note_date, soDocNo: n.so_doc_no ?? '', partyName: n.party_name ?? '', supplierId: n.supplier_id ?? '', debtorId: n.debtor_id ?? '',
+  sourceDocNo: n.source_doc_no ?? '', reason: n.reason ?? '',
+  lines: lines.length > 0 ? lines.map((l, i) => ({ rid: i + 1, description: l.description ?? '', accountCode: l.account_code, amountRm: (l.amount_sen / 100).toFixed(2), projectId: l.project_id ?? null })) : [emptyLine(1)],
+  creditedDoc: null,
+  knockOff: Object.fromEntries(allocations.map((a) => [a.docId, { kind: a.kind, id: a.docId, amountSen: a.amountSen }])),
+});
 
 /** The invoice the paper names, ticked — as much of the credit as it owes. */
 const scanKnockOff = (r: ScnScan): KnockOffPick => {
@@ -323,16 +333,7 @@ export const CreditNotes = ({ side = 'AR' }: { side?: NoteSide }) => {
       {openId && (
         <NoteDetail id={openId} onClose={() => setOpenId(null)}
           onEdit={(n, lines, allocations) => {
-            setForm({
-              mode: 'edit', id: n.id,
-              values: {
-                kind: n.kind, noteDate: n.note_date, soDocNo: n.so_doc_no ?? '', partyName: n.party_name ?? '', supplierId: n.supplier_id ?? '', debtorId: n.debtor_id ?? '',
-                sourceDocNo: n.source_doc_no ?? '', reason: n.reason ?? '',
-                lines: lines.length > 0 ? lines.map((l, i) => ({ rid: i + 1, description: l.description ?? '', accountCode: l.account_code, amountRm: (l.amount_sen / 100).toFixed(2), projectId: l.project_id ?? null })) : [emptyLine(1)],
-                creditedDoc: null,
-                knockOff: Object.fromEntries(allocations.map((a) => [a.docId, { kind: a.kind, id: a.docId, amountSen: a.amountSen }])),
-              },
-            });
+            setForm({ mode: 'edit', id: n.id, values: noteEditValues(n, lines, allocations) });
             setOpenId(null);
           }} />
       )}
@@ -366,7 +367,8 @@ const Field = ({ label, children }: { label: string; children: React.ReactNode }
   </label>
 );
 
-const NoteDetail = ({ id, onClose, onEdit }: { id: string; onClose: () => void; onEdit: (n: CreditNote, lines: CreditNoteLine[], allocations: CreditAllocation[]) => void }) => {
+/** A note in its pop-out — Print, Edit, Post, Cancel, Knock off, files. Supplier bills opens a supplier's note with it. */
+export const NoteDetail = ({ id, onClose, onEdit }: { id: string; onClose: () => void; onEdit: (n: CreditNote, lines: CreditNoteLine[], allocations: CreditAllocation[]) => void }) => {
   const q = useCreditNoteDetail(id);
   const post = usePostCreditNote();
   const cancel = useCancelCreditNote();
@@ -479,7 +481,7 @@ const DebtorField = ({ value, onChange, disabled }: { value: string; onChange: (
   );
 };
 
-const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, onClose, onSaved }: { mode: 'new' | 'edit'; id?: string; kinds: NoteKind[]; initial: FormValues; scan?: ScnScan; scanFiles?: File[]; onClose: () => void; onSaved: (id: string) => void }) => {
+export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, onClose, onSaved }: { mode: 'new' | 'edit'; id?: string; kinds: NoteKind[]; initial: FormValues; scan?: ScnScan; scanFiles?: File[]; onClose: () => void; onSaved: (id: string) => void }) => {
   const [v, setV] = useState<FormValues>(initial);
   const uploadFile = useUploadCreditNoteFile();
   const [attachError, setAttachError] = useState<string | null>(null);
