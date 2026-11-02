@@ -95,6 +95,18 @@ describe('docRowVM — field mapping + late', () => {
     expect(prj.jobLabel).toBe('Dismantle');
     expect(prj.codeLine).toBe('2026-10-HOMEDEC-AKEMI');
   });
+  test('a completed non-SO job folds into the done list even when its stop status is unknown', () => {
+    const d = docRowVM(order({
+      row_type: 'assr', so_doc_no: 'ASSR/1#delivery', assr_id: 1, job_kind: 'delivery',
+      ref: 'ASSR/1', delivery_state: 'DELIVERED', delivery_orders: [], so_ref: null,
+    }), 'scheduled', CLOCK);
+    expect(d.status).toBe('done');
+    expect(d.late).toBe(false);
+  });
+  test('a DELIVERED SO row keeps its computed stop status (the done-fold is non-SO only)', () => {
+    const d = docRowVM(order({ delivery_state: 'DELIVERED' }), 'scheduled', CLOCK);
+    expect(d.status).toBe('scheduled');
+  });
 });
 
 describe('buildRuns — grouping + driver join + sort', () => {
