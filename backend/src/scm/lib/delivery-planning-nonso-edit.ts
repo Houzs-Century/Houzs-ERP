@@ -14,7 +14,7 @@
                            so a hand-set status shows until then (owner-accepted). */
 import { scopeToAllowedCompanies } from './companyScope';
 import { dateOrNull } from './date-coerce';
-import { assrOpenCaseGuardSql } from './assr-board-scope';
+import { assrOpenCaseGuardSql, ASSR_LEG_TIME_COL } from './assr-board-scope';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Hono ctx / the untyped scm PostgREST client, as elsewhere in this route
 type Ctx = any;
@@ -55,20 +55,19 @@ export async function scheduleDpDate(c: Ctx, sb: Sb, id: string, scheduleDate: s
 }
 
 /* The board's inline NON-SO field edits on a DP or service-case row: the MESSAGE
-   status (dp + assr), and the Time Slot (dp only — a DP job has no DO to carry it,
-   so it lives on the order; owner 2026-10-31). Each value present is whitelisted by
+   status (dp + assr), and the Time Slot (dp: on the order, owner 2026-10-31; assr: one
+   column per leg, HC-0194). Each value present is whitelisted by
    the caller (the route) before this runs; the board sends one cell at a time. */
 export async function writeNonSoFields(
   c: Ctx, sb: Sb, type: 'dp' | 'assr', id: string,
-  fields: { deliveryMessageStatus?: string | null; timeRange?: string | null },
+  fields: { deliveryMessageStatus?: string | null; timeRange?: string | null; jobKind?: keyof typeof ASSR_LEG_TIME_COL },
 ): Promise<EditResult> {
-  const { deliveryMessageStatus, timeRange } = fields;
+  const { deliveryMessageStatus, timeRange, jobKind } = fields;
   if (deliveryMessageStatus === undefined && timeRange === undefined) {
     return { status: 400, body: { error: 'no_changes', reason: 'Only the delivery message status and time slot are editable here.' } };
   }
   const msg = deliveryMessageStatus === '' ? null : deliveryMessageStatus;
   if (type === 'dp') {
-    // Time Slot is DP-only — assr_cases has no such column (below writes message only).
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (deliveryMessageStatus !== undefined) patch.delivery_message_status = msg;
     if (timeRange !== undefined) patch.time_range = timeRange === '' ? null : timeRange;
@@ -79,9 +78,9 @@ export async function writeNonSoFields(
     if (!data) return { status: 404, body: { error: 'not_found' } };
     return { status: 200, body: { ...OK_FIELDS } };
   }
-  // assr carries only the message status here; a time-only edit has nothing to write.
-  if (deliveryMessageStatus === undefined) {
-    return { status: 400, body: { error: 'no_changes', reason: 'Only the delivery message status is editable on a service case here.' } };
+  // A service case's Time Slot is per leg (HC-0194), so the write names the leg.
+  if (timeRange !== undefined && !jobKind) {
+    return { status: 400, body: { error: 'job_kind_required', reason: 'A service-case time slot belongs to one job; send jobKind.' } };
   }
   // assr — public.assr_cases via c.env.DB; the open-case guard carries the
   // caller's granted-company predicate, so an out-of-scope case 404s here.
@@ -90,10 +89,14 @@ export async function writeNonSoFields(
   const openCase = (await c.env.DB.prepare(assrOpenCaseGuardSql(c)).bind(caseId).first()) as { id: number } | null;
   if (!openCase) return { status: 404, body: { error: 'not_found' } };
   try {
+    // The column name comes from the ASSR_LEG_TIME_COL map, never from the request.
+    const sets: string[] = []; const binds: unknown[] = [];
+    if (deliveryMessageStatus !== undefined) { sets.push('delivery_message_status = ?'); binds.push(msg); }
+    if (timeRange !== undefined) { sets.push(`${ASSR_LEG_TIME_COL[jobKind!]} = ?`); binds.push(timeRange === '' ? null : timeRange); }
     const res = await c.env.DB.prepare(
-      `UPDATE assr_cases SET delivery_message_status = ?, updated_at = datetime('now')
+      `UPDATE assr_cases SET ${sets.join(', ')}, updated_at = datetime('now')
         WHERE id = ? AND closed_at IS NULL AND archived_at IS NULL`,
-    ).bind(msg, caseId).run();
+    ).bind(...binds, caseId).run();
     if (!res.meta.changes) return { status: 404, body: { error: 'not_found' } };
   } catch (e) {
     return { status: 500, body: { error: 'update_failed', reason: String((e as Error).message).slice(0, 200) } };

@@ -445,13 +445,13 @@ function AmendReasonEditCell({ order, onUpdateFields }: { order: PlanningOrder; 
 }
 
 /* A plain inline text editor for a free-text SO field (owner 2026-09-22:
-   Disposal Request, Remarks). SO rows only, EXCEPT when allowDp — the Time Slot
-   is editable on DP rows too (owner 2026-10-31), where it writes
-   scm.dp_orders.time_range. Commits on blur / Enter. */
-function TextEditCell({ order, value, onCommit, placeholder, allowDp = false }: {
-  order: PlanningOrder; value: string | null; onCommit: (next: string | null) => void; placeholder?: string; allowDp?: boolean;
+   Disposal Request, Remarks). SO rows only, EXCEPT when allowNonSo — the Time Slot
+   is editable on DP rows too (owner 2026-10-31, scm.dp_orders.time_range) and on
+   service-case legs (HC-0194). Commits on blur / Enter. */
+function TextEditCell({ order, value, onCommit, placeholder, allowNonSo = false }: {
+  order: PlanningOrder; value: string | null; onCommit: (next: string | null) => void; placeholder?: string; allowNonSo?: boolean;
 }) {
-  if (isAssr(order) || (isDp(order) && !allowDp) || isProject(order)) return <NotApplicable />;
+  if (isProject(order) || ((isAssr(order) || isDp(order)) && !allowNonSo)) return <NotApplicable />;
   return (
     <input
       className={styles.inlineEdit}
@@ -1463,11 +1463,14 @@ export function DeliveryPlanningBoard({
       /* Inline free-text (owner 2026-09-26: 可以输入文本). SO rows write the DO's
          time_range via useUpdateDeliveryFields (no DO yet → the server saves
          nothing and returns no_do_hint, which we surface); a DP row (owner
-         2026-10-31) writes scm.dp_orders.time_range the same way, no DO needed. */
+         2026-10-31) writes scm.dp_orders.time_range the same way, no DO needed; a
+         service-case leg (HC-0194) writes its own per-leg column on the case. */
       accessor: (o) => (
-        <TextEditCell order={o} value={o.time_range} placeholder="e.g. 2-4pm" allowDp
+        <TextEditCell order={o} value={o.time_range} placeholder="e.g. 2-4pm" allowNonSo
           onCommit={(v) => updateFieldsMutate(
-            isDp(o) ? { type: 'dp', id: dpIdOf(o), timeRange: v } : { type: 'so', id: o.so_doc_no, timeRange: v },
+            isDp(o) ? { type: 'dp', id: dpIdOf(o), timeRange: v }
+              : isAssr(o) ? { type: 'assr', id: String(o.assr_id ?? ''), jobKind: o.job_kind ?? undefined, timeRange: v }
+              : { type: 'so', id: o.so_doc_no, timeRange: v },
             { onSuccess: (res) => { if (res.no_do_hint) void notifyRef.current({ title: 'Saved (partly)', body: res.no_do_hint }); } },
           )} />
       ),

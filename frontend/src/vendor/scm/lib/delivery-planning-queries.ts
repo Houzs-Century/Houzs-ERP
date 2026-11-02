@@ -488,6 +488,7 @@ export type HcFieldsPatch = {
   amendReason?: string | null;
   // DO-execution (→ delivery_orders, when a DO exists)
   timeRange?: string | null;
+  jobKind?: AssrJobKind;  // service-case leg a timeRange write targets
   timeConfirmed?: boolean | null;
   arrivalAt?: string | null;
   departureAt?: string | null;
