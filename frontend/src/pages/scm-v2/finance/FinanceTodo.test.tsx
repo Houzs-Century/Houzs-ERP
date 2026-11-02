@@ -133,3 +133,38 @@ describe('tasks and routines', () => {
     expect(await screen.findByPlaceholderText(/Call Kian Furniture about the October statement/)).toBeTruthy();
   });
 });
+
+/* To do's Payment requests drawer (the owner's Claude Design, batch 4 step 10). */
+describe("To do's Payment requests drawer", () => {
+  const REQ = {
+    id: 'pr-1', request_no: 'HC-PRQ-2611-001', requested_by: 9, requested_by_name: 'Jason Tan', payee_name: 'MLE EVENTS SDN BHD',
+    amount_sen: 50_000, due_date: null, purpose: 'Booth rental 50%', project_id: null, bank_name: 'Maybank', bank_account_no: '5123 4567 8820',
+    bank_account_name: 'MLE EVENTS SDN BHD', status: 'SUBMITTED', pv_id: null, finance_note: null, decided_by: null, decided_at: null,
+    created_at: '2026-10-30T02:00:00Z', updated_at: '2026-10-30T02:00:00Z', stage: 'SUBMITTED', voucher: null, refund_source_doc_no: null,
+  };
+
+  test('Review opens it on the To do page: each waiting request with its doors; a reason sends one back', async () => {
+    mockedFetch.mockImplementation(async (path: string) => {
+      if (path === '/accounting/todo') return PAGE;
+      if (path === '/payment-requests/pr-1/return') return { ok: true };
+      if (path.startsWith('/payment-requests')) return { requests: [REQ], finance: true, mayRaise: true };
+      return {};
+    });
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={['/scm/finance?drawer=requests']}><FinanceTodoPage /></MemoryRouter>
+      </QueryClientProvider>,
+    );
+    const drawer = await screen.findByRole('dialog', { name: 'Payment requests' });
+    expect(await within(drawer).findByText('MLE EVENTS SDN BHD')).toBeTruthy();
+    expect(within(drawer).getByText('Pay to Maybank ···· 8820')).toBeTruthy();
+    expect(within(drawer).getByText('Waiting 3 days')).toBeTruthy();
+    expect(within(drawer).getByText('Make voucher ›')).toBeTruthy();
+    expect(within(drawer).getByText('Make AP invoice')).toBeTruthy();
+    fireEvent.click(within(drawer).getByText('Send back'));
+    fireEvent.change(within(drawer).getByLabelText('Why HC-PRQ-2611-001 goes back'), { target: { value: 'Attach the invoice, please' } });
+    fireEvent.click(within(drawer).getByText('Send back'));
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalledWith('/payment-requests/pr-1/return', expect.objectContaining({ method: 'POST' })));
+    expect(await within(drawer).findByText(/sent back · Jason sees why/)).toBeTruthy();
+  });
+});
