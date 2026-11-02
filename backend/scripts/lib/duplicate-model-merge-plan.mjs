@@ -59,7 +59,8 @@ const cmpRank = (a, b) => {
 
 /**
  * @param {object} w
- * @param {{category: string, keep: string|null, newModel?: string, drops: string[], skip?: string}} w.group
+ * @param {{category: string, keep: string|null, newModel?: string, drops: string[], skip?: string, sizes?: Record<string, string>}} w.group
+ *   `sizes`: the size of a SKU whose code and size_code carry none, by SKU code
  * @param {Array<{id: string, model_code: string, category: string, active: boolean, allowed_options: any, branding?: string|null}>} w.models
  * @param {Array<{id: string, code: string, status: string, size_code: string|null, model_id: string|null, base_model: string|null,
  *                main: string|null, use: {lines: number, stock: number}, master: Record<string, unknown>}>} w.skus
@@ -91,7 +92,7 @@ export function planModelGroup({ group, models, skus }) {
 
   const bySize = new Map();
   for (const s of active) {
-    const z = sizeOf(s);
+    const z = group.sizes?.[s.code] ?? sizeOf(s);
     if (!z) { refusals.push(`"${s.code}" has no size`); continue; }
     bySize.set(z, [...(bySize.get(z) ?? []), s]);
   }
@@ -107,6 +108,7 @@ export function planModelGroup({ group, models, skus }) {
     const survivor = ranked[0];
     sizes.push(size);
     if (survivor.model_id !== keptId) moves.push({ id: survivor.id, code: survivor.code, size, fromModelId: survivor.model_id, setSizeCode: !survivor.size_code });
+    else if (!survivor.size_code && group.sizes?.[survivor.code]) moves.push({ id: survivor.id, code: survivor.code, size, fromModelId: survivor.model_id, setSizeCode: true });
     for (const t of ranked.slice(1)) pairs.push({ drop: t.code, keep: survivor.code, size });
     const donors = ranked.slice(1);
     if (!survivor.main) {

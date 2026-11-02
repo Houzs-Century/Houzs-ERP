@@ -162,6 +162,10 @@ async function main() {
     const tag = `G${String(i + 1).padStart(2, "0")}`;
     log(`${tag} ${group.category} keep ${group.keep ? `"${group.keep}"` : `NEW "${group.newModel}"`}${plan.refusals.length ? "  REFUSED" : ""}`);
     for (const r of plan.refusals) log(`     REFUSED: ${r}`);
+    if (plan.refusals.length) {
+      const mains = [...new Set(world.skus.filter((s) => s.main && plan.refusals.some((r) => r.includes(`"${s.code}"`))).map((s) => s.main))];
+      if (mains.length) log(`     main suppliers: ${mains.map((c) => `${c} ${sup.get(c) ?? ""}`).join("; ")}`);
+    }
     for (const c of [group.keep, ...group.drops].filter((x) => x && world.near.has(x))) log(`     "${c}" not found; Models starting alike: ${world.near.get(c).join(", ") || "none"}`);
     if (plan.refusals.length) return;
     if (plan.createModel) log(`     create Model "${plan.createModel.code}" (pool copied from "${plan.createModel.template?.model_code ?? "-"}")`);
