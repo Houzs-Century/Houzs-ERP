@@ -270,3 +270,25 @@ export const PAYMENT_TERMS_OPTIONS = [
   'Custom',
 ] as const;
 export type PaymentTermOption = typeof PAYMENT_TERMS_OPTIONS[number];
+
+/* Postcode -> locality rows, built once per localities load, so a board with
+   hundreds of rows does not scan the whole table per cell. */
+export const postcodeIndex = (rows: LocalityRow[]): Map<string, LocalityRow[]> => {
+  const m = new Map<string, LocalityRow[]>();
+  for (const r of rows) {
+    const list = m.get(r.postcode);
+    if (list) list.push(r); else m.set(r.postcode, [r]);
+  }
+  return m;
+};
+
+/* "53000 Cyberjaya" for a postcode (HC-0196). The state narrows rows that share a
+   postcode across states; if the postcode still names more than one city (or none)
+   the number alone is shown, never a guess (docs/modules/address-cascade.md). */
+export const postcodeLabel = (index: Map<string, LocalityRow[]>, postcode: string | null, state: string | null): string => {
+  const pc = (postcode ?? '').trim();
+  const hits = index.get(pc) ?? [];
+  const inState = state ? hits.filter((r) => r.state === state) : [];
+  const cities = new Set((inState.length > 0 ? inState : hits).map((r) => r.city).filter(Boolean));
+  return cities.size === 1 ? `${pc} ${[...cities][0]}` : pc;
+};
