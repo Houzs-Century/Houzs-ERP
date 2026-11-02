@@ -14,6 +14,7 @@
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 import type { BankLine, BankMonth, BankMonthAssembly, BankMonthBalances, Reconciliation } from './bank-queries';
 
@@ -80,7 +81,11 @@ const state = vi.hoisted(() => ({
   autoMatch: vi.fn(),
   typeClosing: vi.fn(),
   leaveOut: vi.fn(),
+  todo: [] as unknown[],
 }));
+
+/* To do's own "upload the statement" rule says where the uploads stop. */
+vi.mock('./finance/finance-todo-queries', () => ({ useFinanceTodo: () => ({ data: { mine: state.todo, others: [] } }) }));
 
 /* The failed-print notice needs the app's notify; the tab is mounted without
    the provider here, so the hook is a spy. */
@@ -134,24 +139,23 @@ const setUp = (over: {
   state.autoMatch.mockReset();
   state.typeClosing.mockReset();
   state.leaveOut.mockReset();
+  state.todo = [];
 };
 
 /* The print dialog this screen mounts reads the company branding through
    react-query, so the tree needs a client — the same wrapper NotificationBell's
    test uses. Retries off: a test that waits out a retry is a slow test that
    still fails. */
-const show = () => render(
+const show = (at = '/scm/bank-recon') => render(
   <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-    <BankMonthTab />
+    <MemoryRouter initialEntries={[at]}><BankMonthTab /></MemoryRouter>
   </QueryClientProvider>,
 );
 
-const openMonth = () => {
-  show();
-  fireEvent.click(screen.getByText('Reconcile'));
-};
+/* The redesign opens a month by itself: the account with lines to decide, its oldest month not yet locked. */
+const openMonth = () => show();
 
-describe('the list of months', () => {
+describe('the accounts and their months', () => {
   test('names the month in the numeric shape the rest of the ERP uses', () => {
     expect(monthLabel('2026-09')).toBe('09/2026');
     expect(monthLabel('2026-01')).toBe('01/2026');
@@ -159,47 +163,95 @@ describe('the list of months', () => {
     expect(monthLabel('rubbish')).toBe('rubbish');
   });
 
-  test('says how many files built it and how much is still undecided', () => {
-    setUp();
+  test('a card per account says what is left to decide, and where its statements stand', () => {
+    setUp({ months: [MONTH, { ...MONTH, accountCode: '310-0010', month: '2026-08', openCount: 0, statementCount: 5 }] });
     show();
-    expect(screen.getByText('09/2026')).toBeTruthy();
-    expect(screen.getByText('3 files')).toBeTruthy();
-    expect(screen.getByText('2 of 12 · 1 card payout(s)')).toBeTruthy();
+    expect(screen.getByText('2 lines to decide')).toBeTruthy();
+    expect(screen.getByText('All matched · 2026/08 not locked yet')).toBeTruthy();
+    /* The account with lines to decide comes up, and its month opens below. */
+    expect(screen.getByText('310-0020 statements')).toBeTruthy();
+    expect(screen.getByText('September 2026')).toBeTruthy();
   });
 
-  test('says whether the month can be trusted before it is opened', () => {
+  test('a month chip says what is left on it', () => {
     setUp();
     show();
-    expect(screen.getByText('covered end to end')).toBeTruthy();
+    const chip = screen.getByRole('button', { name: /^2026\/09/ });
+    expect(chip.textContent).toContain('2 to decide');
+    expect(chip.getAttribute('aria-pressed')).toBe('true');
   });
 
   test('marks a month that is missing something', () => {
     setUp({ months: [{ ...MONTH, complete: false, gapCount: 2 }] });
     show();
-    expect(screen.getByText('2 things missing')).toBeTruthy();
-    expect(screen.queryByText('covered end to end')).toBeNull();
+    expect(screen.getByRole('button', { name: /^2026\/09/ }).textContent).toContain('Missing days');
   });
 
   test('says nothing about months when none came back', () => {
     setUp({ months: [] });
     show();
-    expect(screen.getByText(/No bank statement has been uploaded yet/)).toBeTruthy();
-    expect(screen.queryByRole('tablist')).toBeNull();
+    expect(screen.getByText(/No bank account takes statements in this company yet/)).toBeTruthy();
+    expect(screen.queryByText('to decide')).toBeNull();
   });
 
   /* Owner, 2026-09-13: by month 这里我无法分辨什么也会，你可能做成两个 tab? One
-     account's months at a time; the other account is one press away. */
-  test('shows one account at a time, with the other on its own tab', () => {
-    setUp({ months: [MONTH, { ...MONTH, accountCode: '310-0010', month: '2026-08', statementCount: 5 }] });
+     account's months at a time; the other account is one press on its card. */
+  test('shows one account at a time, the other one press away on its card', () => {
+    setUp({ months: [MONTH, { ...MONTH, accountCode: '310-0010', month: '2026-08', openCount: 0, statementCount: 5 }] });
     show();
-    const tabs = screen.getAllByRole('tab');
-    expect(tabs.map((t) => t.textContent)).toEqual(['310-0010', '310-0020']);
-    /* The first account, in code order, is up: its five files and not the other's three. */
-    expect(screen.getByText('5 files')).toBeTruthy();
-    expect(screen.queryByText('3 files')).toBeNull();
-    fireEvent.click(screen.getByRole('tab', { name: '310-0020' }));
-    expect(screen.getByText('3 files')).toBeTruthy();
-    expect(screen.queryByText('5 files')).toBeNull();
+    expect(screen.queryByRole('button', { name: /^2026\/08/ })).toBeNull();
+    fireEvent.click(screen.getByText('All matched · 2026/08 not locked yet'));
+    expect(screen.getByText('310-0010 statements')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^2026\/08/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^2026\/09/ })).toBeNull();
+  });
+
+  test('every month sits under All months, by year', () => {
+    setUp({ months: [MONTH, { ...MONTH, month: '2026-08', openCount: 0 }, { ...MONTH, month: '2025-12', openCount: 0, locked: { lockedBy: 'Chew', lockedAt: '2026-01-05T03:00:00Z' } }] });
+    show();
+    fireEvent.click(screen.getByText('All months'));
+    const pop = screen.getByRole('dialog', { name: 'All months' });
+    expect(pop.textContent).toContain('2025');
+    expect(pop.textContent).toContain('December');
+    expect(pop.textContent).toContain('12 movements');
+    expect(pop.textContent).toContain('Locked');
+  });
+
+  test('the address opens the month asked for', () => {
+    setUp({ months: [MONTH, { ...MONTH, month: '2026-08', openCount: 0 }] });
+    show('/scm/bank-recon?account=310-0020&month=2026-08');
+    expect(screen.getByText('August 2026')).toBeTruthy();
+  });
+
+  test('a statement that stops short says which days are missing, from To do', () => {
+    setUp();
+    state.todo = [{ key: 'bank-missing:310-0020', rule: 'bank-missing', since: '2026-09-04' }];
+    show();
+    expect(screen.getByText('The 310-0020 statement stops at 2026/09/03 · 2026/09/04 onward missing')).toBeTruthy();
+    expect(screen.getByText(/2026\/09\/04 onward missing$/, { selector: 'div' })).toBeTruthy();
+  });
+});
+
+describe('the month: where it stands', () => {
+  test('walks the four steps', () => {
+    setUp();
+    show();
+    expect(screen.getByText('Statement in')).toBeTruthy();
+    expect(screen.getByText('Covers 2026/09/01 → 2026/09/03')).toBeTruthy();
+    expect(screen.getByText('0 of 1 line · 1 to go')).toBeTruthy();
+    expect(screen.getByText('Waiting on 1 bank line')).toBeTruthy();
+    expect(screen.getByText('Ready once every bank line is decided and it tallies')).toBeTruthy();
+  });
+
+  test('the statement less the ledger is the difference, and says what makes it', () => {
+    setUp();
+    show();
+    expect(screen.getByText('Statement closes at')).toBeTruthy();
+    expect(screen.getByText('Per the ledger')).toBeTruthy();
+    expect(screen.getByText('RM 900.00')).toBeTruthy();
+    expect(screen.getByText(/2 bank lines not matched yet/)).toBeTruthy();
+    expect(screen.getByText('+RM 900.00')).toBeTruthy();
+    expect(screen.getByText('Nothing unexplained')).toBeTruthy();
   });
 });
 
@@ -264,7 +316,6 @@ describe('movements an earlier file already recorded', () => {
   test('no button when nothing repeats, or on a closed month', () => {
     setUp({ repeats: { count: 0, statementIds: [] } });
     const first = show();
-    fireEvent.click(screen.getByText('Reconcile'));
     expect(screen.queryByText(/already recorded$/)).toBeNull();
     first.unmount();
     setUp({ repeats: { count: 2, statementIds: [3] }, lock: { accountCode: '310-0020', month: '2026-09', lockedBy: 'Chew', lockedAt: '2026-10-02T03:14:00Z', lockNote: null, closingStatementSen: 1090000, closingLedgerSen: 1090000, differenceSen: 0, statementCount: 3, wasComplete: true } });
@@ -374,10 +425,10 @@ describe('a month with a day missing from it', () => {
     expect(screen.getByText(/d04\.csv closes on 2026-09-04 and d08\.csv opens on 2026-09-08/)).toBeTruthy();
   });
 
-  test('names how much movement the difference below is short by', () => {
+  test('names how much movement the difference is short by', () => {
     setUp({ assembly: BROKEN });
     openMonth();
-    expect(screen.getByText(/the difference below is missing/)).toBeTruthy();
+    expect(screen.getByText(/the difference above is missing/)).toBeTruthy();
     expect(screen.getByText('RM 200.00')).toBeTruthy();
   });
 
@@ -437,11 +488,11 @@ describe('closing a month', () => {
     statementCount: 12, wasComplete: false,
   };
 
-  test('an open month offers to close, and says what closing does', () => {
-    setUp();
+  test('an open month offers to lock, and says what locking does', () => {
+    setUp({ recon: { ...RECON, bankNotInBooks: { count: 0, sen: 0 }, closingLedgerSen: 1090000, differenceSen: 0, reconciled: true }, lines: [{ ...LINE, state: 'POSTED', posted_je_no: 'JE-1' }] });
     openMonth();
-    expect(screen.getByText('Close this month')).toBeTruthy();
-    expect(screen.getByText(/Nothing in it can be booked, left out or undone afterwards/)).toBeTruthy();
+    expect(screen.getByText('Lock Sep')).toBeTruthy();
+    expect(screen.getByText(/Locking fixes what this month says/)).toBeTruthy();
   });
 
   /* Owner, 2026-09-11: 当 closing bank statement amount 无法 tally 就无法 lock.
@@ -450,23 +501,24 @@ describe('closing a month', () => {
   test('the close button is off, and says why, while the month does not tally', () => {
     setUp({ recon: { ...RECON, bankNotInBooks: { count: 0, sen: 0 }, computedClosingSen: 1060000, unexplainedSen: 30000, tallies: false } });
     openMonth();
-    const go = screen.getByText('Close this month').closest('button')!;
+    const go = screen.getByText('Lock Sep').closest('button')!;
     expect(go.disabled).toBe(true);
-    expect(screen.getByText(/does not tally/)).toBeTruthy();
+    expect(screen.getByText(/Can’t lock yet · .*RM 300\.00 unexplained/)).toBeTruthy();
     expect(screen.queryByLabelText('Why this month is being closed anyway')).toBeNull();
   });
 
-  test('the close button is off while movements are still to decide, or a day is missing', () => {
-    setUp();   // RECON has two movements still to decide
+  test('the lock is off while lines are still to decide, or a day is missing', () => {
+    setUp();   // one line still to decide
     openMonth();
-    expect(screen.getByText('Close this month').closest('button')!.disabled).toBe(true);
-    expect(screen.getByText(/2 movements still to decide/)).toBeTruthy();
+    expect(screen.getByText('Lock Sep').closest('button')!.disabled).toBe(true);
+    expect(screen.getByText(/Can’t lock yet · 1 line to decide/)).toBeTruthy();
   });
 
-  test('the close button is on when the month tallies, is whole and no movement is still to decide', () => {
-    setUp({ recon: { ...RECON, bankNotInBooks: { count: 0, sen: 0 }, closingLedgerSen: 1090000, differenceSen: 0, reconciled: true } });
+  test('the lock is on when the month tallies, is whole and no line is still to decide', () => {
+    setUp({ recon: { ...RECON, bankNotInBooks: { count: 0, sen: 0 }, closingLedgerSen: 1090000, differenceSen: 0, reconciled: true }, lines: [{ ...LINE, state: 'POSTED', posted_je_no: 'JE-1' }] });
     openMonth();
-    expect(screen.getByText('Close this month').closest('button')!.disabled).toBe(false);
+    expect(screen.getByText('Lock Sep').closest('button')!.disabled).toBe(false);
+    expect(screen.getByText('Ready to lock')).toBeTruthy();
     expect(screen.queryByLabelText('Why this month is being closed anyway')).toBeNull();
   });
 
@@ -476,8 +528,8 @@ describe('closing a month', () => {
   test('a closed month shows the figures it was closed at, and who closed it', () => {
     setUp({ lock: HELD });
     openMonth();
-    expect(screen.getByText(/Closed by Chew on 2026-10-02/)).toBeTruthy();
-    expect(screen.getByText(/RM 10,900\.00 per the bank against RM 10,450\.00 in the books/)).toBeTruthy();
+    expect(screen.getByText(/Locked 2026\/10\/02 by Chew/)).toBeTruthy();
+    expect(screen.getByText(/RM 10,900\.00 per the bank against RM 10,450\.00 in the ledger/)).toBeTruthy();
     expect(screen.getByText(/NOT covered end to end/)).toBeTruthy();
     expect(screen.getByText(/known timing difference/)).toBeTruthy();
   });
@@ -485,8 +537,8 @@ describe('closing a month', () => {
   test('a closed month offers no way to close it again', () => {
     setUp({ lock: HELD });
     openMonth();
-    expect(screen.queryByText('Close this month')).toBeNull();
-    expect(screen.getByText('Reopen this month')).toBeTruthy();
+    expect(screen.queryByText('Lock Sep')).toBeNull();
+    expect(screen.getByText('Unlock…')).toBeTruthy();
   });
 
   /* Reopening demands a reason, and the button stays dead until there is one —
@@ -495,21 +547,23 @@ describe('closing a month', () => {
   test('reopening cannot be pressed without a reason', () => {
     setUp({ lock: HELD });
     openMonth();
-    fireEvent.click(screen.getByText('Reopen this month'));
-    const go = screen.getByText('Reopen it').closest('button')!;
+    fireEvent.click(screen.getByText('Unlock…'));
+    expect(screen.getByText(/Unlocking needs the approve right and a reason/)).toBeTruthy();
+    const go = screen.getByText('Unlock it').closest('button')!;
     expect(go.disabled).toBe(true);
 
-    fireEvent.change(screen.getByLabelText('Why this month is being reopened'), {
+    fireEvent.change(screen.getByLabelText('Why this month is being unlocked'), {
       target: { value: 'the bank re-issued 12 Sep' },
     });
-    expect(screen.getByText('Reopen it').closest('button')!.disabled).toBe(false);
+    expect(screen.getByText('Unlock it').closest('button')!.disabled).toBe(false);
   });
 
-  test('the list says a month is closed instead of how clean it looks', () => {
-    setUp({ months: [{ ...MONTH, locked: { lockedBy: 'Chew', lockedAt: '2026-10-02T03:14:00Z' } }] });
+  test('the chip says a month is locked instead of how clean it looks', () => {
+    setUp({ months: [{ ...MONTH, openCount: 0, locked: { lockedBy: 'Chew', lockedAt: '2026-10-02T03:14:00Z' } }] });
     show();
-    expect(screen.getByText(/closed by Chew on 2026\/10\/02/)).toBeTruthy();
-    expect(screen.queryByText('covered end to end')).toBeNull();
+    const chip = screen.getByRole('button', { name: /^2026\/09/ });
+    expect(chip.textContent).toContain('Locked');
+    expect(chip.textContent).not.toContain('to decide');
   });
 });
 
@@ -520,20 +574,20 @@ describe('the reconciliation statement', () => {
   test('offers the statement from the month view', () => {
     setUp();
     openMonth();
-    expect(screen.getByText('Reconciliation statement')).toBeTruthy();
+    expect(screen.getByText('Print reconciliation')).toBeTruthy();
   });
 
   test('the dialog says the month is whole before anything is printed', () => {
     setUp();
     openMonth();
-    fireEvent.click(screen.getByText('Reconciliation statement'));
+    fireEvent.click(screen.getByText('Print reconciliation'));
     expect(screen.getByText('covered end to end')).toBeTruthy();
   });
 
   test('and says so when it is not', () => {
     setUp({ assembly: { ...ASSEMBLY, complete: false, gaps: ['a day is missing'] } });
     openMonth();
-    fireEvent.click(screen.getByText('Reconciliation statement'));
+    fireEvent.click(screen.getByText('Print reconciliation'));
     expect(screen.getByText(/not covered end to end — 1 thing\(s\) missing/)).toBeTruthy();
   });
 });
@@ -554,11 +608,11 @@ describe('the movements of the month', () => {
     expect(screen.getByText('Money received — all 1 matched payout')).toBeTruthy();
   });
 
-  test('shows the reconciliation the same way the file screen does', () => {
+  test('says the reconciliation as the three figures and what makes the difference', () => {
     setUp();
     openMonth();
-    expect(screen.getByText(/2 movements on the bank still to decide/)).toBeTruthy();
-    expect(screen.getByText(/On the bank, not in the books/)).toBeTruthy();
+    expect(screen.getByText('Difference')).toBeTruthy();
+    expect(screen.getByText('2 bank lines not matched yet')).toBeTruthy();
   });
 
   test('refuses to publish a difference it cannot account for', () => {
