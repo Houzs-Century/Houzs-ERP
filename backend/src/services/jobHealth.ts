@@ -51,6 +51,7 @@ export const JOB_CADENCE_MIN: Record<string, number> = {
   "deliver-due": DAY,
   "ai-usage-hub": DAY,
   "scan-so-distill": 7 * DAY,
+  "assr-weekly-status": 7 * DAY,
 };
 
 /** Sub-daily: 2.5 cadences. Daily or longer: the cadence plus 2 hours (26h for
