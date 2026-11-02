@@ -198,6 +198,8 @@ const invalidateAfterBankPosting = (qc: ReturnType<typeof useQueryClient>) => {
   void qc.invalidateQueries({ queryKey: ['settlement-batches'] });
   void qc.invalidateQueries({ queryKey: ['settlement-in-transit'] });
   void qc.invalidateQueries({ queryKey: ['account-balances'] });
+  /* Finance's To do counts the open lines; it moves with them. */
+  void qc.invalidateQueries({ queryKey: ['finance-todo'] });
   void qc.invalidateQueries({ queryKey: ['control-check'] });
   void qc.invalidateQueries({ queryKey: ['daily-bank'] });
 };
@@ -223,7 +225,10 @@ export const useUploadBankStatement = () => {
         openingBalanceSen: number | null; closingBalanceSen: number | null;
         kinds: Record<string, number>;
       }>('/accounting/bank/statements', { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['bank-statements'] }); },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['bank-statements'] });
+      void qc.invalidateQueries({ queryKey: ['finance-todo'] });
+    },
     /* No writeFailedAs: a refused statement says WHY, and the page shows the
        server's own sentence verbatim (§2.14). */
   });

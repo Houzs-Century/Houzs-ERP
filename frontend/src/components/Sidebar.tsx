@@ -789,9 +789,11 @@ export const NAV_TABS: NavTab[] = [
         icon: Landmark,
         groupId: "scm-finance-bank",
         children: [
+          // The redesign's order and names (owner's Claude Design, batch 3): the two
+          // uploads first, then the day's board; Unmatched Payments stays last.
+          { to: "/scm/merchant-recon", label: "Merchant reports", icon: CreditCard, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.bank"] },
+          { to: "/scm/bank-recon", label: "Bank statements", icon: Banknote, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.bank"] },
           { to: "/scm/daily-bank", label: "Daily Bank", icon: Landmark, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.bank"] },
-          { to: "/scm/merchant-recon", label: "Merchant Recon", icon: CreditCard, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.bank"] },
-          { to: "/scm/bank-recon", label: "Bank Recon", icon: Banknote, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.bank"] },
           // Card AND transfer payments not matched yet, one list (owner
           // 2026-09-30: 我有没有一个表是显示全部还没 match 的); the recon key family.
           { to: "/scm/unmatched-payments", label: "Unmatched Payments", icon: AlertCircle, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.bank"] },

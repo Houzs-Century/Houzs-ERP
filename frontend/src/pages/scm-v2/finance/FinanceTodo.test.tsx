@@ -88,7 +88,7 @@ describe('FinanceTodoPage', () => {
     const money = await screen.findByLabelText('Can move today');
     expect(within(money).getByText('RM 270,709.15')).toBeTruthy();
     expect(within(money).getByText('16,190.00')).toBeTruthy();
-    expect(money.getAttribute('href')).toBe('/scm/daily-bank');
+    expect(money.getAttribute('href')).toBe('/scm/daily-bank?view=board');
     const check = screen.getByLabelText('Month checklist');
     expect(within(check).getByText('November checklist')).toBeTruthy();
     expect(within(check).getByText('28 days left')).toBeTruthy();

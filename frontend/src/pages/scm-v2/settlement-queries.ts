@@ -370,6 +370,8 @@ const invalidateAfterPosting = (qc: ReturnType<typeof useQueryClient>) => {
   void qc.invalidateQueries({ queryKey: ['account-balances'] });
   void qc.invalidateQueries({ queryKey: ['control-check'] });
   void qc.invalidateQueries({ queryKey: ['daily-bank'] });
+  /* Finance's To do counts these lines; it moves with them. */
+  void qc.invalidateQueries({ queryKey: ['finance-todo'] });
 };
 
 export const useConfirmSettlementRow = () => {
