@@ -16,13 +16,22 @@
 // same method, amount and approval code. Prints the two orders' payments, entries and
 // receipts before and after.
 //
+// A copy dated in a CLOSED bank month refuses to move (the owner's lock). With
+// UNLOCK=account:YYYY-MM (owner 2026-11-02: 开锁 HLB 6 月 → 改 → 锁回 —「做」) the month
+// is released through POST /bank/months/:a/:m/unlock with UNLOCK_NOTE before the move,
+// and closed again through POST /bank/months/:a/:m/lock after it — which refuses unless
+// the month still tallies, so a month that would stay open makes the whole run fail
+// and nothing is kept.
+//
 // PLAN by default: all of it inside one transaction, read back, ROLLED BACK.
 // APPLY=1 with CONFIRM="MOVE RE-KEYED PAYMENTS" keeps it.
-// Env: DATABASE_URL, COMPANY_ID, FROM_DOC, TO_DOC, PAYMENT_IDS (comma list), REASON, ACTOR.
+// Env: DATABASE_URL, COMPANY_ID, FROM_DOC, TO_DOC, PAYMENT_IDS (comma list), REASON, ACTOR,
+//      UNLOCK (optional, account:YYYY-MM), UNLOCK_NOTE (with UNLOCK).
 import postgres from 'postgres';
 import { pgrestShim } from './lib/pgrest-shim.mjs';
 import { d1Compat } from '../src/db/d1-compat.ts';
 import { deleteSoPaymentHandler, postSoPaymentHandler } from '../src/scm/routes/mfg-sales-orders.ts';
+import { bankMonthLock, bankMonthUnlock } from '../src/scm/routes/accounting-bank-locks.ts';
 
 const PHRASE = 'MOVE RE-KEYED PAYMENTS';
 const APPLY = process.env.APPLY === '1';
@@ -33,6 +42,9 @@ const TO = String(process.env.TO_DOC ?? '').trim();
 const IDS = String(process.env.PAYMENT_IDS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 const REASON = String(process.env.REASON ?? '').trim();
 const ACTOR = String(process.env.ACTOR ?? '').trim();
+const UNLOCK = /^(d{3}-[A-Za-z0-9]{4}):(d{4}-d{2})$/.exec(String(process.env.UNLOCK ?? '').trim());
+const UNLOCK_NOTE = String(process.env.UNLOCK_NOTE ?? '').trim();
+if (process.env.UNLOCK && (!UNLOCK || !UNLOCK_NOTE)) { console.error('Refused: UNLOCK is account:YYYY-MM and needs UNLOCK_NOTE.'); process.exit(2); }
 if (!Number.isInteger(CO) || !FROM || !TO || IDS.length === 0 || !REASON || !ACTOR) {
   console.error('Refused: COMPANY_ID, FROM_DOC, TO_DOC, PAYMENT_IDS, REASON and ACTOR are all required.');
   process.exit(2);
@@ -44,7 +56,9 @@ const out = (s) => console.log(`ROW|${s}`);
 const rm = (sen) => (Number(sen) / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 class Rollback extends Error {}
 /* Finance's rights for the two doors — the correction right opens a past payment. */
-const PERMS = ['scm.so_payment.amend', 'scm.payment.backdate', 'scm.payment_voucher.post', 'scm.so.view_all'];
+const PERMS = ['scm.so_payment.amend', 'scm.payment.backdate', 'scm.payment_voucher.post', 'scm.so.view_all',
+  /* Reopening a closed bank month — only with UNLOCK. */
+  ...(process.env.UNLOCK ? ['scm.payment_voucher.approve'] : [])];
 
 async function snapshot(tx, label) {
   out(`== ${label}`);
@@ -87,10 +101,10 @@ try {
     await snapshot(tx, 'BEFORE');
 
     const sb = pgrestShim(tx, 'scm');
-    const ctx = (docNo, { id = null, query = {}, body } = {}) => ({
+    const ctx = (docNo, { id = null, query = {}, body, params = {} } = {}) => ({
       env: { DB: d1Compat(() => tx) },
       req: {
-        param: (k) => ({ docNo, id })[k],
+        param: (k) => ({ docNo, id, ...params })[k],
         query: (k) => query[k],
         json: async () => body,
         path: `/api/scm/mfg-sales-orders/${docNo}/payments${id ? `/${id}` : ''}`,
@@ -105,6 +119,16 @@ try {
       json: (b, status = 200) => ({ body: b, status }),
     });
 
+    const lockOf = async () => (await tx`SELECT period_month, closing_statement_sen, closing_ledger_sen, difference_sen, locked_by, locked_at
+                                             FROM scm.acc_bank_month_locks WHERE company_id = ${CO} AND account_code = ${UNLOCK[1]}
+                                              AND period_month = ${UNLOCK[2] + '-01'}::date AND released_at IS NULL`)[0] ?? null;
+    if (UNLOCK) {
+      const was = await lockOf();
+      out(`LOCK ${UNLOCK[1]} ${UNLOCK[2]} before: ${was ? `closed by ${was.locked_by} ${String(was.locked_at).slice(0, 10)} — statement ${rm(was.closing_statement_sen)} ledger ${rm(was.closing_ledger_sen)} difference ${rm(was.difference_sen)}` : 'NOT closed'}`);
+      const res = await bankMonthUnlock(ctx('', { params: { accountCode: UNLOCK[1], month: UNLOCK[2] }, body: { note: UNLOCK_NOTE } }));
+      out(`UNLOCK → ${res.status} ${res.status === 200 ? 'released' : JSON.stringify(res.body)}`);
+      if (res.status !== 200) throw new Error(`unlock refused: ${JSON.stringify(res.body)}`);
+    }
     for (const p of copies) {
       const res = await deleteSoPaymentHandler(ctx(TO, { id: String(p.id), query: { version: String(p.version ?? 1), reason: REASON } }));
       out(`DELETE ${String(p.id).slice(0, 8)} → ${res.status} ${JSON.stringify(res.body)}`);
@@ -113,6 +137,13 @@ try {
     const add = await postSoPaymentHandler(ctx(TO, { body: { method: 'converted', convertedFromDocNo: FROM, amountSen: moveSen, paidAt: String(copies[0].paid_at).slice(0, 10), reason: REASON } }));
     out(`CONVERT RM ${rm(moveSen)} from ${FROM} → ${add.status} ${add.status === 201 ? `payment ${String(add.body.payment?.id ?? '').slice(0, 8)}` : JSON.stringify(add.body)}`);
     if (add.status !== 201) throw new Error(`convert refused: ${JSON.stringify(add.body)}`);
+    if (UNLOCK) {
+      const res = await bankMonthLock(ctx('', { params: { accountCode: UNLOCK[1], month: UNLOCK[2] }, body: {} }));
+      out(`RELOCK → ${res.status} ${res.status === 200 ? 'closed again' : JSON.stringify(res.body)}`);
+      if (res.status !== 200) throw new Error(`the month would not close again: ${JSON.stringify(res.body)}`);
+      const now = await lockOf();
+      out(`LOCK ${UNLOCK[1]} ${UNLOCK[2]} after: closed by ${now.locked_by} — statement ${rm(now.closing_statement_sen)} ledger ${rm(now.closing_ledger_sen)} difference ${rm(now.difference_sen)}`);
+    }
     if (sb.__gaps.length > 0) throw new Error(`shim gaps: ${sb.__gaps.join(' | ')}`);
 
     await snapshot(tx, 'AFTER');
