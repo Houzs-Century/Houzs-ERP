@@ -43,3 +43,44 @@ describe('writeNonSoFields (assr time slot)', () => {
     expect(runs[0]!.binds).toEqual([null, 7]);
   });
 });
+
+// HC-0193 re-test (ASSR/2610-024): the SERVICE job's POD closed the case, the PICKUP job is still open.
+describe('writeNonSoFields (closed case, open sibling job)', () => {
+  const closedCase: Record<string, unknown> = { id: 7, stage: 'completed', actual_pickup_at: null, closed_at: '2026-10-31 14:30:00', status: 'Completed' };
+  function closedCtx(row: Record<string, unknown> = closedCase) {
+    const runs: Array<{ sql: string; binds: unknown[] }> = [];
+    const prepare = (sql: string) => ({
+      bind: (...binds: unknown[]) => ({
+        first: async () => row,
+        run: async () => { runs.push({ sql, binds }); return { meta: { changes: 1 } }; },
+      }),
+    });
+    return { c: { env: { DB: { prepare } }, get: () => undefined }, runs };
+  }
+
+  it('saves the pickup and writes nothing to the service job columns', async () => {
+    const { c, runs } = closedCtx();
+    const pickup = await writeNonSoFields(c, {}, 'assr', '7', { deliveryMessageStatus: 'Done Send', jobKind: 'customer_pickup' });
+    expect(pickup.status).toBe(200);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.sql).toContain('pickup_message_status = ?');
+    expect(runs[0]!.sql).not.toContain('delivery_message_status');
+    expect(runs[0]!.sql).not.toContain('closed_at');
+    expect(runs[0]!.binds).toEqual(['Done Send', 7]);
+  });
+
+  it('still saves the pickup when the pickup itself happened (actual_pickup_at set)', async () => {
+    const { c, runs } = closedCtx({ ...closedCase, actual_pickup_at: '2026-10-20' });
+    const r = await writeNonSoFields(c, {}, 'assr', '7', { deliveryMessageStatus: 'Done Send', timeRange: '2-4pm', jobKind: 'customer_pickup' });
+    expect(r.status).toBe(200);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.sql).toContain('pickup_message_status = ?');
+    expect(runs[0]!.sql).not.toContain('delivery_message_status');
+  });
+
+  it('refuses an archived or out-of-scope case', async () => {
+    const prepare = () => ({ bind: () => ({ first: async () => null, run: async () => ({ meta: { changes: 0 } }) }) });
+    const r = await writeNonSoFields({ env: { DB: { prepare } }, get: () => undefined }, {}, 'assr', '7', { timeRange: 'x', jobKind: 'customer_pickup' });
+    expect(r.status).toBe(404);
+  });
+});

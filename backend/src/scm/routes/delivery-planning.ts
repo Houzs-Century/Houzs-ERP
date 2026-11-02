@@ -89,7 +89,7 @@ import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMa
 /* Service-Case rows on this board are company-scoped (owner ruling 2026-08-21).
    Both statements live in ONE module, with the reasoning, so the predicate is
    assertable and cannot be re-derived by hand here. */
-import { assrBoardLocation, assrOpenCaseGuardSql, ASSR_BOARD_LEGS, ASSR_CONFIRMED_COL, assrBoardLegs, assrCaseClosed, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL } from '../lib/assr-board-scope'; import { overlayAssrChatState } from '../lib/assr-arrangement-message';
+import { assrBoardLocation, assrLegGuardSql, assrLegOpen, ASSR_BOARD_LEGS, ASSR_CONFIRMED_COL, assrBoardLegs, assrCaseClosed, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL } from '../lib/assr-board-scope'; import { overlayAssrChatState } from '../lib/assr-arrangement-message';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
@@ -2239,7 +2239,7 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
       : 'delivery';
     // Logistics' date is the CONFIRMED one; Service's requested date stays as keyed.
     const col = ASSR_CONFIRMED_COL[jobKind];
-    /* The case must EXIST and be OPEN before ANYTHING is written. The date write
+    /* The case must EXIST and THIS job must be open (a sibling's POD closing the case does not lock it) before ANYTHING is written. The date write
        below carries that guard in its own WHERE clause, but a crew-only edit (a
        lorry with no scheduleDate — now reachable because the board's Driver /
        Lorry cells are editable for ASSR) skips that write entirely. Without this
@@ -2247,20 +2247,20 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
        closed / archived / non-existent case: fleet capacity consumed by work that
        is finished or was never there, and invisible on the board because the
        board has no row for it. Fails the same way the date path already does.
-       It is ALSO the company gate for everything below: assrOpenCaseGuardSql
+       It is ALSO the company gate for everything below: assrLegGuardSql
        carries the caller's granted-company predicate, so an out-of-scope case
        404s here (owner ruling 2026-08-21). */
-    const openCase = (await c.env.DB.prepare(
-      assrOpenCaseGuardSql(c),
-    ).bind(caseId).first()) as { id: number } | null;
-    if (!openCase) return c.json({ error: 'not_found' }, 404);
+    const legCase = (await c.env.DB.prepare(
+      assrLegGuardSql(c),
+    ).bind(caseId).first()) as Parameters<typeof assrLegOpen>[0] | null;
+    if (!legCase || !assrLegOpen(legCase, jobKind)) return c.json({ error: 'not_found' }, 404);
 
     // Write the driving date when the date cell was the edit (unchanged behaviour).
     if (p.scheduleDate !== undefined) {
       try {
         const res = await c.env.DB.prepare(
           `UPDATE assr_cases SET ${col} = ?, updated_at = datetime('now')
-            WHERE id = ? AND closed_at IS NULL AND archived_at IS NULL`,
+            WHERE id = ? AND archived_at IS NULL`,
         ).bind(p.scheduleDate, caseId).run();
         if (!res.meta.changes) return c.json({ error: 'not_found' }, 404);
       } catch (e) {
@@ -2769,7 +2769,7 @@ async function scheduleAssrOntoTrip(
        via c.env.DB (same path the ASSR board union uses). The leg date is the trip's
        default date so a crew-only edit (no scheduleDate) still lands on the right day.
        company-scope: deliberately UNSCOPED, and safe — reachable only after the
-       ASSR branch's assrOpenCaseGuardSql has 404'd any case outside the caller's
+       ASSR branch's assrLegGuardSql has 404'd any case outside the caller's
        granted companies. Same shape as routes/assr.ts (:2672, :1116). */
     const a = (await c.env.DB.prepare(
       `SELECT customer_name AS customer_name, ${dateCol} AS leg_date,
