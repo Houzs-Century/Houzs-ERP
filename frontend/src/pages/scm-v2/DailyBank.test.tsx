@@ -9,7 +9,7 @@
 // backend/tests/dailyBankByBank.test.ts, the table model in daily-bank-report.test.ts.
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 import type { DailyBankBoard } from './accounting-phase1-queries';
 
@@ -56,6 +56,10 @@ vi.mock('./daily-bank-pdf', () => ({ generateDailyBankPdf: (b: unknown) => pdfMo
 
 import { DailyBank } from './DailyBank';
 
+/** Where the page has put the address — the view lives in it. */
+const Where = () => <span data-testid="where">{useLocation().search}</span>;
+const renderAt = (search: string) => render(<MemoryRouter initialEntries={[`/scm/daily-bank${search}`]}><DailyBank /><Where /></MemoryRouter>);
+
 const section = (key: string): HTMLElement => {
   const head = document.querySelector(`[data-section="${key}"]`) as HTMLElement;
   return head;
@@ -83,11 +87,8 @@ const rowsOf = (key: string, kind: string): HTMLElement[] => {
 const col = (tr: HTMLElement, c: 'received' | 'payment' | 'balance'): string => String(tr.querySelector(`[data-col="${c}"]`)?.textContent);
 
 describe('DailyBank board, by bank', () => {
-  test('the three totals stay on top; the dark bar names the day', () => {
-    render(<MemoryRouter><DailyBank /></MemoryRouter>);
-    expect(screen.getByText('RM 77,636.90')).toBeTruthy();                     // can actually move
-    expect(screen.getByText('RM 40,868.52')).toBeTruthy();                     // in transit
-    expect(screen.getByText('RM 10,836.00')).toBeTruthy();                     // checked, awaiting approval
+  test('the Accounts sheet: the dark bar names the day', () => {
+    renderAt('?view=accounts');
     const table = screen.getByLabelText('Bank balance available');
     expect(within(table).getByText('BANK BALANCE AVAILABLE')).toBeTruthy();
     expect(within(table).getByText('Tue · 2026/09/29')).toBeTruthy();
@@ -95,7 +96,7 @@ describe('DailyBank board, by bank', () => {
   });
 
   test('a bank: its Bank Balance in the header, then B/F, received, paid, pending, available, its card money and the line with it added', () => {
-    render(<MemoryRouter><DailyBank /></MemoryRouter>);
+    renderAt('?view=accounts');
     expect(section('310-0020').textContent).toContain('CASH AT BANK - HLBB');
     expect((document.querySelector('[data-bank-balance="310-0020"]') as HTMLElement).textContent).toBe('64,134.35');
     expect(kindsOf('310-0020')).toEqual(['bf', 'receivedHead', 'received', 'paidHead', 'paid', 'pendingHead', 'pending', 'available', 'transitHead', 'transit', 'withTransit']);
@@ -124,7 +125,7 @@ describe('DailyBank board, by bank', () => {
   });
 
   test('a bank with nothing on the day shows its B/F and its available alone; what names no bank waits in the last section', () => {
-    render(<MemoryRouter><DailyBank /></MemoryRouter>);
+    renderAt('?view=accounts');
     expect(kindsOf('310-0030')).toEqual(['bf', 'available']);
     expect(section('unassigned').textContent).toContain('Not tied to a bank');
     expect(kindsOf('unassigned')).toEqual(['transitHead', 'transit']);
@@ -133,10 +134,54 @@ describe('DailyBank board, by bank', () => {
   });
 
   test('Get image, PNG and PDF: the PDF prints the board the page shows', async () => {
-    render(<MemoryRouter><DailyBank /></MemoryRouter>);
+    renderAt('?view=board');
     expect(screen.getByRole('button', { name: /Get image/ })).toBeTruthy();
     expect(screen.getByRole('button', { name: /PNG/ })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /PDF/ }));
     await waitFor(() => expect(pdfMock).toHaveBeenCalledWith(BOARD));
+  });
+});
+
+describe("DailyBank Board (the redesign's Money today)", () => {
+  test('no view in the address opens the Board and says so in the address', async () => {
+    renderAt('');
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('?view=board'));
+    expect(screen.getByRole('button', { name: 'Board' }).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  test('can move today is bank and cash less what awaits approval; card money on its way is said, not added', () => {
+    renderAt('?view=board');
+    const hero = screen.getByLabelText('Can move today');
+    expect(within(hero).getByText('RM 77,636.90')).toBeTruthy();
+    expect(within(hero).getByText('RM 88,472.90')).toBeTruthy();
+    expect(within(hero).getByText('RM 10,836.00')).toBeTruthy();
+    expect(hero.textContent).toContain('RM 40,868.52 is on its way from card machines. Not spendable until it lands.');
+    const bridge = screen.getByLabelText('How the day got here');
+    expect([...bridge.children].map((r) => r.textContent)).toEqual([
+      'Yesterday86,065.54', '+ In today2,850.00', '− Out today442.64', 'Bank & cash now88,472.90', '− Awaiting approval10,836.00', 'Can move today77,636.90',
+    ]);
+  });
+
+  test('each account shows its day; one opens the Accounts sheet at its block', async () => {
+    renderAt('?view=board');
+    const accounts = screen.getByLabelText('Accounts');
+    expect(within(accounts).getByText('Hookka')).toBeTruthy();
+    expect(within(accounts).getByText('+2,850.00')).toBeTruthy();
+    expect(within(accounts).getByText('−442.64')).toBeTruthy();
+    expect(within(accounts).getByText('No movement today')).toBeTruthy();
+    fireEvent.click(within(accounts).getAllByTitle('See every movement of this account')[0]!);
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('?view=accounts'));
+    expect(section('310-0020').className).toMatch(/focused/);
+  });
+
+  test('card money on its way, and the vouchers awaiting approval with the way to them', () => {
+    renderAt('?view=board');
+    const transit = screen.getByLabelText('On its way · card machines');
+    expect(within(transit).getByText('PBB')).toBeTruthy();
+    expect(within(transit).getByText('RM 37,503.52')).toBeTruthy();
+    expect(within(transit).getByText('未标银行')).toBeTruthy();
+    const awaiting = screen.getByLabelText('Awaiting your approval');
+    expect(awaiting.textContent).toContain('UNICOM MARKETING SDN BHD · BILL IV2026-09-007 · 2990-HPV-2609-023');
+    expect(within(awaiting).getByRole('link', { name: /Review vouchers/ }).getAttribute('href')).toBe('/scm/payment-vouchers?status=CHECKED');
   });
 });
