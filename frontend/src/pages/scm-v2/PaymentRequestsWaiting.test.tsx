@@ -31,8 +31,8 @@ describe('the waiting-requests reminder', () => {
     waiting = 3;
     draw();
     const banner = screen.getByRole('status', { name: 'Payment requests waiting for Finance' });
-    expect(banner.textContent).toContain('3 payment requests waiting for Finance · 3 张申请付款等你处理');
-    fireEvent.click(screen.getByRole('button', { name: 'Open them · 去处理' }));
+    expect(banner.textContent).toContain('3 payment requests waiting for Finance');
+    fireEvent.click(screen.getByRole('button', { name: 'Open them ›' }));
     expect(screen.getByLabelText('landed').textContent).toBe('/scm/payment-requests?filter=waiting');
   });
 
