@@ -44,6 +44,7 @@ import {
 } from './BankStatementsTop';
 import { LineTabBody, LineTabs, firstOpenTab, openingTab, tabCounts, type LineTab } from './BankLineTabs';
 import look from './BankStatements.module.css';
+import { BankReconPrintModal, setAsideLines, setAsideSen } from './BankReconPrint';
 import { useFinanceTodo } from './finance/finance-todo-queries';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
@@ -148,6 +149,8 @@ const MonthView = ({ picked, bank, missingSince, onUpload }: {
   picked: Picked; bank: string; missingSince: string | null; onUpload: () => void;
 }) => {
   const q = useBankMonth(picked.accountCode, picked.month);
+  const setup = useBankSetup();
+  const account = setup.data?.accounts.find((x) => x.account_code === picked.accountCode) ?? null;
   const [params, setParams] = useSearchParams();
   /* The lines a person pressed "Not this" on under To match: they go to To
      choose. Nothing is unlinked — a To match line was never linked, only
@@ -155,6 +158,8 @@ const MonthView = ({ picked, bank, missingSince, onUpload }: {
   const [chooseAnyway, setChooseAnyway] = useState<ReadonlySet<number>>(new Set());
   const typedRef = useRef<HTMLDivElement>(null);
   const tabsRef = useRef<HTMLDivElement>(null);
+  /* The A4 statement (BankReconPrint); the earlier PDF stays one release behind its "Old PDF" button. */
+  const [printing, setPrinting] = useState(false);
   const goTo = (r: { current: HTMLDivElement | null }) => r.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   /* THE REPORT. Owner, 2026-09-08: 然后就是match 完了我要report.
@@ -208,6 +213,7 @@ const MonthView = ({ picked, bank, missingSince, onUpload }: {
   const f: MonthFacts = {
     month: data.month, accountCode: data.accountCode, assembly: a, reconciliation: r, lock: data.lock,
     total: lines.length, open: open.length, missing,
+    asideSen: setAsideSen(lines), asideCount: setAsideLines(lines).length,
   };
   const needsTyping = data.lock == null
     && (a.closingFrom == null || a.closingFrom.typed != null || a.openingFrom == null || a.openingFrom.typed != null);
@@ -227,7 +233,16 @@ const MonthView = ({ picked, bank, missingSince, onUpload }: {
     <ReconcilePickProvider lines={ordered} entries={entries}>
     <section className={look.panel} aria-label={`${monthTitle(picked.month)} · ${picked.accountCode}`}>
       {missing && <MissingBanner bank={bank} a={a} from={missing} onUpload={onUpload} />}
-      <MonthHeader data={data} picked={picked} bank={bank} open={open.length} onPrint={print.openPreview} onExport={exportCsv} />
+      <MonthHeader data={data} picked={picked} bank={bank} open={open.length} asideSen={f.asideSen} onPrint={() => setPrinting(true)} onExport={exportCsv} />
+      {printing && (
+        <BankReconPrintModal onClose={() => setPrinting(false)} onOldPdf={() => { setPrinting(false); print.openPreview(); }}
+          d={{
+            accountCode: data.accountCode, month: data.month, monthTitle: monthTitle(data.month), bank,
+            accountName: account?.account_name ?? null, accountNo: account?.account_no ?? null,
+            assembly: a, reconciliation: r, lock: data.lock, files: data.statements.map((s) => s.file_name),
+            lines, entries,
+          }} />
+      )}
 
       {/* MOUNTED ONLY WHILE OPEN. The dialog reads the company branding through
           react-query, so mounting it closed puts a live query on every month a
@@ -264,7 +279,7 @@ const MonthView = ({ picked, bank, missingSince, onUpload }: {
 
       <MonthTracker f={f} />
       <MonthFigures f={f} onTypeClosing={needsTyping ? () => goTo(typedRef) : null} />
-      <DifferenceWalk f={f} onLines={() => showTab(firstOpenTab(counts))} onLedger={() => showTab('not-on-bank')} />
+      <DifferenceWalk f={f} onLines={() => showTab(firstOpenTab(counts))} onLedger={() => showTab('not-on-bank')} onAside={() => showTab('set-aside')} />
 
       {/* The inconsistency comes before anything is read off the walk: a walk
           the numbers cannot account for looks like work has been done. */}
@@ -315,9 +330,9 @@ const MonthView = ({ picked, bank, missingSince, onUpload }: {
    the press. A locked month shows the figures it was locked at — the snapshot,
    not today's numbers — and unlocking takes the approve right and a reason. */
 
-const MonthHeader = ({ data, picked, bank, open, onPrint, onExport }: {
+const MonthHeader = ({ data, picked, bank, open, asideSen, onPrint, onExport }: {
   data: { lock: BankMonthLock | null; assembly: BankMonthAssembly; reconciliation: Reconciliation; statements: unknown[] };
-  picked: Picked; bank: string; open: number; onPrint: () => void; onExport: () => void;
+  picked: Picked; bank: string; open: number; asideSen: number; onPrint: () => void; onExport: () => void;
 }) => {
   const lock = useLockBankMonth();
   const unlock = useUnlockBankMonth();
@@ -325,7 +340,7 @@ const MonthHeader = ({ data, picked, bank, open, onPrint, onExport }: {
   const [asking, setAsking] = useState(false);
   const held = data.lock;
   const a = data.assembly;
-  const reasons = lockReasons(data.reconciliation, a, open);
+  const reasons = lockReasons(data.reconciliation, a, open, asideSen);
   const files = (n: number) => `${n} file${n === 1 ? '' : 's'}`;
   return (
     <>
