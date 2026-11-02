@@ -74,6 +74,7 @@ import { merchantChargesReport } from './accounting-merchant-charges';
 import { performanceReport, savePerformanceSettingsHandler } from './accounting-performance';
 import { forecastFiguresHandler, forecastGetHandler, forecastPutHandler } from './accounting-forecast';
 import { dashboardHandler } from './accounting-dashboard';
+import { financeTodoHandler, financeTodoCountHandler } from './accounting-todo';
 import { openingAccountsPut, openingGet, openingLock, openingPaperCancel, openingPaperCreate, openingPaperUpdate, openingStockPut, openingUnlock } from './accounting-opening';
 import { numberingGet, numberingPut } from './accounting-numbering';
 import { receiptsList, receiptEnsure, receiptFormalise } from './accounting-receipts';
@@ -200,6 +201,10 @@ accounting.put('/forecast', forecastPutHandler);
 accounting.get('/forecast/figures', forecastFiguresHandler);
 /* The Financial Dashboard (owner 2026-09-21): the statements per period, beside the forecast. */
 accounting.get('/dashboard', dashboardHandler);
+/* Finance's To do (the owner's Claude Design redesign, 2026-11-02): the jobs
+   the books raise, and their count for the sidebar badge (routes/accounting-todo.ts). */
+accounting.get('/todo', financeTodoHandler);
+accounting.get('/todo/count', financeTodoCountHandler);
 /* The books' opening (owner 2026-10-28; Finance › Setup › Opening Balance): routes/accounting-opening.ts. */
 accounting.get('/opening', openingGet);
 accounting.put('/opening/accounts', openingAccountsPut);
@@ -1379,24 +1384,25 @@ accounting.post('/backfill/customer-payments', async (c) => {
 /* GET /daily-bank?date=YYYY-MM-DD — the owner's board (brief 3.6): where the
    money is today and how much can actually move. Live from the ledger, no
    cache (2.3) - so it can never disagree with the trial balance. */
-export const dailyBankHandler = async (c: any) => {
-  const co = requireActiveCompanyId(c);
-  if (!co.ok) return c.json(co.refusal, 409);
-  const dateQ = c.req.query('date') ?? todayMyt();
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(dateQ) ? dateQ : todayMyt();
-  const sb = c.get('supabase');
+/** The board for one company and day — the handler's reads and the To do's
+    "Can move today" (acc/finance-todo) share it, so the two never disagree.
+    `withNames` false skips the names the board prints for the day's lines. */
+export async function loadDailyBankBoard(
+  sb: any, companyId: number, date: string, opts: { withNames: boolean } = { withNames: true },
+): Promise<{ ok: true; board: ReturnType<typeof computeDailyBank> } | { ok: false; reason: string }> {
+  const co = { companyId };
 
   const { data: moneyRaw, error: mErr } = await sb.from('accounts')
     .select('account_code, account_name')
     .eq('company_id', co.companyId).eq('acc_money', true).eq('is_active', true)
     .order('account_code');
-  if (mErr) return c.json({ error: 'load_failed', reason: mErr.message }, 500);
+  if (mErr) return { ok: false, reason: mErr.message };
   const money = (moneyRaw ?? []) as Array<{ account_code: string; account_name: string }>;
 
   const { data: acqRaw, error: aErr } = await sb.from('acc_acquirers')
     .select('code, transit_account_code, bank_account_code')
     .eq('company_id', co.companyId).eq('is_active', true).order('code');
-  if (aErr) return c.json({ error: 'load_failed', reason: aErr.message }, 500);
+  if (aErr) return { ok: false, reason: aErr.message };
   /* One transit account may serve several acquirers until 决定4 assigns each
      its own - collapse duplicates so the board does not count a balance twice. */
   const transitByAccount = new Map<string, string>();
@@ -1423,7 +1429,7 @@ export const dailyBankHandler = async (c: any) => {
   const { data: transitNamesRaw, error: tErr } = await sb.from('accounts')
     .select('account_code, account_name')
     .eq('company_id', co.companyId).in('account_code', transitCodes.length ? transitCodes : ['—none—']);
-  if (tErr) return c.json({ error: 'load_failed', reason: tErr.message }, 500);
+  if (tErr) return { ok: false, reason: tErr.message };
   const nameOf = new Map(((transitNamesRaw ?? []) as Array<{ account_code: string; account_name: string }>)
     .map((r) => [r.account_code, r.account_name]));
   const transitAccounts = transitCodes.map((code) => ({
@@ -1448,12 +1454,12 @@ export const dailyBankHandler = async (c: any) => {
     .eq('company_id', co.companyId).eq('status', 'DRAFT')
     .not('checked_at', 'is', null)
     .lte('checked_at', `${date}T23:59:59.999`);
-  if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
+  if (pErr) return { ok: false, reason: pErr.message };
   const pending = (pendingRaw ?? []) as PendingVoucherRow[];
 
   const allCodes = [...money.map((m) => m.account_code), ...transitCodes];
   if (allCodes.length === 0) {
-    return c.json(computeDailyBank(date, [], [], [], pending));
+    return { ok: true, board: computeDailyBank(date, [], [], [], pending) };
   }
   const { data: lines, error: lErr } = await paginateAll<Record<string, unknown>>((from, to) =>
     sb.from('v_gl_entries').select('entry_date, je_no, source_type, source_doc_no, account_code, debit_sen, credit_sen, notes, reversed, reversed_by_je')
@@ -1462,7 +1468,7 @@ export const dailyBankHandler = async (c: any) => {
       .lte('entry_date', date)
       .order('line_id')
       .range(from, to));
-  if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
+  if (lErr) return { ok: false, reason: lErr.message };
 
   /* The board reads the ledger the reconciliation reads: neither side of a
      reversal pair is money that moved (docs/bugs/0923). */
@@ -1481,10 +1487,10 @@ export const dailyBankHandler = async (c: any) => {
   const partyOf = new Map<string, string>();
   const receiptOf = new Map<string, string>();
   const jeNos = [...new Set(todays.map((l) => String(l.je_no)))];
-  if (jeNos.length > 0) {
+  if (opts.withNames && jeNos.length > 0) {
     const { data: partyRows, error: prErr } = await sb.from('v_gl_entries').select('je_no, party_name')
       .eq('company_id', co.companyId).in('je_no', jeNos).not('party_name', 'is', null);
-    if (prErr) return c.json({ error: 'load_failed', reason: prErr.message }, 500);
+    if (prErr) return { ok: false, reason: prErr.message };
     for (const r of (partyRows ?? []) as Array<{ je_no: string; party_name: string | null }>) {
       if (r.party_name && !partyOf.has(r.je_no)) partyOf.set(r.je_no, r.party_name);
     }
@@ -1492,7 +1498,7 @@ export const dailyBankHandler = async (c: any) => {
     if (payIds.length > 0) {
       const { data: orRows, error: orErr } = await sb.from('acc_official_receipts').select('payment_id, or_number, doc_no')
         .eq('company_id', co.companyId).neq('status', 'CANCELLED').in('payment_id', payIds);
-      if (orErr) return c.json({ error: 'load_failed', reason: orErr.message }, 500);
+      if (orErr) return { ok: false, reason: orErr.message };
       for (const r of (orRows ?? []) as Array<{ payment_id: string; or_number: string | null; doc_no: string | null }>) {
         const shown = r.or_number ?? r.doc_no;
         if (shown) receiptOf.set(String(r.payment_id), shown);
@@ -1502,7 +1508,7 @@ export const dailyBankHandler = async (c: any) => {
       if (orderless.length > 0) {
         const { data: payRows, error: payErr } = await sb.from('mfg_sales_order_payments').select('id, so_doc_no')
           .eq('company_id', co.companyId).in('id', orderless);
-        if (payErr) return c.json({ error: 'load_failed', reason: payErr.message }, 500);
+        if (payErr) return { ok: false, reason: payErr.message };
         for (const r of (payRows ?? []) as Array<{ id: string; so_doc_no: string | null }>) {
           if (r.so_doc_no) receiptOf.set(String(r.id), r.so_doc_no);
         }
@@ -1518,7 +1524,17 @@ export const dailyBankHandler = async (c: any) => {
   const stamped = (counted as unknown as BoardLine[]).map((l) => (isTodayMoney(l)
     ? { ...l, party: partyOf.get(String(l.je_no)) ?? null, doc_no: docOf(l) }
     : l));
-  return c.json(computeDailyBank(date, money, transitAccounts, stamped as never, pending));
+  return { ok: true, board: computeDailyBank(date, money, transitAccounts, stamped as never, pending) };
+}
+
+export const dailyBankHandler = async (c: any) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const dateQ = c.req.query('date') ?? todayMyt();
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(dateQ) ? dateQ : todayMyt();
+  const r = await loadDailyBankBoard(c.get('supabase'), co.companyId, date);
+  if (!r.ok) return c.json({ error: 'load_failed', reason: r.reason }, 500);
+  return c.json(r.board);
 };
 accounting.get('/daily-bank', dailyBankHandler);
 

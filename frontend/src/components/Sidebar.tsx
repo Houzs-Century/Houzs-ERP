@@ -66,7 +66,7 @@ import {
   LifeBuoy,
   History,
   CalendarOff,
-  type LucideIcon, Landmark, CreditCard, Banknote, Receipt, Server, Sparkles, ScanLine } from "lucide-react";
+  type LucideIcon, Landmark, CreditCard, Banknote, Receipt, Server, Sparkles, ScanLine, ListChecks } from "lucide-react";
 import { cn } from "../lib/utils";
 import { booleanRecordPreference, useIdentityPreference } from "../hooks/useIdentityPreference";
 import { useAuth } from "../auth/AuthContext";
@@ -727,6 +727,11 @@ export const NAV_TABS: NavTab[] = [
     anyPerm: ["*", "scm.access"],
     anyAccess: ["scm.finance", "scm.finance.accounting", "scm.finance.outstanding"],
     children: [
+      // ── To do and Money today lead (the owner's Claude Design redesign,
+      //    2026-11-02): Finance's home is what is waiting on you, with its count;
+      //    Money today opens the Daily Bank board, as the design's single entry.
+      { to: "/scm/finance", end: true, label: "To do", icon: ListChecks, badge: "finance-todo", anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
+      { to: "/scm/daily-bank?view=board", label: "Money today", icon: Landmark, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.bank"] },
       // ── SIX GROUPS, BY THE JOB (owner 2026-09-12: finance 的 function 分到很散,
       //    我希望我要 maintenance 的东西一个子 side bar, report 一个 side bar;
       //    docs/bugs/0824). Fifteen flat entries and the Accounting page's

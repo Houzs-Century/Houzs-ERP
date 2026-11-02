@@ -13,22 +13,37 @@ import { ACCOUNTING_TABS } from '../pages/scm-v2/accounting-tabs';
  * A seventh, Forecasting, joined on 2026-09-21 (the Forecast P&L; the
  * Dashboard follows) — targets, not books, so it sits after the reports.
  *
- * Pinned here: the seven groups in the owner's order; every destination that
- * existed before still exists (nothing lost in the move); every deep link
- * names a tab the page knows; no destination twice.
+ * The owner's Claude Design redesign (2026-11-02) puts two single entries
+ * above them: To do (Finance's home, with its count) and Money today.
+ *
+ * Pinned here: the two entries, then the seven groups in the owner's order;
+ * every destination that existed before still exists (nothing lost in the
+ * move); every deep link names a tab the page knows; no destination twice.
  */
 const flatten = (tabs: readonly NavTab[]): NavTab[] =>
   tabs.flatMap((t) => [t, ...(t.children ? flatten(t.children) : [])]);
 
 const finance = NAV_TABS.find((t) => t.groupId === 'scm-finance');
 
+const groups = (finance?.children ?? []).filter((g) => g.children);
+
 describe('the Finance sidebar', () => {
+  it('opens with To do and Money today, single entries with their own page', () => {
+    const [todo, money] = finance?.children ?? [];
+    expect(todo).toMatchObject({ label: 'To do', to: '/scm/finance', end: true, badge: 'finance-todo' });
+    expect(money).toMatchObject({ label: 'Money today', to: '/scm/daily-bank?view=board' });
+    expect(todo?.children, 'To do is a page, not a group').toBeUndefined();
+    expect(money?.children, 'Money today is a page, not a group').toBeUndefined();
+  });
+
   it('is seven groups, in the order the money moves', () => {
     expect(finance).toBeDefined();
     expect((finance?.children ?? []).map((g) => g.label)).toEqual([
+      'To do', 'Money today',
       'Money in', 'Money out', 'Bank & cards', 'Books', 'Reports', 'Forecasting', 'Setup',
     ]);
-    for (const g of finance?.children ?? []) {
+    expect(groups).toHaveLength(7);
+    for (const g of groups) {
       expect(g.children?.length ?? 0, `${g.label} has entries`).toBeGreaterThan(0);
       expect(g.groupId, `${g.label} remembers its open state`).toBeTruthy();
       expect(g.to, `${g.label} is a group header, not a link`).toBeUndefined();
