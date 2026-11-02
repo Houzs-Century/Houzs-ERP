@@ -126,8 +126,8 @@ export const SupplierMaintenance = () => {
   return (
     <div className="space-y-4">
       <PageHeader
-        eyebrow="Money out"
-        title="Supplier Maintenance · 供应商"
+        eyebrow="Finance · Money out"
+        title="Supplier maintenance"
         actions={finance ? (
           <Button variant="primary" size="sm" onClick={() => setForm({ mode: 'new' })}>
             <Plus size={16} strokeWidth={1.75} /> New supplier

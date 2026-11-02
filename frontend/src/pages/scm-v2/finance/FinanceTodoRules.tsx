@@ -31,7 +31,7 @@ const groupLabel = (id: string): string => BUILT_IN_GROUPS.find((g) => g.id === 
 
 /** The design's TEMPLATES: what a rule Finance adds can look for. */
 const TEMPLATES: Record<CustomRule['tpl'], { name: string; finds: (n: string) => string; paramLabel: string; unit: string; def: number; group: string; button: string }> = {
-  bills: { name: 'Supplier bills due soon', finds: (n) => `AP invoices due within ${n} days and not paid`, paramLabel: 'Due within', unit: 'days', def: 7, group: 'pay', button: 'Opens AP invoices' },
+  bills: { name: 'Supplier bills due soon', finds: (n) => `Supplier bills due within ${n} days and not paid`, paramLabel: 'Due within', unit: 'days', def: 7, group: 'pay', button: 'Opens Supplier bills' },
   drafts: { name: 'Drafts left too long', finds: (n) => `Finance documents still in Draft after ${n} days`, paramLabel: 'Older than', unit: 'days', def: 3, group: 'other', button: 'Opens Payment vouchers' },
   big: { name: 'Large payments received', finds: (n) => `Customer payments over RM ${n}, each needs its own e-invoice`, paramLabel: 'Over RM', unit: '', def: 10_000, group: 'other', button: 'Opens Official receipts' },
 };

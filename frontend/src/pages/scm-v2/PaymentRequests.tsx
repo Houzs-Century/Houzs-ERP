@@ -180,7 +180,8 @@ export const PaymentRequests = () => {
 
   return (
     <div className="space-y-4">
-      <PageHeader eyebrow="Payments" title="Payment Requests · 申请付款" />
+      {/* Finance reads it under Money out (the redesign); a requester, as his own payments. */}
+      <PageHeader eyebrow={finance ? 'Finance · Money out' : 'Payments'} title="Payment requests" />
       <section className={styles.card}>
         <div className={styles.cardHeader} style={{ flexWrap: 'wrap', gap: 'var(--space-3)' }}>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>

@@ -355,8 +355,8 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
   return (
     <div className="space-y-4">
       {!debitNotes && <PageHeader
-        eyebrow="Finance"
-        title="AP Invoices"
+        eyebrow="Finance · Money out"
+        title="Supplier bills"
         actions={canCreate ? (
           <span style={{ display: 'inline-flex', gap: 'var(--space-4)', alignItems: 'center' }}>
             {/* The pile: many supplier bills at once, read and split one AP

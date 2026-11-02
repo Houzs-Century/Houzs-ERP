@@ -78,7 +78,7 @@ const KEY = 'credit-notes';
 /* An other-debtor note moves the debtor's bills, so the debtor side's lists
    (Other Debtors, AR Invoices and its bill pop-out) are read again too. */
 const invalidate = (qc: ReturnType<typeof useQueryClient>) => {
-  for (const key of [KEY, 'journal-entries', 'gl-entries', 'other-debtors', 'other-debtor-detail', 'ar-invoices', 'ar-bill']) {
+  for (const key of [KEY, 'journal-entries', 'gl-entries', 'other-debtors', 'other-debtor-detail', 'ar-invoices', 'ar-bill', 'finance-todo']) {
     void qc.invalidateQueries({ queryKey: [key] });
   }
 };

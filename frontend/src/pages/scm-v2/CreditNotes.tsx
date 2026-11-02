@@ -79,7 +79,7 @@ const SIDES: Record<NoteSide, { title: string; description: string; kinds: NoteK
     tableId: 'credit-notes',
   },
   AP: {
-    title: 'Supplier & Other Creditor CN / DN',
+    title: 'Supplier & other creditor CN / DN',
     description: 'A credit note from a supplier or an other creditor — we owe them less; a debit note — we owe them more. A note is raised as a draft, posted to the ledger, cancelled by contra; a debit note is a bill of its own kind.',
     kinds: ['SCN'],
     hint: 'SCN: we owe the supplier less — it knocks off their invoices.',
@@ -255,7 +255,7 @@ export const CreditNotes = ({ side = 'AR' }: { side?: NoteSide }) => {
 
   return (
     <div className="space-y-4">
-      <PageHeader eyebrow="Finance" title={page.title}
+      <PageHeader eyebrow={side === 'AP' ? 'Finance · Money out' : 'Finance · Money in'} title={page.title}
         description={page.description}
         actions={side === 'AP' && view !== 'debit' ? (
           <>

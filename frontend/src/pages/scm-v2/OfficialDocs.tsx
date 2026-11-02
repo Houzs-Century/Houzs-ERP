@@ -56,7 +56,7 @@ export const OfficialDocs = () => {
 
   return (
     <div className="space-y-4">
-      <PageHeader eyebrow="Money out" title="Official invoices owed · 欠正式单" />
+      <PageHeader eyebrow="Finance · Money out" title="Official invoices owed" />
       <section className={styles.card}>
         <div className={styles.cardHeader} style={{ flexWrap: 'wrap', gap: 'var(--space-3)' }}>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>

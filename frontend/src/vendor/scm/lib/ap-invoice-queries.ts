@@ -69,6 +69,8 @@ const invalidate = (qc: ReturnType<typeof useQueryClient>) => {
   void qc.invalidateQueries({ queryKey: ['payment-request-bill-matches'] });
   /* …and answers (or, cancelled, re-opens) a request on Finance's waiting count. */
   void qc.invalidateQueries({ queryKey: ['payment-requests'] });
+  /* …and moves what To do raises (bills due, drafts). */
+  void qc.invalidateQueries({ queryKey: ['finance-todo'] });
 };
 
 export type ApInvoiceLineInput = { description?: string; debitAccountCode: string; amountSen: number; projectId?: number };
