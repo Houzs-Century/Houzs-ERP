@@ -2,11 +2,13 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   buildDeliveryFollowUp,
   buildServiceCaseReceived,
+  buildServiceCaseStatus,
   isConnectConfigured,
   postConnectContact,
   parseConnectCompanyProfiles,
   CONNECT_DELIVERY_AUTOMATION,
   CONNECT_SERVICE_CASE_AUTOMATION,
+  CONNECT_SERVICE_CASE_STATUS_AUTOMATION,
   CONNECT_RESET_ATTRIBUTES,
   chatCallbackUrl,
   connectUntriggeredReason,
@@ -301,6 +303,29 @@ describe('buildServiceCaseReceived', () => {
     expect(contact.attributes.button_status).toBeUndefined();
     expect(contact.attributes.order_total).toBeUndefined();
     expect(Object.keys(contact.attributes).sort()).toEqual(['assr_no', 'full_name', 'ref_1']);
+  });
+});
+
+describe('buildServiceCaseStatus', () => {
+  it('maps name/assr_no/case_status and fires the Service Case Status automation by name', () => {
+    const contact = buildServiceCaseStatus('+60123', 'Wong', 'ASSR/2610-038', 'Inspecting the item');
+    expect(contact).toEqual({
+      phone: '+60123',
+      name: 'Wong',
+      automation: CONNECT_SERVICE_CASE_STATUS_AUTOMATION,
+      attributes: { full_name: 'Wong', assr_no: 'ASSR/2610-038', case_status: 'Inspecting the item' },
+    });
+  });
+
+  it('the automation name matches the Connect flow, byte-for-byte', () => {
+    expect(CONNECT_SERVICE_CASE_STATUS_AUTOMATION).toBe('Service Case Status');
+  });
+
+  it('is button-less: no callback_url or conversation state', () => {
+    const contact = buildServiceCaseStatus('+60123', 'Wong', 'ASSR/2610-038', 'Reviewing your request');
+    expect(contact.attributes.callback_url).toBeUndefined();
+    expect(contact.attributes.button_status).toBeUndefined();
+    expect(Object.keys(contact.attributes).sort()).toEqual(['assr_no', 'case_status', 'full_name']);
   });
 });
 
