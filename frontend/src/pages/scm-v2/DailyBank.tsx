@@ -20,17 +20,16 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Calendar, Camera, ChevronLeft, ChevronRight, FileDown, ImageDown } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, ImageDown, Printer } from 'lucide-react';
 import { useDailyBank, useDailyClose, useSaveDailyClose, useConfirmDailyClose } from './accounting-phase1-queries';
 import { fmtSen, fmtSenPlain } from '../../vendor/shared/format';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 import { DateField } from "../../vendor/scm/components/DateField";
-import { drawDailyBankCanvas } from './daily-bank-report';
-import { generateDailyBankPdf } from './daily-bank-pdf';
 import { DailyBankBoardView } from './DailyBankBoard';
 import { DailyBankAccounts } from './DailyBankAccounts';
 import { DailyBankClose } from './DailyBankClose';
+import { DailyBankImageModal, DailyBankPrintModal } from './DailyBankPrint';
 import css from './DailyBank.module.css';
 
 const fmt = (sen: number | null | undefined) => fmtSen(sen);
@@ -90,47 +89,10 @@ export const DailyBank = () => {
 
   const q = useDailyBank(date);
   const board = q.data ?? null;
-  const [shot, setShot] = useState<'idle' | 'copied' | 'downloaded' | 'pdf' | 'failed'>('idle');
-
-  const savePng = (canvas: HTMLCanvasElement, day: string) => {
-    const a = document.createElement('a');
-    a.href = canvas.toDataURL('image/png');
-    a.download = `daily-bank-${day}.png`;
-    a.click();
-  };
-  /* Get image: the PNG onto the clipboard for WhatsApp, saved when the clipboard refuses. */
-  const getImage = async () => {
-    if (!board) return;
-    const canvas = drawDailyBankCanvas(board);
-    setShot('idle');
-    try {
-      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
-      if (!blob) throw new Error('no blob');
-      // Clipboard first — the owner pastes straight into WhatsApp.
-      if ('write' in navigator.clipboard && typeof ClipboardItem !== 'undefined') {
-        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-        setShot('copied');
-        return;
-      }
-      throw new Error('clipboard unavailable');
-    } catch {
-      try {
-        savePng(canvas, board.date);
-        setShot('downloaded');
-      } catch {
-        setShot('failed');
-      }
-    }
-  };
-  const getPng = () => {
-    if (!board) return;
-    try { savePng(drawDailyBankCanvas(board), board.date); setShot('downloaded'); } catch { setShot('failed'); }
-  };
-  const getPdf = () => {
-    if (!board) return;
-    setShot('idle');
-    void generateDailyBankPdf(board).then(() => setShot('pdf')).catch(() => setShot('failed'));
-  };
+  /* Print opens the day's sheet (or the count sheet); Export image its picture. */
+  const [printing, setPrinting] = useState(false);
+  const [imaging, setImaging] = useState(false);
+  const future = date > todayLocal();
 
   return (
     <div className={css.page}>
@@ -149,16 +111,11 @@ export const DailyBank = () => {
           <button type="button" className={css.navButton} onClick={() => setDate(todayLocal())}><Calendar {...ICON} /> Today</button>
         </span>
         <span className={css.grow} />
-        {view !== 'close' && (
-          <>
-            <button type="button" className={css.navButton} onClick={() => { void getImage(); }} disabled={!board}><Camera {...ICON} /> Get image</button>
-            <button type="button" className={css.navButton} onClick={getPng} disabled={!board}><ImageDown {...ICON} /> PNG</button>
-            <button type="button" className={css.navButton} onClick={getPdf} disabled={!board}><FileDown {...ICON} /> PDF</button>
-            {shot === 'copied' && <span className={css.exportNote}>Copied — paste into WhatsApp</span>}
-            {shot === 'downloaded' && <span className={css.exportNote}>Saved as PNG</span>}
-            {shot === 'pdf' && <span className={css.exportNote}>Saved as PDF</span>}
-            {shot === 'failed' && <span className={`${css.exportNote} ${css.exportBad}`}>Could not export</span>}
-          </>
+        <button type="button" className={css.navButton} onClick={() => setPrinting(true)} disabled={view !== 'close' && !board}
+          title={view === 'close' ? 'Print the count sheet' : 'Print the day: every account with its movements'}><Printer {...ICON} /> Print</button>
+        {view !== 'close' && !future && (
+          <button type="button" className={css.solidButton} onClick={() => setImaging(true)} disabled={!board}
+            title="A picture of the day's bank balances for WhatsApp"><ImageDown {...ICON} /> Export image</button>
         )}
       </div>
 
@@ -171,7 +128,10 @@ export const DailyBank = () => {
         <DailyBankBoardView board={board} onOpenAccount={(code) => { setFocus(code); setView('accounts'); }} />
       )}
 
-      {view === 'accounts' && board && <DailyBankAccounts board={board} focus={focus} future={date > todayLocal()} />}
+      {view === 'accounts' && board && <DailyBankAccounts board={board} focus={focus} future={future} />}
+
+      {printing && <DailyBankPrintModal kind={view === 'close' ? 'close' : 'bank'} board={board} date={date} today={todayLocal()} onClose={() => setPrinting(false)} />}
+      {imaging && board && <DailyBankImageModal board={board} onClose={() => setImaging(false)} />}
     </div>
   );
 };

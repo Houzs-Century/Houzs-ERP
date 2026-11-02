@@ -8,7 +8,7 @@
 // backend/src/acc/daily-bank.test.ts, the route's names and numbers in
 // backend/tests/dailyBankByBank.test.ts, the table model in daily-bank-report.test.ts.
 
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 import type { DailyBankBoard } from './accounting-phase1-queries';
@@ -51,8 +51,16 @@ vi.mock('./accounting-phase1-queries', () => ({
   useSaveDailyClose: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useConfirmDailyClose: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
-const pdfMock = vi.fn(async (_b: unknown) => undefined);
-vi.mock('./daily-bank-pdf', () => ({ generateDailyBankPdf: (b: unknown) => pdfMock(b) }));
+vi.mock('../../hooks/useBranding', () => ({ useBranding: () => ({ companyName: 'Houzs Century Sdn Bhd' }) }));
+vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: { name: 'Mei Ling' } }) }));
+vi.mock('./finance/finance-todo-queries', () => ({
+  useTodoCalendar: (month: string) => ({ data: { month, events: month === '2026-09' ? [
+    { key: 'bill:HCAPI-1', day: '2026-09-30', kind: 'pay', label: 'Kian Furniture · pay bill', short: 'Kian bill', detail: 'HCAPI-2609-024 · not paid', amountSen: 1_929_000, done: false, to: null, task: null },
+    { key: 'bill:old', day: '2026-09-20', kind: 'pay', label: 'Old · pay bill', short: 'Old bill', detail: 'HCAPI-OLD · not paid', amountSen: 1, done: false, to: null, task: null },
+  ] : [
+    { key: 'task:r1:2026-10-01', day: '2026-10-01', kind: 'routine', label: 'Rent · MK Properties', short: 'Rent', detail: 'Routine', amountSen: 480_000, done: false, to: null, task: null },
+  ] } }),
+}));
 
 import { DailyBank } from './DailyBank';
 import { accountLines } from './DailyBankAccounts';
@@ -110,12 +118,35 @@ describe('DailyBank Accounts, a block per account', () => {
     expect(screen.getByText('This day hasn’t happened yet.')).toBeTruthy();
   });
 
-  test('Get image, PNG and PDF: the PDF prints the board the page shows', async () => {
+  test('Print opens the day as an A4 sheet — the accounts, then the payments already planned after the day — and prints it', () => {
+    const print = vi.spyOn(window, 'print').mockImplementation(() => undefined);
+    renderAt('?view=board&date=2026-09-29');
+    fireEvent.click(screen.getByRole('button', { name: /^Print$/ }));
+    const dialog = screen.getByRole('dialog', { name: 'Print the day' });
+    const sheet = within(dialog).getByLabelText('Daily Bank sheet');
+    expect(sheet.className).toContain('print-area');
+    expect(sheet.textContent).toContain('Houzs Century Sdn Bhd');
+    expect(sheet.textContent).toContain('BANK BALANCE AVAILABLE');
+    expect(sheet.textContent).toContain('Tue · 2026/09/29');
+    expect(sheet.textContent).toContain('2 accounts · 2 movements');
+    expect(sheet.textContent).toContain('2026/09/30HCAPI-2609-024Kian Furniture19,290.00');
+    expect(sheet.textContent).toContain('2026/10/01Monthly routineRent4,800.00');
+    expect(sheet.textContent).not.toContain('HCAPI-OLD');
+    expect(sheet.textContent).toContain('Projected available (after future)53,546.90');
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Print$/ }));
+    expect(print).toHaveBeenCalled();
+    print.mockRestore();
+  });
+
+  test('Export image opens the picture to copy or download; a day still to come has none', () => {
     renderAt('?view=board');
-    expect(screen.getByRole('button', { name: /Get image/ })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /PNG/ })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /PDF/ }));
-    await waitFor(() => expect(pdfMock).toHaveBeenCalledWith(BOARD));
+    fireEvent.click(screen.getByRole('button', { name: /Export image/ }));
+    const dialog = screen.getByRole('dialog', { name: 'Export image' });
+    expect(within(dialog).getByRole('button', { name: /Copy image/ })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: /Download PNG/ })).toBeTruthy();
+    cleanup();
+    renderAt('?view=board&date=2999-01-01');
+    expect(screen.queryByRole('button', { name: /Export image/ })).toBeNull();
   });
 });
 
