@@ -68,7 +68,7 @@ import {
 } from "../vendor/scm/lib/address-cascade";
 import { StatePicker } from "../vendor/scm/components/StatePicker";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
-import { deferLineDateToHeader, lineDatePinned, withoutLineDate } from "../vendor/scm/lib/so-line-date-defer";
+import { createLineBody, deferLineDateToHeader, lineDatePinned, withoutLineDate } from "../vendor/scm/lib/so-line-date-defer";
 import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
 import { useCreateAmendment, type CreateAmendmentLine } from "../vendor/scm/lib/so-amendment-queries";
 import { useCreateMfgSalesOrder } from "../vendor/scm/lib/sales-order-queries";
@@ -2149,7 +2149,7 @@ export function MobileNewSO({
       }
 
       // CREATE (new / edit-draft treated as create — mints a fresh doc_no).
-      const items = namedLines.map((l) => itemBody(l));
+      const items = namedLines.map((l) => createLineBody(itemBody(l), asDraft));
 
       const body: Record<string, unknown> = {
         customerName: name.trim(),
