@@ -160,15 +160,16 @@ const movesOf = (r: PaymentRequest, me: number) => ({
   withdraw: mayWithdrawRequest(r, me),
 });
 
-const makeVoucherLabel = (r: PaymentRequest): string => (isRefundRequest(r) ? 'Make refund voucher' : 'Make voucher');
+/* The words and doors To do's request drawer shares (finance/RequestsDrawer.tsx). */
+export const makeVoucherLabel = (r: PaymentRequest): string => (isRefundRequest(r) ? 'Make refund voucher' : 'Make voucher');
 const makeVoucherTitle = (r: PaymentRequest): string => (isRefundRequest(r)
   ? `Approve — a Customer Refund on ${r.refund_source_doc_no ?? 'its order'}, the customer's bank in its notes`
   : 'Pay now — a payment voucher, the bill attached');
 /* A refund Finance does not pay is rejected (owner 2026-10-14: 我可能还会拒绝). */
-const sendBackLabel = (r: PaymentRequest): string => (isRefundRequest(r) ? 'Reject' : 'Send back');
+export const sendBackLabel = (r: PaymentRequest): string => (isRefundRequest(r) ? 'Reject' : 'Send back');
 const payOnLabel = (r: PaymentRequest): string => `Pay on ${r.familyInvoice?.invoiceNumber ?? 'the AP invoice'}`;
-const AP_INVOICE_TITLE = "Book the supplier's bill first — an AP invoice, paid later by an AP Payment";
-const apInvoiceFromRequestHref = (r: PaymentRequest): string => `/scm/ap-invoices?fromRequest=${encodeURIComponent(r.id)}`;
+export const AP_INVOICE_TITLE = "Book the supplier's bill first — an AP invoice, paid later by an AP Payment";
+export const apInvoiceFromRequestHref = (r: PaymentRequest): string => `/scm/ap-invoices?fromRequest=${encodeURIComponent(r.id)}`;
 
 /** Every way out of the page a request offers — the row, the ⋯ menu and the drawer press the same ones. */
 type Doors = {

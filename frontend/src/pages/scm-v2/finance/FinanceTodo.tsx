@@ -19,6 +19,7 @@ import { PageHeader } from '../../../components/Layout';
 import { fmtDate, fmtSen, fmtSenPlain } from '../../../vendor/shared/format';
 import styles from './FinanceTodo.module.css';
 import { AddTaskDrawer, TaskDrawer } from './TaskDrawers';
+import { RequestsDrawer } from './RequestsDrawer';
 import { TodoCalendar } from './TodoCalendar';
 import {
   useFinanceTodo, useMarkTask,
@@ -209,6 +210,13 @@ export function FinanceTodoPage() {
     setParams(next, { replace: true });
   };
   const [openTask, setOpenTask] = useState<{ id: string; occursOn: string; due: string } | null>(null);
+  /* The requests job's Review opens the Payment requests drawer here (the redesign, step 10). */
+  const requestsOpen = params.get('drawer') === 'requests';
+  const closeRequests = () => {
+    const next = new URLSearchParams(params);
+    next.delete('drawer');
+    setParams(next, { replace: true });
+  };
   const data = q.data;
   const doneCount = data?.done.length ?? 0;
   const jobCount = doneCount + (data?.mine.length ?? 0);
@@ -327,6 +335,7 @@ export function FinanceTodoPage() {
       )}
       {data && <AddTaskDrawer open={adding} onClose={() => setAdding(false)} today={data.today} groups={data.groups} />}
       {data && <TaskDrawer open={!!openTask} onClose={() => setOpenTask(null)} target={openTask} groups={data.groups} />}
+      {data && <RequestsDrawer open={requestsOpen} onClose={closeRequests} today={data.today} />}
     </div>
   );
 }

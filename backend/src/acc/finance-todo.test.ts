@@ -137,7 +137,7 @@ describe('payments', () => {
     }), FINANCE);
     expect(mine[0]).toMatchObject({
       rule: 'requests', title: 'Turn 4 payment requests into vouchers', detail: 'Kian · TNB · Ikhlas · +1 more',
-      amountSen: 10_000, since: '2026-10-20', action: { to: '/scm/payment-requests?filter=waiting' },
+      amountSen: 10_000, since: '2026-10-20', action: { to: '/scm/finance?drawer=requests' },
     });
     expect(raiseJobs(facts({ requests: [{ payee: 'Kian', amountSen: 1, createdOn: TODAY }] }), FINANCE).mine[0]?.title)
       .toBe('Turn 1 payment request into a voucher');

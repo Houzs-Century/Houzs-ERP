@@ -326,7 +326,8 @@ function paymentJobs(f: TodoFacts): Raised[] {
       title: n === 1 ? 'Turn 1 payment request into a voucher' : `Turn ${n} payment requests into vouchers`,
       detail: firstFew(f.requests.map((r) => r.payee)),
       amountSen: sum(f.requests.map((r) => r.amountSen)), since: minDay(f.requests.map((r) => r.createdOn)),
-      action: { label: 'Review', to: '/scm/payment-requests?filter=waiting', primary: true }, desk: 'finance',
+      /* Review opens To do's Payment requests drawer (the redesign, batch 4 step 10). */
+      action: { label: 'Review', to: '/scm/finance?drawer=requests', primary: true }, desk: 'finance',
     });
   }
   const check = f.vouchers.filter((v) => v.stage === 'check');
