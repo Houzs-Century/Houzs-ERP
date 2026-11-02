@@ -89,7 +89,7 @@ import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMa
 /* Service-Case rows on this board are company-scoped (owner ruling 2026-08-21).
    Both statements live in ONE module, with the reasoning, so the predicate is
    assertable and cannot be re-derived by hand here. */
-import { assrBoardLocation, assrOpenCaseGuardSql, ASSR_BOARD_LEGS, ASSR_CONFIRMED_COL, assrBoardLegs, assrCaseClosed, ASSR_LEG_TIME_COL } from '../lib/assr-board-scope'; import { overlayAssrChatState } from '../lib/assr-arrangement-message';
+import { assrBoardLocation, assrOpenCaseGuardSql, ASSR_BOARD_LEGS, ASSR_CONFIRMED_COL, assrBoardLegs, assrCaseClosed, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL } from '../lib/assr-board-scope'; import { overlayAssrChatState } from '../lib/assr-arrangement-message';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
@@ -1136,7 +1136,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           replacement_disposal: null,
           referral: null,
           // Hand-set status; overlayAssrChatState overlays the WhatsApp reply when there is one (owner 2026-10-29).
-          delivery_message_status: a.delivery_message_status ?? null,
+          delivery_message_status: a[ASSR_LEG_MSG_COL[leg.jobKind]] ?? null,
           disposal_request: null,
           dp_remark: null,
           time_range: a[ASSR_LEG_TIME_COL[leg.jobKind]] ?? null,

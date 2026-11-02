@@ -73,6 +73,12 @@ export const ASSR_LEG_TIME_COL = {
   customer_pickup: 'pickup_time_range', inspection: 'inspection_time_range', delivery: 'delivery_time_range',
 } as const;
 
+/** The hand-set message status a Service Case keeps per leg (HC-0193). The
+ *  delivery leg keeps the original case-level column. */
+export const ASSR_LEG_MSG_COL = {
+  customer_pickup: 'pickup_message_status', inspection: 'inspection_message_status', delivery: 'delivery_message_status',
+} as const;
+
 /* Stages AFTER each leg's own step (the HC sheet feed's rule): that leg is done. */
 const PAST_PICKUP = PAST_PICKUP_STAGES;
 const PAST_INSPECTION = new Set(['pending_supplier_pickup', ...PAST_PICKUP_STAGES]);
@@ -162,6 +168,8 @@ export function assrBoardUnionSql(c: CompanyScopeCtx, recentClosedSince: string)
               assr_cases.closed_at     AS closed_at,
               assr_cases.archived_at   AS archived_at,
               assr_cases.delivery_message_status AS delivery_message_status,
+              assr_cases.pickup_message_status AS pickup_message_status,
+              assr_cases.inspection_message_status AS inspection_message_status,
               assr_cases.addr1 AS addr1, assr_cases.addr2 AS addr2, assr_cases.addr3 AS addr3, assr_cases.addr4 AS addr4,
               so.customer_state AS so_state, so.postcode AS so_postcode, so.customer_country AS so_country
          FROM assr_cases

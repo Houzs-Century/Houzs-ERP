@@ -7,14 +7,14 @@
      · a DP job's DATE   → scm.dp_orders.requested_date (+ the trip's date when it
                            rides one), company-bounded to the caller's companies.
      · a DP / ASSR row's MESSAGE status → scm.dp_orders.delivery_message_status,
-                           or public.assr_cases.delivery_message_status (c.env.DB,
+                           or public.assr_cases.<leg>_message_status (c.env.DB,
                            the plane the ASSR board union reads). For a service
                            case the Service-Arrangement WhatsApp reply still
                            overlays its own value when the customer has answered,
                            so a hand-set status shows until then (owner-accepted). */
 import { scopeToAllowedCompanies } from './companyScope';
 import { dateOrNull } from './date-coerce';
-import { assrOpenCaseGuardSql, ASSR_LEG_TIME_COL } from './assr-board-scope';
+import { assrOpenCaseGuardSql, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL } from './assr-board-scope';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Hono ctx / the untyped scm PostgREST client, as elsewhere in this route
 type Ctx = any;
@@ -78,9 +78,9 @@ export async function writeNonSoFields(
     if (!data) return { status: 404, body: { error: 'not_found' } };
     return { status: 200, body: { ...OK_FIELDS } };
   }
-  // A service case's Time Slot is per leg (HC-0194), so the write names the leg.
-  if (timeRange !== undefined && !jobKind) {
-    return { status: 400, body: { error: 'job_kind_required', reason: 'A service-case time slot belongs to one job; send jobKind.' } };
+  // A service case's message status and Time Slot are per leg (HC-0193, HC-0194), so the write names the leg.
+  if (!jobKind) {
+    return { status: 400, body: { error: 'job_kind_required', reason: 'A service-case message status or time slot belongs to one job; send jobKind.' } };
   }
   // assr — public.assr_cases via c.env.DB; the open-case guard carries the
   // caller's granted-company predicate, so an out-of-scope case 404s here.
@@ -89,10 +89,10 @@ export async function writeNonSoFields(
   const openCase = (await c.env.DB.prepare(assrOpenCaseGuardSql(c)).bind(caseId).first()) as { id: number } | null;
   if (!openCase) return { status: 404, body: { error: 'not_found' } };
   try {
-    // The column name comes from the ASSR_LEG_TIME_COL map, never from the request.
+    // The column names come from the ASSR_LEG_* maps, never from the request.
     const sets: string[] = []; const binds: unknown[] = [];
-    if (deliveryMessageStatus !== undefined) { sets.push('delivery_message_status = ?'); binds.push(msg); }
-    if (timeRange !== undefined) { sets.push(`${ASSR_LEG_TIME_COL[jobKind!]} = ?`); binds.push(timeRange === '' ? null : timeRange); }
+    if (deliveryMessageStatus !== undefined) { sets.push(`${ASSR_LEG_MSG_COL[jobKind]} = ?`); binds.push(msg); }
+    if (timeRange !== undefined) { sets.push(`${ASSR_LEG_TIME_COL[jobKind]} = ?`); binds.push(timeRange === '' ? null : timeRange); }
     const res = await c.env.DB.prepare(
       `UPDATE assr_cases SET ${sets.join(', ')}, updated_at = datetime('now')
         WHERE id = ? AND closed_at IS NULL AND archived_at IS NULL`,
