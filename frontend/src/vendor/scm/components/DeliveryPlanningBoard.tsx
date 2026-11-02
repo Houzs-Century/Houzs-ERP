@@ -62,6 +62,7 @@ import styles from './DeliveryPlanningBoard.module.css';
 import { DateField } from "./DateField";
 import { deliveryDateChange, invalidDeliveryDate } from "../lib/delivery-date-edit";
 import { SearchCombo } from "./SearchCombo";
+import { useLocalities, postcodeIndex, postcodeLabel } from "../lib/localities-queries";
 import { crewComboOptions, crewComboValue, latestDoId, KEEP_CURRENT } from "../lib/dispatch-cell";
 import { useDeliveryRowMarks, rowMarkTint, useBulkSetRowMark, useBulkClearRowMark, ROW_MARK_PALETTE } from "../lib/delivery-row-mark";
 
@@ -926,6 +927,8 @@ export function DeliveryPlanningBoard({
   const updateTrip = useUpdateTrip();
   const dpCrew = useDpCrew();
   const helpers = useHelpers().data ?? [];
+  const localities = useLocalities().data;
+  const pcIndex = useMemo(() => postcodeIndex(localities ?? []), [localities]);
 
   /* PERF (2026-10-23): the inline-editor accessors must NOT close over these
      mutation objects — react-query gives them a new identity every render and on
@@ -1196,8 +1199,10 @@ export function DeliveryPlanningBoard({
     },
     {
       key: 'postcode', label: 'Postcode', width: 100,
-      accessor: (o) => detail(o.postcode ?? '—'),
-      searchValue: (o) => o.postcode ?? '',
+      // HC-0196: the area name beside the number, from the localities table.
+      accessor: (o) => detail(o.postcode ? postcodeLabel(pcIndex, o.postcode, o.customer_state) : '—'),
+      searchValue: (o) => (o.postcode ? postcodeLabel(pcIndex, o.postcode, o.customer_state) : ''),
+      exportValue: (o) => (o.postcode ? postcodeLabel(pcIndex, o.postcode, o.customer_state) : ''),
     },
     /* `building_type` ("Property") was REMOVED in the owner's 2026-08-04 column
        pass, and `house_type` took over its NAME — one "Building Type" column
@@ -1645,7 +1650,7 @@ export function DeliveryPlanningBoard({
   // rides BoardPendingContext — so a mutation's identity / isPending no longer
   // rebuilds this array. (eslint-disable: those stable callbacks are intentionally
   // omitted from the deps.)
-  }, [isEmSg, drivers, lorries, helpers, msgStatuses, salespersonNameOf]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isEmSg, drivers, lorries, helpers, msgStatuses, salespersonNameOf, pcIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Map-open column narrowing: everything NOT in the override hides at render
      time (DataGrid overlayHidden). The user's persisted layout is untouched —
