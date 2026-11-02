@@ -176,6 +176,7 @@ const ScmDeliveryRateCardsV2 = lazy(() => import("./pages/scm-v2/DeliveryRateCar
 const ScmAutoScheduleV2 = lazy(() => import("./pages/scm-v2/AutoSchedule").then((m) => ({ default: m.AutoSchedule })));
 const ScmDriverLeaveV2 = lazy(() => import("./pages/scm-v2/DriverLeave").then((m) => ({ default: m.DriverLeave })));
 const ScmThreePLCompaniesV2 = lazy(() => import("./pages/scm-v2/ThreePLCompanies").then((m) => ({ default: m.ThreePLCompanies })));
+const ScmSavedLocationsV2 = lazy(() => import("./pages/scm-v2/SavedLocations").then((m) => ({ default: m.SavedLocations })));
 const ScmFleetV2 = lazy(() => import("./pages/scm-v2/Fleet").then((m) => ({ default: m.Fleet })));
 const ScmDeliveryMaintenanceV2 = lazy(() => import("./pages/scm-v2/DeliveryMaintenance").then((m) => ({ default: m.DeliveryMaintenance })));
 const ScmLorryCapacityV2 = lazy(() => import("./pages/scm-v2/LorryCapacity").then((m) => ({ default: m.LorryCapacity })));
@@ -904,6 +905,7 @@ export default function App() {
         <Route path="/scm/auto-schedule"             element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmAutoScheduleV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/driver-leave"              element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDriverLeaveV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/threepl-companies"         element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmThreePLCompaniesV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/saved-locations"            element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmSavedLocationsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/fleet"                     element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmFleetV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/delivery-maintenance"      element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryMaintenanceV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/lorry-capacity"            element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmLorryCapacityV2 /></Scm2990Shell></ScmGuard>} />

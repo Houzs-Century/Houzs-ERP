@@ -106,3 +106,33 @@ describe('POST /dp-orders — a TRANSFER records its origin (from)', () => {
     expect(insert.from_warehouse_id).toBeNull();
   });
 });
+
+const SAVEDLOC = {
+  name: 'Sunway Loading Bay', contact_name: 'Mr Lee', contact_phone: '0123334444',
+  address1: 'Lot B1, Jalan PJS 11/15', address2: 'Bandar Sunway', city: 'Petaling Jaya', postcode: '47500', state: 'Selangor',
+};
+
+describe('POST /dp-orders — a TRANSFER can pick a saved location (方案2)', () => {
+  test('destination from a saved location fills the party + records the ref', async () => {
+    const { a, calls } = app(SAVEDLOC);
+    const res = await send(a, { jobType: 'TRANSFER', savedLocationId: UUID_A });
+    expect(res.status).toBe(201);
+    const insert = insertOf(calls);
+    expect(insert.saved_location_id).toBe(UUID_A);
+    expect(insert.party_name).toBe('Sunway Loading Bay');
+    expect(insert.address1).toBe('Lot B1, Jalan PJS 11/15');
+    expect(insert.city).toBe('Petaling Jaya');
+  });
+
+  test('origin from a saved location fills the from_* columns + records the ref', async () => {
+    const { a, calls } = app(SAVEDLOC);
+    const res = await send(a, { jobType: 'TRANSFER', fromSavedLocationId: UUID_A, overrides: DEST });
+    expect(res.status).toBe(201);
+    const insert = insertOf(calls);
+    expect(insert.address1).toBe('Dest street, KL');          // destination from override
+    expect(insert.from_saved_location_id).toBe(UUID_A);
+    expect(insert.from_name).toBe('Sunway Loading Bay');
+    expect(insert.from_address1).toBe('Lot B1, Jalan PJS 11/15');
+    expect(insert.from_city).toBe('Petaling Jaya');
+  });
+});

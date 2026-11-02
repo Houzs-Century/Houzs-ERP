@@ -26,7 +26,8 @@ import {
 import {
   partyTypeFor, emptySnapshot, snapshotFromSo, snapshotFromSupplier,
   snapshotFromProject, snapshotFromAssr, snapshotFromWarehouse, snapshotFromThreepl,
-  snapshotFromWorkshop, snapshotFromWorkshopName, type DpJobType, type DpPartySnapshot,
+  snapshotFromSavedLocation, snapshotFromWorkshop, snapshotFromWorkshopName,
+  type DpJobType, type DpPartySnapshot,
 } from '../lib/dp-party';
 import { assertTripInAllowedCompanies } from '../lib/ref-in-company';
 import { mintNextDpNo, plateForLorry } from '../lib/dp-no-mint';
@@ -169,15 +170,20 @@ const createSchema = z.object({
   // scm.warehouses. Mutually exclusive with warehouseId in the UI. Column: mig
   // 20261102T1300.
   threeplCompanyId: z.string().uuid().optional(),
+  // TRANSFER destination picked from the saved-locations address book (owner
+  // 2026-11-02 方案2). Mutually exclusive with warehouseId / threeplCompanyId in
+  // the UI. Column: mig 20261102T1700.
+  savedLocationId: z.string().uuid().optional(),
   lorryId: z.string().uuid().optional(),
   workshopId: z.string().uuid().optional(),
   workOrderId: z.string().uuid().optional(),
   // TRANSFER ORIGIN ("from where", owner 2026-11-02 方案1): the pickup point the
-  // fleet loads from — our warehouse or an outsourced 3PL, picked the same way as
-  // the destination. Optional: only a move between two chosen points sets it.
-  // Columns: mig 20261102T1500.
+  // fleet loads from — our warehouse, an outsourced 3PL, or a saved location (方案2),
+  // picked the same way as the destination. Optional: only a move between two chosen
+  // points sets it. Columns: mig 20261102T1500 / 20261102T1700.
   fromWarehouseId: z.string().uuid().optional(),
   fromThreeplCompanyId: z.string().uuid().optional(),
+  fromSavedLocationId: z.string().uuid().optional(),
   fromOverrides: z.record(z.string(), z.string().nullable()).optional(),
   requestedDate: z.string().optional(), // YYYY-MM-DD
   remark: z.string().optional(),
@@ -238,6 +244,16 @@ async function resolveSnapshot(
       'SELECT customer_name, phone, addr1, addr2, addr3, addr4, location FROM assr_cases WHERE id = ?',
     ).bind(p.assrCaseId).first<Record<string, unknown>>();
     if (a) return snapshotFromAssr(a);
+  }
+  /* TRANSFER destination from the saved-locations address book (owner 2026-11-02
+     方案2). Checked first so a picked saved location wins; its structured address
+     fills the snapshot. Error bound, never swallowed. */
+  if (p.savedLocationId) {
+    const { data, error } = await sb.from('saved_locations')
+      .select('name, contact_name, contact_phone, address1, address2, city, postcode, state')
+      .eq('id', p.savedLocationId).maybeSingle();
+    if (error) throw error;
+    if (data) return snapshotFromSavedLocation(data as Record<string, unknown>);
   }
   /* TRANSFER to an OUTSOURCED warehouse (owner 2026-11-02): the destination is a
      3PL company, not one of our warehouses. Checked before the warehouse branch
@@ -302,6 +318,13 @@ async function resolveSnapshot(
  *  never swallowed (a read blip must not silently drop the pickup point). */
 async function resolveOrigin(c: Ctx, p: z.infer<typeof createSchema>): Promise<DpPartySnapshot> {
   const sb = c.get('supabase');
+  if (p.fromSavedLocationId) {
+    const { data, error } = await sb.from('saved_locations')
+      .select('name, contact_name, contact_phone, address1, address2, city, postcode, state')
+      .eq('id', p.fromSavedLocationId).maybeSingle();
+    if (error) throw error;
+    if (data) return snapshotFromSavedLocation(data as Record<string, unknown>);
+  }
   if (p.fromThreeplCompanyId) {
     const { data, error } = await sb.from('threepl_companies')
       .select('code, name, contact_name, contact_phone, office_phone, address')
@@ -359,6 +382,7 @@ dpOrders.post('/', async (c) => {
     stock_transfer_id: p.stockTransferId ?? null,
     warehouse_id: p.warehouseId ?? null,
     threepl_company_id: p.threeplCompanyId ?? null,
+    saved_location_id: p.savedLocationId ?? null,
     lorry_id: p.lorryId ?? null,
     workshop_id: p.workshopId ?? null,
     work_order_id: p.workOrderId ?? null,
@@ -379,6 +403,7 @@ dpOrders.post('/', async (c) => {
     from_city: fromMerged.city ?? null, from_postcode: fromMerged.postcode ?? null, from_state: fromMerged.state ?? null,
     from_warehouse_id: p.fromWarehouseId ?? null,
     from_threepl_company_id: p.fromThreeplCompanyId ?? null,
+    from_saved_location_id: p.fromSavedLocationId ?? null,
     requested_date: dateOrNull(p.requestedDate),
     status: 'PENDING_SCHEDULE',
     remark: p.remark ?? null,

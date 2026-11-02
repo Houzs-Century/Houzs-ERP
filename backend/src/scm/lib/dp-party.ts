@@ -168,6 +168,22 @@ export function snapshotFromThreepl(row: Record<string, unknown>): DpPartySnapsh
   };
 }
 
+/** From an scm.saved_locations row (mig 20261102T1700) — a kept delivery point a
+ *  TRANSFER picks its origin or destination from (owner 2026-11-02 方案2). Unlike
+ *  the warehouse / 3PL masters it carries a full structured address and a contact,
+ *  so the snapshot fills them straight through. party_type stays WAREHOUSE, like
+ *  every other transfer endpoint, so grouping by party is unchanged. */
+export function snapshotFromSavedLocation(row: Record<string, unknown>): DpPartySnapshot {
+  return {
+    party_type: 'WAREHOUSE',
+    party_name: s(row.name),
+    contact_name: s(row.contact_name),
+    contact_phone: s(row.contact_phone),
+    address1: s(row.address1), address2: s(row.address2), address3: null, address4: null,
+    city: s(row.city), postcode: s(row.postcode), state: s(row.state),
+  };
+}
+
 /** From an scm.workshops row (mig 0241) — where a LORRY_SERVICE job is going.
  *
  *  The workshop master has ONE free-text `address` (like scm.suppliers before

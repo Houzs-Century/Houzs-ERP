@@ -130,6 +130,7 @@ export const SCM_SEGMENT_LABELS: Record<string, SegmentLabel> = {
   "delivery-rate-cards": ["Delivery Rate Cards", "Delivery Rate Card"],
   "delivery-maintenance": "Coverage & Fleet",
   "threepl-companies": ["3PL Companies", "3PL Company"],
+  "saved-locations": ["Saved Locations", "Saved Location"],
   "fleet": "Fleet",
   "lorry-capacity": "Lorry Capacity",
   "lorry-live-map": "Lorry Live Map",
