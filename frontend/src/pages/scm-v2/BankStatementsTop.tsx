@@ -30,7 +30,6 @@ export const monthTitle = (ym: string): string =>
 const monthWord = (ym: string, month: 'long' | 'short'): string =>
   new Date(`${ym}-01T00:00:00Z`).toLocaleString('en-US', { month, timeZone: 'UTC' });
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
-const nextDay = (ymd: string): string => new Date(Date.parse(`${ymd}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
 const signed = (sen: number): string => `${sen > 0 ? '+' : sen < 0 ? '−' : ''}${fmt(Math.abs(sen))}`;
 
 /* ── A card per bank account ─────────────────────────────────────────────── */
@@ -148,12 +147,7 @@ export function MonthStrip({ bank, months, selected, onPick, onUpload }: {
 
 /* ── One month: where it stands ──────────────────────────────────────────── */
 
-/** The first day the statement has not reached yet, while that day is past and inside the month. */
-export function missingFrom(a: BankMonthAssembly, today: string): string | null {
-  const next = nextDay(a.periodTo);
-  return next <= a.monthTo && next < today ? next : null;
-}
-
+/** `from` is To do's own "upload the statement" day, where it falls inside this month. */
 export function MissingBanner({ bank, a, from, onUpload }: { bank: string; a: BankMonthAssembly; from: string; onUpload: () => void }) {
   return (
     <div className={styles.missing}>

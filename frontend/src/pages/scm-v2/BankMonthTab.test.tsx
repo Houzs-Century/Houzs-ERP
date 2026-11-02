@@ -82,6 +82,9 @@ const state = vi.hoisted(() => ({
   typeClosing: vi.fn(),
   leaveOut: vi.fn(),
   todo: [] as unknown[],
+  entries: [] as unknown[],
+  match: vi.fn(),
+  book: vi.fn(),
 }));
 
 /* To do's own "upload the statement" rule says where the uploads stop. */
@@ -98,7 +101,7 @@ vi.mock('./bank-queries', () => ({
       accountCode: '310-0020', month: '2026-09',
       assembly: state.assembly, reconciliation: state.recon, lock: state.lock,
       balances: state.balances,
-      statements: state.statements, lines: state.lines, unmatchedEntries: [],
+      statements: state.statements, lines: state.lines, unmatchedEntries: state.entries,
       repeats: state.repeats,
     },
     isLoading: false,
@@ -109,9 +112,9 @@ vi.mock('./bank-queries', () => ({
   useBankStatements: () => ({ data: { statements: [] }, isLoading: false }),
   useBankStatement: () => ({ data: undefined, isLoading: false }),
   useUploadBankStatement: () => ({ mutate: vi.fn(), isPending: false }),
-  useBookBankReceipt: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false, isError: false, error: null }),
+  useBookBankReceipt: () => ({ mutate: state.book, mutateAsync: vi.fn(), isPending: false, isError: false, error: null }),
   useMatchBankGroup: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
-  useMatchBankLine: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
+  useMatchBankLine: () => ({ mutate: state.match, isPending: false, isError: false, error: null }),
   useIgnoreBankLine: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
   useUndoBankLine: () => ({ mutate: vi.fn(), isPending: false }),
   useLockBankMonth: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
@@ -122,6 +125,9 @@ vi.mock('./bank-queries', () => ({
 }));
 
 import { BankMonthTab, monthLabel, parseRm, previousMonthOf } from './BankMonthTab';
+
+/* jsdom does not scroll; the walk's chips scroll to the tabs they open. */
+Element.prototype.scrollIntoView = vi.fn();
 
 const setUp = (over: {
   months?: unknown[]; assembly?: BankMonthAssembly; recon?: Reconciliation;
@@ -140,6 +146,9 @@ const setUp = (over: {
   state.typeClosing.mockReset();
   state.leaveOut.mockReset();
   state.todo = [];
+  state.match.mockReset();
+  state.book.mockReset();
+  state.entries = [];
 };
 
 /* The print dialog this screen mounts reads the company branding through
@@ -596,7 +605,8 @@ describe('the movements of the month', () => {
   test('carries the file screen own rows, with what each movement came off', () => {
     setUp();
     openMonth();
-    expect(screen.getByText('Still to decide (1)')).toBeTruthy();
+    /* A payout the matcher could not tie to one report sits under To choose, and the month opens there. */
+    expect(screen.getByRole('tab', { name: /^To choose/ }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByText('a card payout, matched')).toBeTruthy();
   });
 
@@ -622,5 +632,103 @@ describe('the movements of the month', () => {
     openMonth();
     expect(screen.getByText('These numbers do not add up')).toBeTruthy();
     expect(screen.queryByText(/The bank and the books differ by/)).toBeNull();
+  });
+});
+
+/* ── The redesign's six tabs (batch 3, step 10) ─────────────────────────── */
+describe('the month in six tabs', () => {
+  const CERTAIN = { ...LINE, id: 2, line_no: 3, matched_batch_id: 7, candidates: [{ id: 7, acquirerCode: 'HLB', fileName: 'hlb-0901.csv', periodFrom: '2026-09-01', periodTo: '2026-09-01', payableSen: 60000, outstandingSen: 60000 }] };
+  const ONE_ENTRY = {
+    ...LINE, id: 3, line_no: 4, kind: 'OTHER' as const, acquirer_code: null, description: 'IBG TAN WEI MING', amount_sen: 300000,
+    entryCandidates: [{ jeNo: 'JE-2609-0041', entryDate: '2026-09-01', sourceType: 'OR', sourceDocNo: 'OR-2609-004', debitSen: 300000, creditSen: 0, amountSen: 300000, daysApart: 0, reference: 'OR-2609-004 · SO-2609-011', who: 'Tan Wei Ming' }],
+  };
+  const NOTHING_FITS = { ...LINE, id: 4, line_no: 5, kind: 'OTHER' as const, acquirer_code: null, description: 'DUITNOW 8605 SERVICE', amount_sen: -860540 };
+  const MATCHED = { ...LINE, id: 5, line_no: 6, state: 'POSTED' as const, posted_je_no: 'JE-2609-0050' };
+  const ASIDE = { ...LINE, id: 6, line_no: 7, state: 'IGNORED' as const, note: 'reversed by the bank the same day' };
+  const tabOf = (name: string) => screen.getByRole('tab', { name: new RegExp(`^${name}`) });
+
+  test('each line sits in the tab its decision puts it in, with the count on the tab', () => {
+    setUp({ lines: [CERTAIN, ONE_ENTRY, NOTHING_FITS, LINE, MATCHED, ASIDE] });
+    openMonth();
+    expect(tabOf('To match').textContent).toBe('To match2');
+    expect(tabOf('To choose').textContent).toBe('To choose1');
+    expect(tabOf('No entry found').textContent).toBe('No entry found1');
+    expect(tabOf('Matched').textContent).toBe('Matched1');
+    expect(tabOf('Set aside').textContent).toBe('Set aside1');
+    /* The month opens on the first tab with lines to work. */
+    expect(tabOf('To match').getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByText(/Same amount, one entry, names agree/)).toBeTruthy();
+  });
+
+  test('To match: the one entry is matched with one press; nothing new is posted', () => {
+    setUp({ lines: [ONE_ENTRY] });
+    openMonth();
+    expect(screen.getByText('OR-2609-004 · SO-2609-011')).toBeTruthy();
+    expect(screen.getByText('Tan Wei Ming')).toBeTruthy();
+    fireEvent.click(screen.getByText('Match'));
+    expect(state.match).toHaveBeenCalledWith({ lineId: 3, jeNo: 'JE-2609-0041' });
+  });
+
+  test('To match: a payout owed exactly this is booked through its own door, and the all-at-once button is there', () => {
+    setUp({ lines: [CERTAIN] });
+    openMonth();
+    expect(screen.getByText('Money received — all 1 matched payout')).toBeTruthy();
+    fireEvent.click(screen.getByText('Money received'));
+    expect(state.book).toHaveBeenCalledWith({ lineId: 2, allocations: [{ batchId: 7, amountSen: 60000 }] });
+  });
+
+  test('"Not this" moves a line from To match to To choose, and links nothing', () => {
+    setUp({ lines: [ONE_ENTRY] });
+    openMonth();
+    fireEvent.click(screen.getByText('Not this'));
+    expect(state.match).not.toHaveBeenCalled();
+    expect(tabOf('To match').textContent).toBe('To match0');
+    fireEvent.click(tabOf('To choose'));
+    expect(screen.getByText('This is that entry')).toBeTruthy();
+  });
+
+  test('No entry found keeps the row\'s own way to leave a line out, with its reason', () => {
+    setUp({ lines: [NOTHING_FITS] });
+    openMonth();
+    expect(tabOf('No entry found').getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByText('Not ours to reconcile')).toBeTruthy();
+  });
+
+  test('Matched and Set aside list what was decided, with Undo', () => {
+    setUp({ lines: [MATCHED, ASIDE] });
+    openMonth();
+    /* Nothing open: the month opens on Matched. */
+    expect(tabOf('Matched').getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByText(/JE-2609-0050/)).toBeTruthy();
+    expect(screen.getByText('Undo')).toBeTruthy();
+    fireEvent.click(tabOf('Set aside'));
+    expect(screen.getByText(/reversed by the bank the same day/)).toBeTruthy();
+  });
+
+  test('Not on the bank yet names where each entry stands', () => {
+    setUp({ lines: [ONE_ENTRY] });
+    state.entries = [
+      { jeNo: 'JE-2609-0041', entryDate: '2026-09-01', sourceType: 'OR', sourceDocNo: 'OR-2609-004', debitSen: 300000, creditSen: 0, reference: 'OR-2609-004', who: 'Tan Wei Ming' },
+      { jeNo: 'JE-2608-0090', entryDate: '2026-08-28', sourceType: 'PV', sourceDocNo: 'PV-2608-031', debitSen: 0, creditSen: 120000, reference: 'PV-2608-031', who: 'MK Properties', carried: true },
+    ];
+    openMonth();
+    fireEvent.click(tabOf('Not on the bank yet'));
+    expect(screen.getByText('Offered under To match')).toBeTruthy();
+    expect(screen.getByText('Earlier month · 2026/08')).toBeTruthy();
+  });
+
+  test('the walk opens the tab it names', () => {
+    setUp({ lines: [MATCHED], recon: { ...RECON, outstandingReceipts: { count: 1, sen: 300000 } } });
+    state.entries = [{ jeNo: 'JE-2609-0041', entryDate: '2026-09-01', sourceType: 'OR', sourceDocNo: 'OR-2609-004', debitSen: 300000, creditSen: 0, reference: 'OR-2609-004', who: 'Tan Wei Ming' }];
+    openMonth();
+    fireEvent.click(screen.getByText(/1 ledger entry not on the bank yet/));
+    expect(tabOf('Not on the bank yet').getAttribute('aria-selected')).toBe('true');
+  });
+
+  test('the address opens the tab asked for, and an empty tab says what it looked for', () => {
+    setUp({ lines: [MATCHED] });
+    show('/scm/bank-recon?account=310-0020&month=2026-09&tab=set-aside');
+    expect(tabOf('Set aside').getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByText('Nothing set aside.')).toBeTruthy();
   });
 });
