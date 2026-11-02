@@ -42,7 +42,7 @@ const TO = String(process.env.TO_DOC ?? '').trim();
 const IDS = String(process.env.PAYMENT_IDS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 const REASON = String(process.env.REASON ?? '').trim();
 const ACTOR = String(process.env.ACTOR ?? '').trim();
-const UNLOCK = /^(d{3}-[A-Za-z0-9]{4}):(d{4}-d{2})$/.exec(String(process.env.UNLOCK ?? '').trim());
+const UNLOCK = /^(\d{3}-[A-Za-z0-9]{4}):(\d{4}-\d{2})$/.exec(String(process.env.UNLOCK ?? '').trim());
 const UNLOCK_NOTE = String(process.env.UNLOCK_NOTE ?? '').trim();
 if (process.env.UNLOCK && (!UNLOCK || !UNLOCK_NOTE)) { console.error('Refused: UNLOCK is account:YYYY-MM and needs UNLOCK_NOTE.'); process.exit(2); }
 if (!Number.isInteger(CO) || !FROM || !TO || IDS.length === 0 || !REASON || !ACTOR) {
