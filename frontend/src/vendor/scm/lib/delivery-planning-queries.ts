@@ -924,9 +924,25 @@ export function useSendDeliveryMessages() {
       }),
     // The send moved each sent order's Delivery Message Status server-side;
     // re-read just those rows so the board shows it.
-    onSuccess: (res) => {
+    onSuccess: (res, body) => {
       void qc.invalidateQueries({ queryKey: ['delivery-messages'] });
-      scheduleRowRefresh(qc, res.sent.flatMap((s) => s.docNos));
+      const sent = res.sent.flatMap((s) => s.docNos);
+      if (body.kind !== 'assr_arrangement') { scheduleRowRefresh(qc, sent); return; }
+      /* HC-0197: a Service Case leg's Done Send is not a column — only the full
+         board read overlays it from the send log (overlayAssrChatState), and the
+         row refresh is SO-only. Show it now, then re-read the board. */
+      if (sent.length === 0) return;
+      const keys = new Set(sent);
+      for (const [key, prev] of qc.getQueriesData<PlanningResponse>({ queryKey: ['delivery-planning'] })) {
+        if (!prev || !Array.isArray(prev.orders)) continue;
+        qc.setQueryData<PlanningResponse>(key, {
+          ...prev,
+          orders: prev.orders.map((o) => (o.row_type === 'assr' && keys.has(o.so_doc_no)
+            ? { ...o, delivery_message_status: 'Done Send', amend_date_from_customer: null, amend_reason_from_customer: null }
+            : o)),
+        });
+      }
+      scheduleBoardRefresh(qc, [['delivery-planning']]);
     },
   });
 }
