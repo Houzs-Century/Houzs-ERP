@@ -129,6 +129,9 @@ const ScmOtherDebtorsV2 = lazy(() => import("./pages/scm-v2/OtherDebtors").then(
 const ScmReceiptsV2 = lazy(() => import("./pages/scm-v2/Receipts").then((m) => ({ default: m.Receipts })));
 const ScmOfficialReceiptsV2 = lazy(() => import("./pages/scm-v2/OfficialReceipts").then((m) => ({ default: m.OfficialReceipts })));
 const ScmApInvoicesV2 = lazy(() => import("./pages/scm-v2/ApInvoices").then((m) => ({ default: m.ApInvoices })));
+/* A bill and a note as their own pages (the Finance redesign, batch 4 step 6). */
+const ScmApBillPage = lazy(() => import("./pages/scm-v2/ApBillPage").then((m) => ({ default: m.ApBillPage })));
+const ScmNotePage = lazy(() => import("./pages/scm-v2/NotePage").then((m) => ({ default: m.NotePage })));
 const ScmArInvoicesV2 = lazy(() => import("./pages/scm-v2/ArInvoices").then((m) => ({ default: m.ArInvoices })));
 const ScmPaymentRequestsV2 = lazy(() => import("./pages/scm-v2/PaymentRequests").then((m) => ({ default: m.PaymentRequests })));
 const ScmProductRequestsV2 = lazy(() => import("./pages/scm-v2/ProductRequests").then((m) => ({ default: m.ProductRequests })));
@@ -850,11 +853,14 @@ export default function App() {
         {/* Supplier Maintenance (owner 2026-10-02) — Finance's own supplier list; same area as the AP Invoices it sits beside. */}
         <Route path="/scm/supplier-maintenance" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmSupplierMaintenanceV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/ap-invoices/scan" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherScanV2 target="ap" /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/ap-invoices/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmApBillPage /></Scm2990Shell></ScmGuard>} />
         {/* Credit and debit notes (owner 2026-09-12; docs/bugs/0827) — two pages since
             2026-10-28: Money in's customer & other-debtor notes, Money out's supplier
             notes. One page component; the key keeps each page's filters its own. */}
         <Route path="/scm/credit-notes" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmCreditNotesV2 key="AR" side="AR" /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/supplier-notes" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmCreditNotesV2 key="AP" side="AP" /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/credit-notes/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmNotePage key="AR" side="AR" /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/supplier-notes/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmNotePage key="AP" side="AP" /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/deposit-invoices" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmDepositInvoicesV2 /></Scm2990Shell></ScmGuard>} />
         {/* The Forecast P&L (owner 2026-09-21): targets on the P&L's own tree; nothing posts. */}
         <Route path="/scm/forecast" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmForecastPnlV2 /></Scm2990Shell></ScmGuard>} />

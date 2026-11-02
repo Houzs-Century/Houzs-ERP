@@ -49,6 +49,8 @@ const extractRequestAsync = vi.fn(async (_id: unknown) => ({ bills: [{
 /* The detail's status — flipped by tests: a DRAFT may lose a file and edits plainly, a POSTED bill keeps files and re-posts on edit. */
 let detailStatus = 'DRAFT';
 let detailPaidSen = 0;
+/* What paid the bill (the bill page's Payments, step 6) — none unless a test sets it. */
+let detailPayments: Array<Record<string, unknown>> = [];
 let filesLocked: boolean | undefined;
 /* What the list was asked for — kind and docKind (the supplier debit notes, 2026-10-28). */
 const lastApList = { value: '' };
@@ -91,6 +93,7 @@ vi.mock('../../vendor/scm/lib/ap-invoice-queries', () => ({
     invoice: { id: 'api-1', invoice_number: '2990-API-2609-001', supplier_id: 'sup-h', supplier_invoice_ref: 'HVH-0912', invoice_date: '2026-09-01', due_date: null, currency: 'MYR', total_sen: 420_000, paid_sen: detailPaidSen, status: detailStatus, notes: 'Rent September', posted_at: null, posted_by: null },
     lines: [{ id: 'l1', line_no: 1, description: 'Rent Sept', debit_account_code: '900-A001', amount_sen: 400_000 }, { id: 'l2', line_no: 2, description: null, debit_account_code: '900-A002', amount_sen: 20_000 }],
     supplier: { id: 'sup-h', code: '405-H001', name: 'HOUZS VENTURE HOLDING SDN BHD' },
+    payments: detailPayments,
   } : undefined, isLoading: false }),
   useCreateApInvoice: () => ({ mutateAsync: createAsync, isPending: false }),
   useUpdateApInvoice: () => ({ mutateAsync: updateAsync, isPending: false }),
@@ -157,8 +160,18 @@ vi.mock('../../vendor/scm/lib/event-queries', async (importOriginal) => ({
 }));
 
 import { ApInvoices } from './ApInvoices';
+import { ApBillPage } from './ApBillPage';
 
-const draw = () => render(<MemoryRouter><ApInvoices /></MemoryRouter>);
+/* The list, with the pages it opens: a bill's own page (step 6) and a note's (stubbed). */
+const draw = (at = '/scm/ap-invoices') => render(
+  <MemoryRouter initialEntries={[at]}>
+    <Routes>
+      <Route path="/scm/ap-invoices" element={<ApInvoices />} />
+      <Route path="/scm/ap-invoices/:id" element={<ApBillPage />} />
+      <Route path="/scm/supplier-notes/:id" element={<div>NOTE PAGE</div>} />
+    </Routes>
+  </MemoryRouter>,
+);
 const dialog = () => screen.getByRole('dialog');
 const setAmount = (label: string, rm: string) => {
   const box = screen.getByLabelText(label);
@@ -178,20 +191,17 @@ describe('both kinds on one list', () => {
     expect(screen.getByText('Rent September')).toBeTruthy();
   });
 
-  test('an AP invoice opens in a pop-out OVER the list with its lines and description; Post confirms then calls the post', async () => {
+  test('an AP bill opens as its own page (step 6) with its lines, description and books line; Post confirms then calls the post', async () => {
     postAsync.mockClear(); confirmFn.mockClear();
     draw();
     fireEvent.click(screen.getByText('2990-API-2609-001'));
-    const d = dialog();
-    expect(within(d).getByText('Rent Sept')).toBeTruthy();
-    expect(within(d).getByText('Rent September')).toBeTruthy();
-    /* The list is still there behind it — nothing was pushed in above it. */
-    expect(screen.getByText('2990-PI-2607-005')).toBeTruthy();
-    fireEvent.click(within(d).getByText('Post'));
+    expect(screen.getByText('Rent Sept')).toBeTruthy();
+    expect(screen.getByText('Rent September')).toBeTruthy();
+    expect(screen.getByText('Posts when posted').parentElement!.textContent).toMatch(/Dr 900-A001 RENTAL, 900-A002 SERVICE FEE · Cr the supplier’s control · RM 4,200\.00/);
+    expect(screen.getByText('Post the bill before paying it.')).toBeTruthy();
+    fireEvent.click(screen.getByText('Post'));
     await waitFor(() => expect(postAsync).toHaveBeenCalledWith('api-1'));
     expect(JSON.stringify(confirmFn.mock.calls[0]![0])).toMatch(/Post 2990-API-2609-001/);
-    fireEvent.click(within(d).getByLabelText('Close'));
-    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   test('the supplier filter narrows the list, and Print listing prints exactly what is shown', () => {
@@ -341,25 +351,22 @@ describe('the bill pile hands one bill over as one AP invoice', () => {
     await waitFor(() => expect(uploadAsync).toHaveBeenCalledWith({ invoiceId: 'api-2', file: { name: 'rent.pdf', mime: 'application/pdf', dataBase64: 'b64:rent.pdf' } }));
   });
 
-  test('the Files card in the pop-out: a draft or posted-unpaid bill may lose a file (HC-0181); a paid one, or one the server says a checked voucher holds, keeps its files but still takes one', () => {
+  test('the Files card on the bill page: a draft or posted-unpaid bill may lose a file (HC-0181); a paid one, or one the server says a checked voucher holds, keeps its files but still takes one', () => {
     detailStatus = 'DRAFT';
-    const first = draw();
-    fireEvent.click(screen.getByText('2990-API-2609-001'));
+    const first = draw('/scm/ap-invoices/api-1');
     expect(screen.getByText('rent.pdf')).toBeTruthy();
     expect(screen.getByLabelText('Remove rent.pdf')).toBeTruthy();
     expect(screen.getByLabelText('Attach bill files')).toBeTruthy();
     first.unmount();
 
     detailStatus = 'POSTED';
-    const second = draw();
-    fireEvent.click(screen.getByText('2990-API-2609-001'));
+    const second = draw('/scm/ap-invoices/api-1');
     expect(screen.getByLabelText('Remove rent.pdf')).toBeTruthy();
     expect(screen.queryByText(/locked with the AP Payment/)).toBeNull();
     second.unmount();
 
     detailPaidSen = 100_000;
-    const third = draw();
-    fireEvent.click(screen.getByText('2990-API-2609-001'));
+    const third = draw('/scm/ap-invoices/api-1');
     expect(screen.queryByLabelText('Remove rent.pdf')).toBeNull();
     expect(screen.getByLabelText('Attach bill files')).toBeTruthy();
     expect(screen.getByText(/locked with the AP Payment that holds this bill/)).toBeTruthy();
@@ -367,8 +374,7 @@ describe('the bill pile hands one bill over as one AP invoice', () => {
 
     detailPaidSen = 0;
     filesLocked = true;
-    draw();
-    fireEvent.click(screen.getByText('2990-API-2609-001'));
+    draw('/scm/ap-invoices/api-1');
     expect(screen.queryByLabelText('Remove rent.pdf')).toBeNull();
     filesLocked = undefined;
     detailStatus = 'DRAFT';
@@ -379,10 +385,9 @@ describe('editing and copying a bill (round 3)', () => {
   test('Edit opens the form filled from the bill and saving sends the PATCH; a posted bill says it will re-post', async () => {
     updateAsync.mockClear();
     detailStatus = 'DRAFT';
-    const first = draw();
-    fireEvent.click(screen.getByText('2990-API-2609-001'));
+    const first = draw('/scm/ap-invoices/api-1');
     fireEvent.click(screen.getByText('Edit'));
-    const form = screen.getAllByRole('dialog')[1]!;
+    const form = dialog();
     expect((within(form).getByLabelText('Supplier invoice ref') as HTMLInputElement).value).toBe('HVH-0912');
     expect((within(form).getByLabelText('line 1 amount') as HTMLInputElement).value).toBe('4,000.00');
     fireEvent.change(within(form).getByLabelText('AP invoice description'), { target: { value: 'Rent Sept revised' } });
@@ -396,10 +401,9 @@ describe('editing and copying a bill (round 3)', () => {
     first.unmount();
 
     detailStatus = 'POSTED';
-    draw();
-    fireEvent.click(screen.getByText('2990-API-2609-001'));
+    draw('/scm/ap-invoices/api-1');
     fireEvent.click(screen.getByText('Edit'));
-    const posted = screen.getAllByRole('dialog')[1]!;
+    const posted = dialog();
     expect(within(posted).getByText(/saving re-posts it/)).toBeTruthy();
     expect(within(posted).getByText('Save & re-post')).toBeTruthy();
     detailStatus = 'DRAFT';
@@ -407,10 +411,9 @@ describe('editing and copying a bill (round 3)', () => {
 
   test("Copy opens the form with the bill's supplier, description and lines, no supplier number and today's date; saving raises a new bill", async () => {
     createAsync.mockClear();
-    draw();
-    fireEvent.click(screen.getByText('2990-API-2609-001'));
+    draw('/scm/ap-invoices/api-1');
     fireEvent.click(screen.getByText('Copy'));
-    const form = screen.getAllByRole('dialog')[1]!;
+    const form = dialog();
     expect((within(form).getByLabelText('Supplier invoice ref') as HTMLInputElement).value).toBe('');
     expect((within(form).getByLabelText('AP invoice description') as HTMLInputElement).value).toBe('Rent September');
     expect((within(form).getByLabelText('line 1 amount') as HTMLInputElement).value).toBe('4,000.00');
@@ -504,9 +507,9 @@ describe('a payment request answered by a bill (?fromRequest=, owner 2026-09-30 
     }
   });
 
-  test('?open= opens a bill\'s detail — the request\'s link to its invoice', () => {
-    render(<MemoryRouter initialEntries={['/scm/ap-invoices?open=api-1']}><ApInvoices /></MemoryRouter>);
-    expect(within(dialog()).getByText('Rent Sept')).toBeTruthy();
+  test('?open= lands on the bill\'s own page — the request\'s link to its invoice', () => {
+    draw('/scm/ap-invoices?open=api-1');
+    expect(screen.getByText('Rent Sept')).toBeTruthy();
   });
 });
 
@@ -544,10 +547,9 @@ describe('the same bill already entered', () => {
   test('a bill with nothing else under its number shows no warning; an edited bill asks without itself', () => {
     detailStatus = 'DRAFT';
     billMatchAsks.length = 0;
-    draw();
-    fireEvent.click(screen.getByText('2990-API-2609-001'));
+    draw('/scm/ap-invoices/api-1');
     fireEvent.click(screen.getByText('Edit'));
-    const form = screen.getAllByRole('dialog')[1]!;
+    const form = dialog();
     expect(within(form).queryByRole('alert', { name: 'Same bill elsewhere' })).toBeNull();
     expect(billMatchAsks.at(-1)).toEqual(['HVH-0912', '2026-09-01', null, 'api-1']);
   });
@@ -608,9 +610,9 @@ describe('Supplier bills — the redesign', () => {
       const chips = within(screen.getByRole('group', { name: 'Status' }));
       expect(chips.getByText('To use').textContent).toBe('To use 1');
       expect(chips.queryByText('Overdue')).toBeNull();
-      /* Its next step opens the note, where the knock-off lives. */
+      /* Its next step opens the note's own page, where the knock-off lives. */
       fireEvent.click(within(tr('2990-SCN-2610-001')).getByText('Knock off'));
-      expect(screen.getByText('NOTE scn-1')).toBeTruthy();
+      expect(screen.getByText('NOTE PAGE')).toBeTruthy();
     } finally { notes = []; }
   });
 
@@ -675,5 +677,47 @@ describe('Supplier bills — the redesign', () => {
     expect(bar.textContent).toContain('7,200.00');
     fireEvent.click(within(bar).getByText('Clear'));
     expect(screen.queryByLabelText('Ticked bills')).toBeNull();
+  });
+});
+
+/* The bill as its own page, and Save & post (the redesign, batch 4 step 6). */
+describe('the bill page and Save & post', () => {
+  test('a part-paid bill lists what paid it, offers Make voucher for the rest, and reads its trail', () => {
+    detailStatus = 'PARTIALLY_PAID'; detailPaidSen = 100_000;
+    detailPayments = [{ kind: 'PV', id: 'pv-1', number: '2990-PV-2609-004', date: '2026-09-20', stage: 'Approved', amountSen: 100_000, fromAdvance: false }];
+    try {
+      render(
+        <MemoryRouter initialEntries={['/scm/ap-invoices/api-1']}>
+          <Routes>
+            <Route path="/scm/ap-invoices/:id" element={<ApBillPage />} />
+            <Route path="/scm/payment-vouchers/new" element={<div>NEW AP PAYMENT</div>} />
+          </Routes>
+        </MemoryRouter>,
+      );
+      expect(screen.getByText('2990-PV-2609-004').closest('a')!.getAttribute('href')).toBe('/scm/payment-vouchers/pv-1');
+      expect(screen.getByText('Partly paid')).toBeTruthy();
+      expect(screen.getByText('Posted').parentElement!.textContent).toMatch(/^Posted · Dr /);
+      /* No cancel once money is on it; the rest is paid from a new voucher. */
+      expect(screen.queryByText('Cancel…')).toBeNull();
+      fireEvent.click(screen.getByText('Make voucher'));
+      expect(screen.getByText('NEW AP PAYMENT')).toBeTruthy();
+    } finally { detailStatus = 'DRAFT'; detailPaidSen = 0; detailPayments = []; }
+  });
+
+  test('Save & post asks first, raises the bill, then posts it and opens it', async () => {
+    createAsync.mockClear(); postAsync.mockClear(); confirmFn.mockClear();
+    draw();
+    fireEvent.click(screen.getByText('New AP bill'));
+    const d = dialog();
+    fireEvent.focus(within(d).getByLabelText('AP invoice supplier'));
+    fireEvent.mouseDown(screen.getByText('405-H001 · HOUZS VENTURE HOLDING SDN BHD'));
+    const accountBox = within(d).getAllByRole('combobox').find((el) => (el as HTMLInputElement).placeholder.includes('account this line'))!;
+    fireEvent.focus(accountBox);
+    fireEvent.mouseDown(screen.getByText('900-A001 · RENTAL'));
+    setAmount('line 1 amount', '420');
+    fireEvent.click(within(d).getByText('Save & post'));
+    await waitFor(() => expect(postAsync).toHaveBeenCalledWith('api-2'));
+    expect(createAsync).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(confirmFn.mock.calls.at(-1)![0])).toMatch(/Save and post this bill/);
   });
 });
