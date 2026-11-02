@@ -78,8 +78,9 @@ import { financeTodoHandler, financeTodoCountHandler } from './accounting-todo';
 import {
   todoPeopleHandler, todoSettingsGetHandler, todoSettingsPutHandler, todoGroupAddHandler,
   todoTaskCreateHandler, todoTaskGetHandler, todoTaskPatchHandler, todoTaskDoneHandler, todoTaskReopenHandler,
-  todoTaskMoveHandler, todoRemarkAddHandler, todoRemarkEditHandler, todoLinkSearchHandler,
+  todoTaskMoveHandler, todoRemarkAddHandler, todoRemarkEditHandler, todoLinkSearchHandler, todoRuleAddHandler,
 } from './accounting-todo-tasks';
+import { todoCalendarHandler } from './accounting-todo-calendar';
 /* Its handler stays importable from here, where the tests have always found it. */
 export { dailyBankHandler, loadDailyBankBoard } from './accounting-daily-bank';
 import { openingAccountsPut, openingGet, openingLock, openingPaperCancel, openingPaperCreate, openingPaperUpdate, openingStockPut, openingUnlock } from './accounting-opening';
@@ -217,7 +218,9 @@ accounting.get('/todo/people', todoPeopleHandler);
 accounting.get('/todo/settings', todoSettingsGetHandler);
 accounting.put('/todo/settings', todoSettingsPutHandler);
 accounting.post('/todo/groups', todoGroupAddHandler);
+accounting.post('/todo/rules', todoRuleAddHandler);
 accounting.get('/todo/link-search', todoLinkSearchHandler);
+accounting.get('/todo/calendar', todoCalendarHandler);
 accounting.post('/todo/tasks', todoTaskCreateHandler);
 accounting.get('/todo/tasks/:id', todoTaskGetHandler);
 accounting.patch('/todo/tasks/:id', todoTaskPatchHandler);

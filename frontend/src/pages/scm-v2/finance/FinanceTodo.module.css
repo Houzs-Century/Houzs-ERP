@@ -199,3 +199,11 @@ button.actionSecondary { background: #ffffff; }
   font: 600 11.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer;
 }
 .reopen:hover:not(:disabled) { background: #f4f6f3; }
+
+/* List / Calendar (batch 2). */
+.viewSwitch { display: inline-flex; padding: 2px; border-radius: 8px; background: #eef0ec; }
+.viewSwitch > button {
+  height: 26px; padding: 0 12px; border: 0; border-radius: 6px; background: transparent; color: var(--fin-text, #414539);
+  font: 600 12px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer;
+}
+.viewSwitch > .viewOn { background: #ffffff; color: #0c3f39; box-shadow: 0 1px 2px rgba(17, 24, 16, 0.12); }

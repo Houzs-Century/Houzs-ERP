@@ -24,10 +24,15 @@
 
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
-import { paginateAll } from '../lib/paginate-all';
+import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { parsePermissions } from '../../services/permissions';
-import { BUILT_IN_GROUPS, BUILT_IN_RULES, type TodoGroupDef } from '../../acc/finance-todo';
+import {
+  BUILT_IN_GROUPS, BUILT_IN_RULES, CUSTOM_TEMPLATES, addDays,
+  type CustomItem, type CustomRule, type CustomTemplate, type TodoGroupDef,
+} from '../../acc/finance-todo';
+import { OPEN_AP_STATUSES, OPEN_PI_STATUSES } from '../lib/open-invoice-states';
+import { toMyrSen } from '../lib/fx';
 import { occurrenceDays, type TaskLink, type TaskOccurrence, type TodoTask } from '../../acc/todo-tasks';
 
 type Rows = Array<Record<string, any>>;
@@ -97,7 +102,16 @@ export type TodoTaskFacts = {
   remarkCounts: Record<string, number>;
   rulesOff: string[];
   groups: TodoGroupDef[];
+  /** Finance's own rules, as defined (what each finds is read separately). */
+  customRuleDefs: CustomRule[];
 };
+
+/** The custom rules stored on the settings row, those that make sense. */
+const customRulesOf = (v: unknown): CustomRule[] =>
+  (Array.isArray(v) ? v : [])
+    .map((r) => r as Record<string, unknown>)
+    .filter((r) => typeof r.id === 'string' && (CUSTOM_TEMPLATES as readonly string[]).includes(String(r.tpl)) && Number(r.param) > 0)
+    .map((r) => ({ id: String(r.id), tpl: r.tpl as CustomTemplate, param: Number(r.param), group: String(r.group ?? 'misc') }));
 
 /** The tasks, their touched occurrences, how many remarks each has, and the settings — for the To do. */
 export async function readTodoTaskFacts(sb: any, companyId: number): Promise<{ ok: true; value: TodoTaskFacts } | { ok: false; what: string; reason: string }> {
@@ -107,7 +121,7 @@ export async function readTodoTaskFacts(sb: any, companyId: number): Promise<{ o
       .eq('company_id', companyId).order('task_id').order('occurs_on').range(lo, hi)),
     paginateAll<Record<string, any>>((lo, hi) => sb.from('acc_todo_remarks').select('id, task_id').eq('company_id', companyId).neq('body', '')
       .order('id').range(lo, hi)),
-    sb.from('acc_todo_settings').select('rules_off, groups').eq('company_id', companyId).maybeSingle(),
+    sb.from('acc_todo_settings').select('rules_off, groups, custom_rules').eq('company_id', companyId).maybeSingle(),
   ]);
   const bad = [tasks, occ, remarks, settings].find((r) => r.error);
   if (bad) return { ok: false, what: 'tasks', reason: bad.error.message };
@@ -120,7 +134,7 @@ export async function readTodoTaskFacts(sb: any, companyId: number): Promise<{ o
     ok: true,
     value: {
       tasks: ((tasks.data ?? []) as Rows).map(taskOf), occurrences, remarkCounts,
-      rulesOff: Array.isArray(s?.rules_off) ? s.rules_off.map(String) : [], groups: groupsOf(s?.groups),
+      rulesOff: Array.isArray(s?.rules_off) ? s.rules_off.map(String) : [], groups: groupsOf(s?.groups), customRuleDefs: customRulesOf(s?.custom_rules),
     },
   };
 }
@@ -162,10 +176,13 @@ export const todoPeopleHandler = async (c: any): Promise<Response> => {
 
 /* ── Settings ───────────────────────────────────────────────────────────── */
 
-async function loadSettings(sb: any, companyId: number): Promise<{ ok: true; rulesOff: string[]; groups: TodoGroupDef[] } | { ok: false; reason: string }> {
-  const { data, error } = await sb.from('acc_todo_settings').select('rules_off, groups').eq('company_id', companyId).maybeSingle();
+async function loadSettings(sb: any, companyId: number): Promise<{ ok: true; rulesOff: string[]; groups: TodoGroupDef[]; customRules: CustomRule[] } | { ok: false; reason: string }> {
+  const { data, error } = await sb.from('acc_todo_settings').select('rules_off, groups, custom_rules').eq('company_id', companyId).maybeSingle();
   if (error) return { ok: false, reason: error.message };
-  return { ok: true, rulesOff: Array.isArray(data?.rules_off) ? data.rules_off.map(String) : [], groups: groupsOf(data?.groups) };
+  return {
+    ok: true, rulesOff: Array.isArray(data?.rules_off) ? data.rules_off.map(String) : [], groups: groupsOf(data?.groups),
+    customRules: customRulesOf(data?.custom_rules),
+  };
 }
 
 export const todoSettingsGetHandler = async (c: any): Promise<Response> => {
@@ -178,7 +195,7 @@ export const todoSettingsGetHandler = async (c: any): Promise<Response> => {
   ]);
   if (!s.ok) return c.json({ error: 'load_failed', reason: s.reason }, 500);
   if (routines.error) return c.json({ error: 'load_failed', reason: routines.error.message }, 500);
-  return c.json({ rulesOff: s.rulesOff, groups: s.groups, routines: ((routines.data ?? []) as Rows).map(taskOf), mayEdit: mayWork(c) });
+  return c.json({ rulesOff: s.rulesOff, groups: s.groups, customRules: s.customRules, routines: ((routines.data ?? []) as Rows).map(taskOf), mayEdit: mayWork(c) });
 };
 
 export const todoSettingsPutHandler = async (c: any): Promise<Response> => {
@@ -187,7 +204,9 @@ export const todoSettingsPutHandler = async (c: any): Promise<Response> => {
   if (!co.ok) return c.json(co.refusal, 409);
   const body = await c.req.json().catch(() => ({})) as { rulesOff?: unknown };
   if (!Array.isArray(body.rulesOff)) return c.json({ error: 'bad_rules', message: 'Say which rules are off, as a list.' }, 400);
-  const known = new Set<string>(BUILT_IN_RULES);
+  const s = await loadSettings(c.get('supabase'), co.companyId);
+  if (!s.ok) return c.json({ error: 'load_failed', reason: s.reason }, 500);
+  const known = new Set<string>([...BUILT_IN_RULES, ...s.customRules.map((r) => r.id)]);
   const rulesOff = [...new Set(body.rulesOff.map(String))];
   const unknown = rulesOff.filter((r) => !known.has(r));
   if (unknown.length) return c.json({ error: 'bad_rules', message: `No such rule: ${unknown.join(', ')}.` }, 400);
@@ -473,3 +492,87 @@ export const todoLinkSearchHandler = async (c: any): Promise<Response> => {
   ];
   return c.json({ results });
 };
+
+/* ── Finance's own rules (Setup › To do rules › New rule) ──────────────── */
+
+/** The template's number: days for bills and drafts, ringgit for payments. */
+const PARAM_LIMITS: Record<CustomTemplate, { max: number; what: string }> = {
+  bills: { max: 90, what: 'Due within 1 to 90 days.' },
+  drafts: { max: 90, what: 'Older than 1 to 90 days.' },
+  big: { max: 10_000_000, what: 'Over RM 1 to RM 10,000,000.' },
+};
+
+export const todoRuleAddHandler = async (c: any): Promise<Response> => {
+  if (!mayWork(c)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const b = await c.req.json().catch(() => ({})) as Fields;
+  const tpl = String(b.tpl ?? '') as CustomTemplate;
+  if (!(CUSTOM_TEMPLATES as readonly string[]).includes(tpl)) return c.json({ error: 'bad_template', message: 'Pick what the rule looks for.' }, 400);
+  const param = Number(b.param);
+  if (!Number.isInteger(param) || param < 1 || param > PARAM_LIMITS[tpl].max) return c.json({ error: 'bad_param', message: PARAM_LIMITS[tpl].what }, 400);
+  const sb = c.get('supabase');
+  const s = await loadSettings(sb, co.companyId);
+  if (!s.ok) return c.json({ error: 'load_failed', reason: s.reason }, 500);
+  const group = String(b.group ?? 'misc');
+  if (!(BUILT_IN_GROUPS as readonly string[]).includes(group) && !s.groups.some((g) => g.id === group)) {
+    return c.json({ error: 'bad_group', message: 'Put it under one of the groups on the page.' }, 400);
+  }
+  const rule: CustomRule = { id: `c-${Date.now().toString(36)}`, tpl, param, group };
+  const customRules = [...s.customRules, rule];
+  const { error } = await sb.from('acc_todo_settings')
+    .upsert({ company_id: co.companyId, custom_rules: customRules, updated_by: actor(c).name, updated_at: new Date().toISOString() }, { onConflict: 'company_id' });
+  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+  return c.json({ rule, customRules }, 201);
+};
+
+/** What a custom rule finds today: the bills, drafts or payments its template looks for. */
+export async function readCustomRuleItems(sb: any, companyId: number, today: string, rule: CustomRule): Promise<CustomItem[]> {
+  if (rule.tpl === 'bills') {
+    /* Supplier bills still owing that fall due from today to N days on — a bill already late is the AP aging's. */
+    const until = addDays(today, rule.param);
+    const [api, pi] = await Promise.all([
+      paginateAll<Record<string, any>>((lo, hi) => sb.from('ap_invoices').select('id, invoice_number, supplier_id, due_date, total_sen, paid_sen, exchange_rate')
+        .eq('company_id', companyId).in('status', [...OPEN_AP_STATUSES]).gte('due_date', today).lte('due_date', until).order('id').range(lo, hi)),
+      paginateAll<Record<string, any>>((lo, hi) => sb.from('purchase_invoices').select('id, invoice_number, supplier_id, due_date, total_sen, paid_sen, exchange_rate')
+        .eq('company_id', companyId).in('status', [...OPEN_PI_STATUSES]).gte('due_date', today).lte('due_date', until).order('id').range(lo, hi)),
+    ]);
+    if (api.error || pi.error) throw new Error((api.error ?? pi.error)!.message);
+    const rows = [...((api.data ?? []) as Rows), ...((pi.data ?? []) as Rows)];
+    const ids = [...new Set(rows.map((r) => String(r.supplier_id ?? '')).filter(Boolean))];
+    const sup = await chunkIn<Record<string, any>>(ids, (batch, lo, hi) => sb.from('suppliers').select('id, name').eq('company_id', companyId).in('id', batch).order('id').range(lo, hi));
+    if (sup.error) throw new Error(sup.error.message);
+    const names = new Map(sup.data.map((x) => [String(x.id), String(x.name ?? '')]));
+    return rows
+      .map((r) => ({ no: String(r.invoice_number ?? ''), name: names.get(String(r.supplier_id)) || 'Supplier', amountSen: toMyrSen(Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0), r.exchange_rate), day: r.due_date ? String(r.due_date).slice(0, 10) : null }))
+      .filter((i) => (i.amountSen ?? 0) > 0);
+  }
+  if (rule.tpl === 'drafts') {
+    /* Finance's own papers still in draft after N days: vouchers not yet prepared, bills not posted, journals not posted. */
+    const before = new Date(`${addDays(today, -rule.param)}T00:00:00+08:00`).toISOString();
+    const [pv, api, je] = await Promise.all([
+      sb.from('payment_vouchers').select('pv_number, payee_name, created_at').eq('company_id', companyId).eq('status', 'DRAFT').is('submitted_at', null).lt('created_at', before).limit(200),
+      sb.from('ap_invoices').select('invoice_number, created_at').eq('company_id', companyId).eq('status', 'DRAFT').lt('created_at', before).limit(200),
+      sb.from('journal_entries').select('je_no, created_at').eq('company_id', companyId).eq('posted', false).eq('reversed', false).lt('created_at', before).limit(200),
+    ]);
+    const bad = [pv, api, je].find((r) => r.error);
+    if (bad) throw new Error(bad.error.message);
+    const day = (v: unknown) => (v ? new Date(new Date(String(v)).getTime() + 8 * 3_600_000).toISOString().slice(0, 10) : null);
+    return [
+      ...((pv.data ?? []) as Rows).map((r) => ({ no: String(r.pv_number ?? 'Voucher'), name: String(r.payee_name ?? ''), amountSen: null, day: day(r.created_at) })),
+      ...((api.data ?? []) as Rows).map((r) => ({ no: String(r.invoice_number ?? 'AP invoice'), name: '', amountSen: null, day: day(r.created_at) })),
+      ...((je.data ?? []) as Rows).map((r) => ({ no: String(r.je_no ?? 'Journal'), name: '', amountSen: null, day: day(r.created_at) })),
+    ];
+  }
+  /* Customer payments this month over RM N — each needs its own e-invoice. */
+  const first = `${today.slice(0, 7)}-01`;
+  const so = await paginateAll<Record<string, any>>((lo, hi) => sb.from('mfg_sales_order_payments').select('id, so_doc_no, paid_at, amount_sen, method')
+    .eq('company_id', companyId).gte('paid_at', first).lte('paid_at', today).gt('amount_sen', rule.param * 100).order('id').range(lo, hi));
+  if (so.error) throw new Error(so.error.message);
+  const pays = ((so.data ?? []) as Rows).filter((p) => p.method !== 'converted' && p.method !== 'imported');
+  const docs = [...new Set(pays.map((p) => String(p.so_doc_no ?? '')).filter(Boolean))];
+  const orders = await chunkIn<Record<string, any>>(docs, (batch, lo, hi) => sb.from('mfg_sales_orders').select('doc_no, debtor_name').eq('company_id', companyId).in('doc_no', batch).order('doc_no').range(lo, hi));
+  if (orders.error) throw new Error(orders.error.message);
+  const who = new Map(orders.data.map((o) => [String(o.doc_no), String(o.debtor_name ?? '')]));
+  return pays.map((p) => ({ no: String(p.so_doc_no ?? ''), name: who.get(String(p.so_doc_no)) ?? '', amountSen: Number(p.amount_sen ?? 0), day: String(p.paid_at).slice(0, 10) }));
+}

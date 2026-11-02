@@ -256,7 +256,10 @@ export function useLinkSearch(q: string) {
 
 /* ── Setup › To do rules ───────────────────────────────────────────────── */
 
-export type TodoSettings = { rulesOff: string[]; groups: TodoGroupDef[]; routines: TodoTask[]; mayEdit: boolean };
+/** A rule Finance added from a template (Setup › To do rules › New rule). */
+export type CustomRule = { id: string; tpl: 'bills' | 'drafts' | 'big'; param: number; group: string };
+
+export type TodoSettings = { rulesOff: string[]; groups: TodoGroupDef[]; customRules: CustomRule[]; routines: TodoTask[]; mayEdit: boolean };
 
 export function useTodoSettings() {
   return useQuery({
@@ -276,6 +279,16 @@ export function useSaveRulesOff() {
   });
 }
 
+export function useAddRule() {
+  const refresh = useRefresh();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Omit<CustomRule, 'id'>) => authedFetch<{ rule: CustomRule }>('/accounting/todo/rules', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => { refresh(); void qc.invalidateQueries({ queryKey: SETTINGS_KEY }); },
+    onError: writeFailedAs('Rule not added'),
+  });
+}
+
 export function useAddGroup() {
   const refresh = useRefresh();
   const qc = useQueryClient();
@@ -283,5 +296,40 @@ export function useAddGroup() {
     mutationFn: (label: string) => authedFetch<{ group: TodoGroupDef; groups: TodoGroupDef[] }>('/accounting/todo/groups', { method: 'POST', body: JSON.stringify({ label }) }),
     onSuccess: () => { refresh(); void qc.invalidateQueries({ queryKey: SETTINGS_KEY }); },
     onError: writeFailedAs('Group not added'),
+  });
+}
+
+/* ── Calendar ──────────────────────────────────────────────────────────── */
+
+export type CalKind = 'pay' | 'in' | 'routine' | 'task' | 'late';
+
+export type CalEvent = {
+  key: string;
+  day: string;
+  kind: CalKind;
+  label: string;
+  short: string;
+  detail: string;
+  amountSen: number | null;
+  done: boolean;
+  to: string | null;
+  task: { id: string; occursOn: string; kind: 'task' | 'routine'; action: TaskAction; link: TaskLink | null; mine: boolean } | null;
+};
+
+export type TodoCalendarPage = {
+  month: string;
+  today: string;
+  events: CalEvent[];
+  next7: Array<{ kind: CalKind; label: string; count: number; amountSen: number }>;
+  problems: string[];
+};
+
+export function useTodoCalendar(month: string) {
+  return useQuery({
+    /* Under the page's own key, so a done / moved task re-reads the calendar too. */
+    queryKey: [...FINANCE_TODO_KEY, 'calendar', month] as const,
+    queryFn: () => authedFetch<TodoCalendarPage>(`/accounting/todo/calendar?month=${encodeURIComponent(month)}`),
+    staleTime: 30_000,
+    retry: retryUnlessClientError,
   });
 }
