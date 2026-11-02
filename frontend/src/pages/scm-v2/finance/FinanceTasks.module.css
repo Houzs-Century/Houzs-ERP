@@ -128,6 +128,7 @@
 .editFoot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .editFoot .hint { margin-right: auto; }
 .history { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-left: 2px solid var(--fin-rule); background: #f9faf8; font-size: 12.5px; }
+.historyItem { display: flex; flex-direction: column; }
 .historyLabel { font-size: 11px; color: var(--fin-muted); margin-bottom: 2px; }
 .rightRow { display: flex; justify-content: flex-end; }
 .problem { padding: 10px 14px; border: 1px solid #e7c9c9; border-radius: 8px; background: #fbeeee; font-size: 12.5px; color: #7a2222; }
