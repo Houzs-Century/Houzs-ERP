@@ -59,6 +59,14 @@ async function snapshot(tx, label) {
       out(`    ${String(p.id).slice(0, 8)} ${p.method}${p.merchant_provider ? `/${p.merchant_provider}` : ''}${p.online_type ? `/${p.online_type}` : ''} RM ${rm(p.amount_sen)} ref ${p.approval_code ?? '—'} paid ${String(p.paid_at).slice(0, 10)}${p.note ? ` "${p.note}"` : ''} | JE ${jes.map((j) => `${j.je_no}${j.reversed ? ' (reversed)' : ''}`).join(', ') || '—'} | OR ${ors.map((o) => `${o.or_number} ${o.status}`).join(', ') || '—'}`);
     }
   }
+  /* The copies themselves, gone or not: their entries (and any reversal of them) and receipts. */
+  for (const id of IDS) {
+    const jes = await tx`SELECT * FROM scm.journal_entries WHERE company_id = ${CO} AND source_doc_no = ${id} ORDER BY id`;
+    const ors = await tx`SELECT or_number, status FROM scm.acc_official_receipts WHERE company_id = ${CO} AND payment_source = 'SOPAY' AND payment_id = ${id} ORDER BY id`;
+    out(`  copy ${id.slice(0, 8)}: JE ${jes.map((j) => `${j.je_no} ${String(j.entry_date).slice(0, 10)} ${j.source_type}${j.reversed ? ' reversed' : ''}${j.reversal_of ? ` (reverses ${j.reversal_of})` : ''}`).join(', ') || '—'} | OR ${ors.map((o) => `${o.or_number} ${o.status}`).join(', ') || '—'}`);
+    const rev = await tx`SELECT je_no, entry_date, source_type, source_doc_no FROM scm.journal_entries WHERE company_id = ${CO} AND je_no IN (SELECT DISTINCT reversed_by_je FROM scm.v_gl_entries WHERE company_id = ${CO} AND reversed_by_je IS NOT NULL AND je_no IN (SELECT je_no FROM scm.journal_entries WHERE company_id = ${CO} AND source_doc_no = ${id}))`;
+    if (rev.length) out(`    reversal entries: ${rev.map((r) => `${r.je_no} ${String(r.entry_date).slice(0, 10)} ${r.source_type} ${r.source_doc_no}`).join(', ')}`);
+  }
 }
 
 try {
