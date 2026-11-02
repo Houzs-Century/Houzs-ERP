@@ -237,9 +237,13 @@ async function resolveSnapshot(
      so a 3PL pick wins outright; its single free-text address fills the snapshot
      and party_type stays WAREHOUSE. */
   if (p.threeplCompanyId) {
-    const { data } = await sb.from('threepl_companies')
+    // Bind the error: on a read failure we must not fall through to the empty
+    // snapshot and then refuse with "address_required" — a misleading answer when
+    // the operator did pick a carrier. Surface the real failure instead.
+    const { data, error } = await sb.from('threepl_companies')
       .select('code, name, contact_name, contact_phone, office_phone, address')
       .eq('id', p.threeplCompanyId).maybeSingle();
+    if (error) throw error;
     if (data) return snapshotFromThreepl(data as Record<string, unknown>);
   }
   /* TRANSFER — the party is the DESTINATION. An explicit warehouseId wins (the
