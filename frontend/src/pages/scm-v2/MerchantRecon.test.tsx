@@ -116,6 +116,9 @@ vi.mock('./settlement-queries', () => ({
     isLoading: false,
   }),
   useUploadStatement: () => ({ mutateAsync: uploadMutateAsync, isPending: false }),
+  /* The Upload drawer carries Public Bank's advice too. */
+  useUploadPayoutAdvice: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  usePayouts: () => ({ data: { payouts: [], chargeAccounts: [], feeAccountByAcquirer: {} }, isLoading: false }),
   useConfirmSettlementRow: () => ({ mutate: confirmMutate, isPending: false, isError: false, error: null }),
   useUnconfirmSettlementRow: () => ({ mutate: unconfirmMutate, isPending: false }),
   useConfirmMatched: () => ({ mutate: confirmMatchedMutate, isPending: false, data: null }),
@@ -147,6 +150,8 @@ import { MerchantRecon } from './MerchantRecon';
 import { refusalText } from './settlement-ui';
 
 const draw = () => render(<MemoryRouter><MerchantRecon /></MemoryRouter>);
+/** The upload is a drawer now (the redesign): the page's Upload button opens it. */
+const openUpload = () => fireEvent.click(screen.getByRole('button', { name: 'Upload' }));
 /** A report's lines sit in five tabs (the redesign): To confirm · To choose · No sale found ‖ Confirmed · Set aside. */
 const openTab = (name: string) => fireEvent.click(screen.getByRole('tab', { name: new RegExp(`^${name}`) }));
 
@@ -204,12 +209,15 @@ describe("the top of the page (the redesign's Merchant reports)", () => {
 describe('the reconcile tab', () => {
   test('an acquirer with no unique reference is called out before anything is uploaded', () => {
     draw();
+    openUpload();
     fireEvent.change(screen.getByLabelText('Acquirer'), { target: { value: 'GHL' } });
     expect(screen.getByText(/sends no unique reference/)).toBeTruthy();
   });
 
   test('several reports can be picked at once', () => {
     draw();
+    openUpload();
+    fireEvent.change(screen.getByLabelText('Acquirer'), { target: { value: 'MBB' } });
     expect(screen.getByLabelText('Statement files').hasAttribute('multiple')).toBe(true);
   });
 
@@ -228,14 +236,17 @@ describe('the reconcile tab', () => {
       alreadyOnReportDetail: [{ lineNo: 1, txnDate: '2026-08-01', ref: 'A1', grossSen: 100000, batchId: 7, fileName: '027012896718_EP41_713_20260801.CSV', lineNoThere: 1 }],
     });
     draw();
+    openUpload();
     fireEvent.change(screen.getByLabelText('Acquirer'), { target: { value: 'MBB' } });
     const picker = screen.getByLabelText('Statement files');
     const file = new File(['Txn Date,Gross'], 'aug.csv', { type: 'text/csv' });
     /* jsdom's File carries no .text() — the page reads the file with it. */
     Object.defineProperty(file, 'text', { value: () => Promise.resolve('Txn Date,Gross') });
     fireEvent.change(picker, { target: { files: [file] } });
-    await waitFor(() => expect((screen.getByText(/^Upload merchant report/) as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(screen.getByText(/^Upload merchant report/));
+    await waitFor(() => expect((screen.getByRole('button', { name: /Upload & match/ }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: /Upload & match/ }));
+    /* The drawer says the piles; Done lands on what the upload found. */
+    fireEvent.click(await screen.findByRole('button', { name: 'Done' }));
 
     await waitFor(() => expect(screen.getByText(/report read/)).toBeTruthy());
     /* What was left out, and where it already is (docs/bugs/0823). */
@@ -287,6 +298,7 @@ describe('the reconcile tab', () => {
      field they cannot answer is how a screen teaches people to ignore it. */
   test('the statement month is asked only of the acquirer whose file has no year', () => {
     draw();
+    openUpload();
     expect(screen.queryByLabelText('Statement month')).toBeNull();
 
     fireEvent.change(screen.getByLabelText('Acquirer'), { target: { value: 'GHL' } });
@@ -541,12 +553,15 @@ describe('when every line is decided', () => {
       buckets: { MATCHED: 1, NEEDS_CONFIRM: 0, UNMATCHED: 0, IGNORED: 0 },
     });
     draw();
+    openUpload();
     fireEvent.change(screen.getByLabelText('Acquirer'), { target: { value: 'MBB' } });
     const file = new File(['Txn Date,Gross'], 'aug.csv', { type: 'text/csv' });
     Object.defineProperty(file, 'text', { value: () => Promise.resolve('Txn Date,Gross') });
     fireEvent.change(screen.getByLabelText('Statement files'), { target: { files: [file] } });
-    await waitFor(() => expect((screen.getByText(/^Upload merchant report/) as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(screen.getByText(/^Upload merchant report/));
+    await waitFor(() => expect((screen.getByRole('button', { name: /Upload & match/ }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: /Upload & match/ }));
+    /* The drawer says the piles; Done lands on what the upload found. */
+    fireEvent.click(await screen.findByRole('button', { name: 'Done' }));
     await waitFor(() => expect(screen.getByText(/report read/)).toBeTruthy());
   };
 

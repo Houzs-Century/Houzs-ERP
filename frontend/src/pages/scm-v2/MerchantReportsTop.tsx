@@ -193,7 +193,8 @@ export const TAB_EMPTY: Record<ReportTab, string> = {
 
 const rm = (sen: number): string => `RM ${(sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-export function ReportHead({ batch, counts }: { batch: SettlementBatch; counts: Record<ReportTab, number> }) {
+/** `payNote` says where an unpaid report's money stands when the acquirer has more to say than the default (Public Bank's advice). */
+export function ReportHead({ batch, counts, payNote = null }: { batch: SettlementBatch; counts: Record<ReportTab, number>; payNote?: string | null }) {
   const n = Object.values(counts).reduce((a, b) => a + b, 0);
   const toGo = counts['to-confirm'] + counts['to-choose'] + counts['no-sale'];
   const received = batch.received_sen ?? 0;
@@ -208,7 +209,7 @@ export function ReportHead({ batch, counts }: { batch: SettlementBatch; counts: 
     },
     {
       label: 'Paid out',
-      sub: paid ? `${fmtDate(batch.received_on ?? '')} · ${rm(received)}` : received > 0 ? `${rm(received)} in · ${rm(batch.outstanding_sen ?? 0)} still out` : 'Comes in through Bank statements',
+      sub: paid ? `${fmtDate(batch.received_on ?? '')} · ${rm(received)}` : received > 0 ? `${rm(received)} in · ${rm(batch.outstanding_sen ?? 0)} still out` : payNote ?? 'Comes in through Bank statements',
       state: paid ? 'done' : toGo === 0 ? 'current' : 'todo',
     },
   ];

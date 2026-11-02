@@ -25,7 +25,7 @@
 import { useState } from 'react';
 import { AlertTriangle, Upload } from 'lucide-react';
 import {
-  usePayouts, useUploadPayoutAdvice, usePostPayoutCharge, useUndoPayoutCharge,
+  usePayouts, usePostPayoutCharge, useUndoPayoutCharge,
   type Payout, type PayoutDay, type ChargeAccount,
 } from './settlement-queries';
 import {
@@ -34,12 +34,8 @@ import {
 import styles from './Suppliers.module.css';
 import grid from './MerchantRecon.module.css';
 
-export const PayoutAdviceTab = () => {
+export const PayoutAdviceTab = ({ onUpload }: { onUpload?: () => void }) => {
   const q = usePayouts();
-  const upload = useUploadPayoutAdvice();
-  const [files, setFiles] = useState<Array<{ name: string; contentBase64: string }>>([]);
-  const [results, setResults] = useState<Array<{ name: string; ok: boolean; text: string }>>([]);
-  const [sending, setSending] = useState(false);
 
   const payouts = q.data?.payouts ?? [];
   /* What the bank-charge dialog needs (docs/bugs/0787): the accounts it may
@@ -47,69 +43,23 @@ export const PayoutAdviceTab = () => {
   const chargeAccounts = q.data?.chargeAccounts ?? [];
   const feeAccountByAcquirer = q.data?.feeAccountByAcquirer ?? {};
 
-  /* The PDF goes up as base64, not text — a PDF read as text is mangled before
-     the server ever sees it. readAsDataURL's prefix is fine; the server strips
-     everything up to the comma. */
-  const readFiles = (picked: FileList | null) => {
-    setResults([]);
-    const list = Array.from(picked ?? []);
-    if (list.length === 0) { setFiles([]); return; }
-    Promise.all(list.map((f) => new Promise<{ name: string; contentBase64: string }>((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve({ name: f.name, contentBase64: String(reader.result ?? '') });
-      reader.readAsDataURL(f);
-    }))).then(setFiles).catch(() => setFiles([]));
-  };
-
-  const send = async () => {
-    if (files.length === 0 || sending) return;
-    setSending(true);
-    setResults([]);
-    const out: Array<{ name: string; ok: boolean; text: string }> = [];
-    for (const file of files) {
-      /* Only Public Bank sends an advice this system can read, so nobody is asked
-         which acquirer — the server refuses any other by name. */
-      try {
-        const r = await upload.mutateAsync({ acquirerCode: 'PBB', fileName: file.name, contentBase64: file.contentBase64 });
-        out.push({
-          name: file.name, ok: true,
-          text: `Read: ${fmt(r.status.netSen)} across ${r.status.days.length} settlement day(s).`
-            + (r.status.readyToReceive
-              ? ' Every day agrees — the bank credit will match itself.'
-              : ` ${r.status.blockedBy ?? ''}`),
-        });
-      } catch (err) {
-        out.push({ name: file.name, ok: false, text: refusalText(err, 'The advice could not be read.') });
-      }
-      setResults([...out]);
-    }
-    setFiles([]);
-    setSending(false);
-  };
-
   return (
     <div className="space-y-4">
+      {/* The advice goes up through the page's Upload drawer (MerchantUpload) —
+          one door for it, as for the reports. */}
       <section className="space-y-2">
+        <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'baseline', flexWrap: 'wrap' }}>
+          <b style={{ fontSize: 'var(--fs-15, 15px)' }}>PBB payment advices</b>
+          <span style={{ flex: 1 }} />
+          {onUpload && (
+            <button type="button" style={btn(true)} onClick={onUpload}><Upload {...ICON} /> Upload advice PDF</button>
+          )}
+        </div>
         <div style={softText}>
-          When Public Bank pays, it sends ONE payment advice (HOUZSCENTURY_IBG_&lt;date&gt;.pdf) covering
-          several settlement days, and the bank statement shows one credit for its total. Upload the advice
-          and each day is checked against the merchant report already here; once every day agrees, that
-          credit books itself against those reports on the bank statement screen.
+          Public Bank pays several settlement days with one IBG credit and emails one PDF advice for it. Each day in
+          the advice is checked against its merchant report. Once every day agrees, the credit books against those
+          reports on the bank statement.
         </div>
-        <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-          <input type="file" accept=".pdf" multiple aria-label="Payment advice PDF"
-            onChange={(e) => readFiles(e.target.files)} style={{ fontSize: 'var(--fs-13)' }} />
-          <button type="button" style={btn(true, files.length === 0 || sending)}
-            disabled={files.length === 0 || sending} onClick={() => void send()}>
-            <Upload {...ICON} /> {sending ? 'Reading…' : files.length > 1 ? `Upload ${files.length} payment advices` : 'Upload payment advice'}
-          </button>
-        </div>
-        {results.map((r) => (
-          <div key={r.name} style={{ fontSize: 'var(--fs-13)', color: r.ok ? good : danger, display: 'flex', gap: 6 }}>
-            {!r.ok && <AlertTriangle {...ICON} />}
-            <span><b>{r.name}</b> — {r.text}</span>
-          </div>
-        ))}
       </section>
 
       <section className="space-y-3">
