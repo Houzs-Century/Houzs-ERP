@@ -36,7 +36,7 @@ const errText = (e: unknown): string => (e instanceof Error && e.message ? e.mes
 
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
 const card: React.CSSProperties = { background: 'var(--c-paper, #fff)', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 8, padding: 0, overflowX: 'auto' };
-const num: React.CSSProperties = { textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
+const num: React.CSSProperties = { textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
 const danger = 'var(--c-festive-b, #B8331F)';
 const good = 'var(--c-secondary-a, #2F5D4F)';
 const input: React.CSSProperties = { padding: '5px 8px', fontSize: 'var(--fs-13)', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 6, minWidth: 180 };
@@ -47,27 +47,28 @@ const StatusPill = ({ status }: { status: DepositInvoiceStatus }) => (
   </span>
 );
 
-const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)' };
+/* Document numbers in tabular figures — never monospace (the redesign). */
+const figures: React.CSSProperties = { fontVariantNumeric: 'tabular-nums' };
 const methodLabel = (m: string | null): string => {
   const code = PAYMENT_METHOD_CODES.find((c) => c === m);
   return code ? PAYMENT_METHOD_DEFAULT_LABELS[code] : m ? humaniseStatusKey(m) : '—';
 };
 const DEPOSIT_COLUMNS: Column<DepositInvoice>[] = [
-  { key: 'number', label: 'Number', render: (d) => <span className={cancelledDocNoClass(d.status)} style={mono}>{d.di_number}</span>, getValue: (d) => d.di_number },
+  { key: 'number', label: 'Number', render: (d) => <span className={cancelledDocNoClass(d.status)} style={figures}>{d.di_number}</span>, getValue: (d) => d.di_number },
   { key: 'date', label: 'Date', render: (d) => fmtDateOrDash(d.invoice_date), getValue: (d) => d.invoice_date, exportFormat: 'date' },
   { key: 'customer', label: 'Customer', render: (d) => d.party_name ?? d.party_code ?? '—', getValue: (d) => d.party_name ?? d.party_code ?? '' },
-  { key: 'order', label: 'Order', render: (d) => <span style={mono}>{d.so_doc_no}</span>, getValue: (d) => d.so_doc_no },
+  { key: 'order', label: 'Order', render: (d) => <span style={figures}>{d.so_doc_no}</span>, getValue: (d) => d.so_doc_no },
   { key: 'method', label: 'Method', render: (d) => methodLabel(d.method), getValue: (d) => d.method ?? '' },
   {
     key: 'amount', label: 'Amount', align: 'right', render: (d) => fmtSen(d.amount_sen),
     getValue: (d) => d.amount_sen, exportValue: (d) => d.amount_sen / 100, exportFormat: 'money',
   },
   { key: 'status', label: 'Status', render: (d) => <StatusPill status={d.status} />, getValue: (d) => d.status },
-  { key: 'journal', label: 'Journal', render: (d) => <span style={mono}>{d.je_no ?? '—'}</span>, getValue: (d) => d.je_no ?? '' },
+  { key: 'journal', label: 'Journal', render: (d) => <span style={figures}>{d.je_no ?? '—'}</span>, getValue: (d) => d.je_no ?? '' },
   {
     key: 'closedBy', label: 'Closed by',
     render: (d) => (
-      <span style={mono}>
+      <span style={figures}>
         {d.credit_note_number ?? (d.credit_note_id ? 'CN' : '—')}
         {(d.refunded_sen ?? 0) > 0 && <div style={soft}>refunded {fmtSen(d.refunded_sen ?? 0)}</div>}
       </span>
@@ -103,8 +104,7 @@ export const DepositInvoices = () => {
 
   return (
     <div className="space-y-4">
-      <PageHeader eyebrow="Finance" title="Deposit Invoices"
-        description="One invoice per customer payment received before the order's final invoice — issued by itself when the switch is on, booked Dr the customer / Cr Deposit pay by customer. An edited payment cancels its invoice and takes the next number; a deleted one cancels it. At the final invoice each one is closed by a credit note of its own." />
+      <PageHeader eyebrow="Finance · Money in" title="Deposit invoices" />
 
       <SwitchCard />
 
@@ -301,7 +301,7 @@ const InvoiceDetail = ({ id, onClose }: { id: string; onClose: () => void }) => 
         <div className="space-y-3">
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-3)', fontSize: 'var(--fs-13)' }}>
             <div><div style={soft}>Customer</div>{inv.party_name ?? '—'}{inv.party_code ? <span style={soft}> · {inv.party_code}</span> : null}</div>
-            <div><div style={soft}>Sales order</div><span style={{ fontFamily: 'var(--font-mono)' }}>{inv.so_doc_no}</span></div>
+            <div><div style={soft}>Sales order</div><span style={figures}>{inv.so_doc_no}</span></div>
             <div><div style={soft}>Date</div>{fmtDateOrDash(inv.invoice_date)}</div>
             <div><div style={soft}>Amount</div><span style={num}>{fmtSen(inv.amount_sen)}</span></div>
             <div>
@@ -309,12 +309,12 @@ const InvoiceDetail = ({ id, onClose }: { id: string; onClose: () => void }) => 
               {pay ? `${pay.method ?? '—'}${pay.merchant_provider ? ` · ${pay.merchant_provider}` : ''}${pay.online_type ? ` · ${pay.online_type}` : ''} · ${fmtDateOrDash(pay.paid_at)} · ${fmtSen(pay.amount_sen)}` : 'the payment row is gone'}
             </div>
             <div><div style={soft}>Status</div><StatusPill status={inv.status} />{inv.je_no ? <span style={soft}> · {inv.je_no}</span> : <span style={{ ...soft, color: danger }}> · not posted</span>}</div>
-            {inv.credit_note_id && <div><div style={soft}>Closed by credit note</div><span style={{ fontFamily: 'var(--font-mono)' }}>{inv.credit_note_number ?? inv.credit_note_id}</span></div>}
+            {inv.credit_note_id && <div><div style={soft}>Closed by credit note</div><span style={figures}>{inv.credit_note_number ?? inv.credit_note_id}</span></div>}
             {(inv.refund_notes ?? []).length > 0 && (
               <div style={{ gridColumn: '1 / -1' }}>
                 <div style={soft}>Refunded {fmtSen(inv.refunded_sen ?? 0)} — the sale this invoice booked is taken back by credit note, one per refund voucher</div>
                 {(inv.refund_notes ?? []).map((n) => (
-                  <div key={n.note_number} style={{ fontFamily: 'var(--font-mono)' }}>
+                  <div key={n.note_number} style={figures}>
                     {n.note_number} · {fmtSen(n.total_sen)} · {n.status}{n.pv_number ? ` · refund ${n.pv_number}` : ''}
                   </div>
                 ))}
