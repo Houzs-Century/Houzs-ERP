@@ -20,6 +20,7 @@ import type { Env } from '../env';
 import { getSupabaseService } from '../../db/supabase';
 import { effectiveSoDelivery, type SoDeliveryDateRow } from '../shared';
 import { normalizePhone } from '../shared/phone';
+import { templateDate } from './delivery-message-kinds';
 import {
   isConnectConfigured,
   buildDeliveryFollowUp,
@@ -59,10 +60,6 @@ export const CONNECT_SYNC_BATCH = 40;
  *  old, long-delivered order's contact is not worth a Connect round trip. */
 export const CONNECT_SYNC_WINDOW_DAYS = 120;
 
-/** ISO yyyy-mm-dd -> the contact attributes' yyyy/mm/dd; '' when blank. */
-const payloadDate = (iso: string | null | undefined): string =>
-  String(iso ?? '').slice(0, 10).replace(/-/g, '/');
-
 /** Build the Connect sync event (full delivery bundle + headline fields, the sync
  *  sentinel, no conversation reset) for ONE (phone, company) group. `first` — the
  *  group's first order — drives the single-value headline fields, as the
@@ -83,7 +80,7 @@ export function buildContactSyncEvent(args: {
     ref: String(r.doc_no ?? ''),
     orderRef: String(r.ref ?? ''),
     branding: String(r.branding ?? ''),
-    deliveryDate: payloadDate(effectiveSoDelivery(r as SoDeliveryDateRow)),
+    deliveryDate: templateDate(effectiveSoDelivery(r as SoDeliveryDateRow)),
     balanceSen: balanceByDoc.get(String(r.doc_no)) ?? null,
     totalSen: totalByDoc.get(String(r.doc_no)) ?? null,
     companyCode,
@@ -91,7 +88,7 @@ export function buildContactSyncEvent(args: {
   return buildDeliveryFollowUp(phone, String(first.debtor_name ?? ''), orders, companyProfile, {
     callbackUrl,
     automation: CONNECT_SYNC_AUTOMATION,
-    extra: buildSyncHeadline(first, phone, payloadDate(effectiveSoDelivery(first as SoDeliveryDateRow))),
+    extra: buildSyncHeadline(first, phone, templateDate(effectiveSoDelivery(first as SoDeliveryDateRow))),
     resetConversation: false,
   });
 }
