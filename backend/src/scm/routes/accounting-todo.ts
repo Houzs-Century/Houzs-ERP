@@ -10,7 +10,7 @@
 
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { todayMyt, mytDateOf } from '../lib/my-time';
-import { paginateAll } from '../lib/paginate-all';
+import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { hasHouzsPerm, holdsHouzsPermLiterally } from '../lib/houzs-perms';
 import { stampOrderDeposit } from '../lib/si-order-deposit';
 import { usersHoldingPermission } from '../../services/permissionHolders';
@@ -162,26 +162,34 @@ async function readBank(sb: any, companyId: number, today: string): Promise<Read
 
 async function readRequests(sb: any, companyId: number): Promise<Read<TodoFacts['requests']>> {
   /* The four ways a request waits for Finance — routes/payment-requests.ts
-     waitingCountHandler counts the same four: new, or answered by a voucher or
-     bill that was since cancelled, or answered by nothing. */
-  const cols = 'id, payee_name, amount_sen, created_at';
-  const q = (extra: string) => sb.from('acc_payment_requests').select(extra ? `${cols}, ${extra}` : cols).eq('company_id', companyId);
-  const [submitted, invoiceGone, voucherGone, nothing] = await Promise.all([
-    q('').eq('status', 'SUBMITTED'),
-    q('inv:ap_invoices!inner(status)').eq('status', 'VOUCHERED').eq('inv.status', 'CANCELLED'),
-    q('pv:payment_vouchers!inner(status)').eq('status', 'VOUCHERED').is('ap_invoice_id', null).eq('pv.status', 'CANCELLED'),
-    q('').eq('status', 'VOUCHERED').is('ap_invoice_id', null).is('pv_id', null),
+     waitingCountHandler counts the same four: new, or answered by a bill or a
+     voucher that was since cancelled, or answered by nothing. Read here as the
+     answered requests and then the state of what answered them. */
+  const cols = 'id, payee_name, amount_sen, created_at, ap_invoice_id, pv_id';
+  const [submitted, vouchered] = await Promise.all([
+    paginateAll<Record<string, any>>((lo, hi) => sb.from('acc_payment_requests').select(cols)
+      .eq('company_id', companyId).eq('status', 'SUBMITTED').order('id').range(lo, hi)),
+    paginateAll<Record<string, any>>((lo, hi) => sb.from('acc_payment_requests').select(cols)
+      .eq('company_id', companyId).eq('status', 'VOUCHERED').order('id').range(lo, hi)),
   ]);
-  const bad = [submitted, invoiceGone, voucherGone, nothing].find((r) => r.error);
-  if (bad) return fail('payment requests', bad.error.message);
-  const seen = new Set<string>();
-  const out: TodoFacts['requests'] = [];
-  for (const r of [submitted, invoiceGone, voucherGone, nothing].flatMap((x) => (x.data ?? []) as Rows)) {
-    if (seen.has(String(r.id))) continue;
-    seen.add(String(r.id));
-    out.push({ payee: String(r.payee_name ?? ''), amountSen: Number(r.amount_sen ?? 0), createdOn: day(r.created_at) ?? '' });
-  }
-  return { ok: true, value: out };
+  if (submitted.error || vouchered.error) return fail('payment requests', (submitted.error ?? vouchered.error)!.message);
+  const answered = (vouchered.data ?? []) as Rows;
+  const invoiceIds = [...new Set(answered.map((r) => r.ap_invoice_id).filter(Boolean).map(String))];
+  const voucherIds = [...new Set(answered.filter((r) => !r.ap_invoice_id).map((r) => r.pv_id).filter(Boolean).map(String))];
+  const [invoices, vouchers] = await Promise.all([
+    chunkIn<Record<string, any>>(invoiceIds, (batch, lo, hi) => sb.from('ap_invoices').select('id, status').in('id', batch).order('id').range(lo, hi)),
+    chunkIn<Record<string, any>>(voucherIds, (batch, lo, hi) => sb.from('payment_vouchers').select('id, status').in('id', batch).order('id').range(lo, hi)),
+  ]);
+  if (invoices.error || vouchers.error) return fail('payment requests', (invoices.error ?? vouchers.error)!.message);
+  const cancelled = new Set([...invoices.data, ...vouchers.data].filter((d) => d.status === 'CANCELLED').map((d) => String(d.id)));
+  const waiting = answered.filter((r) => (r.ap_invoice_id
+    ? cancelled.has(String(r.ap_invoice_id))
+    : r.pv_id ? cancelled.has(String(r.pv_id)) : true));
+  return {
+    ok: true,
+    value: [...((submitted.data ?? []) as Rows), ...waiting]
+      .map((r) => ({ payee: String(r.payee_name ?? ''), amountSen: Number(r.amount_sen ?? 0), createdOn: day(r.created_at) ?? '' })),
+  };
 }
 
 /** A voucher's total in ringgit sen — a foreign-currency voucher at its rate. */
@@ -237,19 +245,22 @@ async function readOverdue(sb: any, companyId: number, today: string): Promise<R
 
 async function readDone(sb: any, companyId: number, today: string, cards: CardFacts | null, bank: BankFacts | null): Promise<Read<TodoDone[]>> {
   const from = dayStart(today);
-  const [confirmed, decided, vouchers, requests, receipts] = await Promise.all([
+  /* A voucher counts once for each step taken on it today — three plain reads, one per step. */
+  const pvStep = (col: string) => sb.from('payment_vouchers').select('id, pv_number, payee_name, checked_at, approved_at, posted_at')
+    .eq('company_id', companyId).gte(col, from);
+  const [confirmed, decided, checkedPv, approvedPv, postedPv, requests, receipts] = await Promise.all([
     paginateAll<Record<string, any>>((lo, hi) => sb.from('acc_settlement_rows')
       .select('id, acquirer_code, posted_je_no, confirmed_at').eq('company_id', companyId).gte('confirmed_at', from).order('id').range(lo, hi)),
     paginateAll<Record<string, any>>((lo, hi) => sb.from('acc_bank_statement_lines')
       .select('id, statement_id, state, posted_je_no, updated_at').eq('company_id', companyId).in('state', ['POSTED', 'IGNORED'])
       .gte('updated_at', from).order('id').range(lo, hi)),
-    sb.from('payment_vouchers').select('pv_number, payee_name, status, checked_at, approved_at, posted_at').eq('company_id', companyId)
-      .or(`checked_at.gte.${from},approved_at.gte.${from},posted_at.gte.${from}`),
+    pvStep('checked_at'), pvStep('approved_at'), pvStep('posted_at'),
     sb.from('acc_payment_requests').select('id, decided_at').eq('company_id', companyId).eq('status', 'VOUCHERED').gte('decided_at', from),
     sb.from('acc_official_receipts').select('id, issued_at').eq('company_id', companyId).eq('status', 'FORMAL').gte('issued_at', from),
   ]);
-  const bad = [confirmed, decided, vouchers, requests, receipts].find((r) => r.error);
+  const bad = [confirmed, decided, checkedPv, approvedPv, postedPv, requests, receipts].find((r) => r.error);
   if (bad) return fail('what was done today', bad.error.message);
+  const vouchers = { data: [...new Map([checkedPv, approvedPv, postedPv].flatMap((r) => (r.data ?? []) as Rows).map((v) => [String(v.id), v])).values()] };
   const done: TodoDone[] = [];
 
   const names = new Map((cards?.acquirers ?? []).map((a) => [a.code, a.name]));
@@ -344,9 +355,14 @@ async function readViewer(c: any, companyId: number, problems: string[]): Promis
     board and what was done today — the page wants them, the badge does not. */
 export async function readFinanceTodoFacts(sb: any, companyId: number, today: string, full: boolean): Promise<TodoFacts> {
   const problems: string[] = [];
+  /* A section that throws is a failed read like any other — named, and the rest still shown. */
+  const safe = async <T,>(what: string, run: () => Promise<Read<T>>): Promise<Read<T>> => {
+    try { return await run(); } catch (e) { return fail(what, e instanceof Error ? e.message : String(e)); }
+  };
   const [cards, bank, requests, vouchers, transfers, overdue] = await Promise.all([
-    readCards(sb, companyId, today), readBank(sb, companyId, today), readRequests(sb, companyId),
-    readVouchers(sb, companyId), readTransfers(sb, companyId), readOverdue(sb, companyId, today),
+    safe('merchant reports', () => readCards(sb, companyId, today)), safe('bank statements', () => readBank(sb, companyId, today)),
+    safe('payment requests', () => readRequests(sb, companyId)), safe('payment vouchers', () => readVouchers(sb, companyId)),
+    safe('official receipts', () => readTransfers(sb, companyId)), safe('overdue invoices', () => readOverdue(sb, companyId, today)),
   ]);
   const ok = <T,>(r: Read<T>, empty: T): T => {
     if (r.ok) return r.value;
@@ -362,8 +378,9 @@ export async function readFinanceTodoFacts(sb: any, companyId: number, today: st
   let done: TodoDone[] = [];
   if (full) {
     const [board, doneRead] = await Promise.all([
-      loadDailyBankBoard(sb, companyId, today, { withNames: false }),
-      readDone(sb, companyId, today, card, bk),
+      loadDailyBankBoard(sb, companyId, today, { withNames: false })
+        .catch((e: unknown) => ({ ok: false as const, reason: e instanceof Error ? e.message : String(e) })),
+      safe('what was done today', () => readDone(sb, companyId, today, card, bk)),
     ]);
     if (board.ok) money = { bankCashSen: board.board.totalClosingSen, awaitingSen: board.board.pendingApprovalSen, onTheWaySen: board.board.totalTransitSen };
     else problems.push(`bank balances (${board.reason})`);
