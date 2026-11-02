@@ -87,6 +87,10 @@ const state = vi.hoisted(() => ({
   book: vi.fn(),
 }));
 
+/* The A4 statement's letterhead and who printed it. */
+vi.mock('../../hooks/useBranding', () => ({ useBranding: () => ({ companyName: 'Houzs Century', companyCode: 'HC' }) }));
+vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: { name: 'Chew', email: 'chew@example.com' } }) }));
+
 /* To do's own "upload the statement" rule says where the uploads stop. */
 vi.mock('./finance/finance-todo-queries', () => ({ useFinanceTodo: () => ({ data: { mine: state.todo, others: [] } }) }));
 
@@ -586,18 +590,66 @@ describe('the reconciliation statement', () => {
     expect(screen.getByText('Print reconciliation')).toBeTruthy();
   });
 
-  test('the dialog says the month is whole before anything is printed', () => {
+  /* The redesign (owner question d6): the statement is an A4 page the browser
+     prints — the walk, then the three lists; matched lines are not printed;
+     Draft until the month is locked, Final after. */
+  test('prints the walk from the ledger to the bank, marked Draft while the month is open', () => {
     setUp();
     openMonth();
     fireEvent.click(screen.getByText('Print reconciliation'));
-    expect(screen.getByText('covered end to end')).toBeTruthy();
+    const sheet = screen.getByLabelText('Bank reconciliation statement');
+    expect(sheet.textContent).toContain('BANK RECONCILIATION STATEMENT');
+    expect(sheet.textContent).toContain('Draft · not locked. Still open: 2 bank lines to decide.');
+    expect(sheet.textContent).toContain('Balance per the ledger on 2026/09/03');
+    expect(sheet.textContent).toContain('Balance per bank statement on 2026/09/03');
+    expect(sheet.textContent).toContain('Bank lines not in the ledger yet');
+    expect(sheet.textContent).toContain('Ledger entries not on the bank yet');
+    /* Nothing set aside, nothing owed by the books: each list says None. */
+    expect(screen.getAllByText('None.').length).toBe(2);
   });
 
-  test('and says so when it is not', () => {
+  test('a locked month prints Final, and matched lines are left off the paper', () => {
+    setUp({
+      lines: [{ ...LINE, state: 'POSTED', posted_je_no: 'JE-1', description: 'MATCHED LINE' }],
+      lock: { accountCode: '310-0020', month: '2026-09', lockedBy: 'Chew', lockedAt: '2026-10-02T03:14:00Z', lockNote: null, closingStatementSen: 1090000, closingLedgerSen: 1090000, differenceSen: 0, statementCount: 3, wasComplete: true },
+    });
+    openMonth();
+    fireEvent.click(screen.getByText('Print reconciliation'));
+    const sheet = screen.getByLabelText('Bank reconciliation statement');
+    expect(sheet.textContent).toContain('Final · locked 2026/10/02 by Chew');
+    expect(sheet.textContent).not.toContain('MATCHED LINE');
+  });
+
+  test('the earlier PDF is one press away for one more release, and its dialog says whether the month is whole', () => {
     setUp({ assembly: { ...ASSEMBLY, complete: false, gaps: ['a day is missing'] } });
     openMonth();
     fireEvent.click(screen.getByText('Print reconciliation'));
+    fireEvent.click(screen.getByText('Old PDF'));
     expect(screen.getByText(/not covered end to end — 1 thing\(s\) missing/)).toBeTruthy();
+  });
+});
+
+/* A line set aside is out of the ledger and on the statement: the difference
+   names it apart, and the month cannot lock while it moves the balance. */
+describe('lines set aside', () => {
+  const ASIDE = { ...LINE, id: 9, line_no: 9, kind: 'OTHER' as const, state: 'IGNORED' as const, amount_sen: 30000, note: 'own transfer' };
+  const UNTALLIED = { ...RECON, bankNotInBooks: { count: 0, sen: 0 }, computedClosingSen: 1060000, unexplainedSen: 30000, tallies: false };
+
+  test('are their own part of the difference, and leave nothing unexplained when they are all of it', () => {
+    setUp({ lines: [ASIDE], recon: UNTALLIED });
+    openMonth();
+    expect(screen.getByText(/1 line set aside/)).toBeTruthy();
+    expect(screen.getByText('+RM 300.00')).toBeTruthy();
+    expect(screen.getByText('Nothing unexplained')).toBeTruthy();
+    expect(screen.getByText(/Can’t lock yet · set-aside lines change the balance by RM 300\.00$/)).toBeTruthy();
+  });
+
+  test('a repeat of a line already recorded is not one of them', () => {
+    setUp({ lines: [{ ...ASIDE, kind: 'DUPLICATE' as const }], recon: UNTALLIED });
+    openMonth();
+    expect(screen.queryByText(/set aside/, { selector: 'button' })).toBeNull();
+    /* Said where the difference is walked, and where the month stands. */
+    expect(screen.getAllByText('RM 300.00 unexplained').length).toBeGreaterThan(0);
   });
 });
 

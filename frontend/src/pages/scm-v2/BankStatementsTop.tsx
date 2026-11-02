@@ -10,7 +10,7 @@
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
-import { AlertCircle, BookOpen, Check, CheckCircle2, ChevronDown, ChevronRight, Landmark, Lock, Upload } from 'lucide-react';
+import { AlertCircle, BookOpen, Check, CheckCircle2, ChevronDown, ChevronRight, EyeOff, Landmark, Lock, Upload } from 'lucide-react';
 import { fmtDate } from '../../vendor/shared/format';
 import { fmt } from './settlement-ui';
 import type { BankAccountSetup, BankMonth, BankMonthAssembly, BankMonthLock, Reconciliation } from './bank-queries';
@@ -162,13 +162,18 @@ export function MissingBanner({ bank, a, from, onUpload }: { bank: string; a: Ba
 }
 
 /** Why the month cannot lock yet — the server's own rule (acc/bank-lock.ts), short; empty when it can. */
-export function lockReasons(r: Reconciliation, a: BankMonthAssembly, open: number): string[] {
+export function lockReasons(r: Reconciliation, a: BankMonthAssembly, open: number, asideSen = 0): string[] {
   const out: string[] = [];
   if (!r.consistent) out.push('its figures do not add up');
   if (open > 0) out.push(`${plural(open, 'line')} to decide`);
   if (!a.complete) out.push('not covered end to end');
   if (r.closingStatementSen == null) out.push('no closing balance to tally against');
-  else if (r.consistent && !r.tallies) out.push(`${fmt(Math.abs(r.unexplainedSen ?? 0))} unexplained`);
+  else if (r.consistent && !r.tallies) {
+    /* The server's unexplained holds the set-aside lines too; said apart. */
+    if (asideSen !== 0) out.push(`set-aside lines change the balance by ${fmt(Math.abs(asideSen))}`);
+    const rest = (r.unexplainedSen ?? 0) - asideSen;
+    if (rest !== 0) out.push(`${fmt(Math.abs(rest))} unexplained`);
+  }
   return out;
 }
 
@@ -181,6 +186,9 @@ export type MonthFacts = {
   total: number;
   open: number;
   missing: string | null;
+  /** What the lines set aside move the balance by — out of the ledger, on the statement. */
+  asideSen: number;
+  asideCount: number;
 };
 
 const outstandingCount = (r: Reconciliation): number => r.outstandingPayments.count + r.outstandingReceipts.count;
@@ -191,7 +199,8 @@ const isTallied = (f: MonthFacts): boolean => f.reconciliation.tallies && f.open
 export function MonthTracker({ f }: { f: MonthFacts }) {
   const { assembly: a, reconciliation: r, lock } = f;
   const n = outstandingCount(r);
-  const reasons = lockReasons(r, a, f.open);
+  const reasons = lockReasons(r, a, f.open, f.asideSen);
+  const rest = (r.unexplainedSen ?? 0) - f.asideSen;
   const steps: Array<{ label: string; sub: string; done: boolean }> = [
     {
       label: 'Statement in', done: a.complete && f.missing == null,
@@ -203,7 +212,8 @@ export function MonthTracker({ f }: { f: MonthFacts }) {
       sub: isTallied(f) ? (n ? `Agrees, allowing for ${plural(n, 'entry', 'entries')} not on the bank yet` : 'Statement and ledger agree to the sen')
         : r.closingStatementSen == null ? 'No closing balance to tally against'
           : f.open > 0 ? `Waiting on ${plural(f.open, 'bank line')}`
-            : `${fmt(Math.abs(r.unexplainedSen ?? 0))} unexplained`,
+            : rest === 0 && f.asideSen !== 0 ? `Set-aside lines change the balance by ${fmt(Math.abs(f.asideSen))}`
+              : `${fmt(Math.abs(rest))} unexplained`,
     },
     {
       label: 'Locked', done: lock != null,
@@ -271,11 +281,12 @@ export function MonthFigures({ f, onTypeClosing }: { f: MonthFacts; onTypeClosin
 }
 
 /** What the difference is made of: the bank lines not matched yet, the ledger entries not on the bank yet, and what nobody explains. */
-export function DifferenceWalk({ f, onLines, onLedger }: { f: MonthFacts; onLines: () => void; onLedger: () => void }) {
+export function DifferenceWalk({ f, onLines, onLedger, onAside }: { f: MonthFacts; onLines: () => void; onLedger: () => void; onAside: () => void }) {
   const r = f.reconciliation;
   if (r.differenceSen == null) return null;
   const n = outstandingCount(r);
-  const unexplained = r.unexplainedSen ?? 0;
+  /* The set-aside lines are said apart; what is left nobody has accounted for. */
+  const unexplained = (r.unexplainedSen ?? 0) - f.asideSen;
   return (
     <div className={styles.walk}>
       <span>The difference is made of</span>
@@ -289,9 +300,14 @@ export function DifferenceWalk({ f, onLines, onLedger }: { f: MonthFacts; onLine
           <BookOpen size={13} /> {plural(n, 'ledger entry', 'ledger entries')} not on the bank yet <b>{signed(outstandingEffect(r))}</b><ChevronRight size={12} />
         </button>
       )}
+      {f.asideSen !== 0 && (
+        <button type="button" className={styles.walkChip} onClick={onAside}>
+          <EyeOff size={13} /> {plural(f.asideCount, 'line')} set aside <b>{signed(f.asideSen)}</b><ChevronRight size={12} />
+        </button>
+      )}
       <span className={`${styles.unexplained} ${unexplained !== 0 ? styles.toneLate : styles.toneOk}`}>
         {unexplained !== 0 ? <AlertCircle size={14} /> : <CheckCircle2 size={14} />}
-        {unexplained !== 0 ? `${fmt(Math.abs(unexplained))} unexplained` : r.bankNotInBooks.count > 0 || n > 0 ? 'Nothing unexplained' : 'Nothing to explain'}
+        {unexplained !== 0 ? `${fmt(Math.abs(unexplained))} unexplained` : r.bankNotInBooks.count > 0 || n > 0 || f.asideSen !== 0 ? 'Nothing unexplained' : 'Nothing to explain'}
       </span>
     </div>
   );
