@@ -29,12 +29,13 @@
 // 401 every call before the route's own key check ever ran, which is the
 // mistake /api/assr-form-intake documents having made.
 //
-// COMPANY. By the 2026-08-18 rule a shared secret speaks for exactly ONE
-// company and opens nothing else. CHAT_CALLBACK_KEY is a Houzs Century
-// artifact — the WhatsApp number it calls back about is Houzs's — so it
-// resolves HOUZS and REFUSES any doc_no that is not Houzs's. A future 2990
-// chat number gets its own key and its own row in the table below; it must
-// never be handed this one.
+// COMPANY. A shared secret speaks for the companies whose messages go out on
+// its number and opens nothing else. CHAT_CALLBACK_KEY belongs to the Houzs
+// WhatsApp number, and 2990's delivery messages are sent from that same number
+// (services/connect.ts), so a Sales Order tap resolves HOUZS or 2990 and
+// REFUSES any other company's doc_no. Until HC-0200 it resolved HOUZS only, so
+// every 2990 Confirm / Amend 404'd and the board never moved. Service Case taps
+// stay HOUZS-only. A future separate 2990 number gets its own key.
 //
 // PAYLOAD (chat's `Call REST API` body):
 //   What it WRITES on the SO: only the request columns the board shows
@@ -67,8 +68,9 @@ import { AssrTapFailed, isAssrLeg, recordAssrChatTap } from "../scm/lib/assr-arr
 
 const app = new Hono<{ Bindings: Env }>();
 
-/** The one company CHAT_CALLBACK_KEY speaks for. See the COMPANY note above. */
-const CHAT_KEY_COMPANY = "HOUZS";
+/** The companies CHAT_CALLBACK_KEY speaks for, first = the number's owner (the
+ *  only one for Service Case taps). See the COMPANY note above. */
+const CHAT_KEY_COMPANIES = ["HOUZS", "2990"] as const;
 
 /** Shared-secret guard. Constant-time compare (the key should be 48 random
  *  chars — brute force is hopeless, but the comparison shouldn't leak match
@@ -122,15 +124,16 @@ function safeId(raw: unknown): string | null {
 const EVENTS = new Set<string>(CHAT_EVENTS);
 
 app.post("/", async (c) => {
-  // company-scope: every read below IS scoped — chatCompany() resolves HOUZS
-  // first and the predicate is applied as `.eq("company_id", company.id)` on
+  // company-scope: every read below IS scoped — chatCompany() resolves the
+  // key's companies first and the predicate is applied as
+  // `.in("company_id", orderCompanyIds)` / `.eq("company_id", companyId)` on
   // the next line of each statement, which this checker's per-statement
-  // heuristic cannot see. It is conditional on purpose: company.id is null ONLY
+  // heuristic cannot see. It is conditional on purpose: the ids are absent ONLY
   // in the master-unreadable state (the single-company install / the D1 test
   // mirror), where scm/lib/companyScope's own contract is "no predicate" —
   // writing `.eq('company_id', null)` there would be a malformed filter, not a
-  // tighter one. The misconfiguration state (master readable, no HOUZS row) is
-  // refused, not degraded.
+  // tighter one. The misconfiguration state (master readable, a key company
+  // with no row) is refused, not degraded.
   const denied = await badChatKey(c);
   if (denied) return denied;
 
@@ -209,17 +212,17 @@ app.post("/", async (c) => {
   const sb = getSupabaseService(c.env);
 
   // ── Company scope ───────────────────────────────────────────────────────
-  // Resolved FIRST, before anything reads a row: the key speaks for HOUZS and
-  // nothing else, so every query below carries its predicate. A doc that is
-  // not Houzs's is a REFUSAL to notice, not a row to write. See the COMPANY
-  // note at the top.
-  const company = await chatCompany(c.env.DB, CHAT_KEY_COMPANY);
-  if (company.master && company.id == null) {
-    return c.json(
-      { error: "misconfigured", reason: `no companies row for code ${CHAT_KEY_COMPANY}` },
-      500,
-    );
+  // Resolved FIRST, before anything reads a row: the key speaks for its
+  // companies and nothing else, so every query below carries their predicate.
+  // A doc of any other company is a REFUSAL to notice, not a row to write. See
+  // the COMPANY note at the top.
+  const keyCompanies = await Promise.all(CHAT_KEY_COMPANIES.map((code) => chatCompany(c.env.DB, code)));
+  const missing = CHAT_KEY_COMPANIES.find((_, i) => keyCompanies[i].master && keyCompanies[i].id == null);
+  if (missing) {
+    return c.json({ error: "misconfigured", reason: `no companies row for code ${missing}` }, 500);
   }
+  const company = keyCompanies[0];
+  const orderCompanyIds = keyCompanies.flatMap((k) => (k.id != null ? [k.id] : []));
 
   // `ref` is the number the CUSTOMER was shown — delivery-messages sends
   // COALESCE(linked_ac_docno, doc_no), so for an AutoCount-linked order it is
@@ -244,7 +247,7 @@ app.post("/", async (c) => {
       const tap = await recordAssrChatTap(c.env, sb, {
         companyId: company.id, assrNo: ref, leg: body.leg, callbackId, event, phone, requestedDate, reason, note,
       });
-      if (!tap) return c.json({ error: "unknown_ref", reason: `no ${CHAT_KEY_COMPANY} service case ${ref}` }, 404);
+      if (!tap) return c.json({ error: "unknown_ref", reason: `no ${CHAT_KEY_COMPANIES[0]} service case ${ref}` }, 404);
       return c.json({ ok: true, ...(tap.duplicate ? { duplicate: true } : { event, recorded: true }), id: tap.id, ref: tap.docNo, applied: false });
     } catch (e) {
       if (e instanceof AssrTapFailed) return c.json({ error: "log_failed", reason: e.message }, 500);
@@ -258,31 +261,36 @@ app.post("/", async (c) => {
     .from("mfg_sales_orders")
     .select("doc_no, company_id, linked_ac_docno")
     .or(`doc_no.in.(${list}),linked_ac_docno.in.(${list})`);
-  if (company.id != null) soQuery = soQuery.eq("company_id", company.id);
+  if (orderCompanyIds.length) soQuery = soQuery.in("company_id", orderCompanyIds);
   const { data: soRows, error: soErr } = await soQuery.limit(refs.length * 2);
   if (soErr) {
     return c.json({ error: "load_failed", reason: soErr.message }, 500);
   }
-  const hits = (soRows ?? []) as Array<{ doc_no: string; linked_ac_docno: string | null }>;
+  type SoHit = { doc_no: string; company_id: number | string | null; linked_ac_docno: string | null };
+  const hits = (soRows ?? []) as SoHit[];
   // An exact doc_no hit wins over a linked_ac_docno hit, so a number that is
   // somehow both is recorded against the order that literally carries it.
-  const resolve = (r: string): string | null =>
-    hits.find((h) => h.doc_no === r)?.doc_no ?? hits.find((h) => h.linked_ac_docno === r)?.doc_no ?? null;
-  const primaryDoc = resolve(ref);
+  const resolve = (r: string): SoHit | null =>
+    hits.find((h) => h.doc_no === r) ?? hits.find((h) => h.linked_ac_docno === r) ?? null;
+  const primaryDoc = resolve(ref)?.doc_no;
   if (!primaryDoc) {
     // Deliberately the same answer for "no such SO" and "not this company's
     // SO": the caller holds a Houzs credential and must not be able to probe
     // which doc numbers exist elsewhere.
-    return c.json({ error: "unknown_ref", reason: `no ${CHAT_KEY_COMPANY} order ${ref}` }, 404);
+    return c.json({ error: "unknown_ref", reason: `no order ${ref}` }, 404);
   }
   // The primary first, then the rest of the bundle; a sibling that does not
   // resolve is reported, not fatal — the primary order's answer still lands.
-  const targets: Array<{ customerRef: string; docNo: string }> = [];
+  // Each order is recorded under its OWN company, so a 2990 tap's log row and
+  // idempotency probe sit in 2990.
+  const targets: Array<{ customerRef: string; docNo: string; companyId: number | null }> = [];
   const unknown: string[] = [];
   for (const r of refs) {
-    const d = resolve(r);
-    if (!d) { unknown.push(r); continue; }
-    if (!targets.some((t) => t.docNo === d)) targets.push({ customerRef: r, docNo: d });
+    const hit = resolve(r);
+    if (!hit) { unknown.push(r); continue; }
+    if (!targets.some((t) => t.docNo === hit.doc_no)) {
+      targets.push({ customerRef: r, docNo: hit.doc_no, companyId: hit.company_id != null ? Number(hit.company_id) : null });
+    }
   }
 
   // ── Record, per order ───────────────────────────────────────────────────
@@ -293,7 +301,7 @@ app.post("/", async (c) => {
   for (const t of targets) {
     try {
       results.push(await recordChatTap(sb, {
-        companyId: company.id,
+        companyId: t.companyId,
         docNo: t.docNo,
         customerRef: t.customerRef,
         callbackId,
