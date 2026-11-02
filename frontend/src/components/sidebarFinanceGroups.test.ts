@@ -32,8 +32,8 @@ describe('the Finance sidebar', () => {
     const [todo, money] = finance?.children ?? [];
     expect(todo).toMatchObject({ label: 'To do', to: '/scm/finance', end: true, badge: 'finance-todo' });
     expect(money).toMatchObject({ label: 'Money today', to: '/scm/daily-bank?view=board' });
-    expect(todo?.children, 'To do is a page, not a group').toBeUndefined();
-    expect(money?.children, 'Money today is a page, not a group').toBeUndefined();
+    expect(todo.children, 'To do is a page, not a group').toBeUndefined();
+    expect(money.children, 'Money today is a page, not a group').toBeUndefined();
   });
 
   it('is seven groups, in the order the money moves', () => {

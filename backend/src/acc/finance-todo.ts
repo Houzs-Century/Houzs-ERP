@@ -18,6 +18,8 @@
 // "Waiting on others", with who it waits for.
 // ----------------------------------------------------------------------------
 
+import { fmtDate } from '../scm/shared/format';
+
 export type TodoRule =
   | 'card-missing' | 'card-matched' | 'card-choose'
   | 'bank-missing' | 'bank-decide'
@@ -122,7 +124,8 @@ const DAY_MS = 86_400_000;
 export const addDays = (ymd: string, n: number): string =>
   new Date(Date.parse(`${ymd}T00:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
 /** YYYY/MM/DD — the ERP's date everywhere. */
-export const showDate = (ymd: string): string => ymd.replace(/-/g, '/');
+/** The ERP's one date format (YYYY/MM/DD). */
+export const showDate = (ymd: string): string => fmtDate(ymd);
 const plural = (n: number, one: string, many = `${one}s`): string => (n === 1 ? one : many);
 const minDay = (days: Array<string | null | undefined>): string | null =>
   days.filter((d): d is string => !!d).sort()[0] ?? null;
@@ -132,8 +135,9 @@ const dayRange = (days: string[]): string => {
   if (s.length === 0) return '';
   return s.length === 1 ? showDate(s[0]!) : `${showDate(s[0]!)} – ${showDate(s[s.length - 1]!)}`;
 };
-const MONTH = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-const monthOf = (ymd: string): string => MONTH[Number(ymd.slice(5, 7)) - 1] ?? ymd.slice(0, 7);
+/** A month by its name ("October") — a period, not a date. */
+const monthOf = (ymd: string): string =>
+  new Date(`${ymd.slice(0, 7)}-01T00:00:00Z`).toLocaleString('en-MY', { month: 'long', timeZone: 'UTC' });
 /** The first three, then how many more — a detail line stays one line. */
 const firstFew = (names: string[], n = 3): string => {
   const uniq = [...new Set(names.filter(Boolean))];

@@ -16,6 +16,8 @@ import { stampOrderDeposit } from '../lib/si-order-deposit';
 import { usersHoldingPermission } from '../../services/permissionHolders';
 import { keyedAs, merchantNamesOf } from '../../acc/merchant-names';
 import { loadBooksOpening } from '../../acc/books-opening';
+import { OPEN_SI_STATUSES } from '../lib/open-invoice-states';
+import { fmtDate } from '../shared/format';
 import {
   addDays, buildFinanceTodo, raiseJobs, OVERDUE_DAYS, bankName,
   type TodoBankLine, type TodoCardRow, type TodoDone, type TodoFacts, type TodoViewer,
@@ -85,7 +87,7 @@ async function readCards(sb: any, companyId: number, today: string): Promise<Rea
 
   const rows = await paginateAll<Record<string, any>>((lo, hi) => sb.from('acc_settlement_rows')
     .select('id, batch_id, acquirer_code, bucket, match_reason, gross_sen, txn_date')
-    .eq('company_id', companyId).is('confirmed_at', null).in('bucket', ['MATCHED', 'NEEDS_CONFIRM', 'UNMATCHED'])
+    .eq('company_id', companyId).is('confirmed_at', null).neq('bucket', 'IGNORED')
     .order('id').range(lo, hi));
   if (rows.error) return fail('merchant lines', rows.error.message);
   const uploadedOn = new Map(batchRows.map((b) => [Number(b.id), day(b.created_at) ?? today]));
@@ -232,7 +234,7 @@ async function readTransfers(sb: any, companyId: number): Promise<Read<TodoFacts
 async function readOverdue(sb: any, companyId: number, today: string): Promise<Read<TodoFacts['overdue']>> {
   const all = await paginateAll<Record<string, any>>((lo, hi) => sb.from('sales_invoices')
     .select('id, invoice_number, so_doc_no, debtor_name, due_date, status, total_sen, paid_sen')
-    .eq('company_id', companyId).in('status', ['SENT', 'PARTIALLY_PAID', 'OVERDUE'])
+    .eq('company_id', companyId).in('status', [...OPEN_SI_STATUSES])
     .lt('due_date', addDays(today, -OVERDUE_DAYS)).order('id').range(lo, hi));
   if (all.error) return fail('overdue invoices', all.error.message);
   const rows = (all.data ?? []) as Rows;
@@ -280,7 +282,7 @@ async function readDone(sb: any, companyId: number, today: string, cards: CardFa
   }
   for (const b of cards?.batches ?? []) {
     if (day(b.created_at) !== today) continue;
-    const span = b.period_from && b.period_to ? (b.period_from === b.period_to ? ` · ${String(b.period_to).replace(/-/g, '/')}` : ` · ${String(b.period_from).replace(/-/g, '/')} – ${String(b.period_to).replace(/-/g, '/')}`) : '';
+    const span = b.period_from && b.period_to ? (b.period_from === b.period_to ? ` · ${fmtDate(b.period_to)}` : ` · ${fmtDate(b.period_from)} – ${fmtDate(b.period_to)}`) : '';
     done.push({ key: `report:${b.id}`, text: `Uploaded ${names.get(String(b.acquirer_code)) ?? b.acquirer_code} merchant report${span}`, je: null, at: clock(b.created_at) });
   }
 
@@ -301,7 +303,7 @@ async function readDone(sb: any, companyId: number, today: string, cards: CardFa
   }
   for (const l of bank?.locks ?? []) {
     if (day(l.locked_at) !== today) continue;
-    done.push({ key: `locked:${l.account_code}:${l.period_month}`, text: `Locked ${bankOf.get(String(l.account_code)) ?? l.account_code} ${String(l.period_month).slice(0, 7).replace('-', '/')} · ${l.account_code}`, je: null, at: clock(l.locked_at) });
+    done.push({ key: `locked:${l.account_code}:${l.period_month}`, text: `Locked ${bankOf.get(String(l.account_code)) ?? l.account_code} ${new Date(`${String(l.period_month).slice(0, 7)}-01T00:00:00Z`).toLocaleString('en-MY', { month: 'long', year: 'numeric', timeZone: 'UTC' })} · ${l.account_code}`, je: null, at: clock(l.locked_at) });
   }
 
   for (const v of (vouchers.data ?? []) as Rows) {
