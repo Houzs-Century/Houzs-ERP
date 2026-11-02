@@ -1,6 +1,16 @@
 {
   "reviewed": [
     {
+      "check": "D2",
+      "key": "COMPLETED,PENDING_DELIVERY_SERVICE,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,UNDER_VERIFICATION ~ PENDING_DELIVERY_SERVICE,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,UNDER_VERIFICATION",
+      "why": "THE WEEKLY STATUS-UPDATE WORDING, a customer-facing PRESENTATION of the ASSR stage vocabulary, not a second answer to what the stages are. assrWeeklyStatus.ts FRIENDLY_STATUS maps each OPEN stage to a warmer line for the Friday WhatsApp status update; it lists only the six open stages because a completed or voided case gets no weekly update, which is exactly why it differs from the seven-stage set by COMPLETED. friendlyStatus() falls back to the shared assrCustomerStatus().label for any stage it does not list, so the vocabulary keeps its one home (the five D1 homes recorded below, pinned by assrStageLabelOneHome.test.ts) as the referee. Cost of divergence is a less warm status line, never a wrong status."
+    },
+    {
+      "check": "D2",
+      "key": "COMPLETED,PENDING_DELIVERY_SERVICE,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,UNDER_VERIFICATION,VOIDED ~ PENDING_DELIVERY_SERVICE,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,UNDER_VERIFICATION",
+      "why": "THE WEEKLY STATUS-UPDATE WORDING, a customer-facing PRESENTATION of the ASSR stage vocabulary, not a second answer to what the stages are. assrWeeklyStatus.ts FRIENDLY_STATUS maps each OPEN stage to a warmer line for the Friday WhatsApp status update; it lists only the six open stages because a completed or voided case gets no weekly update, which is exactly why it differs from the eight-stage set by COMPLETED and VOIDED. friendlyStatus() falls back to the shared assrCustomerStatus().label for any stage it does not list, so the vocabulary keeps its one home (the ASSR_SHEET_STATUS / ALL_STAGES D1 homes recorded below, pinned by assrStageLabelOneHome.test.ts) as the referee. Cost of divergence is a less warm status line, never a wrong status."
+    },
+    {
       "check": "D1",
       "key": "EDIT,FULL,NONE,VIEW|backend/src/services/pageAccess.ts frontend/src/lib/roleMatrixModel.ts",
       "why": "THE 4-LEVEL PAGE-ACCESS VOCABULARY (none/view/edit/full). Two homes by necessity: POSITION_ACCESS_LEVELS (pageAccess.ts) is the server's writable set that isValidPositionLevel validates every role_page_access write against (PATCH /api/roles/:id/page-access); MATRIX_LEVELS (roleMatrixModel.ts) is the RBAC-matrix UI's dropdown order + 无/看/改/批 labels in the browser. The two packages share no build graph, the set is closed to the code, and a divergence costs a dropdown option, never a wrong grant — the server is the referee. Recorded rather than collapsed because the frontend cannot import backend/src and the matrix needs the ordered list for its control."
