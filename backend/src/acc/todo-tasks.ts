@@ -134,7 +134,9 @@ export function pendingOccurrence(t: TodoTask, occurrences: TaskOccurrence[], to
   return first.due <= addDays(today, leadDays(t)) ? { occursOn: first.occursOn, due: first.due } : null;
 }
 
-const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+/** A weekday's short name, 0 = Sun (4 Jan 2026 was a Sunday). */
+const weekdayName = (d: number): string =>
+  new Date(Date.UTC(2026, 0, 4 + d)).toLocaleString('en-MY', { weekday: 'short', timeZone: 'UTC' });
 const ordinal = (n: number): string => {
   const tens = n % 100;
   if (tens >= 11 && tens <= 13) return `${n}th`;
@@ -147,7 +149,7 @@ export function repeatText(t: Pick<TodoTask, 'repeat' | 'dayMode' | 'weekdays' |
     case 'day':
       return t.dayMode === 'wk' ? 'Every weekday, Mon to Fri' : t.dayMode === 'ms' ? 'Every day, Mon to Sat' : 'Every day';
     case 'week': {
-      const days = [1, 2, 3, 4, 5, 6, 0].filter((d) => t.weekdays.includes(d)).map((d) => WD[d]);
+      const days = [1, 2, 3, 4, 5, 6, 0].filter((d) => t.weekdays.includes(d)).map(weekdayName);
       return days.length ? `Every ${days.join(', ')}` : 'Every week';
     }
     case 'month': {
