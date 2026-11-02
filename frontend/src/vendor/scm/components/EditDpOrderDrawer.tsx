@@ -47,11 +47,21 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
     city: row.city ?? '',
     postcode: row.postcode ?? '',
     state: row.state ?? '',
+    // Origin ("from") — TRANSFER only (owner 2026-11-02 方案1); the section renders
+    // only for a transfer, but the fields are always in state so the diff is simple.
+    fromName: row.from_name ?? '',
+    fromAddress1: row.from_address1 ?? '',
+    fromAddress2: row.from_address2 ?? '',
+    fromCity: row.from_city ?? '',
+    fromPostcode: row.from_postcode ?? '',
+    fromState: row.from_state ?? '',
     requestedDate: row.requested_date ?? '',
     remark: row.remark ?? '',
   });
   const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) =>
     setForm((s) => ({ ...s, [k]: v }));
+
+  const isTransfer = row.job_type === 'TRANSFER';
 
   const fieldRow: CSSProperties = { display: 'block', marginBottom: 'var(--space-3)' };
   const inputStyle: CSSProperties = { width: '100%' };
@@ -78,6 +88,15 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
         city: toNull(form.city),
         postcode: toNull(form.postcode),
         state: toNull(form.state),
+        // Origin fields only for a transfer, so a non-transfer edit never writes them.
+        ...(isTransfer ? {
+          fromName: toNull(form.fromName),
+          fromAddress1: toNull(form.fromAddress1),
+          fromAddress2: toNull(form.fromAddress2),
+          fromCity: toNull(form.fromCity),
+          fromPostcode: toNull(form.fromPostcode),
+          fromState: toNull(form.fromState),
+        } : {}),
         requestedDate: form.requestedDate ? form.requestedDate : null,
         remark: toNull(form.remark),
       },
@@ -101,6 +120,45 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
             {dpJobTypeLabel(row.job_type)} · Pending Schedule. A job can be edited until it is scheduled.
           </div>
 
+          {/* Origin ("from") — TRANSFER only (owner 2026-11-02 方案1). Shown above the
+              destination so the job reads from -> to. Free text, optional. */}
+          {isTransfer && (
+            <div style={{ ...fieldRow, padding: 'var(--space-3)', border: '1px solid var(--border, rgba(34,31,32,0.12))', borderRadius: '6px' }}>
+              <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>
+                From (origin) <span style={{ textTransform: 'none', color: 'var(--c-muted, #767b6e)' }}>— optional</span>
+              </div>
+              <label style={fieldRow}>
+                <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>From name</div>
+                <input className={styles.searchInput} style={inputStyle} value={form.fromName} onChange={(e) => set('fromName', e.target.value)} />
+              </label>
+              <label style={fieldRow}>
+                <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>From address line 1</div>
+                <input className={styles.searchInput} style={inputStyle} value={form.fromAddress1} onChange={(e) => set('fromAddress1', e.target.value)} />
+              </label>
+              <label style={fieldRow}>
+                <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>From address line 2</div>
+                <input className={styles.searchInput} style={inputStyle} value={form.fromAddress2} onChange={(e) => set('fromAddress2', e.target.value)} />
+              </label>
+              <div style={row2}>
+                <label style={fieldRow}>
+                  <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>From city</div>
+                  <input className={styles.searchInput} style={inputStyle} value={form.fromCity} onChange={(e) => set('fromCity', e.target.value)} />
+                </label>
+                <label style={fieldRow}>
+                  <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>From postcode</div>
+                  <input className={styles.searchInput} style={inputStyle} value={form.fromPostcode} onChange={(e) => set('fromPostcode', e.target.value)} />
+                </label>
+              </div>
+              <label style={{ ...fieldRow, marginBottom: 0 }}>
+                <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>From state</div>
+                <input className={styles.searchInput} style={inputStyle} value={form.fromState} onChange={(e) => set('fromState', e.target.value)} />
+              </label>
+            </div>
+          )}
+
+          {isTransfer && (
+            <div className={styles.eyebrow} style={{ margin: 'var(--space-1) 0 var(--space-2)', color: 'var(--c-burnt)' }}>To (destination)</div>
+          )}
           <label style={fieldRow}>
             <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>Party name</div>
             <input className={styles.searchInput} style={inputStyle} value={form.partyName} onChange={(e) => set('partyName', e.target.value)} />

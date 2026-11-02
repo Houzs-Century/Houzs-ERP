@@ -746,6 +746,12 @@ export type DpOrderCreate = {
      3PL company we don't own, picked from the carrier master instead of our own
      warehouses. Mutually exclusive with warehouseId. */
   threeplCompanyId?: string;
+  /* TRANSFER ORIGIN ("from", owner 2026-11-02 方案1): the pickup point — our
+     warehouse or an outsourced 3PL. fromOverrides use snapshot keys (party_name,
+     address1, address2, city, postcode, state) and win over the auto-fill. */
+  fromWarehouseId?: string;
+  fromThreeplCompanyId?: string;
+  fromOverrides?: Record<string, string | null>;
   requestedDate?: string;
   remark?: string;
   overrides?: Record<string, string | null>;
@@ -776,6 +782,13 @@ export type DpOrderPatch = {
   city?: string | null;
   postcode?: string | null;
   state?: string | null;
+  // Origin ("from") fields — TRANSFER only (owner 2026-11-02 方案1).
+  fromName?: string | null;
+  fromAddress1?: string | null;
+  fromAddress2?: string | null;
+  fromCity?: string | null;
+  fromPostcode?: string | null;
+  fromState?: string | null;
   requestedDate?: string | null;
   remark?: string | null;
 };
@@ -904,6 +917,16 @@ export type DpOrderRow = {
   city: string | null;
   postcode: string | null;
   state: string | null;
+  /* Origin ("from") — TRANSFER only (owner 2026-11-02 方案1). Optional (`?`) so a
+     cached pre-upgrade payload still typechecks. */
+  from_name?: string | null;
+  from_address1?: string | null;
+  from_address2?: string | null;
+  from_city?: string | null;
+  from_postcode?: string | null;
+  from_state?: string | null;
+  from_warehouse_id?: string | null;
+  from_threepl_company_id?: string | null;
   requested_date: string | null;
   trip_id: string | null;
   trip_stop_id: string | null;
