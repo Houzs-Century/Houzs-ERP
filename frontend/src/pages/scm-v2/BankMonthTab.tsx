@@ -113,7 +113,8 @@ export const BankMonthTab = () => {
     for (const [k, v] of Object.entries(patch)) { if (v == null) next.delete(k); else next.set(k, v); }
     return next;
   });
-  const upload = () => setParam({ view: 'files' });
+  /* The Upload drawer, on this account (BankRecon mounts it). */
+  const upload = () => setParam({ upload: '1', ...(card ? { account: card.code } : {}) });
 
   return (
     <div className={look.top}>

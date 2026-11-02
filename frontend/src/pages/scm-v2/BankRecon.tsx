@@ -31,6 +31,7 @@ import {
   refusalText, payableOf,
 } from './settlement-ui';
 import { BankStatementTab } from './BankStatementTab';
+import { BankUploadDrawer, type BankUploaded } from './BankUpload';
 import { BankMonthTab } from './BankMonthTab';
 import { DateField } from '../../vendor/scm/components/DateField';
 import grid from './MerchantRecon.module.css';
@@ -59,6 +60,17 @@ export const BankRecon = () => {
     if (next === 'statements') p.delete('view'); else p.set('view', next);
     return p;
   });
+  /* The Upload drawer lives in the address (?upload=1) so To do can open it,
+     on the account asked for; once a file is read the page lands on that
+     account's month. */
+  const uploading = params.get('upload') != null;
+  const openUpload = () => setParams((prev) => { const p = new URLSearchParams(prev); p.set('upload', '1'); return p; });
+  const closeUpload = (done: BankUploaded | null) => setParams((prev) => {
+    const p = new URLSearchParams(prev);
+    p.delete('upload');
+    if (done) { p.delete('view'); p.delete('tab'); p.set('account', done.accountCode); p.set('month', done.month); }
+    return p;
+  });
   return (
     <div className="space-y-4">
       <PageHeader eyebrow="Finance · Bank & cards" title="Bank statements" />
@@ -77,7 +89,8 @@ export const BankRecon = () => {
         <Link to="/scm/merchant-recon" className={look.link}><ArrowLeft {...ICON} /> Merchant reports</Link>
       </div>
       {view === 'statements' && <BankMonthTab />}
-      {view === 'files' && <BankStatementTab />}
+      {view === 'files' && <BankStatementTab onUpload={openUpload} />}
+      {uploading && <BankUploadDrawer account={params.get('account')} onClose={closeUpload} />}
       {view === 'money' && <WaitingForMoney />}
       {view === 'transit' && <InTransitTab />}
     </div>
