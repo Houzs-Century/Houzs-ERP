@@ -1883,6 +1883,8 @@ export function DeliveryPlanningBoard({
         /* Drag over the Total Amount / Balance cells to add them up, like Excel
            (HC-0164, Syu). */
         cellRangeSum
+        /* Whole row on one screen for review and screenshots (Delivery, 11-02). */
+        fitToWidth
         exportName={exportName}
         rowKey={rowIdOf}
         /* The full board scrolls its tabs and toolbar away so the grid fills the
