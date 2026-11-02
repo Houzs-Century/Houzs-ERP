@@ -113,7 +113,11 @@ export async function sendDeliveryMessageForDocs(
   // Address columns feed the Postage kind only; the rest read nothing extra.
   const { data: rowsRaw, error: readErr } = await scopeToAllowedCompanies(
     sb.from('mfg_sales_orders')
-      .select('doc_no, ref, debtor_name, phone, branding, company_id, customer_delivery_date, amended_delivery_date, amend_reason, delivery_address1, delivery_address2, delivery_address3, delivery_address4, address1, address2, address3, address4, postcode, city, customer_state')
+      // The headline columns (venue / agent / house_type / disposal_request /
+      // delivery_message_status) ride along so EVERY send also fills the contact
+      // panel's single-value fields (buildSyncHeadline), not only the fields the
+      // message's own template uses (owner 2026-11-02).
+      .select('doc_no, ref, debtor_name, phone, branding, company_id, customer_delivery_date, amended_delivery_date, amend_reason, venue, agent, house_type, disposal_request, delivery_message_status, delivery_address1, delivery_address2, delivery_address3, delivery_address4, address1, address2, address3, address4, postcode, city, customer_state')
       .in('doc_no', docNos),
     c,
   );
@@ -214,7 +218,9 @@ export async function sendDeliveryMessageForDocs(
     const sendCtx = {
       callbackUrl,
       automation: KIND_AUTOMATION[kind],
-      extra: perKind.attributes,
+      // Headline fields FIRST so this kind's own variables win on any overlap
+      // (driver_info sets client_delivery_date itself); both ride on the one send.
+      extra: { ...buildSyncHeadline(first, phone, payloadDate(effectiveSoDelivery(first as SoDeliveryDateRow))), ...perKind.attributes },
       resetConversation: OPENER_KINDS.has(kind),
     };
     // ONE message per customer phone and company. buildDeliveryFollowUp shows
