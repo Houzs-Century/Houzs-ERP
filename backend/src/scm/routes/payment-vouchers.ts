@@ -71,7 +71,7 @@ import { pvCanEdit, pvCanPrepare, pvCanCheck, pvCanApprove, pvCanReject, pvCanWi
 import { settlePiPaidSen } from '../lib/pi-settlement';
 import { normalizeVendor } from '../../acc/bill-extract';
 import { extractBillsHandler } from './pv-extract';
-import { HEADER, listPaymentVouchersHandler } from './payment-vouchers-list';
+import { HEADER, journalNumbers, listPaymentVouchersHandler } from './payment-vouchers-list';
 /* Still importable from here (tests/pvSupplierAdvance.test.ts and older callers). */
 export { listPaymentVouchersHandler };
 import { parseEventId, pvLineEventRefusal } from '../lib/event-tags';
@@ -438,7 +438,10 @@ paymentVouchers.get('/:id', async (c) => {
       status: inv?.status ?? null,
     };
   });
-  return c.json({ paymentVoucher: h.data, lines: i.data ?? [], allocations });
+  /* The journal its approval posted — the page's books line and Journal fact (the redesign). */
+  const jn = await journalNumbers(sb, c, [String((h.data as { pv_number: string }).pv_number)]);
+  if (!jn.ok) return c.json({ error: 'load_failed', reason: jn.reason }, 500);
+  return c.json({ paymentVoucher: { ...h.data, je_no: jn.byPv.get(String((h.data as { pv_number: string }).pv_number)) ?? null }, lines: i.data ?? [], allocations });
 });
 
 /* ────────────────────────────────────────────────────────────────────────

@@ -77,7 +77,8 @@ function Field({ label, optional = false, children }: { label: string; optional?
 
 /* ── Add task ──────────────────────────────────────────────────────────── */
 
-export function AddTaskDrawer({ open, onClose, today, groups }: { open: boolean; onClose: () => void; today: string; groups: TodoGroupDef[] }) {
+/** `initialLink` opens the drawer with a document already linked (a voucher's own Add task). */
+export function AddTaskDrawer({ open, onClose, today, groups, initialLink = null }: { open: boolean; onClose: () => void; today: string; groups: TodoGroupDef[]; initialLink?: TaskLink | null }) {
   const people = useTodoPeople(open);
   const create = useCreateTask();
   const addGroup = useAddGroup();
@@ -92,7 +93,7 @@ export function AddTaskDrawer({ open, onClose, today, groups }: { open: boolean;
   const [group, setGroup] = useState('misc');
   const [newGroupOpen, setNewGroupOpen] = useState(false);
   const [newGroup, setNewGroup] = useState('');
-  const [link, setLink] = useState<TaskLink | null>(null);
+  const [link, setLink] = useState<TaskLink | null>(initialLink);
   const [linkQ, setLinkQ] = useState('');
   const [remark, setRemark] = useState('');
   const docs = useLinkSearch(open ? linkQ : '');
