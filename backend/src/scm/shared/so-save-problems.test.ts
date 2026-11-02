@@ -443,3 +443,19 @@ describe('proceedGateUnmetBody', () => {
     expect(body.reason).toBe('A; B');
   });
 });
+
+describe('2990-0029 random-colour pillow hint', () => {
+  const msg = (itemCode: string) =>
+    collectProcessingGateProblems({
+      procDate: '2099-01-10', delivDate: '2099-02-10', todayMY: '2026-07-18',
+      variantOffenders: [{ itemCode, group: 'fabric_accessory', missing: ['fabricCode'] }],
+    })[0]!.message;
+
+  it('points a custom SQUARE PILLOW without a colour at the RDM SKU', () => {
+    expect(msg('SQUARE PILLOW')).toContain('SQUARE PILLOW RDM');
+  });
+  it('adds nothing for other accessories', () => {
+    expect(msg('LONG PILLOW')).toBe('LONG PILLOW — Fabrics is required');
+    expect(msg('SB02')).toBe('SB02 — Fabrics is required');
+  });
+});
