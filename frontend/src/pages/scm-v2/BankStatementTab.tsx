@@ -605,14 +605,14 @@ const KIND_LABEL: Record<BankLine['kind'], string> = {
    month, a report paid meanwhile); a refusal is named and the rest still post.
    A split, an unsure or an unmatched payout is not certain and stays below
    for a person. */
-const certainAllocation = (l: BankLine): { batchId: number; amountSen: number } | null => {
+export const certainAllocation = (l: BankLine): { batchId: number; amountSen: number } | null => {
   if (l.state !== 'OPEN' || l.kind !== 'PAYOUT' || l.matched_batch_id == null || l.amount_sen <= 0) return null;
   const b = l.candidates.find((x) => x.id === l.matched_batch_id);
   if (!b || b.outstandingSen !== l.amount_sen) return null;
   return { batchId: b.id, amountSen: b.outstandingSen };
 };
 
-const BookAllMatched = ({ lines }: { lines: BankLine[] }) => {
+export const BookAllMatched = ({ lines }: { lines: BankLine[] }) => {
   const book = useBookBankReceipt();
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ posted: number; jeNos: string[]; refused: string[] } | null>(null);

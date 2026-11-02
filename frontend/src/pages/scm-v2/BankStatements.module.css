@@ -164,3 +164,32 @@
 .viewOn { background: #ffffff; color: #0c3f39; font-weight: 600; box-shadow: 0 1px 2px rgba(17, 24, 16, 0.14); }
 .link { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: #16695f; text-decoration: none; }
 .link:hover { text-decoration: underline; }
+
+/* ── A month's lines, in six tabs ── */
+.tabsRow { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.tabs { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 3px; max-width: 100%; border-radius: 9px; background: #eef0ec; }
+.tabWrap { display: inline-flex; align-items: center; }
+.tabSep { width: 1px; height: 18px; margin: 0 5px; background: #c9cdc4; }
+.tab {
+  display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px; border: 0; border-radius: 7px; white-space: nowrap;
+  background: transparent; color: #5f6459; font: 500 13px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer;
+}
+.tab:hover { color: #0c3f39; }
+.tabOn { background: #ffffff; color: #0c3f39; font-weight: 600; box-shadow: 0 1px 2px rgba(17, 24, 16, 0.14); }
+.tabCount {
+  min-width: 18px; height: 18px; box-sizing: border-box; padding: 0 5px; display: inline-grid; place-items: center; border-radius: 999px;
+  font-size: 11px; font-weight: 600; color: #a9ada3;
+}
+.countSome { background: #e3e6e0; color: #5b6055; }
+.countInfo { background: #eaf3f1; color: #1d5c54; }
+.countWarn { background: #f7f1e3; color: #7a5a1e; }
+.countLate { background: #fbeeee; color: #a83434; }
+.emptyTab { padding: 18px 4px; font-size: 13px; color: #767b6e; }
+.dateCell { white-space: nowrap; color: #5f6459; }
+.actionsCell { text-align: right; white-space: nowrap; }
+.actions { display: inline-flex; align-items: center; gap: 10px; }
+.textBtn { padding: 0; border: 0; background: none; font: 600 12px 'IBM Plex Sans', system-ui, sans-serif; color: #16695f; cursor: pointer; }
+.textBtn:hover { text-decoration: underline; }
+.primary { border-color: #b9d6d1; background: #e1efed; color: #0c3f39; }
+.primary:hover { background: #d3e7e3; }
+.picked { background: #faf7f0; }

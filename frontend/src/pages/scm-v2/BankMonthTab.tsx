@@ -37,12 +37,12 @@ import {
   type BankBalanceSource, type BankTypedBalance, type Reconciliation,
 } from './bank-queries';
 import { ICON, fmt, btn, softText, danger, good, panel, refusalText } from './settlement-ui';
-import { OpenLines, DoneLine, BooksNotOnBank } from './BankStatementTab';
 import { ReconcilePickProvider, byDateThenLine } from './bank-reconcile-pick';
 import {
   BankCards, DifferenceWalk, MissingBanner, MonthFigures, MonthStrip, MonthTracker, bankCards, defaultMonth, lockLabel, lockReasons, monthTitle,
   type MonthFacts,
 } from './BankStatementsTop';
+import { LineTabBody, LineTabs, firstOpenTab, openingTab, tabCounts, type LineTab } from './BankLineTabs';
 import look from './BankStatements.module.css';
 import { useFinanceTodo } from './finance/finance-todo-queries';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
@@ -119,14 +119,14 @@ export const BankMonthTab = () => {
     <div className={look.top}>
       {q.isLoading && <div className={look.muted}>Loading…</div>}
       {q.isError && <div className={look.refusal}><AlertTriangle {...ICON} /> {refusalText(q.error, 'The bank months did not load.')}</div>}
-      {cards.length > 0 && <BankCards cards={cards} selected={card?.code ?? null} onSelect={(code) => setParam({ account: code, month: null })} />}
+      {cards.length > 0 && <BankCards cards={cards} selected={card?.code ?? null} onSelect={(code) => setParam({ account: code, month: null, tab: null })} />}
       {/* Spoken only over lists that came back (the empty-state rule). */}
       {q.data && setup.data && cards.length === 0 && (
         <div className={look.empty}>
           No bank account takes statements in this company yet. Set one up under <Link to="/scm/settlement-setup">Recon setup</Link> and its card appears here.
         </div>
       )}
-      {card && <MonthStrip bank={card.bank} months={mine} selected={month} onPick={(m) => setParam({ account: card.code, month: m })} onUpload={upload} />}
+      {card && <MonthStrip bank={card.bank} months={mine} selected={month} onPick={(m) => setParam({ account: card.code, month: m, tab: null })} onUpload={upload} />}
       {card && q.data && mine.length === 0 && (
         <div className={look.empty}>No {card.bank} statement has been uploaded yet. Upload one and its months appear here.</div>
       )}
@@ -147,10 +147,13 @@ const MonthView = ({ picked, bank, missingSince, onUpload }: {
   picked: Picked; bank: string; missingSince: string | null; onUpload: () => void;
 }) => {
   const q = useBankMonth(picked.accountCode, picked.month);
-  const [showDone, setShowDone] = useState(false);
+  const [params, setParams] = useSearchParams();
+  /* The lines a person pressed "Not this" on under To match: they go to To
+     choose. Nothing is unlinked — a To match line was never linked, only
+     offered — so this lives on the screen and a reload offers it again. */
+  const [chooseAnyway, setChooseAnyway] = useState<ReadonlySet<number>>(new Set());
   const typedRef = useRef<HTMLDivElement>(null);
-  const linesRef = useRef<HTMLDivElement>(null);
-  const ledgerRef = useRef<HTMLDivElement>(null);
+  const tabsRef = useRef<HTMLDivElement>(null);
   const goTo = (r: { current: HTMLDivElement | null }) => r.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   /* THE REPORT. Owner, 2026-09-08: 然后就是match 完了我要report.
@@ -179,11 +182,16 @@ const MonthView = ({ picked, bank, missingSince, onUpload }: {
 
   const lines = data?.lines ?? [];
   const open = lines.filter((l) => l.state === 'OPEN');
-  const done = lines.filter((l) => l.state !== 'OPEN');
   /* In the order the statement reads — by the day the bank booked it, then
      the line — the file screen's own order (docs/bugs/0918). */
   const ordered = byDateThenLine(open);
   const entries = data?.unmatchedEntries ?? [];
+  /* The redesign's six tabs; the tab lives in the address (?tab=) and a month
+     opens on the first with lines to work. */
+  const counts = tabCounts(lines, entries, chooseAnyway);
+  const tab = openingTab(params.get('tab'), counts);
+  const setTab = (t: LineTab) => setParams((prev) => { const next = new URLSearchParams(prev); next.set('tab', t); return next; }, { replace: true });
+  const showTab = (t: LineTab) => { setTab(t); goTo(tabsRef); };
 
   if (q.isLoading) return <section className={look.panel}><span className={look.muted}>Assembling the month…</span></section>;
   if (!data) {
@@ -255,7 +263,7 @@ const MonthView = ({ picked, bank, missingSince, onUpload }: {
 
       <MonthTracker f={f} />
       <MonthFigures f={f} onTypeClosing={needsTyping ? () => goTo(typedRef) : null} />
-      <DifferenceWalk f={f} onLines={() => goTo(linesRef)} onLedger={() => goTo(ledgerRef)} />
+      <DifferenceWalk f={f} onLines={() => showTab(firstOpenTab(counts))} onLedger={() => showTab('not-on-bank')} />
 
       {/* The inconsistency comes before anything is read off the walk: a walk
           the numbers cannot account for looks like work has been done. */}
@@ -280,37 +288,18 @@ const MonthView = ({ picked, bank, missingSince, onUpload }: {
         </div>
       )}
 
-      <div ref={linesRef} className={look.section}>
-        {/* HOW MUCH IS LEFT, and the rule that clears the obvious part of it —
-            on the month, where he works (owner 2026-09-13: 我的 matching 在 bank
-            statement，然后 lock 在 by month？不能做一起？). */}
-        <StillToDecide open={open.length} locked={data.lock != null}
-          statements={data.statements.map((s) => ({ id: s.id, fileName: s.file_name }))}
-          repeats={data.repeats} />
-        {open.length > 0 && <OpenLines lines={ordered} />}
-        {done.length > 0 && (
-          <div style={softText}>
-            {done.length} movement{done.length === 1 ? '' : 's'} already dealt with.{' '}
-            <button type="button" style={{ ...btn(), padding: '2px 8px' }} onClick={() => setShowDone(!showDone)}>
-              {showDone ? 'Hide' : 'Show'}
-            </button>
-          </div>
-        )}
-        {showDone && done.length > 0 && (
-          <table className={grid.grid}>
-            <thead>
-              <tr>
-                <th>On the bank statement</th><th className={grid.num}>Deposit</th><th className={grid.num}>Withdrawal</th><th>What happened</th><th />
-              </tr>
-            </thead>
-            <tbody>
-              {done.map((l) => <DoneLine key={l.id} line={l} />)}
-            </tbody>
-          </table>
-        )}
-      </div>
+      {/* HOW MUCH IS LEFT, and the rule that clears the obvious part of it —
+          on the month, where he works (owner 2026-09-13: 我的 matching 在 bank
+          statement，然后 lock 在 by month？不能做一起？). */}
+      <StillToDecide open={open.length} locked={data.lock != null}
+        statements={data.statements.map((s) => ({ id: s.id, fileName: s.file_name }))}
+        repeats={data.repeats} />
 
-      <div ref={ledgerRef}><BooksNotOnBank entries={entries} /></div>
+      <div ref={tabsRef} className={look.section}>
+        <LineTabs tab={tab} counts={counts} locked={data.lock != null} onTab={setTab} />
+        <LineTabBody tab={tab} lines={byDateThenLine(lines)} entries={entries} locked={data.lock != null} periodTo={a.periodTo}
+          chooseAnyway={chooseAnyway} onNotThis={(id) => setChooseAnyway((was) => new Set(was).add(id))} />
+      </div>
 
       {data.statements.length > 0 && <TheFiles data={data} />}
     </section>
