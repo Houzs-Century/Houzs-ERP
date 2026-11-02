@@ -98,17 +98,30 @@ export function lastMileListSideOf(o: LastMileRow & ToArrangeRow, date: string):
   return isToArrangeRow(o, date) ? 'TO_ARRANGE' : null;
 }
 
-/** A due-this-day SO that already has a LORRY assigned (crew.lorry_plate) but is
- *  not yet on a live trip — the dispatcher picked the lorry on the DP board
- *  before a run was opened (owner 2026-11-01). It belongs UNDER that lorry's Last
- *  Mile card, not in the To-arrange bucket, so the board shows the day's plan per
- *  lorry even before trips/DOs exist. (lastMileSideOf stays trip-only, so map
- *  focus / crew / stop-status still see trip rows only.) */
+/** A due-this-day SO assigned to a LORRY (crew.lorry_plate) that is NOT on a live
+ *  trip — the dispatcher picked the lorry on the DP board before a run was opened
+ *  (owner 2026-11-01). It belongs UNDER that lorry's Last Mile card, so the board
+ *  shows the day's plan per lorry even before trips/DOs exist.
+ *
+ *  Unlike isToArrangeRow (the To-arrange bucket), this KEEPS a DELIVERED one. The
+ *  shared feed flips an SO to DELIVERED the moment its DO is merely LOADED
+ *  (syncSoDeliveredFromDo counts LOADED — see so-delivered-flips-early-from-loaded-do),
+ *  so a lorry's loaded / completed drops would otherwise disappear from its card
+ *  mid-run — the owner's "VRH 少了几张" (2026-11-02). A completed drop stays
+ *  visible, its DO status driving done-vs-active in docRowVM, exactly as a
+ *  delivered SO on a live trip stays via lastMileSideOf. Still bounded to the
+ *  picked day (toArrangeDateOf), so past-day delivered drops do not pile up.
+ *  (lastMileSideOf stays trip-only, so map focus / crew / stop-status still see
+ *  trip rows only.) */
 export function isAssignedNoTripRow(
   o: ToArrangeRow & Pick<PlanningOrder, 'crew'>,
   date: string,
 ): boolean {
-  return isToArrangeRow(o, date) && !!o.crew?.lorry_plate;
+  if (o.row_type !== 'so') return false;
+  if (o.trip_date != null) return false;
+  if (!o.crew?.lorry_plate) return false;
+  const d = toArrangeDateOf(o);
+  return d != null && String(d).slice(0, 10) === date;
 }
 
 /** A NON-SO job a lorry runs on the picked day (owner 2026-11-02). A lorry's day

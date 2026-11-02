@@ -202,6 +202,12 @@ describe('isAssignedNoTripRow — a lorry assigned before a run is opened', () =
   test('not due this day = no', () => {
     expect(isAssignedNoTripRow(due({ effective_delivery_date: '2026-08-11', crew: crewPlate('VQE9058') }), DAY)).toBe(false);
   });
+
+  test('a DELIVERED one STAYS — the feed flips an SO to DELIVERED off a LOADED DO, and a lorry\'s loaded drops must not vanish mid-run', () => {
+    expect(isAssignedNoTripRow(due({ delivery_state: 'DELIVERED', crew: crewPlate('VRH9058') }), DAY)).toBe(true);
+    // still bounded to the picked day — a past-day delivered drop does not pile up
+    expect(isAssignedNoTripRow(due({ delivery_state: 'DELIVERED', effective_delivery_date: '2026-08-09', crew: crewPlate('VRH9058') }), DAY)).toBe(false);
+  });
 });
 
 describe('isLastMileJobRow — a lorry\'s non-SO work of the day (owner 2026-11-02)', () => {
