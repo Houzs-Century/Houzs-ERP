@@ -742,6 +742,10 @@ export type DpOrderCreate = {
      transfer, or enter an ad-hoc move with no document. */
   stockTransferId?: string;
   warehouseId?: string;
+  /* TRANSFER to an OUTSOURCED warehouse (owner 2026-11-02): the destination is a
+     3PL company we don't own, picked from the carrier master instead of our own
+     warehouses. Mutually exclusive with warehouseId. */
+  threeplCompanyId?: string;
   requestedDate?: string;
   remark?: string;
   overrides?: Record<string, string | null>;
@@ -751,6 +755,37 @@ export function useCreateDpOrder() {
   return useMutation({
     mutationFn: (body: DpOrderCreate) =>
       authedFetch<{ dpOrder: unknown }>(`/dp-orders`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery-planning'] }),
+  });
+}
+
+/* Edit an unscheduled DP order's party / address / date / remark (PATCH
+   /dp-orders/:id). The backend edits only PENDING_SCHEDULE rows — a scheduled job
+   sits on a manifest a driver may hold, so it must be cancelled and re-raised. A
+   field sent as null CLEARS it (the backend refuses a change that leaves the job
+   with no address). Invalidates the board prefix the list query extends, so both
+   refresh. First UI of the endpoint (owner 2026-11-02: "DP order maintenance"). */
+export type DpOrderPatch = {
+  partyName?: string | null;
+  contactName?: string | null;
+  contactPhone?: string | null;
+  address1?: string | null;
+  address2?: string | null;
+  address3?: string | null;
+  address4?: string | null;
+  city?: string | null;
+  postcode?: string | null;
+  state?: string | null;
+  requestedDate?: string | null;
+  remark?: string | null;
+};
+export function useUpdateDpOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: DpOrderPatch & { id: string }) =>
+      authedFetch<{ dpOrder: unknown }>(`/dp-orders/${id}`, {
+        method: 'PATCH', body: JSON.stringify(body),
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery-planning'] }),
   });
 }
@@ -856,6 +891,9 @@ export type DpOrderRow = {
   assr_case_id: number | null;
   supplier_id: string | null;
   project_id: number | null;
+  /* Outsourced (3PL) transfer destination (owner 2026-11-02). Optional (`?`) so a
+     cached pre-upgrade payload still typechecks. */
+  threepl_company_id?: string | null;
   party_name: string | null;
   contact_name: string | null;
   contact_phone: string | null;

@@ -25,8 +25,8 @@ import {
 } from '../lib/companyScope';
 import {
   partyTypeFor, emptySnapshot, snapshotFromSo, snapshotFromSupplier,
-  snapshotFromProject, snapshotFromAssr, snapshotFromWarehouse, snapshotFromWorkshop,
-  snapshotFromWorkshopName, type DpJobType, type DpPartySnapshot,
+  snapshotFromProject, snapshotFromAssr, snapshotFromWarehouse, snapshotFromThreepl,
+  snapshotFromWorkshop, snapshotFromWorkshopName, type DpJobType, type DpPartySnapshot,
 } from '../lib/dp-party';
 import { assertTripInAllowedCompanies } from '../lib/ref-in-company';
 import { mintNextDpNo, plateForLorry } from '../lib/dp-no-mint';
@@ -164,6 +164,11 @@ const createSchema = z.object({
   // going to, either picked directly or read off a work order. Columns: mig 0251.
   stockTransferId: z.string().uuid().optional(),
   warehouseId: z.string().uuid().optional(),
+  // TRANSFER to an OUTSOURCED warehouse (owner 2026-11-02): the destination is a
+  // 3PL company we don't own, so it is picked from the carrier master instead of
+  // scm.warehouses. Mutually exclusive with warehouseId in the UI. Column: mig
+  // 20261102T1300.
+  threeplCompanyId: z.string().uuid().optional(),
   lorryId: z.string().uuid().optional(),
   workshopId: z.string().uuid().optional(),
   workOrderId: z.string().uuid().optional(),
@@ -226,6 +231,20 @@ async function resolveSnapshot(
       'SELECT customer_name, phone, addr1, addr2, addr3, addr4, location FROM assr_cases WHERE id = ?',
     ).bind(p.assrCaseId).first<Record<string, unknown>>();
     if (a) return snapshotFromAssr(a);
+  }
+  /* TRANSFER to an OUTSOURCED warehouse (owner 2026-11-02): the destination is a
+     3PL company, not one of our warehouses. Checked before the warehouse branch
+     so a 3PL pick wins outright; its single free-text address fills the snapshot
+     and party_type stays WAREHOUSE. */
+  if (p.threeplCompanyId) {
+    // Bind the error: on a read failure we must not fall through to the empty
+    // snapshot and then refuse with "address_required" — a misleading answer when
+    // the operator did pick a carrier. Surface the real failure instead.
+    const { data, error } = await sb.from('threepl_companies')
+      .select('code, name, contact_name, contact_phone, office_phone, address')
+      .eq('id', p.threeplCompanyId).maybeSingle();
+    if (error) throw error;
+    if (data) return snapshotFromThreepl(data as Record<string, unknown>);
   }
   /* TRANSFER — the party is the DESTINATION. An explicit warehouseId wins (the
      operator picked where the fleet is going); otherwise resolve the transfer
@@ -301,6 +320,7 @@ dpOrders.post('/', async (c) => {
     project_id: p.projectId ?? null,
     stock_transfer_id: p.stockTransferId ?? null,
     warehouse_id: p.warehouseId ?? null,
+    threepl_company_id: p.threeplCompanyId ?? null,
     lorry_id: p.lorryId ?? null,
     workshop_id: p.workshopId ?? null,
     work_order_id: p.workOrderId ?? null,

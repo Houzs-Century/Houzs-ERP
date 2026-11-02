@@ -11,7 +11,9 @@
 //   SUPPLIER_PICKUP             → SUPPLIER   (scm.suppliers — single-line address)
 //   SETUP / DISMANTLE           → VENUE      (public.projects; PIC from public.users)
 //   INSPECTION                  → CUSTOMER   (an ASSR leg, like SERVICE/PICKUP)
-//   TRANSFER                    → WAREHOUSE  (scm.warehouses — the DESTINATION)
+//   TRANSFER                    → WAREHOUSE  (scm.warehouses — the DESTINATION;
+//                                             or scm.threepl_companies for an
+//                                             OUTSOURCED warehouse, owner 2026-11-02)
 //   LORRY_SERVICE               → WORKSHOP   (scm.workshops, mig 0241)
 //
 // The last two joined scm.trip_stop_type in mig 0250 (owner 2026-08-03, the
@@ -144,6 +146,25 @@ export function snapshotFromWarehouse(row: Record<string, unknown>): DpPartySnap
     address1: s(row.location), address2: null, address3: null, address4: null,
     city: s(row.city), postcode: s(row.postcode),
     state: s(row.state),
+  };
+}
+
+/** From an scm.threepl_companies row (mig 0210) — an OUTSOURCED warehouse a
+ *  TRANSFER job delivers to (owner 2026-11-02). The 3PL master has ONE free-text
+ *  `address` (like scm.workshops), so it maps to address1 with nothing to split.
+ *  party_type stays WAREHOUSE — an outsourced warehouse is still the destination
+ *  the move ends at, just one we do not own; keeping it WAREHOUSE means "who was
+ *  this transfer for" groups the same whether the destination is ours or a
+ *  carrier's. party_name falls back to the code; contact prefers the named person
+ *  over the office line, exactly as snapshotFromWorkshop does. */
+export function snapshotFromThreepl(row: Record<string, unknown>): DpPartySnapshot {
+  return {
+    party_type: 'WAREHOUSE',
+    party_name: s(row.name) ?? s(row.code),
+    contact_name: s(row.contact_name),
+    contact_phone: s(row.contact_phone) ?? s(row.office_phone),
+    address1: s(row.address), address2: null, address3: null, address4: null,
+    city: null, postcode: null, state: null,
   };
 }
 

@@ -16,7 +16,7 @@
 
 import { useMemo, useState } from 'react';
 import { JobDetailPanel, type JobPanelTarget } from '../../components/scm-v2/JobDetailPanel';
-import { CalendarClock, Plus, XCircle } from 'lucide-react';
+import { CalendarClock, Pencil, Plus, XCircle } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
@@ -29,6 +29,7 @@ import {
   type DpOrderRow,
 } from '../../vendor/scm/lib/delivery-planning-queries';
 import { NewDpOrderDrawer } from '../../vendor/scm/components/NewDpOrderDrawer';
+import { EditDpOrderDrawer } from '../../vendor/scm/components/EditDpOrderDrawer';
 import {
   ScheduleDpOrderDrawer,
   type ScheduleDpOrderTarget,
@@ -82,6 +83,7 @@ export const DpOrders = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [showNewDp, setShowNewDp] = useState(false);
   const [scheduling, setScheduling] = useState<DpOrderRow | null>(null);
+  const [editing, setEditing] = useState<DpOrderRow | null>(null);
 
   const rows = useMemo(() => {
     const all = list.data?.dpOrders ?? [];
@@ -236,9 +238,14 @@ export const DpOrders = () => {
       render: (r) => <span style={{ whiteSpace: 'nowrap' }}>{fmtDate(r.created_at)}</span>,
     },
     {
-      key: 'actions', label: '', width: '190px', disableSort: true,
+      key: 'actions', label: '', width: '260px', disableSort: true,
       render: (r) => (
         <div style={{ display: 'inline-flex', gap: 4 }}>
+          {r.status === 'PENDING_SCHEDULE' && (
+            <Button variant="ghost" onClick={() => setEditing(r)}>
+              <Pencil {...ICON} /><span>Edit…</span>
+            </Button>
+          )}
           {r.status === 'PENDING_SCHEDULE' && (
             <Button variant="ghost" onClick={() => setScheduling(r)}>
               <CalendarClock {...ICON} /><span>Schedule…</span>
@@ -290,7 +297,8 @@ export const DpOrders = () => {
         resetFilters={{ active: searchTerm.trim() !== '', onReset: () => setSearchTerm('') }}
         contextMenu={(r) => [
           ...(r.status === 'PENDING_SCHEDULE'
-            ? [{ label: 'Schedule…', onClick: () => setScheduling(r) }]
+            ? [{ label: 'Edit…', onClick: () => setEditing(r) },
+               { label: 'Schedule…', onClick: () => setScheduling(r) }]
             : []),
           ...(r.status !== 'CANCELLED'
             ? [{ label: 'Cancel job', onClick: () => void cancel(r), danger: true }]
@@ -300,6 +308,7 @@ export const DpOrders = () => {
       />
 
       {showNewDp && <NewDpOrderDrawer onClose={() => setShowNewDp(false)} />}
+      {editing && <EditDpOrderDrawer row={editing} onClose={() => setEditing(null)} />}
       {scheduling && (
         <ScheduleDpOrderDrawer dpRow={asScheduleTarget(scheduling)} onClose={() => setScheduling(null)} />
       )}
