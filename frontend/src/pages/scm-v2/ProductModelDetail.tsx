@@ -453,10 +453,10 @@ export const ProductModelDetail = ({
           <label className={styles.field}>
             <span className="t-eyebrow">Model code</span>
             {/* Commander 2026-05-27: "为什么不能 edit model code". Wired to
-                modelCode state. SKU rows under this Model reference it by
-                UUID (product_models.id), so renaming is safe — only the
-                display label changes. Unique constraint on (model_code,
-                category) prevents accidental clashes. */}
+                modelCode state. A new code is saved by the server together with
+                its SKUs' base_model and the combo / quick-pick rows keyed on it
+                (scm.rename_model_code); it refuses a code already in use. SKU
+                item codes keep the old code. */}
             <input
               type="text"
               value={modelCode}

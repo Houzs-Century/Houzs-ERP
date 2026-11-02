@@ -40,7 +40,14 @@ function setup(category: string) {
   };
   const app = new Hono();
   app.use('*', async (c, next) => {
-    c.set('supabase' as never, { from: (t: string) => new Q(data[t] ?? []) } as never);
+    c.set('supabase' as never, {
+      from: (t: string) => new Q(data[t] ?? []),
+      // scm.rename_model_code, reduced to its effect on the model row (the cascade has its own test)
+      rpc: (_fn: string, a: Row) => {
+        for (const m of data.product_models) if (m.id === a.p_model_id && m.company_id === a.p_company_id) m.model_code = a.p_new_code;
+        return Promise.resolve({ data: { renamed: true }, error: null });
+      },
+    } as never);
     c.set('companyId' as never, 1 as never);
     await next();
   });
