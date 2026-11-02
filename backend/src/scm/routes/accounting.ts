@@ -75,6 +75,11 @@ import { performanceReport, savePerformanceSettingsHandler } from './accounting-
 import { forecastFiguresHandler, forecastGetHandler, forecastPutHandler } from './accounting-forecast';
 import { dashboardHandler } from './accounting-dashboard';
 import { financeTodoHandler, financeTodoCountHandler } from './accounting-todo';
+import {
+  todoPeopleHandler, todoSettingsGetHandler, todoSettingsPutHandler, todoGroupAddHandler,
+  todoTaskCreateHandler, todoTaskGetHandler, todoTaskPatchHandler, todoTaskDoneHandler, todoTaskReopenHandler,
+  todoTaskMoveHandler, todoRemarkAddHandler, todoRemarkEditHandler, todoLinkSearchHandler,
+} from './accounting-todo-tasks';
 /* Its handler stays importable from here, where the tests have always found it. */
 export { dailyBankHandler, loadDailyBankBoard } from './accounting-daily-bank';
 import { openingAccountsPut, openingGet, openingLock, openingPaperCancel, openingPaperCreate, openingPaperUpdate, openingStockPut, openingUnlock } from './accounting-opening';
@@ -207,6 +212,20 @@ accounting.get('/dashboard', dashboardHandler);
    the books raise, and their count for the sidebar badge (routes/accounting-todo.ts). */
 accounting.get('/todo', financeTodoHandler);
 accounting.get('/todo/count', financeTodoCountHandler);
+/* Its tasks, routines, remarks and rule switches (redesign batch 2; routes/accounting-todo-tasks.ts). */
+accounting.get('/todo/people', todoPeopleHandler);
+accounting.get('/todo/settings', todoSettingsGetHandler);
+accounting.put('/todo/settings', todoSettingsPutHandler);
+accounting.post('/todo/groups', todoGroupAddHandler);
+accounting.get('/todo/link-search', todoLinkSearchHandler);
+accounting.post('/todo/tasks', todoTaskCreateHandler);
+accounting.get('/todo/tasks/:id', todoTaskGetHandler);
+accounting.patch('/todo/tasks/:id', todoTaskPatchHandler);
+accounting.post('/todo/tasks/:id/done', todoTaskDoneHandler);
+accounting.post('/todo/tasks/:id/reopen', todoTaskReopenHandler);
+accounting.post('/todo/tasks/:id/move', todoTaskMoveHandler);
+accounting.post('/todo/tasks/:id/remarks', todoRemarkAddHandler);
+accounting.patch('/todo/remarks/:id', todoRemarkEditHandler);
 /* The books' opening (owner 2026-10-28; Finance › Setup › Opening Balance): routes/accounting-opening.ts. */
 accounting.get('/opening', openingGet);
 accounting.put('/opening/accounts', openingAccountsPut);

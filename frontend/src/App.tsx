@@ -193,6 +193,7 @@ const Overview = lazy(() => import("./pages/Overview").then((m) => ({ default: m
 const ScmHub = lazy(() => import("./pages/ScmHub").then((m) => ({ default: m.ScmHub })));
 const ScmSubgroupHub = lazy(() => import("./pages/ScmSubgroupHub").then((m) => ({ default: m.ScmSubgroupHub })));
 const FinanceTodoPage = lazy(() => import("./pages/scm-v2/finance/FinanceTodo").then((m) => ({ default: m.FinanceTodoPage })));
+const FinanceTodoRulesPage = lazy(() => import("./pages/scm-v2/finance/FinanceTodoRules").then((m) => ({ default: m.FinanceTodoRulesPage })));
 const ScmSalesOrdersV2 = lazy(() => import("./pages/scm-v2/MfgSalesOrdersListV2").then((m) => ({ default: m.MfgSalesOrdersListV2 })));
 const ScmSalesOrderMaintenanceV2 = lazy(() => import("./pages/scm-v2/SalesOrderMaintenance").then((m) => ({ default: m.SalesOrderMaintenance })));
 const ScmSalesOrderNewV2 = lazy(() => import("./pages/scm-v2/SalesOrderNew").then((m) => ({ default: m.SalesOrderNew })));
@@ -936,6 +937,7 @@ export default function App() {
         <Route path="/scm/transportation" element={<ScmGuard area="scm"><ScmSubgroupHub groupId="scm-transportation" description="Delivery planning, fleet, lorry capacity, drivers and regions." /></ScmGuard>} />
         <Route path="/scm/warehouse"      element={<ScmGuard area="scm"><ScmSubgroupHub groupId="scm-warehouse"      description="Warehouses, inventory, adjustments, transfers and stock take." /></ScmGuard>} />
         <Route path="/scm/finance"        element={<FinanceHome />} />
+        <Route path="/scm/finance/rules" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><FinanceTodoRulesPage /></Scm2990Shell></ScmGuard>} />
         {/* Sales Orders READ side (vendored). The literal /maintenance route
             MUST precede /:docNo so 'maintenance' isn't caught as a doc number.
             2990 uses :docNo (not :id) for the SO detail. */}
