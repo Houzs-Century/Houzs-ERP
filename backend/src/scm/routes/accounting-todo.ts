@@ -19,7 +19,7 @@ import {
   addDays, buildFinanceTodo, raiseJobs, OVERDUE_DAYS, bankName,
   type TodoBankLine, type TodoCardRow, type TodoDone, type TodoFacts, type TodoViewer,
 } from '../../acc/finance-todo';
-import { loadDailyBankBoard } from './accounting';
+import { loadDailyBankBoard } from './accounting-daily-bank';
 
 type Rows = Array<Record<string, any>>;
 type Read<T> = { ok: true; value: T } | { ok: false; what: string; reason: string };
