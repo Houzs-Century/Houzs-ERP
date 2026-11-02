@@ -2,8 +2,8 @@
   "HC-0202": {
     "ruling": "Sim 2026-11-02 (HC-0202, file '20261102-02 Product Models-2026-10-30 (1) check duplicate.xls', sheet 'duplicated'): the row marked 'merge' is the Model kept, the rows marked 'merge to' fold into it. 'create one modular then merge' = a new Model, every listed one folds into it. Sheet1-only rows (PUREZONE, TIFANNY) and the 'if no stock & no outstanding SO set deactivate' list come from Sheet1 of the same file.",
     "groups": [
-      { "category": "BEDFRAME", "keep": "CODY ADJUSTABLE BED (KING) (S+S)", "drops": ["CODY ADJUSTABLE BED", "CODY ADJUSTABLE BED (S+S)"] },
-      { "category": "BEDFRAME", "keep": "FENRIR ADJUSTABLE BED (KING) (S+S)", "note": "sheet says FENRIR ADJUSTABLE BED =(KING) (S+S); the Model has no =", "drops": ["FENRIR ADJUSTABLE BED", "FENRIR ADJUSTABLE BED (S+S)"] },
+      { "category": "BEDFRAME", "keep": "CODY ADJUSTABLE BED (KING) (S+S)", "drops": ["CODY ADJUSTABLE BED", "CODY ADJUSTABLE BED (S+S)"], "sizes": { "CODY ADJUSTABLE BED (KING) (S+S)": "K" }, "note": "the one-SKU Model CODY ADJUSTABLE BED (KING) (S+S) is the King, the same bed as CODY ADJUSTABLE BED (S+S)-(K)" },
+      { "category": "BEDFRAME", "keep": "FENRIR ADJUSTABLE BED (KING) (S+S)", "note": "sheet says FENRIR ADJUSTABLE BED =(KING) (S+S); the Model has no =. Its one SKU is the King, the same bed as FENRIR ADJUSTABLE BED (S+S)-(K)", "drops": ["FENRIR ADJUSTABLE BED", "FENRIR ADJUSTABLE BED (S+S)"], "sizes": { "FENRIR ADJUSTABLE BED (KING) (S+S)": "K", "FENRIR ADJUSTABLE BED =(KING) (S+S)": "K" } },
       { "category": "BEDFRAME", "keep": "HILTON 2.0 (A)(F)", "drops": ["HILTON 2.0 (A)(F) ("] },
       { "category": "BEDFRAME", "keep": "TIFANNY", "drops": ["TIFFANI"], "source": "Sheet1", "skip": "TIFANNY is bound to 400-H004, TIFFANI to 400-B002: two products, asked Sim" },
 
