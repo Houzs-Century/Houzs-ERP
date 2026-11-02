@@ -134,6 +134,21 @@ describe('buildRuns — grouping + driver join + sort', () => {
   });
 });
 
+describe('makeRunVM sort — drops ordered by delivery time (owner 2026-11-02)', () => {
+  const drivers = new Map<string, DriverRow>();
+  test('earliest delivery window first; AM before PM; untimed last; time beats stop no.', () => {
+    const docs: DocRowVM[] = [
+      docRowVM(order({ so_doc_no: 'D-2PM', trip_id: 't1', trip_stop_no: 1, time_range: '2pm-4pm' }), 'scheduled', CLOCK),
+      docRowVM(order({ so_doc_no: 'D-NONE', trip_id: 't1', trip_stop_no: 2, time_range: null }), 'scheduled', CLOCK),
+      docRowVM(order({ so_doc_no: 'D-AM', trip_id: 't1', trip_stop_no: 9, time_range: 'AM' }), 'scheduled', CLOCK),
+      docRowVM(order({ so_doc_no: 'D-930', trip_id: 't1', trip_stop_no: 8, time_range: '9:30am to 11am' }), 'scheduled', CLOCK),
+      docRowVM(order({ so_doc_no: 'D-1230', trip_id: 't1', trip_stop_no: 7, time_range: '12:30pm to 2:30pm' }), 'scheduled', CLOCK),
+    ];
+    const runs = buildRuns([trip()], docs, drivers, () => '#000');
+    expect(runs[0]!.docs.map((d) => d.soDocNo)).toEqual(['D-AM', 'D-930', 'D-1230', 'D-2PM', 'D-NONE']);
+  });
+});
+
 describe('buildLorryCards — pin in-house, outsourced only when working', () => {
   const drivers = new Map<string, DriverRow>();
   const lorries = [
