@@ -108,12 +108,12 @@ describe("list search scope contracts", () => {
     "pages/scm-v2/PurchaseReturnsListV2.tsx",
     // Finance report, single fetch, no early return: an unloaded or failed
     // response painted "Not billed RM 0.00" on a page whose whole purpose is to
-    // say how much is owed.
+    // say how much is owed. Its tiles are the redesign's FigureCard (batch 5).
     "pages/scm-v2/UnbilledDeliveriesV2.tsx",
   ])("declares the unknown state on every KPI tile of %s", (file) => {
     const contents = source(file);
     expect(contents).toContain("const statsPending =");
-    const tiles = contents.match(/<StatCard/g) ?? [];
+    const tiles = contents.match(/<(?:StatCard|FigureCard)\b/g) ?? [];
     const declared = contents.match(/pending=\{statsPending\}/g) ?? [];
     expect(tiles.length).toBeGreaterThan(0);
     expect(declared).toHaveLength(tiles.length);
