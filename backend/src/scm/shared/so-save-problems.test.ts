@@ -452,7 +452,7 @@ describe('2990-0029 random-colour pillow hint', () => {
     })[0]!.message;
 
   it('points a custom SQUARE PILLOW without a colour at the RDM SKU', () => {
-    expect(msg('SQUARE PILLOW')).toContain('SQUARE PILLOW RDM');
+    expect(msg('SQUARE PILLOW')).toContain('random-colour pillow SKU');
   });
   it('adds nothing for other accessories', () => {
     expect(msg('LONG PILLOW')).toBe('LONG PILLOW — Fabrics is required');

@@ -108,7 +108,7 @@ const CONDITION_SUBJECT: Record<Exclude<ProceedGateCondition, 'deposit'>, { subj
  *  operator is not left with only the fabric picker. */
 const randomColourHint = (itemCode: string, axisKey: string): string =>
   axisKey === 'fabricCode' && /^SQUARE PILLOW(?!.*RDM)/i.test(itemCode.trim())
-    ? '. Colour not chosen by the customer? Use the SQUARE PILLOW RDM (random colour) SKU instead'
+    ? '. No colour chosen? Use the random-colour pillow SKU instead'
     : '';
 
 /** One completeness condition as a problem. Freshly built every call — a shared
