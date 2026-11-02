@@ -23,10 +23,16 @@ function tabLabel(pattern: string): string {
   return labelForPath(sectionKeyFor(concretePath(pattern)));
 }
 
-describe("labelForPath — the reported bug", () => {
+describe("labelForPath — owner-reported tab names", () => {
   it("names /scm/fleet-day by its page title, not 'Scm'", () => {
     expect(tabLabel("/scm/fleet-day")).toBe("Last Mile Delivery");
     expect(labelForPath("/scm/fleet-day")).toBe("Last Mile Delivery");
+  });
+  // The driver view of Last Mile Delivery (page h1 "Last Mile Delivery"); its
+  // slug is delivery-planning-driver, so without an entry it read "Delivery
+  // Planning (Driver)" — owner asked for the Last Mile name the sidebar uses.
+  it("names /scm/delivery-planning-driver after the sidebar's Last Mile name", () => {
+    expect(tabLabel("/scm/delivery-planning-driver")).toBe("Last Mile Delivery (Driver)");
   });
 });
 

@@ -117,7 +117,7 @@ export const SCM_SEGMENT_LABELS: Record<string, SegmentLabel> = {
   // Transportation
   "drivers": ["Drivers", "Driver"],
   "delivery-planning": "Delivery Planning",
-  "delivery-planning-driver": "Delivery Planning (Driver)",
+  "delivery-planning-driver": "Last Mile Delivery (Driver)",
   "dp-orders": ["DP Orders", "DP Order"],
   "auto-schedule": "Delivery Date Arrangement",
   "trips": "Delivery Time Arrangement",
