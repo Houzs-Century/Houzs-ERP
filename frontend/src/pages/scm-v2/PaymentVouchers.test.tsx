@@ -10,7 +10,7 @@
    here the mutateAsyncs are canned and the arithmetic around them is what is
    under test. */
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 
@@ -37,6 +37,8 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   fetchPvPrintBundle: vi.fn(),
 }));
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
+/* Pay from names its account (code, name below). */
+vi.mock('../../vendor/scm/lib/accounting-queries', () => ({ useAccounts: () => ({ data: { accounts: [{ account_code: '310-0001', account_name: 'HONG LEONG BANK' }] } }) }));
 const confirmFn = vi.fn(async (_a: unknown) => true);
 vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => confirmFn }));
 const notifyFn = vi.fn((_a: unknown) => undefined);
@@ -60,7 +62,7 @@ describe('批量 tick yes', () => {
 
     fireEvent.click(boxes[3]!); // posted — printable, not approvable
     expect(screen.getByText('Print 1 + files')).toBeTruthy();
-    expect(screen.getByText('Save PDF')).toBeTruthy();
+    expect(screen.getByText('Save as PDF')).toBeTruthy();
     /* The files toggle (owner 2026-09-04: 批量那边也要有这个选) — default ON;
        unticking flips the button to vouchers-only. */
     fireEvent.click(screen.getByLabelText("Include each voucher's attached files"));
@@ -127,10 +129,13 @@ describe('批量 tick yes', () => {
 });
 
 describe('an advance not yet knocked off (owner 2026-09-06)', () => {
-  test('the row wears the open amount beside its pill, and the Advance open chip keeps only such rows', () => {
+  test('the row says the open amount on its For line and wears the Advance open tag, and the chip keeps only such rows', () => {
     render(<MemoryRouter><PaymentVouchers /></MemoryRouter>);
-    expect(screen.getByText(/预付未冲 RM 2,143\.74/)).toBeTruthy();
-    fireEvent.click(screen.getByText('Advance open'));
+    expect(screen.getByText('RM 2,143.74 not knocked off')).toBeTruthy();
+    /* The chip comes first, the row's tag after it. */
+    const [chip, tag] = screen.getAllByText('Advance open');
+    expect(tag).toBeTruthy();
+    fireEvent.click(chip!);
     expect(screen.getByText('PV-2609-005')).toBeTruthy();
     expect(screen.queryByText('PV-2609-004')).toBeNull();
     expect(screen.queryByText('PV-2609-001')).toBeNull();
@@ -151,10 +156,10 @@ describe('the batch runs in voucher-date order (docs/bugs/0653)', () => {
   });
 });
 
-describe('the Notes column (owner 2026-10-14: pv 那边的 list，可以让他把 notes 显示出来吗？)', () => {
-  test('each row shows its Notes, whole on hover; a voucher without notes reads —', () => {
+describe('the For column — the Notes (owner 2026-10-14: pv 那边的 list，可以让他把 notes 显示出来吗？)', () => {
+  test('each row shows its Notes under For, whole on hover; a voucher without notes reads —', () => {
     draw();
-    expect(screen.getByRole('columnheader', { name: /Notes/ })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: /^For/ })).toBeTruthy();
     const note = 'BIGHOME PENANG WATERFRONT CONVENTION CENTRE PG 30 OCT - 1 NOV26 (AKEMI, ZANOTTI)';
     const cell = screen.getByText(note).closest('td');
     expect(cell?.getAttribute('title')).toBe(note);
@@ -170,11 +175,53 @@ describe('the Notes column (owner 2026-10-14: pv 那边的 list，可以让他�
   });
 });
 
-describe('the third New (§14)', () => {
-  test('New Customer Refund stands beside the other two', () => {
+describe('the header (the redesign)', () => {
+  test('four doors in, in the design\'s words: Scan bills, New customer refund, New payment voucher, New AP payment', () => {
     draw();
-    expect(screen.getByText('New Customer Refund')).toBeTruthy();
-    expect(screen.getByText('New AP Payment')).toBeTruthy();
-    expect(screen.getByText('New Payment Voucher')).toBeTruthy();
+    expect(screen.getByText('Payment vouchers')).toBeTruthy();
+    for (const label of ['Scan bills', 'New customer refund', 'New payment voucher', 'New AP payment']) expect(screen.getByText(label)).toBeTruthy();
+  });
+
+  test('the stage says what it means, and the whole list loaded so the chips carry counts', () => {
+    draw();
+    expect(screen.getByText(/Every voucher in any stage/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^All months/ }).getAttribute('aria-pressed')).toBe('true');
+    /* The chip, not the row tag of the same word. */
+    fireEvent.click(screen.getAllByText('Checked')[0]!);
+    expect(screen.getByText(/Locked and reserved\. Approving posts the journal in the same step/)).toBeTruthy();
+  });
+});
+
+describe('the next step on each row (the redesign)', () => {
+  test('a draft offers Prepare and runs it without a dialog, through the same door', async () => {
+    prepareAsync.mockClear(); confirmFn.mockClear();
+    draw();
+    const row = screen.getByText('PV-2609-001').closest('tr') as HTMLElement;
+    fireEvent.click(within(row).getByText('Prepare'));
+    await waitFor(() => expect(prepareAsync).toHaveBeenCalledWith('raw'));
+    expect(confirmFn).not.toHaveBeenCalled();
+  });
+
+  test('a checked voucher offers Approve & post, asks first, and an approved one offers Print', async () => {
+    approveAsync.mockClear(); confirmFn.mockClear();
+    draw();
+    const row = screen.getByText('PV-2609-003').closest('tr') as HTMLElement;
+    fireEvent.click(within(row).getByText('Approve & post'));
+    await waitFor(() => expect(approveAsync).toHaveBeenCalledWith('chk'));
+    expect(JSON.stringify(confirmFn.mock.calls[0]![0])).toMatch(/300\.00/);
+    const done = screen.getByText('PV-2609-004').closest('tr') as HTMLElement;
+    expect(within(done).getByText('Print')).toBeTruthy();
+    expect(within(done).queryByText('Approve & post')).toBeNull();
+  });
+
+  test('⋯ opens the row menu: Edit only while the voucher can still change', () => {
+    draw();
+    fireEvent.click(screen.getByLabelText('More for PV-2609-002'));
+    let menu = screen.getByRole('menu');
+    for (const label of ['Open', 'Edit', 'Print', 'Print + files', 'Copy as new', 'Cancel…']) expect(within(menu).getByText(label)).toBeTruthy();
+    fireEvent.click(within(menu).getByText('Open'));
+    fireEvent.click(screen.getByLabelText('More for PV-2609-003'));
+    menu = screen.getByRole('menu');
+    expect(within(menu).queryByText('Edit')).toBeNull();
   });
 });
