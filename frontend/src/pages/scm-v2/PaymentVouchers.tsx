@@ -356,8 +356,8 @@ export const PaymentVouchers = () => {
   return (
     <div className="space-y-4">
       <PageHeader
-        eyebrow="Finance"
-        title="Payment Vouchers"
+        eyebrow="Finance · Money out"
+        title="Payment vouchers"
         actions={
           <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
             {/* The pile kept while this tab lives (owner 2026-10-06): the bills not yet opened. */}

@@ -89,7 +89,7 @@ describe('the Finance sidebar', () => {
   it('splits the notes: the customer\'s and other debtor\'s under Money in, the supplier\'s under Money out', () => {
     const entries = (label: string) => flatten(finance?.children?.find((g) => g.label === label)?.children ?? []);
     expect(entries('Money in').find((t) => t.to === '/scm/credit-notes')?.label).toBe('Customer & Other Debtor CN / DN');
-    expect(entries('Money out').find((t) => t.to === '/scm/supplier-notes')?.label).toBe('Supplier & Other Creditor CN / DN');
+    expect(entries('Money out').find((t) => t.to === '/scm/supplier-notes')?.label).toBe('Supplier & other creditor CN / DN');
     expect(entries('Money out').find((t) => t.to === '/scm/supplier-notes')?.anyAccess).toEqual(['scm.finance.money_out']);
   });
 

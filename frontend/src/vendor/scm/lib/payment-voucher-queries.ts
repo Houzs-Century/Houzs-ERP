@@ -108,6 +108,7 @@ export const useCreatePaymentVoucher = () => {
         idempotentInit(idempotencyKey, { method: 'POST', body: JSON.stringify(body) })),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      void qc.invalidateQueries({ queryKey: ['finance-todo'] });
       /* A bill now vouchered is another's same bill (the pile says so on return). */
       void qc.invalidateQueries({ queryKey: ['payment-request-bill-matches'] });
       /* A voucher answering a request takes it off Finance's waiting count. */
@@ -124,6 +125,7 @@ export const useUpdatePaymentVoucher = () => {
     onSuccess: (_d, vars) => {
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', vars.id] });
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      void qc.invalidateQueries({ queryKey: ['finance-todo'] });
     },
   });
 };
@@ -134,6 +136,7 @@ export const usePostPaymentVoucher = () => {
     mutationFn: (id: string) => authedFetch<{ ok: true; jeNo?: string }>(`/payment-vouchers/${id}/post`, { method: 'POST' }),
     onSuccess: (_d, id) => {
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      void qc.invalidateQueries({ queryKey: ['finance-todo'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
       // A post settles linked PIs — refresh the PI list/detail too.
       void qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
@@ -173,6 +176,7 @@ export const useApplyAdvance = () => {
       void qc.invalidateQueries({ queryKey: ['ap-invoices'] });
       void qc.invalidateQueries({ queryKey: ['ap-invoice'] });
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      void qc.invalidateQueries({ queryKey: ['finance-todo'] });
     },
   });
 };
@@ -183,6 +187,7 @@ export const useCancelPaymentVoucher = () => {
     mutationFn: (id: string) => authedFetch(`/payment-vouchers/${id}/cancel`, { method: 'POST' }),
     onSuccess: (_d, id) => {
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      void qc.invalidateQueries({ queryKey: ['finance-todo'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
       void qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
       /* A cancelled voucher puts its request back on Finance's waiting count. */
@@ -200,6 +205,7 @@ const approvalMutation = (path: 'submit' | 'withdraw' | 'check' | 'approve') => 
     mutationFn: (id: string) => authedFetch(`/payment-vouchers/${id}/${path}`, { method: 'POST' }),
     onSuccess: (_d, id) => {
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      void qc.invalidateQueries({ queryKey: ['finance-todo'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
       void qc.invalidateQueries({ queryKey: ['daily-bank'] });
     },
@@ -218,6 +224,7 @@ export const useRejectPaymentVoucher = () => {
       authedFetch(`/payment-vouchers/${id}/reject`, { method: 'POST', body: JSON.stringify({ note }) }),
     onSuccess: (_d, vars) => {
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      void qc.invalidateQueries({ queryKey: ['finance-todo'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', vars.id] });
       void qc.invalidateQueries({ queryKey: ['daily-bank'] });
     },

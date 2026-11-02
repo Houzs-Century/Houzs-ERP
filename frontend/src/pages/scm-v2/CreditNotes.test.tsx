@@ -188,7 +188,7 @@ describe('the Credit & Debit Notes page', () => {
     expect(screen.queryByLabelText('Supplier credit note pages')).toBeNull();
     unmount();
     render(<MemoryRouter><ConfirmProvider><CreditNotes side="AP" /></ConfirmProvider></MemoryRouter>);
-    expect(screen.getByRole('heading', { name: 'Supplier & Other Creditor CN / DN' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Supplier & other creditor CN / DN' })).toBeTruthy();
     /* One kind on the page — no kind tabs; the real notes first, the opening credits on their own tab; the scan is here. */
     expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Credit notes', 'Debit notes', 'Opening 31/08']);
     expect(lastList.value).toBe('AP|ALL|ALL|exclude');

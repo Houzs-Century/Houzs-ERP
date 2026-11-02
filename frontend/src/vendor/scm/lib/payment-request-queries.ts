@@ -266,6 +266,8 @@ const invalidate = (qc: ReturnType<typeof useQueryClient>) => {
   /* A refund request holds its order's money (owner 2026-10-14) — withdrawn or
      returned, the order's money panel reads it back. */
   void qc.invalidateQueries({ queryKey: ['so-money'] });
+  /* To do's "requests waiting" job reads them. */
+  void qc.invalidateQueries({ queryKey: ['finance-todo'] });
 };
 
 export const useCreatePaymentRequest = () => {

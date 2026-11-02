@@ -770,18 +770,21 @@ export const NAV_TABS: NavTab[] = [
         icon: Wallet,
         groupId: "scm-finance-out",
         children: [
-          { to: "/scm/payment-vouchers", label: "Payment Vouchers", icon: Wallet, anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.write", "scm.payment_voucher.post", "scm.payment_voucher.cancel"], anyAccess: ["scm.finance.money_out"] },
-          { to: "/scm/ap-invoices", label: "AP Invoices", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_out"] },
+          // The redesign's order and names (owner's Claude Design, batch 4): the
+          // design's three pages first, then the ERP's own, kept where the owner
+          // put them. Every permission gate is as it was.
+          { to: "/scm/payment-vouchers", label: "Payment vouchers", icon: Wallet, anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.write", "scm.payment_voucher.post", "scm.payment_voucher.cancel"], anyAccess: ["scm.finance.money_out"] },
           // 申请付款 (owner 2026-09-30) — the requests waiting for a voucher.
-          { to: "/scm/payment-requests", label: "Payment Requests", icon: HandCoins, anyPerm: ["*", "scm.payment_voucher.create"], badge: "payment-requests-waiting" },
-          // 欠正式单 (owner 2026-10-01) — payments made on a proforma, still owing the official invoice.
-          { to: "/scm/official-docs", label: "Official Invoices Owed", icon: FileText, anyPerm: ["*", "scm.payment_voucher.create"] },
+          { to: "/scm/payment-requests", label: "Payment requests", icon: HandCoins, anyPerm: ["*", "scm.payment_voucher.create"], badge: "payment-requests-waiting" },
+          { to: "/scm/ap-invoices", label: "Supplier bills", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_out"] },
           // Supplier Maintenance (owner 2026-10-02: 放在 money out 的 sidebar) — Finance's own
           // supplier list: what each is owed, its bank, and the ones Finance keeps to itself.
-          { to: "/scm/supplier-maintenance", label: "Supplier Maintenance", icon: Truck, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_out"] },
+          { to: "/scm/supplier-maintenance", label: "Supplier maintenance", icon: Truck, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_out"] },
+          // 欠正式单 (owner 2026-10-01) — payments made on a proforma, still owing the official invoice.
+          { to: "/scm/official-docs", label: "Official invoices owed", icon: FileText, anyPerm: ["*", "scm.payment_voucher.create"] },
           // The supplier's (and an other creditor's) credit notes, moved here from
           // Money in (owner 2026-10-28: supplier & other creditor cn / dn 分出来).
-          { to: "/scm/supplier-notes", label: "Supplier & Other Creditor CN / DN", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_out"] },
+          { to: "/scm/supplier-notes", label: "Supplier & other creditor CN / DN", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_out"] },
         ],
       },
       {
