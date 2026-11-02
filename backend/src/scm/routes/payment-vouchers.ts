@@ -71,6 +71,9 @@ import { pvCanEdit, pvCanPrepare, pvCanCheck, pvCanApprove, pvCanReject, pvCanWi
 import { settlePiPaidSen } from '../lib/pi-settlement';
 import { normalizeVendor } from '../../acc/bill-extract';
 import { extractBillsHandler } from './pv-extract';
+import { HEADER, listPaymentVouchersHandler } from './payment-vouchers-list';
+/* Still importable from here (tests/pvSupplierAdvance.test.ts and older callers). */
+export { listPaymentVouchersHandler };
 import { parseEventId, pvLineEventRefusal } from '../lib/event-tags';
 import { paymentRequestLinkGuard, linkPaymentRequest } from '../lib/payment-request';
 import { pvBillFields, pvBillUpdates } from '../lib/bill-matches';
@@ -101,8 +104,7 @@ const PV_AUDIT_FIELDS: Array<[string, string]> = [
   ['bankChargeSen', 'bank_charge_sen'],
 ];
 
-const HEADER =
-  'id, pv_number, voucher_date, payee_name, supplier_id, credit_account_code, currency, exchange_rate, purpose, notes, total_sen, status, posted_at, created_at, created_by, updated_at, company_id, submitted_at, submitted_by, checked_at, checked_by, approved_at, approved_by, refund_source_type, refund_source_doc_no, customer_id, debtor_code, bill_ref, bill_date, official_doc, official_doc_note, official_doc_at, official_doc_by, bank_charge_sen';
+/* The header's columns live with the list (payment-vouchers-list.ts). */
 
 const LINE = 'id, pv_id, line_no, description, debit_account_code, amount_sen, created_at, project_id';
 
@@ -384,36 +386,8 @@ const ALLOCATION_ON_HOLD = (ids: string[]) => ({
    List / get
    ──────────────────────────────────────────────────────────────────────── */
 
-/* GET / — the list. Each row also says what remains of its ADVANCE (owner
-   2026-09-06: 如果这个 prepay 还没有 knock off 单,在 listing 要特别显示):
-   acc_supplier_advances for the page's vouchers, remaining = amount − applied,
-   only when > 0 — the list paints those rows and offers a chip for them. */
-export const listPaymentVouchersHandler = async (c: any): Promise<Response> => {
-  const sb = c.get('supabase');
-  let q = sb.from('payment_vouchers')
-    .select(`${HEADER}, supplier:suppliers(id, code, name)`)
-    .order('voucher_date', { ascending: false })
-    // Bound the result so PostgREST's default 1000-row cap can't silently
-    // truncate the list — matches the PI/SI/DO list convention.
-    .limit(500);
-  const status = c.req.query('status'); if (status) q = q.eq('status', status);
-  q = scopeToCompany(q, c); // multi-company: isolate to the active company
-  const { data, error } = await q;
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  const rows = (data ?? []) as Array<Record<string, unknown> & { id: string }>;
-  const remaining = new Map<string, number>();
-  if (rows.length > 0) {
-    const { data: adv, error: advErr } = await scopeToCompany(
-      sb.from('acc_supplier_advances').select('pv_id, amount_sen, applied_sen').in('pv_id', rows.map((r) => r.id)), c,
-    );
-    if (advErr) return c.json({ error: 'load_failed', reason: advErr.message }, 500);
-    for (const a of (adv ?? []) as Array<{ pv_id: string; amount_sen: number; applied_sen: number }>) {
-      const left = Number(a.amount_sen) - Number(a.applied_sen);
-      if (left > 0) remaining.set(a.pv_id, (remaining.get(a.pv_id) ?? 0) + left);
-    }
-  }
-  return c.json({ paymentVouchers: rows.map((r) => ({ ...r, advance_remaining_sen: remaining.get(r.id) ?? 0 })) });
-};
+/* GET / — the list, its search (?q=) and its stage counts (?counts=1):
+   payment-vouchers-list.ts (the redesign, batch 4). */
 paymentVouchers.get('/', listPaymentVouchersHandler);
 
 /* PV attachments (0352) — the bill lives with its voucher. Registered BEFORE

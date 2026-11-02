@@ -22,7 +22,7 @@
 
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Camera, MoreHorizontal, Plus } from 'lucide-react';
+import { Camera, MoreHorizontal, Plus, Search, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { usePaymentVouchers, useCancelPaymentVoucher, useSubmitPaymentVoucher, useCheckPaymentVoucher, useApprovePaymentVoucher, fetchPvPrintDetail, fetchPvPrintBundle, type PaymentVoucherRow } from '../../vendor/scm/lib/payment-voucher-queries';
 import { useAccounts } from '../../vendor/scm/lib/accounting-queries';
@@ -36,6 +36,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useToastOptional } from '../../hooks/useToast';
 import { useOpenDocInTab } from '../../lib/openDocInTab';
+import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { fmtDateOrDash, fmtMoneySen, todayMY } from '@2990s/shared';
 import { PageHeader } from '../../components/Layout';
 import { BackToPile } from '../../vendor/scm/components/BackToPile';
@@ -175,7 +176,12 @@ export const PaymentVouchers = () => {
     setSearchParams(next, { replace: true });
   };
 
-  const { data, isLoading, error } = usePaymentVouchers();
+  const { data, isLoading, error } = usePaymentVouchers({ counts: true });
+  /* The design's one search box: any voucher, every stage and month, on the server. */
+  const [qText, setQText] = useState('');
+  const q = useDebouncedValue(qText.trim(), 300);
+  const searching = q !== '';
+  const search = usePaymentVouchers({ q, enabled: searching });
   const accounts = useAccounts();
   const cancelPv = useCancelPaymentVoucher();
   const preparePv = useSubmitPaymentVoucher();
@@ -191,12 +197,15 @@ export const PaymentVouchers = () => {
   const allRows = useMemo<PaymentVoucherRow[]>(() => (data?.paymentVouchers ?? []) as PaymentVoucherRow[], [data]);
   /* Everything came back: the counts are the population's, so they may show. */
   const whole = data != null && allRows.length < LIST_CAP;
+  const found = useMemo<PaymentVoucherRow[]>(() => (search.data?.paymentVouchers ?? []) as PaymentVoucherRow[], [search.data]);
+  const stageCounts = data?.counts;
   const months = useMemo(() => lastMonths(todayMY(), 3), []);
   const inMonth = (r: PaymentVoucherRow) => monthChip === 'all' || String(r.voucher_date ?? '').slice(0, 7) === monthChip;
   const rows = useMemo<PaymentVoucherRow[]>(
-    () => allRows.filter((r) => statusChip === 'all' || chipMatches(statusChip, r)).filter(inMonth),
+    /* A search shows what it found, whatever the stage and month. */
+    () => (searching ? found : allRows.filter((r) => statusChip === 'all' || chipMatches(statusChip, r)).filter(inMonth)),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- inMonth reads monthChip, listed
-    [allRows, statusChip, monthChip],
+    [allRows, found, searching, statusChip, monthChip],
   );
   const accountName = useMemo(() => new Map((accounts.data?.accounts ?? []).map((a) => [a.account_code, a.account_name])), [accounts.data]);
   const openDoc = (r: PaymentVoucherRow) => openInTab(`/scm/payment-vouchers/${r.id}`);
@@ -207,7 +216,8 @@ export const PaymentVouchers = () => {
      the whole post) — a failure names itself and the rest carry on. */
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batchRunning, setBatchRunning] = useState(false);
-  const byId = useMemo(() => new Map(allRows.map((r) => [r.id, r])), [allRows]);
+  /* A ticked voucher may have come from the search, older than the newest 500. */
+  const byId = useMemo(() => new Map([...allRows, ...found].map((r) => [r.id, r])), [allRows, found]);
   const tickedRows = useMemo(
     () => [...selected].map((k) => byId.get(k)).filter((r): r is PaymentVoucherRow => Boolean(r)),
     [selected, byId],
@@ -501,6 +511,13 @@ export const PaymentVouchers = () => {
       sortFn: (a, b) => Number(a.bank_charge_sen ?? 0) - Number(b.bank_charge_sen ?? 0),
     },
     {
+      /* The journal its approval posted (the redesign's hidden column). */
+      key: 'je_no', label: 'Journal', width: 150, sortable: true, groupable: false, defaultHidden: true,
+      accessor: (r) => r.je_no ?? '—',
+      searchValue: (r) => r.je_no ?? '',
+      exportValue: (r) => r.je_no ?? '',
+    },
+    {
       key: 'bill_ref', label: 'Bill no.', width: 130, sortable: true, groupable: false, defaultHidden: true,
       accessor: (r) => String(r.bill_ref ?? '') || '—',
       searchValue: (r) => String(r.bill_ref ?? ''),
@@ -509,7 +526,10 @@ export const PaymentVouchers = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- the cells read the latest handlers through closures each render
   ], [accountName, canWrite, canCheck, canApprove, stepping, batchRunning, printing]);
 
-  const chipCount = (chip: string) => (whole ? allRows.filter((r) => (chip === 'all' || chipMatches(chip, r)) && inMonth(r)).length : undefined);
+  /* All months: the server's count over the company. One month: counted here, while everything came back. */
+  const chipCount = (chip: string) => (monthChip === 'all' && stageCounts
+    ? stageCounts[chip]
+    : whole ? allRows.filter((r) => (chip === 'all' || chipMatches(chip, r)) && inMonth(r)).length : undefined);
   const monthCount = (m: string) => (whole ? allRows.filter((r) => (statusChip === 'all' || chipMatches(statusChip, r)) && (m === 'all' || String(r.voucher_date ?? '').slice(0, 7) === m)).length : undefined);
 
   return (
@@ -555,6 +575,13 @@ export const PaymentVouchers = () => {
       {/* Requests waiting for Finance (owner 2026-10-08: 提醒我有几个payment request 还没proceed). */}
       <PaymentRequestsWaiting />
 
+      {search.error && searching && (
+        <div className={styles.bannerWarn}>
+          <strong>The search did not run.</strong>{' '}
+          {search.error instanceof Error ? search.error.message : 'Something went wrong.'}
+        </div>
+      )}
+
       {error && !isLoading && (
         <div className={styles.bannerWarn}>
           <strong>Failed to load payment vouchers.</strong>{' '}
@@ -563,8 +590,16 @@ export const PaymentVouchers = () => {
       )}
 
       <div className={mo.top}>
+        <div className={mo.row}>
+          <label className={mo.search}>
+            <Search size={14} />
+            <input value={qText} onChange={(e) => { setQText(e.target.value); setSelected(new Set()); }}
+              placeholder="Find any voucher · number, payee, bill, amount" aria-label="Find any voucher" />
+            {qText && <button type="button" className={mo.clear} aria-label="Clear the search" onClick={() => setQText('')}><X size={13} /></button>}
+          </label>
+        </div>
         {/* The SO strip's own FilterPills slab (owner 2026-07-26); the counts
-            only while the whole list came back. */}
+            from the server, or counted here while the whole list came back. */}
         <FilterPills
           options={STATUS_CHIPS.map((s) => ({ value: s as string, label: CHIP_LABELS[s] ?? s, count: chipCount(s) }))}
           value={statusChip}
@@ -583,7 +618,9 @@ export const PaymentVouchers = () => {
           })}
         </div>
         <div className={mo.hint}>
-          {isLoading ? 'Loading vouchers…' : `${CHIP_HINTS[statusChip] ?? ''}${whole ? '' : ` The newest ${LIST_CAP} vouchers are listed; counts show once the list holds them all.`}`}
+          {searching
+            ? (search.isLoading ? `Searching “${q}”…` : `Search “${q}” · ${found.length} voucher${found.length === 1 ? '' : 's'} across every stage and month${search.data?.capped ? ' · the newest 200 shown' : ''}`)
+            : isLoading ? 'Loading vouchers…' : `${CHIP_HINTS[statusChip] ?? ''}${whole ? '' : ` The newest ${LIST_CAP} vouchers are listed.`}`}
         </div>
       </div>
 
@@ -663,9 +700,8 @@ export const PaymentVouchers = () => {
              opens, right-click menus; nothing else ticks. */
           checkboxOnly: true,
         }}
-        searchPlaceholder="Search voucher no, payee, notes…"
-        /* Written out: searchScopeContracts.test.ts reads this cap off the source. */
-        loadedSearchLimit={500}
+        /* The page's own search box asks the server (every stage and month). */
+        hideSearch
         groupBanner={false}
         onRowDoubleClick={(r) => openDoc(r)}
         getRowClassName={(r) => cancelledRowClass(r.status)}
@@ -674,9 +710,11 @@ export const PaymentVouchers = () => {
           : advanceOpenSen(r) > 0 ? { color: ADVANCE_BLUE } : undefined}
         contextMenu={(r) => menuOf(r)}
         isLoading={isLoading}
-        emptyMessage={allRows.length === 0
-          ? 'No payment voucher yet — New payment voucher raises one.'
-          : 'No voucher in this stage and month.'}
+        emptyMessage={searching
+          ? `No voucher matches “${q}”.`
+          : allRows.length === 0
+            ? 'No payment voucher yet — New payment voucher raises one.'
+            : 'No voucher in this stage and month.'}
       />
 
       {openMenu && (
