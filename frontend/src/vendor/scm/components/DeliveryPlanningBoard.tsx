@@ -328,7 +328,7 @@ function MessageStatusEditCell({ order, onUpdateFields }: { order: PlanningOrder
      own value when the customer has answered, so a hand-set status shows until
      then. */
   const target = isDp(order) ? { type: 'dp' as const, id: dpIdOf(order) }
-    : isAssr(order) ? { type: 'assr' as const, id: String(order.assr_id ?? '') }
+    : isAssr(order) ? { type: 'assr' as const, id: String(order.assr_id ?? ''), jobKind: order.job_kind ?? undefined }
     : { type: 'so' as const, id: order.so_doc_no };
   // The workflow status shows as a coloured chip, on the editable select too.
   const chip = messageStatusChip(order.delivery_message_status);

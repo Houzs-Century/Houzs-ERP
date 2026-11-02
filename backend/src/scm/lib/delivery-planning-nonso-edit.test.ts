@@ -24,6 +24,18 @@ describe('writeNonSoFields (assr time slot)', () => {
     expect(runs[0]!.binds).toEqual(['2-4pm', 7]);
   });
 
+  // HC-0193: the pickup row and the service-delivery row of one case keep separate statuses.
+  it('writes the message status to the named leg column only', async () => {
+    const { c, runs } = fakeCtx();
+    await writeNonSoFields(c, {}, 'assr', '7', { deliveryMessageStatus: 'Done Send', jobKind: 'customer_pickup' });
+    await writeNonSoFields(c, {}, 'assr', '7', { deliveryMessageStatus: 'To Send Driver Info', jobKind: 'delivery' });
+    expect(runs[0]!.sql).toContain('pickup_message_status = ?');
+    expect(runs[0]!.sql).not.toContain('delivery_message_status');
+    expect(runs[1]!.sql).toContain('delivery_message_status = ?');
+    expect(runs[1]!.sql).not.toContain('pickup_message_status');
+    expect((await writeNonSoFields(c, {}, 'assr', '7', { deliveryMessageStatus: 'Done Send' })).status).toBe(400);
+  });
+
   it('refuses a slot with no leg, and blanks an empty one to null', async () => {
     const { c, runs } = fakeCtx();
     expect((await writeNonSoFields(c, {}, 'assr', '7', { timeRange: '2-4pm' })).status).toBe(400);
