@@ -346,7 +346,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/product-models.ts": {
-      "reads": 13,
+      "reads": 12,
       "catches": 5
     },
     "backend/src/scm/routes/purchase-consignment-orders.ts": {
