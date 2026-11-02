@@ -26,7 +26,7 @@ export function methodLabel(method: string | null | undefined): string {
   return m[method] ?? method.charAt(0).toUpperCase() + method.slice(1);
 }
 
-export type AccountLine = { key: string; doc: string; description: string; journal: string; inSen: number | null; outSen: number | null };
+export type AccountLine = { key: string; who: string; doc: string; description: string; journal: string; inSen: number | null; outSen: number | null };
 
 /** The day's lines for one account: customer payments one line per way they were paid; everything else one line per document. */
 export function accountLines(block: DailyBankBlock): AccountLine[] {
@@ -37,11 +37,11 @@ export function accountLines(block: DailyBankBlock): AccountLine[] {
     const names = [...new Set(ms.map((m) => m.party).filter((x): x is string => !!x))];
     const few = names.length > 3 ? `${names.slice(0, 3).join(', ')} +${names.length - 3}` : names.join(', ');
     return ms.length === 1
-      ? { key: `in:${label}`, doc: ms[0]!.docNo, description: `${label}${ms[0]!.party ? ` · ${ms[0]!.party}` : ''}`, journal: ms[0]!.jeNo, inSen: ms[0]!.amountSen, outSen: null }
-      : { key: `in:${label}`, doc: `${ms.length} receipts`, description: `${label} · ${ms.length} sales${few ? ` · ${few}` : ''}`, journal: '', inSen: sum(ms.map((m) => m.amountSen)), outSen: null };
+      ? { key: `in:${label}`, who: ms[0]!.party ?? '', doc: ms[0]!.docNo, description: `${label}${ms[0]!.party ? ` · ${ms[0]!.party}` : ''}`, journal: ms[0]!.jeNo, inSen: ms[0]!.amountSen, outSen: null }
+      : { key: `in:${label}`, who: `${ms.length} customers`, doc: `${ms.length} receipts`, description: `${label} · ${ms.length} sales${few ? ` · ${few}` : ''}`, journal: '', inSen: sum(ms.map((m) => m.amountSen)), outSen: null };
   });
   const other = (m: DailyBankMovement, dir: 'in' | 'out'): AccountLine => ({
-    key: `${dir}:${m.jeNo}:${m.docNo}`, doc: m.docNo, description: [m.party, m.note].filter(Boolean).join(' · '), journal: m.jeNo,
+    key: `${dir}:${m.jeNo}:${m.docNo}`, who: m.party ?? '', doc: m.docNo, description: [m.party, m.note].filter(Boolean).join(' · '), journal: m.jeNo,
     inSen: dir === 'in' ? m.amountSen : null, outSen: dir === 'out' ? m.amountSen : null,
   });
   return [...paid, ...block.receipts.filter((m) => !isPayment(m)).map((m) => other(m, 'in')), ...block.payouts.map((m) => other(m, 'out'))];
