@@ -288,7 +288,7 @@ export function FinanceTodoPage() {
 
           <div className={styles.side}>
             {data.money && (
-              <Link to="/scm/daily-bank" className={styles.moneyCard} aria-label="Can move today">
+              <Link to="/scm/daily-bank?view=board" className={styles.moneyCard} aria-label="Can move today">
                 <div className={styles.moneyHead}><span>Can move today</span><ArrowUpRight size={15} /></div>
                 {/* Bank and cash less the vouchers awaiting approval (the Daily Bank board's own sum);
                     card money not paid out yet is shown under it, not counted in it. */}

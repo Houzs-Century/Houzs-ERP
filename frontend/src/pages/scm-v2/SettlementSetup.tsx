@@ -147,7 +147,7 @@ const BankStatementsCard = () => {
       accountCode: form.accountCode, bankCode: form.bankCode, accountNo: form.accountNo, statementFormat: form.statementFormat,
       delimiter: form.delimiter, amountFormat: form.amountFormat, creditIndicator: form.creditIndicator, isActive: true, columnMap,
     }, {
-      onSuccess: () => { setNote(`${form.accountCode} saved — upload its statements on Bank Recon.`); setForm(null); },
+      onSuccess: () => { setNote(`${form.accountCode} saved — upload its statements on Bank statements.`); setForm(null); },
       onError: (e) => setNote(refusalText(e, 'That account was not saved.')),
     });
   };
@@ -159,7 +159,7 @@ const BankStatementsCard = () => {
         <span className={css.hint}>Which of this company's accounts take a statement file, and how each file reads. Headings, never positions — name every caption the bank has used, comma-separated.</span>
       </div>
       {configs.length === 0 && !cfgQ.isLoading && (
-        <div style={softText}>No account takes a statement yet — Bank Recon cannot read a file until one does.</div>
+        <div style={softText}>No account takes a statement yet — Bank statements cannot read a file until one does.</div>
       )}
       {configs.length > 0 && (
         <div className={css.scroll}>
@@ -242,7 +242,7 @@ const BankStatementsCard = () => {
             ))}
           </div>
           <div className={css.formActions}>
-            <span style={softText}>A blank heading uses the reader's built-in names (shown greyed). Save, then upload on Bank Recon.</span>
+            <span style={softText}>A blank heading uses the reader's built-in names (shown greyed). Save, then upload on Bank statements.</span>
             <span style={{ flex: 1 }} />
             <button type="button" style={btn(true, save.isPending || !form.accountCode || !form.bankCode)} disabled={save.isPending || !form.accountCode || !form.bankCode} onClick={submit}>
               {save.isPending ? 'Saving…' : 'Save statement setup'}

@@ -282,6 +282,7 @@ export const useConfirmDailyClose = () => {
       void qc.invalidateQueries({ queryKey: ['daily-close', v.date] });
       void qc.invalidateQueries({ queryKey: ['daily-bank'] });
       void qc.invalidateQueries({ queryKey: ['account-balances'] });
+      void qc.invalidateQueries({ queryKey: ['finance-todo'] });
     },
     onError: writeFailedAs('Daily close not confirmed'),
   });

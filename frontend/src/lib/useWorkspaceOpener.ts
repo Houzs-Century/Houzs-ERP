@@ -17,8 +17,8 @@ import {
 /** Names for the pages an order is opened from whose generic route label reads
     as the bare app section. */
 const OPENER_LABELS: Array<[RegExp, string]> = [
-  [/^\/scm\/merchant-recon(?:\/|$)/, "Merchant Recon"],
-  [/^\/scm\/bank-recon(?:\/|$)/, "Bank Recon"],
+  [/^\/scm\/merchant-recon(?:\/|$)/, "Merchant reports"],
+  [/^\/scm\/bank-recon(?:\/|$)/, "Bank statements"],
   [/^\/scm\/fair-pending(?:\/|$)/, "Fair Links"],
 ];
 
