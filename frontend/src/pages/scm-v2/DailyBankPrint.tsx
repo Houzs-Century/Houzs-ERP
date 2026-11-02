@@ -96,7 +96,7 @@ export function DailyBankSheet({ board, upcoming, companyName, printedBy, printe
           </tbody>
         </table>
       )}
-      <div className={styles.note}>= Current cash available {money(board.availableSen)} − future {money(future)}. Bills are by their due date; plan them in Money out and the To do calendar.</div>
+      <div className={styles.note}>= Current cash available {money(board.availableSen)} − future {money(future)}. Bills fall on their planned payment date, else their due date. Plan them in Money out › Supplier bills and the To do calendar.</div>
       <div className={styles.footer}><span>{companyName} · DAILY BANK · {fmtDate(board.date)}</span><span>Printed {fmtDateTime(printedAt)} by {printedBy}</span></div>
     </div>
   );

@@ -86,3 +86,28 @@ describe('TodoCalendar', () => {
     await waitFor(() => expect(mockedFetch).toHaveBeenCalledWith('/accounting/todo/calendar?month=2026-12'));
   });
 });
+
+/* A supplier bill dragged to another day moves its planned payment date (the redesign, step 7). */
+describe('TodoCalendar — planning a bill', () => {
+  const BILL = ev({ key: 'bill:HCAPI-2611-001', day: '2026-11-05', kind: 'pay', label: 'Kian Furniture · pay bill', short: 'Kian bill',
+    detail: 'Supplier due 2026/11/05 · HCAPI-2611-001', amountSen: 1_929_000, to: '/scm/ap-invoices/1',
+    bill: { kind: 'API', id: '1', no: 'HCAPI-2611-001', due: '2026-11-05', planned: null } });
+
+  test('dropped on a later day, the plan moves there; on a past day nothing is asked', async () => {
+    mockedFetch.mockResolvedValue({ ...PAGE, events: [BILL] });
+    renderCal();
+    const chip = await screen.findByText('Kian bill');
+    fireEvent.dragStart(chip, { dataTransfer: { effectAllowed: '' } });
+    const past = screen.getByRole('button', { name: '2026/11/01' });
+    fireEvent.dragOver(past);
+    fireEvent.drop(past);
+    expect(mockedFetch.mock.calls.some(([p]) => p === '/ap-invoices/plans')).toBe(false);
+    fireEvent.dragStart(await screen.findByText('Kian bill'), { dataTransfer: { effectAllowed: '' } });
+    const later = screen.getByRole('button', { name: '2026/11/12' });
+    fireEvent.dragOver(later);
+    fireEvent.drop(later);
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalledWith('/ap-invoices/plans', expect.objectContaining({ method: 'PUT' })));
+    const [, init] = mockedFetch.mock.calls.find(([p]) => p === '/ap-invoices/plans')!;
+    expect(JSON.parse(String(init?.body))).toEqual({ kind: 'API', id: '1', plannedOn: '2026-11-12' });
+  });
+});

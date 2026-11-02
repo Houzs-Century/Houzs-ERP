@@ -17,6 +17,8 @@ import { addDays } from '../../acc/todo-tasks';
 import { firstOf, lastOf, monthOrToday, nextSeven, taskEvents, type CalendarPage, type CalEvent } from '../../acc/todo-calendar';
 import { readFinanceTodoFacts } from './accounting-todo';
 import { readTodoTaskFacts } from './accounting-todo-tasks';
+import { billPlans } from './ap-bill-plans';
+import { fmtDate } from '../shared/format';
 
 type Rows = Array<Record<string, any>>;
 
@@ -27,8 +29,27 @@ async function supplierNames(sb: any, companyId: number, ids: string[]): Promise
   return new Map(r.data.map((s) => [String(s.id), String(s.name ?? '')]));
 }
 
-/** Supplier bills due in [from, to]: AP invoices and purchase invoices still owing, in ringgit. */
+/** Supplier bills to pay in [from, to], on the day Finance planned (the
+    redesign, step 7) or else their due date: AP invoices and purchase
+    invoices still owing, in ringgit. A bill planned into the month but due
+    outside it is read by its id. */
 async function billEvents(sb: any, companyId: number, from: string, to: string): Promise<CalEvent[]> {
+  const plans = await billPlans(sb, companyId);
+  if (!plans.ok) throw new Error(plans.reason);
+  const plannedIn: Record<'API' | 'PI', string[]> = { API: [], PI: [] };
+  for (const [key, day] of plans.byBill) {
+    const [kind, id] = key.split(':') as ['API' | 'PI', string];
+    if (day >= from && day <= to) plannedIn[kind].push(id);
+  }
+  const COLS = 'id, invoice_number, supplier_id, due_date, total_sen, paid_sen, exchange_rate';
+  const [apiPlanned, piPlanned] = await Promise.all([
+    chunkIn<Record<string, any>>(plannedIn.API, (batch, lo, hi) => sb.from('ap_invoices').select(COLS)
+      .eq('company_id', companyId).in('status', [...OPEN_AP_STATUSES]).in('id', batch).order('id').range(lo, hi)),
+    chunkIn<Record<string, any>>(plannedIn.PI, (batch, lo, hi) => sb.from('purchase_invoices').select(COLS)
+      .eq('company_id', companyId).in('status', [...OPEN_PI_STATUSES]).in('id', batch).order('id').range(lo, hi)),
+  ]);
+  if (apiPlanned.error) throw new Error(`AP invoices planned: ${apiPlanned.error.message}`);
+  if (piPlanned.error) throw new Error(`purchase invoices planned: ${piPlanned.error.message}`);
   const [api, pi] = await Promise.all([
     paginateAll<Record<string, any>>((lo, hi) => sb.from('ap_invoices')
       .select('id, invoice_number, supplier_id, due_date, total_sen, paid_sen, exchange_rate')
@@ -39,22 +60,36 @@ async function billEvents(sb: any, companyId: number, from: string, to: string):
   ]);
   if (api.error) throw new Error(`AP invoices: ${api.error.message}`);
   if (pi.error) throw new Error(`purchase invoices: ${pi.error.message}`);
-  const rows: Rows = [
-    ...((api.data ?? []) as Rows).map((r) => ({ ...r, to: `/scm/ap-invoices?open=${r.id}` })),
-    ...((pi.data ?? []) as Rows).map((r) => ({ ...r, to: '/scm/purchase-invoices' })),
-  ];
+  /* One row per bill: due in the month, planned into it, or both. */
+  const seen = new Set<string>();
+  const rows: Rows = [];
+  for (const [kind, list] of [['API', [...(api.data ?? []), ...apiPlanned.data]], ['PI', [...(pi.data ?? []), ...piPlanned.data]]] as const) {
+    for (const r of list as Rows) {
+      const key = `${kind}:${String(r.id)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push({ ...r, kind, planned: plans.byBill.get(key) ?? null, to: kind === 'API' ? `/scm/ap-invoices/${r.id}` : `/scm/purchase-invoices/${r.id}` });
+    }
+  }
   const names = await supplierNames(sb, companyId, rows.map((r) => String(r.supplier_id)).filter(Boolean));
   return rows
     .map((r) => {
       const owed = toMyrSen(Number(r.total_sen ?? 0) - Number(r.paid_sen ?? 0), r.exchange_rate);
       const who = names.get(String(r.supplier_id)) || 'Supplier';
+      const due = r.due_date ? String(r.due_date).slice(0, 10) : null;
+      const planned: string | null = r.planned;
       return {
-        key: `bill:${r.invoice_number}`, day: String(r.due_date).slice(0, 10), kind: 'pay' as const,
-        label: `${who} · pay bill`, short: `${who.split(/\s+/)[0]} bill`, detail: `${r.invoice_number} · not paid`,
+        key: `bill:${r.invoice_number}`, day: planned ?? due ?? '', kind: 'pay' as const,
+        label: `${who} · pay bill`, short: `${who.split(/\s+/)[0]} bill`,
+        /* The design's words: the plan beside the supplier's own due date. */
+        detail: planned
+          ? `Planned ${fmtDate(planned)} · supplier due ${due ? fmtDate(due) : '—'} · ${r.invoice_number}`
+          : `Supplier due ${due ? fmtDate(due) : '—'} · ${r.invoice_number}`,
         amountSen: owed, done: false, to: r.to, task: null,
+        bill: { kind: r.kind as 'API' | 'PI', id: String(r.id), no: String(r.invoice_number), due, planned },
       };
     })
-    .filter((e) => (e.amountSen ?? 0) > 0);
+    .filter((e) => (e.amountSen ?? 0) > 0 && e.day >= from && e.day <= to);
 }
 
 /** Vouchers on their way through checking and approval, on their voucher day. */

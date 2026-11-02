@@ -24,6 +24,7 @@ const cancelAsync = vi.fn(async (_id: unknown) => ({ ok: true }));
 const uploadAsync = vi.fn(async (_v: unknown) => ({ ok: true, file: { id: 'f9' } }));
 const deleteAsync = vi.fn(async (_v: unknown) => ({ ok: true }));
 const listingAsync = vi.fn(async (_rows: unknown, _filter: unknown) => undefined);
+const planAsync = vi.fn(async (_b: unknown) => ({ ok: true, plannedOn: '2099-12-15' }));
 const extractAsync = vi.fn(async (_bills: unknown) => ({ bills: [{
   index: 0, ok: true,
   extraction: {
@@ -99,6 +100,7 @@ vi.mock('../../vendor/scm/lib/ap-invoice-queries', () => ({
   useUpdateApInvoice: () => ({ mutateAsync: updateAsync, isPending: false }),
   usePostApInvoice: () => ({ mutateAsync: postAsync, isPending: false }),
   useCancelApInvoice: () => ({ mutateAsync: cancelAsync, isPending: false }),
+  usePlanBill: () => ({ mutateAsync: planAsync, mutate: vi.fn(), isPending: false }),
   useApInvoiceFiles: (id: string | null) => ({ data: id ? { files: [{ id: 'f1', file_name: 'rent.pdf', mime: 'application/pdf', size_bytes: 120_000, sort_no: 1, created_at: '2026-09-06T02:00:00Z' }], locked: filesLocked } : undefined, isLoading: false }),
   useUploadApInvoiceFile: () => ({ mutateAsync: uploadAsync, isPending: false }),
   useDeleteApInvoiceFile: () => ({ mutateAsync: deleteAsync, isPending: false }),
@@ -653,9 +655,27 @@ describe('Supplier bills — the redesign', () => {
     fireEvent.click(within(menu).getByText('Post'));
     await waitFor(() => expect(postAsync).toHaveBeenCalledWith('api-1'));
     expect(JSON.stringify(confirmFn.mock.calls[0]![0])).toMatch(/Post 2990-API-2609-001/);
-    /* A purchase invoice is Procurement's: open only. */
+    /* A purchase invoice is Procurement's: open it, or plan when we pay it (step 7). */
     fireEvent.click(screen.getByLabelText('2990-PI-2607-005 menu'));
-    expect(within(screen.getByRole('menu')).getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Open']);
+    expect(within(screen.getByRole('menu')).getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Open', 'Plan date']);
+  });
+
+  test('Plan date sets when we will pay a bill; the Planned column shows it (step 7)', async () => {
+    planAsync.mockClear();
+    apRowsNow = [ROWS[0]!, { ...ROWS[1]!, plannedOn: '2026-11-20' }];
+    try {
+      draw();
+      expect(within(tr('2990-PI-2607-005')).getByText('2026/11/20')).toBeTruthy();
+      fireEvent.click(screen.getByLabelText('2990-PI-2607-005 menu'));
+      fireEvent.click(within(screen.getByRole('menu')).getByText('Plan date'));
+      const d = dialog();
+      expect(d.textContent).toContain('Plan the payment of 2990-PI-2607-005 · HOOKKA INDUSTRIES SDN. BHD. · RM 2,000.00');
+      const box = within(d).getByLabelText('Planned payment date');
+      fireEvent.focus(box);
+      fireEvent.change(box, { target: { value: '20991215' } });
+      fireEvent.click(within(d).getByText('Save planned date'));
+      await waitFor(() => expect(planAsync).toHaveBeenCalledWith({ kind: 'PI', id: 'pi-1', plannedOn: '2099-12-15' }));
+    } finally { apRowsNow = ROWS; }
   });
 
   test('Trade / Other narrows by control; the search finds an amount; ticks add up in the bar', () => {
