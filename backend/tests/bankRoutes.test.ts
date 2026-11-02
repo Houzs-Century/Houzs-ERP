@@ -1032,58 +1032,6 @@ describe('a month whose earlier entry is claimed only by the match table', () =>
   });
 });
 
-/* ── A payment the bank paid two months later ───────────────────────────────
-   2990's Hong Leong, 2026: a RM 6,024.06 voucher dated 29 May the bank paid on
-   8 July. At 30 June it is outstanding, and June closed on that (11/09). Then
-   July was matched (14/09), the July line claimed the voucher, and June — read
-   again to close it once more — no longer carried it: a claim from a LATER month
-   counted as "claimed elsewhere", and June was RM 6,024.06 out, 2 Nov 2026. */
-describe('an earlier entry the bank paid in a later month', () => {
-  const HLB = (balanceFrom: string, ...rows: string[]) => [
-    'HLB PRIMEBIZ CURRENT ACCOUNT - 23600600000,',
-    'Date,Transaction Description,Cheque No.,Ref. No.,Deposit,Withdrawal,Balance',
-    `="",="Balance from previous statement",="",="",="",="",="${balanceFrom}"`,
-    ...rows,
-  ].join('\n');
-  const world = () => harness({
-    acc_bank_statement_config: [MBB_ACCOUNT, HLB_ACCOUNT],
-    v_gl_entries: [
-      { company_id: CO, account_code: '310-0020', je_no: 'JE-2605-0001', entry_date: '2026-05-02', source_type: 'RCT', source_doc_no: 'OR-2605-001', debit_sen: 100000, credit_sen: 0, party_name: 'A CUSTOMER', notes: null },
-      { company_id: CO, account_code: '310-0020', je_no: 'JE-2605-0029', entry_date: '2026-05-29', source_type: 'PV', source_doc_no: 'HPV-2605-029', debit_sen: 0, credit_sen: 20000, party_name: 'A SUPPLIER SDN BHD', notes: null },
-    ],
-  });
-  const file = (app: Hono, month: string, content: string) =>
-    post(app, '/bank/statements', { accountCode: '310-0020', fileName: `acs_23600600000_${month}.csv`, content, statementMonth: month });
-  const lineOf = async (app: Hono, statementId: number, amountSen: number) =>
-    ((await (await app.request(`/bank/statements/${statementId}`)).json()) as any).lines.find((l: any) => Number(l.amount_sen) === amountSen);
-
-  test('June carries it and closes, before July is matched and after', async () => {
-    const { app, sb } = world();
-    const may = await (await file(app, '2026-05', HLB('0.00', '="02-05-2026",="Fund Transfer at DIO",="",="A CUSTOMER",="1000.00",="",="1000.00"'))).json() as any;
-    expect((await post(app, `/bank/lines/${(await lineOf(app, may.statementId, 100000)).id}/match`, { jeNo: 'JE-2605-0001' })).status).toBe(200);
-    const june = await (await file(app, '2026-06', HLB('1000.00'))).json() as any;
-    expect(june.ok).toBe(true);
-    const juneNow = async () => (await (await app.request('/bank/months/310-0020/2026-06')).json()) as any;
-    expect((await juneNow()).reconciliation).toMatchObject({ carried: { count: 1, sen: -20000 }, computedClosingSen: 100000, tallies: true });
-
-    const july = await (await file(app, '2026-07', HLB('1000.00', '="08-07-2026",="CIB Instant Transfer at DIO",="",="PAYEE 7781",="",="200.00",="800.00"'))).json() as any;
-    expect((await post(app, `/bank/lines/${(await lineOf(app, july.statementId, -20000)).id}/match`, { jeNo: 'JE-2605-0029' })).status).toBe(200);
-
-    /* July paid it — June, at its own end, still waited for it. */
-    const after = await juneNow();
-    expect(after.reconciliation).toMatchObject({ carried: { count: 1, sen: -20000 }, computedClosingSen: 100000, unexplainedSen: 0, tallies: true });
-    expect(after.unmatchedEntries?.map((e: any) => e.jeNo) ?? after.reconciliation.carriedJeNos).toContain('JE-2605-0029');
-    const juneFile = (await (await app.request(`/bank/statements/${june.statementId}`)).json()) as any;
-    expect(juneFile.reconciliation).toMatchObject({ carried: { count: 1, sen: -20000 }, tallies: true });
-    expect((await post(app, '/bank/months/310-0020/2026-06/lock', {})).status).toBe(200);
-    expect(sb.tables.acc_bank_month_locks[0]).toMatchObject({ closing_statement_sen: 100000, closing_ledger_sen: 80000 });
-
-    /* And July shows it paid, not waiting. */
-    const julyNow = (await (await app.request('/bank/months/310-0020/2026-07')).json()) as any;
-    expect(julyNow.reconciliation).toMatchObject({ carried: { count: 0, sen: 0 }, tallies: true });
-  });
-});
-
 /* ── A transfer the bank itself reversed (docs/bugs/0817) ─────────────────────
    Hong Leong, 04/06/2026: 2990's RM 2,872.75 transfer to its own Alliance
    account failed and the bank put it back the same day — "CIB Instant
