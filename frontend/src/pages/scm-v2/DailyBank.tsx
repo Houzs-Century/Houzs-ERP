@@ -18,17 +18,18 @@
 // PNG saves it; PDF saves the same table on the letterhead.
 // ----------------------------------------------------------------------------
 
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Calendar, Camera, ChevronLeft, ChevronRight, FileDown, ImageDown } from 'lucide-react';
-import { useDailyBank, useDailyClose, useSaveDailyClose, useConfirmDailyClose, type DailyBankBoard } from './accounting-phase1-queries';
+import { useDailyBank, useDailyClose, useSaveDailyClose, useConfirmDailyClose } from './accounting-phase1-queries';
 import { fmtSen, fmtSenPlain } from '../../vendor/shared/format';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 import { DateField } from "../../vendor/scm/components/DateField";
-import { DAILY_BANK_HEAD, DB_COLORS, balanceColor, boardDayLabel, cellMoney, dailyBankSections, drawDailyBankCanvas, isDetailRow, rowColor, type DailyBankRow } from './daily-bank-report';
+import { drawDailyBankCanvas } from './daily-bank-report';
 import { generateDailyBankPdf } from './daily-bank-pdf';
 import { DailyBankBoardView } from './DailyBankBoard';
+import { DailyBankAccounts } from './DailyBankAccounts';
 import css from './DailyBank.module.css';
 
 const fmt = (sen: number | null | undefined) => fmtSen(sen);
@@ -60,80 +61,6 @@ const btnStyle = (primary?: boolean): React.CSSProperties => ({
   fontWeight: 600,
   cursor: 'pointer',
 });
-
-/* The table's dress — the sample's: a dark bar, a beige band per bank, small
-   grey column heads, monospace figures, received green, paid red, pending
-   orange, the available row on a green band, transit grey. */
-const thCell: React.CSSProperties = { padding: '8px 10px', fontSize: 'var(--fs-11)', fontWeight: 600, letterSpacing: '0.05em', color: DB_COLORS.soft, textAlign: 'left', borderBottom: `1px solid ${DB_COLORS.rule}`, whiteSpace: 'nowrap' };
-const tdCell: React.CSSProperties = { padding: '7px 10px', fontSize: 'var(--fs-13)', borderBottom: `1px solid ${DB_COLORS.rule}`, verticalAlign: 'top' };
-const moneyCell: React.CSSProperties = { ...tdCell, textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
-
-/** One row of a bank's table, coloured by what it is. */
-const BoardRow = ({ r }: { r: DailyBankRow }) => {
-  const color = rowColor(r.kind);
-  const detail = isDetailRow(r.kind);
-  const strong = r.kind === 'available' || r.kind === 'withTransit' || r.kind === 'bf' || r.kind.endsWith('Head');
-  const band = r.kind === 'available' ? { background: DB_COLORS.band } : undefined;
-  return (
-    <tr data-row={r.kind} style={band}>
-      <td style={{ ...tdCell, color, fontWeight: strong ? 600 : undefined, paddingLeft: detail ? 22 : 10 }}>{detail ? `· ${r.who}` : r.who}</td>
-      <td style={{ ...tdCell, fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-11)', color: DB_COLORS.soft, whiteSpace: 'nowrap' }}>{r.doc}</td>
-      <td style={{ ...tdCell, color: detail ? DB_COLORS.soft : color }}>{r.description}</td>
-      <td data-col="received" style={{ ...moneyCell, color: DB_COLORS.green, fontWeight: r.kind === 'receivedHead' ? 600 : undefined }}>{cellMoney(r.receivedSen)}</td>
-      {/* PAYMENT holds what was paid today (red) and what is pending (orange); BALANCE the running figures (owner 2026-09-29: 一栏一种数字). */}
-      <td data-col="payment" style={{ ...moneyCell, color, fontWeight: r.kind === 'paidHead' || r.kind === 'pendingHead' ? 600 : undefined }}>{cellMoney(r.paymentSen)}</td>
-      <td data-col="balance" style={{ ...moneyCell, color: balanceColor(r), fontWeight: strong ? 700 : undefined }}>{cellMoney(r.balanceSen)}</td>
-    </tr>
-  );
-};
-
-/** The board as the sample lays it out: the dark bar, then a table per bank. */
-const BoardTable = ({ board, focus = null }: { board: DailyBankBoard; focus?: string | null }) => {
-  const sections = useMemo(() => dailyBankSections(board), [board]);
-  /* A block opened from the Board is outlined and brought into view. */
-  const focusRef = useRef<HTMLTableRowElement | null>(null);
-  useEffect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- jsdom (the tests) has no scrollIntoView
-    focusRef.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
-  }, [focus]);
-  return (
-    <section aria-label="Bank balance available" style={{ border: `1px solid ${DB_COLORS.rule}`, borderRadius: 'var(--radius-md)', overflow: 'hidden', background: 'var(--c-paper, #fff)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', padding: '12px 18px', background: DB_COLORS.bar, color: DB_COLORS.barText }}>
-        <b style={{ letterSpacing: '0.12em', fontSize: 'var(--fs-14)' }}>BANK BALANCE AVAILABLE</b>
-        <span style={{ flex: 1 }} />
-        <b style={{ fontSize: 'var(--fs-13)' }}>{boardDayLabel(board.date)}</b>
-      </div>
-      <div style={{ overflowX: 'auto' }}>
-        <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 860 }}>
-          <tbody>
-            {sections.map((sec) => (
-              <Fragment key={sec.key}>
-                <tr data-section={sec.key} ref={sec.key === focus ? focusRef : undefined} className={sec.key === focus ? css.focused : undefined} style={{ background: DB_COLORS.sectionBg }}>
-                  <td colSpan={4} style={{ ...tdCell, fontWeight: 700 }}>
-                    {sec.title}
-                    {sec.code && <span className={styles.codeChip} style={{ marginLeft: 8 }}>{sec.code}</span>}
-                  </td>
-                  <td colSpan={2} style={{ ...moneyCell, fontWeight: 700 }}>
-                    {sec.bankBalanceSen != null && (
-                      <>
-                        <span style={{ fontFamily: 'inherit', fontWeight: 500, color: DB_COLORS.soft, marginRight: 10 }}>Bank Balance</span>
-                        <span data-bank-balance={sec.key} style={{ color: sec.bankBalanceSen < 0 ? DB_COLORS.red : DB_COLORS.ink }}>{fmtSenPlain(sec.bankBalanceSen)}</span>
-                      </>
-                    )}
-                  </td>
-                </tr>
-                <tr>
-                  {DAILY_BANK_HEAD.map((h, i) => <th key={h} scope="col" style={{ ...thCell, textAlign: i >= 3 ? 'right' : 'left' }}>{h}</th>)}
-                </tr>
-                {sec.rows.map((r, i) => <BoardRow key={`${sec.key}:${String(i)}`} r={r} />)}
-              </Fragment>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-};
 
 type DailyBankView = 'board' | 'accounts' | 'close';
 const VIEWS: Array<[DailyBankView, string]> = [['board', 'Board'], ['accounts', 'Accounts'], ['close', 'Daily close']];
@@ -243,8 +170,7 @@ export const DailyBank = () => {
         <DailyBankBoardView board={board} onOpenAccount={(code) => { setFocus(code); setView('accounts'); }} />
       )}
 
-      {view === 'accounts' && board && <BoardTable board={board} focus={focus} />}
-      {view === 'accounts' && board && <div className={css.footnote}>{board.note}</div>}
+      {view === 'accounts' && board && <DailyBankAccounts board={board} focus={focus} future={date > todayLocal()} />}
     </div>
   );
 };
