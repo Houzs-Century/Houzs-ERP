@@ -160,3 +160,94 @@ export function ReportStrip({ code, batches, openId, missingDay, onOpen, extra }
     </div>
   );
 }
+
+/* ── One report: where it stands, and its money ─────────────────────────── */
+
+/* 'done' is the Confirmed tab: the key stays clear of the stored status words (confirmRungReadsSubmitted.test.ts). */
+export type ReportTab = 'to-confirm' | 'to-choose' | 'no-sale' | 'done' | 'set-aside';
+
+/** Which tab a report's line sits in (the design's five). */
+export function lineTab(r: { confirmed_at: string | null; bucket: string; linked: unknown[]; candidates: unknown[]; suggested?: unknown[] }): ReportTab {
+  if (r.bucket === 'IGNORED') return 'set-aside';
+  if (r.confirmed_at) return 'done';
+  if (r.linked.length > 0) return 'to-confirm';
+  return r.candidates.length > 0 || (r.suggested?.length ?? 0) > 0 ? 'to-choose' : 'no-sale';
+}
+
+export const TAB_LABEL: Record<ReportTab, string> = {
+  'to-confirm': 'To confirm', 'to-choose': 'To choose', 'no-sale': 'No sale found', done: 'Confirmed', 'set-aside': 'Set aside',
+};
+
+export const TAB_HINT: Record<ReportTab, string> = {
+  'to-confirm': 'Matched by approval code. Confirm them all with the button, or open a line.',
+  'to-choose': 'More than one sale could fit, or one swipe may cover several orders.',
+  'no-sale': 'No card payment in the ERP fits yet.',
+  done: 'Fee posted. Undo stays open until the payout is recorded.',
+  'set-aside': 'Kept on the report, left out of the books.',
+};
+
+export const TAB_EMPTY: Record<ReportTab, string> = {
+  'to-confirm': 'No line here to confirm.', 'to-choose': 'No line here to choose for.', 'no-sale': 'Every line here has a sale.',
+  done: 'No line confirmed yet.', 'set-aside': 'No line set aside.',
+};
+
+const rm = (sen: number): string => `RM ${(sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/** `payNote` says where an unpaid report's money stands when the acquirer has more to say than the default (Public Bank's advice). */
+export function ReportHead({ batch, counts, payNote = null }: { batch: SettlementBatch; counts: Record<ReportTab, number>; payNote?: string | null }) {
+  const n = Object.values(counts).reduce((a, b) => a + b, 0);
+  const toGo = counts['to-confirm'] + counts['to-choose'] + counts['no-sale'];
+  const received = batch.received_sen ?? 0;
+  const paid = !!batch.received_on;
+  const steps: Array<{ label: string; sub: string; state: 'done' | 'current' | 'todo' }> = [
+    { label: 'Swiped', sub: `${swipeLabel(batch)} · ${n} sale${n === 1 ? '' : 's'}`, state: 'done' },
+    { label: 'Report in', sub: `Uploaded ${fmtDate(batch.created_at)}${batch.uploaded_by ? ` · ${batch.uploaded_by}` : ''}`, state: 'done' },
+    {
+      label: 'Confirmed',
+      sub: toGo > 0 ? `${counts.done} of ${n} lines · ${toGo} to go` : `${counts.done} of ${n} lines · ${counts['set-aside']} set aside`,
+      state: toGo > 0 ? 'current' : 'done',
+    },
+    {
+      label: 'Paid out',
+      sub: paid ? `${fmtDate(batch.received_on ?? '')} · ${rm(received)}` : received > 0 ? `${rm(received)} in · ${rm(batch.outstanding_sen ?? 0)} still out` : payNote ?? 'Comes in through Bank statements',
+      state: paid ? 'done' : toGo === 0 ? 'current' : 'todo',
+    },
+  ];
+  const pct = batch.gross_sen > 0 ? ((batch.fee_sen / batch.gross_sen) * 100).toFixed(2) : '0.00';
+  return (
+    <div className={styles.head} aria-label="Where this report stands">
+      <ol className={styles.tracker}>
+        {steps.map((s) => (
+          <li key={s.label} className={`${styles.step} ${s.state === 'done' ? styles.stepDone : s.state === 'current' ? styles.stepCurrent : ''}`}>
+            <span className={styles.stepDot} />
+            <span className={styles.stepLabel}>{s.label}</span>
+            <span className={styles.stepSub}>{s.sub}</span>
+          </li>
+        ))}
+      </ol>
+      <div className={styles.figures}>
+        <span className={styles.figure}><span className={styles.figLabel}>Gross</span><b>{rm(batch.gross_sen)}</b><span className={styles.muted}>{batch.row_count} swipes</span></span>
+        <span className={styles.op}>−</span>
+        <span className={styles.figure}><span className={styles.figLabel}>Fee</span><b>{rm(batch.fee_sen)}</b><span className={styles.muted}>{pct}% · booked to Merchant charges</span></span>
+        <span className={styles.op}>=</span>
+        <span className={styles.figure}><span className={styles.figLabel}>{paid ? 'Net · paid out' : 'Net to be paid out'}</span><b>{rm(batch.net_sen)}</b><span className={styles.muted}>{paid ? 'In the bank' : 'Comes in through Bank statements'}</span></span>
+      </div>
+    </div>
+  );
+}
+
+export function ReportTabs({ tab, counts, onTab }: { tab: ReportTab; counts: Record<ReportTab, number>; onTab: (t: ReportTab) => void }) {
+  const tabs: ReportTab[] = ['to-confirm', 'to-choose', 'no-sale', 'done', 'set-aside'];
+  return (
+    <div className={styles.tabsRow}>
+      <span className={styles.tabs} role="tablist" aria-label="Lines">
+        {tabs.map((t) => (
+          <button key={t} type="button" role="tab" aria-selected={tab === t} className={`${styles.tab} ${tab === t ? styles.tabOn : ''} ${t === 'done' ? styles.tabSep : ''}`} onClick={() => onTab(t)}>
+            {TAB_LABEL[t]} <span className={styles.tabCount}>{counts[t]}</span>
+          </button>
+        ))}
+      </span>
+      <span className={styles.muted}>{TAB_HINT[tab]}</span>
+    </div>
+  );
+}
