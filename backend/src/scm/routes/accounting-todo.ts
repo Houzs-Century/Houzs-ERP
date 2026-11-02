@@ -15,6 +15,7 @@ import { hasHouzsPerm, holdsHouzsPermLiterally } from '../lib/houzs-perms';
 import { stampOrderDeposit } from '../lib/si-order-deposit';
 import { usersHoldingPermission } from '../../services/permissionHolders';
 import { keyedAs, merchantNamesOf } from '../../acc/merchant-names';
+import { loadBooksOpening } from '../../acc/books-opening';
 import {
   addDays, buildFinanceTodo, raiseJobs, OVERDUE_DAYS, bankName,
   type TodoBankLine, type TodoCardRow, type TodoDone, type TodoFacts, type TodoViewer,
@@ -214,9 +215,16 @@ async function readVouchers(sb: any, companyId: number): Promise<Read<TodoFacts[
 /* ── Receipts and invoices ───────────────────────────────────────────────── */
 
 async function readTransfers(sb: any, companyId: number): Promise<Read<TodoFacts['transfers']>> {
-  const all = await paginateAll<Record<string, any>>((lo, hi) => sb.from('acc_official_receipts')
-    .select('id, amount_sen, paid_at').eq('company_id', companyId).eq('status', 'DRAFT').eq('method', 'transfer')
-    .order('id').range(lo, hi));
+  /* Only money paid since the books started: a receipt from before them is
+     never met by a statement in these books (Houzs opens 01/09/2026). */
+  const opening = await loadBooksOpening(sb, companyId);
+  if (!opening.ok) return fail('official receipts', opening.reason);
+  const start = opening.opening?.booksStart ?? null;
+  const all = await paginateAll<Record<string, any>>((lo, hi) => {
+    const q = sb.from('acc_official_receipts')
+      .select('id, amount_sen, paid_at').eq('company_id', companyId).eq('status', 'DRAFT').eq('method', 'transfer');
+    return (start ? q.gte('paid_at', start) : q).order('id').range(lo, hi);
+  });
   if (all.error) return fail('official receipts', all.error.message);
   return { ok: true, value: ((all.data ?? []) as Rows).map((r) => ({ amountSen: Number(r.amount_sen ?? 0), paidOn: r.paid_at ? String(r.paid_at) : null })) };
 }
