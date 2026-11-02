@@ -14,7 +14,7 @@
                            so a hand-set status shows until then (owner-accepted). */
 import { scopeToAllowedCompanies } from './companyScope';
 import { dateOrNull } from './date-coerce';
-import { assrLegGuardSql, assrLegOpen, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL } from './assr-board-scope';
+import { assrLegGuardSql, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL } from './assr-board-scope';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Hono ctx / the untyped scm PostgREST client, as elsewhere in this route
 type Ctx = any;
@@ -86,9 +86,9 @@ export async function writeNonSoFields(
   // caller's granted-company predicate, so an out-of-scope case 404s here.
   const caseId = Number(id);
   if (!Number.isFinite(caseId)) return { status: 400, body: { error: 'bad_id', reason: 'assr id must be numeric' } };
-  // Judged per job: a sibling job's POD closes the case but must not lock this one.
-  const legCase = (await c.env.DB.prepare(assrLegGuardSql(c)).bind(caseId).first()) as Parameters<typeof assrLegOpen>[0] | null;
-  if (!legCase || !assrLegOpen(legCase, jobKind)) return { status: 404, body: { error: 'not_found' } };
+  // Message status and Time Slot are planning notes, not scheduling: allowed on any leg the board lists, done or not; only an archived or out-of-scope case 404s.
+  const legCase = await c.env.DB.prepare(assrLegGuardSql(c)).bind(caseId).first();
+  if (!legCase) return { status: 404, body: { error: 'not_found' } };
   try {
     // The column names come from the ASSR_LEG_* maps, never from the request.
     const sets: string[] = []; const binds: unknown[] = [];

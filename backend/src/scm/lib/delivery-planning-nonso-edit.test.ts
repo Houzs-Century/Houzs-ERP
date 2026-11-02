@@ -58,7 +58,7 @@ describe('writeNonSoFields (closed case, open sibling job)', () => {
     return { c: { env: { DB: { prepare } }, get: () => undefined }, runs };
   }
 
-  it('saves the pickup job while the POD closed service job stays untouched', async () => {
+  it('saves the pickup and writes nothing to the service job columns', async () => {
     const { c, runs } = closedCtx();
     const pickup = await writeNonSoFields(c, {}, 'assr', '7', { deliveryMessageStatus: 'Done Send', jobKind: 'customer_pickup' });
     expect(pickup.status).toBe(200);
@@ -66,15 +66,21 @@ describe('writeNonSoFields (closed case, open sibling job)', () => {
     expect(runs[0]!.sql).toContain('pickup_message_status = ?');
     expect(runs[0]!.sql).not.toContain('delivery_message_status');
     expect(runs[0]!.sql).not.toContain('closed_at');
-    const service = await writeNonSoFields(c, {}, 'assr', '7', { deliveryMessageStatus: 'Done Send', jobKind: 'delivery' });
-    expect(service.status).toBe(404);
-    expect(runs).toHaveLength(1);
+    expect(runs[0]!.binds).toEqual(['Done Send', 7]);
   });
 
-  it('refuses a pickup that was itself done', async () => {
-    const { c, runs } = closedCtx({ ...closedCase, actual_pickup_at: '2026-10-29' });
-    const r = await writeNonSoFields(c, {}, 'assr', '7', { timeRange: '2-4pm', jobKind: 'customer_pickup' });
+  it('still saves the pickup when the pickup itself happened (actual_pickup_at set)', async () => {
+    const { c, runs } = closedCtx({ ...closedCase, actual_pickup_at: '2026-10-20' });
+    const r = await writeNonSoFields(c, {}, 'assr', '7', { deliveryMessageStatus: 'Done Send', timeRange: '2-4pm', jobKind: 'customer_pickup' });
+    expect(r.status).toBe(200);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.sql).toContain('pickup_message_status = ?');
+    expect(runs[0]!.sql).not.toContain('delivery_message_status');
+  });
+
+  it('refuses an archived or out-of-scope case', async () => {
+    const prepare = () => ({ bind: () => ({ first: async () => null, run: async () => ({ meta: { changes: 0 } }) }) });
+    const r = await writeNonSoFields({ env: { DB: { prepare } }, get: () => undefined }, {}, 'assr', '7', { timeRange: 'x', jobKind: 'customer_pickup' });
     expect(r.status).toBe(404);
-    expect(runs).toHaveLength(0);
   });
 });
