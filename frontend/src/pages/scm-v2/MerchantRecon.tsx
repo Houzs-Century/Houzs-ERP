@@ -46,7 +46,7 @@ import { downloadCSV, toCSV } from '../../lib/csv';
 import styles from './Suppliers.module.css';
 import grid from './MerchantRecon.module.css';
 import { PageHeader } from '../../components/Layout';
-import { AcquirerCards, ReportStrip, acquirerCards } from './MerchantReportsTop';
+import { AcquirerCards, ReportHead, ReportStrip, ReportTabs, TAB_EMPTY, acquirerCards, lineTab, type ReportTab } from './MerchantReportsTop';
 import top from './MerchantReports.module.css';
 import { useFinanceTodo } from './finance/finance-todo-queries';
 import { fmtDate } from '../../vendor/shared/format';
@@ -926,7 +926,6 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
   /* Back from an order opened on one of these lines lands on that line. */
   useReturnScroll(q.data != null);
   const confirmAll = useConfirmMatched();
-  const [showDone, setShowDone] = useState(false);
 
   const rows = useMemo(() => q.data?.rows ?? [], [q.data]);
   const batch = q.data?.batch ?? null;
@@ -940,14 +939,22 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
      needs a person. The screen must not call them the same thing. */
   const toConfirm = openRows.filter((r) => r.linked.length > 0).length;
   const toDecide = openRows.length - toConfirm;
-  const shown = showDone ? [...openRows, ...doneRows] : openRows;
-  /* A CARD IS A DECISION, a table row is information. A line that already
-     claimed its payment asks nothing of a person — the button at the top books
-     every one of them — so it belongs in the table, and only the lines that
-     genuinely need choosing get a card. Anything already decided is
-     information too. */
-  const needChoice = shown.filter((r) => !r.confirmed_at && r.bucket !== 'IGNORED' && r.linked.length === 0);
-  const noChoice = shown.filter((r) => !needChoice.includes(r));
+  /* The redesign's five tabs (owner's Claude Design, batch 3): To confirm · To
+     choose · No sale found ‖ Confirmed · Set aside — the tab lives in the
+     address (?tab=), and a report opens on the first with lines to work. */
+  const counts: Record<ReportTab, number> = { 'to-confirm': 0, 'to-choose': 0, 'no-sale': 0, confirmed: 0, 'set-aside': 0 };
+  for (const r of rows) counts[lineTab(r)] += 1;
+  const [params, setParams] = useSearchParams();
+  const asked = params.get('tab') as ReportTab | null;
+  const tab: ReportTab = asked && asked in counts ? asked
+    : (['to-confirm', 'to-choose', 'no-sale'] as const).find((t) => counts[t] > 0) ?? 'confirmed';
+  const setTab = (t: ReportTab) => setParams((prev) => { const next = new URLSearchParams(prev); next.set('tab', t); return next; }, { replace: true });
+  /* A CARD IS A DECISION, a table row is information: lines to choose for, or
+     with no sale, and lines set aside (Put back) are cards; matched and
+     confirmed lines are table rows. */
+  const inTab = rows.filter((r) => lineTab(r) === tab);
+  const needChoice = tab === 'to-choose' || tab === 'no-sale' || tab === 'set-aside' ? inTab : [];
+  const noChoice = needChoice.length > 0 ? [] : inTab;
 
   const exportCsv = () => {
     downloadCSV(`merchant-report-${batchId}.csv`, toCSV(rows, [
@@ -996,13 +1003,6 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
             <CheckCheck {...ICON} /> Confirm the {unconfirmedMatched} matched on this report
           </button>
         )}
-        {doneRows.length > 0 && (
-          <label style={{ ...softText, display: 'flex', gap: 6, alignItems: 'center' }}>
-            <input type="checkbox" checked={showDone} aria-label="Show lines already decided"
-              onChange={(e) => setShowDone(e.target.checked)} />
-            Show the {doneRows.length} already decided
-          </label>
-        )}
         <button type="button" style={btn()} onClick={exportCsv}><Download {...ICON} /> Export</button>
       </div>
 
@@ -1037,6 +1037,10 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
       )}
 
       {batch && <HandOff batch={batch} toConfirm={toConfirm} toDecide={toDecide} />}
+
+      {batch && <ReportHead batch={batch} counts={counts} />}
+      {batch && <ReportTabs tab={tab} counts={counts} onTab={setTab} />}
+      {batch && inTab.length === 0 && <div style={softText}>{TAB_EMPTY[tab]}</div>}
 
       {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading the report…</div>}
 

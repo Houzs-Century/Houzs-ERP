@@ -69,3 +69,25 @@
 .popRow:hover { background: #f4f6f3; }
 .popDay { font-weight: 600; white-space: nowrap; }
 .popSub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+
+/* ── One report ── */
+.head { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; border: 1px solid var(--line, #d6d9d2); border-radius: 10px; background: #ffffff; }
+.tracker { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+@media (max-width: 720px) { .tracker { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+.step { position: relative; display: flex; flex-direction: column; gap: 2px; padding-left: 18px; }
+.stepDot { position: absolute; left: 0; top: 3px; width: 10px; height: 10px; border-radius: 999px; border: 2px solid #c2c6bd; background: #ffffff; box-sizing: border-box; }
+.stepDone .stepDot { border-color: #16695f; background: #16695f; }
+.stepCurrent .stepDot { border-color: #a16a2e; }
+.stepLabel { font-size: 12.5px; font-weight: 600; }
+.stepSub { font-size: 11.5px; color: #767b6e; }
+.figures { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }
+.figure { display: flex; flex-direction: column; gap: 2px; min-width: 150px; padding: 8px 12px; border: 1px solid #e3e6e0; border-radius: 8px; }
+.figure > b { font-size: 16px; }
+.figLabel { font-size: 11.5px; color: #5f6459; }
+.op { align-self: center; font-size: 16px; color: #767b6e; }
+.tabsRow { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.tabs { display: inline-flex; flex-wrap: wrap; padding: 3px; border-radius: 9px; background: #e3e6e0; }
+.tab { height: 30px; padding: 0 12px; border: 0; border-radius: 7px; background: transparent; color: #414539; font: 500 13px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; }
+.tabOn { background: #ffffff; color: #0c3f39; font-weight: 600; box-shadow: 0 1px 2px rgba(17, 24, 16, 0.14); }
+.tabSep { margin-left: 10px; }
+.tabCount { margin-left: 4px; font-size: 11.5px; color: #767b6e; }
