@@ -307,7 +307,7 @@ describe('buildServiceCaseReceived', () => {
 });
 
 describe('buildServiceCaseStatus', () => {
-  it('maps name/assr_no/case_status and fires the Service Case Status automation by name', () => {
+  it('maps name/assr_no/case_status and fires the Service Case Status Update automation by name', () => {
     const contact = buildServiceCaseStatus('+60123', 'Wong', 'ASSR/2610-038', 'Inspecting the item');
     expect(contact).toEqual({
       phone: '+60123',
@@ -318,7 +318,7 @@ describe('buildServiceCaseStatus', () => {
   });
 
   it('the automation name matches the Connect flow, byte-for-byte', () => {
-    expect(CONNECT_SERVICE_CASE_STATUS_AUTOMATION).toBe('Service Case Status');
+    expect(CONNECT_SERVICE_CASE_STATUS_AUTOMATION).toBe('Service Case Status Update');
   });
 
   it('is button-less: no callback_url or conversation state', () => {

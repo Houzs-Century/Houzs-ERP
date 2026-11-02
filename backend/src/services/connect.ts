@@ -32,7 +32,7 @@ export const CONNECT_SERVICE_CASE_AUTOMATION = 'Service Case Received';
  *  matched BY NAME — must equal the automation's name in chat.houzscentury.com
  *  exactly. Its flow sends the button-less template hc_service_case_status_update
  *  (params full_name + assr_no + case_status). */
-export const CONNECT_SERVICE_CASE_STATUS_AUTOMATION = 'Service Case Status';
+export const CONNECT_SERVICE_CASE_STATUS_AUTOMATION = 'Service Case Status Update';
 
 export interface ConnectConfig {
   CONNECT_WEBHOOK_URL?: string;
