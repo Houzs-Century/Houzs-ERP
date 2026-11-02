@@ -32,6 +32,13 @@ const row = {
   city: 'Johor Bahru',
   postcode: '81100',
   state: 'Johor',
+  // Origin ("from") — a transfer carries one (owner 2026-11-02 方案1).
+  from_name: 'KL Warehouse',
+  from_address1: 'Lot 12, Jalan Balakong',
+  from_address2: '',
+  from_city: 'Seri Kembangan',
+  from_postcode: '43300',
+  from_state: 'Selangor',
   requested_date: '2026-11-05',
   remark: '',
 } as unknown as Parameters<typeof EditDpOrderDrawer>[0]['row'];
@@ -39,11 +46,14 @@ const row = {
 const saveBtn = () => screen.getByText('Save changes').closest('button') as HTMLButtonElement;
 
 describe('EditDpOrderDrawer', () => {
-  test('prefills the stored fields', () => {
+  test('prefills the stored fields, origin included', () => {
     render(<EditDpOrderDrawer row={row} onClose={() => {}} />);
     expect(screen.getByDisplayValue('MSJ TRANSPORT SDN BHD')).toBeTruthy();
     expect(screen.getByDisplayValue('No 3, Jalan Perdagangan')).toBeTruthy();
     expect(screen.getByDisplayValue('Johor Bahru')).toBeTruthy();
+    // Origin ("from") section prefilled too.
+    expect(screen.getByDisplayValue('KL Warehouse')).toBeTruthy();
+    expect(screen.getByDisplayValue('Lot 12, Jalan Balakong')).toBeTruthy();
   });
 
   test('Save sends every field, a cleared one as null', () => {
@@ -65,9 +75,28 @@ describe('EditDpOrderDrawer', () => {
       city: 'Johor Bahru',
       postcode: '81100',
       state: 'Johor',
+      // Origin ("from") rides along for a transfer.
+      fromName: 'KL Warehouse',
+      fromAddress1: 'Lot 12, Jalan Balakong',
+      fromAddress2: null,
+      fromCity: 'Seri Kembangan',
+      fromPostcode: '43300',
+      fromState: 'Selangor',
       requestedDate: '2026-11-05',
       remark: null,
     });
+  });
+
+  test('a non-transfer job carries no origin fields in the patch', () => {
+    mutate.mockClear();
+    const setupRow = { ...row, job_type: 'SETUP' } as unknown as Parameters<typeof EditDpOrderDrawer>[0]['row'];
+    render(<EditDpOrderDrawer row={setupRow} onClose={() => {}} />);
+    // The From section is absent, so its fields never reach the patch.
+    expect(screen.queryByText('From (origin)')).toBeNull();
+    fireEvent.click(saveBtn());
+    const sent = mutate.mock.calls[0][0] as Record<string, unknown>;
+    expect('fromName' in sent).toBe(false);
+    expect('fromAddress1' in sent).toBe(false);
   });
 
   test('Save is blocked once the last address line is cleared', () => {

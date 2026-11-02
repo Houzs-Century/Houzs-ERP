@@ -46,6 +46,12 @@ const joinedAddress = (r: DpOrderRow): string =>
   [r.address1, r.address2, r.address3, r.address4, r.city, r.postcode, r.state]
     .filter(Boolean).join(', ');
 
+/* The origin ("from") a transfer was picked up from (owner 2026-11-02 方案1) —
+   name + address, so the list reads from -> to. Blank on jobs without an origin. */
+const joinedFrom = (r: DpOrderRow): string =>
+  [r.from_name, r.from_address1, r.from_address2, r.from_city, r.from_postcode, r.from_state]
+    .filter(Boolean).join(', ');
+
 /* Provenance, humanised. party_name already carries the resolved party, so the
    supplier/project/case refs only need to say WHERE the snapshot came from. */
 const sourceRef = (r: DpOrderRow): string => {
@@ -92,7 +98,7 @@ export const DpOrders = () => {
     return all.filter((r) =>
       [
         r.dp_no, r.party_name, r.contact_name, r.contact_phone, r.remark,
-        r.city, r.state, r.postcode, joinedAddress(r), sourceRef(r),
+        r.city, r.state, r.postcode, joinedAddress(r), joinedFrom(r), sourceRef(r),
         dpJobTypeLabel(r.job_type), statusLabel('dpOrder', r.status),
         r.so_venue, r.so_doc_no ? salespersonNameOf(r.so_agent, r.so_salesperson_id, '') : '',
       ].some((v) => (v ?? '').toLowerCase().includes(term)),
@@ -154,7 +160,17 @@ export const DpOrders = () => {
       render: (r) => dpJobTypeLabel(r.job_type),
     },
     {
-      key: 'party', label: 'Party',
+      /* Origin ("from") — the pickup point of a point-to-point / partner transfer
+         (owner 2026-11-02 方案1). Blank on jobs without one; the Party column is
+         the destination, so the two read from -> to. */
+      key: 'from', label: 'From', width: '160px',
+      getValue: (r) => joinedFrom(r),
+      render: (r) => r.from_name
+        ? <span title={joinedFrom(r)}>{r.from_name}</span>
+        : <span style={{ color: 'var(--fg-muted)' }}>—</span>,
+    },
+    {
+      key: 'party', label: 'To (Party)',
       getValue: (r) => r.party_name ?? '',
       render: (r) => r.party_name ? <strong>{r.party_name}</strong> : '—',
     },
