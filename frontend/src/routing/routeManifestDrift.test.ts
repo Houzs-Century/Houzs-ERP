@@ -113,8 +113,10 @@ describe("executable route contract", () => {
     // 181 since 2026-10-28: /scm/opening-balance, Finance › Setup › Opening Balance.
     // 182 since 2026-10-28: /scm/supplier-notes, Finance › Money out › Supplier &
     // Other Creditor CN / DN — the supplier's notes moved off /scm/credit-notes.
-    // 183 since 2026-11-02: /scm/saved-locations, the transfer from/to address book (方案2).
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(183);
+    // 183 since 2026-11-02: /scm/finance/rules, Finance › Setup › To do rules —
+    // the To do's rule switches, routines and groups (Claude Design redesign).
+    // 184 since 2026-11-02: /scm/saved-locations, the transfer from/to address book (方案2).
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(184);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -172,8 +174,9 @@ describe("executable route contract", () => {
     // 189 since 2026-10-21 — /hr/employees; see the staff-route count above.
     // 190 since 2026-10-28 — /scm/opening-balance; see the staff-route count above.
     // 191 since 2026-10-28 — /scm/supplier-notes; see the staff-route count above.
-    // 192 since 2026-11-02 — /scm/saved-locations; see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(192);
+    // 192 since 2026-11-02 — /scm/finance/rules; see the staff-route count above.
+    // 193 since 2026-11-02 — /scm/saved-locations; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(193);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {

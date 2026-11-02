@@ -23,6 +23,7 @@ import {
   type TodoBankLine, type TodoCardRow, type TodoDone, type TodoFacts, type TodoViewer,
 } from '../../acc/finance-todo';
 import { loadDailyBankBoard } from './accounting-daily-bank';
+import { readTodoTaskFacts, type TodoTaskFacts } from './accounting-todo-tasks';
 
 type Rows = Array<Record<string, any>>;
 type Read<T> = { ok: true; value: T } | { ok: false; what: string; reason: string };
@@ -356,7 +357,12 @@ async function readViewer(c: any, companyId: number, problems: string[]): Promis
     }
   };
   const [check, approve] = await Promise.all([desk('scm.payment_voucher.check'), desk('scm.payment_voucher.approve')]);
-  return { finance, checker: check.mine, approver: approve.mine, checkerNames: check.names, approverNames: approve.names };
+  const hu = c.get('houzsUser') as { id?: number; name?: string | null; email?: string } | undefined;
+  const id = Number(hu?.id);
+  return {
+    id: Number.isFinite(id) && id > 0 ? id : null, name: String(hu?.name ?? hu?.email ?? ''),
+    finance, checker: check.mine, approver: approve.mine, checkerNames: check.names, approverNames: approve.names,
+  };
 }
 
 /* ── Facts and handlers ──────────────────────────────────────────────────── */
@@ -369,10 +375,11 @@ export async function readFinanceTodoFacts(sb: any, companyId: number, today: st
   const safe = async <T,>(what: string, run: () => Promise<Read<T>>): Promise<Read<T>> => {
     try { return await run(); } catch (e) { return fail(what, e instanceof Error ? e.message : String(e)); }
   };
-  const [cards, bank, requests, vouchers, transfers, overdue] = await Promise.all([
+  const [cards, bank, requests, vouchers, transfers, overdue, taskFacts] = await Promise.all([
     safe('merchant reports', () => readCards(sb, companyId, today)), safe('bank statements', () => readBank(sb, companyId, today)),
     safe('payment requests', () => readRequests(sb, companyId)), safe('payment vouchers', () => readVouchers(sb, companyId)),
     safe('official receipts', () => readTransfers(sb, companyId)), safe('overdue invoices', () => readOverdue(sb, companyId, today)),
+    safe<TodoTaskFacts>('tasks', () => readTodoTaskFacts(sb, companyId)),
   ]);
   const ok = <T,>(r: Read<T>, empty: T): T => {
     if (r.ok) return r.value;
@@ -402,6 +409,7 @@ export async function readFinanceTodoFacts(sb: any, companyId: number, today: st
     bankAccounts: bk?.bankAccounts ?? [], lastStatementTo: bk?.lastStatementTo ?? {}, bankLines: bk?.bankLines ?? [], lockedLastMonth: bk?.lockedLastMonth ?? [],
     requests: ok(requests, []), vouchers: ok(vouchers, []), transfers: ok(transfers, []), overdue: ok(overdue, []),
     money, done, problems,
+    ...(ok<TodoTaskFacts>(taskFacts, { tasks: [], occurrences: {}, remarkCounts: {}, rulesOff: [], groups: [] })),
   };
 }
 
