@@ -133,7 +133,7 @@ async function stageCounts(sb: any, c: CompanyScopeCtx): Promise<{ ok: true; cou
 }
 
 /** Each voucher's journal: the entry its approval posted, the live one when it was reversed and re-posted. */
-async function journalNumbers(sb: any, c: CompanyScopeCtx, pvNumbers: string[]): Promise<{ ok: true; byPv: Map<string, string> } | Fail> {
+export async function journalNumbers(sb: any, c: CompanyScopeCtx, pvNumbers: string[]): Promise<{ ok: true; byPv: Map<string, string> } | Fail> {
   const byPv = new Map<string, string>();
   if (pvNumbers.length === 0) return { ok: true, byPv };
   /* A voucher has one journal, two when its approval was reversed and re-posted. */
