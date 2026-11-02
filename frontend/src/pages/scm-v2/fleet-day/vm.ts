@@ -12,7 +12,7 @@ import type { StopStatus } from '../../../vendor/scm/lib/delivery-stop-status';
 import { windowEndMinutes } from '../../../vendor/scm/lib/delivery-stop-status';
 import { jobRefOf, LEG_LABEL } from '../../../vendor/scm/lib/delivery-job';
 import {
-  slotKindOf, slotLabelOf, runStatusOf, rollupRun, isLate, lateReason,
+  slotKindOf, slotLabelOf, slotSortKey, runStatusOf, rollupRun, isLate, lateReason,
   type RunStatus, type SlotKind, type RunRollup,
 } from '../../../vendor/scm/lib/fleet-day-cards';
 
@@ -215,7 +215,19 @@ function makeRunVM(args: {
   driversById: Map<string, DriverRow>;
 }): LorryRunVM {
   const { plate, lorryId, isInternal, trip, color, driversById } = args;
-  const docs = args.docs.slice().sort((a, b) => (a.stopNo ?? 1e9) - (b.stopNo ?? 1e9));
+  // Drops ordered by DELIVERY TIME, earliest first (owner 2026-11-02, every lorry):
+  // the slot-start minutes, then the run sequence (trip_stop_no), then the SO no.
+  // so the order is stable when two drops share a window.
+  const BIG = Number.MAX_SAFE_INTEGER;
+  const docs = args.docs.slice().sort((a, b) => {
+    const ak = slotSortKey(a.order.time_range);
+    const bk = slotSortKey(b.order.time_range);
+    if (ak !== bk) return ak - bk;
+    const as = a.stopNo ?? BIG;
+    const bs = b.stopNo ?? BIG;
+    if (as !== bs) return as - bs;
+    return a.soDocNo.localeCompare(b.soDocNo);
+  });
   const master = trip?.driver?.id ? driversById.get(trip.driver.id) : undefined;
   const crew = docs.map((d) => d.order.crew).find((c) => c) ?? null;
   const driver2Name = docs.map((d) => d.order.crew?.driver_2_name).find((n) => n) ?? null;
