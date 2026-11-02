@@ -11,7 +11,7 @@ import { PageHeader } from '../../../components/Layout';
 import { fmtSenPlain } from '../../../vendor/shared/format';
 import styles from './FinanceTasks.module.css';
 import { BUILT_IN_GROUPS } from './TaskDrawers';
-import { useAddGroup, useSaveRulesOff, useTodoSettings, useUpdateTask, type TodoTask } from './finance-todo-queries';
+import { useAddGroup, useAddRule, useSaveRulesOff, useTodoSettings, useUpdateTask, type CustomRule, type TodoTask } from './finance-todo-queries';
 
 /** The design's RULES table: what each finds, where it lands, whose desk it is on. */
 const RULES: Array<[string, string, string, string, string]> = [
@@ -28,6 +28,52 @@ const RULES: Array<[string, string, string, string, string]> = [
 ];
 
 const groupLabel = (id: string): string => BUILT_IN_GROUPS.find((g) => g.id === id)?.label ?? id;
+
+/** The design's TEMPLATES: what a rule Finance adds can look for. */
+const TEMPLATES: Record<CustomRule['tpl'], { name: string; finds: (n: string) => string; paramLabel: string; unit: string; def: number; group: string; button: string }> = {
+  bills: { name: 'Supplier bills due soon', finds: (n) => `AP invoices due within ${n} days and not paid`, paramLabel: 'Due within', unit: 'days', def: 7, group: 'pay', button: 'Opens AP invoices' },
+  drafts: { name: 'Drafts left too long', finds: (n) => `Finance documents still in Draft after ${n} days`, paramLabel: 'Older than', unit: 'days', def: 3, group: 'other', button: 'Opens Payment vouchers' },
+  big: { name: 'Large payments received', finds: (n) => `Customer payments over RM ${n}, each needs its own e-invoice`, paramLabel: 'Over RM', unit: '', def: 10_000, group: 'other', button: 'Opens Official receipts' },
+};
+const TEMPLATE_IDS = Object.keys(TEMPLATES) as Array<CustomRule['tpl']>;
+
+function NewRule({ groups, onDone }: { groups: Array<{ id: string; label: string }>; onDone: () => void }) {
+  const add = useAddRule();
+  const [tpl, setTpl] = useState<CustomRule['tpl']>('bills');
+  const [param, setParam] = useState(String(TEMPLATES.bills.def));
+  const [group, setGroup] = useState(TEMPLATES.bills.group);
+  const t = TEMPLATES[tpl];
+  const n = Number(param.replace(/,/g, ''));
+  const ok = Number.isInteger(n) && n > 0;
+  return (
+    <div className={styles.newRule} aria-label='New rule'>
+      <div className={styles.templateList}>
+        {TEMPLATE_IDS.map((id) => (
+          <button key={id} type='button' className={`${styles.template} ${tpl === id ? styles.templateOn : ''}`} aria-pressed={tpl === id}
+            onClick={() => { setTpl(id); setParam(String(TEMPLATES[id].def)); setGroup(TEMPLATES[id].group); }}>
+            <span className={styles.ruleName}>{TEMPLATES[id].name}</span>
+            <span className={styles.ruleFinds}>{TEMPLATES[id].finds(String(TEMPLATES[id].def))}</span>
+          </button>
+        ))}
+      </div>
+      <div className={styles.newRuleRow}>
+        <span className={styles.ruleFinds}>{t.paramLabel}</span>
+        <input className={styles.amountInput} value={param} onChange={(e) => setParam(e.target.value)} inputMode='numeric' aria-label={t.paramLabel} />
+        {t.unit && <span className={styles.ruleFinds}>{t.unit}</span>}
+        <span className={styles.ruleFinds}>· put under</span>
+        <select className={styles.payeeInput} value={group} onChange={(e) => setGroup(e.target.value)} aria-label='Put it under'>
+          {[...BUILT_IN_GROUPS, ...groups].map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
+        </select>
+      </div>
+      <div className={styles.ruleFinds}>{ok ? t.finds(n.toLocaleString('en-MY')) : 'Give a whole number.'} · {t.button}. To do fills itself from then on.</div>
+      <div className={styles.newRuleRow}>
+        <button type='button' className={styles.btnSecondary} onClick={onDone}>Cancel</button>
+        <button type='button' className={styles.btnPrimary} disabled={!ok || add.isPending}
+          onClick={() => add.mutate({ tpl, param: n, group }, { onSuccess: onDone })}>Add rule</button>
+      </div>
+    </div>
+  );
+}
 
 function Switch({ on, label, disabled, onClick }: { on: boolean; label: string; disabled: boolean; onClick: () => void }) {
   return <button type="button" role="switch" aria-checked={on} aria-label={label} disabled={disabled} className={`${styles.switch} ${on ? styles.switchOn : ''}`} onClick={onClick} />;
@@ -78,6 +124,7 @@ export function FinanceTodoRulesPage() {
   const save = useSaveRulesOff();
   const addGroup = useAddGroup();
   const [newGroup, setNewGroup] = useState('');
+  const [adding, setAdding] = useState(false);
   const s = q.data;
   const off = new Set(s?.rulesOff ?? []);
   const flip = (id: string) => {
@@ -91,7 +138,10 @@ export function FinanceTodoRulesPage() {
       {s && (
         <div className={styles.rulesPage}>
           <section className={styles.card} aria-label="Built-in rules">
-            <div className={styles.cardHead}>Built-in rules<span className={styles.cardNote}>Each one fills To do from the books by itself. Switch one off and its jobs stop showing.</span></div>
+            <div className={styles.cardHead}>Rules<span className={styles.cardNote}>Each one fills To do from the books by itself. Switch one off and its jobs stop showing.</span>
+              {s.mayEdit && !adding && <button type='button' className={`${styles.btnSecondary} ${styles.headButton}`} onClick={() => setAdding(true)}>New rule</button>}
+            </div>
+            {adding && <NewRule groups={s.groups} onDone={() => setAdding(false)} />}
             <div className={styles.tableWrap}>
               <table className={styles.table}>
                 <thead><tr><th>Rule</th><th>Puts it under</th><th>For</th><th>On</th></tr></thead>
@@ -104,6 +154,17 @@ export function FinanceTodoRulesPage() {
                       <td><Switch on={!off.has(id)} label={`${name} on`} disabled={!s.mayEdit || save.isPending} onClick={() => flip(id)} /></td>
                     </tr>
                   ))}
+                  {s.customRules.map((r) => {
+                    const t = TEMPLATES[r.tpl];
+                    return (
+                      <tr key={r.id} className={off.has(r.id) ? styles.offRow : ''}>
+                        <td><div className={styles.ruleName}>{t.name}<span className={styles.yours}>Yours</span></div><div className={styles.ruleFinds}>{t.finds(r.param.toLocaleString('en-MY'))}</div></td>
+                        <td>{[...BUILT_IN_GROUPS, ...s.groups].find((g) => g.id === r.group)?.label ?? r.group}</td>
+                        <td>Finance</td>
+                        <td><Switch on={!off.has(r.id)} label={`${t.name} on`} disabled={!s.mayEdit || save.isPending} onClick={() => flip(r.id)} /></td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

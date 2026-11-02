@@ -165,3 +165,16 @@
 .payeeInput { width: 180px; height: 32px; box-sizing: border-box; padding: 0 10px; border: 1px solid #c2c6bd; border-radius: 6px; font: 13px 'IBM Plex Sans', system-ui, sans-serif; }
 .groupList { display: flex; flex-wrap: wrap; gap: 6px; padding: 14px 16px; }
 .groupPill { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 999px; background: #f4f6f3; border: 1px solid #e3e6e0; font-size: 12.5px; }
+
+/* Setup › To do rules › New rule (batch 2c). */
+.headButton { margin-left: auto; height: 28px; }
+.newRule { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; border-bottom: 1px solid #e3e6e0; background: #fbfcfa; }
+.templateList { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+.template {
+  display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border: 1px solid #d6d9d2; border-radius: 8px;
+  background: #ffffff; text-align: left; cursor: pointer; font: 13px 'IBM Plex Sans', system-ui, sans-serif; color: #11140f;
+}
+.template:hover { background: #f4f6f3; }
+.templateOn, .templateOn:hover { border-color: #16695f; box-shadow: inset 0 0 0 1px #16695f; background: #f3f8f7; }
+.newRuleRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.yours { margin-left: 8px; height: 18px; display: inline-flex; align-items: center; padding: 0 6px; border-radius: 4px; background: #eaf3f1; color: #1d5c54; font-size: 10.5px; font-weight: 600; vertical-align: middle; }

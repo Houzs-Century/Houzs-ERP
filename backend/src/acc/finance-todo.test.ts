@@ -29,6 +29,7 @@ const facts = (over: Partial<TodoFacts> = {}): TodoFacts => ({
   remarkCounts: {},
   rulesOff: [],
   groups: [],
+  customRules: [],
   ...over,
 });
 
@@ -212,5 +213,26 @@ describe('the page', () => {
     }), FINANCE);
     expect(page.done.map((d) => d.key)).toEqual(['b', 'a']);
     expect(page.problems).toEqual(['bank lines (timeout)']);
+  });
+});
+
+describe("Finance's own rules", () => {
+  const rule = (tpl: 'bills' | 'drafts' | 'big', param: number) => ({ id: `c-${tpl}`, tpl, param, group: 'pay' });
+  it('each template words its job; a rule with nothing found raises nothing; one switched off is silent', () => {
+    const f = facts({ customRules: [
+      { rule: rule('bills', 7), items: [{ no: 'HCAPI-2611-001', name: 'Kian Furniture', amountSen: 1_929_000, day: '2026-11-05' }, { no: 'PI-1', name: 'TNB', amountSen: 214_060, day: '2026-10-30' }] },
+      { rule: rule('drafts', 3), items: [{ no: 'HC-JV-2610-008', name: '', amountSen: null, day: '2026-10-25' }] },
+      { rule: rule('big', 10_000), items: [{ no: 'SO-2611-0422', name: 'Wong Kar Mun', amountSen: 1_280_000, day: '2026-11-01' }] },
+      { rule: rule('bills', 30), items: [] },
+    ] });
+    const jobs = raiseJobs(f, FINANCE).mine;
+    expect(jobs.map((j) => [j.rule, j.group, j.title, j.amountSen])).toEqual([
+      ['custom', 'pay', 'Pay 2 supplier bills due within 7 days', 2_143_060],
+      ['custom', 'pay', '1 draft older than 3 days', null],
+      ['custom', 'pay', '1 payment over RM 10,000', 1_280_000],
+    ]);
+    expect(jobs[1]!.since).toBe('2026-10-29');
+    expect(jobs[2]!.detail).toBe('SO-2611-0422 · Wong Kar Mun · each needs its own e-invoice');
+    expect(raiseJobs({ ...f, rulesOff: ['c-bills', 'c-drafts', 'c-big'] }, FINANCE).mine).toEqual([]);
   });
 });

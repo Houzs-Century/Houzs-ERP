@@ -31,7 +31,7 @@ export type TodoRule =
   | 'bank-missing' | 'bank-decide'
   | 'requests' | 'pv-check' | 'pv-approve'
   | 'transfers' | 'selfcheck' | 'overdue'
-  | 'task' | 'routine';
+  | 'task' | 'routine' | 'custom';
 
 /** The rules a switch in Setup › To do rules can turn off (tasks and routines have their own). */
 export const BUILT_IN_RULES = [
@@ -150,7 +150,17 @@ export type TodoFacts = {
   /** Setup › To do rules: the built-in rules switched off, and Finance's own groups. */
   rulesOff: string[];
   groups: TodoGroupDef[];
+  /** Finance's own rules (from a template) that are on, with what each found. */
+  customRules: CustomRuleFacts[];
 };
+
+/** A rule Finance added from a template (Setup › To do rules › New rule). */
+export type CustomRule = { id: string; tpl: CustomTemplate; param: number; group: string };
+export type CustomTemplate = 'bills' | 'drafts' | 'big';
+export const CUSTOM_TEMPLATES: readonly CustomTemplate[] = ['bills', 'drafts', 'big'];
+/** One thing a custom rule found: a bill, a draft, a payment. */
+export type CustomItem = { no: string; name: string; amountSen: number | null; day: string | null };
+export type CustomRuleFacts = { rule: CustomRule; items: CustomItem[] };
 
 export type TodoViewer = {
   /** public.users id and name — whose tasks are "mine", and how "done by" reads. */
@@ -499,10 +509,49 @@ function tasksDoneToday(f: TodoFacts, v: TodoViewer, doneToday: (iso: string) =>
   return out;
 }
 
+/* ── Finance's own rules ─────────────────────────────────────────────── */
+
+const rm = (sen: number): string => (sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+
+/** What each template's job says, and where it is handled (the design's TEMPLATES). */
+function customJobs(f: TodoFacts): Raised[] {
+  const out: Raised[] = [];
+  for (const { rule, items } of f.customRules) {
+    const n = items.length;
+    if (n === 0) continue;
+    const amount = items.reduce((s, i) => s + (i.amountSen ?? 0), 0);
+    const earliest = minDay(items.map((i) => i.day));
+    const base = { key: `custom:${rule.id}`, rule: 'custom' as const, group: rule.group, sub: null, desk: 'finance' as const };
+    if (rule.tpl === 'bills') {
+      out.push({
+        ...base, tone: 'out', icon: 'file-text', title: `Pay ${n} supplier ${plural(n, 'bill')} due within ${rule.param} days`,
+        detail: firstFew(items.map((i) => i.name)), amountSen: amount, since: null,
+        action: { label: 'Open', to: '/scm/ap-invoices', primary: false },
+      });
+    } else if (rule.tpl === 'drafts') {
+      out.push({
+        ...base, tone: 'money', icon: 'file-text', title: `${n} ${plural(n, 'draft')} older than ${rule.param} days`,
+        detail: firstFew(items.map((i) => i.no)), amountSen: null,
+        /* A draft joins the list the day it turns too old. */
+        since: earliest ? addDays(earliest, rule.param + 1) : null,
+        action: { label: 'Open', to: '/scm/payment-vouchers?status=DRAFT', primary: false },
+      });
+    } else {
+      out.push({
+        ...base, tone: 'money', icon: 'receipt', title: `${n} ${plural(n, 'payment')} over RM ${rm(rule.param * 100)}`,
+        detail: `${firstFew(items.map((i) => `${i.no} · ${i.name}`.trim()), 2)} · each needs its own e-invoice`, amountSen: amount, since: earliest,
+        action: { label: 'Open', to: '/scm/official-receipts', primary: false },
+      });
+    }
+  }
+  return out;
+}
+
 /** Every job the rules raise, split by whose desk it is on. A rule switched off raises nothing. */
 export function raiseJobs(f: TodoFacts, viewer: TodoViewer): { mine: TodoJob[]; others: TodoJob[]; raised: Raised[] } {
   const off = new Set(f.rulesOff);
-  const raised = [...cardJobs(f), ...bankJobs(f), ...paymentJobs(f), ...otherJobs(f)].filter((j) => !off.has(j.rule));
+  const raised = [...cardJobs(f), ...bankJobs(f), ...paymentJobs(f), ...otherJobs(f), ...customJobs(f)]
+    .filter((j) => !off.has(j.rule) && !off.has(j.key.replace(/^custom:/, '')));
   const mine: TodoJob[] = [];
   const others: TodoJob[] = [];
   for (const { desk, ...job } of raised) {

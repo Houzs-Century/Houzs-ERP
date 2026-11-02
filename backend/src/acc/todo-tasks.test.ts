@@ -80,7 +80,7 @@ describe('how a repeat reads', () => {
 const facts = (over: Partial<TodoFacts>): TodoFacts => ({
   today: '2026-11-02', acquirers: [], lastReportTo: {}, keyedCardDays: {}, cardRows: [], bankAccounts: [], lastStatementTo: {},
   bankLines: [], lockedLastMonth: [], requests: [], vouchers: [], transfers: [], overdue: [], money: null, done: [], problems: [],
-  tasks: [], occurrences: {}, remarkCounts: {}, rulesOff: [], groups: [], ...over,
+  tasks: [], occurrences: {}, remarkCounts: {}, rulesOff: [], groups: [], customRules: [], ...over,
 });
 const MEI: TodoViewer = { id: 7, name: 'Mei Ling', finance: true, checker: true, approver: true, checkerNames: [], approverNames: [] };
 const DANIEL: TodoViewer = { ...MEI, id: 9, name: 'Daniel' };

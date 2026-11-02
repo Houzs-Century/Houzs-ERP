@@ -256,7 +256,10 @@ export function useLinkSearch(q: string) {
 
 /* ── Setup › To do rules ───────────────────────────────────────────────── */
 
-export type TodoSettings = { rulesOff: string[]; groups: TodoGroupDef[]; routines: TodoTask[]; mayEdit: boolean };
+/** A rule Finance added from a template (Setup › To do rules › New rule). */
+export type CustomRule = { id: string; tpl: 'bills' | 'drafts' | 'big'; param: number; group: string };
+
+export type TodoSettings = { rulesOff: string[]; groups: TodoGroupDef[]; customRules: CustomRule[]; routines: TodoTask[]; mayEdit: boolean };
 
 export function useTodoSettings() {
   return useQuery({
@@ -273,6 +276,16 @@ export function useSaveRulesOff() {
     mutationFn: (rulesOff: string[]) => authedFetch<{ rulesOff: string[] }>('/accounting/todo/settings', { method: 'PUT', body: JSON.stringify({ rulesOff }) }),
     onSuccess: () => { refresh(); void qc.invalidateQueries({ queryKey: SETTINGS_KEY }); },
     onError: writeFailedAs('Rule not switched'),
+  });
+}
+
+export function useAddRule() {
+  const refresh = useRefresh();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Omit<CustomRule, 'id'>) => authedFetch<{ rule: CustomRule }>('/accounting/todo/rules', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => { refresh(); void qc.invalidateQueries({ queryKey: SETTINGS_KEY }); },
+    onError: writeFailedAs('Rule not added'),
   });
 }
 
