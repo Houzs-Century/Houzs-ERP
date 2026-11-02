@@ -117,6 +117,7 @@ import { formatPhone } from '../../vendor/shared/phone';
 import { ProductModels, NewModelDialog } from './ProductModels';
 import { VariantsTab } from './products/VariantsTab';
 import { MergeCodesDialog } from './products/MergeCodesDialog';
+import { modelFilterLabel, modelLabelOf } from './products/modelLabel';
 import { describeRenameCounts } from './products/compartmentRename';
 import { Categories } from './Categories';
 import { useBrandingPool, useProductModel } from '../../vendor/scm/lib/product-models-queries';
@@ -363,16 +364,20 @@ const SkuMasterTab = () => {
   const categoryModels = useMemo<string[]>(() => {
     if (!supportsModelFilter) return [];
     const s = new Set<string>();
-    for (const r of allRows) if (r.base_model) s.add(r.base_model);
+    for (const r of allRows) if (modelLabelOf(r)) s.add(modelLabelOf(r));
     return Array.from(s).sort();
   }, [allRows, supportsModelFilter]);
+  const codeByModelLabel = useMemo(
+    () => new Map(allRows.filter((r) => r.base_model).map((r) => [modelLabelOf(r), r.base_model as string])),
+    [allRows],
+  );
 
   // Apply the Model filter (when supported + a specific model is picked), then
   // the no-supplier gap filter.
   const rows = useMemo(() => {
     let base = allRows;
     if (supportsModelFilter && modelFilter !== 'all') {
-      base = base.filter((r) => r.base_model === modelFilter);
+      base = base.filter((r) => modelLabelOf(r) === modelFilter);
     }
     // Gap filter: only SKUs with no supplier binding (no-op until loaded).
     if (noSupplierOnly && boundCodes.data) {
@@ -670,8 +675,8 @@ const SkuMasterTab = () => {
         key: 'model',
         label: 'Model',
         width: '120px',
-        getValue: (r) => r.base_model ?? '',
-        render: (r) => r.base_model ?? '—',
+        getValue: (r) => modelLabelOf(r),
+        render: (r) => modelLabelOf(r) || '—',
       });
       /* The two columns that make the exported sheet a TEMPLATE and not a
          picture of the screen — docs/bugs/0662. Labelled with the importer's
@@ -933,7 +938,7 @@ const SkuMasterTab = () => {
             onChange={(v) => setModelFilter(v || 'all')}
             options={[
               { value: '', label: `All models (${categoryModels.length})` },
-              ...categoryModels.map((m) => ({ value: m, label: m })),
+              ...categoryModels.map((m) => ({ value: m, label: modelFilterLabel(m, codeByModelLabel.get(m)) })),
             ]}
             placeholder={`Search ${categoryModels.length} models…`}
             className="block w-full rounded-md border border-border bg-surface py-1.5 px-2.5 text-[13px] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
