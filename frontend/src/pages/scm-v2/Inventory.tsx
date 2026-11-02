@@ -19,6 +19,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AsOfSection } from './InventoryAsOf';
 import { DemandSoPanel } from './InventoryDemandSoPanel';
+import { BY_WAREHOUSE_COLUMN } from './InventoryWarehouseStock';
 import {
   Search, ArrowUpRight, ArrowDownLeft, Star, X, Plus,
   Warehouse as WarehouseIcon, ChevronRight, ChevronDown,
@@ -628,6 +629,7 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
       );
     },
   },
+  BY_WAREHOUSE_COLUMN,
   {
     key: 'consignment',
     label: 'Consignment',

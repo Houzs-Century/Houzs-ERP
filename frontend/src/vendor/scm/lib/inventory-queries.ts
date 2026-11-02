@@ -147,6 +147,8 @@ export type InventoryProductTotal = {
      call sites fall back to surplus_qty, i.e. the old behaviour. */
   non_selling_qty?: number;
   sellable_surplus_qty?: number;
+  /* OWNED stock split by warehouse, non-zero only, largest first (HC-0187). */
+  stock_by_warehouse?: InventoryWarehouseStock[];
   /* The MOVEMENT rollup (SUM of IN − OUT) and whether it disagrees with the lot
      ledger the row is built from. Comparison only, never arithmetic: a mismatch
      is a real data fault (docs/inventory-ledger-divergence-coe.md), and the row
@@ -154,6 +156,12 @@ export type InventoryProductTotal = {
   movement_qty?: number;
   ledger_mismatch?: boolean;
   oldest_lot_at: string | null;
+};
+
+export type InventoryWarehouseStock = {
+  warehouse_id: string;
+  warehouse_code: string | null;
+  qty: number;
 };
 
 /* One incoming purchase-order line feeding a SKU's Incoming (≤30-day) figure —
