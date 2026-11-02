@@ -7,6 +7,7 @@ import { Truck } from 'lucide-react';
 import { fmtSen } from '@2990s/shared';
 import { mfgCategoryLabel, type MfgProductRow, type SeatHeightPrice, type SofaPriceTier } from '../../../vendor/scm/lib/mfg-products-queries';
 import styles from '../Products.module.css';
+import { modelLabelOf } from './modelLabel';
 
 type Tier = SofaPriceTier;
 
@@ -267,7 +268,7 @@ export const ProductRow = memo(({
       {isSofaView ? (
         <>
           <td className={styles.numCellMuted} style={{ textAlign: 'left' }}>
-            {row.base_model ?? '—'}
+            {modelLabelOf(row) || '—'}
           </td>
           {sofaSizes.map((s) => {
             const sen = priceForHeightTier(seatArr, s, tier);

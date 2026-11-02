@@ -182,6 +182,8 @@ export type MfgProductRow = {
   // required in the source (the grid sorts on it); the rest are optional.
   description?: string | null;
   base_model?: string | null;
+  /** The Model's live name (follows a rename); base_model stays the model code. */
+  model_name?: string | null;
   pwp_price_sen?: number | null;
   unit_m3_milli: number;
   sku_code?: string | null;
