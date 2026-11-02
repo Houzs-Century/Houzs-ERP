@@ -153,6 +153,7 @@ export function assrBoardUnionSql(c: CompanyScopeCtx, recentClosedSince: string)
               assr_cases.sched_delivery_date AS sched_delivery_date,
               assr_cases.closed_at     AS closed_at,
               assr_cases.archived_at   AS archived_at,
+              assr_cases.delivery_message_status AS delivery_message_status,
               assr_cases.addr1 AS addr1, assr_cases.addr2 AS addr2, assr_cases.addr3 AS addr3, assr_cases.addr4 AS addr4,
               so.customer_state AS so_state, so.postcode AS so_postcode, so.customer_country AS so_country
          FROM assr_cases

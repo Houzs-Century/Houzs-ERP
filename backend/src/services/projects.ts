@@ -10,6 +10,7 @@ import { eventFinanceLines } from "./projectFinanceLines";
 import { loadEventPnl } from "./eventPnlInputs";
 import { pnlForProjects, withPnlColumns } from "./eventPnlBatch";
 import { earliestLorryDate } from "./earliest-lorry-date";
+import { applyProjectFleetDates } from "./project-fleet-dates";
 export { deriveProjectCode, deriveProjectName };
 // Re-exported from here so projects.earliestLorryDate.test.ts still resolves it.
 export { earliestLorryDate };
@@ -571,6 +572,14 @@ export async function patchProject(
     );
     shifted = out.shifted;
     deltaDays = out.deltaDays;
+  }
+
+  // Auto-fill the fleet window from the event dates on confirm (owner 2026-10-31),
+  // so a confirmed project reaches the Delivery Planning board without re-keying
+  // setup/dismantle. Fill-only + confirmed-only (see project-fleet-dates.ts); only
+  // when the patch could newly enable it.
+  if ("status" in body || "start_date" in body || "end_date" in body) {
+    await applyProjectFleetDates(env, id);
   }
 
   return {

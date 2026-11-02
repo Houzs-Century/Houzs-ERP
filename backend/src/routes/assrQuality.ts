@@ -16,6 +16,7 @@ import { requirePermission } from "../middleware/auth";
 import { allowedCompaniesSql } from "../scm/lib/companyScope";
 import { todayMyt } from "../scm/lib/my-time";
 import { assrVisibilityScope } from "./assr";
+import { overviewFilter, withOverviewFilter } from "./lib/assr-overview-filter";
 import { qualityOverview, type QCase, type QStageRow, type QReceived } from "./lib/assr-quality";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -31,7 +32,11 @@ app.get("/", requirePermission("service_cases.read"), async (c) => {
   const threeMonths = new Date(Date.parse(`${to}T00:00:00Z`) - 89 * 86400000).toISOString().slice(0, 10);
   const rateFrom = from < threeMonths ? from : threeMonths;
   const since = new Date(Date.parse(`${to}T00:00:00Z`) - 730 * 86400000).toISOString().slice(0, 10);
-  const vis = (await assrVisibilityScope(c))("c.");
+  const scope = await assrVisibilityScope(c);
+  const filter = overviewFilter(c);
+  const vis = withOverviewFilter(scope, filter)("c.");
+  /* The filter choices come from the unfiltered cases, so a picked supplier does not empty its own list. */
+  const all = scope("c.");
   const co = allowedCompaniesSql(c, "c.company_id");
 
   const rows = await c.env.DB.prepare(
@@ -60,15 +65,26 @@ app.get("/", requirePermission("service_cases.read"), async (c) => {
        JOIN scm.grns g ON g.id = gi.grn_id
        JOIN scm.suppliers s ON s.id = g.supplier_id
       WHERE g.status NOT IN ('DRAFT','CANCELLED')
-        AND substr(CAST(g.received_at AS TEXT), 1, 10) >= ? AND substr(CAST(g.received_at AS TEXT), 1, 10) <= ?${allowedCompaniesSql(c, "g.company_id")}
+        AND substr(CAST(g.received_at AS TEXT), 1, 10) >= ? AND substr(CAST(g.received_at AS TEXT), 1, 10) <= ?${allowedCompaniesSql(c, "g.company_id")}${filter.supplier ? " AND s.code = ?" : ""}${filter.company ? " AND g.company_id = ?" : ""}
       GROUP BY s.code, s.name, substr(CAST(g.received_at AS TEXT), 1, 7)`,
-  ).bind(rateFrom, to).all<{ code: string | null; name: string | null; month: string | null; qty: number | null; lines: number | null }>();
+  ).bind(rateFrom, to, ...[filter.supplier, filter.company].filter((x): x is string => x != null)).all<{ code: string | null; name: string | null; month: string | null; qty: number | null; lines: number | null }>();
   const received: QReceived[] = recv.results.filter((r) => r.code).map((r) => ({ creditor: String(r.code), name: String(r.name ?? r.code), month: String(r.month ?? ''), qty: Number(r.qty ?? 0), lines: Number(r.lines ?? 0) }));
 
   const creditors = await c.env.DB.prepare(`SELECT creditor_code, company_name FROM creditors`).all<{ creditor_code: string; company_name: string | null }>();
   const names = new Map(creditors.results.filter((r) => r.company_name).map((r) => [String(r.creditor_code), String(r.company_name)]));
 
-  return c.json({ from, to, ...qualityOverview(cases, itemsByCase, history, received, from, to, rateFrom, today, names) });
+  const opts = await c.env.DB.prepare(
+    `SELECT DISTINCT c.creditor_code, c.issue_category, c.company_id FROM assr_cases c
+      WHERE c.archived_at IS NULL AND COALESCE(c.complained_date, c.created_at) >= ?${co}${all.sql}`,
+  ).bind(since, ...all.binds).all<{ creditor_code: string | null; issue_category: string | null; company_id: number | null }>();
+  const uniq = <T,>(xs: Array<T | null>) => [...new Set(xs.filter((x): x is T => x != null && x !== ""))];
+  const options = {
+    suppliers: uniq(opts.results.map((r) => r.creditor_code)).map((code) => ({ code, name: names.get(code) ?? code })).sort((a, b) => a.name.localeCompare(b.name)),
+    categories: uniq(opts.results.map((r) => r.issue_category)).sort(),
+    companies: uniq(opts.results.map((r) => (r.company_id == null ? null : Number(r.company_id)))).sort(),
+  };
+
+  return c.json({ from, to, filter, options, ...qualityOverview(cases, itemsByCase, history, received, from, to, rateFrom, today, names) });
 });
 
 export default app;

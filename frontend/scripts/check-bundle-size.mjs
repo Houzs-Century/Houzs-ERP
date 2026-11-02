@@ -257,7 +257,14 @@ const CEILINGS = {
   // Employees & Attendance (HC-0125, PR #4812) then added no eager module (a
   // lazy() route, one Sidebar entry, its route label, the phone Punch row):
   // 173.3 KB measured 2026-10-23, under this ceiling.
-  INITIAL_JS_GZIP: 174 * KB,
+  // 174 -> 175 on 2026-11-01: main sat at 173.6 and the SCM tab-label fix
+  // (PR #5097) added NO eager module — it fills lib/routeLabels.ts (the
+  // always-loaded workspace tab strip + breadcrumb) with every /scm section's
+  // title so no tab falls through to a bare "Scm", +0.4 KB gzip on the entry.
+  // Same shell-DATA mechanism as the notes above; the table was first compacted
+  // (a bare string when the list and detail labels match) to hold the growth to
+  // the minimum before this bump.
+  INITIAL_JS_GZIP: 175 * KB,
   // Everything the app can lazy-load (users only fetch the routes they visit).
   // A soft guard against unbounded total growth, not a first-paint cost. Left
   // at 1800 deliberately — main is at ~99% of it and RAISING IT AGAIN IS NOT

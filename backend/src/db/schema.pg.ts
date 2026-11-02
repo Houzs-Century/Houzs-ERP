@@ -350,6 +350,9 @@ export const trips = pgTable("trips", {
   status: text("status").notNull(),
   started_at: text("started_at"),
   completed_at: text("completed_at"),
+  // mig 20261101T0900 — planned departure for the office Last Mile board, beside
+  // the actual clock-in/out. timestamptz in pg; text here like the siblings.
+  planned_depart_at: text("planned_depart_at"),
 });
 
 // ── trip_stops ─────────────────────────────────────────────

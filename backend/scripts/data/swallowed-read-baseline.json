@@ -242,7 +242,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/delivery-planning.ts": {
-      "reads": 34,
+      "reads": 32,
       "catches": 0
     },
     "backend/src/scm/routes/delivery-rate-cards.ts": {

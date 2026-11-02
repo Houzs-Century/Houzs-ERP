@@ -22,6 +22,12 @@
  *  Must equal the automation's name in chat.houzscentury.com exactly. */
 export const CONNECT_DELIVERY_AUTOMATION = 'New Delivery Follow-up';
 
+/** The Connect automation fired when a Service Case (ASSR) is created, matched
+ *  BY NAME — must equal the automation's name in chat.houzscentury.com exactly.
+ *  Its flow sends the button-less template hc_service_case_received (params
+ *  full_name + ref_1 = the case/ASSR number) acknowledging the request. */
+export const CONNECT_SERVICE_CASE_AUTOMATION = 'Service Case Received';
+
 export interface ConnectConfig {
   CONNECT_WEBHOOK_URL?: string;
   CONNECT_WEBHOOK_KEY?: string;
@@ -43,6 +49,16 @@ export interface ConnectOrder {
   /** Outstanding balance in sen (local_total − Σpayments) from the SO list's
    *  own view; null when the view had no row for the doc. Drives `amount`. */
   balanceSen?: number | null;
+  /** The order's gross value in sen (local_total_sen) from the SO list's own
+   *  view; null when the view had no row for the doc. Drives `order_amount`,
+   *  the panel-only total Connect shows — distinct from the owed `amount`. */
+  totalSen?: number | null;
+  /** The order's ERP company code, uppercase (`HOUZS` / `2990`); null when the
+   *  company is unresolved. Drives `company_code` — the signal Connect routes
+   *  the balance send on so a 2990 order is not auto-sent HOUZS's bank account.
+   *  It is the ORDER's company, not the sending user's; delivery-messages.ts
+   *  groups a send by company, so every order in one build shares it. */
+  companyCode?: string | null;
 }
 
 /** Everything the ERP must tell Connect on EVERY send besides the order lines. */
@@ -88,12 +104,16 @@ export function formatRm(sen: number): string {
  *  new conversation: a stale `button_status=Confirm` makes the Delivery Lock
  *  guard refuse the new order's Amend tap, a stale `amount` prints a balance
  *  that was settled months ago, a stale `amended_delivery_date` rides into the
- *  amend callback when the date form is skipped. '' reads as "unset" to
- *  Connect's criteria_router. */
+ *  amend callback when the date form is skipped, a stale `company_code` routes
+ *  the send by the PREVIOUS order's company. '' reads as "unset" to Connect's
+ *  criteria_router. */
 export const CONNECT_RESET_ATTRIBUTES = [
   'button_status',
   'last_button',
   'amount',
+  'order_amount',
+  'orders_json',
+  'company_code',
   'amended_delivery_date',
   'amend_date_reason',
   'date_amended',
@@ -202,6 +222,35 @@ export function buildDeliveryFollowUp(
   // amount '' and the flow's has_balance branch stays quiet.
   const owedSen = orders.reduce((sum, o) => sum + Math.max(0, Number(o.balanceSen ?? 0)), 0);
   if (owedSen > 0) attributes.amount = formatRm(owedSen);
+  // The order card's gross value: the sum over EVERY bundled order, panel-only.
+  // Unlike `amount` (template text, so formatRm with commas), this is a PLAIN
+  // decimal — no thousands separators — so Connect's own Number()/money() parses
+  // it. Unknown/zero leaves it the empty reset, so the card shows nothing.
+  const totalSen = orders.reduce((sum, o) => sum + Math.max(0, Number(o.totalSen ?? 0)), 0);
+  if (totalSen > 0) attributes.order_amount = (totalSen / 100).toFixed(2);
+  // The order card lists EVERY bundled order, NOT capped at CONNECT_ORDER_LINES
+  // (that cap bounds only the template's ref_N params). One entry per order,
+  // primary first: its SO doc_no (same as ref_1), its customer Ref No., and its
+  // own gross value as a PLAIN decimal — the amounts sum to order_amount. A send
+  // with no orders leaves the empty reset, so a prior longer list cannot leak.
+  if (orders.length > 0) {
+    attributes.orders_json = JSON.stringify(
+      orders.map((o) => ({
+        so: o.ref,
+        ref: o.orderRef,
+        amount: (Math.max(0, Number(o.totalSen ?? 0)) / 100).toFixed(2),
+      })),
+    );
+  }
+  // The order-batch's ERP company code (uppercase, e.g. HOUZS / 2990) — the
+  // signal Connect routes the balance send on, because the Houzs balance
+  // template bakes HOUZS's bank account and a 2990 order must be tagged for
+  // manual collection instead of auto-sent that account. PER ORDER-BATCH's
+  // company (delivery-messages groups a send by company, so every bundled order
+  // carries the same code), never the sending user's active company. Unset when
+  // unresolved — Connect then falls back to the SO doc_no prefix (`2990-SO…`).
+  const companyCode = orders.find((o) => o.companyCode)?.companyCode ?? '';
+  if (companyCode) attributes.company_code = companyCode;
   attributes.callback_url = ctx.callbackUrl;
   if (profile) {
     attributes.company_signature = profile.signature;
@@ -210,6 +259,28 @@ export function buildDeliveryFollowUp(
   }
   if (ctx.extra) Object.assign(attributes, ctx.extra);
   return { phone, name, automation: ctx.automation || CONNECT_DELIVERY_AUTOMATION, attributes };
+}
+
+/** Build the /api/webhooks/erp body for the one-off acknowledgement sent to the
+ *  customer when a Service Case (ASSR) is created. Unlike the delivery follow-up
+ *  this opens no Confirm / Amend conversation: the template is button-less, so
+ *  there is no callback_url and no conversation reset — just the customer name,
+ *  the Sales Order the case is about (ref_1, the delivery convention) and the
+ *  service case number, which the template features as its focus. The case number
+ *  rides in assr_no, its OWN dedicated Connect field (not a shared ref_* slot) so
+ *  it never collides with a delivery ref. */
+export function buildServiceCaseReceived(
+  phone: string,
+  name: string,
+  soNo: string,
+  assrNo: string,
+): ConnectContact {
+  return {
+    phone,
+    name,
+    automation: CONNECT_SERVICE_CASE_AUTOMATION,
+    attributes: { full_name: name, ref_1: soNo, assr_no: assrNo },
+  };
 }
 
 /** Connect's /api/webhooks/erp answer when it fired nothing for the named

@@ -1704,6 +1704,11 @@
       "check": "D2",
       "key": "PRICE_1,PRICE_2,PRICE_3 ~ PRICE_1,PRICE_2,PRICE_3,PRICE_4",
       "why": "PRICE_4 (Full Leather) is a sofa-only cost grade (2990-0024). The three-tier sets are the bedframe tier, the 2990 POS selling tier (no PRICE_4 add-on in the POS) and pos_sofa_combos (own CHECK); the four-tier sets are sofa cost. Different scopes on purpose, not a missed home."
+    },
+    {
+      "check": "D1",
+      "key": "DELIVERED,INVOICED,SIGNED|backend/src/scm/routes/trips.ts frontend/src/vendor/scm/lib/delivery-stop-status.ts",
+      "why": "THE DELIVERED-DO SET — which delivery_order statuses mean the customer has the goods (DELIVERED/SIGNED/INVOICED). Two homes across the FE/BE boundary that share no build graph: DO_DELIVERED_STATUSES (delivery-stop-status.ts) is the live Last Mile board's stop-status rule — it decides a drop's done/overdue colour; DO_DELIVERED (trips.ts) is the GET /trips/history query filter — it only chooses which past delivery orders the History tab pulls. Same vocabulary, two runtimes, the frontend cannot import backend/src. Divergence shows or hides a History row, never money or stock."
     }
   ]
 }

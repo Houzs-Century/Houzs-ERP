@@ -241,6 +241,10 @@ export interface DataTableProps<T, L = never> {
   /** Compact grid inside another table's expanded row: no toolbar, no card
    *  view, tighter cells. Header menus still work. */
   embedded?: boolean;
+  /** Show a Fit toggle that shrinks the grid until every visible column fits
+   *  the screen width, so a wide board reads (and screenshots) without
+   *  scrolling sideways. A personal preference per table. */
+  fitToWidth?: boolean;
   /** Filename stem for CSV export, e.g. "orders". A date suffix is appended automatically. */
   exportName?: string;
   /** Toolbar button text, default "Export" — override when a second export

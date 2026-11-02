@@ -574,7 +574,7 @@ const SO_FIELD_COLUMNS = [
 export function useUpdateDeliveryFields() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ type, id, ...body }: { type: 'so' | 'do'; id: string } & HcFieldsPatch) =>
+    mutationFn: ({ type, id, ...body }: { type: 'so' | 'do' | 'dp' | 'assr'; id: string } & HcFieldsPatch) =>
       authedFetch<HcFieldsResult>(`/delivery-planning/${type}/${id}/fields`, {
         method: 'PATCH', body: JSON.stringify(body),
       }),
@@ -781,7 +781,7 @@ export function useCancelDpOrder() {
    never attached" from a clean success — a wiring failure must never look like a
    plain success (the #720 lesson the endpoint documents). A header-only schedule
    (no tripId) is valid: the number is minted, no stop is written. */
-export type ScheduleDpOrderVars = { id: string; lorryId: string; tripDate: string; tripId?: string };
+export type ScheduleDpOrderVars = { id: string; lorryId: string; tripDate: string; tripId?: string; driverId?: string };
 export type ScheduleDpOrderResult = {
   dpOrder: unknown;
   dp_no: string | null;
@@ -796,16 +796,41 @@ export type ScheduleDpOrderResult = {
 export function useScheduleDpOrder() {
   const qc = useQueryClient();
   return useMutation<ScheduleDpOrderResult, Error, ScheduleDpOrderVars>({
-    mutationFn: ({ id, lorryId, tripDate, tripId }) =>
+    mutationFn: ({ id, lorryId, tripDate, tripId, driverId }) =>
       authedFetch<ScheduleDpOrderResult>(`/dp-orders/${id}/schedule`, {
         method: 'POST',
-        body: JSON.stringify({ lorryId, tripDate, ...(tripId ? { tripId } : {}) }),
+        body: JSON.stringify({ lorryId, tripDate, ...(tripId ? { tripId } : {}), ...(driverId ? { driverId } : {}) }),
       }),
     onSuccess: () => {
       // Refresh the board AND the trips views — a new stop landed on a trip.
       qc.invalidateQueries({ queryKey: ['delivery-planning'] });
       qc.invalidateQueries({ queryKey: ['scm-trips'] });
       qc.invalidateQueries({ queryKey: ['scm-trip'] });
+    },
+  });
+}
+
+/* ── Inline crew edit on a DP (manual job) row (owner 2026-10-31) ──────────────
+   The board's Driver / Lorry / Helper cells on a DP row POST one seat here. A DP
+   job's crew is its RUN's crew, so the endpoint puts the job on a run (its confirmed
+   date — creating the run if there is none) before setting the seat, and mints the
+   DP number once a lorry is on the run. So Driver / Lorry / Trip No. / the number
+   all fill from one pick, like an SO row, with no "Schedule…" drawer. tripStop.failed
+   is surfaced so the caller can tell "crew saved but the stop never attached" from a
+   clean success (the #720 rule the endpoint documents). */
+export type DpCrewVars = { id: string; driverId?: string | null; helper1Id?: string | null; helper2Id?: string | null; lorryId?: string | null };
+export type DpCrewResult = { ok: true; trip_id: string | null; dp_no: string | null; tripStop: { id: string | null; failed: boolean; reason?: string } };
+export function useDpCrew() {
+  const qc = useQueryClient();
+  return useMutation<DpCrewResult, Error, DpCrewVars>({
+    mutationFn: ({ id, ...seat }) =>
+      authedFetch<DpCrewResult>(`/dp-orders/${id}/crew`, {
+        method: 'POST', body: JSON.stringify(seat),
+      }),
+    onSuccess: () => {
+      // The run + its number may have changed — reconcile the board and the trips
+      // views (coalesced, like the other inline crew edits).
+      scheduleBoardRefresh(qc, [['delivery-planning'], ['scm-trips'], ['scm-trip'], ['fleet-day']]);
     },
   });
 }
@@ -898,9 +923,25 @@ export function useSendDeliveryMessages() {
       }),
     // The send moved each sent order's Delivery Message Status server-side;
     // re-read just those rows so the board shows it.
-    onSuccess: (res) => {
+    onSuccess: (res, body) => {
       void qc.invalidateQueries({ queryKey: ['delivery-messages'] });
-      scheduleRowRefresh(qc, res.sent.flatMap((s) => s.docNos));
+      const sent = res.sent.flatMap((s) => s.docNos);
+      if (body.kind !== 'assr_arrangement') { scheduleRowRefresh(qc, sent); return; }
+      /* HC-0197: a Service Case leg's Done Send is not a column — only the full
+         board read overlays it from the send log (overlayAssrChatState), and the
+         row refresh is SO-only. Show it now, then re-read the board. */
+      if (sent.length === 0) return;
+      const keys = new Set(sent);
+      for (const [key, prev] of qc.getQueriesData<PlanningResponse>({ queryKey: ['delivery-planning'] })) {
+        if (!prev || !Array.isArray(prev.orders)) continue;
+        qc.setQueryData<PlanningResponse>(key, {
+          ...prev,
+          orders: prev.orders.map((o) => (o.row_type === 'assr' && keys.has(o.so_doc_no)
+            ? { ...o, delivery_message_status: 'Done Send', amend_date_from_customer: null, amend_reason_from_customer: null }
+            : o)),
+        });
+      }
+      scheduleBoardRefresh(qc, [['delivery-planning']]);
     },
   });
 }
@@ -944,8 +985,10 @@ export function useDeliveryMessageStatuses(docNos: string[]) {
 export type ScheduleDeliveryVars = {
   /* 'so' | 'do' are the original SO/DO schedule paths. 'assr' schedules a
      service-case job (Delivery Planning ASSR rows) — the backend now accepts it;
-     for ASSR the id is the service case's id and jobKind carries the row's kind. */
-  type: 'so' | 'do' | 'assr';
+     for ASSR the id is the service case's id and jobKind carries the row's kind.
+     'dp' writes a DP (manual job) row's date (scm.dp_orders.requested_date, and
+     the trip's date when it rides one); its id is the dp_order's id. */
+  type: 'so' | 'do' | 'assr' | 'dp';
   id: string;
   scheduleDate?: string | null;
   deliveryState?: DeliveryState | null;
@@ -1033,10 +1076,14 @@ export function useScheduleDelivery() {
           ...prev,
           orders: prev.orders.map((o) => {
             /* Match by the row's identity: ASSR rows key on the numeric case id
-               (vars.id is that id as a string); SO/DO rows key on so_doc_no. */
+               (vars.id is that id as a string); DP rows key on their bare
+               dp_order id (the board row's so_doc_no is `DP:<id>`); SO/DO rows
+               key on so_doc_no. */
             const matches = vars.type === 'assr'
               ? o.row_type === 'assr' && String(o.assr_id ?? '') === vars.id
-              : o.so_doc_no === vars.id;
+              : vars.type === 'dp'
+                ? o.row_type === 'dp' && o.so_doc_no === `DP:${vars.id}`
+                : o.so_doc_no === vars.id;
             if (!matches) return o;
             const next: PlanningOrder = { ...o };
             if (vars.deliveryState !== undefined && vars.deliveryState !== null) next.delivery_state = vars.deliveryState;

@@ -29,6 +29,7 @@ import {
   MoveHorizontal,
   Filter,
   Rows3,
+  Shrink,
   WrapText,
 } from "lucide-react";
 import { cn } from "../lib/utils";
@@ -159,6 +160,7 @@ function DataTableInner<T, L>({
   cellRangeSum = false,
   defaultSort,
   embedded = false,
+  fitToWidth = false,
   groupBanner = false,
   legacyGridKey,
   layoutSeeds,
@@ -358,6 +360,11 @@ function DataTableInner<T, L>({
      A personal preference per table, like the other dt:* keys. */
   const [wrapText, setWrapText] = useLocalStorage<boolean>(`dt:wrap:${idKey}`, false, undefined, (v) => v === true);
   const wrapOn = wrapText && layoutFixed;
+  const [fitWidth, setFitWidth] = useLocalStorage<boolean>(`dt:fit:${idKey}`, false, undefined, (v) => v === true);
+  const fitOn = fitToWidth && fitWidth && layoutFixed && !isSmallViewport;
+  const [fitScale, setFitScale] = useState(1);
+  const fitScaleRef = useRef(1);
+  fitScaleRef.current = fitOn ? fitScale : 1;
   // Pinned (frozen-left) column keys. Pinned columns render at the front
   // (after any alwaysVisible columns) and stick during horizontal scroll.
   const [pinned, setPinned] = useLocalStorage<string[]>(
@@ -1435,7 +1442,8 @@ function DataTableInner<T, L>({
     const onMove = (ev: MouseEvent) => {
       const r = resizeRef.current;
       if (r !== gesture) return;
-      const next = Math.max(MIN_COL_WIDTH, r.startW + (ev.clientX - r.startX));
+      // Pointer px are screen px; a fitted grid draws each column px smaller.
+      const next = Math.max(MIN_COL_WIDTH, r.startW + (ev.clientX - r.startX) / fitScaleRef.current);
       updateWidths((prev) => ({ ...prev, [r.key]: next }), false);
     };
     const onUp = () => finish();
@@ -1897,6 +1905,17 @@ function DataTableInner<T, L>({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- scrollWrapRef is a ref
   }, [layoutFixed, showTable, effectiveLoading, sortedRows, idKey]);
 
+  useLayoutEffect(() => {
+    const wrap = scrollWrapRef.current;
+    if (!fitOn || !wrap || !fixedTableWidth) return;
+    const fit = () => setFitScale(Math.min(1, Math.floor((wrap.clientWidth / fixedTableWidth) * 1000) / 1000));
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(wrap);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- scrollWrapRef is a ref
+  }, [fitOn, fixedTableWidth, showTable]);
+
   // ── Group-by (opt-in) ──────────────────────────────────────
   // Flatten the sorted rows into a list of render instructions — a group
   // header followed by its rows (unless collapsed). Single level only (the
@@ -2279,6 +2298,18 @@ function DataTableInner<T, L>({
             <WrapText size={13} />
             Wrap
           </button>
+          {fitToWidth && (
+            <button
+              type="button"
+              onClick={() => setFitWidth(!fitWidth)}
+              aria-pressed={fitWidth}
+              title={fitWidth ? "Show columns at full size" : "Shrink the table so every column fits the screen"}
+              className={cn(toolbarBtn, "hidden sm:inline-flex", fitWidth && "border-primary/40 bg-primary-soft text-primary")}
+            >
+              <Shrink size={13} />
+              {fitOn && fitScale < 1 ? `Fit ${Math.round(fitScale * 100)}%` : "Fit"}
+            </button>
+          )}
           <ColumnsButton
             visibleCount={visibleCount}
             totalCount={chooserOptions.length}
@@ -2358,7 +2389,11 @@ function DataTableInner<T, L>({
             className="w-full border-separate border-spacing-0 text-sm"
             // Fixed: every column holds its width; the table is at least their
             // sum (it scrolls) and at least the container (the filler takes it).
-            style={layoutFixed ? { tableLayout: "fixed", minWidth: fixedTableWidth } : undefined}
+            style={
+              layoutFixed
+                ? { tableLayout: "fixed", minWidth: fixedTableWidth, zoom: fitOn ? fitScale : undefined }
+                : undefined
+            }
           >
             {/* z-30, ABOVE the body sticky cells (z-20): the thead's own z-index
                 opens a stacking context, so a frozen header <th>'s inline z-30 is
