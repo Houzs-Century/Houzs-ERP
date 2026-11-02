@@ -8,23 +8,24 @@
 // its payment, cancel with a reason, post again. The server decides; this
 // page shows its reasons.
 //
-// A row opens THE INVOICE (owner 2026-10-06: 点一行就直接打开这张单): the
-// pop-out shows the page exactly as it prints — the Sales Invoice's A4 layout
-// with the order's address and figures (GET /deposit-invoices/sheets) — with
-// Print and Save PDF beside the Finance facts and actions.
+// A row opens THE INVOICE (owner 2026-10-06: 点一行就直接打开这张单) — since the
+// redesign (owner's Claude Design, batch 5 §8) as a page of its own,
+// /scm/ar-invoices/deposit/:id, in its own tab: the facts, the steps (Post to
+// ledger, Cancel with a reason) and the page exactly as it prints.
 // ----------------------------------------------------------------------------
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Button } from '@2990s/design-system';
 import { PageHeader } from '../../components/Layout';
-import { Modal } from '../../vendor/scm/components/Modal';
 import { DateField } from '../../vendor/scm/components/DateField';
 import {
-  useDepositInvoices, useDepositInvoiceDetail, useDepositInvoiceSettings, useSaveDepositInvoiceSettings,
-  useIssueMissingDepositInvoices, useInvoiceDeliveredOrders, useCancelDepositInvoice, usePostDepositInvoice,
-  useDepositInvoiceSheet, fetchDepositInvoiceSheets,
-  type DepositInvoice, type DepositInvoiceSheet, type DepositInvoiceStatus,
+  useDepositInvoices, useDepositInvoiceSettings, useSaveDepositInvoiceSettings,
+  useIssueMissingDepositInvoices, useInvoiceDeliveredOrders, fetchDepositInvoiceSheets,
+  type DepositInvoice, type DepositInvoiceStatus,
 } from '../../vendor/scm/lib/deposit-invoice-queries';
+import { useOpenDocInTab } from '../../lib/openDocInTab';
+import { FinanceDocLink } from './finance/FinanceDocLink';
+import { moneyInDocHref } from './money-in/moneyInDocs';
 import { DataTable, type Column } from '../../components/DataTable';
 import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
@@ -36,7 +37,6 @@ const errText = (e: unknown): string => (e instanceof Error && e.message ? e.mes
 
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
 const card: React.CSSProperties = { background: 'var(--c-paper, #fff)', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 8, padding: 0, overflowX: 'auto' };
-const num: React.CSSProperties = { textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
 const danger = 'var(--c-festive-b, #B8331F)';
 const good = 'var(--c-secondary-a, #2F5D4F)';
 const input: React.CSSProperties = { padding: '5px 8px', fontSize: 'var(--fs-13)', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 6, minWidth: 180 };
@@ -54,7 +54,11 @@ const methodLabel = (m: string | null): string => {
   return code ? PAYMENT_METHOD_DEFAULT_LABELS[code] : m ? humaniseStatusKey(m) : '—';
 };
 const DEPOSIT_COLUMNS: Column<DepositInvoice>[] = [
-  { key: 'number', label: 'Number', render: (d) => <span className={cancelledDocNoClass(d.status)} style={figures}>{d.di_number}</span>, getValue: (d) => d.di_number },
+  /* The number opens the invoice's page, in its own tab. */
+  {
+    key: 'number', label: 'Number', getValue: (d) => d.di_number,
+    render: (d) => <span className={cancelledDocNoClass(d.status)}><FinanceDocLink to={moneyInDocHref('depositInvoice', d.id)}>{d.di_number}</FinanceDocLink></span>,
+  },
   { key: 'date', label: 'Date', render: (d) => fmtDateOrDash(d.invoice_date), getValue: (d) => d.invoice_date, exportFormat: 'date' },
   { key: 'customer', label: 'Customer', render: (d) => d.party_name ?? d.party_code ?? '—', getValue: (d) => d.party_name ?? d.party_code ?? '' },
   { key: 'order', label: 'Order', render: (d) => <span style={figures}>{d.so_doc_no}</span>, getValue: (d) => d.so_doc_no },
@@ -80,7 +84,7 @@ const DEPOSIT_COLUMNS: Column<DepositInvoice>[] = [
 export const DepositInvoices = () => {
   const [status, setStatus] = useState<DepositInvoiceStatus | 'ALL'>('ALL');
   const [so, setSo] = useState('');
-  const [openId, setOpenId] = useState<string | null>(null);
+  const openInTab = useOpenDocInTab();
   const listQ = useDepositInvoices(status, so.trim());
   const rows = listQ.data?.rows ?? [];
   const [ticked, setTicked] = useState<Set<string>>(new Set());
@@ -137,7 +141,7 @@ export const DepositInvoices = () => {
         emptyLabel="No deposit invoice matches this filter."
         getRowKey={(d) => d.id}
         getRowClassName={(d) => cancelledRowClass(d.status)}
-        onRowClick={(d) => setOpenId(d.id)}
+        onRowClick={(d) => openInTab(moneyInDocHref('depositInvoice', d.id))}
         selection={{
           selectedIds: ticked,
           onToggle: toggle,
@@ -146,7 +150,6 @@ export const DepositInvoices = () => {
         }}
       />
 
-      {openId && <InvoiceDetail id={openId} onClose={() => setOpenId(null)} />}
     </div>
   );
 };
@@ -224,120 +227,5 @@ const SwitchCard = () => {
       )}
       {note && <div style={{ ...soft, marginTop: 'var(--space-2)' }}>{note}</div>}
     </section>
-  );
-};
-
-/* The invoice itself, as it prints — the browser's own PDF viewer in the
-   pop-out, drawn from the same sheet Print sends. */
-const InvoicePaper = ({ sheet }: { sheet: DepositInvoiceSheet }) => {
-  const [url, setUrl] = useState<string | null>(null);
-  const [failed, setFailed] = useState<string | null>(null);
-  useEffect(() => {
-    let live = true;
-    let made: string | null = null;
-    setFailed(null);
-    void import('../../vendor/scm/lib/deposit-invoice-pdf')
-      .then(({ depositInvoicePdfBlob }) => depositInvoicePdfBlob(sheet))
-      .then((blob) => { if (!live) return; made = URL.createObjectURL(blob); setUrl(made); })
-      .catch((e: unknown) => { if (live) setFailed(errText(e)); });
-    return () => { live = false; if (made) URL.revokeObjectURL(made); };
-  }, [sheet]);
-  if (failed) return <div style={{ fontSize: 'var(--fs-13)', color: danger }}>The invoice could not be drawn — {failed}</div>;
-  if (!url) return <div style={soft}>Drawing the invoice…</div>;
-  return (
-    <iframe title={`Deposit invoice ${sheet.di_number} as printed`} src={url}
-      style={{ width: '100%', height: '72vh', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 6, background: '#fff' }} />
-  );
-};
-
-const InvoiceDetail = ({ id, onClose }: { id: string; onClose: () => void }) => {
-  const q = useDepositInvoiceDetail(id);
-  const sheetQ = useDepositInvoiceSheet(id);
-  const sheet = sheetQ.data ?? null;
-  const cancel = useCancelDepositInvoice();
-  const post = usePostDepositInvoice();
-  const [reason, setReason] = useState('');
-  const inv = q.data?.invoice;
-  const pay = q.data?.payment ?? null;
-  const busy = cancel.isPending || post.isPending;
-  const failed = cancel.isError ? cancel.error : post.isError ? post.error : null;
-  /* A credit note against the invoice — the final invoice's close-out, a refund's
-     or a conversion's — means it is never cancelled or re-issued (the server
-     refuses invoice_noted; the closed-DI guard, owner 2026-09-21). */
-  const noted = inv ? Boolean(inv.credit_note_id) || (inv.refund_notes ?? []).some((n) => n.status !== 'CANCELLED') : false;
-  const [printing, setPrinting] = useState(false);
-  const [printError, setPrintError] = useState<string | null>(null);
-  /* A cancelled invoice prints too — as void, with its reason (docs/bugs/0834).
-     The sheet carries the order's address and figures; until it is here the
-     row alone prints. */
-  const printOne = async (action: PdfAction) => {
-    if (!inv || printing) return;
-    setPrinting(true); setPrintError(null);
-    try {
-      const { generateDepositInvoicePdf } = await import('../../vendor/scm/lib/deposit-invoice-pdf');
-      await generateDepositInvoicePdf(sheet ?? inv, { action });
-    } catch (e) { setPrintError(errText(e)); } finally { setPrinting(false); }
-  };
-  return (
-    <Modal title={inv ? `Deposit invoice ${inv.di_number}` : 'Deposit invoice'} onClose={onClose} width="min(980px, 100%)" ariaLabel="Deposit invoice"
-      actions={inv && (
-        <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-          <Button size="sm" onClick={() => void printOne('print')} disabled={busy || printing}>{printing ? 'Preparing…' : 'Print'}</Button>
-          <Button variant="ghost" size="sm" onClick={() => void printOne('save')} disabled={busy || printing}>Save PDF</Button>
-          {inv.status === 'ISSUED' && !inv.je_no && <Button size="sm" onClick={() => post.mutate(inv.id)} disabled={busy}>{post.isPending ? 'Posting…' : 'Post to ledger'}</Button>}
-          {inv.status === 'ISSUED' && !noted && (
-            <>
-              <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="why it is cancelled" aria-label="Cancel reason" style={input} />
-              <Button variant="ghost" size="sm" disabled={busy || reason.trim() === ''} onClick={() => cancel.mutate({ id: inv.id, reason: reason.trim() })}>
-                {cancel.isPending ? 'Cancelling…' : 'Cancel invoice'}
-              </Button>
-            </>
-          )}
-        </div>
-      )}>
-      {q.isLoading && <div style={soft}>Loading…</div>}
-      {q.isError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{errText(q.error)}</div>}
-      {inv && (
-        <div className="space-y-3">
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-3)', fontSize: 'var(--fs-13)' }}>
-            <div><div style={soft}>Customer</div>{inv.party_name ?? '—'}{inv.party_code ? <span style={soft}> · {inv.party_code}</span> : null}</div>
-            <div><div style={soft}>Sales order</div><span style={figures}>{inv.so_doc_no}</span></div>
-            <div><div style={soft}>Date</div>{fmtDateOrDash(inv.invoice_date)}</div>
-            <div><div style={soft}>Amount</div><span style={num}>{fmtSen(inv.amount_sen)}</span></div>
-            <div>
-              <div style={soft}>Payment</div>
-              {pay ? `${pay.method ?? '—'}${pay.merchant_provider ? ` · ${pay.merchant_provider}` : ''}${pay.online_type ? ` · ${pay.online_type}` : ''} · ${fmtDateOrDash(pay.paid_at)} · ${fmtSen(pay.amount_sen)}` : 'the payment row is gone'}
-            </div>
-            <div><div style={soft}>Status</div><StatusPill status={inv.status} />{inv.je_no ? <span style={soft}> · {inv.je_no}</span> : <span style={{ ...soft, color: danger }}> · not posted</span>}</div>
-            {inv.credit_note_id && <div><div style={soft}>Closed by credit note</div><span style={figures}>{inv.credit_note_number ?? inv.credit_note_id}</span></div>}
-            {(inv.refund_notes ?? []).length > 0 && (
-              <div style={{ gridColumn: '1 / -1' }}>
-                <div style={soft}>Refunded {fmtSen(inv.refunded_sen ?? 0)} — the sale this invoice booked is taken back by credit note, one per refund voucher</div>
-                {(inv.refund_notes ?? []).map((n) => (
-                  <div key={n.note_number} style={figures}>
-                    {n.note_number} · {fmtSen(n.total_sen)} · {n.status}{n.pv_number ? ` · refund ${n.pv_number}` : ''}
-                  </div>
-                ))}
-              </div>
-            )}
-            {inv.status === 'ISSUED' && noted && (
-              <div style={{ gridColumn: '1 / -1', ...soft }}>
-                A credit note stands against this invoice, so it cannot be cancelled or re-issued; cancelling the final invoice or the refund voucher takes the note back first.
-              </div>
-            )}
-            {inv.status === 'CANCELLED' && (
-              <div style={{ gridColumn: '1 / -1' }}><div style={soft}>Cancelled</div>{inv.cancel_reason ?? '—'}{inv.cancelled_by ? <span style={soft}> · {inv.cancelled_by}</span> : null}{inv.cancelled_at ? <span style={soft}> · {fmtDateOrDash(inv.cancelled_at)}</span> : null}</div>
-            )}
-          </div>
-          {post.isSuccess && <div style={{ fontSize: 'var(--fs-13)', color: good }}>Posted as {post.data.jeNo}.</div>}
-          {printError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{printError}</div>}
-          {cancel.isSuccess && <div style={{ fontSize: 'var(--fs-13)', color: good }}>Cancelled{cancel.data.contraJeNo ? ` — contra ${cancel.data.contraJeNo}` : ''}.</div>}
-          {failed != null && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{errText(failed)}</div>}
-          {sheet ? <InvoicePaper sheet={sheet} />
-            : sheetQ.isError ? <div style={{ fontSize: 'var(--fs-13)', color: danger }}>The invoice page did not load — {errText(sheetQ.error)}</div>
-              : <div style={soft}>Drawing the invoice…</div>}
-        </div>
-      )}
-    </Modal>
   );
 };

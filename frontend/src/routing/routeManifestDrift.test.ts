@@ -116,7 +116,11 @@ describe("executable route contract", () => {
     // 183 since 2026-11-02: /scm/finance/rules, Finance › Setup › To do rules —
     // the To do's rule switches, routines and groups (Claude Design redesign).
     // 184 since 2026-11-02: /scm/saved-locations, the transfer from/to address book (方案2).
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(187);
+    // 187 since 2026-11-03: /scm/ap-invoices/:id, /scm/credit-notes/:id and
+    // /scm/supplier-notes/:id — the bill and note pages (batch 4, step 6).
+    // 190 since 2026-11-03: /scm/ar-invoices/deposit/:id, /bills/:id and /sales/:id —
+    // Money in's invoice documents as pages (Claude Design, batch 5 step 1).
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(190);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -176,7 +180,9 @@ describe("executable route contract", () => {
     // 191 since 2026-10-28 — /scm/supplier-notes; see the staff-route count above.
     // 192 since 2026-11-02 — /scm/finance/rules; see the staff-route count above.
     // 193 since 2026-11-02 — /scm/saved-locations; see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(196);
+    // 196 since 2026-11-03 — the bill and note pages (batch 4, step 6); see the staff-route count above.
+    // 199 since 2026-11-03 — the three invoice document pages; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(199);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {

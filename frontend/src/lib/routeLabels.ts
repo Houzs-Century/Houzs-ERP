@@ -8,6 +8,10 @@
 // Keeps the navbar from rendering as an empty strip.
 const ROUTE_LABELS: Array<[RegExp, string]> = [
   [/^\/$/, "Overview"],
+  // Money in's documents, each a page of its own (Claude Design, batch 5 §8).
+  [/^\/scm\/ar-invoices\/deposit\/.+$/, "Deposit invoice"],
+  [/^\/scm\/ar-invoices\/bills\/.+$/, "Debtor bill"],
+  [/^\/scm\/ar-invoices\/sales\/.+$/, "Sales invoice"],
   [/^\/orders\/.+$/, "Sales Order"],
   [/^\/orders$/, "Sales Orders"],
   [/^\/delivery-orders$/, "Delivery Orders"],

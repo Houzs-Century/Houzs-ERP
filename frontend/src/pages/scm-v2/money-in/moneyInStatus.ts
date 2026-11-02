@@ -9,7 +9,8 @@
 // statusLabel, so the confirm rung reads "Submitted" here as everywhere else.
 
 import { fmtDate } from '../../../vendor/shared/format';
-import { statusLabel } from '../../../vendor/scm/lib/status-pill';
+import { humaniseStatusKey, statusLabel } from '../../../vendor/scm/lib/status-pill';
+import { PAYMENT_METHOD_CODES, PAYMENT_METHOD_DEFAULT_LABELS } from '../../../vendor/scm/lib/payment-methods';
 import type { OutstandingModule } from '../../../vendor/scm/lib/outstanding-queries';
 import { dayDiff } from '../../../lib/dateRangePresets';
 
@@ -104,7 +105,12 @@ export function debtorBillTag(b: { status: string; total_sen: number; received_s
 /** A sales invoice, by its money: paid; past its due date with money
  *  outstanding (`Overdue <n>d`); part paid; unpaid. `paidSen` counts the
  *  order's deposit applied, as the outstanding figure does. */
-export function salesInvoiceTag(si: { outstandingSen: number; paidSen: number; dueDate: string | null }, today: string): Tag {
+export function salesInvoiceTag(si: { outstandingSen: number; paidSen: number; dueDate: string | null; status?: string | null }, today: string): Tag {
+  /* Finance lists the live invoices only; a page opened on a cancelled or a
+     draft one says so first (statusLabel's own word). */
+  const stored = String(si.status ?? '').toUpperCase();
+  if (stored === 'CANCELLED') return { text: statusLabel('si', stored), tone: 'late' };
+  if (stored === 'DRAFT') return { text: statusLabel('si', stored), tone: 'warn' };
   if (si.outstandingSen <= 0) return { text: 'Paid', tone: 'calm' };
   const due = String(si.dueDate ?? '').slice(0, 10);
   const late = due && due < today ? dayDiff(due, today) : 0;
@@ -123,3 +129,10 @@ export function noteTag(status: string | null | undefined): Tag {
 
 /** An other debtor in the registry. */
 export const debtorTag = (active: boolean): Tag => (active ? { text: 'Active', tone: 'calm' } : { text: 'Inactive', tone: 'late' });
+
+/** A customer payment's method in words (Cash, Transfer, Card…), as the
+ *  Official receipts and Deposit invoices lists print it. */
+export const methodWord = (m: string | null | undefined): string => {
+  const code = PAYMENT_METHOD_CODES.find((c) => c === m);
+  return code ? PAYMENT_METHOD_DEFAULT_LABELS[code] : m ? humaniseStatusKey(m) : '—';
+};
