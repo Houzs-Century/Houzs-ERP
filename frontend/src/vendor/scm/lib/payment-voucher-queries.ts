@@ -61,6 +61,8 @@ export type PaymentVoucherRow = Record<string, unknown> & {
       yet knocked off) — the list paints such rows and offers a chip. 0 when
       none. Server: listPaymentVouchersHandler. */
   advance_remaining_sen?: number | null;
+  /** The journal its approval posted (the live one when an earlier was reversed); null until approved. */
+  je_no?: string | null;
 };
 
 export type PaymentVoucherAllocation = {
@@ -75,9 +77,24 @@ export type PaymentVoucherAllocation = {
   status: string | null;
 };
 
-export const usePaymentVouchers = (status?: string) => baseQuery<{ paymentVouchers: PaymentVoucherRow[] }>(
-  ['payment-vouchers', status ?? 'all'], `/payment-vouchers${status ? `?status=${status}` : ''}`,
-);
+/** The list (the newest 500), or with `q` any voucher of every stage and month
+    (at most 200, `capped` when cut); `counts` adds each stage's count over the
+    whole company (the redesign's chips). */
+export const usePaymentVouchers = (opts: { status?: string; q?: string; counts?: boolean; enabled?: boolean } = {}) => {
+  const params = new URLSearchParams();
+  if (opts.status) params.set('status', opts.status);
+  if (opts.q) params.set('q', opts.q);
+  if (opts.counts) params.set('counts', '1');
+  const qs = params.toString();
+  return useQuery({
+    queryKey: ['payment-vouchers', opts.status ?? 'all', opts.q ?? '', opts.counts ? 'counts' : 'plain'],
+    queryFn: () => authedFetch<{ paymentVouchers: PaymentVoucherRow[]; counts?: Record<string, number>; q?: string; capped?: boolean }>(`/payment-vouchers${qs ? `?${qs}` : ''}`),
+    staleTime: 30_000,
+    retry: retryUnlessClientError,
+    retryDelay: 800,
+    enabled: opts.enabled ?? true,
+  });
+};
 
 export const usePaymentVoucherDetail = (id: string | null) => useQuery({
   queryKey: ['payment-voucher-detail', id],

@@ -8,7 +8,6 @@ const source = (relative: string) =>
 describe("list search scope contracts", () => {
   test.each([
     ["pages/scm-v2/Amendments.tsx", 500],
-    ["pages/scm-v2/PaymentVouchers.tsx", 500],
     ["pages/scm-v2/PurchaseConsignmentReturns.tsx", 300],
     ["pages/scm-v2/PurchaseConsignmentOrders.tsx", 1000],
     ["pages/scm-v2/PurchaseConsignmentReceives.tsx", 1000],

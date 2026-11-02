@@ -17,8 +17,12 @@ import { describe, expect, test, vi } from 'vitest';
 const prepareAsync = vi.fn(async (_id: string) => ({}));
 const checkAsync = vi.fn(async (_id: string) => ({}));
 const approveAsync = vi.fn(async (_id: string) => ({}));
+/* The list (with the server's stage counts), or — asked with q — what the server's search found. */
+const searched = vi.fn((q: string) => [{ id: 'old', pv_number: 'HCMPV-2601-004', payee_name: 'Found Co', status: 'POSTED', voucher_date: '2026-01-04', total_sen: 7000, currency: 'MYR', exchange_rate: 1, submitted_at: 'x', checked_at: 'y', approved_at: 'z', notes: `about ${q}`, je_no: 'HC-JE-2601-0007' }]);
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
-  usePaymentVouchers: () => ({ data: { paymentVouchers: [
+  usePaymentVouchers: (opts: { q?: string; enabled?: boolean } = {}) => (opts.q
+    ? { data: { paymentVouchers: searched(opts.q), q: opts.q }, isLoading: false, error: null }
+    : { data: { counts: { all: 61, DRAFT: 11, PREPARED: 12, CHECKED: 13, POSTED: 14, ADVANCE: 15, CANCELLED: 16 }, paymentVouchers: [
     { id: 'raw', pv_number: 'PV-2609-001', payee_name: 'Raw Draft Co', status: 'DRAFT', voucher_date: '2026-09-01', total_sen: 10000, currency: 'MYR', exchange_rate: 1, submitted_at: null, checked_at: null, approved_at: null, notes: 'BIGHOME PENANG WATERFRONT CONVENTION CENTRE PG 30 OCT - 1 NOV26 (AKEMI, ZANOTTI)' },
     { id: 'prep', pv_number: 'PV-2609-002', payee_name: 'Prepared Co', status: 'DRAFT', voucher_date: '2026-09-01', total_sen: 20000, currency: 'MYR', exchange_rate: 1, submitted_at: '2026-09-02T01:00:00Z', checked_at: null, approved_at: null },
     { id: 'chk', pv_number: 'PV-2609-003', payee_name: 'Checked Co', status: 'DRAFT', voucher_date: '2026-09-01', total_sen: 30000, currency: 'MYR', exchange_rate: 1, submitted_at: '2026-09-02T01:00:00Z', checked_at: '2026-09-02T02:00:00Z', approved_at: null },
@@ -167,11 +171,16 @@ describe('the For column — the Notes (owner 2026-10-14: pv 那边的 list，�
     expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(5);
   });
 
-  test('the search box finds a voucher by its notes', async () => {
+  test('the search box asks the server for any voucher, every stage and month, and says what it found', async () => {
     draw();
-    fireEvent.change(screen.getByPlaceholderText('Search voucher no, payee, notes…'), { target: { value: 'penang' } });
-    await waitFor(() => expect(screen.queryByText('PV-2609-002')).toBeNull());
-    expect(screen.getByText('PV-2609-001')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Find any voucher'), { target: { value: 'penang' } });
+    /* The newest-500 list makes way for what the search found — an older voucher too. */
+    expect(await screen.findByText('HCMPV-2601-004')).toBeTruthy();
+    expect(screen.queryByText('PV-2609-002')).toBeNull();
+    expect(searched).toHaveBeenLastCalledWith('penang');
+    expect(screen.getByText(/Search “penang” · 1 voucher across every stage and month/)).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('Clear the search'));
+    expect(await screen.findByText('PV-2609-002')).toBeTruthy();
   });
 });
 
@@ -182,7 +191,13 @@ describe('the header (the redesign)', () => {
     for (const label of ['Scan bills', 'New customer refund', 'New payment voucher', 'New AP payment']) expect(screen.getByText(label)).toBeTruthy();
   });
 
-  test('the stage says what it means, and the whole list loaded so the chips carry counts', () => {
+  test('the chips carry the server\'s counts over the whole company', () => {
+    draw();
+    const chip = screen.getAllByText('Draft')[0]!.closest('button') as HTMLElement;
+    expect(chip.textContent).toBe('Draft11');
+  });
+
+  test('the stage says what it means', () => {
     draw();
     expect(screen.getByText(/Every voucher in any stage/)).toBeTruthy();
     expect(screen.getByRole('button', { name: /^All months/ }).getAttribute('aria-pressed')).toBe('true');
