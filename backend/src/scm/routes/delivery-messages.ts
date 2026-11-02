@@ -458,9 +458,13 @@ deliveryMessages.post('/send', async (c) => {
   const result = await sendDeliveryMessageForDocs(c, docNos, kind, extras);
   if (result.readError) return c.json({ error: result.readError.code, reason: result.readError.reason }, 500);
   // The messages have left; a status that cannot move is reported, never a 500.
-  const statusNotMoved = await markSentStatus(
-    c, result.sent.flatMap((s) => s.docNos), KIND_AFTER_STATUS[kind], KIND_AUTOMATION[kind],
-  );
+  // Overdue Order is a one-way production-delay heads-up and lands on NO Delivery
+  // Message Status (KIND_AFTER_STATUS excludes it), so it moves no row's "Done X".
+  const statusNotMoved = kind === 'overdue_order'
+    ? []
+    : await markSentStatus(
+        c, result.sent.flatMap((s) => s.docNos), KIND_AFTER_STATUS[kind], KIND_AUTOMATION[kind],
+      );
   return c.json({ sent: result.sent, failed: result.failed, skipped: result.skipped, statusNotMoved });
 });
 
