@@ -10,7 +10,7 @@
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
-import { OPEN_PI_STATUSES, OPEN_SI_STATUSES } from '../lib/open-invoice-states';
+import { OPEN_AP_STATUSES, OPEN_PI_STATUSES, OPEN_SI_STATUSES } from '../lib/open-invoice-states';
 import { toMyrSen } from '../lib/fx';
 import { raiseJobs } from '../../acc/finance-todo';
 import { addDays } from '../../acc/todo-tasks';
@@ -19,8 +19,6 @@ import { readFinanceTodoFacts } from './accounting-todo';
 import { readTodoTaskFacts } from './accounting-todo-tasks';
 
 type Rows = Array<Record<string, any>>;
-/** A supplier bill still owing: an AP invoice posted or part paid (the purchase side has its own list). */
-const OPEN_AP_STATUSES = ['POSTED', 'PARTIALLY_PAID'] as const;
 
 async function supplierNames(sb: any, companyId: number, ids: string[]): Promise<Map<string, string>> {
   const r = await chunkIn<Record<string, any>>([...new Set(ids)], (batch, lo, hi) => sb.from('suppliers').select('id, name')

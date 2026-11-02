@@ -23,7 +23,7 @@ import {
   type TodoBankLine, type TodoCardRow, type TodoDone, type TodoFacts, type TodoViewer,
 } from '../../acc/finance-todo';
 import { loadDailyBankBoard } from './accounting-daily-bank';
-import { readTodoTaskFacts, type TodoTaskFacts } from './accounting-todo-tasks';
+import { readCustomRuleItems, readTodoTaskFacts, type TodoTaskFacts } from './accounting-todo-tasks';
 
 type Rows = Array<Record<string, any>>;
 type Read<T> = { ok: true; value: T } | { ok: false; what: string; reason: string };
@@ -391,6 +391,16 @@ export async function readFinanceTodoFacts(sb: any, companyId: number, today: st
   if (!cards.ok) problems.push(`${cards.what} (${cards.reason})`);
   if (!bank.ok) problems.push(`${bank.what} (${bank.reason})`);
 
+  const tf = ok<TodoTaskFacts>(taskFacts, { tasks: [], occurrences: {}, remarkCounts: {}, rulesOff: [], groups: [], customRuleDefs: [] });
+  /* Finance's own rules that are on, each read on its own — one that fails is named. */
+  const off = new Set(tf.rulesOff);
+  const customRules = await Promise.all(tf.customRuleDefs.filter((r) => !off.has(r.id)).map(async (rule) => {
+    try { return { rule, items: await readCustomRuleItems(sb, companyId, today, rule) }; } catch (e) {
+      problems.push(`your rule ${rule.tpl} (${e instanceof Error ? e.message : String(e)})`);
+      return { rule, items: [] };
+    }
+  }));
+
   let money: TodoFacts['money'] = null;
   let done: TodoDone[] = [];
   if (full) {
@@ -409,7 +419,7 @@ export async function readFinanceTodoFacts(sb: any, companyId: number, today: st
     bankAccounts: bk?.bankAccounts ?? [], lastStatementTo: bk?.lastStatementTo ?? {}, bankLines: bk?.bankLines ?? [], lockedLastMonth: bk?.lockedLastMonth ?? [],
     requests: ok(requests, []), vouchers: ok(vouchers, []), transfers: ok(transfers, []), overdue: ok(overdue, []),
     money, done, problems,
-    ...(ok<TodoTaskFacts>(taskFacts, { tasks: [], occurrences: {}, remarkCounts: {}, rulesOff: [], groups: [] })),
+    tasks: tf.tasks, occurrences: tf.occurrences, remarkCounts: tf.remarkCounts, rulesOff: tf.rulesOff, groups: tf.groups, customRules,
   };
 }
 
