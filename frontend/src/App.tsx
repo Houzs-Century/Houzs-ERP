@@ -192,6 +192,7 @@ const Overview = lazy(() => import("./pages/Overview").then((m) => ({ default: m
 // Supply Chain Hub — section landing page (flattens the 3-level SCM nesting).
 const ScmHub = lazy(() => import("./pages/ScmHub").then((m) => ({ default: m.ScmHub })));
 const ScmSubgroupHub = lazy(() => import("./pages/ScmSubgroupHub").then((m) => ({ default: m.ScmSubgroupHub })));
+const FinanceTodoPage = lazy(() => import("./pages/scm-v2/finance/FinanceTodo").then((m) => ({ default: m.FinanceTodoPage })));
 const ScmSalesOrdersV2 = lazy(() => import("./pages/scm-v2/MfgSalesOrdersListV2").then((m) => ({ default: m.MfgSalesOrdersListV2 })));
 const ScmSalesOrderMaintenanceV2 = lazy(() => import("./pages/scm-v2/SalesOrderMaintenance").then((m) => ({ default: m.SalesOrderMaintenance })));
 const ScmSalesOrderNewV2 = lazy(() => import("./pages/scm-v2/SalesOrderNew").then((m) => ({ default: m.SalesOrderNew })));
@@ -348,6 +349,18 @@ function Guard({
  * from non-finance callers, so a salesperson sees the DO/SI generated from their
  * OWN Sales Orders — and nothing else. Safe: opens NO office/finance data.
  */
+/**
+ * /scm/finance — Finance's To do for whoever works the books (the owner's Claude
+ * Design redesign, 2026-11-02); everyone else the Finance group can show (an
+ * Outstanding-only grant) keeps the index of its pages they had here before.
+ */
+function FinanceHome() {
+  const { can, pageAccess } = useAuth();
+  const works = can("scm.access") || pageAccess("scm.finance.accounting") !== "none";
+  if (works) return <Scm2990Shell><FinanceTodoPage /></Scm2990Shell>;
+  return <ScmGuard area="scm"><ScmSubgroupHub groupId="scm-finance" description="Accounting and outstanding receivables." /></ScmGuard>;
+}
+
 function ScmGuard({
   area,
   allowSales = false,
@@ -922,7 +935,7 @@ export default function App() {
         <Route path="/scm/procurement"    element={<ScmGuard area="scm"><ScmSubgroupHub groupId="scm-procurement"    description="Procurement flow — products, suppliers, MRP, POs, receipts, invoices and returns." /></ScmGuard>} />
         <Route path="/scm/transportation" element={<ScmGuard area="scm"><ScmSubgroupHub groupId="scm-transportation" description="Delivery planning, fleet, lorry capacity, drivers and regions." /></ScmGuard>} />
         <Route path="/scm/warehouse"      element={<ScmGuard area="scm"><ScmSubgroupHub groupId="scm-warehouse"      description="Warehouses, inventory, adjustments, transfers and stock take." /></ScmGuard>} />
-        <Route path="/scm/finance"        element={<ScmGuard area="scm"><ScmSubgroupHub groupId="scm-finance"        description="Accounting and outstanding receivables." /></ScmGuard>} />
+        <Route path="/scm/finance"        element={<FinanceHome />} />
         {/* Sales Orders READ side (vendored). The literal /maintenance route
             MUST precede /:docNo so 'maintenance' isn't caught as a doc number.
             2990 uses :docNo (not :id) for the SO detail. */}
