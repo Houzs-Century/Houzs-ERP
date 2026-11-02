@@ -25,7 +25,7 @@
 import { useState } from 'react';
 import { AlertTriangle, ArrowLeft, CheckCheck, Landmark, Link2, Undo2, Upload } from 'lucide-react';
 import {
-  useBankSetup, useBankStatements, useBankStatement, useUploadBankStatement,
+  useBankStatements, useBankStatement,
   useBookBankReceipt, useMatchBankLine, useMatchBankGroup, useIgnoreBankLine, useUndoBankLine, useSetStatementPeriod, useAutoMatchStatement,
   type BankLine, type BankStatement, type Reconciliation, type LedgerEntry } from './bank-queries';
 import { useChargeChoices } from './settlement-queries';
@@ -37,39 +37,17 @@ import { fmtDateOrDash } from '../../vendor/shared/format';
 import { DataTable } from '../../components/DataTable';
 import { ReconcilePickProvider, byDateThenLine, useReconcilePick } from './bank-reconcile-pick';
 
-export const BankStatementTab = () => {
+export const BankStatementTab = ({ onUpload }: { onUpload?: () => void }) => {
   const [statementId, setStatementId] = useState<number | null>(null);
   if (statementId != null) return <StatementView id={statementId} onBack={() => setStatementId(null)} />;
-  return <UploadAndList onOpen={setStatementId} />;
+  return <UploadAndList onOpen={setStatementId} onUpload={onUpload} />;
 };
 
 /* ── Upload, and the statements already read ──────────────────────────────── */
 
-/** The file's bytes or its text, through FileReader — the one reader every
-    browser (and the test runner's DOM) has. */
-const readAs = (f: File, as: 'bytes' | 'text'): Promise<ArrayBuffer | string> => new Promise((resolve, reject) => {
-  const r = new FileReader();
-  r.onload = () => resolve(r.result as ArrayBuffer | string);
-  r.onerror = () => reject(r.error ?? new Error('The file could not be read.'));
-  if (as === 'bytes') r.readAsArrayBuffer(f); else r.readAsText(f);
-});
-
-const UploadAndList = ({ onOpen }: { onOpen: (id: number) => void }) => {
-  const setup = useBankSetup();
+/* The upload itself is the page's Upload drawer (BankUpload.tsx) — one door, opened from here or from an account. */
+const UploadAndList = ({ onOpen, onUpload }: { onOpen: (id: number) => void; onUpload?: () => void }) => {
   const statements = useBankStatements();
-  const upload = useUploadBankStatement();
-  const [accountCode, setAccountCode] = useState('');
-  const [file, setFile] = useState<{ name: string; content: string; format: 'CSV' | 'PDF' } | null>(null);
-  /* Which year and month, for a file whose dates carry no year — the same
-     answer the merchant screen asks for, and the same narrow meaning. It is NOT
-     what files the statement into a month: a movement is put in the month its
-     own date falls in, so a label here could never move it. Saying so is the
-     whole point of the sentence under the field. */
-  const [statementMonth, setStatementMonth] = useState('');
-  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
-
-  const accounts = setup.data?.accounts ?? [];
-  const chosen = accounts.find((a) => a.account_code === accountCode) ?? null;
   const rows = statements.data?.statements ?? [];
   /* One account's files at a time, as on By month (owner 2026-09-13: 无法分辨). */
   const [account, setAccount] = useState<string | null>(null);
@@ -77,137 +55,16 @@ const UploadAndList = ({ onOpen }: { onOpen: (id: number) => void }) => {
   const current = currentAccount(codes, account);
   const shown = rows.filter((s) => s.account_code === current);
 
-  const readFile = (picked: FileList | null) => {
-    setResult(null);
-    const f = picked?.[0];
-    if (!f) { setFile(null); return; }
-    if (/\.pdf$/i.test(f.name)) {
-      /* The bank's monthly statement PDF (docs/bugs/0869): the browser reads
-         the text with where it was drawn; the server reads the bank's layout.
-         pdf.js is loaded here, on the press, and never for a CSV. */
-      void readAs(f, 'bytes')
-        .then(async (data) => {
-          const { extractPdfText } = await import('../../vendor/scm/lib/pdf-text');
-          return extractPdfText(data as ArrayBuffer);
-        })
-        .then((pdf) => setFile({ name: f.name, content: JSON.stringify(pdf), format: 'PDF' }))
-        .catch((err: unknown) => { setFile(null); setResult({ ok: false, text: refusalText(err, 'The PDF could not be read.') }); });
-      return;
-    }
-    void readAs(f, 'text')
-      .then((content) => setFile({ name: f.name, content: String(content), format: 'CSV' }))
-      .catch((err: unknown) => { setFile(null); setResult({ ok: false, text: refusalText(err, 'The file could not be read.') }); });
-  };
-
-  const send = () => {
-    if (!accountCode || !file) return;
-    setResult(null);
-    upload.mutate({
-      accountCode, fileName: file.name, content: file.content, format: file.format,
-      statementMonth: statementMonth || null,
-    }, {
-      onSuccess: (r) => {
-        setFile(null);
-        setResult({
-          ok: true,
-          /* A quiet month reads as what it is, not as "0 movements": the file
-             was filed, and the month it is for can now be closed
-             (docs/bugs/0794). */
-          text: r.lines === 0
-            ? `No transactions in this statement — filed for ${r.periodFrom.slice(0, 7)} at ${fmt(r.openingBalanceSen ?? 0)} throughout. The month can be reconciled and closed under By month.`
-            : `${r.lines} movement(s) over ${r.periodFrom} → ${r.periodTo}`
-            + `, ${fmt(r.inSen)} in and ${fmt(r.outSen)} out`
-            /* Say what was JOINED and what was LEFT OUT. Both are places a
-               reader could otherwise think the file was misread. */
-            + (r.joinedPairs > 0 ? ` · ${r.joinedPairs} credit(s) had their charge taken back separately and were joined` : '')
-            + (r.skippedLines > 0 ? ` · ${r.skippedLines} row(s) carried no transaction` : '')
-            /* A re-upload settling half its own lines is a surprise even when
-               every one of them is right, so it is said here and not only
-               findable inside the statement. */
-            + (r.alreadyRecorded > 0 ? ` · ${r.alreadyRecorded} were already recorded and have been left out` : '')
-            /* The obvious ones went in matched (docs/bugs/0814). */
-            + (r.autoMatched > 0 ? ` · ${r.autoMatched} matched by amount and name` : '')
-            /* And the bank's own contras (docs/bugs/0817). */
-            + (r.contraPairs > 0 ? ` · ${pairsReversed(r.contraPairs)} left out` : ''),
-        });
-        onOpen(r.statementId);
-      },
-      onError: (err) => setResult({ ok: false, text: refusalText(err, 'The statement could not be read.') }),
-    });
-  };
-
   return (
     <div className="space-y-4">
       <section className="space-y-2">
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-          <select value={accountCode} onChange={(e) => { setAccountCode(e.target.value); setResult(null); }}
-            aria-label="Bank account" style={{ padding: '6px 10px', fontSize: 'var(--fs-13)' }}>
-            <option value="">Which bank account?</option>
-            {accounts.filter((a) => a.is_active).map((a) => (
-              <option key={a.account_code} value={a.account_code}>
-                {a.bank_code} · {a.account_code}{a.account_no ? ` · ${a.account_no}` : ''}
-              </option>
-            ))}
-          </select>
-          <input type="file" accept=".csv,.txt,.pdf" aria-label="Bank statement file"
-            onChange={(e) => readFile(e.target.files)} style={{ fontSize: 'var(--fs-13)' }} />
-          <button type="button" style={btn(true, !accountCode || !file || upload.isPending)}
-            disabled={!accountCode || !file || upload.isPending} onClick={send}>
-            <Upload {...ICON} /> {upload.isPending ? 'Reading…' : 'Upload bank statement'}
-          </button>
+          <b>Bank statements read</b>
+          <span style={{ flex: 1 }} />
+          {onUpload && <button type="button" style={btn(true)} onClick={onUpload}><Upload {...ICON} /> Upload statement</button>}
         </div>
-
-        <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-          <label style={{ fontSize: 'var(--fs-13)', fontWeight: 600 }} htmlFor="bank-statement-month">
-            Year and month
-          </label>
-          <input id="bank-statement-month" type="month" value={statementMonth} aria-label="Statement month"
-            onChange={(e) => setStatementMonth(e.target.value)}
-            style={{ padding: '5px 8px', fontSize: 'var(--fs-13)' }} />
-          {/* Said plainly, because the field could otherwise be read as filing
-              the whole file into a month. It does not: every movement lands in
-              the month its own date falls in, and the month view is built from
-              those dates. This only supplies a year the file left out. */}
-          <span style={softText}>
-            For a file whose dates carry no year, or one with no transactions at all (a quiet month's
-            statement is filed under the month chosen here). The bank's monthly statement PDF is taken too
-            (Maybank for now) — it prints the opening and closing balances, so nothing needs typing under By
-            month; one source per month, the PDF or the CSV export, never both. For a file that prints full dates, naming the month
-            says this statement covers that whole month — the 1st to the last day — so the books are compared over
-            the same days; each movement still belongs to the month of its own date, and one dated outside the
-            month refuses the file.
-          </span>
-        </div>
-
-        {/* A config that cannot read anything must say so BEFORE an upload, not
-            as a refusal after one. */}
-        {chosen && !chosen.ready && (
-          <div style={{ fontSize: 'var(--fs-13)', color: danger }}>
-            {chosen.bank_code} has no statement columns set up, so nothing can be read from its file yet.
-          </div>
-        )}
-        {setup.data && setup.data.recognises.length > 0 && (
-          <div style={softText}>
-            Card money is recognised for {setup.data.recognises.join(', ')}. Anything else is listed for you to match by hand.
-          </div>
-        )}
-        {accounts.length === 0 && !setup.isLoading && (
-          <div style={{ fontSize: 'var(--fs-13)', color: danger }}>
-            No bank account is set up to take a statement in this company yet — add one under Reconciliation setup → Bank statements.
-          </div>
-        )}
-        {result && (
-          <div style={{ fontSize: 'var(--fs-13)', color: result.ok ? good : danger, display: 'flex', gap: 6 }}>
-            {!result.ok && <AlertTriangle {...ICON} />}
-            <span>{result.text}</span>
-          </div>
-        )}
-      </section>
-
-      <section className="space-y-2">
-        <b>Bank statements read</b>
         {rows.length === 0 && !statements.isLoading && (
-          <div style={softText}>None yet. Upload one above and it will be matched against the books.</div>
+          <div style={softText}>None yet. Upload one and it will be matched against the books.</div>
         )}
         <BankAccountTabs codes={codes} value={current} onChange={setAccount} ariaLabel="Bank account of the files listed" />
         {shown.length > 0 && (
