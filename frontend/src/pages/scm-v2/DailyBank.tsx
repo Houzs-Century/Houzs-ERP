@@ -30,6 +30,7 @@ import { drawDailyBankCanvas } from './daily-bank-report';
 import { generateDailyBankPdf } from './daily-bank-pdf';
 import { DailyBankBoardView } from './DailyBankBoard';
 import { DailyBankAccounts } from './DailyBankAccounts';
+import { DailyBankClose } from './DailyBankClose';
 import css from './DailyBank.module.css';
 
 const fmt = (sen: number | null | undefined) => fmtSen(sen);
@@ -161,7 +162,7 @@ export const DailyBank = () => {
         )}
       </div>
 
-      {view === 'close' && <DailyCloseView date={date} />}
+      {view === 'close' && <DailyBankClose date={date} today={todayLocal()} />}
 
       {view !== 'close' && q.isLoading && <div className={css.muted}>Loading the board…</div>}
       {view !== 'close' && q.isError && <div role="alert" className={css.problem}>The board could not be loaded — {q.error instanceof Error ? q.error.message : 'something went wrong.'}</div>}
@@ -171,100 +172,6 @@ export const DailyBank = () => {
       )}
 
       {view === 'accounts' && board && <DailyBankAccounts board={board} focus={focus} future={date > todayLocal()} />}
-    </div>
-  );
-};
-
-/* ── The daily close (cashup) — count the drawer against the system ────────── */
-
-const DailyCloseView = ({ date }: { date: string }) => {
-  const q = useDailyClose(date);
-  const saveM = useSaveDailyClose();
-  const confirmM = useConfirmDailyClose();
-  const rows = useMemo(() => q.data?.rows ?? [], [q.data]);
-  const [counts, setCounts] = useState<Record<string, string>>({});
-
-  // Re-seed the inputs whenever the day (or its saved counts) change.
-  useEffect(() => {
-    const seed: Record<string, string> = {};
-    for (const r of rows) seed[r.bucket] = r.countedSen == null ? '' : (r.countedSen / 100).toFixed(2);
-    setCounts(seed);
-  }, [rows]);
-
-  const allConfirmed = rows.length > 0 && rows.every((r) => r.status === 'CONFIRMED');
-
-  const toSen = (v: string): number | null => {
-    const t = v.trim();
-    if (!t) return null;
-    const n = Number(t);
-    return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null;
-  };
-
-  const save = () => {
-    saveM.mutate({
-      date,
-      buckets: rows.map((r) => ({ bucket: r.bucket, countedSen: toSen(counts[r.bucket] ?? '') })),
-    });
-  };
-
-  return (
-    <div className="space-y-3">
-      <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-ink-soft, #666)' }}>
-        Count what is actually in hand for {date}. Confirming posts the CASH difference into Cash Over/Short the
-        same day; card and transfer differences are settlement timing and are settled by the acquirer reconciliation.
-      </div>
-      <table style={{ width: '100%', fontSize: 'var(--fs-13)', borderCollapse: 'collapse', maxWidth: 720 }}>
-        <thead>
-          <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.12))' }}>
-            <th style={{ padding: '6px 8px' }}>Bucket</th>
-            <th style={{ padding: '6px 8px', textAlign: 'right' }}>System</th>
-            <th style={{ padding: '6px 8px', textAlign: 'right' }}>Counted (RM)</th>
-            <th style={{ padding: '6px 8px', textAlign: 'right' }}>Difference</th>
-            <th style={{ padding: '6px 8px' }}>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => {
-            const counted = toSen(counts[r.bucket] ?? '');
-            const diff = counted == null ? null : counted - r.systemSen;
-            return (
-              <tr key={r.bucket} style={{ borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.06))' }}>
-                <td style={{ padding: '6px 8px', fontWeight: r.bucket === 'cash' ? 700 : 400 }}>{r.bucket}</td>
-                <td style={{ padding: '6px 8px', textAlign: 'right' }}>{fmt(r.systemSen)}</td>
-                <td style={{ padding: '6px 8px', textAlign: 'right' }}>
-                  <input
-                    inputMode="decimal"
-                    value={counts[r.bucket] ?? ''}
-                    disabled={r.status === 'CONFIRMED'}
-                    onChange={(e) => setCounts((c0) => ({ ...c0, [r.bucket]: e.target.value }))}
-                    style={{ width: 110, textAlign: 'right', padding: '4px 8px', border: '1px solid var(--c-line, rgba(34,31,32,0.2))', borderRadius: 6 }}
-                  />
-                </td>
-                <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700, color: diff == null || diff === 0 ? 'var(--c-ink)' : diff < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--c-secondary-a, #2F5D4F)' }}>
-                  {diff == null ? '—' : fmt(diff)}
-                </td>
-                <td style={{ padding: '6px 8px' }}>
-                  <span className={`${styles.statusPill} ${r.status === 'CONFIRMED' ? styles.statusActive : styles.statusInactive}`}>{r.status}</span>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-        <button type="button" style={btnStyle()} disabled={saveM.isPending || allConfirmed} onClick={save}>
-          {saveM.isPending ? 'Saving…' : 'Save counts'}
-        </button>
-        <button type="button" style={btnStyle(true)} disabled={confirmM.isPending || allConfirmed}
-          onClick={() => confirmM.mutate({ date })}>
-          {confirmM.isPending ? 'Confirming…' : allConfirmed ? 'Day closed' : 'Confirm close'}
-        </button>
-      </div>
-      {confirmM.data?.cashPosting?.jeNo && (
-        <div style={{ fontSize: 'var(--fs-13)' }}>
-          Cash over/short posted: <span className={styles.codeChip}>{confirmM.data.cashPosting.jeNo}</span>
-        </div>
-      )}
     </div>
   );
 };

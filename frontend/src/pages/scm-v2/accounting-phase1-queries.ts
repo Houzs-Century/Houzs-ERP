@@ -257,7 +257,8 @@ export type DailyCloseRow = { bucket: string; systemSen: number; countedSen: num
 
 export const useDailyClose = (date: string) => useQuery({
   queryKey: ['daily-close', date],
-  queryFn: () => authedFetch<{ date: string; rows: DailyCloseRow[] }>(`/accounting/daily-close?date=${date}`),
+  /* confirmedBy / confirmedAt / cashJeNo: who closed the day, when, and its cash over/short entry (if any). */
+  queryFn: () => authedFetch<{ date: string; rows: DailyCloseRow[]; confirmedBy?: string | null; confirmedAt?: string | null; cashJeNo?: string | null }>(`/accounting/daily-close?date=${date}`),
   staleTime: 15_000,
   retry: retryUnlessClientError,
   retryDelay: 800,

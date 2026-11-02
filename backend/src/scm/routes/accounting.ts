@@ -1426,10 +1426,16 @@ accounting.get('/daily-close', async (c) => {
   const takings = await systemTakings(sb, co.companyId, date);
   if (!takings.ok) return c.json({ error: 'load_failed', reason: takings.reason }, 500);
 
-  const { data: savedRaw, error: sErr } = await sb.from('acc_daily_closes')
-    .select('bucket, system_sen, counted_sen, diff_sen, status, notes')
-    .eq('company_id', co.companyId).eq('close_date', date);
+  const [{ data: savedRaw, error: sErr }, cashJe] = await Promise.all([
+    sb.from('acc_daily_closes')
+      .select('bucket, system_sen, counted_sen, diff_sen, status, notes, confirmed_by, confirmed_at')
+      .eq('company_id', co.companyId).eq('close_date', date),
+    /* The day's cash over/short entry, when its count differed (acc/daily-close: CASHUP, company-date-cash). */
+    sb.from('journal_entries').select('je_no').eq('company_id', co.companyId).eq('source_type', 'CASHUP')
+      .eq('source_doc_no', `${co.companyId}-${date}-cash`).eq('reversed', false).limit(1),
+  ]);
   if (sErr) return c.json({ error: 'load_failed', reason: sErr.message }, 500);
+  if (cashJe.error) return c.json({ error: 'load_failed', reason: cashJe.error.message }, 500);
   const saved = new Map(((savedRaw ?? []) as Array<{ bucket: string; system_sen: number; counted_sen: number | null; status: string; notes: string | null }>)
     .map((r) => [r.bucket, r]));
 
@@ -1447,7 +1453,15 @@ accounting.get('/daily-close', async (c) => {
       notes: row?.notes ?? null,
     };
   });
-  return c.json({ date, rows });
+  /* Who closed the day and when — the latest confirmation across its buckets. */
+  const confirmed = ((savedRaw ?? []) as Array<{ status: string; confirmed_by: string | null; confirmed_at: string | null }>)
+    .filter((r) => r.status === 'CONFIRMED' && r.confirmed_at)
+    .sort((a, b) => String(b.confirmed_at).localeCompare(String(a.confirmed_at)))[0];
+  return c.json({
+    date, rows,
+    confirmedBy: confirmed?.confirmed_by ?? null, confirmedAt: confirmed?.confirmed_at ?? null,
+    cashJeNo: ((cashJe.data ?? []) as Array<{ je_no: string }>)[0]?.je_no ?? null,
+  });
 });
 
 /* PUT /daily-close — save counted amounts (draft). Upsert per bucket. */
