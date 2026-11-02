@@ -14,7 +14,7 @@ import { OPEN_AP_STATUSES, OPEN_PI_STATUSES, OPEN_SI_STATUSES } from '../lib/ope
 import { toMyrSen } from '../lib/fx';
 import { raiseJobs } from '../../acc/finance-todo';
 import { addDays } from '../../acc/todo-tasks';
-import { firstOf, lastOf, monthOrToday, nextSeven, taskEvents, type CalEvent } from '../../acc/todo-calendar';
+import { firstOf, lastOf, monthOrToday, nextSeven, taskEvents, type CalendarPage, type CalEvent } from '../../acc/todo-calendar';
 import { readFinanceTodoFacts } from './accounting-todo';
 import { readTodoTaskFacts } from './accounting-todo-tasks';
 
@@ -94,20 +94,15 @@ async function invoiceEvents(sb: any, companyId: number, from: string, to: strin
   }));
 }
 
-export const todoCalendarHandler = async (c: any): Promise<Response> => {
-  const co = requireActiveCompanyId(c);
-  if (!co.ok) return c.json(co.refusal, 409);
-  const today = todayMyt();
-  const month = monthOrToday(c.req.query('month'), today);
+/** The calendar for one company and month, as of today — the handler's reads, and a rehearsal's. */
+export async function readCalendarPage(sb: any, companyId: number, today: string, month: string, viewerId: number | null): Promise<CalendarPage> {
+  const co = { companyId };
   const from = firstOf(month);
   const to = lastOf(month);
   /* The next 7 days may run past the month shown: read both. */
   const lo = from < today ? from : today;
   const hi = to > addDays(today, 6) ? to : addDays(today, 6);
-  const sb = c.get('supabase');
   const problems: string[] = [];
-  const hu = c.get('houzsUser') as { id?: number } | undefined;
-  const viewerId = Number(hu?.id) > 0 ? Number(hu?.id) : null;
   const safe = async (what: string, run: () => Promise<CalEvent[]>): Promise<CalEvent[]> => {
     try { return await run(); } catch (e) { problems.push(`${what} (${e instanceof Error ? e.message : String(e)})`); return []; }
   };
@@ -138,10 +133,19 @@ export const todoCalendarHandler = async (c: any): Promise<Response> => {
   ]);
 
   const all = [...late, ...bills, ...vouchers, ...invoices, ...tasks];
-  return c.json({
+  return {
     month, today,
     events: all.filter((e) => e.day >= from && e.day <= to).sort((a, b) => a.day.localeCompare(b.day) || a.kind.localeCompare(b.kind)),
     next7: nextSeven(all, today),
     problems,
-  });
+  };
+}
+
+export const todoCalendarHandler = async (c: any): Promise<Response> => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const today = todayMyt();
+  const hu = c.get('houzsUser') as { id?: number } | undefined;
+  const viewerId = Number(hu?.id) > 0 ? Number(hu?.id) : null;
+  return c.json(await readCalendarPage(c.get('supabase'), co.companyId, today, monthOrToday(c.req.query('month'), today), viewerId));
 };
