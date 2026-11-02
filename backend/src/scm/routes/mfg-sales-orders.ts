@@ -83,6 +83,7 @@ import { paymentMayChange, SLIP_DATE_OVERRIDE_NOTE, SO_PAYMENT_AMEND, SO_PAYMENT
 import { AMEND_SOURCE, ledgerFieldChange } from '../../acc/payment-corrections';
 import { paymentReasonRule } from '../lib/so-payment-reason';
 import { paymentVersionGuard, soCasGrace, soCasGraceOpen } from '../lib/so-cas';
+import { markIdempotencyNoWrite } from '../../middleware/idempotency';
 /* SO-SKU spec P2 — every charge is a SKU line. Predicates from P1; the
    fee/addon → SERVICE-line decomposition builders are pure + shared. */
 import {
@@ -2209,7 +2210,9 @@ mfgSalesOrders.post('/backfill-warehouses', async (c) => {
    below feeds it a synthetic context built from Env + the identities captured
    at enqueue time. `c.json(body, status)` inside the core returns a plain
    outcome object; the HTTP route re-emits it as the real JSON response. */
-export type SoCreateOutcome = { status: number; body: Record<string, unknown> };
+/* `noWrite` marks a refusal answered before the core's first business write, so
+   the HTTP route can release the idempotency claim (see createSalesOrderCore). */
+export type SoCreateOutcome = { status: number; body: Record<string, unknown>; noWrite?: true };
 export type SoCreateContext = {
   req: { json(): Promise<unknown> };
   /* supabase keeps the REAL client type — the core body relies on the typed
@@ -2245,6 +2248,16 @@ export type SoCreateContext = {
 };
 
 async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome> {
+  /* Every refusal above the first business write (the customer upsert, below)
+     leaves nothing behind — the only thing claimed by then is a doc-number
+     counter suffix, which cannot duplicate an order — so it goes out marked
+     noWrite and POST / releases the idempotency claim. Without that, the form's
+     one key per mount froze the first refusal and the corrected Save answered
+     idempotency_key_reused until the operator left and re-keyed the whole order
+     (phone New SO, 2026-11-02). See lib/no-write-refusal.ts for the contract. */
+  let wrote = false;
+  const answer = c.json;
+  c = { ...c, json: (b, s) => (wrote ? answer(b, s) : { ...answer(b, s), noWrite: true }) };
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   /* Multi-company (mig 0061): the active company for this create (SoCreateContext
@@ -2713,6 +2726,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      customer_id (the POS never sent one). */
   let orderCustomerId: string | null = null;
   const casCo = requireActiveCompanyId(c); if (!casCo.ok) return c.json(casCo.refusal, 409);  // HAZARD 1
+  wrote = true;  // the first business write follows; no refusal from here on may release the claim
   /* Scan blank-draft shell (owner 2026-07-04) — a scan that could not read the
      customer's name/phone still lands a draft the rep completes by hand, but it
      carries PLACEHOLDER name/phone. Resolving a customer identity off those
@@ -4784,6 +4798,7 @@ mfgSalesOrders.post('/', async (c) => {
     });
     if (vpBrand) return c.json({ ...out.body, vpBrand }, 201);
   }
+  if (out.noWrite) markIdempotencyNoWrite(c);
   return c.json(out.body, out.status as 201);
 });
 

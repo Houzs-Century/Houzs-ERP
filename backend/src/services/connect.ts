@@ -34,6 +34,14 @@ export const CONNECT_SERVICE_CASE_AUTOMATION = 'Service Case Received';
  *  (params full_name + assr_no + case_status). */
 export const CONNECT_SERVICE_CASE_STATUS_AUTOMATION = 'Service Case Status Update';
 
+/** A sentinel automation name that matches NO enabled Connect automation. The
+ *  "Sync to Connect" action POSTs the contact's full field set under this name:
+ *  handleErpWebhook upserts the attributes BEFORE it matches automations, and
+ *  when a name IS given it matches only that name — so an unmatched name stores
+ *  the fields and fires nothing (no WhatsApp). Never give a real Connect
+ *  automation this name, or a sync would start sending. */
+export const CONNECT_SYNC_AUTOMATION = '__erp_contact_sync__';
+
 export interface ConnectConfig {
   CONNECT_WEBHOOK_URL?: string;
   CONNECT_WEBHOOK_KEY?: string;
@@ -307,6 +315,56 @@ export function buildServiceCaseStatus(
   };
 }
 
+/** The SO-header columns the contact-info sync reads for the single-value
+ *  "headline" fields the Connect panel shows (Reference No. / Brand / Purchase
+ *  Venue / Sales Person / Delivery State / House Type / Disposal / Delivery
+ *  Message Status). These are the fields the delivery bundle's per-order
+ *  ref_N / brand_N slots do NOT fill, which is why the panel sat mostly empty. */
+export interface SyncHeadlineRow {
+  doc_no?: unknown;
+  ref?: unknown;
+  branding?: unknown;
+  venue?: unknown;
+  agent?: unknown;
+  customer_state?: unknown;
+  house_type?: unknown;
+  disposal_request?: unknown;
+  delivery_message_status?: unknown;
+}
+
+/** The headline contact fields built from a customer's FIRST order (the panel
+ *  shows one value per contact, as the single-order templates do). Only NON-EMPTY
+ *  values are returned, so a sync FILLS a field and never blanks one the customer
+ *  or an earlier message already set. `clientDeliveryDate` is the order's
+ *  effective (amended ?? original) delivery date as yyyy/mm/dd; `phone` the E.164
+ *  number the caller already resolved. Keys are Connect's contact-field keys. */
+export function buildSyncHeadline(
+  first: SyncHeadlineRow,
+  phone: string,
+  clientDeliveryDate: string,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  const put = (key: string, value: unknown): void => {
+    const s = String(value ?? '').trim();
+    if (s) out[key] = s;
+  };
+  // The customer Reference No. (ref, e.g. "HC 11063"); the SO doc_no when blank.
+  put('reference_no', String(first.ref ?? '').trim() || first.doc_no);
+  put('brand', first.branding);
+  put('purchase_venue', first.venue);
+  put('sales_person', first.agent);
+  // "Delivery State" on the panel is the Malaysian state the order ships to
+  // (customer_state), NOT the ERP's delivery_state status enum.
+  put('delivery_state', first.customer_state);
+  put('house_type', first.house_type);
+  put('disposal', first.disposal_request);
+  put('delivery_message_status', first.delivery_message_status);
+  const digits = phone.replace(/\D/g, '');
+  if (digits) out.customer_phone = `+${digits}`;
+  if (clientDeliveryDate) out.client_delivery_date = clientDeliveryDate;
+  return out;
+}
+
 /** Connect's /api/webhooks/erp answer when it fired nothing for the named
  *  automation: a reason for the operator, or null when a run was triggered (or
  *  the body does not say — an older Connect without `triggered` is trusted). */
@@ -331,6 +389,7 @@ export function connectUntriggeredReason(bodyText: string, automation: string): 
 export async function postConnectContact(
   env: ConnectConfig,
   contact: ConnectContact,
+  opts?: { expectTrigger?: boolean },
 ): Promise<ConnectResult> {
   const base = String(env.CONNECT_WEBHOOK_URL ?? '').replace(/\/+$/, '');
   try {
@@ -344,6 +403,10 @@ export async function postConnectContact(
     });
     const text = (await res.text().catch(() => '')).slice(0, 2000);
     if (res.ok) {
+      // A SYNC (expectTrigger false) names the CONNECT_SYNC_AUTOMATION sentinel
+      // on purpose, so an empty `triggered` is the success case — it upserted the
+      // contact's fields and sent nothing. A real send leaves expectTrigger unset.
+      if (opts?.expectTrigger === false) return { ok: true, httpCode: res.status, error: null };
       // 200 means Connect ACCEPTED the event, not that a message went out: it
       // upserts the contact and answers `triggered: [names]` — an EMPTY list
       // when no enabled automation carries that name (still DRAFT, disabled,

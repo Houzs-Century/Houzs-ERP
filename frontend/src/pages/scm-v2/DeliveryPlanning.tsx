@@ -32,7 +32,7 @@ import { useMemo, useState } from 'react';
 import { JobDetailPanel, panelTargetOf, rowDocumentPath, type JobPanelTarget } from '../../components/scm-v2/JobDetailPanel';
 import { useNavigate } from 'react-router-dom';
 import { useStickyFilters } from '../../hooks/useStickyFilters';
-import { MapPinned, Truck, Plus, MessageSquare, CalendarClock, ChevronDown } from 'lucide-react';
+import { MapPinned, Truck, Plus, MessageSquare, CalendarClock, ChevronDown, RefreshCw } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
 import { DeliveryFieldsDrawer } from '../../vendor/scm/components/DeliveryFieldsDrawer';
@@ -67,6 +67,7 @@ import {
   useScheduleDelivery,
   useDeliveryMessageStatuses,
   useSendDeliveryMessages,
+  useSyncDeliveryContacts,
   filterOrdersByRegion,
   planningCountsFrom,
   type PlanningOrder,
@@ -380,6 +381,30 @@ export const DeliveryPlanning = () => {
     });
   };
 
+  /* Sync to Connect (owner 2026-11-02): push the selected orders' full field set
+     into each customer's Connect contact so the chat panel shows the order's
+     details — no WhatsApp sent. Fire and report, like Postpone. */
+  const syncContacts = useSyncDeliveryContacts();
+  const syncToConnectDirect = () => {
+    const docNos = selectedSoDocNos();
+    if (docNos.length === 0 || syncContacts.isPending) return;
+    void syncContacts.mutate({ docNos }, {
+      onSuccess: (res) => {
+        const parts: string[] = [];
+        if (res.synced.length) parts.push(`Synced ${res.synced.length} contact${res.synced.length === 1 ? '' : 's'} (${res.synced.reduce((n, g) => n + g.docNos.length, 0)} orders).`);
+        if (res.failed.length) parts.push(`Failed ${res.failed.length}: ${res.failed.map((f) => `${f.phone} (${f.error})`).join('; ')}.`);
+        if (res.skipped.length) parts.push(`Skipped ${res.skipped.length}: ${res.skipped.map((sk) => `${sk.docNo} (${SKIP_LABEL[sk.reason] ?? sk.reason})`).join(', ')}.`);
+        void notify({
+          title: res.failed.length ? 'Sync finished with failures' : res.synced.length ? 'Contacts synced to Connect' : 'Nothing synced',
+          body: parts.join(' ') || 'Nothing to sync.',
+          tone: res.failed.length ? 'error' : 'info',
+        });
+        setSel(new Set());
+      },
+      onError: (err) => notify({ title: 'Sync failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
+    });
+  };
+
   return (
     <div className="space-y-4">
       <PageHeader
@@ -445,6 +470,22 @@ export const DeliveryPlanning = () => {
                             ['delivery', 'Send Now', 'Delivery-date message (Confirm / Amend)'],
                             ['amend', 'Amend Now', 'Amend / reschedule message (Confirm / Amend)'],
                           ] as const).map((it) => renderKind(it, false))}
+                          {/* Sync to Connect (owner 2026-11-02): fill the customer's
+                              Connect contact panel from the order — no message sent. */}
+                          <button
+                            type="button"
+                            role="menuitem"
+                            disabled={selectedSoDocNos().length === 0 || syncContacts.isPending}
+                            onClick={() => { setSendMenuOpen(false); setOneTimeOpen(false); syncToConnectDirect(); }}
+                            style={{ display: 'block', width: '100%', padding: '8px 10px', background: 'transparent', border: 'none', borderRadius: 8, cursor: selectedSoDocNos().length === 0 ? 'default' : 'pointer', textAlign: 'left', opacity: selectedSoDocNos().length === 0 ? 0.5 : 1 }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg, #f4f2ec)'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                          >
+                            <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-13, 13px)', fontWeight: 600, color: 'var(--ink, #221f20)' }}>
+                              <RefreshCw size={14} strokeWidth={1.75} /> Sync to Connect
+                            </span>
+                            <span style={{ display: 'block', marginLeft: 22, fontSize: 'var(--fs-12, 11px)', color: 'var(--c-muted, #767b6e)' }}>Fill the customer's Connect details from the order — no message sent</span>
+                          </button>
                           {/* One Time Send Now (owner 2026-10-21): the ad-hoc sends
                               fold under one entry, opened on demand. */}
                           <button

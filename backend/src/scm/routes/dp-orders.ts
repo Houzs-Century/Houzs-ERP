@@ -172,6 +172,13 @@ const createSchema = z.object({
   lorryId: z.string().uuid().optional(),
   workshopId: z.string().uuid().optional(),
   workOrderId: z.string().uuid().optional(),
+  // TRANSFER ORIGIN ("from where", owner 2026-11-02 方案1): the pickup point the
+  // fleet loads from — our warehouse or an outsourced 3PL, picked the same way as
+  // the destination. Optional: only a move between two chosen points sets it.
+  // Columns: mig 20261102T1500.
+  fromWarehouseId: z.string().uuid().optional(),
+  fromThreeplCompanyId: z.string().uuid().optional(),
+  fromOverrides: z.record(z.string(), z.string().nullable()).optional(),
   requestedDate: z.string().optional(), // YYYY-MM-DD
   remark: z.string().optional(),
   // Manual overrides — applied ON TOP of the auto-filled snapshot so the operator
@@ -289,6 +296,29 @@ async function resolveSnapshot(
   return emptySnapshot(jobType);
 }
 
+/** Resolve the ORIGIN ("from") snapshot for a TRANSFER (owner 2026-11-02 方案1) —
+ *  our warehouse or a 3PL carrier, the same two masters the destination draws on,
+ *  else an empty snapshot the operator types over. Errors are bound and surfaced,
+ *  never swallowed (a read blip must not silently drop the pickup point). */
+async function resolveOrigin(c: Ctx, p: z.infer<typeof createSchema>): Promise<DpPartySnapshot> {
+  const sb = c.get('supabase');
+  if (p.fromThreeplCompanyId) {
+    const { data, error } = await sb.from('threepl_companies')
+      .select('code, name, contact_name, contact_phone, office_phone, address')
+      .eq('id', p.fromThreeplCompanyId).maybeSingle();
+    if (error) throw error;
+    if (data) return snapshotFromThreepl(data as Record<string, unknown>);
+  }
+  if (p.fromWarehouseId) {
+    const { data, error } = await sb.from('warehouses')
+      .select('code, name, location, city, postcode, state')
+      .eq('id', p.fromWarehouseId).maybeSingle();
+    if (error) throw error;
+    if (data) return snapshotFromWarehouse(data as Record<string, unknown>);
+  }
+  return emptySnapshot('TRANSFER');
+}
+
 /* ── POST /api/scm/dp-orders — create (type-aware auto-fill) ───────────────── */
 dpOrders.post('/', async (c) => {
   let body: unknown;
@@ -305,6 +335,14 @@ dpOrders.post('/', async (c) => {
     if (k in merged) merged[k] = v;
   }
   if (!hasAddress(merged)) return c.json(ADDRESS_REQUIRED, 400);
+
+  // Origin ("from") — TRANSFER only, optional. Its own snapshot + overrides, kept
+  // apart from the destination party above so neither overwrites the other.
+  const fromSnap = jobType === 'TRANSFER' ? await resolveOrigin(c, p) : emptySnapshot('TRANSFER');
+  const fromMerged: Record<string, unknown> = { ...fromSnap };
+  for (const [k, v] of Object.entries(p.fromOverrides ?? {})) {
+    if (k in fromMerged) fromMerged[k] = v;
+  }
 
   const sb = c.get('supabase');
   const user = c.get('user') as { id?: string } | null;
@@ -335,6 +373,12 @@ dpOrders.post('/', async (c) => {
     address1: merged.address1 ?? null, address2: merged.address2 ?? null,
     address3: merged.address3 ?? null, address4: merged.address4 ?? null,
     city: merged.city ?? null, postcode: merged.postcode ?? null, state: merged.state ?? null,
+    // Origin ("from") — party_name/address* of the fromSnap map to the from_* columns.
+    from_name: fromMerged.party_name ?? null,
+    from_address1: fromMerged.address1 ?? null, from_address2: fromMerged.address2 ?? null,
+    from_city: fromMerged.city ?? null, from_postcode: fromMerged.postcode ?? null, from_state: fromMerged.state ?? null,
+    from_warehouse_id: p.fromWarehouseId ?? null,
+    from_threepl_company_id: p.fromThreeplCompanyId ?? null,
     requested_date: dateOrNull(p.requestedDate),
     status: 'PENDING_SCHEDULE',
     remark: p.remark ?? null,
@@ -425,6 +469,15 @@ const patchSchema = z.object({
   city: z.string().nullable().optional(),
   postcode: z.string().nullable().optional(),
   state: z.string().nullable().optional(),
+  // Origin ("from") fields — TRANSFER only, editable like the destination (owner
+  // 2026-11-02 方案1). Null clears a line; the address-required check guards the
+  // DESTINATION only, so the origin may be blank.
+  fromName: z.string().nullable().optional(),
+  fromAddress1: z.string().nullable().optional(),
+  fromAddress2: z.string().nullable().optional(),
+  fromCity: z.string().nullable().optional(),
+  fromPostcode: z.string().nullable().optional(),
+  fromState: z.string().nullable().optional(),
   requestedDate: z.string().nullable().optional(),
   remark: z.string().nullable().optional(),
 });
@@ -442,6 +495,8 @@ const PATCH_COLS: Record<keyof z.infer<typeof patchSchema>, string> = {
   partyName: 'party_name', contactName: 'contact_name', contactPhone: 'contact_phone',
   address1: 'address1', address2: 'address2', address3: 'address3', address4: 'address4',
   city: 'city', postcode: 'postcode', state: 'state',
+  fromName: 'from_name', fromAddress1: 'from_address1', fromAddress2: 'from_address2',
+  fromCity: 'from_city', fromPostcode: 'from_postcode', fromState: 'from_state',
   requestedDate: 'requested_date', remark: 'remark',
 };
 

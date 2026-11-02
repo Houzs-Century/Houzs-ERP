@@ -117,6 +117,7 @@ import {
   drainVenturePortalOutbox,
   reconcileVenturePortalOutbox,
 } from "./scm/lib/venture-portal-outbox";
+import { runScheduledConnectSync } from "./scm/lib/connect-contact-sync";
 import { pushVenturePortalCatalogue } from "./scm/lib/venture-portal-catalogue";
 import { pushVenturePortalAttendance } from "./scm/lib/venture-portal-attendance";
 import { venturePortalKick } from "./scm/lib/venture-portal-kick";
@@ -928,6 +929,21 @@ export default {
             if (r.requeued) console.warn(`[cron vp-reconcile] requeued=${r.requeued}`);
           })
           .catch((e) => console.error("[cron vp-reconcile]", e))
+      );
+      /* Houzs Connect contact sync (owner 2026-11-02): fill every customer's
+         Connect contact panel from their order, no message sent. Walks the
+         in-window orders a batch at a time by a cursor in app_config — the first
+         cycle backfills the ~1,099 existing contacts, then it wraps and keeps them
+         current (a new conversation contact is picked up on the next pass; an
+         explicit send fills instantly). Ships dark until CONNECT_WEBHOOK_* are set
+         (skipped:'not_configured'). Best-effort — a failed group is logged and
+         counted, never thrown. */
+      ctx.waitUntil(
+        track("connect-sync", () => runScheduledConnectSync(env))
+          .then((r) => {
+            if (r.synced || r.failed) console.log(`[cron connect-sync] ${JSON.stringify(r)}`);
+          })
+          .catch((e) => console.error("[cron connect-sync]", e))
       );
       // Houzs POS watchdog (spec section 10): terminal alerts, their emails
       // (once, then daily), auto-resolve, and the once-per-event summary.
