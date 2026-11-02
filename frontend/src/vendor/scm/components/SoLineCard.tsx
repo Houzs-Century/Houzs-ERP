@@ -64,7 +64,7 @@ import { sortByNumeric } from '../lib/sort-options';
 import { posRemarkSpecialOf } from '../lib/pos-remark-special';
 import { seedFollowerVariants } from '../lib/so-variant-cascade';
 import { pickDefaultVariants } from '../../shared/model-default-variants';
-import { priceBoxAuthored } from '../lib/zeroPriceClaim';
+import { priceBoxAuthored, unpricedExtraSen } from '../lib/zeroPriceClaim';
 import { useAnchoredPanel, anchoredPanelStyle } from '../../../lib/anchoredPanel';
 import { useNotify } from './NotifyDialog';
 import { SpecialOrders } from './SpecialOrders';
@@ -770,9 +770,11 @@ const SoLineCardInner = ({
     + pricingBreakdown.fabricSurchargeSen
     : 0;
 
+  // HC-0198: a blank price still saves base + variant surcharges; show that total, not RM 0.
+  const unpricedExtra = isFeeLine ? 0 : unpricedExtraSen(draft.unitPriceSen, draft.priceAuthored === true, extraSen, category === 'sofa');
   const lineTotal = useMemo(
-    () => Math.max(0, draft.qty * draft.unitPriceSen - draft.discountSen),
-    [draft.qty, draft.unitPriceSen, draft.discountSen],
+    () => Math.max(0, draft.qty * (draft.unitPriceSen + unpricedExtra) - draft.discountSen),
+    [draft.qty, draft.unitPriceSen, unpricedExtra, draft.discountSen],
   );
 
   /* Colour KIV (owner 2026-07-24, SO-2607-016) — the line committed to a
@@ -1331,7 +1333,9 @@ const SoLineCardInner = ({
                   Director sets them (sellingPriceSen) — 0 today. */}
               {extraSen > 0 && (
                 <div className={styles.priceRow}>
-                  <span className={styles.priceLabel}>+ Variants</span>
+                  <span className={styles.priceLabel}>
+                    + Variants{unpricedExtra > 0 ? ' (charged: Unit Price is blank; type 0 to charge nothing)' : ''}
+                  </span>
                   <span className={styles.priceValue}>{fmtRm(extraSen)}</span>
                 </div>
               )}
