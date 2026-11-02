@@ -85,6 +85,29 @@ export async function refreshMrpSnapshot(
 }
 
 /**
+ * Refresh one company's snapshot in the background after a write that moves
+ * supply. 2990-0034 (2026-11-02): seven POs cancelled at 11:33 stayed "covered"
+ * on the MRP page until the next cron, and the toolbar Refresh only re-reads the
+ * same snapshot, so the purchaser saw nothing to re-order. Only companies the
+ * cron refreshes: writing a first snapshot for any other company would pin its
+ * page to a plan nothing keeps fresh. Never fails the caller's write.
+ */
+export function deferMrpSnapshotRefresh(c: any, sb: Sb, companyId: number, where: string): void {
+  if (!MRP_REFRESH_COMPANY_IDS.includes(companyId)) return;
+  const run = (async () => {
+    const leadBuffers = await loadLeadBuffers(c.env.DB);
+    await refreshMrpSnapshot(sb, companyId, leadBuffers, new Date().toISOString());
+  })().catch((e: unknown) => {
+    // eslint-disable-next-line no-console
+    console.error(`[mrp-snapshot] ${where} company=${companyId}`, e);
+  });
+  /* c.executionCtx throws outside Workers (vitest); the floating promise is
+     already caught there. */
+  try { c.executionCtx.waitUntil(run); }
+  catch { /* non-Workers runtime */ }
+}
+
+/**
  * Refresh every live company's stored MRP snapshot — the scheduled (~15 min)
  * job, run from the Worker's `scheduled()` handler where env.DB + the SCM client
  * are already to hand (so no pgrest-shim / lead-buffer plumbing). Best-effort per
