@@ -102,6 +102,28 @@ export async function noteAllocations(sb: Db, companyId: number, note: Row): Pro
   return { ok: true, allocations, appliedSen, leftSen: Math.max(0, Number(note.total_sen ?? 0) - appliedSen) };
 }
 
+/** What each note has used, summed off its applications — the list's
+    "To use" / "Used" (the redesign's Credit notes tab). Read in batches of
+    note ids, every page of each. */
+export async function appliedByNote(sb: Db, companyId: number, noteIds: string[]): Promise<
+  { ok: true; byNote: Map<string, number> } | { ok: false; reason: string }
+> {
+  const byNote = new Map<string, number>();
+  const ids = [...new Set(noteIds)];
+  for (let i = 0; i < ids.length; i += 100) {
+    const batch = ids.slice(i, i + 100);
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await sb.from('acc_credit_note_allocations').select('id, note_id, applied_sen')
+        .eq('company_id', companyId).in('note_id', batch).order('id').range(from, from + 999);
+      if (error) return { ok: false, reason: error.message };
+      const rows = (data ?? []) as Row[];
+      for (const r of rows) byNote.set(String(r.note_id), (byNote.get(String(r.note_id)) ?? 0) + Number(r.applied_sen ?? 0));
+      if (rows.length < 1000) break;
+    }
+  }
+  return { ok: true, byNote };
+}
+
 export type OpenInvoice = {
   kind: CreditTargetKind; id: string; number: string; invoiceRef: string | null; invoiceDate: string | null;
   totalSen: number; paidSen: number; outstandingSen: number; status: string;

@@ -7,7 +7,10 @@
    be copied; the form's lines are a table in the owner's order with Insert
    adding a line and landing on it, amounts reading 1,800.00; the form scans
    a bill and attaches its pages after save. The server half is
-   backend/tests/apInvoices.test.ts + apInvoiceEdit.test.ts. */
+   backend/tests/apInvoices.test.ts + apInvoiceEdit.test.ts.
+   The redesign (batch 4, step 5): Money out › Supplier bills — kind tabs with
+   the suppliers' credit notes, Trade / Other, status chips, the sand tint,
+   ticks, the row's next step and its ⋯ menu. */
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -51,9 +54,28 @@ let filesLocked: boolean | undefined;
 const lastApList = { value: '' };
 
 const ROWS = [
-  { kind: 'API', id: 'api-1', invoiceNumber: '2990-API-2609-001', supplierId: 'sup-h', supplierCode: '405-H001', supplierName: 'HOUZS VENTURE HOLDING SDN BHD', supplierInvoiceRef: 'HVH-0912', description: 'Rent September', invoiceDate: '2026-09-01', dueDate: '2026-09-30', currency: 'MYR', totalSen: 420_000, paidSen: 0, outstandingSen: 420_000, status: 'DRAFT' },
-  { kind: 'PI', id: 'pi-1', invoiceNumber: '2990-PI-2607-005', supplierId: 'sup-t', supplierCode: '400-H004', supplierName: 'HOOKKA INDUSTRIES SDN. BHD.', supplierInvoiceRef: null, description: null, invoiceDate: '2026-06-27', dueDate: '2026-07-27', currency: 'MYR', totalSen: 300_000, paidSen: 100_000, outstandingSen: 200_000, status: 'PARTIALLY_PAID' },
+  { kind: 'API', id: 'api-1', invoiceNumber: '2990-API-2609-001', supplierId: 'sup-h', supplierCode: '405-H001', supplierName: 'HOUZS VENTURE HOLDING SDN BHD', supplierInvoiceRef: 'HVH-0912', description: 'Rent September', invoiceDate: '2026-09-01', dueDate: '2026-09-30', currency: 'MYR', totalSen: 420_000, paidSen: 0, outstandingSen: 420_000, status: 'DRAFT', controlRole: 'AP_OTHER' },
+  { kind: 'PI', id: 'pi-1', invoiceNumber: '2990-PI-2607-005', supplierId: 'sup-t', supplierCode: '400-H004', supplierName: 'HOOKKA INDUSTRIES SDN. BHD.', supplierInvoiceRef: null, description: null, invoiceDate: '2026-06-27', dueDate: '2026-07-27', currency: 'MYR', totalSen: 300_000, paidSen: 100_000, outstandingSen: 200_000, status: 'PARTIALLY_PAID', controlRole: 'AP' },
 ];
+/* What the list hands over — ROWS unless a test swaps it (a held invoice). */
+let apRowsNow: Array<Record<string, unknown>> = ROWS;
+
+/* The suppliers' credit notes on Supplier bills — none unless a test sets them. */
+let notes: Array<Record<string, unknown>> = [];
+const postNoteAsync = vi.fn(async (_id: unknown) => ({ ok: true, jeNo: '2990-JE-2611-0007', status: 'POSTED', applied: [] }));
+vi.mock('../../vendor/scm/lib/credit-note-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/credit-note-queries')>()),
+  useCreditNotes: () => ({ data: { rows: notes }, isLoading: false, isError: false, error: null }),
+  usePostCreditNote: () => ({ mutateAsync: postNoteAsync, isPending: false }),
+  useCancelCreditNote: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useScanSupplierCreditNote: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+/* The note's own pop-out and form belong to the CN / DN page (CreditNotes.test.tsx); here they only say they opened. */
+vi.mock('./CreditNotes', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./CreditNotes')>()),
+  NoteDetail: ({ id }: { id: string }) => <div role="dialog">NOTE {id}</div>,
+  NoteForm: ({ kinds }: { kinds: string[] }) => <div role="dialog">NOTE FORM {kinds.join(',')}</div>,
+}));
 
 /* 欠正式单 (item 3): Finance's marks and the requester's upload — stubbed. */
 const markOfficial = vi.fn();
@@ -64,7 +86,7 @@ vi.mock('../../vendor/scm/lib/official-doc-queries', async (importOriginal) => (
   useUploadOfficialDoc: () => ({ mutateAsync: uploadOfficialAsync, isPending: false }),
 }));
 vi.mock('../../vendor/scm/lib/ap-invoice-queries', () => ({
-  useApInvoices: (kind?: string, docKind?: string) => { lastApList.value = `${kind ?? ''}|${docKind ?? ''}`; return { data: { rows: ROWS }, isLoading: false, isError: false, error: null }; },
+  useApInvoices: (kind?: string, docKind?: string) => { lastApList.value = `${kind ?? ''}|${docKind ?? ''}`; return { data: { rows: apRowsNow }, isLoading: false, isError: false, error: null }; },
   useApInvoiceDetail: (id: string | null) => ({ data: id ? {
     invoice: { id: 'api-1', invoice_number: '2990-API-2609-001', supplier_id: 'sup-h', supplier_invoice_ref: 'HVH-0912', invoice_date: '2026-09-01', due_date: null, currency: 'MYR', total_sen: 420_000, paid_sen: detailPaidSen, status: detailStatus, notes: 'Rent September', posted_at: null, posted_by: null },
     lines: [{ id: 'l1', line_no: 1, description: 'Rent Sept', debit_account_code: '900-A001', amount_sen: 400_000 }, { id: 'l2', line_no: 2, description: null, debit_account_code: '900-A002', amount_sen: 20_000 }],
@@ -148,8 +170,9 @@ const setAmount = (label: string, rm: string) => {
 describe('both kinds on one list', () => {
   test('a purchase invoice mirrors with a link to its own page; the description shows', () => {
     draw();
-    expect(screen.getByText('Purchase Invoice')).toBeTruthy();
-    expect(screen.getByText('AP Invoice')).toBeTruthy();
+    /* The kind tabs count what each holds (the design). */
+    expect(screen.getByRole('tab', { name: /AP bills/ }).textContent).toBe('AP bills 1');
+    expect(screen.getByRole('tab', { name: /Purchase invoices/ }).textContent).toBe('Purchase invoices 1');
     expect(screen.getByText('2990-PI-2607-005').closest('a')!.getAttribute('href')).toBe('/scm/purchase-invoices/pi-1');
     expect(screen.getByText('2990-PI-2607-005').closest('tr')!.textContent).toContain('2,000.00');
     expect(screen.getByText('Rent September')).toBeTruthy();
@@ -176,13 +199,13 @@ describe('both kinds on one list', () => {
     draw();
     fireEvent.click(screen.getByText('Print listing'));
     expect((listingAsync.mock.calls[0]![0] as unknown[]).length).toBe(2);
-    expect(listingAsync.mock.calls[0]![1]).toEqual({ kind: 'ALL', supplierName: null });
+    expect(listingAsync.mock.calls[0]![1]).toEqual({ showing: 'All kinds · All suppliers · Any status' });
     fireEvent.focus(screen.getByLabelText('Filter by supplier'));
     fireEvent.mouseDown(screen.getByText('400-H004 · HOOKKA INDUSTRIES SDN. BHD.'));
     expect(screen.queryByText('2990-API-2609-001')).toBeNull();
     fireEvent.click(screen.getByText('Print listing'));
     expect((listingAsync.mock.calls[1]![0] as unknown[]).length).toBe(1);
-    expect(listingAsync.mock.calls[1]![1]).toEqual({ kind: 'ALL', supplierName: 'HOOKKA INDUSTRIES SDN. BHD.' });
+    expect(listingAsync.mock.calls[1]![1]).toEqual({ showing: 'All kinds · 400-H004 · HOOKKA INDUSTRIES SDN. BHD. · Any status' });
   });
 });
 
@@ -190,7 +213,7 @@ describe('raising an AP invoice', () => {
   test('supplier, a line on a LEAF account (headers and controls never offered), an amount that reads 420.00 → the create payload', async () => {
     createAsync.mockClear();
     draw();
-    fireEvent.click(screen.getByText('New AP invoice'));
+    fireEvent.click(screen.getByText('New AP bill'));
     const d = dialog();
     fireEvent.focus(within(d).getByLabelText('AP invoice supplier'));
     fireEvent.mouseDown(screen.getByText('405-H001 · HOUZS VENTURE HOLDING SDN BHD'));
@@ -214,7 +237,7 @@ describe('raising an AP invoice', () => {
 
   test("the lines are a table in the owner's order; Insert adds a line and lands on its account; Enter on an amount moves down; a line can be removed", () => {
     draw();
-    fireEvent.click(screen.getByText('New AP invoice'));
+    fireEvent.click(screen.getByText('New AP bill'));
     const d = dialog();
     const amountHead = within(d).getByText('Amount (RM)');
     expect([...amountHead.parentElement!.children].map((c) => c.textContent)).toEqual(['Account', 'Description', 'Amount (RM)', 'Event', '']);
@@ -238,7 +261,7 @@ describe('the scanned bill (OCR) and its files', () => {
   test("Scan bill pre-fills the supplier, the bill's number, dates and lines with the remembered account; the pages attach after save", async () => {
     createAsync.mockClear(); uploadAsync.mockClear();
     draw();
-    fireEvent.click(screen.getByText('New AP invoice'));
+    fireEvent.click(screen.getByText('New AP bill'));
     const d = dialog();
     const page = new File(['%PDF'], 'rent.pdf', { type: 'application/pdf' });
     fireEvent.change(within(d).getByLabelText('Scan bill files'), { target: { files: [page] } });
@@ -264,7 +287,7 @@ describe('the scanned bill (OCR) and its files', () => {
   test('a bill dropped onto the New form is read like a picked one', async () => {
     extractAsync.mockClear();
     draw();
-    fireEvent.click(screen.getByText('New AP invoice'));
+    fireEvent.click(screen.getByText('New AP bill'));
     const zone = within(dialog()).getByLabelText('Drop the bill here');
     fireEvent.drop(zone, { dataTransfer: { files: [new File(['%PDF'], 'drop.pdf', { type: 'application/pdf' })] } });
     await waitFor(() => expect(extractAsync).toHaveBeenCalledWith([{ files: [{ name: 'drop.pdf', mime: 'application/pdf', dataBase64: 'b64:drop.pdf' }] }]));
@@ -276,7 +299,7 @@ describe('the scanned bill (OCR) and its files', () => {
    and a bill handed back opens the New form pre-filled, upper case, its pages
    waiting to attach. */
 describe('the bill pile hands one bill over as one AP invoice', () => {
-  test('Scan bills sits beside New AP invoice and opens the pile page', () => {
+  test('Scan bills sits beside New AP bill and opens the pile page', () => {
     const view = render(
       <MemoryRouter initialEntries={['/scm/ap-invoices']}>
         <Routes>
@@ -406,7 +429,7 @@ describe('the event each line is for (owner 2026-09-30, 5a — the header a defa
   test('the header event sets every line and rides the create payload; the event column sits after the amount', async () => {
     createAsync.mockClear();
     draw();
-    fireEvent.click(screen.getByText('New AP invoice'));
+    fireEvent.click(screen.getByText('New AP bill'));
     const d = dialog();
     fireEvent.focus(within(d).getByLabelText('AP invoice supplier'));
     fireEvent.mouseDown(screen.getByText('405-H001 · HOUZS VENTURE HOLDING SDN BHD'));
@@ -537,7 +560,7 @@ describe('the supplier debit notes', () => {
     createAsync.mockClear();
     render(<MemoryRouter><ApInvoices docKind="DN" /></MemoryRouter>);
     expect(lastApList.value).toBe('API|DN');
-    expect(screen.queryByText('New AP invoice')).toBeNull();
+    expect(screen.queryByText('New AP bill')).toBeNull();
     expect(screen.getByText('Supplier debit notes — we owe the supplier more')).toBeTruthy();
     fireEvent.click(screen.getByText('New debit note'));
     const d = dialog();
@@ -557,5 +580,100 @@ describe('the supplier debit notes', () => {
   test('the AP Invoices page itself still asks for every kind', () => {
     draw();
     expect(lastApList.value).toBe('ALL|');
+  });
+});
+
+/* Money out › Supplier bills in the owner's Claude Design (batch 4, step 5). */
+describe('Supplier bills — the redesign', () => {
+  const SCN = {
+    id: 'scn-1', note_number: '2990-SCN-2610-001', kind: 'SCN', party_type: 'SUPPLIER', party_code: '400-H004', party_name: 'HOOKKA INDUSTRIES SDN. BHD.',
+    supplier_id: 'sup-t', debtor_id: null, so_doc_no: null, sales_invoice_id: null, ap_invoice_id: null, purchase_invoice_id: null, source_doc_no: 'CN-77',
+    note_date: '2026-10-05', total_sen: 50_000, reason: 'Short delivery', notes: null, status: 'POSTED', je_no: '2990-JE-2610-0100',
+    created_at: '2026-10-05T01:00:00Z', created_by: null, posted_at: '2026-10-05T01:00:00Z', cancelled_at: null,
+    appliedSen: 10_000, unusedSen: 40_000, controlRole: 'AP',
+  };
+  const tr = (text: string) => screen.getByText(text).closest('tr')!;
+
+  test('a supplier credit note sits under Credit notes with To use; no Overdue there; open rows wear the sand', () => {
+    notes = [SCN];
+    try {
+      draw();
+      expect(screen.getByRole('tab', { name: /Credit notes/ }).textContent).toBe('Credit notes 1');
+      /* The posted purchase invoice still owes: sand. The draft bill does not. */
+      expect(tr('2990-PI-2607-005').style.backgroundColor).toBe('rgb(252, 247, 236)');
+      expect(tr('2990-API-2609-001').style.backgroundColor).toBe('');
+      fireEvent.click(screen.getByRole('tab', { name: /Credit notes/ }));
+      expect(screen.queryByText('2990-PI-2607-005')).toBeNull();
+      expect(within(tr('2990-SCN-2610-001')).getByText('To use')).toBeTruthy();
+      const chips = within(screen.getByRole('group', { name: 'Status' }));
+      expect(chips.getByText('To use').textContent).toBe('To use 1');
+      expect(chips.queryByText('Overdue')).toBeNull();
+      /* Its next step opens the note, where the knock-off lives. */
+      fireEvent.click(within(tr('2990-SCN-2610-001')).getByText('Knock off'));
+      expect(screen.getByText('NOTE scn-1')).toBeTruthy();
+    } finally { notes = []; }
+  });
+
+  test('Unpaid and Overdue read what is owed and the due date; Make voucher opens New AP payment on the bill; a held invoice refuses', () => {
+    const view = render(
+      <MemoryRouter initialEntries={['/scm/ap-invoices']}>
+        <Routes>
+          <Route path="/scm/ap-invoices" element={<ApInvoices />} />
+          <Route path="/scm/payment-vouchers/new" element={<div>NEW AP PAYMENT</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    const chips = within(screen.getByRole('group', { name: 'Status' }));
+    expect(chips.getByText('Unpaid').textContent).toBe('Unpaid 1');
+    expect(chips.getByText('Overdue').textContent).toBe('Overdue 1');
+    expect(chips.getByText('Draft').textContent).toBe('Draft 1');
+    expect(within(tr('2990-PI-2607-005')).getByText(/^Partly paid$/)).toBeTruthy();
+    fireEvent.click(within(tr('2990-PI-2607-005')).getByText('Make voucher'));
+    expect(screen.getByText('NEW AP PAYMENT')).toBeTruthy();
+    view.unmount();
+
+    apRowsNow = [{ ...ROWS[1]!, held: true, holdReason: 'Short delivery' }];
+    try {
+      draw();
+      const make = within(tr('2990-PI-2607-005')).getByText('Make voucher') as HTMLButtonElement;
+      expect(make.disabled).toBe(true);
+      expect(make.title).toMatch(/On hold · Short delivery/);
+      expect(within(tr('2990-PI-2607-005')).getByText('On hold')).toBeTruthy();
+    } finally { apRowsNow = ROWS; }
+  });
+
+  test('the ⋯ menu offers what the row may do; Post on a draft confirms, then posts', async () => {
+    postAsync.mockClear(); confirmFn.mockClear();
+    draw();
+    fireEvent.click(screen.getByLabelText('2990-API-2609-001 menu'));
+    const menu = screen.getByRole('menu');
+    expect(within(menu).getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Open', 'Edit', 'Post', 'Copy as new', 'Cancel bill…']);
+    fireEvent.click(within(menu).getByText('Post'));
+    await waitFor(() => expect(postAsync).toHaveBeenCalledWith('api-1'));
+    expect(JSON.stringify(confirmFn.mock.calls[0]![0])).toMatch(/Post 2990-API-2609-001/);
+    /* A purchase invoice is Procurement's: open only. */
+    fireEvent.click(screen.getByLabelText('2990-PI-2607-005 menu'));
+    expect(within(screen.getByRole('menu')).getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Open']);
+  });
+
+  test('Trade / Other narrows by control; the search finds an amount; ticks add up in the bar', () => {
+    draw();
+    fireEvent.focus(screen.getByLabelText('Filter by supplier'));
+    fireEvent.mouseDown(screen.getByText('All other creditors · 405'));
+    expect(screen.queryByText('2990-PI-2607-005')).toBeNull();
+    expect(screen.getByText('2990-API-2609-001')).toBeTruthy();
+    fireEvent.focus(screen.getByLabelText('Filter by supplier'));
+    fireEvent.mouseDown(screen.getByText('All suppliers'));
+    fireEvent.change(screen.getByLabelText('Find a bill'), { target: { value: '2,000' } });
+    expect(screen.queryByText('2990-API-2609-001')).toBeNull();
+    expect(screen.getByText('2990-PI-2607-005')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Find a bill'), { target: { value: '' } });
+    fireEvent.click(screen.getByLabelText('Tick 2990-API-2609-001'));
+    fireEvent.click(screen.getByLabelText('Tick 2990-PI-2607-005'));
+    const bar = screen.getByLabelText('Ticked bills');
+    expect(bar.textContent).toContain('2 ticked');
+    expect(bar.textContent).toContain('7,200.00');
+    fireEvent.click(within(bar).getByText('Clear'));
+    expect(screen.queryByLabelText('Ticked bills')).toBeNull();
   });
 });
