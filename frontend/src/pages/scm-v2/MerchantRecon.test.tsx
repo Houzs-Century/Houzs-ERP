@@ -139,6 +139,9 @@ vi.mock('./settlement-queries', () => ({
    screen too (owner, 2026-08-24: 毕竟它属于card merchant 那边). Its contract is
    PayoutAdviceTab.test.tsx; here it is stubbed and only its door is proved. */
 vi.mock('./PayoutAdviceTab', () => ({ PayoutAdviceTab: () => <div>payment advice tab</div> }));
+/* The cards read a missing report off Finance's To do (card-missing). */
+let todoJobs: Array<Record<string, unknown>> = [];
+vi.mock('./finance/finance-todo-queries', () => ({ useFinanceTodo: () => ({ data: { mine: todoJobs } }) }));
 
 import { MerchantRecon } from './MerchantRecon';
 import { refusalText } from './settlement-ui';
@@ -165,13 +168,34 @@ describe("refusalText — the server's sentence must reach the operator", () => 
   });
 });
 
-describe('the tab strip', () => {
-  test('carries the payment advice beside the reports, and opens on the reports', () => {
+describe("the top of the page (the redesign's Merchant reports)", () => {
+  test('it is Merchant reports; the payment advices are a door, not a detour', () => {
     draw();
-    /* The work queue is the default — the advice is a door, not a detour. */
+    expect(screen.getByRole('heading', { name: 'Merchant reports' })).toBeTruthy();
     expect(screen.queryByText('payment advice tab')).toBeNull();
-    fireEvent.click(screen.getByText('Payment advice'));
+    fireEvent.click(screen.getByRole('button', { name: 'Payment advices' }));
     expect(screen.getByText('payment advice tab')).toBeTruthy();
+  });
+
+  test('a card per acquirer says what is left to decide and where it stands; a missing report comes first', () => {
+    todoJobs = [{ key: 'card-missing:GHL', rule: 'card-missing', since: '2026-08-05' }];
+    draw();
+    const cards = screen.getByRole('group', { name: 'Acquirers' });
+    const mbb = within(cards).getByRole('button', { name: /MBB/ });
+    const ghl = within(cards).getByRole('button', { name: /GHL/ });
+    expect(ghl.textContent).toContain('2026/08/04 report missing');
+    expect(mbb.textContent).toMatch(/to decide/);
+    todoJobs = [];
+  });
+
+  test('choosing an acquirer narrows the page to it and shows its reports by swipe day; choosing it again shows them all', () => {
+    draw();
+    fireEvent.click(within(screen.getByRole('group', { name: 'Acquirers' })).getByRole('button', { name: /MBB/ }));
+    const strip = screen.getByLabelText('MBB reports');
+    expect(within(strip).getByText(/by the date customers swiped/)).toBeTruthy();
+    expect(within(strip).getByRole('button', { name: /All reports/ })).toBeTruthy();
+    fireEvent.click(within(screen.getByRole('group', { name: 'Acquirers' })).getByRole('button', { name: /MBB/ }));
+    expect(screen.queryByLabelText('MBB reports')).toBeNull();
   });
 });
 

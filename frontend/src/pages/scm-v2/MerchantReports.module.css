@@ -1,0 +1,71 @@
+/* Merchant reports — the owner's Claude Design redesign (batch 3). Colours are
+   the design's own, on the ERP's Theme C. */
+
+.top { --ink: #11140f; --text: #414539; --detail: #5f6459; --muted: #767b6e; --line: #d6d9d2; --rule: #e3e6e0; --petrol: #16695f;
+  display: flex; flex-direction: column; gap: 12px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.headRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.grow { flex: 1; }
+.link { font-size: 12.5px; font-weight: 600; color: var(--petrol); text-decoration: none; }
+.link:hover { text-decoration: underline; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+.card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px;
+  background: #ffffff; text-align: left; cursor: pointer; font: inherit; color: inherit;
+}
+.card:hover { border-color: #b9d6d1; }
+.cardOn, .cardOn:hover { background: #f6faf9; border-color: var(--petrol); box-shadow: inset 0 0 0 1px var(--petrol); }
+.cardHead { display: flex; align-items: center; gap: 8px; min-width: 0; width: 100%; }
+.codeChip { flex: none; padding: 2px 6px; border-radius: 4px; background: #e1efed; color: #0c3f39; font-size: 11px; font-weight: 600; }
+.cardName { font-size: 14px; font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.count { margin-top: 6px; font-size: 20px; font-weight: 600; line-height: 1.1; }
+.countZero { color: #a9ada3; }
+.countLabel { font-size: 11.5px; color: var(--muted); }
+.status { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; color: var(--text); }
+.dot { width: 6px; height: 6px; border-radius: 999px; background: currentColor; flex: none; }
+
+.strip {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #ffffff;
+}
+.stripLabel { font-size: 13px; font-weight: 600; margin-right: 4px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px;
+  background: #ffffff; color: var(--ink); font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
+}
+.chip:hover { background: #f4f6f3; }
+.chipOn, .chipOn:hover { background: #f6faf9; border-color: var(--petrol); box-shadow: inset 0 0 0 1px var(--petrol); }
+.pill { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 7px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.toneLate { color: #a83434; }
+.pill.toneLate { background: #fbeeee; }
+.toneInfo { color: #1d5c54; }
+.pill.toneInfo { background: #eaf3f1; }
+.toneWarn { color: #7a5a1e; }
+.pill.toneWarn { background: #f7f1e3; }
+.toneCalm { color: #5b6055; }
+.pill.toneCalm { background: #f0f2ee; }
+.toneOk { color: #2f8a5b; }
+.status .toneLate { color: #a83434; }
+.status .toneInfo { color: var(--petrol); }
+.status .toneWarn { color: #a16a2e; }
+.status .toneOk { color: #2f8a5b; }
+.muted { font-size: 12px; font-weight: 400; color: var(--muted); }
+
+.popWrap { position: relative; }
+.popover {
+  position: absolute; z-index: 30; top: calc(100% + 6px); left: 0; width: 340px; max-height: 420px; display: flex; flex-direction: column; gap: 8px;
+  padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: #ffffff; box-shadow: 0 12px 32px rgba(17, 24, 16, 0.18);
+}
+.search { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border: 1px solid #c2c6bd; border-radius: 7px; color: var(--muted); }
+.search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font: 13px 'IBM Plex Sans', system-ui, sans-serif; color: var(--ink); }
+.modes { display: flex; gap: 6px; }
+.mode { height: 26px; padding: 0 10px; border: 1px solid var(--line); border-radius: 999px; background: #ffffff; font: 600 12px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; color: var(--ink); }
+.modeOn { background: var(--ink); border-color: var(--ink); color: #ffffff; }
+.popList { overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.monthHead { padding: 6px 4px 2px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.popRow {
+  width: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 7px 6px; border: 0; border-radius: 6px;
+  background: transparent; text-align: left; cursor: pointer; font: 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--ink);
+}
+.popRow:hover { background: #f4f6f3; }
+.popDay { font-weight: 600; white-space: nowrap; }
+.popSub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
