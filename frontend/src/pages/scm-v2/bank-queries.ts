@@ -11,6 +11,11 @@ import { retryUnlessClientError } from '../../lib/retryPolicy';
 export type BankAccountSetup = {
   account_code: string;
   bank_code: string;
+  /** The bank as people say it ("Maybank") and the account's own name off the
+      chart — the Bank statements cards print both. Optional only for the
+      minute a newer screen reads an older server. */
+  bank_name?: string;
+  account_name?: string | null;
   account_no: string | null;
   statement_format: string;
   is_active: boolean;

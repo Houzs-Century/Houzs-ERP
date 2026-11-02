@@ -39,6 +39,7 @@ import { undoBatchReceipt } from '../../acc/settlement';
 import { postBankCredit } from '../../acc/bank-receive';
 import { withJournalRefs } from '../../acc/journal-refs';
 import { fmtSen } from '../shared/format';
+import { bankName } from '../../acc/finance-todo';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -132,10 +133,26 @@ export const bankSetup = guard(async (c) => {
   if (!cfgs.ok) return c.json({ error: 'load_failed', reason: cfgs.reason }, 500);
   if (!rules.ok) return c.json({ error: 'load_failed', reason: rules.reason }, 500);
 
+  /* The names the Bank statements cards print (redesign batch 3): the bank as
+     people say it, and the account's own name off the chart — three Maybank
+     accounts are three cards, and only their names tell them apart. An
+     account with no name on the chart prints its code. */
+  const codes = cfgs.configs.map((cfg) => cfg.account_code);
+  const names = new Map<string, string>();
+  if (codes.length > 0) {
+    const { data, error } = await sb.from('accounts').select('account_code, account_name').eq('company_id', co.companyId).in('account_code', codes);
+    if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+    for (const a of (data ?? []) as Array<{ account_code: string; account_name: string | null }>) {
+      if (a.account_name) names.set(String(a.account_code), String(a.account_name));
+    }
+  }
+
   return c.json({
     accounts: cfgs.configs.map((cfg) => ({
       account_code: cfg.account_code,
       bank_code: cfg.bank_code,
+      bank_name: bankName(cfg.bank_code),
+      account_name: names.get(cfg.account_code) ?? null,
       account_no: cfg.account_no,
       statement_format: cfg.statement_format,
       is_active: cfg.is_active,
