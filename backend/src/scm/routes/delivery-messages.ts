@@ -45,10 +45,10 @@ import {
   parseConnectCompanyProfiles,
   chatCallbackUrl,
   CONNECT_COMPANY_PROFILE_KEY,
-  CONNECT_SYNC_AUTOMATION,
   type ConnectOrder,
   type ConnectCompanyProfile,
 } from '../../services/connect';
+import { buildContactSyncEvent, SYNC_SO_SELECT } from '../lib/connect-contact-sync';
 
 export const deliveryMessages = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -313,9 +313,7 @@ export async function syncContactsForDocs(
   // customer_state / house_type / disposal_request / delivery_message_status),
   // read alongside the bundle's doc_no / ref / branding / dates.
   const { data: rowsRaw, error: readErr } = await scopeToAllowedCompanies(
-    sb.from('mfg_sales_orders')
-      .select('doc_no, ref, debtor_name, phone, branding, company_id, customer_delivery_date, amended_delivery_date, venue, agent, customer_state, house_type, disposal_request, delivery_message_status')
-      .in('doc_no', docNos),
+    sb.from('mfg_sales_orders').select(SYNC_SO_SELECT).in('doc_no', docNos),
     c,
   );
   if (readErr) return { synced: [], failed: [], skipped: [], readError: { code: 'load_failed', reason: readErr.message } };
@@ -368,23 +366,14 @@ export async function syncContactsForDocs(
 
   for (const { phone, companyId, rows: groupRows } of byPhoneCompany.values()) {
     const groupDocs = groupRows.map((r) => String(r.doc_no));
-    const first = groupRows[0] as Record<string, unknown>;
-    const companyProfile: ConnectCompanyProfile | null = profilesById[String(companyId ?? '')] ?? null;
-    const companyCode = companyId != null ? codeByCompany.get(companyId)?.toUpperCase() ?? null : null;
-    const orders: ConnectOrder[] = groupRows.map((r) => ({
-      ref: String(r.doc_no ?? ''),
-      orderRef: String(r.ref ?? ''),
-      branding: String(r.branding ?? ''),
-      deliveryDate: payloadDate(effectiveSoDelivery(r as SoDeliveryDateRow)),
-      balanceSen: balanceByDoc.get(String(r.doc_no)) ?? null,
-      totalSen: totalByDoc.get(String(r.doc_no)) ?? null,
-      companyCode,
-    }));
-    const contact = buildDeliveryFollowUp(phone, String(first.debtor_name ?? ''), orders, companyProfile, {
+    const contact = buildContactSyncEvent({
+      phone,
+      groupRows,
+      balanceByDoc,
+      totalByDoc,
+      companyProfile: profilesById[String(companyId ?? '')] ?? null,
+      companyCode: companyId != null ? codeByCompany.get(companyId)?.toUpperCase() ?? null : null,
       callbackUrl,
-      automation: CONNECT_SYNC_AUTOMATION,
-      extra: buildSyncHeadline(first, phone, payloadDate(effectiveSoDelivery(first as SoDeliveryDateRow))),
-      resetConversation: false,
     });
     const result = await postConnectContact(c.env, contact, { expectTrigger: false });
 
