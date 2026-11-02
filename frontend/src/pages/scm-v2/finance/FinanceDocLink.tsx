@@ -17,14 +17,13 @@ import css from './FinanceDocLink.module.css';
     purchase invoice. */
 export type FinanceDocKind = 'PV' | 'API' | 'PI';
 
-/** Where a Money out document opens — one home, so when the AP bill gets its
-    own page (`/scm/ap-invoices/:id`, batch 4 step 6) every link moves at once.
-    Until then an AP bill opens on Supplier bills with its card up (`?open=`). */
+/** Where a Money out document opens — one home: a voucher, a purchase invoice
+    and (since batch 4 step 6) an AP bill each on its own page. */
 export const financeDocHref = (kind: FinanceDocKind, id: string): string => {
   switch (kind) {
     case 'PV': return `/scm/payment-vouchers/${encodeURIComponent(id)}`;
     case 'PI': return `/scm/purchase-invoices/${encodeURIComponent(id)}`;
-    default: return `/scm/ap-invoices?open=${encodeURIComponent(id)}`;
+    default: return `/scm/ap-invoices/${encodeURIComponent(id)}`;
   }
 };
 

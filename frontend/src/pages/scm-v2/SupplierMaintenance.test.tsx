@@ -113,7 +113,7 @@ describe('the pop-out', () => {
     expect(d.getByText('AutoCount')).toBeTruthy();
     /* Each number opens its own document: a PI, an AP bill, a voucher. */
     expect(d.getByText('PI-2609-002').getAttribute('href')).toBe('/scm/purchase-invoices/pi-1');
-    expect(d.getByText('HC-API-2609-004').getAttribute('href')).toBe('/scm/ap-invoices?open=api-1');
+    expect(d.getByText('HC-API-2609-004').getAttribute('href')).toBe('/scm/ap-invoices/api-1');
     expect(d.getByText('AP bill')).toBeTruthy();
     expect(d.getByText('PV-2609-003').getAttribute('href')).toBe('/scm/payment-vouchers/pv-adv');
     expect(d.getByText('PV-2609-001').getAttribute('href')).toBe('/scm/payment-vouchers/pv-1');

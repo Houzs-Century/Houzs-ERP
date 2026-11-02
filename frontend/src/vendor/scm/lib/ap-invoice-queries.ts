@@ -50,6 +50,20 @@ export type ApInvoiceHeader = {
   /** 欠正式单 (item 3): booked on a proforma — OWED, RECEIVED (to check), CHECKED. */
   official_doc?: string | null; official_doc_note?: string | null;
   doc_kind?: ApDocKind;
+  /** Who raised and who cancelled it, and when — the bill page's trail. */
+  created_at?: string | null; created_by?: string | null; cancelled_at?: string | null; cancelled_by?: string | null;
+  /** The journal its post wrote (the live one when an edit re-posted it); null until posted. */
+  je_no?: string | null;
+};
+
+/** What paid a bill (the bill page's Payments): a voucher by its stage — its own
+    payment or an advance knocked off onto the bill — or a supplier credit note. */
+export type BillPayment = { kind: 'PV' | 'SCN'; id: string; number: string; date: string | null; stage: string; amountSen: number; fromAdvance: boolean };
+export type ApInvoiceDetail = {
+  invoice: ApInvoiceHeader; lines: ApInvoiceLine[]; supplier: { id: string; code: string; name: string } | null;
+  payments?: BillPayment[];
+  /** The control the bill credits, by the supplier code (the server's rule). */
+  controlCode?: string;
 };
 /** project_id: the event the line's money is for (owner 2026-09-30, 5a). */
 export type ApInvoiceLine = { id: string; line_no: number; description: string | null; debit_account_code: string; amount_sen: number; project_id?: number | null };
@@ -63,7 +77,7 @@ export const useApInvoices = (kind: ApListKind = 'ALL', docKind?: ApDocKind) => 
 
 export const useApInvoiceDetail = (id: string | null) => useQuery({
   queryKey: ['ap-invoice', id],
-  queryFn: () => authedFetch<{ invoice: ApInvoiceHeader; lines: ApInvoiceLine[]; supplier: { id: string; code: string; name: string } | null }>(`/ap-invoices/${id}`),
+  queryFn: () => authedFetch<ApInvoiceDetail>(`/ap-invoices/${id}`),
   enabled: !!id,
 });
 

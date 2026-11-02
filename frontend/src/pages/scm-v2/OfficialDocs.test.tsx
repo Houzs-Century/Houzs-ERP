@@ -64,7 +64,7 @@ describe('Official invoices owed', () => {
     expect(views.getByRole('button', { name: 'All' })).toBeTruthy();
     /* The paying document's number opens it: a voucher, or an AP bill on Supplier bills. */
     expect(screen.getByText('HC-PV-2610-001').getAttribute('href')).toBe('/scm/payment-vouchers/pv-1');
-    expect(screen.getByText('HC-API-2610-001').getAttribute('href')).toBe('/scm/ap-invoices?open=api-1');
+    expect(screen.getByText('HC-API-2610-001').getAttribute('href')).toBe('/scm/ap-invoices/api-1');
     expect(screen.queryByText('HC-PV-2610-002')).toBeNull();
     /* The state as a tag, in English. */
     expect(screen.getAllByText('Owed')).toHaveLength(2 + 1);
@@ -98,7 +98,7 @@ describe('Official invoices owed', () => {
     fireEvent.doubleClick(screen.getByText('Add a remark'));
     expect(screen.queryByTestId('where')).toBeNull();
     fireEvent.doubleClick(screen.getByText('MLE EVENTS SDN BHD').closest('tr') as HTMLElement);
-    expect(screen.getByTestId('where').textContent).toBe('/scm/ap-invoices?open=api-7');
+    expect(screen.getByTestId('where').textContent).toBe('/scm/ap-invoices/api-7');
   });
 
   test('an owed mark can be checked straight away or cleared; nothing owed says so', () => {

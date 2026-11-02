@@ -46,6 +46,7 @@ import { todayMyt } from '../lib/my-time';
 import { postJournal, reverseJournal } from '../../acc/engine';
 import { apControlRole, apInvoiceLines, resolveRoles, type RoleCodes } from '../../acc/rules';
 import { HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
+import { billPayments } from './ap-invoice-payments';
 import { requireLeafAccount } from './accounting-chart';
 import { learnVendorMemory } from './payment-vouchers';
 import {
@@ -182,7 +183,8 @@ function shape(kind: 'API' | 'PI', r: Row, roles: RoleCodes): Row {
   };
 }
 
-/* ── GET /:id — an AP invoice with its lines ─────────────────────────────── */
+/* ── GET /:id — an AP invoice with its lines, what paid it, its journal and
+   the control it sits on (the bill page, batch 4 step 6) ───────────────── */
 export const apInvoiceDetailHandler = async (c: any): Promise<Response> => {
   const found = await loadInvoice(c, c.req.param('id'));
   if ('resp' in found) return found.resp;
@@ -193,7 +195,11 @@ export const apInvoiceDetailHandler = async (c: any): Promise<Response> => {
   ]);
   if (lines.error) return c.json({ error: 'load_failed', reason: lines.error.message }, 500);
   if (sup.error) return c.json({ error: 'load_failed', reason: sup.error.message }, 500);
-  return c.json({ invoice: found.inv, lines: lines.data ?? [], supplier: sup.data ?? null });
+  const pay = await billPayments(sb, c, found.inv);
+  if (!pay.ok) return c.json({ error: 'load_failed', reason: pay.reason }, 500);
+  const roles = await resolveRoles(sb, activeCompanyId(c) ?? null);
+  const controlCode = roles[apControlRole((sup.data as { code?: string | null } | null)?.code ?? null)];
+  return c.json({ invoice: { ...found.inv, je_no: pay.jeNo }, lines: lines.data ?? [], supplier: sup.data ?? null, payments: pay.payments, controlCode });
 };
 
 /* ── POST / — raise a DRAFT ──────────────────────────────────────────────── */

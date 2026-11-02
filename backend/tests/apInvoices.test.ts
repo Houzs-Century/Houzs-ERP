@@ -211,6 +211,38 @@ describe('the Finance list — both kinds', () => {
   });
 });
 
+describe('the bill page (batch 4, step 6 — read c7)', () => {
+  test('a bill says what paid it — vouchers by stage, an advance knocked off, a credit note — its journal and its control', async () => {
+    const no = `2990-API-${yymm}-001`;
+    const { app } = harness({
+      ap_invoices: [{ id: 'api-1', company_id: CO, invoice_number: no, supplier_id: 'sup-h', invoice_date: '2026-09-01', total_sen: 420_000, paid_sen: 300_000, status: 'PARTIALLY_PAID' }],
+      pv_allocations: [
+        { id: 'al-1', company_id: CO, pv_id: 'pv-1', ap_invoice_id: 'api-1', pi_id: null, amount_sen: 200_000, from_advance: false },
+        { id: 'al-2', company_id: CO, pv_id: 'pv-2', ap_invoice_id: 'api-1', pi_id: null, amount_sen: 50_000, from_advance: true },
+        { id: 'al-x', company_id: CO, pv_id: 'pv-1', ap_invoice_id: 'api-other', pi_id: null, amount_sen: 1, from_advance: false },
+      ],
+      payment_vouchers: [
+        { id: 'pv-1', company_id: CO, pv_number: '2990-PV-2609-004', voucher_date: '2026-09-20', status: 'POSTED' },
+        { id: 'pv-2', company_id: CO, pv_number: '2990-PV-2608-001', voucher_date: '2026-08-30', status: 'DRAFT', submitted_at: 'x', checked_at: 'y' },
+      ],
+      acc_credit_note_allocations: [{ id: 'cn-al', company_id: CO, note_id: 'scn-1', ap_invoice_id: 'api-1', amount_sen: 60_000, applied_sen: 50_000 }],
+      acc_credit_notes: [{ id: 'scn-1', company_id: CO, note_number: '2990-SCN-2609-002', note_date: '2026-09-25', status: 'POSTED' }],
+      journal_entries: [
+        { id: 'je-old', company_id: CO, je_no: '2990-JE-2609-0010', source_type: 'API', source_doc_no: no, reversed: true },
+        { id: 'je-new', company_id: CO, je_no: '2990-JE-2609-0031', source_type: 'API', source_doc_no: no, reversed: false },
+      ],
+    });
+    const b = await (await app.request('/ap-invoices/api-1')).json() as { invoice: Row; payments: Row[]; controlCode: string };
+    expect(b.invoice.je_no).toBe('2990-JE-2609-0031');
+    expect(b.controlCode).toBe('405-0000');
+    expect(b.payments.map((p) => [p.kind, p.number, p.stage, p.amountSen, p.fromAdvance])).toEqual([
+      ['PV', '2990-PV-2608-001', 'Checked', 50_000, true],
+      ['PV', '2990-PV-2609-004', 'Approved', 200_000, false],
+      ['SCN', '2990-SCN-2609-002', 'Posted', 50_000, false],
+    ]);
+  });
+});
+
 describe('an AP Payment allocation may name an AP invoice', () => {
   test('buildAllocations: one target per row, either kind', () => {
     const ok = buildAllocations([{ apInvoiceId: 'api-1', amountSen: 100 }, { piId: 'pi-1', amountSen: 50 }]);
