@@ -118,6 +118,7 @@ export async function loadDailyBankBoard(
   const todays = (counted as unknown as BoardLine[]).filter(isTodayMoney);
   const partyOf = new Map<string, string>();
   const receiptOf = new Map<string, string>();
+  const methodOf = new Map<string, string>();
   const jeNos = [...new Set(todays.map((l) => String(l.je_no)))];
   if (opts.withNames && jeNos.length > 0) {
     const { data: partyRows, error: prErr } = await sb.from('v_gl_entries').select('je_no, party_name')
@@ -135,15 +136,22 @@ export async function loadDailyBankBoard(
         const shown = r.or_number ?? r.doc_no;
         if (shown) receiptOf.set(String(r.payment_id), shown);
       }
-      /* A payment with no receipt row yet prints its order's number. */
-      const orderless = payIds.filter((id) => !receiptOf.has(id));
-      if (orderless.length > 0) {
-        const { data: payRows, error: payErr } = await sb.from('mfg_sales_order_payments').select('id, so_doc_no')
-          .eq('company_id', co.companyId).in('id', orderless);
-        if (payErr) return { ok: false, reason: payErr.message };
-        for (const r of (payRows ?? []) as Array<{ id: string; so_doc_no: string | null }>) {
-          if (r.so_doc_no) receiptOf.set(String(r.id), r.so_doc_no);
-        }
+      /* How each was paid (the Accounts sheet groups the day's money in by it),
+         and for a payment with no receipt row yet, its order's number. */
+      const soIds = [...new Set(todays.filter((l) => l.source_type === 'SOPAY' && l.source_doc_no).map((l) => String(l.source_doc_no)))];
+      const siIds = [...new Set(todays.filter((l) => l.source_type === 'SIPAY' && l.source_doc_no).map((l) => String(l.source_doc_no)))];
+      const [soPays, siPays] = await Promise.all([
+        soIds.length ? sb.from('mfg_sales_order_payments').select('id, so_doc_no, method, online_type').eq('company_id', co.companyId).in('id', soIds) : { data: [], error: null },
+        siIds.length ? sb.from('sales_invoice_payments').select('id, method').eq('company_id', co.companyId).in('id', siIds) : { data: [], error: null },
+      ]);
+      if (soPays.error) return { ok: false, reason: soPays.error.message };
+      if (siPays.error) return { ok: false, reason: siPays.error.message };
+      for (const r of (soPays.data ?? []) as Array<{ id: string; so_doc_no: string | null; method: string | null; online_type: string | null }>) {
+        if (r.so_doc_no && !receiptOf.has(String(r.id))) receiptOf.set(String(r.id), r.so_doc_no);
+        if (r.method) methodOf.set(String(r.id), r.method === 'online' && r.online_type ? `online:${r.online_type}` : r.method);
+      }
+      for (const r of (siPays.data ?? []) as Array<{ id: string; method: string | null }>) {
+        if (r.method) methodOf.set(String(r.id), r.method);
       }
     }
   }
@@ -154,7 +162,7 @@ export async function loadDailyBankBoard(
     return null;
   };
   const stamped = (counted as unknown as BoardLine[]).map((l) => (isTodayMoney(l)
-    ? { ...l, party: partyOf.get(String(l.je_no)) ?? null, doc_no: docOf(l) }
+    ? { ...l, party: partyOf.get(String(l.je_no)) ?? null, doc_no: docOf(l), method: methodOf.get(String(l.source_doc_no ?? '')) ?? null }
     : l));
   return { ok: true, board: computeDailyBank(date, money, transitAccounts, stamped as never, pending) };
 }

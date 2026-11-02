@@ -108,3 +108,52 @@
 /* ── Accounts: a block opened from the Board is outlined ── */
 .focused { outline: 2px solid var(--fin-petrol); outline-offset: 2px; border-radius: 6px; }
 .problem { padding: 10px 14px; border: 1px solid #e7c9c9; border-radius: 8px; background: #fbeeee; font-size: 12.5px; color: #7a2222; }
+
+/* ── Accounts: a block per bank and cash account ── */
+.accounts { display: flex; flex-direction: column; gap: 14px; }
+.acctBlock { background: #ffffff; border: 1px solid var(--fin-line); border-radius: 10px; overflow: hidden; }
+.acctStrip { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 12px 16px; background: #f9faf8; border-bottom: 1px solid var(--fin-rule); }
+.acctTitle { font-size: 13.5px; font-weight: 600; }
+.acctOpening { font-size: 12.5px; color: var(--fin-detail); }
+.acctOpening b { color: var(--fin-ink); margin-left: 6px; }
+.acctEmpty { padding: 14px 16px; font-size: 12.5px; color: var(--fin-muted); }
+.tableWrap { overflow-x: auto; }
+.acctTable { width: 100%; border-collapse: collapse; font-size: 13px; }
+.acctTable th { text-align: left; font-size: 11.5px; font-weight: 600; color: var(--fin-detail); padding: 8px 12px; border-bottom: 1px solid var(--fin-rule); white-space: nowrap; }
+.acctTable td { padding: 8px 12px; border-top: 1px solid #eef0ec; vertical-align: top; }
+.acctTable tbody tr:first-child td { border-top: 0; }
+.num { text-align: right !important; white-space: nowrap; }
+.docCell { font-weight: 600; white-space: nowrap; }
+.subtotal td { background: #eef2f0; font-weight: 600; border-top: 1px solid var(--fin-rule); }
+.closingStrip { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 10px 16px; background: #e6f2ec; color: #1f7a4f; font-size: 13px; font-weight: 600; }
+.closingSum { margin-left: 8px; font-weight: 400; color: #2f6b4f; }
+.afterStrip { display: flex; flex-direction: column; padding: 6px 16px 10px; border-top: 1px solid var(--fin-rule); font-size: 12.5px; }
+.afterRow { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; }
+.awaitingText { color: #8a5a1e; }
+.availableRow { color: #1f7a4f; }
+.allCard { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; padding: 14px 16px; border: 1px solid var(--fin-line); border-radius: 10px; background: #ffffff; }
+.allLabel { font-size: 10.5px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fin-text); }
+.allSum { flex: 1; font-size: 12.5px; color: var(--fin-detail); }
+.allCard > b { font-size: 18px; }
+
+/* ── Daily close ── */
+.closeCard { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--fin-line); border-radius: 10px; background: #ffffff; }
+.closeHead { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.closeTitle { font-size: 15px; font-weight: 600; }
+.pill { height: 20px; display: inline-flex; align-items: center; padding: 0 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.pillOpen { background: #f7f1e3; color: #7a5a1e; }
+.pillClosed { background: #e2f0e9; color: var(--fin-green); }
+.pillAhead { background: #f0f2ee; color: #5b6055; }
+.closeSub { font-size: 12.5px; color: var(--fin-detail); }
+.diffOther { color: #7a5a1e; font-weight: 600; }
+.rmInput { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px; border: 1px solid #c2c6bd; border-radius: 6px; background: #ffffff; color: var(--fin-muted); font-size: 12px; }
+.rmInput input { width: 96px; border: 0; outline: none; background: transparent; text-align: right; font: 600 13px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-ink); }
+.rmInputDue { border-color: var(--fin-petrol); box-shadow: 0 0 0 2px #e1efed; }
+.closeNote { font-size: 12.5px; color: var(--fin-text); }
+.closeButtons { display: flex; gap: 8px; }
+.solidButton {
+  height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 0 14px; border: 1px solid var(--fin-petrol); border-radius: 7px;
+  background: var(--fin-petrol); color: #ffffff; font: 600 13px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer;
+}
+.solidButton:disabled { background: #8fb3ad; border-color: #8fb3ad; cursor: default; }
+.saidLine { font-size: 12.5px; color: var(--fin-green); }

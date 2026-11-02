@@ -43,6 +43,8 @@ export type GlLine = {
   notes?: string | null;
   /** Who paid or was paid — the entry's party, stamped by the route. */
   party?: string | null;
+  /** A customer payment's method, stamped by the route. */
+  method?: string | null;
   /** The document number the board prints (a customer payment's official receipt or order, a voucher's number), stamped by the route. */
   doc_no?: string | null;
 };
@@ -61,6 +63,8 @@ export type DailyBankMovement = {
   party: string | null;
   note: string;
   amountSen: number;
+  /** A customer payment's method (cash, transfer, online:<how>, …); null for anything else. */
+  method: string | null;
 };
 
 /** A checked voucher awaiting approval — money already asked for. */
@@ -209,6 +213,7 @@ export function computeDailyBank(
           party: l.party ?? null,
           note: l.notes ?? l.narration ?? '',
           amountSen: Math.abs(net),
+          method: l.method ?? null,
         };
         if (net > 0) { inSen += net; receipts.push(move); }
         else if (net < 0) { outSen += -net; payouts.push(move); }
