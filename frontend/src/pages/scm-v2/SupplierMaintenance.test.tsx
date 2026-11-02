@@ -5,7 +5,8 @@
    Finance opens is Finance's alone unless 采购也用 is ticked, its bank rides
    along, a code that names neither control is flagged, and an edit sends the
    code only when it changed. A caller who is not Finance gets no form and no
-   Finance part. */
+   Finance part. The redesign (batch 4 §5): English views with counts, status
+   tags, and the pop-out's document numbers opening their documents. */
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -43,20 +44,37 @@ beforeEach(() => {
   updateSupplier.mockReset().mockResolvedValue({ supplier: { id: 's-bed' } });
 });
 
+/** The table row a supplier's name sits on. */
+const rowOf = (name: string): HTMLElement => screen.getByText(name).closest('tr') as HTMLElement;
+
 describe('the list', () => {
   test('what each supplier is owed, its bank, and the chips that narrow it', () => {
     draw();
     expect(screen.getByText('BEST BED SDN BHD')).toBeTruthy();
     expect(screen.getByText('RM 8,000.00')).toBeTruthy();
     expect(screen.getByText('Maybank · 5123 4567 8901')).toBeTruthy();
-    expect(screen.getByText('Finance only')).toBeTruthy();
+    /* Tags in English: Finance only, the control, the TIN on file or missing, the status. */
+    const land = within(rowOf('MAJU PROPERTY SDN BHD'));
+    expect(land.getByText('Finance only')).toBeTruthy();
+    expect(land.getByText('Other 405')).toBeTruthy();
+    expect(land.getByText('Missing')).toBeTruthy();
+    const bed = within(rowOf('BEST BED SDN BHD'));
+    expect(bed.getByText('Trade 400')).toBeTruthy();
+    expect(bed.getByText('On file')).toBeTruthy();
+    expect(bed.getByText('Active')).toBeTruthy();
+    /* The header in English (the table title-cases every header). */
+    expect(screen.getByText('Advance Open')).toBeTruthy();
+    /* No monospace on the code. */
+    expect(bed.getByText('400-B001').getAttribute('style')).toBeNull();
 
-    fireEvent.click(screen.getByText('Other creditor 405 · 1'));
+    const views = within(screen.getByRole('group', { name: 'Suppliers' }));
+    fireEvent.click(views.getByRole('button', { name: 'Other creditor 405 (1)' }));
     expect(screen.queryByText('BEST BED SDN BHD')).toBeNull();
     expect(screen.getByText('MAJU PROPERTY SDN BHD')).toBeTruthy();
-    fireEvent.click(screen.getByText('缺 TIN / 注册号 · 1'));
+    fireEvent.click(views.getByRole('button', { name: 'Missing TIN / reg. no. (1)' }));
     expect(screen.getByText('MAJU PROPERTY SDN BHD')).toBeTruthy();
-    fireEvent.click(screen.getByText('全部 · All · 2'));
+    fireEvent.click(views.getByRole('button', { name: 'All (2)' }));
+    expect(views.getByRole('button', { name: 'All (2)' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByText('BEST BED SDN BHD')).toBeTruthy();
   });
 
@@ -64,7 +82,8 @@ describe('the list', () => {
     list = { rows: [row({ tinNumber: undefined, bankName: undefined, bankAccountNo: undefined, forPurchasing: undefined, missingTax: undefined })], finance: false };
     draw();
     expect(screen.queryByText('New supplier')).toBeNull();
-    expect(screen.queryByText(/缺 TIN/)).toBeNull();
+    expect(screen.queryByRole('button', { name: /Missing TIN/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Finance only/ })).toBeNull();
     expect(screen.queryByText('Bank')).toBeNull();
     expect(screen.getByText('RM 8,000.00')).toBeTruthy();
   });
@@ -78,9 +97,10 @@ describe('the pop-out', () => {
       openInvoices: [
         { kind: 'PI', id: 'pi-old', number: 'PI-2405-001', supplierRef: 'OLD-1', date: '2024-05-02', dueDate: null, currency: 'MYR', totalSen: 40_000, outstandingSen: 40_000, outstandingMyrSen: 40_000, status: 'POSTED', preErp: true },
         { kind: 'PI', id: 'pi-1', number: 'PI-2609-002', supplierRef: 'INV-9', date: '2026-09-10', dueDate: null, currency: 'MYR', totalSen: 1_000_000, outstandingSen: 800_000, outstandingMyrSen: 800_000, status: 'PARTIALLY_PAID', preErp: false },
+        { kind: 'API', id: 'api-1', number: 'HC-API-2609-004', supplierRef: 'Q-77', date: '2026-09-20', dueDate: '2026-10-20', currency: 'USD', totalSen: 50_000, outstandingSen: 50_000, outstandingMyrSen: 221_000, status: 'POSTED', preErp: false },
       ],
       advances: [{ pvId: 'pv-adv', pvNumber: 'PV-2609-003', date: '2026-09-12', leftSen: 30_000 }],
-      credits: [],
+      credits: [{ id: 'cn-1', noteNumber: 'HC-SCN-2609-001', date: '2026-09-18', leftSen: 5_000 }],
       payments: [{ id: 'pv-1', pvNumber: 'PV-2609-001', date: '2026-09-15', purpose: 'SUPPLIER_PAYMENT', status: 'POSTED', totalSen: 200_000, totalMyrSen: 200_000 }],
     };
     draw();
@@ -88,10 +108,22 @@ describe('the pop-out', () => {
     const dialog = screen.getByRole('dialog', { name: 'Supplier 400-B001' });
     const d = within(dialog);
     expect(d.getByText('Owed — the books (400-0000)')).toBeTruthy();
+    expect(d.getByText('Advance open')).toBeTruthy();
+    expect(d.getByText('Open bills (3)')).toBeTruthy();
     expect(d.getByText('AutoCount')).toBeTruthy();
+    /* Each number opens its own document: a PI, an AP bill, a voucher. */
     expect(d.getByText('PI-2609-002').getAttribute('href')).toBe('/scm/purchase-invoices/pi-1');
-    expect(d.getByText('PV-2609-003')).toBeTruthy();
-    expect(d.getByText('PV-2609-001')).toBeTruthy();
+    expect(d.getByText('HC-API-2609-004').getAttribute('href')).toBe('/scm/ap-invoices?open=api-1');
+    expect(d.getByText('AP bill')).toBeTruthy();
+    expect(d.getByText('PV-2609-003').getAttribute('href')).toBe('/scm/payment-vouchers/pv-adv');
+    expect(d.getByText('PV-2609-001').getAttribute('href')).toBe('/scm/payment-vouchers/pv-1');
+    /* A foreign-currency bill reads in its own currency; the dates year-first. */
+    expect(d.getByText('USD 500.00')).toBeTruthy();
+    expect(d.getByText('2026/10/20')).toBeTruthy();
+    /* A credit note is not a link (it has no page here). */
+    expect(d.getByText('HC-SCN-2609-001').closest('a')).toBeNull();
+    /* The voucher's state in Money out's words. */
+    expect(d.getByText('Approved')).toBeTruthy();
     expect(d.getByText('5123 4567 8901')).toBeTruthy();
     expect(d.getByText('Edit')).toBeTruthy();
   });
@@ -105,7 +137,7 @@ describe('the form', () => {
     fireEvent.change(screen.getByLabelText('Company name *'), { target: { value: 'TENAGA NASIONAL BERHAD' } });
     fireEvent.change(screen.getByLabelText('Bank'), { target: { value: 'Maybank' } });
     fireEvent.change(screen.getByLabelText('Account no.'), { target: { value: '5123 0000 1111' } });
-    expect((screen.getByLabelText('采购也用 · Purchasing uses it too') as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText('Purchasing uses it too') as HTMLInputElement).checked).toBe(false);
     expect(screen.getByText('Other creditor — posts to 405-0000.')).toBeTruthy();
     fireEvent.click(screen.getByText('Create supplier'));
     await waitFor(() => expect(createSupplier).toHaveBeenCalled());
@@ -120,7 +152,7 @@ describe('the form', () => {
     draw();
     fireEvent.click(screen.getByText('MAJU PROPERTY SDN BHD'));
     fireEvent.click(screen.getByText('Edit'));
-    fireEvent.click(screen.getByLabelText('采购也用 · Purchasing uses it too'));
+    fireEvent.click(screen.getByLabelText('Purchasing uses it too'));
     fireEvent.click(screen.getByText('Save'));
     await waitFor(() => expect(updateSupplier).toHaveBeenCalled());
     const body = updateSupplier.mock.calls[0]![0] as Row;
