@@ -285,3 +285,38 @@ export function useAddGroup() {
     onError: writeFailedAs('Group not added'),
   });
 }
+
+/* ── Calendar ──────────────────────────────────────────────────────────── */
+
+export type CalKind = 'pay' | 'in' | 'routine' | 'task' | 'late';
+
+export type CalEvent = {
+  key: string;
+  day: string;
+  kind: CalKind;
+  label: string;
+  short: string;
+  detail: string;
+  amountSen: number | null;
+  done: boolean;
+  to: string | null;
+  task: { id: string; occursOn: string; kind: 'task' | 'routine'; action: TaskAction; link: TaskLink | null; mine: boolean } | null;
+};
+
+export type TodoCalendarPage = {
+  month: string;
+  today: string;
+  events: CalEvent[];
+  next7: Array<{ kind: CalKind; label: string; count: number; amountSen: number }>;
+  problems: string[];
+};
+
+export function useTodoCalendar(month: string) {
+  return useQuery({
+    /* Under the page's own key, so a done / moved task re-reads the calendar too. */
+    queryKey: [...FINANCE_TODO_KEY, 'calendar', month] as const,
+    queryFn: () => authedFetch<TodoCalendarPage>(`/accounting/todo/calendar?month=${encodeURIComponent(month)}`),
+    staleTime: 30_000,
+    retry: retryUnlessClientError,
+  });
+}

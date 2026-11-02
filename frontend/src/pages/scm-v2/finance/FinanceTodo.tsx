@@ -9,7 +9,7 @@
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle, ArrowUpRight, BookOpen, CalendarDays, CheckCheck, CheckCircle2, ChevronRight, CircleDot, CreditCard,
   FileText, HandCoins, Landmark, Layers, MessageSquare, Paperclip, PenLine, Plus, Receipt, Send, Settings2, Upload, Wallet,
@@ -19,6 +19,7 @@ import { PageHeader } from '../../../components/Layout';
 import { fmtDate, fmtSen, fmtSenPlain } from '../../../vendor/shared/format';
 import styles from './FinanceTodo.module.css';
 import { AddTaskDrawer, TaskDrawer } from './TaskDrawers';
+import { TodoCalendar } from './TodoCalendar';
 import {
   useFinanceTodo, useMarkTask,
   type FinanceTodo, type TodoCheck, type TodoGroup, type TodoIcon, type TodoJob, type TodoTone,
@@ -199,6 +200,14 @@ export function FinanceTodoPage() {
   const mark = useMarkTask();
   const navigate = useNavigate();
   const [adding, setAdding] = useState(false);
+  /* List or Calendar — in the address, so either can be linked to. */
+  const [params, setParams] = useSearchParams();
+  const calendar = params.get('view') === 'calendar';
+  const setView = (v: 'list' | 'calendar') => {
+    const next = new URLSearchParams(params);
+    if (v === 'calendar') next.set('view', 'calendar'); else next.delete('view');
+    setParams(next, { replace: true });
+  };
   const [openTask, setOpenTask] = useState<{ id: string; occursOn: string; due: string } | null>(null);
   const data = q.data;
   const doneCount = data?.done.length ?? 0;
@@ -225,6 +234,10 @@ export function FinanceTodoPage() {
         title="To do"
         actions={data && (
           <div className={styles.headStats}>
+            <span className={styles.viewSwitch} role='group' aria-label='View'>
+              <button type='button' className={calendar ? '' : styles.viewOn} aria-pressed={!calendar} onClick={() => setView('list')}>List</button>
+              <button type='button' className={calendar ? styles.viewOn : ''} aria-pressed={calendar} onClick={() => setView('calendar')}>Calendar</button>
+            </span>
             <span>{doneCount} of {jobCount} done today</span>
             <span className={styles.bar}><span className={styles.barFill} style={{ width: `${pct}%` }} /></span>
             <Link to="/scm/finance/rules" className={`${styles.action} ${styles.actionSecondary}`} title="To do rules"><Settings2 size={14} />Rules</Link>
@@ -237,7 +250,8 @@ export function FinanceTodoPage() {
         <div className={styles.problem}>Some of it could not be read, so it is not listed: {data.problems.join(' · ')}.</div>
       )}
       {!data && !q.isError && <div className={styles.page} aria-busy="true"><div className={styles.card} style={{ height: 320 }} /><div className={styles.card} style={{ height: 240 }} /></div>}
-      {data && (
+      {data && calendar && <TodoCalendar today={data.today} onOpenTask={setOpenTask} />}
+      {data && !calendar && (
         <div className={styles.page}>
           <div className={styles.column}>
             <section aria-label="Waiting on you">
