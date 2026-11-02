@@ -25,7 +25,7 @@
 // reference, and a loud refusal for a file it cannot read.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, ArrowLeft, ArrowRight, CheckCheck, Download, Undo2, Upload } from 'lucide-react';
 import {
@@ -46,6 +46,9 @@ import { downloadCSV, toCSV } from '../../lib/csv';
 import styles from './Suppliers.module.css';
 import grid from './MerchantRecon.module.css';
 import { PageHeader } from '../../components/Layout';
+import { AcquirerCards, ReportStrip, acquirerCards } from './MerchantReportsTop';
+import top from './MerchantReports.module.css';
+import { useFinanceTodo } from './finance/finance-todo-queries';
 import { fmtDate } from '../../vendor/shared/format';
 import { markWorkspaceOpenIntent } from '../../lib/workspaceTabs';
 import { rememberReturnScroll, useReturnScroll } from '../../lib/returnScroll';
@@ -91,30 +94,65 @@ const bucketCount = (buckets: Record<string, number>, key: SettlementBucket): nu
   Number(buckets[key] ?? 0);
 
 export const MerchantRecon = () => {
-  const [tab, setTab] = useState<'reports' | 'advice'>('reports');
+  /* The redesign (owner's Claude Design, batch 3): a card per acquirer on top;
+     choosing one narrows the page to its reports and shows them by swipe day.
+     With none chosen the page is today's work list of every acquirer. The
+     acquirer, the open report and the advice view all live in the address. */
+  const setup = useAcquirerSetup();
+  const batches = useSettlementBatches();
+  const todo = useFinanceTodo();
+  const [params, setParams] = useSearchParams();
+  const acq = params.get('acq');
+  const advice = params.get('view') === 'advice';
+  const batchParam = Number(params.get('batch'));
+  const openId = Number.isInteger(batchParam) && batchParam > 0 ? batchParam : null;
+  const all = batches.data?.batches ?? [];
+  /* A report not in by the next morning, as To do raised it (card-missing): the swipe day before it began waiting. */
+  const missingDay = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const j of todo.data?.mine ?? []) {
+      if (j.rule !== 'card-missing' || !j.since) continue;
+      const code = j.key.replace(/^card-missing:/, '');
+      out[code] = new Date(Date.parse(`${j.since}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+    }
+    return out;
+  }, [todo.data]);
+  const cards = acquirerCards(setup.data?.acquirers ?? [], all, missingDay);
+  const setParam = (patch: Record<string, string | null>) => setParams((prev) => {
+    const next = new URLSearchParams(prev);
+    for (const [k, v] of Object.entries(patch)) { if (v == null) next.delete(k); else next.set(k, v); }
+    return next;
+  });
 
   return (
     <div className="space-y-4">
-      <PageHeader eyebrow="Finance · step 1 of 2" title="Merchant reconciliation" />
-      <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-        <button type="button" style={btn(tab === 'reports')} onClick={() => setTab('reports')}>Merchant reports</button>
-        {/* The advice is the ACQUIRER'S paperwork, so it lives here too — the
-            owner, 2026-08-24: 毕竟它属于card merchant 那边. Everything a person
-            DOES about an advice is on this side (upload it, see which report is
-            missing or differs, fix that report); the bank screen carries the
-            same tab because the credit lands there, and the matcher consumes
-            the advice without being asked. One component, two doors. */}
-        <button type="button" style={btn(tab === 'advice')} onClick={() => setTab('advice')}>Payment advice</button>
-        <span style={{ flex: 1 }} />
-        <Link to="/scm/settlement-setup" style={{ ...btn(), textDecoration: 'none' }}>Setup</Link>
-        {/* Step two is its own screen; the link is here so the next job is one
-            click away, not a hunt through the menu. */}
-        <Link to="/scm/bank-recon" style={{ ...btn(), textDecoration: 'none' }}>
-          Bank statement reconciliation <ArrowRight {...ICON} />
-        </Link>
+      <PageHeader eyebrow="Finance · Bank & cards" title="Merchant reports" />
+      <div className={top.top}>
+        <div className={top.headRow}>
+          <span className={top.grow} />
+          <Link to="/scm/settlement-setup" className={top.link}>Recon setup</Link>
+          {/* Step two is its own screen; the link keeps the next job one click away. */}
+          <Link to="/scm/bank-recon" className={top.link}>Bank statements <ArrowRight {...ICON} /></Link>
+        </div>
+        <AcquirerCards cards={cards} selected={acq}
+          onSelect={(code) => setParam({ acq: acq === code ? null : code, batch: null, view: null })} />
+        {acq && (
+          <ReportStrip code={acq} batches={all.filter((x) => x.acquirer_code === acq)} openId={openId} missingDay={missingDay[acq] ?? null}
+            onOpen={(id) => setParam({ batch: String(id), view: null })}
+            extra={acq === 'PBB' ? (
+              /* The advice is the acquirer's paperwork, so it lives with its reports (owner 2026-08-24). */
+              <button type="button" className={`${top.chip} ${advice ? top.chipOn : ''}`} aria-pressed={advice}
+                onClick={() => setParam({ view: advice ? null : 'advice', batch: null })}>Advices</button>
+            ) : null} />
+        )}
+        {!acq && (
+          <div className={top.headRow}>
+            <button type="button" className={`${top.chip} ${advice ? top.chipOn : ''}`} aria-pressed={advice}
+              onClick={() => setParam({ view: advice ? null : 'advice', batch: null })}>Payment advices</button>
+          </div>
+        )}
       </div>
-      {tab === 'reports' && <ReconcileTab />}
-      {tab === 'advice' && <PayoutAdviceTab />}
+      {advice ? <PayoutAdviceTab /> : <ReconcileTab acq={acq} />}
     </div>
   );
 };
@@ -132,7 +170,7 @@ export const MerchantRecon = () => {
    is clean — his rule: 核对完了没有问题才会显示去 bank statement 的
    reconciliation. */
 
-const ReconcileTab = () => {
+const ReconcileTab = ({ acq = null }: { acq?: string | null }) => {
   const setup = useAcquirerSetup();
   const batches = useSettlementBatches();
   const watchlist = useSettlementWatchlist();
@@ -157,7 +195,9 @@ const ReconcileTab = () => {
   const [showDone, setShowDone] = useState(false);
 
   const acquirers = setup.data?.acquirers ?? [];
-  const [code, setCode] = useState('');
+  const [code, setCode] = useState(acq ?? '');
+  /* The chosen acquirer is the one an upload is for. */
+  useEffect(() => { if (acq) setCode(acq); }, [acq]);
   const [files, setFiles] = useState<Array<{ name: string; content: string }>>([]);
   const [summaryFee, setSummaryFee] = useState('');
   /* Some terminal statements date a line "05-Jun" with no year anywhere in the
@@ -260,18 +300,21 @@ const ReconcileTab = () => {
     );
   }
 
-  const all = batches.data?.batches ?? [];
+  const every = batches.data?.batches ?? [];
+  /* "Confirm all matched" covers every report; the list shows the chosen acquirer's. */
+  const everyOpen = every.filter((b) => (b.open_count ?? 0) > 0);
+  const all = acq ? every.filter((b) => b.acquirer_code === acq) : every;
   const open = all.filter((b) => (b.open_count ?? 0) > 0);
   const cleared = all.filter((b) => (b.open_count ?? 0) === 0);
   /* Two different jobs, and the button may only claim the first: a line that
      matched by reference is a press, a line without one is a decision. */
-  const readyToConfirm = open.reduce((s, b) => s + (b.to_confirm_count ?? 0), 0);
-  const toPost = open.filter(worthConfirming).length;
-  const stillToDecide = open.reduce((s, b) => s + (b.to_choose_count ?? 0) + (b.no_record_count ?? 0), 0);
+  const readyToConfirm = everyOpen.reduce((s, b) => s + (b.to_confirm_count ?? 0), 0);
+  const toPost = everyOpen.filter(worthConfirming).length;
+  const stillToDecide = everyOpen.reduce((s, b) => s + (b.to_choose_count ?? 0) + (b.no_record_count ?? 0), 0);
   /* Card money the sales team recorded that no statement has reported. Held
      back until the watchlist has answered, so an empty list never reads as
      "nothing outstanding" when it means "not loaded". */
-  const waiting = watchlist.data?.recordedNotArrived ?? [];
+  const waiting = (watchlist.data?.recordedNotArrived ?? []).filter((p) => !acq || p.acquirerCode === acq || p.acquirerCode == null);
   const waitingSen = waiting.reduce((s, p) => s + p.amountSen, 0);
   /* Keyed in without a bank: the server lists such a payment ONCE here
      (docs/bugs/0688 — it used to sit under every merchant), and the confirm
@@ -358,7 +401,7 @@ const ReconcileTab = () => {
         {readyToConfirm > 0 && (
           <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
             <button type="button" style={btn(true, bulk.busy)} disabled={bulk.busy}
-              onClick={() => { void bulk.run(open); }}>
+              onClick={() => { void bulk.run(everyOpen); }}>
               {/* Says its scope too: one press here covers every report with
                   something to post, and the button inside a report covers only
                   that one. */}
