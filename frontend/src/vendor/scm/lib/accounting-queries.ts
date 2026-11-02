@@ -399,6 +399,8 @@ export type DebtorBill = {
   doc_kind?: 'INV' | 'DN';
   /** The bill's lines (2026-09-06) — Edit and Copy start from them. */
   lines?: DebtorBillLine[];
+  /** When it was raised — the bill page's trail. */
+  created_at?: string | null;
 };
 export type DebtorReceipt = {
   id: string; receipt_number: string; receipt_date: string;
@@ -452,7 +454,7 @@ export const useCreateDebtorBill = () => {
       lines: Array<{ description?: string; creditAccountCode?: string; amountSen: number }>;
       /** 'DN': a debit note to the debtor — a bill of its own kind, series {co}ODN- (2026-10-28). */
       docKind?: 'INV' | 'DN';
-    }) => authedFetch<{ ok: boolean; bill: { billNumber: string; totalSen: number } }>(
+    }) => authedFetch<{ ok: boolean; bill: { id?: string; billNumber: string; totalSen: number } }>(
       `/other-debtors/${debtorId}/bills`, { method: 'POST', body: JSON.stringify(body) },
     ),
     onSuccess: () => invalidateDebtors(qc),

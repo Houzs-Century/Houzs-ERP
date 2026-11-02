@@ -7,8 +7,9 @@
    list with Print / Edit / Copy / Cancel; the party filter narrows and Print
    listing prints what is shown; `?debtor=` opens on one debtor. Since
    2026-10-06 (owner: ar invoice 点不开、没有办法 print) a click anywhere on a
-   row opens it — a sales invoice as the page it prints, with Print, Save PDF
-   and its full page — and ticked rows print as ONE document. The server
+   row opens it — since the redesign (batch 5 step 1) as the document's own
+   page in its own tab (money-in/invoiceDocs.test.tsx holds the pages: Print,
+   Edit, Copy, Cancel) — and ticked rows print as ONE document. The server
    half is backend/tests/arInvoices.test.ts (+ otherDebtors.test.ts for the
    bill's writes). */
 
@@ -94,6 +95,9 @@ vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
   useCancelDebtorBill: () => ({ mutateAsync: cancelBillAsync, isPending: false }),
 }));
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
+/* A row opens its document's page in its own tab. */
+const openInTabFn = vi.fn();
+vi.mock('../../lib/openDocInTab', () => ({ useOpenDocInTab: () => openInTabFn }));
 /* Events (owner 2026-10-01, payment-request item 6) — the picker's list and labels, stubbed; the real eventLabel stays. */
 const EVENT_OPTIONS = [
   { id: 348, code: 'E-348', name: 'Pulau Pinang [AKEMI] MLE @ PWCC', startDate: '2026-09-25', endDate: '2026-09-27', status: 'confirmed', archived: false, venue: null, brand: 'AKEMI', organizer: 'MLE', boothNo: 'F1' },
@@ -122,12 +126,13 @@ const setAmount = (scope: HTMLElement, label: string, rm: string) => {
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 describe('both kinds on one list', () => {
-  test('a sales invoice mirrors with its number as a link-styled button and the SI list\'s outstanding; a bill shows its debtor', () => {
+  test('a sales invoice mirrors with its number as the link to its page and the SI list\'s outstanding; a bill shows its debtor', () => {
     draw();
     expect(screen.getByText('Sales Invoice')).toBeTruthy();
     expect(screen.getAllByText('Debtor Bill')).toHaveLength(2);
-    /* The number reads as the link it is — it no longer looks like plain text. */
-    expect(screen.getByText('HC-SI-2609-001').tagName).toBe('BUTTON');
+    /* The number is the document's link: it opens the invoice's own page. */
+    expect(screen.getByText('HC-SI-2609-001').closest('a')!.getAttribute('href')).toBe('/scm/ar-invoices/sales/si-1');
+    expect(screen.getByText('HC-ODB-2609-001').closest('a')!.getAttribute('href')).toBe('/scm/ar-invoices/bills/b1');
     const siRow = screen.getByText('HC-SI-2609-001').closest('tr')!;
     expect(siRow.textContent).toContain('TAN AH KOW');
     expect(siRow.textContent).toContain('300-C001');
@@ -166,24 +171,15 @@ describe('both kinds on one list', () => {
 
 /* 点不开、没有办法 print (owner 2026-10-06). */
 describe('every row opens, and prints', () => {
-  test('a click anywhere on a sales invoice row opens it over the list as the page it prints — Print, Save PDF, and its full page', async () => {
-    siPdf.mockClear(); siBlob.mockClear();
+  test('a click anywhere on a row opens its document\'s page in its own tab — a sales invoice\'s, a debtor bill\'s', () => {
+    openInTabFn.mockClear();
     draw();
     fireEvent.click(within(screen.getByText('HC-SI-2609-001').closest('tr')!).getByText('Bedroom set'));
-    const d = screen.getByRole('dialog', { name: 'Sales invoice HC-SI-2609-001' });
-    await waitFor(() => expect(within(d).getByTitle('Sales invoice HC-SI-2609-001 as printed').getAttribute('src')).toBe('blob:si-1'));
-    expect(siBlob.mock.calls[0]).toEqual([SI_DETAIL.salesInvoice, SI_DETAIL.items]);
-    fireEvent.click(within(d).getByText('Print'));
-    await waitFor(() => expect(siPdf).toHaveBeenCalledWith(SI_DETAIL.salesInvoice, SI_DETAIL.items, { action: 'print' }));
-    fireEvent.click(within(d).getByText('Save PDF'));
-    await waitFor(() => expect(siPdf).toHaveBeenCalledWith(SI_DETAIL.salesInvoice, SI_DETAIL.items, { action: 'save' }));
-    expect(within(d).getByText('Open full page').closest('a')!.getAttribute('href')).toBe('/scm/sales-invoices/si-1');
-  });
-
-  test("a click on a debtor bill's row — not only its number — opens its pop-out", () => {
-    draw();
+    expect(openInTabFn).toHaveBeenLastCalledWith('/scm/ar-invoices/sales/si-1');
     fireEvent.click(within(screen.getByText('HC-ODB-2609-001').closest('tr')!).getByText('转租九月'));
-    expect(within(dialog()).getByText('转租')).toBeTruthy();
+    expect(openInTabFn).toHaveBeenLastCalledWith('/scm/ar-invoices/bills/b1');
+    /* No pop-out over the list any more. */
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   test('ticked rows print as ONE document in the order the table shows them', async () => {
@@ -199,79 +195,6 @@ describe('every row opens, and prints', () => {
     expect((names as (c: string) => string | null)('700-0000')).toBe('Other Income');
     expect(deliverBlob.mock.calls[0]![1]).toMatch(/^ar-invoices-\d{4}-\d{2}-\d{2}\.pdf$/);
     expect(deliverBlob.mock.calls[0]![2]).toBe('print');
-  });
-});
-
-describe('a debtor bill, popped out over the list', () => {
-  test('opens with its lines, description and received; Print hands the bill, its debtor and the account names to the PDF; a bill with money on it offers Edit and Copy but no Cancel', () => {
-    pdfMock.mockClear();
-    draw();
-    fireEvent.click(screen.getByText('HC-ODB-2609-001'));
-    const d = dialog();
-    expect(within(d).getByText('转租')).toBeTruthy();
-    expect(within(d).getByText(/Other Income/)).toBeTruthy();
-    expect(within(d).getByText('RM 200.00')).toBeTruthy();
-    /* The list is still there behind it — nothing was pushed in above it. */
-    expect(screen.getByText('HC-SI-2609-001')).toBeTruthy();
-    fireEvent.click(within(d).getByText('Print'));
-    expect(pdfMock).toHaveBeenCalledTimes(1);
-    const [data, opts] = pdfMock.mock.calls[0]!;
-    expect((data as { bill: { bill_number: string } }).bill.bill_number).toBe('HC-ODB-2609-001');
-    expect((data as { debtor: { name: string } }).debtor.name).toBe('AHMAD BIN ALI');
-    expect((data as { accountName: (c: string) => string | null }).accountName('700-0000')).toBe('Other Income');
-    expect(opts).toEqual({ action: 'print' });
-    expect(within(d).getByText('Edit')).toBeTruthy();
-    expect(within(d).getByText('Copy')).toBeTruthy();
-    expect(within(d).queryByText('Cancel bill')).toBeNull();
-  });
-
-  test('Cancel bill — offered while nothing was received — confirms, then sends the bill id', async () => {
-    cancelBillAsync.mockClear();
-    draw();
-    fireEvent.click(screen.getByText('HC-ODB-2608-003'));
-    fireEvent.click(within(dialog()).getByText('Cancel bill'));
-    await waitFor(() => expect(cancelBillAsync).toHaveBeenCalledWith('b2'));
-  });
-
-  test('Edit opens the bill with its lines, says it will re-post, caps the total at the money received, and sends everything on Save & re-post', async () => {
-    updateBillAsync.mockClear();
-    draw();
-    fireEvent.click(screen.getByText('HC-ODB-2609-001'));
-    fireEvent.click(within(dialog()).getByText('Edit'));
-    const d = screen.getAllByRole('dialog').at(-1)!;
-    expect(within(d).getByText(/Edit HC-ODB-2609-001 — AHMAD BIN ALI/)).toBeTruthy();
-    expect(within(d).getByText(/saving re-posts it/)).toBeTruthy();
-    /* The debtor is fixed on an edit — a bill belongs to its debtor. */
-    expect(within(d).queryByLabelText('Bill debtor')).toBeNull();
-    expect((within(d).getByLabelText('line 1 amount') as HTMLInputElement).value).toBe('500.00');
-    setAmount(d, 'line 1 amount', '100');
-    await waitFor(() => expect((within(d).getByText('Save & re-post') as HTMLButtonElement).disabled).toBe(true));
-    setAmount(d, 'line 1 amount', '650');
-    await waitFor(() => expect((within(d).getByText('Save & re-post') as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(within(d).getByText('Save & re-post'));
-    await waitFor(() => expect(updateBillAsync).toHaveBeenCalledWith({
-      billId: 'b1',
-      body: { billDate: '2026-09-05', notes: '转租九月', lines: [{ description: '转租', creditAccountCode: '700-0000', amountSen: 65000 }] },
-    }));
-  });
-
-  test('Copy starts a NEW bill from the old one for the same debtor — lines and description ride over, the date is today', async () => {
-    createBillAsync.mockClear();
-    draw();
-    fireEvent.click(screen.getByText('HC-ODB-2609-001'));
-    fireEvent.click(within(dialog()).getByText('Copy'));
-    const d = screen.getAllByRole('dialog').at(-1)!;
-    expect(within(d).getByText(/copied from HC-ODB-2609-001/)).toBeTruthy();
-    expect((within(d).getByLabelText('Bill debtor') as HTMLInputElement).value).toBe('AHMAD BIN ALI');
-    expect((within(d).getByLabelText('line 1 amount') as HTMLInputElement).value).toBe('500.00');
-    fireEvent.click(within(d).getByText('Post bill'));
-    await waitFor(() => expect(createBillAsync).toHaveBeenCalledTimes(1));
-    const sent = createBillAsync.mock.calls[0]![0] as { debtorId: string; billDate: string; notes?: string; lines: unknown[] };
-    expect(sent.debtorId).toBe('d1');
-    expect(sent.billDate).toMatch(ISO_DATE);
-    expect(sent.billDate).not.toBe('2026-09-05');
-    expect(sent.notes).toBe('转租九月');
-    expect(sent.lines).toEqual([{ description: '转租', creditAccountCode: '700-0000', amountSen: 50000 }]);
   });
 });
 
@@ -341,18 +264,6 @@ describe('an event on a bill line — optional', () => {
     expect((createBillAsync.mock.calls[0]![0] as { lines: unknown[] }).lines).toEqual([{ creditAccountCode: '700-0000', amountSen: 150000, projectId: 348 }]);
   });
 
-  test("Edit keeps a line's event", async () => {
-    updateBillAsync.mockClear();
-    draw();
-    fireEvent.click(screen.getByText('HC-ODB-2608-003'));
-    fireEvent.click(within(dialog()).getByText('Edit'));
-    const d = screen.getAllByRole('dialog').at(-1)!;
-    expect((within(d).getByLabelText('line 1 event') as HTMLInputElement).value).toMatch(/MLE @ PWCC/);
-    fireEvent.click(within(d).getByText('Save & re-post'));
-    await waitFor(() => expect(updateBillAsync).toHaveBeenCalledWith({
-      billId: 'b2', body: { billDate: '2026-08-20', lines: [{ creditAccountCode: '700-0000', amountSen: 10000, projectId: 348 }] },
-    }));
-  });
 });
 
 /* Debit notes to other debtors (owner 2026-10-28: Customer & Other Debtor CN / DN): this
