@@ -49,6 +49,7 @@ export const fieldsSchema = z.object({
   amendedDeliveryDate: z.string().nullable().optional(),    // YYYY-MM-DD (we confirm)
   // DO-execution (→ delivery_orders)
   timeRange: z.string().nullable().optional(),
+  jobKind: z.enum(['customer_pickup', 'delivery', 'inspection']).optional(),  // service-case leg the write targets
   timeConfirmed: z.boolean().nullable().optional(),
   arrivalAt: z.string().nullable().optional(),            // ISO datetime
   departureAt: z.string().nullable().optional(),

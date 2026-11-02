@@ -89,7 +89,7 @@ import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMa
 /* Service-Case rows on this board are company-scoped (owner ruling 2026-08-21).
    Both statements live in ONE module, with the reasoning, so the predicate is
    assertable and cannot be re-derived by hand here. */
-import { assrBoardLocation, assrOpenCaseGuardSql, ASSR_BOARD_LEGS, ASSR_CONFIRMED_COL, assrBoardLegs, assrCaseClosed } from '../lib/assr-board-scope'; import { overlayAssrChatState } from '../lib/assr-arrangement-message';
+import { assrBoardLocation, assrOpenCaseGuardSql, ASSR_BOARD_LEGS, ASSR_CONFIRMED_COL, assrBoardLegs, assrCaseClosed, ASSR_LEG_TIME_COL } from '../lib/assr-board-scope'; import { overlayAssrChatState } from '../lib/assr-arrangement-message';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
@@ -1139,7 +1139,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           delivery_message_status: a.delivery_message_status ?? null,
           disposal_request: null,
           dp_remark: null,
-          time_range: null,
+          time_range: a[ASSR_LEG_TIME_COL[leg.jobKind]] ?? null,
           time_confirmed: null,
           arrival_at: null,
           departure_at: null,
@@ -1919,6 +1919,7 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
     const r = await writeNonSoFields(c, sb, type, id, {
       deliveryMessageStatus: p.deliveryMessageStatus as string | null | undefined,
       timeRange: p.timeRange as string | null | undefined,
+      jobKind: p.jobKind as 'customer_pickup' | 'delivery' | 'inspection' | undefined,
     });
     return c.json(r.body, r.status);
   }

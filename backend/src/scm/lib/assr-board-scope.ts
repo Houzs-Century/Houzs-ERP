@@ -68,6 +68,11 @@ export const ASSR_CONFIRMED_COL = {
   customer_pickup: 'sched_pickup_date', inspection: 'sched_inspection_date', delivery: 'sched_delivery_date',
 } as const;
 
+/** The Time Slot a Service Case keeps per leg (HC-0194), typed on the board. */
+export const ASSR_LEG_TIME_COL = {
+  customer_pickup: 'pickup_time_range', inspection: 'inspection_time_range', delivery: 'delivery_time_range',
+} as const;
+
 /* Stages AFTER each leg's own step (the HC sheet feed's rule): that leg is done. */
 const PAST_PICKUP = PAST_PICKUP_STAGES;
 const PAST_INSPECTION = new Set(['pending_supplier_pickup', ...PAST_PICKUP_STAGES]);
@@ -151,6 +156,9 @@ export function assrBoardUnionSql(c: CompanyScopeCtx, recentClosedSince: string)
               assr_cases.sched_pickup_date AS sched_pickup_date,
               assr_cases.sched_inspection_date AS sched_inspection_date,
               assr_cases.sched_delivery_date AS sched_delivery_date,
+              assr_cases.pickup_time_range AS pickup_time_range,
+              assr_cases.inspection_time_range AS inspection_time_range,
+              assr_cases.delivery_time_range AS delivery_time_range,
               assr_cases.closed_at     AS closed_at,
               assr_cases.archived_at   AS archived_at,
               assr_cases.delivery_message_status AS delivery_message_status,
