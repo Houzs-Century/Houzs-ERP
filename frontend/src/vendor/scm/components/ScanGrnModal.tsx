@@ -22,7 +22,7 @@ import { Button } from '@2990s/design-system';
 import { compressForOcr } from '../../shared/image-compress';
 import { writeFailedAs } from '../lib/mutation-error';
 import {
-  PENDING_KEY, createFromScans, discardScans, fetchPending, fetchPoLines, localBlock, retryScan, saveReview, uploadScans,
+  PENDING_KEY, createFromScans, discardScans, fetchPending, fetchPoLines, localBlock, markGold, retryScan, saveReview, uploadScans,
   type CheckPoLine, type CreateResult, type GrnReview,
 } from '../lib/scan-gr-check';
 import { DateField } from './DateField';
@@ -254,6 +254,7 @@ export function ScanGrnModal({ onClose }: { onClose: () => void }) {
                   onToggle={() => setTicked((cur) => ({ ...cur, [d.id]: !cur[d.id] }))}
                   onChange={(r) => edit(d.id, r)}
                   onDelete={() => void remove([d.id])}
+                  onGold={() => { markGold(d.id).then(() => qc.invalidateQueries({ queryKey: PENDING_KEY })).catch(writeFailedAs('Could not mark it as gold')); }}
                   onRetry={() => { retryScan(d.id).then(() => qc.invalidateQueries({ queryKey: PENDING_KEY })).catch(writeFailedAs('Could not read it again')); }}
                 />
               ))}

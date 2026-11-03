@@ -4,7 +4,7 @@
 // fields and the lines to edit before it becomes a draft goods receipt.
 // ----------------------------------------------------------------------------
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, FileText, Loader2, Plus, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileText, Loader2, Plus, Star, X } from 'lucide-react';
 import { DateField } from './DateField';
 import { fetchDocFileBlobUrl } from '../lib/payment-voucher-queries';
 import { writeFailedAs } from '../lib/mutation-error';
@@ -22,11 +22,12 @@ type Props = {
   onChange: (review: GrnReview) => void;
   onDelete: () => void;
   onRetry: () => void;
+  onGold: () => void;
 };
 
 const label = (l: CheckPoLine) => `${l.poNumber} · ${l.itemCode}${l.name ? ` · ${l.name}` : ''} · owed ${l.remaining}${l.warehouse ? ` · ${l.warehouse}` : ''}`;
 
-export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, block, onToggle, onChange, onDelete, onRetry }: Props) {
+export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, block, onToggle, onChange, onDelete, onRetry, onGold }: Props) {
   const [open, setOpen] = useState(false);
   const supplier = suppliers.find((s) => s.id === review?.supplierId);
   const mine = poLines.filter((l) => l.supplierId === review?.supplierId);
@@ -71,6 +72,11 @@ export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, blo
         {doc.duplicateOf && <span className={`${styles.chip} ${styles.chipYellow}`}>Already {doc.duplicateOf}</span>}
         {block && <span className={`${styles.chip} ${styles.chipGrey}`} title={block}>Needs a fix</span>}
         <span style={{ flex: 1 }} />
+        {doc.canGold && (
+          <button type="button" className={styles.docLink} onClick={onGold} disabled={doc.gold} title="Mark this read as a good example the scanner learns from">
+            <Star size={13} style={{ verticalAlign: '-2px' }} fill={doc.gold ? 'currentColor' : 'none'} /> {doc.gold ? 'Gold' : 'Mark as gold'}
+          </button>
+        )}
         {doc.hasFile && (
           <button type="button" className={styles.docLink} onClick={() => void viewFile()}>
             <FileText size={13} style={{ verticalAlign: '-2px' }} /> {doc.fileName ?? 'File'}{pages}

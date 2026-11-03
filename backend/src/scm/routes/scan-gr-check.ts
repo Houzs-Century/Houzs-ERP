@@ -45,9 +45,9 @@ const KEEP_DAYS = 14;
 type CheckRow = {
   id: string; batch_id: string | null; status: string; review_state: string; review: GrnReview | null;
   error: string | null; file_name: string | null; page_from: number | null; page_to: number | null;
-  image_keys: string[] | null; linked_doc_no: string | null; created_at: string;
+  image_keys: string[] | null; linked_doc_no: string | null; created_at: string; sample_id: string | null;
 };
-const ROW_COLS = 'id, batch_id, status, review_state, review, error, file_name, page_from, page_to, image_keys, linked_doc_no, created_at';
+const ROW_COLS = 'id, batch_id, status, review_state, review, error, file_name, page_from, page_to, image_keys, linked_doc_no, created_at, sample_id';
 
 /* POST /scan-gr/check/upload — multipart, repeated `file`. Every file is one
    document, except a PDF of several pages, which is split into the documents it
@@ -91,9 +91,11 @@ scanGrCheck.post('/upload', async (c) => {
        matched, before any edit) instead of paying for another, like Hookka's
        file-hash cache. The operator still checks it. */
     const fileHash = await sha256Hex(d.bytes);
-    const { data: prior } = await svc.from('scan_jobs').select('review, error').eq('company_id', companyId).eq('document_type', 'GR')
+    const { data: prior, error: priorErr } = await svc.from('scan_jobs').select('review, error').eq('company_id', companyId).eq('document_type', 'GR')
       .eq('file_hash', fileHash).not('review', 'is', null).order('created_at', { ascending: false }).limit(1).maybeSingle();
-    const seen = prior as { review: unknown; error: string | null } | null;
+    // A failed look-up only costs a fresh read, never a wrong one.
+    if (priorErr) console.warn('[scan-gr check] earlier-read look-up failed, reading afresh:', priorErr.message);
+    const seen = priorErr ? null : (prior as { review: unknown; error: string | null } | null);
     const { data, error } = await svc.from('scan_jobs').insert({
       status: seen ? 'done' : 'queued', document_type: 'GR', review_state: seen ? 'pending' : 'reading', batch_id: batchId,
       review: seen?.review ?? null, error: seen ? seen.error : null, file_hash: fileHash,
@@ -114,8 +116,9 @@ scanGrCheck.post('/upload', async (c) => {
       try { await c.env.SCAN_QUEUE.send({ jobId: id }); } catch (e) { console.error('[scan-gr check] queue send failed:', id, (e as Error).message); }
     } else {
       const run = (async () => {
-        const { data } = await svc.from('scan_jobs').select('id, salesperson_id, houzs_user_id, image_keys, company_id, review_state').eq('id', id).single();
-        if (data) await runGrnJobFromRow(c.env, id, data as Record<string, unknown>);
+        const { data, error: readErr } = await svc.from('scan_jobs').select('id, salesperson_id, houzs_user_id, image_keys, company_id, review_state').eq('id', id).single();
+        if (readErr) { console.error('[scan-gr check] job read failed:', id, readErr.message); return; }
+        await runGrnJobFromRow(c.env, id, data as Record<string, unknown>);
       })();
       try { c.executionCtx.waitUntil(run); } catch { /* non-Workers runtime (tests) */ }
     }
@@ -143,17 +146,28 @@ scanGrCheck.get('/pending', async (c) => {
   const refs = [...new Set(rows.map((r) => r.review?.doNo).filter((x): x is string => !!x))];
   const existing: Array<{ grnNumber: string; supplierId: string | null; deliveryNoteRef: string | null }> = [];
   if (refs.length > 0) {
-    const { data: g } = await svc.from('grns').select('grn_number, supplier_id, delivery_note_ref')
+    const { data: g, error: gErr } = await svc.from('grns').select('grn_number, supplier_id, delivery_note_ref')
       .eq('company_id', companyId).neq('status', 'CANCELLED').in('delivery_note_ref', refs);
-    for (const x of (g ?? []) as Array<{ grn_number: string; supplier_id: string | null; delivery_note_ref: string | null }>) {
+    // Without this read no repeat could be flagged, so the list is refused rather than shown clean.
+    if (gErr) return c.json({ error: 'query_failed', reason: 'Could not check for delivery orders already received. Please try again.' }, 500);
+    for (const x of (g as Array<{ grn_number: string; supplier_id: string | null; delivery_note_ref: string | null }> | null) ?? []) {
       existing.push({ grnNumber: x.grn_number, supplierId: x.supplier_id, deliveryNoteRef: x.delivery_note_ref });
     }
+  }
+  // Marked as gold = the read is a good example the scanner learns from (so_scan_samples ACCEPTED / CONFIRMED).
+  const sampleIds = rows.map((r) => r.sample_id).filter((x): x is string => !!x);
+  const gold = new Set<string>();
+  if (sampleIds.length > 0) {
+    const { data: ss, error: ssErr } = await svc.from('so_scan_samples').select('id, status').in('id', sampleIds);
+    if (ssErr) console.warn('[scan-gr check] sample status read failed (gold marks hidden):', ssErr.message);
+    for (const x of (ss as Array<{ id: string; status: string }> | null) ?? []) if (x.status === 'ACCEPTED' || x.status === 'CONFIRMED') gold.add(x.id);
   }
   const supplierIds = new Set(rows.map((r) => r.review?.supplierId).filter(Boolean));
   const documents = rows.map((r) => ({
     id: r.id, batchId: r.batch_id, fileName: r.file_name, pages: r.page_from != null ? [r.page_from, r.page_to] : null,
     state: r.status === 'error' ? 'failed' : r.review_state, note: r.error, review: r.review, createdAt: r.created_at,
     hasFile: (r.image_keys ?? []).length > 0,
+    canGold: !!r.sample_id, gold: !!r.sample_id && gold.has(r.sample_id),
     duplicateOf: r.review ? duplicateOf(r.review, existing) : null,
     blocked: r.review ? blockedReason(r.review, open) : null,
   }));
@@ -178,15 +192,20 @@ scanGrCheck.get('/po-lines', async (c) => {
 
 async function ownRows(svc: SupabaseClient, c: Parameters<typeof activeCompanyId>[0] & { get(k: 'houzsUser'): { id?: unknown } | undefined }, ids: string[]): Promise<CheckRow[]> {
   if (ids.length === 0) return [];
-  const { data } = await svc.from('scan_jobs').select(ROW_COLS)
+  const { data, error } = await svc.from('scan_jobs').select(ROW_COLS)
     .eq('company_id', activeCompanyId(c)).eq('document_type', 'GR').eq('houzs_user_id', callerId(c)).in('id', ids.slice(0, 200));
-  return (data ?? []) as CheckRow[];
+  if (error) throw new Error(`Could not load your scans: ${error.message}`);
+  return (data as CheckRow[] | null) ?? [];
+}
+/** The request body, or null when it is not JSON (the caller answers 400). */
+async function jsonBody(c: { req: { json(): Promise<unknown> } }): Promise<unknown> {
+  try { return await c.req.json(); } catch { return null; }
 }
 const idsOf = (body: unknown): string[] => (Array.isArray((body as { ids?: unknown } | null)?.ids) ? ((body as { ids: unknown[] }).ids).filter((x): x is string => typeof x === 'string') : []);
 
 /* PATCH /scan-gr/check/:id {review} — save the operator's edit. */
 scanGrCheck.patch('/:id', async (c) => {
-  const body = await c.req.json().catch(() => null) as { review?: unknown } | null;
+  const body = await jsonBody(c) as { review?: unknown } | null;
   const review = cleanReview(body?.review);
   if (!review) return c.json({ error: 'bad_request', reason: 'Nothing to save.' }, 400);
   const svc = svcOf(c.env);
@@ -205,7 +224,7 @@ scanGrCheck.post('/create', async (c) => {
   // company-scope: rows are read with the active company and the caller; drafts go through createDraftGrnFromPoItems, whose PO-line read is company-scoped; each row update repeats the company predicate.
   const svc = svcOf(c.env);
   const companyId = activeCompanyId(c) ?? null;
-  const rows = (await ownRows(svc, c, idsOf(await c.req.json().catch(() => null)))).filter((r) => r.review_state === 'pending' && r.review);
+  const rows = (await ownRows(svc, c, idsOf(await jsonBody(c)))).filter((r) => r.review_state === 'pending' && r.review);
   const companyCode = await companyCodeById(svc, companyId);
   const houzsUserId = callerId(c);
   const userId = (await resolveCallerStaffId(svc, houzsUserId)) ?? c.get('user').id;
@@ -242,13 +261,31 @@ scanGrCheck.post('/create', async (c) => {
    sends every id). The read stays for the audit and the learning pool. */
 scanGrCheck.post('/discard', async (c) => {
   const svc = svcOf(c.env);
-  const rows = await ownRows(svc, c, idsOf(await c.req.json().catch(() => null)));
+  const rows = await ownRows(svc, c, idsOf(await jsonBody(c)));
   const ids = rows.filter((r) => r.review_state === 'pending' || r.review_state === 'reading' || r.status === 'error').map((r) => r.id);
   if (ids.length === 0) return c.json({ success: true, data: { discarded: 0 } });
   const { error } = await svc.from('scan_jobs').update({ review_state: 'discarded', updated_at: new Date().toISOString() })
     .eq('company_id', activeCompanyId(c)).in('id', ids);
   if (error) return c.json({ error: 'discard_failed', reason: 'Could not delete. Please try again.' }, 500);
   return c.json({ success: true, data: { discarded: ids.length } });
+});
+
+/* POST /scan-gr/check/:id/gold — mark this read as a good example: the sample
+   lands ACCEPTED (corrected = what was read) and joins the scanner's few-shot
+   pool, the same promotion a posted draft gives it. */
+scanGrCheck.post('/:id/gold', async (c) => {
+  // company-scope: the sample id comes from the caller's own company-scoped scan row; so_scan_samples has no company column.
+  const svc = svcOf(c.env);
+  const row = (await ownRows(svc, c, [c.req.param('id')]))[0] as CheckRow | undefined;
+  if (!row?.sample_id) return c.json({ error: 'not_found', reason: 'Nothing was read off this scan yet.' }, 404);
+  const { data: sample, error: readErr } = await svc.from('so_scan_samples').select('extracted, status').eq('id', row.sample_id).maybeSingle();
+  if (readErr) return c.json({ error: 'query_failed', reason: 'Could not load this read. Please try again.' }, 500);
+  const sm = sample as { extracted: unknown; status: string } | null;
+  if (!sm?.extracted) return c.json({ error: 'not_found', reason: 'Nothing was read off this scan.' }, 404);
+  if (sm.status === 'ACCEPTED' || sm.status === 'CONFIRMED') return c.json({ success: true });
+  const { error } = await svc.from('so_scan_samples').update({ corrected: sm.extracted, status: 'ACCEPTED' }).eq('id', row.sample_id).eq('status', sm.status);
+  if (error) return c.json({ error: 'save_failed', reason: 'Could not mark it. Please try again.' }, 500);
+  return c.json({ success: true });
 });
 
 /* POST /scan-gr/check/:id/retry — read a document that failed once more. */

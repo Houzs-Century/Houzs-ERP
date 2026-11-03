@@ -29,6 +29,8 @@ export type CheckDoc = {
   review: GrnReview | null;
   createdAt: string;
   hasFile: boolean;
+  canGold: boolean;
+  gold: boolean;
   duplicateOf: string | null;
   blocked: string | null;
 };
@@ -51,6 +53,7 @@ export const saveReview = (id: string, review: GrnReview) =>
   authedFetch(`/scan-gr/check/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ review }) });
 export const createFromScans = (ids: string[]) =>
   authedFetch<{ data: { results: CreateResult[] } }>('/scan-gr/check/create', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ids }) }).then((r) => r.data.results);
+export const markGold = (id: string) => authedFetch(`/scan-gr/check/${id}/gold`, { method: 'POST' });
 export const retryScan = (id: string) => authedFetch(`/scan-gr/check/${id}/retry`, { method: 'POST' });
 export const discardScans = (ids: string[]) =>
   authedFetch('/scan-gr/check/discard', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ids }) });

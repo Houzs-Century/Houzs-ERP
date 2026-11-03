@@ -9,9 +9,9 @@ const pending = {
   success: true,
   data: {
     documents: [
-      { id: 'a', batchId: 'b', fileName: 'do.pdf', pages: [1, 1], state: 'pending', note: null, review: review('DO-1', 'pi-1'), createdAt: '', hasFile: true, duplicateOf: null, blocked: null },
-      { id: 'b', batchId: 'b', fileName: 'do.pdf', pages: [2, 2], state: 'pending', note: null, review: review('DO-2', 'pi-2'), createdAt: '', hasFile: true, duplicateOf: 'HC-GRN-9', blocked: null },
-      { id: 'c', batchId: 'b', fileName: 'do.pdf', pages: [3, 3], state: 'reading', note: null, review: null, createdAt: '', hasFile: true, duplicateOf: null, blocked: null },
+      { id: 'a', batchId: 'b', fileName: 'do.pdf', pages: [1, 1], state: 'pending', note: null, review: review('DO-1', 'pi-1'), createdAt: '', hasFile: true, canGold: true, gold: false, duplicateOf: null, blocked: null },
+      { id: 'b', batchId: 'b', fileName: 'do.pdf', pages: [2, 2], state: 'pending', note: null, review: review('DO-2', 'pi-2'), createdAt: '', hasFile: true, canGold: true, gold: false, duplicateOf: 'HC-GRN-9', blocked: null },
+      { id: 'c', batchId: 'b', fileName: 'do.pdf', pages: [3, 3], state: 'reading', note: null, review: null, createdAt: '', hasFile: true, canGold: true, gold: false, duplicateOf: null, blocked: null },
     ],
     suppliers: [{ id: 's1', code: 'DG', name: 'DIGLANT' }],
     poLines: [
