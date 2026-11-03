@@ -182,3 +182,41 @@ export function scopeMatchesAssignment(
   for (const h of assignment.helperIds) if (h && scope.helperIds.has(String(h))) return true;
   return false;
 }
+
+/**
+ * Which company a Delivery-Order status WRITE should scope to.
+ *
+ * THE GAP THIS CLOSES (owner, 2026-11-03): an in-house driver delivers BOTH
+ * companies' goods on one lorry, and the phone has no company switcher, so a
+ * driver is always "in" their base company (HOUZS). The DO status write
+ * (PATCH /delivery-orders-mfg/:id/status) scoped to that ACTIVE company and so
+ * 404'd a 2990 drop the driver was standing in front of — they could SEE the
+ * stop (the board + POD-context reads are cross-company) but could not complete
+ * it. A driver's authorization to complete a delivery is "it is crewed to me",
+ * not "it is my active company".
+ *
+ * So for a bypassed driver POD (`bypassPod`), the write acts on the DO's OWN
+ * company. `doCompanyIdWhenGranted` is that company_id as read THROUGH the
+ * caller's company grant (scopeToAllowedCompanies): null means the DO is in no
+ * company this caller is granted, which is a plain `not_your_job` — the grant
+ * stays the outer tenancy boundary (nothing leaks to an ungranted company) and
+ * the crew-ownership check at the call site is the inner one. Every other caller
+ * (`bypassPod` false) stays on the ACTIVE company — isolation unchanged.
+ *
+ * Pure so it is unit-tested directly; the DB read and the crew check live at the
+ * call site in routes/delivery-orders-mfg.ts.
+ */
+export type PodWriteScope =
+  | { readonly kind: "do_company"; readonly companyId: number }
+  | { readonly kind: "not_your_job" }
+  | { readonly kind: "active" };
+
+export function podWriteScopeCompany(
+  bypassPod: boolean,
+  doCompanyIdWhenGranted: number | null | undefined,
+): PodWriteScope {
+  if (!bypassPod) return { kind: "active" };
+  const id = Number(doCompanyIdWhenGranted);
+  if (Number.isInteger(id) && id > 0) return { kind: "do_company", companyId: id };
+  return { kind: "not_your_job" };
+}
