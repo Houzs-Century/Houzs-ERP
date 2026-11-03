@@ -32,6 +32,7 @@ import {
   type DocAction, type DocFact, type TrailStep,
 } from './MoneyInDocPage';
 import { liveJournal, useDebtorReceipt, useDocJournals, type DebtorReceiptAllocation } from './moneyInDocQueries';
+import { generateDebtorReceiptPdf } from '../../../vendor/scm/lib/debtor-receipt-pdf';
 import { debtorReceiptTag } from './moneyInStatus';
 import { moneyInDocHref } from './moneyInDocs';
 import s from './MoneyInDoc.module.css';
@@ -175,6 +176,15 @@ export const DebtorReceiptDoc = () => {
       kind="debtorReceipt" kindLabel="Other debtor receipt" number={no} tag={debtorReceiptTag(stage)}
       sub={stage === 'Checked' && !canApprove ? 'Waiting for approval' : null}
       taskLink={{ type: 'Other debtor receipt', no, name: debtorName, to: moneyInDocHref('debtorReceipt', r.id) }}
+      printJob={{
+        title: 'Receipt', docNo: no, papers: ['A4'],
+        rows: [{ label: 'Received from', value: debtorName }, { label: 'Amount', value: fmtSen(r.total_sen) }],
+        deliver: (action) => generateDebtorReceiptPdf({
+          receipt: r, debtor: d.debtor,
+          bills: d.allocations.map((a) => ({ billNumber: a.billNumber, description: a.description, amountSen: a.amountSen })),
+          accountName, journalNo: live?.je_no ?? null,
+        }, { action }),
+      }}
       actions={actions}
       ask={ask ? <AskBanner key={ask.title} ask={ask} busy={busy} error={askError} onKeep={() => setAsking(null)} /> : null}
       notice={failure ? <div role="alert" className={`${s.note} ${s.toneLate}`}>{failure}</div> : null}

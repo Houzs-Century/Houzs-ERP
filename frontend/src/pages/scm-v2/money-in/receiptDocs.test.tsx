@@ -102,6 +102,8 @@ const DEBTOR_D1 = {
 const PERMS = { value: new Set<string>(['*']) };
 vi.mock('../../../auth/AuthContext', () => ({ useAuth: () => ({ can: (k: string) => PERMS.value.has('*') || PERMS.value.has(k) }) }));
 const receiptPdf = vi.fn(async (_r: unknown, _o: unknown) => {});
+const debtorPdf = vi.fn(async (_d: unknown, _o: unknown) => {});
+vi.mock('../../../vendor/scm/lib/debtor-receipt-pdf', () => ({ generateDebtorReceiptPdf: (d: unknown, o: unknown) => debtorPdf(d, o) }));
 vi.mock('../../../vendor/scm/lib/receipt-pdf', () => ({ generateReceiptPdf: (r: unknown, o: unknown) => receiptPdf(r, o) }));
 vi.mock('../PvDocParts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../PvDocParts')>()),
@@ -165,8 +167,14 @@ describe('an official receipt, as a page', () => {
     expect(fact('Confirmed').textContent).toBe('Cash at the counter · 2026/10/02');
     expect(screen.queryByText('Payment keyed', { selector: 'dt' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /Print/ }));
-    expect((receiptPdf.mock.calls[0]![0] as { or_number: string }).or_number).toBe('2990-COR-2610-002');
+    const preview = screen.getByRole('dialog', { name: 'Print preview' });
+    expect(preview.textContent).toContain('A5 landscape · half an A4 sheet · one receipt per page · same letterhead as the payment voucher');
+    fireEvent.click(within(preview).getByText('Print now'));
+    await waitFor(() => expect(receiptPdf).toHaveBeenCalled());
+    expect((receiptPdf.mock.calls[0]![0] as { or_number: string; sales_order: string }).or_number).toBe('2990-COR-2610-002');
+    expect((receiptPdf.mock.calls[0]![0] as { sales_order: string }).sales_order).toBe('2990-SO-2610-020');
     expect(receiptPdf.mock.calls[0]![1]).toEqual({ action: 'print' });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Print preview' })).toBeNull());
     fireEvent.click(screen.getByRole('button', { name: /Add task/ }));
     expect(screen.getByRole('dialog', { name: 'Add task' }).textContent).toBe('Official receipt 2990-COR-2610-002 → /scm/receipts/official/9');
   });
@@ -230,6 +238,23 @@ describe("an other debtor's receipt walks the four layers", () => {
     expect(within(ask).getByRole('button', { name: 'Not now' })).toBeTruthy();
     fireEvent.click(within(ask).getByRole('button', { name: 'Approve & post' }));
     expect(stepMutate.mock.calls[0]![0]).toEqual({ receiptId: 'r1', action: 'approve' });
+  });
+
+  /* Batch 5 step 10: the receipt prints on the A4 RECEIPT — DRAFT across it until approved (the generator's). */
+  test('Print opens the print dialog; Print now hands the receipt, its debtor and the bills it knocks off to the RECEIPT', async () => {
+    openDebtorReceipt({});
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: '2990-ODR-2610-001' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Print/ }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Print preview' })).getByText('Print now'));
+    await waitFor(() => expect(debtorPdf).toHaveBeenCalled());
+    const [data, opts] = debtorPdf.mock.calls[0]! as [{ receipt: { receipt_number: string }; debtor: { name: string }; bills: unknown[] }, unknown];
+    expect(data.receipt.receipt_number).toBe('2990-ODR-2610-001');
+    expect(data.debtor.name).toBe('AHMAD BIN ALI');
+    expect(data.bills).toEqual([
+      { billNumber: '2990-ODB-2609-001', description: '转租九月', amountSen: 50_000 },
+      { billNumber: '2990-ODB-2609-002', description: 'Booth rental', amountSen: 10_000 },
+    ]);
+    expect(opts).toEqual({ action: 'print' });
   });
 
   test('checked, for someone who cannot approve: it waits, no Approve', async () => {

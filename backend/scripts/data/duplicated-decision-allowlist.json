@@ -1532,8 +1532,8 @@
     },
     {
       "check": "D1",
-      "key": "#,AMOUNT,DESCRIPTION|frontend/src/vendor/scm/lib/debtor-bill-pdf.ts frontend/src/vendor/scm/lib/deposit-invoice-pdf.ts",
-      "why": "TWO PRINTED TABLES' COLUMN HEADINGS that happen to match (owner 2026-10-06, the Deposit Invoice reprinted in the Sales Invoice layout): a debtor bill's lines and a deposit invoice's one deposit line each print # / Description / Amount. A heading row is how one document lays out its own table, not a business rule with two homes; divergence costs a differently titled column, never a figure."
+      "key": "#,AMOUNT,DESCRIPTION|frontend/src/vendor/scm/lib/credit-note-pdf.ts frontend/src/vendor/scm/lib/debtor-bill-pdf.ts frontend/src/vendor/scm/lib/deposit-invoice-pdf.ts frontend/src/vendor/scm/lib/receipt-a4-pdf.ts",
+      "why": "TWO PRINTED TABLES' COLUMN HEADINGS that happen to match (owner 2026-10-06, the Deposit Invoice reprinted in the Sales Invoice layout): a debtor bill's lines and a deposit invoice's one deposit line each print # / Description / Amount — and since the owner’s Claude Design (batch 5 step 10) so do the customer’s credit / debit note and the A4 RECEIPT, the design’s one A4 family. A heading row is how one document lays out its own table, not a business rule with two homes; divergence costs a differently titled column, never a figure."
     },
     {
       "check": "D1",

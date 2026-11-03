@@ -9,10 +9,16 @@
 // The title is the kind's — CREDIT NOTE, DEBIT NOTE, SUPPLIER CREDIT NOTE.
 // A DRAFT prints with a DRAFT watermark, a CANCELLED note with CANCELLED.
 // Several notes print as ONE document, a page each, in list order.
+//
+// The owner's Claude Design (batch 5 §9.1): a note to a customer or an other
+// debtor takes the A4 family — CUSTOMER beside NOTE DETAILS (the papers it
+// answers and why), each line's description and amount with the accounts off
+// the paper, TOTAL CREDIT / TOTAL DEBIT, the amount in words, Issued by and the
+// company chop. A supplier's credit note (Money out) keeps its paper.
 // ----------------------------------------------------------------------------
 
 import {
-  drawHeader, drawTwoColInfo, drawSignatureBoxes, deliverPdf, deliverPdfBlob,
+  drawHeader, drawInfoColumns, drawTwoColInfo, drawSignatureBoxes, deliverPdf, deliverPdfBlob,
   amountInWordsMyr, fmtRm, fmtDocDate, safeName, DOC_TABLE_STYLES, DOC_TABLE_HEAD_STYLES, type PdfAction,
 } from './pdf-common';
 
@@ -56,7 +62,7 @@ export function renderCreditNoteInto(
   const margin = 14;
   const startPage = doc.getNumberOfPages();
 
-  let y = drawHeader(doc, {
+  const y = drawHeader(doc, {
     docTitle: KIND_TITLE[h.kind],
     rightMeta: [
       { label: 'Note No', value: h.note_number },
@@ -65,7 +71,46 @@ export function renderCreditNoteInto(
   });
 
   const closesDeposit = looksLikeDepositInvoice(h.source_doc_no);
-  y = drawTwoColInfo(doc, y + 2, h.kind === 'SCN' ? 'SUPPLIER' : 'CUSTOMER', 'REFERENCES',
+  /* A note to a customer or an other debtor takes the design's A4 family; a supplier's keeps its paper. */
+  if (h.kind === 'SCN') renderSupplierNoteBody(doc, autoTable, h, lines, accountName, y, closesDeposit);
+  else renderCustomerNoteBody(doc, autoTable, h, lines, accountName, y, closesDeposit);
+
+  const pageCount = doc.getNumberOfPages();
+  for (let p = startPage; p <= pageCount; p += 1) {
+    doc.setPage(p);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(110);
+    doc.text(h.note_number, margin, 290);
+    if (h.je_no) doc.text(`Journal ${h.je_no}`, pageW - margin, 290, { align: 'right' });
+    doc.setTextColor(0);
+    if (h.status !== 'POSTED') {
+      const pageH = doc.internal.pageSize.getHeight();
+      doc.saveGraphicsState();
+      doc.setGState(doc.GState({ opacity: 0.14 }));
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(64);
+      doc.setTextColor(180, 30, 30);
+      doc.text(h.status === 'CANCELLED' ? 'CANCELLED' : 'DRAFT', pageW / 2, pageH / 2, { align: 'center', angle: 30 });
+      doc.restoreGraphicsState();
+      doc.setTextColor(0, 0, 0);
+    }
+  }
+  doc.setPage(pageCount);
+}
+
+/** A supplier's credit note below the letterhead (Money out): SUPPLIER and the papers it answers, each line with its account, TOTAL, Prepared by. */
+function renderSupplierNoteBody(
+  doc: JsPdf,
+  autoTable: AutoTable,
+  h: CreditNotePdfHeader,
+  lines: CreditNotePdfLine[],
+  accountName: (code: string) => string | null,
+  startY: number,
+  closesDeposit: boolean,
+): void {
+  const pageW = doc.internal.pageSize.getWidth();
+  const margin = 14;
+  let y = startY;
+  y = drawTwoColInfo(doc, y + 2, 'SUPPLIER', 'REFERENCES',
     [
       h.party_name || '—',
       h.party_code ? `Code: ${h.party_code}` : null,
@@ -114,27 +159,70 @@ export function renderCreditNoteInto(
   ty += 8;
 
   drawSignatureBoxes(doc, ty + 6, 'Prepared by', 'Company chop');
+}
 
-  const pageCount = doc.getNumberOfPages();
-  for (let p = startPage; p <= pageCount; p += 1) {
-    doc.setPage(p);
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(110);
-    doc.text(h.note_number, margin, 290);
-    if (h.je_no) doc.text(`Journal ${h.je_no}`, pageW - margin, 290, { align: 'right' });
-    doc.setTextColor(0);
-    if (h.status !== 'POSTED') {
-      const pageH = doc.internal.pageSize.getHeight();
-      doc.saveGraphicsState();
-      doc.setGState(doc.GState({ opacity: 0.14 }));
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(64);
-      doc.setTextColor(180, 30, 30);
-      doc.text(h.status === 'CANCELLED' ? 'CANCELLED' : 'DRAFT', pageW / 2, pageH / 2, { align: 'center', angle: 30 });
-      doc.restoreGraphicsState();
-      doc.setTextColor(0, 0, 0);
-    }
-  }
-  doc.setPage(pageCount);
+const noteStatusWord = (s: string): string => (s === 'DRAFT' ? 'Draft' : s === 'CANCELLED' ? 'Cancelled' : s === 'POSTED' ? 'Posted' : s);
+
+/** A customer's or other debtor's note below the letterhead: CUSTOMER and NOTE
+ *  DETAILS, the lines without our accounts, TOTAL CREDIT / DEBIT, the words,
+ *  Issued by. */
+function renderCustomerNoteBody(
+  doc: JsPdf,
+  autoTable: AutoTable,
+  h: CreditNotePdfHeader,
+  lines: CreditNotePdfLine[],
+  accountName: (code: string) => string | null,
+  startY: number,
+  closesDeposit: boolean,
+): void {
+  const pageW = doc.internal.pageSize.getWidth();
+  const margin = 14;
+  let y = drawInfoColumns(doc, startY,
+    { title: 'CUSTOMER', rows: [['Name', h.party_name || '—'], ['Code', h.party_code]] },
+    {
+      title: 'NOTE DETAILS',
+      rows: [
+        ['Note No', h.note_number],
+        ['Date', fmtDocDate(h.note_date)],
+        ['Sales order', h.so_doc_no],
+        ['Deposit invoice', closesDeposit ? h.source_doc_no : null],
+        ['Final invoice', h.sales_invoice_number ?? null],
+        ['Reference', !closesDeposit ? h.source_doc_no : null],
+        ['Reason', h.reason],
+        ['Status', noteStatusWord(h.status)],
+      ],
+    },
+  );
+  /* What it is for and how much — the account behind a line stays off the paper; an unnamed line reads as its account's name. */
+  const rows = lines.map((l, idx) => [
+    String(idx + 1),
+    l.description?.trim() ? l.description : (accountName(l.account_code) ?? '—'),
+    fmtRm(Number(l.amount_sen)),
+  ]);
+  autoTable(doc, {
+    startY: y,
+    head: [['#', 'Description', 'Amount']],
+    body: rows,
+    theme: 'plain',
+    rowPageBreak: 'avoid',
+    styles: { ...DOC_TABLE_STYLES, fontSize: 9 },
+    headStyles: DOC_TABLE_HEAD_STYLES,
+    columnStyles: { 0: { cellWidth: 8, halign: 'right' }, 1: { cellWidth: 'auto' }, 2: { cellWidth: 36, halign: 'right' } },
+    margin: { left: margin, right: margin },
+  });
+  y = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 6;
+  const totalsX = pageW - margin - 70;
+  doc.setDrawColor(0); doc.line(totalsX, y - 2, pageW - margin, y - 2);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
+  doc.text(h.kind === 'DN' ? 'TOTAL DEBIT' : 'TOTAL CREDIT', totalsX, y + 3);
+  doc.text(fmtRm(h.total_sen), pageW - margin, y + 3, { align: 'right' });
+  y += 10;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+  doc.text('RINGGIT (IN WORDS)', margin, y);
+  doc.setFont('helvetica', 'normal');
+  doc.text(amountInWordsMyr(h.total_sen), margin, y + 4, { maxWidth: pageW - margin * 2 });
+  y += 10;
+  drawSignatureBoxes(doc, y + 4, 'Issued by', 'Company chop');
 }
 
 const load = async (): Promise<{ jsPDF: typeof import('jspdf').jsPDF; autoTable: AutoTable }> => {

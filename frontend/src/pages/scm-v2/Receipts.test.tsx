@@ -250,8 +250,14 @@ describe('the steps', () => {
     expect(bar.textContent).toContain('3 ticked');
     expect(bar.textContent).toContain('RM 2,200.00');
     expect(bar.textContent).toContain('Confirming turns each draft formal and gives it its official number, in payment-date order.');
+    /* Print goes through the print dialog, the A5 paper named (batch 5 step 10). */
     fireEvent.click(within(bar).getByRole('button', { name: /Print 3/ }));
+    const preview = screen.getByRole('dialog', { name: 'Print preview' });
+    expect(preview.textContent).toContain('Print 3 receipts');
+    expect(preview.textContent).toContain('A5 landscape · half an A4 sheet · one receipt per page · same letterhead as the payment voucher');
+    fireEvent.click(within(preview).getByText('Print now'));
     await waitFor(() => expect(pdfMock).toHaveBeenCalledTimes(1));
+    expect(pdfMock.mock.calls[0]![1]).toEqual({ action: 'print' });
     failFormaliseOn = '5';
     fireEvent.click(within(bar).getByRole('button', { name: 'Confirm money · 2' }));
     /* The 2nd paid first, so it is numbered first; the 4th refused stops the run. */
@@ -265,7 +271,7 @@ describe('the steps', () => {
     await waitFor(() => expect(screen.getByText('HC-RCT-2611-001', { selector: 'a' })).toBeTruthy());
     fireEvent.click(within(row('HC-RCT-2611-001')).getByRole('button', { name: 'HC-RCT-2611-001 menu' }));
     const menu = screen.getByRole('menu', { name: 'HC-RCT-2611-001 menu' });
-    expect(within(menu).getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Open', 'Edit', 'Copy as new', 'Void…']);
+    expect(within(menu).getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Open', 'Edit', 'Copy as new', 'Print', 'Void…']);
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Void…' }));
     const ask = screen.getByRole('region', { name: 'Void HC-RCT-2611-001?' });
     await waitFor(() => expect(ask.textContent).toContain('Its journal HC-JE-2611-0042 is reversed by a contra dated today. The receipt stays on file as voided.'));
@@ -283,7 +289,7 @@ describe('the steps', () => {
     fireEvent.click(within(row('HC-ODR-2611-001')).getByRole('button', { name: 'Prepare' }));
     expect(stepMutate.mock.calls[0]![0]).toEqual({ receiptId: 'dr1', action: 'submit' });
     fireEvent.click(within(row('HC-ODR-2611-002')).getByRole('button', { name: 'HC-ODR-2611-002 menu' }));
-    expect(within(screen.getByRole('menu', { name: 'HC-ODR-2611-002 menu' })).getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Open', 'Reject…']);
+    expect(within(screen.getByRole('menu', { name: 'HC-ODR-2611-002 menu' })).getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Open', 'Print', 'Reject…']);
   });
 
   /* Batch 5 step 6 (c5): a Draft or a Prepared one changes in place — Debtor
@@ -293,7 +299,7 @@ describe('the steps', () => {
     await waitFor(() => expect(screen.getByText('HC-ODR-2611-001', { selector: 'a' })).toBeTruthy());
     fireEvent.click(within(row('HC-ODR-2611-001')).getByRole('button', { name: 'HC-ODR-2611-001 menu' }));
     const menu = screen.getByRole('menu', { name: 'HC-ODR-2611-001 menu' });
-    expect(within(menu).getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Open', 'Edit', 'Prepare']);
+    expect(within(menu).getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Open', 'Edit', 'Prepare', 'Print']);
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Edit' }));
     expect(screen.getByTestId('where').textContent).toContain('form=edit&id=dr1&type=debtor');
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Edit HC-ODR-2611-001' })).toBeTruthy());

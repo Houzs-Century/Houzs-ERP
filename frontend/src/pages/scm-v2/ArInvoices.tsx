@@ -32,7 +32,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { AlertCircle, FileDown, MoreHorizontal, Plus, Printer, Send, Truck } from 'lucide-react';
+import { AlertCircle, MoreHorizontal, Plus, Printer, Send, Truck } from 'lucide-react';
 import { useAccounts, useCancelDebtorBill, useOtherDebtors } from '../../vendor/scm/lib/accounting-queries';
 import { useArInvoices, type ArListRow } from '../../vendor/scm/lib/ar-invoice-queries';
 import {
@@ -57,6 +57,7 @@ import { BatchBar, Chips, SearchBox, Segments, StatusTag, tidyMenu, useRowMenu, 
 import { liveJournal, useDocJournals } from './money-in/moneyInDocQueries';
 import { openRowStyle } from './money-in/moneyInStatus';
 import { useMoneyInGates } from './money-in/moneyInGates';
+import { batchTitle, useMoneyInPrint } from './money-in/moneyInPrint';
 import {
   arItem, depositItem, inInvoiceChip, inInvoiceKind, invoiceChips, invoiceHref, invoiceKindLabel, invoiceKindTag,
   matchesInvoice, newestInvoiceFirst, readInvoiceChip, readInvoiceKind, type InvoiceItem, type InvoiceKindPick,
@@ -167,8 +168,8 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
 
   /* Print: each document as it prints — a sales invoice the Sales print (f4),
      a debtor bill its own, a deposit invoice its A4 sheet — ONE document in
-     list order. */
-  const print = async (rows: InvoiceItem[], action: PdfAction = 'print') => {
+     list order, through the print dialog (batch 5 step 10). */
+  const deliverPrint = async (rows: InvoiceItem[], action: PdfAction) => {
     if (rows.length === 0 || busy) return;
     setBusy('print'); setFailure(null);
     try {
@@ -186,6 +187,18 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
     } catch (e) {
       setFailure(errText(e));
     } finally { setBusy(null); }
+  };
+
+  const printer = useMoneyInPrint((e) => setFailure(errText(e)));
+  const print = (rows: InvoiceItem[]) => {
+    if (rows.length === 0) return;
+    printer.open({
+      title: rows.length > 1 ? batchTitle(rows.length, false) : rows[0]!.kind === 'si' ? 'Sales invoice' : rows[0]!.kind === 'di' ? 'Deposit invoice' : rows[0]!.debitNote ? 'Debit note' : 'Debtor bill',
+      docNo: rows.length > 1 ? `${rows.length} ticked` : rows[0]!.no,
+      papers: ['A4'],
+      rows: rows.length === 1 ? [{ label: 'Bill to', value: rows[0]!.billTo }, { label: 'Amount', value: fmtSen(rows[0]!.totalSen) }] : [],
+      deliver: (action) => deliverPrint(rows, action),
+    });
   };
 
   /* Ask: cancel a deposit invoice (a reason), or a bill. */
@@ -226,7 +239,7 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
 
   const menuOf = (x: InvoiceItem): MenuItem[] => {
     const open: MenuItem = { label: 'Open', onClick: () => openRow(x) };
-    const printIt: MenuItem = { label: 'Print', onClick: () => { void print([x]); } };
+    const printIt: MenuItem = { label: 'Print', onClick: () => print([x]) };
     const order = x.forHref ? [{ label: `Open ${x.forText}`, onClick: () => openInTab(x.forHref!) }] : [];
     switch (x.kind) {
       case 'si': return tidyMenu([open, ...order, DIVIDER, printIt]);
@@ -253,7 +266,7 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
   const actionsOf = (x: InvoiceItem): ReactNode => {
     const main = x.kind === 'di' && x.status === 'notposted' && canPost
       ? <button type="button" className={ui.act} disabled={busy != null} onClick={(e) => { e.stopPropagation(); void postDeposits([x]); }}>Post to ledger</button>
-      : <button type="button" className={ui.actLink} disabled={busy != null} onClick={(e) => { e.stopPropagation(); void print([x]); }}>Print</button>;
+      : <button type="button" className={ui.actLink} disabled={busy != null} onClick={(e) => { e.stopPropagation(); print([x]); }}>Print</button>;
     return <span className={ui.acts}>{main}{rowMenu.button(x)}</span>;
   };
 
@@ -448,16 +461,14 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
                 {busy === 'post' ? 'Posting…' : `Post to ledger · ${tickedUnposted.length}`}
               </button>
             )}
-            <button type="button" className={ui.btn} disabled={busy != null} onClick={() => { void print(tickedShown); }}>
+            <button type="button" className={ui.btn} disabled={busy != null} onClick={() => print(tickedShown)}>
               <Printer size={14} /> {busy === 'print' ? 'Preparing…' : `Print ${tickedShown.length}`}
-            </button>
-            <button type="button" className={ui.btn} disabled={busy != null} onClick={() => { void print(tickedShown, 'save'); }}>
-              <FileDown size={14} /> Save as PDF
             </button>
           </BatchBar>
         )}
       </div>
       {rowMenu.popup}
+      {printer.modal}
     </div>
   );
 };

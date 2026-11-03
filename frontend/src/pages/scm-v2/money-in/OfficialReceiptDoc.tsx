@@ -103,7 +103,11 @@ export const OfficialReceiptDoc = () => {
       kind="official" kindLabel="Official receipt" number={r.or_number} tag={officialReceiptTag(r.status)}
       sub={draft ? 'money not confirmed yet' : cancelled ? `cancelled · ${r.cancel_reason ?? 'its payment changed'}` : null}
       taskLink={{ type: 'Official receipt', no: r.or_number, name: r.customer_name ?? '', to: moneyInDocHref('official', r.id) }}
-      onPrint={() => { void generateReceiptPdf(r, { action: 'print' }).catch((e: unknown) => setFailure(errText(e))); }}
+      printJob={{
+        title: 'Official receipt', docNo: r.or_number, papers: ['A5'],
+        rows: [{ label: 'Received from', value: r.customer_name ?? '—' }, { label: 'Amount', value: fmtSen(r.amount_sen) }],
+        deliver: (action) => generateReceiptPdf({ ...r, sales_order: d.salesOrder, payment_source: r.payment_source }, { action }),
+      }}
       actions={actions}
       notice={failure ? <div role="alert" className={`${s.note} ${s.toneLate}`}>{failure}</div> : null}
       party={{ label: 'Received from', name: r.customer_name ?? '—' }}

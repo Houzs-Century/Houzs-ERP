@@ -14,6 +14,12 @@
 // CANCELLED watermark and its reason — the paper must read as void from across
 // the counter. Several invoices print as ONE document, a page each, in list
 // order.
+//
+// The owner's Claude Design (batch 5 §9.1): the A4 family's INVOICE DETAILS;
+// the line `Deposit for sales order <SO> · paid by <method> on <date>`; TOTAL,
+// Deposit received −, BALANCE DUE 0.00 (the order's own standing still under
+// it); a NOTE that says it was cancelled and why, or the credit note that
+// closed it at the final invoice; a cancelled invoice reads VOID (A4).
 // ----------------------------------------------------------------------------
 
 import { formatPhone } from '@2990s/shared/phone';
@@ -87,7 +93,7 @@ export async function renderDepositInvoiceInto(doc: JsPdf, autoTable: AutoTable,
       email: o?.email ?? null,
     }),
     {
-      title: 'DEPOSIT DETAILS',
+      title: 'INVOICE DETAILS',
       rows: [
         ['DI No', d.di_number],
         ['SO Ref', d.so_doc_no],
@@ -102,7 +108,7 @@ export async function renderDepositInvoiceInto(doc: JsPdf, autoTable: AutoTable,
   autoTable(doc, {
     startY: y,
     head: [['#', 'Description', 'Amount']],
-    body: [['1', `Deposit received for Sales Order ${d.so_doc_no}`, fmtRm(d.amount_sen)]],
+    body: [['1', `Deposit for sales order ${d.so_doc_no} · paid by ${methodLabel(d.method)} on ${fmtDocDate(d.invoice_date)}`, fmtRm(d.amount_sen)]],
     theme: 'plain',
     styles: { ...DOC_TABLE_STYLES, fontSize: 8.5 },
     headStyles: DOC_TABLE_HEAD_STYLES,
@@ -118,16 +124,26 @@ export async function renderDepositInvoiceInto(doc: JsPdf, autoTable: AutoTable,
     doc.text(label, totalsX, at);
     doc.text(value, pageW - margin, at, { align: 'right' });
   };
+  /* The invoice is settled by the deposit it records: TOTAL, the deposit
+     received against it, nothing due. */
   doc.setFontSize(11);
-  row('DEPOSIT TOTAL', fmtRm(d.amount_sen), ty + 2, true);
-  ty += 8;
+  row('TOTAL', fmtRm(d.amount_sen), ty + 2, true);
+  ty += 7;
   doc.setFontSize(9);
+  row('Deposit received', `- ${fmtRm(d.amount_sen)}`, ty); ty += 5;
+  doc.setDrawColor(0); doc.line(totalsX, ty - 3, pageW - margin, ty - 3);
+  doc.setFontSize(10);
+  row('BALANCE DUE', fmtRm(0), ty + 1, true);
+  ty += 8;
+  /* Where the order stands with it (owner 2026-10-06), under the invoice's own figures. */
+  doc.setFontSize(9); doc.setTextColor(90);
   if (o?.total_sen != null) { row('Order total', fmtRm(o.total_sen), ty); ty += 4.5; }
   if (o?.paid_to_date_sen != null) {
     row('Paid to date (this order)', fmtRm(o.paid_to_date_sen), ty); ty += 4.5;
     /* Unfloored: money over the order's total prints negative, never a silent 0. */
     if (o.total_sen != null) { row('Balance on order', fmtRm(o.total_sen - o.paid_to_date_sen), ty, true); ty += 4.5; }
   }
+  doc.setTextColor(0);
   ty += 5;
 
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
@@ -139,27 +155,30 @@ export async function renderDepositInvoiceInto(doc: JsPdf, autoTable: AutoTable,
   /* Where the customer pays (owner 2026-09-21): the CUSTOMER set from Settings › Branding; blank prints nothing. */
   ty = drawPaymentDetails(doc, ty, getBrandingCache().customerPaymentDetails, margin);
 
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(110);
-  doc.text(`This deposit is deducted from the final invoice of sales order ${d.so_doc_no}.`, margin, ty + 2, { maxWidth: pageW - margin * 2 });
+  /* NOTE: why it is void, or what closed it — else what becomes of the deposit. */
+  const cancelled = d.status === 'CANCELLED';
+  const note = cancelled ? `Cancelled · ${d.cancel_reason || 'its payment changed'}`
+    : d.credit_note_number ? `Closed by credit note ${d.credit_note_number} at the final invoice`
+      : `This deposit is deducted from the final invoice of sales order ${d.so_doc_no}.`;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+  doc.text('NOTE', margin, ty + 2);
+  doc.setFont('helvetica', 'normal');
+  if (cancelled) doc.setTextColor(180, 30, 30);
+  doc.text(note, margin, ty + 6, { maxWidth: pageW - margin * 2 });
   doc.setTextColor(0);
 
-  drawSignatureBoxes(doc, ty + 8, 'Issued by', 'Company chop');
+  drawSignatureBoxes(doc, ty + 12, 'Issued by', 'Company chop');
 
-  /* The watermark LAST, over everything: a void invoice must read as void. */
-  if (d.status === 'CANCELLED') {
+  /* The watermark LAST, over everything: a void invoice must read as void (VOID — the design's word, A4). */
+  if (cancelled) {
     doc.saveGraphicsState();
     doc.setGState(doc.GState({ opacity: 0.14 }));
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(80);
+    doc.setFontSize(96);
     doc.setTextColor(180, 30, 30);
-    doc.text('CANCELLED', pageW / 2, pageH / 2, { align: 'center', angle: 30 });
+    doc.text('VOID', pageW / 2, pageH / 2, { align: 'center', angle: 30 });
     doc.restoreGraphicsState();
     doc.setTextColor(0, 0, 0);
-    if (d.cancel_reason) {
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(180, 30, 30);
-      doc.text(`Cancelled: ${d.cancel_reason}`, margin, pageH - 14, { maxWidth: pageW - margin * 2 });
-      doc.setTextColor(0, 0, 0);
-    }
   }
 
   /* The footer every invoice carries: its number and page n of m. */
