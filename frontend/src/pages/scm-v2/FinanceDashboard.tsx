@@ -18,7 +18,7 @@
 // ----------------------------------------------------------------------------
 import { Fragment, useMemo, useState } from 'react';
 import { Button } from '@2990s/design-system';
-import { PageHeader } from '../../components/Layout';
+import { ReportShell } from './reports/ReportShell';
 import { fmtSenPlain } from '../../vendor/shared/format';
 import type { LaidNode } from '../../vendor/scm/lib/report-layout';
 import {
@@ -536,9 +536,9 @@ export const FinanceDashboard = () => {
   const provisional = periods.filter((p) => p.actual != null && p.stock.closingProvisional).map(labelOf);
 
   return (
-    <div className="space-y-4">
-      <PageHeader eyebrow="Finance · Forecasting" title="Dashboard"
-        description="The statements' actuals (petrol) beside the Forecast P&L's targets (red, dashed), per month or quarter, from the first month with sales. Every figure is the report's own — the P&L, the Cash Flow, the Performance P&L, the balance sheet — read once per period. Nothing here writes." />
+    /* In the Finance report shell (batch 6 §4.3), under Reports › Plan. */
+    <ReportShell report="dashboard"
+      subtitle="The statements' actuals (petrol) beside the Forecast P&L's targets (red, dashed), per month or quarter, from the first month with sales. Every figure is the report's own — the P&L, the Cash Flow, the Performance P&L, the balance sheet — read once per period. Nothing here writes.">
       <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
         <Tabs options={[{ key: 'month', label: 'Monthly' }, { key: 'quarter', label: 'Quarterly' }]} value={granularity} onChange={(k) => setGranularity(k as Granularity)} />
         <span style={soft}>Period</span>
@@ -562,6 +562,6 @@ export const FinanceDashboard = () => {
           <RatiosCard periods={periods} />
         </>
       )}
-    </div>
+    </ReportShell>
   );
 };

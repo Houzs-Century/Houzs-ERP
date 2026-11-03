@@ -94,6 +94,12 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   // feature is on for this handset, never who is signed in — the session itself
   // lives in the iOS Keychain, not here.
   { id: "native-app-opt-ins", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "native:<feature>", matches: prefix("native:") },
+  // The Finance report list pinned open (owner's redesign, batch 6 §4.1; the
+  // design's own key) — '1'/'0', a per-device layout preference.
+  { id: "finance-report-list-pin", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "fin-reports-rail-pinned", matches: exact("fin-reports-rail-pinned") },
+  // The last date range picked on a Finance report in this tab (batch 6 §4.3):
+  // a report opened with no dates in its address follows it. {from,to} ISO days.
+  { id: "finance-report-range", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "fin-report-range", matches: exact("fin-report-range") },
   { id: "mobile-language", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "houzs.mobile.lang", matches: exact("houzs.mobile.lang") },
   // Floating Assistant panel size — a per-device layout preference (width/height
   // of the draggable chat card), no identity/company data, same class as the
@@ -239,5 +245,8 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "pages/scm-v2/ProductModels.tsx",
   "pages/scm-v2/SoFromProducts.tsx",
   "pages/scm-v2/SupplierDetail.tsx",
+  // The Finance reports' own memory (finance-report-list-pin, finance-report-
+  // range): the list's pin and the last range picked — no identity data.
+  "pages/scm-v2/reports/reportPrefs.ts",
   "vendor/scm/components/dataGridLayoutStorage.ts",
 ] as const;

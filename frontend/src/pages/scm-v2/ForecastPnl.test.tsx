@@ -42,6 +42,9 @@ vi.mock('../../vendor/scm/lib/forecast-queries', () => ({
   useForecast: () => ({ data: state.data, isLoading: false, isError: false, error: null }),
   useSaveForecast: () => ({ mutate, isPending: false }),
 }));
+/* The page sits in the Finance report shell, whose report list reads the
+   sidebar's gates (reports/ReportRail). */
+vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: null, can: () => true, pageAccess: () => 'full' }) }));
 const { ForecastPnl } = await import('./ForecastPnl');
 
 const amount = (m: string, code: string) => screen.getByLabelText(`${m} ${code} amount`) as HTMLInputElement;

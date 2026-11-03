@@ -14,9 +14,11 @@
 //      drift named to the document (brief §3.5)
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { accountingTabFromSearch, type AccountingTab } from './accounting-tabs';
+import { reportOfAccountingTab, type ReportItem } from './reports-catalog';
+import { ReportShell } from './reports/ReportShell';
 import {
   useAccountBalances,
   useAccounts,
@@ -71,12 +73,13 @@ export const Accounting = () => {
     if (wanted && wanted !== tab) setTabState(wanted);
   }, [wanted, tab]);
 
-  return (
-    <div className="space-y-4">
-      {/* The redesign's head (batch 6 §1.2): "Finance · <section>" over the
-          tab's own name. A tab with header actions draws its own. */}
-      {!OWN_HEADER.has(tab) && <AccountingHeader tab={tab} />}
+  /* A report tab is drawn in the report shell — the report list and the
+     report's own header (batch 6 §4.3); Journal entries, the General ledger
+     and the Trial balance too when opened from the list (`in=reports`). */
+  const report = reportOfAccountingTab(tab, params.get('in') === 'reports');
 
+  return (
+    <AccountingFrame tab={tab} report={report}>
       {tab === 'coa'   && <CoaTab />}
       {tab === 'groups' && <ItemGroupsTab />}
       {tab === 'je'    && <JeTab />}
@@ -99,9 +102,24 @@ export const Accounting = () => {
       {tab === 'commission' && <EventCommissionTab />}
       {tab === 'products' && <ProductProfitTab />}
       {tab === 'logistics' && <LogisticsCostTab />}
-    </div>
+    </AccountingFrame>
   );
 };
+
+/* The frame a tab is drawn in: a report in the report shell (a tab that draws
+   its own head keeps it, the shell adds the report list), any other tab under
+   the redesign's head (batch 6 §1.2) — "Finance · <section>" over the tab's
+   own name, unless the tab draws its own with its actions in it. */
+const AccountingFrame = ({ tab, report, children }: { tab: Tab; report: ReportItem | null; children: ReactNode }) => (
+  report
+    ? <ReportShell report={report.id} ownHeader={OWN_HEADER.has(tab)}>{children}</ReportShell>
+    : (
+      <div className="space-y-4">
+        {!OWN_HEADER.has(tab) && <AccountingHeader tab={tab} />}
+        {children}
+      </div>
+    )
+);
 
 /* ── Chart of Accounts ───────────────────────────────────────────────── */
 const ACCOUNT_TYPE_ORDER = ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE'];

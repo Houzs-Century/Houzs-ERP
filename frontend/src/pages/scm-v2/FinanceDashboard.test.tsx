@@ -91,6 +91,9 @@ vi.mock('../../vendor/scm/lib/dashboard-queries', async (importOriginal) => ({
   ...(await importOriginal() as object),
   useFinanceDashboard: (p: DashboardParams) => { lastParams.value = p; return { data: PAYLOAD, isLoading: false, isFetching: false, isError: false, error: null }; },
 }));
+/* The page sits in the Finance report shell, whose report list reads the
+   sidebar's gates (reports/ReportRail). */
+vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: null, can: () => true, pageAccess: () => 'full' }) }));
 const { FinanceDashboard } = await import('./FinanceDashboard');
 
 const rowText = (id: string): string => String((document.querySelector(`[data-row="${id}"]`) as HTMLElement).textContent);
