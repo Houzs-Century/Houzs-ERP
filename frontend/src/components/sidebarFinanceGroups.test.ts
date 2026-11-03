@@ -88,9 +88,23 @@ describe('the Finance sidebar', () => {
      CN / DN 分出来 — each beside the money it moves. */
   it('splits the notes: the customer\'s and other debtor\'s under Money in, the supplier\'s under Money out', () => {
     const entries = (label: string) => flatten(finance?.children?.find((g) => g.label === label)?.children ?? []);
-    expect(entries('Money in').find((t) => t.to === '/scm/credit-notes')?.label).toBe('Customer & Other Debtor CN / DN');
+    /* The redesign's name (owner's Claude Design, batch 5): the same page, the same gate. */
+    expect(entries('Money in').find((t) => t.to === '/scm/credit-notes')?.label).toBe('Credit / debit notes');
+    expect(entries('Money in').find((t) => t.to === '/scm/credit-notes')?.anyAccess).toEqual(['scm.finance.money_in']);
     expect(entries('Money out').find((t) => t.to === '/scm/supplier-notes')?.label).toBe('Supplier & other creditor CN / DN');
     expect(entries('Money out').find((t) => t.to === '/scm/supplier-notes')?.anyAccess).toEqual(['scm.finance.money_out']);
+  });
+
+  /* The owner's Claude Design (batch 5, step 0): the Money-in pages renamed one
+     for one keep their place, their address and their gates. */
+  it('names the Money-in pages as the redesign does', () => {
+    const moneyIn = finance?.children?.find((g) => g.label === 'Money in')?.children ?? [];
+    const byTo = (to: string) => moneyIn.find((t) => t.to === to);
+    expect(byTo('/scm/other-debtors')).toMatchObject({ label: 'Debtor maintenance', anyAccess: ['scm.finance.money_in'] });
+    expect(byTo('/scm/unbilled-deliveries')).toMatchObject({ label: 'Not yet billed', anyAccess: ['scm.finance.outstanding'] });
+    expect(byTo('/scm/credit-notes')?.label).toBe('Credit / debit notes');
+    expect(byTo('/scm/receipts')?.label).toBe('Receipts');
+    expect(byTo('/scm/outstanding')?.label).toBe('Outstanding');
   });
 
   it('puts the reports together, the Corrections report among them', () => {

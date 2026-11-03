@@ -29,6 +29,8 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { fmtSen } from '../../vendor/shared/format';
 import { DebtorPartyForm } from './DebtorPartyForm';
+import { FinanceDocLink } from './finance/FinanceDocLink';
+import { moneyInDocHref } from './money-in/moneyInDocs';
 import { debtorPartyBody, debtorPartyFrom, emptyDebtorParty, partyAddressLines, type DebtorPartyValues } from '../../vendor/scm/lib/debtor-party';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -36,11 +38,12 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const fmtRm = (sen: number | null | undefined): string => fmtSen(sen ?? 0);
 
 const DEBTOR_COLUMNS: Column<OtherDebtor>[] = [
-  { key: 'name', label: 'Name', render: (d) => <span style={{ fontWeight: 600 }}>{d.name}</span>, getValue: (d) => d.name },
+  /* The name opens the debtor's own page (batch 5 §8), in its own tab. */
+  { key: 'name', label: 'Name', render: (d) => <FinanceDocLink to={moneyInDocHref('debtor', d.id)}>{d.name}</FinanceDocLink>, getValue: (d) => d.name },
   { key: 'phone', label: 'Phone', render: (d) => d.phone ?? '—', getValue: (d) => d.phone ?? '' },
   {
     key: 'outstanding', label: 'Outstanding', align: 'right',
-    render: (d) => <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(d.outstanding_sen)}</span>,
+    render: (d) => <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtRm(d.outstanding_sen)}</span>,
     getValue: (d) => d.outstanding_sen, exportValue: (d) => d.outstanding_sen / 100, exportFormat: 'money',
   },
   {
@@ -92,8 +95,8 @@ export const OtherDebtors = () => {
   return (
     <div className="space-y-4">
       <PageHeader
-        eyebrow="Finance"
-        title="Other Debtors"
+        eyebrow="Finance · Money in"
+        title="Debtor maintenance"
         actions={canCreate ? (
           <button type="button" onClick={() => setPartyForm('new')}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--c-orange)', fontWeight: 600, cursor: 'pointer', fontSize: 'var(--fs-13)', background: 'none', border: 'none', padding: 0 }}>
@@ -163,7 +166,7 @@ export const OtherDebtors = () => {
               })()}
             </div>
             <div style={{ fontSize: 'var(--fs-13)' }}>
-              Outstanding <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{fmtRm(detail.outstanding_sen)}</span>
+              Outstanding <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{fmtRm(detail.outstanding_sen)}</span>
               <span style={{ color: 'var(--fg-muted)' }}> — the bills behind it, and a new one, live on AR Invoices; the money comes in on Receipts.</span>
             </div>
           </div>

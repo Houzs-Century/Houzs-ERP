@@ -133,6 +133,14 @@ const ScmApInvoicesV2 = lazy(() => import("./pages/scm-v2/ApInvoices").then((m) 
 const ScmApBillPage = lazy(() => import("./pages/scm-v2/ApBillPage").then((m) => ({ default: m.ApBillPage })));
 const ScmNotePage = lazy(() => import("./pages/scm-v2/NotePage").then((m) => ({ default: m.NotePage })));
 const ScmArInvoicesV2 = lazy(() => import("./pages/scm-v2/ArInvoices").then((m) => ({ default: m.ArInvoices })));
+/* Money in's invoice documents, each a page of its own (owner's Claude Design, batch 5 §8). */
+const ScmDepositInvoiceDocV2 = lazy(() => import("./pages/scm-v2/money-in/DepositInvoiceDoc").then((m) => ({ default: m.DepositInvoiceDoc })));
+const ScmDebtorBillDocV2 = lazy(() => import("./pages/scm-v2/money-in/DebtorBillDoc").then((m) => ({ default: m.DebtorBillDoc })));
+const ScmSalesInvoiceDocV2 = lazy(() => import("./pages/scm-v2/money-in/SalesInvoiceDoc").then((m) => ({ default: m.SalesInvoiceDoc })));
+const ScmOfficialReceiptDocV2 = lazy(() => import("./pages/scm-v2/money-in/OfficialReceiptDoc").then((m) => ({ default: m.OfficialReceiptDoc })));
+const ScmDebtorReceiptDocV2 = lazy(() => import("./pages/scm-v2/money-in/DebtorReceiptDoc").then((m) => ({ default: m.DebtorReceiptDoc })));
+const ScmSundryReceiptDocV2 = lazy(() => import("./pages/scm-v2/money-in/SundryReceiptDoc").then((m) => ({ default: m.SundryReceiptDoc })));
+const ScmOtherDebtorDocV2 = lazy(() => import("./pages/scm-v2/money-in/OtherDebtorDoc").then((m) => ({ default: m.OtherDebtorDoc })));
 const ScmPaymentRequestsV2 = lazy(() => import("./pages/scm-v2/PaymentRequests").then((m) => ({ default: m.PaymentRequests })));
 const ScmProductRequestsV2 = lazy(() => import("./pages/scm-v2/ProductRequests").then((m) => ({ default: m.ProductRequests })));
 const ScmOfficialDocsV2 = lazy(() => import("./pages/scm-v2/OfficialDocs").then((m) => ({ default: m.OfficialDocs })));
@@ -836,8 +844,15 @@ export default function App() {
         <Route path="/scm/other-debtors" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOtherDebtorsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/receipts" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmReceiptsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/official-receipts" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOfficialReceiptsV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/receipts/official/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOfficialReceiptDocV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/receipts/debtor/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmDebtorReceiptDocV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/receipts/sundry/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmSundryReceiptDocV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/other-debtors/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOtherDebtorDocV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/ap-invoices" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmApInvoicesV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/ar-invoices" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmArInvoicesV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/ar-invoices/deposit/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmDepositInvoiceDocV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/ar-invoices/bills/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmDebtorBillDocV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/ar-invoices/sales/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmSalesInvoiceDocV2 /></Scm2990Shell></ScmGuard>} />
         {/* 申请付款 (owner 2026-09-30): a flat-key door, not an SCM area — a sales PIC
             asking Finance to pay a bill holds no Finance area; Finance comes in on
             the voucher key. The server shows a requester their own requests only.

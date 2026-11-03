@@ -101,6 +101,7 @@ import { firstSoLinkCategoryMismatch, soLinkCategoryMismatch, hardBoundUnlinkRef
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { withSoRefPoIds } from '../lib/so-ref-search';
 import { releaseRequestFromCancelledPo } from '../lib/product-request-link';
+import { deferMrpSnapshotRefresh } from '../lib/mrp-snapshot';
 
 /* ── Supplier sofa-combo auto-pricing (Commander 2026-05-29) ─────────────────
    The supplier prices a sofa SET (a colour-matched bundle of modules) as a
@@ -4342,6 +4343,7 @@ export const cancelPurchaseOrderHandler = async (c: any) => {
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 
+  deferMrpSnapshotRefresh(c, supabase, co.companyId, 'po-cancel');
   return c.json({ purchaseOrder: after ?? { id, status: 'CANCELLED' } });
 };
 mfgPurchaseOrders.patch('/:id/cancel', cancelPurchaseOrderHandler);
@@ -4407,12 +4409,7 @@ mfgPurchaseOrders.patch('/:id/reopen', async (c) => {
 
   const { error: updErr } = await scopeToCompanyId(supabase
     .from('purchase_orders')
-    .update({
-      status: 'SUBMITTED',
-      cancelled_at: null,
-      submitted_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
+    .update({ status: 'SUBMITTED', cancelled_at: null, submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq('id', id), co.companyId);
   if (updErr) return c.json({ error: 'reopen_failed', reason: updErr.message }, 500);
 
@@ -4450,6 +4447,7 @@ mfgPurchaseOrders.patch('/:id/reopen', async (c) => {
     .select('id, status, cancelled_at')
     .eq('id', id), co.companyId)
     .maybeSingle();
+  deferMrpSnapshotRefresh(c, supabase, co.companyId, 'po-reopen');
   return c.json({ purchaseOrder: after ?? { id, status: 'SUBMITTED' } });
 });
 
