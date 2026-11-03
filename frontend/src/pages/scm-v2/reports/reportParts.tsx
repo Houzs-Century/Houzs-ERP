@@ -151,7 +151,7 @@ export type ReportTile = {
  *  each figure as a shimmer, never a zero that reads as a fact. */
 export function ReportTiles({ tiles, label, pending = false }: { tiles: ReportTile[]; label: string; pending?: boolean }) {
   return (
-    <div className={s.tiles} role="group" aria-label={label} style={{ '--tile-cols': String(Math.min(tiles.length, 6)) } as React.CSSProperties}>
+    <div className={s.tiles} role="group" aria-label={label} style={{ '--tile-cols': String(Math.min(tiles.length, 7)) } as React.CSSProperties}>
       {tiles.map((t) => {
         const body = (
           <>

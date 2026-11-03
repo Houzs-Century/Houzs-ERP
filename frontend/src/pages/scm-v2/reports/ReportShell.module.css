@@ -124,7 +124,12 @@
 .switchOn .switchKnob { transform: translateX(12px); }
 
 /* ── Tiles over a report: label, figure, the line under it ── */
-.tiles { display: grid; grid-template-columns: repeat(var(--tile-cols, 4), minmax(0, 1fr)); gap: 10px; }
+/* As many columns as tiles (up to seven), each at least 132px: a narrower
+   report wraps the row instead of squeezing a figure out of its tile. */
+.tiles {
+  display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(max(132px, calc((100% - (var(--tile-cols, 4) - 1) * 10px) / var(--tile-cols, 4))), 1fr));
+}
 @media (max-width: 767px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .tile {
   display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 12px 14px; border-radius: 10px;
