@@ -147,7 +147,9 @@ describe('the OR book', () => {
       const row = screen.getByText('HCHOR-2609-007').closest('tr')!;
       expect(row.textContent).toContain('Cancelled');
       expect(row.textContent).toContain('Payment on HC-SO-013398 changed: amount RM 1,115.00 → RM 558.00');
-      expect(screen.getByText('HCHOR-2609-007').getAttribute('style')).toContain('line-through');
+      expect(screen.getByText('HCHOR-2609-007').closest('span')!.getAttribute('style')).toContain('line-through');
+      /* The number opens the receipt's own page (batch 5 §8). */
+      expect(screen.getByText('HCHOR-2609-007').closest('a')!.getAttribute('href')).toBe('/scm/receipts/official/3');
       /* Still one Confirm money (the draft); three Prints. */
       expect(screen.getAllByText('Confirm money')).toHaveLength(1);
       expect(screen.getAllByText('Print')).toHaveLength(3);

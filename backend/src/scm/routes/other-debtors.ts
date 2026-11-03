@@ -187,7 +187,67 @@ export const debtorDetailHandler = async (c: any): Promise<Response> => {
       byBill.set(k, [...(byBill.get(k) ?? []), l]);
     }
   }
-  return c.json({ debtor: found.debtor, bills: billRows.map((b) => ({ ...b, lines: byBill.get(String(b.id)) ?? [] })), receipts: receipts.data ?? [] });
+  /* Each receipt names the bills it knocks off (the owner's Claude Design,
+     batch 5 §8.3 c4) — this debtor's own bills, by number. */
+  const receiptRows = (receipts.data ?? []) as Row[];
+  const billsOfReceipt = new Map<string, Array<{ billId: string; no: string | null; amountSen: number }>>();
+  if (receiptRows.length > 0) {
+    const { data: allocRows, error: aErr } = await scopeToCompany(
+      sb.from('acc_debtor_receipt_allocations').select('receipt_id, bill_id, amount_sen').in('receipt_id', receiptRows.map((r) => r.id)), c,
+    );
+    if (aErr) return c.json({ error: 'load_failed', reason: aErr.message }, 500);
+    const numberOf = new Map(billRows.map((b) => [String(b.id), String(b.bill_number ?? '')]));
+    for (const a of (allocRows ?? []) as Row[]) {
+      const k = String(a.receipt_id);
+      billsOfReceipt.set(k, [...(billsOfReceipt.get(k) ?? []), { billId: String(a.bill_id), no: numberOf.get(String(a.bill_id)) ?? null, amountSen: Number(a.amount_sen ?? 0) }]);
+    }
+  }
+  return c.json({
+    debtor: found.debtor,
+    bills: billRows.map((b) => ({ ...b, lines: byBill.get(String(b.id)) ?? [] })),
+    receipts: receiptRows.map((r) => ({ ...r, bills: billsOfReceipt.get(String(r.id)) ?? [] })),
+  });
+};
+
+/* ── GET /receipts/:receiptId — one debtor receipt, for its page ────────────
+   (the owner's Claude Design, batch 5 §8.3 c4). The receipt with every mark
+   of its four layers, its debtor (the registry row the paper's RECEIVED FROM
+   reads), and what it knocks off: each bill's number, date, description and
+   what it still owes, with the amount this receipt takes off it. Reads only. */
+export const debtorReceiptDetailHandler = async (c: Parameters<typeof debtorDetailHandler>[0]): Promise<Response> => {
+  const found = await loadReceipt(c);
+  if ('resp' in found) return found.resp;
+  const r = found.receipt;
+  const sb = c.get('supabase');
+  const [allocs, debtor] = await Promise.all([
+    scopeToCompany(sb.from('acc_debtor_receipt_allocations').select('bill_id, amount_sen').eq('receipt_id', r.id), c),
+    scopeToCompany(sb.from('acc_debtors').select(`id, name, phone, notes, is_active, ${DEBTOR_PARTY_COLS}`).eq('id', r.debtor_id), c).maybeSingle(),
+  ]);
+  if (allocs.error) return c.json({ error: 'load_failed', reason: allocs.error.message }, 500);
+  if (debtor.error) return c.json({ error: 'load_failed', reason: debtor.error.message }, 500);
+  const allocRows = (allocs.data ?? []) as Row[];
+  const billIds = [...new Set(allocRows.map((a) => String(a.bill_id)))];
+  const billById = new Map<string, Row>();
+  if (billIds.length > 0) {
+    const { data: billRows, error: bErr } = await scopeToCompany(
+      sb.from('acc_debtor_bills').select('id, bill_number, bill_date, notes, total_sen, received_sen, status, doc_kind').in('id', billIds), c,
+    );
+    if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
+    for (const b of (billRows ?? []) as Row[]) billById.set(String(b.id), b);
+  }
+  return c.json({
+    receipt: r,
+    debtor: debtor.data ?? null,
+    allocations: allocRows.map((a) => {
+      const b = billById.get(String(a.bill_id));
+      return {
+        billId: String(a.bill_id), amountSen: Number(a.amount_sen ?? 0),
+        billNumber: b?.bill_number ?? null, billDate: b?.bill_date ?? null, description: b?.notes ?? null,
+        totalSen: b ? Number(b.total_sen ?? 0) : null, receivedSen: b ? Number(b.received_sen ?? 0) : null,
+        status: b?.status ?? null, docKind: b?.doc_kind === 'DN' ? 'DN' : 'INV',
+      };
+    }),
+  });
 };
 
 /* ── Debtor Bill — posts directly (the owner: bill 直接过账) ───────────────── */
@@ -793,6 +853,7 @@ otherDebtors.post('/:id/bills', createDebtorBillHandler);
 otherDebtors.post('/bills/:billId/cancel', cancelDebtorBillHandler);
 otherDebtors.patch('/bills/:billId', updateDebtorBillHandler);
 otherDebtors.post('/:id/receipts', createDebtorReceiptHandler);
+otherDebtors.get('/receipts/:receiptId', debtorReceiptDetailHandler);
 otherDebtors.post('/receipts/:receiptId/submit', submitDebtorReceiptHandler);
 otherDebtors.post('/receipts/:receiptId/withdraw', withdrawDebtorReceiptHandler);
 otherDebtors.post('/receipts/:receiptId/check', checkDebtorReceiptHandler);

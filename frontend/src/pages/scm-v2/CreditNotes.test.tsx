@@ -183,7 +183,7 @@ describe('the Credit & Debit Notes page', () => {
   /* Owner 2026-10-28: supplier & other creditor CN / DN 和 customer & other debtor CN / DN 分出来. */
   test('two pages: Money in asks for the customer and other-debtor notes, Money out for the supplier notes with the scan', () => {
     const { unmount } = render(<MemoryRouter><ConfirmProvider><CreditNotes /></ConfirmProvider></MemoryRouter>);
-    expect(screen.getByRole('heading', { name: 'Customer & Other Debtor CN / DN' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Credit / debit notes' })).toBeTruthy();
     expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Credit & debit notes', 'Other debtor DN', 'All', 'CN', 'DN', 'Other debtor CN']);
     expect(screen.queryByLabelText('Supplier credit note pages')).toBeNull();
     unmount();
