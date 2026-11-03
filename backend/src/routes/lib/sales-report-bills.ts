@@ -49,6 +49,7 @@ export type ReportSummary = {
 export function collectReport(
   notes: readonly NoteRow[],
   projectStartDate: string | null,
+  attendeeEmails?: ReadonlySet<string> | null,
 ): { bills: BillRow[]; report_activity_ids: number[]; summary: ReportSummary | null } {
   const ordered = [...notes].sort((a, b) =>
     (a.created_at ?? "").localeCompare(b.created_at ?? "") || a.id - b.id,
@@ -57,7 +58,7 @@ export function collectReport(
   const contributing = new Set<number>();
   let summary: ReportSummary | null = null;
   for (const n of ordered) {
-    if (!canSaveSalesReport({ email: n.author_email, position_name: n.author_position })) continue;
+    if (!canSaveSalesReport({ email: n.author_email, position_name: n.author_position }, attendeeEmails)) continue;
     const parsed = parseSalesReport(n.note);
     if (parsed.bills.length > 0) {
       const reportDate = reportDateFor(parsed.date, projectStartDate);
@@ -154,21 +155,31 @@ export type BillTotals = {
 };
 
 /* ── who may save ──────────────────────────────────────────────────────────
-   Owner 2026-10-14: "ummu, owner, weisiang". Named people, not a role — the
-   same shape as canCreateEvent (routes/projects.ts): the Owner position, and
-   two accounts by email. Mirrored in frontend/src/auth/salesAccess.ts
-   canSaveSalesReport, which only decides whether the button shows; this is
-   the authority. Reading the saved report needs only the Sales section's own
-   gate — the whole point is that every attending rep sees their red number. */
-const SAVE_EMAILS = new Set(["weisiang329@gmail.com", "ummuaimanlm@gmail.com"]);
+   Owner 2026-10-14: "ummu, owner, weisiang". Owner 2026-10-30: add Peter
+   (Sales Director, yzhe212@gmail.com) and every Sales Attending of THIS
+   project. The admin tier stays named (Owner position + emails); the per-event
+   path takes a Set<string> of attendee emails the caller resolved from
+   project_sales_attendees. Mirrored in frontend/src/auth/salesAccess.ts
+   canSaveSalesReport, which only decides whether the chat shows the Save
+   button; this is the authority. Reading the saved report needs only the Sales
+   section's own gate — every attending rep sees their red number. */
+const SAVE_EMAILS = new Set([
+  "weisiang329@gmail.com",
+  "ummuaimanlm@gmail.com",
+  "yzhe212@gmail.com", // Peter — Sales Director; owner 2026-10-30
+]);
 
 export function canSaveSalesReport(
   user: { email?: string | null; position_name?: string | null } | null | undefined,
+  attendeeEmails?: ReadonlySet<string> | null,
 ): boolean {
   if (!user) return false;
   const position = (user.position_name ?? "").trim().toLowerCase();
   const email = (user.email ?? "").trim().toLowerCase();
-  return position === "owner" || SAVE_EMAILS.has(email);
+  if (position === "owner") return true;
+  if (SAVE_EMAILS.has(email)) return true;
+  if (attendeeEmails && email && attendeeEmails.has(email)) return true;
+  return false;
 }
 
 /* ── bill ↔ order ──────────────────────────────────────────────────────────

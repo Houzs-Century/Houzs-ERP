@@ -35,13 +35,26 @@ const ATTENDEES: AttendeeRow[] = [
 ];
 
 describe("canSaveSalesReport", () => {
-  test("the Owner position and the two named accounts, nobody else", () => {
+  test("the Owner position and the named accounts (incl. Peter), nobody else", () => {
     expect(canSaveSalesReport({ position_name: "Owner", email: "hello@houzscentury.com" })).toBe(true);
     expect(canSaveSalesReport({ position_name: "Managing Director", email: "WeiSiang329@gmail.com" })).toBe(true);
     expect(canSaveSalesReport({ position_name: "Operation Executive", email: "ummuaimanlm@gmail.com" })).toBe(true);
+    expect(canSaveSalesReport({ position_name: "Sales Director", email: "yzhe212@gmail.com" })).toBe(true); // Peter
     expect(canSaveSalesReport({ position_name: "Sales Director", email: "sd@houzs.com" })).toBe(false);
     expect(canSaveSalesReport({ position_name: "Super Admin", email: "nico@houzs.com" })).toBe(false);
     expect(canSaveSalesReport(null)).toBe(false);
+  });
+  test("a sales attendee of THIS project is accepted via attendeeEmails; others still rejected", () => {
+    const attendees = new Set(["anthony@houzs.com", "adrian@houzs.com"]);
+    expect(canSaveSalesReport({ position_name: "Sales Executive", email: "anthony@houzs.com" }, attendees)).toBe(true);
+    // Input is normalised to lowercase, so mixed-case email still matches a lowercased attendee set.
+    expect(canSaveSalesReport({ position_name: "Sales Executive", email: "ADRIAN@houzs.com" }, attendees)).toBe(true);
+    expect(canSaveSalesReport({ position_name: "Sales Executive", email: "someoneelse@houzs.com" }, attendees)).toBe(false);
+    // Admin tier still passes without an attendee list.
+    expect(canSaveSalesReport({ position_name: "Owner", email: "hello@houzscentury.com" }, attendees)).toBe(true);
+    // An attendees set in mixed case is a caller mistake — a mixed-case attendee entry is not matched.
+    const mixedAttendees = new Set(["Mixed@case.com"]);
+    expect(canSaveSalesReport({ position_name: "Sales Executive", email: "mixed@case.com" }, mixedAttendees)).toBe(false);
   });
 });
 
