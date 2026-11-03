@@ -10,6 +10,7 @@ import {
 } from "../vendor/scm/lib/so-variant-cascade";
 import { useQueryClient } from "@tanstack/react-query";
 import { authedFetch, type SaveProblem } from "../vendor/scm/lib/authed-fetch";
+import { fabricColourName } from "../vendor/scm/lib/fabric-colour-name";
 import { lineWriteFailure, lineWriteSaveMessage, type LineWriteFailure } from "../vendor/scm/lib/line-write-failures";
 import { amendmentVariants, amendmentVariantsKey, amendmentRequestedUnitPriceSen, amendmentPriceFields, storedLineRemark } from "../vendor/scm/lib/so-amendment-line-diff";
 import { photoLabel, photoUploadFailure, photoUploadFailureMessage, unmatchedLinePhotos, type PhotoUploadFailure } from "../vendor/scm/lib/photo-upload-failures";
@@ -3346,6 +3347,7 @@ function LineCard({
 function FabricField({ value, colourLabel, invalid, onOpen }: {
   value: string; colourLabel: string; invalid: boolean; onOpen: () => void;
 }) {
+  const name = fabricColourName(value, colourLabel);
   return (
     <Field label="Fabric / colour *">
       <button
@@ -3359,7 +3361,7 @@ function FabricField({ value, colourLabel, invalid, onOpen }: {
         }}
       >
         <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: value ? "#11140f" : "#9aa093", fontWeight: value ? 700 : 400 }}>
-          {value ? (colourLabel ? `${value} — ${colourLabel}` : value) : "Select fabric…"}
+          {value ? (name ? `${value} — ${name}` : value) : "Select fabric…"}
         </span>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9aa093" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none" }}><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
       </button>

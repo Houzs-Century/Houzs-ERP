@@ -3,6 +3,7 @@ import { useDebouncedValue } from "../vendor/scm/lib/hooks";
 import { useFabricColoursSearch, type FabricColourRow } from "../vendor/scm/lib/fabric-queries";
 import { useModelAllowedOptionsByCode } from "../vendor/scm/lib/mfg-products-queries";
 import { fabricAllowedByPool } from "../vendor/shared/fabric-pool";
+import { fabricColourMeta } from "../vendor/scm/lib/fabric-colour-name";
 
 /* MobileFabricPicker — the phone's server-typeahead fabric sheet (owner #1
    scaling pain 2026-07-14), moved out of MobileNewSO. The search box drives
@@ -91,11 +92,9 @@ export function MobileFabricPicker({ itemCode, fabricSeries, current, onPick, on
                   )}
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: "#11140f" }}>{c.colourId}</span>
-                    {(c.label || series) && (
-                      <span style={{ display: "block", fontSize: 10.5, color: "#767b6e", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {[series, c.label].filter(Boolean).join(" · ")}
-                      </span>
-                    )}
+                    <span style={{ display: "block", fontSize: 10.5, color: "#767b6e", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {fabricColourMeta(series, c.colourId, c.label)}
+                    </span>
                   </span>
                   {on && <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#16695f" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none" }}><path d="M20 6 9 17l-5-5" /></svg>}
                 </button>
