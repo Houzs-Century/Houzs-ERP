@@ -19,6 +19,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AsOfSection } from './InventoryAsOf';
 import { DemandSoPanel } from './InventoryDemandSoPanel';
+import { LOCATION_COLUMN } from './InventoryLocationColumn';
 import {
   Search, ArrowUpRight, ArrowDownLeft, Star, X, Plus,
   Warehouse as WarehouseIcon, ChevronRight, ChevronDown,
@@ -648,31 +649,7 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
       );
     },
   },
-  {
-    key: 'location',
-    label: 'Location',
-    width: '180px',
-    /* HC-0206 (Sim): "All warehouses" summed every location into one Stock
-       figure, so finding WHERE a SKU sits meant picking warehouses one by one. */
-    getValue: (r) => (r.stock_by_warehouse ?? []).map((w) => `${w.code} ${w.qty}`).join(' · '),
-    render: (r) => {
-      const whs = r.stock_by_warehouse ?? [];
-      if (whs.length === 0) return <span className={styles.numCellZero}>—</span>;
-      return (
-        <span
-          style={{ whiteSpace: 'nowrap' }}
-          title={whs.map((w) => `${w.code}${w.name ? ` (${w.name})` : ''}: ${fmtQty(w.qty)}${w.held_qty > 0 ? ` incl. ${fmtQty(w.held_qty)} consignment` : ''}`).join('\n')}
-        >
-          {whs.map((w, i) => (
-            <span key={w.warehouse_id}>
-              {i > 0 && <span className={styles.numCellZero}> · </span>}
-              {w.code} <strong>{fmtQty(w.qty)}</strong>
-            </span>
-          ))}
-        </span>
-      );
-    },
-  },
+  LOCATION_COLUMN,
   {
     key: 'incoming',
     label: 'Incoming',
