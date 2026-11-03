@@ -72,11 +72,18 @@ export type StatementTableProps = {
   /** Open lines close when this changes (the dates, the view). */
   drillKey: string;
   ariaLabel: string;
+  /** Which rows open lines under them: an account's (its ledger lines, by
+   *  default), or every row with figures — a category too (the Cash flow's
+   *  entries behind a figure). */
+  drillRows?: 'accounts' | 'figures';
+  /** What opens under a row instead of an account's ledger lines: the column
+   *  pressed (null = the whole span), the close, and the width to span. */
+  renderLines?: (line: StatementLine, column: StatementColumn | null, close: () => void, colSpan: number) => ReactNode;
 };
 
 export function StatementTable({
   widthsKey, head, columns, lines, shown, level, tree, showPct, fmt = fmtSenPlain,
-  finalId, strongIds, onCategoryFigure, noteAfter, note, drillKey, ariaLabel,
+  finalId, strongIds, onCategoryFigure, noteAfter, note, drillKey, ariaLabel, drillRows = 'accounts', renderLines,
 }: StatementTableProps) {
   const w = useStatementWidths(widthsKey);
   /* Which rows have their lines open, and on which column (ALL = the whole span). */
@@ -169,10 +176,13 @@ export function StatementTable({
           <tbody>
             {shown.map((l) => {
               const i = lines.indexOf(l);
-              const folder = l.kind === 'category' && foldsChildren(lines, i);
+              const folder = (l.kind === 'category' || l.kind === 'unassigned') && foldsChildren(lines, i);
               const open = folder && folderOpen(l, level, tree.open);
-              const account = l.kind === 'row' && Boolean(l.code);
-              const drilled = account ? drill[l.id] : undefined;
+              /* An account row opens its lines by its name; in 'figures' mode any row
+                 with figures opens what is behind a figure (a category's: every row under it). */
+              const account = l.kind === 'row' && (drillRows === 'figures' || Boolean(l.code));
+              const drillable = account || (drillRows === 'figures' && (l.kind === 'category' || l.kind === 'unassigned'));
+              const drilled = drillable ? drill[l.id] : undefined;
               const drillCol = drilled && drilled !== ALL ? columns.find((c) => c.key === drilled) : undefined;
               const depthPad = 12 + 16 * Math.max(0, l.depth - 1);
               const name = nameOf(l);
@@ -204,7 +214,7 @@ export function StatementTable({
                       const cell = l.cells[c.key];
                       const text = cell ? fmt(cell.amountSen) : DASH;
                       const pct = c.pct && showPct ? (cell ? fmtPct(cell.pct) : DASH) : null;
-                      const opens = Boolean(cell) && c.kind !== 'change' && (account || (folder && onCategoryFigure));
+                      const opens = Boolean(cell) && c.kind !== 'change' && (drillable || (folder && onCategoryFigure));
                       return (
                         <td key={c.key} className={cls}>
                           <span className={s.cellInner}>
@@ -213,8 +223,8 @@ export function StatementTable({
                                 type="button"
                                 className={s.figure}
                                 aria-label={`${l.label} · ${c.label}`}
-                                aria-pressed={account ? drilled === c.key : undefined}
-                                onClick={() => (account ? toggleDrill(l.id, c.key) : onCategoryFigure?.(codesUnder(lines, i), c))}
+                                aria-pressed={drillable ? drilled === c.key : undefined}
+                                onClick={() => (drillable ? toggleDrill(l.id, c.key) : onCategoryFigure?.(codesUnder(lines, i), c))}
                               >
                                 {text}
                               </button>
@@ -225,7 +235,8 @@ export function StatementTable({
                       );
                     })}
                   </tr>
-                  {drilled && l.code && (
+                  {drilled && renderLines && renderLines(l, drillCol ?? null, () => toggleDrill(l.id, drilled), columns.length + 1)}
+                  {drilled && !renderLines && l.code && (
                     <AccountLinesRow
                       code={l.code}
                       title={`${l.code} ${name}`}

@@ -211,7 +211,7 @@ type RpLike = {
 
 /** The Cash Flow as lines, the Total column only: each top category as a
     block, its tree, its own subtotal line; a running subtotal as a bold
-    line; then Cash Surplus / (Deficit), Balance b/f and Balance c/f last
+    line; then Cash surplus / (deficit) (its % of the receipts), Balance b/f and Balance c/f last
     (owner 2026-09-18: b/f and c/f at the foot). % of the side's total. */
 export const rpLines = (r: RpLike): FlatLine[] => {
   const t = r.totals;
@@ -222,7 +222,7 @@ export const rpLines = (r: RpLike): FlatLine[] => {
     out.push(...treeLines(n.children));
     out.push(fixedLine(`tot:${n.id}`, n.totalLabel ?? `Total ${n.label}`, 'total', n.amountSen, n.pct));
   }
-  out.push(fixedLine('net:surplus', 'Cash Surplus / (Deficit)', 'net', t.receiptsTotalSen - t.paymentsTotalSen, null));
+  out.push(fixedLine('net:surplus', 'Cash surplus / (deficit)', 'net', t.receiptsTotalSen - t.paymentsTotalSen, pctOfBase(t.receiptsTotalSen - t.paymentsTotalSen, t.receiptsTotalSen)));
   out.push(fixedLine('bal:opening', 'Balance b/f', 'total', t.openingTotalSen, null));
   out.push(fixedLine('bal:closing', 'Balance c/f', 'net', t.closingTotalSen, null));
   /* The card money the bank has not received (owner 2026-09-28): memo lines, so a

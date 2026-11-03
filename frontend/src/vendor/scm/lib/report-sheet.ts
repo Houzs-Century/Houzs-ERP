@@ -12,7 +12,7 @@
 // ----------------------------------------------------------------------------
 
 import { fmtSenPlain } from '../../shared/format';
-import { flattenLaid, fmtPct, linesVisible, type LaidNode } from './report-layout';
+import { flattenLaid, fmtPct, linesVisible, pctOf, type LaidNode } from './report-layout';
 import type { FlatLine, MonthColumn, MonthlyLine } from './report-monthly';
 import type { RpReport } from './rp-report-queries';
 import { performanceNotes, performanceSummaryLines, type PerformanceReport } from './performance-report-queries';
@@ -66,24 +66,28 @@ export type CashFlowSheetOptions = {
   columns?: string[];
   level?: number | 'all';
   open?: Record<string, boolean>;
+  /** The % beside Total, as the screen shows it (on unless switched off). */
+  pct?: boolean;
 };
 
 /** The Cash Flow's rows as the screen draws them: each top category as a
     block with its tree folded to the level, its own subtotal name; a running
-    subtotal as a bold line; Cash Surplus, Balance b/f and c/f last. A zero in
-    an account column prints as a dash, as on the screen; the Total prints. */
+    subtotal as a bold line; Cash surplus / (deficit) — its % of the receipts —
+    Balance b/f and c/f last. A zero in an account column prints as a dash, as
+    on the screen; the Total prints. */
 export function cashFlowTable(r: RpReport, opts: CashFlowSheetOptions = {}): SheetTable {
   const codes = opts.columns ?? [];
   const level = opts.level ?? 'all';
   const open = opts.open ?? {};
+  const withPct = opts.pct ?? true;
   const named = r.columns.filter((c) => codes.includes(c.code));
   const columns: SheetColumn[] = [
     ...named.map((c): SheetColumn => ({ label: `${c.code} ${c.name}`, kind: 'amount' })),
     AMOUNT_COLUMN('Total'),
-    PCT_COLUMN('%'),
+    ...(withPct ? [PCT_COLUMN('%')] : []),
   ];
   const cellsOf = (per: Record<string, number> | undefined, total: number, pct: number | null): SheetValue[] =>
-    [...named.map((c) => { const v = per?.[c.code] ?? 0; return v === 0 ? null : v; }), total, pct];
+    [...named.map((c) => { const v = per?.[c.code] ?? 0; return v === 0 ? null : v; }), total, ...(withPct ? [pct] : [])];
   const rows: SheetRow[] = [];
   for (const n of r.layout.tree) {
     if (n.kind === 'subtotal') { rows.push({ kind: 'net', depth: 0, label: n.label, cells: cellsOf(n.cells, n.amountSen, null) }); continue; }
@@ -95,7 +99,8 @@ export function cashFlowTable(r: RpReport, opts: CashFlowSheetOptions = {}): She
     rows.push({ kind: 'total', depth: 0, label: n.totalLabel ?? `Total ${n.label}`, cells: cellsOf(n.cells, n.amountSen, n.pct) });
   }
   const surplusPer = Object.fromEntries(r.columns.map((c) => [c.code, (r.totals.receipts[c.code] ?? 0) - (r.totals.payments[c.code] ?? 0)]));
-  rows.push({ kind: 'net', depth: 0, label: 'Cash Surplus / (Deficit)', cells: cellsOf(surplusPer, r.totals.receiptsTotalSen - r.totals.paymentsTotalSen, null) });
+  const surplus = r.totals.receiptsTotalSen - r.totals.paymentsTotalSen;
+  rows.push({ kind: 'net', depth: 0, label: 'Cash surplus / (deficit)', cells: cellsOf(surplusPer, surplus, pctOf(surplus, r.totals.receiptsTotalSen)) });
   rows.push({ kind: 'total', depth: 0, label: 'Balance b/f', cells: cellsOf(r.opening, r.totals.openingTotalSen, null) });
   rows.push({ kind: 'net', depth: 0, label: 'Balance c/f', cells: cellsOf(r.totals.closing, r.totals.closingTotalSen, null) });
   return { columns, rows };
