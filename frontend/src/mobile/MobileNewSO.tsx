@@ -235,6 +235,8 @@ type SoHeader = {
   note: string | null;
   address1: string | null;
   address2: string | null;
+  address3?: string | null;
+  address4?: string | null;
   customer_state: string | null;
   city: string | null;
   postcode: string | null;
@@ -801,6 +803,8 @@ export function MobileNewSO({
   // Delivery address
   const [addr1, setAddr1] = useState(scanPrefill?.address1 ?? "");
   const [addr2, setAddr2] = useState("");
+  const [addr3, setAddr3] = useState("");
+  const [addr4, setAddr4] = useState("");
   // Reconciled against the live my_localities state list — seed it straight (see custType).
   const [state, setState] = useState(scanPrefill?.state ?? "");
   const [city, setCity] = useState(scanPrefill?.city ?? "");
@@ -870,6 +874,8 @@ export function MobileNewSO({
   // Address lines joined the frozen set 2026-07-27 (two-lane phase 2) — persisted pair for addr1/addr2.
   const [origAddress1, setOrigAddress1] = useState<string>("");
   const [origAddress2, setOrigAddress2] = useState<string>("");
+  const [origAddress3, setOrigAddress3] = useState<string>("");
+  const [origAddress4, setOrigAddress4] = useState<string>("");
   // Customer info joined 2026-08-21 (DELIVERY lane). phone kept E164 = state seed = pristine baseline.
   const [origContact, setOrigContact] = useState({ debtorName: "", phone: "", email: "" });
   /* PERSISTED SO status — feeds the SHARED procLockActive() so the processing
@@ -1001,6 +1007,8 @@ export function MobileNewSO({
         setEcPhone(toE164(h.emergency_contact_phone));
         setAddr1(h.address1 ?? "");
         setAddr2(h.address2 ?? "");
+        setAddr3(h.address3 ?? "");
+        setAddr4(h.address4 ?? "");
         setState(h.customer_state ?? "");
         setCity(h.city ?? "");
         setPostcode(h.postcode ?? "");
@@ -1009,6 +1017,8 @@ export function MobileNewSO({
         setOrigCity(h.city ?? "");
         setOrigAddress1(h.address1 ?? "");
         setOrigAddress2(h.address2 ?? "");
+        setOrigAddress3(h.address3 ?? "");
+        setOrigAddress4(h.address4 ?? "");
         setOrigContact({ debtorName: h.debtor_name ?? "", phone: toE164(h.phone), email: h.email ?? "" });
         /* SEED THE PICKER FROM THE ROW. Owner, 2026-08-05, on an order whose
            salesperson is Pei Fen: "当我点选 ID 的时候，跳出第一个人的时候，他就
@@ -1038,6 +1048,8 @@ export function MobileNewSO({
           note: h.note ?? "",
           addr1: h.address1 ?? "",
           addr2: h.address2 ?? "",
+          addr3: h.address3 ?? "",
+          addr4: h.address4 ?? "",
           state: h.customer_state ?? "",
           city: h.city ?? "",
           postcode: h.postcode ?? "",
@@ -1095,7 +1107,7 @@ export function MobileNewSO({
       if (gone) return;
       const h = d.salesOrder;
       setName(h.debtor_name ?? ""); setCustRef(h.customer_so_no ?? h.ref ?? ""); setPhone(toE164(h.phone)); setEmail(h.email ?? ""); setCustType(h.customer_type ?? "");
-      setBuildingType(h.building_type ?? ""); setAddr1(h.address1 ?? ""); setAddr2(h.address2 ?? ""); setState(h.customer_state ?? ""); setCity(h.city ?? ""); setPostcode(h.postcode ?? "");
+      setBuildingType(h.building_type ?? ""); setAddr1(h.address1 ?? ""); setAddr2(h.address2 ?? ""); setAddr3(h.address3 ?? ""); setAddr4(h.address4 ?? ""); setState(h.customer_state ?? ""); setCity(h.city ?? ""); setPostcode(h.postcode ?? "");
       setSalespersonId(h.salesperson_id != null ? String(h.salesperson_id) : "");
       const copied = copySeedLines(d.items, h.status, (n) => void notify(n)).map((it) => ({ ...lineFromItem(it), itemId: "", photoKeys: [] }));
       if (copied.length) setLines(copied);
@@ -1936,7 +1948,7 @@ export function MobileNewSO({
     const headerPatchInput: SoHeaderPatchInput = {
       name, custRef, phone, email, custType, buildingType,
       venueId: outgoingVenueId, venueName: outgoingVenueName,
-      note, addr1, addr2, state, city, postcode, salesLocation,
+      note, addr1, addr2, addr3, addr4, state, city, postcode, salesLocation,
       procDate: procOut, delivDate: delivOut,
       ecName, ecPhone, ecRel,
       salespersonId: outgoingSalespersonId,
@@ -1993,6 +2005,8 @@ export function MobileNewSO({
             // Addresses frozen 2026-07-27, customer contact 2026-08-21 — collected so a locked-SO edit rides the amendment.
             address1:             addr1.trim(),
             address2:             addr2.trim(),
+            address3:             addr3.trim(),
+            address4:             addr4.trim(),
             debtorName: name, phone, email,
           },
           {
@@ -2003,6 +2017,8 @@ export function MobileNewSO({
             city:                 origCity,
             address1:             origAddress1,
             address2:             origAddress2,
+            address3:             origAddress3,
+            address4:             origAddress4,
             ...origContact,
           },
         );
@@ -2493,7 +2509,13 @@ export function MobileNewSO({
                       <input className="fld-i" value={addr1} disabled={identityLocked} {...addressLineProps(setAddr1, { value: addr2, set: setAddr2 })} onChange={(e) => setAddr1(e.target.value)} placeholder="Unit, street, area" />
                     </Field>
                     <Field label="Address Line 2">
-                      <input className="fld-i" value={addr2} disabled={identityLocked} {...addressLineProps(setAddr2, null)} onChange={(e) => setAddr2(e.target.value)} placeholder="Apt, floor, building (optional)" />
+                      <input className="fld-i" value={addr2} disabled={identityLocked} {...addressLineProps(setAddr2, { value: addr3, set: setAddr3 })} onChange={(e) => setAddr2(e.target.value)} placeholder="Apt, floor, building (optional)" />
+                    </Field>
+                    <Field label="Address Line 3">
+                      <input className="fld-i" value={addr3} disabled={identityLocked} {...addressLineProps(setAddr3, { value: addr4, set: setAddr4 })} onChange={(e) => setAddr3(e.target.value)} placeholder="Optional" />
+                    </Field>
+                    <Field label="Address Line 4">
+                      <input className="fld-i" value={addr4} disabled={identityLocked} {...addressLineProps(setAddr4, null)} onChange={(e) => setAddr4(e.target.value)} placeholder="Optional" />
                     </Field>
                     {/* FIX A — cascading State → City → Postcode from my_localities
                         (desktop parity). When the dataset is present these are
@@ -2912,7 +2934,7 @@ type SoHeaderPatchInput = {
   name: string; custRef: string; phone: string; email: string;
   custType: string; buildingType: string;
   venueId: string | null; venueName: string;
-  note: string; addr1: string; addr2: string; state: string;
+  note: string; addr1: string; addr2: string; addr3: string; addr4: string; state: string;
   city: string; postcode: string; salesLocation: string;
   procDate: string; delivDate: string;
   ecName: string; ecPhone: string; ecRel: string;
@@ -2935,6 +2957,8 @@ function soHeaderPatchFrom(v: SoHeaderPatchInput): Record<string, unknown> {
     note: v.note.trim() || null,
     address1: v.addr1.trim() || null,
     address2: v.addr2.trim() || null,
+    address3: v.addr3.trim() || null,
+    address4: v.addr4.trim() || null,
     customerState: v.state || null,
     city: v.city.trim() || null,
     postcode: v.postcode.trim() || null,
