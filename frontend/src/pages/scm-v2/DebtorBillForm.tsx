@@ -63,7 +63,7 @@ const th: React.CSSProperties = {
   textTransform: 'uppercase', color: 'var(--fg-muted)', borderBottom: '1px solid var(--border-weak, #e3e1da)', whiteSpace: 'nowrap',
 };
 const td: React.CSSProperties = { padding: '6px 8px', verticalAlign: 'middle' };
-const right: React.CSSProperties = { textAlign: 'right', fontFamily: 'var(--font-mono)' };
+const right: React.CSSProperties = { textAlign: 'right', fontVariantNumeric: 'tabular-nums' };
 const iconBtn: React.CSSProperties = { border: 'none', background: 'none', cursor: 'pointer', color: 'var(--fg-muted)', padding: 2 };
 
 export const DebtorBillForm = ({ mode, initial, accounts, receivedSen = 0, saving, onSubmit, onCancel }: {

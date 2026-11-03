@@ -75,8 +75,8 @@ describe('the unified money-in list', () => {
     /* 888.00 + 200.00 + 3,500.00 */
     expect(screen.getByText('RM 4,588.00')).toBeTruthy();
     expect(screen.getByText('HC-SO-2609-004').closest('a')!.getAttribute('href')).toBe('/scm/sales-orders/HC-SO-2609-004');
-    /* A debtor receipt's number leads to that debtor's bills on AR Invoices (2026-09-29). */
-    expect(screen.getByText('HC-ODR-2609-001').closest('a')!.getAttribute('href')).toBe('/scm/ar-invoices?debtor=d1');
+    /* A debtor receipt's number opens the receipt's own page (batch 5 §8). */
+    expect(screen.getByText('HC-ODR-2609-001').closest('a')!.getAttribute('href')).toBe('/scm/receipts/debtor/dr1');
   });
 
   /* 月份只是筛选 (owner 2026-09-08): the page opens on every month; picking one

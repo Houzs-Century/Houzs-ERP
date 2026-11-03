@@ -85,7 +85,7 @@ import { todoCalendarHandler } from './accounting-todo-calendar';
 export { dailyBankHandler, loadDailyBankBoard } from './accounting-daily-bank';
 import { openingAccountsPut, openingGet, openingLock, openingPaperCancel, openingPaperCreate, openingPaperUpdate, openingStockPut, openingUnlock } from './accounting-opening';
 import { numberingGet, numberingPut } from './accounting-numbering';
-import { receiptsList, receiptEnsure, receiptFormalise } from './accounting-receipts';
+import { receiptsList, receiptEnsure, receiptFormalise, receiptDetail } from './accounting-receipts';
 import { receiptsCheck } from './accounting-receipts-check';
 import { receiptsBackfillPlan, receiptsBackfillRun } from './accounting-receipts-backfill';
 import { ACCOUNT_SECTIONS, defaultSectionFor } from '../lib/account-sections';
@@ -251,6 +251,9 @@ accounting.get('/receipts/backfill', receiptsBackfillPlan);
 accounting.get('/receipts/check', receiptsCheck);
 accounting.post('/receipts/backfill', receiptsBackfillRun);
 accounting.post('/receipts/:id/formalise', receiptFormalise);
+/* One receipt for its page (Claude Design, batch 5 §8.3 c7) — after /check and
+   /backfill, so those names are never read as an id. */
+accounting.get('/receipts/:id', receiptDetail);
 accounting.post('/item-groups', itemGroupCreate);
 accounting.put('/item-groups/:code/accounts', itemGroupBind);
 accounting.patch('/item-groups/:code', itemGroupPatch);
