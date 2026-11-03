@@ -72,6 +72,7 @@ import { settlePiPaidSen } from '../lib/pi-settlement';
 import { normalizeVendor } from '../../acc/bill-extract';
 import { extractBillsHandler, splitPdfHandler } from './pv-extract';
 import { HEADER, journalNumbers, listPaymentVouchersHandler } from './payment-vouchers-list';
+import { remindApproverHandler } from './payment-vouchers-remind';
 /* Still importable from here (tests/pvSupplierAdvance.test.ts and older callers). */
 export { listPaymentVouchersHandler };
 import { parseEventId, pvLineEventRefusal } from '../lib/event-tags';
@@ -395,6 +396,7 @@ paymentVouchers.get('/', listPaymentVouchersHandler);
 /* print-bundle sits with the other literal paths, BEFORE '/:id'. */
 paymentVouchers.post('/print-bundle', printPvBundleHandler);
 paymentVouchers.get('/refund-source', refundSourceHandler); // the document a Customer Refund refunds (lib/pv-refund.ts)
+paymentVouchers.post('/remind', remindApproverHandler); // Remind approver: a note in the approver's bell, posts nothing (payment-vouchers-remind.ts)
 paymentVouchers.post('/:id/files', uploadPvFileHandler);
 paymentVouchers.get('/:id/files', listPvFilesHandler);
 paymentVouchers.get('/:id/files/:fileId', streamPvFileHandler);

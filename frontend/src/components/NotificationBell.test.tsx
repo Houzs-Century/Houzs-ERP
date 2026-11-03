@@ -14,9 +14,17 @@ import { NotificationBell } from "./NotificationBell";
    surfaces record and settles the row immediately.
    ──────────────────────────────────────────────────────────────────────────── */
 
-const { apiGet, apiPost } = vi.hoisted(() => ({
+const { apiGet, apiPost, activeCo } = vi.hoisted(() => ({
   apiGet: vi.fn(),
   apiPost: vi.fn(),
+  activeCo: { value: null as number | null },
+}));
+
+// The company this tab works in — a reminder about another company's voucher
+// opens in a new window on that company.
+vi.mock("../lib/activeCompany", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/activeCompany")>()),
+  getActiveCompanyId: () => activeCo.value,
 }));
 
 vi.mock("../api/client", () => ({
@@ -158,5 +166,69 @@ describe("NotificationBell — system notices section", () => {
         screen.getByRole("button", { name: "Notifications · 3 unread" }),
       ).toBeTruthy(),
     );
+  });
+});
+
+/* Remind approver (owner 2026-11-03): the note a preparer sends about a checked
+   payment voucher lands here, and clicking it opens the voucher. */
+describe("NotificationBell — a payment voucher reminder opens its voucher", () => {
+  const REMINDERS = {
+    success: true,
+    data: [
+      {
+        id: "ann-pv",
+        title: "Carrie Ong asks you to approve HCPV-2610-001 · Freight Co · RM 500.00",
+        body: "Checked by Siti on 2026/10/29. Open it to approve & post.",
+        createdAt: new Date().toISOString(),
+        remindedAt: null,
+        source: "pv_approval:1:pv-1",
+      },
+      {
+        id: "ann-pv-2990",
+        title: "Carrie Ong asks you to approve 2 payment vouchers · RM 623.45",
+        body: "2990PV-2610-001 · Freight Co · RM 500.00",
+        createdAt: new Date().toISOString(),
+        remindedAt: null,
+        source: "pv_approval:2",
+      },
+    ],
+    ackedIds: [],
+  };
+
+  beforeEach(() => {
+    apiGet.mockReset();
+    apiPost.mockReset();
+    apiGet.mockImplementation((url: string) =>
+      url.includes("scope=system")
+        ? Promise.resolve(REMINDERS)
+        : Promise.resolve({ success: true, data: [], ackedIds: [] }),
+    );
+    apiPost.mockResolvedValue({ success: true });
+    activeCo.value = 1;
+  });
+
+  afterEach(() => {
+    cleanup();
+    activeCo.value = null;
+  });
+
+  it("in this company the title links to the voucher, and opening it marks the note read", async () => {
+    renderBell();
+    await openBell();
+    const link = (await screen.findByText(/asks you to approve HCPV-2610-001/)).closest("a");
+    expect(screen.getAllByText("Payment voucher")).toHaveLength(2);
+    expect(link?.getAttribute("to")).toBe("/scm/payment-vouchers/pv-1");
+    fireEvent.click(link!);
+    await waitFor(() =>
+      expect(apiPost).toHaveBeenCalledWith("/api/announcements/ann-pv/ack"),
+    );
+  });
+
+  it("another company's vouchers open in a new window on that company", async () => {
+    renderBell();
+    await openBell();
+    const link = (await screen.findByText(/approve 2 payment vouchers/)).closest("a");
+    expect(link?.getAttribute("href")).toBe("/scm/payment-vouchers?status=CHECKED&company=2");
+    expect(link?.getAttribute("target")).toBe("_blank");
   });
 });

@@ -17,6 +17,13 @@ import { describe, expect, test, vi } from 'vitest';
 const prepareAsync = vi.fn(async (_id: string) => ({}));
 const checkAsync = vi.fn(async (_id: string) => ({}));
 const approveAsync = vi.fn(async (_id: string) => ({}));
+type RemindOut = { reminded: Array<{ id: string; pvNumber: string }>; refused: Array<{ id: string; pvNumber: string | null; error: string; message: string }>; approvers: number; nextAt: string };
+const remindAsync = vi.fn(async (_ids: string[]): Promise<RemindOut> => ({ reminded: [], refused: [], approvers: 1, nextAt: '' }));
+/* Keys this viewer lacks (every key is held unless named here). */
+const denied = new Set<string>();
+const toastSuccess = vi.fn((_m: string) => undefined);
+const toastError = vi.fn((_m: string) => undefined);
+vi.mock('../../hooks/useToast', () => ({ useToastOptional: () => ({ success: toastSuccess, error: toastError, info: vi.fn(), warning: vi.fn() }) }));
 /* The list (with the server's stage counts), or — asked with q — what the server's search found. */
 const searched = vi.fn((q: string) => [{ id: 'old', pv_number: 'HCMPV-2601-004', payee_name: 'Found Co', status: 'POSTED', voucher_date: '2026-01-04', total_sen: 7000, currency: 'MYR', exchange_rate: 1, submitted_at: 'x', checked_at: 'y', approved_at: 'z', notes: `about ${q}`, je_no: 'HC-JE-2601-0007' }]);
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
@@ -35,12 +42,13 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   useSubmitPaymentVoucher: () => ({ mutateAsync: prepareAsync, isPending: false }),
   useCheckPaymentVoucher: () => ({ mutateAsync: checkAsync, isPending: false }),
   useApprovePaymentVoucher: () => ({ mutateAsync: approveAsync, isPending: false }),
+  useRemindApprover: () => ({ mutateAsync: remindAsync, isPending: false }),
   /* Batch-print fetches — never called here (no test clicks Print), stubbed
      because this factory replaces the WHOLE module. */
   fetchPvPrintDetail: vi.fn(),
   fetchPvPrintBundle: vi.fn(),
 }));
-vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
+vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: (key: string) => !denied.has(key) }) }));
 /* Pay from names its account (code, name below). */
 vi.mock('../../vendor/scm/lib/accounting-queries', () => ({ useAccounts: () => ({ data: { accounts: [{ account_code: '310-0001', account_name: 'HONG LEONG BANK' }] } }) }));
 const confirmFn = vi.fn(async (_a: unknown) => true);
@@ -238,5 +246,64 @@ describe('the next step on each row (the redesign)', () => {
     fireEvent.click(screen.getByLabelText('More for PV-2609-003'));
     menu = screen.getByRole('menu');
     expect(within(menu).queryByText('Edit')).toBeNull();
+  });
+});
+
+describe('Remind approver (the design\'s e8; owner 2026-11-03: 主要是付款吧)', () => {
+  const APPROVE = 'scm.payment_voucher.approve';
+  const NEXT = '2026-11-03T08:05:00Z'; // 16:05 in Malaysia
+
+  test('the approver sees Approve & post on a checked voucher, never Remind approver', () => {
+    denied.clear();
+    draw();
+    const row = screen.getByText('PV-2609-003').closest('tr') as HTMLElement;
+    expect(within(row).getByText('Approve & post')).toBeTruthy();
+    expect(screen.queryByText('Remind approver')).toBeNull();
+  });
+
+  test('whoever cannot approve gets Remind approver on the checked row only; the toast names the voucher and the hour', async () => {
+    denied.clear(); denied.add(APPROVE);
+    remindAsync.mockClear(); toastSuccess.mockClear();
+    remindAsync.mockResolvedValueOnce({ reminded: [{ id: 'chk', pvNumber: 'PV-2609-003' }], refused: [], approvers: 1, nextAt: NEXT });
+    draw();
+    const row = screen.getByText('PV-2609-003').closest('tr') as HTMLElement;
+    expect(within(row).queryByText('Approve & post')).toBeNull();
+    expect(screen.getAllByText('Remind approver')).toHaveLength(1);
+    fireEvent.click(within(row).getByText('Remind approver'));
+    await waitFor(() => expect(remindAsync).toHaveBeenCalledWith(['chk']));
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
+    expect(toastSuccess.mock.calls[0]![0]).toBe('Reminder sent to the approver · PV-2609-003 · RM 300.00. One reminder per voucher an hour — the next after 16:05.');
+    denied.clear();
+  });
+
+  test('a reminder refused within the hour says so in the toast, in the server\'s own words', async () => {
+    denied.clear(); denied.add(APPROVE);
+    toastError.mockClear();
+    const said = 'PV-2609-003 was reminded at 15:05 by Mika. One reminder per voucher an hour — the next can go after 16:05.';
+    remindAsync.mockRejectedValueOnce(new Error(said));
+    draw();
+    const row = screen.getByText('PV-2609-003').closest('tr') as HTMLElement;
+    fireEvent.click(within(row).getByText('Remind approver'));
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith(said));
+    denied.clear();
+  });
+
+  test('the batch bar sends ONE request for the ticked checked vouchers, and says the right is someone else\'s', async () => {
+    denied.clear(); denied.add(APPROVE);
+    remindAsync.mockClear(); toastSuccess.mockClear();
+    remindAsync.mockResolvedValueOnce({ reminded: [{ id: 'chk', pvNumber: 'PV-2609-003' }], refused: [], approvers: 3, nextAt: NEXT });
+    draw();
+    const boxes = screen.getAllByLabelText('Select row') as HTMLInputElement[];
+    fireEvent.click(boxes[1]!); // prepared
+    fireEvent.click(boxes[2]!); // checked
+    expect(screen.getByText('Check 1')).toBeTruthy();
+    expect(screen.queryByText(/Approve & post \d/)).toBeNull();
+    expect(screen.getByText(/Approving needs the approve right\. Remind approver sends one note for them all, once an hour per voucher\./)).toBeTruthy();
+    fireEvent.click(screen.getByText('Remind approver · 1'));
+    await waitFor(() => expect(remindAsync).toHaveBeenCalledTimes(1));
+    expect(remindAsync).toHaveBeenCalledWith(['chk']);
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
+    expect(toastSuccess.mock.calls[0]![0]).toBe('Reminder sent to 3 approvers · PV-2609-003 · RM 300.00. One reminder per voucher an hour — the next after 16:05.');
+    denied.clear();
   });
 });
