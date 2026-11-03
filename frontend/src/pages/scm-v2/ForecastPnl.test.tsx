@@ -6,7 +6,7 @@
    percentages and starts the amounts blank; Save sends the whole grid and a
    refused save shows the server's sentence naming the cell; empty lines hide
    and show. The server half is backend/tests/forecastPnl.test.ts. */
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import type { ForecastResponse } from '../../vendor/scm/lib/forecast-queries';
@@ -45,6 +45,8 @@ vi.mock('../../vendor/scm/lib/forecast-queries', () => ({
 /* The page sits in the Finance report shell, whose report list reads the
    sidebar's gates (reports/ReportRail). */
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: null, can: () => true, pageAccess: () => 'full' }) }));
+const xlsx = vi.fn(async (..._a: unknown[]) => {});
+vi.mock('../../vendor/scm/lib/report-sheet-xlsx', () => ({ downloadReportXlsx: (...a: unknown[]) => xlsx(...a) }));
 const { ForecastPnl } = await import('./ForecastPnl');
 
 const amount = (m: string, code: string) => screen.getByLabelText(`${m} ${code} amount`) as HTMLInputElement;
@@ -81,12 +83,12 @@ describe('the Forecast P&L page', () => {
 
   test('keying an amount moves every implied figure; keying the other box clears the first; the page says it is not saved', () => {
     render(<MemoryRouter><ForecastPnl /></MemoryRouter>);
-    expect(screen.queryByText('Not saved')).toBeNull();
+    expect(screen.queryByText('Unsaved changes')).toBeNull();
     key(amount('2026-09', '500-0003'), '200000');
     expect(amount('2026-09', '601-0003').placeholder).toBe('120,000.00');
     expect(rowText('gross-profit')).toContain('80,000.00');
     expect(percent('2026-09', '900-S001').placeholder).toBe('10');
-    expect(screen.getByText('Not saved')).toBeTruthy();
+    expect(screen.getByText('Unsaved changes')).toBeTruthy();
     /* An amount on the cost line replaces its %. */
     key(amount('2026-09', '601-0003'), '50,000');
     expect(percent('2026-09', '601-0003').value).toBe('');
@@ -102,8 +104,9 @@ describe('the Forecast P&L page', () => {
   test('Add month inherits the percentages and none of the amounts; Save sends the whole grid', () => {
     render(<MemoryRouter><ForecastPnl /></MemoryRouter>);
     fireEvent.change(screen.getByLabelText('Month to add'), { target: { value: '2026-10' } });
-    fireEvent.click(screen.getByText('Add month'));
-    expect(screen.getByText('10/2026')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Add month' }));
+    expect(screen.getByText('Oct 2026')).toBeTruthy();
+    expect(screen.getByText('October 2026 added · type its sales; every other line kept its %')).toBeTruthy();
     expect(percent('2026-10', '601-0003').value).toBe('60');
     expect(amount('2026-10', '500-0003').value).toBe('');
     expect(amount('2026-10', '601-0003').placeholder).toBe('0.00');
@@ -113,6 +116,10 @@ describe('the Forecast P&L page', () => {
     expect(Object.keys(sent).sort()).toEqual(['2026-09', '2026-10']);
     expect(sent['2026-10']).toEqual({ '601-0003': { bp: 6000 } });
     expect(sent['2026-09']).toEqual(DATA.months['2026-09']);
+    const opts = mutate.mock.calls[0]![1] as { onSuccess: () => void };
+    act(() => { opts.onSuccess(); });
+    expect(screen.getByText('Forecast saved · 2 months')).toBeTruthy();
+    expect(screen.queryByText('Unsaved changes')).toBeNull();
   });
 
   test('a refused save shows the server\'s sentence naming the cell; a removed month leaves on Save', () => {
@@ -124,10 +131,33 @@ describe('the Forecast P&L page', () => {
     expect(within(screen.getByRole('alert')).getByText('2026-09 900-S001 amount: amount must be a whole number of sen')).toBeTruthy();
     expect(document.activeElement).toBe(amount('2026-09', '900-S001'));
     /* Removing the only month empties the grid the PUT will send. */
-    fireEvent.click(screen.getByLabelText('Remove 09/2026'));
-    expect(screen.getByText(/No month yet/)).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('Remove Sep 2026'));
+    expect(screen.getByText('No month yet — pick one above and press Add month.')).toBeTruthy();
     fireEvent.click(screen.getByText('Save'));
     expect(mutate.mock.calls[1]![0]).toEqual({});
+  });
+
+  test('the bar: the months covered as the grey line, the six after the last or Other…, Nothing to save, and Excel of the grid as shown', async () => {
+    render(<MemoryRouter><ForecastPnl /></MemoryRouter>);
+    expect(screen.getByText('Sep 2026 – Sep 2026 · 1 month · targets per account on the P&L’s layout')).toBeTruthy();
+    const pick = screen.getByLabelText('Month to add') as HTMLSelectElement;
+    expect([...pick.options].map((o) => o.textContent)).toEqual(['October 2026', 'November 2026', 'December 2026', 'January 2027', 'February 2027', 'March 2027', 'Other…']);
+    fireEvent.click(screen.getByText('Save'));
+    expect(mutate).not.toHaveBeenCalled();
+    expect(screen.getByText('Nothing to save')).toBeTruthy();
+    /* Other… takes any month — an earlier one inherits the month before it. */
+    fireEvent.change(pick, { target: { value: 'other' } });
+    fireEvent.change(screen.getByLabelText('Other month to add'), { target: { value: '2026-08' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add month' }));
+    expect(screen.getByText('Aug 2026')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Excel' }));
+    await waitFor(() => expect(xlsx).toHaveBeenCalledTimes(1));
+    const [sheet, file] = xlsx.mock.calls[0]! as [{ title: string; tables: Array<{ columns: Array<{ label: string }>; rows: Array<{ label: string }> }> }, string];
+    expect(file).toBe('forecast-pnl-2026-08-to-2026-09.xlsx');
+    expect(sheet.title).toBe('Forecast P&L');
+    expect(sheet.tables[0]!.columns.map((c) => c.label)).toEqual(['Aug 2026', 'Sep 2026']);
+    expect(sheet.tables[0]!.rows.map((r) => r.label)).toContain('500-0003 · SALES OF SOFA');
+    expect(sheet.tables[0]!.rows.map((r) => r.label)).toContain('NET PROFIT');
   });
 
   /* A purchase line's % is of its OWN group's sales (owner 2026-09-29: purchase
