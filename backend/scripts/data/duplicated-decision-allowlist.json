@@ -2,6 +2,11 @@
   "reviewed": [
     {
       "check": "D1",
+      "key": "*,SCM.ACCESS,SCM.PAYMENT_VOUCHER.POST|frontend/src/components/Sidebar.tsx frontend/src/pages/scm-v2/reports-catalog.ts",
+      "why": "NOT one rule in two homes: the same three permission keys are the gate of several unrelated Finance entries, each its own decision — Bank & cards (Merchant reports, Bank statements, Unmatched payments) and Setup (Chart of accounts, Opening balance, Recon setup) in the sidebar, and the Forecast P&L and Dashboard, which moved with their gate into pages/scm-v2/reports-catalog.ts when Finance › Reports became one entry (owner Claude Design batch 6 §1.1: keep every member's own gate). Changing one entry's gate must not change the others; each is pinned by sidebarFinanceGroups / sidebarReportsEntry tests."
+    },
+    {
+      "check": "D1",
       "key": "UMMUAIMANLM@GMAIL.COM,WEISIANG329@GMAIL.COM,YZHE212@GMAIL.COM|backend/src/routes/lib/sales-report-bills.ts frontend/src/auth/salesAccess.ts",
       "why": "THE CHAT SALES-REPORT ADMIN EMAILS (owner 2026-10-14 trio + Peter added 2026-10-30), one decision with ONE authoritative home and a vendored twin. backend/src/routes/lib/sales-report-bills.ts SAVE_EMAILS is the server's gate (canSaveSalesReport, called per note author inside collectReport). frontend/src/auth/salesAccess.ts SAVE_EMAILS mirrors it so the chat UI shows the Save button for the same accounts; the backend is the authority and returns a can_save flag per project (which also carries the per-event sales-attendee grant that the frontend list CANNOT compute). The two files share no build graph (frontend cannot import backend/src), the set is closed, and a divergence costs a UI button that doesn't match what the server would accept — never a wrong grant, since the server is the referee."
     },
