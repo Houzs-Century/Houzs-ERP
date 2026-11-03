@@ -5,27 +5,29 @@
    page's own default. */
 /* Each tab's title, as the page header names it once the tab strip is gone
    (owner 2026-09-12: 只靠侧栏就好，不然太乱了; docs/bugs/0841) — the Finance
-   sidebar is the one way in, and "Accounting · P&L" says where you are. */
+   sidebar is the one way in, and "Accounting · P&L" says where you are.
+   In sentence case, as the owner's Claude Design names them (batch 6 §1.1):
+   the header, the report list and the workspace tab all read these. */
 export const ACCOUNTING_TAB_TITLES = {
-  coa: 'Chart of Accounts',
-  groups: 'Item Groups',
-  je: 'Journal Entries',
-  gl: 'General Ledger',
-  tb: 'Trial Balance',
-  close: 'Month-end',
+  coa: 'Chart of accounts',
+  groups: 'Item groups',
+  je: 'Journal entries',
+  gl: 'General ledger',
+  tb: 'Trial balance',
+  close: 'Stock close',
   pnl: 'P&L',
-  bs: 'Balance Sheet',
-  rp: 'Cash Flow',
-  ar: 'AR Aging',
-  ap: 'AP Aging',
+  bs: 'Balance sheet',
+  rp: 'Cash flow',
+  ar: 'AR aging',
+  ap: 'AP aging',
   check: 'Self-check',
   corrections: 'Corrections',
   collection: 'Collection',
   charges: 'Merchant charges',
   performance: 'Performance P&L',
   events: 'Event costs',
-  commission: 'Event Commission',
-  products: 'Product Profit',
+  commission: 'Event commission',
+  products: 'Product profit',
   logistics: 'Logistics cost',
 } as const;
 

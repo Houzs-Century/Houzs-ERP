@@ -594,6 +594,36 @@ export async function saveSharedLayout(
   });
 }
 
+/** Picker rows for team-published layouts (is_shared, not a code seed): a
+ *  manager shared these company-wide, so every member gets them. A shared row
+ *  whose name matches a seed id is that seed's override (folded into the seed
+ *  row elsewhere), so it is skipped here. */
+export function sharedPresetRows(
+  sharedLayouts: Record<string, NamedLayout[] | undefined>,
+  tableKey: string,
+  seedIds: ReadonlySet<string>,
+): Array<{
+  id: string;
+  label: string;
+  hint: string;
+  layout: StoredLayout;
+  isDefault: boolean;
+  fromServer: boolean;
+  shared: boolean;
+}> {
+  return (sharedLayouts[tableKey] ?? [])
+    .filter((l) => !seedIds.has(l.name))
+    .map((l) => ({
+      id: `shared:${l.name}`,
+      label: l.name,
+      hint: "Shared with team",
+      layout: l.layout,
+      isDefault: false,
+      fromServer: true,
+      shared: true,
+    }));
+}
+
 /** Drop this company's shared layout for `name`, reverting to the code default. */
 export async function deleteSharedLayout(tableKey: string, name: string): Promise<void> {
   await api.del(
@@ -606,4 +636,22 @@ export async function deleteSharedLayout(tableKey: string, name: string): Promis
       [tableKey]: (snapshot.sharedLayouts[tableKey] ?? []).filter((l) => l.name !== name),
     },
   });
+}
+
+/** The two team-sharing picker actions, as plain functions so the table keeps
+ *  only the glue. `share` publishes a row's OWN columns under its own name (not
+ *  what is on screen); `unshare` drops a team layout by its `shared:` id. */
+export function makeLayoutShareActions(
+  tableKey: string,
+  presets: ReadonlyArray<{ id: string; label: string; layout?: StoredLayout; columns?: string[] }>,
+  presetLayout: (p: { layout?: StoredLayout; columns?: string[] }) => StoredLayout,
+): { share: (id: string) => Promise<void>; unshare: (id: string) => Promise<void> } {
+  return {
+    share: (id) => {
+      const t = presets.find((p) => p.id === id);
+      return t ? saveSharedLayout(tableKey, t.label, presetLayout(t)) : Promise.resolve();
+    },
+    unshare: (id) =>
+      id.startsWith("shared:") ? deleteSharedLayout(tableKey, id.slice("shared:".length)) : Promise.resolve(),
+  };
 }

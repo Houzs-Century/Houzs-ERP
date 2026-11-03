@@ -9,12 +9,13 @@
 // it did, under the header.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../../../components/Layout';
 import { todayMyt } from '../../../vendor/scm/lib/dates';
 import { reportById, type ReportId } from '../reports-catalog';
 import { ReportRail, useRailPinned, useVisibleReports } from './ReportRail';
+import { writeLastReport } from './lastReport';
 import { ShellContext, type ShellSlots } from './reportParts';
 import { isUsableRange, resolveReportRange } from './useReportRange';
 import tokens from '../finance/finance-ui.module.css';
@@ -31,6 +32,11 @@ export function ReportShell({ report, subtitle, actions, ownHeader = false, chil
   children: ReactNode;
 }) {
   const item = reportById(report);
+  /* The sidebar's one Reports entry goes back to the report opened last — one
+     of its members; a Books page opened from the list leaves it as it was. */
+  useEffect(() => {
+    if (item.gate) writeLastReport(item.navTo);
+  }, [item]);
   const reports = useVisibleReports();
   const [pinned, setPinned] = useRailPinned();
   const [params] = useSearchParams();

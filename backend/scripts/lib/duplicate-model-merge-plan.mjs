@@ -25,7 +25,7 @@
 // NO SHEBANG: tests/duplicateModelMergePlan.test.mjs imports this module.
 
 /** Codes that are a misspelling or a placeholder of their twin; never the survivor while a clean twin exists. */
-export const BAD_SPELLING = [/\(BLANK\)/i, /\bLUXURTY?\b/i, /\bPREMUIM\b/i, /\bROY\b/i, /\bSANTUARY\b/i, /\)\s*\(-\(/];
+export const BAD_SPELLING = [/\(BLANK\)/i, /\bLUXURTY?\b/i, /\bPREMUIM\b/i, /\bROY\b/i, /\bSANTUARY\b/i, /\bIYASH\b/i, /\)\s*\(-\(/];
 
 /** Price and cost columns a survivor takes from the code it absorbs when its own is blank. */
 export const FILL_FIELDS = ["base_price_sen", "sell_price_sen", "pwp_price_sen", "cost_price_sen", "price1_sen", "price2_sen", "price3_sen", "price4_sen"];
