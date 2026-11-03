@@ -2,8 +2,7 @@ import type { CSSProperties } from 'react';
 import { addressLineProps } from '../lib/acColumnWidths';
 
 const PLACEHOLDERS = ['Unit, street, area', 'Apt, floor, building (optional)', 'Optional', 'Optional'];
-export const SO_ADDRESS_KEYS = ['address1', 'address2', 'address3', 'address4'] as const;
-type Line = 0 | 1 | 2 | 3;
+type Line = 1 | 2 | 3 | 4;
 
 /**
  * A sales order's four address lines, as the account book holds them: 40
@@ -21,7 +20,7 @@ type Line = 0 | 1 | 2 | 3;
  */
 export function SoAddressLines({ lines, onChange, fieldClassName, labelClassName, inputClassName, style, disabled }: {
   lines: readonly [string, string, string, string];
-  onChange: (index: Line, value: string) => void;
+  onChange: (line: Line, value: string) => void;
   fieldClassName: string;
   labelClassName: string;
   inputClassName: (index: number) => string;
@@ -30,13 +29,13 @@ export function SoAddressLines({ lines, onChange, fieldClassName, labelClassName
 }) {
   return (
     <>
-      {lines.map((value, n) => { const i = n as Line; return (
+      {lines.map((value, i) => { const line = (i + 1) as Line; return (
         <label key={i} className={fieldClassName} style={{ gridColumn: 'span 4', ...style }}>
-          <span className={labelClassName}>Address Line {i + 1}</span>
+          <span className={labelClassName}>Address Line {line}</span>
           <input className={inputClassName(i)} value={value} placeholder={PLACEHOLDERS[i]}
             autoComplete="houzs-no-autofill" disabled={disabled}
-            {...addressLineProps((v) => onChange(i, v), i < 3 ? { value: lines[i + 1] as string, set: (v) => onChange((i + 1) as Line, v) } : null)}
-            onChange={(e) => onChange(i, e.target.value)} />
+            {...addressLineProps((v) => onChange(line, v), line < 4 ? { value: lines[i + 1] ?? '', set: (v) => onChange((line + 1) as Line, v) } : null)}
+            onChange={(e) => onChange(line, e.target.value)} />
         </label>
       ); })}
     </>

@@ -82,7 +82,7 @@ import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER,
 import { useAmendmentSubmitDialog, RequestProcessingDateRemoval } from '../../vendor/scm/components/AmendmentSubmitDialog';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { soConfirmDateNote } from '../../lib/soConfirmDateNote';
-import { SoAddressLines, SO_ADDRESS_KEYS } from '../../components/SoAddressLines';
+import { SoAddressLines } from '../../components/SoAddressLines';
 /* lib/utils formatDate (NOT the vendored fmtDate) for the amendment's header
    dates: these are bare YYYY-MM-DD strings, and fmtDate's `new Date(d)` parses
    those as UTC midnight then renders in the DEVICE zone — the documented
@@ -3578,7 +3578,7 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
         <div className={styles.cardBody}>
           <div className={styles.formGrid4}>
             <SoAddressLines lines={[form.address1, form.address2, form.address3, form.address4]}
-              onChange={(i, v) => set(SO_ADDRESS_KEYS[i], v)}
+              onChange={(line, v) => set(`address${line}` as const, v)}
               fieldClassName={styles.field} labelClassName={styles.fieldLabel} inputClassName={() => styles.fieldInput} disabled={customerDisabled} />
             {/* Owner spec 2026-07-23 — StatePicker (MY-default, click Others for CN/SG, Search). Same shared component as Warehouse / Supplier / Venue / MobileNewSO / SalesOrderNew. No `(legacy)` sneak-through, no free-text fallback. */}
             <label

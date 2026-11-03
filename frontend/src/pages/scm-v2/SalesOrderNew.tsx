@@ -2132,7 +2132,7 @@ export const SalesOrderNew = () => {
           {/* Address fields — only the address lines dim when fill-later is on. */}
           <div className={styles.formGrid4}>
             <SoAddressLines lines={[address1, address2, address3, address4]}
-              onChange={(i, v) => ([setAddress1, setAddress2, setAddress3, setAddress4] as const)[i](v)}
+              onChange={(line, v) => ({ 1: setAddress1, 2: setAddress2, 3: setAddress3, 4: setAddress4 })[line](v)}
               fieldClassName={styles.field} labelClassName={styles.fieldLabel}
               inputClassName={(i) => (i === 0 ? `${styles.fieldInput} ${editedClass('address1', address1)}` : styles.fieldInput)}
               style={{ opacity: fillAddressLater ? 0.4 : 1, pointerEvents: fillAddressLater ? 'none' : 'auto' }} />
