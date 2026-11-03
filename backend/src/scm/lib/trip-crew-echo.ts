@@ -55,7 +55,8 @@ export async function echoTripCrew(sb: Sb, rows: RunRow[]): Promise<void> {
    (assr_case_id, stop_type), not a trip_id on the row — so resolve the stop
    first, then echo its trip's crew (driver, lorry and, owner 2026-10-29, the
    helpers) onto the board's Driver / Lorry / Helper cells, on every load, not
-   just optimistically. Driver IC / contact stay null for an ASSR row, as before.
+   just optimistically. The driver's IC / contact ride along too: the Driver
+   Info WhatsApp prints them, and a leg without a contact cannot send it.
    Best-effort: the caller wraps it so a failure leaves the rows date-only. */
 type AssrCrewRow = { assr_id: number | null; job_kind: string | null; crew: CrewEcho | null; trip_no: string | null; trip_date: string | null };
 export async function echoAssrCrew(sb: Sb, rows: AssrCrewRow[]): Promise<void> {
@@ -72,11 +73,11 @@ export async function echoAssrCrew(sb: Sb, rows: AssrCrewRow[]): Promise<void> {
   const ids = (k: 'driver_id' | 'helper_1_id' | 'helper_2_id' | 'lorry_id') => [...new Set(trips.map((t) => t[k]).filter((x): x is string => !!x))];
   const helperIds = [...new Set([...ids('helper_1_id'), ...ids('helper_2_id')])];
   const [dr, hr, lr] = await Promise.all([
-    ids('driver_id').length ? sb.from('drivers').select('id, name').in('id', ids('driver_id')) : { data: [], error: null },
+    ids('driver_id').length ? sb.from('drivers').select('id, name, ic_number, phone').in('id', ids('driver_id')) : { data: [], error: null },
     helperIds.length ? sb.from('helpers').select('id, name').in('id', helperIds) : { data: [], error: null },
     ids('lorry_id').length ? sb.from('lorries').select('id, plate').in('id', ids('lorry_id')) : { data: [], error: null },
   ]);
-  const drv = new Map(((dr.data ?? []) as Array<{ id: string; name: string | null }>).map((d) => [d.id, d.name]));
+  const drv = new Map(((dr.data ?? []) as Array<{ id: string; name: string | null; ic_number: string | null; phone: string | null }>).map((d) => [d.id, d]));
   const hlp = new Map(((hr.data ?? []) as Array<{ id: string; name: string | null }>).map((h) => [h.id, h.name]));
   const lry = new Map(((lr.data ?? []) as Array<{ id: string; plate: string | null }>).map((l) => [l.id, l.plate]));
   const tripByKey = new Map<string, Trip>();
@@ -93,14 +94,15 @@ export async function echoAssrCrew(sb: Sb, rows: AssrCrewRow[]): Promise<void> {
     // drops it instead of showing it as that lorry's completed stop.
     o.trip_no = t.trip_no;
     o.trip_date = t.trip_date ? String(t.trip_date).slice(0, 10) : null;
-    const driver = t.driver_id ? drv.get(t.driver_id) ?? null : null;
+    const d = t.driver_id ? drv.get(t.driver_id) : undefined;
+    const driver = d?.name ?? null;
     const h1 = t.helper_1_id ? hlp.get(t.helper_1_id) ?? null : null;
     const h2 = t.helper_2_id ? hlp.get(t.helper_2_id) ?? null : null;
     const plate = t.lorry_id ? lry.get(t.lorry_id) ?? null : null;
     if (driver || plate || h1 || h2) {
       o.crew = {
         driver, helper: null, lorry: plate,
-        driver_1_name: driver, driver_1_ic: null, driver_1_contact: null,
+        driver_1_name: driver, driver_1_ic: d?.ic_number ?? null, driver_1_contact: d?.phone ?? null,
         driver_2_name: null, helper_1_name: h1, helper_2_name: h2, lorry_plate: plate,
       };
     }

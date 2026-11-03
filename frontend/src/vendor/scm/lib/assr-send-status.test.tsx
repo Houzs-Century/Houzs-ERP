@@ -1,4 +1,5 @@
-/* HC-0197: after a Service Arrangement blast the ticked ASSR rows show Done Send. */
+/* HC-0197: after a Service Arrangement blast the ticked ASSR rows show Done Send;
+   a Driver Info send to a Service Case job shows Done Driver Information. */
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
@@ -47,5 +48,27 @@ describe('Service Arrangement send moves the ASSR rows to Done Send', () => {
     result.current.mutate({ docNos: ['ASSR/2610-048#inspection', 'ASSR/2610-054#delivery', 'ASSR/2610-099#delivery'], kind: 'assr_arrangement' });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(statuses()).toEqual(['Done Send', 'Done Send', TO_SEND, TO_SEND]);
+  });
+});
+
+describe('Driver Info send to a Service Case job', () => {
+  test('the sent leg shows Done Driver Information; the SO sent with it is left to the re-read', async () => {
+    authedFetch.mockResolvedValue({
+      sent: [
+        { phone: '60123', docNos: ['ASSR/2610-048#inspection'], httpCode: 200 },
+        { phone: '60126', docNos: ['HC-SO-2610-005'], httpCode: 200 },
+      ],
+      failed: [],
+      skipped: [],
+      statusNotMoved: [],
+    });
+    const { result, statuses } = setup();
+    result.current.mutate({
+      docNos: ['ASSR/2610-048#inspection'],
+      kind: 'driver_info',
+      driverInfo: { driverName: 'ABD KHALID', driverContact: '0123', driverIc: '', carPlate: 'VQE9058', deliveryTime: '9am - 11am' },
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(statuses()).toEqual(['Done Driver Information', TO_SEND, TO_SEND, TO_SEND]);
   });
 });

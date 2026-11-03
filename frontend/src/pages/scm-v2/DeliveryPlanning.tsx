@@ -349,9 +349,11 @@ export const DeliveryPlanning = () => {
   const openSendModal = (kind: SendMessageKind) => {
     if (kind === 'assr_arrangement') { setSendKind(kind); setSendingRows(selectedAssrRows); return; }
     const docs = new Set(selectedSoDocNos());
-    if (docs.size === 0) return;
+    // Driver Info also goes to a Service Case job: its trip's driver, its date.
+    const assr = kind === 'driver_info' ? selectedAssrRows : [];
+    if (docs.size === 0 && assr.length === 0) return;
     setSendKind(kind);
-    setSendingRows(allOrders.filter((o) => o.row_type === 'so' && docs.has(o.so_doc_no)));
+    setSendingRows([...allOrders.filter((o) => o.row_type === 'so' && docs.has(o.so_doc_no)), ...assr]);
   };
 
   /* Postpone sends with NO modal (owner 2026-10-15): the reason and the new
@@ -458,6 +460,11 @@ export const DeliveryPlanning = () => {
                     }}
                   >
                     {(() => {
+                      /* Only Service Arrangement and Driver Info reach a Service
+                         Case job; the rest read a Sales Order, so with only ASSR
+                         rows ticked they are greyed instead of doing nothing. */
+                      const soOnlyIdle = (k: SendMessageKind) =>
+                        k !== 'assr_arrangement' && k !== 'driver_info' && selectedSoDocNos().length === 0;
                       const renderKind = (
                         [k, label, hint]: readonly [SendMessageKind, string, string],
                         sub: boolean,
@@ -466,8 +473,10 @@ export const DeliveryPlanning = () => {
                           key={k}
                           type="button"
                           role="menuitem"
+                          disabled={soOnlyIdle(k)}
+                          title={soOnlyIdle(k) ? 'Sales Orders only - tick an SO row' : undefined}
                           onClick={() => { setSendMenuOpen(false); setOneTimeOpen(false); if (k === 'postpone') void sendPostponeDirect(); else openSendModal(k); }}
-                          style={{ display: 'block', width: '100%', padding: sub ? '8px 10px 8px 24px' : '8px 10px', background: 'transparent', border: 'none', borderRadius: 8, cursor: 'pointer', textAlign: 'left' }}
+                          style={{ display: 'block', width: '100%', padding: sub ? '8px 10px 8px 24px' : '8px 10px', background: 'transparent', border: 'none', borderRadius: 8, cursor: soOnlyIdle(k) ? 'default' : 'pointer', textAlign: 'left', opacity: soOnlyIdle(k) ? 0.5 : 1 }}
                           onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg, #f4f2ec)'; }}
                           onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                         >
