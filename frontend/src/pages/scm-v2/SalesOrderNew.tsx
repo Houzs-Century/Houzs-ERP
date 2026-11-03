@@ -79,7 +79,7 @@ import { completePaymentRetryDraft, paymentRetryNavigationState, writePaymentRet
 import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
 import { resolveSelfStaff } from '../../vendor/scm/lib/self-staff';
 import { todayMyt } from '../../vendor/scm/lib/dates';
-import { addressLineProps } from '../../lib/acColumnWidths';
+import { SoAddressLines } from '../../components/SoAddressLines';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { deriveProcessingDate } from '../../lib/processingDate';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
@@ -2129,76 +2129,13 @@ export const SalesOrderNew = () => {
             </div>
           </label>
 
-          {/* Address fields — only Address 1/2 dim when fill-later is on. */}
+          {/* Address fields — only the address lines dim when fill-later is on. */}
           <div className={styles.formGrid4}>
-            <label
-              className={styles.field}
-              style={{
-                gridColumn: 'span 4',
-                opacity: fillAddressLater ? 0.4 : 1,
-                pointerEvents: fillAddressLater ? 'none' : 'auto',
-              }}
-            >
-              <span className={styles.fieldLabel}>Address Line 1</span>
-              <input
-                className={`${styles.fieldInput} ${editedClass('address1', address1)}`}
-                value={address1}
-                {...addressLineProps(setAddress1, { value: address2, set: setAddress2 })}
-                onChange={(e) => setAddress1(e.target.value)}
-                placeholder="Unit, street, area"
-              />
-            </label>
-            <label
-              className={styles.field}
-              style={{
-                gridColumn: 'span 4',
-                opacity: fillAddressLater ? 0.4 : 1,
-                pointerEvents: fillAddressLater ? 'none' : 'auto',
-              }}
-            >
-              <span className={styles.fieldLabel}>Address Line 2</span>
-              <input
-                className={styles.fieldInput}
-                value={address2}
-                {...addressLineProps(setAddress2, { value: address3, set: setAddress3 })}
-                onChange={(e) => setAddress2(e.target.value)}
-                placeholder="Apt, floor, building (optional)"
-              />
-            </label>
-            <label
-              className={styles.field}
-              style={{
-                gridColumn: 'span 4',
-                opacity: fillAddressLater ? 0.4 : 1,
-                pointerEvents: fillAddressLater ? 'none' : 'auto',
-              }}
-            >
-              <span className={styles.fieldLabel}>Address Line 3</span>
-              <input
-                className={styles.fieldInput}
-                value={address3}
-                {...addressLineProps(setAddress3, { value: address4, set: setAddress4 })}
-                onChange={(e) => setAddress3(e.target.value)}
-                placeholder="Optional"
-              />
-            </label>
-            <label
-              className={styles.field}
-              style={{
-                gridColumn: 'span 4',
-                opacity: fillAddressLater ? 0.4 : 1,
-                pointerEvents: fillAddressLater ? 'none' : 'auto',
-              }}
-            >
-              <span className={styles.fieldLabel}>Address Line 4</span>
-              <input
-                className={styles.fieldInput}
-                value={address4}
-                {...addressLineProps(setAddress4, null)}
-                onChange={(e) => setAddress4(e.target.value)}
-                placeholder="Optional"
-              />
-            </label>
+            <SoAddressLines lines={[address1, address2, address3, address4]}
+              onChange={(i, v) => ([setAddress1, setAddress2, setAddress3, setAddress4] as const)[i](v)}
+              fieldClassName={styles.field} labelClassName={styles.fieldLabel}
+              inputClassName={(i) => (i === 0 ? `${styles.fieldInput} ${editedClass('address1', address1)}` : styles.fieldInput)}
+              style={{ opacity: fillAddressLater ? 0.4 : 1, pointerEvents: fillAddressLater ? 'none' : 'auto' }} />
             {/* Owner spec 2026-07-23 — StatePicker enforces "MY default listed,
                 click Others for CN/SG, Search filters across all". Same shared
                 component as Warehouse / Supplier / Venue / MobileNewSO — no

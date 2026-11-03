@@ -82,7 +82,7 @@ import { planAmendmentSubmit, amendmentSubmittedNotice, AMENDMENT_MODE_BANNER,
 import { useAmendmentSubmitDialog, RequestProcessingDateRemoval } from '../../vendor/scm/components/AmendmentSubmitDialog';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { soConfirmDateNote } from '../../lib/soConfirmDateNote';
-import { addressLineProps } from '../../lib/acColumnWidths';
+import { SoAddressLines, SO_ADDRESS_KEYS } from '../../components/SoAddressLines';
 /* lib/utils formatDate (NOT the vendored fmtDate) for the amendment's header
    dates: these are bare YYYY-MM-DD strings, and fmtDate's `new Date(d)` parses
    those as UTC midnight then renders in the DEVICE zone — the documented
@@ -3577,51 +3577,9 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
         </header>
         <div className={styles.cardBody}>
           <div className={styles.formGrid4}>
-            <label className={`${styles.field}`} style={{ gridColumn: 'span 4' }}>
-              <span className={styles.fieldLabel}>Address Line 1</span>
-              {/* KEEP CHROME'S ADDRESS AUTOFILL OFF THIS BLOCK.
-                  Chrome classifies a form by its FIELDS, not one at a time, so
-                  a bare address input here makes it treat the whole group as an
-                  address form and offer its saved-address popup — which renders
-                  above the State list and makes State unpickable, and with it
-                  City and Postcode. StatePicker already sets autoComplete="off"
-                  and it was not enough: Chrome overrides `off` once the form
-                  looks like an address. An UNRECOGNISED token is what actually
-                  stops the heuristic, because it is neither a known field type
-                  nor the `off` it argues with. */}
-              <input className={styles.fieldInput} value={form.address1}
-                placeholder="Unit, street, area"
-                autoComplete="houzs-no-autofill"
-                disabled={customerDisabled} {...addressLineProps((v) => set('address1', v), { value: form.address2, set: (v) => set('address2', v) })}
-                onChange={(e) => set('address1', e.target.value)} />
-            </label>
-            <label className={`${styles.field}`} style={{ gridColumn: 'span 4' }}>
-              <span className={styles.fieldLabel}>Address Line 2</span>
-              <input className={styles.fieldInput} value={form.address2}
-                placeholder="Apt, floor, building (optional)"
-                autoComplete="houzs-no-autofill"
-                disabled={customerDisabled} {...addressLineProps((v) => set('address2', v), { value: form.address3, set: (v) => set('address3', v) })}
-                onChange={(e) => set('address2', e.target.value)} />
-            </label>
-            {/* Lines 3 and 4 were stored but had no input, so a POS address the
-                save fit spilled past line 2 printed on the order and could not
-                be seen or corrected here (2990-0036). */}
-            <label className={`${styles.field}`} style={{ gridColumn: 'span 4' }}>
-              <span className={styles.fieldLabel}>Address Line 3</span>
-              <input className={styles.fieldInput} value={form.address3}
-                placeholder="Optional"
-                autoComplete="houzs-no-autofill"
-                disabled={customerDisabled} {...addressLineProps((v) => set('address3', v), { value: form.address4, set: (v) => set('address4', v) })}
-                onChange={(e) => set('address3', e.target.value)} />
-            </label>
-            <label className={`${styles.field}`} style={{ gridColumn: 'span 4' }}>
-              <span className={styles.fieldLabel}>Address Line 4</span>
-              <input className={styles.fieldInput} value={form.address4}
-                placeholder="Optional"
-                autoComplete="houzs-no-autofill"
-                disabled={customerDisabled} {...addressLineProps((v) => set('address4', v), null)}
-                onChange={(e) => set('address4', e.target.value)} />
-            </label>
+            <SoAddressLines lines={[form.address1, form.address2, form.address3, form.address4]}
+              onChange={(i, v) => set(SO_ADDRESS_KEYS[i], v)}
+              fieldClassName={styles.field} labelClassName={styles.fieldLabel} inputClassName={() => styles.fieldInput} disabled={customerDisabled} />
             {/* Owner spec 2026-07-23 — StatePicker (MY-default, click Others for CN/SG, Search). Same shared component as Warehouse / Supplier / Venue / MobileNewSO / SalesOrderNew. No `(legacy)` sneak-through, no free-text fallback. */}
             <label
               className={styles.field}
