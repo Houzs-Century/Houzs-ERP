@@ -12,9 +12,10 @@
 // `kind` picks the Connect automation (backend scm/lib/delivery-message-kinds
 // .ts is the source of truth). Driver Info reads the driver (name / IC / contact
 // / plate) off each order's own crew — the board's Driver / Lorry columns — so
-// the operator does not pick it again; the one thing the ERP does not hold is the
-// delivery-time window, and it differs per customer, so EACH customer carries its
-// own time field. Ready customers send one Connect call each (owner 2026-10-27).
+// the operator does not pick it again. The delivery-time window differs per
+// customer, so EACH customer carries its own time field, pre-filled from the
+// row's Time Slot so it is not keyed twice. Ready customers send one Connect call
+// each (owner 2026-10-27).
 // Postpone likewise reads the row's Amend Reason + Delivery Date.
 //
 // Mirrors ScheduleDpOrderDrawer's chrome + the Suppliers CSS module. In-app
@@ -29,10 +30,11 @@ import {
   assrJobKindLabel,
   useSendDeliveryMessages,
   type PlanningOrder,
+  type SendDeliveryMessagesBody,
   type SendDeliveryMessagesResult,
   type SendMessageKind,
 } from '../lib/delivery-planning-queries';
-import { phoneKey, planDriverInfoGroup, type DriverGroupPlan } from '../lib/driver-info-send';
+import { groupTimeSlot, phoneKey, planDriverInfoGroup, type DriverGroupPlan } from '../lib/driver-info-send';
 import { useNotify } from './NotifyDialog';
 import styles from '../../../pages/scm-v2/Suppliers.module.css';
 
@@ -50,6 +52,7 @@ const KIND_TITLE: Record<SendMessageKind, string> = {
   delivery: 'Send delivery message',
   amend: 'Send amend / reschedule message',
   postpone: 'Send postpone notice',
+  overdue_order: 'Send overdue-order notice',
   driver_info: 'Send driver information',
   balance_reminder: 'Send balance reminder',
   reminder_1: 'Send reminder 1',
@@ -74,6 +77,45 @@ export const statusNotMovedNote = (list: SendDeliveryMessagesResult['statusNotMo
     ? `Delivery Message Status NOT updated for ${list.map((n) => `${n.docNo} (${NOT_MOVED_LABEL[n.reason] ?? n.reason})`).join(', ')} - set it on the row.`
     : null;
 
+/** "Failed N: phone, phone (reason)." — one reason printed once, not per customer. */
+export const failedNote = (list: SendDeliveryMessagesResult['failed']): string | null => {
+  if (list.length === 0) return null;
+  const byError = new Map<string, string[]>();
+  for (const f of list) byError.set(f.error, [...(byError.get(f.error) ?? []), f.phone]);
+  return `Failed ${list.length}: ${[...byError].map(([error, phones]) => `${phones.join(', ')} (${error})`).join('; ')}.`;
+};
+
+/* HC-0197: the Worker messages one customer after another, so 64 customers in
+   one request ran past the 30 s request deadline and the board never heard
+   which ones went. A request now carries at most SEND_CHUNK customers. */
+export const SEND_CHUNK = 10;
+
+/** Send each customer's orders, SEND_CHUNK customers per request, one request
+ *  after another. A request that fails marks only its own customers failed. */
+export async function sendInChunks(
+  sendOne: (body: SendDeliveryMessagesBody) => Promise<SendDeliveryMessagesResult>,
+  kind: SendMessageKind,
+  customers: Array<{ phone: string; docNos: string[] }>,
+  onProgress?: (customersDone: number) => void,
+): Promise<Required<SendDeliveryMessagesResult>> {
+  const agg: Required<SendDeliveryMessagesResult> = { sent: [], failed: [], skipped: [], statusNotMoved: [] };
+  for (let i = 0; i < customers.length; i += SEND_CHUNK) {
+    const chunk = customers.slice(i, i + SEND_CHUNK);
+    try {
+      const res = await sendOne({ docNos: chunk.flatMap((g) => g.docNos), kind });
+      agg.sent.push(...res.sent);
+      agg.failed.push(...res.failed);
+      agg.skipped.push(...res.skipped);
+      agg.statusNotMoved.push(...(res.statusNotMoved ?? []));
+    } catch (err) {
+      const error = err instanceof Error ? err.message : 'send failed';
+      for (const g of chunk) agg.failed.push({ phone: g.phone, docNos: g.docNos, error });
+    }
+    onProgress?.(Math.min(i + SEND_CHUNK, customers.length));
+  }
+  return agg;
+}
+
 export const SKIP_LABEL: Record<string, string> = {
   not_found: 'order not found',
   no_phone: 'no usable phone',
@@ -91,14 +133,20 @@ export const SKIP_LABEL: Record<string, string> = {
 const DRIVER_BLOCK_HINT: Record<NonNullable<DriverGroupPlan['block']>, string> = {
   no_driver: 'No driver on these orders — set the Driver column on the row first.',
   no_contact: 'This driver has no contact on file — add it in Fleet first.',
-  no_time: 'Type a delivery time to send this customer.',
+  no_time: 'No Time Slot on the row — type a delivery time to send this customer.',
 };
 
 const fieldStyle = { display: 'grid', gap: 4, fontSize: 'var(--fs-12)' } as const;
 const inputStyle = { padding: '6px 8px', border: '1px solid var(--line)', borderRadius: 8, fontSize: 'var(--fs-13)', background: '#fff' } as const;
 const noteStyle = { marginBottom: 'var(--space-3)', padding: 'var(--space-3)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-12)', color: 'var(--c-muted, #767b6e)' } as const;
 
-export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: { rows: PlanningOrder[]; onClose: () => void; kind?: SendMessageKind }) => {
+export const SendDeliveryMessageModal = ({ rows, onClose, onSent, kind = 'delivery' }: {
+  rows: PlanningOrder[];
+  onClose: () => void;
+  /** The rows whose message went out — the board unticks them (HC-0197). */
+  onSent?: (rows: PlanningOrder[]) => void;
+  kind?: SendMessageKind;
+}) => {
   const send = useSendDeliveryMessages();
   const notify = useNotify();
 
@@ -109,32 +157,38 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
   // One Service Case job per message: the template names one case and one date.
   const isAssrSend = kind === 'assr_arrangement';
 
-  // Driver Info only: the per-customer delivery-time window, keyed by phone.
+  // Driver Info only: the operator's per-customer edits of the delivery time,
+  // keyed by phone. A customer not edited here sends its rows' Time Slot.
   const [timeByPhone, setTimeByPhone] = useState<Record<string, string>>({});
   // Sequential per-customer sends run across several awaits, so a local flag
   // keeps the button disabled for the whole run (send.isPending toggles per call).
   const [busy, setBusy] = useState(false);
+  const [customersDone, setCustomersDone] = useState(0);
 
   // Preview grouping — mirrors the backend's phone grouping.
   const groups = new Map<string, PlanningOrder[]>();
   const noPhone: PlanningOrder[] = [];
   for (const r of rows) {
-    const key = phoneKey(r.phone) && (isAssrSend ? r.so_doc_no : phoneKey(r.phone));
+    // A Service Case job sends alone (its template names one date), never
+    // bundled with another job or an SO on the same phone.
+    const key = phoneKey(r.phone) && (r.row_type === 'assr' ? r.so_doc_no : phoneKey(r.phone));
     if (!key) { noPhone.push(r); continue; }
     const arr = groups.get(key) ?? [];
     arr.push(r);
     groups.set(key, arr);
   }
   const sendableDocs = [...groups.values()].flat().map((r) => r.so_doc_no);
+  const customers = [...groups.entries()].map(([phone, list]) => ({ phone, docNos: list.map((r) => r.so_doc_no) }));
 
   // Driver Info: one plan per customer (driver pulled from the orders' crew +
   // this customer's typed time). A customer is ready only when its plan has no
   // block; ready customers each send their own Connect call.
+  const timeFor = (phone: string, list: PlanningOrder[]): string => timeByPhone[phone] ?? groupTimeSlot(list);
   const driverGroups = needsDriver
     ? [...groups.entries()].map(([phone, list]) => ({
         phone,
         docNos: list.map((r) => r.so_doc_no),
-        plan: planDriverInfoGroup(list, timeByPhone[phone] ?? ''),
+        plan: planDriverInfoGroup(list, timeFor(phone, list)),
       }))
     : [];
   const planByPhone = new Map(driverGroups.map((g) => [g.phone, g.plan]));
@@ -148,10 +202,13 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
   /* Post-send: summarise and close. The server already moved each sent order's
      Delivery Message Status; only the ones it could not move are listed. */
   const finish = (res: SendResult) => {
+    const sentDocs = new Set(res.sent.flatMap((s) => s.docNos));
+    onSent?.(rows.filter((r) => sentDocs.has(r.so_doc_no)));
     const notMoved = statusNotMovedNote(res.statusNotMoved);
+    const failed = failedNote(res.failed);
     const parts: string[] = [];
     if (res.sent.length) parts.push(`Sent ${res.sent.length} message${res.sent.length === 1 ? '' : 's'}${isAssrSend ? '.' : ` (${res.sent.reduce((n, s) => n + s.docNos.length, 0)} orders).`}`);
-    if (res.failed.length) parts.push(`Failed ${res.failed.length}: ${res.failed.map((f) => `${f.phone} (${f.error})`).join('; ')}.`);
+    if (failed) parts.push(failed);
     if (res.skipped.length) parts.push(`Skipped ${res.skipped.length}: ${res.skipped.map((s) => `${s.docNo} (${SKIP_LABEL[s.reason] ?? s.reason})`).join(', ')}.`);
     if (notMoved) parts.push(notMoved);
     void notify({
@@ -185,22 +242,24 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
       return;
     }
 
-    // Every other kind: one call for the whole selection (postpone / balance /
-    // postage read what they need off each order server-side).
-    try {
-      const res = await send.mutateAsync({ docNos: sendableDocs, kind });
-      finish(res);
-    } catch (err) {
-      void notify({ title: 'Send failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
-    }
+    // Every other kind (postpone / balance / postage read what they need off
+    // each order server-side), a few customers per request.
+    setBusy(true);
+    setCustomersDone(0);
+    const res = await sendInChunks(send.mutateAsync, kind, customers, setCustomersDone);
+    setBusy(false);
+    finish(res);
   };
 
+  // A send in progress keeps the drawer open: closing it would hide which customers went.
+  const close = busy ? undefined : onClose;
+
   return (
-    <div className={styles.backdrop} onClick={onClose}>
+    <div className={styles.backdrop} onClick={close}>
       <div className={styles.drawer} onClick={(e) => e.stopPropagation()}>
         <div className={styles.drawerHeader}>
           <h2 className={styles.drawerTitle}>{KIND_TITLE[kind]}</h2>
-          <button type="button" onClick={onClose} className={styles.codeChip}><X {...ICON} /></button>
+          <button type="button" onClick={close} disabled={busy} className={styles.codeChip}><X {...ICON} /></button>
         </div>
 
         <div className={styles.drawerBody}>
@@ -210,7 +269,7 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
 
           {needsDriver && (
             <div style={noteStyle}>
-              Each customer's message uses the <strong>driver set on the row</strong> (the Driver / Lorry columns) — no need to pick it again. Type the <strong>delivery-time window</strong> for each customer below; a customer with no driver on the row is skipped.
+              Each customer's message uses the <strong>driver set on the row</strong> (the Driver / Lorry columns) — no need to pick it again. The <strong>delivery time</strong> is taken from the row's <strong>Time Slot</strong>; change it below only if the customer should read something else. A customer with no driver on the row is skipped. A Service Case job sends on its own, with its job date.
             </div>
           )}
 
@@ -259,9 +318,9 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
                     )}
                     {plan.driver && (
                       <label style={fieldStyle}>
-                        <span>Delivery time (as the customer will read it)</span>
+                        <span>Delivery time (as the customer will read it){!(phone in timeByPhone) && groupTimeSlot(list) ? ' — from Time Slot' : ''}</span>
                         <input
-                          value={timeByPhone[phone] ?? ''}
+                          value={timeFor(phone, list)}
                           onChange={(e) => setTimeByPhone((m) => ({ ...m, [phone]: e.target.value }))}
                           placeholder="e.g. 10am – 1pm"
                           style={inputStyle}
@@ -276,7 +335,7 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
 
                 {list.map((r) => (
                   <div key={r.so_doc_no} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 'var(--fs-12)', padding: '2px 0' }}>
-                    <span>{isAssrSend ? `${r.ref} · ${assrJobKindLabel(r.job_kind)}` : r.so_doc_no}{r.branding ? ` · ${r.branding}` : ''}</span>
+                    <span>{r.row_type === 'assr' ? `${r.ref} · ${assrJobKindLabel(r.job_kind)}` : r.so_doc_no}{r.branding ? ` · ${r.branding}` : ''}</span>
                     <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--c-muted, #767b6e)' }}>{effectiveDate(r)}</span>
                   </div>
                 ))}
@@ -286,20 +345,22 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
 
           {noPhone.length > 0 && (
             <div style={{ padding: 'var(--space-3)', border: '1px dashed var(--line)', borderRadius: 'var(--radius-md)', color: 'var(--c-muted, #767b6e)', fontSize: 'var(--fs-12)' }}>
-              Skipped — no usable phone: {noPhone.map((r) => (isAssrSend ? r.ref : r.so_doc_no)).join(', ')}
+              Skipped — no usable phone: {noPhone.map((r) => (r.row_type === 'assr' ? r.ref : r.so_doc_no)).join(', ')}
             </div>
           )}
         </div>
 
         {needsDriver && messageCount === 0 && (
           <div style={{ padding: '0 var(--space-4)', color: 'var(--c-burnt)', fontSize: 'var(--fs-12)' }}>
-            Type a delivery time for at least one customer to enable sending.
+            Set the Time Slot on the row (or type a delivery time here) for at least one customer to enable sending.
           </div>
         )}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-3)', padding: 'var(--space-4)' }}>
-          <Button variant="ghost" size="md" onClick={onClose}>Cancel</Button>
+          <Button variant="ghost" size="md" onClick={close} disabled={busy}>Cancel</Button>
           <Button variant="primary" size="md" onClick={submit} disabled={!canSend}>
-            {busy || send.isPending ? 'Sending…' : `Send ${messageCount} message${messageCount === 1 ? '' : 's'}`}
+            {busy && !needsDriver
+              ? `Sending ${customersDone} / ${messageCount}…`
+              : busy || send.isPending ? 'Sending…' : `Send ${messageCount} message${messageCount === 1 ? '' : 's'}`}
           </Button>
         </div>
       </div>

@@ -288,9 +288,15 @@ export const jeNosOf = (value: unknown): string[] =>
  * statement being looked at — plus the day the first statement ever filed for
  * the account begins, before which nothing was reconciled here and so nothing
  * is "still waiting". Fails closed: a read that fails is a refusal.
+ *
+ * `upTo`: for a statement's carried list, only lines dated on or before its
+ * last day — what the bank paid after the statement ended was still waiting at
+ * its end (see claimedOutside, accounting-bank-months.ts). Null for the matcher,
+ * which must never offer an entry any line has taken, whenever.
  */
 export async function loadClaimedElsewhere(
   sb: Parameters<typeof loadAccountLedger>[0], companyId: number, accountCode: string, exceptStatementId: number | null,
+  upTo: string | null = null,
 ): Promise<{ ok: true; claimed: Set<string>; firstPeriodFrom: string | null } | Fail> {
   const { data: stmts, error: sErr } = await sb.from('acc_bank_statements')
     .select('id, period_from').eq('company_id', companyId).eq('account_code', accountCode);
@@ -302,9 +308,10 @@ export async function loadClaimedElsewhere(
   if (ids.length === 0) return { ok: true, claimed, firstPeriodFrom };
 
   const { data: lines, error: lErr } = await sb.from('acc_bank_statement_lines')
-    .select('id, posted_je_no, state').eq('company_id', companyId).in('statement_id', ids).eq('state', 'POSTED');
+    .select('id, posted_je_no, state, booked_on').eq('company_id', companyId).in('statement_id', ids).eq('state', 'POSTED');
   if (lErr) return { ok: false, reason: lErr.message };
-  const posted = (lines ?? []) as Array<{ id: number; posted_je_no: string | null }>;
+  const posted = ((lines ?? []) as Array<{ id: number; posted_je_no: string | null; booked_on: string | null }>)
+    .filter((l) => upTo == null || String(l.booked_on ?? '').slice(0, 10) <= upTo);
   for (const l of posted) for (const je of jeNosOf(l.posted_je_no)) claimed.add(je);
 
   const postedIds = posted.map((l) => Number(l.id));

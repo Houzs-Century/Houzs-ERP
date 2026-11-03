@@ -35,7 +35,9 @@ describe('the registry', () => {
     debtors = [baseDebtor()];
     draw();
     expect(screen.getByText('RM 500.00')).toBeTruthy();
-    fireEvent.click(screen.getByText('AHMAD BIN ALI'));
+    /* The name opens the debtor's own page (batch 5 step 2); the row still opens the card. */
+    expect(screen.getByText('AHMAD BIN ALI').closest('a')!.getAttribute('href')).toBe('/scm/other-debtors/d1');
+    fireEvent.click(screen.getByText('012-345'));
     expect(screen.getByText('Bills on AR Invoices').closest('a')!.getAttribute('href')).toBe('/scm/ar-invoices?debtor=d1');
     expect(screen.getByText(/the bills behind it, and a new one, live on AR Invoices/)).toBeTruthy();
     /* The registry alone (2026-09-29): no bill and no receipt is raised on this page. */
@@ -48,7 +50,7 @@ describe('the registry', () => {
     debtors = [baseDebtor()];
     updateDebtorAsync.mockClear();
     draw();
-    fireEvent.click(screen.getByText('AHMAD BIN ALI'));
+    fireEvent.click(screen.getByText('012-345'));
     fireEvent.click(screen.getByRole('button', { name: /Deactivate/ }));
     await waitFor(() => expect(updateDebtorAsync).toHaveBeenCalledWith({ id: 'd1', isActive: false }));
   });
@@ -75,7 +77,7 @@ describe("the debtor's own data (owner 2026-09-21: 他要填的资料就和 supp
     debtors = [{ ...baseDebtor(), address1: '12, JALAN SATU', city: 'PETALING JAYA', postcode: '47810', state: 'Selangor', country: 'Malaysia', email: 'ahmad@example.com', tin_number: 'IG12345678090' }];
     updateDebtorAsync.mockClear();
     draw();
-    fireEvent.click(screen.getByText('AHMAD BIN ALI'));
+    fireEvent.click(screen.getByText('012-345'));
     expect(screen.getByText('12, JALAN SATU')).toBeTruthy();
     expect(screen.getByText('47810 PETALING JAYA')).toBeTruthy();
     expect(screen.getByText('Selangor, Malaysia')).toBeTruthy();

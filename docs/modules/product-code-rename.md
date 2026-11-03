@@ -134,6 +134,15 @@ Editing a code in place in Maintenance -> Sofa Compartments (master scope) calls
 - The new code has no spaces (the sofa canvas cannot parse one) and keeps
   `<longest SOFA model code>-<code>` within 30 characters.
 
+## 5a-2. Model code change (Modular)
+
+`PATCH /api/scm/product-models/:id` with a new `modelCode` calls `scm.rename_model_code(company_id, model_id, new_code)`:
+the model, its SKUs' `mfg_products.base_model` and the company's `sofa_combo_pricing`, `sofa_quick_picks` and
+`personal_quick_picks` rows move in one transaction. SKU item codes (`<MODEL>-<comp>`) do not change.
+- 409 `code_taken` (another model, SKU, combo or quick pick already uses the new code), `code_shared` (another model still
+  holds the old code), `pos_combos_in_use` (2990 POS combos are append-only; retire them on the POS first).
+- A model name change needs none of this: SKU Master reads the live name through `model_id`.
+
 ## 5b. Merge codes (many into one)
 
 SKU Master -> "Merge codes": pick the kept code, add the old codes one by one,

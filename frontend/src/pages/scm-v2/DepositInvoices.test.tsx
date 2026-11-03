@@ -1,11 +1,11 @@
 /* The Deposit Invoices page (docs/bugs/0828): the switch line and the
    backlog button, the list with its filters, one invoice with its payment,
-   cancel behind a reason, post again; Print in the detail prints the one
-   invoice and ticked rows print as one document in list order
-   (docs/bugs/0834). Since 2026-10-06 a row opens THE INVOICE — the page as it
-   prints, A4 with its order's address and figures — and every print reads
-   the sheets (GET /deposit-invoices/sheets). The server half is
-   backend/tests/depositInvoices.test.ts. */
+   cancel behind a reason, post again; ticked rows print as one document in
+   list order (docs/bugs/0834). Since 2026-10-06 a row opens THE INVOICE —
+   since the redesign (batch 5 step 1) as its own page in its own tab, which
+   money-in/invoiceDocs.test.tsx holds (Post, Cancel, the page as it prints)
+   — and every print reads the sheets (GET /deposit-invoices/sheets). The
+   server half is backend/tests/depositInvoices.test.ts. */
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -74,6 +74,10 @@ vi.mock('../../vendor/scm/lib/deposit-invoice-queries', async (importOriginal) =
   },
 }));
 
+/* A row opens the invoice's page in its own tab. */
+const openInTabFn = vi.fn();
+vi.mock('../../lib/openDocInTab', () => ({ useOpenDocInTab: () => openInTabFn }));
+
 const { DepositInvoices } = await import('./DepositInvoices');
 
 describe('the Deposit Invoices page', () => {
@@ -122,48 +126,13 @@ describe('the Deposit Invoices page', () => {
     settings.value = { ...settings.value, missingCount: 3 };
   });
 
-  test('an invoice opens with its payment; Cancel invoice waits for a reason, then sends it; a posted invoice offers no Post', () => {
+  test('a row — or its number — opens the invoice\'s own page in its own tab; no pop-out over the list', () => {
+    openInTabFn.mockClear();
     render(<MemoryRouter><DepositInvoices /></MemoryRouter>);
-    fireEvent.click(screen.getByText('2990-DI-2609-003'));
-    const dialog = screen.getByLabelText('Deposit invoice');
-    expect(within(dialog).getByText(/cash · .* · RM 1,000\.00/)).toBeTruthy();
-    expect(within(dialog).queryByText('Post to ledger')).toBeNull();
-    const cancelBtn = within(dialog).getByText('Cancel invoice') as HTMLButtonElement;
-    expect(cancelBtn.disabled).toBe(true);
-    fireEvent.change(within(dialog).getByLabelText('Cancel reason'), { target: { value: 'Customer changed order' } });
-    fireEvent.click(within(dialog).getByText('Cancel invoice'));
-    expect(cancelMutate).toHaveBeenCalledWith({ id: 'd3', reason: 'Customer changed order' });
-  });
-
-  test('an invoice with a credit note against it offers no Cancel and says why (the closed-DI guard, owner 2026-09-21)', () => {
-    render(<MemoryRouter><DepositInvoices /></MemoryRouter>);
-    fireEvent.click(screen.getByText('2990-DI-2609-001'));
-    const dialog = screen.getByLabelText('Deposit invoice');
-    expect(within(dialog).queryByText('Cancel invoice')).toBeNull();
-    expect(within(dialog).queryByLabelText('Cancel reason')).toBeNull();
-    expect(within(dialog).getByText(/A credit note stands against this invoice, so it cannot be cancelled or re-issued/)).toBeTruthy();
-  });
-
-  test('a cancelled invoice shows its reason and offers neither Post nor Cancel', () => {
-    render(<MemoryRouter><DepositInvoices /></MemoryRouter>);
-    fireEvent.click(screen.getByText('2990-DI-2609-002'));
-    const dialog = screen.getByLabelText('Deposit invoice');
-    expect(within(dialog).getByText(/payment on 2990-SO-2609-002 edited — re-issued/)).toBeTruthy();
-    expect(within(dialog).queryByText('Cancel invoice')).toBeNull();
-    expect(within(dialog).queryByLabelText('Cancel reason')).toBeNull();
-  });
-
-  test('Print in the detail prints the one invoice — a cancelled one too; ticked rows print as ONE document in list order (docs/bugs/0834)', async () => {
-    render(<MemoryRouter><DepositInvoices /></MemoryRouter>);
-    fireEvent.click(screen.getByText('2990-DI-2609-002'));
-    const dialog = screen.getByLabelText('Deposit invoice');
-    /* The page is drawn first — what Print prints is what the pop-out shows. */
-    await waitFor(() => expect(within(dialog).getByTitle('Deposit invoice 2990-DI-2609-002 as printed')).toBeTruthy());
-    fireEvent.click(within(dialog).getByText('Print'));
-    await waitFor(() => expect(pdfSingle).toHaveBeenCalled());
-    /* The sheet prints — the row with its order's address and figures. */
-    expect(pdfSingle.mock.calls[0]?.[0]).toMatchObject({ di_number: '2990-DI-2609-002', status: 'CANCELLED', so_doc_no: '2990-SO-2609-002', method: 'merchant', order: ORDER });
-    expect(pdfSingle.mock.calls[0]?.[1]).toEqual({ action: 'print' });
+    expect(screen.getByText('2990-DI-2609-003').closest('a')!.getAttribute('href')).toBe('/scm/ar-invoices/deposit/d3');
+    fireEvent.click(screen.getByText('Ah Seng'));
+    expect(openInTabFn).toHaveBeenLastCalledWith('/scm/ar-invoices/deposit/d3');
+    expect(screen.queryByLabelText('Deposit invoice')).toBeNull();
   });
 
   test('ticked rows print as ONE document in list order, each sheet with its order (docs/bugs/0834)', async () => {
@@ -182,29 +151,14 @@ describe('the Deposit Invoices page', () => {
     expect(pdfBatch.mock.calls[0]?.[1]).toEqual({ action: 'print' });
   });
 
-  /* 点一行就直接打开这张单 (owner 2026-10-06): the pop-out IS the invoice. */
-  test('a row opens the invoice as it prints — the A4 page in the pop-out — and Save PDF keeps it', async () => {
-    pdfBlob.mockClear(); pdfSingle.mockClear();
-    render(<MemoryRouter><DepositInvoices /></MemoryRouter>);
-    fireEvent.click(screen.getByText('Ah Seng'));
-    const dialog = screen.getByLabelText('Deposit invoice');
-    await waitFor(() => expect(within(dialog).getByTitle('Deposit invoice 2990-DI-2609-003 as printed').getAttribute('src')).toBe('blob:di'));
-    expect(pdfBlob.mock.calls[0]?.[0]).toMatchObject({ di_number: '2990-DI-2609-003', order: ORDER });
-    fireEvent.click(within(dialog).getByText('Save PDF'));
-    await waitFor(() => expect(pdfSingle).toHaveBeenCalled());
-    expect(pdfSingle.mock.calls[0]?.[1]).toEqual({ action: 'save' });
-  });
 });
 
 /* A refund on a deposit invoice is a credit note against it, whole or in
    part (docs/bugs/0860): the list says how much came off, the detail names
    the note and the refund voucher. */
 describe('what a refund took off an invoice', () => {
-  test('the list says how much was refunded; the detail names the note and the voucher', () => {
+  test('the list says how much was refunded (the invoice\'s page names the note and the voucher)', () => {
     render(<MemoryRouter><DepositInvoices /></MemoryRouter>);
     expect(screen.getByText('refunded RM 400.00')).toBeTruthy();
-    fireEvent.click(screen.getByText('2990-DI-2609-001'));
-    expect(screen.getByText(/Refunded RM 400\.00 — the sale this invoice booked is taken back by credit note/)).toBeTruthy();
-    expect(screen.getByText(/2990-CN-2609-009 · RM 400\.00 · POSTED · refund 2990-CRF-2609-001/)).toBeTruthy();
   });
 });

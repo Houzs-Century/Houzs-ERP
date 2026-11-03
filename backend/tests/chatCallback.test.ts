@@ -125,16 +125,25 @@ describe("the callback records the request, it does not schedule", () => {
   });
 });
 
-describe("one secret, one company", () => {
-  test("the key speaks for HOUZS and the SO lookup is scoped to it", () => {
+describe("one secret, the companies of its number", () => {
+  test("the key speaks for HOUZS and 2990 and the SO lookup is scoped to them", () => {
     const src = route();
-    expect(src).toMatch(/CHAT_KEY_COMPANY\s*=\s*"HOUZS"/);
-    // company.id null-but-master-readable is a MISCONFIGURATION and must
-    // refuse; degrading to "no predicate" re-opens the cross-tenant hole on
-    // the day someone renames a company code.
-    expect(src).toMatch(/company\.master\s*&&\s*company\.id\s*==\s*null/);
-    expect(src).toMatch(/\.eq\("company_id",\s*company\.id\)/);
+    // HC-0200: 2990's delivery messages go out on the Houzs number, so their
+    // taps come back on this key. HOUZS-only 404'd every 2990 Confirm / Amend.
+    expect(src).toMatch(/CHAT_KEY_COMPANIES\s*=\s*\["HOUZS",\s*"2990"\]\s*as const/);
+    // An id null-but-master-readable is a MISCONFIGURATION and must refuse;
+    // degrading to "no predicate" re-opens the cross-tenant hole on the day
+    // someone renames a company code.
+    expect(src).toMatch(/keyCompanies\[i\]\.master\s*&&\s*keyCompanies\[i\]\.id\s*==\s*null/);
+    expect(src).toMatch(/\.in\("company_id",\s*orderCompanyIds\)/);
     expect(record()).toMatch(/\.eq\("company_id",\s*companyId\)/);
+  });
+
+  test("each order is recorded under its own company, Service Cases under HOUZS", () => {
+    const src = route();
+    expect(src).toMatch(/companyId:\s*t\.companyId,/);
+    expect(src).toMatch(/const company = keyCompanies\[0\]/);
+    expect(src).toMatch(/recordAssrChatTap\(c\.env,\s*sb,\s*\{\s*companyId:\s*company\.id/);
   });
 
   test("an unknown ref and another company's ref answer identically", () => {

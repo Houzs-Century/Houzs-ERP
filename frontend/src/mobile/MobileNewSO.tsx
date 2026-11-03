@@ -68,7 +68,7 @@ import {
 } from "../vendor/scm/lib/address-cascade";
 import { StatePicker } from "../vendor/scm/components/StatePicker";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
-import { deferLineDateToHeader, lineDatePinned, withoutLineDate } from "../vendor/scm/lib/so-line-date-defer";
+import { createLineBody, deferLineDateToHeader, lineDatePinned, withoutLineDate } from "../vendor/scm/lib/so-line-date-defer";
 import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
 import { useCreateAmendment, type CreateAmendmentLine } from "../vendor/scm/lib/so-amendment-queries";
 import { useCreateMfgSalesOrder } from "../vendor/scm/lib/sales-order-queries";
@@ -92,7 +92,7 @@ import {
   type SpecialAddonRow,
 } from "../vendor/scm/lib/mfg-products-queries";
 import { useSpecialOrderSurface } from "../vendor/scm/lib/special-order-surface";
-import { MobileFabricPicker } from "./MobileFabricPicker";
+import { FabricField, MobileFabricPicker } from "./MobileFabricPicker";
 /* Owner 2026-07-16 — the recorded-payment ledger is the SHARED
    RecordedPaymentsList, the SAME component the scan-draft review screen
    (MobileSODetail) renders. It was a local read-only copy, which is why
@@ -2149,7 +2149,7 @@ export function MobileNewSO({
       }
 
       // CREATE (new / edit-draft treated as create — mints a fresh doc_no).
-      const items = namedLines.map((l) => itemBody(l));
+      const items = namedLines.map((l) => createLineBody(itemBody(l), asDraft));
 
       const body: Record<string, unknown> = {
         customerName: name.trim(),
@@ -3339,33 +3339,6 @@ function LineCard({
 
 /* Tile chrome + StagedPhotoThumb + MobileSavedPhotoThumb moved to
    ./MobileSavedPhotoThumb — see that file for the shared style constants. */
-
-/* FabricField — a tappable read-only row that opens the searchable FabricPicker
-   modal (native <select> with 700+ options is unusable per owner). Shows the
-   picked fabric code (+ colour label) or a "Select fabric" placeholder. */
-function FabricField({ value, colourLabel, invalid, onOpen }: {
-  value: string; colourLabel: string; invalid: boolean; onOpen: () => void;
-}) {
-  return (
-    <Field label="Fabric / colour *">
-      <button
-        type="button"
-        onClick={onOpen}
-        className="fld-i"
-        style={{
-          textAlign: "left", fontFamily: "inherit", cursor: "pointer", display: "flex",
-          alignItems: "center", gap: 8, background: "#fff",
-          ...(invalid ? { borderColor: "#b23a3a", boxShadow: "0 0 0 2px rgba(178,58,58,.12)" } : null),
-        }}
-      >
-        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: value ? "#11140f" : "#9aa093", fontWeight: value ? 700 : 400 }}>
-          {value ? (colourLabel ? `${value} — ${colourLabel}` : value) : "Select fabric…"}
-        </span>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9aa093" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none" }}><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
-      </button>
-    </Field>
-  );
-}
 
 /* SpecialOrderSheet — unified special-order entry as a bottom sheet
    (owner-approved). Lists the active special_addons presets for this line's

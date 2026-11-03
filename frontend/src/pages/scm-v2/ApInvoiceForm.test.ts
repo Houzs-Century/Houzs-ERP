@@ -3,7 +3,7 @@
    invoice — pre-ticked; the flag rides the submit only when ticked. */
 
 import { describe, expect, test } from 'vitest';
-import { emptyApForm, formFromExtraction, formFromRequest, isProvisional, toSubmit } from './ApInvoiceForm';
+import { dueFromTerms, emptyApForm, formFromExtraction, formFromRequest, isProvisional, toSubmit } from './ApInvoiceForm';
 import type { BillExtraction } from '../../vendor/scm/lib/payment-voucher-queries';
 
 const read = (documentKind: BillExtraction['documentKind']): BillExtraction => ({
@@ -31,4 +31,16 @@ test('an AP invoice answering a request carries the requester\'s note', () => {
   const r = { request_no: 'HC-PRQ-2610-002', requested_by_name: 'James Seow', purpose: 'Booth F1 rental', amount_sen: 850_000, due_date: null, project_id: null };
   expect(formFromRequest({ ...r, note: 'Pay before 25/09' }, undefined, null).initial.description).toBe('Payment request HC-PRQ-2610-002 — Booth F1 rental · Note: Pay before 25/09');
   expect(formFromRequest(r, undefined, null).initial.description).toBe('Payment request HC-PRQ-2610-002 — Booth F1 rental');
+});
+
+/* The due date from the supplier's terms (the redesign, batch 4 step 6). */
+describe('the due date from the terms', () => {
+  test('N days or Net N count from the invoice date; C.O.D., blank or unreadable give none', () => {
+    expect(dueFromTerms('30 Days', '2026-09-15')).toBe('2026-10-15');
+    expect(dueFromTerms('Net 60', '2026-11-30')).toBe('2027-01-29');
+    expect(dueFromTerms('7 DAYS', '2026-12-28')).toBe('2027-01-04');
+    expect(dueFromTerms('C.O.D.', '2026-09-15')).toBeNull();
+    expect(dueFromTerms(null, '2026-09-15')).toBeNull();
+    expect(dueFromTerms('30 Days', '')).toBeNull();
+  });
 });

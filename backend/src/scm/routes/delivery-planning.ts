@@ -89,11 +89,12 @@ import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMa
 /* Service-Case rows on this board are company-scoped (owner ruling 2026-08-21).
    Both statements live in ONE module, with the reasoning, so the predicate is
    assertable and cannot be re-derived by hand here. */
-import { assrBoardLocation, assrOpenCaseGuardSql, ASSR_BOARD_LEGS, ASSR_CONFIRMED_COL, assrBoardLegs, assrCaseClosed } from '../lib/assr-board-scope'; import { overlayAssrChatState } from '../lib/assr-arrangement-message';
+import { assrBoardLocation, assrLegGuardSql, assrLegOpen, ASSR_BOARD_LEGS, ASSR_CONFIRMED_COL, assrBoardLegs, assrCaseClosed, ASSR_LEG_TIME_COL, ASSR_LEG_MSG_COL } from '../lib/assr-board-scope'; import { overlayAssrChatState } from '../lib/assr-arrangement-message';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { computeReleaseGate } from '../../services/agents/release-gate';
 import { mintDpNoForLorry } from '../lib/dp-no-mint';
+import { scheduleDpDate, writeNonSoFields } from '../lib/delivery-planning-nonso-edit';
 import { resolveDeliveryScope, scopeMatchesAssignment, type DeliveryScope, type CrewAssignment } from '../lib/deliveryScope';
 import { fetchDoCrewAssignment, doPodContextHandler, ownServiceAndProjectRowKeys } from './delivery-pod-context';
 import { deriveArrangementStage } from '../lib/arrangement-stage';
@@ -106,7 +107,7 @@ import { zoneForAddress } from '../lib/zone-classify';
 import { deriveSetCount, type SetLine } from '../lib/set-count';
 import { composeAddress, geocodeAddressCached, normalizeAddress } from '../lib/geocode';
 import { dateOrNull } from '../lib/date-coerce';
-import { echoTripCrew } from '../lib/trip-crew-echo';
+import { echoTripCrew, echoAssrCrew } from '../lib/trip-crew-echo';
 import { latestLiveDoIdForSo, applyScheduleCrew, assignSoCrew, setAssrLegCrew, staleRunOfSo, hasSeatPatch } from '../lib/trip-crew-sync';
 import { pgrestIn } from '../lib/pgrest-in-list';
 import { planningPoNosByDoc } from '../lib/planning-po-nos'; import { stepClock } from '../../lib/step-timing';
@@ -1134,10 +1135,11 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           house_type: null,
           replacement_disposal: null,
           referral: null,
-          delivery_message_status: null,
+          // Hand-set status; overlayAssrChatState overlays the WhatsApp reply when there is one (owner 2026-10-29).
+          delivery_message_status: a[ASSR_LEG_MSG_COL[leg.jobKind]] ?? null,
           disposal_request: null,
           dp_remark: null,
-          time_range: null,
+          time_range: a[ASSR_LEG_TIME_COL[leg.jobKind]] ?? null,
           time_confirmed: null,
           arrival_at: null,
           departure_at: null,
@@ -1186,52 +1188,9 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     if (e !== SUB_BOARD_SKIPPED) console.warn(`[delivery-planning] ASSR union skipped: ${String((e as Error).message).slice(0, 120)}`);
   }
 
-  /* ── ASSR crew echo (P3) ──────────────────────────────────────────────────────
-     An ASSR leg scheduled onto a trip (scheduleAssrOntoTrip) writes a trip_stop
-     keyed by (assr_case_id, stop_type). Resolve that stop's trip crew so the board's
-     Driver / Lorry cells reflect the assignment — not just optimistically, but on
-     every load. Best-effort: any failure leaves the ASSR rows date-only. */
-  try {
-    const assrCaseIds = [...new Set(assrOrders.map((o) => o.assr_id).filter((x): x is number => x != null))];
-    if (assrCaseIds.length) {
-      const { data: stops } = await chunkIn<{ assr_case_id: number; stop_type: string; trip_id: string }, number>(assrCaseIds, (batch, from, to) => sb.from('trip_stops')
-        .select('assr_case_id, stop_type, trip_id').in('assr_case_id', batch).order('assr_case_id').range(from, to));
-      if (stops.length) {
-        const tripIds = [...new Set(stops.map((s) => s.trip_id).filter(Boolean))];
-        const { data: trips } = await chunkIn<{ id: string; driver_id: string | null; lorry_id: string | null }>(tripIds,
-          (batch, from, to) => sb.from('trips').select('id, driver_id, lorry_id').in('id', batch).order('id').range(from, to));
-        const tripById = new Map(trips.map((t) => [String(t.id), t]));
-        const driverIds = [...new Set(trips.map((t) => t.driver_id).filter((x): x is string => !!x))];
-        const lorryIds = [...new Set(trips.map((t) => t.lorry_id).filter((x): x is string => !!x))];
-        const { data: drvRaw } = driverIds.length ? await sb.from('drivers').select('id, name').in('id', driverIds) : { data: [] };
-        const { data: lryRaw } = lorryIds.length ? await sb.from('lorries').select('id, plate').in('id', lorryIds) : { data: [] }; lap('dp-assr-crew');
-        const driverName = new Map(((drvRaw ?? []) as Array<{ id: string; name: string | null }>).map((d) => [String(d.id), d.name]));
-        const lorryPlate = new Map(((lryRaw ?? []) as Array<{ id: string; plate: string | null }>).map((l) => [String(l.id), l.plate]));
-        const stopByKey = new Map<string, { driver: string | null; lorry: string | null }>();
-        for (const s of stops) {
-          const t = tripById.get(String(s.trip_id));
-          stopByKey.set(`${s.assr_case_id}#${s.stop_type}`, {
-            driver: t?.driver_id ? (driverName.get(String(t.driver_id)) ?? null) : null,
-            lorry: t?.lorry_id ? (lorryPlate.get(String(t.lorry_id)) ?? null) : null,
-          });
-        }
-        for (const o of assrOrders) {
-          const st = o.job_kind === 'customer_pickup' ? 'PICKUP' : o.job_kind === 'inspection' ? 'INSPECTION' : 'DELIVERY';
-          const hit = stopByKey.get(`${o.assr_id}#${st}`);
-          if (hit && (hit.driver || hit.lorry)) {
-            o.crew = {
-              driver: hit.driver, helper: null, lorry: hit.lorry,
-              driver_1_name: hit.driver, driver_1_ic: null, driver_1_contact: null,
-              driver_2_name: null, helper_1_name: null, helper_2_name: null,
-              lorry_plate: hit.lorry,
-            };
-          }
-        }
-      }
-    }
-  } catch (e) {
-    console.warn(`[delivery-planning] ASSR crew echo skipped: ${String((e as Error).message).slice(0, 120)}`);
-  }
+  /* An ASSR leg on a trip shows that run's crew — driver, lorry and helpers
+     (owner 2026-10-29) — resolved from the leg's trip_stop. Best-effort. */
+  await echoAssrCrew(sb, assrOrders).catch((e: Error) => console.warn(`[delivery-planning] ASSR crew echo skipped: ${e.message.slice(0, 120)}`)); lap('dp-assr-crew');
   await overlayAssrChatState(sb, assrOrders); // HC-0171: the customer's WhatsApp answer on ASSR rows
 
   /* ── DP Order union (mig 0129) ────────────────────────────────────────────────
@@ -1303,10 +1262,10 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         house_type: null,
         replacement_disposal: null,
         referral: null,
-        delivery_message_status: null,
+        delivery_message_status: (d.delivery_message_status as string | null) ?? null,
         disposal_request: null,
         dp_remark: null,
-        time_range: null,
+        time_range: (d.time_range as string | null) ?? null,
         time_confirmed: null,
         arrival_at: null,
         departure_at: null,
@@ -1930,7 +1889,9 @@ function emptyCounts(): Record<'ALL' | DeliveryState, number> {
 deliveryPlanning.patch('/:type/:id/fields', async (c) => {
   const type = c.req.param('type').toLowerCase();
   const id = c.req.param('id');
-  if (type !== 'so' && type !== 'do') return c.json({ error: 'bad_type', reason: 'type must be so | do' }, 400);
+  if (type !== 'so' && type !== 'do' && type !== 'dp' && type !== 'assr') {
+    return c.json({ error: 'bad_type', reason: 'type must be so | do | dp | assr' }, 400);
+  }
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
   const parsed = fieldsSchema.safeParse(body);
@@ -1950,6 +1911,18 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
   }
 
   const sb = c.get('supabase');
+
+  /* DP / Service-Case rows carry ONE editable field here — the message status
+     (owner 2026-10-29). The rest of fieldsSchema is SO/DO-shaped, so these two
+     types write just that column and return (module keeps the router thin). */
+  if (type === 'dp' || type === 'assr') {
+    const r = await writeNonSoFields(c, sb, type, id, {
+      deliveryMessageStatus: p.deliveryMessageStatus as string | null | undefined,
+      timeRange: p.timeRange as string | null | undefined,
+      jobKind: p.jobKind as 'customer_pickup' | 'delivery' | 'inspection' | undefined,
+    });
+    return c.json(r.body, r.status);
+  }
 
   // Split the present keys into the two column maps.
   const soUpdates: Record<string, unknown> = {};
@@ -2237,8 +2210,8 @@ async function nextTripNo(sb: any): Promise<string> {
 deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
   const type = c.req.param('type').toLowerCase();
   const id = c.req.param('id');
-  if (type !== 'so' && type !== 'do' && type !== 'assr') {
-    return c.json({ error: 'bad_type', reason: 'type must be so | do | assr' }, 400);
+  if (type !== 'so' && type !== 'do' && type !== 'assr' && type !== 'dp') {
+    return c.json({ error: 'bad_type', reason: 'type must be so | do | assr | dp' }, 400);
   }
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -2266,7 +2239,7 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
       : 'delivery';
     // Logistics' date is the CONFIRMED one; Service's requested date stays as keyed.
     const col = ASSR_CONFIRMED_COL[jobKind];
-    /* The case must EXIST and be OPEN before ANYTHING is written. The date write
+    /* The case must EXIST and THIS job must be open (a sibling's POD closing the case does not lock it) before ANYTHING is written. The date write
        below carries that guard in its own WHERE clause, but a crew-only edit (a
        lorry with no scheduleDate — now reachable because the board's Driver /
        Lorry cells are editable for ASSR) skips that write entirely. Without this
@@ -2274,20 +2247,20 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
        closed / archived / non-existent case: fleet capacity consumed by work that
        is finished or was never there, and invisible on the board because the
        board has no row for it. Fails the same way the date path already does.
-       It is ALSO the company gate for everything below: assrOpenCaseGuardSql
+       It is ALSO the company gate for everything below: assrLegGuardSql
        carries the caller's granted-company predicate, so an out-of-scope case
        404s here (owner ruling 2026-08-21). */
-    const openCase = (await c.env.DB.prepare(
-      assrOpenCaseGuardSql(c),
-    ).bind(caseId).first()) as { id: number } | null;
-    if (!openCase) return c.json({ error: 'not_found' }, 404);
+    const legCase = (await c.env.DB.prepare(
+      assrLegGuardSql(c),
+    ).bind(caseId).first()) as Parameters<typeof assrLegOpen>[0] | null;
+    if (!legCase || !assrLegOpen(legCase, jobKind)) return c.json({ error: 'not_found' }, 404);
 
     // Write the driving date when the date cell was the edit (unchanged behaviour).
     if (p.scheduleDate !== undefined) {
       try {
         const res = await c.env.DB.prepare(
           `UPDATE assr_cases SET ${col} = ?, updated_at = datetime('now')
-            WHERE id = ? AND closed_at IS NULL AND archived_at IS NULL`,
+            WHERE id = ? AND archived_at IS NULL`,
         ).bind(p.scheduleDate, caseId).run();
         if (!res.meta.changes) return c.json({ error: 'not_found' }, 404);
       } catch (e) {
@@ -2306,6 +2279,12 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
       ? await scheduleAssrOntoTrip(c, sb, caseId, jobKind, p)
       : { state: 'NOT_REQUESTED' };
     return c.json({ ok: true, assr: { id: caseId, job_kind: jobKind, [col]: p.scheduleDate ?? null }, ...tripFieldsFor(wiring) });
+  }
+
+  /* DP (manual job) rows — date-only here; crew is the trip's (see the module). */
+  if (type === 'dp') {
+    const r = await scheduleDpDate(c, c.get('supabase'), id, p.scheduleDate);
+    return c.json(r.body, r.status);
   }
 
   const wantsTrip = p.tripId != null || p.lorryId != null;
@@ -2790,7 +2769,7 @@ async function scheduleAssrOntoTrip(
        via c.env.DB (same path the ASSR board union uses). The leg date is the trip's
        default date so a crew-only edit (no scheduleDate) still lands on the right day.
        company-scope: deliberately UNSCOPED, and safe — reachable only after the
-       ASSR branch's assrOpenCaseGuardSql has 404'd any case outside the caller's
+       ASSR branch's assrLegGuardSql has 404'd any case outside the caller's
        granted companies. Same shape as routes/assr.ts (:2672, :1116). */
     const a = (await c.env.DB.prepare(
       `SELECT customer_name AS customer_name, ${dateCol} AS leg_date,

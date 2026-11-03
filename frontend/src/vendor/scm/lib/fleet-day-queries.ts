@@ -13,6 +13,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import type { HistoryRow } from './fleet-day-cards';
 
 export type FleetDayWarehouse = {
   id: string;
@@ -46,6 +47,11 @@ export type FleetDayTrip = {
   status: string;
   is_outsourced: boolean;
   total_distance_km: number | null;
+  /** Planned departure (mig 20261101T0900) vs the actual clock-in / clock-out
+   *  departure (mig 0053). ISO; null until set. */
+  planned_depart_at: string | null;
+  clock_in_at: string | null;
+  clock_out_at: string | null;
   lorry: { id: string; plate: string } | null;
   driver: { id: string; name: string } | null;
   helpers: Array<{ id: string; name: string }>;
@@ -68,6 +74,19 @@ export type FleetDayResponse = {
   warehouses: FleetDayWarehouse[];
   trips: FleetDayTrip[];
 };
+
+/** The Last Mile History tab (phase 3c): delivered drops whose delivery day is
+ *  in [from,to]. Disabled until both ends are set. */
+export function useDeliveryHistory(from: string | null, to: string | null) {
+  return useQuery({
+    queryKey: ['fleet-history', from ?? '', to ?? ''],
+    queryFn: () => authedFetch<{ rows: HistoryRow[] }>(
+      `/trips/history?from=${encodeURIComponent(from ?? '')}&to=${encodeURIComponent(to ?? '')}`,
+    ).then((r) => r.rows),
+    enabled: !!from && !!to,
+    staleTime: 60_000,
+  });
+}
 
 /** Fetch a whole day's fleet. `date` is required (YYYY-MM-DD); `warehouseId`
  *  narrows to one depot. Disabled until a date is set. */

@@ -98,6 +98,59 @@ export function lastMileListSideOf(o: LastMileRow & ToArrangeRow, date: string):
   return isToArrangeRow(o, date) ? 'TO_ARRANGE' : null;
 }
 
+/** A due-this-day SO assigned to a LORRY (crew.lorry_plate) that is NOT on a live
+ *  trip — the dispatcher picked the lorry on the DP board before a run was opened
+ *  (owner 2026-11-01). It belongs UNDER that lorry's Last Mile card, so the board
+ *  shows the day's plan per lorry even before trips/DOs exist.
+ *
+ *  Unlike isToArrangeRow (the To-arrange bucket), this KEEPS a DELIVERED one. The
+ *  shared feed flips an SO to DELIVERED the moment its DO is merely LOADED
+ *  (syncSoDeliveredFromDo counts LOADED — see so-delivered-flips-early-from-loaded-do),
+ *  so a lorry's loaded / completed drops would otherwise disappear from its card
+ *  mid-run — the owner's "VRH 少了几张" (2026-11-02). A completed drop stays
+ *  visible, its DO status driving done-vs-active in docRowVM, exactly as a
+ *  delivered SO on a live trip stays via lastMileSideOf. Still bounded to the
+ *  picked day (toArrangeDateOf), so past-day delivered drops do not pile up.
+ *  (lastMileSideOf stays trip-only, so map focus / crew / stop-status still see
+ *  trip rows only.) */
+export function isAssignedNoTripRow(
+  o: ToArrangeRow & Pick<PlanningOrder, 'crew'>,
+  date: string,
+): boolean {
+  if (o.row_type !== 'so') return false;
+  if (o.trip_date != null) return false;
+  if (!o.crew?.lorry_plate) return false;
+  const d = toArrangeDateOf(o);
+  return d != null && String(d).slice(0, 10) === date;
+}
+
+/** A NON-SO job a lorry runs on the picked day (owner 2026-11-02). A lorry's day
+ *  is not only its SO deliveries: the same run also does ASSR service legs and the
+ *  DP / PMS jobs the fleet schedules — SETUP, DISMANTLE, SUPPLIER_PICKUP, TRANSFER,
+ *  SERVICE. Those rows already ride the shared feed with the lorry on them (a DP
+ *  row on a trip carries the trip's date + crew via echoTripCrew; an ASSR leg
+ *  carries the crew via echoAssrCrew; a PMS project window carries the crew from
+ *  its phase JSON) — they were simply never pulled onto the Last Mile board, which
+ *  was SO-delivery-only. This is their inclusion, a path SEPARATE from the SO ones
+ *  (lastMileSideOf / isAssignedNoTripRow stay SO-only so map focus, crew proposal
+ *  and stop-status still see SO trip rows only).
+ *
+ *  A non-SO job belongs to the day when it either sits on a live trip that day
+ *  (its trip_date, which the DP crew echo stamps) or is due that day with a lorry
+ *  already assigned (crew.lorry_plate). A DELIVERED job with no trip is historical
+ *  — kept off, exactly as isToArrangeRow drops a delivered SO. EM / SG is excluded
+ *  upstream (FleetDay filters boardOrders), same as the SO rows. */
+export function isLastMileJobRow(
+  o: ToArrangeRow & Pick<PlanningOrder, 'crew'>,
+  date: string,
+): boolean {
+  if (o.row_type === 'so') return false;
+  if (o.trip_date != null && String(o.trip_date).slice(0, 10) === date) return true;
+  if (o.delivery_state === 'DELIVERED') return false;
+  const d = toArrangeDateOf(o);
+  return d != null && String(d).slice(0, 10) === date && !!o.crew?.lorry_plate;
+}
+
 /* East Malaysia (Sabah / Sarawak / Labuan) and Singapore ship by their OWN
    channel — consolidated out of KL and sent by freight, not on the local
    last-mile lorry run — so they are kept OFF the Last Mile board (owner

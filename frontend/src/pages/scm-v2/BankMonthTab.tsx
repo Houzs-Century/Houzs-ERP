@@ -28,21 +28,28 @@
 // right.
 // ----------------------------------------------------------------------------
 
-import { useState } from 'react';
-import { AlertTriangle, ArrowLeft, CalendarDays, Check, Link2, Lock, Printer, Unlock } from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { AlertTriangle, Check, Download, Link2, Lock, Printer, Unlock } from 'lucide-react';
 import {
-  useBankMonths, useBankMonth, useLockBankMonth, useUnlockBankMonth, useAutoMatchStatement, useTypeMonthClosing, useLeaveOutRepeats,
-  type BankMonth, type BankMonthAssembly, type BankMonthBalances, type BankMonthLock, type BankLine,
+  useBankSetup, useBankMonths, useBankMonth, useLockBankMonth, useUnlockBankMonth, useAutoMatchStatement, useTypeMonthClosing, useLeaveOutRepeats,
+  type BankMonthAssembly, type BankMonthBalances, type BankMonthLock, type BankLine,
   type BankBalanceSource, type BankTypedBalance, type Reconciliation,
 } from './bank-queries';
 import { ICON, fmt, btn, softText, danger, good, panel, refusalText } from './settlement-ui';
-import { ReconciliationPanel, OpenLines, DoneLine, BooksNotOnBank } from './BankStatementTab';
 import { ReconcilePickProvider, byDateThenLine } from './bank-reconcile-pick';
-import { BankAccountTabs, currentAccount } from './BankAccountTabs';
+import {
+  BankCards, DifferenceWalk, MissingBanner, MonthFigures, MonthStrip, MonthTracker, bankCards, defaultMonth, lockLabel, lockReasons, monthTitle,
+  type MonthFacts,
+} from './BankStatementsTop';
+import { LineTabBody, LineTabs, firstOpenTab, openingTab, tabCounts, type LineTab } from './BankLineTabs';
+import look from './BankStatements.module.css';
+import { BankReconPrintModal, setAsideLines, setAsideSen } from './BankReconPrint';
+import { useFinanceTodo } from './finance/finance-todo-queries';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import grid from './MerchantRecon.module.css';
-import { DataTable, type Column } from '../../components/DataTable';
+import { downloadCSV, toCSV } from '../../lib/csv';
 import { fmtDate } from '../../vendor/shared/format';
 
 /** 2026-09 → 09/2026 — a month in the house's own numeric, unambiguous shape,
@@ -78,118 +85,82 @@ export const parseRm = (text: string): number | null => {
 type Picked = { accountCode: string; month: string };
 
 export const BankMonthTab = () => {
-  const [picked, setPicked] = useState<Picked | null>(null);
-  /* Which account's months are on the list — kept HERE, above the list, so
-     coming back from a month lands on the same account (owner 2026-09-13:
-     by month 这里我无法分辨什么也会). */
-  const [account, setAccount] = useState<string | null>(null);
-  if (picked) return <MonthView picked={picked} onBack={() => setPicked(null)} />;
-  return (
-    <MonthList account={account} onAccount={setAccount}
-      onOpen={(p) => { setAccount(p.accountCode); setPicked(p); }} />
-  );
-};
-
-/* ── Every month that has anything in it ──────────────────────────────────── */
-
-const MonthList = ({ account, onAccount, onOpen }: {
-  account: string | null; onAccount: (code: string) => void; onOpen: (p: Picked) => void;
-}) => {
+  /* The redesign (owner's Claude Design, batch 3): a card per account, its
+     months by statement month, and one month open below — the account and the
+     month live in the address (?account=&month=), so To do lands on the right
+     one. With none asked for, the account with lines to decide comes up, and
+     its oldest month not yet locked: months are closed in order. */
+  const [params, setParams] = useSearchParams();
+  const setup = useBankSetup();
   const q = useBankMonths();
+  const todo = useFinanceTodo();
   const months = q.data?.months ?? [];
-  /* One account at a time. The codes come off the months themselves, so an
-     account with nothing uploaded has no tab — a tab over an empty list is a
-     question with no answer. */
-  const codes = [...new Set(months.map((m) => m.accountCode))].sort();
-  const current = currentAccount(codes, account);
-  const shown = months.filter((m) => m.accountCode === current);
+  /* To do's own rule for a statement not uploaded (bank-missing): the day the uploads stop, per account. */
+  const missing = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const j of [...(todo.data?.mine ?? []), ...(todo.data?.others ?? [])]) {
+      if (j.rule === 'bank-missing' && j.since) out[j.key.replace(/^bank-missing:/, '')] = j.since;
+    }
+    return out;
+  }, [todo.data]);
+  const cards = bankCards(setup.data?.accounts ?? [], months, missing);
+  const asked = params.get('account');
+  const card = cards.find((c) => c.code === asked) ?? cards.find((c) => c.toDecide > 0) ?? cards.at(0) ?? null;
+  const mine = card ? months.filter((m) => m.accountCode === card.code) : [];
+  const askedMonth = params.get('month');
+  const month = askedMonth != null && mine.some((m) => m.month === askedMonth) ? askedMonth : defaultMonth(mine);
+  const setParam = (patch: Record<string, string | null>) => setParams((prev) => {
+    const next = new URLSearchParams(prev);
+    for (const [k, v] of Object.entries(patch)) { if (v == null) next.delete(k); else next.set(k, v); }
+    return next;
+  });
+  /* The Upload drawer, on this account (BankRecon mounts it). */
+  const upload = () => setParam({ upload: '1', ...(card ? { account: card.code } : {}) });
 
   return (
-    <div className="space-y-3">
-      <div style={softText}>
-        A movement belongs to the month its own date falls in, whichever file it arrived in — so uploading
-        daily, monthly, or both builds the same month.
-      </div>
-
-      {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading…</div>}
-      {/* Spoken only over a list that came back and was empty (the empty-state
-          rule): an absence is never evidence. */}
-      {q.data && months.length === 0 && (
-        <div style={softText}>
-          No bank statement has been uploaded yet. Upload one under “Bank statement” and its month appears here.
+    <div className={look.top}>
+      {q.isLoading && <div className={look.muted}>Loading…</div>}
+      {q.isError && <div className={look.refusal}><AlertTriangle {...ICON} /> {refusalText(q.error, 'The bank months did not load.')}</div>}
+      {cards.length > 0 && <BankCards cards={cards} selected={card?.code ?? null} onSelect={(code) => setParam({ account: code, month: null, tab: null })} />}
+      {/* Spoken only over lists that came back (the empty-state rule). */}
+      {q.data && setup.data && cards.length === 0 && (
+        <div className={look.empty}>
+          No bank account takes statements in this company yet. Set one up under <Link to="/scm/settlement-setup">Recon setup</Link> and its card appears here.
         </div>
       )}
-
-      <BankAccountTabs codes={codes} value={current} onChange={onAccount} ariaLabel="Bank account" />
-
-      {shown.length > 0 && (
-        <DataTable<BankMonth>
-          tableId="bank-months"
-          exportName="bank-months"
-          exportXlsx
-          columns={monthColumns(onOpen)}
-          rows={shown}
-          getRowKey={(m) => `${m.accountCode}|${m.month}`}
-        />
+      {card && <MonthStrip bank={card.bank} months={mine} selected={month} onPick={(m) => setParam({ account: card.code, month: m, tab: null })} onUpload={upload} />}
+      {card && q.data && mine.length === 0 && (
+        <div className={look.empty}>No {card.bank} statement has been uploaded yet. Upload one and its months appear here.</div>
+      )}
+      {card && month && (
+        <MonthView key={`${card.code}|${month}`} picked={{ accountCode: card.code, month }} bank={card.bank}
+          missingSince={missing[card.code] ?? null} onUpload={upload} />
       )}
     </div>
   );
 };
 
-const monthColumns = (onOpen: (p: Picked) => void): Column<BankMonth>[] => [
-  { key: 'month', label: 'Month', getValue: (m) => m.month, render: (m) => <b>{monthLabel(m.month)}</b> },
-  {
-    key: 'files', label: 'Files', getValue: (m) => m.statementCount,
-    render: (m) => (
-      <>
-        {m.statementCount} file{m.statementCount === 1 ? '' : 's'}
-        <div className={grid.sub}>{m.lineCount} movement{m.lineCount === 1 ? '' : 's'}</div>
-      </>
-    ),
-  },
-  { key: 'days', label: 'Days covered', getValue: (m) => m.periodFrom, render: (m) => (m.periodFrom === m.periodTo ? fmtDate(m.periodFrom) : `${fmtDate(m.periodFrom)} → ${fmtDate(m.periodTo)}`) },
-  { key: 'in', label: 'In', align: 'right', getValue: (m) => m.inSen, exportValue: (m) => m.inSen / 100, exportFormat: 'money', render: (m) => fmt(m.inSen) },
-  { key: 'out', label: 'Out', align: 'right', getValue: (m) => m.outSen, exportValue: (m) => m.outSen / 100, exportFormat: 'money', render: (m) => fmt(m.outSen) },
-  {
-    key: 'open', label: 'Still to decide', getValue: (m) => m.openCount,
-    render: (m) => (
-      <span className={m.openCount === 0 ? grid.good : undefined}>
-        {m.openCount === 0
-          ? 'nothing'
-          : `${m.openCount} of ${m.lineCount}` + (m.openPayoutCount > 0 ? ` · ${m.openPayoutCount} card payout(s)` : '')}
-      </span>
-    ),
-  },
-  {
-    key: 'itself', label: 'The month itself',
-    getValue: (m) => (m.locked ? 'closed' : m.complete ? 'covered end to end' : `${m.gapCount} missing`),
-    /* Whether the month can be trusted, before he opens it: a month missing a
-       day is not nearly right, its closing figure is somebody else's. CLOSED
-       replaces the verdict: a closed month's answer is fixed. */
-    render: (m) => (m.locked
-      ? <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-          <Lock {...ICON} /> closed by {m.locked.lockedBy ?? 'somebody'} on {fmtDate(m.locked.lockedAt)}
-        </span>
-      : m.complete
-        ? <span className={grid.good}>covered end to end</span>
-        : <span className={grid.bad}>{m.gapCount} thing{m.gapCount === 1 ? '' : 's'} missing</span>),
-  },
-  {
-    key: 'action', label: '', exportLabel: 'Action',
-    render: (m) => (
-      <button type="button" style={btn(!m.locked && m.openCount > 0)}
-        onClick={() => onOpen({ accountCode: m.accountCode, month: m.month })}>
-        <CalendarDays {...ICON} /> {m.locked ? 'Open' : m.openCount > 0 ? 'Reconcile' : 'Open'}
-      </button>
-    ),
-  },
-];
-
 /* ── One month ────────────────────────────────────────────────────────────── */
 
-const MonthView = ({ picked, onBack }: { picked: Picked; onBack: () => void }) => {
+/* "To decide" / "Matched" / "Set aside" — a line's state in the redesign's words. */
+const stateWord = (state: BankLine['state']): string => (state === 'OPEN' ? 'To decide' : state === 'POSTED' ? 'Matched' : 'Set aside');
+
+const MonthView = ({ picked, bank, missingSince, onUpload }: {
+  picked: Picked; bank: string; missingSince: string | null; onUpload: () => void;
+}) => {
   const q = useBankMonth(picked.accountCode, picked.month);
-  const [showDone, setShowDone] = useState(false);
+  const setup = useBankSetup();
+  const account = setup.data?.accounts.find((x) => x.account_code === picked.accountCode) ?? null;
+  const [params, setParams] = useSearchParams();
+  /* The lines a person pressed "Not this" on under To match: they go to To
+     choose. Nothing is unlinked — a To match line was never linked, only
+     offered — so this lives on the screen and a reload offers it again. */
+  const [chooseAnyway, setChooseAnyway] = useState<ReadonlySet<number>>(new Set());
+  const typedRef = useRef<HTMLDivElement>(null);
+  const tabsRef = useRef<HTMLDivElement>(null);
+  /* The A4 statement (BankReconPrint); the earlier PDF stays one release behind its "Old PDF" button. */
+  const [printing, setPrinting] = useState(false);
+  const goTo = (r: { current: HTMLDivElement | null }) => r.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   /* THE REPORT. Owner, 2026-09-08: 然后就是match 完了我要report.
      Built from exactly what is on the screen — the same assembly, the same
@@ -215,254 +186,240 @@ const MonthView = ({ picked, onBack }: { picked: Picked; onBack: () => void }) =
     }
   });
 
-  const lines = q.data?.lines ?? [];
+  const lines = data?.lines ?? [];
   const open = lines.filter((l) => l.state === 'OPEN');
-  const done = lines.filter((l) => l.state !== 'OPEN');
   /* In the order the statement reads — by the day the bank booked it, then
      the line — the file screen's own order (docs/bugs/0918). */
   const ordered = byDateThenLine(open);
-  const entries = q.data?.unmatchedEntries ?? [];
+  const entries = data?.unmatchedEntries ?? [];
+  /* The redesign's six tabs; the tab lives in the address (?tab=) and a month
+     opens on the first with lines to work. */
+  const counts = tabCounts(lines, entries, chooseAnyway);
+  const tab = openingTab(params.get('tab'), counts);
+  const setTab = (t: LineTab) => setParams((prev) => { const next = new URLSearchParams(prev); next.set('tab', t); return next; }, { replace: true });
+  const showTab = (t: LineTab) => { setTab(t); goTo(tabsRef); };
+
+  if (q.isLoading) return <section className={look.panel}><span className={look.muted}>Assembling the month…</span></section>;
+  if (!data) {
+    return q.isError
+      ? <section className={look.panel}><span className={look.refusal}><AlertTriangle {...ICON} /> {refusalText(q.error, 'This month did not load.')}</span></section>
+      : null;
+  }
+
+  const a = data.assembly;
+  const r = data.reconciliation;
+  /* To do's missing days, where they fall inside this month. */
+  const missing = missingSince != null && missingSince >= a.monthFrom && missingSince <= a.monthTo ? missingSince : null;
+  const f: MonthFacts = {
+    month: data.month, accountCode: data.accountCode, assembly: a, reconciliation: r, lock: data.lock,
+    total: lines.length, open: open.length, missing,
+    asideSen: setAsideSen(lines), asideCount: setAsideLines(lines).length,
+  };
+  const needsTyping = data.lock == null
+    && (a.closingFrom == null || a.closingFrom.typed != null || a.openingFrom == null || a.openingFrom.typed != null);
+  const exportCsv = () => downloadCSV(`${data.accountCode}-${data.month}-bank-lines.csv`, toCSV(byDateThenLine(lines), [
+    { key: 'date', label: 'Date', getValue: (l) => l.booked_on },
+    { key: 'desc', label: 'Description', getValue: (l) => l.description },
+    { key: 'ref', label: 'Reference', getValue: (l) => l.reference ?? '' },
+    { key: 'in', label: 'In', getValue: (l) => (l.amount_sen > 0 ? (l.amount_sen / 100).toFixed(2) : '') },
+    { key: 'out', label: 'Out', getValue: (l) => (l.amount_sen < 0 ? (-l.amount_sen / 100).toFixed(2) : '') },
+    { key: 'state', label: 'State', getValue: (l) => stateWord(l.state) },
+    { key: 'entry', label: 'Entry', getValue: (l) => l.posted_je_no ?? l.matches.map((m) => m.je_no).join(', ') },
+    { key: 'note', label: 'Note', getValue: (l) => l.note ?? '' },
+    { key: 'file', label: 'File', getValue: (l) => l.file_name ?? '' },
+  ]));
 
   return (
     <ReconcilePickProvider lines={ordered} entries={entries}>
-    <section className="space-y-3">
-      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'baseline', flexWrap: 'wrap' }}>
-        <button type="button" style={btn()} onClick={onBack}><ArrowLeft {...ICON} /> All months</button>
-        <b>{picked.accountCode} · {monthLabel(picked.month)}</b>
-        {q.data && (
-          <span style={softText}>
-            {q.data.assembly.periodFrom} → {q.data.assembly.periodTo}
-            {' · '}{q.data.statements.length} file{q.data.statements.length === 1 ? '' : 's'}
-          </span>
-        )}
-        <span style={{ flex: 1 }} />
-        <button type="button" style={btn(true, !q.data)} disabled={!q.data} onClick={print.openPreview}>
-          <Printer {...ICON} /> Reconciliation statement
-        </button>
-      </div>
-
-      {/* HOW MUCH IS LEFT, and the rule that clears the obvious part of it —
-          on the month, where he works (owner 2026-09-13: 我的 matching 在 bank
-          statement，然后 lock 在 by month？不能做一起？). */}
-      {q.data && (
-        <StillToDecide open={open.length} locked={q.data.lock != null}
-          statements={q.data.statements.map((s) => ({ id: s.id, fileName: s.file_name }))}
-          repeats={q.data.repeats} />
+    <section className={look.panel} aria-label={`${monthTitle(picked.month)} · ${picked.accountCode}`}>
+      {missing && <MissingBanner bank={bank} a={a} from={missing} onUpload={onUpload} />}
+      <MonthHeader data={data} picked={picked} bank={bank} open={open.length} asideSen={f.asideSen} onPrint={() => setPrinting(true)} onExport={exportCsv} />
+      {printing && (
+        <BankReconPrintModal onClose={() => setPrinting(false)} onOldPdf={() => { setPrinting(false); print.openPreview(); }}
+          d={{
+            accountCode: data.accountCode, month: data.month, monthTitle: monthTitle(data.month), bank,
+            accountName: account?.account_name ?? null, accountNo: account?.account_no ?? null,
+            assembly: a, reconciliation: r, lock: data.lock, files: data.statements.map((s) => s.file_name),
+            lines, entries,
+          }} />
       )}
 
       {/* MOUNTED ONLY WHILE OPEN. The dialog reads the company branding through
           react-query, so mounting it closed puts a live query on every month a
-          person merely looks at — and, more sharply, makes this whole screen
-          require a QueryClientProvider that BankRecon's own tests do not set up.
-          It has no entry state to preserve, so mounting on the press is the same
-          dialog and one fewer subscription. */}
-      {q.data && print.open && (
+          person merely looks at. It has no entry state to preserve, so
+          mounting on the press is the same dialog and one fewer subscription. */}
+      {print.open && (
         <PrintPreviewModal
           open={print.open}
           onClose={print.close}
           docTitle="Bank Reconciliation Statement"
-          docNo={`${q.data.accountCode} · ${monthLabel(q.data.month)}`}
+          docNo={`${data.accountCode} · ${monthLabel(data.month)}`}
           rows={[
-            { label: 'Days covered', value: `${q.data.assembly.periodFrom} → ${q.data.assembly.periodTo}` },
+            { label: 'Days covered', value: `${a.periodFrom} → ${a.periodTo}` },
             {
               label: 'Bank statement closes at',
-              value: q.data.assembly.statementClosingSen == null
+              value: a.statementClosingSen == null
                 ? 'not stated by any file — the statement cannot be drawn'
-                : fmt(q.data.assembly.statementClosingSen),
+                : fmt(a.statementClosingSen),
             },
-            { label: 'Per the books', value: fmt(q.data.reconciliation.closingLedgerSen) },
+            { label: 'Per the books', value: fmt(r.closingLedgerSen) },
             {
               /* Said in the dialog, before the paper exists: printing a month
                  that is short a day is a decision, and it should be one the
                  operator makes knowingly rather than discovers on the sheet. */
               label: 'The month itself',
-              value: q.data.assembly.complete
+              value: a.complete
                 ? 'covered end to end'
-                : `not covered end to end — ${q.data.assembly.gaps.length} thing(s) missing, printed on the report`,
+                : `not covered end to end — ${a.gaps.length} thing(s) missing, printed on the report`,
             },
           ]}
           {...print.handlers}
         />
       )}
 
-      {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Assembling the month…</div>}
+      <MonthTracker f={f} />
+      <MonthFigures f={f} onTypeClosing={needsTyping ? () => goTo(typedRef) : null} />
+      <DifferenceWalk f={f} onLines={() => showTab(firstOpenTab(counts))} onLedger={() => showTab('not-on-bank')} onAside={() => showTab('set-aside')} />
 
-      {/* CLOSED OR NOT, above everything. A person looking at a month needs to
-          know whether what he is reading can still move before he reads it —
-          and if it cannot, the row that says so has to name who closed it. */}
-      {q.data && <TheLock data={q.data} picked={picked} />}
-
-      {/* WHAT THE MONTH IS MISSING, before the verdict. A reconciliation of a
-          month with a day missing from it is a reconciliation of a different
-          month, and reading the difference first would be reading the wrong
-          number carefully. */}
-      {q.data && !q.data.assembly.complete && <WhatIsMissing a={q.data.assembly} />}
-      {q.data && <ReconciliationPanel r={q.data.reconciliation} />}
-      {q.data && <WhereTheFiguresCameFrom a={q.data.assembly} />}
+      {/* The inconsistency comes before anything is read off the walk: a walk
+          the numbers cannot account for looks like work has been done. */}
+      {!r.consistent && (
+        <div className={look.gaps}>
+          <b><AlertTriangle {...ICON} /> These numbers do not add up</b>
+          <div>{r.inconsistency}</div>
+        </div>
+      )}
+      {/* WHAT THE MONTH IS MISSING, under the figures it makes wrong. */}
+      {!a.complete && <WhatIsMissing a={a} />}
+      <WhereTheFiguresCameFrom a={a} />
 
       {/* THE FIGURE HE TYPES, for a month no file prints a balance for
           (docs/bugs/0858). Keyed on what is stored so a saved figure re-seeds
-          the boxes; hidden on a closed month, whose figures cannot move. */}
-      {q.data && q.data.lock == null && (
-        <TypedBalances
-          key={`${q.data.balances?.closing?.typedAt ?? ''}|${q.data.balances?.previousClosing?.typedAt ?? ''}`}
-          assembly={q.data.assembly} balances={q.data.balances} picked={picked} />
-      )}
-
-      {open.length > 0 && <OpenLines lines={ordered} />}
-
-      {done.length > 0 && (
-        <div style={softText}>
-          {done.length} movement{done.length === 1 ? '' : 's'} already dealt with.{' '}
-          <button type="button" style={{ ...btn(), padding: '2px 8px' }} onClick={() => setShowDone(!showDone)}>
-            {showDone ? 'Hide' : 'Show'}
-          </button>
+          the boxes; hidden on a locked month, whose figures cannot move. */}
+      {needsTyping && (
+        <div ref={typedRef}>
+          <TypedBalances
+            key={`${data.balances?.closing?.typedAt ?? ''}|${data.balances?.previousClosing?.typedAt ?? ''}`}
+            assembly={a} balances={data.balances} picked={picked} />
         </div>
       )}
-      {showDone && done.length > 0 && (
-        <table className={grid.grid}>
-          <thead>
-            <tr>
-              <th>On the bank statement</th><th className={grid.num}>Deposit</th><th className={grid.num}>Withdrawal</th><th>What happened</th><th />
-            </tr>
-          </thead>
-          <tbody>
-            {done.map((l) => <DoneLine key={l.id} line={l} />)}
-          </tbody>
-        </table>
-      )}
 
-      {q.data && <BooksNotOnBank entries={q.data.unmatchedEntries} />}
+      {/* HOW MUCH IS LEFT, and the rule that clears the obvious part of it —
+          on the month, where he works (owner 2026-09-13: 我的 matching 在 bank
+          statement，然后 lock 在 by month？不能做一起？). */}
+      <StillToDecide open={open.length} locked={data.lock != null}
+        statements={data.statements.map((s) => ({ id: s.id, fileName: s.file_name }))}
+        repeats={data.repeats} />
 
-      {q.data && q.data.statements.length > 0 && <TheFiles data={q.data} />}
+      <div ref={tabsRef} className={look.section}>
+        <LineTabs tab={tab} counts={counts} locked={data.lock != null} onTab={setTab} />
+        <LineTabBody tab={tab} lines={byDateThenLine(lines)} entries={entries} locked={data.lock != null} periodTo={a.periodTo}
+          chooseAnyway={chooseAnyway} onNotThis={(id) => setChooseAnyway((was) => new Set(was).add(id))} />
+      </div>
+
+      {data.statements.length > 0 && <TheFiles data={data} />}
     </section>
     </ReconcilePickProvider>
   );
 };
 
-/* ── Closed, or the button that closes it ─────────────────────────────────── */
+/* ── The month's head: its name, the lock, print and export ─────────────────
+   Owner, 2026-09-08: 还有lock 起来不可以随便碰. The button is on only when the
+   month can lock (owner 2026-09-11: 当 closing bank statement amount 无法 tally
+   就无法 lock) and otherwise names what is missing; the server judges again on
+   the press. A locked month shows the figures it was locked at — the snapshot,
+   not today's numbers — and unlocking takes the approve right and a reason. */
 
-const TheLock = ({ data, picked }: {
-  data: { lock: BankMonthLock | null; assembly: BankMonthAssembly; reconciliation: Reconciliation };
-  picked: Picked;
+const MonthHeader = ({ data, picked, bank, open, asideSen, onPrint, onExport }: {
+  data: { lock: BankMonthLock | null; assembly: BankMonthAssembly; reconciliation: Reconciliation; statements: unknown[] };
+  picked: Picked; bank: string; open: number; asideSen: number; onPrint: () => void; onExport: () => void;
 }) => {
   const lock = useLockBankMonth();
   const unlock = useUnlockBankMonth();
   const [note, setNote] = useState('');
   const [asking, setAsking] = useState(false);
-
   const held = data.lock;
-
-  if (held) {
-    return (
-      <div style={{ ...panel('good'), display: 'grid', gap: 'var(--space-2)' }}>
-        <b style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <Lock {...ICON} /> Closed by {held.lockedBy ?? 'somebody'} on {held.lockedAt.slice(0, 10)}
-        </b>
-        <div style={{ fontSize: 'var(--fs-13)' }}>
-          {/* THE SNAPSHOT, not today's figures. A lock exists to fix a claim,
-              and showing live numbers here would quietly rewrite it. */}
-          Closed at {fmt(held.closingStatementSen)} per the bank against {fmt(held.closingLedgerSen)} in the
-          books, {held.statementCount} file{held.statementCount === 1 ? '' : 's'},{' '}
-          {held.wasComplete ? 'covered end to end' : 'NOT covered end to end'}.
-          {held.lockNote && <> Reason given: “{held.lockNote}”.</>}
+  const a = data.assembly;
+  const reasons = lockReasons(data.reconciliation, a, open, asideSen);
+  const files = (n: number) => `${n} file${n === 1 ? '' : 's'}`;
+  return (
+    <>
+      <div className={look.head}>
+        <div className={look.headWho}>
+          <div className={look.title}>{monthTitle(picked.month)}</div>
+          <div className={look.meta}>
+            {bank} · {picked.accountCode} · covers {fmtDate(a.periodFrom)} → {fmtDate(a.periodTo)} · {files(data.statements.length)}
+          </div>
         </div>
-        <div style={softText}>
-          Nothing in this month can be booked, matched, left out or undone, and no statement carrying its
-          days can be loaded, until it is reopened.
-        </div>
-        {!asking && (
-          <button type="button" style={{ ...btn(), justifySelf: 'start' }} onClick={() => setAsking(true)}>
-            <Unlock {...ICON} /> Reopen this month
+        {held ? (
+          <>
+            <span className={look.lockedPill}><Lock size={12} strokeWidth={2.4} /> Locked {fmtDate(held.lockedAt)} by {held.lockedBy ?? 'somebody'}</span>
+            <button type="button" className={look.btn} aria-expanded={asking} onClick={() => setAsking(!asking)}>Unlock…</button>
+          </>
+        ) : (
+          <button type="button" className={`${look.btn} ${reasons.length === 0 ? look.lockOn : ''}`}
+            disabled={reasons.length > 0 || lock.isPending} title={reasons.length > 0 ? `Not yet: ${reasons.join(' · ')}` : undefined}
+            onClick={() => lock.mutate({ accountCode: picked.accountCode, month: picked.month })}>
+            <Lock size={12} strokeWidth={2.4} /> {lock.isPending ? 'Locking…' : lockLabel(picked.month)}
           </button>
         )}
-        {asking && (
-          <div style={{ display: 'grid', gap: 4, justifyItems: 'start' }}>
-            {/* Required, and the server requires it too. A month that was closed
-                and is open again with no explanation is the one state the lock
-                table exists to make impossible. */}
-            <input value={note} onChange={(e) => setNote(e.target.value)}
-              aria-label="Why this month is being reopened"
-              placeholder="Why? e.g. the bank re-issued 12 Sep with a corrected charge"
-              style={{ padding: '5px 8px', fontSize: 'var(--fs-13)', minWidth: 340 }} />
-            <button type="button" style={btn(false, !note.trim() || unlock.isPending)}
-              disabled={!note.trim() || unlock.isPending}
+        <button type="button" className={look.btn} onClick={onPrint}><Printer size={13} /> Print reconciliation</button>
+        <button type="button" className={look.btn} onClick={onExport}><Download size={13} /> Export</button>
+      </div>
+      {!held && (
+        <div className={look.muted}>
+          {reasons.length > 0
+            ? `Can’t lock yet · ${reasons.join(' · ')}`
+            : 'Locking fixes what this month says: nothing in it can be matched, set aside or undone afterwards without unlocking it.'}
+        </div>
+      )}
+      {held && (
+        <div className={look.muted}>
+          Locked at {fmt(held.closingStatementSen)} per the bank against {fmt(held.closingLedgerSen)} in the ledger,{' '}
+          {files(held.statementCount)}, {held.wasComplete ? 'covered end to end' : 'NOT covered end to end'}.
+          {held.lockNote && <> Reason given: “{held.lockNote}”.</>}
+          {' '}Nothing in it can be matched, set aside or undone, and no statement carrying its days can be loaded, until it is unlocked.
+        </div>
+      )}
+      {held && asking && (
+        <div className={look.ask}>
+          <span>Unlocking needs the approve right and a reason. The month stays as it is until then.</span>
+          {/* Required, and the server requires it too. A month that was locked
+              and is open again with no explanation is the one state the lock
+              table exists to make impossible. */}
+          <input value={note} onChange={(e) => setNote(e.target.value)} aria-label="Why this month is being unlocked"
+            placeholder="Why? e.g. the bank re-issued 12 Sep with a corrected charge" />
+          <div>
+            <button type="button" className={look.btn} disabled={!note.trim() || unlock.isPending}
               onClick={() => unlock.mutate(
                 { accountCode: picked.accountCode, month: picked.month, note: note.trim() },
                 { onSuccess: () => { setAsking(false); setNote(''); } },
               )}>
-              <Unlock {...ICON} /> {unlock.isPending ? 'Reopening…' : 'Reopen it'}
+              <Unlock size={12} /> {unlock.isPending ? 'Unlocking…' : 'Unlock it'}
             </button>
           </div>
-        )}
-        {unlock.isError && (
-          <div style={{ fontSize: 'var(--fs-13)', color: danger, display: 'flex', gap: 6 }}>
-            <AlertTriangle {...ICON} />
-            <span>{refusalText(unlock.error, 'The month was not reopened.')}</span>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  /* OPEN. The button is on only when the month can close — it tallies, is
-     whole, and has nothing left to decide (owner 2026-09-11: 当 closing bank
-     statement amount 无法 tally 就无法 lock) — and otherwise says which of those
-     is missing. There is no reason box: no sentence makes a month tally. The
-     server judges again on the press; its refusal is the sentence below. */
-  const r = data.reconciliation;
-  const open = r.bankNotInBooks.count;
-  const why = !r.consistent
-    ? 'Cannot close: these numbers do not add up.'
-    : open > 0
-      ? `Cannot close: ${open} movement${open === 1 ? '' : 's'} still to decide.`
-      : !data.assembly.complete
-        ? 'Cannot close: this month is not covered end to end by the files uploaded.'
-        : r.closingStatementSen == null
-          ? 'Cannot close: no file printed a closing balance to tally against.'
-          : !r.tallies
-            ? `Cannot close: it does not tally — the books and the outstanding items reach ${fmt(r.computedClosingSen)}, the bank statement says ${fmt(r.closingStatementSen)}.`
-            : null;
-
-  return (
-    <div style={{ display: 'grid', gap: 4, justifyItems: 'start' }}>
-      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-        <button type="button" style={btn(false, why != null || lock.isPending)} disabled={why != null || lock.isPending}
-          onClick={() => lock.mutate({ accountCode: picked.accountCode, month: picked.month })}>
-          <Lock {...ICON} /> {lock.isPending ? 'Closing…' : 'Close this month'}
-        </button>
-        {why && <span style={{ fontSize: 'var(--fs-13)', color: danger }}>{why}</span>}
-      </div>
-      <div style={softText}>
-        Closing fixes what this month says. Nothing in it can be booked, left out or undone afterwards
-        without reopening it.
-      </div>
-      {lock.isError && (
-        <div style={{ fontSize: 'var(--fs-13)', color: danger, display: 'flex', gap: 6 }}>
-          <AlertTriangle {...ICON} />
-          <span>{refusalText(lock.error, 'The month was not closed.')}</span>
         </div>
       )}
-    </div>
+      {lock.isError && <div className={look.refusal}><AlertTriangle {...ICON} /> {refusalText(lock.error, 'The month was not locked.')}</div>}
+      {unlock.isError && <div className={look.refusal}><AlertTriangle {...ICON} /> {refusalText(unlock.error, 'The month was not unlocked.')}</div>}
+    </>
   );
 };
 
 /* ── What this month does not have ────────────────────────────────────────── */
 
 const WhatIsMissing = ({ a }: { a: BankMonthAssembly }) => (
-  <div style={{ ...panel('plain'), border: `1px solid ${danger}` }}>
-    <b style={{ color: danger, display: 'flex', gap: 6, alignItems: 'center' }}>
-      <AlertTriangle {...ICON} /> This month is not covered end to end
-    </b>
-    <ul style={{ margin: '6px 0 0 0', paddingLeft: 18, fontSize: 'var(--fs-13)' }}>
+  <div className={look.gaps}>
+    <b><AlertTriangle {...ICON} /> This month is not covered end to end</b>
+    <ul>
       {a.gaps.map((g) => <li key={g}>{g}</li>)}
     </ul>
     {a.breaks.length > 0 && (
-      <div style={{ fontSize: 'var(--fs-13)', marginTop: 8 }}>
+      <div style={{ marginTop: 8 }}>
         {/* The amount, named, because it is the size of what he has not
             uploaded — and it is the number the difference below is short by. */}
-        Upload the days between them and the month closes. Until then the difference below is missing{' '}
-        <b>{fmt(a.breaks.reduce((s, b) => s + Math.abs(b.gapSen), 0))}</b> of movement.
+        Upload the days between them and the month closes. Until then the difference above is missing{' '}
+        <strong>{fmt(a.breaks.reduce((s, b) => s + Math.abs(b.gapSen), 0))}</strong> of movement.
       </div>
     )}
   </div>
@@ -691,8 +648,8 @@ const TypedFigure = ({ label, ariaLabel, month, current, picked, save }: {
 const TheFiles = ({ data }: {
   data: { statements: Array<{ id: number; file_name: string; period_from: string | null; period_to: string | null; opening_balance_sen: number | null; closing_balance_sen: number | null; spanning: boolean }> };
 }) => (
-  <section className="space-y-2">
-    <b>{`The files this month is made of (${data.statements.length})`}</b>
+  <details className={look.files}>
+    <summary>{`Files (${data.statements.length})`} — what this month is made of</summary>
     <table className={grid.grid}>
       <thead>
         <tr>
@@ -721,6 +678,6 @@ const TheFiles = ({ data }: {
         ))}
       </tbody>
     </table>
-  </section>
+  </details>
 );
 

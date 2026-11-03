@@ -9,6 +9,13 @@
 // the message (HC-SO-006432 / 010484, 2026-10-26 17:03 MYT). Written here, the
 // send and the status share one request, and an order whose status could not
 // move comes back to the caller by name.
+//
+// HC-0205: the status moves only after the WHOLE send loop, which on a bulk
+// blast can run a minute. 2990-SO-2608-036 (2026-11-02 18:48 MYT) was sent,
+// the customer tapped Confirm 16 s later (chat-callback -> Done Scheduling),
+// and this write landed 62 s after that and put it back to Done Send. An order
+// whose status changed while the send ran (the customer's tap, a staff pick)
+// keeps the newer status.
 // ---------------------------------------------------------------------------
 
 import type { Context } from 'hono';
@@ -29,6 +36,7 @@ export async function markSentStatus(
   docNos: readonly string[],
   status: string,
   kindLabel: string,
+  statusAtSend?: ReadonlyMap<string, string | null>,
 ): Promise<StatusNotMoved[]> {
   if (docNos.length === 0) return [];
   const sb = c.get('supabase');
@@ -46,6 +54,7 @@ export async function markSentStatus(
     const prev = before.get(docNo);
     if (!prev) { notMoved.push({ docNo, reason: 'not_found' }); continue; }
     if (prev.delivery_message_status === status) continue;
+    if (statusAtSend?.has(docNo) && statusAtSend.get(docNo) !== (prev.delivery_message_status ?? null)) continue;
     let reason: string | null = null;
     for (let attempt = 0; attempt <= CONFLICT_RETRIES; attempt++) {
       try {

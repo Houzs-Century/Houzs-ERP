@@ -17,9 +17,20 @@ import {
 /** Names for the pages an order is opened from whose generic route label reads
     as the bare app section. */
 const OPENER_LABELS: Array<[RegExp, string]> = [
-  [/^\/scm\/merchant-recon(?:\/|$)/, "Merchant Recon"],
-  [/^\/scm\/bank-recon(?:\/|$)/, "Bank Recon"],
+  [/^\/scm\/merchant-recon(?:\/|$)/, "Merchant reports"],
+  [/^\/scm\/bank-recon(?:\/|$)/, "Bank statements"],
   [/^\/scm\/fair-pending(?:\/|$)/, "Fair Links"],
+  /* Money in's lists, by the redesign's names (owner's Claude Design, batch 5):
+     a document opened from one reads "Back to Receipts" and so on. The list
+     itself only — a document opened from another document names that one. */
+  [/^\/scm\/receipts$/, "Receipts"],
+  [/^\/scm\/official-receipts$/, "Official receipts"],
+  [/^\/scm\/ar-invoices$/, "AR invoices"],
+  [/^\/scm\/deposit-invoices$/, "Deposit invoices"],
+  [/^\/scm\/other-debtors$/, "Debtor maintenance"],
+  [/^\/scm\/credit-notes$/, "Credit / debit notes"],
+  [/^\/scm\/outstanding$/, "Outstanding"],
+  [/^\/scm\/unbilled-deliveries$/, "Not yet billed"],
 ];
 
 /** The opener of the ACTIVE tab, and whether its tab is still in the strip —

@@ -873,6 +873,23 @@ export const createSupplierBindingsBatchHandler = async (c: any) => {
 
   if (rows.length === 0) return c.json({ inserted: 0, skipped });
 
+  /* One main supplier per item (owner 2026-10-31): a batch row arriving as main
+     demotes the item's other main, as the single create does. Without it a batch
+     import left 83 items with two or three mains. */
+  for (const kind of MATERIAL_KINDS) {
+    const mains = rows.filter((r) => r.is_main_supplier && r.material_kind === kind).map((r) => String(r.item_code));
+    for (let i = 0; i < mains.length; i += 100) {
+      const { error: demoteErr } = await pgrestIn(supabase
+        .from('supplier_material_bindings')
+        .update({ is_main_supplier: false })
+        .eq('material_kind', kind)
+        .eq('is_main_supplier', true)
+        .eq('company_id', activeCompanyId(c))
+        .neq('supplier_id', supplierId), 'item_code', mains.slice(i, i + 100));
+      if (demoteErr) return c.json({ error: 'demote_failed', reason: demoteErr.message }, 500);
+    }
+  }
+
   const { data, error } = await supabase
     .from('supplier_material_bindings')
     .insert(stampCompany(rows, c))

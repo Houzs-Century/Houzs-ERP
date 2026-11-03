@@ -74,6 +74,8 @@ export type DataGridCompatProps<T> = {
   onRowReorder?: (orderedKeys: string[]) => void;
   /** See DataTable.cellRangeSum. */
   cellRangeSum?: boolean;
+  /** See DataTable.fitToWidth. */
+  fitToWidth?: boolean;
   onFilteredRowsChange?: (rows: T[]) => void;
   toolbar?: ReactNode;
   focusSearchNonce?: number;
@@ -216,6 +218,7 @@ export function DataGridCompat<T>({
   initialRowLimit,
   onRowReorder,
   cellRangeSum,
+  fitToWidth,
 }: DataGridCompatProps<T>) {
   const tableColumns = useMemo(() => columns.map(gridColumnToTableColumn), [columns]);
   const layoutSeeds = useMemo(
@@ -238,6 +241,7 @@ export function DataGridCompat<T>({
       initialRowLimit={initialRowLimit}
       onRowReorder={onRowReorder}
       cellRangeSum={cellRangeSum}
+      fitToWidth={fitToWidth}
       onFilteredRowsChange={onFilteredRowsChange}
       toolbarExtra={toolbar}
       clientSearch={

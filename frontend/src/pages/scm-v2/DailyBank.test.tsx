@@ -8,8 +8,8 @@
 // backend/src/acc/daily-bank.test.ts, the route's names and numbers in
 // backend/tests/dailyBankByBank.test.ts, the table model in daily-bank-report.test.ts.
 
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 import type { DailyBankBoard } from './accounting-phase1-queries';
 
@@ -51,92 +51,145 @@ vi.mock('./accounting-phase1-queries', () => ({
   useSaveDailyClose: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useConfirmDailyClose: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
-const pdfMock = vi.fn(async (_b: unknown) => undefined);
-vi.mock('./daily-bank-pdf', () => ({ generateDailyBankPdf: (b: unknown) => pdfMock(b) }));
+vi.mock('../../hooks/useBranding', () => ({ useBranding: () => ({ companyName: 'Houzs Century Sdn Bhd' }) }));
+vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: { name: 'Mei Ling' } }) }));
+vi.mock('./finance/finance-todo-queries', () => ({
+  useTodoCalendar: (month: string) => ({ data: { month, events: month === '2026-09' ? [
+    { key: 'bill:HCAPI-1', day: '2026-09-30', kind: 'pay', label: 'Kian Furniture · pay bill', short: 'Kian bill', detail: 'HCAPI-2609-024 · not paid', amountSen: 1_929_000, done: false, to: null, task: null },
+    { key: 'bill:old', day: '2026-09-20', kind: 'pay', label: 'Old · pay bill', short: 'Old bill', detail: 'HCAPI-OLD · not paid', amountSen: 1, done: false, to: null, task: null },
+  ] : [
+    { key: 'task:r1:2026-10-01', day: '2026-10-01', kind: 'routine', label: 'Rent · MK Properties', short: 'Rent', detail: 'Routine', amountSen: 480_000, done: false, to: null, task: null },
+  ] } }),
+}));
 
 import { DailyBank } from './DailyBank';
+import { accountLines } from './DailyBankAccounts';
 
-const section = (key: string): HTMLElement => {
-  const head = document.querySelector(`[data-section="${key}"]`) as HTMLElement;
-  return head;
-};
-/** The rows after a section's header, up to the next section — their kinds, in order. */
-const kindsOf = (key: string): string[] => {
-  const out: string[] = [];
-  let tr = section(key).nextElementSibling;
-  while (tr && !tr.hasAttribute('data-section')) {
-    const k = tr.getAttribute('data-row');
-    if (k) out.push(k);
-    tr = tr.nextElementSibling;
-  }
-  return out;
-};
-const rowsOf = (key: string, kind: string): HTMLElement[] => {
-  const out: HTMLElement[] = [];
-  let tr = section(key).nextElementSibling;
-  while (tr && !tr.hasAttribute('data-section')) {
-    if (tr.getAttribute('data-row') === kind) out.push(tr as HTMLElement);
-    tr = tr.nextElementSibling;
-  }
-  return out;
-};
-const col = (tr: HTMLElement, c: 'received' | 'payment' | 'balance'): string => String(tr.querySelector(`[data-col="${c}"]`)?.textContent);
+/** Where the page has put the address — the view lives in it. */
+const Where = () => <span data-testid="where">{useLocation().search}</span>;
+const renderAt = (search: string) => render(<MemoryRouter initialEntries={[`/scm/daily-bank${search}`]}><DailyBank /><Where /></MemoryRouter>);
 
-describe('DailyBank board, by bank', () => {
-  test('the three totals stay on top; the dark bar names the day', () => {
-    render(<MemoryRouter><DailyBank /></MemoryRouter>);
-    expect(screen.getByText('RM 77,636.90')).toBeTruthy();                     // can actually move
-    expect(screen.getByText('RM 40,868.52')).toBeTruthy();                     // in transit
-    expect(screen.getByText('RM 10,836.00')).toBeTruthy();                     // checked, awaiting approval
-    const table = screen.getByLabelText('Bank balance available');
-    expect(within(table).getByText('BANK BALANCE AVAILABLE')).toBeTruthy();
-    expect(within(table).getByText('Tue · 2026/09/29')).toBeTruthy();
-    expect(screen.getByText('test note')).toBeTruthy();
+describe('DailyBank Accounts, a block per account', () => {
+  test('a bank: its opening, the day in and out, the subtotal and the closing, then what awaits approval and its card money', () => {
+    renderAt('?view=accounts');
+    const hlb = screen.getByLabelText('310-0020 CASH AT BANK - HLBB');
+    expect(within(hlb).getByText('61,726.99')).toBeTruthy();
+    const rows = [...hlb.querySelectorAll('tbody tr')].map((tr) => [...tr.querySelectorAll('td')].slice(1).map((td) => td.textContent));
+    expect(rows).toEqual([
+      ['2990-MOR-2609-009', 'Customer payment · Hookka', 'JE-2', '2,850.00', ''],
+      ['PV-0432', 'Tan Yong Hong · Claude - Sep', 'JE-4', '', '442.64'],
+    ]);
+    expect(hlb.querySelector('tfoot')?.textContent).toBe('Subtotal2,850.00442.64');
+    expect(hlb.textContent).toContain('Closing balance 61,726.99 + 2,850.00 − 442.64');
+    expect(hlb.textContent).toContain('64,134.35');
+    expect(hlb.textContent).toContain('· Awaiting approval · UNICOM MARKETING SDN BHD · 2990-HPV-2609-023−10,836.00');
+    expect(hlb.textContent).toContain('Available (after pending)53,298.35');
+    expect(hlb.textContent).toContain('· In transit · PBB card money, not yet in this bank37,503.52');
+    expect(hlb.textContent).toContain('Available + in transit90,801.87');
   });
 
-  test('a bank: its Bank Balance in the header, then B/F, received, paid, pending, available, its card money and the line with it added', () => {
-    render(<MemoryRouter><DailyBank /></MemoryRouter>);
-    expect(section('310-0020').textContent).toContain('CASH AT BANK - HLBB');
-    expect((document.querySelector('[data-bank-balance="310-0020"]') as HTMLElement).textContent).toBe('64,134.35');
-    expect(kindsOf('310-0020')).toEqual(['bf', 'receivedHead', 'received', 'paidHead', 'paid', 'pendingHead', 'pending', 'available', 'transitHead', 'transit', 'withTransit']);
-    expect(col(rowsOf('310-0020', 'bf')[0]!, 'balance')).toBe('61,726.99');
-    const received = rowsOf('310-0020', 'received')[0]!;
-    expect(received.textContent).toContain('· Hookka');
-    expect(received.textContent).toContain('2990-MOR-2609-009');
-    expect(received.textContent).toContain('Settle invoice HV-INV-0039');
-    expect(col(received, 'received')).toBe('2,850.00');
-    const paid = rowsOf('310-0020', 'paid')[0]!;
-    expect(paid.textContent).toContain('· Tan Yong Hong');
-    expect(col(paid, 'payment')).toBe('442.64');
-    const pending = rowsOf('310-0020', 'pending')[0]!;
-    expect(pending.textContent).toContain('· UNICOM MARKETING SDN BHD');
-    expect(pending.textContent).toContain('2990-HPV-2609-023');
-    /* Paid and pending sit in the ONE payment column (owner 2026-09-29: 你看 paid amount 不在同一个 column); the balance column carries none of them. */
-    expect(col(pending, 'payment')).toBe('10,836.00');
-    expect(col(pending, 'balance')).toBe('');
-    expect(col(paid, 'balance')).toBe('');
-    expect(col(rowsOf('310-0020', 'available')[0]!, 'balance')).toBe('53,298.35');
-    const transit = rowsOf('310-0020', 'transit')[0]!;
-    expect(transit.textContent).toContain('· PBB');
-    expect(col(transit, 'balance')).toBe('37,503.52');
-    expect(col(rowsOf('310-0020', 'withTransit')[0]!, 'balance')).toBe('90,801.87');
-    expect([...document.querySelectorAll('th[scope="col"]')].slice(0, 6).map((h) => h.textContent)).toEqual(['PAY TO / FROM', 'DOC NO.', 'DESCRIPTION', 'RECEIVED (RM)', 'PAYMENT (RM)', 'BALANCE (RM)']);
+  test('a quiet bank says so; all accounts close together; what names no bank waits at the end', () => {
+    renderAt('?view=accounts');
+    expect(within(screen.getByLabelText('310-0030 CASH AT BANK - ALLIANCE')).getByText('No movement this day.')).toBeTruthy();
+    const all = screen.getByLabelText('Closing · all bank & cash');
+    expect(all.textContent).toContain('Opening 86,065.54 + In 2,850.00 − Out 442.64 · 2 movements');
+    expect(all.textContent).toContain('88,472.90');
+    const loose = screen.getByLabelText('Not tied to a bank');
+    expect(loose.textContent).toContain('In transit · 未标银行 card money · CARD MACHINE CLEARING (EDC)');
+    expect(loose.textContent).toContain('3,365.00');
   });
 
-  test('a bank with nothing on the day shows its B/F and its available alone; what names no bank waits in the last section', () => {
-    render(<MemoryRouter><DailyBank /></MemoryRouter>);
-    expect(kindsOf('310-0030')).toEqual(['bf', 'available']);
-    expect(section('unassigned').textContent).toContain('Not tied to a bank');
-    expect(kindsOf('unassigned')).toEqual(['transitHead', 'transit']);
-    expect(rowsOf('unassigned', 'transit')[0]!.textContent).toContain('未标银行');
-    expect(col(rowsOf('unassigned', 'transit')[0]!, 'balance')).toBe('3,365.00');
+  test('customer payments group by how they were paid; anything else stays one line per document', () => {
+    const block = { ...BOARD.blocks[0]!, receipts: [
+      { jeNo: 'JE-7', sourceType: 'SOPAY', sourceDocNo: 'p7', docNo: 'OR-7', party: 'Tan', note: '', amountSen: 10_000, method: 'cash' },
+      { jeNo: 'JE-8', sourceType: 'SOPAY', sourceDocNo: 'p8', docNo: 'OR-8', party: 'Lim', note: '', amountSen: 5_000, method: 'cash' },
+      { jeNo: 'JE-9', sourceType: 'SIPAY', sourceDocNo: 'p9', docNo: 'OR-9', party: 'Wong', note: '', amountSen: 7_000, method: 'online:DuitNow' },
+      { jeNo: 'JE-10', sourceType: 'SETTLEBANK', sourceDocNo: 'SETTLEBANK-5-1', docNo: 'SETTLEBANK-5-1', party: null, note: 'MBB payout', amountSen: 90_000, method: null },
+    ], payouts: [] };
+    expect(accountLines(block).map((l) => [l.doc, l.description, l.inSen])).toEqual([
+      ['2 receipts', 'Cash · 2 sales · Tan, Lim', 15_000],
+      ['OR-9', 'Online · DuitNow · Wong', 7_000],
+      ['SETTLEBANK-5-1', 'MBB payout', 90_000],
+    ]);
   });
 
-  test('Get image, PNG and PDF: the PDF prints the board the page shows', async () => {
-    render(<MemoryRouter><DailyBank /></MemoryRouter>);
-    expect(screen.getByRole('button', { name: /Get image/ })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /PNG/ })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /PDF/ }));
-    await waitFor(() => expect(pdfMock).toHaveBeenCalledWith(BOARD));
+  test('a day still to come has not happened yet', () => {
+    renderAt('?view=accounts&date=2999-01-01');
+    expect(screen.getByText('This day hasn’t happened yet.')).toBeTruthy();
+  });
+
+  test('Print opens the day as an A4 sheet — the accounts, then the payments already planned after the day — and prints it', () => {
+    const print = vi.spyOn(window, 'print').mockImplementation(() => undefined);
+    renderAt('?view=board&date=2026-09-29');
+    fireEvent.click(screen.getByRole('button', { name: /^Print$/ }));
+    const dialog = screen.getByRole('dialog', { name: 'Print the day' });
+    const sheet = within(dialog).getByLabelText('Daily Bank sheet');
+    expect(sheet.className).toContain('print-area');
+    expect(sheet.textContent).toContain('Houzs Century Sdn Bhd');
+    expect(sheet.textContent).toContain('BANK BALANCE AVAILABLE');
+    expect(sheet.textContent).toContain('Tue · 2026/09/29');
+    expect(sheet.textContent).toContain('2 accounts · 2 movements');
+    expect(sheet.textContent).toContain('2026/09/30HCAPI-2609-024Kian Furniture19,290.00');
+    expect(sheet.textContent).toContain('2026/10/01Monthly routineRent4,800.00');
+    expect(sheet.textContent).not.toContain('HCAPI-OLD');
+    expect(sheet.textContent).toContain('Projected available (after future)53,546.90');
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Print$/ }));
+    expect(print).toHaveBeenCalled();
+    print.mockRestore();
+  });
+
+  test('Export image opens the picture to copy or download; a day still to come has none', () => {
+    renderAt('?view=board');
+    fireEvent.click(screen.getByRole('button', { name: /Export image/ }));
+    const dialog = screen.getByRole('dialog', { name: 'Export image' });
+    expect(within(dialog).getByRole('button', { name: /Copy image/ })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: /Download PNG/ })).toBeTruthy();
+    cleanup();
+    renderAt('?view=board&date=2999-01-01');
+    expect(screen.queryByRole('button', { name: /Export image/ })).toBeNull();
+  });
+});
+
+describe("DailyBank Board (the redesign's Money today)", () => {
+  test('no view in the address opens the Board and says so in the address', async () => {
+    renderAt('');
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('?view=board'));
+    expect(screen.getByRole('button', { name: 'Board' }).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  test('can move today is bank and cash less what awaits approval; card money on its way is said, not added', () => {
+    renderAt('?view=board');
+    const hero = screen.getByLabelText('Can move today');
+    expect(within(hero).getByText('RM 77,636.90')).toBeTruthy();
+    expect(within(hero).getByText('RM 88,472.90')).toBeTruthy();
+    expect(within(hero).getByText('RM 10,836.00')).toBeTruthy();
+    expect(hero.textContent).toContain('RM 40,868.52 is on its way from card machines. Not spendable until it lands.');
+    const bridge = screen.getByLabelText('How the day got here');
+    expect([...bridge.children].map((r) => r.textContent)).toEqual([
+      'Yesterday86,065.54', '+ In today2,850.00', '− Out today442.64', 'Bank & cash now88,472.90', '− Awaiting approval10,836.00', 'Can move today77,636.90',
+    ]);
+  });
+
+  test('each account shows its day; one opens the Accounts sheet at its block', async () => {
+    renderAt('?view=board');
+    const accounts = screen.getByLabelText('Accounts');
+    expect(within(accounts).getByText('Hookka')).toBeTruthy();
+    expect(within(accounts).getByText('+2,850.00')).toBeTruthy();
+    expect(within(accounts).getByText('−442.64')).toBeTruthy();
+    expect(within(accounts).getByText('No movement today')).toBeTruthy();
+    fireEvent.click(within(accounts).getAllByTitle('See every movement of this account')[0]!);
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('?view=accounts'));
+    expect((document.querySelector('[data-account="310-0020"]') as HTMLElement).className).toMatch(/focused/);
+  });
+
+  test('card money on its way, and the vouchers awaiting approval with the way to them', () => {
+    renderAt('?view=board');
+    const transit = screen.getByLabelText('On its way · card machines');
+    expect(within(transit).getByText('PBB')).toBeTruthy();
+    expect(within(transit).getByText('RM 37,503.52')).toBeTruthy();
+    expect(within(transit).getByText('未标银行')).toBeTruthy();
+    const awaiting = screen.getByLabelText('Awaiting your approval');
+    expect(awaiting.textContent).toContain('UNICOM MARKETING SDN BHD · BILL IV2026-09-007 · 2990-HPV-2609-023');
+    expect(within(awaiting).getByRole('link', { name: /Review vouchers/ }).getAttribute('href')).toBe('/scm/payment-vouchers?status=CHECKED');
   });
 });

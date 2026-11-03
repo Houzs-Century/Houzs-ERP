@@ -33,6 +33,7 @@ import { CollapsibleSection, useOpenSections } from '../../components/Collapsibl
 import { DeliveryPlanningRegions } from './DeliveryPlanningRegions';
 import { DeliveryResidenceRules } from './DeliveryResidenceRules';
 import { Fleet } from './Fleet';
+import { SavedLocations } from './SavedLocations';
 
 type Section = { key: string; title: string; hint: string; path: string; render: () => ReactElement };
 
@@ -51,6 +52,11 @@ const SECTIONS: Section[] = [
     key: 'fleet', title: 'Fleet', path: '/scm/fleet',
     hint: 'Drivers, helpers and lorries — in-house and outsourced.',
     render: () => <Fleet embedded />,
+  },
+  {
+    key: 'saved-locations', title: 'Saved Locations', path: '/scm/saved-locations',
+    hint: 'Common from/to points a transfer is driven between.',
+    render: () => <SavedLocations embedded />,
   },
 ];
 

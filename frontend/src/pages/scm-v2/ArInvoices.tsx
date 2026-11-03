@@ -18,39 +18,39 @@
 // `?debtor=<id>` opens the page filtered to one debtor — the registry and
 // the Receipts page link here that way.
 //
-// Every row OPENS (owner 2026-10-06: ar invoice 点不开、没有办法 print — only a
-// sales invoice's number was a link, drawn as plain text, and nothing here
-// printed one): a click anywhere on a row opens it over the list — a debtor
-// bill in its pop-out, a sales invoice as the page it prints, with Print,
-// Save PDF and its full page a link away. Ticked rows print as ONE document,
+// Every row OPENS (owner 2026-10-06: ar invoice 点不开、没有办法 print) — since
+// the redesign (owner's Claude Design, batch 5 §8) as the document's own page,
+// in its own tab: a debtor bill at /scm/ar-invoices/bills/:id (Print, Copy,
+// Edit, Cancel), a sales invoice at /scm/ar-invoices/sales/:id (the page as it
+// prints, Print, Save PDF, Open in Sales). Ticked rows print as ONE document,
 // each as its own print, in list order (ar-invoice-print.ts).
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Plus, Printer } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
-  useAccounts, postableAccounts, useOtherDebtors, useCreateDebtorBill, useUpdateDebtorBill, useCancelDebtorBill,
-  type Account, type DebtorBill,
+  useAccounts, postableAccounts, useOtherDebtors, useCreateDebtorBill,
+  type Account,
 } from '../../vendor/scm/lib/accounting-queries';
-import { useArInvoices, useArBillDetail, type ArBillDetail, type ArListKind, type ArListRow } from '../../vendor/scm/lib/ar-invoice-queries';
+import { useArInvoices, type ArListKind, type ArListRow } from '../../vendor/scm/lib/ar-invoice-queries';
 import { generateArListingPdf } from '../../vendor/scm/lib/ar-invoice-listing-pdf';
-import { generateDebtorBillPdf } from '../../vendor/scm/lib/debtor-bill-pdf';
-import { useSalesInvoiceDetail } from '../../vendor/scm/lib/sales-invoice-queries';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { Modal } from '../../vendor/scm/components/Modal';
 import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
-import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { fmtSen, fmtDateOrDash } from '../../vendor/shared/format';
+import { useOpenDocInTab } from '../../lib/openDocInTab';
+import { FinanceDocLink } from './finance/FinanceDocLink';
+import { moneyInDocHref } from './money-in/moneyInDocs';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
 import { DataTable, type Column } from '../../components/DataTable';
 import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
-import { DebtorBillForm, emptyBillForm, type BillFormMode, type BillFormSubmit, type BillFormValues } from './DebtorBillForm';
+import { DebtorBillForm, emptyBillForm, type BillFormSubmit, type BillFormValues } from './DebtorBillForm';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
@@ -62,99 +62,16 @@ const chip = (on: boolean): React.CSSProperties => ({
   border: '1px solid var(--c-line, rgba(34,31,32,0.2))',
   background: on ? 'var(--c-ink)' : 'transparent', color: on ? 'var(--c-cream)' : 'var(--c-ink)',
 });
-/* One table dress for the detail and the list — the AP page's. */
-const th: React.CSSProperties = {
-  padding: '6px 8px', textAlign: 'left', fontSize: 'var(--fs-11)', fontWeight: 600, letterSpacing: '0.04em',
-  textTransform: 'uppercase', color: 'var(--fg-muted)', borderBottom: '1px solid var(--border-weak, #e3e1da)', whiteSpace: 'nowrap',
-};
-const td: React.CSSProperties = { padding: '6px 8px', verticalAlign: 'middle' };
-const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)' };
-const right: React.CSSProperties = { textAlign: 'right', ...mono };
 const linkBtn: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--c-orange)', fontWeight: 600, cursor: 'pointer', fontSize: 'var(--fs-13)', background: 'none', border: 'none', padding: 0 };
 
-const danger = 'var(--c-festive-b, #B8331F)';
 const errText = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'Something went wrong.');
 
-/* A sales invoice opened from the list: the page as it prints (the browser's
-   own PDF viewer), Print and Save PDF, and its full page a link away. */
-const SalesInvoicePopOut = ({ id, onClose }: { id: string; onClose: () => void }) => {
-  const q = useSalesInvoiceDetail(id);
-  const notify = useNotify();
-  const header = q.data?.salesInvoice;
-  const items = q.data?.items;
-  const [url, setUrl] = useState<string | null>(null);
-  const [failed, setFailed] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    if (!header || !items) return;
-    let live = true;
-    let made: string | null = null;
-    setFailed(null);
-    void import('../../vendor/scm/lib/sales-invoice-pdf')
-      .then(({ salesInvoicePdfBlob }) => salesInvoicePdfBlob(header, items))
-      .then((blob) => { if (!live) return; made = URL.createObjectURL(blob); setUrl(made); })
-      .catch((e: unknown) => { if (live) setFailed(errText(e)); });
-    return () => { live = false; if (made) URL.revokeObjectURL(made); };
-  }, [header, items]);
-  const deliver = async (action: PdfAction) => {
-    if (!header || !items || busy) return;
-    setBusy(true);
-    try {
-      const { generateSalesInvoicePdf } = await import('../../vendor/scm/lib/sales-invoice-pdf');
-      await generateSalesInvoicePdf(header, items, { action });
-    } catch (e) {
-      void notify({ title: 'Invoice not printed', body: errText(e), tone: 'error' });
-    } finally { setBusy(false); }
-  };
-  const number = header ? String(header.invoice_number ?? '') : '';
-  return (
-    <Modal
-      title={header ? `${number} · ${String(header.debtor_name ?? '—')}` : 'Sales invoice'}
-      onClose={onClose}
-      width="min(980px, 100%)"
-      ariaLabel={number ? `Sales invoice ${number}` : 'Sales invoice'}
-      actions={header ? (
-        <>
-          <span style={soft}>{humaniseStatusKey(String(header.status ?? ''))}</span>
-          <Button size="sm" onClick={() => void deliver('print')} disabled={busy}><Printer {...ICON} /> {busy ? 'Preparing…' : 'Print'}</Button>
-          <Button variant="ghost" size="sm" onClick={() => void deliver('save')} disabled={busy}>Save PDF</Button>
-          <Link to={`/scm/sales-invoices/${id}`} style={linkBtn}>Open full page</Link>
-        </>
-      ) : undefined}
-    >
-      {q.isLoading && <div style={soft}>Loading…</div>}
-      {q.isError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>The invoice did not load — {errText(q.error)}</div>}
-      {failed && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>The invoice could not be drawn — {failed}</div>}
-      {header && !failed && (url
-        ? <iframe title={`Sales invoice ${number} as printed`} src={url}
-            style={{ width: '100%', height: '72vh', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 6, background: '#fff' }} />
-        : <div style={soft}>Drawing the invoice…</div>)}
-    </Modal>
-  );
-};
-
-const Meta = ({ label, value }: { label: string; value: React.ReactNode }) => (
-  <div>
-    <div className={styles.fieldLabel}>{label}</div>
-    <div>{value}</div>
-  </div>
-);
-
-/** The form's values from a bill: an EDIT keeps everything, a COPY keeps the
-    description and lines and starts the paper afresh — today's date, a new
-    number on post. */
-const fromBill = (b: DebtorBill, copy: boolean): BillFormValues => ({
-  billDate: copy ? myt() : b.bill_date,
-  notes: b.notes ?? '',
-  lines: (b.lines ?? []).map((l, i) => ({ rid: i + 1, description: l.description ?? '', creditAccountCode: l.credit_account_code ?? '', amountSen: l.amount_sen, projectId: l.project_id ?? null })),
-});
-
+/* New debtor bill (or debit note) — Edit and Copy live on the bill's own page. */
 type FormState = {
-  mode: BillFormMode; initial: BillFormValues;
-  /** The debtor the bill belongs to — picked on New, carried over on Copy, fixed on Edit. */
-  debtorId: string; debtorName?: string;
-  billId?: string; billNumber?: string; receivedSen?: number;
-  /** A new paper raised as a debit note to the debtor — on the CN / DN page's tab, or copied from one. */
+  initial: BillFormValues;
+  /** The debtor the bill belongs to — picked here. */
+  debtorId: string;
+  /** A new paper raised as a debit note to the debtor — on the CN / DN page's tab. */
   docKind?: 'DN';
 };
 
@@ -167,22 +84,17 @@ const kindLabelOf = (r: ArListRow): string => (r.kind === 'ODB' && r.docKind ===
 /** docKind="DN": the other debtors' debit notes alone, inside the CN / DN page (no page header of its own). */
 export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
   const debitNotes = docKind === 'DN';
-  const askConfirm = useConfirm();
   const notify = useNotify();
+  const openInTab = useOpenDocInTab();
   const { can } = useHouzsAuth();
   const canCreate = can('scm.payment_voucher.create');
-  const canWrite = can('scm.payment_voucher.write') || canCreate;
-  const canCancel = can('scm.payment_voucher.cancel');
 
   const [kind, setKind] = useState<ArListKind>('ALL');
   const listQ = useArInvoices(debitNotes ? 'ODB' : kind, debitNotes ? 'DN' : undefined);
   const rows = listQ.data?.rows ?? [];
-  const [detailId, setDetailId] = useState<string | null>(null);
-  const detailQ = useArBillDetail(detailId);
-  const detail = detailQ.data;
-  /* A sales invoice opened over the list. */
-  const [siId, setSiId] = useState<string | null>(null);
-  const openRow = (r: ArListRow) => { if (r.kind === 'SI') setSiId(r.id); else setDetailId(r.id); };
+  /* A row opens its document's page in its own tab. */
+  const docHref = (r: ArListRow) => moneyInDocHref(r.kind === 'SI' ? 'salesInvoice' : 'debtorBill', r.id);
+  const openRow = (r: ArListRow) => openInTab(docHref(r));
   /* Ticked rows, by the table's row key. */
   const [ticked, setTicked] = useState<Set<string>>(new Set());
   const [printing, setPrinting] = useState(false);
@@ -226,28 +138,14 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
   }, [accountsQ.data]);
 
   const createBill = useCreateDebtorBill();
-  const updateBill = useUpdateDebtorBill();
-  const cancelBill = useCancelDebtorBill();
 
-  /* The one form — New, Edit, Copy — in its own pop-out over the list. */
+  /* New debtor bill, in its pop-out over the list (the in-page form comes with batch 5 step 5). */
   const [form, setForm] = useState<FormState | null>(null);
-  const openNew = () => setForm({ mode: 'new', initial: emptyBillForm(), debtorId: partyFilter.startsWith('D:') ? partyFilter.slice(2) : '', ...(debitNotes ? { docKind: 'DN' as const } : {}) });
-  const openEdit = (d: ArBillDetail) => setForm({
-    mode: 'edit', initial: fromBill(d.bill, false), debtorId: d.debtor?.id ?? '', debtorName: d.debtor?.name,
-    billId: d.bill.id, billNumber: d.bill.bill_number, receivedSen: Number(d.bill.received_sen),
-  });
-  /* A copy of a debit note is a debit note. */
-  const openCopy = (d: ArBillDetail) => setForm({ mode: 'copy', initial: fromBill(d.bill, true), debtorId: d.debtor?.id ?? '', billNumber: d.bill.bill_number, ...(d.bill.doc_kind === 'DN' ? { docKind: 'DN' as const } : {}) });
+  const openNew = () => setForm({ initial: emptyBillForm(), debtorId: partyFilter.startsWith('D:') ? partyFilter.slice(2) : '', ...(debitNotes ? { docKind: 'DN' as const } : {}) });
 
   const submitBill = async (values: BillFormSubmit) => {
     if (!form) return;
     try {
-      if (form.mode === 'edit' && form.billId) {
-        const res = await updateBill.mutateAsync({ billId: form.billId, body: values });
-        setForm(null);
-        void notify({ title: `${res.bill.billNumber} saved`, body: `Re-posted — the old journal got its contra and ${res.jeNo ?? 'a fresh entry'} books it as saved; ${fmtSen(res.bill.totalSen)} now on 305-0000.`, tone: 'info' });
-        return;
-      }
       if (!form.debtorId) {
         void notify({ title: 'Pick the debtor', body: 'A bill belongs to one other debtor — pick who owes it before posting.', tone: 'error' });
         return;
@@ -256,21 +154,11 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
       setForm(null);
       void notify({
         title: `${res.bill.billNumber} posted`,
-        body: `${fmtSen(res.bill.totalSen)} now owing — the GL carries it on 305-0000.${form.mode === 'copy' && form.billNumber ? ` Copied from ${form.billNumber}.` : ''}`,
+        body: `${fmtSen(res.bill.totalSen)} now owing — the GL carries it on 305-0000.`,
         tone: 'info',
       });
     } catch (e) {
       void notify({ title: 'Bill failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
-    }
-  };
-
-  const onCancelBill = async (b: DebtorBill) => {
-    const ok = await askConfirm({ title: `Cancel ${b.bill_number}?`, body: 'The ODB journal is reversed; a bill with money received refuses.', confirmLabel: 'Cancel bill', danger: true });
-    if (!ok) return;
-    try {
-      await cancelBill.mutateAsync(b.id);
-    } catch (e) {
-      void notify({ title: 'Cancel failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
     }
   };
 
@@ -294,18 +182,12 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
       void notify({ title: 'Invoices not printed', body: errText(e), tone: 'error' });
     } finally { setPrinting(false); }
   };
-  const printBill = (d: ArBillDetail) => {
-    void generateDebtorBillPdf({ bill: d.bill, debtor: d.debtor ?? { name: '(debtor)', phone: null }, accountName: accountNameOf }, { action: 'print' }).catch((e: unknown) => {
-      void notify({ title: 'Bill not printed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
-    });
-  };
-
   const arColumns = useMemo<Column<ArListRow>[]>(() => [
     { key: 'kind', label: 'Kind', render: (r) => <span style={{ fontSize: 'var(--fs-11)', fontWeight: 600 }}>{kindLabelOf(r)}</span>, getValue: (r) => kindLabelOf(r) },
     {
       key: 'number', label: 'No.',
       /* Both kinds open the same way the row does — the number reads as the link it is. */
-      render: (r) => <button type="button" onClick={(e) => { e.stopPropagation(); openRow(r); }} className={cancelledDocNoClass(r.status)} style={{ ...linkBtn, ...mono }}>{r.invoiceNumber}</button>,
+      render: (r) => <span className={cancelledDocNoClass(r.status)}><FinanceDocLink to={docHref(r)}>{r.invoiceNumber}</FinanceDocLink></span>,
       getValue: (r) => r.invoiceNumber,
     },
     {
@@ -313,7 +195,7 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
       render: (r) => <>{r.partyName ?? '—'}{r.partyCode ? <span style={soft}> · {r.partyCode}</span> : null}</>,
       getValue: (r) => r.partyName ?? '',
     },
-    { key: 'ref', label: 'Ref', render: (r) => r.ref ? <span style={mono}>{r.ref}</span> : '—', getValue: (r) => r.ref ?? '' },
+    { key: 'ref', label: 'Ref', render: (r) => r.ref ?? '—', getValue: (r) => r.ref ?? '' },
     { key: 'description', label: 'Description', width: '260px', render: (r) => r.description ?? '—', getValue: (r) => r.description ?? '' },
     { key: 'date', label: 'Date', render: (r) => fmtDateOrDash(r.invoiceDate), getValue: (r) => r.invoiceDate, exportFormat: 'date' },
     { key: 'due', label: 'Due', render: (r) => fmtDateOrDash(r.dueDate), getValue: (r) => r.dueDate, exportFormat: 'date' },
@@ -330,7 +212,7 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
           title={r.depositAppliedSen > 0 ? `${fmtSen(r.depositAppliedSen)} was collected on ${r.ref ?? 'the sales order'} and settles this invoice.` : undefined}>
           {fmtSen(r.outstandingSen)}
           {r.depositAppliedSen > 0 && (
-            <span className="rounded-sm bg-surface-2 px-1 font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted" style={{ marginLeft: 4 }}>dep</span>
+            <span className="rounded-sm bg-surface-2 px-1 text-[9px] font-semibold uppercase tracking-brand text-ink-muted" style={{ marginLeft: 4 }}>dep</span>
           )}
         </span>
       ),
@@ -340,17 +222,13 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
   ], []);
 
   const debtorOptions = useMemo(() => activeDebtors.map((d) => ({ value: d.id, label: d.name })), [activeDebtors]);
-  const paperName = form?.docKind === 'DN' ? 'debit note' : 'debtor bill';
-  const formTitle = form?.mode === 'edit'
-    ? `Edit ${form.billNumber ?? 'bill'} — ${form.debtorName ?? ''}`
-    : form?.mode === 'copy' ? `New ${paperName} — copied from ${form.billNumber ?? 'a bill'}`
-      : form?.docKind === 'DN' ? 'New debit note to an other debtor — 多收 other debtor 的钱' : 'New debtor bill — 明细行自由选户口';
+  const formTitle = form?.docKind === 'DN' ? 'New debit note to an other debtor — 多收 other debtor 的钱' : 'New debtor bill — 明细行自由选户口';
 
   return (
     <div className="space-y-4">
       {!debitNotes && <PageHeader
-        eyebrow="Finance"
-        title="AR Invoices"
+        eyebrow="Finance · Money in"
+        title="AR invoices"
         actions={canCreate ? (
           <button type="button" onClick={openNew} style={linkBtn}>
             <Plus {...ICON} /> New debtor bill
@@ -418,85 +296,19 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
         </div>
       </section>
 
-      {/* The bill, popped out over the list — the AP page's shape. */}
-      {detailId && detail && (
-        <Modal
-          title={`${detail.bill.bill_number} · ${detail.debtor?.name ?? '—'}`}
-          onClose={() => setDetailId(null)}
-          ariaLabel={`${detail.bill.doc_kind === 'DN' ? 'Debit note' : 'Debtor bill'} ${detail.bill.bill_number}`}
-          actions={(
-            <>
-              <span style={soft}>{humaniseStatusKey(detail.bill.status)}</span>
-              <Button variant="secondary" size="sm" onClick={() => printBill(detail)}><Printer {...ICON} /> Print</Button>
-              {canWrite && detail.bill.status !== 'CANCELLED' && (
-                <Button variant="secondary" size="sm" onClick={() => openEdit(detail)}>Edit</Button>
-              )}
-              {canCreate && (
-                <Button variant="secondary" size="sm" onClick={() => openCopy(detail)}>Copy</Button>
-              )}
-              {canCancel && detail.bill.status !== 'CANCELLED' && Number(detail.bill.received_sen) === 0 && (
-                <Button variant="ghost" size="sm" onClick={() => void onCancelBill(detail.bill)} disabled={cancelBill.isPending}>
-                  {detail.bill.doc_kind === 'DN' ? 'Cancel debit note' : 'Cancel bill'}
-                </Button>
-              )}
-            </>
-          )}
-        >
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 'var(--space-3)', fontSize: 'var(--fs-13)' }}>
-            <Meta label="Debtor" value={detail.debtor?.name ?? '—'} />
-            <Meta label="Bill date" value={fmtDateOrDash(detail.bill.bill_date)} />
-            <Meta label="Description" value={detail.bill.notes ?? '—'} />
-            <Meta label="Received" value={<span style={mono}>{fmtSen(detail.bill.received_sen)}</span>} />
-          </div>
-          <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 'var(--fs-13)' }}>
-            <thead>
-              <tr>
-                <th style={{ ...th, width: 36 }}>#</th>
-                <th style={th}>Account</th>
-                <th style={th}>Description</th>
-                <th style={{ ...th, textAlign: 'right' }}>Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(detail.bill.lines ?? []).map((l) => (
-                <tr key={l.id}>
-                  <td style={{ ...td, ...mono, color: 'var(--fg-muted)' }}>{l.line_no}</td>
-                  <td style={td}>
-                    {l.credit_account_code
-                      ? <><span style={mono}>{l.credit_account_code}</span>{accountNameOf(l.credit_account_code) ? <span style={soft}> · {accountNameOf(l.credit_account_code)}</span> : null}</>
-                      : <span style={soft}>text line</span>}
-                  </td>
-                  <td style={td}>{l.description ?? '—'}</td>
-                  <td style={{ ...td, ...right }}>{l.credit_account_code ? fmtSen(l.amount_sen) : ''}</td>
-                </tr>
-              ))}
-              <tr style={{ borderTop: '1px solid var(--border-weak, #e3e1da)' }}>
-                <td colSpan={3} style={{ ...td, fontWeight: 600 }}>Total · outstanding {fmtSen(Math.max(0, detail.bill.total_sen - detail.bill.received_sen))}</td>
-                <td style={{ ...td, ...right, fontWeight: 700 }}>{fmtSen(detail.bill.total_sen)}</td>
-              </tr>
-            </tbody>
-          </table>
-        </Modal>
-      )}
-
-      {siId && <SalesInvoicePopOut id={siId} onClose={() => setSiId(null)} />}
-
       {form && (
         <Modal title={formTitle} onClose={() => setForm(null)} ariaLabel={formTitle}>
-          {form.mode !== 'edit' && (
-            <label className={styles.field} style={{ maxWidth: 420, marginBottom: 'var(--space-3)' }}>
-              <span className={styles.fieldLabel}>Debtor *</span>
-              <SearchCombo options={debtorOptions} value={form.debtorId} onChange={(id) => setForm((prev) => (prev ? { ...prev, debtorId: id } : prev))}
-                className={styles.fieldInput} aria-label="Bill debtor" placeholder="— who owes this bill —" />
-            </label>
-          )}
+          <label className={styles.field} style={{ maxWidth: 420, marginBottom: 'var(--space-3)' }}>
+            <span className={styles.fieldLabel}>Debtor *</span>
+            <SearchCombo options={debtorOptions} value={form.debtorId} onChange={(id) => setForm((prev) => (prev ? { ...prev, debtorId: id } : prev))}
+              className={styles.fieldInput} aria-label="Bill debtor" placeholder="— who owes this bill —" />
+          </label>
           <DebtorBillForm
-            key={`${form.mode}-${form.billId ?? 'new'}`}
-            mode={form.mode}
+            key="new"
+            mode="new"
             initial={form.initial}
             accounts={lineAccounts}
-            receivedSen={form.receivedSen}
-            saving={createBill.isPending || updateBill.isPending}
+            saving={createBill.isPending}
             onSubmit={submitBill}
             onCancel={() => setForm(null)}
           />

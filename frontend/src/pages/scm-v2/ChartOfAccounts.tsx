@@ -1,5 +1,6 @@
 // ----------------------------------------------------------------------------
-// ChartOfAccounts — the maintenance page at /scm/chart-of-accounts.
+// ChartOfAccounts — Finance › Setup › Chart of accounts (/scm/chart-of-accounts),
+// in the owner's Claude Design redesign (Finance-1a-Setup, batch 6 §6.1).
 //
 // The owner's selective sharing (2026-09-02): 我要做选择性公用是因为往后可能会
 // 在加公司，所以要可以公用，可能类似recon setup 我tick 后选择这个公司要不要用.
@@ -15,11 +16,19 @@
 // Rows are pre-classified shared vs company-specific (banks, cash, related-
 // party loans, directors, HP/borrowings stay home); the tick columns are
 // where a person adjusts afterwards. The file itself never enters the repo.
+//
+// The redesign re-skins the same calls: section rows and the tree in the
+// design's look, the forms (New account, Edit) as centred modals, the asks
+// (untick, delete, move, rename) as the app's confirm, English words. The ERP's
+// own columns (Needs event, PMS row, Logistics), the new account's company
+// ticks (every company, as today — owner question g6) and the active company's
+// own list (header ⋯) all stay.
 // ----------------------------------------------------------------------------
 
 import { Fragment, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
-import { ChevronDown, ChevronRight, Pencil, Plus, Trash2, Upload } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileSpreadsheet, MoreHorizontal, PenLine, Plus, Search, Upload, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
   useChartUnion, useChartTick, useChartImport,
@@ -29,8 +38,11 @@ import {
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
-import styles from './SalesOrderDetail.module.css';
+import { useToastOptional } from '../../hooks/useToast';
 import { PageHeader } from '../../components/Layout';
+import { Check, Field, PopMenu, SetupModal, Skeleton, Switch, Tag } from './finance/SetupParts';
+import sp from './finance/SetupParts.module.css';
+import css from './ChartOfAccounts.module.css';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -118,16 +130,43 @@ function treeOrder(accounts: ChartRow[]): ChartRow[] {
   return out;
 }
 
-const TYPE_TONE: Record<string, string> = {
-  ASSET: '#2F5D4F', LIABILITY: '#B06000', EQUITY: '#4A4A8A', INCOME: '#16695f', EXPENSE: '#8A3B3B',
-};
-
 /* The shelf for a row the server has not sectioned (predates the migration). */
 const UNSECTIONED = 'UNSECTIONED';
+
+/** An account code the server takes: NNN-XXXX. */
+const ACCOUNT_CODE = /^\d{3}-[A-Za-z0-9]{4}$/;
+
+/** The server's section words in sentence case: CURRENT ASSETS → Current assets. */
+const sectionLabel = (section: string): string => (section === UNSECTIONED
+  ? 'Not sectioned'
+  : (section.charAt(0) + section.slice(1).toLowerCase()).replace(/\ba\/c\b/g, 'A/C'));
+/** ASSET → Asset. */
+const typeLabel = (type: string): string => type.charAt(0) + type.slice(1).toLowerCase();
+const plural = (n: number, one: string, many: string): string => (n === 1 ? `1 ${one}` : `${n} ${many}`);
+
+/* AutoCount's special-account kinds, in the design's words. */
+const SPECIAL_TYPES: Array<[string, string]> = [
+  ['SBK', 'SBK · bank'], ['SCH', 'SCH · cash'], ['SOP', 'SOP · e-wallet / other'],
+  ['SFA', 'SFA · fixed asset, with its depreciation pair'], ['SAD', 'SAD · accumulated depreciation'],
+  ['SRE', 'SRE · retained earnings'], ['SDP', 'SDP · deferred'],
+  ['SOS', 'SOS · opening stock'], ['SCS', 'SCS · closing stock'],
+  ['SDC', 'SDC · debtor control, posted by modules'], ['SCC', 'SCC · creditor control, posted by modules'],
+  ['SBS', 'SBS · stock control, posted by modules'],
+];
+
+const errText = (e: unknown, fallback: string): string => (e instanceof Error && e.message ? e.message : fallback);
+
+type NewForm = {
+  code: string; name: string; section: string; parent: string; special: string; money: boolean;
+  depOn: boolean; depCode: string; depName: string; companies: number[]; error: string | null;
+};
+type EditForm = { row: ChartRow; code: string; name: string; section: string; parent: string; error: string | null };
 
 export const ChartOfAccounts = () => {
   const askConfirm = useConfirm();
   const notify = useNotify();
+  const toast = useToastOptional();
+  const navigate = useNavigate();
   const { can } = useHouzsAuth();
   const canManage = can('scm.payment_voucher.post');
 
@@ -136,25 +175,39 @@ export const ChartOfAccounts = () => {
   const doImport = useChartImport();
   const doRename = useChartRename();
   const doUpdate = useChartUpdate();
-  /* 需要 Event / PMS row (item 4) / Logistics row: one field at a time, a refusal said out loud. */
-  const setEventFields = async (code: string, patch: { needsEvent?: boolean; pmsRow?: string | null; logisticsRow?: string | null }) => {
-    try { await doUpdate.mutateAsync({ code, ...patch }); } catch (e) {
-      void notify({ title: `${code} not saved`, body: e instanceof Error ? e.message : 'Try again.', tone: 'error' });
-    }
-  };
   const doDelete = useChartDelete();
   const doCreate = useChartCreate();
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const companies = unionQ.data?.companies ?? [];
+  /* Needs event / PMS row (item 4) / Logistics row: one field at a time, a refusal said out loud. */
+  const setEventFields = async (code: string, patch: { needsEvent?: boolean; pmsRow?: string | null; logisticsRow?: string | null }) => {
+    try { await doUpdate.mutateAsync({ code, ...patch }); } catch (e) {
+      void notify({ title: `${code} not saved`, body: errText(e, 'Try again.'), tone: 'error' });
+    }
+  };
+
+  const companies = useMemo(() => unionQ.data?.companies ?? [], [unionQ.data]);
+  const coCode = (id: number): string => companies.find((co) => co.id === id)?.code ?? String(id);
   const accounts = useMemo(() => treeOrder(unionQ.data?.accounts ?? []), [unionQ.data]);
+  const byCode = useMemo(() => new Map(accounts.map((a) => [a.code, a])), [accounts]);
   const sections = useMemo(() => unionQ.data?.sections ?? [], [unionQ.data]);
-  /* 需要 Event / PMS row (owner 2026-10-01, payment-request item 4): the rows a
+  /* Needs event / PMS row (owner 2026-10-01, payment-request item 4): the rows a
      Finance account can fill on the PMS event page — the server's one list. */
   const pmsRows = useMemo(() => unionQ.data?.pmsRows ?? [], [unionQ.data]);
   /* The Logistics P&L's rows (owner 2026-10-29: the own-lorry tick list moved here —
      「就不能在coa 那边tick？」): each offered on accounts of the type it reads. */
   const logisticsRows = useMemo(() => unionQ.data?.logisticsRows ?? [], [unionQ.data]);
+  const kidsOf = useMemo(() => {
+    const m = new Map<string, ChartRow[]>();
+    for (const a of accounts) {
+      if (!a.parentCode) continue;
+      const list = m.get(a.parentCode) ?? [];
+      list.push(a);
+      m.set(a.parentCode, list);
+    }
+    return m;
+  }, [accounts]);
+  const kidCount = (code: string): number => kidsOf.get(code)?.length ?? 0;
 
   /* ── The AutoCount tree (owner 2026-09-06: 每个 account type 的 header):
      one header row per SECTION in the server's order, the accounts of that
@@ -189,11 +242,14 @@ export const ChartOfAccounts = () => {
       return next;
     });
   };
-  const [parsed, setParsed] = useState<ParsedChart | null>(null);
+  const [parsed, setParsed] = useState<(ParsedChart & { file: string }) | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
-  /* 快速模式 — session-only, never persisted: every visit starts with the
-     confirms back on (see the toggle's comment in the header). */
+  /* Quick mode — session-only, never persisted: every visit starts with the
+     confirms back on (see the switch's title). */
   const [quickMode, setQuickMode] = useState(false);
+  const [query, setQuery] = useState('');
+  const needle = query.trim().toLowerCase();
+  const [headMenu, setHeadMenu] = useState<{ x: number; y: number } | null>(null);
 
   /* ── 展开/收缩 (owner point 4): fold a header, its whole subtree hides. ── */
   const [folded, setFolded] = useState<Set<string>>(new Set());
@@ -206,7 +262,7 @@ export const ChartOfAccounts = () => {
      父子account 不清楚; the old indent was a has-parent boolean, so a
      grandchild sat as shallow as its parent). Same 6-level cap as isHidden. */
   const depthOf = useMemo(() => {
-    const m = new Map();
+    const m = new Map<string, number>();
     for (const a of accounts) {
       let d = 0;
       let cursor = a.parentCode ?? null;
@@ -244,29 +300,47 @@ export const ChartOfAccounts = () => {
       return next;
     });
   };
+  /* Every descendant still active in one company — what an untick there takes
+     with it (the server walks the same way: active children, then theirs). */
+  const activeBelow = (code: string, companyId: number): number => {
+    let n = 0;
+    const walk = (c: string, depth: number) => {
+      if (depth > 6) return;
+      for (const k of kidsOf.get(c) ?? []) {
+        if (k.perCompany[companyId]?.active !== true) continue;
+        n += 1;
+        walk(k.code, depth + 1);
+      }
+    };
+    walk(code, 0);
+    return n;
+  };
 
   /* ── 拖动改父户 (the owner, 2026-09-03: 我希望可以拖动式 put account under
      别的 account). Drop A onto B → confirm → B becomes A's header. The moved
      account keeps its GL (lines hang on its own code); the SERVER holds the
-     rule — a target with postings or references refuses (父户不记账), same
-     type only, no cycles — and its sentence lands in the dialog on refusal. */
+     rule — a target with postings or references refuses (a header never
+     books), same type only, no cycles — and its sentence is shown on refusal. */
   const [dragCode, setDragCode] = useState<string | null>(null);
+  const [dropOn, setDropOn] = useState<string | null>(null);
+  const endDrag = () => { setDragCode(null); setDropOn(null); };
   const onDropInto = async (target: ChartRow) => {
     const src = dragCode;
-    setDragCode(null);
+    endDrag();
     if (!src || src === target.code) return;
-    const srcRow = accounts.find((x) => x.code === src);
+    const srcRow = byCode.get(src);
     if (!srcRow || (srcRow.parentCode ?? '') === target.code) return;
     const ok = await askConfirm({
-      title: `把 ${src} 挂到 ${target.code} 下？`,
-      body: `${srcRow.name} → under ${target.name}. A target that carries postings or references refuses (父户不记账); the move itself never touches the GL.`,
+      title: `Put ${src} ${srcRow.name} under ${target.code} ${target.name}?`,
+      body: `${target.code} becomes its header. A header never books, so an account with postings or references cannot become one; the move itself never touches the ledger.`,
       confirmLabel: 'Move',
     });
     if (!ok) return;
     try {
       await doUpdate.mutateAsync({ code: src, parentCode: target.code });
+      toast?.success(`${src} is now under ${target.code}`);
     } catch (e) {
-      void notify({ title: 'Move failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+      void notify({ title: `${src} not moved`, body: errText(e, 'Something went wrong.'), tone: 'error' });
     }
   };
 
@@ -277,179 +351,217 @@ export const ChartOfAccounts = () => {
      named — 子户跟着 header 走. */
   const onDropIntoSection = async (section: string) => {
     const src = dragCode;
-    setDragCode(null);
+    endDrag();
     if (!src || section === UNSECTIONED) return;
-    const srcRow = accounts.find((x) => x.code === src);
+    const srcRow = byCode.get(src);
     if (!srcRow || srcRow.section === section) return;
     if (srcRow.parentCode) {
-      void notify({ title: `${src} 是子户`, body: `子户跟着 header 走 — drag ${srcRow.parentCode} instead, or move ${src} to the root first.`, tone: 'error' });
+      void notify({
+        title: `${src} is under ${srcRow.parentCode}`,
+        body: `A child moves with its header — drag ${srcRow.parentCode} instead, or take ${src} out from under it first.`,
+        tone: 'error',
+      });
       return;
     }
     const newType = sections.find((s) => s.section === section)?.type ?? srcRow.type;
-    const kids = accounts.filter((x) => x.parentCode === src).length;
+    const kids = kidCount(src);
+    const label = sectionLabel(section);
     const ok = await askConfirm({
-      title: `把 ${src} 移到 ${section}?`,
-      body: `${srcRow.name}${kids > 0 ? ` and its ${kids} sub-account(s)` : ''} → ${section}${newType !== srcRow.type ? ` — the type changes ${srcRow.type} → ${newType}, and the statements follow the section` : ''}. The GL is untouched.`,
+      title: `Move ${src} ${srcRow.name} to ${label}?`,
+      body: `It${kids > 0 ? ` and the ${plural(kids, 'account', 'accounts')} under it` : ''} move${kids > 0 ? '' : 's'} to ${label}${newType !== srcRow.type ? ` and take its type, ${typeLabel(newType)}; the statements follow the section` : ''}. The ledger is untouched.`,
       confirmLabel: 'Move',
     });
     if (!ok) return;
     try {
       await doUpdate.mutateAsync({ code: src, section });
+      toast?.success(`${src} moved to ${label}`);
     } catch (e) {
-      void notify({ title: 'Move failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+      void notify({ title: `${src} not moved`, body: errText(e, 'Something went wrong.'), tone: 'error' });
     }
   };
 
-  /* ── 改码/改名 (owner point 1): edit panel above the table. A changed code
-     goes through the rename RPC (改码全账跟); name/type ride the update. ── */
-  const [editing, setEditing] = useState<ChartRow | null>(null);
-  const [editCode, setEditCode] = useState('');
-  const [editName, setEditName] = useState('');
-  const [editSection, setEditSection] = useState('');
-  const [editParent, setEditParent] = useState('');
-  const openEdit = (row: ChartRow) => {
-    setEditing(row);
-    setEditCode(row.code);
-    setEditName(row.name);
-    setEditSection(row.section ?? '');
-    setEditParent(row.parentCode ?? '');
-  };
+  /* ── 改码/改名 (owner point 1): Edit is a centred modal. A changed code goes
+     through the rename RPC (改码全账跟); name/section/parent ride the update.
+     The backdrop does not close it (owner 2026-09-04: a stray click must not
+     eat a half-typed rename) — Cancel is the way out. ── */
+  const [edit, setEdit] = useState<EditForm | null>(null);
+  const openEdit = (row: ChartRow) => setEdit({
+    row, code: row.code, name: row.name, section: row.section ?? '', parent: row.parentCode ?? '', error: null,
+  });
+  const patchEdit = (patch: Partial<EditForm>) => setEdit((f) => (f ? { ...f, error: null, ...patch } : f));
   const saveEdit = async () => {
-    if (!editing) return;
-    const codeChanged = editCode.trim() !== editing.code;
-    const nameChanged = editName.trim() !== editing.name;
-    const sectionChanged = editSection !== '' && editSection !== (editing.section ?? '');
-    const parentChanged = editParent.trim() !== (editing.parentCode ?? '');
-    if (!codeChanged && !nameChanged && !sectionChanged && !parentChanged) { setEditing(null); return; }
+    if (!edit) return;
+    const { row } = edit;
+    const code = edit.code.trim();
+    const name = edit.name.trim();
+    if (!ACCOUNT_CODE.test(code)) { patchEdit({ error: 'The code must look like 305-0010.' }); return; }
+    if (code !== row.code && byCode.has(code)) { patchEdit({ error: `${code} is already in the chart.` }); return; }
+    if (!name) { patchEdit({ error: 'Name the account.' }); return; }
+    const codeChanged = code !== row.code;
+    const nameChanged = name !== row.name;
+    const sectionChanged = edit.section !== '' && edit.section !== (row.section ?? '');
+    const parentChanged = edit.parent.trim() !== (row.parentCode ?? '');
+    if (!codeChanged && !nameChanged && !sectionChanged && !parentChanged) { setEdit(null); return; }
     if (codeChanged) {
       const ok = await askConfirm({
-        title: `Rename ${editing.code} → ${editCode.trim()}?`,
-        body: '改码全账跟: every journal line, voucher, settlement link and role binding moves to the new code in one transaction — or none of it does.',
+        title: `Rename ${row.code} to ${code} everywhere?`,
+        body: 'Every journal line, voucher, settlement link and role binding moves to the new code in one step, or none of it does.',
         confirmLabel: 'Rename everywhere',
       });
       if (!ok) return;
     }
+    let moved = '';
+    let renamed = false;
     try {
       if (codeChanged) {
-        const res = await doRename.mutateAsync({ oldCode: editing.code, newCode: editCode.trim() });
-        const moved = Object.entries(res.moved).filter(([, n]) => Number(n) > 0)
-          .map(([k, n]) => `${k}: ${n}`).join(', ');
-        void notify({ title: `${editing.code} → ${editCode.trim()}`, body: moved ? `Moved — ${moved}.` : 'Renamed.', tone: 'info' });
+        const res = await doRename.mutateAsync({ oldCode: row.code, newCode: code });
+        renamed = true;
+        moved = Object.entries(res.moved).filter(([, n]) => Number(n) > 0)
+          .map(([k, n]) => `${k.replace(/_/g, ' ')} ${n}`).join(', ');
       }
       if (nameChanged || sectionChanged || parentChanged) {
         await doUpdate.mutateAsync({
-          code: codeChanged ? editCode.trim() : editing.code,
-          ...(nameChanged ? { name: editName.trim() } : {}),
-          ...(sectionChanged ? { section: editSection } : {}),
-          ...(parentChanged ? { parentCode: editParent.trim() || null } : {}),
+          code: codeChanged ? code : row.code,
+          ...(nameChanged ? { name } : {}),
+          ...(sectionChanged ? { section: edit.section } : {}),
+          ...(parentChanged ? { parentCode: edit.parent.trim() || null } : {}),
         });
       }
-      setEditing(null);
+      setEdit(null);
+      toast?.success(codeChanged ? `${row.code} renamed to ${code} everywhere${moved ? ` · moved ${moved}` : ''}` : `${code} saved`);
     } catch (e) {
-      void notify({ title: 'Save failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+      /* A rename that went through stays; the form now stands on the new code. */
+      patchEdit({ ...(renamed ? { row: { ...row, code } } : {}), error: errText(e, 'Something went wrong.') });
     }
   };
 
   /* ── 一个门开户 (owner 2026-09-03: 照理说应该维护 overall chart 罢了):
      the definition is created once, lands in every ticked company, parent
-     chain riding along per company. ── */
-  const [addingNew, setAddingNew] = useState(false);
-  const [newCode, setNewCode] = useState('');
-  const [newName, setNewName] = useState('');
-  const [newSection, setNewSection] = useState('');
-  const [newParent, setNewParent] = useState('');
-  const [newMoney, setNewMoney] = useState(false);
-  const [newSpecial, setNewSpecial] = useState('');
-  const [depOn, setDepOn] = useState(true);
-  const [depCode, setDepCode] = useState('');
-  const [depName, setDepName] = useState('');
-  const [newCompanies, setNewCompanies] = useState<Set<number>>(new Set());
-  const openAdd = () => {
-    setAddingNew(true);
-    setNewCode(''); setNewName(''); setNewSection(''); setNewParent(''); setNewMoney(false);
-    setNewSpecial(''); setDepOn(true); setDepCode(''); setDepName('');
-    setNewCompanies(new Set(companies.map((co) => co.id)));
-  };
+     chain riding along per company. Every company starts ticked (owner
+     question g6 — today's default). ── */
+  const [form, setForm] = useState<NewForm | null>(null);
+  const openAdd = () => setForm({
+    code: '', name: '', section: '', parent: '', special: '', money: false,
+    depOn: true, depCode: '', depName: '', companies: companies.map((co) => co.id), error: null,
+  });
+  const patchForm = (patch: Partial<NewForm>) => setForm((f) => (f ? { ...f, error: null, ...patch } : f));
   /* His chart's own SFA/SAD convention: the twin is the asset's code with the
      last digit +5 (201-1000 → 201-1005), named ACCUM. DEPRN. - <asset>. */
-  const deriveDep = (assetCode: string, assetName: string) => {
+  const derivedDep = (assetCode: string, assetName: string): Pick<NewForm, 'depCode' | 'depName'> => {
     const m = /^(\d{3}-\d{3})(\d)$/.exec(assetCode.trim());
-    setDepCode(m && Number(m[2]) < 5 ? `${m[1]}${Number(m[2]) + 5}` : '');
-    setDepName(assetName.trim() ? `ACCUM. DEPRN. - ${assetName.trim()}` : '');
+    return {
+      depCode: m && Number(m[2]) < 5 ? `${m[1]}${Number(m[2]) + 5}` : '',
+      depName: assetName.trim() ? `ACCUM. DEPRN. - ${assetName.trim()}` : '',
+    };
   };
-  const pickSpecial = (sp: string) => {
-    setNewSpecial(sp);
-    if (sp === 'SBK' || sp === 'SCH') setNewMoney(true);
-    if (sp === 'SFA') deriveDep(newCode, newName);
+  const pickSpecial = (special: string) => {
+    if (!form) return;
+    patchForm({
+      special,
+      ...(special === 'SBK' || special === 'SCH' ? { money: true } : {}),
+      ...(special === 'SFA' ? derivedDep(form.code, form.name) : {}),
+    });
   };
+  const formParent = form?.parent ? byCode.get(form.parent) : undefined;
+  /* A child sits where its header sits — the section follows the parent (a
+     parent older than the sections leaves the pick to the form). */
+  const parentSection = formParent?.section ?? null;
+  const formSection = parentSection ?? form?.section ?? '';
   const saveNew = async () => {
+    if (!form) return;
+    const code = form.code.trim();
+    const name = form.name.trim();
+    const special = form.special;
+    if (!ACCOUNT_CODE.test(code)) { patchForm({ error: 'The code must look like 305-0010.' }); return; }
+    if (byCode.has(code)) { patchForm({ error: `${code} is already in the chart.` }); return; }
+    if (!name) { patchForm({ error: 'Name the account.' }); return; }
+    if (!formSection) { patchForm({ error: 'Pick a section, or a parent.' }); return; }
+    if (form.companies.length === 0) { patchForm({ error: 'Tick at least one company.' }); return; }
+    const withDep = special === 'SFA' && form.depOn;
+    const depCode = form.depCode.trim();
+    const depName = form.depName.trim();
+    if (withDep && (!ACCOUNT_CODE.test(depCode) || byCode.has(depCode) || depCode === code)) {
+      patchForm({ error: 'Give the depreciation pair its own new code, e.g. 202-0001.' });
+      return;
+    }
+    if (withDep && !depName) { patchForm({ error: 'Name the depreciation account.' }); return; }
     try {
-      const withDep = newSpecial === 'SFA' && depOn && depCode.trim() && depName.trim();
       const res = await doCreate.mutateAsync({
-        code: newCode.trim(),
-        name: newName.trim(),
-        section: newSection,
-        parentCode: newParent.trim() || null,
-        accMoney: newMoney,
-        ...(newSpecial ? { specialType: newSpecial } : {}),
-        ...(withDep ? { depreciation: { code: depCode.trim(), name: depName.trim() } } : {}),
-        companyIds: [...newCompanies],
+        code,
+        name,
+        section: formSection,
+        parentCode: form.parent.trim() || null,
+        accMoney: form.money,
+        ...(special ? { specialType: special } : {}),
+        ...(withDep ? { depreciation: { code: depCode, name: depName } } : {}),
+        companyIds: form.companies,
       });
-      setAddingNew(false);
-      void notify({
-        title: `${res.code} created`,
-        body: `Live in ${res.companies.length} company(ies)${newParent.trim() ? ` under ${newParent.trim()}` : ''}${res.depreciationCode ? ` — depreciation twin ${res.depreciationCode} created beside it` : ''}. Adjust the ticks any time.`,
-        tone: 'info',
-      });
+      setForm(null);
+      toast?.success(`Added ${res.code}${res.depreciationCode ? ` and ${res.depreciationCode}` : ''} · ticked for ${res.companies.map(coCode).join(' and ')}`);
     } catch (e) {
-      void notify({ title: 'Create failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+      patchForm({ error: errText(e, 'Something went wrong.') });
     }
   };
 
   /* ── 删除 (owner point 2): only a never-used code dies; the server names
-     every holdout otherwise — that sentence goes straight to the dialog. ── */
+     every holdout otherwise — that sentence goes straight to the dialog. A
+     header is refused here already: its children hold it. ── */
   const onDelete = async (row: ChartRow) => {
+    if (kidCount(row.code) > 0) {
+      const said = `${row.code} cannot be deleted: it has children. Untick it instead.`;
+      if (toast) toast.warning(said); else void notify({ title: said, tone: 'error' });
+      return;
+    }
     /* Quick mode goes straight through — safely: the SERVER's 11-probe guard
        still refuses any account with a record or reference anywhere, so the
        only thing a stray click can delete is a never-used code. */
     if (!quickMode) {
       const ok = await askConfirm({
-        title: `Delete ${row.code} · ${row.name}?`,
-        body: 'Only an account with NO transactions and NO references anywhere can be deleted — otherwise untick it instead. This removes it from every company.',
+        title: `Delete ${row.code} ${row.name}?`,
+        body: 'Only an account with no transactions and no references anywhere can be deleted. This removes it from every company.',
         confirmLabel: 'Delete',
+        danger: true,
       });
       if (!ok) return;
     }
     try {
       await doDelete.mutateAsync(row.code);
-      void notify({ title: `${row.code} deleted`, body: 'It existed in no ledger — gone from every company.', tone: 'info' });
+      toast?.success(`${row.code} ${row.name} deleted from every company`);
     } catch (e) {
-      void notify({ title: 'Cannot delete', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+      void notify({ title: `${row.code} cannot be deleted`, body: errText(e, 'Something went wrong.'), tone: 'error' });
     }
   };
 
   const onTick = async (companyId: number, row: ChartRow, next: boolean) => {
+    const co = coCode(companyId);
     if (!next) {
-      const kids = accounts.filter((a) => a.parentCode === row.code && a.perCompany[companyId]?.active);
+      const below = activeBelow(row.code, companyId);
       /* Quick mode silences the LEAF untick only — a header sweep still
-         asks, whatever the toggle says (its children do not come back by
+         asks, whatever the switch says (its children do not come back by
          re-ticking the header). */
-      if (!quickMode || kids.length > 0) {
+      if (!quickMode || below > 0) {
         const ok = await askConfirm({
-          title: `Untick ${row.code} for ${companies.find((c) => c.id === companyId)?.code ?? companyId}?`,
-          body: kids.length > 0
-            ? `This is a header — its ${kids.length} active sub-account(s) go off with it.`
-            : 'The account is kept (history stays); it just stops being offered in this company.',
+          title: `Untick ${row.code} ${row.name} for ${co}?`,
+          body: `${co} stops using it.${below > 0
+            ? ` ${below === 1 ? 'Its 1 child is' : `Its ${below} children are`} unticked too, and ticking the header again does not bring ${below === 1 ? 'it' : 'them'} back.`
+            : ''} Nothing it already booked changes.`,
           confirmLabel: 'Untick',
+          danger: true,
         });
         if (!ok) return;
       }
     }
     setBusyKey(`${companyId}:${row.code}`);
     try {
-      await tick.mutateAsync({ companyId, code: row.code, active: next });
+      const res = (await tick.mutateAsync({ companyId, code: row.code, active: next })) as { instantiated?: string[]; disabled?: string[] } | null;
+      if (next) {
+        toast?.success(`${row.code} ticked for ${co}${(res?.instantiated?.length ?? 0) > 1 ? ' · its header rides along' : ''}`);
+      } else {
+        const also = Math.max(0, (res?.disabled?.length ?? 1) - 1);
+        toast?.success(`${row.code} unticked for ${co}${also > 0 ? ` · ${plural(also, 'child', 'children')} too` : ''}`);
+      }
     } catch (e) {
-      void notify({ title: 'Tick failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+      void notify({ title: `${row.code} not changed for ${co}`, body: errText(e, 'Something went wrong.'), tone: 'error' });
     } finally {
       setBusyKey(null);
     }
@@ -464,9 +576,9 @@ export const ChartOfAccounts = () => {
         void notify({ title: 'Nothing to import', body: 'No account codes were found in the file — is this the AutoCount chart export?', tone: 'error' });
         return;
       }
-      setParsed(p);
+      setParsed({ ...p, file: f.name });
     } catch (e) {
-      void notify({ title: 'Could not read the file', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+      void notify({ title: 'Could not read the file', body: errText(e, 'Something went wrong.'), tone: 'error' });
     }
   };
 
@@ -475,466 +587,464 @@ export const ChartOfAccounts = () => {
     try {
       const res = await doImport.mutateAsync({ companyId: 1, rows: parsed.rows });
       setParsed(null);
-      void notify({
-        title: `${res.imported} account(s) imported`,
-        body: res.shared > 0 && res.sharedTo.length > 0
-          ? `${res.shared} shared row(s) copied to ${res.sharedTo.length} other company(ies); the rest stay HOUZS-only. Adjust any tick below.`
-          : 'Adjust the ticks below.',
-        tone: 'info',
-      });
+      toast?.success(`Imported ${plural(res.imported, 'account', 'accounts')}${res.shared > 0 && res.sharedTo.length > 0
+        ? ` · ${res.shared} shared with ${res.sharedTo.map(coCode).join(' and ')}` : ''}`);
     } catch (e) {
-      void notify({ title: 'Import failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+      void notify({ title: 'Import failed', body: errText(e, 'Something went wrong.'), tone: 'error' });
     }
   };
 
   const exclusiveRows = parsed?.rows.filter((r) => !r.shared) ?? [];
+  const freshRows = parsed?.rows.filter((r) => !byCode.has(r.code)) ?? [];
+  const knownCount = (parsed?.rows.length ?? 0) - freshRows.length;
+
+  const hit = (a: ChartRow): boolean => !needle || `${a.code} ${a.name}`.toLowerCase().includes(needle);
+  const usesCount = (companyId: number): number => accounts.filter((a) => a.perCompany[companyId]?.active === true).length;
+  const countLine = [
+    plural(accounts.length, 'account', 'accounts'),
+    ...companies.map((co) => `${co.code} uses ${usesCount(co.id)}`),
+  ].join(' · ');
+  const colCount = 7 + companies.length + (canManage ? 1 : 0);
+  let shownRows = 0;
+
+  /* The header row sticks INSIDE the card's own scroll (owner 2026-09-04:
+     往下滑时看不到 header / 按 edit 时要跑回上去): solid background + an inset
+     shadow instead of a border — a border on the <tr> does not travel with
+     sticky cells, the shadow does. */
+  const stickyTh = {
+    position: 'sticky' as const, top: 0, zIndex: 5, background: '#f4f6f3', boxShadow: 'inset 0 -1px #e3e6e0',
+  };
 
   return (
     <div className="space-y-4">
       <PageHeader
-        eyebrow="Finance"
-        title="Chart of Accounts"
-        actions={canManage ? (
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-            <button
-              type="button"
-              onClick={openAdd}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--c-orange)', fontWeight: 600, cursor: 'pointer', fontSize: 'var(--fs-13)', background: 'none', border: 'none', padding: 0 }}
-            >
-              <Plus {...ICON} /> Add account
+        eyebrow="Finance · Setup"
+        title="Chart of accounts"
+        description="Every account any company carries · tick per company"
+        actions={
+          <span className={css.headActs}>
+            {canManage && (
+              <>
+                <input ref={fileRef} type="file" accept=".xlsx,.xls" hidden aria-label="Upload AutoCount chart"
+                  onChange={(e) => { void onFile(e.target.files?.[0]); e.target.value = ''; }} />
+                <Button variant="secondary" size="sm" onClick={() => fileRef.current?.click()}>
+                  <Upload {...ICON} /> Upload AutoCount chart
+                </Button>
+                <Button variant="primary" size="sm" onClick={openAdd}>
+                  <Plus {...ICON} /> Add account
+                </Button>
+              </>
+            )}
+            <button type="button" className={sp.more} aria-label="More for the chart" title="This company's accounts"
+              onClick={(e) => setHeadMenu({ x: e.clientX, y: e.clientY })}>
+              <MoreHorizontal size={14} />
             </button>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--c-orange)', fontWeight: 600, cursor: 'pointer', fontSize: 'var(--fs-13)' }}>
-              <Upload {...ICON} /> Upload AutoCount chart
-              <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }}
-                onChange={(e) => { void onFile(e.target.files?.[0]); e.target.value = ''; }} />
-            </label>
-            {/* 快速模式 (owner 2026-09-04, mid tidy-up: tick 和 untick 的可以
-                做到就不要 pop out notice 吗? delete 同理, 就 for 先阶段…过后
-                这个 function 还是要有). The toggle IS the "afterwards": it
-                resets to OFF on every visit (his 默认都是要弹的), so the
-                confirms return by themselves — no second change needed. ON
-                skips the confirm for LEAF unticks and deletes only; a HEADER
-                untick still asks (it sweeps the children, and re-ticking the
-                header does not bring them back), and the server's delete
-                guard still refuses any account with records. */}
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 'var(--fs-13)', color: quickMode ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)', fontWeight: 600 }}>
-              <input type="checkbox" checked={quickMode}
-                aria-label="Quick mode — untick and delete without confirms"
-                onChange={(e) => setQuickMode(e.target.checked)}
-                style={{ width: 14, height: 14, accentColor: 'var(--c-festive-b, #B8331F)' }} />
-              ⚡ Quick mode · 免确认
-            </label>
-          </div>
-        ) : undefined}
+          </span>
+        }
       />
 
-      <datalist id="chart-parent-codes">
-        {accounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
-      </datalist>
-
-      {addingNew && (
-        <section className={styles.card}>
-          <div className={styles.cardHeader}>
-            <h2 className={styles.cardTitle}>New account</h2>
-          </div>
-          <div className={styles.cardBody} style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)', alignItems: 'flex-end', fontSize: 'var(--fs-13)' }}>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Code (NNN-XXXX)</span>
-              <input value={newCode} onChange={(e) => setNewCode(e.target.value)} placeholder="305-0010"
-                style={{ fontFamily: 'var(--font-mono)', padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6, width: 130 }} />
-            </label>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 220px' }}>
-              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Name</span>
-              <input value={newName} onChange={(e) => setNewName(e.target.value)}
-                style={{ padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }} />
-            </label>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Section — 决定 type</span>
-              <select value={newSection} onChange={(e) => setNewSection(e.target.value)} aria-label="New account section"
-                style={{ padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }}>
-                <option value="">— section —</option>
-                {sections.map((s) => <option key={s.section} value={s.section}>{s.section} · {s.type}</option>)}
-              </select>
-            </label>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Parent (optional — 子户跟着 header 的 section)</span>
-              <input value={newParent} onChange={(e) => setNewParent(e.target.value)} list="chart-parent-codes" placeholder="305-0000"
-                style={{ fontFamily: 'var(--font-mono)', padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6, width: 150 }} />
-            </label>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Special type</span>
-              <select value={newSpecial} onChange={(e) => pickSpecial(e.target.value)} aria-label="Special type"
-                style={{ padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }}>
-                <option value="">— none —</option>
-                <option value="SBK">SBK · 银行</option>
-                <option value="SCH">SCH · 现金</option>
-                <option value="SOP">SOP · 电子钱包/其他</option>
-                <option value="SFA">SFA · 固定资产 (带折旧对)</option>
-                <option value="SAD">SAD · 累计折旧</option>
-                <option value="SRE">SRE · Retained earning</option>
-                <option value="SDP">SDP · Deferred</option>
-                <option value="SOS">SOS · 期初存货</option>
-                <option value="SCS">SCS · 期末存货</option>
-                <option value="SDC">SDC · Debtor control (由模块过账)</option>
-                <option value="SCC">SCC · Creditor control (由模块过账)</option>
-                <option value="SBS">SBS · Stock control (由模块过账)</option>
-              </select>
-            </label>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <input type="checkbox" checked={newMoney} onChange={(e) => setNewMoney(e.target.checked)} />
-              money (bank/cash/wallet)
-            </label>
-            {newSpecial === 'SFA' && (
-              <div style={{ flexBasis: '100%', display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)', alignItems: 'flex-end', padding: 'var(--space-2)', border: '1px dashed var(--border-weak, #d8d5cd)', borderRadius: 8 }}>
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  <input type="checkbox" checked={depOn} onChange={(e) => setDepOn(e.target.checked)} />
-                  同时开折旧户 (SAD)
-                </label>
-                {depOn && (<>
-                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Depreciation code</span>
-                    <input value={depCode} onChange={(e) => setDepCode(e.target.value)} aria-label="Depreciation code"
-                      style={{ fontFamily: 'var(--font-mono)', padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6, width: 130 }} />
-                  </label>
-                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 240px' }}>
-                    <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Depreciation name</span>
-                    <input value={depName} onChange={(e) => setDepName(e.target.value)} aria-label="Depreciation name"
-                      style={{ padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }} />
-                  </label>
-                  <Button variant="ghost" size="sm" onClick={() => deriveDep(newCode, newName)}>
-                    照惯例填 (+5 / ACCUM. DEPRN.)
-                  </Button>
-                </>)}
-              </div>
-            )}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-              {companies.map((co) => (
-                <label key={co.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                  <input
-                    type="checkbox"
-                    aria-label={`new account for ${co.code}`}
-                    checked={newCompanies.has(co.id)}
-                    onChange={(e) => setNewCompanies((prev) => {
-                      const next = new Set(prev);
-                      if (e.target.checked) next.add(co.id); else next.delete(co.id);
-                      return next;
-                    })}
-                  />
-                  {co.code}
-                </label>
-              ))}
-            </div>
-            <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-              <Button variant="primary" size="sm" onClick={() => void saveNew()}
-                disabled={doCreate.isPending || !newCode.trim() || !newName.trim() || !newSection || newCompanies.size === 0}>
-                {doCreate.isPending ? 'Creating…' : 'Create'}
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => setAddingNew(false)} disabled={doCreate.isPending}>
-                Cancel
-              </Button>
-            </div>
-          </div>
-        </section>
-      )}
-
-      {parsed && (
-        <section className={styles.card}>
-          <div className={styles.cardHeader}>
-            <h2 className={styles.cardTitle}>Ready to import</h2>
-          </div>
-          <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', fontSize: 'var(--fs-13)' }}>
-            <div>
-              {parsed.rows.length} account(s) read · {parsed.rows.length - exclusiveRows.length} will be SHARED to every company ·{' '}
-              {exclusiveRows.length} stay HOUZS-only (banks, cash, related-party loans, directors, HP/borrowings).
-            </div>
-            {parsed.unknownSections.length > 0 && (
-              <div style={{ color: 'var(--c-festive-b, #B8331F)' }}>
-                Unknown section(s) fell back to EXPENSE: {parsed.unknownSections.join(', ')} — check them after import.
-              </div>
-            )}
-            <details>
-              <summary style={{ cursor: 'pointer' }}>The HOUZS-only list ({exclusiveRows.length})</summary>
-              <div style={{ maxHeight: 220, overflowY: 'auto', marginTop: 6, fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)' }}>
-                {exclusiveRows.map((r) => <div key={r.code}>{r.code} · {r.name}</div>)}
-              </div>
-            </details>
-            <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-              <Button variant="primary" size="sm" onClick={() => void runImport()} disabled={doImport.isPending}>
-                {doImport.isPending ? 'Importing…' : `Import ${parsed.rows.length} accounts`}
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => setParsed(null)} disabled={doImport.isPending}>
-                Cancel
-              </Button>
-            </div>
-          </div>
-        </section>
-      )}
-
-      {/* Edit is a POP-OUT (owner 2026-09-04, third round on this panel:
-          edit 不能做成一个 pop out 出来 edit? — a dialog appears wherever you
-          are, the list never moves). Backdrop deliberately does NOT close:
-          a stray click must not eat a half-typed rename; Cancel is the way
-          out. Styling mirrors ConfirmDialog's backdrop/card so the two read
-          as one family. */}
-      {editing && (
-        <div role="presentation"
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.28)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 'var(--space-4)' }}>
-        <section role="dialog" aria-label={`Edit ${editing.code}`} className={styles.card}
-          style={{ width: 'min(560px, 95vw)', boxShadow: 'var(--shadow-3, 0 18px 48px rgba(0,0,0,0.25))' }}>
-          <div className={styles.cardHeader}>
-            <h2 className={styles.cardTitle}>Edit {editing.code}</h2>
-          </div>
-          <div className={styles.cardBody} style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)', alignItems: 'flex-end', fontSize: 'var(--fs-13)' }}>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Code — 改码全账跟</span>
-              <input value={editCode} onChange={(e) => setEditCode(e.target.value)}
-                style={{ fontFamily: 'var(--font-mono)', padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6, width: 130 }} />
-            </label>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 240px' }}>
-              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Name</span>
-              <input value={editName} onChange={(e) => setEditName(e.target.value)}
-                style={{ padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }} />
-            </label>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Section — 决定 type{editing.parentCode ? ' (子户跟着 header)' : ''}</span>
-              <select value={editSection} onChange={(e) => setEditSection(e.target.value)} aria-label="Edit section"
-                disabled={editing.parentCode != null}
-                style={{ padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6 }}>
-                {!editSection && <option value="">— section —</option>}
-                {sections.map((s) => <option key={s.section} value={s.section}>{s.section} · {s.type}</option>)}
-              </select>
-            </label>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>Under (parent — 留空 = 根)</span>
-              <input value={editParent} onChange={(e) => setEditParent(e.target.value)} list="chart-parent-codes" aria-label="Edit parent"
-                style={{ fontFamily: 'var(--font-mono)', padding: '6px 8px', border: '1px solid var(--border-weak, #d8d5cd)', borderRadius: 6, width: 150 }} />
-            </label>
-            <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-              <Button variant="primary" size="sm" onClick={() => void saveEdit()} disabled={doRename.isPending || doUpdate.isPending}>
-                {doRename.isPending || doUpdate.isPending ? 'Saving…' : 'Save'}
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => setEditing(null)} disabled={doRename.isPending || doUpdate.isPending}>
-                Cancel
-              </Button>
-            </div>
-          </div>
-        </section>
-        </div>
-      )}
-
-      <section className={styles.card}>
-        <div className={styles.cardHeader}>
-          <h2 className={styles.cardTitle}>Every account, every company</h2>
-          <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-            tick = the company uses it · unticking a header takes its children · headers never book (父户不记账)
-          </span>
-        </div>
-        {/* The LIST scrolls inside the card, not the page (owner 2026-09-04:
-            按 edit 时要跑回上去 / 往下滑时看不到 header). With the page short,
-            the Edit/Add panels above this card stay in sight wherever you are
-            in the list — press ✎ on row 400 and the panel is right there, and
-            saving leaves the list where you were. And a scroll container of
-            its OWN is what lets the header row stick: .card carries
-            overflow:hidden (its rounded corners), which would swallow a
-            page-scroll sticky. */}
-        <div className={styles.cardBody} style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 'calc(100vh - 260px)', padding: 0 }}>
-          {unionQ.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading the chart…</div>}
-          {unionQ.error != null && (
-            <div className={styles.bannerWarn}>
-              Failed to load the chart. {unionQ.error instanceof Error ? unionQ.error.message : ''}
-            </div>
+      <div className={sp.page}>
+        <div className={sp.bar}>
+          <label className={sp.search}>
+            <Search size={13} />
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find an account by code or name" aria-label="Find an account" />
+          </label>
+          {accounts.length > 0 && <span className={sp.count}>{countLine}</span>}
+          <span className={sp.grow} />
+          {canManage && (
+            /* Quick mode (owner 2026-09-04, mid tidy-up: tick 和 untick 的可以
+               做到就不要 pop out notice 吗? delete 同理, 就 for 先阶段…过后
+               这个 function 还是要有). The switch IS the "afterwards": it
+               resets to OFF on every visit (his 默认都是要弹的), so the
+               confirms return by themselves. ON skips the confirm for LEAF
+               unticks and deletes only; a HEADER untick still asks (it sweeps
+               the children, and re-ticking the header does not bring them
+               back), and the server's delete guard still refuses any account
+               with records. */
+            <Switch on={quickMode} danger label="Quick mode · no confirms" onClick={() => setQuickMode((v) => !v)}
+              title="Skips the confirm for leaf unticks and deletes. A header untick still asks. Off again on every visit.">
+              Quick mode · no confirms
+            </Switch>
           )}
-          {!unionQ.isLoading && accounts.length === 0 && (
-            <div style={{ fontSize: 'var(--fs-13)', color: 'var(--fg-muted)' }}>
-              No accounts yet — upload the AutoCount chart to begin.
+        </div>
+
+        {parsed && (
+          <section className={`${sp.card} ${css.importCard}`} aria-label="Ready to import">
+            <div className={css.importHead}>
+              <FileSpreadsheet size={16} className={css.petrol} />
+              <span className={css.importTitle}>Ready to import</span>
+              <span className={sp.cardSub}>{parsed.file} · {plural(parsed.rows.length, 'account', 'accounts')} read</span>
+              <span className={sp.grow} />
+              <button type="button" className={sp.btn} onClick={() => setParsed(null)} disabled={doImport.isPending}>Cancel</button>
+              <button type="button" className={sp.btnSolid} onClick={() => void runImport()} disabled={doImport.isPending}>
+                {doImport.isPending ? 'Importing…' : 'Import'}
+              </button>
             </div>
-          )}
-          {accounts.length > 0 && (
-            <table style={{ borderCollapse: 'separate', borderSpacing: 0, width: '100%', fontSize: 'var(--fs-13)' }}>
-              <thead>
-                {/* Sticky INSIDE the card's scroll (see the cardBody note).
-                    Solid background + inset shadow instead of the old tr
-                    border — a border on the <tr> does not travel with sticky
-                    cells, the shadow does. borderCollapse SEPARATE, not
-                    collapse: Chromium offsets sticky th cells under collapsed
-                    borders, which is the strip the owner called 不好看. */}
-                <tr style={{ textAlign: 'left' }}>
-                  {(() => {
-                    const stickyTh = {
-                      position: 'sticky' as const, top: 0, zIndex: 5,
-                      background: 'var(--c-paper, #fff)',
-                      boxShadow: 'inset 0 -1px var(--border-weak, #e3e1da)',
-                      padding: '6px 8px',
-                    };
+            <div className={css.importBody}>
+              <div>
+                {freshRows.length} {freshRows.length === 1 ? 'is' : 'are'} new and {knownCount} {knownCount === 1 ? 'is' : 'are'} already
+                in the chart{knownCount > 0 ? ` — the file's name, section, parent and special type are written over ${knownCount === 1 ? 'it' : 'those'}, and ${knownCount === 1 ? 'it is' : 'they are'} ticked for ${coCode(1)} again` : ''}.
+                {' '}Shared rows go to every company; banks, cash, related-party loans, directors and borrowings stay {coCode(1)}-only
+                ({exclusiveRows.length}). Adjust any tick afterwards.
+              </div>
+              {parsed.unknownSections.length > 0 && (
+                <div className={css.warnLine}>
+                  Unknown heading{parsed.unknownSections.length === 1 ? '' : 's'} read as an expense account: {parsed.unknownSections.join(', ')} — check {parsed.unknownSections.length === 1 ? 'it' : 'them'} after the import.
+                </div>
+              )}
+              {freshRows.length > 0 && (
+                <div className={css.importRows}>
+                  {freshRows.map((r) => (
+                    <div key={r.code} className={css.importRow}>
+                      <span className={css.importMuted}>{r.code}</span>
+                      <span>{r.name}</span>
+                      <span className={css.importMuted}>{r.section ? sectionLabel(r.section) : 'Unknown heading'}</span>
+                      <span className={css.importMuted}>{r.shared ? 'shared' : `${coCode(1)} only`}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {exclusiveRows.length > 0 && (
+                <details className={css.details}>
+                  <summary>The {coCode(1)}-only list ({exclusiveRows.length})</summary>
+                  <div className={css.importRows}>
+                    {exclusiveRows.map((r) => (
+                      <div key={r.code} className={css.importRow}>
+                        <span className={css.importMuted}>{r.code}</span>
+                        <span>{r.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </div>
+          </section>
+        )}
+
+        <section className={sp.card} aria-label="Every account, every company">
+          {/* The LIST scrolls inside the card, not the page (owner 2026-09-04:
+              按 edit 时要跑回上去 / 往下滑时看不到 header): its own scroll
+              container is what lets the header row stick — .card carries
+              overflow:hidden (its rounded corners), which would swallow a
+              page-scroll sticky. */}
+          <div className={css.scroller} style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 'calc(100vh - 300px)', padding: 0 }}>
+            {unionQ.isLoading && <Skeleton rows={10} label="Loading the chart" />}
+            {unionQ.error != null && (
+              <div className={sp.problem}>Failed to load the chart. {errText(unionQ.error, '')}</div>
+            )}
+            {!unionQ.isLoading && unionQ.error == null && accounts.length === 0 && (
+              <div className={sp.empty}>No account in the chart yet — Upload AutoCount chart reads the accountant&apos;s file.</div>
+            )}
+            {accounts.length > 0 && (
+              /* borderCollapse SEPARATE, not collapse: Chromium offsets sticky
+                 th cells under collapsed borders (the strip the owner called 不好看). */
+              <table className={css.tree} style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+                <thead>
+                  <tr>
+                    <th style={stickyTh} className={css.th} aria-label="fold" />
+                    <th style={stickyTh} className={css.th}>Code</th>
+                    <th style={stickyTh} className={css.th}>Name</th>
+                    <th style={stickyTh} className={css.th}>Type</th>
+                    <th style={stickyTh} className={`${css.th} ${css.mid}`} title="A voucher or AP invoice line on this account needs its event before it is approved">Needs event</th>
+                    <th style={stickyTh} className={css.th} title="Which row of the PMS event page this account's money fills">PMS row</th>
+                    <th style={stickyTh} className={css.th} title="Which row of the Logistics P&L this account's money fills">Logistics</th>
+                    {companies.map((co) => (
+                      <th key={co.id} style={stickyTh} className={`${css.th} ${css.mid}`}>{co.code}</th>
+                    ))}
+                    {canManage && <th style={stickyTh} className={css.th} aria-label="actions" />}
+                  </tr>
+                </thead>
+                <tbody>
+                  {sectioned.map((grp) => {
+                    const rows = grp.rows.filter((a) => hit(a) && (needle !== '' || !isHidden(a.code)));
+                    if (needle && rows.length === 0) return null;
+                    const sectionFolded = !needle && foldedSections.has(grp.section);
+                    const secDrop = dropOn === `section:${grp.section}`;
                     return (
-                      <>
-                        <th style={stickyTh}>Code</th>
-                        <th style={stickyTh}>Name</th>
-                        <th style={stickyTh}>Type</th>
-                        <th style={stickyTh} title="A voucher or AP invoice line on this account needs its Event before it is approved">需要 Event</th>
-                        <th style={stickyTh} title="Which row of the PMS event page this account's money fills">PMS row</th>
-                        <th style={stickyTh} title="Which row of the Logistics P&L this account's money fills">Logistics</th>
-                        {companies.map((co) => (
-                          <th key={co.id} style={{ ...stickyTh, textAlign: 'center' }}>{co.code}</th>
-                        ))}
-                        {canManage && <th style={stickyTh} aria-label="actions" />}
-                      </>
-                    );
-                  })()}
-                </tr>
-              </thead>
-              <tbody>
-                {sectioned.map((grp) => (
-                  <Fragment key={grp.section}>
-                    {/* The section row: AutoCount's header line. Fold it, or
-                        drop an account on it to re-shelve (换节). */}
-                    <tr
-                      onDragOver={(e) => { if (canManage && dragCode) e.preventDefault(); }}
-                      onDrop={(e) => { e.preventDefault(); void onDropIntoSection(grp.section); }}
-                      style={{ background: 'var(--c-cream, #f5f1ea)' }}
-                    >
-                      <td colSpan={6 + companies.length + (canManage ? 1 : 0)} data-section={grp.section}
-                          style={{ padding: '6px 8px', fontWeight: 700, letterSpacing: '0.04em', color: TYPE_TONE[grp.type] ?? 'inherit', whiteSpace: 'nowrap' }}>
-                        <button
-                          type="button"
-                          aria-label={`${foldedSections.has(grp.section) ? 'Expand' : 'Collapse'} section ${grp.section}`}
-                          onClick={() => toggleSection(grp.section)}
-                          style={{ background: 'none', border: 'none', padding: 0, marginRight: 4, cursor: 'pointer', verticalAlign: 'middle', color: 'var(--fg-muted)' }}
-                        >
-                          {foldedSections.has(grp.section) ? <ChevronRight size={14} strokeWidth={2} /> : <ChevronDown size={14} strokeWidth={2} />}
-                        </button>
-                        {grp.section}
-                        <span style={{ marginLeft: 8, fontWeight: 400, fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
-                          {grp.type ? `${grp.type} · ` : ''}{grp.rows.length}
-                        </span>
-                      </td>
-                    </tr>
-                    {!foldedSections.has(grp.section) && grp.rows.map((a) => {
-                  const isParent = accounts.some((x) => x.parentCode === a.code);
-                  if (isHidden(a.code)) return null;
-                  const isControl = isControlSpecial(a.special);
-                  const depth = depthOf.get(a.code) ?? 0;
-                  return (
-                    <tr
-                      key={a.code}
-                      draggable={canManage}
-                      onDragStart={() => setDragCode(a.code)}
-                      onDragOver={(e) => { if (canManage && dragCode && dragCode !== a.code) e.preventDefault(); }}
-                      onDrop={(e) => { e.preventDefault(); void onDropInto(a); }}
-                      style={{ borderBottom: '1px solid var(--border-weak, #f0eee8)', cursor: canManage ? 'grab' : undefined }}
-                    >
-                      <td style={{ padding: '4px 8px', fontFamily: 'var(--font-mono)', paddingLeft: 8 + depth * 22, fontWeight: isParent ? 700 : 400, whiteSpace: 'nowrap' }}>
-                        {isParent ? (
-                          <button
-                            type="button"
-                            aria-label={`${folded.has(a.code) ? 'Expand' : 'Collapse'} ${a.code}`}
-                            onClick={() => toggleFold(a.code)}
-                            style={{ background: 'none', border: 'none', padding: 0, marginRight: 4, cursor: 'pointer', verticalAlign: 'middle', color: 'var(--fg-muted)' }}
-                          >
-                            {folded.has(a.code) ? <ChevronRight size={14} strokeWidth={2} /> : <ChevronDown size={14} strokeWidth={2} />}
-                          </button>
-                        ) : (
-                          <span style={{ display: 'inline-block', width: 18 }} />
-                        )}
-                        {a.code}
-                      </td>
-                      {/* The NAME steps with the level too — the eye scans
-                          this column, and an all-flush name column is what
-                          made the tree unreadable. └ marks a child; child
-                          names sit a shade quieter than their header. */}
-                      <td style={{ padding: '4px 8px', paddingLeft: 8 + depth * 22, fontWeight: isParent ? 700 : 400, color: depth > 0 && !isParent ? 'var(--fg-strong, #3a3a3a)' : undefined }}>
-                        {depth > 0 && <span style={{ color: 'var(--fg-muted)', fontFamily: 'var(--font-mono)', marginRight: 6 }}>└</span>}
-                        {a.name}
-                        {a.accMoney && <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', color: 'var(--c-secondary-a, #2F5D4F)' }}>money</span>}
-                        {isParent && <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>header</span>}
-                        {a.special != null && a.special !== '' && (
-                          <span style={{ marginLeft: 6, fontSize: 'var(--fs-11)', fontFamily: 'var(--font-mono)', color: isControl ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)' }}>
-                            {a.special}{isControl ? ' · control' : ''}
-                          </span>
-                        )}
-                      </td>
-                      <td style={{ padding: '4px 8px', fontSize: 'var(--fs-11)', color: TYPE_TONE[a.type] ?? 'inherit', whiteSpace: 'nowrap' }}>
-                        {a.type}
-                        {a.type === 'INCOME' && isOtherIncome(a.code) && (
-                          <span style={{ color: 'var(--fg-muted)' }}> · Other</span>
-                        )}
-                      </td>
-                      {/* 需要 Event and the PMS row: a money account a line can debit — not a header. */}
-                      <td style={{ padding: '4px 8px', textAlign: 'center' }}>
-                        {!isParent && (a.type === 'EXPENSE' || a.type === 'ASSET') && (
-                          <input type="checkbox" checked={a.needsEvent === true} disabled={!canManage || doUpdate.isPending}
-                            aria-label={`${a.code} needs its Event`}
-                            onChange={(e) => { void setEventFields(a.code, { needsEvent: e.target.checked }); }} />
-                        )}
-                      </td>
-                      <td style={{ padding: '4px 8px' }}>
-                        {!isParent && (a.type === 'EXPENSE' || a.type === 'ASSET') && (
-                          <select value={a.pmsRow ?? ''} disabled={!canManage || doUpdate.isPending} aria-label={`${a.code} PMS row`}
-                            onChange={(e) => { void setEventFields(a.code, { pmsRow: e.target.value || null }); }}
-                            style={{ fontSize: 'var(--fs-12)', maxWidth: 190 }}>
-                            <option value="">—</option>
-                            {pmsRows.map((r) => <option key={r.row} value={r.row}>{r.label}</option>)}
-                          </select>
-                        )}
-                      </td>
-                      {/* The Logistics row: an account a line can carry — not a header — of the type the row reads. */}
-                      <td style={{ padding: '4px 8px' }}>
-                        {!isParent && logisticsRows.some((r) => r.type === a.type) && (
-                          <select value={a.logisticsRow ?? ''} disabled={!canManage || doUpdate.isPending} aria-label={`${a.code} Logistics row`}
-                            onChange={(e) => { void setEventFields(a.code, { logisticsRow: e.target.value || null }); }}
-                            style={{ fontSize: 'var(--fs-12)', maxWidth: 190 }}>
-                            <option value="">—</option>
-                            {logisticsRows.filter((r) => r.type === a.type).map((r) => <option key={r.row} value={r.row}>{r.label}</option>)}
-                          </select>
-                        )}
-                      </td>
-                      {companies.map((co) => {
-                        const active = a.perCompany[co.id]?.active === true;
-                        const key = `${co.id}:${a.code}`;
-                        return (
-                          <td key={co.id} style={{ padding: '4px 8px', textAlign: 'center' }}>
-                            <input
-                              type="checkbox"
-                              aria-label={`${a.code} for ${co.code}`}
-                              checked={active}
-                              disabled={!canManage || busyKey === key || tick.isPending}
-                              onChange={(e) => void onTick(co.id, a, e.target.checked)}
-                              style={{ width: 15, height: 15, accentColor: 'var(--c-orange)' }}
-                            />
+                      <Fragment key={grp.section}>
+                        {/* The section row: AutoCount's header line. Fold it, or
+                            drop an account on it to re-shelve (换节). */}
+                        <tr className={secDrop ? `${css.secRow} ${css.dropOn}` : css.secRow}
+                          onDragOver={(e) => {
+                            if (!canManage || !dragCode) return;
+                            e.preventDefault();
+                            if (!secDrop) setDropOn(`section:${grp.section}`);
+                          }}
+                          onDrop={(e) => { e.preventDefault(); void onDropIntoSection(grp.section); }}>
+                          <td colSpan={colCount} data-section={grp.section} className={css.secCell}>
+                            <button type="button" className={css.secFold}
+                              aria-label={`${sectionFolded ? 'Expand' : 'Collapse'} section ${grp.section}`}
+                              onClick={() => toggleSection(grp.section)}>
+                              {sectionFolded ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+                              <span>{sectionLabel(grp.section)}</span>
+                              <span className={css.secSub}>{grp.type ? `${grp.type} · ` : ''}{plural(grp.rows.length, 'account', 'accounts')}</span>
+                            </button>
                           </td>
-                        );
-                      })}
-                      {canManage && (
-                        <td style={{ padding: '4px 8px', whiteSpace: 'nowrap', textAlign: 'right' }}>
-                          <button
-                            type="button"
-                            aria-label={`Edit ${a.code}`}
-                            onClick={() => openEdit(a)}
-                            style={{ background: 'none', border: 'none', padding: 2, cursor: 'pointer', color: 'var(--fg-muted)' }}
-                          >
-                            <Pencil size={14} strokeWidth={1.75} />
-                          </button>
-                          <button
-                            type="button"
-                            aria-label={`Delete ${a.code}`}
-                            onClick={() => void onDelete(a)}
-                            disabled={doDelete.isPending}
-                            style={{ background: 'none', border: 'none', padding: 2, cursor: 'pointer', color: 'var(--fg-muted)' }}
-                          >
-                            <Trash2 size={14} strokeWidth={1.75} />
-                          </button>
-                        </td>
-                      )}
-                    </tr>
-                  );
-                })}
-                  </Fragment>
-                ))}
-              </tbody>
-            </table>
+                        </tr>
+                        {!sectionFolded && rows.map((a) => {
+                          shownRows += 1;
+                          const kids = kidCount(a.code);
+                          const isParent = kids > 0;
+                          const isControl = isControlSpecial(a.special);
+                          const depth = depthOf.get(a.code) ?? 0;
+                          const indent = { paddingLeft: 10 + depth * 18 };
+                          const rowClass = [
+                            css.accRow, isParent ? css.parentRow : '', dragCode === a.code ? css.dragging : '',
+                            dropOn === `account:${a.code}` ? css.dropOn : '',
+                          ].filter(Boolean).join(' ');
+                          return (
+                            <tr key={a.code} data-code={a.code} className={rowClass}
+                              draggable={canManage}
+                              onDragStart={(e) => {
+                                setDragCode(a.code);
+                                try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', a.code); } catch { /* no dataTransfer outside a browser */ }
+                              }}
+                              onDragOver={(e) => {
+                                if (!canManage || !dragCode || dragCode === a.code) return;
+                                e.preventDefault();
+                                if (dropOn !== `account:${a.code}`) setDropOn(`account:${a.code}`);
+                              }}
+                              onDrop={(e) => { e.preventDefault(); void onDropInto(a); }}
+                              onDragEnd={endDrag}>
+                              <td className={css.foldCell}>
+                                {isParent && (
+                                  <button type="button" className={css.fold}
+                                    aria-label={`${folded.has(a.code) ? 'Expand' : 'Collapse'} ${a.code}`}
+                                    title={folded.has(a.code) ? `Show its ${plural(kids, 'account', 'accounts')}` : `Fold its ${plural(kids, 'account', 'accounts')}`}
+                                    onClick={() => toggleFold(a.code)}>
+                                    {folded.has(a.code) ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                                  </button>
+                                )}
+                              </td>
+                              <td className={isParent ? `${css.codeCell} ${css.codeParent}` : css.codeCell} style={indent}
+                                title={canManage ? 'Drag onto another account to put it under it, or onto a section' : undefined}>
+                                <span className={css.codeInner}>
+                                  {depth > 0 && <span className={css.grip} aria-hidden="true" />}
+                                  {a.code}
+                                </span>
+                              </td>
+                              <td className={css.nameCell} style={indent}>
+                                <span className={css.nameInner}>
+                                  <span className={isParent ? `${css.name} ${css.nameParent}` : css.name}>{a.name}</span>
+                                  {a.accMoney && <Tag tone="info">money</Tag>}
+                                  {isParent && <Tag tone="calm">header</Tag>}
+                                  {a.special != null && a.special !== '' && (
+                                    <Tag tone="brass">{a.special}{isControl ? ' · control' : ''}</Tag>
+                                  )}
+                                </span>
+                              </td>
+                              <td className={css.typeCell}>
+                                {typeLabel(a.type)}
+                                {a.type === 'INCOME' && isOtherIncome(a.code) && ' · other'}
+                              </td>
+                              {/* Needs event and the PMS row: a money account a line can debit — not a header. */}
+                              <td className={css.mid}>
+                                {!isParent && (a.type === 'EXPENSE' || a.type === 'ASSET') && (
+                                  <input type="checkbox" className={css.tick} checked={a.needsEvent === true} disabled={!canManage || doUpdate.isPending}
+                                    aria-label={`${a.code} needs its event`}
+                                    onChange={(e) => { void setEventFields(a.code, { needsEvent: e.target.checked }); }} />
+                                )}
+                              </td>
+                              <td>
+                                {!isParent && (a.type === 'EXPENSE' || a.type === 'ASSET') && (
+                                  <select value={a.pmsRow ?? ''} disabled={!canManage || doUpdate.isPending} aria-label={`${a.code} PMS row`}
+                                    className={`${sp.select} ${sp.compact} ${css.pick}`}
+                                    onChange={(e) => { void setEventFields(a.code, { pmsRow: e.target.value || null }); }}>
+                                    <option value="">—</option>
+                                    {pmsRows.map((r) => <option key={r.row} value={r.row}>{r.label}</option>)}
+                                  </select>
+                                )}
+                              </td>
+                              {/* The Logistics row: an account a line can carry — not a header — of the type the row reads. */}
+                              <td>
+                                {!isParent && logisticsRows.some((r) => r.type === a.type) && (
+                                  <select value={a.logisticsRow ?? ''} disabled={!canManage || doUpdate.isPending} aria-label={`${a.code} Logistics row`}
+                                    className={`${sp.select} ${sp.compact} ${css.pick}`}
+                                    onChange={(e) => { void setEventFields(a.code, { logisticsRow: e.target.value || null }); }}>
+                                    <option value="">—</option>
+                                    {logisticsRows.filter((r) => r.type === a.type).map((r) => <option key={r.row} value={r.row}>{r.label}</option>)}
+                                  </select>
+                                )}
+                              </td>
+                              {companies.map((co) => {
+                                const active = a.perCompany[co.id]?.active === true;
+                                const key = `${co.id}:${a.code}`;
+                                return (
+                                  <td key={co.id} className={css.mid}>
+                                    <input
+                                      type="checkbox"
+                                      className={css.tick}
+                                      aria-label={`${a.code} for ${co.code}`}
+                                      title={active ? `Untick for ${co.code}` : `Tick for ${co.code}`}
+                                      checked={active}
+                                      disabled={!canManage || busyKey === key || tick.isPending}
+                                      onChange={(e) => void onTick(co.id, a, e.target.checked)}
+                                    />
+                                  </td>
+                                );
+                              })}
+                              {canManage && (
+                                <td className={css.actCell}>
+                                  <span className={sp.acts}>
+                                    <button type="button" className={sp.iconBtn} aria-label={`Edit ${a.code}`} title="Edit" onClick={() => openEdit(a)}>
+                                      <PenLine size={13} />
+                                    </button>
+                                    <button type="button" className={`${sp.iconBtn} ${isParent ? sp.iconOff : sp.iconDanger}`}
+                                      aria-label={`Delete ${a.code}`}
+                                      title={isParent ? 'Has children · untick instead' : 'Delete'}
+                                      disabled={doDelete.isPending}
+                                      onClick={() => void onDelete(a)}>
+                                      <X size={13} />
+                                    </button>
+                                  </span>
+                                </td>
+                              )}
+                            </tr>
+                          );
+                        })}
+                      </Fragment>
+                    );
+                  })}
+                  {needle !== '' && shownRows === 0 && (
+                    <tr><td colSpan={colCount} className={sp.empty}>No account matches.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            )}
+          </div>
+          <div className={sp.cardFoot}>
+            One tree of every account any company carries. A tick means that company uses the account; a new company is a new
+            column. Unticking a header unticks its children, and a header never books — its accounts do. An account with
+            transactions or references cannot be deleted; untick it instead. Drag an account onto another to put it under it, or
+            onto a section to move it there.
+          </div>
+        </section>
+      </div>
+
+      {form && (
+        <SetupModal
+          title="New account"
+          sub={form.companies.length === 0
+            ? 'Tick the companies that use it.'
+            : `Ticked for ${form.companies.map(coCode).join(' and ')} when it is created; untick a company that does not use it.`}
+          okLabel="Add account"
+          busyLabel="Adding…"
+          busy={doCreate.isPending}
+          error={form.error}
+          onOk={() => void saveNew()}
+          onCancel={() => setForm(null)}
+        >
+          <Field label="Code (NNN-XXXX)" w="32%">
+            <input className={sp.input} value={form.code} placeholder="305-0010" onChange={(e) => patchForm({ code: e.target.value })} />
+          </Field>
+          <Field label="Name" w="64%">
+            <input className={sp.input} value={form.name} onChange={(e) => patchForm({ name: e.target.value })} />
+          </Field>
+          <Field label="Section · decides the type" hint={parentSection != null ? 'A child follows its header’s section.' : undefined}>
+            <select className={sp.select} value={formSection} aria-label="New account section" disabled={parentSection != null}
+              onChange={(e) => patchForm({ section: e.target.value })}>
+              <option value="">— section —</option>
+              {sections.map((s) => <option key={s.section} value={s.section}>{sectionLabel(s.section)} · {typeLabel(s.type)}</option>)}
+            </select>
+          </Field>
+          <Field label="Parent (optional)">
+            <select className={sp.select} value={form.parent} aria-label="New account parent" onChange={(e) => patchForm({ parent: e.target.value })}>
+              <option value="">— none —</option>
+              {accounts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
+            </select>
+          </Field>
+          <Field label="Special type" w="100%">
+            <select className={sp.select} value={form.special} aria-label="Special type" onChange={(e) => pickSpecial(e.target.value)}>
+              <option value="">— none —</option>
+              {SPECIAL_TYPES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+            </select>
+          </Field>
+          <Field label="Money account" w="100%" group>
+            <Check checked={form.money} onChange={(money) => patchForm({ money })}>Money — a bank, cash or e-wallet account</Check>
+          </Field>
+          {form.special === 'SFA' && (
+            <>
+              <Field label="Depreciation pair" w="100%" group>
+                <Check checked={form.depOn} onChange={(depOn) => patchForm({ depOn })}>Also create its accumulated depreciation account</Check>
+              </Field>
+              {form.depOn && (
+                <>
+                  <Field label="Depreciation code" w="32%">
+                    <input className={sp.input} value={form.depCode} placeholder="202-0001" aria-label="Depreciation code"
+                      onChange={(e) => patchForm({ depCode: e.target.value })} />
+                  </Field>
+                  <Field label="Depreciation name" w="64%"
+                    hint={<button type="button" className={sp.link} onClick={() => patchForm(derivedDep(form.code, form.name))}>Fill by convention (+5 · ACCUM. DEPRN.)</button>}>
+                    <input className={sp.input} value={form.depName} placeholder="ACCUM. DEPRN. - …" aria-label="Depreciation name"
+                      onChange={(e) => patchForm({ depName: e.target.value })} />
+                  </Field>
+                </>
+              )}
+            </>
           )}
-        </div>
-      </section>
+          <Field label="Companies" w="100%" group>
+            <span className={css.companyTicks}>
+              {companies.map((co) => (
+                <Check key={co.id} label={`new account for ${co.code}`} checked={form.companies.includes(co.id)}
+                  onChange={(on) => patchForm({ companies: on ? companies.map((c) => c.id).filter((id) => id === co.id || form.companies.includes(id)) : form.companies.filter((id) => id !== co.id) })}>
+                  {co.code}
+                </Check>
+              ))}
+            </span>
+          </Field>
+        </SetupModal>
+      )}
+
+      {edit && (
+        <SetupModal
+          title={`Edit ${edit.row.code}`}
+          sub="A new code moves every journal line, voucher, settlement link and role binding with it."
+          okLabel="Save"
+          busyLabel="Saving…"
+          busy={doRename.isPending || doUpdate.isPending}
+          error={edit.error}
+          onOk={() => void saveEdit()}
+          onCancel={() => setEdit(null)}
+        >
+          <Field label="Code" w="32%">
+            <input className={sp.input} value={edit.code} aria-label="Edit code" onChange={(e) => patchEdit({ code: e.target.value })} />
+          </Field>
+          <Field label="Name" w="64%">
+            <input className={sp.input} value={edit.name} aria-label="Edit name" onChange={(e) => patchEdit({ name: e.target.value })} />
+          </Field>
+          <Field label="Section" hint={edit.row.parentCode != null ? 'A child follows its header’s section.' : undefined}>
+            <select className={sp.select} value={edit.section} aria-label="Edit section" disabled={edit.row.parentCode != null}
+              onChange={(e) => patchEdit({ section: e.target.value })}>
+              {!edit.section && <option value="">— section —</option>}
+              {sections.map((s) => <option key={s.section} value={s.section}>{sectionLabel(s.section)} · {typeLabel(s.type)}</option>)}
+            </select>
+          </Field>
+          <Field label="Parent" hint="None puts it at the top of its section.">
+            <select className={sp.select} value={edit.parent} aria-label="Edit parent" onChange={(e) => patchEdit({ parent: e.target.value })}>
+              <option value="">— none —</option>
+              {accounts.filter((x) => x.code !== edit.row.code && !isBelow(x.code, edit.row.code, parentOf)).map((x) => (
+                <option key={x.code} value={x.code}>{x.code} {x.name}</option>
+              ))}
+            </select>
+          </Field>
+        </SetupModal>
+      )}
+
+      {headMenu && (
+        <PopMenu x={headMenu.x} y={headMenu.y} label="Chart menu" onClose={() => setHeadMenu(null)}
+          items={[{ label: 'This company’s accounts', onClick: () => navigate('/scm/accounting?tab=coa') }]} />
+      )}
     </div>
   );
 };
+
+/** Whether `code` hangs anywhere under `ancestor` — a parent may not come from
+    its own subtree. */
+function isBelow(code: string, ancestor: string, parentOf: Map<string, string | null>): boolean {
+  let cursor = parentOf.get(code) ?? null;
+  for (let depth = 0; cursor && depth < 7; depth += 1) {
+    if (cursor === ancestor) return true;
+    cursor = parentOf.get(cursor) ?? null;
+  }
+  return false;
+}

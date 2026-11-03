@@ -68,6 +68,17 @@ export const ASSR_CONFIRMED_COL = {
   customer_pickup: 'sched_pickup_date', inspection: 'sched_inspection_date', delivery: 'sched_delivery_date',
 } as const;
 
+/** The Time Slot a Service Case keeps per leg (HC-0194), typed on the board. */
+export const ASSR_LEG_TIME_COL = {
+  customer_pickup: 'pickup_time_range', inspection: 'inspection_time_range', delivery: 'delivery_time_range',
+} as const;
+
+/** The hand-set message status a Service Case keeps per leg (HC-0193). The
+ *  delivery leg keeps the original case-level column. */
+export const ASSR_LEG_MSG_COL = {
+  customer_pickup: 'pickup_message_status', inspection: 'inspection_message_status', delivery: 'delivery_message_status',
+} as const;
+
 /* Stages AFTER each leg's own step (the HC sheet feed's rule): that leg is done. */
 const PAST_PICKUP = PAST_PICKUP_STAGES;
 const PAST_INSPECTION = new Set(['pending_supplier_pickup', ...PAST_PICKUP_STAGES]);
@@ -151,8 +162,14 @@ export function assrBoardUnionSql(c: CompanyScopeCtx, recentClosedSince: string)
               assr_cases.sched_pickup_date AS sched_pickup_date,
               assr_cases.sched_inspection_date AS sched_inspection_date,
               assr_cases.sched_delivery_date AS sched_delivery_date,
+              assr_cases.pickup_time_range AS pickup_time_range,
+              assr_cases.inspection_time_range AS inspection_time_range,
+              assr_cases.delivery_time_range AS delivery_time_range,
               assr_cases.closed_at     AS closed_at,
               assr_cases.archived_at   AS archived_at,
+              assr_cases.delivery_message_status AS delivery_message_status,
+              assr_cases.pickup_message_status AS pickup_message_status,
+              assr_cases.inspection_message_status AS inspection_message_status,
               assr_cases.addr1 AS addr1, assr_cases.addr2 AS addr2, assr_cases.addr3 AS addr3, assr_cases.addr4 AS addr4,
               so.customer_state AS so_state, so.postcode AS so_postcode, so.customer_country AS so_country
          FROM assr_cases
@@ -191,13 +208,28 @@ export function assrBoardLocation(
   return { state, postcode: addrPostcode ?? soPostcode ?? null };
 }
 
-/** The open-case guard the ASSR schedule write runs before it touches anything.
- *  Carries the SAME company predicate as the read: a case the caller cannot see
- *  on the board is a case they cannot schedule onto a lorry either, and it 404s
- *  exactly as /api/assr's own `caseInCallerScope` does. Without this the board
- *  read would be scoped while the write beside it stayed open — and the write is
- *  the half that consumes real fleet capacity. */
-export function assrOpenCaseGuardSql(c: CompanyScopeCtx): string {
-  return `SELECT id FROM assr_cases
-        WHERE id = ? AND closed_at IS NULL AND archived_at IS NULL${assrCompanySql(c)}`;
+/** The guard every ASSR board write runs before it touches anything, PER JOB
+ *  (HC-0193 re-test). One board row is one job of a case, keyed case id + job
+ *  kind; a sibling job's POD closes the whole case but must not lock this one.
+ *  It selects the case (company predicate included: a case the caller cannot see
+ *  on the board is one they cannot write to, and it 404s) and `assrLegOpen`
+ *  then asks only about the named job. Archived cases stay locked. */
+export function assrLegGuardSql(c: CompanyScopeCtx): string {
+  return `SELECT id, stage, actual_pickup_at, closed_at, status FROM assr_cases
+        WHERE id = ? AND archived_at IS NULL${assrCompanySql(c)}`;
+}
+
+/** True while THIS job is not done. Each job is judged by its own record, never
+ *  by the case-level closed stamp a sibling job's POD sets: pickup is done once
+ *  it has an actual pickup time; inspection once the case moved past it (not by
+ *  the terminal stage, which any job can set); delivery is the job whose POD
+ *  closes the case. */
+export function assrLegOpen(
+  a: { stage: string | null; actual_pickup_at: string | null; closed_at: string | null; status: string | null },
+  jobKind: AssrBoardLeg['jobKind'],
+): boolean {
+  const stage = a.stage ?? '';
+  if (jobKind === 'customer_pickup') return !a.actual_pickup_at;
+  if (jobKind === 'inspection') return !(PAST_INSPECTION.has(stage) && !(ASSR_TERMINAL_STAGES as readonly string[]).includes(stage));
+  return !assrCaseClosed({ closed_at: a.closed_at, archived_at: null, stage, status: a.status });
 }

@@ -158,8 +158,8 @@ export function couldBeAcquirers(method: string, provider: string | null | undef
   return method === 'imported';
 }
 
-const PAYMENT_COLUMNS_SO = 'id, so_doc_no, paid_at, amount_sen, approval_code, method, merchant_provider, collected_by, created_by';
-const PAYMENT_COLUMNS_SI = 'id, sales_invoice_id, paid_at, amount_sen, approval_code, method, merchant_provider, collected_by, created_by';
+const PAYMENT_COLUMNS_SO = 'id, so_doc_no, paid_at, amount_sen, approval_code, method, merchant_provider, collected_by, created_by, account_sheet';
+const PAYMENT_COLUMNS_SI = 'id, sales_invoice_id, paid_at, amount_sen, approval_code, method, merchant_provider, collected_by, created_by, account_sheet';
 
 /**
  * Every card payment this company recorded that could belong to this acquirer
@@ -259,11 +259,17 @@ export async function loadPaymentCandidates(
      new order or refunded, and only then is it anybody's candidate again. The
      status rides on the same read as the customer's name. */
   const cancelledDocs = new Set<string>();
+  /* WHO SOLD IT (the redesign's Sales column; owner 2026-09-10: 我想要看到
+     salesman 的名字): the order's salesperson, off the same read as the
+     customer, then the staff table once. A name that cannot be read is blank,
+     never somebody else's. */
+  const staffOfDoc = new Map<string, string>();
+  const staffName = new Map<string, string>();
   if (soDocs.length > 0) {
     /* Chunked: a busy window names hundreds of orders, and one IN list of them
        outgrows the request line before it outgrows the row cap. */
-    const { data, error } = await chunkIn<{ doc_no: string; debtor_name: string | null; status?: string | null }>(soDocs, (batch, f, t) => sb
-      .from('mfg_sales_orders').select('doc_no, debtor_name, status') // debtor_name — docs/bugs/0655
+    const { data, error } = await chunkIn<{ doc_no: string; debtor_name: string | null; status?: string | null; salesperson_id?: string | null }>(soDocs, (batch, f, t) => sb
+      .from('mfg_sales_orders').select('doc_no, debtor_name, status, salesperson_id') // debtor_name — docs/bugs/0655
       .eq('company_id', companyId).in('doc_no', batch).order('doc_no').range(f, t));
     /* Failed is not "nameless": a blank customer column across the whole
        screen reads as data, so the read fails like its siblings above. */
@@ -271,6 +277,14 @@ export async function loadPaymentCandidates(
     for (const r of data) {
       if (r.debtor_name) customerOf.set(`SO:${r.doc_no}`, r.debtor_name);
       if (String(r.status ?? '').toUpperCase() === 'CANCELLED') cancelledDocs.add(String(r.doc_no));
+      if (r.salesperson_id) staffOfDoc.set(String(r.doc_no), String(r.salesperson_id));
+    }
+    const staffIds = [...new Set(staffOfDoc.values())];
+    if (staffIds.length > 0) {
+      const people = await chunkIn<{ id: string; name: string | null }>(staffIds, (batch, f, t) => sb
+        .from('staff').select('id, name').in('id', batch).order('id').range(f, t));
+      if (people.error) return { ok: false, reason: `salespeople: ${people.error.message}` };
+      for (const r of people.data) if (r.name) staffName.set(String(r.id), r.name);
     }
   }
   if (siIds.length > 0) {
@@ -303,6 +317,8 @@ export async function loadPaymentCandidates(
       customerName: customerOf.get(`SO:${String(r.so_doc_no ?? '')}`) ?? null,
       recordedById: (r.collected_by ?? r.created_by ?? null) as string | null,
       merchantProvider: tagOf(r),
+      accountSheet: r.account_sheet == null ? null : String(r.account_sheet),
+      salesperson: staffName.get(staffOfDoc.get(String(r.so_doc_no ?? '')) ?? '') ?? null,
     });
   }
   for (const r of siRaw) {
@@ -318,6 +334,8 @@ export async function loadPaymentCandidates(
       customerName: customerOf.get(`SI:${String(r.sales_invoice_id ?? '')}`) ?? null,
       recordedById: (r.collected_by ?? r.created_by ?? null) as string | null,
       merchantProvider: tagOf(r),
+      accountSheet: r.account_sheet == null ? null : String(r.account_sheet),
+      salesperson: null,
     });
   }
   return { ok: true, payments };

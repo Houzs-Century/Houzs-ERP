@@ -61,6 +61,8 @@ export type PaymentVoucherRow = Record<string, unknown> & {
       yet knocked off) — the list paints such rows and offers a chip. 0 when
       none. Server: listPaymentVouchersHandler. */
   advance_remaining_sen?: number | null;
+  /** The journal its approval posted (the live one when an earlier was reversed); null until approved. */
+  je_no?: string | null;
 };
 
 export type PaymentVoucherAllocation = {
@@ -75,9 +77,24 @@ export type PaymentVoucherAllocation = {
   status: string | null;
 };
 
-export const usePaymentVouchers = (status?: string) => baseQuery<{ paymentVouchers: PaymentVoucherRow[] }>(
-  ['payment-vouchers', status ?? 'all'], `/payment-vouchers${status ? `?status=${status}` : ''}`,
-);
+/** The list (the newest 500), or with `q` any voucher of every stage and month
+    (at most 200, `capped` when cut); `counts` adds each stage's count over the
+    whole company (the redesign's chips). */
+export const usePaymentVouchers = (opts: { status?: string; q?: string; counts?: boolean; enabled?: boolean } = {}) => {
+  const params = new URLSearchParams();
+  if (opts.status) params.set('status', opts.status);
+  if (opts.q) params.set('q', opts.q);
+  if (opts.counts) params.set('counts', '1');
+  const qs = params.toString();
+  return useQuery({
+    queryKey: ['payment-vouchers', opts.status ?? 'all', opts.q ?? '', opts.counts ? 'counts' : 'plain'],
+    queryFn: () => authedFetch<{ paymentVouchers: PaymentVoucherRow[]; counts?: Record<string, number>; q?: string; capped?: boolean }>(`/payment-vouchers${qs ? `?${qs}` : ''}`),
+    staleTime: 30_000,
+    retry: retryUnlessClientError,
+    retryDelay: 800,
+    enabled: opts.enabled ?? true,
+  });
+};
 
 export const usePaymentVoucherDetail = (id: string | null) => useQuery({
   queryKey: ['payment-voucher-detail', id],
@@ -108,6 +125,7 @@ export const useCreatePaymentVoucher = () => {
         idempotentInit(idempotencyKey, { method: 'POST', body: JSON.stringify(body) })),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      void qc.invalidateQueries({ queryKey: ['finance-todo'] });
       /* A bill now vouchered is another's same bill (the pile says so on return). */
       void qc.invalidateQueries({ queryKey: ['payment-request-bill-matches'] });
       /* A voucher answering a request takes it off Finance's waiting count. */
@@ -124,6 +142,7 @@ export const useUpdatePaymentVoucher = () => {
     onSuccess: (_d, vars) => {
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', vars.id] });
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      void qc.invalidateQueries({ queryKey: ['finance-todo'] });
     },
   });
 };
@@ -134,6 +153,7 @@ export const usePostPaymentVoucher = () => {
     mutationFn: (id: string) => authedFetch<{ ok: true; jeNo?: string }>(`/payment-vouchers/${id}/post`, { method: 'POST' }),
     onSuccess: (_d, id) => {
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      void qc.invalidateQueries({ queryKey: ['finance-todo'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
       // A post settles linked PIs — refresh the PI list/detail too.
       void qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
@@ -173,6 +193,7 @@ export const useApplyAdvance = () => {
       void qc.invalidateQueries({ queryKey: ['ap-invoices'] });
       void qc.invalidateQueries({ queryKey: ['ap-invoice'] });
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      void qc.invalidateQueries({ queryKey: ['finance-todo'] });
     },
   });
 };
@@ -183,6 +204,7 @@ export const useCancelPaymentVoucher = () => {
     mutationFn: (id: string) => authedFetch(`/payment-vouchers/${id}/cancel`, { method: 'POST' }),
     onSuccess: (_d, id) => {
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      void qc.invalidateQueries({ queryKey: ['finance-todo'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
       void qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
       /* A cancelled voucher puts its request back on Finance's waiting count. */
@@ -200,6 +222,7 @@ const approvalMutation = (path: 'submit' | 'withdraw' | 'check' | 'approve') => 
     mutationFn: (id: string) => authedFetch(`/payment-vouchers/${id}/${path}`, { method: 'POST' }),
     onSuccess: (_d, id) => {
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      void qc.invalidateQueries({ queryKey: ['finance-todo'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
       void qc.invalidateQueries({ queryKey: ['daily-bank'] });
     },
@@ -218,6 +241,7 @@ export const useRejectPaymentVoucher = () => {
       authedFetch(`/payment-vouchers/${id}/reject`, { method: 'POST', body: JSON.stringify({ note }) }),
     onSuccess: (_d, vars) => {
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
+      void qc.invalidateQueries({ queryKey: ['finance-todo'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', vars.id] });
       void qc.invalidateQueries({ queryKey: ['daily-bank'] });
     },
@@ -364,13 +388,15 @@ export const fetchPvFileBlobUrl = (pvId: string, fileId: string): Promise<{ url:
    change +60. So the client posts the RENDERED voucher page(s) up — one
    part per voucher — and receives one finished PDF back: voucher A, A's
    files in sort order, voucher B, B's… Raw fetch (binary response;
-   authedFetch JSON-parses). */
-export async function fetchPvPrintBundle(parts: Array<{ pvId: string; voucherBase64: string }>): Promise<Blob> {
+   authedFetch JSON-parses). The ONE door for every print bundle — the
+   vouchers' here, Supplier bills' (POST /ap-invoices/print-bundle, batch 4
+   step 8) through the same call. */
+export async function fetchPrintBundle(path: string, parts: unknown[]): Promise<Blob> {
   const token = readAuthToken();
   if (!token) throw new Error('Your session has expired — please sign in again.');
   let signal: AbortSignal | undefined;
   try { signal = AbortSignal.timeout(120_000); } catch { signal = undefined; } // pre-2022 browsers
-  const res = await correlatedFetch(`${API_URL}/payment-vouchers/print-bundle`, {
+  const res = await correlatedFetch(`${API_URL}${path}`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...companyHeader() },
     body: JSON.stringify({ parts }),
@@ -382,6 +408,8 @@ export async function fetchPvPrintBundle(parts: Array<{ pvId: string; voucherBas
   }
   return consumeCorrelated(res, () => res.blob());
 }
+export const fetchPvPrintBundle = (parts: Array<{ pvId: string; voucherBase64: string }>): Promise<Blob> =>
+  fetchPrintBundle('/payment-vouchers/print-bundle', parts);
 
 /* Imperative twin of usePaymentVoucherDetail for the batch print (owner:
    可选多张 pv + document) — a loop over ticked rows has no hook to call, and

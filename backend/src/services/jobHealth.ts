@@ -23,6 +23,7 @@ export const JOB_CADENCE_MIN: Record<string, number> = {
   "mrp-snapshot": 15,
   "procurement-overview": 15,
   "vp-reconcile": 30,
+  "connect-sync": 30,
   "hr-auto-clockout": 30,
   "assr-alerts": 30,
   "ann-escalation": 30,

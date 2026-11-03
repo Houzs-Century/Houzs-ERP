@@ -1,0 +1,168 @@
+/* Money in — the owner's Claude Design redesign (batch 5): the list anatomy
+   Outstanding and Not yet billed share — cards, chips, segments, tags, the
+   toolbar over the table. Colours are the design's own, on the ERP's Theme C,
+   in the batch-3/4 pattern (MoneyOut.module.css). */
+
+.page { --ink: #11140f; --text: #414539; --detail: #5f6459; --muted: #767b6e; --faint: #a9ada3; --line: #d6d9d2; --petrol: #16695f;
+  /* The sand tint of a document still open (the design's OPEN_BG). */
+  --open-bg: #fcf7ec;
+  display: flex; flex-direction: column; gap: 12px; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* ── Cards: one figure each; the selected one petrol-ringed. Two across on a
+   phone, four on a laptop, a single row of eight on a wide screen. ── */
+.cardsWrap { container-type: inline-size; }
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@container (min-width: 560px) { .cards { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@container (min-width: 1180px) { .cardsEight { grid-template-columns: repeat(8, minmax(0, 1fr)); } }
+.card {
+  display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 0; padding: 12px 14px;
+  border: 1px solid var(--line); border-radius: 10px; background: #ffffff; color: inherit; font: inherit; text-align: left;
+}
+button.card { cursor: pointer; }
+button.card:hover { border-color: #b9d6d1; }
+.cardOn, button.cardOn:hover { background: #f6faf9; border-color: var(--petrol); box-shadow: inset 0 0 0 1px var(--petrol); }
+.cardHead { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12.5px; color: var(--text); }
+.cardHead svg { flex: none; color: var(--muted); }
+.cardLabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cardValue { font-size: 20px; font-weight: 600; line-height: 1.1; }
+.cardValueZero { color: var(--faint); }
+.cardSub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted); }
+.cardSubBad { color: #a83434; font-weight: 600; }
+
+/* ── The row over the table: chips · list title · the date range. ── */
+.stack { display: flex; flex-direction: column; gap: 10px; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.grow { flex: 1; }
+.listTitle { font-size: 15px; font-weight: 600; }
+
+/* Chips: ink-filled when on, the count after the label. */
+.chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border: 1px solid var(--line); border-radius: 999px;
+  background: #ffffff; color: var(--ink); font: 600 12px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
+}
+.chip:hover { background: #f4f6f3; }
+.chipOn, .chipOn:hover { background: #11140f; border-color: #11140f; color: #ffffff; }
+.chipCount { font-weight: 500; color: var(--muted); }
+.chipOn .chipCount { color: #c2c6bd; }
+
+/* Segments: a grey track, the one in use white with a shadow. */
+.segs { display: inline-flex; gap: 2px; max-width: 100%; padding: 3px; border-radius: 9px; background: #eef0ec; overflow-x: auto; scrollbar-width: none; }
+.seg {
+  flex: none; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border: 0; border-radius: 7px;
+  background: transparent; color: var(--detail); font: 500 13px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
+}
+.segOn { background: #ffffff; color: #0c3f39; font-weight: 600; box-shadow: 0 1px 2px rgba(17, 24, 16, 0.14); }
+
+/* Status tags: 20px, 4px radius, 11/600. */
+.tag { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 4px; font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap; }
+.toneLate { background: #fbeeee; color: #a83434; }
+.toneWarn { background: #f7f1e3; color: #7a5a1e; }
+.toneInfo { background: #eaf3f1; color: #1d5c54; }
+.toneCalm { background: #f0f2ee; color: #5b6055; }
+.tags { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+/* A clickable document number: 13/600, dotted underline. */
+.docLink {
+  font: 600 13px 'IBM Plex Sans', system-ui, sans-serif; color: inherit; text-decoration: underline dotted;
+  text-underline-offset: 3px; text-decoration-color: #a9ada3; font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.docLink:hover { color: var(--petrol); text-decoration-color: var(--petrol); }
+/* A cancelled document's number is struck through (index.css dt-cancel-strike,
+   owner 2026-10-06); the dotted underline above must not hide it. */
+.docLink:global(.dt-cancel-strike), .docLink:global(.dt-cancel-strike):hover {
+  text-decoration: line-through; text-decoration-thickness: 1px; text-decoration-color: currentColor;
+}
+.strong { font-weight: 600; }
+.muted { color: var(--muted); }
+.money { font-variant-numeric: tabular-nums; }
+.under { display: block; font-size: 11.5px; color: var(--muted); }
+.hint { font-size: 12.5px; color: var(--muted); }
+
+/* ── Buttons (the design): a white one, the petrol one that does the step, the
+   red-outlined one that undoes. 34px on a page head, 26px in a row. ── */
+.btn {
+  display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border: 1px solid #d6d9d2; border-radius: 6px;
+  background: #ffffff; color: #414539; font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
+}
+.btn:hover:not(:disabled) { background: #f4f6f3; }
+.btn:disabled { opacity: 0.55; cursor: default; }
+.btnPrimary { background: #16695f; border-color: #16695f; color: #ffffff; }
+.btnPrimary:hover:not(:disabled) { background: #0f5a51; }
+.btnDanger { border-color: #e2b8b8; color: #a83434; }
+.btnDanger:hover:not(:disabled) { background: #fbeeee; }
+.btnSmall { height: 28px; padding: 0 10px; font-size: 12px; }
+
+/* Row buttons: right-aligned, ⋯ last. */
+.acts { display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px; width: 100%; }
+.act {
+  height: 26px; padding: 0 10px; border: 1px solid #b9d6d1; border-radius: 6px; background: #e1efed; color: #0c3f39;
+  font: 600 12px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
+}
+.act:hover:not(:disabled) { background: #d3e7e3; }
+.act:disabled { opacity: 0.55; cursor: default; }
+.actLink { padding: 0; border: 0; background: none; font: 600 12px 'IBM Plex Sans', system-ui, sans-serif; color: #16695f; cursor: pointer; }
+.actLink:hover { text-decoration: underline; }
+.more {
+  width: 26px; height: 26px; display: inline-grid; place-items: center; border: 1px solid #d6d9d2; border-radius: 6px; background: #ffffff;
+  color: #414539; cursor: pointer;
+}
+.more:hover { background: #f4f6f3; }
+.menu {
+  position: fixed; z-index: 80; min-width: 180px; padding: 4px; border: 1px solid #d6d9d2; border-radius: 8px; background: #ffffff;
+  box-shadow: 0 12px 32px -12px rgba(17, 24, 16, 0.3);
+}
+.menuItem {
+  width: 100%; display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 0; border-radius: 6px; background: transparent;
+  text-align: left; font: 13px 'IBM Plex Sans', system-ui, sans-serif; color: #11140f; cursor: pointer;
+}
+.menuItem:hover { background: #f4f6f3; }
+.menuDanger { color: #a83434; }
+.menuRule { height: 1px; margin: 4px 2px; background: #e3e6e0; }
+
+/* The search box with its clear ×. */
+.search {
+  display: flex; align-items: center; gap: 6px; flex: 1; max-width: 460px; height: 34px; padding: 0 10px; border: 1px solid #d6d9d2;
+  border-radius: 8px; background: #ffffff; color: #767b6e;
+}
+.search:focus-within { border-color: #16695f; }
+.search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font: 13px 'IBM Plex Sans', system-ui, sans-serif; color: #11140f; }
+.clear { display: grid; place-items: center; width: 22px; height: 22px; border: 0; border-radius: 4px; background: transparent; color: #767b6e; cursor: pointer; }
+.clear:hover { background: #f4f6f3; }
+
+/* The batch bar, once something is ticked: `<n> ticked · RM x`, the actions,
+   Clear; the notes under it. */
+.batch {
+  display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border: 1px solid #b9d6d1; border-radius: 8px; background: #f6faf9; font-size: 13px;
+}
+.batchRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.batchNotes { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: #5f6459; }
+
+/* ── The ask: an inline banner above the table or the document (the design's
+   askVals) — title, body, an optional reason, Keep it and the go button. Red
+   when it undoes something, petrol when it moves the document on. ── */
+.ask { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 8px; background: #fbeeee; color: #7a2222; }
+.askGo { background: #eaf3f1; color: #1d5c54; }
+.askTitle { font-size: 13px; font-weight: 600; }
+.askBody { font-size: 12px; line-height: 1.45; }
+.askRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.askInput {
+  flex: 1; min-width: 240px; height: 32px; box-sizing: border-box; padding: 0 10px; border: 1px solid #c2c6bd; border-radius: 6px;
+  background: #ffffff; color: #11140f; font: 12.5px 'IBM Plex Sans', system-ui, sans-serif; outline: none;
+}
+.askInput:focus { border-color: #16695f; }
+.askKeep {
+  height: 32px; display: inline-flex; align-items: center; padding: 0 12px; border: 1px solid #d6d9d2; border-radius: 6px; background: #ffffff;
+  color: #414539; font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
+}
+.askKeep:hover:not(:disabled) { background: #f4f6f3; }
+.askButton {
+  height: 32px; padding: 0 14px; border: 1px solid #a83434; border-radius: 6px; background: #a83434; color: #ffffff;
+  font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
+}
+.askButtonGo { border-color: #16695f; background: #16695f; }
+/* Greyed until a required reason is typed — still pressable, so it can say why. */
+.askButtonWaiting { border-color: #c9a3a3; background: #c9a3a3; }
+.askButtonGo.askButtonWaiting { border-color: #8fb3ad; background: #8fb3ad; }
+.askButton:disabled { opacity: 0.7; cursor: default; }
+.askError { font-size: 12px; font-weight: 600; }
