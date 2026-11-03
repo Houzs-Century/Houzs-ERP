@@ -35,7 +35,14 @@ export type FairFilters = {
   month?: string;        // YYYY-MM
   dateFrom?: string;     // YYYY-MM-DD (inclusive)
   dateTo?: string;       // YYYY-MM-DD (inclusive)
+  /** How the dates pick the rows: by the orders' SO date (default) or each stage by its own date. */
+  dateBasis?: FairDateBasis;
 };
+
+/** 'so': every stage's rows from the orders whose SO date is in the window (the
+ *  default); 'stage': Delivery Orders by the date their rows show, Invoices by
+ *  invoice date — Sales Orders and the P&L keep the SO date (owner 2026-11-03). */
+export type FairDateBasis = 'so' | 'stage';
 
 /** Fair-identity columns emitted on every stage row (fairDims). */
 export type FairDims = {
@@ -203,6 +210,7 @@ export type FairFiltersEcho = {
   month: string | null;
   date_from: string | null;
   date_to: string | null;
+  date_basis?: FairDateBasis;
 };
 
 export type FairSoResponse = {
@@ -282,6 +290,7 @@ function buildFairQs(stage: FairStage, f: FairFilters): string {
   if (f.month)       params.set('month', f.month);
   if (f.dateFrom)    params.set('date_from', f.dateFrom);
   if (f.dateTo)      params.set('date_to', f.dateTo);
+  if (f.dateBasis === 'stage') params.set('date_basis', 'stage');
   return params.toString();
 }
 

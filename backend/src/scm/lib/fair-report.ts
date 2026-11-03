@@ -734,6 +734,25 @@ export function everyFairPnl(
   return { fairs, no_fair: noFair };
 }
 
+// ── How the dates pick the rows (owner 2026-11-03: 「都要」) ───────────────────
+//
+// 'so' (the default, and the only basis before): every stage's rows come from
+// the orders whose SO date is in the window — a fair's later deliveries and
+// invoices stay with its orders. 'stage': each stage by its own date — the
+// Delivery Orders stage by the date its rows show (delivered, else the DO's
+// own date), the Invoices stage by the invoice date; Sales Orders and the
+// P&L (both per order) keep the SO date.
+export type FairDateBasis = 'so' | 'stage';
+export const parseDateBasis = (raw: string | null | undefined): FairDateBasis => (raw === 'stage' ? 'stage' : 'so');
+
+/** Is a day (YYYY-MM-DD) inside an inclusive window whose ends may be open? */
+export function dayInWindow(day: string | null, from: string | null, to: string | null): boolean {
+  if (!day) return false;
+  if (from && day < from) return false;
+  if (to && day > to) return false;
+  return true;
+}
+
 // ── Filter helpers ───────────────────────────────────────────────────────────
 export interface FairFilters {
   venue?: string | null;        // venue TEXT (venue_id is a dead scm.venues FK)
