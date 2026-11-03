@@ -9,10 +9,11 @@
 //
 // The redesign (owner's Claude Design, batch 4): Money out opens here. Stage
 // chips and the month, a line saying what the stage means, stage tags, the
-// next step on every row (Prepare / Check / Approve & post, Print once done),
-// ⋯ and right-click with the same menu, printing in place, and the batch bar
-// in the design's words. Every voucher still walks through its own door: the
-// same hooks, the same permissions, the same confirmations.
+// next step on every row (Prepare / Check / Approve & post, Print once done;
+// Remind approver on a checked one for whoever cannot approve), ⋯ and
+// right-click with the same menu, printing in place, and the batch bar in the
+// design's words. Every voucher still walks through its own door: the same
+// hooks, the same permissions, the same confirmations.
 //
 // HOUZS VENDOR — port of 2990's apps/backend/src/pages/PaymentVouchers.tsx.
 // Import boundary only: react-router → react-router-dom; flow-queries PV hooks →
@@ -24,7 +25,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Camera, MoreHorizontal, Plus, Search, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { usePaymentVouchers, useCancelPaymentVoucher, useSubmitPaymentVoucher, useCheckPaymentVoucher, useApprovePaymentVoucher, fetchPvPrintDetail, fetchPvPrintBundle, type PaymentVoucherRow } from '../../vendor/scm/lib/payment-voucher-queries';
+import { usePaymentVouchers, useCancelPaymentVoucher, useSubmitPaymentVoucher, useCheckPaymentVoucher, useApprovePaymentVoucher, useRemindApprover, fetchPvPrintDetail, fetchPvPrintBundle, type PaymentVoucherRow } from '../../vendor/scm/lib/payment-voucher-queries';
 import { useAccounts } from '../../vendor/scm/lib/accounting-queries';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { deliverPdfBlob, type PdfAction } from '../../vendor/scm/lib/pdf-common';
@@ -37,7 +38,7 @@ import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useToastOptional } from '../../hooks/useToast';
 import { useOpenDocInTab } from '../../lib/openDocInTab';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
-import { fmtDateOrDash, fmtMoneySen, todayMY } from '@2990s/shared';
+import { fmtDateOrDash, fmtMoneySen, fmtTime, todayMY } from '@2990s/shared';
 import { PageHeader } from '../../components/Layout';
 import { BackToPile } from '../../vendor/scm/components/BackToPile';
 import { FilterPills } from '../../components/FilterPills';
@@ -45,6 +46,7 @@ import { PaymentRequestsWaiting } from './PaymentRequestsWaiting';
 import { AccountCell } from './JournalEntryCards';
 import styles from './Suppliers.module.css';
 import mo from './MoneyOut.module.css';
+import pvx from './PaymentVouchers.module.css';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -193,6 +195,10 @@ export const PaymentVouchers = () => {
   const canWrite = can('scm.payment_voucher.write');
   const canCheck = can('scm.payment_voucher.check');
   const canApprove = can('scm.payment_voucher.approve');
+  /* Remind approver (the design's e8; owner 2026-11-03 主要是付款吧): whoever may
+     see and prepare vouchers, while the approve right is someone else's. */
+  const canRemind = !canApprove && (canCreate || canWrite || canCheck);
+  const remindPv = useRemindApprover();
 
   const allRows = useMemo<PaymentVoucherRow[]>(() => (data?.paymentVouchers ?? []) as PaymentVoucherRow[], [data]);
   /* Everything came back: the counts are the population's, so they may show. */
@@ -225,6 +231,7 @@ export const PaymentVouchers = () => {
   const prepareTargets = canWrite ? tickedRows.filter(isPreparable) : [];
   const checkTargets = canCheck ? tickedRows.filter(isCheckable) : [];
   const approveTargets = canApprove ? tickedRows.filter(isApprovable) : [];
+  const remindTargets = canRemind ? tickedRows.filter(isApprovable) : [];
   const printOnly = tickedRows.filter((r) => stageOf(r) === 'DONE').length;
   const sumMyr = (list: PaymentVoucherRow[]) => list.reduce((s, r) => s + myrSen(r), 0);
 
@@ -300,6 +307,35 @@ export const PaymentVouchers = () => {
       void notify({ title: `${r.pv_number} was not ${s === 'DRAFT' ? 'prepared' : s === 'PREPARED' ? 'checked' : 'approved'}`, body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
     } finally {
       setStepping(null);
+    }
+  };
+
+  /* ── Remind approver: a note in the approver's bell (the ERP's own, the system
+     slice), never a name on the screen (A6). Posts nothing; the voucher does not
+     change. One voucher from its row; the ticked ones from the batch bar make
+     ONE note listing them. One reminder per voucher an hour, and the toast says
+     when the next may go. */
+  const [reminding, setReminding] = useState<string | null>(null);
+  const runRemind = async (targets: PaymentVoucherRow[], key: string) => {
+    if (targets.length === 0 || reminding != null) return;
+    setReminding(key);
+    try {
+      const out = await remindPv.mutateAsync(targets.map((r) => r.id));
+      const sent = targets.filter((r) => out.reminded.some((x) => x.id === r.id));
+      const to = out.approvers === 1 ? 'the approver' : `${out.approvers} approvers`;
+      const what = sent.length === 1
+        ? `${sent[0]!.pv_number} · ${fmtMoney(Number(sent[0]!.total_sen ?? 0), sent[0]!.currency)}`
+        : `${sent.length} vouchers · ${fmtMoney(sumMyr(sent))}`;
+      toast?.success(`Reminder sent to ${to} · ${what}. One reminder per voucher an hour — the next after ${fmtTime(out.nextAt)}.`);
+      if (out.refused.length > 0) {
+        void notify({ title: `${out.refused.length} not reminded`, body: out.refused.map((x) => x.message).join('\n'), tone: 'info' });
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Something went wrong.';
+      if (key !== 'batch' && toast) toast.error(message);
+      else void notify({ title: 'No reminder went', body: message, tone: 'error' });
+    } finally {
+      setReminding(null);
     }
   };
 
@@ -486,6 +522,11 @@ export const PaymentVouchers = () => {
               <button type="button" className={mo.act} disabled={stepping != null || batchRunning}
                 onClick={(e) => { e.stopPropagation(); void runStep(r); }}>{stepping === r.id ? 'Working…' : step}</button>
             )}
+            {s === 'CHECKED' && canRemind && (
+              <button type="button" className={pvx.actSecondary} disabled={reminding != null || batchRunning}
+                title="A note in the approver's bell. Posts nothing."
+                onClick={(e) => { e.stopPropagation(); void runRemind([r], r.id); }}>{reminding === r.id ? 'Sending…' : 'Remind approver'}</button>
+            )}
             {s === 'DONE' && (
               <button type="button" className={mo.actLink} disabled={printing}
                 onClick={(e) => { e.stopPropagation(); void printVouchers([r], false, 'print'); }}>Print</button>
@@ -524,7 +565,7 @@ export const PaymentVouchers = () => {
       exportValue: (r) => String(r.bill_ref ?? ''),
     },
   // eslint-disable-next-line react-hooks/exhaustive-deps -- the cells read the latest handlers through closures each render
-  ], [accountName, canWrite, canCheck, canApprove, stepping, batchRunning, printing]);
+  ], [accountName, canWrite, canCheck, canApprove, canRemind, stepping, reminding, batchRunning, printing]);
 
   /* All months: the server's count over the company. One month: counted here, while everything came back. */
   const chipCount = (chip: string) => (monthChip === 'all' && stageCounts
@@ -645,6 +686,11 @@ export const PaymentVouchers = () => {
                 Approve & post {approveTargets.length}
               </Button>
             )}
+            {remindTargets.length > 0 && (
+              <Button variant="secondary" size="sm" onClick={() => void runRemind(remindTargets, 'batch')} disabled={batchRunning || reminding != null}>
+                {reminding === 'batch' ? 'Sending…' : `Remind approver · ${remindTargets.length}`}
+              </Button>
+            )}
             {/* Print rides the SAME ticks (owner 2026-09-03): the ticked
                 vouchers, list order, one PDF — with each voucher's files
                 interleaved, or vouchers only (owner 2026-09-04: 批量那边也要
@@ -672,7 +718,9 @@ export const PaymentVouchers = () => {
             {(prepareTargets.length + checkTargets.length + approveTargets.length) > 0 && <span>Runs in voucher-date order.</span>}
             {checkTargets.length > 0 && <span>Checking locks them, numbers them and reserves {fmtMoney(sumMyr(checkTargets))} in Money today.</span>}
             {approveTargets.length > 0 && <span>Approving posts each journal now: {fmtMoney(sumMyr(approveTargets))} leaves the books.</span>}
-            {!canApprove && tickedRows.some(isApprovable) && <span>Approving needs the approve right.</span>}
+            {!canApprove && tickedRows.some(isApprovable) && (
+              <span>Approving needs the approve right.{remindTargets.length > 0 ? ' Remind approver sends one note for them all, once an hour per voucher.' : ''}</span>
+            )}
             {printOnly > 0 && <span>{printOnly} ticked {printOnly === 1 ? 'voucher is' : 'vouchers are'} already approved or cancelled, so only printed.</span>}
           </div>
         </div>
