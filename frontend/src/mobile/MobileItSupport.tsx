@@ -3,6 +3,8 @@ import { LifeBuoy, Paperclip } from "lucide-react";
 import { api } from "../api/client";
 import { formatDateTime, relativeTime } from "../lib/utils";
 import { useRefreshItSupportUnread } from "../hooks/useAmendmentApprovals";
+import { NAV_TABS } from "../components/Sidebar";
+import { itModuleIndex } from "../lib/itSupportModule";
 import {
   IT_ACCEPT, IT_KINDS, IT_MAX_FILES, IT_TABS, IT_URGENCY, itAddFiles, itFresh, itInTab, itKindText, itMessage,
   itStatusText, itStatusTone, itStepLine, itUrgencyText, itUrgencyTone,
@@ -86,8 +88,12 @@ function Files({ files, onChange }: { files: File[]; onChange: (f: File[]) => vo
   );
 }
 
+// The same module names as the desktop form, from the one sidebar.
+const MODULES = itModuleIndex(NAV_TABS);
+
 function NewRequest({ onSent }: { onSent: (code: string) => void }) {
   const [title, setTitle] = useState("");
+  const [module, setModule] = useState("");
   const [description, setDescription] = useState("");
   const [kind, setKind] = useState("bug");
   const [urgency, setUrgency] = useState("medium");
@@ -107,6 +113,7 @@ function NewRequest({ onSent }: { onSent: (code: string) => void }) {
     form.set("type", kind);
     form.set("priority", urgency);
     form.set("occurred_at", new Date().toISOString());
+    if (module) form.set("module", module);
     for (const f of files) form.append("files", f, f.name);
     try {
       const r = await api.postForm<{ code: string }>("/api/it-support/tickets", form);
@@ -141,6 +148,13 @@ function NewRequest({ onSent }: { onSent: (code: string) => void }) {
         <span className="fld-l">How urgent</span>
         <select className="fld-i" style={INPUT} value={urgency} onChange={(e) => setUrgency(e.target.value)}>
           {IT_URGENCY.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </select>
+      </label>
+      <label className="fld">
+        <span className="fld-l">Which part of the system</span>
+        <select className="fld-i" style={INPUT} value={module} onChange={(e) => setModule(e.target.value)}>
+          <option value="">Not sure</option>
+          {MODULES.options.map((m) => <option key={m} value={m}>{m}</option>)}
         </select>
       </label>
       <div className="fld">

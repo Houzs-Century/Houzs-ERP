@@ -202,6 +202,7 @@ describe("/api/it-support", () => {
     form.set("type", "bug");
     form.set("priority", "high");
     form.set("page_url", "/scm/delivery-orders");
+    form.set("module", " Supply Chain · Sales Order ");
     form.set("occurred_at", "2026-10-15T02:00:00.000Z");
     form.set("reporter_name", "The Boss");
     form.set("reporter_email", "boss@houzs.test");
@@ -224,6 +225,7 @@ describe("/api/it-support", () => {
     expect(sent.get("title")).toBe("Delivery order will not save");
     expect(sent.get("priority")).toBe("high");
     expect(sent.get("page_url")).toBe("/scm/delivery-orders");
+    expect(sent.get("module")).toBe("Supply Chain · Sales Order");
     expect(sent.get("occurred_at")).toBe("2026-10-15T02:00:00.000Z");
     expect(sent.get("reporter_name")).toBe("Aina");
     expect(sent.get("reporter_email")).toBe("aina@houzs.test");
