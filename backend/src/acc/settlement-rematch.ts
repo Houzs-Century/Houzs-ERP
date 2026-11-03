@@ -22,7 +22,7 @@
 // upload makes inside one file, kept across files.
 // ----------------------------------------------------------------------------
 
-import { loadAcquirer, loadPaymentCandidates, loadSettledKeys } from './settlement';
+import { loadAcquirer, loadPaymentCandidates, loadSettledKeys, notThisOf } from './settlement';
 import { matchStatement, type MatchBucket, type PaymentCandidate } from './settlement-match';
 import { chunkIn, paginateAll } from '../scm/lib/paginate-all';
 import { mapBounded } from '../scm/lib/concurrency';
@@ -32,6 +32,7 @@ type LineRow = {
   id: number; batch_id: number; line_no: number; txn_date: string; ref: string | null;
   gross_sen: number; fee_sen: number; net_sen: number;
   bucket: string; match_reason: string | null; notes: string | null; confirmed_at: string | null;
+  not_this?: unknown;
 };
 type LinkRow = { settlement_row_id: number; payment_source: string; payment_id: string };
 
@@ -72,7 +73,7 @@ export async function rematchOpenLines(sb: any, companyId: number, acquirerCode:
 
   const lines = await chunkIn<LineRow, number>(batchIds, (batch, f, t) => sb
     .from('acc_settlement_rows')
-    .select('id, batch_id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, match_reason, notes, confirmed_at')
+    .select('id, batch_id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, match_reason, notes, confirmed_at, not_this')
     .eq('company_id', companyId).in('batch_id', batch)
     .order('id').range(f, t));
   if (lines.error) return { ok: false, reason: `report lines: ${lines.error.message}` };
@@ -129,15 +130,19 @@ export async function rematchOpenLines(sb: any, companyId: number, acquirerCode:
     for (const d of decided) {
       const row = byLine.get(d.row.lineNo);
       if (!row) continue;
-      const want = d.bucket === 'MATCHED' ? d.matched : [];
+      /* "Not this": a payment a person said this line is not is never its match. */
+      const turnedDown = new Set(notThisOf(row.not_this));
+      const refused = d.bucket === 'MATCHED' && d.matched.some((p) => turnedDown.has(keyOf(p)));
+      const want = d.bucket === 'MATCHED' && !refused ? d.matched : [];
       /* A report decided earlier in this run has taken these. */
       for (const p of want) taken.add(keyOf(p));
-      if (d.bucket === 'MATCHED') matched += 1;
+      const bucket: MatchBucket = refused ? 'NEEDS_CONFIRM' : d.bucket;
+      if (bucket === 'MATCHED') matched += 1;
       const held = heldBy.get(Number(row.id)) ?? [];
       const wantKeys = want.map(keyOf).sort();
       const sameLinks = held.length === wantKeys.length && [...held].sort().every((k, i) => k === wantKeys[i]);
-      if (sameLinks && row.bucket === d.bucket) continue;
-      changes.push({ row, bucket: d.bucket, matchReason: d.matchReason, notes: d.clue, link: want, held });
+      if (sameLinks && row.bucket === bucket) continue;
+      changes.push({ row, bucket, matchReason: refused ? null : d.matchReason, notes: d.clue, link: want, held });
     }
   }
 

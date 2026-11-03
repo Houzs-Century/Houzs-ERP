@@ -35,6 +35,7 @@ import { parseStatement, type StatementColumnMap } from '../../acc/settlement-pa
 import { matchStatement, recordedNotArrived, listOnce, UNTAGGED_LIST, type MatchBucket, type PaymentCandidate } from '../../acc/settlement-match';
 import {
   loadAcquirer, loadPaymentCandidates, loadSettledKeys, linesAlreadyOnFile, confirmSettlementRow, confirmSettlementGroup, postStatementCharge,
+  releaseSettlementRow, notThisOf,
   postBatchReceipt, loadBatchReceipts, undoBatchReceipt, unconfirmSettlementRow, clearOrphanBatch, findPaymentsForRow,
 } from '../../acc/settlement';
 import { rematchOpenLines } from '../../acc/settlement-rematch';
@@ -83,6 +84,8 @@ type StoredRow = {
   posted_je_no: string | null; notes: string | null;
   /** The lead line this one was matched together with (option B), else null. */
   matched_with_row_id?: number | null;
+  /** The payments a person said this line is NOT ("Not this"), as "SOPAY:<id>" keys. */
+  not_this?: unknown;
 };
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -884,7 +887,7 @@ export const settlementBatchDetail = guard(async (c) => {
   if (!paid.ok) return c.json({ error: 'load_failed', reason: paid.reason }, 500);
 
   const { data: rowsRaw, error: rErr } = await sb.from('acc_settlement_rows')
-    .select('id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, match_reason, confirmed_at, posted_je_no, notes, matched_with_row_id')
+    .select('id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, match_reason, confirmed_at, posted_je_no, notes, matched_with_row_id, not_this')
     .eq('batch_id', batchId).order('line_no');
   if (rErr) return c.json({ error: 'load_failed', reason: rErr.message }, 500);
   const stored = (rowsRaw ?? []) as StoredRow[];
@@ -969,6 +972,12 @@ export const settlementBatchDetail = guard(async (c) => {
   const rows = stored.map((r) => {
     const s = byLine.get(r.line_no);
     const group = groupOf.get(leadOf(r));
+    /* "Not this": a payment a person said this line is not is never offered to
+       it again — not as a candidate, a pair, the pre-tick, or the clue. */
+    const notThis = new Set(notThisOf(r.not_this));
+    const keep = <P extends { source: string; id: string }>(list: P[]): P[] => list.filter((p) => !notThis.has(`${p.source}:${p.id}`));
+    const turnedDown = (s?.matched ?? []).filter((p) => notThis.has(`${p.source}:${p.id}`));
+    const turnedDownIds = new Set([...notThis].map((k) => k.slice(k.indexOf(':') + 1)));
     return {
       ...r,
       txn_date: String(r.txn_date).slice(0, 10),
@@ -1010,12 +1019,14 @@ export const settlementBatchDetail = guard(async (c) => {
          linked line is not recomputed at all — and is the whole answer when it
          is not. Pre-ticked, still his to confirm: nothing posts until he
          presses. */
-      candidates: (s?.candidates.length ? s.candidates : s?.matched) ?? [],
-      comboHints: s?.comboHints ?? [],
+      candidates: keep((s?.candidates.length ? s.candidates : s?.matched) ?? []),
+      comboHints: (s?.comboHints ?? []).filter((combo) => !combo.some((id) => turnedDownIds.has(String(id)))),
       /* The system's own best answer, pre-ticked on screen. A suggestion, never
          a decision — nothing posts until he confirms. */
-      suggested: (s?.suggested.length ? s.suggested : s?.matched) ?? [],
-      clue: s?.clue ?? r.notes,
+      suggested: keep((s?.suggested.length ? s.suggested : s?.matched) ?? []),
+      clue: turnedDown.length > 0
+        ? `Not ${turnedDown.map((p) => p.docNo || p.id).join(', ')} — you said so. Choose the sale, or find it.`
+        : s?.clue ?? r.notes,
     };
   });
 
@@ -1152,7 +1163,7 @@ export const settlementConfirmMatched = guard(async (c) => {
   const b = batchRaw as { acquirer_code: string; period_from: string; period_to: string };
 
   const { data: rowsRaw, error } = await sb.from('acc_settlement_rows')
-    .select('id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, confirmed_at')
+    .select('id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, confirmed_at, not_this')
     .eq('batch_id', batchId).eq('company_id', co.companyId);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   const stored = (rowsRaw ?? []) as StoredRow[];
@@ -1208,6 +1219,8 @@ export const settlementConfirmMatched = guard(async (c) => {
       if (d.bucket !== 'MATCHED' || d.matched.length === 0) continue;
       const rowId = byLine.get(d.row.lineNo);
       if (rowId == null) continue;
+      const notThis = new Set(notThisOf(unlinked.find((r) => r.id === rowId)?.not_this));
+      if (d.matched.some((p) => notThis.has(`${p.source}:${p.id}`))) continue;
       rescued.set(rowId, d.matched.map((p) => ({
         source: p.source, id: p.id, docNo: p.docNo, amountSen: p.amountSen,
       })));
@@ -1373,6 +1386,24 @@ export const settlementRowUnconfirm = guard(async (c) => {
     return c.json({ error: r.status, message: r.reason }, code);
   }
   return c.json({ ok: true, ...(r.jeNo ? { reversalJeNo: r.jeNo } : {}) });
+});
+
+/* POST /rows/:id/release — "Not this" (owner 2026-11-03, batch 3 d2): an
+   unconfirmed line's match is released and the line goes back to be chosen;
+   the payments it held are not offered to it again. Posts nothing. */
+export const settlementReleaseRow = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const rowId = Number(c.req.param('id'));
+  if (!Number.isInteger(rowId)) return c.json({ error: 'bad_id' }, 400);
+  const r = await releaseSettlementRow(c.get('supabase'), co.companyId, rowId);
+  if (!r.ok) {
+    const status = r.status === 'not_found' ? 404
+      : ['already_confirmed', 'ignored', 'nothing_matched'].includes(r.status) ? 409
+      : 500;
+    return c.json({ error: r.status, message: r.reason }, status);
+  }
+  return c.json(r);
 });
 
 /* POST /rows/:id/ignore — set a line aside (or put it back). A confirmed line

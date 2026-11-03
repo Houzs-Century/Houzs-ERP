@@ -44,7 +44,7 @@ import { ledgerReport } from './accounting-ledger';
 import {
   settlementSetup, settlementSetupSave, settlementUpload, settlementBatches,
   settlementBatchDetail, settlementConfirmRow, settlementConfirmGroup, settlementConfirmMatched, settlementRowUnconfirm,
-  settlementIgnoreRow, settlementWatchlist, settlementExport, settlementInTransit, settlementFindPayments,
+  settlementIgnoreRow, settlementReleaseRow, settlementWatchlist, settlementExport, settlementInTransit, settlementFindPayments,
   settlementBatchReceived, settlementReceiptUndo,
   settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank, settlementRematch,
 } from './accounting-settlement';
@@ -149,6 +149,8 @@ accounting.post('/settlement/rows/:id/confirm', settlementConfirmRow);
 accounting.post('/settlement/rows/confirm-together', settlementConfirmGroup);
 accounting.post('/settlement/rows/:id/unconfirm', settlementRowUnconfirm);
 accounting.post('/settlement/rows/:id/ignore', settlementIgnoreRow);
+/* "Not this" — release an unconfirmed line's match (owner 2026-11-03, batch 3 d2). */
+accounting.post('/settlement/rows/:id/release', settlementReleaseRow);
 /* "Find the sale" — the card payments the window could not offer (docs/bugs/0792). */
 accounting.get('/settlement/rows/:id/find', settlementFindPayments);
 accounting.get('/settlement/watchlist', settlementWatchlist);

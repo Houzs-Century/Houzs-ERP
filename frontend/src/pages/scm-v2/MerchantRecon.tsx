@@ -31,7 +31,7 @@ import { AlertTriangle, ArrowLeft, ArrowRight, CheckCheck, Download, Undo2, Uplo
 import {
   useAcquirerSetup, useSaveAcquirerSetup, useSettlementBatches, useSettlementBatch,
   useConfirmSettlementRow, useConfirmSettlementGroup, useConfirmMatched, useIgnoreSettlementRow,
-  useSettlementWatchlist, useUnconfirmSettlementRow, useFindPayments, usePayouts,
+  useSettlementWatchlist, useUnconfirmSettlementRow, useReleaseSettlementRow, useFindPayments, usePayouts,
   confirmMatchedBatch, useInvalidateAfterPosting,
   type AcquirerSetup, type SettlementRow, type SettlementBatch, type BankAccount, type SettlementCandidate,
   type Watchlist, type Payout,
@@ -787,6 +787,28 @@ const UndoDone = ({ rowId }: { rowId: number }) => {
   );
 };
 
+/** "Not this" on a line the machine matched and nobody confirmed (owner
+    2026-11-03, batch 3 d2): the match is released, the line goes to To choose,
+    and that payment is not offered to it again. Nothing posts. */
+const NotThis = ({ rowId }: { rowId: number }) => {
+  const release = useReleaseSettlementRow();
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <>
+      <button
+        type="button"
+        style={{ ...btn(false, release.isPending), marginLeft: 8 }}
+        disabled={release.isPending}
+        title="This is not the sale — release the match and choose the right one. Nothing is posted."
+        onClick={() => { setError(null); release.mutate(rowId, { onError: (e) => setError(refusalText(e, 'The match was not released.')) }); }}
+      >
+        Not this
+      </button>
+      {error && <div className={grid.bad} style={{ fontSize: 'var(--fs-12, 12px)' }}>{error}</div>}
+    </>
+  );
+};
+
 const Tally = ({ n, label, note, tone }: {
   n: number; label: string; note: string; tone: 'good' | 'danger' | 'plain';
 }) => (
@@ -984,7 +1006,12 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
                     )
                     : r.bucket === 'IGNORED'
                       ? <span style={softText}>set aside</span>
-                      : <span className={grid.good}>matched — the button above books it</span>}
+                      : (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
+                          <span className={grid.good}>matched — the button above books it</span>
+                          {r.linked.length > 0 && <NotThis rowId={r.id} />}
+                        </span>
+                      )}
                 </td>
               </tr>
             ))}
