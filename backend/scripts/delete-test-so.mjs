@@ -113,7 +113,11 @@ const CHILD_TABLES = [
   { table: "scm.mfg_sales_order_payments", cols: ["so_doc_no", "doc_no"] },
   { table: "scm.mfg_sales_order_activity", cols: ["doc_no"] },
   { table: "scm.so_amendments",            cols: ["so_doc_no"] },
+  /* "Request cancellation" on the order. The table also holds PO and DO requests,
+     so only the SO's own rows go. */
+  { table: "scm.document_cancel_requests", cols: ["doc_number"], where: "doc_type = 'SO'" },
 ];
+const andWhere = (t) => (t.where ? ` AND ${t.where}` : "");
 
 // Resolve which of `cols` actually exists on (schema, table) in THIS database.
 // Returns null when the table or every candidate column is absent (D1 mirror,
@@ -281,7 +285,7 @@ async function main() {
       childCounts[t.table] = null;
       continue;
     }
-    const rows = await db.unsafe(`SELECT count(*)::int AS n FROM ${t.table} WHERE ${col} = $1`, [DOC_NO]);
+    const rows = await db.unsafe(`SELECT count(*)::int AS n FROM ${t.table} WHERE ${col} = $1${andWhere(t)}`, [DOC_NO]);
     childCounts[t.table] = rows[0].n;
     console.log(`Child   : ${t.table.padEnd(40)} ${col.padEnd(12)} rows=${rows[0].n}`);
   }
@@ -395,7 +399,7 @@ async function main() {
     for (const t of CHILD_TABLES) {
       const col = childCols[t.table];
       if (!col) continue;
-      const r = await sql.unsafe(`DELETE FROM ${t.table} WHERE ${col} = $1`, [DOC_NO]);
+      const r = await sql.unsafe(`DELETE FROM ${t.table} WHERE ${col} = $1${andWhere(t)}`, [DOC_NO]);
       console.log(`Deleted : ${t.table.padEnd(40)} rows=${r.count}`);
     }
     const r = await sql`DELETE FROM scm.mfg_sales_orders WHERE doc_no = ${DOC_NO}`;
@@ -420,7 +424,7 @@ async function main() {
     for (const t of CHILD_TABLES) {
       const col = childCols[t.table];
       if (!col) continue;
-      const [r] = await verify.unsafe(`SELECT count(*)::int AS n FROM ${t.table} WHERE ${col} = $1`, [DOC_NO]);
+      const [r] = await verify.unsafe(`SELECT count(*)::int AS n FROM ${t.table} WHERE ${col} = $1${andWhere(t)}`, [DOC_NO]);
       console.log(`  ${t.table.padEnd(40)} ${col.padEnd(12)} rows=${r.n}`);
       if (r.n !== 0) shape.push(`${t.table}.${col} still has ${r.n} row(s)`);
     }
