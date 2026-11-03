@@ -8,7 +8,9 @@
 //   · <ReportToolbar> is the white card its date range and tools sit in;
 //   · <ReportExports> are Layout · Excel · PDF · Print, drawn from the report's
 //     sheet the way today's exports are (report-sheet-xlsx / report-sheet-pdf):
-//     PDF opens the preview, Print prints that same PDF.
+//     PDF opens the preview, Print prints that same PDF;
+//   · <InPlaceOfReport> stands in for the report while it is open (the Layout
+//     editor, batch 6 §5.12): the report and its header buttons step aside.
 // ----------------------------------------------------------------------------
 
 import { createContext, useContext, useEffect, type ReactNode } from 'react';
@@ -22,6 +24,9 @@ import s from './ReportShell.module.css';
 export type ShellSlots = {
   actionsHost: HTMLElement | null;
   setSubtitle: (text: string | null) => void;
+  /** Where a part that stands in for the report draws, and the switch that sets the report aside. */
+  inPlaceHost: HTMLElement | null;
+  setInPlace: (on: boolean) => void;
 };
 
 export const ShellContext = createContext<ShellSlots | null>(null);
@@ -43,6 +48,22 @@ export function useReportSubtitle(text: string | null): void {
     set(text);
     return () => set(null);
   }, [set, text]);
+}
+
+/** Draws its children in place of the report (the Layout editor, batch 6
+ *  §5.12): while it is mounted the report below the header and the header's
+ *  buttons step aside — hidden, not unmounted, so the report keeps its state —
+ *  and come back when it closes. Outside a shell it renders where it stands. */
+export function InPlaceOfReport({ children }: { children: ReactNode }) {
+  const slots = useContext(ShellContext);
+  const set = slots?.setInPlace;
+  useEffect(() => {
+    if (!set) return undefined;
+    set(true);
+    return () => set(false);
+  }, [set]);
+  if (!slots) return <>{children}</>;
+  return slots.inPlaceHost ? createPortal(children, slots.inPlaceHost) : null;
 }
 
 /** The white card under the header: the date range first, then the report's own tools. */

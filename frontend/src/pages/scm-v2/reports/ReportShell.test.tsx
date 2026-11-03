@@ -32,7 +32,7 @@ import { REPORT_CATALOG, REPORT_GROUPS, reportHref, reportOfAccountingTab } from
 import { REPORT_RANGE_PRESETS, presetLabel } from '../../../lib/dateRangePresets';
 import { classifyBrowserStorageKey } from '../../../lib/browserStorageRegistry';
 import { ReportShell } from './ReportShell';
-import { ReportExports, ReportHeaderActions, useReportSubtitle } from './reportParts';
+import { InPlaceOfReport, ReportExports, ReportHeaderActions, useReportSubtitle } from './reportParts';
 import { FinanceDateRange } from './FinanceDateRange';
 import { useReportRange } from './useReportRange';
 
@@ -224,6 +224,39 @@ describe('the header and the shared pieces', () => {
   test('drawn without a shell, a report’s buttons stand where they are', () => {
     render(<MemoryRouter><Body text="ignored" /></MemoryRouter>);
     expect(screen.getByRole('button', { name: 'Mine' })).toBeTruthy();
+  });
+
+  test('a part in place of the report (the Layout editor) sets the report and its header buttons aside until it closes', async () => {
+    const Report = ({ editing }: { editing: boolean }) => (
+      <>
+        <Body text="2026/10/01 – 2026/10/29" />
+        <p>the statement</p>
+        {editing && <InPlaceOfReport><section aria-label="Layout · P&L">the editor</section></InPlaceOfReport>}
+      </>
+    );
+    const { rerender } = at('/scm/accounting?tab=pnl', <ReportShell report="pnl"><Report editing={false} /></ReportShell>);
+    const header = screen.getByRole('heading', { level: 1 }).closest('.sticky') as HTMLElement;
+    await waitFor(() => expect(within(header).getByRole('button', { name: 'Mine' })).toBeTruthy());
+    const body = screen.getByText('the statement').closest('[data-report-body]')!;
+    expect(body.className).not.toMatch(/asideNow/);
+
+    rerender(<MemoryRouter initialEntries={['/scm/accounting?tab=pnl']}><Routes><Route path="*" element={<ReportShell report="pnl"><Report editing /></ReportShell>} /></Routes></MemoryRouter>);
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Layout · P&L' })).toBeTruthy());
+    /* The editor draws outside the report's box: the report is hidden, not unmounted. */
+    expect(screen.getByRole('region', { name: 'Layout · P&L' }).closest('[data-report-body]')).toBeNull();
+    expect(screen.getByText('the statement').closest('[data-report-body]')!.className).toMatch(/asideNow/);
+    expect(within(header).getByRole('button', { name: 'Mine' }).closest('div')!.className).toMatch(/asideNow/);
+    /* Still "Finance · Reports" over the report's name. */
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('P&L');
+
+    rerender(<MemoryRouter initialEntries={['/scm/accounting?tab=pnl']}><Routes><Route path="*" element={<ReportShell report="pnl"><Report editing={false} /></ReportShell>} /></Routes></MemoryRouter>);
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Layout · P&L' })).toBeNull());
+    expect(screen.getByText('the statement').closest('[data-report-body]')!.className).not.toMatch(/asideNow/);
+  });
+
+  test('drawn without a shell, a part in place of the report renders where it stands', () => {
+    render(<InPlaceOfReport><p>the editor</p></InPlaceOfReport>);
+    expect(screen.getByText('the editor')).toBeTruthy();
   });
 
   test('Excel makes the .xlsx, PDF opens the preview, Print prints that same PDF; Layout only where offered', async () => {

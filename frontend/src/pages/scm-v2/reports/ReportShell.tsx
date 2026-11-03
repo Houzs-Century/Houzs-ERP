@@ -41,7 +41,11 @@ export function ReportShell({ report, subtitle, actions, ownHeader = false, chil
   const carried = range.source !== 'default' && isUsableRange(range) ? { from: range.from, to: range.to } : null;
   const [actionsHost, setActionsHost] = useState<HTMLElement | null>(null);
   const [ownSubtitle, setSubtitle] = useState<string | null>(null);
-  const slots = useMemo<ShellSlots>(() => ({ actionsHost, setSubtitle }), [actionsHost]);
+  /* A part standing in for the report (the Layout editor) draws here, and the
+     report with its header buttons steps aside until it closes. */
+  const [inPlaceHost, setInPlaceHost] = useState<HTMLElement | null>(null);
+  const [inPlace, setInPlace] = useState(false);
+  const slots = useMemo<ShellSlots>(() => ({ actionsHost, setSubtitle, inPlaceHost, setInPlace }), [actionsHost, inPlaceHost]);
   /* A reader who may open one report only has no list to choose from. */
   const showRail = reports.length > 1;
 
@@ -58,13 +62,16 @@ export function ReportShell({ report, subtitle, actions, ownHeader = false, chil
               title={item.title ?? item.label}
               description={ownSubtitle ?? subtitle}
               actions={(
-                <div className={s.actions}>
+                <div className={`${s.actions} ${inPlace ? s.asideNow : ''}`}>
                   {actions}
                   <span ref={setActionsHost} className={s.actionsSlot} />
                 </div>
               )}
             />
-            <ShellContext.Provider value={slots}>{children}</ShellContext.Provider>
+            <div ref={setInPlaceHost} className={s.inPlace} />
+            <div className={inPlace ? s.asideNow : s.inPlace} data-report-body>
+              <ShellContext.Provider value={slots}>{children}</ShellContext.Provider>
+            </div>
           </>
         )}
       </div>
