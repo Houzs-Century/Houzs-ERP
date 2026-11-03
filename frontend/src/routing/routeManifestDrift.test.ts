@@ -120,7 +120,9 @@ describe("executable route contract", () => {
     // /scm/supplier-notes/:id — the bill and note pages (batch 4, step 6).
     // 190 since 2026-11-03: /scm/ar-invoices/deposit/:id, /bills/:id and /sales/:id —
     // Money in's invoice documents as pages (Claude Design, batch 5 step 1).
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(190);
+    // 192 since 2026-11-03: /scm/receipts/official/:id and /scm/receipts/debtor/:id —
+    // the official and the other-debtor receipt as pages (Claude Design, batch 5 step 3).
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(192);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -182,7 +184,8 @@ describe("executable route contract", () => {
     // 193 since 2026-11-02 — /scm/saved-locations; see the staff-route count above.
     // 196 since 2026-11-03 — the bill and note pages (batch 4, step 6); see the staff-route count above.
     // 199 since 2026-11-03 — the three invoice document pages; see the staff-route count above.
-    expect(ROUTE_CONTRACT).toHaveLength(199);
+    // 201 since 2026-11-03 — the two receipt document pages; see the staff-route count above.
+    expect(ROUTE_CONTRACT).toHaveLength(201);
   });
 
   it("keeps every desktop nav destination on a live staff route", () => {

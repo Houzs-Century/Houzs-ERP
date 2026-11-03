@@ -136,3 +136,15 @@ export const methodWord = (m: string | null | undefined): string => {
   const code = PAYMENT_METHOD_CODES.find((c) => c === m);
   return code ? PAYMENT_METHOD_DEFAULT_LABELS[code] : m ? humaniseStatusKey(m) : '—';
 };
+
+/** A debtor receipt's stage — the payment voucher's four layers riding on a
+ *  DRAFT as marks (PvDocParts' pvStage reads them): Draft calm, Prepared brass,
+ *  Checked petrol, Approved calm, Cancelled red. */
+export function debtorReceiptTag(stage: 'Draft' | 'Prepared' | 'Checked' | 'Approved' | 'Cancelled'): Tag {
+  switch (stage) {
+    case 'Prepared': return { text: stage, tone: 'warn' };
+    case 'Checked': return { text: stage, tone: 'info' };
+    case 'Cancelled': return { text: stage, tone: 'late' };
+    default: return { text: stage, tone: 'calm' };
+  }
+}

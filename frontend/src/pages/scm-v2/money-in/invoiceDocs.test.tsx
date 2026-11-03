@@ -91,6 +91,9 @@ const BILLS: Record<string, unknown> = {
     bill: { id: 'b1', bill_number: 'HC-ODB-2609-001', bill_date: '2026-09-05', total_sen: 50000, received_sen: 20000, status: 'POSTED', notes: '转租九月', created_at: '2026-09-05T02:00:00Z',
       lines: [{ id: 'l1', line_no: 1, description: '转租', credit_account_code: '700-0000', amount_sen: 50000 }] },
     debtor: { id: 'd1', name: 'AHMAD BIN ALI', phone: '012-345', notes: null, is_active: true, outstanding_sen: 30000, address1: '12 Jalan Satu' },
+    /* What came in on it (read c8): a receipt, and an other debtor's credit note. */
+    receipts: [{ id: 'r1', number: 'HC-ODR-2609-004', date: '2026-09-28', status: 'POSTED', submittedAt: '2026-09-28T01:00:00Z', checkedAt: '2026-09-28T02:00:00Z', approvedAt: '2026-09-28T03:00:00Z', amountSen: 20000 }],
+    creditNotes: [{ id: 'n1', number: 'HC-OCN-2610-001', date: '2026-10-10', status: 'POSTED', reason: 'Rental discount', amountSen: 3000, appliedSen: 3000 }],
   },
   b2: {
     bill: { id: 'b2', bill_number: 'HC-ODB-2608-003', bill_date: '2026-08-20', total_sen: 10000, received_sen: 0, status: 'POSTED', notes: null,
@@ -159,7 +162,8 @@ vi.mock('../../../vendor/scm/lib/sales-invoice-pdf', () => ({
 }));
 
 /* Add task opens To do's drawer with this document linked. */
-vi.mock('../PvDocParts', () => ({
+vi.mock('../PvDocParts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../PvDocParts')>()),
   VoucherTaskDrawer: ({ link }: { link: { type: string; no: string; to: string } }) => <div role="dialog" aria-label="Add task">{`${link.type} ${link.no} → ${link.to}`}</div>,
 }));
 
@@ -301,6 +305,22 @@ describe('an other debtor\'s bill, as a page', () => {
     expect(cancel.title).toBe('This bill has money received on it, so it can’t be cancelled.');
     expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Copy' })).toBeTruthy();
+  });
+
+  test('the receipts on it and the credit notes allocated to it, each opening its own page; a bill nothing came in on says so', async () => {
+    const view = openBill('b1');
+    const receipts = screen.getByRole('region', { name: 'Receipts' });
+    expect(within(receipts).getByText('HC-ODR-2609-004').closest('a')!.getAttribute('href')).toBe('/scm/receipts/debtor/r1');
+    expect(within(receipts).getByText('Approved')).toBeTruthy();
+    expect(within(receipts).getByText('RM 200.00')).toBeTruthy();
+    const notes = screen.getByRole('region', { name: 'Credit notes' });
+    expect(within(notes).getByText('HC-OCN-2610-001').closest('a')!.getAttribute('href')).toBe('/scm/credit-notes/n1');
+    expect(within(notes).getByText('Rental discount')).toBeTruthy();
+    expect(within(screen.getByRole('complementary', { name: 'Trail' })).getByText('Received · HC-ODR-2609-004')).toBeTruthy();
+    view.unmount();
+    openBill('b2');
+    expect(within(screen.getByRole('region', { name: 'Receipts' })).getByText('No receipt yet.')).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Credit notes' })).toBeNull();
   });
 
   test('Cancel bill — while nothing was received — asks inline, then sends the bill id', () => {

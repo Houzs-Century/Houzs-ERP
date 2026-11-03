@@ -137,6 +137,8 @@ const ScmArInvoicesV2 = lazy(() => import("./pages/scm-v2/ArInvoices").then((m) 
 const ScmDepositInvoiceDocV2 = lazy(() => import("./pages/scm-v2/money-in/DepositInvoiceDoc").then((m) => ({ default: m.DepositInvoiceDoc })));
 const ScmDebtorBillDocV2 = lazy(() => import("./pages/scm-v2/money-in/DebtorBillDoc").then((m) => ({ default: m.DebtorBillDoc })));
 const ScmSalesInvoiceDocV2 = lazy(() => import("./pages/scm-v2/money-in/SalesInvoiceDoc").then((m) => ({ default: m.SalesInvoiceDoc })));
+const ScmOfficialReceiptDocV2 = lazy(() => import("./pages/scm-v2/money-in/OfficialReceiptDoc").then((m) => ({ default: m.OfficialReceiptDoc })));
+const ScmDebtorReceiptDocV2 = lazy(() => import("./pages/scm-v2/money-in/DebtorReceiptDoc").then((m) => ({ default: m.DebtorReceiptDoc })));
 const ScmPaymentRequestsV2 = lazy(() => import("./pages/scm-v2/PaymentRequests").then((m) => ({ default: m.PaymentRequests })));
 const ScmProductRequestsV2 = lazy(() => import("./pages/scm-v2/ProductRequests").then((m) => ({ default: m.ProductRequests })));
 const ScmOfficialDocsV2 = lazy(() => import("./pages/scm-v2/OfficialDocs").then((m) => ({ default: m.OfficialDocs })));
@@ -840,6 +842,8 @@ export default function App() {
         <Route path="/scm/other-debtors" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOtherDebtorsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/receipts" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmReceiptsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/official-receipts" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOfficialReceiptsV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/receipts/official/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOfficialReceiptDocV2 /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/receipts/debtor/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmDebtorReceiptDocV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/ap-invoices" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmApInvoicesV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/ar-invoices" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmArInvoicesV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/ar-invoices/deposit/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmDepositInvoiceDocV2 /></Scm2990Shell></ScmGuard>} />

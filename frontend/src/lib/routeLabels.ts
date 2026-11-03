@@ -12,6 +12,8 @@ const ROUTE_LABELS: Array<[RegExp, string]> = [
   [/^\/scm\/ar-invoices\/deposit\/.+$/, "Deposit invoice"],
   [/^\/scm\/ar-invoices\/bills\/.+$/, "Debtor bill"],
   [/^\/scm\/ar-invoices\/sales\/.+$/, "Sales invoice"],
+  [/^\/scm\/receipts\/official\/.+$/, "Official receipt"],
+  [/^\/scm\/receipts\/debtor\/.+$/, "Debtor receipt"],
   [/^\/orders\/.+$/, "Sales Order"],
   [/^\/orders$/, "Sales Orders"],
   [/^\/delivery-orders$/, "Delivery Orders"],

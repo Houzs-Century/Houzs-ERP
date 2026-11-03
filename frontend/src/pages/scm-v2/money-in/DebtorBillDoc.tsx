@@ -15,7 +15,7 @@ import {
   postableAccounts, useAccounts, useCancelDebtorBill, useCreateDebtorBill, useOtherDebtors, useUpdateDebtorBill,
   type DebtorBill, type DebtorBillLine,
 } from '../../../vendor/scm/lib/accounting-queries';
-import { useArBillDetail } from '../../../vendor/scm/lib/ar-invoice-queries';
+import { useArBillDetail, type ArBillDetail } from '../../../vendor/scm/lib/ar-invoice-queries';
 import { generateDebtorBillPdf } from '../../../vendor/scm/lib/debtor-bill-pdf';
 import { partyAddressLines } from '../../../vendor/scm/lib/debtor-party';
 import { SearchCombo } from '../../../vendor/scm/components/SearchCombo';
@@ -24,6 +24,8 @@ import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
 import { useToastOptional } from '../../../hooks/useToast';
 import { DataTable, type Column } from '../../../components/DataTable';
 import { AccountCell } from '../JournalEntryCards';
+import { FinanceDocLink } from '../finance/FinanceDocLink';
+import { pvStage } from '../PvDocParts';
 import { DebtorBillForm, type BillFormSubmit, type BillFormValues } from '../DebtorBillForm';
 import formStyles from '../SalesOrderDetail.module.css';
 import { AskBanner, type Ask } from './AskBanner';
@@ -32,7 +34,8 @@ import {
   type DocAction, type DocFact,
 } from './MoneyInDocPage';
 import { liveJournal, useDocJournals } from './moneyInDocQueries';
-import { debtorBillTag } from './moneyInStatus';
+import { debtorBillTag, debtorReceiptTag, noteTag } from './moneyInStatus';
+import { StatusTag } from './MoneyInParts';
 import { moneyInDocHref, moneyInListOf } from './moneyInDocs';
 import s from './MoneyInDoc.module.css';
 
@@ -46,6 +49,28 @@ const fromBill = (b: DebtorBill, copy: boolean): BillFormValues => ({
   notes: b.notes ?? '',
   lines: (b.lines ?? []).map((l, i) => ({ rid: i + 1, description: l.description ?? '', creditAccountCode: l.credit_account_code ?? '', amountSen: l.amount_sen, projectId: l.project_id ?? null })),
 });
+
+type BillReceipt = NonNullable<ArBillDetail['receipts']>[number];
+type BillNote = NonNullable<ArBillDetail['creditNotes']>[number];
+
+/* What came in on the bill (batch 5 §8.3 c8): each receipt with its stage and the amount on this bill. */
+const RECEIPT_COLUMNS: Column<BillReceipt>[] = [
+  { key: 'receipt_no', label: 'Receipt', getValue: (r) => r.number, render: (r) => <FinanceDocLink to={moneyInDocHref('debtorReceipt', r.id)}>{r.number}</FinanceDocLink> },
+  { key: 'date', label: 'Date', render: (r) => fmtDate(r.date), getValue: (r) => r.date ?? '' },
+  {
+    key: 'stage', label: 'Stage', getValue: (r) => r.status,
+    render: (r) => <StatusTag tag={debtorReceiptTag(pvStage({ status: r.status, submitted_at: r.submittedAt, checked_at: r.checkedAt }))} />,
+  },
+  { key: 'amount', label: 'On this bill', align: 'right', render: (r) => fmtSen(r.amountSen), getValue: (r) => r.amountSen },
+];
+/* The other-debtor credit notes allocated to it, and what each actually took off. */
+const NOTE_COLUMNS: Column<BillNote>[] = [
+  { key: 'note', label: 'Note', getValue: (n) => n.number, render: (n) => <FinanceDocLink to={moneyInDocHref('note', n.id)}>{n.number}</FinanceDocLink> },
+  { key: 'date', label: 'Date', render: (n) => fmtDate(n.date), getValue: (n) => n.date ?? '' },
+  { key: 'status', label: 'Status', render: (n) => <StatusTag tag={noteTag(n.status)} />, getValue: (n) => n.status },
+  { key: 'reason', label: 'Reason', width: '240px', render: (n) => n.reason ?? '—', getValue: (n) => n.reason ?? '' },
+  { key: 'applied_amount', label: 'Knocked off', align: 'right', render: (n) => fmtSen(n.appliedSen), getValue: (n) => n.appliedSen },
+];
 
 /** Money already received is why a bill can't be cancelled (the server's rule, in the redesign's words). */
 const RECEIVED_REFUSAL = 'This bill has money received on it, so it can’t be cancelled.';
@@ -210,12 +235,23 @@ export const DebtorBillDoc = () => {
       trail={byTime([
         { key: 'raised', act: isDn ? 'Debit note raised' : 'Bill raised', when: bill.created_at ?? null },
         ...journalTrail(journals.data),
+        ...(d.receipts ?? []).filter((r) => r.status === 'POSTED').map((r) => ({ key: `odr-${r.id}`, act: `Received · ${r.number}`, when: r.approvedAt ?? r.date, note: fmtSen(r.amountSen) })),
       ])}
     >
       <DocSection title="Lines">
         <DataTable<DebtorBillLine> tableId="mi-bill-lines" embedded columns={lineColumns} rows={bill.lines ?? []} getRowKey={(l) => l.id}
           emptyLabel="No lines on this bill." />
       </DocSection>
+      <DocSection title="Receipts">
+        {(d.receipts ?? []).length === 0
+          ? <div className={s.empty}>No receipt yet.</div>
+          : <DataTable<BillReceipt> tableId="mi-bill-receipts" embedded columns={RECEIPT_COLUMNS} rows={d.receipts ?? []} getRowKey={(r) => r.id} />}
+      </DocSection>
+      {(d.creditNotes ?? []).length > 0 && (
+        <DocSection title="Credit notes">
+          <DataTable<BillNote> tableId="mi-bill-notes" embedded columns={NOTE_COLUMNS} rows={d.creditNotes ?? []} getRowKey={(n) => n.id} />
+        </DocSection>
+      )}
     </MoneyInDocPage>
   );
 };

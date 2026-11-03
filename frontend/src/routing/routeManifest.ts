@@ -81,6 +81,8 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/other-debtors",
   "/scm/receipts",
   "/scm/official-receipts",
+  "/scm/receipts/official/:id",
+  "/scm/receipts/debtor/:id",
   "/scm/ap-invoices",
   "/scm/ap-invoices/scan",
   "/scm/ap-invoices/:id",

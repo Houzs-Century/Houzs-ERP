@@ -41,6 +41,8 @@ export type DocAction = {
   kind?: 'primary' | 'danger';
   /** The step is refused: greyed, and this says why. */
   refused?: string | null;
+  /** A word on the button when it is not refused. */
+  hint?: string;
   busy?: boolean;
 };
 
@@ -105,7 +107,7 @@ export function journalTrail(j: DocJournals | undefined): TrailStep[] {
 }
 
 /** The Books line: the live entry's accounts, else what reversed it, else the rule's preview. */
-export function DocBooks({ journals, loading, accountName, preview, prefix }: {
+export function DocBooks({ journals, loading, accountName, preview, prefix, tail }: {
   journals: DocJournals | undefined;
   loading: boolean;
   accountName: (code: string) => string | null;
@@ -113,10 +115,12 @@ export function DocBooks({ journals, loading, accountName, preview, prefix }: {
   preview?: ReactNode;
   /** Words before a posted entry's accounts — default `Posted`. */
   prefix?: string;
+  /** Words after a posted entry (`knocks off the bills below`). */
+  tail?: string;
 }) {
   if (loading) return <>Reading the journal…</>;
   const live = liveJournal(journals);
-  if (live) return <><b>{prefix ?? 'Posted'}</b> · {booksSentence(live, accountName)} · {live.je_no}</>;
+  if (live) return <><b>{prefix ?? 'Posted'}</b> · {booksSentence(live, accountName)} · {live.je_no}{tail ? ` · ${tail}` : ''}</>;
   const reversed = journals?.booked[0];
   if (reversed) return <><b>Reversed</b> · {booksSentence(reversed, accountName)} · {reversed.je_no}</>;
   return <>{preview ?? 'Nothing posted'}</>;
@@ -186,7 +190,7 @@ export function MoneyInDocPage({
             <button type="button" className={ui.btn} onClick={onPrint} disabled={printing}><Printer size={14} /> {printing ? 'Preparing…' : 'Print'}</button>
           )}
           {actions.map((a) => (
-            <button key={a.label} type="button" title={a.refused ?? undefined} disabled={Boolean(a.refused) || a.busy}
+            <button key={a.label} type="button" title={a.refused ?? a.hint} disabled={Boolean(a.refused) || a.busy}
               className={`${ui.btn} ${a.kind === 'primary' ? ui.btnPrimary : a.kind === 'danger' ? ui.btnDanger : ''}`}
               onClick={a.onClick}>
               {a.label}

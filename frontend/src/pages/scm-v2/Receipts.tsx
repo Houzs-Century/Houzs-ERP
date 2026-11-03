@@ -54,6 +54,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { fmtDate, fmtSen } from '../../vendor/shared/format';
 import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
+import { moneyInDocHref } from './money-in/moneyInDocs';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -92,7 +93,7 @@ const buildReceiptColumns = (h: {
     accessor: (r) => (
       <span className={cancelledDocNoClass(r.status)} style={{ fontVariantNumeric: 'tabular-nums' }}>
         {r.kind === 'DEBTOR'
-          ? <Link to={`/scm/ar-invoices?debtor=${r.debtorId ?? ''}`} style={{ color: 'inherit' }}>{r.number}</Link>
+          ? <Link to={moneyInDocHref('debtorReceipt', r.id)} style={{ color: 'inherit' }}>{r.number}</Link>
           : r.kind === 'CUSTOMER'
             ? <Link to={`/scm/sales-orders/${r.number}`} style={{ color: 'inherit' }}>{r.number}</Link>
             : r.number}
