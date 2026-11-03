@@ -24,6 +24,7 @@
  * SKIPPED, not failed, without TEST_DATABASE_URL, matching the other pg suites.
  */
 import postgres, { type Sql } from 'postgres';
+import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import {
   AUDIT, AUDIT_KEEP, CHILD, DOWNSTREAM, UNCLASSIFIED,
@@ -302,6 +303,12 @@ describePg('delete-test-so — the 2990-SO-2611-010 references and the ledger gu
     expect(classifyReference('scm.pwp_codes', children)).toBe(CHILD);
     // A trigger re-inserts a row on the delete itself, so it is kept, not deleted.
     expect(classifyReference('scm.delivery_board_changes', children)).toBe(AUDIT);
+  });
+
+  test('document_cancel_requests is a CHILD and its SO-only filter is in the script', async () => {
+    expect(classifyReference('scm.document_cancel_requests', new Set(['scm.document_cancel_requests']))).toBe(CHILD);
+    const script = readFileSync(new URL('../scripts/delete-test-so.mjs', import.meta.url), 'utf8');
+    expect(script).toContain(`table: "scm.document_cancel_requests", cols: ["doc_number"], where: "doc_type = 'SO'"`);
   });
 
   test('no blockers when the receipt is a draft and nothing is posted', async () => {
