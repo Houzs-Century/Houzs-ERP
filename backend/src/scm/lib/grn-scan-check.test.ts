@@ -1,0 +1,42 @@
+/* Scan, check, then create (owner 2026-11-03): the working copy a delivery-order scan keeps for the operator. */
+import { describe, expect, test } from 'vitest';
+import { blockedReason, buildReview, cleanReview, duplicateOf, picksOf, type GrnReview } from './grn-scan-check';
+import type { GrnMatchResult, OpenPoLine } from './grn-scan-match';
+
+const parsed = { supplierName: 'DIGLANT', poNo: 'PO-1', doNo: 'DO 77', deliveryDate: '2026-11-03', lines: [
+  { itemCode: 'A1', barcode: null, description: 'Mattress Q', qty: 2, poNo: null, rack: null },
+  { itemCode: 'ZZ', barcode: null, description: 'Free pillow', qty: 1, poNo: null, rack: null },
+] };
+const match = { picks: [{ poItemId: 'pi-1', qty: 2 }], unmatched: [{ line: parsed.lines[1], reason: 'not_on_po', candidatePoItemIds: [] }] } as unknown as GrnMatchResult;
+const open = new Map<string, OpenPoLine>([['pi-1', { poItemId: 'pi-1', poId: 'p', poNumber: 'HC-PO-1', supplierId: 's1', itemCode: 'A1', materialName: null, supplierSku: null, remaining: 2, locationCode: 'KL' }]]);
+
+describe('grn scan check', () => {
+  test('matched lines arrive tied to their PO line; unplaced lines arrive untied with what was printed', () => {
+    const r = buildReview(parsed, 's1', match);
+    expect(r).toMatchObject({ supplierId: 's1', supplierRead: 'DIGLANT', doNo: 'DO 77', deliveryDate: '2026-11-03' });
+    expect(r.lines.map((l) => [l.poItemId, l.qty, l.read?.itemCode ?? null])).toEqual([['pi-1', 2, null], [null, 1, 'ZZ']]);
+  });
+  test('a read the matcher never saw keeps every printed line', () => {
+    expect(buildReview(parsed, null, null).lines).toHaveLength(2);
+  });
+  test('the saved edit keeps known fields only, drops a bad date and a negative qty', () => {
+    const r = cleanReview({ supplierId: 's1', doNo: ' DO 77 ', deliveryDate: '03/11/2026', lines: [{ key: 'k', poItemId: 'pi-1', qty: -3, evil: 1 }], extra: 'x' });
+    expect(r).toEqual({ supplierId: 's1', supplierRead: null, doNo: 'DO 77', deliveryDate: null, notes: null, lines: [{ key: 'k', poItemId: 'pi-1', qty: 0, read: null }] });
+  });
+  test('Create converts tied lines with a qty, one pick per PO line', () => {
+    const r = { lines: [{ poItemId: 'pi-1', qty: 1 }, { poItemId: 'pi-1', qty: 1 }, { poItemId: null, qty: 5 }, { poItemId: 'pi-2', qty: 0 }] } as GrnReview;
+    expect(picksOf(r)).toEqual([{ poItemId: 'pi-1', qty: 2 }]);
+  });
+  test('blocked: nothing tied, a closed line, more than owed', () => {
+    expect(blockedReason({ lines: [] } as unknown as GrnReview, open)).toMatch(/No line/);
+    expect(blockedReason({ lines: [{ poItemId: 'gone', qty: 1 }] } as GrnReview, open)).toMatch(/no longer open/);
+    expect(blockedReason({ lines: [{ poItemId: 'pi-1', qty: 3 }] } as GrnReview, open)).toMatch(/3 is more than the 2 still owed/);
+    expect(blockedReason({ lines: [{ poItemId: 'pi-1', qty: 2 }] } as GrnReview, open)).toBeNull();
+  });
+  test('already received: the same D.O. no of the same supplier, spacing and case aside', () => {
+    const existing = [{ grnNumber: 'HC-GRN-1', supplierId: 's1', deliveryNoteRef: 'do77' }, { grnNumber: 'HC-GRN-2', supplierId: 's2', deliveryNoteRef: 'DO 88' }];
+    expect(duplicateOf({ supplierId: 's1', doNo: 'DO 77' } as GrnReview, existing)).toBe('HC-GRN-1');
+    expect(duplicateOf({ supplierId: 's1', doNo: 'DO 88' } as GrnReview, existing)).toBeNull();
+    expect(duplicateOf({ supplierId: 's1', doNo: null } as GrnReview, existing)).toBeNull();
+  });
+});

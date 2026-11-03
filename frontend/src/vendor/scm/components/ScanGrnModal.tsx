@@ -1,257 +1,282 @@
 // ----------------------------------------------------------------------------
-// ScanGrnModal — "Scan Delivery Order" on the Goods Receipt list.
-//
-// The GR twin of ScanOrderModal: photo a supplier DELIVERY ORDER, we read it in
-// the background and CONVERT the matching open PO line(s) into a DRAFT goods
-// receipt (never a standalone GRN). EVERY scan is a background job on the same
-// scan_jobs pipeline (document_type='GR'):
-//   1. Operator drops / snaps the delivery-order photo(s) (one or more pages;
-//      jpeg/png/webp/PDF).
-//   2. POST /scan-gr/enqueue uploads them, queues a server job, returns 202
-//      {job_id}. The await is the upload only — seconds, not the OCR.
-//   3. The Worker reads the DO, matches its lines to our open PO lines and mints
-//      a DRAFT GRN. If it cannot confidently match a PO, NOTHING is created and
-//      the job lands NEEDS-REVIEW with a note — the operator receives from the
-//      PO by hand. The operator can close this window once the upload lands.
-//
-// A scan NEVER posts stock: the DRAFT is reviewed + posted from the GRN list.
-// Reuses the shared scan-jobs helpers + authedFetch + the SO modal's styling.
+// ScanGrnModal — "Scan Delivery Order" on the Goods Receipt list: upload,
+// check, then create (owner 2026-11-03, after Hookka's scan modal).
+//   1. Upload: drop any number of files — one PDF holding twenty delivery
+//      orders, or twenty files. The server splits each PDF into its documents
+//      and reads every one in the background (POST /scan-gr/check/upload).
+//   2. Check: each delivery order is a card — supplier, D.O. no, date, and the
+//      lines with the PO line each receives into. Edit one, or select several
+//      and set their date together. Every edit is saved on the server, so the
+//      operator can close this, log out, and come back to the same list.
+//      One already received under another goods receipt says so ("Already
+//      HC-GRN-…"); it starts unticked and can still be created or deleted.
+//   3. Create: the ticked cards become DRAFT goods receipts, converted from
+//      their PO lines. Nothing posts stock until the draft is posted.
 // ----------------------------------------------------------------------------
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { useQuery } from '@tanstack/react-query';
-import { Camera, CheckCircle2, Loader2, Plus, X } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { CheckCircle2, Plus, Trash2, Upload, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { authedFetch } from '../lib/authed-fetch';
 import { compressForOcr } from '../../shared/image-compress';
+import { writeFailedAs } from '../lib/mutation-error';
 import {
-  normalizeJobs,
-  isActiveJob,
-  jobTs,
-  hhmm,
-  type ScanJob,
-  type ScanJobsResp,
-} from '../lib/scan-jobs';
-import { ScanCodesPanel } from './ScanCodesPanel';
+  PENDING_KEY, createFromScans, discardScans, fetchPending, fetchPoLines, localBlock, saveReview, uploadScans,
+  type CheckPoLine, type CreateResult, type GrnReview,
+} from '../lib/scan-gr-check';
+import { DateField } from './DateField';
+import { ScanGrnCheckCard } from './ScanGrnCheckCard';
 import styles from './ScanOrderModal.module.css';
 
 const ACCEPT = 'image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf';
 const isAcceptedFile = (f: File): boolean =>
   /^(image\/(jpeg|png|webp)|application\/pdf)$/.test(f.type) || /\.(jpe?g|png|webp|pdf)$/i.test(f.name);
 
-type EnqueueResp = { job_id: string; status: string };
-
 export function ScanGrnModal({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate();
-  const [files, setFiles] = useState<File[]>([]);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [enqueuedJobIds, setEnqueuedJobIds] = useState<string[]>([]);
-  const [dragOver, setDragOver] = useState(false);
-  const [codesOpen, setCodesOpen] = useState<string | null>(null);
+  const qc = useQueryClient();
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [edits, setEdits] = useState<Partial<Record<string, GrnReview>>>({});
+  const [ticked, setTicked] = useState<Partial<Record<string, boolean>>>({});
+  const [extraLines, setExtraLines] = useState<CheckPoLine[]>([]);
+  const [bulkDate, setBulkDate] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [results, setResults] = useState<CreateResult[]>([]);
+  const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
-  const busy = submitting;
+  /* What is waiting for this user — read on open, so a batch left yesterday comes
+     straight back; polled while any document is still being read. */
+  const q = useQuery({
+    queryKey: PENDING_KEY,
+    queryFn: fetchPending,
+    staleTime: 0,
+    refetchInterval: (query) => (query.state.data?.data.documents.some((d) => d.state === 'reading') ? 4000 : false),
+  });
+  const docs = useMemo(() => q.data?.data.documents ?? [], [q.data]);
+  const suppliers = q.data?.data.suppliers ?? [];
+  const poLines = useMemo(() => {
+    const m = new Map<string, CheckPoLine>();
+    for (const l of [...(q.data?.data.poLines ?? []), ...extraLines]) m.set(l.poItemId, l);
+    return m;
+  }, [q.data, extraLines]);
+  const reviewOf = useCallback((id: string) => edits[id] ?? docs.find((d) => d.id === id)?.review ?? null, [edits, docs]);
+
+  // A newly read card starts ticked, unless it repeats a receipt already made.
+  useEffect(() => {
+    setTicked((cur) => {
+      const next = { ...cur };
+      for (const d of docs) if (d.state === 'pending' && next[d.id] === undefined) next[d.id] = !d.duplicateOf;
+      return next;
+    });
+  }, [docs]);
+
+  const showUpload = adding || (!q.isLoading && docs.length === 0 && results.length === 0);
 
   const addFiles = (list: FileList | File[] | null) => {
-    const accepted = Array.from(list ?? []).filter(isAcceptedFile);
-    if (accepted.length === 0) {
-      if ((list?.length ?? 0) > 0) setError('Unsupported file — use a JPEG, PNG, WEBP or PDF.');
-      return;
-    }
-    setFiles((cur) => [...cur, ...accepted]);
-    setError(null);
-  };
-  const removeFile = (index: number) => {
-    if (busy) return;
-    setFiles((cur) => cur.filter((_, k) => k !== index));
+    const ok = Array.from(list ?? []).filter(isAcceptedFile);
+    if (ok.length) setFiles((cur) => [...cur, ...ok]);
   };
 
-  /* Results — poll GET /scan-gr/jobs (company-scoped, GR-only) and show only the
-     jobs this session enqueued. Every 4s while any is queued/running. */
-  const { data: jobsData } = useQuery({
-    queryKey: ['scan-grn-modal-jobs'],
-    enabled: enqueuedJobIds.length > 0,
-    queryFn: () => authedFetch<ScanJobsResp>('/scan-gr/jobs'),
-    staleTime: 0,
-    retry: false,
-    refetchInterval: (query) => {
-      if (enqueuedJobIds.length === 0) return false;
-      const tracked = normalizeJobs(query.state.data).filter((j) => enqueuedJobIds.includes(j.id));
-      const allSettled = tracked.length === enqueuedJobIds.length && !tracked.some(isActiveJob);
-      return allSettled ? false : 4000;
-    },
-  });
-  const trackedJobs = useMemo<ScanJob[]>(() => {
-    const byId = new Map(normalizeJobs(jobsData).map((j) => [j.id, j]));
-    return enqueuedJobIds
-      .map((id) => byId.get(id))
-      .filter((j): j is ScanJob => Boolean(j))
-      .sort((a, b) => jobTs(a.createdAt) - jobTs(b.createdAt));
-  }, [jobsData, enqueuedJobIds]);
-
-  // One /scan-gr/enqueue POST — every page of the delivery order under `file`
-  // (the repeated-`file` contract the backend + SO scanner share). Downscale
-  // first, same helper the SO scan uses; a PDF passes through untouched.
-  const runScan = async () => {
-    if (submitting || files.length === 0) return;
-    setSubmitting(true);
-    setError(null);
+  const upload = async () => {
+    if (uploading || files.length === 0) return;
+    setUploading(true);
     try {
-      const fd = new FormData();
-      for (const f of files) fd.append('file', await compressForOcr(f));
-      const r = await authedFetch<EnqueueResp>('/scan-gr/enqueue', { method: 'POST', body: fd });
-      if (r.job_id) {
-        setEnqueuedJobIds((prev) => [...prev, r.job_id]);
-        setFiles([]); // ready for the next delivery order
-      }
-    } catch {
-      setError('The delivery order could not be queued. Please try again.');
+      const ready = await Promise.all(files.map((f) => compressForOcr(f)));
+      await uploadScans(ready);
+      setFiles([]);
+      setAdding(false);
+      setResults([]);
+      await qc.invalidateQueries({ queryKey: PENDING_KEY });
+    } catch (e) {
+      writeFailedAs('The files were not uploaded')(e);
     } finally {
-      setSubmitting(false);
+      setUploading(false);
     }
   };
 
-  useEffect(() => () => { /* jobs keep running server-side after close */ }, []);
+  // Each edit shows at once and is saved on the server shortly after.
+  const edit = (id: string, review: GrnReview) => {
+    setEdits((cur) => ({ ...cur, [id]: review }));
+    clearTimeout(timers.current[id]);
+    timers.current[id] = setTimeout(() => { saveReview(id, review).catch(writeFailedAs('That change was not saved')); }, 600);
+    if (review.supplierId && ![...poLines.values()].some((l) => l.supplierId === review.supplierId)) {
+      fetchPoLines(review.supplierId).then((ls) => setExtraLines((cur) => [...cur, ...ls])).catch(writeFailedAs('Could not load that supplier\'s PO lines'));
+    }
+  };
+  // Saves still waiting go out before anything is created or the window shuts.
+  const flush = async () => {
+    const pending = Object.entries(timers.current);
+    timers.current = {};
+    for (const [, t] of pending) clearTimeout(t);
+    await Promise.all(pending.map(([id]) => { const r = edits[id]; return r ? saveReview(id, r) : null; }));
+  };
+  useEffect(() => () => { for (const t of Object.values(timers.current)) clearTimeout(t); }, []);
+
+  const pending = docs.filter((d) => d.state === 'pending');
+  const blockOf = (id: string) => { const r = reviewOf(id); return r ? localBlock(r, poLines) : 'Still reading.'; };
+  const selected = pending.filter((d) => ticked[d.id]);
+  const creatable = selected.filter((d) => !blockOf(d.id));
+  const reading = docs.filter((d) => d.state === 'reading').length;
+
+  const remove = async (ids: string[]) => {
+    try {
+      await discardScans(ids);
+      setEdits((cur) => { const n = { ...cur }; for (const id of ids) delete n[id]; return n; });
+      await qc.invalidateQueries({ queryKey: PENDING_KEY });
+    } catch (e) { writeFailedAs('Could not delete')(e); }
+  };
+
+  const create = async () => {
+    if (creating || creatable.length === 0) return;
+    setCreating(true);
+    try {
+      await flush();
+      const res = await createFromScans(creatable.map((d) => d.id));
+      setResults(res);
+      setEdits((cur) => { const n = { ...cur }; for (const r of res) if (r.ok) delete n[r.id]; return n; });
+      await qc.invalidateQueries({ queryKey: PENDING_KEY });
+      void qc.invalidateQueries({ queryKey: ['grns'] });
+    } catch (e) {
+      writeFailedAs('The goods receipts were not created')(e);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const applyBulkDate = () => {
+    if (!bulkDate) return;
+    for (const d of selected) { const r = reviewOf(d.id); if (r) edit(d.id, { ...r, deliveryDate: bulkDate }); }
+  };
+
+  const close = () => { void flush(); onClose(); };
+  const made = results.filter((r) => r.ok).flatMap((r) => r.grnNumbers ?? []);
+  const refused = results.filter((r) => !r.ok);
 
   return (
-    <div className={styles.modal} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className={styles.panel}>
+    <div className={styles.modal} onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
+      <div className={styles.panel} style={{ maxWidth: 1240, width: '96vw' }}>
         <div className={styles.head}>
           <div>
             <div className={styles.eyebrow}>Goods Receipt</div>
-            <h2 className={styles.title}>Scan Delivery Order</h2>
-            <p className={styles.sub}>
-              Photo a supplier delivery order and we read it in the background,
-              then create a draft goods receipt from the matching purchase order —
-              ready for you to review and post. You can close this window as soon
-              as the photos finish uploading.
-            </p>
+            <h2 className={styles.title}>Scan Delivery Orders</h2>
+            <p className={styles.sub}>Drop the supplier delivery orders — one PDF with many, or many files. We read each one, you check it, then create the draft goods receipts. You can close this and come back; nothing is lost.</p>
           </div>
-          <button type="button" className={styles.closeBtn} onClick={onClose} aria-label="Close">
-            <X size={18} strokeWidth={1.75} />
-          </button>
+          <button type="button" className={styles.closeBtn} onClick={close} aria-label="Close"><X size={18} strokeWidth={1.75} /></button>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, padding: '0 24px 8px', fontSize: 12 }}>
+          {['1. Upload', '2. Check', '3. Create'].map((s, i) => {
+            const at = showUpload ? 0 : results.length > 0 && pending.length === 0 ? 2 : 1;
+            return <span key={s} className={`${styles.chip} ${i === at ? styles.chipTeal : i < at ? styles.chipGreen : styles.chipGrey}`}>{s}</span>;
+          })}
         </div>
 
         <div className={styles.body}>
-          {error && <div className={styles.error}>{error}</div>}
+          {q.error && <div className={styles.error}>Could not load your scans: {(q.error as Error).message}</div>}
 
-          <input
-            ref={inputRef}
-            type="file"
-            accept={ACCEPT}
-            multiple
-            style={{ display: 'none' }}
-            onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }}
-          />
-
-          <div className={styles.slot}>
-            <span className={styles.slotLabel}>Delivery order {files.length > 0 ? `· ${files.length} page${files.length === 1 ? '' : 's'}` : ''}</span>
-            {files.map((file, i) => (
-              <div key={`${file.name}-${i}`} className={styles.slotFilled}>
-                <Camera size={20} strokeWidth={1.5} />
-                <span className={styles.slotFileName}>{file.name}</span>
-                {!busy && (
-                  <button
-                    type="button"
-                    className={styles.removeBtn}
-                    onClick={() => removeFile(i)}
-                    aria-label={`Remove page ${i + 1}`}
-                  >
-                    <X size={14} strokeWidth={1.75} /> Remove
-                  </button>
-                )}
+          {showUpload && (
+            <>
+              <input ref={inputRef} type="file" accept={ACCEPT} multiple style={{ display: 'none' }} onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
+              <div
+                className={`${styles.slotZone} ${dragOver ? styles.slotZoneActive : ''}`}
+                onClick={() => { if (!uploading) inputRef.current?.click(); }}
+                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
+              >
+                <Upload size={22} strokeWidth={1.5} />
+                <div>Drop delivery orders here, or click — PDF, JPEG, PNG, WEBP. A PDF with many delivery orders is split for you.</div>
               </div>
-            ))}
-            <div
-              className={`${styles.slotZone} ${dragOver ? styles.slotZoneActive : ''}`}
-              onClick={() => { if (!busy) inputRef.current?.click(); }}
-              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
-            >
-              {files.length === 0 ? <Camera size={22} strokeWidth={1.5} /> : <Plus size={22} strokeWidth={1.5} />}
-              <div>{files.length === 0 ? 'Drop the delivery order, or click' : 'Add another page'}</div>
-            </div>
-          </div>
-
-          {files.length > 0 && (
-            <Button variant="primary" size="sm" onClick={() => void runScan()} disabled={busy}>
-              {submitting ? 'Uploading…' : 'Scan delivery order'}
-            </Button>
+              {files.map((f, i) => (
+                <div key={`${f.name}-${i}`} className={styles.slotFilled}>
+                  <span className={styles.slotFileName}>{f.name}</span>
+                  {!uploading && <button type="button" className={styles.removeBtn} onClick={() => setFiles((cur) => cur.filter((_, k) => k !== i))} aria-label={`Remove ${f.name}`}><X size={14} /></button>}
+                </div>
+              ))}
+            </>
           )}
 
-          {enqueuedJobIds.length > 0 && (
-            <div>
-              <div className={styles.sectionLabel} style={{ marginBottom: 6 }}>Scanned this session</div>
-              <div className={styles.results}>
-                {trackedJobs.length === 0 && (
-                  <div className={styles.resultRow}>
-                    <span className={`${styles.chip} ${styles.chipGrey}`}>Queued</span>
-                    <div className={styles.resultMain}>Uploading — the reading finishes in the background.</div>
-                  </div>
-                )}
-                {trackedJobs.map((j) => {
-                  const active = isActiveJob(j);
-                  const done = j.status === 'done';
-                  const failed = j.status === 'error';
-                  // A 'done' job with a linked GRN is a draft; 'done' with only a
-                  // note is NEEDS-REVIEW (no doc created — matcher couldn't map a PO).
-                  const needsReview = done && !j.linkedDocNo;
-                  const chipClass = done ? (needsReview ? styles.chipYellow : styles.chipTeal) : failed ? styles.chipYellow : styles.chipGrey;
-                  const chipLabel = active ? (j.status === 'running' ? 'Reading…' : 'Queued') : done ? (needsReview ? 'Review' : 'Draft') : failed ? 'Failed' : j.status;
-                  return (
-                    <div key={j.id} className={styles.resultRow}>
-                      <span className={`${styles.chip} ${chipClass}`}>
-                        {active && <Loader2 size={11} strokeWidth={2} className={styles.spin} style={{ marginRight: 4 }} />}
-                        {done && !needsReview && <CheckCircle2 size={11} strokeWidth={2} style={{ marginRight: 4 }} />}
-                        {chipLabel}
-                      </span>
-                      <div className={styles.resultMain}>
-                        {done
-                          ? (j.linkedDocNo
-                              ? (j.linkedDocId
-                                  ? <>Draft goods receipt{' '}
-                                      <button type="button" className={styles.docLink} onClick={() => { onClose(); navigate(`/scm/grns/${j.linkedDocId}`); }}>{j.linkedDocNo}</button>
-                                      {' '}— open it to check the lines, add what is missing, set racks and post.</>
-                                  : `Draft goods receipt ${j.linkedDocNo} — open it to review and post.`)
-                              : (j.error || 'Needs review — open the PO and receive by hand.'))
-                          : failed
-                            ? (j.error || "Couldn't read the delivery order.")
-                            : 'Reading the delivery order…'}
-                        {done && j.linkedDocNo && j.error && (
-                          <div className={styles.resultSub}>{j.error}</div>
-                        )}
-                        {done && (
-                          <button type="button" className={styles.docLink} style={{ display: 'block', marginTop: 4 }} onClick={() => setCodesOpen(codesOpen === j.id ? null : j.id)}>
-                            {codesOpen === j.id ? 'Hide supplier codes' : 'Match supplier codes'}
-                          </button>
-                        )}
-                        {done && codesOpen === j.id && <ScanCodesPanel jobId={j.id} jobsQueryKey={['scan-grn-modal-jobs']} />}
-                      </div>
-                      <span style={{ flex: 'none', fontSize: 11, color: 'var(--fg-muted)' }}>
-                        {jobTs(j.createdAt) ? hhmm(jobTs(j.createdAt)) : ''}
-                      </span>
+          {!showUpload && (
+            <>
+              {(made.length > 0 || refused.length > 0) && (
+                <div className={styles.results}>
+                  {made.length > 0 && (
+                    <div className={styles.resultRow}>
+                      <span className={`${styles.chip} ${styles.chipTeal}`}><CheckCircle2 size={11} /> Created</span>
+                      <div className={styles.resultMain}>{made.length} draft goods receipt{made.length === 1 ? '' : 's'}: {made.join(', ')}. Open each from the Goods Receipt list to post it.</div>
                     </div>
-                  );
-                })}
+                  )}
+                  {refused.map((r) => (
+                    <div key={r.id} className={styles.resultRow}>
+                      <span className={`${styles.chip} ${styles.chipYellow}`}>Not created</span>
+                      <div className={styles.resultMain}>{r.reason}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ fontWeight: 600 }}>{pending.length} delivery order{pending.length === 1 ? '' : 's'} to check{reading > 0 ? ` · ${reading} still reading` : ''}</div>
+                  <div className={styles.sub}>{selected.length} selected — open a card to edit it, then create.</div>
+                </div>
+                <span style={{ flex: 1 }} />
+                {selected.length > 1 && (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span className={styles.sub}>Received date for the selected</span>
+                    <DateField value={bulkDate} onChange={setBulkDate} aria-label="Received date for the selected" />
+                    <Button variant="secondary" size="sm" onClick={applyBulkDate} disabled={!bulkDate}>Apply</Button>
+                  </span>
+                )}
+                {pending.length > 0 && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
+                    <input type="checkbox" checked={selected.length === pending.length} onChange={(e) => setTicked(Object.fromEntries(pending.map((d) => [d.id, e.target.checked])))} /> All
+                  </label>
+                )}
+                {selected.length > 0 && <Button variant="secondary" size="sm" onClick={() => void remove(selected.map((d) => d.id))}><Trash2 size={13} /> Delete selected</Button>}
+                {docs.length > 0 && <Button variant="secondary" size="sm" onClick={() => void remove(docs.map((d) => d.id))}><Trash2 size={13} /> Clear all</Button>}
               </div>
-              <p className={styles.sub} style={{ marginTop: 8 }}>
-                Draft receipts land in the Goods Receipt list — open each to review every line, then post to receive stock.
-              </p>
-            </div>
+
+              {docs.map((d) => (
+                <ScanGrnCheckCard
+                  key={d.id}
+                  doc={d}
+                  review={reviewOf(d.id)}
+                  suppliers={suppliers}
+                  poLines={[...poLines.values()]}
+                  checked={!!ticked[d.id]}
+                  block={d.state === 'pending' ? blockOf(d.id) : null}
+                  onToggle={() => setTicked((cur) => ({ ...cur, [d.id]: !cur[d.id] }))}
+                  onChange={(r) => edit(d.id, r)}
+                  onDelete={() => void remove([d.id])}
+                />
+              ))}
+              {docs.length === 0 && results.length > 0 && <p className={styles.sub}>Nothing left to check.</p>}
+            </>
           )}
         </div>
 
         <div className={styles.foot}>
-          <Button variant="secondary" size="sm" onClick={onClose}>
-            {enqueuedJobIds.length > 0 || submitting ? 'Close' : 'Cancel'}
-          </Button>
-          {enqueuedJobIds.length > 0 && (
-            <Button variant="secondary" size="sm" onClick={() => { onClose(); navigate('/scm/grns'); }}>
-              Go to Goods Receipts
-            </Button>
+          {showUpload ? (
+            <>
+              <Button variant="secondary" size="sm" onClick={() => (docs.length > 0 ? setAdding(false) : close())}>{docs.length > 0 ? 'Back to the list' : 'Cancel'}</Button>
+              <Button variant="primary" size="sm" onClick={() => void upload()} disabled={uploading || files.length === 0}>
+                {uploading ? 'Uploading and splitting…' : `Read ${files.length || ''} file${files.length === 1 ? '' : 's'}`}
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button variant="secondary" size="sm" onClick={() => setAdding(true)}><Plus size={13} /> Add more files</Button>
+              {made.length > 0 && <Button variant="secondary" size="sm" onClick={() => { close(); navigate('/scm/grns'); }}>Go to Goods Receipts</Button>}
+              <Button variant="primary" size="sm" onClick={() => void create()} disabled={creating || creatable.length === 0}>
+                {creating ? 'Creating…' : `Create ${creatable.length} goods receipt${creatable.length === 1 ? '' : 's'} as DRAFT`}
+              </Button>
+            </>
           )}
         </div>
       </div>

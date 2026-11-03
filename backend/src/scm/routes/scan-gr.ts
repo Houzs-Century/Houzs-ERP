@@ -37,7 +37,8 @@ import {
   type UploadedImage,
 } from '../lib/scan-ocr';
 import { callClaudeGrExtract, emptyScanNote, loadGrnFewShot, type GrnExtracted } from '../lib/grn-scan-extract';
-import { draftFromScan, matchScan, toScanned, type ScanDraftOutcome } from '../lib/grn-scan-draft';
+import { buildNeedsReviewNote, draftFromScan, matchScan, toScanned, type ScanDraftOutcome } from '../lib/grn-scan-draft';
+import { buildReview } from '../lib/grn-scan-check';
 import { buildTeachOptions, saveScanCodes } from '../lib/grn-scan-codes';
 
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
@@ -167,6 +168,9 @@ async function runGrnScanJob(
     uploadedImages: UploadedImage[];
     firstBuffer: ArrayBuffer | null;
     imageKeys: string[];
+    // A check-first scan (scan-gr-check.ts): keep the read for the operator to
+    // check and edit instead of minting the draft.
+    review: boolean;
   },
 ): Promise<void> {
   const svc = serviceClient(env);
@@ -215,6 +219,14 @@ async function runGrnScanJob(
     });
     if (sampleId) await touch({ sample_id: sampleId });
     await storeGrnScanImage(env.SO_ITEM_PHOTOS, svc, sampleId, job.uploadedImages);
+
+    if (job.review) {
+      const ctx = parsed && parsed.lines.length > 0 ? await matchScan(svc, job.companyId, parsed) : null;
+      const note = !parsed || parsed.lines.length === 0 ? emptyScanNote(parsed)
+        : ctx && ctx.match.picks.length === 0 ? buildNeedsReviewNote(parsed, ctx.match, ctx.allPos, ctx.supplierId) : null;
+      await touch({ status: 'done', review_state: 'pending', review: buildReview(parsed, ctx?.supplierId ?? null, ctx?.match ?? null), error: note });
+      return;
+    }
 
     if (!parsed || parsed.lines.length === 0) {
       console.error('[scan-gr] extraction empty, needs review:', job.id, call.errorMsg);
@@ -320,6 +332,7 @@ scanGr.post('/enqueue', async (c) => {
       uploadedImages,
       firstBuffer,
       imageKeys,
+      review: false,
     });
     try { c.executionCtx.waitUntil(pipeline); } catch { /* non-Workers runtime (tests) */ }
   }
@@ -329,7 +342,7 @@ scanGr.post('/enqueue', async (c) => {
 
 // Rebuild the reaper/queue file inputs, run the GR pipeline. Shared by the queue
 // consumer and the stale-job reaper.
-async function runGrnJobFromRow(
+export async function runGrnJobFromRow(
   env: Env,
   id: string,
   r: Record<string, unknown>,
@@ -347,6 +360,7 @@ async function runGrnJobFromRow(
   await runGrnScanJob(env, {
     id, uploaderStaffId, houzsUserId, companyId,
     fileBlocks: files.fileBlocks, uploadedImages: files.uploadedImages, firstBuffer: files.firstBuffer, imageKeys,
+    review: (r.reviewState ?? r.review_state) != null,
   });
   return 'ran';
 }
@@ -362,7 +376,7 @@ export async function processGrnScanQueueMessage(env: Env, jobId: string): Promi
   const svc = serviceClient(env);
   const { data: row, error } = await svc
     .from('scan_jobs')
-    .select('id, status, salesperson_id, houzs_user_id, image_keys, company_id, document_type')
+    .select('id, status, salesperson_id, houzs_user_id, image_keys, company_id, document_type, review_state')
     .eq('id', id)
     .single();
   if (error) {
@@ -393,7 +407,7 @@ async function reapStaleGrnScanJobs(
     const cutoff = new Date(Date.now() - SCAN_JOB_STALE_MINUTES * 60 * 1000).toISOString();
     const { data: retryRows, error: retryErr } = await svc
       .from('scan_jobs')
-      .select('id, salesperson_id, houzs_user_id, image_keys, retry_count, company_id, document_type')
+      .select('id, salesperson_id, houzs_user_id, image_keys, retry_count, company_id, document_type, review_state')
       .eq('document_type', 'GR')
       .in('status', ['queued', 'running'])
       .lt('updated_at', cutoff)

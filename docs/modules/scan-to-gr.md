@@ -34,6 +34,21 @@ lists only what differs for GR.
   delivery order's qty equals what each owes; otherwise needs-review with the
   counts (`qtyMismatch`). Never with an unresolved supplier.
 
+## Desktop: scan, check, then create (`/scan-gr/check/*`, `routes/scan-gr-check.ts`)
+
+The desktop modal no longer drafts straight from the scan. `POST /check/upload` takes any
+number of files; a PDF of several pages is split into its documents (`lib/scan-split.ts`:
+a Haiku call says where each starts, `planChunks` keeps the file whole unless the answer
+covers every page once, in order). Each document is a `scan_jobs` row with `batch_id` and
+`review_state` `reading -> pending -> created | discarded`; the runner keeps the read +
+match as `review` (`lib/grn-scan-check.ts` `buildReview`) instead of drafting. `GET /pending`
+returns the caller's own `reading`/`pending` rows (14 days) with suppliers, open PO lines,
+`duplicateOf` (a non-cancelled GRN of the same supplier with that `delivery_note_ref`) and
+`blocked`. `PATCH /:id` saves an edit; `POST /create {ids}` converts each through
+`createDraftGrnFromPoItems` (DRAFT only, company-scoped PO-line read, qty capped);
+`POST /discard {ids}` hides rows. A repeat starts unticked; the operator may still create it.
+Mobile (`MobileGrnScan`) still uses `/enqueue` (photos of one delivery order = one draft).
+
 ## Endpoints (`/scan-gr/*`, gated `scm.procurement.grn`, writeLevel `view`)
 
 | Route | Purpose |
