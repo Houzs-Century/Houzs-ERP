@@ -11,9 +11,9 @@
 //     PDF opens the preview, Print prints that same PDF.
 // ----------------------------------------------------------------------------
 
-import { createContext, useContext, useEffect, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { FileDown, FileSpreadsheet, Layers, Printer } from 'lucide-react';
+import { FileDown, FileSpreadsheet, Layers, MoreHorizontal, Printer } from 'lucide-react';
 import type { ReportSheet } from '../../../vendor/scm/lib/report-sheet';
 import s from './ReportShell.module.css';
 
@@ -91,6 +91,40 @@ export function ReportExports({ sheet, fileBase, onLayout, layoutOn = false }: {
         <Printer size={14} strokeWidth={1.75} aria-hidden />Print
       </button>
     </>
+  );
+}
+
+/** The header's ⋯ (batch 6 §5.11): what a report keeps beside Excel · PDF ·
+ *  Print — its CSV, its Charts PNG. Closes on a pick, a click outside or Escape. */
+export function ReportMore({ items, label = 'More' }: {
+  items: ReadonlyArray<{ label: string; onClick: () => void; disabled?: boolean }>;
+  label?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const down = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', down);
+    document.addEventListener('keydown', key);
+    return () => { document.removeEventListener('mousedown', down); document.removeEventListener('keydown', key); };
+  }, [open]);
+  return (
+    <div ref={ref} className={s.moreWrap}>
+      <button type="button" className={`${s.btn} ${s.moreBtn}`} aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}>
+        <MoreHorizontal size={15} strokeWidth={1.75} aria-hidden />
+      </button>
+      {open && (
+        <div className={s.moreMenu} role="menu" aria-label={label}>
+          {items.map((it) => (
+            <button key={it.label} type="button" role="menuitem" className={s.moreItem} disabled={it.disabled}
+              onClick={() => { setOpen(false); it.onClick(); }}>{it.label}</button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -1,0 +1,48 @@
+/* Finance › Reports › Product profit in the owner's redesign (batch 6 §5.11):
+   the month and the page's own filters in the toolbar card, four tiles, the
+   three charts as one block of cards, the ranked table on the Finance-Table,
+   the notes. Colours from finance/finance-ui.module.css. */
+
+.month {
+  height: 30px; box-sizing: border-box; padding: 0 8px; border: 1px solid var(--fin-line); border-radius: 6px; background: var(--fin-surface);
+  font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-ink); outline: none;
+}
+.month:focus { border-color: var(--fin-petrol); }
+
+/* Categories tick any number at once: a track like the segmented control. */
+.chips { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 3px; border-radius: 8px; background: var(--fin-rule-soft); }
+.chip {
+  height: 26px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: var(--fin-detail);
+  font: 500 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
+}
+.chip:hover { color: var(--fin-ink); }
+.chipOn, .chipOn:hover { background: var(--fin-surface); color: var(--fin-petrol-ink); font-weight: 600; box-shadow: 0 1px 2px rgba(17, 24, 16, 0.14); }
+
+.charts { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 12px; align-items: stretch; }
+@media (max-width: 1023px) { .charts { grid-template-columns: minmax(0, 1fr); } }
+.side { display: grid; gap: 12px; align-content: start; min-width: 0; }
+.card {
+  min-width: 0; padding: 12px 14px; background: var(--fin-surface); border: 1px solid var(--fin-line); border-radius: 10px;
+  box-shadow: var(--fin-card-shadow);
+}
+.rankCard { display: flex; flex-direction: column; }
+.cardTitle { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--fin-ink); }
+.cardSub { font-weight: 400; color: var(--fin-muted); }
+
+.model { display: inline-flex; align-items: baseline; flex-wrap: wrap; gap: 0 6px; }
+.modelName { font-weight: 600; }
+.brand { font-size: 12px; color: var(--fin-muted); }
+.noCost { display: block; font-size: 11px; font-weight: 600; color: var(--fin-late-fg); }
+.loss { color: var(--fin-late-fg); }
+.muted { color: var(--fin-muted); }
+.strong { font-weight: 600; }
+
+/* A model's sizes, under its row. */
+.sizes { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.sizes th { padding: 4px 8px; font-size: 11.5px; font-weight: 600; color: var(--fin-muted); text-align: left; white-space: nowrap; }
+.sizes td { padding: 4px 8px; border-top: 1px solid var(--fin-rule-soft); color: var(--fin-text); }
+.num { text-align: right !important; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.notes { display: grid; gap: 4px; margin: 0; padding: 0 0 0 18px; font-size: 12px; line-height: 1.5; color: var(--fin-muted); }
+.skeleton { display: grid; gap: 10px; padding: 14px; background: var(--fin-surface); border: 1px solid var(--fin-line); border-radius: 10px; }
+.skeletonBar { height: 14px; border-radius: 4px; }
