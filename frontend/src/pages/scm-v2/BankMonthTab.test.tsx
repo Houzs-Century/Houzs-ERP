@@ -13,7 +13,7 @@
 //     buttons wherever it is looked at.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 import type { BankLine, BankMonth, BankMonthAssembly, BankMonthBalances, Reconciliation } from './bank-queries';
@@ -85,11 +85,22 @@ const state = vi.hoisted(() => ({
   entries: [] as unknown[],
   match: vi.fn(),
   book: vi.fn(),
+  /* Whether the person may post a manual journal and match bank lines (Record journal). */
+  mayPost: true,
 }));
 
 /* The A4 statement's letterhead and who printed it. */
 vi.mock('../../hooks/useBranding', () => ({ useBranding: () => ({ companyName: 'Houzs Century', companyCode: 'HC' }) }));
-vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: { name: 'Chew', email: 'chew@example.com' } }) }));
+vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: { name: 'Chew', email: 'chew@example.com' }, can: () => state.mayPost }) }));
+
+/* Record journal opens the manual journal form, which names the bank's account from the chart. */
+vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../vendor/scm/lib/accounting-queries')>()),
+  useAccounts: () => ({
+    data: { accounts: [{ account_code: '310-0020', account_name: 'HONG LEONG BANK', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true, special_type: null }] },
+    isLoading: false,
+  }),
+}));
 
 /* To do's own "upload the statement" rule says where the uploads stop. */
 vi.mock('./finance/finance-todo-queries', () => ({ useFinanceTodo: () => ({ data: { mine: state.todo, others: [] } }) }));
@@ -118,7 +129,9 @@ vi.mock('./bank-queries', () => ({
   useUploadBankStatement: () => ({ mutate: vi.fn(), isPending: false }),
   useBookBankReceipt: () => ({ mutate: state.book, mutateAsync: vi.fn(), isPending: false, isError: false, error: null }),
   useMatchBankGroup: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
-  useMatchBankLine: () => ({ mutate: state.match, isPending: false, isError: false, error: null }),
+  useMatchBankLine: () => ({ mutate: state.match, mutateAsync: vi.fn(), isPending: false, isError: false, error: null }),
+  fetchBankMonth: vi.fn(),
+  invalidateAfterBankPosting: vi.fn(),
   useIgnoreBankLine: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
   useUndoBankLine: () => ({ mutate: vi.fn(), isPending: false }),
   useLockBankMonth: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
@@ -136,8 +149,9 @@ Element.prototype.scrollIntoView = vi.fn();
 const setUp = (over: {
   months?: unknown[]; assembly?: BankMonthAssembly; recon?: Reconciliation;
   lines?: unknown[]; statements?: unknown[]; lock?: unknown; balances?: BankMonthBalances;
-  repeats?: { count: number; statementIds: number[] };
+  repeats?: { count: number; statementIds: number[] }; mayPost?: boolean;
 } = {}) => {
+  state.mayPost = over.mayPost ?? true;
   state.months = over.months ?? [MONTH];
   state.assembly = over.assembly ?? ASSEMBLY;
   state.recon = over.recon ?? RECON;
@@ -744,6 +758,51 @@ describe('the month in six tabs', () => {
     openMonth();
     expect(tabOf('No entry found').getAttribute('aria-selected')).toBe('true');
     expect(screen.getByText('Not ours to reconcile')).toBeTruthy();
+  });
+
+  /* Owner 2026-11-03 on d10 (「这样需要」, the journal only): a line nothing fits is recorded from itself. */
+  test('No entry found: Record journal opens the manual journal on the line — its day, the bank’s leg filled in', () => {
+    setUp({ lines: [NOTHING_FITS] });
+    openMonth();
+    fireEvent.click(screen.getByText('Record journal'));
+    const drawer = screen.getByRole('dialog', { name: 'Record journal' });
+    expect(within(drawer).getByText(/Bank line 5 · 2026\/09\/01 · Out 8,605\.40/)).toBeTruthy();
+    expect(within(drawer).getByLabelText("The bank's leg").textContent).toContain('310-0020 — HONG LEONG BANK');
+    expect(within(drawer).getByLabelText('Bank credit').textContent).toBe('8605.40');
+    expect((within(drawer).getByLabelText('Line 1 debit') as HTMLInputElement).value).toBe('8605.40');
+  });
+
+  test('the journal stays open while the tabs change under it — its line leaves No entry found once it posts', () => {
+    setUp({ lines: [NOTHING_FITS, MATCHED] });
+    openMonth();
+    fireEvent.click(screen.getByText('Record journal'));
+    fireEvent.click(tabOf('Matched'));
+    expect(tabOf('Matched').getAttribute('aria-selected')).toBe('true');
+    expect(within(screen.getByRole('dialog', { name: 'Record journal' })).getByText(/Bank line 5 · 2026\/09\/01/)).toBeTruthy();
+  });
+
+  test('Record journal is not offered on a locked month', () => {
+    setUp({
+      lines: [NOTHING_FITS],
+      lock: { accountCode: '310-0020', month: '2026-09', lockedBy: 'Chew', lockedAt: '2026-10-02T03:14:00Z', lockNote: null, closingStatementSen: 1090000, closingLedgerSen: 1090000, differenceSen: 0, statementCount: 3, wasComplete: true },
+    });
+    openMonth();
+    expect(tabOf('No entry found').textContent).toBe('No entry found1');
+    expect(screen.queryByText('Record journal')).toBeNull();
+  });
+
+  test('Record journal is not offered to someone who may not post a journal', () => {
+    setUp({ lines: [NOTHING_FITS], mayPost: false });
+    openMonth();
+    expect(screen.getByText('Not ours to reconcile')).toBeTruthy();
+    expect(screen.queryByText('Record journal')).toBeNull();
+  });
+
+  test('a card payout with no report is not recorded as a journal — its money is owed by a report', () => {
+    setUp({ lines: [{ ...LINE, id: 7, line_no: 8, kind: 'PAYOUT_NO_BATCH' as const }] });
+    openMonth();
+    expect(tabOf('No entry found').getAttribute('aria-selected')).toBe('true');
+    expect(screen.queryByText('Record journal')).toBeNull();
   });
 
   test('Matched and Set aside list what was decided, with Undo', () => {

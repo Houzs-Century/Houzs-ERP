@@ -7,13 +7,18 @@
 // decided; nothing here posts or links unless its own button is pressed.
 // ----------------------------------------------------------------------------
 
+import { useState } from 'react';
 import { AlertTriangle, Landmark, Link2 } from 'lucide-react';
+import { useAuth } from '../../auth/AuthContext';
 import { useBookBankReceipt, useMatchBankLine, type BankLine, type LedgerEntry } from './bank-queries';
 import { BookAllMatched, DepWd, DoneLine, OpenLine, certainAllocation, decisionKey } from './BankStatementTab';
 import { useReconcilePick } from './bank-reconcile-pick';
 import { ICON, fmt, refusalText } from './settlement-ui';
 import { monthShort } from './BankStatementsTop';
 import { fmtDate, fmtDateOrDash } from '../../vendor/shared/format';
+import { BankRecordJournal, recordableLine } from './BankRecordJournal';
+import { useBooksToast } from './books/BooksToast';
+import tokens from './finance/finance-ui.module.css';
 import look from './BankStatements.module.css';
 import grid from './MerchantRecon.module.css';
 
@@ -39,7 +44,7 @@ export const LINE_TAB_LABEL: Record<LineTab, string> = {
 const HINT: Record<LineTab, string> = {
   'to-match': 'Same amount, one entry, names agree. Check each one, then match it.',
   'to-choose': 'More than one entry could fit, or one movement covers several entries.',
-  'no-entry': 'Nothing in the books fits yet. Record it where it belongs and it moves to To match, or set it aside with a note.',
+  'no-entry': 'Nothing in the books fits yet. Record what it is, or set it aside with a note.',
   'not-on-bank': 'In the ledger, not shown by the bank yet: a payment not paid out, a receipt not credited, or an entry after the statement ends. Each stays here month after month until the bank shows it and its line is matched.',
   matched: 'Lines you match here can be undone until the month is locked.',
   'set-aside': 'Kept on the statement with a note. Nothing posted.',
@@ -171,9 +176,37 @@ function NotOnBankYet({ entries, open, chooseAnyway, periodTo }: { entries: Ledg
 
 /* ── The tab's body ──────────────────────────────────────────────────────── */
 
-export function LineTabBody({ tab, lines, entries, locked, periodTo, chooseAnyway, onNotThis }: {
+type TabBodyProps = {
   tab: LineTab; lines: BankLine[]; entries: LedgerEntry[]; locked: boolean; periodTo: string;
   chooseAnyway: ReadonlySet<number>; onNotThis: (lineId: number) => void;
+};
+
+export function LineTabBody({ accountCode, ...body }: TabBodyProps & {
+  /** The bank account the month is of — its ledger code; Record journal posts its leg there. */
+  accountCode?: string;
+}) {
+  const { can } = useAuth();
+  /* Record journal (No entry found): the same right as posting a manual journal
+     and matching bank lines, and never on a locked month. */
+  const mayRecord = !body.locked && accountCode != null && can('scm.payment_voucher.post');
+  const [recording, setRecording] = useState<BankLine | null>(null);
+  const toast = useBooksToast();
+  return (
+    <>
+      <TabBody {...body} onRecord={mayRecord ? setRecording : null} />
+      {/* Beside the tab, not inside it: once its journal posts, the line leaves
+          No entry found on the next read while the drawer still has things to say. */}
+      {accountCode != null && (
+        <BankRecordJournal line={recording} accountCode={accountCode} onClose={() => setRecording(null)} onToast={toast.say} />
+      )}
+      {toast.node && <div className={tokens.root}>{toast.node}</div>}
+    </>
+  );
+}
+
+function TabBody({ tab, lines, entries, locked, periodTo, chooseAnyway, onNotThis, onRecord }: TabBodyProps & {
+  /** Record journal on a No entry found line; null where it is not offered. */
+  onRecord: ((line: BankLine) => void) | null;
 }) {
   const pick = useReconcilePick();
   const inTab = tab === 'not-on-bank' ? [] : lines.filter((l) => bankLineTab(l, chooseAnyway) === tab);
@@ -212,7 +245,8 @@ export function LineTabBody({ tab, lines, entries, locked, periodTo, chooseAnywa
         <tbody>
           {/* KEYED ON THE DECISION (docs/bugs/0870): a changed decision remounts the row. */}
           {inTab.map((l) => (
-            <OpenLine key={decisionKey(l)} line={l} isPicked={pick.pickedLines.includes(l.id)} onPick={() => pick.toggleLine(l.id)} />
+            <OpenLine key={decisionKey(l)} line={l} isPicked={pick.pickedLines.includes(l.id)} onPick={() => pick.toggleLine(l.id)}
+              onRecordJournal={tab === 'no-entry' && onRecord && recordableLine(l) ? () => onRecord(l) : undefined} />
           ))}
         </tbody>
       </table>
