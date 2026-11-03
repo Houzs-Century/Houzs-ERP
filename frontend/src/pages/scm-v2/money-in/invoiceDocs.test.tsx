@@ -289,7 +289,7 @@ describe('an other debtor\'s bill, as a page', () => {
     expect(fact('Description').textContent).toBe('转租九月');
     expect(fact('Received').textContent).toBe('RM 200.00');
     expect(fact('Outstanding').textContent).toBe('RM 300.00');
-    expect(fact('Debtor').querySelector('a')!.getAttribute('href')).toBe('/scm/ar-invoices?debtor=d1');
+    expect(fact('Debtor').querySelector('a')!.getAttribute('href')).toBe('/scm/other-debtors/d1');
     const lines = screen.getByRole('region', { name: 'Lines' });
     expect(within(lines).getByText('转租')).toBeTruthy();
     expect(within(lines).getByText('Other Income')).toBeTruthy();

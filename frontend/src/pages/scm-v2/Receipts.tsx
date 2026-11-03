@@ -96,7 +96,7 @@ const buildReceiptColumns = (h: {
           ? <Link to={moneyInDocHref('debtorReceipt', r.id)} style={{ color: 'inherit' }}>{r.number}</Link>
           : r.kind === 'CUSTOMER'
             ? <Link to={`/scm/sales-orders/${r.number}`} style={{ color: 'inherit' }}>{r.number}</Link>
-            : r.number}
+            : <Link to={moneyInDocHref('sundry', r.id)} style={{ color: 'inherit' }}>{r.number}</Link>}
       </span>
     ),
     /* A customer receipt is also found by its order's reference. */

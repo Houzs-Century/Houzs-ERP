@@ -541,7 +541,7 @@ export const useCreateReceipt = () => {
     mutationFn: (body: {
       payerName: string; receiptDate?: string; bankAccountCode: string; notes?: string;
       lines: Array<{ description?: string; creditAccountCode: string; amountSen: number }>;
-    }) => authedFetch<{ ok: boolean; receipt: { receiptNumber: string; totalSen: number } }>(
+    }) => authedFetch<{ ok: boolean; receipt: { id?: string; receiptNumber: string; totalSen: number } }>(
       `/receipts`, { method: 'POST', body: JSON.stringify(body) },
     ),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['receipts'] }); },

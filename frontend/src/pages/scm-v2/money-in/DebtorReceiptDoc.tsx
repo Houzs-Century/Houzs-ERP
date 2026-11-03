@@ -138,7 +138,7 @@ export const DebtorReceiptDoc = () => {
   const facts: DocFact[] = [
     { label: 'Date', value: fmtDate(r.receipt_date) },
     { label: 'Received into', value: named(r.bank_account_code) },
-    { label: 'Debtor', value: debtorName, to: d.debtor ? `/scm/ar-invoices?debtor=${encodeURIComponent(d.debtor.id)}` : null, title: 'Every bill of this debtor' },
+    { label: 'Debtor', value: debtorName, to: d.debtor ? moneyInDocHref('debtor', d.debtor.id) : null },
     { label: 'Journal', value: live?.je_no ?? (stage === 'Approved' ? '—' : 'Written at approval'), tone: live ? null : 'brass' },
     { label: 'Stage', value: stage },
   ];

@@ -202,7 +202,7 @@ export const DebtorBillDoc = () => {
   const facts: DocFact[] = [
     { label: 'Bill date', value: fmtDate(bill.bill_date) },
     { label: 'Description', value: bill.notes ?? '—' },
-    { label: 'Debtor', value: debtor?.name ?? '—', to: debtor ? `/scm/ar-invoices?debtor=${encodeURIComponent(debtor.id)}` : null, title: 'Every bill of this debtor' },
+    { label: 'Debtor', value: debtor?.name ?? '—', to: debtor ? moneyInDocHref('debtor', debtor.id) : null },
     { label: 'Received', value: fmtSen(received) },
     { label: 'Outstanding', value: fmtSen(cancelled ? 0 : outstanding), tone: !cancelled && outstanding > 0 ? 'brass' : null },
     { label: 'Journal', value: live?.je_no ?? (cancelled ? 'Reversed' : '—') },

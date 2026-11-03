@@ -29,6 +29,8 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { fmtSen } from '../../vendor/shared/format';
 import { DebtorPartyForm } from './DebtorPartyForm';
+import { FinanceDocLink } from './finance/FinanceDocLink';
+import { moneyInDocHref } from './money-in/moneyInDocs';
 import { debtorPartyBody, debtorPartyFrom, emptyDebtorParty, partyAddressLines, type DebtorPartyValues } from '../../vendor/scm/lib/debtor-party';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -36,7 +38,8 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const fmtRm = (sen: number | null | undefined): string => fmtSen(sen ?? 0);
 
 const DEBTOR_COLUMNS: Column<OtherDebtor>[] = [
-  { key: 'name', label: 'Name', render: (d) => <span style={{ fontWeight: 600 }}>{d.name}</span>, getValue: (d) => d.name },
+  /* The name opens the debtor's own page (batch 5 §8), in its own tab. */
+  { key: 'name', label: 'Name', render: (d) => <FinanceDocLink to={moneyInDocHref('debtor', d.id)}>{d.name}</FinanceDocLink>, getValue: (d) => d.name },
   { key: 'phone', label: 'Phone', render: (d) => d.phone ?? '—', getValue: (d) => d.phone ?? '' },
   {
     key: 'outstanding', label: 'Outstanding', align: 'right',
