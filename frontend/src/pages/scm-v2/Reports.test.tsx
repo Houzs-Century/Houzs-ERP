@@ -117,6 +117,8 @@ describe('the P&L', () => {
     expect(screen.getByText(/Closing stock is what the shelves hold as of 2026\/10\/31/)).toBeTruthy();
     /* One read for the one column, on the period in the address. */
     expect(reads.keys).toContainEqual(['report-pnl', '2026-10-01', '2026-10-31']);
+    /* The chart over the statement: twelve months ending with the period's (its own contract: ReportBarChart.test). */
+    expect(screen.getByLabelText('Revenue, cost and expenses · Nov 25 – Oct 26')).toBeTruthy();
   });
 
   /* SIGNS (owner 2026-09-14, docs/bugs/0910): an expense is the positive
@@ -132,7 +134,7 @@ describe('the P&L', () => {
     expect(screen.getByText('STOCKS AT END').closest('tr')!.textContent).toContain('(100.00)');
     expect(screen.getByText('Total expenses').closest('tr')!.textContent).toContain('105.00');
     expect(document.body.textContent).not.toMatch(/\(-/);
-    expect(document.body.textContent).not.toContain('RM ');
+    expect(screen.getByRole('table', { name: 'P&L' }).textContent).not.toContain('RM ');
   });
 
   test('the tree: a category with its subtotal and %, every row with its % of sales beside; L1 / L2 / All fold it', () => {

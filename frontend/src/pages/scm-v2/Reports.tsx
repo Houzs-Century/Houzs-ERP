@@ -60,9 +60,54 @@ import {
   COMPARE_WITH, MONTH_COUNTS, balanceColumns, columnsSpan, monthName, pnlColumns, statementLines,
   type CompareWith, type StatementColumn, type StatementLine, type StatementView,
 } from './reports/statementColumns';
+import {
+  REPORT_CHART_COLORS, ReportBarChart, chartMonths, thousands, useChartMonths, useChartPeriods,
+  type ChartBarSeries, type ChartMonth,
+} from './reports/ReportBarChart';
+import type { ChartWindow } from './reports/chartWindow';
+import type { DashboardPeriod } from '../../vendor/scm/lib/dashboard-queries';
 import s from './reports/Statement.module.css';
 
 type Line = { code: string; name: string; amountSen: number };
+
+/* ── The P&L chart (batch 6 §4.1): three bars a month — revenue, cost of
+   sales, operating expenses — and net profit under each, from the
+   Dashboard's one read of the P&L builder's figures. ── */
+const PNL_SERIES: ChartBarSeries[] = [
+  { key: 'revenue', label: 'Revenue', color: REPORT_CHART_COLORS.petrol },
+  { key: 'cost', label: 'Cost of sales', color: REPORT_CHART_COLORS.gold },
+  { key: 'opex', label: 'Operating expenses', color: REPORT_CHART_COLORS.grey },
+];
+
+/** A month of the P&L chart — the builder's figures; the margin worked here, once. */
+export function pnlChartMonth(p: DashboardPeriod): Omit<ChartMonth, 'month'> | null {
+  const a = p.actual;
+  if (!a) return null;
+  const loss = a.netProfitSen < 0;
+  return {
+    values: { revenue: a.salesSen, cost: a.costOfSalesSen, opex: a.expensesSen },
+    bottom: [
+      { label: 'Net profit', value: fmtSenPlain(a.netProfitSen), loss },
+      { label: 'Net margin', value: a.salesSen ? `${((a.netProfitSen / a.salesSen) * 100).toFixed(1)}%` : '—', loss },
+    ],
+    under: { text: thousands(a.netProfitSen), loss },
+  };
+}
+
+function PnlChart({ win }: { win: ChartWindow }) {
+  const periods = useChartPeriods(win);
+  return (
+    <ReportBarChart
+      title="Revenue, cost and expenses"
+      series={PNL_SERIES}
+      months={chartMonths(win, periods.byMonth, pnlChartMonth)}
+      win={win}
+      loading={periods.isLoading}
+      failed={periods.isError}
+      note="Under each month: net profit, RM thousand — red is a loss. Shaded months are in the period; click a month to open it."
+    />
+  );
+}
 
 /** The views a statement offers, in the design's words. */
 const PNL_VIEWS: ReadonlyArray<{ value: StatementView; label: string }> = [
@@ -159,6 +204,7 @@ export const PnLTab = () => {
   const canArrange = can('scm.payment_voucher.post');
   const tree = useReportTree(level);
   const openLedger = useOpenLedger('P&L');
+  const chartWin = useChartMonths(r.from, r.to, r.usable);
 
   const columns = useMemo(
     () => (r.usable ? pnlColumns(view, r.from, r.to, r.today, { compareWith, months }) : []),
@@ -213,6 +259,7 @@ export const PnLTab = () => {
         <ReportSwitch on={showPct} onChange={setShowPct}>% beside</ReportSwitch>
       </ReportToolbar>
       {editing && <ReportLayoutEditor report="pnl" onClose={() => setEditing(false)} />}
+      {chartWin && <PnlChart win={chartWin} />}
       {!r.usable && <ReportMessage>Pick dates.</ReportMessage>}
       {r.usable && reads.failed > 0 && (
         <ReportMessage tone="error">
