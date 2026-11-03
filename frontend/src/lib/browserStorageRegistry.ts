@@ -94,6 +94,9 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   // feature is on for this handset, never who is signed in — the session itself
   // lives in the iOS Keychain, not here.
   { id: "native-app-opt-ins", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "native:<feature>", matches: prefix("native:") },
+  // The Finance report opened last in this tab (batch 6 §1.1): the sidebar's one
+  // Reports entry goes back to it. The report's sidebar address, no identity data.
+  { id: "finance-report-last", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "fin-reports-last", matches: exact("fin-reports-last") },
   // The Finance report list pinned open (owner's redesign, batch 6 §4.1; the
   // design's own key) — '1'/'0', a per-device layout preference.
   { id: "finance-report-list-pin", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "fin-reports-rail-pinned", matches: exact("fin-reports-rail-pinned") },
@@ -245,6 +248,8 @@ export const PRODUCTION_STORAGE_CALLERS = [
   // Finance grid column widths (finance-column-widths, fin-<grid>-cw): reads,
   // writes and removes its own key only — px per column, no identity data.
   "pages/scm-v2/finance/useColumnWidths.ts",
+  // The report opened last (finance-report-last), for the sidebar's Reports entry.
+  "pages/scm-v2/reports/lastReport.ts",
   "pages/scm-v2/ProductModels.tsx",
   "pages/scm-v2/SoFromProducts.tsx",
   "pages/scm-v2/SupplierDetail.tsx",

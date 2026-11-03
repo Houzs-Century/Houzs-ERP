@@ -111,11 +111,16 @@ describe('the Financial Dashboard page', () => {
     render(<MemoryRouter><FinanceDashboard /></MemoryRouter>);
     /* The Income Statement's table carries every line of the statement now, not one metric (2026-09-29). */
     const table = screen.getByLabelText('Income statement figures');
-    expect(within(table).getByText('08/2026')).toBeTruthy();
-    expect(within(table).getByText('09/2026 *')).toBeTruthy();
-    expect(within(table).getByText('10/2026 *')).toBeTruthy();
+    /* A month as the redesign names it (batch 6 step 15), " *" while not finished. */
+    expect(within(table).getByText('Aug 2026')).toBeTruthy();
+    expect(within(table).getByText('Sep 2026 *')).toBeTruthy();
+    expect(within(table).getByText('Oct 2026 *')).toBeTruthy();
     expect(screen.getByText(/not finished — a small figure is not a fall/)).toBeTruthy();
-    expect(screen.getByText(/Closing stock for 09\/2026 \* is what the shelves hold today/)).toBeTruthy();
+    expect(screen.getByText(/Closing stock for Sep 2026 \* is what the shelves hold today/)).toBeTruthy();
+    /* The hover names a period that is not finished, and one that holds only a forecast. */
+    const tips = [...document.querySelectorAll('title')].map((x) => x.textContent);
+    expect(tips.some((x) => x.startsWith('Sep 2026 · Not finished · Actual Revenue'))).toBe(true);
+    expect(tips.some((x) => x.startsWith('Oct 2026 · Forecast only · Forecast Revenue'))).toBe(true);
     expect(lastParams.value).toEqual({ granularity: 'month', from: null, to: null });
   });
 
@@ -150,11 +155,11 @@ describe('the Financial Dashboard page', () => {
     /* Net profit under forecast is worse: red; a cost under forecast would be green. */
     const gapCell = (document.querySelector('[data-row="vs-forecast"]') as HTMLElement).querySelectorAll('td')[2]!;
     expect(gapCell.textContent).toBe('(4,000.00)');
-    expect(gapCell.style.color).toContain('B8331F');
+    expect(gapCell.style.color).toContain('--fin-late-fg');
     fireEvent.click(screen.getByRole('tab', { name: 'COGS' }));
     const cogsGap = (document.querySelector('[data-row="vs-forecast"]') as HTMLElement).querySelectorAll('td')[2]!;
     expect(cogsGap.textContent).toBe('(42,000.00)');
-    expect(cogsGap.style.color).toContain('2F5D4F');
+    expect(cogsGap.style.color).toBe('rgb(47, 138, 91)');
     /* The rows do not change with the tab — the whole statement stays on the table. */
     expect(side('is:net')).toEqual(['19,000.00 19.0%', '—', '18,000.00 36.0%', '22,000.00 18.3%', '—', '60,000.00 40.0%']);
   });

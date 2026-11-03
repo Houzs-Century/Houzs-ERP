@@ -118,6 +118,21 @@ describe("IT Support — report a problem", () => {
     expect(api.postForm).not.toHaveBeenCalled();
   });
 
+  it("picks the module from the page it came from; without a page it is Not sure and none is sent", async () => {
+    open("/it-support?new=1&from=%2Fscm%2Fgrns");
+    expect((screen.getByLabelText("Which part of the system") as HTMLSelectElement).value).toBe("Supply Chain · Procurement");
+    cleanup();
+
+    api.postForm.mockResolvedValue({ code: "HC-0008" });
+    api.get.mockResolvedValue(detail("open"));
+    open("/it-support?new=1");
+    expect((screen.getByLabelText("Which part of the system") as HTMLSelectElement).value).toBe("");
+    fireEvent.change(screen.getByPlaceholderText("The delivery order will not save"), { target: { value: "Printer" } });
+    fireEvent.click(screen.getByText("Send"));
+    await waitFor(() => expect(api.postForm).toHaveBeenCalledTimes(1));
+    expect((api.postForm.mock.calls[0][1] as FormData).get("module")).toBeNull();
+  });
+
   it("sends the form with the page it came from and opens the new request", async () => {
     api.postForm.mockResolvedValue({ code: "HC-0007" });
     api.get.mockResolvedValue(detail("open"));
@@ -139,6 +154,8 @@ describe("IT Support — report a problem", () => {
     expect(form.get("priority")).toBe("high");
     expect(form.get("type")).toBe("development");
     expect(form.get("page_url")).toBe("/scm/delivery-orders");
+    // The module was picked from the page it came from.
+    expect(form.get("module")).toBe("Supply Chain · Sales Order");
     expect(Number.isNaN(Date.parse(String(form.get("occurred_at"))))).toBe(false);
     expect((form.getAll("files") as File[]).map((f) => f.name)).toEqual(["shot.png"]);
     // Who is reporting is the server's business, never the form's.

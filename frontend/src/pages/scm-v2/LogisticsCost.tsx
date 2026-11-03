@@ -16,114 +16,158 @@
 // the tick list here 「这样显示很丑，就不能在coa 那边tick？」).
 // What could not be counted is said above the views, never folded into a zero.
 // Server: backend/src/scm/routes/acc-logistics.ts.
+//
+// The owner's redesign (batch 6 §5.11): inside the report shell — the months
+// in the subtitle, Excel · PDF · Print in the header for the view on screen;
+// one toolbar row (the shared range in whole months, the view); the tiles.
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
-import { StatCard } from '../../components/StatCard';
 import { DataTable, type Column } from '../../components/DataTable';
+import { monthEnd, monthStart } from '../../lib/dateRangePresets';
+import { AMOUNT_COLUMN, PCT_COLUMN, type ReportSheet, type SheetRow } from '../../vendor/scm/lib/report-sheet';
 import { fmtDayMonthRange, fmtDateOrDash } from '../../vendor/shared/format';
 import {
   useLogisticsCost,
   type LogisticsEventRow, type LogisticsRegionRow, type LogisticsReport, type LogisticsTripRow,
 } from '../../vendor/scm/lib/logistics-queries';
 import { PnlView } from './LogisticsPnl';
-
-const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
-const firstDay = (month: string): string => `${month}-01`;
-const lastDay = (month: string): string => {
-  const [y, m] = month.split('-').map(Number);
-  return new Date(Date.UTC(y!, m!, 0)).toISOString().slice(0, 10);
-};
-
-const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
-const card: React.CSSProperties = { background: 'var(--c-paper, #fff)', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 8, padding: 'var(--space-3)' };
-const num: React.CSSProperties = { textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
-const warn = 'var(--c-festive-b, #B8331F)';
+import { FinanceDateRange } from './reports/FinanceDateRange';
+import {
+  ReportExports, ReportHeaderActions, ReportMessage, ReportTiles, ReportTool, ReportToolbar, Segmented, useReportSubtitle,
+  type ReportTile,
+} from './reports/reportParts';
+import { monthName } from './reports/statementColumns';
+import { useReportRange } from './reports/useReportRange';
+import s from './Logistics.module.css';
 
 /** Table money: 1,234.56 (the header says RM); a negative in brackets. */
 export const fmtRm = (sen: number): string => {
   const text = (Math.abs(sen) / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return sen < 0 ? `(${text})` : text;
 };
-/** Card money: whole ringgit. */
-const cardRm = (sen: number): string => `RM ${Math.round(sen / 100).toLocaleString('en-MY')}`;
+/** A tile's money: whole ringgit, a negative in brackets (the owner's sheet reads whole ringgit). */
+export const tileRm = (sen: number): string => {
+  const text = Math.round(Math.abs(sen) / 100).toLocaleString('en-MY');
+  return sen < 0 ? `(${text})` : text;
+};
 const pct = (part: number, whole: number): string => (whole > 0 ? `${((part / whole) * 100).toFixed(1)}%` : '—');
-const sum = <T,>(rows: readonly T[], f: (r: T) => number): number => rows.reduce((s, r) => s + f(r), 0);
-const Num = ({ children }: { children: React.ReactNode }) => <span style={num}>{children}</span>;
+const sum = <T,>(rows: readonly T[], f: (r: T) => number): number => rows.reduce((t, r) => t + f(r), 0);
+const Num = ({ children }: { children: React.ReactNode }) => <span className={s.num}>{children}</span>;
 
 type View = 'pnl' | 'region' | 'trips' | 'events';
-const VIEWS: Array<{ key: View; text: string }> = [
-  { key: 'pnl', text: 'P&L' },
-  { key: 'region', text: 'By region' },
-  { key: 'trips', text: 'Per trip' },
-  { key: 'events', text: 'Setup & Dismantle' },
+const VIEWS: ReadonlyArray<{ value: View; label: string }> = [
+  { value: 'pnl', label: 'P&L' },
+  { value: 'region', label: 'By region' },
+  { value: 'trips', label: 'Per trip' },
+  { value: 'events', label: 'Setup & Dismantle' },
 ];
 
 export const LogisticsCostTab = () => {
-  const [fromMonth, setFromMonth] = useState(myt().slice(0, 7));
-  const [toMonth, setToMonth] = useState(myt().slice(0, 7));
+  const r = useReportRange();
   const [view, setView] = useState<View>('pnl');
-  const from = firstDay(fromMonth);
-  const to = lastDay(fromMonth > toMonth ? fromMonth : toMonth);
+  /* Whole months: the range widens to its months' first and last days. */
+  const from = r.usable ? monthStart(r.from) : monthStart(r.today);
+  const to = r.usable ? monthEnd(r.to) : monthEnd(r.today);
+  const period = from.slice(0, 7) === to.slice(0, 7) ? monthName(from) : `${monthName(from)} – ${monthName(to)}`;
+  const partMonths = r.usable && (r.from !== from || r.to !== to);
+  useReportSubtitle(`Deliveries ${period}${partMonths ? ' · whole months' : ''} · by the delivery date Delivery Planning shows, else the DO date · fairs in these months`);
 
   return (
-    <div className="space-y-3">
-      <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
-        <span style={soft}>Deliveries from</span>
-        <input type="month" value={fromMonth} onChange={(e) => { if (e.target.value) setFromMonth(e.target.value); }} aria-label="From month" style={{ padding: '4px 6px', fontSize: 'var(--fs-12)' }} />
-        <span style={soft}>to</span>
-        <input type="month" value={toMonth} onChange={(e) => { if (e.target.value) setToMonth(e.target.value); }} aria-label="To month" style={{ padding: '4px 6px', fontSize: 'var(--fs-12)' }} />
-        <span style={soft}>· by the delivery date Delivery Planning shows, else the DO date · fairs in these months</span>
-      </div>
-
-      <div role="tablist" aria-label="Logistics views" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        {VIEWS.map((v) => (
-          <button key={v.key} type="button" role="tab" aria-selected={view === v.key} onClick={() => setView(v.key)}
-            style={{
-              padding: '4px 12px', borderRadius: 999, fontSize: 'var(--fs-13)', cursor: 'pointer',
-              border: '1px solid var(--border-weak, #e3e1da)',
-              background: view === v.key ? 'var(--c-ink)' : 'transparent', color: view === v.key ? 'var(--c-cream)' : 'var(--c-ink)',
-            }}>
-            {v.text}
-          </button>
-        ))}
-      </div>
-
-      {view === 'pnl' ? <PnlView from={from} to={to} /> : <CostViews view={view} from={from} to={to} />}
-    </div>
+    <>
+      <ReportToolbar>
+        <FinanceDateRange label="Deliveries" />
+        <ReportTool label="View"><Segmented options={VIEWS} value={view} onChange={setView} label="Logistics views" /></ReportTool>
+      </ReportToolbar>
+      {!r.usable && <ReportMessage>Pick dates.</ReportMessage>}
+      {view === 'pnl' ? <PnlView from={from} to={to} period={period} /> : <CostViews view={view} from={from} to={to} period={period} />}
+    </>
   );
 };
 
+/* ── The sheets each view exports, as the screen shows it ─────────────────── */
+export function regionSheet(rows: readonly LogisticsRegionRow[], period: string): ReportSheet {
+  const cells = (x: Pick<LogisticsRegionRow, 'dos' | 'valueSen' | 'ownSen' | 'threeplSen' | 'totalSen'>) =>
+    [String(x.dos), x.valueSen, x.ownSen, x.threeplSen, x.totalSen, x.dos > 0 ? Math.round(x.totalSen / x.dos) : null, x.valueSen > 0 ? (x.totalSen / x.valueSen) * 100 : null];
+  const total = { dos: sum(rows, (x) => x.dos), valueSen: sum(rows, (x) => x.valueSen), ownSen: sum(rows, (x) => x.ownSen), threeplSen: sum(rows, (x) => x.threeplSen), totalSen: sum(rows, (x) => x.totalSen) };
+  return {
+    title: 'Logistics cost · by region', subtitle: `Deliveries ${period} · RM`, meta: [{ label: 'Months', value: period }],
+    tables: [{
+      columns: [{ label: 'DOs', kind: 'text' }, AMOUNT_COLUMN('Goods'), AMOUNT_COLUMN('Our lorries'), AMOUNT_COLUMN('3PL'), AMOUNT_COLUMN('Total'), AMOUNT_COLUMN('Per DO'), PCT_COLUMN('% of goods')],
+      rows: [
+        ...rows.map((x): SheetRow => ({ kind: 'row', depth: 0, label: x.name, cells: cells(x) })),
+        { kind: 'total', depth: 0, label: 'Total', cells: cells(total) },
+      ],
+    }],
+  };
+}
+export function tripsSheet(rows: readonly LogisticsTripRow[], period: string): ReportSheet {
+  return {
+    title: 'Logistics cost · per trip', subtitle: `Deliveries ${period} · RM`, meta: [{ label: 'Months', value: period }],
+    tables: [{
+      columns: [{ label: 'Type', kind: 'text' }, { label: 'Lorry / 3PL', kind: 'text' }, { label: 'Bill', kind: 'text' }, { label: 'DOs', kind: 'text' }, { label: 'Regions', kind: 'text' }, AMOUNT_COLUMN('Cost')],
+      rows: [
+        ...rows.map((x): SheetRow => ({ kind: 'row', depth: 0, label: fmtDateOrDash(x.day), cells: [x.kind === 'own' ? 'Our lorry' : '3PL', x.who, x.ref ?? null, String(x.dos), x.regions.join(', ') || null, x.amountSen] })),
+        { kind: 'total', depth: 0, label: 'Total', cells: [null, null, null, String(sum(rows, (x) => x.dos)), null, sum(rows, (x) => x.amountSen ?? 0)] },
+      ],
+    }],
+  };
+}
+export function eventsSheet(rows: readonly LogisticsEventRow[], period: string): ReportSheet {
+  return {
+    title: 'Logistics cost · setup & dismantle', subtitle: `Fairs ${period} · RM`, meta: [{ label: 'Months', value: period }],
+    tables: [{
+      columns: [{ label: 'Dates', kind: 'text' }, AMOUNT_COLUMN('Setup'), AMOUNT_COLUMN('Transport setup & dismantle'), AMOUNT_COLUMN('Total')],
+      rows: [
+        ...rows.map((x): SheetRow => ({ kind: 'row', depth: 0, label: x.name, cells: [fmtDayMonthRange(x.startDate, x.endDate), x.setupSen, x.transportSen, x.totalSen] })),
+        { kind: 'total', depth: 0, label: 'Total', cells: [null, sum(rows, (x) => x.setupSen), sum(rows, (x) => x.transportSen), sum(rows, (x) => x.totalSen)] },
+      ],
+    }],
+  };
+}
+
 /* ── The cost views: one read of the Logistics cost report ────────────────── */
-function CostViews({ view, from, to }: { view: Exclude<View, 'pnl'>; from: string; to: string }) {
+function CostViews({ view, from, to, period }: { view: Exclude<View, 'pnl'>; from: string; to: string; period: string }) {
   const q = useLogisticsCost(from, to);
   const r = q.data;
 
   const ownTrips = useMemo(() => (r?.trips ?? []).filter((t) => t.kind === 'own'), [r]);
   const runs = useMemo(() => (r?.trips ?? []).filter((t) => t.kind === '3pl'), [r]);
-  const t = r?.totals;
   const eventsKnown = r != null && r.eventsProblem == null;
+  const months = `${from.slice(0, 7)}-${to.slice(0, 7)}`;
+  const sheet = (): ReportSheet | null => {
+    if (!r) return null;
+    if (view === 'region') return regionSheet(r.regions, period);
+    if (view === 'trips') return tripsSheet(r.trips, period);
+    return r.eventsProblem ? null : eventsSheet(r.events, period);
+  };
+  const fileBase = `logistics-${view === 'region' ? 'by-region' : view === 'trips' ? 'per-trip' : 'setup-dismantle'}-${months}`;
+
+  const t = r?.totals ?? null;
+  const tiles: ReportTile[] = t ? [
+    { key: 'dos', label: 'Deliveries (DOs)', value: t.dos.toLocaleString('en-MY'), sub: `Goods RM ${tileRm(t.valueSen)}` },
+    { key: 'cost', label: 'Delivery cost', value: tileRm(t.totalSen), sub: `${t.dos > 0 ? `RM ${tileRm(t.totalSen / t.dos)} per DO` : '—'} · ${pct(t.totalSen, t.valueSen)} of goods` },
+    { key: 'own', label: 'Our lorries', value: tileRm(t.ownSen), sub: `${ownTrips.length} trip${ownTrips.length === 1 ? '' : 's'}${ownTrips.length > 0 ? ` · RM ${tileRm(t.ownSen / ownTrips.length)} each` : ''}` },
+    { key: '3pl', label: '3PL', value: tileRm(t.threeplSen), sub: `${runs.length} bill line${runs.length === 1 ? '' : 's'}` },
+    {
+      key: 'setup', label: 'Setup & Dismantle', value: eventsKnown ? tileRm(t.setupSen + t.transportSen) : '—',
+      sub: eventsKnown ? `${r.events.length} fair${r.events.length === 1 ? '' : 's'}` : 'could not be read', tone: eventsKnown ? 'plain' : 'late',
+    },
+  ] : [];
 
   return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-5" aria-label="Logistics totals">
-        <StatCard label="Deliveries (DOs)" pending={!r} value={t ? t.dos.toLocaleString('en-MY') : ''} subtitle={t ? `Goods ${cardRm(t.valueSen)}` : undefined} />
-        <StatCard label="Delivery cost" pending={!r} value={t ? cardRm(t.totalSen) : ''}
-          subtitle={t ? `${t.dos > 0 ? `${cardRm(t.totalSen / t.dos)} per DO` : '—'} · ${pct(t.totalSen, t.valueSen)} of goods` : undefined} />
-        <StatCard label="Our lorries" pending={!r} value={t ? cardRm(t.ownSen) : ''}
-          subtitle={r ? `${ownTrips.length} trip${ownTrips.length === 1 ? '' : 's'}${ownTrips.length > 0 ? ` · ${cardRm(t!.ownSen / ownTrips.length)} each` : ''}` : undefined} />
-        <StatCard label="3PL" pending={!r} value={t ? cardRm(t.threeplSen) : ''} subtitle={r ? `${runs.length} bill line${runs.length === 1 ? '' : 's'}` : undefined} />
-        <StatCard label="Setup & Dismantle" pending={!eventsKnown} value={t && eventsKnown ? cardRm(t.setupSen + t.transportSen) : ''}
-          subtitle={r ? (eventsKnown ? `${r.events.length} fair${r.events.length === 1 ? '' : 's'}` : 'could not be read') : undefined} />
-      </div>
+    <>
+      <ReportHeaderActions><ReportExports sheet={sheet} fileBase={fileBase} /></ReportHeaderActions>
+      <ReportTiles tiles={tiles.length > 0 ? tiles : ['Deliveries (DOs)', 'Delivery cost', 'Our lorries', '3PL', 'Setup & Dismantle'].map((label) => ({ key: label, label, value: '' }))}
+        label="Logistics totals" pending={!r} />
 
-      {q.isError && <div style={{ ...soft, color: warn }}>The report could not be read — {q.error instanceof Error ? q.error.message : String(q.error)}</div>}
+      {q.isError && <ReportMessage tone="error">The report could not be read — {q.error instanceof Error ? q.error.message : String(q.error)}</ReportMessage>}
       {r && <NotCounted report={r} />}
 
       {view === 'region' && <RegionView rows={r?.regions ?? null} loading={q.isLoading} noState={r?.gaps.dosNoState ?? 0} />}
       {view === 'trips' && <TripsView rows={r?.trips ?? null} loading={q.isLoading} />}
       {view === 'events' && <EventsView rows={r?.events ?? null} loading={q.isLoading} problem={r?.eventsProblem ?? null} />}
-    </div>
+    </>
   );
 }
 
@@ -143,12 +187,10 @@ function NotCounted({ report }: { report: LogisticsReport }) {
   if (report.eventsProblem) lines.push(`Setup & Dismantle could not be read — ${report.eventsProblem}.`);
   if (lines.length === 0) return null;
   return (
-    <div style={{ ...card, borderColor: warn }} aria-label="Not counted">
-      <b style={{ color: warn, fontSize: 'var(--fs-13)' }}>Not counted</b>
-      <ul style={{ margin: '4px 0 0 18px', padding: 0, fontSize: 'var(--fs-13)' }}>
-        {lines.map((l) => <li key={l}>{l}</li>)}
-      </ul>
-    </div>
+    <section className={s.notCounted} aria-label="Not counted">
+      <h3 className={s.notCountedTitle}>Not counted</h3>
+      <ul>{lines.map((l) => <li key={l}>{l}</li>)}</ul>
+    </section>
   );
 }
 
@@ -159,9 +201,9 @@ function RegionView({ rows, loading, noState }: { rows: LogisticsRegionRow[] | n
     {
       key: 'zone', label: 'Region', getValue: (x) => x.name, total: () => 'Total',
       render: (x) => (
-        <span style={{ display: 'inline-flex', flexDirection: 'column' }}>
+        <span className={s.region}>
           <span>{x.name}</span>
-          <span style={{ ...soft, fontSize: 'var(--fs-11)' }}>{x.covers}</span>
+          <span className={s.regionCovers}>{x.covers}</span>
         </span>
       ),
     },
@@ -186,7 +228,7 @@ function RegionView({ rows, loading, noState }: { rows: LogisticsRegionRow[] | n
       <DataTable<LogisticsRegionRow> tableId="logistics-by-region" exportName="logistics-by-region" exportXlsx
         columns={columns} rows={rows} loading={loading} getRowKey={(x) => x.code}
         emptyLabel="No DO goes out in these months." />
-      {noState > 0 && <div style={soft}>KL includes {noState} DO{noState === 1 ? '' : 's'} with no state on {noState === 1 ? 'it' : 'them'} (others). A Singapore address is read from its postcode or the word Singapore.</div>}
+      {noState > 0 && <p className={s.hint}>KL includes {noState} DO{noState === 1 ? '' : 's'} with no state on {noState === 1 ? 'it' : 'them'} (others). A Singapore address is read from its postcode or the word Singapore.</p>}
     </>
   );
 }
@@ -207,7 +249,7 @@ function TripsView({ rows, loading }: { rows: LogisticsTripRow[] | null; loading
     { key: 'ref', label: 'Bill', getValue: (x) => x.ref ?? '', render: (x) => x.ref ?? '—' },
     {
       key: 'dos', label: 'DOs', align: 'right', getValue: (x) => x.dos,
-      render: (x) => <span title={x.doNumbers.join(', ')} style={num}>{x.dos}</span>, total: (rs) => <Num>{sum(rs, (x) => x.dos)}</Num>,
+      render: (x) => <span title={x.doNumbers.join(', ')} className={s.num}>{x.dos}</span>, total: (rs) => <Num>{sum(rs, (x) => x.dos)}</Num>,
     },
     { key: 'route', label: 'Regions', getValue: (x) => x.regions.join(', '), render: (x) => x.regions.join(', ') || '—' },
     {
@@ -218,7 +260,7 @@ function TripsView({ rows, loading }: { rows: LogisticsTripRow[] | null; loading
   ], []);
   return (
     <>
-      <div style={soft}>A trip of ours is one lorry on one day; it costs the month&rsquo;s lorry cost ÷ the month&rsquo;s trips. A 3PL run is one line of the carrier&rsquo;s bill.</div>
+      <p className={s.hint}>A trip of ours is one lorry on one day; it costs the month&rsquo;s lorry cost ÷ the month&rsquo;s trips. A 3PL run is one line of the carrier&rsquo;s bill.</p>
       <DataTable<LogisticsTripRow> tableId="logistics-per-trip" exportName="logistics-per-trip" exportXlsx
         columns={columns} rows={rows} loading={loading} getRowKey={(x) => `${x.kind}|${x.day}|${x.who}|${x.ref ?? ''}|${x.doNumbers.join(',')}`}
         emptyLabel="No trip in these months." />
@@ -235,10 +277,10 @@ function EventsView({ rows, loading, problem }: { rows: LogisticsEventRow[] | nu
     money('transport', 'Transport setup & dismantle (RM)', (x) => x.transportSen),
     money('total', 'Total (RM)', (x) => x.totalSen),
   ], []);
-  if (problem) return <div style={{ ...soft, color: warn }}>The fairs&rsquo; books could not be read — {problem}.</div>;
+  if (problem) return <ReportMessage tone="error">The fairs&rsquo; books could not be read — {problem}.</ReportMessage>;
   return (
     <>
-      <div style={soft}>Each fair&rsquo;s own books — the Setup and Transport Setup &amp; Dismantle rows Project Overview shows. Fairs with nothing booked are left out.</div>
+      <p className={s.hint}>Each fair&rsquo;s own books — the Setup and Transport Setup &amp; Dismantle rows Project Overview shows. Fairs with nothing booked are left out.</p>
       <DataTable<LogisticsEventRow> tableId="logistics-setup-dismantle" exportName="logistics-setup-dismantle" exportXlsx
         columns={columns} rows={rows} loading={loading} getRowKey={(x) => String(x.id)}
         emptyLabel="No fair starting in these months has setup or dismantle booked." />

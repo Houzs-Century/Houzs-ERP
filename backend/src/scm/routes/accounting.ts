@@ -44,7 +44,7 @@ import { ledgerReport } from './accounting-ledger';
 import {
   settlementSetup, settlementSetupSave, settlementUpload, settlementBatches,
   settlementBatchDetail, settlementConfirmRow, settlementConfirmGroup, settlementConfirmMatched, settlementRowUnconfirm,
-  settlementIgnoreRow, settlementWatchlist, settlementExport, settlementInTransit, settlementFindPayments,
+  settlementIgnoreRow, settlementReleaseRow, settlementWatchlist, settlementExport, settlementInTransit, settlementFindPayments,
   settlementBatchReceived, settlementReceiptUndo,
   settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank, settlementRematch,
 } from './accounting-settlement';
@@ -75,7 +75,7 @@ import { reportLayoutGet, reportLayoutPut, reportLayoutReset } from './accountin
 import { receiptsPaymentsReport } from './accounting-rp';
 import { collectionReport } from './accounting-collection';
 import { merchantChargesReport } from './accounting-merchant-charges';
-import { performanceReport, savePerformanceSettingsHandler } from './accounting-performance';
+import { performanceMonthsHandler, performanceReport, savePerformanceSettingsHandler } from './accounting-performance';
 import { forecastFiguresHandler, forecastGetHandler, forecastPutHandler } from './accounting-forecast';
 import { dashboardHandler } from './accounting-dashboard';
 import { financeTodoHandler, financeTodoCountHandler } from './accounting-todo';
@@ -149,6 +149,8 @@ accounting.post('/settlement/rows/:id/confirm', settlementConfirmRow);
 accounting.post('/settlement/rows/confirm-together', settlementConfirmGroup);
 accounting.post('/settlement/rows/:id/unconfirm', settlementRowUnconfirm);
 accounting.post('/settlement/rows/:id/ignore', settlementIgnoreRow);
+/* "Not this" — release an unconfirmed line's match (owner 2026-11-03, batch 3 d2). */
+accounting.post('/settlement/rows/:id/release', settlementReleaseRow);
 /* "Find the sale" — the card payments the window could not offer (docs/bugs/0792). */
 accounting.get('/settlement/rows/:id/find', settlementFindPayments);
 accounting.get('/settlement/watchlist', settlementWatchlist);
@@ -205,6 +207,8 @@ accounting.delete('/reports/layout', reportLayoutReset);
    expense in place of one ledger account, the rest as booked (owner
    2026-09-12; docs/bugs/0835). Handlers in accounting-performance.ts. */
 accounting.get('/reports/performance', performanceReport);
+/* Its chart's months — the same builder, the window read once (batch 6 read c6). */
+accounting.get('/reports/performance/months', performanceMonthsHandler);
 /* The monthly product profit ranking (owner 2026-10-05): every product the
    month sold, by model, with its own cost and its share of the gifts.
    accounting-product-profit.ts; acc/product-profit.ts. */

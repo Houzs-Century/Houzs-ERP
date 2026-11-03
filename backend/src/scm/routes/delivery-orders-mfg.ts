@@ -26,7 +26,7 @@ import { buildVariantSummary } from '../shared';
 import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shared/so-line-display';
 import { supabaseAuth } from '../middleware/auth';
 import { statusCapabilityRefusal, POD_STATES } from '../lib/do-status-capability';
-import { resolveDeliveryScope, scopeMatchesAssignment } from '../lib/deliveryScope';
+import { resolveDeliveryScope, scopeMatchesAssignment, podWriteScopeCompany } from '../lib/deliveryScope';
 import { resolveCrewSeats } from '../lib/crew-seats';
 import { fetchDoCrewAssignment, doPodPhotoHandler } from './delivery-pod-context';
 import { startTripIfPlanned } from './delivery-job-progress';
@@ -4979,10 +4979,44 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      the inventory deduct/reverse, the SO delivered-qty resync, a customer-facing
      DO email and the rack return, so the flip is the right place to stop a
      cross-company caller. */
-  const co = requireActiveCompanyId(c);
-  if (!co.ok) return c.json(co.refusal, 409);
+  /* COMPANY TO ACT IN. A bypassed driver completing their OWN POD acts on the
+     DO's OWN company, not the active one — one lorry carries both companies'
+     goods and a driver has no company switcher, so a 2990 drop on a HOUZS-active
+     driver's phone must still complete. The caller's company GRANT (resolved by
+     scopeToAllowedCompanies — a driver granted only HOUZS still gets a plain
+     "not your job", nothing leaks) PLUS the crew-ownership check below are the
+     authorization; the active company does not gate a driver's own delivery.
+     Every other caller stays strictly active-company — tenancy isolation is
+     unchanged, and the money/stock side-effects below are unaffected either way
+     because they key off the DO id / so_doc_no and so always book to the DO's
+     own company. */
+  const bypassPod = c.get('scmWriteBypassed') && POD_STATES.has(toStatus);
+  // For a driver POD, the DO's own company read through the caller's GRANT
+  // (scopeToAllowedCompanies); null when the DO is in no company they are
+  // granted (a plain "not your job", never confirming another tenant's id).
+  let doCompanyIdWhenGranted: number | null = null;
+  if (bypassPod) {
+    const { data: own, error: ownErr } = await scopeToAllowedCompanies(
+      sb.from('delivery_orders').select('company_id').eq('id', id), c,
+    ).maybeSingle();
+    // A READ failure is not "you are not granted it" — surface it, never let a DB
+    // blip silently become a 403 that blocks the driver from their own delivery.
+    if (ownErr) return c.json({ error: 'load_failed', reason: ownErr.message }, 500);
+    doCompanyIdWhenGranted = (own as { company_id?: number | null } | null)?.company_id ?? null;
+  }
+  const podCo = podWriteScopeCompany(bypassPod, doCompanyIdWhenGranted);
+  let scopeCompanyId: number;
+  if (podCo.kind === 'not_your_job') {
+    return c.json({ error: 'not_your_job', reason: 'You can only complete a delivery assigned to you.' }, 403);
+  } else if (podCo.kind === 'do_company') {
+    scopeCompanyId = podCo.companyId;
+  } else {
+    const co = requireActiveCompanyId(c);
+    if (!co.ok) return c.json(co.refusal, 409);
+    scopeCompanyId = co.companyId;
+  }
   const { data: cur } = await scopeToCompanyId(
-    sb.from('delivery_orders').select('status, so_doc_no').eq('id', id), co.companyId,
+    sb.from('delivery_orders').select('status, so_doc_no').eq('id', id), scopeCompanyId,
   ).maybeSingle();
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const prevStatus = (cur as { status: string }).status;
@@ -4992,7 +5026,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
      DO crew; an admin on behalf resolves to 'all'). prev MUST be stock-out, so
      a POD records arrival and never triggers a first ship. See do-status-
      capability.ts + deliveryScope.ts. Never reached by a real-access caller. */
-  if (c.get('scmWriteBypassed') && POD_STATES.has(toStatus)) {
+  if (bypassPod) {
     if (!(DO_STOCK_OUT_STATES as readonly string[]).includes((prevStatus ?? '').toUpperCase()))
       return c.json({ error: 'illegal_status_transition', reason: 'A delivery can only be completed after it has been dispatched.' }, 409);
     const podScope = await resolveDeliveryScope(sb, c.get('houzsUser'));
@@ -5158,7 +5192,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   if (toStatus === 'CANCELLED') {
     const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_orders')
       .update({ status: toStatus, ...ts, ...tsNum, ...tsJson })
-      .eq('id', id), co.companyId).neq('status', 'CANCELLED')
+      .eq('id', id), scopeCompanyId).neq('status', 'CANCELLED')
       .select('id, status').maybeSingle();
     // HC-0004 T2: an SI line raced in after the doHasDownstream check above.
     const dbLock = doCancelDbRefusal(error);
@@ -5172,7 +5206,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     data = updated as { id: string; status: string };
   } else {
     const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_orders')
-      .update({ status: toStatus, ...ts, ...tsNum, ...tsJson }).eq('id', id), co.companyId).select('id, status').single();
+      .update({ status: toStatus, ...ts, ...tsNum, ...tsJson }).eq('id', id), scopeCompanyId).select('id, status').single();
     if (isSoLineOverDelivered(error)) return c.json({ error: 'over_delivery', message: 'This delivery would ship more than the Sales Order ordered — another DO already covers it. Refresh and check the Sales Order.', reason: error?.message }, 409);
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
     data = updated as { id: string; status: string };
@@ -5226,7 +5260,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     }
     /* REC P4 — put the physical rack stock back. Best-effort; never blocks cancel. */
     try {
-      const { data: doRow } = await scopeToCompanyId(sb.from('delivery_orders').select('do_number, company_id').eq('id', id), co.companyId).maybeSingle();
+      const { data: doRow } = await scopeToCompanyId(sb.from('delivery_orders').select('do_number, company_id').eq('id', id), scopeCompanyId).maybeSingle();
       const doNo = (doRow as { do_number?: string } | null)?.do_number ?? null;
       if (doNo) await returnDoRacksOnCancel(sb, id, doNo, user.id, (doRow as { company_id?: number | null } | null)?.company_id ?? null);
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[do-rack] cancel reversal failed:', e); }
@@ -5244,7 +5278,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
        so this can never ask AutoCount to cancel an invoiced delivery. */
     const { data: doRow } = await sb.from('delivery_orders').select('do_number').eq('id', id).maybeSingle();
     await enqueueCancel(sb, {
-      companyId: co.companyId,
+      companyId: scopeCompanyId,
       docType: 'DO',
       docNo: (doRow as { do_number?: string } | null)?.do_number ?? id,
       docId: id,

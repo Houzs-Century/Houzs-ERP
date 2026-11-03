@@ -190,7 +190,7 @@ export const useBankStatement = (id: number | null) => useQuery({
 /* A bank movement changes the LEDGER, so everything downstream of the ledger is
    stale after one — the settlement side included, since booking a credit here
    writes a receipt there. */
-const invalidateAfterBankPosting = (qc: ReturnType<typeof useQueryClient>) => {
+export const invalidateAfterBankPosting = (qc: ReturnType<typeof useQueryClient>) => {
   void qc.invalidateQueries({ queryKey: ['bank-statement'] });
   void qc.invalidateQueries({ queryKey: ['bank-statements'] });
   /* The month is the same movements counted a second way, so a decision on one
@@ -477,25 +477,32 @@ export const useBankMonths = () => useQuery({
   retryDelay: 800,
 });
 
+export type BankMonthDetail = {
+  accountCode: string;
+  month: string;
+  assembly: BankMonthAssembly;
+  reconciliation: Reconciliation;
+  lock: BankMonthLock | null;
+  /** The typed month-end figures as stored (docs/bugs/0858). Optional only
+      for the minute a newer screen reads an older server. */
+  balances?: BankMonthBalances;
+  statements: Array<BankStatement & { spanning: boolean }>;
+  lines: Array<BankLine & { file_name: string | null }>;
+  unmatchedEntries: LedgerEntry[];
+  /** This month's movements still to decide that an earlier file of the
+      account already recorded, and the files carrying them (owner
+      2026-10-14). Optional only for the minute a newer screen reads an older server. */
+  repeats?: { count: number; statementIds: number[] };
+};
+
+/** One account's month as the server assembles it — the month view's read, and
+    the fresh look Record journal takes before it writes anything. */
+export const fetchBankMonth = (accountCode: string, month: string) =>
+  authedFetch<BankMonthDetail>(`/accounting/bank/months/${encodeURIComponent(accountCode)}/${encodeURIComponent(month)}`);
+
 export const useBankMonth = (accountCode: string | null, month: string | null) => useQuery({
   queryKey: ['bank-month', accountCode, month],
-  queryFn: () => authedFetch<{
-    accountCode: string;
-    month: string;
-    assembly: BankMonthAssembly;
-    reconciliation: Reconciliation;
-    lock: BankMonthLock | null;
-    /** The typed month-end figures as stored (docs/bugs/0858). Optional only
-        for the minute a newer screen reads an older server. */
-    balances?: BankMonthBalances;
-    statements: Array<BankStatement & { spanning: boolean }>;
-    lines: Array<BankLine & { file_name: string | null }>;
-    unmatchedEntries: LedgerEntry[];
-    /** This month's movements still to decide that an earlier file of the
-        account already recorded, and the files carrying them (owner
-        2026-10-14). Optional only for the minute a newer screen reads an older server. */
-    repeats?: { count: number; statementIds: number[] };
-  }>(`/accounting/bank/months/${encodeURIComponent(accountCode!)}/${encodeURIComponent(month!)}`),
+  queryFn: () => fetchBankMonth(accountCode!, month!),
   enabled: accountCode != null && month != null,
   retry: retryUnlessClientError,
   retryDelay: 800,

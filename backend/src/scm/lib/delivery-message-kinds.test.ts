@@ -47,7 +47,7 @@ describe('joinDeliveryAddress', () => {
 
 describe('kindAttributes', () => {
   it('openers and simple reminders add nothing beyond the shared bundle', () => {
-    for (const k of ['delivery', 'amend', 'reminder_1', 'reminder_2', 'reminder_3', 'delivery_completed', 'overdue_order'] as const) {
+    for (const k of ['delivery', 'amend', 'reminder_1', 'reminder_2', 'reminder_3', 'delivery_completed'] as const) {
       expect(kindAttributes(k, row, '2026-10-08', 0, undefined)).toEqual({ attributes: {} });
     }
   });
@@ -89,6 +89,14 @@ describe('kindAttributes', () => {
       amend_date_reason_2: 'Our strict quality control checks',
       new_delivery_date: '2026/10/12',
     });
+  });
+
+  it('overdue order sends the board Amend Reason as amend_date_reason; skips when blank', () => {
+    // No Amend Reason on the row -> skipped, never sent as the literal "{amend_date_reason}".
+    expect(kindAttributes('overdue_order', row, '2026-10-08', 0, undefined).skip).toBe('overdue_order_needs_reason');
+    const r = kindAttributes('overdue_order', { ...row, amend_reason: 'Our strict quality control checks' }, '2026-10-08', 0, undefined);
+    expect(r.attributes).toEqual({ amend_date_reason: 'Our strict quality control checks' });
+    expect(r.skip).toBeUndefined();
   });
 
   it('postage sends the phone and the joined address, and skips an order with no address', () => {

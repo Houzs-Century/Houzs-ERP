@@ -274,7 +274,15 @@ const CEILINGS = {
   // in no initial chunk - crossed it by ~10 bytes: initial-app 88.88 -> 88.89
   // KB gzip, the renamed lazy-chunk hashes in the entry's map. Any PR touching
   // a lazy page would trip the same way, so one more KB of headroom.
-  INITIAL_JS_GZIP: 177 * KB,
+  // 177 -> 178 on 2026-11-03: Finance › Reports became ONE sidebar entry (the
+  // owner's Claude Design, batch 6 step 0). The sidebar decides from the report
+  // catalog's members whether to show it and where it goes, so the catalog's
+  // names, addresses and gates (pages/scm-v2/reports-catalog.ts) and the
+  // Accounting tab titles moved from the report pages' lazy chunk into the
+  // entry: initial-app 89.05 -> 89.88 KB gzip (main 176.5 -> 177.3). The
+  // list's icons and one-line descriptions stayed lazy (reports/
+  // reportListLook.ts) — moving them too measured +1.9 KB.
+  INITIAL_JS_GZIP: 178 * KB,
   // Everything the app can lazy-load (users only fetch the routes they visit).
   // A soft guard against unbounded total growth, not a first-paint cost. Left
   // at 1800 deliberately — main is at ~99% of it and RAISING IT AGAIN IS NOT

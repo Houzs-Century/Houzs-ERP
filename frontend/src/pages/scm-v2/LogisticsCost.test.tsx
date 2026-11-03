@@ -71,7 +71,8 @@ vi.mock('../../vendor/scm/lib/authed-fetch', () => ({
   authedFetch: (path: string, init?: RequestInit) => fetchMock(path, init),
 }));
 
-import { LogisticsCostTab } from './LogisticsCost';
+import { LogisticsCostTab, regionSheet } from './LogisticsCost';
+import type { LogisticsRegionRow } from '../../vendor/scm/lib/logistics-queries';
 
 const draw = () => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -92,7 +93,8 @@ describe('the P&L view — the owner\'s Logistic Cost Report from the books', ()
     expect(net.textContent).toContain('(21,617)');
     expect(within(table).getByText('Transport Income (2990)').closest('tr')!.textContent).toContain('4,442');
     const totals = screen.getByLabelText('P&L totals');
-    expect(totals.textContent).toContain('−RM 21,617');
+    /* The tiles read whole ringgit like the sheet, a loss in brackets (the redesign's tiles carry no RM). */
+    expect(totals.textContent).toContain('(21,617)');
     expect(totals.textContent).toContain('3 DOs');
     expect(screen.getByText(/In-house cost per trip: RM 10,354 — 2 trips of our lorries/)).toBeTruthy();
     expect(screen.getByText(/Which account feeds which row: Chart of Accounts › Logistics column/)).toBeTruthy();
@@ -131,21 +133,21 @@ describe('the P&L view — the owner\'s Logistic Cost Report from the books', ()
 describe('the Logistics cost tab', () => {
   test('asks for this month and leads with the totals', async () => {
     draw();
-    fireEvent.click(await screen.findByRole('tab', { name: 'By region' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'By region' }));
     await waitFor(() => expect(fetchMock.mock.calls.some(([p]) => String(p).startsWith(`/acc-events/logistics?from=${thisMonth}-01&to=${thisMonth}-`))).toBe(true));
     const totals = await screen.findByLabelText('Logistics totals');
-    await waitFor(() => expect(totals.textContent).toContain('RM 1,350'));
+    await waitFor(() => expect(totals.textContent).toContain('1,350'));
     expect(totals.textContent).toContain('Goods RM 2,600');
     expect(totals.textContent).toContain('RM 270 per DO · 51.9% of goods');
     expect(totals.textContent).toContain('2 trips · RM 450 each');
     expect(totals.textContent).toContain('1 bill line');
-    expect(totals.textContent).toContain('RM 9,730');
+    expect(totals.textContent).toContain('9,730');
     expect(totals.textContent).toContain('1 fair');
   });
 
   test('says what could not be counted', async () => {
     draw();
-    fireEvent.click(await screen.findByRole('tab', { name: 'By region' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'By region' }));
     const box = await screen.findByLabelText('Not counted');
     expect(box.textContent).toContain('2 DOs have nobody on them');
     expect(box.textContent).toContain('ABC 123');
@@ -154,18 +156,33 @@ describe('the Logistics cost tab', () => {
 
   test('by region, per trip and setup & dismantle are views of the one answer; no own-lorry tick list here', async () => {
     draw();
-    fireEvent.click(await screen.findByRole('tab', { name: 'By region' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'By region' }));
     await screen.findByText('Penang, Perlis, Kedah, Kelantan, Terengganu, Pahang');
     expect(screen.getByText('SBH & SWK')).toBeTruthy();
     expect(screen.getByText(/KL includes 1 DO with no state/)).toBeTruthy();
-    fireEvent.click(screen.getByRole('tab', { name: 'Per trip' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Per trip' }));
     await screen.findByText('MSJ TRANSPORT SERVICE');
     expect(screen.getByText('VRH9058')).toBeTruthy();
     expect(screen.getByText('HC-API-2610-009')).toBeTruthy();
-    fireEvent.click(screen.getByRole('tab', { name: 'Setup & Dismantle' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Setup & Dismantle' }));
     await screen.findByText('IOI CITY MALL FAIR');
-    expect(screen.queryByRole('tab', { name: 'Own-lorry cost' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Own-lorry cost' })).toBeNull();
     expect(screen.queryByLabelText('Own-lorry cost accounts')).toBeNull();
     expect(fetchMock.mock.calls.some(([p]) => String(p).startsWith('/acc-events/logistics/settings'))).toBe(false);
+  });
+});
+
+describe('the redesign (batch 6 §5.11)', () => {
+  test('the view is one of a segmented control; Excel / PDF / Print draw the view as shown', async () => {
+    draw();
+    expect((await screen.findByRole('button', { name: 'P&L' })).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Excel' })).toBeTruthy();
+    const regions: LogisticsRegionRow[] = [
+      { code: 'PG', name: 'Penang', covers: 'Penang', dos: 2, valueSen: 200_000, ownSen: 30_000, threeplSen: 10_000, totalSen: 40_000 },
+      { code: 'KL', name: 'KL', covers: 'KL', dos: 1, valueSen: 60_000, ownSen: 0, threeplSen: 9_000, totalSen: 9_000 },
+    ];
+    const sheet = regionSheet(regions, 'Oct 2026');
+    expect(sheet.title).toBe('Logistics cost · by region');
+    expect(sheet.tables[0]!.rows.at(-1)).toMatchObject({ kind: 'total', cells: ['3', 260_000, 30_000, 19_000, 49_000, 16_333, expect.closeTo(18.85, 1)] });
   });
 });

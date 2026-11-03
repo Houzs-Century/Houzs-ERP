@@ -1429,6 +1429,59 @@ async function unconfirmSettlementGroup(
   return { ok: true, status: 'unconfirmed' };
 }
 
+/** The payments a person said a line is NOT ("SOPAY:<id>" keys), from its not_this column. */
+export function notThisOf(v: unknown): string[] {
+  return Array.isArray(v) ? v.map(String) : [];
+}
+
+/** "Not this" (owner 2026-11-03, batch 3 d2: 「可以」). The machine matched an
+    UNCONFIRMED line to a payment — by its reference, at upload or on a rematch —
+    and a person says it is not that sale. The line goes back to the deciding
+    pile, its links go, and the payments it held are remembered on the line
+    (not_this) so neither the report's suggestion nor a rematch hands the same
+    payment back to it. Nothing posts: an unconfirmed line has no entry. The
+    memory steers the machine, not the person — picking that payment by hand
+    later still works.
+
+    The line is written before the links go: a press that stops between the two
+    leaves the memory and the bucket right and the links still there, and the
+    next press finishes; the other order would lose the memory. */
+export async function releaseSettlementRow(
+  sb: any, companyId: number, rowId: number,
+): Promise<{ ok: true; released: string[] } | { ok: false; status: string; reason: string }> {
+  const { data: rowRaw, error } = await sb.from('acc_settlement_rows')
+    .select('id, confirmed_at, bucket, not_this').eq('id', rowId).eq('company_id', companyId).maybeSingle();
+  if (error) return { ok: false, status: 'load_failed', reason: error.message };
+  if (!rowRaw) return { ok: false, status: 'not_found', reason: `settlement line ${rowId} not found` };
+  const row = rowRaw as { id: number; confirmed_at: string | null; bucket: string; not_this: unknown };
+  if (row.confirmed_at) {
+    return { ok: false, status: 'already_confirmed', reason: 'This line is already in the ledger. Take it back with Undo first.' };
+  }
+  if (row.bucket === 'IGNORED') {
+    return { ok: false, status: 'ignored', reason: 'This line was set aside. Put it back in the list first.' };
+  }
+  const { data: linkRaw, error: lErr } = await sb.from('acc_settlement_matches')
+    .select('payment_source, payment_id').eq('company_id', companyId).eq('settlement_row_id', row.id);
+  if (lErr) return { ok: false, status: 'load_failed', reason: lErr.message };
+  const released = ((linkRaw ?? []) as Array<{ payment_source: string; payment_id: string }>)
+    .map((l) => `${l.payment_source}:${l.payment_id}`);
+  if (released.length === 0) {
+    return { ok: false, status: 'nothing_matched', reason: 'This line holds no payment — there is nothing to release.' };
+  }
+  const { error: upErr } = await sb.from('acc_settlement_rows').update({
+    bucket: 'NEEDS_CONFIRM', match_reason: null,
+    not_this: [...new Set([...notThisOf(row.not_this), ...released])],
+    updated_at: new Date().toISOString(),
+  }).eq('id', row.id).eq('company_id', companyId);
+  if (upErr) return { ok: false, status: 'update_failed', reason: upErr.message };
+  const { error: delErr } = await sb.from('acc_settlement_matches').delete()
+    .eq('company_id', companyId).eq('settlement_row_id', row.id);
+  if (delErr) {
+    return { ok: false, status: 'unlink_failed', reason: `${delErr.message} (the line was marked — press Not this again to release the payment)` };
+  }
+  return { ok: true, released };
+}
+
 /** Every credit recorded against a batch, oldest first, with what is left. */
 export async function loadBatchReceipts(
   sb: any,

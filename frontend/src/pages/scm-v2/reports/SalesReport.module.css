@@ -1,0 +1,92 @@
+/* Finance › Reports › Sales report in the owner's redesign (batch 6 §5.8):
+   the stage tabs under the toolbar, the bar over the table (back to every
+   fair, title, count, Clear filters, the column groups as chips, Table /
+   Cards), the stage's line of description, the cards, and the message with
+   its one action. Colours from finance/finance-ui.module.css. */
+
+.select {
+  height: 30px; max-width: 220px; box-sizing: border-box; padding: 0 8px; border: 1px solid var(--fin-line); border-radius: 6px;
+  background: var(--fin-surface); font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-ink);
+}
+
+/* ── Stage tabs: an underline under the one open ── */
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--fin-line); overflow-x: auto; scrollbar-width: none; }
+.tab {
+  position: relative; flex: none; padding: 9px 14px 11px; border: 0; background: none; cursor: pointer; white-space: nowrap;
+  font: 500 13px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-text);
+}
+.tab:hover { color: var(--fin-ink); }
+.tabOn { font-weight: 600; color: var(--fin-petrol-ink); }
+.tabOn::after {
+  content: ''; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2.5px; border-radius: 2px; background: var(--fin-petrol);
+}
+
+/* ── The bar over the table ── */
+.bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; min-width: 0; }
+.back, .link {
+  display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: none; cursor: pointer; white-space: nowrap;
+  font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-petrol);
+}
+.back:hover, .link:hover { color: var(--fin-petrol-ink); text-decoration: underline; text-underline-offset: 2px; }
+.title { margin: 0; font-size: 15px; font-weight: 600; color: var(--fin-ink); white-space: nowrap; }
+.count { font-size: 12.5px; color: var(--fin-muted); white-space: nowrap; }
+.grow { flex: 1; }
+.groupsLabel { font-size: 12px; color: var(--fin-muted); }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; box-sizing: border-box; padding: 0 10px; border-radius: 999px;
+  border: 1px solid var(--fin-line); background: var(--fin-surface); color: var(--fin-muted); cursor: pointer; white-space: nowrap;
+  font: 600 12px 'IBM Plex Sans', system-ui, sans-serif;
+}
+.chipOn { border-color: var(--fin-petrol-line); background: var(--fin-info-bg); color: var(--fin-info-fg); }
+
+.desc { margin: -4px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--fin-detail); }
+
+/* ── A message in place of the table, with its one action ── */
+.msg {
+  padding: 32px 20px; background: var(--fin-surface); border: 1px solid var(--fin-line); border-radius: 10px; box-shadow: var(--fin-card-shadow);
+  text-align: center; font-size: 13px; line-height: 1.5; color: var(--fin-detail);
+}
+.msgAct {
+  margin-top: 12px; height: 32px; padding: 0 14px; border: 1px solid var(--fin-petrol-line); border-radius: 6px; background: var(--fin-petrol-pale);
+  color: var(--fin-petrol-ink); font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer;
+}
+.msgAct:hover { background: var(--fin-petrol-hover); }
+
+/* ── A document number or a fair: opens its view ── */
+.docLink {
+  padding: 0; border: 0; background: none; cursor: pointer; white-space: nowrap; text-align: left;
+  font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-petrol-ink);
+  text-decoration: underline dotted; text-underline-offset: 3px;
+}
+.docLink:hover { color: var(--fin-petrol); }
+.plainNo { font-weight: 600; color: var(--fin-ink); white-space: nowrap; }
+
+/* The stage a COGS came from, and a row's small tags. */
+.tag {
+  display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap;
+  background: var(--fin-calm-bg); color: var(--fin-calm-fg);
+}
+.tagInfo { background: var(--fin-info-bg); color: var(--fin-info-fg); }
+.tagWarn { background: var(--fin-warn-bg); color: var(--fin-warn-fg); }
+
+.good { color: #2f7a52; }
+.late { color: var(--fin-late-fg); }
+
+/* ── Cards ── */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
+.card {
+  display: flex; flex-direction: column; gap: 9px; min-width: 0; padding: 12px 14px;
+  background: var(--fin-surface); border: 1px solid var(--fin-line); border-radius: 10px; box-shadow: var(--fin-card-shadow);
+}
+.cardHead { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.cardSub { flex: 1; min-width: 0; font-size: 12px; color: var(--fin-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.figs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.figK { font-size: 11px; color: var(--fin-muted); white-space: nowrap; }
+.figV { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--fin-ink); }
+.none { padding: 20px; font-size: 13px; color: var(--fin-muted); }
+
+.notes { margin: 0; font-size: 12px; line-height: 1.5; color: var(--fin-muted); }
+
+@media (max-width: 640px) {
+  .select { max-width: 100%; }
+}

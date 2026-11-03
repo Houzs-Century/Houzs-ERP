@@ -64,6 +64,7 @@ const SUGGESTED_ROW: SettlementRow = {
 const confirmMutate = vi.fn();
 const confirmGroupMutate = vi.fn();
 const unconfirmMutate = vi.fn();
+const releaseMutate = vi.fn();
 const confirmMatchedMutate = vi.fn();
 const confirmMatchedBatch = vi.fn();
 const refreshAfterPosting = vi.fn();
@@ -125,6 +126,7 @@ vi.mock('./settlement-queries', () => ({
   useConfirmSettlementRow: () => ({ mutate: confirmMutate, isPending: false, isError: false, error: null }),
   useConfirmSettlementGroup: () => ({ mutate: confirmGroupMutate, isPending: false, isError: false, error: null }),
   useUnconfirmSettlementRow: () => ({ mutate: unconfirmMutate, isPending: false }),
+  useReleaseSettlementRow: () => ({ mutate: releaseMutate, isPending: false }),
   useConfirmMatched: () => ({ mutate: confirmMatchedMutate, isPending: false, data: null }),
   confirmMatchedBatch: (id: number) => confirmMatchedBatch(id),
   useInvalidateAfterPosting: () => refreshAfterPosting,
@@ -660,6 +662,18 @@ describe('inside one report', () => {
     expect(within(row).getByText(/the button above books it/)).toBeTruthy();
     /* And it has no confirm button of its own — the one at the top does it. */
     expect(within(row).queryByText('Confirm and post')).toBeNull();
+  });
+
+  /* Owner 2026-11-03 (batch 3 d2): the reference matched it, and it is not that sale. */
+  test('a matched line can be told "Not this" — its match is released, nothing posts', () => {
+    open();
+    const row = screen.getByText('969745').closest('tr') as HTMLElement;
+    fireEvent.click(within(row).getByText('Not this'));
+    expect(releaseMutate).toHaveBeenCalledWith(9, expect.anything());
+    /* A confirmed line has Undo, not Not this. */
+    openTab('Confirmed');
+    const done = screen.getByText(/done · JE-2608-0011/).closest('tr') as HTMLElement;
+    expect(within(done).queryByText('Not this')).toBeNull();
   });
 
   test('a line that needs choosing keeps its card', () => {
