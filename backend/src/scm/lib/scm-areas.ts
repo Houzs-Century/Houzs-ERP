@@ -129,6 +129,7 @@ export const SCM_AREA_MOUNTS: ReadonlyArray<readonly [string, string]> = [
   ["/so-dropdown-options/*", "scm.procurement.products"],
   ["/venues/*", "scm.procurement.products"],
   ["/scan-so/*", "scm.sales.orders"],
+  ["/scan-gr/check/*", "scm.procurement.grn"],
   ["/scan-gr/*", "scm.procurement.grn"],
   ["/scan-pi/*", "scm.procurement.pi"],
   ["/scan-payment/*", "scm.sales.orders"],
