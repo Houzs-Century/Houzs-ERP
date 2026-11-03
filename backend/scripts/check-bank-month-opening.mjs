@@ -25,7 +25,7 @@ try {
   const ids = await sql`select distinct company_id from scm.acc_bank_statements where account_code = ${code} order by company_id`;
   for (const co of ids.map((r) => ({ id: r.company_id, code: String(r.company_id) }))) {
     const stmts = await sql`
-      select id, file_name, period_from, period_to, line_count, opening_balance_sen, closing_balance_sen, status, created_at
+      select id, file_name, period_from, period_to, line_count, in_sen, out_sen, opening_balance_sen, closing_balance_sen, status, created_at
       from scm.acc_bank_statements
       where company_id = ${co.id} and account_code = ${code} and period_to >= ${from} and period_from <= ${to}
       order by period_from, period_to`;
@@ -43,7 +43,7 @@ try {
     console.log(`\n=== company ${co.id} ${co.code} · account ${code} · ${months.join(' → ')}`);
     console.log('STATEMENT FILES');
     for (const s of stmts) {
-      console.log(`  ${d(s.period_from)} → ${d(s.period_to)} | opening ${rm(s.opening_balance_sen)} | closing ${rm(s.closing_balance_sen)} | ${s.line_count} lines | ${s.status} | ${s.file_name}`);
+      console.log(`  ${d(s.period_from)} → ${d(s.period_to)} | opening ${rm(s.opening_balance_sen)} | closing ${rm(s.closing_balance_sen)} | in ${rm(s.in_sen)} out ${rm(s.out_sen)} | ${s.line_count} lines | ${s.status} | ${s.file_name}`);
     }
     console.log('TYPED MONTH-END BALANCES');
     for (const t of typed) console.log(`  ${d(t.period_month)} | closing ${rm(t.closing_sen)} | by ${t.typed_by} at ${d(t.typed_at)}`);
