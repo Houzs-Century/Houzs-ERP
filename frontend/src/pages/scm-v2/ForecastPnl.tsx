@@ -15,9 +15,16 @@
 // month inherits the previous month's percentages and starts its amounts
 // blank. Save is the whole grid in ONE PUT: a refused save names the cell
 // and scrolls to it, and nothing is kept. Nothing here touches the books.
+//
+// In the owner's Claude Design (batch 6 §5.10, step 15), inside the report
+// shell: the months it covers as the grey line; the bar — Add month (the six
+// after the last, or Other…), "A new month inherits the % of the month
+// before.", Show / Hide empty lines, Unsaved changes, Save; the grid in the
+// Finance dress with each month's RM and % sales; toasts for an added month
+// and a save; Excel / PDF / Print of the grid as shown.
 // ----------------------------------------------------------------------------
 import { Fragment, useEffect, useMemo, useState, type ReactElement } from 'react';
-import { Button } from '@2990s/design-system';
+import { Plus, X } from 'lucide-react';
 import { ReportShell } from './reports/ReportShell';
 import { getActiveCompanyId } from '../../lib/activeCompany';
 import { fmtMoneyAtRest } from '../../vendor/scm/components/MoneyInput';
@@ -27,23 +34,20 @@ import {
   type ForecastAccount, type ForecastBlockKey, type ForecastCell, type ForecastFigures, type ForecastGrid, type ForecastLines,
 } from '../../vendor/shared/forecast-pnl';
 import type { LayoutItem } from '../../vendor/scm/lib/report-layout';
+import { AMOUNT_COLUMN, type ReportSheet, type SheetRow } from '../../vendor/scm/lib/report-sheet';
 import { useForecast, useSaveForecast } from '../../vendor/scm/lib/forecast-queries';
+import { useBooksToast } from './books/BooksToast';
+import { ReportExports, ReportHeaderActions, ReportMessage, useReportSubtitle } from './reports/reportParts';
+import { monthName } from './reports/statementColumns';
+import f from './reports/Forecast.module.css';
 
 const errText = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'That was not accepted.');
-const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
-const card: React.CSSProperties = { background: 'var(--c-paper, #fff)', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 8, padding: 0, overflowX: 'auto' };
-const th: React.CSSProperties = { padding: '6px 10px', fontSize: 'var(--fs-11)', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--fg-muted)', borderBottom: '1px solid var(--border-weak, #e3e1da)', whiteSpace: 'nowrap', textAlign: 'right' };
-const td: React.CSSProperties = { padding: '3px 8px', fontSize: 'var(--fs-13)', borderBottom: '1px dashed var(--border-weak, #f0eee8)', whiteSpace: 'nowrap' };
-const num: React.CSSProperties = { textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' };
-const shaded: React.CSSProperties = { background: 'var(--c-surface-2, #f6f5f0)', fontWeight: 600 };
-const danger = 'var(--c-festive-b, #B8331F)';
-const input: React.CSSProperties = { padding: '3px 6px', fontSize: 'var(--fs-13)', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 4, width: 108, textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', background: 'transparent' };
-const pctInput: React.CSSProperties = { ...input, width: 64 };
-const chevron: React.CSSProperties = { background: 'none', border: 'none', padding: '0 4px 0 0', cursor: 'pointer', font: 'inherit', color: 'var(--text-soft, #8a8578)', width: 18, display: 'inline-block', textAlign: 'left' };
-const nameCol: React.CSSProperties = { position: 'sticky', left: 0, background: 'var(--c-paper, #fff)', zIndex: 1, minWidth: 260 };
 
-/** The month a column names: 09/2026 (the house spelling). */
-const monthLabel = (m: string): string => `${m.slice(5, 7)}/${m.slice(0, 4)}`;
+/** The month a column names: "Sep 2026" (as the statements' month columns). */
+const monthLabel = (m: string): string => monthName(m);
+/** "September 2026" — a month in the Add month list and the toast. */
+const monthFull = (m: string): string =>
+  new Date(`${m}-01T00:00:00Z`).toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 /** Basis points as the box shows them: 15, 15.4, 0.25. */
 const fmtBp = (bp: number): string => (bp / 100).toFixed(2).replace(/\.?0+$/, '');
 /** % of sales for a total line, one decimal; nothing when there are no sales. */
@@ -53,6 +57,14 @@ const basisTitle = (a: ForecastAccount): string =>
   (a.basis && a.basis.length > 0 ? `% of this line's own sales: ${a.basis.join(' + ')}` : "% of the month's sales");
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const mytMonth = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 7);
+/** The six months a new one is picked from: those after the last on the grid (or from this month). */
+export const monthsToAdd = (last: string | undefined, today: string): string[] => {
+  const out: string[] = [];
+  let m = last ? nextMonth(last) : today;
+  for (let i = 0; i < 6; i += 1) { out.push(m); m = nextMonth(m); }
+  return out;
+};
+const OTHER = 'other';
 
 /* ── The rows: the P&L's tree over the forecast's accounts ──────────────── */
 
@@ -115,7 +127,7 @@ const AmountBox = ({ valueSen, impliedSen, onCommit, label, cellKey }: { valueSe
   };
   return (
     <input
-      type="text" inputMode="decimal" style={input} value={draft} data-cell={cellKey} aria-label={label}
+      type="text" inputMode="decimal" className={`${f.box} ${valueSen != null ? f.boxTyped : ''}`} value={draft} data-cell={cellKey} aria-label={label}
       placeholder={impliedSen == null ? '' : fmtMoneyAtRest(impliedSen)}
       onFocus={() => { setFocused(true); setDraft(valueSen == null ? '' : (valueSen / 100).toFixed(2)); }}
       onChange={(e) => setDraft(e.target.value)}
@@ -144,7 +156,7 @@ const PercentBox = ({ bp, impliedBp, onCommit, label, cellKey, title }: { bp: nu
   };
   return (
     <input
-      type="text" inputMode="decimal" style={pctInput} value={draft} data-cell={cellKey} aria-label={label} title={title}
+      type="text" inputMode="decimal" className={`${f.box} ${f.pctBox} ${bp != null ? f.boxTyped : ''}`} value={draft} data-cell={cellKey} aria-label={label} title={title}
       placeholder={impliedBp == null ? '' : fmtBp(impliedBp)}
       onFocus={() => setFocused(true)}
       onChange={(e) => setDraft(e.target.value)}
@@ -182,17 +194,29 @@ const hasAnyCell = (g: ForecastGrid): boolean => Object.values(g).some((lines) =
 
 /* ── The page ────────────────────────────────────────────────────────────── */
 
-export const ForecastPnl = () => {
+/** In the Finance report shell (batch 6 §4.3), under Reports › Plan. */
+export const ForecastPnl = () => (
+  <ReportShell report="forecast">
+    <ForecastGridPage />
+  </ReportShell>
+);
+
+const NOTE = 'Sales lines take an amount; every other line takes a % of that month’s sales — a purchase line, of its own group’s sales — or an amount. '
+  + 'Type in either box: the one you typed is kept and the other shows what it implies, in grey. Subtotals, gross profit, profit before tax and net profit follow the P&L’s layout. '
+  + 'Nothing here posts to the books.';
+
+function ForecastGridPage() {
   const q = useForecast();
   const save = useSaveForecast();
+  const toast = useBooksToast();
   const companyId = getActiveCompanyId();
   const [grid, setGrid] = useState<ForecastGrid | null>(null);
   const [saved, setSaved] = useState<ForecastGrid | null>(null);
   const [hideEmpty, setHideEmpty] = useState(true);
   const [closed, setClosed] = useState<Record<string, boolean>>({});
-  const [addMonth, setAddMonth] = useState('');
+  const [pick, setPick] = useState('');
+  const [otherMonth, setOtherMonth] = useState('');
   const [refusal, setRefusal] = useState<{ cell: string | null; message: string } | null>(null);
-  const [savedNote, setSavedNote] = useState<string | null>(null);
 
   /* The server's grid becomes the page's the first time, and again whenever
      nothing typed would be lost by it. */
@@ -214,8 +238,11 @@ export const ForecastPnl = () => {
 
   const months = useMemo(() => (grid ? sortedMonths(grid) : []), [grid]);
   const lastMonth = months.length > 0 ? months[months.length - 1] : undefined;
-  /* The month box shows the next month by default; Add month takes what the box shows, typed or not. */
-  const addTarget = addMonth || nextMonth(lastMonth ?? mytMonth());
+  const firstMonth = months.length > 0 ? months[0] : undefined;
+  /* Add month offers the six months after the last on the grid; Other… takes any month. */
+  const choices = monthsToAdd(lastMonth, mytMonth());
+  const picked = pick && (pick === OTHER || choices.includes(pick)) ? pick : (choices[0] ?? '');
+  const addTarget = picked === OTHER ? otherMonth : picked;
   /* Index reads typed as possibly absent on purpose: a month the grid does not carry has no figures. */
   const figures = useMemo<Record<string, ForecastFigures | undefined>>(() => Object.fromEntries(months.map((m) => [m, monthFigures(grid?.[m] ?? {}, accounts)])), [months, grid, accounts]);
   const lineOf = (m: string, code: string) => figures[m]?.lines.find((l) => l.code === code);
@@ -225,6 +252,10 @@ export const ForecastPnl = () => {
     return lines && Object.prototype.hasOwnProperty.call(lines, code) ? lines[code]! : null;
   };
   const keyed = (code: string): boolean => months.some((m) => cellOf(m, code) != null);
+
+  useReportSubtitle(firstMonth && lastMonth
+    ? `${monthLabel(firstMonth)} – ${monthLabel(lastMonth)} · ${months.length} ${months.length === 1 ? 'month' : 'months'} · targets per account on the P&L’s layout`
+    : 'No month yet');
 
   const dirty = grid != null && saved != null && !sameGrid(grid, saved);
   useEffect(() => {
@@ -241,28 +272,31 @@ export const ForecastPnl = () => {
       if (cell) lines[code] = cell; else delete lines[code];
       return { ...g, [m]: lines };
     });
-    setSavedNote(null);
   };
   const removeMonth = (m: string) => {
     setGrid((g) => { if (!g) return g; const next = { ...g }; delete next[m]; return next; });
-    setSavedNote(null);
   };
   const add = () => {
     const m = addTarget.trim();
     if (!MONTH_RE.test(m) || !grid) return;
-    if (Object.prototype.hasOwnProperty.call(grid, m)) { setRefusal({ cell: null, message: `${monthLabel(m)} is already on the grid.` }); return; }
+    if (Object.prototype.hasOwnProperty.call(grid, m)) { setRefusal({ cell: null, message: `${monthFull(m)} is already on the grid.` }); return; }
     const before = months.filter((x) => x < m);
     const prev = before.length > 0 ? before[before.length - 1] : lastMonth;
     setGrid({ ...grid, [m]: inheritMonth(prev ? grid[prev] : undefined) });
     setRefusal(null);
-    setSavedNote(null);
-    setAddMonth(nextMonth(m));
+    setPick('');
+    toast.say(`${monthFull(m)} added · type its sales; every other line kept its %`);
   };
   const doSave = () => {
     if (!grid) return;
+    if (!dirty) { toast.say('Nothing to save'); return; }
     setRefusal(null);
     save.mutate(grid, {
-      onSuccess: () => { setSaved(grid); setSavedNote(`Saved ${sortedMonths(grid).length} month${sortedMonths(grid).length === 1 ? '' : 's'}.`); },
+      onSuccess: () => {
+        const n = sortedMonths(grid).length;
+        setSaved(grid);
+        toast.say(`Forecast saved · ${n} ${n === 1 ? 'month' : 'months'}`);
+      },
       onError: (e) => {
         const r = refusalOf(e);
         setRefusal(r);
@@ -293,31 +327,6 @@ export const ForecastPnl = () => {
     }
     return out;
   };
-
-  if (q.isError) return <div style={{ color: danger }}>{errText(q.error)}</div>;
-  if (!grid || !q.data) return <div style={soft}>Loading…</div>;
-
-  const colSpan = 1 + months.length * 2;
-  const TotalRow = ({ label, sen, strong = false, id }: { label: string; sen: (m: string) => number; strong?: boolean; id: string }) => (
-    <tr data-row={id} style={shaded}>
-      <td style={{ ...td, ...nameCol, ...shaded, fontWeight: strong ? 700 : 600 }}>{label}</td>
-      {months.map((m) => {
-        const v = sen(m);
-        return (
-          <Fragment key={m}>
-            <td style={{ ...td, ...num, fontWeight: strong ? 700 : 600, color: v < 0 && strong ? danger : undefined }}>{fmtSenPlain(v)}</td>
-            <td style={{ ...td, ...num, ...soft }}>{pctOfSales(v, figures[m]?.salesSen ?? 0)}</td>
-          </Fragment>
-        );
-      })}
-    </tr>
-  );
-  const after = (key: ForecastBlockKey): ReactElement | null => {
-    if (key === 'costOfSales') return <TotalRow id="gross-profit" label="GROSS PROFIT" strong sen={(m) => figures[m]?.totals.grossProfitSen ?? 0} />;
-    if (key === 'expenses') return <TotalRow id="profit-before-tax" label="PROFIT BEFORE TAX" strong sen={(m) => figures[m]?.totals.profitBeforeTaxSen ?? 0} />;
-    if (key === 'taxation') return <TotalRow id="net-profit" label="NET PROFIT" strong sen={(m) => figures[m]?.totals.netProfitSen ?? 0} />;
-    return null;
-  };
   const blockTotal = (key: ForecastBlockKey, m: string): number => {
     const t = figures[m]?.totals;
     if (!t) return 0;
@@ -329,102 +338,171 @@ export const ForecastPnl = () => {
       default: return t.taxationSen;
     }
   };
+  /* The statement's lines after a block: gross profit, profit before tax, net profit. */
+  const afterOf = (key: ForecastBlockKey): { id: string; label: string; sen: (m: string) => number } | null => {
+    if (key === 'costOfSales') return { id: 'gross-profit', label: 'GROSS PROFIT', sen: (m) => figures[m]?.totals.grossProfitSen ?? 0 };
+    if (key === 'expenses') return { id: 'profit-before-tax', label: 'PROFIT BEFORE TAX', sen: (m) => figures[m]?.totals.profitBeforeTaxSen ?? 0 };
+    if (key === 'taxation') return { id: 'net-profit', label: 'NET PROFIT', sen: (m) => figures[m]?.totals.netProfitSen ?? 0 };
+    return null;
+  };
+
+  /* The grid as shown — the lines open, the empty ones as the switch has them — for Excel / PDF / Print. */
+  const sheet = (): ReportSheet | null => {
+    if (!grid || !firstMonth || !lastMonth) return null;
+    const rows: SheetRow[] = [];
+    for (const b of blocks) {
+      rows.push({ kind: 'block', depth: 0, label: b.title, cells: [] });
+      for (const r of visibleRows(b)) {
+        rows.push(r.kind === 'category'
+          ? { kind: 'category', depth: r.depth, label: r.label, cells: months.map((m) => amountOf(m, r.codes)) }
+          : { kind: 'row', depth: r.depth, label: `${r.account.code} · ${r.account.name}`, cells: months.map((m) => lineOf(m, r.account.code)?.amountSen ?? 0) });
+      }
+      rows.push({ kind: 'total', depth: 0, label: `TOTAL ${b.title.toUpperCase()}`, cells: months.map((m) => blockTotal(b.key, m)) });
+      const after = afterOf(b.key);
+      if (after) rows.push({ kind: 'net', depth: 0, label: after.label, cells: months.map(after.sen) });
+    }
+    return {
+      title: 'Forecast P&L',
+      subtitle: `${monthLabel(firstMonth)} – ${monthLabel(lastMonth)} · targets per account on the P&L’s layout`,
+      meta: [{ label: 'Period', value: `${monthLabel(firstMonth)} – ${monthLabel(lastMonth)}` }, { label: 'Rows', value: 'Targets per account · amounts' }],
+      tables: [{ columns: months.map((m) => AMOUNT_COLUMN(monthLabel(m))), rows }],
+      notes: [NOTE],
+    };
+  };
+
+  if (q.isError) return <ReportMessage tone="error">{errText(q.error)}</ReportMessage>;
+  if (!grid || !q.data) return <ReportMessage>Loading…</ReportMessage>;
+
+  const colSpan = 1 + months.length * 2;
+  const TotalRow = ({ label, sen, strong = false, id }: { label: string; sen: (m: string) => number; strong?: boolean; id: string }) => (
+    <tr data-row={id} className={strong ? f.strongRow : f.totalRow}>
+      <td className={f.name}>{label}</td>
+      {months.map((m) => {
+        const v = sen(m);
+        return (
+          <Fragment key={m}>
+            <td className={`${f.cell} ${v < 0 && strong ? f.loss : ''}`}>{fmtSenPlain(v)}</td>
+            <td className={f.pctCell}>{pctOfSales(v, figures[m]?.salesSen ?? 0)}</td>
+          </Fragment>
+        );
+      })}
+    </tr>
+  );
+  const after = (key: ForecastBlockKey): ReactElement | null => {
+    const a = afterOf(key);
+    return a ? <TotalRow id={a.id} label={a.label} strong sen={a.sen} /> : null;
+  };
 
   return (
-    /* In the Finance report shell (batch 6 §4.3), under Reports › Plan. */
-    <ReportShell report="forecast"
-      subtitle="Targets on the P&L's own tree, a column per month. A sales line takes an amount — the month's forecast sales are their sum. Every other line takes a % or an amount — of those sales, or, on a purchase line, of its own group's sales; key one and the other shows what it implies. A new month inherits the percentages. Nothing here touches the books.">
-      <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
-        <input type="month" value={addTarget} onChange={(e) => setAddMonth(e.target.value)} aria-label="Month to add" style={{ ...input, width: 150, textAlign: 'left', fontFamily: 'inherit' }} />
-        <Button variant="secondary" size="sm" onClick={add}>Add month</Button>
-        <Button variant="ghost" size="sm" onClick={() => setHideEmpty((h) => !h)}>{hideEmpty ? 'Show empty lines' : 'Hide empty lines'}</Button>
-        <span style={{ flex: 1 }} />
-        {dirty && <span style={{ ...soft, color: danger, fontWeight: 600 }}>Not saved</span>}
-        {!dirty && savedNote && <span style={soft}>{savedNote}</span>}
-        <Button variant="primary" size="sm" onClick={doSave} disabled={!dirty || save.isPending}>{save.isPending ? 'Saving…' : 'Save'}</Button>
+    <>
+      <ReportHeaderActions>
+        <ReportExports sheet={sheet} fileBase={firstMonth && lastMonth ? `forecast-pnl-${firstMonth}-to-${lastMonth}` : 'forecast-pnl'} />
+      </ReportHeaderActions>
+      {toast.node}
+      <div className={f.bar} role="toolbar" aria-label="Forecast tools">
+        <span className={f.barLabel}>Add month</span>
+        <select className={f.select} value={picked} onChange={(e) => setPick(e.target.value)} aria-label="Month to add">
+          {choices.map((m) => <option key={m} value={m}>{monthFull(m)}</option>)}
+          <option value={OTHER}>Other…</option>
+        </select>
+        {picked === OTHER && (
+          <input type="month" className={f.monthInput} value={otherMonth} onChange={(e) => setOtherMonth(e.target.value)} aria-label="Other month to add" />
+        )}
+        <button type="button" className={f.btn} onClick={add}><Plus size={13} strokeWidth={2.5} aria-hidden />Add month</button>
+        <span className={f.hint}>A new month inherits the % of the month before.</span>
+        <span className={f.grow} />
+        <button type="button" className={f.toggle} onClick={() => setHideEmpty((h) => !h)}>{hideEmpty ? 'Show empty lines' : 'Hide empty lines'}</button>
+        {dirty && <span className={f.unsaved}>Unsaved changes</span>}
+        <button type="button" className={`${f.save} ${dirty ? '' : f.saveIdle}`} onClick={doSave} disabled={save.isPending}>{save.isPending ? 'Saving…' : 'Save'}</button>
       </div>
-      {refusal && <div role="alert" style={{ color: danger, fontSize: 'var(--fs-13)' }}>{refusal.message}</div>}
-      {months.length === 0 && <div style={soft}>No month yet — pick one above and press Add month.</div>}
+      {refusal && <p role="alert" className={f.alert}>{refusal.message}</p>}
+      {months.length === 0 && <p className={f.empty}>No month yet — pick one above and press Add month.</p>}
       {months.length > 0 && (
-        <div style={card}>
-          <table style={{ borderCollapse: 'collapse', width: '100%' }}>
-            <thead>
-              <tr>
-                <th style={{ ...th, ...nameCol, textAlign: 'left' }}>Account</th>
-                {months.map((m) => (
-                  <th key={m} colSpan={2} style={{ ...th, textAlign: 'center' }}>
-                    <span>{monthLabel(m)}</span>
-                    <button type="button" onClick={() => removeMonth(m)} aria-label={`Remove ${monthLabel(m)}`} title="Remove this month (on Save)" style={{ ...chevron, width: 'auto', marginLeft: 6 }}>×</button>
-                  </th>
-                ))}
-              </tr>
-              <tr>
-                <th style={{ ...th, ...nameCol }} />
-                {months.map((m) => (
-                  <Fragment key={m}>
-                    <th style={th}>RM</th>
-                    <th style={th}>% sales</th>
+        <div className={f.card}>
+          <div className={f.scroll}>
+            <table className={f.table}>
+              <thead>
+                <tr>
+                  <th className={`${f.name} ${f.nameHead}`} rowSpan={2}>Account</th>
+                  {months.map((m) => (
+                    <th key={m} colSpan={2} className={f.th}>
+                      <span className={f.monthHead}>
+                        <span>{monthLabel(m)}</span>
+                        <button type="button" className={f.remove} onClick={() => removeMonth(m)} aria-label={`Remove ${monthLabel(m)}`} title="Remove this month (on Save)">
+                          <X size={10} strokeWidth={2.5} aria-hidden />
+                        </button>
+                      </span>
+                    </th>
+                  ))}
+                </tr>
+                <tr>
+                  {months.map((m) => (
+                    <Fragment key={m}>
+                      <th className={f.sub}>RM</th>
+                      <th className={f.sub}>% sales</th>
+                    </Fragment>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {blocks.map((b) => (
+                  <Fragment key={b.key}>
+                    <tr data-row={`block:${b.key}`} className={f.blockRow}><td colSpan={colSpan} className={f.name}>{b.title}</td></tr>
+                    {visibleRows(b).map((r) => r.kind === 'category' ? (
+                      <tr key={r.id} data-row={r.id} className={f.catRow}>
+                        <td className={f.name} style={{ paddingLeft: 12 + (r.depth - 1) * 18 }}>
+                          <button type="button" onClick={() => setClosed((c) => ({ ...c, [r.id]: !c[r.id] }))} aria-label={`${closed[r.id] ? 'Open' : 'Close'} ${r.label}`} className={f.chevron}>{closed[r.id] ? '▸' : '▾'}</button>
+                          {r.label}
+                        </td>
+                        {months.map((m) => {
+                          const v = amountOf(m, r.codes);
+                          return (
+                            <Fragment key={m}>
+                              <td className={f.cell}>{fmtSenPlain(v)}</td>
+                              <td className={f.pctCell}>{pctOfSales(v, figures[m]?.salesSen ?? 0)}</td>
+                            </Fragment>
+                          );
+                        })}
+                      </tr>
+                    ) : (
+                      <tr key={r.id} data-row={r.id} className={f.row}>
+                        {/* One line, `code · name`, the report trees' own label (owner 2026-09-22:
+                            the two-line shape belongs to the journal and GL line tables). */}
+                        <td className={f.name} style={{ paddingLeft: 12 + (r.depth - 1) * 18 + 18 }}>{r.account.code} · {r.account.name}</td>
+                        {months.map((m) => {
+                          const cell = cellOf(m, r.account.code);
+                          const line = lineOf(m, r.account.code);
+                          const sales = isSalesAccount(r.account);
+                          const amount = cell && isAmountCell(cell) ? cell.amtSen : null;
+                          const bp = cell && !isAmountCell(cell) ? cell.bp : null;
+                          return (
+                            <Fragment key={m}>
+                              <td className={f.cell}>
+                                <AmountBox valueSen={amount} impliedSen={bp != null ? (line?.amountSen ?? 0) : null} label={`${m} ${r.account.code} amount`} cellKey={`${m} ${r.account.code} amount`}
+                                  onCommit={(sen) => setCell(m, r.account.code, sen == null ? null : { amtSen: sen })} />
+                              </td>
+                              <td className={f.pctCell}>
+                                {sales
+                                  ? <span>{cell ? pctOfSales(line?.amountSen ?? 0, figures[m]?.salesSen ?? 0) : ''}</span>
+                                  : <PercentBox bp={bp} impliedBp={amount != null ? line?.bp ?? null : null} label={`${m} ${r.account.code} percent`} cellKey={`${m} ${r.account.code} percent`}
+                                      title={basisTitle(r.account)}
+                                      onCommit={(next) => setCell(m, r.account.code, next == null ? null : { bp: next })} />}
+                              </td>
+                            </Fragment>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                    <TotalRow id={`total:${b.key}`} label={`TOTAL ${b.title.toUpperCase()}`} sen={(m) => blockTotal(b.key, m)} />
+                    {after(b.key)}
                   </Fragment>
                 ))}
-              </tr>
-            </thead>
-            <tbody>
-              {blocks.map((b) => (
-                <Fragment key={b.key}>
-                  <tr data-row={`block:${b.key}`}><td colSpan={colSpan} style={{ ...td, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', paddingTop: 10, ...nameCol, background: 'var(--c-paper, #fff)' }}>{b.title}</td></tr>
-                  {visibleRows(b).map((r) => r.kind === 'category' ? (
-                    <tr key={r.id} data-row={r.id}>
-                      <td style={{ ...td, ...nameCol, paddingLeft: 8 + (r.depth - 1) * 16, fontWeight: 600 }}>
-                        <button type="button" onClick={() => setClosed((c) => ({ ...c, [r.id]: !c[r.id] }))} aria-label={`${closed[r.id] ? 'Open' : 'Close'} ${r.label}`} style={chevron}>{closed[r.id] ? '▸' : '▾'}</button>
-                        {r.label}
-                      </td>
-                      {months.map((m) => {
-                        const v = amountOf(m, r.codes);
-                        return (
-                          <Fragment key={m}>
-                            <td style={{ ...td, ...num, fontWeight: 600 }}>{fmtSenPlain(v)}</td>
-                            <td style={{ ...td, ...num, ...soft }}>{pctOfSales(v, figures[m]?.salesSen ?? 0)}</td>
-                          </Fragment>
-                        );
-                      })}
-                    </tr>
-                  ) : (
-                    <tr key={r.id} data-row={r.id}>
-                      {/* One line, `code · name`, the report trees' own label (owner 2026-09-22:
-                          the two-line shape belongs to the journal and GL line tables). */}
-                      <td style={{ ...td, ...nameCol, paddingLeft: 8 + (r.depth - 1) * 16 + 18 }}>{r.account.code} · {r.account.name}</td>
-                      {months.map((m) => {
-                        const cell = cellOf(m, r.account.code);
-                        const line = lineOf(m, r.account.code);
-                        const sales = isSalesAccount(r.account);
-                        const amount = cell && isAmountCell(cell) ? cell.amtSen : null;
-                        const bp = cell && !isAmountCell(cell) ? cell.bp : null;
-                        return (
-                          <Fragment key={m}>
-                            <td style={{ ...td, ...num }}>
-                              <AmountBox valueSen={amount} impliedSen={bp != null ? (line?.amountSen ?? 0) : null} label={`${m} ${r.account.code} amount`} cellKey={`${m} ${r.account.code} amount`}
-                                onCommit={(sen) => setCell(m, r.account.code, sen == null ? null : { amtSen: sen })} />
-                            </td>
-                            <td style={{ ...td, ...num }}>
-                              {sales
-                                ? <span style={soft}>{cell ? pctOfSales(line?.amountSen ?? 0, figures[m]?.salesSen ?? 0) : ''}</span>
-                                : <PercentBox bp={bp} impliedBp={amount != null ? line?.bp ?? null : null} label={`${m} ${r.account.code} percent`} cellKey={`${m} ${r.account.code} percent`}
-                                    title={basisTitle(r.account)}
-                                    onCommit={(next) => setCell(m, r.account.code, next == null ? null : { bp: next })} />}
-                            </td>
-                          </Fragment>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                  <TotalRow id={`total:${b.key}`} label={`TOTAL ${b.title.toUpperCase()}`} sen={(m) => blockTotal(b.key, m)} />
-                  {after(b.key)}
-                </Fragment>
-              ))}
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          </div>
+          <div className={f.note}>{NOTE}</div>
         </div>
       )}
-    </ReportShell>
+    </>
   );
-};
+}
