@@ -8,32 +8,47 @@
 
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId } from '../lib/companyScope';
-import { closeStockMonth, stockValueAsOf, sweepMonths } from '../../acc/stock-close';
+import { closeStockMonth, stockValueByBucketAsOf, sweepMonths } from '../../acc/stock-close';
+import { closedStockMonths } from '../../acc/stock-close-months';
+
+/** Runs the screen lists: the last 90 days (two a night, a few by hand). */
+export const RUN_DAYS = 90;
+const RUN_LIMIT = 400;
 
 const requirePerm = (c: any): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
 
-/* ── GET /accounting/stock-close — run log + the live number ──────────────── */
+/* ── GET /accounting/stock-close — run log + the live number ────────────────
+   Books › Stock close (batch 6 c4): the live value with its buckets, every
+   month the close has booked (its buckets, posted or re-posted, the entries)
+   and the runs of the last 90 days. */
 export const stockCloseStatus = async (c: any): Promise<Response> => {
   if (!requirePerm(c)) return c.json({ error: "You don't have permission to post to the general ledger." }, 403);
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
 
-  const [runsRes, live] = await Promise.all([
+  const since = new Date(Date.now() - RUN_DAYS * 86_400_000).toISOString();
+  const [runsRes, live, months] = await Promise.all([
     sb.from('acc_stock_close_runs')
       .select('month, ran_at, trigger, stock_value_sen, action, je_no, rev_je_no, note')
       .eq('company_id', co.companyId)
+      .gte('ran_at', since)
       .order('ran_at', { ascending: false })
-      .limit(60),
-    stockValueAsOf(sb, co.companyId, new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10)),
+      .limit(RUN_LIMIT),
+    stockValueByBucketAsOf(sb, co.companyId, new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10)),
+    closedStockMonths(sb, co.companyId),
   ]);
   if (runsRes.error) return c.json({ error: 'load_failed', reason: runsRes.error.message }, 500);
   if (!live.ok) return c.json({ error: 'load_failed', reason: live.reason }, 500);
+  if (!months.ok) return c.json({ error: 'load_failed', reason: months.reason }, 500);
 
   return c.json({
-    liveValueSen: live.valueSen,
+    liveValueSen: live.totalSen,
+    liveBuckets: live.buckets,
     defaultMonth: sweepMonths()[0],
+    sweepMonths: sweepMonths(),
     runs: runsRes.data ?? [],
+    months: months.months,
   });
 };
 

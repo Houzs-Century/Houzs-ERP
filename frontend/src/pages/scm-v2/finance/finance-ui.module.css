@@ -33,6 +33,13 @@
   --fin-calm-bg: #f0f2ee;
   --fin-calm-fg: #5b6055;
 
+  /* The five closing stocks (Books › Stock close): the design's three, then showroom and others. */
+  --fin-bucket-customer: #16695f;
+  --fin-bucket-display: #a16a2e;
+  --fin-bucket-service: #dcb36a;
+  --fin-bucket-showroom: #6fa79e;
+  --fin-bucket-others: #a3a99b;
+
   /* The dark toast with its brass check. */
   --fin-toast: #13201c;
   --fin-toast-ink: #e7eae4;
