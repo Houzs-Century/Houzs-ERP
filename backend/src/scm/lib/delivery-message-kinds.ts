@@ -27,6 +27,8 @@ export const MESSAGE_KINDS = [
   'delivery_completed',
   'balance_reminder',
   'postpone',
+  // One-way production-delay heads-up (apology only; no new date, not an opener).
+  'overdue_order',
   'postage',
   // Service Case (ASSR) legs only — sent by assr-arrangement-message.ts (HC-0171).
   'assr_arrangement',
@@ -44,6 +46,7 @@ export const KIND_AUTOMATION: Record<MessageKind, string> = {
   delivery_completed: 'Delivery Completed',
   balance_reminder: 'Balance Reminder',
   postpone: 'Postpone',
+  overdue_order: 'Overdue Order',
   postage: 'Postage Confirm',
   assr_arrangement: 'Service Arrangement',
 };
@@ -51,8 +54,9 @@ export const KIND_AUTOMATION: Record<MessageKind, string> = {
 /** The Delivery Message Status a sent order lands on (owner 2026-10-21: every
  *  send lands the row on its "Done X"; values from HC_MESSAGE_STATUS_VALUES).
  *  Service Arrangement is not here: an ASSR job has no SO status column, its row
- *  reads its state off the WhatsApp record. */
-export const KIND_AFTER_STATUS: Record<Exclude<MessageKind, 'assr_arrangement'>, string> = {
+ *  reads its state off the WhatsApp record. Overdue Order is not here either: a
+ *  one-way production-delay heads-up moves no status (guarded in /send). */
+export const KIND_AFTER_STATUS: Record<Exclude<MessageKind, 'assr_arrangement' | 'overdue_order'>, string> = {
   delivery: 'Done Send',
   amend: 'Done Amend',
   postpone: 'Done Postpone Reason',
@@ -139,6 +143,7 @@ export function kindAttributes(
     case 'reminder_2':
     case 'reminder_3':
     case 'delivery_completed':
+    case 'overdue_order':
       return { attributes: {} };
 
     case 'balance_reminder':

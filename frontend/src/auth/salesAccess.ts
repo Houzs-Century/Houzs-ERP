@@ -112,17 +112,24 @@ export function canSeeSoloOrganizer(user: AuthUser | null | undefined): boolean 
 
 /**
  * May this user SAVE a pasted sales report into a project (and delete a bill
- * from it)? Owner 2026-10-14: "ummu, owner, weisiang" — the Owner position and
- * two accounts by email, the same named-people shape as canCreateEvent. This
- * only decides whether the chat shows the Save button; the backend
+ * from it)? Owner 2026-10-14: "ummu, owner, weisiang"; owner 2026-10-30 adds
+ * Peter (Sales Director, yzhe212@gmail.com) and every Sales Attending of the
+ * project. The frontend check only sees the admin tier — a sales attendee's
+ * UI gate comes from the backend's `can_save` flag on the project-sales-bills
+ * payload, which already resolves the per-event attendee context. Backend
  * (routes/lib/sales-report-bills.ts canSaveSalesReport) is the authority.
- * Reading the saved report needs only the Sales section's own gate.
  */
+const SAVE_EMAILS = new Set([
+  "weisiang329@gmail.com",
+  "ummuaimanlm@gmail.com",
+  "yzhe212@gmail.com", // Peter — Sales Director; owner 2026-10-30
+]);
+
 export function canSaveSalesReport(user: AuthUser | null | undefined): boolean {
   if (!user) return false;
   const position = (user.position_name ?? "").trim().toLowerCase();
   const email = (user.email || "").trim().toLowerCase();
-  return position === "owner" || email === "weisiang329@gmail.com" || email === "ummuaimanlm@gmail.com";
+  return position === "owner" || SAVE_EMAILS.has(email);
 }
 
 /**

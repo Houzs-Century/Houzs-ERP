@@ -21,6 +21,8 @@ describe('message kinds → Connect automation names', () => {
     expect(KIND_AUTOMATION.amend).toBe('New Amend');
     expect(KIND_AUTOMATION.driver_info).toBe('Driver Info');
     expect(KIND_AUTOMATION.postage).toBe('Postage Confirm');
+    // Must equal the Connect automation name byte-for-byte (houzs-connect #157).
+    expect(KIND_AUTOMATION.overdue_order).toBe('Overdue Order');
     expect(new Set(Object.values(KIND_AUTOMATION)).size).toBe(MESSAGE_KINDS.length);
   });
 
@@ -45,7 +47,7 @@ describe('joinDeliveryAddress', () => {
 
 describe('kindAttributes', () => {
   it('openers and simple reminders add nothing beyond the shared bundle', () => {
-    for (const k of ['delivery', 'amend', 'reminder_1', 'reminder_2', 'reminder_3', 'delivery_completed'] as const) {
+    for (const k of ['delivery', 'amend', 'reminder_1', 'reminder_2', 'reminder_3', 'delivery_completed', 'overdue_order'] as const) {
       expect(kindAttributes(k, row, '2026-10-08', 0, undefined)).toEqual({ attributes: {} });
     }
   });

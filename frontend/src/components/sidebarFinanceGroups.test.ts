@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { NAV_TABS, type NavTab } from './Sidebar';
 import { ACCOUNTING_TABS } from '../pages/scm-v2/accounting-tabs';
+import { STAFF_LEGACY_REDIRECT_PATTERNS } from '../routing/routeManifest';
 
 /**
  * THE FINANCE SIDEBAR IS GROUPED BY THE JOB, NOT A FLAT LIST (docs/bugs/0824).
@@ -53,12 +54,12 @@ describe('the Finance sidebar', () => {
   it('keeps every destination the flat list had', () => {
     const tos = flatten(finance?.children ?? []).map((t) => t.to).filter((t): t is string => typeof t === 'string');
     for (const to of [
-      '/scm/daily-bank', '/scm/merchant-recon', '/scm/official-receipts', '/scm/bank-recon',
+      '/scm/daily-bank', '/scm/merchant-recon', '/scm/bank-recon',
       '/scm/settlement-setup', '/scm/chart-of-accounts', '/scm/other-debtors', '/scm/ap-invoices',
       '/scm/receipts', '/scm/payment-vouchers', '/scm/outstanding', '/scm/unbilled-deliveries',
       '/scm/currencies', '/reports/fair-report',
       /* And the ones added since (docs/bugs/0827, 0828; the Forecast P&L 2026-09-21). */
-      '/scm/credit-notes', '/scm/deposit-invoices', '/scm/forecast', '/scm/finance-dashboard',
+      '/scm/credit-notes', '/scm/forecast', '/scm/finance-dashboard',
       /* AR Invoices (2026-09-29) — the AP list's twin. */
       '/scm/ar-invoices',
       /* Card and transfer payments not matched yet, one list (2026-09-30). */
@@ -71,6 +72,35 @@ describe('the Finance sidebar', () => {
       expect(tos, `tab ${tab} is deep-linked`).toContain(`/scm/accounting?tab=${tab}`);
     }
     expect(new Set(tos).size, 'no destination twice').toBe(tos.length);
+  });
+
+  /* The owner's Claude Design (batch 5, step 4): Official receipts folded into
+     Receipts as its first kind — the entry leaves the sidebar, its address
+     redirects, and Receipts' gate is the two old entries' together. */
+  it('folds Official receipts into Receipts: one entry, the old address a redirect', () => {
+    const moneyIn = finance?.children?.find((g) => g.label === 'Money in')?.children ?? [];
+    expect(moneyIn[0]).toMatchObject({ to: '/scm/receipts', label: 'Receipts', anyAccess: ['scm.finance.money_in'] });
+    expect(moneyIn[0]?.anyPerm).toEqual(expect.arrayContaining(['*', 'scm.access', 'scm.payment_voucher.create', 'scm.payment_voucher.post', 'scm.sales_order.write']));
+    expect(moneyIn.some((t) => t.to === '/scm/official-receipts')).toBe(false);
+    expect(STAFF_LEGACY_REDIRECT_PATTERNS as readonly string[]).toContain('/scm/official-receipts');
+  });
+
+  /* Batch 5, step 5: Deposit invoices folded into Invoices as a kind; the switch
+     they carried is Setup › Deposit invoices, gated as the old row was. */
+  it('folds Deposit invoices into Invoices, and puts their switch in Setup', () => {
+    const moneyIn = finance?.children?.find((g) => g.label === 'Money in')?.children ?? [];
+    expect(moneyIn.map((t) => t.label)).toEqual(['Receipts', 'Invoices', 'Debtor maintenance', 'Credit / debit notes', 'Outstanding', 'Not yet billed']);
+    const invoices = moneyIn.find((t) => t.to === '/scm/ar-invoices');
+    expect(invoices?.anyPerm).toEqual(expect.arrayContaining(['*', 'scm.access', 'scm.payment_voucher.create', 'scm.payment_voucher.post', 'scm.sales_order.write']));
+    expect(moneyIn.some((t) => t.to === '/scm/deposit-invoices')).toBe(false);
+    expect(STAFF_LEGACY_REDIRECT_PATTERNS as readonly string[]).toContain('/scm/deposit-invoices');
+    const setup = finance?.children?.find((g) => g.label === 'Setup')?.children ?? [];
+    const labels = setup.map((t) => t.label);
+    expect(labels.indexOf('Deposit invoices')).toBe(labels.indexOf('Currencies') + 1);
+    expect(labels.indexOf('To do rules')).toBe(labels.indexOf('Deposit invoices') + 1);
+    expect(setup.find((t) => t.label === 'Deposit invoices')).toMatchObject({
+      to: '/scm/finance/deposit-invoices', anyPerm: ['*', 'scm.access', 'scm.payment_voucher.post', 'scm.sales_order.write'], anyAccess: ['scm.finance.money_in'],
+    });
   });
 
   it('deep-links only tabs the Accounting page knows', () => {

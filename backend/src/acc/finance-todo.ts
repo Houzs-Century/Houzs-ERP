@@ -364,7 +364,8 @@ function otherJobs(f: TodoFacts): Raised[] {
       title: `Confirm ${t} ${plural(t, 'transfer')} arrived`,
       detail: 'Official receipts stay draft until the money is seen',
       amountSen: sum(f.transfers.map((x) => x.amountSen)), since: minDay(f.transfers.map((x) => x.paidOn)),
-      action: { label: 'Review', to: '/scm/official-receipts', primary: false }, desk: 'finance',
+      /* Receipts, opened on the drafts of every month (the merged page, batch 5 §2). */
+      action: { label: 'Review', to: '/scm/receipts?kind=official&status=draft&month=all', primary: false }, desk: 'finance',
     });
   }
   const o = f.overdue.length;
@@ -551,7 +552,7 @@ function customJobs(f: TodoFacts): Raised[] {
       out.push({
         ...base, tone: 'money', icon: 'receipt', title: `${n} ${plural(n, 'payment')} over RM ${rm(rule.param * 100)}`,
         detail: `${firstFew(items.map((i) => `${i.no} · ${i.name}`.trim()), 2)} · each needs its own e-invoice`, amountSen: amount, since: earliest,
-        action: { label: 'Open', to: '/scm/official-receipts', primary: false },
+        action: { label: 'Open', to: '/scm/receipts?kind=official', primary: false },
       });
     }
   }

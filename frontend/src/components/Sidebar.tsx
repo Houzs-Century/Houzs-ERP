@@ -746,26 +746,28 @@ export const NAV_TABS: NavTab[] = [
         icon: HandCoins,
         groupId: "scm-finance-in",
         children: [
-          { to: "/scm/official-receipts", label: "Official receipts", icon: Receipt, anyPerm: ["*", "scm.access", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.money_in"] },
-          // Deposit invoices (owner 2026-09-12; docs/bugs/0828) — born with a
-          // customer payment when the company's switch is on; beside the
-          // receipt the same payment is born with.
-          { to: "/scm/deposit-invoices", label: "Deposit invoices", icon: Receipt, anyPerm: ["*", "scm.access", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.money_in"] },
-          // AR invoices (owner 2026-09-29) — the AP list's twin: sales invoices
-          // mirrored beside the other-debtor bills raised there; the PV key
-          // family, like the AP invoice it mirrors.
-          { to: "/scm/ar-invoices", label: "AR invoices", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_in"] },
-          { to: "/scm/receipts", label: "Receipts", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_in"] },
+          // Receipts (the owner's Claude Design, batch 5 step 4): every ringgit in on
+          // one page — the official receipts folded in as its first kind, so the
+          // gate is the two old entries' together; inside, each kind shows to
+          // whoever saw its old entry. /scm/official-receipts redirects here.
+          { to: "/scm/receipts", label: "Receipts", icon: Receipt, anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.money_in"] },
+          // Invoices (owner 2026-09-29: AR invoices, the AP list's twin; the
+          // owner's Claude Design, batch 5 step 5): the sales invoices mirrored
+          // beside the other-debtor bills, the deposit invoices (owner
+          // 2026-09-12; docs/bugs/0828) folded in as a kind — so the gate is the
+          // two old rows' together; inside, each kind shows to whoever saw its
+          // old row. /scm/deposit-invoices redirects here; its switch is in Setup.
+          { to: "/scm/ar-invoices", label: "Invoices", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.money_in"] },
           { to: "/scm/other-debtors", label: "Debtor maintenance", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_in"] },
-          { to: "/scm/outstanding", label: "Outstanding", icon: AlertCircle, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
-          { to: "/scm/unbilled-deliveries", label: "Not yet billed", icon: HandCoins, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
           // Credit and debit notes (owner 2026-09-12; docs/bugs/0827) — the
           // customer's CN / DN and an other debtor's CN; the supplier's moved to
           // Money out (owner 2026-10-28). The PV key family, like the AP invoice.
-          // The redesign's names (owner's Claude Design, batch 5): Debtor
-          // maintenance, Not yet billed, Credit / debit notes — the same pages
-          // behind the same gates.
+          // The redesign's names and order (owner's Claude Design, batch 5):
+          // Receipts, Invoices, Debtor maintenance, Credit / debit notes,
+          // Outstanding, Not yet billed — the same pages behind the same gates.
           { to: "/scm/credit-notes", label: "Credit / debit notes", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_in"] },
+          { to: "/scm/outstanding", label: "Outstanding", icon: AlertCircle, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
+          { to: "/scm/unbilled-deliveries", label: "Not yet billed", icon: HandCoins, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
         ],
       },
       {
@@ -871,6 +873,9 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/accounting?tab=groups", label: "Item Groups", icon: SettingsIcon, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.setup"] },
           { to: "/scm/settlement-setup", label: "Recon Setup", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.setup"] },
           { to: "/scm/currencies", label: "Currencies", icon: DollarSign, anyPerm: ["*", "scm.currency.manage"] },
+          // The deposit invoice switch (owner 2026-09-12; docs/bugs/0828), moved off the old
+          // Deposit invoices page (Claude Design, batch 5 step 5) — gated as that row was.
+          { to: "/scm/finance/deposit-invoices", label: "Deposit invoices", icon: Receipt, anyPerm: ["*", "scm.access", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.money_in"] },
           // What fills To do: its built-in rules, the month's routines, Finance's own groups (redesign batch 2).
           { to: "/scm/finance/rules", label: "To do rules", icon: ListChecks, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
         ],

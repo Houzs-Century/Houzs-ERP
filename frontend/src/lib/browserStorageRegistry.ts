@@ -109,6 +109,10 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   // per-device layout preference the user can toggle off (and any explicit
   // Columns-panel choice switches it off). Same class as dmap-open; '0'/'1'.
   { id: "delivery-map-compact-columns", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "dmap-compact.<page>.v1", matches: prefix("dmap-compact.") },
+  // The Finance grids' dragged column widths (owner's redesign, batch 6 §1.3:
+  // Journal entries, General ledger, Merchant charges, Collection) — an array
+  // of px per column. A layout preference; no identity/company data.
+  { id: "finance-column-widths", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "fin-<grid>-cw", matches: (key) => /^fin-[a-z]+-cw$/.test(key) },
   {
     id: "grid-and-panel-layout",
     classification: "DEVICE_PREF",
@@ -229,6 +233,9 @@ export const PRODUCTION_STORAGE_CALLERS = [
   // key is per user so a shared browser never shows one person's draft to the
   // next. Reviewed with the announcements redesign.
   "pages/announcements/ComposerModal.tsx",
+  // Finance grid column widths (finance-column-widths, fin-<grid>-cw): reads,
+  // writes and removes its own key only — px per column, no identity data.
+  "pages/scm-v2/finance/useColumnWidths.ts",
   "pages/scm-v2/ProductModels.tsx",
   "pages/scm-v2/SoFromProducts.tsx",
   "pages/scm-v2/SupplierDetail.tsx",

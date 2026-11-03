@@ -108,7 +108,7 @@ export const SCM_SEGMENT_LABELS: Record<string, SegmentLabel> = {
   "receipts": ["Receipts", "Receipt"],
   "official-receipts": ["Official receipts", "Official receipt"],
   "ap-invoices": ["Supplier Bills", "Supplier Bill"],
-  "ar-invoices": ["AR invoices", "AR invoice"],
+  "ar-invoices": ["Invoices", "Invoice"],
   "credit-notes": ["Credit / debit notes", "Credit / debit note"],
   "deposit-invoices": ["Deposit invoices", "Deposit invoice"],
   "official-docs": "Official Invoices Owed",

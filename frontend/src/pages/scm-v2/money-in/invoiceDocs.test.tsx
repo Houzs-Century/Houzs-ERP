@@ -131,7 +131,16 @@ vi.mock('../../../vendor/scm/lib/accounting-queries', async (importOriginal) => 
   useCreateDebtorBill: () => ({ mutateAsync: createBillAsync, isPending: false }),
   useUpdateDebtorBill: () => ({ mutateAsync: updateBillAsync, isPending: false }),
   useCancelDebtorBill: () => ({ mutate: cancelBillMutate, isPending: false }),
+  useDebtorDetail: (id: string | null) => ({ data: id === 'd1' ? DEBTOR_D1 : undefined, isLoading: false, isError: false, error: null }),
+  useCreateDebtorReceipt: () => ({ mutate: createDebtorReceipt, isPending: false }),
 }));
+/* The debtor the bill page's New receipt lists (batch 5 step 6). */
+const DEBTOR_D1 = {
+  debtor: { id: 'd1', name: 'AHMAD BIN ALI', phone: '012-345', notes: null, is_active: true, outstanding_sen: 30000 },
+  bills: [{ id: 'b1', bill_number: 'HC-ODB-2609-001', bill_date: '2026-09-05', total_sen: 50000, received_sen: 20000, status: 'POSTED', notes: '转租九月' }],
+  receipts: [],
+};
+const createDebtorReceipt = vi.fn();
 vi.mock('../../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
 const EVENT_OPTIONS = [
   { id: 348, code: 'E-348', name: 'Pulau Pinang [AKEMI] MLE @ PWCC', startDate: '2026-09-25', endDate: '2026-09-27', status: 'confirmed', archived: false, venue: null, brand: 'AKEMI', organizer: 'MLE', boothNo: 'F1' },
@@ -209,7 +218,7 @@ describe('a deposit invoice, as a page', () => {
     openDi('d3');
     const title = screen.getByRole('heading', { level: 1, name: '2990-DI-2609-003' });
     expect(within(title.parentElement!).getByText('Issued')).toBeTruthy();
-    expect(screen.getByText('Back to Deposit invoices')).toBeTruthy();
+    expect(screen.getByText('Back to Invoices')).toBeTruthy();
     expect(screen.getAllByText('Ah Seng').length).toBeGreaterThan(0);
     expect(screen.getByText('12 Jalan Satu')).toBeTruthy();
     expect(fact('Sales order').querySelector('a')!.getAttribute('href')).toBe('/scm/sales-orders/2990-SO-2609-003');
@@ -285,7 +294,7 @@ describe('an other debtor\'s bill, as a page', () => {
     openBill('b1');
     expect(screen.getByRole('heading', { level: 1, name: 'HC-ODB-2609-001' })).toBeTruthy();
     expect(screen.getByText('Partly paid')).toBeTruthy();
-    expect(screen.getByText('Back to AR invoices')).toBeTruthy();
+    expect(screen.getByText('Back to Invoices')).toBeTruthy();
     expect(fact('Description').textContent).toBe('转租九月');
     expect(fact('Received').textContent).toBe('RM 200.00');
     expect(fact('Outstanding').textContent).toBe('RM 300.00');
@@ -323,6 +332,19 @@ describe('an other debtor\'s bill, as a page', () => {
     expect(screen.queryByRole('region', { name: 'Credit notes' })).toBeNull();
   });
 
+  /* Batch 5 step 6: while money is still owed, the Receipts section raises one —
+     Debtor maintenance's receipt form, this bill ticked for what it still owes. */
+  test('New receipt opens the debtor receipt form in place, this bill ticked for what it owes; it waits for its four layers', () => {
+    openBill('b1');
+    fireEvent.click(within(screen.getByRole('region', { name: 'Receipts' })).getByRole('button', { name: /New receipt/ }));
+    expect(screen.getByRole('heading', { name: 'New receipt · Other debtor' })).toBeTruthy();
+    expect(screen.getByText('Back to HC-ODB-2609-001')).toBeTruthy();
+    expect((screen.getByLabelText('Collect HC-ODB-2609-001 in full') as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText(/· RM 300\.00 · posts at approval/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save draft' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save & prepare' })).toBeTruthy();
+  });
+
   test('Cancel bill — while nothing was received — asks inline, then sends the bill id', () => {
     openBill('b2');
     fireEvent.click(screen.getByRole('button', { name: 'Cancel bill…' }));
@@ -336,11 +358,14 @@ describe('an other debtor\'s bill, as a page', () => {
     openBill('b1');
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     expect(screen.getByRole('heading', { name: 'Edit HC-ODB-2609-001' })).toBeTruthy();
-    expect(screen.getByText(/saving re-posts it/)).toBeTruthy();
-    expect(screen.queryByLabelText('Bill debtor')).toBeNull();
+    expect(screen.getByText('Saving re-posts the bill: the old journal gets a contra and a fresh one books what you save.')).toBeTruthy();
+    /* A bill keeps its debtor; money on it says why. */
+    expect((screen.getByLabelText('Bill debtor') as HTMLSelectElement).disabled).toBe(true);
+    expect(screen.getByText('This bill has money received on it, so the debtor can’t change.')).toBeTruthy();
     expect((screen.getByLabelText('line 1 amount') as HTMLInputElement).value).toBe('500.00');
     setAmount(document.body, 'line 1 amount', '100');
     await waitFor(() => expect((screen.getByText('Save & re-post') as HTMLButtonElement).disabled).toBe(true));
+    expect(screen.getByText('RM 200.00 has been received on this bill, so the total can’t go below it.')).toBeTruthy();
     setAmount(document.body, 'line 1 amount', '650');
     await waitFor(() => expect((screen.getByText('Save & re-post') as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByText('Save & re-post'));
@@ -355,9 +380,9 @@ describe('an other debtor\'s bill, as a page', () => {
   test('Copy starts a NEW bill from it for the same debtor — lines and description ride over, the date is today — and opens it once posted', async () => {
     openBill('b1', '?form=copy');
     expect(screen.getByRole('heading', { name: 'New debtor bill · copy of HC-ODB-2609-001' })).toBeTruthy();
-    expect((screen.getByLabelText('Bill debtor') as HTMLInputElement).value).toBe('AHMAD BIN ALI');
+    expect((screen.getByLabelText('Bill debtor') as HTMLSelectElement).value).toBe('d1');
     expect((screen.getByLabelText('line 1 amount') as HTMLInputElement).value).toBe('500.00');
-    fireEvent.click(screen.getByText('Post bill'));
+    fireEvent.click(screen.getByText('Save & post'));
     await waitFor(() => expect(createBillAsync).toHaveBeenCalledTimes(1));
     const sent = createBillAsync.mock.calls[0]![0] as { debtorId: string; billDate: string; notes?: string; lines: unknown[] };
     expect(sent.debtorId).toBe('d1');
