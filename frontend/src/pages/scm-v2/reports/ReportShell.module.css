@@ -103,6 +103,20 @@
   background: var(--fin-surface); border: 1px solid var(--fin-line); border-radius: 10px; box-shadow: var(--fin-card-shadow);
 }
 
+/* ── The header's ⋯: CSV, Charts PNG … ── */
+.moreWrap { position: relative; display: inline-flex; }
+.moreBtn { width: 32px; padding: 0; justify-content: center; }
+.moreMenu {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 40; min-width: 170px; padding: 4px;
+  background: var(--fin-surface); border: 1px solid var(--fin-line); border-radius: 8px; box-shadow: var(--fin-pop-shadow);
+}
+.moreItem {
+  display: block; width: 100%; padding: 7px 10px; border: 0; border-radius: 6px; background: none; text-align: left;
+  font: 500 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-text); cursor: pointer; white-space: nowrap;
+}
+.moreItem:hover:not(:disabled) { background: var(--fin-paper); color: var(--fin-ink); }
+.moreItem:disabled { opacity: 0.5; cursor: default; }
+
 /* ── The toolbar's tools: a grey name, then its control ── */
 .tool { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
 .toolLabel { font-size: 12px; font-weight: 500; color: var(--fin-muted); white-space: nowrap; }

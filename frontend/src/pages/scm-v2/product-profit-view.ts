@@ -11,6 +11,8 @@
 import type { ProductCategory, ProductProfitData, ProductProfitRow } from '../../vendor/scm/lib/product-profit-queries';
 import { AMOUNT_COLUMN, PCT_COLUMN, type ReportSheet, type SheetRow, type SheetValue } from '../../vendor/scm/lib/report-sheet';
 import { fmtSenPlain } from '../../vendor/shared/format';
+import { monthEnd } from '../../lib/dateRangePresets';
+import { periodLabel } from './reports/statementColumns';
 
 export const CATEGORY_ORDER: readonly ProductCategory[] = ['mattress', 'sofa', 'bedframe', 'other'];
 export const CATEGORY_LABEL: Record<ProductCategory, string> = { mattress: 'Mattress', sofa: 'Sofa', bedframe: 'Bedframe', other: 'Others' };
@@ -155,10 +157,10 @@ export function productProfitSheet(d: ProductProfitData, v: ProfitView, rows: re
   total.push(t.gpSen, t.gpPct, null);
   table.push({ kind: 'total', depth: 0, label: 'Total', cells: total });
   return {
-    title: 'Product Profit',
-    subtitle: `${d.month} · ${viewLabel(v)} · ${giftsLabel(v.gifts)} · RM`,
+    title: 'Product profit',
+    subtitle: `${periodLabel(`${d.month}-01`, monthEnd(`${d.month}-01`))} · by SO date · ${viewLabel(v)} · ${giftsLabel(v.gifts)} · RM`,
     meta: [
-      { label: 'Month', value: d.month },
+      { label: 'Month', value: periodLabel(`${d.month}-01`, monthEnd(`${d.month}-01`)) },
       { label: 'Models', value: String(rows.length) },
       { label: 'Orders', value: String(d.orders) },
     ],
@@ -166,7 +168,7 @@ export function productProfitSheet(d: ProductProfitData, v: ProfitView, rows: re
       columns: [
         { label: 'Category', kind: 'text' }, { label: 'Sold', kind: 'text' }, AMOUNT_COLUMN('Avg price'), AMOUNT_COLUMN('Sales'), AMOUNT_COLUMN('Product cost'),
         ...(v.gifts ? [AMOUNT_COLUMN('Gifts')] : []),
-        AMOUNT_COLUMN('Gross profit'), PCT_COLUMN('Margin'), { label: 'Free bedframes', kind: 'text' as const },
+        AMOUNT_COLUMN('Gross profit'), PCT_COLUMN('Margin · % of sales'), { label: 'Free bedframes', kind: 'text' as const },
       ],
       rows: table,
     }],

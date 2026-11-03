@@ -92,10 +92,12 @@ describe('product-profit-view', () => {
   test('Excel and PDF draw the rows as shown, with the gifts column only when they count', () => {
     const rows = viewRows(DATA, view(['mattress']));
     const on = productProfitSheet(DATA, view(['mattress']), rows);
-    expect(on.tables[0].columns.map((c) => c.label)).toEqual(['Category', 'Sold', 'Avg price', 'Sales', 'Product cost', 'Gifts', 'Gross profit', 'Margin', 'Free bedframes']);
+    expect(on.tables[0].columns.map((c) => c.label)).toEqual(['Category', 'Sold', 'Avg price', 'Sales', 'Product cost', 'Gifts', 'Gross profit', 'Margin · % of sales', 'Free bedframes']);
     expect(on.tables[0].rows[0]).toMatchObject({ label: '1. ULTIMATE · AKEMI', cells: ['Mattress', '89 pcs', 673_256, 59_919_800, 14_650_000, 11_200_300, 34_069_500, expect.any(Number), '87 pcs · 54,038.00'] });
     expect(on.tables[0].rows.at(-1)).toMatchObject({ kind: 'total' });
-    expect(on.subtitle).toBe('2026-09 · Mattress · gifts included · RM');
+    expect(on.title).toBe('Product profit');
+    expect(on.subtitle).toBe('September 2026 · by SO date · Mattress · gifts included · RM');
+    expect(on.meta[0]).toEqual({ label: 'Month', value: 'September 2026' });
     const off = productProfitSheet(DATA, view(['mattress'], false), rows);
     expect(off.tables[0].columns.map((c) => c.label)).not.toContain('Gifts');
     expect(profitNotes(DATA, view([], false), rows).some((n) => n.startsWith('Gifts are not counted this time'))).toBe(true);
