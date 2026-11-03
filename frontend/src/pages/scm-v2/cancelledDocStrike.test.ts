@@ -35,6 +35,8 @@ const DOCUMENT_LISTS = [
   "pages/scm-v2/StockTransfersListV2.tsx",
   "pages/scm-v2/PaymentVouchers.tsx",
   "pages/scm-v2/CreditNotes.tsx",
+  // Money in › Credit / debit notes, its own list since batch 5 step 7.
+  "pages/scm-v2/money-in/MoneyInNotes.tsx",
   "pages/scm-v2/ApInvoices.tsx",
   "pages/scm-v2/ArInvoices.tsx",
   "pages/scm-v2/Receipts.tsx",
