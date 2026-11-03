@@ -114,3 +114,19 @@ describe('ruling file', () => {
     expect(confirmPhrase({ groups: 1, pairs: 2, moves: 3, fills: 4, folds: 5, idleModels: 6, idleSkus: 7 })).toBe('MERGE 1 MODELS: 2 SKU MERGES, MOVE 3 SKUS, FILL 4, FOLD 5, IDLE OFF 6/7');
   });
 });
+
+describe('HC-0208 KŌRI IYASH -> KŌRI IYASHI', () => {
+  it('keeps the IYASHI code even when the IYASH twin has the supplier and the use', () => {
+    const p = planModelGroup({
+      group: BOOK['HC-0208'].groups[0],
+      models: [model('m-keep', 'KŌRI IYASHI'), model('m-fold', 'KŌRI IYASH')],
+      skus: [
+        sku('AKEMI KŌRI IYASHI MATT (K)', 'm-keep'),
+        sku('AKEMI KŌRI IYASH MATT (K)', 'm-fold', { main: '400-A002', use: { lines: 3, stock: 1, openSo: 1 } }),
+      ],
+    });
+    expect(p.refusals).toEqual([]);
+    expect(p.pairs).toEqual([{ drop: 'AKEMI KŌRI IYASH MATT (K)', keep: 'AKEMI KŌRI IYASHI MATT (K)', size: 'K' }]);
+    expect(p.foldModels).toEqual([{ id: 'm-fold', code: 'KŌRI IYASH' }]);
+  });
+});
