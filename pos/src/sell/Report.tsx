@@ -61,7 +61,7 @@ export function ReportPopup({ state, session, onClose, say }: { state: DeviceSta
     if (!printerStatus().connected) { say("No printer connected", true); return; }
     setBusy("print");
     try {
-      await printBytes(escposBytes(zReportLines(totals, { state, scope: scopeLabel, rangeLabel: days.label, printedAt }), { barcode: null, copies: 1, cut: true }));
+      await printBytes(escposBytes(zReportLines(totals, { state, scope: scopeLabel, rangeLabel: days.label, printedAt }), { barcode: null, copies: 1, cut: true, paperWidth: state.bundle.settings.sst_receipt.paper_width }));
       say("Daily report printed");
     } catch (e) {
       say(e instanceof Error ? e.message : "Print failed", true);

@@ -1,18 +1,22 @@
 /* ESC/POS bytes for a 58 / 80 mm thermal printer: text lines, bold, size,
  * alignment, a Code 128 barcode of the receipt number (GS k), feed and cut.
  * Pure: lines in, Uint8Array out. */
-import type { ReceiptLine } from "./receipt";
+import { receiptColumns, receiptMargin, type ReceiptLine } from "./receipt";
 
 const ESC = 0x1b;
 const GS = 0x1d;
 
-export function escposBytes(lines: readonly ReceiptLine[], opts: { barcode: string | null; copies: number; cut: boolean }): Uint8Array {
+export function escposBytes(lines: readonly ReceiptLine[], opts: { barcode: string | null; copies: number; cut: boolean; paperWidth: 58 | 80 }): Uint8Array {
   const out: number[] = [];
   const enc = new TextEncoder();
   const text = (s: string) => { for (const b of enc.encode(s.replace(/[^\x20-\x7e]/g, "?"))) out.push(b); };
   for (let copy = 0; copy < Math.max(1, opts.copies); copy++) {
     out.push(ESC, 0x40); // init
     out.push(ESC, 0x74, 0x00); // codepage 437
+    const left = receiptMargin(opts.paperWidth) * 12;
+    const width = receiptColumns(opts.paperWidth) * 12;
+    out.push(GS, 0x4c, left & 0xff, left >> 8); // left margin (dots)
+    out.push(GS, 0x57, width & 0xff, width >> 8); // print area width (dots), so centred lines centre inside the margins
     for (const l of lines) {
       out.push(ESC, 0x61, l.center ? 0x01 : 0x00);
       out.push(ESC, 0x45, l.bold ? 0x01 : 0x00);

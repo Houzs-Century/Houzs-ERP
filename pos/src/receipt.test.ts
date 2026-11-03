@@ -84,11 +84,15 @@ describe("receipt", () => {
 
   test("ESC/POS bytes start with init, end with a cut, and carry a Code 128 of the receipt no", () => {
     const lines = receiptLines(sale(), { company, event_name: "E", settings: posSettingsDefaults().sst_receipt, kind: "ORIGINAL" });
-    const b = escposBytes(lines, { barcode: "T02-000279", copies: 1, cut: true });
+    const b = escposBytes(lines, { barcode: "T02-000279", copies: 1, cut: true, paperWidth: 80 });
+    // GS L 36 dots left margin and GS W 504 dots print area: a 3-column gap each side of 48.
+    expect(Array.from(b.slice(0, 16))).toEqual(expect.arrayContaining([0x1d, 0x4c, 36, 0, 0x1d, 0x57, 504 & 0xff, 504 >> 8]));
     expect(Array.from(b.slice(0, 2))).toEqual([0x1b, 0x40]);
     expect(Array.from(b.slice(-4))).toEqual([0x1d, 0x56, 0x42, 0x00]);
     const s = Array.from(b).map((x) => String.fromCharCode(x)).join("");
     expect(s).toContain("\x1dk\x49\x0c{BT02-000279");
-    expect(escposBytes(lines, { barcode: null, copies: 2, cut: false }).length).toBeGreaterThan(b.length);
+    expect(escposBytes(lines, { barcode: null, copies: 2, cut: false, paperWidth: 80 }).length).toBeGreaterThan(b.length);
+    expect(receiptColumns(80)).toBe(42);
+    expect(receiptColumns(58)).toBe(32);
   });
 });
