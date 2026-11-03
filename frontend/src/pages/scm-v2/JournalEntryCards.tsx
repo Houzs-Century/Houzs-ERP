@@ -378,9 +378,13 @@ export const NewJournalForm = ({ initial, editing, copiedFrom, onCancel, onSaved
   const postable = useMemo(() => leafAccounts(all), [all]);
   /* Typed to, not scrolled through (owner 2026-09-15: 无法快速打关键字眼找
      account): every word typed must match the code or the name. */
+  /* A recorded bank line's own account is its fixed leg, never the other side:
+     a second line on it would move the bank by other than the line's amount. */
+  const fixedBank = record?.accountCode ?? null;
   const options = useMemo(
-    () => [...postable].sort((a, b) => byText(a.account_code, b.account_code)).map((a) => ({ value: a.account_code, label: `${a.account_code} — ${a.account_name}` })),
-    [postable],
+    () => [...postable].filter((a) => a.account_code !== fixedBank)
+      .sort((a, b) => byText(a.account_code, b.account_code)).map((a) => ({ value: a.account_code, label: `${a.account_code} — ${a.account_name}` })),
+    [postable, fixedBank],
   );
 
   const totals = useMemo(() => {

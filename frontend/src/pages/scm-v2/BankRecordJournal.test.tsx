@@ -114,6 +114,15 @@ describe('Record journal', () => {
     expect((screen.getByText('Save & post') as HTMLButtonElement).disabled).toBe(true);
   });
 
+  test('the other side is any account but the bank’s own — its leg is already there', () => {
+    draw();
+    const box = screen.getByLabelText('Line 1 account') as HTMLInputElement;
+    fireEvent.focus(box);
+    fireEvent.change(box, { target: { value: '0' } });
+    expect(screen.getByRole('option', { name: /903-0001 — BANK CHARGES/ })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: /310-0010/ })).toBeNull();
+  });
+
   test('money in: Dr the bank, the other side a credit', () => {
     draw({ ...LINE, amount_sen: 1234, description: 'INTEREST CREDIT', reference: null });
     expect(screen.getByText(/· In 12\.34/)).toBeTruthy();
