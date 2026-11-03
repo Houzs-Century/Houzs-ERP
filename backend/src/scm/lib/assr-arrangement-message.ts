@@ -26,7 +26,7 @@ import { logActivity } from '../../services/assr';
 import { normDate } from '../../services/agents/schedule-reconcile';
 import { fmtDate } from '../shared/format';
 import { normalizePhone } from '../shared/phone';
-import { ASSR_CONFIRMED_COL, ASSR_LEG_MSG_COL } from './assr-board-scope';
+import { ASSR_CONFIRMED_COL } from './assr-board-scope';
 import { KIND_AFTER_STATUS, KIND_AUTOMATION, kindAttributes, templateDate, type DriverInfoInput } from './delivery-message-kinds';
 import { buildDeliveryFollowUp, chatCallbackUrl, postConnectContact } from '../../services/connect';
 
@@ -182,15 +182,6 @@ export async function sendAssrArrangement(
           userId, { category: 'service', source_channel: 'whatsapp' });
       } catch (e) {
         console.warn(`[assr-arrangement] activity insert failed: ${String((e as Error).message).slice(0, 120)}`);
-      }
-      // The hand-set leg status moves like an SO's does on send (KIND_AFTER_STATUS).
-      if (driverInfo) {
-        try {
-          await c.env.DB.prepare(`UPDATE assr_cases SET ${ASSR_LEG_MSG_COL[leg]} = ? WHERE id = ?`)
-            .bind(KIND_AFTER_STATUS.driver_info, row.id).run();
-        } catch (e) {
-          console.warn(`[assr-arrangement] leg status update failed: ${String((e as Error).message).slice(0, 120)}`);
-        }
       }
       sent.push({ phone, docNos: [key], httpCode: result.httpCode ?? 0 });
     } else {
