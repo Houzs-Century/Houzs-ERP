@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { phoneKey, planDriverInfoGroup } from './driver-info-send';
+import { groupTimeSlot, phoneKey, planDriverInfoGroup } from './driver-info-send';
 import type { PlanningOrder } from './delivery-planning-queries';
 
 /** A PlanningOrder stub carrying only the crew the plan reads. */
@@ -74,5 +74,19 @@ describe('planDriverInfoGroup', () => {
     );
     expect(plan.mixedDrivers).toBe(true);
     expect(plan.driver?.driverName).toBe('Ali');
+  });
+});
+
+describe('groupTimeSlot', () => {
+  const slot = (time_range: string | null): PlanningOrder => ({ time_range } as unknown as PlanningOrder);
+
+  it('defaults the delivery time to the row Time Slot', () => {
+    expect(groupTimeSlot([slot(' 10am - 1pm ')])).toBe('10am - 1pm');
+  });
+  it('lists each distinct slot once across the customer orders', () => {
+    expect(groupTimeSlot([slot('10am - 1pm'), slot(null), slot('10am - 1pm'), slot('2-4pm')])).toBe('10am - 1pm / 2-4pm');
+  });
+  it('is blank when no order has a Time Slot', () => {
+    expect(groupTimeSlot([slot(null), slot('  ')])).toBe('');
   });
 });

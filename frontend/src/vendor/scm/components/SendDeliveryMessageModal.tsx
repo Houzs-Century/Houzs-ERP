@@ -12,9 +12,10 @@
 // `kind` picks the Connect automation (backend scm/lib/delivery-message-kinds
 // .ts is the source of truth). Driver Info reads the driver (name / IC / contact
 // / plate) off each order's own crew — the board's Driver / Lorry columns — so
-// the operator does not pick it again; the one thing the ERP does not hold is the
-// delivery-time window, and it differs per customer, so EACH customer carries its
-// own time field. Ready customers send one Connect call each (owner 2026-10-27).
+// the operator does not pick it again. The delivery-time window differs per
+// customer, so EACH customer carries its own time field, pre-filled from the
+// row's Time Slot so it is not keyed twice. Ready customers send one Connect call
+// each (owner 2026-10-27).
 // Postpone likewise reads the row's Amend Reason + Delivery Date.
 //
 // Mirrors ScheduleDpOrderDrawer's chrome + the Suppliers CSS module. In-app
@@ -32,7 +33,7 @@ import {
   type SendDeliveryMessagesResult,
   type SendMessageKind,
 } from '../lib/delivery-planning-queries';
-import { phoneKey, planDriverInfoGroup, type DriverGroupPlan } from '../lib/driver-info-send';
+import { groupTimeSlot, phoneKey, planDriverInfoGroup, type DriverGroupPlan } from '../lib/driver-info-send';
 import { useNotify } from './NotifyDialog';
 import styles from '../../../pages/scm-v2/Suppliers.module.css';
 
@@ -91,7 +92,7 @@ export const SKIP_LABEL: Record<string, string> = {
 const DRIVER_BLOCK_HINT: Record<NonNullable<DriverGroupPlan['block']>, string> = {
   no_driver: 'No driver on these orders — set the Driver column on the row first.',
   no_contact: 'This driver has no contact on file — add it in Fleet first.',
-  no_time: 'Type a delivery time to send this customer.',
+  no_time: 'No Time Slot on the row — type a delivery time to send this customer.',
 };
 
 const fieldStyle = { display: 'grid', gap: 4, fontSize: 'var(--fs-12)' } as const;
@@ -109,7 +110,8 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
   // One Service Case job per message: the template names one case and one date.
   const isAssrSend = kind === 'assr_arrangement';
 
-  // Driver Info only: the per-customer delivery-time window, keyed by phone.
+  // Driver Info only: the operator's per-customer edits of the delivery time,
+  // keyed by phone. A customer not edited here sends its rows' Time Slot.
   const [timeByPhone, setTimeByPhone] = useState<Record<string, string>>({});
   // Sequential per-customer sends run across several awaits, so a local flag
   // keeps the button disabled for the whole run (send.isPending toggles per call).
@@ -130,11 +132,12 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
   // Driver Info: one plan per customer (driver pulled from the orders' crew +
   // this customer's typed time). A customer is ready only when its plan has no
   // block; ready customers each send their own Connect call.
+  const timeFor = (phone: string, list: PlanningOrder[]): string => timeByPhone[phone] ?? groupTimeSlot(list);
   const driverGroups = needsDriver
     ? [...groups.entries()].map(([phone, list]) => ({
         phone,
         docNos: list.map((r) => r.so_doc_no),
-        plan: planDriverInfoGroup(list, timeByPhone[phone] ?? ''),
+        plan: planDriverInfoGroup(list, timeFor(phone, list)),
       }))
     : [];
   const planByPhone = new Map(driverGroups.map((g) => [g.phone, g.plan]));
@@ -210,7 +213,7 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
 
           {needsDriver && (
             <div style={noteStyle}>
-              Each customer's message uses the <strong>driver set on the row</strong> (the Driver / Lorry columns) — no need to pick it again. Type the <strong>delivery-time window</strong> for each customer below; a customer with no driver on the row is skipped.
+              Each customer's message uses the <strong>driver set on the row</strong> (the Driver / Lorry columns) — no need to pick it again. The <strong>delivery time</strong> is taken from the row's <strong>Time Slot</strong>; change it below only if the customer should read something else. A customer with no driver on the row is skipped.
             </div>
           )}
 
@@ -259,9 +262,9 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
                     )}
                     {plan.driver && (
                       <label style={fieldStyle}>
-                        <span>Delivery time (as the customer will read it)</span>
+                        <span>Delivery time (as the customer will read it){!(phone in timeByPhone) && groupTimeSlot(list) ? ' — from Time Slot' : ''}</span>
                         <input
-                          value={timeByPhone[phone] ?? ''}
+                          value={timeFor(phone, list)}
                           onChange={(e) => setTimeByPhone((m) => ({ ...m, [phone]: e.target.value }))}
                           placeholder="e.g. 10am – 1pm"
                           style={inputStyle}
@@ -293,7 +296,7 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
 
         {needsDriver && messageCount === 0 && (
           <div style={{ padding: '0 var(--space-4)', color: 'var(--c-burnt)', fontSize: 'var(--fs-12)' }}>
-            Type a delivery time for at least one customer to enable sending.
+            Set the Time Slot on the row (or type a delivery time here) for at least one customer to enable sending.
           </div>
         )}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-3)', padding: 'var(--space-4)' }}>
