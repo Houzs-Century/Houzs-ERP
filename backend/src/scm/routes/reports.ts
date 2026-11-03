@@ -59,7 +59,7 @@ import {
   parseStage, fairReportAccess, fairSoMoney, depositByTender, paymentMethodsUsed,
   belowDeposit, fairBalanceSen, doCostTotal, siCostTotal, siGoodsTotals, marginPct, resolveDateWindow,
   summarizeSo, summarizeDo, summarizeInvoice,
-  fairPnlLineCost, summarizeFairPnl,
+  fairPnlLineCost, summarizeFairPnl, everyFairPnl,
   type FairStage, type FairFilters, type PaymentRow, type FairCostRate, type FairPnlSummaryRow,
   type DoCostLine, type SiGoodsLine,
 } from '../lib/fair-report';
@@ -893,19 +893,59 @@ async function resolveFairRate(c: any, projectId: number): Promise<{ brand: stri
     const proj = (await c.env.DB.prepare('SELECT brand FROM projects WHERE id = ?')
       .bind(projectId)
       .first()) as { brand: string | null } | null;
-    const brand = proj?.brand?.trim() ? proj.brand.trim() : null;
+    const brand = fairBrandOf(proj?.brand);
     if (!brand) return { brand: null, rate: null };
-    const rate = (await c.env.DB.prepare(
-      `SELECT transport_pct, merchandise_pct, commission_normal_pct,
-              commission_boost_pct, boost_min_gp_pct, boost_min_sales
-         FROM project_cost_rates WHERE brand = ?`,
-    )
+    const rate = (await c.env.DB.prepare(`SELECT ${FAIR_RATE_COLS} FROM project_cost_rates WHERE brand = ?`)
       .bind(brand)
       .first()) as FairCostRate | null;
-    return { brand, rate: rate ?? null };
+    return { brand, rate: rate ? rateCard(rate) : null };
   } catch {
     return { brand: null, rate: null };
   }
+}
+
+/* The rate card's columns, and the brand a fair's card is looked up by (the
+   project's brand, trimmed; blank is none) — one rule for one fair and for
+   every fair. */
+const FAIR_RATE_COLS = `transport_pct, merchandise_pct, commission_normal_pct,
+              commission_boost_pct, boost_min_gp_pct, boost_min_sales`;
+const fairBrandOf = (raw: string | null | undefined): string | null => (raw?.trim() ? raw.trim() : null);
+const rateCard = (r: FairCostRate): FairCostRate => ({
+  transport_pct: r.transport_pct,
+  merchandise_pct: r.merchandise_pct,
+  commission_normal_pct: r.commission_normal_pct,
+  commission_boost_pct: r.commission_boost_pct,
+  boost_min_gp_pct: r.boost_min_gp_pct,
+  boost_min_sales: r.boost_min_sales,
+});
+
+/* resolveFairRate for every fair of the period at once — two reads, whatever
+   the number of fairs. Same rule, same fallback: a fair whose project has no
+   brand, whose brand has no card, or whose card cannot be read gets
+   rate=null, and its line shows zero overhead rather than blocking the
+   report. Never throws. */
+async function resolveFairRates(c: { env: Pick<Env, 'DB'> }, projectIds: number[]): Promise<Map<number, { brand: string | null; rate: FairCostRate | null }>> {
+  const out = new Map<number, { brand: string | null; rate: FairCostRate | null }>();
+  const uniq = Array.from(new Set(projectIds.filter((v) => Number.isFinite(v))));
+  if (uniq.length === 0) return out;
+  try {
+    const projRes = await c.env.DB.prepare(
+      `SELECT id, brand FROM projects WHERE id IN (${uniq.map(() => '?').join(',')})`,
+    ).bind(...uniq).all<{ id: number; brand: string | null }>();
+    for (const p of projRes.results) out.set(Number(p.id), { brand: fairBrandOf(p.brand), rate: null });
+    const brands = Array.from(new Set([...out.values()].map((f) => f.brand).filter((b): b is string => b != null)));
+    if (brands.length > 0) {
+      const rateRes = await c.env.DB.prepare(
+        `SELECT brand, ${FAIR_RATE_COLS} FROM project_cost_rates WHERE brand IN (${brands.map(() => '?').join(',')})`,
+      ).bind(...brands).all<FairCostRate & { brand: string }>();
+      const byBrand = new Map(rateRes.results.map((r) => [r.brand, rateCard(r)] as const));
+      for (const f of out.values()) f.rate = f.brand ? byBrand.get(f.brand) ?? null : null;
+    }
+  } catch {
+    /* As for one fair: the lines show without overhead rather than not at all. */
+    for (const f of out.values()) f.rate = null;
+  }
+  return out;
 }
 
 type FairCtx = Context<{ Bindings: Env; Variables: Variables }>;
@@ -1005,19 +1045,16 @@ export const fairReportHandler = async (c: FairCtx) => {
   // ── stage=pnl ───────────────────────────────────────────────────────────────
   // Per fair: revenue (confirmed SO amount) vs the three-way fulfillment cost
   // (most-progressed booked stage per order) vs the project_cost_rates overhead.
-  // REQUIRES a fair (project) so the per-brand rate card resolves to one row.
+  // The per-order rows need a fair (project) so the per-brand rate card
+  // resolves to one row. With NO fair picked (owner 2026/11/02, the redesign's
+  // Sales report: shown without picking first) the answer keeps that shape —
+  // no rows, `needs_project` — and adds `fairs`: every fair with orders in the
+  // period, a line each, priced on its own card (lib everyFairPnl), plus
+  // `no_fair`, the period's orders that carry none.
   if (stage === 'pnl') {
-    if (filters.project == null) {
-      return c.json({
-        stage,
-        rows: [],
-        summary: summarizeFairPnl([], null),
-        filters: filtersEcho,
-        meta: { access_tier: access.tier, needs_project: true, brand: null, rate_present: false },
-      });
-    }
-
-    const pnlDocNos = soRows.map((r) => r.doc_no);
+    const everyFair = filters.project == null;
+    const pnlSos = everyFair ? soRows.filter((r) => r.project_id != null) : soRows;
+    const pnlDocNos = pnlSos.map((r) => r.doc_no);
 
     // DO cost per SO — Σ COALESCE(ship_cost_sen, unit_cost_sen) × qty over
     // the SO's delivery-order lines. Absent (null) when the SO has no DO.
@@ -1087,7 +1124,48 @@ export const fairReportHandler = async (c: FairCtx) => {
       }
     }
 
-    const { brand, rate } = await resolveFairRate(c, filters.project);
+    if (everyFair) {
+      const rates = await resolveFairRates(c, pnlSos.map((r) => r.project_id as number));
+      const orders = soRows.map((h) => {
+        const money = fairSoMoney(h);
+        const doCost = doCostBySo.has(h.doc_no) ? (doCostBySo.get(h.doc_no) as number) : null;
+        const siCost = siCostBySo.has(h.doc_no) ? (siCostBySo.get(h.doc_no) as number) : null;
+        const cost = fairPnlLineCost({
+          amount_sen: money.amount_sen, so_cost_sen: money.total_so_cost_sen, do_cost_sen: doCost, si_cost_sen: siCost,
+        });
+        return {
+          project_id: h.project_id,
+          venue: h.venue,
+          amount_sen: money.amount_sen,
+          selling_sen: money.selling_sen,
+          service_rev_sen: money.service_rev_sen,
+          so_cost_sen: money.total_so_cost_sen,
+          do_cost_sen: doCost,
+          si_cost_sen: siCost,
+          effective_cost_sen: cost.effective_cost_sen,
+        };
+      });
+      const { fairs, no_fair } = everyFairPnl(orders, (id) => {
+        const p = projects.get(id);
+        const r = rates.get(id);
+        return { name: p?.name ?? null, start_date: p?.start_date ?? null, end_date: p?.end_date ?? null, brand: r?.brand ?? null, rate: r?.rate ?? null };
+      });
+      return c.json({
+        stage,
+        rows: [],
+        summary: summarizeFairPnl([], null),
+        fairs,
+        no_fair,
+        filters: filtersEcho,
+        meta: { access_tier: access.tier, needs_project: true, brand: null, rate_present: false, rate: null, fair: null },
+      });
+    }
+
+    const pickedFair = filters.project as number;
+    const { brand, rate } = await resolveFairRate(c, pickedFair);
+    /* The fair itself, even when none of its orders falls in the dates — the
+       page then names it and offers its own dates. */
+    const fairMeta = projects.get(pickedFair) ?? (await resolveProjects(c, [pickedFair])).get(pickedFair) ?? null;
 
     const rows = soRows.map((h) => {
       const money = fairSoMoney(h);
@@ -1132,7 +1210,14 @@ export const fairReportHandler = async (c: FairCtx) => {
       rows,
       summary,
       filters: filtersEcho,
-      meta: { access_tier: access.tier, needs_project: false, brand, rate_present: rate != null },
+      meta: {
+        access_tier: access.tier, needs_project: false, brand, rate_present: rate != null,
+        /* The card itself, so the page can say what the overhead is made of. */
+        rate,
+        fair: fairMeta
+          ? { project_id: pickedFair, project: fairMeta.name, project_start_date: fairMeta.start_date, project_end_date: fairMeta.end_date }
+          : null,
+      },
     });
   }
 

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test } from 'vitest';
 import { fairReportHandler } from '../src/scm/routes/reports';
 import {
   computeFairOverheads,
+  everyFairPnl,
   fairPnlLineCost,
   summarizeFairPnl,
   emptyOverheads,
@@ -64,6 +65,10 @@ function fakeDB(projects: any[], rates: Record<string, FairCostRate>) {
         bind(...args: any[]) {
           return {
             all: async () => {
+              /* The every-fair read asks for many cards at once. */
+              if (/FROM project_cost_rates WHERE brand IN/.test(sql)) {
+                return { results: args.filter((b) => rates[String(b)]).map((b) => ({ brand: String(b), ...rates[String(b)] })) };
+              }
               const ids = new Set(args.map(String));
               return { results: projects.filter((p) => ids.has(String(p.id))) };
             },
@@ -277,6 +282,154 @@ describe('stage=pnl guards', () => {
     expect(body.meta.rate_present).toBe(false);
     expect(body.summary.overheads.total_overhead_sen).toBe(0);
     expect(body.summary.net_profit_sen).toBe(body.summary.gross_profit_sen);
+  });
+});
+
+// ── Every fair (no fair picked; owner 2026/11/02) ────────────────────────────
+/* A second fair on Brand B, with its own (normal-only) card, and an order with
+   no fair at all — the period then holds two fairs and one order aside. */
+const BRAND_B_RATE: FairCostRate = {
+  transport_pct: 3, merchandise_pct: 1, commission_normal_pct: 8,
+  commission_boost_pct: null, boost_min_gp_pct: null, boost_min_sales: null,
+};
+function twoFairs(): DataSet {
+  const data = fixture();
+  data.mfg_sales_orders.push(
+    { doc_no: 'SO-B1', company_id: 1, status: 'CONFIRMED', project_id: 3, venue_id: null, customer_state: 'Penang',
+      salesperson_id: 'sp-1', branding: 'Brand B', so_date: '2026-07-20', ref: 'OF-B1', venue: 'Spice Arena',
+      local_total_sen: 200000, balance_sen: 0, deposit_sen: 0, paid_sen: 200000,
+      mattress_sofa_sen: 200000, bedframe_sen: 0, accessories_sen: 0, others_sen: 0, service_sen: 0,
+      mattress_sofa_cost_sen: 120000, bedframe_cost_sen: 0, accessories_cost_sen: 0, others_cost_sen: 0, service_cost_sen: 0,
+      total_cost_sen: 120000 },
+    { doc_no: 'SO-N1', company_id: 1, status: 'CONFIRMED', project_id: null, venue_id: null, customer_state: 'Selangor',
+      salesperson_id: 'sp-2', branding: 'Brand A', so_date: '2026-07-21', ref: 'OF-N1', venue: 'Showroom',
+      local_total_sen: 30000, balance_sen: 0, deposit_sen: 0, paid_sen: 30000,
+      mattress_sofa_sen: 30000, bedframe_sen: 0, accessories_sen: 0, others_sen: 0, service_sen: 0,
+      mattress_sofa_cost_sen: 10000, bedframe_cost_sen: 0, accessories_cost_sen: 0, others_cost_sen: 0, service_cost_sen: 0,
+      total_cost_sen: 10000 },
+  );
+  return data;
+}
+const TWO_FAIR_PROJECTS = [
+  ...PROJECTS,
+  { id: 3, name: 'Penang Fair', start_date: '2026-07-18', end_date: '2026-07-27', brand: '  Brand B ' },
+];
+const TWO_FAIR_RATES: Record<string, FairCostRate> = { ...RATES, 'Brand B': BRAND_B_RATE };
+
+describe('stage=pnl with no fair picked — every fair (c7)', () => {
+  test('a line per fair with orders in the period, newest first, each on its own card; the order with no fair aside', async () => {
+    state.companyId = 1;
+    const { app, env } = appWith(twoFairs(), { projects: TWO_FAIR_PROJECTS, rates: TWO_FAIR_RATES });
+    const res = await req(app, '/fair-report?stage=pnl&date_from=2026-07-01&date_to=2026-07-31', env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    /* The per-order shape is unchanged: no rows until a fair is picked. */
+    expect(body.rows).toHaveLength(0);
+    expect(body.meta.needs_project).toBe(true);
+    expect(body.fairs.map((f: any) => f.project)).toEqual(['Penang Fair', 'KL Fair']);
+
+    const kl = body.fairs.find((f: any) => f.project_id === 1);
+    expect(kl.project_start_date).toBe('2026-07-01');
+    expect(kl.brand).toBe('Brand A');
+    expect(kl.rate_present).toBe(true);
+    expect(kl.summary.orders).toBe(2);
+    expect(kl.summary.total_cogs_sen).toBe(75000);           // SO-1 landed 54000 + SO-2 DO 21000
+    expect(kl.summary.overheads.commission_is_boost).toBe(true);
+    expect(kl.summary.net_profit_sen).toBe(42000);
+
+    const pg = body.fairs.find((f: any) => f.project_id === 3);
+    expect(pg.brand).toBe('Brand B');                          // trimmed, as one fair's lookup
+    expect(pg.venue).toBe('Spice Arena');
+    expect(pg.summary.total_revenue_sen).toBe(200000);
+    expect(pg.summary.total_cogs_sen).toBe(120000);            // no DO, no SI: the SO cost
+    expect(pg.summary.overheads.commission_pct).toBe(8);       // Brand B has no boost
+    expect(pg.summary.overheads.total_overhead_sen).toBe(24000); // 3% + 1% + 8% of 200000
+    expect(pg.summary.net_profit_sen).toBe(56000);
+
+    expect(body.no_fair).toEqual({ orders: 1, revenue_sen: 30000 });
+  });
+
+  test('a fair\'s line carries exactly the figures its own P&L shows once picked', async () => {
+    state.companyId = 1;
+    const { app, env } = appWith(twoFairs(), { projects: TWO_FAIR_PROJECTS, rates: TWO_FAIR_RATES });
+    const every = (await (await req(app, '/fair-report?stage=pnl&date_from=2026-07-01&date_to=2026-07-31', env)).json()) as any;
+    for (const id of [1, 3]) {
+      const picked = (await (await req(app, `/fair-report?stage=pnl&project=${id}&date_from=2026-07-01&date_to=2026-07-31`, env)).json()) as any;
+      expect(every.fairs.find((f: any) => f.project_id === id).summary).toEqual(picked.summary);
+    }
+  });
+
+  test('the dates pick the orders: a fair with none in them has no line', async () => {
+    state.companyId = 1;
+    const { app, env } = appWith(twoFairs(), { projects: TWO_FAIR_PROJECTS, rates: TWO_FAIR_RATES });
+    const body = (await (await req(app, '/fair-report?stage=pnl&date_from=2026-07-15&date_to=2026-07-31', env)).json()) as any;
+    expect(body.fairs.map((f: any) => f.project_id)).toEqual([3]);
+    expect(body.no_fair.orders).toBe(1);
+  });
+
+  test('a fair whose brand has no card shows its line with zero overhead', async () => {
+    state.companyId = 1;
+    const { app, env } = appWith(twoFairs(), { projects: TWO_FAIR_PROJECTS, rates: RATES });
+    const body = (await (await req(app, '/fair-report?stage=pnl&date_from=2026-07-01&date_to=2026-07-31', env)).json()) as any;
+    const pg = body.fairs.find((f: any) => f.project_id === 3);
+    expect(pg.rate_present).toBe(false);
+    expect(pg.summary.overheads.total_overhead_sen).toBe(0);
+    expect(pg.summary.net_profit_sen).toBe(pg.summary.gross_profit_sen);
+  });
+
+  test('the same gate: a Sales Director and a salesperson are refused the every-fair read', async () => {
+    state.companyId = 1;
+    for (const who of [SALES_DIRECTOR, SALES_EXEC]) {
+      state.houzsUser = who;
+      const { app, env } = appWith(twoFairs(), { projects: TWO_FAIR_PROJECTS, rates: TWO_FAIR_RATES });
+      expect((await req(app, '/fair-report?stage=pnl&date_from=2026-07-01&date_to=2026-07-31', env)).status).toBe(403);
+    }
+  });
+
+  test('company scope holds: the other company\'s orders on the same fair are not in its line', async () => {
+    state.companyId = 2;
+    const { app, env } = appWith(twoFairs(), { projects: TWO_FAIR_PROJECTS, rates: TWO_FAIR_RATES });
+    const body = (await (await req(app, '/fair-report?stage=pnl&date_from=2026-07-01&date_to=2026-07-31', env)).json()) as any;
+    expect(body.fairs).toHaveLength(1);
+    expect(body.fairs[0].summary.total_revenue_sen).toBe(99999);
+    expect(body.no_fair.orders).toBe(0);
+  });
+});
+
+describe('stage=pnl with a fair picked — the card and the fair in meta', () => {
+  test('meta names the card the overhead is priced on, and the fair itself', async () => {
+    state.companyId = 1;
+    const { app, env } = appWith(fixture());
+    const body = (await (await req(app, '/fair-report?stage=pnl&project=1', env)).json()) as any;
+    expect(body.meta.rate).toEqual(BRAND_A_RATE);
+    expect(body.meta.fair).toEqual({ project_id: 1, project: 'KL Fair', project_start_date: '2026-07-01', project_end_date: '2026-07-10' });
+  });
+
+  test('a fair with no order in the dates is still named, with its own dates', async () => {
+    state.companyId = 1;
+    const { app, env } = appWith(fixture());
+    const body = (await (await req(app, '/fair-report?stage=pnl&project=1&date_from=2026-08-01&date_to=2026-08-31', env)).json()) as any;
+    expect(body.rows).toHaveLength(0);
+    expect(body.meta.fair).toEqual({ project_id: 1, project: 'KL Fair', project_start_date: '2026-07-01', project_end_date: '2026-07-10' });
+  });
+});
+
+describe('everyFairPnl (pure)', () => {
+  const line = (amount: number, cost: number) => ({
+    amount_sen: amount, selling_sen: amount, service_rev_sen: 0, so_cost_sen: cost, do_cost_sen: null, si_cost_sen: null, effective_cost_sen: cost,
+  });
+  test('groups by fair, names the commonest venue, keeps the fair-less orders aside', () => {
+    const out = everyFairPnl([
+      { ...line(1000, 400), project_id: 7, venue: 'Hall B' },
+      { ...line(2000, 900), project_id: 7, venue: 'Hall A' },
+      { ...line(500, 100), project_id: 7, venue: 'Hall A' },
+      { ...line(800, 300), project_id: null, venue: 'Showroom' },
+    ], () => ({ name: 'Fair 7', start_date: '2026-07-01', end_date: '2026-07-05', brand: null, rate: null }));
+    expect(out.fairs).toHaveLength(1);
+    expect(out.fairs[0]!.venue).toBe('Hall A');
+    expect(out.fairs[0]!.summary.total_revenue_sen).toBe(3500);
+    expect(out.fairs[0]!.summary.net_profit_sen).toBe(2100);
+    expect(out.no_fair).toEqual({ orders: 1, revenue_sen: 800 });
   });
 });
 
