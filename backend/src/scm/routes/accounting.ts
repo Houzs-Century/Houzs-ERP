@@ -75,7 +75,7 @@ import { reportLayoutGet, reportLayoutPut, reportLayoutReset } from './accountin
 import { receiptsPaymentsReport } from './accounting-rp';
 import { collectionReport } from './accounting-collection';
 import { merchantChargesReport } from './accounting-merchant-charges';
-import { performanceReport, savePerformanceSettingsHandler } from './accounting-performance';
+import { performanceMonthsHandler, performanceReport, savePerformanceSettingsHandler } from './accounting-performance';
 import { forecastFiguresHandler, forecastGetHandler, forecastPutHandler } from './accounting-forecast';
 import { dashboardHandler } from './accounting-dashboard';
 import { financeTodoHandler, financeTodoCountHandler } from './accounting-todo';
@@ -205,6 +205,8 @@ accounting.delete('/reports/layout', reportLayoutReset);
    expense in place of one ledger account, the rest as booked (owner
    2026-09-12; docs/bugs/0835). Handlers in accounting-performance.ts. */
 accounting.get('/reports/performance', performanceReport);
+/* Its chart's months — the same builder, the window read once (batch 6 read c6). */
+accounting.get('/reports/performance/months', performanceMonthsHandler);
 /* The monthly product profit ranking (owner 2026-10-05): every product the
    month sold, by model, with its own cost and its share of the gifts.
    accounting-product-profit.ts; acc/product-profit.ts. */

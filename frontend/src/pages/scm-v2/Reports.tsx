@@ -38,17 +38,15 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { useQueries } from '@tanstack/react-query';
 import { fmtDate, fmtSen, fmtSenPlain } from '../../vendor/shared/format';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { useAuth } from '../../auth/AuthContext';
-import { ledgerHref, linesVisible, pctOf, type LaidNode } from '../../vendor/scm/lib/report-layout';
+import { linesVisible, pctOf, type LaidNode } from '../../vendor/scm/lib/report-layout';
 import { useReportTree, type Level } from './ReportLayoutTree';
 import { ReportLayoutEditor } from './ReportLayoutEditor';
-import { balanceSheetLines, monthlyDepth, pnlLines, type FlatLine } from '../../vendor/scm/lib/report-monthly';
-import { statementColumnsTable, statementTable, type ReportSheet } from '../../vendor/scm/lib/report-sheet';
+import { balanceSheetLines, monthlyDepth, pnlLines } from '../../vendor/scm/lib/report-monthly';
+import type { ReportSheet } from '../../vendor/scm/lib/report-sheet';
 import { FinanceDateRange } from './reports/FinanceDateRange';
 import { useReportRange } from './reports/useReportRange';
 import {
@@ -56,8 +54,9 @@ import {
   type ReportTile,
 } from './reports/reportParts';
 import { StatementSkeleton, StatementTable } from './reports/StatementTable';
+import { LevelTool, MONTH_OPTIONS, sheetTable, useColumnReads, useOpenLedger } from './reports/statementTools';
 import {
-  COMPARE_WITH, MONTH_COUNTS, balanceColumns, columnsSpan, monthName, pnlColumns, statementLines,
+  COMPARE_WITH, balanceColumns, columnsSpan, monthName, pnlColumns, statementLines,
   type CompareWith, type StatementColumn, type StatementLine, type StatementView,
 } from './reports/statementColumns';
 import {
@@ -116,40 +115,6 @@ const PNL_VIEWS: ReadonlyArray<{ value: StatementView; label: string }> = [
   { value: 'month', label: 'By month' },
 ];
 const BS_VIEWS = PNL_VIEWS.filter((v) => v.value !== 'compare');
-const MONTH_OPTIONS = MONTH_COUNTS.map((n) => ({ value: n, label: String(n) }));
-
-/** L1 … Ln + All, from the tree's own depth; nothing to choose when it is one level. */
-function LevelTool({ depth, level, onLevel }: { depth: number; level: Level; onLevel: (l: Level) => void }) {
-  if (depth < 2) return null;
-  const options = [...Array.from({ length: depth }, (_, i) => ({ value: (i + 1) as Level, label: `L${i + 1}` })), { value: 'all' as Level, label: 'All' }];
-  return (
-    <ReportTool label="Levels">
-      <Segmented options={options} value={level} onChange={onLevel} label="Levels" />
-    </ReportTool>
-  );
-}
-
-/** Where the General ledger opens for a category's accounts — Back returns here. */
-function useOpenLedger(backLabel: string) {
-  const navigate = useNavigate();
-  const location = useLocation();
-  return (codes: string[], col: StatementColumn) => {
-    if (codes.length === 0) return;
-    navigate(`${ledgerHref(codes, col.from, col.to)}&in=reports`, {
-      state: { back: { to: `${location.pathname}${location.search}`, label: backLabel } },
-    });
-  };
-}
-
-/** The sheet the exports draw: the single period as today's statement sheet, the
- *  other views their columns, each amount with its % beside when shown. */
-function sheetTable(view: StatementView, columns: StatementColumn[], shown: StatementLine[], showPct: boolean, pctTitle: string) {
-  if (view === 'single' && showPct) {
-    const col = columns[0]!;
-    return statementTable(shown.map((l): FlatLine => ({ ...l, amountSen: l.cells[col.key]?.amountSen ?? 0, pct: l.cells[col.key]?.pct ?? null })), pctTitle);
-  }
-  return statementColumnsTable(columns.map((c) => ({ key: c.key, label: c.kind === 'period' && view === 'single' ? 'Amount' : c.label, pct: c.pct && showPct, edge: c.kind === 'total' })), shown);
-}
 
 const layoutWord = (stored: boolean | undefined): string =>
   stored === undefined ? '' : stored ? ' · on the saved layout' : " · on the chart's own tree";
@@ -175,22 +140,6 @@ type PnlResponse = {
   };
 };
 const fetchPnl = (from: string, to: string) => authedFetch<PnlResponse>(`/accounting/reports/pnl?from=${from}&to=${to}`);
-
-/** The columns' reads: one request per column, each the report for its period. */
-function useColumnReads<T>(columns: StatementColumn[], key: (c: StatementColumn) => unknown[], fetchOne: (c: StatementColumn) => Promise<T>) {
-  const read = columns.filter((c) => c.kind !== 'change');
-  const results = useQueries({
-    queries: read.map((c) => ({ queryKey: key(c), queryFn: () => fetchOne(c), staleTime: 30_000 })),
-  });
-  const byKey: Partial<Record<string, T>> = {};
-  read.forEach((c, i) => { const d = results[i]?.data; if (d !== undefined) byKey[c.key] = d; });
-  return {
-    byKey,
-    loading: results.some((r) => r.isLoading),
-    failed: results.filter((r) => r.isError).length,
-    complete: read.length > 0 && read.every((c) => byKey[c.key] !== undefined),
-  };
-}
 
 export const PnLTab = () => {
   const r = useReportRange();

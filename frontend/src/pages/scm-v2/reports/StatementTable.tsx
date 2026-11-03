@@ -219,6 +219,7 @@ export function StatementTable({
                         ) : folder ? (
                           <button type="button" className={s.nameBtn} aria-expanded={open} onClick={() => tree.toggle(l.id, open)}>{name}</button>
                         ) : <span className={s.nameText}>{name}</span>}
+                        {l.caption && <span className={s.caption}>{l.caption}</span>}
                       </span>
                     </th>
                     {columns.map((c, ci) => {

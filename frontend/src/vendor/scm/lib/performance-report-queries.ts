@@ -66,6 +66,26 @@ export const useSavePerformanceSettings = () => {
   });
 };
 
+/** A month of the report's chart (the owner's Claude Design, batch 6 read c6):
+    the report's own figures for that month — the expenses are the operating
+    expense at the rate plus every other expense as booked. */
+export type PerformanceMonth = {
+  month: string; from: string; to: string;
+  salesSen: number; cogsSen: number; gpSen: number; gpPct: number | null;
+  otherIncomeSen: number; expensesSen: number; netSen: number; netPct: number | null;
+};
+
+/** The months of a chart window (YYYY-MM to YYYY-MM): one read, the window's orders read once. */
+export const usePerformanceMonths = (from: string | null, to: string | null) => useQuery({
+  queryKey: [KEY, 'months', from, to],
+  queryFn: () => authedFetch<{ from: string; to: string; months: PerformanceMonth[] }>(
+    `/accounting/reports/performance/months?from=${encodeURIComponent(from ?? '')}&to=${encodeURIComponent(to ?? '')}`,
+  ),
+  enabled: Boolean(from && to),
+  staleTime: 60_000,
+  retry: retryUnlessClientError,
+});
+
 /* ── The report's own dress — ONE home for the screen, the CSV and the PDF ── */
 
 /** 1,234.56 with a bracketed negative — the Finance reports' one money dress (fmtSenPlain). */
