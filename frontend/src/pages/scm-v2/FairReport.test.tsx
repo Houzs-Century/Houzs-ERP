@@ -123,7 +123,7 @@ vi.mock('../../vendor/scm/lib/fair-report-queries', async (importOriginal) => ({
 const xlsx = vi.fn(async (..._a: unknown[]) => {});
 vi.mock('../../vendor/scm/lib/report-sheet-xlsx', () => ({ downloadReportXlsx: (...a: unknown[]) => xlsx(...a) }));
 
-const { SalesReport, legacyRange } = await import('./FairReport');
+const { SalesReport, legacyRange, datesLine } = await import('./FairReport');
 
 const where = { pathname: '', search: '' };
 function Probe() {
@@ -256,6 +256,33 @@ describe('the Sales report', () => {
     expect(params().get('to')).toBe('2026-06-30');
     expect(params().has('month')).toBe(false);
     expect(params().get('stage')).toBe('so');
+  });
+});
+
+describe('how the dates pick the rows (owner 2026-11-03: both)', () => {
+  test('SO date by default; Each stage’s own date rides the address and the read, and the stage’s line says which date picks it', () => {
+    draw('from=2026-07-01&to=2026-07-31&stage=so');
+    const dates = screen.getByRole('group', { name: 'Dates by' });
+    expect(within(dates).getByRole('button', { name: 'SO date' }).getAttribute('aria-pressed')).toBe('true');
+    expect(asked.calls.at(-1)?.filters.dateBasis).toBe('so');
+    fireEvent.click(within(dates).getByRole('button', { name: 'Each stage’s own date' }));
+    expect(params().get('dates')).toBe('stage');
+    expect(asked.calls.at(-1)).toMatchObject({ stage: 'so', filters: { dateBasis: 'stage' } });
+    fireEvent.click(screen.getByRole('tab', { name: 'Delivery Orders' }));
+    expect(asked.calls.at(-1)).toMatchObject({ stage: 'do', filters: { dateBasis: 'stage', dateFrom: '2026-07-01', dateTo: '2026-07-31' } });
+    expect(screen.getByText(/^Deliveries dated in the period — the day delivered, else the DO’s own date/)).toBeTruthy();
+    /* Back to the default: the address loses it. */
+    fireEvent.click(within(screen.getByRole('group', { name: 'Dates by' })).getByRole('button', { name: 'SO date' }));
+    expect(params().has('dates')).toBe(false);
+    expect(screen.getByText(/^The same orders once delivered/)).toBeTruthy();
+  });
+
+  test('the grey line names the basis on each stage', () => {
+    expect(datesLine('so', 'do')).toBe('the dates pick orders by SO date');
+    expect(datesLine('stage', 'so')).toBe('each stage by its own date: orders by SO date');
+    expect(datesLine('stage', 'do')).toBe('each stage by its own date: deliveries by DO date');
+    expect(datesLine('stage', 'invoice')).toBe('each stage by its own date: invoices by invoice date');
+    expect(datesLine('stage', 'pnl')).toBe('each stage by its own date: the P&L by SO date');
   });
 });
 

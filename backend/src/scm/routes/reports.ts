@@ -41,6 +41,7 @@ import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
+import { mytDateOf, rangeBoundsMy } from '../lib/my-time';
 import { scopeToCompany, activeCompanyId } from '../lib/companyScope';
 import { stampOrderDeposit } from '../lib/si-list-stamps';
 import { stampSoRefs } from '../lib/so-ref-lookup';
@@ -56,7 +57,7 @@ import { resolveSalesScopeIds } from '../lib/salesScope';
 import { SO_FINANCE_KEYS, SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { soPaidSen, soPaidInputsOf } from '../shared/so-outstanding';
 import {
-  parseStage, fairReportAccess, fairSoMoney, depositByTender, paymentMethodsUsed,
+  parseStage, parseDateBasis, dayInWindow, fairReportAccess, fairSoMoney, depositByTender, paymentMethodsUsed,
   belowDeposit, fairBalanceSen, doCostTotal, siCostTotal, siGoodsTotals, marginPct, resolveDateWindow,
   summarizeSo, summarizeDo, summarizeInvoice,
   fairPnlLineCost, summarizeFairPnl, everyFairPnl,
@@ -758,14 +759,18 @@ function readFairFilters(c: { req: { query(k: string): string | undefined } }): 
 }
 
 /* Fetch the CONFIRMED SOs of a fair matching the filters. The single source of
-   truth for "which orders are in scope" — all three stages start here. */
+   truth for "which orders are in scope" — all three stages start here. With
+   `docNos` (each stage by its own date: the orders whose DOs / invoices fall in
+   the window) the orders are those numbers, every other filter as ever, and no
+   SO-date window. */
 async function fetchFairSos(
   c: any,
   filters: FairFilters,
+  docNos?: readonly string[],
 ): Promise<{ rows: FairSoHeader[]; error?: string }> {
   const sb = c.get('supabase');
-  const { from, to } = resolveDateWindow(filters);
-  const { data, error } = await paginateAll((pFrom: number, pTo: number) => {
+  const { from, to } = docNos ? { from: null, to: null } : resolveDateWindow(filters);
+  const read = (pFrom: number, pTo: number, batch?: string[]) => {
     /* SCOPE (owner 2026-08-31: 「很多单都没进得来…可能因为我还没 delivered」).
        This read anchored on status='CONFIRMED' alone, so an order LEFT the
        report the moment the floor delivered it: measured on 2990, 34 of 49
@@ -789,15 +794,69 @@ async function fetchFairSos(
        (the create form has no branding field), so an eq matched nothing. The
        handler derives display branding after this fetch and filters there. */
     if (filters.salesperson) q = q.eq('salesperson_id', filters.salesperson);
+    if (batch) q = q.in('doc_no', batch);
     if (from) q = q.gte('so_date', from);
     if (to)   q = q.lte('so_date', to);
     q = scopeToCompany(q, c);
     q = q.order('so_date', { ascending: false });
     return q.range(pFrom, pTo);
-  });
+  };
+  const { data, error } = docNos
+    ? await chunkIn([...docNos], (batch: string[], pFrom: number, pTo: number) => read(pFrom, pTo, batch))
+    : await paginateAll((pFrom: number, pTo: number) => read(pFrom, pTo));
   if (error) return { rows: [], error: error.message };
   return { rows: (data ?? []) as unknown as FairSoHeader[] };
 }
+
+/* Each stage by its own date: the SO numbers whose delivery orders (by the
+   date a DO row shows — delivered, else the DO's own date, as a day in
+   Malaysia) or sales invoices (by invoice date) fall in the window. A DO is
+   read on either of its dates, then held to the one its row shows. */
+async function stageDocNosInWindow(
+  c: FairCtx,
+  stage: 'do' | 'invoice',
+  from: string | null,
+  to: string | null,
+): Promise<{ docNos: string[]; error?: string }> {
+  const sb = c.get('supabase');
+  const out = new Set<string>();
+  if (stage === 'invoice') {
+    const { data, error } = await paginateAll((pFrom: number, pTo: number) => {
+      let q = sb.from('sales_invoices').select('so_doc_no, invoice_date');
+      if (from) q = q.gte('invoice_date', from);
+      if (to) q = q.lte('invoice_date', to);
+      return scopeToCompany(q, c).range(pFrom, pTo);
+    });
+    if (error) return { docNos: [], error: error.message };
+    for (const s of (data ?? []) as Array<{ so_doc_no: string | null }>) if (s.so_doc_no) out.add(s.so_doc_no);
+    return { docNos: [...out] };
+  }
+  const { startUtc, endUtc } = rangeBoundsMy(from, to);
+  const byDoDate = await paginateAll((pFrom: number, pTo: number) => {
+    let q = sb.from('delivery_orders').select('so_doc_no, do_date, delivered_at');
+    if (from) q = q.gte('do_date', from);
+    if (to) q = q.lte('do_date', to);
+    return scopeToCompany(q, c).range(pFrom, pTo);
+  });
+  if (byDoDate.error) return { docNos: [], error: byDoDate.error.message };
+  const byDelivered = await paginateAll((pFrom: number, pTo: number) => {
+    let q = sb.from('delivery_orders').select('so_doc_no, do_date, delivered_at');
+    if (startUtc) q = q.gte('delivered_at', startUtc);
+    if (endUtc) q = q.lt('delivered_at', endUtc);
+    return scopeToCompany(q, c).range(pFrom, pTo);
+  });
+  if (byDelivered.error) return { docNos: [], error: byDelivered.error.message };
+  for (const d of [...(byDoDate.data ?? []), ...(byDelivered.data ?? [])] as Array<{ so_doc_no: string | null; do_date: string | null; delivered_at: string | null }>) {
+    if (d.so_doc_no && dayInWindow(doRowDay(d), from, to)) out.add(d.so_doc_no);
+  }
+  return { docNos: [...out] };
+}
+
+/** The day a Delivery Orders row is dated — what its Date column shows. */
+const doRowDay = (d: { do_date: string | null; delivered_at: string | null }): string | null => {
+  const v = d.delivered_at ?? d.do_date;
+  return v ? mytDateOf(v) : null;
+};
 
 /* Resolve salesperson uuid → staff.name for a set of ids (batched). */
 async function resolveStaffNames(c: any, ids: string[]): Promise<Map<string, string>> {
@@ -962,7 +1021,20 @@ export const fairReportHandler = async (c: FairCtx) => {
   if (!access.allowed) return c.json({ error: access.error }, 403);
 
   const filters = readFairFilters(c);
-  const { rows: soRowsAll, error: soErr } = await fetchFairSos(c, filters);
+  /* How the dates pick the rows (owner 2026-11-03: 「都要」): by the orders' SO
+     date (the default), or each stage by its own date — then the Delivery
+     Orders and Invoices stages start from their own documents in the window,
+     and their orders are read whatever their SO date. */
+  const dateBasis = parseDateBasis(c.req.query('date_basis'));
+  const window = resolveDateWindow(filters);
+  const ownDate = dateBasis === 'stage' && (stage === 'do' || stage === 'invoice') && (window.from != null || window.to != null);
+  let stageDocNos: string[] | undefined;
+  if (ownDate) {
+    const found = await stageDocNosInWindow(c, stage, window.from, window.to);
+    if (found.error) return c.json({ error: 'load_failed', reason: found.error }, 500);
+    stageDocNos = found.docNos;
+  }
+  const { rows: soRowsAll, error: soErr } = await fetchFairSos(c, filters, stageDocNos);
   if (soErr) return c.json({ error: 'load_failed', reason: soErr }, 500);
 
   const sb = c.get('supabase');
@@ -1000,6 +1072,7 @@ export const fairReportHandler = async (c: FairCtx) => {
     venue: filters.venue ?? null, state: filters.state ?? null, project: filters.project ?? null,
     branding: filters.branding ?? null, salesperson: filters.salesperson ?? null,
     month: filters.month ?? null, date_from: filters.dateFrom ?? null, date_to: filters.dateTo ?? null,
+    date_basis: dateBasis,
   };
 
   // ── stage=so ──────────────────────────────────────────────────────────────
@@ -1236,11 +1309,14 @@ export const fairReportHandler = async (c: FairCtx) => {
       .in('so_doc_no', batch), c)
       .range(pFrom, pTo));
     if (doErr) return c.json({ error: 'load_failed', reason: doErr.message }, 500);
-    const dos = (doData ?? []) as Array<{
+    const doDocs = (doData ?? []) as Array<{
       id: string; do_number: string; so_doc_no: string | null; do_date: string | null; delivered_at: string | null; status: string | null;
       address1: string | null; address2: string | null; city: string | null; postcode: string | null; state: string | null;
       warehouse_id: string | null; sales_location: string | null;
     }>;
+    /* Each stage by its own date: only the deliveries dated in the window — by
+       the day the row shows — not every delivery of the orders found. */
+    const dos = ownDate ? doDocs.filter((d) => dayInWindow(doRowDay(d), window.from, window.to)) : doDocs;
 
     // Same Location the Delivery Orders list shows: the DO's warehouse code, else its sales_location.
     const whById = new Map<string, { code: string | null; name: string | null }>();
@@ -1318,7 +1394,9 @@ export const fairReportHandler = async (c: FairCtx) => {
     .in('so_doc_no', batch), c)
     .range(pFrom, pTo));
   if (siErr) return c.json({ error: 'load_failed', reason: siErr.message }, 500);
-  const sis = (siData ?? []) as Array<{ id: string; invoice_number: string; so_doc_no: string | null; delivery_order_id: string | null; invoice_date: string | null; total_sen: number | null; status: string | null }>;
+  const siDocs = (siData ?? []) as Array<{ id: string; invoice_number: string; so_doc_no: string | null; delivery_order_id: string | null; invoice_date: string | null; total_sen: number | null; status: string | null }>;
+  /* Each stage by its own date: only the invoices dated in the window. */
+  const sis = ownDate ? siDocs.filter((s) => dayInWindow(s.invoice_date ? s.invoice_date.slice(0, 10) : null, window.from, window.to)) : siDocs;
 
   // SI line costs grouped per SI id. line_total / item_group / item_code give
   // the goods side the margin is worked on.

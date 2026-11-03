@@ -27,7 +27,9 @@
 // read the backend would refuse.
 //
 // URL IS STATE: the stage, the five filters, the view, the hidden column
-// groups and the open order ride the address beside the shared range.
+// groups and the open order ride the address beside the shared range — and
+// how the dates pick the rows (owner 2026-11-03: 「都要」): by the orders' SO
+// date (the default) or, with dates=stage, each stage by its own date.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
@@ -109,16 +111,34 @@ const OPTIONAL_GROUPS: Record<TabKey, { key: string; label: string }[]> = {
   gaps: [],
 };
 
-/* The line under the bar: what the stage shows. Every stage picks its orders
-   by their SO date (the server's one window), so no line claims another. */
+/* The line under the bar: what the stage shows. By default every stage picks
+   its orders by their SO date (the server's one window), so no line claims
+   another; with each stage by its own date the Delivery Orders and Invoices
+   lines say which date picks them. */
 const DESCRIPTIONS = {
   so: 'Orders taken at the fair, by SO date: the amount, the cost estimated when the order was taken, the deposit paid and the balance left.',
   do: 'The same orders once delivered: the cost frozen when the goods left the warehouse (FIFO) against the cost estimated at order. Cost Δ is what the wait changed.',
+  doOwn: 'Deliveries dated in the period — the day delivered, else the DO’s own date: the cost frozen when the goods left the warehouse (FIFO) against the cost estimated at order. Cost Δ is what the wait changed.',
   invoice: 'The same orders once invoiced: the invoiced amount against the landed cost, the supplier’s actual cost once its purchase invoice is in. A fair’s orders can be delivered and invoiced in a later month than the fair.',
+  invoiceOwn: 'Invoices dated in the period, whatever their order’s date: the invoiced amount against the landed cost, the supplier’s actual cost once its purchase invoice is in.',
   pnlFair: 'Each order of the fair, with COGS from the latest stage it has reached: the invoice (SI) when invoiced, else the delivery (DO), else the order (SO).',
   pnlEvery: 'Every fair with orders in the period: revenue, COGS at the latest stage each order has reached, overhead and net profit.',
   gaps: 'Order lines with no cost whose product has no cost either — the products to fill in Product Maintenance. Every order, whatever the dates and filters.',
 } as const;
+
+/** How the dates pick the rows (owner 2026-11-03: 「都要」): the address keeps it as `dates=stage`. */
+type DateBasis = 'so' | 'stage';
+const DATE_BASES: ReadonlyArray<{ value: DateBasis; label: string }> = [
+  { value: 'so', label: 'SO date' },
+  { value: 'stage', label: 'Each stage’s own date' },
+];
+/** What the grey line says picks the rows on this stage. */
+export function datesLine(basis: DateBasis, stage: FairStage): string {
+  if (basis === 'so') return 'the dates pick orders by SO date';
+  if (stage === 'do') return 'each stage by its own date: deliveries by DO date';
+  if (stage === 'invoice') return 'each stage by its own date: invoices by invoice date';
+  return `each stage by its own date: ${stage === 'pnl' ? 'the P&L' : 'orders'} by SO date`;
+}
 
 const PICK_KEYS = ['venue', 'state', 'project', 'branding', 'salesperson'] as const;
 const LEGACY_DATE_KEYS = ['month', 'date_from', 'date_to'] as const;
@@ -668,9 +688,10 @@ export function SalesReport() {
   const stage: TabKey = rawStage && tabKeys.includes(rawStage) ? rawStage : (firstTab ?? 'so');
   const reportStage: FairStage = stage === 'gaps' ? 'so' : stage;
 
-  // ── the five filters (URL) + the shared range ──────────────────────────────
+  // ── the five filters (URL) + the shared range and how it picks ─────────────
   const projectRaw = sp.get('project');
   const project = projectRaw && Number.isFinite(Number(projectRaw)) ? Number(projectRaw) : undefined;
+  const dateBasis: DateBasis = sp.get('dates') === 'stage' ? 'stage' : 'so';
   const filters: FairFilters = useMemo(() => ({
     venue: sp.get('venue') || undefined,
     state: sp.get('state') || undefined,
@@ -679,7 +700,8 @@ export function SalesReport() {
     salesperson: sp.get('salesperson') || undefined,
     dateFrom: range.usable ? range.from : undefined,
     dateTo: range.usable ? range.to : undefined,
-  }), [sp, project, range.usable, range.from, range.to]);
+    dateBasis,
+  }), [sp, project, range.usable, range.from, range.to, dateBasis]);
 
   const view = sp.get('view') === 'cards' ? 'cards' : 'table';
   const hidden = useMemo(() => new Set((sp.get('hide') || '').split(',').filter(Boolean)), [sp]);
@@ -722,7 +744,7 @@ export function SalesReport() {
 
   const period = range.usable ? periodLabel(range.from, range.to) : '';
   useReportSubtitle(range.usable
-    ? `${period} · exhibition sales by document stage · confirmed orders only · the dates pick orders by SO date`
+    ? `${period} · exhibition sales by document stage · confirmed orders only · ${datesLine(dateBasis, reportStage)}`
     : 'Pick dates');
 
   const anyPick = PICK_KEYS.some((k) => Boolean(sp.get(k)));
@@ -754,7 +776,9 @@ export function SalesReport() {
   const groups = stage === 'gaps' || everyFair ? [] : OPTIONAL_GROUPS[stage];
   const desc = stage === 'gaps' ? DESCRIPTIONS.gaps
     : reportStage === 'pnl' ? (everyFair ? DESCRIPTIONS.pnlEvery : DESCRIPTIONS.pnlFair)
-      : DESCRIPTIONS[reportStage];
+      : dateBasis === 'stage' && reportStage === 'do' ? DESCRIPTIONS.doOwn
+        : dateBasis === 'stage' && reportStage === 'invoice' ? DESCRIPTIONS.invoiceOwn
+          : DESCRIPTIONS[reportStage];
 
   // ── tiles ──────────────────────────────────────────────────────────────────
   const tileKey = reportStage === 'pnl' ? (everyFair ? 'pnlEvery' : 'pnlFair') : reportStage;
@@ -797,7 +821,7 @@ export function SalesReport() {
   const sheet = (): ReportSheet | null => {
     const head = {
       title: `Sales report · ${stage === 'pnl' ? 'P&L' : STAGE_LABELS[stage]}`,
-      subtitle: stage === 'gaps' ? DESCRIPTIONS.gaps : `${title} · ${period} · the dates pick orders by SO date`,
+      subtitle: stage === 'gaps' ? DESCRIPTIONS.gaps : `${title} · ${period} · ${datesLine(dateBasis, reportStage)}`,
       meta: stage === 'gaps' ? [] : [{ label: 'Period', value: period }, { label: 'Filters', value: pickText }],
     };
     if (stage === 'gaps') return gapQ.data ? salesSheet({ ...head, cols: gapColumns(noOpen), rows: gapRows, total: null }) : null;
@@ -858,6 +882,9 @@ export function SalesReport() {
       </ReportHeaderActions>
       <ReportToolbar>
         <FinanceDateRange />
+        <ReportTool label="Dates by">
+          <Segmented label="Dates by" options={DATE_BASES} value={dateBasis} onChange={(v) => setParam('dates', v === 'so' ? null : v)} />
+        </ReportTool>
         <PickFilter label="Venue" value={sp.get('venue') ?? ''} onChange={(v) => setParam('venue', v)}
           options={opts.venues.map((v) => ({ value: v, label: v }))} allLabel="All venues" />
         <PickFilter label="State" value={sp.get('state') ?? ''} onChange={(v) => setParam('state', v)}
