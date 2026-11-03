@@ -18,7 +18,7 @@
 // ERPNext-style chart hierarchy + cost centres are deferred.
 // ----------------------------------------------------------------------------
 
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { postSiRevenue } from '../lib/post-si-revenue';
@@ -35,6 +35,7 @@ import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
 import { splitByItemGroup } from '../../acc/item-group-split';
 import { classifyJournal } from '../../acc/journal-class';
 import { isReversalPair } from '../../acc/reversal-pairs';
+import { balancesAsOf, type AccountBalanceRow, type LaterLine } from '../../acc/balances-as-of';
 import { resolveJournalRefs } from '../../acc/journal-refs';
 import { resolveJournalDocument } from '../../acc/journal-document';
 import { runControlCheck } from '../../acc/control-check';
@@ -992,8 +993,16 @@ accounting.get('/gl', glStreamHandler);
    accounting-ledger.ts. */
 accounting.get('/gl/ledger', ledgerReport);
 
-accounting.get('/balances', async (c) => {
+/* The Trial balance. `asOf` (YYYY-MM-DD, the owner's redesign batch 6 read c1)
+   cuts it at a day: the lines the books count dated after it come back off the
+   all-time balances (acc/balances-as-of). Without it, every line, as before.
+   Reads only. Exported for tests/trialBalanceAsOf.test.ts. */
+export const balancesHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   const sb = c.get('supabase');
+  const asOf = c.req.query('asOf') ?? '';
+  if (asOf !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(asOf)) {
+    return c.json({ error: 'bad_request', reason: 'asOf must be a day written YYYY-MM-DD.' }, 400);
+  }
   // PostgREST's 1000-row cap silently truncated the balance list — page through
   // so every account balance is returned, not just the first 1000.
   const { data, error } = await paginateAll((from, to) => scopeToCompany(sb
@@ -1001,8 +1010,18 @@ accounting.get('/balances', async (c) => {
     .select('*'), c) // multi-company: isolate balances to the active company (view exposes company_id, mig 0106)
     .range(from, to));
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ balances: data ?? [] });
-});
+  if (asOf === '') return c.json({ balances: data ?? [] });
+  /* The same lines the view counts (posted, inside the books) dated after the
+     day; the reversal pairs are left out by balancesAsOf, as the view does. */
+  const later = await paginateAll((from, to) => scopeToCompany(sb
+    .from('v_gl_entries')
+    .select('account_code, debit_sen, credit_sen, reversed, reversed_by_je'), c) // multi-company: the active company's lines only
+    .gt('entry_date', asOf)
+    .range(from, to));
+  if (later.error) return c.json({ error: 'load_failed', reason: later.error.message }, 500);
+  return c.json({ balances: balancesAsOf((data ?? []) as AccountBalanceRow[], (later.data ?? []) as LaterLine[]), asOf });
+};
+accounting.get('/balances', balancesHandler);
 
 /* AR Aging / AP Aging — the formal debtor and creditor aging (owner 2026-10-02,
    B4: replace the old ones, keep the names): as at a date, one row per debtor

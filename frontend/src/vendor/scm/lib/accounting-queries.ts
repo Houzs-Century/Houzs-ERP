@@ -232,8 +232,10 @@ export type AccountBalance = {
   total_credit_sen: number;
   balance_sen: number;
 };
-export const useAccountBalances = () => baseQuery<{ balances: AccountBalance[] }>(
-  ['account-balances'], `/accounting/balances`,
+/** The Trial balance — every line the books count, or cut at a day (`asOf`,
+ *  YYYY-MM-DD; the redesign's As at, batch 6 read c1). */
+export const useAccountBalances = (asOf?: string) => baseQuery<{ balances: AccountBalance[] }>(
+  asOf ? ['account-balances', asOf] : ['account-balances'], asOf ? `/accounting/balances?asOf=${encodeURIComponent(asOf)}` : `/accounting/balances`,
 );
 
 /* AR / AP Aging moved to aging-queries.ts (owner 2026-10-02: the formal debtor

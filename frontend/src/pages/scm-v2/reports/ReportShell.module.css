@@ -97,3 +97,54 @@
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; min-width: 0; padding: 10px 12px;
   background: var(--fin-surface); border: 1px solid var(--fin-line); border-radius: 10px; box-shadow: var(--fin-card-shadow);
 }
+
+/* ── The toolbar's tools: a grey name, then its control ── */
+.tool { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
+.toolLabel { font-size: 12px; font-weight: 500; color: var(--fin-muted); white-space: nowrap; }
+.segs {
+  display: inline-flex; gap: 2px; max-width: 100%; padding: 3px; border-radius: 8px; background: var(--fin-rule-soft);
+  overflow-x: auto; scrollbar-width: none;
+}
+.seg {
+  flex: none; height: 26px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: var(--fin-detail);
+  font: 500 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
+}
+.seg:hover { color: var(--fin-ink); }
+.segOn, .segOn:hover { background: var(--fin-surface); color: var(--fin-petrol-ink); font-weight: 600; box-shadow: 0 1px 2px rgba(17, 24, 16, 0.14); }
+.switch {
+  display: inline-flex; align-items: center; gap: 8px; padding: 0; border: 0; background: none;
+  font: 500 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-text); cursor: pointer; white-space: nowrap;
+}
+.switchTrack { position: relative; flex: none; width: 30px; height: 18px; border-radius: 999px; background: var(--fin-input); transition: background-color 120ms ease; }
+.switchOn { background: var(--fin-petrol); }
+.switchKnob {
+  position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--fin-surface);
+  box-shadow: 0 1px 2px rgba(17, 24, 16, 0.25); transition: transform 120ms ease;
+}
+.switchOn .switchKnob { transform: translateX(12px); }
+
+/* ── Tiles over a report: label, figure, the line under it ── */
+.tiles { display: grid; grid-template-columns: repeat(var(--tile-cols, 4), minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 767px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.tile {
+  display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 12px 14px; border-radius: 10px;
+  background: var(--fin-surface); border: 1px solid var(--fin-line); font: inherit; color: inherit; text-align: left;
+}
+button.tile { cursor: pointer; }
+button.tile:hover { border-color: var(--fin-petrol-line); }
+.tileOn, button.tileOn:hover { background: #f6faf9; border-color: var(--fin-petrol); box-shadow: inset 0 0 0 1px var(--fin-petrol); }
+.tileLabel { display: flex; align-items: center; gap: 6px; overflow: hidden; font-size: 12px; color: var(--fin-text); white-space: nowrap; }
+.tileDot { flex: none; width: 8px; height: 8px; border-radius: 2px; }
+.tileValue { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tileSub { overflow: hidden; font-size: 11.5px; color: var(--fin-muted); font-variant-numeric: tabular-nums; white-space: nowrap; text-overflow: ellipsis; }
+.tileLate { background: var(--fin-late-bg); border-color: #efd3d3; }
+.tileLate .tileValue { color: var(--fin-late-fg); }
+.tileGood .tileValue { color: var(--fin-petrol); }
+.tileSkel { display: block; width: 60%; height: 18px; border-radius: 4px; }
+
+/* ── A report's own messages ── */
+.message { margin: 0; padding: 10px 12px; font-size: 13px; color: var(--fin-muted); }
+.error {
+  margin: 0; padding: 10px 12px; border: 1px solid #efd3d3; border-radius: 8px; background: var(--fin-late-bg);
+  font-size: 13px; color: var(--fin-late-fg);
+}

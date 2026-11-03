@@ -6,7 +6,9 @@
 //     ('1' / '0'), a per-device layout preference (the design's own key);
 //   · fin-report-range (sessionStorage) — the last date range picked on a
 //     report, so a report opened without dates in its address follows it
-//     (batch 6 §4.3: the range lives in the URL; this is the fallback).
+//     (batch 6 §4.3: the range lives in the URL; this is the fallback);
+//   · fin-reports-colw-v2 (localStorage) — the statement column widths a
+//     person dragged, per view (the design's own key).
 //
 // Every read and write is wrapped: a private window or blocked storage only
 // means nothing is remembered.
@@ -47,5 +49,38 @@ export function readSavedRange(): ReportRange | null {
 export function saveRange(range: ReportRange): void {
   try {
     window.sessionStorage.setItem(RANGE_KEY, JSON.stringify(range));
+  } catch { /* nothing remembered */ }
+}
+
+/** The statement column widths a person dragged, per view: the account
+ *  column, Total, and every period column together (statementWidths). */
+export type StatementWidths = Partial<Record<string, Partial<Record<'acc' | 'total' | 'period', number>>>>;
+
+const WIDTHS_KEY = 'fin-reports-colw-v2';
+
+export function readStatementWidths(): StatementWidths {
+  try {
+    const v: unknown = JSON.parse(window.localStorage.getItem(WIDTHS_KEY) ?? 'null');
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+    const out: StatementWidths = {};
+    for (const [view, w] of Object.entries(v as Record<string, unknown>)) {
+      if (!w || typeof w !== 'object') continue;
+      const keep: Partial<Record<'acc' | 'total' | 'period', number>> = {};
+      for (const g of ['acc', 'total', 'period'] as const) {
+        const px = (w as Record<string, unknown>)[g];
+        if (typeof px === 'number' && px > 0 && px < 2000) keep[g] = Math.round(px);
+      }
+      if (Object.keys(keep).length > 0) out[view] = keep;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function writeStatementWidths(all: StatementWidths): void {
+  try {
+    if (Object.keys(all).length === 0) window.localStorage.removeItem(WIDTHS_KEY);
+    else window.localStorage.setItem(WIDTHS_KEY, JSON.stringify(all));
   } catch { /* nothing remembered */ }
 }
