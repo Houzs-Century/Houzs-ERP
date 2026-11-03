@@ -14,7 +14,7 @@ import { authedFetch } from './authed-fetch';
 export type ReportKey = 'pnl' | 'balance_sheet' | 'performance' | 'rp';
 
 export const REPORT_TITLES: Record<ReportKey, string> = {
-  pnl: 'P&L', balance_sheet: 'Balance Sheet', performance: 'Performance P&L', rp: 'Cash Flow',
+  pnl: 'P&L', balance_sheet: 'Balance sheet', performance: 'Performance P&L', rp: 'Cash flow',
 };
 
 /** Cash Flow: which way a line reads — money in, money out, or in − out. */
