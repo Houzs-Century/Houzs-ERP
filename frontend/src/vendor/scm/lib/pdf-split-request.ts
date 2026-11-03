@@ -1,5 +1,5 @@
 // ----------------------------------------------------------------------------
-// pdf-split — one PDF holding several bills, as one PDF per page (HC-0204).
+// pdf-split-request — one PDF holding several bills, as one PDF per page (HC-0204).
 //
 // Finance gets a supplier's invoices as ONE PDF (Siti 2026-11-02: our
 // attachment is a single PDF containing multiple invoices). The pile reads one

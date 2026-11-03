@@ -5,7 +5,7 @@ const authedFetch = vi.fn();
 vi.mock('./authed-fetch', () => ({ authedFetch: (...a: unknown[]) => authedFetch(...a) }));
 vi.mock('./payment-voucher-queries', () => ({ fileToBase64: async () => 'UERG' }));
 
-import { splitPdfPages } from './pdf-split';
+import { splitPdfPages } from './pdf-split-request';
 
 describe('splitPdfPages', () => {
   test('sends the PDF, names each page it gets back', async () => {

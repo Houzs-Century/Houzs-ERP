@@ -59,7 +59,7 @@ import { useBillMatches } from '../../vendor/scm/lib/payment-request-queries';
 import { BillMatchesNote } from '../../vendor/scm/components/RequestBill';
 import type { EventSuggestion } from '../../vendor/scm/lib/event-queries';
 import { stashPvFiles } from '../../vendor/scm/lib/pv-file-handoff';
-import { splitPdfPages } from '../../vendor/scm/lib/pdf-split';
+import { splitPdfPages } from '../../vendor/scm/lib/pdf-split-request';
 import { clearPile, getPile, pileKey, updatePile, usePile, type PileState } from '../../vendor/scm/lib/bill-pile-store';
 import { getActiveCompanySnapshot, subscribeActiveCompany } from '../../lib/activeCompany';
 import { fmtDate } from '../../vendor/shared/format';

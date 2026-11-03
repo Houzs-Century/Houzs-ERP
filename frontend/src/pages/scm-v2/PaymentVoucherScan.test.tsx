@@ -36,7 +36,7 @@ vi.mock('../../vendor/scm/lib/payment-request-queries', async (importOriginal) =
 /* The page cutter is the server's (pinned in backend lib/pdf-split.test.ts);
    here it answers with the pages a test says the PDF has. */
 const splitPdfPages = vi.fn(async (_f: File): Promise<File[]> => []);
-vi.mock('../../vendor/scm/lib/pdf-split', () => ({ splitPdfPages: (f: File) => splitPdfPages(f) }));
+vi.mock('../../vendor/scm/lib/pdf-split-request', () => ({ splitPdfPages: (f: File) => splitPdfPages(f) }));
 
 import { MAX_PILE_FILES, PaymentVoucherScan } from './PaymentVoucherScan';
 
