@@ -4409,12 +4409,7 @@ mfgPurchaseOrders.patch('/:id/reopen', async (c) => {
 
   const { error: updErr } = await scopeToCompanyId(supabase
     .from('purchase_orders')
-    .update({
-      status: 'SUBMITTED',
-      cancelled_at: null,
-      submitted_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
+    .update({ status: 'SUBMITTED', cancelled_at: null, submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq('id', id), co.companyId);
   if (updErr) return c.json({ error: 'reopen_failed', reason: updErr.message }, 500);
 
