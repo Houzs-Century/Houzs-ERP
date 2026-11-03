@@ -1,13 +1,7 @@
 /* Finance › Reports › Product profit in the owner's redesign (batch 6 §5.11):
-   the month and the page's own filters in the toolbar card, four tiles, the
-   three charts as one block of cards, the ranked table on the Finance-Table,
-   the notes. Colours from finance/finance-ui.module.css. */
-
-.month {
-  height: 30px; box-sizing: border-box; padding: 0 8px; border: 1px solid var(--fin-line); border-radius: 6px; background: var(--fin-surface);
-  font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-ink); outline: none;
-}
-.month:focus { border-color: var(--fin-petrol); }
+   the shared dates and the page's own filters in the toolbar card, four
+   tiles, the three charts as one block of cards, the ranked table on the
+   Finance-Table, the notes. Colours from finance/finance-ui.module.css. */
 
 /* Categories tick any number at once: a track like the segmented control. */
 .chips { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 3px; border-radius: 8px; background: var(--fin-rule-soft); }
