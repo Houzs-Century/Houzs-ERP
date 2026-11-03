@@ -143,7 +143,6 @@ export function kindAttributes(
     case 'reminder_2':
     case 'reminder_3':
     case 'delivery_completed':
-    case 'overdue_order':
       return { attributes: {} };
 
     case 'balance_reminder':
@@ -184,6 +183,19 @@ export function kindAttributes(
           new_delivery_date: templateDate(newDate),
         },
       };
+    }
+
+    case 'overdue_order': {
+      // One-way production-delay heads-up. Its template prints OUR reason as
+      // {{amend_date_reason}} — the board's staff-picked Amend Reason, the same
+      // column Postpone reads. It is NOT an opener, so the send does not reset
+      // the contact (connect.ts CONNECT_RESET_ATTRIBUTES), which means an absent
+      // value would leave a stale reason, or the literal "{amend_date_reason}",
+      // in the customer's message. Skip the group when the reason is blank
+      // rather than send either.
+      const reason = clean(first.amend_reason);
+      if (!reason) return { attributes: {}, skip: 'overdue_order_needs_reason' };
+      return { attributes: { amend_date_reason: reason } };
     }
 
     case 'assr_arrangement':
