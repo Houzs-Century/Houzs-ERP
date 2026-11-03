@@ -154,6 +154,7 @@ describe('GET /project-sales-orders/:projectId', () => {
         bind: (...vals: unknown[]) => ({
           all: async () => {
             if (/FROM project_activity/.test(sql)) return { results: [] };
+            if (/project_sales_attendees/.test(sql)) return { results: [] };
             calls.push(vals);
             return { results: [{ id: 77, venue: 'MID VALLEY', organizer: 'REX', brand: 'AKEMI', startdate: '2026-09-18', enddate: '2026-09-20', status: 'confirmed' }] };
           },
@@ -188,7 +189,9 @@ describe('GET /project-sales-orders/:projectId', () => {
                 { id: 1, project_id: 77, note: '19/9\n1. HC13503 RM5000 Anthony', created_at: '2026-09-19 10:00:00', ...reporter },
                 { id: 2, project_id: 80, note: '19/9\n1. HC13504 RM3000 Adrian', created_at: '2026-09-19 11:00:00', ...reporter },
               ] }
-            : { results: vals.map((v) => FAIRS[Number(v)]).filter(Boolean) }),
+            : /project_sales_attendees/.test(sql)
+              ? { results: [] }
+              : { results: vals.map((v) => FAIRS[Number(v)]).filter(Boolean) }),
         }),
       }),
     };
