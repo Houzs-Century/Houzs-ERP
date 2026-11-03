@@ -50,7 +50,7 @@ export function periodLabel(from: string, to: string): string {
 }
 
 /** Whole months a range spans, counting both ends' months. */
-const monthsSpanned = (from: string, to: string): number =>
+export const monthsSpanned = (from: string, to: string): number =>
   (Number(to.slice(0, 4)) - Number(from.slice(0, 4))) * 12 + Number(to.slice(5, 7)) - Number(from.slice(5, 7)) + 1;
 
 /** The same calendar day a year back (29 Feb falls to the 28th). */

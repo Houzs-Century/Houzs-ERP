@@ -8,30 +8,33 @@
 // bedframes it gave away; the charts he kept — the ranking, a donut and the
 // waterfall. Every word on the screen is English (字体要英文).
 //
-// The owner's redesign (batch 6 §5.11): inside the report shell — the month in
-// the subtitle, Excel · PDF · Print in the header and Charts PNG under its ⋯;
-// one toolbar row (the month, Category, Rank by, Include gifts); four tiles;
-// the charts in petrol / gold / warm grey; the table on the Finance-Table.
-// The report reads ONE whole month, as today: a longer range waits for the
-// owner (question g2), so the month sets the shared range to that month and
-// takes the month of a range carried in from another report.
+// The owner's redesign (batch 6 §5.11): inside the report shell — the months
+// in the subtitle, Excel · PDF · Print in the header and Charts PNG under its
+// ⋯; one toolbar row (the shared dates, Category, Rank by, Include gifts); four
+// tiles; the charts in petrol / gold / warm grey; the table on the
+// Finance-Table.
+// Several months (the redesign's c8; owner 2026-11-03 「要」, question g2): the
+// report follows the shell's shared range like the other month-based reports,
+// in WHOLE months — a part month widens to its first and last days and the
+// subtitle says so. One month is the monthly report it always was; several add
+// up, each order in the month of its SO date (按开单月).
 // ----------------------------------------------------------------------------
 
 import { useMemo, useRef, useState } from 'react';
 import { DataTable, type Column } from '../../components/DataTable';
-import { monthEnd } from '../../lib/dateRangePresets';
+import { monthEnd, monthStart } from '../../lib/dateRangePresets';
 import { useProductProfit, type ProductCategory, type ProductProfitRow } from '../../vendor/scm/lib/product-profit-queries';
 import { fmtSenPlain } from '../../vendor/shared/format';
 import {
   CATEGORY_LABEL, CATEGORY_ORDER, compact, donutOf, rankingOf, freeBedframesText, giftsLabel, gpOf, gpPctOf, productProfitSheet, profitNotes,
-  showsFreeBedframes, totalsOf, unitsText, viewLabel, viewRows, waterfallOf, type ProfitView, type SortKey,
+  profitPeriod, showsFreeBedframes, totalsOf, unitsText, viewLabel, viewRows, waterfallOf, type ProfitView, type SortKey,
 } from './product-profit-view';
 import { ProfitWaterfall, RankingChart, ShareDonut, chartsPng } from './ProductProfitCharts';
+import { FinanceDateRange } from './reports/FinanceDateRange';
 import {
   ReportExports, ReportHeaderActions, ReportMessage, ReportMore, ReportSwitch, ReportTiles, ReportTool, ReportToolbar, Segmented, useReportSubtitle,
   type ReportTile,
 } from './reports/reportParts';
-import { periodLabel } from './reports/statementColumns';
 import { useReportRange } from './reports/useReportRange';
 import s from './ProductProfit.module.css';
 
@@ -48,13 +51,14 @@ type Ranked = ProductProfitRow & { rank: number; gp: number };
 
 export const ProductProfitTab = () => {
   const r = useReportRange();
-  /* One whole month (g2 open): the month the shared range ends in. */
-  const month = (r.usable ? r.to : r.today).slice(0, 7);
-  const setMonth = (m: string) => { if (/^\d{4}-\d{2}$/.test(m)) r.setRange(`${m}-01`, monthEnd(`${m}-01`)); };
+  /* Whole months of the shared range: a part month widens to its first and last days. */
+  const from = r.usable ? monthStart(r.from) : monthStart(r.today);
+  const to = r.usable ? monthEnd(r.to) : monthEnd(r.today);
+  const partMonths = r.usable && (r.from !== from || r.to !== to);
   const [cats, setCats] = useState<Set<ProductCategory>>(new Set());
   const [gifts, setGifts] = useState(true);
   const [sort, setSort] = useState<SortKey>('gp');
-  const q = useProductProfit(month);
+  const q = useProductProfit({ from: from.slice(0, 7), to: to.slice(0, 7) });
   const d = q.data;
   const v: ProfitView = useMemo(() => ({ cats, gifts, sort }), [cats, gifts, sort]);
   const rows = useMemo(() => (d ? viewRows(d, v) : []), [d, v]);
@@ -71,10 +75,14 @@ export const ProductProfitTab = () => {
     if (next.has(c)) next.delete(c); else next.add(c);
     return next;
   });
-  const shownMonth = d?.month ?? month;
-  const monthText = periodLabel(`${shownMonth}-01`, monthEnd(`${shownMonth}-01`));
-  useReportSubtitle(`${monthText} · by SO date · ${viewLabel(v)} · ${giftsLabel(gifts)}`);
-  const fileBase = `product-profit-${shownMonth}`;
+  /* What is on screen: the months the report read, else the months asked for. */
+  const shownFrom = d?.from ?? from;
+  const shownTo = d?.to ?? to;
+  const monthText = profitPeriod(shownFrom, shownTo);
+  useReportSubtitle(`${monthText}${partMonths ? ' · whole months' : ''} · by SO date · ${viewLabel(v)} · ${giftsLabel(gifts)}`);
+  const fileBase = shownFrom.slice(0, 7) === shownTo.slice(0, 7)
+    ? `product-profit-${shownFrom.slice(0, 7)}`
+    : `product-profit-${shownFrom.slice(0, 7)}-${shownTo.slice(0, 7)}`;
   const pngTitle = `Product profit · ${monthText} · ${viewLabel(v)} · ${giftsLabel(gifts)} · ${ranking.title.toLowerCase()}`;
   const donutNote = donut.losers.count > 0
     ? `${donut.losers.count} ${donut.byCategory ? (donut.losers.count === 1 ? 'category' : 'categories') : (donut.losers.count === 1 ? 'model' : 'models')} lost money (${compact(donut.losers.sen)}) — not in the donut`
@@ -169,9 +177,7 @@ export const ProductProfitTab = () => {
         }]} />
       </ReportHeaderActions>
       <ReportToolbar>
-        <ReportTool label="Month">
-          <input type="month" className={s.month} aria-label="Month" value={month} onChange={(e) => setMonth(e.target.value)} />
-        </ReportTool>
+        <FinanceDateRange label="SO dates" />
         <ReportTool label="Category">
           <span className={s.chips} role="group" aria-label="Category">
             <button type="button" className={`${s.chip} ${cats.size === 0 ? s.chipOn : ''}`} aria-pressed={cats.size === 0} onClick={() => setCats(new Set())}>All</button>
@@ -183,6 +189,7 @@ export const ProductProfitTab = () => {
         <ReportTool label="Rank by"><Segmented options={SORTS} value={sort} onChange={setSort} label="Rank by" /></ReportTool>
         <ReportSwitch on={gifts} onChange={setGifts}>Include gifts</ReportSwitch>
       </ReportToolbar>
+      {!r.usable && <ReportMessage>Pick dates.</ReportMessage>}
 
       {q.isLoading && (
         <div className={s.skeleton} aria-label="Working the products out">
