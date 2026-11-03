@@ -103,14 +103,6 @@ const CONDITION_SUBJECT: Record<Exclude<ProceedGateCondition, 'deposit'>, { subj
   delivery_date: { subject: 'A delivery date is required',          field: 'Delivery date' },
 };
 
-/** 2990-0029: a custom-colour pillow needs its colour; a pillow with no chosen
- *  colour is a different SKU, `SQUARE PILLOW RDM` (random colour). Name it so the
- *  operator is not left with only the fabric picker. */
-const randomColourHint = (itemCode: string, axisKey: string): string =>
-  axisKey === 'fabricCode' && /^SQUARE PILLOW(?!.*RDM)/i.test(itemCode.trim())
-    ? '. No colour chosen? Use the random-colour pillow SKU instead'
-    : '';
-
 /** One completeness condition as a problem. Freshly built every call — a shared
  *  object handed to two responses is one `problems` list away from a caller
  *  mutating the other's. */
@@ -225,7 +217,7 @@ export function collectProcessingGateProblems(facts: ProcessingGateFacts): SaveP
       const label = axisLabel(off.group, key);
       out.push({
         code: 'variants_incomplete',
-        message: `${off.itemCode} — ${label} is required${randomColourHint(off.itemCode, key)}`,
+        message: `${off.itemCode} — ${label} is required`,
         line: off.itemCode,
         field: label,
       });
