@@ -388,13 +388,15 @@ export const fetchPvFileBlobUrl = (pvId: string, fileId: string): Promise<{ url:
    change +60. So the client posts the RENDERED voucher page(s) up — one
    part per voucher — and receives one finished PDF back: voucher A, A's
    files in sort order, voucher B, B's… Raw fetch (binary response;
-   authedFetch JSON-parses). */
-export async function fetchPvPrintBundle(parts: Array<{ pvId: string; voucherBase64: string }>): Promise<Blob> {
+   authedFetch JSON-parses). The ONE door for every print bundle — the
+   vouchers' here, Supplier bills' (POST /ap-invoices/print-bundle, batch 4
+   step 8) through the same call. */
+export async function fetchPrintBundle(path: string, parts: unknown[]): Promise<Blob> {
   const token = readAuthToken();
   if (!token) throw new Error('Your session has expired — please sign in again.');
   let signal: AbortSignal | undefined;
   try { signal = AbortSignal.timeout(120_000); } catch { signal = undefined; } // pre-2022 browsers
-  const res = await correlatedFetch(`${API_URL}/payment-vouchers/print-bundle`, {
+  const res = await correlatedFetch(`${API_URL}${path}`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...companyHeader() },
     body: JSON.stringify({ parts }),
@@ -406,6 +408,8 @@ export async function fetchPvPrintBundle(parts: Array<{ pvId: string; voucherBas
   }
   return consumeCorrelated(res, () => res.blob());
 }
+export const fetchPvPrintBundle = (parts: Array<{ pvId: string; voucherBase64: string }>): Promise<Blob> =>
+  fetchPrintBundle('/payment-vouchers/print-bundle', parts);
 
 /* Imperative twin of usePaymentVoucherDetail for the batch print (owner:
    可选多张 pv + document) — a loop over ticked rows has no hook to call, and

@@ -5,14 +5,17 @@
 // Payments (what paid it), Attachments and a Trail from its stamps; the action
 // bar keeps every action the pop-out had (Edit, Copy, Post, Cancel, Official
 // invoice, files) and adds Make voucher and Add task. Posting is unchanged —
-// the same calls the list makes.
+// the same calls the list makes. Print (step 8) opens the voucher page's print
+// preview: the AP BILL, its stored files after it unless unticked.
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Ban, CalendarClock, Copy, ListPlus, Pencil, Send, Wallet } from 'lucide-react';
+import { Ban, CalendarClock, Copy, ListPlus, Pencil, Printer, Send, Wallet } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { PageHeader } from '../../components/Layout';
+import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { Modal } from '../../vendor/scm/components/Modal';
 import { OfficialDocActions } from '../../vendor/scm/components/OfficialDoc';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
@@ -22,7 +25,7 @@ import { useEventLabels } from '../../vendor/scm/lib/event-queries';
 import { useAccounts, postableAccounts } from '../../vendor/scm/lib/accounting-queries';
 import { useSuppliers } from '../../vendor/scm/lib/suppliers-queries';
 import {
-  useApInvoiceDetail, useCancelApInvoice, useCreateApInvoice, usePostApInvoice, useUpdateApInvoice,
+  useApInvoiceDetail, useApInvoiceFiles, useCancelApInvoice, useCreateApInvoice, usePostApInvoice, useUpdateApInvoice,
   type ApInvoiceDetail, type BillPayment,
 } from '../../vendor/scm/lib/ap-invoice-queries';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
@@ -34,6 +37,7 @@ import { ApInvoiceFilesCard, fromDetail } from './ApInvoices';
 import { VoucherTaskDrawer } from './PvDocParts';
 import { BillPlanDialog } from './BillPlanDialog';
 import { billTag, lifeOf, type BillRow, type BillTone } from './supplier-bills';
+import { useSupplierBillsPrint } from './useSupplierBillsPrint';
 import styles from './SalesOrderDetail.module.css';
 import mo from './MoneyOut.module.css';
 
@@ -90,6 +94,21 @@ export function ApBillPage() {
 
   const accountName = (code: string): string | null => (accountsQ.data?.accounts ?? []).find((a) => a.account_code === code)?.account_name ?? null;
   const lineAccounts = useMemo(() => postableAccounts(accountsQ.data?.accounts ?? []), [accountsQ.data]);
+
+  /* Print (step 8): the AP BILL with its stored files after it — or without,
+     the operator's call in the preview card, as on the voucher page. Files not
+     counted yet: the Worker appends whatever the bill keeps. */
+  const filesQ = useApInvoiceFiles(id || null);
+  const fileCount = filesQ.data?.files.length ?? null;
+  const [includeFiles, setIncludeFiles] = useState(true);
+  const prints = useSupplierBillsPrint();
+  const deliverPrint = (action: PdfAction) => prints.print(
+    [{ kind: 'API', id, number: d?.invoice.invoice_number ?? 'AP bill' }],
+    includeFiles && fileCount !== 0,
+    action,
+  );
+  const print = usePrintPreview(deliverPrint);
+  useOpenPrintPreviewFromUrl(print.openPreview, !!d);
 
   if (q.isLoading) return <div className={mo.hint}>Reading the bill…</div>;
   if (q.isError || !d) {
@@ -177,6 +196,7 @@ export function ApBillPage() {
             {canCreate && life !== 'cancelled' && <Button variant="ghost" size="md" onClick={() => setForm('edit')}><Pencil {...ICON} /> Edit</Button>}
             {canCreate && <Button variant="ghost" size="md" onClick={() => setForm('copy')}><Copy {...ICON} /> Copy</Button>}
             <Button variant="ghost" size="md" onClick={() => setAddingTask(true)}><ListPlus {...ICON} /> Add task</Button>
+            <Button variant="ghost" size="md" onClick={print.openPreview}><Printer {...ICON} /> Print</Button>
             {canCreate && life === 'posted' && outstanding > 0 && (
               <Button variant="ghost" size="md" onClick={() => setPlanning(true)}><CalendarClock {...ICON} /> Plan date</Button>
             )}
@@ -302,6 +322,32 @@ export function ApBillPage() {
           </ol>
         </div>
       </section>
+
+      {/* Mounted while open only — the page's own pop-outs stay the one dialog on it otherwise. */}
+      {print.open && <PrintPreviewModal
+        open
+        onClose={print.close}
+        docTitle={paper}
+        docNo={inv.invoice_number}
+        rows={[
+          { label: 'Supplier', value: d.supplier ? `${d.supplier.code} · ${d.supplier.name}` : '—' },
+          { label: dn ? 'Date' : 'Invoice date', value: fmtDateOrDash(inv.invoice_date) },
+          { label: 'Due date', value: fmtDateOrDash(inv.due_date) },
+          { label: 'Total', value: fmtSen(inv.total_sen) },
+          {
+            label: 'Files',
+            /* The exclude toggle sits where the decision is made, as on the voucher page. */
+            value: fileCount === 0 ? 'none attached' : (
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                <input type="checkbox" checked={includeFiles} onChange={(e) => setIncludeFiles(e.target.checked)}
+                  aria-label="Include attached files in the print" style={{ width: 14, height: 14, accentColor: '#16695f' }} />
+                {fileCount == null ? 'include its attached files after the bill page' : `include the ${fileCount} attached file(s) after the bill page`}
+              </label>
+            ),
+          },
+        ]}
+        {...print.handlers}
+      />}
 
       {planning && (
         <BillPlanDialog onClose={() => setPlanning(false)}

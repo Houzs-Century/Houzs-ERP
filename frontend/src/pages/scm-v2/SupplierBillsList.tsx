@@ -8,12 +8,15 @@
 // and everything else under ⋯ (or a right-click).
 //
 // The page (ApInvoices.tsx) owns the pop-outs, the forms and every post; this
-// file only shows the rows and says which step was asked for.
+// file only shows the rows and says which step was asked for. Printing posts
+// nothing, so it lives here (step 8): the ticks print as one document in list
+// order, With files puts each paper's stored files after it, and a row prints
+// alone from its Print link or its ⋯ (useSupplierBillsPrint.ts).
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { MoreHorizontal, Printer, Search, X } from 'lucide-react';
+import { FileDown, MoreHorizontal, Printer, Search, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { DataTable, type Column } from '../../components/DataTable';
 import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
@@ -25,6 +28,8 @@ import {
   billKindWord, billTag, chipLabel, chipsOf, controlWord, daysLate, fromApRow, fromNote, inChip, inKind, isOpen, kindTabLabel, lifeOf,
   matchesBill, ofSupplier, signedSen, sortBills, type BillChip, type BillKindTab, type BillRow, type BillTone,
 } from './supplier-bills';
+import { billPrintDocOf, useSupplierBillsPrint } from './useSupplierBillsPrint';
+import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import mo from './MoneyOut.module.css';
 
 /** What a row asks the page to do. */
@@ -60,6 +65,10 @@ export function SupplierBillsList({ apRows, apLoading, apError, can, onAct, onPr
   const [ticked, setTicked] = useState<Set<string>>(new Set());
   const [shown, setShown] = useState<BillRow[] | null>(null);
   const [menu, setMenu] = useState<{ row: BillRow; x: number; y: number } | null>(null);
+  /* Files or not is the operator's call per batch — on by default, as on Payment vouchers. */
+  const [withFiles, setWithFiles] = useState(true);
+  const prints = useSupplierBillsPrint();
+  const printRows = (rows: BillRow[], files: boolean, action: PdfAction = 'print') => { void prints.print(rows.map(billPrintDocOf), files, action); };
 
   const notesQ = useCreditNotes('AP', 'SCN', 'ALL', openingOnly ? 'only' : 'exclude');
   const notesError = notesQ.isError ? (notesQ.error instanceof Error ? notesQ.error.message : 'something went wrong') : null;
@@ -96,7 +105,12 @@ export function SupplierBillsList({ apRows, apLoading, apError, can, onAct, onPr
   };
 
   const tickedRows = allRows.filter((r) => ticked.has(r.key));
-  const hiddenTicked = tickedRows.filter((r) => !visible.some((v) => v.key === r.key)).length;
+  /* The rows on screen after the table's own filters, in the order shown: the
+     ticked ones among them are what Print and Save as PDF send. */
+  const onScreen = shown ?? visible;
+  const printTargets = onScreen.filter((r) => ticked.has(r.key));
+  const onScreenKeys = new Set(onScreen.map((r) => r.key));
+  const hiddenTicked = tickedRows.filter((r) => !onScreenKeys.has(r.key)).length;
 
   const showing = [
     kindTabLabel(tab) === 'All' ? 'All kinds' : kindTabLabel(tab),
@@ -114,7 +128,10 @@ export function SupplierBillsList({ apRows, apLoading, apError, can, onAct, onPr
     if (can.post && life === 'draft') items.push({ label: r.kind === 'SCN' ? 'Post to ledger' : 'Post', onClick: () => onAct('post', r) });
     /* When we plan to pay it (step 7): a posted bill still owed. */
     if (can.create && r.kind !== 'SCN' && life === 'posted' && isOpen(r)) items.push({ label: 'Plan date', onClick: () => onAct('plan', r) });
-    if (can.create && r.kind === 'API') items.push({ label: '', onClick: () => undefined, divider: true }, { label: 'Copy as new', onClick: () => onAct('copy', r) });
+    /* Printed in place (step 8): the paper alone, or with its stored files — a purchase invoice keeps none here. */
+    items.push({ label: '', onClick: () => undefined, divider: true }, { label: 'Print', onClick: () => printRows([r], false) });
+    if (r.kind !== 'PI') items.push({ label: 'Print + files', onClick: () => printRows([r], true) });
+    if (can.create && r.kind === 'API') items.push({ label: 'Copy as new', onClick: () => onAct('copy', r) });
     if (can.cancel && r.kind !== 'PI' && life !== 'cancelled' && r.paidSen === 0 && !(r.kind === 'SCN' && openingOnly)) {
       items.push({ label: '', onClick: () => undefined, divider: true }, { label: r.kind === 'SCN' ? 'Cancel note…' : r.debitNote ? 'Cancel debit note…' : 'Cancel bill…', onClick: () => onAct('cancel', r), danger: true });
     }
@@ -137,6 +154,12 @@ export function SupplierBillsList({ apRows, apLoading, apError, can, onAct, onPr
             Make voucher
           </button>
         );
+    } else {
+      /* Paid, used or cancelled — the design's Print link (step 8); its files ride ⋯ Print + files. */
+      primary = (
+        <button type="button" className={mo.actLink} disabled={prints.printing}
+          onClick={(e) => { e.stopPropagation(); printRows([r], false); }}>Print</button>
+      );
     }
     return (
       <span className={mo.acts}>
@@ -250,6 +273,19 @@ export function SupplierBillsList({ apRows, apLoading, apError, can, onAct, onPr
           <span className={mo.money}>· {tickedSum < 0 ? '−' : ''}{fmtSen(Math.abs(tickedSum))}</span>
           {hiddenTicked > 0 && <span className={mo.hint}>· {hiddenTicked} hidden by a filter, left out</span>}
           <span className={mo.grow} />
+          {/* The ticked papers as ONE document, in list order (step 8); With
+              files puts each one's stored files right after it. */}
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+            <input type="checkbox" checked={withFiles} onChange={(e) => setWithFiles(e.target.checked)}
+              aria-label="Include each document's attached files" style={{ width: 14, height: 14, accentColor: '#16695f' }} />
+            With files
+          </label>
+          <Button variant="secondary" size="sm" onClick={() => printRows(printTargets, withFiles)} disabled={prints.printing || printTargets.length === 0}>
+            <Printer size={14} /> {prints.printing ? 'Preparing…' : `Print ${printTargets.length}${withFiles ? ' + files' : ''}`}
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => printRows(printTargets, withFiles, 'save')} disabled={prints.printing || printTargets.length === 0}>
+            <FileDown size={14} /> Save as PDF
+          </Button>
           <Button variant="ghost" size="sm" onClick={() => setTicked(new Set())}>Clear</Button>
         </div>
       )}
@@ -285,7 +321,7 @@ export function SupplierBillsList({ apRows, apLoading, apError, can, onAct, onPr
         <>
           <div style={{ position: 'fixed', inset: 0, zIndex: 79 }} onClick={() => setMenu(null)} aria-hidden />
           <div className={mo.menu} role="menu" aria-label={`${menu.row.number} menu`}
-            style={{ top: Math.min(menu.y + 6, window.innerHeight - 240), left: Math.max(8, menu.x - 180) }}>
+            style={{ top: Math.max(8, Math.min(menu.y + 6, window.innerHeight - 320)), left: Math.max(8, menu.x - 180) }}>
             {menuOf(menu.row).map((m, i) => (m.divider
               ? <div key={`d${i}`} className={mo.menuRule} />
               : (
