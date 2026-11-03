@@ -106,9 +106,28 @@ projectDataGaps.get("/", async (c) => {
   ).bind(recent, from, to).all<NoteRow & { project_id: number }>();
   const notesOf = new Map<number, NoteRow[]>();
   for (const n of noteRows.results) notesOf.set(Number(n.project_id), [...(notesOf.get(Number(n.project_id)) ?? []), { ...n, id: Number(n.id) }]);
+  /* Per-event attendee emails — the per-event side of the save gate (owner
+     2026-10-30). Same shape as projectOverview.ts, so an attending rep's chat
+     counts in the data-gap scan too. */
+  const attendeeRows = await c.env.DB.prepare(
+    `SELECT psa.project_id, LOWER(TRIM(u.email)) AS email
+       FROM project_sales_attendees psa
+       JOIN projects p ON p.id = psa.project_id
+       JOIN sales_reps sr ON sr.id = psa.sales_rep_id
+       JOIN users u ON u.id = sr.user_id
+      WHERE u.email IS NOT NULL AND u.email <> ''
+        AND (substr(COALESCE(p.start_date, p.end_date), 1, 10) >= ? OR (substr(p.end_date, 1, 10) >= ? AND substr(p.end_date, 1, 10) <= ?))${activeCompanySql(c, "p.company_id")}`,
+  ).bind(recent, from, to).all<{ project_id: number; email: string }>();
+  const attendeesOf = new Map<number, Set<string>>();
+  for (const a of attendeeRows.results) {
+    const pid = Number(a.project_id);
+    const bag = attendeesOf.get(pid) ?? new Set<string>();
+    if (a.email) bag.add(a.email);
+    attendeesOf.set(pid, bag);
+  }
   const billsOf = new Map<number, ReturnType<typeof collectReport>["bills"]>();
   for (const p of eventsById.values()) {
-    const bills = notesOf.has(p.id) ? collectReport(notesOf.get(p.id)!, p.start_date ? String(p.start_date) : null).bills : [];
+    const bills = notesOf.has(p.id) ? collectReport(notesOf.get(p.id)!, p.start_date ? String(p.start_date) : null, attendeesOf.get(p.id) ?? null).bills : [];
     if (bills.length) billsOf.set(p.id, bills);
   }
   type ProblemBill = { ref: string; amountSen: number; salesperson: string | null; problem: "not_opened" | "other_event"; soDocNo: string | null; otherEvent: string | null };

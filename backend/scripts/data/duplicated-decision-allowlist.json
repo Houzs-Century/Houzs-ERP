@@ -2,6 +2,11 @@
   "reviewed": [
     {
       "check": "D1",
+      "key": "UMMUAIMANLM@GMAIL.COM,WEISIANG329@GMAIL.COM,YZHE212@GMAIL.COM|backend/src/routes/lib/sales-report-bills.ts frontend/src/auth/salesAccess.ts",
+      "why": "THE CHAT SALES-REPORT ADMIN EMAILS (owner 2026-10-14 trio + Peter added 2026-10-30), one decision with ONE authoritative home and a vendored twin. backend/src/routes/lib/sales-report-bills.ts SAVE_EMAILS is the server's gate (canSaveSalesReport, called per note author inside collectReport). frontend/src/auth/salesAccess.ts SAVE_EMAILS mirrors it so the chat UI shows the Save button for the same accounts; the backend is the authority and returns a can_save flag per project (which also carries the per-event sales-attendee grant that the frontend list CANNOT compute). The two files share no build graph (frontend cannot import backend/src), the set is closed, and a divergence costs a UI button that doesn't match what the server would accept — never a wrong grant, since the server is the referee."
+    },
+    {
+      "check": "D1",
       "key": "EDIT,FULL,NONE,VIEW|backend/src/services/pageAccess.ts frontend/src/lib/roleMatrixModel.ts",
       "why": "THE 4-LEVEL PAGE-ACCESS VOCABULARY (none/view/edit/full). Two homes by necessity: POSITION_ACCESS_LEVELS (pageAccess.ts) is the server's writable set that isValidPositionLevel validates every role_page_access write against (PATCH /api/roles/:id/page-access); MATRIX_LEVELS (roleMatrixModel.ts) is the RBAC-matrix UI's dropdown order + 无/看/改/批 labels in the browser. The two packages share no build graph, the set is closed to the code, and a divergence costs a dropdown option, never a wrong grant — the server is the referee. Recorded rather than collapsed because the frontend cannot import backend/src and the matrix needs the ordered list for its control."
     },
