@@ -5,9 +5,9 @@
 // delivery-time window. The driver crew is already on each order — the board's
 // Driver / Lorry columns snapshot it onto the DO — so the send READS it per
 // order instead of asking the operator to pick again, exactly as Postpone reads
-// the row's Amend Reason + Delivery Date. The one thing the ERP does not hold is
-// the time window, and it differs from customer to customer, so each customer
-// group carries its OWN typed time.
+// the row's Amend Reason + Delivery Date. The time window differs from customer
+// to customer, so each customer group carries its OWN time, pre-filled from the
+// row's Time Slot column so the operator does not key it twice.
 //
 // This is the pure part (grouping key + per-group readiness), imported by both
 // the modal and its test; the modal owns the state and the per-group sends.
@@ -44,6 +44,12 @@ export type DriverGroupPlan = {
 };
 
 const trimmed = (v: string | null | undefined): string => String(v ?? '').trim();
+
+/** The group's Time Slot (board column `time_range`) as the default delivery
+ *  time: each distinct slot once, in order, so two orders on different slots
+ *  both reach the customer. '' when no order has one. */
+export const groupTimeSlot = (rows: PlanningOrder[]): string =>
+  [...new Set(rows.map((r) => trimmed(r.time_range)).filter(Boolean))].join(' / ');
 
 /** Build the Driver Info send plan for one customer phone group: the driver
  *  pulled from the orders' crew (the first order that names one) + the operator's
