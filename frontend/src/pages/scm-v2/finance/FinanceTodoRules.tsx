@@ -24,6 +24,7 @@ const RULES: Array<[string, string, string, string, string]> = [
   ['pv-check', 'Vouchers to check', 'Vouchers someone else prepared, not yet checked', 'pay', 'Checker'],
   ['pv-approve', 'Vouchers to approve', 'Checked vouchers waiting for approval', 'pay', 'Approver'],
   ['transfers', 'Transfers to confirm', 'Draft receipts for transfers not yet seen in the bank', 'other', 'Finance'],
+  ['selfcheck', 'Self-check findings', 'Any self-check that is not clean', 'other', 'Finance'],
   ['overdue', 'Overdue invoices', 'Customer invoices more than 30 days past due', 'other', 'Finance'],
 ];
 

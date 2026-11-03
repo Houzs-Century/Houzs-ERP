@@ -190,7 +190,9 @@ function CheckRow({ c }: { c: TodoCheck }) {
     : c.state === 'open' ? <CircleDot size={15} className={styles.checkOpen} /> : <CheckCircle2 size={15} className={styles.checkOk} />;
   const tone = c.state === 'late' ? styles.valueLate : c.state === 'open' ? styles.valueOpen : styles.valueOk;
   const body = (<>{icon}<span className={styles.checkLabel}>{c.label}</span><span className={`${styles.checkValue} ${tone}`}>{c.value}</span></>);
-  return c.to ? <Link to={c.to} className={styles.checkRow}>{body}</Link> : <div className={styles.checkRow}>{body}</div>;
+  return c.to
+    ? <Link to={c.to} className={styles.checkRow} title={c.detail}>{body}</Link>
+    : <div className={styles.checkRow} title={c.detail}>{body}</div>;
 }
 
 const monthName = (ym: string): string =>

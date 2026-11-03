@@ -34,11 +34,11 @@ import { fmtDate, fmtDateTime, fmtSen } from '../../vendor/shared/format';
 import { fmtLedger } from '../../vendor/scm/lib/ledger-queries';
 import { useCancelledWithMoney, type ConvertSource } from '../../vendor/scm/lib/so-money-queries';
 import {
-  useBookUnbookedPayments, useControlCheck, usePaymentBookingDryRun,
+  useBookUnbookedPayments, useControlCheck, usePaymentBookingDryRun, useRunSelfCheck,
   type ControlCheckRow, type ControlDrift, type PaymentDrift, type PaymentDriftRow, type PaymentDryRun, type UnbookedPayments,
 } from './accounting-phase1-queries';
 import {
-  monthLabel, monthsWord, seriesLine, useReceiptBackfillPlan, useRunReceiptBackfill, type BackfillMonth, type BackfillPlan, type BackfillResult,
+  RECEIPT_PLAN_KEY, monthLabel, monthsWord, seriesLine, useReceiptBackfillPlan, useRunReceiptBackfill, type BackfillMonth, type BackfillPlan, type BackfillResult,
 } from './receipt-backfill-queries';
 import { AccountingHeader } from './books/AccountingHeader';
 import { useBooksToast } from './books/BooksToast';
@@ -553,6 +553,8 @@ export function selfCheckCounts(p: {
 export const SelfCheckTab = () => {
   const control = useControlCheck();
   const cancelled = useCancelledWithMoney(null);
+  const run = useRunSelfCheck();
+  const qc = useQueryClient();
   const receipts = useReceiptBackfillPlan();
   const open = useOpenDocInTab();
   const toast = useBooksToast();
@@ -572,13 +574,26 @@ export const SelfCheckTab = () => {
       ? 'Checking…'
       : `Checked ${fmtDateTime(new Date(checkedAt))} · ${counts.checks} checks · ${counts.toLook > 0 ? `${counts.toLook} to look at` : 'all clean'}`;
 
+  /* Run again (batch 6 c3): the server makes the three reads in one go and
+     keeps their sum for To do; the page takes the reads it hands back. A run
+     the server refuses falls back to reading the three again. */
   const runAgain = async () => {
     setRunning(true);
     try {
-      const [c, x, r] = await Promise.all([control.refetch(), cancelled.refetch(), receipts.refetch()]);
+      const r = await run.mutateAsync();
+      qc.setQueryData(['control-check'], r.control);
+      if ('error' in r.cancelled) void qc.invalidateQueries({ queryKey: ['so-cancelled-with-money'] });
+      else qc.setQueryData(['so-cancelled-with-money', ''], r.cancelled);
+      if ('error' in r.receipts) void qc.invalidateQueries({ queryKey: RECEIPT_PLAN_KEY });
+      else qc.setQueryData(RECEIPT_PLAN_KEY, r.receipts);
+      void qc.invalidateQueries({ queryKey: ['finance-todo'] });
+      const found = r.summary.findings;
+      toast.say(`Self-check ran · ${found > 0 ? `${found} to look at` : 'all clean'}${r.recordError ? ' · To do not updated' : ''}`);
+    } catch {
+      const [c, x, rp] = await Promise.all([control.refetch(), cancelled.refetch(), receipts.refetch()]);
       const after = selfCheckCounts({
         checks: c.data?.checks ?? null, payments: c.data?.payments ?? null, drift: c.data?.paymentDrift ?? null,
-        cancelled: x.isError ? null : x.data?.orders.length ?? 0, receipts: r.isError ? null : r.data?.total ?? 0,
+        cancelled: x.isError ? null : x.data?.orders.length ?? 0, receipts: rp.isError ? null : rp.data?.total ?? 0,
       });
       toast.say(`Self-check ran · ${after.toLook > 0 ? `${after.toLook} to look at` : 'all clean'}`);
     } finally {

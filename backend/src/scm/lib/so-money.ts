@@ -377,6 +377,8 @@ export type ConvertSource = {
   /** What may move to another order — the remaining, less the floor a live order keeps. */
   movableSen: number;
   keepSen: number;
+  /** Who sold it (the salesperson, else the order's agent) — on Finance's lists (batch 6 c2). */
+  salesperson?: string | null;
 };
 
 /**
@@ -436,7 +438,7 @@ const sourceOf = (m: OrderMoney, row: Row | null): ConvertSource => ({
 export async function ordersWithMoney(sb: Db, companyId: number, p: { phone?: string | null; cancelledOnly: boolean }): Promise<{ ok: true; rows: ConvertSource[] } | { ok: false; reason: string }> {
   const phone = String(p.phone ?? '').trim();
   const found = await paginateAll<Row>((f, t) => {
-    let q = sb.from('mfg_sales_orders').select('doc_no, debtor_name, updated_at, status').eq('company_id', companyId);
+    let q = sb.from('mfg_sales_orders').select('doc_no, debtor_name, updated_at, status, salesperson_id, agent').eq('company_id', companyId);
     if (p.cancelledOnly) q = q.eq('status', 'CANCELLED');
     if (phone) q = q.eq('phone', phone);
     return q.order('doc_no').range(f, t);
@@ -445,13 +447,20 @@ export async function ordersWithMoney(sb: Db, companyId: number, p: { phone?: st
   const orders = [...(found.data ?? [])].sort((a, b) => String(a.doc_no).localeCompare(String(b.doc_no)));
   const money = await ordersMoney(sb, companyId, orders.map((r) => String(r.doc_no)));
   if (!money.ok) return { ok: false, reason: money.reason };
-  const rows: ConvertSource[] = [];
-  for (const r of orders) {
+  const kept = orders.filter((r) => {
     const m = money.money.get(String(r.doc_no));
-    if (!m || m.bookedSen === 0) continue;
-    rows.push(sourceOf(m, r));
-  }
-  return { ok: true, rows: rows.filter((x) => x.remainingSen > 0) };
+    return m != null && m.bookedSen !== 0 && m.remainingSen > 0;
+  });
+  /* Who sold each: the salesperson's staff row, else the agent typed on the order. */
+  const staffIds = [...new Set(kept.map((r) => String(r.salesperson_id ?? '')).filter(Boolean))];
+  const staff = await chunkIn<Row>(staffIds, (batch, lo, hi) => sb.from('staff').select('id, name').in('id', batch).order('id').range(lo, hi));
+  if (staff.error) return { ok: false, reason: `staff: ${staff.error.message}` };
+  const staffName = new Map(staff.data.filter((x) => x.name).map((x) => [String(x.id), String(x.name)]));
+  const rows = kept.map((r): ConvertSource => ({
+    ...sourceOf(money.money.get(String(r.doc_no))!, r),
+    salesperson: (r.salesperson_id ? staffName.get(String(r.salesperson_id)) ?? null : null) ?? (r.agent ? String(r.agent) : null),
+  }));
+  return { ok: true, rows };
 }
 
 /**

@@ -11,10 +11,12 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 
-const { useControlCheck, useCancelledWithMoney, useReceiptBackfillPlan } = vi.hoisted(() => ({
-  useControlCheck: vi.fn(), useCancelledWithMoney: vi.fn(), useReceiptBackfillPlan: vi.fn(),
+const { useControlCheck, useCancelledWithMoney, useReceiptBackfillPlan, runSelfCheck } = vi.hoisted(() => ({
+  useControlCheck: vi.fn(), useCancelledWithMoney: vi.fn(), useReceiptBackfillPlan: vi.fn(), runSelfCheck: vi.fn(),
 }));
-vi.mock('./accounting-phase1-queries', async (orig) => ({ ...(await orig<Record<string, unknown>>()), useControlCheck }));
+vi.mock('./accounting-phase1-queries', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()), useControlCheck, useRunSelfCheck: () => ({ mutateAsync: runSelfCheck, isPending: false }),
+}));
 vi.mock('../../vendor/scm/lib/so-money-queries', async (orig) => ({ ...(await orig<Record<string, unknown>>()), useCancelledWithMoney }));
 vi.mock('./receipt-backfill-queries', async (orig) => ({ ...(await orig<Record<string, unknown>>()), useReceiptBackfillPlan }));
 
@@ -29,7 +31,8 @@ const wrap = (ui: ReactNode) => (
 const CHECKS = {
   checks: [
     { role: 'AR', accountCode: '300-0000', glBalanceSen: 43_815_700, ok: false,
-      driftDocs: [{ docNo: 'HC-SI-2610-0088', docTotalSen: 245_000, jeTotalSen: 233_000, diffSen: -12_000, note: 'journal total differs from document total' }],
+      driftDocs: [{ docNo: 'HC-SI-2610-0088', docTotalSen: 245_000, jeTotalSen: 233_000, diffSen: -12_000, note: 'journal total differs from document total',
+        party: 'Lim Kah Hoe', date: '2026-10-24', jeNo: 'HC-JE-2610-0851', docKind: 'SI', docId: 'si-88' }],
       foreignLines: [{ jeNo: 'HC-JE-2610-0100', sourceType: 'MANUAL', debitSen: 5_000, creditSen: 0 }] },
     { role: 'AR_OTHER', accountCode: '305-0000', glBalanceSen: 1_024_500, ok: true, driftDocs: [], foreignLines: [] },
     { role: 'AP', accountCode: '400-0000', glBalanceSen: -29_712_100, ok: true, driftDocs: [], foreignLines: [] },
@@ -65,8 +68,11 @@ describe('Self-check', () => {
     expect(within(ar).getByText('300-0000 · balance in the ledger')).toBeTruthy();
     expect(within(ar).getByText('RM 438,157.00')).toBeTruthy();
     expect(within(ar).getByText('2 findings')).toBeTruthy();
-    /* Open by default: the document, its two totals and the difference; the foreign line. */
-    expect(within(ar).getByText('HC-SI-2610-0088')).toBeTruthy();
+    /* Open by default: the document (a link to the invoice), who, when, its entry, the totals; the foreign line. */
+    expect(within(ar).getByRole('button', { name: 'HC-SI-2610-0088' })).toBeTruthy();
+    expect(within(ar).getByText('Lim Kah Hoe')).toBeTruthy();
+    expect(within(ar).getByText('2026/10/24')).toBeTruthy();
+    expect(within(ar).getByText('HC-JE-2610-0851')).toBeTruthy();
     expect(within(ar).getByText('(120.00)')).toBeTruthy();
     expect(within(ar).getByText(/Lines on this account from sources that do not belong here: HC-JE-2610-0100 \(MANUAL\)/)).toBeTruthy();
     /* A clean control is one line; a creditor's balance reads Cr. */
@@ -94,7 +100,20 @@ describe('Self-check', () => {
     expect(within(rowOf('receipts')).getByText('Every payment has one')).toBeTruthy();
   });
 
-  it('Run again re-reads every check and says what it found', async () => {
+  it('Run again asks the server to run the checks, takes the reads it returns, and says what it found', async () => {
+    runSelfCheck.mockResolvedValueOnce({
+      control: CHECKS, cancelled: { orders: [], totalRemainingSen: 0 }, receipts: { total: 0, months: [] },
+      summary: { checks: 8, findings: 2, items: ['x', 'y'] }, ranAt: '2026-11-03T08:00:00Z',
+    });
+    render(wrap(<SelfCheckTab />));
+    fireEvent.click(screen.getByRole('button', { name: 'Run again' }));
+    await waitFor(() => expect(screen.getByText('Self-check ran · 2 to look at')).toBeTruthy());
+    expect(runSelfCheck).toHaveBeenCalledTimes(1);
+    expect(useControlCheck.mock.results.at(-1)!.value.refetch).not.toHaveBeenCalled();
+  });
+
+  it('a run the server refuses falls back to reading every check again', async () => {
+    runSelfCheck.mockRejectedValueOnce(new Error("You don't have permission to run the self-check."));
     render(wrap(<SelfCheckTab />));
     fireEvent.click(screen.getByRole('button', { name: 'Run again' }));
     await waitFor(() => expect(screen.getByText('Self-check ran · 3 to look at')).toBeTruthy());
