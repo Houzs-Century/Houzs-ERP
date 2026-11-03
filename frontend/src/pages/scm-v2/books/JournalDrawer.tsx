@@ -38,6 +38,7 @@ export function JournalDrawer({ state, onChange, onClose, onToast, backLabel, ra
     const to = range?.to ?? monthEnd(entryDate);
     const q = new URLSearchParams({ tab: 'gl', accounts: code, from, to });
     navigate(`/scm/accounting?${q.toString()}`, { state: { back: { to: `${location.pathname}${location.search}`, label: backLabel } } });
+    onClose();
   };
 
   return (

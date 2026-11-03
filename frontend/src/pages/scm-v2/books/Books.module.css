@@ -131,6 +131,77 @@
 .entryLine { min-height: 30px; padding-top: 3px; padding-bottom: 3px; border-top: 1px solid var(--fin-calm-bg); font-size: 12.5px; }
 .desc { font-weight: 500; }
 
+/* General ledger: a block per account — its head, b/f, lines, total. */
+.blockHead { min-height: 40px; cursor: pointer; border-top: 1px solid var(--fin-rule); }
+.gridHead + .block .blockHead { border-top: 0; }
+.blockHead:hover { background: var(--fin-paper); }
+.blockTitle { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.blockTitle > svg { flex: none; color: var(--fin-muted); }
+.blockCode { font-size: 13px; color: var(--fin-detail); }
+.blockName { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.blockCount { font-size: 12px; color: var(--fin-muted); white-space: nowrap; }
+.blockFig { font-size: 13px; }
+.bfRow { min-height: 30px; font-size: 12.5px; color: var(--fin-detail); }
+.bfLabel { font-style: italic; }
+.glLine { min-height: 34px; padding-top: 3px; padding-bottom: 3px; border-top: 1px solid var(--fin-rule-soft); font-size: 12.5px; }
+.totalRow { min-height: 34px; border-top: 1px solid var(--fin-line); font-size: 12.5px; font-weight: 600; }
+.grandRow { min-height: 40px; border-top: 2px solid var(--fin-ink); background: var(--fin-row); font-size: 13px; font-weight: 700; }
+.side { font-size: 11px; font-weight: 500; color: var(--fin-muted); }
+.moreLines { padding: 8px 14px; border-top: 1px solid var(--fin-rule-soft); }
+.backLink {
+  display: inline-flex; align-items: center; gap: 5px; padding: 0; border: 0; background: none; align-self: flex-start;
+  font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-petrol); cursor: pointer;
+}
+.backLink:hover { text-decoration: underline; }
+.linkBtn { display: inline-flex; align-items: center; gap: 5px; padding: 0; border: 0; background: none; font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-petrol); cursor: pointer; white-space: nowrap; }
+.linkBtn:hover { text-decoration: underline; }
+
+/* The Accounts picker: a button, its popover, the chips it leaves. */
+.pickWrap { position: relative; display: inline-flex; }
+.pickBtn {
+  height: 32px; display: inline-flex; align-items: center; gap: 7px; padding: 0 10px; border: 1px solid var(--fin-line); border-radius: 6px;
+  background: var(--fin-surface); font: 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-ink); cursor: pointer; white-space: nowrap;
+}
+.pickBtn:hover { border-color: var(--fin-petrol-line); }
+.pickBtnOpen { border-color: var(--fin-petrol); }
+.pickValue { font-weight: 600; }
+.pop {
+  position: absolute; top: 36px; left: 0; z-index: 60; width: 360px; max-width: calc(100vw - 32px); display: flex; flex-direction: column;
+  border: 1px solid var(--fin-line); border-radius: 10px; background: var(--fin-surface); box-shadow: var(--fin-pop-shadow);
+}
+.popSearch { padding: 10px; border-bottom: 1px solid var(--fin-rule-soft); }
+.popList { max-height: 260px; overflow-y: auto; padding: 4px 0; }
+.popItem {
+  width: 100%; display: flex; align-items: center; gap: 10px; padding: 6px 10px; border: 0; background: transparent; text-align: left;
+  font: 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-ink); cursor: pointer;
+}
+.popItem:hover { background: var(--fin-paper); }
+.tick {
+  flex: none; width: 15px; height: 15px; box-sizing: border-box; display: grid; place-items: center; border: 1px solid var(--fin-input); border-radius: 4px;
+  color: #ffffff;
+}
+.tickOn { border-color: var(--fin-petrol); background: var(--fin-petrol); }
+.popCode { width: 70px; flex: none; color: var(--fin-detail); }
+.popName { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.popEmpty { padding: 8px 10px; font-size: 12.5px; color: var(--fin-muted); }
+.popRange { display: flex; flex-direction: column; gap: 6px; padding: 10px; border-top: 1px solid var(--fin-rule-soft); }
+.popRangeRow { display: flex; gap: 8px; }
+.popRangeRow .selectWrap { flex: 1; min-width: 0; }
+.popRangeRow .select { width: 100%; max-width: none; font-weight: 500; }
+.popFoot { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-top: 1px solid var(--fin-rule-soft); }
+.chips { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 4px 0 9px; border: 1px solid var(--fin-petrol-line); border-radius: 999px;
+  background: var(--fin-petrol-pale); color: var(--fin-petrol-ink); font-size: 12px; font-weight: 600; white-space: nowrap;
+}
+.chipX { display: grid; place-items: center; width: 18px; height: 18px; border: 0; border-radius: 999px; background: transparent; color: var(--fin-petrol-ink); cursor: pointer; }
+.chipX:hover { background: var(--fin-petrol-hover); }
+.switch { display: inline-flex; align-items: center; gap: 7px; padding: 0; border: 0; background: none; font: 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-text); cursor: pointer; white-space: nowrap; }
+.switchTrack { position: relative; width: 28px; height: 16px; border-radius: 999px; background: var(--fin-input); transition: background 0.15s; }
+.switchKnob { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 999px; background: #ffffff; transition: left 0.15s; }
+.switchOn .switchTrack { background: var(--fin-petrol); }
+.switchOn .switchKnob { left: 14px; }
+
 /* ── The entry card and the form, in a right drawer ──────────────────── */
 .drawer { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--fin-surface); color: var(--fin-ink); font-variant-numeric: tabular-nums; }
 .dHead { display: flex; align-items: flex-start; gap: 12px; padding: 18px 20px 12px; border-bottom: 1px solid var(--fin-rule-soft); }
