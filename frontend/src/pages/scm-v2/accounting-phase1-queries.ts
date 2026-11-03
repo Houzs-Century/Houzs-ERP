@@ -232,6 +232,21 @@ export const usePaymentCorrections = (month: string) => useQuery({
   retryDelay: 800,
 });
 
+/** Self-check's Run again (batch 6 c3): the page's three reads, made on the
+    server in one go and summed into the row To do reads. */
+export type SelfCheckRunResult = {
+  control: { checks: ControlCheckRow[]; payments: UnbookedPayments; paymentDrift?: PaymentDrift };
+  cancelled: { orders: Array<Record<string, unknown>>; totalRemainingSen: number } | { error: string };
+  receipts: { total: number; months: unknown[] } | { error: string };
+  summary: { checks: number; findings: number; items: string[] };
+  ranAt: string;
+  /** Only when the summary could not be kept; the reads stand. */
+  recordError?: string;
+};
+export const useRunSelfCheck = () => useMutation({
+  mutationFn: () => authedFetch<SelfCheckRunResult>('/accounting/self-check/run', { method: 'POST' }),
+});
+
 export const useControlCheck = () => useQuery({
   queryKey: ['control-check'],
   queryFn: () => authedFetch<{ checks: ControlCheckRow[]; payments: UnbookedPayments; paymentDrift?: PaymentDrift }>(`/accounting/control-check`),

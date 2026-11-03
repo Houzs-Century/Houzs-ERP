@@ -24,6 +24,7 @@ import {
 } from '../../acc/finance-todo';
 import { loadDailyBankBoard } from './accounting-daily-bank';
 import { readCustomRuleItems, readTodoTaskFacts, type TodoTaskFacts } from './accounting-todo-tasks';
+import { latestSelfCheck } from './accounting-self-check';
 
 type Rows = Array<Record<string, any>>;
 type Read<T> = { ok: true; value: T } | { ok: false; what: string; reason: string };
@@ -368,19 +369,47 @@ async function readViewer(c: any, companyId: number, problems: string[]): Promis
 
 /* ── Facts and handlers ──────────────────────────────────────────────────── */
 
+/* ── Books: the newest self-check, the trial balance, the stock close ───── */
+
+async function readSelfCheck(sb: any, companyId: number): Promise<Read<TodoFacts['selfCheck']>> {
+  const r = await latestSelfCheck(sb, companyId);
+  if (!r.ok) return fail('self-check', r.reason);
+  return { ok: true, value: r.run ? { ranOn: mytDateOf(r.run.ranAt), findings: r.run.findings, items: r.run.items } : null };
+}
+
+/** Σ debit − Σ credit over every posted line — the trial balance's own difference. */
+async function readTrialBalance(sb: any, companyId: number): Promise<Read<number>> {
+  const all = await paginateAll<Record<string, any>>((lo, hi) => sb.from('v_account_balances')
+    .select('account_code, total_debit_sen, total_credit_sen').eq('company_id', companyId).order('account_code').range(lo, hi));
+  if (all.error) return fail('trial balance', String(all.error.message ?? all.error));
+  return { ok: true, value: ((all.data ?? []) as Rows).reduce((d, r) => d + Number(r.total_debit_sen ?? 0) - Number(r.total_credit_sen ?? 0), 0) };
+}
+
+/** Whether the stock close's newest run for last month failed. */
+async function readStockClose(sb: any, companyId: number, today: string): Promise<Read<{ lastMonthFailed: boolean }>> {
+  const lastMonth = addDays(`${today.slice(0, 7)}-01`, -1).slice(0, 7);
+  const { data, error } = await sb.from('acc_stock_close_runs').select('action, ran_at')
+    .eq('company_id', companyId).eq('month', lastMonth).order('ran_at', { ascending: false }).limit(1);
+  if (error) return fail('stock close', String(error.message ?? error));
+  const last = (Array.isArray(data) ? data[0] : null) as { action?: string } | null | undefined;
+  return { ok: true, value: { lastMonthFailed: last?.action === 'failed' } };
+}
+
 /** Every fact the rules read, for one company and day. `full` adds the money
-    board and what was done today — the page wants them, the badge does not. */
+    board, what was done today and the Books checklist's trial balance and
+    stock close — the page wants them, the badge does not. */
 export async function readFinanceTodoFacts(sb: any, companyId: number, today: string, full: boolean): Promise<TodoFacts> {
   const problems: string[] = [];
   /* A section that throws is a failed read like any other — named, and the rest still shown. */
   const safe = async <T,>(what: string, run: () => Promise<Read<T>>): Promise<Read<T>> => {
     try { return await run(); } catch (e) { return fail(what, e instanceof Error ? e.message : String(e)); }
   };
-  const [cards, bank, requests, vouchers, transfers, overdue, taskFacts] = await Promise.all([
+  const [cards, bank, requests, vouchers, transfers, overdue, taskFacts, selfCheck] = await Promise.all([
     safe('merchant reports', () => readCards(sb, companyId, today)), safe('bank statements', () => readBank(sb, companyId, today)),
     safe('payment requests', () => readRequests(sb, companyId)), safe('payment vouchers', () => readVouchers(sb, companyId)),
     safe('official receipts', () => readTransfers(sb, companyId)), safe('overdue invoices', () => readOverdue(sb, companyId, today)),
     safe<TodoTaskFacts>('tasks', () => readTodoTaskFacts(sb, companyId)),
+    safe('self-check', () => readSelfCheck(sb, companyId)),
   ]);
   const ok = <T,>(r: Read<T>, empty: T): T => {
     if (r.ok) return r.value;
@@ -404,21 +433,28 @@ export async function readFinanceTodoFacts(sb: any, companyId: number, today: st
 
   let money: TodoFacts['money'] = null;
   let done: TodoDone[] = [];
+  let trialBalanceDiffSen: number | null = null;
+  let stockClose: TodoFacts['stockClose'] = null;
   if (full) {
-    const [board, doneRead] = await Promise.all([
+    const [board, doneRead, trialBalance, stockRun] = await Promise.all([
       loadDailyBankBoard(sb, companyId, today, { withNames: false })
         .catch((e: unknown) => ({ ok: false as const, reason: e instanceof Error ? e.message : String(e) })),
       safe('what was done today', () => readDone(sb, companyId, today, card, bk)),
+      safe('trial balance', () => readTrialBalance(sb, companyId)),
+      safe('stock close', () => readStockClose(sb, companyId, today)),
     ]);
     if (board.ok) money = { bankCashSen: board.board.totalClosingSen, awaitingSen: board.board.pendingApprovalSen, onTheWaySen: board.board.totalTransitSen };
     else problems.push(`bank balances (${board.reason})`);
     done = ok(doneRead, []);
+    trialBalanceDiffSen = ok<number | null>(trialBalance, null);
+    stockClose = ok<TodoFacts['stockClose']>(stockRun, null);
   }
   return {
     today,
     acquirers: card?.acquirers ?? [], lastReportTo: card?.lastReportTo ?? {}, keyedCardDays: card?.keyedCardDays ?? {}, cardRows: card?.cardRows ?? [],
     bankAccounts: bk?.bankAccounts ?? [], lastStatementTo: bk?.lastStatementTo ?? {}, bankLines: bk?.bankLines ?? [], lockedLastMonth: bk?.lockedLastMonth ?? [],
     requests: ok(requests, []), vouchers: ok(vouchers, []), transfers: ok(transfers, []), overdue: ok(overdue, []),
+    selfCheck: ok<TodoFacts['selfCheck']>(selfCheck, null), trialBalanceDiffSen, stockClose,
     money, done, problems,
     tasks: tf.tasks, occurrences: tf.occurrences, remarkCounts: tf.remarkCounts, rulesOff: tf.rulesOff, groups: tf.groups, customRules,
   };
