@@ -1,9 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────
-// assrWeeklyStatus.ts — weekly (Friday) WhatsApp status update to Service Case
+// assrWeeklyStatus.ts — weekly (Monday) WhatsApp status update to Service Case
 // (ASSR) customers, via Houzs Connect.
 //
-// Owner 2026-11-02: customers complain nobody updates them on their service
-// case. Every Friday, tell each customer the current status of their OPEN case.
+// Owner 2026-11-02 (moved Friday -> Monday 2026-11-03): customers complain nobody
+// updates them on their service case. Every Monday, tell each customer the current
+// status of their OPEN case. The day is set by the getUTCDay() gate in index.ts.
 //
 // Scope (owner's choice): a case is eligible when it is OPEN (not completed /
 // voided / archived), has a phone, AND the customer was NOT WhatsApp'd in the

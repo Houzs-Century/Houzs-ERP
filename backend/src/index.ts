@@ -1165,11 +1165,12 @@ export default {
           .then((r) => console.log(`[cron assr-digest] sent=${r.recipients} cases=${r.cases}`))
           .catch((e) => console.error("[cron assr-digest]", e))
       );
-      // Weekly Service Case status update to customers (owner 2026-11-02). This
-      // 02:00 UTC slot is 10:00 MYT; gate to Friday (getUTCDay 5) so it runs once
-      // a week at that hour without a dedicated cron trigger. Ships DARK — no-op
-      // unless scm.app_config 'scm.assr_weekly_status' is pilot/on. Best-effort.
-      if (new Date(event.scheduledTime).getUTCDay() === 5) {
+      // Weekly Service Case status update to customers (owner 2026-11-02; moved
+      // Friday -> Monday 2026-11-03). This 02:00 UTC slot is 10:00 MYT; gate to
+      // Monday (getUTCDay 1) so it runs once a week at that hour without a
+      // dedicated cron trigger. Ships DARK — no-op unless scm.app_config
+      // 'scm.assr_weekly_status' is pilot/on. Best-effort.
+      if (new Date(event.scheduledTime).getUTCDay() === 1) {
         ctx.waitUntil(
           track("assr-weekly-status", () => runWeeklyServiceCaseStatus(env))
             .then((r) => {
