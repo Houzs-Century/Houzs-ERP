@@ -15,6 +15,8 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { FilterPills } from '../../components/FilterPills';
 import { JobDetailPanel, type JobPanelTarget } from '../../components/scm-v2/JobDetailPanel';
 import { CalendarClock, Pencil, Plus, XCircle } from 'lucide-react';
 import { Button } from '../../components/Button';
@@ -39,6 +41,8 @@ import { statusLabel } from '../../vendor/scm/lib/status-pill';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
+
+const DP_STATUS_CHIPS = ['all', 'PENDING_SCHEDULE', 'SCHEDULED', 'CANCELLED'] as const;
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -91,8 +95,19 @@ export const DpOrders = () => {
   const [scheduling, setScheduling] = useState<DpOrderRow | null>(null);
   const [editing, setEditing] = useState<DpOrderRow | null>(null);
 
+  /* Status chips (HC-0210, same FilterPills strip as Amendments). Counts are off
+     the loaded set — this list filters client-side, like Amendments. */
+  const [searchParams, setSearchParams] = useSearchParams();
+  const statusChip = searchParams.get('status') ?? 'all';
+  const setStatusChip = (s: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (s === 'all') next.delete('status'); else next.set('status', s);
+    setSearchParams(next, { replace: true });
+  };
+  const allDp = list.data?.dpOrders ?? [];
+
   const rows = useMemo(() => {
-    const all = list.data?.dpOrders ?? [];
+    const all = statusChip === 'all' ? allDp : allDp.filter((r) => r.status === statusChip);
     const term = searchTerm.trim().toLowerCase();
     if (!term) return all;
     return all.filter((r) =>
@@ -103,7 +118,7 @@ export const DpOrders = () => {
         r.so_venue, r.so_doc_no ? salespersonNameOf(r.so_agent, r.so_salesperson_id, '') : '',
       ].some((v) => (v ?? '').toLowerCase().includes(term)),
     );
-  }, [list.data, searchTerm, salespersonNameOf]);
+  }, [allDp, statusChip, searchTerm, salespersonNameOf]);
 
   const cancel = async (r: DpOrderRow) => {
     const ok = await askConfirm({
@@ -290,6 +305,16 @@ export const DpOrders = () => {
         )}
       />
 
+      <FilterPills
+        options={DP_STATUS_CHIPS.map((s) => ({
+          value: s,
+          label: s === 'all' ? 'All' : statusLabel('dpOrder', s),
+          count: s === 'all' ? allDp.length : allDp.filter((r) => r.status === s).length,
+        }))}
+        value={statusChip}
+        onChange={setStatusChip}
+      />
+
       <JobDetailPanel target={jobPanel} onClose={() => setJobPanel(null)} />
       <DataTable<DpOrderRow>
         onRowClick={(r) => setJobPanel(dpPanel(r))}
@@ -310,7 +335,7 @@ export const DpOrders = () => {
           loadedLimit: 500,
           totalRecords: rows.length,
         }}
-        resetFilters={{ active: searchTerm.trim() !== '', onReset: () => setSearchTerm('') }}
+        resetFilters={{ active: searchTerm.trim() !== '' || statusChip !== 'all', onReset: () => { setSearchTerm(''); setStatusChip('all'); } }}
         contextMenu={(r) => [
           ...(r.status === 'PENDING_SCHEDULE'
             ? [{ label: 'Edit…', onClick: () => setEditing(r) },
