@@ -36,7 +36,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Download, Printer } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { fmtDate, fmtSenPlain } from '../../vendor/shared/format';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
@@ -48,21 +47,7 @@ import { ReportLayoutEditor } from './ReportLayoutEditor';
 import { ByMonthButton, MonthlyReport } from './MonthlyReport';
 import { balanceSheetLines, pnlLines, type MonthColumn } from '../../vendor/scm/lib/report-monthly';
 import { statementTable, type ReportSheet } from '../../vendor/scm/lib/report-sheet';
-import { downloadReportXlsx } from '../../vendor/scm/lib/report-sheet-xlsx';
-import { generateReportPdf } from '../../vendor/scm/lib/report-sheet-pdf';
-
-/** The Excel and PDF buttons a statement wears while one period is shown. */
-const ExportButtons = ({ sheet, fileBase }: { sheet: () => ReportSheet | null; fileBase: string }) => (
-  <>
-    <span style={{ flex: 1 }} />
-    <Button variant="ghost" size="sm" onClick={() => { const s = sheet(); if (s) void downloadReportXlsx(s, `${fileBase}.xlsx`); }}>
-      <Download size={16} strokeWidth={1.75} /> Excel
-    </Button>
-    <Button variant="ghost" size="sm" onClick={() => { const s = sheet(); if (s) void generateReportPdf(s, { fileName: `${fileBase}.pdf` }); }}>
-      <Printer size={16} strokeWidth={1.75} /> PDF
-    </Button>
-  </>
-);
+import { ReportExports, ReportHeaderActions, useReportSubtitle } from './reports/reportParts';
 
 const card: React.CSSProperties = {
   padding: 'var(--space-4)',
@@ -134,6 +119,8 @@ export const PnLTab = () => {
   const base = lay ? lay.baseSen : null;
   /* Excel and PDF carry the statement as shown — the lines at this level (owner 2026-09-19). */
   const period = `${fmtDate(from)} – ${fmtDate(to)}`;
+  /* The header's grey line: the period, while one period is shown (batch 6 §1.2). */
+  useReportSubtitle(monthly ? null : `${period} · % of sales${lay ? ` · ${lay.stored ? 'on the saved layout' : "on the chart's own tree"}` : ''}`);
   const sheet = (): ReportSheet | null => (q.data && lay ? {
     title: 'P&L',
     subtitle: `${period} · % of sales · ${lay.stored ? 'on the saved layout' : "on the chart's own tree"}${level === 'all' ? '' : ` · level ${level}`}`,
@@ -155,7 +142,8 @@ export const PnLTab = () => {
         {canArrange && (
           <Button variant="ghost" size="sm" onClick={() => setEditing((v) => !v)} aria-pressed={editing}>Layout</Button>
         )}
-        {!monthly && q.data && <ExportButtons sheet={sheet} fileBase={`pnl-${from}-to-${to}`} />}
+        {/* Excel · PDF · Print in the header (batch 6 §4.1): PDF previews, Print prints that same PDF. */}
+        {!monthly && q.data && <ReportHeaderActions><ReportExports sheet={sheet} fileBase={`pnl-${from}-to-${to}`} /></ReportHeaderActions>}
       </div>
       {editing && <ReportLayoutEditor report="pnl" onClose={() => setEditing(false)} />}
       {monthly && <MonthlyReport<PnlResponse> report="pnl" title="P&L" withCumulative fetchColumn={fetchPnlColumn} linesOf={pnlLines} fmt={fmtSenPlain} pctTitle="% of sales" />}
@@ -240,6 +228,7 @@ export const BalanceSheetTab = () => {
   const depth = lay ? Math.max(laidDepth(lay.assets), laidDepth(lay.liabilities), laidDepth(lay.equity)) : 0;
   const base = lay ? lay.baseSen : null;
   /* Excel and PDF carry the statement as shown — the lines at this level (owner 2026-09-19). */
+  useReportSubtitle(monthly ? null : `As at ${fmtDate(asOf)} · % of total assets${lay ? ` · ${lay.stored ? 'on the saved layout' : "on the chart's own tree"}` : ''}`);
   const sheet = (): ReportSheet | null => (q.data && lay ? {
     title: 'Balance Sheet',
     subtitle: `As at ${fmtDate(asOf)} · % of total assets · ${lay.stored ? 'on the saved layout' : "on the chart's own tree"}${level === 'all' ? '' : ` · level ${level}`}`,
@@ -260,7 +249,7 @@ export const BalanceSheetTab = () => {
         {canArrange && (
           <Button variant="ghost" size="sm" onClick={() => setEditing((v) => !v)} aria-pressed={editing}>Layout</Button>
         )}
-        {!monthly && q.data && <ExportButtons sheet={sheet} fileBase={`balance-sheet-${asOf}`} />}
+        {!monthly && q.data && <ReportHeaderActions><ReportExports sheet={sheet} fileBase={`balance-sheet-${asOf}`} /></ReportHeaderActions>}
       </div>
       {editing && <ReportLayoutEditor report="balance_sheet" onClose={() => setEditing(false)} />}
       {monthly && <MonthlyReport<BsResponse> report="balance-sheet" title="Balance Sheet (as at month end)" withCumulative={false} fetchColumn={fetchBsColumn} linesOf={balanceSheetLines} fmt={fmtSenPlain} pctTitle="% of total assets" />}
