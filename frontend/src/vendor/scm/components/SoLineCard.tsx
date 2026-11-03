@@ -49,6 +49,7 @@ import {
   type SpecialAddonRow,
 } from '../lib/mfg-products-queries';
 import { useFabricTrackingsLite, useFabricColoursSearch, type FabricLite, type FabricColourRow } from '../lib/fabric-queries';
+import { fabricColourMeta } from '../lib/fabric-colour-name';
 import { useFabricLibrary } from '../lib/queries';
 import {
   useUploadSoItemPhoto,
@@ -1677,7 +1678,7 @@ const FabricColourCombobox = ({
                  keeps the input focused so the portal doesn't blur-close before
                  the pick lands. */
               results.map((c) => {
-                const meta = [fabricSeries.get(c.fabricId) ?? '', c.label ?? ''].filter(Boolean).join(' · ');
+                const meta = fabricColourMeta(fabricSeries.get(c.fabricId) ?? '', c.colourId, c.label);
                 return (
                   <li
                     key={c.colourId}
