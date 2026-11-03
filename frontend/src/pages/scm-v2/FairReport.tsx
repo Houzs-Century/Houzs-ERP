@@ -25,7 +25,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Download, Columns3, X, ChevronRight, LayoutList, Table2 } from 'lucide-react';
-import { PageHeader } from '../../components/Layout';
+import { ReportShell } from './reports/ReportShell';
 import { StatCard } from '../../components/StatCard';
 import { DataTable, type Column } from '../../components/DataTable';
 import { formatDate } from '../../lib/utils';
@@ -268,12 +268,12 @@ export const FairReport = () => {
   };
 
   return (
-    <div className="space-y-4">
-      <PageHeader
-        eyebrow="Reports"
-        title="Sales Report"
-        description="Exhibition sales by document stage — Sales Order, Delivery Order, Invoice. Confirmed orders only."
-        primaryAction={
+    /* In the Finance report shell (batch 6 §4.3): the report list, the header
+       "Finance · Reports" over its name, these actions at its right. */
+    <ReportShell
+      report="fair"
+      subtitle="Exhibition sales by document stage — Sales Order, Delivery Order, Invoice. Confirmed orders only."
+      actions={
           <div className="flex items-center gap-2">
             <button type="button" className={btnCls} onClick={handleExport} disabled={!activeCount}>
               <Download size={14} /> Export
@@ -298,7 +298,7 @@ export const FairReport = () => {
             </div>
           </div>
         }
-      />
+    >
 
       {/* ── Stage tabs ──────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap gap-1 rounded-lg border border-border bg-surface-2 p-1" role="tablist">
@@ -412,7 +412,7 @@ export const FairReport = () => {
 
       {/* ── Quick-view drawer ───────────────────────────────────────────────── */}
       <FairDrawer docNo={selectedSo} onClose={() => setParam('so', null)} />
-    </div>
+    </ReportShell>
   );
 };
 

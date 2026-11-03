@@ -152,6 +152,7 @@ describe("browser storage registry", () => {
     ["houzs:scm-handoff:v1:soPaymentRetry:u1:c7:SO-1", "localStorage", "DRAFT_UI"],
     ["projects:view:u1:c7", "localStorage", "IDENTITY_PREF"],
     ["dg-product-models", "localStorage", "DEVICE_PREF"],
+    ["fin-je-cw", "localStorage", "DEVICE_PREF"],
   ] as const)("classifies %s", (key, storage, classification) => {
     expect(classifyBrowserStorageKey(key, storage)?.classification).toBe(classification);
   });

@@ -19,6 +19,10 @@ export type RangePresetKey =
   | 'last3Months'
   | 'last12Months'
   | 'thisYear'
+  | 'thisQuarter'
+  | 'lastQuarter'
+  | 'yearToDate'
+  | 'lastYear'
   | 'all';
 
 export type DateRange = { from: string; to: string };
@@ -39,6 +43,10 @@ export const addDays = (iso: string, n: number): string => isoOfMs(msOf(iso) + n
 export const monthStart = (iso: string, n = 0): string =>
   isoOfMs(Date.UTC(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1 + n, 1));
 
+/** The first day of the quarter `n` quarters after the one `iso` falls in. */
+export const quarterStart = (iso: string, n = 0): string =>
+  isoOfMs(Date.UTC(Number(iso.slice(0, 4)), Math.floor((Number(iso.slice(5, 7)) - 1) / 3) * 3 + n * 3, 1));
+
 /** The last day of that month. */
 export const monthEnd = (iso: string, n = 0): string => addDays(monthStart(iso, n + 1), -1);
 
@@ -57,6 +65,10 @@ export function presetLabel(key: RangePresetKey): string {
     case 'last3Months': return 'Last 3 months';
     case 'last12Months': return 'Last 12 months';
     case 'thisYear': return 'This year';
+    case 'thisQuarter': return 'This quarter';
+    case 'lastQuarter': return 'Last quarter';
+    case 'yearToDate': return 'Year to date';
+    case 'lastYear': return 'Last year';
     case 'all': return 'All dates';
   }
 }
@@ -74,6 +86,11 @@ export function presetRange(key: RangePresetKey, today: string): DateRange {
        eleven months still shows without anyone touching the dates. */
     case 'last12Months': return { from: addDays(today, -365), to: today };
     case 'thisYear': return { from: isoOfMs(Date.UTC(Number(today.slice(0, 4)), 0, 1)), to: today };
+    case 'thisQuarter': return { from: quarterStart(today), to: today };
+    case 'lastQuarter': return { from: quarterStart(today, -1), to: addDays(quarterStart(today), -1) };
+    /* The reports' own name for this year so far (the design's list). */
+    case 'yearToDate': return { from: isoOfMs(Date.UTC(Number(today.slice(0, 4)), 0, 1)), to: today };
+    case 'lastYear': return { from: isoOfMs(Date.UTC(Number(today.slice(0, 4)) - 1, 0, 1)), to: isoOfMs(Date.UTC(Number(today.slice(0, 4)) - 1, 11, 31)) };
     /* No from, no to: the page sends neither and the server reads every date. */
     case 'all': return { from: '', to: '' };
   }
@@ -94,3 +111,9 @@ export const OUTSTANDING_RANGE_PRESETS: readonly RangePresetKey[] = [
   'today', 'last7', 'thisMonth', 'lastMonth', 'last3Months', 'last12Months', 'thisYear', 'all',
 ];
 export const OUTSTANDING_DEFAULT_PRESET: RangePresetKey = 'last12Months';
+
+/** The Finance reports' presets (the design's report toolbar, batch 6 §4.1):
+ *  Journal entries and the General ledger open on This month. */
+export const REPORT_RANGE_PRESETS: readonly RangePresetKey[] = [
+  'thisMonth', 'lastMonth', 'thisQuarter', 'lastQuarter', 'yearToDate', 'last12Months', 'lastYear',
+];

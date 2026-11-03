@@ -17,7 +17,7 @@ import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import {
   settlementSetup, settlementUpload, settlementBatches, settlementBatchDetail,
-  settlementConfirmRow, settlementConfirmMatched, settlementIgnoreRow, settlementWatchlist, settlementFindPayments,
+  settlementConfirmRow, settlementConfirmGroup, settlementConfirmMatched, settlementIgnoreRow, settlementWatchlist, settlementFindPayments,
   settlementBatchReceived, settlementInTransit, settlementRowUnconfirm,
   settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank,
 } from '../src/scm/routes/accounting-settlement';
@@ -87,6 +87,7 @@ function harness(tables: Record<string, Row[]>, perms: readonly string[] = [GL_P
   app.get('/settlement/batches/:id', settlementBatchDetail as never);
   app.post('/settlement/batches/:id/confirm-matched', settlementConfirmMatched as never);
   app.post('/settlement/rows/:id/confirm', settlementConfirmRow as never);
+  app.post('/settlement/rows/confirm-together', settlementConfirmGroup as never);
   app.post('/settlement/rows/:id/unconfirm', settlementRowUnconfirm as never);
   app.post('/settlement/rows/:id/ignore', settlementIgnoreRow as never);
   app.post('/settlement/batches/:id/received', settlementBatchReceived as never);
@@ -116,6 +117,7 @@ describe('the permission gate answers at this end too', () => {
     expect((await app.request('/settlement/setup')).status).toBe(403);
     expect((await app.request('/settlement/watchlist')).status).toBe(403);
     expect((await upload(app, { acquirerCode: 'MBB', content: STATEMENT })).status).toBe(403);
+    expect((await post(app, '/settlement/rows/confirm-together', { rowIds: [1, 2], payments: [] })).status).toBe(403);
   });
 });
 
@@ -766,6 +768,153 @@ describe('taking a confirmed line back — the door the ignore refusal points at
     /* And nothing moved: still confirmed, entry still standing. */
     expect(sb.tables.acc_settlement_rows.find((r) => r.id === confirmed.id)!.confirmed_at).toBeTruthy();
     expect(sb.tables.journal_entries.find((j) => j.je_no === confirmed.posted_je_no)!.reversed).not.toBe(true);
+  });
+});
+
+/* ── Lines matched TOGETHER (owner 2026-11-03, option B) ──────────────────────
+   The customer swiped twice for two orders: GHL 29/10 RM 5,000 + RM 2,085 for
+   2990-SO-2610-055 RM 2,990 + SO-2610-056 RM 4,095. No line equals any payment
+   or set of payments; only the totals agree. */
+describe('several lines confirmed together against several payments', () => {
+  const SWIPES = 'Txn Date,Gross,MDR\n29/10/2026,5000.00,50.00\n29/10/2026,2085.00,20.85';
+  const ORDERS = [
+    soPayment({ id: 'p55', so_doc_no: '2990-SO-2610-055', paid_at: '2026-10-29T15:00:00', amount_sen: 299000, approval_code: null, merchant_provider: 'GHL' }),
+    soPayment({ id: 'p56', so_doc_no: '2990-SO-2610-056', paid_at: '2026-10-29T15:05:00', amount_sen: 409500, approval_code: null, merchant_provider: 'GHL' }),
+  ];
+  const BOTH = [
+    { source: 'SOPAY', id: 'p55', docNo: '2990-SO-2610-055', amountSen: 299000 },
+    { source: 'SOPAY', id: 'p56', docNo: '2990-SO-2610-056', amountSen: 409500 },
+  ];
+  const setUp = async () => {
+    /* Copies: a test that corrects a payment must not correct the next test's. */
+    const h = harness({ acc_acquirers: [GHL], mfg_sales_order_payments: ORDERS.map((p) => ({ ...p })) });
+    const up = await (await upload(h.app, { acquirerCode: 'GHL', fileName: 'ghl-2910.csv', content: SWIPES })).json() as { batchId: number };
+    const [first, second] = [...h.sb.tables.acc_settlement_rows].sort((a, b) => Number(a.line_no) - Number(b.line_no));
+    return { ...h, batchId: up.batchId, first: first!, second: second! };
+  };
+
+  test('each line books its own fee; the payments link once, to the first line; the second points at it', async () => {
+    const { app, sb, batchId, first, second } = await setUp();
+    expect(sb.tables.acc_settlement_matches).toHaveLength(0);
+
+    const res = await post(app, '/settlement/rows/confirm-together', { rowIds: [second.id, first.id], payments: BOTH });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, status: 'confirmed' });
+
+    const row = (id: unknown) => sb.tables.acc_settlement_rows.find((r) => r.id === id)!;
+    expect(row(first.id)).toMatchObject({ bucket: 'MATCHED', matched_with_row_id: null });
+    expect(row(second.id)).toMatchObject({ bucket: 'MATCHED', matched_with_row_id: first.id });
+    expect(row(first.id).confirmed_at).toBeTruthy();
+    expect(row(second.id).confirmed_at).toBeTruthy();
+
+    expect(sb.tables.acc_settlement_matches.map((m) => [m.settlement_row_id, m.payment_id])).toEqual([[first.id, 'p55'], [first.id, 'p56']]);
+
+    /* Two fee entries, each dated by its own swipe, each keyed by its own line. */
+    const fees = sb.tables.journal_entries.filter((e) => e.source_type === 'SETTLE');
+    expect(fees.map((e) => e.source_doc_no).sort()).toEqual([`SETTLE-${first.id}`, `SETTLE-${second.id}`].sort());
+    const feeOf = (je: Row) => sb.tables.journal_entry_lines.find((l) => l.journal_entry_id === je.id && l.account_code === '930-0000')!.debit_sen;
+    expect(fees.map(feeOf).sort((a, b) => Number(a) - Number(b))).toEqual([2085, 5000]);
+    expect(row(first.id).posted_je_no).toBe(fees.find((e) => e.source_doc_no === `SETTLE-${first.id}`)!.je_no);
+
+    /* The report shows the group's payments on both lines, and names the lines. */
+    const detail = await (await app.request(`/settlement/batches/${batchId}`)).json() as {
+      rows: Array<{ id: number; linked: Array<{ doc_no: string }>; matched_with: { leadRowId: number; lines: Array<{ lineNo: number }>; grossSen: number } | null }>;
+    };
+    for (const r of detail.rows) {
+      expect(r.linked.map((l) => l.doc_no)).toEqual(['2990-SO-2610-055', '2990-SO-2610-056']);
+      expect(r.matched_with).toMatchObject({ leadRowId: first.id, grossSen: 708500 });
+      expect(r.matched_with!.lines.map((l) => l.lineNo)).toEqual([first.line_no, second.line_no]);
+    }
+
+    /* A second press is the same press finished, not a second booking. */
+    const again = await post(app, '/settlement/rows/confirm-together', { rowIds: [first.id, second.id], payments: BOTH });
+    expect(again.status).toBe(200);
+    expect(await again.json()).toMatchObject({ ok: true, status: 'already_confirmed' });
+    expect(sb.tables.journal_entries.filter((e) => e.source_type === 'SETTLE')).toHaveLength(2);
+  });
+
+  test('the totals must agree to the sen — refused with the difference, and nothing posts', async () => {
+    const { app, sb, first, second } = await setUp();
+    sb.tables.mfg_sales_order_payments.find((p) => p.id === 'p56')!.amount_sen = 409400;
+    const res = await post(app, '/settlement/rows/confirm-together', { rowIds: [first.id, second.id], payments: BOTH });
+    expect(res.status).toBe(409);
+    const body = await res.json() as { error: string; message: string };
+    expect(body.error).toBe('amount_mismatch');
+    expect(body.message).toMatch(/these 2 lines come to RM 7,085\.00/);
+    expect(sb.tables.journal_entries).toHaveLength(0);
+    expect(sb.tables.acc_settlement_matches).toHaveLength(0);
+  });
+
+  test('one line alone, a line set aside, and lines on two reports are each refused', async () => {
+    const { app, sb, first, second } = await setUp();
+    const alone = await post(app, '/settlement/rows/confirm-together', { rowIds: [first.id], payments: BOTH });
+    expect(alone.status).toBe(400);
+    expect(await alone.json()).toMatchObject({ error: 'group_too_small' });
+
+    await post(app, `/settlement/rows/${second.id}/ignore`, {});
+    const aside = await post(app, '/settlement/rows/confirm-together', { rowIds: [first.id, second.id], payments: BOTH });
+    expect(aside.status).toBe(409);
+    expect(await aside.json()).toMatchObject({ error: 'ignored' });
+    await post(app, `/settlement/rows/${second.id}/ignore`, { restore: true });
+
+    await upload(app, { acquirerCode: 'GHL', fileName: 'ghl-3010.csv', content: 'Txn Date,Gross,MDR\n30/10/2026,2085.00,20.85' });
+    const other = sb.tables.acc_settlement_rows.find((r) => r.batch_id !== first.batch_id)!;
+    const apart = await post(app, '/settlement/rows/confirm-together', { rowIds: [first.id, other.id], payments: BOTH });
+    expect(apart.status).toBe(409);
+    expect(await apart.json()).toMatchObject({ error: 'different_reports' });
+    expect(sb.tables.journal_entries).toHaveLength(0);
+  });
+
+  test('a line already matched by its reference is not the group\'s to take', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment(), soPayment({ id: 'p2', so_doc_no: 'SO-2608-002', approval_code: 'B2', amount_sen: 77700 })] });
+    await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT });
+    const [matched, open] = [...sb.tables.acc_settlement_rows].sort((a, b) => Number(a.line_no) - Number(b.line_no));
+    expect(sb.tables.acc_settlement_matches).toHaveLength(1);
+    const res = await post(app, '/settlement/rows/confirm-together', {
+      rowIds: [matched!.id, open!.id],
+      payments: [
+        { source: 'SOPAY', id: 'p1', docNo: 'SO-2608-001', amountSen: 100000 },
+        { source: 'SOPAY', id: 'p2', docNo: 'SO-2608-002', amountSen: 77700 },
+      ],
+    });
+    expect(res.status).toBe(409);
+    const body = await res.json() as { error: string; message: string };
+    expect(body.error).toBe('line_already_matched');
+    expect(body.message).toContain(`Line ${matched!.line_no} is already matched to SO-2608-001`);
+    expect(sb.tables.journal_entries).toHaveLength(0);
+  });
+
+  test('taking back any line of the group takes the whole group back', async () => {
+    const { app, sb, first, second } = await setUp();
+    const done = await post(app, '/settlement/rows/confirm-together', { rowIds: [first.id, second.id], payments: BOTH });
+    expect(await done.json()).toMatchObject({ ok: true, status: 'confirmed' });
+    const feeJes = sb.tables.journal_entries.filter((e) => e.source_type === 'SETTLE').map((e) => e.je_no);
+
+    const res = await post(app, `/settlement/rows/${second.id}/unconfirm`, {});
+    expect(await res.json()).toMatchObject({ ok: true });
+    for (const id of [first.id, second.id]) {
+      expect(sb.tables.acc_settlement_rows.find((r) => r.id === id)).toMatchObject({
+        bucket: 'NEEDS_CONFIRM', confirmed_at: null, posted_je_no: null, matched_with_row_id: null,
+      });
+    }
+    for (const jeNo of feeJes) expect(sb.tables.journal_entries.find((e) => e.je_no === jeNo)!.reversed).toBe(true);
+    expect(sb.tables.acc_settlement_matches).toHaveLength(0);
+
+    /* Released for real: the once-only index would refuse this if a link had survived. */
+    const again = await post(app, '/settlement/rows/confirm-together', { rowIds: [first.id, second.id], payments: BOTH });
+    expect(again.status).toBe(200);
+  });
+
+  test('in transit, every line\'s fee comes off the group\'s payments', async () => {
+    const { app, first, second } = await setUp();
+    const done = await post(app, '/settlement/rows/confirm-together', { rowIds: [first.id, second.id], payments: BOTH });
+    expect(await done.json()).toMatchObject({ ok: true, status: 'confirmed' });
+    const body = await (await app.request('/settlement/in-transit')).json() as {
+      totalSen: number; lines: Array<{ docNo: string; state: string; amountSen: number }>;
+    };
+    expect(body.lines.map((l) => l.state)).toEqual(['RECONCILED_NOT_PAID', 'RECONCILED_NOT_PAID']);
+    /* RM 7,085.00 swiped, RM 50.00 + RM 20.85 of fees booked. */
+    expect(body.totalSen).toBe(708500 - 5000 - 2085);
   });
 });
 

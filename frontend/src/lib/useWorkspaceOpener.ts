@@ -25,7 +25,7 @@ const OPENER_LABELS: Array<[RegExp, string]> = [
      itself only — a document opened from another document names that one. */
   [/^\/scm\/receipts$/, "Receipts"],
   [/^\/scm\/official-receipts$/, "Official receipts"],
-  [/^\/scm\/ar-invoices$/, "AR invoices"],
+  [/^\/scm\/ar-invoices$/, "Invoices"],
   [/^\/scm\/deposit-invoices$/, "Deposit invoices"],
   [/^\/scm\/other-debtors$/, "Debtor maintenance"],
   [/^\/scm\/credit-notes$/, "Credit / debit notes"],

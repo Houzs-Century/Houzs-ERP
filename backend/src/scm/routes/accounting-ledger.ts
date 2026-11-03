@@ -48,6 +48,8 @@ export type LedgerLine = {
   lineId: string;
   date: string;
   jeNo: string;
+  /** The entry's id — what its card opens by; null when the read missed it. */
+  jeId: string | null;
   journal: JournalClass;
   /** The other side of the entry: the one other account, or the largest one and how many more. */
   counter: { code: string; name: string; more: number } | null;
@@ -187,12 +189,17 @@ export const ledgerReport = async (c: any): Promise<Response> => {
     }
   }
 
-  /* What each entry is called: the narration, the document handles, the who. */
+  /* What each entry is called: the narration, the document handles, the who —
+     and its id, so a line opens the entry's card. */
   const narration = new Map<string, string | null>();
+  const entryId = new Map<string, string>();
   for (const ns of chunks(jeNos)) {
-    const { data, error } = await sb.from('journal_entries').select('je_no, narration').eq('company_id', co.companyId).in('je_no', ns);
+    const { data, error } = await sb.from('journal_entries').select('id, je_no, narration').eq('company_id', co.companyId).in('je_no', ns);
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-    for (const j of (data ?? []) as Array<{ je_no: string; narration: string | null }>) narration.set(j.je_no, j.narration ?? null);
+    for (const j of (data ?? []) as Array<{ id: string; je_no: string; narration: string | null }>) {
+      narration.set(j.je_no, j.narration ?? null);
+      if (j.id != null) entryId.set(j.je_no, String(j.id));
+    }
   }
   const partyOf = (jeNo: string): string | null => (entryLines.get(jeNo) ?? []).map((l) => l.party_name).find((p) => p != null && p !== '') ?? null;
   const refs = await resolveJournalRefs(sb, co.companyId, jeNos.map((jeNo) => {
@@ -227,6 +234,7 @@ export const ledgerReport = async (c: any): Promise<Response> => {
         lineId: String(l.line_id),
         date: String(l.entry_date).slice(0, 10),
         jeNo: l.je_no,
+        jeId: entryId.get(l.je_no) ?? null,
         journal: classifyJournal(l.source_type, entry.map((x) => x.account_code), cash),
         counter: counterOf(l, entry),
         doc: ref?.doc ?? l.source_doc_no ?? null,

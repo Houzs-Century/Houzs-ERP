@@ -84,10 +84,26 @@ vi.mock('../../../vendor/scm/lib/accounting-queries', async (importOriginal) => 
   useAccountRoles: () => ({ data: { roles: { AR: '300-0000', AR_OTHER: '305-0000' }, overridden: {} } }),
   useDebtorReceiptAction: () => ({ mutate: stepMutate, isPending: false }),
   useVoidDebtorReceipt: () => ({ mutate: voidMutate, isPending: false }),
+  useUpdateDebtorReceipt: () => ({ mutate: updateDebtorReceipt, isPending: false }),
+  useDebtorDetail: (id: string | null) => ({ data: id === 'd1' ? DEBTOR_D1 : undefined, isLoading: false, isError: false, error: null }),
+  useOtherDebtors: () => DEBTORS,
 }));
+const updateDebtorReceipt = vi.fn();
+/* What the edit form lists (batch 5 step 6): the debtor and the bills it still owes on. */
+const DEBTORS = { data: { debtors: [{ id: 'd1', name: 'AHMAD BIN ALI', phone: '012-345', notes: null, is_active: true, outstanding_sen: 80_000 }] }, isLoading: false };
+const DEBTOR_D1 = {
+  debtor: DEBTORS.data.debtors[0],
+  bills: [
+    { id: 'b1', bill_number: '2990-ODB-2609-001', bill_date: '2026-09-05', total_sen: 50_000, received_sen: 0, status: 'POSTED', notes: '转租九月' },
+    { id: 'b2', bill_number: '2990-ODB-2609-002', bill_date: '2026-09-20', total_sen: 30_000, received_sen: 0, status: 'POSTED', notes: 'Booth rental' },
+  ],
+  receipts: [],
+};
 const PERMS = { value: new Set<string>(['*']) };
 vi.mock('../../../auth/AuthContext', () => ({ useAuth: () => ({ can: (k: string) => PERMS.value.has('*') || PERMS.value.has(k) }) }));
 const receiptPdf = vi.fn(async (_r: unknown, _o: unknown) => {});
+const debtorPdf = vi.fn(async (_d: unknown, _o: unknown) => {});
+vi.mock('../../../vendor/scm/lib/debtor-receipt-pdf', () => ({ generateDebtorReceiptPdf: (d: unknown, o: unknown) => debtorPdf(d, o) }));
 vi.mock('../../../vendor/scm/lib/receipt-pdf', () => ({ generateReceiptPdf: (r: unknown, o: unknown) => receiptPdf(r, o) }));
 vi.mock('../PvDocParts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../PvDocParts')>()),
@@ -151,8 +167,14 @@ describe('an official receipt, as a page', () => {
     expect(fact('Confirmed').textContent).toBe('Cash at the counter · 2026/10/02');
     expect(screen.queryByText('Payment keyed', { selector: 'dt' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /Print/ }));
-    expect((receiptPdf.mock.calls[0]![0] as { or_number: string }).or_number).toBe('2990-COR-2610-002');
+    const preview = screen.getByRole('dialog', { name: 'Print preview' });
+    expect(preview.textContent).toContain('A5 landscape · half an A4 sheet · one receipt per page · same letterhead as the payment voucher');
+    fireEvent.click(within(preview).getByText('Print now'));
+    await waitFor(() => expect(receiptPdf).toHaveBeenCalled());
+    expect((receiptPdf.mock.calls[0]![0] as { or_number: string; sales_order: string }).or_number).toBe('2990-COR-2610-002');
+    expect((receiptPdf.mock.calls[0]![0] as { sales_order: string }).sales_order).toBe('2990-SO-2610-020');
     expect(receiptPdf.mock.calls[0]![1]).toEqual({ action: 'print' });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Print preview' })).toBeNull());
     fireEvent.click(screen.getByRole('button', { name: /Add task/ }));
     expect(screen.getByRole('dialog', { name: 'Add task' }).textContent).toBe('Official receipt 2990-COR-2610-002 → /scm/receipts/official/9');
   });
@@ -190,15 +212,49 @@ describe("an other debtor's receipt walks the four layers", () => {
     expect(stepMutate.mock.calls[2]![0]).toEqual({ receiptId: 'r1', action: 'reject', note: 'Wrong bank' });
   });
 
+  /* Batch 5 step 6 (c5): a Draft or a Prepared receipt changes in place; it keeps its stage and posts nothing. */
+  test('prepared: Edit opens the form in place — the debtor fixed — and saves the date, account and bills', async () => {
+    openDebtorReceipt({ submitted_at: '2026-10-03T01:00:00Z' });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Edit 2990-ODR-2610-001' })).toBeTruthy());
+    expect(screen.getByText('Back to 2990-ODR-2610-001')).toBeTruthy();
+    expect(screen.getByText('Saving keeps it Prepared — nothing posts until it is approved.')).toBeTruthy();
+    expect((screen.getByLabelText('Debtor') as HTMLSelectElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(updateDebtorReceipt.mock.calls[0]![0]).toEqual({
+      receiptId: 'r1', receiptDate: '2026-10-03', bankAccountCode: '310-0001',
+      allocations: [{ billId: 'b1', amountSen: 50_000 }, { billId: 'b2', amountSen: 10_000 }],
+    });
+  });
+
   test('checked: Approve & post asks what it books and knocks off, then posts', async () => {
     openDebtorReceipt({ submitted_at: '2026-10-03T01:00:00Z', checked_at: '2026-10-03T02:00:00Z' });
     await waitFor(() => expect(screen.getByRole('button', { name: 'Approve & post' })).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Approve & post' }));
     const ask = screen.getByRole('region', { name: 'Approve 2990-ODR-2610-001?' });
     expect(ask.textContent).toContain('RM 600.00 books into Hong Leong Bank (310-0001) and 2990-ODB-2609-001, 2990-ODB-2609-002 are knocked off.');
     expect(within(ask).getByRole('button', { name: 'Not now' })).toBeTruthy();
     fireEvent.click(within(ask).getByRole('button', { name: 'Approve & post' }));
     expect(stepMutate.mock.calls[0]![0]).toEqual({ receiptId: 'r1', action: 'approve' });
+  });
+
+  /* Batch 5 step 10: the receipt prints on the A4 RECEIPT — DRAFT across it until approved (the generator's). */
+  test('Print opens the print dialog; Print now hands the receipt, its debtor and the bills it knocks off to the RECEIPT', async () => {
+    openDebtorReceipt({});
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: '2990-ODR-2610-001' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Print/ }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Print preview' })).getByText('Print now'));
+    await waitFor(() => expect(debtorPdf).toHaveBeenCalled());
+    const [data, opts] = debtorPdf.mock.calls[0]! as [{ receipt: { receipt_number: string }; debtor: { name: string }; bills: unknown[] }, unknown];
+    expect(data.receipt.receipt_number).toBe('2990-ODR-2610-001');
+    expect(data.debtor.name).toBe('AHMAD BIN ALI');
+    expect(data.bills).toEqual([
+      { billNumber: '2990-ODB-2609-001', description: '转租九月', amountSen: 50_000 },
+      { billNumber: '2990-ODB-2609-002', description: 'Booth rental', amountSen: 10_000 },
+    ]);
+    expect(opts).toEqual({ action: 'print' });
   });
 
   test('checked, for someone who cannot approve: it waits, no Approve', async () => {

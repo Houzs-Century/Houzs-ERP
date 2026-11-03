@@ -5,20 +5,23 @@
 // owed, its journal — and its steps: Print, Copy and Edit (the bill form in
 // place of the page, `?form=copy|edit`, so reload and Back work) and Cancel
 // (refused once money is received on it). Edit re-posts and Cancel reverses
-// through the same routes as before; nothing posts differently.
+// through the same routes as before; nothing posts differently. While money
+// is still owed its Receipts section offers New receipt (batch 5 step 6,
+// `?form=receipt`): Debtor maintenance's receipt form, this bill ticked for
+// what it still owes — saved as a Draft or prepared, posted at approval.
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
+import { Plus } from 'lucide-react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  postableAccounts, useAccounts, useCancelDebtorBill, useCreateDebtorBill, useOtherDebtors, useUpdateDebtorBill,
-  type DebtorBill, type DebtorBillLine,
+  postableAccounts, useAccountRoles, useAccounts, useCancelDebtorBill, useCreateDebtorBill, useOtherDebtors, useUpdateDebtorBill,
+  type DebtorBillLine,
 } from '../../../vendor/scm/lib/accounting-queries';
 import { useArBillDetail, type ArBillDetail } from '../../../vendor/scm/lib/ar-invoice-queries';
 import { generateDebtorBillPdf } from '../../../vendor/scm/lib/debtor-bill-pdf';
 import { partyAddressLines } from '../../../vendor/scm/lib/debtor-party';
-import { SearchCombo } from '../../../vendor/scm/components/SearchCombo';
 import { fmtDate, fmtSen } from '../../../vendor/shared/format';
 import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
 import { useToastOptional } from '../../../hooks/useToast';
@@ -26,9 +29,10 @@ import { DataTable, type Column } from '../../../components/DataTable';
 import { AccountCell } from '../JournalEntryCards';
 import { FinanceDocLink } from '../finance/FinanceDocLink';
 import { pvStage } from '../PvDocParts';
-import { DebtorBillForm, type BillFormSubmit, type BillFormValues } from '../DebtorBillForm';
-import formStyles from '../SalesOrderDetail.module.css';
+import { DebtorBillForm, type BillFormSubmit } from '../DebtorBillForm';
+import { billValuesOf } from './BillFormPage';
 import { AskBanner, type Ask } from './AskBanner';
+import { DebtorReceiptFormPage } from './DebtorReceiptFormPage';
 import {
   DocBooks, DocFormShell, DocSection, DocState, MoneyInDocPage, byTime, journalTrail,
   type DocAction, type DocFact,
@@ -37,18 +41,11 @@ import { liveJournal, useDocJournals } from './moneyInDocQueries';
 import { debtorBillTag, debtorReceiptTag, noteTag } from './moneyInStatus';
 import { StatusTag } from './MoneyInParts';
 import { moneyInDocHref, moneyInListOf } from './moneyInDocs';
+import ui from '../MoneyIn.module.css';
 import s from './MoneyInDoc.module.css';
 
 const errText = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'Something went wrong.');
-const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
-
-/** The form's values from a bill: an edit keeps everything, a copy keeps the
- *  description and lines and starts afresh — today's date, a new number on post. */
-const fromBill = (b: DebtorBill, copy: boolean): BillFormValues => ({
-  billDate: copy ? myt() : b.bill_date,
-  notes: b.notes ?? '',
-  lines: (b.lines ?? []).map((l, i) => ({ rid: i + 1, description: l.description ?? '', creditAccountCode: l.credit_account_code ?? '', amountSen: l.amount_sen, projectId: l.project_id ?? null })),
-});
+const fromBill = billValuesOf;
 
 type BillReceipt = NonNullable<ArBillDetail['receipts']>[number];
 type BillNote = NonNullable<ArBillDetail['creditNotes']>[number];
@@ -97,7 +94,7 @@ export const DebtorBillDoc = () => {
   const [asking, setAsking] = useState(false);
   const [askError, setAskError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
-  const [copyDebtor, setCopyDebtor] = useState<string | null>(null);
+  const rolesQ = useAccountRoles();
 
   /* A line credits an ordinary leaf (postableAccounts, docs/bugs/0693); names
      come off the whole chart so a since-inactive account still reads. */
@@ -106,9 +103,10 @@ export const DebtorBillDoc = () => {
     const names = new Map((accountsQ.data?.accounts ?? []).map((a) => [a.account_code, a.account_name]));
     return (code: string): string | null => names.get(code) ?? null;
   }, [accountsQ.data]);
+  const billDebtor = q.data?.debtor?.id ?? null;
   const debtorOptions = useMemo(
-    () => (debtorsQ.data?.debtors ?? []).filter((x) => x.is_active).map((x) => ({ value: x.id, label: x.name })),
-    [debtorsQ.data],
+    () => (debtorsQ.data?.debtors ?? []).filter((x) => x.is_active || x.id === billDebtor).map((x) => ({ id: x.id, name: x.name })),
+    [debtorsQ.data, billDebtor],
   );
 
   if (!d) return <DocState kind="debtorBill" loading={q.isLoading} error={q.error} />;
@@ -121,13 +119,13 @@ export const DebtorBillDoc = () => {
   const received = Number(bill.received_sen);
   const outstanding = Math.max(0, Number(bill.total_sen) - received);
   const live = liveJournal(journals.data);
-  const setForm = (mode: 'edit' | 'copy' | null) => {
+  const setForm = (mode: 'edit' | 'copy' | 'receipt' | null) => {
     setFormError(null);
     setParams((prev) => { const n = new URLSearchParams(prev); if (mode) n.set('form', mode); else n.delete('form'); return n; });
   };
   const refreshJournal = () => { void qc.invalidateQueries({ queryKey: ['journal-entries'] }); };
 
-  const submit = async (values: BillFormSubmit) => {
+  const submit = async (values: BillFormSubmit, who: string) => {
     setFormError(null);
     try {
       if (form === 'edit') {
@@ -137,9 +135,8 @@ export const DebtorBillDoc = () => {
         toast?.success(`${res.bill.billNumber} saved and re-posted`);
         return;
       }
-      const debtorId = copyDebtor ?? debtor?.id ?? '';
-      if (!debtorId) { setFormError('Pick the debtor.'); return; }
-      const res = await createBill.mutateAsync({ debtorId, ...values, ...(isDn ? { docKind: 'DN' as const } : {}) });
+      if (!who) { setFormError('Pick the debtor.'); return; }
+      const res = await createBill.mutateAsync({ debtorId: who, ...values, ...(isDn ? { docKind: 'DN' as const } : {}) });
       toast?.success(`${res.bill.billNumber} posted · ${fmtSen(res.bill.totalSen)}`);
       navigate(res.bill.id ? moneyInDocHref('debtorBill', res.bill.id) : moneyInListOf('debtorBill').href);
     } catch (e) {
@@ -147,27 +144,33 @@ export const DebtorBillDoc = () => {
     }
   };
 
+  /* The bill form in place of the page (Invoices' own form): an edit keeps the debtor, a copy may bill another. */
+  const formProps = {
+    accounts: lineAccounts, accountName, debtors: debtorOptions, debtorId: debtor?.id ?? '',
+    controlCode: rolesQ.data?.roles.AR_OTHER ?? '305-0000', onSubmit: submit, onCancel: () => setForm(null),
+  };
+  /* New receipt: the debtor's receipt form, this bill ticked for what it still owes. */
+  if (form === 'receipt' && canCreate && !cancelled && outstanding > 0 && debtor) {
+    return (
+      <DebtorReceiptFormPage id={null} debtorId={debtor.id} alloc={{ [bill.id]: outstanding }} backLabel={bill.bill_number}
+        onClose={() => setForm(null)} openDoc={(href) => navigate(href)} />
+    );
+  }
   if (form === 'edit' && canWrite && !cancelled) {
     return (
-      <DocFormShell title={`Edit ${bill.bill_number}`} backLabel={bill.bill_number} onBack={() => setForm(null)}>
-        {formError && <div role="alert" className={`${s.note} ${s.toneLate}`} style={{ marginBottom: 12 }}>{formError}</div>}
-        <div className={s.note} style={{ marginBottom: 12 }}>{debtor?.name ?? '—'} · the debtor stays: a bill belongs to its debtor.</div>
-        <DebtorBillForm key={`edit-${bill.id}`} mode="edit" initial={fromBill(bill, false)} accounts={lineAccounts} receivedSen={received}
-          saving={updateBill.isPending} onSubmit={submit} onCancel={() => setForm(null)} />
+      <DocFormShell title={`Edit ${bill.bill_number}`} backLabel={bill.bill_number} onBack={() => setForm(null)} bare>
+        {formError && <div role="alert" className={`${s.note} ${s.toneLate}`}>{formError}</div>}
+        <DebtorBillForm key={`edit-${bill.id}`} mode="edit" initial={fromBill(bill, false)} receivedSen={received}
+          saving={updateBill.isPending} {...formProps} />
       </DocFormShell>
     );
   }
   if (form === 'copy' && canCreate) {
     return (
-      <DocFormShell title={`New ${paper.toLowerCase()} · copy of ${bill.bill_number}`} backLabel={bill.bill_number} onBack={() => setForm(null)}>
-        {formError && <div role="alert" className={`${s.note} ${s.toneLate}`} style={{ marginBottom: 12 }}>{formError}</div>}
-        <label className={s.formField}>
-          Debtor
-          <SearchCombo options={debtorOptions} value={copyDebtor ?? debtor?.id ?? ''} onChange={setCopyDebtor}
-            className={formStyles.fieldInput} aria-label="Bill debtor" placeholder="— Pick the debtor —" />
-        </label>
-        <DebtorBillForm key={`copy-${bill.id}`} mode="copy" initial={fromBill(bill, true)} accounts={lineAccounts}
-          saving={createBill.isPending} onSubmit={submit} onCancel={() => setForm(null)} />
+      <DocFormShell title={`New ${paper.toLowerCase()} · copy of ${bill.bill_number}`} backLabel={bill.bill_number} onBack={() => setForm(null)} bare>
+        {formError && <div role="alert" className={`${s.note} ${s.toneLate}`}>{formError}</div>}
+        <DebtorBillForm key={`copy-${bill.id}`} mode="copy" initial={fromBill(bill, true)}
+          saving={createBill.isPending} {...formProps} />
       </DocFormShell>
     );
   }
@@ -194,11 +197,6 @@ export const DebtorBillDoc = () => {
     },
   };
 
-  const print = () => {
-    void generateDebtorBillPdf({ bill, debtor: debtor ?? { name: '(debtor)', phone: null }, accountName }, { action: 'print' })
-      .catch((e: unknown) => toast?.error(`${bill.bill_number} was not printed — ${errText(e)}`));
-  };
-
   const facts: DocFact[] = [
     { label: 'Bill date', value: fmtDate(bill.bill_date) },
     { label: 'Description', value: bill.notes ?? '—' },
@@ -222,7 +220,11 @@ export const DebtorBillDoc = () => {
     <MoneyInDocPage
       kind="debtorBill" kindLabel={paper} number={bill.bill_number} tag={debtorBillTag(bill)}
       taskLink={{ type: paper, no: bill.bill_number, name: debtor?.name ?? '', to: moneyInDocHref('debtorBill', bill.id) }}
-      onPrint={print}
+      printJob={{
+        title: paper, docNo: bill.bill_number, papers: ['A4'],
+        rows: [{ label: 'Bill to', value: debtor?.name ?? '—' }, { label: 'Amount', value: fmtSen(bill.total_sen) }],
+        deliver: (action) => generateDebtorBillPdf({ bill, debtor: debtor ?? { name: '(debtor)', phone: null }, accountName }, { action }),
+      }}
       actions={actions}
       ask={asking ? <AskBanner key={ask.title} ask={ask} busy={cancelBill.isPending} error={askError} onKeep={() => setAsking(false)} /> : null}
       party={{
@@ -242,7 +244,9 @@ export const DebtorBillDoc = () => {
         <DataTable<DebtorBillLine> tableId="mi-bill-lines" embedded columns={lineColumns} rows={bill.lines ?? []} getRowKey={(l) => l.id}
           emptyLabel="No lines on this bill." />
       </DocSection>
-      <DocSection title="Receipts">
+      <DocSection title="Receipts" buttons={canCreate && !cancelled && outstanding > 0 && debtor ? (
+        <button type="button" className={`${ui.btn} ${ui.btnSmall}`} onClick={() => setForm('receipt')}><Plus size={13} /> New receipt</button>
+      ) : undefined}>
         {(d.receipts ?? []).length === 0
           ? <div className={s.empty}>No receipt yet.</div>
           : <DataTable<BillReceipt> tableId="mi-bill-receipts" embedded columns={RECEIPT_COLUMNS} rows={d.receipts ?? []} getRowKey={(r) => r.id} />}

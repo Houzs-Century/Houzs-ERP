@@ -69,25 +69,31 @@ const rp: RpReport = {
 };
 
 describe('the Cash Flow as a table', () => {
-  it('lays each top category as a block with its tree and its own subtotal name, a running subtotal as a net line, then Cash Surplus, Balance b/f and c/f — Total and % alone when nothing is ticked', () => {
+  it('lays each top category as a block with its tree and its own subtotal name, a running subtotal as a net line, then Cash surplus / (deficit) with its % of the receipts, Balance b/f and c/f — Total and % alone when nothing is ticked', () => {
     const t = cashFlowTable(rp);
     expect(t.columns.map((c) => c.label)).toEqual(['Total', '%']);
     expect(t.rows.map((r) => [r.kind, r.depth, r.label])).toEqual([
       ['block', 0, 'CASH IN'], ['category', 1, 'Sales & trade receipts'], ['row', 2, '300-0000 · AR'], ['total', 0, 'Total Cash In'],
       ['block', 0, 'OPERATIONS OUTFLOWS'], ['row', 1, '900-S100 · SALARIES'], ['total', 0, 'Total operations outflows'],
       ['net', 0, 'Net operation surplus / (deficit)'],
-      ['net', 0, 'Cash Surplus / (Deficit)'], ['total', 0, 'Balance b/f'], ['net', 0, 'Balance c/f'],
+      ['net', 0, 'Cash surplus / (deficit)'], ['total', 0, 'Balance b/f'], ['net', 0, 'Balance c/f'],
     ]);
     expect(t.rows[2]!.cells).toEqual([50000, 100]);
     expect(t.rows[7]!.cells).toEqual([20000, null]);
     expect(t.rows[9]!.cells).toEqual([-10000, null]);
     expect(t.rows[10]!.cells).toEqual([10000, null]);
+    /* The surplus, 200.00 of 500.00 received: 40.0% of the receipts. */
+    expect(t.rows[8]!.cells).toEqual([20000, 40]);
+    /* "% beside" off on the screen: the export drops the % column with it. */
+    const plain = cashFlowTable(rp, { pct: false });
+    expect(plain.columns.map((c) => c.label)).toEqual(['Total']);
+    expect(plain.rows[8]!.cells).toEqual([20000]);
   });
 
   it('carries the ticked columns before Total — a zero there is a dash, as on the screen — and folds to the level', () => {
     const t = cashFlowTable(rp, { columns: ['320-0000', '310-0010'], level: 1 });
     expect(t.columns.map((c) => c.label)).toEqual(['310-0010 BANK', '320-0000 CASH', 'Total', '%']);
-    expect(t.rows.map((r) => r.label)).toEqual(['CASH IN', 'Sales & trade receipts', 'Total Cash In', 'OPERATIONS OUTFLOWS', '900-S100 · SALARIES', 'Total operations outflows', 'Net operation surplus / (deficit)', 'Cash Surplus / (Deficit)', 'Balance b/f', 'Balance c/f']);
+    expect(t.rows.map((r) => r.label)).toEqual(['CASH IN', 'Sales & trade receipts', 'Total Cash In', 'OPERATIONS OUTFLOWS', '900-S100 · SALARIES', 'Total operations outflows', 'Net operation surplus / (deficit)', 'Cash surplus / (deficit)', 'Balance b/f', 'Balance c/f']);
     expect(t.rows[1]!.cells).toEqual([50000, null, 50000, 100]);
     expect(t.rows[8]!.cells).toEqual([-10000, null, -10000, null]);
     /* A hand-opened category shows its rows past the level, as on the screen. */

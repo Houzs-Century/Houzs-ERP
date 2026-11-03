@@ -174,6 +174,7 @@ import { CLAUDE_MODEL } from "./scm/lib/scan-ocr";
 import { runAgentHeartbeat } from "./services/agent-scheduler";
 import { getSupabaseService } from "./db/supabase";
 import { sweepStockClose } from "./acc/stock-close";
+import { sweepSelfCheck } from "./scm/routes/accounting-self-check";
 import { applyDueSupplierPrices } from "./scm/lib/supplier-price-apply";
 import { todayMyt } from "./scm/lib/my-time";
 import { reapOnce } from "./scm/lib/reaper";
@@ -1287,6 +1288,23 @@ export default {
             (changed.length ? ` — ${changed.map((o) => `${o.companyId}/${o.month}:${o.action}`).join(", ")}` : ""),
           );
         }).catch((e) => console.error("[cron stock-close]", e)),
+      );
+      // Books › Self-check summed for To do (batch 6 c3): the control check is
+      // too heavy for every To do read, so each night leaves one row per
+      // company in scm.acc_selfcheck_runs — reads only, nothing posts.
+      ctx.waitUntil(
+        track("self-check", async () => {
+          const sb = getSupabaseService(env);
+          const { data, error } = await sb.schema("public").from("companies").select("id");
+          if (error) throw new Error(`companies: ${error.message}`);
+          const ids = ((data ?? []) as Array<{ id: number }>).map((r) => Number(r.id));
+          const runs = await sweepSelfCheck(sb, ids);
+          const failed = runs.filter((r) => !r.ok);
+          console.log(
+            `[cron self-check] ${runs.length} compan${runs.length === 1 ? "y" : "ies"}` +
+            (failed.length ? ` — failed: ${failed.map((r) => `${r.companyId}: ${r.reason}`).join("; ")}` : ""),
+          );
+        }).catch((e) => console.error("[cron self-check]", e)),
       );
       // Scheduled supplier prices whose effective date is today (BUG-32): onto
       // the flat binding POs read, then the derived product cost SOs read.

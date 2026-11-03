@@ -165,12 +165,19 @@ function tsxFiles(dir) {
   return out;
 }
 
+/* The desktop SO forms render their four boxes through one component, so a
+   form that uses it is in scope and the component's own input is checked. */
+const SO_ADDRESS_COMPONENT = /<SoAddressLines\b/;
 const inScope = [];
 for (const file of tsxFiles(path.join(frontendRoot, 'src'))) {
   const code = stripComments(read(file));
-  if (!ADDRESS_BINDING.test(code)) continue;
+  if (!ADDRESS_BINDING.test(code) && !SO_ADDRESS_COMPONENT.test(code)) continue;
   if (!SO_ENDPOINT.test(code)) continue;
   inScope.push({ file, code });
+}
+const componentInput = inputElements(stripComments(read(path.join(frontendRoot, 'src', 'components', 'SoAddressLines.tsx'))));
+if (componentInput.length !== 1 || !/addressLineProps\(/.test(componentInput[0] ?? '')) {
+  failures.push('frontend/src/components/SoAddressLines.tsx: its input does not go through addressLineProps');
 }
 
 /* A scope that came out EMPTY is a broken checker, not a clean tree. */
@@ -182,6 +189,7 @@ if (inScope.length === 0) {
 let boxes = 0;
 for (const { file, code } of inScope) {
   const rel = path.relative(repoRoot, file).replace(/\\/g, '/');
+  boxes += 4 * (code.match(new RegExp(SO_ADDRESS_COMPONENT, 'g')) ?? []).length;
   for (const el of inputElements(code)) {
     if (!ADDRESS_BINDING.test(el)) continue;
     boxes += 1;

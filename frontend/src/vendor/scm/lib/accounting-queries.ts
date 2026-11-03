@@ -232,8 +232,10 @@ export type AccountBalance = {
   total_credit_sen: number;
   balance_sen: number;
 };
-export const useAccountBalances = () => baseQuery<{ balances: AccountBalance[] }>(
-  ['account-balances'], `/accounting/balances`,
+/** The Trial balance — every line the books count, or cut at a day (`asOf`,
+ *  YYYY-MM-DD; the redesign's As at, batch 6 read c1). */
+export const useAccountBalances = (asOf?: string) => baseQuery<{ balances: AccountBalance[] }>(
+  asOf ? ['account-balances', asOf] : ['account-balances'], asOf ? `/accounting/balances?asOf=${encodeURIComponent(asOf)}` : `/accounting/balances`,
 );
 
 /* AR / AP Aging moved to aging-queries.ts (owner 2026-10-02: the formal debtor
@@ -496,6 +498,21 @@ export const useCreateDebtorReceipt = () => {
     onSuccess: () => { invalidateDebtors(qc); void qc.invalidateQueries({ queryKey: ['receipts'] }); },
   });
 };
+/** Change a debtor receipt nobody has checked yet — its date, money account and
+    bills (the owner's Claude Design, batch 5 §4.3 c5). Posts nothing; it keeps
+    its stage and its number. */
+export const useUpdateDebtorReceipt = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ receiptId, ...body }: {
+      receiptId: string; receiptDate?: string; bankAccountCode?: string;
+      allocations?: Array<{ billId: string; amountSen: number }>;
+    }) => authedFetch<{ ok: boolean; receipt: { id: string; receiptNumber: string; totalSen: number; stage: 'Draft' | 'Prepared' } }>(
+      `/other-debtors/receipts/${receiptId}`, { method: 'PATCH', body: JSON.stringify(body) },
+    ),
+    onSuccess: () => { invalidateDebtors(qc); void qc.invalidateQueries({ queryKey: ['receipts'] }); },
+  });
+};
 /* One hook, five doors — the receipt's four-layer actions mirror the PV's. */
 export const useDebtorReceiptAction = () => {
   const qc = useQueryClient();
@@ -529,12 +546,21 @@ export type ReceiptRow = {
   debtorId?: string; notes?: string | null;
   /** CUSTOMER rows: the order's raw reference pair (resolve with soRefOfCamelStamp). */
   soRef?: string | null; soCustomerSoNo?: string | null;
+  /** GENERAL rows: the first line's description — what the money was for (batch 5 §2.3 c1). */
+  firstLine?: string | null;
+  /** DEBTOR rows: the four layers' marks, and the bills the receipt knocks off (c1). */
+  submittedAt?: string | null; checkedAt?: string | null; approvedAt?: string | null;
+  bills?: Array<{ billId: string; no: string | null; amountSen: number }>;
 };
 /** No month = every month (owner 2026-09-08: 月份只是筛选); `month` echoes the
-    filter, null when none. */
-export const useReceipts = (month?: string) => baseQuery<{ month: string | null; receipts: ReceiptRow[] }>(
-  ['receipts', month ?? 'all'], `/receipts${month ? `?month=${month}` : ''}`,
-);
+    filter, null when none. `kind` reads one kind alone (Debtor maintenance's
+    receipts, batch 5 §4.3). */
+export const useReceipts = (month?: string, kind?: ReceiptRow['kind']) => {
+  const query = [month ? `month=${month}` : '', kind ? `kind=${kind}` : ''].filter(Boolean).join('&');
+  return baseQuery<{ month: string | null; receipts: ReceiptRow[] }>(
+    ['receipts', month ?? 'all', ...(kind ? [kind] : [])], `/receipts${query ? `?${query}` : ''}`,
+  );
+};
 export const useCreateReceipt = () => {
   const qc = useQueryClient();
   return useMutation({

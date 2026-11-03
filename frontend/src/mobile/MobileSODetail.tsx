@@ -1049,8 +1049,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                 postcode ?? address4; State = customer_state; Country =
                 customer_country. Individually em-dashed when blank. */}
             <div className="card"><div className="card-h"><span className="card-t">Delivery address</span></div><div className="card-b">
-              <RoField label="Address line 1" value={val(h.address1)} />
-              <RoField label="Address line 2" value={val(h.address2)} />
+              {[h.address1, h.address2, h.address3, h.address4].map((v, i) => (i < 2 || v ? <RoField key={i} label={`Address line ${i + 1}`} value={val(v)} /> : null))}
               <div style={{ display: "flex", gap: 9 }}>
                 <div style={{ flex: 1, minWidth: 0 }}><RoField label="City" value={val(h.city ?? h.address3)} /></div>
                 <div style={{ flex: 1, minWidth: 0 }}><RoField label="Postcode" value={val(h.postcode ?? h.address4)} mono /></div>

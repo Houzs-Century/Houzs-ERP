@@ -137,6 +137,8 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', async (importOriginal) =
 }));
 vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
   ...(await importOriginal() as object),
+  /* The note form names a customer note's default account from the roles (f1, batch 5 step 7). */
+  useAccountRoles: () => ({ data: { roles: { SALES_RETURNS: '510-0000', PURCHASE_RETURNS: '612-0000' }, overridden: {} } }),
   useAccounts: () => ({ data: { accounts: [
     { account_code: '510-0000', account_name: 'RETURN INWARDS', account_type: 'INCOME', parent_code: null, is_active: true },
     { account_code: '520-0000', account_name: 'DISCOUNT ALLOWED', account_type: 'INCOME', parent_code: null, is_active: true },
@@ -223,6 +225,8 @@ describe('the Credit & Debit Notes page', () => {
     render(<MemoryRouter><ConfirmProvider><CreditNotes /></ConfirmProvider></MemoryRouter>);
     fireEvent.click(screen.getByText('New note'));
     const dialog = await screen.findByLabelText('Note form');
+    /* A blank account lands on the customer-note default, named (f1, batch 5 step 7). */
+    expect(within(dialog).getByPlaceholderText('— Default · 510-0000 RETURN INWARDS —')).toBeTruthy();
     fireEvent.change(within(dialog).getByLabelText('Sales order'), { target: { value: '2990-SO-2607-019' } });
     fireEvent.change(within(dialog).getByLabelText('Reason'), { target: { value: 'Scratched leg' } });
     fireEvent.change(within(dialog).getByLabelText('Line 1 description'), { target: { value: 'Goodwill' } });

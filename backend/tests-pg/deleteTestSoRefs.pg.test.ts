@@ -28,7 +28,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest'
 import {
   AUDIT, AUDIT_KEEP, CHILD, DOWNSTREAM, UNCLASSIFIED,
   CONTROL_FIELDS, classifyReference, controlDrift, controlSnapshot,
-  referenceColumns, sweepReferences,
+  referenceColumns, sweepReferences, ledgerBlockers,
 } from '../scripts/lib/delete-test-so-refs.mjs';
 
 const url = process.env.TEST_DATABASE_URL ?? '';
@@ -93,6 +93,20 @@ async function schema(db: Sql) {
     CREATE TABLE scm.delivery_orders (
       id serial PRIMARY KEY, do_number text, so_doc_no text
     );
+    -- Made from the order's payment; deleted with it.
+    CREATE TABLE scm.acc_official_receipts (
+      id bigserial PRIMARY KEY, or_number text, status text, payment_id text, doc_no text
+    );
+    CREATE TABLE scm.acc_deposit_invoices (
+      id serial PRIMARY KEY, di_number text, so_doc_no text, payment_id text, je_no text, credit_note_id uuid
+    );
+    CREATE TABLE scm.journal_entries (
+      id serial PRIMARY KEY, je_no text, source_type text, source_doc_no text, reversed boolean
+    );
+    CREATE TABLE scm.delivery_board_changes (id bigserial PRIMARY KEY, doc_no text NOT NULL);
+    CREATE TABLE scm.pwp_codes (
+      id serial PRIMARY KEY, code text, status text, source_doc_no text, redeemed_doc_no text
+    );
     -- No doc-no in the column name: must never be scanned.
     CREATE TABLE scm.unrelated_notes (
       id serial PRIMARY KEY, body text
@@ -105,7 +119,8 @@ async function seed(db: Sql) {
     TRUNCATE scm.mfg_sales_orders, scm.mfg_sales_order_items, scm.mfg_sales_order_payments,
              scm.mfg_sales_order_activity, scm.so_amendments, scm.so_revisions,
              scm.autocount_outbox, scm.delivery_orders, scm.unrelated_notes,
-             scm.mfg_so_audit_log;
+             scm.mfg_so_audit_log, scm.acc_official_receipts, scm.acc_deposit_invoices,
+             scm.journal_entries, scm.delivery_board_changes, scm.pwp_codes;
 
     -- HC-SO-2609-001 carries its OWN number as the book number, exactly as
     -- production does after a successful write-back.
@@ -266,6 +281,58 @@ describePg('delete-test-so — the reference sweep, against real Postgres', () =
     ]);
     // And every survivor is one somebody decided to keep.
     for (const h of swept.hits) expect(AUDIT_KEEP.has(h.table)).toBe(true);
+  });
+});
+
+describePg('delete-test-so — the 2990-SO-2611-010 references and the ledger guard', () => {
+  beforeAll(async () => {
+    sql = postgres(url, { max: 1, prepare: false, onnotice: () => {} });
+    await schema(sql);
+  });
+  beforeEach(async () => { await seed(sql); });
+  afterAll(async () => { await sql?.end(); });
+
+  const children = new Set([
+    'scm.acc_official_receipts', 'scm.acc_deposit_invoices', 'scm.mfg_sales_order_payments',
+  ]);
+
+  test('the four references that refused the 2990 run are classified', () => {
+    expect(classifyReference('scm.acc_official_receipts', children)).toBe(CHILD);
+    expect(classifyReference('scm.acc_deposit_invoices', children)).toBe(CHILD);
+    expect(classifyReference('scm.pwp_codes', children)).toBe(CHILD);
+    // A trigger re-inserts a row on the delete itself, so it is kept, not deleted.
+    expect(classifyReference('scm.delivery_board_changes', children)).toBe(AUDIT);
+  });
+
+  test('no blockers when the receipt is a draft and nothing is posted', async () => {
+    await sql.unsafe(`
+      INSERT INTO scm.acc_official_receipts (or_number, status, payment_id, doc_no) VALUES ('DraftOR-1', 'DRAFT', '1', '${DOC}');
+      INSERT INTO scm.acc_deposit_invoices (di_number, so_doc_no, payment_id) VALUES ('DI-1', '${DOC}', '1');`);
+    expect(await ledgerBlockers(sql, DOC)).toEqual([]);
+  });
+
+  test('a FORMAL receipt, a credit-noted deposit invoice, a live SOPAY or DI journal each block', async () => {
+    const payId = String((await sql`SELECT id FROM scm.mfg_sales_order_payments WHERE so_doc_no = ${DOC}`)[0].id);
+    await sql.unsafe(`
+      INSERT INTO scm.acc_official_receipts (or_number, status, payment_id, doc_no) VALUES ('OR-1', 'FORMAL', '${payId}', '${DOC}');
+      INSERT INTO scm.acc_deposit_invoices (di_number, so_doc_no, payment_id, credit_note_id)
+        VALUES ('DI-1', '${DOC}', '${payId}', gen_random_uuid());
+      INSERT INTO scm.journal_entries (je_no, source_type, source_doc_no, reversed) VALUES
+        ('JE-1', 'SOPAY', '${payId}', false), ('JE-2', 'DI', 'DI-1', false);`);
+    const b = (await ledgerBlockers(sql, DOC)).join(' | ');
+    expect(b).toContain('OR-1');
+    expect(b).toContain('credit note');
+    expect(b).toContain('JE-1');
+    expect(b).toContain('JE-2');
+  });
+
+  test('a reversed journal does not block, and a different order has its journal left alone', async () => {
+    const payId = String((await sql`SELECT id FROM scm.mfg_sales_order_payments WHERE so_doc_no = ${DOC}`)[0].id);
+    const other = String((await sql`SELECT id FROM scm.mfg_sales_order_payments WHERE so_doc_no = 'HC-SO-013361'`)[0].id);
+    await sql.unsafe(`
+      INSERT INTO scm.journal_entries (je_no, source_type, source_doc_no, reversed) VALUES
+        ('JE-1', 'SOPAY', '${payId}', true), ('JE-9', 'SOPAY', '${other}', false);`);
+    expect(await ledgerBlockers(sql, DOC)).toEqual([]);
   });
 });
 

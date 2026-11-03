@@ -96,6 +96,9 @@ export type SettlementRow = {
   posted_je_no: string | null;
   notes: string | null;
   linked: SettlementLink[];
+  /** Lines confirmed TOGETHER against their payments (option B): the group's
+      lines and their total. `linked` then holds the group's payments. */
+  matched_with?: { leadRowId: number; lines: Array<{ rowId: number; lineNo: number; grossSen: number }>; grossSen: number } | null;
   candidates: SettlementCandidate[];
   /** Sets of payments that add up to the line — two orders on one swipe, or
       three. The screen flattens them into "these are worth a look". */
@@ -390,6 +393,22 @@ export const useConfirmSettlementRow = () => {
       payments: Array<{ source: string; id: string; docNo: string | null; amountSen: number }>;
     }) => authedFetch<{ ok: boolean; status: string; jeNo?: string }>(
       `/accounting/settlement/rows/${rowId}/confirm`, { method: 'POST', body: JSON.stringify(body) },
+    ),
+    onSuccess: () => invalidateAfterPosting(qc),
+  });
+};
+
+/* Several lines of one report against several payments — the customer swiped
+   twice for two orders (owner 2026-11-03, option B). The sum of the payments
+   must be the sum of the lines, to the sen. */
+export const useConfirmSettlementGroup = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      rowIds: number[];
+      payments: Array<{ source: string; id: string; docNo: string | null; amountSen: number }>;
+    }) => authedFetch<{ ok: boolean; status: string; jeNo?: string }>(
+      '/accounting/settlement/rows/confirm-together', { method: 'POST', body: JSON.stringify(body) },
     ),
     onSuccess: () => invalidateAfterPosting(qc),
   });

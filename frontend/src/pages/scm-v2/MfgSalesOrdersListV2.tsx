@@ -111,6 +111,7 @@ import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/
 import { soExemptionExpiryOf } from "../../lib/so-exemption-expiry";
 import { formatPhone } from "@2990s/shared/phone";
 import { customerRefOf } from '../../lib/customer-ref';
+import { soStreetTail } from '../../vendor/scm/lib/order-address';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Minimal row shape the listing needs. The full SoRow (in MfgSalesOrdersList
@@ -150,6 +151,8 @@ type SoRow = HoldFields & {
   email: string | null;
   address1: string | null;
   address2: string | null;
+  address3?: string | null;
+  address4?: string | null;
   city: string | null;
   postcode: string | null;
   customer_state: string | null;
@@ -602,7 +605,7 @@ function DetailDrawer({
                 <RowKV
                   k="Address"
                   v={
-                    [row.address1, row.address2, row.city, row.postcode, row.customer_state]
+                    [row.address1, row.address2, ...soStreetTail(row), row.city, row.postcode, row.customer_state]
                       .filter(Boolean)
                       .join(", ") || "—"
                   }
