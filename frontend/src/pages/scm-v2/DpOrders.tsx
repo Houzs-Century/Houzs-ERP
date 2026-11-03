@@ -42,9 +42,6 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 
-// COMPLETED is set by delivery-job-progress.ts, so the chips follow the data, not a hand list.
-const DP_STATUS_ORDER = ['PENDING_SCHEDULE', 'SCHEDULED', 'COMPLETED', 'CANCELLED'];
-
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const joinedAddress = (r: DpOrderRow): string =>
@@ -107,9 +104,8 @@ export const DpOrders = () => {
   };
   const allDp = useMemo(() => list.data?.dpOrders ?? [], [list.data]);
   const statusChips = useMemo(() => {
-    const seen = new Set(allDp.map((r) => r.status));
-    const known = DP_STATUS_ORDER.filter((s) => seen.has(s));
-    return ['all', ...known, ...[...seen].filter((s) => !DP_STATUS_ORDER.includes(s)).sort()];
+    // Follows the data (A-Z, as the column filter lists them), so no status can be dropped.
+    return ['all', ...[...new Set(allDp.map((r) => r.status))].sort()];
   }, [allDp]);
 
   const rows = useMemo(() => {
