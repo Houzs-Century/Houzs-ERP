@@ -36,13 +36,13 @@ const ATTENDEES: AttendeeRow[] = [
 
 describe("canSaveSalesReport", () => {
   test("the Owner position and the named accounts (incl. Peter), nobody else", () => {
-    expect(canSaveSalesReport({ position_name: "Owner", email: "hello@houzscentury.com" })).toBe(true);
-    expect(canSaveSalesReport({ position_name: "Managing Director", email: "WeiSiang329@gmail.com" })).toBe(true);
-    expect(canSaveSalesReport({ position_name: "Operation Executive", email: "ummuaimanlm@gmail.com" })).toBe(true);
-    expect(canSaveSalesReport({ position_name: "Sales Director", email: "yzhe212@gmail.com" })).toBe(true); // Peter
-    expect(canSaveSalesReport({ position_name: "Sales Director", email: "sd@houzs.com" })).toBe(false);
-    expect(canSaveSalesReport({ position_name: "Super Admin", email: "nico@houzs.com" })).toBe(false);
-    expect(canSaveSalesReport(null)).toBe(false);
+    expect(canSaveSalesReport({ position_name: "Owner", email: "hello@houzscentury.com" }, null)).toBe(true);
+    expect(canSaveSalesReport({ position_name: "Managing Director", email: "WeiSiang329@gmail.com" }, null)).toBe(true);
+    expect(canSaveSalesReport({ position_name: "Operation Executive", email: "ummuaimanlm@gmail.com" }, null)).toBe(true);
+    expect(canSaveSalesReport({ position_name: "Sales Director", email: "yzhe212@gmail.com" }, null)).toBe(true); // Peter
+    expect(canSaveSalesReport({ position_name: "Sales Director", email: "sd@houzs.com" }, null)).toBe(false);
+    expect(canSaveSalesReport({ position_name: "Super Admin", email: "nico@houzs.com" }, null)).toBe(false);
+    expect(canSaveSalesReport(null, null)).toBe(false);
   });
   test("a sales attendee of THIS project is accepted via attendeeEmails; others still rejected", () => {
     const attendees = new Set(["anthony@houzs.com", "adrian@houzs.com"]);
@@ -71,7 +71,7 @@ describe("collectReport", () => {
       note(3, "1. HC99999 RM100 Me", { author_email: "rep@houzs.com", author_position: "Sales Executive" }),
       /* The corrected re-paste of HC13162 wins. */
       note(4, "10/10\n1. HC13162 RM2099 Ethan"),
-    ], "2026-10-09");
+    ], "2026-10-09", null);
     expect(r.bills.map((b) => [b.ref_token, b.amount_sen, b.report_date, b.source_activity_id, b.extra_sen])).toEqual([
       ["HC13162", 209900, "2026-10-10", 4, null],
       ["HC13163", 417200, "2026-10-10", 2, 71000],
@@ -82,7 +82,7 @@ describe("collectReport", () => {
   });
 
   test("a message all of whose bills were overtaken no longer counts as contributing", () => {
-    const r = collectReport([note(1, "1. HC1001 RM100 A"), note(2, "1. HC1001 RM150 A")], "2026-10-09");
+    const r = collectReport([note(1, "1. HC1001 RM100 A"), note(2, "1. HC1001 RM150 A")], "2026-10-09", null);
     expect(r.bills.map((b) => [b.ref_token, b.amount_sen])).toEqual([["HC1001", 15000]]);
     expect(r.report_activity_ids).toEqual([2]);
   });
@@ -92,9 +92,21 @@ describe("collectReport", () => {
       note(1, "Total RM 1,000", { author_email: "hello@houzscentury.com", author_position: "Owner" }),
       note(2, "JB @ Sutera Mall 9-11/10\n9/10:RM10,500\n10/10:RM37,865+2883\nTotal RM48,185+2883"),
       note(3, "Total RM 5", { author_email: "rep@houzs.com", author_position: "Sales Executive" }),
-    ], "2026-10-09");
+    ], "2026-10-09", null);
     expect(r.summary).toEqual({ activity_id: 2, total_sen: 4818500, days_sen: 4836500, created_at: "2026-10-14 02:00:00" });
     expect(r.bills).toEqual([]);
+  });
+
+  test("an attending rep's paste counts when the project's attendee emails include theirs", () => {
+    const r = collectReport([
+      /* Peter — admin tier (SAVE_EMAILS) — always counts. */
+      note(1, "1. HC2001 RM100 CH", { author_email: "yzhe212@gmail.com", author_position: "Sales Director" }),
+      /* An attendee of THIS project — counts because the Set carries their email. */
+      note(2, "1. HC2002 RM200 Anthony", { author_email: "anthony@houzs.com", author_position: "Sales Executive" }),
+      /* A sales rep who is NOT this event's attendee — still rejected. */
+      note(3, "1. HC2003 RM300 Random", { author_email: "random@houzs.com", author_position: "Sales Executive" }),
+    ], "2026-10-09", new Set(["anthony@houzs.com"]));
+    expect(r.bills.map((b) => b.ref_token).sort()).toEqual(["HC2001", "HC2002"]);
   });
 });
 

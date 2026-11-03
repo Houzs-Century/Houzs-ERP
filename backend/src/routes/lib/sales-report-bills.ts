@@ -49,7 +49,7 @@ export type ReportSummary = {
 export function collectReport(
   notes: readonly NoteRow[],
   projectStartDate: string | null,
-  attendeeEmails?: ReadonlySet<string> | null,
+  attendeeEmails: ReadonlySet<string> | null,
 ): { bills: BillRow[]; report_activity_ids: number[]; summary: ReportSummary | null } {
   const ordered = [...notes].sort((a, b) =>
     (a.created_at ?? "").localeCompare(b.created_at ?? "") || a.id - b.id,
@@ -169,9 +169,16 @@ const SAVE_EMAILS = new Set([
   "yzhe212@gmail.com", // Peter — Sales Director; owner 2026-10-30
 ]);
 
+/* attendeeEmails is REQUIRED (CLAUDE.md: a parameter that decides something is
+   not optional). Pass a lowercased Set of this project's attendee emails when
+   the gate is per-event, or null when the gate is being asked without an event
+   context (e.g. "would this user's chat ever count"). Making it required stops
+   a new caller from forgetting it and silently dropping attendees — which was
+   the bug behind the "No chat report" marker on project overview and the empty
+   SALES REPORT (CHAT) panel on KLCC 31/10. */
 export function canSaveSalesReport(
   user: { email?: string | null; position_name?: string | null } | null | undefined,
-  attendeeEmails?: ReadonlySet<string> | null,
+  attendeeEmails: ReadonlySet<string> | null,
 ): boolean {
   if (!user) return false;
   const position = (user.position_name ?? "").trim().toLowerCase();
