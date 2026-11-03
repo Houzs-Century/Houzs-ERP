@@ -1,31 +1,22 @@
-/* The Finance corrections tab. Pinned: the three summary figures and every
-   column of a row are on screen from what the endpoint returns — since
-   docs/bugs/0888 that includes an added payment, who FIRST recorded the
-   payment, and a row from before the rule; an empty month says so in a
-   sentence rather than showing an empty table; a read that fails says it
-   failed instead of reading as an empty month; and the person filter narrows
-   the table without touching the month's summary; a print that fails says
-   so — the generator's refusal reaches the operator as a notice. */
+/* The Finance corrections tab. Pinned: the three tiles and every column of a
+   row are on screen from what the endpoint returns — since docs/bugs/0888
+   that includes an added payment, who FIRST recorded the payment, and a row
+   from before the rule; an empty month says so in a sentence rather than
+   showing an empty table; a read that fails says it failed instead of reading
+   as an empty month; the person filter narrows the table without touching the
+   month's figures; PDF and Print go through the report's own document, and a
+   print that fails says so — the generator's refusal reaches the operator as
+   a notice. In the owner's Claude Design (batch 6 step 13): the shell's tiles,
+   the Finance-Table with its own Customer and Change columns and the kind's
+   tag, PDF and Print in the header. */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 
 vi.mock('../../vendor/scm/lib/authed-fetch', () => ({ authedFetch: vi.fn() }));
-/* The deliver the tab hands the preview is caught here so a test can run it. */
-const { deliverRef, notifySpy, generateSpy } = vi.hoisted(() => ({
-  deliverRef: { current: null as null | ((action: 'save' | 'print' | 'preview') => void | Promise<void>) },
-  notifySpy: vi.fn(),
-  generateSpy: vi.fn(),
-}));
-vi.mock('../../components/scm-v2/PrintPreviewModal', () => ({
-  usePrintPreview: (deliver: (action: 'save' | 'print' | 'preview') => void | Promise<void>) => {
-    deliverRef.current = deliver;
-    return { open: false, openPreview: () => {}, close: () => {}, handlers: {} };
-  },
-  PrintPreviewModal: () => null,
-}));
+const { notifySpy, generateSpy } = vi.hoisted(() => ({ notifySpy: vi.fn(), generateSpy: vi.fn() }));
 vi.mock('../../vendor/scm/components/NotifyDialog', () => ({ useNotify: () => notifySpy }));
 vi.mock('../../vendor/scm/lib/payment-corrections-pdf', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
@@ -76,26 +67,26 @@ const REPORT: PaymentCorrections = {
   summary: { corrections: 4, added: 2, edited: 1, deleted: 1, proof: 0, netMovedSen: 100 - 50_000 + 150_000 + 20_000, addedSen: 170_000, deletedSen: 50_000 },
 };
 
+
 const draw = () => render(
   <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
     <MemoryRouter><PaymentCorrectionsTab /></MemoryRouter>
   </QueryClientProvider>,
 );
 
-/* The month's summary card; the list below has its own row count. */
-const summaryCard = () => screen.getByText(/^Payment actions in/).parentElement!;
+/* The month's tiles; the list below has its own row count. */
+const tiles = () => screen.getByRole('group', { name: 'Payment corrections figures' });
 
 describe('the corrections tab', () => {
-  test('asks for the current month and shows the summary and every column of each row', async () => {
+  test('asks for the current month and shows the tiles and every column of each row', async () => {
     mockedFetch.mockReset();
     mockedFetch.mockResolvedValue(REPORT);
     draw();
     await waitFor(() => expect(mockedFetch).toHaveBeenCalledWith(expect.stringMatching(/^\/accounting\/payment-corrections\?month=\d{4}-\d{2}$/)));
 
-    await waitFor(() => expect(within(summaryCard()).getByText('4')).toBeTruthy());
-    expect(screen.getByText('2 added · 1 edited · 1 deleted · 0 proof')).toBeTruthy();
-    expect(screen.getByText('+RM 1,201.00')).toBeTruthy();
-    expect(screen.getByText(/1 · RM 500\.00/)).toBeTruthy();
+    await waitFor(() => expect(tiles().textContent).toContain('Payment actions41 edited · 2 added · 1 deleted'));
+    expect(tiles().textContent).toContain('Done byEveryone2 people');
+    expect(tiles().textContent).toContain('Money received, net effect+RM 1,201.00Added, removed and edited amounts together');
 
     expect(screen.getByText('2990-SO-2606-043').closest('a')?.getAttribute('href')).toBe('/scm/sales-orders/2990-SO-2606-043');
     expect(screen.getByText('Wong li way')).toBeTruthy();
@@ -109,16 +100,18 @@ describe('the corrections tab', () => {
     /* Who first recorded the payment (docs/bugs/0888): Rachael's name and day
        beside the edit of her payment; a dash where nothing could be read. */
     expect(screen.getByText('Rachael')).toBeTruthy();
-    expect(screen.getByText('2026/08/29')).toBeTruthy();
-    /* The add: its own pill, what was recorded, booked once. */
+    expect(screen.getByText(/2026\/08\/29/)).toBeTruthy();
+    /* The add: what was recorded, booked once; the kinds wear their tags. */
     expect(screen.getByText('Added — RM 1,500.00 (cash on 2026/09/12)')).toBeTruthy();
     expect(screen.getByText('booked JE-2609-0070')).toBeTruthy();
     expect(screen.getByText('Balance collected on delivery')).toBeTruthy();
+    expect(screen.getAllByText('Added').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Deleted').length).toBeGreaterThan(0);
     /* The row from before the rule says so instead of showing a blank reason. */
     expect(screen.getByText('Before the rule')).toBeTruthy();
   });
 
-  test('the person filter narrows the rows and leaves the month\'s summary alone', async () => {
+  test('the person filter narrows the rows and leaves the month\'s figures alone', async () => {
     mockedFetch.mockReset();
     mockedFetch.mockResolvedValue(REPORT);
     draw();
@@ -126,7 +119,8 @@ describe('the corrections tab', () => {
     fireEvent.change(screen.getByLabelText('Done by'), { target: { value: 'Mei Ling' } });
     expect(screen.queryByText('Sales keyed RM 1,990 — receipt shows RM 1,991')).toBeNull();
     expect(screen.getByText('Keyed twice')).toBeTruthy();
-    expect(within(summaryCard()).getByText('4')).toBeTruthy();
+    expect(tiles().textContent).toContain('Payment actions4');
+    expect(tiles().textContent).toContain('Done byMei Ling');
   });
 
   test('an empty month says so in a sentence, with no table', async () => {
@@ -137,23 +131,24 @@ describe('the corrections tab', () => {
     expect(screen.queryByRole('table')).toBeNull();
   });
 
-  test('a print that fails says so — the notice carries the reason, the page stays', async () => {
+  test('Print and PDF go through the report\'s own document; a print that fails says so, the page stays', async () => {
     mockedFetch.mockReset();
     mockedFetch.mockResolvedValue(REPORT);
     generateSpy.mockReset();
     notifySpy.mockReset();
     generateSpy.mockRejectedValue(new Error('The Chinese font could not be fetched.'));
     draw();
-    await waitFor(() => expect(screen.getByRole('table')).toBeTruthy());
-    expect(deliverRef.current).toBeTruthy();
-    await deliverRef.current!('print');
-    expect(generateSpy).toHaveBeenCalledWith(expect.objectContaining({ month: '2026-09' }), { action: 'print' });
-    expect(notifySpy).toHaveBeenCalledWith({ title: 'PDF generation failed', body: 'The Chinese font could not be fetched.', tone: 'error' });
+    await waitFor(() => expect(screen.getByText('Keyed twice')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Print' }));
+    await waitFor(() => expect(generateSpy).toHaveBeenCalledWith(expect.objectContaining({ month: '2026-09' }), { action: 'print' }));
+    await waitFor(() => expect(notifySpy).toHaveBeenCalledWith({ title: 'PDF generation failed', body: 'The Chinese font could not be fetched.', tone: 'error' }));
     expect(screen.getByRole('table')).toBeTruthy();
-    /* And a print that works raises no notice. */
+    /* And a PDF that works opens the preview and raises no notice. */
+    generateSpy.mockReset();
     generateSpy.mockResolvedValue(undefined);
     notifySpy.mockReset();
-    await deliverRef.current!('print');
+    fireEvent.click(screen.getByRole('button', { name: 'PDF' }));
+    await waitFor(() => expect(generateSpy).toHaveBeenCalledWith(expect.objectContaining({ month: '2026-09' }), { action: 'preview' }));
     expect(notifySpy).not.toHaveBeenCalled();
   });
 
