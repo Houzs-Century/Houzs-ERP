@@ -314,7 +314,7 @@ const MonthView = ({ picked, bank, missingSince, onUpload }: {
       <div ref={tabsRef} className={look.section}>
         <LineTabs tab={tab} counts={counts} locked={data.lock != null} onTab={setTab} />
         <LineTabBody tab={tab} lines={byDateThenLine(lines)} entries={entries} locked={data.lock != null} periodTo={a.periodTo}
-          chooseAnyway={chooseAnyway} onNotThis={(id) => setChooseAnyway((was) => new Set(was).add(id))} />
+          chooseAnyway={chooseAnyway} onNotThis={(id) => setChooseAnyway((was) => new Set(was).add(id))} accountCode={data.accountCode} />
       </div>
 
       {data.statements.length > 0 && <TheFiles data={data} />}

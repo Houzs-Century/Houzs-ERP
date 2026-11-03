@@ -23,7 +23,7 @@
 // saves a draft or saves and posts — the create, then today's post call.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Info, Plus, X } from 'lucide-react';
 import {
@@ -284,6 +284,44 @@ export const JeDetailCard = ({ id, onClose, onCopy, onEdit, onOpenAccount, onOpe
   );
 };
 
+/** A bank line recorded as a journal (Bank statements › No entry found; owner
+    2026-11-03 on d10, 「这样需要」 — the journal, not a receipt): its day and the
+    bank's own leg are fixed — Dr the bank for money in, Cr it for money out,
+    to the sen — and the person picks the other account(s). `check` is asked
+    before anything is written (a locked month, a line no longer open, or an
+    entry that fits it now refuses with its sentence); `settle` matches the
+    line to the posted entry with today's match call — null once it is
+    matched, or the sentence saying why the line was left as it is; a refused
+    match rejects. */
+export type BankLineRecord = {
+  lineNo: number;
+  /** The line's day (ISO): the entry posts on it. */
+  bookedOn: string;
+  /** Signed: positive is money in. */
+  amountSen: number;
+  /** The bank account the money moved on — its ledger code. */
+  accountCode: string;
+  description: string;
+  reference: string | null;
+  check: () => Promise<string | null>;
+  settle: (jeNo: string) => Promise<string | null>;
+};
+
+/** The bank's leg of a recorded line, as the form shows it (fixed). */
+export const bankLegOf = (r: Pick<BankLineRecord, 'amountSen' | 'accountCode' | 'lineNo'>): DraftLine => ({
+  accountCode: r.accountCode,
+  debit: r.amountSen > 0 ? senToRm(r.amountSen) : '',
+  credit: r.amountSen < 0 ? senToRm(-r.amountSen) : '',
+  notes: `Bank line ${r.lineNo}`,
+});
+/** The other side, ready for its account: the same amount the other way. */
+const otherLegOf = (r: Pick<BankLineRecord, 'amountSen'>): DraftLine => ({
+  accountCode: '',
+  debit: r.amountSen < 0 ? senToRm(-r.amountSen) : '',
+  credit: r.amountSen > 0 ? senToRm(r.amountSen) : '',
+  notes: '',
+});
+
 /* One form for a new journal, a copy and an edit. `editing` names the entry
    being edited: Save then goes to PUT /journal-entries/:id — a posted entry
    is reversed and the corrected one posted in the same step, a draft is
@@ -300,19 +338,38 @@ export type JournalFormProps = {
   /** Saved (or posted): the drawer turns to the saved entry's card. */
   onSaved: (id: string) => void;
   onToast?: (text: string) => void;
+  /** Recording a bank line instead of a free journal: see BankLineRecord. */
+  record?: BankLineRecord | null;
 };
 
 const todayMyt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+/** A reason as a sentence of its own: ends with its stop. */
+const asSentence = (t: string): string => (/[.!?]$/.test(t) ? t : `${t}.`);
 
-export const NewJournalForm = ({ initial, editing, copiedFrom, onCancel, onSaved, onToast }: JournalFormProps) => {
+export const NewJournalForm = ({ initial, editing, copiedFrom, onCancel, onSaved, onToast, record = null }: JournalFormProps) => {
   const accounts = useAccounts();
   const createM = useCreateJournalEntry();
   const editM = useEditJournalEntry();
   const postM = usePostJournalEntry();
   const qc = useQueryClient();
-  const [entryDate, setEntryDate] = useState(() => editing?.entryDate ?? todayMyt());
-  const [narration, setNarration] = useState(initial?.narration ?? '');
-  const [lines, setLines] = useState<DraftLine[]>(initial && initial.lines.length > 0 ? initial.lines.map((l) => ({ ...l })) : [{ ...EMPTY_LINE }, { ...EMPTY_LINE }]);
+  const [entryDate, setEntryDate] = useState(() => record?.bookedOn ?? editing?.entryDate ?? todayMyt());
+  const [narration, setNarration] = useState(() => (record
+    ? [record.reference, record.description].filter((t): t is string => !!t && t.trim() !== '').join(' · ')
+    : initial?.narration ?? ''));
+  /* A recorded bank line keeps the bank's leg apart, fixed; these are the lines the person keys. */
+  const [lines, setLines] = useState<DraftLine[]>(() => (record
+    ? [otherLegOf(record)]
+    : initial && initial.lines.length > 0 ? initial.lines.map((l) => ({ ...l })) : [{ ...EMPTY_LINE }, { ...EMPTY_LINE }]));
+  const bankLeg = record ? bankLegOf(record) : null;
+  const allLines = bankLeg ? [bankLeg, ...lines] : lines;
+  /* Recording: the draft and the post this form has made, kept across presses —
+     a second press never creates or posts a second journal, it finishes the
+     first (posts the draft, or only asks the match again). */
+  const made = useRef<{ id: string; jeNo: string; posted: boolean } | null>(null);
+  const busy = useRef(false);
+  const [postedNo, setPostedNo] = useState<string | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [step, setStep] = useState<'checking' | 'matching' | null>(null);
 
   const all = accounts.data?.accounts ?? [];
   // Postable = active and not a header (retired children count, docs/bugs/0693)
@@ -321,25 +378,29 @@ export const NewJournalForm = ({ initial, editing, copiedFrom, onCancel, onSaved
   const postable = useMemo(() => leafAccounts(all), [all]);
   /* Typed to, not scrolled through (owner 2026-09-15: 无法快速打关键字眼找
      account): every word typed must match the code or the name. */
+  /* A recorded bank line's own account is its fixed leg, never the other side:
+     a second line on it would move the bank by other than the line's amount. */
+  const fixedBank = record?.accountCode ?? null;
   const options = useMemo(
-    () => [...postable].sort((a, b) => byText(a.account_code, b.account_code)).map((a) => ({ value: a.account_code, label: `${a.account_code} — ${a.account_name}` })),
-    [postable],
+    () => [...postable].filter((a) => a.account_code !== fixedBank)
+      .sort((a, b) => byText(a.account_code, b.account_code)).map((a) => ({ value: a.account_code, label: `${a.account_code} — ${a.account_name}` })),
+    [postable, fixedBank],
   );
 
   const totals = useMemo(() => {
     let dr = 0; let cr = 0; let bad = false;
-    for (const l of lines) {
+    for (const l of allLines) {
       const d = rmToSen(l.debit); const c = rmToSen(l.credit);
       if (d == null || c == null) { bad = true; continue; }
       dr += d; cr += c;
       if (d > 0 && c > 0) bad = true;
     }
     return { dr, cr, bad };
-  }, [lines]);
+  }, [allLines]);
 
   const balanced = !totals.bad && totals.dr === totals.cr && totals.dr > 0;
   const canSave = balanced && /^\d{4}-\d{2}-\d{2}$/.test(entryDate)
-    && lines.every((l) => l.accountCode || (!l.debit && !l.credit));
+    && allLines.every((l) => l.accountCode || (!l.debit && !l.credit));
   const state = totals.bad
     ? { label: 'Check the amounts', tone: 'late' as const }
     : balanced
@@ -349,11 +410,11 @@ export const NewJournalForm = ({ initial, editing, copiedFrom, onCancel, onSaved
   const setLine = (i: number, patch: Partial<DraftLine>) =>
     setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
 
-  const pending = createM.isPending || editM.isPending || postM.isPending;
+  const pending = createM.isPending || editM.isPending || postM.isPending || step != null;
   const body = () => ({
     entryDate,
     narration: narration.trim() || null,
-    lines: lines
+    lines: allLines
       .filter((l) => l.accountCode)
       .map((l): JeLineIn => ({
         accountCode: l.accountCode,
@@ -384,7 +445,61 @@ export const NewJournalForm = ({ initial, editing, copiedFrom, onCancel, onSaved
     onSaved(saved.id);
   };
 
-  const banner = editing
+  /* Recording a bank line: ask first, then the draft and today's post, then
+     today's match — each step at most once. A refused post leaves the draft
+     standing (a second press posts that same draft); a refused match after the
+     post is said plainly and leaves the line to match by hand. */
+  const recordAndMatch = async () => {
+    if (!record || busy.current) return;
+    busy.current = true;
+    setProblem(null);
+    try {
+      let entry = made.current;
+      if (!entry?.posted) {
+        setStep('checking');
+        const refusal = await record.check()
+          .catch((e: unknown) => `The bank line could not be checked, so nothing was written: ${asSentence((e instanceof Error ? e.message.trim() : '') || 'the month did not answer')} Try again.`);
+        setStep(null);
+        if (refusal) { setProblem(refusal); return; }
+        try {
+          const saved = entry
+            ? (await editM.mutateAsync({ id: entry.id, ...body() })).journalEntry
+            : (await createM.mutateAsync(body())).journalEntry;
+          entry = { id: saved.id, jeNo: saved.je_no, posted: false };
+          made.current = entry;
+        } catch { return; }
+        try {
+          const done = (await postM.mutateAsync(entry.id)).journalEntry;
+          entry = { ...entry, jeNo: done.je_no || entry.jeNo, posted: true };
+          made.current = entry;
+          setPostedNo(entry.jeNo);
+          void qc.invalidateQueries({ queryKey: ['finance-todo'] });
+        } catch {
+          setProblem(`${entry.jeNo} is saved as a draft but was not posted. Press Save & post again to post it — no second journal is made.`);
+          return;
+        }
+      }
+      setStep('matching');
+      let leftAlone: string | null;
+      try {
+        leftAlone = await record.settle(entry.jeNo);
+      } catch (e) {
+        setProblem(`Posted ${entry.jeNo}, but the bank line was not matched: ${asSentence((e instanceof Error ? e.message.trim() : '') || 'the match was refused')} The line stays open — match it to ${entry.jeNo} by hand, or press Match again.`);
+        return;
+      } finally {
+        setStep(null);
+      }
+      if (leftAlone) { setProblem(`Posted ${entry.jeNo}, but ${leftAlone}`); return; }
+      onToast?.(`Posted ${entry.jeNo} · matched to bank line ${record.lineNo}`);
+      onSaved(entry.id);
+    } finally {
+      busy.current = false;
+    }
+  };
+
+  const banner = record
+    ? null
+    : editing
     ? editing.posted
       ? 'This entry is posted — saving reverses it on its own day and posts the corrected entry under a new number.'
       : 'This entry is a draft — saving rewrites it in place.'
@@ -396,18 +511,26 @@ export const NewJournalForm = ({ initial, editing, copiedFrom, onCancel, onSaved
     <div className={s.drawer}>
       <div className={s.dHead}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div className={s.dTitleRow}><span className={s.dTitle}>{editing ? `Edit ${editing.jeNo}` : 'New manual journal'}</span></div>
-          <div className={s.dSub}>{editing ? 'A manual journal' : 'A draft until it is posted. Debits must equal credits.'}</div>
+          <div className={s.dTitleRow}><span className={s.dTitle}>{record ? 'Record journal' : editing ? `Edit ${editing.jeNo}` : 'New manual journal'}</span></div>
+          <div className={s.dSub}>
+            {record
+              ? `Bank line ${record.lineNo} · ${fmtDate(record.bookedOn)} · ${record.amountSen > 0 ? 'In' : 'Out'} ${fmtLedger(Math.abs(record.amountSen))} — matched to the line once it is posted`
+              : editing ? 'A manual journal' : 'A draft until it is posted. Debits must equal credits.'}
+          </div>
         </div>
         <button type="button" className={s.dClose} onClick={onCancel} title="Close" aria-label="Close"><X size={14} /></button>
       </div>
       <div className={s.dBody}>
         {banner && <div className={`${s.note} ${s.noteWarn}`}><Info size={14} aria-hidden /><span>{banner}</span></div>}
+        {problem && <div className={`${s.note} ${s.noteWarn}`} role="alert"><Info size={14} aria-hidden /><span>{problem}</span></div>}
+        <fieldset disabled={postedNo != null} style={{ border: 0, margin: 0, padding: 0, minWidth: 0, display: 'contents' }}>
         <div className={s.formTop}>
           <label className={s.field}>
             <span className={s.fieldLabel}>Date</span>
-            <DateField className={s.input} fullWidth value={entryDate} onChange={(iso) => setEntryDate(iso)} aria-label="Date" />
-            <span className={s.fieldHint}>{editing?.posted ? 'The corrected entry’s day' : 'The day it posts on'}</span>
+            {record
+              ? <span className={s.input} aria-label="Date" style={{ display: 'flex', alignItems: 'center' }}>{fmtDate(entryDate)}</span>
+              : <DateField className={s.input} fullWidth value={entryDate} onChange={(iso) => setEntryDate(iso)} aria-label="Date" />}
+            <span className={s.fieldHint}>{record ? 'The bank line’s day' : editing?.posted ? 'The corrected entry’s day' : 'The day it posts on'}</span>
           </label>
           <label className={s.field}>
             <span className={s.fieldLabel}>Narration</span>
@@ -420,6 +543,18 @@ export const NewJournalForm = ({ initial, editing, copiedFrom, onCancel, onSaved
           <div className={s.formHead}>
             <span>Account</span><span className={s.right}>Debit (RM)</span><span className={s.right}>Credit (RM)</span><span>Line note</span><span />
           </div>
+          {/* The bank's own leg: the account the money moved on and the line's amount, to the sen — fixed, so the match fits. */}
+          {bankLeg && (
+            <div data-grid-row className={s.formRow} aria-label="The bank's leg">
+              <span className={s.input} title="The bank account this line moved on" style={{ display: 'flex', alignItems: 'center', minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                {bankLeg.accountCode}{(() => { const name = all.find((a) => a.account_code === bankLeg.accountCode)?.account_name; return name ? ` — ${name}` : ''; })()}
+              </span>
+              <span className={`${s.input} ${s.amount}`} aria-label="Bank debit" style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>{bankLeg.debit}</span>
+              <span className={`${s.input} ${s.amount}`} aria-label="Bank credit" style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>{bankLeg.credit}</span>
+              <span className={s.input} style={{ display: 'flex', alignItems: 'center' }}>{bankLeg.notes}</span>
+              <span />
+            </div>
+          )}
           {lines.map((l, i) => {
             const drBad = rmToSen(l.debit) == null;
             const crBad = rmToSen(l.credit) == null;
@@ -435,7 +570,7 @@ export const NewJournalForm = ({ initial, editing, copiedFrom, onCancel, onSaved
                   value={l.credit} onChange={(e) => setLine(i, { credit: e.target.value, debit: e.target.value ? '' : l.debit })} />
                 <input className={s.input} placeholder="Optional" aria-label={`Line ${i + 1} note`}
                   value={l.notes} onChange={(e) => setLine(i, { notes: e.target.value })} />
-                <button type="button" className={s.remove} title="Remove line" aria-label={`Remove line ${i + 1}`} disabled={lines.length <= 2}
+                <button type="button" className={s.remove} title="Remove line" aria-label={`Remove line ${i + 1}`} disabled={lines.length <= (record ? 1 : 2)}
                   onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}>
                   <X size={13} />
                 </button>
@@ -450,7 +585,20 @@ export const NewJournalForm = ({ initial, editing, copiedFrom, onCancel, onSaved
             <span />
           </div>
         </div>
+        </fieldset>
       </div>
+      {record ? (
+        <div className={s.dFoot}>
+          <span className={s.dFootText}>
+            {postedNo ? `${postedNo} is posted — Match again asks the match only.` : 'Save & post writes it to the ledger and matches the bank line to it.'}
+          </span>
+          {/* Not while a step is running: a Cancel then would not stop the post it seems to stop. */}
+          <button type="button" className={`${s.btn} ${s.dBtn}`} disabled={pending} onClick={onCancel}>{postedNo ? 'Close' : 'Cancel'}</button>
+          <button type="button" className={`${s.btnSolid} ${s.dBtn}`} disabled={(!canSave && !postedNo) || pending} onClick={() => { void recordAndMatch(); }}>
+            {step === 'checking' ? 'Checking…' : step === 'matching' ? 'Matching…' : postM.isPending ? 'Posting…' : createM.isPending || editM.isPending ? 'Saving…' : postedNo ? 'Match again' : 'Save & post'}
+          </button>
+        </div>
+      ) : (
       <div className={s.dFoot}>
         <span className={s.dFootText}>{editing?.posted ? 'Saving posts the corrected entry at once.' : 'Save draft keeps it unposted; Save & post writes it to the ledger.'}</span>
         <button type="button" className={`${s.btn} ${s.dBtn}`} onClick={onCancel}>Cancel</button>
@@ -463,6 +611,7 @@ export const NewJournalForm = ({ initial, editing, copiedFrom, onCancel, onSaved
           {postM.isPending ? 'Posting…' : 'Save & post'}
         </button>
       </div>
+      )}
     </div>
   );
 };
