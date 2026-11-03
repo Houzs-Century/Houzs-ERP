@@ -1051,6 +1051,8 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
             <div className="card"><div className="card-h"><span className="card-t">Delivery address</span></div><div className="card-b">
               <RoField label="Address line 1" value={val(h.address1)} />
               <RoField label="Address line 2" value={val(h.address2)} />
+              {h.address3 && <RoField label="Address line 3" value={h.address3} />}
+              {h.address4 && <RoField label="Address line 4" value={h.address4} />}
               <div style={{ display: "flex", gap: 9 }}>
                 <div style={{ flex: 1, minWidth: 0 }}><RoField label="City" value={val(h.city ?? h.address3)} /></div>
                 <div style={{ flex: 1, minWidth: 0 }}><RoField label="Postcode" value={val(h.postcode ?? h.address4)} mono /></div>

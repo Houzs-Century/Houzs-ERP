@@ -656,15 +656,15 @@ describe('InvAddr3 / InvAddr4 — the town, postcode and state never arrived (fi
     expect(p.InvAddr4).toBe('Selangor');
   });
 
-  /* Only the cutover import ever wrote address3 / address4, and that text is
-     AutoCount's own. */
+  /* The cutover import wrote address3 / address4 as AutoCount's own text, and
+     read the stored postcode off them — so its town line names that postcode. */
   test('a cutover-imported order keeps its own address3 / address4', () => {
     const p = createSo({
-      ...header, address3: 'AC LINE 3', address4: 'AC LINE 4',
+      ...header, address3: '43300 SERI KEMBANGAN', address4: 'SELANGOR DARUL EHSAN',
       city: 'Seri Kembangan', postcode: '43300', customer_state: 'Selangor',
     }, [line()], SALESPERSON, opts);
-    expect(p.InvAddr3).toBe('AC LINE 3');
-    expect(p.InvAddr4).toBe('AC LINE 4');
+    expect(p.InvAddr3).toBe('43300 SERI KEMBANGAN');
+    expect(p.InvAddr4).toBe('SELANGOR DARUL EHSAN');
   });
 
   test('a half-filled address packs what there is', () => {

@@ -276,6 +276,8 @@ export const SalesOrderNew = () => {
   const [fillAddressLater, setFillAddressLater] = useState(false);
   const [address1,    setAddress1]    = useState('');
   const [address2,    setAddress2]    = useState('');
+  const [address3,    setAddress3]    = useState('');
+  const [address4,    setAddress4]    = useState('');
   const [state,       setState]       = useState('');
   const [city,        setCity]        = useState('');
   const [postcode,    setPostcode]    = useState('');
@@ -351,6 +353,8 @@ export const SalesOrderNew = () => {
     setNote(h.note ?? '');
     setAddress1(h.address1 ?? '');
     setAddress2(h.address2 ?? '');
+    setAddress3(h.address3 ?? '');
+    setAddress4(h.address4 ?? '');
     setState(h.customer_state ?? '');
     setCity(h.city ?? h.address3 ?? '');
     setPostcode(h.postcode ?? h.address4 ?? '');
@@ -1635,6 +1639,8 @@ export const SalesOrderNew = () => {
            State/City/Postcode/BuildingType always submit. */
         address1: fillAddressLater ? undefined : (address1 || undefined),
         address2: fillAddressLater ? undefined : (address2 || undefined),
+        address3: fillAddressLater ? undefined : (address3 || undefined),
+        address4: fillAddressLater ? undefined : (address4 || undefined),
         customerState: state || undefined,
         city: city || undefined,
         postcode: postcode || undefined,
@@ -2154,9 +2160,43 @@ export const SalesOrderNew = () => {
               <input
                 className={styles.fieldInput}
                 value={address2}
-                {...addressLineProps(setAddress2, null)}
+                {...addressLineProps(setAddress2, { value: address3, set: setAddress3 })}
                 onChange={(e) => setAddress2(e.target.value)}
                 placeholder="Apt, floor, building (optional)"
+              />
+            </label>
+            <label
+              className={styles.field}
+              style={{
+                gridColumn: 'span 4',
+                opacity: fillAddressLater ? 0.4 : 1,
+                pointerEvents: fillAddressLater ? 'none' : 'auto',
+              }}
+            >
+              <span className={styles.fieldLabel}>Address Line 3</span>
+              <input
+                className={styles.fieldInput}
+                value={address3}
+                {...addressLineProps(setAddress3, { value: address4, set: setAddress4 })}
+                onChange={(e) => setAddress3(e.target.value)}
+                placeholder="Optional"
+              />
+            </label>
+            <label
+              className={styles.field}
+              style={{
+                gridColumn: 'span 4',
+                opacity: fillAddressLater ? 0.4 : 1,
+                pointerEvents: fillAddressLater ? 'none' : 'auto',
+              }}
+            >
+              <span className={styles.fieldLabel}>Address Line 4</span>
+              <input
+                className={styles.fieldInput}
+                value={address4}
+                {...addressLineProps(setAddress4, null)}
+                onChange={(e) => setAddress4(e.target.value)}
+                placeholder="Optional"
               />
             </label>
             {/* Owner spec 2026-07-23 — StatePicker enforces "MY default listed,

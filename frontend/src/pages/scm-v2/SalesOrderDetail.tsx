@@ -2889,6 +2889,8 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     phone: h.phone ?? '',
     address1: h.address1 ?? '',
     address2: h.address2 ?? '',
+    address3: h.address3 ?? '',
+    address4: h.address4 ?? '',
     city: h.city ?? h.address3 ?? '',
     postcode: h.postcode ?? h.address4 ?? '',
     state: h.customer_state ?? '',
@@ -2933,6 +2935,8 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     phone: f.phone,
     address1: f.address1,
     address2: f.address2,
+    address3: f.address3,
+    address4: f.address4,
     city: f.city,
     postcode: f.postcode,
     customerState: f.state,
@@ -3199,12 +3203,11 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     /* Address lines joined 2026-07-27 (two-lane phase 2): a street/unit change
        on a locked SO is a Logistics-approved amendment, no longer a direct
        save. Without these here the request would silently drop the change —
-       the exact City defect this table exists to prevent. The editor form
-       collects TWO address lines (address3/4 are legacy/postcode-mirror
-       columns with no input here); buildAmendmentHeaderChanges skips keys the
-       surface doesn't collect, so omitting them is the correct shape. */
+       the exact City defect this table exists to prevent. */
     address1:             form.address1,
     address2:             form.address2,
+    address3:             form.address3,
+    address4:             form.address4,
     /* Customer info joined the frozen set 2026-08-21 (owner: "需要加上更新
        客户信息") — a name/phone/email change on a locked SO rides the
        DELIVERY-lane amendment instead of saving directly. */
@@ -3220,6 +3223,8 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     city:                 header.city ?? '',
     address1:             header.address1 ?? '',
     address2:             header.address2 ?? '',
+    address3:             header.address3 ?? '',
+    address4:             header.address4 ?? '',
     debtorName:           header.debtor_name ?? '',
     phone:                header.phone ?? '',
     email:                header.email ?? '',
@@ -3595,8 +3600,27 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               <input className={styles.fieldInput} value={form.address2}
                 placeholder="Apt, floor, building (optional)"
                 autoComplete="houzs-no-autofill"
-                disabled={customerDisabled} {...addressLineProps((v) => set('address2', v), null)}
+                disabled={customerDisabled} {...addressLineProps((v) => set('address2', v), { value: form.address3, set: (v) => set('address3', v) })}
                 onChange={(e) => set('address2', e.target.value)} />
+            </label>
+            {/* Lines 3 and 4 were stored but had no input, so a POS address the
+                save fit spilled past line 2 printed on the order and could not
+                be seen or corrected here (2990-0036). */}
+            <label className={`${styles.field}`} style={{ gridColumn: 'span 4' }}>
+              <span className={styles.fieldLabel}>Address Line 3</span>
+              <input className={styles.fieldInput} value={form.address3}
+                placeholder="Optional"
+                autoComplete="houzs-no-autofill"
+                disabled={customerDisabled} {...addressLineProps((v) => set('address3', v), { value: form.address4, set: (v) => set('address4', v) })}
+                onChange={(e) => set('address3', e.target.value)} />
+            </label>
+            <label className={`${styles.field}`} style={{ gridColumn: 'span 4' }}>
+              <span className={styles.fieldLabel}>Address Line 4</span>
+              <input className={styles.fieldInput} value={form.address4}
+                placeholder="Optional"
+                autoComplete="houzs-no-autofill"
+                disabled={customerDisabled} {...addressLineProps((v) => set('address4', v), null)}
+                onChange={(e) => set('address4', e.target.value)} />
             </label>
             {/* Owner spec 2026-07-23 — StatePicker (MY-default, click Others for CN/SG, Search). Same shared component as Warehouse / Supplier / Venue / MobileNewSO / SalesOrderNew. No `(legacy)` sneak-through, no free-text fallback. */}
             <label

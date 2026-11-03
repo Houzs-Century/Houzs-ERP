@@ -14,7 +14,7 @@
  */
 import { LOCATION_MAP } from "../services/autocount-master-maps";
 import { bookSpellingOrOwn, resolveAcAgent } from "../services/autocount-writeback";
-import { soTownLines } from "../services/autocount-address-fit";
+import { soStreetTail, soTownLines } from "../services/autocount-address-fit";
 import { summariseReadiness } from "../scm/lib/so-readiness";
 import { SO_DELIVERED_OR_BEYOND } from "../scm/shared/so-deliverable-states";
 import { canonicalizeMyState, isCanonicalMyState } from "../scm/lib/canonical-state";
@@ -501,7 +501,7 @@ export function toSheetRecord(row: FeedHeadRow, lines: ReadonlyArray<FeedLineRow
     SOUDF_Note: blankToNull(row.note),
     SOUDF_ToPONo: blankToNull(row.po_numbers),
     InvAddr1: blankToNull(row.address1),
-    InvAddr2: blankToNull(row.address2),
+    InvAddr2: blankToNull([blankToNull(row.address2), ...soStreetTail(row)].filter(Boolean).join(", ")),
     InvAddr3: addr3,
     InvAddr4: addr4,
     Attention: null,

@@ -25,12 +25,26 @@ export type OrderAddressFields = {
   customer_state?: string | null;
 };
 
+/**
+ * address3 / address4 when they carry the street on past line 2 rather than a
+ * town line: the order holds a postcode and no line names one. The POS sends
+ * the whole address as address1 and the save spills it there (2990-0036). A
+ * COPY of soStreetTail in backend/src/services/autocount-address-fit.ts.
+ */
+export function soStreetTail(h: OrderAddressFields): string[] {
+  if (!(h.postcode ?? '').trim()) return [];
+  const lines = [h.address1, h.address2, h.address3, h.address4].map((s) => (s ?? '').trim());
+  if (lines.some((l) => /\b\d{5}\b/.test(l))) return [];
+  return [lines[2], lines[3]].filter(Boolean);
+}
+
 export function orderAddressLines(h: OrderAddressFields): string[] {
   const baseAddressLines = (h.ship_to_address ?? '').trim()
     ? (h.ship_to_address as string).split('\n').map((s) => s.trim()).filter(Boolean)
     : [h.address1, h.address2]
         .map((s) => (typeof s === 'string' ? s.trim() : ''))
-        .filter(Boolean);
+        .filter(Boolean)
+        .concat(soStreetTail(h));
   const addressHaystack = baseAddressLines.join(' ').toLowerCase();
   const localityParts: string[] = [];
   for (const part of [
