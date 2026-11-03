@@ -1258,7 +1258,7 @@
     {
       "check": "D2",
       "key": "*,SCM.ACCESS,SCM.PAYMENT_VOUCHER.CREATE,SCM.PAYMENT_VOUCHER.POST,SCM.SALES_ORDER.WRITE ~ *,SCM.ACCESS,SCM.PAYMENT_VOUCHER.POST,SCM.SALES_ORDER.WRITE",
-      "why": "MONEY IN › RECEIPTS against the Deposit invoices nav gate, one key apart BY DESIGN (the owner's Claude Design, batch 5 step 4). Official Receipts folded into Receipts as its first kind, so the merged Sidebar row shows to whoever saw EITHER old row — the union of the Official Receipts gate (payment_voucher.post OR sales_order.write) and the Receipts gate (payment_voucher.create); inside the page each kind still shows only to whoever saw its old row. The Deposit invoices row keeps the Official Receipts gate until it folds into Invoices (batch 5 step 5), when the four-key set leaves the tree and this entry goes stale. Divergence costs a nav row showing or not, never money — the server's own checks are unchanged."
+      "why": "MONEY IN'S MERGED ROWS (Receipts, Invoices) against the payment-recording rows' gate, one key apart BY DESIGN (the owner's Claude Design, batch 5 steps 4–5). Official Receipts folded into Receipts and Deposit invoices into Invoices, so each merged Sidebar row shows to whoever saw EITHER old row — the union of the recording gate (payment_voucher.post OR sales_order.write) and the voucher create gate; inside each page every kind still shows only to whoever saw its old row (money-in/moneyInGates.ts). The four-key set stays on Setup › Deposit invoices (the switch the old Deposit invoices row held, gated as it was). Divergence costs a nav row showing or not, never money — the server's own checks are unchanged."
     },
     {
       "check": "D1",

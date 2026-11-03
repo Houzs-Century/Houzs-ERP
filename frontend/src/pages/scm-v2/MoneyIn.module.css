@@ -264,3 +264,12 @@ button.card:hover { border-color: #b9d6d1; }
 .sideWhy { padding: 7px 9px; border-radius: 6px; background: #f7f1e3; color: #7a5a1e; font-size: 12px; line-height: 1.45; }
 .sideButtons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .formTypes { display: inline-flex; gap: 2px; padding: 3px; border-radius: 9px; background: #eef0ec; }
+
+/* Invoices (batch 5 step 5): the switch's backlogs at the head of the page;
+   a bill line with its event (the bill form's fifth column). */
+.backlog {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px;
+  background: #ffffff; font-size: 13px; color: var(--text);
+}
+.backlog svg { flex: none; }
+.lineHeadEvent, .lineRowEvent { grid-template-columns: minmax(180px, 220px) minmax(160px, 1fr) 130px minmax(160px, 200px) 24px; min-width: 720px; }

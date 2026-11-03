@@ -155,7 +155,7 @@ export const OtherDebtorDoc = () => {
       trail={trail}
     >
       <DocSection title="Bills" buttons={(
-        <Link to={`/scm/ar-invoices?debtor=${encodeURIComponent(debtor.id)}`} className={`${ui.btn} ${ui.btnSmall}`} style={{ textDecoration: 'none' }}>Open bills in AR invoices</Link>
+        <Link to={`/scm/ar-invoices?debtor=${encodeURIComponent(debtor.id)}`} className={`${ui.btn} ${ui.btnSmall}`} style={{ textDecoration: 'none' }}>Open bills in Invoices</Link>
       )}>
         {bills.length === 0
           ? <div className={s.empty}>No bills yet.</div>
