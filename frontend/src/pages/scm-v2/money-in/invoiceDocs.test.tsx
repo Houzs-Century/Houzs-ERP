@@ -228,6 +228,7 @@ describe('a deposit invoice, as a page', () => {
     await waitFor(() => expect(screen.getByText(/Dr 300-0000 Trade Debtors \(Ah Seng\) · Cr 509-0000 Deposit pay by customer · RM 1,000\.00 · 2990-JE-2609-0013/)).toBeTruthy());
     expect(screen.queryByRole('button', { name: 'Post to ledger' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /Print/ }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Print preview' })).getByText('Print now'));
     await waitFor(() => expect(pdfSingle).toHaveBeenCalled());
     expect(pdfSingle.mock.calls[0]?.[0]).toMatchObject({ di_number: '2990-DI-2609-003', order: ORDER });
     expect(pdfSingle.mock.calls[0]?.[1]).toEqual({ action: 'print' });
@@ -304,6 +305,10 @@ describe('an other debtor\'s bill, as a page', () => {
     expect(within(lines).getByText('Other Income')).toBeTruthy();
     await waitFor(() => expect(fact('Journal').textContent).toBe('HC-JE-2609-031'));
     fireEvent.click(screen.getByRole('button', { name: /Print/ }));
+    const preview = screen.getByRole('dialog', { name: 'Print preview' });
+    expect(preview.textContent).toContain('A4 portrait · same letterhead as the payment voucher · one per page');
+    fireEvent.click(within(preview).getByText('Print now'));
+    await waitFor(() => expect(billPdf).toHaveBeenCalled());
     const [data, opts] = billPdf.mock.calls[0]!;
     expect((data as { bill: { bill_number: string } }).bill.bill_number).toBe('HC-ODB-2609-001');
     expect((data as { debtor: { name: string } }).debtor.name).toBe('AHMAD BIN ALI');
@@ -419,7 +424,9 @@ describe('a sales invoice, read from Sales', () => {
     await waitFor(() => expect(screen.getByTitle('Sales invoice HC-SI-2609-001 as printed').getAttribute('src')).toBe('blob:paper'));
     expect(siBlob.mock.calls[0]).toEqual([SI_DETAIL.salesInvoice, SI_DETAIL.items]);
     fireEvent.click(screen.getByRole('button', { name: /Print/ }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Print preview' })).getByText('Print now'));
     await waitFor(() => expect(siPdf).toHaveBeenCalledWith(SI_DETAIL.salesInvoice, SI_DETAIL.items, { action: 'print' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Print preview' })).toBeNull());
     fireEvent.click(screen.getByRole('button', { name: 'Save PDF' }));
     await waitFor(() => expect(siPdf).toHaveBeenCalledWith(SI_DETAIL.salesInvoice, SI_DETAIL.items, { action: 'save' }));
     fireEvent.click(screen.getByRole('button', { name: 'Open in Sales' }));

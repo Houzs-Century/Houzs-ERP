@@ -197,11 +197,6 @@ export const DebtorBillDoc = () => {
     },
   };
 
-  const print = () => {
-    void generateDebtorBillPdf({ bill, debtor: debtor ?? { name: '(debtor)', phone: null }, accountName }, { action: 'print' })
-      .catch((e: unknown) => toast?.error(`${bill.bill_number} was not printed — ${errText(e)}`));
-  };
-
   const facts: DocFact[] = [
     { label: 'Bill date', value: fmtDate(bill.bill_date) },
     { label: 'Description', value: bill.notes ?? '—' },
@@ -225,7 +220,11 @@ export const DebtorBillDoc = () => {
     <MoneyInDocPage
       kind="debtorBill" kindLabel={paper} number={bill.bill_number} tag={debtorBillTag(bill)}
       taskLink={{ type: paper, no: bill.bill_number, name: debtor?.name ?? '', to: moneyInDocHref('debtorBill', bill.id) }}
-      onPrint={print}
+      printJob={{
+        title: paper, docNo: bill.bill_number, papers: ['A4'],
+        rows: [{ label: 'Bill to', value: debtor?.name ?? '—' }, { label: 'Amount', value: fmtSen(bill.total_sen) }],
+        deliver: (action) => generateDebtorBillPdf({ bill, debtor: debtor ?? { name: '(debtor)', phone: null }, accountName }, { action }),
+      }}
       actions={actions}
       ask={asking ? <AskBanner key={ask.title} ask={ask} busy={cancelBill.isPending} error={askError} onKeep={() => setAsking(false)} /> : null}
       party={{

@@ -27,6 +27,7 @@ import {
 } from './MoneyInDocPage';
 import { ReceiptForm, receiptValuesOf, type SundrySubmit } from './ReceiptForm';
 import { liveJournal, useDocJournals } from './moneyInDocQueries';
+import { generateSundryReceiptPdf } from '../../../vendor/scm/lib/sundry-receipt-pdf';
 import { sundryReceiptTag } from './moneyInStatus';
 import { moneyInDocHref, moneyInListOf } from './moneyInDocs';
 import s from './MoneyInDoc.module.css';
@@ -152,6 +153,11 @@ export const SundryReceiptDoc = () => {
     <MoneyInDocPage
       kind="sundry" kindLabel="Receipt · sundry income" number={no} tag={sundryReceiptTag(r.status)}
       taskLink={{ type: 'Receipt', no, name: r.payer_name, to: moneyInDocHref('sundry', r.id) }}
+      printJob={{
+        title: 'Receipt', docNo: no, papers: ['A4'],
+        rows: [{ label: 'Received from', value: r.payer_name }, { label: 'Amount', value: fmtSen(r.total_sen) }],
+        deliver: (action) => generateSundryReceiptPdf({ receipt: r, lines: d.lines, accountName, journalNo: live?.je_no ?? null }, { action }),
+      }}
       actions={actions}
       ask={asking ? <AskBanner key={ask.title} ask={ask} busy={voidIt.isPending} error={askError} onKeep={() => setAsking(false)} /> : null}
       party={{ label: 'Received from', name: r.payer_name }}
