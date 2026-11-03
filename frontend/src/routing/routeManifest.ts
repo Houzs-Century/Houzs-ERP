@@ -80,7 +80,6 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/opening-balance",
   "/scm/other-debtors",
   "/scm/receipts",
-  "/scm/official-receipts",
   "/scm/receipts/official/:id",
   "/scm/receipts/debtor/:id",
   "/scm/receipts/sundry/:id",
@@ -206,8 +205,9 @@ export const STAFF_ROUTE_PATTERNS = [
   "/profile",
 ] as const;
 
-/** Live compatibility route, not a page of its own. */
-export const STAFF_LEGACY_REDIRECT_PATTERNS = ["/roles"] as const;
+/** Live compatibility routes, not pages of their own: the Team page's Roles
+ *  tab, and Official receipts folded into Money in › Receipts (batch 5 §1). */
+export const STAFF_LEGACY_REDIRECT_PATTERNS = ["/roles", "/scm/official-receipts"] as const;
 
 export const PUBLIC_ROUTE_PATTERNS = [
   "/survey/:token",

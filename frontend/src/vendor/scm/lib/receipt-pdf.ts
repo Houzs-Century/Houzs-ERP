@@ -38,10 +38,10 @@ export type ReceiptPdfData = {
 const labelOf: Record<string, string | undefined> = { ...PAYMENT_METHOD_DEFAULT_LABELS };
 const methodLabel = (m: string | null): string => (m ? labelOf[m] ?? m : '—');
 
-export async function generateReceiptPdf(r: ReceiptPdfData, opts?: { action?: PdfAction }): Promise<void> {
-  const { jsPDF } = await import('jspdf');
-  const doc = new jsPDF({ unit: 'mm', format: 'a5', orientation: 'landscape' });
+type JsPdf = import('jspdf').jsPDF;
 
+/** One receipt on the current page of an A5 landscape document. */
+function renderReceiptInto(doc: JsPdf, r: ReceiptPdfData): void {
   let y = drawHeader(doc, {
     docTitle: 'OFFICIAL RECEIPT',
     rightMeta: [
@@ -87,6 +87,25 @@ export async function generateReceiptPdf(r: ReceiptPdfData, opts?: { action?: Pd
     doc.restoreGraphicsState();
     doc.setTextColor(0, 0, 0);
   }
+}
 
+export async function generateReceiptPdf(r: ReceiptPdfData, opts?: { action?: PdfAction }): Promise<void> {
+  const { jsPDF } = await import('jspdf');
+  const doc = new jsPDF({ unit: 'mm', format: 'a5', orientation: 'landscape' });
+  renderReceiptInto(doc, r);
   deliverPdf(doc, `${r.or_number}-${safeName(r.customer_name ?? r.doc_no ?? 'receipt')}.pdf`, opts?.action);
+}
+
+/** The ticked receipts as ONE A5 document, one receipt per page, in the order
+ *  given (Money in › Receipts' batch Print, the owner's Claude Design batch 5). */
+export async function generateReceiptsPdf(list: ReceiptPdfData[], opts?: { action?: PdfAction }): Promise<void> {
+  if (list.length === 0) return;
+  if (list.length === 1) { await generateReceiptPdf(list[0]!, opts); return; }
+  const { jsPDF } = await import('jspdf');
+  const doc = new jsPDF({ unit: 'mm', format: 'a5', orientation: 'landscape' });
+  list.forEach((r, i) => {
+    if (i > 0) doc.addPage('a5', 'landscape');
+    renderReceiptInto(doc, r);
+  });
+  deliverPdf(doc, `official-receipts-${list.length}.pdf`, opts?.action);
 }

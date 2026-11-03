@@ -25,23 +25,15 @@ import {
   DocBooks, DocFormShell, DocSection, DocState, MoneyInDocPage, byTime, journalTrail,
   type DocAction, type DocFact,
 } from './MoneyInDocPage';
-import { SundryReceiptForm, type SundrySubmit, type SundryValues } from './SundryReceiptForm';
+import { ReceiptForm, receiptValuesOf, type SundrySubmit } from './ReceiptForm';
 import { liveJournal, useDocJournals } from './moneyInDocQueries';
 import { sundryReceiptTag } from './moneyInStatus';
 import { moneyInDocHref, moneyInListOf } from './moneyInDocs';
 import s from './MoneyInDoc.module.css';
 
 const errText = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'Something went wrong.');
-const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 type Line = ReceiptDetail['lines'][number];
-
-/** The form's values from a receipt: an edit keeps its date, a copy starts today. */
-const fromReceipt = (d: ReceiptDetail, copy: boolean): SundryValues => ({
-  receiptDate: copy ? myt() : String(d.receipt.receipt_date).slice(0, 10),
-  payerName: d.receipt.payer_name,
-  bankAccountCode: d.receipt.bank_account_code,
-  lines: d.lines.map((l, i) => ({ rid: i + 1, description: l.description ?? '', creditAccountCode: l.credit_account_code, amountSen: Number(l.amount_sen) })),
-});
+const fromReceipt = receiptValuesOf;
 
 export const SundryReceiptDoc = () => {
   const { id = '' } = useParams();
@@ -105,20 +97,23 @@ export const SundryReceiptDoc = () => {
     });
   };
 
-  const formProps = { accounts, moneyAccounts, accountName, onSubmit: submit, onCancel: () => setForm(null) };
+  const formProps = {
+    kind: 'sundry' as const, door: 'receipts' as const, accounts, moneyAccounts, accountName,
+    onSundry: submit, onDebtor: () => undefined, onCancel: () => setForm(null),
+  };
   if (form === 'edit' && canEdit && posted) {
     return (
-      <DocFormShell title={`Edit ${no}`} backLabel={no} onBack={() => setForm(null)}>
-        {formError && <div role="alert" className={`${s.note} ${s.toneLate}`} style={{ marginBottom: 12 }}>{formError}</div>}
-        <SundryReceiptForm key={`edit-${r.id}`} mode="edit" initial={fromReceipt(d, false)} saving={update.isPending} {...formProps} />
+      <DocFormShell title={`Edit ${no}`} backLabel={no} onBack={() => setForm(null)} bare>
+        {formError && <div role="alert" className={`${s.note} ${s.toneLate}`}>{formError}</div>}
+        <ReceiptForm key={`edit-${r.id}`} mode="edit" initial={fromReceipt(d, false)} saving={update.isPending} {...formProps} />
       </DocFormShell>
     );
   }
   if (form === 'copy' && canCreate) {
     return (
-      <DocFormShell title={`New receipt · copy of ${no}`} backLabel={no} onBack={() => setForm(null)}>
-        {formError && <div role="alert" className={`${s.note} ${s.toneLate}`} style={{ marginBottom: 12 }}>{formError}</div>}
-        <SundryReceiptForm key={`copy-${r.id}`} mode="copy" initial={fromReceipt(d, true)} saving={create.isPending} {...formProps} />
+      <DocFormShell title={`New receipt · copy of ${no}`} backLabel={no} onBack={() => setForm(null)} bare>
+        {formError && <div role="alert" className={`${s.note} ${s.toneLate}`}>{formError}</div>}
+        <ReceiptForm key={`copy-${r.id}`} mode="copy" initial={fromReceipt(d, true)} saving={create.isPending} {...formProps} />
       </DocFormShell>
     );
   }

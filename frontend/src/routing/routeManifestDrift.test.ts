@@ -124,7 +124,10 @@ describe("executable route contract", () => {
     // the official and the other-debtor receipt as pages (Claude Design, batch 5 step 3).
     // 194 since 2026-11-03: /scm/receipts/sundry/:id and /scm/other-debtors/:id —
     // a sundry receipt and an other debtor as pages (Claude Design, batch 5 step 2).
-    expect(STAFF_ROUTE_PATTERNS).toHaveLength(194);
+    // 193 since 2026-11-03: /scm/official-receipts folded into Receipts — a
+    // legacy redirect now (Claude Design, batch 5 step 4), so the contract's
+    // count below stays.
+    expect(STAFF_ROUTE_PATTERNS).toHaveLength(193);
     expect(new Set(STAFF_ROUTE_PATTERNS).size).toBe(STAFF_ROUTE_PATTERNS.length);
     expect([...STAFF_ROUTE_PATTERNS].sort()).toEqual([...appPages].sort());
   });
@@ -188,6 +191,7 @@ describe("executable route contract", () => {
     // 199 since 2026-11-03 — the three invoice document pages; see the staff-route count above.
     // 201 since 2026-11-03 — the two receipt document pages; see the staff-route count above.
     // 203 since 2026-11-03 — the sundry receipt and other debtor pages; see the staff-route count above.
+    // 203 still since 2026-11-03 — /scm/official-receipts moved from page to legacy redirect.
     expect(ROUTE_CONTRACT).toHaveLength(203);
   });
 
