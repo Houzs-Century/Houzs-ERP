@@ -746,7 +746,11 @@ export const NAV_TABS: NavTab[] = [
         icon: HandCoins,
         groupId: "scm-finance-in",
         children: [
-          { to: "/scm/official-receipts", label: "Official receipts", icon: Receipt, anyPerm: ["*", "scm.access", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.money_in"] },
+          // Receipts (the owner's Claude Design, batch 5 step 4): every ringgit in on
+          // one page — the official receipts folded in as its first kind, so the
+          // gate is the two old entries' together; inside, each kind shows to
+          // whoever saw its old entry. /scm/official-receipts redirects here.
+          { to: "/scm/receipts", label: "Receipts", icon: Receipt, anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.money_in"] },
           // Deposit invoices (owner 2026-09-12; docs/bugs/0828) — born with a
           // customer payment when the company's switch is on; beside the
           // receipt the same payment is born with.
@@ -755,7 +759,6 @@ export const NAV_TABS: NavTab[] = [
           // mirrored beside the other-debtor bills raised there; the PV key
           // family, like the AP invoice it mirrors.
           { to: "/scm/ar-invoices", label: "AR invoices", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_in"] },
-          { to: "/scm/receipts", label: "Receipts", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_in"] },
           { to: "/scm/other-debtors", label: "Debtor maintenance", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_in"] },
           { to: "/scm/outstanding", label: "Outstanding", icon: AlertCircle, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
           { to: "/scm/unbilled-deliveries", label: "Not yet billed", icon: HandCoins, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },

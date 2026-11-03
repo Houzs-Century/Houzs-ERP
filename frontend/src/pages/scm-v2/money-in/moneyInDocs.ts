@@ -34,11 +34,11 @@ export const moneyInDocHref = (kind: MoneyInDocKind, id: string | number): strin
 
 /** The list a document's Back returns to when it was not opened from another
  *  page (an opened tab's opener wins — lib/useWorkspaceOpener). Official
- *  receipts and deposit invoices keep their own lists until those fold into
- *  Receipts and Invoices (batch 5 steps 4 and 5). */
+ *  receipts are Receipts' first kind since batch 5 step 4; deposit invoices
+ *  keep their own list until it folds into Invoices (step 5). */
 export const moneyInListOf = (kind: MoneyInDocKind): { href: string; label: string } => {
   switch (kind) {
-    case 'official': return { href: '/scm/official-receipts', label: 'Official receipts' };
+    case 'official': return { href: '/scm/receipts?kind=official', label: 'Receipts' };
     case 'sundry':
     case 'debtorReceipt': return { href: '/scm/receipts', label: 'Receipts' };
     case 'depositInvoice': return { href: '/scm/deposit-invoices', label: 'Deposit invoices' };

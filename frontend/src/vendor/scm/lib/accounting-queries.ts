@@ -529,6 +529,11 @@ export type ReceiptRow = {
   debtorId?: string; notes?: string | null;
   /** CUSTOMER rows: the order's raw reference pair (resolve with soRefOfCamelStamp). */
   soRef?: string | null; soCustomerSoNo?: string | null;
+  /** GENERAL rows: the first line's description — what the money was for (batch 5 §2.3 c1). */
+  firstLine?: string | null;
+  /** DEBTOR rows: the four layers' marks, and the bills the receipt knocks off (c1). */
+  submittedAt?: string | null; checkedAt?: string | null; approvedAt?: string | null;
+  bills?: Array<{ billId: string; no: string | null; amountSen: number }>;
 };
 /** No month = every month (owner 2026-09-08: 月份只是筛选); `month` echoes the
     filter, null when none. */

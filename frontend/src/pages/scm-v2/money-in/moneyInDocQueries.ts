@@ -92,16 +92,69 @@ export const useOfficialReceipt = (id: string | null) => useQuery({
   retry: retryUnlessClientError,
 });
 
+/** Confirm money, one receipt: the draft turns formal and takes its official
+ *  number (no journal; the payment posted). Receipts' batch calls it in
+ *  payment-date order and refreshes once at the end. */
+export const formaliseReceiptRequest = (id: number) =>
+  authedFetch<{ ok: boolean; orNumber: string; already?: boolean }>(`/accounting/receipts/${id}/formalise`, { method: 'POST', body: '{}' });
+
 /** Confirm money: the draft turns formal and takes its official number — the
- *  same door as the Official receipts list (no journal; the payment posted). */
+ *  same door as the Receipts list (no journal; the payment posted). */
 export const useFormaliseReceipt = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: number) => authedFetch<{ ok: boolean; orNumber: string; already?: boolean }>(`/accounting/receipts/${id}/formalise`, { method: 'POST', body: '{}' }),
+    mutationFn: formaliseReceiptRequest,
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['official-receipts'] });
       void qc.invalidateQueries({ queryKey: ['official-receipts-check'] });
       /* To do's transfers job counts the draft non-card receipts. */
+      void qc.invalidateQueries({ queryKey: ['finance-todo'] });
+    },
+  });
+};
+
+/** The official receipts of a month by their payment day ('' = the whole book,
+ *  newest first — c2), for Money in › Receipts. Under 'official-receipts', so a
+ *  formalise, an ensure or a payment's edit refreshes it. */
+export const useOfficialReceipts = <R>(month: string, enabled: boolean) => useQuery({
+  queryKey: ['official-receipts', 'list', month || 'all'],
+  enabled,
+  queryFn: () => authedFetch<{ receipts: R[] }>(`/accounting/receipts?${month ? `month=${encodeURIComponent(month)}` : 'all=1'}`),
+  staleTime: 15_000,
+  retry: retryUnlessClientError,
+});
+
+/** One month of customer payments against its official receipts (owner
+ *  2026-09-16: or 我如何查看 amount 是对的) — the totals, the difference and every
+ *  row behind it (GET /accounting/receipts/check). */
+export type ReceiptsCheck = {
+  month: string;
+  payments: { count: number; totalSen: number };
+  receipts: { count: number; totalSen: number };
+  diffSen: number;
+  missing: Array<{ source: string; paymentId: string; docNo: string | null; paidAt: string; method: string; amountSen: number }>;
+  mismatched: Array<{ orNumber: string; source: string; paymentId: string; docNo: string | null; paidAt: string; receiptSen: number; paymentSen: number }>;
+  orphans: Array<{ orNumber: string; docNo: string | null; paidAt: string; amountSen: number }>;
+};
+export const useReceiptsCheck = (month: string, enabled: boolean) => useQuery({
+  queryKey: ['official-receipts-check', month],
+  enabled: enabled && Boolean(month),
+  queryFn: () => authedFetch<ReceiptsCheck>(`/accounting/receipts/check?month=${encodeURIComponent(month)}`),
+  staleTime: 15_000,
+  retry: retryUnlessClientError,
+});
+
+/** Issue receipt (the month check's `Payments without a receipt`): find or make
+ *  the receipt for one payment — the print button's own door, nothing posts. A
+ *  cash payment's comes back formal at once. */
+export const useEnsureReceipt = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (p: { source: string; paymentId: string }) =>
+      authedFetch<{ receipt: OfficialReceiptRow }>('/accounting/receipts/ensure', { method: 'POST', body: JSON.stringify(p) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['official-receipts'] });
+      void qc.invalidateQueries({ queryKey: ['official-receipts-check'] });
       void qc.invalidateQueries({ queryKey: ['finance-todo'] });
     },
   });

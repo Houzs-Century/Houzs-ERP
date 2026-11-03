@@ -8,7 +8,7 @@ import { isSalesStaff, isDirectorUser, isSalesDirectorUser, isSalesNonDirector, 
 import { capability, capabilitiesUnresolved } from "./auth/capabilities";
 import { PageGuard } from "./auth/PageGuard";
 import { ROUTE_ALIASES } from "./lib/routeAliases";
-import { AliasRedirect } from "./routing/AliasRedirect";
+import { AliasRedirect, FoldRedirect } from "./routing/AliasRedirect";
 import { Forbidden } from "./pages/Forbidden";
 import { GlobalSearchProvider } from "./components/GlobalSearch";
 import { NotificationsProvider } from "./hooks/useNotifications";
@@ -127,7 +127,6 @@ const ScmChartOfAccountsV2 = lazy(() => import("./pages/scm-v2/ChartOfAccounts")
 const ScmOpeningBalanceV2 = lazy(() => import("./pages/scm-v2/OpeningBalance").then((m) => ({ default: m.OpeningBalance })));
 const ScmOtherDebtorsV2 = lazy(() => import("./pages/scm-v2/OtherDebtors").then((m) => ({ default: m.OtherDebtors })));
 const ScmReceiptsV2 = lazy(() => import("./pages/scm-v2/Receipts").then((m) => ({ default: m.Receipts })));
-const ScmOfficialReceiptsV2 = lazy(() => import("./pages/scm-v2/OfficialReceipts").then((m) => ({ default: m.OfficialReceipts })));
 const ScmApInvoicesV2 = lazy(() => import("./pages/scm-v2/ApInvoices").then((m) => ({ default: m.ApInvoices })));
 /* A bill and a note as their own pages (the Finance redesign, batch 4 step 6). */
 const ScmApBillPage = lazy(() => import("./pages/scm-v2/ApBillPage").then((m) => ({ default: m.ApBillPage })));
@@ -843,7 +842,8 @@ export default function App() {
         <Route path="/scm/opening-balance" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOpeningBalanceV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/other-debtors" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOtherDebtorsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/receipts" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmReceiptsV2 /></Scm2990Shell></ScmGuard>} />
-        <Route path="/scm/official-receipts" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOfficialReceiptsV2 /></Scm2990Shell></ScmGuard>} />
+        {/* Official receipts folded into Receipts (Claude Design, batch 5 §1): bookmarks and To do links land on its kind. */}
+        <Route path="/scm/official-receipts" element={<FoldRedirect to="/scm/receipts" add={{ kind: "official" }} />} />
         <Route path="/scm/receipts/official/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOfficialReceiptDocV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/receipts/debtor/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmDebtorReceiptDocV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/receipts/sundry/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmSundryReceiptDocV2 /></Scm2990Shell></ScmGuard>} />

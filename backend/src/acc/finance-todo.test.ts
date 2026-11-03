@@ -163,6 +163,8 @@ describe('receipts and invoices', () => {
   it('draft transfer receipts are one job to confirm the money arrived', () => {
     const { mine } = raiseJobs(facts({ transfers: [{ amountSen: 50_000, paidOn: '2026-10-25' }, { amountSen: 7_000, paidOn: null }] }), FINANCE);
     expect(mine[0]).toMatchObject({ rule: 'transfers', group: 'other', title: 'Confirm 2 transfers arrived', amountSen: 57_000, since: '2026-10-25' });
+    /* Review opens Receipts on the official drafts of every month (batch 5 §2). */
+    expect(mine[0]!.action).toMatchObject({ label: 'Review', to: '/scm/receipts?kind=official&status=draft&month=all' });
   });
 
   it('an invoice more than 30 days past due joins the list the day it crosses', () => {
@@ -236,6 +238,7 @@ describe("Finance's own rules", () => {
     ]);
     expect(jobs[1]!.since).toBe('2026-10-29');
     expect(jobs[2]!.detail).toBe('SO-2611-0422 · Wong Kar Mun · each needs its own e-invoice');
+    expect(jobs[2]!.action.to).toBe('/scm/receipts?kind=official');
     expect(raiseJobs({ ...f, rulesOff: ['c-bills', 'c-drafts', 'c-big'] }, FINANCE).mine).toEqual([]);
   });
 });
