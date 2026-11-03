@@ -227,6 +227,9 @@ describe('the backlogs and the steps', () => {
     fireEvent.click(within(bar).getByRole('button', { name: 'Post to ledger · 1' }));
     await waitFor(() => expect(screen.getByText('The deposit account is not set for this company.')).toBeTruthy());
     fireEvent.click(within(bar).getByRole('button', { name: /Print 2/ }));
+    const preview = screen.getByRole('dialog', { name: 'Print preview' });
+    expect(preview.textContent).toContain('A4 portrait · same letterhead as the payment voucher · one per page');
+    fireEvent.click(within(preview).getByText('Print now'));
     await waitFor(() => expect(diPdf).toHaveBeenCalledTimes(1));
     expect(arBlob.mock.calls[0]![0]).toEqual([expect.objectContaining({ id: 'si-1' })]);
   });

@@ -30,13 +30,18 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { CheckCheck, FileDown, Plus, Printer } from 'lucide-react';
+import { CheckCheck, Plus, Printer } from 'lucide-react';
 import {
   postableAccounts, useAccounts, useCreateDebtorReceipt, useCreateReceipt, useReceiptDetail, useReceipts,
-  useUpdateReceipt, useVoidReceipt,
+  useUpdateReceipt, useVoidReceipt, type ReceiptDetail,
 } from '../../vendor/scm/lib/accounting-queries';
 import { generateReceiptsPdf } from '../../vendor/scm/lib/receipt-pdf';
-import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
+import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
+import { generateA4ReceiptsPdf, type A4ReceiptPaper } from '../../vendor/scm/lib/receipt-a4-pdf';
+import { sundryReceiptPaper } from '../../vendor/scm/lib/sundry-receipt-pdf';
+import { debtorReceiptPaper } from '../../vendor/scm/lib/debtor-receipt-pdf';
+import { batchTitle, useMoneyInPrint, type Paper } from './money-in/moneyInPrint';
+import type { DebtorReceiptDetail } from './money-in/moneyInDocQueries';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
 import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
@@ -159,10 +164,45 @@ export const Receipts = () => {
     }
   };
 
-  const printOfficial = (rows: OfficialListRow[], action: PdfAction = 'print') => {
-    if (rows.length === 0 || printing) return;
-    setPrinting(true);
-    generateReceiptsPdf(rows, { action }).catch((e: unknown) => setFailure(errText(e))).finally(() => setPrinting(false));
+  /* Print (batch 5 §9.3): through the print dialog — the official receipts as
+     ONE A5 file, a receipt a page; the sundry and other-debtor receipts as ONE
+     A4 file after it, each read whole for its lines; list order kept. */
+  const printer = useMoneyInPrint((e) => setFailure(errText(e)));
+  const paperOf = async (x: ReceiptItem): Promise<A4ReceiptPaper> => {
+    if (x.kind === 'sundry') {
+      const d = await authedFetch<ReceiptDetail>(`/receipts/${encodeURIComponent(x.id)}`);
+      return sundryReceiptPaper({ receipt: d.receipt, lines: d.lines, accountName });
+    }
+    const d = await authedFetch<DebtorReceiptDetail>(`/other-debtors/receipts/${encodeURIComponent(x.id)}`);
+    return debtorReceiptPaper({
+      receipt: d.receipt, debtor: d.debtor, accountName,
+      bills: d.allocations.map((a) => ({ billNumber: a.billNumber, description: a.description, amountSen: a.amountSen })),
+    });
+  };
+  const printReceipts = (items: ReceiptItem[]) => {
+    const officials = items.flatMap((x) => (x.kind === 'official' && x.official ? [x.official] : []));
+    const others = items.filter((x) => x.kind === 'sundry' || x.kind === 'debtor');
+    const n = officials.length + others.length;
+    if (n === 0) return;
+    setFailure(null);
+    const papers: Paper[] = [...(officials.length > 0 ? ['A5' as const] : []), ...(others.length > 0 ? ['A4' as const] : [])];
+    printer.open({
+      title: n > 1 ? batchTitle(n, true) : officials.length > 0 ? 'Official receipt' : 'Receipt',
+      /* One receipt names itself; a batch says how many. */
+      docNo: n > 1 ? `${n} ticked` : [...officials.map((o) => o.or_number), ...others.map((x) => x.no)].join(''),
+      papers,
+      rows: [
+        ...(officials.length > 0 ? [{ label: 'Official receipts', value: String(officials.length) }] : []),
+        ...(others.length > 0 ? [{ label: 'Other receipts', value: String(others.length) }] : []),
+      ],
+      deliver: async (action) => {
+        setPrinting(true);
+        try {
+          if (officials.length > 0) await generateReceiptsPdf(officials, { action });
+          if (others.length > 0) await generateA4ReceiptsPdf(await Promise.all(others.map(paperOf)), { action });
+        } finally { setPrinting(false); }
+      },
+    });
   };
 
   const issue = (p: { source: string; paymentId: string; docNo: string | null; amountSen: number }) => {
@@ -196,7 +236,7 @@ export const Receipts = () => {
           ...(x.status === 'draft' ? [{ label: 'Confirm money', onClick: () => { void confirmMoney([r]); } }] : []),
           ...(x.forHref ? [{ label: `Open ${x.forText}`, onClick: () => openInTab(x.forHref!) }] : []),
           DIVIDER,
-          { label: 'Print', onClick: () => printOfficial([r]) },
+          { label: 'Print', onClick: () => printReceipts([x]) },
         ]);
       }
       case 'sundry':
@@ -205,6 +245,8 @@ export const Receipts = () => {
           ...(x.status === 'posted' && canEdit ? [{ label: 'Edit', onClick: () => openForm('edit', x.id) }] : []),
           ...(canCreate ? [{ label: 'Copy as new', onClick: () => openForm('copy', x.id) }] : []),
           DIVIDER,
+          { label: 'Print', onClick: () => printReceipts([x]) },
+          DIVIDER,
           ...(x.status === 'posted' && canCancel ? [{ label: 'Void…', danger: true, onClick: () => askVoid(x) }] : []),
         ]);
       case 'debtor': {
@@ -212,7 +254,7 @@ export const Receipts = () => {
         /* A Draft or a Prepared one changes in place and keeps its stage (batch 5 step 6, c5). */
         const edit: MenuItem[] = (x.stage === 'Draft' || x.stage === 'Prepared') && canEdit
           ? [{ label: 'Edit', onClick: () => setUrl({ form: 'edit', id: x.id, type: 'debtor' }, true) }] : [];
-        return tidyMenu([open, ...edit, ...m.steps, DIVIDER, ...m.undo]);
+        return tidyMenu([open, ...edit, ...m.steps, DIVIDER, { label: 'Print', onClick: () => printReceipts([x]) }, DIVIDER, ...m.undo]);
       }
       case 'customer':
         return x.forHref ? [{ label: `Open ${x.no}`, onClick: () => openInTab(x.forHref!) }] : [];
@@ -231,7 +273,9 @@ export const Receipts = () => {
             Confirm money
           </button>
         )
-        : <button type="button" className={ui.actLink} disabled={printing} onClick={(e) => { e.stopPropagation(); printOfficial([x.official!]); }}>Print</button>;
+        : <button type="button" className={ui.actLink} disabled={printing} onClick={(e) => { e.stopPropagation(); printReceipts([x]); }}>Print</button>;
+    } else if (x.kind === 'sundry') {
+      main = <button type="button" className={ui.actLink} disabled={printing} onClick={(e) => { e.stopPropagation(); printReceipts([x]); }}>Print</button>;
     } else if (x.kind === 'debtor') {
       const next = steps.nextOf(stepRowOf(x));
       if (next.button) {
@@ -311,7 +355,8 @@ export const Receipts = () => {
   const tickedShown = onScreen.filter((x) => ticked.has(x.key));
   const hidden = items.filter((x) => ticked.has(x.key)).length - tickedShown.length;
   const tickedDrafts = tickedShown.filter((x) => x.kind === 'official' && x.status === 'draft').map((x) => x.official!);
-  const tickedOfficial = tickedShown.filter((x) => x.kind === 'official').map((x) => x.official!);
+  /* What a batch Print takes: the receipts — a customer payment is not one. */
+  const tickedPrintable = tickedShown.filter((x) => x.kind !== 'customer');
   const tickedSum = tickedShown.filter((x) => !x.cancelled).reduce((s, x) => s + x.amountSen, 0);
   const cancelledShown = onScreen.filter((x) => x.cancelled).length;
 
@@ -403,20 +448,16 @@ export const Receipts = () => {
                 <CheckCheck size={14} /> {confirming ? 'Confirming…' : `Confirm money · ${tickedDrafts.length}`}
               </button>
             )}
-            {tickedOfficial.length > 0 && (
-              <>
-                <button type="button" className={ui.btn} disabled={printing} onClick={() => printOfficial(tickedOfficial)}>
-                  <Printer size={14} /> {printing ? 'Preparing…' : `Print ${tickedOfficial.length}`}
-                </button>
-                <button type="button" className={ui.btn} disabled={printing} onClick={() => printOfficial(tickedOfficial, 'save')}>
-                  <FileDown size={14} /> Save as PDF
-                </button>
-              </>
+            {tickedPrintable.length > 0 && (
+              <button type="button" className={ui.btn} disabled={printing} onClick={() => printReceipts(tickedPrintable)}>
+                <Printer size={14} /> {printing ? 'Preparing…' : `Print ${tickedPrintable.length}`}
+              </button>
             )}
           </BatchBar>
         )}
       </div>
       {rowMenu.popup}
+      {printer.modal}
     </div>
   );
 };

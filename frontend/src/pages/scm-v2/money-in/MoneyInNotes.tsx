@@ -24,7 +24,7 @@
 
 import { useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { FileDown, Plus, Printer } from 'lucide-react';
+import { Plus, Printer } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useArInvoices } from '../../../vendor/scm/lib/ar-invoice-queries';
 import {
@@ -43,6 +43,7 @@ import { fmtDate, fmtSen } from '../../../vendor/shared/format';
 import { FinanceDocLink } from '../finance/FinanceDocLink';
 import { NoteForm, emptyForm, noteEditValues } from '../CreditNotes';
 import { AskBanner, type Ask } from './AskBanner';
+import { batchTitle, useMoneyInPrint } from './moneyInPrint';
 import { BillFormPage } from './BillFormPage';
 import { DocFormShell } from './MoneyInDocPage';
 import { BatchBar, Chips, SearchBox, Segments, StatusTag, tidyMenu, useRowMenu, type MenuItem } from './MoneyInParts';
@@ -137,8 +138,9 @@ export function MoneyInNotes() {
   };
 
   /* Print: the notes as ONE document in list order (credit-note-pdf); an other
-     debtor's debit note prints as the bill it is (ar-invoice-print). */
-  const print = async (rows: NoteItem[], action: PdfAction = 'print') => {
+     debtor's debit note prints as the bill it is (ar-invoice-print) — through
+     the print dialog (batch 5 step 10). */
+  const deliverPrint = async (rows: NoteItem[], action: PdfAction) => {
     if (rows.length === 0 || busy) return;
     setBusy('print'); setFailure(null);
     try {
@@ -161,6 +163,18 @@ export function MoneyInNotes() {
     } catch (e) {
       setFailure(errText(e));
     } finally { setBusy(null); }
+  };
+
+  const printer = useMoneyInPrint((e) => setFailure(errText(e)));
+  const print = (rows: NoteItem[]) => {
+    if (rows.length === 0) return;
+    printer.open({
+      title: rows.length > 1 ? batchTitle(rows.length, false) : rows[0]!.kindWord === 'DN' ? 'Debit note' : 'Credit note',
+      docNo: rows.length > 1 ? `${rows.length} ticked` : rows[0]!.no,
+      papers: ['A4'],
+      rows: rows.length === 1 ? [{ label: 'Party', value: rows[0]!.party }, { label: 'Total', value: fmtSen(rows[0]!.totalSen) }] : [],
+      deliver: (action) => deliverPrint(rows, action),
+    });
   };
 
   /* Cancel, asked inline: a note's (a contra once posted, its knock-off given
@@ -204,7 +218,7 @@ export function MoneyInNotes() {
 
   const menuOf = (x: NoteItem): MenuItem[] => {
     const open: MenuItem = { label: 'Open', onClick: () => openRow(x) };
-    const printIt: MenuItem = { label: 'Print', onClick: () => { void print([x]); } };
+    const printIt: MenuItem = { label: 'Print', onClick: () => print([x]) };
     if (x.source === 'bill') {
       const received = (x.bill?.paidSen ?? 0) > 0;
       return tidyMenu([
@@ -234,7 +248,7 @@ export function MoneyInNotes() {
   const actionsOf = (x: NoteItem): ReactNode => {
     const main = x.source === 'note' && x.status === 'draft' && canPost
       ? <button type="button" className={ui.act} disabled={busy != null} onClick={(e) => { e.stopPropagation(); void postNotes([x]); }}>Post</button>
-      : <button type="button" className={ui.actLink} disabled={busy != null} onClick={(e) => { e.stopPropagation(); void print([x]); }}>Print</button>;
+      : <button type="button" className={ui.actLink} disabled={busy != null} onClick={(e) => { e.stopPropagation(); print([x]); }}>Print</button>;
     return <span className={ui.acts}>{main}{rowMenu.button(x)}</span>;
   };
 
@@ -350,16 +364,14 @@ export function MoneyInNotes() {
                 {busy === 'post' ? 'Posting…' : `Post to ledger · ${tickedDrafts.length}`}
               </button>
             )}
-            <button type="button" className={ui.btn} disabled={busy != null} onClick={() => { void print(tickedShown); }}>
+            <button type="button" className={ui.btn} disabled={busy != null} onClick={() => print(tickedShown)}>
               <Printer size={14} /> {busy === 'print' ? 'Preparing…' : `Print ${tickedShown.length}`}
-            </button>
-            <button type="button" className={ui.btn} disabled={busy != null} onClick={() => { void print(tickedShown, 'save'); }}>
-              <FileDown size={14} /> Save as PDF
             </button>
           </BatchBar>
         )}
       </div>
       {rowMenu.popup}
+      {printer.modal}
     </div>
   );
 }

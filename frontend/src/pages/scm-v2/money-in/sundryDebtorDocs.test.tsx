@@ -71,6 +71,8 @@ vi.mock('../../../vendor/scm/lib/event-queries', async (importOriginal) => ({
   useEventLabels: () => ({ data: new Map() }),
 }));
 vi.mock('../../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
+const sundryPdf = vi.fn(async (_d: unknown, _o: unknown) => {});
+vi.mock('../../../vendor/scm/lib/sundry-receipt-pdf', () => ({ generateSundryReceiptPdf: (d: unknown, o: unknown) => sundryPdf(d, o) }));
 vi.mock('../PvDocParts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../PvDocParts')>()),
   VoucherTaskDrawer: ({ link }: { link: { type: string; no: string; to: string } }) => <div role="dialog" aria-label="Add task">{`${link.type} ${link.no} → ${link.to}`}</div>,
@@ -140,6 +142,23 @@ describe('a sundry receipt, as a page', () => {
     fireEvent.change(screen.getByLabelText('Received from'), { target: { value: '  ' } });
     expect(screen.getByText('Type who paid.')).toBeTruthy();
     expect((screen.getByRole('button', { name: 'Save & post' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe('a sundry receipt prints (batch 5 step 10)', () => {
+  test('Print opens the print dialog on the A4 paper; Print now hands the receipt, its lines and its journal to the RECEIPT', async () => {
+    openReceipt();
+    await waitFor(() => expect(screen.getAllByText(/HC-JE-2610-0912/).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByRole('button', { name: /Print/ }));
+    const preview = screen.getByRole('dialog', { name: 'Print preview' });
+    expect(preview.textContent).toContain('A4 portrait · same letterhead as the payment voucher · one per page');
+    fireEvent.click(within(preview).getByText('Print now'));
+    await waitFor(() => expect(sundryPdf).toHaveBeenCalled());
+    const [data, opts] = sundryPdf.mock.calls[0]! as [{ receipt: { receipt_number: string }; lines: unknown[]; journalNo: string | null }, unknown];
+    expect(data.receipt.receipt_number).toBe('HC-RCT-2610-004');
+    expect(data.lines).toHaveLength(1);
+    expect(data.journalNo).toBe('HC-JE-2610-0912');
+    expect(opts).toEqual({ action: 'print' });
   });
 });
 

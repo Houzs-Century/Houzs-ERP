@@ -159,7 +159,12 @@ export const DepositInvoiceDoc = () => {
       kind="depositInvoice" kindLabel="Deposit invoice" number={inv.di_number} tag={depositInvoiceTag(inv)}
       sub={inv.status === 'CANCELLED' ? `void · ${inv.cancel_reason ?? 'no reason given'}` : null}
       taskLink={{ type: 'Deposit invoice', no: inv.di_number, name: party, to: moneyInDocHref('depositInvoice', inv.id) }}
-      onPrint={() => void printOne('print')} printing={printing}
+      printJob={{
+        title: 'Deposit invoice', docNo: inv.di_number, papers: ['A4'],
+        rows: [{ label: 'Customer', value: party }, { label: 'Amount', value: fmtSen(inv.amount_sen) }],
+        deliver: printOne,
+      }}
+      printing={printing}
       actions={actions}
       ask={asking ? <AskBanner key={ask.title} ask={ask} busy={cancel.isPending} error={askError} onKeep={() => setAsking(false)} /> : null}
       notice={(

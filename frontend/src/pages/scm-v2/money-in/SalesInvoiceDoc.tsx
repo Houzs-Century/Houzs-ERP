@@ -95,7 +95,13 @@ export const SalesInvoiceDoc = () => {
       tag={salesInvoiceTag({ outstandingSen: outstanding, paidSen: own + deposit, dueDate: header.due_date, status: header.status }, today)}
       sub="raised in Sales · edit or cancel it there"
       taskLink={{ type: 'Sales invoice', no: header.invoice_number, name: header.debtor_name, to: moneyInDocHref('salesInvoice', id) }}
-      onPrint={() => void deliver('print')} printing={printing}
+      printJob={{
+        /* f4: Sales' own print — the paper the customer gets does not change. */
+        title: 'Sales invoice', docNo: header.invoice_number, papers: ['A4'],
+        rows: [{ label: 'Bill to', value: header.debtor_name }, { label: 'Amount', value: fmtSen(total) }],
+        deliver,
+      }}
+      printing={printing}
       actions={[{ label: 'Open in Sales', onClick: () => navigate(`/scm/sales-invoices/${encodeURIComponent(id)}`) }]}
       notice={failure ? <div role="alert" className={`${s.note} ${s.toneLate}`}>The invoice was not printed — {failure}</div> : null}
       party={{

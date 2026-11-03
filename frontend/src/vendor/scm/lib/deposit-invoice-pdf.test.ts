@@ -79,18 +79,24 @@ describe('the deposit invoice sheet — A4, the Sales Invoice layout (owner 2026
     expect(has(draws, 'BILL TO')).toBe(true);
     expect(has(draws, 'Larding Chen')).toBe(true);
     expect(has(draws, 'cust-larding')).toBe(true);
-    expect(has(draws, 'DEPOSIT DETAILS')).toBe(true);
+    expect(has(draws, 'INVOICE DETAILS')).toBe(true);
     expect(has(draws, ': 2990-SO-2609-001')).toBe(true);
     expect(has(draws, ': Cash')).toBe(true);
     expect(has(draws, ': Issued')).toBe(true);
-    expect(has(draws, 'Deposit received for Sales Order 2990-SO-2609-001')).toBe(true);
-    expect(has(draws, 'DEPOSIT TOTAL')).toBe(true);
+    /* The design's A4 family (batch 5 step 10): the line, TOTAL, the deposit received against it, nothing due. */
+    expect(has(draws, 'Deposit for sales order 2990-SO-2609-001 · paid by Cash on 2026/09/05')).toBe(true);
+    expect(draws.some((d) => d.text === 'TOTAL')).toBe(true);
+    expect(has(draws, 'Deposit received')).toBe(true);
+    expect(has(draws, '- RM 1,000.00')).toBe(true);
+    expect(has(draws, 'BALANCE DUE')).toBe(true);
+    expect(has(draws, 'RM 0.00')).toBe(true);
     expect(has(draws, 'RM 1,000.00')).toBe(true);
     expect(has(draws, 'ONE THOUSAND')).toBe(true);
     expect(has(draws, 'deducted from the final invoice of sales order 2990-SO-2609-001')).toBe(true);
     expect(has(draws, 'Issued by')).toBe(true);
     expect(has(draws, 'Page 1 of 1')).toBe(true);
     expect(has(draws, 'CANCELLED')).toBe(false);
+    expect(has(draws, 'VOID')).toBe(false);
     expect(has(draws, 'Closed by')).toBe(false);
     /* No order on the sheet: nothing about it is guessed. */
     expect(has(draws, 'Order total')).toBe(false);
@@ -120,12 +126,14 @@ describe('the deposit invoice sheet — A4, the Sales Invoice layout (owner 2026
   test('names the credit note that closed it', async () => {
     const { draws } = await render({ credit_note_number: '2990-CN-2609-003' });
     expect(has(draws, ': Credit note 2990-CN-2609-003')).toBe(true);
+    expect(has(draws, 'Closed by credit note 2990-CN-2609-003 at the final invoice')).toBe(true);
   });
 
   test('a cancelled invoice reads as void, with its reason', async () => {
     const { draws } = await render({ status: 'CANCELLED', cancel_reason: 'payment on 2990-SO-2609-001 edited — re-issued' });
-    expect(has(draws, 'CANCELLED')).toBe(true);
+    /* VOID across it (the design's word, A4) and the reason under NOTE. */
+    expect(has(draws, 'VOID')).toBe(true);
     expect(has(draws, ': Cancelled')).toBe(true);
-    expect(has(draws, 'Cancelled: payment on 2990-SO-2609-001 edited')).toBe(true);
+    expect(has(draws, 'Cancelled · payment on 2990-SO-2609-001 edited')).toBe(true);
   });
 });
