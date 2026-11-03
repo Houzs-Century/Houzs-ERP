@@ -52,6 +52,7 @@ const KIND_TITLE: Record<SendMessageKind, string> = {
   delivery: 'Send delivery message',
   amend: 'Send amend / reschedule message',
   postpone: 'Send postpone notice',
+  overdue_order: 'Send overdue-order notice',
   driver_info: 'Send driver information',
   balance_reminder: 'Send balance reminder',
   reminder_1: 'Send reminder 1',
