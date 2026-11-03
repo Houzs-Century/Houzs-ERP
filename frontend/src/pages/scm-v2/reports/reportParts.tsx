@@ -8,12 +8,14 @@
 //   · <ReportToolbar> is the white card its date range and tools sit in;
 //   · <ReportExports> are Layout · Excel · PDF · Print, drawn from the report's
 //     sheet the way today's exports are (report-sheet-xlsx / report-sheet-pdf):
-//     PDF opens the preview, Print prints that same PDF.
+//     PDF opens the preview, Print prints that same PDF;
+//   · <InPlaceOfReport> stands in for the report while it is open (the Layout
+//     editor, batch 6 §5.12): the report and its header buttons step aside.
 // ----------------------------------------------------------------------------
 
-import { createContext, useContext, useEffect, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { FileDown, FileSpreadsheet, Layers, Printer } from 'lucide-react';
+import { FileDown, FileSpreadsheet, Layers, MoreHorizontal, Printer } from 'lucide-react';
 import type { ReportSheet } from '../../../vendor/scm/lib/report-sheet';
 import s from './ReportShell.module.css';
 
@@ -22,6 +24,9 @@ import s from './ReportShell.module.css';
 export type ShellSlots = {
   actionsHost: HTMLElement | null;
   setSubtitle: (text: string | null) => void;
+  /** Where a part that stands in for the report draws, and the switch that sets the report aside. */
+  inPlaceHost: HTMLElement | null;
+  setInPlace: (on: boolean) => void;
 };
 
 export const ShellContext = createContext<ShellSlots | null>(null);
@@ -43,6 +48,22 @@ export function useReportSubtitle(text: string | null): void {
     set(text);
     return () => set(null);
   }, [set, text]);
+}
+
+/** Draws its children in place of the report (the Layout editor, batch 6
+ *  §5.12): while it is mounted the report below the header and the header's
+ *  buttons step aside — hidden, not unmounted, so the report keeps its state —
+ *  and come back when it closes. Outside a shell it renders where it stands. */
+export function InPlaceOfReport({ children }: { children: ReactNode }) {
+  const slots = useContext(ShellContext);
+  const set = slots?.setInPlace;
+  useEffect(() => {
+    if (!set) return undefined;
+    set(true);
+    return () => set(false);
+  }, [set]);
+  if (!slots) return <>{children}</>;
+  return slots.inPlaceHost ? createPortal(children, slots.inPlaceHost) : null;
 }
 
 /** The white card under the header: the date range first, then the report's own tools. */
@@ -91,6 +112,40 @@ export function ReportExports({ sheet, fileBase, onLayout, layoutOn = false }: {
         <Printer size={14} strokeWidth={1.75} aria-hidden />Print
       </button>
     </>
+  );
+}
+
+/** The header's ⋯ (batch 6 §5.11): what a report keeps beside Excel · PDF ·
+ *  Print — its CSV, its Charts PNG. Closes on a pick, a click outside or Escape. */
+export function ReportMore({ items, label = 'More' }: {
+  items: ReadonlyArray<{ label: string; onClick: () => void; disabled?: boolean }>;
+  label?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const down = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', down);
+    document.addEventListener('keydown', key);
+    return () => { document.removeEventListener('mousedown', down); document.removeEventListener('keydown', key); };
+  }, [open]);
+  return (
+    <div ref={ref} className={s.moreWrap}>
+      <button type="button" className={`${s.btn} ${s.moreBtn}`} aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}>
+        <MoreHorizontal size={15} strokeWidth={1.75} aria-hidden />
+      </button>
+      {open && (
+        <div className={s.moreMenu} role="menu" aria-label={label}>
+          {items.map((it) => (
+            <button key={it.label} type="button" role="menuitem" className={s.moreItem} disabled={it.disabled}
+              onClick={() => { setOpen(false); it.onClick(); }}>{it.label}</button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -151,7 +206,7 @@ export type ReportTile = {
  *  each figure as a shimmer, never a zero that reads as a fact. */
 export function ReportTiles({ tiles, label, pending = false }: { tiles: ReportTile[]; label: string; pending?: boolean }) {
   return (
-    <div className={s.tiles} role="group" aria-label={label} style={{ '--tile-cols': String(Math.min(tiles.length, 6)) } as React.CSSProperties}>
+    <div className={s.tiles} role="group" aria-label={label} style={{ '--tile-cols': String(Math.min(tiles.length, 7)) } as React.CSSProperties}>
       {tiles.map((t) => {
         const body = (
           <>

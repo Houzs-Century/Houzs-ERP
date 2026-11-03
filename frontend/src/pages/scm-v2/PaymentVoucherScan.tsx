@@ -41,6 +41,12 @@
 // and coming back finds every other bill as read — each bill opened says so,
 // and the AP / voucher pages offer "Back to Scan bills (N left)". A refresh or
 // a closed tab empties it; Clear the pile empties it on purpose.
+//
+// SEVERAL BILLS IN ONE PDF (HC-0204, Siti 2026-11-02: our attachment is a
+// single PDF containing multiple invoices): a PDF in the pile can be split
+// by page — each page becomes its own bill, still one file = one bill, and the
+// person (not the reader) says so by pressing Split. An invoice that runs two
+// pages is merged back with the same Merge.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -53,6 +59,7 @@ import { useBillMatches } from '../../vendor/scm/lib/payment-request-queries';
 import { BillMatchesNote } from '../../vendor/scm/components/RequestBill';
 import type { EventSuggestion } from '../../vendor/scm/lib/event-queries';
 import { stashPvFiles } from '../../vendor/scm/lib/pv-file-handoff';
+import { splitPdfPages } from '../../vendor/scm/lib/pdf-split-request';
 import { clearPile, getPile, pileKey, updatePile, usePile, type PileState } from '../../vendor/scm/lib/bill-pile-store';
 import { getActiveCompanySnapshot, subscribeActiveCompany } from '../../lib/activeCompany';
 import { fmtDate } from '../../vendor/shared/format';
@@ -151,6 +158,35 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
       };
     });
     setTicked(new Set());
+  };
+
+  /* One PDF of several bills → one bill per page, in the PDF's place in the pile. */
+  const [splitting, setSplitting] = useState<string | null>(null);
+  const splitPdf = async (rid: string) => {
+    const f = picked.find((p) => p.rid === rid);
+    if (!f || busy || splitting) return;
+    setSplitting(rid);
+    let pages: File[];
+    try {
+      pages = await splitPdfPages(f.file);
+    } catch (e) {
+      setNote(`${f.file.name}: ${e instanceof Error ? e.message : 'it could not be split.'} Read it as one bill, or save each invoice as its own file.`);
+      return;
+    } finally {
+      setSplitting(null);
+    }
+    if (pages.length < 2) { setNote(`${f.file.name} has one page — nothing to split.`); return; }
+    if (getPile(key).picked.length - 1 + pages.length > MAX_PILE_FILES) {
+      setNote(`${f.file.name} has ${pages.length} pages — the pile holds at most ${MAX_PILE_FILES} files. Read the rest first, then split it.`);
+      return;
+    }
+    const next = pages.map((page, i) => ({ rid: `${rid}-p${i + 1}`, file: page, merged: false, page: i + 1 }));
+    pileChanged((p) => ({
+      picked: p.picked.flatMap((x) => (x.rid === rid ? next : [x])),
+      billGroups: p.billGroups.flatMap((g) => (g.length === 1 && g[0] === rid ? next.map((n) => [n.rid]) : [g])),
+    }));
+    setTicked((prev) => { const n = new Set(prev); n.delete(rid); return n; });
+    setNote(`${f.file.name} split into ${pages.length} bills, one per page. An invoice on two pages: tick its pages and merge.`);
   };
 
   const removeFile = (rid: string) => {
@@ -356,7 +392,7 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>The pile</h2>
           <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-            {ap ? 'one file = one bill = one AP invoice, however many pages' : 'one file = one bill, however many pages'} · Merge is only for ONE bill photographed in pieces{ap ? '' : ' · several receipts on ONE voucher: read them, then tick them below'}
+            {ap ? 'one file = one bill = one AP invoice, however many pages' : 'one file = one bill, however many pages'} · Merge is only for ONE bill photographed in pieces · several bills in ONE PDF: Split it by page{ap ? '' : ' · several receipts on ONE voucher: read them, then tick them below'}
           </span>
         </div>
         <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -400,6 +436,12 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
                   <FileText {...ICON} />
                   <span>{p.file.name}</span>
                   {p.merged && <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>(merged page)</span>}
+                  {!p.merged && p.page == null && docFileMime(p.file) === 'application/pdf' && (
+                    <Button variant="ghost" size="sm" onClick={() => void splitPdf(p.rid)} disabled={busy || splitting != null}
+                      aria-label={`Split ${p.file.name} into one bill per page`}>
+                      {splitting === p.rid ? 'Splitting…' : 'Several bills inside — split by page'}
+                    </Button>
+                  )}
                   <button type="button" aria-label={`Remove ${p.file.name}`} onClick={() => removeFile(p.rid)} disabled={busy}
                     style={{ border: 'none', background: 'none', cursor: busy ? 'default' : 'pointer', color: 'var(--fg-muted)' }}>
                     <X size={14} strokeWidth={1.75} />

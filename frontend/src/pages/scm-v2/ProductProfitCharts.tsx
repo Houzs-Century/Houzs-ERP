@@ -20,13 +20,17 @@ const INK = '#11140f';
 const INK2 = '#414539';
 const MUTED = '#767b6e';
 const GRID = '#e3e6e0';
+/* The reports' palette (the owner's redesign, batch 6 §5.11): petrol, gold and
+   warm grey, the P&L chart's three; dark petrol for the bottom line, the
+   Finance red for a loss. Hex, not tokens: Charts PNG draws the SVG as it is. */
 const PETROL = '#16695f';
-const RED = '#b23a3a';
-const BRASS = '#a16a2e';
-const GREEN = '#2f8a5b';
-export const SLICE_COLOURS = ['#16695f', '#a16a2e', '#1f3a8a', '#2f8a5b', '#7a3e6e', '#4a6670'];
-const REST_COLOUR = '#c2c6bd';
-const CATEGORY_COLOURS = { mattress: '#16695f', sofa: '#a16a2e', bedframe: '#1f3a8a', other: '#767b6e' } as const;
+const PETROL_INK = '#0c3f39';
+const GOLD = '#d8a85a';
+const WARM_GREY = '#a3a99b';
+const RED = '#a83434';
+export const SLICE_COLOURS = [PETROL, GOLD, WARM_GREY, '#6fa79e', '#a16a2e', PETROL_INK];
+const REST_COLOUR = '#d6d9d2';
+const CATEGORY_COLOURS = { mattress: PETROL, sofa: GOLD, bedframe: '#6fa79e', other: WARM_GREY } as const;
 
 const clip = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
@@ -172,7 +176,7 @@ export const ProfitWaterfall = forwardRef<SVGSVGElement, { steps: Step[] }>(({ s
   const slot = (right - left) / Math.max(steps.length, 1);
   const barW = Math.min(72, slot * 0.56);
   const ticks = [0, 1, 2, 3, 4].map((k) => lo + ((hi - lo) * k) / 4);
-  const fill = (s: Step) => (s.key === 'sales' ? PETROL : s.key === 'gp' ? GREEN : s.key === 'gifts' ? BRASS : RED);
+  const fill = (s: Step) => (s.key === 'sales' ? PETROL : s.key === 'gp' ? (s.valueSen < 0 ? RED : PETROL_INK) : s.key === 'gifts' ? WARM_GREY : GOLD);
   return (
     <div ref={holder} style={{ width: '100%' }}>
       <svg ref={ref} viewBox={`0 0 ${W} ${H}`} width={W} height={H} style={{ display: 'block' }} fontFamily={FONT} role="img" aria-label="From sales to gross profit">

@@ -14,6 +14,7 @@ import { toBase64 } from '../lib/scan-ocr';
 import { scanTimer } from '../lib/scan-timing';
 import { keepScanFile } from '../lib/scan-files';
 import { base64ToBytes } from '../../services/mail-parse';
+import { MAX_SPLIT_PAGES, splitPdfPages } from '../lib/pdf-split';
 
 /* ── Bill OCR — read incoming bills into voucher pre-fills (2026-09-02) ──────
    我想要把ocr 功能放去payment 那边. Each `bills` entry is ONE document (its
@@ -163,6 +164,29 @@ export const extractBillsHandler = async (c: any) => {
   timer.mark('parse');
   timer.done(c.env, null, read.some((r) => r.ok) ? 'ok' : 'error');
   return c.json({ bills: out });
+};
+
+/* POST /payment-vouchers/split-pdf — one PDF of several bills, cut into one
+   PDF per page (HC-0204) for the pile to read one by one. Nothing is kept or
+   written: the pages go back to the browser and travel on as pile files. */
+export const splitPdfHandler = async (c: any) => {
+  if (!hasHouzsPerm(c, 'scm.payment_voucher.create')) {
+    return c.json({ error: "You don't have permission to do that." }, 403);
+  }
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const bytes = base64ToBytes(String(body?.dataBase64 ?? ''));
+  if (!bytes || bytes.length === 0) return c.json({ error: 'no_file', message: 'Send the PDF to split.' }, 400);
+  if (bytes.length > MAX_BILL_FILE_BYTES) {
+    return c.json({ error: 'file_too_big', message: `The PDF is over ${Math.round(MAX_BILL_FILE_BYTES / 1024 / 1024)}MB.` }, 400);
+  }
+  const got = await splitPdfPages(bytes);
+  if (!got.ok) {
+    return got.reason === 'too_many_pages'
+      ? c.json({ error: 'too_many_pages', message: `The PDF has ${got.pageCount} pages — a pile holds at most ${MAX_SPLIT_PAGES}.` }, 400)
+      : c.json({ error: 'unreadable_pdf', message: 'This PDF could not be split — it may be password-protected or damaged.' }, 422);
+  }
+  return c.json({ pages: got.pages.map((p) => toBase64(p.slice().buffer)) });
 };
 
 /** A payment request's files, read from the file store as one bill's pages —

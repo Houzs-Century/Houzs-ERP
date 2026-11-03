@@ -83,6 +83,11 @@
 /* ── The header's actions: Layout · Excel · PDF · Print, right-aligned. ── */
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .actionsSlot { display: contents; }
+
+/* What stands in for the report (the Layout editor) and the report itself:
+   neither adds a box of its own; the report steps aside while the other is open. */
+.inPlace { display: contents; }
+.asideNow { display: none !important; }
 .btn {
   height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; border: 1px solid var(--fin-line);
   border-radius: 6px; background: var(--fin-surface); color: var(--fin-text); font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif;
@@ -97,6 +102,20 @@
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; min-width: 0; padding: 10px 12px;
   background: var(--fin-surface); border: 1px solid var(--fin-line); border-radius: 10px; box-shadow: var(--fin-card-shadow);
 }
+
+/* ── The header's ⋯: CSV, Charts PNG … ── */
+.moreWrap { position: relative; display: inline-flex; }
+.moreBtn { width: 32px; padding: 0; justify-content: center; }
+.moreMenu {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 40; min-width: 170px; padding: 4px;
+  background: var(--fin-surface); border: 1px solid var(--fin-line); border-radius: 8px; box-shadow: var(--fin-pop-shadow);
+}
+.moreItem {
+  display: block; width: 100%; padding: 7px 10px; border: 0; border-radius: 6px; background: none; text-align: left;
+  font: 500 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-text); cursor: pointer; white-space: nowrap;
+}
+.moreItem:hover:not(:disabled) { background: var(--fin-paper); color: var(--fin-ink); }
+.moreItem:disabled { opacity: 0.5; cursor: default; }
 
 /* ── The toolbar's tools: a grey name, then its control ── */
 .tool { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
@@ -124,7 +143,12 @@
 .switchOn .switchKnob { transform: translateX(12px); }
 
 /* ── Tiles over a report: label, figure, the line under it ── */
-.tiles { display: grid; grid-template-columns: repeat(var(--tile-cols, 4), minmax(0, 1fr)); gap: 10px; }
+/* As many columns as tiles (up to seven), each at least 132px: a narrower
+   report wraps the row instead of squeezing a figure out of its tile. */
+.tiles {
+  display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(max(132px, calc((100% - (var(--tile-cols, 4) - 1) * 10px) / var(--tile-cols, 4))), 1fr));
+}
 @media (max-width: 767px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .tile {
   display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 12px 14px; border-radius: 10px;
