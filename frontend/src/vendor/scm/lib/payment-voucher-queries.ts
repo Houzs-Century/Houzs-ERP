@@ -234,6 +234,31 @@ export const useCheckPaymentVoucher = approvalMutation('check');
 /* Approve posts the GL in the same request — the response is the post's. */
 export const useApprovePaymentVoucher = approvalMutation('approve');
 
+/* Remind approver (the redesign's e8; owner 2026-11-03: 主要是付款吧) — a note in
+   the approver's bell about checked vouchers. Posts nothing and changes no
+   voucher, so only the trail it writes is refreshed. One voucher from the row,
+   the ticked ones from the batch bar (one note for all of them). Server:
+   backend/src/scm/routes/payment-vouchers-remind.ts. */
+export type PvRemindRefusal = { id: string; pvNumber: string | null; error: string; message: string };
+export type PvRemindResult = {
+  reminded: Array<{ id: string; pvNumber: string }>;
+  refused: PvRemindRefusal[];
+  /** How many people the note reached. */
+  approvers: number;
+  /** When these vouchers may be reminded again (one reminder per voucher an hour). */
+  nextAt: string;
+};
+export const useRemindApprover = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) =>
+      authedFetch<PvRemindResult>('/payment-vouchers/remind', { method: 'POST', body: JSON.stringify({ ids }) }),
+    onSuccess: (d) => {
+      for (const r of d.reminded) void qc.invalidateQueries({ queryKey: ['scm-entity-audit-log', 'PAYMENT_VOUCHER', r.id] });
+    },
+  });
+};
+
 export const useRejectPaymentVoucher = () => {
   const qc = useQueryClient();
   return useMutation({
