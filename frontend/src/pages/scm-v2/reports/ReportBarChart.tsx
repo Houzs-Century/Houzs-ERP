@@ -62,7 +62,7 @@ export function useChartPeriods(win: ChartWindow | null) {
   return { byMonth, isLoading: q.isLoading, isError: q.isError, today: q.data?.today };
 }
 
-export function ReportBarChart({ title, series, months, win, loading, failed, note }: {
+export function ReportBarChart({ title, series, months, win, loading, failed, note, onOpen, unit = 'sen', fmtValue = fmtSenPlain }: {
   title: string;
   series: ChartBarSeries[];
   /** The window's months with their figures, oldest first. */
@@ -71,11 +71,20 @@ export function ReportBarChart({ title, series, months, win, loading, failed, no
   loading: boolean;
   failed: boolean;
   note: string;
+  /** Called after a month is opened (the Performance P&L also switches to Single). */
+  onOpen?: (month: string) => void;
+  /** What the bars count — RM by default; a % (Merchant charges' fee %). */
+  unit?: 'sen' | 'pct';
+  /** A bar's figure in the card beside a month. */
+  fmtValue?: (v: number) => string;
 }) {
   const r = useReportRange();
   const inPeriod = (m: string) => r.usable && m >= monthStart(r.from) && m <= monthStart(r.to);
   const running = (m: string) => m === monthStart(r.today);
-  const open = (m: string) => r.setRange(m, running(m) ? r.today : monthEnd(m));
+  const open = (m: string) => {
+    r.setRange(m, running(m) ? r.today : monthEnd(m));
+    onOpen?.(m);
+  };
   const span = win ? `${monthAxis(win.from)} – ${monthAxis(win.to)}` : '';
   const empty = !loading && !failed && months.every((m) => series.every((x) => m.values[x.key] == null));
 
@@ -95,6 +104,7 @@ export function ReportBarChart({ title, series, months, win, loading, failed, no
           labels={months.map((m) => monthAxis(m.month))}
           bars={series.map((x) => ({ key: x.key, label: x.label, color: x.color, values: months.map((m) => m.values[x.key] ?? null) }))}
           height={230}
+          unit={unit}
           legend={false}
           ariaLabel={`${title}, month by month`}
           shaded={months.map((m) => inPeriod(m.month))}
@@ -111,7 +121,7 @@ export function ReportBarChart({ title, series, months, win, loading, failed, no
                   <div key={x.key} className={s.tipRow}>
                     <span className={s.swatch} style={{ background: x.color }} aria-hidden />
                     <span className={s.tipLabel}>{x.label}</span>
-                    <span className={s.tipValue}>{m.values[x.key] == null ? '—' : fmtSenPlain(m.values[x.key]!)}</span>
+                    <span className={s.tipValue}>{m.values[x.key] == null ? '—' : fmtValue(m.values[x.key]!)}</span>
                   </div>
                 ))}
                 {m.bottom.map((b, k) => (
