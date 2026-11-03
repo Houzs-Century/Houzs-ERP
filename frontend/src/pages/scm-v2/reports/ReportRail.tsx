@@ -20,6 +20,7 @@ import { NAV_TABS, type NavTab } from '../../../components/Sidebar';
 import { makeNavFilter } from '../../../components/navFilter';
 import { REPORT_CATALOG, REPORT_GROUPS, reportHref, type ReportId, type ReportItem, type ReportRange } from '../reports-catalog';
 import { readRailPinned, writeRailPinned } from './reportPrefs';
+import { REPORT_LOOK } from './reportListLook';
 import s from './ReportShell.module.css';
 
 const OPEN_DELAY_MS = 90;
@@ -119,7 +120,7 @@ export function ReportRail({ current, reports, range, pinned, onPinned }: {
           <div key={g.id} className={s.stripGroup}>
             <span className={s.stripRule} aria-hidden />
             {g.items.map((r) => {
-              const Icon = r.icon;
+              const Icon = REPORT_LOOK[r.id].icon;
               const on = r.id === current;
               return (
                 <Link
@@ -157,14 +158,14 @@ export function ReportRail({ current, reports, range, pinned, onPinned }: {
           <div key={g.id} role="group" aria-label={g.label}>
             <div className={s.groupLabel}>{g.label}</div>
             {g.items.map((r) => {
-              const Icon = r.icon;
+              const Icon = REPORT_LOOK[r.id].icon;
               const on = r.id === current;
               return (
                 <Link
                   key={r.id}
                   to={reportHref(r, range)}
                   className={`${s.item} ${on ? s.itemOn : ''}`}
-                  title={r.desc}
+                  title={REPORT_LOOK[r.id].desc}
                   aria-current={on ? 'page' : undefined}
                   onClick={picked}
                 >

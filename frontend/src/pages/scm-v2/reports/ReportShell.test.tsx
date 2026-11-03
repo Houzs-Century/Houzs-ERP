@@ -32,6 +32,7 @@ import { REPORT_CATALOG, REPORT_GROUPS, reportHref, reportOfAccountingTab } from
 import { REPORT_RANGE_PRESETS, presetLabel } from '../../../lib/dateRangePresets';
 import { classifyBrowserStorageKey } from '../../../lib/browserStorageRegistry';
 import { ReportShell } from './ReportShell';
+import { REPORT_LOOK } from './reportListLook';
 import { InPlaceOfReport, ReportExports, ReportHeaderActions, useReportSubtitle } from './reportParts';
 import { FinanceDateRange } from './FinanceDateRange';
 import { useReportRange } from './useReportRange';
@@ -74,7 +75,7 @@ describe('the report catalog', () => {
     ]);
     for (const r of REPORT_CATALOG) {
       if (r.tab) expect(r.label).toBe(ACCOUNTING_TAB_TITLES[r.tab]);
-      expect(r.desc.length).toBeGreaterThan(10);
+      expect(REPORT_LOOK[r.id].desc.length).toBeGreaterThan(10);
     }
   });
 
@@ -211,6 +212,16 @@ describe('the header and the shared pieces', () => {
     const header = screen.getByRole('heading', { level: 1 }).closest('.sticky') as HTMLElement;
     expect(within(header).getByRole('button', { name: 'Up front' })).toBeTruthy();
     await waitFor(() => expect(within(header).getByRole('button', { name: 'Mine' })).toBeTruthy());
+  });
+
+  test('the report opened last is remembered for the sidebar’s Reports entry; a Books page opened from the list leaves it', () => {
+    window.sessionStorage.removeItem('fin-reports-last');
+    const first = at('/scm/accounting?tab=ar', <ReportShell report="ar"><Body text={null} /></ReportShell>);
+    expect(window.sessionStorage.getItem('fin-reports-last')).toBe('/scm/accounting?tab=ar');
+    expect(classifyBrowserStorageKey('fin-reports-last', 'sessionStorage')?.classification).toBe('TRANSIENT');
+    first.unmount();
+    at('/scm/accounting?tab=tb&in=reports', <ReportShell report="tb"><Body text={null} /></ReportShell>);
+    expect(window.sessionStorage.getItem('fin-reports-last')).toBe('/scm/accounting?tab=ar');
   });
 
   test('a report that draws its own header gets the list only', () => {

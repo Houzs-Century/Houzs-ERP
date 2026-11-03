@@ -12,12 +12,14 @@ import { STAFF_LEGACY_REDIRECT_PATTERNS } from '../routing/routeManifest';
  * Books, Reports, Setup. The Accounting page's tabs are reached by deep link
  * (`/scm/accounting?tab=…`), so the sidebar can name a report directly.
  * A seventh, Forecasting, joined on 2026-09-21 (the Forecast P&L; the
- * Dashboard follows) — targets, not books, so it sits after the reports.
+ * Dashboard follows) — targets, not books, so it sat after the reports.
  *
  * The owner's Claude Design redesign (2026-11-02) puts two single entries
- * above them: To do (Finance's home, with its count) and Money today.
+ * above them: To do (Finance's home, with its count) and Money today; and
+ * Reports becomes ONE entry with its own report list (batch 6 §1.1) — the old
+ * Reports and Forecasting entries its hidden members (sidebarReportsEntry.test).
  *
- * Pinned here: the two entries, then the seven groups in the owner's order;
+ * Pinned here: the two entries, then the six groups in the owner's order;
  * every destination that existed before still exists (nothing lost in the
  * move); every deep link names a tab the page knows; no destination twice.
  */
@@ -37,13 +39,13 @@ describe('the Finance sidebar', () => {
     expect(money.children, 'Money today is a page, not a group').toBeUndefined();
   });
 
-  it('is seven groups, in the order the money moves', () => {
+  it('is six groups, in the order the money moves', () => {
     expect(finance).toBeDefined();
     expect((finance?.children ?? []).map((g) => g.label)).toEqual([
       'To do', 'Money today',
-      'Money in', 'Money out', 'Bank & cards', 'Books', 'Reports', 'Forecasting', 'Setup',
+      'Money in', 'Money out', 'Bank & cards', 'Books', 'Reports', 'Setup',
     ]);
-    expect(groups).toHaveLength(7);
+    expect(groups).toHaveLength(6);
     for (const g of groups) {
       expect(g.children?.length ?? 0, `${g.label} has entries`).toBeGreaterThan(0);
       expect(g.groupId, `${g.label} remembers its open state`).toBeTruthy();
@@ -137,9 +139,30 @@ describe('the Finance sidebar', () => {
     expect(byTo('/scm/outstanding')?.label).toBe('Outstanding');
   });
 
-  it('puts the reports together, the Corrections report among them', () => {
+  it('puts the reports together — the Corrections report, the Forecast P&L and the Dashboard among them', () => {
     const reports = finance?.children?.find((g) => g.label === 'Reports');
+    expect(reports?.collapsed, 'one entry with its own report list').toBe(true);
     const labels = (reports?.children ?? []).map((t) => t.label);
-    expect(labels).toEqual(expect.arrayContaining(['P&L', 'Balance Sheet', 'Cash Flow', 'AR Aging', 'AP Aging', 'Corrections', 'Sales Report', 'Product Profit']));
+    expect(labels).toEqual(expect.arrayContaining([
+      'P&L', 'Balance sheet', 'Cash flow', 'AR aging', 'AP aging', 'Corrections', 'Sales report · fairs', 'Product profit',
+      'Forecast P&L', 'Dashboard',
+    ]));
+  });
+
+  /* The owner's Claude Design (batch 6 §1.1): Books and Setup in the design's
+     order and names, every gate as it was. */
+  it('names Books and Setup as the redesign does', () => {
+    const entries = (label: string) => finance?.children?.find((g) => g.label === label)?.children ?? [];
+    expect(entries('Books').map((t) => [t.label, t.to])).toEqual([
+      ['Journal entries', '/scm/accounting?tab=je'],
+      ['General ledger', '/scm/accounting?tab=gl'],
+      ['Trial balance', '/scm/accounting?tab=tb'],
+      ['Self-check', '/scm/accounting?tab=check'],
+      ['Stock close', '/scm/accounting?tab=close'],
+    ]);
+    for (const t of entries('Books')) expect(t, t.label).toMatchObject({ anyPerm: ['*', 'scm.access'], anyAccess: ['scm.finance.books'] });
+    expect(entries('Setup').map((t) => t.label)).toEqual([
+      'Chart of accounts', 'Opening balance', 'Item groups', 'Recon setup', 'Currencies', 'Deposit invoices', 'To do rules',
+    ]);
   });
 });
