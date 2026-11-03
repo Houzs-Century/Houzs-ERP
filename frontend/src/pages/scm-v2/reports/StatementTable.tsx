@@ -22,6 +22,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import { fmtSenPlain } from '../../../vendor/shared/format';
 import { fmtPct, folderOpen, foldsChildren } from '../../../vendor/scm/lib/report-layout';
 import { AccountLinesRow } from '../AccountLinesRow';
+import { AccountCell } from '../JournalEntryCards';
 import type { Level, ReportTree } from '../ReportLayoutTree';
 import { columnsSpan, type StatementColumn, type StatementLine } from './statementColumns';
 import { useStatementWidths, type WidthGroup } from './statementWidths';
@@ -79,11 +80,18 @@ export type StatementTableProps = {
   /** What opens under a row instead of an account's ledger lines: the column
    *  pressed (null = the whole span), the close, and the width to span. */
   renderLines?: (line: StatementLine, column: StatementColumn | null, close: () => void, colSpan: number) => ReactNode;
+  /** An account row opens elsewhere (the Trial balance's drawer): its name and a
+   *  double-click on the row call this; nothing opens under the row. */
+  onOpenRow?: (line: StatementLine) => void;
+  /** Accounts print as the owner's AccountCell — the code on one line, the name
+   *  below (the Trial balance) — instead of the code before the name. */
+  accountCell?: boolean;
 };
 
 export function StatementTable({
   widthsKey, head, columns, lines, shown, level, tree, showPct, fmt = fmtSenPlain,
   finalId, strongIds, onCategoryFigure, noteAfter, note, drillKey, ariaLabel, drillRows = 'accounts', renderLines,
+  onOpenRow, accountCell = false,
 }: StatementTableProps) {
   const w = useStatementWidths(widthsKey);
   /* Which rows have their lines open, and on which column (ALL = the whole span). */
@@ -181,14 +189,15 @@ export function StatementTable({
               /* An account row opens its lines by its name; in 'figures' mode any row
                  with figures opens what is behind a figure (a category's: every row under it). */
               const account = l.kind === 'row' && (drillRows === 'figures' || Boolean(l.code));
-              const drillable = account || (drillRows === 'figures' && (l.kind === 'category' || l.kind === 'unassigned'));
+              const opensElsewhere = Boolean(onOpenRow) && account;
+              const drillable = !onOpenRow && (account || (drillRows === 'figures' && (l.kind === 'category' || l.kind === 'unassigned')));
               const drilled = drillable ? drill[l.id] : undefined;
               const drillCol = drilled && drilled !== ALL ? columns.find((c) => c.key === drilled) : undefined;
               const depthPad = 12 + 16 * Math.max(0, l.depth - 1);
               const name = nameOf(l);
               return (
                 <Fragment key={l.id}>
-                  <tr data-kind={l.kind} data-depth={l.depth} className={rowClass(l)}>
+                  <tr data-kind={l.kind} data-depth={l.depth} className={rowClass(l)} onDoubleClick={opensElsewhere ? () => onOpenRow?.(l) : undefined}>
                     <th scope="row" className={s.name} style={{ paddingLeft: depthPad }}>
                       <span className={s.nameInner}>
                         {folder ? (
@@ -197,8 +206,12 @@ export function StatementTable({
                             {open ? <ChevronDown size={12} strokeWidth={2} aria-hidden /> : <ChevronRight size={12} strokeWidth={2} aria-hidden />}
                           </button>
                         ) : l.depth > 0 ? <span className={s.leaf} aria-hidden /> : null}
-                        {l.code && l.kind !== 'block' && <span className={s.code}>{l.code}</span>}
-                        {account ? (
+                        {l.code && l.kind !== 'block' && !accountCell && <span className={s.code}>{l.code}</span>}
+                        {opensElsewhere ? (
+                          <button type="button" className={s.nameBtn} title="Open its lines" onClick={() => onOpenRow?.(l)}>
+                            {accountCell && l.code ? <AccountCell code={l.code} name={name} /> : name}
+                          </button>
+                        ) : account ? (
                           <button type="button" className={s.nameBtn} title="Its lines over the whole period"
                             aria-label={`Lines of ${l.label}`} aria-expanded={drilled === ALL} onClick={() => toggleDrill(l.id, ALL)}>
                             {name}

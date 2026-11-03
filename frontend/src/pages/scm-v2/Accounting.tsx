@@ -20,13 +20,13 @@ import { accountingTabFromSearch, type AccountingTab } from './accounting-tabs';
 import { reportOfAccountingTab, type ReportItem } from './reports-catalog';
 import { ReportShell } from './reports/ReportShell';
 import {
-  useAccountBalances,
   useAccounts,
   type Account,
 } from '../../vendor/scm/lib/accounting-queries';
 import { AgingReport } from './AgingReport';
 import { DataTable, type Column } from '../../components/DataTable';
 import { ItemGroupsTab } from './ItemGroups';
+import { TrialBalanceTab } from './TrialBalance';
 import { StockCloseTab } from './StockClose';
 import { PnLTab, BalanceSheetTab } from './Reports';
 import { ReceiptsPaymentsTab } from './ReceiptsPayments';
@@ -38,7 +38,6 @@ import { EventCostsTab } from './EventCosts';
 import { EventCommissionTab } from './EventCommission';
 import { ProductProfitTab } from './ProductProfit';
 import { LogisticsCostTab } from './LogisticsCost';
-import { fmtSen } from '../../vendor/shared/format';
 import { byText } from '../../vendor/scm/lib/sort-options';
 import styles from './Suppliers.module.css';
 import { GeneralLedger } from './GeneralLedger';
@@ -48,10 +47,6 @@ import { AccountingHeader } from './books/AccountingHeader';
 import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
 import { DateField } from "../../vendor/scm/components/DateField";
 
-
-// The ONE guarded centi→"RM …" formatter — returns "—" for an absent/non-finite
-// amount, never "RM NaN". Kept under the local name so callsites are unchanged.
-const fmt = (sen: number | null | undefined) => fmtSen(sen);
 
 type Tab = AccountingTab;
 
@@ -240,118 +235,3 @@ const JeTab = () => <JournalTab />;
    running balance, the journal's references (docs/bugs/0924). Its filters
    live in the URL, so a figure on a statement opens it on that account. */
 const GlTab = () => <GeneralLedger />;
-
-/* ── Trial Balance ───────────────────────────────────────────────────── */
-
-export const TrialBalanceTab = () => {
-  const q = useAccountBalances();
-  // Pre-sort into the canonical statement order — DataTable's groupBy buckets
-  // in first-seen row order, so this IS the group order until the user sorts.
-  const rows = useMemo(() => {
-    const all = q.data?.balances ?? [];
-    const rank = (t: string) => {
-      const i = ACCOUNT_TYPE_ORDER.indexOf(t);
-      return i === -1 ? ACCOUNT_TYPE_ORDER.length : i;
-    };
-    return [...all].sort(
-      (a, b) => rank(a.account_type) - rank(b.account_type) || a.account_code.localeCompare(b.account_code),
-    );
-  }, [q.data]);
-
-  /* The report's own self-check (brief §3.7: every report is born carrying
-     one): Σ debits must equal Σ credits over the whole ledger. Anything but
-     0.00 is a BUG in the books, not an opinion about them. */
-  const totals = useMemo(() => {
-    let dr = 0; let cr = 0;
-    for (const r of rows) { dr += r.total_debit_sen; cr += r.total_credit_sen; }
-    return { dr, cr, diff: dr - cr };
-  }, [rows]);
-
-  type BalanceRow = (typeof rows)[number];
-  /* A self-check folded over a list that is empty BECAUSE THE READ FAILED
-     computes dr === cr === 0, which reads as "the books balance" — in the green
-     frame, as a finding. It is not a finding about the ledger, it is the
-     absence of one. `isLoading` alone cannot tell them apart: it is FALSE after
-     a failed fetch, which is exactly when `rows` is emptiest. So the tiles show
-     the unknown marker and the failure is stated. */
-  const unknown = q.isError || (!q.isSuccess && rows.length === 0);
-  const NOT_KNOWN = '—';
-  return (
-    <div className="space-y-3">
-      {q.isError && (
-        <div style={{
-          padding: 'var(--space-3) var(--space-4)',
-          background: 'rgba(184, 51, 31, 0.10)',
-          border: '1px solid var(--c-festive-b, #B8331F)',
-          borderRadius: 'var(--radius-md)',
-          fontSize: 'var(--fs-13)',
-          color: 'var(--c-festive-b, #B8331F)',
-        }}>
-          <strong>The account balances could not be loaded, so this report is not a statement about the books.</strong>{' '}
-          {q.error instanceof Error ? q.error.message : 'Please try again.'}
-        </div>
-      )}
-      <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-3)' }}>
-        <SummaryTile label="Σ Debit" value={unknown ? NOT_KNOWN : fmt(totals.dr)} />
-        <SummaryTile label="Σ Credit" value={unknown ? NOT_KNOWN : fmt(totals.cr)} />
-        <div style={{
-          padding: 'var(--space-3) var(--space-4)',
-          background: unknown ? 'var(--c-cream)' : totals.diff === 0 ? 'rgba(47, 93, 79, 0.10)' : 'rgba(184, 51, 31, 0.10)',
-          border: `1px solid ${unknown ? 'var(--c-line, rgba(34,31,32,0.08))' : totals.diff === 0 ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--c-festive-b, #B8331F)'}`,
-          borderRadius: 'var(--radius-md)',
-        }}>
-          <div className={styles.subtitle} style={{ marginBottom: 2 }}>Difference (must be 0.00)</div>
-          <div style={{ fontSize: 'var(--fs-16)', fontWeight: 900, color: unknown ? 'var(--c-ink)' : totals.diff === 0 ? 'var(--c-secondary-a, #2F5D4F)' : 'var(--c-festive-b, #B8331F)' }}>
-            {unknown
-              ? `${NOT_KNOWN} — not checked`
-              : `${fmt(totals.diff)}${totals.diff === 0 ? ' — books balance' : ' — BOOKS DO NOT BALANCE'}`}
-          </div>
-        </div>
-      </section>
-
-      <DataTable<BalanceRow>
-        tableId="accounting-balances"
-        layoutFamily="accounting-balances"
-        exportName="trial-balance"
-        rows={q.isLoading || q.isError ? null : rows}
-        loading={q.isLoading}
-        emptyLabel={q.isError ? 'The account balances could not be loaded.' : 'No balances yet.'}
-        getRowKey={(r) => r.account_code}
-        groupBy={{ key: 'type' }}
-        columns={[
-          { key: 'type', label: 'Type', width: '110px', defaultHidden: true, getValue: (r) => r.account_type, render: (r) => humaniseStatusKey(r.account_type) },
-          { key: 'account', label: 'Account', getValue: (r) => `${r.account_code} — ${r.account_name}`, render: (r) => `${r.account_code} — ${r.account_name}` },
-          { key: 'debit', label: 'Σ Debit', align: 'right', width: '140px', getValue: (r) => r.total_debit_sen / 100, render: (r) => fmt(r.total_debit_sen) },
-          { key: 'credit', label: 'Σ Credit', align: 'right', width: '140px', getValue: (r) => r.total_credit_sen / 100, render: (r) => fmt(r.total_credit_sen) },
-          {
-            key: 'balance', label: 'Balance', align: 'right', width: '150px',
-            getValue: (r) => r.balance_sen / 100,
-            render: (r) => (
-              <span style={{ fontWeight: 700, color: r.balance_sen < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--c-ink)' }}>
-                {fmt(r.balance_sen)}
-              </span>
-            ),
-          },
-        ] satisfies Column<BalanceRow>[]}
-      />
-    </div>
-  );
-};
-
-/* ── Helpers ─────────────────────────────────────────────────────────── */
-const SummaryTile = ({
-  label, value, muted, bold,
-}: { label: string; value: string; muted?: boolean; bold?: boolean }) => (
-  <div style={{
-    padding: 'var(--space-3) var(--space-4)',
-    background: 'var(--c-cream)',
-    border: `1px solid ${muted ? 'var(--c-line, rgba(34,31,32,0.08))' : 'var(--c-orange)'}`,
-    borderRadius: 'var(--radius-md)',
-  }}>
-    <div className={styles.subtitle} style={{ marginBottom: 2 }}>{label}</div>
-    <div style={{ fontSize: 'var(--fs-16)', fontWeight: bold ? 900 : 700, color: 'var(--c-ink)' }}>
-      {value}
-    </div>
-  </div>
-);
-
