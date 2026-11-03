@@ -461,7 +461,11 @@ scanPayment.post('/extract', async (c) => {
 
   // Live active payment vocabularies via the user-scoped client (RLS applies).
   const sb = c.get('supabase');
-  const options = await loadPaymentOptions(sb, activeCompanyId(c));
+  // A vocabulary read error leaves `options` empty here, exactly as before the
+  // loader was factored out: validateReceipt then clears every match (with a
+  // warning) rather than failing the OCR — the operator still gets the raw
+  // fields to key. The Connect push treats the same error as fatal instead.
+  const { options } = await loadPaymentOptions(sb, activeCompanyId(c) ?? null);
   const optionsText = formatOptions(options);
 
   // Company name from the central Branding config (anchors the prompt).

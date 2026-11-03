@@ -1,4 +1,4 @@
--- 20261103T1200_scm_connect_payment_pushes.sql
+-- 20261103T1600_scm_connect_payment_pushes.sql
 -- REVERSAL: DROP TABLE IF EXISTS scm.connect_payment_pushes;
 --   Revert the code first (routes/connect-payments.ts reads and writes it).
 --   Payments already booked from a push stay — they are ordinary

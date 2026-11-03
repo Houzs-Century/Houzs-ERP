@@ -62,7 +62,7 @@ export type SoMatchResult =
  * confident match — the caller must queue it for manual linking, never book blind.
  */
 export function classifySoMatch(hits: SoMatchRow[], orderRef: string): SoMatchResult {
-  const ref = String(orderRef ?? '').trim();
+  const ref = orderRef.trim();
   if (ref === '') return { ok: false, reason: 'order_ref is blank' };
   const byDoc = hits.filter((h) => h.doc_no === ref);
   if (byDoc.length === 1) return { ok: true, docNo: byDoc[0].doc_no };

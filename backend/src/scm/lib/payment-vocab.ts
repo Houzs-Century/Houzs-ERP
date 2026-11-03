@@ -14,7 +14,10 @@ import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase
 import { paginateAll } from './paginate-all';
 
 // scm-scoped, loosely-typed client (matches scm/env.ts Variables.supabase and
-// the service-role client from db/supabase.getSupabaseService).
+// the service-role client from db/supabase.getSupabaseService). The scm
+// PostgREST client has no generated schema types, so it is typed loosely here
+// exactly as scan-payment.ts and every scm route do.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- loose scm client; no generated schema types (same as scan-payment.ts / scm route Variables.supabase)
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 
 export const PAYMENT_OPTION_CATEGORIES = [
@@ -35,14 +38,22 @@ export const emptyPaymentOptions = (): CatalogOptions => ({
 });
 
 /** Pull the live, ACTIVE payment vocabularies from so_dropdown_options, scoped
- *  to the caller's company (multi-company, mig 0089 — null/undefined stays
- *  global). Paged so PostgREST's 1000-row cap can't drop option rows. */
+ *  to the caller's company (multi-company, mig 0089 — `null` is the GLOBAL,
+ *  no-company read, and is passed explicitly: the scope decides which rows come
+ *  back, so it is a required argument, never an omittable default). Paged so
+ *  PostgREST's 1000-row cap can't drop option rows.
+ *
+ *  Returns `{ options, error }`: a read failure rides back rather than
+ *  collapsing to an empty vocabulary, because "no options" and "the read
+ *  failed" must not look alike — an empty list would silently clear every match
+ *  the caller tries to snap. On error `options` is empty; the caller decides
+ *  whether that is fatal (the Connect push fails, retryable) or tolerable. */
 export async function loadPaymentOptions(
   sb: SupabaseClient,
-  companyId?: number | null,
-): Promise<CatalogOptions> {
+  companyId: number | null,
+): Promise<{ options: CatalogOptions; error: { message: string } | null }> {
   const options = emptyPaymentOptions();
-  const { data } = await paginateAll((from, to) => {
+  const { data, error } = await paginateAll((from, to) => {
     let q = sb
       .from('so_dropdown_options')
       .select('category, value, label')
@@ -54,12 +65,13 @@ export async function loadPaymentOptions(
     if (companyId != null) q = q.eq('company_id', companyId);
     return q.range(from, to);
   });
+  if (error) return { options, error };
   for (const row of (data as Array<{ category: string; value: string; label: string }> | null) ?? []) {
     if ((PAYMENT_OPTION_CATEGORIES as readonly string[]).includes(row.category)) {
       options[row.category as PaymentOptionCategory].push({ value: row.value, label: row.label });
     }
   }
-  return options;
+  return { options, error: null };
 }
 
 /** Snap a free-typed value to the canonical casing of an ACTIVE option in the

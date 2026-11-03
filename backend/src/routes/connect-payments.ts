@@ -38,8 +38,9 @@ import { mapConnectMethod, rmToSen, isSupportedCurrency, classifySoMatch, type S
 import { recordSoPaymentRow } from '../scm/lib/so-payment-row';
 import { checkPaymentSlipDate } from '../scm/shared/payment-slip-date';
 import { todayMyt } from '../scm/lib/my-time';
-import { buildSlipKey, type SlipMime } from '../scm/lib/r2';
+import { buildSlipKey } from '../scm/lib/r2';
 import { slipBindings } from '../scm/lib/slip';
+import { ALLOWED_SLIP_MIMES } from '../scm/shared/schemas/slip.schema';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -49,7 +50,6 @@ const app = new Hono<{ Bindings: Env }>();
 app.use('*', requirePermission('*'));
 
 const MAX_SLIP_BYTES = 20 * 1024 * 1024;
-const SLIP_MIMES: readonly SlipMime[] = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
 
 /* The push Connect sends. snake_case to match Connect's own payload style and
    chatCallback's. The slip rides as base64 in the body (one call: Connect already
@@ -73,7 +73,9 @@ const pushSchema = z.object({
   reference:          z.string().trim().max(200).optional().nullable(),
   paid_at:            z.string().trim().min(1).max(32),
   slip_base64:        z.string().min(1),
-  slip_mime:          z.enum(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']),
+  // Reuse the ONE shared slip-mime vocabulary (scm/shared/schemas/slip.schema)
+  // rather than re-listing the four values here — no new "home" for that set.
+  slip_mime:          z.enum(ALLOWED_SLIP_MIMES),
 });
 type Push = z.infer<typeof pushSchema>;
 
@@ -121,9 +123,8 @@ app.post('/', async (c) => {
   if (amountSen == null || amountSen <= 0) {
     return c.json({ ok: false, error: 'bad_amount', reason: 'amount must be a positive RM value' }, 400);
   }
-  if (!SLIP_MIMES.includes(p.slip_mime)) {
-    return c.json({ ok: false, error: 'bad_slip', reason: 'slip_mime must be image/jpeg, image/png, image/webp or application/pdf' }, 400);
-  }
+  // slip_mime is already constrained to the four accepted types by the zod enum
+  // above — no second runtime check (and no second copy of that mime set).
   const slipBytes = decodeSlip(p.slip_base64);
   if (!slipBytes) {
     return c.json({ ok: false, error: 'bad_slip', reason: 'slip_base64 is not valid base64, or the slip exceeds 20MB' }, 400);
@@ -182,11 +183,12 @@ app.post('/', async (c) => {
       // Unique violation = a concurrent request claimed it first. Re-read and
       // return its state; a raced 'failed' (or an unreadable re-read) is a 502
       // so a later retry re-processes it rather than double-booking now.
-      const { data: raced } = await sb
+      const { data: raced, error: racedErr } = await sb
         .from('connect_payment_pushes')
         .select('status, so_doc_no, erp_payment_id, error')
         .eq('connect_payment_id', p.connect_payment_id)
         .maybeSingle();
+      if (racedErr) return c.json({ ok: false, error: 'lookup_failed', reason: racedErr.message }, 502);
       if (raced && (raced as PushRow).status !== 'failed') return replay(raced as PushRow);
       return c.json({ ok: false, error: 'insert_failed', reason: insErr.message }, 502);
     }
@@ -251,7 +253,9 @@ app.post('/', async (c) => {
   if (byLinkedRes.error) return settle('failed', { slipKey, reason: `SO lookup failed: ${byLinkedRes.error.message}` });
   const seen = new Set<string>();
   const hits: SoMatchRow[] = [];
-  for (const r of [...(byDocRes.data ?? []), ...(byLinkedRes.data ?? [])] as SoMatchRow[]) {
+  // Both reads succeeded (the error guards above returned otherwise), so each
+  // `.data` is a row array, never null.
+  for (const r of [...byDocRes.data, ...byLinkedRes.data] as SoMatchRow[]) {
     if (!seen.has(r.doc_no)) { seen.add(r.doc_no); hits.push(r); }
   }
   const match = classifySoMatch(hits, p.order_ref);
@@ -263,17 +267,19 @@ app.post('/', async (c) => {
   // resolve, not ours to guess. ──────────────────────────────────────────────
   let merchantProvider: string | null = null;
   let onlineType: string | null = null;
-  if (methodCode === 'merchant') {
-    const options = await loadPaymentOptions(sb, p.erp_company_id);
-    merchantProvider = snapPaymentOption(options.payment_merchant, p.bank);
-    if (!merchantProvider) {
-      return settle('needs_manual', { slipKey, reason: `bank "${p.bank ?? ''}" is not in the live merchant list for this company` });
-    }
-  } else if (methodCode === 'transfer') {
-    const options = await loadPaymentOptions(sb, p.erp_company_id);
-    onlineType = snapPaymentOption(options.online_type, p.online_type);
-    if (!onlineType) {
-      return settle('needs_manual', { slipKey, reason: `online_type "${p.online_type ?? ''}" is not in the live online sub-type list for this company` });
+  if (methodCode === 'merchant' || methodCode === 'transfer') {
+    const { options, error: vocabErr } = await loadPaymentOptions(sb, p.erp_company_id);
+    if (vocabErr) return settle('failed', { slipKey, reason: `payment vocabulary read failed: ${vocabErr.message}` });
+    if (methodCode === 'merchant') {
+      merchantProvider = snapPaymentOption(options.payment_merchant, p.bank);
+      if (!merchantProvider) {
+        return settle('needs_manual', { slipKey, reason: `bank "${p.bank ?? ''}" is not in the live merchant list for this company` });
+      }
+    } else {
+      onlineType = snapPaymentOption(options.online_type, p.online_type);
+      if (!onlineType) {
+        return settle('needs_manual', { slipKey, reason: `online_type "${p.online_type ?? ''}" is not in the live online sub-type list for this company` });
+      }
     }
   }
 
