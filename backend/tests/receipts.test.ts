@@ -163,6 +163,21 @@ describe('the general receipt — record and post, one motion', () => {
     expect((await app.request('/?month=2026-13')).status).toBe(400);
   });
 
+  /* Debtor maintenance lists the debtor receipts alone (the owner's Claude
+     Design, batch 5 §4.3): ?kind= reads one kind, with the month as before. */
+  test('?kind= lists one kind alone; junk is a 400', async () => {
+    const tables = baseTables();
+    tables.acc_receipts.push({ id: 'g1', company_id: CO, receipt_number: 'HC-RCT-2609-001', payer_name: 'MLE', receipt_date: `${thisMonth}-03`, bank_account_code: '310-0010', total_sen: 5000, status: 'POSTED', notes: null });
+    const app = harness(tables);
+    const kinds = async (q: string) => ((await (await app.request(`/${q}`)).json()) as { receipts: Row[] }).receipts.map((r) => `${r.kind} ${r.number}`);
+    expect(await kinds('?kind=DEBTOR')).toEqual(['DEBTOR HC-ODR-2609-001']);
+    expect(await kinds('?kind=debtor')).toEqual(['DEBTOR HC-ODR-2609-001']);
+    expect(await kinds('?kind=GENERAL')).toEqual(['GENERAL HC-RCT-2609-001']);
+    expect(await kinds(`?kind=CUSTOMER&month=${thisMonth}`)).toEqual(['CUSTOMER HC-SO-2609-004']);
+    expect((await kinds('')).sort()).toEqual(['CUSTOMER HC-SO-2609-004', 'DEBTOR HC-ODR-2609-001', 'GENERAL HC-RCT-2609-001']);
+    expect((await app.request('/?kind=OFFICIAL')).status).toBe(400);
+  });
+
   /* The merged Receipts page (the owner's Claude Design, batch 5 §2.3 c1): a
      sundry receipt says what it was for (its first line), a debtor receipt its
      stage marks and the bills it knocks off — this company's bills only. */

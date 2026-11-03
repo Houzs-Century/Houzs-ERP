@@ -21,6 +21,9 @@ const facts = (over: Partial<TodoFacts> = {}): TodoFacts => ({
   vouchers: [],
   transfers: [],
   overdue: [],
+  selfCheck: null,
+  trialBalanceDiffSen: null,
+  stockClose: null,
   money: null,
   done: [],
   problems: [],
@@ -206,9 +209,28 @@ describe('the page', () => {
       'Bank lines open': '0|ok',
       'October locked': '1 / 2|open',
       'Vouchers in progress': '1 to check|open',
+      'Self-check': 'not run yet|open',
+      'Trial balance': 'not checked|open',
+      'Stock close': 'automatic|ok',
     });
     const late = buildFinanceTodo({ ...base, today: '2026-11-20' }, FINANCE);
     expect(late.checklist.items.find((c) => c.key === 'months-locked')?.state).toBe('late');
+  });
+
+  it('the Books lines: the newest self-check, the difference in the trial balance, the stock close', () => {
+    const page = buildFinanceTodo(facts({
+      selfCheck: { ranOn: '2026-11-02', findings: 2, items: ['HC-SI-2610-0088 journal RM 120.00 short', '1 cancelled order holding money'] },
+      trialBalanceDiffSen: 0, stockClose: { lastMonthFailed: false },
+    }), FINANCE);
+    const line = (key: string) => page.checklist.items.find((c) => c.key === key)!;
+    expect(line('selfcheck')).toMatchObject({ label: 'Self-check', value: '2 to look at', state: 'late', to: '/scm/accounting?tab=check', detail: 'Checked 2026/11/02' });
+    expect(line('trial-balance')).toMatchObject({ value: '0.00', state: 'ok', detail: 'Debits equal credits' });
+    expect(line('stock-close')).toMatchObject({ value: 'automatic', state: 'ok', detail: "Runs by itself on 2026/12/01 at 00:05 and posts November's closing stock" });
+    const off = buildFinanceTodo(facts({ selfCheck: { ranOn: '2026-11-02', findings: 0, items: [] }, trialBalanceDiffSen: -1_250, stockClose: { lastMonthFailed: true } }), FINANCE);
+    const line2 = (key: string) => off.checklist.items.find((c) => c.key === key)!;
+    expect(line2('selfcheck')).toMatchObject({ value: 'Clean', state: 'ok' });
+    expect(line2('trial-balance')).toMatchObject({ value: '12.50', state: 'late', detail: 'Debits and credits differ' });
+    expect(line2('stock-close')).toMatchObject({ value: 'last run failed', state: 'late' });
   });
 
   it('done today is newest first, and a failed read is carried to the page', () => {
@@ -218,6 +240,27 @@ describe('the page', () => {
     }), FINANCE);
     expect(page.done.map((d) => d.key)).toEqual(['b', 'a']);
     expect(page.problems).toEqual(['bank lines (timeout)']);
+  });
+});
+
+describe('self-check', () => {
+  it('a run that found something is a job on Finance: how many checks, the items, Look', () => {
+    const f = facts({ selfCheck: { ranOn: '2026-11-01', findings: 2, items: ['HC-SI-2610-0088 journal RM 120.00 short', '2 payments not in the books', '1 cancelled order holding money', '3 payments without an official receipt'] } });
+    const { mine } = raiseJobs(f, FINANCE);
+    expect(mine).toHaveLength(1);
+    expect(mine[0]).toMatchObject({
+      key: 'selfcheck', rule: 'selfcheck', group: 'other', tone: 'err', icon: 'alert-triangle',
+      title: '2 self-checks to look at', since: '2026-11-01',
+      detail: 'HC-SI-2610-0088 journal RM 120.00 short · 2 payments not in the books · 1 cancelled order holding money · +1 more',
+      action: { label: 'Look', to: '/scm/accounting?tab=check', primary: false },
+    });
+    expect(raiseJobs(facts({ selfCheck: { ranOn: '2026-11-01', findings: 1, items: ['x'] } }), FINANCE).mine[0]!.title).toBe('1 self-check to look at');
+  });
+
+  it('a clean run, no run yet, or the rule switched off raises nothing', () => {
+    expect(raiseJobs(facts({ selfCheck: { ranOn: '2026-11-01', findings: 0, items: [] } }), FINANCE).mine).toEqual([]);
+    expect(raiseJobs(facts(), FINANCE).mine).toEqual([]);
+    expect(raiseJobs(facts({ selfCheck: { ranOn: '2026-11-01', findings: 1, items: ['x'] }, rulesOff: ['selfcheck'] }), FINANCE).mine).toEqual([]);
   });
 });
 

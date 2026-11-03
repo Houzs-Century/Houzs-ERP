@@ -36,7 +36,7 @@ export type TodoRule =
 /** The rules a switch in Setup › To do rules can turn off (tasks and routines have their own). */
 export const BUILT_IN_RULES = [
   'card-missing', 'card-matched', 'card-choose', 'bank-missing', 'bank-decide',
-  'requests', 'pv-check', 'pv-approve', 'transfers', 'overdue',
+  'requests', 'pv-check', 'pv-approve', 'transfers', 'selfcheck', 'overdue',
 ] as const satisfies readonly TodoRule[];
 
 /** One of the four piles ('recon' | 'pay' | 'other' | 'misc'), or a group Finance added (its id). */
@@ -80,7 +80,8 @@ export type TodoJob = {
 
 /** `task` is set for a task or routine done today — the page can reopen it. */
 export type TodoDone = { key: string; text: string; je: string | null; at: string; task?: { id: string; occursOn: string } | null };
-export type TodoCheck = { key: string; label: string; value: string; state: 'ok' | 'open' | 'late'; to: string | null };
+/** `detail` is the line's explanation, shown on hover ("Debits equal credits"). */
+export type TodoCheck = { key: string; label: string; value: string; state: 'ok' | 'open' | 'late'; to: string | null; detail?: string };
 
 export type FinanceTodo = {
   today: string;
@@ -123,6 +124,8 @@ export type TodoRequest = { payee: string; amountSen: number; createdOn: string 
 export type TodoVoucher = { stage: 'check' | 'approve'; payee: string; amountSen: number; since: string; by: string | null };
 export type TodoTransfer = { amountSen: number; paidOn: string | null };
 export type TodoOverdue = { invoiceNo: string; debtor: string; outstandingSen: number; dueDate: string };
+/** The newest Self-check run (scm.acc_selfcheck_runs): its day, how many checks found something, the items. */
+export type TodoSelfCheck = { ranOn: string; findings: number; items: string[] };
 
 export type TodoFacts = {
   today: string;
@@ -141,6 +144,12 @@ export type TodoFacts = {
   vouchers: TodoVoucher[];
   transfers: TodoTransfer[];
   overdue: TodoOverdue[];
+  /** Self-check's newest run; null when it never ran (a failed read is named in problems). */
+  selfCheck: TodoSelfCheck | null;
+  /** Σ debit − Σ credit over every posted line (the trial balance); null when it could not be read. */
+  trialBalanceDiffSen: number | null;
+  /** The stock close: whether its last run for last month failed; null when it could not be read. */
+  stockClose: { lastMonthFailed: boolean } | null;
   money: FinanceTodo['money'];
   done: TodoDone[];
   problems: string[];
@@ -368,6 +377,17 @@ function otherJobs(f: TodoFacts): Raised[] {
       action: { label: 'Review', to: '/scm/receipts?kind=official&status=draft&month=all', primary: false }, desk: 'finance',
     });
   }
+  /* Self-check (batch 6 c3): its newest run found something. Read from the
+     run's own summary — the check itself is too heavy for every To do read. */
+  const sc = f.selfCheck;
+  if (sc && sc.findings > 0) {
+    out.push({
+      key: 'selfcheck', rule: 'selfcheck', group: 'other', sub: null, tone: 'err', icon: 'alert-triangle',
+      title: `${sc.findings} self-${plural(sc.findings, 'check')} to look at`,
+      detail: firstFew(sc.items), amountSen: null, since: sc.ranOn,
+      action: { label: 'Look', to: SELF_CHECK_PAGE, primary: false }, desk: 'finance',
+    });
+  }
   const o = f.overdue.length;
   if (o > 0) {
     out.push({
@@ -385,6 +405,10 @@ function otherJobs(f: TodoFacts): Raised[] {
 
 /** Customer invoices more than this many days past due (the design's rule). */
 export const OVERDUE_DAYS = 30;
+
+const SELF_CHECK_PAGE = '/scm/accounting?tab=check';
+/** 1,234.56 — a figure the checklist prints. */
+const figure = (sen: number): string => (sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 /* ── The month's checklist ──────────────────────────────────────────────── */
 
@@ -418,6 +442,24 @@ function checklist(f: TodoFacts, jobs: Raised[]): FinanceTodo['checklist'] {
       key: 'vouchers', label: 'Vouchers in progress',
       value: toCheck + toApprove === 0 ? 'none' : [toCheck && `${toCheck} to check`, toApprove && `${toApprove} to approve`].filter(Boolean).join(' · '),
       state: toCheck + toApprove ? 'open' : 'ok', to: '/scm/payment-vouchers',
+    },
+    /* Books (batch 6 c3): the newest Self-check, the trial balance, the stock close. */
+    {
+      key: 'selfcheck', label: 'Self-check',
+      value: f.selfCheck == null ? 'not run yet' : f.selfCheck.findings > 0 ? `${f.selfCheck.findings} to look at` : 'Clean',
+      state: f.selfCheck == null ? 'open' : f.selfCheck.findings > 0 ? 'late' : 'ok', to: SELF_CHECK_PAGE,
+      ...(f.selfCheck ? { detail: `Checked ${showDate(f.selfCheck.ranOn)}` } : {}),
+    },
+    {
+      key: 'trial-balance', label: 'Trial balance',
+      value: f.trialBalanceDiffSen == null ? 'not checked' : figure(Math.abs(f.trialBalanceDiffSen)),
+      state: f.trialBalanceDiffSen == null ? 'open' : f.trialBalanceDiffSen === 0 ? 'ok' : 'late', to: '/scm/accounting?tab=tb',
+      ...(f.trialBalanceDiffSen == null ? {} : { detail: f.trialBalanceDiffSen === 0 ? 'Debits equal credits' : 'Debits and credits differ' }),
+    },
+    {
+      key: 'stock-close', label: 'Stock close', value: f.stockClose?.lastMonthFailed ? 'last run failed' : 'automatic',
+      state: f.stockClose?.lastMonthFailed ? 'late' : 'ok', to: '/scm/accounting?tab=close',
+      detail: `Runs by itself on ${showDate(addDays(`${f.today.slice(0, 7)}-01`, lastDayOfMonth(f.today)))} at 00:05 and posts ${monthOf(f.today)}'s closing stock`,
     },
   ];
   return { month: f.today.slice(0, 7), daysLeft: lastDayOfMonth(f.today) - Number(f.today.slice(8, 10)), items };

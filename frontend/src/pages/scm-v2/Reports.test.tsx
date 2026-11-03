@@ -5,7 +5,7 @@
 // sales on every row, L1..Ln buttons — and offers the layout editor.
 
 import { describe, expect, test, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 const acc = (code: string, name: string, amountSen: number, pct: number | null) =>
   ({ kind: 'account' as const, id: `acc:${code}`, label: `${code} — ${name}`, code, amountSen, pct, children: [] });
@@ -219,13 +219,15 @@ describe('the standard statements', () => {
   });
 
   /* EXPORTS (owner 2026-09-19: 我这页显示什么就要 export 什么): Excel and PDF carry
-     the statement as shown — the lines at the level chosen, no RM. */
-  test('Excel and PDF carry the statement as shown — the lines at the level chosen', () => {
+     the statement as shown — the lines at the level chosen, no RM. The
+     builders load on the press (batch 6: the header's Excel · PDF · Print), so
+     the calls are awaited; PDF opens the preview, Print prints that same PDF. */
+  test('Excel and PDF carry the statement as shown — the lines at the level chosen', async () => {
     type Sheet = { title: string; subtitle: string; tables: Array<{ columns: Array<{ label: string }>; rows: Array<{ label: string; kind: string; depth: number; cells: unknown[] }> }> };
     render(<PnLTab />);
     fireEvent.click(screen.getByRole('button', { name: 'L1' }));
     fireEvent.click(screen.getByRole('button', { name: 'Excel' }));
-    expect(xlsx).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(xlsx).toHaveBeenCalledTimes(1));
     const [sheet, name] = xlsx.mock.calls[0]! as [Sheet, string];
     expect(name).toMatch(/^pnl-\d{4}-\d{2}-\d{2}-to-\d{4}-\d{2}-\d{2}\.xlsx$/);
     expect(sheet.title).toBe('P&L');
@@ -237,11 +239,16 @@ describe('the standard statements', () => {
     expect(labels).not.toContain('900-A001 — ADVERT');
     expect(sheet.tables[0]!.rows.find((r) => r.label === 'NET PROFIT')).toMatchObject({ kind: 'net', cells: [41_500, 41.5] });
     fireEvent.click(screen.getByRole('button', { name: 'PDF' }));
-    expect(pdf).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(pdf).toHaveBeenCalledTimes(1));
+    expect(pdf.mock.calls[0]![1]).toMatchObject({ action: 'preview' });
     expect((pdf.mock.calls[0]![1] as { fileName: string }).fileName).toMatch(/^pnl-.*\.pdf$/);
+    fireEvent.click(screen.getByRole('button', { name: 'Print' }));
+    await waitFor(() => expect(pdf).toHaveBeenCalledTimes(2));
+    expect(pdf.mock.calls[1]![1]).toMatchObject({ action: 'print' });
     xlsx.mockClear();
     render(<BalanceSheetTab />);
     fireEvent.click(screen.getAllByRole('button', { name: 'Excel' })[1]!);
+    await waitFor(() => expect(xlsx).toHaveBeenCalledTimes(1));
     const [bs, bsName] = xlsx.mock.calls[0]! as [Sheet, string];
     expect(bs.title).toBe('Balance Sheet');
     expect(bsName).toMatch(/^balance-sheet-\d{4}-\d{2}-\d{2}\.xlsx$/);

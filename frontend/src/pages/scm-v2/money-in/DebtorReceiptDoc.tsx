@@ -6,12 +6,14 @@
 // Withdraw) → Approve & post, Reject… back to Draft with a reason, and Void…
 // once it is on the books. Every step is a route that already exists
 // (other-debtors.ts); Approve posts exactly what the Receipts page's post-now
-// door posts. Who may press what is the server's — the buttons follow the
-// same keys.
+// door posts. Edit (batch 5 step 6, `?form=edit`) changes a Draft or a
+// Prepared receipt in place — PATCH /other-debtors/receipts/:id (c5), which
+// posts nothing and keeps the stage. Who may press what is the server's — the
+// buttons follow the same keys.
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   useAccountRoles, useAccounts, useDebtorReceiptAction, useVoidDebtorReceipt,
@@ -24,6 +26,7 @@ import { DataTable, type Column } from '../../../components/DataTable';
 import { FinanceDocLink } from '../finance/FinanceDocLink';
 import { pvStage } from '../PvDocParts';
 import { AskBanner, type Ask } from './AskBanner';
+import { DebtorReceiptFormPage } from './DebtorReceiptFormPage';
 import {
   DocBooks, DocSection, DocState, MoneyInDocPage, byTime, journalTrail, personOf,
   type DocAction, type DocFact, type TrailStep,
@@ -48,6 +51,7 @@ const KNOCK_COLUMNS: Column<DebtorReceiptAllocation>[] = [
 
 export const DebtorReceiptDoc = () => {
   const { id = '' } = useParams();
+  const [params, setParams] = useSearchParams();
   const qc = useQueryClient();
   const toast = useToastOptional();
   const q = useDebtorReceipt(id || null);
@@ -59,8 +63,9 @@ export const DebtorReceiptDoc = () => {
   const step = useDebtorReceiptAction();
   const voidIt = useVoidDebtorReceipt();
   const { can } = useHouzsAuth();
-  /* The server's keys, step by step (other-debtors.ts). */
+  /* The server's keys, step by step (other-debtors.ts); an edit takes .write or .create, as raising it did. */
   const canWrite = can('scm.payment_voucher.write');
+  const canEdit = canWrite || can('scm.payment_voucher.create');
   const canCheck = can('scm.payment_voucher.check');
   const canApprove = can('scm.payment_voucher.approve');
   const canCancel = can('scm.payment_voucher.cancel');
@@ -76,6 +81,15 @@ export const DebtorReceiptDoc = () => {
 
   const no = r.receipt_number;
   const stage = pvStage(r);
+  const editable = (stage === 'Draft' || stage === 'Prepared') && canEdit;
+  const setForm = (form: 'edit' | null) => setParams((prev) => {
+    const n = new URLSearchParams(prev);
+    if (form) n.set('form', form); else n.delete('form');
+    return n;
+  });
+  if (params.get('form') === 'edit' && editable) {
+    return <DebtorReceiptFormPage key={r.id} id={r.id} debtorId={r.debtor_id} backLabel={no} onClose={() => setForm(null)} openDoc={() => undefined} />;
+  }
   const live = liveJournal(journals.data);
   const debtorName = d.debtor?.name ?? '—';
   const bills = d.allocations.map((a) => a.billNumber ?? '—');
@@ -94,6 +108,7 @@ export const DebtorReceiptDoc = () => {
   };
 
   const actions: DocAction[] = [];
+  if (editable) actions.push({ label: 'Edit', busy, onClick: () => { setFailure(null); setForm('edit'); } });
   if (stage === 'Draft' && canWrite) actions.push({ label: 'Prepare', kind: 'primary', busy, onClick: () => run('submit', `${no} prepared · checked next`) });
   if (stage === 'Prepared' && canWrite) actions.push({ label: 'Withdraw', busy, hint: 'Back out of the cycle — it will need preparing again', onClick: () => run('withdraw', `${no} withdrawn · back to Draft`) });
   if (stage === 'Prepared' && canCheck) actions.push({ label: 'Check', kind: 'primary', busy, onClick: () => run('check', `Checked · ${no} · approved next`) });

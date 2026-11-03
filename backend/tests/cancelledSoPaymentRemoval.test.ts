@@ -183,6 +183,14 @@ describe('Finance removes a payment from a cancelled order', () => {
     expect(after.orders.map((o) => o.docNo)).not.toContain(DUP);
   });
 
+  test('the list says who sold each order (batch 6 c2): the salesperson, else nobody named', async () => {
+    const { app } = harness(FINANCE, { staff: [{ id: 'staff-1', name: 'Kelvin' }] });
+    const list = await (await app.request('/mfg-sales-orders/cancelled-with-money')).json() as { orders: Array<{ docNo: string; salesperson: string | null; cancelledOn: string | null }> };
+    const dup = list.orders.find((o) => o.docNo === DUP)!;
+    expect(dup.salesperson).toBe('Kelvin');
+    expect(dup.cancelledOn).toBe('2026-08-25');
+  });
+
   test('nobody else may — not even a payment keyed today, which the same-day window would have opened', async () => {
     const { app, sb } = harness(STORE);
     for (const id of ['dup', 'dup-today']) {

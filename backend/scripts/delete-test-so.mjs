@@ -61,7 +61,7 @@ import postgres from "postgres";
    postgres:16 can run it first — tests-pg/deleteTestSoRefs.pg.test.ts. */
 import {
   AUDIT, AUDIT_KEEP, CHILD, DOWNSTREAM, UNCLASSIFIED,
-  classifyReference, controlDrift, controlSnapshot, sweepReferences,
+  classifyReference, controlDrift, ledgerBlockers, controlSnapshot, sweepReferences,
 } from "./lib/delete-test-so-refs.mjs";
 
 const DST = process.env.DATABASE_URL;
@@ -103,6 +103,12 @@ const refuse = (msg) => { throw new Refused(msg); };
 // schema, so a rename downgrades to "skip" rather than silently counting 0 —
 // which is what made the payments guard below unreachable before.
 const CHILD_TABLES = [
+  /* Made from the order's one payment (acc/receipts.ts, acc/deposit-invoices.ts),
+     so they go with it - and BEFORE it, so nothing ever points at a deleted
+     payment. ledgerBlockers() has already refused on a posted journal or a FORMAL
+     receipt by the time these run. */
+  { table: "scm.acc_official_receipts",    cols: ["doc_no"] },
+  { table: "scm.acc_deposit_invoices",     cols: ["so_doc_no"] },
   { table: "scm.mfg_sales_order_items",    cols: ["doc_no"] },
   { table: "scm.mfg_sales_order_payments", cols: ["so_doc_no", "doc_no"] },
   { table: "scm.mfg_sales_order_activity", cols: ["doc_no"] },
@@ -253,6 +259,12 @@ async function main() {
   if (orphans.length > 0) {
     console.log(`ALLOW_ORPHAN_REFS=yes — ${orphans.length} unclassified reference(s) will be LEFT BEHIND as orphans.`);
     console.log("");
+  }
+
+  const ledger = await ledgerBlockers(db, DOC_NO);
+  for (const l of ledger) console.log(`LEDGER  : ${l}`);
+  if (ledger.length > 0) {
+    refuse(`${ledger.length} posted ledger item(s) would be stranded by this delete - see the LEDGER lines above.`);
   }
 
   // (3) Discover every row that references it. Print BEFORE deleting so the

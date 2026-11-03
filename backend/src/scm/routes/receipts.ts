@@ -52,19 +52,26 @@ const monthWindow = (raw: string | undefined): { from: string; to: string } | nu
 export const listReceiptsHandler = async (c: any): Promise<Response> => {
   const win = monthWindow(c.req.query('month'));
   if (win === 'bad') return c.json({ error: 'bad_month', message: 'month must look like 2026-09, or be left out for every month.' }, 400);
+  /* ?kind= reads one kind alone (Debtor maintenance lists the debtor receipts —
+     the owner's Claude Design, batch 5 §4.3); left out, all three. */
+  const kind = String(c.req.query('kind') ?? '').toUpperCase();
+  if (kind && kind !== 'GENERAL' && kind !== 'DEBTOR' && kind !== 'CUSTOMER') {
+    return c.json({ error: 'bad_kind', message: 'kind must be GENERAL, DEBTOR or CUSTOMER, or be left out for every kind.' }, 400);
+  }
+  const none = Promise.resolve({ data: [] as Row[], error: null });
   const sb = c.get('supabase');
   /* No month asked for = the three reads are whole — paged, so a long history
      is never cut at the server's 1000-row page. */
   const windowed = (q: any, col: string) => (win ? q.gte(col, win.from).lt(col, win.to) : q);
 
   const [general, debtor, customer] = await Promise.all([
-    paginateAll<Row>((from, to) => scopeToCompany(windowed(sb.from('acc_receipts')
+    kind && kind !== 'GENERAL' ? none : paginateAll<Row>((from, to) => scopeToCompany(windowed(sb.from('acc_receipts')
       .select('id, receipt_number, payer_name, receipt_date, bank_account_code, total_sen, status, notes'), 'receipt_date'), c)
       .order('receipt_number').range(from, to)),
-    paginateAll<Row>((from, to) => scopeToCompany(windowed(sb.from('acc_debtor_receipts')
+    kind && kind !== 'DEBTOR' ? none : paginateAll<Row>((from, to) => scopeToCompany(windowed(sb.from('acc_debtor_receipts')
       .select('id, receipt_number, receipt_date, bank_account_code, total_sen, status, debtor_id, submitted_at, checked_at, approved_at, debtor:acc_debtors(name)'), 'receipt_date'), c)
       .order('receipt_number').range(from, to)),
-    paginateAll<Row>((from, to) => scopeToCompany(windowed(sb.from('mfg_sales_order_payments')
+    kind && kind !== 'CUSTOMER' ? none : paginateAll<Row>((from, to) => scopeToCompany(windowed(sb.from('mfg_sales_order_payments')
       .select('id, so_doc_no, paid_at, method, amount_sen, is_deposit'), 'paid_at'), c)
       .order('paid_at').range(from, to)),
   ]);

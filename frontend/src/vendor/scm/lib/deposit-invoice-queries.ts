@@ -34,8 +34,10 @@ const invalidate = (qc: ReturnType<typeof useQueryClient>) => {
   void qc.invalidateQueries({ queryKey: ['gl-entries'] });
 };
 
-export const useDepositInvoices = (status: DepositInvoiceStatus | 'ALL', so: string) => useQuery({
+/** enabled: false when the reader may not see deposit invoices (Money in › Invoices' gates). */
+export const useDepositInvoices = (status: DepositInvoiceStatus | 'ALL', so: string, enabled = true) => useQuery({
   queryKey: [KEY, status, so],
+  enabled,
   queryFn: () => authedFetch<{ rows: DepositInvoice[] }>(`/deposit-invoices?status=${status === 'ALL' ? '' : status}&so=${encodeURIComponent(so)}`),
   staleTime: 15_000,
   retry: retryUnlessClientError,
@@ -66,8 +68,9 @@ export const useDepositInvoiceSheet = (id: string | null) => useQuery({
   retry: retryUnlessClientError,
 });
 
-export const useDepositInvoiceSettings = () => useQuery({
+export const useDepositInvoiceSettings = (enabled = true) => useQuery({
   queryKey: [KEY, 'settings'],
+  enabled,
   queryFn: () => authedFetch<{ settings: DepositInvoiceSettings; missingCount: number; deliveredUninvoicedCount: number }>('/deposit-invoices/settings'),
   staleTime: 0,
   retry: retryUnlessClientError,

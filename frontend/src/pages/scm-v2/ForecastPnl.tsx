@@ -18,7 +18,7 @@
 // ----------------------------------------------------------------------------
 import { Fragment, useEffect, useMemo, useState, type ReactElement } from 'react';
 import { Button } from '@2990s/design-system';
-import { PageHeader } from '../../components/Layout';
+import { ReportShell } from './reports/ReportShell';
 import { getActiveCompanyId } from '../../lib/activeCompany';
 import { fmtMoneyAtRest } from '../../vendor/scm/components/MoneyInput';
 import { fmtSenPlain } from '../../vendor/shared/format';
@@ -331,9 +331,9 @@ export const ForecastPnl = () => {
   };
 
   return (
-    <div className="space-y-4">
-      <PageHeader eyebrow="Finance · Forecasting" title="Forecast P&L"
-        description="Targets on the P&L's own tree, a column per month. A sales line takes an amount — the month's forecast sales are their sum. Every other line takes a % or an amount — of those sales, or, on a purchase line, of its own group's sales; key one and the other shows what it implies. A new month inherits the percentages. Nothing here touches the books." />
+    /* In the Finance report shell (batch 6 §4.3), under Reports › Plan. */
+    <ReportShell report="forecast"
+      subtitle="Targets on the P&L's own tree, a column per month. A sales line takes an amount — the month's forecast sales are their sum. Every other line takes a % or an amount — of those sales, or, on a purchase line, of its own group's sales; key one and the other shows what it implies. A new month inherits the percentages. Nothing here touches the books.">
       <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
         <input type="month" value={addTarget} onChange={(e) => setAddMonth(e.target.value)} aria-label="Month to add" style={{ ...input, width: 150, textAlign: 'left', fontFamily: 'inherit' }} />
         <Button variant="secondary" size="sm" onClick={add}>Add month</Button>
@@ -425,6 +425,6 @@ export const ForecastPnl = () => {
           </table>
         </div>
       )}
-    </div>
+    </ReportShell>
   );
 };

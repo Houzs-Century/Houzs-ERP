@@ -59,7 +59,7 @@ describe('the Finance sidebar', () => {
       '/scm/receipts', '/scm/payment-vouchers', '/scm/outstanding', '/scm/unbilled-deliveries',
       '/scm/currencies', '/reports/fair-report',
       /* And the ones added since (docs/bugs/0827, 0828; the Forecast P&L 2026-09-21). */
-      '/scm/credit-notes', '/scm/deposit-invoices', '/scm/forecast', '/scm/finance-dashboard',
+      '/scm/credit-notes', '/scm/forecast', '/scm/finance-dashboard',
       /* AR Invoices (2026-09-29) — the AP list's twin. */
       '/scm/ar-invoices',
       /* Card and transfer payments not matched yet, one list (2026-09-30). */
@@ -83,6 +83,24 @@ describe('the Finance sidebar', () => {
     expect(moneyIn[0]?.anyPerm).toEqual(expect.arrayContaining(['*', 'scm.access', 'scm.payment_voucher.create', 'scm.payment_voucher.post', 'scm.sales_order.write']));
     expect(moneyIn.some((t) => t.to === '/scm/official-receipts')).toBe(false);
     expect(STAFF_LEGACY_REDIRECT_PATTERNS as readonly string[]).toContain('/scm/official-receipts');
+  });
+
+  /* Batch 5, step 5: Deposit invoices folded into Invoices as a kind; the switch
+     they carried is Setup › Deposit invoices, gated as the old row was. */
+  it('folds Deposit invoices into Invoices, and puts their switch in Setup', () => {
+    const moneyIn = finance?.children?.find((g) => g.label === 'Money in')?.children ?? [];
+    expect(moneyIn.map((t) => t.label)).toEqual(['Receipts', 'Invoices', 'Debtor maintenance', 'Credit / debit notes', 'Outstanding', 'Not yet billed']);
+    const invoices = moneyIn.find((t) => t.to === '/scm/ar-invoices');
+    expect(invoices?.anyPerm).toEqual(expect.arrayContaining(['*', 'scm.access', 'scm.payment_voucher.create', 'scm.payment_voucher.post', 'scm.sales_order.write']));
+    expect(moneyIn.some((t) => t.to === '/scm/deposit-invoices')).toBe(false);
+    expect(STAFF_LEGACY_REDIRECT_PATTERNS as readonly string[]).toContain('/scm/deposit-invoices');
+    const setup = finance?.children?.find((g) => g.label === 'Setup')?.children ?? [];
+    const labels = setup.map((t) => t.label);
+    expect(labels.indexOf('Deposit invoices')).toBe(labels.indexOf('Currencies') + 1);
+    expect(labels.indexOf('To do rules')).toBe(labels.indexOf('Deposit invoices') + 1);
+    expect(setup.find((t) => t.label === 'Deposit invoices')).toMatchObject({
+      to: '/scm/finance/deposit-invoices', anyPerm: ['*', 'scm.access', 'scm.payment_voucher.post', 'scm.sales_order.write'], anyAccess: ['scm.finance.money_in'],
+    });
   });
 
   it('deep-links only tabs the Accounting page knows', () => {

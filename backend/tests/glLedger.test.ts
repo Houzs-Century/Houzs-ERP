@@ -70,7 +70,7 @@ const world = () => fakeSb({
   journal_entries: [
     { company_id: CO, je_no: '2990-JE-2607-0001', narration: 'Payment transfer on 2990-SO-2607-003 — Ah Meng' },
     { company_id: CO, je_no: '2990-JE-2608-0001', narration: 'Payment cash on 2990-SO-2608-067 — NG KAH YEE' },
-    { company_id: CO, je_no: '2990-JE-2608-0002', narration: 'Facebook ads August — LOO WEN WEI' },
+    { id: 'je-2', company_id: CO, je_no: '2990-JE-2608-0002', narration: 'Facebook ads August — LOO WEN WEI' },
     { company_id: CO, je_no: '2990-JE-2608-0003', narration: 'Sales invoice 2990-SI-2608-001 — NG KAH YEE' },
     { company_id: CO, je_no: '2990-JE-2608-0004', narration: 'Payment transfer on 2990-SO-2608-004 — keyed twice' },
     { company_id: CO, je_no: '2990-JE-2609-0001', narration: 'Reversal of 2990-JE-2608-0004 — payment on 2990-SO-2608-004 deleted' },
@@ -125,6 +125,8 @@ describe('GET /accounting/gl/ledger — the ledger the AutoCount way', () => {
       ['2026-08-10', '2990-JE-2608-0002', 0, 30_000, 70_000],
     ]);
     expect([bank.debitSen, bank.creditSen, bank.closingSen]).toEqual([0, 30_000, 70_000]);
+    /* A line carries its entry's id, so the screen opens the entry's card (batch 6 step 8). */
+    expect(bank.lines[0]!.jeId).toBe('je-2');
 
     /* Sales sit on the credit side: the invoice reads positive. */
     const sales = block(r, '501-0000')!;

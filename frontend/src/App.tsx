@@ -145,7 +145,8 @@ const ScmProductRequestsV2 = lazy(() => import("./pages/scm-v2/ProductRequests")
 const ScmOfficialDocsV2 = lazy(() => import("./pages/scm-v2/OfficialDocs").then((m) => ({ default: m.OfficialDocs })));
 const ScmSupplierMaintenanceV2 = lazy(() => import("./pages/scm-v2/SupplierMaintenance").then((m) => ({ default: m.SupplierMaintenance })));
 const ScmCreditNotesV2 = lazy(() => import("./pages/scm-v2/CreditNotes").then((m) => ({ default: m.CreditNotes })));
-const ScmDepositInvoicesV2 = lazy(() => import("./pages/scm-v2/DepositInvoices").then((m) => ({ default: m.DepositInvoices })));
+/* Money in › Credit / debit notes — its own list since the owner's Claude Design (batch 5 step 7); Money out keeps CreditNotes. */
+const ScmMoneyInNotesV2 = lazy(() => import("./pages/scm-v2/money-in/MoneyInNotes").then((m) => ({ default: m.MoneyInNotes })));
 const ScmForecastPnlV2 = lazy(() => import("./pages/scm-v2/ForecastPnl").then((m) => ({ default: m.ForecastPnl })));
 const ScmFinanceDashboardV2 = lazy(() => import("./pages/scm-v2/FinanceDashboard").then((m) => ({ default: m.FinanceDashboard })));
 const ScmPaymentVoucherDetailV2 = lazy(() => import("./pages/scm-v2/PaymentVoucherDetail").then((m) => ({ default: m.PaymentVoucherDetail })));
@@ -205,6 +206,7 @@ const ScmHub = lazy(() => import("./pages/ScmHub").then((m) => ({ default: m.Scm
 const ScmSubgroupHub = lazy(() => import("./pages/ScmSubgroupHub").then((m) => ({ default: m.ScmSubgroupHub })));
 const FinanceTodoPage = lazy(() => import("./pages/scm-v2/finance/FinanceTodo").then((m) => ({ default: m.FinanceTodoPage })));
 const FinanceTodoRulesPage = lazy(() => import("./pages/scm-v2/finance/FinanceTodoRules").then((m) => ({ default: m.FinanceTodoRulesPage })));
+const FinanceDepositInvoiceSetup = lazy(() => import("./pages/scm-v2/finance/DepositInvoiceSetup").then((m) => ({ default: m.DepositInvoiceSetup })));
 const ScmSalesOrdersV2 = lazy(() => import("./pages/scm-v2/MfgSalesOrdersListV2").then((m) => ({ default: m.MfgSalesOrdersListV2 })));
 const ScmSalesOrderMaintenanceV2 = lazy(() => import("./pages/scm-v2/SalesOrderMaintenance").then((m) => ({ default: m.SalesOrderMaintenance })));
 const ScmSalesOrderNewV2 = lazy(() => import("./pages/scm-v2/SalesOrderNew").then((m) => ({ default: m.SalesOrderNew })));
@@ -872,11 +874,12 @@ export default function App() {
         {/* Credit and debit notes (owner 2026-09-12; docs/bugs/0827) — two pages since
             2026-10-28: Money in's customer & other-debtor notes, Money out's supplier
             notes. One page component; the key keeps each page's filters its own. */}
-        <Route path="/scm/credit-notes" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmCreditNotesV2 key="AR" side="AR" /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/credit-notes" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmMoneyInNotesV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/supplier-notes" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmCreditNotesV2 key="AP" side="AP" /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/credit-notes/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmNotePage key="AR" side="AR" /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/supplier-notes/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmNotePage key="AP" side="AP" /></Scm2990Shell></ScmGuard>} />
-        <Route path="/scm/deposit-invoices" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmDepositInvoicesV2 /></Scm2990Shell></ScmGuard>} />
+        {/* Deposit invoices folded into Invoices (Claude Design, batch 5 §1); the switch moved to Setup › Deposit invoices. */}
+        <Route path="/scm/deposit-invoices" element={<FoldRedirect to="/scm/ar-invoices" add={{ kind: "deposit" }} />} />
         {/* The Forecast P&L (owner 2026-09-21): targets on the P&L's own tree; nothing posts. */}
         <Route path="/scm/forecast" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmForecastPnlV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/finance-dashboard" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmFinanceDashboardV2 /></Scm2990Shell></ScmGuard>} />
@@ -961,6 +964,7 @@ export default function App() {
         <Route path="/scm/warehouse"      element={<ScmGuard area="scm"><ScmSubgroupHub groupId="scm-warehouse"      description="Warehouses, inventory, adjustments, transfers and stock take." /></ScmGuard>} />
         <Route path="/scm/finance"        element={<FinanceHome />} />
         <Route path="/scm/finance/rules" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><FinanceTodoRulesPage /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/finance/deposit-invoices" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><FinanceDepositInvoiceSetup /></Scm2990Shell></ScmGuard>} />
         {/* Sales Orders READ side (vendored). The literal /maintenance route
             MUST precede /:docNo so 'maintenance' isn't caught as a doc number.
             2990 uses :docNo (not :id) for the SO detail. */}

@@ -1,24 +1,27 @@
-/* The Self-check card for money that never reached the ledger (docs/bugs/0652).
-   Pinned: a company where NOTHING has ever booked but payments exist reads red
-   ("none, ever", with the money), not green; the Why? button asks the backfill
-   endpoint in dry-run mode and prints each payment's verdict and reason. */
+/* Self-check's row for money that never reached the ledger (docs/bugs/0652),
+   in the owner's redesign (batch 6 §3). Pinned: a company where NOTHING has
+   ever booked but payments exist reads red ("none, ever", with the money),
+   not clean; the Why? button asks the backfill endpoint in dry-run mode and
+   prints each payment's verdict and reason; Book N payments appears only
+   after a dry run the gate refused nothing on, behind an inline confirm, and
+   runs the real backfill. */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 
 vi.mock('../../vendor/scm/lib/authed-fetch', () => ({ authedFetch: vi.fn() }));
 vi.mock('../../vendor/scm/lib/mutation-error', () => ({ writeFailedAs: () => () => {} }));
-const confirmFn = vi.fn(async (_a: unknown) => true);
-vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => confirmFn }));
 
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
-import { UnbookedPaymentsCard } from './Accounting';
+import { UnbookedRowCheck } from './SelfCheck';
 
 const mockedFetch = vi.mocked(authedFetch);
-const draw = (p: Parameters<typeof UnbookedPaymentsCard>[0]['p']) => render(
+const onToast = vi.fn();
+const draw = (p: Parameters<typeof UnbookedRowCheck>[0]['p']) => render(
   <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}>
-    <UnbookedPaymentsCard p={p} />
+    <MemoryRouter><UnbookedRowCheck p={p} onToast={onToast} /></MemoryRouter>
   </QueryClientProvider>,
 );
 
@@ -35,37 +38,48 @@ describe('the never-booked state', () => {
     });
     draw({ since: null, rows: [], totalSen: 0, ok: true, neverBooked: { count: 171, totalSen: 40_359_350, firstPaidOn: '2026-06-11', lastPaidOn: '2026-09-06' } });
     expect(screen.getByText('none, ever')).toBeTruthy();
-    expect(screen.getByText(/RM 403,593\.50 on 171 payments and not in the books/)).toBeTruthy();
-    expect(screen.getByText(/171 were recorded between 2026-06-11 and 2026-09-06/)).toBeTruthy();
+    expect(screen.getByText('RM 403,593.50')).toBeTruthy();
+    expect(screen.getByText('171 payments were recorded and none ever reached the books')).toBeTruthy();
+    expect(screen.getByText(/171 were recorded between 2026\/06\/11 and 2026\/09\/06/)).toBeTruthy();
 
     fireEvent.click(screen.getByText('Why? (dry run)'));
     await waitFor(() => expect(mockedFetch).toHaveBeenCalledWith('/accounting/backfill/customer-payments', {
       method: 'POST', body: JSON.stringify({ dryRun: true, limit: 500 }),
     }));
-    await waitFor(() => expect(screen.getByText(/2 unbooked payments put through the gate, nothing written/)).toBeTruthy());
-    expect(screen.getByText('would post')).toBeTruthy();
-    expect(screen.getByText('account_invalid')).toBeTruthy();
+    await waitFor(() => expect(screen.getByText(/Dry run: 2 unbooked payments put through the gate, nothing written/)).toBeTruthy());
+    expect(screen.getAllByText('would post').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('account_invalid').length).toBeGreaterThan(0);
     expect(screen.getByText('account 999-0000 does not exist for company 2')).toBeTruthy();
+    /* A refusal: no Book button. */
+    expect(screen.queryByText(/^Book \d/)).toBeNull();
   });
 
-  test('a company with nothing booked AND nothing recorded stays green', () => {
+  test('a company with nothing booked AND nothing recorded reads clean and offers no dry run', () => {
     draw({ since: null, rows: [], totalSen: 0, ok: true, neverBooked: { count: 0, totalSen: 0, firstPaidOn: null, lastPaidOn: null } });
-    expect(screen.getByText('all of them')).toBeTruthy();
+    expect(screen.getByText('Clean')).toBeTruthy();
     expect(screen.queryByText('Why? (dry run)')).toBeNull();
   });
 
-  test('the after-boundary list still reads "N did not" and offers Why?', () => {
+  test('the after-boundary list reads "N not in the books", counts from the first booked day, and offers Why?', () => {
     draw({ since: '2026-08-01', ok: false, totalSen: 12345, rows: [
       { source: 'SOPAY', id: 'p3', docNo: 'SO-3', paidOn: '2026-08-05', amountSen: 12345, method: 'cash' },
     ] });
-    expect(screen.getByText('1 did not')).toBeTruthy();
+    expect(screen.getByText('1 not in the books')).toBeTruthy();
+    expect(screen.getByText('1 payment since 2026/08/01 did not')).toBeTruthy();
+    expect(screen.getByText(/Counting from 2026\/08\/01, the first day this company booked a payment/)).toBeTruthy();
     expect(screen.getByText('Why? (dry run)')).toBeTruthy();
+  });
+
+  test('a check that could not run says so instead of reading clean', () => {
+    draw({ since: null, rows: [], totalSen: 0, ok: false, error: 'payments: timeout' });
+    expect(screen.getByText('Not checked')).toBeTruthy();
+    expect(screen.getByText(/The check could not run: payments: timeout/)).toBeTruthy();
   });
 });
 
-describe('Book now (docs/bugs/0655)', () => {
-  test('appears only after a dry run the gate refused nothing on, confirms, then runs the real backfill', async () => {
-    mockedFetch.mockReset(); confirmFn.mockClear();
+describe('Book N payments (docs/bugs/0655)', () => {
+  test('appears only after a dry run the gate refused nothing on, confirms inline, then runs the real backfill', async () => {
+    mockedFetch.mockReset(); onToast.mockClear();
     const clean = {
       ok: true, dryRun: true, scanned: 2, posted: 0, wouldPost: 2, skipped: 0, remaining: 0, failed: [],
       rows: [
@@ -76,28 +90,35 @@ describe('Book now (docs/bugs/0655)', () => {
     mockedFetch.mockResolvedValueOnce(clean);
     mockedFetch.mockResolvedValueOnce({ ...clean, dryRun: false, posted: 2, wouldPost: 0 });
     draw({ since: null, rows: [], totalSen: 0, ok: false, neverBooked: { count: 2, totalSen: 205800, firstPaidOn: '2026-06-11', lastPaidOn: '2026-06-12' } });
-    expect(screen.queryByText(/Book 2 payments now/)).toBeNull();
+    expect(screen.queryByText('Book 2 payments')).toBeNull();
     fireEvent.click(screen.getByText('Why? (dry run)'));
-    await waitFor(() => expect(screen.getByText('Book 2 payments now')).toBeTruthy());
-    fireEvent.click(screen.getByText('Book 2 payments now'));
+    await waitFor(() => expect(screen.getByText('Book 2 payments')).toBeTruthy());
+    fireEvent.click(screen.getByText('Book 2 payments'));
+    /* The inline confirm says what posts, and nothing is written until it is pressed. */
+    expect(screen.getByText('Book 2 payments into the ledger?')).toBeTruthy();
+    expect(screen.getByText(/Each posts on its own paid date, RM 2,058\.00 in total: Dr bank or cash, Cr Trade debtors\./)).toBeTruthy();
+    expect(mockedFetch).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByText('Book them'));
     await waitFor(() => expect(mockedFetch).toHaveBeenCalledWith('/accounting/backfill/customer-payments', {
       method: 'POST', body: JSON.stringify({ limit: 500 }),
     }));
-    expect(JSON.stringify(confirmFn.mock.calls[0]![0])).toMatch(/Book 2 payments into the ledger\?/);
-    expect(JSON.stringify(confirmFn.mock.calls[0]![0])).toMatch(/RM 2,058\.00/);
     await waitFor(() => expect(screen.getByText(/Booked 2, skipped 0, refused 0/)).toBeTruthy());
+    expect(screen.getByText(/Every payment is in the books now/)).toBeTruthy();
+    expect(onToast).toHaveBeenCalledWith('Booked 2 payments · RM 2,058.00');
   });
 
-  test('a dry run with a refusal offers no Book button', async () => {
+  test('Cancel on the confirm writes nothing', async () => {
     mockedFetch.mockReset();
     mockedFetch.mockResolvedValueOnce({
-      ok: true, dryRun: true, scanned: 1, posted: 0, wouldPost: 0, skipped: 0, remaining: 1,
-      failed: [{ id: 'p1', status: 'so_read_failed', reason: 'column mfg_sales_orders.customer_name does not exist' }],
-      rows: [{ id: 'p1', docNo: '2990-SO-2606-001', paidOn: '2026-06-11', method: 'transfer', amountSen: 12500, status: 'so_read_failed', reason: 'column mfg_sales_orders.customer_name does not exist' }],
+      ok: true, dryRun: true, scanned: 1, posted: 0, wouldPost: 1, skipped: 0, remaining: 0, failed: [],
+      rows: [{ id: 'p1', docNo: '2990-SO-2606-001', paidOn: '2026-06-11', method: 'transfer', amountSen: 12500, status: 'would_post' }],
     });
-    draw({ since: null, rows: [], totalSen: 0, ok: false, neverBooked: { count: 1, totalSen: 12500, firstPaidOn: '2026-06-11', lastPaidOn: '2026-06-11' } });
+    draw({ since: '2026-06-01', rows: [{ source: 'SOPAY', id: 'p1', docNo: '2990-SO-2606-001', paidOn: '2026-06-11', amountSen: 12500, method: 'transfer' }], totalSen: 12500, ok: false });
     fireEvent.click(screen.getByText('Why? (dry run)'));
-    await waitFor(() => expect(screen.getByText('so_read_failed')).toBeTruthy());
-    expect(screen.queryByText(/payments? now/)).toBeNull();
+    await waitFor(() => expect(screen.getByText('Book 1 payment')).toBeTruthy());
+    fireEvent.click(screen.getByText('Book 1 payment'));
+    fireEvent.click(screen.getByText('Cancel'));
+    expect(screen.queryByText('Book them')).toBeNull();
+    expect(mockedFetch).toHaveBeenCalledTimes(1);
   });
 });

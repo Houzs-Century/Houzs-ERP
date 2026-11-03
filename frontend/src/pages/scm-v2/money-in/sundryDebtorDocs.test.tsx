@@ -61,6 +61,14 @@ vi.mock('../../../vendor/scm/lib/accounting-queries', async (importOriginal) => 
   useVoidReceipt: () => ({ mutate: voidReceipt, isPending: false }),
   useDebtorDetail: (id: string | null) => ({ data: id === 'd1' ? DEBTOR : undefined, isLoading: false, error: null }),
   useUpdateDebtor: () => ({ mutate: updateDebtor, isPending: false }),
+  useOtherDebtors: () => DEBTORS,
+}));
+const DEBTORS = { data: { debtors: [{ id: 'd1', name: 'AHMAD BIN ALI', phone: '012-345', notes: null, is_active: true, outstanding_sen: 20_000 }] }, isLoading: false };
+const EVENTS = { data: [], isLoading: false };
+vi.mock('../../../vendor/scm/lib/event-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../vendor/scm/lib/event-queries')>()),
+  useEventOptions: () => EVENTS,
+  useEventLabels: () => ({ data: new Map() }),
 }));
 vi.mock('../../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
 vi.mock('../PvDocParts', async (importOriginal) => ({
@@ -150,19 +158,38 @@ describe('an other debtor, as a page', () => {
     expect(screen.getByText(/Bills and receipts post to the 305-0000 Other Debtors control/)).toBeTruthy();
     const bills = screen.getByRole('region', { name: 'Bills' });
     expect(within(bills).getByText('HC-ODB-2609-002').closest('a')!.getAttribute('href')).toBe('/scm/ar-invoices/bills/b2');
-    expect(within(bills).getByText('Open bills in AR invoices').closest('a')!.getAttribute('href')).toBe('/scm/ar-invoices?debtor=d1');
+    expect(within(bills).getByText('Open bills in Invoices').closest('a')!.getAttribute('href')).toBe('/scm/ar-invoices?debtor=d1');
     const receipts = screen.getByRole('region', { name: 'Receipts' });
     expect(within(receipts).getByText('HC-ODR-2610-001').closest('a')!.getAttribute('href')).toBe('/scm/receipts/debtor/r1');
     expect(within(receipts).getByText('HC-ODB-2609-001, HC-ODB-2609-002')).toBeTruthy();
   });
 
-  test('Edit debtor opens the party form in place and saves every field; Deactivate', () => {
+  test('Edit debtor opens the debtor form in place and saves every field; Deactivate', () => {
     openDebtor();
     fireEvent.click(screen.getByRole('button', { name: 'Deactivate' }));
     expect(updateDebtor.mock.calls[0]![0]).toEqual({ id: 'd1', isActive: false });
     fireEvent.click(screen.getByRole('button', { name: 'Edit debtor' }));
     expect(screen.getByRole('heading', { name: 'Edit AHMAD BIN ALI' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /^Save/ }));
+    expect(screen.getByText('Back to AHMAD BIN ALI')).toBeTruthy();
+    expect((screen.getByLabelText('Registration no.') as HTMLInputElement).value).toBe('202001012345');
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     expect(updateDebtor.mock.calls[1]![0]).toMatchObject({ id: 'd1', name: 'AHMAD BIN ALI', address1: '12 Jalan Satu', businessRegNo: '202001012345' });
+  });
+
+  /* Batch 5 step 6: the page raises the debtor's documents in place. */
+  test('New bill and New receipt open their forms in place, on this debtor', () => {
+    const view = openDebtor();
+    fireEvent.click(within(screen.getByRole('region', { name: 'Bills' })).getByRole('button', { name: /New bill/ }));
+    expect(screen.getByRole('heading', { name: 'New debtor bill' })).toBeTruthy();
+    expect(screen.getByText('Back to AHMAD BIN ALI')).toBeTruthy();
+    expect((screen.getByLabelText('Bill debtor') as HTMLSelectElement).value).toBe('d1');
+    view.unmount();
+    openDebtor();
+    fireEvent.click(within(screen.getByRole('region', { name: 'Receipts' })).getByRole('button', { name: /New receipt/ }));
+    expect(screen.getByRole('heading', { name: 'New receipt · Other debtor' })).toBeTruthy();
+    expect((screen.getByLabelText('Debtor') as HTMLSelectElement).value).toBe('d1');
+    expect(screen.getByText('What AHMAD BIN ALI still owes')).toBeTruthy();
+    expect(screen.getByLabelText('Collect HC-ODB-2609-002 in full')).toBeTruthy();
+    expect(screen.queryByLabelText('Collect HC-ODB-2609-001 in full')).toBeNull(); // paid in full
   });
 });
