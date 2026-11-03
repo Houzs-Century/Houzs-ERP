@@ -22,6 +22,21 @@ WHERE c.status = 'AVAILABLE'
   AND c.customer_id IS DISTINCT FROM so.customer_id
 ORDER BY c.company_id, c.source_doc_no, c.code;
 
+-- 2b. READ-ONLY. The 2990-0037 shape: the SO still points at the old customer, but its CURRENT
+--     name+phone resolves (same key as upsert_customer_by_name_phone: company, lower(btrim(name)), phone)
+--     to a different existing customer, so a new order for this person cannot redeem the code.
+SELECT c.company_id, c.code, c.source_doc_no, c.customer_id AS code_customer_id,
+       so.debtor_name, so.phone AS so_phone, rc.id AS resolves_to_customer_id, rc.name AS resolves_to_name
+FROM scm.pwp_codes c
+JOIN scm.mfg_sales_orders so ON so.doc_no = c.source_doc_no AND so.company_id = c.company_id
+JOIN scm.customers rc ON rc.company_id = so.company_id
+     AND lower(btrim(rc.name)) = lower(btrim(so.debtor_name)) AND rc.phone = so.phone
+WHERE c.status = 'AVAILABLE'
+  AND rc.id IS DISTINCT FROM c.customer_id
+ORDER BY c.company_id, c.source_doc_no, c.code;
+-- Fix those by hand (like pwp-3473fbhd.sql): set the code's customer_id to resolves_to_customer_id.
+-- Step 3 below only covers code.customer_id <> so.customer_id.
+
 -- 3. BACKFILL. Run with ROLLBACK first, compare the row count with step 1, then change to COMMIT.
 BEGIN;
 UPDATE scm.pwp_codes c
