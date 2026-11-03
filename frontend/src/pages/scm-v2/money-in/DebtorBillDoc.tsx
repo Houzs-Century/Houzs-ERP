@@ -5,10 +5,14 @@
 // owed, its journal — and its steps: Print, Copy and Edit (the bill form in
 // place of the page, `?form=copy|edit`, so reload and Back work) and Cancel
 // (refused once money is received on it). Edit re-posts and Cancel reverses
-// through the same routes as before; nothing posts differently.
+// through the same routes as before; nothing posts differently. While money
+// is still owed its Receipts section offers New receipt (batch 5 step 6,
+// `?form=receipt`): Debtor maintenance's receipt form, this bill ticked for
+// what it still owes — saved as a Draft or prepared, posted at approval.
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
+import { Plus } from 'lucide-react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -28,6 +32,7 @@ import { pvStage } from '../PvDocParts';
 import { DebtorBillForm, type BillFormSubmit } from '../DebtorBillForm';
 import { billValuesOf } from './BillFormPage';
 import { AskBanner, type Ask } from './AskBanner';
+import { DebtorReceiptFormPage } from './DebtorReceiptFormPage';
 import {
   DocBooks, DocFormShell, DocSection, DocState, MoneyInDocPage, byTime, journalTrail,
   type DocAction, type DocFact,
@@ -36,6 +41,7 @@ import { liveJournal, useDocJournals } from './moneyInDocQueries';
 import { debtorBillTag, debtorReceiptTag, noteTag } from './moneyInStatus';
 import { StatusTag } from './MoneyInParts';
 import { moneyInDocHref, moneyInListOf } from './moneyInDocs';
+import ui from '../MoneyIn.module.css';
 import s from './MoneyInDoc.module.css';
 
 const errText = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'Something went wrong.');
@@ -113,7 +119,7 @@ export const DebtorBillDoc = () => {
   const received = Number(bill.received_sen);
   const outstanding = Math.max(0, Number(bill.total_sen) - received);
   const live = liveJournal(journals.data);
-  const setForm = (mode: 'edit' | 'copy' | null) => {
+  const setForm = (mode: 'edit' | 'copy' | 'receipt' | null) => {
     setFormError(null);
     setParams((prev) => { const n = new URLSearchParams(prev); if (mode) n.set('form', mode); else n.delete('form'); return n; });
   };
@@ -143,6 +149,13 @@ export const DebtorBillDoc = () => {
     accounts: lineAccounts, accountName, debtors: debtorOptions, debtorId: debtor?.id ?? '',
     controlCode: rolesQ.data?.roles.AR_OTHER ?? '305-0000', onSubmit: submit, onCancel: () => setForm(null),
   };
+  /* New receipt: the debtor's receipt form, this bill ticked for what it still owes. */
+  if (form === 'receipt' && canCreate && !cancelled && outstanding > 0 && debtor) {
+    return (
+      <DebtorReceiptFormPage id={null} debtorId={debtor.id} alloc={{ [bill.id]: outstanding }} backLabel={bill.bill_number}
+        onClose={() => setForm(null)} openDoc={(href) => navigate(href)} />
+    );
+  }
   if (form === 'edit' && canWrite && !cancelled) {
     return (
       <DocFormShell title={`Edit ${bill.bill_number}`} backLabel={bill.bill_number} onBack={() => setForm(null)} bare>
@@ -232,7 +245,9 @@ export const DebtorBillDoc = () => {
         <DataTable<DebtorBillLine> tableId="mi-bill-lines" embedded columns={lineColumns} rows={bill.lines ?? []} getRowKey={(l) => l.id}
           emptyLabel="No lines on this bill." />
       </DocSection>
-      <DocSection title="Receipts">
+      <DocSection title="Receipts" buttons={canCreate && !cancelled && outstanding > 0 && debtor ? (
+        <button type="button" className={`${ui.btn} ${ui.btnSmall}`} onClick={() => setForm('receipt')}><Plus size={13} /> New receipt</button>
+      ) : undefined}>
         {(d.receipts ?? []).length === 0
           ? <div className={s.empty}>No receipt yet.</div>
           : <DataTable<BillReceipt> tableId="mi-bill-receipts" embedded columns={RECEIPT_COLUMNS} rows={d.receipts ?? []} getRowKey={(r) => r.id} />}

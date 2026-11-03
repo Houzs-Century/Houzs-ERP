@@ -50,6 +50,7 @@ vi.mock('../../vendor/scm/lib/authed-fetch', () => ({
       return { ok: true, orNumber: `HCTOR-2611-00${formal[1]}` };
     }
     if (path === '/accounting/receipts/ensure') return { receipt: official({ id: 11, or_number: 'HCDraftOR-2611-009', payment_id: 'p7', doc_no: 'HC-SO-013401' }) };
+    if (path === '/other-debtors/receipts/dr1') return DR1_DETAIL;
     if (path.startsWith('/accounting/receipts')) return { receipts: OFFICIAL_ROWS };
     throw new Error(`unexpected read ${path}`);
   }),
@@ -63,7 +64,15 @@ const RECEIPTS = { month: NOW, receipts: [
     submittedAt: 'x', checkedAt: 'y', approvedAt: null, bills: [{ billId: 'b1', no: 'HC-ODB-2611-001', amountSen: 30_000 }] },
   { kind: 'CUSTOMER', id: 'p1', number: 'HC-SO-013400', date: `${NOW}-04`, payer: 'Customer deposit', moneyAccount: 'transfer', totalSen: 150_000, status: 'RECEIVED' },
 ] };
+/* The draft's own read, for Edit (GET /other-debtors/receipts/:id). */
+const DR1_DETAIL = {
+  receipt: { id: 'dr1', receipt_number: 'HC-ODR-2611-001', debtor_id: 'd1', receipt_date: `${NOW}-06`, bank_account_code: '310-0010', total_sen: 20_000, status: 'DRAFT',
+    submitted_at: null, submitted_by: null, checked_at: null, checked_by: null, approved_at: null, approved_by: null, posted_at: null, notes: null },
+  debtor: { id: 'd1', name: 'AHMAD BIN ALI', phone: null, notes: null, is_active: true, outstanding_sen: 30_000 },
+  allocations: [{ billId: 'b1', amountSen: 20_000, billNumber: 'HC-ODB-2611-001', billDate: `${NOW}-01`, description: 'Booth rental', totalSen: 50_000, receivedSen: 20_000, status: 'POSTED', docKind: 'INV' }],
+};
 const receiptsAsked: Array<string | undefined> = [];
+const updateDebtorReceipt = vi.fn();
 const createReceipt = vi.fn();
 const updateReceipt = vi.fn();
 const voidReceipt = vi.fn();
@@ -106,6 +115,7 @@ vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
   useOtherDebtors: () => DEBTORS,
   useDebtorDetail: (id: string | null) => ({ data: id === 'd1' ? DEBTOR_D1 : undefined, isLoading: false, isError: false }),
   useCreateDebtorReceipt: () => ({ mutate: createDebtorReceipt, isPending: false }),
+  useUpdateDebtorReceipt: () => ({ mutate: updateDebtorReceipt, isPending: false }),
   useDebtorReceiptAction: () => ({ mutate: stepMutate, isPending: false }),
   useVoidDebtorReceipt: () => ({ mutate: vi.fn(), isPending: false }),
 }));
@@ -274,6 +284,25 @@ describe('the steps', () => {
     expect(stepMutate.mock.calls[0]![0]).toEqual({ receiptId: 'dr1', action: 'submit' });
     fireEvent.click(within(row('HC-ODR-2611-002')).getByRole('button', { name: 'HC-ODR-2611-002 menu' }));
     expect(within(screen.getByRole('menu', { name: 'HC-ODR-2611-002 menu' })).getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Open', 'Reject…']);
+  });
+
+  /* Batch 5 step 6 (c5): a Draft or a Prepared one changes in place — Debtor
+     maintenance's form, which keeps the stage and posts nothing. */
+  test("an other debtor's Draft changes in place from its ⋯ — Edit keeps its stage; a checked one has no Edit", async () => {
+    draw('?kind=debtor');
+    await waitFor(() => expect(screen.getByText('HC-ODR-2611-001', { selector: 'a' })).toBeTruthy());
+    fireEvent.click(within(row('HC-ODR-2611-001')).getByRole('button', { name: 'HC-ODR-2611-001 menu' }));
+    const menu = screen.getByRole('menu', { name: 'HC-ODR-2611-001 menu' });
+    expect(within(menu).getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Open', 'Edit', 'Prepare']);
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Edit' }));
+    expect(screen.getByTestId('where').textContent).toContain('form=edit&id=dr1&type=debtor');
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Edit HC-ODR-2611-001' })).toBeTruthy());
+    expect(screen.getByText('Back to Receipts')).toBeTruthy();
+    expect(screen.getByText('Saving keeps it a Draft — nothing posts until it is approved.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(updateDebtorReceipt.mock.calls[0]![0]).toEqual({
+      receiptId: 'dr1', receiptDate: `${NOW}-06`, bankAccountCode: '310-0010', allocations: [{ billId: 'b1', amountSen: 20_000 }],
+    });
   });
 
   test('the approver approves a checked receipt after an inline ask naming the money and the bills', async () => {

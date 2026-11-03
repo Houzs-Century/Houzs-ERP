@@ -46,6 +46,7 @@ import { useToastOptional } from '../../hooks/useToast';
 import { fmtDate, fmtSen, todayMY } from '../../vendor/shared/format';
 import { FinanceDocLink } from './finance/FinanceDocLink';
 import { AskBanner, type Ask } from './money-in/AskBanner';
+import { DebtorReceiptFormPage } from './money-in/DebtorReceiptFormPage';
 import { DocFormShell } from './money-in/MoneyInDocPage';
 import { BatchBar, Chips, MonthNav, SearchBox, Segments, StatusTag, tidyMenu, useRowMenu, type MenuItem } from './money-in/MoneyInParts';
 import { ReceiptForm, blankReceipt, receiptValuesOf, type DebtorSubmit, type SundrySubmit } from './money-in/ReceiptForm';
@@ -208,7 +209,10 @@ export const Receipts = () => {
         ]);
       case 'debtor': {
         const m = steps.menuOf(stepRowOf(x));
-        return tidyMenu([open, ...m.steps, DIVIDER, ...m.undo]);
+        /* A Draft or a Prepared one changes in place and keeps its stage (batch 5 step 6, c5). */
+        const edit: MenuItem[] = (x.stage === 'Draft' || x.stage === 'Prepared') && canEdit
+          ? [{ label: 'Edit', onClick: () => setUrl({ form: 'edit', id: x.id, type: 'debtor' }, true) }] : [];
+        return tidyMenu([open, ...edit, ...m.steps, DIVIDER, ...m.undo]);
       }
       case 'customer':
         return x.forHref ? [{ label: `Open ${x.no}`, onClick: () => openInTab(x.forHref!) }] : [];
@@ -274,6 +278,14 @@ export const Receipts = () => {
     { key: 'actions', label: '', align: 'right', width: '190px', disableSort: true, disableFilter: true, render: actionsOf },
   ];
 
+  /* An other debtor's receipt not yet checked, changed in place (c5): the
+     Debtor maintenance form — it keeps its stage; nothing posts. */
+  if (form === 'edit' && params.get('type') === 'debtor') {
+    return (
+      <DebtorReceiptFormPage id={params.get('id')} debtorId="" backLabel="Receipts"
+        onClose={() => setUrl({ form: null, id: null, type: null }, true)} openDoc={(href) => openInTab(href)} />
+    );
+  }
   if (form === 'new' || form === 'copy' || form === 'edit') {
     return (
       <ReceiptFormPage

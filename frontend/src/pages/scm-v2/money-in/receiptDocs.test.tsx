@@ -84,7 +84,21 @@ vi.mock('../../../vendor/scm/lib/accounting-queries', async (importOriginal) => 
   useAccountRoles: () => ({ data: { roles: { AR: '300-0000', AR_OTHER: '305-0000' }, overridden: {} } }),
   useDebtorReceiptAction: () => ({ mutate: stepMutate, isPending: false }),
   useVoidDebtorReceipt: () => ({ mutate: voidMutate, isPending: false }),
+  useUpdateDebtorReceipt: () => ({ mutate: updateDebtorReceipt, isPending: false }),
+  useDebtorDetail: (id: string | null) => ({ data: id === 'd1' ? DEBTOR_D1 : undefined, isLoading: false, isError: false, error: null }),
+  useOtherDebtors: () => DEBTORS,
 }));
+const updateDebtorReceipt = vi.fn();
+/* What the edit form lists (batch 5 step 6): the debtor and the bills it still owes on. */
+const DEBTORS = { data: { debtors: [{ id: 'd1', name: 'AHMAD BIN ALI', phone: '012-345', notes: null, is_active: true, outstanding_sen: 80_000 }] }, isLoading: false };
+const DEBTOR_D1 = {
+  debtor: DEBTORS.data.debtors[0],
+  bills: [
+    { id: 'b1', bill_number: '2990-ODB-2609-001', bill_date: '2026-09-05', total_sen: 50_000, received_sen: 0, status: 'POSTED', notes: '转租九月' },
+    { id: 'b2', bill_number: '2990-ODB-2609-002', bill_date: '2026-09-20', total_sen: 30_000, received_sen: 0, status: 'POSTED', notes: 'Booth rental' },
+  ],
+  receipts: [],
+};
 const PERMS = { value: new Set<string>(['*']) };
 vi.mock('../../../auth/AuthContext', () => ({ useAuth: () => ({ can: (k: string) => PERMS.value.has('*') || PERMS.value.has(k) }) }));
 const receiptPdf = vi.fn(async (_r: unknown, _o: unknown) => {});
@@ -190,9 +204,26 @@ describe("an other debtor's receipt walks the four layers", () => {
     expect(stepMutate.mock.calls[2]![0]).toEqual({ receiptId: 'r1', action: 'reject', note: 'Wrong bank' });
   });
 
+  /* Batch 5 step 6 (c5): a Draft or a Prepared receipt changes in place; it keeps its stage and posts nothing. */
+  test('prepared: Edit opens the form in place — the debtor fixed — and saves the date, account and bills', async () => {
+    openDebtorReceipt({ submitted_at: '2026-10-03T01:00:00Z' });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Edit 2990-ODR-2610-001' })).toBeTruthy());
+    expect(screen.getByText('Back to 2990-ODR-2610-001')).toBeTruthy();
+    expect(screen.getByText('Saving keeps it Prepared — nothing posts until it is approved.')).toBeTruthy();
+    expect((screen.getByLabelText('Debtor') as HTMLSelectElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(updateDebtorReceipt.mock.calls[0]![0]).toEqual({
+      receiptId: 'r1', receiptDate: '2026-10-03', bankAccountCode: '310-0001',
+      allocations: [{ billId: 'b1', amountSen: 50_000 }, { billId: 'b2', amountSen: 10_000 }],
+    });
+  });
+
   test('checked: Approve & post asks what it books and knocks off, then posts', async () => {
     openDebtorReceipt({ submitted_at: '2026-10-03T01:00:00Z', checked_at: '2026-10-03T02:00:00Z' });
     await waitFor(() => expect(screen.getByRole('button', { name: 'Approve & post' })).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Approve & post' }));
     const ask = screen.getByRole('region', { name: 'Approve 2990-ODR-2610-001?' });
     expect(ask.textContent).toContain('RM 600.00 books into Hong Leong Bank (310-0001) and 2990-ODB-2609-001, 2990-ODB-2609-002 are knocked off.');

@@ -31,6 +31,12 @@
 // contra, the bills' money given back) — the four-layer doors below remain
 // for the API but no page walks them any more.
 //
+// 2026-11-03 (the owner's Claude Design, batch 5 §4): pages walk them again —
+// Money in › Debtor maintenance lists the debtors' receipts beside the
+// registry and raises one as a Draft (or prepared), the receipt's own page and
+// the list step it through the four layers, and a receipt nobody has checked
+// yet is changed through PATCH /receipts/:receiptId (c5), which posts nothing.
+//
 // Handlers exported bare for the vitest harness (accounting-chart precedent).
 // ----------------------------------------------------------------------------
 
@@ -526,6 +532,43 @@ export const cancelDebtorBillHandler = async (c: any): Promise<Response> => {
 
 /* ── Receipt — the owner's four layers, then Dr bank / Cr AR_OTHER ────────── */
 
+/* The bills a debtor receipt takes money for — the checks raising one makes,
+   and changing a draft makes again (batch 5 §4.3 c5): each a positive whole
+   sen on one of THIS debtor's live bills, never above what the bill still owes. */
+type Allocation = { billId: string; amountSen: number };
+const checkAllocations = async (c: any, debtorId: string, raw: unknown): Promise<{ allocs: Allocation[] } | { resp: Response }> => {
+  const rawAllocs: unknown[] = Array.isArray(raw) ? raw : [];
+  if (rawAllocs.length === 0) return { resp: c.json({ error: 'allocations_required', message: 'Tick at least one bill.' }, 400) };
+  const allocs: Allocation[] = [];
+  for (const [i, a] of rawAllocs.entries()) {
+    const item = (a ?? {}) as Row;
+    const billId = String(item.billId ?? '').trim();
+    const amount = Number(item.amountSen);
+    if (!billId || !Number.isInteger(amount) || amount <= 0) {
+      return { resp: c.json({ error: 'bad_allocation', message: `Allocation ${i + 1} needs a bill and a positive integer amountSen.` }, 400) };
+    }
+    allocs.push({ billId, amountSen: amount });
+  }
+  const sb = c.get('supabase');
+  const { data: bills, error: bErr } = await scopeToCompany(
+    sb.from('acc_debtor_bills').select('id, debtor_id, status, total_sen, received_sen').in('id', allocs.map((a) => a.billId)), c,
+  );
+  if (bErr) return { resp: c.json({ error: 'load_failed', reason: bErr.message }, 500) };
+  const byId = new Map(((bills ?? []) as Row[]).map((b) => [b.id, b]));
+  for (const a of allocs) {
+    const b = byId.get(a.billId);
+    if (!b || b.debtor_id !== debtorId) {
+      return { resp: c.json({ error: 'bad_allocation', message: `Bill ${a.billId} is not this debtor's.` }, 400) };
+    }
+    if (b.status === 'CANCELLED') return { resp: c.json({ error: 'bad_allocation', message: 'A cancelled bill takes no money.' }, 400) };
+    const outstanding = Number(b.total_sen) - Number(b.received_sen ?? 0);
+    if (a.amountSen > outstanding) {
+      return { resp: c.json({ error: 'over_allocation', message: `That bill has only ${fmtSen(outstanding)} outstanding.` }, 400) };
+    }
+  }
+  return { allocs };
+};
+
 export const createDebtorReceiptHandler = async (c: any): Promise<Response> => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.create')) {
     return c.json({ error: "You don't have permission to do that." }, 403);
@@ -540,35 +583,11 @@ export const createDebtorReceiptHandler = async (c: any): Promise<Response> => {
   const moneyErr = await requireMoneyIn(c, bank);
   if (moneyErr) return moneyErr;
 
-  const rawAllocs = Array.isArray(body.allocations) ? body.allocations : [];
-  if (rawAllocs.length === 0) return c.json({ error: 'allocations_required', message: 'Tick at least one bill.' }, 400);
-  const allocs: Array<{ billId: string; amountSen: number }> = [];
-  for (const [i, a] of rawAllocs.entries()) {
-    const billId = String(a?.billId ?? '').trim();
-    const amount = Number(a?.amountSen);
-    if (!billId || !Number.isInteger(amount) || amount <= 0) {
-      return c.json({ error: 'bad_allocation', message: `Allocation ${i + 1} needs a bill and a positive integer amountSen.` }, 400);
-    }
-    allocs.push({ billId, amountSen: amount });
-  }
+  const checked = await checkAllocations(c, String(found.debtor.id), body.allocations);
+  if ('resp' in checked) return checked.resp;
+  const allocs = checked.allocs;
   const sb = c.get('supabase');
   const coId = activeCompanyId(c);
-  const { data: bills, error: bErr } = await scopeToCompany(
-    sb.from('acc_debtor_bills').select('id, debtor_id, status, total_sen, received_sen').in('id', allocs.map((a) => a.billId)), c,
-  );
-  if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
-  const byId = new Map(((bills ?? []) as Row[]).map((b) => [b.id, b]));
-  for (const a of allocs) {
-    const b = byId.get(a.billId);
-    if (!b || b.debtor_id !== found.debtor.id) {
-      return c.json({ error: 'bad_allocation', message: `Bill ${a.billId} is not this debtor's.` }, 400);
-    }
-    if (b.status === 'CANCELLED') return c.json({ error: 'bad_allocation', message: 'A cancelled bill takes no money.' }, 400);
-    const outstanding = Number(b.total_sen) - Number(b.received_sen ?? 0);
-    if (a.amountSen > outstanding) {
-      return c.json({ error: 'over_allocation', message: `That bill has only ${fmtSen(outstanding)} outstanding.` }, 400);
-    }
-  }
   const totalSen = allocs.reduce((s, a) => s + a.amountSen, 0);
   const receiptDate = dateOrNull(body.receiptDate) ?? todayMyt();
   /* 录入即过账 from the Receipts page (owner 2026-09-08: 用这个方式 — the
@@ -627,6 +646,90 @@ const loadReceipt = async (c: any): Promise<{ receipt: Row } | { resp: Response 
 };
 
 const stamp = (c: any) => ({ at: now(), by: String(c.get('user')?.id ?? '') });
+
+/* ── PATCH /receipts/:receiptId — change a receipt not yet checked ──────────
+   (the owner's Claude Design, batch 5 §4.3 c5). Its date, the money account it
+   lands on and the bills it takes money for, while it is a DRAFT nobody has
+   checked — the payment voucher's rule (pvCanEdit): a Prepared receipt is still
+   editable and keeps its stage; a Checked one is locked until it is rejected
+   back to Draft. The same checks as raising it. Posts nothing — the money
+   moves at approval — and the number stays. */
+export const updateDebtorReceiptHandler = async (c: any): Promise<Response> => {
+  if (!hasHouzsPerm(c, 'scm.payment_voucher.write') && !hasHouzsPerm(c, 'scm.payment_voucher.create')) {
+    return c.json({ error: "You don't have permission to do that." }, 403);
+  }
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const found = await loadReceipt(c);
+  if ('resp' in found) return found.resp;
+  const r = found.receipt;
+  if (r.status !== 'DRAFT') {
+    return c.json({ error: 'not_editable', message: `${r.receipt_number} is on the books — void it and raise it again to change it.` }, 409);
+  }
+  if (r.checked_at) {
+    return c.json({ error: 'already_checked', message: `${r.receipt_number} has been checked — it is locked. Reject it back to Draft to change it.` }, 409);
+  }
+
+  const patch: Row = {};
+  if (body.receiptDate !== undefined) {
+    const d = dateOrNull(body.receiptDate);
+    if (!d) return c.json({ error: 'bad_date', message: 'Type the date as 2026/10/29.' }, 400);
+    patch.receipt_date = d;
+  }
+  if (body.bankAccountCode !== undefined) {
+    const bank = String(body.bankAccountCode ?? '').trim();
+    if (!bank) return c.json({ error: 'bank_required' }, 400);
+    const moneyErr = await requireMoneyIn(c, bank);
+    if (moneyErr) return moneyErr;
+    patch.bank_account_code = bank;
+  }
+  let allocs: Allocation[] | null = null;
+  if (body.allocations !== undefined) {
+    const checked = await checkAllocations(c, String(r.debtor_id), body.allocations);
+    if ('resp' in checked) return checked.resp;
+    allocs = checked.allocs;
+    patch.total_sen = allocs.reduce((s, a) => s + a.amountSen, 0);
+  }
+  if (Object.keys(patch).length === 0) return c.json({ error: 'nothing_to_change' }, 400);
+
+  const sb = c.get('supabase');
+  const coId = r.company_id;
+  /* The bills it takes money for are replaced whole. If a later write fails,
+     the old set goes back, so the receipt never says one total and knocks off
+     another. */
+  let restore: (() => Promise<string | null>) | null = null;
+  if (allocs) {
+    const { data: was, error: wasErr } = await sb.from('acc_debtor_receipt_allocations')
+      .select('bill_id, amount_sen').eq('company_id', coId).eq('receipt_id', r.id);
+    if (wasErr) return c.json({ error: 'load_failed', reason: wasErr.message }, 500);
+    const old = ((was ?? []) as Row[]).map((a) => ({ company_id: coId, receipt_id: r.id, bill_id: a.bill_id, amount_sen: a.amount_sen }));
+    restore = async () => {
+      const { error: clearErr } = await sb.from('acc_debtor_receipt_allocations').delete().eq('company_id', coId).eq('receipt_id', r.id);
+      if (clearErr) return clearErr.message;
+      if (old.length === 0) return null;
+      const { error: backErr } = await sb.from('acc_debtor_receipt_allocations').insert(old);
+      return backErr ? backErr.message : null;
+    };
+    const { error: delErr } = await sb.from('acc_debtor_receipt_allocations').delete().eq('company_id', coId).eq('receipt_id', r.id);
+    if (delErr) return c.json({ error: 'save_failed', reason: delErr.message }, 500);
+    const { error: insErr } = await sb.from('acc_debtor_receipt_allocations').insert(allocs.map((a) => ({
+      company_id: coId, receipt_id: r.id, bill_id: a.billId, amount_sen: a.amountSen,
+    })));
+    if (insErr) {
+      const backErr = await restore();
+      return c.json({ error: 'save_failed', reason: backErr ? `${insErr.message}; the old bills were not put back: ${backErr}` : insErr.message }, 500);
+    }
+  }
+  const { error: upErr } = await sb.from('acc_debtor_receipts').update(patch).eq('company_id', coId).eq('id', r.id);
+  if (upErr) {
+    const backErr = restore ? await restore() : null;
+    return c.json({ error: 'save_failed', reason: backErr ? `${upErr.message}; the old bills were not put back: ${backErr}` : upErr.message }, 500);
+  }
+  return c.json({
+    ok: true,
+    receipt: { id: r.id, receiptNumber: r.receipt_number, totalSen: Number(patch.total_sen ?? r.total_sen), stage: r.submitted_at ? 'Prepared' : 'Draft' },
+  });
+};
 
 export const submitDebtorReceiptHandler = async (c: any): Promise<Response> => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.write')) {
@@ -854,6 +957,7 @@ otherDebtors.post('/bills/:billId/cancel', cancelDebtorBillHandler);
 otherDebtors.patch('/bills/:billId', updateDebtorBillHandler);
 otherDebtors.post('/:id/receipts', createDebtorReceiptHandler);
 otherDebtors.get('/receipts/:receiptId', debtorReceiptDetailHandler);
+otherDebtors.patch('/receipts/:receiptId', updateDebtorReceiptHandler);
 otherDebtors.post('/receipts/:receiptId/submit', submitDebtorReceiptHandler);
 otherDebtors.post('/receipts/:receiptId/withdraw', withdrawDebtorReceiptHandler);
 otherDebtors.post('/receipts/:receiptId/check', checkDebtorReceiptHandler);
