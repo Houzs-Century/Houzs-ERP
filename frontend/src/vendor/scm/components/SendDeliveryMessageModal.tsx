@@ -119,7 +119,9 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
   const groups = new Map<string, PlanningOrder[]>();
   const noPhone: PlanningOrder[] = [];
   for (const r of rows) {
-    const key = phoneKey(r.phone) && (isAssrSend ? r.so_doc_no : phoneKey(r.phone));
+    // A Service Case job sends alone (its template names one date), never
+    // bundled with another job or an SO on the same phone.
+    const key = phoneKey(r.phone) && (r.row_type === 'assr' ? r.so_doc_no : phoneKey(r.phone));
     if (!key) { noPhone.push(r); continue; }
     const arr = groups.get(key) ?? [];
     arr.push(r);
@@ -210,7 +212,7 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
 
           {needsDriver && (
             <div style={noteStyle}>
-              Each customer's message uses the <strong>driver set on the row</strong> (the Driver / Lorry columns) — no need to pick it again. Type the <strong>delivery-time window</strong> for each customer below; a customer with no driver on the row is skipped.
+              Each customer's message uses the <strong>driver set on the row</strong> (the Driver / Lorry columns) — no need to pick it again. Type the <strong>delivery-time window</strong> for each customer below; a customer with no driver on the row is skipped. A Service Case job sends on its own, with its job date.
             </div>
           )}
 
@@ -276,7 +278,7 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
 
                 {list.map((r) => (
                   <div key={r.so_doc_no} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 'var(--fs-12)', padding: '2px 0' }}>
-                    <span>{isAssrSend ? `${r.ref} · ${assrJobKindLabel(r.job_kind)}` : r.so_doc_no}{r.branding ? ` · ${r.branding}` : ''}</span>
+                    <span>{r.row_type === 'assr' ? `${r.ref} · ${assrJobKindLabel(r.job_kind)}` : r.so_doc_no}{r.branding ? ` · ${r.branding}` : ''}</span>
                     <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--c-muted, #767b6e)' }}>{effectiveDate(r)}</span>
                   </div>
                 ))}
@@ -286,7 +288,7 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
 
           {noPhone.length > 0 && (
             <div style={{ padding: 'var(--space-3)', border: '1px dashed var(--line)', borderRadius: 'var(--radius-md)', color: 'var(--c-muted, #767b6e)', fontSize: 'var(--fs-12)' }}>
-              Skipped — no usable phone: {noPhone.map((r) => (isAssrSend ? r.ref : r.so_doc_no)).join(', ')}
+              Skipped — no usable phone: {noPhone.map((r) => (r.row_type === 'assr' ? r.ref : r.so_doc_no)).join(', ')}
             </div>
           )}
         </div>

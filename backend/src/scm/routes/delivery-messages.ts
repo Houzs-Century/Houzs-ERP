@@ -36,7 +36,7 @@ import {
   type SendExtras,
 } from '../lib/delivery-message-kinds';
 import { markSentStatus } from '../lib/delivery-message-status';
-import { sendAssrArrangement } from '../lib/assr-arrangement-message';
+import { parseAssrRowKey, sendAssrArrangement } from '../lib/assr-arrangement-message';
 import {
   isConnectConfigured,
   buildDeliveryFollowUp,
@@ -453,15 +453,33 @@ deliveryMessages.post('/send', async (c) => {
       return c.json({ error: 'load_failed', reason: String((e as Error).message).slice(0, 200) }, 500);
     }
   }
+  // Driver Info also serves a Service Case leg (its trip's driver): those row
+  // keys go to the ASSR sender, which reads the case, not mfg_sales_orders.
+  const assrKeys = kind === 'driver_info' ? docNos.filter((k) => parseAssrRowKey(k)) : [];
+  let assrResult = { sent: [], failed: [], skipped: [] } as Awaited<ReturnType<typeof sendAssrArrangement>>;
+  if (assrKeys.length > 0) {
+    try {
+      assrResult = await sendAssrArrangement(c, assrKeys, extras.driverInfo);
+    } catch (e) {
+      return c.json({ error: 'load_failed', reason: String((e as Error).message).slice(0, 200) }, 500);
+    }
+  }
+  const soDocNos = assrKeys.length > 0 ? docNos.filter((k) => !assrKeys.includes(k)) : docNos;
+  if (soDocNos.length === 0) return c.json({ ...assrResult, statusNotMoved: [] });
   // Postpone needs no request field: it reads the row's Amend Reason + Delivery
   // Date (kindAttributes), and skips any order missing either.
-  const result = await sendDeliveryMessageForDocs(c, docNos, kind, extras);
+  const result = await sendDeliveryMessageForDocs(c, soDocNos, kind, extras);
   if (result.readError) return c.json({ error: result.readError.code, reason: result.readError.reason }, 500);
   // The messages have left; a status that cannot move is reported, never a 500.
   const statusNotMoved = await markSentStatus(
     c, result.sent.flatMap((s) => s.docNos), KIND_AFTER_STATUS[kind], KIND_AUTOMATION[kind],
   );
-  return c.json({ sent: result.sent, failed: result.failed, skipped: result.skipped, statusNotMoved });
+  return c.json({
+    sent: [...assrResult.sent, ...result.sent],
+    failed: [...assrResult.failed, ...result.failed],
+    skipped: [...assrResult.skipped, ...result.skipped],
+    statusNotMoved,
+  });
 });
 
 /* ── POST /statuses — latest send status per doc (board "Message" column) ──── */

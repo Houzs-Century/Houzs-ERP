@@ -984,6 +984,8 @@ export type SendDeliveryMessagesBody = {
   kind?: SendMessageKind;
   driverInfo?: { driverName: string; driverContact: string; driverIc: string; carPlate: string; deliveryTime: string };
 };
+/* An ASSR leg's board row key, `<assr_no>#<leg>` (backend parseAssrRowKey). */
+const ASSR_ROW_KEY_RE = /#(customer_pickup|inspection|delivery)$/;
 export function useSendDeliveryMessages() {
   const qc = useQueryClient();
   return useMutation<SendDeliveryMessagesResult, Error, SendDeliveryMessagesBody>({
@@ -996,18 +998,20 @@ export function useSendDeliveryMessages() {
     onSuccess: (res, body) => {
       void qc.invalidateQueries({ queryKey: ['delivery-messages'] });
       const sent = res.sent.flatMap((s) => s.docNos);
-      if (body.kind !== 'assr_arrangement') { scheduleRowRefresh(qc, sent); return; }
-      /* HC-0197: a Service Case leg's Done Send is not a column — only the full
-         board read overlays it from the send log (overlayAssrChatState), and the
-         row refresh is SO-only. Show it now, then re-read the board. */
+      const assrStatus = body.kind === 'assr_arrangement' ? 'Done Send' : body.kind === 'driver_info' ? 'Done Driver Information' : null;
+      const assrSent = sent.filter((d) => ASSR_ROW_KEY_RE.test(d));
+      if (body.kind !== 'assr_arrangement' && assrSent.length === 0) { scheduleRowRefresh(qc, sent); return; }
+      /* HC-0197: a Service Case leg's status after a send comes from the full
+         board read (overlayAssrChatState), and the row refresh is SO-only. Show
+         it now, then re-read the board (which re-reads any SO sent with it). */
       if (sent.length === 0) return;
-      const keys = new Set(sent);
+      const keys = new Set(assrSent);
       for (const [key, prev] of qc.getQueriesData<PlanningResponse>({ queryKey: ['delivery-planning'] })) {
         if (!prev || !Array.isArray(prev.orders)) continue;
         qc.setQueryData<PlanningResponse>(key, {
           ...prev,
           orders: prev.orders.map((o) => (o.row_type === 'assr' && keys.has(o.so_doc_no)
-            ? { ...o, delivery_message_status: 'Done Send', amend_date_from_customer: null, amend_reason_from_customer: null }
+            ? { ...o, delivery_message_status: assrStatus, amend_date_from_customer: null, amend_reason_from_customer: null }
             : o)),
         });
       }
