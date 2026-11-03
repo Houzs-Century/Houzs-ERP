@@ -16,7 +16,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ACCOUNTING_TAB_TITLES, accountingTabFromSearch, type AccountingTab } from './accounting-tabs';
+import { accountingTabFromSearch, type AccountingTab } from './accounting-tabs';
 import {
   useAccountBalances,
   useAccounts,
@@ -47,7 +47,7 @@ import { EventCostsTab } from './EventCosts';
 import { EventCommissionTab } from './EventCommission';
 import { ProductProfitTab } from './ProductProfit';
 import { LogisticsCostTab } from './LogisticsCost';
-import { cardStyle, fieldStyle, btnStyle } from './JournalEntryCards';
+import { cardStyle } from './JournalEntryCards';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { fmtDateOrDash, fmtSen } from '../../vendor/shared/format';
 import { byText } from '../../vendor/scm/lib/sort-options';
@@ -56,7 +56,7 @@ import { GeneralLedger } from './GeneralLedger';
 import { JournalTab } from './JournalEntries';
 import { CancelledWithMoneyCard } from './CancelledWithMoneyCard';
 import { ReceiptBackfillCard } from './ReceiptBackfillCard';
-import { PageHeader } from '../../components/Layout';
+import { AccountingHeader } from './books/AccountingHeader';
 import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
 import { DateField } from "../../vendor/scm/components/DateField";
 
@@ -66,6 +66,9 @@ import { DateField } from "../../vendor/scm/components/DateField";
 const fmt = (sen: number | null | undefined) => fmtSen(sen);
 
 type Tab = AccountingTab;
+
+/* The tabs that draw their own head, with their actions in it. */
+const OWN_HEADER: ReadonlySet<Tab> = new Set<Tab>(['je']);
 
 export const Accounting = () => {
   /* THE TAB THE URL NAMES (docs/bugs/0824). The Finance sidebar deep-links
@@ -84,7 +87,9 @@ export const Accounting = () => {
 
   return (
     <div className="space-y-4">
-      <PageHeader eyebrow="Finance" title={`Accounting · ${ACCOUNTING_TAB_TITLES[tab]}`} />
+      {/* The redesign's head (batch 6 §1.2): "Finance · <section>" over the
+          tab's own name. A tab with header actions draws its own. */}
+      {!OWN_HEADER.has(tab) && <AccountingHeader tab={tab} />}
 
       {tab === 'coa'   && <CoaTab />}
       {tab === 'groups' && <ItemGroupsTab />}

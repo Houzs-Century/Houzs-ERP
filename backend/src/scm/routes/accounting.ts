@@ -36,6 +36,7 @@ import { splitByItemGroup } from '../../acc/item-group-split';
 import { classifyJournal } from '../../acc/journal-class';
 import { isReversalPair } from '../../acc/reversal-pairs';
 import { resolveJournalRefs } from '../../acc/journal-refs';
+import { resolveJournalDocument } from '../../acc/journal-document';
 import { ledgerReport } from './accounting-ledger';
 import {
   settlementSetup, settlementSetupSave, settlementUpload, settlementBatches,
@@ -494,7 +495,19 @@ accounting.get('/journal-entries/:id', async (c) => {
     .eq('journal_entry_id', id)
     .order('line_no');
   if (e2) return c.json({ error: 'load_failed', reason: e2.message }, 500);
-  return c.json({ journalEntry: je, lines: lines ?? [] });
+  /* The document it was written from, so the card can open it (batch 6, g3).
+     A failed lookup does not cost the card: it is said, and the entry shows. */
+  const row = je as { company_id?: number | null; source_type?: string | null; source_doc_no?: string | null };
+  const docCompany = activeCompanyId(c) ?? row.company_id ?? null;
+  const doc = docCompany == null
+    ? { ok: true as const, document: null }
+    : await resolveJournalDocument(sb, Number(docCompany), row.source_type ?? null, row.source_doc_no ?? null);
+  return c.json({
+    journalEntry: je,
+    lines: lines ?? [],
+    document: doc.ok ? doc.document : null,
+    ...(doc.ok ? {} : { documentError: doc.reason }),
+  });
 });
 
 accounting.post('/journal-entries', async (c) => {

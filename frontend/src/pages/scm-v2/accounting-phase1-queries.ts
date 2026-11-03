@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { writeFailedAs } from '../../vendor/scm/lib/mutation-error';
 import { retryUnlessClientError } from '../../lib/retryPolicy';
-import type { Account, JeLineIn, JournalEntry } from '../../vendor/scm/lib/accounting-queries';
+import type { Account, JeLineIn, JournalEntry, JournalEntryLine } from '../../vendor/scm/lib/accounting-queries';
 
 export const useCreateAccount = () => {
   const qc = useQueryClient();
@@ -69,6 +69,26 @@ export const useEditJournalEntry = () => {
     onError: writeFailedAs('Journal entry not edited'),
   });
 };
+
+/** The document an entry was written from, read back to the id its page opens
+    by (backend acc/journal-document) — the card's "Open <document>". */
+export type JournalDocument = { kind: 'SI' | 'SO' | 'PI' | 'API' | 'PV' | 'NOTE' | 'SUPPLIER_NOTE'; id: string; number: string };
+export type JournalEntryCardData = {
+  journalEntry: JournalEntry;
+  lines: JournalEntryLine[];
+  document?: JournalDocument | null;
+  /** Only when the document could not be read; the entry still shows. */
+  documentError?: string;
+};
+/** One entry for its card — the detail read the post / edit / reverse hooks
+    already refresh (same key), with the entry's document beside it. */
+export const useJournalEntryCard = (id: string | null) => useQuery({
+  queryKey: ['journal-entry-detail', id],
+  queryFn: () => authedFetch<JournalEntryCardData>(`/accounting/journal-entries/${id}`),
+  enabled: Boolean(id),
+  staleTime: 30_000,
+  retry: retryUnlessClientError,
+});
 
 /** The Journal page grouped per entry (docs/bugs/0935): every entry of the
     period with its lines in order and the references the GL page prints. */

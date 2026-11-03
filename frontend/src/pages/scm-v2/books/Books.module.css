@@ -1,0 +1,224 @@
+/* Finance › Books — Journal entries, General ledger, Self-check and Stock
+   close in the owner's Claude Design (batch 6). The colours are the custom
+   properties of finance/finance-ui.module.css (`.root` sits on each page);
+   the classes copy the batch 3–4 patterns (MoneyOut, FinanceTasks) rather
+   than reaching into their modules. */
+
+.page { display: flex; flex-direction: column; gap: 12px; min-width: 0; font-variant-numeric: tabular-nums; }
+.grow { flex: 1; }
+.muted { color: var(--fin-detail); }
+.soft { color: var(--fin-muted); }
+.right { text-align: right; }
+
+/* ── Header actions ─────────────────────────────────────────────────── */
+.headActions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.btn, .btnPrimary, .btnSolid {
+  height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; border-radius: 6px; box-sizing: border-box;
+  font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
+}
+.btn { border: 1px solid var(--fin-line); background: var(--fin-surface); color: var(--fin-text); }
+.btn:hover:not(:disabled) { background: var(--fin-paper); }
+.btnPrimary { border: 1px solid var(--fin-petrol-line); background: var(--fin-petrol-pale); color: var(--fin-petrol-ink); }
+.btnPrimary:hover:not(:disabled) { background: var(--fin-petrol-hover); }
+.btnSolid { border: 1px solid var(--fin-petrol); background: var(--fin-petrol); color: #ffffff; }
+.btnSolid:hover:not(:disabled) { background: var(--fin-petrol-ink); border-color: var(--fin-petrol-ink); }
+.btn:disabled, .btnPrimary:disabled, .btnSolid:disabled { opacity: 0.55; cursor: default; }
+.more {
+  width: 32px; height: 32px; display: inline-grid; place-items: center; border: 1px solid var(--fin-line); border-radius: 6px;
+  background: var(--fin-surface); color: var(--fin-text); cursor: pointer;
+}
+.more:hover { background: var(--fin-paper); }
+.menuWrap { position: relative; display: inline-flex; }
+.menu {
+  position: absolute; right: 0; top: 36px; z-index: 60; min-width: 220px; padding: 4px; border: 1px solid var(--fin-line);
+  border-radius: 8px; background: var(--fin-surface); box-shadow: var(--fin-pop-shadow);
+}
+.menuItem {
+  width: 100%; display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 0; border-radius: 6px; background: transparent;
+  text-align: left; font: 13px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-ink); cursor: pointer;
+}
+.menuItem:hover:not(:disabled) { background: var(--fin-paper); }
+.menuItem:disabled { color: var(--fin-muted); cursor: default; }
+
+/* ── The toolbar row ────────────────────────────────────────────────── */
+.tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.tool { display: inline-flex; align-items: center; gap: 7px; }
+.toolLabel { font-size: 12.5px; color: var(--fin-muted); }
+.seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 8px; background: var(--fin-rule-soft); }
+.segBtn {
+  height: 26px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent;
+  color: var(--fin-text); font: 500 12px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; white-space: nowrap;
+}
+.segBtn:hover { color: var(--fin-ink); }
+.segOn, .segOn:hover { background: var(--fin-surface); color: var(--fin-petrol-ink); font-weight: 600; box-shadow: 0 1px 2px rgba(17, 24, 16, 0.12); }
+.segCount { font-weight: 500; color: var(--fin-muted); }
+.selectWrap { position: relative; display: inline-flex; align-items: center; }
+.select {
+  appearance: none; -webkit-appearance: none; height: 32px; box-sizing: border-box; padding: 0 28px 0 10px; max-width: 260px;
+  border: 1px solid var(--fin-line); border-radius: 6px; background: var(--fin-surface); color: var(--fin-ink);
+  font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer; outline: none;
+}
+.select:focus { border-color: var(--fin-petrol); }
+.selectChevron { position: absolute; right: 9px; pointer-events: none; color: var(--fin-muted); }
+.search {
+  flex: 1; min-width: 220px; max-width: 420px; display: flex; align-items: center; gap: 7px; height: 32px; box-sizing: border-box; padding: 0 10px;
+  border: 1px solid var(--fin-line); border-radius: 6px; background: var(--fin-surface); color: var(--fin-muted);
+}
+.search:focus-within { border-color: var(--fin-petrol); }
+.search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font: 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-ink); }
+.toolNote { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; font-size: 12px; color: var(--fin-muted); }
+
+/* ── Banners and states ─────────────────────────────────────────────── */
+.problem { padding: 10px 14px; border: 1px solid #e7c9c9; border-radius: 8px; background: var(--fin-late-bg); font-size: 12.5px; color: #7a2222; }
+.empty { padding: 28px 14px; text-align: center; font-size: 13px; color: var(--fin-muted); }
+.skeleton { display: flex; flex-direction: column; gap: 8px; padding: 14px; }
+.skeletonBar { height: 14px; border-radius: 4px; background: linear-gradient(90deg, var(--fin-rule-soft), var(--fin-paper), var(--fin-rule-soft)); }
+
+/* ── Status tags: 20px, 4px radius, 11/600 ──────────────────────────── */
+.tags { display: inline-flex; align-items: center; gap: 4px; }
+.tag {
+  flex: none; display: inline-flex; align-items: center; gap: 5px; height: 20px; box-sizing: border-box; padding: 0 7px; border-radius: 4px;
+  font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap;
+}
+.toneLate { background: var(--fin-late-bg); color: var(--fin-late-fg); }
+.toneWarn { background: var(--fin-warn-bg); color: var(--fin-warn-fg); }
+.toneInfo { background: var(--fin-info-bg); color: var(--fin-info-fg); }
+.toneCalm { background: var(--fin-calm-bg); color: var(--fin-calm-fg); }
+.dot { width: 5px; height: 5px; border-radius: 999px; background: var(--fin-late-fg); }
+
+/* ── The resizable grids (Journal entries, General ledger) ───────────── */
+.card { background: var(--fin-surface); border: 1px solid var(--fin-line); border-radius: 10px; box-shadow: var(--fin-card-shadow); min-width: 0; overflow: hidden; }
+.scroll { overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--fin-input) transparent; }
+.gridHead, .row {
+  display: grid; align-items: center; padding: 0 14px;
+}
+.gridHead {
+  align-items: end; padding-top: 9px; padding-bottom: 8px; background: var(--fin-paper); border-bottom: 1px solid var(--fin-rule);
+  font-size: 12px; font-weight: 600; color: var(--fin-text);
+}
+.gap12 { column-gap: 12px; }
+.gap8 { column-gap: 8px; }
+.headCell { position: relative; min-width: 0; white-space: nowrap; }
+.resize {
+  position: absolute; top: -9px; bottom: -8px; right: -9px; width: 10px; z-index: 2; display: flex; justify-content: center; cursor: col-resize;
+}
+.gap12 .resize { right: -11px; }
+.resize:hover { background: rgba(22, 105, 95, 0.1); }
+.resizeLine { width: 1px; margin: 7px 0; background: var(--fin-line); }
+.cell { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.strong { font-weight: 600; }
+.entryNo {
+  padding: 0; border: 0; background: none; font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-petrol-ink);
+  font-variant-numeric: tabular-nums; text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; white-space: nowrap;
+}
+.entryNo:hover { color: var(--fin-petrol); }
+.resetRow { display: flex; justify-content: flex-end; padding: 0 2px; }
+.resetLink {
+  padding: 0; border: 0; background: none; font: 12px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-muted); cursor: pointer;
+  text-decoration: underline; text-underline-offset: 2px;
+}
+.moreRow { padding: 10px 14px; border-top: 1px solid var(--fin-rule); }
+.moreLink { padding: 0; border: 0; background: none; font: 600 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-petrol); cursor: pointer; }
+.moreLink:hover { text-decoration: underline; }
+
+/* Journal entries: an entry's head row, then its lines. */
+.entry { border-top: 1px solid var(--fin-rule); }
+.gridHead + .entry { border-top: 0; }
+.dim { opacity: 0.6; }
+.entryHead { min-height: 36px; background: var(--fin-row); font-size: 12.5px; cursor: default; }
+.entryHead:hover { background: var(--fin-paper); }
+.entryLine { min-height: 30px; padding-top: 3px; padding-bottom: 3px; border-top: 1px solid var(--fin-calm-bg); font-size: 12.5px; }
+.desc { font-weight: 500; }
+
+/* ── The entry card and the form, in a right drawer ──────────────────── */
+.drawer { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--fin-surface); color: var(--fin-ink); font-variant-numeric: tabular-nums; }
+.dHead { display: flex; align-items: flex-start; gap: 12px; padding: 18px 20px 12px; border-bottom: 1px solid var(--fin-rule-soft); }
+.dTitleRow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dTitle { font-size: 17px; font-weight: 600; }
+.dSub { margin-top: 3px; font-size: 12.5px; color: var(--fin-detail); }
+.dClose {
+  flex: none; width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid var(--fin-line); border-radius: 6px;
+  background: var(--fin-surface); color: var(--fin-text); cursor: pointer;
+}
+.dClose:hover { background: var(--fin-paper); }
+.dBody { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 20px 20px; display: flex; flex-direction: column; gap: 14px; }
+.dFoot { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--fin-rule); background: var(--fin-row); }
+.dFootText { flex: 1; min-width: 180px; font-size: 12.5px; color: var(--fin-detail); line-height: 1.4; }
+.dBtn { height: 34px; padding: 0 14px; }
+
+.facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px 16px; }
+.factLabel { font-size: 12px; color: var(--fin-muted); }
+.factValue { margin-top: 2px; font-size: 13px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.docLink {
+  padding: 0; border: 0; background: none; font: 600 13px 'IBM Plex Sans', system-ui, sans-serif; color: inherit; cursor: pointer;
+  text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: #a9ada3;
+}
+.docLink:hover { color: var(--fin-petrol); text-decoration-color: var(--fin-petrol); }
+.note { display: flex; gap: 9px; align-items: flex-start; padding: 10px 12px; border-radius: 8px; font-size: 12.5px; line-height: 1.45; }
+.note > svg { flex: none; margin-top: 1px; }
+.noteInfo { background: var(--fin-info-bg); color: var(--fin-info-fg); }
+.noteWarn { background: var(--fin-warn-bg); color: #5a3a14; }
+.noteWarn > svg { color: var(--fin-warn-fg); }
+.hint { font-size: 12px; color: var(--fin-muted); }
+
+.lines { border: 1px solid var(--fin-rule); border-radius: 8px; overflow: hidden; }
+.linesHead, .linesRow, .linesTotal {
+  display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr) 112px 112px; column-gap: 10px; align-items: center; padding: 0 12px;
+}
+.linesHead { padding-top: 8px; padding-bottom: 8px; background: var(--fin-paper); font-size: 12px; font-weight: 600; color: var(--fin-text); }
+.linesRow { min-height: 40px; padding-top: 4px; padding-bottom: 4px; border-top: 1px solid var(--fin-rule-soft); font-size: 13px; }
+.linesTotal { min-height: 36px; border-top: 1px solid var(--fin-line); font-size: 13px; font-weight: 600; }
+.acct {
+  min-width: 0; padding: 0; border: 0; background: none; text-align: left; font: inherit; color: inherit; cursor: pointer; overflow: hidden;
+}
+.acct:hover { color: var(--fin-petrol); }
+
+.formTop { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 12px; }
+.field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.fieldLabel { font-size: 12px; font-weight: 600; color: var(--fin-text); }
+.fieldHint { font-size: 11.5px; color: var(--fin-muted); }
+.input {
+  height: 32px; box-sizing: border-box; width: 100%; padding: 0 10px; border: 1px solid var(--fin-line); border-radius: 6px; background: var(--fin-surface);
+  font: 12.5px 'IBM Plex Sans', system-ui, sans-serif; color: var(--fin-ink); outline: none;
+}
+.input:focus { border-color: var(--fin-petrol); }
+.inputBad, .inputBad:focus { border-color: var(--fin-late-fg); }
+.amount { text-align: right; font-variant-numeric: tabular-nums; }
+.formGrid { border: 1px solid var(--fin-rule); border-radius: 8px; container-type: inline-size; }
+.formHead, .formRow, .formFoot {
+  display: grid; grid-template-columns: minmax(150px, 1.6fr) 108px 108px minmax(90px, 1fr) 30px; column-gap: 8px; align-items: center; padding: 6px 10px;
+}
+.formHead { padding-top: 8px; padding-bottom: 8px; background: var(--fin-paper); border-radius: 8px 8px 0 0; font-size: 12px; font-weight: 600; color: var(--fin-text); }
+.formRow { border-top: 1px solid var(--fin-rule-soft); }
+.formFoot { padding-top: 8px; padding-bottom: 8px; border-top: 1px solid var(--fin-line); }
+.formTotal { text-align: right; font-size: 13px; font-weight: 600; padding-right: 10px; white-space: nowrap; }
+.remove {
+  width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--fin-muted); cursor: pointer;
+}
+.remove:hover:not(:disabled) { background: var(--fin-paper); }
+.remove:disabled { opacity: 0.35; cursor: default; }
+.addLine {
+  height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid var(--fin-line); border-radius: 6px;
+  background: var(--fin-surface); color: var(--fin-text); font: 600 12px 'IBM Plex Sans', system-ui, sans-serif; cursor: pointer;
+}
+.addLine:hover { background: var(--fin-paper); }
+/* A narrow drawer: the account takes its own line above the figures. */
+@container (max-width: 520px) {
+  .formHead, .formRow, .formFoot { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 30px; row-gap: 6px; }
+  .formHead > :nth-child(1), .formRow > :nth-child(1), .formFoot > :nth-child(1) { grid-column: 1 / -1; }
+  .formHead > :nth-child(4), .formRow > :nth-child(4), .formFoot > :nth-child(4) { grid-column: 1 / 3; }
+}
+
+/* ── The dark toast with the brass check ────────────────────────────── */
+.toast {
+  position: fixed; top: 18px; left: 50%; transform: translateX(-50%); z-index: 300; display: flex; align-items: center; gap: 10px;
+  max-width: calc(100vw - 32px); padding: 10px 14px; border-radius: 8px; background: var(--fin-toast); color: var(--fin-toast-ink);
+  font-size: 12.5px; box-shadow: 0 12px 32px -16px rgba(17, 24, 16, 0.45);
+}
+.toast > svg { flex: none; color: var(--fin-gold); }
+
+@media (max-width: 720px) {
+  .formTop { grid-template-columns: minmax(0, 1fr); }
+  .search { min-width: 0; max-width: none; flex-basis: 100%; }
+}
