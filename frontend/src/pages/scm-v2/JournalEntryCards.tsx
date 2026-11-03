@@ -40,14 +40,6 @@ import { financeDocHref } from './finance/FinanceDocLink';
 import { isManualSource, sourceLabel } from './books/journal-sources';
 import s from './books/Books.module.css';
 
-/* The self-check cards' frame until they are restyled (Accounting.tsx). */
-export const cardStyle: React.CSSProperties = {
-  padding: 'var(--space-4)',
-  background: 'var(--c-cream)',
-  border: '1px solid var(--c-line, rgba(34,31,32,0.12))',
-  borderRadius: 'var(--radius-md)',
-};
-
 /* JE status — REVERSED wins over POSTED, then DRAFT. The stored words, for the
    CSV and the search; the card and the grid print jeStatusTag's. */
 export const jeStatus = (r: JournalEntry): string =>

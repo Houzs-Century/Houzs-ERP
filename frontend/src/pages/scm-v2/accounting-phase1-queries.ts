@@ -115,7 +115,13 @@ export const useJournalEntriesGrouped = (f: JournalGroupedFilters, enabled = tru
   });
 };
 
-export type ControlDrift = { docNo: string; docTotalSen: number; jeTotalSen: number; diffSen: number; note: string };
+export type ControlDrift = {
+  docNo: string; docTotalSen: number; jeTotalSen: number; diffSen: number; note: string;
+  /** The customer or supplier, the document's date, its active entry, and the
+      id its page opens by — read with the check (batch 6 c2); absent before. */
+  party?: string | null; date?: string | null; jeNo?: string | null;
+  docKind?: 'SI' | 'PI' | 'API' | null; docId?: string | null;
+};
 export type ControlForeign = { jeNo: string; sourceType: string; debitSen: number; creditSen: number };
 export type ControlCheckRow =
   | { role: string; accountCode: string; glBalanceSen: number; driftDocs: ControlDrift[]; foreignLines: ControlForeign[]; ok: boolean }
@@ -126,7 +132,11 @@ export type ControlCheckRow =
     company ever booked one — and null means there is no period to check. */
 export type UnbookedPayments = {
   since: string | null;
-  rows: Array<{ source: 'SOPAY' | 'SIPAY'; id: string; docNo: string; paidOn: string; amountSen: number; method: string }>;
+  rows: Array<{
+    source: 'SOPAY' | 'SIPAY'; id: string; docNo: string; paidOn: string; amountSen: number; method: string;
+    /** The order's customer and salesperson (batch 6 c2); absent before. */
+    customer?: string | null; salesperson?: string | null;
+  }>;
   totalSen: number;
   ok: boolean;
   /** Only when the check itself could not run. */
