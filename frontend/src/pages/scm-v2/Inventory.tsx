@@ -19,6 +19,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AsOfSection } from './InventoryAsOf';
 import { DemandSoPanel } from './InventoryDemandSoPanel';
+import { LOCATION_COLUMN } from './InventoryLocationColumn';
 import {
   Search, ArrowUpRight, ArrowDownLeft, Star, X, Plus,
   Warehouse as WarehouseIcon, ChevronRight, ChevronDown,
@@ -648,6 +649,7 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
       );
     },
   },
+  LOCATION_COLUMN,
   {
     key: 'incoming',
     label: 'Incoming',
