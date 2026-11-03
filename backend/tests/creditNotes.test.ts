@@ -218,6 +218,23 @@ describe('posting and cancelling', () => {
     expect(drafts.rows.map((r) => r.kind)).toEqual(['CN']);
   });
 
+  test('a posted supplier note on the list says what it used and what is left (Supplier bills · To use / Used)', async () => {
+    const { app, sb } = harness();
+    const scn = await raise(app, { kind: 'SCN', supplierId: 'sup-h', lines: [{ amountSen: 50_000 }] });
+    await json(app, `/credit-notes/${scn.id}/post`, 'POST');
+    const draft = await raise(app, { kind: 'SCN', supplierId: 'sup-f', lines: [{ amountSen: 9_000 }] });
+    /* Two applications, the second on an AP bill; the plan's amount is not what it used. */
+    (sb.tables as Record<string, Row[]>).acc_credit_note_allocations = [
+      { id: 'al-1', company_id: CO, note_id: scn.id, purchase_invoice_id: 'pi-1', amount_sen: 30_000, applied_sen: 20_000 },
+      { id: 'al-2', company_id: CO, note_id: scn.id, ap_invoice_id: 'api-1', amount_sen: 10_000, applied_sen: 10_000 },
+    ];
+    const rows = (await (await app.request('/credit-notes?side=AP')).json() as { rows: Row[] }).rows;
+    expect(rows.find((r) => r.id === scn.id)).toMatchObject({ appliedSen: 30_000, unusedSen: 20_000, controlRole: 'AP_OTHER' });
+    expect(rows.find((r) => r.id === draft.id)?.controlRole).toBe('AP');
+    /* A draft has used nothing yet and says nothing. */
+    expect(rows.find((r) => r.id === draft.id)?.unusedSen).toBeUndefined();
+  });
+
   test('a note that answers a sales invoice carries the invoice NUMBER on the list and the detail — the print names it (docs/bugs/0834)', async () => {
     const { app } = harness();
     const fromSi = await raise(app, { ...CN, soDocNo: undefined, salesInvoiceId: 'si-1' });

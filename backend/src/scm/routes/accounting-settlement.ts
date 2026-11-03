@@ -968,6 +968,9 @@ export const settlementBatchDetail = guard(async (c) => {
           paid_on: p?.paidOn ?? null,
           customer_name: p?.customerName ?? null,
           approval_code: p?.approvalCode ?? null,
+          /* The redesign's Sales and Account sheet columns. */
+          salesperson: p?.salesperson ?? null,
+          account_sheet: p?.accountSheet ?? null,
         };
       }),
       /* A REF-MATCHED LINE CARRIES ITS PAYMENT IN `matched`, NOT `candidates`.

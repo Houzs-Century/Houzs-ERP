@@ -54,6 +54,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { fmtDate, fmtSen } from '../../vendor/shared/format';
 import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
+import { moneyInDocHref } from './money-in/moneyInDocs';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -90,12 +91,12 @@ const buildReceiptColumns = (h: {
   {
     key: 'number', label: 'No.', width: 180, sortable: true,
     accessor: (r) => (
-      <span className={cancelledDocNoClass(r.status)} style={{ fontFamily: 'var(--font-mono)' }}>
+      <span className={cancelledDocNoClass(r.status)} style={{ fontVariantNumeric: 'tabular-nums' }}>
         {r.kind === 'DEBTOR'
-          ? <Link to={`/scm/ar-invoices?debtor=${r.debtorId ?? ''}`} style={{ color: 'inherit' }}>{r.number}</Link>
+          ? <Link to={moneyInDocHref('debtorReceipt', r.id)} style={{ color: 'inherit' }}>{r.number}</Link>
           : r.kind === 'CUSTOMER'
             ? <Link to={`/scm/sales-orders/${r.number}`} style={{ color: 'inherit' }}>{r.number}</Link>
-            : r.number}
+            : <Link to={moneyInDocHref('sundry', r.id)} style={{ color: 'inherit' }}>{r.number}</Link>}
       </span>
     ),
     /* A customer receipt is also found by its order's reference. */
@@ -121,14 +122,14 @@ const buildReceiptColumns = (h: {
   },
   {
     key: 'moneyAccount', label: 'Into', width: 200, sortable: true, groupable: true,
-    accessor: (r) => <span style={{ fontFamily: 'var(--font-mono)' }}>{r.moneyAccount}</span>,
+    accessor: (r) => r.moneyAccount,
     searchValue: (r) => r.moneyAccount,
     groupValue: (r) => r.moneyAccount || '(none)',
     sortFn: (a, b) => a.moneyAccount.localeCompare(b.moneyAccount),
   },
   {
     key: 'totalSen', label: 'Amount', width: 140, sortable: true, align: 'right',
-    accessor: (r) => <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(r.totalSen)}</span>,
+    accessor: (r) => <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtRm(r.totalSen)}</span>,
     searchValue: (r) => fmtRm(r.totalSen),
     exportValue: (r) => r.totalSen / 100,
     exportFormat: 'money',
@@ -324,7 +325,7 @@ export const Receipts = () => {
   return (
     <div className="space-y-4">
       <PageHeader
-        eyebrow="Finance"
+        eyebrow="Finance · Money in"
         title="Receipts"
         actions={canCreate ? (
           <button type="button" onClick={() => { closeForm(); setAdding(true); }}
@@ -419,9 +420,9 @@ export const Receipts = () => {
                               checked={v === out && out > 0}
                               onChange={(e) => setDebtorAllocs((prev) => ({ ...prev, [b.id]: e.target.checked ? out : 0 }))} />
                           </td>
-                          <td style={{ padding: '4px 8px', fontFamily: 'var(--font-mono)' }}>{b.bill_number}</td>
-                          <td style={{ padding: '4px 8px', whiteSpace: 'nowrap' }}>{b.bill_date}</td>
-                          <td style={{ padding: '4px 8px', textAlign: 'right', color: 'var(--fg-muted)', fontFamily: 'var(--font-mono)' }}>{fmtRm(out)}</td>
+                          <td style={{ padding: '4px 8px' }}>{b.bill_number}</td>
+                          <td style={{ padding: '4px 8px', whiteSpace: 'nowrap' }}>{fmtDate(b.bill_date)}</td>
+                          <td style={{ padding: '4px 8px', textAlign: 'right', color: 'var(--fg-muted)', fontVariantNumeric: 'tabular-nums' }}>{fmtRm(out)}</td>
                           <td style={{ padding: '4px 8px', width: 160 }}>
                             <MoneyInput bare valueSen={v > 0 ? v : null} allowBlank inputClassName={styles.fieldInput} selectOnFocus aria-label={`amount for ${b.bill_number}`}
                               placeholder="0.00" style={{ width: '100%' }}
@@ -451,7 +452,7 @@ export const Receipts = () => {
                   <Plus {...ICON} /> Line
                 </Button>
               )}
-              <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)' }}>Total {fmtRm(debtorMode ? debtorTotal : total)}</span>
+              <span style={{ marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}>Total {fmtRm(debtorMode ? debtorTotal : total)}</span>
               <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{SAVE_HOTKEY_HINT}</span>
               <Button variant="primary" size="sm" onClick={() => void save()}
                 disabled={saving || !canPost}>
@@ -488,7 +489,7 @@ export const Receipts = () => {
               </button>
             )}
             <span style={{ color: 'var(--fg-muted)' }}>{shown.length} receipt(s)</span>
-            <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{fmtRm(listTotal)}</span>
+            <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>{fmtRm(listTotal)}</span>
           </div>
         )}
       />

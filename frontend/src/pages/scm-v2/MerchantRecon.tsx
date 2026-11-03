@@ -30,11 +30,11 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, ArrowLeft, ArrowRight, CheckCheck, Download, Undo2, Upload } from 'lucide-react';
 import {
   useAcquirerSetup, useSaveAcquirerSetup, useSettlementBatches, useSettlementBatch,
-  useUploadStatement, useConfirmSettlementRow, useConfirmMatched, useIgnoreSettlementRow,
-  useSettlementWatchlist, useUnconfirmSettlementRow, useFindPayments,
+  useConfirmSettlementRow, useConfirmMatched, useIgnoreSettlementRow,
+  useSettlementWatchlist, useUnconfirmSettlementRow, useFindPayments, usePayouts,
   confirmMatchedBatch, useInvalidateAfterPosting,
-  type AcquirerSetup, type SettlementRow, type SettlementBucket, type SettlementBatch, type BankAccount, type SettlementCandidate,
-  type Watchlist,
+  type AcquirerSetup, type SettlementRow, type SettlementBatch, type BankAccount, type SettlementCandidate,
+  type Watchlist, type Payout,
 } from './settlement-queries';
 import { DataTable, type Column } from '../../components/DataTable';
 import {
@@ -42,10 +42,14 @@ import {
   BUCKET_LABEL, refusalText, payableOf,
 } from './settlement-ui';
 import { PayoutAdviceTab } from './PayoutAdviceTab';
+import { MerchantUploadDrawer, type UploadLanding } from './MerchantUpload';
 import { downloadCSV, toCSV } from '../../lib/csv';
 import styles from './Suppliers.module.css';
 import grid from './MerchantRecon.module.css';
 import { PageHeader } from '../../components/Layout';
+import { AcquirerCards, ReportHead, ReportStrip, ReportTabs, TAB_EMPTY, acquirerCards, lineTab, type ReportTab } from './MerchantReportsTop';
+import top from './MerchantReports.module.css';
+import { useFinanceTodo } from './finance/finance-todo-queries';
 import { fmtDate } from '../../vendor/shared/format';
 import { markWorkspaceOpenIntent } from '../../lib/workspaceTabs';
 import { rememberReturnScroll, useReturnScroll } from '../../lib/returnScroll';
@@ -85,36 +89,90 @@ const LinkedDocs = ({ links }: { links: SettlementRow['linked'] }) => (
   </>
 );
 
-/* The server sends the four piles as a plain tally; a bucket with nothing in it
-   is simply absent, so read it as a lookup rather than a guaranteed key. */
-const bucketCount = (buckets: Record<string, number>, key: SettlementBucket): number =>
-  Number(buckets[key] ?? 0);
-
 export const MerchantRecon = () => {
-  const [tab, setTab] = useState<'reports' | 'advice'>('reports');
+  /* The redesign (owner's Claude Design, batch 3): a card per acquirer on top;
+     choosing one narrows the page to its reports and shows them by swipe day.
+     With none chosen the page is today's work list of every acquirer. The
+     acquirer, the open report and the advice view all live in the address. */
+  const setup = useAcquirerSetup();
+  const batches = useSettlementBatches();
+  const todo = useFinanceTodo();
+  const [params, setParams] = useSearchParams();
+  const acq = params.get('acq');
+  const advice = params.get('view') === 'advice';
+  const batchParam = Number(params.get('batch'));
+  const openId = Number.isInteger(batchParam) && batchParam > 0 ? batchParam : null;
+  const all = batches.data?.batches ?? [];
+  /* A report not in by the next morning, as To do raised it (card-missing): the swipe day before it began waiting. */
+  const missingDay = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const j of todo.data?.mine ?? []) {
+      if (j.rule !== 'card-missing' || !j.since) continue;
+      const code = j.key.replace(/^card-missing:/, '');
+      out[code] = new Date(Date.parse(`${j.since}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+    }
+    return out;
+  }, [todo.data]);
+  const cards = acquirerCards(setup.data?.acquirers ?? [], all, missingDay);
+  /* The Upload drawer lives in the address (?upload=1, or ?upload=advice for
+     Public Bank's advice), so To do can open it; what an upload made lands
+     below once the drawer closes. */
+  const uploading = params.get('upload');
+  const [landing, setLanding] = useState<UploadLanding | null>(null);
+  const openUpload = () => setParam({ upload: '1' });
+  const uploadButton = <button type="button" className={top.upload} onClick={openUpload}><Upload {...ICON} /> Upload</button>;
+  const setParam = (patch: Record<string, string | null>) => setParams((prev) => {
+    const next = new URLSearchParams(prev);
+    for (const [k, v] of Object.entries(patch)) { if (v == null) next.delete(k); else next.set(k, v); }
+    return next;
+  });
 
   return (
     <div className="space-y-4">
-      <PageHeader eyebrow="Finance · step 1 of 2" title="Merchant reconciliation" />
-      <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-        <button type="button" style={btn(tab === 'reports')} onClick={() => setTab('reports')}>Merchant reports</button>
-        {/* The advice is the ACQUIRER'S paperwork, so it lives here too — the
-            owner, 2026-08-24: 毕竟它属于card merchant 那边. Everything a person
-            DOES about an advice is on this side (upload it, see which report is
-            missing or differs, fix that report); the bank screen carries the
-            same tab because the credit lands there, and the matcher consumes
-            the advice without being asked. One component, two doors. */}
-        <button type="button" style={btn(tab === 'advice')} onClick={() => setTab('advice')}>Payment advice</button>
-        <span style={{ flex: 1 }} />
-        <Link to="/scm/settlement-setup" style={{ ...btn(), textDecoration: 'none' }}>Setup</Link>
-        {/* Step two is its own screen; the link is here so the next job is one
-            click away, not a hunt through the menu. */}
-        <Link to="/scm/bank-recon" style={{ ...btn(), textDecoration: 'none' }}>
-          Bank statement reconciliation <ArrowRight {...ICON} />
-        </Link>
+      <PageHeader eyebrow="Finance · Bank & cards" title="Merchant reports" />
+      <div className={top.top}>
+        <div className={top.headRow}>
+          <span className={top.grow} />
+          <Link to="/scm/settlement-setup" className={top.link}>Recon setup</Link>
+          {/* Step two is its own screen; the link keeps the next job one click away. */}
+          <Link to="/scm/bank-recon" className={top.link}>Bank statements <ArrowRight {...ICON} /></Link>
+        </div>
+        <AcquirerCards cards={cards} selected={acq}
+          onSelect={(code) => setParam({ acq: acq === code ? null : code, batch: null, view: null })} />
+        {acq && (
+          <ReportStrip code={acq} batches={all.filter((x) => x.acquirer_code === acq)} openId={openId} missingDay={missingDay[acq] ?? null}
+            onOpen={(id) => setParam({ batch: String(id), view: null })}
+            extra={(
+              <>
+                {/* The advice is the acquirer's paperwork, so it lives with its reports (owner 2026-08-24). */}
+                {acq === 'PBB' && (
+                  <button type="button" className={`${top.chip} ${advice ? top.chipOn : ''}`} aria-pressed={advice}
+                    onClick={() => setParam({ view: advice ? null : 'advice', batch: null })}>Advices</button>
+                )}
+                {uploadButton}
+              </>
+            )} />
+        )}
+        {!acq && (
+          <div className={top.headRow}>
+            <button type="button" className={`${top.chip} ${advice ? top.chipOn : ''}`} aria-pressed={advice}
+              onClick={() => setParam({ view: advice ? null : 'advice', batch: null })}>Payment advices</button>
+            <span className={top.grow} />
+            {uploadButton}
+          </div>
+        )}
       </div>
-      {tab === 'reports' && <ReconcileTab />}
-      {tab === 'advice' && <PayoutAdviceTab />}
+      {uploading != null && (
+        <MerchantUploadDrawer acq={acq} acquirers={setup.data?.acquirers ?? []} startWith={uploading === 'advice' ? 'advice' : null}
+          onClose={(l) => {
+            if (l?.kind === 'advice') { setParam({ upload: null, view: 'advice', batch: null }); return; }
+            if (l) setLanding(l);
+            setParam({ upload: null, ...(l ? { view: null, batch: null } : {}) });
+          }} />
+      )}
+      {advice
+        ? <PayoutAdviceTab onUpload={() => setParam({ upload: 'advice' })} />
+        : <ReconcileTab acq={acq} landing={landing} onLandingDone={() => setLanding(null)} />}
     </div>
   );
 };
@@ -132,11 +190,12 @@ export const MerchantRecon = () => {
    is clean — his rule: 核对完了没有问题才会显示去 bank statement 的
    reconciliation. */
 
-const ReconcileTab = () => {
+const ReconcileTab = ({ acq = null, landing = null, onLandingDone }: {
+  acq?: string | null; landing?: UploadLanding | null; onLandingDone?: () => void;
+}) => {
   const setup = useAcquirerSetup();
   const batches = useSettlementBatches();
   const watchlist = useSettlementWatchlist();
-  const upload = useUploadStatement();
   const bulk = useConfirmAcross();
   /* The open report lives in the ADDRESS (?batch=), not in memory: a Sales
      Order opened from a report and closed again comes back to the same report
@@ -152,126 +211,34 @@ const ReconcileTab = () => {
   });
   /* Back from an order lands where the list was scrolled. */
   useReturnScroll(batchId == null && batches.data != null);
-  /* The batches the last upload created — the summary screen it lands on. */
-  const [justUploaded, setJustUploaded] = useState<number[] | null>(null);
   const [showDone, setShowDone] = useState(false);
-
-  const acquirers = setup.data?.acquirers ?? [];
-  const [code, setCode] = useState('');
-  const [files, setFiles] = useState<Array<{ name: string; content: string }>>([]);
-  const [summaryFee, setSummaryFee] = useState('');
-  /* Some terminal statements date a line "05-Jun" with no year anywhere in the
-     file. The operator answers that; the system never guesses which year money
-     belongs to. */
-  const [statementMonth, setStatementMonth] = useState('');
-  /* One result line per file — a month's statements go up in one go and each
-     one answers for itself, so a single bad file never hides four good ones. */
-  const [results, setResults] = useState<Array<{ name: string; ok: boolean; text: string; leftOut?: string }>>([]);
-  const [busy, setBusy] = useState(false);
-  const chosen = acquirers.find((a) => a.code === code) ?? null;
-
-  /**
-   * Read each file to CSV text.
-   *
-   * AEON sends .xlsx and the reader on the server speaks CSV, so the sheet is
-   * flattened HERE — the app already ships SheetJS for its other exports, so
-   * this costs no new dependency and no new parser. Loaded on demand so the
-   * library stays out of the page's initial bundle.
-   */
-  const readFiles = (picked: FileList | null) => {
-    setResults([]);
-    if (!picked || picked.length === 0) { setFiles([]); return; }
-    void Promise.all([...picked].map(async (f) => {
-      if (!/\.xlsx?$/i.test(f.name)) return { name: f.name, content: await f.text() };
-      const XLSX = await import('xlsx');
-      const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
-      /* First sheet only — every acquirer export seen so far is one sheet, and
-         a workbook with none reaches the server as an empty file, which it
-         already refuses by name rather than accepting as an empty batch. */
-      const first: string | undefined = wb.SheetNames[0];
-      return { name: f.name, content: first ? XLSX.utils.sheet_to_csv(wb.Sheets[first]) : '' };
-    })).then(setFiles);
-  };
-
-  const send = async () => {
-    if (!code || files.length === 0) return;
-    setBusy(true);
-    setResults([]);
-    const done: Array<{ name: string; ok: boolean; text: string }> = [];
-    /* A file that was REFUSED stays selected. Half of these refusals end with
-       "…and upload it again" — and clearing the picker made that impossible:
-       the operator answered the question the message asked, pressed Upload, and
-       found the button dead because the file it was talking about had been
-       thrown away. Only the ones that got through are cleared. */
-    const rejected: Array<{ name: string; content: string }> = [];
-    /* EVERY batch this upload created, not just the last: the owner uploads a
-       month of reports in one go and wants one answer for the lot — 当我上传完全
-       部文件后…让我知道我 upload 的文件有哪里几笔是 match 的… */
-    const made: number[] = [];
-    /* Sequential, not parallel: each upload's matching must see the payments
-       the previous one already claimed, or two statements could both take the
-       same money and only the database's unique index would catch it. */
-    for (const f of files) {
-      try {
-        const r = await upload.mutateAsync({
-          acquirerCode: code,
-          fileName: f.name,
-          content: f.content,
-          summaryFeeSen: summaryFee.trim() ? Math.round(Number(summaryFee) * 100) : null,
-          statementMonth: statementMonth || null,
-        });
-        made.push(r.batchId);
-        /* A line the bank pays once, already on another report, left out of
-           this batch (docs/bugs/0823) — carried separately so the landing view
-           can say it: a report one line short with no reason is a puzzle. */
-        const leftOut = r.alreadyOnReport > 0
-          ? `${r.alreadyOnReport} line(s) already on ${[...new Set(r.alreadyOnReportDetail.map((d) => d.fileName ?? `batch ${d.batchId}`))].join(', ')} left out — the bank pays a card transaction once`
-          : undefined;
-        done.push({
-          name: f.name,
-          ok: true,
-          ...(leftOut ? { leftOut } : {}),
-          text: `${r.rows} line${r.rows === 1 ? '' : 's'} (${r.periodFrom} → ${r.periodTo}), gross ${fmt(r.grossSen)}, fee ${fmt(r.feeSen)}`
-            + (r.skippedLines > 0 ? ` · ${r.skippedLines} summary line(s) left out` : '')
-            /* A line the bank pays once, already on another report (docs/bugs/0823). */
-            + (r.alreadyOnReport > 0
-              ? ` · ${r.alreadyOnReport} line(s) already on ${[...new Set(r.alreadyOnReportDetail.map((d) => d.fileName ?? `batch ${d.batchId}`))].join(', ')} left out`
-              : '')
-            + ` · matched ${bucketCount(r.buckets, 'MATCHED')}, to confirm ${bucketCount(r.buckets, 'NEEDS_CONFIRM')}, not matched ${bucketCount(r.buckets, 'UNMATCHED')}`,
-        });
-      } catch (err) {
-        rejected.push(f);
-        done.push({ name: f.name, ok: false, text: refusalText(err, 'The statement could not be read.') });
-      }
-      setResults([...done]);
-    }
-    setBusy(false);
-    setFiles(rejected);
-    if (made.length > 0) setJustUploaded(made);
-  };
 
   /* ONE THING AT A TIME. Working a statement replaces everything else. */
   if (batchId != null) return <BatchView batchId={batchId} onBack={() => setBatchId(null)} />;
-  if (justUploaded != null) {
+  /* What the last upload made — the summary it lands on (the drawer said the piles). */
+  if (landing && landing.batchIds.length > 0) {
     return (
-      <UploadSummary batchIds={justUploaded} refusals={results.filter((r) => !r.ok)}
-        leftOut={results.flatMap((r) => (r.ok && r.leftOut ? [{ name: r.name, text: r.leftOut }] : []))}
-        onOpen={setBatchId} onDone={() => setJustUploaded(null)} />
+      <UploadSummary batchIds={landing.batchIds} refusals={landing.results.filter((r) => !r.ok)}
+        leftOut={landing.results.flatMap((r) => (r.ok && r.leftOut ? [{ name: r.name, text: r.leftOut }] : []))}
+        onOpen={setBatchId} onDone={() => onLandingDone?.()} />
     );
   }
 
-  const all = batches.data?.batches ?? [];
+  const every = batches.data?.batches ?? [];
+  /* "Confirm all matched" covers every report; the list shows the chosen acquirer's. */
+  const everyOpen = every.filter((b) => (b.open_count ?? 0) > 0);
+  const all = acq ? every.filter((b) => b.acquirer_code === acq) : every;
   const open = all.filter((b) => (b.open_count ?? 0) > 0);
   const cleared = all.filter((b) => (b.open_count ?? 0) === 0);
   /* Two different jobs, and the button may only claim the first: a line that
      matched by reference is a press, a line without one is a decision. */
-  const readyToConfirm = open.reduce((s, b) => s + (b.to_confirm_count ?? 0), 0);
-  const toPost = open.filter(worthConfirming).length;
-  const stillToDecide = open.reduce((s, b) => s + (b.to_choose_count ?? 0) + (b.no_record_count ?? 0), 0);
+  const readyToConfirm = everyOpen.reduce((s, b) => s + (b.to_confirm_count ?? 0), 0);
+  const toPost = everyOpen.filter(worthConfirming).length;
+  const stillToDecide = everyOpen.reduce((s, b) => s + (b.to_choose_count ?? 0) + (b.no_record_count ?? 0), 0);
   /* Card money the sales team recorded that no statement has reported. Held
      back until the watchlist has answered, so an empty list never reads as
      "nothing outstanding" when it means "not loaded". */
-  const waiting = watchlist.data?.recordedNotArrived ?? [];
+  const waiting = (watchlist.data?.recordedNotArrived ?? []).filter((p) => !acq || p.acquirerCode === acq || p.acquirerCode == null);
   const waitingSen = waiting.reduce((s, p) => s + p.amountSen, 0);
   /* Keyed in without a bank: the server lists such a payment ONCE here
      (docs/bugs/0688 — it used to sit under every merchant), and the confirm
@@ -280,56 +247,6 @@ const ReconcileTab = () => {
 
   return (
     <div className="space-y-4">
-      <section className="space-y-2">
-        <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-          <select value={code} onChange={(e) => setCode(e.target.value)} aria-label="Acquirer"
-            style={{ padding: '6px 10px', fontSize: 'var(--fs-13)' }}>
-            <option value="">Which merchant?</option>
-            {acquirers.filter((a) => a.is_active).map((a) => (
-              <option key={a.code} value={a.code} disabled={!a.ready}>
-                {a.display_name}{a.ready ? '' : ' — not set up yet'}
-              </option>
-            ))}
-          </select>
-          <input type="file" accept=".csv,.xls,.xlsx,text/csv" multiple aria-label="Statement files"
-            onChange={(e) => readFiles(e.target.files)} style={{ fontSize: 'var(--fs-13)' }} />
-          {chosen?.fee_method === 'prorated-summary' && (
-            <input value={summaryFee} onChange={(e) => setSummaryFee(e.target.value)}
-              placeholder="Statement fee total (RM)" aria-label="Statement fee total"
-              style={{ padding: '6px 10px', fontSize: 'var(--fs-13)', width: 180 }} />
-          )}
-          <button type="button" style={btn(true, !code || files.length === 0 || busy)}
-            disabled={!code || files.length === 0 || busy} onClick={() => { void send(); }}>
-            <Upload {...ICON} /> {busy ? 'Reading…'
-              : results.some((r) => !r.ok) && files.length > 0 ? `Try again (${files.length})`
-              : `Upload merchant report${files.length > 1 ? ` (${files.length} files)` : ''}`}
-          </button>
-        </div>
-        {/* Asked ONLY of the merchant whose file needs it. Hong Leong dates a
-            line "16-Aug" with no year anywhere in the statement, so somebody
-            has to say which year that is — and nothing here guesses. */}
-        {chosen?.dates_have_no_year === true && (
-          <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-            <label style={{ fontSize: 'var(--fs-13)', fontWeight: 600 }} htmlFor="settlement-month">Statement month</label>
-            <input id="settlement-month" type="month" value={statementMonth} aria-label="Statement month"
-              onChange={(e) => setStatementMonth(e.target.value)}
-              style={{ padding: '5px 8px', fontSize: 'var(--fs-13)' }} />
-            <span style={softText}>{chosen.display_name} dates its lines like &ldquo;16-Aug&rdquo;, with no year.</span>
-          </div>
-        )}
-        {chosen && !chosen.autoMatchable && (
-          <div style={{ fontSize: 'var(--fs-13)', color: danger }}>
-            {chosen.display_name} sends no unique reference — every line waits for you to confirm it.
-          </div>
-        )}
-        {results.map((r) => (
-          <div key={r.name} style={{ fontSize: 'var(--fs-13)', color: r.ok ? good : danger, display: 'flex', gap: 6 }}>
-            {!r.ok && <AlertTriangle {...ICON} />}
-            <span><b>{r.name}</b> — {r.text}</span>
-          </div>
-        ))}
-      </section>
-
       {/* 1. The reports that still need decisions. */}
       <section className="space-y-2">
         <b>Merchant reports still to reconcile</b>
@@ -358,7 +275,7 @@ const ReconcileTab = () => {
         {readyToConfirm > 0 && (
           <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
             <button type="button" style={btn(true, bulk.busy)} disabled={bulk.busy}
-              onClick={() => { void bulk.run(open); }}>
+              onClick={() => { void bulk.run(everyOpen); }}>
               {/* Says its scope too: one press here covers every report with
                   something to post, and the button inside a report covers only
                   that one. */}
@@ -703,7 +620,7 @@ const LinesTable = ({ batches, onOpen, openOnly }: {
       <tr>
         <th rowSpan={2}>Report</th>
         <th colSpan={5} className={grid.band}>What the merchant reported</th>
-        <th colSpan={5} className={`${grid.band} ${grid.seam}`}>The sale it paid for</th>
+        <th colSpan={7} className={`${grid.band} ${grid.seam}`}>The sale it paid for</th>
         <th rowSpan={2}>Status</th>
       </tr>
       <tr>
@@ -714,6 +631,8 @@ const LinesTable = ({ batches, onOpen, openOnly }: {
         <th className={grid.num}>Net</th>
         <th className={grid.seam}>Document</th>
         <th>Customer</th>
+        <th>Sales</th>
+        <th>Account sheet</th>
         <th>Paid on</th>
         <th>Approval</th>
         <th className={grid.num}>Amount</th>
@@ -753,7 +672,7 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
       <tbody>
         <tr>
           {reportCell(1)}
-          <td colSpan={11}>
+          <td colSpan={13}>
             <span className={grid.sub}>{q.isLoading ? 'Reading its lines…' : 'Nothing left on this report.'}</span>
           </td>
         </tr>
@@ -778,12 +697,15 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
             /* No document number: the payment id is shown, and it opens nothing. */
             source: l.doc_no ? l.payment_source : null,
             customer: l.customer_name ?? null,
+            sales: l.salesperson ?? null,
+            sheet: l.account_sheet ?? null,
             paidOn: l.paid_on ?? null,
             code: l.approval_code ?? null,
             amountSen: l.amount_sen,
           }))
           : guess.map((p) => ({
             key: p.id, docNo: p.docNo, source: p.source, customer: p.customerName ?? null,
+            sales: p.salesperson ?? null, sheet: p.accountSheet ?? null,
             paidOn: p.paidOn, code: p.approvalCode ?? null, amountSen: p.amountSen,
           }));
         /* One line settling several orders stacks INSIDE its cell — the rare
@@ -812,6 +734,8 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
                 : stack((o) => <DocLink source={o.source} docNo={o.docNo} bold />)}
             </td>
             <td>{stack((o) => o.customer)}</td>
+            <td>{stack((o) => o.sales)}</td>
+            <td>{stack((o) => o.sheet)}</td>
             <td>{stack((o) => o.paidOn)}</td>
             <td>{stack((o) => o.code)}</td>
             <td className={grid.num}>{stack((o) => fmt(o.amountSen))}</td>
@@ -878,12 +802,20 @@ const Tally = ({ n, label, note, tone }: {
    The counts stay in view so nothing is hidden, and one checkbox brings the
    finished lines back for a look. */
 
+/** Where a Public Bank report's money stands before it is paid: in an advice, or waiting for one. Null until the advices have loaded — an absence is never evidence. */
+const pbbPayNote = (batchId: number, payouts: Payout[] | undefined): string | null => {
+  if (!payouts) return null;
+  const p = payouts.find((x) => x.status.days.some((d) => d.batchId === batchId));
+  return p ? `In the advice of ${fmtDate(p.advice_date)} · books when the bank statement shows the credit` : "Waiting for Public Bank's payment advice (PDF)";
+};
+
 const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void }) => {
   const q = useSettlementBatch(batchId);
+  /* Public Bank pays through its advice: until one names this report, the report waits for it (the redesign). */
+  const payouts = usePayouts();
   /* Back from an order opened on one of these lines lands on that line. */
   useReturnScroll(q.data != null);
   const confirmAll = useConfirmMatched();
-  const [showDone, setShowDone] = useState(false);
 
   const rows = useMemo(() => q.data?.rows ?? [], [q.data]);
   const batch = q.data?.batch ?? null;
@@ -897,14 +829,22 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
      needs a person. The screen must not call them the same thing. */
   const toConfirm = openRows.filter((r) => r.linked.length > 0).length;
   const toDecide = openRows.length - toConfirm;
-  const shown = showDone ? [...openRows, ...doneRows] : openRows;
-  /* A CARD IS A DECISION, a table row is information. A line that already
-     claimed its payment asks nothing of a person — the button at the top books
-     every one of them — so it belongs in the table, and only the lines that
-     genuinely need choosing get a card. Anything already decided is
-     information too. */
-  const needChoice = shown.filter((r) => !r.confirmed_at && r.bucket !== 'IGNORED' && r.linked.length === 0);
-  const noChoice = shown.filter((r) => !needChoice.includes(r));
+  /* The redesign's five tabs (owner's Claude Design, batch 3): To confirm · To
+     choose · No sale found ‖ Confirmed · Set aside — the tab lives in the
+     address (?tab=), and a report opens on the first with lines to work. */
+  const counts: Record<ReportTab, number> = { 'to-confirm': 0, 'to-choose': 0, 'no-sale': 0, done: 0, 'set-aside': 0 };
+  for (const r of rows) counts[lineTab(r)] += 1;
+  const [params, setParams] = useSearchParams();
+  const asked = params.get('tab') as ReportTab | null;
+  const tab: ReportTab = asked && asked in counts ? asked
+    : (['to-confirm', 'to-choose', 'no-sale'] as const).find((t) => counts[t] > 0) ?? 'done';
+  const setTab = (t: ReportTab) => setParams((prev) => { const next = new URLSearchParams(prev); next.set('tab', t); return next; }, { replace: true });
+  /* A CARD IS A DECISION, a table row is information: lines to choose for, or
+     with no sale, and lines set aside (Put back) are cards; matched and
+     confirmed lines are table rows. */
+  const inTab = rows.filter((r) => lineTab(r) === tab);
+  const needChoice = tab === 'to-choose' || tab === 'no-sale' || tab === 'set-aside' ? inTab : [];
+  const noChoice = needChoice.length > 0 ? [] : inTab;
 
   const exportCsv = () => {
     downloadCSV(`merchant-report-${batchId}.csv`, toCSV(rows, [
@@ -953,13 +893,6 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
             <CheckCheck {...ICON} /> Confirm the {unconfirmedMatched} matched on this report
           </button>
         )}
-        {doneRows.length > 0 && (
-          <label style={{ ...softText, display: 'flex', gap: 6, alignItems: 'center' }}>
-            <input type="checkbox" checked={showDone} aria-label="Show lines already decided"
-              onChange={(e) => setShowDone(e.target.checked)} />
-            Show the {doneRows.length} already decided
-          </label>
-        )}
         <button type="button" style={btn()} onClick={exportCsv}><Download {...ICON} /> Export</button>
       </div>
 
@@ -995,6 +928,10 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
 
       {batch && <HandOff batch={batch} toConfirm={toConfirm} toDecide={toDecide} />}
 
+      {batch && <ReportHead batch={batch} counts={counts} payNote={batch.acquirer_code === 'PBB' ? pbbPayNote(batch.id, payouts.data?.payouts) : null} />}
+      {batch && <ReportTabs tab={tab} counts={counts} onTab={setTab} />}
+      {batch && inTab.length === 0 && <div style={softText}>{TAB_EMPTY[tab]}</div>}
+
       {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading the report…</div>}
 
       {/* A CARD IS A DECISION. A line already matched by its reference asks
@@ -1011,7 +948,7 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
             <tr>
               <th>Date</th><th>Reference</th>
               <th className={grid.num}>Gross</th><th className={grid.num}>Fee</th><th className={grid.num}>Net</th>
-              <th className={grid.seam}>Matched to</th><th>Status</th>
+              <th className={grid.seam}>Matched to</th><th>Sales</th><th>Account sheet</th><th>Status</th>
             </tr>
           </thead>
           <tbody>
@@ -1030,6 +967,8 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
                     </div>
                   ))}
                 </td>
+                <td>{r.linked.map((l) => <div key={l.payment_id}>{l.salesperson ?? '—'}</div>)}</td>
+                <td>{r.linked.map((l) => <div key={l.payment_id}>{l.account_sheet ?? '—'}</div>)}</td>
                 <td>
                   {r.confirmed_at
                     ? (

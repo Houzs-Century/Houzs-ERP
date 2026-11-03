@@ -114,7 +114,7 @@ describe('the pile for AP invoices', () => {
       'b.pdf': readBill(1, { invoiceNumber: 'INV-2', totalSen: 50000 }, { id: 'sup-1', name: 'Foshan Chairs' }, { payeeName: 'Foshan Chairs', debitAccountCode: '900-F002' }),
     });
     drawAp();
-    expect(screen.getByText('Scan bills — AP invoices')).toBeTruthy();
+    expect(screen.getByText('Scan bills — Supplier bills')).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Add bill files'), { target: { files: [pdf('a.pdf'), pdf('b.pdf')] } });
     fireEvent.click(screen.getByText('Read 2 bill(s)'));
     await readDone(2);

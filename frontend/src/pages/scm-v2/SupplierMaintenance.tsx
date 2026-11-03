@@ -12,10 +12,15 @@
 // part, the purchasing part, its open invoices, advances, credit left and the
 // latest payments. Server: backend/src/scm/routes/supplier-maintenance.ts
 // (reads); a save goes to /suppliers, which owns the rules.
+//
+// The redesign (owner's Claude Design, batch 4 §5): an ERP-only page that stays
+// under Money out, restyled by the design's shared rules — English throughout,
+// views with counts, status tags, no monospace, and every document number in the
+// pop-out opening that document in its own tab.
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
@@ -27,14 +32,17 @@ import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { Modal } from '../../vendor/scm/components/Modal';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
-import { fmtDateOrDash, fmtSen } from '../../vendor/shared/format';
-import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
+import { fmtDate, fmtMoneySen, fmtSen } from '../../vendor/shared/format';
+import { humaniseStatusKey, statusLabel } from '../../vendor/scm/lib/status-pill';
+import { FinanceDocLink, financeDocHref } from './finance/FinanceDocLink';
+import { Tag, Views, type ViewOption } from './MoneyOutErpParts';
 import styles from './SalesOrderDetail.module.css';
+import css from './MoneyOutErp.module.css';
 
 type ChipKey = 'all' | 'trade' | 'other' | 'missing' | 'financeOnly' | 'inactive';
 const CHIPS: Array<[ChipKey, string]> = [
-  ['all', '全部 · All'], ['trade', 'Trade 400'], ['other', 'Other creditor 405'],
-  ['missing', '缺 TIN / 注册号'], ['financeOnly', 'Finance only'], ['inactive', 'Inactive'],
+  ['all', 'All'], ['trade', 'Trade 400'], ['other', 'Other creditor 405'],
+  ['missing', 'Missing TIN / reg. no.'], ['financeOnly', 'Finance only'], ['inactive', 'Inactive'],
 ];
 const inChip = (r: SupplierMaintenanceRow, k: ChipKey): boolean => {
   if (k === 'trade') return r.controlKind === 'TRADE';
@@ -46,22 +54,12 @@ const inChip = (r: SupplierMaintenanceRow, k: ChipKey): boolean => {
 };
 
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
-const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)' };
 const right: React.CSSProperties = { textAlign: 'right', fontVariantNumeric: 'tabular-nums' };
-const chip = (on: boolean): React.CSSProperties => ({
-  padding: '4px 10px', borderRadius: 999, fontSize: 'var(--fs-12)', cursor: 'pointer',
-  border: '1px solid var(--c-line, rgba(34,31,32,0.2))',
-  background: on ? 'var(--c-ink)' : 'transparent', color: on ? 'var(--c-cream)' : 'var(--c-ink)',
-});
 const th: React.CSSProperties = {
   padding: '6px 8px', textAlign: 'left', fontSize: 'var(--fs-11)', fontWeight: 600, letterSpacing: '0.04em',
   textTransform: 'uppercase', color: 'var(--fg-muted)', borderBottom: '1px solid var(--border-weak, #e3e1da)', whiteSpace: 'nowrap',
 };
 const td: React.CSSProperties = { padding: '6px 8px', verticalAlign: 'middle', borderBottom: '1px solid var(--border-weak, #efede6)' };
-const tag = (bg: string, fg: string): React.CSSProperties => ({ fontSize: 'var(--fs-11)', padding: '1px 6px', borderRadius: 6, background: bg, color: fg, whiteSpace: 'nowrap' });
-const TAG_OK = tag('#e6f2e6', '#2f6b2f');
-const TAG_MISSING = tag('#fbe9e7', '#a5321f');
-const TAG_INFO = tag('#e8eef7', '#2c4f7c');
 
 const Meta = ({ label, value }: { label: string; value: React.ReactNode }) => (
   <div>
@@ -87,65 +85,77 @@ export const SupplierMaintenance = () => {
   const all = useMemo(() => q.data?.rows ?? [], [q.data]);
   const rows = useMemo(() => all.filter((r) => inChip(r, chipKey)), [all, chipKey]);
   const counts = useMemo(() => Object.fromEntries(CHIPS.map(([k]) => [k, all.filter((r) => inChip(r, k)).length])) as Record<ChipKey, number>, [all]);
+  const views: ViewOption<ChipKey>[] = CHIPS
+    .filter(([k]) => finance || (k !== 'missing' && k !== 'financeOnly'))
+    .map(([k, label]) => ({ key: k, label, count: q.data ? counts[k] : null, work: k === 'missing' ? 'warn' : undefined }));
 
   const columns = useMemo<Column<SupplierMaintenanceRow>[]>(() => [
-    { key: 'code', label: 'Code', render: (r) => <span style={mono}>{r.code}</span>, getValue: (r) => r.code },
+    { key: 'code', label: 'Code', render: (r) => <span className={css.code}>{r.code}</span>, getValue: (r) => r.code },
     {
+      /* The name reads as the link (the design's Debtor maintenance); a click
+         on it, as anywhere on the row, opens the supplier. */
       key: 'name', label: 'Name',
-      render: (r) => <span>{r.name}{r.forPurchasing === false ? <> <span style={TAG_INFO}>Finance only</span></> : null}</span>,
+      render: (r) => (
+        <span className={css.tags}>
+          <span className={css.nameLink}>{r.name}</span>
+          {r.forPurchasing === false && <Tag tone="info">Finance only</Tag>}
+        </span>
+      ),
       getValue: (r) => r.name,
     },
-    { key: 'control', label: 'Control', render: (r) => (r.controlKind === 'OTHER' ? 'Other 405' : 'AP 400'), getValue: (r) => r.controlCode },
+    {
+      key: 'control', label: 'Control',
+      render: (r) => (r.controlKind === 'OTHER' ? <Tag tone="warn">Other 405</Tag> : <Tag tone="calm">Trade 400</Tag>),
+      getValue: (r) => r.controlCode,
+    },
     { key: 'terms', label: 'Terms', render: (r) => dash(r.paymentTerms), getValue: (r) => r.paymentTerms ?? '' },
     ...(finance ? [
       {
-        key: 'tax', label: 'TIN / 注册号',
-        render: (r: SupplierMaintenanceRow) => (r.missingTax ? <span style={TAG_MISSING}>缺</span> : <span style={TAG_OK}>有</span>),
-        getValue: (r: SupplierMaintenanceRow) => (r.missingTax ? 'missing' : 'ok'),
+        key: 'tax', label: 'TIN / reg. no.',
+        render: (r: SupplierMaintenanceRow) => (r.missingTax ? <Tag tone="late">Missing</Tag> : <Tag tone="calm">On file</Tag>),
+        getValue: (r: SupplierMaintenanceRow) => (r.missingTax ? 'Missing' : 'On file'),
       },
       {
         key: 'bank', label: 'Bank',
-        render: (r: SupplierMaintenanceRow) => supplierBankLine({ bank_name: r.bankName, bank_account_no: r.bankAccountNo, bank_account_name: null }) ?? <span style={soft}>—</span>,
+        render: (r: SupplierMaintenanceRow) => supplierBankLine({ bank_name: r.bankName, bank_account_no: r.bankAccountNo, bank_account_name: null }) ?? <span className={css.muted}>—</span>,
         getValue: (r: SupplierMaintenanceRow) => supplierBankLine({ bank_name: r.bankName, bank_account_no: r.bankAccountNo, bank_account_name: r.bankAccountName }) ?? '',
       },
     ] as Column<SupplierMaintenanceRow>[] : []),
     {
       key: 'owed', label: 'Owed', align: 'right',
-      render: (r) => <span style={{ fontWeight: r.owedSen > 0 ? 600 : 400 }}>{fmtSen(r.owedSen)}</span>,
+      render: (r) => <span className={r.owedSen > 0 ? css.money : css.code}>{fmtSen(r.owedSen)}</span>,
       getValue: (r) => r.owedSen, exportValue: (r) => r.owedSen / 100, exportFormat: 'money',
     },
     {
-      key: 'advance', label: '预付未冲', align: 'right',
-      render: (r) => (r.advanceSen > 0 ? fmtSen(r.advanceSen) : <span style={soft}>—</span>),
+      key: 'advance', label: 'Advance open', align: 'right',
+      render: (r) => (r.advanceSen > 0 ? fmtSen(r.advanceSen) : <span className={css.muted}>—</span>),
       getValue: (r) => r.advanceSen, exportValue: (r) => r.advanceSen / 100, exportFormat: 'money',
     },
-    { key: 'open', label: 'Open bills', align: 'right', render: (r) => (r.openInvoices > 0 ? r.openInvoices : <span style={soft}>—</span>), getValue: (r) => r.openInvoices },
-    { key: 'status', label: 'Status', render: (r) => <span style={{ fontSize: 'var(--fs-11)' }}>{humaniseStatusKey(r.status)}</span>, getValue: (r) => r.status },
+    { key: 'open', label: 'Open bills', align: 'right', render: (r) => (r.openInvoices > 0 ? r.openInvoices : <span className={css.muted}>—</span>), getValue: (r) => r.openInvoices },
+    {
+      key: 'status', label: 'Status',
+      render: (r) => <Tag tone={r.status === 'ACTIVE' ? 'calm' : 'late'}>{humaniseStatusKey(r.status)}</Tag>,
+      getValue: (r) => r.status,
+    },
   ], [finance]);
 
   return (
     <div className="space-y-4">
       <PageHeader
-        eyebrow="Money out"
-        title="Supplier Maintenance · 供应商"
+        eyebrow="Finance · Money out"
+        title="Supplier maintenance"
         actions={finance ? (
           <Button variant="primary" size="sm" onClick={() => setForm({ mode: 'new' })}>
             <Plus size={16} strokeWidth={1.75} /> New supplier
           </Button>
         ) : undefined}
       />
-      <section className={styles.card}>
-        <div className={styles.cardHeader} style={{ flexWrap: 'wrap', gap: 'var(--space-3)' }}>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {CHIPS.filter(([k]) => finance || (k !== 'missing' && k !== 'financeOnly')).map(([k, label]) => (
-              <button key={k} type="button" style={chip(chipKey === k)} aria-pressed={chipKey === k} onClick={() => setChipKey(k)}>
-                {label} · {counts[k]}
-              </button>
-            ))}
-          </div>
-          <span style={soft}>Owed = the supplier&apos;s balance in the books, after payments, advances and credit notes.</span>
+      <section className={css.card}>
+        <div className={css.cardTop}>
+          <Views label="Suppliers" options={views} value={chipKey} onChange={setChipKey} />
+          <span className={css.hint}>Owed = the supplier&apos;s balance in the books, after payments, advances and credit notes.</span>
         </div>
-        <div className={styles.cardBody} style={{ overflowX: 'auto' }}>
+        <div className={css.cardBody}>
           <DataTable<SupplierMaintenanceRow>
             tableId="supplier-maintenance"
             exportName="supplier-maintenance"
@@ -173,7 +183,7 @@ export const SupplierMaintenance = () => {
 
       {form && (
         <Modal
-          title={form.mode === 'new' ? 'New supplier · 新供应商' : `Edit ${form.supplier.code} · ${form.supplier.name}`}
+          title={form.mode === 'new' ? 'New supplier' : `Edit ${form.supplier.code} · ${form.supplier.name}`}
           onClose={() => setForm(null)}
           width="min(860px, 100%)"
           ariaLabel={form.mode === 'new' ? 'New supplier' : `Edit ${form.supplier.code}`}
@@ -220,18 +230,18 @@ const SupplierDetailBody = ({ d, s, finance }: { d: SupplierMaintenanceDetail; s
   return (
     <div>
       <div style={{ ...grid, background: 'var(--c-cream, #f7f5ef)', borderRadius: 8, padding: '10px 12px' }}>
-        <Meta label={`Owed — the books (${d.controlCode})`} value={<strong>{fmtSen(d.balanceSen)}</strong>} />
-        <Meta label="预付未冲 · Advance unspent" value={advanceLeft > 0 ? fmtSen(advanceLeft) : '—'} />
-        <Meta label="CN 未冲 · Credit left" value={creditLeft > 0 ? fmtSen(creditLeft) : '—'} />
+        <Meta label={`Owed — the books (${d.controlCode})`} value={<strong className={css.code}>{fmtSen(d.balanceSen)}</strong>} />
+        <Meta label="Advance open" value={advanceLeft > 0 ? fmtSen(advanceLeft) : '—'} />
+        <Meta label="Credit left" value={creditLeft > 0 ? fmtSen(creditLeft) : '—'} />
         {preErp > 0 && <Meta label="AutoCount bills not in the books" value={fmtSen(preErp)} />}
       </div>
 
       {finance && (
         <>
-          <h3 style={h3}>Finance · 财务资料</h3>
+          <h3 style={h3}>Finance</h3>
           <div style={grid}>
-            <Meta label="Credit Account (code)" value={<span style={mono}>{s.code}</span>} />
-            <Meta label="Control account" value={<span style={mono}>{d.controlCode}</span>} />
+            <Meta label="Credit Account (code)" value={<span className={css.code}>{s.code}</span>} />
+            <Meta label="Control account" value={<span className={css.code}>{d.controlCode}</span>} />
             <Meta label="TIN Number" value={dash(s.tin_number)} />
             <Meta label="Business Reg No" value={dash(s.business_reg_no)} />
             <Meta label="Registration No." value={dash(s.registration_no)} />
@@ -239,15 +249,15 @@ const SupplierDetailBody = ({ d, s, finance }: { d: SupplierMaintenanceDetail; s
             <Meta label="Credit limit" value={s.credit_limit_sen ? fmtSen(s.credit_limit_sen) : '—'} />
             <Meta label="Statement type" value={dash(s.statement_type ? humaniseStatusKey(s.statement_type) : null)} />
             <Meta label="Aging basis" value={dash(s.aging_basis ? humaniseStatusKey(s.aging_basis) : null)} />
-            <Meta label="Bank · 银行" value={dash(s.bank_name)} />
-            <Meta label="Account no. · 户口号码" value={<span style={mono}>{dash(s.bank_account_no)}</span>} />
-            <Meta label="Account name · 户口名字" value={dash(s.bank_account_name)} />
-            <Meta label="采购也用 · Purchasing" value={s.for_purchasing === false ? <span style={TAG_INFO}>Finance only — purchasing does not see it</span> : 'Yes — shared with purchasing'} />
+            <Meta label="Bank" value={dash(s.bank_name)} />
+            <Meta label="Account no." value={<span className={css.code}>{dash(s.bank_account_no)}</span>} />
+            <Meta label="Account name" value={dash(s.bank_account_name)} />
+            <Meta label="Purchasing uses it" value={s.for_purchasing === false ? <Tag tone="info">Finance only — purchasing does not see it</Tag> : 'Yes — shared with purchasing'} />
           </div>
         </>
       )}
 
-      <h3 style={h3}>Purchasing · 采购资料</h3>
+      <h3 style={h3}>Purchasing</h3>
       <div style={grid}>
         <Meta label="Contact person" value={dash(s.contact_person)} />
         <Meta label="Phone" value={dash(s.phone)} />
@@ -258,9 +268,9 @@ const SupplierDetailBody = ({ d, s, finance }: { d: SupplierMaintenanceDetail; s
         <Meta label="Billing address" value={dash(s.address)} />
       </div>
 
-      <h3 style={h3}>Open bills · 未付的单 ({d.openInvoices.length})</h3>
+      <h3 style={h3}>Open bills ({d.openInvoices.length})</h3>
       {d.openInvoices.length === 0 ? <div style={soft}>Nothing owing on a bill.</div> : (
-        <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 'var(--fs-13)' }}>
+        <table className={css.code} style={{ borderCollapse: 'collapse', width: '100%', fontSize: 'var(--fs-13)' }}>
           <thead><tr>
             <th style={th}>No.</th><th style={th}>Date</th><th style={th}>Due</th><th style={th}>Supplier ref</th>
             <th style={{ ...th, ...right }}>Total</th><th style={{ ...th, ...right }}>Outstanding (RM)</th>
@@ -269,14 +279,16 @@ const SupplierDetailBody = ({ d, s, finance }: { d: SupplierMaintenanceDetail; s
             {d.openInvoices.map((i) => (
               <tr key={`${i.kind}-${i.id}`}>
                 <td style={td}>
-                  <Link to={i.kind === 'PI' ? `/scm/purchase-invoices/${i.id}` : `/scm/ap-invoices?open=${encodeURIComponent(i.id)}`} style={{ ...mono, color: 'var(--c-orange)' }}>{i.number}</Link>
-                  {i.kind === 'API' ? <> <span style={TAG_INFO}>AP</span></> : null}
-                  {i.preErp ? <> <span style={tag('#fdf2df', '#8a5a12')}>AutoCount</span></> : null}
+                  <span className={css.tags}>
+                    <FinanceDocLink to={financeDocHref(i.kind, i.id)}>{i.number}</FinanceDocLink>
+                    {i.kind === 'API' && <Tag tone="info">AP bill</Tag>}
+                    {i.preErp && <Tag tone="warn">AutoCount</Tag>}
+                  </span>
                 </td>
-                <td style={td}>{fmtDateOrDash(i.date)}</td>
-                <td style={td}>{fmtDateOrDash(i.dueDate)}</td>
+                <td style={td}>{fmtDate(i.date)}</td>
+                <td style={td}>{fmtDate(i.dueDate)}</td>
                 <td style={td}>{dash(i.supplierRef)}</td>
-                <td style={{ ...td, ...right }}>{i.currency !== 'MYR' ? `${i.currency} ` : ''}{fmtSen(i.totalSen)}</td>
+                <td style={{ ...td, ...right }}>{fmtMoneySen(i.totalSen, i.currency)}</td>
                 <td style={{ ...td, ...right, fontWeight: 600 }}>{fmtSen(i.outstandingMyrSen)}</td>
               </tr>
             ))}
@@ -286,20 +298,20 @@ const SupplierDetailBody = ({ d, s, finance }: { d: SupplierMaintenanceDetail; s
 
       {(d.advances.length > 0 || d.credits.length > 0) && (
         <>
-          <h3 style={h3}>Not yet knocked off · 未冲</h3>
-          <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 'var(--fs-13)' }}>
+          <h3 style={h3}>Not yet knocked off</h3>
+          <table className={css.code} style={{ borderCollapse: 'collapse', width: '100%', fontSize: 'var(--fs-13)' }}>
             <tbody>
               {d.advances.map((a) => (
                 <tr key={`adv-${a.pvId}`}>
-                  <td style={td}><Link to={`/scm/payment-vouchers/${a.pvId}`} style={{ ...mono, color: 'var(--c-orange)' }}>{a.pvNumber}</Link> <span style={soft}>· advance (预付)</span></td>
-                  <td style={td}>{fmtDateOrDash(a.date)}</td>
+                  <td style={td}><FinanceDocLink to={financeDocHref('PV', a.pvId)}>{a.pvNumber}</FinanceDocLink> <span style={soft}>· advance</span></td>
+                  <td style={td}>{fmtDate(a.date)}</td>
                   <td style={{ ...td, ...right }}>{fmtSen(a.leftSen)}</td>
                 </tr>
               ))}
               {d.credits.map((n) => (
                 <tr key={`cn-${n.id}`}>
-                  <td style={td}><span style={mono}>{n.noteNumber}</span> <span style={soft}>· credit note left</span></td>
-                  <td style={td}>{fmtDateOrDash(n.date)}</td>
+                  <td style={td}><span className={css.code}>{n.noteNumber}</span> <span style={soft}>· credit note left</span></td>
+                  <td style={td}>{fmtDate(n.date)}</td>
                   <td style={{ ...td, ...right }}>{fmtSen(n.leftSen)}</td>
                 </tr>
               ))}
@@ -308,16 +320,16 @@ const SupplierDetailBody = ({ d, s, finance }: { d: SupplierMaintenanceDetail; s
         </>
       )}
 
-      <h3 style={h3}>Latest payments · 最近付款</h3>
+      <h3 style={h3}>Latest payments</h3>
       {d.payments.length === 0 ? <div style={soft}>No voucher has paid this supplier yet.</div> : (
-        <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 'var(--fs-13)' }}>
+        <table className={css.code} style={{ borderCollapse: 'collapse', width: '100%', fontSize: 'var(--fs-13)' }}>
           <thead><tr><th style={th}>Voucher</th><th style={th}>Date</th><th style={th}>Status</th><th style={{ ...th, ...right }}>Amount (RM)</th></tr></thead>
           <tbody>
             {d.payments.map((p) => (
               <tr key={p.id} style={p.status === 'CANCELLED' ? { opacity: 0.55 } : undefined}>
-                <td style={td}><Link to={`/scm/payment-vouchers/${p.id}`} style={{ ...mono, color: 'var(--c-orange)' }}>{p.pvNumber ?? 'Draft voucher'}</Link></td>
-                <td style={td}>{fmtDateOrDash(p.date)}</td>
-                <td style={td}>{humaniseStatusKey(p.status)}</td>
+                <td style={td}><FinanceDocLink to={financeDocHref('PV', p.id)}>{p.pvNumber ?? 'Draft voucher'}</FinanceDocLink></td>
+                <td style={td}>{fmtDate(p.date)}</td>
+                <td style={td}><Tag tone={p.status === 'CANCELLED' ? 'late' : 'calm'}>{statusLabel('pv', p.status)}</Tag></td>
                 <td style={{ ...td, ...right }}>{fmtSen(p.totalMyrSen)}</td>
               </tr>
             ))}
@@ -373,11 +385,10 @@ const SupplierForm = ({ supplier, onDone, onCancel }: {
   const saving = create.isPending || update.isPending;
   const note = codeNote(f.code);
 
-  const field = (label: string, k: TextKey, opts: { placeholder?: string; full?: boolean; mono?: boolean } = {}) => (
+  const field = (label: string, k: TextKey, opts: { placeholder?: string; full?: boolean } = {}) => (
     <label className={styles.field} style={opts.full ? { gridColumn: '1 / -1' } : undefined}>
       <span className={styles.fieldLabel}>{label}</span>
       <input className={styles.fieldInput} value={f[k]} placeholder={opts.placeholder} aria-label={label}
-        style={opts.mono ? mono : undefined}
         onChange={(e) => set(k, e.target.value)} />
     </label>
   );
@@ -418,7 +429,7 @@ const SupplierForm = ({ supplier, onDone, onCancel }: {
       <div style={grid}>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Credit Account (code) *</span>
-          <input className={styles.fieldInput} value={f.code} placeholder="405-T001" aria-label="Credit Account (code)" style={mono}
+          <input className={styles.fieldInput} value={f.code} placeholder="405-T001" aria-label="Credit Account (code)"
             onChange={(e) => set('code', e.target.value)} />
           {note && <span style={{ ...soft, color: note.startsWith('This code') ? '#8a5a12' : undefined }}>{note}</span>}
         </label>
@@ -433,14 +444,14 @@ const SupplierForm = ({ supplier, onDone, onCancel }: {
         )}
         <label className={styles.field} style={{ alignSelf: 'end' }}>
           <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', fontSize: 'var(--fs-13)' }}>
-            <input type="checkbox" checked={f.forPurchasing} aria-label="采购也用 · Purchasing uses it too" onChange={(e) => set('forPurchasing', e.target.checked)} />
-            采购也用 · Purchasing uses it too
+            <input type="checkbox" checked={f.forPurchasing} aria-label="Purchasing uses it too" onChange={(e) => set('forPurchasing', e.target.checked)} />
+            Purchasing uses it too
           </span>
           <span style={soft}>{f.forPurchasing ? 'Purchasing sees this supplier.' : 'Finance only — purchasing does not see it.'}</span>
         </label>
       </div>
 
-      <h3 style={h3}>Finance · 财务资料</h3>
+      <h3 style={h3}>Finance</h3>
       <div style={grid}>
         {field('TIN Number', 'tinNumber')}
         {field('Business Reg No', 'businessRegNo')}
@@ -465,14 +476,14 @@ const SupplierForm = ({ supplier, onDone, onCancel }: {
         </label>
       </div>
 
-      <h3 style={h3}>Bank · 银行（付款时带出来）</h3>
+      <h3 style={h3}>Bank — carried onto the payments to this supplier</h3>
       <div style={grid}>
         {field('Bank', 'bankName', { placeholder: 'Maybank' })}
-        {field('Account no.', 'bankAccountNo', { mono: true })}
+        {field('Account no.', 'bankAccountNo')}
         {field('Account name', 'bankAccountName')}
       </div>
 
-      <h3 style={h3}>Purchasing · 采购资料</h3>
+      <h3 style={h3}>Purchasing</h3>
       <div style={grid}>
         {field('Payment terms', 'paymentTerms', { placeholder: '30 days' })}
         {field('Contact person', 'contactPerson')}

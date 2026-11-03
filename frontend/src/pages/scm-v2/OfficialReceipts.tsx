@@ -17,6 +17,8 @@
 // A receipt follows its payment (owner 2026-10-29: 收据跟着付款改或作废): a
 // draft changes with it, a formal one is CANCELLED and re-issued — the cancelled
 // row stays listed, struck through, its reason under it, and counts nowhere.
+// A receipt's number (or a double-click on its row) opens its own page,
+// /scm/receipts/official/:id (the owner's Claude Design, batch 5 §8).
 // ----------------------------------------------------------------------------
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -27,6 +29,9 @@ import { PAYMENT_METHOD_CODES, PAYMENT_METHOD_DEFAULT_LABELS } from '../../vendo
 import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
 import { DataTable, type Column } from '../../components/DataTable';
 import { generateReceiptPdf, type ReceiptPdfData } from '../../vendor/scm/lib/receipt-pdf';
+import { useOpenDocInTab } from '../../lib/openDocInTab';
+import { FinanceDocLink } from './finance/FinanceDocLink';
+import { moneyInDocHref } from './money-in/moneyInDocs';
 
 type ReceiptRow = ReceiptPdfData & {
   id: number;
@@ -77,6 +82,7 @@ const btn = (primary?: boolean, disabled?: boolean): React.CSSProperties => ({
 
 export const OfficialReceipts = () => {
   const qc = useQueryClient();
+  const openInTab = useOpenDocInTab();
   const [status, setStatus] = useState<StatusPick>('');
   /* '' = any month: the newest 100 receipts. */
   const [month, setMonth] = useState<string>(mytMonth());
@@ -97,6 +103,8 @@ export const OfficialReceipts = () => {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['official-receipts'] });
       void qc.invalidateQueries({ queryKey: ['official-receipts-check'] });
+      /* To do's transfers job counts the draft non-card receipts. */
+      void qc.invalidateQueries({ queryKey: ['finance-todo'] });
     },
   });
   const rows = useMemo(() => q.data?.receipts ?? [], [q.data]);
@@ -109,7 +117,11 @@ export const OfficialReceipts = () => {
   const columns = useMemo<Column<ReceiptRow>[]>(() => [
     {
       key: 'or', label: 'OR No', getValue: (r) => r.or_number,
-      render: (r) => <b style={isCancelled(r) ? { textDecoration: 'line-through', color: 'var(--text-soft, #8a8578)' } : undefined}>{r.or_number}</b>,
+      render: (r) => (
+        <span style={isCancelled(r) ? { textDecoration: 'line-through', color: 'var(--text-soft, #8a8578)' } : undefined}>
+          <FinanceDocLink to={moneyInDocHref('official', r.id)}>{r.or_number}</FinanceDocLink>
+        </span>
+      ),
     },
     {
       key: 'status', label: 'Status', getValue: (r) => STATUS_WORD[r.status] ?? r.status,
@@ -149,7 +161,7 @@ export const OfficialReceipts = () => {
 
   return (
     <div className="space-y-3">
-      <PageHeader eyebrow="Finance" title="Official Receipts" />
+      <PageHeader eyebrow="Finance · Money in" title="Official receipts" />
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         {([['', 'All'], ['DRAFT', 'Draft — money not confirmed'], ['FORMAL', 'Formal'], ['CANCELLED', 'Cancelled']] as const).map(([v, label]) => (
           <button key={v || 'all'} type="button" style={btn(status === v)} onClick={() => setStatus(v)}>{label}</button>
@@ -160,7 +172,7 @@ export const OfficialReceipts = () => {
         {month
           ? <button type="button" style={btn()} onClick={() => setMonth('')}>Any month</button>
           : <button type="button" style={btn()} onClick={() => setMonth(mytMonth())}>This month</button>}
-        <span style={soft}>现金当场正式;卡款等 merchant recon;转账你核对后按 Confirm money。</span>
+        <span style={soft}>Cash turns formal at the counter; card when its merchant line is confirmed; transfers when you confirm the money.</span>
       </div>
 
       {month && (
@@ -221,6 +233,7 @@ export const OfficialReceipts = () => {
         error={q.isError ? 'The receipts did not load.' : null}
         emptyLabel={month ? `No receipts for ${monthWord(month)}.` : 'No receipts yet — one is born with every customer payment recorded from now on.'}
         getRowKey={(r) => r.id}
+        onRowDoubleClick={(r) => openInTab(moneyInDocHref('official', r.id))}
         onFilteredRowsChange={setShown}
       />
       {shown.length > 0 && (

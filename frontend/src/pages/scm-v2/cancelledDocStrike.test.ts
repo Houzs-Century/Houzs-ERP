@@ -40,6 +40,8 @@ const DOCUMENT_LISTS = [
   "pages/scm-v2/ArInvoices.tsx",
   "pages/scm-v2/Receipts.tsx",
   "pages/scm-v2/DpOrders.tsx",
+  // Its Completed / All lists carry cancelled documents (batch 5 redesign).
+  "pages/scm-v2/Outstanding.tsx",
 ];
 
 const STRIKE = /dt-cancel-strike|cancelledDocNoClass\(/;

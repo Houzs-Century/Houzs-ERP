@@ -35,6 +35,14 @@ export type ApListRow = {
   paidSen: number;
   outstandingSen: number;
   status: string;
+  /** The control the bill sits on, by the supplier code (the server's rule): AP = 400, AP_OTHER = 405. */
+  controlRole?: 'AP' | 'AP_OTHER';
+  controlCode?: string;
+  /** A purchase invoice held in Procurement — every voucher path refuses it. */
+  held?: boolean;
+  holdReason?: string | null;
+  /** When Finance plans to pay it (step 7) — beside the due date, never instead of it. */
+  plannedOn?: string | null;
 };
 
 export type ApInvoiceHeader = {
@@ -44,6 +52,22 @@ export type ApInvoiceHeader = {
   /** 欠正式单 (item 3): booked on a proforma — OWED, RECEIVED (to check), CHECKED. */
   official_doc?: string | null; official_doc_note?: string | null;
   doc_kind?: ApDocKind;
+  /** Who raised and who cancelled it, and when — the bill page's trail. */
+  created_at?: string | null; created_by?: string | null; cancelled_at?: string | null; cancelled_by?: string | null;
+  /** The journal its post wrote (the live one when an edit re-posted it); null until posted. */
+  je_no?: string | null;
+  /** When Finance plans to pay it (step 7); null = by its due date. */
+  planned_on?: string | null;
+};
+
+/** What paid a bill (the bill page's Payments): a voucher by its stage — its own
+    payment or an advance knocked off onto the bill — or a supplier credit note. */
+export type BillPayment = { kind: 'PV' | 'SCN'; id: string; number: string; date: string | null; stage: string; amountSen: number; fromAdvance: boolean };
+export type ApInvoiceDetail = {
+  invoice: ApInvoiceHeader; lines: ApInvoiceLine[]; supplier: { id: string; code: string; name: string } | null;
+  payments?: BillPayment[];
+  /** The control the bill credits, by the supplier code (the server's rule). */
+  controlCode?: string;
 };
 /** project_id: the event the line's money is for (owner 2026-09-30, 5a). */
 export type ApInvoiceLine = { id: string; line_no: number; description: string | null; debit_account_code: string; amount_sen: number; project_id?: number | null };
@@ -55,9 +79,19 @@ export const useApInvoices = (kind: ApListKind = 'ALL', docKind?: ApDocKind) => 
   staleTime: 15_000,
 });
 
+/** Plan a bill's payment date, or clear the plan (null) — an AP bill or a purchase invoice; posts nothing. */
+export const usePlanBill = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (b: { kind: 'API' | 'PI'; id: string; plannedOn: string | null }) =>
+      authedFetch<{ ok: boolean; plannedOn: string | null }>('/ap-invoices/plans', { method: 'PUT', body: JSON.stringify(b) }),
+    onSuccess: () => invalidate(qc),
+  });
+};
+
 export const useApInvoiceDetail = (id: string | null) => useQuery({
   queryKey: ['ap-invoice', id],
-  queryFn: () => authedFetch<{ invoice: ApInvoiceHeader; lines: ApInvoiceLine[]; supplier: { id: string; code: string; name: string } | null }>(`/ap-invoices/${id}`),
+  queryFn: () => authedFetch<ApInvoiceDetail>(`/ap-invoices/${id}`),
   enabled: !!id,
 });
 
@@ -69,6 +103,8 @@ const invalidate = (qc: ReturnType<typeof useQueryClient>) => {
   void qc.invalidateQueries({ queryKey: ['payment-request-bill-matches'] });
   /* …and answers (or, cancelled, re-opens) a request on Finance's waiting count. */
   void qc.invalidateQueries({ queryKey: ['payment-requests'] });
+  /* …and moves what To do raises (bills due, drafts). */
+  void qc.invalidateQueries({ queryKey: ['finance-todo'] });
 };
 
 export type ApInvoiceLineInput = { description?: string; debitAccountCode: string; amountSen: number; projectId?: number };

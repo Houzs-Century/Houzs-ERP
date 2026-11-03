@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   partyTypeFor, emptySnapshot,
-  snapshotFromWarehouse, snapshotFromThreepl, snapshotFromWorkshop, snapshotFromWorkshopName,
+  snapshotFromWarehouse, snapshotFromThreepl, snapshotFromSavedLocation,
+  snapshotFromWorkshop, snapshotFromWorkshopName,
   type DpJobType,
 } from './dp-party';
 
@@ -90,6 +91,33 @@ describe('snapshotFromThreepl — an outsourced warehouse destination', () => {
 
   it('falls back to the code for a carrier with no name', () => {
     expect(snapshotFromThreepl({ ...row, name: '   ' }).party_name).toBe('3PL-003');
+  });
+});
+
+describe('snapshotFromSavedLocation — a kept delivery point (方案2)', () => {
+  const row = {
+    name: 'Sunway Pyramid Loading Bay', contact_name: 'Mr Lee', contact_phone: '0123334444',
+    address1: 'Lot B1, Jalan PJS 11/15', address2: 'Bandar Sunway',
+    city: 'Petaling Jaya', postcode: '47500', state: 'Selangor',
+  };
+
+  it('fills the full structured address + contact straight through', () => {
+    const snap = snapshotFromSavedLocation(row);
+    expect(snap).toEqual({
+      party_type: 'WAREHOUSE',
+      party_name: 'Sunway Pyramid Loading Bay',
+      contact_name: 'Mr Lee',
+      contact_phone: '0123334444',
+      address1: 'Lot B1, Jalan PJS 11/15', address2: 'Bandar Sunway', address3: null, address4: null,
+      city: 'Petaling Jaya', postcode: '47500', state: 'Selangor',
+    });
+  });
+
+  it('blanks collapse to null', () => {
+    const snap = snapshotFromSavedLocation({ name: 'Bare point', address1: 'Somewhere' });
+    expect(snap.contact_name).toBeNull();
+    expect(snap.address2).toBeNull();
+    expect(snap.city).toBeNull();
   });
 });
 

@@ -1,5 +1,6 @@
 // ----------------------------------------------------------------------------
-// RECONCILIATION SETUP — ONE maintenance table, every company at once.
+// RECON SETUP — ONE maintenance page, every company at once, in the owner's
+// Claude Design redesign (Finance-1a-Setup, batch 6 §6.3).
 //
 // The owner's own shape (2026-08-18): "我应该 overall maintenance table，左手边是
 // merchant、bank，上面 header 是公司，这个公司有就 tick." So merchants and banks
@@ -20,24 +21,37 @@
 //     is the CELL — PBB pays Houzs into Maybank and 2990 into Hong Leong;
 //   • the banks themselves are the chart of accounts, already maintained
 //     centrally — his answer: "chart of account 我也是会做成总维护不是？"
+//
+// The redesign keeps every call: the sections in the design's order (Merchants,
+// Banks beside Voucher numbering and Default bank, Bank statements, Bank
+// recognition rules), the merchant's layout and a statement setup in centred
+// modals. A rule is never deleted — Remove switches it off (owner question g4).
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { AlertTriangle, ArrowLeft } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { AlertTriangle, ArrowLeft, CheckCircle2, MoreHorizontal, Plus, X } from 'lucide-react';
+import { Button } from '@2990s/design-system';
 import {
   useSettlementMaintenance, useSaveMaintenanceMerchant, useSaveMaintenanceBank,
   useSaveAcquirerSetup, useRematch,
   type MaintenanceMerchant, type MaintenanceBank, type MaintenanceCompany, type MaintenanceData } from './settlement-queries';
-import { ICON, btn, softText, danger, good, refusalText } from './settlement-ui';
+import { ICON, refusalText } from './settlement-ui';
 import { useAccounts, useAccountRoles, useSaveBankDefault } from '../../vendor/scm/lib/accounting-queries';
 import { useBankRules, useSaveBankRule, useCreateBankRule, useBankConfigs, useSaveBankConfig, type BankRule, type BankConfig } from './bank-queries';
 import { useVoucherNumbering, useSaveVoucherNumbering } from './accounting-phase1-queries';
-import css from './SettlementSetup.module.css';
 import { NumberInput } from '../../vendor/scm/components/NumberInput';
+import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
+import { useToastOptional } from '../../hooks/useToast';
+import { getActiveCompanyId } from '../../lib/activeCompany';
+import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
+import { Field, PopMenu, SetupModal, Skeleton, Switch, Tag, type Tone } from './finance/SetupParts';
+import sp from './finance/SetupParts.module.css';
+import css from './SettlementSetup.module.css';
 
 export const SettlementSetup = () => {
+  const navigate = useNavigate();
   const [editing, setEditing] = useState<string | null>(null);
   /* What the last merchant save did to the reports already uploaded. */
   const [notice, setNotice] = useState<string | null>(null);
@@ -48,49 +62,424 @@ export const SettlementSetup = () => {
   const merchants = data?.merchants ?? [];
   const banks = data?.banks ?? [];
   const open = merchants.find((m) => m.code === editing) ?? null;
-
-  if (open) {
-    return <MerchantForm merchant={open} companies={companies} onDone={(said) => { setEditing(null); setNotice(said ?? null); }} />;
-  }
+  const activeId = getActiveCompanyId();
+  const thisCompany = companies.find((co) => co.id === activeId)?.name ?? null;
 
   return (
     <div className="space-y-4">
-      <PageHeader eyebrow="Finance" title="Reconciliation setup" />
-      {notice && <div style={{ fontSize: 'var(--fs-13)', color: good }}>{notice}</div>}
+      <PageHeader
+        eyebrow="Finance · Setup"
+        title="Recon setup"
+        description="Merchants, banks, statements and voucher numbers"
+        actions={(
+          <Button variant="secondary" size="sm" onClick={() => navigate('/scm/merchant-recon')}>
+            <ArrowLeft {...ICON} /> Merchant reports
+          </Button>
+        )}
+      />
 
-      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-        <span style={softText}>
-          Tick what each company uses. The report layout is taught once and shared by all of them.
-        </span>
-        <span style={{ flex: 1 }} />
-        <Link to="/scm/merchant-recon" style={{ ...btn(), textDecoration: 'none' }}>
-          <ArrowLeft {...ICON} /> Merchant reconciliation
-        </Link>
+      <div className={sp.page}>
+        {notice && (
+          <div className={sp.note} role="status">
+            <CheckCircle2 size={14} />
+            <span className={sp.grow}>{notice}</span>
+            <button type="button" className={sp.iconBtn} aria-label="Close the note" onClick={() => setNotice(null)}><X size={13} /></button>
+          </div>
+        )}
+
+        {q.isLoading && <section className={sp.card}><Skeleton rows={6} label="Loading the merchants and banks" /></section>}
+        {q.isError && (
+          <div className={sp.problem}>The merchants and banks could not be loaded — {refusalText(q.error, 'try again.')}</div>
+        )}
+
+        {companies.length > 0 && (
+          <MerchantMatrix companies={companies} merchants={merchants} banks={banks} clearings={data?.clearings ?? {}}
+            feeAccounts={data?.feeAccounts ?? {}} onEdit={setEditing} />
+        )}
+
+        <div className={css.pair}>
+          {companies.length > 0 ? <BankMatrix companies={companies} banks={banks} /> : <div />}
+          {/* Per-company settings: this company's numbering and default bank —
+              switch companies in the top bar for the other one. */}
+          <div className={css.stack}>
+            <NumberingCard company={thisCompany} />
+            <DefaultBankCard />
+          </div>
+        </div>
+
+        <BankStatementsCard />
+        <BankRulesCard />
       </div>
 
-      {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading…</div>}
-
-      {companies.length > 0 && (
-        <>
-          <MerchantMatrix companies={companies} merchants={merchants} banks={banks} clearings={data?.clearings ?? {}} feeAccounts={data?.feeAccounts ?? {}} onEdit={setEditing} />
-          <BankMatrix companies={companies} banks={banks} />
-        </>
+      {open && (
+        <MerchantForm merchant={open} companies={companies} onDone={(said) => { setEditing(null); if (said) setNotice(said); }} />
       )}
-
-      {/* Per-company settings in ONE card — label column, content column —
-          instead of two floating strips (owner 2026-09-13: setup 的东西很乱不
-          整齐; docs/bugs/0857). */}
-      <section className={css.card}>
-        <div className={css.cardHead}>
-          <span className={css.cardTitle}>This company&rsquo;s defaults</span>
-          <span className={css.hint}>The bank every voucher starts from, and the letter each bank&rsquo;s vouchers carry. Per company — switch companies in the top bar for the other one.</span>
-        </div>
-        <DefaultBankRow />
-        <NumberingRow />
-      </section>
-      <BankStatementsCard />
-      <BankRulesCard />
     </div>
+  );
+};
+
+/* ── Merchants down the side, companies across the top ────────────────────── */
+
+/** A fee method's chip and its words (the server holds the vocabulary). */
+const feeChip = (method: string | null): [string, string] => {
+  switch (method) {
+    case 'stated': return ['Fee per line', 'fee stated per line'];
+    case 'gross-minus-net': return ['Gross − net', 'fee = gross minus net'];
+    case 'prorated-summary': return ['Fee per file', 'one fee total for the statement'];
+    default: return ['Fee ?', 'fee not known'];
+  }
+};
+
+/** The shared half of a merchant as the design's chips: file, reference, fee, drift. */
+const layoutChips = (m: MaintenanceMerchant): Array<{ t: string; tone: Tone; tip: string }> => [
+  { t: m.statement_format ?? 'File ?', tone: 'calm', tip: 'File type' },
+  m.has_unique_ref === true
+    ? { t: 'Unique ref', tone: 'calm', tip: 'The reference matches the sale' }
+    : m.has_unique_ref === false
+      ? { t: 'Ref not unique', tone: 'warn', tip: 'Each line is picked by hand' }
+      : { t: 'Ref ?', tone: 'calm', tip: 'Unique reference not known' },
+  { t: feeChip(m.fee_method)[0], tone: 'calm', tip: feeChip(m.fee_method)[1] },
+  { t: `±${m.date_tolerance_days} days`, tone: 'calm', tip: 'Date tolerance' },
+];
+
+const MerchantMatrix = ({ companies, merchants, banks, clearings, feeAccounts, onEdit }: {
+  companies: MaintenanceCompany[]; merchants: MaintenanceMerchant[]; banks: MaintenanceBank[];
+  /** Each company's clearing accounts (326-/327-) — the picker under the payout bank. */
+  clearings: NonNullable<MaintenanceData['clearings']>;
+  feeAccounts: NonNullable<MaintenanceData['feeAccounts']>;
+  onEdit: (code: string) => void;
+}) => {
+  const save = useSaveMaintenanceMerchant();
+  const toast = useToastOptional();
+
+  return (
+    <section className={sp.card} aria-label="Merchants">
+      <div className={css.head}>
+        <span className={css.title}>Merchants</span>
+        <span className={sp.cardSub}>File layout shared · accounts per company</span>
+      </div>
+      <div className={sp.scroll}>
+        <table className={`${sp.table} ${css.merchants}`}>
+          <thead>
+            <tr>
+              <th>Merchant</th>
+              <th>File layout</th>
+              {companies.map((co) => (
+                <th key={co.id}>{co.code} <span className={css.coName}>{co.name}</span></th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {merchants.map((m) => {
+              const heads = Object.values(m.column_map ?? {}).filter(Boolean);
+              return (
+                <tr key={m.code} className={css.topRow}>
+                  <td>
+                    <span className={css.rowName}>{m.code}</span>
+                    {m.display_name !== m.code && <span className={css.rowSub}>{m.display_name}</span>}
+                    {(m.so_names ?? []).length > 0 && <span className={css.rowSub}>also keyed as {(m.so_names ?? []).join(', ')}</span>}
+                  </td>
+                  {/* OUTSIDE the company columns, because it belongs to no company. */}
+                  <td>
+                    <span className={css.chips}>
+                      {layoutChips(m).map((k) => <Tag key={k.tip} tone={k.tone} title={k.tip}>{k.t}</Tag>)}
+                      {!m.ready && <Tag tone="late" dot>Not taught yet</Tag>}
+                    </span>
+                    <button type="button" className={`${sp.link} ${css.editLink}`} onClick={() => onEdit(m.code)}
+                      title={heads.length > 0 ? `Headings: ${heads.join(', ')}` : 'No headings yet'}>
+                      Edit
+                    </button>
+                  </td>
+                  {companies.map((co) => {
+                    const at = m.byCompany[String(co.id)] ?? { enabled: false, linked: false, bankAccountCode: null };
+                    /* Only banks THIS company has can receive THIS company's money. */
+                    const usable = banks.filter((b) => b.byCompany[String(co.id)]?.enabled);
+                    const coClearings = clearings[String(co.id)] ?? [];
+                    const coFees = feeAccounts[String(co.id)] ?? [];
+                    return (
+                      <td key={co.id} className={css.coCell}>
+                        <label className={css.used}>
+                          <input type="checkbox" className={css.tick} checked={at.enabled}
+                            aria-label={`${m.code} for ${co.name}`}
+                            onChange={(e) => {
+                              const on = e.target.checked;
+                              save.mutate({ companyId: co.id, code: m.code, enabled: on }, {
+                                onSuccess: () => toast?.success(`${m.code} turned ${on ? 'on' : 'off'} for ${co.name}`),
+                              });
+                            }} />
+                          {at.enabled ? 'Used' : 'Not used'}
+                        </label>
+                        {at.enabled && (
+                          <span className={css.pickers}>
+                            <label className={css.pickRow}>
+                              <span className={css.pickLabel}>Pays into</span>
+                              <select className={`${sp.select} ${sp.compact}`}
+                                aria-label={`${m.code} bank for ${co.name}`} value={at.bankAccountCode ?? ''}
+                                onChange={(e) => save.mutate({ companyId: co.id, code: m.code, bankAccountCode: e.target.value || null })}>
+                                <option value="">company default</option>
+                                {usable.map((b) => <option key={b.account_code} value={b.account_code}>{b.account_name}</option>)}
+                              </select>
+                            </label>
+                            {/* The clearing account — where this machine's card money
+                                sits until the payout (owner 2026-09-07: one per bank,
+                                so the board says what each still owes). Offered only
+                                when the server lists the company's clearing codes. */}
+                            {coClearings.length > 0 && (
+                              <label className={css.pickRow}>
+                                <span className={css.pickLabel}>Clearing</span>
+                                <select className={`${sp.select} ${sp.compact}`}
+                                  aria-label={`${m.code} clearing for ${co.name}`} value={at.transitAccountCode ?? '326-0000'}
+                                  onChange={(e) => save.mutate({ companyId: co.id, code: m.code, transitAccountCode: e.target.value })}>
+                                  {coClearings.map((a) => <option key={a.account_code} value={a.account_code}>{a.account_name}</option>)}
+                                </select>
+                              </label>
+                            )}
+                            {/* WHERE THE FEE GOES. This had to be a migration
+                                once already: the fee account was seeded at
+                                930-0000, the AutoCount chart deactivated that
+                                code, and every settlement confirm in both
+                                companies refused — with nothing on any screen
+                                able to repoint it (docs/bugs/0762). The list is
+                                the company's ACTIVE EXPENSE LEAVES, filtered by
+                                the server to the same properties the posting
+                                gate checks. */}
+                            {coFees.length > 0 && (
+                              <label className={css.pickRow}>
+                                <span className={css.pickLabel}>Fee to</span>
+                                <select className={`${sp.select} ${sp.compact}`}
+                                  aria-label={`${m.code} fee account for ${co.name}`} value={at.feeAccountCode ?? ''}
+                                  onChange={(e) => save.mutate({ companyId: co.id, code: m.code, feeAccountCode: e.target.value })}>
+                                  <option value="">fee goes to…</option>
+                                  {coFees.map((a) => <option key={a.account_code} value={a.account_code}>{a.account_name}</option>)}
+                                </select>
+                              </label>
+                            )}
+                            {/* A fee account this company's chart no longer
+                                offers is named rather than shown as a blank
+                                select — that silence is exactly how 930-0000
+                                went unnoticed for six days. */}
+                            {at.feeAccountCode && coFees.length > 0 && !coFees.some((a) => a.account_code === at.feeAccountCode) && (
+                              <span className={css.warn}>fee → {at.feeAccountCode}, which this chart cannot post to</span>
+                            )}
+                          </span>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+            {merchants.length === 0 && (
+              <tr><td colSpan={2 + companies.length} className={sp.empty}>No merchant in the setup yet.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+};
+
+/* ── Banks down the side, the same companies across the top ───────────────── */
+
+const BankMatrix = ({ companies, banks }: { companies: MaintenanceCompany[]; banks: MaintenanceBank[] }) => {
+  const save = useSaveMaintenanceBank();
+
+  return (
+    <section className={sp.card} aria-label="Banks">
+      <div className={css.head}>
+        <span className={css.title}>Banks</span>
+        <span className={sp.cardSub}>Tick the companies that bank with each account</span>
+      </div>
+      <div className={sp.scroll}>
+        <table className={sp.table}>
+          <thead>
+            <tr>
+              <th>Account</th>
+              {companies.map((co) => <th key={co.id} className={css.mid}>{co.code}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {banks.map((b) => (
+              <tr key={b.account_code}>
+                <td>
+                  <span className={css.bankName}>{b.account_name}</span>
+                  <span className={css.rowSub}>{b.account_code}</span>
+                </td>
+                {companies.map((co) => {
+                  const at = b.byCompany[String(co.id)] ?? { inChart: false, enabled: false, usedBy: [] };
+                  /* A code this company simply does not carry is not a box it
+                     could tick — say so rather than offer a lie. */
+                  if (!at.inChart) {
+                    return <td key={co.id} className={css.mid}><span className={css.absent}>not in its chart</span></td>;
+                  }
+                  return (
+                    <td key={co.id} className={css.mid}>
+                      <input type="checkbox" className={css.tick} checked={at.enabled}
+                        aria-label={`${b.account_code} for ${co.name}`}
+                        onChange={(e) => save.mutate({ companyId: co.id, accountCode: b.account_code, enabled: e.target.checked })} />
+                      {at.usedBy.length > 0 && (
+                        <span className={css.users} title="The merchants paying into it">
+                          {at.usedBy.map((code) => <Tag key={code} tone="calm">{code}</Tag>)}
+                        </span>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+            {banks.length === 0 && (
+              <tr><td colSpan={1 + companies.length} className={sp.empty}>No money account in any company’s chart yet.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {save.isError && (
+        <div className={css.refusal}>
+          <AlertTriangle size={14} />
+          <span>{refusalText(save.error, 'That bank was not changed.')}</span>
+        </div>
+      )}
+      <div className={sp.cardFoot}>
+        The accounts come from the chart of accounts, which is maintained centrally. Unticking one a merchant still pays
+        into is refused — point the merchant somewhere else first.
+      </div>
+    </section>
+  );
+};
+
+/* ── Voucher numbering (GL redesign item 8a) — the owner's own levers ──────
+   One letter per bank (Maybank M → the 2990-MPV-YYMM series; a new bank is a
+   letter typed HERE, never a deploy) and the suffix width (3 → -001, up to
+   5). The PV series (8b), the OR channels (9) and transfers (10) all read
+   the same letters, so Maybank is M everywhere or nowhere. */
+const NumberingCard = ({ company }: { company: string | null }) => {
+  const q = useVoucherNumbering();
+  const save = useSaveVoucherNumbering();
+  const toast = useToastOptional();
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [digits, setDigits] = useState<number | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  const rows = q.data?.accounts ?? [];
+  const shownDigits = digits ?? q.data?.digits ?? 3;
+  // Index reads widened by hand — noUncheckedIndexedAccess is off project-wide.
+  const typed = (code: string): string | undefined => draft[code] as string | undefined;
+  const letterOf = (code: string, saved: string | null): string => typed(code) ?? saved ?? '';
+  const dirtyLetters = rows
+    .filter((a) => a.fixedCash !== true)
+    .filter((a) => (typed(a.accountCode) ?? '') !== '' && (typed(a.accountCode) ?? '').toUpperCase() !== (a.letter ?? ''))
+    .map((a) => ({ accountCode: a.accountCode, letter: (typed(a.accountCode) ?? '').toUpperCase() }));
+  const dirty = dirtyLetters.length > 0 || (digits != null && digits !== (q.data?.digits ?? 3));
+  const firstBank = rows.find((a) => a.fixedCash !== true && letterOf(a.accountCode, a.letter) !== '');
+  const firstLetter = firstBank ? letterOf(firstBank.accountCode, firstBank.letter).toUpperCase() : 'M';
+
+  const submit = () => {
+    /* Two banks on one letter would share a number series. */
+    const letters = rows.filter((a) => a.fixedCash !== true).map((a) => letterOf(a.accountCode, a.letter).toUpperCase()).filter(Boolean);
+    if (new Set(letters).size !== letters.length) { setNote('Each money account needs its own letter.'); return; }
+    save.mutate(
+      { ...(digits != null ? { digits } : {}), ...(dirtyLetters.length ? { letters: dirtyLetters } : {}) },
+      {
+        onSuccess: () => {
+          setNote(null); setDraft({}); setDigits(null);
+          toast?.success(`Voucher numbering saved · next vouchers use ${shownDigits} digits`);
+        },
+        onError: (e) => setNote(e instanceof Error ? e.message : 'Not saved.'),
+      },
+    );
+  };
+
+  return (
+    <section className={css.smallCard} aria-label="Voucher numbering">
+      <div className={css.smallHead}>
+        <span className={css.title}>Voucher numbering</span>
+        {company && <span className={sp.cardSub}>{company}</span>}
+      </div>
+      <div className={css.digitsRow}>
+        Digits
+        <select className={`${sp.select} ${sp.compact}`} aria-label="Voucher number digits" value={shownDigits}
+          onChange={(e) => { setDigits(Number(e.target.value)); setNote(null); }}>
+          {[3, 4, 5].map((d) => <option key={d} value={d}>{d} · {'0'.repeat(d - 1)}1</option>)}
+        </select>
+        <span className={sp.muted}>e.g. {firstLetter}PV-YYMM-{'1'.padStart(shownDigits, '0')}</span>
+      </div>
+      <div className={css.letters}>
+        {rows.map((a) => (
+          <label key={a.accountCode} className={css.letterRow}>
+            <span className={sp.muted}>{a.accountCode}</span>
+            <span className={css.letterName}>{a.accountName}</span>
+            {a.fixedCash === true ? (
+              /* The drawer: C on both papers (CPV / COR), minted off
+                 roles.CASH — nothing to type, nothing the Save sends. */
+              <input className={`${sp.input} ${css.letterBox}`} value="C" readOnly aria-label={`Letter for ${a.accountCode}`}
+                title="The cash series is fixed at C — CPV for payments, COR for receipts" />
+            ) : (
+              <input
+                className={`${sp.input} ${css.letterBox}`}
+                aria-label={`Letter for ${a.accountCode}`}
+                value={letterOf(a.accountCode, a.letter)}
+                onChange={(e) => { setDraft((d) => ({ ...d, [a.accountCode]: e.target.value })); setNote(null); }}
+                maxLength={3}
+                placeholder="—"
+              />
+            )}
+          </label>
+        ))}
+        {rows.length === 0 && <span className={sp.hint}>{q.isLoading ? 'Loading…' : 'No money accounts in this chart yet.'}</span>}
+      </div>
+      <div className={css.smallFoot}>
+        <span className={sp.hint}>One letter per bank — Maybank M → 2990-MPV-2609-001; the cash drawer is always C.</span>
+        <button type="button" className={sp.btnSolid} disabled={!dirty || save.isPending} onClick={submit}>
+          {save.isPending ? 'Saving…' : 'Save numbering'}
+        </button>
+      </div>
+      {note && <div className={css.warn}>{note}</div>}
+    </section>
+  );
+};
+
+/* ── The company's default bank (BANK_DEFAULT) ──────────────────────────────
+   The owner's own lever (2026-08-30: 默认银行我可以自己maintenance): where a
+   transfer payment lands, and what the PV / AP Payment "Paid From" pre-fills.
+   Per company — switch companies in the top bar to set the other one's. Only
+   money accounts are offered, and the server refuses anything else anyway. */
+const DefaultBankCard = () => {
+  const rolesQ = useAccountRoles();
+  const accountsQ = useAccounts();
+  const save = useSaveBankDefault();
+  const toast = useToastOptional();
+  const [choice, setChoice] = useState<string>('');
+  const [note, setNote] = useState<string | null>(null);
+
+  const money = (accountsQ.data?.accounts ?? []).filter((a) => a.is_active && a.acc_money === true);
+  const current = rolesQ.data?.roles.BANK_DEFAULT ?? '';
+  const value = choice || current;
+  const dirty = !!choice && choice !== current;
+
+  return (
+    <section className={css.smallCard} aria-label="Default bank">
+      <div className={css.defaultRow}>
+        <span className={css.title}>Default bank</span>
+        <span className={`${sp.cardSub} ${sp.grow}`}>When a merchant names none</span>
+        <select className={`${sp.select} ${sp.compact}`} aria-label="Default bank account" value={value}
+          onChange={(e) => { setChoice(e.target.value); setNote(null); }}
+          disabled={rolesQ.isLoading || accountsQ.isLoading}>
+          {!value && <option value="">{rolesQ.isLoading ? 'Loading…' : '— pick a bank / cash account —'}</option>}
+          {money.map((a) => <option key={a.account_code} value={a.account_code}>{a.account_name}</option>)}
+        </select>
+        {dirty && (
+          <button type="button" className={`${sp.btnPrimary} ${sp.small}`} disabled={save.isPending}
+            onClick={() => save.mutate(choice, {
+              onSuccess: () => { setChoice(''); toast?.success(`Default bank set to ${choice}`); },
+              onError: (e) => setNote(e instanceof Error ? e.message : 'Not saved.'),
+            })}>
+            {save.isPending ? 'Saving…' : 'Save'}
+          </button>
+        )}
+      </div>
+      <div className={sp.hint}>Pre-fills every voucher’s Paid from; transfer payments land here.</div>
+      {note && <div className={css.warn}>{note}</div>}
+    </section>
   );
 };
 
@@ -119,137 +508,168 @@ const EMPTY_CONFIG: ConfigForm = {
 };
 const joinHeadings = (h: string | string[] | undefined): string => (h == null ? '' : Array.isArray(h) ? h.join(', ') : h);
 const splitHeadings = (s: string): string[] => s.split(',').map((x) => x.trim()).filter(Boolean);
+const delimiterWords = (d: string | null): string => (d === '\t' || d === 'tab' ? 'tab' : d === '|' ? 'pipe |' : d === ';' ? 'semicolon ;' : 'comma');
+const amountWords = (f: string): string => (f === 'integer-sen' ? 'integer sen' : '1,234.56');
 
 const BankStatementsCard = () => {
   const cfgQ = useBankConfigs();
   const save = useSaveBankConfig();
   const accountsQ = useAccounts();
+  const toast = useToastOptional();
   const money = (accountsQ.data?.accounts ?? []).filter((a) => a.acc_money === true && a.is_active);
-  const [form, setForm] = useState<ConfigForm | null>(null);
-  const [note, setNote] = useState<string | null>(null);
+  const nameOf = (code: string): string => (accountsQ.data?.accounts ?? []).find((a) => a.account_code === code)?.account_name ?? '';
+  const [form, setForm] = useState<(ConfigForm & { editing: boolean }) | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ row: BankConfig; x: number; y: number } | null>(null);
   const configs = cfgQ.data?.configs ?? [];
   const defaults = cfgQ.data?.defaultHeadings ?? {};
-  const set = (patch: Partial<ConfigForm>) => setForm((f) => ({ ...(f ?? EMPTY_CONFIG), ...patch }));
+  const set = (patch: Partial<ConfigForm>) => { setForm((f) => (f ? { ...f, ...patch } : f)); setError(null); };
 
-  const edit = (c: BankConfig) => setForm({
-    accountCode: c.account_code, bankCode: c.bank_code, accountNo: c.account_no ?? '', statementFormat: c.statement_format,
-    delimiter: c.delimiter === '\t' ? 'tab' : (c.delimiter ?? ''), amountFormat: c.amount_format, creditIndicator: c.credit_indicator,
-    date: joinHeadings(c.column_map.date), description: joinHeadings(c.column_map.description), reference: joinHeadings(c.column_map.reference),
-    credit: joinHeadings(c.column_map.credit), debit: joinHeadings(c.column_map.debit), amount: joinHeadings(c.column_map.amount),
-    indicator: joinHeadings(c.column_map.indicator), balance: joinHeadings(c.column_map.balance),
-  });
+  const edit = (c: BankConfig) => {
+    setError(null);
+    setForm({
+      editing: true,
+      accountCode: c.account_code, bankCode: c.bank_code, accountNo: c.account_no ?? '', statementFormat: c.statement_format,
+      delimiter: c.delimiter === '\t' ? 'tab' : (c.delimiter ?? ''), amountFormat: c.amount_format, creditIndicator: c.credit_indicator,
+      date: joinHeadings(c.column_map.date), description: joinHeadings(c.column_map.description), reference: joinHeadings(c.column_map.reference),
+      credit: joinHeadings(c.column_map.credit), debit: joinHeadings(c.column_map.debit), amount: joinHeadings(c.column_map.amount),
+      indicator: joinHeadings(c.column_map.indicator), balance: joinHeadings(c.column_map.balance),
+    });
+  };
 
   const submit = () => {
     if (!form) return;
+    if (!form.accountCode || !form.bankCode.trim()) { setError('Pick the account and name its bank.'); return; }
     const columnMap: Record<string, string[]> = {};
     for (const r of HEADING_ROLES) { const list = splitHeadings(form[r.key]); if (list.length > 0) columnMap[r.key] = list; }
+    const code = form.accountCode;
     save.mutate({
       accountCode: form.accountCode, bankCode: form.bankCode, accountNo: form.accountNo, statementFormat: form.statementFormat,
       delimiter: form.delimiter, amountFormat: form.amountFormat, creditIndicator: form.creditIndicator, isActive: true, columnMap,
     }, {
-      onSuccess: () => { setNote(`${form.accountCode} saved — upload its statements on Bank Recon.`); setForm(null); },
-      onError: (e) => setNote(refusalText(e, 'That account was not saved.')),
+      onSuccess: () => { setForm(null); toast?.success(`${code} saved · upload its statements on Bank statements`); },
+      onError: (e) => setError(refusalText(e, 'That account was not saved.')),
     });
   };
 
+  const columns: Column<BankConfig>[] = [
+    { key: 'account', label: 'Account', render: (c) => <span className={sp.muted}>{c.account_code}</span>, getValue: (c) => c.account_code },
+    { key: 'name', label: 'Name', render: (c) => nameOf(c.account_code), getValue: (c) => nameOf(c.account_code) },
+    {
+      key: 'bank', label: 'Bank',
+      render: (c) => <span className={css.bankCell}>{c.bank_code}{!c.is_active && <Tag tone="calm">Off</Tag>}</span>,
+      getValue: (c) => c.bank_code,
+    },
+    { key: 'no', label: 'Account no.', render: (c) => <span className={sp.muted}>{c.account_no ?? '—'}</span>, getValue: (c) => c.account_no ?? '' },
+    {
+      key: 'file', label: 'File',
+      render: (c) => <span className={sp.muted}>{c.statement_format} · {delimiterWords(c.delimiter)} · {amountWords(c.amount_format)}</span>,
+      getValue: (c) => `${c.statement_format} · ${delimiterWords(c.delimiter)} · ${amountWords(c.amount_format)}`,
+    },
+    {
+      key: 'heads', label: 'Headings',
+      render: (c) => {
+        const money2 = c.column_map.credit && c.column_map.debit
+          ? `${joinHeadings(c.column_map.credit)} / ${joinHeadings(c.column_map.debit)}` : joinHeadings(c.column_map.amount);
+        const said = [joinHeadings(c.column_map.date), money2, joinHeadings(c.column_map.balance)].filter(Boolean).join(' · ');
+        return <span className={sp.muted}>{said || 'built-in names'}</span>;
+      },
+      getValue: (c) => joinHeadings(c.column_map.date),
+    },
+    {
+      key: 'acts', label: '', align: 'right', disableSort: true, filterable: false,
+      render: (c) => (
+        <span className={sp.acts}>
+          <button type="button" className={sp.more} aria-label={`More for ${c.account_code}`} title="Edit"
+            onClick={(e) => { e.stopPropagation(); setMenu({ row: c, x: e.clientX, y: e.clientY }); }}>
+            <MoreHorizontal size={14} />
+          </button>
+        </span>
+      ),
+    },
+  ];
+
   return (
-    <section className={css.card}>
-      <div className={css.cardHead}>
-        <span className={css.cardTitle}>Bank statements</span>
-        <span className={css.hint}>Which of this company's accounts take a statement file, and how each file reads. Headings, never positions — name every caption the bank has used, comma-separated.</span>
+    <section className={css.flatCard} aria-label="Bank statements">
+      <div className={css.flatHead}>
+        <span className={css.title}>Bank statements</span>
+        <span className={sp.cardSub}>Which of this company’s accounts take a statement file, and how each file reads</span>
+        <span className={sp.grow} />
+        <button type="button" className={sp.btn} onClick={() => { setError(null); setForm({ ...EMPTY_CONFIG, editing: false }); }}>
+          <Plus size={14} /> Add account
+        </button>
       </div>
-      {configs.length === 0 && !cfgQ.isLoading && (
-        <div style={softText}>No account takes a statement yet — Bank Recon cannot read a file until one does.</div>
+      <DataTable<BankConfig>
+        tableId="recon-statements"
+        exportName="recon-statements"
+        columns={columns}
+        rows={cfgQ.isLoading ? null : configs}
+        loading={cfgQ.isLoading}
+        error={cfgQ.isError ? `The statement setups did not load — ${refusalText(cfgQ.error, 'try again.')}` : null}
+        emptyLabel="No account takes a statement yet — Bank statements cannot read a file until one does."
+        getRowKey={(c) => c.id}
+        onRowDoubleClick={edit}
+        contextMenu={(c) => [{ label: 'Edit', onClick: () => edit(c) }]}
+        freezeHeight="off"
+      />
+      {menu && (
+        <PopMenu x={menu.x} y={menu.y} label={`${menu.row.account_code} menu`} onClose={() => setMenu(null)}
+          items={[{ label: 'Edit', onClick: () => edit(menu.row) }]} />
       )}
-      {configs.length > 0 && (
-        <div className={css.scroll}>
-          <table className={`${css.grid} ${css.fixed}`}>
-            <colgroup>
-              <col style={{ width: 120 }} /><col style={{ width: 80 }} /><col style={{ width: 160 }} />
-              <col style={{ width: 200 }} /><col /><col style={{ width: 90 }} />
-            </colgroup>
-            <thead>
-              <tr>
-                <th className={css.head}>Account</th><th className={css.head}>Bank</th><th className={css.head}>Account no.</th>
-                <th className={css.head}>File</th><th className={css.head}>Headings</th><th className={css.head} aria-label="edit" />
-              </tr>
-            </thead>
-            <tbody>
-              {configs.map((c) => (
-                <tr key={c.id} className={css.row}>
-                  <td className={`${css.label} ${css.nowrap}`}><span className={`${css.name} ${css.mono}`}>{c.account_code}</span></td>
-                  <td className={`${css.cell} ${css.nowrap}`}>{c.bank_code}{c.is_active ? '' : ' (off)'}</td>
-                  <td className={`${css.cell} ${css.nowrap} ${css.mono}`}>{c.account_no ?? '—'}</td>
-                  <td className={`${css.cell} ${css.nowrap}`}>
-                    {c.statement_format}{c.delimiter ? ` · ${c.delimiter === '\t' ? 'tab' : c.delimiter}` : ''} · {c.amount_format === 'integer-sen' ? 'integer sen' : c.amount_format}
-                  </td>
-                  <td className={css.cell}>
-                    {/* The roles the file names, as chips; the captions themselves on hover and under Edit. */}
-                    <div className={css.chips}>
-                      {HEADING_ROLES.filter((r) => joinHeadings(c.column_map[r.key])).map((r) => (
-                        <span key={r.key} className={css.chip} title={joinHeadings(c.column_map[r.key])}>{r.label.replace(/ headings?( \(joined\))?$/i, '')}</span>
-                      ))}
-                      {HEADING_ROLES.every((r) => !joinHeadings(c.column_map[r.key])) && <span className={css.hint}>built-in names</span>}
-                    </div>
-                  </td>
-                  <td className={css.cell}><button type="button" style={btn()} onClick={() => edit(c)}>Edit</button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-        <button type="button" style={btn()} onClick={() => setForm(EMPTY_CONFIG)}>+ Add account</button>
-        {note && <span style={{ ...softText, color: note.includes('saved') ? undefined : danger }}>{note}</span>}
-      </div>
       {form && (
-        <div className={css.formCard} aria-label="Statement setup form">
-          {/* Row 1 — the file's identity. Row 2 — its headings. Every field the
-              same width, its label above it. */}
-          <div className={css.formRow7}>
-            <label className={css.field}>Account
-              <select aria-label="Statement account" value={form.accountCode} onChange={(e) => set({ accountCode: e.target.value })} disabled={configs.some((c) => c.account_code === form.accountCode)}>
-                <option value="">— pick the bank account —</option>
-                {money.map((a) => <option key={a.account_code} value={a.account_code}>{a.account_code} · {a.account_name}</option>)}
-              </select>
-            </label>
-            <label className={css.field}>Bank<input aria-label="Bank" value={form.bankCode} onChange={(e) => set({ bankCode: e.target.value })} placeholder="HLB / MBB / PBB…" /></label>
-            <label className={css.field}>Account number<input aria-label="Account number" value={form.accountNo} onChange={(e) => set({ accountNo: e.target.value })} placeholder="the file must mention it" /></label>
-            <label className={css.field}>File format
-              <select aria-label="File format" value={form.statementFormat} onChange={(e) => set({ statementFormat: e.target.value })}>
-                <option value="CSV">CSV</option><option value="TXT">TXT</option>
-              </select>
-            </label>
-            <label className={css.field}>Delimiter
-              <select aria-label="Delimiter" value={form.delimiter} onChange={(e) => set({ delimiter: e.target.value })}>
-                <option value="">comma</option><option value="|">pipe |</option><option value="tab">tab</option><option value=";">semicolon ;</option>
-              </select>
-            </label>
-            <label className={css.field}>Amounts
-              <select aria-label="Amount format" value={form.amountFormat} onChange={(e) => set({ amountFormat: e.target.value })}>
-                <option value="decimal">decimal (1,710.00)</option><option value="integer-sen">integer sen (000000000171000)</option>
-              </select>
-            </label>
-            <label className={css.field}>Credit indicator<input aria-label="Credit indicator" value={form.creditIndicator} onChange={(e) => set({ creditIndicator: e.target.value })} /></label>
+        <SetupModal
+          wide
+          title={form.editing ? `Statement · ${form.accountCode}` : 'Add a statement account'}
+          sub="Headings, never positions: name every caption the bank has used, comma-separated."
+          okLabel="Save"
+          busyLabel="Saving…"
+          busy={save.isPending}
+          error={error}
+          onOk={submit}
+          onCancel={() => setForm(null)}
+        >
+          <Field label="Account">
+            <select className={sp.select} aria-label="Statement account" value={form.accountCode} disabled={form.editing}
+              onChange={(e) => set({ accountCode: e.target.value })}>
+              <option value="">— pick the bank account —</option>
+              {money.map((a) => <option key={a.account_code} value={a.account_code}>{a.account_code} · {a.account_name}</option>)}
+            </select>
+          </Field>
+          <Field label="Bank" w="22%">
+            <input className={sp.input} aria-label="Bank" value={form.bankCode} placeholder="HLB / MBB / PBB…" onChange={(e) => set({ bankCode: e.target.value })} />
+          </Field>
+          <Field label="Account number" w="26%">
+            <input className={sp.input} aria-label="Account number" value={form.accountNo} placeholder="the file must mention it" onChange={(e) => set({ accountNo: e.target.value })} />
+          </Field>
+          <Field label="File" w="22%">
+            <select className={sp.select} aria-label="File format" value={form.statementFormat} onChange={(e) => set({ statementFormat: e.target.value })}>
+              <option value="CSV">CSV</option><option value="TXT">TXT</option>
+            </select>
+          </Field>
+          <Field label="Delimiter" w="22%">
+            <select className={sp.select} aria-label="Delimiter" value={form.delimiter} onChange={(e) => set({ delimiter: e.target.value })}>
+              <option value="">comma</option><option value="|">pipe |</option><option value="tab">tab</option><option value=";">semicolon ;</option>
+            </select>
+          </Field>
+          <Field label="Amount format" w="26%">
+            <select className={sp.select} aria-label="Amount format" value={form.amountFormat} onChange={(e) => set({ amountFormat: e.target.value })}>
+              <option value="decimal">1,234.56</option><option value="integer-sen">integer sen · 000000123456</option>
+            </select>
+          </Field>
+          <Field label="Credit indicator" w="22%">
+            <input className={sp.input} aria-label="Credit indicator" value={form.creditIndicator} onChange={(e) => set({ creditIndicator: e.target.value })} />
+          </Field>
+          {HEADING_ROLES.map((r) => (
+            <Field key={r.key} label={r.label}>
+              <input className={sp.input} aria-label={r.label} value={form[r.key]}
+                onChange={(e) => set({ [r.key]: e.target.value } as Partial<ConfigForm>)}
+                placeholder={(defaults[r.key] ?? []).slice(0, 3).join(', ') || '—'} />
+            </Field>
+          ))}
+          <div className={`${sp.hint} ${css.fullRow}`}>
+            A blank heading uses the reader’s built-in names (shown greyed). Save, then upload on Bank statements.
           </div>
-          <div className={css.formRow8}>
-            {HEADING_ROLES.map((r) => (
-              <label key={r.key} className={css.field}>{r.label.replace(/ headings?$/i, '')}
-                <input aria-label={r.label} value={form[r.key]} onChange={(e) => set({ [r.key]: e.target.value } as Partial<ConfigForm>)}
-                  placeholder={(defaults[r.key] ?? []).slice(0, 3).join(', ') || '—'} />
-              </label>
-            ))}
-          </div>
-          <div className={css.formActions}>
-            <span style={softText}>A blank heading uses the reader's built-in names (shown greyed). Save, then upload on Bank Recon.</span>
-            <span style={{ flex: 1 }} />
-            <button type="button" style={btn(true, save.isPending || !form.accountCode || !form.bankCode)} disabled={save.isPending || !form.accountCode || !form.bankCode} onClick={submit}>
-              {save.isPending ? 'Saving…' : 'Save statement setup'}
-            </button>
-            <button type="button" style={btn()} onClick={() => setForm(null)}>Cancel</button>
-          </div>
-        </div>
+        </SetupModal>
       )}
     </section>
   );
@@ -259,12 +679,20 @@ const BankStatementsCard = () => {
    (2026-09-02). Seed-only since layer 4; now the owner fixes a reworded bank
    narration himself. GLOBAL like the report layouts — a payout reads the same
    in every company's statement. The server compiles every regex at write time
-   and its refusal sentence is shown verbatim; switching a rule off keeps the
-   row (nothing vanishes). */
+   and its refusal sentence is shown verbatim. Nothing is deleted: Remove
+   switches a rule off and the row stays (owner question g4). */
+const badPattern = (p: string): boolean => {
+  if (!p.trim()) return true;
+  try { new RegExp(p, 'i'); return false; } catch { return true; }
+};
+const BAD_PATTERN = 'That pattern is not a valid regular expression, so it was not saved.';
+
 const BankRulesCard = () => {
   const rulesQ = useBankRules();
   const save = useSaveBankRule();
   const createM = useCreateBankRule();
+  const askConfirm = useConfirm();
+  const toast = useToastOptional();
   const [drafts, setDrafts] = useState<Record<number, Partial<BankRule> | undefined>>({});
   const [note, setNote] = useState<string | null>(null);
   const [newRule, setNewRule] = useState<{ acquirerCode: string; pattern: string }>({ acquirerCode: '', pattern: '' });
@@ -273,460 +701,146 @@ const BankRulesCard = () => {
   const acquirers = [...new Set(rules.map((r) => r.acquirer_code))];
 
   const rowValue = (r: BankRule): BankRule => ({ ...r, ...(drafts[r.id] ?? ({} as Partial<BankRule>)) });
-  const edit = (id: number, patch: Partial<BankRule>) =>
+  const edit = (id: number, patch: Partial<BankRule>) => {
     setDrafts((prev) => ({ ...prev, [id]: { ...(prev[id] ?? {}), ...patch } }));
+    setNote(null);
+  };
+  const dropDraft = (id: number) => setDrafts((prev) => { const { [id]: _gone, ...rest } = prev; return rest; });
+  const switchTo = (r: BankRule, on: boolean) => save.mutate({ id: r.id, isActive: on }, {
+    onSuccess: () => toast?.success(`${r.acquirer_code} rule switched ${on ? 'on' : 'off'} for every company`),
+    onError: (e) => setNote(refusalText(e, 'Rule not saved.')),
+  });
+  const switchOff = async (r: BankRule) => {
+    const ok = await askConfirm({
+      title: `Remove the ${r.acquirer_code} rule?`,
+      body: `Statement credits matching “${r.pattern}” are no longer recognised as ${r.acquirer_code} payouts. Every company shares this rule. It is switched off, not deleted — its switch brings it back.`,
+      confirmLabel: 'Switch off',
+      danger: true,
+    });
+    if (ok) switchTo(r, false);
+  };
 
   return (
-    <section className={css.card}>
-      <div className={css.cardHead}>
-        <span className={css.cardTitle}>Bank recognition rules</span>
-        <span className={css.hint}>How a statement credit is known to be an acquirer&rsquo;s payout. Shared by every company; a broken pattern is refused, not saved.</span>
+    <section className={css.flatCard} aria-label="Bank recognition rules">
+      <div className={css.flatHead}>
+        <span className={css.title}>Bank recognition rules</span>
+        <span className={sp.cardSub}>Spots card payouts on bank statements · shared</span>
       </div>
-      <div className={css.scroll}>
-        <table className={`${css.grid} ${css.fixed}`}>
-          <colgroup>
-            <col style={{ width: 110 }} /><col /><col style={{ width: 140 }} /><col style={{ width: 90 }} /><col style={{ width: 80 }} /><col style={{ width: 100 }} />
-          </colgroup>
+      <div className={sp.scroll}>
+        <table className={`${sp.table} ${css.rules}`}>
           <thead>
             <tr>
-              <th className={css.head}>Acquirer</th>
-              <th className={css.head}>Pattern (regex, case-insensitive)</th>
-              <th className={css.head}>Looks in</th>
-              <th className={css.head}>Order</th>
-              <th className={css.head}>Active</th>
-              <th className={css.head} />
+              <th>Acquirer</th>
+              <th>Pattern · regex, any case</th>
+              <th>Looks in</th>
+              <th>Order</th>
+              <th>Active</th>
+              <th aria-label="actions" />
             </tr>
           </thead>
           <tbody>
             {rules.map((r) => {
               const v = rowValue(r);
-              const dirty = drafts[r.id] != null && Object.keys(drafts[r.id]!).length > 0;
+              const d = drafts[r.id];
+              const dirty = d != null && Object.keys(d).length > 0;
               return (
-                <tr key={r.id} className={css.row}>
-                  <td className={`${css.label} ${css.nowrap}`}><b className={css.mono}>{r.acquirer_code}</b></td>
-                  <td style={{ padding: '4px 8px' }}>
+                <tr key={r.id} className={r.is_active ? undefined : css.offRule}>
+                  <td className={css.acq}>{r.acquirer_code}</td>
+                  <td>
                     <input
+                      className={`${sp.input} ${sp.compact} ${css.pattern} ${badPattern(v.pattern) ? sp.inputBad : ''}`}
                       aria-label={`Pattern for ${r.acquirer_code} rule ${r.id}`}
                       value={v.pattern}
                       onChange={(e) => edit(r.id, { pattern: e.target.value })}
-                      style={{ width: '100%', minWidth: 220, fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)', padding: '4px 8px' }}
                     />
                   </td>
-                  <td style={{ padding: '4px 8px' }}>
-                    <select value={v.match_field} onChange={(e) => edit(r.id, { match_field: e.target.value as BankRule['match_field'] })} style={{ fontSize: 'var(--fs-12)', padding: '4px 6px' }}>
+                  <td>
+                    <select className={`${sp.select} ${sp.compact}`} aria-label={`Looks in for ${r.acquirer_code} rule ${r.id}`} value={v.match_field}
+                      onChange={(e) => edit(r.id, { match_field: e.target.value as BankRule['match_field'] })}>
                       <option value="both">both</option>
                       <option value="description">description</option>
                       <option value="reference">reference</option>
                     </select>
                   </td>
-                  <td style={{ padding: '4px 8px' }}>
+                  <td>
+                    {/* A number, as today: the list reads by acquirer, the
+                        matcher reads every rule by this order. */}
                     <NumberInput
+                      className={`${sp.input} ${sp.compact} ${css.order}`}
                       aria-label={`Order for ${r.acquirer_code} rule ${r.id}`}
                       value={v.sort_order}
                       sign="unsigned"
                       decimal={false}
-                      onValueChange={(n) => edit(r.id, { sort_order: n ?? 0 })}
-                      style={{ width: 64, fontSize: 'var(--fs-12)', padding: '4px 6px' }} />
+                      onValueChange={(n) => edit(r.id, { sort_order: n ?? 0 })} />
                   </td>
-                  <td style={{ padding: '4px 8px', textAlign: 'center' }}>
-                    <input type="checkbox" checked={v.is_active}
-                      aria-label={`${r.acquirer_code} rule ${r.id} active`}
-                      onChange={(e) => edit(r.id, { is_active: e.target.checked })}
-                      style={{ width: 16, height: 16, accentColor: 'var(--c-orange)' }} />
+                  <td>
+                    <Switch on={r.is_active} label={`${r.acquirer_code} rule ${r.id} active`} disabled={save.isPending}
+                      onClick={() => switchTo(r, !r.is_active)} />
                   </td>
-                  <td style={{ padding: '4px 8px' }}>
-                    <button type="button" style={btn(dirty, save.isPending)} disabled={!dirty || save.isPending}
-                      onClick={() => {
-                        const d = drafts[r.id]!;
-                        save.mutate({
-                          id: r.id,
-                          ...(d.pattern !== undefined ? { pattern: d.pattern } : {}),
-                          ...(d.match_field !== undefined ? { matchField: d.match_field } : {}),
-                          ...(d.sort_order !== undefined ? { sortOrder: d.sort_order } : {}),
-                          ...(d.is_active !== undefined ? { isActive: d.is_active } : {}),
-                        }, {
-                          onSuccess: () => { setDrafts((prev) => { const { [r.id]: _gone, ...rest } = prev; return rest; }); setNote(null); },
-                          onError: (e) => setNote(refusalText(e, 'Rule not saved.')),
-                        });
-                      }}>
-                      Save
-                    </button>
+                  <td className={css.ruleActs}>
+                    <span className={sp.acts}>
+                      {dirty && (
+                        <>
+                          <button type="button" className={css.undo} onClick={() => dropDraft(r.id)}>Undo</button>
+                          <button type="button" className={`${sp.btnPrimary} ${sp.small}`} disabled={save.isPending}
+                            onClick={() => {
+                              if (d.pattern !== undefined && badPattern(d.pattern)) { setNote(BAD_PATTERN); return; }
+                              save.mutate({
+                                id: r.id,
+                                ...(d.pattern !== undefined ? { pattern: d.pattern } : {}),
+                                ...(d.match_field !== undefined ? { matchField: d.match_field } : {}),
+                                ...(d.sort_order !== undefined ? { sortOrder: d.sort_order } : {}),
+                              }, {
+                                onSuccess: () => { dropDraft(r.id); setNote(null); toast?.success(`${r.acquirer_code} rule saved for every company`); },
+                                onError: (e) => setNote(refusalText(e, 'Rule not saved.')),
+                              });
+                            }}>
+                            Save
+                          </button>
+                        </>
+                      )}
+                      <button type="button" className={`${sp.iconBtn} ${r.is_active ? sp.iconDanger : sp.iconOff}`}
+                        aria-label={`Remove the ${r.acquirer_code} rule ${r.id}`}
+                        title={r.is_active ? 'Remove the rule — it is switched off, not deleted' : 'Switched off · its switch brings it back'}
+                        disabled={!r.is_active || save.isPending}
+                        onClick={() => void switchOff(r)}>
+                        <X size={13} />
+                      </button>
+                    </span>
                   </td>
                 </tr>
               );
             })}
-            {/* Add a rule — the acquirer and the pattern are the essentials;
-                everything else starts at its default and is edited above. */}
-            <tr className={css.row}>
-              <td className={css.label}>
-                <select aria-label="New rule acquirer" value={newRule.acquirerCode}
-                  onChange={(e) => setNewRule((p) => ({ ...p, acquirerCode: e.target.value }))}
-                  style={{ fontSize: 'var(--fs-12)', padding: '4px 6px' }}>
-                  <option value="">+ add…</option>
-                  {acquirers.map((a) => <option key={a} value={a}>{a}</option>)}
-                </select>
-              </td>
-              <td style={{ padding: '4px 8px' }} colSpan={4}>
-                <input aria-label="New rule pattern" placeholder="e.g. PBB-PBCS"
-                  value={newRule.pattern}
-                  onChange={(e) => setNewRule((p) => ({ ...p, pattern: e.target.value }))}
-                  style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)', padding: '4px 8px' }} />
-              </td>
-              <td style={{ padding: '4px 8px' }}>
-                <button type="button" style={btn(!!newRule.acquirerCode && !!newRule.pattern.trim(), createM.isPending)}
-                  disabled={!newRule.acquirerCode || !newRule.pattern.trim() || createM.isPending}
-                  onClick={() => createM.mutate({ acquirerCode: newRule.acquirerCode, pattern: newRule.pattern.trim() }, {
-                    onSuccess: () => { setNewRule({ acquirerCode: '', pattern: '' }); setNote(null); },
-                    onError: (e) => setNote(refusalText(e, 'Rule not added.')),
-                  })}>
-                  Add
-                </button>
-              </td>
-            </tr>
+            {rules.length === 0 && (
+              <tr><td colSpan={6} className={sp.empty}>{rulesQ.isLoading ? 'Loading the rules…' : 'No recognition rule yet.'}</td></tr>
+            )}
           </tbody>
         </table>
       </div>
-      {note && <div style={{ color: danger, fontSize: 'var(--fs-12)', padding: 'var(--space-2) var(--space-3)' }}>{note}</div>}
-    </section>
-  );
-};
-
-/* ── The company's default bank (BANK_DEFAULT) ──────────────────────────────
-   The owner's own lever (2026-08-30: 默认银行我可以自己maintenance): where a
-   transfer payment lands, and what the PV / AP Payment "Paid From" pre-fills.
-   Per company — switch companies in the top bar to set the other one's. Only
-   money accounts are offered, and the server refuses anything else anyway. */
-/* ── Voucher numbering (GL redesign item 8a) — the owner's own levers ──────
-   One letter per bank (Maybank M → the 2990-MPV-YYMM series; a new bank is a
-   letter typed HERE, never a deploy) and the suffix width (3 → -001, up to
-   5). The PV series (8b), the OR channels (9) and transfers (10) all read
-   the same letters, so Maybank is M everywhere or nowhere. */
-const NumberingRow = () => {
-  const q = useVoucherNumbering();
-  const save = useSaveVoucherNumbering();
-  const [draft, setDraft] = useState<Record<string, string>>({});
-  const [digits, setDigits] = useState<number | null>(null);
-  const [note, setNote] = useState<string | null>(null);
-
-  const rows = q.data?.accounts ?? [];
-  const shownDigits = digits ?? q.data?.digits ?? 3;
-  // Index reads widened by hand — noUncheckedIndexedAccess is off project-wide.
-  const typed = (code: string): string | undefined => draft[code] as string | undefined;
-  const letterOf = (code: string, saved: string | null): string => typed(code) ?? saved ?? '';
-  const dirtyLetters = rows
-    .filter((a) => a.fixedCash !== true)
-    .filter((a) => (typed(a.accountCode) ?? '') !== '' && (typed(a.accountCode) ?? '').toUpperCase() !== (a.letter ?? ''))
-    .map((a) => ({ accountCode: a.accountCode, letter: (typed(a.accountCode) ?? '').toUpperCase() }));
-  const dirty = dirtyLetters.length > 0 || (digits != null && digits !== (q.data?.digits ?? 3));
-
-  return (
-    <div className={css.defs}>
-      <div className={css.defLabel}>Voucher numbering</div>
-      <div className="space-y-2" style={{ minWidth: 0 }}>
-        <div className={css.defRow}>
-          <span style={softText}>每家银行一个字母 (Maybank M → 2990-MPV-2609-001);位数你自己定</span>
-          <span style={{ flex: 1 }} />
-          <span style={softText}>Digits</span>
-          <select aria-label="Voucher number digits" value={shownDigits}
-            onChange={(e) => { setDigits(Number(e.target.value)); setNote(null); }}
-            style={{ padding: '6px 10px', fontSize: 'var(--fs-13)' }}>
-            {[3, 4, 5].map((d) => <option key={d} value={d}>{d} — {'0'.repeat(d - 1)}1</option>)}
-          </select>
-          <button type="button" style={btn(dirty, save.isPending)} disabled={!dirty || save.isPending}
-            onClick={() => save.mutate(
-              { ...(digits != null ? { digits } : {}), ...(dirtyLetters.length ? { letters: dirtyLetters } : {}) },
-              {
-                onSuccess: () => { setNote('Saved — new vouchers use these series.'); setDraft({}); setDigits(null); },
-                onError: (e) => setNote(e instanceof Error ? e.message : 'Not saved.'),
-              },
-            )}>
-            {save.isPending ? 'Saving…' : 'Save'}
-          </button>
-        </div>
-        <div className={css.letters}>
-          {rows.map((a) => (
-            <label key={a.accountCode} className={css.letter}>
-              <span className={css.mono}>{a.accountCode}</span>
-              <span className={css.letterName}>{a.accountName}</span>
-              {a.fixedCash === true ? (
-                /* The drawer: C on both papers (CPV / COR), minted off
-                   roles.CASH — nothing to type, nothing the Save sends. */
-                <span title="现金系列固定 C — 付款 CPV,收据 COR" style={{ padding: '4px 8px', fontWeight: 700 }}>
-                  C <span style={softText}>· CPV/COR 固定</span>
-                </span>
-              ) : (
-                <input
-                  aria-label={`Letter for ${a.accountCode}`}
-                  value={letterOf(a.accountCode, a.letter)}
-                  onChange={(e) => { setDraft((d) => ({ ...d, [a.accountCode]: e.target.value })); setNote(null); }}
-                  maxLength={3}
-                  placeholder="—"
-                  style={{ width: 48, padding: '4px 6px', fontSize: 'var(--fs-13)', textTransform: 'uppercase', border: '1px solid var(--c-line, rgba(34,31,32,0.2))', borderRadius: 'var(--radius-sm, 6px)' }}
-                />
-              )}
-            </label>
-          ))}
-          {rows.length === 0 && <span style={softText}>{q.isLoading ? 'Loading…' : 'No money accounts in this chart yet.'}</span>}
-        </div>
-        {note && <div style={softText}>{note}</div>}
-      </div>
-    </div>
-  );
-};
-
-/* The company's default bank → a row in the defaults card. */
-const DefaultBankRow = () => {
-  const rolesQ = useAccountRoles();
-  const accountsQ = useAccounts();
-  const save = useSaveBankDefault();
-  const [choice, setChoice] = useState<string>('');
-  const [note, setNote] = useState<string | null>(null);
-
-  const money = (accountsQ.data?.accounts ?? []).filter((a) => a.is_active && a.acc_money === true);
-  const current = rolesQ.data?.roles.BANK_DEFAULT ?? '';
-  const value = choice || current;
-  const dirty = !!choice && choice !== current;
-
-  return (
-    <div className={css.defs}>
-      <div className={css.defLabel}>Default bank</div>
-      <div className={css.defRow}>
-        <select
-          aria-label="Default bank account"
-          value={value}
-          onChange={(e) => { setChoice(e.target.value); setNote(null); }}
-          style={{ padding: '6px 10px', fontSize: 'var(--fs-13)', minWidth: 260 }}
-          disabled={rolesQ.isLoading || accountsQ.isLoading}
-        >
-          {!value && <option value="">{rolesQ.isLoading ? 'Loading…' : '— pick a bank / cash account —'}</option>}
-          {money.map((a) => (
-            <option key={a.account_code} value={a.account_code}>{a.account_code} · {a.account_name}</option>
-          ))}
+      {/* Add a rule — the acquirer and the pattern are the essentials;
+          everything else starts at its default and is edited above. */}
+      <div className={css.addRule}>
+        <select className={`${sp.select} ${sp.compact}`} aria-label="New rule acquirer" value={newRule.acquirerCode}
+          onChange={(e) => { setNewRule((p) => ({ ...p, acquirerCode: e.target.value })); setNote(null); }}>
+          <option value="">Acquirer</option>
+          {acquirers.map((a) => <option key={a} value={a}>{a}</option>)}
         </select>
-        <button
-          type="button"
-          style={btn(dirty, save.isPending)}
-          disabled={!dirty || save.isPending}
+        <input className={`${sp.input} ${sp.compact} ${css.newPattern}`} aria-label="New rule pattern" placeholder="e.g. PBB-PBCS"
+          value={newRule.pattern}
+          onChange={(e) => { setNewRule((p) => ({ ...p, pattern: e.target.value })); setNote(null); }} />
+        <button type="button" className={`${sp.btnPrimary} ${sp.small}`}
+          disabled={!newRule.acquirerCode || !newRule.pattern.trim() || createM.isPending}
           onClick={() => {
-            save.mutate(choice, {
-              onSuccess: () => { setNote('Saved — vouchers now pre-fill this bank.'); setChoice(''); },
-              onError: (e) => setNote(e instanceof Error ? e.message : 'Not saved.'),
+            if (badPattern(newRule.pattern)) { setNote(BAD_PATTERN); return; }
+            const acq = newRule.acquirerCode;
+            createM.mutate({ acquirerCode: acq, pattern: newRule.pattern.trim() }, {
+              onSuccess: () => { setNewRule({ acquirerCode: '', pattern: '' }); setNote(null); toast?.success(`${acq} rule added for every company`); },
+              onError: (e) => setNote(refusalText(e, 'Rule not added.')),
             });
-          }}
-        >
-          {save.isPending ? 'Saving…' : 'Save'}
+          }}>
+          Add rule
         </button>
-        <span style={softText}>pre-fills every voucher&rsquo;s Paid From; transfer payments land here{note ? ` · ${note}` : ''}</span>
-      </div>
-    </div>
-  );
-};
-
-/* ── Merchants down the side, companies across the top ────────────────────── */
-
-const MerchantMatrix = ({ companies, merchants, banks, clearings, feeAccounts, onEdit }: {
-  companies: MaintenanceCompany[]; merchants: MaintenanceMerchant[]; banks: MaintenanceBank[];
-  /** Each company's clearing accounts (326-/327-) — the picker under the payout bank. */
-  clearings: NonNullable<MaintenanceData['clearings']>;
-  feeAccounts: NonNullable<MaintenanceData['feeAccounts']>;
-  onEdit: (code: string) => void;
-}) => {
-  const save = useSaveMaintenanceMerchant();
-
-  return (
-    <section className={css.card}>
-      <div className={css.cardHead}>
-        <span className={css.cardTitle}>Merchants</span>
-        <span className={css.hint}>Tick the companies that use each one, and where its money lands.</span>
-      </div>
-      <div className={css.scroll}>
-        <table className={css.grid}>
-          <thead>
-            <tr>
-              <th className={css.groupHead} colSpan={2} />
-              <th className={css.groupHead} colSpan={companies.length}>Companies</th>
-            </tr>
-            <tr>
-              <th className={css.head}>Merchant</th>
-              <th className={css.head}>Report layout</th>
-              {companies.map((co) => (
-                <th key={co.id} className={css.headCompany}>
-                  <div className={css.companyName}>{co.name}</div>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {merchants.map((m) => (
-              <tr key={m.code} className={css.row}>
-                <td className={css.label}>
-                  <div className={css.name}>{m.display_name}</div>
-                  {m.code !== m.display_name && <div className={css.sub}>{m.code}</div>}
-                  {(m.so_names ?? []).length > 0 && <div className={css.sub}>also keyed as {(m.so_names ?? []).join(', ')}</div>}
-                </td>
-                {/* OUTSIDE the company columns, because it belongs to no company. */}
-                <td className={css.shared}>
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <span className={css.pill}>shared by every company</span>
-                    <button type="button" style={{ ...btn(), padding: '2px 10px' }} onClick={() => onEdit(m.code)}>
-                      Change
-                    </button>
-                  </div>
-                  <div className={m.ready ? css.sub : undefined} style={m.ready ? undefined : { fontSize: 'var(--fs-12)', color: danger }}>
-                    {m.ready
-                      ? `${m.statement_format} · ${m.autoMatchable ? 'matches by reference' : 'by hand, always'}`
-                      : 'not taught yet'}
-                  </div>
-                </td>
-                {companies.map((co) => {
-                  const at = m.byCompany[String(co.id)] ?? { enabled: false, linked: false, bankAccountCode: null };
-                  /* Only banks THIS company has can receive THIS company's money. */
-                  const usable = banks.filter((b) => b.byCompany[String(co.id)]?.enabled);
-                  return (
-                    <td key={co.id} className={css.cellCompany}>
-                      <div className={css.cellInner}>
-                        <input type="checkbox" className={css.tick} checked={at.enabled}
-                          aria-label={`${m.code} for ${co.name}`}
-                          onChange={(e) => save.mutate({ companyId: co.id, code: m.code, enabled: e.target.checked })} />
-                        {at.enabled && (
-                          <>
-                            <select className={css.bankPick}
-                              aria-label={`${m.code} bank for ${co.name}`} value={at.bankAccountCode ?? ''}
-                              onChange={(e) => save.mutate({ companyId: co.id, code: m.code, bankAccountCode: e.target.value || null })}>
-                              <option value="">money lands in…</option>
-                              {usable.map((b) => (
-                                <option key={b.account_code} value={b.account_code}>{b.account_name}</option>
-                              ))}
-                            </select>
-                            {!at.bankAccountCode && <div className={css.warn}>company default</div>}
-                            {/* The clearing account — where this machine's card money
-                                sits until the payout (owner 2026-09-07: one per bank,
-                                so the board says what each still owes). Offered only
-                                when the server lists the company's clearing codes. */}
-                            {(clearings[String(co.id)]?.length ?? 0) > 0 && (
-                              <select className={css.bankPick}
-                                aria-label={`${m.code} clearing for ${co.name}`} value={at.transitAccountCode ?? '326-0000'}
-                                onChange={(e) => save.mutate({ companyId: co.id, code: m.code, transitAccountCode: e.target.value })}>
-                                {(clearings[String(co.id)] ?? []).map((a) => (
-                                  <option key={a.account_code} value={a.account_code}>clearing · {a.account_code} {a.account_name}</option>
-                                ))}
-                              </select>
-                            )}
-                            {/* WHERE THE FEE GOES. This had to be a migration
-                                once already: the fee account was seeded at
-                                930-0000, the AutoCount chart deactivated that
-                                code, and every settlement confirm in both
-                                companies refused — with nothing on any screen
-                                able to repoint it (docs/bugs/0762). The list is
-                                the company's ACTIVE EXPENSE LEAVES, filtered by
-                                the server to the same properties the posting
-                                gate checks. */}
-                            {(feeAccounts[String(co.id)]?.length ?? 0) > 0 && (
-                              <select className={css.bankPick}
-                                aria-label={`${m.code} fee account for ${co.name}`} value={at.feeAccountCode ?? ''}
-                                onChange={(e) => save.mutate({ companyId: co.id, code: m.code, feeAccountCode: e.target.value })}>
-                                <option value="">fee goes to…</option>
-                                {(feeAccounts[String(co.id)] ?? []).map((a) => (
-                                  <option key={a.account_code} value={a.account_code}>fee · {a.account_code} {a.account_name}</option>
-                                ))}
-                              </select>
-                            )}
-                            {/* A fee account this company's chart no longer
-                                offers is named rather than shown as a blank
-                                select — that silence is exactly how 930-0000
-                                went unnoticed for six days. */}
-                            {at.feeAccountCode
-                              && (feeAccounts[String(co.id)] ?? []).length > 0
-                              && !(feeAccounts[String(co.id)] ?? []).some((a) => a.account_code === at.feeAccountCode) && (
-                              <div className={css.warn}>
-                                fee → {at.feeAccountCode}, which this chart cannot post to
-                              </div>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-};
-
-/* ── Banks down the side, the same companies across the top ───────────────── */
-
-const BankMatrix = ({ companies, banks }: { companies: MaintenanceCompany[]; banks: MaintenanceBank[] }) => {
-  const save = useSaveMaintenanceBank();
-
-  return (
-    <section className={css.card}>
-      <div className={css.cardHead}>
-        <span className={css.cardTitle}>Banks</span>
-        <span className={css.hint}>Tick the companies that bank with each account.</span>
-      </div>
-      <div className={css.scroll}>
-        <table className={css.grid}>
-          <thead>
-            <tr>
-              <th className={css.groupHead} colSpan={1} />
-              <th className={css.groupHead} colSpan={companies.length}>Companies</th>
-            </tr>
-            <tr>
-              <th className={css.head}>Account</th>
-              {companies.map((co) => (
-                <th key={co.id} className={css.headCompany}>
-                  <div className={css.companyName}>{co.name}</div>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {banks.map((b) => (
-              <tr key={b.account_code} className={css.row}>
-                <td className={css.label}>
-                  <div className={css.name}>{b.account_name}</div>
-                  <div className={css.sub}>{b.account_code}</div>
-                </td>
-                {companies.map((co) => {
-                  const at = b.byCompany[String(co.id)] ?? { inChart: false, enabled: false, usedBy: [] };
-                  /* A code this company simply does not carry is not a box it
-                     could tick — say so rather than offer a lie. */
-                  if (!at.inChart) {
-                    return <td key={co.id} className={css.cellCompany}><span className={css.absent}>not in its chart</span></td>;
-                  }
-                  return (
-                    <td key={co.id} className={css.cellCompany}>
-                      <div className={css.cellInner}>
-                        <input type="checkbox" className={css.tick} checked={at.enabled}
-                          aria-label={`${b.account_code} for ${co.name}`}
-                          onChange={(e) => save.mutate({ companyId: co.id, accountCode: b.account_code, enabled: e.target.checked })} />
-                        {at.usedBy.length > 0 && (
-                          <div className={css.users}>
-                            {at.usedBy.map((code) => <span key={code} className={css.userChip}>{code}</span>)}
-                          </div>
-                        )}
-                      </div>
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {save.isError && (
-        <div className={css.error}>
-          <AlertTriangle {...ICON} />
-          <span>{refusalText(save.error, 'That bank was not changed.')}</span>
-        </div>
-      )}
-      <div className={css.footNote}>
-        The accounts come from the chart of accounts, which is maintained centrally. Unticking one a merchant still
-        pays into is refused — point the merchant somewhere else first.
+        {note && <span className={css.warn}>{note}</span>}
       </div>
     </section>
   );
@@ -750,11 +864,12 @@ const namesOf = (text: string): string[] => text.split(',').map((s) => s.trim())
 const MerchantForm = ({ merchant, companies, onDone }: {
   merchant: MaintenanceMerchant;
   companies: MaintenanceCompany[];
-  /** Back to the matrix, with what the save did to the reports already uploaded. */
+  /** Back to the page, with what the save did to the reports already uploaded. */
   onDone: (said?: string) => void;
 }) => {
   const save = useSaveAcquirerSetup();
   const rematch = useRematch();
+  const toast = useToastOptional();
   const [matching, setMatching] = useState(false);
   const [form, setForm] = useState({
     statementFormat: merchant.statement_format ?? '',
@@ -792,10 +907,12 @@ const MerchantForm = ({ merchant, companies, onDone }: {
       }
     }
     setMatching(false);
+    toast?.success(`${merchant.code} layout saved · every company reads its files this way · matched again`);
     onDone(`${merchant.display_name} saved.${said.length > 0 ? ` Reports matched again — ${said.join('; ')}.` : ''}`);
   };
 
   const submit = () => {
+    if (!/^\d+$/.test(form.dateToleranceDays.trim())) { setMapError('Date tolerance is a whole number of days.'); return; }
     const missing = requiredHeadings.filter((k) => !String(headings[k] ?? '').trim());
     if (missing.length > 0) {
       setMapError(`Fill in the ${missing.map((k) => HEADING_FIELDS.find((f) => f.key === k)?.label.replace(' heading', '')).join(', ')} heading${missing.length > 1 ? 's' : ''} — a report cannot be read without ${missing.length > 1 ? 'them' : 'it'}.`);
@@ -821,114 +938,82 @@ const MerchantForm = ({ merchant, companies, onDone }: {
       columnMap: Object.fromEntries(
         Object.entries(headings).map(([k, v]) => [k, String(v).trim()]).filter(([, v]) => v !== ''),
       ),
-    }, { onSuccess: () => { if (ruleChanged) void matchAgain(); else onDone(); } });
-  };
-
-  /* `key` matters for the heading fields below, which are rendered from a list —
-     without it React cannot tell one input from the next and reuses the wrong
-     DOM node when the required-field marks change. */
-  const field = (label: string, node: React.ReactNode, key?: string) => (
-    <label key={key} style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 'var(--fs-12)' }}>
-      <span style={{ color: 'var(--c-ink-soft, #777)' }}>{label}</span>
-      {node}
-    </label>
-  );
-  const input: React.CSSProperties = { padding: '6px 8px', fontSize: 'var(--fs-13)', width: '100%', boxSizing: 'border-box' };
-  const legend: React.CSSProperties = {
-    fontSize: 'var(--fs-12)', fontWeight: 700, letterSpacing: '.04em',
-    textTransform: 'uppercase', color: 'var(--c-ink-soft, #777)',
+    }, {
+      onSuccess: () => {
+        if (ruleChanged) { void matchAgain(); return; }
+        toast?.success(`${merchant.code} layout saved · every company reads its files this way`);
+        onDone();
+      },
+    });
   };
 
   return (
-    <div className="space-y-4">
-      <PageHeader eyebrow="Finance" title="Reconciliation setup" />
-
-      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'baseline', flexWrap: 'wrap' }}>
-        <button type="button" style={btn()} onClick={() => onDone()}><ArrowLeft {...ICON} /> All merchants</button>
-        <b>{merchant.display_name} — report layout</b>
-        <span style={softText}>Taught once. Every company reads {merchant.display_name}&rsquo;s file this way.</span>
-      </div>
-
-      <div className={css.formCard}>
-        <div style={legend}>How the file is built</div>
-        <div className={css.formRow4}>
-          {field('File format', (
-            <select style={input} value={form.statementFormat} aria-label={`${merchant.code} statement format`}
-              onChange={(e) => setForm({ ...form, statementFormat: e.target.value })}>
-              <option value="">not known</option><option value="CSV">CSV</option>
-              <option value="XLSX">XLSX</option><option value="PDF">PDF</option>
-            </select>
-          ))}
-          {field('Has a unique reference?', (
-            <select style={input} value={form.hasUniqueRef} aria-label={`${merchant.code} unique reference`}
-              onChange={(e) => setForm({ ...form, hasUniqueRef: e.target.value })}>
-              <option value="">not known</option><option value="true">yes</option><option value="false">no</option>
-            </select>
-          ))}
-          {field('Fee shown as', (
-            <select style={input} value={form.feeMethod} aria-label={`${merchant.code} fee method`}
-              onChange={(e) => setForm({ ...form, feeMethod: e.target.value })}>
-              <option value="">not known</option>
-              <option value="stated">a column on each line</option>
-              <option value="gross-minus-net">gross minus net</option>
-              <option value="prorated-summary">one total for the statement</option>
-            </select>
-          ))}
-          {field('Days it may drift', (
-            <input style={input} value={form.dateToleranceDays} aria-label={`${merchant.code} date tolerance`}
-              onChange={(e) => setForm({ ...form, dateToleranceDays: e.target.value })} />
-          ))}
+    <SetupModal
+      wide
+      title={`${merchant.code} · how the file reads`}
+      sub={`Shared by every company. Name the heading the file uses for each figure. Every company reads ${merchant.display_name}’s file this way.`}
+      okLabel="Save"
+      busyLabel={matching ? 'Matching the reports again…' : 'Saving…'}
+      busy={save.isPending || matching}
+      error={mapError || null}
+      onOk={submit}
+      onCancel={() => onDone()}
+    >
+      <Field label="File" w="23%">
+        <select className={sp.select} value={form.statementFormat} aria-label={`${merchant.code} statement format`}
+          onChange={(e) => setForm({ ...form, statementFormat: e.target.value })}>
+          <option value="">not known</option><option value="CSV">CSV</option>
+          <option value="XLSX">XLSX</option><option value="PDF">PDF</option>
+        </select>
+      </Field>
+      <Field label="Unique reference" w="23%">
+        <select className={sp.select} value={form.hasUniqueRef} aria-label={`${merchant.code} unique reference`}
+          onChange={(e) => setForm({ ...form, hasUniqueRef: e.target.value })}>
+          <option value="">not known</option><option value="true">yes</option><option value="false">no</option>
+        </select>
+      </Field>
+      <Field label="Fee shown as" w="32%">
+        <select className={sp.select} value={form.feeMethod} aria-label={`${merchant.code} fee method`}
+          onChange={(e) => setForm({ ...form, feeMethod: e.target.value })}>
+          <option value="">not known</option>
+          <option value="stated">stated per line</option>
+          <option value="gross-minus-net">gross minus net</option>
+          <option value="prorated-summary">one total for the statement</option>
+        </select>
+      </Field>
+      <Field label="Date tolerance (days)" w="14%">
+        <input className={sp.input} value={form.dateToleranceDays} aria-label={`${merchant.code} date tolerance`} inputMode="numeric"
+          onChange={(e) => setForm({ ...form, dateToleranceDays: e.target.value })} />
+      </Field>
+      {form.hasUniqueRef === 'false' && (
+        <div className={`${sp.note} ${sp.noteWarn} ${css.fullRow}`}>
+          <AlertTriangle size={14} />
+          <span>Without a unique reference nothing from {merchant.code} can be confirmed automatically — every line will be matched by hand.</span>
         </div>
-        {form.hasUniqueRef === 'false' && (
-          <div style={{ fontSize: 'var(--fs-12)', color: danger }}>
-            Without a unique reference nothing from {merchant.code} can be confirmed automatically — every line
-            will be matched by hand.
-          </div>
-        )}
-      </div>
-
+      )}
+      {HEADING_FIELDS.map((f) => {
+        const required = requiredHeadings.includes(f.key);
+        return (
+          <Field key={f.key} label={`${f.label}${required ? ' *' : ''}`}>
+            <input
+              className={required && !headings[f.key] ? `${sp.input} ${sp.inputBad}` : sp.input}
+              value={headings[f.key] ?? ''} placeholder={f.hint}
+              aria-label={`${merchant.code} ${f.label}`}
+              onChange={(e) => setHeadings({ ...headings, [f.key]: e.target.value })}
+            />
+          </Field>
+        );
+      })}
       {/* Owner 2026-10-21: 「Pinelabs=AEON，Public=PBB」 — the sales team picks
           the terminal's or the bank's everyday name on a payment, and a sale
           keyed that way must still be this merchant's. */}
-      <div className={css.formCard}>
-        <div style={legend}>On Sales Orders</div>
-        {field('Also keyed on Sales Orders as', (
-          <input style={input} value={form.soNames} placeholder="e.g. Pinelabs"
-            aria-label={`${merchant.code} also keyed as`}
-            onChange={(e) => setForm({ ...form, soNames: e.target.value })} />
-        ))}
-        <span style={softText}>
-          The names the sales team picks for {merchant.display_name} on a payment, separated by commas. A payment keyed
-          under one of them counts as {merchant.display_name}&rsquo;s. Saving matches the reports already uploaded again.
-        </span>
-      </div>
-
-      <div className={css.formCard}>
-        <div style={legend}>Column headings, exactly as they appear in the file</div>
-        <div className={css.formRow5}>
-          {HEADING_FIELDS.map((f) => {
-            const required = requiredHeadings.includes(f.key);
-            return field(`${f.label}${required ? ' *' : ''}`, (
-              <input
-                style={{ ...input, borderColor: required && !headings[f.key] ? danger : undefined }}
-                value={headings[f.key] ?? ''} placeholder={f.hint}
-                aria-label={`${merchant.code} ${f.label}`}
-                onChange={(e) => setHeadings({ ...headings, [f.key]: e.target.value })}
-              />
-            ), f.key);
-          })}
-        </div>
-      </div>
-
-      {mapError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{mapError}</div>}
-
-      <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-        <button type="button" style={btn(true, save.isPending || matching)} disabled={save.isPending || matching} onClick={submit}>
-          {save.isPending ? 'Saving…' : matching ? 'Matching the reports again…' : 'Save'}
-        </button>
-        <button type="button" style={btn()} disabled={matching} onClick={() => onDone()}>Cancel</button>
-      </div>
-    </div>
+      <Field label="Also keyed on Sales Orders as" w="100%"
+        hint={`The names the sales team picks for ${merchant.display_name} on a payment, separated by commas. A payment keyed under one of them counts as ${merchant.display_name}’s. Saving matches the reports already uploaded again.`}>
+        <input className={sp.input} value={form.soNames} placeholder="e.g. Pinelabs"
+          aria-label={`${merchant.code} also keyed as`}
+          onChange={(e) => setForm({ ...form, soNames: e.target.value })} />
+      </Field>
+    </SetupModal>
   );
 };
 

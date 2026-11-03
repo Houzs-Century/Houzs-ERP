@@ -3,6 +3,7 @@ import {
   slotMinutes,
   slotKindOf,
   slotLabelOf,
+  slotSortKey,
   runStatusOf,
   isLate,
   lateReason,
@@ -58,6 +59,30 @@ describe('slotLabelOf', () => {
     expect(slotLabelOf('2pm-6pm')).toBe('PM');
     expect(slotLabelOf('10 AM-1 PM')).toBe('10 AM-1 PM');
     expect(slotLabelOf(null)).toBe('');
+  });
+});
+
+describe('slotSortKey — order a lorry\'s drops by delivery time', () => {
+  const BIG = Number.MAX_SAFE_INTEGER;
+  test('explicit window sorts by its start; bare AM before PM; no slot sinks to the end', () => {
+    expect(slotSortKey('9:30am to 11am')).toBe(9 * 60 + 30);
+    expect(slotSortKey('12:30pm to 2:30pm')).toBe(12 * 60 + 30);
+    expect(slotSortKey('2pm-4pm')).toBe(14 * 60);
+    expect(slotSortKey('am')).toBe(0);
+    expect(slotSortKey('pm')).toBe(12 * 60);
+    expect(slotSortKey('call first')).toBe(BIG); // non-empty but unreadable → last
+    expect(slotSortKey(null)).toBe(BIG);
+    expect(slotSortKey('')).toBe(BIG);
+  });
+  test('reads the start through the office\'s "TIME AROUND …" wording (not treated as untimed)', () => {
+    expect(slotSortKey('TIME AROUND 9AM TO 11AM')).toBe(9 * 60);   // morning drop, shown as the "AM" tag
+    expect(slotSortKey('TIME AROUND 2PM TO 4PM')).toBe(14 * 60);   // must NOT sink to the end
+    expect(slotSortKey('TIME AROUND 12:30PM TO 2:30PM')).toBe(12 * 60 + 30);
+  });
+  test('the keys put a day in earliest-first order', () => {
+    const windows = ['2pm-4pm', null, 'am', '9:30am to 11am', '12:30pm to 2:30pm'];
+    const sorted = windows.slice().sort((a, b) => slotSortKey(a) - slotSortKey(b));
+    expect(sorted).toEqual(['am', '9:30am to 11am', '12:30pm to 2:30pm', '2pm-4pm', null]);
   });
 });
 

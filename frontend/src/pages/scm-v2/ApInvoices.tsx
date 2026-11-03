@@ -33,24 +33,38 @@
 // supplier DN): a DN is an AP invoice of its own kind (series {co}SDN-), listed
 // here as "Supplier DN" beside the bills it is paid with; `docKind="DN"` is this
 // same page narrowed to them, shown on the CN / DN page's Debit notes tab.
+//
+// The redesign (owner's Claude Design, batch 4 step 5): Money out › Supplier
+// bills — the list is SupplierBillsList.tsx (kind tabs incl. the suppliers'
+// credit notes, Trade / Other filter, status chips, ticks, row buttons).
+// Step 6: a bill opens as its own page (ApBillPage.tsx, /scm/ap-invoices/:id)
+// and a note as its own (NotePage.tsx, /scm/supplier-notes/:id); `?open=`
+// lands there. New / Edit / Copy from the list keep the form over the list.
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { Camera, Plus, Printer } from 'lucide-react';
+import { Camera, FileText, Plus, Printer } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { useAccounts, postableAccounts, type Account } from '../../vendor/scm/lib/accounting-queries';
 import { useSuppliers } from '../../vendor/scm/lib/suppliers-queries';
 import {
   useApInvoices, useApInvoiceDetail, useCreateApInvoice, useUpdateApInvoice, usePostApInvoice, useCancelApInvoice,
   useApInvoiceFiles, useUploadApInvoiceFile, useDeleteApInvoiceFile, fetchApInvoiceFileBlobUrl,
-  type ApListKind, type ApListRow, type ApInvoiceHeader, type ApInvoiceLine,
+  type ApListRow, type ApInvoiceHeader, type ApInvoiceLine,
 } from '../../vendor/scm/lib/ap-invoice-queries';
-import { useExtractRequestBill, type PvFilePayload, type BillExtraction, type ExtractedBill, type VendorMemory } from '../../vendor/scm/lib/payment-voucher-queries';
+import { fileToBase64, PV_FILE_ACCEPT, useExtractRequestBill, type PvFilePayload, type BillExtraction, type ExtractedBill, type VendorMemory } from '../../vendor/scm/lib/payment-voucher-queries';
+import { useCancelCreditNote, usePostCreditNote, useScanSupplierCreditNote, type ScnScan } from '../../vendor/scm/lib/credit-note-queries';
+import { docFileMime } from '../../vendor/scm/lib/doc-file-mime';
+import { NoteForm, emptyForm as emptyNoteForm, fromScan, type FormValues as NoteFormValues } from './CreditNotes';
+import { useOpenDocInTab } from '../../lib/openDocInTab';
+import mo from './MoneyOut.module.css';
+import { SupplierBillsList, type BillAction } from './SupplierBillsList';
+import { BillPlanDialog } from './BillPlanDialog';
+import { listingRowOf, type BillRow } from './supplier-bills';
 import { usePaymentRequest } from '../../vendor/scm/lib/payment-request-queries';
-import { OfficialDocActions } from '../../vendor/scm/components/OfficialDoc';
 import { takePvFiles } from '../../vendor/scm/lib/pv-file-handoff';
-import { generateApListingPdf } from '../../vendor/scm/lib/ap-invoice-listing-pdf';
+import { generateApListingPdf, listingRowOfAp } from '../../vendor/scm/lib/ap-invoice-listing-pdf';
 import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
 import { Modal } from '../../vendor/scm/components/Modal';
 import { BackToPile } from '../../vendor/scm/components/BackToPile';
@@ -58,15 +72,14 @@ import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
-import { fmtSen, fmtDateOrDash } from '../../vendor/shared/format';
+import { fmtSen, fmtDateOrDash, todayMY } from '../../vendor/shared/format';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
 import { DataTable, type Column } from '../../components/DataTable';
 import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import { ApInvoiceForm, emptyApForm, formFromExtraction, formFromRequest, scanNoteFor, type ApFormMode, type ApFormSubmit, type ApFormValues } from './ApInvoiceForm';
-import { eventCellText } from '../../vendor/scm/components/EventSelect';
-import { useEventLabels, type EventSuggestion } from '../../vendor/scm/lib/event-queries';
+import type { EventSuggestion } from '../../vendor/scm/lib/event-queries';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
@@ -75,33 +88,13 @@ const KIND_LABEL: Record<ApListRow['kind'], string> = { API: 'AP Invoice', PI: '
 /* A supplier's debit note is an AP invoice of its own kind — it says so. */
 const kindLabelOf = (r: ApListRow): string => (r.kind === 'API' && r.docKind === 'DN' ? 'Supplier DN' : KIND_LABEL[r.kind]);
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
-const chip = (on: boolean): React.CSSProperties => ({
-  padding: '4px 10px', borderRadius: 999, fontSize: 'var(--fs-13)', cursor: 'pointer',
-  border: '1px solid var(--c-line, rgba(34,31,32,0.2))',
-  background: on ? 'var(--c-ink)' : 'transparent', color: on ? 'var(--c-cream)' : 'var(--c-ink)',
-});
-/* One table dress for the detail and the list. */
-const th: React.CSSProperties = {
-  padding: '6px 8px', textAlign: 'left', fontSize: 'var(--fs-11)', fontWeight: 600, letterSpacing: '0.04em',
-  textTransform: 'uppercase', color: 'var(--fg-muted)', borderBottom: '1px solid var(--border-weak, #e3e1da)', whiteSpace: 'nowrap',
-};
-const td: React.CSSProperties = { padding: '6px 8px', verticalAlign: 'middle' };
-const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)' };
-const right: React.CSSProperties = { textAlign: 'right', ...mono };
 const linkBtn: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--c-orange)', fontWeight: 600, cursor: 'pointer', fontSize: 'var(--fs-13)', background: 'none', border: 'none', padding: 0 };
-
-const Meta = ({ label, value }: { label: string; value: React.ReactNode }) => (
-  <div>
-    <div className={styles.fieldLabel}>{label}</div>
-    <div>{value}</div>
-  </div>
-);
 
 type Detail = { invoice: ApInvoiceHeader; lines: ApInvoiceLine[]; supplier: { id: string; code: string; name: string } | null };
 /** The form's values from a bill: an EDIT keeps everything, a COPY keeps the
     supplier, description and lines and starts the paper afresh — no supplier
     number, today's date, no due date, a new number on save. */
-const fromDetail = (d: Detail, copy: boolean): ApFormValues => ({
+export const fromDetail = (d: Detail, copy: boolean): ApFormValues => ({
   supplierId: d.invoice.supplier_id,
   supplierRef: copy ? '' : (d.invoice.supplier_invoice_ref ?? ''),
   invoiceDate: copy ? myt() : d.invoice.invoice_date,
@@ -130,13 +123,14 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
   const canPost = can('scm.payment_voucher.post');
   const canCancel = can('scm.payment_voucher.cancel');
 
-  const [kind, setKind] = useState<ApListKind>('ALL');
-  const listQ = useApInvoices(debitNotes ? 'API' : kind, debitNotes ? 'DN' : undefined);
+  /* Supplier bills reads every kind (its own tabs narrow it); the DN view its notes. */
+  const listQ = useApInvoices(debitNotes ? 'API' : 'ALL', debitNotes ? 'DN' : undefined);
   const rows = listQ.data?.rows ?? [];
   const [detailId, setDetailId] = useState<string | null>(null);
   const detailQ = useApInvoiceDetail(detailId);
   const detail = detailQ.data;
-  const eventLabelsQ = useEventLabels((detail?.lines ?? []).map((l) => l.project_id ?? null));
+  /* A bill, a note or a new paper opens as its own page, in a workspace tab. */
+  const openInTab = useOpenDocInTab();
 
   /* The supplier filter (owner: supplier 筛选) — the suppliers ON the list,
      never the whole registry, so every choice shows something. */
@@ -158,9 +152,6 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
      not a header (父户不记账) — the same door the PV's lines walk, from the
      one home (postableAccounts, docs/bugs/0693). */
   const lineAccounts = useMemo<Account[]>(() => postableAccounts(accountsQ.data?.accounts ?? []), [accountsQ.data]);
-  /* The detail names accounts off the UNFILTERED chart — a posted bill on a
-     since-inactive account must still print that account's name. */
-  const accountName = (code: string): string => (accountsQ.data?.accounts ?? []).find((a) => a.account_code === code)?.account_name ?? '';
 
   const create = useCreateApInvoice();
   const update = useUpdateApInvoice();
@@ -171,6 +162,25 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
   /* The one form — New, Edit, Copy — in its own pop-out over the list. */
   const [form, setForm] = useState<FormState | null>(null);
   const openNew = () => setForm({ mode: 'new', initial: emptyApForm(), ...(debitNotes ? { docKind: 'DN' as const } : {}) });
+
+  /* A supplier's credit note raised on Supplier bills (the redesign): the CN /
+     DN page's own form, here; Scan credit note reads the pages into it. Saved,
+     the note opens on its own page. */
+  const [noteForm, setNoteForm] = useState<{ mode: 'new' | 'edit'; id?: string; values: NoteFormValues; scan?: ScnScan; files?: File[] } | null>(null);
+  const postNote = usePostCreditNote();
+  const cancelNote = useCancelCreditNote();
+  const scnScan = useScanSupplierCreditNote();
+  const scnInput = useRef<HTMLInputElement>(null);
+  const scanCreditNote = async (picked: File[]) => {
+    if (picked.length === 0) return;
+    try {
+      const pages: PvFilePayload[] = await Promise.all(picked.map(async (f) => ({ name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) })));
+      const read = await scnScan.mutateAsync(pages);
+      setNoteForm({ mode: 'new', values: fromScan(read), scan: read, files: picked });
+    } catch (e) {
+      void notify({ title: 'The credit note was not read', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
 
   /* The pile page's hand-off (/scm/ap-invoices/scan → here): ONE BILL = ONE AP
      INVOICE (owner 2026-09-08: 每张单一张 ap invoice … 分出来一张一张). The
@@ -221,16 +231,35 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fromRequest, requestQ.data]);
   const openParam = searchParams.get('open');
-  useEffect(() => { if (openParam) setDetailId(openParam); }, [openParam]);
+  /* ?open=<id> (task links, the calendar, official docs, requests): the bill's own page. */
+  useEffect(() => { if (openParam) navigate(`/scm/ap-invoices/${encodeURIComponent(openParam)}`, { replace: true }); }, [openParam, navigate]);
+  /* Edit / Copy picked on a row: the bill's own read first, then its form —
+     the pop-out stays shut in between. */
+  const [pendingForm, setPendingForm] = useState<'edit' | 'copy' | null>(null);
+  /* Plan date (step 7): the bill whose planned payment date is being set. */
+  const [planning, setPlanning] = useState<BillRow | null>(null);
   const openEdit = (d: Detail) => setForm({
     mode: 'edit', initial: fromDetail(d, false), invoiceId: d.invoice.id, invoiceNumber: d.invoice.invoice_number,
     posted: d.invoice.status !== 'DRAFT', paidSen: Number(d.invoice.paid_sen),
   });
   /* A copy of a debit note is a debit note. */
   const openCopy = (d: Detail) => setForm({ mode: 'copy', initial: fromDetail(d, true), invoiceNumber: d.invoice.invoice_number, ...(d.invoice.doc_kind === 'DN' ? { docKind: 'DN' as const } : {}) });
+  useEffect(() => {
+    if (!pendingForm || !detail || detail.invoice.id !== detailId) return;
+    if (pendingForm === 'edit') openEdit(detail); else openCopy(detail);
+    setPendingForm(null);
+    setDetailId(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingForm, detail, detailId]);
 
-  const submitForm = async (values: ApFormSubmit, pendingFiles: PvFilePayload[]) => {
+  const submitForm = async (values: ApFormSubmit, pendingFiles: PvFilePayload[], opts?: { post?: boolean }) => {
     if (!form) return;
+    /* Save & post: today's confirm first, so a "no" saves nothing. */
+    if (opts?.post && !(await askConfirm({
+      title: 'Save and post this bill?',
+      body: 'Books Dr each line\'s account / Cr the supplier\'s AP control, dated by the invoice. From then on it is paid through an AP Payment.',
+      confirmLabel: 'Save & post',
+    }))) return;
     try {
       if (form.mode === 'edit' && form.invoiceId) {
         const res = await update.mutateAsync({ id: form.invoiceId, body: values });
@@ -263,18 +292,25 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
           break;
         }
       }
+      /* Then the post, when asked: a refused post leaves the bill a draft and says why. */
+      let posted: string | null = null;
+      let postErr: string | null = null;
+      if (opts?.post) {
+        try { posted = (await post.mutateAsync(res.invoice.id)).jeNo; } catch (e) { postErr = e instanceof Error ? e.message : 'Something went wrong.'; }
+      }
       setForm(null);
-      setDetailId(res.invoice.id);
+      openInTab(`/scm/ap-invoices/${res.invoice.id}`);
       void notify({
-        title: `${res.invoice.invoice_number} raised`,
+        title: `${res.invoice.invoice_number} ${posted ? 'posted' : 'raised'}`,
         body: [
-          `${fmtSen(res.invoice.total_sen)} as a draft — post it to put it on the books.`,
+          posted ? `${fmtSen(res.invoice.total_sen)} on the books as ${posted}.` : `${fmtSen(res.invoice.total_sen)} as a draft — post it to put it on the books.`,
+          postErr ? `It was saved but not posted: ${postErr}` : null,
           form.mode === 'copy' && form.invoiceNumber ? `Copied from ${form.invoiceNumber}.` : null,
           form.request ? `It answers ${form.request.no}${res.requestFilesCopied ? ` — ${res.requestFilesCopied} file(s) from the request attached` : ''}.` : null,
           attached > 0 ? `${attached} scanned file(s) attached.` : null,
           attachErr ? `${pendingFiles.length - attached} file(s) did not attach (${attachErr}) — add them from the bill's Files card.` : null,
         ].filter(Boolean).join(' '),
-        tone: attachErr ? 'error' : 'info',
+        tone: attachErr || postErr ? 'error' : 'info',
       });
     } catch (e) {
       void notify({ title: 'Bill not saved', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
@@ -310,10 +346,63 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
 
   /* Print listing (owner: print listing 功能我也想要) — exactly the rows on
      screen, kind and supplier filters applied, totalled. */
+  const listingFailed = (e: unknown) => {
+    void notify({ title: 'Listing not printed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+  };
   const printListing = () => {
-    void generateApListingPdf(shownRows ?? visibleRows, { kind, supplierName: filteredSupplierName }).catch((e: unknown) => {
-      void notify({ title: 'Listing not printed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    void generateApListingPdf((shownRows ?? visibleRows).map(listingRowOfAp), { showing: `Supplier debit notes · ${filteredSupplierName ?? 'All suppliers'}` }).catch(listingFailed);
+  };
+  const printBills = (bills: BillRow[], showing: string) => {
+    const today = todayMY();
+    void generateApListingPdf(bills.map((b) => listingRowOf(b, today)), { showing }).catch(listingFailed);
+  };
+
+  /* A supplier note posted or cancelled from its row — the same calls its pop-out makes. */
+  const onPostNote = async (r: BillRow) => {
+    const ok = await askConfirm({
+      title: `Post ${r.number}?`,
+      body: 'Books Dr the supplier\'s AP control / Cr each line\'s account, dated by the note. The bills ticked under its Knock off take the credit.',
+      confirmLabel: 'Post to ledger',
     });
+    if (!ok) return;
+    try {
+      const res = await postNote.mutateAsync(r.id);
+      void notify({ title: `${r.number} posted`, body: [`Posted as ${res.jeNo}.`, ...(res.applied ?? []).map((a) => `${fmtSen(a.appliedSen)} came off ${a.number}.`), res.notApplied ?? ''].filter(Boolean).join(' '), tone: 'info' });
+    } catch (e) {
+      void notify({ title: 'Post failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
+  const onCancelNote = async (r: BillRow) => {
+    const ok = await askConfirm({
+      title: `Cancel ${r.number}?`,
+      body: r.status === 'POSTED' ? 'Its journal is reversed by a contra dated today. The note stays on file as cancelled.' : 'The draft stays on file as cancelled.',
+      confirmLabel: 'Cancel note', danger: true,
+    });
+    if (!ok) return;
+    try {
+      await cancelNote.mutateAsync(r.id);
+    } catch (e) {
+      void notify({ title: 'Cancel failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
+    }
+  };
+
+  /* What a Supplier bills row asks for. A purchase invoice lives in
+     Procurement; a credit note in its pop-out; an AP bill here. */
+  const voucherFor = (r: BillRow) => navigate(`/scm/payment-vouchers/new?type=ap&supplier=${encodeURIComponent(r.supplierId ?? '')}&pi=${encodeURIComponent(r.id)}`);
+  const onBillAct = (action: BillAction, r: BillRow) => {
+    if (r.kind === 'SCN') {
+      if (action === 'post') void onPostNote(r);
+      else if (action === 'cancel') void onCancelNote(r);
+      else openInTab(`/scm/supplier-notes/${r.id}`);
+      return;
+    }
+    if (action === 'makeVoucher') { voucherFor(r); return; }
+    if (action === 'plan') { setPlanning(r); return; }
+    if (r.kind === 'PI') { navigate(`/scm/purchase-invoices/${r.id}`); return; }
+    if (action === 'post') void onPost(r.id, r.number);
+    else if (action === 'cancel') void onCancel(r.id, r.number, r.status !== 'DRAFT');
+    else if (action === 'edit' || action === 'copy') { setPendingForm(action); setDetailId(r.id); }
+    else openInTab(`/scm/ap-invoices/${r.id}`);
   };
 
   const apColumns = useMemo<Column<ApListRow>[]>(() => [
@@ -321,8 +410,8 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
     {
       key: 'number', label: 'No.',
       render: (r) => r.kind === 'PI'
-        ? <Link to={`/scm/purchase-invoices/${r.id}`} className={cancelledDocNoClass(r.status)} style={{ color: 'inherit', ...mono }}>{r.invoiceNumber}</Link>
-        : <button type="button" onClick={() => setDetailId(r.id)} className={cancelledDocNoClass(r.status)} style={{ ...linkBtn, ...mono }}>{r.invoiceNumber}</button>,
+        ? <Link to={`/scm/purchase-invoices/${r.id}`} className={`${mo.docLink} ${cancelledDocNoClass(r.status)}`}>{r.invoiceNumber}</Link>
+        : <button type="button" onClick={() => openInTab(`/scm/ap-invoices/${r.id}`)} className={`${mo.docLink} ${cancelledDocNoClass(r.status)}`}>{r.invoiceNumber}</button>,
       getValue: (r) => r.invoiceNumber,
     },
     {
@@ -346,47 +435,63 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
     { key: 'status', label: 'Status', render: (r) => <span style={{ fontSize: 'var(--fs-11)' }}>{humaniseStatusKey(r.status)}</span>, getValue: (r) => r.status },
   ], []);
 
-  const paperName = form?.docKind === 'DN' ? 'supplier debit note' : 'AP invoice';
+  const paperName = form?.docKind === 'DN' ? 'supplier debit note' : 'AP bill';
   const formTitle = form?.mode === 'edit'
-    ? `Edit ${form.invoiceNumber ?? 'AP invoice'}`
+    ? `Edit ${form.invoiceNumber ?? 'AP bill'}`
     : form?.mode === 'copy' ? `New ${paperName} — copied from ${form.invoiceNumber ?? 'a bill'}`
-      : form?.docKind === 'DN' ? 'New supplier debit note — 供应商 DN（多欠供应商的钱）' : 'New AP invoice — 非库存的供应商账单';
+      : form?.docKind === 'DN' ? 'New supplier debit note' : 'New AP bill';
 
   return (
     <div className="space-y-4">
       {!debitNotes && <PageHeader
-        eyebrow="Finance"
-        title="AP Invoices"
+        eyebrow="Finance · Money out"
+        title="Supplier bills"
         actions={canCreate ? (
-          <span style={{ display: 'inline-flex', gap: 'var(--space-4)', alignItems: 'center' }}>
+          <span style={{ display: 'inline-flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
             {/* The pile: many supplier bills at once, read and split one AP
                 invoice each (owner 2026-09-08: scan bill 的按钮可以直接做在
                 + new ap invoice 附近吗). */}
             {/* The pile kept while this tab lives (owner 2026-10-06): the bills not yet opened. */}
             <BackToPile target="ap" />
-            <button type="button" onClick={() => navigate('/scm/ap-invoices/scan')} style={linkBtn}>
+            <Button variant="secondary" size="sm" onClick={() => navigate('/scm/ap-invoices/scan')}>
               <Camera {...ICON} /> Scan bills
-            </button>
-            <button type="button" onClick={openNew} style={linkBtn}>
-              <Plus {...ICON} /> New AP invoice
-            </button>
+            </Button>
+            {/* A supplier's credit note read from its pages into the New note form (the CN / DN page's scan). */}
+            <input ref={scnInput} type="file" multiple accept={PV_FILE_ACCEPT} style={{ display: 'none' }} aria-label="Supplier credit note pages"
+              onChange={(e) => { const picked = [...(e.target.files ?? [])]; e.target.value = ''; void scanCreditNote(picked); }} />
+            <Button variant="secondary" size="sm" onClick={() => scnInput.current?.click()} disabled={scnScan.isPending}>
+              <FileText {...ICON} /> {scnScan.isPending ? 'Reading the credit note…' : 'Scan credit note'}
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => setNoteForm({ mode: 'new', values: emptyNoteForm('SCN') })}>
+              <Plus {...ICON} /> New credit note
+            </Button>
+            <Button variant="primary" size="sm" onClick={openNew}>
+              <Plus {...ICON} /> New AP bill
+            </Button>
           </span>
         ) : undefined}
       />}
 
       {readingRequest && <div style={soft} role="status">Reading the bill on {readingRequest}…</div>}
-      <section className={styles.card}>
+      {!debitNotes && (
+        <SupplierBillsList
+          apRows={listQ.data?.rows ?? null}
+          apLoading={listQ.isLoading}
+          apError={listQ.isError ? `The list could not be loaded — ${listQ.error instanceof Error ? listQ.error.message : 'something went wrong.'}` : null}
+          can={{ create: canCreate, post: canPost, cancel: canCancel }}
+          onAct={onBillAct}
+          onPrintListing={printBills}
+        />
+      )}
+      {debitNotes && <section className={styles.card}>
         <div className={styles.cardHeader}>
-          <h2 className={styles.cardTitle}>{debitNotes ? 'Supplier debit notes — we owe the supplier more' : 'Supplier invoices — both kinds'}</h2>
+          <h2 className={styles.cardTitle}>Supplier debit notes — we owe the supplier more</h2>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            {debitNotes && canCreate && (
+            {canCreate && (
               <button type="button" onClick={openNew} style={linkBtn}>
                 <Plus {...ICON} /> New debit note
               </button>
             )}
-            {!debitNotes && ([['ALL', 'All'], ['API', 'AP invoices'], ['PI', 'Purchase invoices']] as const).map(([v, label]) => (
-              <button key={v} type="button" style={chip(kind === v)} onClick={() => setKind(v)}>{label}</button>
-            ))}
             <div style={{ minWidth: 260 }}>
               <SearchCombo options={supplierOptions} value={supplierFilter} onChange={setSupplierFilter}
                 className={styles.fieldInput} aria-label="Filter by supplier" placeholder="All suppliers" />
@@ -400,95 +505,31 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
           {/* A refused or failed read says so — an empty sentence over a 403 hid
              docs/bugs/0648 for an afternoon. */}
           <DataTable<ApListRow>
-            tableId={debitNotes ? 'supplier-debit-notes' : 'ap-invoices'}
-            exportName={debitNotes ? 'supplier-debit-notes' : 'ap-invoices'}
+            tableId="supplier-debit-notes"
+            exportName="supplier-debit-notes"
             exportXlsx
             columns={apColumns}
             rows={listQ.data ? visibleRows : null}
             loading={listQ.isLoading}
             error={listQ.isError ? `The list could not be loaded — ${listQ.error instanceof Error ? listQ.error.message : 'something went wrong.'}` : null}
             emptyLabel={rows.length > 0
-              ? 'No supplier invoices match this filter — pick another supplier or kind.'
-              : debitNotes
-                ? 'No supplier debit note yet — New debit note raises one; it is paid through an AP Payment like a bill.'
-                : 'No supplier invoices here yet — purchase invoices show once posted on the Procurement side; raise an AP invoice for a non-stock bill.'}
+              ? 'No supplier debit note matches this supplier — pick another.'
+              : 'No supplier debit note yet — New debit note raises one; it is paid through an AP Payment like a bill.'}
             getRowKey={(r) => `${r.kind}-${r.id}`}
             getRowClassName={(r) => cancelledRowClass(r.status)}
             getRowStyle={(r) => (r.status === 'CANCELLED' ? { opacity: 0.55 } : undefined)}
             onFilteredRowsChange={setShownRows}
           />
         </div>
-      </section>
+      </section>}
 
-      {/* The bill, popped out over the list (owner: 我希望是 pop out 出来). */}
-      {detailId && detail && (
-        <Modal
-          title={`${detail.invoice.invoice_number} · ${detail.supplier?.name ?? '—'}`}
-          onClose={() => setDetailId(null)}
-          ariaLabel={`${detail.invoice.doc_kind === 'DN' ? 'Supplier debit note' : 'AP invoice'} ${detail.invoice.invoice_number}`}
-          actions={(
-            <>
-              <span style={soft}>{detail.invoice.status}</span>
-              {canCreate && detail.invoice.status !== 'CANCELLED' && (
-                <Button variant="secondary" size="sm" onClick={() => openEdit(detail)}>Edit</Button>
-              )}
-              {canCreate && (
-                <Button variant="secondary" size="sm" onClick={() => openCopy(detail)}>Copy</Button>
-              )}
-              {canPost && detail.invoice.status === 'DRAFT' && (
-                <Button variant="primary" size="sm" onClick={() => void onPost(detail.invoice.id, detail.invoice.invoice_number)} disabled={post.isPending}>
-                  {post.isPending ? 'Posting…' : 'Post'}
-                </Button>
-              )}
-              {canCancel && detail.invoice.status !== 'CANCELLED' && Number(detail.invoice.paid_sen) === 0 && (
-                <Button variant="ghost" size="sm" onClick={() => void onCancel(detail.invoice.id, detail.invoice.invoice_number, detail.invoice.status !== 'DRAFT')} disabled={cancel.isPending}>
-                  {detail.invoice.doc_kind === 'DN' ? 'Cancel debit note' : 'Cancel bill'}
-                </Button>
-              )}
-            </>
-          )}
-        >
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 'var(--space-3)', fontSize: 'var(--fs-13)' }}>
-            <Meta label="Supplier" value={<span><span style={mono}>{detail.supplier?.code ?? ''}</span> {detail.supplier?.name ?? '—'}</span>} />
-            <Meta label={detail.invoice.doc_kind === 'DN' ? "Supplier's debit note no." : "Supplier's invoice no."} value={detail.invoice.supplier_invoice_ref ?? '—'} />
-            <Meta label={detail.invoice.doc_kind === 'DN' ? 'Date' : 'Invoice date'} value={fmtDateOrDash(detail.invoice.invoice_date)} />
-            <Meta label="Due date" value={fmtDateOrDash(detail.invoice.due_date)} />
-            <Meta label="Description" value={detail.invoice.notes ?? '—'} />
-            {/* 欠正式单 asks after an official INVOICE — a debit note is its own paper. */}
-            {detail.invoice.status !== 'CANCELLED' && detail.invoice.doc_kind !== 'DN' && (
-              <Meta label="Official invoice" value={<OfficialDocActions kind="API" id={detail.invoice.id} state={detail.invoice.official_doc ?? null} note={detail.invoice.official_doc_note ?? null} />} />
-            )}
-          </div>
-          <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 'var(--fs-13)' }}>
-            <thead>
-              <tr>
-                <th style={{ ...th, width: 36 }}>#</th>
-                <th style={th}>Account</th>
-                <th style={th}>Description</th>
-                <th style={th}>Event</th>
-                <th style={{ ...th, textAlign: 'right' }}>Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {detail.lines.map((l) => (
-                <tr key={l.id}>
-                  <td style={{ ...td, ...mono, color: 'var(--fg-muted)' }}>{l.line_no}</td>
-                  <td style={td}><span style={mono}>{l.debit_account_code}</span>{accountName(l.debit_account_code) ? <span style={soft}> · {accountName(l.debit_account_code)}</span> : null}</td>
-                  <td style={td}>{l.description ?? '—'}</td>
-                  <td style={{ ...td, ...(l.project_id == null ? soft : {}) }}>{eventCellText(eventLabelsQ.data, l.project_id)}</td>
-                  <td style={{ ...td, ...right }}>{fmtSen(l.amount_sen)}</td>
-                </tr>
-              ))}
-              <tr style={{ borderTop: '1px solid var(--border-weak, #e3e1da)' }}>
-                <td colSpan={4} style={{ ...td, fontWeight: 600 }}>Total · paid {fmtSen(detail.invoice.paid_sen)}</td>
-                <td style={{ ...td, ...right, fontWeight: 700 }}>{fmtSen(detail.invoice.total_sen)}</td>
-              </tr>
-            </tbody>
-          </table>
-          <ApInvoiceFilesCard invoiceId={detail.invoice.id} canWrite={canCreate}
-            locked={detail.invoice.paid_sen > 0}
-            closed={detail.invoice.status === 'CANCELLED'} />
-        </Modal>
+      {planning && planning.kind !== 'SCN' && (
+        <BillPlanDialog onClose={() => setPlanning(null)}
+          bill={{ kind: planning.kind, id: planning.id, number: planning.number, supplierName: planning.supplierName, outstandingSen: planning.outstandingSen, due: planning.due, planned: planning.planned }} />
+      )}
+      {noteForm && (
+        <NoteForm mode={noteForm.mode} id={noteForm.id} kinds={['SCN']} initial={noteForm.values} scan={noteForm.scan} scanFiles={noteForm.files}
+          onClose={() => setNoteForm(null)} onSaved={(id) => { setNoteForm(null); openInTab(`/scm/supplier-notes/${id}`); }} />
       )}
 
       {form && (
@@ -507,7 +548,8 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
             paidSen={form.paidSen}
             selfId={form.mode === 'edit' ? (form.invoiceId ?? null) : null}
             requestId={form.request?.id ?? null}
-            saving={create.isPending || update.isPending || uploadFile.isPending}
+            saving={create.isPending || update.isPending || uploadFile.isPending || post.isPending}
+            canPost={canPost}
             onSubmit={submitForm}
             onCancel={() => setForm(null)}
           />
@@ -523,7 +565,7 @@ export const ApInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
    checked voucher ticks it; the server says which in `locked`), a posted
    unpaid bill may still swap a wrong file (HC-0181), a CANCELLED one takes
    no more. */
-const ApInvoiceFilesCard = ({ invoiceId, canWrite, locked, closed }: { invoiceId: string; canWrite: boolean; locked: boolean; closed: boolean }) => {
+export const ApInvoiceFilesCard = ({ invoiceId, canWrite, locked, closed }: { invoiceId: string; canWrite: boolean; locked: boolean; closed: boolean }) => {
   const filesQ = useApInvoiceFiles(invoiceId);
   const upload = useUploadApInvoiceFile();
   const remove = useDeleteApInvoiceFile();

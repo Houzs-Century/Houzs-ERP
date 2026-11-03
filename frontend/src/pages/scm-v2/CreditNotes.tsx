@@ -58,7 +58,7 @@ import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { fmtSen, fmtDateOrDash } from '../../vendor/shared/format';
 
-const KIND_WORD: Record<NoteKind, string> = { CN: 'Credit note', DN: 'Debit note', SCN: 'Supplier credit note', OCN: 'Other debtor credit note' };
+export const KIND_WORD: Record<NoteKind, string> = { CN: 'Credit note', DN: 'Debit note', SCN: 'Supplier credit note', OCN: 'Other debtor credit note' };
 /* The kind as the tab and the form's picker say it. */
 const KIND_TAB: Record<NoteKind, string> = { CN: 'CN', DN: 'DN', SCN: 'SCN', OCN: 'Other debtor CN' };
 const KIND_OPTION: Record<NoteKind, string> = {
@@ -70,16 +70,16 @@ const KIND_OPTION: Record<NoteKind, string> = {
 
 /* The two pages (owner 2026-10-28): which kinds each holds — the list asks the
    server for the side's kinds, the tabs and the New note picker offer them. */
-const SIDES: Record<NoteSide, { title: string; description: string; kinds: NoteKind[]; hint: string; tableId: string }> = {
+const SIDES: Record<NoteSide, { title: string; description?: string; kinds: NoteKind[]; hint: string; tableId: string }> = {
+  /* Money in's page by the redesign's name, no description (owner's Claude Design, batch 5). */
   AR: {
-    title: 'Customer & Other Debtor CN / DN',
-    description: 'A credit or debit note to a customer, a credit or debit note to an other debtor. A note is raised as a draft, posted to the ledger, cancelled by contra; an other debtor\'s debit note is a bill of its own kind.',
+    title: 'Credit / debit notes',
     kinds: ['CN', 'DN', 'OCN'],
     hint: 'CN: the customer owes less. DN: the customer owes more. Other debtor CN: the debtor owes less — it knocks off their bills.',
     tableId: 'credit-notes',
   },
   AP: {
-    title: 'Supplier & Other Creditor CN / DN',
+    title: 'Supplier & other creditor CN / DN',
     description: 'A credit note from a supplier or an other creditor — we owe them less; a debit note — we owe them more. A note is raised as a draft, posted to the ledger, cancelled by contra; a debit note is a bill of its own kind.',
     kinds: ['SCN'],
     hint: 'SCN: we owe the supplier less — it knocks off their invoices.',
@@ -135,14 +135,15 @@ const accountNamer = async (): Promise<(code: string) => string | null> => {
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
 const th: React.CSSProperties = { padding: '6px 10px', fontSize: 'var(--fs-11)', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--fg-muted)', borderBottom: '1px solid var(--border-weak, #e3e1da)', whiteSpace: 'nowrap', textAlign: 'left' };
 const td: React.CSSProperties = { padding: '6px 10px', fontSize: 'var(--fs-13)', borderBottom: '1px solid var(--border-weak, #f0eee8)' };
-const num: React.CSSProperties = { textAlign: 'right', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
+const num: React.CSSProperties = { textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
 const danger = 'var(--c-festive-b, #B8331F)';
 const good = 'var(--c-secondary-a, #2F5D4F)';
 const input: React.CSSProperties = { padding: '5px 8px', fontSize: 'var(--fs-13)', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 6, minWidth: 180 };
 
 /** projectId: a supplier note line's event (owner 2026-10-22) — null = none, or the AP invoice's at save. */
 type FormLine = { rid: number; description: string; accountCode: string; amountRm: string; projectId: number | null };
-type FormValues = {
+/** The note form's values — Supplier bills raises and edits a supplier's note with the same form. */
+export type FormValues = {
   kind: NoteKind; noteDate: string; soDocNo: string; partyName: string; supplierId: string;
   /** An other-debtor note's debtor (2026-10-28). */
   debtorId?: string;
@@ -153,7 +154,16 @@ type FormValues = {
   knockOff?: KnockOffPick;
 };
 const emptyLine = (rid: number): FormLine => ({ rid, description: '', accountCode: '', amountRm: '', projectId: null });
-const emptyForm = (kind: NoteKind = 'CN'): FormValues => ({ kind, noteDate: myt(), soDocNo: '', partyName: '', supplierId: '', debtorId: '', sourceDocNo: '', reason: '', lines: [emptyLine(1)], creditedDoc: null, knockOff: {} });
+export const emptyForm = (kind: NoteKind = 'CN'): FormValues => ({ kind, noteDate: myt(), soDocNo: '', partyName: '', supplierId: '', debtorId: '', sourceDocNo: '', reason: '', lines: [emptyLine(1)], creditedDoc: null, knockOff: {} });
+
+/** A draft note's form, filled from the note, its lines and its knock-off ticks (its pop-out's Edit). */
+export const noteEditValues = (n: CreditNote, lines: CreditNoteLine[], allocations: CreditAllocation[]): FormValues => ({
+  kind: n.kind, noteDate: n.note_date, soDocNo: n.so_doc_no ?? '', partyName: n.party_name ?? '', supplierId: n.supplier_id ?? '', debtorId: n.debtor_id ?? '',
+  sourceDocNo: n.source_doc_no ?? '', reason: n.reason ?? '',
+  lines: lines.length > 0 ? lines.map((l, i) => ({ rid: i + 1, description: l.description ?? '', accountCode: l.account_code, amountRm: (l.amount_sen / 100).toFixed(2), projectId: l.project_id ?? null })) : [emptyLine(1)],
+  creditedDoc: null,
+  knockOff: Object.fromEntries(allocations.map((a) => [a.docId, { kind: a.kind, id: a.docId, amountSen: a.amountSen }])),
+});
 
 /** The invoice the paper names, ticked — as much of the credit as it owes. */
 const scanKnockOff = (r: ScnScan): KnockOffPick => {
@@ -255,7 +265,7 @@ export const CreditNotes = ({ side = 'AR' }: { side?: NoteSide }) => {
 
   return (
     <div className="space-y-4">
-      <PageHeader eyebrow="Finance" title={page.title}
+      <PageHeader eyebrow={side === 'AP' ? 'Finance · Money out' : 'Finance · Money in'} title={page.title}
         description={page.description}
         actions={side === 'AP' && view !== 'debit' ? (
           <>
@@ -323,16 +333,7 @@ export const CreditNotes = ({ side = 'AR' }: { side?: NoteSide }) => {
       {openId && (
         <NoteDetail id={openId} onClose={() => setOpenId(null)}
           onEdit={(n, lines, allocations) => {
-            setForm({
-              mode: 'edit', id: n.id,
-              values: {
-                kind: n.kind, noteDate: n.note_date, soDocNo: n.so_doc_no ?? '', partyName: n.party_name ?? '', supplierId: n.supplier_id ?? '', debtorId: n.debtor_id ?? '',
-                sourceDocNo: n.source_doc_no ?? '', reason: n.reason ?? '',
-                lines: lines.length > 0 ? lines.map((l, i) => ({ rid: i + 1, description: l.description ?? '', accountCode: l.account_code, amountRm: (l.amount_sen / 100).toFixed(2), projectId: l.project_id ?? null })) : [emptyLine(1)],
-                creditedDoc: null,
-                knockOff: Object.fromEntries(allocations.map((a) => [a.docId, { kind: a.kind, id: a.docId, amountSen: a.amountSen }])),
-              },
-            });
+            setForm({ mode: 'edit', id: n.id, values: noteEditValues(n, lines, allocations) });
             setOpenId(null);
           }} />
       )}
@@ -342,7 +343,7 @@ export const CreditNotes = ({ side = 'AR' }: { side?: NoteSide }) => {
 };
 
 const NOTE_COLUMNS: Column<CreditNote>[] = [
-  { key: 'number', label: 'Number', render: (n) => <span className={cancelledDocNoClass(n.status)} style={{ fontFamily: 'var(--font-mono)' }}>{n.note_number}</span>, getValue: (n) => n.note_number },
+  { key: 'number', label: 'Number', render: (n) => <span className={cancelledDocNoClass(n.status)} style={{ fontVariantNumeric: 'tabular-nums' }}>{n.note_number}</span>, getValue: (n) => n.note_number },
   { key: 'kind', label: 'Kind', render: (n) => n.kind, getValue: (n) => n.kind },
   { key: 'date', label: 'Date', render: (n) => fmtDateOrDash(n.note_date), getValue: (n) => n.note_date, exportFormat: 'date' },
   { key: 'party', label: 'Party', render: (n) => n.party_name ?? n.party_code ?? '—', getValue: (n) => n.party_name ?? n.party_code ?? '' },
@@ -356,7 +357,7 @@ const NOTE_COLUMNS: Column<CreditNote>[] = [
     getValue: (n) => n.total_sen, exportValue: (n) => n.total_sen / 100, exportFormat: 'money',
   },
   { key: 'status', label: 'Status', render: (n) => <StatusPill status={n.status} />, getValue: (n) => n.status },
-  { key: 'journal', label: 'Journal', render: (n) => <span style={{ fontFamily: 'var(--font-mono)' }}>{n.je_no ?? '—'}</span>, getValue: (n) => n.je_no ?? '' },
+  { key: 'journal', label: 'Journal', render: (n) => <span style={{ fontVariantNumeric: 'tabular-nums' }}>{n.je_no ?? '—'}</span>, getValue: (n) => n.je_no ?? '' },
 ];
 
 const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
@@ -366,7 +367,8 @@ const Field = ({ label, children }: { label: string; children: React.ReactNode }
   </label>
 );
 
-const NoteDetail = ({ id, onClose, onEdit }: { id: string; onClose: () => void; onEdit: (n: CreditNote, lines: CreditNoteLine[], allocations: CreditAllocation[]) => void }) => {
+/** One note's reads and its two writes — the pop-out and the page share them. */
+export function useNoteDoc(id: string) {
   const q = useCreditNoteDetail(id);
   const post = usePostCreditNote();
   const cancel = useCancelCreditNote();
@@ -388,69 +390,96 @@ const NoteDetail = ({ id, onClose, onEdit }: { id: string; onClose: () => void; 
       await generateCreditNotePdf(n, lines, nameOf, { action: 'print' });
     } catch (e) { setPrintError(errText(e)); } finally { setPrinting(false); }
   };
+  const cancelNote = async () => {
+    if (!n) return;
+    const yes = await askConfirm({
+      title: `Cancel ${n.note_number}?`,
+      body: n.status === 'POSTED' ? 'Its journal is reversed by a contra dated today. The note stays on file as cancelled.' : 'The draft stays on file as cancelled.',
+      confirmLabel: 'Cancel note', danger: true,
+    });
+    if (yes) cancel.mutate(n.id);
+  };
+  return { q, n, lines, allocations: q.data?.allocations ?? [], post, cancel, eventLabelsQ, withEvents, busy, failed, printing, printError, printOne, cancelNote };
+}
+export type NoteDoc = ReturnType<typeof useNoteDoc>;
+
+/** The note's buttons: Print, Edit (draft), Post to ledger (draft), Cancel note. */
+export function NoteActions({ doc, onEdit }: { doc: NoteDoc; onEdit: (n: CreditNote, lines: CreditNoteLine[], allocations: CreditAllocation[]) => void }) {
+  const { n, busy } = doc;
+  if (!n) return null;
+  return (
+    <>
+      <Button variant="ghost" size="sm" onClick={() => void doc.printOne()} disabled={busy || doc.printing}>{doc.printing ? 'Preparing…' : 'Print'}</Button>
+      {n.status === 'DRAFT' && <Button variant="ghost" size="sm" onClick={() => onEdit(n, doc.lines, doc.allocations)} disabled={busy}>Edit</Button>}
+      {n.status === 'DRAFT' && <Button size="sm" onClick={() => doc.post.mutate(n.id)} disabled={busy}>{doc.post.isPending ? 'Posting…' : 'Post to ledger'}</Button>}
+      {/* An opening paper is changed on Opening Balance — the server refuses a cancel here. */}
+      {n.status !== 'CANCELLED' && !n.opening && (
+        <Button variant="ghost" size="sm" disabled={busy} onClick={() => void doc.cancelNote()}>
+          Cancel note
+        </Button>
+      )}
+    </>
+  );
+}
+
+/** The note itself: party, dates, reference, status, reason, lines, its knock-off, files, and what the last write said. */
+export function NoteBody({ doc }: { doc: NoteDoc }) {
+  const { n, lines, withEvents, eventLabelsQ, post, failed } = doc;
+  if (!n) return null;
+  return (
+    <div className="space-y-3">
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-3)', fontSize: 'var(--fs-13)' }}>
+        <div><div style={soft}>Party</div>{n.party_name ?? '—'}{n.party_code ? <span style={soft}> · {n.party_code}</span> : null}</div>
+        <div><div style={soft}>Date</div>{fmtDateOrDash(n.note_date)}</div>
+        <div><div style={soft}>Reference</div>{[n.so_doc_no, n.source_doc_no].filter(Boolean).join(' · ') || '—'}</div>
+        {(n.purchase_invoice_number || n.ap_invoice_number) && <div><div style={soft}>Credits</div>{n.purchase_invoice_number ?? n.ap_invoice_number}</div>}
+        <div><div style={soft}>Status</div><StatusPill status={n.status} />{n.je_no ? <span style={soft}> · {n.je_no}</span> : null}</div>
+        <div style={{ gridColumn: '1 / -1' }}><div style={soft}>Reason</div>{n.reason ?? '—'}</div>
+      </div>
+      {n.opening && (
+        <div style={soft} aria-label="Opening balance">
+          Opening balance 31/08, from AutoCount — its amount is changed on Finance › Opening Balance. Tick the supplier&apos;s bills under Knock off to use it.
+        </div>
+      )}
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead><tr><th style={th}>#</th><th style={th}>Description</th><th style={th}>Account</th>{withEvents && <th style={th}>Event</th>}<th style={{ ...th, textAlign: 'right' }}>Amount</th></tr></thead>
+        <tbody>
+          {lines.map((l) => (
+            <tr key={l.id}><td style={td}>{l.line_no}</td><td style={td}>{l.description ?? '—'}</td><td style={td}>{l.account_code}</td>
+              {withEvents && <td style={{ ...td, ...(l.project_id == null ? soft : {}) }}>{eventCellText(eventLabelsQ.data, l.project_id)}</td>}
+              <td style={{ ...td, ...num }}>{fmtSen(l.amount_sen)}</td></tr>
+          ))}
+          <tr><td colSpan={withEvents ? 4 : 3} style={{ ...td, fontWeight: 700 }}>Total</td><td style={{ ...td, ...num, fontWeight: 700 }}>{fmtSen(n.total_sen)}</td></tr>
+        </tbody>
+      </table>
+      {knocksOff(n.kind) && n.status !== 'CANCELLED' && <NoteKnockOff noteId={n.id} posted={n.status === 'POSTED'} totalSen={n.total_sen} who={whoOf(n.kind)} />}
+      <NoteFilesCard noteId={n.id} locked={n.status === 'POSTED'} closed={n.status === 'CANCELLED'} />
+      {post.isSuccess && (
+        <div style={{ fontSize: 'var(--fs-13)', color: good }}>
+          Posted as {post.data.jeNo}.
+          {(post.data.applied ?? []).map((a) => ` ${fmtSen(a.appliedSen)} came off ${a.number}.`).join('')}
+          {post.data.notApplied ? ` ${post.data.notApplied}` : ''}
+        </div>
+      )}
+      {doc.printError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{doc.printError}</div>}
+      {failed != null && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{errText(failed)}</div>}
+    </div>
+  );
+}
+
+/** A note in its pop-out — Print, Edit, Post, Cancel, Knock off, files. The note page (NotePage.tsx) shows the same parts. */
+export const NoteDetail = ({ id, onClose, onEdit }: { id: string; onClose: () => void; onEdit: (n: CreditNote, lines: CreditNoteLine[], allocations: CreditAllocation[]) => void }) => {
+  const doc = useNoteDoc(id);
+  const n = doc.n;
   return (
     <Modal title={n ? `${KIND_WORD[n.kind]} ${n.note_number}` : 'Note'} onClose={onClose} width="min(820px, 100%)" ariaLabel="Credit or debit note"
       actions={n && (
         <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-          <Button variant="ghost" size="sm" onClick={() => void printOne()} disabled={busy || printing}>{printing ? 'Preparing…' : 'Print'}</Button>
-          {n.status === 'DRAFT' && <Button variant="ghost" size="sm" onClick={() => onEdit(n, lines, q.data?.allocations ?? [])} disabled={busy}>Edit</Button>}
-          {n.status === 'DRAFT' && <Button size="sm" onClick={() => post.mutate(n.id)} disabled={busy}>{post.isPending ? 'Posting…' : 'Post to ledger'}</Button>}
-          {/* An opening paper is changed on Opening Balance — the server refuses a cancel here. */}
-          {n.status !== 'CANCELLED' && !n.opening && (
-            <Button variant="ghost" size="sm" disabled={busy}
-              onClick={async () => {
-                const yes = await askConfirm({
-                  title: `Cancel ${n.note_number}?`,
-                  body: n.status === 'POSTED' ? 'Its journal is reversed by a contra dated today. The note stays on file as cancelled.' : 'The draft stays on file as cancelled.',
-                  confirmLabel: 'Cancel note', danger: true,
-                });
-                if (yes) cancel.mutate(n.id);
-              }}>
-              Cancel note
-            </Button>
-          )}
+          <NoteActions doc={doc} onEdit={onEdit} />
         </div>
       )}>
-      {q.isLoading && <div style={soft}>Loading…</div>}
-      {n && (
-        <div className="space-y-3">
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-3)', fontSize: 'var(--fs-13)' }}>
-            <div><div style={soft}>Party</div>{n.party_name ?? '—'}{n.party_code ? <span style={soft}> · {n.party_code}</span> : null}</div>
-            <div><div style={soft}>Date</div>{fmtDateOrDash(n.note_date)}</div>
-            <div><div style={soft}>Reference</div>{[n.so_doc_no, n.source_doc_no].filter(Boolean).join(' · ') || '—'}</div>
-            {(n.purchase_invoice_number || n.ap_invoice_number) && <div><div style={soft}>Credits</div>{n.purchase_invoice_number ?? n.ap_invoice_number}</div>}
-            <div><div style={soft}>Status</div><StatusPill status={n.status} />{n.je_no ? <span style={soft}> · {n.je_no}</span> : null}</div>
-            <div style={{ gridColumn: '1 / -1' }}><div style={soft}>Reason</div>{n.reason ?? '—'}</div>
-          </div>
-          {n.opening && (
-            <div style={soft} aria-label="Opening balance">
-              Opening balance 31/08, from AutoCount — its amount is changed on Finance › Opening Balance. Tick the supplier&apos;s bills under Knock off to use it.
-            </div>
-          )}
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th style={th}>#</th><th style={th}>Description</th><th style={th}>Account</th>{withEvents && <th style={th}>Event</th>}<th style={{ ...th, textAlign: 'right' }}>Amount</th></tr></thead>
-            <tbody>
-              {lines.map((l) => (
-                <tr key={l.id}><td style={td}>{l.line_no}</td><td style={td}>{l.description ?? '—'}</td><td style={{ ...td, fontFamily: 'var(--font-mono)' }}>{l.account_code}</td>
-                  {withEvents && <td style={{ ...td, ...(l.project_id == null ? soft : {}) }}>{eventCellText(eventLabelsQ.data, l.project_id)}</td>}
-                  <td style={{ ...td, ...num }}>{fmtSen(l.amount_sen)}</td></tr>
-              ))}
-              <tr><td colSpan={withEvents ? 4 : 3} style={{ ...td, fontWeight: 700 }}>Total</td><td style={{ ...td, ...num, fontWeight: 700 }}>{fmtSen(n.total_sen)}</td></tr>
-            </tbody>
-          </table>
-          {knocksOff(n.kind) && n.status !== 'CANCELLED' && <NoteKnockOff noteId={n.id} posted={n.status === 'POSTED'} totalSen={n.total_sen} who={whoOf(n.kind)} />}
-          <NoteFilesCard noteId={n.id} locked={n.status === 'POSTED'} closed={n.status === 'CANCELLED'} />
-          {post.isSuccess && (
-            <div style={{ fontSize: 'var(--fs-13)', color: good }}>
-              Posted as {post.data.jeNo}.
-              {(post.data.applied ?? []).map((a) => ` ${fmtSen(a.appliedSen)} came off ${a.number}.`).join('')}
-              {post.data.notApplied ? ` ${post.data.notApplied}` : ''}
-            </div>
-          )}
-          {printError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{printError}</div>}
-          {failed != null && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{errText(failed)}</div>}
-        </div>
-      )}
+      {doc.q.isLoading && <div style={soft}>Loading…</div>}
+      <NoteBody doc={doc} />
     </Modal>
   );
 };
@@ -479,11 +508,10 @@ const DebtorField = ({ value, onChange, disabled }: { value: string; onChange: (
   );
 };
 
-const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, onClose, onSaved }: { mode: 'new' | 'edit'; id?: string; kinds: NoteKind[]; initial: FormValues; scan?: ScnScan; scanFiles?: File[]; onClose: () => void; onSaved: (id: string) => void }) => {
+export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, onClose, onSaved }: { mode: 'new' | 'edit'; id?: string; kinds: NoteKind[]; initial: FormValues; scan?: ScnScan; scanFiles?: File[]; onClose: () => void; onSaved: (id: string) => void }) => {
   const [v, setV] = useState<FormValues>(initial);
   const uploadFile = useUploadCreditNoteFile();
   const [attachError, setAttachError] = useState<string | null>(null);
-  const [postAfter, setPostAfter] = useState(false);
   const accountsQ = useAccounts();
   const create = useCreateCreditNote();
   const update = useUpdateCreditNote();
@@ -501,7 +529,8 @@ const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, onClose, onSaved 
     : v.soDocNo.trim() !== '' || v.partyName.trim() !== '');
   const withEvents = knocksOff(v.kind);
 
-  const save = async () => {
+  /* Save as draft, or Save & post (the redesign): the same save, then the post. */
+  const save = async (postAfter = false) => {
     try {
       const body = bodyOf(v);
       let noteId = id ?? '';
@@ -596,13 +625,10 @@ const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, onClose, onSaved 
         {v.kind === 'OCN' && !accountsNamed && <div style={soft}>Pick an account on every line — an other debtor's credit note has no default account.</div>}
 
         <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
-          <label style={{ ...soft, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <input type="checkbox" checked={postAfter} onChange={(e) => setPostAfter(e.target.checked)} aria-label="Post to the ledger after saving" />
-            post to the ledger after saving
-          </label>
           <span style={{ flex: 1 }} />
           <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>Close</Button>
-          <Button size="sm" onClick={() => void save()} disabled={!canSave || busy}>{busy ? 'Saving…' : mode === 'new' ? 'Save note' : 'Save changes'}</Button>
+          <Button variant="secondary" size="sm" onClick={() => void save()} disabled={!canSave || busy}>{busy ? 'Saving…' : mode === 'new' ? 'Save as draft' : 'Save changes'}</Button>
+          <Button size="sm" onClick={() => void save(true)} disabled={!canSave || busy}>Save & post</Button>
         </div>
         {failed != null && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{errText(failed)}</div>}
         {attachError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{attachError}</div>}

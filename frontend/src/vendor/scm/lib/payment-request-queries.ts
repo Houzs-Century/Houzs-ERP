@@ -86,6 +86,16 @@ export const isRefundRequest = (r: Pick<PaymentRequest, 'refund_source_doc_no'>)
 export const stageLabel = (r: Pick<PaymentRequest, 'stage' | 'refund_source_doc_no'>): string =>
   isRefundRequest(r) && r.stage === 'RETURNED' ? 'Rejected · 已拒绝' : STAGE[r.stage].label;
 
+/** The same words in English only — Finance's Money out view (the redesign,
+    batch 4); the requester keeps both languages. */
+export const stageLabelEn = (r: Pick<PaymentRequest, 'stage' | 'refund_source_doc_no'>): string =>
+  stageLabel(r).split(' · ')[0];
+
+/** What kind of request it is, read off the request — never typed (owner
+    2026-10-01: requesters choose no type): a Sales Order's refund, or a payment. */
+export const requestKind = (r: Pick<PaymentRequest, 'refund_source_doc_no'>): 'Customer refund' | 'Payment' =>
+  (isRefundRequest(r) ? 'Customer refund' : 'Payment');
+
 /** Where Finance answers a request with a voucher: a refund opens New Customer
     Refund on its order; anything else the plain voucher. */
 export const makeVoucherHref = (r: Pick<PaymentRequest, 'id' | 'refund_source_doc_no'>): string =>
@@ -134,19 +144,24 @@ const MATCH_KIND: Record<BillMatch['kind'], string> = { PRQ: 'Request', PV: 'Vou
 export const billMatchText = (m: BillMatch): string =>
   `${MATCH_KIND[m.kind]} ${m.number ?? '(no number yet)'} · ${fmtSen(m.amountSen)}${m.answeredBy ? ` → ${m.answeredBy}` : ''} · ${MATCH_STATUS[m.status] ?? m.status.toLowerCase()}`;
 
+/** The tone of a stage's tag in Finance's view (the redesign's four: calm,
+    warn, info, late). */
+export type StageTagTone = 'calm' | 'warn' | 'info' | 'late';
+
 /** Each stage in the owner's words (2026-09-29: 已提交 → Finance 处理中 → 已付 →
-    银行已确认; 2026-09-30 for a booked bill: 已入账、未付 → 部分已付) and the
-    colour it reads in — one home for both. */
-export const STAGE: Record<RequestStage, { label: string; tone: string }> = {
-  SUBMITTED: { label: 'Submitted · 已提交', tone: 'var(--fg-muted)' },
-  PROCESSING: { label: 'Finance processing · 处理中', tone: 'var(--c-orange)' },
-  BOOKED: { label: 'Booked, not paid yet · 已入账、未付', tone: 'var(--c-orange)' },
-  PARTLY_PAID: { label: 'Partly paid · 部分已付', tone: 'var(--c-orange)' },
-  PAID: { label: 'Paid · 已付', tone: 'var(--c-green, #2f7d32)' },
-  BANK_CONFIRMED: { label: 'Bank confirmed · 银行已确认', tone: 'var(--c-green-deep, #1b5e20)' },
-  RETURNED: { label: 'Returned · 已退回', tone: 'var(--c-festive-b, #B8331F)' },
-  WITHDRAWN: { label: 'Withdrawn · 已撤回', tone: 'var(--fg-muted)' },
-  VOUCHER_CANCELLED: { label: 'Cancelled — Finance makes the next · 单据已取消', tone: 'var(--c-festive-b, #B8331F)' },
+    银行已确认; 2026-09-30 for a booked bill: 已入账、未付 → 部分已付), the
+    colour it reads in, and the tone of its tag on Finance's list — one home
+    for all three. */
+export const STAGE: Record<RequestStage, { label: string; tone: string; tag: StageTagTone }> = {
+  SUBMITTED: { label: 'Submitted · 已提交', tone: 'var(--fg-muted)', tag: 'info' },
+  PROCESSING: { label: 'Finance processing · 处理中', tone: 'var(--c-orange)', tag: 'warn' },
+  BOOKED: { label: 'Booked, not paid yet · 已入账、未付', tone: 'var(--c-orange)', tag: 'warn' },
+  PARTLY_PAID: { label: 'Partly paid · 部分已付', tone: 'var(--c-orange)', tag: 'warn' },
+  PAID: { label: 'Paid · 已付', tone: 'var(--c-green, #2f7d32)', tag: 'calm' },
+  BANK_CONFIRMED: { label: 'Bank confirmed · 银行已确认', tone: 'var(--c-green-deep, #1b5e20)', tag: 'calm' },
+  RETURNED: { label: 'Returned · 已退回', tone: 'var(--c-festive-b, #B8331F)', tag: 'late' },
+  WITHDRAWN: { label: 'Withdrawn · 已撤回', tone: 'var(--fg-muted)', tag: 'calm' },
+  VOUCHER_CANCELLED: { label: 'Cancelled — Finance makes the next · 单据已取消', tone: 'var(--c-festive-b, #B8331F)', tag: 'late' },
 };
 
 /** Finance's to-do: nothing answers these yet. */
@@ -156,6 +171,8 @@ export const financeWorking = (r: Pick<PaymentRequest, 'stage'>): boolean =>
   r.stage === 'PROCESSING' || r.stage === 'BOOKED' || r.stage === 'PARTLY_PAID';
 /** The money is out. */
 export const requestPaid = (r: Pick<PaymentRequest, 'stage'>): boolean => r.stage === 'PAID' || r.stage === 'BANK_CONFIRMED';
+/** Sent back to the requester, or withdrawn by them — nothing answers it now. */
+export const requestReturned = (r: Pick<PaymentRequest, 'stage'>): boolean => r.stage === 'RETURNED' || r.stage === 'WITHDRAWN';
 
 /** What answered the request, in one line — the voucher's number, or the AP
     invoice's with how much of it is paid so far (部分已付 RM x / y); null while
@@ -266,6 +283,8 @@ const invalidate = (qc: ReturnType<typeof useQueryClient>) => {
   /* A refund request holds its order's money (owner 2026-10-14) — withdrawn or
      returned, the order's money panel reads it back. */
   void qc.invalidateQueries({ queryKey: ['so-money'] });
+  /* To do's "requests waiting" job reads them. */
+  void qc.invalidateQueries({ queryKey: ['finance-todo'] });
 };
 
 export const useCreatePaymentRequest = () => {

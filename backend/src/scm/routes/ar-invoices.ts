@@ -15,8 +15,9 @@
 // notes are not here (对).
 //
 //   GET /ar-invoices?kind=ALL|SI|ODB  → { rows }         both kinds, one list
-//   GET /ar-invoices/bills/:billId    → { bill, debtor }  a debtor bill with its
-//                                       lines and its debtor, for the pop-out
+//   GET /ar-invoices/bills/:billId    → { bill, debtor, receipts, creditNotes }
+//                                       a debtor bill with its lines, its debtor,
+//                                       the receipts and credit notes on it — its page
 //
 // This router only READS. A debtor bill is raised, edited and cancelled through
 // routes/other-debtors.ts (POST /other-debtors/:id/bills, PATCH
@@ -187,13 +188,51 @@ export const arBillDetailHandler = async (c: any): Promise<Response> => {
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (!data) return c.json({ error: 'not_found', message: 'That bill is not in the company you are working in.' }, 404);
   const bill = data as Row;
-  const [lines, debtor] = await Promise.all([
+  const [lines, debtor, receiptAllocs, noteAllocs] = await Promise.all([
     scopeToCompany(sb.from('acc_debtor_bill_lines').select('id, bill_id, line_no, description, credit_account_code, amount_sen, project_id').eq('bill_id', bill.id), c).order('line_no'),
     scopeToCompany(sb.from('acc_debtors').select(`id, name, phone, notes, is_active, ${DEBTOR_PARTY_COLS}`).eq('id', bill.debtor_id), c).maybeSingle(),
+    /* What came in on it and what credited it (the owner's Claude Design, batch 5
+       §8.3 c8): the debtor receipts that knock it off, and the other-debtor
+       credit notes allocated to it. */
+    scopeToCompany(sb.from('acc_debtor_receipt_allocations').select('receipt_id, amount_sen').eq('bill_id', bill.id), c),
+    scopeToCompany(sb.from('acc_credit_note_allocations').select('note_id, amount_sen, applied_sen').eq('debtor_bill_id', bill.id), c),
   ]);
   if (lines.error) return c.json({ error: 'load_failed', reason: lines.error.message }, 500);
   if (debtor.error) return c.json({ error: 'load_failed', reason: debtor.error.message }, 500);
-  return c.json({ bill: { ...bill, lines: lines.data ?? [] }, debtor: debtor.data ?? null });
+  if (receiptAllocs.error) return c.json({ error: 'load_failed', reason: receiptAllocs.error.message }, 500);
+  if (noteAllocs.error) return c.json({ error: 'load_failed', reason: noteAllocs.error.message }, 500);
+  const rAllocs = (receiptAllocs.data ?? []) as Row[];
+  const nAllocs = (noteAllocs.data ?? []) as Row[];
+  const [receiptRows, noteRows] = await Promise.all([
+    rAllocs.length > 0
+      ? scopeToCompany(sb.from('acc_debtor_receipts').select('id, receipt_number, receipt_date, status, submitted_at, checked_at, approved_at').in('id', [...new Set(rAllocs.map((a) => String(a.receipt_id)))]), c)
+      : Promise.resolve({ data: [], error: null }),
+    nAllocs.length > 0
+      ? scopeToCompany(sb.from('acc_credit_notes').select('id, note_number, note_date, status, kind, reason').in('id', [...new Set(nAllocs.map((a) => String(a.note_id)))]), c)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (receiptRows.error) return c.json({ error: 'load_failed', reason: receiptRows.error.message }, 500);
+  if (noteRows.error) return c.json({ error: 'load_failed', reason: noteRows.error.message }, 500);
+  const receiptById = new Map(((receiptRows.data ?? []) as Row[]).map((r) => [String(r.id), r]));
+  const noteById = new Map(((noteRows.data ?? []) as Row[]).map((n) => [String(n.id), n]));
+  return c.json({
+    bill: { ...bill, lines: lines.data ?? [] },
+    debtor: debtor.data ?? null,
+    receipts: rAllocs.flatMap((a) => {
+      const r = receiptById.get(String(a.receipt_id));
+      return r ? [{
+        id: String(r.id), number: String(r.receipt_number ?? ''), date: r.receipt_date ?? null, status: String(r.status ?? ''),
+        submittedAt: r.submitted_at ?? null, checkedAt: r.checked_at ?? null, approvedAt: r.approved_at ?? null, amountSen: Number(a.amount_sen ?? 0),
+      }] : [];
+    }),
+    creditNotes: nAllocs.flatMap((a) => {
+      const n = noteById.get(String(a.note_id));
+      return n ? [{
+        id: String(n.id), number: String(n.note_number ?? ''), date: n.note_date ?? null, status: String(n.status ?? ''), reason: n.reason ?? null,
+        amountSen: Number(a.amount_sen ?? 0), appliedSen: Number(a.applied_sen ?? 0),
+      }] : [];
+    }),
+  });
 };
 
 /* ── Router ───────────────────────────────────────────────────────────────── */

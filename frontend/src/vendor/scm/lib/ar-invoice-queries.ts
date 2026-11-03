@@ -52,7 +52,13 @@ export const useArInvoices = (kind: ArListKind = 'ALL', docKind?: 'INV' | 'DN') 
 
 /** A debtor bill with its lines and its debtor (the registry row the printed
     invoice's BILL TO reads) — the pop-out over the list. */
-export type ArBillDetail = { bill: DebtorBill; debtor: OtherDebtor | null };
+export type ArBillDetail = {
+  bill: DebtorBill; debtor: OtherDebtor | null;
+  /** The debtor receipts that knock it off, with their stage marks and the amount on this bill (batch 5 §8.3 c8). */
+  receipts?: Array<{ id: string; number: string; date: string | null; status: string; submittedAt: string | null; checkedAt: string | null; approvedAt: string | null; amountSen: number }>;
+  /** The other-debtor credit notes allocated to it (c8). */
+  creditNotes?: Array<{ id: string; number: string; date: string | null; status: string; reason: string | null; amountSen: number; appliedSen: number }>;
+};
 
 export const useArBillDetail = (id: string | null) => useQuery({
   queryKey: ['ar-bill', id],

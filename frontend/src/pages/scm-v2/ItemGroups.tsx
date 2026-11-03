@@ -1,26 +1,35 @@
 // ----------------------------------------------------------------------------
 // Item Groups tab — the product-group ↔ ledger-account registry the posting
-// rules read (GL redesign item 1, owner 2026-09-05).
+// rules read (GL redesign item 1, owner 2026-09-05), in the owner's Claude
+// Design redesign (Finance-1a-Setup, batch 6 §6.2).
 //
 // One row per group × four account slots, for the ACTIVE company. A group the
 // company has not bound yet shows the SUGGESTED defaults pre-filled and marked
-// 建议 — nothing is written until the owner presses Save: 他要求"绑定表先给我
-// 过目,我改完确认才生效", and this screen IS that sign-off, row by row.
+// "Suggested · not saved" — nothing is written until the owner presses Save:
+// 他要求"绑定表先给我过目,我改完确认才生效", and this screen IS that sign-off,
+// row by row.
 //
 // New groups are born HERE and born BOUND (create refuses without all four
 // accounts) — the server extends the category enums in the same breath, so a
-// group created here is immediately pickable on a product.
+// group created here is immediately pickable on a product. Turn off / Turn on
+// (hide from new products, the bindings stay) sit in the row's ⋯ and its
+// right-click menu.
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
+import { ChevronRight, MoreHorizontal, Plus } from 'lucide-react';
 import { getActiveCompanyId } from '../../lib/activeCompany';
+import { useToastOptional } from '../../hooks/useToast';
 import { PiBackfillCard } from './PiBackfill';
 import { SearchCombo, type ComboOption } from '../../vendor/scm/components/SearchCombo';
 import { useAccounts } from '../../vendor/scm/lib/accounting-queries';
 import {
   useItemGroups, useCreateItemGroup, useBindItemGroup, usePatchItemGroup,
-  type ItemGroupBinding,
+  type ItemGroup, type ItemGroupBinding,
 } from './accounting-phase1-queries';
+import { Field, PopMenu, SetupModal, Skeleton, Tag, type MenuItem, type Tone } from './finance/SetupParts';
+import sp from './finance/SetupParts.module.css';
+import css from './ItemGroups.module.css';
 
 /* Each slot names the side of the ledger it may bind to — the purchase slots
    take EXPENSE accounts, the sales slots INCOME. The picker filters on this,
@@ -28,8 +37,8 @@ import {
 const SLOTS: Array<{ key: keyof ItemGroupBinding; label: string; wants: 'EXPENSE' | 'INCOME' }> = [
   { key: 'purchase', label: 'Purchase', wants: 'EXPENSE' },
   { key: 'sales', label: 'Sales', wants: 'INCOME' },
-  { key: 'salesReturn', label: 'Sales Return', wants: 'INCOME' },
-  { key: 'purchaseReturn', label: 'Purchase Return', wants: 'EXPENSE' },
+  { key: 'salesReturn', label: 'Sales return', wants: 'INCOME' },
+  { key: 'purchaseReturn', label: 'Purchase return', wants: 'EXPENSE' },
 ];
 
 /* The picker's section headers are the CHART's sections (owner 2026-09-05:
@@ -63,30 +72,22 @@ const EMPTY: ItemGroupBinding = { purchase: '', sales: '', salesReturn: '', purc
    whole subject matter. */
 const pick = <T,>(rec: Record<string, T>, key: string): T | undefined => rec[key];
 
-const cardStyle: React.CSSProperties = {
-  padding: 'var(--space-4)',
-  background: 'var(--c-cream)',
-  border: '1px solid var(--c-line, rgba(34,31,32,0.12))',
-  borderRadius: 'var(--radius-md)',
-};
-const btnStyle = (primary?: boolean, disabled?: boolean): React.CSSProperties => ({
-  padding: '5px 12px',
-  border: '1px solid var(--c-line, rgba(34,31,32,0.2))',
-  borderRadius: 'var(--radius-sm, 6px)',
-  background: primary ? 'var(--c-ink)' : 'transparent',
-  color: primary ? 'var(--c-cream)' : 'var(--c-ink)',
-  fontSize: 'var(--fs-13)',
-  cursor: disabled ? 'not-allowed' : 'pointer',
-  opacity: disabled ? 0.5 : 1,
-});
-const fieldStyle: React.CSSProperties = {
-  padding: '5px 8px',
-  border: '1px solid var(--c-line, rgba(34,31,32,0.2))',
-  borderRadius: 'var(--radius-sm, 6px)',
-  fontSize: 'var(--fs-13)',
-  background: 'white',
-};
-const softText: React.CSSProperties = { fontSize: 'var(--fs-13)', color: 'var(--text-soft, #8a8578)' };
+const complete = (b: ItemGroupBinding): boolean => SLOTS.every((s) => b[s.key].trim() !== '');
+const differs = (a: ItemGroupBinding, b: ItemGroupBinding): boolean => SLOTS.some((s) => a[s.key] !== b[s.key]);
+
+/** Where a row stands, in the design's words and tones. */
+type RowState = { label: string; tone: Tone; suggested: boolean; canSave: boolean; canUndo: boolean };
+function rowState(saved: ItemGroupBinding | undefined, own: ItemGroupBinding | undefined, suggestion: ItemGroupBinding | undefined): RowState {
+  const base = saved ?? suggestion ?? EMPTY;
+  const cur = own ?? base;
+  const changed = own !== undefined && differs(own, base);
+  const canSave = complete(cur) && (saved === undefined || differs(cur, saved));
+  const out = (label: string, tone: Tone, suggested = false): RowState => ({ label, tone, suggested, canSave, canUndo: changed });
+  if (saved) return differs(cur, saved) ? out('Changed · not saved', 'warn') : out('Bound', 'info');
+  if (!complete(cur)) return out('Unbound', 'late');
+  if (changed || !suggestion) return out('Changed · not saved', 'warn');
+  return out('Suggested · not saved', 'warn', true);
+}
 
 export const ItemGroupsTab = () => {
   const groupsQ = useItemGroups();
@@ -94,6 +95,7 @@ export const ItemGroupsTab = () => {
   const create = useCreateItemGroup();
   const bind = useBindItemGroup();
   const patchGroup = usePatchItemGroup();
+  const toast = useToastOptional();
 
   const companies = groupsQ.data?.companies ?? [];
   const activeCo = getActiveCompanyId() ?? companies.at(0)?.id ?? null;
@@ -124,104 +126,125 @@ export const ItemGroupsTab = () => {
      SUGGESTED defaults (marked as such) — the sign-off flow. */
   const [drafts, setDrafts] = useState<Record<string, ItemGroupBinding>>({});
   const [showNew, setShowNew] = useState(false);
+  const [menu, setMenu] = useState<{ group: ItemGroup; x: number; y: number } | null>(null);
 
-  if (groupsQ.isLoading) return <div style={softText}>Loading…</div>;
-  if (groupsQ.isError || !groupsQ.data) return <div style={softText}>Item groups did not load. Refresh to retry.</div>;
-  if (activeCo == null) return <div style={softText}>No company grants resolve for this session.</div>;
+  /* The design's header line: what the page is, and New group at the right
+     (the Accounting page above owns the title). */
+  const lead = (withNew: boolean) => (
+    <div className={css.lead}>
+      <span className={css.leadSub}>Each product group’s ledger accounts · nothing is written until a row is saved</span>
+      <span className={sp.grow} />
+      {withNew && (
+        <button type="button" className={sp.btnSolid} onClick={() => setShowNew(true)}>
+          <Plus size={14} /> New group
+        </button>
+      )}
+    </div>
+  );
+
+  if (groupsQ.isLoading) return <div className={sp.page}>{lead(false)}<section className={sp.card}><Skeleton rows={8} label="Loading the item groups" /></section></div>;
+  if (groupsQ.isError || !groupsQ.data) return <div className={sp.page}>{lead(false)}<div className={sp.problem}>Item groups did not load. Refresh to retry.</div></div>;
+  if (activeCo == null) return <div className={sp.page}><div className={sp.problem}>No company grants resolve for this session.</div></div>;
 
   const rows = groupsQ.data.groups;
+  const coCode = companies.find((co) => co.id === activeCo)?.code ?? String(activeCo);
 
   const draftOf = (code: string, saved: ItemGroupBinding | undefined): ItemGroupBinding =>
     pick(drafts, code) ?? saved ?? pick(SUGGESTED, code) ?? EMPTY;
-
   const setSlot = (code: string, saved: ItemGroupBinding | undefined, key: keyof ItemGroupBinding, value: string) => {
     setDrafts((d) => ({ ...d, [code]: { ...draftOf(code, saved), [key]: value } }));
   };
-
-  const complete = (b: ItemGroupBinding) => SLOTS.every((s) => b[s.key].trim() !== '');
-  const differs = (a: ItemGroupBinding, b: ItemGroupBinding | undefined) =>
-    !b || SLOTS.some((s) => a[s.key] !== b[s.key]);
+  const dropDraft = (code: string) => setDrafts((d) => { const { [code]: _gone, ...rest } = d; return rest; });
+  const save = (g: ItemGroup, accounts: ItemGroupBinding) => bind.mutate(
+    { code: g.code, companyId: activeCo, accounts },
+    { onSuccess: () => { dropDraft(g.code); toast?.success(`${g.name} bound · its sales and purchases post to these accounts from now`); } },
+  );
+  const menuOf = (g: ItemGroup): MenuItem[] => [g.isActive
+    ? { label: 'Turn off', title: 'Hide from new products (bindings stay)', disabled: patchGroup.isPending, onClick: () => patchGroup.mutate({ code: g.code, isActive: false }, { onSuccess: () => toast?.success(`${g.name} turned off · new products no longer offer it`) }) }
+    : { label: 'Turn on', title: 'Offer to new products again', disabled: patchGroup.isPending, onClick: () => patchGroup.mutate({ code: g.code, isActive: true }, { onSuccess: () => toast?.success(`${g.name} turned on · new products offer it again`) }) }];
 
   return (
-    <div className="space-y-3">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
-        <div style={softText}>
-          Binding for company <b>{companies.find((co) => co.id === activeCo)?.code ?? activeCo}</b> — a group must be
-          bound here before its purchases can post. 灰字 = 建议,按 Save 才生效.
-        </div>
-        <button type="button" style={btnStyle(true)} onClick={() => setShowNew(true)}>New group</button>
-      </div>
+    <div className={sp.page}>
+      {lead(true)}
 
-      <div style={{ ...cardStyle, padding: 0, overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-13)' }}>
-          <thead>
-            <tr>
-              <th style={{ textAlign: 'left', padding: '8px 10px' }}>Group</th>
-              {SLOTS.map((s) => <th key={s.key} style={{ textAlign: 'left', padding: '8px 10px', minWidth: 180 }}>{s.label}</th>)}
-              <th style={{ textAlign: 'left', padding: '8px 10px' }}>Status</th>
-              <th style={{ padding: '8px 10px' }} />
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((g) => {
-              const saved = pick(g.bindings, coKey);
-              const draft = draftOf(g.code, saved);
-              const dirty = differs(draft, saved);
-              const suggested = !saved && pick(drafts, g.code) === undefined && pick(SUGGESTED, g.code) !== undefined;
-              return (
-                <tr key={g.code} style={{ borderTop: '1px solid var(--border-weak, #e3e1da)', opacity: g.isActive ? 1 : 0.55 }}>
-                  <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
-                    <b>{g.code}</b>
-                    <div style={softText}>{g.name}{!g.isActive && ' · off'}</div>
-                  </td>
-                  {SLOTS.map((s) => (
-                    <td key={s.key} style={{ padding: '6px 10px' }}>
-                      <SearchCombo
-                        options={optionsByWants[s.wants]}
-                        value={draft[s.key]}
-                        onChange={(v) => setSlot(g.code, saved, s.key, v)}
-                        aria-label={`${g.code} ${s.label} account`}
-                        placeholder="— pick account —"
-                      />
+      <section className={sp.card} aria-label="Item groups">
+        <div className={sp.scroll}>
+          <table className={`${sp.table} ${css.grid}`}>
+            <thead>
+              <tr>
+                <th>Group</th>
+                {SLOTS.map((s) => <th key={s.key}>{s.label}</th>)}
+                <th>Status</th>
+                <th aria-label="actions" />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((g) => {
+                const saved = pick(g.bindings, coKey);
+                const own = pick(drafts, g.code);
+                const st = rowState(saved, own, pick(SUGGESTED, g.code));
+                const draft = draftOf(g.code, saved);
+                const rowClass = [!g.isActive ? css.offRow : '', st.label !== 'Bound' ? css.unsavedRow : ''].filter(Boolean).join(' ');
+                return (
+                  <tr key={g.code} data-group={g.code} className={rowClass || undefined}
+                    onContextMenu={(e) => { e.preventDefault(); setMenu({ group: g, x: e.clientX + 180, y: e.clientY }); }}>
+                    <td className={css.groupCell}>
+                      <span className={css.groupName}>{g.name}</span>
+                      <span className={css.groupCode}>{g.code}{!g.isActive && ' · off for new products'}</span>
                     </td>
-                  ))}
-                  <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
-                    {saved && !dirty && <span style={{ color: 'var(--c-good, #2f5d4f)' }}>bound</span>}
-                    {suggested && <span style={softText}>建议 · unsaved</span>}
-                    {!saved && !suggested && !complete(draft) && <span style={{ color: 'var(--c-danger, #a33)' }}>unbound</span>}
-                    {dirty && !suggested && (saved || complete(draft)) && <span style={softText}>edited · unsaved</span>}
-                  </td>
-                  <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
-                    <button
-                      type="button"
-                      style={btnStyle(true, !complete(draft) || !dirty || bind.isPending)}
-                      disabled={!complete(draft) || !dirty || bind.isPending}
-                      onClick={() => bind.mutate(
-                        { code: g.code, companyId: activeCo, accounts: draft },
-                        { onSuccess: () => setDrafts((d) => { const { [g.code]: _gone, ...rest } = d; return rest; }) },
-                      )}
-                    >
-                      Save
-                    </button>{' '}
-                    <button
-                      type="button"
-                      style={btnStyle(false, patchGroup.isPending)}
-                      disabled={patchGroup.isPending}
-                      title={g.isActive ? 'Hide from new products (bindings stay)' : 'Offer to new products again'}
-                      onClick={() => patchGroup.mutate({ code: g.code, isActive: !g.isActive })}
-                    >
-                      {g.isActive ? 'Turn off' : 'Turn on'}
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+                    {SLOTS.map((s) => {
+                      const v = draft[s.key];
+                      const slotClass = !v.trim() ? css.slotEmpty : st.suggested ? css.slotSuggested : '';
+                      return (
+                        <td key={s.key} className={css.slotCell}>
+                          <SearchCombo
+                            fill
+                            className={`${sp.input} ${sp.compact} ${css.slot} ${slotClass}`}
+                            options={optionsByWants[s.wants]}
+                            value={v}
+                            onChange={(next) => setSlot(g.code, saved, s.key, next)}
+                            aria-label={`${g.code} ${s.label} account`}
+                            placeholder="— pick account —"
+                          />
+                        </td>
+                      );
+                    })}
+                    <td><Tag tone={st.tone} dot={st.tone === 'late'}>{st.label}</Tag></td>
+                    <td className={css.actCell}>
+                      <span className={sp.acts}>
+                        {st.canUndo && (
+                          <button type="button" className={css.undo} onClick={() => dropDraft(g.code)}>Undo</button>
+                        )}
+                        {st.canSave && (
+                          <button type="button" className={`${sp.btnPrimary} ${sp.small} ${css.save}`} disabled={bind.isPending}
+                            onClick={() => save(g, draft)}>
+                            Save <ChevronRight size={12} />
+                          </button>
+                        )}
+                        <button type="button" className={sp.more} aria-label={`More for ${g.code}`} title={g.isActive ? 'Turn off' : 'Turn on'}
+                          onClick={(e) => setMenu({ group: g, x: e.clientX, y: e.clientY })}>
+                          <MoreHorizontal size={14} />
+                        </button>
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+              {rows.length === 0 && (
+                <tr><td colSpan={SLOTS.length + 3} className={sp.empty}>No item group yet — New group opens one.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className={sp.cardFoot}>
+          For {coCode}. Purchase and purchase-return slots take cost and expense accounts; sales slots take income accounts. A
+          group must be bound before its purchases can post. A group not bound yet shows the suggested accounts; nothing is
+          written until you press Save on its row. A new group is born bound and is pickable on a product at once.
+        </div>
+      </section>
 
       {(bind.isError || create.isError || patchGroup.isError) && (
-        <div style={{ fontSize: 'var(--fs-13)', color: 'var(--c-danger, #a33)' }}>
+        <div className={sp.problem}>
           {String(((bind.error ?? create.error ?? patchGroup.error) as { message?: string } | null)?.message ?? 'The change was not saved.')}
         </div>
       )}
@@ -229,13 +252,21 @@ export const ItemGroupsTab = () => {
       {showNew && (
         <NewGroupDialog
           optionsByWants={optionsByWants}
+          taken={rows.map((g) => g.code)}
           pending={create.isPending}
           onClose={() => setShowNew(false)}
-          onCreate={(body) => create.mutate(
+          onCreate={(body, onFail) => create.mutate(
             { ...body, companyId: activeCo },
-            { onSuccess: () => setShowNew(false) },
+            {
+              onSuccess: () => { setShowNew(false); toast?.success(`${body.code} created and bound · pickable on a product now`); },
+              onError: (e) => onFail(e instanceof Error ? e.message : 'The group was not created.'),
+            },
           )}
         />
+      )}
+
+      {menu && (
+        <PopMenu x={menu.x} y={menu.y} label={`${menu.group.code} menu`} items={menuOf(menu.group)} onClose={() => setMenu(null)} />
       )}
 
       {/* Bindings feed the backfill — the historical PIs repost right where
@@ -245,51 +276,57 @@ export const ItemGroupsTab = () => {
   );
 };
 
-/* ── New group — born bound ──────────────────────────────────────────────── */
+/* ── New item group — born bound ─────────────────────────────────────────── */
 const NewGroupDialog = ({
-  optionsByWants, pending, onClose, onCreate,
+  optionsByWants, taken, pending, onClose, onCreate,
 }: {
   optionsByWants: Record<'EXPENSE' | 'INCOME', ComboOption[]>;
+  taken: string[];
   pending: boolean;
   onClose: () => void;
-  onCreate: (body: { code: string; name: string; accounts: ItemGroupBinding }) => void;
+  onCreate: (body: { code: string; name: string; accounts: ItemGroupBinding }, onFail: (why: string) => void) => void;
 }) => {
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
   const [accounts, setAccounts] = useState<ItemGroupBinding>(EMPTY);
-  const codeOk = /^[A-Za-z][A-Za-z0-9_]{1,29}$/.test(code.trim());
-  const ready = codeOk && name.trim() !== '' && SLOTS.every((s) => accounts[s.key].trim() !== '');
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = () => {
+    const upper = code.trim().toUpperCase();
+    if (!/^[A-Za-z][A-Za-z0-9_]{1,29}$/.test(code.trim())) { setError('The code is letters, digits or _, starting with a letter, e.g. CURTAIN.'); return; }
+    if (taken.includes(upper)) { setError(`${upper} already exists.`); return; }
+    if (!name.trim()) { setError('Name the group.'); return; }
+    if (!complete(accounts)) { setError('A new group needs all four accounts.'); return; }
+    setError(null);
+    onCreate({ code: upper, name: name.trim(), accounts }, setError);
+  };
 
   return (
-    <div role="presentation" style={{
-      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.28)', zIndex: 1000,
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-    }}>
-      <div role="dialog" aria-label="New item group" style={{ ...cardStyle, background: 'var(--c-paper, #fff)', width: 'min(440px, 92vw)' }}>
-        <div className="space-y-2">
-          <b>New group</b>
-          <div style={softText}>四个 account 都绑了才能 create — 没绑的 group 不给过账。</div>
-          <input style={{ ...fieldStyle, width: '100%' }} placeholder="Code (e.g. CURTAIN)" value={code}
-            aria-label="Group code" onChange={(e) => setCode(e.target.value)} />
-          <input style={{ ...fieldStyle, width: '100%' }} placeholder="Name" value={name}
-            aria-label="Group name" onChange={(e) => setName(e.target.value)} />
-          {SLOTS.map((s) => (
-            <div key={s.key}>
-              <div style={softText}>{s.label}</div>
-              <SearchCombo options={optionsByWants[s.wants]} value={accounts[s.key]}
-                onChange={(v) => setAccounts((a) => ({ ...a, [s.key]: v }))}
-                aria-label={`New group ${s.label} account`} placeholder="— pick account —" />
-            </div>
-          ))}
-          <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end' }}>
-            <button type="button" style={btnStyle(false)} onClick={onClose}>Cancel</button>
-            <button type="button" style={btnStyle(true, !ready || pending)} disabled={!ready || pending}
-              onClick={() => onCreate({ code: code.trim().toUpperCase(), name: name.trim(), accounts })}>
-              Create
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
+    <SetupModal
+      title="New item group"
+      sub="Born bound: it needs all four accounts, and it is pickable on a product at once."
+      okLabel="Create group"
+      busyLabel="Creating…"
+      busy={pending}
+      error={error}
+      onOk={submit}
+      onCancel={onClose}
+    >
+      <Field label="Code" w="32%">
+        <input className={sp.input} placeholder="CURTAIN" value={code} aria-label="Group code"
+          onChange={(e) => { setCode(e.target.value); setError(null); }} />
+      </Field>
+      <Field label="Name" w="64%">
+        <input className={sp.input} placeholder="Curtain" value={name} aria-label="Group name"
+          onChange={(e) => { setName(e.target.value); setError(null); }} />
+      </Field>
+      {SLOTS.map((s) => (
+        <Field key={s.key} label={s.label}>
+          <SearchCombo fill className={sp.input} options={optionsByWants[s.wants]} value={accounts[s.key]}
+            onChange={(v) => { setAccounts((a) => ({ ...a, [s.key]: v })); setError(null); }}
+            aria-label={`New group ${s.label} account`} placeholder="— pick account —" />
+        </Field>
+      ))}
+    </SetupModal>
   );
 };

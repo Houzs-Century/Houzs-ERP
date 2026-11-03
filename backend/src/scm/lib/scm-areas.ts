@@ -106,6 +106,7 @@ export const SCM_AREA_MOUNTS: ReadonlyArray<readonly [string, string]> = [
   ["/delivery-planning-row-order/*", "scm.transportation.drivers"],
   ["/delivery-residence-rules/*", "scm.transportation.drivers"],
   ["/threepl-companies/*", "scm.transportation.drivers"],
+  ["/saved-locations/*", "scm.transportation.drivers"],
   ["/delivery-zones/*", "scm.transportation.drivers"],
   ["/delivery-rate-cards/*", "scm.transportation.drivers"],
   ["/threepl-do-charges/*", "scm.transportation.drivers"],

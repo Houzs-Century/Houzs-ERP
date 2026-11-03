@@ -14,12 +14,13 @@ vi.mock('./pdf-common', async (importOriginal) => {
   return { ...real, deliverPdf: (...args: unknown[]) => deliver(...args) };
 });
 
-import { apListingTable, generateApListingPdf } from './ap-invoice-listing-pdf';
+import { apListingTable, generateApListingPdf, listingRowOfAp } from './ap-invoice-listing-pdf';
 
-const row = (over: Partial<ApListRow>): ApListRow => ({
+const row = (over: Partial<ApListRow>) => listingRowOfAp({
   kind: 'API', id: 'api-1', invoiceNumber: '2990-API-2609-001', supplierId: 'sup-h', supplierCode: '405-H001',
   supplierName: 'HOUZS VENTURE HOLDING SDN BHD', supplierInvoiceRef: 'HVH-0912', description: 'Rent September',
   invoiceDate: '2026-09-01', dueDate: '2026-09-30', currency: 'MYR', totalSen: 420_000, paidSen: 0, outstandingSen: 420_000, status: 'POSTED',
+  controlRole: 'AP_OTHER',
   ...over,
 });
 
@@ -27,13 +28,14 @@ describe('the listing table', () => {
   test('one cell row per list row, kind spelled out, description printed, money columns totalled', () => {
     const t = apListingTable([
       row({}),
-      row({ kind: 'PI', id: 'pi-1', invoiceNumber: '2990-PI-2607-005', supplierCode: '400-H004', supplierName: 'HOOKKA INDUSTRIES SDN. BHD.', supplierInvoiceRef: null, description: null, totalSen: 300_000, paidSen: 100_000, outstandingSen: 200_000, status: 'PARTIALLY_PAID' }),
+      row({ kind: 'PI', controlRole: 'AP', id: 'pi-1', invoiceNumber: '2990-PI-2607-005', supplierCode: '400-H004', supplierName: 'HOOKKA INDUSTRIES SDN. BHD.', supplierInvoiceRef: null, description: null, totalSen: 300_000, paidSen: 100_000, outstandingSen: 200_000, status: 'PARTIALLY_PAID' }),
     ]);
-    expect(t.head).toEqual(['Kind', 'No.', 'Supplier', 'Ref', 'Date', 'Due', 'Description', 'Total', 'Paid', 'Outstanding', 'Status']);
-    expect(t.body[0]).toEqual(['AP Invoice', '2990-API-2609-001', 'HOUZS VENTURE HOLDING SDN BHD (405-H001)', 'HVH-0912', '2026/09/01', '2026/09/30', 'Rent September', 'RM 4,200.00', 'RM 0.00', 'RM 4,200.00', 'POSTED']);
-    expect(t.body[1]![0]).toBe('Purchase Invoice');
-    expect(t.body[1]![3]).toBe('');
-    expect(t.body[1]![6]).toBe('');
+    expect(t.head).toEqual(['Kind', 'No.', 'Supplier', 'Control', 'Ref', 'Date', 'Due', 'Planned', 'Description', 'Total', 'Paid', 'Outstanding', 'Status']);
+    expect(t.body[0]).toEqual(['AP bill', '2990-API-2609-001', 'HOUZS VENTURE HOLDING SDN BHD (405-H001)', '405', 'HVH-0912', '2026/09/01', '2026/09/30', '—', 'Rent September', 'RM 4,200.00', 'RM 0.00', 'RM 4,200.00', 'POSTED']);
+    expect(t.body[1]![0]).toBe('Purchase invoice');
+    expect(t.body[1]![3]).toBe('400');
+    expect(t.body[1]![4]).toBe('');
+    expect(t.body[1]![8]).toBe('');
     expect(t.totals).toEqual({ count: 2, totalSen: 720_000, paidSen: 100_000, outstandingSen: 620_000 });
   });
 
@@ -45,10 +47,10 @@ describe('the listing table', () => {
 describe('the drawn document', () => {
   test('carries the title and the filter words, and leaves as a preview', async () => {
     deliver.mockClear();
-    await generateApListingPdf([row({})], { kind: 'API', supplierName: 'HOUZS VENTURE HOLDING SDN BHD' });
+    await generateApListingPdf([row({})], { showing: 'AP bills · HOUZS VENTURE HOLDING SDN BHD · Unpaid' });
     expect(deliver).toHaveBeenCalledTimes(1);
     const [doc, filename, action] = deliver.mock.calls[0]! as [{ internal: { pages: unknown[] }; output: (t: string) => string }, string, string];
-    expect(filename).toMatch(/^supplier-invoice-listing-\d{4}-\d{2}-\d{2}\.pdf$/);
+    expect(filename).toMatch(/^supplier-bills-listing-\d{4}-\d{2}-\d{2}\.pdf$/);
     expect(action).toBe('preview');
     const text = doc.output('datauristring');
     expect(text.length).toBeGreaterThan(100);
