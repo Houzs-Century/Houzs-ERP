@@ -34,7 +34,7 @@ import { todayMyt } from '../lib/my-time';
 import { parseStatement, type StatementColumnMap } from '../../acc/settlement-parse';
 import { matchStatement, recordedNotArrived, listOnce, UNTAGGED_LIST, type MatchBucket, type PaymentCandidate } from '../../acc/settlement-match';
 import {
-  loadAcquirer, loadPaymentCandidates, loadSettledKeys, linesAlreadyOnFile, confirmSettlementRow, postStatementCharge,
+  loadAcquirer, loadPaymentCandidates, loadSettledKeys, linesAlreadyOnFile, confirmSettlementRow, confirmSettlementGroup, postStatementCharge,
   postBatchReceipt, loadBatchReceipts, undoBatchReceipt, unconfirmSettlementRow, clearOrphanBatch, findPaymentsForRow,
 } from '../../acc/settlement';
 import { rematchOpenLines } from '../../acc/settlement-rematch';
@@ -81,6 +81,8 @@ type StoredRow = {
   gross_sen: number; fee_sen: number; net_sen: number;
   bucket: string; match_reason: string | null; confirmed_at: string | null;
   posted_je_no: string | null; notes: string | null;
+  /** The lead line this one was matched together with (option B), else null. */
+  matched_with_row_id?: number | null;
 };
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -882,7 +884,7 @@ export const settlementBatchDetail = guard(async (c) => {
   if (!paid.ok) return c.json({ error: 'load_failed', reason: paid.reason }, 500);
 
   const { data: rowsRaw, error: rErr } = await sb.from('acc_settlement_rows')
-    .select('id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, match_reason, confirmed_at, posted_je_no, notes')
+    .select('id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, match_reason, confirmed_at, posted_je_no, notes, matched_with_row_id')
     .eq('batch_id', batchId).order('line_no');
   if (rErr) return c.json({ error: 'load_failed', reason: rErr.message }, 500);
   const stored = (rowsRaw ?? []) as StoredRow[];
@@ -951,16 +953,37 @@ export const settlementBatchDetail = guard(async (c) => {
      `settled.keys` gates the MATCHER, it does not shrink this list. */
   const paymentOf = new Map(candidates.payments.map((p) => [`${p.source}:${p.id}`, p]));
 
+  /* LINES MATCHED TOGETHER (owner 2026-11-03, option B): the payments are
+     linked once, to the group's lead; every line of the group shows them, and
+     names the lines it was matched with. */
+  const leadOf = (r: StoredRow): number => (r.matched_with_row_id == null ? Number(r.id) : Number(r.matched_with_row_id));
+  const groupOf = new Map<number, StoredRow[]>();
+  for (const r of stored) {
+    if (r.matched_with_row_id == null) continue;
+    const lead = stored.find((x) => Number(x.id) === leadOf(r));
+    if (!lead) continue;
+    if (!groupOf.has(Number(lead.id))) groupOf.set(Number(lead.id), [lead]);
+    groupOf.get(Number(lead.id))!.push(r);
+  }
+
   const rows = stored.map((r) => {
     const s = byLine.get(r.line_no);
+    const group = groupOf.get(leadOf(r));
     return {
       ...r,
       txn_date: String(r.txn_date).slice(0, 10),
+      matched_with: group
+        ? {
+          leadRowId: leadOf(r),
+          lines: group.map((g) => ({ rowId: Number(g.id), lineNo: Number(g.line_no), grossSen: Number(g.gross_sen) })),
+          grossSen: group.reduce((t, g) => t + Number(g.gross_sen), 0),
+        }
+        : null,
       /* The linked rows carry a document number and an amount. The operator is
          reading a RECONCILIATION, so the sale itself belongs here too — who it
          was, when it was paid, what code the till recorded (owner: 我希望他是显示
          transaction detail 和 sales order detail, 而不是 document 罢了). */
-      linked: (linksByRow.get(r.id) ?? []).map((l) => {
+      linked: (linksByRow.get(leadOf(r)) ?? []).map((l) => {
         const p = paymentOf.get(`${String(l.payment_source)}:${String(l.payment_id)}`);
         return {
           ...l,
@@ -1069,6 +1092,39 @@ export const settlementConfirmRow = guard(async (c) => {
   if (!r.ok) {
     const status = r.status === 'not_found' ? 404
       : ['amount_mismatch', 'no_payments', 'ignored', 'payment_already_settled', 'payment_not_found', 'not_card_payment'].includes(r.status) ? 409
+      : 500;
+    return c.json({ error: r.status, message: r.reason }, status);
+  }
+  return c.json(r);
+});
+
+/* POST /rows/confirm-together — several lines of one report confirmed against
+   several payments (owner 2026-11-03, option B: the customer swiped twice for
+   two orders, and only the totals agree). `rowIds` are the lines; the sum of
+   `payments` must be the sum of their gross, to the sen. */
+export const settlementConfirmGroup = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const rowIds = Array.isArray(body.rowIds) ? body.rowIds.map(Number).filter((n: number) => Number.isInteger(n)) : [];
+  const payments = Array.isArray(body.payments) ? body.payments : [];
+
+  const r = await confirmSettlementGroup(c.get('supabase'), {
+    companyId: co.companyId,
+    rowIds,
+    userName: (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null,
+    payments: payments.map((p: any) => ({
+      source: p.source === 'SIPAY' ? 'SIPAY' : 'SOPAY',
+      id: String(p.id),
+      docNo: p.docNo == null ? null : String(p.docNo),
+      amountSen: Number(p.amountSen ?? 0),
+    })),
+  });
+  if (!r.ok) {
+    const status = r.status === 'not_found' ? 404
+      : r.status === 'group_too_small' ? 400
+      : ['amount_mismatch', 'no_payments', 'ignored', 'already_confirmed', 'different_reports', 'line_already_matched', 'payment_already_settled', 'payment_not_found', 'not_card_payment'].includes(r.status) ? 409
       : 500;
     return c.json({ error: r.status, message: r.reason }, status);
   }
@@ -1483,7 +1539,7 @@ export const settlementInTransit = guard(async (c) => {
     .eq('company_id', co.companyId).order('id').range(f, t));
   if (mErr) return c.json({ error: 'load_failed', reason: mErr.message }, 500);
   const { data: rowRaw, error: rErr } = await paginateAll<Record<string, any>>((f, t) => sb
-    .from('acc_settlement_rows').select('id, batch_id, confirmed_at, fee_sen')
+    .from('acc_settlement_rows').select('id, batch_id, confirmed_at, fee_sen, matched_with_row_id')
     .eq('company_id', co.companyId).order('id').range(f, t));
   if (rErr) return c.json({ error: 'load_failed', reason: rErr.message }, 500);
   const { data: batchRaw, error: bErr } = await paginateAll<Record<string, any>>((f, t) => sb
@@ -1550,10 +1606,18 @@ export const settlementInTransit = guard(async (c) => {
       into.set(key, (into.get(key) ?? 0) + share);
     });
   };
+  /* Lines matched together (option B) hold their payments on the lead: every
+     confirmed line's fee is spread over its lead's links. */
+  const feeOfLead = new Map<number, number>();
+  for (const r of (rowRaw ?? []) as Array<{ id: number; confirmed_at: string | null; fee_sen: number | null; matched_with_row_id?: number | null }>) {
+    if (!r.confirmed_at) continue;
+    const lead = r.matched_with_row_id == null ? Number(r.id) : Number(r.matched_with_row_id);
+    feeOfLead.set(lead, (feeOfLead.get(lead) ?? 0) + Number(r.fee_sen ?? 0));
+  }
   for (const [rowId, list] of byRow) {
     /* Only a CONFIRMED line's fee has actually left the account. */
     const row = rowInfo.get(rowId);
-    if (row?.confirmed === true) spread(row.feeSen, list, outOfTransit);
+    if (row?.confirmed === true) spread(feeOfLead.get(rowId) ?? row.feeSen, list, outOfTransit);
   }
 
   /* Two more things that have left in-transit without belonging to any single

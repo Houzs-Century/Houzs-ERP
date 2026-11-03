@@ -62,6 +62,7 @@ const SUGGESTED_ROW: SettlementRow = {
 };
 
 const confirmMutate = vi.fn();
+const confirmGroupMutate = vi.fn();
 const unconfirmMutate = vi.fn();
 const confirmMatchedMutate = vi.fn();
 const confirmMatchedBatch = vi.fn();
@@ -94,6 +95,8 @@ const findResults = [
   { source: 'SOPAY' as const, id: 'f2', docNo: '2990-SO-2606-013', customerName: 'Tan Ah Kow', paidOn: '2026-06-14', amountSen: 336500, approvalCode: '009577', merchantProvider: null, possible: false, method: 'installment' },
 ];
 const setBatchList = (b: Array<Record<string, unknown>>) => { batchList = b; };
+const REPORT_ROWS: SettlementRow[] = [ROW, MATCHED_ROW, SUGGESTED_ROW, DONE_ROW, LONELY_ROW];
+let reportRows: SettlementRow[] = REPORT_ROWS;
 
 vi.mock('./settlement-queries', () => ({
   useAcquirerSetup: () => ({ data: { acquirers: [MBB, GHL], bankAccounts: [{ account_code: '310-0010', account_name: 'Bank — Maybank Current' }] }, isLoading: false }),
@@ -109,7 +112,7 @@ vi.mock('./settlement-queries', () => ({
       },
       acquirer: { code: 'MBB', hasUniqueRef: true, dateToleranceDays: 3 },
       buckets: { MATCHED: 1, NEEDS_CONFIRM: 1, UNMATCHED: 0, IGNORED: 0 },
-      rows: [ROW, MATCHED_ROW, SUGGESTED_ROW, DONE_ROW, LONELY_ROW],
+      rows: reportRows,
       /* The owner's 3,053 → 3,052, read back as the report opened (docs/bugs/0833). */
       refreshedLinks: [{ settlementRowId: 2, paymentSource: 'SOPAY', paymentId: 'p7', docNo: 'SO-2608-777', fromSen: 305300, toSen: 305200 }],
     },
@@ -120,6 +123,7 @@ vi.mock('./settlement-queries', () => ({
   useUploadPayoutAdvice: () => ({ mutateAsync: vi.fn(), isPending: false }),
   usePayouts: () => ({ data: { payouts: [], chargeAccounts: [], feeAccountByAcquirer: {} }, isLoading: false }),
   useConfirmSettlementRow: () => ({ mutate: confirmMutate, isPending: false, isError: false, error: null }),
+  useConfirmSettlementGroup: () => ({ mutate: confirmGroupMutate, isPending: false, isError: false, error: null }),
   useUnconfirmSettlementRow: () => ({ mutate: unconfirmMutate, isPending: false }),
   useConfirmMatched: () => ({ mutate: confirmMatchedMutate, isPending: false, data: null }),
   confirmMatchedBatch: (id: number) => confirmMatchedBatch(id),
@@ -672,6 +676,82 @@ describe('inside one report', () => {
     open();
     openTab('To choose');
     expect(screen.getAllByText(/just moves a line out of the working list/)).toHaveLength(1);
+  });
+});
+
+/* ── Lines matched TOGETHER (owner 2026-11-03, option B) ──────────────────────
+   GHL 29/10: the customer swiped RM 5,000 and RM 2,085 for two orders of
+   RM 2,990 and RM 4,095. No line equals any payment; the two lines together
+   equal the two payments. */
+describe('several lines of a report matched together', () => {
+  const PAYS = [
+    { source: 'SOPAY' as const, id: 'p55', docNo: '2990-SO-2610-055', paidOn: '2026-10-29', amountSen: 299000, approvalCode: null },
+    { source: 'SOPAY' as const, id: 'p56', docNo: '2990-SO-2610-056', paidOn: '2026-10-29', amountSen: 409500, approvalCode: null },
+  ];
+  const SWIPE_A: SettlementRow = {
+    ...LONELY_ROW, id: 21, line_no: 4, txn_date: '2026-10-29', ref: null, bucket: 'NEEDS_CONFIRM',
+    gross_sen: 500000, fee_sen: 5000, net_sen: 495000, candidates: PAYS, clue: 'No payment or pair of payments makes this amount',
+  };
+  const SWIPE_B: SettlementRow = { ...SWIPE_A, id: 22, line_no: 5, gross_sen: 208500, fee_sen: 2085, net_sen: 206415 };
+  const open = (rows: SettlementRow[]) => { reportRows = rows; draw(); fireEvent.click(screen.getByText('Reconcile')); };
+  const cardOf = (lineNo: number) => screen.getByText(`Line ${lineNo}`, { selector: 'span' }).closest('section') as HTMLElement;
+
+  test('ticking the other line makes the target their sum, and one press confirms both', () => {
+    try {
+      open([SWIPE_A, SWIPE_B]);
+      openTab('To choose');
+      const card = cardOf(4);
+      fireEvent.click(within(card).getByLabelText('Select 2990-SO-2610-055'));
+      fireEvent.click(within(card).getByLabelText('Select 2990-SO-2610-056'));
+      /* Alone, line 4 is RM 2,085.00 short of what was picked. */
+      expect(within(card).getByText(/Selected RM 7,085\.00 of RM 5,000\.00/)).toBeTruthy();
+      expect((within(card).getByText('Confirm and post') as HTMLButtonElement).disabled).toBe(true);
+
+      fireEvent.click(within(card).getByText('Match with other lines'));
+      fireEvent.click(within(card).getByLabelText('Match with line 5'));
+      expect(within(card).getByText(/Selected RM 7,085\.00 of RM 7,085\.00 \(2 lines together\)/)).toBeTruthy();
+      const both = within(card).getByText('Confirm the 2 lines and post') as HTMLButtonElement;
+      expect(both.disabled).toBe(false);
+      fireEvent.click(both);
+      expect(confirmGroupMutate).toHaveBeenCalledWith({
+        rowIds: [21, 22],
+        payments: [
+          expect.objectContaining({ id: 'p55', amountSen: 299000 }),
+          expect.objectContaining({ id: 'p56', amountSen: 409500 }),
+        ],
+      });
+      expect(confirmMutate).not.toHaveBeenCalledWith(expect.objectContaining({ rowId: 21 }));
+    } finally {
+      reportRows = REPORT_ROWS;
+    }
+  });
+
+  test('a line already holding its own payment is not offered to match with', () => {
+    try {
+      open([SWIPE_A, MATCHED_ROW]);
+      openTab('To choose');
+      /* MATCHED_ROW claimed its sale by reference; the only other line has nothing to join. */
+      expect(within(cardOf(4)).queryByText('Match with other lines')).toBeNull();
+    } finally {
+      reportRows = REPORT_ROWS;
+    }
+  });
+
+  test('confirmed together, each line says which line it went with and their total', () => {
+    const group = { leadRowId: 21, lines: [{ rowId: 21, lineNo: 4, grossSen: 500000 }, { rowId: 22, lineNo: 5, grossSen: 208500 }], grossSen: 708500 };
+    const linked = PAYS.map((p) => ({ settlement_row_id: 21, payment_source: p.source, payment_id: p.id, doc_no: p.docNo, amount_sen: p.amountSen }));
+    const done = { bucket: 'MATCHED' as const, confirmed_at: '2026-11-03T05:00:00Z', candidates: [], clue: null, linked, matched_with: group };
+    try {
+      open([{ ...SWIPE_A, ...done, posted_je_no: 'JE-2610-0101' }, { ...SWIPE_B, ...done, posted_je_no: 'JE-2610-0102' }]);
+      openTab('Confirmed');
+      const a = screen.getByText(/done · JE-2610-0101/).closest('tr') as HTMLElement;
+      expect(within(a).getByText(/with line 5 · together RM 7,085\.00/)).toBeTruthy();
+      expect(within(a).getByText('2990-SO-2610-056')).toBeTruthy();
+      const b = screen.getByText(/done · JE-2610-0102/).closest('tr') as HTMLElement;
+      expect(within(b).getByText(/with line 4 · together RM 7,085\.00/)).toBeTruthy();
+    } finally {
+      reportRows = REPORT_ROWS;
+    }
   });
 });
 

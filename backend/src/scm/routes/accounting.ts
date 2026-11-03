@@ -39,7 +39,7 @@ import { resolveJournalRefs } from '../../acc/journal-refs';
 import { ledgerReport } from './accounting-ledger';
 import {
   settlementSetup, settlementSetupSave, settlementUpload, settlementBatches,
-  settlementBatchDetail, settlementConfirmRow, settlementConfirmMatched, settlementRowUnconfirm,
+  settlementBatchDetail, settlementConfirmRow, settlementConfirmGroup, settlementConfirmMatched, settlementRowUnconfirm,
   settlementIgnoreRow, settlementWatchlist, settlementExport, settlementInTransit, settlementFindPayments,
   settlementBatchReceived, settlementReceiptUndo,
   settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank, settlementRematch,
@@ -141,6 +141,8 @@ accounting.post('/settlement/batches/:id/confirm-matched', settlementConfirmMatc
 accounting.post('/settlement/batches/:id/received', settlementBatchReceived);
 accounting.post('/settlement/receipts/:id/undo', settlementReceiptUndo);
 accounting.post('/settlement/rows/:id/confirm', settlementConfirmRow);
+/* Several lines of one report against several payments (owner 2026-11-03, option B). */
+accounting.post('/settlement/rows/confirm-together', settlementConfirmGroup);
 accounting.post('/settlement/rows/:id/unconfirm', settlementRowUnconfirm);
 accounting.post('/settlement/rows/:id/ignore', settlementIgnoreRow);
 /* "Find the sale" — the card payments the window could not offer (docs/bugs/0792). */
