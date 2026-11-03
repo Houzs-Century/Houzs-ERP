@@ -154,6 +154,18 @@ export type InventoryProductTotal = {
   movement_qty?: number;
   ledger_mismatch?: boolean;
   oldest_lot_at: string | null;
+  /* On-hand per warehouse (owned + consignment, held_qty = the consignment
+     part), largest first (HC-0206). Optional for the same cached-payload
+     reason as above. */
+  stock_by_warehouse?: InventoryWarehouseQty[];
+};
+
+export type InventoryWarehouseQty = {
+  warehouse_id: string;
+  code: string;
+  name: string | null;
+  qty: number;
+  held_qty: number;
 };
 
 /* One incoming purchase-order line feeding a SKU's Incoming (≤30-day) figure —
