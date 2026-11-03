@@ -433,6 +433,8 @@ export type BankBalanceSource = {
   fileName: string | null;
   on: string;
   typed?: { month: string; by: string | null; at: string; note: string | null };
+  /** An opening carried from the previous month's printed closing: the month that closed there. */
+  carried?: { month: string };
 };
 
 /** A month-end figure somebody typed off the bank's own statement. */

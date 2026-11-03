@@ -1685,7 +1685,7 @@ describe('a month whose files print no balance, with the closing typed', () => {
     expect(body.assembly.complete).toBe(false);
     expect(body.assembly.gaps.join(' ')).toContain('Type it off the bank');
     expect(body.assembly.gaps.join(' ')).toContain('Type the closing balance of 2026-07');
-    expect(body.balances).toEqual({ closing: null, previousClosing: null });
+    expect(body.balances).toEqual({ closing: null, previousClosing: null, previousPrinted: null });
   });
 
   test('the previous month\'s closing opens the month, its own closes it, and the month is whole when they meet', async () => {
@@ -1720,6 +1720,32 @@ describe('a month whose files print no balance, with the closing typed', () => {
     const months = (await (await app.request('/bank/months')).json() as any).months as any[];
     expect(months.find((m) => m.accountCode === '330-0000' && m.month === '2026-08'))
       .toMatchObject({ complete: true, openingBalanceSen: 1000000, closingBalanceSen: 1000000 + moved, gapCount: 0 });
+  });
+
+  /* Rule 5 (owner 2026-11-03: 「不能9月close了就直接带bank balance过来吗」): the
+     previous month's closing as its own file PRINTED it opens the month — no
+     typing, on the month's page and on the list alike. */
+  test("the previous month's printed closing opens a month whose files print none", async () => {
+    const { app, sb } = harness();
+    await upload(app);
+    const moved = (await august(app)).reconciliation.movementsStatementSen as number;
+    (sb.tables.acc_bank_statements as Row[]).push({
+      id: 9001, company_id: CO, account_code: '330-0000', file_name: 'MBB-july.pdf', period_from: '2026-07-01', period_to: '2026-07-31',
+      line_count: 0, in_sen: 0, out_sen: 0, opening_balance_sen: 990000, closing_balance_sen: 1000000, status: 'OPEN',
+      uploaded_by: 'Tester', created_at: '2026-08-01T00:00:00Z',
+    });
+    expect((await typed(app, '2026-08', { closingSen: 1000000 + moved })).status).toBe(200);
+
+    const body = await august(app);
+    expect(body.assembly.statementOpeningSen).toBe(1000000);
+    expect(body.assembly.openingFrom).toMatchObject({ statementId: 9001, fileName: 'MBB-july.pdf', on: '2026-07-31', carried: { month: '2026-07' } });
+    expect(body.assembly.gaps).toEqual([]);
+    expect(body.assembly.complete).toBe(true);
+    expect(body.balances.previousPrinted).toMatchObject({ month: '2026-07', closingSen: 1000000, statementId: 9001 });
+
+    const months = (await (await app.request('/bank/months')).json() as any).months as any[];
+    expect(months.find((m) => m.accountCode === '330-0000' && m.month === '2026-08'))
+      .toMatchObject({ complete: true, openingBalanceSen: 1000000, gapCount: 0 });
   });
 
   test('a typed closing the movements do not reach leaves the month not whole, naming the shortfall', async () => {
