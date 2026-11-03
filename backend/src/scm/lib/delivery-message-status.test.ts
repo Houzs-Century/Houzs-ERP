@@ -57,6 +57,21 @@ describe('markSentStatus', () => {
     expect(advance).not.toHaveBeenCalled();
   });
 
+  /* HC-0205: 2990-SO-2608-036, sent 18:48:24 MYT 2026-11-02; the customer's
+     Confirm moved it to Done Scheduling at 18:48:40, and the end-of-blast write
+     at 18:49:42 put it back to Done Send. */
+  test('a status that changed while the send ran is kept', async () => {
+    const atSend = new Map([['2990-SO-2608-036', 'To Send Delivery Date'], ['HC-SO-010484', 'To Send Delivery Date']]);
+    advance.mockResolvedValue({ applied: true, version: 7, previous: {} });
+    const out = await markSentStatus(
+      ctx([row('2990-SO-2608-036', 'Done Scheduling'), row('HC-SO-010484', 'To Send Delivery Date')]),
+      ['2990-SO-2608-036', 'HC-SO-010484'], 'Done Send', 'New Delivery Follow-up', atSend,
+    );
+    expect(out).toEqual([]);
+    expect(advance).toHaveBeenCalledTimes(1);
+    expect(advance).toHaveBeenCalledWith(expect.anything(), 'HC-SO-010484', { delivery_message_status: 'Done Send' });
+  });
+
   test('a failed read names every order instead of claiming success', async () => {
     const out = await markSentStatus(ctx(null, { message: 'boom' }), ['A', 'B'], 'Done Send', 'New Delivery Follow-up');
     expect(out).toEqual([{ docNo: 'A', reason: 'read_failed' }, { docNo: 'B', reason: 'read_failed' }]);

@@ -91,6 +91,8 @@ export interface SendDeliveryMessagesResult {
   failed: Array<{ phone: string; docNos: string[]; error: string }>;
   skipped: Array<{ docNo: string; reason: string }>;
   readError?: { code: string; reason: string };
+  /** Each order's Delivery Message Status as read before the send (HC-0205). */
+  statusAtSend?: Map<string, string | null>;
 }
 
 /* The shared sender — group the docs by customer phone AND company, load the
@@ -278,7 +280,8 @@ export async function sendDeliveryMessageForDocs(
     else failed.push({ phone, docNos: groupDocs, error: result.error ?? 'send failed' });
   }
 
-  return { sent, failed, skipped };
+  const statusAtSend = new Map(rows.map((r) => [String(r.doc_no), (r.delivery_message_status as string | null) ?? null]));
+  return { sent, failed, skipped, statusAtSend };
 }
 
 /* The result of a contact-info sync — one Connect upsert per (phone, company),
@@ -459,7 +462,7 @@ deliveryMessages.post('/send', async (c) => {
   if (result.readError) return c.json({ error: result.readError.code, reason: result.readError.reason }, 500);
   // The messages have left; a status that cannot move is reported, never a 500.
   const statusNotMoved = await markSentStatus(
-    c, result.sent.flatMap((s) => s.docNos), KIND_AFTER_STATUS[kind], KIND_AUTOMATION[kind],
+    c, result.sent.flatMap((s) => s.docNos), KIND_AFTER_STATUS[kind], KIND_AUTOMATION[kind], result.statusAtSend,
   );
   return c.json({ sent: result.sent, failed: result.failed, skipped: result.skipped, statusNotMoved });
 });
