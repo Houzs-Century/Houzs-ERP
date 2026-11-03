@@ -20,7 +20,7 @@ import { getSupabaseService } from '../../db/supabase';
 import { activeCompanyId } from '../lib/companyScope';
 import { resolveCallerStaffId } from '../lib/salesScope';
 import { companyCodeById } from '../lib/doc-no';
-import { IMAGE_MIMES, MAX_FILE_BYTES } from '../lib/scan-ocr';
+import { IMAGE_MIMES, MAX_FILE_BYTES, sha256Hex } from '../lib/scan-ocr';
 import { askBoundaries, cutPdf, pdfPageCount, planChunks } from '../lib/scan-split';
 import { createDraftGrnFromPoItems } from '../lib/grn-from-po-core';
 import { loadOpenPoLines, loadSuppliers } from '../lib/grn-scan-load';
@@ -85,9 +85,18 @@ scanGrCheck.post('/upload', async (c) => {
   }
 
   const ids: string[] = [];
+  let reused = 0;
   for (const d of docs) {
+    /* The same file read before in this company: take that read (as first
+       matched, before any edit) instead of paying for another, like Hookka's
+       file-hash cache. The operator still checks it. */
+    const fileHash = await sha256Hex(d.bytes);
+    const { data: prior } = await svc.from('scan_jobs').select('review, error').eq('company_id', companyId).eq('document_type', 'GR')
+      .eq('file_hash', fileHash).not('review', 'is', null).order('created_at', { ascending: false }).limit(1).maybeSingle();
+    const seen = prior as { review: unknown; error: string | null } | null;
     const { data, error } = await svc.from('scan_jobs').insert({
-      status: 'queued', document_type: 'GR', review_state: 'reading', batch_id: batchId,
+      status: seen ? 'done' : 'queued', document_type: 'GR', review_state: seen ? 'pending' : 'reading', batch_id: batchId,
+      review: seen?.review ?? null, error: seen ? seen.error : null, file_hash: fileHash,
       file_name: d.name, page_from: d.pages?.[0] ?? null, page_to: d.pages?.[1] ?? null,
       salesperson: null, salesperson_id: uploaderStaffId, houzs_user_id: houzsUserId, image_keys: [], company_id: companyId,
     }).select('id').single();
@@ -98,7 +107,7 @@ scanGrCheck.post('/upload', async (c) => {
       await c.env.SO_ITEM_PHOTOS.put(key, d.bytes, { httpMetadata: { contentType: d.mime } });
       await svc.from('scan_jobs').update({ image_keys: [key] }).eq('id', id).eq('company_id', companyId);
     } catch (e) { console.warn('[scan-gr check] R2 put failed:', key, (e as Error).message); }
-    ids.push(id);
+    if (seen) reused += 1; else ids.push(id);
   }
   for (const id of ids) {
     if (c.env.SCAN_QUEUE) {
@@ -111,7 +120,7 @@ scanGrCheck.post('/upload', async (c) => {
       try { c.executionCtx.waitUntil(run); } catch { /* non-Workers runtime (tests) */ }
     }
   }
-  return c.json({ success: true, data: { batchId, documents: ids.length } }, 202);
+  return c.json({ success: true, data: { batchId, documents: ids.length + reused, reused } }, 202);
 });
 
 /* GET /scan-gr/check/pending — this user's documents still being read or
@@ -240,6 +249,18 @@ scanGrCheck.post('/discard', async (c) => {
     .eq('company_id', activeCompanyId(c)).in('id', ids);
   if (error) return c.json({ error: 'discard_failed', reason: 'Could not delete. Please try again.' }, 500);
   return c.json({ success: true, data: { discarded: ids.length } });
+});
+
+/* POST /scan-gr/check/:id/retry — read a document that failed once more. */
+scanGrCheck.post('/:id/retry', async (c) => {
+  const svc = svcOf(c.env);
+  const row = (await ownRows(svc, c, [c.req.param('id')]))[0] as CheckRow | undefined;
+  if (!row || row.status !== 'error') return c.json({ error: 'not_retryable', reason: 'Only a scan that could not be read can be read again.' }, 409);
+  const { error } = await svc.from('scan_jobs').update({ status: 'queued', retry_count: 0, error: null, review_state: 'reading', updated_at: new Date().toISOString() })
+    .eq('id', row.id).eq('company_id', activeCompanyId(c)).eq('status', 'error');
+  if (error) return c.json({ error: 'retry_failed', reason: 'Could not start the scan again. Please try again.' }, 500);
+  if (c.env.SCAN_QUEUE) await c.env.SCAN_QUEUE.send({ jobId: row.id });
+  return c.json({ success: true });
 });
 
 /* GET /scan-gr/check/:id/file — the document as uploaded (or its pages), for the preview. */

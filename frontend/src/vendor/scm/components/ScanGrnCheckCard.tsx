@@ -21,11 +21,12 @@ type Props = {
   onToggle: () => void;
   onChange: (review: GrnReview) => void;
   onDelete: () => void;
+  onRetry: () => void;
 };
 
 const label = (l: CheckPoLine) => `${l.poNumber} · ${l.itemCode}${l.name ? ` · ${l.name}` : ''} · owed ${l.remaining}${l.warehouse ? ` · ${l.warehouse}` : ''}`;
 
-export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, block, onToggle, onChange, onDelete }: Props) {
+export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, block, onToggle, onChange, onDelete, onRetry }: Props) {
   const [open, setOpen] = useState(false);
   const supplier = suppliers.find((s) => s.id === review?.supplierId);
   const mine = poLines.filter((l) => l.supplierId === review?.supplierId);
@@ -49,6 +50,7 @@ export function ScanGrnCheckCard({ doc, review, suppliers, poLines, checked, blo
         <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.fileName ?? 'Document'}{pages}</span>
         <span className={`${styles.chip} ${doc.state === 'reading' ? styles.chipYellow : styles.chipGrey}`}>{doc.state === 'reading' ? 'Reading…' : 'Could not read'}</span>
         {doc.state === 'failed' && doc.note && <span className={styles.resultSub} style={{ maxWidth: 360 }}>{doc.note}</span>}
+        {doc.state === 'failed' && <button type="button" className={styles.docLink} onClick={onRetry}>Read again</button>}
         <button type="button" className={styles.removeBtn} onClick={onDelete} aria-label="Delete this scan"><X size={14} /></button>
       </div>
     );

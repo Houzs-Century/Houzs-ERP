@@ -11,7 +11,7 @@ const poLines = [{ poItemId: 'pi-1', poNumber: 'HC-PO-1', supplierId: 's1', item
 describe('ScanGrnCheckCard', () => {
   it('opens to the rows; picking the PO line and adding a row reach the parent', () => {
     const onChange = vi.fn();
-    render(<ScanGrnCheckCard doc={doc} review={review} suppliers={[{ id: 's1', code: 'DG', name: 'DIGLANT' }]} poLines={poLines} checked block={null} onToggle={() => {}} onChange={onChange} onDelete={() => {}} />);
+    render(<ScanGrnCheckCard doc={doc} review={review} suppliers={[{ id: 's1', code: 'DG', name: 'DIGLANT' }]} poLines={poLines} checked block={null} onToggle={() => {}} onChange={onChange} onDelete={() => {}} onRetry={() => {}} />);
     fireEvent.click(screen.getByLabelText('Open to edit'));
     expect(screen.getByText(/T1MA · Mattress · qty 2/)).toBeTruthy();
     fireEvent.change(screen.getByLabelText('PO line for row 1'), { target: { value: 'pi-1' } });
