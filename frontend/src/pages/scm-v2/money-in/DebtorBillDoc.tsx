@@ -12,13 +12,12 @@ import { useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  postableAccounts, useAccounts, useCancelDebtorBill, useCreateDebtorBill, useOtherDebtors, useUpdateDebtorBill,
-  type DebtorBill, type DebtorBillLine,
+  postableAccounts, useAccountRoles, useAccounts, useCancelDebtorBill, useCreateDebtorBill, useOtherDebtors, useUpdateDebtorBill,
+  type DebtorBillLine,
 } from '../../../vendor/scm/lib/accounting-queries';
 import { useArBillDetail, type ArBillDetail } from '../../../vendor/scm/lib/ar-invoice-queries';
 import { generateDebtorBillPdf } from '../../../vendor/scm/lib/debtor-bill-pdf';
 import { partyAddressLines } from '../../../vendor/scm/lib/debtor-party';
-import { SearchCombo } from '../../../vendor/scm/components/SearchCombo';
 import { fmtDate, fmtSen } from '../../../vendor/shared/format';
 import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
 import { useToastOptional } from '../../../hooks/useToast';
@@ -26,8 +25,8 @@ import { DataTable, type Column } from '../../../components/DataTable';
 import { AccountCell } from '../JournalEntryCards';
 import { FinanceDocLink } from '../finance/FinanceDocLink';
 import { pvStage } from '../PvDocParts';
-import { DebtorBillForm, type BillFormSubmit, type BillFormValues } from '../DebtorBillForm';
-import formStyles from '../SalesOrderDetail.module.css';
+import { DebtorBillForm, type BillFormSubmit } from '../DebtorBillForm';
+import { billValuesOf } from './BillFormPage';
 import { AskBanner, type Ask } from './AskBanner';
 import {
   DocBooks, DocFormShell, DocSection, DocState, MoneyInDocPage, byTime, journalTrail,
@@ -40,15 +39,7 @@ import { moneyInDocHref, moneyInListOf } from './moneyInDocs';
 import s from './MoneyInDoc.module.css';
 
 const errText = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'Something went wrong.');
-const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
-
-/** The form's values from a bill: an edit keeps everything, a copy keeps the
- *  description and lines and starts afresh — today's date, a new number on post. */
-const fromBill = (b: DebtorBill, copy: boolean): BillFormValues => ({
-  billDate: copy ? myt() : b.bill_date,
-  notes: b.notes ?? '',
-  lines: (b.lines ?? []).map((l, i) => ({ rid: i + 1, description: l.description ?? '', creditAccountCode: l.credit_account_code ?? '', amountSen: l.amount_sen, projectId: l.project_id ?? null })),
-});
+const fromBill = billValuesOf;
 
 type BillReceipt = NonNullable<ArBillDetail['receipts']>[number];
 type BillNote = NonNullable<ArBillDetail['creditNotes']>[number];
@@ -97,7 +88,7 @@ export const DebtorBillDoc = () => {
   const [asking, setAsking] = useState(false);
   const [askError, setAskError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
-  const [copyDebtor, setCopyDebtor] = useState<string | null>(null);
+  const rolesQ = useAccountRoles();
 
   /* A line credits an ordinary leaf (postableAccounts, docs/bugs/0693); names
      come off the whole chart so a since-inactive account still reads. */
@@ -106,9 +97,10 @@ export const DebtorBillDoc = () => {
     const names = new Map((accountsQ.data?.accounts ?? []).map((a) => [a.account_code, a.account_name]));
     return (code: string): string | null => names.get(code) ?? null;
   }, [accountsQ.data]);
+  const billDebtor = q.data?.debtor?.id ?? null;
   const debtorOptions = useMemo(
-    () => (debtorsQ.data?.debtors ?? []).filter((x) => x.is_active).map((x) => ({ value: x.id, label: x.name })),
-    [debtorsQ.data],
+    () => (debtorsQ.data?.debtors ?? []).filter((x) => x.is_active || x.id === billDebtor).map((x) => ({ id: x.id, name: x.name })),
+    [debtorsQ.data, billDebtor],
   );
 
   if (!d) return <DocState kind="debtorBill" loading={q.isLoading} error={q.error} />;
@@ -127,7 +119,7 @@ export const DebtorBillDoc = () => {
   };
   const refreshJournal = () => { void qc.invalidateQueries({ queryKey: ['journal-entries'] }); };
 
-  const submit = async (values: BillFormSubmit) => {
+  const submit = async (values: BillFormSubmit, who: string) => {
     setFormError(null);
     try {
       if (form === 'edit') {
@@ -137,9 +129,8 @@ export const DebtorBillDoc = () => {
         toast?.success(`${res.bill.billNumber} saved and re-posted`);
         return;
       }
-      const debtorId = copyDebtor ?? debtor?.id ?? '';
-      if (!debtorId) { setFormError('Pick the debtor.'); return; }
-      const res = await createBill.mutateAsync({ debtorId, ...values, ...(isDn ? { docKind: 'DN' as const } : {}) });
+      if (!who) { setFormError('Pick the debtor.'); return; }
+      const res = await createBill.mutateAsync({ debtorId: who, ...values, ...(isDn ? { docKind: 'DN' as const } : {}) });
       toast?.success(`${res.bill.billNumber} posted · ${fmtSen(res.bill.totalSen)}`);
       navigate(res.bill.id ? moneyInDocHref('debtorBill', res.bill.id) : moneyInListOf('debtorBill').href);
     } catch (e) {
@@ -147,27 +138,26 @@ export const DebtorBillDoc = () => {
     }
   };
 
+  /* The bill form in place of the page (Invoices' own form): an edit keeps the debtor, a copy may bill another. */
+  const formProps = {
+    accounts: lineAccounts, accountName, debtors: debtorOptions, debtorId: debtor?.id ?? '',
+    controlCode: rolesQ.data?.roles.AR_OTHER ?? '305-0000', onSubmit: submit, onCancel: () => setForm(null),
+  };
   if (form === 'edit' && canWrite && !cancelled) {
     return (
-      <DocFormShell title={`Edit ${bill.bill_number}`} backLabel={bill.bill_number} onBack={() => setForm(null)}>
-        {formError && <div role="alert" className={`${s.note} ${s.toneLate}`} style={{ marginBottom: 12 }}>{formError}</div>}
-        <div className={s.note} style={{ marginBottom: 12 }}>{debtor?.name ?? '—'} · the debtor stays: a bill belongs to its debtor.</div>
-        <DebtorBillForm key={`edit-${bill.id}`} mode="edit" initial={fromBill(bill, false)} accounts={lineAccounts} receivedSen={received}
-          saving={updateBill.isPending} onSubmit={submit} onCancel={() => setForm(null)} />
+      <DocFormShell title={`Edit ${bill.bill_number}`} backLabel={bill.bill_number} onBack={() => setForm(null)} bare>
+        {formError && <div role="alert" className={`${s.note} ${s.toneLate}`}>{formError}</div>}
+        <DebtorBillForm key={`edit-${bill.id}`} mode="edit" initial={fromBill(bill, false)} receivedSen={received}
+          saving={updateBill.isPending} {...formProps} />
       </DocFormShell>
     );
   }
   if (form === 'copy' && canCreate) {
     return (
-      <DocFormShell title={`New ${paper.toLowerCase()} · copy of ${bill.bill_number}`} backLabel={bill.bill_number} onBack={() => setForm(null)}>
-        {formError && <div role="alert" className={`${s.note} ${s.toneLate}`} style={{ marginBottom: 12 }}>{formError}</div>}
-        <label className={s.formField}>
-          Debtor
-          <SearchCombo options={debtorOptions} value={copyDebtor ?? debtor?.id ?? ''} onChange={setCopyDebtor}
-            className={formStyles.fieldInput} aria-label="Bill debtor" placeholder="— Pick the debtor —" />
-        </label>
-        <DebtorBillForm key={`copy-${bill.id}`} mode="copy" initial={fromBill(bill, true)} accounts={lineAccounts}
-          saving={createBill.isPending} onSubmit={submit} onCancel={() => setForm(null)} />
+      <DocFormShell title={`New ${paper.toLowerCase()} · copy of ${bill.bill_number}`} backLabel={bill.bill_number} onBack={() => setForm(null)} bare>
+        {formError && <div role="alert" className={`${s.note} ${s.toneLate}`}>{formError}</div>}
+        <DebtorBillForm key={`copy-${bill.id}`} mode="copy" initial={fromBill(bill, true)}
+          saving={createBill.isPending} {...formProps} />
       </DocFormShell>
     );
   }

@@ -150,7 +150,7 @@ describe('an other debtor, as a page', () => {
     expect(screen.getByText(/Bills and receipts post to the 305-0000 Other Debtors control/)).toBeTruthy();
     const bills = screen.getByRole('region', { name: 'Bills' });
     expect(within(bills).getByText('HC-ODB-2609-002').closest('a')!.getAttribute('href')).toBe('/scm/ar-invoices/bills/b2');
-    expect(within(bills).getByText('Open bills in AR invoices').closest('a')!.getAttribute('href')).toBe('/scm/ar-invoices?debtor=d1');
+    expect(within(bills).getByText('Open bills in Invoices').closest('a')!.getAttribute('href')).toBe('/scm/ar-invoices?debtor=d1');
     const receipts = screen.getByRole('region', { name: 'Receipts' });
     expect(within(receipts).getByText('HC-ODR-2610-001').closest('a')!.getAttribute('href')).toBe('/scm/receipts/debtor/r1');
     expect(within(receipts).getByText('HC-ODB-2609-001, HC-ODB-2609-002')).toBeTruthy();

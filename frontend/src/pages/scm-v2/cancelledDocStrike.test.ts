@@ -35,7 +35,6 @@ const DOCUMENT_LISTS = [
   "pages/scm-v2/StockTransfersListV2.tsx",
   "pages/scm-v2/PaymentVouchers.tsx",
   "pages/scm-v2/CreditNotes.tsx",
-  "pages/scm-v2/DepositInvoices.tsx",
   "pages/scm-v2/ApInvoices.tsx",
   "pages/scm-v2/ArInvoices.tsx",
   "pages/scm-v2/Receipts.tsx",
