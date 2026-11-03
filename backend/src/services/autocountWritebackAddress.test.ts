@@ -211,4 +211,13 @@ describe('a street that runs on into lines 3 and 4 keeps the town', () => {
   test('without a stored postcode lines 3 and 4 keep their old meaning', () => {
     expect(soStreetTail({ ...SPILLED, postcode: null })).toEqual([]);
   });
+
+  /* AutoCount-era rows keep their own text there (tests/deliverySheetSync.test.ts). */
+  test('a hand-typed state, a foreign postcode or a non-Malaysian order is not street', () => {
+    expect(soStreetTail({ ...SPILLED, address3: null, address4: 'P.PINANG' })).toEqual([]);
+    expect(soStreetTail({ ...SPILLED, address3: 'KL' })).toEqual([]);
+    expect(soStreetTail({ ...SPILLED, address3: 'SINGAPORE 123456' })).toEqual([]);
+    expect(soStreetTail({ ...SPILLED, customer_state: 'West' })).toEqual([]);
+    expect(soStreetTail({ ...SPILLED, customer_state: null })).toEqual([]);
+  });
 });

@@ -26,6 +26,10 @@ describe('a street that runs on into lines 3 and 4 prints', () => {
     })).toEqual([]);
   });
 
+  test("a hand-typed spelling of the order's own state is not street", () => {
+    expect(soStreetTail({ ...SPILLED, address3: null, address4: 'Penang', customer_state: 'Pulau Pinang' })).toEqual([]);
+  });
+
   test('a legacy row with no postcode keeps address3 as the city', () => {
     expect(orderAddressLines({ address1: 'No 1', address3: 'Ipoh', address4: '30000' }))
       .toEqual(['No 1', '30000 Ipoh']);

@@ -14,6 +14,8 @@
 // drop.
 // ----------------------------------------------------------------------------
 
+import { sameState } from './localities-queries';
+
 export type OrderAddressFields = {
   ship_to_address?: string | null;
   address1?: string | null;
@@ -27,15 +29,19 @@ export type OrderAddressFields = {
 
 /**
  * address3 / address4 when they carry the street on past line 2 rather than a
- * town line: the order holds a postcode and no line names one. The POS sends
- * the whole address as address1 and the save spills it there (2990-0036). A
- * COPY of soStreetTail in backend/src/services/autocount-address-fit.ts.
+ * town line. The POS sends the whole address as address1 and the save spills it
+ * there (2990-0036). Follows soStreetTail in
+ * backend/src/services/autocount-address-fit.ts, with one difference: the
+ * backend refuses any Malaysian state name in lines 3/4, this one only the
+ * order's own state (sameState knows its spellings). Display only.
  */
 export function soStreetTail(h: OrderAddressFields): string[] {
-  if (!(h.postcode ?? '').trim()) return [];
+  const state = (h.customer_state ?? '').trim();
+  if (!(h.postcode ?? '').trim() || !state) return [];
   const lines = [h.address1, h.address2, h.address3, h.address4].map((s) => (s ?? '').trim());
-  if (lines.some((l) => /\b\d{5}\b/.test(l))) return [];
-  return [lines[2], lines[3]].filter(Boolean);
+  if (lines.some((l) => /\b\d{5,6}\b/.test(l))) return [];
+  const tail = [lines[2], lines[3]].filter(Boolean);
+  return tail.some((l) => sameState(l, state)) ? [] : tail;
 }
 
 export function orderAddressLines(h: OrderAddressFields): string[] {

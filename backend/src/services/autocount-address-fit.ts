@@ -8,6 +8,8 @@
 // does not own — and it is the first member of a class the rest of the
 // write-back has not addressed yet (docs/bugs/0728).
 // ----------------------------------------------------------------------------
+import { canonicalizeMyState, isCanonicalMyState } from '../scm/lib/canonical-state';
+
 /**
  * HOW WIDE THE ACCOUNT BOOK'S ADDRESS LINES ARE — measured, not assumed.
  *
@@ -175,18 +177,25 @@ export function soTownLines(h: SoAddressHead): [string | null, string | null] {
  * town line.
  *
  * The POS sends the whole address as address1 and the save fit spills it into
- * lines 3 and 4; the SO form types them directly too (2990-0036). Such lines
- * name no postcode while the order holds one in its own column, which a cutover
- * town line never does — the import read the postcode off that very line. Left
- * to win as the town line, they pushed "47820 Petaling Jaya" off the account
- * book and the delivery sheet.
+ * lines 3 and 4; the SO form types them directly too (2990-0036). Left to win
+ * as the town line, they pushed "47820 Petaling Jaya" off the account book and
+ * the delivery sheet.
+ *
+ * NARROW ON PURPOSE, because AutoCount-era rows put their own text there and
+ * the sheet keeps it (tests/deliverySheetSync.test.ts): a town line naming a
+ * postcode ("51200 Kuala Lumpur", "SINGAPORE 123456"), a hand-typed state
+ * ("Penang", "KL"), or anything on an order with no Malaysian state of its own.
+ * Only what is none of those is street.
  */
 export function soStreetTail(h: SoAddressHead): string[] {
-  if (tidy(h.postcode) == null) return [];
+  if (tidy(h.postcode) == null || !isMyState(tidy(h.customer_state))) return [];
   const lines = [h.address1, h.address2, h.address3, h.address4].map(tidy);
-  if (lines.some((l) => /\b\d{5}\b/.test(l ?? ''))) return [];
-  return [lines[2], lines[3]].filter((l): l is string => l != null);
+  if (lines.some((l) => /\b\d{5,6}\b/.test(l ?? ''))) return [];
+  const tail = [lines[2], lines[3]].filter((l): l is string => l != null);
+  return tail.some(isMyState) ? [] : tail;
 }
+
+const isMyState = (s: string | null): boolean => isCanonicalMyState(canonicalizeMyState(s));
 
 export function soInvoiceAddress(h: SoAddressHead): {
     InvAddr1: string | null;
