@@ -42,6 +42,11 @@ export type PaymentCandidate = {
       matching itself never reads it, because the loader already refused
       payments tagged with a different acquirer. */
   merchantProvider?: string | null;
+  /** The account sheet the payment was recorded under, and the order's
+      salesperson — the redesign's Account sheet and Sales columns. Read for
+      the screen; the matcher never reads them. */
+  accountSheet?: string | null;
+  salesperson?: string | null;
 };
 
 export type MatchBucket = 'MATCHED' | 'NEEDS_CONFIRM' | 'UNMATCHED' | 'IGNORED';

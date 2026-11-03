@@ -57,7 +57,7 @@ export async function echoTripCrew(sb: Sb, rows: RunRow[]): Promise<void> {
    helpers) onto the board's Driver / Lorry / Helper cells, on every load, not
    just optimistically. Driver IC / contact stay null for an ASSR row, as before.
    Best-effort: the caller wraps it so a failure leaves the rows date-only. */
-type AssrCrewRow = { assr_id: number | null; job_kind: string | null; crew: CrewEcho | null };
+type AssrCrewRow = { assr_id: number | null; job_kind: string | null; crew: CrewEcho | null; trip_no: string | null; trip_date: string | null };
 export async function echoAssrCrew(sb: Sb, rows: AssrCrewRow[]): Promise<void> {
   const caseIds = [...new Set(rows.map((o) => o.assr_id).filter((x): x is number => x != null))];
   if (!caseIds.length) return;
@@ -85,6 +85,14 @@ export async function echoAssrCrew(sb: Sb, rows: AssrCrewRow[]): Promise<void> {
     const st = o.job_kind === 'customer_pickup' ? 'PICKUP' : o.job_kind === 'inspection' ? 'INSPECTION' : 'DELIVERY';
     const t = tripByKey.get(`${o.assr_id}#${st}`);
     if (!t || t.status === 'CANCELLED') continue;
+    // Stamp the run's trip date onto the leg (echoTripCrew does the same for DP
+    // rows). A service leg rides a trip through its trip_stop but carries no
+    // trip_id of its own, so without this a leg that is on today's run but whose
+    // own service date is another day — or that is already DELIVERED — has no
+    // trip_date, and the Last Mile board (which keys a job's day on trip_date)
+    // drops it instead of showing it as that lorry's completed stop.
+    o.trip_no = t.trip_no;
+    o.trip_date = t.trip_date ? String(t.trip_date).slice(0, 10) : null;
     const driver = t.driver_id ? drv.get(t.driver_id) ?? null : null;
     const h1 = t.helper_1_id ? hlp.get(t.helper_1_id) ?? null : null;
     const h2 = t.helper_2_id ? hlp.get(t.helper_2_id) ?? null : null;

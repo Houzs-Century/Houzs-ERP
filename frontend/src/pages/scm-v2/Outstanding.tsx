@@ -1,27 +1,32 @@
 // ----------------------------------------------------------------------------
-// Outstanding — cross-module Outstanding dashboard (PR #45).
+// Outstanding — cross-module Outstanding dashboard (PR #45), in the owner's
+// Claude Design redesign (Finance › Money in, batch 5).
 //
 // Commander 2026-05-26: "8 个 module 全部都要能 filter 出来 Outstanding
 // 跟非 Outstanding 的部分. by date".
 //
-// One page with 8 tabs, each shows the outstanding (or completed) rows for
-// that module. Date range filter applies across all tabs. Top stat strip
-// shows counts + value per module from the /outstanding/summary endpoint.
+// A card per module — its outstanding count and money in the chosen dates,
+// from /outstanding/summary — plus the line-level PO chasing list. The card
+// picked lists its documents below, Outstanding / Completed / All, in the date
+// range. What the reader sets lives in the URL (?mod=&mode=&from=&to=), so a
+// link such as To do's "SI outstanding" (?mod=si&mode=outstanding) opens the
+// same view and a reload keeps it.
 // ----------------------------------------------------------------------------
 
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { PO_ESTIMATE_DELIVERY_DATE_LABELS } from '../../vendor/scm/lib/po-line-export-columns';
-import { fmtSen } from '../../vendor/shared/format';
+import { fmtDate, fmtSen } from '../../vendor/shared/format';
 import { soRefOfStamp, type SoRefStamp } from '../../lib/so-ref-search';
-import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { ClipboardList, FileText, Receipt, Truck, Undo2, ScrollText, PackagePlus, PackageSearch } from 'lucide-react';
+import { useMemo, useState, type ReactNode } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { ClipboardCheck, FileText, Package, PackageSearch, Receipt, Truck, Undo2 } from 'lucide-react';
 import {
   useOutstanding,
   useOutstandingSummary,
   useOutstandingPoLines,
   type OutstandingModule,
   type OutstandingFilterMode,
+  type OutstandingSummary,
 } from '../../vendor/scm/lib/outstanding-queries';
 import {
   rollUpToSets,
@@ -30,44 +35,100 @@ import {
   type PoOutstandingSetRow,
 } from '../../vendor/scm/lib/po-outstanding-rollup';
 import { DataTable, type Column } from '../../components/DataTable';
+import { DateRangeButton } from '../../components/DateRangeButton';
 import { OVERDUE_CLASS, isPastDue } from '../../lib/tableHighlight';
-import styles from './Suppliers.module.css';
+import { cancelledDocNoClass, cancelledRowClass, isCancelledDocStatus } from '../../lib/scm';
+import { OUTSTANDING_DEFAULT_PRESET, OUTSTANDING_RANGE_PRESETS, isIsoDay, presetRange } from '../../lib/dateRangePresets';
 import { PageHeader } from '../../components/Layout';
-import { DateField } from "../../vendor/scm/components/DateField";
+import { Chips, DocLink, FigureCard, Segments, StatusTag, type ChipOption } from './money-in/MoneyInParts';
+import { dueDateTag, outstandingStatusTag } from './money-in/moneyInStatus';
+import s from './MoneyIn.module.css';
 
-const MODULES: { value: OutstandingModule; label: string; icon: React.ReactNode; route: (row: Record<string, unknown>) => string }[] = [
-  // HOUZS VENDOR — "Open →" deep-links repointed onto Houzs's /scm/* routes
-  // (same /api/scm backend). PO points at the vendored  detail; the other
-  // modules use their native Houzs SCM detail pages.
-  { value: 'po',          label: 'PO',          icon: <ScrollText size={14} strokeWidth={1.75} />,    route: (r) => `/scm/purchase-orders/${r.id}` },
-  { value: 'grn',         label: 'GRN',         icon: <PackagePlus size={14} strokeWidth={1.75} />,   route: (r) => `/scm/grns/${r.id}` },
-  { value: 'pi',          label: 'PI',          icon: <Receipt size={14} strokeWidth={1.75} />,       route: (r) => `/scm/purchase-invoices/${r.id}` },
-  { value: 'pr',          label: 'PR',          icon: <Undo2 size={14} strokeWidth={1.75} />,         route: (r) => `/scm/purchase-returns/${r.id}` },
-  { value: 'so',          label: 'SO',          icon: <ClipboardList size={14} strokeWidth={1.75} />, route: (r) => `/scm/sales-orders/${r.doc_no}` },
-  { value: 'do',          label: 'DO',          icon: <Truck size={14} strokeWidth={1.75} />,         route: (r) => `/scm/delivery-orders/${r.id}` },
-  { value: 'si',          label: 'SI',          icon: <FileText size={14} strokeWidth={1.75} />,      route: (r) => `/scm/sales-invoices/${r.id}` },
+type OutRow = Record<string, unknown>;
+type SummaryEntry = OutstandingSummary[OutstandingModule];
+
+const ICON = { size: 14, strokeWidth: 1.75 } as const;
+
+const MODULES: {
+  value: OutstandingModule;
+  /** The card's label and the list's title (the design's words). */
+  card: string;
+  title: string;
+  icon: ReactNode;
+  /** The card's money line, read off the summary; null for a module the
+   *  summary sums no money for, whose card counts documents instead. */
+  money: ((e: SummaryEntry) => number) | null;
+  route: (row: OutRow) => string;
+}[] = [
+  // HOUZS VENDOR — the numbers open Houzs's own /scm/* detail pages (same
+  // /api/scm backend).
+  { value: 'si',  card: 'SI · Sales invoices',    title: 'Sales invoices',    icon: <FileText {...ICON} />,       money: (e) => e.total_outstanding_sen ?? 0, route: (r) => `/scm/sales-invoices/${String(r.id)}` },
+  { value: 'so',  card: 'SO · Sales orders',      title: 'Sales orders',      icon: <ClipboardCheck {...ICON} />, money: (e) => e.total_sen ?? 0,             route: (r) => `/scm/sales-orders/${String(r.doc_no)}` },
+  { value: 'do',  card: 'DO · Deliveries',        title: 'Delivery orders',   icon: <Truck {...ICON} />,          money: null,                                route: (r) => `/scm/delivery-orders/${String(r.id)}` },
+  { value: 'po',  card: 'PO · Purchase orders',   title: 'Purchase orders',   icon: <FileText {...ICON} />,       money: (e) => e.total_sen ?? 0,             route: (r) => `/scm/purchase-orders/${String(r.id)}` },
+  { value: 'grn', card: 'GRN · Goods received',   title: 'Goods received',    icon: <Package {...ICON} />,        money: null,                                route: (r) => `/scm/grns/${String(r.id)}` },
+  { value: 'pi',  card: 'PI · Purchase invoices', title: 'Purchase invoices', icon: <Receipt {...ICON} />,        money: (e) => e.total_outstanding_sen ?? 0, route: (r) => `/scm/purchase-invoices/${String(r.id)}` },
+  /* The design counts PR refunds as money, but the summary sums no refund, so
+     the card counts documents rather than print a total it cannot know. */
+  { value: 'pr',  card: 'PR · Purchase returns',  title: 'Purchase returns',  icon: <Undo2 {...ICON} />,          money: null,                                route: (r) => `/scm/purchase-returns/${String(r.id)}` },
 ];
 
-// Guarded centi→"RM …" — "—" for an absent/non-finite amount, never "RM NaN".
-const fmtRm = (centi: number | null | undefined): string => fmtSen(centi);
-
-/* The tab bar carries the seven money modules plus one extra: 'po-lines', the
-   line-level PO chasing list. It is NOT an OutstandingModule (no summary money
-   tile, cross-company, its own endpoint), so it rides a wider union here. */
+/* The cards carry the seven modules plus one extra: 'po-lines', the line-level
+   PO chasing list. It is NOT an OutstandingModule (no summary money, cross-
+   company, its own endpoint), so it rides a wider union here. */
 type OutstandingTab = OutstandingModule | 'po-lines';
+const PO_LINES_TITLE = 'PO chasing';
+const DEFAULT_TAB: OutstandingTab = 'si';
+const DEFAULT_MODE: OutstandingFilterMode = 'outstanding';
+
+const MODE_OPTIONS: ChipOption<OutstandingFilterMode>[] = [
+  { value: 'outstanding', label: 'Outstanding' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'all', label: 'All' },
+];
+
+const isTab = (v: string | null): v is OutstandingTab => v === 'po-lines' || MODULES.some((m) => m.value === v);
+const isMode = (v: string | null): v is OutstandingFilterMode => MODE_OPTIONS.some((o) => o.value === v);
+/** A date from the URL, or '' (an open end) when it is not a real day. */
+const urlDay = (v: string | null): string => (v && isIsoDay(v) ? v : '');
+
+const docWord = (n: number): string => (n === 1 ? '1 document' : `${n.toLocaleString('en-MY')} documents`);
+const lineWord = (n: number, mode: OutstandingFilterMode): string => {
+  const what = mode === 'outstanding' ? 'outstanding ' : mode === 'completed' ? 'completed ' : '';
+  return `${n.toLocaleString('en-MY')} ${what}${n === 1 ? 'line' : 'lines'}`;
+};
 
 export const Outstanding = () => {
   const today = todayMyt();
-  const yearAgo = todayMyt(-365);
+  const [params, setParams] = useSearchParams();
 
-  const [mode, setMode] = useState<OutstandingFilterMode>('outstanding');
-  const [from, setFrom] = useState(yearAgo);
-  const [to, setTo] = useState(today);
-  const [activeModule, setActiveModule] = useState<OutstandingTab>('so');
+  const rawTab = params.get('mod');
+  const activeModule: OutstandingTab = isTab(rawTab) ? rawTab : DEFAULT_TAB;
+  const rawMode = params.get('mode');
+  const mode: OutstandingFilterMode = isMode(rawMode) ? rawMode : DEFAULT_MODE;
+  /* No dates in the URL = the default window, counted from today (the last 12
+     months until the owner answers f7). An empty value is an open end: "All
+     dates" writes `from=&to=`, and the hooks then send neither. */
+  const fallback = presetRange(OUTSTANDING_DEFAULT_PRESET, today);
+  const hasRange = params.has('from') || params.has('to');
+  const from = hasRange ? urlDay(params.get('from')) : fallback.from;
+  const to = hasRange ? urlDay(params.get('to')) : fallback.to;
+
+  const setParam = (patch: Record<string, string | null>) => setParams((prev) => {
+    const next = new URLSearchParams(prev);
+    for (const [k, v] of Object.entries(patch)) {
+      if (v == null) next.delete(k); else next.set(k, v);
+    }
+    return next;
+  }, { replace: true });
+  const setModule = (m: OutstandingTab) => setParam({ mod: m === DEFAULT_TAB ? null : m });
+  const setMode = (m: OutstandingFilterMode) => setParam({ mode: m === DEFAULT_MODE ? null : m });
+  const setRange = (f: string, t: string) =>
+    setParam(f === fallback.from && t === fallback.to ? { from: null, to: null } : { from: f, to: t });
 
   const summary = useOutstandingSummary({ from, to });
   // The generic per-module hook only knows the seven money modules; when the
-  // chasing tab is active fall it back to 'po' (cached, cheap) and read the
+  // chasing card is picked fall it back to 'po' (cached, cheap) and read the
   // dedicated cross-company hook below instead.
   const genericModule: OutstandingModule = activeModule === 'po-lines' ? 'po' : activeModule;
   const rowsQ = useOutstanding(genericModule, { mode, from, to });
@@ -76,295 +137,318 @@ export const Outstanding = () => {
   const poLinesQ = useOutstandingPoLines({ mode, from, to });
   const poLinesRows = poLinesQ.data?.rows ?? [];
   const isPoLines = activeModule === 'po-lines';
+  const config = MODULES.find((m) => m.value === genericModule) ?? MODULES[0];
+  const pending = summary.isLoading;
+  const summaryFailed = Boolean(summary.error);
 
   return (
-    <div className="space-y-4">
-      <PageHeader
-        eyebrow="Finance"
-        title="Outstanding"
-        actions={
-          <div className={styles.actionsRow}>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-13)' }}>
-              <span style={{ color: 'var(--fg-muted)' }}>From</span>
-              <DateField fullWidth className={styles.searchInput} value={from} onChange={(iso) => setFrom(iso)} style={{ width: 150 }}/>
-            </label>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-13)' }}>
-              <span style={{ color: 'var(--fg-muted)' }}>To</span>
-              <DateField fullWidth className={styles.searchInput} value={to} onChange={(iso) => setTo(iso)} style={{ width: 150 }}/>
-            </label>
-            <div className={styles.statusChips}>
-              <FilterChip label="Outstanding" active={mode === 'outstanding'} onClick={() => setMode('outstanding')} />
-              <FilterChip label="Completed"   active={mode === 'completed'}   onClick={() => setMode('completed')} />
-              <FilterChip label="All"         active={mode === 'all'}         onClick={() => setMode('all')} />
-            </div>
-          </div>
-        }
-      />
+    <div className={s.page}>
+      <PageHeader eyebrow="Finance · Money in" title="Outstanding" />
 
-      {/* Summary tiles — count + outstanding value per module, in selected date range */}
-      <section style={{
-        display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-        gap: 'var(--space-3)', marginTop: 'var(--space-3)',
-      }}>
-        {MODULES.map((m) => {
-          const s = summary.data?.summary?.[m.value];
-          const active = activeModule === m.value;
-          return (
-            <button key={m.value} type="button"
-              onClick={() => setActiveModule(m.value)}
-              /* Theme C selected-tile (owner 2026-07-25): like the SO page's
-                 active StatCard - white with a petrol border - instead of the
-                 2990 ink-filled block. */
-              style={{
-                padding: 'var(--space-3) var(--space-4)',
-                background: '#ffffff',
-                color: 'var(--c-ink)',
-                border: `1px solid ${active ? '#16695f' : 'var(--c-line, rgba(34,31,32,0.12))'}`,
-                boxShadow: active ? 'inset 0 0 0 1px #16695f' : 'none',
-                borderRadius: 'var(--radius-md)',
-                cursor: 'pointer',
-                textAlign: 'left',
-              }}>
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-12)', opacity: 0.8 }}>
-                {m.icon}
-                <span>{m.label}</span>
-              </div>
-              <div style={{ fontSize: 'var(--fs-22)', fontWeight: 900, marginTop: 4 }}>
-                {s?.unavailable ? '—' : (s?.count ?? 0)}
-              </div>
-              {s?.unavailable ? (
-                <div style={{ fontSize: 'var(--fs-11)', opacity: 0.85, marginTop: 2, color: 'var(--c-err, #b4453a)' }}
-                     title={s.deposit_note ?? undefined}>
-                  Could not read
-                </div>
-              ) : (
-                !!s?.total_outstanding_sen && s.total_outstanding_sen > 0 && (
-                  <div style={{ fontSize: 'var(--fs-11)', opacity: 0.7, marginTop: 2 }}
-                       title={s.deposit_note ?? undefined}>
-                    {/* "at most" is not hedging — when deposit_applied is false the
-                        figure counts every invoice but subtracts no order deposit,
-                        so it is a ceiling and the reader is entitled to know. */}
-                    {s.deposit_applied === false ? 'at most ' : ''}{fmtRm(s.total_outstanding_sen)} outstanding
-                  </div>
-                )
-              )}
-            </button>
-          );
-        })}
+      {/* A card per module — its outstanding documents and money in these
+          dates — then PO chasing. */}
+      <div className={s.cardsWrap}>
+        <div className={`${s.cards} ${s.cardsEight}`}>
+          {MODULES.map((m) => {
+            const e: SummaryEntry | undefined = summary.data?.summary[m.value];
+            const unread = summaryFailed || e?.unavailable === true;
+            const count = e?.count ?? 0;
+            /* "at most" is not hedging — when deposit_applied is false the SI
+               figure counts every invoice but subtracts no order deposit, so it
+               is a ceiling and the reader is entitled to know. */
+            const sub = pending ? 'Loading…'
+              : unread ? 'Could not read'
+              : m.money && e ? `${e.deposit_applied === false ? 'at most ' : ''}${fmtSen(m.money(e))}`
+              : docWord(count);
+            return (
+              <FigureCard
+                key={m.value}
+                icon={m.icon}
+                label={m.card}
+                value={count.toLocaleString('en-MY')}
+                zero={count === 0}
+                pending={pending || unread}
+                sub={sub}
+                subBad={!pending && unread}
+                title={e?.deposit_note ?? undefined}
+                on={activeModule === m.value}
+                onClick={() => setModule(m.value)}
+              />
+            );
+          })}
+          {/* PO chasing — line-level, cross-company (HOUZS + 2990). Not a money
+              module, so it counts lines, in the mode picked below. */}
+          <FigureCard
+            icon={<PackageSearch {...ICON} />}
+            label={PO_LINES_TITLE}
+            value={poLinesRows.length.toLocaleString('en-MY')}
+            zero={poLinesRows.length === 0}
+            pending={poLinesQ.isLoading || Boolean(poLinesQ.error)}
+            sub={poLinesQ.isLoading ? 'Loading…' : poLinesQ.error ? 'Could not read' : lineWord(poLinesRows.length, mode)}
+            subBad={!poLinesQ.isLoading && Boolean(poLinesQ.error)}
+            on={isPoLines}
+            onClick={() => setModule('po-lines')}
+          />
+        </div>
+      </div>
 
-        {/* PO Chasing — line-level, cross-company (HOUZS + 2990). Not a money
-            module, so it carries a line count, not an outstanding value. */}
-        <button type="button"
-          onClick={() => setActiveModule('po-lines')}
-          style={{
-            padding: 'var(--space-3) var(--space-4)',
-            background: '#ffffff',
-            color: 'var(--c-ink)',
-            border: `1px solid ${isPoLines ? '#16695f' : 'var(--c-line, rgba(34,31,32,0.12))'}`,
-            boxShadow: isPoLines ? 'inset 0 0 0 1px #16695f' : 'none',
-            borderRadius: 'var(--radius-md)',
-            cursor: 'pointer',
-            textAlign: 'left',
-          }}>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-12)', opacity: 0.8 }}>
-            <PackageSearch size={14} strokeWidth={1.75} />
-            <span>PO Chasing</span>
-          </div>
-          <div style={{ fontSize: 'var(--fs-22)', fontWeight: 900, marginTop: 4 }}>
-            {poLinesQ.isLoading ? '—' : poLinesRows.length}
-          </div>
-          <div style={{ fontSize: 'var(--fs-11)', opacity: 0.7, marginTop: 2 }}>
-            outstanding lines
-          </div>
-        </button>
-      </section>
-
-      <p className={styles.eyebrow} style={{ marginTop: 'var(--space-3)' }}>
-        {isPoLines
-          ? (poLinesQ.isLoading ? 'Loading PO chasing…' : `${poLinesRows.length} PO lines (${mode})`)
-          : rowsQ.isLoading
-            ? `Loading ${activeModule}…`
-            : `${rows.length} ${activeModule.toUpperCase()} rows (${mode})`}
-      </p>
+      <div className={s.toolbar}>
+        <Chips label="Show" options={MODE_OPTIONS} value={mode} onChange={setMode} />
+        <span className={s.listTitle}>{isPoLines ? PO_LINES_TITLE : config.title}</span>
+        <span className={s.grow} />
+        <DateRangeButton
+          from={from}
+          to={to}
+          onChange={setRange}
+          presets={OUTSTANDING_RANGE_PRESETS}
+          today={today}
+          label="Document dates"
+        />
+      </div>
 
       {/* key= remounts the table per module — columns AND search reset with
-          the tab, so a PI search never filters the SO list. */}
+          the card, so a PI search never filters the SO list. */}
       {isPoLines ? (
-        <PoChasingView rows={poLinesRows} isLoading={poLinesQ.isLoading} />
+        <PoChasingView rows={poLinesRows} isLoading={poLinesQ.isLoading} error={poLinesQ.error} />
       ) : (
         <ModuleTable
           key={activeModule}
           module={genericModule}
           rows={rows}
           isLoading={rowsQ.isLoading}
+          error={rowsQ.error}
+          mode={mode}
+          today={today}
         />
       )}
     </div>
   );
 };
 
-const FilterChip = ({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) => (
-  <button type="button" onClick={onClick}
-    style={{
-      padding: '4px 12px',
-      border: '1px solid var(--c-line, rgba(34,31,32,0.12))',
-      borderRadius: 'var(--radius-pill)',
-      background: active ? 'var(--c-orange)' : 'transparent',
-      color: active ? 'var(--c-cream)' : 'var(--c-ink)',
-      fontSize: 'var(--fs-13)',
-      cursor: 'pointer',
-      fontWeight: 600,
-    }}>{label}</button>
-);
+const errorText = (e: unknown): string | null =>
+  e ? (e instanceof Error && e.message ? e.message : 'Could not load this list') : null;
 
-/* ── Batch 2: shared DataTable ───────────────────────────────────────────
-   Per-module column specs ported 1:1. Each module keeps its own tableId
-   (columns differ per module, so a shared layout would corrupt across
-   tabs). Money (centi) + qty columns sort numerically on the raw value via
-   getValue; date columns sort on the raw ISO string. */
-type OutRow = Record<string, unknown>;
-
+/* ── One module's documents ──────────────────────────────────────────────
+   Column specs per module, in the design's order. Keys are the ones the list
+   had before the redesign, so a saved layout carries over. Money (sen) and
+   qty sort on the raw number via getValue; dates on the raw ISO string. */
 type ColSpec = {
   key: string;
   label: string;
-  kind?: 'date' | 'money' | 'qty';
-  /** The date reads red once passed while this says the row is still open
-   *  (the Completed / All filters show closed rows too). */
-  overdue?: (r: OutRow) => boolean;
+  /** doc: the row's own number · so: its sales order · date · due: a date
+   *  tagged late while open · money · qty · status: the status tag. */
+  kind?: 'doc' | 'so' | 'date' | 'due' | 'money' | 'qty' | 'status';
+  muted?: boolean;
+  /** The cell's value when it is not the row's own field. */
+  value?: (r: OutRow) => unknown;
+  /** For `due`: whether the document is still open (the date then turns red
+   *  once passed; the Completed / All filters show closed rows too). */
+  open?: (r: OutRow) => boolean;
+  /** Off until the reader turns it on in Columns. */
+  hidden?: boolean;
 };
 
+/* Credit notes knocked off against a sales invoice: none can be today — the
+   knock-off waits on its own change (owner question f2) — so the column reads
+   0 until it ships. It starts hidden (Columns turns it on): an eleventh column
+   of zeros would squeeze the dates and amounts on a laptop screen. The
+   knock-off's change shows it by default. */
+const SI_CREDIT_NOTES_SEN = 0;
+
+/* Still open by the view's own rule (a paid or cancelled document never is),
+   and something left on it — the date only turns late then. */
+const owes = (r: OutRow): boolean => r.is_outstanding === true && Number(r.outstanding_sen) > 0;
+
 const MODULE_COLUMNS: Record<OutstandingModule, ColSpec[]> = {
-  po: [
-    { key: 'po_number', label: 'PO No' },
-    { key: 'po_date',   label: 'Date', kind: 'date' },
-    { key: 'expected_at', label: 'Expected', kind: 'date', overdue: (r) => Number(r.qty_outstanding) > 0 },
-    { key: 'status',    label: 'Status' },
-    { key: 'qty_outstanding', label: 'Qty Outstanding', kind: 'qty' },
-    { key: 'total_sen', label: 'Total', kind: 'money' },
-  ],
-  grn: [
-    { key: 'grn_number', label: 'GRN No' },
-    { key: 'received_at', label: 'Date', kind: 'date' },
-    { key: 'status',    label: 'Status' },
-  ],
-  pi: [
-    { key: 'invoice_number', label: 'Invoice No' },
-    { key: 'invoice_date',   label: 'Date', kind: 'date' },
-    { key: 'due_date',       label: 'Due', kind: 'date', overdue: (r) => Number(r.outstanding_sen) > 0 },
-    { key: 'total_sen',    label: 'Total', kind: 'money' },
-    { key: 'paid_sen',     label: 'Paid', kind: 'money' },
-    { key: 'outstanding_sen', label: 'Outstanding', kind: 'money' },
-    { key: 'status',         label: 'Status' },
-  ],
-  pr: [
-    { key: 'return_number', label: 'PR No' },
-    { key: 'return_date',   label: 'Date', kind: 'date' },
-    { key: 'status',        label: 'Status' },
-    { key: 'refund_sen',  label: 'Refund', kind: 'money' },
-  ],
-  so: [
-    { key: 'doc_no',     label: 'SO No' },
-    { key: 'so_date',    label: 'Date', kind: 'date' },
-    { key: 'debtor_name', label: 'Customer' },
-    { key: 'status',     label: 'Status' },
-    { key: 'total_revenue_sen', label: 'Total', kind: 'money' },
-  ],
-  do: [
-    { key: 'do_number',  label: 'DO No' },
-    { key: 'do_date',    label: 'Date', kind: 'date' },
-    { key: 'so_doc_no',  label: 'SO No.' },
-    { key: 'debtor_name', label: 'Customer' },
-    { key: 'status',     label: 'Status' },
-  ],
   si: [
-    { key: 'invoice_number', label: 'Invoice No' },
-    { key: 'invoice_date',   label: 'Date', kind: 'date' },
-    { key: 'due_date',       label: 'Due', kind: 'date', overdue: (r) => Number(r.outstanding_sen) > 0 },
+    { key: 'invoice_number', label: 'Invoice No', kind: 'doc' },
+    { key: 'invoice_date',   label: 'Date', kind: 'date', muted: true },
+    { key: 'due_date',       label: 'Due', kind: 'due', open: owes },
     { key: 'debtor_name',    label: 'Customer' },
-    { key: 'total_sen',    label: 'Total', kind: 'money' },
-    { key: 'paid_sen',     label: 'Paid', kind: 'money' },
+    { key: 'total_sen',      label: 'Total', kind: 'money' },
+    { key: 'paid_sen',       label: 'Paid', kind: 'money', muted: true },
     /* The deposit taken on the source Sales Order. `outstanding_sen` on these
        rows is ALREADY net of it (the /outstanding/si handler subtracts it —
        the view scm.v_si_outstanding cannot, the split is a per-order rule), so
        this column is what makes the smaller Outstanding readable instead of
        mysterious. */
-    { key: 'so_deposit_applied_sen', label: 'SO deposit', kind: 'money' },
+    { key: 'so_deposit_applied_sen', label: 'SO deposit', kind: 'money', muted: true },
+    { key: 'credit_notes_sen', label: 'Credit notes', kind: 'money', muted: true, value: () => SI_CREDIT_NOTES_SEN, hidden: true },
     { key: 'outstanding_sen', label: 'Outstanding', kind: 'money' },
-    { key: 'status',         label: 'Status' },
+    { key: 'status',         label: 'Status', kind: 'status' },
+  ],
+  so: [
+    { key: 'doc_no',      label: 'SO No', kind: 'doc' },
+    { key: 'so_date',     label: 'Date', kind: 'date', muted: true },
+    { key: 'debtor_name', label: 'Customer' },
+    { key: 'status',      label: 'Status', kind: 'status' },
+    { key: 'total_revenue_sen', label: 'Total', kind: 'money' },
+  ],
+  do: [
+    { key: 'do_number',   label: 'DO No', kind: 'doc' },
+    { key: 'do_date',     label: 'Date', kind: 'date', muted: true },
+    { key: 'so_doc_no',   label: 'SO No.', kind: 'so' },
+    { key: 'debtor_name', label: 'Customer' },
+    { key: 'status',      label: 'Status', kind: 'status' },
+  ],
+  po: [
+    { key: 'po_number',   label: 'PO No', kind: 'doc' },
+    { key: 'po_date',     label: 'Date', kind: 'date', muted: true },
+    { key: 'expected_at', label: 'Expected', kind: 'due', open: (r) => r.is_outstanding === true && Number(r.qty_outstanding) > 0 },
+    { key: 'status',      label: 'Status', kind: 'status' },
+    { key: 'qty_outstanding', label: 'Qty outstanding', kind: 'qty' },
+    { key: 'total_sen',   label: 'Total', kind: 'money' },
+  ],
+  grn: [
+    { key: 'grn_number',  label: 'GRN No', kind: 'doc' },
+    { key: 'received_at', label: 'Date', kind: 'date', muted: true },
+    { key: 'status',      label: 'Status', kind: 'status' },
+  ],
+  pi: [
+    { key: 'invoice_number', label: 'Invoice No', kind: 'doc' },
+    { key: 'invoice_date',   label: 'Date', kind: 'date', muted: true },
+    { key: 'due_date',       label: 'Due', kind: 'due', open: owes },
+    { key: 'total_sen',      label: 'Total', kind: 'money' },
+    { key: 'paid_sen',       label: 'Paid', kind: 'money', muted: true },
+    { key: 'outstanding_sen', label: 'Outstanding', kind: 'money' },
+    { key: 'status',         label: 'Status', kind: 'status' },
+  ],
+  pr: [
+    { key: 'return_number', label: 'PR No', kind: 'doc' },
+    { key: 'return_date',   label: 'Date', kind: 'date', muted: true },
+    { key: 'status',        label: 'Status', kind: 'status' },
+    { key: 'refund_sen',    label: 'Refund', kind: 'money' },
   ],
 };
 
-const cellText = (spec: ColSpec, r: OutRow): string => {
-  const v = r[spec.key];
-  if (spec.kind === 'money') return fmtRm(Number(v) || 0);
-  if (spec.kind === 'qty')   return Number(v).toLocaleString();
-  if (spec.kind === 'date')  return v ? String(v) : '—';
-  return String(v ?? '—');
+/* Near the design's proportions, so the ten sales-invoice columns open without
+   squeezing a date or an amount on a laptop; the customer takes what is left. */
+const widthOf = (spec: ColSpec): string | undefined => {
+  switch (spec.kind) {
+    case 'money':
+    case 'qty': return '110px';
+    case 'due': return '150px';
+    case 'date': return '104px';
+    case 'status': return '124px';
+    case 'doc':
+    case 'so': return '132px';
+    default: return undefined;
+  }
+};
+
+const rawOf = (spec: ColSpec, r: OutRow): unknown => (spec.value ? spec.value(r) : r[spec.key]);
+const senOf = (spec: ColSpec, r: OutRow): number => Number(rawOf(spec, r)) || 0;
+const textOf = (v: unknown): string => (v == null ? '' : String(v));
+/* A cancelled document's amounts read "—" and stay out of the totals (the
+   Completed / All lists carry them); its number is struck, its row faded. */
+const isDead = (r: OutRow): boolean => isCancelledDocStatus(textOf(r.status));
+
+/** A sales invoice counts as part-paid once money, its order's deposit or a
+ *  credit note has gone against it (the design's Partly paid). */
+const partlyPaid = (r: OutRow): boolean =>
+  Number(r.paid_sen ?? 0) + Number(r.so_deposit_applied_sen ?? 0) + SI_CREDIT_NOTES_SEN > 0;
+
+const statusTagOf = (module: OutstandingModule, r: OutRow) =>
+  outstandingStatusTag(module, textOf(r.status), r.is_outstanding === true, module === 'si' && partlyPaid(r));
+
+/** What a cell reads as text — the search matches it, alongside the raw date. */
+const cellText = (module: OutstandingModule, spec: ColSpec, r: OutRow, today: string): string => {
+  const v = rawOf(spec, r);
+  switch (spec.kind) {
+    case 'money': return isDead(r) ? '—' : fmtSen(senOf(spec, r));
+    case 'qty': return (Number(v) || 0).toLocaleString('en-MY');
+    case 'date': return fmtDate(textOf(v) || null);
+    case 'due': return dueDateTag(textOf(v), spec.open?.(r) ?? false, today)?.text ?? '—';
+    case 'status': return statusTagOf(module, r).text;
+    default: return textOf(v) || '—';
+  }
 };
 
 const ModuleTable = ({
-  module, rows, isLoading,
+  module, rows, isLoading, error, mode, today,
 }: {
   module: OutstandingModule;
   rows: OutRow[];
   isLoading: boolean;
+  error: unknown;
+  mode: OutstandingFilterMode;
+  today: string;
 }) => {
-  const config = useMemo(() => MODULES.find((m) => m.value === module)!, [module]);
+  const navigate = useNavigate();
+  const config = MODULES.find((m) => m.value === module) ?? MODULES[0];
 
   type KeyedRow = OutRow & { __rk: string };
-  const columns = useMemo<Column<KeyedRow>[]>(() => {
-    const cols: Column<KeyedRow>[] = MODULE_COLUMNS[module].map((spec) => ({
+  const columns = useMemo<Column<KeyedRow>[]>(() => MODULE_COLUMNS[module].map((spec) => {
+    const numeric = spec.kind === 'money' || spec.kind === 'qty';
+    const col: Column<KeyedRow> = {
       key: spec.key,
       label: spec.label,
-      width: spec.kind === 'money' || spec.kind === 'qty' ? '120px' : '140px',
-      align: spec.kind === 'money' || spec.kind === 'qty' ? ('right' as const) : undefined,
-      getValue: (r: KeyedRow) =>
-        spec.kind === 'money' || spec.kind === 'qty'
-          ? Number(r[spec.key]) || 0
-          : String(r[spec.key] ?? ''),
-      render: (r: KeyedRow) =>
-        spec.overdue && isPastDue(String(r[spec.key] ?? ''), spec.overdue(r))
-          ? <span className={OVERDUE_CLASS} title="Past due">{cellText(spec, r)}</span>
-          : cellText(spec, r),
-    }));
-    cols.push({
-      key: '__open__',
-      label: '',
-      width: '80px',
-      disableSort: true,
-      getValue: () => '',
-      render: (r) => (
-        <Link to={config.route(r)} className={styles.docLink ?? ''}>
-          Open →
-        </Link>
-      ),
-    });
-    return cols;
-  }, [module, config]);
+      width: widthOf(spec),
+      align: numeric ? 'right' : undefined,
+      defaultHidden: spec.hidden,
+      /* Sort, funnel and export read what the cell shows: the number, the raw
+         ISO date, the status's word (never its stored key). */
+      getValue: (r) => (numeric ? Number(rawOf(spec, r)) || 0
+        : spec.kind === 'status' ? statusTagOf(module, r).text
+        : textOf(rawOf(spec, r))),
+      render: (r) => {
+        const v = rawOf(spec, r);
+        switch (spec.kind) {
+          case 'doc':
+            return (
+              <DocLink to={config.route(r)} className={cancelledDocNoClass(textOf(r.status))}>
+                {textOf(v) || '—'}
+              </DocLink>
+            );
+          case 'so':
+            return textOf(v) ? <DocLink to={`/scm/sales-orders/${textOf(v)}`}>{textOf(v)}</DocLink> : '—';
+          case 'due': {
+            const tag = dueDateTag(textOf(v), spec.open?.(r) ?? false, today);
+            return tag ? <StatusTag tag={tag} /> : '—';
+          }
+          case 'status':
+            return <StatusTag tag={statusTagOf(module, r)} />;
+          default: {
+            const text = cellText(module, spec, r, today);
+            return spec.muted ? <span className={s.muted}>{text}</span> : text;
+          }
+        }
+      },
+    };
+    if (spec.kind === 'money') {
+      // Ringgit, not sen, in the file; a cancelled document's amount blank as on screen.
+      col.exportValue = (r) => (isDead(r) ? null : senOf(spec, r) / 100);
+      col.exportFormat = 'money';
+      col.total = (list) => fmtSen(list.reduce((sum, r) => sum + (isDead(r) ? 0 : senOf(spec, r)), 0));
+    }
+    return col;
+  }), [module, config, today]);
 
   /* Rows can lack a stable id for some modules — pre-compute a row key that
      falls back to doc_no then the index (matches the legacy <tr key>). */
   const keyedRows: KeyedRow[] = useMemo(
-    () => rows.map((r, i) => ({ ...r, __rk: String(r.id ?? r.doc_no ?? i) })),
+    () => rows.map((r, i) => ({ ...r, __rk: textOf(r.id ?? r.doc_no ?? i) })),
     [rows],
   );
 
-  /* Loaded-only search across the module's visible columns — the page
-     filters (DataTable renders box + hint), same fields the old DataGrid's
-     built-in search matched. Component remounts per module (key= above), so
-     the term never leaks across tabs. */
+  /* Loaded-only search across the module's columns as they read on screen
+     (and the raw ISO dates), the page filtering and DataTable rendering the box
+     and its hint. The table remounts per module (key= above), so the term never
+     leaks across cards. The SO / DO / SI rows also carry their order's customer
+     reference (stamped server-side), which the search matches without a
+     column. */
   const [search, setSearch] = useState('');
   const visible = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) return keyedRows;
     const specs = MODULE_COLUMNS[module];
-    /* The SO / DO / SI rows also carry their order's customer reference
-       (stamped server-side), which the search matches without a column. */
     return keyedRows.filter((r) =>
-      specs.some((spec) => cellText(spec, r).toLowerCase().includes(term))
+      specs.some((spec) =>
+        cellText(module, spec, r, today).toLowerCase().includes(term)
+        || ((spec.kind === 'date' || spec.kind === 'due') && textOf(rawOf(spec, r)).includes(term)))
       || soRefOfStamp(r as SoRefStamp).toLowerCase().includes(term),
     );
-  }, [keyedRows, search, module]);
+  }, [keyedRows, search, module, today]);
 
   return (
     <DataTable<KeyedRow>
@@ -373,25 +457,32 @@ const ModuleTable = ({
       exportName={`outstanding-${module}`}
       rows={isLoading ? null : visible}
       loading={isLoading}
-      emptyLabel="No rows match the filters."
+      error={errorText(error)}
+      emptyLabel={search.trim()
+        ? 'Nothing matches this search.'
+        : mode === 'completed' ? 'Nothing completed in these dates.' : 'Nothing outstanding in these dates.'}
       getRowKey={(r) => r.__rk}
       columns={columns}
+      onRowDoubleClick={(r) => navigate(config.route(r))}
+      getRowClassName={(r) => cancelledRowClass(textOf(r.status))}
+      /* The design's sand tint: a sales invoice still owed. */
+      getRowStyle={(r) => (module === 'si' && r.is_outstanding === true ? { background: 'var(--open-bg)' } : undefined)}
       search={{
         value: search,
         onChange: setSearch,
-        placeholder: `Search ${module.toUpperCase()} rows…`,
+        placeholder: `Search ${config.title.toLowerCase()}…`,
       }}
     />
   );
 };
 
-/* ── PO Chasing — line-level, cross-company outstanding PO list ───────────────
+/* ── PO chasing — line-level, cross-company outstanding PO list ───────────────
    The AutoCount "PO chasing list" shape: one row per outstanding PO line,
-   grouped by supplier, with a Detail (component lines) / By set toggle and an
+   grouped by supplier, with a Detail (component lines) / By set switch and an
    Excel export. Reads the cross-company /outstanding/po-lines (HOUZS + 2990),
-   so it carries a Company column and an optional company filter the money tabs
-   don't have. Rolling sofa components into one "set" row is a heuristic — see
-   po-outstanding-rollup.ts. */
+   so it carries a Company column and an optional company filter the module
+   lists don't have. Rolling sofa components into one "set" row is a heuristic
+   — see po-outstanding-rollup.ts. */
 type ChaseSpec = {
   key: string;
   label: string;
@@ -402,15 +493,22 @@ type ChaseSpec = {
   get: (r: PoOutstandingLineRow) => string | number;
 };
 
-const chaseText = (spec: ChaseSpec, r: PoOutstandingLineRow): string => {
+/** A cell as the reader sees it (dates through fmtDate); `forExport` keeps the
+ *  raw ISO date the Excel file has always carried. */
+const chaseText = (spec: ChaseSpec, r: PoOutstandingLineRow, forExport = false): string => {
   const v = spec.get(r);
   if (spec.kind === 'qty') return (Number(v) || 0).toLocaleString();
-  if (spec.kind === 'date') return v ? String(v) : '—';
-  const s = String(v).trim();
-  return s === '' ? '—' : s;
+  if (spec.kind === 'date') return v ? (forExport ? String(v) : fmtDate(String(v))) : '—';
+  const text = String(v).trim();
+  return text === '' ? '—' : text;
 };
 
-const PoChasingView = ({ rows, isLoading }: { rows: PoOutstandingLineRow[]; isLoading: boolean }) => {
+const GRANULARITY_OPTIONS: { value: 'detail' | 'set'; label: string }[] = [
+  { value: 'detail', label: 'Detail (lines)' },
+  { value: 'set', label: 'By set' },
+];
+
+const PoChasingView = ({ rows, isLoading, error }: { rows: PoOutstandingLineRow[]; isLoading: boolean; error: unknown }) => {
   const [granularity, setGranularity] = useState<'detail' | 'set'>('detail');
   const [companyFilter, setCompanyFilter] = useState('');
   const [search, setSearch] = useState('');
@@ -490,34 +588,32 @@ const PoChasingView = ({ rows, isLoading }: { rows: PoOutstandingLineRow[]; isLo
   const visible = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) return keyed;
-    return keyed.filter((r) => specs.some((s) => chaseText(s, r).toLowerCase().includes(term)));
+    return keyed.filter((r) => specs.some((sp) =>
+      chaseText(sp, r).toLowerCase().includes(term) || (sp.kind === 'date' && chaseText(sp, r, true).includes(term))));
   }, [keyed, specs, search]);
 
   const onExport = async () => {
     const XLSX = await import('../../lib/xlsx-runtime');
-    const header = specs.map((s) => s.label);
-    const aoa: (string | number)[][] = [header, ...visible.map((r) => specs.map((s) => chaseText(s, r)))];
+    const header = specs.map((sp) => sp.label);
+    const aoa: (string | number)[][] = [header, ...visible.map((r) => specs.map((sp) => chaseText(sp, r, true)))];
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = specs.map((s) => ({ wch: Math.min(42, Math.max(10, s.label.length + 2)) }));
+    ws['!cols'] = specs.map((sp) => ({ wch: Math.min(42, Math.max(10, sp.label.length + 2)) }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'PO Chasing');
     XLSX.writeFileXLSX(wb, `PO-Chasing-${granularity}-${todayMyt()}.xlsx`);
   };
 
+  const companyOptions: ChipOption<string>[] = [
+    { value: '', label: 'All companies' },
+    ...companyCodes.map((code) => ({ value: code, label: code })),
+  ];
+
   return (
-    <div className="space-y-2">
-      <div className={styles.actionsRow} style={{ marginBottom: 'var(--space-2)' }}>
-        <div className={styles.statusChips}>
-          <FilterChip label="Detail (lines)" active={granularity === 'detail'} onClick={() => setGranularity('detail')} />
-          <FilterChip label="By set" active={granularity === 'set'} onClick={() => setGranularity('set')} />
-        </div>
+    <div className={s.stack}>
+      <div className={s.toolbar}>
+        <Segments label="Rows" options={GRANULARITY_OPTIONS} value={granularity} onChange={setGranularity} />
         {companyCodes.length > 1 && (
-          <div className={styles.statusChips}>
-            <FilterChip label="All companies" active={companyFilter === ''} onClick={() => setCompanyFilter('')} />
-            {companyCodes.map((code) => (
-              <FilterChip key={code} label={code} active={companyFilter === code} onClick={() => setCompanyFilter(code)} />
-            ))}
-          </div>
+          <Chips label="Company" options={companyOptions} value={companyFilter} onChange={setCompanyFilter} />
         )}
       </div>
       <DataTable<KeyedRow>
@@ -526,7 +622,8 @@ const PoChasingView = ({ rows, isLoading }: { rows: PoOutstandingLineRow[]; isLo
         exportName={`PO-Chasing-${granularity}`}
         rows={isLoading ? null : visible}
         loading={isLoading}
-        emptyLabel="No outstanding PO lines match the filters."
+        error={errorText(error)}
+        emptyLabel={search.trim() ? 'Nothing matches this search.' : 'No outstanding PO lines match the filters.'}
         getRowKey={(r) => r.__rk}
         columns={columns}
         groupBy={{ key: 'creditor_name', label: (v) => v || '—' }}

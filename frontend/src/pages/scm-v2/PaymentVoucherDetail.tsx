@@ -21,7 +21,7 @@
 import { ViewOriginalScan } from '../../vendor/scm/components/ViewOriginalScan';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { CheckCircle2, ChevronDown, Copy, History, Pencil, Plus, Printer, RotateCcw, Save, Send, Ban, Trash2, X, XCircle } from 'lucide-react';
+import { CheckCircle2, ChevronDown, Copy, ListPlus, Pencil, Plus, Printer, RotateCcw, Save, Send, Ban, Trash2, X, XCircle } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { fmtDate, fmtDateOrDash } from '../../vendor/shared/format';
 import {
@@ -63,6 +63,8 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { OfficialDocActions } from '../../vendor/scm/components/OfficialDoc';
 import { EntityHistoryPanel } from './EntityHistoryPanel';
+import { BooksLine, PvTrail, StageTag, VoucherTaskDrawer, pvStage } from './PvDocParts';
+import { returnToWorkspaceOpener, useWorkspaceOpener } from '../../lib/useWorkspaceOpener';
 import { PAYMENT_VOUCHER_AUDIT_LABELS } from './entity-audit-labels';
 import { resolveFxRate, deriveRateFromMyrPaid } from './fx-rate';
 import { useUnsavedWork } from '../../lib/unsavedWork';
@@ -129,6 +131,10 @@ export const PaymentVoucherDetail = () => {
   const [historyOpen, setHistoryOpen] = useState(false);
   const closeHistory = useCallback(() => setHistoryOpen(false), []);
   const navigate = useNavigate();
+  /* Back returns to the page this voucher was opened from (a workspace tab's
+     opener), else history-back; Add task links the voucher (the redesign). */
+  const cameFrom = useWorkspaceOpener();
+  const [addingTask, setAddingTask] = useState(false);
 
   const detailQ = usePaymentVoucherDetail(id || null);
   const pv    = detailQ.data?.paymentVoucher as Record<string, any> | undefined;
@@ -495,7 +501,13 @@ export const PaymentVoucherDetail = () => {
   saveRef.current = () => { void onSave(); };
 
   const onCancel = async () => {
-    if (!(await askConfirm({ title: `Cancel voucher ${pv.pv_number}?`, body: 'This sets status to CANCELLED and reverses the GL entry if it was posted.', confirmLabel: 'Cancel voucher', danger: true }))) return;
+    /* Said by stage (the design): what cancelling does to THIS voucher. */
+    const body = pv.status === 'POSTED'
+      ? `It turns Cancelled and its journal${pv.je_no ? ` ${String(pv.je_no)}` : ''} is reversed with a contra entry. Nothing is deleted and the number stays.`
+      : isChecked
+        ? `The ${fmtRm(Number(pv.total_sen ?? 0), viewCurrency)} reserved in Money today is released. ${pv.pv_number} stays on file as Cancelled.`
+        : 'Nothing has posted yet. It stays on file as Cancelled.';
+    if (!(await askConfirm({ title: `Cancel ${pv.pv_number}?`, body, confirmLabel: 'Cancel voucher', cancelLabel: 'Keep it', danger: true }))) return;
     try {
       await cancel.mutateAsync(id);
     } catch (err) {
@@ -540,16 +552,21 @@ export const PaymentVoucherDetail = () => {
   return (
     <div className="space-y-4">
       <PageHeader back
-        eyebrow="Finance"
+        beforeBack={() => {
+          /* Opened as a document from another page: back to THAT page and its tab. */
+          const href = cameFrom ? returnToWorkspaceOpener() : null;
+          if (href) { navigate(href); return false; }
+          return true;
+        }}
+        eyebrow={`Payment voucher · ${pvTypeLabel(pv.purpose)}`}
         title={pv.pv_number}
         actions={
-          <div className={styles.actions} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-            <StatusPill docType="pv" status={pv.status} />
+          <div className={styles.actions} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+            <StageTag pv={pv} />
             <ViewOriginalScan kind="pv" documentId={String(pv.id)} />
-            {/* History drawer toggle. Same header seat on every detail page, and
-                ungated: whoever may open the voucher may see who changed it. */}
-            <Button variant="ghost" size="md" onClick={() => setHistoryOpen(true)}>
-              <History {...ICON} /> History
+            {/* Add task (the redesign): a Finance task with this voucher linked. */}
+            <Button variant="ghost" size="md" onClick={() => setAddingTask(true)}>
+              <ListPlus {...ICON} /> Add task
             </Button>
             {/* Print — the voucher page plus every stored file after it. */}
             <Button variant="ghost" size="md" onClick={print.openPreview}>
@@ -603,29 +620,31 @@ export const PaymentVoucherDetail = () => {
                     draft with the why on the trail (一律退回 Draft). */}
                 {isDraft && (canCheck || canApprove) && isPrepared && rejectNote === null && (
                   <Button variant="ghost" size="md" onClick={() => setRejectNote('')} disabled={busy}>
-                    <XCircle {...ICON} /> Reject
+                    <XCircle {...ICON} /> Reject…
                   </Button>
                 )}
+                {/* Send it back to Draft: the reason is required (the
+                    redesign) — the preparer reads it on the trail. */}
                 {rejectNote !== null && (
                   <>
                     <input
                       value={rejectNote}
                       onChange={(e) => setRejectNote(e.target.value)}
-                      placeholder="Why it goes back (the preparer reads this)"
+                      placeholder="Why does it go back?"
                       aria-label="Rejection reason"
                       style={{ padding: '6px 10px', fontSize: 'var(--fs-13)', minWidth: 220 }}
                     />
-                    <Button variant="primary" size="md" onClick={() => void onRejectConfirm()} disabled={busy}>
-                      <XCircle {...ICON} /> Reject it
+                    <Button variant="primary" size="md" onClick={() => void onRejectConfirm()} disabled={busy || !rejectNote.trim()}>
+                      <XCircle {...ICON} /> Send back to Draft
                     </Button>
                     <Button variant="ghost" size="md" onClick={() => setRejectNote(null)} disabled={busy}>
-                      <X {...ICON} /> Back
+                      <X {...ICON} /> Cancel
                     </Button>
                   </>
                 )}
                 {pv.status !== 'CANCELLED' && canCancel && rejectNote === null && (
                   <Button variant="ghost" size="md" onClick={onCancel} disabled={busy}>
-                    <Ban {...ICON} /> Cancel
+                    <Ban {...ICON} /> Cancel…
                   </Button>
                 )}
               </>
@@ -646,7 +665,7 @@ export const PaymentVoucherDetail = () => {
 
       {/* ── Header card ───────────────────────────────────────────────── */}
       <section className={styles.card}>
-        <div className={styles.cardHeader}><h2 className={styles.cardTitle}>Header</h2></div>
+        <div className={styles.cardHeader}><h2 className={styles.cardTitle}>Details</h2></div>
         <div className={styles.cardBody}>
           {!isEditing ? (
             <div className={styles.formGrid2}>
@@ -665,6 +684,7 @@ export const PaymentVoucherDetail = () => {
               )}
               <InfoCell label="Paid From" value={accountLabel(pv.credit_account_code)} />
               <InfoCell label="Voucher Date" value={pv.voucher_date ? fmtDateOrDash(pv.voucher_date) : null} />
+              <InfoCell label="Journal" value={pv.je_no ? String(pv.je_no) : pvStage(pv) === 'Cancelled' ? 'Never posted' : 'Written at approval'} />
               <InfoCell label="Currency" value={viewCurrency} />
               {viewCurrency !== 'MYR' && <InfoCell label="Exchange Rate" value={`${pv.exchange_rate} (MYR per 1 ${viewCurrency})`} />}
               <InfoCell label="Bank Charges" value={Number(pv.bank_charge_sen ?? 0) > 0 ? `${fmtRm(Number(pv.bank_charge_sen), 'MYR')} (not in total)` : null} />
@@ -772,6 +792,8 @@ export const PaymentVoucherDetail = () => {
           <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>total {fmtRm(totalSen, currency)}</span>
         </div>
         <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+          {/* The books line (the redesign): posted or not, debit to credit, the money. */}
+          {!isEditing && <BooksLine pv={pv} lines={lines} accountName={accountNameOf} />}
           {apEdit ? (
             /* No line editor on an AP Payment: its one debit line is the AP
                control, written on save from the ticks below — as on PV New. */
@@ -880,7 +902,7 @@ export const PaymentVoucherDetail = () => {
       {(purpose === 'SUPPLIER_PAYMENT' || allocations.length > 0) && (
         <section className={styles.card}>
           <div className={styles.cardHeader}>
-            <h2 className={styles.cardTitle}>Linked invoices</h2>
+            <h2 className={styles.cardTitle}>Applies to</h2>
             {isEditing && editApplyToPi ? (
               <span style={{ fontSize: 'var(--fs-12)', color: editOverAllocated ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)' }}>
                 {apEdit
@@ -1081,6 +1103,13 @@ export const PaymentVoucherDetail = () => {
         {...print.handlers}
       />
 
+      {/* The trail, read inline; Full history › opens the drawer (the redesign). */}
+      <PvTrail pvId={String(pv.id)} onFullHistory={() => setHistoryOpen(true)} />
+      {addingTask && (
+        <VoucherTaskDrawer onClose={() => setAddingTask(false)}
+          link={{ type: 'Payment voucher', no: String(pv.pv_number), name: String(pv.payee_name ?? ''), to: `/scm/payment-vouchers/${String(pv.id)}` }} />
+      )}
+
       {/* History drawer — portals to <body>, so its position here is only
           about lifecycle, not layout. */}
       {historyOpen && (
@@ -1218,8 +1247,8 @@ const PvFilesCard = ({ pvId, canWrite, locked, cancelled }: { pvId: string; canW
     <DocFilesCard
       files={filesQ.data?.files ?? []}
       canWrite={canWrite} locked={locked} closed={cancelled}
-      lockedNote=" · locked with the checked voucher"
-      emptyNote="No files yet. A voucher opened from Scan bills attaches its scans here by itself; use Attach file for anything else."
+      lockedNote=" · Checked vouchers keep their files. Nothing can be removed."
+      emptyNote="No files attached. The bill or quotation goes here and prints with the voucher; one opened from Scan bills attaches its scans by itself."
       removeBody="The stored file is deleted with its row. A checked voucher refuses this — evidence locks with the document."
       attachAriaLabel="Attach voucher files"
       uploading={upload.isPending} removing={remove.isPending}

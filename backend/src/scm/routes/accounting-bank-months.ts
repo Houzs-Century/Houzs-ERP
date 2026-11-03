@@ -90,15 +90,20 @@ const feedersOf = (all: Row[], lineStatementIds: Set<number>, window: { from: st
     || (Number(s.line_count ?? 0) === 0
       && (dayOf(s.period_from) ?? '') >= window.from && (dayOf(s.period_to) ?? '') <= window.to));
 
-/** What lines OUTSIDE the window have claimed (docs/bugs/0802): a POSTED
-    line's own entry, or its match row. Passed to the reconciliation so an
-    earlier entry reconciled on an earlier month is not "still waiting" here. */
+/** What lines OUTSIDE the window, dated no later than its last day, have
+    claimed (docs/bugs/0802): a POSTED line's own entry, or its match row.
+    Passed to the reconciliation so an earlier entry reconciled on an earlier
+    month is not "still waiting" here. A LATER month's line does not count:
+    the bank paid that entry after this month ended, so at its end the entry
+    was still waiting — 2990's RM 6,024.06 voucher of 29 May, paid 8 July, left
+    June's list the day July was matched and June would not close again. */
 const claimedOutside = (
-  allLines: Row[], inWindow: Set<number>, matchesByLine: Map<number, Row[]>,
+  allLines: Row[], inWindow: Set<number>, matchesByLine: Map<number, Row[]>, upTo: string,
 ): Set<string> => {
   const out = new Set<string>();
   for (const l of allLines) {
     if (inWindow.has(Number(l.id)) || String(l.state) !== 'POSTED') continue;
+    if ((dayOf(l.booked_on) ?? '') > upTo) continue;
     /* Every entry the line names — a split's "A, B" is two (docs/bugs/0809). */
     for (const je of jeNosOf(l.posted_je_no)) out.add(je);
     for (const m of matchesByLine.get(Number(l.id)) ?? []) { const je = textOf(m.je_no); if (je) out.add(je); }
@@ -415,7 +420,7 @@ export async function loadMonthForLock(
          still outstanding and the lock refused a month the screen said tallied
          (docs/bugs/0818). */
       claimedElsewhere: claimedSetFor(
-        { claimed: claimedOutside(everyLine, new Set(lines.map((l) => Number(l.id))), matchesByLine), firstPeriodFrom },
+        { claimed: claimedOutside(everyLine, new Set(lines.map((l) => Number(l.id))), matchesByLine, window.to), firstPeriodFrom },
         ledger.movements,
       ),
     }),
@@ -528,7 +533,7 @@ export const bankMonthDetail = bankGuard(async (c) => {
 
   const firstPeriodFrom = allStatements.map((s) => dayOf(s.period_from) ?? '').filter(Boolean).sort()[0] ?? null;
   const claimedElsewhere = claimedSetFor(
-    { claimed: claimedOutside(everyLine, new Set(lines.map((l) => Number(l.id))), matchesByLine), firstPeriodFrom },
+    { claimed: claimedOutside(everyLine, new Set(lines.map((l) => Number(l.id))), matchesByLine, window.to), firstPeriodFrom },
     ledger.movements,
   );
   const reconciliation = reconcileBankStatement({

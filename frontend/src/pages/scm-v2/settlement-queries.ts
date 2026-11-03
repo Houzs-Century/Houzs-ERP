@@ -58,6 +58,10 @@ export type SettlementCandidate = {
   /** On a "Find the sale" result: the payment's own amount is the line's exact
       gross — the system's guess, ranked first, never the only choice. */
   possible?: boolean;
+  /** The order's salesperson and the payment's account sheet (the redesign's
+      Sales and Account sheet columns) — on a report's candidates. */
+  salesperson?: string | null;
+  accountSheet?: string | null;
 };
 
 export type SettlementLink = {
@@ -71,6 +75,9 @@ export type SettlementLink = {
   paid_on?: string | null;
   customer_name?: string | null;
   approval_code?: string | null;
+  /** The order's salesperson and the payment's account sheet (the redesign). */
+  salesperson?: string | null;
+  account_sheet?: string | null;
 };
 
 export type RefreshedLink = { settlementRowId: number; paymentSource: string; paymentId: string; docNo: string | null; fromSen: number; toSen: number };
@@ -370,6 +377,8 @@ const invalidateAfterPosting = (qc: ReturnType<typeof useQueryClient>) => {
   void qc.invalidateQueries({ queryKey: ['account-balances'] });
   void qc.invalidateQueries({ queryKey: ['control-check'] });
   void qc.invalidateQueries({ queryKey: ['daily-bank'] });
+  /* Finance's To do counts these lines; it moves with them. */
+  void qc.invalidateQueries({ queryKey: ['finance-todo'] });
 };
 
 export const useConfirmSettlementRow = () => {

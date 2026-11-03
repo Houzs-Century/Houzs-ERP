@@ -1,0 +1,7 @@
+/* A document number on a Finance page (the redesign's rule): 13/600, a dotted
+   underline, tabular figures — Money out's own look (MoneyOut.module.css .docLink). */
+.docLink {
+  font: 600 13px 'IBM Plex Sans', system-ui, sans-serif; color: inherit; white-space: nowrap; font-variant-numeric: tabular-nums;
+  text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: #a9ada3;
+}
+.docLink:hover { color: #16695f; text-decoration-color: #16695f; }

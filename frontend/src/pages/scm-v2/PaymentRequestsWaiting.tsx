@@ -27,11 +27,11 @@ export function PaymentRequestsWaiting() {
     >
       <HandCoins size={18} strokeWidth={1.75} aria-hidden="true" style={{ color: 'var(--c-orange)' }} />
       <span style={{ fontWeight: 600, fontSize: 'var(--fs-13)' }}>
-        {waiting} payment request{waiting === 1 ? '' : 's'} waiting for Finance · {waiting} 张申请付款等你处理
+        {waiting} payment request{waiting === 1 ? '' : 's'} waiting for Finance
       </span>
       <span style={{ flex: 1 }} />
       <Button variant="primary" size="sm" onClick={() => navigate('/scm/payment-requests?filter=waiting')}>
-        Open them · 去处理
+        Open them ›
       </Button>
     </div>
   );

@@ -40,6 +40,7 @@ import { sendAssrArrangement } from '../lib/assr-arrangement-message';
 import {
   isConnectConfigured,
   buildDeliveryFollowUp,
+  buildSyncHeadline,
   postConnectContact,
   parseConnectCompanyProfiles,
   chatCallbackUrl,
@@ -47,6 +48,7 @@ import {
   type ConnectOrder,
   type ConnectCompanyProfile,
 } from '../../services/connect';
+import { buildContactSyncEvent, SYNC_SO_SELECT } from '../lib/connect-contact-sync';
 
 export const deliveryMessages = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -111,7 +113,11 @@ export async function sendDeliveryMessageForDocs(
   // Address columns feed the Postage kind only; the rest read nothing extra.
   const { data: rowsRaw, error: readErr } = await scopeToAllowedCompanies(
     sb.from('mfg_sales_orders')
-      .select('doc_no, ref, debtor_name, phone, branding, company_id, customer_delivery_date, amended_delivery_date, amend_reason, delivery_address1, delivery_address2, delivery_address3, delivery_address4, address1, address2, address3, address4, postcode, city, customer_state')
+      // The headline columns (venue / agent / house_type / disposal_request /
+      // delivery_message_status) ride along so EVERY send also fills the contact
+      // panel's single-value fields (buildSyncHeadline), not only the fields the
+      // message's own template uses (owner 2026-11-02).
+      .select('doc_no, ref, debtor_name, phone, branding, company_id, customer_delivery_date, amended_delivery_date, amend_reason, venue, agent, house_type, disposal_request, delivery_message_status, delivery_address1, delivery_address2, delivery_address3, delivery_address4, address1, address2, address3, address4, postcode, city, customer_state')
       .in('doc_no', docNos),
     c,
   );
@@ -212,7 +218,9 @@ export async function sendDeliveryMessageForDocs(
     const sendCtx = {
       callbackUrl,
       automation: KIND_AUTOMATION[kind],
-      extra: perKind.attributes,
+      // Headline fields FIRST so this kind's own variables win on any overlap
+      // (driver_info sets client_delivery_date itself); both ride on the one send.
+      extra: { ...buildSyncHeadline(first, phone, payloadDate(effectiveSoDelivery(first as SoDeliveryDateRow))), ...perKind.attributes },
       resetConversation: OPENER_KINDS.has(kind),
     };
     // ONE message per customer phone and company. buildDeliveryFollowUp shows
@@ -272,6 +280,150 @@ export async function sendDeliveryMessageForDocs(
 
   return { sent, failed, skipped };
 }
+
+/* The result of a contact-info sync — one Connect upsert per (phone, company),
+   NO WhatsApp sent. Mirrors the send result's shape (synced in place of sent) so
+   the board reports it the same way. */
+export interface SyncContactsResult {
+  synced: Array<{ phone: string; docNos: string[]; httpCode: number }>;
+  failed: Array<{ phone: string; docNos: string[]; error: string }>;
+  skipped: Array<{ docNo: string; reason: string }>;
+  readError?: { code: string; reason: string };
+}
+
+/* Push each selected order's full field set into its Connect contact WITHOUT
+   sending a message (owner 2026-11-02 — the panel sat at 13/65 because a send
+   only ever pushed the fields its own template used). Each (phone, company) gets
+   the same delivery bundle a send carries (ref_N / ref_no_N / brand_N /
+   delivery_date_N / order_amount / company profile) PLUS the single-value
+   "headline" fields the panel shows (buildSyncHeadline: Reference No. / Brand /
+   Purchase Venue / Sales Person / Delivery State / House Type / Disposal / phone),
+   fired under CONNECT_SYNC_AUTOMATION so Connect upserts the attributes and
+   triggers nothing. resetConversation:false — a sync must never blank
+   button_status and unlock the Delivery Lock. Groups by company like the sender,
+   so a 2990 order carries 2990's profile, not the acting user's. */
+export async function syncContactsForDocs(
+  c: Context<{ Bindings: Env; Variables: Variables }>,
+  docNos: string[],
+): Promise<SyncContactsResult> {
+  const sb = c.get('supabase');
+  const user = c.get('user') as { id?: string } | null;
+
+  // The headline fields are the board's own SO columns (venue / agent /
+  // customer_state / house_type / disposal_request / delivery_message_status),
+  // read alongside the bundle's doc_no / ref / branding / dates.
+  const { data: rowsRaw, error: readErr } = await scopeToAllowedCompanies(
+    sb.from('mfg_sales_orders').select(SYNC_SO_SELECT).in('doc_no', docNos),
+    c,
+  );
+  if (readErr) return { synced: [], failed: [], skipped: [], readError: { code: 'load_failed', reason: readErr.message } };
+  const rows = (rowsRaw ?? []) as Array<Record<string, unknown>>;
+
+  const byDoc = new Map(rows.map((r) => [String(r.doc_no), r]));
+  const skipped: Array<{ docNo: string; reason: string }> = [];
+  const byPhoneCompany = new Map<string, { phone: string; companyId: number | null; rows: Array<Record<string, unknown>> }>();
+  for (const docNo of docNos) {
+    const r = byDoc.get(docNo);
+    if (!r) { skipped.push({ docNo, reason: 'not_found' }); continue; }
+    const phone = blastPhone(r.phone);
+    if (!phone) { skipped.push({ docNo, reason: 'no_phone' }); continue; }
+    const companyId = r.company_id == null ? null : Number(r.company_id);
+    const key = `${phone}\u0000${companyId ?? ''}`;
+    const g = byPhoneCompany.get(key) ?? { phone, companyId, rows: [] };
+    g.rows.push(r);
+    byPhoneCompany.set(key, g);
+  }
+
+  const synced: Array<{ phone: string; docNos: string[]; httpCode: number }> = [];
+  const failed: Array<{ phone: string; docNos: string[]; error: string }> = [];
+
+  // Same fail-closed per-company profile read as the sender (bank / signature /
+  // disposal), so a synced balance block is never left without them.
+  // company-scope: app_config is a global key/value config table, not per-company data.
+  const { data: profileRow, error: profileErr } = await sb.from('app_config')
+    .select('value').eq('key', CONNECT_COMPANY_PROFILE_KEY).maybeSingle();
+  if (profileErr) return { synced, failed, skipped, readError: { code: 'profile_load_failed', reason: profileErr.message } };
+  const profilesById = parseConnectCompanyProfiles((profileRow as { value?: string | null } | null)?.value ?? null);
+  const codeByCompany = companyCodeMap(c);
+
+  // LIVE balance + gross total per SO (the SO list's own view, view-native cols);
+  // a failed read must not sync "nothing owed", same fail-closed rule.
+  const { data: balRaw, error: balErr } = await scopeToAllowedCompanies(
+    sb.from('mfg_sales_orders_with_payment_totals')
+      .select('doc_no, balance_sen_live, local_total_sen')
+      .in('doc_no', docNos),
+    c,
+  );
+  if (balErr) return { synced, failed, skipped, readError: { code: 'balance_load_failed', reason: balErr.message } };
+  const balanceByDoc = new Map<string, number>();
+  const totalByDoc = new Map<string, number>();
+  for (const b of (balRaw ?? []) as Array<{ doc_no: string | null; balance_sen_live: number | null; local_total_sen: number | null }>) {
+    if (b.doc_no == null) continue;
+    if (b.balance_sen_live != null) balanceByDoc.set(String(b.doc_no), Number(b.balance_sen_live));
+    if (b.local_total_sen != null) totalByDoc.set(String(b.doc_no), Number(b.local_total_sen));
+  }
+  const callbackUrl = chatCallbackUrl(c.env);
+
+  for (const { phone, companyId, rows: groupRows } of byPhoneCompany.values()) {
+    const groupDocs = groupRows.map((r) => String(r.doc_no));
+    const contact = buildContactSyncEvent({
+      phone,
+      groupRows,
+      balanceByDoc,
+      totalByDoc,
+      companyProfile: profilesById[String(companyId ?? '')] ?? null,
+      companyCode: companyId != null ? codeByCompany.get(companyId)?.toUpperCase() ?? null : null,
+      callbackUrl,
+    });
+    const result = await postConnectContact(c.env, contact, { expectTrigger: false });
+
+    // Logged like a send (per doc, shared batch_id) but source 'connect-sync', so
+    // the board's "Message" column never shows a sync as a customer message.
+    const batchId = crypto.randomUUID();
+    try {
+      await sb.from('wa_message_log').insert(groupDocs.map((docNo) => ({
+        batch_id: batchId,
+        company_id: activeCompanyId(c) ?? null,
+        doc_no: docNo,
+        phone,
+        payload: JSON.stringify(contact),
+        http_code: result.httpCode,
+        success: result.ok,
+        error: result.error,
+        source: 'connect-sync',
+        created_by: user?.id ?? null,
+      })));
+    } catch (e) {
+      console.warn(`[delivery-messages] sync log insert failed: ${String((e as Error).message).slice(0, 120)}`);
+    }
+
+    if (result.ok) synced.push({ phone, docNos: groupDocs, httpCode: result.httpCode ?? 0 });
+    else failed.push({ phone, docNos: groupDocs, error: result.error ?? 'sync failed' });
+  }
+
+  return { synced, failed, skipped };
+}
+
+/* ── POST /sync — push the selected orders' full field set into Connect, no send ── */
+const syncSchema = z.object({
+  docNos: z.array(z.string().min(1)).min(1).max(200),
+});
+deliveryMessages.post('/sync', async (c) => {
+  if (!isConnectConfigured(c.env)) {
+    return c.json({
+      error: 'not_configured',
+      reason: 'Houzs Connect is not configured yet — set the CONNECT_WEBHOOK_URL and CONNECT_WEBHOOK_KEY secrets to enable sync.',
+    }, 503);
+  }
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const parsed = syncSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: 'invalid_body', reason: parsed.error.message }, 400);
+  const docNos = [...new Set(parsed.data.docNos)];
+  const result = await syncContactsForDocs(c, docNos);
+  if (result.readError) return c.json({ error: result.readError.code, reason: result.readError.reason }, 500);
+  return c.json({ synced: result.synced, failed: result.failed, skipped: result.skipped });
+});
 
 /* ── POST /send — one Houzs Connect call per customer phone ────────────────── */
 deliveryMessages.post('/send', async (c) => {

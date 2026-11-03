@@ -344,7 +344,7 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
 
   return (
     <div className="space-y-4">
-      <PageHeader back eyebrow="Finance" title={ap ? 'Scan bills — AP invoices' : 'Scan bills'} />
+      <PageHeader back eyebrow="Finance · Money out" title={ap ? 'Scan bills — Supplier bills' : 'Scan bills'} />
 
       <section
         className={styles.card}
@@ -458,13 +458,13 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
                             onChange={(e) => setTickedForOne((prev) => { const n = new Set(prev); if (e.target.checked) n.add(b.index); else n.delete(b.index); return n; })}
                             style={{ width: 15, height: 15, accentColor: 'var(--c-orange)' }} />
                         )}
-                        <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>
+                        <span style={{ fontWeight: 700 }}>
                           {b.extraction.invoiceNumber ?? '(no number)'}
                           {opened.includes(b.index) && <span style={{ fontFamily: 'inherit', fontWeight: 400, fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', marginLeft: 6 }}>· opened</span>}
                         </span>
                         <span style={{ color: 'var(--fg-muted)' }}>{fmtDate(b.extraction.invoiceDate)}</span>
                         <span style={{ color: 'var(--fg-muted)' }}>{b.extraction.dueDate ? `due ${fmtDate(b.extraction.dueDate)}` : ''}</span>
-                        <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtRm(b.extraction.totalSen)}</span>
+                        <span style={{ fontWeight: 700, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtRm(b.extraction.totalSen)}</span>
                         {ap ? (
                           <Button variant="primary" size="sm" onClick={() => openApInvoice(b)} disabled={busy}>
                             Open as AP invoice
@@ -492,7 +492,7 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
                           {b.extraction.lines.map((l, i) => (
                             <div key={i} style={{ display: 'contents' }}>
                               <span style={{ color: 'var(--fg-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.description ?? '—'}</span>
-                              <span style={{ fontFamily: 'var(--font-mono)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtRm(l.amountSen)}</span>
+                              <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtRm(l.amountSen)}</span>
                             </div>
                           ))}
                         </div>

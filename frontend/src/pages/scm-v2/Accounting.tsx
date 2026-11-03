@@ -195,7 +195,7 @@ const CoaTab = () => {
           {
             key: 'parent', label: 'Parent', width: '120px', getValue: (r) => r.parent_code ?? '',
             render: (r) => r.parent_code
-              ? <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--c-ink-soft, #666)' }}>{r.parent_code}</span>
+              ? <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--c-ink-soft, #666)' }}>{r.parent_code}</span>
               : '—',
           },
           {

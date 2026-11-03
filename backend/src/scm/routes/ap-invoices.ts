@@ -44,12 +44,16 @@ import { docMonthTag, mintMonthlyDocNo } from '../lib/doc-no';
 import { dateOrNull } from '../lib/date-coerce';
 import { todayMyt } from '../lib/my-time';
 import { postJournal, reverseJournal } from '../../acc/engine';
-import { apInvoiceLines, resolveRoles } from '../../acc/rules';
+import { apControlRole, apInvoiceLines, resolveRoles, type RoleCodes } from '../../acc/rules';
+import { HOLD_COLUMNS, isDocumentHeld } from '../lib/document-hold';
+import { billPayments } from './ap-invoice-payments';
+import { billPlans, putBillPlanHandler } from './ap-bill-plans';
 import { requireLeafAccount } from './accounting-chart';
 import { learnVendorMemory } from './payment-vouchers';
 import {
   uploadApInvoiceFileHandler, listApInvoiceFilesHandler, streamApInvoiceFileHandler, deleteApInvoiceFileHandler,
 } from './ap-invoice-files';
+import { printApBillsBundleHandler } from './ap-bill-print';
 import { supabaseAuth } from '../middleware/auth';
 import { fmtSen } from '../shared/format';
 import { parseEventId, unknownEventRefusal } from '../lib/event-tags';
@@ -117,6 +121,9 @@ export const listApInvoicesHandler = async (c: any): Promise<Response> => {
   /* docKind=DN: the supplier debit notes alone (the CN / DN page's tab) — a
      purchase invoice is never one; docKind=INV: the bills without them. */
   const docKind = String(c.req.query('docKind') ?? '').trim().toUpperCase();
+  /* The control each bill sits on (the redesign's Control column and its
+     Trade / Other filter): the server's own rule, the roles read once. */
+  const roles = await resolveRoles(sb, co.companyId);
 
   const rows: Row[] = [];
   if (kind === 'ALL' || kind === 'API') {
@@ -124,7 +131,7 @@ export const listApInvoicesHandler = async (c: any): Promise<Response> => {
     if (docKind === 'DN' || docKind === 'INV') q = q.eq('doc_kind', docKind);
     const { data, error } = await q.order('invoice_date', { ascending: false }).limit(500);
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-    for (const r of (data ?? []) as Row[]) rows.push(shape('API', r));
+    for (const r of (data ?? []) as Row[]) rows.push(shape('API', r, roles));
   }
   if ((kind === 'ALL' || kind === 'PI') && docKind !== 'DN') {
     /* The operational invoices, read-only here: the Procurement page raises
@@ -132,20 +139,28 @@ export const listApInvoicesHandler = async (c: any): Promise<Response> => {
        the Finance side sees a supplier's whole debt. */
     const { data, error } = await scopeToCompany(
       sb.from('purchase_invoices')
-        .select('id, invoice_number, supplier_invoice_ref, supplier_id, invoice_date, due_date, currency, total_sen, paid_sen, status, notes, supplier:suppliers(id, code, name)')
+        .select(`id, invoice_number, supplier_invoice_ref, supplier_id, invoice_date, due_date, currency, total_sen, paid_sen, status, notes, ${HOLD_COLUMNS}, supplier:suppliers(id, code, name)`)
         .in('status', ['POSTED', 'PARTIALLY_PAID', 'PAID', 'ON_HOLD']), c,
     ).order('invoice_date', { ascending: false }).limit(500);
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-    for (const r of (data ?? []) as Row[]) rows.push(shape('PI', r));
+    for (const r of (data ?? []) as Row[]) rows.push(shape('PI', r, roles));
   }
   rows.sort((a, b) => String(b.invoiceDate ?? '').localeCompare(String(a.invoiceDate ?? '')) || String(b.invoiceNumber).localeCompare(String(a.invoiceNumber)));
+  /* When Finance plans to pay each bill (step 7) — beside its due date, never instead of it. */
+  const plans = await billPlans(sb, co.companyId);
+  if (!plans.ok) return c.json({ error: 'load_failed', reason: plans.reason }, 500);
+  for (const r of rows) r.plannedOn = plans.byBill.get(`${r.kind}:${r.id}`) ?? null;
   return c.json({ rows });
 };
 
-function shape(kind: 'API' | 'PI', r: Row): Row {
+function shape(kind: 'API' | 'PI', r: Row, roles: RoleCodes): Row {
   const sup = Array.isArray(r.supplier) ? r.supplier[0] : r.supplier;
   const total = Number(r.total_sen ?? 0);
   const paid = Number(r.paid_sen ?? 0);
+  const controlRole = apControlRole(sup?.code ?? null);
+  /* A purchase invoice held in Procurement: every voucher path refuses it
+     (payment-vouchers.ts), so the list says so before anyone tries. */
+  const held = kind === 'PI' && isDocumentHeld(r);
   return {
     kind,
     /* 'DN' for a supplier's debit note; a purchase invoice is always an invoice. */
@@ -166,10 +181,16 @@ function shape(kind: 'API' | 'PI', r: Row): Row {
     paidSen: paid,
     outstandingSen: Math.max(0, total - paid),
     status: String(r.status ?? ''),
+    /* Trade creditors (AP, 400) or Other creditors (AP_OTHER, 405) — by the supplier's code. */
+    controlRole,
+    controlCode: roles[controlRole],
+    held,
+    holdReason: held ? (r.hold_reason ?? null) : null,
   };
 }
 
-/* ── GET /:id — an AP invoice with its lines ─────────────────────────────── */
+/* ── GET /:id — an AP invoice with its lines, what paid it, its journal and
+   the control it sits on (the bill page, batch 4 step 6) ───────────────── */
 export const apInvoiceDetailHandler = async (c: any): Promise<Response> => {
   const found = await loadInvoice(c, c.req.param('id'));
   if ('resp' in found) return found.resp;
@@ -180,7 +201,13 @@ export const apInvoiceDetailHandler = async (c: any): Promise<Response> => {
   ]);
   if (lines.error) return c.json({ error: 'load_failed', reason: lines.error.message }, 500);
   if (sup.error) return c.json({ error: 'load_failed', reason: sup.error.message }, 500);
-  return c.json({ invoice: found.inv, lines: lines.data ?? [], supplier: sup.data ?? null });
+  const pay = await billPayments(sb, c, found.inv);
+  if (!pay.ok) return c.json({ error: 'load_failed', reason: pay.reason }, 500);
+  const plan = await scopeToCompany(sb.from('acc_bill_plans').select('planned_on').eq('bill_kind', 'API').eq('bill_id', found.inv.id), c).maybeSingle();
+  if (plan.error) return c.json({ error: 'load_failed', reason: plan.error.message }, 500);
+  const roles = await resolveRoles(sb, activeCompanyId(c) ?? null);
+  const controlCode = roles[apControlRole((sup.data as { code?: string | null } | null)?.code ?? null)];
+  return c.json({ invoice: { ...found.inv, je_no: pay.jeNo, planned_on: (plan.data as { planned_on?: string } | null)?.planned_on ?? null }, lines: lines.data ?? [], supplier: sup.data ?? null, payments: pay.payments, controlCode });
 };
 
 /* ── POST / — raise a DRAFT ──────────────────────────────────────────────── */
@@ -467,12 +494,16 @@ export const apInvoices = new Hono();
 apInvoices.use('*', supabaseAuth);
 apInvoices.get('/', listApInvoicesHandler);
 apInvoices.post('/', createApInvoiceHandler);
+/* Supplier bills printed together, each followed by its files (batch 4,
+   step 8; routes/ap-bill-print.ts) — a literal path, before '/:id'. */
+apInvoices.post('/print-bundle', printApBillsBundleHandler);
 /* Files before /:id, as the PV mounts them — the evidence paths never fall
    into the detail matcher. */
 apInvoices.post('/:id/files', uploadApInvoiceFileHandler);
 apInvoices.get('/:id/files', listApInvoiceFilesHandler);
 apInvoices.get('/:id/files/:fileId', streamApInvoiceFileHandler);
 apInvoices.delete('/:id/files/:fileId', deleteApInvoiceFileHandler);
+apInvoices.put('/plans', putBillPlanHandler);
 apInvoices.get('/:id', apInvoiceDetailHandler);
 apInvoices.patch('/:id', updateApInvoiceHandler);
 apInvoices.post('/:id/post', postApInvoiceHandler);

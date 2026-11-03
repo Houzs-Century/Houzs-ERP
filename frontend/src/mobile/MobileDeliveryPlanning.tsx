@@ -320,6 +320,19 @@ export function MobileDeliveryPlanning({
       customer_delivered_date: p.completed_at ?? o.customer_delivered_date } : o;
   }), [data, progressMap]);
 
+  /* HC-0192: office staff watch one driver's day. The choices are the drivers on
+     the rows the server already returned, so a driver (whose rows are only their
+     own jobs, resolveDeliveryScope) gets a single name and no filter. */
+  const [driverFilter, setDriverFilter] = useState("");
+  const driverNames = useMemo(
+    () => [...new Set(allOrders.filter(isDispatched).map((o) => o.crew?.driver).filter(Boolean) as string[])].sort(),
+    [allOrders],
+  );
+  const shownOrders = useMemo(
+    () => (driverFilter ? allOrders.filter((o) => o.crew?.driver === driverFilter) : allOrders),
+    [allOrders, driverFilter],
+  );
+
   // today / tomorrow local day keys.
   const { todayKey, tomorrowKey } = useMemo(() => {
     const now = new Date();
@@ -343,7 +356,7 @@ export function MobileDeliveryPlanning({
       d.setDate(1);
       return dayKey(d.toISOString());
     })();
-    for (const o of allOrders) {
+    for (const o of shownOrders) {
       // Only stops actually on a run — a cut DO or an assigned driver. An order
       // that merely carries today's customer date (no DO, no driver) is not yet
       // dispatched and stays on the desktop board. See runSheetDispatch.ts.
@@ -376,7 +389,7 @@ export function MobileDeliveryPlanning({
     // History newest-first.
     history.sort((a, b) => -bySeq(a, b));
     return { today, tomorrow, history };
-  }, [allOrders, todayKey, tomorrowKey]);
+  }, [shownOrders, todayKey, tomorrowKey]);
 
   const advancedFor = useRef<string | null>(null);
   useEffect(() => {
@@ -641,6 +654,17 @@ export function MobileDeliveryPlanning({
             </button>
           ))}
         </div>
+        {driverNames.length > 1 && (
+          <select
+            aria-label="Filter by driver"
+            value={driverFilter}
+            onChange={(e) => setDriverFilter(e.target.value)}
+            style={{ marginTop: 9, width: "100%", height: 34, borderRadius: 8, border: "1px solid var(--line)", padding: "0 8px", fontSize: 13, background: "#fff" }}
+          >
+            <option value="">All drivers</option>
+            {driverNames.map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+        )}
       </header>
 
       <div

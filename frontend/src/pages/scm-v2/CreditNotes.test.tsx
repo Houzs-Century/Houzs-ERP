@@ -9,7 +9,7 @@
    otherDebtorCreditNote.test.ts. */
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ConfirmProvider } from '../../vendor/scm/components/ConfirmDialog';
 import { describe, expect, test, vi } from 'vitest';
 import type { CreditNote } from '../../vendor/scm/lib/credit-note-queries';
@@ -188,7 +188,7 @@ describe('the Credit & Debit Notes page', () => {
     expect(screen.queryByLabelText('Supplier credit note pages')).toBeNull();
     unmount();
     render(<MemoryRouter><ConfirmProvider><CreditNotes side="AP" /></ConfirmProvider></MemoryRouter>);
-    expect(screen.getByRole('heading', { name: 'Supplier & Other Creditor CN / DN' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Supplier & other creditor CN / DN' })).toBeTruthy();
     /* One kind on the page — no kind tabs; the real notes first, the opening credits on their own tab; the scan is here. */
     expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Credit notes', 'Debit notes', 'Opening 31/08']);
     expect(lastList.value).toBe('AP|ALL|ALL|exclude');
@@ -227,7 +227,7 @@ describe('the Credit & Debit Notes page', () => {
     fireEvent.change(within(dialog).getByLabelText('Reason'), { target: { value: 'Scratched leg' } });
     fireEvent.change(within(dialog).getByLabelText('Line 1 description'), { target: { value: 'Goodwill' } });
     fireEvent.change(within(dialog).getByLabelText('Line 1 amount'), { target: { value: '150' } });
-    fireEvent.click(within(dialog).getByText('Save note'));
+    fireEvent.click(within(dialog).getByText('Save as draft'));
     await waitFor(() => expect(createMutate).toHaveBeenCalled());
     expect(createMutate.mock.calls[0]?.[0]).toEqual({
       kind: 'CN', noteDate: expect.any(String), reason: 'Scratched leg', sourceDocNo: null, soDocNo: '2990-SO-2607-019',
@@ -299,7 +299,7 @@ describe('Scan supplier CN', () => {
     expect((within(ko).getByLabelText('Knock off HC-PI-2610-018') as HTMLInputElement).checked).toBe(false);
     expect((screen.getByLabelText('Line 1 amount') as HTMLInputElement).value).toBe('324.99');
     expect((screen.getByLabelText('Reference') as HTMLInputElement).value).toBe('DGPSC26000263');
-    fireEvent.click(screen.getByText('Save note'));
+    fireEvent.click(screen.getByText('Save as draft'));
     await waitFor(() => expect(createMutate).toHaveBeenCalledTimes(1));
     expect(createMutate.mock.calls[0]![0]).toMatchObject({
       kind: 'SCN', supplierId: 'sup-d', noteDate: '2026-09-07', sourceDocNo: 'DGPSC26000263', reason: '25% display discount', purchaseInvoiceId: 'pi-17',
@@ -317,7 +317,7 @@ describe('Scan supplier CN', () => {
     const ko = screen.getByLabelText("Knock off the supplier's invoices");
     fireEvent.click(within(ko).getByLabelText('Knock off HC-PI-2610-017'));
     expect(screen.getByLabelText('Knock-off total').textContent).toContain('credit left RM 650.00 of RM 650.00');
-    fireEvent.click(screen.getByText('Save note'));
+    fireEvent.click(screen.getByText('Save as draft'));
     await waitFor(() => expect(createMutate).toHaveBeenCalledTimes(1));
     /* The paper's invoice stays as the note's reference; nothing is knocked off. */
     expect(createMutate.mock.calls[0]![0]).toMatchObject({ purchaseInvoiceId: 'pi-17', allocations: [] });
@@ -331,7 +331,7 @@ describe('Scan supplier CN', () => {
     const ko = screen.getByLabelText("Knock off the supplier's invoices");
     fireEvent.click(within(ko).getByLabelText('Knock off HC-PI-2610-017'));
     fireEvent.click(within(ko).getByLabelText('Knock off HC-PI-2610-018'));
-    fireEvent.click(screen.getByText('Save note'));
+    fireEvent.click(screen.getByText('Save as draft'));
     await waitFor(() => expect(createMutate).toHaveBeenCalledTimes(1));
     expect(createMutate.mock.calls[0]![0]).toMatchObject({ allocations: [{ kind: 'PI', id: 'pi-18', amountSen: 65_000 }] });
   });
@@ -396,7 +396,7 @@ describe("an other debtor's credit note", () => {
     fireEvent.change(within(dialog).getByLabelText('Line 1 amount'), { target: { value: '2000' } });
     /* No account on the line yet — no default for this kind, so Save waits. */
     expect(within(dialog).getByText("Pick an account on every line — an other debtor's credit note has no default account.")).toBeTruthy();
-    expect(within(dialog).getByText('Save note').closest('button')?.disabled).toBe(true);
+    expect(within(dialog).getByText('Save as draft').closest('button')?.disabled).toBe(true);
     fireEvent.focus(within(dialog).getByPlaceholderText('— pick the account —'));
     fireEvent.mouseDown(screen.getByRole('option', { name: '520-0000 · DISCOUNT ALLOWED' }));
     /* The debtor's bill, ticked for the whole credit; a bill has no supplier reference. */
@@ -405,7 +405,7 @@ describe("an other debtor's credit note", () => {
     fireEvent.click(within(ko).getByLabelText('Knock off HC-ODB-2608-005'));
     expect((within(ko).getByLabelText('Amount off HC-ODB-2608-005') as HTMLInputElement).value).toBe('2,000.00');
     expect(within(dialog).getByLabelText('Knock-off total').textContent).toContain('credit left RM 0.00 of RM 2,000.00 — it stays with the debtor.');
-    fireEvent.click(within(dialog).getByText('Save note'));
+    fireEvent.click(within(dialog).getByText('Save as draft'));
     await waitFor(() => expect(createMutate).toHaveBeenCalledTimes(1));
     expect(createMutate.mock.calls[0]![0]).toEqual({
       kind: 'OCN', noteDate: expect.any(String), reason: null, sourceDocNo: 'CN-2609-025', debtorId: 'deb-e',
@@ -446,5 +446,23 @@ describe('the debit-note tabs', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Other debtor DN' }));
     expect(await screen.findByText('AR invoices page · DN')).toBeTruthy();
     expect(screen.queryByRole('tab', { name: 'CN' })).toBeNull();
+  });
+});
+
+/* A note as its own page (the redesign, batch 4 step 6): the pop-out's parts on a page. */
+const { NotePage } = await import('./NotePage');
+describe('a note as its own page', () => {
+  test('the supplier note page shows the note, says its credit is still to use, keeps its buttons and reads its trail', () => {
+    render(
+      <MemoryRouter initialEntries={['/scm/supplier-notes/n2']}>
+        <ConfirmProvider><Routes><Route path="/scm/supplier-notes/:id" element={<NotePage side="AP" />} /></Routes></ConfirmProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.getByText('Supplier credit note')).toBeTruthy();
+    expect(screen.getByText('To use')).toBeTruthy();
+    expect(screen.getByText('Print')).toBeTruthy();
+    expect(screen.getByText('Cancel note')).toBeTruthy();
+    expect(screen.getByText('Add task')).toBeTruthy();
+    expect(screen.getByText('Knocked off 2990-PI-2609-004')).toBeTruthy();
   });
 });

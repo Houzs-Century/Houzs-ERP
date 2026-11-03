@@ -116,6 +116,9 @@ vi.mock('./settlement-queries', () => ({
     isLoading: false,
   }),
   useUploadStatement: () => ({ mutateAsync: uploadMutateAsync, isPending: false }),
+  /* The Upload drawer carries Public Bank's advice too. */
+  useUploadPayoutAdvice: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  usePayouts: () => ({ data: { payouts: [], chargeAccounts: [], feeAccountByAcquirer: {} }, isLoading: false }),
   useConfirmSettlementRow: () => ({ mutate: confirmMutate, isPending: false, isError: false, error: null }),
   useUnconfirmSettlementRow: () => ({ mutate: unconfirmMutate, isPending: false }),
   useConfirmMatched: () => ({ mutate: confirmMatchedMutate, isPending: false, data: null }),
@@ -139,11 +142,18 @@ vi.mock('./settlement-queries', () => ({
    screen too (owner, 2026-08-24: 毕竟它属于card merchant 那边). Its contract is
    PayoutAdviceTab.test.tsx; here it is stubbed and only its door is proved. */
 vi.mock('./PayoutAdviceTab', () => ({ PayoutAdviceTab: () => <div>payment advice tab</div> }));
+/* The cards read a missing report off Finance's To do (card-missing). */
+let todoJobs: Array<Record<string, unknown>> = [];
+vi.mock('./finance/finance-todo-queries', () => ({ useFinanceTodo: () => ({ data: { mine: todoJobs } }) }));
 
 import { MerchantRecon } from './MerchantRecon';
 import { refusalText } from './settlement-ui';
 
 const draw = () => render(<MemoryRouter><MerchantRecon /></MemoryRouter>);
+/** The upload is a drawer now (the redesign): the page's Upload button opens it. */
+const openUpload = () => fireEvent.click(screen.getByRole('button', { name: 'Upload' }));
+/** A report's lines sit in five tabs (the redesign): To confirm · To choose · No sale found ‖ Confirmed · Set aside. */
+const openTab = (name: string) => fireEvent.click(screen.getByRole('tab', { name: new RegExp(`^${name}`) }));
 
 /* The bug the owner hit on the local rig: the page showed "Some of the details
    weren't accepted" instead of the statement's actual problem, because the
@@ -165,25 +175,49 @@ describe("refusalText — the server's sentence must reach the operator", () => 
   });
 });
 
-describe('the tab strip', () => {
-  test('carries the payment advice beside the reports, and opens on the reports', () => {
+describe("the top of the page (the redesign's Merchant reports)", () => {
+  test('it is Merchant reports; the payment advices are a door, not a detour', () => {
     draw();
-    /* The work queue is the default — the advice is a door, not a detour. */
+    expect(screen.getByRole('heading', { name: 'Merchant reports' })).toBeTruthy();
     expect(screen.queryByText('payment advice tab')).toBeNull();
-    fireEvent.click(screen.getByText('Payment advice'));
+    fireEvent.click(screen.getByRole('button', { name: 'Payment advices' }));
     expect(screen.getByText('payment advice tab')).toBeTruthy();
+  });
+
+  test('a card per acquirer says what is left to decide and where it stands; a missing report comes first', () => {
+    todoJobs = [{ key: 'card-missing:GHL', rule: 'card-missing', since: '2026-08-05' }];
+    draw();
+    const cards = screen.getByRole('group', { name: 'Acquirers' });
+    const mbb = within(cards).getByRole('button', { name: /MBB/ });
+    const ghl = within(cards).getByRole('button', { name: /GHL/ });
+    expect(ghl.textContent).toContain('2026/08/04 report missing');
+    expect(mbb.textContent).toMatch(/to decide/);
+    todoJobs = [];
+  });
+
+  test('choosing an acquirer narrows the page to it and shows its reports by swipe day; choosing it again shows them all', () => {
+    draw();
+    fireEvent.click(within(screen.getByRole('group', { name: 'Acquirers' })).getByRole('button', { name: /MBB/ }));
+    const strip = screen.getByLabelText('MBB reports');
+    expect(within(strip).getByText(/by the date customers swiped/)).toBeTruthy();
+    expect(within(strip).getByRole('button', { name: /All reports/ })).toBeTruthy();
+    fireEvent.click(within(screen.getByRole('group', { name: 'Acquirers' })).getByRole('button', { name: /MBB/ }));
+    expect(screen.queryByLabelText('MBB reports')).toBeNull();
   });
 });
 
 describe('the reconcile tab', () => {
   test('an acquirer with no unique reference is called out before anything is uploaded', () => {
     draw();
+    openUpload();
     fireEvent.change(screen.getByLabelText('Acquirer'), { target: { value: 'GHL' } });
     expect(screen.getByText(/sends no unique reference/)).toBeTruthy();
   });
 
   test('several reports can be picked at once', () => {
     draw();
+    openUpload();
+    fireEvent.change(screen.getByLabelText('Acquirer'), { target: { value: 'MBB' } });
     expect(screen.getByLabelText('Statement files').hasAttribute('multiple')).toBe(true);
   });
 
@@ -202,14 +236,17 @@ describe('the reconcile tab', () => {
       alreadyOnReportDetail: [{ lineNo: 1, txnDate: '2026-08-01', ref: 'A1', grossSen: 100000, batchId: 7, fileName: '027012896718_EP41_713_20260801.CSV', lineNoThere: 1 }],
     });
     draw();
+    openUpload();
     fireEvent.change(screen.getByLabelText('Acquirer'), { target: { value: 'MBB' } });
     const picker = screen.getByLabelText('Statement files');
     const file = new File(['Txn Date,Gross'], 'aug.csv', { type: 'text/csv' });
     /* jsdom's File carries no .text() — the page reads the file with it. */
     Object.defineProperty(file, 'text', { value: () => Promise.resolve('Txn Date,Gross') });
     fireEvent.change(picker, { target: { files: [file] } });
-    await waitFor(() => expect((screen.getByText(/^Upload merchant report/) as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(screen.getByText(/^Upload merchant report/));
+    await waitFor(() => expect((screen.getByRole('button', { name: /Upload & match/ }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: /Upload & match/ }));
+    /* The drawer says the piles; Done lands on what the upload found. */
+    fireEvent.click(await screen.findByRole('button', { name: 'Done' }));
 
     await waitFor(() => expect(screen.getByText(/report read/)).toBeTruthy());
     /* What was left out, and where it already is (docs/bugs/0823). */
@@ -261,6 +298,7 @@ describe('the reconcile tab', () => {
      field they cannot answer is how a screen teaches people to ignore it. */
   test('the statement month is asked only of the acquirer whose file has no year', () => {
     draw();
+    openUpload();
     expect(screen.queryByLabelText('Statement month')).toBeNull();
 
     fireEvent.change(screen.getByLabelText('Acquirer'), { target: { value: 'GHL' } });
@@ -286,14 +324,16 @@ describe('the reconcile tab', () => {
   test('a matched line says it once, and is not called a decision', () => {
     draw();
     fireEvent.click(screen.getByText('Reconcile'));
-    fireEvent.click(screen.getByLabelText('Show lines already decided'));
+    openTab('Confirmed');
     /* The counts are stated ONCE, at the top. */
     expect(screen.getAllByText(/still to decide/)).toHaveLength(1);
     expect(screen.getByText(/1 matched, waiting for you to confirm/)).toBeTruthy();
     expect(screen.getByText(/opens for this report once every line is done/)).toBeTruthy();
+    openTab('To choose');
     /* The line that needs a person still carries its clue… */
     expect(screen.getByText('No single payment matches; 1 pair(s) of payments add up to this amount')).toBeTruthy();
     /* …and the matched one names its match once, in the words of the work. */
+    openTab('To confirm');
     expect(screen.getByText(/Matched to/)).toBeTruthy();
     /* …and does NOT also repeat that as a grey clue above it. */
     expect(screen.queryByText('Reference 969745 matches SO-2608-043')).toBeNull();
@@ -311,6 +351,7 @@ describe('the reconcile tab', () => {
   test('a report opens on the lines still to decide, with its clue and candidates', () => {
     draw();
     fireEvent.click(screen.getByText('Reconcile'));
+    openTab('To choose');
     /* Two kinds of not-done on this report, and the screen names both: one
        matched by reference (a button) and the ones that need a person — ROW,
        SUGGESTED_ROW, and the LONELY_ROW the window had nothing for. */
@@ -323,7 +364,7 @@ describe('the reconcile tab', () => {
     expect(screen.getByText('1 done · 0 set aside')).toBeTruthy();
     // the finished line is not on screen until he asks for it
     expect(screen.queryByText(/JE-2608-0011/)).toBeNull();
-    fireEvent.click(screen.getByLabelText('Show lines already decided'));
+    openTab('Confirmed');
     /* It comes back as a TABLE row now, not a card: a line already decided
        asks nothing of anybody, so it is information, and the journal number
        reads inside its status cell. */
@@ -342,6 +383,7 @@ describe('the reconcile tab', () => {
   test('an untagged payment says so where it is claimed', () => {
     draw();
     fireEvent.click(screen.getByText('Reconcile'));
+    openTab('To choose');
     expect(screen.getAllByText('未标 merchant')).toHaveLength(1);
     const cell = screen.getByText(/SO-2608-001/).closest('td') as HTMLElement;
     expect(cell.textContent).toContain('未标 merchant');
@@ -356,6 +398,7 @@ describe('the reconcile tab', () => {
   test('the system best guess arrives already ticked, ready to confirm', () => {
     draw();
     fireEvent.click(screen.getByText('Reconcile'));
+    openTab('To choose');
     /* SUGGESTED_ROW carries one payment that makes its amount exactly. */
     expect((screen.getByLabelText('Select SO-2608-050') as HTMLInputElement).checked).toBe(true);
     const confirms = screen.getAllByText('Confirm and post') as HTMLButtonElement[];
@@ -365,6 +408,7 @@ describe('the reconcile tab', () => {
   test('a part-selection cannot be confirmed; the pair that adds up can', () => {
     draw();
     fireEvent.click(screen.getByText('Reconcile'));
+    openTab('To choose');
     /* Scoped to THIS line: other lines on the report have their own button. */
     const line = screen.getByLabelText('Select SO-2608-001').closest('section') as HTMLElement;
     const button = () => within(line).getByText('Confirm and post') as HTMLButtonElement;
@@ -425,13 +469,15 @@ describe('an order number opens the whole order', () => {
   test('inside a report, the candidates and the matched order are links too — in their own cell, apart from the tick', () => {
     draw();
     fireEvent.click(screen.getByText('Reconcile'));
+    openTab('To choose');
     expect(hrefOf('SO-2608-001')).toBe('/scm/sales-orders/SO-2608-001');
     expect(hrefOf('SO-2608-002')).toBe('/scm/sales-orders/SO-2608-002');
-    expect(hrefOf('SO-2608-043')).toBe('/scm/sales-orders/SO-2608-043');
     /* The tick and the number are separate cells, so opening the order never ticks it. */
     const link = screen.getAllByRole('link', { name: 'SO-2608-001' })[0]!;
     expect(link.closest('label')).toBeNull();
     expect(link.closest('td')?.querySelector('input[type="checkbox"]')).toBeNull();
+    openTab('To confirm');
+    expect(hrefOf('SO-2608-043')).toBe('/scm/sales-orders/SO-2608-043');
   });
 });
 
@@ -507,12 +553,15 @@ describe('when every line is decided', () => {
       buckets: { MATCHED: 1, NEEDS_CONFIRM: 0, UNMATCHED: 0, IGNORED: 0 },
     });
     draw();
+    openUpload();
     fireEvent.change(screen.getByLabelText('Acquirer'), { target: { value: 'MBB' } });
     const file = new File(['Txn Date,Gross'], 'aug.csv', { type: 'text/csv' });
     Object.defineProperty(file, 'text', { value: () => Promise.resolve('Txn Date,Gross') });
     fireEvent.change(screen.getByLabelText('Statement files'), { target: { files: [file] } });
-    await waitFor(() => expect((screen.getByText(/^Upload merchant report/) as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(screen.getByText(/^Upload merchant report/));
+    await waitFor(() => expect((screen.getByRole('button', { name: /Upload & match/ }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: /Upload & match/ }));
+    /* The drawer says the piles; Done lands on what the upload found. */
+    fireEvent.click(await screen.findByRole('button', { name: 'Done' }));
     await waitFor(() => expect(screen.getByText(/report read/)).toBeTruthy());
   };
 
@@ -611,6 +660,7 @@ describe('inside one report', () => {
 
   test('a line that needs choosing keeps its card', () => {
     open();
+    openTab('To choose');
     /* ROW has candidates and no link: a person has to pick. */
     const card = screen.getByLabelText('Select SO-2608-001').closest('section') as HTMLElement;
     expect(card).toBeTruthy();
@@ -620,6 +670,7 @@ describe('inside one report', () => {
   /* It used to sit under EVERY line — 27 copies on his Public Bank report. */
   test('the "set aside" explanation is said once', () => {
     open();
+    openTab('To choose');
     expect(screen.getAllByText(/just moves a line out of the working list/)).toHaveLength(1);
   });
 });
@@ -634,6 +685,7 @@ describe('finding the sale the window could not offer', () => {
 
   test('a line with no candidate offers the search instead of a dead end', () => {
     open();
+    openTab('No sale found');
     const card = lonely();
     expect(within(card).getByText(/find it below/)).toBeTruthy();
     expect(within(card).queryByText('Confirm and post')).toBeNull();
@@ -643,6 +695,7 @@ describe('finding the sale the window could not offer', () => {
 
   test('the exact gross is marked possible, and the rest is still offered', () => {
     open();
+    openTab('No sale found');
     const card = lonely();
     fireEvent.click(within(card).getByText('Find the sale'));
     const hit = within(card).getByLabelText('Select 2990-SO-2606-011').closest('tr') as HTMLElement;
@@ -655,6 +708,7 @@ describe('finding the sale the window could not offer', () => {
 
   test('ticking the found sale confirms it with what the server will read back', () => {
     open();
+    openTab('No sale found');
     const card = lonely();
     fireEvent.click(within(card).getByText('Find the sale'));
     fireEvent.click(within(card).getByLabelText('Select 2990-SO-2606-011'));
@@ -670,6 +724,7 @@ describe('finding the sale the window could not offer', () => {
 
   test('a found sale that does not add up cannot be confirmed', () => {
     open();
+    openTab('No sale found');
     const card = lonely();
     fireEvent.click(within(card).getByText('Find the sale'));
     fireEvent.click(within(card).getByLabelText('Select 2990-SO-2606-013'));
@@ -679,6 +734,7 @@ describe('finding the sale the window could not offer', () => {
 
   test('a line that already has candidates can still look further', () => {
     open();
+    openTab('To choose');
     const card = screen.getByLabelText('Select SO-2608-001').closest('section') as HTMLElement;
     fireEvent.click(within(card).getByText('Find the sale'));
     expect(within(card).getByLabelText('Find the sale')).toBeTruthy();

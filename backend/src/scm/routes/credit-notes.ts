@@ -34,7 +34,7 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { companyDocPrefix, requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
 import { dateOrNull } from '../lib/date-coerce';
 import { todayMyt } from '../lib/my-time';
-import { resolveRoles, type NoteParty } from '../../acc/rules';
+import { apControlRole, resolveRoles, type NoteParty } from '../../acc/rules';
 import { customerPartyCode } from '../../acc/payments';
 import {
   CREDIT_NOTE_HEADER as HEADER, CREDIT_NOTE_LINE as LINE, NOTE_KINDS as KINDS, NOTE_KIND_WORD as KIND_WORD,
@@ -45,7 +45,7 @@ import { requireLeafAccount } from './accounting-chart';
 import { supabaseAuth } from '../middleware/auth';
 import { scanSupplierCreditNoteHandler } from './credit-note-scan';
 import {
-  applyCreditNote, carryOutPlan, checkKnockOff, debtorParty, knockOffRows, noteAllocations, parseTargets, partyOfNote, partyOpenDocs,
+  appliedByNote, applyCreditNote, carryOutPlan, checkKnockOff, debtorParty, knockOffRows, noteAllocations, parseTargets, partyOfNote, partyOpenDocs,
   removeAllocation, setNoteKnockOff, supplierParty, writePlan, type CreditParty, type CreditTarget,
 } from '../../acc/credit-note-allocations';
 import { deleteCreditNoteFileHandler, listCreditNoteFilesHandler, streamCreditNoteFileHandler, uploadCreditNoteFileHandler } from './credit-note-files';
@@ -186,6 +186,21 @@ export const listCreditNotesHandler = async (c: any): Promise<Response> => {
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   const numbered = await withInvoiceNumbers(c, (Array.isArray(data) ? data : []) as Row[]);
   if ('resp' in numbered) return numbered.resp;
+  /* A supplier note's control by its supplier code (party_code), the AP
+     rule's one home — Supplier bills' Control column and Trade / Other filter. */
+  for (const r of numbered.rows) if (r.kind === 'SCN') r.controlRole = apControlRole(r.party_code ?? null);
+  /* A posted supplier or other-debtor note's use (the redesign's "To use" /
+     "Used"): what its applications took, and the credit left. */
+  const credited = numbered.rows.filter((r) => (r.kind === 'SCN' || r.kind === 'OCN') && r.status === 'POSTED');
+  if (credited.length > 0) {
+    const used = await appliedByNote(sb, co.companyId, credited.map((r) => String(r.id)));
+    if (!used.ok) return c.json({ error: 'load_failed', reason: used.reason }, 500);
+    for (const r of credited) {
+      const applied = used.byNote.get(String(r.id)) ?? 0;
+      r.appliedSen = applied;
+      r.unusedSen = Math.max(0, Number(r.total_sen ?? 0) - applied);
+    }
+  }
   return c.json({ rows: numbered.rows });
 };
 

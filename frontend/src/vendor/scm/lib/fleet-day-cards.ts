@@ -77,6 +77,27 @@ export function slotLabelOf(timeRange: string | null | undefined): string {
   return kind;
 }
 
+/** Sort key (minutes-after-midnight) for ordering a lorry's drops by DELIVERY TIME
+ *  — owner 2026-11-02, "sort by delivery time, 全部车都要". A window sorts by its
+ *  START time; a bare AM / PM slot sorts morning-before-afternoon; a drop with no
+ *  readable time sinks to the end.
+ *
+ *  The start is read from the FIRST clock token ANYWHERE in the free text, so a
+ *  leading "TIME AROUND …" (the office's usual wording, e.g. "TIME AROUND 9AM TO
+ *  11AM") is handled — slotMinutes' start-of-token parser misses that prefix and
+ *  returns a null start, which would wrongly sink a timed drop to the bottom. */
+export function slotSortKey(timeRange: string | null | undefined): number {
+  if (timeRange && timeRange.trim()) {
+    const s = timeRange.toLowerCase();
+    const hint = (/(am|pm)/.exec(s)?.[1] as 'am' | 'pm' | undefined) ?? null;
+    const tok = /\d{1,2}(?:[:.]\d{2})?\s*(?:am|pm)?/.exec(s);
+    const start = tok ? clockMinutes(tok[0], hint) : null;
+    if (start != null) return start;
+  }
+  const kind = slotKindOf(timeRange);
+  return kind === 'AM' ? 0 : kind === 'PM' ? PM_START : Number.MAX_SAFE_INTEGER;
+}
+
 /* ── Lorry run status ─────────────────────────────────────────────────────
    Not departed = no stop started · On the way = any stop started, not all done
    · Completed = every drop delivered. A "started" stop is the stop-status rule's

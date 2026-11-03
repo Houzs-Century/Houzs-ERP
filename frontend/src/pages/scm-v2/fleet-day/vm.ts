@@ -12,7 +12,7 @@ import type { StopStatus } from '../../../vendor/scm/lib/delivery-stop-status';
 import { windowEndMinutes } from '../../../vendor/scm/lib/delivery-stop-status';
 import { jobRefOf, LEG_LABEL } from '../../../vendor/scm/lib/delivery-job';
 import {
-  slotKindOf, slotLabelOf, runStatusOf, rollupRun, isLate, lateReason,
+  slotKindOf, slotLabelOf, slotSortKey, runStatusOf, rollupRun, isLate, lateReason,
   type RunStatus, type SlotKind, type RunRollup,
 } from '../../../vendor/scm/lib/fleet-day-cards';
 
@@ -162,6 +162,11 @@ export function docRowVM(o: PlanningOrder, status: StopStatus, clock: DayClock):
   const codeLine = jr
     ? (jobDoc ?? '')
     : [o.so_doc_no, doNumber, o.so_ref].filter(Boolean).join(' · ');
+  // A completed NON-SO job (an ASSR service leg, a DP transfer / dismantle, a
+  // project window) carries its done-ness on delivery_state — it has no DO status
+  // or job-progress completion the stop-status reader keys on — so fold it into
+  // the day's done list instead of showing a finished job as "Not started".
+  const effStatus: StopStatus = o.row_type !== 'so' && o.delivery_state === 'DELIVERED' ? 'done' : status;
   return {
     key: `so:${o.so_doc_no}`,
     order: o,
@@ -183,9 +188,9 @@ export function docRowVM(o: PlanningOrder, status: StopStatus, clock: DayClock):
     slotKind: slotKindOf(o.time_range),
     slotLabel: slotLabelOf(o.time_range),
     stopNo: o.trip_stop_no ?? null,
-    status,
-    late: isLate(status),
-    lateReason: lateReason(status, { day: clock.day, today: clock.today, slotEnd }),
+    status: effStatus,
+    late: isLate(effStatus),
+    lateReason: lateReason(effStatus, { day: clock.day, today: clock.today, slotEnd }),
     hasPod: !!o.has_pod,
     deliveredAt: o.delivered_at ?? o.customer_delivered_date ?? null,
     latestLiveDoId: live.length > 0 ? live[live.length - 1]!.id : null,
@@ -210,7 +215,19 @@ function makeRunVM(args: {
   driversById: Map<string, DriverRow>;
 }): LorryRunVM {
   const { plate, lorryId, isInternal, trip, color, driversById } = args;
-  const docs = args.docs.slice().sort((a, b) => (a.stopNo ?? 1e9) - (b.stopNo ?? 1e9));
+  // Drops ordered by DELIVERY TIME, earliest first (owner 2026-11-02, every lorry):
+  // the slot-start minutes, then the run sequence (trip_stop_no), then the SO no.
+  // so the order is stable when two drops share a window.
+  const BIG = Number.MAX_SAFE_INTEGER;
+  const docs = args.docs.slice().sort((a, b) => {
+    const ak = slotSortKey(a.order.time_range);
+    const bk = slotSortKey(b.order.time_range);
+    if (ak !== bk) return ak - bk;
+    const as = a.stopNo ?? BIG;
+    const bs = b.stopNo ?? BIG;
+    if (as !== bs) return as - bs;
+    return a.soDocNo.localeCompare(b.soDocNo);
+  });
   const master = trip?.driver?.id ? driversById.get(trip.driver.id) : undefined;
   const crew = docs.map((d) => d.order.crew).find((c) => c) ?? null;
   const driver2Name = docs.map((d) => d.order.crew?.driver_2_name).find((n) => n) ?? null;

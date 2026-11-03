@@ -62,6 +62,7 @@ import styles from './DeliveryPlanningBoard.module.css';
 import { DateField } from "./DateField";
 import { deliveryDateChange, invalidDeliveryDate } from "../lib/delivery-date-edit";
 import { SearchCombo } from "./SearchCombo";
+import { crewToCopy, seatsForTarget, type CrewSeats } from "../lib/crew-paste";
 import { useLocalities, postcodeIndex, postcodeLabel } from "../lib/localities-queries";
 import { crewComboOptions, crewComboValue, latestDoId, KEEP_CURRENT } from "../lib/dispatch-cell";
 import { useDeliveryRowMarks, rowMarkTint, useBulkSetRowMark, useBulkClearRowMark, ROW_MARK_PALETTE } from "../lib/delivery-row-mark";
@@ -329,7 +330,7 @@ function MessageStatusEditCell({ order, onUpdateFields }: { order: PlanningOrder
      own value when the customer has answered, so a hand-set status shows until
      then. */
   const target = isDp(order) ? { type: 'dp' as const, id: dpIdOf(order) }
-    : isAssr(order) ? { type: 'assr' as const, id: String(order.assr_id ?? '') }
+    : isAssr(order) ? { type: 'assr' as const, id: String(order.assr_id ?? ''), jobKind: order.job_kind ?? undefined }
     : { type: 'so' as const, id: order.so_doc_no };
   // The workflow status shows as a coloured chip, on the editable select too.
   const chip = messageStatusChip(order.delivery_message_status);
@@ -444,13 +445,13 @@ function AmendReasonEditCell({ order, onUpdateFields }: { order: PlanningOrder; 
 }
 
 /* A plain inline text editor for a free-text SO field (owner 2026-09-22:
-   Disposal Request, Remarks). SO rows only, EXCEPT when allowDp — the Time Slot
-   is editable on DP rows too (owner 2026-10-31), where it writes
-   scm.dp_orders.time_range. Commits on blur / Enter. */
-function TextEditCell({ order, value, onCommit, placeholder, allowDp = false }: {
-  order: PlanningOrder; value: string | null; onCommit: (next: string | null) => void; placeholder?: string; allowDp?: boolean;
+   Disposal Request, Remarks). SO rows only, EXCEPT when allowNonSo — the Time Slot
+   is editable on DP rows too (owner 2026-10-31, scm.dp_orders.time_range) and on
+   service-case legs (HC-0194). Commits on blur / Enter. */
+function TextEditCell({ order, value, onCommit, placeholder, allowNonSo = false }: {
+  order: PlanningOrder; value: string | null; onCommit: (next: string | null) => void; placeholder?: string; allowNonSo?: boolean;
 }) {
-  if (isAssr(order) || (isDp(order) && !allowDp) || isProject(order)) return <NotApplicable />;
+  if (isProject(order) || ((isAssr(order) || isDp(order)) && !allowNonSo)) return <NotApplicable />;
   return (
     <input
       className={styles.inlineEdit}
@@ -975,6 +976,50 @@ export function DeliveryPlanningBoard({
     assignCrewRef.current.mutate({ doId, ...seat });
     return true;
   }, []);
+  /* HC-0191 Copy / Paste crew: copy the one ticked row's lorry + driver(s) + helper(s),
+     then tick the other bills and paste. Each target is written through the same
+     paths as its own inline pick (writeCrewSeat / the schedule write), so the
+     permission checks and audit are those of a normal edit. */
+  const [copiedCrew, setCopiedCrew] = useState<{ seats: CrewSeats; fromKey: string; label: string } | null>(null);
+  const copyCrew = () => {
+    const src = orders.find((o) => selectedKeys.has(rowIdOf(o)));
+    if (!src || selectedKeys.size !== 1 || isProject(src)) return;
+    const { seats, unresolved } = crewToCopy(src, drivers, lorries, helpers);
+    if (Object.keys(seats).length === 0) {
+      void notify({ title: 'Nothing to copy', body: unresolved.length ? `${unresolved.join(', ')} could not be matched to the driver / lorry / helper lists.` : 'This row has no lorry, driver or helper yet.' });
+      return;
+    }
+    const label = [src.crew?.lorry_plate, src.crew?.driver_1_name].filter(Boolean).join(' · ');
+    setCopiedCrew({ seats, fromKey: rowIdOf(src), label });
+    if (unresolved.length) void notify({ title: 'Copied (partly)', body: `${unresolved.join(', ')} could not be matched to the driver / lorry / helper lists and will not be pasted.` });
+  };
+  const pasteCrew = async () => {
+    if (!copiedCrew) return;
+    const targets = orders.filter((o) => selectedKeys.has(rowIdOf(o)) && rowIdOf(o) !== copiedCrew.fromKey && !isProject(o));
+    if (targets.length === 0) return;
+    const ok = await askConfirm({
+      title: `Paste crew onto ${targets.length} row${targets.length === 1 ? '' : 's'}?`,
+      body: `${copiedCrew.label || 'The copied crew'} replaces the lorry, driver and helper on the ticked rows.`,
+      confirmLabel: 'Paste crew',
+    });
+    if (!ok) return;
+    let noDo = 0;
+    for (const o of targets) {
+      const seats = seatsForTarget(copiedCrew.seats, o);
+      if (isAssr(o)) {
+        scheduleMutate({
+          type: 'assr', id: String(o.assr_id ?? ''), jobKind: o.job_kind,
+          ...(seats.driver1Id ? { driverId: seats.driver1Id } : {}), ...(seats.lorryId ? { lorryId: seats.lorryId } : {}),
+          ...(seats.helper1Id ? { helper1Id: seats.helper1Id } : {}), ...(seats.helper2Id ? { helper2Id: seats.helper2Id } : {}),
+        });
+      } else if (!isDp(o) && !latestDoId(o.delivery_orders)) {
+        noDo += 1;
+      } else {
+        writeCrewSeat(o, seats);
+      }
+    }
+    if (noDo > 0) void notify({ title: 'Some rows skipped', body: `${noDo} row${noDo === 1 ? ' has' : 's have'} no delivery order yet, so crew cannot be saved there. Create the DO first, then paste again.` });
+  };
   const crewPending = assignCrew.isPending || sched.isPending || updateTrip.isPending || dpCrew.isPending;
   /* The volatile "a save is running" flags for the inline editors — recomputed
      only when a mutation's isPending actually toggles, so the context value (and
@@ -1418,11 +1463,14 @@ export function DeliveryPlanningBoard({
       /* Inline free-text (owner 2026-09-26: 可以输入文本). SO rows write the DO's
          time_range via useUpdateDeliveryFields (no DO yet → the server saves
          nothing and returns no_do_hint, which we surface); a DP row (owner
-         2026-10-31) writes scm.dp_orders.time_range the same way, no DO needed. */
+         2026-10-31) writes scm.dp_orders.time_range the same way, no DO needed; a
+         service-case leg (HC-0194) writes its own per-leg column on the case. */
       accessor: (o) => (
-        <TextEditCell order={o} value={o.time_range} placeholder="e.g. 2-4pm" allowDp
+        <TextEditCell order={o} value={o.time_range} placeholder="e.g. 2-4pm" allowNonSo
           onCommit={(v) => updateFieldsMutate(
-            isDp(o) ? { type: 'dp', id: dpIdOf(o), timeRange: v } : { type: 'so', id: o.so_doc_no, timeRange: v },
+            isDp(o) ? { type: 'dp', id: dpIdOf(o), timeRange: v }
+              : isAssr(o) ? { type: 'assr', id: String(o.assr_id ?? ''), jobKind: o.job_kind ?? undefined, timeRange: v }
+              : { type: 'so', id: o.so_doc_no, timeRange: v },
             { onSuccess: (res) => { if (res.no_do_hint) void notifyRef.current({ title: 'Saved (partly)', body: res.no_do_hint }); } },
           )} />
       ),
@@ -1783,6 +1831,18 @@ export function DeliveryPlanningBoard({
           >
             Clear
           </button>
+
+          <span className={styles.bulkSep}>·</span>
+          <span className={styles.bulkLabel}>Crew</span>
+          <Button variant="ghost" disabled={selectedKeys.size !== 1} onClick={copyCrew} title="Copy the lorry, driver and helpers of the one ticked row">Copy crew</Button>
+          <Button
+            variant="ghost"
+            disabled={!copiedCrew || [...selectedKeys].every((k) => k === copiedCrew.fromKey)}
+            onClick={() => void pasteCrew()}
+            title={copiedCrew ? `Paste ${copiedCrew.label || 'the copied crew'} onto the other ticked rows` : 'Copy a row crew first'}
+          >
+            Paste crew
+          </Button>
 
           {selectedTotals.count > 0 && (
             <>

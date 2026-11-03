@@ -43,13 +43,13 @@ describe('Payments not matched yet', () => {
     const card = within(rowOf('2990-SO-2609-045'));
     expect(card.getByText('Card · PBB')).toBeTruthy();
     expect(card.getByText('On a merchant report — waiting for you to confirm')).toBeTruthy();
-    expect(card.getByText('Merchant Recon').getAttribute('href')).toBe('/scm/merchant-recon');
+    expect(card.getByText('Merchant reports').getAttribute('href')).toBe('/scm/merchant-recon');
     expect(card.getByText('2990-SO-2609-045').getAttribute('href')).toBe('/scm/sales-orders/2990-SO-2609-045');
 
     const transfer = within(rowOf('2990-SO-2609-031'));
     expect(transfer.getByText('Transfer · Bank Transfer')).toBeTruthy();
     expect(transfer.getByText('Not matched to the bank statement yet')).toBeTruthy();
-    expect(transfer.getByText('Bank Recon').getAttribute('href')).toBe('/scm/bank-recon');
+    expect(transfer.getByText('Bank statements').getAttribute('href')).toBe('/scm/bank-recon');
 
     const late = within(rowOf('2990-SO-2608-069'));
     expect(late.getByText(/^Bank statement for this day not uploaded yet \(uploaded to /)).toBeTruthy();

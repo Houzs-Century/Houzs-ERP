@@ -66,7 +66,7 @@ import {
   LifeBuoy,
   History,
   CalendarOff,
-  type LucideIcon, Landmark, CreditCard, Banknote, Receipt, Server, Sparkles, ScanLine } from "lucide-react";
+  type LucideIcon, Landmark, CreditCard, Banknote, Receipt, Server, Sparkles, ScanLine, ListChecks } from "lucide-react";
 import { cn } from "../lib/utils";
 import { booleanRecordPreference, useIdentityPreference } from "../hooks/useIdentityPreference";
 import { useAuth } from "../auth/AuthContext";
@@ -727,6 +727,11 @@ export const NAV_TABS: NavTab[] = [
     anyPerm: ["*", "scm.access"],
     anyAccess: ["scm.finance", "scm.finance.accounting", "scm.finance.outstanding"],
     children: [
+      // ── To do and Money today lead (the owner's Claude Design redesign,
+      //    2026-11-02): Finance's home is what is waiting on you, with its count;
+      //    Money today opens the Daily Bank board, as the design's single entry.
+      { to: "/scm/finance", end: true, label: "To do", icon: ListChecks, badge: "finance-todo", anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+      { to: "/scm/daily-bank?view=board", label: "Money today", icon: Landmark, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.bank"] },
       // ── SIX GROUPS, BY THE JOB (owner 2026-09-12: finance 的 function 分到很散,
       //    我希望我要 maintenance 的东西一个子 side bar, report 一个 side bar;
       //    docs/bugs/0824). Fifteen flat entries and the Accounting page's
@@ -765,18 +770,21 @@ export const NAV_TABS: NavTab[] = [
         icon: Wallet,
         groupId: "scm-finance-out",
         children: [
-          { to: "/scm/payment-vouchers", label: "Payment Vouchers", icon: Wallet, anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.write", "scm.payment_voucher.post", "scm.payment_voucher.cancel"], anyAccess: ["scm.finance.money_out"] },
-          { to: "/scm/ap-invoices", label: "AP Invoices", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_out"] },
+          // The redesign's order and names (owner's Claude Design, batch 4): the
+          // design's three pages first, then the ERP's own, kept where the owner
+          // put them. Every permission gate is as it was.
+          { to: "/scm/payment-vouchers", label: "Payment vouchers", icon: Wallet, anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.write", "scm.payment_voucher.post", "scm.payment_voucher.cancel"], anyAccess: ["scm.finance.money_out"] },
           // 申请付款 (owner 2026-09-30) — the requests waiting for a voucher.
-          { to: "/scm/payment-requests", label: "Payment Requests", icon: HandCoins, anyPerm: ["*", "scm.payment_voucher.create"], badge: "payment-requests-waiting" },
-          // 欠正式单 (owner 2026-10-01) — payments made on a proforma, still owing the official invoice.
-          { to: "/scm/official-docs", label: "Official Invoices Owed", icon: FileText, anyPerm: ["*", "scm.payment_voucher.create"] },
+          { to: "/scm/payment-requests", label: "Payment requests", icon: HandCoins, anyPerm: ["*", "scm.payment_voucher.create"], badge: "payment-requests-waiting" },
+          { to: "/scm/ap-invoices", label: "Supplier bills", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_out"] },
           // Supplier Maintenance (owner 2026-10-02: 放在 money out 的 sidebar) — Finance's own
           // supplier list: what each is owed, its bank, and the ones Finance keeps to itself.
-          { to: "/scm/supplier-maintenance", label: "Supplier Maintenance", icon: Truck, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_out"] },
+          { to: "/scm/supplier-maintenance", label: "Supplier maintenance", icon: Truck, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_out"] },
+          // 欠正式单 (owner 2026-10-01) — payments made on a proforma, still owing the official invoice.
+          { to: "/scm/official-docs", label: "Official invoices owed", icon: FileText, anyPerm: ["*", "scm.payment_voucher.create"] },
           // The supplier's (and an other creditor's) credit notes, moved here from
           // Money in (owner 2026-10-28: supplier & other creditor cn / dn 分出来).
-          { to: "/scm/supplier-notes", label: "Supplier & Other Creditor CN / DN", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_out"] },
+          { to: "/scm/supplier-notes", label: "Supplier & other creditor CN / DN", icon: FileText, anyPerm: ["*", "scm.access", "scm.payment_voucher.create"], anyAccess: ["scm.finance.money_out"] },
         ],
       },
       {
@@ -784,9 +792,11 @@ export const NAV_TABS: NavTab[] = [
         icon: Landmark,
         groupId: "scm-finance-bank",
         children: [
+          // The redesign's order and names (owner's Claude Design, batch 3): the two
+          // uploads first, then the day's board; Unmatched Payments stays last.
+          { to: "/scm/merchant-recon", label: "Merchant reports", icon: CreditCard, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.bank"] },
+          { to: "/scm/bank-recon", label: "Bank statements", icon: Banknote, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.bank"] },
           { to: "/scm/daily-bank", label: "Daily Bank", icon: Landmark, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.bank"] },
-          { to: "/scm/merchant-recon", label: "Merchant Recon", icon: CreditCard, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.bank"] },
-          { to: "/scm/bank-recon", label: "Bank Recon", icon: Banknote, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.bank"] },
           // Card AND transfer payments not matched yet, one list (owner
           // 2026-09-30: 我有没有一个表是显示全部还没 match 的); the recon key family.
           { to: "/scm/unmatched-payments", label: "Unmatched Payments", icon: AlertCircle, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.bank"] },
@@ -858,6 +868,8 @@ export const NAV_TABS: NavTab[] = [
           { to: "/scm/accounting?tab=groups", label: "Item Groups", icon: SettingsIcon, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.setup"] },
           { to: "/scm/settlement-setup", label: "Recon Setup", icon: SettingsIcon, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.setup"] },
           { to: "/scm/currencies", label: "Currencies", icon: DollarSign, anyPerm: ["*", "scm.currency.manage"] },
+          // What fills To do: its built-in rules, the month's routines, Finance's own groups (redesign batch 2).
+          { to: "/scm/finance/rules", label: "To do rules", icon: ListChecks, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
         ],
       },
     ],

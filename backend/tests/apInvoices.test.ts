@@ -189,6 +189,58 @@ describe('the Finance list — both kinds', () => {
     const only = await (await app.request('/ap-invoices?kind=PI')).json() as { rows: Array<Row> };
     expect(only.rows.map((r) => r.kind)).toEqual(['PI']);
   });
+
+  test('each row names its control by the supplier code, and a held purchase invoice says so (Supplier bills)', async () => {
+    /* The fake reads no embeds: each row carries its supplier the way PostgREST hands it over. */
+    const { app } = harness({
+      acc_account_roles: [{ company_id: CO, role: 'AP_OTHER', account_code: '405-0000' }, { company_id: CO, role: 'AP', account_code: '400-0000' }],
+      purchase_invoices: [
+        { id: 'pi-h', company_id: CO, invoice_number: '2990-PI-2609-010', supplier_id: 'sup-t', invoice_date: '2026-09-03', total_sen: 5_000, paid_sen: 0, status: 'POSTED', on_hold: true, hold_reason: 'Short delivery', supplier: SUPPLIERS[1] },
+        { id: 'pi-o', company_id: CO, invoice_number: '2990-PI-2609-011', supplier_id: 'sup-t', invoice_date: '2026-09-02', total_sen: 5_000, paid_sen: 0, status: 'POSTED', on_hold: false, supplier: SUPPLIERS[1] },
+      ],
+      ap_invoices: [
+        { id: 'api-1', company_id: CO, invoice_number: `2990-API-${yymm}-001`, supplier_id: 'sup-h', invoice_date: '2026-09-01', total_sen: 420_000, paid_sen: 0, status: 'POSTED', supplier: SUPPLIERS[0] },
+      ],
+    });
+    const b = await (await app.request('/ap-invoices')).json() as { rows: Array<Row> };
+    expect(b.rows.map((r) => [r.invoiceNumber, r.controlRole, r.controlCode, r.held, r.holdReason])).toEqual([
+      ['2990-PI-2609-010', 'AP', '400-0000', true, 'Short delivery'],
+      ['2990-PI-2609-011', 'AP', '400-0000', false, null],
+      [`2990-API-${yymm}-001`, 'AP_OTHER', '405-0000', false, null],
+    ]);
+  });
+});
+
+describe('the bill page (batch 4, step 6 — read c7)', () => {
+  test('a bill says what paid it — vouchers by stage, an advance knocked off, a credit note — its journal and its control', async () => {
+    const no = `2990-API-${yymm}-001`;
+    const { app } = harness({
+      ap_invoices: [{ id: 'api-1', company_id: CO, invoice_number: no, supplier_id: 'sup-h', invoice_date: '2026-09-01', total_sen: 420_000, paid_sen: 300_000, status: 'PARTIALLY_PAID' }],
+      pv_allocations: [
+        { id: 'al-1', company_id: CO, pv_id: 'pv-1', ap_invoice_id: 'api-1', pi_id: null, amount_sen: 200_000, from_advance: false },
+        { id: 'al-2', company_id: CO, pv_id: 'pv-2', ap_invoice_id: 'api-1', pi_id: null, amount_sen: 50_000, from_advance: true },
+        { id: 'al-x', company_id: CO, pv_id: 'pv-1', ap_invoice_id: 'api-other', pi_id: null, amount_sen: 1, from_advance: false },
+      ],
+      payment_vouchers: [
+        { id: 'pv-1', company_id: CO, pv_number: '2990-PV-2609-004', voucher_date: '2026-09-20', status: 'POSTED' },
+        { id: 'pv-2', company_id: CO, pv_number: '2990-PV-2608-001', voucher_date: '2026-08-30', status: 'DRAFT', submitted_at: 'x', checked_at: 'y' },
+      ],
+      acc_credit_note_allocations: [{ id: 'cn-al', company_id: CO, note_id: 'scn-1', ap_invoice_id: 'api-1', amount_sen: 60_000, applied_sen: 50_000 }],
+      acc_credit_notes: [{ id: 'scn-1', company_id: CO, note_number: '2990-SCN-2609-002', note_date: '2026-09-25', status: 'POSTED' }],
+      journal_entries: [
+        { id: 'je-old', company_id: CO, je_no: '2990-JE-2609-0010', source_type: 'API', source_doc_no: no, reversed: true },
+        { id: 'je-new', company_id: CO, je_no: '2990-JE-2609-0031', source_type: 'API', source_doc_no: no, reversed: false },
+      ],
+    });
+    const b = await (await app.request('/ap-invoices/api-1')).json() as { invoice: Row; payments: Row[]; controlCode: string };
+    expect(b.invoice.je_no).toBe('2990-JE-2609-0031');
+    expect(b.controlCode).toBe('405-0000');
+    expect(b.payments.map((p) => [p.kind, p.number, p.stage, p.amountSen, p.fromAdvance])).toEqual([
+      ['PV', '2990-PV-2608-001', 'Checked', 50_000, true],
+      ['PV', '2990-PV-2609-004', 'Approved', 200_000, false],
+      ['SCN', '2990-SCN-2609-002', 'Posted', 50_000, false],
+    ]);
+  });
 });
 
 describe('an AP Payment allocation may name an AP invoice', () => {

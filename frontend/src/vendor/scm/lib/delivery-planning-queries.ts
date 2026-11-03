@@ -488,6 +488,7 @@ export type HcFieldsPatch = {
   amendReason?: string | null;
   // DO-execution (→ delivery_orders, when a DO exists)
   timeRange?: string | null;
+  jobKind?: AssrJobKind;  // service-case leg a timeRange write targets
   timeConfirmed?: boolean | null;
   arrivalAt?: string | null;
   departureAt?: string | null;
@@ -741,6 +742,21 @@ export type DpOrderCreate = {
      transfer, or enter an ad-hoc move with no document. */
   stockTransferId?: string;
   warehouseId?: string;
+  /* TRANSFER to an OUTSOURCED warehouse (owner 2026-11-02): the destination is a
+     3PL company we don't own, picked from the carrier master instead of our own
+     warehouses. Mutually exclusive with warehouseId. */
+  threeplCompanyId?: string;
+  /* TRANSFER destination from the saved-locations address book (owner 2026-11-02
+     方案2). Mutually exclusive with warehouseId / threeplCompanyId. */
+  savedLocationId?: string;
+  /* TRANSFER ORIGIN ("from", owner 2026-11-02 方案1): the pickup point — our
+     warehouse, an outsourced 3PL, or a saved location (方案2). fromOverrides use
+     snapshot keys (party_name, address1, address2, city, postcode, state) and win
+     over the auto-fill. */
+  fromWarehouseId?: string;
+  fromThreeplCompanyId?: string;
+  fromSavedLocationId?: string;
+  fromOverrides?: Record<string, string | null>;
   requestedDate?: string;
   remark?: string;
   overrides?: Record<string, string | null>;
@@ -750,6 +766,44 @@ export function useCreateDpOrder() {
   return useMutation({
     mutationFn: (body: DpOrderCreate) =>
       authedFetch<{ dpOrder: unknown }>(`/dp-orders`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery-planning'] }),
+  });
+}
+
+/* Edit an unscheduled DP order's party / address / date / remark (PATCH
+   /dp-orders/:id). The backend edits only PENDING_SCHEDULE rows — a scheduled job
+   sits on a manifest a driver may hold, so it must be cancelled and re-raised. A
+   field sent as null CLEARS it (the backend refuses a change that leaves the job
+   with no address). Invalidates the board prefix the list query extends, so both
+   refresh. First UI of the endpoint (owner 2026-11-02: "DP order maintenance"). */
+export type DpOrderPatch = {
+  partyName?: string | null;
+  contactName?: string | null;
+  contactPhone?: string | null;
+  address1?: string | null;
+  address2?: string | null;
+  address3?: string | null;
+  address4?: string | null;
+  city?: string | null;
+  postcode?: string | null;
+  state?: string | null;
+  // Origin ("from") fields — TRANSFER only (owner 2026-11-02 方案1).
+  fromName?: string | null;
+  fromAddress1?: string | null;
+  fromAddress2?: string | null;
+  fromCity?: string | null;
+  fromPostcode?: string | null;
+  fromState?: string | null;
+  requestedDate?: string | null;
+  remark?: string | null;
+};
+export function useUpdateDpOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: DpOrderPatch & { id: string }) =>
+      authedFetch<{ dpOrder: unknown }>(`/dp-orders/${id}`, {
+        method: 'PATCH', body: JSON.stringify(body),
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['delivery-planning'] }),
   });
 }
@@ -855,6 +909,9 @@ export type DpOrderRow = {
   assr_case_id: number | null;
   supplier_id: string | null;
   project_id: number | null;
+  /* Outsourced (3PL) transfer destination (owner 2026-11-02). Optional (`?`) so a
+     cached pre-upgrade payload still typechecks. */
+  threepl_company_id?: string | null;
   party_name: string | null;
   contact_name: string | null;
   contact_phone: string | null;
@@ -865,6 +922,19 @@ export type DpOrderRow = {
   city: string | null;
   postcode: string | null;
   state: string | null;
+  /* Origin ("from") — TRANSFER only (owner 2026-11-02 方案1). Optional (`?`) so a
+     cached pre-upgrade payload still typechecks. */
+  from_name?: string | null;
+  from_address1?: string | null;
+  from_address2?: string | null;
+  from_city?: string | null;
+  from_postcode?: string | null;
+  from_state?: string | null;
+  from_warehouse_id?: string | null;
+  from_threepl_company_id?: string | null;
+  /* Saved-location refs (owner 2026-11-02 方案2), destination + origin. */
+  saved_location_id?: string | null;
+  from_saved_location_id?: string | null;
   requested_date: string | null;
   trip_id: string | null;
   trip_stop_id: string | null;
@@ -943,6 +1013,25 @@ export function useSendDeliveryMessages() {
       }
       scheduleBoardRefresh(qc, [['delivery-planning']]);
     },
+  });
+}
+
+/* Sync to Connect — push the selected orders' FULL field set into each customer's
+   Connect contact (Reference No. / Brand / Purchase Venue / Sales Person / House
+   Type / …) WITHOUT sending a WhatsApp. The contact panel only ever filled the
+   fields a prior message used; this fills the rest. One Connect upsert per (phone,
+   company); `synced` mirrors a send's `sent`. */
+export type SyncContactsResult = {
+  synced: Array<{ phone: string; docNos: string[]; httpCode: number }>;
+  failed: Array<{ phone: string; docNos: string[]; error: string }>;
+  skipped: Array<{ docNo: string; reason: string }>;
+};
+export function useSyncDeliveryContacts() {
+  return useMutation<SyncContactsResult, Error, { docNos: string[] }>({
+    mutationFn: (body) =>
+      authedFetch<SyncContactsResult>(`/delivery-messages/sync`, {
+        method: 'POST', body: JSON.stringify(body),
+      }),
   });
 }
 

@@ -95,6 +95,18 @@ describe('docRowVM — field mapping + late', () => {
     expect(prj.jobLabel).toBe('Dismantle');
     expect(prj.codeLine).toBe('2026-10-HOMEDEC-AKEMI');
   });
+  test('a completed non-SO job folds into the done list even when its stop status is unknown', () => {
+    const d = docRowVM(order({
+      row_type: 'assr', so_doc_no: 'ASSR/1#delivery', assr_id: 1, job_kind: 'delivery',
+      ref: 'ASSR/1', delivery_state: 'DELIVERED', delivery_orders: [], so_ref: null,
+    }), 'scheduled', CLOCK);
+    expect(d.status).toBe('done');
+    expect(d.late).toBe(false);
+  });
+  test('a DELIVERED SO row keeps its computed stop status (the done-fold is non-SO only)', () => {
+    const d = docRowVM(order({ delivery_state: 'DELIVERED' }), 'scheduled', CLOCK);
+    expect(d.status).toBe('scheduled');
+  });
 });
 
 describe('buildRuns — grouping + driver join + sort', () => {
@@ -119,6 +131,21 @@ describe('buildRuns — grouping + driver join + sort', () => {
     expect(r.status).toBe('COMPLETED');
     expect(r.rollup).toMatchObject({ drops: 2, delivered: 2, withPod: 1 });
     expect(r.color).toBe('#2563eb');
+  });
+});
+
+describe('makeRunVM sort — drops ordered by delivery time (owner 2026-11-02)', () => {
+  const drivers = new Map<string, DriverRow>();
+  test('earliest delivery window first; AM before PM; untimed last; time beats stop no.', () => {
+    const docs: DocRowVM[] = [
+      docRowVM(order({ so_doc_no: 'D-2PM', trip_id: 't1', trip_stop_no: 1, time_range: '2pm-4pm' }), 'scheduled', CLOCK),
+      docRowVM(order({ so_doc_no: 'D-NONE', trip_id: 't1', trip_stop_no: 2, time_range: null }), 'scheduled', CLOCK),
+      docRowVM(order({ so_doc_no: 'D-AM', trip_id: 't1', trip_stop_no: 9, time_range: 'AM' }), 'scheduled', CLOCK),
+      docRowVM(order({ so_doc_no: 'D-930', trip_id: 't1', trip_stop_no: 8, time_range: '9:30am to 11am' }), 'scheduled', CLOCK),
+      docRowVM(order({ so_doc_no: 'D-1230', trip_id: 't1', trip_stop_no: 7, time_range: '12:30pm to 2:30pm' }), 'scheduled', CLOCK),
+    ];
+    const runs = buildRuns([trip()], docs, drivers, () => '#000');
+    expect(runs[0]!.docs.map((d) => d.soDocNo)).toEqual(['D-AM', 'D-930', 'D-1230', 'D-2PM', 'D-NONE']);
   });
 });
 

@@ -264,7 +264,12 @@ const CEILINGS = {
   // Same shell-DATA mechanism as the notes above; the table was first compacted
   // (a bare string when the list and detail labels match) to hold the growth to
   // the minimum before this bump.
-  INITIAL_JS_GZIP: 175 * KB,
+  // 175 -> 176 on 2026-11-03: main sat at 174.9 and the Finance redesign's
+  // document pages (batch 4 step 6, PR #5167) added NO eager module — three
+  // lazy() routes in App.tsx (/scm/ap-invoices/:id, /scm/supplier-notes/:id,
+  // /scm/credit-notes/:id) whose entries in the route table and lazy-chunk map
+  // measured +0.2 KB gzip on the entry. Same shell-DATA mechanism as above.
+  INITIAL_JS_GZIP: 176 * KB,
   // Everything the app can lazy-load (users only fetch the routes they visit).
   // A soft guard against unbounded total growth, not a first-paint cost. Left
   // at 1800 deliberately — main is at ~99% of it and RAISING IT AGAIN IS NOT

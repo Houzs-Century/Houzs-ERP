@@ -221,6 +221,8 @@ export type DailyBankMovement = {
   /** Who paid or was paid; null when the entry names nobody. */
   party: string | null;
   note: string; amountSen: number;
+  /** A customer payment's method (cash, transfer, online:<how>, …); null for anything else. */
+  method?: string | null;
 };
 export type DailyBankPending = { id: string | null; pvNumber: string | null; payee: string | null; description: string; voucherDate: string | null; accountCode: string | null; amountSen: number };
 export type DailyBankTransit = { acquirerCode: string; accountCode: string; accountName: string; balanceSen: number; bankAccountCode: string | null };
@@ -255,7 +257,8 @@ export type DailyCloseRow = { bucket: string; systemSen: number; countedSen: num
 
 export const useDailyClose = (date: string) => useQuery({
   queryKey: ['daily-close', date],
-  queryFn: () => authedFetch<{ date: string; rows: DailyCloseRow[] }>(`/accounting/daily-close?date=${date}`),
+  /* confirmedBy / confirmedAt / cashJeNo: who closed the day, when, and its cash over/short entry (if any). */
+  queryFn: () => authedFetch<{ date: string; rows: DailyCloseRow[]; confirmedBy?: string | null; confirmedAt?: string | null; cashJeNo?: string | null }>(`/accounting/daily-close?date=${date}`),
   staleTime: 15_000,
   retry: retryUnlessClientError,
   retryDelay: 800,
@@ -282,6 +285,7 @@ export const useConfirmDailyClose = () => {
       void qc.invalidateQueries({ queryKey: ['daily-close', v.date] });
       void qc.invalidateQueries({ queryKey: ['daily-bank'] });
       void qc.invalidateQueries({ queryKey: ['account-balances'] });
+      void qc.invalidateQueries({ queryKey: ['finance-todo'] });
     },
     onError: writeFailedAs('Daily close not confirmed'),
   });

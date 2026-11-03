@@ -2,10 +2,12 @@
    payments made on a proforma or quotation that still owe the official invoice.
    Pinned: the owed and the to-check rows, who asked and how long it has waited,
    the reader's note, and Finance's marks (checked, clear) — and Finance's
-   remark on what to follow up (owner 2026-10-08). */
+   remark on what to follow up (owner 2026-10-08). The redesign (batch 4 §5):
+   English views with counts, the state as a tag, and the paying document's
+   number (or a double-click on its row) opening it. */
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 
 type Row = Record<string, unknown>;
@@ -55,18 +57,48 @@ describe('Official invoices owed', () => {
     ];
     markOfficial.mockClear();
     render(<MemoryRouter><OfficialDocs /></MemoryRouter>);
-    expect(screen.getByText('Owed · 欠正式单 (2)')).toBeTruthy();
-    expect(screen.getByText('HC-PV-2610-001')).toBeTruthy();
-    expect(screen.getByText('HC-API-2610-001')).toBeTruthy();
+    const views = within(screen.getByRole('group', { name: 'Official invoices' }));
+    expect(views.getByRole('button', { name: 'Owed (2)' }).getAttribute('aria-pressed')).toBe('true');
+    expect(views.getByRole('button', { name: 'To check (1)' })).toBeTruthy();
+    /* All counts only once its own read (the checked ones too) is loaded. */
+    expect(views.getByRole('button', { name: 'All' })).toBeTruthy();
+    /* The paying document's number opens it: a voucher, or an AP bill on Supplier bills. */
+    expect(screen.getByText('HC-PV-2610-001').getAttribute('href')).toBe('/scm/payment-vouchers/pv-1');
+    expect(screen.getByText('HC-API-2610-001').getAttribute('href')).toBe('/scm/ap-invoices/api-1');
     expect(screen.queryByText('HC-PV-2610-002')).toBeNull();
-    /* Asked by the requester, or by Finance itself. */
+    /* The state as a tag, in English. */
+    expect(screen.getAllByText('Owed')).toHaveLength(2 + 1);
+    /* Asked by the requester (their request one click away), or by Finance itself. */
     expect(screen.getByText('James Seow')).toBeTruthy();
+    expect(screen.getByText('HC-PRQ-2610-001').getAttribute('href')).toBe('/scm/payment-requests?open=r1');
     expect(screen.getByText('Finance')).toBeTruthy();
 
-    fireEvent.click(screen.getByText('To check · 待核对 (1)'));
+    fireEvent.click(views.getByRole('button', { name: 'To check (1)' }));
     expect(screen.getByText(/the proforma read RM 8,500\.00/)).toBeTruthy();
-    fireEvent.click(screen.getByText('Checked ✓ · 核对好了'));
+    expect(screen.getAllByText('To check')).toHaveLength(1 + 1);
+    fireEvent.click(screen.getByText('Checked ✓'));
     expect(markOfficial).toHaveBeenCalledWith({ kind: 'PV', id: 'pv-2', state: 'CHECKED' });
+  });
+
+  test('a double-click on a row opens the payment it is about', () => {
+    rows = [row({ kind: 'API', id: 'api-7', number: 'HC-API-2610-007', request: null })];
+    const Where = () => {
+      const at = useLocation();
+      return <div data-testid="where">{at.pathname + at.search}</div>;
+    };
+    render(
+      <MemoryRouter initialEntries={['/scm/official-docs']}>
+        <Routes>
+          <Route path="/scm/official-docs" element={<OfficialDocs />} />
+          <Route path="*" element={<Where />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    /* A double-click on the marks is not one on the row. */
+    fireEvent.doubleClick(screen.getByText('Add a remark'));
+    expect(screen.queryByTestId('where')).toBeNull();
+    fireEvent.doubleClick(screen.getByText('MLE EVENTS SDN BHD').closest('tr') as HTMLElement);
+    expect(screen.getByTestId('where').textContent).toBe('/scm/ap-invoices/api-7');
   });
 
   test('an owed mark can be checked straight away or cleared; nothing owed says so', () => {
@@ -74,7 +106,7 @@ describe('Official invoices owed', () => {
     markOfficial.mockClear();
     const { unmount } = render(<MemoryRouter><OfficialDocs /></MemoryRouter>);
     /* 漏洞 2: a voucher answering no request has nobody to upload — Finance checks it here. */
-    fireEvent.click(screen.getByText('Checked ✓ · 核对好了'));
+    fireEvent.click(screen.getByText('Checked ✓'));
     expect(markOfficial).toHaveBeenCalledWith({ kind: 'PV', id: 'pv-1', state: 'CHECKED' });
     fireEvent.click(screen.getByText('Clear the mark'));
     expect(markOfficial).toHaveBeenCalledWith({ kind: 'PV', id: 'pv-1', state: null });
