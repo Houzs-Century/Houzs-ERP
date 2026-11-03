@@ -4996,9 +4996,12 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   // granted (a plain "not your job", never confirming another tenant's id).
   let doCompanyIdWhenGranted: number | null = null;
   if (bypassPod) {
-    const { data: own } = await scopeToAllowedCompanies(
+    const { data: own, error: ownErr } = await scopeToAllowedCompanies(
       sb.from('delivery_orders').select('company_id').eq('id', id), c,
     ).maybeSingle();
+    // A READ failure is not "you are not granted it" — surface it, never let a DB
+    // blip silently become a 403 that blocks the driver from their own delivery.
+    if (ownErr) return c.json({ error: 'load_failed', reason: ownErr.message }, 500);
     doCompanyIdWhenGranted = (own as { company_id?: number | null } | null)?.company_id ?? null;
   }
   const podCo = podWriteScopeCompany(bypassPod, doCompanyIdWhenGranted);
