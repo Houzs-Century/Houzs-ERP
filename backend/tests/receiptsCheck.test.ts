@@ -131,4 +131,16 @@ describe('GET /accounting/receipts?month=', () => {
     const newest = await (await app.request('/accounting/receipts')).json() as { receipts: Row[] };
     expect(newest.receipts[0]!.or_number).toBe('2990-DraftOR-2606-002');
   });
+
+  /* Receipts' Any month (the owner's Claude Design, batch 5 §2.3 c2): the whole
+     book, newest first, every status — the page's chips count it. */
+  test('all=1 reads every receipt of the company, newest first, past any limit', async () => {
+    const res = await harness(world()).request('/accounting/receipts?all=1&limit=2');
+    expect(res.status).toBe(200);
+    const every = await res.json() as { receipts: Row[] };
+    expect(every.receipts.map((r) => r.or_number)).toEqual([
+      '2990-DraftOR-2606-002', '2990-DraftOR-2606-001', '2990-COR-2606-001', '2990-COR-2606-002', '2990-COR-2605-001',
+    ]);
+    expect((await harness(world(), []).request('/accounting/receipts?all=1')).status).toBe(403);
+  });
 });

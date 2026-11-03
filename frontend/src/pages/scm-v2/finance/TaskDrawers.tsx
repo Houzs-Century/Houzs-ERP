@@ -36,7 +36,7 @@ const PAGES: Array<[string, string, string]> = [
   ['Payment requests', '/scm/payment-requests', 'Finance › Money out'],
   ['Supplier bills', '/scm/ap-invoices', 'Finance › Money out'],
   ['Receipts', '/scm/receipts', 'Finance › Money in'],
-  ['Official receipts', '/scm/official-receipts', 'Finance › Money in'],
+  ['Official receipts', '/scm/receipts?kind=official', 'Finance › Money in'],
   ['AR invoices', '/scm/ar-invoices', 'Finance › Money in'],
   ['Deposit invoices', '/scm/deposit-invoices', 'Finance › Money in'],
   ['Debtor maintenance', '/scm/other-debtors', 'Finance › Money in'],

@@ -528,6 +528,7 @@ export const DeliveryPlanning = () => {
                           </button>
                           {oneTimeOpen && ([
                             ['postpone', 'Postpone', 'Move the date - reads the order reason and new date'],
+                            ['overdue_order', 'Overdue Order', 'Production delay - one-way heads-up, no new date'],
                             ['driver_info', 'Driver Info', 'Day-before: date, time, driver, lorry plate'],
                             ['balance_reminder', 'Balance Reminder', 'Outstanding balance + bank details (owing orders only)'],
                             ['reminder_1', 'Reminder 1', 'No reply yet - first nudge'],

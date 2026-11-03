@@ -42,6 +42,14 @@
 //      the movements the way the chain is, so a mistyped one, or a day missing
 //      from the files, is named with the amount rather than quietly believed.
 //
+//   5. A month opens where the last one closed, however that closing was
+//      known: the previous month's closing as ITS files printed it, else as
+//      somebody typed it (owner 2026-11-03: 「不能9月close了就直接带bank balance
+//      过来吗」 — Maybank 310-0010's September PDF printed RM 26,311.45, its
+//      October Account Activity Report prints nothing, and October stood
+//      without an opening). A carried opening is checked against the movements
+//      the way a typed one is.
+//
 // Nothing here reads a database or decides what a movement means. It arranges
 // what a month is made of and hands it to reconcileBankStatement, which is the
 // one place that answers whether the bank and the books agree.
@@ -73,11 +81,26 @@ export type TypedBalance = {
   note: string | null;
 };
 
-/** The typed figures that can speak for a month: its own closing, and the
-    previous month's closing, which is where this month opens. */
+/** The previous month's closing as its own files PRINTED it (rule 5). */
+export type PrintedBalance = {
+  /** The month whose closing this is, as YYYY-MM. */
+  month: string;
+  closingSen: number;
+  statementId: number;
+  fileName: string;
+  /** The day the file closes on. */
+  on: string;
+};
+
+/** The figures that can speak for a month beyond its own files: its own typed
+    closing, and the previous month's closing — printed or typed — which is
+    where this month opens. */
 export type MonthBalances = {
   closing: TypedBalance | null;
   previousClosing: TypedBalance | null;
+  /** The previous month's printed closing; it wins over a typed one, as a
+      printed figure does inside a month (rule 4). */
+  previousPrinted?: PrintedBalance | null;
 };
 
 export const NO_TYPED_BALANCES: MonthBalances = { closing: null, previousClosing: null };
@@ -109,6 +132,8 @@ export type BalanceSource = {
   /** Present when the figure was TYPED rather than printed: the month it was
       typed as the closing of, who typed it, when, and their note. */
   typed?: { month: string; by: string | null; at: string; note: string | null };
+  /** Present when an OPENING is the previous month's printed closing (rule 5): the month it closed. */
+  carried?: { month: string };
 };
 
 export type MonthAssembly = {
@@ -144,6 +169,18 @@ export type MonthAssembly = {
 const pad = (n: number) => String(n).padStart(2, '0');
 
 /** First and last day of a YYYY-MM, as ISO dates. */
+/** A month's closing as its own files print it — the last file lying wholly
+    inside the month that prints one, the figure the month itself closes at
+    (rules 2 and 4) — or null. The next month opens here (rule 5). */
+export function printedClosingOf(statements: MonthStatement[], month: string): PrintedBalance | null {
+  const printing = statements
+    .filter((s) => s.periodFrom != null && s.periodTo != null && s.closingBalanceSen != null
+      && monthOf(s.periodFrom) === month && monthOf(s.periodTo) === month)
+    .sort((a, b) => String(a.periodFrom).localeCompare(String(b.periodFrom)) || String(a.periodTo).localeCompare(String(b.periodTo)));
+  const last = printing[printing.length - 1];
+  return last == null ? null : { month, closingSen: Number(last.closingBalanceSen), statementId: last.id, fileName: last.fileName, on: String(last.periodTo) };
+}
+
 export function monthWindow(month: string): { from: string; to: string } | null {
   const m = /^(\d{4})-(\d{2})$/.exec(month);
   if (!m) return null;
@@ -228,7 +265,10 @@ export function assembleMonth(
   const typedOpening = typed.previousClosing != null && prev != null && typed.previousClosing.month === prev
     ? typed.previousClosing : null;
   const typedClosing = typed.closing != null && typed.closing.month === month ? typed.closing : null;
-  const statementOpeningSen = first?.openingBalanceSen ?? typedOpening?.closingSen ?? null;
+  /* Rule 5: the previous month's printed closing, then its typed one. */
+  const printedOpening = typed.previousPrinted != null && prev != null && typed.previousPrinted.month === prev
+    ? typed.previousPrinted : null;
+  const statementOpeningSen = first?.openingBalanceSen ?? printedOpening?.closingSen ?? typedOpening?.closingSen ?? null;
   const statementClosingSen = last?.closingBalanceSen ?? typedClosing?.closingSen ?? null;
   const typedSource = (t: TypedBalance, on: string): BalanceSource => ({
     statementId: null, fileName: null, on,
@@ -236,6 +276,8 @@ export function assembleMonth(
   });
   const openingFrom: BalanceSource | null = first != null
     ? { statementId: first.id, fileName: first.fileName, on: String(first.periodFrom) }
+    : printedOpening != null
+      ? { statementId: printedOpening.statementId, fileName: printedOpening.fileName, on: printedOpening.on, carried: { month: printedOpening.month } }
     : typedOpening != null && prev != null
       ? typedSource(typedOpening, monthWindow(prev)?.to ?? window.from)
       : null;
@@ -319,13 +361,13 @@ export function assembleMonth(
      its own words. An IGNORED movement is out, as it is there: a repeat of one
      already recorded, or a pair the bank itself reversed. */
   let typedShortSen = 0;
-  if ((openingFrom?.typed != null || closingFrom?.typed != null)
+  if ((openingFrom?.typed != null || openingFrom?.carried != null || closingFrom?.typed != null)
     && statementOpeningSen != null && statementClosingSen != null) {
     const moved = movements.filter((m) => m.state !== 'IGNORED').reduce((s, m) => s + m.amountSen, 0);
     typedShortSen = statementClosingSen - (statementOpeningSen + moved);
     if (typedShortSen !== 0) {
       gaps.push(
-        `${month} opens at ${rm(statementOpeningSen)}${openingFrom?.typed ? ' (typed)' : ''} and closes at`
+        `${month} opens at ${rm(statementOpeningSen)}${openingFrom?.typed ? ' (typed)' : openingFrom?.carried ? ` (${openingFrom.carried.month}'s closing)` : ''} and closes at`
         + ` ${rm(statementClosingSen)}${closingFrom?.typed ? ' (typed)' : ''}, but the movements uploaded come to`
         + ` ${rm(moved)} — ${rm(Math.abs(typedShortSen))} is unaccounted for: a day is missing from the files,`
         + ' or a typed figure is wrong.',

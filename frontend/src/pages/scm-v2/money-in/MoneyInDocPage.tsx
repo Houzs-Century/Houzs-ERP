@@ -253,13 +253,18 @@ export function MoneyInDocPage({
   );
 }
 
-/** A document's form in place of the document (`?form=…`), with Back to it. */
-export function DocFormShell({ title, backLabel, onBack, children }: { title: string; backLabel: string; onBack: () => void; children: ReactNode }) {
+/** A document's form in place of the document (`?form=…`), with Back to it —
+ *  or a list's form in place of the list. `titleExtra` sits beside the title
+ *  (a receipt's Sundry income / Other debtor switch); `bare` leaves the form to
+ *  lay out its own cards (the design's two-column forms). */
+export function DocFormShell({ title, backLabel, onBack, titleExtra, bare = false, children }: {
+  title: string; backLabel: string; onBack: () => void; titleExtra?: ReactNode; bare?: boolean; children: ReactNode;
+}) {
   return (
     <div className={s.page}>
       <button type="button" className={s.back} onClick={onBack}><ArrowLeft size={14} /> Back to {backLabel}</button>
-      <div className={s.formHead}><h1 className={s.formTitle}>{title}</h1></div>
-      <div className={s.formBody}>{children}</div>
+      <div className={s.formHead}><h1 className={s.formTitle}>{title}</h1>{titleExtra}</div>
+      {bare ? children : <div className={s.formBody}>{children}</div>}
     </div>
   );
 }

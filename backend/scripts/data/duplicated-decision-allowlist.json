@@ -2,6 +2,11 @@
   "reviewed": [
     {
       "check": "D1",
+      "key": "UMMUAIMANLM@GMAIL.COM,WEISIANG329@GMAIL.COM,YZHE212@GMAIL.COM|backend/src/routes/lib/sales-report-bills.ts frontend/src/auth/salesAccess.ts",
+      "why": "THE CHAT SALES-REPORT ADMIN EMAILS (owner 2026-10-14 trio + Peter added 2026-10-30), one decision with ONE authoritative home and a vendored twin. backend/src/routes/lib/sales-report-bills.ts SAVE_EMAILS is the server's gate (canSaveSalesReport, called per note author inside collectReport). frontend/src/auth/salesAccess.ts SAVE_EMAILS mirrors it so the chat UI shows the Save button for the same accounts; the backend is the authority and returns a can_save flag per project (which also carries the per-event sales-attendee grant that the frontend list CANNOT compute). The two files share no build graph (frontend cannot import backend/src), the set is closed, and a divergence costs a UI button that doesn't match what the server would accept — never a wrong grant, since the server is the referee."
+    },
+    {
+      "check": "D1",
       "key": "EDIT,FULL,NONE,VIEW|backend/src/services/pageAccess.ts frontend/src/lib/roleMatrixModel.ts",
       "why": "THE 4-LEVEL PAGE-ACCESS VOCABULARY (none/view/edit/full). Two homes by necessity: POSITION_ACCESS_LEVELS (pageAccess.ts) is the server's writable set that isValidPositionLevel validates every role_page_access write against (PATCH /api/roles/:id/page-access); MATRIX_LEVELS (roleMatrixModel.ts) is the RBAC-matrix UI's dropdown order + 无/看/改/批 labels in the browser. The two packages share no build graph, the set is closed to the code, and a divergence costs a dropdown option, never a wrong grant — the server is the referee. Recorded rather than collapsed because the frontend cannot import backend/src and the matrix needs the ordered list for its control."
     },
@@ -1251,6 +1256,11 @@
       "why": "THE FINANCE NAV GATE against the Official Receipts nav gate, one key apart BY DESIGN. The recon/setup/chart rows show only to GL people (scm.payment_voucher.post); the Official Receipts row adds SCM.SALES_ORDER.WRITE because the OR is sales-side paper — the salesperson who records the payment hands the receipt over — and the sidebar MIRRORS the backend guard (accounting-receipts.ts requirePerm: payment_voucher.post OR sales_order.write). Folding onto the GL-only set would hide the book from the very people who print from it; divergence costs a nav row showing or not, never money."
     },
     {
+      "check": "D2",
+      "key": "*,SCM.ACCESS,SCM.PAYMENT_VOUCHER.CREATE,SCM.PAYMENT_VOUCHER.POST,SCM.SALES_ORDER.WRITE ~ *,SCM.ACCESS,SCM.PAYMENT_VOUCHER.POST,SCM.SALES_ORDER.WRITE",
+      "why": "MONEY IN › RECEIPTS against the Deposit invoices nav gate, one key apart BY DESIGN (the owner's Claude Design, batch 5 step 4). Official Receipts folded into Receipts as its first kind, so the merged Sidebar row shows to whoever saw EITHER old row — the union of the Official Receipts gate (payment_voucher.post OR sales_order.write) and the Receipts gate (payment_voucher.create); inside the page each kind still shows only to whoever saw its old row. The Deposit invoices row keeps the Official Receipts gate until it folds into Invoices (batch 5 step 5), when the four-key set leaves the tree and this entry goes stale. Divergence costs a nav row showing or not, never money — the server's own checks are unchanged."
+    },
+    {
       "check": "D1",
       "key": "DO,GRN,PO,SO|backend/src/scm/lib/downstream-lock.ts backend/src/scm/routes/change-log.ts frontend/src/lib/changeLog.ts",
       "why": "THE FOUR DOCUMENT KINDS THE OWNER OPENED TO STAFF (2026-09-08), plus one unrelated set that happens to hold the same four values. Three homes, and each answers a different question: downstream-lock.ts REFUSALS is a map of why a downstream document refuses an edit and has nothing to do with the change log; change-log.ts ALL_DOC_TYPES is the SERVER's list, which is the boundary — the client cannot widen it; frontend/src/lib/changeLog.ts CL_DOC_TYPES plus CL_DOC_TYPE_LABEL is the ONE client-side home, imported by both pages/ChangeLog.tsx and mobile/MobileChangeLog.tsx rather than written out again (they each held a copy until this entry was recorded, and that copy was deleted, not allowlisted). Cost of the remaining divergence is a chip the server answers 'every type' for, never a wrong number. Same shape as the AutoCount doc-type entry above."
@@ -1512,13 +1522,13 @@
     },
     {
       "check": "D1",
-      "key": "AMEND,ASSR_ARRANGEMENT,BALANCE_REMINDER,DELIVERY,DELIVERY_COMPLETED,DRIVER_INFO,POSTAGE,POSTPONE,REMINDER_1,REMINDER_2,REMINDER_3|backend/src/scm/lib/delivery-message-kinds.ts frontend/src/vendor/scm/components/SendDeliveryMessageModal.tsx",
+      "key": "AMEND,ASSR_ARRANGEMENT,BALANCE_REMINDER,DELIVERY,DELIVERY_COMPLETED,DRIVER_INFO,OVERDUE_ORDER,POSTAGE,POSTPONE,REMINDER_1,REMINDER_2,REMINDER_3|backend/src/scm/lib/delivery-message-kinds.ts frontend/src/vendor/scm/components/SendDeliveryMessageModal.tsx",
       "why": "THE BOARD'S WHATSAPP MESSAGE KINDS (2026-10-05), one decision with one home: scm/lib/delivery-message-kinds.ts MESSAGE_KINDS decides which kinds exist and KIND_AUTOMATION which Connect automation each fires (the zod enum on /delivery-messages/send is built from that array). KIND_AFTER_STATUS (the status a sent order lands on) lives beside them and is written server-side by the send (HC-0164). SendDeliveryMessageModal's KIND_TITLE is PRESENTATION of the same vocabulary — the drawer heading — keyed by the frontend SendMessageKind type that mirrors the backend list; a kind added on one side without the other is a compile error on the frontend (Record<SendMessageKind, ...>) and a 400 invalid_body from the server, never a wrong message. Cost of divergence is a missing menu entry, not a wrong number."
     },
     {
       "check": "D2",
-      "key": "AMEND,ASSR_ARRANGEMENT,BALANCE_REMINDER,DELIVERY,DELIVERY_COMPLETED,DRIVER_INFO,POSTAGE,POSTPONE,REMINDER_1,REMINDER_2,REMINDER_3 ~ AMEND,BALANCE_REMINDER,DELIVERY,DELIVERY_COMPLETED,DRIVER_INFO,POSTAGE,POSTPONE,REMINDER_1,REMINDER_2,REMINDER_3",
-      "why": "INTENDED, not a missed kind (HC-0164). KIND_AFTER_STATUS in delivery-message-kinds.ts is the Delivery Message Status a sent SALES ORDER lands on, written server-side by POST /delivery-messages/send. ASSR_ARRANGEMENT is a service-case message: the case has no SO status column and its row reads its state off the WhatsApp record, and /send hands that kind to sendAssrArrangement before any status write. The map is typed Record<Exclude<MessageKind, 'assr_arrangement'>, string>, so a NEW kind missing here is a compile error, not a silent gap."
+      "key": "AMEND,ASSR_ARRANGEMENT,BALANCE_REMINDER,DELIVERY,DELIVERY_COMPLETED,DRIVER_INFO,OVERDUE_ORDER,POSTAGE,POSTPONE,REMINDER_1,REMINDER_2,REMINDER_3 ~ AMEND,BALANCE_REMINDER,DELIVERY,DELIVERY_COMPLETED,DRIVER_INFO,POSTAGE,POSTPONE,REMINDER_1,REMINDER_2,REMINDER_3",
+      "why": "INTENDED, not a missed kind (HC-0164). KIND_AFTER_STATUS in delivery-message-kinds.ts is the Delivery Message Status a sent SALES ORDER lands on, written server-side by POST /delivery-messages/send. Two kinds are deliberately absent: ASSR_ARRANGEMENT (a service-case message — the case has no SO status column, its row reads state off the WhatsApp record, and /send hands it to sendAssrArrangement before any status write) and OVERDUE_ORDER (a one-way production-delay heads-up that moves no status — /send skips markSentStatus for it). The map is typed Record<Exclude<MessageKind, 'assr_arrangement' | 'overdue_order'>, string>, so a NEW status-moving kind missing here is a compile error, not a silent gap."
     },
     {
       "check": "D1",

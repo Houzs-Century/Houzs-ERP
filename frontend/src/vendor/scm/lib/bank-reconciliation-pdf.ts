@@ -76,6 +76,8 @@ export type FigureSource = {
   fileName: string | null;
   on: string;
   typed?: { month: string; by: string | null; at: string; note: string | null };
+  /** An opening carried from the previous month's printed closing: the month that closed there. */
+  carried?: { month: string };
 };
 
 export type AssemblyInput = {
@@ -197,7 +199,9 @@ export function reconciliationStatement(input: ReconReportInput): ReconReport {
     ? `${what} ${money(sen ?? 0)} as typed for the end of ${src.typed.month} by ${src.typed.by ?? 'somebody'}`
       + ` on ${fmtDocDate(src.typed.at.slice(0, 10))}${src.typed.note ? ` (“${src.typed.note}”)` : ''}`
       + ' — no file uploaded prints it.'
-    : `${what} ${money(sen ?? 0)} per ${src.fileName ?? ''} (${fmtDocDate(src.on)}).`);
+    : src.carried
+      ? `${what} ${money(sen ?? 0)} — where ${src.carried.month} closed, per ${src.fileName ?? ''} (${fmtDocDate(src.on)}).`
+      : `${what} ${money(sen ?? 0)} per ${src.fileName ?? ''} (${fmtDocDate(src.on)}).`);
   const provenance: string[] = [];
   if (assembly.openingFrom) provenance.push(sourceOfFigure('Opening', assembly.statementOpeningSen, assembly.openingFrom));
   if (assembly.closingFrom) provenance.push(sourceOfFigure('Closing', assembly.statementClosingSen, assembly.closingFrom));
