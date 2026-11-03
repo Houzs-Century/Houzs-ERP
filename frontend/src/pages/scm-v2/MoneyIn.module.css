@@ -273,3 +273,14 @@ button.card:hover { border-color: #b9d6d1; }
 }
 .backlog svg { flex: none; }
 .lineHeadEvent, .lineRowEvent { grid-template-columns: minmax(180px, 220px) minmax(160px, 1fr) 130px minmax(160px, 200px) 24px; min-width: 720px; }
+
+/* Debtor maintenance (batch 5 step 6): the debtor form's address heading, and
+   More details — every other party field, folded until asked for. */
+.formSub { margin-top: 4px; padding-top: 12px; border-top: 1px solid #eef0ec; font-size: 12px; font-weight: 600; color: var(--detail); }
+.moreToggle {
+  display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; background: none;
+  font: 600 13px 'IBM Plex Sans', system-ui, sans-serif; color: var(--ink); cursor: pointer;
+}
+.moreToggle:hover { color: var(--petrol); }
+.moreToggle .muted { font-weight: 400; }
+.moreFields { margin-top: 14px; }

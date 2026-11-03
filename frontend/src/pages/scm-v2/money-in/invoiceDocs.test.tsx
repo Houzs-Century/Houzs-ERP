@@ -131,7 +131,16 @@ vi.mock('../../../vendor/scm/lib/accounting-queries', async (importOriginal) => 
   useCreateDebtorBill: () => ({ mutateAsync: createBillAsync, isPending: false }),
   useUpdateDebtorBill: () => ({ mutateAsync: updateBillAsync, isPending: false }),
   useCancelDebtorBill: () => ({ mutate: cancelBillMutate, isPending: false }),
+  useDebtorDetail: (id: string | null) => ({ data: id === 'd1' ? DEBTOR_D1 : undefined, isLoading: false, isError: false, error: null }),
+  useCreateDebtorReceipt: () => ({ mutate: createDebtorReceipt, isPending: false }),
 }));
+/* The debtor the bill page's New receipt lists (batch 5 step 6). */
+const DEBTOR_D1 = {
+  debtor: { id: 'd1', name: 'AHMAD BIN ALI', phone: '012-345', notes: null, is_active: true, outstanding_sen: 30000 },
+  bills: [{ id: 'b1', bill_number: 'HC-ODB-2609-001', bill_date: '2026-09-05', total_sen: 50000, received_sen: 20000, status: 'POSTED', notes: '转租九月' }],
+  receipts: [],
+};
+const createDebtorReceipt = vi.fn();
 vi.mock('../../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
 const EVENT_OPTIONS = [
   { id: 348, code: 'E-348', name: 'Pulau Pinang [AKEMI] MLE @ PWCC', startDate: '2026-09-25', endDate: '2026-09-27', status: 'confirmed', archived: false, venue: null, brand: 'AKEMI', organizer: 'MLE', boothNo: 'F1' },
@@ -321,6 +330,19 @@ describe('an other debtor\'s bill, as a page', () => {
     openBill('b2');
     expect(within(screen.getByRole('region', { name: 'Receipts' })).getByText('No receipt yet.')).toBeTruthy();
     expect(screen.queryByRole('region', { name: 'Credit notes' })).toBeNull();
+  });
+
+  /* Batch 5 step 6: while money is still owed, the Receipts section raises one —
+     Debtor maintenance's receipt form, this bill ticked for what it still owes. */
+  test('New receipt opens the debtor receipt form in place, this bill ticked for what it owes; it waits for its four layers', () => {
+    openBill('b1');
+    fireEvent.click(within(screen.getByRole('region', { name: 'Receipts' })).getByRole('button', { name: /New receipt/ }));
+    expect(screen.getByRole('heading', { name: 'New receipt · Other debtor' })).toBeTruthy();
+    expect(screen.getByText('Back to HC-ODB-2609-001')).toBeTruthy();
+    expect((screen.getByLabelText('Collect HC-ODB-2609-001 in full') as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText(/· RM 300\.00 · posts at approval/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save draft' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save & prepare' })).toBeTruthy();
   });
 
   test('Cancel bill — while nothing was received — asks inline, then sends the bill id', () => {
