@@ -319,15 +319,14 @@ describePg('delete-test-so — the 2990-SO-2611-010 references and the ledger gu
         VALUES ('DI-1', '${DOC}', '${payId}', gen_random_uuid());
       INSERT INTO scm.journal_entries (je_no, source_type, source_doc_no, reversed) VALUES
         ('JE-1', 'SOPAY', '${payId}', false), ('JE-2', 'DI', 'DI-1', false);`);
-    const b = (await ledgerBlockers(sql, DOC)).join('
-');
+    const b = (await ledgerBlockers(sql, DOC)).join(' | ');
     expect(b).toContain('OR-1');
     expect(b).toContain('credit note');
     expect(b).toContain('JE-1');
     expect(b).toContain('JE-2');
   });
 
-  test('a reversed journal does not block, and another order's journal is not read', async () => {
+  test('a reversed journal does not block, and a different order has its journal left alone', async () => {
     const payId = String((await sql`SELECT id FROM scm.mfg_sales_order_payments WHERE so_doc_no = ${DOC}`)[0].id);
     const other = String((await sql`SELECT id FROM scm.mfg_sales_order_payments WHERE so_doc_no = 'HC-SO-013361'`)[0].id);
     await sql.unsafe(`
