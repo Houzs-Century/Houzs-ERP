@@ -226,16 +226,47 @@ export type FairInvoiceResponse = {
   filters: FairFiltersEcho;
   meta: { access_tier: 'management' | 'sales_director' | 'none' };
 };
+/** A brand's cost-rate card (project_cost_rates): plain percentages (5 == 5%). */
+export type FairCostRate = {
+  transport_pct: number;
+  merchandise_pct: number;
+  commission_normal_pct: number;
+  commission_boost_pct: number | null;
+  boost_min_gp_pct: number | null;
+  boost_min_sales: number | null;
+};
+
+/** One fair's line in the every-fair P&L (no fair picked): its summary is the
+ *  one its own P&L shows once picked, priced on its own card. */
+export type FairPnlFairRow = {
+  project_id: number;
+  project: string | null;
+  project_start_date: string | null;
+  project_end_date: string | null;
+  venue: string | null;     // the venue its orders were taken at (the commonest)
+  brand: string | null;     // the fair's brand — whose card prices its overhead
+  rate_present: boolean;
+  summary: FairPnlSummary;
+};
+
 export type FairPnlResponse = {
   stage: 'pnl';
   rows: FairPnlRow[];
   summary: FairPnlSummary;
+  /** No fair picked: every fair with orders in the period, a line each. */
+  fairs?: FairPnlFairRow[];
+  /** No fair picked: the period's orders that carry no fair (in no line). */
+  no_fair?: { orders: number; revenue_sen: number };
   filters: FairFiltersEcho;
   meta: {
     access_tier: 'management' | 'sales_director' | 'none';
-    needs_project: boolean;   // true when no fair (project) is selected yet
+    needs_project: boolean;   // true when no fair (project) is selected yet — the per-order rows wait for one
     brand: string | null;     // the fair's brand (drives the rate card)
     rate_present: boolean;    // false when the brand has no project_cost_rates card
+    /** The picked fair's card (null: none, or no fair picked). */
+    rate?: FairCostRate | null;
+    /** The picked fair itself — named even when none of its orders is in the dates. */
+    fair?: { project_id: number; project: string | null; project_start_date: string | null; project_end_date: string | null } | null;
   };
 };
 export type FairReportResponse = FairSoResponse | FairDoResponse | FairInvoiceResponse | FairPnlResponse;

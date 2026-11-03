@@ -23,8 +23,9 @@ import type { AuthUser } from '../../services/auth';
 // ── Stage ────────────────────────────────────────────────────────────────────
 // 'pnl' is the exhibition P&L view (revenue - three-way fulfillment cost -
 // project_cost_rates overhead = net profit). It is management-only, like do /
-// invoice, and additionally REQUIRES a fair (project) so the per-brand rate card
-// resolves to exactly one row.
+// invoice. Its per-order rows need a fair (project) so the per-brand rate card
+// resolves to exactly one row; with none picked it lists every fair, each on
+// its own card (everyFairPnl).
 export type FairStage = 'so' | 'do' | 'invoice' | 'pnl';
 export const FAIR_STAGES: readonly FairStage[] = ['so', 'do', 'invoice', 'pnl'];
 
@@ -636,6 +637,101 @@ export function summarizeFairPnl(rows: readonly FairPnlSummaryRow[], rate: FairC
   s.net_profit_sen = s.gross_profit_sen - s.overheads.total_overhead_sen;
   s.net_margin_pct = s.total_revenue_sen === 0 ? null : (s.net_profit_sen / s.total_revenue_sen) * 100;
   return s;
+}
+
+// ── stage=pnl with no fair picked — every fair ──────────────────────────────
+//
+// Owner 2026/11/02 (the redesign's Sales report): the P&L stage shows WITHOUT a
+// fair picked first — every fair with orders in the period, one line each,
+// and a click opens that fair's own P&L. Each line is summarizeFairPnl over the
+// fair's orders with THE FAIR'S OWN rate card, so it carries exactly the
+// figures the fair's P&L shows once it is picked (COGS at the latest stage,
+// overhead on the card, the boost when the fair qualifies).
+
+/** One order of the period with the fair it belongs to (null: none). */
+export interface FairPnlOrderOfFair extends FairPnlSummaryRow {
+  project_id: number | null;
+  venue: string | null;
+}
+
+/** What the route read about one fair: its project row and its rate card. */
+export interface FairPnlFairInfo {
+  name: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  brand: string | null;
+  rate: FairCostRate | null;
+}
+
+export interface FairPnlFairRow {
+  project_id: number;
+  project: string | null;
+  project_start_date: string | null;
+  project_end_date: string | null;
+  /** The venue its orders were taken at (the commonest on its orders). */
+  venue: string | null;
+  /** The fair's brand — the rate card its overhead is priced on. */
+  brand: string | null;
+  rate_present: boolean;
+  summary: FairPnlSummary;
+}
+
+export interface EveryFairPnl {
+  fairs: FairPnlFairRow[];
+  /** The period's orders that carry no fair: in no line above. */
+  no_fair: { orders: number; revenue_sen: number };
+}
+
+/** The value seen most often (blank ones aside); a tie goes to the first in A–Z. */
+function commonest(values: ReadonlyArray<string | null>): string | null {
+  const count = new Map<string, number>();
+  for (const v of values) {
+    const t = v?.trim();
+    if (t) count.set(t, (count.get(t) ?? 0) + 1);
+  }
+  let best: string | null = null;
+  let most = 0;
+  for (const [v, k] of [...count].sort((a, b) => a[0].localeCompare(b[0]))) {
+    if (k > most) { best = v; most = k; }
+  }
+  return best;
+}
+
+/** The period's orders, a line per fair — newest fair first. */
+export function everyFairPnl(
+  orders: readonly FairPnlOrderOfFair[],
+  fairOf: (projectId: number) => FairPnlFairInfo,
+): EveryFairPnl {
+  const byFair = new Map<number, FairPnlOrderOfFair[]>();
+  const noFair = { orders: 0, revenue_sen: 0 };
+  for (const o of orders) {
+    if (o.project_id == null) {
+      noFair.orders += 1;
+      noFair.revenue_sen += n(o.amount_sen);
+      continue;
+    }
+    const arr = byFair.get(o.project_id) ?? [];
+    arr.push(o);
+    byFair.set(o.project_id, arr);
+  }
+  const fairs: FairPnlFairRow[] = [...byFair].map(([id, rows]) => {
+    const info = fairOf(id);
+    return {
+      project_id: id,
+      project: info.name,
+      project_start_date: info.start_date,
+      project_end_date: info.end_date,
+      venue: commonest(rows.map((r) => r.venue)),
+      brand: info.brand,
+      rate_present: info.rate != null,
+      summary: summarizeFairPnl(rows, info.rate),
+    };
+  });
+  fairs.sort((a, b) =>
+    (b.project_start_date ?? '').localeCompare(a.project_start_date ?? '')
+    || (a.project ?? '').localeCompare(b.project ?? '')
+    || a.project_id - b.project_id);
+  return { fairs, no_fair: noFair };
 }
 
 // ── Filter helpers ───────────────────────────────────────────────────────────
