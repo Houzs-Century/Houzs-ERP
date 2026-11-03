@@ -143,6 +143,27 @@ export function monthlyTable(columns: MonthColumn[], shown: MonthlyLine[], showP
   return { columns: cols, rows };
 }
 
+/** A statement's columns as the screen shows them (the redesign's Compare and
+    By month, or one period without its %): each column an amount, its % beside
+    it where the screen prints one; a Total column ruled after, as on screen. */
+export function statementColumnsTable(
+  columns: ReadonlyArray<{ key: string; label: string; pct: boolean; edge?: boolean }>,
+  shown: MonthlyLine[],
+): SheetTable {
+  const cols: SheetColumn[] = columns.flatMap((c): SheetColumn[] => (c.pct
+    ? [{ label: c.label, kind: 'amount' }, { label: '%', kind: 'pct', beside: true, edge: c.edge }]
+    : [{ label: c.label, kind: 'amount', edge: c.edge }]));
+  const rows = shown.map((l): SheetRow => ({
+    kind: l.kind, depth: l.depth, label: l.label,
+    cells: l.kind === 'block' ? [] : columns.flatMap((c): SheetValue[] => {
+      const cell = l.cells[c.key];
+      if (!cell) return c.pct ? [null, null] : [null];
+      return c.pct ? [cell.amountSen, cell.pct] : [cell.amountSen];
+    }),
+  }));
+  return { columns: cols, rows };
+}
+
 /** Which lines of a laid block the screen shows at a level — the fold rule the pages use. */
 export const visibleLaid = (nodes: LaidNode[], level: number | 'all', open: Record<string, boolean>): Array<{ node: LaidNode; depth: number }> =>
   linesVisible(flattenLaid(nodes).map(({ node, depth }) => ({ id: node.id, depth, node })), level, open);

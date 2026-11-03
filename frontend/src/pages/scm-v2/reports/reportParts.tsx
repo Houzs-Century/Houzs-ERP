@@ -93,3 +93,85 @@ export function ReportExports({ sheet, fileBase, onLayout, layoutOn = false }: {
     </>
   );
 }
+
+/** A labelled tool in the toolbar card: a small grey name, then its control. */
+export function ReportTool({ label, children }: { label?: string; children: ReactNode }) {
+  return (
+    <div className={s.tool}>
+      {label && <span className={s.toolLabel}>{label}</span>}
+      {children}
+    </div>
+  );
+}
+
+/** A segmented control: one of a few, the one in use white on the grey track. */
+export function Segmented<T extends string | number>({ options, value, onChange, label }: {
+  options: ReadonlyArray<{ value: T; label: string }>;
+  value: T;
+  onChange: (v: T) => void;
+  label: string;
+}) {
+  return (
+    <div className={s.segs} role="group" aria-label={label}>
+      {options.map((o) => (
+        <button key={String(o.value)} type="button" className={`${s.seg} ${o.value === value ? s.segOn : ''}`}
+          aria-pressed={o.value === value} onClick={() => onChange(o.value)}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** An on / off switch with its words beside it. */
+export function ReportSwitch({ on, onChange, children }: { on: boolean; onChange: (v: boolean) => void; children: ReactNode }) {
+  return (
+    <button type="button" role="switch" aria-checked={on} className={s.switch} onClick={() => onChange(!on)}>
+      <span className={`${s.switchTrack} ${on ? s.switchOn : ''}`} aria-hidden><span className={s.switchKnob} /></span>
+      {children}
+    </button>
+  );
+}
+
+export type ReportTileTone = 'plain' | 'good' | 'late';
+export type ReportTile = {
+  key: string;
+  label: string;
+  value: ReactNode;
+  sub?: ReactNode;
+  tone?: ReportTileTone;
+  /** The small square before the label (a bucket's colour). */
+  dot?: string;
+  /** A tile that filters what is below it: pressed while it does. */
+  onClick?: () => void;
+  on?: boolean;
+};
+
+/** The figures over a report: label, figure, a line under it. `pending` shows
+ *  each figure as a shimmer, never a zero that reads as a fact. */
+export function ReportTiles({ tiles, label, pending = false }: { tiles: ReportTile[]; label: string; pending?: boolean }) {
+  return (
+    <div className={s.tiles} role="group" aria-label={label} style={{ '--tile-cols': String(Math.min(tiles.length, 6)) } as React.CSSProperties}>
+      {tiles.map((t) => {
+        const body = (
+          <>
+            <span className={s.tileLabel}>{t.dot && <span className={s.tileDot} style={{ background: t.dot }} aria-hidden />}{t.label}</span>
+            <span className={s.tileValue}>{pending ? <span className={`skeleton ${s.tileSkel}`} aria-hidden /> : t.value}</span>
+            {t.sub != null && t.sub !== '' && <span className={s.tileSub}>{pending ? '' : t.sub}</span>}
+          </>
+        );
+        const cls = [s.tile, t.tone === 'late' ? s.tileLate : t.tone === 'good' ? s.tileGood : '', t.on ? s.tileOn : ''].join(' ');
+        return t.onClick ? (
+          <button key={t.key} type="button" className={cls} aria-pressed={Boolean(t.on)} onClick={t.onClick}>{body}</button>
+        ) : (
+          <div key={t.key} className={cls}>{body}</div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** A line in place of the report: what is needed before it can show, or what failed. */
+export function ReportMessage({ tone = 'calm', children }: { tone?: 'calm' | 'error'; children: ReactNode }) {
+  return <p className={tone === 'error' ? s.error : s.message} role={tone === 'error' ? 'alert' : 'status'}>{children}</p>;
+}

@@ -100,6 +100,9 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   // The last date range picked on a Finance report in this tab (batch 6 §4.3):
   // a report opened with no dates in its address follows it. {from,to} ISO days.
   { id: "finance-report-range", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "fin-report-range", matches: exact("fin-report-range") },
+  // The statement column widths a person dragged, per view (batch 6 §4.1; the
+  // design's own key) — px for the account column, Total and the periods.
+  { id: "finance-statement-widths", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "fin-reports-colw-v2", matches: exact("fin-reports-colw-v2") },
   { id: "mobile-language", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "houzs.mobile.lang", matches: exact("houzs.mobile.lang") },
   // Floating Assistant panel size — a per-device layout preference (width/height
   // of the draggable chat card), no identity/company data, same class as the
@@ -246,7 +249,8 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "pages/scm-v2/SoFromProducts.tsx",
   "pages/scm-v2/SupplierDetail.tsx",
   // The Finance reports' own memory (finance-report-list-pin, finance-report-
-  // range): the list's pin and the last range picked — no identity data.
+  // range, finance-statement-widths): the list's pin, the last range picked and
+  // the statement column widths — no identity data.
   "pages/scm-v2/reports/reportPrefs.ts",
   "vendor/scm/components/dataGridLayoutStorage.ts",
 ] as const;
