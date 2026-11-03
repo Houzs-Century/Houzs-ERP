@@ -53,6 +53,7 @@ import { learnVendorMemory } from './payment-vouchers';
 import {
   uploadApInvoiceFileHandler, listApInvoiceFilesHandler, streamApInvoiceFileHandler, deleteApInvoiceFileHandler,
 } from './ap-invoice-files';
+import { printApBillsBundleHandler } from './ap-bill-print';
 import { supabaseAuth } from '../middleware/auth';
 import { fmtSen } from '../shared/format';
 import { parseEventId, unknownEventRefusal } from '../lib/event-tags';
@@ -493,6 +494,9 @@ export const apInvoices = new Hono();
 apInvoices.use('*', supabaseAuth);
 apInvoices.get('/', listApInvoicesHandler);
 apInvoices.post('/', createApInvoiceHandler);
+/* Supplier bills printed together, each followed by its files (batch 4,
+   step 8; routes/ap-bill-print.ts) — a literal path, before '/:id'. */
+apInvoices.post('/print-bundle', printApBillsBundleHandler);
 /* Files before /:id, as the PV mounts them — the evidence paths never fall
    into the detail matcher. */
 apInvoices.post('/:id/files', uploadApInvoiceFileHandler);

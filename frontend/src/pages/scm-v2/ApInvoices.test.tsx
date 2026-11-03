@@ -10,7 +10,9 @@
    backend/tests/apInvoices.test.ts + apInvoiceEdit.test.ts.
    The redesign (batch 4, step 5): Money out › Supplier bills — kind tabs with
    the suppliers' credit notes, Trade / Other, status chips, the sand tint,
-   ticks, the row's next step and its ⋯ menu. */
+   ticks, the row's next step and its ⋯ menu. Step 8: the prints — the ticks
+   as one document (With files), ⋯ Print / Print + files, a paid row's Print,
+   and the bill page's print preview. */
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -124,6 +126,13 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   fileToBase64: async (f: File) => `b64:${f.name}`,
   PV_FILE_ACCEPT: 'image/jpeg,image/png,image/webp,application/pdf',
 }));
+/* Supplier bills on paper (step 8): what was asked to print, in what order, with or without files. */
+const printBills = vi.fn(async (_docs: unknown, _opts: unknown) => undefined);
+vi.mock('../../vendor/scm/lib/supplier-bills-print', () => ({
+  printSupplierBills: (docs: unknown, opts: unknown) => printBills(docs, opts),
+}));
+/* The print preview's letterhead band reads the branding; no query client here. */
+vi.mock('../../hooks/useBranding', () => ({ useBranding: () => ({ companyName: 'Houzs Century Sdn Bhd', companyCode: 'HOUZS' }) }));
 vi.mock('../../vendor/scm/lib/ap-invoice-listing-pdf', () => ({
   generateApListingPdf: (rows: unknown, filter: unknown) => listingAsync(rows, filter),
 }));
@@ -651,13 +660,13 @@ describe('Supplier bills — the redesign', () => {
     draw();
     fireEvent.click(screen.getByLabelText('2990-API-2609-001 menu'));
     const menu = screen.getByRole('menu');
-    expect(within(menu).getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Open', 'Edit', 'Post', 'Copy as new', 'Cancel bill…']);
+    expect(within(menu).getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Open', 'Edit', 'Post', 'Print', 'Print + files', 'Copy as new', 'Cancel bill…']);
     fireEvent.click(within(menu).getByText('Post'));
     await waitFor(() => expect(postAsync).toHaveBeenCalledWith('api-1'));
     expect(JSON.stringify(confirmFn.mock.calls[0]![0])).toMatch(/Post 2990-API-2609-001/);
-    /* A purchase invoice is Procurement's: open it, or plan when we pay it (step 7). */
+    /* A purchase invoice is Procurement's: open it, plan when we pay it (step 7), print it — it keeps no files here (step 8). */
     fireEvent.click(screen.getByLabelText('2990-PI-2607-005 menu'));
-    expect(within(screen.getByRole('menu')).getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Open', 'Plan date']);
+    expect(within(screen.getByRole('menu')).getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Open', 'Plan date', 'Print']);
   });
 
   test('Plan date sets when we will pay a bill; the Planned column shows it (step 7)', async () => {
@@ -739,5 +748,85 @@ describe('the bill page and Save & post', () => {
     await waitFor(() => expect(postAsync).toHaveBeenCalledWith('api-2'));
     expect(createAsync).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(confirmFn.mock.calls.at(-1)![0])).toMatch(/Save and post this bill/);
+  });
+});
+
+/* Supplier bills on paper (the redesign, batch 4 step 8). */
+describe('printing supplier bills', () => {
+  const API_DOC = { kind: 'API', id: 'api-1', number: '2990-API-2609-001' };
+  const PI_DOC = { kind: 'PI', id: 'pi-1', number: '2990-PI-2607-005' };
+
+  test('the ticks print as one document in list order — With files on by default — and Save as PDF keeps it', async () => {
+    printBills.mockClear();
+    draw();
+    fireEvent.click(screen.getByLabelText('Tick 2990-PI-2607-005'));
+    fireEvent.click(screen.getByLabelText('Tick 2990-API-2609-001'));
+    const bar = screen.getByLabelText('Ticked bills');
+    expect((within(bar).getByLabelText("Include each document's attached files") as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(within(bar).getByText('Print 2 + files'));
+    await waitFor(() => expect(printBills).toHaveBeenCalledTimes(1));
+    /* The list's order (newest first), not the order ticked. */
+    expect(printBills.mock.calls[0]).toEqual([[API_DOC, PI_DOC], { withFiles: true, action: 'print' }]);
+    fireEvent.click(within(bar).getByLabelText("Include each document's attached files"));
+    expect(within(bar).getByText('Print 2')).toBeTruthy();
+    fireEvent.click(within(bar).getByText('Save as PDF'));
+    await waitFor(() => expect(printBills).toHaveBeenCalledTimes(2));
+    expect(printBills.mock.calls[1]).toEqual([[API_DOC, PI_DOC], { withFiles: false, action: 'save' }]);
+  });
+
+  test('a ticked row a filter hides is left out of the print, and the bar says so', async () => {
+    printBills.mockClear();
+    draw();
+    fireEvent.click(screen.getByLabelText('Tick 2990-PI-2607-005'));
+    fireEvent.click(screen.getByLabelText('Tick 2990-API-2609-001'));
+    fireEvent.click(within(screen.getByRole('group', { name: 'Status' })).getByText('Draft'));
+    const bar = screen.getByLabelText('Ticked bills');
+    expect(bar.textContent).toContain('1 hidden by a filter, left out');
+    fireEvent.click(within(bar).getByText('Print 1 + files'));
+    await waitFor(() => expect(printBills).toHaveBeenCalledWith([API_DOC], { withFiles: true, action: 'print' }));
+  });
+
+  test('⋯ prints one paper in place — alone, or with its files', async () => {
+    printBills.mockClear();
+    draw();
+    fireEvent.click(screen.getByLabelText('2990-API-2609-001 menu'));
+    fireEvent.click(within(screen.getByRole('menu')).getByText('Print + files'));
+    await waitFor(() => expect(printBills).toHaveBeenCalledWith([API_DOC], { withFiles: true, action: 'print' }));
+    fireEvent.click(screen.getByLabelText('2990-PI-2607-005 menu'));
+    fireEvent.click(within(screen.getByRole('menu')).getByText('Print'));
+    await waitFor(() => expect(printBills).toHaveBeenCalledWith([PI_DOC], { withFiles: false, action: 'print' }));
+  });
+
+  test('a paid bill has no next step, so its row offers Print', async () => {
+    printBills.mockClear();
+    apRowsNow = [ROWS[0]!, { ...ROWS[1]!, status: 'PAID', paidSen: 300_000, outstandingSen: 0 }];
+    try {
+      draw();
+      const row = screen.getByText('2990-PI-2607-005').closest('tr')!;
+      expect(within(row).queryByText('Make voucher')).toBeNull();
+      fireEvent.click(within(row).getByText('Print'));
+      await waitFor(() => expect(printBills).toHaveBeenCalledWith([PI_DOC], { withFiles: false, action: 'print' }));
+      /* A draft's next step is Post — no Print link beside it. */
+      expect(within(screen.getByText('2990-API-2609-001').closest('tr')!).queryByText('Print')).toBeNull();
+    } finally { apRowsNow = ROWS; }
+  });
+
+  test('the bill page prints through its preview: its files after it unless unticked', async () => {
+    printBills.mockClear();
+    draw('/scm/ap-invoices/api-1');
+    fireEvent.click(screen.getByText('Print'));
+    const preview = screen.getByRole('dialog', { name: 'Print preview' });
+    const files = within(preview).getByLabelText('Include attached files in the print') as HTMLInputElement;
+    expect(files.checked).toBe(true);
+    expect(preview.textContent).toContain('include the 1 attached file(s) after the bill page');
+    fireEvent.click(within(preview).getByText('Print now'));
+    await waitFor(() => expect(printBills).toHaveBeenCalledWith([API_DOC], { withFiles: true, action: 'print' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Print preview' })).toBeNull());
+
+    fireEvent.click(screen.getByText('Print'));
+    const again = screen.getByRole('dialog', { name: 'Print preview' });
+    fireEvent.click(within(again).getByLabelText('Include attached files in the print'));
+    fireEvent.click(within(again).getByText('Download PDF'));
+    await waitFor(() => expect(printBills).toHaveBeenCalledWith([API_DOC], { withFiles: false, action: 'save' }));
   });
 });
