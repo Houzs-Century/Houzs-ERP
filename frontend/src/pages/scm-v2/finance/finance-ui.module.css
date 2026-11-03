@@ -1,0 +1,44 @@
+/* The Finance redesign's colours (the owner's Claude Design, batch 6 §1.4) —
+   ONE module holds them as custom properties, so a later dark theme redefines
+   one place. A page puts `.root` on its outermost box; every Finance module
+   inside it reads var(--fin-…). Values are the design's own, on Theme C. */
+
+.root {
+  --fin-ink: #11140f;
+  --fin-text: #414539;
+  --fin-detail: #5f6459;
+  --fin-muted: #767b6e;
+  --fin-line: #d6d9d2;
+  --fin-rule: #e3e6e0;
+  --fin-rule-soft: #eef0ec;
+  --fin-input: #c2c6bd;
+  --fin-paper: #f4f6f3;
+  --fin-row: #f9faf8;
+  --fin-surface: #ffffff;
+  --fin-petrol: #16695f;
+  --fin-petrol-ink: #0c3f39;
+  --fin-petrol-pale: #e1efed;
+  --fin-petrol-line: #b9d6d1;
+  --fin-petrol-hover: #d3e7e3;
+  --fin-brass: #a16a2e;
+  --fin-gold: #d8a85a;
+
+  /* Status tones: late (with a dot), warn, info, calm. */
+  --fin-late-bg: #fbeeee;
+  --fin-late-fg: #a83434;
+  --fin-warn-bg: #f7f1e3;
+  --fin-warn-fg: #7a5a1e;
+  --fin-info-bg: #eaf3f1;
+  --fin-info-fg: #1d5c54;
+  --fin-calm-bg: #f0f2ee;
+  --fin-calm-fg: #5b6055;
+
+  /* The dark toast with its brass check. */
+  --fin-toast: #13201c;
+  --fin-toast-ink: #e7eae4;
+
+  --fin-card-shadow: 0 1px 0 rgba(17, 24, 16, 0.04), 0 4px 18px -8px rgba(17, 24, 16, 0.12);
+  --fin-pop-shadow: 0 1px 0 rgba(17, 24, 16, 0.06), 0 12px 32px -12px rgba(17, 24, 16, 0.3);
+
+  color: var(--fin-ink);
+}

@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { writeFailedAs } from '../../vendor/scm/lib/mutation-error';
 import { retryUnlessClientError } from '../../lib/retryPolicy';
-import type { Account, JeLineIn, JournalEntry } from '../../vendor/scm/lib/accounting-queries';
+import type { Account, JeLineIn, JournalEntry, JournalEntryLine } from '../../vendor/scm/lib/accounting-queries';
 
 export const useCreateAccount = () => {
   const qc = useQueryClient();
@@ -70,6 +70,26 @@ export const useEditJournalEntry = () => {
   });
 };
 
+/** The document an entry was written from, read back to the id its page opens
+    by (backend acc/journal-document) — the card's "Open <document>". */
+export type JournalDocument = { kind: 'SI' | 'SO' | 'PI' | 'API' | 'PV' | 'NOTE' | 'SUPPLIER_NOTE'; id: string; number: string };
+export type JournalEntryCardData = {
+  journalEntry: JournalEntry;
+  lines: JournalEntryLine[];
+  document?: JournalDocument | null;
+  /** Only when the document could not be read; the entry still shows. */
+  documentError?: string;
+};
+/** One entry for its card — the detail read the post / edit / reverse hooks
+    already refresh (same key), with the entry's document beside it. */
+export const useJournalEntryCard = (id: string | null) => useQuery({
+  queryKey: ['journal-entry-detail', id],
+  queryFn: () => authedFetch<JournalEntryCardData>(`/accounting/journal-entries/${id}`),
+  enabled: Boolean(id),
+  staleTime: 30_000,
+  retry: retryUnlessClientError,
+});
+
 /** The Journal page grouped per entry (docs/bugs/0935): every entry of the
     period with its lines in order and the references the GL page prints. */
 export type JournalLineLite = { line_no: number; account_code: string; debit_sen: number; credit_sen: number; party_name: string | null; notes: string | null };
@@ -95,7 +115,13 @@ export const useJournalEntriesGrouped = (f: JournalGroupedFilters, enabled = tru
   });
 };
 
-export type ControlDrift = { docNo: string; docTotalSen: number; jeTotalSen: number; diffSen: number; note: string };
+export type ControlDrift = {
+  docNo: string; docTotalSen: number; jeTotalSen: number; diffSen: number; note: string;
+  /** The customer or supplier, the document's date, its active entry, and the
+      id its page opens by — read with the check (batch 6 c2); absent before. */
+  party?: string | null; date?: string | null; jeNo?: string | null;
+  docKind?: 'SI' | 'PI' | 'API' | null; docId?: string | null;
+};
 export type ControlForeign = { jeNo: string; sourceType: string; debitSen: number; creditSen: number };
 export type ControlCheckRow =
   | { role: string; accountCode: string; glBalanceSen: number; driftDocs: ControlDrift[]; foreignLines: ControlForeign[]; ok: boolean }
@@ -106,7 +132,11 @@ export type ControlCheckRow =
     company ever booked one — and null means there is no period to check. */
 export type UnbookedPayments = {
   since: string | null;
-  rows: Array<{ source: 'SOPAY' | 'SIPAY'; id: string; docNo: string; paidOn: string; amountSen: number; method: string }>;
+  rows: Array<{
+    source: 'SOPAY' | 'SIPAY'; id: string; docNo: string; paidOn: string; amountSen: number; method: string;
+    /** The order's customer and salesperson (batch 6 c2); absent before. */
+    customer?: string | null; salesperson?: string | null;
+  }>;
   totalSen: number;
   ok: boolean;
   /** Only when the check itself could not run. */
