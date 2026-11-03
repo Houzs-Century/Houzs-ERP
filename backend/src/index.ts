@@ -96,6 +96,7 @@ import assrPortal from "./routes/assrPortal";
 import assrFormIntake from "./routes/assrFormIntake";
 import deliverySheetSync from "./routes/deliverySheetSync";
 import chatCallback from "./routes/chatCallback";
+import connectPayments from "./routes/connect-payments";
 import survey from "./routes/survey";
 import track from "./routes/track";
 import portal from "./routes/portal";
@@ -438,6 +439,14 @@ app.use("/api/*", companyContext);
 // can never replay another user's or another company's response. Bookkeeping
 // failures are fail-closed for callers that explicitly request idempotency.
 app.use("/api/*", idempotency);
+
+// HOUZS CONNECT → ERP confirmed-payment push. Books a Connect-verified customer
+// payment onto its Sales Order through the one Payments writer. Mounted BELOW the
+// /api/* auth gate on purpose (unlike /api/chat-callback): it reuses the service
+// user the auth middleware mints for Bearer <CONNECT_SERVICE_TOKEN> — the same
+// credential Connect's org sync uses — and the router itself gates to the service
+// tier with requirePermission("*"). See routes/connect-payments.ts.
+app.route("/api/connect/payments", connectPayments);
 
 // Inbox snapshot self-heal — the /api/inbox GET caches a per-user aggregate of
 // ASSR + Projects + Trips for ~60s. After the acting user makes a successful
