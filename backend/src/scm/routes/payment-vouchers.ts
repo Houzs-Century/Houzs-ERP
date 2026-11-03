@@ -70,7 +70,7 @@ import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChang
 import { pvCanEdit, pvCanPrepare, pvCanCheck, pvCanApprove, pvCanReject, pvCanWithdraw, pvCanPost, type PvApprovalShape } from '../lib/pv-approval';
 import { settlePiPaidSen } from '../lib/pi-settlement';
 import { normalizeVendor } from '../../acc/bill-extract';
-import { extractBillsHandler } from './pv-extract';
+import { extractBillsHandler, splitPdfHandler } from './pv-extract';
 import { HEADER, journalNumbers, listPaymentVouchersHandler } from './payment-vouchers-list';
 /* Still importable from here (tests/pvSupplierAdvance.test.ts and older callers). */
 export { listPaymentVouchersHandler };
@@ -1912,8 +1912,9 @@ export const applyAdvanceHandler = async (c: any) => {
 paymentVouchers.post('/:id/apply-advance', applyAdvanceHandler);
 
 /* Bill OCR (2026-09-02) — the handler lives in pv-extract.ts; re-exported for its tests. */
-export { extractBillsHandler };
+export { extractBillsHandler, splitPdfHandler };
 paymentVouchers.post('/extract', extractBillsHandler);
+paymentVouchers.post('/split-pdf', splitPdfHandler);
 
 /* ── reversePvAccounting — contra the active PV JE (mirror reversePiAccounting).
    Loads the original lines + swaps Dr/Cr so the reversal nets the original to

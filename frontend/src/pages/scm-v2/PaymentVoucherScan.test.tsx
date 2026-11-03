@@ -33,6 +33,11 @@ vi.mock('../../vendor/scm/lib/payment-request-queries', async (importOriginal) =
   useBillMatches: (no: string, date: string) => ({ data: { matches: sameBills[`${no}|${date}`] ?? [] } }),
 }));
 
+/* The page cutter is the server's (pinned in backend lib/pdf-split.test.ts);
+   here it answers with the pages a test says the PDF has. */
+const splitPdfPages = vi.fn(async (_f: File): Promise<File[]> => []);
+vi.mock('../../vendor/scm/lib/pdf-split-request', () => ({ splitPdfPages: (f: File) => splitPdfPages(f) }));
+
 import { MAX_PILE_FILES, PaymentVoucherScan } from './PaymentVoucherScan';
 
 /* The reader, one bill per call: each call's answer is looked up by the bill's
@@ -134,6 +139,52 @@ describe('the pile for AP invoices', () => {
     expect(state.apPrefill.supplierMatch).toMatchObject({ id: 'sup-1' });
     expect(state.apPrefill.memory).toMatchObject({ debitAccountCode: '900-F002' });
     expect(takePvFiles().map((f) => f.name)).toEqual(['b.pdf']);
+  });
+
+  /* HC-0204 (Siti 2026-11-02): one PDF holding several invoices. Split cuts it
+     into one bill per page, in its place in the pile; each page reads alone and
+     opens as its own AP invoice carrying only its own page. */
+  test('a PDF of several invoices splits into one bill per page', async () => {
+    apLanded = null;
+    splitPdfPages.mockResolvedValueOnce([pdf('stmt p1.pdf'), pdf('stmt p2.pdf'), pdf('stmt p3.pdf')]);
+    answers({
+      'stmt p1.pdf': readBill(0, { invoiceNumber: 'INV-1', totalSen: 100000 }, { id: 'sup-1', name: 'Foshan Chairs' }),
+      'stmt p2.pdf': readBill(0, { invoiceNumber: 'INV-2', totalSen: 50000 }, { id: 'sup-1', name: 'Foshan Chairs' }),
+      'stmt p3.pdf': readBill(0, { invoiceNumber: 'INV-3', totalSen: 20000 }, { id: 'sup-1', name: 'Foshan Chairs' }),
+    });
+    drawAp();
+    fireEvent.change(screen.getByLabelText('Add bill files'), { target: { files: [pdf('stmt.pdf')] } });
+    expect(screen.getByText('Read 1 bill(s)')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('Split stmt.pdf into one bill per page'));
+    await waitFor(() => expect(screen.getByText('Read 3 bill(s)')).toBeTruthy());
+    expect(screen.queryByText('stmt.pdf')).toBeNull();
+    expect(screen.getByText(/stmt\.pdf split into 3 bills/)).toBeTruthy();
+    /* A page is already one page — it offers no split of its own. */
+    expect(screen.queryByLabelText(/Split stmt p1\.pdf/)).toBeNull();
+
+    fireEvent.click(screen.getByText('Read 3 bill(s)'));
+    await readDone(3);
+    expect(extractAsync).toHaveBeenCalledTimes(3);
+    expect(extractAsync.mock.calls.map(([bills]) => bills[0]!.files.map((f) => f.name)).flat().sort())
+      .toEqual(['stmt p1.pdf', 'stmt p2.pdf', 'stmt p3.pdf']);
+    await waitFor(() => expect(screen.getAllByText('Open as AP invoice')).toHaveLength(3));
+
+    fireEvent.click(screen.getAllByText('Open as AP invoice')[1]!);
+    await waitFor(() => expect(screen.getByText('AP LIST')).toBeTruthy());
+    expect((apLanded as { apPrefill: { extraction: { invoiceNumber: string } } }).apPrefill.extraction.invoiceNumber).toBe('INV-2');
+    expect(takePvFiles().map((f) => f.name)).toEqual(['stmt p2.pdf']);
+  });
+
+  test('a one-page PDF is left as it is, and a PDF that cannot be cut says so', async () => {
+    splitPdfPages.mockResolvedValueOnce([pdf('one p1.pdf')]);
+    splitPdfPages.mockRejectedValueOnce(new Error('This PDF could not be split — it may be password-protected or damaged.'));
+    drawAp();
+    fireEvent.change(screen.getByLabelText('Add bill files'), { target: { files: [pdf('one.pdf'), pdf('locked.pdf')] } });
+    fireEvent.click(screen.getByLabelText('Split one.pdf into one bill per page'));
+    await waitFor(() => expect(screen.getByText('one.pdf has one page — nothing to split.')).toBeTruthy());
+    fireEvent.click(screen.getByLabelText('Split locked.pdf into one bill per page'));
+    await waitFor(() => expect(screen.getByText(/locked\.pdf: This PDF could not be split/)).toBeTruthy());
+    expect(screen.getByText('Read 2 bill(s)')).toBeTruthy();
   });
 });
 
