@@ -407,9 +407,27 @@ export type StockCloseRun = {
   note: string | null;
 };
 
+/** The five closing stocks (owner 2026-09-30): customer, display, service, showroom, others. */
+export type StockBucketValues = { customer: number; display: number; service: number; showroom: number; others: number };
+/** A month the close has booked (batch 6 c4): its active closing entry, split by bucket. */
+export type ClosedStockMonth = {
+  month: string; buckets: StockBucketValues; totalSen: number; action: 'posted' | 'reposted';
+  bookedOn: string | null; jeNo: string; revJeNo: string | null;
+};
+export type StockCloseStatus = {
+  liveValueSen: number;
+  liveBuckets?: StockBucketValues;
+  defaultMonth: string;
+  /** The months the nightly run re-checks: last month and the one before. */
+  sweepMonths?: string[];
+  /** The last 90 days of runs, newest first. */
+  runs: StockCloseRun[];
+  months?: ClosedStockMonth[];
+};
+
 export const useStockClose = () => useQuery({
   queryKey: ['stock-close'],
-  queryFn: () => authedFetch<{ liveValueSen: number; defaultMonth: string; runs: StockCloseRun[] }>(`/accounting/stock-close`),
+  queryFn: () => authedFetch<StockCloseStatus>(`/accounting/stock-close`),
   staleTime: 15_000,
   retry: retryUnlessClientError,
   retryDelay: 800,
@@ -419,9 +437,10 @@ export const useRunStockClose = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { month?: string }) =>
-      authedFetch<{ outcome: { action: string; jeNo?: string; note?: string } }>(`/accounting/stock-close/run`, { method: 'POST', body: JSON.stringify(body) }),
+      authedFetch<{ outcome: { action: string; valueSen?: number; jeNo?: string; revJeNo?: string; note?: string } }>(`/accounting/stock-close/run`, { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['stock-close'] });
+      void qc.invalidateQueries({ queryKey: ['finance-todo'] });
       void qc.invalidateQueries({ queryKey: ['journal-entries'] });
       void qc.invalidateQueries({ queryKey: ['gl-entries'] });
       void qc.invalidateQueries({ queryKey: ['account-balances'] });

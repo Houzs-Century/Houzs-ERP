@@ -54,7 +54,7 @@ const fmt = (sen: number | null | undefined) => fmtSen(sen);
 type Tab = AccountingTab;
 
 /* The tabs that draw their own head, with their actions in it. */
-const OWN_HEADER: ReadonlySet<Tab> = new Set<Tab>(['je', 'gl', 'check']);
+const OWN_HEADER: ReadonlySet<Tab> = new Set<Tab>(['je', 'gl', 'check', 'close']);
 
 export const Accounting = () => {
   /* THE TAB THE URL NAMES (docs/bugs/0824). The Finance sidebar deep-links
