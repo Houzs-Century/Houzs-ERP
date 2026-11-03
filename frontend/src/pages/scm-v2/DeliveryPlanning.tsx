@@ -41,7 +41,8 @@ import { SetJobDateDrawer } from '../../vendor/scm/components/SetJobDateDrawer';
 import { ScheduleDpOrderDrawer } from '../../vendor/scm/components/ScheduleDpOrderDrawer';
 import { useBoardChangePoll } from '../../vendor/scm/lib/board-change-poll';
 import { ScheduleTripDrawer } from '../../vendor/scm/components/ScheduleTripDrawer';
-import { SendDeliveryMessageModal, SKIP_LABEL, statusNotMovedNote, type SendMessageKind } from '../../vendor/scm/components/SendDeliveryMessageModal';
+import { SendDeliveryMessageModal, SKIP_LABEL, failedNote, sendInChunks, statusNotMovedNote, type SendMessageKind } from '../../vendor/scm/components/SendDeliveryMessageModal';
+import { phoneKey } from '../../vendor/scm/lib/driver-info-send';
 import {
   DeliveryPlanningBoard,
   regionTabsFrom,
@@ -72,7 +73,6 @@ import {
   planningCountsFrom,
   type PlanningOrder,
   type PlanningCounts,
-  type SendDeliveryMessagesResult,
 } from '../../vendor/scm/lib/delivery-planning-queries';
 import { useDrivers } from '../../vendor/scm/lib/drivers-queries';
 import { useLorries } from '../../vendor/scm/lib/lorries-queries';
@@ -361,25 +361,39 @@ export const DeliveryPlanning = () => {
      ask — the backend reads them per order and skips any missing either. Fire
      and report the summary; the send itself moves each sent order's status. */
   const sendMsg = useSendDeliveryMessages();
-  const sendPostponeDirect = () => {
-    const docNos = selectedSoDocNos();
-    if (docNos.length === 0 || sendMsg.isPending) return;
-    void sendMsg.mutate({ docNos, kind: 'postpone' }, {
-      onSuccess: (res: SendDeliveryMessagesResult) => {
-        const notMoved = statusNotMovedNote(res.statusNotMoved);
-        const parts: string[] = [];
-        if (res.sent.length) parts.push(`Sent ${res.sent.length} message${res.sent.length === 1 ? '' : 's'} (${res.sent.reduce((n, g) => n + g.docNos.length, 0)} orders).`);
-        if (res.failed.length) parts.push(`Failed ${res.failed.length}: ${res.failed.map((f) => `${f.phone} (${f.error})`).join('; ')}.`);
-        if (res.skipped.length) parts.push(`Skipped ${res.skipped.length}: ${res.skipped.map((sk) => `${sk.docNo} (${SKIP_LABEL[sk.reason] ?? sk.reason})`).join(', ')}.`);
-        if (notMoved) parts.push(notMoved);
-        void notify({
-          title: res.failed.length ? 'Postpone finished with failures' : res.sent.length ? 'Postpone notice sent' : 'Nothing sent',
-          body: parts.join(' ') || 'Nothing to send.',
-          tone: res.failed.length || notMoved ? 'error' : 'info',
-        });
-        setSel(new Set());
-      },
-      onError: (err) => notify({ title: 'Send failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
+  const [postponing, setPostponing] = useState(false);
+  /* Untick what went out; failed / skipped rows stay ticked to retry (HC-0197:
+     a sent row that left a status-filtered view stayed ticked and counted). */
+  const untickSent = (sentRows: PlanningOrder[]) => setSel((p) => {
+    const n = new Set(p);
+    for (const o of sentRows) n.delete(rowIdOf(o));
+    return n;
+  });
+  const sendPostponeDirect = async () => {
+    const docs = new Set(selectedSoDocNos());
+    if (docs.size === 0 || postponing) return;
+    const byPhone = new Map<string, string[]>();
+    for (const o of allOrders) {
+      if (o.row_type !== 'so' || !docs.has(o.so_doc_no)) continue;
+      const key = phoneKey(o.phone) || o.so_doc_no;
+      byPhone.set(key, [...(byPhone.get(key) ?? []), o.so_doc_no]);
+    }
+    setPostponing(true);
+    const res = await sendInChunks(sendMsg.mutateAsync, 'postpone', [...byPhone].map(([phone, docNos]) => ({ phone, docNos })));
+    setPostponing(false);
+    const sentDocs = new Set(res.sent.flatMap((s) => s.docNos));
+    untickSent(allOrders.filter((o) => o.row_type === 'so' && sentDocs.has(o.so_doc_no)));
+    const notMoved = statusNotMovedNote(res.statusNotMoved);
+    const failed = failedNote(res.failed);
+    const parts: string[] = [];
+    if (res.sent.length) parts.push(`Sent ${res.sent.length} message${res.sent.length === 1 ? '' : 's'} (${res.sent.reduce((n, g) => n + g.docNos.length, 0)} orders).`);
+    if (failed) parts.push(failed);
+    if (res.skipped.length) parts.push(`Skipped ${res.skipped.length}: ${res.skipped.map((sk) => `${sk.docNo} (${SKIP_LABEL[sk.reason] ?? sk.reason})`).join(', ')}.`);
+    if (notMoved) parts.push(notMoved);
+    void notify({
+      title: res.failed.length ? 'Postpone finished with failures' : res.sent.length ? 'Postpone notice sent' : 'Nothing sent',
+      body: parts.join(' ') || 'Nothing to send.',
+      tone: res.failed.length || notMoved ? 'error' : 'info',
     });
   };
 
@@ -461,7 +475,7 @@ export const DeliveryPlanning = () => {
                           role="menuitem"
                           disabled={soOnlyIdle(k)}
                           title={soOnlyIdle(k) ? 'Sales Orders only - tick an SO row' : undefined}
-                          onClick={() => { setSendMenuOpen(false); setOneTimeOpen(false); if (k === 'postpone') sendPostponeDirect(); else openSendModal(k); }}
+                          onClick={() => { setSendMenuOpen(false); setOneTimeOpen(false); if (k === 'postpone') void sendPostponeDirect(); else openSendModal(k); }}
                           style={{ display: 'block', width: '100%', padding: sub ? '8px 10px 8px 24px' : '8px 10px', background: 'transparent', border: 'none', borderRadius: 8, cursor: soOnlyIdle(k) ? 'default' : 'pointer', textAlign: 'left', opacity: soOnlyIdle(k) ? 0.5 : 1 }}
                           onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg, #f4f2ec)'; }}
                           onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
@@ -697,7 +711,7 @@ export const DeliveryPlanning = () => {
       )}
 
       {sendingRows && sendingRows.length > 0 && (
-        <SendDeliveryMessageModal rows={sendingRows} kind={sendKind} onClose={() => setSendingRows(null)} />
+        <SendDeliveryMessageModal rows={sendingRows} kind={sendKind} onClose={() => setSendingRows(null)} onSent={untickSent} />
       )}
 
       {editing && (

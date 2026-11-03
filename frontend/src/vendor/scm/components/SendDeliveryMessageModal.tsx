@@ -30,6 +30,7 @@ import {
   assrJobKindLabel,
   useSendDeliveryMessages,
   type PlanningOrder,
+  type SendDeliveryMessagesBody,
   type SendDeliveryMessagesResult,
   type SendMessageKind,
 } from '../lib/delivery-planning-queries';
@@ -75,6 +76,45 @@ export const statusNotMovedNote = (list: SendDeliveryMessagesResult['statusNotMo
     ? `Delivery Message Status NOT updated for ${list.map((n) => `${n.docNo} (${NOT_MOVED_LABEL[n.reason] ?? n.reason})`).join(', ')} - set it on the row.`
     : null;
 
+/** "Failed N: phone, phone (reason)." — one reason printed once, not per customer. */
+export const failedNote = (list: SendDeliveryMessagesResult['failed']): string | null => {
+  if (list.length === 0) return null;
+  const byError = new Map<string, string[]>();
+  for (const f of list) byError.set(f.error, [...(byError.get(f.error) ?? []), f.phone]);
+  return `Failed ${list.length}: ${[...byError].map(([error, phones]) => `${phones.join(', ')} (${error})`).join('; ')}.`;
+};
+
+/* HC-0197: the Worker messages one customer after another, so 64 customers in
+   one request ran past the 30 s request deadline and the board never heard
+   which ones went. A request now carries at most SEND_CHUNK customers. */
+export const SEND_CHUNK = 10;
+
+/** Send each customer's orders, SEND_CHUNK customers per request, one request
+ *  after another. A request that fails marks only its own customers failed. */
+export async function sendInChunks(
+  sendOne: (body: SendDeliveryMessagesBody) => Promise<SendDeliveryMessagesResult>,
+  kind: SendMessageKind,
+  customers: Array<{ phone: string; docNos: string[] }>,
+  onProgress?: (customersDone: number) => void,
+): Promise<Required<SendDeliveryMessagesResult>> {
+  const agg: Required<SendDeliveryMessagesResult> = { sent: [], failed: [], skipped: [], statusNotMoved: [] };
+  for (let i = 0; i < customers.length; i += SEND_CHUNK) {
+    const chunk = customers.slice(i, i + SEND_CHUNK);
+    try {
+      const res = await sendOne({ docNos: chunk.flatMap((g) => g.docNos), kind });
+      agg.sent.push(...res.sent);
+      agg.failed.push(...res.failed);
+      agg.skipped.push(...res.skipped);
+      agg.statusNotMoved.push(...(res.statusNotMoved ?? []));
+    } catch (err) {
+      const error = err instanceof Error ? err.message : 'send failed';
+      for (const g of chunk) agg.failed.push({ phone: g.phone, docNos: g.docNos, error });
+    }
+    onProgress?.(Math.min(i + SEND_CHUNK, customers.length));
+  }
+  return agg;
+}
+
 export const SKIP_LABEL: Record<string, string> = {
   not_found: 'order not found',
   no_phone: 'no usable phone',
@@ -99,7 +139,13 @@ const fieldStyle = { display: 'grid', gap: 4, fontSize: 'var(--fs-12)' } as cons
 const inputStyle = { padding: '6px 8px', border: '1px solid var(--line)', borderRadius: 8, fontSize: 'var(--fs-13)', background: '#fff' } as const;
 const noteStyle = { marginBottom: 'var(--space-3)', padding: 'var(--space-3)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-12)', color: 'var(--c-muted, #767b6e)' } as const;
 
-export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: { rows: PlanningOrder[]; onClose: () => void; kind?: SendMessageKind }) => {
+export const SendDeliveryMessageModal = ({ rows, onClose, onSent, kind = 'delivery' }: {
+  rows: PlanningOrder[];
+  onClose: () => void;
+  /** The rows whose message went out — the board unticks them (HC-0197). */
+  onSent?: (rows: PlanningOrder[]) => void;
+  kind?: SendMessageKind;
+}) => {
   const send = useSendDeliveryMessages();
   const notify = useNotify();
 
@@ -116,6 +162,7 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
   // Sequential per-customer sends run across several awaits, so a local flag
   // keeps the button disabled for the whole run (send.isPending toggles per call).
   const [busy, setBusy] = useState(false);
+  const [customersDone, setCustomersDone] = useState(0);
 
   // Preview grouping — mirrors the backend's phone grouping.
   const groups = new Map<string, PlanningOrder[]>();
@@ -130,6 +177,7 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
     groups.set(key, arr);
   }
   const sendableDocs = [...groups.values()].flat().map((r) => r.so_doc_no);
+  const customers = [...groups.entries()].map(([phone, list]) => ({ phone, docNos: list.map((r) => r.so_doc_no) }));
 
   // Driver Info: one plan per customer (driver pulled from the orders' crew +
   // this customer's typed time). A customer is ready only when its plan has no
@@ -153,10 +201,13 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
   /* Post-send: summarise and close. The server already moved each sent order's
      Delivery Message Status; only the ones it could not move are listed. */
   const finish = (res: SendResult) => {
+    const sentDocs = new Set(res.sent.flatMap((s) => s.docNos));
+    onSent?.(rows.filter((r) => sentDocs.has(r.so_doc_no)));
     const notMoved = statusNotMovedNote(res.statusNotMoved);
+    const failed = failedNote(res.failed);
     const parts: string[] = [];
     if (res.sent.length) parts.push(`Sent ${res.sent.length} message${res.sent.length === 1 ? '' : 's'}${isAssrSend ? '.' : ` (${res.sent.reduce((n, s) => n + s.docNos.length, 0)} orders).`}`);
-    if (res.failed.length) parts.push(`Failed ${res.failed.length}: ${res.failed.map((f) => `${f.phone} (${f.error})`).join('; ')}.`);
+    if (failed) parts.push(failed);
     if (res.skipped.length) parts.push(`Skipped ${res.skipped.length}: ${res.skipped.map((s) => `${s.docNo} (${SKIP_LABEL[s.reason] ?? s.reason})`).join(', ')}.`);
     if (notMoved) parts.push(notMoved);
     void notify({
@@ -190,22 +241,24 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
       return;
     }
 
-    // Every other kind: one call for the whole selection (postpone / balance /
-    // postage read what they need off each order server-side).
-    try {
-      const res = await send.mutateAsync({ docNos: sendableDocs, kind });
-      finish(res);
-    } catch (err) {
-      void notify({ title: 'Send failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
-    }
+    // Every other kind (postpone / balance / postage read what they need off
+    // each order server-side), a few customers per request.
+    setBusy(true);
+    setCustomersDone(0);
+    const res = await sendInChunks(send.mutateAsync, kind, customers, setCustomersDone);
+    setBusy(false);
+    finish(res);
   };
 
+  // A send in progress keeps the drawer open: closing it would hide which customers went.
+  const close = busy ? undefined : onClose;
+
   return (
-    <div className={styles.backdrop} onClick={onClose}>
+    <div className={styles.backdrop} onClick={close}>
       <div className={styles.drawer} onClick={(e) => e.stopPropagation()}>
         <div className={styles.drawerHeader}>
           <h2 className={styles.drawerTitle}>{KIND_TITLE[kind]}</h2>
-          <button type="button" onClick={onClose} className={styles.codeChip}><X {...ICON} /></button>
+          <button type="button" onClick={close} disabled={busy} className={styles.codeChip}><X {...ICON} /></button>
         </div>
 
         <div className={styles.drawerBody}>
@@ -302,9 +355,11 @@ export const SendDeliveryMessageModal = ({ rows, onClose, kind = 'delivery' }: {
           </div>
         )}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-3)', padding: 'var(--space-4)' }}>
-          <Button variant="ghost" size="md" onClick={onClose}>Cancel</Button>
+          <Button variant="ghost" size="md" onClick={close} disabled={busy}>Cancel</Button>
           <Button variant="primary" size="md" onClick={submit} disabled={!canSend}>
-            {busy || send.isPending ? 'Sending…' : `Send ${messageCount} message${messageCount === 1 ? '' : 's'}`}
+            {busy && !needsDriver
+              ? `Sending ${customersDone} / ${messageCount}…`
+              : busy || send.isPending ? 'Sending…' : `Send ${messageCount} message${messageCount === 1 ? '' : 's'}`}
           </Button>
         </div>
       </div>
