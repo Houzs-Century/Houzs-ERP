@@ -20,6 +20,7 @@ import {
   settlementConfirmRow, settlementConfirmGroup, settlementConfirmMatched, settlementIgnoreRow, settlementWatchlist, settlementFindPayments,
   settlementBatchReceived, settlementInTransit, settlementRowUnconfirm,
   settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank,
+  settlementReleaseRow, settlementRematch,
 } from '../src/scm/routes/accounting-settlement';
 import { postBatchReceipt } from '../src/acc/settlement';
 
@@ -90,6 +91,8 @@ function harness(tables: Record<string, Row[]>, perms: readonly string[] = [GL_P
   app.post('/settlement/rows/confirm-together', settlementConfirmGroup as never);
   app.post('/settlement/rows/:id/unconfirm', settlementRowUnconfirm as never);
   app.post('/settlement/rows/:id/ignore', settlementIgnoreRow as never);
+  app.post('/settlement/rows/:id/release', settlementReleaseRow as never);
+  app.post('/settlement/rematch', settlementRematch as never);
   app.post('/settlement/batches/:id/received', settlementBatchReceived as never);
   app.get('/settlement/watchlist', settlementWatchlist as never);
   app.get('/settlement/rows/:id/find', settlementFindPayments as never);
@@ -915,6 +918,69 @@ describe('several lines confirmed together against several payments', () => {
     expect(body.lines.map((l) => l.state)).toEqual(['RECONCILED_NOT_PAID', 'RECONCILED_NOT_PAID']);
     /* RM 7,085.00 swiped, RM 50.00 + RM 20.85 of fees booked. */
     expect(body.totalSen).toBe(708500 - 5000 - 2085);
+  });
+});
+
+/* ── "Not this" (owner 2026-11-03, batch 3 d2: 「可以」) ──────────────────────
+   The reference matched a line to a payment nobody has confirmed, and a person
+   says it is not that sale. */
+describe('"Not this" — a matched line the person says is not that sale', () => {
+  test('the match is released, the line goes back to be chosen, and that payment is not offered to it again', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+    const line = sb.tables.acc_settlement_rows.find((r) => r.bucket === 'MATCHED')!;
+    expect(sb.tables.acc_settlement_matches).toHaveLength(1);
+
+    const res = await post(app, `/settlement/rows/${line.id}/release`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, released: ['SOPAY:p1'] });
+    expect(sb.tables.acc_settlement_rows.find((r) => r.id === line.id)).toMatchObject({ bucket: 'NEEDS_CONFIRM', not_this: ['SOPAY:p1'] });
+    expect(sb.tables.acc_settlement_matches).toHaveLength(0);
+    expect(sb.tables.journal_entries).toHaveLength(0);
+
+    /* The report does not hand it back: no candidate, no pre-tick, and the clue says why. */
+    const detail = await (await app.request(`/settlement/batches/${up.batchId}`)).json() as {
+      rows: Array<{ id: number; linked: unknown[]; candidates: Array<{ id: string }>; suggested: Array<{ id: string }>; clue: string | null }>;
+    };
+    const shown = detail.rows.find((x) => x.id === line.id)!;
+    expect(shown.linked).toEqual([]);
+    expect(shown.candidates.map((p) => p.id)).not.toContain('p1');
+    expect(shown.suggested).toEqual([]);
+    expect(shown.clue).toMatch(/^Not SO-2608-001 — you said so/);
+
+    /* Neither does Confirm all, nor matching the merchant's open lines again. */
+    expect(await (await post(app, `/settlement/batches/${up.batchId}/confirm-matched`)).json()).toMatchObject({ attempted: 0 });
+    const again = await post(app, '/settlement/rematch', { companyId: CO, acquirerCode: 'MBB' });
+    expect(again.status).toBe(200);
+    expect(sb.tables.acc_settlement_matches).toHaveLength(0);
+    expect(sb.tables.acc_settlement_rows.find((r) => r.id === line.id)).toMatchObject({ bucket: 'NEEDS_CONFIRM' });
+
+    /* A person may still pick it by hand — the memory steers the machine only. */
+    const byHand = await post(app, `/settlement/rows/${line.id}/confirm`, {
+      matchReason: 'manual', payments: [{ source: 'SOPAY', id: 'p1', docNo: 'SO-2608-001', amountSen: 100000 }],
+    });
+    expect(byHand.status).toBe(200);
+  });
+
+  test('a line holding nothing, a set-aside line and a confirmed line are refused', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+    const open = sb.tables.acc_settlement_rows.find((r) => r.bucket === 'UNMATCHED')!;
+    const none = await post(app, `/settlement/rows/${open.id}/release`);
+    expect(none.status).toBe(409);
+    expect(await none.json()).toMatchObject({ error: 'nothing_matched' });
+
+    await post(app, `/settlement/rows/${open.id}/ignore`, {});
+    const aside = await post(app, `/settlement/rows/${open.id}/release`);
+    expect(aside.status).toBe(409);
+    expect(await aside.json()).toMatchObject({ error: 'ignored' });
+
+    await post(app, `/settlement/batches/${up.batchId}/confirm-matched`);
+    const done = sb.tables.acc_settlement_rows.find((r) => r.confirmed_at)!;
+    const booked = await post(app, `/settlement/rows/${done.id}/release`);
+    expect(booked.status).toBe(409);
+    expect(await booked.json()).toMatchObject({ error: 'already_confirmed' });
+    expect(sb.tables.acc_settlement_matches).toHaveLength(1);
   });
 });
 

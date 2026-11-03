@@ -414,6 +414,19 @@ export const useConfirmSettlementGroup = () => {
   });
 };
 
+/* "Not this" (owner 2026-11-03, batch 3 d2): release an unconfirmed line's
+   match; the line goes back to be chosen and is not offered that payment again.
+   Posts nothing. */
+export const useReleaseSettlementRow = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (rowId: number) => authedFetch<{ ok: boolean; released: string[] }>(
+      `/accounting/settlement/rows/${rowId}/release`, { method: 'POST', body: '{}' },
+    ),
+    onSuccess: () => invalidateAfterPosting(qc),
+  });
+};
+
 /* The door the ignore refusal points at: reverse the fee entry, release the
    payments, send the row back to the deciding pile. Same invalidations as
    confirming — the ledger moved, just in the other direction. */
