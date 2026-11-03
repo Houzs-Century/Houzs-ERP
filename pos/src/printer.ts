@@ -6,7 +6,9 @@
 type BtDevice = { id: string; name?: string; gatt?: { connected: boolean; connect(): Promise<unknown>; disconnect(): void; getPrimaryServices(): Promise<{ uuid: string; getCharacteristics(): Promise<{ uuid: string; properties: { write?: boolean; writeWithoutResponse?: boolean }; writeValueWithoutResponse?(v: BufferSource): Promise<void>; writeValueWithResponse?(v: BufferSource): Promise<void>; writeValue(v: BufferSource): Promise<void> }[]> }[]> }; addEventListener(ev: string, fn: () => void): void };
 type Bluetooth = { requestDevice(o: unknown): Promise<BtDevice>; getDevices?(): Promise<BtDevice[]> };
 type UsbDevice = { productName?: string; manufacturerName?: string; opened: boolean; configuration: { interfaces: { interfaceNumber: number; alternate: { interfaceClass: number; endpoints: { direction: string; endpointNumber: number; type: string }[] } }[] } | null; open(): Promise<void>; selectConfiguration(n: number): Promise<void>; claimInterface(n: number): Promise<void>; transferOut(ep: number, data: BufferSource): Promise<unknown>; close(): Promise<void> };
-type Usb = { requestDevice(o: unknown): Promise<UsbDevice>; getDevices(): Promise<UsbDevice[]> };
+type Usb = { requestDevice(o: unknown): Promise<UsbDevice>; getDevices(): Promise<UsbDevice[]>; addEventListener?(type: "connect" | "disconnect", fn: (e: { device: UsbDevice }) => void): void };
+
+import { printerGone } from "./printerRules";
 
 const nav = navigator as Navigator & { bluetooth?: Bluetooth; usb?: Usb };
 
@@ -102,17 +104,41 @@ export async function reconnectPrinter(): Promise<PrinterStatus> {
   return status;
 }
 
-/** Send bytes in chunks (Bluetooth MTU is small). */
+/* A USB printer that is unplugged, powered off or lost over a laptop sleep
+   drops out from under the open handle; Chrome then fails every write with
+   "The device was disconnected". The browser still remembers the Allow, so
+   the POS rebinds on the next write (and on the plug-in event) instead of
+   asking the cashier to pair again (owner 2026-11-03, Reprint at the booth). */
+nav.usb?.addEventListener?.("disconnect", (e) => {
+  if (usb && e.device === usb) { usb = null; usbEp = null; setStatus({ connected: false, error: "Printer disconnected" }); }
+});
+nav.usb?.addEventListener?.("connect", () => { if (!usb && !btChar) void reconnectPrinter(); });
+
+async function writeUsb(bytes: Uint8Array): Promise<void> {
+  if (!usb || usbEp == null) throw new Error("No printer connected");
+  const CHUNK = 4096;
+  for (let i = 0; i < bytes.length; i += CHUNK) await usb.transferOut(usbEp, bytes.slice(i, i + CHUNK));
+}
+
+/** Send bytes in chunks (Bluetooth MTU is small). A USB write that fails
+ *  because the printer went away rebinds the allowed device and retries once. */
 export async function printBytes(bytes: Uint8Array): Promise<void> {
   if (btChar) {
     const CHUNK = 100;
     for (let i = 0; i < bytes.length; i += CHUNK) await btChar.write(bytes.slice(i, i + CHUNK));
     return;
   }
-  if (usb && usbEp != null) {
-    const CHUNK = 4096;
-    for (let i = 0; i < bytes.length; i += CHUNK) await usb.transferOut(usbEp, bytes.slice(i, i + CHUNK));
-    return;
+  if (!usb || usbEp == null) {
+    await reconnectPrinter();
+    if (!usb || usbEp == null) throw new Error("No printer connected");
   }
-  throw new Error("No printer connected");
+  try {
+    await writeUsb(bytes);
+  } catch (e) {
+    if (!printerGone(e)) throw e;
+    usb = null; usbEp = null;
+    await reconnectPrinter();
+    if (!usb || usbEp == null) throw new Error("Printer disconnected. Check the USB cable and power, then print again.");
+    await writeUsb(bytes);
+  }
 }
