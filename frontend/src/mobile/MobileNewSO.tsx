@@ -10,7 +10,6 @@ import {
 } from "../vendor/scm/lib/so-variant-cascade";
 import { useQueryClient } from "@tanstack/react-query";
 import { authedFetch, type SaveProblem } from "../vendor/scm/lib/authed-fetch";
-import { fabricColourName } from "../vendor/scm/lib/fabric-colour-name";
 import { lineWriteFailure, lineWriteSaveMessage, type LineWriteFailure } from "../vendor/scm/lib/line-write-failures";
 import { amendmentVariants, amendmentVariantsKey, amendmentRequestedUnitPriceSen, amendmentPriceFields, storedLineRemark } from "../vendor/scm/lib/so-amendment-line-diff";
 import { photoLabel, photoUploadFailure, photoUploadFailureMessage, unmatchedLinePhotos, type PhotoUploadFailure } from "../vendor/scm/lib/photo-upload-failures";
@@ -93,7 +92,7 @@ import {
   type SpecialAddonRow,
 } from "../vendor/scm/lib/mfg-products-queries";
 import { useSpecialOrderSurface } from "../vendor/scm/lib/special-order-surface";
-import { MobileFabricPicker } from "./MobileFabricPicker";
+import { FabricField, MobileFabricPicker } from "./MobileFabricPicker";
 /* Owner 2026-07-16 — the recorded-payment ledger is the SHARED
    RecordedPaymentsList, the SAME component the scan-draft review screen
    (MobileSODetail) renders. It was a local read-only copy, which is why
@@ -3340,34 +3339,6 @@ function LineCard({
 
 /* Tile chrome + StagedPhotoThumb + MobileSavedPhotoThumb moved to
    ./MobileSavedPhotoThumb — see that file for the shared style constants. */
-
-/* FabricField — a tappable read-only row that opens the searchable FabricPicker
-   modal (native <select> with 700+ options is unusable per owner). Shows the
-   picked fabric code (+ colour label) or a "Select fabric" placeholder. */
-function FabricField({ value, colourLabel, invalid, onOpen }: {
-  value: string; colourLabel: string; invalid: boolean; onOpen: () => void;
-}) {
-  const name = fabricColourName(value, colourLabel);
-  return (
-    <Field label="Fabric / colour *">
-      <button
-        type="button"
-        onClick={onOpen}
-        className="fld-i"
-        style={{
-          textAlign: "left", fontFamily: "inherit", cursor: "pointer", display: "flex",
-          alignItems: "center", gap: 8, background: "#fff",
-          ...(invalid ? { borderColor: "#b23a3a", boxShadow: "0 0 0 2px rgba(178,58,58,.12)" } : null),
-        }}
-      >
-        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: value ? "#11140f" : "#9aa093", fontWeight: value ? 700 : 400 }}>
-          {value ? (name ? `${value} — ${name}` : value) : "Select fabric…"}
-        </span>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9aa093" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none" }}><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
-      </button>
-    </Field>
-  );
-}
 
 /* SpecialOrderSheet — unified special-order entry as a bottom sheet
    (owner-approved). Lists the active special_addons presets for this line's

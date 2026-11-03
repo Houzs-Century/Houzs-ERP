@@ -24,7 +24,7 @@ export function fabricColourName(colourId: string, label: string | null | undefi
   for (let i = 0; i < words.length - 1; i++) {
     spelled += alnum(words[i]!);
     if (spelled === code) {
-      const rest = words.slice(i + 1).join(' ').replace(/^[-:#\s]+/, '');
+      const rest = words.slice(i + 1).join(' ').replace(/^(?:-|:|#|\s)+/, '');
       const unwrapped = /^\((.*)\)$/.exec(rest)?.[1]?.trim() ?? rest;
       return unwrapped || null;
     }
