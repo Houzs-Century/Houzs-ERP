@@ -1,6 +1,6 @@
 /* Scan, check, then create, for supplier invoices (owner 2026-11-04): the working copy an invoice scan keeps. */
 import { describe, expect, test } from 'vitest';
-import { billBlocked, billCodesToTeach, billPicks, buildPiReview, cleanPiReview, duplicatePi, repeatedPis, suggestBills, type BillableLine, type ExistingPi, type PiReview, type PiReviewLine } from './pi-scan-check';
+import { billBlocked, billCodesToTeach, billPicks, buildPiReview, cleanPiReview, duplicatePi, repeatedPis, setPieces, suggestBills, type BillableLine, type ExistingPi, type PiReview, type PiReviewLine } from './pi-scan-check';
 import type { PiScanExtract } from './pi-scan-extract';
 import type { PiLineMatchResult } from './pi-scan-match';
 
@@ -76,5 +76,19 @@ describe('pi scan check', () => {
   test('a printed code confirmed on a tied row is taught', () => {
     const r = { lines: [{ grnItemId: 'g1', read: { itemCode: 'T1' } }, { grnItemId: null, read: { itemCode: 'T2' } }] } as unknown as PiReview;
     expect(billCodesToTeach(r, () => 'SKU-1')).toEqual([{ printedCode: 'T1', itemCode: 'SKU-1' }]);
+  });
+});
+
+describe('a set billed on one row', () => {
+  const piece = (id: string, sen: number): BillableLine => ({ ...bill(id, 'HC-GRN-1', id, 1), unitPriceSen: sen });
+  const row = (unitPrice: number | null, qty = 1): PiReviewLine => ({ key: 'r', grnItemId: null, grnNumber: null, qty, suggested: false, read: { itemCode: 'DSL 8075', description: '2 + L', qty, unitPrice, lineTotal: unitPrice } });
+  test('one row becomes its pieces, the price shared as theirs is', () => {
+    const out = setPieces(row(2000), [piece('a', 90000), piece('b', 110000)]);
+    expect(out?.map((l) => [l.grnItemId, l.read?.unitPrice])).toEqual([['a', 900], ['b', 1100]]);
+  });
+  test('a price that is not the set, or more than one set, stays one row', () => {
+    expect(setPieces(row(900), [piece('a', 90000), piece('b', 110000)])).toBeNull();
+    expect(setPieces(row(2000, 2), [piece('a', 90000), piece('b', 110000)])).toBeNull();
+    expect(setPieces(row(null), [piece('a', 90000), piece('b', 110000)])).toBeNull();
   });
 });

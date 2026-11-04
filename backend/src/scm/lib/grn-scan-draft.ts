@@ -74,6 +74,7 @@ export function otherCompanyNote(printed: ReadonlyArray<string | null>, companyI
   const here = companies.find((co) => co.id === companyId);
   for (const po of printed) {
     const number = (po ?? '').trim().toUpperCase();
+    if (/-PCO-/.test(number)) return `${number} is a purchase consignment order. Receive it from PC Receive, not as a goods receipt.`;
     const owner = companies.find((co) => co.id !== companyId && co.code && number.startsWith(`${docPrefixForCode(co.code)}PO-`));
     if (owner) return `${number} is a ${owner.name ?? owner.code} purchase order, but this scan is under ${here?.name ?? 'another company'}. Switch to ${owner.name ?? owner.code} and scan it there.`;
   }
