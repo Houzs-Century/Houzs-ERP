@@ -20,7 +20,7 @@ import type { AuthUser } from "../services/auth";
 import { supabaseAuth } from "../scm/middleware/auth";
 import { scopeToCompany, activeCompanySql } from "../scm/lib/companyScope";
 import { chunkIn, paginateAll } from "../scm/lib/paginate-all";
-import { collectReport, indexOrdersByToken, matchBill, type NoteRow, type OrderRow } from "./lib/sales-report-bills";
+import { collectReport, indexOrdersByToken, matchBill, type NoteRow, type OrderRow, isBinding, sameFair } from "./lib/sales-report-bills";
 import { pnlForProjects } from "../services/eventPnlBatch";
 import { LEDGER_COST_CATEGORIES } from "../services/projects";
 import { activeCompanyId } from "../scm/lib/companyScope";
@@ -146,12 +146,20 @@ projectDataGaps.get("/", async (c) => {
        opened, then cancelled, is not the same as never opened (owner 2026-11-04). */
     const index = indexOrdersByToken((orders.data ?? []).filter((o) => o.status !== "CANCELLED"));
     const cancelled = indexOrdersByToken((orders.data ?? []).filter((o) => o.status === "CANCELLED"));
+    const booths = await c.env.DB.prepare(
+      `SELECT p.id, p.venue, p.start_date, p.end_date FROM projects p WHERE substr(COALESCE(p.start_date, p.end_date), 1, 10) >= ?${activeCompanySql(c, "p.company_id")}`,
+    ).bind(since).all<{ id: number; venue: string | null; start_date: string | null; end_date: string | null }>();
+    const boothById = new Map(booths.results.map((p) => [Number(p.id), { venue: p.venue, start: p.start_date, end: p.end_date }]));
+    const boothOf = (id: number | null) => (id == null ? undefined : boothById.get(Number(id)));
     const otherIds = new Set<number>();
     for (const [pid, bills] of billsOf) {
       const list: ProblemBill[] = [];
       for (const b of bills) {
         const m = matchBill(b.ref_token, pid, index);
         if (m.status === "opened" && !m.other_event) continue;
+        /* A binding, or another brand's booth of this fair: either event may hold the sale. */
+        const held = index.get(b.ref_token)?.[0];
+        if (m.other_event && ((held && isBinding(held)) || sameFair(boothOf(m.so_project_id), boothOf(pid)))) continue;
         if (m.other_event && m.so_project_id != null) otherIds.add(m.so_project_id);
         const gone = m.status === "opened" ? undefined : cancelled.get(b.ref_token)?.[0];
         list.push({ ref: b.ref_raw || b.ref_token, amountSen: Number(b.amount_sen), salesperson: b.salesperson_name ?? null,
