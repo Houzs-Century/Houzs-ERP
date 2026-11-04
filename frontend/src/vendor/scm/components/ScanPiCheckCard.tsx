@@ -1,8 +1,8 @@
 // ----------------------------------------------------------------------------
 // One scanned supplier invoice in the check step, the twin of ScanGrnCheckCard:
 // the head row is the supplier, invoice no and date; rows split GRN, SKU and
-// description, and bill a Goods Receipt line. The draft bills at the receipt's
-// price, so a printed price that differs is shown on the row.
+// description, and bill a Goods Receipt line. The draft bills the supplier's
+// printed price; one that differs from the PO shows in red for the operator.
 // ----------------------------------------------------------------------------
 import { useState } from 'react';
 import { ChevronRight, FileText, Loader2, Star, X } from 'lucide-react';
@@ -161,7 +161,6 @@ export function ScanPiCheckCard({ doc, review, suppliers, billLines, checked, bl
                 <div className={styles.desc}>
                   <div className={styles.metaLine}>{line?.description ?? '—'}</div>
                   {printed && <div className={styles.printed}>{l.suggested ? 'Matched by name, check: ' : 'Printed: '}{printed}</div>}
-                  {off && <div className={`${styles.printed} ${styles.priceOff}`}>The draft bills the GRN price, not the invoice price.</div>}
                 </div>
                 <span className={styles.right}>{line?.remaining ?? '—'}</span>
                 <input className={`${styles.cell} ${styles.qty}`} type="number" min={0} step="1" value={l.qty} onChange={(e) => setLine(l.key, { qty: Math.max(0, Number(e.target.value) || 0) })} aria-label={`Qty for row ${i + 1}`} />

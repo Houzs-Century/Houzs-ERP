@@ -44,7 +44,16 @@ describe('pi scan check', () => {
   });
   test('Create bills tied rows with a qty, one pick per line', () => {
     const r = { lines: [{ grnItemId: 'g1', qty: 1 }, { grnItemId: 'g1', qty: 1 }, { grnItemId: null, qty: 5 }, { grnItemId: 'g2', qty: 0 }] } as PiReview;
-    expect(billPicks(r)).toEqual([{ grnItemId: 'g1', qty: 2 }]);
+    expect(billPicks(r)).toEqual([{ grnItemId: 'g1', qty: 2, unitPriceSen: null }]);
+  });
+  test('picks carry the price the supplier printed, by qty when two rows share a line', () => {
+    const read = (unitPrice: number | null) => ({ itemCode: null, description: null, qty: 1, unitPrice, lineTotal: null });
+    const r = { lines: [{ grnItemId: 'g1', qty: 1, read: read(830) }, { grnItemId: 'g1', qty: 3, read: read(800) }, { grnItemId: 'g2', qty: 1, read: read(0) }, { grnItemId: 'g3', qty: 1, read: read(null) }] } as PiReview;
+    expect(billPicks(r)).toEqual([
+      { grnItemId: 'g1', qty: 4, unitPriceSen: 80_750 },
+      { grnItemId: 'g2', qty: 1, unitPriceSen: 0 },
+      { grnItemId: 'g3', qty: 1, unitPriceSen: null },
+    ]);
   });
   test('blocked: nothing tied, a closed line, more than is left', () => {
     const open = new Map([['g1', bill('g1', 'HC-GRN-1', 'A1', 2)]]);

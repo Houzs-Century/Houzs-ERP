@@ -8,7 +8,7 @@ import { HELD_OR_TERM } from '../lib/document-hold'; import { grnNotBillableRefu
 import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
-import { createDraftPisFromGrnItemsCore, type PiFromGrnItemsContext } from '../lib/pi-from-grn-core';
+import { RECEIPT_PRICES, createDraftPisFromGrnItemsCore, type PiFromGrnItemsContext } from '../lib/pi-from-grn-core';
 import { qtyCapRefusal } from '../lib/qty-cap';
 import { buildVariantSummary, isServiceLine } from '../shared';
 import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-allocation';
@@ -1283,7 +1283,7 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
     req: { json: () => c.req.json() },
     get: ((key: 'supabase' | 'user' | 'companyId' | 'allowedCompanyIds' | 'companyCode') =>
       c.get(key as 'supabase')) as unknown as PiFromGrnItemsContext['get'],
-  });
+  }, RECEIPT_PRICES);
   /* Every core refusal (invalid_json, picks_required, load_failed, the migrated
      refusal, item_not_found, qty_must_be_positive, qty_exceeds_remaining and the
      not-billable gate) is emitted BEFORE the core's first write, and the original
