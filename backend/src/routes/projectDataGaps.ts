@@ -28,6 +28,8 @@ import { todayMyt } from "../scm/lib/my-time";
 import { financeHiddenForUser } from "../services/pmsAccess";
 import { classifyProjectGaps, type GapProject } from "../scm/lib/project-data-gaps";
 
+const GO_LIVE = "2026-09-01";
+
 export const projectDataGaps = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 projectDataGaps.use("*", async (c, next) => {
@@ -39,7 +41,8 @@ projectDataGaps.use("*", async (c, next) => {
 projectDataGaps.use("*", supabaseAuth);
 
 projectDataGaps.get("/", async (c) => {
-  const from = todayMyt(-120);
+  /* The ERP went live on 1 Sep 2026 (owner): rental and chat reports before it are not books to chase. */
+  const from = [todayMyt(-120), GO_LIVE].sort()[1]!;
   const to = todayMyt(-3);
   const COGS = "('cogs','cogs_matt_sofa','cogs_bedframe','cogs_accessories')";
   const sum = (where: string) =>
