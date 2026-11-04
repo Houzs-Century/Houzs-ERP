@@ -49,7 +49,7 @@ projectDataGaps.get("/", async (c) => {
     `COALESCE((SELECT SUM(l.amount) FROM project_finance_lines l WHERE l.project_id = p.id AND l.archived_at IS NULL AND ${where}), 0)`;
   // company-scope: finance lines are read per project of the active company (activeCompanySql on p.company_id at the end of this statement).
   const rows = await c.env.DB.prepare(
-    `SELECT p.id, p.code, p.name, p.brand, p.start_date, p.end_date,
+    `SELECT p.id, p.code, p.name, p.brand, p.start_date, p.end_date, p.size_sqm,
             ${sum("l.kind = 'income'")} AS income,
             ${sum(`l.kind = 'cost' AND l.category IN ${COGS}`)} AS cogs,
             ${sum("l.kind = 'cost' AND l.category = 'commission'")} AS commission,
@@ -65,7 +65,7 @@ projectDataGaps.get("/", async (c) => {
        FROM projects p
       WHERE p.archived_at IS NULL AND COALESCE(p.status, '') <> 'cancelled'
         AND substr(p.end_date, 1, 10) >= ? AND substr(p.end_date, 1, 10) <= ?${activeCompanySql(c, "p.company_id")}`,
-  ).bind(from, to).all<Omit<GapProject, "soSen"> & { start_date: string | null; rental: number; setup: number; transport_fee: number; transport_setup: number; merchandise: number; cogs_matt_sofa: number; cogs_bedframe: number; cogs_accessories: number }>();
+  ).bind(from, to).all<Omit<GapProject, "soSen"> & { start_date: string | null; size_sqm: number | null; rental: number; setup: number; transport_fee: number; transport_setup: number; merchandise: number; cogs_matt_sofa: number; cogs_bedframe: number; cogs_accessories: number }>();
   const projects = rows.results;
 
   const ids = projects.map((p) => String(p.id));
@@ -173,6 +173,7 @@ projectDataGaps.get("/", async (c) => {
     rental: pnls.get(p.id)?.by_sales.rental ?? Number(p.rental),
     id: p.id, code: p.code, name: p.name, brand: p.brand, endDate: String(p.end_date ?? "").slice(0, 10), soSen: soSen.get(p.id) ?? 0,
     soDocs: soDocs.get(p.id) ?? [],
+    sizeSqm: p.size_sqm == null ? null : Number(p.size_sqm),
     lines: {
       sales: Number(p.income), cogs: Number(p.cogs),
       cogsMattSofa: Number(p.cogs_matt_sofa), cogsBedframe: Number(p.cogs_bedframe), cogsAccessories: Number(p.cogs_accessories), rental: Number(p.rental), setup: Number(p.setup), transportFee: Number(p.transport_fee),
