@@ -29,6 +29,8 @@ import { financeHiddenForUser } from "../services/pmsAccess";
 import { classifyProjectGaps, type GapProject } from "../scm/lib/project-data-gaps";
 
 const GO_LIVE = "2026-09-01";
+/** A giveaway that carries no cost (owner 2026-11-05), so it is no gap in the books. */
+const NO_COST_BY_DESIGN = new Set(["DL-SLEEP WELL PILLOW"]);
 
 export const projectDataGaps = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -214,7 +216,7 @@ projectDataGaps.get("/", async (c) => {
   if (zeroLines.error) return c.json({ error: "load_failed", reason: `order lines with no cost: ${zeroLines.error.message}` }, 500);
   const noCogs = new Map<string, string[]>();
   for (const l of zeroLines.data) {
-    if (!l.item_code || String(l.item_group ?? "").toLowerCase() === "service") continue;
+    if (!l.item_code || String(l.item_group ?? "").toLowerCase() === "service" || NO_COST_BY_DESIGN.has(l.item_code)) continue;
     noCogs.set(String(l.doc_no), [...(noCogs.get(String(l.doc_no)) ?? []), String(l.item_code)]);
   }
   const soNoCogs = [...noCogs.entries()].map(([docNo, items]) => {
